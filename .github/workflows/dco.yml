@@ -1,0 +1,42 @@
+name: DCO
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  sign-off:
+    # Pull requests opened by GitHub App accounts (Dependabot and similar) are exempt.
+    # The opener is authenticated by GitHub; commit author metadata is not.
+    if: github.event.pull_request.user.type != 'Bot'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check author sign-offs
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          failed=0
+          commits=$(git log --no-merges --format=%H "$BASE_SHA..$HEAD_SHA")
+          for commit in $commits; do
+            author_email=$(git show -s --format=%ae "$commit")
+            if ! git show -s --format='%(trailers:key=Signed-off-by,valueonly)' "$commit" |
+              sed -n 's/^.* <\([^<>]*\)>$/\1/p' |
+              grep -Fx -- "$author_email" > /dev/null; then
+              printf 'Missing author sign-off: %s <%s>\n' "$commit" "$author_email"
+              failed=1
+            fi
+          done
+          if [ "$failed" -ne 0 ]; then
+            echo 'Add your sign-off with git commit --amend -s (latest commit)'
+            echo 'or git rebase --signoff <base> (multiple commits), then push the updated branch.'
+          fi
+          exit "$failed"

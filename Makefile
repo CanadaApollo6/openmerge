@@ -1,0 +1,25 @@
+TOOLCHAIN := $(if $(shell command -v go 2>/dev/null),,mise exec --)
+VERSION ?= $(shell git describe --tags --always --dirty)
+
+.PHONY: build test lint fmt check clean
+
+build:
+	CGO_ENABLED=0 $(TOOLCHAIN) go build -ldflags "-X main.version=$(VERSION)" -o bin/openmerge ./cmd/openmerge
+
+test:
+	$(TOOLCHAIN) go test -race -count=1 ./...
+
+lint:
+	$(TOOLCHAIN) golangci-lint run
+
+fmt:
+	@files="$$($(TOOLCHAIN) gofmt -l .)" || exit $$?; \
+	if [ -n "$$files" ]; then \
+		printf 'Run gofmt on these files:\n%s\n' "$$files"; \
+		exit 1; \
+	fi
+
+check: fmt lint test build
+
+clean:
+	rm -rf bin/
