@@ -37,7 +37,7 @@ This roadmap is grounded in the research in [`docs/research/`](docs/research/REA
 - **Planner:** a pure function from (config, queue state, CI results, clock) to a list of intended actions. This is where batching, speculation, bisection, and priorities live. Being pure makes it unit- and simulation-testable without a forge.
 - **Executor:** applies planned actions through the forge driver. Every action is idempotent and keyed, so retries and crashes converge.
 - **Test refs, not draft PRs (default):** speculative batches are pushed to bot-owned refs such as `openmerge/queue/<base>/<batch-id>`, and CI triggers on pushes to that prefix. Draft-PR mode exists as a fallback for CI systems that only test PRs, and a `mergify/merge-queue/` prefix compatibility mode keeps existing two-step-CI filters working during migration.
-- **Landing:** fast-forward the base to the exact tested SHA when the app is a ruleset bypass actor; otherwise merge through the forge API with an expected head SHA.
+- **Landing:** one atomic git push that moves the base to the exact tested commit, leased on both the expected base SHA and a protected fence branch, so a moved base or an abandoned attempt can never land ([ADR 0004](docs/adr/0004-forge-driver-interface.md)). This needs OpenMerge to be allowed to push to the protected branch; teams that cannot allow it can use the GitHub native merge queue adapter in Phase 5.
 
 ## Phases
 
