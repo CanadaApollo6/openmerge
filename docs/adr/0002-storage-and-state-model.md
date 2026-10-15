@@ -29,9 +29,11 @@ Concurrency is naturally partitioned. A queue is identified by (forge installati
 
 **The planner is a pure function.** For one queue it takes (config, state, CI results, current time) and returns a list of intended actions: create a test ref, cancel a run, land a SHA, post a check, dequeue with a reason. It performs no I/O and reads the clock only through its input. This is where batching, speculation, bisection, and priorities live, and it is tested with tables and simulations that need no database or forge.
 
-**One worker owns a queue at a time.** A worker takes a transaction-scoped Postgres advisory lock on the queue's key, folds new events, runs the planner, and writes the planned actions in the same transaction, each with an idempotency key. There is no leader election: any number of `openmerge` processes can run, and the lock serializes each queue. Work items are claimed with `SELECT … FOR UPDATE SKIP LOCKED`.
+**One worker plans a queue at a time.** A worker takes a transaction-scoped Postgres advisory lock on the queue's key, folds new events, runs the planner, and writes the planned actions in the same transaction. Each action records an idempotency key and the event watermark it was planned from (the last event ID it saw). There is no leader election: any number of `openmerge` processes can run, and the lock serializes planning for each queue. Work items are claimed with `SELECT … FOR UPDATE SKIP LOCKED` and a lease, so a crashed worker's claim expires and another worker picks it up.
 
-**The executor applies actions outside the transaction** through the forge driver ([ADR 0004](0004-forge-driver-interface.md)). Every action is idempotent under its key, so a crash between "applied" and "recorded" converges on retry. Each outcome is appended to the log as an event.
+**Consequential actions are revalidated under the lock.** Idempotency stops an action running twice; it does not stop an action that has gone stale. An action is consequential if it changes what can land: pushing a test ref, landing, or dequeuing. Before executing one, the executor takes the queue's session-level advisory lock and holds it through the forge call. Under the lock it checks for events newer than the action's watermark. If any exist, it re-runs the planner, and an action the new plan no longer contains is cancelled, not executed. A landing therefore can never overtake a dequeue, a new push, or a config change that arrived after it was planned. The forge-level compare-and-swap in [ADR 0004](0004-forge-driver-interface.md) is the final fence if a lock is ever lost.
+
+**Other actions run without the lock** (comments, labels, status updates). Every action is idempotent under its key, so a crash between "applied" and "recorded" converges on retry. Each outcome is appended to the log as an event.
 
 **Every decision is explainable.** Because each planned action records the event range and planner inputs that produced it, the API can answer "why is this PR in this state" by pointing at concrete events. This backs the dashboard's stuck-PR explainer and the agent-facing failure explanations in Phase 3.
 
@@ -46,6 +48,8 @@ Concurrency is naturally partitioned. A queue is identified by (forge installati
 - We own schema migrations from Phase 1 onward. Migrations ship inside the binary and run on startup, forward-only.
 - Store-level tests need a real Postgres. CI provides a Postgres service. Locally, store tests use `OPENMERGE_TEST_DATABASE_URL` and are skipped with a clear message when it is unset. Planner and fake-forge tests never need a database.
 - Advisory-lock ownership means a very hot queue is limited to one worker's throughput. Lanes (Phase 4) split such queues.
+- Lanes parallelize testing, not landing. Every lane on a base branch lands through the same base-branch lock and compare-and-swap, so disjoint-scope merges keep the exact-SHA guarantee. Phase 4 must design lane landing on top of this rule, not around it.
+- Holding a lock through a forge call adds latency to consequential actions only. Landing is rare compared with status updates, so this is acceptable.
 
 ## Alternatives considered
 

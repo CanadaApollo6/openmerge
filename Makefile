@@ -19,7 +19,7 @@ fmt:
 		exit 1; \
 	fi
 
-check: fmt lint test
+check: fmt lint test build
 
 clean:
 	rm -rf bin/

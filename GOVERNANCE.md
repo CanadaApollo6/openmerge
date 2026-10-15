@@ -22,4 +22,4 @@ When the project has at least three active maintainers from at least two organiz
 
 ## Licensing commitments
 
-OpenMerge is licensed under Apache 2.0, and contributions are accepted under the [Developer Certificate of Origin](CONTRIBUTING.md#developer-certificate-of-origin), not a CLA. Contributors keep their copyright. The project will not adopt a CLA or relicense under a non-open-source license; doing so would require the agreement of every copyright holder.
+OpenMerge is licensed under Apache 2.0, and contributions are accepted under the [Developer Certificate of Origin](CONTRIBUTING.md#developer-certificate-of-origin), not a CLA. Contributors keep their copyright. As project policy, OpenMerge itself will stay Apache 2.0 and will not adopt a CLA. Apache 2.0 still lets anyone, including companies, build and distribute differently licensed derivative works; that freedom is intentional.

@@ -22,9 +22,12 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           failed=0
-          commits=$(git log --format=%H "$BASE_SHA..$HEAD_SHA")
+          commits=$(git log --no-merges --format=%H "$BASE_SHA..$HEAD_SHA")
           for commit in $commits; do
             author_email=$(git show -s --format=%ae "$commit")
+            case "$author_email" in
+              *'[bot]@users.noreply.github.com') continue ;;
+            esac
             if ! git show -s --format='%(trailers:key=Signed-off-by,valueonly)' "$commit" |
               sed -n 's/^.* <\([^<>]*\)>$/\1/p' |
               grep -Fx -- "$author_email" > /dev/null; then

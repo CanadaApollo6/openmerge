@@ -33,7 +33,7 @@ type Driver interface {
 	// Git transport for building test refs.
 	GitRemote(ctx context.Context, repo RepoRef) (GitRemote, error)
 
-	// Writes. Each is idempotent under the caller's key.
+	// Writes. Each takes the caller's idempotency key and must be safe to retry (see below).
 	DeleteRef(ctx context.Context, repo RepoRef, ref string) error
 	Land(ctx context.Context, repo RepoRef, req LandRequest) (LandResult, error)
 	ReportStatus(ctx context.Context, repo RepoRef, sha string, s Status) error
@@ -48,7 +48,16 @@ type Driver interface {
 
 **Test refs are built with git, not forge merge APIs.** A shared git component fetches the base and the queued PRs, composes the speculative commits locally, and pushes them to `openmerge/queue/...` refs over the driver's `GitRemote`. This works the same on every forge. The host running OpenMerge needs the `git` executable, which the container image includes.
 
-**Landing preserves the exact-SHA guarantee.** `LandRequest` carries the PR, the merge method, the PR head SHA we tested, and the tested commit SHA. A driver must refuse to land, not land something else, if the PR head moved or the base is not where the planner expected. A fast-forward lands the tested SHA itself.
+**Landing is a compare-and-swap on the base branch.** `LandRequest` carries the PR, the merge method, the expected base SHA, and the tested commit SHA. A driver must make the base check atomic with the write: a preflight read followed by a merge call is not enough, because the base can move in between. Two landing modes satisfy this, and a driver declares which it supports.
+
+- **Fast-forward to the tested commit (default).** The test ref is built in the shape the merge method asks for (merge commits, squashed commits, or rebased commits on top of the base), and landing fast-forwards the base branch to exactly that commit with a non-forced ref update. If the base has moved, the forge rejects the update as non-fast-forward, so what lands is byte-for-byte what was tested. This needs OpenMerge to be allowed to push to the protected branch, for example as a ruleset bypass actor on GitHub. With merge commits, forges mark the PRs merged automatically. With squash or rebase the PR heads are not in the base history, so the driver closes each PR with a link to the commit that landed it, or uses the forge's native way to mark it merged where one exists.
+- **Forge merge with an enforced up-to-date rule.** Where OpenMerge cannot push to the base, it may land through the forge's merge API only if the forge itself refuses merges of a branch that is behind its base (GitHub's "require branches to be up to date"). That rule makes the forge do the compare-and-swap, but it only fits serial, in-place testing on the PR branch, so batching and speculation are unavailable in this mode.
+
+A configuration whose merge method needs a landing mode the driver cannot make atomic fails validation. OpenMerge never falls back to an unchecked merge.
+
+**Writes are recoverable after a crash.** Refs, check runs, and labels are idempotent by nature, keyed by name or external ID. Comments and other append-only writes embed the action's idempotency key in a hidden marker, and before retrying, the driver searches for an existing write carrying that key. The contract suite crashes a driver between each write and its recording and checks that a retry converges to exactly one effect.
+
+**Test refs never run untrusted code with trusted privileges.** Pushing a test ref into the base repository runs CI with that repository's privileges, often including secrets. A pull request from a fork, or from an author without write access, could change a build script and read those secrets before anyone merges it. So, independent of any `enter_when` conditions, OpenMerge will not put a PR into a test ref unless its current head SHA is approved by someone with write access, or its author has write access. A new push revokes that approval for this purpose. Draft-PR mode does not avoid this, because a PR from a branch in the base repository runs with the same privileges. Repositories should still scope deployment secrets to protected environments that queue refs cannot reach.
 
 **The fake forge ships first.** `internal/forge/fake` is an in-memory driver with a scriptable CI simulator: per-check outcomes as functions of the commit (pass, fail, flaky with a probability, duration) and a virtual clock. It is a first-class driver, not a mock: the planner simulation suite, the end-to-end tests, and the roadmap's throughput exit tests all run on it.
 
@@ -57,6 +66,8 @@ type Driver interface {
 ## Consequences
 
 - Adding a forge means implementing one interface and passing one suite, with no engine changes.
+- The default landing mode needs push access to the protected branch. Teams that cannot grant it get the serial up-to-date mode, without batching.
+- Fork contributions queue only after a maintainer approves the exact head being tested. This is slower for outside contributors and is intentional.
 - Contributors can run the whole system, including end-to-end queue behavior, with no credentials.
 - We take on a git dependency at runtime and must handle clone caching and disk cleanup. Mergify's self-hosted edition has the same requirement.
 - The interface will grow. Additions go through review against the "narrow" rule: a method belongs in the driver only if the engine cannot express it with existing methods.

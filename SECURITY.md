@@ -18,5 +18,6 @@ Of particular interest:
 
 - landing a commit that was not the one tested, or landing without the configured conditions holding;
 - a pull request influencing the configuration or permissions it is judged by;
+- untrusted pull request code running in a test ref with the base repository's privileges before a maintainer approved it;
 - webhook signature bypass, or forging commands from users without permission;
 - leaking forge credentials, installation tokens, or repository contents.

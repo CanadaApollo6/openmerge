@@ -11,7 +11,7 @@ Thanks for helping build an open merge queue. OpenMerge is early (see the [roadm
 
 ## Developer setup
 
-You need Go (the version in `go.mod`), `git`, and `make`. If you use [mise](https://mise.jdx.dev), `mise install` in the repo root installs the pinned Go and golangci-lint versions from `mise.toml`.
+You need Go (the version in `go.mod`), `git`, and `make`. If you use [mise](https://mise.jdx.dev), `mise install` in the repo root installs the pinned Go and golangci-lint versions from `mise.toml`. Without mise, install the golangci-lint version listed in `mise.toml` by following [its install guide](https://golangci-lint.run/welcome/install/).
 
 ```bash
 git clone https://github.com/CanadaApollo6/openmerge
@@ -25,8 +25,8 @@ make build   # produces bin/openmerge
 | `make test` | Runs every test with the race detector |
 | `make lint` | Runs golangci-lint |
 | `make fmt` | Fails if any file is not gofmt-formatted |
-| `make check` | All of the above |
 | `make build` | Builds `bin/openmerge` |
+| `make check` | All of the above |
 
 The test suite never needs forge credentials. Engine and end-to-end tests run against the in-memory fake forge ([ADR 0004](docs/adr/0004-forge-driver-interface.md)). Once storage lands, tests that need Postgres read `OPENMERGE_TEST_DATABASE_URL` and skip with a message when it is unset ([ADR 0002](docs/adr/0002-storage-and-state-model.md)).
 
@@ -52,7 +52,7 @@ Sign off every commit by adding a trailer that matches your commit author:
 Signed-off-by: Your Name <you@example.com>
 ```
 
-`git commit -s` adds it for you. A CI check rejects pull requests with commits that are not signed off. To fix existing commits:
+`git commit -s` adds it for you. A CI check rejects pull requests with commits that are not signed off. Merge commits and commits authored by GitHub bot accounts (such as Dependabot) are exempt; the maintainer who merges a bot's PR takes responsibility for it. To fix existing commits:
 
 ```bash
 git commit --amend -s --no-edit          # the last commit
@@ -60,7 +60,7 @@ git rebase --signoff origin/main         # every commit on your branch
 git push --force-with-lease
 ```
 
-We chose the DCO over a CLA deliberately: contributors keep their copyright, and there is no mechanism for relicensing the project away from Apache 2.0.
+We chose the DCO over a CLA deliberately: contributors keep their copyright, and no single party gains the right to relicense their contributions.
 
 ## AI-assisted contributions
 
