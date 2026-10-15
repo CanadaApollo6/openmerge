@@ -1,0 +1,55 @@
+# 0002. Use Postgres only, with queue state derived from an append-only event log
+
+- **Status:** Accepted
+- **Date:** 2026-10-15
+
+## Context
+
+A merge queue is a small amount of state with very high stakes. A wrong decision merges an untested commit or silently drops a PR. Three failure modes from prior art shape this decision:
+
+- **Lost or reordered webhooks.** Forges deliver late, twice, or never. Prow/Tide survives this by reconciling against forge state instead of trusting events alone.
+- **Unexplainable decisions.** "Why is my PR stuck?" is the most common support question for any queue. Mergify users report check runs stuck `in_progress` with no recovery path.
+- **Operational weight.** Mergify's 2022 engine ran on Redis streams and hashes. Its current self-hosted edition needs both Redis and PostgreSQL. Our roadmap promises one binary plus Postgres.
+
+Concurrency is naturally partitioned. A queue is identified by (forge installation, repository, base branch, lane), and decisions inside one queue must be serial, while different queues are independent.
+
+## Decision
+
+**Postgres (version 15 or later) is the only stateful dependency.** No Redis, no message broker.
+
+**Inputs are events in an append-only log.** Everything that can change a decision is recorded as an event before it is acted on:
+
+- forge webhooks, deduplicated by delivery ID;
+- observations from the reconciler, which periodically re-reads forge state and records what it saw;
+- results of actions the executor performed, including failures;
+- user commands from comments, the CLI, the API, or MCP;
+- timer firings (check timeouts, batch wait windows, schedules).
+
+**Queue state is a projection.** Each queue's current state is the fold of its events. Projections are cached in tables for speed but can always be rebuilt from the log, so a bug in state handling is fixed by fixing the fold and replaying.
+
+**The planner is a pure function.** For one queue it takes (config, state, CI results, current time) and returns a list of intended actions: create a test ref, cancel a run, land a SHA, post a check, dequeue with a reason. It performs no I/O and reads the clock only through its input. This is where batching, speculation, bisection, and priorities live, and it is tested with tables and simulations that need no database or forge.
+
+**One worker owns a queue at a time.** A worker takes a transaction-scoped Postgres advisory lock on the queue's key, folds new events, runs the planner, and writes the planned actions in the same transaction, each with an idempotency key. There is no leader election: any number of `openmerge` processes can run, and the lock serializes each queue. Work items are claimed with `SELECT … FOR UPDATE SKIP LOCKED`.
+
+**The executor applies actions outside the transaction** through the forge driver ([ADR 0004](0004-forge-driver-interface.md)). Every action is idempotent under its key, so a crash between "applied" and "recorded" converges on retry. Each outcome is appended to the log as an event.
+
+**Every decision is explainable.** Because each planned action records the event range and planner inputs that produced it, the API can answer "why is this PR in this state" by pointing at concrete events. This backs the dashboard's stuck-PR explainer and the agent-facing failure explanations in Phase 3.
+
+**Retention.** Old events are compacted per queue into a snapshot plus recent history after a configurable window. Compaction must preserve the ability to rebuild current state.
+
+## Consequences
+
+- Self-hosting stays at one binary plus one database. Backups, high availability, and observability reuse standard Postgres tooling.
+- Missed webhooks degrade latency, not correctness: the reconciler catches up.
+- Debugging becomes replay. A bug report can ship the relevant event range, and a test can reproduce the exact decision.
+- The planner can be simulated at scale (thousands of PRs, scripted failure rates) in milliseconds, which is how the roadmap's throughput exit tests are measured.
+- We own schema migrations from Phase 1 onward. Migrations ship inside the binary and run on startup, forward-only.
+- Store-level tests need a real Postgres. CI provides a Postgres service. Locally, store tests use `OPENMERGE_TEST_DATABASE_URL` and are skipped with a clear message when it is unset. Planner and fake-forge tests never need a database.
+- Advisory-lock ownership means a very hot queue is limited to one worker's throughput. Lanes (Phase 4) split such queues.
+
+## Alternatives considered
+
+- **Redis streams plus hashes** (Mergify's 2022 design). Fast and proven at their scale, but it adds a second stateful service, durability depends on AOF configuration, and Mergify itself later added PostgreSQL for persistent state.
+- **Mutable state rows without an event log.** Simpler to start, but loses replay, makes "why" questions unanswerable after the fact, and turns webhook ordering bugs into silent corruption.
+- **SQLite.** Attractive for single-node installs and development. It lost as the primary store because multiple workers need row-level locking and `SKIP LOCKED`. The store interface should not preclude a SQLite backend for single-process development later; that would need its own ADR.
+- **An external workflow engine** (Temporal and similar). Durable execution would cover crash recovery, but it is a heavy dependency for self-hosters and hides the queue logic inside workflow code that is harder to simulate than a pure planner.

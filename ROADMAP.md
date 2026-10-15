@@ -47,11 +47,12 @@ Each phase has an exit test. A phase is done when its exit test passes on the fa
 
 - [x] Apache-2.0 license, NOTICE, public repo
 - [x] Research: Mergify merge queue, Mergify platform, prior art and landscape
-- [ ] ADR-0001 implementation language (proposal: **Go**, see Open decisions)
-- [ ] ADR-0002 storage and event model (Postgres, event-sourced queue state)
-- [ ] ADR-0003 config format (`.openmerge.yml`) and condition grammar
-- [ ] ADR-0004 forge driver interface and fake forge contract
-- [ ] CONTRIBUTING, code of conduct, DCO sign-off, issue templates, CI for the repo itself
+- [x] [ADR 0001](docs/adr/0001-implementation-language.md): implement in Go
+- [x] [ADR 0002](docs/adr/0002-storage-and-state-model.md): Postgres only, event-sourced queue state, pure planner
+- [x] [ADR 0003](docs/adr/0003-configuration-format.md): `.openmerge.yml`, condition grammar, Mergify importer
+- [x] [ADR 0004](docs/adr/0004-forge-driver-interface.md): forge driver interface and fake forge contract
+- [x] CONTRIBUTING, code of conduct, governance, security policy, DCO sign-off, issue and PR templates
+- [x] Go scaffold with `make check` and CI for the repo itself
 - [ ] Project site and a public design discussion
 
 **Exit:** ADRs merged; a contributor can clone, run `make test`, and see a green (empty) suite.
@@ -137,15 +138,16 @@ Each phase has an exit test. A phase is done when its exit test passes on the fa
 | Lanes (scopes) | green per lane | scales with independence | monorepos |
 | Post-merge verify + auto-revert | briefly red, auto-healed | highest | agent-scale monorepos |
 
-## Open decisions
+## Decisions
 
-These need a maintainer call before Phase 1 code lands:
+Phase 0 settled the founding decisions:
 
-1. **Language.** Proposal: **Go** — single static binary, mature forge SDKs (go-github, go-gitlab, Gitea SDK), and the prior art closest to this domain (Prow, policy-bot, bulldozer) is Go. Alternative: Rust, following rust-lang/bors (Rust + Postgres). TypeScript/Probot is easiest to contribute to but weakest for a long-running scheduler.
-2. **Config compatibility depth.** Read `.mergify.yml` natively, or only import it? Proposal: native `.openmerge.yml` plus an importer; avoid coupling to a schema we don't control.
-3. **Command prefix and branding.** `@openmerge` and `/openmerge` comment commands; `openmerge/` ref prefix.
-4. **Governance.** Proposal: BDFL-to-steering-committee path, DCO rather than a CLA, public ADRs.
-5. **Hosted offering.** Whether to run a free hosted instance for open-source projects, and who operates it.
+1. **Language:** Go ([ADR 0001](docs/adr/0001-implementation-language.md)).
+2. **Config compatibility:** native `.openmerge.yml` plus a Mergify importer; OpenMerge never reads `.mergify.yml` at runtime ([ADR 0003](docs/adr/0003-configuration-format.md)).
+3. **Command prefix and branding:** `@openmerge` comment commands and the `openmerge/` ref prefix.
+4. **Governance:** project lead now, a documented path to a steering committee, DCO instead of a CLA ([GOVERNANCE.md](GOVERNANCE.md)).
+
+Still open: whether to run a free hosted instance for open-source projects, and who operates it. That decision can wait until Phase 2.
 
 ## Reuse and licensing rules
 

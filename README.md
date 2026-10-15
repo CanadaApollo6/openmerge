@@ -6,7 +6,7 @@
 
 Agents now open pull requests faster than CI and humans can land them. The merge path — queuing, batching, speculative testing, flaky-test handling, and the rules around them — has become the bottleneck, and the best tools for it are closed, paywalled, or tied to a single forge. OpenMerge brings the ideas that Mergify popularized to everyone, under the Apache 2.0 license.
 
-> **Status: pre-alpha.** We're in Phase 0: research and design. There is no runnable code yet. See the [roadmap](ROADMAP.md).
+> **Status: pre-alpha.** Phase 0 (research, design decisions, project scaffold) is wrapping up and Phase 1 is next. There is no usable merge queue yet. See the [roadmap](ROADMAP.md).
 
 ## What it will do
 
@@ -20,12 +20,13 @@ Agents now open pull requests faster than CI and humans can land them. The merge
 
 ## Docs
 
-- [Roadmap](ROADMAP.md): principles, architecture, phases, and open decisions
+- [Roadmap](ROADMAP.md): principles, architecture, phases, and decisions
+- [Architecture decisions](docs/adr/README.md): the ADRs behind the design
 - [Research](docs/research/README.md): how Mergify works, and the wider merge-queue landscape
 
 ## Contributing
 
-The project is just starting, and the most useful contributions right now are design feedback: open an issue or comment on the open decisions in the roadmap.
+The project is just starting, and design feedback is the most useful contribution right now. Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup and the DCO sign-off, and [GOVERNANCE.md](GOVERNANCE.md) for how decisions are made.
 
 ## License
 

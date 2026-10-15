@@ -1,0 +1,28 @@
+name: Bug report
+description: Something OpenMerge did that it should not have, or failed to do.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: Config (redact secrets), PR sequence, and CI results that trigger it.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `openmerge version`, or the commit you built.
+  - type: dropdown
+    id: forge
+    attributes:
+      label: Forge
+      options: [GitHub, GitHub Enterprise Server, GitLab, Forgejo / Gitea, Fake forge (tests), Other]
