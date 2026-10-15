@@ -52,7 +52,7 @@ Sign off every commit by adding a trailer that matches your commit author:
 Signed-off-by: Your Name <you@example.com>
 ```
 
-`git commit -s` adds it for you. A CI check rejects pull requests with commits that are not signed off. Merge commits and commits authored by GitHub bot accounts (such as Dependabot) are exempt; the maintainer who merges a bot's PR takes responsibility for it. To fix existing commits:
+`git commit -s` adds it for you. A CI check rejects pull requests with commits that are not signed off. Merge commits, and pull requests opened by GitHub bot accounts such as Dependabot, are exempt; the maintainer who merges a bot's PR takes responsibility for it. To fix existing commits:
 
 ```bash
 git commit --amend -s --no-edit          # the last commit

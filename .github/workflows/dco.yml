@@ -8,6 +8,9 @@ permissions:
 
 jobs:
   sign-off:
+    # Pull requests opened by GitHub App accounts (Dependabot and similar) are exempt.
+    # The opener is authenticated by GitHub; commit author metadata is not.
+    if: github.event.pull_request.user.type != 'Bot'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -25,9 +28,6 @@ jobs:
           commits=$(git log --no-merges --format=%H "$BASE_SHA..$HEAD_SHA")
           for commit in $commits; do
             author_email=$(git show -s --format=%ae "$commit")
-            case "$author_email" in
-              *'[bot]@users.noreply.github.com') continue ;;
-            esac
             if ! git show -s --format='%(trailers:key=Signed-off-by,valueonly)' "$commit" |
               sed -n 's/^.* <\([^<>]*\)>$/\1/p' |
               grep -Fx -- "$author_email" > /dev/null; then
