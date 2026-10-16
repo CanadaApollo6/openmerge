@@ -1,0 +1,217 @@
+package sim
+
+import (
+	"encoding/json"
+	"fmt"
+	"math"
+	"slices"
+	"time"
+
+	"github.com/CanadaApollo6/openmerge/internal/queue"
+)
+
+// Config describes trusted PRs plus one additional untrusted fork probe per 50
+// PRs (at least one for a nonempty workload). Arrivals have uniform jitter in
+// ArrivalWindow; enqueue follows observation by one simulated second.
+type Config struct {
+	PRs             int
+	Seed            uint64
+	ArrivalWindow   time.Duration
+	BrokenRate      float64
+	FlakeRate       float64
+	DropWebhookRate float64
+	RepushRate      float64
+	ConflictRate    float64
+	// ExternalPushRate selects PRs accompanied by external base pushes (see doc.go).
+	ExternalPushRate float64
+	// CIMin/CIMax, when both positive, override fixed CIDuration.
+	CIDuration  time.Duration
+	CIMin       time.Duration
+	CIMax       time.Duration
+	MergeMethod queue.MergeMethod
+	Planner     queue.Config
+	Faults      Faults
+	RetryDelay  time.Duration
+	MaxSteps    int
+}
+
+// Faults injects errors at every forge boundary, lost landing acknowledgements,
+// late pushes and duplicate Land executions. Methods overrides ForgeErrorRate
+// per method; FailFirst guarantees coverage of the first N calls to each method.
+type Faults struct {
+	ForgeErrorRate         float64
+	Methods                map[string]float64
+	FailFirst              map[string]int
+	LandingCrashRate       float64
+	DelayedPushRate        float64
+	DuplicateExecutionRate float64
+	ReplayDelay            time.Duration
+}
+
+// DefaultFaults fails each method once, then exercises random transient errors
+// and uncertain landings. Methods unused by the executor are tested separately.
+func DefaultFaults() Faults {
+	methods := make(map[string]float64, len(forgeMethods))
+	first := make(map[string]int, len(forgeMethods))
+	for _, method := range forgeMethods {
+		methods[method] = 0.02
+		first[method] = 1
+	}
+	return Faults{Methods: methods, FailFirst: first, LandingCrashRate: 0.02, DelayedPushRate: 0.02, DuplicateExecutionRate: 0.02}
+}
+
+// DefaultConfig models a 500-PR day. Two-minute CI leaves serial capacity for
+// 720 runs/day; slower CI can legitimately drain past the arrival window.
+func DefaultConfig() Config {
+	return Config{
+		PRs: 500, Seed: 1, ArrivalWindow: 24 * time.Hour, BrokenRate: 0.05,
+		CIDuration: 2 * time.Minute,
+		Planner: queue.Config{
+			CheckTimeout: 30 * time.Minute, ResolveAfter: 5 * time.Second,
+			RefreshInterval: time.Minute, BuildBackoff: time.Second,
+		},
+		RetryDelay: time.Second, MaxSteps: 1_000_000,
+	}
+}
+
+// Result contains aggregate outcomes. JSON durations are floating-point seconds.
+// Untrusted probes are extra PRs, counted separately from PRs and Broken.
+type Result struct {
+	Config              Config                      `json:"config"`
+	PRs                 int                         `json:"prs"`
+	Broken              int                         `json:"broken"`
+	Untrusted           int                         `json:"untrusted"`
+	Merged              int                         `json:"merged"`
+	Dequeued            map[queue.DequeueReason]int `json:"dequeued"`
+	Blocked             map[queue.DequeueReason]int `json:"blocked"`
+	StillQueued         int                         `json:"still_queued"`
+	MeanTimeToMerge     time.Duration               `json:"-"`
+	MedianTimeToMerge   time.Duration               `json:"-"`
+	P95TimeToMerge      time.Duration               `json:"-"`
+	CIRuns              int                         `json:"ci_runs"`
+	CIRunsPerMergedPR   float64                     `json:"ci_runs_per_merged_pr"`
+	SimulatedSpan       time.Duration               `json:"-"`
+	Steps               int                         `json:"steps"`
+	FaultsInjected      int                         `json:"faults_injected"`
+	FaultsRecovered     int                         `json:"faults_recovered"`
+	FaultsByMethod      map[string]int              `json:"faults_by_method"`
+	DelayedPushes       int                         `json:"delayed_pushes"`
+	DuplicateExecutions int                         `json:"duplicate_executions"`
+	RejectedReplays     int                         `json:"rejected_replays"`
+	DroppedWebhooks     int                         `json:"dropped_webhooks"`
+	ExternalPushes      int                         `json:"external_pushes"`
+
+	// First-enqueue latency includes time spent in earlier admissions.
+	MedianTimeFromFirstEnqueue time.Duration `json:"-"`
+	P95TimeFromFirstEnqueue    time.Duration `json:"-"`
+}
+
+func (cfg Config) normalized() (Config, error) {
+	if cfg.PRs < 0 || cfg.ArrivalWindow < 0 {
+		return cfg, fmt.Errorf("PR count and arrival window must be nonnegative")
+	}
+	rates := []struct {
+		name string
+		rate float64
+	}{
+		{"broken rate", cfg.BrokenRate}, {"flake rate", cfg.FlakeRate},
+		{"drop webhook rate", cfg.DropWebhookRate},
+		{"repush rate", cfg.RepushRate}, {"conflict rate", cfg.ConflictRate},
+		{"external push rate", cfg.ExternalPushRate},
+		{"delayed push rate", cfg.Faults.DelayedPushRate}, {"duplicate execution rate", cfg.Faults.DuplicateExecutionRate},
+		{"forge error rate", cfg.Faults.ForgeErrorRate}, {"landing crash rate", cfg.Faults.LandingCrashRate},
+	}
+	for method, count := range cfg.Faults.FailFirst {
+		if !slices.Contains(forgeMethods, method) || count < 0 {
+			return cfg, fmt.Errorf("invalid initial fault count %q: %d", method, count)
+		}
+	}
+	for method, rate := range cfg.Faults.Methods {
+		if !slices.Contains(forgeMethods, method) {
+			return cfg, fmt.Errorf("unknown forge method %q", method)
+		}
+		rates = append(rates, struct {
+			name string
+			rate float64
+		}{method + " error rate", rate})
+	}
+	for _, r := range rates {
+		if math.IsNaN(r.rate) || r.rate < 0 || r.rate > 1 {
+			return cfg, fmt.Errorf("%s must be between 0 and 1", r.name)
+		}
+	}
+	if cfg.CIDuration == 0 {
+		cfg.CIDuration = 2 * time.Minute
+	}
+	if cfg.CIDuration < 0 || cfg.CIMin < 0 || cfg.CIMax < 0 ||
+		(cfg.CIMin != 0 || cfg.CIMax != 0) && (cfg.CIMin == 0 || cfg.CIMax < cfg.CIMin) {
+		return cfg, fmt.Errorf("CI duration must be positive; CI range requires 0 < min <= max")
+	}
+	if cfg.MergeMethod == "" {
+		cfg.MergeMethod = cfg.Planner.MergeMethod
+		if cfg.MergeMethod == "" {
+			cfg.MergeMethod = queue.Merge
+		}
+	}
+	switch cfg.MergeMethod {
+	case queue.Merge, queue.Squash, queue.Rebase:
+	default:
+		return cfg, fmt.Errorf("unsupported merge method %q", cfg.MergeMethod)
+	}
+	cfg.Planner.MergeMethod = cfg.MergeMethod
+	if cfg.RetryDelay < 0 || cfg.MaxSteps < 0 {
+		return cfg, fmt.Errorf("retry delay and step limit must be nonnegative")
+	}
+	if cfg.RetryDelay == 0 {
+		cfg.RetryDelay = time.Second
+	}
+	if cfg.MaxSteps == 0 {
+		cfg.MaxSteps = 1_000_000
+	}
+	if cfg.Planner.RefreshInterval <= 0 {
+		cfg.Planner.RefreshInterval = time.Minute
+	}
+	if cfg.Planner.BuildRetries <= 0 {
+		cfg.Planner.BuildRetries = 3
+	}
+	if cfg.Faults.ReplayDelay < 0 {
+		return cfg, fmt.Errorf("replay delay must be nonnegative")
+	}
+	if cfg.Faults.ReplayDelay == 0 {
+		cfg.Faults.ReplayDelay = 2*max(cfg.Planner.ResolveAfter, 0) + 2*cfg.RetryDelay + time.Nanosecond
+	}
+	return cfg, nil
+}
+
+// MarshalJSON keeps Go's duration API while making exported run records readable.
+func (r Result) MarshalJSON() ([]byte, error) {
+	type plain Result
+	return json.Marshal(struct {
+		plain
+		Mean        float64 `json:"mean_time_to_merge_seconds"`
+		Median      float64 `json:"median_time_to_merge_seconds"`
+		P95         float64 `json:"p95_time_to_merge_seconds"`
+		FirstMedian float64 `json:"median_time_from_first_enqueue_seconds"`
+		FirstP95    float64 `json:"p95_time_from_first_enqueue_seconds"`
+		Span        float64 `json:"simulated_span_seconds"`
+	}{plain(r), r.MeanTimeToMerge.Seconds(), r.MedianTimeToMerge.Seconds(), r.P95TimeToMerge.Seconds(),
+		r.MedianTimeFromFirstEnqueue.Seconds(), r.P95TimeFromFirstEnqueue.Seconds(), r.SimulatedSpan.Seconds()})
+}
+
+// MarshalJSON records every effective setting with durations in seconds.
+func (cfg Config) MarshalJSON() ([]byte, error) {
+	return json.Marshal(map[string]any{
+		"prs": cfg.PRs, "seed": cfg.Seed, "arrival_window_seconds": cfg.ArrivalWindow.Seconds(),
+		"broken_rate": cfg.BrokenRate, "flake_rate": cfg.FlakeRate, "drop_webhook_rate": cfg.DropWebhookRate,
+		"repush_rate": cfg.RepushRate, "conflict_rate": cfg.ConflictRate,
+		"external_push_rate":  cfg.ExternalPushRate,
+		"ci_duration_seconds": cfg.CIDuration.Seconds(), "ci_min_seconds": cfg.CIMin.Seconds(), "ci_max_seconds": cfg.CIMax.Seconds(),
+		"merge_method": cfg.MergeMethod, "retry_delay_seconds": cfg.RetryDelay.Seconds(), "max_steps": cfg.MaxSteps,
+		"planner": map[string]any{"merge_method": cfg.Planner.MergeMethod, "check_timeout_seconds": cfg.Planner.CheckTimeout.Seconds(),
+			"resolve_after_seconds": cfg.Planner.ResolveAfter.Seconds(), "refresh_interval_seconds": cfg.Planner.RefreshInterval.Seconds(),
+			"build_retries": cfg.Planner.BuildRetries, "build_backoff_seconds": cfg.Planner.BuildBackoff.Seconds()},
+		"faults": map[string]any{"forge_error_rate": cfg.Faults.ForgeErrorRate, "methods": cfg.Faults.Methods, "fail_first": cfg.Faults.FailFirst,
+			"landing_crash_rate": cfg.Faults.LandingCrashRate, "delayed_push_rate": cfg.Faults.DelayedPushRate,
+			"duplicate_execution_rate": cfg.Faults.DuplicateExecutionRate, "replay_delay_seconds": cfg.Faults.ReplayDelay.Seconds()},
+	})
+}
