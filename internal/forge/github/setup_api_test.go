@@ -77,6 +77,11 @@ func (f *apiFixture) handleSetup(w http.ResponseWriter, r *http.Request, path st
 					if !ok || params["update_allows_fetch_and_merge"] != false {
 						f.t.Error("fence update must explicitly forbid fetch-and-merge")
 					}
+					// Like GitHub, store no parameters when only the false default
+					// was sent; validation must accept the omitted default.
+					if len(params) == 1 {
+						delete(rule, "parameters")
+					}
 				}
 			}
 		}

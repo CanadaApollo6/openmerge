@@ -146,11 +146,17 @@ func hasFenceRules(r Ruleset) bool {
 	return true
 }
 
+// strictFenceUpdate reports whether an update rule forbids fetch-and-merge.
+// GitHub omits the parameters when update_allows_fetch_and_merge is false, its
+// default, so only an explicit true (or unreadable parameters) is lenient.
 func strictFenceUpdate(rule RepositoryRule) bool {
+	if len(rule.Parameters) == 0 || string(rule.Parameters) == "null" {
+		return true
+	}
 	var params struct {
 		Allow *bool `json:"update_allows_fetch_and_merge"`
 	}
-	return json.Unmarshal(rule.Parameters, &params) == nil && params.Allow != nil && !*params.Allow
+	return json.Unmarshal(rule.Parameters, &params) == nil && (params.Allow == nil || !*params.Allow)
 }
 
 func fenceRule(kind string) RepositoryRule {
