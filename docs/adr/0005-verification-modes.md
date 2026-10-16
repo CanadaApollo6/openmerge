@@ -21,8 +21,8 @@ Agent-scale users have already left this model. Anthropic reports growing from a
 |---|---|---|---|
 | `max_base_age` | duration, at least the check timeout | `1h` | How long ago the admission test's base may have been the tip, checked again at landing |
 | `on_red` | `revert` \| `pause` \| `notify` | `revert` | Remedy for a confirmed red commit |
-| `max_red` | duration | `30m` | Longest the base may stay red before ordinary landings pause |
-| `max_remedies` | integer, 0 to 5 | `3` | Automatic remedies per red episode before escalating |
+| `max_red` | duration | `30m` | Longest a suspect may stay open before it escalates |
+| `max_open_suspects` | integer, 1 to 100 | `25` | Open suspects at once before the queue escalates |
 
 ### Admission and landing
 
@@ -33,21 +33,24 @@ Agent-scale users have already left this model. Anthropic reports growing from a
 
 ### Verifying main
 
-**Every landed commit is checked.** CI already runs on pushes to the base. A landed commit is green when all its required checks passed on that exact commit, and red when a required check failed twice: once, then once more after one automatic rerun to filter flakes.
+**Every landed commit is checked.** CI already runs on pushes to the base. Each required check on each landed commit ends as passed or failed, where failed means it failed twice: once, then once more after one automatic rerun to filter flakes. A failure that an open suspect already explains is not rerun.
 
-**Verification frontier.** OpenMerge tracks, per base, the newest landed commit F such that every landed commit up to and including F has a final result: green, or red and resolved. A commit whose checks are still pending stops the frontier, even if later commits already passed. Red commits are recorded in an unresolved set that is independent of the frontier and the green ref; a red commit leaves the set only when it is resolved.
+**Suspects, not a red base.** At agent scale the base is rarely free of every bug at once: with 300 bad changes a day and about an hour to detect and remove each, a dozen can be live in the tip. So OpenMerge tracks each defect separately. A suspect is a landed commit S with a set of checks K that passed on the nearest earlier commit with a known result for them and failed on S. If CI skipped or cancelled runs between that commit and S, for example through concurrency groups, OpenMerge runs CI on each skipped commit in parallel by pushing it to `openmerge/verify/<base>/<sha>`, and does not binary-search, because history need not be monotonic. If those results cannot be obtained, the suspect is inconclusive. A later failure of a check in K is explained by S while S is unremedied in that commit's history; an unexplained failure makes a new suspect.
 
-**Green ref.** `openmerge/green/<base>` is a protected, App-only ref that deploys follow instead of the base. OpenMerge moves it forward, by compare-and-swap along the base's first-parent history, to the newest green commit C at or behind the frontier while the unresolved set has no member at or before C. A red commit R is resolved only when a remedy for R (or any later fix) has landed and a green commit after it is inside the frontier. A later commit that passes while still containing R's bug, or while R's own checks are pending, cannot move the ref. The promise is that the green ref only points at commits whose required checks passed on that exact commit, with every earlier commit's result known and every failure resolved. It is not a promise that those checks catch every bug.
+**Remedies.** With `on_red: revert`, OpenMerge composes a revert of S onto the tip and lands it ahead of ordinary PRs. The revert carries `Reverts:` and credits S's author. It skips admission testing, because it only removes a change, and is verified after landing like every other commit. It is verified when the checks in K pass on the revert commit, or on the first later commit with known results for K, apart from failures other open suspects explain. With `pause`, ordinary landings pause while S is open. With `notify`, OpenMerge only reports.
 
-### Red commits
+**Bounded automation.** Each suspect gets at most one automatic remedy. OpenMerge never automatically reverts a commit it authored as a remedy, and never retries a remedy that conflicts. A suspect escalates when it is inconclusive, its remedy conflicts or is not verified, or it stays open longer than `max_red`, counted from when its failure was confirmed. The queue also escalates when more than `max_open_suspects` are open at once. Escalation pauses ordinary landings while culprit finding, remedies for other suspects, and verification keep running, and gives a human the evidence. A human fixes the base by landing a fix through the queue or pushing it directly. A writer's `@openmerge refresh` asks for verification again. Ordinary landings resume automatically once no escalated suspect remains open, never on the command alone.
 
-1. **Episode.** A red episode opens when a landed commit is confirmed red and no episode is open, and gets a durable ID. Every red commit until the episode closes belongs to it. It closes when the unresolved set is empty and the frontier holds a green commit after the last remedy.
-2. **Suspect.** The suspect is the first red commit after the frontier. If CI skipped or cancelled runs for commits before it, for example through concurrency groups, OpenMerge runs CI on every one of those commits, in parallel, by pushing them to `openmerge/verify/<base>/<sha>`; it does not binary-search, because history need not be monotonic. A commit whose result still cannot be obtained makes the diagnosis inconclusive.
-3. **Remedy.** With `on_red: revert`, OpenMerge composes a revert of the suspect and lands it ahead of ordinary PRs. The revert carries `Reverts:`, credits the suspect's author, and goes through the same landing path. With `pause`, ordinary landings pause. With `notify`, OpenMerge only reports.
-4. **Verify the remedy.** A remedy is verified when its own commit is green. If the tip stays red after a verified remedy, OpenMerge looks for the next suspect: the first red commit after the remedy whose failure is not explained by an already-remedied suspect. Independent defects that land close together each get their own remedy.
-5. **Bounded automation.** An episode gets at most `max_remedies` automatic remedies, and at most one per suspect. OpenMerge never automatically reverts a commit it authored as a remedy, and never retries a remedy that conflicts. An inconclusive diagnosis, a remedy that does not turn its own commit green, a conflicting revert, an exhausted `max_remedies`, or an episode older than `max_red` escalates: ordinary landings pause, culprit finding and verification keep running, and a human gets the evidence.
-6. **Recovering from escalation.** A human fixes the base by landing a fix through the queue or pushing it directly. Each fix is just another landed commit. A writer's `@openmerge refresh` asks for the tip to be verified again; ordinary landings resume automatically only when the episode closes, never on the command alone.
-7. **Report.** The suspect PR's author gets one structured comment and a machine-readable event: the commits, the failed checks, the evidence, and the remedy's SHA or the reason it escalated.
+**Report.** The suspect PR's author gets one structured comment and a machine-readable event: the commit, the failed checks, the evidence, and the remedy's SHA or the reason it escalated.
+
+**Verification frontier.** OpenMerge tracks, per base, the newest landed commit F such that every landed commit up to and including F has known results for every required check. A commit with pending checks stops the frontier, even if later commits already passed.
+
+**Green ref.** `openmerge/green/<base>` is a protected, App-only ref that deploys follow instead of the base. It always points at a commit on which every required check passed, and it comes from one of two places:
+
+1. *A base commit.* The newest commit C at or behind the frontier whose required checks all passed, with no open suspect at or before C.
+2. *A deploy candidate.* While open suspects block the first option, OpenMerge composes a candidate D from the frontier commit F with a revert of every open suspect at or before F, pushes it to `openmerge/verify/<base>/candidate-<n>`, and moves the green ref to D if every required check passes on D. It builds at most one candidate at a time and starts the next when the previous result arrives.
+
+The green ref's base commit (C, or the F a candidate was built from) only moves forward along the base's first-parent history. Each move is a compare-and-swap, and the event records the base commit and, for a candidate, the suspects it reverts. The promise is that deploys only receive a commit that passed every required check on that exact commit. It is not a promise that those checks catch every bug.
 
 ### Conflicts
 
@@ -55,15 +58,15 @@ A composition conflict produces a structured event naming the conflicting files 
 
 ### Switching modes
 
-A mode change is a new configuration generation. Admission under the old generation freezes. In-flight consequential actions finish or are fenced as today. Outstanding post-merge obligations (an open episode, unresolved red commits, pending reruns, verify runs, remedies) and any escalation pause belong to the queue, not to a mode, so they survive the switch and keep running under the generation that created them. The new mode admits work only after the episode closes and no escalation pause remains. Recovery evidence is tied to the persisted attempt's generation, not to the queue's current mode: the fence parser accepts both fence forms, then checks that the form matches the attempt it names, so switching modes can never hide an in-flight landing.
+A mode change is a new configuration generation. Admission under the old generation freezes. In-flight consequential actions finish or are fenced as today. Outstanding post-merge obligations (open suspects, pending reruns, verify runs, candidates, remedies) and any escalation pause belong to the queue, not to a mode, so they survive the switch and keep running under the generation that created them. The new mode admits work only after no suspect is open and no escalation pause remains. Recovery evidence is tied to the persisted attempt's generation, not to the queue's current mode: the fence parser accepts both fence forms, then checks that the form matches the attempt it names, so switching modes can never hide an in-flight landing.
 
 ## Consequences
 
 - Product principle 1 becomes a promise about honesty: strict queues land exactly what was tested; post-merge queues say exactly what was tested before landing and keep a green ref that only passing code reaches.
 - Post-merge throughput is bounded by landing latency and conflict rate, not by CI duration. The base can be red between a bad landing and its remedy, so deploys must follow the green ref. Setup and the rules checks verify CI on base pushes and on `openmerge/verify/**`, and that `openmerge/green/*` and `openmerge/verify/*` are protected.
-- CI cost per merged PR is about two runs (admission and post-merge), plus reruns and culprit finding. The simulator must model a finite runner pool so its exit tests measure latency under a CI budget, not with unlimited CI.
+- CI cost per merged PR is about two runs (admission and post-merge), plus reruns, verify runs for skipped commits, and one deploy candidate at a time. The simulator must model a finite runner pool so its exit tests measure latency under a CI budget, not with unlimited CI.
 - Post-merge landings use new event types and a new fence-commit form. Existing event types and the strict fence form stay byte-for-byte unchanged ([ADR 0002](0002-storage-and-state-model.md)); the shared fence parser accepts both forms and validates each against its persisted attempt.
-- The simulator's invariants for post-merge queues change from "main is always green" to: the green ref only points at green commits inside the verification frontier with no unresolved red commit at or before them; every red episode closes or escalates; and no landing is reported as tested unless it was.
+- The simulator's invariants for post-merge queues change from "main is always green" to: the green ref only points at a commit on which every required check passed, and its base commit never moves backward; every suspect is remedied and verified or escalates; and no landing is reported as tested unless it was.
 - [ADR 0004](0004-forge-driver-interface.md)'s "what lands is byte-for-byte what was tested" holds for strict queues only. The landing mechanism, one atomic push leased on base and fence, is unchanged in both modes.
 
 ## Alternatives considered
@@ -72,4 +75,5 @@ A mode change is a new configuration generation. Admission under the old generat
 - **Post-merge only.** Many teams cannot accept a red base even briefly, or deploy from the base directly. Removing strict mode would give up the guarantee the project started from.
 - **Optimistic batching (Zuul's HEADGREEN) instead.** It tolerates rare intermittent failures but keeps CI-bound serialization, so it does not answer the scale problem. It remains a Phase 2 option within strict mode.
 - **Leave culprit finding and reverts to external tooling.** Culprit finding needs the queue's own record of what landed when and what was tested where. Splitting it out loses that record and keeps the base red longer.
-- **Automatic revert-of-revert or repeated remedies.** Each automatic step can create the next failure. One verified remedy, then a human, keeps automation from making things worse.
+- **Automatic revert-of-revert or repeated remedies.** Each automatic step can create the next failure. One verified remedy per suspect, then a human, keeps automation from making things worse.
+- **Require a fully green base before the green ref moves.** At agent-scale defect rates no base commit is ever free of every live defect, so the green ref would freeze. Deploy candidates give a tested commit to deploy without waiting for the base to be clean.
