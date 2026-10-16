@@ -25,7 +25,7 @@ func TestRecordedSuccessIsRechecked(t *testing.T) {
 				case "missing":
 					checks = checks[1:]
 				case "ambiguous":
-					checks = append(checks, forge.CheckRun{Name: "ci", Source: "other", State: forge.Success})
+					checks = append(checks, forge.CheckRun{Name: "ci", Source: "other", State: forge.Success, HeadBranch: land.Ref})
 				case "failed":
 					checks[0].State = forge.Failure
 				case "read-error":

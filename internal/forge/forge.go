@@ -96,6 +96,9 @@ type CheckRun struct {
 	Name   string
 	Source string
 	State  CheckState
+	// HeadBranch is the check suite's triggering branch, without refs/heads/.
+	// Empty means unknown; commit statuses (Source "status:...") lack provenance.
+	HeadBranch string
 }
 
 // LinearHistoryReader reports base policy independently of landing permission.

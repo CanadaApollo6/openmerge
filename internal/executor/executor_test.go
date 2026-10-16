@@ -49,7 +49,7 @@ func setup(t *testing.T) *harness {
 }
 
 func (h *harness) buildAction() queue.BuildTestRef {
-	return queue.BuildTestRef{BatchID: "batch", BaseSHA: h.base, PRs: []queue.BatchPR{{PR: 1, HeadSHA: h.prs[0].HeadSHA}}, Ref: "openmerge/queue/main/batch", Method: queue.Merge}
+	return queue.BuildTestRef{BatchID: "batch", BaseSHA: h.base, PRs: []queue.BatchPR{{PR: 1, HeadSHA: h.prs[0].HeadSHA}}, Ref: "openmerge/queue/" + h.x.Base + "/batch", Method: queue.Merge}
 }
 
 func (h *harness) tested(t *testing.T) string {
@@ -345,6 +345,9 @@ func TestAmbiguousRequiredCheckSourcesStayPending(t *testing.T) {
 			h := setup(t)
 			h.x.RequiredChecks = []string{"ci"}
 			sha := h.tested(t)
+			for i := range tc.checks {
+				tc.checks[i].HeadBranch = h.buildAction().Ref
+			}
 			h.f.SetCheckRuns(repo, sha, tc.checks)
 			var events []queue.Event
 			err := h.x.Execute(context.Background(), queue.RefreshChecks{BatchID: "batch", TestedSHA: sha}, record(&events))

@@ -60,7 +60,7 @@ func TestExecutorSerialQueueOverRealGit(t *testing.T) {
 					switch e := e.(type) {
 					case queue.TestRefBuilt:
 						tested = append(tested, e.TestedSHA)
-						driver.SetCheckRuns(testRepo, e.TestedSHA, []forge.CheckRun{{ID: 1, Name: "ci", State: forge.Success}})
+						driver.SetCheckRuns(testRepo, e.TestedSHA, []forge.CheckRun{{ID: 1, Name: "ci", State: forge.Success, HeadBranch: s.Active.TestRef}})
 					case queue.Landed:
 						landed = append(landed, e.NewBaseSHA)
 						if f.read("main") != e.NewBaseSHA || f.read(testFence) != e.NewFence {

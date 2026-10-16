@@ -100,7 +100,8 @@ PR head. The marker has only that head as parent, the same tree, the configured
 App committer, a random 128-bit nonce, and the authoritative `OpenMerge-Batch`
 trailer. Its message contains no contributor metadata. Existing suites, historical
 same-ref/SHA suites, completed reruns, and statuses on the original head cannot
-satisfy CI on this unique tested SHA. Fork checks need no branch provenance.
+satisfy CI on this unique tested SHA. All methods also enforce the
+[queue CI provenance contract](../operating.md#queue-ci-provenance).
 Consecutive queued heads may batch only when each strictly descends from its
 predecessor, starting at the current base. The executor selects a linear prefix;
 unrelated heads start singly. A head that cannot extend the base (including an

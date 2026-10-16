@@ -59,7 +59,7 @@ func TestFastForwardHeadSuitesCannotAuthorizeMarker(t *testing.T) {
 			markerRun := *run
 			markerRun.ID, markerRun.HeadSHA = new(int64(1)), &marker
 			api.runs[marker] = []*gh.CheckRun{&markerRun}
-			api.suites[marker] = []*gh.CheckSuite{{ID: new(int64(99)), Status: new("completed"), HeadBranch: branch}}
+			api.suites[marker] = []*gh.CheckSuite{{ID: new(int64(99)), Status: new("completed"), HeadBranch: &build.Ref}}
 			must(t, x.Execute(t.Context(), refresh, emit))
 			must(t, x.Execute(t.Context(), land, emit))
 			if tip, err := git.ReadRef(t.Context(), testRepo, "main"); err != nil || tip != pr.HeadSHA {

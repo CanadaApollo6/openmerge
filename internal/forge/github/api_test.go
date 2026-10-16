@@ -365,7 +365,7 @@ func (f *apiFixture) handle(w http.ResponseWriter, r *http.Request) {
 					id = run.GetCheckSuite().GetID()
 				}
 				if !seen[id] {
-					suites = append(suites, &gh.CheckSuite{ID: &id, Status: new("completed")})
+					suites = append(suites, &gh.CheckSuite{ID: &id, Status: new("completed"), HeadBranch: new("openmerge/queue/main/batch")})
 					seen[id] = true
 				}
 			}

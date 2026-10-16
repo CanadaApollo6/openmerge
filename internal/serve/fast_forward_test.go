@@ -144,7 +144,7 @@ func TestServeFastForwardPRChecksCannotReplaceQueueCI(t *testing.T) {
 			if tip, err := f.ReadRef(t.Context(), repo, "main"); err != nil || tip != base {
 				t.Fatalf("restart landed without queue CI: %s %v", tip, err)
 			}
-			f.SetCheckRuns(repo, marker, []forge.CheckRun{{ID: 1, Name: "ci", Source: source, State: forge.Success}})
+			f.SetCheckRuns(repo, marker, []forge.CheckRun{{ID: 1, Name: "ci", Source: source, State: forge.Success, HeadBranch: ref}})
 			time.Sleep(2 * time.Millisecond)
 			must(t, s.cycle(t.Context(), w))
 			if tip, err := f.ReadRef(t.Context(), repo, "main"); err != nil || tip != pr.HeadSHA {

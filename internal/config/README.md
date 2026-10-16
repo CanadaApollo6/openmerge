@@ -202,7 +202,8 @@ diagnostics and does not depend on the JSON Schema validator.
 
 ## Fast-forward
 
-`merge_method: fast-forward` publishes the unchanged last head as the test ref.
+`merge_method: fast-forward` publishes a unique empty marker above the last head
+as the test ref, then lands the unchanged head.
 Only consecutive heads forming a strictly increasing ancestry chain can batch;
 the longest linear prefix is selected before the push, with remaining PRs kept
 in queue order. Independent heads start singly. A head that does not strictly
@@ -210,16 +211,13 @@ extend the base is dequeued with `fast-forward-required`, asking the author to
 update the branch and queue again. There is no automatic rebase. After a base
 move the batch is rebuilt and ancestry is checked against the new tip. An
 unchanged head may be tested again after an abandoned attempt or failed batch;
-the landing attempt's unique fence, rather than a rewritten batch trailer,
-identifies the atomic write. No commit attribution changes are made. Confirmed
+the new marker identifies each test execution and the landing attempt's unique
+fence identifies the atomic write. No head attribution changes are made. Confirmed
 landings use the existing head-branch cleanup protocol.
 
-CI must run on pushes to `openmerge/queue/**`. Fast-forward requires check runs
-whose check suite `head_branch` equals the current queue test ref. Successful PR
-workflow checks do not establish queue CI: `pull_request` workflows can test
-GitHub's synthetic merge commit while reporting against the PR head. Commit
-statuses have no branch provenance and remain pending in fast-forward mode.
-The same provenance gate runs again immediately before landing.
+All merge methods follow the
+[queue CI provenance contract](../../docs/operating.md#queue-ci-provenance),
+including its trust requirements for external CI posting commit statuses.
 
 When readable classic protection or an active ruleset requires linear history,
 a head containing merge commits outside the current base history is dequeued at

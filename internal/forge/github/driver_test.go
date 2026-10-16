@@ -313,7 +313,7 @@ func TestSuiteStateRevalidatesStaleSuccess(t *testing.T) {
 	f := newAPI(t)
 	f.runs["tested"] = []*gh.CheckRun{{ID: new(int64(100)), Name: new("CI"), Status: new("completed"), Conclusion: new("success"), CheckSuite: &gh.CheckSuite{ID: new(int64(9))}}}
 	for _, state := range []string{"completed", "completed", "queued", "in_progress", "completed", "missing"} {
-		f.suites["tested"] = []*gh.CheckSuite{{ID: new(int64(1)), Status: new("completed")}, {ID: new(int64(2)), Status: new("completed")}, {ID: new(int64(9)), Status: &state}}
+		f.suites["tested"] = []*gh.CheckSuite{{ID: new(int64(1)), Status: new("completed")}, {ID: new(int64(2)), Status: new("completed")}, {ID: new(int64(9)), Status: &state, HeadBranch: new("openmerge/queue/main/batch")}}
 		if state == "missing" {
 			f.suites["tested"] = nil
 		}

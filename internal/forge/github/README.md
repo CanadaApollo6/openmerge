@@ -34,10 +34,10 @@ never appear in driver errors or logs.
   follow pagination. Native IDs order reruns within one producer. Check runs carry `Source:
   "app:<id>"`; statuses carry `Source: "status:<lowercase-creator-login>"`.
   Check suites for the SHA are read on every check refresh. A queued, running,
-  missing, or unknown suite makes its run pending regardless of stale success.
-  Fast-forward tests a unique empty marker above the pinned head, so runs and
-  statuses count normally on that marker. Suites need no `head_branch`
-  provenance, including fork pushes where GitHub returns null.
+  or unknown suite state makes its run pending regardless of stale success.
+  `HeadBranch` preserves the refreshed suite's `head_branch`; missing suites
+  have unknown provenance. All methods follow the
+  [queue CI provenance contract](../../../docs/operating.md#queue-ci-provenance).
   Missing producer identities and unknown outcomes are pending.
   Only the `OpenMerge` check owned by this App is excluded from CI observations.
 - Multiple Apps, multiple status creators, or a check/status pair using a required

@@ -167,7 +167,7 @@ func TestSkewedRefreshAdvancesDurableActionKey(t *testing.T) {
 	if _, ok := next.Action.(queue.RefreshChecks); !ok || next.Key == first.Key {
 		t.Fatalf("completed refresh key reused: first=%s next=%+v", first.Key, next)
 	}
-	f.SetCheckRuns(repo, "tested", []forge.CheckRun{{Name: "ci", State: forge.Success}})
+	f.SetCheckRuns(repo, "tested", []forge.CheckRun{{Name: "ci", State: forge.Success, HeadBranch: land.Action.(queue.Land).Ref}})
 	slow.Now = func() time.Time { return now }
 	must(t, slow.Execute(t.Context(), next.Action, s.Emit(t.Context(), next, config)))
 	must(t, s.Complete(t.Context(), next, Done))
@@ -200,7 +200,7 @@ func TestLandingStartRejectsSkewedDurableReopen(t *testing.T) {
 	f := fake.New()
 	repo := forge.RepoRef{Path: "owner/repo"}
 	f.Init(repo, "main", "openmerge/fence/main")
-	f.SetCheckRuns(repo, land.TestedSHA, []forge.CheckRun{{Name: "ci", State: forge.Success}})
+	f.SetCheckRuns(repo, land.TestedSHA, []forge.CheckRun{{Name: "ci", State: forge.Success, HeadBranch: land.Ref}})
 	git := &startGit{Git: f}
 	var watermark int64
 	x := executor.Executor{Driver: f, Git: git, Repo: repo, Base: "main", RequiredChecks: []string{"ci"}, Now: func() time.Time { return epoch }, NewID: func() (string, error) {

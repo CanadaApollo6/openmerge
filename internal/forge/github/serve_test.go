@@ -122,6 +122,8 @@ func TestServeCommentToLanding(t *testing.T) {
 			sha := strings.Split(path, "/")[1]
 			if f.runs[sha] == nil {
 				f.runs[sha] = []*gh.CheckRun{{ID: new(int64(300)), Name: new("ci"), Status: new("completed"), Conclusion: new("success"), App: &gh.App{ID: new(int64(99))}}}
+				branch := localGit(t, remote, "", "for-each-ref", "--format=%(refname:short)", "--points-at="+sha, "refs/heads/openmerge/queue/")
+				f.suites[sha] = []*gh.CheckSuite{{ID: new(int64(99)), Status: new("completed"), HeadBranch: &branch}}
 			}
 		}
 		if r.Method == "DELETE" && strings.HasPrefix(path, "git/refs/") {

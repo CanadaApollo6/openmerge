@@ -15,7 +15,7 @@ import (
 
 func passingCI(f *apiFixture) {
 	f.runs["tested"] = []*gh.CheckRun{{ID: new(int64(100)), Name: new("CI"), Status: new("completed"), Conclusion: new("success"), CheckSuite: &gh.CheckSuite{ID: new(int64(9))}, App: &gh.App{ID: new(int64(11))}}}
-	f.suites["tested"] = []*gh.CheckSuite{{ID: new(int64(9)), Status: new("completed"), HeadSHA: new("tested"), App: &gh.App{ID: new(int64(11))}}}
+	f.suites["tested"] = []*gh.CheckSuite{{ID: new(int64(9)), Status: new("completed"), HeadSHA: new("tested"), HeadBranch: new("openmerge/queue/main/batch"), App: &gh.App{ID: new(int64(11))}}}
 }
 
 func TestMismatched304CannotReplayPermissionOrChecks(t *testing.T) {
@@ -84,7 +84,8 @@ func TestPendingRefreshRevokesRecordedSuccess(t *testing.T) {
 			}
 			s = queue.Apply(s, queue.BatchStarted{BatchID: build.BatchID, BaseSHA: build.BaseSHA, PRs: build.PRs, At: epoch})
 			s = queue.Apply(s, queue.TestRefBuilt{BatchID: build.BatchID, TestedSHA: "tested", Method: queue.Merge, At: epoch})
-			x := executor.Executor{Driver: f.driver, Repo: testRepo, RequiredChecks: []string{"CI"}}
+			f.suites["tested"][0].HeadBranch = &build.Ref
+			x := executor.Executor{Driver: f.driver, Repo: testRepo, Base: "main", RequiredChecks: []string{"CI"}}
 			emit := func(e queue.Event) error { s = queue.Apply(s, e); return nil }
 			a := queue.RefreshChecks{BatchID: build.BatchID, TestedSHA: "tested"}
 			must(t, x.Execute(context.Background(), a, emit))
@@ -92,7 +93,7 @@ func TestPendingRefreshRevokesRecordedSuccess(t *testing.T) {
 				f.suites["tested"][0].Status = new("queued")
 			} else {
 				f.runs["tested"] = append(f.runs["tested"], &gh.CheckRun{ID: new(int64(101)), Name: new("CI"), Status: new("completed"), Conclusion: new("success"), CheckSuite: &gh.CheckSuite{ID: new(int64(10))}, App: &gh.App{ID: new(int64(22))}})
-				f.suites["tested"] = append(f.suites["tested"], &gh.CheckSuite{ID: new(int64(10)), Status: new("completed")})
+				f.suites["tested"] = append(f.suites["tested"], &gh.CheckSuite{ID: new(int64(10)), Status: new("completed"), HeadBranch: &build.Ref})
 			}
 			err := x.Execute(context.Background(), a, emit)
 			if mode == "rerequested-suite" {

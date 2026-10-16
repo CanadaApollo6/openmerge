@@ -60,10 +60,10 @@ Commit-status APIs that lack cancelled and action-required keep the normalized s
 
 The executor aggregates as follows:
 
-- Fast-forward check evaluation uses the unique marker SHA, just like generated SHAs for other methods. Runs and legacy statuses on it count normally; branch provenance is unnecessary, including for fork pushes with null `head_branch`. Checks on the original head cannot satisfy marker CI.
+- Drivers preserve the suite's triggering branch in `CheckRun.HeadBranch` (without `refs/heads/`), with empty meaning unknown. The executor applies the [queue CI provenance contract](operating.md#queue-ci-provenance) for every method before either aggregation policy. `status:` sources identify commit statuses, which lack branch provenance and remain accepted under the trust requirements documented there.
 - A required name reported by more than one source is ambiguous and stays pending, even if every source reports success. A missing source also stays pending. The executor emits `ChecksReopened` followed by `ChecksRefreshed`, emits no terminal `ChecksCompleted`, and returns `executor.CheckSourceAmbiguityError` with the name and sorted sources for the server to surface. Unrequired names do not block the batch.
 - Within one source, the newest run of each name wins, regardless of response order. A pending rerun supersedes an older result.
-- A GitHub check run whose suite is not completed is pending even if the run still reports an old success. Missing suite observations and unknown producer identities also fail safe as pending. Drivers must refresh suite state as well as run state. GitHub `check_suite` requested/rerequested/completed and `check_run` rerequested/completed webhooks normalize to `ChecksChanged{SHA}` and trigger these reads.
+- A matching GitHub check run whose suite is not completed is pending even if the run still reports an old success. Missing suite observations have unknown provenance and are ignored; unknown producer identities stay pending when provenance matches. Drivers must refresh suite state and branch as well as run state. GitHub `check_suite` requested/rerequested/completed and `check_run` rerequested/completed webhooks normalize to `ChecksChanged{SHA}` and trigger these reads.
 - Cancelled counts as failure until a newer run supersedes it.
 - Skipped and neutral count as failure unless the `AllowSkippedNeutral` option is set.
 - A required check with no run, or an unknown state, is pending.

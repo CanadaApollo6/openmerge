@@ -12,6 +12,32 @@ and use `openmerge queue status [--json]`. The [API guide](api.md) documents the
 bearer token requirements, response contract, CLI and exit codes. No database or
 GitHub credentials are needed by an API client.
 
+## Queue CI provenance
+
+For every merge method, CI must run on `push` events for
+`openmerge/queue/**`. A check run counts toward `merge_when` only when its check
+suite's `head_branch` exactly equals the batch's test ref name, for example
+`openmerge/queue/main/b7`, without `refs/heads/`. GitHub Actions suites triggered
+by that push report this branch name; the repository's
+[CI workflow](../.github/workflows/ci.yml) enables these pushes.
+
+Each build publishes a unique tested SHA: a composed commit for merge, squash,
+or rebase, or an empty marker above the pinned head for fast-forward. The SHA
+and suite branch together bind check runs to that queue execution. A contributor
+can copy a published commit into a fork and open another PR; even a newer pass
+from the same App on that SHA must not replace pending queue CI. Suites with
+null, missing, or other `head_branch` values are ignored, rather than counted as
+failed. Filtering happens before newest-run selection and source ambiguity
+checks, both during refresh and immediately before landing. Reruns of a matching
+suite remain valid; a pending rerun revokes its older result.
+
+Commit statuses have no suite or branch provenance and remain accepted on the
+tested SHA. GitHub Actions jobs for fork PRs cannot post statuses with their
+read-only token. External CI services that post commit statuses must not build
+arbitrary fork SHAs and report those results in the base repository: otherwise
+a copied queue commit could authorize landing. Prefer check runs with matching
+queue push suites for external CI.
+
 ## Run as a systemd user service
 
 Create the installation directory and install the binary:

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
@@ -154,16 +155,28 @@ func (f *Forge) SetPRConditions(repo forge.RepoRef, number int, labels []string,
 }
 
 // SetCheckRuns replaces a commit's check snapshot, copying the caller's slice.
+// An unspecified source defaults to fake:ci and a queue ref pointing at sha,
+// if one exists. Explicit sources retain their provenance, including unknown.
 func (f *Forge) SetCheckRuns(repo forge.RepoRef, sha string, checks []forge.CheckRun) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	checks = slices.Clone(checks)
+	r := f.repo(repo)
+	var branch string
+	for ref, tip := range r.refs {
+		if tip == sha && strings.HasPrefix(ref, "openmerge/queue/") && (branch == "" || ref < branch) {
+			branch = ref
+		}
+	}
 	for i := range checks {
 		if checks[i].Source == "" {
 			checks[i].Source = "fake:ci"
+			if checks[i].HeadBranch == "" {
+				checks[i].HeadBranch = branch
+			}
 		}
 	}
-	f.repo(repo).checks[sha] = checks
+	r.checks[sha] = checks
 }
 
 // SetRef simulates external branch updates, including rewrites and rollbacks.

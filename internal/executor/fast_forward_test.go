@@ -52,7 +52,7 @@ func TestFastForwardRequiresMarkerCI(t *testing.T) {
 				t.Fatal("head CI moved landing refs")
 			}
 			// Both statuses and runs count normally on this attempt's unique marker.
-			h.f.SetCheckRuns(repo, marker, []forge.CheckRun{{ID: 1, Name: "ci", Source: source, State: forge.Success}, {ID: 2, Name: "lint", Source: source, State: forge.Success}})
+			h.f.SetCheckRuns(repo, marker, []forge.CheckRun{{ID: 1, Name: "ci", Source: source, State: forge.Success, HeadBranch: build.Ref}, {ID: 2, Name: "lint", Source: source, State: forge.Success, HeadBranch: build.Ref}})
 			must(t, h.x.Execute(t.Context(), queue.RefreshChecks{BatchID: build.BatchID, TestedSHA: marker}, emit))
 			must(t, h.x.Execute(t.Context(), land, emit))
 			if h.read(t, "main") != head {

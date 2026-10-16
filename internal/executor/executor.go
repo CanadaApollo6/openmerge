@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
@@ -91,7 +92,7 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 			return err
 		}
 		at := x.now()
-		terminal, success, ambiguity := x.checkResult(checks)
+		terminal, success, ambiguity := x.checkResult(checks, a.BatchID)
 		if terminal {
 			if err := emit(queue.ChecksCompleted{TestedSHA: a.TestedSHA, Success: success}); err != nil {
 				return err
@@ -108,7 +109,7 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		if err != nil {
 			return err
 		}
-		terminal, success, ambiguity := x.checkResult(checks)
+		terminal, success, ambiguity := x.checkResult(checks, a.BatchID)
 		if !terminal || !success {
 			at := x.now()
 			var result queue.Event = queue.ChecksReopened{TestedSHA: a.TestedSHA, At: at}
@@ -283,7 +284,13 @@ func (e *CheckSourceAmbiguityError) Error() string {
 
 // Missing, unknown, or ambiguous required checks keep the batch pending. Only
 // the newest run within one source participates; cancelled counts as failure.
-func (x *Executor) checkResult(checks []forge.CheckRun) (terminal, success bool, ambiguity error) {
+func (x *Executor) checkResult(checks []forge.CheckRun, batchID string) (terminal, success bool, ambiguity error) {
+	// Batch refs are deterministic, including for persisted RefreshChecks actions.
+	// Filter before either policy compares run IDs or checks source ambiguity.
+	ref := "openmerge/queue/" + x.Base + "/" + batchID
+	checks = slices.DeleteFunc(slices.Clone(checks), func(check forge.CheckRun) bool {
+		return !strings.HasPrefix(check.Source, "status:") && check.HeadBranch != ref
+	})
 	if x.CheckPolicy != nil {
 		return x.CheckPolicy(checks)
 	}
