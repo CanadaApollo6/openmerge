@@ -222,10 +222,10 @@ func (p *parser) queue(n *yaml.Node, path string) Queue {
 	if n := fields["merge_method"]; n != nil {
 		method := p.text(n, path+".merge_method")
 		switch queue.MergeMethod(method) {
-		case queue.Merge, queue.Squash, queue.Rebase:
+		case queue.Merge, queue.Squash, queue.Rebase, queue.FastForward:
 			q.MergeMethod = queue.MergeMethod(method)
 		default:
-			p.error(n, path+".merge_method", "expected merge, squash, or rebase, got %q", method)
+			p.error(n, path+".merge_method", "expected merge, squash, rebase, or fast-forward, got %q", method)
 		}
 	}
 	if n := fields["check_timeout"]; n != nil {

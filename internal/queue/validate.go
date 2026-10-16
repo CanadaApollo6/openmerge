@@ -38,7 +38,7 @@ func validateBatchPRs(prs []BatchPR) error {
 
 func validateMergeMethod(method MergeMethod) error {
 	switch method {
-	case Merge, Squash, Rebase:
+	case Merge, Squash, Rebase, FastForward:
 		return nil
 	default:
 		return fmt.Errorf("invalid merge method %q", method)
@@ -108,7 +108,7 @@ func (a Dequeue) Validate() error {
 		return err
 	}
 	switch a.Reason {
-	case NotEligible, Untrusted, HeadChanged, ChecksFailed, Conflict, Closed, Requested:
+	case NotEligible, Untrusted, HeadChanged, ChecksFailed, Conflict, Closed, Requested, FastForwardRequired:
 		return nil
 	case ChecksTimeout:
 		return requireActionText("batch_id", a.BatchID)

@@ -346,6 +346,21 @@ func decodeBatchPRs(prs []wireBatchPR) []BatchPR {
 // EncodeEvent returns the stable type discriminator and versioned JSON.
 func EncodeEvent(value Event) (string, []byte, error) {
 	switch v := value.(type) {
+	case FastForwardBatchSelected:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("fast_forward_batch_selected", wireFastForwardBatchSelected{BatchID: v.BatchID, PRs: encodeBatchPRs(v.PRs)})
+	case FastForwardRefBuilt:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("fast_forward_ref_built", wireFastForwardRefBuilt(v))
+	case FastForwardBlocked:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("fast_forward_blocked", wireFastForwardBlocked(v))
 	case FenceInitialized:
 		if err := v.Validate(); err != nil {
 			return "", nil, err
@@ -447,6 +462,27 @@ func DecodeEvent(payload []byte) (Event, error) {
 		return nil, err
 	}
 	switch envelope.Type {
+	case "fast_forward_batch_selected":
+		v, err := readWireData[wireFastForwardBatchSelected](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := FastForwardBatchSelected{BatchID: v.BatchID, PRs: decodeBatchPRs(v.PRs)}
+		return event, event.Validate()
+	case "fast_forward_ref_built":
+		v, err := readWireData[wireFastForwardRefBuilt](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := FastForwardRefBuilt(v)
+		return event, event.Validate()
+	case "fast_forward_blocked":
+		v, err := readWireData[wireFastForwardBlocked](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := FastForwardBlocked(v)
+		return event, event.Validate()
 	case "fence_initialized":
 		v, err := readWireData[wireFenceInitialized](envelope.Data)
 		if err != nil {

@@ -90,3 +90,15 @@ Previously deployed event/action types and their fixtures are unchanged.
 See the canonical [landed head cleanup protocol](../operating.md#landed-head-cleanup)
 for its additive wire types, replay behavior, acknowledgements, and upgrade
 requirements.
+
+### Post-deployment addition: fast-forward preparation (2026-10-16)
+
+Fast-forward uses three additive wire-v1 event types:
+`fast_forward_batch_selected` pins a consecutive prefix of a building batch and
+keeps the remainder pending in order; `fast_forward_ref_built` records the
+unchanged final head and permits testing that SHA in another batch;
+`fast_forward_blocked` dequeues the first member with `fast-forward-required`
+when it cannot extend the current base. All have golden fixtures. Existing
+event/action wire structs and fixtures are unchanged. Atomic landing and its
+unique attempt fence are unchanged. As with other additive event types, drain
+older workers before upgrading; rollback requires restoring the earlier log.

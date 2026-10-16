@@ -79,9 +79,9 @@ Immediately before `LandingStarted`, the executor freshly reads `CheckRuns` for 
 `BuildTestRef` composes the test commit locally with git and pushes it to `openmerge/queue/...`. It must:
 
 - refuse a request whose pinned head is not the PR's current head;
-- produce the shape the merge method asks for: merge commits that keep each PR head as an ancestor, a single squashed commit per PR, or each PR commit replayed separately for rebase;
-- capture each PR's current title/body, head label and commit identity at build
-  time, rejecting metadata whose number/head differs from the pin, or whose
+- produce the shape the merge method asks for: merge commits that keep each PR head as an ancestor, a single squashed commit per PR, each PR commit replayed separately for rebase, or the unchanged final head of a strictly increasing ancestry chain for fast-forward;
+- for generated commits, capture each PR's current title/body, head label and
+  commit identity at build time, rejecting metadata whose number/head differs from the pin, or whose
   author identity/title is missing or invalid;
 - squash to `<title> (#<number>)` plus the trimmed PR body, removing
   `<!-- openmerge:... -->` marker comments and reserved metadata; merge to
@@ -93,9 +93,16 @@ Immediately before `LandingStarted`, the executor freshly reads `CheckRuns` for 
   retaining their message/trailers and adding `OpenMerge-Replayed-From`;
 - use the configured committer on all generated commits;
 - put the batch ID in the top commit's trailer block only, so a tested SHA
-  identifies exactly one batch; every earlier squash/merge still carries its
+  identifies exactly one batch (fast-forward preserves original heads and has no batch trailer); every earlier squash/merge still carries its
   own PR metadata;
-- return `ErrConflict` for merge conflicts or rebase histories containing PR merge commits, and any other error for infrastructure failures.
+- return `ErrConflict` for merge conflicts or rebase histories containing PR merge commits; return `ErrNotFastForward` when a fast-forward head does not strictly extend its predecessor/base; use other errors for infrastructure failures.
+
+For fast-forward, the executor records `FastForwardBatchSelected` before the push,
+choosing the longest consecutive linear prefix and retaining the remaining PRs in
+queue order. A non-descendant first head is dequeued as `fast-forward-required`;
+the author must update and requeue it. No rebase or attribution rewrite occurs.
+`FastForwardRefBuilt` permits the unchanged head to be tested in another batch
+after abandonment or bisection. Landing still uses the same base/fence leases.
 
 Batch identity is OpenMerge's own format, independent of Git trailer parsing:
 the final line is exactly `OpenMerge-Batch: <id>` with an ID matching
@@ -135,7 +142,7 @@ git push --atomic \
 - A refused build or landing leaves every ref and PR unchanged.
 - OpenMerge needs permission to push to the protected base branch, for example as an always-allowed ruleset bypass on GitHub.
 
-After a landing with merge commits, the forge marks the PRs merged because their heads are reachable. After squash or rebase it does not, so the planner emits `MarkLanded` for each PR. `Driver.MarkLanded` closes the PR with a link to the landed commit, or uses the forge's native mark-merged where one exists. It is idempotent and never merges again. Immediately before calling `Driver.MarkLanded`, the executor freshly reads the base and verifies that the landed commit equals the tip or is its ancestor. An absent commit returns `executor.ErrLandingNotOnBase` without calling the driver, closing the PR, or acknowledging the action. `MarkLanded` carries no attempt ID, so that error's attempt ID is empty. These checks detect external rollbacks observed at verification; they cannot prevent subsequent external rewrites.
+After a landing with merge commits or fast-forward, the forge marks the PRs merged because their heads are reachable. After squash or rebase it does not, so the planner emits `MarkLanded` for each PR. `Driver.MarkLanded` closes the PR with a link to the landed commit, or uses the forge's native mark-merged where one exists. It is idempotent and never merges again. Immediately before calling `Driver.MarkLanded`, the executor freshly reads the base and verifies that the landed commit equals the tip or is its ancestor. An absent commit returns `executor.ErrLandingNotOnBase` without calling the driver, closing the PR, or acknowledging the action. `MarkLanded` carries no attempt ID, so that error's attempt ID is empty. These checks detect external rollbacks observed at verification; they cannot prevent subsequent external rewrites.
 
 ## The fence
 

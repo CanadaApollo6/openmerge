@@ -60,7 +60,7 @@ retried on later operations. These are soft triggers, not hard disk limits: a
 single fetch can exceed the threshold, and an idle cache waits until its next
 operation for collection.
 
-`PullRequest` reads current PR metadata when building a test ref, rejecting a
+`PullRequest` reads current PR metadata when generating test commits, rejecting a
 number/head mismatch or invalid author/title before pushing. `serve` supplies
 the installation driver's reader. Squash creates one single-parent commit per
 PR with `<title> (#<number>)` and the trimmed body (without OpenMerge HTML
@@ -101,6 +101,16 @@ an unreferenced synthetic commit with the current tree and the desired base as
 its only parent, then runs `merge-tree --write-tree` against the original commit.
 That forces the same base without an index or worktree. A test compares both
 paths' resulting commit IDs. Newer Git uses `--merge-base=<original>^` directly.
+
+## Fast-forward preparation
+
+`forge.FastForward` verifies remote head pins and requires each head to strictly
+extend its predecessor, starting at the requested base. It pushes the final head
+unchanged; there is no metadata read, commit creation or batch trailer rewrite.
+Non-descendant or equal heads return `forge.ErrNotFastForward` without moving
+the test ref. The executor selects a consecutive linear prefix before invoking
+this operation and dequeues a diverged first head as `fast-forward-required`.
+Land uses the same base/fence CAS protocol below for every method.
 
 ## Landing and real Git findings
 

@@ -165,8 +165,8 @@ func (f *Forge) OnTestRef(fn func(sha string, prs []int)) {
 	f.onTestRef = fn
 }
 
-// BuildTestRef composes merge commits, one squash per PR, or rebased PR commits. Each
-// shape's top commit contains the batch ID. Failed builds never move the ref.
+// BuildTestRef composes merge/squash/rebase commits with a batch ID, or verifies
+// and publishes an unchanged fast-forward chain. Failed builds never move the ref.
 func (f *Forge) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.BuildRequest) (string, error) {
 	f.mu.Lock()
 	sha, prs, changed, err := f.build(ctx, f.repo(repo), req)
@@ -189,7 +189,7 @@ func (f *Forge) build(ctx context.Context, r *repository, req forge.BuildRequest
 	if req.Ref == "" || !forge.ValidBatchID(req.BatchID) || len(req.PRs) == 0 {
 		return "", nil, false, errors.New("test ref, valid batch ID, and PRs are required")
 	}
-	if req.Method != forge.Merge && req.Method != forge.Squash && req.Method != forge.Rebase {
+	if req.Method != forge.Merge && req.Method != forge.Squash && req.Method != forge.Rebase && req.Method != forge.FastForward {
 		return "", nil, false, fmt.Errorf("unsupported merge method %q", req.Method)
 	}
 	content := slices.Clone(base.PRs)
@@ -200,6 +200,14 @@ func (f *Forge) build(ctx context.Context, r *repository, req forge.BuildRequest
 		actual, ok := r.prs[pr.Number]
 		if !ok || actual.HeadSHA != pr.HeadSHA {
 			return "", nil, false, fmt.Errorf("PR %d head %q does not match actual head %q", pr.Number, pr.HeadSHA, actual.HeadSHA)
+		}
+		if req.Method == forge.FastForward {
+			if top == pr.HeadSHA || !r.isAncestor(top, pr.HeadSHA) {
+				return "", nil, false, fmt.Errorf("PR #%d: %w", pr.Number, forge.ErrNotFastForward)
+			}
+			top = pr.HeadSHA
+			prs = append(prs, pr.Number)
+			continue
 		}
 		content = append(content, pr.Number)
 		prs = append(prs, pr.Number)

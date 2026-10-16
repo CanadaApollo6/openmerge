@@ -78,6 +78,12 @@ func (s *Server) logEvent(ctx context.Context, w *worker, before, after queue.St
 				log("dequeued", e.PR, batch, old.HeadSHA, string(e.Reason))
 			}
 		}
+	case queue.FastForwardRefBuilt:
+		if after.Active != nil && after.Active.TestedSHA == e.TestedSHA {
+			batchLog("test ref built", "", after.Active, "ref", after.Active.TestRef)
+		}
+	case queue.FastForwardBlocked:
+		batchLog("fast-forward blocked", "fast-forward-required", before.Active)
 	case queue.TestRefBuilt:
 		if after.Active != nil && after.Active.TestedSHA == e.TestedSHA {
 			batchLog("test ref built", "", after.Active, "ref", after.Active.TestRef)

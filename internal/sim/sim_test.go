@@ -176,7 +176,7 @@ func TestInvalidConfig(t *testing.T) {
 		{Faults: Faults{FailFirst: map[string]int{"Land": -1}}},
 		{Faults: Faults{FailFirst: map[string]int{"Unknown": 1}}},
 		{Faults: Faults{ReplayDelay: -1}},
-		{MergeMethod: "fast-forward"}, {RetryDelay: -1}, {MaxSteps: -1},
+		{MergeMethod: "invalid"}, {RetryDelay: -1}, {MaxSteps: -1},
 	} {
 		if _, err := Run(cfg); err == nil {
 			t.Errorf("accepted invalid config %+v", cfg)

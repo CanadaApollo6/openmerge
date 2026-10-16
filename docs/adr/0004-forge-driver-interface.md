@@ -91,3 +91,15 @@ it, even if the PR title or body changes after testing.
 - **Call the GitHub SDK directly and abstract later.** Fastest to the first demo, and the path every GitHub-only queue took. Rejected because the abstraction would be shaped by GitHub's quirks and the tests would depend on GitHub.
 - **Compose test commits with forge merge APIs** (Mergify's 2022 approach on GitHub). No local git needed, but GitLab and Forgejo lack equivalent endpoints, and API merges cost rate limit per PR per batch.
 - **Record-and-replay HTTP fixtures instead of a fake forge.** Good for driver tests, which may still use them, but fixtures cannot express scripted CI outcomes over virtual time, which the planner simulation needs.
+
+### Fast-forward landing
+
+`fast-forward` prepares no new commits: its test ref points to the last PR head.
+Consecutive queued heads may batch only when each strictly descends from its
+predecessor, starting at the current base. The executor selects a linear prefix;
+unrelated heads start singly. A head that cannot extend the base (including an
+already equal head) is dequeued as `fast-forward-required`, asking the author
+to update and requeue. It is never rebased by OpenMerge. Base movement causes
+ancestry to be checked again. The existing two-ref atomic leased landing still
+applies, and the landed SHA is the exact tested head. Attribution and signatures
+remain untouched, and ordinary confirmed-landing head cleanup applies.

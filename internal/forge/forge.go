@@ -161,9 +161,10 @@ type MergeMethod string
 
 // Supported tested-commit shapes.
 const (
-	Merge  MergeMethod = "merge"
-	Squash MergeMethod = "squash"
-	Rebase MergeMethod = "rebase"
+	Merge       MergeMethod = "merge"
+	Squash      MergeMethod = "squash"
+	Rebase      MergeMethod = "rebase"
+	FastForward MergeMethod = "fast-forward"
 )
 
 // BuildPR pins an admitted PR head. A build rejects a head that no longer
@@ -173,8 +174,9 @@ type BuildPR struct {
 	HeadSHA string
 }
 
-// BuildRequest composes pinned heads on BaseSHA and pushes Ref. The top commit
-// must carry BatchID, making the tested SHA unique across batches.
+// BuildRequest prepares pinned heads on BaseSHA and pushes Ref. Generated top
+// commits carry BatchID, making those SHAs unique across batches. Fast-forward
+// instead requires a strict ancestry chain and pushes the unchanged final head.
 type BuildRequest struct {
 	Ref, BaseSHA string
 	PRs          []BuildPR
@@ -184,6 +186,9 @@ type BuildRequest struct {
 
 // ErrConflict distinguishes a content conflict from an infrastructure failure.
 var ErrConflict = errors.New("merge conflict")
+
+// ErrNotFastForward means the pinned heads do not extend the base in order.
+var ErrNotFastForward = errors.New("head must be updated to fast-forward onto the current base")
 
 // ErrLeaseRejected reports an atomic lease refusal. A rejected git push provides
 // no actual ref values; callers must read the fence to settle the attempt.

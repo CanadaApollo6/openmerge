@@ -61,6 +61,9 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		if err := emit(queue.BatchStarted{BatchID: a.BatchID, BaseSHA: a.BaseSHA, PRs: append([]queue.BatchPR(nil), a.PRs...), At: x.now()}); err != nil {
 			return err
 		}
+		if a.Method == queue.FastForward {
+			return x.buildFastForward(ctx, a, emit)
+		}
 		prs := make([]forge.BuildPR, len(a.PRs))
 		for i, pr := range a.PRs {
 			prs[i] = forge.BuildPR{Number: pr.PR, HeadSHA: pr.HeadSHA}
@@ -194,7 +197,7 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		}
 		return emit(queue.ActionCompleted{Key: a.Key()})
 	case queue.Dequeue:
-		if err := x.Driver.ReportStatus(ctx, x.Repo, a.PR, a.HeadSHA, forge.Status{State: forge.Dequeued, Reason: string(a.Reason)}); err != nil {
+		if err := x.Driver.ReportStatus(ctx, x.Repo, a.PR, a.HeadSHA, forge.Status{State: forge.Dequeued, Reason: string(a.Reason), Summary: dequeueSummary(a.Reason)}); err != nil {
 			return err
 		}
 		return emit(queue.Dequeued{PR: a.PR, AdmissionID: a.AdmissionID, Reason: a.Reason, BatchID: a.BatchID})

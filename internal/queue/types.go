@@ -29,9 +29,10 @@ type MergeMethod string
 
 // Supported merge methods preserve the exact tested commit at landing.
 const (
-	Merge  MergeMethod = "merge"
-	Squash MergeMethod = "squash"
-	Rebase MergeMethod = "rebase"
+	Merge       MergeMethod = "merge"
+	Squash      MergeMethod = "squash"
+	Rebase      MergeMethod = "rebase"
+	FastForward MergeMethod = "fast-forward"
 )
 
 // State is a replayable projection for one base branch. Its zero value is empty.
@@ -119,14 +120,15 @@ type DequeueReason string
 
 // Stable dequeue reasons are suitable for machine-readable outcomes.
 const (
-	NotEligible   DequeueReason = "not-eligible"
-	Untrusted     DequeueReason = "untrusted"
-	HeadChanged   DequeueReason = "head-changed"
-	ChecksFailed  DequeueReason = "checks-failed"
-	ChecksTimeout DequeueReason = "checks-timeout"
-	Conflict      DequeueReason = "conflict"
-	Closed        DequeueReason = "closed"
-	Requested     DequeueReason = "requested"
+	NotEligible         DequeueReason = "not-eligible"
+	Untrusted           DequeueReason = "untrusted"
+	HeadChanged         DequeueReason = "head-changed"
+	ChecksFailed        DequeueReason = "checks-failed"
+	ChecksTimeout       DequeueReason = "checks-timeout"
+	Conflict            DequeueReason = "conflict"
+	FastForwardRequired DequeueReason = "fast-forward-required"
+	Closed              DequeueReason = "closed"
+	Requested           DequeueReason = "requested"
 )
 
 // Event is a normalized observation, command, or action result.
@@ -288,8 +290,9 @@ type Action interface {
 }
 
 // BuildTestRef pins the input heads, base, and merge method at planning time.
-// The executor must include BatchID in the top commit (for example, an
-// OpenMerge-Batch trailer), so each tested SHA identifies exactly one batch.
+// The executor includes BatchID in generated top commits (for example, an
+// OpenMerge-Batch trailer). Fast-forward preserves heads and uses its own
+// FastForwardRefBuilt result, allowing a head to be tested again.
 type BuildTestRef struct {
 	BatchID, BaseSHA string
 	PRs              []BatchPR

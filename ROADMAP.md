@@ -81,9 +81,12 @@ through the durable rules block; unreadable protection warns and retains state.
 Classic reads use installation permissions, so operators still audit protection
 when Administration read is unavailable and hidden ruleset bypass ownership.
 
-Phase 1 is **not complete**. Remaining work: publish the version-1 JSON Schema,
-implement the listed fast-forward mode (merge/squash/rebase are available), and
-verify the exit test on a real GitHub test organization. The Mergify importer remains a Phase 5 deliverable.
+- [x] Publish the [version-1 JSON Schema](schema/openmerge.v1.json), loader agreement tests, and `openmerge config schema`.
+- [x] Fast-forward landing, including linear-chain batches and divergence dequeue.
+- [ ] Verify the exit test on a real GitHub test organization.
+
+Phase 1 code is implemented. Phase 1 is **not complete** until the real GitHub
+test-organization exit test passes. The Mergify importer remains a Phase 5 deliverable.
 
 **Exit:** OpenMerge merges its own PRs. A simulated 500-PR day with 5% failure rate lands every passing PR with main green throughout.
 

@@ -6,7 +6,7 @@
 
 Agents now open pull requests faster than CI and humans can land them. The merge path — queuing, batching, speculative testing, flaky-test handling, and the rules around them — has become the bottleneck, and the best tools for it are closed, paywalled, or tied to a single forge. OpenMerge brings the ideas that Mergify popularized to everyone, under the Apache 2.0 license.
 
-> **Status: pre-alpha.** Phase 1 is in progress: the planner, Postgres store, GitHub App driver, polling server, read-only API/CLI, and Compose quickstart are available. All core conditions have runtime observations, with classic protection and installed App grant checks alongside ruleset validation. JSON Schema, fast-forward mode, and the real GitHub exit test remain. See the [roadmap](ROADMAP.md).
+> **Status: pre-alpha.** Phase 1 is in progress: the planner, Postgres store, GitHub App driver, polling server, read-only API/CLI, and Compose quickstart are available. All core conditions have runtime observations, with classic protection and installed App grant checks alongside ruleset validation. The version-1 JSON Schema and fast-forward mode are available; only the real GitHub exit test remains. See the [roadmap](ROADMAP.md).
 
 ## What it will do
 
@@ -304,11 +304,41 @@ leave every `files` predicate unknown, including counts and exclusions.
 Uncomputed mergeability is unknown and retried on polls. See the
 [condition reference](internal/config/README.md#conditions).
 
-Phase 1 still needs JSON Schema publication, fast-forward mode, and the real
-GitHub test-organization exit test. The Mergify importer is
+Phase 1 code is implemented, including the [version-1 JSON Schema](schema/openmerge.v1.json)
+and fast-forward mode. The remaining Phase 1 exit work is the real
+GitHub test-organization test. The Mergify importer is
 planned for Phase 5; the native grammar already accepts the core attribute names.
 Operators must grant the App protected-base bypass and exclusive, nondeletable `openmerge/fence/*`
 ownership as described in the [forge contract](docs/forge-driver-contract.md#the-fence).
+
+## Repository schema and fast-forward landing
+
+The [configuration reference](internal/config/README.md) documents every key and
+condition. `openmerge config schema` prints the embedded
+[version-1 JSON Schema](schema/openmerge.v1.json); `openmerge config validate`
+checks YAML and loader semantics as well. For editor completion, use the YAML
+language-server comment (a literal `$schema` YAML key is not accepted):
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/CanadaApollo6/openmerge/main/schema/openmerge.v1.json
+version: 1
+queues:
+  - name: default
+    merge_when: [check-success = ci]
+    merge_method: fast-forward
+    batch: {max_size: 8, max_wait: 30s}
+```
+
+Fast-forward tests the PR head itself and lands that exact SHA. For a batch, each
+head must strictly descend from the previous head, starting at the base; the last
+head is tested and landed. The executor selects the longest consecutive linear
+prefix in queue order; unrelated heads fall back to a singleton. A head equal to
+or diverged from the current base is dequeued as `fast-forward-required`: the
+author must update the branch and queue it again. OpenMerge never rebases it.
+Base movement invalidates the test batch, and a rebuild checks ancestry again.
+Landing still uses one atomic push leased on both base and fence. Original
+commits, authors, signatures and trailers are preserved; head cleanup follows
+the same safety checks as other methods.
 
 ## Contributing
 

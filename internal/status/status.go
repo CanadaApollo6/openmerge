@@ -368,6 +368,12 @@ func eventSummary(event queue.Event, before, after queue.State) string {
 		return "Started constructing a test batch"
 	case queue.BatchFailed:
 		return "Batch failed: " + string(e.Reason)
+	case queue.FastForwardBatchSelected:
+		return "Selected a consecutive fast-forward chain"
+	case queue.FastForwardRefBuilt:
+		return "Recorded the unchanged head as the batch test commit"
+	case queue.FastForwardBlocked:
+		return "Head cannot fast-forward onto the current base; update the branch and queue it again"
 	case queue.TestRefBuilt:
 		return "Recorded the batch test commit"
 	case queue.TestRefBuildFailed:
@@ -419,6 +425,12 @@ func affects(event queue.Event, pr int, before, after queue.State, tested map[st
 		return tested[e.TestedSHA]
 	case queue.ChecksRefreshed:
 		return inBatch(before, pr) && before.Active.ID == e.BatchID && before.Active.TestedSHA == e.TestedSHA
+	case queue.FastForwardBatchSelected:
+		return inBatch(before, pr) && before.Active.ID == e.BatchID
+	case queue.FastForwardRefBuilt:
+		return inBatch(before, pr) && before.Active.ID == e.BatchID
+	case queue.FastForwardBlocked:
+		return inBatch(before, pr) && before.Active.ID == e.BatchID
 	case queue.TestRefBuilt:
 		return inBatch(before, pr) && before.Active.ID == e.BatchID
 	case queue.TestRefBuildFailed:
