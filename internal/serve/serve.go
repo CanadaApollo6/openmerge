@@ -23,6 +23,12 @@ type Target struct {
 	BotLogin string
 	// CheckRules is supplied by the forge adapter, without admin credentials.
 	CheckRules func(context.Context) (problems, warnings []string, err error)
+	// AdditionalRuleChecks keep independently readable sources separate, so a
+	// failed inspection cannot hide definite failures from another source.
+	AdditionalRuleChecks []func(context.Context) (problems, warnings []string, err error)
+	// CheckProtection also receives the configured commit shape. An empty method
+	// means configuration has not been loaded yet during startup.
+	CheckProtection func(context.Context, forge.MergeMethod) (problems, warnings []string, err error)
 }
 
 // Options bounds API polling and concurrent queue execution.
@@ -101,21 +107,15 @@ func New(ctx context.Context, db *store.Store, targets []Target, options Options
 			return nil, fmt.Errorf("duplicate target %s/%s", target.Key.Repository, target.Key.BaseBranch)
 		}
 		seen[id] = true
-		token, err := target.Git.EnsureFence(ctx, forge.RepoRef{Path: target.Key.Repository}, "openmerge/fence/"+target.Key.BaseBranch)
-		if err != nil {
-			return nil, err
-		}
 		state, watermark, err := db.Load(ctx, id)
 		if err != nil {
 			return nil, err
 		}
-		if state.Fence == "" {
-			if err := db.InitializeFence(ctx, id, token); err != nil {
-				return nil, err
-			}
-		}
 		w := &worker{Target: target, id: id, logState: state, logWatermark: watermark, wake: make(chan struct{}, 1), prs: make(map[int]forge.PullRequest), summaries: make(map[int]forge.PullRequestSummary)}
 		if err := s.repositoryRules(ctx, w); err != nil {
+			return nil, err
+		}
+		if err := s.initializeFence(ctx, w); err != nil {
 			return nil, err
 		}
 		s.queues = append(s.queues, w)
@@ -210,6 +210,22 @@ func (s *Server) loop(ctx context.Context, w *worker) {
 }
 
 func (w *worker) repo() forge.RepoRef { return forge.RepoRef{Path: w.Key.Repository} }
+
+// Validate landing grants before the first write. A blocked new installation
+// can serve diagnostics and initialize its fence after a successful recheck.
+func (s *Server) initializeFence(ctx context.Context, w *worker) error {
+	state, _, err := s.store.Load(ctx, w.id)
+	if err != nil || state.Fence != "" || len(state.RulesProblems()) > 0 {
+		return err
+	}
+	token, err := w.Git.EnsureFence(ctx, w.repo(), "openmerge/fence/"+w.Key.BaseBranch)
+	if err != nil {
+		return err
+	}
+	_, err = s.store.Append(ctx, w.id, []queue.Event{queue.FenceInitialized{Token: token}}, "")
+	return err
+}
+
 func (w *worker) plannerConfig(interval time.Duration) queue.Config {
 	cfg := w.cfg.QueueConfig()
 	cfg.RefreshInterval = interval
@@ -229,7 +245,18 @@ func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
 	if err := s.repositoryRules(ctx, w); err != nil {
 		return err
 	}
+	if err := s.initializeFence(ctx, w); err != nil {
+		return err
+	}
 	if err := s.reconcile(ctx, w, force); err != nil {
+		return err
+	}
+	// Loading a different configuration invalidates method-dependent protection
+	// checks, including the first read after startup's method was unknown.
+	if err := s.repositoryRules(ctx, w); err != nil {
+		return err
+	}
+	if err := s.initializeFence(ctx, w); err != nil {
 		return err
 	}
 	s.logCommitted(ctx, w)

@@ -63,6 +63,17 @@ func (d *Driver) PullRequest(ctx context.Context, repo forge.RepoRef, number int
 	}
 	result := forge.PullRequest{Number: pr.GetNumber(), HeadSHA: pr.GetHead().GetSHA(), Base: pr.GetBase().GetRef(), Draft: pr.GetDraft(), Author: pr.GetUser().GetLogin(), Closed: pr.GetState() == "closed"}
 	result.Title, result.Body, result.HeadBranch = pr.GetTitle(), pr.GetBody(), pr.GetHead().GetLabel()
+	result.LabelsKnown = pr.Labels != nil
+	for _, label := range pr.Labels {
+		if label == nil || label.GetName() == "" {
+			result.LabelsKnown = false
+			continue
+		}
+		result.Labels = append(result.Labels, label.GetName())
+	}
+	if pr.Mergeable != nil {
+		result.ConflictKnown, result.Conflict = true, !pr.GetMergeable()
+	}
 	if result.HeadBranch == "" {
 		result.HeadBranch = pr.GetHead().GetRef()
 	}
@@ -74,6 +85,21 @@ func (d *Driver) PullRequest(ctx context.Context, repo forge.RepoRef, number int
 	result.HeadInBaseRepo = head.GetID() > 0 && head.GetID() == base.GetID()
 	if result.Closed {
 		return result, nil
+	}
+	if pr.GetChangedFiles() <= forge.MaxChangedFiles {
+		result.Files, result.FilesKnown, err = d.changedFiles(ctx, owner, name, number, pr.ChangedFiles)
+		if err != nil {
+			return forge.PullRequest{}, err
+		}
+		// The files endpoint is not SHA-pinned. Reject a mixed observation if
+		// either side of its diff moved while pages were being read.
+		after, _, err := d.client.PullRequests.Get(ctx, owner, name, number)
+		if err != nil {
+			return forge.PullRequest{}, safeError(err)
+		}
+		if after.GetHead().GetSHA() != result.HeadSHA || after.GetBase().GetSHA() != pr.GetBase().GetSHA() || after.GetBase().GetRef() != result.Base || after.GetState() != pr.GetState() {
+			return forge.PullRequest{}, errors.New("pull request changed during file observation; retry")
+		}
 	}
 	reviews := make(map[string]*gh.PullRequestReview)
 	for page := 1; page != 0; {
@@ -112,6 +138,38 @@ func (d *Driver) PullRequest(ctx context.Context, repo forge.RepoRef, number int
 		result.Approvals = append(result.Approvals, forge.Approval{User: user, SHA: review.GetCommitID(), CanWrite: write})
 	}
 	return result, nil
+}
+
+func (d *Driver) changedFiles(ctx context.Context, owner, repo string, number int, count *int) ([]string, bool, error) {
+	files := []string{}
+	seen := make(map[string]bool)
+	for page := 1; page != 0; {
+		list, response, err := d.client.PullRequests.ListFiles(ctx, owner, repo, number, &gh.ListOptions{Page: page, PerPage: 100})
+		if err != nil {
+			return nil, false, safeError(err)
+		}
+		for _, file := range list {
+			if file.GetFilename() == "" || seen[file.GetFilename()] {
+				return nil, false, errors.New("incomplete or repeated PR file observation")
+			}
+			seen[file.GetFilename()] = true
+			files = append(files, file.GetFilename())
+			if len(files) > forge.MaxChangedFiles {
+				return nil, false, nil
+			}
+		}
+		if response.NextPage != 0 && (response.NextPage <= page || len(list) == 0) {
+			return nil, false, errors.New("PR file pagination did not advance")
+		}
+		if len(files) == forge.MaxChangedFiles && response.NextPage != 0 {
+			return nil, false, nil
+		}
+		page = response.NextPage
+	}
+	if count != nil && *count != len(files) {
+		return nil, false, errors.New("PR changed-file count does not match complete file observation; retry")
+	}
+	return files, true, nil
 }
 
 // CanWrite revalidates collaborator permission on every call. The transport may

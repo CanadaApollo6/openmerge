@@ -48,8 +48,10 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 			cfg, warnings, err := config.Load(data)
 			loadErr = err
 			if err == nil {
+				if w.CheckProtection != nil && w.cfg.MergeMethod != cfg.Queues[0].MergeMethod {
+					w.rulesNextCheck = time.Time{}
+				}
 				w.cfg = cfg.Queues[0]
-				loadErr = supported(w.cfg)
 				for _, warning := range warnings {
 					s.options.Logger.Warn("repository configuration", "repository", w.Key.Repository, "diagnostic", warning.Error())
 				}
@@ -96,7 +98,8 @@ func (s *Server) reconcile(ctx context.Context, w *worker, force bool) error {
 		}
 		open[summary.Number] = true
 		old, known := w.summaries[summary.Number]
-		if !force && known && old.HeadSHA == summary.HeadSHA && old.UpdatedAt.Equal(summary.UpdatedAt) {
+		needsConflict := slices.Contains(w.cfg.EnterWhen.Attributes(), "conflict") || slices.Contains(w.cfg.MergeWhen.Attributes(), "conflict")
+		if !force && known && old.HeadSHA == summary.HeadSHA && old.UpdatedAt.Equal(summary.UpdatedAt) && (!needsConflict || w.prs[summary.Number].ConflictKnown) {
 			continue
 		}
 		if _, err := s.observe(ctx, w, summary.Number); err != nil {
@@ -155,12 +158,36 @@ func (s *Server) observe(ctx context.Context, w *worker, number int) (forge.Pull
 		return pr, err
 	}
 	observation := queue.PRObserved{PR: number, HeadSHA: pr.HeadSHA, Eligible: eligible, Trusted: trusted(pr)}
-	events := []queue.Event{observation}
+	metadata := observedMetadata(pr)
+	events := []queue.Event{metadata, observation}
 	if pr.Closed || pr.Base != w.Key.BaseBranch {
 		events = append(events, queue.PRClosed{PR: number})
 	}
-	err = s.record(ctx, w, fmt.Sprintf("pr/%d", number), observation, events...)
+	err = s.record(ctx, w, fmt.Sprintf("pr/%d", number), struct {
+		Metadata queue.PRMetadataObserved
+		Decision queue.PRObserved
+	}{metadata, observation}, events...)
 	return pr, err
+}
+
+func observedMetadata(pr forge.PullRequest) queue.PRMetadataObserved {
+	metadata := queue.PRMetadataObserved{
+		PR: pr.Number, HeadSHA: pr.HeadSHA, Base: pr.Base, Head: pr.HeadBranch, Title: pr.Title, Author: pr.Author, Draft: pr.Draft,
+		ApprovedReviewsBy: []string{}, Labels: []string{}, Files: []string{},
+		LabelsKnown: pr.LabelsKnown, FilesKnown: pr.FilesKnown, ConflictKnown: pr.ConflictKnown, Conflict: pr.Conflict,
+	}
+	for _, approval := range pr.Approvals {
+		if approval.SHA == pr.HeadSHA {
+			metadata.ApprovedReviewsBy = append(metadata.ApprovedReviewsBy, approval.User)
+		}
+	}
+	if pr.LabelsKnown {
+		metadata.Labels = append(metadata.Labels, pr.Labels...)
+	}
+	if pr.FilesKnown {
+		metadata.Files = append(metadata.Files, pr.Files...)
+	}
+	return metadata
 }
 
 func trusted(pr forge.PullRequest) bool {

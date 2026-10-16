@@ -9,8 +9,70 @@ import (
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
+	"github.com/CanadaApollo6/openmerge/internal/forge/fake"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
+	"github.com/CanadaApollo6/openmerge/internal/store"
 )
+
+type countingFence struct {
+	forge.Git
+	writes int
+}
+
+func (g *countingFence) EnsureFence(ctx context.Context, repo forge.RepoRef, ref string) (string, error) {
+	g.writes++
+	return g.Git.EnsureFence(ctx, repo, ref)
+}
+
+func TestStartupMissingLandingGrantBlocksBeforeFenceAndRecovers(t *testing.T) {
+	db := database(t)
+	f := fake.New()
+	f.Init(repo, "main", "openmerge/fence/main")
+	g := &countingFence{Git: f}
+	missing := true
+	var logs strings.Builder
+	target := Target{Key: store.QueueKey{Installation: "7", Repository: repo.Path, BaseBranch: "main"}, Driver: f, Git: g, BotLogin: fake.Identity,
+		CheckRules: func(context.Context) ([]string, []string, error) {
+			return nil, nil, errors.New("classic protection HTTP 403")
+		},
+		AdditionalRuleChecks: []func(context.Context) ([]string, []string, error){func(context.Context) ([]string, []string, error) {
+			if missing {
+				return []string{"installed App missing permission contents: write", "installed App missing permission workflows: write"}, []string{"installed App missing permission checks: write"}, nil
+			}
+			return nil, nil, nil
+		}},
+	}
+	s, err := New(t.Context(), db, []Target{target}, Options{Logger: slog.New(slog.NewTextHandler(&logs, nil))})
+	must(t, err)
+	w := s.queues[0]
+	state, _, err := db.Load(t.Context(), w.id)
+	must(t, err)
+	if state.PauseReason(queue.Config{}) != "repository-rules" || len(state.RulesProblems()) != 2 || g.writes != 0 || state.Fence != "" {
+		t.Fatalf("missing grant attempted a write or did not block: writes=%d state=%+v", g.writes, state)
+	}
+	for _, diagnostic := range []string{"level=ERROR", "contents: write", "workflows: write", "level=WARN", "checks: write", "keeping previous state"} {
+		if !strings.Contains(logs.String(), diagnostic) {
+			t.Errorf("missing %q in logs: %s", diagnostic, &logs)
+		}
+	}
+	missing = false
+	w.rulesNextCheck = time.Time{}
+	must(t, s.repositoryRules(t.Context(), w))
+	state, _, err = db.Load(t.Context(), w.id)
+	must(t, err)
+	if len(state.RulesProblems()) != 2 {
+		t.Fatal("unreadable protection cleared previous permission block")
+	}
+	w.CheckRules = func(context.Context) ([]string, []string, error) { return nil, nil, nil }
+	w.rulesNextCheck = time.Time{}
+	must(t, s.repositoryRules(t.Context(), w))
+	must(t, s.initializeFence(t.Context(), w))
+	state, _, err = db.Load(t.Context(), w.id)
+	must(t, err)
+	if len(state.RulesProblems()) != 0 || state.Fence == "" || g.writes != 1 {
+		t.Fatalf("passing grants/protection did not bootstrap: writes=%d state=%+v", g.writes, state)
+	}
+}
 
 func TestRulesStartupPauseSlowRecheckAndAutomaticRecovery(t *testing.T) {
 	s, w, f, _ := fixture(t, repositoryConfig)

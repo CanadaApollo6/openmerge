@@ -370,6 +370,26 @@ func (f *Forge) PullRequest(ctx context.Context, repo forge.RepoRef, number int)
 		return forge.PullRequest{}, fmt.Errorf("unknown PR %d", number)
 	}
 	pr.Approvals = slices.Clone(pr.Approvals)
+	pr.Labels = slices.Clone(pr.Labels)
+	if pr.FilesKnown {
+		pr.Files = []string{}
+		r := f.repo(repo)
+		before, after := r.commits[r.prBases[number]].Files, r.commits[pr.HeadSHA].Files
+		for path, content := range after {
+			if old, exists := before[path]; !exists || old != content {
+				pr.Files = append(pr.Files, path)
+			}
+		}
+		for path := range before {
+			if _, exists := after[path]; !exists {
+				pr.Files = append(pr.Files, path)
+			}
+		}
+		slices.Sort(pr.Files)
+		if len(pr.Files) > forge.MaxChangedFiles {
+			pr.Files, pr.FilesKnown = nil, false
+		}
+	}
 	if pr.Closed {
 		pr.Approvals = nil
 	}

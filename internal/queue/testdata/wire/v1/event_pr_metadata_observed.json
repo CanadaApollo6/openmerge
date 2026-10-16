@@ -1,0 +1,1 @@
+{"version":1,"type":"pr_metadata_observed","data":{"pr":2,"head_sha":"head","base":"main","head":"contributor:feature","title":"A change","author":"contributor","draft":false,"approved_reviews_by":["writer"],"labels":["ready"],"files":["src/main.go"],"labels_known":true,"files_known":true,"conflict_known":false,"conflict":false}}

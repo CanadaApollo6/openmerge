@@ -2,28 +2,13 @@ package serve
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"strings"
 
-	"github.com/CanadaApollo6/openmerge/internal/config"
 	"github.com/CanadaApollo6/openmerge/internal/config/condition"
 	"github.com/CanadaApollo6/openmerge/internal/executor"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
-
-func supported(cfg config.Queue) error {
-	for _, expression := range []condition.Expression{cfg.EnterWhen, cfg.MergeWhen} {
-		for _, name := range expression.Attributes() {
-			switch name {
-			case "base", "draft", "author", "approved-reviews-by", "check-success", "check-failure", "check-pending":
-			default:
-				return fmt.Errorf("serve cannot yet observe attribute %q; remove it or wait for the metadata driver extension", name)
-			}
-		}
-	}
-	return nil
-}
 
 func snapshot(pr forge.PullRequest) condition.Snapshot {
 	var approvals []string
@@ -32,7 +17,22 @@ func snapshot(pr forge.PullRequest) condition.Snapshot {
 			approvals = append(approvals, a.User)
 		}
 	}
-	return condition.Snapshot{"base": condition.String(pr.Base), "draft": condition.Bool(pr.Draft), "author": condition.String(pr.Author), "approved-reviews-by": condition.Strings(approvals...)}
+	values := condition.Snapshot{"draft": condition.Bool(pr.Draft), "approved-reviews-by": condition.Strings(approvals...)}
+	for name, value := range map[string]string{"base": pr.Base, "head": pr.HeadBranch, "title": pr.Title, "author": pr.Author} {
+		if value != "" {
+			values[name] = condition.String(value)
+		}
+	}
+	if pr.LabelsKnown {
+		values["label"] = condition.Strings(pr.Labels...)
+	}
+	if pr.FilesKnown {
+		values["files"] = condition.Strings(pr.Files...)
+	}
+	if pr.ConflictKnown {
+		values["conflict"] = condition.Bool(pr.Conflict)
+	}
+	return values
 }
 
 func hasChecks(expression condition.Expression) bool {

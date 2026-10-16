@@ -71,13 +71,21 @@ Each phase has an exit test. A phase is done when its exit test passes on the fa
 - Single binary + Postgres; `docker compose up` quickstart
 
 Implemented so far: the planner and simulator, durable Postgres workers, GitHub
-App setup and polling/webhook driver, runtime ruleset validation, batching and
+App setup and polling/webhook driver, runtime ruleset/classic-protection and
+installed permission-grant validation, all core condition observations, batching and
 bisection, exact-tested landing, commands, read-only API/CLI, and the Compose
-quickstart. Phase 1 is **not complete**. Remaining follow-ups include automated
-classic branch protection checks, validation of installed App permission grants,
-and runtime metadata reads for label/file conditions (also head, title and
-conflict). Operators still audit classic protection and App permissions.
-The exit test also requires verification on a real GitHub test organization.
+quickstart. Labels and changed files are observed from the PR, file pagination
+is bounded at 1,000 paths (larger PRs remain unknown), and uncomputed conflict
+state remains unknown. Definite protection or landing-permission failures pause
+through the durable rules block; unreadable protection warns and retains state.
+Classic reads use installation permissions, so operators still audit protection
+when Administration read is unavailable and hidden ruleset bypass ownership.
+
+Phase 1 is **not complete**. Remaining work: publish the version-1 JSON Schema,
+implement the listed fast-forward mode (merge/squash/rebase are available),
+finish landing/status polish (co-author dedupe, why-view summaries, head-branch
+deletion and the status table), and verify the exit test on a real GitHub test
+organization. The Mergify importer remains a Phase 5 deliverable.
 
 **Exit:** OpenMerge merges its own PRs. A simulated 500-PR day with 5% failure rate lands every passing PR with main green throughout.
 

@@ -324,6 +324,13 @@ func decodeBatchPRs(prs []wireBatchPR) []BatchPR {
 // EncodeEvent returns the stable type discriminator and versioned JSON.
 func EncodeEvent(value Event) (string, []byte, error) {
 	switch v := value.(type) {
+	case FenceInitialized:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("fence_initialized", wireFenceInitialized(v))
+	case PRMetadataObserved:
+		return encodeWire("pr_metadata_observed", wirePRMetadataObserved(v))
 	case PRObserved:
 		return encodeWire("pr_observed", wirePRObserved(v))
 	case BaseMoved:
@@ -403,6 +410,17 @@ func DecodeEvent(payload []byte) (Event, error) {
 		return nil, err
 	}
 	switch envelope.Type {
+	case "fence_initialized":
+		v, err := readWireData[wireFenceInitialized](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := FenceInitialized(v)
+		return event, event.Validate()
+	case "pr_metadata_observed":
+		return decodeWireData(envelope.Data, func(v wirePRMetadataObserved) Event {
+			return PRMetadataObserved(v)
+		})
 	case "pr_observed":
 		return decodeWireData(envelope.Data, func(v wirePRObserved) Event {
 			return PRObserved(v)

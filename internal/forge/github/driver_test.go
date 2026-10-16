@@ -367,16 +367,16 @@ func TestPollCycleRequestBudget(t *testing.T) {
 				}
 				return n
 			}
-			want := 6
+			want := 8
 			if withComments {
 				want++
 			}
 			poll()
-			if requests() != want || f.notModified != 0 {
+			if requests() != want || f.notModified != 1 {
 				t.Fatalf("cold poll: requests=%d 304s=%d", requests(), f.notModified)
 			}
 			poll()
-			if requests() != 2*want || f.notModified != want {
+			if requests() != 2*want || f.notModified != want+1 {
 				t.Fatalf("unchanged poll skipped revalidation or used primary quota: requests=%d 304s=%d", requests(), f.notModified)
 			}
 			f.prs[1].Head.SHA = new("new-head")
@@ -387,10 +387,10 @@ func TestPollCycleRequestBudget(t *testing.T) {
 			f.statuses["tested"] = []*gh.RepoStatus{{ID: new(int64(101)), Context: new("legacy"), State: new("pending")}}
 			f.comments[1] = []*gh.IssueComment{{ID: new(int64(102)), Body: new("@openmerge enqueue"), User: &gh.User{Login: new("writer")}}}
 			poll()
-			if requests() != 3*want || f.notModified != want {
+			if requests() != 3*want || f.notModified != want+3 {
 				t.Fatalf("changed poll: requests=%d 304s=%d", requests(), f.notModified)
 			}
-			t.Logf("REST requests per cycle=%d; unchanged: %d validated 304s, 0 primary-limit charges; all pages changed: %d primary-limit charges", want, want, want)
+			t.Logf("REST requests per cycle=%d; unchanged: %d validated 304s, 0 primary-limit charges; changed fixture: %d primary-limit charges (file list and in-cycle PR recheck unchanged)", want, want, want-2)
 		})
 	}
 }

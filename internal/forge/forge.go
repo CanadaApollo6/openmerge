@@ -26,7 +26,15 @@ type PullRequest struct {
 	HeadInBaseRepo bool
 	Approvals      []Approval
 	Closed         bool
+	Labels, Files  []string
+	// Known flags distinguish an observed empty list/false from missing data.
+	LabelsKnown, FilesKnown, ConflictKnown bool
+	Conflict                               bool
 }
+
+// MaxChangedFiles bounds complete PR file observations across drivers. Larger
+// changes have unknown Files, never a partially observed list.
+const MaxChangedFiles = 1000
 
 // PullRequestSummary is the lightweight reconciliation view of an open PR.
 type PullRequestSummary struct {

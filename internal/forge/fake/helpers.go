@@ -37,7 +37,16 @@ func (f *Forge) OpenPRWithFiles(repo forge.RepoRef, number int, baseSHA string, 
 			baseRef = ref
 		}
 	}
-	pr := forge.PullRequest{Number: number, HeadSHA: head, Base: baseRef, Author: "contributor", AuthorID: 12, AuthorEmail: "12+contributor@users.noreply.github.com", Title: fmt.Sprintf("PR %d", number), HeadBranch: fmt.Sprintf("contributor:pr-%d", number), HeadInBaseRepo: headInBaseRepo}
+	pr := forge.PullRequest{Number: number, HeadSHA: head, Base: baseRef, Author: "contributor", AuthorID: 12, AuthorEmail: "12+contributor@users.noreply.github.com", Title: fmt.Sprintf("PR %d", number), HeadBranch: fmt.Sprintf("contributor:pr-%d", number), HeadInBaseRepo: headInBaseRepo, LabelsKnown: true, FilesKnown: true, ConflictKnown: true}
+	for path, content := range changes {
+		if old, exists := base.Files[path]; !exists || old != content {
+			pr.Files = append(pr.Files, path)
+		}
+	}
+	slices.Sort(pr.Files)
+	if len(pr.Files) > forge.MaxChangedFiles {
+		pr.Files, pr.FilesKnown = nil, false
+	}
 	r.prs[number] = pr
 	r.updated[number] = time.Now().UTC()
 	r.prBases[number] = baseSHA
@@ -113,6 +122,26 @@ func (f *Forge) SetPRMetadata(repo forge.RepoRef, number int, base string, draft
 		return fmt.Errorf("unknown PR %d", number)
 	}
 	pr.Base, pr.Draft, pr.Author = base, draft, author
+	r.prs[number] = pr
+	r.updated[number] = time.Now().UTC()
+	return nil
+}
+
+// SetPRConditions changes label and mergeability observations. nil conflict
+// means the forge has not computed mergeability yet; nil labels is unknown.
+func (f *Forge) SetPRConditions(repo forge.RepoRef, number int, labels []string, conflict *bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r := f.repo(repo)
+	pr, ok := r.prs[number]
+	if !ok {
+		return fmt.Errorf("unknown PR %d", number)
+	}
+	pr.Labels, pr.LabelsKnown = slices.Clone(labels), labels != nil
+	pr.ConflictKnown, pr.Conflict = conflict != nil, false
+	if conflict != nil {
+		pr.Conflict = *conflict
+	}
 	r.prs[number] = pr
 	r.updated[number] = time.Now().UTC()
 	return nil

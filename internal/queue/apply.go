@@ -15,6 +15,16 @@ func Apply(s State, e Event) State {
 	s = cloneState(s)
 	s.revision++
 	switch e := e.(type) {
+	case FenceInitialized:
+		if s.Fence == "" && e.Validate() == nil {
+			s.Fence = e.Token
+		}
+	case PRMetadataObserved:
+		// Fold the invalidation here, where the active phase is serialized with
+		// the observation. A pre-append phase read could race TestRefBuilt.
+		if s.Active != nil && slices.ContainsFunc(s.Active.PRs, func(pin BatchPR) bool { return pin.PR == e.PR }) {
+			s.refreshChecks()
+		}
 	case PRObserved:
 		s.observations[e.PR] = e
 		if entry := s.entry(e.PR); entry != nil {
@@ -55,10 +65,7 @@ func Apply(s State, e Event) State {
 			s.rebuildBatch()
 		}
 	case RefreshRequested:
-		if s.Active != nil && s.Active.Phase == Testing {
-			s.Active.checksPassed, s.Active.needsRefresh = false, true
-			s.Active.checksGeneration++
-		}
+		s.refreshChecks()
 	case PauseRequested:
 		s.pause, s.pauseRevision = e, s.revision
 	case RulesBlocked:
@@ -195,6 +202,13 @@ func Apply(s State, e Event) State {
 	}
 	s.pruneAcknowledgements()
 	return s
+}
+
+func (s *State) refreshChecks() {
+	if s.Active != nil && s.Active.Phase == Testing {
+		s.Active.checksPassed, s.Active.needsRefresh = false, true
+		s.Active.checksGeneration++
+	}
 }
 
 func cloneState(s State) State {
