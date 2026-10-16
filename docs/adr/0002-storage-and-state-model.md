@@ -51,6 +51,9 @@ Concurrency is naturally partitioned. A queue is identified by (forge installati
 - Lanes parallelize testing, not landing. Every lane on a base branch lands through the same base-branch lock and compare-and-swap, so disjoint-scope merges keep the exact-SHA guarantee. Phase 4 must design lane landing on top of this rule, not around it.
 - OpenMerge uses only transaction-scoped locks, so it works behind transaction-mode connection poolers such as PgBouncer.
 - A dequeue that races a landing is acknowledged a moment later than it would be otherwise. That delay is the cost of always reporting the true outcome.
+- **Stored events and actions use a versioned wire format** owned by `internal/queue` (`WireVersion` 1). Every field is required, unknown fields are rejected, and golden fixtures pin the format. Strict decoding means an older binary cannot read data a newer one wrote, so upgrades drain old workers before new ones start writing. New fields are added as a new wire version, never silently.
+- **An action that cannot be decoded or validated is quarantined** as `poisoned`, never executed, and never blocks other queues. Re-planning the same key replaces it with the planner's fresh payload. After three incidents on one key the queue pauses with reason `action-poisoned`, visible on the PR, until someone resumes it.
+- **Pausing stops new work; it never stops settling a landing already in flight.** `ResolveLanding` runs while paused and is exempt from the quarantine limit.
 
 ## Alternatives considered
 
