@@ -166,3 +166,8 @@ func (a FailBatch) Validate() error {
 	}
 	return requireActionText("batch_id", a.BatchID)
 }
+
+// Validate requires both a stable pause reason and an operator explanation.
+func (e PauseRequested) Validate() error {
+	return requireActionText("reason", e.Reason, "detail", e.Detail)
+}

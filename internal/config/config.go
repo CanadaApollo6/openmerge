@@ -186,6 +186,7 @@ func (p *parser) error(n *yaml.Node, path, format string, args ...any) {
 }
 
 func (p *parser) queue(n *yaml.Node, path string) Queue {
+	before := len(p.errors)
 	q := Queue{MergeMethod: queue.Squash, CheckTimeout: time.Hour, Batch: Batch{MaxSize: 1}}
 	fields := p.fields(n, path, "name", "enter_when", "merge_when", "merge_method", "check_timeout", "batch")
 	if name := fields["name"]; name == nil {
@@ -201,6 +202,22 @@ func (p *parser) queue(n *yaml.Node, path string) Queue {
 	}
 	if n := fields["merge_when"]; n != nil {
 		q.MergeWhen = condition.All(p.conditionList(n, path+".merge_when")...)
+	}
+	if len(p.errors) == before {
+		required := q.MergeWhen.RequiredChecks()
+		missing, _ := q.MergeWhen.Evaluate(condition.CheckResults(nil, nil, nil))
+		failed, _ := q.MergeWhen.Evaluate(condition.Snapshot{
+			"check-success": condition.Strings(),
+			"check-failure": condition.Strings(required...),
+			"check-pending": condition.Strings(),
+		})
+		if len(required) == 0 || missing || failed {
+			location := fields["merge_when"]
+			if location == nil {
+				location = n
+			}
+			p.error(location, path+".merge_when", "queue %q merge_when must require a positive named check-success equality in its conjunction and reject missing or failed checks (for example merge_when: [check-success = ci]); checks under or/not and counts do not qualify", q.Name)
+		}
 	}
 	if n := fields["merge_method"]; n != nil {
 		method := p.text(n, path+".merge_method")

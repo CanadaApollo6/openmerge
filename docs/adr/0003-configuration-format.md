@@ -20,6 +20,8 @@ Reading `.mergify.yml` natively would make OpenMerge a drop-in replacement, but 
 
 **Source of truth.** Configuration is always read from the base branch, never from a pull request's head. A PR cannot change the rules it is judged by. A PR that edits the config gets a validation check showing the parsed result and any errors, and the change takes effect once merged.
 
+**Server loading.** The polling server pins all configuration reads to the observed base tip and pauses on missing, invalid, or currently unobservable attributes, reloading when the base moves; it never falls back to a merge-capable configuration.
+
 **Versioned schema.** The file starts with `version: 1`. Within version 1, changes are additive only: new keys and new condition attributes, never renames or removals. A breaking change requires `version: 2` and ships with `openmerge config migrate`, which rewrites the file mechanically. We publish a JSON Schema for each version so editors validate as you type.
 
 **Shape (version 1, Phase 1 surface).**
@@ -51,6 +53,15 @@ Later phases add top-level keys (`priorities`, `rules`, `scopes`, `commands`) as
 - An unknown attribute or operator is a validation error; close misspellings name the closest valid one.
 
 Missing or mistyped attribute data makes a condition unknown, and unknown never passes, including under `not`.
+
+Phase 1 requires each queue's `merge_when` conjunction (flattening nested
+`and` groups) to contain a positive `check-success = <non-empty name>` term;
+checks under `or`/`not` and counts do not qualify. Extra terms may still use
+`or`/`not`. Loading also rejects conditions that pass with missing or failed
+checks, naming the queue and an example fix such as
+`merge_when: [check-success = ci]`. There is no opt-out. CI is evaluated on the
+tested SHA. Missing and pending check results remain unknown within logical
+groups; an OR fails only when all alternatives are definitely false.
 
 Attributes cover people and reviews, branch and PR metadata, files and line counts, CI results, queue state, and time windows. Each attribute is documented in a generated reference with its type and an example. The concrete Phase 1 list is part of the Phase 1 implementation.
 

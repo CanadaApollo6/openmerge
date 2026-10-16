@@ -98,6 +98,9 @@ type Status struct {
 	Summary string
 }
 
+// ErrFileNotFound identifies an absent repository configuration file.
+var ErrFileNotFound = errors.New("file does not exist at ref")
+
 // Driver exposes forge API operations. Mutations must converge when retried.
 type Driver interface {
 	// ReadFile reads a file at an explicit branch or commit; missing is an error.

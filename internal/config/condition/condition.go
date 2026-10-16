@@ -21,10 +21,13 @@ const (
 
 // Value is a typed PR attribute. Its zero value represents missing data.
 type Value struct {
-	kind valueKind
-	text string
-	list []string
-	flag bool
+	kind      valueKind
+	text      string
+	list      []string
+	flag      bool
+	checks    bool
+	observed  []string
+	unsettled []string
 }
 
 // String constructs a string attribute.
@@ -32,6 +35,23 @@ func String(s string) Value { return Value{kind: stringValue, text: s} }
 
 // Strings constructs a list attribute, copying the caller's slice.
 func Strings(s ...string) Value { return Value{kind: listValue, list: append([]string(nil), s...)} }
+
+// CheckResults builds CI attributes with per-name pending/missing knowledge.
+// Pending runs may still join either terminal list. Missing named checks are
+// unknown, so negation cannot authorize a batch before its CI appears.
+func CheckResults(success, failure, pending []string) Snapshot {
+	observed := append(append(append([]string{}, success...), failure...), pending...)
+	result := Snapshot{}
+	for name, list := range map[string][]string{"check-success": success, "check-failure": failure, "check-pending": pending} {
+		value := Strings(list...)
+		value.checks, value.observed = true, observed
+		if name != "check-pending" {
+			value.unsettled = append([]string{}, pending...)
+		}
+		result[name] = value
+	}
+	return result
+}
 
 // Bool constructs a boolean attribute.
 func Bool(b bool) Value { return Value{kind: boolValue, flag: b} }
@@ -236,6 +256,29 @@ func (e Expression) Attributes() []string {
 	return names
 }
 
+// RequiredChecks returns positive, named check-success equalities in the
+// conjunction, flattening AND groups. Checks under OR/NOT and counts do not
+// qualify: those predicates can pass without that check succeeding.
+func (e Expression) RequiredChecks() []string {
+	var names []string
+	var visit func(Expression)
+	visit = func(expression Expression) {
+		switch expression.kind {
+		case all:
+			for _, child := range expression.children {
+				visit(child)
+			}
+		case atom:
+			if expression.name == "check-success" && expression.op == "=" && !expression.negative && !expression.length && expression.value != "" {
+				names = append(names, expression.value)
+			}
+		}
+	}
+	visit(e)
+	slices.Sort(names)
+	return slices.Compact(names)
+}
+
 // Failure describes a condition that did not pass. Actual is a string, bool,
 // []string, list length (int), or nil for missing data and logical groups.
 // Children retain a group's evidence, including met operands under failed NOT.
@@ -324,7 +367,7 @@ func (e Expression) evaluate(pr PR) evaluation {
 				evaluated.evidence.Actual = len(value.list)
 			}
 		}
-		if value.kind != attributeKind(e.name) {
+		if value.kind != attributeKind(e.name) || value.checks && e.checkUnknown(value) {
 			evaluated.result = unknown
 		} else if e.matches(value) != e.negative {
 			evaluated.result = met
@@ -335,6 +378,24 @@ func (e Expression) evaluate(pr PR) evaluation {
 		evaluated.failures = []Failure{evaluated.evidence}
 	}
 	return evaluated
+}
+
+func (e Expression) checkUnknown(value Value) bool {
+	if !slices.ContainsFunc(value.observed, e.ReferencesCheck) {
+		return true
+	}
+	matched := e.matches(value)
+	possible := Strings(value.list...)
+	for _, name := range value.unsettled {
+		if !e.length && !e.ReferencesCheck(name) {
+			continue
+		}
+		possible.list = append(possible.list, name)
+		if e.matches(possible) != matched {
+			return true
+		}
+	}
+	return false
 }
 
 func (e Expression) matches(v Value) bool {
@@ -382,6 +443,21 @@ func (e Expression) matches(v Value) bool {
 func contains(values []string, target string) bool {
 	for _, value := range values {
 		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+// ReferencesCheck reports whether a named producer can affect a check predicate.
+// Counts and exclusions inspect the entire list; equality/pattern predicates
+// inspect only matching names. This also visits predicates beneath NOT and OR.
+func (e Expression) ReferencesCheck(name string) bool {
+	if e.kind == atom && strings.HasPrefix(e.name, "check-") {
+		return e.length || e.op == "!=" || e.matches(Strings(name))
+	}
+	for _, child := range e.children {
+		if child.ReferencesCheck(name) {
 			return true
 		}
 	}

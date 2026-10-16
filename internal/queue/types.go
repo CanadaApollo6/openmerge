@@ -55,6 +55,8 @@ type State struct {
 	testedOrder   []string // insertion order of testedBatches, oldest first
 	buildRetry    buildRetryState
 	actionPoison  actionPoisonState
+	pause         PauseRequested
+	pauseRevision uint64
 }
 
 // Entry records the head admitted to the queue, independently of later observations.
@@ -174,6 +176,12 @@ type DequeueRequested struct{ PR int }
 // ResumeRequested clears build failures and poison pauses and resumes the queue.
 type ResumeRequested struct{}
 
+// RefreshRequested invalidates cached CI evidence and requests an early read.
+type RefreshRequested struct{}
+
+// PauseRequested stops new work while leaving landing resolution available.
+type PauseRequested struct{ Reason, Detail string }
+
 // BatchStarted durably records the planner's composition before any build I/O.
 type BatchStarted struct {
 	BatchID, BaseSHA string
@@ -239,6 +247,8 @@ func (PRClosed) queueEvent()           {}
 func (EnqueueRequested) queueEvent()   {}
 func (DequeueRequested) queueEvent()   {}
 func (ResumeRequested) queueEvent()    {}
+func (RefreshRequested) queueEvent()   {}
+func (PauseRequested) queueEvent()     {}
 func (TestRefBuilt) queueEvent()       {}
 func (TestRefBuildFailed) queueEvent() {}
 func (LandingStarted) queueEvent()     {}

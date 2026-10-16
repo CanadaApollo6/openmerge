@@ -60,15 +60,18 @@ func safeError(err error) error {
 }
 
 type transport struct {
-	base      http.RoundTripper
-	token     func(context.Context) (string, error)
-	origin    *url.URL
-	now       func() time.Time
-	mu        sync.Mutex
-	until     time.Time
-	secondary bool
-	strikes   uint
-	cache     *responseCache
+	base        http.RoundTripper
+	token       func(context.Context) (string, error)
+	origin      *url.URL
+	now         func() time.Time
+	mu          sync.Mutex
+	until       time.Time
+	secondary   bool
+	remaining   int
+	reset       time.Time
+	budgetKnown bool
+	strikes     uint
+	cache       *responseCache
 }
 
 func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -91,6 +94,18 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	res, err := t.conditionalGET(copyReq, token)
 	if err != nil {
 		return nil, safeError(err)
+	}
+	if remaining, err := strconv.Atoi(res.Header.Get("X-RateLimit-Remaining")); err == nil {
+		if reset, err := strconv.ParseInt(res.Header.Get("X-RateLimit-Reset"), 10, 64); err == nil {
+			t.mu.Lock()
+			resetAt := time.Unix(reset, 0)
+			if !t.budgetKnown || resetAt.After(t.reset) {
+				t.remaining, t.reset, t.budgetKnown = remaining, resetAt, true
+			} else if resetAt.Equal(t.reset) {
+				t.remaining = min(t.remaining, remaining)
+			}
+			t.mu.Unlock()
+		}
 	}
 	exhausted := res.Header.Get("X-RateLimit-Remaining") == "0"
 	limited := res.StatusCode == 429
@@ -153,4 +168,17 @@ func maxTime(a, b time.Time) time.Time {
 		return b
 	}
 	return a
+}
+
+// BackoffUntil reserves the last 100 primary requests for recovery and honors
+// transport cooldowns. Missing rate headers never invent a budget.
+func (d *Driver) BackoffUntil() time.Time {
+	t := d.client.Client().Transport.(*transport)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	until := t.until
+	if t.budgetKnown && t.remaining < 100 && t.reset.After(t.now()) {
+		until = maxTime(until, t.reset)
+	}
+	return until
 }

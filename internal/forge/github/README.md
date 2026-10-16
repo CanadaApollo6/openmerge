@@ -71,7 +71,9 @@ A primary limit, a secondary limit, or `Retry-After` establishes a cooldown.
 During it, requests return `RateLimitError{RetryAt, Secondary}` without network
 traffic. Repeated secondary limits back off exponentially from one minute,
 capped at 64 minutes, while honoring longer server reset/retry deadlines.
-The caller schedules another attempt at `RetryAt`; the transport never retries
+`Driver.BackoffUntil()` also exposes the shared cooldown and reserves the last
+100 primary requests until reset for the polling server. The caller schedules
+another attempt at `RetryAt`; the transport never retries
 an uncertain write automatically. HTTP status failures yield `APIError` without
 response bodies or request URLs; cancellation and deadlines remain recognizable.
 
@@ -100,18 +102,14 @@ headers; it verifies App JWTs on every App endpoint and rejects unknown
 installation IDs. No credentials or live user data are captured.
 
 The package also provides the manifest callback and ruleset setup behind
-`openmerge setup`; it does not implement the queue server, persistence, or worker
-loops. The server PR still owns:
+`openmerge setup`. HTTP serving, persistence, worker loops, and commands live in
+`cmd/openmerge serve` and `internal/serve`. Remaining work includes:
 
-- Durable delivery dedupe, webhook response handling, and event-to-queue routing.
 - Installation/repository discovery and reconciliation, token eviction after
-  suspension/deletion, and persistent action serialization and retry scheduling.
-- Base-branch `.openmerge.yml` loading/validation and configuration reloads.
-- Command parsing and permission checks (`CanWrite` is available).
-- Constructing gitops repositories, cache ownership, and executor wiring.
-- Wiring `ValidateRules` into startup, installed App permission validation, and
-  classic branch protection checks. PR labels/files and installation repository
-  enumeration remain follow-ups.
+  suspension/deletion.
+- Wiring `ValidateRules` into `serve` startup, installed App permission
+  validation, and classic branch protection checks. PR labels/files and
+  installation repository enumeration remain follow-ups.
 
 ## Setup and ruleset validation
 
@@ -152,7 +150,7 @@ policy covering the entire fence namespace with all four ref restrictions and ex
 always-allowed App bypass. Every other applicable policy must allow the App.
 Pathname-aware patterns cover nested base names; uncertain namespace overlaps
 are conservative diagnostics. Classic branch protection is outside this function.
-Wire it into server startup after the server PR merges; do not treat ruleset-only
+`serve` startup does not call it yet; do not treat ruleset-only
 validation as proof about classic protection.
 
 ## App setup and troubleshooting

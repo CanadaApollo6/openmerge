@@ -54,7 +54,15 @@ func Apply(s State, e Event) State {
 		if s.Active != nil && s.Active.Phase != Landing && s.Active.BaseSHA != e.SHA {
 			s.rebuildBatch()
 		}
+	case RefreshRequested:
+		if s.Active != nil && s.Active.Phase == Testing {
+			s.Active.checksPassed, s.Active.needsRefresh = false, true
+			s.Active.checksGeneration++
+		}
+	case PauseRequested:
+		s.pause, s.pauseRevision = e, s.revision
 	case ResumeRequested:
+		s.pause = PauseRequested{}
 		s.buildRetry = buildRetryState{}
 		s.actionPoison = actionPoisonState{}
 	case ActionPoisoned:
@@ -403,7 +411,7 @@ func (s *State) addEffect(action Action) {
 }
 
 func (s *State) completeEffect(key string) {
-	if len(s.Entries) > 0 && (s.buildRetry.failures > 0 || s.actionPoison.key != "") && s.pauseReport().Key() == key {
+	if len(s.Entries) > 0 && (s.buildRetry.failures > 0 || s.actionPoison.key != "" || s.pause.Reason != "") && s.pauseReport().Key() == key {
 		s.acknowledged[key] = effectScope{pr: s.Entries[0].PR, admission: s.Entries[0].AdmissionID}
 	}
 	for _, effect := range s.effects {

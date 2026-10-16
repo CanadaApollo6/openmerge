@@ -188,7 +188,7 @@ func TestCancellationAndInfrastructureErrors(t *testing.T) {
 }
 
 func TestFinalPushRefreshesCredentials(t *testing.T) {
-	for _, operation := range []string{"land", "advance"} {
+	for _, operation := range []string{"build", "land", "advance"} {
 		for _, failRefresh := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/fail-refresh=%v", operation, failRefresh), func(t *testing.T) {
 				f := newFixture(t)
@@ -213,10 +213,13 @@ func TestFinalPushRefreshesCredentials(t *testing.T) {
 					}
 					return f.remote, Auth{Password: "fresh-token"}, nil
 				}
-				if operation == "land" {
+				switch operation {
+				case "build":
+					_, err = f.g.BuildTestRef(ctx, testRepo, forge.BuildRequest{Ref: "openmerge/queue/main/refresh-final", BaseSHA: f.base, PRs: f.prs[:1], Method: forge.Merge, BatchID: "refresh-final"})
+				case "land":
 					_, err = f.g.Land(ctx, testRepo, forge.LandRequest{Base: "main", ExpectedBaseSHA: f.base, TestedSHA: tested,
 						Fence: testFence, ExpectedFence: initial, NextFenceID: "land/refresh", PRs: f.prs[:1]})
-				} else {
+				default:
 					_, err = f.g.AdvanceFence(ctx, testRepo, testFence, initial, "abandon/refresh")
 				}
 				if calls != 2 {

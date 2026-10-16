@@ -13,14 +13,15 @@ import (
 
 func TestNegatedConditionsFailClosed(t *testing.T) {
 	for _, text := range []string{"conflict", "#approved-reviews-by < 1"} {
-		data := fmt.Sprintf("version: 1\nqueues:\n  - name: default\n    enter_when: &rules\n      - not: %q\n    merge_when: *rules\n", text)
+		data := fmt.Sprintf("version: 1\nqueues:\n  - name: default\n    enter_when: &rules\n      - check-success = ci\n      - not: %q\n    merge_when: *rules\n", text)
 		cfg, _, err := Load([]byte(data))
 		if err != nil {
 			t.Fatal(err)
 		}
 		for _, expression := range []condition.Expression{cfg.Queues[0].EnterWhen, cfg.Queues[0].MergeWhen} {
-			for _, pr := range []condition.PR{nil, condition.Snapshot{
-				"conflict": condition.String("false"), "approved-reviews-by": condition.Bool(false),
+			for _, pr := range []condition.PR{condition.Snapshot{"check-success": condition.Strings("ci")}, condition.Snapshot{
+				"check-success": condition.Strings("ci"),
+				"conflict":      condition.String("false"), "approved-reviews-by": condition.Bool(false),
 			}} {
 				ok, failures := expression.Evaluate(pr)
 				if ok || len(failures) != 1 || !failures[0].Unknown || len(failures[0].Children) != 1 || failures[0].Children[0].Attribute == "" {
@@ -66,7 +67,7 @@ func TestMergeKeyIdentity(t *testing.T) {
 	}
 	// Value, rather than YAML's inferred tag, identifies an actual merge key.
 	for _, key := range []string{"<<", "'<<'", "!!str <<", "!!merge <<"} {
-		cfg, _, err := Load([]byte(prefix + "    batch: {" + key + ": {max_size: 8}, max_size: 1}\n"))
+		cfg, _, err := Load([]byte(prefix + "    batch: {" + key + ": {max_size: 8}, max_size: 1}\n    merge_when: [check-success = ci]\n"))
 		if err != nil || cfg.Queues[0].Batch.MaxSize != 1 {
 			t.Errorf("merge key %s: %+v, %v", key, cfg, err)
 		}
@@ -137,7 +138,7 @@ func TestYAMLResourceLimits(t *testing.T) {
 		{"nesting depth", nestedInput(120), false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			cfg, warnings, err := Load([]byte(test.data))
+			cfg, warnings, err := Load([]byte(test.data + "    merge_when: [check-success = ci]\n"))
 			if test.valid {
 				if err != nil {
 					t.Fatal(err)

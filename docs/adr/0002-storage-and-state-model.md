@@ -41,6 +41,8 @@ Every matching `ChecksRefreshed` advances the refresh count, giving the next act
 
 **Every decision is explainable.** Because each planned action records the event range and planner inputs that produced it, the API can answer "why is this PR in this state" by pointing at concrete events. This backs the dashboard's stuck-PR explainer and the agent-facing failure explanations in Phase 3.
 
+**Server reconciliation.** Inclusive comment cursors, comment receipts, changed-observation fingerprints, and webhook delivery IDs live in Postgres; accepted commands and changed decision inputs append queue events atomically with their receipts. `PauseRequested` shares poison pause/resume semantics, while `RefreshRequested` revokes cached CI evidence and requests an early read; timer-bearing CI refresh events remain recorded even when the outcome is unchanged. An unpinned queue command binds to the head current at processing without ordering observations by clocks, granting only that head's existing trust (a writer-pushed same-repository head or a fork head with a writer's exact-head approval); the SHA form binds strict user intent.
+
 **Retention.** Old events are compacted per queue into a snapshot plus recent history after a configurable window. Compaction must preserve the ability to rebuild current state.
 
 ## Consequences

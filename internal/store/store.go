@@ -110,14 +110,14 @@ func lockQueue(ctx context.Context, tx pgx.Tx, q QueueID) error {
 // carries the delivery key, so deduplication returns the original final watermark.
 // An empty key disables deduplication. Empty deliveries are rejected.
 func (s *Store) Append(ctx context.Context, q QueueID, events []queue.Event, dedupeKey string) (int64, error) {
-	return s.append(ctx, q, events, dedupeKey, nil)
+	return s.append(ctx, q, events, dedupeKey, nil, nil)
 }
 
 // ErrStale rejects a start whose action is no longer in the current plan.
 var ErrStale = errors.New("action is no longer authorized to start")
 
-func (s *Store) append(ctx context.Context, q QueueID, events []queue.Event, dedupeKey string, execution *emission) (int64, error) {
-	if len(events) == 0 {
+func (s *Store) append(ctx context.Context, q QueueID, events []queue.Event, dedupeKey string, execution *emission, observation *record) (int64, error) {
+	if len(events) == 0 && observation == nil {
 		return 0, errors.New("cannot append an empty delivery")
 	}
 	var watermark int64
@@ -125,6 +125,20 @@ func (s *Store) append(ctx context.Context, q QueueID, events []queue.Event, ded
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		if err := s.lockQueue(ctx, tx, q); err != nil {
 			return err
+		}
+		if observation != nil {
+			var previous []byte
+			err := tx.QueryRow(ctx, `SELECT value FROM observations WHERE queue_id = $1 AND key = $2`, q, observation.key).Scan(&previous)
+			if err == nil && string(previous) == string(observation.value) {
+				return nil
+			}
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `INSERT INTO observations(queue_id, key, value) VALUES ($1, $2, $3)
+				ON CONFLICT (queue_id, key) DO UPDATE SET value = EXCLUDED.value`, q, observation.key, observation.value); err != nil {
+				return err
+			}
 		}
 		if dedupeKey != "" {
 			err := tx.QueryRow(ctx, `SELECT id FROM events WHERE queue_id = $1 AND dedupe_key = $2`, q, dedupeKey).Scan(&watermark)
@@ -184,7 +198,7 @@ type emission struct {
 // Use a worker context whose lifetime covers execution and result persistence.
 func (s *Store) Emit(ctx context.Context, claim ClaimedAction, cfg queue.Config) func(queue.Event) error {
 	return func(e queue.Event) error {
-		_, err := s.append(ctx, claim.QueueID, []queue.Event{e}, "", &emission{claim, cfg})
+		_, err := s.append(ctx, claim.QueueID, []queue.Event{e}, "", &emission{claim, cfg}, nil)
 		return err
 	}
 }

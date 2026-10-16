@@ -20,7 +20,7 @@ import (
 )
 
 // Remote resolves an opaque forge repository path and fresh credentials.
-// Initial credentials must last through preflight reads and fetches. Land and
+// Initial credentials must last through preflight reads and fetches. BuildTestRef, Land and
 // AdvanceFence resolve again immediately before pushing; the fresh credentials
 // must remain valid for that push.
 type Remote func(context.Context, forge.RepoRef) (url string, auth Auth, err error)

@@ -20,9 +20,20 @@ func Plan(cfg Config, s State, now time.Time) []Action {
 	return actions
 }
 
+// DeferredByPause distinguishes temporarily suppressed work from actions that
+// the resumed plan has superseded. Resume is projected without appending it.
+func DeferredByPause(cfg Config, s State, action Action, now time.Time) bool {
+	if s.PauseReason(cfg) == "" {
+		return false
+	}
+	return slices.ContainsFunc(Plan(cfg, Apply(s, ResumeRequested{}), now), func(planned Action) bool {
+		return planned.Key() == action.Key()
+	})
+}
+
 func plan(cfg Config, s State, now time.Time) []Action {
 	var actions []Action
-	if s.actionPoison.key != "" {
+	if s.actionPoison.key != "" || s.pause.Reason != "" {
 		if len(s.Entries) > 0 {
 			report := s.pauseReport()
 			if _, done := s.acknowledged[report.Key()]; !done {
@@ -44,7 +55,7 @@ func plan(cfg Config, s State, now time.Time) []Action {
 	}
 	batch := s.Active
 	if batch == nil {
-		if s.actionPoison.key != "" {
+		if s.actionPoison.key != "" || s.pause.Reason != "" {
 			return actions
 		}
 		if s.PauseReason(cfg) != "" || s.buildRetry.detail != "" {
@@ -72,7 +83,7 @@ func plan(cfg Config, s State, now time.Time) []Action {
 		}
 		return actions
 	}
-	if s.actionPoison.key != "" {
+	if s.actionPoison.key != "" || s.pause.Reason != "" {
 		return actions
 	}
 	for _, pr := range batch.PRs {
@@ -152,10 +163,13 @@ type actionPoisonState struct {
 	revision    uint64
 }
 
-// PauseReason reports a poison pause or the configured build failure limit.
+// PauseReason reports an external pause, poison pause or build failure limit.
 // ResumeRequested clears either pause. A changed base or successful build clears
 // only the build failure streak. Apply has no config, so Plan evaluates its limit.
 func (s State) PauseReason(cfg Config) string {
+	if s.pause.Reason != "" {
+		return s.pause.Reason
+	}
 	if s.actionPoison.key != "" {
 		return "action-poisoned"
 	}
@@ -170,6 +184,9 @@ func (s State) PauseReason(cfg Config) string {
 }
 
 func (s State) pauseReport() ReportStatus {
+	if s.pause.Reason != "" {
+		return ReportStatus{PR: s.Entries[0].PR, HeadSHA: s.Entries[0].HeadSHA, Status: "paused", Reason: s.pause.Reason, Detail: s.pause.Detail, revision: s.pauseRevision, admission: s.Entries[0].AdmissionID}
+	}
 	if s.actionPoison.key != "" {
 		return ReportStatus{
 			PR: s.Entries[0].PR, HeadSHA: s.Entries[0].HeadSHA, Status: "paused", Reason: "action-poisoned",
@@ -264,4 +281,18 @@ func CanStart(cfg Config, s State, action Action, event Event) bool {
 		}
 	}
 	return false
+}
+
+// PauseDetail gives the human-readable explanation used by queue status checks.
+func (s State) PauseDetail(cfg Config) string {
+	if s.PauseReason(cfg) == "" {
+		return ""
+	}
+	if s.pause.Reason != "" {
+		return s.pause.Detail
+	}
+	if len(s.Entries) > 0 {
+		return s.pauseReport().Detail
+	}
+	return s.PauseReason(cfg)
 }
