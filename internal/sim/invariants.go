@@ -80,6 +80,7 @@ func (s *simulation) observeAbandonments() error {
 			attempt, _, _ = strings.Cut(attempt, " ")
 			if tested := s.attempts[attempt]; tested != "" {
 				s.abandoned[tested] = attempt
+				s.abandonedAttempts[attempt] = true
 			}
 		}
 	}
@@ -98,16 +99,16 @@ func (s *simulation) checkInvariants() error {
 	if err != nil {
 		return err
 	}
-	if attempt := s.abandoned[tip]; attempt != "" && (tip != s.mainSHA || s.observed[tip] != nil) {
-		return fmt.Errorf("abandoned attempt %s became main tip %s", attempt, tip)
+	if err := s.checkAbandonedLanding(tip); err != nil {
+		return err
 	}
 	if err := s.observeAbandonments(); err != nil {
 		return err
 	}
 	// An independent actor can push the tested SHA without settling our
 	// attempt. Only queue pushes count as landings of an abandoned attempt.
-	if attempt := s.abandoned[tip]; attempt != "" && (tip != s.mainSHA || s.observed[tip] != nil) {
-		return fmt.Errorf("abandoned attempt %s became main tip %s", attempt, tip)
+	if err := s.checkAbandonedLanding(tip); err != nil {
+		return err
 	}
 	if tip == s.mainSHA {
 		return nil
@@ -117,6 +118,18 @@ func (s *simulation) checkInvariants() error {
 		return err
 	}
 	run := s.tests[tip]
+	if s.cfg.MergeMethod == queue.FastForward {
+		_, _, tested, err := s.forge.ReadFence(context.Background(), s.repo, "openmerge/fence/main")
+		if err != nil {
+			return err
+		}
+		run = s.tests[tested]
+		if run != nil {
+			if err := s.forge.VerifyFastForward(context.Background(), s.repo, run.base, tested, tip); err != nil {
+				return err
+			}
+		}
+	}
 	if run == nil || !run.done || !run.success {
 		return fmt.Errorf("main is not green: first-parent commit %s has no passing completed CI run covering its landing", tip)
 	}
@@ -124,7 +137,7 @@ func (s *simulation) checkInvariants() error {
 		return fmt.Errorf("main landing %s from %s differs from CI coverage based on %s", tip, s.mainSHA, run.base)
 	}
 	for _, sha := range added {
-		if attempt := s.abandoned[sha]; attempt != "" {
+		if attempt := s.abandoned[sha]; attempt != "" && s.cfg.MergeMethod != queue.FastForward {
 			return fmt.Errorf("abandoned attempt %s became main tip %s", attempt, sha)
 		}
 		commit, err := s.forge.Commit(s.repo, sha)
@@ -162,7 +175,7 @@ func (s *simulation) verifyPRContent(tip string, pr queue.BatchPR, method queue.
 	if !s.forge.ContainsPR(s.repo, tip, pr.PR) {
 		return fmt.Errorf("landed commit %s lacks intended PR %d content", tip, pr.PR)
 	}
-	if method == queue.Merge {
+	if method == queue.Merge || method == queue.FastForward {
 		ancestor, err := s.forge.IsAncestor(context.Background(), s.repo, pr.HeadSHA, tip)
 		if err != nil {
 			return err
@@ -178,12 +191,16 @@ func (s *simulation) verifyLanded(batch *queue.Batch, event queue.Landed) error 
 	if err := s.checkInvariants(); err != nil {
 		return err
 	}
-	landing := s.observed[batch.TestedSHA]
+	landedSHA := batch.TestedSHA
+	if head := batch.LandingAttempt.FastForwardHeadSHA; head != "" {
+		landedSHA = head
+	}
+	landing := s.observed[landedSHA]
 	tip, err := s.forge.ReadRef(context.Background(), s.repo, "main")
 	if err != nil {
 		return err
 	}
-	if landing == nil || landing.verified || landing.base != batch.BaseSHA || tip != batch.TestedSHA || event.NewBaseSHA != batch.TestedSHA {
+	if landing == nil || landing.verified || landing.base != batch.BaseSHA || tip != landedSHA || event.NewBaseSHA != landedSHA {
 		return fmt.Errorf("landed event for batch %s has no matching forge landing: expected %s -> tested %s, event tip %s, actual main tip %s", batch.ID, batch.BaseSHA, batch.TestedSHA, event.NewBaseSHA, tip)
 	}
 	run := s.tests[batch.TestedSHA]
@@ -218,6 +235,7 @@ func (s *simulation) verifyAbandoned(batch *queue.Batch, event queue.LandingAban
 		return fmt.Errorf("landing attempt %s for batch %s was abandoned with no injected fault or external base push since it started", batch.LandingAttempt.ID, batch.ID)
 	}
 	s.abandoned[batch.TestedSHA] = batch.LandingAttempt.ID
+	s.abandonedAttempts[batch.LandingAttempt.ID] = true
 	return s.checkInvariants()
 }
 
@@ -252,5 +270,28 @@ func (s *simulation) checkSettled() error {
 		}
 	}
 
+	return nil
+}
+
+// Generated test commits identify one batch. Fast-forward lands the marker's
+// parent, so its fence binds that head to the unique tested marker and attempt.
+func (s *simulation) checkAbandonedLanding(tip string) error {
+	if s.cfg.MergeMethod == queue.FastForward {
+		_, id, tested, err := s.forge.ReadFence(context.Background(), s.repo, "openmerge/fence/main")
+		if err != nil {
+			return err
+		}
+		marker, err := s.forge.Commit(s.repo, tested)
+		if err != nil && tested != "" {
+			return err
+		}
+		if attempt, ok := strings.CutPrefix(id, "land/"); ok && len(marker.Parents) == 1 && marker.Parents[0] == tip && s.abandonedAttempts[attempt] {
+			return fmt.Errorf("abandoned attempt %s became main tip %s", attempt, tip)
+		}
+		return nil
+	}
+	if attempt := s.abandoned[tip]; attempt != "" && (tip != s.mainSHA || s.observed[tip] != nil) {
+		return fmt.Errorf("abandoned attempt %s became main tip %s", attempt, tip)
+	}
 	return nil
 }

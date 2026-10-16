@@ -7,6 +7,8 @@ import (
 	"os"
 	"runtime/debug"
 	"strings"
+
+	"github.com/CanadaApollo6/openmerge/schema"
 )
 
 var version = "dev"
@@ -16,6 +18,7 @@ const usage = `Usage: openmerge <command>
 Commands:
   version                 Print version and build information
   config validate [path]  Validate repository configuration
+  config schema           Print the version 1 JSON Schema
   queue status [options]  Read queue status and PR explanations
   serve [options]         Run the GitHub merge queue server
   setup <github|rulesets>  Set up the GitHub App and repository rules
@@ -46,6 +49,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 		output = fmt.Sprintf("openmerge %s\ncommit: %s\ngo: %s\n", release, commit, goVersion)
+	case len(args) == 2 && args[0] == "config" && args[1] == "schema":
+		output = schema.V1
 	case (len(args) == 2 || len(args) == 3) && args[0] == "config" && args[1] == "validate":
 		return validateConfig(args[2:], stdout, stderr)
 	case len(args) > 0 && args[0] == "serve":

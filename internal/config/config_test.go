@@ -79,6 +79,7 @@ func TestDefaultsAndOverrides(t *testing.T) {
 		{"defaults", "", queue.Squash, time.Hour, Batch{MaxSize: 1}, 0},
 		{"merge", "    merge_method: merge\n", queue.Merge, time.Hour, Batch{MaxSize: 1}, 0},
 		{"rebase", "    merge_method: rebase\n", queue.Rebase, time.Hour, Batch{MaxSize: 1}, 0},
+		{"fast-forward", "    merge_method: fast-forward\n", queue.FastForward, time.Hour, Batch{MaxSize: 1}, 0},
 		{"squash", "    merge_method: squash\n", queue.Squash, time.Hour, Batch{MaxSize: 1}, 0},
 		{"timeout", "    check_timeout: 1h2m3s\n", queue.Squash, time.Hour + 2*time.Minute + 3*time.Second, Batch{MaxSize: 1}, 0},
 		{"disabled string", "    check_timeout: '0'\n", queue.Squash, 0, Batch{MaxSize: 1}, 0},
@@ -92,7 +93,9 @@ func TestDefaultsAndOverrides(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			cfg, warnings, err := Load([]byte("version: 1\nqueues:\n  - name: default\n    merge_when: [check-success = ci]\n" + tt.fields))
+			data := []byte("version: 1\nqueues:\n  - name: default\n    merge_when: [check-success = ci]\n" + tt.fields)
+			cfg, warnings, err := Load(data)
+			assertSchemaAgreement(t, data, err)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -142,7 +145,7 @@ func TestLoadErrors(t *testing.T) {
 		{"unknown root", prefix + "prioritis: []", `line 4: prioritis: unknown key "prioritis"`},
 		{"unknown queue", prefix + "    merge_methd: squash", `line 4: queues[0].merge_methd: unknown key "merge_methd"; did you mean "merge_method"?`},
 		{"unknown batch", prefix + "    batch:\n      max_siz: 2", `line 5: queues[0].batch.max_siz: unknown key "max_siz"; did you mean "max_size"?`},
-		{"invalid method", prefix + "    merge_method: fast-forward", "line 4: queues[0].merge_method: expected merge, squash, or rebase"},
+		{"invalid method", prefix + "    merge_method: invalid", "line 4: queues[0].merge_method: expected merge, squash, rebase, or fast-forward"},
 		{"typed method", prefix + "    merge_method: 1", "line 4: queues[0].merge_method: expected a string"},
 		{"invalid duration", prefix + "    check_timeout: tomorrow", "line 4: queues[0].check_timeout: expected a nonnegative Go duration string"},
 		{"negative duration", prefix + "    check_timeout: -1s", "line 4: queues[0].check_timeout: expected a nonnegative Go duration string"},
@@ -185,6 +188,7 @@ func TestLoadErrors(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			cfg, warnings, err := Load([]byte(tt.input))
+			assertSchemaAgreement(t, []byte(tt.input), err)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("error = %v, want containing %q", err, tt.want)
 			}
@@ -220,6 +224,7 @@ queues:
     batch: &batch {max_size: 8, max_wait: 30s}
 `)
 	cfg, warnings, err := Load(data)
+	assertSchemaAgreement(t, data, err)
 	if err != nil || len(warnings) != 0 {
 		t.Fatalf("Load: %v, warnings: %v", err, warnings)
 	}
@@ -261,7 +266,9 @@ func TestAliasReuseAndMergeKeys(t *testing.T) {
 			if !strings.Contains(fields, "merge_when:") {
 				fields += "    merge_when: [check-success = ci]\n"
 			}
-			cfg, warnings, err := Load([]byte("version: 1\nqueues:\n  - name: default\n" + fields))
+			data := []byte("version: 1\nqueues:\n  - name: default\n" + fields)
+			cfg, warnings, err := Load(data)
+			assertSchemaAgreement(t, data, err)
 			if err != nil || len(warnings) != 0 {
 				t.Fatalf("Load = %v, warnings = %v", err, warnings)
 			}
@@ -294,6 +301,7 @@ func TestGoldenExampleMatchesADR(t *testing.T) {
 		t.Fatal("golden example differs from ADR 0003")
 	}
 	cfg, warnings, err := Load(data)
+	assertSchemaAgreement(t, data, err)
 	if err != nil {
 		t.Fatalf("ADR example does not validate: %s", err)
 	}

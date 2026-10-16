@@ -67,4 +67,11 @@
 // scripts/check-simulator-mutations.py replays reviewer mutations of the planner,
 // executor, and fake forge through Go overlays and confirms the simulator rejects
 // each one. Run it after changing an invariant or a fault.
+//
+// Fast-forward mode leaves heads unchanged. The standard workload creates
+// independent heads from the initial base, so after the first passing landing
+// the remaining heads dequeue as fast-forward-required. It never rebases those
+// heads. Each build tests a unique empty marker above the head. The simulator
+// checks marker CI coverage against the landed parent's history and binds the
+// marker to the attempt through the landing fence.
 package sim

@@ -1,0 +1,28 @@
+{
+  "action": "completed",
+  "check_suite": {
+    "id": 99,
+    "node_id": "CS_99",
+    "head_branch": "openmerge/queue/main/b7",
+    "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "status": "completed",
+    "conclusion": "success",
+    "url": "https://api.github.com/repos/acme/project/check-suites/99",
+    "before": "0000000000000000000000000000000000000000",
+    "after": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "pull_requests": [],
+    "app": {
+      "id": 15368,
+      "slug": "github-actions",
+      "name": "GitHub Actions",
+      "owner": { "login": "github", "id": 9919, "type": "Organization" }
+    },
+    "created_at": "2026-10-16T00:00:00Z",
+    "updated_at": "2026-10-16T00:01:00Z",
+    "latest_check_runs_count": 1,
+    "check_runs_url": "https://api.github.com/repos/acme/project/check-suites/99/check-runs"
+  },
+  "repository": { "id": 50, "name": "project", "full_name": "acme/project" },
+  "installation": { "id": 7 },
+  "sender": { "login": "github-actions[bot]", "id": 41898282, "type": "Bot" }
+}

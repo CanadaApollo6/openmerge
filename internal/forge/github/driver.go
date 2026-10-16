@@ -295,14 +295,14 @@ func (d *Driver) CheckRuns(ctx context.Context, repo forge.RepoRef, sha string) 
 	if err != nil {
 		return nil, err
 	}
-	suites := make(map[int64]string)
+	suites := make(map[int64]*gh.CheckSuite)
 	for page := 1; page != 0; {
 		list, res, err := d.client.Checks.ListCheckSuitesForRef(ctx, owner, name, sha, &gh.ListCheckSuiteOptions{ListOptions: gh.ListOptions{Page: page, PerPage: 100}})
 		if err != nil {
 			return nil, safeError(err)
 		}
 		for _, suite := range list.CheckSuites {
-			suites[suite.GetID()] = suite.GetStatus()
+			suites[suite.GetID()] = suite
 		}
 		page = res.NextPage
 	}
@@ -310,10 +310,11 @@ func (d *Driver) CheckRuns(ctx context.Context, repo forge.RepoRef, sha string) 
 	for _, run := range runs {
 		if !d.own(run) {
 			state := checkState(run.GetStatus(), run.GetConclusion())
-			if run.GetCheckSuite().GetID() <= 0 || suites[run.GetCheckSuite().GetID()] != "completed" || run.GetApp().GetID() <= 0 {
+			suite := suites[run.GetCheckSuite().GetID()]
+			if run.GetCheckSuite().GetID() <= 0 || suite.GetStatus() != "completed" || run.GetApp().GetID() <= 0 {
 				state = forge.Pending
 			}
-			result = append(result, forge.CheckRun{ID: uint64(max(run.GetID(), 0)), Name: run.GetName(), Source: "app:" + strconv.FormatInt(run.GetApp().GetID(), 10), State: state})
+			result = append(result, forge.CheckRun{ID: uint64(max(run.GetID(), 0)), Name: run.GetName(), Source: "app:" + strconv.FormatInt(run.GetApp().GetID(), 10), State: state, HeadBranch: suite.GetHeadBranch()})
 		}
 	}
 	for page := 1; page != 0; {
@@ -380,13 +381,17 @@ func (d *Driver) ReportStatus(ctx context.Context, repo forge.RepoRef, pr int, h
 	default:
 		return errors.New("unknown OpenMerge status state")
 	}
+	// Reasons and summaries can quote check names, branches and diagnostics from
+	// outside OpenMerge; redact them before they reach a public PR.
 	title := string(s.State)
 	if s.Reason != "" {
-		title += ": " + s.Reason
+		title += ": " + d.app.sanitizer.Sanitize(s.Reason)
 	}
 	summary := s.Summary
 	if summary == "" {
 		summary = title
+	} else {
+		summary = d.app.sanitizer.SanitizeText(summary)
 	}
 	output := &gh.CheckRunOutput{Title: &title, Summary: &summary}
 	external := "openmerge/pr/" + strconv.Itoa(pr)
@@ -437,7 +442,8 @@ func (d *Driver) Comment(ctx context.Context, repo forge.RepoRef, pr int, key, b
 		}
 		page = res.NextPage
 	}
-	_, _, err = d.client.Issues.CreateComment(ctx, owner, name, pr, gh.IssueCommentRequest{Body: body + "\n\n" + marker})
+	// Comment bodies are redacted like statuses; the marker is OpenMerge's own.
+	_, _, err = d.client.Issues.CreateComment(ctx, owner, name, pr, gh.IssueCommentRequest{Body: d.app.sanitizer.SanitizeText(body) + "\n\n" + marker})
 	return safeError(err)
 }
 

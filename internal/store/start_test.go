@@ -138,8 +138,9 @@ func TestLandingStartRevalidatesAfterBegin(t *testing.T) {
 			}
 			f := fake.New()
 			git := &startGit{Git: f}
-			x := executor.Executor{Driver: f, Git: git, RequiredChecks: []string{"ci"}, Now: func() time.Time { return epoch }}
-			f.SetCheckRuns(x.Repo, claim.Action.(queue.Land).TestedSHA, []forge.CheckRun{{Name: "ci", State: forge.Success}})
+			x := executor.Executor{Driver: f, Git: git, Base: "main", RequiredChecks: []string{"ci"}, Now: func() time.Time { return epoch }}
+			land := claim.Action.(queue.Land)
+			f.SetCheckRuns(x.Repo, land.TestedSHA, []forge.CheckRun{{Name: "ci", State: forge.Success, HeadBranch: land.Ref}})
 			err = x.Execute(t.Context(), claim.Action, s.Emit(t.Context(), claim, config))
 			assertStaleStart(t, s, q, claim, watermark, git.calls, err)
 		})

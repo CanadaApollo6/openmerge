@@ -84,3 +84,23 @@ func TestCommentDedupeRequiresOwnIdentity(t *testing.T) {
 		t.Fatal("driver ignored its own existing marker")
 	}
 }
+
+func TestCheckProvenanceDefaultsPreserveExplicitSources(t *testing.T) {
+	f, e := fixture(t)
+	const ref = "openmerge/queue/main/b7"
+	sha, err := f.BuildTestRef(t.Context(), repo, forge.BuildRequest{Ref: ref, BaseSHA: e.BaseSHA, PRs: e.PRs[:1], Method: forge.Merge, BatchID: "b7"})
+	must(t, err)
+	f.SetCheckRuns(repo, sha, []forge.CheckRun{
+		{Name: "ci", State: forge.Success},
+		{Name: "ci", Source: "app:15368", State: forge.Success},
+		{Name: "ci", Source: "app:15368", State: forge.Success, HeadBranch: "foreign"},
+		{Name: "ci", Source: "status:external-ci", State: forge.Success},
+	})
+	runs, err := f.CheckRuns(t.Context(), repo, sha)
+	must(t, err)
+	for i, want := range []string{ref, "", "foreign", ""} {
+		if runs[i].HeadBranch != want {
+			t.Fatalf("run %d provenance = %q, want %q", i, runs[i].HeadBranch, want)
+		}
+	}
+}

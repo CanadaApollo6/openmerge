@@ -48,7 +48,7 @@ func TestReviewRevokedWriterCannotApproveNewHead(t *testing.T) {
 }
 
 func reviewRefresh(f *apiFixture) ([]queue.Event, error) {
-	x := executor.Executor{Driver: f.driver, Repo: testRepo, RequiredChecks: []string{"CI"}}
+	x := executor.Executor{Driver: f.driver, Repo: testRepo, Base: "main", RequiredChecks: []string{"CI"}}
 	var events []queue.Event
 	err := x.Execute(context.Background(), queue.RefreshChecks{BatchID: "batch", TestedSHA: "tested"}, func(e queue.Event) error { events = append(events, e); return nil })
 	return events, err

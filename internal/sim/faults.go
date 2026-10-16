@@ -22,6 +22,8 @@ func faultScope(action queue.Action) string {
 		return "checks/" + a.BatchID
 	case queue.Land:
 		return "landing/" + a.BatchID
+	case queue.FastForwardResolveLanding:
+		return "landing/" + a.BatchID
 	case queue.ResolveLanding:
 		return "landing/" + a.BatchID
 	default:

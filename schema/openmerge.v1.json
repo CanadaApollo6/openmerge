@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/CanadaApollo6/openmerge/main/schema/openmerge.v1.json",
+  "title": "OpenMerge repository configuration, version 1",
+  "description": "Configuration read from the base branch. Phase 1 supports exactly one queue. See internal/config/README.md for YAML, grammar, and semantic validation details.",
+  "$comment": "Apply after YAML alias/merge expansion and strict YAML validation. Formats openmerge-condition and openmerge-duration are loader assertions: editors may ignore them. Patterns describe syntax; Go RE2/glob compilation, integer/duration overflow, and YAML limits remain loader checks. Run openmerge config validate before committing.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "queues"
+  ],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Configuration version. Only version 1 is supported."
+    },
+    "queues": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 1,
+      "description": "Exactly one queue in Phase 1.",
+      "items": {
+        "$ref": "#/$defs/queue"
+      }
+    }
+  },
+  "$defs": {
+    "queue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "merge_when"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "[^\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]",
+          "description": "Nonempty queue name (must contain a non-whitespace character)."
+        },
+        "enter_when": {
+          "$ref": "#/$defs/conditions",
+          "default": [],
+          "description": "Conjunction required to enter and remain queued. Empty means true; exact-head trust is independently required."
+        },
+        "merge_when": {
+          "$ref": "#/$defs/conditions",
+          "contains": {
+            "$ref": "#/$defs/requiredCheck"
+          },
+          "description": "Conjunction evaluated on the tested commit. Must require a positive named check-success equality directly or through nested and groups; or/not/counts do not qualify. The loader also rejects expressions passing with missing or failed checks."
+        },
+        "merge_method": {
+          "type": "string",
+          "enum": [
+            "merge",
+            "squash",
+            "rebase",
+            "fast-forward"
+          ],
+          "default": "squash",
+          "description": "Commit preparation method. Fast-forward tests the unchanged final head and dequeues diverged heads without rebasing; only a consecutive linear chain can batch."
+        },
+        "check_timeout": {
+          "$ref": "#/$defs/duration",
+          "default": "1h",
+          "description": "Maximum check wait, measured from test-ref publication. Zero disables the timeout."
+        },
+        "batch": {
+          "type": "object",
+          "additionalProperties": false,
+          "default": {
+            "max_size": 1,
+            "max_wait": "0s"
+          },
+          "description": "Serial batch formation. Failing batches are bisected in queue order.",
+          "properties": {
+            "max_size": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 128,
+              "default": 1,
+              "description": "Maximum PRs tested together. Fast-forward selects only a consecutive linear prefix."
+            },
+            "max_wait": {
+              "$ref": "#/$defs/duration",
+              "default": "0s",
+              "description": "Wait for a partial fresh batch to fill; singleton mode and pending retry/bisection groups start immediately."
+            }
+          }
+        }
+      }
+    },
+    "duration": {
+      "description": "Nonnegative Go time.ParseDuration string (signed 64-bit nanoseconds); integer zero also disables. Units: ns, us, \u00b5s, \u03bcs, ms, s, m, h. Fractions and composite durations are accepted. The loader checks range and sign, including negative zero.",
+      "oneOf": [
+        {
+          "type": "integer",
+          "const": 0
+        },
+        {
+          "type": "string",
+          "format": "openmerge-duration",
+          "pattern": "^(?:[+-]?0|[+-]?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:ns|us|\u00b5s|\u03bcs|ms|s|m|h)(?:(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:ns|us|\u00b5s|\u03bcs|ms|s|m|h))*)$"
+        }
+      ]
+    },
+    "conditions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/condition"
+      },
+      "description": "Implicit AND of condition strings and logical groups. Quote strings beginning with # in YAML."
+    },
+    "condition": {
+      "description": "Atom [-][#]attribute [operator value], or exactly one and/or/not group. Missing or mistyped observations stay unknown, including under negation.",
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*-?(?:(?:draft|conflict)(?:[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*(?:=|!=)[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*(?:true|false))?|#(?:label|approved-reviews-by|files|check-success|check-failure|check-pending)[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*(?:=|!=|<=|>=|<|>)[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*[+-]?[0-9]+|(?:base|head|author|title|label|approved-reviews-by|files|check-success|check-failure|check-pending)[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*(?:=|!=|~=|glob[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+)[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*[\\s\\S]*[^\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000][\\s\\S]*)[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*$",
+          "format": "openmerge-condition",
+          "description": "Strings/lists: =, !=, ~= (Go RE2), glob. List lengths (#): =, !=, <, <=, >, >= and a Go integer. Booleans draft/conflict: bare or =/!= true/false. Prefix - negates. Value is the trimmed remainder, with no inner quoting syntax."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "maxProperties": 1,
+          "properties": {
+            "and": {
+              "$ref": "#/$defs/conditions",
+              "description": "All children must hold. Empty AND is true."
+            },
+            "or": {
+              "$ref": "#/$defs/conditions",
+              "description": "Any child must hold. Empty OR is false."
+            },
+            "not": {
+              "$ref": "#/$defs/condition",
+              "description": "Negates one string or logical group; unknown remains unknown."
+            }
+          }
+        }
+      ]
+    },
+    "requiredCheck": {
+      "description": "A required positive success atom, possibly nested only through conjunctions.",
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*check-success[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*=[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*[^\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000][\\s\\S]*$"
+        },
+        {
+          "type": "object",
+          "required": [
+            "and"
+          ],
+          "properties": {
+            "and": {
+              "type": "array",
+              "contains": {
+                "$ref": "#/$defs/requiredCheck"
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

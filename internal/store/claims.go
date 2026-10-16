@@ -114,7 +114,7 @@ func (s *Store) claim(ctx context.Context, q QueueID, limit int, lease time.Dura
 // Consequential reports whether an action must pass the durable in-flight gate.
 func Consequential(action queue.Action) bool {
 	switch action.(type) {
-	case queue.BuildTestRef, queue.Land, queue.ResolveLanding, queue.Dequeue, queue.FailBatch:
+	case queue.BuildTestRef, queue.Land, queue.ResolveLanding, queue.FastForwardResolveLanding, queue.Dequeue, queue.FailBatch:
 		return true
 	default:
 		return false
@@ -197,7 +197,7 @@ func (s *Store) BeginConsequential(ctx context.Context, a ClaimedAction, cfg que
 		var conflicting bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT FROM actions WHERE queue_id = $1
 			AND id <> $2 AND status = 'in_flight' AND lease_until > $4
-			AND NOT ($3 = 'resolve_landing' AND type = 'land'))`, a.QueueID, record.id, kind, now).Scan(&conflicting); err != nil {
+			AND NOT ($3 IN ('resolve_landing', 'fast_forward_resolve_landing') AND type = 'land'))`, a.QueueID, record.id, kind, now).Scan(&conflicting); err != nil {
 			return err
 		}
 		if conflicting {

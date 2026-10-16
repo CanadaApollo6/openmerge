@@ -107,6 +107,11 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 		}
 	}
 	x := executor.Executor{Driver: w.Driver, Git: w.Git, Repo: w.repo(), Base: w.Key.BaseBranch, DisableDeleteHeadBranch: s.options.DisableDeleteHeadBranch}
+	x.PreviousUnboundChecks = state.UnboundChecks()
+	x.ReferencesCheck = w.cfg.MergeWhen.ReferencesCheck
+	if dequeue, ok := claim.Action.(queue.Dequeue); ok {
+		x.ChecksTimeoutDetail = state.DequeueDetail(dequeue.PR, dequeue.Reason)
+	}
 	var finalChecks []forge.CheckRun
 	x.CheckPolicy = func(checks []forge.CheckRun) (bool, bool, error) {
 		finalChecks = checks
@@ -254,6 +259,16 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 		}
 		if state.Active != nil && state.Active.TestedSHA == w.blockedSHA && w.blockedDetail != "" {
 			status = forge.Status{State: forge.Blocked, Reason: "ambiguous-check-sources", Summary: w.blockedDetail}
+		}
+		if state.Active != nil && (status.State == forge.Testing || status.Reason == "ambiguous-check-sources") {
+			if detail := state.CheckProvenanceDetail(); detail != "" {
+				if status.Reason == "" {
+					status = forge.Status{State: forge.Blocked, Reason: "unbound-check-provenance", Summary: detail}
+				} else {
+					status.Reason += ", unbound-check-provenance"
+					status.Summary += "; " + detail
+				}
+			}
 		}
 		if err := s.status(ctx, w, entry.PR, entry.HeadSHA, status); err != nil {
 			return err

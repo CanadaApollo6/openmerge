@@ -28,20 +28,21 @@ type Commit struct {
 }
 
 type repository struct {
-	refs        map[string]string
-	commits     map[string]Commit
-	prs         map[int]forge.PullRequest
-	checks      map[string][]forge.CheckRun
-	statuses    map[int]map[string]forge.Status
-	comments    map[int][]Comment
-	prCommits   map[int][]string
-	prBases     map[int]string
-	authors     map[string]forge.CommitAuthor
-	protected   map[string]bool
-	nonce       func() string
-	permissions map[string]bool
-	updated     map[int]time.Time
-	nextComment int64
+	refs          map[string]string
+	commits       map[string]Commit
+	prs           map[int]forge.PullRequest
+	checks        map[string][]forge.CheckRun
+	statuses      map[int]map[string]forge.Status
+	comments      map[int][]Comment
+	prCommits     map[int][]string
+	prBases       map[int]string
+	authors       map[string]forge.CommitAuthor
+	protected     map[string]bool
+	linearHistory map[string]bool
+	nonce         func() string
+	permissions   map[string]bool
+	updated       map[int]time.Time
+	nextComment   int64
 }
 
 // Forge implements both forge interfaces. Use New to construct it. All helpers
@@ -165,8 +166,8 @@ func (f *Forge) OnTestRef(fn func(sha string, prs []int)) {
 	f.onTestRef = fn
 }
 
-// BuildTestRef composes merge commits, one squash per PR, or rebased PR commits. Each
-// shape's top commit contains the batch ID. Failed builds never move the ref.
+// BuildTestRef composes merge/squash/rebase commits with a batch ID, or verifies
+// and publishes an empty marker over a fast-forward chain. Failed builds never move the ref.
 func (f *Forge) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.BuildRequest) (string, error) {
 	f.mu.Lock()
 	sha, prs, changed, err := f.build(ctx, f.repo(repo), req)
@@ -189,7 +190,7 @@ func (f *Forge) build(ctx context.Context, r *repository, req forge.BuildRequest
 	if req.Ref == "" || !forge.ValidBatchID(req.BatchID) || len(req.PRs) == 0 {
 		return "", nil, false, errors.New("test ref, valid batch ID, and PRs are required")
 	}
-	if req.Method != forge.Merge && req.Method != forge.Squash && req.Method != forge.Rebase {
+	if req.Method != forge.Merge && req.Method != forge.Squash && req.Method != forge.Rebase && req.Method != forge.FastForward {
 		return "", nil, false, fmt.Errorf("unsupported merge method %q", req.Method)
 	}
 	content := slices.Clone(base.PRs)
@@ -200,6 +201,14 @@ func (f *Forge) build(ctx context.Context, r *repository, req forge.BuildRequest
 		actual, ok := r.prs[pr.Number]
 		if !ok || actual.HeadSHA != pr.HeadSHA {
 			return "", nil, false, fmt.Errorf("PR %d head %q does not match actual head %q", pr.Number, pr.HeadSHA, actual.HeadSHA)
+		}
+		if req.Method == forge.FastForward {
+			if top == pr.HeadSHA || !r.isAncestor(top, pr.HeadSHA) {
+				return "", nil, false, fmt.Errorf("PR #%d: %w", pr.Number, forge.ErrNotFastForward)
+			}
+			top = pr.HeadSHA
+			prs = append(prs, pr.Number)
+			continue
 		}
 		content = append(content, pr.Number)
 		prs = append(prs, pr.Number)
@@ -239,6 +248,10 @@ func (f *Forge) build(ctx context.Context, r *repository, req forge.BuildRequest
 			top = r.commit(parents, content, message, files)
 		}
 	}
+	if req.Method == forge.FastForward {
+		head := r.commits[top]
+		top = r.commit([]string{top}, head.PRs, fmt.Sprintf("OpenMerge fast-forward test %s\n\nOpenMerge-Batch: %s", r.nonce(), req.BatchID), head.Files)
+	}
 	changed := r.refs[req.Ref] != top
 	r.refs[req.Ref] = top
 	return top, prs, changed, nil
@@ -252,7 +265,17 @@ func (f *Forge) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequ
 		return "", err
 	}
 	r := f.repo(repo)
-	if r.refs[req.Base] == req.TestedSHA || r.refs[req.Base] != req.ExpectedBaseSHA || !f.disableFenceLeaseForTesting && r.refs[req.Fence] != req.ExpectedFence {
+	landed := req.TestedSHA
+	if req.FastForwardHeadSHA != "" {
+		if len(req.PRs) == 0 || req.PRs[len(req.PRs)-1].HeadSHA != req.FastForwardHeadSHA {
+			return "", errors.New("fast-forward landing head must match the final pinned PR")
+		}
+		if err := r.verifyFastForward(req.ExpectedBaseSHA, req.TestedSHA, req.FastForwardHeadSHA); err != nil {
+			return "", err
+		}
+		landed = req.FastForwardHeadSHA
+	}
+	if r.refs[req.Base] == landed || r.refs[req.Base] != req.ExpectedBaseSHA || !f.disableFenceLeaseForTesting && r.refs[req.Fence] != req.ExpectedFence {
 		return "", forge.ErrLeaseRejected
 	}
 	if req.Base == req.Fence {
@@ -271,9 +294,9 @@ func (f *Forge) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequ
 	if err != nil {
 		return "", err
 	}
-	r.refs[req.Base], r.refs[req.Fence] = req.TestedSHA, next
+	r.refs[req.Base], r.refs[req.Fence] = landed, next
 	for _, pinned := range req.PRs {
-		if pr := r.prs[pinned.Number]; r.isAncestor(pinned.HeadSHA, req.TestedSHA) {
+		if pr := r.prs[pinned.Number]; r.isAncestor(pinned.HeadSHA, landed) {
 			pr.Closed = true
 			r.prs[pr.Number] = pr
 		}

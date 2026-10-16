@@ -41,7 +41,7 @@ This roadmap is grounded in the research in [`docs/research/`](docs/research/REA
 
 ## Phases
 
-Each phase has an exit test. A phase is done when its exit test passes on the fake forge and on a real GitHub test org.
+Each phase has an exit test. A phase is done when its exit test passes on the fake forge and on a real GitHub repository.
 
 ### Phase 0 — Foundations (now)
 
@@ -57,7 +57,7 @@ Each phase has an exit test. A phase is done when its exit test passes on the fa
 
 **Exit:** ADRs merged; a contributor can clone, run `make test`, and see a green (empty) suite.
 
-### Phase 1 — MVP: a queue that never lies (in progress)
+### Phase 1 — MVP: a queue that never lies (complete)
 
 - GitHub App (webhook intake, reconciler, installation tokens, rate-limit budget)
 - Fake forge with a scripted CI simulator; a simulation test suite for the planner
@@ -81,9 +81,13 @@ through the durable rules block; unreadable protection warns and retains state.
 Classic reads use installation permissions, so operators still audit protection
 when Administration read is unavailable and hidden ruleset bypass ownership.
 
-Phase 1 is **not complete**. Remaining work: publish the version-1 JSON Schema,
-implement the listed fast-forward mode (merge/squash/rebase are available), and
-verify the exit test on a real GitHub test organization. The Mergify importer remains a Phase 5 deliverable.
+- [x] Publish the [version-1 JSON Schema](schema/openmerge.v1.json), loader agreement tests, and `openmerge config schema`.
+- [x] Fast-forward landing, including linear-chain batches and divergence dequeue.
+- [x] Exit test on a real repository: since 2026-10-16 OpenMerge has landed its own
+  PRs on CanadaApollo6/openmerge (#17, #19 to #23 and the PR that closed this phase),
+  each as exactly the CI-tested commit. The 500-PR simulation runs in CI.
+
+Phase 1 is **complete**. The Mergify importer remains a Phase 5 deliverable.
 
 **Exit:** OpenMerge merges its own PRs. A simulated 500-PR day with 5% failure rate lands every passing PR with main green throughout.
 

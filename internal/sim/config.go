@@ -158,7 +158,7 @@ func (cfg Config) normalized() (Config, error) {
 		}
 	}
 	switch cfg.MergeMethod {
-	case queue.Merge, queue.Squash, queue.Rebase:
+	case queue.Merge, queue.Squash, queue.Rebase, queue.FastForward:
 	default:
 		return cfg, fmt.Errorf("unsupported merge method %q", cfg.MergeMethod)
 	}

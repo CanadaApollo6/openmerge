@@ -60,9 +60,10 @@ Commit-status APIs that lack cancelled and action-required keep the normalized s
 
 The executor aggregates as follows:
 
+- Drivers preserve the suite's triggering branch in `CheckRun.HeadBranch` (without `refs/heads/`), with empty meaning unknown. The executor applies the [queue CI provenance contract](operating.md#queue-ci-provenance) for every method before either aggregation policy. `status:` sources identify commit statuses, which lack branch provenance and remain accepted under the trust requirements documented there.
 - A required name reported by more than one source is ambiguous and stays pending, even if every source reports success. A missing source also stays pending. The executor emits `ChecksReopened` followed by `ChecksRefreshed`, emits no terminal `ChecksCompleted`, and returns `executor.CheckSourceAmbiguityError` with the name and sorted sources for the server to surface. Unrequired names do not block the batch.
 - Within one source, the newest run of each name wins, regardless of response order. A pending rerun supersedes an older result.
-- A GitHub check run whose suite is not completed is pending even if the run still reports an old success. Missing suite observations and unknown producer identities also fail safe as pending. Drivers must refresh suite state as well as run state. GitHub `check_suite` requested/rerequested/completed and `check_run` rerequested/completed webhooks normalize to `ChecksChanged{SHA}` and trigger these reads.
+- A matching GitHub check run whose suite is not completed is pending even if the run still reports an old success. Missing suite observations have unknown provenance and are ignored; unknown producer identities stay pending when provenance matches. Drivers must refresh suite state and branch as well as run state. GitHub `check_suite` requested/rerequested/completed and `check_run` rerequested/completed webhooks normalize to `ChecksChanged{SHA}` and trigger these reads.
 - Cancelled counts as failure until a newer run supersedes it.
 - Skipped and neutral count as failure unless the `AllowSkippedNeutral` option is set.
 - A required check with no run, or an unknown state, is pending.
@@ -79,9 +80,9 @@ Immediately before `LandingStarted`, the executor freshly reads `CheckRuns` for 
 `BuildTestRef` composes the test commit locally with git and pushes it to `openmerge/queue/...`. It must:
 
 - refuse a request whose pinned head is not the PR's current head;
-- produce the shape the merge method asks for: merge commits that keep each PR head as an ancestor, a single squashed commit per PR, or each PR commit replayed separately for rebase;
-- capture each PR's current title/body, head label and commit identity at build
-  time, rejecting metadata whose number/head differs from the pin, or whose
+- produce the shape the merge method asks for: merge commits that keep each PR head as an ancestor, a single squashed commit per PR, each PR commit replayed separately for rebase, or one empty marker above the final head of a strictly increasing ancestry chain for fast-forward;
+- for generated commits, capture each PR's current title/body, head label and
+  commit identity at build time, rejecting metadata whose number/head differs from the pin, or whose
   author identity/title is missing or invalid;
 - squash to `<title> (#<number>)` plus the trimmed PR body, removing
   `<!-- openmerge:... -->` marker comments and reserved metadata; merge to
@@ -93,9 +94,38 @@ Immediately before `LandingStarted`, the executor freshly reads `CheckRuns` for 
   retaining their message/trailers and adding `OpenMerge-Replayed-From`;
 - use the configured committer on all generated commits;
 - put the batch ID in the top commit's trailer block only, so a tested SHA
-  identifies exactly one batch; every earlier squash/merge still carries its
+  identifies exactly one batch (including the fast-forward marker); every earlier squash/merge still carries its
   own PR metadata;
-- return `ErrConflict` for merge conflicts or rebase histories containing PR merge commits, and any other error for infrastructure failures.
+- return `ErrConflict` for merge conflicts or rebase histories containing PR merge commits; return `ErrNotFastForward` when a fast-forward head does not strictly extend its predecessor/base; use other errors for infrastructure failures.
+
+For fast-forward, the executor records `FastForwardBatchSelected` before the push,
+choosing the longest consecutive linear prefix and retaining the remaining PRs in
+queue order. A non-descendant first head is dequeued as `fast-forward-required`;
+the author must update and requeue it. No rebase or attribution rewrite occurs.
+Before publishing, `LinearHistoryReader` checks whether either readable base
+protection source requires linear history. GitHub reads classic protection and
+the effective active branch rules, including inherited rulesets. When required,
+`Git.HasMergeCommits` inspects all new history (`base..head`, all parent edges).
+An offending selected head is dequeued as `merge-commits-not-allowed` through
+the new `FastForwardMergeCommitsBlocked` event; other heads keep queue order.
+Unknown requirements preserve existing behavior; graph read errors are retryable
+build failures. Existing event/action formats remain unchanged.
+Fast-forward tests the exact head tree and history via a unique marker commit;
+it lands the head itself. `FastForwardRefBuilt` records the marker and pinned head.
+The marker has the head as its only parent and the same tree, uses the configured
+App committer, and carries only queue-authored text with a random 128-bit nonce
+and the authoritative batch trailer. Every build, including retries with the
+same ref, batch ID and clock, mints a fresh marker.
+
+Before `LandingStarted` and again inside `Git.Land`, `VerifyFastForward` requires
+the marker's only parent to be the pinned final head, the marker tree to equal
+the head tree, and the head to strictly descend from the leased base. Landing
+uses the existing atomic base/fence leases, pushes the head to base, and records
+`tested=<marker>` in the unchanged strict fence form. The attempt captures the
+landing head; the additive `FastForwardResolveLanding` action persists that head
+and the tested marker independently of current configuration. Successful landing,
+recovery, base-membership verification and head cleanup use the head as landed
+SHA. Other methods retain their exact-tested-SHA behavior.
 
 Batch identity is OpenMerge's own format, independent of Git trailer parsing:
 the final line is exactly `OpenMerge-Batch: <id>` with an ID matching
@@ -135,7 +165,7 @@ git push --atomic \
 - A refused build or landing leaves every ref and PR unchanged.
 - OpenMerge needs permission to push to the protected base branch, for example as an always-allowed ruleset bypass on GitHub.
 
-After a landing with merge commits, the forge marks the PRs merged because their heads are reachable. After squash or rebase it does not, so the planner emits `MarkLanded` for each PR. `Driver.MarkLanded` closes the PR with a link to the landed commit, or uses the forge's native mark-merged where one exists. It is idempotent and never merges again. Immediately before calling `Driver.MarkLanded`, the executor freshly reads the base and verifies that the landed commit equals the tip or is its ancestor. An absent commit returns `executor.ErrLandingNotOnBase` without calling the driver, closing the PR, or acknowledging the action. `MarkLanded` carries no attempt ID, so that error's attempt ID is empty. These checks detect external rollbacks observed at verification; they cannot prevent subsequent external rewrites.
+After a landing with merge commits or fast-forward, the forge marks the PRs merged because their heads are reachable. After squash or rebase it does not, so the planner emits `MarkLanded` for each PR. `Driver.MarkLanded` closes the PR with a link to the landed commit, or uses the forge's native mark-merged where one exists. It is idempotent and never merges again. Immediately before calling `Driver.MarkLanded`, the executor freshly reads the base and verifies that the landed commit equals the tip or is its ancestor. An absent commit returns `executor.ErrLandingNotOnBase` without calling the driver, closing the PR, or acknowledging the action. `MarkLanded` carries no attempt ID, so that error's attempt ID is empty. These checks detect external rollbacks observed at verification; they cannot prevent subsequent external rewrites.
 
 ## The fence
 
@@ -158,7 +188,7 @@ Before any push, the executor mints a random attempt ID of at least 128 bits and
 
 A rejected landing push, a crash, and a timeout are all resolved the same way, by reading the fence:
 
-1. The fence names `land/<attempt>` with the attempt's tested SHA: freshly read the base and require the tested commit to equal its tip or be its ancestor. Only then record `Landed`. Otherwise return `executor.ErrLandingNotOnBase` without an event, leaving the batch in `Landing` and reporting the same error on each retry while the commit is absent.
+1. The fence names `land/<attempt>` with the attempt's tested SHA: freshly read the base and require the landed commit (the pinned marker parent for a fast-forward attempt, otherwise the tested commit) to equal its tip or be its ancestor. Only then record `Landed`. Otherwise return `executor.ErrLandingNotOnBase` without an event, leaving the batch in `Landing` and reporting the same error on each retry while the commit is absent.
 2. The fence names `abandon/<attempt>`: an earlier resolution already abandoned it. Record `LandingAbandoned`.
 3. The fence is still the attempt's starting token: advance it to `abandon/<attempt>` with a leased push, then record `LandingAbandoned`. Any delayed copy of the landing push now fails its fence lease. If this lease is rejected, read the fence and decide once more; the landing may have just won.
 4. Anything else, including `land/<attempt>` with a different tested SHA, returns `ErrFenceTampered` without settling the attempt. It means the fence protection above is missing.

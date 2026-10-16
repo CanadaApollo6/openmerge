@@ -436,7 +436,7 @@ func TestReconciliationMetadataAndCurrentPermissions(t *testing.T) {
 	if len(summaries) != 0 {
 		t.Fatal("closed PR remained in reconciliation")
 	}
-	checks := []forge.CheckRun{{ID: 1, Name: "CI", Source: "app:11", State: forge.Failure}, {ID: 2, Name: "CI", Source: "app:22", State: forge.Success}}
+	checks := []forge.CheckRun{{ID: 1, Name: "CI", Source: "app:11", State: forge.Failure, HeadBranch: "contributor/reposted-marker"}, {ID: 2, Name: "CI", Source: "app:22", State: forge.Success, HeadBranch: "other"}}
 	f.SetCheckRuns(repo, e.PRs[0].HeadSHA, checks)
 	got, err := f.CheckRuns(ctx, repo, e.PRs[0].HeadSHA)
 	must(t, err)

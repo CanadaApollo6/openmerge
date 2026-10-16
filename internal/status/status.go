@@ -82,6 +82,7 @@ type Entry struct {
 	Status            string     `json:"status"`
 	Reason            string     `json:"reason"`
 	LastDequeueReason string     `json:"last_dequeue_reason"`
+	Detail            string     `json:"detail,omitempty"`
 }
 
 // Why links a current-state explanation to recent committed evidence.
@@ -129,7 +130,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 			case queue.PRObserved:
 				heads[n] = v.HeadSHA
 				if e.HeadSHA != v.HeadSHA || e.Status != "merged" {
-					e.Status, e.Reason = "not-queued", ""
+					e.Status, e.Reason, e.Detail = "not-queued", "", ""
 					if !v.Eligible {
 						e.Status, e.Reason = "blocked", string(queue.NotEligible)
 					} else if !v.Trusted {
@@ -148,6 +149,9 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 			case queue.Dequeued:
 				if entryIn(before, n) && !entryIn(s, n) {
 					e.Status, e.Reason, e.LastDequeueReason = "dequeued", string(v.Reason), string(v.Reason)
+					if v.Reason == queue.ChecksTimeout && before.CheckProvenanceDetail() != "" && inBatch(before, n) {
+						e.Detail = sanitizer.Sanitize(before.DequeueDetail(n, v.Reason))
+					}
 				}
 			}
 			known[n] = e
@@ -203,9 +207,15 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 	for i, admitted := range s.Entries {
 		e := known[admitted.PR]
 		e.HeadSHA = admitted.HeadSHA
-		e.Position, e.Status, e.Reason = i+1, "queued", ""
+		e.Position, e.Status, e.Reason, e.Detail = i+1, "queued", "", ""
 		if inBatch(s, e.PR) {
 			e.Status = string(s.Active.Phase)
+			if s.Active.Phase == queue.Testing {
+				e.Detail = sanitizer.Sanitize(s.CheckProvenanceDetail())
+				if e.Detail != "" {
+					e.Reason = "unbound-check-provenance"
+				}
+			}
 		}
 		if reason := s.PendingDequeue(e.PR); reason != "" {
 			e.Status, e.Reason = "dequeue-pending", string(reason)
@@ -253,6 +263,9 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 		summary += "; resolving the durable landing attempt through its fence"
 	case "dequeue-pending":
 		summary += "; dequeue requested; an in-flight landing must settle first if present"
+	}
+	if e.Detail != "" {
+		summary += "; " + e.Detail
 	}
 	if len(events) > limit {
 		events = slices.Delete(events, 0, len(events)-limit)
@@ -367,7 +380,18 @@ func eventSummary(event queue.Event, before, after queue.State) string {
 	case queue.BatchStarted:
 		return "Started constructing a test batch"
 	case queue.BatchFailed:
+		if before.Active != nil {
+			return "Batch failed: " + before.DequeueDetail(before.Active.PRs[0].PR, e.Reason)
+		}
 		return "Batch failed: " + string(e.Reason)
+	case queue.FastForwardBatchSelected:
+		return "Selected a consecutive fast-forward chain"
+	case queue.FastForwardRefBuilt:
+		return "Recorded a unique marker testing the head tree and history"
+	case queue.FastForwardBlocked:
+		return "Head cannot fast-forward onto the current base; update the branch and queue it again"
+	case queue.FastForwardMergeCommitsBlocked:
+		return "Base requires linear history; remove merge commits from the branch and queue it again"
 	case queue.TestRefBuilt:
 		return "Recorded the batch test commit"
 	case queue.TestRefBuildFailed:
@@ -375,6 +399,11 @@ func eventSummary(event queue.Event, before, after queue.State) string {
 			return "Test ref build failed with a merge conflict"
 		}
 		return "Test ref build failed; retry policy applies"
+	case queue.CheckProvenanceObserved:
+		if detail := after.CheckProvenanceDetail(); detail != "" {
+			return detail
+		}
+		return "Check provenance diagnostic cleared"
 	case queue.ChecksCompleted:
 		return fmt.Sprintf("Recorded terminal CI result; success=%t", e.Success)
 	case queue.ChecksReopened:
@@ -383,6 +412,9 @@ func eventSummary(event queue.Event, before, after queue.State) string {
 		}
 		if after.ChecksPassed(e.TestedSHA) {
 			return "Observed pending CI; landing already started"
+		}
+		if detail := after.CheckProvenanceDetail(); detail != "" {
+			return "CI still pending; " + detail
 		}
 		return "CI still pending"
 	case queue.ChecksRefreshed:
@@ -394,7 +426,7 @@ func eventSummary(event queue.Event, before, after queue.State) string {
 	case queue.LandingAbandoned:
 		return "Confirmed landing abandonment through the fence"
 	case queue.Dequeued:
-		return fmt.Sprintf("Recorded PR #%d dequeue: %s", e.PR, e.Reason)
+		return fmt.Sprintf("Recorded PR #%d dequeue: %s", e.PR, before.DequeueDetail(e.PR, e.Reason))
 	default:
 		return "Recorded queue event"
 	}
@@ -417,8 +449,18 @@ func affects(event queue.Event, pr int, before, after queue.State, tested map[st
 		return tested[e.TestedSHA]
 	case queue.ChecksReopened:
 		return tested[e.TestedSHA]
+	case queue.CheckProvenanceObserved:
+		return inBatch(before, pr) && before.Active.ID == e.BatchID && before.Active.TestedSHA == e.TestedSHA
 	case queue.ChecksRefreshed:
 		return inBatch(before, pr) && before.Active.ID == e.BatchID && before.Active.TestedSHA == e.TestedSHA
+	case queue.FastForwardBatchSelected:
+		return inBatch(before, pr) && before.Active.ID == e.BatchID
+	case queue.FastForwardRefBuilt:
+		return inBatch(before, pr) && before.Active.ID == e.BatchID
+	case queue.FastForwardBlocked:
+		return inBatch(before, pr) && before.Active.ID == e.BatchID
+	case queue.FastForwardMergeCommitsBlocked:
+		return inBatch(before, pr) && before.Active.ID == e.BatchID
 	case queue.TestRefBuilt:
 		return inBatch(before, pr) && before.Active.ID == e.BatchID
 	case queue.TestRefBuildFailed:

@@ -27,7 +27,9 @@ func TestMergeRequiresPositiveNamedSuccessInConjunction(t *testing.T) {
 		"    merge_when: [{and: [{or: [check-success = ci, check-success = fallback]}]}]\n",
 	} {
 		t.Run(fields, func(t *testing.T) {
-			cfg, _, err := Load([]byte("version: 1\nqueues:\n  - name: release\n" + fields))
+			data := []byte("version: 1\nqueues:\n  - name: release\n" + fields)
+			cfg, _, err := Load(data)
+			assertSchemaAgreement(t, data, err)
 			if err == nil || len(cfg.Queues) != 0 {
 				t.Fatalf("unsafe merge condition accepted: %+v", cfg)
 			}
@@ -46,7 +48,9 @@ func TestMergeRequiredCheckAllowsNestedConjunctionAndExtraOR(t *testing.T) {
 		"check-success = ci, {or: [check-success = linux, check-success = fallback]}",
 	} {
 		t.Run(rule, func(t *testing.T) {
-			cfg, _, err := Load([]byte("version: 1\nqueues:\n  - name: release\n    merge_when: [" + rule + "]\n"))
+			data := []byte("version: 1\nqueues:\n  - name: release\n    merge_when: [" + rule + "]\n")
+			cfg, _, err := Load(data)
+			assertSchemaAgreement(t, data, err)
 			if err != nil {
 				t.Fatal(err)
 			}

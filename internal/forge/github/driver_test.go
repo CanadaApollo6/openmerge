@@ -121,6 +121,55 @@ func TestCheckNormalization(t *testing.T) {
 		t.Fatal("legacy status did not retain native ordering ID")
 	}
 }
+
+func TestCheckSuiteWithoutBranchCountsNormally(t *testing.T) {
+	f := newAPI(t)
+	ref := "openmerge/queue/main/b1"
+	f.runs["tested"] = []*gh.CheckRun{
+		{ID: new(int64(1)), Name: new("ci"), Status: new("completed"), Conclusion: new("success"), CheckSuite: &gh.CheckSuite{ID: new(int64(9)), HeadBranch: new("wrong-embedded-branch")}},
+		{ID: new(int64(2)), Name: new("ci"), Status: new("completed"), Conclusion: new("success"), CheckSuite: &gh.CheckSuite{ID: new(int64(10))}},
+	}
+	f.suites["tested"] = []*gh.CheckSuite{
+		{ID: new(int64(1)), Status: new("completed"), HeadBranch: new("unrelated")},
+		{ID: new(int64(2)), Status: new("completed"), HeadBranch: new("unrelated")},
+		{ID: new(int64(9)), Status: new("completed"), HeadBranch: &ref},
+		{ID: new(int64(10)), Status: new("completed")},
+	}
+	f.statuses["tested"] = []*gh.RepoStatus{{ID: new(int64(3)), Context: new("legacy"), State: new("success"), Creator: &gh.User{Login: new("writer")}}}
+	checks, err := f.driver.CheckRuns(t.Context(), testRepo, "tested")
+	must(t, err)
+	if len(checks) != 3 || checks[0].State != forge.Success || checks[1].State != forge.Success || checks[2].State != forge.Success {
+		t.Fatalf("incorrect provenance or changed status normalization: %+v", checks)
+	}
+}
+func TestReportStatusRedactsReasonAndSummary(t *testing.T) {
+	f := newAPI(t)
+	sha := f.prs[1].GetHead().GetSHA()
+	// Check names and branches come from outside OpenMerge and can carry tokens.
+	status := forge.Status{
+		State:   forge.Blocked,
+		Reason:  "unbound-check-provenance ghp_reasonsecret123",
+		Summary: "check ci-ghp_summarysecret456 from app x\nexpected openmerge/queue/main/b7, saw Bearer abc.def",
+	}
+	must(t, f.driver.ReportStatus(context.Background(), testRepo, 1, sha, status))
+	out := f.runs[sha][0].GetOutput()
+	for _, secret := range []string{"ghp_reasonsecret123", "ghp_summarysecret456", "Bearer abc.def"} {
+		if strings.Contains(out.GetTitle()+out.GetSummary(), secret) {
+			t.Fatalf("status leaked %q: title=%q summary=%q", secret, out.GetTitle(), out.GetSummary())
+		}
+	}
+	if !strings.Contains(out.GetSummary(), "\n") || !strings.Contains(out.GetSummary(), "openmerge/queue/main/b7") {
+		t.Fatalf("summary lost layout or non-secret detail: %q", out.GetSummary())
+	}
+	// An unregistered multi-line PEM must be removed whole, not line by line.
+	pem := "-----BEGIN PRIVATE KEY-----\nMIIBVQIBADANBgkqhkiG9w0BAQEFAASCAT8wggE7\nAgEAAkEAq7BFUpkGp3+LQmlQ\n-----END PRIVATE KEY-----"
+	must(t, f.driver.ReportStatus(context.Background(), testRepo, 1, sha, forge.Status{State: forge.Blocked, Reason: "x", Summary: "before\n" + pem + "\nafter"}))
+	out = f.runs[sha][0].GetOutput()
+	if strings.Contains(out.GetSummary(), "MIIBVQ") || strings.Contains(out.GetSummary(), "AgEAAkEA") || !strings.Contains(out.GetSummary(), "before\n") || !strings.Contains(out.GetSummary(), "after") {
+		t.Fatalf("multi-line PEM leaked or layout lost: %q", out.GetSummary())
+	}
+}
+
 func TestStatusMappingsAndConcurrentWrites(t *testing.T) {
 	f := newAPI(t)
 	sha := f.prs[1].GetHead().GetSHA()
@@ -177,6 +226,16 @@ func TestSpoofedMarkersAndPagination(t *testing.T) {
 		t.Fatal("spoof suppressed comment or paginated dedupe failed")
 	}
 }
+func TestCommentBodiesAreRedacted(t *testing.T) {
+	f := newAPI(t)
+	body := "landed in abc123\ntoken ghp_commentsecret789\n-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA\n-----END RSA PRIVATE KEY-----\ndone"
+	must(t, f.driver.Comment(context.Background(), testRepo, 1, "redact", body))
+	got := f.comments[1][len(f.comments[1])-1].GetBody()
+	if strings.Contains(got, "ghp_commentsecret789") || strings.Contains(got, "MIIEpAIBAAKCAQEA") || !strings.Contains(got, "landed in abc123\n") || !strings.Contains(got, "<!-- openmerge:key=redact -->") {
+		t.Fatalf("comment leaked a secret or lost content/marker: %q", got)
+	}
+}
+
 func TestDeleteRefAndReadFile(t *testing.T) {
 	f := newAPI(t)
 	ctx := context.Background()
@@ -292,7 +351,7 @@ func TestSuiteStateRevalidatesStaleSuccess(t *testing.T) {
 	f := newAPI(t)
 	f.runs["tested"] = []*gh.CheckRun{{ID: new(int64(100)), Name: new("CI"), Status: new("completed"), Conclusion: new("success"), CheckSuite: &gh.CheckSuite{ID: new(int64(9))}}}
 	for _, state := range []string{"completed", "completed", "queued", "in_progress", "completed", "missing"} {
-		f.suites["tested"] = []*gh.CheckSuite{{ID: new(int64(1)), Status: new("completed")}, {ID: new(int64(2)), Status: new("completed")}, {ID: new(int64(9)), Status: &state}}
+		f.suites["tested"] = []*gh.CheckSuite{{ID: new(int64(1)), Status: new("completed")}, {ID: new(int64(2)), Status: new("completed")}, {ID: new(int64(9)), Status: &state, HeadBranch: new("openmerge/queue/main/batch")}}
 		if state == "missing" {
 			f.suites["tested"] = nil
 		}

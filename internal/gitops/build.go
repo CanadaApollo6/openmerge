@@ -2,6 +2,7 @@ package gitops
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"strings"
@@ -121,7 +122,7 @@ func (r *Repo) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.B
 	if req.Ref == "" || !forge.ValidBatchID(req.BatchID) || len(req.PRs) == 0 {
 		return "", errors.New("test ref, valid batch ID, and PRs are required")
 	}
-	if req.Method != forge.Merge && req.Method != forge.Squash && req.Method != forge.Rebase {
+	if req.Method != forge.Merge && req.Method != forge.Squash && req.Method != forge.Rebase && req.Method != forge.FastForward {
 		return "", errors.New("unsupported git merge method")
 	}
 	s, unlock, err := r.open(ctx, repo)
@@ -141,6 +142,17 @@ func (r *Repo) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.B
 	}
 	top := req.BaseSHA
 	for i, pr := range req.PRs {
+		if req.Method == forge.FastForward {
+			_, diagnostic, err := s.run(ctx, "", "merge-base", "--is-ancestor", top, pr.HeadSHA)
+			if top == pr.HeadSHA || exitCode(err, 1) {
+				return "", fmt.Errorf("PR #%d: %w", pr.Number, forge.ErrNotFastForward)
+			}
+			if err != nil {
+				return "", s.failure("merge-base", diagnostic, err)
+			}
+			top = pr.HeadSHA
+			continue
+		}
 		metadata, author, err := s.metadata(ctx, repo, pr)
 		if err != nil {
 			return "", err
@@ -205,6 +217,21 @@ func (r *Repo) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.B
 			parents = append(parents, pr.HeadSHA)
 		}
 		top, err = s.commitAs(ctx, tree, message, author, "", parents...)
+		if err != nil {
+			return "", err
+		}
+	}
+	if req.Method == forge.FastForward {
+		tree, err := s.command(ctx, "", "rev-parse", top+"^{tree}")
+		if err != nil {
+			return "", err
+		}
+		var nonce [16]byte
+		if _, err := rand.Read(nonce[:]); err != nil {
+			return "", err
+		}
+		message := fmt.Sprintf("OpenMerge fast-forward test %x\n\nOpenMerge-Batch: %s", nonce, req.BatchID)
+		top, err = s.commit(ctx, tree, message, top)
 		if err != nil {
 			return "", err
 		}

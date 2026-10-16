@@ -346,6 +346,26 @@ func decodeBatchPRs(prs []wireBatchPR) []BatchPR {
 // EncodeEvent returns the stable type discriminator and versioned JSON.
 func EncodeEvent(value Event) (string, []byte, error) {
 	switch v := value.(type) {
+	case FastForwardMergeCommitsBlocked:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("fast_forward_merge_commits_blocked", wireFastForwardMergeCommitsBlocked(v))
+	case FastForwardBatchSelected:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("fast_forward_batch_selected", wireFastForwardBatchSelected{BatchID: v.BatchID, PRs: encodeBatchPRs(v.PRs)})
+	case FastForwardRefBuilt:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("fast_forward_ref_built", wireFastForwardRefBuilt(v))
+	case FastForwardBlocked:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("fast_forward_blocked", wireFastForwardBlocked(v))
 	case FenceInitialized:
 		if err := v.Validate(); err != nil {
 			return "", nil, err
@@ -357,6 +377,12 @@ func EncodeEvent(value Event) (string, []byte, error) {
 		return encodeWire("pr_observed", wirePRObserved(v))
 	case BaseMoved:
 		return encodeWire("base_moved", wireBaseMoved(v))
+	case CheckProvenanceObserved:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		v.Checks = append([]UnboundCheck{}, v.Checks...)
+		return encodeWire("check_provenance_observed", v)
 	case ChecksCompleted:
 		if err := v.Validate(); err != nil {
 			return "", nil, err
@@ -447,6 +473,34 @@ func DecodeEvent(payload []byte) (Event, error) {
 		return nil, err
 	}
 	switch envelope.Type {
+	case "fast_forward_merge_commits_blocked":
+		v, err := readWireData[wireFastForwardMergeCommitsBlocked](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := FastForwardMergeCommitsBlocked(v)
+		return event, event.Validate()
+	case "fast_forward_batch_selected":
+		v, err := readWireData[wireFastForwardBatchSelected](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := FastForwardBatchSelected{BatchID: v.BatchID, PRs: decodeBatchPRs(v.PRs)}
+		return event, event.Validate()
+	case "fast_forward_ref_built":
+		v, err := readWireData[wireFastForwardRefBuilt](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := FastForwardRefBuilt(v)
+		return event, event.Validate()
+	case "fast_forward_blocked":
+		v, err := readWireData[wireFastForwardBlocked](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := FastForwardBlocked(v)
+		return event, event.Validate()
 	case "fence_initialized":
 		v, err := readWireData[wireFenceInitialized](envelope.Data)
 		if err != nil {
@@ -466,6 +520,12 @@ func DecodeEvent(payload []byte) (Event, error) {
 		return decodeWireData(envelope.Data, func(v wireBaseMoved) Event {
 			return BaseMoved(v)
 		})
+	case "check_provenance_observed":
+		v, err := readWireData[CheckProvenanceObserved](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		return v, v.Validate()
 	case "checks_completed":
 		v, err := readWireData[wireChecksCompleted](envelope.Data)
 		if err != nil {
@@ -636,6 +696,8 @@ func EncodeAction(value Action) (string, []byte, error) {
 		return encodeWire("refresh_checks", wireRefreshChecks{BatchID: v.BatchID, TestedSHA: v.TestedSHA, Epoch: v.epoch})
 	case Land:
 		return encodeWire("land", wireLand{BatchID: v.BatchID, ExpectedBaseSHA: v.ExpectedBaseSHA, TestedSHA: v.TestedSHA, Ref: v.Ref, FenceToken: v.FenceToken, PRs: encodeBatchPRs(v.PRs), Method: string(v.Method), ChecksGeneration: v.ChecksGeneration})
+	case FastForwardResolveLanding:
+		return encodeWire("fast_forward_resolve_landing", wireFastForwardResolveLanding{v.BatchID, v.AttemptID, v.TestedSHA, v.FenceToken, v.HeadSHA})
 	case ResolveLanding:
 		return encodeWire("resolve_landing", wireResolveLanding(v))
 	case DeleteRef:
@@ -673,6 +735,10 @@ func DecodeAction(payload []byte) (Action, error) {
 	case "land":
 		return decodeWireAction(envelope.Data, func(v wireLand) Action {
 			return Land{BatchID: v.BatchID, ExpectedBaseSHA: v.ExpectedBaseSHA, TestedSHA: v.TestedSHA, Ref: v.Ref, FenceToken: v.FenceToken, PRs: decodeBatchPRs(v.PRs), Method: MergeMethod(v.Method), ChecksGeneration: v.ChecksGeneration}
+		})
+	case "fast_forward_resolve_landing":
+		return decodeWireAction(envelope.Data, func(v wireFastForwardResolveLanding) Action {
+			return FastForwardResolveLanding{ResolveLanding: ResolveLanding{BatchID: v.BatchID, AttemptID: v.AttemptID, TestedSHA: v.TestedSHA, FenceToken: v.FenceToken}, HeadSHA: v.HeadSHA}
 		})
 	case "resolve_landing":
 		return decodeWireAction(envelope.Data, func(v wireResolveLanding) Action {

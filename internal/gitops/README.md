@@ -60,7 +60,7 @@ retried on later operations. These are soft triggers, not hard disk limits: a
 single fetch can exceed the threshold, and an idle cache waits until its next
 operation for collection.
 
-`PullRequest` reads current PR metadata when building a test ref, rejecting a
+`PullRequest` reads current PR metadata when generating test commits, rejecting a
 number/head mismatch or invalid author/title before pushing. `serve` supplies
 the installation driver's reader. Squash creates one single-parent commit per
 PR with `<title> (#<number>)` and the trimmed body (without OpenMerge HTML
@@ -101,6 +101,24 @@ an unreferenced synthetic commit with the current tree and the desired base as
 its only parent, then runs `merge-tree --write-tree` against the original commit.
 That forces the same base without an index or worktree. A test compares both
 paths' resulting commit IDs. Newer Git uses `--merge-base=<original>^` directly.
+
+## Fast-forward preparation
+
+`forge.FastForward` verifies remote head pins and requires each head to strictly
+extend its predecessor, starting at the requested base. It tests the exact head
+tree and history via a unique marker commit; it lands the head itself. The test
+ref receives one empty marker with only the final head as parent and the same
+tree. Its queue-authored message contains a random 128-bit nonce and the
+authoritative `OpenMerge-Batch` trailer, and its committer is the configured App
+committer. There is no contributor metadata read or original commit rewrite.
+Non-descendant or equal heads return `forge.ErrNotFastForward` without moving
+the test ref. The executor selects a consecutive linear prefix before invoking
+this operation and dequeues a diverged first head as `fast-forward-required`.
+`VerifyFastForward` validates the marker's only parent, identical tree, and strict
+head ancestry from the leased base before `LandingStarted` and inside `Land`.
+Land uses the same base/fence CAS protocol below, pushing the pinned head to base
+while recording `tested=<marker>` in the fence. The durable fast-forward recovery
+action carries both SHAs; base-membership verification uses the landed head.
 
 ## Landing and real Git findings
 

@@ -91,3 +91,29 @@ it, even if the PR title or body changes after testing.
 - **Call the GitHub SDK directly and abstract later.** Fastest to the first demo, and the path every GitHub-only queue took. Rejected because the abstraction would be shaped by GitHub's quirks and the tests would depend on GitHub.
 - **Compose test commits with forge merge APIs** (Mergify's 2022 approach on GitHub). No local git needed, but GitLab and Forgejo lack equivalent endpoints, and API merges cost rate limit per PR per batch.
 - **Record-and-replay HTTP fixtures instead of a fake forge.** Good for driver tests, which may still use them, but fixtures cannot express scripted CI outcomes over virtual time, which the planner simulation needs.
+
+### Fast-forward landing
+
+`fast-forward` tests the exact head tree and history via a unique marker commit;
+it lands the head itself. Its test ref points to one empty marker above the last
+PR head. The marker has only that head as parent, the same tree, the configured
+App committer, a random 128-bit nonce, and the authoritative `OpenMerge-Batch`
+trailer. Its message contains no contributor metadata. Existing suites, historical
+same-ref/SHA suites, completed reruns, and statuses on the original head cannot
+satisfy CI on this unique tested SHA. All methods also enforce the
+[queue CI provenance contract](../operating.md#queue-ci-provenance).
+Consecutive queued heads may batch only when each strictly descends from its
+predecessor, starting at the current base. The executor selects a linear prefix;
+unrelated heads start singly. A head that cannot extend the base (including an
+already equal head) is dequeued as `fast-forward-required`, asking the author
+to update and requeue. It is never rebased by OpenMerge. Base movement causes
+ancestry to be checked again. The existing two-ref atomic leased landing still
+applies: `tested=` records the marker, while the base receives its pinned parent.
+Before `LandingStarted` and again inside git landing, require the marker's only
+parent to be the pinned head, its tree to equal the head tree, and the head to
+strictly descend from the leased base. The landing attempt captures that head;
+`FastForwardResolveLanding` persists it separately from the tested marker and
+recovers via the existing strict fence form. Landing verification and cleanup
+use the landed head. Other methods continue to land their exact tested SHA.
+Original attribution and signatures remain untouched, and ordinary confirmed
+landing head cleanup applies.

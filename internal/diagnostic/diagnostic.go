@@ -107,6 +107,33 @@ func (s *Sanitizer) Sanitize(value string) string {
 	return Sanitize(value, s.secrets...)
 }
 
+var pemBlock = regexp.MustCompile(`(?s)-----BEGIN [^-]+-----.*?(?:-----END [^-]+-----|$)`)
+
+// SanitizeText redacts multi-line text bound for a public forge surface while
+// keeping its line breaks. Secrets that can span lines (PEM blocks and
+// registered multi-line credentials) are removed from the whole text first,
+// then each line is sanitized. A nil receiver still redacts patterns.
+func (s *Sanitizer) SanitizeText(value string) string {
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	value = pemBlock.ReplaceAllString(value, "[REDACTED]")
+	if s != nil {
+		s.mu.RLock()
+		secrets := slices.Clone(s.secrets)
+		s.mu.RUnlock()
+		slices.SortFunc(secrets, func(a, b string) int { return len(b) - len(a) })
+		for _, secret := range secrets {
+			if strings.Contains(secret, "\n") {
+				value = strings.ReplaceAll(value, strings.ReplaceAll(secret, "\r\n", "\n"), "[REDACTED]")
+			}
+		}
+	}
+	lines := strings.Split(value, "\n")
+	for i, line := range lines {
+		lines[i] = s.Sanitize(line)
+	}
+	return strings.Join(lines, "\n")
+}
+
 // LogAttr redacts messages, string attributes and error values in slog handlers.
 func (s *Sanitizer) LogAttr(_ []string, attr slog.Attr) slog.Attr {
 	attr.Value = attr.Value.Resolve()

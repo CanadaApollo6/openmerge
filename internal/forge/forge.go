@@ -96,6 +96,16 @@ type CheckRun struct {
 	Name   string
 	Source string
 	State  CheckState
+	// HeadBranch is the check suite's triggering branch, without refs/heads/.
+	// Empty means unknown; commit statuses (Source "status:...") lack provenance.
+	HeadBranch string
+}
+
+// LinearHistoryReader reports base policy independently of landing permission.
+// An error means unknown; a readable requirement from either protection source
+// wins even when the other source is unreadable.
+type LinearHistoryReader interface {
+	LinearHistoryRequired(context.Context, RepoRef, string) (bool, error)
 }
 
 // StatusState is the normalized queue lifecycle, independent of forge terminology.
@@ -161,9 +171,10 @@ type MergeMethod string
 
 // Supported tested-commit shapes.
 const (
-	Merge  MergeMethod = "merge"
-	Squash MergeMethod = "squash"
-	Rebase MergeMethod = "rebase"
+	Merge       MergeMethod = "merge"
+	Squash      MergeMethod = "squash"
+	Rebase      MergeMethod = "rebase"
+	FastForward MergeMethod = "fast-forward"
 )
 
 // BuildPR pins an admitted PR head. A build rejects a head that no longer
@@ -173,8 +184,9 @@ type BuildPR struct {
 	HeadSHA string
 }
 
-// BuildRequest composes pinned heads on BaseSHA and pushes Ref. The top commit
-// must carry BatchID, making the tested SHA unique across batches.
+// BuildRequest prepares pinned heads on BaseSHA and pushes Ref. Generated top
+// commits carry BatchID, making those SHAs unique across batches. Fast-forward
+// requires a strict ancestry chain and adds one empty marker above the final head.
 type BuildRequest struct {
 	Ref, BaseSHA string
 	PRs          []BuildPR
@@ -184,6 +196,9 @@ type BuildRequest struct {
 
 // ErrConflict distinguishes a content conflict from an infrastructure failure.
 var ErrConflict = errors.New("merge conflict")
+
+// ErrNotFastForward means the pinned heads do not extend the base in order.
+var ErrNotFastForward = errors.New("head must be updated to fast-forward onto the current base")
 
 // ErrLeaseRejected reports an atomic lease refusal. A rejected git push provides
 // no actual ref values; callers must read the fence to settle the attempt.
@@ -201,12 +216,17 @@ type LandRequest struct {
 	Base, ExpectedBaseSHA, TestedSHA  string
 	Fence, ExpectedFence, NextFenceID string
 	PRs                               []BuildPR
+	// FastForwardHeadSHA lands this pinned head instead of the tested marker.
+	FastForwardHeadSHA string
 }
 
 // Git builds exact tested commits and performs forge-enforced fenced writes.
 type Git interface {
 	BuildTestRef(ctx context.Context, repo RepoRef, req BuildRequest) (testedSHA string, err error)
 	Land(ctx context.Context, repo RepoRef, req LandRequest) (newFenceSHA string, err error)
+	// VerifyFastForward requires a single-parent, identical-tree marker above
+	// head, with head strictly descending from base. It never changes refs.
+	VerifyFastForward(ctx context.Context, repo RepoRef, base, tested, head string) error
 	// EnsureFence creates the initial fence only if absent, safely under
 	// concurrency, otherwise returning the existing SHA without changing it.
 	EnsureFence(ctx context.Context, repo RepoRef, fenceRef string) (sha string, err error)
@@ -218,6 +238,8 @@ type Git interface {
 	ReadFence(ctx context.Context, repo RepoRef, fenceRef string) (sha, id, testedSHA string, err error)
 	ReadRef(ctx context.Context, repo RepoRef, ref string) (sha string, err error)
 	IsAncestor(ctx context.Context, repo RepoRef, ancestor, descendant string) (bool, error)
+	// HasMergeCommits inspects all commits reachable from head but not base.
+	HasMergeCommits(ctx context.Context, repo RepoRef, base, head string) (bool, error)
 	// DeleteBranch deletes only expectedSHA; missing or changed refs are no-ops.
 	DeleteBranch(ctx context.Context, repo RepoRef, branch, expectedSHA string) error
 }

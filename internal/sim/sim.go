@@ -41,6 +41,7 @@ type testRun struct {
 	base    string
 	covered []string
 	method  queue.MergeMethod
+	ref     string
 }
 
 type loggedEvent struct {
@@ -76,6 +77,7 @@ type simulation struct {
 	attempts            map[string]string
 	disturbance         map[string]int // per landing attempt: disturbances seen when it started
 	abandoned           map[string]string
+	abandonedAttempts   map[string]bool
 	observed            map[string]*forgeLanding
 	lastFence           string
 }
@@ -103,7 +105,7 @@ func newSimulation(cfg Config) (*simulation, error) {
 		faults: rand.New(rand.NewPCG(cfg.Seed, 4)), tests: make(map[string]*testRun),
 		completed: make(map[string]bool), planned: make(map[string]queue.Action), retryAt: make(map[string]time.Time),
 		pendingFaults: make(map[string]int), landed: make(map[int]string),
-		attempts: make(map[string]string), disturbance: make(map[string]int), abandoned: make(map[string]string), observed: make(map[string]*forgeLanding),
+		attempts: make(map[string]string), disturbance: make(map[string]int), abandoned: make(map[string]string), abandonedAttempts: make(map[string]bool), observed: make(map[string]*forgeLanding),
 		result: Result{Config: cfg, FaultsByMethod: make(map[string]int), PRs: cfg.PRs, Dequeued: make(map[queue.DequeueReason]int), Blocked: make(map[queue.DequeueReason]int)},
 	}
 	base, fence := s.forge.Init(s.repo, "main", "openmerge/fence/main")
@@ -369,7 +371,7 @@ func (s *simulation) startCI(sha string, prs []int) {
 			return
 		}
 	}
-	run := &testRun{base: batch.BaseSHA, heads: slices.Clone(batch.PRs), method: s.cfg.MergeMethod, success: s.ci.Float64() >= s.cfg.FlakeRate}
+	run := &testRun{base: batch.BaseSHA, heads: slices.Clone(batch.PRs), method: s.cfg.MergeMethod, ref: batch.TestRef, success: s.ci.Float64() >= s.cfg.FlakeRate}
 	commit, err := s.forge.Commit(s.repo, sha)
 	if err != nil {
 		s.violation = err
@@ -383,7 +385,15 @@ func (s *simulation) startCI(sha string, prs []int) {
 			s.violation = fmt.Errorf("untrusted PR %d appears in test commit %s", pr, sha)
 		}
 	}
-	run.covered, err = s.firstParentRange(run.base, sha)
+	coveredTip := sha
+	if run.method == queue.FastForward {
+		coveredTip = run.heads[len(run.heads)-1].HeadSHA
+		if err := s.forge.VerifyFastForward(context.Background(), s.repo, run.base, sha, coveredTip); err != nil {
+			s.violation = err
+			return
+		}
+	}
+	run.covered, err = s.firstParentRange(run.base, coveredTip)
 	if err != nil {
 		s.violation = err
 		return

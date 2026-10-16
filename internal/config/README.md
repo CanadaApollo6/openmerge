@@ -40,7 +40,7 @@ Loading also evaluates the condition with missing checks and with failed checks;
 either passing result rejects the configuration. Invalid conditions report the
 queue name and an example fix. Phase 1 has no opt-out. Defaults are:
 
-- `merge_method: squash` (also accepts `merge` and `rebase`).
+- `merge_method: squash` (also accepts `merge`, `rebase`, and `fast-forward`).
 - `check_timeout: 1h`; `0`, `"0"`, or `0s` disables it. Durations must be
   nonnegative Go duration strings, with unquoted integer zero also accepted.
 - `enter_when: []`, true. `merge_when` requires a positive named success check.
@@ -149,8 +149,8 @@ inner quoting syntax to the input grammar.
 
 ## Dependency and scope
 
-The sole new dependency is `go.yaml.in/yaml/v3 v3.0.5`, the current stable YAML
-organization module. The standard library does not parse YAML. This parser
+YAML parsing uses `go.yaml.in/yaml/v3 v3.0.5`, the stable YAML
+organization module. The schema test validator is described below. The standard library does not parse YAML. This parser
 provides syntax handling, source nodes, anchors, and aliases; custom validation
 adds the repository's schema paths and suggestions. The archived
 `gopkg.in/yaml.v3` path is not used. At implementation time the v4 module's latest
@@ -158,11 +158,71 @@ tag is `v4.0.0-rc.6`, so this PR uses stable v3 as requested. See the
 [maintainer's version policy](https://github.com/yaml/go-yaml#version-intentions).
 
 The ADR example in `testdata/openmerge.yml` is byte-identical to ADR 0003 and
-validates without warnings. Both list the three supported
-methods in `queue.MergeMethod`: merge, squash, and rebase.
+validates without warnings. The example uses squash; supported
+methods are merge, squash, rebase, and fast-forward.
 The ADR leaves group operand shapes, glob details, and operational defaults
 unspecified; the rules above make those choices explicit. ADR 0003 also records
 that missing or mistyped data remains unknown under negation.
 
-JSON Schema generation is a follow-up. Template substitution, importing,
-migration, and multi-queue execution are outside this PR's Phase 1 surface.
+## JSON Schema
+
+The hand-maintained [version-1 JSON Schema](../../schema/openmerge.v1.json) uses
+JSON Schema 2020-12, rejects unknown properties, and covers all loader keys,
+types, method enums, defaults and nested condition groups. It is embedded from
+that one file: `openmerge config schema` prints it byte for byte. Editor hint:
+
+```yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/CanadaApollo6/openmerge/main/schema/openmerge.v1.json
+```
+
+Use a comment; `$schema` is not a configuration key. For offline editors,
+`openmerge config schema > openmerge.v1.json` exports a local copy.
+
+`schema_test.go` validates repository config fixtures, full YAML examples in
+Markdown, defaults/overrides, the loader's invalid-config corpus, and positive
+and negative merge-check cases through both the loader and a JSON Schema
+validator. Required checks are expressed with recursive `contains` restricted
+to `and` groups. The loader additionally evaluates missing/failed-check rejection.
+Patterns document the atom syntax and Go duration spelling. JSON Schema cannot
+compile Go RE2/globs or enforce Go integer/duration range exactly. The test
+validator asserts `openmerge-condition` and `openmerge-duration` formats with
+the loader's atom parser and `time.ParseDuration`; editors may ignore these
+formats. Always run `openmerge config validate` for complete validation.
+
+YAML-only rules (one document, aliases/merges, duplicate keys, strict scalar tags,
+resource limits) run before schema validation. In particular, YAML `1.0` is a
+float and fails the loader even though JSON Schema treats JSON `1.0` as an
+integer. Only literal unquoted `0` is accepted as an integer duration.
+
+The test-only validator is the pure-Go, Apache-2.0
+[`github.com/santhosh-tekuri/jsonschema/v6`](https://pkg.go.dev/github.com/santhosh-tekuri/jsonschema/v6).
+It supports 2020-12 without a runtime process or network fetch and shares the
+already-present `x/text` dependency. The production loader retains source-line
+diagnostics and does not depend on the JSON Schema validator.
+
+## Fast-forward
+
+`merge_method: fast-forward` publishes a unique empty marker above the last head
+as the test ref, then lands the unchanged head.
+Only consecutive heads forming a strictly increasing ancestry chain can batch;
+the longest linear prefix is selected before the push, with remaining PRs kept
+in queue order. Independent heads start singly. A head that does not strictly
+extend the base is dequeued with `fast-forward-required`, asking the author to
+update the branch and queue again. There is no automatic rebase. After a base
+move the batch is rebuilt and ancestry is checked against the new tip. An
+unchanged head may be tested again after an abandoned attempt or failed batch;
+the new marker identifies each test execution and the landing attempt's unique
+fence identifies the atomic write. No head attribution changes are made. Confirmed
+landings use the existing head-branch cleanup protocol.
+
+All merge methods follow the
+[queue CI provenance contract](../../docs/operating.md#queue-ci-provenance),
+including its trust requirements for external CI posting commit statuses.
+
+When readable classic protection or an active ruleset requires linear history,
+a head containing merge commits outside the current base history is dequeued at
+build time with `merge-commits-not-allowed`. Remove those merge commits and queue
+the branch again. If the requirement is unknown, builds behave as before.
+
+Template substitution, importing, migration, and multi-queue execution remain
+outside the Phase 1 surface.

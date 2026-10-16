@@ -11,7 +11,7 @@ import (
 )
 
 func TestRun(t *testing.T) {
-	const wantUsage = "Usage: openmerge <command>\n\nCommands:\n  version                 Print version and build information\n  config validate [path]  Validate repository configuration\n  queue status [options]  Read queue status and PR explanations\n  serve [options]         Run the GitHub merge queue server\n  setup <github|rulesets>  Set up the GitHub App and repository rules\n  sim [options]           Simulate a day of merge queue traffic\n  help                    Show this help\n"
+	const wantUsage = "Usage: openmerge <command>\n\nCommands:\n  version                 Print version and build information\n  config validate [path]  Validate repository configuration\n  config schema           Print the version 1 JSON Schema\n  queue status [options]  Read queue status and PR explanations\n  serve [options]         Run the GitHub merge queue server\n  setup <github|rulesets>  Set up the GitHub App and repository rules\n  sim [options]           Simulate a day of merge queue traffic\n  help                    Show this help\n"
 	tests := []struct {
 		name       string
 		args       []string

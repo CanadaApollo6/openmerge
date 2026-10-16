@@ -272,6 +272,20 @@ func (r *Repo) ReadRef(ctx context.Context, repo forge.RepoRef, ref string) (str
 	return values[full], nil
 }
 
+// HasMergeCommits inspects the complete newly introduced commit graph.
+func (r *Repo) HasMergeCommits(ctx context.Context, repo forge.RepoRef, base, head string) (bool, error) {
+	s, unlock, err := r.open(ctx, repo)
+	if err != nil {
+		return false, err
+	}
+	defer unlock()
+	if err := s.commits(ctx, base, head); err != nil {
+		return false, err
+	}
+	merges, err := s.command(ctx, "", "rev-list", "--merges", "--max-count=1", head, "^"+base)
+	return merges != "", err
+}
+
 // IsAncestor checks graph reachability after obtaining any missing commits.
 func (r *Repo) IsAncestor(ctx context.Context, repo forge.RepoRef, ancestor, descendant string) (bool, error) {
 	s, unlock, err := r.open(ctx, repo)

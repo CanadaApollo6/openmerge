@@ -33,7 +33,7 @@ func TestRandomAttemptIDsAndGenerationFailure(t *testing.T) {
 		// A crash after the start record leaves the push unexecuted. Each new queue
 		// generation must still mint a fresh ID, even with identical action keys.
 		var id string
-		err := h.x.Execute(context.Background(), queue.Land{BatchID: "b1", FenceToken: h.fence, TestedSHA: sha}, func(e queue.Event) error { id = e.(queue.LandingStarted).AttemptID; return errLog })
+		err := h.x.Execute(context.Background(), queue.Land{BatchID: "batch", FenceToken: h.fence, TestedSHA: sha}, func(e queue.Event) error { id = e.(queue.LandingStarted).AttemptID; return errLog })
 		decoded, decodeErr := hex.DecodeString(id)
 		if !errors.Is(err, errLog) || decodeErr != nil || len(decoded) < 16 || seen[id] {
 			t.Fatalf("invalid or reused random attempt %q: %v", id, err)
@@ -42,7 +42,7 @@ func TestRandomAttemptIDsAndGenerationFailure(t *testing.T) {
 	}
 	h.x.NewID = func() (string, error) { return "", errIO }
 	var events []queue.Event
-	if err := h.x.Execute(context.Background(), queue.Land{TestedSHA: sha}, record(&events)); !errors.Is(err, errIO) || len(events) != 0 {
+	if err := h.x.Execute(context.Background(), queue.Land{BatchID: "batch", TestedSHA: sha}, record(&events)); !errors.Is(err, errIO) || len(events) != 0 {
 		t.Fatalf("ID failure started a landing: %v, %v", err, events)
 	}
 }
@@ -56,7 +56,7 @@ func TestFenceDerivedFromBase(t *testing.T) {
 	token, err := h.f.EnsureFence(ctx, repo, fence)
 	must(t, err)
 	h.x.Base = base
-	a := queue.Land{BatchID: "release", ExpectedBaseSHA: h.base, TestedSHA: h.tested(t), FenceToken: token, PRs: []queue.BatchPR{{PR: 1, HeadSHA: h.prs[0].HeadSHA}}}
+	a := queue.Land{BatchID: "batch", ExpectedBaseSHA: h.base, TestedSHA: h.tested(t), FenceToken: token, PRs: []queue.BatchPR{{PR: 1, HeadSHA: h.prs[0].HeadSHA}}}
 	must(t, h.x.Execute(ctx, a, func(queue.Event) error { return nil }))
 	if h.read(t, base) != a.TestedSHA || h.read(t, fence) == token || h.read(t, "main") != h.base || h.read(t, fenceRef) != h.fence {
 		t.Fatal("landing used a fence from a different base")
@@ -138,6 +138,7 @@ func TestLatestCheckRuns(t *testing.T) {
 			h.x.AllowSkippedNeutral = tc.allow
 			for i := range tc.checks {
 				tc.checks[i].Name = "ci"
+				tc.checks[i].HeadBranch = h.buildAction().Ref
 			}
 			h.f.SetCheckRuns(repo, "tested", tc.checks)
 			var events []queue.Event

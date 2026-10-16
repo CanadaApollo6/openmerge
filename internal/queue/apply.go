@@ -105,26 +105,24 @@ func Apply(s State, e Event) State {
 		if e.Reason == ChecksTimeout && s.batchIn(e.BatchID, Testing) && !s.Active.checksPassed {
 			s.failBatch(e.Reason)
 		}
-	case TestRefBuilt:
-		if s.batchIn(e.BatchID, Building) {
-			if earlier, used := s.testedBatches[e.TestedSHA]; used {
-				s.failBuild(e.At, fmt.Sprintf("tested SHA %s was already recorded for batch %s; the top commit must carry the batch ID", e.TestedSHA, earlier))
-				break
-			}
-			s.recordTestedSHA(e.TestedSHA, e.BatchID)
-			s.Active.TestedSHA = e.TestedSHA
-			s.Active.Method = e.Method
-			s.Active.StartedTestingAt = e.At
-			s.Active.Phase = Testing
-			s.buildRetry = buildRetryState{}
-			if check, retained := s.checks[e.TestedSHA]; retained {
-				delete(s.checks, e.TestedSHA)
-				s.Active.needsRefresh = !check.terminal
-				if check.terminal {
-					s.completeChecks(check.success)
-				}
-			}
+	case FastForwardBatchSelected:
+		s.selectFastForward(e)
+	case FastForwardBlocked:
+		if s.batchIn(e.BatchID, Building) && s.Active.Method == FastForward {
+			s.requestDequeue(s.Active.PRs[0].PR, FastForwardRequired)
+			s.rebuildBatch()
 		}
+	case FastForwardMergeCommitsBlocked:
+		if e.Validate() == nil && s.batchIn(e.BatchID, Building) && s.Active.Method == FastForward && slices.ContainsFunc(s.Active.PRs, func(pr BatchPR) bool { return pr.PR == e.PR }) {
+			s.requestDequeue(e.PR, MergeCommitsNotAllowed)
+			s.rebuildBatch()
+		}
+	case FastForwardRefBuilt:
+		if e.Validate() == nil && s.batchIn(e.BatchID, Building) && s.Active.Method == FastForward && e.HeadSHA == s.Active.PRs[len(s.Active.PRs)-1].HeadSHA && e.TestedSHA != e.HeadSHA {
+			s.applyBuilt(TestRefBuilt{BatchID: e.BatchID, TestedSHA: e.TestedSHA, At: e.At, Method: FastForward})
+		}
+	case TestRefBuilt:
+		s.applyBuilt(e)
 	case TestRefBuildFailed:
 		if s.batchIn(e.BatchID, Building) {
 			if e.Conflict {
@@ -151,6 +149,10 @@ func Apply(s State, e Event) State {
 				s.retainChecks(e.TestedSHA, retainedCheck{})
 			}
 		}
+	case CheckProvenanceObserved:
+		if e.Validate() == nil && s.batchIn(e.BatchID, Testing) && s.Active.TestedSHA == e.TestedSHA {
+			s.Active.unboundChecks = slices.Clone(e.Checks)
+		}
 	case ChecksRefreshed:
 		if s.batchIn(e.BatchID, Testing) && s.Active.TestedSHA == e.TestedSHA {
 			s.Active.checksRefreshedAt = e.At
@@ -161,6 +163,9 @@ func Apply(s State, e Event) State {
 		if s.batchIn(e.BatchID, Testing) {
 			s.Active.Phase = Landing
 			s.Active.LandingAttempt = LandingAttempt{ID: e.AttemptID, FenceToken: e.FenceToken, StartedAt: e.At}
+			if s.Active.Method == FastForward {
+				s.Active.LandingAttempt.FastForwardHeadSHA = s.Active.PRs[len(s.Active.PRs)-1].HeadSHA
+			}
 			for _, pr := range s.Active.PRs {
 				if _, pending := s.dequeues[pr.PR]; pending {
 					s.entry(pr.PR).DequeueRequested = true
@@ -168,7 +173,7 @@ func Apply(s State, e Event) State {
 			}
 		}
 	case HeadCleanupRequested:
-		if s.batchIn(e.BatchID, Landing) && s.Active.TestedSHA == e.LandedSHA {
+		if s.batchIn(e.BatchID, Landing) && (s.Active.TestedSHA == e.LandedSHA && s.Active.LandingAttempt.FastForwardHeadSHA == "" || s.Active.LandingAttempt.FastForwardHeadSHA == e.LandedSHA) {
 			s.Active.cleanupRequested = true
 		}
 	case Landed:
@@ -198,10 +203,11 @@ func Apply(s State, e Event) State {
 	case Dequeued:
 		if entry := s.entry(e.PR); entry != nil && entry.AdmissionID == e.AdmissionID && !s.isLanding(e.PR) &&
 			(e.BatchID == "" || s.Active != nil && s.Active.ID == e.BatchID) {
+			detail := s.DequeueDetail(e.PR, e.Reason)
 			if s.inBatch(e.PR) {
 				s.rebuildBatch()
 			}
-			s.reportHead(e.PR, entry.HeadSHA, "dequeued", string(e.Reason), string(e.Reason))
+			s.reportHead(e.PR, entry.HeadSHA, "dequeued", string(e.Reason), detail)
 			s.removeEntry(e.PR)
 		}
 	case ActionCompleted:
@@ -235,6 +241,7 @@ func cloneState(s State) State {
 	if s.Active != nil {
 		batch := *s.Active
 		batch.PRs = slices.Clone(batch.PRs)
+		batch.unboundChecks = slices.Clone(batch.unboundChecks)
 		s.Active = &batch
 	}
 	s.observations = maps.Clone(s.observations)
@@ -493,5 +500,27 @@ func (s *State) recordTestedSHA(sha, batchID string) {
 	for len(s.testedOrder) > testedHistory {
 		delete(s.testedBatches, s.testedOrder[0])
 		s.testedOrder = s.testedOrder[1:]
+	}
+}
+
+func (s *State) applyBuilt(e TestRefBuilt) {
+	if s.batchIn(e.BatchID, Building) {
+		if earlier, used := s.testedBatches[e.TestedSHA]; used {
+			s.failBuild(e.At, fmt.Sprintf("tested SHA %s was already recorded for batch %s; the top commit must carry the batch ID", e.TestedSHA, earlier))
+			return
+		}
+		s.recordTestedSHA(e.TestedSHA, e.BatchID)
+		s.Active.TestedSHA = e.TestedSHA
+		s.Active.Method = e.Method
+		s.Active.StartedTestingAt = e.At
+		s.Active.Phase = Testing
+		s.buildRetry = buildRetryState{}
+		if check, retained := s.checks[e.TestedSHA]; retained {
+			delete(s.checks, e.TestedSHA)
+			s.Active.needsRefresh = !check.terminal
+			if check.terminal {
+				s.completeChecks(check.success)
+			}
+		}
 	}
 }

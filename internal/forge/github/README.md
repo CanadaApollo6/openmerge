@@ -34,7 +34,10 @@ never appear in driver errors or logs.
   follow pagination. Native IDs order reruns within one producer. Check runs carry `Source:
   "app:<id>"`; statuses carry `Source: "status:<lowercase-creator-login>"`.
   Check suites for the SHA are read on every check refresh. A queued, running,
-  missing, or unknown suite makes its run pending regardless of stale success.
+  or unknown suite state makes its run pending regardless of stale success.
+  `HeadBranch` preserves the refreshed suite's `head_branch`; missing suites
+  have unknown provenance. All methods follow the
+  [queue CI provenance contract](../../../docs/operating.md#queue-ci-provenance).
   Missing producer identities and unknown outcomes are pending.
   Only the `OpenMerge` check owned by this App is excluded from CI observations.
 - Multiple Apps, multiple status creators, or a check/status pair using a required
@@ -42,6 +45,11 @@ never appear in driver errors or logs.
   `executor.CheckSourceAmbiguityError{Name, Sources}` after recording the refresh.
   No terminal check result is emitted. The server surfaces that diagnostic;
   configure distinct names for independent producers.
+- Fast-forward build validation reads the base's classic linear-history setting
+  and effective active branch rules (`rules/branches/{base}`, including inherited
+  rulesets). Either readable requirement rejects new merge commits before the
+  queue ref is pushed, even when the other source cannot be read. Unknown policy
+  retains the existing behavior.
 - `ListOpenPullRequests` paginates open PR summaries, filtered by target branch
   (or all branches for an empty filter), without loading approvals. `PullRequest`
   includes `Base`, `Draft`, `Author`, numeric `AuthorID`, `Title`, `Body`, and
