@@ -50,7 +50,8 @@ MUTANTS = {
     ),
     "refresh_fence": mutation(
         EXECUTOR,
-        ("token := a.FenceToken", "token, _, _, err := x.Git.ReadFence(ctx, x.Repo, x.fenceRef())\n if err != nil { return err }"),
+        ("Fence: x.fenceRef(), ExpectedFence: a.FenceToken,", "Fence: x.fenceRef(), ExpectedFence: x.freshFenceMutant(ctx),"),
+        ("func (x *Executor) fenceRef() string", "func (x *Executor) freshFenceMutant(ctx context.Context) string {\n\tsha, _, _, _ := x.Git.ReadFence(ctx, x.Repo, x.fenceRef())\n\treturn sha\n}\n\nfunc (x *Executor) fenceRef() string"),
     ),
     "ignore_fence_lease": mutation(
         FAKE, (" || !f.disableFenceLeaseForTesting && r.refs[req.Fence] != req.ExpectedFence", "")

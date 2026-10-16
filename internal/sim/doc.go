@@ -32,4 +32,8 @@
 // Dequeued counts acknowledged dequeues, including re-pushes later merged.
 //
 // CI currently has unlimited runners; runner capacity is left for Phase 2.
+//
+// scripts/check-simulator-mutations.py replays reviewer mutations of the planner,
+// executor, and fake forge through Go overlays and confirms the simulator rejects
+// each one. Run it after changing an invariant or a fault.
 package sim

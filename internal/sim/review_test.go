@@ -105,10 +105,7 @@ func TestSimulatorDetectsFenceMutants(t *testing.T) {
 			land := readyLanding(t, s)
 			switch mutant {
 			case "fresh executor token":
-				s.executor.LandingFenceTokenForTesting = func(ctx context.Context, _ string) (string, error) {
-					sha, _, _, err := s.forge.ReadFence(ctx, s.repo, "openmerge/fence/main")
-					return sha, err
-				}
+				s.executor.Git = freshFenceGit{Git: s.executor.Git}
 			case "fake ignores fence lease":
 				s.forge.DisableFenceLeaseForTesting()
 			}
@@ -144,10 +141,7 @@ func TestAbandonmentBeforePush(t *testing.T) {
 			s := onePR(t)
 			land := readyLanding(t, s)
 			if fresh {
-				s.executor.LandingFenceTokenForTesting = func(ctx context.Context, _ string) (string, error) {
-					sha, _, _, err := s.forge.ReadFence(ctx, s.repo, "openmerge/fence/main")
-					return sha, err
-				}
+				s.executor.Git = freshFenceGit{Git: s.executor.Git}
 			}
 			err := s.executor.Execute(context.Background(), land, func(e queue.Event) error {
 				s.record(e)
@@ -376,4 +370,18 @@ func TestMedianAndReadableJSON(t *testing.T) {
 	if got["median_time_to_merge_seconds"] != 5.5 || cfg["seed"] != float64(s.cfg.Seed) || cfg["ci_duration_seconds"] != 120.0 || strings.Contains(string(data), "_ns") {
 		t.Fatalf("unreadable/unidentified JSON: %s", data)
 	}
+}
+
+// freshFenceGit is the "executor re-reads the fence" mutant: it discards the
+// fence token captured in LandingStarted and leases on whatever the fence is now.
+// A correct executor must never behave this way, and the simulator must catch it.
+type freshFenceGit struct{ forge.Git }
+
+func (g freshFenceGit) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequest) (string, error) {
+	sha, _, _, err := g.ReadFence(ctx, repo, req.Fence)
+	if err != nil {
+		return "", err
+	}
+	req.ExpectedFence = sha
+	return g.Git.Land(ctx, repo, req)
 }
