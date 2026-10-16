@@ -8,6 +8,7 @@ An ADR records one significant decision: the context that forced it, what we cho
 | [0002](0002-storage-and-state-model.md) | Postgres only, with queue state derived from an append-only event log | Accepted |
 | [0003](0003-configuration-format.md) | Native `.openmerge.yml` with a condition grammar, plus a Mergify importer | Accepted |
 | [0004](0004-forge-driver-interface.md) | All forge access goes through a narrow driver interface, with a fake forge from day one | Accepted |
+| [0005](0005-verification-modes.md) | Offer post-merge verification as a per-queue mode alongside strict landing | Proposed |
 
 ## Writing a new ADR
 

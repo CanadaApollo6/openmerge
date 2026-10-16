@@ -6,13 +6,13 @@ This roadmap is grounded in the research in [`docs/research/`](docs/research/REA
 
 ## Why this exists
 
-- **CI and the merge path are now the bottleneck.** Agents produce PRs at 10–1000x human rates, re-push often, and fail CI more. A serial queue at 30-minute CI tops out near 48 merges a day. Anthropic reports 30,000+ merges a day internally and dropped classic pre-merge queuing to get there.
+- **CI and the merge path are now the bottleneck.** Agents produce PRs at 10–1000x human rates, re-push often, and fail CI more. A serial queue at 30-minute CI tops out near 48 merges a day. Anthropic reports 30,000+ merges a day internally and dropped classic pre-merge queuing to get there ([Redesigning source control at Anthropic](https://www.anthropic.com/engineering/redesigning-source-control)).
 - **The good tools are closed or gated.** GitHub's native merge queue is unavailable for private repos outside Enterprise Cloud and gives no control over batching, bisection, lanes, or priorities. GitLab merge trains are Premium-only. Mergify's engine went private in 2022, and on 2026-10-08 its CLI and test plugins moved to a proprietary license that forbids competing use. Trunk, Aviator, and Graphite are closed SaaS.
 - **The open-source options are fragmented.** bors-ng is archived. rust-lang/bors is excellent but serial and GitHub-only. Zuul is powerful but heavy to run. Prow/Tide is tied to Kubernetes' job model. Nothing open combines speculative batching, monorepo lanes, flaky-test handling, and agent-native interfaces.
 
 ## Product principles
 
-1. **What you tested is what you merged.** Land the exact tested SHA (or the exact tested tree, for squash and rebase) or don't land.
+1. **Never lie about what was tested.** Strict queues land the exact tested commit or nothing. Post-merge queues say exactly what was tested before landing, keep a green ref that only passing code reaches, and never present an untested commit as tested ([ADR 0005](docs/adr/0005-verification-modes.md)).
 2. **Agent-native, human-friendly.** Every state change and every failure reason is machine-readable (JSON API, CLI `--json`, MCP). Humans get the same facts rendered as one quiet check run.
 3. **Quiet by default.** No PR or comment spam. One check run per PR, comments only on outcomes the author must act on.
 4. **Self-hostable in five minutes.** One binary plus Postgres. No Redis, no Kubernetes required. A hosted offering is optional and never gets features first.
@@ -91,8 +91,12 @@ The exit test also requires verification on a real GitHub test organization.
 - Pause, scheduled freezes with exclusions, `schedule` conditions
 - Read-only web dashboard: queue graph, batch history, why-is-my-PR-stuck explainer
 - **MCP server** exposing queue status, enqueue/dequeue, failure explanations
+- **Post-merge verification mode** ([ADR 0005](docs/adr/0005-verification-modes.md)): per-queue `verification: post_merge`, admission tests bounded by `max_base_age`, landing composed on the current tip with an honest tested/landed record
+- **Green ref** `openmerge/green/<base>` for deploys, advanced only to passing commits
+- **Culprit finding on main:** rerun once, bisect landed commits on `openmerge/verify/**`, then `on_red: revert | pause | notify`, with a structured report to the culprit's author and a `max_red` circuit breaker
+- **Conflict handoff:** a conflict sends the author a structured event and holds the PR's position for `conflict_grace`
 
-**Exit:** at 2,000 simulated PRs/day with 30-minute CI, median time-to-merge stays under 2x CI duration, and CI runs per merged PR stays under 1.5.
+**Exit:** at 2,000 simulated PRs/day with 30-minute CI, a strict queue keeps median time-to-merge under 2x CI duration with CI runs per merged PR under 1.5. At 30,000 simulated PRs/day with 30-minute CI and 1% bad changes, a post-merge queue keeps median time-to-merge under CI duration plus 5 minutes, the green ref is never red, and every bad landing is reverted within 3x CI duration.
 
 ### Phase 3 — Agent-native
 
@@ -100,6 +104,9 @@ The exit test also requires verification on a real GitHub test organization.
 - Per-author and per-agent concurrency, CI-spend, and retry budgets, with escalation to a human
 - Agent-aware policy rules (policy-bot style): e.g. agent-authored PRs touching `infra/**` need two human approvals
 - Structured failure explanations: which batch, which check, which tests, flaky or real, suggested next action
+- **Change classification for approvals:** comment-only, docs-only, generated, or owned-directory changes, so policy can ask for human review of intent only where it matters
+- **Write API and lookups agents need:** enqueue/dequeue/refresh over the API, and "which commit landed PR N" without scanning history
+- A ready-made **queue-watcher agent skill** that reads the structured logs and "why" API and reports anomalies
 - Outbound webhooks and OpenTelemetry export for every queue event
 - Agent skills and docs written for agents (`llms.txt`, Markdown docs, stable `--json` and exit codes)
 
@@ -130,7 +137,6 @@ The exit test also requires verification on a real GitHub test organization.
 ### Phase 6 — Scale, prediction, 1.0
 
 - Predictive scheduling: spend the CI budget on speculations with the highest expected value (pass probability and build-time prediction, after Uber's SubmitQueue and follow-ups)
-- **Post-merge verification + auto-revert mode** for teams at agent scale that drop pre-merge serialization
 - High availability (multiple workers, leader-free queue ownership via row locks), horizontal scaling
 - Security review, threat model, signed releases, SBOM
 - Config schema 1.0 with a compatibility promise
@@ -139,13 +145,13 @@ The exit test also requires verification on a real GitHub test organization.
 
 ## Gating modes (the spectrum OpenMerge supports)
 
-| Mode | Main is | Throughput | When |
-|---|---|---|---|
-| Strict serial | always green | lowest | small repos, regulated code |
-| Batched + speculative (default) | always green | high | most teams |
-| Optimistic | green except rare intermittent bugs | higher | high flake rates |
-| Lanes (scopes) | green per lane | scales with independence | monorepos |
-| Post-merge verify + auto-revert | briefly red, auto-healed | highest | agent-scale monorepos |
+| Mode | Main is | Throughput | When | Phase |
+|---|---|---|---|---|
+| Strict serial | always green | lowest | small repos, regulated code | 1 |
+| Batched + speculative (default) | always green | high | most teams | 2 |
+| Optimistic | green except rare intermittent bugs | higher | high flake rates | 2 |
+| Post-merge verify + auto-revert | briefly red, auto-healed; deploy from the green ref | highest | agent-scale repositories | 2 |
+| Lanes (scopes) | green per lane | scales with independence | monorepos | 4 |
 
 ## Decisions
 
