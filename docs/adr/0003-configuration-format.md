@@ -1,6 +1,6 @@
 # 0003. Use a native `.openmerge.yml` with a condition grammar, plus a Mergify importer
 
-- **Status:** Accepted
+- **Status:** Accepted; [ADR 0006](0006-multi-repository-serving.md) makes the default branch's file govern every queue in a repository
 - **Date:** 2026-10-15
 
 ## Context
