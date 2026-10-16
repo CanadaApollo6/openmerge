@@ -98,12 +98,13 @@ use a longer polling interval for larger repositories.
 
 Writers can post `@openmerge queue [sha]`, `@openmerge dequeue`, or
 `@openmerge refresh`. The comment must contain only the command: after trimming
-surrounding whitespace and normalizing CRLF, it must be one ASCII line, with
+surrounding ASCII whitespace and normalizing CRLF, it must be one ASCII line, with
 the exact lowercase mention and command name and a single space or tab between
 tokens. Other content,
 including prose, multiple lines, code fences, HTML, and quotes, is silently ignored.
-An optional queue SHA is a 7–40 hex prefix of the current head; a mismatch gets
-a refusal reply. Without a SHA, the command queues the head current when the
+An optional queue SHA must be the full commit SHA of the current head
+(abbreviations are refused because they can be ambiguous); a mismatch gets a
+refusal reply. Without a SHA, the command queues the head current when the
 server processes it. Acceptance replies name that exact SHA; a later push
 dequeues it. Entry conditions and fresh trust checks still apply.
 An unpinned command grants nothing beyond the head's own trust: same-repository

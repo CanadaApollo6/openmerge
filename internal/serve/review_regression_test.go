@@ -58,6 +58,10 @@ var nonCommandBodies = []struct{ name, body, want string }{
 	{"vertical tab separator", "@openmerge\vqueue", ""},
 	{"form feed separator", "@openmerge\fqueue", ""},
 	{"short SHA", "@openmerge queue abc123", ""},
+	{"SHA prefix", "@openmerge queue abc1234", ""},
+	{"39-hex SHA", "@openmerge queue " + strings.Repeat("a", 39), ""},
+	{"leading NBSP", "\u00a0@openmerge queue", ""},
+	{"trailing NBSP", "@openmerge queue\u00a0", ""},
 	{"long SHA", "@openmerge queue " + strings.Repeat("a", 41), ""},
 	{"nonhex SHA", "@openmerge queue not-a-sha", ""},
 	{"dequeue args", "@openmerge dequeue abc1234", ""},
@@ -69,8 +73,8 @@ func TestCommandGrammar(t *testing.T) {
 		{"plain", "@openmerge queue", "queue"},
 		{"surrounding whitespace", " \t\r\n    @openmerge dequeue \r\n", "dequeue"},
 		{"tab", "\t@openmerge\trefresh\t", "refresh"},
-		{"pinned", "@openmerge queue abc1234", "queue abc1234"},
-		{"pinned tabs", "@openmerge\tqueue\tABC1234", "queue ABC1234"},
+		{"pinned tabs", "@openmerge\tqueue\t" + strings.Repeat("A", 40), "queue " + strings.Repeat("A", 40)},
+		{"SHA-256", "@openmerge queue " + strings.Repeat("b", 64), "queue " + strings.Repeat("b", 64)},
 		{"full SHA", "@openmerge queue " + strings.Repeat("a", 40), "queue " + strings.Repeat("a", 40)},
 	}, nonCommandBodies...)
 	for _, tt := range cases {
@@ -98,7 +102,7 @@ func TestNonCommandsAreSilentlyIgnored(t *testing.T) {
 }
 
 func TestQueueCommandPinsHead(t *testing.T) {
-	for _, mode := range []string{"stale unpinned", "stale prefix", "stale full", "matching prefix", "matching full", "first observation"} {
+	for _, mode := range []string{"stale unpinned", "stale full", "matching full", "matching uppercase", "first observation"} {
 		t.Run(mode, func(t *testing.T) {
 			s, w, f, _ := fixture(t, repositoryConfig)
 			pr, err := f.PullRequest(t.Context(), repo, 1)
@@ -108,10 +112,10 @@ func TestQueueCommandPinsHead(t *testing.T) {
 			}
 			body := "@openmerge queue"
 			switch mode {
-			case "stale prefix", "matching prefix":
-				body += " " + strings.ToUpper(pr.HeadSHA[:7])
+			case "matching uppercase":
+				body += " " + strings.ToUpper(pr.HeadSHA)
 			case "stale full", "matching full":
-				body += " " + pr.HeadSHA[:40]
+				body += " " + pr.HeadSHA
 			}
 			f.AddComment(repo, 1, "writer", body)
 			if strings.HasPrefix(mode, "stale") {
@@ -125,7 +129,7 @@ func TestQueueCommandPinsHead(t *testing.T) {
 			must(t, s.cycle(t.Context(), w))
 			state, _, err := s.store.Load(t.Context(), w.id)
 			must(t, err)
-			accept := mode != "stale prefix" && mode != "stale full"
+			accept := mode != "stale full"
 			if (len(state.Entries) == 1) != accept {
 				t.Fatalf("accept=%v: %+v", accept, state)
 			}

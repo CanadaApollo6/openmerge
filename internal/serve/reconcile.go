@@ -231,7 +231,7 @@ func (s *Server) commands(ctx context.Context, w *worker, number int) error {
 						if err != nil {
 							return err
 						}
-						if len(fields) == 2 && !strings.HasPrefix(strings.ToLower(pr.HeadSHA), strings.ToLower(fields[1])) {
+						if len(fields) == 2 && !strings.EqualFold(pr.HeadSHA, fields[1]) {
 							if err := w.Driver.Comment(ctx, w.repo(), number, receipt+"/head-changed", "The SHA does not match the current head "+pr.HeadSHA+". Please re-issue @openmerge queue with the intended SHA."); err != nil {
 								return err
 							}
