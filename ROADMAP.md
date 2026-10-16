@@ -104,7 +104,7 @@ Built after Phase 1 closes, in parallel with Phase 2 where they don't overlap ([
 - **Conflict events:** structured conflict reports to the author; the fixed push re-enters at the back until change identity (Phase 3)
 - Simulator: post-merge model with a finite CI runner pool, injected bad changes, interacting culprits and flakes
 
-**Exit:** at 30,000 simulated PRs/day, 30-minute CI, a 2,000-runner pool and 1% independent bad changes, a post-merge queue keeps median time-to-merge under CI duration plus 10 minutes and CI runs per merged PR under 2.5. The green ref only ever points at a commit on which every required check passed. Every independent bad change is reverted, with the revert verified, within 4x CI duration; interacting or inconclusive cases escalate within `max_red`. The green ref's base commit is never more than 4x CI duration behind the tip, given a uniform arrival profile.
+**Exit:** at 30,000 simulated PRs/day, 30-minute CI, a 2,000-runner pool and 1% independent bad changes that each break required checks no other live defect breaks, a post-merge queue keeps median time-to-merge under CI duration plus 10 minutes and CI runs per merged PR under 2.5. The green ref only ever points at a commit on which every required check passed. With per-commit CI results available, every such bad change is reverted, with the revert verified, within 4x CI duration. Defects that share checks are remedied through residual search or escalate within `max_red`, as do interacting or inconclusive cases. Given a uniform arrival profile, the green ref's base commit is never more than 6x CI duration behind the tip, counting failed candidates.
 
 ### Phase 3 — Agent-native
 
