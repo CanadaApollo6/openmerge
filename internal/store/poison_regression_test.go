@@ -336,7 +336,7 @@ func TestPoisonedResolverAlwaysReactivates(t *testing.T) {
 			must(t, s.Complete(t.Context(), claims[0], Done))
 			state, _, err = s.Load(t.Context(), q)
 			must(t, err)
-			if state.Active == nil || state.Active.Phase != queue.Building || state.Fence != "settled" {
+			if state.Active != nil || len(queue.Plan(config, state, now)) == 0 || state.Fence != "settled" {
 				t.Fatalf("resolver did not settle landing: %+v", state)
 			}
 		})

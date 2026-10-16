@@ -36,8 +36,8 @@ func TestChecksBeforeTestRefBuilt(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s := queued(1)
 			batchID := s.Active.ID
-			s = Apply(s, ChecksCompleted{TestedSHA: "early", Success: success})
-			s = Apply(s, TestRefBuilt{Method: Merge, BatchID: batchID, TestedSHA: "early", At: epoch})
+			s = applySerial(s, ChecksCompleted{TestedSHA: "early", Success: success})
+			s = applySerial(s, TestRefBuilt{Method: Merge, BatchID: batchID, TestedSHA: "early", At: epoch})
 			actions := Plan(testConfig, s, epoch.Add(time.Hour))
 			if success {
 				land := onlyAction[Land](t, actions)
@@ -56,38 +56,38 @@ func TestRetainedChecksArePruned(t *testing.T) {
 		t.Run(transition, func(t *testing.T) {
 			s := queued(1, 2)
 			batchID := s.Active.ID
-			s = Apply(s, ChecksCompleted{TestedSHA: "retained", Success: true})
+			s = applySerial(s, ChecksCompleted{TestedSHA: "retained", Success: true})
 			switch transition {
 			case "base-moved":
-				s = Apply(s, BaseMoved{SHA: "base2"})
+				s = applySerial(s, BaseMoved{SHA: "base2"})
 			case "build-failed":
-				s = Apply(s, TestRefBuildFailed{BatchID: batchID, At: epoch})
+				s = applySerial(s, TestRefBuildFailed{BatchID: batchID, At: epoch})
 			case "dequeued":
-				s = Apply(s, DequeueRequested{PR: 1})
+				s = applySerial(s, DequeueRequested{PR: 1})
 				dequeue := onlyAction[Dequeue](t, Plan(testConfig, s, epoch))
-				s = Apply(s, Dequeued{PR: dequeue.PR, AdmissionID: dequeue.AdmissionID, Reason: dequeue.Reason})
+				s = applySerial(s, Dequeued{PR: dequeue.PR, AdmissionID: dequeue.AdmissionID, Reason: dequeue.Reason})
 			default:
-				s = Apply(s, TestRefBuilt{BatchID: batchID, TestedSHA: "first", Method: Merge, At: epoch})
-				s = Apply(s, ChecksCompleted{TestedSHA: "first", Success: true})
-				s = Apply(s, LandingStarted{BatchID: batchID, AttemptID: "attempt", FenceToken: "f0", At: epoch})
+				s = applySerial(s, TestRefBuilt{BatchID: batchID, TestedSHA: "first", Method: Merge, At: epoch})
+				s = applySerial(s, ChecksCompleted{TestedSHA: "first", Success: true})
+				s = applySerial(s, LandingStarted{BatchID: batchID, AttemptID: "attempt", FenceToken: "f0", At: epoch})
 				switch transition {
 				case "landed":
-					s = Apply(s, Landed{BatchID: batchID, NewBaseSHA: "first", NewFence: "f1"})
+					s = applySerial(s, Landed{BatchID: batchID, NewBaseSHA: "first", NewFence: "f1"})
 				case "rejected":
-					s = Apply(Apply(s, BaseMoved{SHA: "base2"}), LandingAbandoned{BatchID: batchID, NewFence: "f1"})
+					s = applySerial(applySerial(s, BaseMoved{SHA: "base2"}), LandingAbandoned{BatchID: batchID, NewFence: "f1"})
 				case "abandoned":
-					s = Apply(s, LandingAbandoned{BatchID: batchID, NewFence: "f1"})
+					s = applySerial(s, LandingAbandoned{BatchID: batchID, NewFence: "f1"})
 				}
 			}
 			build := onlyAction[BuildTestRef](t, Plan(testConfig, s, epoch))
 			if build.BatchID == batchID {
 				t.Fatal("discarded batch reused")
 			}
-			s = Apply(s, TestRefBuilt{BatchID: build.BatchID, TestedSHA: "retained", Method: build.Method, At: epoch})
+			s = applySerial(s, TestRefBuilt{BatchID: build.BatchID, TestedSHA: "retained", Method: build.Method, At: epoch})
 			if actions := Plan(testConfig, s, epoch); len(actionsOf[Land](actions)) != 0 || len(actionsOf[Dequeue](actions)) != 0 {
 				t.Fatalf("old outcome crossed batch lifetime: %v", actions)
 			}
-			s = Apply(s, ChecksCompleted{TestedSHA: "retained", Success: true})
+			s = applySerial(s, ChecksCompleted{TestedSHA: "retained", Success: true})
 			onlyAction[Land](t, Plan(testConfig, s, epoch))
 		})
 	}
@@ -96,7 +96,7 @@ func TestRetainedChecksArePruned(t *testing.T) {
 func TestRetainedChecksCapacity(t *testing.T) {
 	s := queued(1)
 	for i := 0; i <= maxRetainedChecks; i++ {
-		s = Apply(s, ChecksCompleted{TestedSHA: fmt.Sprintf("sha-%d", i), Success: true})
+		s = applySerial(s, ChecksCompleted{TestedSHA: fmt.Sprintf("sha-%d", i), Success: true})
 	}
 	for _, tc := range []struct {
 		name string
@@ -108,7 +108,7 @@ func TestRetainedChecksCapacity(t *testing.T) {
 		{"newest retained", fmt.Sprintf("sha-%d", maxRetainedChecks), true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			next := Apply(s, TestRefBuilt{BatchID: s.Active.ID, TestedSHA: tc.sha, Method: Merge, At: epoch})
+			next := applySerial(s, TestRefBuilt{BatchID: s.Active.ID, TestedSHA: tc.sha, Method: Merge, At: epoch})
 			lands := actionsOf[Land](Plan(testConfig, next, epoch))
 			if (len(lands) == 1) != tc.land {
 				t.Fatalf("landing for %s = %v, want enabled=%t", tc.sha, lands, tc.land)
@@ -121,9 +121,9 @@ func TestRetainedChecksUseLatestOutcome(t *testing.T) {
 	for _, success := range []bool{true, false} {
 		t.Run(fmt.Sprintf("latest success=%t", success), func(t *testing.T) {
 			s := queued(1)
-			s = Apply(s, ChecksCompleted{TestedSHA: "early", Success: !success})
-			s = Apply(s, ChecksCompleted{TestedSHA: "early", Success: success})
-			s = Apply(s, TestRefBuilt{BatchID: s.Active.ID, TestedSHA: "early", Method: Merge, At: epoch})
+			s = applySerial(s, ChecksCompleted{TestedSHA: "early", Success: !success})
+			s = applySerial(s, ChecksCompleted{TestedSHA: "early", Success: success})
+			s = applySerial(s, TestRefBuilt{BatchID: s.Active.ID, TestedSHA: "early", Method: Merge, At: epoch})
 			actions := Plan(testConfig, s, epoch)
 			if success {
 				onlyAction[Land](t, actions)
@@ -135,20 +135,20 @@ func TestRetainedChecksUseLatestOutcome(t *testing.T) {
 }
 
 func TestStaleDequeueCannotRemoveNewAdmission(t *testing.T) {
-	s := Apply(queued(1), DequeueRequested{PR: 1})
+	s := applySerial(queued(1), DequeueRequested{PR: 1})
 	first := onlyAction[Dequeue](t, Plan(testConfig, s, epoch))
 	result := Dequeued{PR: first.PR, AdmissionID: first.AdmissionID, Reason: first.Reason}
-	s = Apply(s, result)
-	s = Apply(s, EnqueueRequested{PR: 1, At: epoch.Add(time.Minute)})
+	s = applySerial(s, result)
+	s = applySerial(s, EnqueueRequested{PR: 1, At: epoch.Add(time.Minute)})
 	before := Plan(testConfig, s, epoch)
 	if s.Entries[0].AdmissionID <= first.AdmissionID {
 		t.Fatal("new admission did not advance its ID")
 	}
-	s = Apply(s, result)
+	s = applySerial(s, result)
 	if len(s.Entries) != 1 || !reflect.DeepEqual(before, Plan(testConfig, s, epoch)) {
 		t.Fatal("delayed duplicate dequeued the new admission")
 	}
-	s = Apply(s, DequeueRequested{PR: 1})
+	s = applySerial(s, DequeueRequested{PR: 1})
 	second := onlyAction[Dequeue](t, Plan(testConfig, s, epoch))
 	if first.Key() == second.Key() || second.AdmissionID != s.Entries[0].AdmissionID {
 		t.Fatal("dequeue action did not identify the new admission")
@@ -158,11 +158,11 @@ func TestStaleDequeueCannotRemoveNewAdmission(t *testing.T) {
 	if changedAdmission.Key() == first.Key() {
 		t.Fatal("dequeue key omits admission ID")
 	}
-	s = Apply(s, result)
+	s = applySerial(s, result)
 	if got := onlyAction[Dequeue](t, Plan(testConfig, s, epoch)); got.Key() != second.Key() {
 		t.Fatal("old result completed a pending dequeue for the new admission")
 	}
-	s = Apply(s, Dequeued{PR: second.PR, AdmissionID: second.AdmissionID, Reason: second.Reason})
+	s = applySerial(s, Dequeued{PR: second.PR, AdmissionID: second.AdmissionID, Reason: second.Reason})
 	if len(s.Entries) != 0 || s.Active != nil {
 		t.Fatal("matching dequeue result did not complete")
 	}
@@ -170,14 +170,14 @@ func TestStaleDequeueCannotRemoveNewAdmission(t *testing.T) {
 
 func TestStaleTimeoutCannotRemoveRebuiltBatch(t *testing.T) {
 	s := testingState()
-	s = Apply(s, ChecksRefreshed{BatchID: s.Active.ID, TestedSHA: s.Active.TestedSHA, At: epoch.Add(time.Hour)})
+	s = applySerial(s, ChecksRefreshed{BatchID: s.Active.ID, TestedSHA: s.Active.TestedSHA, At: epoch.Add(time.Hour)})
 	timeout := onlyAction[Dequeue](t, Plan(testConfig, s, epoch.Add(time.Hour)))
 	if timeout.BatchID != s.Active.ID || timeout.AdmissionID != s.Entries[0].AdmissionID {
 		t.Fatalf("timeout omitted its subject: %+v", timeout)
 	}
-	s = Apply(s, BaseMoved{SHA: "base2"})
+	s = applySerial(s, BaseMoved{SHA: "base2"})
 	before := Plan(testConfig, s, epoch)
-	s = Apply(s, Dequeued{PR: timeout.PR, AdmissionID: timeout.AdmissionID, BatchID: timeout.BatchID, Reason: timeout.Reason})
+	s = applySerial(s, Dequeued{PR: timeout.PR, AdmissionID: timeout.AdmissionID, BatchID: timeout.BatchID, Reason: timeout.Reason})
 	if len(s.Entries) != 1 || !reflect.DeepEqual(before, Plan(testConfig, s, epoch)) {
 		t.Fatal("old timeout removed the rebuilt batch")
 	}
@@ -188,7 +188,7 @@ func withBuildFailures(t *testing.T, cfg Config, count int) State {
 	s := queued(1)
 	for i := 0; i < count; i++ {
 		build := onlyAction[BuildTestRef](t, Plan(cfg, s, epoch.Add(time.Hour)))
-		s = Apply(s, TestRefBuildFailed{BatchID: build.BatchID, At: epoch})
+		s = applySerial(s, TestRefBuildFailed{BatchID: build.BatchID, At: epoch})
 	}
 	return s
 }
@@ -204,7 +204,7 @@ func TestBuildFailuresPause(t *testing.T) {
 			}
 			s := withBuildFailures(t, cfg, effectiveLimit-1)
 			build := onlyAction[BuildTestRef](t, Plan(cfg, s, epoch))
-			s = Apply(s, TestRefBuildFailed{BatchID: build.BatchID, At: epoch})
+			s = applySerial(s, TestRefBuildFailed{BatchID: build.BatchID, At: epoch})
 			actions := Plan(cfg, s, epoch.Add(24*time.Hour))
 			if s.PauseReason(cfg) != "build-failed" || len(actionsOf[BuildTestRef](actions)) != 0 || len(actionsOf[Dequeue](actions)) != 0 || len(s.Entries) != 1 {
 				t.Fatalf("failure limit did not pause the queued PR: %+v, %v", s, actions)
@@ -213,11 +213,11 @@ func TestBuildFailuresPause(t *testing.T) {
 			if report.PR != 1 || report.Reason != "build-failed" || !strings.Contains(report.Detail, "Queue paused") || !strings.Contains(report.Detail, fmt.Sprint(effectiveLimit)) {
 				t.Fatalf("pause is not explained: %+v", report)
 			}
-			s = Apply(s, PRObserved{PR: 1, HeadSHA: "head1", Eligible: true, Trusted: true})
+			s = applySerial(s, PRObserved{PR: 1, HeadSHA: "head1", Eligible: true, Trusted: true})
 			if again := onlyAction[ReportStatus](t, Plan(cfg, s, epoch)); again.Key() != report.Key() {
 				t.Fatal("unchanged pause changed its report key")
 			}
-			s = Apply(s, ActionCompleted{Key: report.Key()})
+			s = applySerial(s, ActionCompleted{Key: report.Key()})
 			actions = Plan(cfg, s, epoch.Add(48*time.Hour))
 			if len(actionsOf[ReportStatus](actions)) != 0 || len(actionsOf[BuildTestRef](actions)) != 0 {
 				t.Fatalf("acknowledged pause repeated or resumed: %v", actions)
@@ -234,7 +234,7 @@ func TestBuildBackoff(t *testing.T) {
 	for failure := 1; failure <= 3; failure++ {
 		at := epoch.Add(time.Duration(failure) * time.Minute)
 		build := onlyAction[BuildTestRef](t, Plan(cfg, s, at))
-		s = Apply(s, TestRefBuildFailed{BatchID: build.BatchID, At: at})
+		s = applySerial(s, TestRefBuildFailed{BatchID: build.BatchID, At: at})
 		delay := cfg.BuildBackoff * time.Duration(1<<(failure-1))
 		if actions := Plan(cfg, s, at.Add(delay-time.Nanosecond)); len(actionsOf[BuildTestRef](actions)) != 0 || len(actionsOf[Dequeue](actions)) != 0 {
 			t.Fatalf("failure %d retried before %s: %v", failure, delay, actions)
@@ -255,7 +255,7 @@ func TestBuildPauseResume(t *testing.T) {
 			cfg.BuildBackoff = time.Minute
 			s := withBuildFailures(t, cfg, 2)
 			onlyAction[ReportStatus](t, Plan(cfg, s, epoch))
-			s = Apply(s, event)
+			s = applySerial(s, event)
 			build := onlyAction[BuildTestRef](t, Plan(cfg, s, epoch))
 			if s.PauseReason(cfg) != "" || len(actionsOf[ReportStatus](Plan(cfg, s, epoch))) != 0 {
 				t.Fatal("resume retained the pause")
@@ -263,7 +263,7 @@ func TestBuildPauseResume(t *testing.T) {
 			if moved, ok := event.(BaseMoved); ok && build.BaseSHA != moved.SHA {
 				t.Fatal("base move resumed on the old base")
 			}
-			s = Apply(s, TestRefBuildFailed{BatchID: build.BatchID, At: epoch})
+			s = applySerial(s, TestRefBuildFailed{BatchID: build.BatchID, At: epoch})
 			if s.PauseReason(cfg) != "" {
 				t.Fatal("resume did not reset the failure count")
 			}
@@ -277,18 +277,18 @@ func TestPauseReportAcknowledgementCannotCompleteNewAdmissionReport(t *testing.T
 	cfg.BuildRetries = 1
 	s := withBuildFailures(t, cfg, 1)
 	first := onlyAction[ReportStatus](t, Plan(cfg, s, epoch))
-	s = Apply(s, DequeueRequested{PR: 1})
+	s = applySerial(s, DequeueRequested{PR: 1})
 	dequeue := onlyAction[Dequeue](t, Plan(cfg, s, epoch))
-	s = Apply(s, Dequeued{PR: dequeue.PR, AdmissionID: dequeue.AdmissionID, Reason: dequeue.Reason})
+	s = applySerial(s, Dequeued{PR: dequeue.PR, AdmissionID: dequeue.AdmissionID, Reason: dequeue.Reason})
 	for _, effect := range Plan(cfg, s, epoch) {
-		s = Apply(s, ActionCompleted{Key: effect.Key()})
+		s = applySerial(s, ActionCompleted{Key: effect.Key()})
 	}
-	s = Apply(s, EnqueueRequested{PR: 1, At: epoch})
+	s = applySerial(s, EnqueueRequested{PR: 1, At: epoch})
 	second := onlyAction[ReportStatus](t, Plan(cfg, s, epoch))
 	if first.Key() == second.Key() {
 		t.Fatal("new admission reused a pause report key")
 	}
-	s = Apply(s, ActionCompleted{Key: first.Key()})
+	s = applySerial(s, ActionCompleted{Key: first.Key()})
 	if report := onlyAction[ReportStatus](t, Plan(cfg, s, epoch)); report.Key() != second.Key() {
 		t.Fatal("stale acknowledgement completed the new admission's pause report")
 	}
@@ -311,12 +311,12 @@ func TestSuccessfulBuildResetsFailures(t *testing.T) {
 	cfg.BuildBackoff = 5 * time.Second
 	s := withBuildFailures(t, cfg, 1)
 	build := onlyAction[BuildTestRef](t, Plan(cfg, s, epoch.Add(time.Minute)))
-	s = Apply(s, TestRefBuilt{BatchID: build.BatchID, TestedSHA: "tested", Method: build.Method, At: epoch})
-	s = Apply(s, ChecksCompleted{TestedSHA: "tested", Success: true})
-	s = Apply(s, LandingStarted{BatchID: build.BatchID, AttemptID: "attempt", FenceToken: "f0", At: epoch})
-	s = Apply(Apply(s, BaseMoved{SHA: "base1"}), LandingAbandoned{BatchID: build.BatchID, NewFence: "f1"})
+	s = applySerial(s, TestRefBuilt{BatchID: build.BatchID, TestedSHA: "tested", Method: build.Method, At: epoch})
+	s = applySerial(s, ChecksCompleted{TestedSHA: "tested", Success: true})
+	s = applySerial(s, LandingStarted{BatchID: build.BatchID, AttemptID: "attempt", FenceToken: "f0", At: epoch})
+	s = applySerial(applySerial(s, BaseMoved{SHA: "base1"}), LandingAbandoned{BatchID: build.BatchID, NewFence: "f1"})
 	build = onlyAction[BuildTestRef](t, Plan(cfg, s, epoch))
-	s = Apply(s, TestRefBuildFailed{BatchID: build.BatchID, At: epoch})
+	s = applySerial(s, TestRefBuildFailed{BatchID: build.BatchID, At: epoch})
 	if s.PauseReason(cfg) != "" {
 		t.Fatal("successful build did not reset the failure count")
 	}
@@ -328,9 +328,9 @@ func TestStaleBuildFailureCannotPauseNewBatch(t *testing.T) {
 	cfg.BuildRetries = 2
 	s := queued(1)
 	failure := TestRefBuildFailed{BatchID: s.Active.ID, At: epoch}
-	s = Apply(s, failure)
+	s = applySerial(s, failure)
 	before := Plan(cfg, s, epoch)
-	s = Apply(s, failure)
+	s = applySerial(s, failure)
 	if s.PauseReason(cfg) != "" || !reflect.DeepEqual(before, Plan(cfg, s, epoch)) {
 		t.Fatal("stale build failure affected the new batch")
 	}
@@ -354,8 +354,8 @@ func TestMergeMethodPinnedBetweenBuildAndLand(t *testing.T) {
 			if changed.Method != cfg.MergeMethod || changed.Key() == build.Key() {
 				t.Fatal("build key did not distinguish the configured method")
 			}
-			s = Apply(s, TestRefBuilt{BatchID: build.BatchID, TestedSHA: "tested", Method: build.Method, At: epoch})
-			s = Apply(s, ChecksCompleted{TestedSHA: "tested", Success: true})
+			s = applySerial(s, TestRefBuilt{BatchID: build.BatchID, TestedSHA: "tested", Method: build.Method, At: epoch})
+			s = applySerial(s, ChecksCompleted{TestedSHA: "tested", Success: true})
 			land := onlyAction[Land](t, Plan(cfg, s, epoch))
 			if land.Method != actual || s.Active.Method != actual || land.TestedSHA != "tested" || land.ExpectedBaseSHA != build.BaseSHA || land.FenceToken != s.Fence {
 				t.Fatalf("config change altered landing payload: %+v", land)

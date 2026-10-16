@@ -1,13 +1,17 @@
 package queue
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"time"
 )
 
-// Config controls a serial queue. ResolveAfter is the wait before fencing and
+// Config controls a queue with one active batch. ResolveAfter is the wait before fencing and
 // reading an uncertain landing; it never makes the landing a failure.
 type Config struct {
+	// BatchMaxSize defaults to 1; BatchMaxWait bounds formation of partial batches.
+	BatchMaxSize int
+	BatchMaxWait time.Duration
 	MergeMethod  MergeMethod
 	CheckTimeout time.Duration
 	ResolveAfter time.Duration
@@ -36,6 +40,7 @@ type State struct {
 	BaseSHA    string
 	Entries    []Entry
 	Active     *Batch
+	pending    []pendingGroup
 	Fence      string
 
 	nextBatch     uint64
@@ -61,8 +66,9 @@ type Entry struct {
 	DequeueRequested bool
 }
 
-// Batch is the unit of testing and landing. Serial mode admits one PR per batch.
+// Batch is the unit of testing and landing.
 type Batch struct {
+	FromBisection    bool
 	ID               string
 	PRs              []BatchPR
 	BaseSHA          string
@@ -158,6 +164,19 @@ type DequeueRequested struct{ PR int }
 // ResumeRequested clears build failures and poison pauses and resumes the queue.
 type ResumeRequested struct{}
 
+// BatchStarted durably records the planner's composition before any build I/O.
+type BatchStarted struct {
+	BatchID, BaseSHA string
+	PRs              []BatchPR
+	At               time.Time
+}
+
+// BatchFailed records a planner timeout after a final checks refresh.
+type BatchFailed struct {
+	BatchID string
+	Reason  DequeueReason
+}
+
 // TestRefBuilt records the tested SHA, actual method, and origin of its check timer.
 type TestRefBuilt struct {
 	BatchID, TestedSHA string
@@ -198,6 +217,9 @@ type ActionCompleted struct{ Key string }
 // ActionPoisoned pauses the queue after repeated corruption of one action key.
 type ActionPoisoned struct{ Key, Reason string }
 
+func (BatchStarted) queueEvent() {}
+func (BatchFailed) queueEvent()  {}
+
 func (PRObserved) queueEvent()         {}
 func (BaseMoved) queueEvent()          {}
 func (ChecksCompleted) queueEvent()    {}
@@ -232,6 +254,17 @@ type BuildTestRef struct {
 	Ref              string
 	Method           MergeMethod
 }
+
+// FailBatch records a timeout decision so replay can split a multi-PR batch.
+type FailBatch struct {
+	BatchID string
+	Reason  DequeueReason
+}
+
+func (FailBatch) queueAction() {}
+
+// Key pins the recorded failure to one active batch.
+func (a FailBatch) Key() string { return "batch/" + a.BatchID + "/fail/" + string(a.Reason) }
 
 // RefreshChecks reads forge CI status for TestedSHA. The executor first appends
 // ChecksCompleted if terminal, then always appends ChecksRefreshed with the read
@@ -294,8 +327,15 @@ func (a MarkLanded) Key() string {
 	return fmt.Sprintf("pr/%d/head/%s/landed/%s", a.PR, a.HeadSHA, a.LandedSHA)
 }
 
-// Key distinguishes the planned method as well as the unique batch.
-func (a BuildTestRef) Key() string { return "batch/" + a.BatchID + "/build/" + string(a.Method) }
+// Key pins the unique batch, planned method, base and ordered composition.
+func (a BuildTestRef) Key() string {
+	h := sha256.New()
+	_, _ = fmt.Fprintf(h, "%d:%s", len(a.BaseSHA), a.BaseSHA)
+	for _, pr := range a.PRs {
+		_, _ = fmt.Fprintf(h, "/%d/%d:%s", pr.PR, len(pr.HeadSHA), pr.HeadSHA)
+	}
+	return fmt.Sprintf("batch/%s/build/%s/%x", a.BatchID, a.Method, h.Sum(nil))
+}
 
 // Key stays stable until a refresh result advances this batch's refresh epoch.
 func (a RefreshChecks) Key() string {

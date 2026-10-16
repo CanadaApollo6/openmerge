@@ -127,3 +127,25 @@ func (a MarkLanded) Validate() error {
 	}
 	return requireActionText("head_sha", a.HeadSHA, "landed_sha", a.LandedSHA)
 }
+
+// Validate requires a durable composition, base and recorded clock origin.
+func (e BatchStarted) Validate() error {
+	if err := requireActionText("batch_id", e.BatchID, "base_sha", e.BaseSHA); err != nil {
+		return err
+	}
+	if e.At.IsZero() {
+		return fmt.Errorf("at must not be zero")
+	}
+	if len(e.PRs) > 128 {
+		return fmt.Errorf("prs must contain at most 128 PRs")
+	}
+	return validateBatchPRs(e.PRs)
+}
+
+// Validate restricts planner-triggered failures to check timeouts.
+func (a FailBatch) Validate() error {
+	if a.Reason != ChecksTimeout {
+		return fmt.Errorf("invalid batch failure reason %q", a.Reason)
+	}
+	return requireActionText("batch_id", a.BatchID)
+}

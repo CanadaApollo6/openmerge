@@ -8,7 +8,17 @@ import "time"
 func NextWake(cfg Config, s State, now time.Time) (time.Time, bool) {
 	batch := s.Active
 	if batch == nil {
-		return time.Time{}, false
+		if s.PauseReason(cfg) != "" {
+			return time.Time{}, false
+		}
+		if s.buildRetry.failures > 0 {
+			at := s.buildRetry.failedAt.Add(cfg.buildRetryDelay(s.buildRetry.failures))
+			if at.After(now) {
+				return at, true
+			}
+		}
+		_, at := s.batchCandidates(cfg, now)
+		return at, !at.IsZero()
 	}
 	var next time.Time
 	consider := func(at time.Time) {

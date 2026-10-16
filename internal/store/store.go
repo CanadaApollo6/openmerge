@@ -112,6 +112,9 @@ func (s *Store) Append(ctx context.Context, q QueueID, events []queue.Event, ded
 	return s.append(ctx, q, events, dedupeKey, false)
 }
 
+// ErrBatchStarted rejects a stale build before it can overwrite a test ref.
+var ErrBatchStarted = errors.New("batch composition is no longer authorized to build")
+
 // ErrLandingStarted rejects a superseded executor before it calls the forge.
 var ErrLandingStarted = errors.New("landing has already started or its batch is no longer testing")
 
@@ -138,6 +141,35 @@ func (s *Store) append(ctx context.Context, q QueueID, events []queue.Event, ded
 				if _, err := tx.Exec(ctx, `UPDATE actions SET poison_count = 0, poison_notified = false
 					WHERE queue_id = $1 AND poison_count > 0`, q); err != nil {
 					return err
+				}
+			}
+			if start, ok := event.(queue.BatchStarted); ok && executorEmit {
+				state, _, err := load(ctx, tx, q)
+				if err != nil {
+					return err
+				}
+				next := queue.Apply(state, start)
+				if next.Active == nil || next.Active.Phase != queue.Building || next.Active.ID != start.BatchID || next.Active.BaseSHA != start.BaseSHA || !slices.Equal(next.Active.PRs, start.PRs) {
+					return ErrBatchStarted
+				}
+				// Match the composition against the live in-flight build, rather than
+				// trusting a stale worker's event or its former action key.
+				var payload []byte
+				err = tx.QueryRow(ctx, `SELECT payload FROM actions WHERE queue_id=$1 AND type='build_test_ref'
+					AND status='in_flight' AND lease_until > $2`, q, start.At).Scan(&payload)
+				if errors.Is(err, pgx.ErrNoRows) {
+					return ErrClaimLost
+				}
+				if err != nil {
+					return err
+				}
+				action, err := queue.DecodeAction(payload)
+				if err != nil {
+					return err
+				}
+				build, ok := action.(queue.BuildTestRef)
+				if !ok || build.BatchID != start.BatchID || build.BaseSHA != start.BaseSHA || !slices.Equal(build.PRs, start.PRs) {
+					return ErrBatchStarted
 				}
 			}
 			if start, ok := event.(queue.LandingStarted); ok && executorEmit {

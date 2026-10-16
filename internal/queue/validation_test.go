@@ -178,7 +178,7 @@ func TestPlanRejectsInvalidActionBeforeEmission(t *testing.T) {
 
 func TestActionPoisonPauseAndResume(t *testing.T) {
 	for _, initial := range []State{queued(1), testingState(), readyState(), landingState()} {
-		s := Apply(initial, ActionPoisoned{Key: "bad/key", Reason: "invalid payload"})
+		s := applySerial(initial, ActionPoisoned{Key: "bad/key", Reason: "invalid payload"})
 		if s.PauseReason(testConfig) != "action-poisoned" {
 			t.Fatal("poison did not pause queue")
 		}
@@ -186,7 +186,7 @@ func TestActionPoisonPauseAndResume(t *testing.T) {
 		if report.Status != "paused" || report.Reason != "action-poisoned" || report.HeadSHA != "head1" {
 			t.Fatalf("pause is not visible on head PR: %+v", report)
 		}
-		s = Apply(s, ActionCompleted{Key: report.Key()})
+		s = applySerial(s, ActionCompleted{Key: report.Key()})
 		actions := Plan(testConfig, s, epoch.Add(time.Hour))
 		if s.Active != nil && s.Active.Phase == Landing {
 			resolve := onlyAction[ResolveLanding](t, actions)
@@ -196,11 +196,11 @@ func TestActionPoisonPauseAndResume(t *testing.T) {
 		} else if len(actions) != 0 {
 			t.Fatalf("paused work continued: %+v", actions)
 		}
-		s = Apply(s, BaseMoved{SHA: "another-base"})
+		s = applySerial(s, BaseMoved{SHA: "another-base"})
 		if s.PauseReason(testConfig) != "action-poisoned" {
 			t.Fatal("base update cleared poison pause")
 		}
-		s = Apply(s, ResumeRequested{})
+		s = applySerial(s, ResumeRequested{})
 		if s.PauseReason(testConfig) != "" || len(Plan(testConfig, s, epoch.Add(time.Hour))) == 0 {
 			t.Fatal("resume did not retry work")
 		}
@@ -208,22 +208,22 @@ func TestActionPoisonPauseAndResume(t *testing.T) {
 }
 
 func TestActionPoisonedWhilePausedIsNoOp(t *testing.T) {
-	s := Apply(readyState(), ActionPoisoned{Key: "bad/key", Reason: "invalid payload"})
+	s := applySerial(readyState(), ActionPoisoned{Key: "bad/key", Reason: "invalid payload"})
 	report := onlyAction[ReportStatus](t, Plan(testConfig, s, epoch))
 	for _, acknowledged := range []bool{false, true} {
 		if acknowledged {
-			s = Apply(s, ActionCompleted{Key: report.Key()})
+			s = applySerial(s, ActionCompleted{Key: report.Key()})
 		}
 		for range 5 {
-			after := Apply(s, ActionPoisoned{Key: report.Key(), Reason: "corrupt pause report"})
+			after := applySerial(s, ActionPoisoned{Key: report.Key(), Reason: "corrupt pause report"})
 			if !reflect.DeepEqual(s, after) {
 				t.Fatal("repeated poison changed the paused state or its revision")
 			}
 			s = after
 		}
 	}
-	s = Apply(s, ResumeRequested{})
-	s = Apply(s, ActionPoisoned{Key: "new/key", Reason: "new incident"})
+	s = applySerial(s, ResumeRequested{})
+	s = applySerial(s, ActionPoisoned{Key: "new/key", Reason: "new incident"})
 	if next := onlyAction[ReportStatus](t, Plan(testConfig, s, epoch)); next.Key() == report.Key() {
 		t.Fatal("resume did not permit a new pause report")
 	}
@@ -234,7 +234,7 @@ func TestPausedLandingRespectsResolutionDeadline(t *testing.T) {
 		t.Run(reason, func(t *testing.T) {
 			s := landingState()
 			if reason == "action-poisoned" {
-				s = Apply(s, ActionPoisoned{Key: "unrelated", Reason: "invalid payload"})
+				s = applySerial(s, ActionPoisoned{Key: "unrelated", Reason: "invalid payload"})
 			} else {
 				// Build failures normally reset on success; retain a pause here
 				// to assert that resolution is independent of the pause reason.

@@ -33,6 +33,12 @@
 // Landed events must
 // match the actual base transition and fence, and each forge landing must have
 // a Landed event after recovery settles. Abandoned attempts must never land.
+// Exit tests run all 500-PR variants with both size 1 and size 8 (30s max wait),
+// and report a 2,000-PR day with size 8 and 30-minute CI. BisectionCIRuns counts
+// builds from pending bisection groups, including rebuilds of those groups.
+// Failure dequeues must isolate a singleton; settled workloads must account for
+// every admitted PR and retain merged reports for every landed PR.
+//
 // CI membership must match the planner's intended batch. Before crediting a
 // landing, every intended PR must have its file changes in the landed tip; merge
 // landings must also retain each intended PR head as an ancestor.

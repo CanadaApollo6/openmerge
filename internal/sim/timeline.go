@@ -79,6 +79,7 @@ func (s *simulation) deliver(event scheduledEvent) error {
 		s.record(queue.PRObserved{PR: event.pr, HeadSHA: pr.HeadSHA, Eligible: true, Trusted: !p.untrusted})
 		s.schedule(s.now.Add(time.Second), enqueue, event.pr, "")
 	case enqueue:
+		s.prs[event.pr].dequeued = ""
 		s.prs[event.pr].enqueued = s.now
 		if s.prs[event.pr].firstEnqueued.IsZero() {
 			s.prs[event.pr].firstEnqueued = s.now

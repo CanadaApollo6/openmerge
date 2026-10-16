@@ -31,8 +31,10 @@ Version 1 requires exactly one named queue. Defaults are:
   nonnegative Go duration strings, with unquoted integer zero also accepted.
 - `enter_when: []` and `merge_when: []`, both true.
 - `batch: {max_size: 1, max_wait: 0s}`. Sizes 1 through 128 are accepted.
-  A larger size or positive wait produces a warning: Phase 1 always executes
-  serially without a batch wait. The values remain in the loaded config.
+  The queue tests up to `max_size` PRs together, with one active batch at a time.
+  A partial batch waits until its oldest member has waited `max_wait`; size 1
+  starts immediately. Failing batches are bisected serially, preserving passing
+  PRs. Pending bisection groups run before fresh work without waiting.
 
 `Queue.QueueConfig()` supplies planner defaults of `ResolveAfter: 1m`,
 `RefreshInterval: 1m`, `BuildRetries: 3`, and `BuildBackoff: 5s`. The backoff
@@ -119,7 +121,7 @@ tag is `v4.0.0-rc.6`, so this PR uses stable v3 as requested. See the
 [maintainer's version policy](https://github.com/yaml/go-yaml#version-intentions).
 
 The ADR example in `testdata/openmerge.yml` is byte-identical to ADR 0003 and
-validates with the expected batching warning. Both list the three supported
+validates without warnings. Both list the three supported
 methods in `queue.MergeMethod`: merge, squash, and rebase.
 The ADR leaves group operand shapes, glob details, and operational defaults
 unspecified; the rules above make those choices explicit. ADR 0003 also records

@@ -226,5 +226,18 @@ func (s *simulation) checkSettled() error {
 			return fmt.Errorf("forge landing %s -> %s has no matching Landed after recovery settled", landing.base, landing.tip)
 		}
 	}
+	for pr := 1; pr < len(s.prs); pr++ {
+		p := s.prs[pr]
+		if !p.untrusted && !p.enqueued.IsZero() && p.landed.IsZero() && p.dequeued == "" {
+			return fmt.Errorf("admitted PR %d silently disappeared without landing or dequeue", pr)
+		}
+		if !p.landed.IsZero() {
+			status := s.forge.Statuses(s.repo, pr)[p.head]
+			if status.State != "merged" {
+				return fmt.Errorf("landed PR %d lost its merged report", pr)
+			}
+		}
+	}
+
 	return nil
 }

@@ -52,13 +52,32 @@ func Apply(s State, e Event) State {
 		s.BaseSHA = e.SHA
 		s.buildRetry = buildRetryState{}
 		if s.Active != nil && s.Active.Phase != Landing && s.Active.BaseSHA != e.SHA {
-			s.discardBatch()
+			s.rebuildBatch()
 		}
 	case ResumeRequested:
 		s.buildRetry = buildRetryState{}
 		s.actionPoison = actionPoisonState{}
 	case ActionPoisoned:
 		s.actionPoison = actionPoisonState{key: e.Key, reason: e.Reason, revision: s.revision}
+	case BatchStarted:
+		if e.Validate() == nil && s.Active == nil && e.BatchID == s.nextBatchID() && e.BaseSHA == s.BaseSHA && s.runnablePRs(e.PRs) {
+			fromBisection := false
+			if len(s.pending) > 0 {
+				group := s.pending[0]
+				if !slices.Equal(group.prs, e.PRs) {
+					break
+				}
+				fromBisection = group.bisection
+				s.pending = s.pending[1:]
+			}
+			s.nextBatch++
+			s.Active = &Batch{ID: e.BatchID, BaseSHA: e.BaseSHA, PRs: slices.Clone(e.PRs), FromBisection: fromBisection,
+				TestRef: "openmerge/queue/" + s.BaseBranch + "/" + e.BatchID, Phase: Building}
+		}
+	case BatchFailed:
+		if e.Reason == ChecksTimeout && s.batchIn(e.BatchID, Testing) && !s.Active.checksPassed {
+			s.failBatch(e.Reason)
+		}
 	case TestRefBuilt:
 		if s.batchIn(e.BatchID, Building) {
 			if earlier, used := s.testedBatches[e.TestedSHA]; used {
@@ -79,9 +98,7 @@ func Apply(s State, e Event) State {
 	case TestRefBuildFailed:
 		if s.batchIn(e.BatchID, Building) {
 			if e.Conflict {
-				for _, pr := range s.Active.PRs {
-					s.requestDequeue(pr.PR, Conflict)
-				}
+				s.failBatch(Conflict)
 			} else {
 				s.failBuild(e.At, "")
 			}
@@ -130,13 +147,13 @@ func Apply(s State, e Event) State {
 	case LandingAbandoned:
 		if s.batchIn(e.BatchID, Landing) {
 			s.Fence = e.NewFence
-			s.discardBatch()
+			s.rebuildBatch()
 		}
 	case Dequeued:
 		if entry := s.entry(e.PR); entry != nil && entry.AdmissionID == e.AdmissionID && !s.isLanding(e.PR) &&
 			(e.BatchID == "" || s.Active != nil && s.Active.ID == e.BatchID) {
 			if s.inBatch(e.PR) {
-				s.discardBatch()
+				s.rebuildBatch()
 			}
 			s.reportHead(e.PR, entry.HeadSHA, "dequeued", string(e.Reason), string(e.Reason))
 			s.removeEntry(e.PR)
@@ -144,13 +161,16 @@ func Apply(s State, e Event) State {
 	case ActionCompleted:
 		s.completeEffect(e.Key)
 	}
-	s.startBatch()
 	s.pruneAcknowledgements()
 	return s
 }
 
 func cloneState(s State) State {
 	s.Entries = slices.Clone(s.Entries)
+	s.pending = slices.Clone(s.pending)
+	for i := range s.pending {
+		s.pending[i].prs = slices.Clone(s.pending[i].prs)
+	}
 	if s.Active != nil {
 		batch := *s.Active
 		batch.PRs = slices.Clone(batch.PRs)
@@ -220,12 +240,14 @@ func (s *State) requestDequeue(pr int, reason DequeueReason) {
 	if current, pending := s.dequeues[pr]; !pending || reason == Requested && current.Reason != Requested {
 		s.dequeues[pr] = Dequeue{PR: pr, HeadSHA: entry.HeadSHA, AdmissionID: entry.AdmissionID, Reason: reason, scope: fmt.Sprintf("event/%d", s.revision)}
 	}
+	s.removePendingPR(pr)
 	if s.inBatch(pr) && !s.isLanding(pr) {
 		s.addEffect(DeleteRef{Ref: s.Active.TestRef})
 	}
 }
 
 func (s *State) removeEntry(pr int) {
+	s.removePendingPR(pr)
 	s.Entries = slices.DeleteFunc(s.Entries, func(e Entry) bool { return e.PR == pr })
 	delete(s.dequeues, pr)
 }
@@ -241,7 +263,7 @@ func (s *State) failBuild(at time.Time, detail string) {
 	s.buildRetry.failedAt = at
 	s.buildRetry.revision = s.revision
 	s.buildRetry.detail = detail
-	s.discardBatch()
+	s.rebuildBatch()
 }
 
 // maxRetainedChecks bounds unrelated or reordered CI observations per active batch.
@@ -272,26 +294,65 @@ func (s *State) completeChecks(success bool) {
 	if success {
 		s.Active.checksPassed = true
 	} else {
-		for _, pr := range s.Active.PRs {
-			s.requestDequeue(pr.PR, ChecksFailed)
-		}
+		s.failBatch(ChecksFailed)
 	}
 }
 
-func (s *State) startBatch() {
-	if s.Active != nil || len(s.Entries) == 0 {
+func (s State) nextBatchID() string { return fmt.Sprintf("b%d", s.nextBatch+1) }
+
+type pendingGroup struct {
+	prs       []BatchPR
+	bisection bool
+}
+
+func (s State) runnablePRs(prs []BatchPR) bool {
+	for _, pr := range prs {
+		entry := s.entry(pr.PR)
+		observation, known := s.observations[pr.PR]
+		if entry == nil || entry.HeadSHA != pr.HeadSHA || !known || !observation.Eligible || !observation.Trusted || observation.HeadSHA != pr.HeadSHA {
+			return false
+		}
+		if _, pending := s.dequeues[pr.PR]; pending {
+			return false
+		}
+	}
+	return len(prs) > 0
+}
+
+func (s *State) removePendingPR(pr int) {
+	for i := range s.pending {
+		s.pending[i].prs = slices.DeleteFunc(s.pending[i].prs, func(p BatchPR) bool { return p.PR == pr })
+	}
+	s.pending = slices.DeleteFunc(s.pending, func(g pendingGroup) bool { return len(g.prs) == 0 })
+}
+
+func (s *State) rebuildBatch() {
+	group := pendingGroup{prs: slices.Clone(s.Active.PRs), bisection: s.Active.FromBisection}
+	group.prs = slices.DeleteFunc(group.prs, func(pr BatchPR) bool { _, pending := s.dequeues[pr.PR]; return pending })
+	if len(group.prs) > 0 {
+		s.pending = append([]pendingGroup{group}, s.pending...)
+	}
+	s.discardBatch()
+}
+
+func (s *State) failBatch(reason DequeueReason) {
+	prs := s.Active.PRs
+	if len(prs) == 1 {
+		s.requestDequeue(prs[0].PR, reason)
 		return
 	}
-	entry := s.Entries[0]
-	if _, pending := s.dequeues[entry.PR]; pending {
-		return
+	middle := len(prs) / 2
+	groups := []pendingGroup{
+		{prs: slices.Clone(prs[:middle]), bisection: true},
+		{prs: slices.Clone(prs[middle:]), bisection: true},
 	}
-	s.nextBatch++
-	id := fmt.Sprintf("b%d", s.nextBatch)
-	s.Active = &Batch{
-		ID: id, PRs: []BatchPR{{PR: entry.PR, HeadSHA: entry.HeadSHA}},
-		BaseSHA: s.BaseSHA, TestRef: "openmerge/queue/" + s.BaseBranch + "/" + id, Phase: Building,
+	s.pending = append(groups, s.pending...)
+	for _, pr := range prs {
+		if !s.runnablePRs([]BatchPR{pr}) {
+			s.removePendingPR(pr.PR)
+		}
 	}
+	s.discardBatch()
 }
 
 type effectScope struct {

@@ -54,7 +54,12 @@ func (h *harness) buildAction() queue.BuildTestRef {
 func (h *harness) tested(t *testing.T) string {
 	t.Helper()
 	var sha string
-	must(t, h.x.Execute(context.Background(), h.buildAction(), func(e queue.Event) error { sha = e.(queue.TestRefBuilt).TestedSHA; return nil }))
+	must(t, h.x.Execute(context.Background(), h.buildAction(), func(e queue.Event) error {
+		if built, ok := e.(queue.TestRefBuilt); ok {
+			sha = built.TestedSHA
+		}
+		return nil
+	}))
 	return sha
 }
 
@@ -94,7 +99,7 @@ func TestBuildTestRef(t *testing.T) {
 			if tc.buildErr == nil {
 				must(t, err)
 				sha := h.read(t, a.Ref)
-				want := []queue.Event{queue.TestRefBuilt{BatchID: a.BatchID, TestedSHA: sha, Method: tc.method, At: epoch}}
+				want := []queue.Event{queue.BatchStarted{BatchID: a.BatchID, BaseSHA: a.BaseSHA, PRs: a.PRs, At: epoch}, queue.TestRefBuilt{BatchID: a.BatchID, TestedSHA: sha, Method: tc.method, At: epoch}}
 				if !reflect.DeepEqual(events, want) {
 					t.Fatalf("events = %#v, want %#v", events, want)
 				}
@@ -105,7 +110,7 @@ func TestBuildTestRef(t *testing.T) {
 			} else if !errors.Is(err, tc.buildErr) {
 				t.Fatalf("error = %v, want infrastructure error", err)
 			}
-			want := []queue.Event{queue.TestRefBuildFailed{BatchID: a.BatchID, Conflict: tc.conflict, At: epoch}}
+			want := []queue.Event{queue.BatchStarted{BatchID: a.BatchID, BaseSHA: a.BaseSHA, PRs: a.PRs, At: epoch}, queue.TestRefBuildFailed{BatchID: a.BatchID, Conflict: tc.conflict, At: epoch}}
 			if !reflect.DeepEqual(events, want) {
 				t.Fatalf("events = %#v, want %#v", events, want)
 			}
@@ -298,5 +303,23 @@ func must(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestBatchStartedEmitFailurePreventsBuild(t *testing.T) {
+	h := setup(t)
+	calls := 0
+	h.f.OnTestRef(func(string, []int) { calls++ })
+	err := h.x.Execute(t.Context(), h.buildAction(), func(e queue.Event) error {
+		if _, ok := e.(queue.BatchStarted); !ok {
+			t.Fatalf("first event is %T", e)
+		}
+		return errIO
+	})
+	if !errors.Is(err, errIO) || calls != 0 {
+		t.Fatalf("build ran without durable start: calls=%d err=%v", calls, err)
+	}
+	if _, err := h.f.ReadRef(t.Context(), repo, h.buildAction().Ref); err == nil {
+		t.Fatal("unrecorded build pushed a ref")
 	}
 }

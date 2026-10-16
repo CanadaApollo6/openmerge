@@ -64,7 +64,7 @@ type Queue struct {
 	Batch        Batch
 }
 
-// Batch reserves batching settings for a later release; Phase 1 executes size 1.
+// Batch controls serial batch formation.
 type Batch struct {
 	MaxSize int
 	MaxWait time.Duration
@@ -76,6 +76,7 @@ type Batch struct {
 func (q Queue) QueueConfig() queue.Config {
 	return queue.Config{
 		MergeMethod: q.MergeMethod, CheckTimeout: q.CheckTimeout,
+		BatchMaxSize: q.Batch.MaxSize, BatchMaxWait: q.Batch.MaxWait,
 		ResolveAfter: time.Minute, RefreshInterval: time.Minute,
 		BuildRetries: 3, BuildBackoff: 5 * time.Second,
 	}
@@ -109,7 +110,7 @@ func (errs Errors) Error() string {
 
 // Load parses exactly one YAML document, validates it, and compiles conditions.
 // Errors are returned as Errors, including YAML syntax errors. Invalid input
-// returns no usable configuration. Warnings describe accepted inactive batching.
+// returns no usable configuration.
 func Load(data []byte) (Config, []Diagnostic, error) {
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	var doc yaml.Node
@@ -222,9 +223,6 @@ func (p *parser) queue(n *yaml.Node, path string) Queue {
 		}
 		if n := fields["max_wait"]; n != nil {
 			q.Batch.MaxWait = p.duration(n, path+".batch.max_wait")
-		}
-		if q.Batch.MaxSize > 1 || q.Batch.MaxWait > 0 {
-			p.warnings = append(p.warnings, Diagnostic{Line: n.Line, Path: path + ".batch", Message: "batching is not yet active; Phase 1 executes max_size 1 without waiting"})
 		}
 	}
 	return q

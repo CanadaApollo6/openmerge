@@ -29,6 +29,16 @@ def mutation(path, *edits):
 LAND_SHA = "Base: x.Base, ExpectedBaseSHA: a.ExpectedBaseSHA, TestedSHA: a.TestedSHA,"
 ABANDON = "return emit(queue.LandingAbandoned{BatchID: a.BatchID, NewFence: next})"
 MUTANTS = {
+    "drop_passing_subbatch_pr": mutation(
+        APPLY,
+        ("s.Active.checksPassed = true",
+         "if s.Active.FromBisection && len(s.Active.PRs) > 1 { s.Active.PRs = s.Active.PRs[1:] }\n\t\ts.Active.checksPassed = true"),
+    ),
+    "dequeue_whole_failing_batch": mutation(
+        APPLY,
+        ("if len(prs) == 1 {", "if true {"),
+        ("s.requestDequeue(prs[0].PR, reason)", "for _, pr := range prs { s.requestDequeue(pr.PR, reason) }"),
+    ),
     "no_ci_gate": mutation(PLAN, ("if batch.checksPassed {", "if true {")),
     "wrong_sha": mutation(
         EXECUTOR, (LAND_SHA, LAND_SHA.replace("TestedSHA: a.TestedSHA", "TestedSHA: a.PRs[0].HeadSHA"))
@@ -37,7 +47,7 @@ MUTANTS = {
         EXECUTOR, (LAND_SHA, LAND_SHA.replace("TestedSHA: a.TestedSHA", "TestedSHA: a.ExpectedBaseSHA"))
     ),
     "skip_trust": {
-        **mutation(APPLY, ("case !e.Trusted:", "case false:"), ("case !observation.Trusted:", "case false:")),
+        **mutation(APPLY, ("case !e.Trusted:", "case false:"), ("case !observation.Trusted:", "case false:"), (" || !observation.Trusted", "")),
         **mutation(PLAN, (" || !observation.Trusted", "")),
     },
     "no_dequeued": mutation(
@@ -93,13 +103,18 @@ import (
     "github.com/CanadaApollo6/openmerge/internal/queue"
 )
 func TestMutationRunProbe(t *testing.T) {
-    for _, mode := range []string{"passing", "broken", "squash", "external"} {
+    for _, mode := range []string{"passing", "broken", "squash", "external", "batching"} {
         t.Run(mode, func(t *testing.T) {
             cfg := smallConfig()
             cfg.PRs, cfg.MaxSteps, cfg.Faults = 2, 10000, DefaultFaults()
             if mode == "broken" { cfg.BrokenRate = 1 }
             if mode == "squash" { cfg.MergeMethod = queue.Squash }
             if mode == "external" { cfg.ExternalPushRate = 1 }
+            if mode == "batching" {
+                cfg.PRs, cfg.BrokenRate, cfg.Faults = 16, 0.2, Faults{}
+                cfg.ArrivalWindow = 0
+                cfg.Planner.BatchMaxSize = 8
+            }
             r, err := Run(cfg)
             if err != nil { t.Fatalf("simulator rejected mutation: %v; merged=%d", err, r.Merged) }
         })

@@ -15,22 +15,22 @@ var testConfig = Config{MergeMethod: Merge, CheckTimeout: 10 * time.Minute, Reso
 func queued(prs ...int) State {
 	s := State{BaseBranch: "main", BaseSHA: "base1", Fence: "f0"}
 	for _, pr := range prs {
-		s = Apply(s, PRObserved{PR: pr, HeadSHA: fmt.Sprintf("head%d", pr), Eligible: true, Trusted: true})
-		s = Apply(s, EnqueueRequested{PR: pr, At: epoch})
+		s = applySerial(s, PRObserved{PR: pr, HeadSHA: fmt.Sprintf("head%d", pr), Eligible: true, Trusted: true})
+		s = applySerial(s, EnqueueRequested{PR: pr, At: epoch})
 	}
 	return s
 }
 
 func testingState() State {
-	return Apply(queued(1), TestRefBuilt{Method: Merge, BatchID: "b1", TestedSHA: "tested1", At: epoch})
+	return applySerial(queued(1), TestRefBuilt{Method: Merge, BatchID: "b1", TestedSHA: "tested1", At: epoch})
 }
 
 func readyState() State {
-	return Apply(testingState(), ChecksCompleted{TestedSHA: "tested1", Success: true})
+	return applySerial(testingState(), ChecksCompleted{TestedSHA: "tested1", Success: true})
 }
 
 func landingState() State {
-	return Apply(readyState(), LandingStarted{BatchID: "b1", AttemptID: "attempt1", FenceToken: "f0", At: epoch})
+	return applySerial(readyState(), LandingStarted{BatchID: "b1", AttemptID: "attempt1", FenceToken: "f0", At: epoch})
 }
 
 func descriptions(actions []Action) []string {
@@ -331,7 +331,7 @@ func TestApplyAndPlan(t *testing.T) {
 			t.Parallel()
 			s := tt.initial()
 			for _, event := range tt.events {
-				s = Apply(s, event)
+				s = applySerial(s, event)
 			}
 			var prs []int
 			for _, entry := range s.Entries {
@@ -376,7 +376,7 @@ func TestPlanTimers(t *testing.T) {
 		{"checks before deadline", testingState(), testConfig, 9 * time.Minute, []string{"refresh:b1:tested1"}},
 		{"checks at deadline", testingState(), testConfig, 10 * time.Minute, []string{"refresh:b1:tested1"}},
 		{"checks after deadline need refresh", testingState(), testConfig, 10*time.Minute + time.Nanosecond, []string{"refresh:b1:tested1"}},
-		{"checks after deadline and refresh", Apply(testingState(), ChecksRefreshed{BatchID: "b1", TestedSHA: "tested1", At: epoch.Add(10 * time.Minute)}), testConfig, 10*time.Minute + time.Nanosecond, []string{"dequeue:1:checks-timeout", "delete:openmerge/queue/main/b1"}},
+		{"checks after deadline and refresh", applySerial(testingState(), ChecksRefreshed{BatchID: "b1", TestedSHA: "tested1", At: epoch.Add(10 * time.Minute)}), testConfig, 10*time.Minute + time.Nanosecond, []string{"dequeue:1:checks-timeout", "delete:openmerge/queue/main/b1"}},
 		{"checks unlimited", testingState(), Config{}, 100 * time.Hour, []string{"refresh:b1:tested1"}},
 		{"successful checks do not time out", readyState(), testConfig, time.Hour, []string{"land:b1:base1:tested1:f0"}},
 		{"landing before delay", landingState(), testConfig, 59 * time.Second, nil},
@@ -407,13 +407,13 @@ func TestChangesDuringLanding(t *testing.T) {
 		for _, landed := range []bool{true, false} {
 			t.Run(fmt.Sprintf("%s/landed=%t", tt.name, landed), func(t *testing.T) {
 				t.Parallel()
-				s := Apply(landingState(), tt.event)
+				s := applySerial(landingState(), tt.event)
 				assertPlan(t, testConfig, s, epoch.Add(time.Hour), "resolve:b1:attempt1")
 				if landed {
-					s = Apply(s, Landed{BatchID: "b1", NewBaseSHA: "tested1", NewFence: "f1"})
+					s = applySerial(s, Landed{BatchID: "b1", NewBaseSHA: "tested1", NewFence: "f1"})
 					assertPlan(t, testConfig, s, epoch, "report:1:merged:already landed", "delete:openmerge/queue/main/b1")
 				} else {
-					s = Apply(Apply(s, BaseMoved{SHA: "base2"}), LandingAbandoned{BatchID: "b1", NewFence: "f1"})
+					s = applySerial(applySerial(s, BaseMoved{SHA: "base2"}), LandingAbandoned{BatchID: "b1", NewFence: "f1"})
 					assertPlan(t, testConfig, s, epoch, "dequeue:1:"+string(tt.reason), "delete:openmerge/queue/main/b1")
 				}
 			})
@@ -423,41 +423,41 @@ func TestChangesDuringLanding(t *testing.T) {
 
 func TestEffectAcknowledgements(t *testing.T) {
 	t.Run("report repeats until acknowledged and never returns", func(t *testing.T) {
-		s := Apply(queued(), EnqueueRequested{PR: 1, At: epoch})
+		s := applySerial(queued(), EnqueueRequested{PR: 1, At: epoch})
 		actions := assertPlan(t, testConfig, s, epoch, "report:1:blocked:PR does not satisfy queue entry conditions")
 		assertPlan(t, testConfig, s, epoch.Add(time.Hour), descriptions(actions)...)
-		s = Apply(s, ActionCompleted{Key: actions[0].Key()})
+		s = applySerial(s, ActionCompleted{Key: actions[0].Key()})
 		assertPlan(t, testConfig, s, epoch)
-		s = Apply(s, BaseMoved{SHA: "base2"})
+		s = applySerial(s, BaseMoved{SHA: "base2"})
 		assertPlan(t, testConfig, s, epoch)
 	})
 	t.Run("delete acknowledgement survives until dequeue result", func(t *testing.T) {
 		s := testingState()
 		now := epoch.Add(time.Hour)
-		s = Apply(s, ChecksRefreshed{BatchID: "b1", TestedSHA: "tested1", At: now})
+		s = applySerial(s, ChecksRefreshed{BatchID: "b1", TestedSHA: "tested1", At: now})
 		actions := assertPlan(t, testConfig, s, now, "dequeue:1:checks-timeout", "delete:openmerge/queue/main/b1")
-		s = Apply(s, ActionCompleted{Key: actions[1].Key()})
+		s = applySerial(s, ActionCompleted{Key: actions[1].Key()})
 		remaining := assertPlan(t, testConfig, s, now, "dequeue:1:checks-timeout")
 		if remaining[0].Key() != actions[0].Key() {
 			t.Fatal("unrelated acknowledgement changed timeout dequeue key")
 		}
-		s = Apply(s, Dequeued{PR: 1, AdmissionID: 1, Reason: ChecksTimeout})
+		s = applySerial(s, Dequeued{PR: 1, AdmissionID: 1, Reason: ChecksTimeout})
 		assertPlan(t, testConfig, s, now, "report:1:dequeued:checks-timeout")
 	})
 	t.Run("generic acknowledgement cannot complete a dequeue", func(t *testing.T) {
-		s := Apply(queued(1), DequeueRequested{PR: 1})
+		s := applySerial(queued(1), DequeueRequested{PR: 1})
 		actions := Plan(testConfig, s, epoch)
-		s = Apply(s, ActionCompleted{Key: actions[0].Key()})
+		s = applySerial(s, ActionCompleted{Key: actions[0].Key()})
 		assertPlan(t, testConfig, s, epoch, "dequeue:1:requested", "delete:openmerge/queue/main/b1")
 	})
 	t.Run("PR acknowledgement does not resurrect after the entry leaves", func(t *testing.T) {
-		s := Apply(queued(), EnqueueRequested{PR: 1, At: epoch})
+		s := applySerial(queued(), EnqueueRequested{PR: 1, At: epoch})
 		report := Plan(testConfig, s, epoch)[0]
-		s = Apply(s, PRObserved{PR: 1, HeadSHA: "head1", Eligible: true, Trusted: true})
-		s = Apply(s, EnqueueRequested{PR: 1, At: epoch})
-		s = Apply(s, ActionCompleted{Key: report.Key()})
-		s = Apply(s, DequeueRequested{PR: 1})
-		s = Apply(s, Dequeued{PR: 1, AdmissionID: 1, Reason: Requested})
+		s = applySerial(s, PRObserved{PR: 1, HeadSHA: "head1", Eligible: true, Trusted: true})
+		s = applySerial(s, EnqueueRequested{PR: 1, At: epoch})
+		s = applySerial(s, ActionCompleted{Key: report.Key()})
+		s = applySerial(s, DequeueRequested{PR: 1})
+		s = applySerial(s, Dequeued{PR: 1, AdmissionID: 1, Reason: Requested})
 		for _, action := range Plan(testConfig, s, epoch) {
 			if action.Key() == report.Key() {
 				t.Fatal("pruning resurrected acknowledged report")
@@ -479,7 +479,7 @@ func TestIgnoredResultEvents(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/%T", initial().Active.Phase, event), func(t *testing.T) {
 				s := initial()
 				before := Plan(testConfig, s, epoch)
-				s = Apply(s, event)
+				s = applySerial(s, event)
 				if s.BaseSHA != "base1" || s.Fence != "f0" || !reflect.DeepEqual(before, Plan(testConfig, s, epoch)) {
 					t.Fatal("stale result changed the queue")
 				}
@@ -489,21 +489,21 @@ func TestIgnoredResultEvents(t *testing.T) {
 }
 
 func TestActionKeysAcrossQueueLifetimes(t *testing.T) {
-	s := Apply(queued(1), DequeueRequested{PR: 1})
+	s := applySerial(queued(1), DequeueRequested{PR: 1})
 	first := Plan(testConfig, s, epoch)[0]
-	s = Apply(s, DequeueRequested{PR: 1})
+	s = applySerial(s, DequeueRequested{PR: 1})
 	if Plan(testConfig, s, epoch)[0].Key() != first.Key() {
 		t.Fatal("duplicate dequeue command changed the pending action key")
 	}
-	s = Apply(s, Dequeued{PR: 1, AdmissionID: 1, Reason: Requested})
+	s = applySerial(s, Dequeued{PR: 1, AdmissionID: 1, Reason: Requested})
 	oldReport := Plan(testConfig, s, epoch)[1]
-	s = Apply(s, EnqueueRequested{PR: 1, At: epoch})
-	s = Apply(s, DequeueRequested{PR: 1})
+	s = applySerial(s, EnqueueRequested{PR: 1, At: epoch})
+	s = applySerial(s, DequeueRequested{PR: 1})
 	second := Plan(testConfig, s, epoch)[0]
 	if first.Key() == second.Key() {
 		t.Fatal("later enqueue reused an old dequeue key")
 	}
-	s = Apply(s, Dequeued{PR: 1, AdmissionID: second.(Dequeue).AdmissionID, Reason: Requested})
+	s = applySerial(s, Dequeued{PR: 1, AdmissionID: second.(Dequeue).AdmissionID, Reason: Requested})
 	actions := Plan(testConfig, s, epoch)
 	newReport := actions[len(actions)-1]
 	if oldReport.Key() == newReport.Key() {
@@ -538,13 +538,13 @@ func TestApplyDoesNotMutateInput(t *testing.T) {
 	}
 	for _, initial := range []func() State{
 		func() State { return queued(1) }, testingState, landingState,
-		func() State { return Apply(testingState(), DequeueRequested{PR: 1}) },
-		func() State { return Apply(queued(1), ChecksCompleted{TestedSHA: "test", Success: true}) },
+		func() State { return applySerial(testingState(), DequeueRequested{PR: 1}) },
+		func() State { return applySerial(queued(1), ChecksCompleted{TestedSHA: "test", Success: true}) },
 	} {
 		for _, event := range events {
 			t.Run(fmt.Sprintf("%s/%T", initial().Active.Phase, event), func(t *testing.T) {
 				s, original := initial(), initial()
-				next := Apply(s, event)
+				next := applySerial(s, event)
 				if !reflect.DeepEqual(s, original) {
 					t.Fatal("Apply mutated input")
 				}
@@ -587,7 +587,7 @@ type scenario struct {
 
 func (sc *scenario) step(event Event, want ...string) {
 	sc.t.Helper()
-	sc.s = Apply(sc.s, event)
+	sc.s = applySerial(sc.s, event)
 	assertPlan(sc.t, testConfig, sc.s, sc.now, want...)
 }
 
@@ -596,7 +596,7 @@ func (sc *scenario) acknowledgeEffects() {
 	for _, action := range Plan(testConfig, sc.s, sc.now) {
 		switch action.(type) {
 		case ReportStatus, DeleteRef:
-			sc.s = Apply(sc.s, ActionCompleted{Key: action.Key()})
+			sc.s = applySerial(sc.s, ActionCompleted{Key: action.Key()})
 		}
 	}
 }
@@ -639,7 +639,7 @@ func TestSerialScenarios(t *testing.T) {
 	})
 	t.Run("landing rejected then succeeds", func(t *testing.T) {
 		sc := scenario{t: t, s: landingState(), now: epoch}
-		sc.s = Apply(sc.s, BaseMoved{SHA: "external"})
+		sc.s = applySerial(sc.s, BaseMoved{SHA: "external"})
 		sc.step(LandingAbandoned{BatchID: "b1", NewFence: "f1"}, "delete:openmerge/queue/main/b1", "build:b2:external:[{1 head1}]")
 		sc.acknowledgeEffects()
 		sc.step(ChecksCompleted{TestedSHA: "tested1", Success: true}, "build:b2:external:[{1 head1}]")
@@ -661,4 +661,18 @@ func TestSerialScenarios(t *testing.T) {
 			t.Fatalf("unexpected final state: %+v", sc.s)
 		}
 	})
+}
+
+// applySerial records the planner's size-one composition in the legacy serial
+// scenario harness. Production Apply only creates batches from BatchStarted.
+func applySerial(s State, event Event) State {
+	s = Apply(s, event)
+	if s.Active == nil && len(s.Entries) > 0 {
+		entry := s.Entries[0]
+		prs := []BatchPR{{PR: entry.PR, HeadSHA: entry.HeadSHA}}
+		if s.runnablePRs(prs) {
+			s = Apply(s, BatchStarted{BatchID: s.nextBatchID(), BaseSHA: s.BaseSHA, PRs: prs, At: epoch})
+		}
+	}
+	return s
 }

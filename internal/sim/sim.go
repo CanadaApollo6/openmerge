@@ -308,6 +308,12 @@ func (s *simulation) record(event queue.Event) {
 		}
 		s.recoverFaults("landing/" + event.BatchID)
 	case queue.Dequeued:
+		if event.Reason == queue.ChecksFailed || event.Reason == queue.ChecksTimeout || event.Reason == queue.Conflict {
+			if batch == nil || len(batch.PRs) != 1 || batch.PRs[0].PR != event.PR {
+				s.violation = fmt.Errorf("failure dequeued PR %d without isolating it in a singleton batch", event.PR)
+				return
+			}
+		}
 		for _, entry := range s.state.Entries {
 			if entry.PR == event.PR && entry.AdmissionID == event.AdmissionID {
 				s.prs[event.PR].dequeued = event.Reason
@@ -358,6 +364,9 @@ func (s *simulation) startCI(sha string, prs []int) {
 	}
 	s.tests[sha] = run
 	s.result.CIRuns++
+	if batch.FromBisection {
+		s.result.BisectionCIRuns++
+	}
 	s.forge.SetCheckRuns(s.repo, sha, []forge.CheckRun{{ID: 1, Name: "ci", State: forge.Pending}})
 	duration := s.cfg.CIDuration
 	if s.cfg.CIMin > 0 {

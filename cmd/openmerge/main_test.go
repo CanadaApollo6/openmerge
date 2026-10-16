@@ -104,7 +104,7 @@ func TestRun(t *testing.T) {
 			name: "validate warnings", args: []string{"config", "validate"},
 			files:      map[string]string{".openmerge.yml": "version: 1\nqueues:\n  - name: default\n    batch: {max_size: 8, max_wait: 30s}\n"},
 			wantStdout: "ok\n",
-			wantStderr: ".openmerge.yml:4: warning: queues[0].batch: batching is not yet active; Phase 1 executes max_size 1 without waiting\n",
+			wantStderr: "",
 		},
 		{
 			name: "validate all errors", args: []string{"config", "validate"}, wantCode: 1,

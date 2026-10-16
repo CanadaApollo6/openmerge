@@ -88,6 +88,7 @@ type Result struct {
 	MeanTimeToMerge     time.Duration               `json:"-"`
 	MedianTimeToMerge   time.Duration               `json:"-"`
 	P95TimeToMerge      time.Duration               `json:"-"`
+	BisectionCIRuns     int                         `json:"bisection_ci_runs"`
 	CIRuns              int                         `json:"ci_runs"`
 	CIRunsPerMergedPR   float64                     `json:"ci_runs_per_merged_pr"`
 	SimulatedSpan       time.Duration               `json:"-"`
@@ -159,6 +160,9 @@ func (cfg Config) normalized() (Config, error) {
 		return cfg, fmt.Errorf("unsupported merge method %q", cfg.MergeMethod)
 	}
 	cfg.Planner.MergeMethod = cfg.MergeMethod
+	if cfg.Planner.BatchMaxSize < 0 || cfg.Planner.BatchMaxSize > 128 || cfg.Planner.BatchMaxWait < 0 {
+		return cfg, fmt.Errorf("invalid planner batching settings")
+	}
 	if cfg.RetryDelay < 0 || cfg.MaxSteps < 0 {
 		return cfg, fmt.Errorf("retry delay and step limit must be nonnegative")
 	}
@@ -207,7 +211,7 @@ func (cfg Config) MarshalJSON() ([]byte, error) {
 		"external_push_rate":  cfg.ExternalPushRate,
 		"ci_duration_seconds": cfg.CIDuration.Seconds(), "ci_min_seconds": cfg.CIMin.Seconds(), "ci_max_seconds": cfg.CIMax.Seconds(),
 		"merge_method": cfg.MergeMethod, "retry_delay_seconds": cfg.RetryDelay.Seconds(), "max_steps": cfg.MaxSteps,
-		"planner": map[string]any{"merge_method": cfg.Planner.MergeMethod, "check_timeout_seconds": cfg.Planner.CheckTimeout.Seconds(),
+		"planner": map[string]any{"batch_max_size": cfg.Planner.BatchMaxSize, "batch_max_wait_seconds": cfg.Planner.BatchMaxWait.Seconds(), "merge_method": cfg.Planner.MergeMethod, "check_timeout_seconds": cfg.Planner.CheckTimeout.Seconds(),
 			"resolve_after_seconds": cfg.Planner.ResolveAfter.Seconds(), "refresh_interval_seconds": cfg.Planner.RefreshInterval.Seconds(),
 			"build_retries": cfg.Planner.BuildRetries, "build_backoff_seconds": cfg.Planner.BuildBackoff.Seconds()},
 		"faults": map[string]any{"forge_error_rate": cfg.Faults.ForgeErrorRate, "methods": cfg.Faults.Methods, "fail_first": cfg.Faults.FailFirst,
