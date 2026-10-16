@@ -81,11 +81,16 @@ head but not the base contains a merge commit, rebase returns a wrapped
 `forge.ErrConflict` asking for the merge or squash method. This avoids resurrecting
 content deliberately discarded by a merge resolution. Replayed
 messages keep the original message and add `OpenMerge-Replayed-From`.
-`OpenMerge-Batch` is reserved: contributor-supplied lines with that key are
-removed from PR titles, bodies and replayed messages. Only the top generated
+Prose lines starting with `---` are rewritten to start with `- - -`, keeping
+attribution visible to Git's trailer parser. `OpenMerge-Batch` is reserved:
+contributor-supplied lines starting with that key and their folded continuations
+are removed from PR titles, bodies and replayed messages. Only the top generated
 commit carries the authoritative batch trailer. `forge.ParseBatchMessage`
-reads it only from the final trailer block and rejects duplicate or misplaced
-keys. A fixed clock makes identical builds repeatable.
+requires an exact final `OpenMerge-Batch: <id>` line (ASCII letters, digits,
+period, underscore or hyphen in the ID) and rejects any earlier batch key,
+independently of Git's trailer grammar. Trailing replay comments stay before
+that final line without blank lines splitting the trailer block.
+A fixed clock makes identical builds repeatable.
 
 Git 2.38/2.39 lack `merge-tree --merge-base`. On those versions, replay creates
 an unreferenced synthetic commit with the current tree and the desired base as

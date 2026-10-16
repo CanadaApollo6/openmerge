@@ -39,6 +39,11 @@ type Git interface {
 
 **Test refs are built with git, not forge merge APIs.** OpenMerge composes test commits locally and pushes them to `openmerge/queue/...`, so building works the same on every forge. The top commit of every test ref carries the batch ID, so a tested SHA identifies exactly one batch. The host needs the `git` executable, which the container image includes.
 
+Batch identity uses OpenMerge's own format, independently of Git trailer parsing:
+the final line must be exactly `OpenMerge-Batch: <id>` with an ID matching
+`[A-Za-z0-9._-]+`, and no other line may start with `OpenMerge-Batch`
+(case-insensitive after trimming leading whitespace).
+
 **Attribution is fixed before CI.** Squash commits use `<PR title> (#<number>)`,
 the trimmed PR body without OpenMerge's HTML marker comments, and the PR author
 (with the forge-provided commit email). Merge commits use

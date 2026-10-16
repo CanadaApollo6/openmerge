@@ -184,8 +184,8 @@ func (f *Forge) build(ctx context.Context, r *repository, req forge.BuildRequest
 	if !ok {
 		return "", nil, false, fmt.Errorf("unknown base commit %q", req.BaseSHA)
 	}
-	if req.Ref == "" || req.BatchID == "" || len(req.PRs) == 0 {
-		return "", nil, false, errors.New("test ref, batch ID, and PRs are required")
+	if req.Ref == "" || !forge.ValidBatchID(req.BatchID) || len(req.PRs) == 0 {
+		return "", nil, false, errors.New("test ref, valid batch ID, and PRs are required")
 	}
 	if req.Method != forge.Merge && req.Method != forge.Squash && req.Method != forge.Rebase {
 		return "", nil, false, fmt.Errorf("unsupported merge method %q", req.Method)

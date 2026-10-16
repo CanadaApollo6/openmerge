@@ -248,6 +248,21 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 		}
 	})
 	for _, method := range []forge.MergeMethod{forge.Merge, forge.Squash, forge.Rebase} {
+		t.Run("build-rejects-batch-id/"+string(method), func(t *testing.T) {
+			e := newEnv(t)
+			req := forge.BuildRequest{Ref: testRef(e, "batch-validation"), BaseSHA: e.BaseSHA, PRs: e.PRs[:1], Method: method, BatchID: "valid"}
+			before, err := e.Git.BuildTestRef(ctx, e.Repo, req)
+			must(t, err)
+			for _, id := range []string{"", "two words", "b/1", "b\n1", "b\r1", "b\x001", "b\u0431"} {
+				req.BatchID = id
+				if _, err := e.Git.BuildTestRef(ctx, e.Repo, req); err == nil {
+					t.Fatalf("invalid batch ID %q accepted", id)
+				}
+				if got := read(t, e, req.Ref); got != before {
+					t.Fatalf("invalid batch ID %q changed ref to %s", id, got)
+				}
+			}
+		})
 		t.Run("unique-test-commit/"+string(method), func(t *testing.T) {
 			e := newEnv(t)
 			req := forge.BuildRequest{Ref: testRef(e, "unique"), BaseSHA: e.BaseSHA, PRs: e.PRs, Method: method, BatchID: "first"}

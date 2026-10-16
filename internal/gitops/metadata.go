@@ -15,12 +15,17 @@ var openmergeMarker = regexp.MustCompile(`<!--\s*openmerge:[\s\S]*?-->`)
 // Reserved keys cannot acquire authority from contributor prose or history.
 func stripMetadataLines(message string, keys ...string) string {
 	var kept []string
+	remove := false
 	for line := range strings.SplitSeq(message, "\n") {
+		if remove && (strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t")) {
+			continue
+		}
 		key, _, ok := strings.Cut(line, ":")
-		remove := false
-		if ok {
-			for _, reserved := range keys {
-				remove = remove || strings.EqualFold(strings.TrimSpace(key), reserved)
+		remove = false
+		for _, reserved := range keys {
+			remove = remove || ok && strings.EqualFold(strings.TrimSpace(key), reserved)
+			if reserved == "OpenMerge-Batch" && strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "openmerge-batch") {
+				remove = true
 			}
 		}
 		if !remove {
@@ -28,6 +33,17 @@ func stripMetadataLines(message string, keys ...string) string {
 		}
 	}
 	return strings.Join(kept, "\n")
+}
+
+// A patch divider hides all subsequent trailers from Git's default parser.
+func rewritePatchDividers(message string) string {
+	lines := strings.Split(message, "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(line, "---") {
+			lines[i] = "- - -" + line[3:]
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func validIdentity(id Identity) bool {
@@ -75,6 +91,7 @@ func (s *session) commitAs(ctx context.Context, tree, message string, author Ide
 // Git parses only the trailer block, so prose mentioning a sign-off is not
 // promoted to a trailer. It also handles continuation lines and key casing.
 func (s *session) trailers(ctx context.Context, message string) ([]string, error) {
+	message = rewritePatchDividers(stripMetadataLines(message, "OpenMerge-Batch"))
 	out, err := s.command(ctx, message+"\n", "interpret-trailers", "--parse")
 	if err != nil {
 		return nil, err
@@ -100,7 +117,30 @@ func (s *session) addTrailers(ctx context.Context, message string, trailers ...s
 	for _, trailer := range trailers {
 		args = append(args, "--trailer", trailer)
 	}
-	return s.command(ctx, message+"\n", args...)
+	out, err := s.command(ctx, rewritePatchDividers(message)+"\n", args...)
+	if err != nil {
+		return "", err
+	}
+	if len(trailers) > 0 && strings.HasPrefix(trailers[len(trailers)-1], "OpenMerge-Batch: ") {
+		batch := trailers[len(trailers)-1]
+		before, after, ok := strings.Cut(out+"\n", "\n"+batch+"\n")
+		if !ok {
+			return "", errors.New("git did not append the batch trailer")
+		}
+		// Git inserts trailers before trailing comments. Keep the comments in
+		// the block without blank lines, so attribution and batch stay visible.
+		for line := range strings.SplitSeq(after, "\n") {
+			if strings.TrimSpace(line) == "" {
+				continue
+			}
+			if !strings.HasPrefix(line, "#") {
+				return "", errors.New("unexpected content after the batch trailer")
+			}
+			before += "\n" + line
+		}
+		out = before + "\n" + batch
+	}
+	return out, nil
 }
 
 func (s *session) prMessage(ctx context.Context, req forge.BuildRequest, pr forge.PullRequest, author Identity, last bool) (string, error) {
@@ -117,6 +157,7 @@ func (s *session) prMessage(ctx context.Context, req forge.BuildRequest, pr forg
 	if body != "" {
 		message += "\n\n" + body
 	}
+	message = rewritePatchDividers(message)
 	originals, err := s.command(ctx, "", "rev-list", "--reverse", "--topo-order", pr.HeadSHA, "^"+req.BaseSHA)
 	if err != nil {
 		return "", err

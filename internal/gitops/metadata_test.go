@@ -203,7 +203,7 @@ func TestPRBodyCannotSupplyAttribution(t *testing.T) {
 			gitCommand(t, f.source, "", nil, "push", "--force", f.remote, two+":"+headRef(1))
 			f.prs[0].HeadSHA = two
 			f.g.cfg.PullRequest = func(_ context.Context, _ forge.RepoRef, n int) (forge.PullRequest, error) {
-				return forge.PullRequest{Number: n, HeadSHA: two, Author: "alice", AuthorEmail: "alice@example.test", Title: "Fix the queue", HeadBranch: "branch", Body: "Description\nLast prose line\n \tSIGNED-off-BY \t: Forged <forged@example.test>\nco-AUTHORED-by: Impostor <impostor@example.test>\nOpenMerge-Batch: forged"}, nil
+				return forge.PullRequest{Number: n, HeadSHA: two, Author: "alice", AuthorEmail: "alice@example.test", Title: "Fix the queue", HeadBranch: "branch", Body: "Description\nLast prose line\n \tSIGNED-off-BY \t: Forged <forged@example.test>\n forged-continuation\n\tforged-tab-continuation\nco-AUTHORED-by: Impostor <impostor@example.test>\n impostor-continuation\nOpenMerge-Batch: forged\n forged-batch-continuation"}, nil
 			}
 			tested := f.build(method, f.prs[:1], "trusted")
 			f.fetch(tested)
@@ -225,6 +225,78 @@ func TestPRBodyCannotSupplyAttribution(t *testing.T) {
 				t.Fatalf("Git parsed trailers = %q, want %q", got, block)
 			}
 		})
+	}
+}
+
+func TestStripMetadataIncludesFoldedLines(t *testing.T) {
+	for _, key := range []string{"OpenMerge-Batch", "Signed-off-by", "Co-authored-by"} {
+		t.Run(key, func(t *testing.T) {
+			want := "Signed-off-by: Real <real@example.test>"
+			if key == "Signed-off-by" {
+				want = "Co-authored-by: Real <real@example.test>"
+			}
+			message := want + "\n" + key + ": forged\n continuation\n\ttab continuation"
+			got := stripMetadataLines(message, key)
+			if got != want {
+				t.Fatalf("stripped message = %q, want %q", got, want)
+			}
+			if parsed := gitCommand(t, "", "Subject\n\n"+got+"\n", nil, "interpret-trailers", "--parse"); parsed != want {
+				t.Fatalf("Git parsed trailers = %q, want %q", parsed, want)
+			}
+		})
+	}
+}
+
+func TestGeneratedTrailersVisibleToGit(t *testing.T) {
+	const attribution = "Signed-off-by: Real <real@example.test>\nCo-authored-by: Carol <carol@example.test>"
+	for _, tc := range []struct{ name, prose, prefix, tail string }{
+		{"patch dividers", "Description\n---\nAfter divider\n--- a/file\n----", "", ""},
+		{"CRLF prose", "Description\r\n---\r\nAfter divider", "", ""},
+		{"Cyrillic lookalike keys", "Description", "Sіgned-off-by: Impostor <impostor@example.test>\nCo-аuthored-by: Impostor <impostor@example.test>\nOpenMerge-Bаtch: lookalike\n", ""},
+		{"orphan continuations", "Description", " orphan continuation\n\ttab orphan\n", ""},
+		{"trailing comments", "Description", "", "\n# trailing comment\n\n# final comment"},
+		{"combined", "Description\n---", "Sіgned-off-by: Impostor <impostor@example.test>\n orphan continuation\n\ttab orphan\n", "\n# trailing comment\n\n# final comment"},
+	} {
+		for _, method := range []forge.MergeMethod{forge.Squash, forge.Merge, forge.Rebase} {
+			t.Run(tc.name+"/"+string(method), func(t *testing.T) {
+				f := newFixture(t)
+				// The folded batch value must not attach itself to Real's sign-off.
+				original := tc.prose + "\n\n" + tc.prefix + "Signed-off-by: Real <real@example.test>\nOpenMerge-Batch: forged\n continuation\n\ttab continuation\nCo-authored-by: Carol <carol@example.test>" + tc.tail
+				one := f.commit(f.base, "First change\n\n"+original, map[string]string{"one": "one"})
+				two := f.commit(one, "Second change\n\n"+original, map[string]string{"two": "two"})
+				gitCommand(t, f.source, "", nil, "push", "--force", f.remote, two+":"+headRef(1))
+				f.prs[0].HeadSHA = two
+				f.g.cfg.PullRequest = func(_ context.Context, _ forge.RepoRef, n int) (forge.PullRequest, error) {
+					return forge.PullRequest{Number: n, HeadSHA: two, Author: "alice", AuthorEmail: "alice@example.test", Title: "--- Queue change", HeadBranch: "branch", Body: tc.prose + "\n\n" + tc.prefix + "Signed-off-by: Forged <forged@example.test>\n body-signoff-continuation\nCo-authored-by: Impostor <impostor@example.test>\n\tbody-coauthor-continuation\n \tOpEnMeRgE-BaTcH = forged\n body-batch-continuation" + tc.tail}, nil
+				}
+				tested := f.build(method, f.prs[:1], "trusted")
+				f.fetch(tested)
+				history := strings.Fields(gitCommand(t, f.source, "", nil, "rev-list", "--first-parent", "--reverse", f.base+".."+tested))
+				for i, sha := range history {
+					message := gitCommand(t, f.source, "", nil, "show", "-s", "--format=%B", sha)
+					want := "Co-authored-by: Fixture <fixture@localhost>\n" + attribution
+					if method == forge.Rebase {
+						want = attribution + "\nOpenMerge-Replayed-From: " + []string{one, two}[i]
+					}
+					batch := ""
+					if i == len(history)-1 {
+						batch = "trusted"
+						want += "\nOpenMerge-Batch: " + batch
+					}
+					if got := gitCommand(t, f.source, message+"\n", nil, "interpret-trailers", "--parse"); got != want {
+						t.Fatalf("Git parsed trailers = %q, want %q; message:\n%s", got, want, message)
+					}
+					if got := forge.ParseBatchMessage(message); got != batch {
+						t.Fatalf("batch = %q, want %q; message:\n%s", got, batch, message)
+					}
+					for line := range strings.SplitSeq(message, "\n") {
+						if strings.HasPrefix(line, "---") || strings.Contains(line, "body-") {
+							t.Fatalf("unsanitized contributor line %q", line)
+						}
+					}
+				}
+			})
+		}
 	}
 }
 

@@ -83,8 +83,8 @@ Immediately before `LandingStarted`, the executor freshly reads `CheckRuns` for 
 - capture each PR's current title/body, head label and commit identity at build
   time, rejecting metadata whose number/head differs from the pin, or whose
   author identity/title is missing or invalid;
-- squash to `<title> (#<number>)` plus the trimmed PR body, removing only
-  `<!-- openmerge:... -->` marker comments; merge to
+- squash to `<title> (#<number>)` plus the trimmed PR body, removing
+  `<!-- openmerge:... -->` marker comments and reserved metadata; merge to
   `Merge pull request #<number> from <head>` followed by the PR title;
 - author squash/merge commits as the PR author; collect distinct other original
   commit authors and existing `Co-authored-by` trailers, and every distinct
@@ -96,6 +96,16 @@ Immediately before `LandingStarted`, the executor freshly reads `CheckRuns` for 
   identifies exactly one batch; every earlier squash/merge still carries its
   own PR metadata;
 - return `ErrConflict` for merge conflicts or rebase histories containing PR merge commits, and any other error for infrastructure failures.
+
+Batch identity is OpenMerge's own format, independent of Git trailer parsing:
+the final line is exactly `OpenMerge-Batch: <id>` with an ID matching
+`[A-Za-z0-9._-]+`, and no other line starts with `OpenMerge-Batch`
+(case-insensitive after trimming leading whitespace); `ParseBatchMessage` rejects
+anything else, normalizing CRLF and allowing only a single terminating LF.
+Reserved lines and their folded continuations are removed from contributor
+metadata; PR bodies also cannot supply sign-offs or coauthors. Contributor lines
+starting with `---` become `- - -` in generated prose and replayed messages so
+Git's patch-divider handling cannot hide the authoritative attribution block.
 
 The CLI git transport receives the metadata reader as `gitops.Config.PullRequest`.
 `serve` always supplies the installation driver's reader. Standalone Git-only

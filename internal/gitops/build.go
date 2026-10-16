@@ -118,8 +118,8 @@ func (s *session) mergeTree(ctx context.Context, base, ours, theirs string) (str
 // BuildTestRef composes commits without an index or worktree, then force-pushes
 // the OpenMerge-owned test ref. All pinned heads are verified before composing.
 func (r *Repo) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.BuildRequest) (string, error) {
-	if req.Ref == "" || req.BatchID == "" || strings.ContainsAny(req.BatchID, "\x00\r\n") || len(req.PRs) == 0 {
-		return "", errors.New("test ref, single-line batch ID, and PRs are required")
+	if req.Ref == "" || !forge.ValidBatchID(req.BatchID) || len(req.PRs) == 0 {
+		return "", errors.New("test ref, valid batch ID, and PRs are required")
 	}
 	if req.Method != forge.Merge && req.Method != forge.Squash && req.Method != forge.Rebase {
 		return "", errors.New("unsupported git merge method")
