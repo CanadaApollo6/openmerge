@@ -24,15 +24,26 @@ are supported.
 Warnings and errors go to stderr. Discovery errors list every found file or all
 four searched paths, without inventing a file/line location. `--help` prints usage.
 
-Version 1 requires exactly one named queue. Its `merge_when` must reference at
-least one check predicate, such as `check-success = ci`, including inside logical
-groups. Missing, empty, or metadata-only merge conditions are rejected with the
-queue name and an example. Phase 1 has no opt-out. Defaults are:
+Version 1 requires exactly one named queue. Its `merge_when` is a conjunction
+(the condition list, flattening nested `and` groups) with at least one positive
+`check-success = <non-empty name>` term directly in that conjunction. Checks
+under `or`/`not`, counts, exclusions, and patterns do not supply this requirement.
+Additional terms may use `or`/`not`. For example:
+
+```yaml
+merge_when:
+  - check-success = ci
+  - or: [base = main, base = release]
+```
+
+Loading also evaluates the condition with missing checks and with failed checks;
+either passing result rejects the configuration. Invalid conditions report the
+queue name and an example fix. Phase 1 has no opt-out. Defaults are:
 
 - `merge_method: squash` (also accepts `merge` and `rebase`).
 - `check_timeout: 1h`; `0`, `"0"`, or `0s` disables it. Durations must be
   nonnegative Go duration strings, with unquoted integer zero also accepted.
-- `enter_when: []`, true. `merge_when` must be supplied with a check predicate.
+- `enter_when: []`, true. `merge_when` requires a positive named success check.
 - `batch: {max_size: 1, max_wait: 0s}`. Sizes 1 through 128 are accepted.
   The queue tests up to `max_size` PRs together, with one active batch at a time.
   A partial batch waits until its oldest member has waited `max_wait`; size 1

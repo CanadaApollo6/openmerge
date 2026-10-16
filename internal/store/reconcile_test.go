@@ -59,42 +59,6 @@ func TestPausedConsequentialClaimDefersUntilResume(t *testing.T) {
 	}
 }
 
-func TestHeadCommandObservationTiming(t *testing.T) {
-	for _, tt := range []struct {
-		name    string
-		heads   []string
-		times   []time.Duration
-		changed bool
-	}{
-		{"first discovery", nil, nil, false},
-		{"old head before command", []string{"a", "b"}, []time.Duration{-10 * time.Second, 2 * time.Second}, true},
-		{"reissued after stable observation", []string{"a", "b"}, []time.Duration{-10 * time.Second, -2 * time.Second}, false},
-		{"change near command", []string{"a", "b"}, []time.Duration{-10 * time.Second, -500 * time.Millisecond}, true},
-		{"old head near command", []string{"a"}, []time.Duration{500 * time.Millisecond}, true},
-		{"old head at margin", []string{"a"}, []time.Duration{time.Second}, true},
-		{"only evidence after margin", []string{"a", "b"}, []time.Duration{2 * time.Second, 3 * time.Second}, false},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			s := newStore(t)
-			q := ensureQueue(t, s, "")
-			for i, head := range tt.heads {
-				id := appendEvents(t, s, q, queue.PRObserved{PR: 1, HeadSHA: head, Eligible: true, Trusted: true})
-				_, err := s.pool.Exec(t.Context(), `UPDATE events SET recorded_at = $2 WHERE id = $1`, id, epoch.Add(tt.times[i]))
-				must(t, err)
-			}
-			// Other PRs must not supply evidence about this command.
-			id := appendEvents(t, s, q, queue.PRObserved{PR: 2, HeadSHA: "other", Eligible: true, Trusted: true})
-			_, err := s.pool.Exec(t.Context(), `UPDATE events SET recorded_at = $2 WHERE id = $1`, id, epoch)
-			must(t, err)
-			changed, err := s.HeadChangedSince(t.Context(), q, 1, "b", epoch)
-			must(t, err)
-			if changed != tt.changed {
-				t.Fatalf("changed=%v, want %v", changed, tt.changed)
-			}
-		})
-	}
-}
-
 func TestRecordTransitionsAndCommandReceipts(t *testing.T) {
 	s := newStore(t)
 	q := ensureQueue(t, s, "")

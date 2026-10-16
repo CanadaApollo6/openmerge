@@ -231,22 +231,8 @@ func (s *Server) commands(ctx context.Context, w *worker, number int) error {
 						if err != nil {
 							return err
 						}
-						var refusal string
-						if len(fields) == 2 {
-							if !shaPrefix(fields[1]) || !strings.HasPrefix(strings.ToLower(pr.HeadSHA), strings.ToLower(fields[1])) {
-								refusal = "The SHA must be a 7–40 hex prefix matching the current head."
-							}
-						} else {
-							changed, err := s.store.HeadChangedSince(ctx, w.id, number, pr.HeadSHA, c.CreatedAt)
-							if err != nil {
-								return err
-							}
-							if changed {
-								refusal = "The head changed since this command, or its timing is ambiguous."
-							}
-						}
-						if refusal != "" {
-							if err := w.Driver.Comment(ctx, w.repo(), number, receipt+"/head-changed", refusal+" Please re-issue @openmerge queue, optionally with the current SHA."); err != nil {
+						if len(fields) == 2 && !strings.HasPrefix(strings.ToLower(pr.HeadSHA), strings.ToLower(fields[1])) {
+							if err := w.Driver.Comment(ctx, w.repo(), number, receipt+"/head-changed", "The SHA does not match the current head "+pr.HeadSHA+". Please re-issue @openmerge queue with the intended SHA."); err != nil {
 								return err
 							}
 						} else {

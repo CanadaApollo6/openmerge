@@ -256,6 +256,29 @@ func (e Expression) Attributes() []string {
 	return names
 }
 
+// RequiredChecks returns positive, named check-success equalities in the
+// conjunction, flattening AND groups. Checks under OR/NOT and counts do not
+// qualify: those predicates can pass without that check succeeding.
+func (e Expression) RequiredChecks() []string {
+	var names []string
+	var visit func(Expression)
+	visit = func(expression Expression) {
+		switch expression.kind {
+		case all:
+			for _, child := range expression.children {
+				visit(child)
+			}
+		case atom:
+			if expression.name == "check-success" && expression.op == "=" && !expression.negative && !expression.length && expression.value != "" {
+				names = append(names, expression.value)
+			}
+		}
+	}
+	visit(e)
+	slices.Sort(names)
+	return slices.Compact(names)
+}
+
 // Failure describes a condition that did not pass. Actual is a string, bool,
 // []string, list length (int), or nil for missing data and logical groups.
 // Children retain a group's evidence, including met operands under failed NOT.

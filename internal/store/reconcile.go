@@ -3,30 +3,10 @@ package store
 import (
 	"context"
 	"errors"
-	"fmt"
-	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/jackc/pgx/v5"
 )
-
-// HeadChangedSince compares the last stable observation before a command with
-// the current head. A one-second window covers GitHub timestamp precision and
-// small clock skew; any differing head in that window is ambiguous and refused.
-// No prior evidence permits an unpinned command on first discovery.
-func (s *Store) HeadChangedSince(ctx context.Context, q QueueID, pr int, head string, createdAt time.Time) (bool, error) {
-	const margin = time.Second
-	var changed bool
-	err := s.pool.QueryRow(ctx, `WITH history AS (
- SELECT id, recorded_at, payload->'data'->>'head_sha' AS head FROM events
- WHERE queue_id = $1 AND type = 'pr_observed' AND payload->'data'->>'pr' = $2
-), baseline AS (
- SELECT id FROM history WHERE recorded_at < $3 ORDER BY recorded_at DESC, id DESC LIMIT 1
-)
-SELECT EXISTS (SELECT FROM history WHERE head <> $5 AND recorded_at <= $4
- AND id >= COALESCE((SELECT id FROM baseline), 0))`, q, fmt.Sprint(pr), createdAt.Add(-margin), createdAt.Add(margin), head).Scan(&changed)
-	return changed, err
-}
 
 type record struct {
 	key   string

@@ -54,11 +54,14 @@ Later phases add top-level keys (`priorities`, `rules`, `scopes`, `commands`) as
 
 Missing or mistyped attribute data makes a condition unknown, and unknown never passes, including under `not`.
 
-Phase 1 requires each queue's `merge_when` to reference at least one check
-predicate; missing, empty, and metadata-only merge conditions are invalid, with
-no opt-out. CI is evaluated on the tested SHA. Missing and pending check results
-remain unknown within logical groups; an OR fails only when all alternatives
-are definitely false.
+Phase 1 requires each queue's `merge_when` conjunction (flattening nested
+`and` groups) to contain a positive `check-success = <non-empty name>` term;
+checks under `or`/`not` and counts do not qualify. Extra terms may still use
+`or`/`not`. Loading also rejects conditions that pass with missing or failed
+checks, naming the queue and an example fix such as
+`merge_when: [check-success = ci]`. There is no opt-out. CI is evaluated on the
+tested SHA. Missing and pending check results remain unknown within logical
+groups; an OR fails only when all alternatives are definitely false.
 
 Attributes cover people and reviews, branch and PR metadata, files and line counts, CI results, queue state, and time windows. Each attribute is documented in a generated reference with its type and an example. The concrete Phase 1 list is part of the Phase 1 implementation.
 

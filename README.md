@@ -96,16 +96,20 @@ cooldowns. Each extra PR, CI SHA, page, and permission check increases the
 [request budget](internal/forge/github/README.md#polling-cost-and-conditional-requests);
 use a longer polling interval for larger repositories.
 
-Writers can post a standalone `@openmerge queue [sha]`, `@openmerge dequeue`, or
-`@openmerge refresh` line with at most three leading spaces. Fenced code
-(```` ``` ```` or `~~~`), indented code (four spaces or a tab), and blockquotes
-(including lazy paragraph continuations) are ignored. An optional queue SHA is
-a 7–40 hex prefix of the current head; a mismatch is refused. Without a SHA,
-durable head observations reject commands that predate a head change. A
-one-second safety margin treats uncertain ordering as changed and asks the
-writer to re-issue the command, optionally with a SHA. With no prior head
-evidence, an unpinned command applies to the head first observed. Acceptance
-replies name the exact SHA; entry conditions and fresh trust checks still apply.
+Writers can post `@openmerge queue [sha]`, `@openmerge dequeue`, or
+`@openmerge refresh`. The comment must contain only the command: after trimming
+surrounding whitespace and normalizing CRLF, it must be one ASCII line, with
+the exact lowercase mention and command name and a single space or tab between
+tokens. Other content,
+including prose, multiple lines, code fences, HTML, and quotes, is silently ignored.
+An optional queue SHA is a 7–40 hex prefix of the current head; a mismatch gets
+a refusal reply. Without a SHA, the command queues the head current when the
+server processes it. Acceptance replies name that exact SHA; a later push
+dequeues it. Entry conditions and fresh trust checks still apply.
+An unpinned command grants nothing beyond the head's own trust: same-repository
+heads were pushed by someone with write access, and fork heads still require a
+writer's exact-head approval at the trust gate. Queueing whatever is current is
+therefore equivalent; use the SHA form when intent must bind to a specific head.
 Refresh rechecks eligibility, requests fresh CI, and
 resumes an operator pause after its cause is fixed; it does not enqueue a new
 entry. Fork heads need an approval of that exact SHA from a current writer.
@@ -116,9 +120,12 @@ producer ambiguity stays blocked until an unambiguous refresh succeeds.
 `landing-not-on-base` pauses new work while fence resolution continues; restore
 the tested commit on the base before resuming after an external rollback.
 Pending closure work is retained while paused and runs after refresh resumes it.
-Every queue's `merge_when` must reference at least one check predicate; Phase 1
-has no opt-out. Pending or missing check alternatives keep an OR condition
-pending until the whole condition passes or is definitely false.
+Every queue's `merge_when` must require a positive `check-success = <name>`
+term in its conjunction (nested `and` groups are flattened); `or`, `not`, and
+counts cannot supply that requirement. Extra terms may still use `or`/`not`.
+Loading also rejects conditions that pass with missing or failed checks.
+Pending or missing check alternatives keep an OR condition pending until the
+whole condition passes or is definitely false.
 
 The current driver supplies conditions on `base`, `draft`, `author`,
 `approved-reviews-by`, and checks. Configurations referencing `head`, `title`,
