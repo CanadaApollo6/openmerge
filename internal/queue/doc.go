@@ -32,6 +32,14 @@
 // the streak and delay; duplicate BaseMoved observations do nothing. Successful
 // builds also reset it. Conflicts still dequeue normally.
 //
+// ActionPoisoned records repeated invalid durable work. It pauses all work except
+// the head PR's paused ReportStatus, with reason "action-poisoned", regardless of
+// batch phase. Only ResumeRequested clears this pause; the active batch survives.
+// Every Action validates its semantic inputs. Plan checks this invariant before
+// emitting actions; invalid state/config inputs panic rather than emit unsafe work.
+// Wire v1 requires every field, including zero/empty values, and rejects JSON null.
+// DecodeAction also validates the restored action before it can be executed.
+//
 // LandingStarted is the durable transition into Landing, before any forge call.
 // Cancellation and invalidation wait for its definitive result. After ResolveAfter,
 // Plan requests fence-and-read resolution; a deadline alone never fails a landing.

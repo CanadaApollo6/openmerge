@@ -6,8 +6,12 @@
 //
 // Events and actions use queue's versioned wire format, including private action
 // key inputs. Decoding never invokes the planner or loads an event prefix. Keys
-// are stored separately when actions are inserted. Undecodable actions are
-// quarantined as poisoned and exposed by Store.Poisoned; other work continues.
+// are stored separately when actions are inserted. Missing/null wire fields and
+// semantically invalid actions are quarantined as poisoned and exposed by
+// Store.Poisoned. Replanning repairs a poisoned key with fresh inputs, preserving
+// its incident count. Three incidents append ActionPoisoned and pause the queue
+// visibly on its head PR. ResumeRequested clears the pause and incident counts;
+// the next plan retries current work. Done keys remain terminal.
 //
 // Append, Plan and BeginConsequential share a transaction-scoped queue lock.
 // Serializing appends makes event IDs also reflect commit order within a queue:

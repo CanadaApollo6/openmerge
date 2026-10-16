@@ -37,7 +37,7 @@ func TestChecksBeforeTestRefBuilt(t *testing.T) {
 			s := queued(1)
 			batchID := s.Active.ID
 			s = Apply(s, ChecksCompleted{TestedSHA: "early", Success: success})
-			s = Apply(s, TestRefBuilt{BatchID: batchID, TestedSHA: "early", At: epoch})
+			s = Apply(s, TestRefBuilt{Method: Merge, BatchID: batchID, TestedSHA: "early", At: epoch})
 			actions := Plan(testConfig, s, epoch.Add(time.Hour))
 			if success {
 				land := onlyAction[Land](t, actions)

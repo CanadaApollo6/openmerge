@@ -92,14 +92,14 @@ func TestPoisonIsolationAndOperatorListing(t *testing.T) {
 				poison[0].Watermark == 0 || !strings.Contains(poison[0].Error, "cannot unmarshal") || len(poison[0].Payload) == 0 {
 				t.Fatalf("missing poison evidence: %+v", poison)
 			}
-			// Poison stays terminal, but new work in its own queue still runs.
+			// Replanning repairs the poisoned action and preserves unrelated work.
 			appendEvents(t, s, a, queue.PRObserved{PR: 2, HeadSHA: "denied"}, queue.EnqueueRequested{PR: 2, At: epoch})
 			planned, err := s.Plan(t.Context(), a, config, epoch)
 			must(t, err)
-			if len(planned) != 1 {
-				t.Fatalf("poison blocked planning: %+v", planned)
+			if len(planned) != 2 {
+				t.Fatalf("repair or unrelated work missing: %+v", planned)
 			}
-			if _, ok := planned[0].Action.(queue.ReportStatus); !ok {
+			if _, ok := planned[1].Action.(queue.ReportStatus); !ok {
 				t.Fatalf("unexpected work: %+v", planned)
 			}
 			claims, err = s.Claim(t.Context(), 1, time.Minute, epoch)
@@ -107,8 +107,8 @@ func TestPoisonIsolationAndOperatorListing(t *testing.T) {
 			if len(claims) != 1 || claims[0].QueueID != a {
 				t.Fatalf("poison blocked healthy work in same queue: %+v", claims)
 			}
-			if n := count(t, s, `SELECT count(*) FROM actions WHERE status = 'poisoned'`); n != 1 {
-				t.Fatalf("poison was reactivated: %d", n)
+			if n := count(t, s, `SELECT count(*) FROM actions WHERE status = 'poisoned'`); n != 0 {
+				t.Fatalf("poison was not repaired: %d", n)
 			}
 		})
 	}
@@ -135,7 +135,7 @@ func TestBeginConsequentialRenewsOriginalLease(t *testing.T) {
 	if len(claims) != 0 {
 		t.Fatal("slow forge call was reclaimed within renewed lease")
 	}
-	must(t, s.Emit(t.Context(), q)(queue.LandingStarted{BatchID: "b1", AttemptID: "slow", At: epoch.Add(61 * time.Second)}))
+	must(t, s.Emit(t.Context(), q)(queue.LandingStarted{FenceToken: "fence", BatchID: "b1", AttemptID: "slow", At: epoch.Add(61 * time.Second)}))
 	claims, err = s.Claim(t.Context(), 1, time.Minute, renewed)
 	must(t, err)
 	if len(claims) != 1 {
@@ -186,8 +186,8 @@ func TestOpenUnreachableDatabaseReportsConnectionError(t *testing.T) {
 	}
 }
 
-func TestPlanReplacesCancelledPayloadButNeverReactivatesDone(t *testing.T) {
-	for _, status := range []string{"cancelled", "done"} {
+func TestPlanReplacesRecoverablePayloadButNeverReactivatesDone(t *testing.T) {
+	for _, status := range []string{"cancelled", "poisoned", "done"} {
 		t.Run(status, func(t *testing.T) {
 			s := newStore(t)
 			q := ensureQueue(t, s, "")
@@ -197,7 +197,7 @@ func TestPlanReplacesCancelledPayloadButNeverReactivatesDone(t *testing.T) {
 			if len(first) != 1 {
 				t.Fatal("missing first plan")
 			}
-			_, err = s.pool.Exec(t.Context(), `UPDATE actions SET status = $2,
+			_, err = s.pool.Exec(t.Context(), `UPDATE actions SET status = $2, error = 'invalid payload', poison_count = 1,
                 payload = jsonb_set(payload, '{data,ref}', '"old-payload"'::jsonb) WHERE queue_id = $1`, q, status)
 			must(t, err)
 			newWatermark := appendEvents(t, s, q, queue.PRObserved{PR: 99, HeadSHA: "unrelated"})
@@ -207,9 +207,9 @@ func TestPlanReplacesCancelledPayloadButNeverReactivatesDone(t *testing.T) {
 			var watermark int64
 			must(t, s.pool.QueryRow(t.Context(), `SELECT status, watermark, payload #>> '{data,ref}' FROM actions WHERE queue_id = $1`, q).
 				Scan(&storedStatus, &watermark, &ref))
-			if status == "cancelled" {
+			if status != "done" {
 				if len(planned) != 1 || storedStatus != "planned" || watermark != newWatermark || ref != first[0].Action.(queue.BuildTestRef).Ref {
-					t.Fatalf("cancelled action retained old inputs: %+v / %s at %d ref %s", planned, storedStatus, watermark, ref)
+					t.Fatalf("%s action retained old inputs: %+v / %s at %d ref %s", status, planned, storedStatus, watermark, ref)
 				}
 			} else if len(planned) != 0 || storedStatus != "done" || watermark != firstWatermark || ref != "old-payload" {
 				t.Fatal("done action was reactivated or overwritten")

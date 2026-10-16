@@ -49,6 +49,7 @@ type State struct {
 	testedBatches map[string]string
 	testedOrder   []string // insertion order of testedBatches, oldest first
 	buildRetry    buildRetryState
+	actionPoison  actionPoisonState
 }
 
 // Entry records the head admitted to the queue, independently of later observations.
@@ -154,7 +155,7 @@ type EnqueueRequested struct {
 // DequeueRequested defers acknowledgement when landing has an uncertain outcome.
 type DequeueRequested struct{ PR int }
 
-// ResumeRequested clears build failures and resumes a paused queue immediately.
+// ResumeRequested clears build failures and poison pauses and resumes the queue.
 type ResumeRequested struct{}
 
 // TestRefBuilt records the tested SHA, actual method, and origin of its check timer.
@@ -194,6 +195,9 @@ type Dequeued struct {
 // ActionCompleted acknowledges ReportStatus, MarkLanded, and DeleteRef effects.
 type ActionCompleted struct{ Key string }
 
+// ActionPoisoned pauses the queue after repeated corruption of one action key.
+type ActionPoisoned struct{ Key, Reason string }
+
 func (PRObserved) queueEvent()         {}
 func (BaseMoved) queueEvent()          {}
 func (ChecksCompleted) queueEvent()    {}
@@ -209,12 +213,14 @@ func (Landed) queueEvent()             {}
 func (LandingAbandoned) queueEvent()   {}
 func (Dequeued) queueEvent()           {}
 func (ActionCompleted) queueEvent()    {}
+func (ActionPoisoned) queueEvent()     {}
 
 // Action describes an intended effect. Executors deduplicate by Key and record
 // its result as an Event; they must revalidate stale actions under ADR 0002.
 type Action interface {
 	queueAction()
 	Key() string
+	Validate() error
 }
 
 // BuildTestRef pins the input heads, base, and merge method at planning time.

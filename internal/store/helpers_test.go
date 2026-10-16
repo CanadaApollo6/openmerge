@@ -26,6 +26,7 @@ func eventSamples() []queue.Event {
 		queue.LandingAbandoned{BatchID: "b1", NewFence: "next"},
 		queue.Dequeued{PR: 2, AdmissionID: 3, Reason: queue.Requested, BatchID: "b1"},
 		queue.ActionCompleted{Key: "effect"},
+		queue.ActionPoisoned{Key: "batch/b1/land", Reason: "invalid payload"},
 	}
 }
 

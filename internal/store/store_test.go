@@ -106,8 +106,8 @@ func TestMigrationsConcurrentOpenAndReopen(t *testing.T) {
 		must(t, err)
 	}
 	s := openTestStore(t, url)
-	if n := count(t, s, `SELECT count(*) FROM schema_migrations`); n != 1 {
-		t.Fatalf("migration count = %d, want 1", n)
+	if n := count(t, s, `SELECT count(*) FROM schema_migrations`); n != 2 {
+		t.Fatalf("migration count = %d, want 2", n)
 	}
 	q := ensureQueue(t, s, "")
 	appendEvents(t, s, q, seedEvents()...)
@@ -431,6 +431,7 @@ func TestClaimSkipLockedAndLeaseRecovery(t *testing.T) {
 func readyLand(t *testing.T, s *Store) (QueueID, ClaimedAction) {
 	t.Helper()
 	q := ensureQueue(t, s, "")
+	must(t, s.InitializeFence(t.Context(), q, "fence"))
 	appendEvents(t, s, q, append(seedEvents(),
 		queue.TestRefBuilt{BatchID: "b1", TestedSHA: "tested", Method: queue.Squash, At: epoch},
 		queue.ChecksCompleted{TestedSHA: "tested", Success: true})...)
@@ -487,8 +488,8 @@ func TestLandingStartedStopsReexecutingLand(t *testing.T) {
 		t.Fatal("valid landing did not proceed")
 	}
 	emit := s.Emit(t.Context(), q)
-	must(t, emit(queue.LandingStarted{BatchID: "b1", AttemptID: "first", At: epoch}))
-	if err := emit(queue.LandingStarted{BatchID: "b1", AttemptID: "late-copy", At: epoch}); !errors.Is(err, ErrLandingStarted) {
+	must(t, emit(queue.LandingStarted{FenceToken: "fence", BatchID: "b1", AttemptID: "first", At: epoch}))
+	if err := emit(queue.LandingStarted{FenceToken: "fence", BatchID: "b1", AttemptID: "late-copy", At: epoch}); !errors.Is(err, ErrLandingStarted) {
 		t.Fatalf("a second executor could start another landing: %v", err)
 	}
 	must(t, s.Complete(t.Context(), claim, Failed))
@@ -576,7 +577,7 @@ func TestInFlightLandDefersConflictingDequeue(t *testing.T) {
 	if !proceed {
 		t.Fatal("dequeue could not recover an expired execution window")
 	}
-	err = s.Emit(t.Context(), q)(queue.LandingStarted{BatchID: "b1", AttemptID: "late", At: epoch.Add(time.Minute)})
+	err = s.Emit(t.Context(), q)(queue.LandingStarted{FenceToken: "fence", BatchID: "b1", AttemptID: "late", At: epoch.Add(time.Minute)})
 	if !errors.Is(err, ErrClaimLost) {
 		t.Fatalf("paused worker started a landing after losing its window: %v", err)
 	}
@@ -590,7 +591,7 @@ func TestResolveLandingCanRecoverUncompletedInFlightLand(t *testing.T) {
 	if !proceed {
 		t.Fatal("landing did not proceed")
 	}
-	must(t, s.Emit(t.Context(), q)(queue.LandingStarted{BatchID: "b1", AttemptID: "attempt", At: epoch}))
+	must(t, s.Emit(t.Context(), q)(queue.LandingStarted{FenceToken: "fence", BatchID: "b1", AttemptID: "attempt", At: epoch}))
 	now := epoch.Add(2 * time.Minute)
 	_, err = s.Plan(t.Context(), q, config, now)
 	must(t, err)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"reflect"
 	"time"
 )
 
@@ -105,6 +106,11 @@ type wireActionCompleted struct {
 	Key string `json:"key"`
 }
 
+type wireActionPoisoned struct {
+	Key    string `json:"key"`
+	Reason string `json:"reason"`
+}
+
 type wireBuildTestRef struct {
 	BatchID string        `json:"batch_id"`
 	BaseSHA string        `json:"base_sha"`
@@ -183,6 +189,42 @@ func decodeJSON(payload []byte, value any) error {
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		return fmt.Errorf("expected one JSON value, got trailing data: %v", err)
 	}
+	return requireWireFields(payload, reflect.TypeOf(value).Elem(), "wire")
+}
+
+// Every v1 field is required, including false/zero values and nested PR fields.
+// Inspect only the explicit wire schema; time and RawMessage decode themselves.
+func requireWireFields(raw []byte, schema reflect.Type, path string) error {
+	if len(bytes.TrimSpace(raw)) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return fmt.Errorf("%s is required and must not be null", path)
+	}
+	if schema == reflect.TypeFor[time.Time]() || schema == reflect.TypeFor[json.RawMessage]() {
+		return nil
+	}
+	switch schema.Kind() {
+	case reflect.Struct:
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &fields); err != nil {
+			return err
+		}
+		for i := 0; i < schema.NumField(); i++ {
+			field := schema.Field(i)
+			name := field.Tag.Get("json")
+			if err := requireWireFields(fields[name], field.Type, path+"."+name); err != nil {
+				return err
+			}
+		}
+	case reflect.Slice:
+		var items []json.RawMessage
+		if err := json.Unmarshal(raw, &items); err != nil {
+			return err
+		}
+		for i, item := range items {
+			if err := requireWireFields(item, schema.Elem(), fmt.Sprintf("%s[%d]", path, i)); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -210,12 +252,16 @@ func decodeWireAction[T any](data json.RawMessage, convert func(T) Action) (Acti
 	if err != nil {
 		return nil, err
 	}
-	return convert(value), nil
+	action := convert(value)
+	if err := action.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid queue action %T: %w", action, err)
+	}
+	return action, nil
 }
 
 func readWireData[T any](data json.RawMessage) (T, error) {
 	var value T
-	if len(data) == 0 || bytes.TrimSpace(data)[0] != '{' {
+	if trimmed := bytes.TrimSpace(data); len(trimmed) == 0 || trimmed[0] != '{' {
 		return value, fmt.Errorf("queue wire data must be an object")
 	}
 	err := decodeJSON(data, &value)
@@ -277,6 +323,8 @@ func EncodeEvent(value Event) (string, []byte, error) {
 		return encodeWire("dequeued", wireDequeued{PR: v.PR, AdmissionID: v.AdmissionID, Reason: string(v.Reason), BatchID: v.BatchID})
 	case ActionCompleted:
 		return encodeWire("action_completed", wireActionCompleted(v))
+	case ActionPoisoned:
+		return encodeWire("action_poisoned", wireActionPoisoned(v))
 	default:
 		return "", nil, fmt.Errorf("unregistered queue event %T", value)
 	}
@@ -348,6 +396,10 @@ func DecodeEvent(payload []byte) (Event, error) {
 	case "action_completed":
 		return decodeWireData(envelope.Data, func(v wireActionCompleted) Event {
 			return ActionCompleted(v)
+		})
+	case "action_poisoned":
+		return decodeWireData(envelope.Data, func(v wireActionPoisoned) Event {
+			return ActionPoisoned(v)
 		})
 	default:
 		return nil, fmt.Errorf("unknown queue event type %q", envelope.Type)

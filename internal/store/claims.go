@@ -33,6 +33,7 @@ func (s *Store) Claim(ctx context.Context, limit int, lease time.Duration, now t
 		return nil, errors.New("claim limit and lease must be positive")
 	}
 	var result []ClaimedAction
+	poisonedQueues := make(map[QueueID]bool)
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		for len(result) < limit {
 			rows, err := tx.Query(ctx, claimQuery, now, limit-len(result))
@@ -52,6 +53,7 @@ func (s *Store) Claim(ctx context.Context, limit int, lease time.Duration, now t
 					if err := poisonAction(ctx, tx, record.id, err); err != nil {
 						return err
 					}
+					poisonedQueues[record.queue] = true
 					continue
 				}
 				var token [16]byte
@@ -71,6 +73,19 @@ func (s *Store) Claim(ctx context.Context, limit int, lease time.Duration, now t
 	})
 	if err != nil {
 		return nil, err
+	}
+	// Release action locks before acquiring queue locks, matching Plan's lock
+	// order. A crash here is repaired by the next Plan's notification drain.
+	for q := range poisonedQueues {
+		if err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+			if err := s.lockQueue(ctx, tx, q); err != nil {
+				return err
+			}
+			_, err := publishPoisonPauses(ctx, tx, q)
+			return err
+		}); err != nil {
+			return nil, err
+		}
 	}
 	return result, nil
 }
@@ -121,7 +136,11 @@ func (s *Store) BeginConsequential(ctx context.Context, a ClaimedAction, cfg que
 		stored, err := restoreAction(record)
 		if err != nil {
 			decodeErr = err
-			return poisonAction(ctx, tx, record.id, err)
+			if err := poisonAction(ctx, tx, record.id, err); err != nil {
+				return err
+			}
+			_, err := publishPoisonPauses(ctx, tx, a.QueueID)
+			return err
 		}
 		if !Consequential(stored.Action) {
 			return errors.New("action does not require consequential validation")

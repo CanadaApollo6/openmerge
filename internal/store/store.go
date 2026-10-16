@@ -133,6 +133,12 @@ func (s *Store) append(ctx context.Context, q QueueID, events []queue.Event, ded
 			}
 		}
 		for i, event := range events {
+			if _, resume := event.(queue.ResumeRequested); resume {
+				if _, err := tx.Exec(ctx, `UPDATE actions SET poison_count = 0, poison_notified = false
+					WHERE queue_id = $1 AND poison_count > 0`, q); err != nil {
+					return err
+				}
+			}
 			if start, ok := event.(queue.LandingStarted); ok && executorEmit {
 				state, _, err := load(ctx, tx, q)
 				if err != nil {
@@ -232,12 +238,16 @@ type PlannedAction struct {
 }
 
 // Plan serializes planning and writes the pure planner's actions atomically.
-// Cancelled keys are reactivated with current inputs; done and poisoned keys stay
-// terminal. It returns unclaimed work, quarantining undecodable rows for operators.
+// Cancelled and poisoned keys are reactivated with current inputs. Three poison
+// incidents pause the queue until ResumeRequested; done keys remain terminal.
+// It returns unclaimed work, quarantining invalid rows for operators.
 func (s *Store) Plan(ctx context.Context, q QueueID, cfg queue.Config, now time.Time) ([]PlannedAction, error) {
 	var result []PlannedAction
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		if err := s.lockQueue(ctx, tx, q); err != nil {
+			return err
+		}
+		if _, err := publishPoisonPauses(ctx, tx, q); err != nil {
 			return err
 		}
 		state, watermark, err := load(ctx, tx, q)
@@ -253,7 +263,7 @@ func (s *Store) Plan(ctx context.Context, q QueueID, cfg queue.Config, now time.
 				VALUES ($1, $2, $3, $4::jsonb, $5) ON CONFLICT (queue_id, key) DO UPDATE
 				SET status = 'planned', type = EXCLUDED.type, payload = EXCLUDED.payload,
 					watermark = EXCLUDED.watermark, error = NULL, updated_at = now()
-				WHERE actions.status = 'cancelled'`, q, action.Key(), name, string(payload), watermark); err != nil {
+				WHERE actions.status = 'cancelled' OR (actions.status = 'poisoned' AND actions.poison_count < 3)`, q, action.Key(), name, string(payload), watermark); err != nil {
 				return err
 			}
 		}
@@ -275,7 +285,11 @@ func (s *Store) Plan(ctx context.Context, q QueueID, cfg queue.Config, now time.
 			}
 			result = append(result, action)
 		}
-		return nil
+		paused, err := publishPoisonPauses(ctx, tx, q)
+		if paused {
+			result = nil
+		}
+		return err
 	})
 	if err != nil {
 		return nil, err
@@ -304,8 +318,38 @@ func restoreAction(record actionRecord) (PlannedAction, error) {
 
 func poisonAction(ctx context.Context, tx pgx.Tx, id int64, cause error) error {
 	_, err := tx.Exec(ctx, `UPDATE actions SET status = 'poisoned', error = $2,
-		attempt_id = NULL, lease_until = NULL, updated_at = now() WHERE id = $1`, id, cause.Error())
+		poison_count = poison_count + 1, attempt_id = NULL, lease_until = NULL,
+		updated_at = now() WHERE id = $1 AND status <> 'poisoned'`, id, cause.Error())
 	return err
+}
+
+// The caller holds the queue lock. Notification and its event commit together;
+// Plan also drains pending notifications if a claimer stopped after quarantine.
+func publishPoisonPauses(ctx context.Context, tx pgx.Tx, q QueueID) (bool, error) {
+	rows, err := tx.Query(ctx, `UPDATE actions SET poison_notified = true
+		WHERE queue_id = $1 AND status = 'poisoned' AND poison_count >= 3 AND NOT poison_notified
+		RETURNING key, error`, q)
+	if err != nil {
+		return false, err
+	}
+	events, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (queue.ActionPoisoned, error) {
+		var event queue.ActionPoisoned
+		err := row.Scan(&event.Key, &event.Reason)
+		return event, err
+	})
+	if err != nil {
+		return false, err
+	}
+	for _, event := range events {
+		name, payload, err := queue.EncodeEvent(event)
+		if err != nil {
+			return false, err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO events(queue_id, type, payload) VALUES ($1, $2, $3::jsonb)`, q, name, string(payload)); err != nil {
+			return false, err
+		}
+	}
+	return len(events) > 0, nil
 }
 
 // PoisonedAction retains the row identity, original payload and decoding error
@@ -317,18 +361,19 @@ type PoisonedAction struct {
 	Watermark int64
 	Payload   []byte
 	Error     string
+	Incidents int
 }
 
 // Poisoned lists quarantined actions in insertion order, across all queues.
 func (s *Store) Poisoned(ctx context.Context) ([]PoisonedAction, error) {
-	rows, err := s.pool.Query(ctx, `SELECT id, queue_id, key, watermark, payload, error
+	rows, err := s.pool.Query(ctx, `SELECT id, queue_id, key, watermark, payload, error, poison_count
 		FROM actions WHERE status = 'poisoned' ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (PoisonedAction, error) {
 		var a PoisonedAction
-		err := row.Scan(&a.ID, &a.QueueID, &a.Key, &a.Watermark, &a.Payload, &a.Error)
+		err := row.Scan(&a.ID, &a.QueueID, &a.Key, &a.Watermark, &a.Payload, &a.Error, &a.Incidents)
 		return a, err
 	})
 }
