@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
-	"strings"
 	"time"
 )
 
@@ -27,7 +26,10 @@ func DeferredByPause(cfg Config, s State, action Action, now time.Time) bool {
 	if s.PauseReason(cfg) == "" {
 		return false
 	}
-	unblocked := Apply(Apply(s, ResumeRequested{}), RulesCleared{Basis: s.rulesRevision})
+	unblocked := Apply(s, ResumeRequested{})
+	for _, source := range s.RulesSources() {
+		unblocked = Apply(unblocked, RulesSourceCleared{Source: source.Source, Basis: source.Revision})
+	}
 	return slices.ContainsFunc(Plan(cfg, unblocked, now), func(planned Action) bool {
 		return planned.Key() == action.Key()
 	})
@@ -166,14 +168,8 @@ type actionPoisonState struct {
 }
 
 func (s State) workBlocked() bool {
-	return s.pause.Reason != "" || s.actionPoison.key != "" || len(s.rulesBlock.Problems) > 0
+	return s.pause.Reason != "" || s.actionPoison.key != "" || s.hasRulesProblems()
 }
-
-// RulesProblems returns the independent repository rules block, if any.
-func (s State) RulesProblems() []string { return slices.Clone(s.rulesBlock.Problems) }
-
-// RulesRevision identifies the last applied rules observation, independently of other events.
-func (s State) RulesRevision() uint64 { return s.rulesRevision }
 
 // Block describes one active reason that prevents new work.
 type Block struct{ Reason, Detail string }
@@ -187,8 +183,10 @@ func (s State) Blocks(cfg Config) []Block {
 	if s.actionPoison.key != "" {
 		blocks = append(blocks, Block{"action-poisoned", s.poisonDetail()})
 	}
-	if len(s.rulesBlock.Problems) > 0 {
-		blocks = append(blocks, Block{"repository-rules", strings.Join(s.rulesBlock.Problems, "; ")})
+	for _, source := range rulesSourceOrder {
+		if len(s.rulesSources[source].problems) > 0 {
+			blocks = append(blocks, Block{"repository-rules", s.rulesSourceDetail(source)})
+		}
 	}
 	if s.buildLimitReached(cfg) {
 		blocks = append(blocks, Block{"build-failed", s.buildFailureDetail()})
@@ -206,7 +204,7 @@ func (s State) PauseReason(cfg Config) string {
 	if s.actionPoison.key != "" {
 		return "action-poisoned"
 	}
-	if len(s.rulesBlock.Problems) > 0 {
+	if s.hasRulesProblems() {
 		return "repository-rules"
 	}
 	if s.buildLimitReached(cfg) {
@@ -234,8 +232,8 @@ func (s State) pauseReport() ReportStatus {
 			Detail: s.poisonDetail(),
 		}
 	}
-	if len(s.rulesBlock.Problems) > 0 {
-		return ReportStatus{PR: s.Entries[0].PR, HeadSHA: s.Entries[0].HeadSHA, Status: "paused", Reason: "repository-rules", Detail: strings.Join(s.rulesBlock.Problems, "; "), revision: s.rulesPauseRevision, admission: s.Entries[0].AdmissionID}
+	if s.hasRulesProblems() {
+		return ReportStatus{PR: s.Entries[0].PR, HeadSHA: s.Entries[0].HeadSHA, Status: "paused", Reason: "repository-rules", Detail: s.rulesDetail(), revision: s.rulesPauseRevision, admission: s.Entries[0].AdmissionID}
 	}
 	return ReportStatus{
 		PR: s.Entries[0].PR, HeadSHA: s.Entries[0].HeadSHA, Status: "paused", Reason: "build-failed", revision: s.buildRetry.revision, admission: s.Entries[0].AdmissionID,

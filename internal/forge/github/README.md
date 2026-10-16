@@ -49,10 +49,12 @@ never appear in driver errors or logs.
   `AuthorEmail` is `<id>+<login>@users.noreply.github.com`. The git transport
   reads this metadata again at test-ref build time, checking the pinned head;
   title/body edits after building never change the commit that lands.
-- Labels are read from the PR. Changed filenames follow all pages up to the
-  shared 1,000-path cap; larger PRs expose no partial list and `FilesKnown` is
+- Labels are read from the PR. Serve requests changed files only when an entry
+  or merge condition uses `files`; commit metadata reads omit them. Renames
+  include both the previous and current filename. Distinct paths follow all pages
+  up to the shared 1,000-path cap; larger PRs expose no partial list and `FilesKnown` is
   false. A declared count above the cap skips file reads. Within the cap,
-  count mismatches and head/base changes across the paginated read reject the
+  count mismatches and changes to head/base or condition/trust metadata reject the
   observation for retry. `ConflictKnown` is false while GitHub's `mergeable` is
   null; otherwise conflict is its inverse. Known empty labels/files differ from
   absent data. Serve journals these inputs with eligibility and retries
@@ -177,8 +179,10 @@ Linear history is compatible with squash/rebase and the fence's single-parent
 updates. Force pushes are unnecessary for the current leased fast-forward
 updates. Only the explicit `Branch not protected` 404 is a pass; generic 403/404
 is unreadable. This endpoint needs installation Administration read, which is
-not requested by the default manifest. Serve warns and preserves existing state
-when unreadable, while independently enforcing visible ruleset/grant failures.
+not requested by the default manifest. Serve logs WARN and preserves only the
+classic-protection source’s existing state when unreadable. Definite problems
+from partially readable protection still block. Ruleset and permission sources
+can independently block or recover, with their own revisions.
 See the
 [runtime rules policy](../../../docs/operating.md#runtime-repository-rules),
 including GitHub's permission documentation. Do not treat ruleset-only validation

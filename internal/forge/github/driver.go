@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -53,6 +54,15 @@ func splitRepo(repo forge.RepoRef) (string, string, error) {
 // PullRequest attributes approvals to GitHub's review commit_id, including stale
 // SHAs. Only each user's newest decisive review counts; comments do not revoke it.
 func (d *Driver) PullRequest(ctx context.Context, repo forge.RepoRef, number int) (forge.PullRequest, error) {
+	return d.pullRequest(ctx, repo, number, true)
+}
+
+// PullRequestMetadata omits changed files when the caller only needs PR metadata.
+func (d *Driver) PullRequestMetadata(ctx context.Context, repo forge.RepoRef, number int) (forge.PullRequest, error) {
+	return d.pullRequest(ctx, repo, number, false)
+}
+
+func (d *Driver) pullRequest(ctx context.Context, repo forge.RepoRef, number int, files bool) (forge.PullRequest, error) {
 	owner, name, err := splitRepo(repo)
 	if err != nil {
 		return forge.PullRequest{}, err
@@ -61,43 +71,22 @@ func (d *Driver) PullRequest(ctx context.Context, repo forge.RepoRef, number int
 	if err != nil {
 		return forge.PullRequest{}, safeError(err)
 	}
-	result := forge.PullRequest{Number: pr.GetNumber(), HeadSHA: pr.GetHead().GetSHA(), Base: pr.GetBase().GetRef(), Draft: pr.GetDraft(), Author: pr.GetUser().GetLogin(), Closed: pr.GetState() == "closed"}
-	result.Title, result.Body, result.HeadBranch = pr.GetTitle(), pr.GetBody(), pr.GetHead().GetLabel()
-	result.LabelsKnown = pr.Labels != nil
-	for _, label := range pr.Labels {
-		if label == nil || label.GetName() == "" {
-			result.LabelsKnown = false
-			continue
-		}
-		result.Labels = append(result.Labels, label.GetName())
-	}
-	if pr.Mergeable != nil {
-		result.ConflictKnown, result.Conflict = true, !pr.GetMergeable()
-	}
-	if result.HeadBranch == "" {
-		result.HeadBranch = pr.GetHead().GetRef()
-	}
-	result.AuthorID = pr.GetUser().GetID()
-	if result.AuthorID > 0 && result.Author != "" {
-		result.AuthorEmail = fmt.Sprintf("%d+%s@users.noreply.github.com", result.AuthorID, result.Author)
-	}
-	head, base := pr.GetHead().GetRepo(), pr.GetBase().GetRepo()
-	result.HeadInBaseRepo = head.GetID() > 0 && head.GetID() == base.GetID()
+	result := pullRequestMetadata(pr)
 	if result.Closed {
 		return result, nil
 	}
-	if pr.GetChangedFiles() <= forge.MaxChangedFiles {
+	if files && pr.GetChangedFiles() <= forge.MaxChangedFiles {
 		result.Files, result.FilesKnown, err = d.changedFiles(ctx, owner, name, number, pr.ChangedFiles)
 		if err != nil {
 			return forge.PullRequest{}, err
 		}
 		// The files endpoint is not SHA-pinned. Reject a mixed observation if
-		// either side of its diff moved while pages were being read.
+		// its diff or condition/trust metadata moved while pages were read.
 		after, _, err := d.client.PullRequests.Get(ctx, owner, name, number)
 		if err != nil {
 			return forge.PullRequest{}, safeError(err)
 		}
-		if after.GetHead().GetSHA() != result.HeadSHA || after.GetBase().GetSHA() != pr.GetBase().GetSHA() || after.GetBase().GetRef() != result.Base || after.GetState() != pr.GetState() {
+		if !reflect.DeepEqual(pullRequestMetadata(after), pullRequestMetadata(pr)) || after.GetBase().GetSHA() != pr.GetBase().GetSHA() || !reflect.DeepEqual(after.ChangedFiles, pr.ChangedFiles) {
 			return forge.PullRequest{}, errors.New("pull request changed during file observation; retry")
 		}
 	}
@@ -140,20 +129,52 @@ func (d *Driver) PullRequest(ctx context.Context, repo forge.RepoRef, number int
 	return result, nil
 }
 
+func pullRequestMetadata(pr *gh.PullRequest) forge.PullRequest {
+	result := forge.PullRequest{Number: pr.GetNumber(), HeadSHA: pr.GetHead().GetSHA(), Base: pr.GetBase().GetRef(), Draft: pr.GetDraft(), Author: pr.GetUser().GetLogin(), Closed: pr.GetState() == "closed"}
+	result.Title, result.Body, result.HeadBranch = pr.GetTitle(), pr.GetBody(), pr.GetHead().GetLabel()
+	result.LabelsKnown = pr.Labels != nil
+	for _, label := range pr.Labels {
+		if label == nil || label.GetName() == "" {
+			result.LabelsKnown = false
+			continue
+		}
+		result.Labels = append(result.Labels, label.GetName())
+	}
+	if pr.Mergeable != nil {
+		result.ConflictKnown, result.Conflict = true, !pr.GetMergeable()
+	}
+	if result.HeadBranch == "" {
+		result.HeadBranch = pr.GetHead().GetRef()
+	}
+	result.AuthorID = pr.GetUser().GetID()
+	if result.AuthorID > 0 && result.Author != "" {
+		result.AuthorEmail = fmt.Sprintf("%d+%s@users.noreply.github.com", result.AuthorID, result.Author)
+	}
+	head, base := pr.GetHead().GetRepo(), pr.GetBase().GetRepo()
+	result.HeadInBaseRepo = head.GetID() > 0 && head.GetID() == base.GetID()
+	return result
+}
+
 func (d *Driver) changedFiles(ctx context.Context, owner, repo string, number int, count *int) ([]string, bool, error) {
 	files := []string{}
 	seen := make(map[string]bool)
+	filenames := make(map[string]bool)
 	for page := 1; page != 0; {
 		list, response, err := d.client.PullRequests.ListFiles(ctx, owner, repo, number, &gh.ListOptions{Page: page, PerPage: 100})
 		if err != nil {
 			return nil, false, safeError(err)
 		}
 		for _, file := range list {
-			if file.GetFilename() == "" || seen[file.GetFilename()] {
+			if file.GetFilename() == "" || filenames[file.GetFilename()] || file.GetStatus() == "renamed" && file.GetPreviousFilename() == "" {
 				return nil, false, errors.New("incomplete or repeated PR file observation")
 			}
-			seen[file.GetFilename()] = true
-			files = append(files, file.GetFilename())
+			filenames[file.GetFilename()] = true
+			for _, path := range []string{file.GetFilename(), file.GetPreviousFilename()} {
+				if path != "" && !seen[path] {
+					seen[path] = true
+					files = append(files, path)
+				}
+			}
 			if len(files) > forge.MaxChangedFiles {
 				return nil, false, nil
 			}
@@ -161,12 +182,12 @@ func (d *Driver) changedFiles(ctx context.Context, owner, repo string, number in
 		if response.NextPage != 0 && (response.NextPage <= page || len(list) == 0) {
 			return nil, false, errors.New("PR file pagination did not advance")
 		}
-		if len(files) == forge.MaxChangedFiles && response.NextPage != 0 {
+		if len(filenames) == forge.MaxChangedFiles && response.NextPage != 0 {
 			return nil, false, nil
 		}
 		page = response.NextPage
 	}
-	if count != nil && *count != len(files) {
+	if count != nil && *count != len(filenames) {
 		return nil, false, errors.New("PR changed-file count does not match complete file observation; retry")
 	}
 	return files, true, nil

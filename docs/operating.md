@@ -129,29 +129,33 @@ this every ten minutes (`--rules-interval` / `OPENMERGE_RULES_INTERVAL`), at the
 next worker cycle. Reads share the driver's conditional cache and quota budget.
 The same cycle checks classic protection on the base and its exact
 `openmerge/fence/<base>` ref, plus the granted permissions from the installation
-token response. These are independent reads: a definite failure from one can
-add a block even if another is unreadable. No partial pass clears a previous
-problem; automatic recovery requires a complete passing inspection.
-Only a successful read with definite problems sets a durable `repository-rules`
-block. A read failure (including network, 5xx, quota/rate limit or authentication
-errors) logs WARN and preserves the previous state: healthy queues continue,
-and an existing rules block stays blocked. Failed reads retry after one minute,
+token response. Each source (`rulesets`, `classic_protection`, `permissions`)
+owns its block and revision. Definite findings block even when another part of
+that source's read fails; partial reads retain its previous findings too. A
+complete passing inspection clears only that source's block. An unreadable
+classic protection endpoint cannot veto ruleset or permission recovery.
+A read failure (including network, 5xx, quota/rate limit or authentication errors)
+logs WARN and preserves only that source's previous state: healthy queues continue,
+and an existing block for that source stays blocked. Failed reads retry after one minute,
 then two, four, and at most five minutes, capped by `--rules-interval` if shorter.
 The worker wakes for that deadline even if its normal poll interval is longer;
 the driver's shared quota cooldown can defer the read further.
 
 Rules blocks appear in the API, PR check, journal and logs. Every definite
-failure advances the rules revision, including unchanged problems, so an older
-passing read cannot clear a newer confirmed failure. Passing checks on healthy
-queues append nothing. A later complete passing check appends
-`RulesCleared` and removes only the rules block; generic pauses, action poison,
+failure advances its source's revision, including unchanged problems, so an older
+passing read cannot clear a newer confirmed failure for that source. Passing
+checks on healthy sources append nothing. A later complete passing check appends
+`RulesSourceCleared` with that source's current basis; generic pauses, action poison,
 build failures and `landing-not-on-base` remain independent. An operator
 `@openmerge refresh` cannot clear a known rules block. All active reasons are
-shown by status/API. Blocks still permit `ResolveLanding`: a push already in
+shown by status/API, including `rules_sources` with per-source problems and revisions.
+Blocks still permit `ResolveLanding`: a push already in
 flight must settle truthfully through its fence.
 
-The new `rules_blocked` and `rules_cleared` events extend wire v1. Existing event
-types and their replay behavior are unchanged. A legacy `PauseRequested` with
+The new `rules_source_blocked` and `rules_source_cleared` events extend wire v1.
+Stored `rules_blocked` and `rules_cleared` events retain their payloads and basis
+semantics and fold into the `rulesets` source. Existing event/action fixtures
+remain unchanged. A legacy `PauseRequested` with
 reason `repository-rules` remains a generic pause on replay; after repairing its
 cause, a writer must clear it with `@openmerge refresh`. A passing rules check
 never emits a generic resume during upgrades.

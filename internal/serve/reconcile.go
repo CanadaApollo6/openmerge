@@ -136,7 +136,12 @@ func (s *Server) reconcile(ctx context.Context, w *worker, force bool) error {
 }
 
 func (s *Server) observe(ctx context.Context, w *worker, number int) (forge.PullRequest, error) {
-	pr, err := w.Driver.PullRequest(ctx, w.repo(), number)
+	read := w.Driver.PullRequest
+	needsFiles := slices.Contains(w.cfg.EnterWhen.Attributes(), "files") || slices.Contains(w.cfg.MergeWhen.Attributes(), "files")
+	if metadata, ok := w.Driver.(forge.PullRequestMetadataReader); ok && !needsFiles {
+		read = metadata.PullRequestMetadata
+	}
+	pr, err := read(ctx, w.repo(), number)
 	if err != nil {
 		return pr, err
 	}

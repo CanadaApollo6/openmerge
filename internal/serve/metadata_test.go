@@ -153,3 +153,47 @@ func (d *labelRevocationDriver) CheckRuns(ctx context.Context, repo forge.RepoRe
 	}
 	return checks, err
 }
+
+type selectiveMetadataDriver struct {
+	forge.Driver
+	metadata, full int
+}
+
+func (d *selectiveMetadataDriver) PullRequestMetadata(ctx context.Context, repo forge.RepoRef, number int) (forge.PullRequest, error) {
+	d.metadata++
+	pr, err := d.Driver.PullRequest(ctx, repo, number)
+	pr.Files, pr.FilesKnown = nil, false
+	return pr, err
+}
+
+func (d *selectiveMetadataDriver) PullRequest(ctx context.Context, repo forge.RepoRef, number int) (forge.PullRequest, error) {
+	d.full++
+	return d.Driver.PullRequest(ctx, repo, number)
+}
+
+func TestObserveRequestsFilesOnlyForConditionsThatUseThem(t *testing.T) {
+	for _, tc := range []struct {
+		name, enter, merge string
+		files              bool
+	}{
+		{"unused", "-draft", "check-success = ci", false},
+		{"entry exclusion", "files != secret", "check-success = ci", true},
+		{"merge count", "-draft", "#files > 0", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, w, _, _ := fixture(t, repositoryConfig)
+			var err error
+			w.cfg.EnterWhen, err = condition.Parse(tc.enter)
+			must(t, err)
+			w.cfg.MergeWhen, err = condition.Parse(tc.merge)
+			must(t, err)
+			d := &selectiveMetadataDriver{Driver: w.Driver}
+			w.Driver = d
+			pr, err := s.observe(t.Context(), w, 1)
+			must(t, err)
+			if pr.FilesKnown != tc.files || (d.full == 1) != tc.files || (d.metadata == 1) == tc.files {
+				t.Fatalf("file observation not gated by policy: full=%d metadata=%d pr=%+v", d.full, d.metadata, pr)
+			}
+		})
+	}
+}

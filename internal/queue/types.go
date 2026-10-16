@@ -57,8 +57,7 @@ type State struct {
 	actionPoison       actionPoisonState
 	pause              PauseRequested
 	pauseRevision      uint64
-	rulesBlock         RulesBlocked
-	rulesRevision      uint64
+	rulesSources       map[RulesSource]rulesSourceState
 	rulesPauseRevision uint64
 }
 

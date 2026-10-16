@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/CanadaApollo6/openmerge/internal/status"
 )
 
 const statusJSON = `{"version":1,"queue":{"installation":"7","repo":"owner/repo","base":"release/v1","lane":"","watermark":3,"base_sha":"base","paused":true,"pause_reason":"repository-rules","pause_detail":"fix fence","blocks":[{"reason":"repository-rules","detail":"fix fence"},{"reason":"action-poisoned","detail":"invalid action"}],"active_batch":null,"entries":[{"position":1,"pr":1,"head_sha":"0123456789012345","admitted_at":"2026-10-16T12:00:00Z","status":"paused","reason":"repository-rules","last_dequeue_reason":""}]},"pr":{"position":1,"pr":1,"head_sha":"0123456789012345","admitted_at":"2026-10-16T12:00:00Z","status":"paused","reason":"repository-rules","last_dequeue_reason":""},"why":{"summary":"PR #1: paused (repository-rules): fix fence","limit":20,"events":[{"id":3,"type":"rules_blocked","at":"2026-10-16T12:00:00Z","summary":"Repository rules block: fix fence"}]}}
@@ -148,5 +150,29 @@ func TestQueueStatusUsageAndOutputFailures(t *testing.T) {
 		if code := runQueue(append([]string{"status", "--api", server.URL, "--repo", "owner/repo", "--pr", "1"}, extra...), brokenWriter{}, io.Discard); code != 1 {
 			t.Fatalf("output failure=%d", code)
 		}
+	}
+}
+
+func TestStatusPrintsProblemsPerRulesSource(t *testing.T) {
+	var response status.Response
+	if err := json.Unmarshal([]byte(statusJSON), &response); err != nil {
+		t.Fatal(err)
+	}
+	response.Queue.RulesSources = []status.RulesSource{
+		{Source: "rulesets", Problems: []string{"repair fence rules"}, Revision: 1},
+		{Source: "classic_protection", Problems: []string{"remove required reviews"}, Revision: 2},
+		{Source: "permissions", Problems: []string{}, Revision: 2},
+	}
+	var out bytes.Buffer
+	if err := printStatus(&out, response); err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{"rules (rulesets): repair fence rules", "rules (classic_protection): remove required reviews"} {
+		if !strings.Contains(out.String(), text) {
+			t.Fatalf("source problems missing from status: %s", &out)
+		}
+	}
+	if strings.Contains(out.String(), "rules (permissions)") {
+		t.Fatal("cleared source printed as a block")
 	}
 }

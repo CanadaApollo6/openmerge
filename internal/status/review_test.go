@@ -202,3 +202,50 @@ func TestStatusKeepsRulesEvidenceWhenStaleClearIsIgnored(t *testing.T) {
 		}
 	}
 }
+
+func TestSourceProblemsAndExplanationsRemainIndependent(t *testing.T) {
+	events := []queue.Event{
+		queue.RulesBlocked{Problems: []string{"repair ruleset"}},
+		queue.RulesSourceBlocked{Source: queue.ClassicProtection, Problems: []string{"repair classic ghp_private123"}},
+		queue.RulesSourceBlocked{Source: queue.Permissions, Problems: []string{"repair grants"}},
+		queue.RulesSourceCleared{Source: queue.Rulesets, Basis: 1},
+		queue.RulesSourceBlocked{Source: queue.ClassicProtection, Problems: []string{"new classic block ghp_private123"}, Basis: 1},
+		queue.RulesSourceCleared{Source: queue.ClassicProtection, Basis: 1}, // stale
+	}
+	events = append(events, admission()...)
+	q, _, why := Project(journal(events...), 1, 20, nil)
+	if !q.Paused || len(q.Blocks) != 2 || len(q.RulesSources) != 3 {
+		t.Fatalf("missing source problems: %+v", q)
+	}
+	for i, want := range []struct {
+		source   string
+		problems int
+		revision uint64
+	}{{"rulesets", 0, 2}, {"classic_protection", 1, 2}, {"permissions", 1, 1}} {
+		got := q.RulesSources[i]
+		if got.Source != want.source || len(got.Problems) != want.problems || got.Revision != want.revision {
+			t.Fatalf("incorrect source state: %+v", got)
+		}
+	}
+	for _, event := range why.Events {
+		if event.ID <= 2 || event.ID == 4 || event.ID == 6 {
+			t.Fatalf("cleared/stale source inherited as active evidence: %+v", event)
+		}
+	}
+	if !strings.Contains(why.Summary, "classic_protection") || !strings.Contains(why.Summary, "permissions") {
+		t.Fatalf("source names missing from status: %s", why.Summary)
+	}
+	body, err := json.Marshal(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "private123") {
+		t.Fatalf("source diagnostics escaped sanitization: %s", body)
+	}
+	// A legacy clear still targets only rulesets after source-aware events exist.
+	events = append(events, queue.RulesCleared{Basis: 2}, queue.RulesSourceCleared{Source: queue.ClassicProtection, Basis: 2})
+	q, _, why = Project(journal(events...), 1, 20, nil)
+	if len(q.Blocks) != 1 || q.RulesSources[2].Problems[0] != "repair grants" || !strings.Contains(why.Summary, "permissions") {
+		t.Fatal("one source's recovery removed another source's block")
+	}
+}

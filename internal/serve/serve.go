@@ -23,9 +23,8 @@ type Target struct {
 	BotLogin string
 	// CheckRules is supplied by the forge adapter, without admin credentials.
 	CheckRules func(context.Context) (problems, warnings []string, err error)
-	// AdditionalRuleChecks keep independently readable sources separate, so a
-	// failed inspection cannot hide definite failures from another source.
-	AdditionalRuleChecks []func(context.Context) (problems, warnings []string, err error)
+	// CheckPermissions checks the installation's grants independently of policy reads.
+	CheckPermissions func(context.Context) (problems, warnings []string, err error)
 	// CheckProtection also receives the configured commit shape. An empty method
 	// means configuration has not been loaded yet during startup.
 	CheckProtection func(context.Context, forge.MergeMethod) (problems, warnings []string, err error)

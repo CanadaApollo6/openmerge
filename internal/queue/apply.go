@@ -69,16 +69,16 @@ func Apply(s State, e Event) State {
 	case PauseRequested:
 		s.pause, s.pauseRevision = e, s.revision
 	case RulesBlocked:
-		// A failing read is always evidence, even if another read finished first:
-		// applying it can only block, which fails safe until the next check.
-		s.rulesBlock = RulesBlocked{Problems: slices.Clone(e.Problems), Basis: e.Basis}
-		s.rulesRevision++
-		s.rulesPauseRevision = s.revision
+		s.blockRulesSource(Rulesets, e.Problems)
 	case RulesCleared:
-		// A pass clears only if no rules event was applied since its read began.
-		if e.Basis == s.rulesRevision {
-			s.rulesBlock = RulesBlocked{}
-			s.rulesRevision++
+		s.clearRulesSource(Rulesets, e.Basis)
+	case RulesSourceBlocked:
+		if e.Validate() == nil {
+			s.blockRulesSource(e.Source, e.Problems)
+		}
+	case RulesSourceCleared:
+		if e.Validate() == nil {
+			s.clearRulesSource(e.Source, e.Basis)
 		}
 	case ResumeRequested:
 		s.pause = PauseRequested{}
@@ -212,7 +212,14 @@ func (s *State) refreshChecks() {
 }
 
 func cloneState(s State) State {
-	s.rulesBlock.Problems = slices.Clone(s.rulesBlock.Problems)
+	s.rulesSources = maps.Clone(s.rulesSources)
+	if s.rulesSources == nil {
+		s.rulesSources = make(map[RulesSource]rulesSourceState)
+	}
+	for source, current := range s.rulesSources {
+		current.problems = slices.Clone(current.problems)
+		s.rulesSources[source] = current
+	}
 	s.Entries = slices.Clone(s.Entries)
 	s.pending = slices.Clone(s.pending)
 	for i := range s.pending {

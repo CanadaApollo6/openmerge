@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/CanadaApollo6/openmerge/internal/config/condition"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	gh "github.com/google/go-github/v93/github"
 )
@@ -114,5 +115,129 @@ func TestChangedFilesRejectHeadOrBaseMovementAndReadFailures(t *testing.T) {
 				t.Fatalf("mixed/failed observation accepted: %v", err)
 			}
 		})
+	}
+}
+
+func TestChangedFilesRejectMetadataChangesDuringPagination(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		edit func(*gh.PullRequest)
+	}{
+		{"label removed", func(pr *gh.PullRequest) { pr.Labels = []*gh.Label{} }},
+		{"labels unknown", func(pr *gh.PullRequest) { pr.Labels = nil }},
+		{"title", func(pr *gh.PullRequest) { pr.Title = new("new title") }},
+		{"body", func(pr *gh.PullRequest) { pr.Body = new("new body") }},
+		{"draft", func(pr *gh.PullRequest) { pr.Draft = new(true) }},
+		{"mergeable", func(pr *gh.PullRequest) { pr.Mergeable = new(false) }},
+		{"mergeable unknown", func(pr *gh.PullRequest) { pr.Mergeable = nil }},
+		{"author", func(pr *gh.PullRequest) { pr.User.Login = new("other") }},
+		{"head branch", func(pr *gh.PullRequest) { pr.Head.Label = new("other:branch") }},
+		{"head repository", func(pr *gh.PullRequest) { pr.Head.Repo.ID = pr.Base.Repo.ID }},
+		{"base branch", func(pr *gh.PullRequest) { pr.Base.Ref = new("release") }},
+		{"closed", func(pr *gh.PullRequest) { pr.State = new("closed") }},
+		{"file count", func(pr *gh.PullRequest) { pr.ChangedFiles = new(2) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newAPI(t)
+			f.prs[1].Labels = []*gh.Label{{Name: "ready"}}
+			f.prs[1].Mergeable = new(true)
+			f.override = func(w http.ResponseWriter, r *http.Request) bool {
+				if !strings.HasSuffix(r.URL.Path, "/pulls/1/files") {
+					return false
+				}
+				tc.edit(f.prs[1])
+				f.json(w, []map[string]any{{"filename": "a.go"}})
+				return true
+			}
+			if pr, err := f.driver.PullRequest(t.Context(), testRepo, 1); err == nil || !strings.Contains(err.Error(), "changed during file observation") || pr.LabelsKnown {
+				t.Fatalf("mixed metadata observation accepted: %+v %v", pr, err)
+			}
+		})
+	}
+}
+
+func TestRenamedFilesUseDistinctUnionForConditions(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		count int
+		chain bool
+		known bool
+		paths int
+	}{
+		{"workflow rename", 1, false, true, 2},
+		{"500 renames at cap", 500, false, true, 1000},
+		{"501 renames exceed cap", 501, false, false, 0},
+		{"overlapping old and new paths", 501, true, true, 502},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newAPI(t)
+			f.prs[1].ChangedFiles = new(tc.count)
+			f.override = func(w http.ResponseWriter, r *http.Request) bool {
+				if !strings.HasSuffix(r.URL.Path, "/pulls/1/files") {
+					return false
+				}
+				page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+				list := []map[string]any{}
+				for i := (page - 1) * 100; i < min(page*100, tc.count); i++ {
+					old, filename := fmt.Sprintf("old/%d", i), fmt.Sprintf("new/%d", i)
+					if tc.count == 1 {
+						old, filename = ".github/workflows/ci.yml", "docs/ci.yml"
+					}
+					if tc.chain {
+						old, filename = fmt.Sprintf("path/%d", i), fmt.Sprintf("path/%d", i+1)
+					}
+					list = append(list, map[string]any{"status": "renamed", "filename": filename, "previous_filename": old})
+				}
+				if page*100 < tc.count {
+					w.Header().Set("Link", fmt.Sprintf("<%s/api/v3/repos/acme/project/pulls/1/files?page=%d>; rel=\"next\"", f.server.URL, page+1))
+				}
+				f.json(w, list)
+				return true
+			}
+			pr, err := f.driver.PullRequest(t.Context(), testRepo, 1)
+			must(t, err)
+			if pr.FilesKnown != tc.known || len(pr.Files) != tc.paths {
+				t.Fatalf("rename union: known=%v paths=%d", pr.FilesKnown, len(pr.Files))
+			}
+			values := condition.Snapshot{}
+			if pr.FilesKnown {
+				values["files"] = condition.Strings(pr.Files...)
+			}
+			expression, err := condition.Parse("files glob .github/workflows/**")
+			must(t, err)
+			met, _ := expression.Evaluate(values)
+			negated, _ := condition.Not(expression).Evaluate(values)
+			if tc.count == 1 && (!met || negated) {
+				t.Fatal("renaming a workflow bypassed its file condition")
+			}
+			if !tc.known {
+				for _, text := range []string{"files glob new/**", "files != .github/workflows/ci.yml", "#files > 0"} {
+					expression, err := condition.Parse(text)
+					must(t, err)
+					met, _ := expression.Evaluate(values)
+					negated, _ := condition.Not(expression).Evaluate(values)
+					if met || negated {
+						t.Fatalf("oversized rename union made a decision: %s", text)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestPullRequestMetadataSkipsFileList(t *testing.T) {
+	f := newAPI(t)
+	f.override = func(w http.ResponseWriter, r *http.Request) bool {
+		if strings.HasSuffix(r.URL.Path, "/files") {
+			t.Error("metadata read fetched files")
+			f.apiError(w, 403, "files unavailable")
+			return true
+		}
+		return false
+	}
+	pr, err := f.driver.PullRequestMetadata(t.Context(), testRepo, 1)
+	must(t, err)
+	if pr.FilesKnown || len(pr.Files) != 0 || pr.HeadSHA == "" {
+		t.Fatalf("metadata-only observation: %+v", pr)
 	}
 }

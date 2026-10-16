@@ -187,6 +187,15 @@ func printStatus(out io.Writer, response status.Response) error {
 	if err := table.Flush(); err != nil {
 		return err
 	}
+	for _, q := range queues {
+		for _, source := range q.RulesSources {
+			if len(source.Problems) > 0 {
+				if _, err := fmt.Fprintf(out, "%s %s rules (%s): %s\n", q.Repository, q.Base, source.Source, strings.Join(source.Problems, "; ")); err != nil {
+					return err
+				}
+			}
+		}
+	}
 	if response.Why != nil {
 		if _, err := fmt.Fprintln(out, response.Why.Summary); err != nil {
 			return err

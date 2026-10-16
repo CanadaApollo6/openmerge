@@ -132,7 +132,7 @@ wildcard rules for queue/fence refs: this command validates rulesets only.
 `serve` validates visible rulesets and reads classic protection at startup and periodically; run
 `setup rulesets` first to audit the full bypass lists with an admin token.
 Classic protection reads need installation Administration read; unreadable
-protection produces WARN and retains the previous rules state. The default App
+protection produces WARN and retains only its own previous block state. The default App
 manifest does not request Administration. Audit it manually when unreadable.
 
 ## GitHub integration details
@@ -201,8 +201,9 @@ rulesets, classic protection on the base and its fence, and the installation
 token's actual permission grants. Missing `contents: write` or `workflows: write`
 logs ERROR and blocks new work as `repository-rules`, before initial fence
 creation. Other missing required grants log WARN with the exact permission.
-Definite policy problems also block; a later complete passing check clears only that rules block.
-Read failures log WARN, retain the previous state, and retry after one minute
+Definite policy problems also block. Rulesets, classic protection, and permissions
+track independent blocks and revisions; each passing source clears only its own block.
+Read failures log WARN, retain that source’s previous state, and retry after one minute
 with exponential backoff capped at five minutes (or the configured rules interval
 if shorter). Other pauses and action poison remain independent.
 Hidden bypass lists produce WARN logs and require the separate admin-token setup
@@ -294,7 +295,8 @@ whole condition passes or is definitely false.
 The driver supplies all core conditions: `base`, `label`, `author`,
 `#approved-reviews-by`, `check-success/failure/pending`, `files`, `draft`, and
 `conflict`, plus `head` and `title`. Missing observations remain unknown even
-under negation. File lists are paginated and capped at 1,000 paths; larger PRs
+under negation. File lists are fetched only when a condition uses `files`. Renames include both
+old and new paths; lists are paginated and capped at 1,000 distinct paths. Larger PRs
 leave every `files` predicate unknown, including counts and exclusions.
 Uncomputed mergeability is unknown and retried on polls. See the
 [condition reference](internal/config/README.md#conditions).

@@ -27,18 +27,26 @@ type Response struct {
 
 // Queue describes one served installation/repository/base/lane partition.
 type Queue struct {
-	Installation string  `json:"installation"`
-	Repository   string  `json:"repo"`
-	Base         string  `json:"base"`
-	Lane         string  `json:"lane"`
-	Watermark    int64   `json:"watermark"`
-	BaseSHA      string  `json:"base_sha"`
-	Paused       bool    `json:"paused"`
-	PauseReason  string  `json:"pause_reason"`
-	PauseDetail  string  `json:"pause_detail"`
-	Blocks       []Block `json:"blocks"`
-	ActiveBatch  *Batch  `json:"active_batch"`
-	Entries      []Entry `json:"entries"`
+	Installation string        `json:"installation"`
+	Repository   string        `json:"repo"`
+	Base         string        `json:"base"`
+	Lane         string        `json:"lane"`
+	Watermark    int64         `json:"watermark"`
+	BaseSHA      string        `json:"base_sha"`
+	Paused       bool          `json:"paused"`
+	PauseReason  string        `json:"pause_reason"`
+	PauseDetail  string        `json:"pause_detail"`
+	Blocks       []Block       `json:"blocks"`
+	ActiveBatch  *Batch        `json:"active_batch"`
+	Entries      []Entry       `json:"entries"`
+	RulesSources []RulesSource `json:"rules_sources,omitempty"`
+}
+
+// RulesSource lists one source's independently revisioned policy findings.
+type RulesSource struct {
+	Source   string   `json:"source"`
+	Problems []string `json:"problems"`
+	Revision uint64   `json:"revision"`
 }
 
 // Block describes one active cause preventing new work; multiple may coexist.
@@ -171,6 +179,13 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 	for _, block := range s.Blocks(queue.Config{}) {
 		q.Blocks = append(q.Blocks, Block{sanitizer.Sanitize(block.Reason), sanitizer.Sanitize(block.Detail)})
 	}
+	for _, source := range s.RulesSources() {
+		problems := make([]string, 0, len(source.Problems))
+		for _, problem := range source.Problems {
+			problems = append(problems, sanitizer.Sanitize(problem))
+		}
+		q.RulesSources = append(q.RulesSources, RulesSource{string(source.Source), problems, source.Revision})
+	}
 	q.Paused = len(q.Blocks) > 0
 	if b := s.Active; b != nil {
 		q.ActiveBatch = &Batch{ID: b.ID, Phase: string(b.Phase), BaseSHA: b.BaseSHA, TestedSHA: b.TestedSHA, TestRef: b.TestRef, Method: string(b.Method), PRs: make([]BatchPR, 0, len(b.PRs))}
@@ -272,7 +287,7 @@ func explanationContext(j store.Journal, pr int) (map[string]bool, map[int64]boo
 	for _, record := range j.Events {
 		before := s
 		s = queue.Apply(s, record.Event)
-		switch record.Event.(type) {
+		switch e := record.Event.(type) {
 		case queue.PauseRequested:
 			causes["pause"] = record.ID
 		case queue.ResumeRequested:
@@ -284,11 +299,19 @@ func explanationContext(j store.Journal, pr int) (map[string]bool, map[int64]boo
 			}
 		case queue.RulesBlocked:
 			if s.RulesRevision() != before.RulesRevision() {
-				causes["rules"] = record.ID
+				causes["rules/rulesets"] = record.ID
 			}
 		case queue.RulesCleared:
 			if s.RulesRevision() != before.RulesRevision() {
-				delete(causes, "rules")
+				delete(causes, "rules/rulesets")
+			}
+		case queue.RulesSourceBlocked:
+			if s.RulesSourceRevision(e.Source) != before.RulesSourceRevision(e.Source) {
+				causes["rules/"+string(e.Source)] = record.ID
+			}
+		case queue.RulesSourceCleared:
+			if s.RulesSourceRevision(e.Source) != before.RulesSourceRevision(e.Source) {
+				delete(causes, "rules/"+string(e.Source))
 			}
 		}
 		if inBatch(s, pr) && s.Active.TestedSHA != "" {
@@ -323,6 +346,10 @@ func eventSummary(event queue.Event) string {
 		return "Repository rules block: " + strings.Join(e.Problems, "; ")
 	case queue.RulesCleared:
 		return "Repository rules passed; rules block cleared"
+	case queue.RulesSourceBlocked:
+		return "Repository rules block (" + string(e.Source) + "): " + strings.Join(e.Problems, "; ")
+	case queue.RulesSourceCleared:
+		return "Repository rules passed; " + string(e.Source) + " block cleared"
 	case queue.ActionPoisoned:
 		return "Action quarantined after repeated invalid execution: " + e.Reason
 	case queue.RefreshRequested:
@@ -364,6 +391,10 @@ func affects(event queue.Event, pr int, before, after queue.State, tested map[st
 	switch e := event.(type) {
 	case queue.RulesBlocked, queue.RulesCleared:
 		return before.RulesRevision() != after.RulesRevision() && (entryIn(before, pr) || entryIn(after, pr))
+	case queue.RulesSourceBlocked:
+		return before.RulesSourceRevision(e.Source) != after.RulesSourceRevision(e.Source) && (entryIn(before, pr) || entryIn(after, pr))
+	case queue.RulesSourceCleared:
+		return before.RulesSourceRevision(e.Source) != after.RulesSourceRevision(e.Source) && (entryIn(before, pr) || entryIn(after, pr))
 	case queue.BatchStarted:
 		return slices.ContainsFunc(e.PRs, func(p queue.BatchPR) bool { return p.PR == pr })
 	case queue.ChecksCompleted:

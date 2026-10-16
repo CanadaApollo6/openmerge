@@ -24,6 +24,7 @@ func (d *Driver) ValidateClassicProtection(ctx context.Context, repo forge.RepoR
 
 func (d *Driver) classicProtection(ctx context.Context, owner, repo, base string, method forge.MergeMethod) ([]string, error) {
 	var problems []string
+	var readErrors []error
 	base = strings.TrimPrefix(base, "refs/heads/")
 	for _, ref := range []string{base, "openmerge/fence/" + base} {
 		protection, response, err := d.client.Repositories.GetBranchProtection(ctx, owner, repo, ref)
@@ -33,29 +34,31 @@ func (d *Driver) classicProtection(ctx context.Context, owner, repo, base string
 		if err != nil {
 			// A generic 404 can hide a missing permission. Only GitHub's explicit
 			// "Branch not protected" response establishes absence of protection.
-			return nil, fmt.Errorf("cannot read classic protection for %s: %w", ref, safeError(err))
+			readErrors = append(readErrors, fmt.Errorf("cannot read classic protection for %s: %w", ref, safeError(err)))
+			continue
 		}
 		if protection == nil {
-			return nil, fmt.Errorf("classic protection for %s returned no details", ref)
+			readErrors = append(readErrors, fmt.Errorf("classic protection for %s returned no details", ref))
+			continue
 		}
 		if ref == base && protection.GetRequireLinearHistory().GetEnabled() && method == "" {
-			return nil, errors.New("classic linear history validation awaits base-branch merge_method configuration")
+			readErrors = append(readErrors, errors.New("classic linear history validation awaits base-branch merge_method configuration"))
 		}
 		if protection.RequiredSignatures == nil {
 			signatures, _, err := d.client.Repositories.GetSignaturesProtectedBranch(ctx, owner, repo, ref)
 			if err != nil {
-				return nil, fmt.Errorf("cannot read required signatures for %s: %w", ref, safeError(err))
+				readErrors = append(readErrors, fmt.Errorf("cannot read required signatures for %s: %w", ref, safeError(err)))
+			} else if signatures == nil || signatures.Enabled == nil {
+				readErrors = append(readErrors, fmt.Errorf("required signatures for %s returned no details", ref))
+			} else {
+				protection.RequiredSignatures = signatures
 			}
-			if signatures == nil || signatures.Enabled == nil {
-				return nil, fmt.Errorf("required signatures for %s returned no details", ref)
-			}
-			protection.RequiredSignatures = signatures
 		}
 		// Both the base and fence advance to children of their leased tips.
 		// --force-with-lease supplies CAS; it does not require a non-FF push.
 		problems = append(problems, classicProtectionProblems(protection, ref, d.app.id, ref == base && method == forge.Merge, false)...)
 	}
-	return problems, nil
+	return problems, errors.Join(readErrors...)
 }
 
 func classicProtectionProblems(p *gh.Protection, ref string, appID int64, hasMerges, needsForce bool) []string {

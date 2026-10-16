@@ -131,3 +131,43 @@ func TestClassicLinearHistoryUsesConfiguredCommitShape(t *testing.T) {
 		})
 	}
 }
+
+func TestClassicProtectionRetainsDefiniteProblemsAcrossPartialFailures(t *testing.T) {
+	for _, mode := range []string{"base unreadable", "fence unreadable", "signatures unreadable", "method unknown"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newAPI(t)
+			f.override = func(w http.ResponseWriter, r *http.Request) bool {
+				if !strings.Contains(r.URL.Path, "/branches/") {
+					return false
+				}
+				fence := strings.Contains(r.URL.Path, "openmerge/fence/")
+				if strings.HasSuffix(r.URL.Path, "/required_signatures") || mode == "base unreadable" && !fence || mode == "fence unreadable" && fence {
+					f.apiError(w, 403, "secret protection response")
+					return true
+				}
+				protection := map[string]any{"required_pull_request_reviews": map[string]any{}, "required_signatures": map[string]bool{"enabled": false}}
+				if mode == "signatures unreadable" {
+					delete(protection, "required_signatures")
+				}
+				if mode == "method unknown" {
+					protection["required_linear_history"] = map[string]bool{"enabled": true}
+				}
+				f.json(w, protection)
+				return true
+			}
+			method := forge.Merge
+			if mode == "method unknown" {
+				method = ""
+			}
+			problems, _, err := f.driver.ValidateClassicProtection(t.Context(), testRepo, "main", method)
+			if err == nil || strings.Contains(err.Error(), "secret protection response") || len(problems) == 0 {
+				t.Fatalf("definite block discarded with partial read: %v %v", problems, err)
+			}
+			for _, problem := range problems {
+				if !strings.Contains(problem, "classic_reviews") {
+					t.Fatalf("unexpected finding: %s", problem)
+				}
+			}
+		})
+	}
+}

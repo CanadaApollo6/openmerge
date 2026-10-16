@@ -36,6 +36,12 @@ type PullRequest struct {
 // changes have unknown Files, never a partially observed list.
 const MaxChangedFiles = 1000
 
+// PullRequestMetadataReader can omit file-list reads when no condition uses files.
+// Drivers without this optimization still supply complete PullRequest observations.
+type PullRequestMetadataReader interface {
+	PullRequestMetadata(context.Context, RepoRef, int) (PullRequest, error)
+}
+
 // PullRequestSummary is the lightweight reconciliation view of an open PR.
 type PullRequestSummary struct {
 	Number    int

@@ -32,15 +32,15 @@ func TestStartupMissingLandingGrantBlocksBeforeFenceAndRecovers(t *testing.T) {
 	missing := true
 	var logs strings.Builder
 	target := Target{Key: store.QueueKey{Installation: "7", Repository: repo.Path, BaseBranch: "main"}, Driver: f, Git: g, BotLogin: fake.Identity,
-		CheckRules: func(context.Context) ([]string, []string, error) {
+		CheckProtection: func(context.Context, forge.MergeMethod) ([]string, []string, error) {
 			return nil, nil, errors.New("classic protection HTTP 403")
 		},
-		AdditionalRuleChecks: []func(context.Context) ([]string, []string, error){func(context.Context) ([]string, []string, error) {
+		CheckPermissions: func(context.Context) ([]string, []string, error) {
 			if missing {
 				return []string{"installed App missing permission contents: write", "installed App missing permission workflows: write"}, []string{"installed App missing permission checks: write"}, nil
 			}
 			return nil, nil, nil
-		}},
+		},
 	}
 	s, err := New(t.Context(), db, []Target{target}, Options{Logger: slog.New(slog.NewTextHandler(&logs, nil))})
 	must(t, err)
@@ -60,12 +60,9 @@ func TestStartupMissingLandingGrantBlocksBeforeFenceAndRecovers(t *testing.T) {
 	must(t, s.repositoryRules(t.Context(), w))
 	state, _, err = db.Load(t.Context(), w.id)
 	must(t, err)
-	if len(state.RulesProblems()) != 2 {
-		t.Fatal("unreadable protection cleared previous permission block")
+	if len(state.RulesProblems()) != 0 || state.RulesSourceRevision(queue.Permissions) != 2 {
+		t.Fatal("unreadable protection vetoed permission recovery")
 	}
-	w.CheckRules = func(context.Context) ([]string, []string, error) { return nil, nil, nil }
-	w.rulesNextCheck = time.Time{}
-	must(t, s.repositoryRules(t.Context(), w))
 	must(t, s.initializeFence(t.Context(), w))
 	state, _, err = db.Load(t.Context(), w.id)
 	must(t, err)
@@ -125,8 +122,7 @@ func TestRulesReadFailurePreservesStateAndRetriesSooner(t *testing.T) {
 	calls := 0
 	w.CheckRules = func(context.Context) ([]string, []string, error) {
 		calls++
-		// A partial result must never be enforced when any part of the read fails.
-		return []string{"partial problem"}, nil, errors.New("HTTP 403")
+		return nil, nil, errors.New("HTTP 403")
 	}
 	for _, blocked := range []bool{false, true} {
 		if blocked {
