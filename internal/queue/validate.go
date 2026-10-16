@@ -14,6 +14,11 @@ func requireActionText(fields ...string) error {
 	return nil
 }
 
+// Validate pins the cleanup opt-in to one batch and its verified landing.
+func (e HeadCleanupRequested) Validate() error {
+	return requireActionText("batch_id", e.BatchID, "landed_sha", e.LandedSHA)
+}
+
 func validateBatchPRs(prs []BatchPR) error {
 	if len(prs) == 0 {
 		return fmt.Errorf("prs must contain at least one PR")

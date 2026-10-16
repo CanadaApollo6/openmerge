@@ -75,5 +75,16 @@ func (d *Driver) HeadBranchForDeletion(ctx context.Context, repo forge.RepoRef, 
 	if len(prs) > 0 {
 		return "", nil
 	}
+	// The head can also be shared by a PR targeting a different base. Scope
+	// the head to this repository's owner so a fork's namesake is unrelated.
+	users, _, err := d.client.PullRequests.List(ctx, owner, name, &gh.PullRequestListOptions{
+		State: "open", Head: owner + ":" + branch, ListOptions: gh.ListOptions{PerPage: 1},
+	})
+	if err != nil {
+		return "", safeError(err)
+	}
+	if len(users) > 0 {
+		return "", nil
+	}
 	return branch, nil
 }

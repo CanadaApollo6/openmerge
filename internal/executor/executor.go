@@ -153,6 +153,9 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		if err := x.verifyLanding(ctx, a.TestedSHA, attemptID); err != nil {
 			return err
 		}
+		if err := emit(queue.HeadCleanupRequested{BatchID: a.BatchID, LandedSHA: a.TestedSHA}); err != nil {
+			return err
+		}
 		return emit(queue.Landed{BatchID: a.BatchID, NewBaseSHA: a.TestedSHA, NewFence: next})
 	case queue.ResolveLanding:
 		return x.resolve(ctx, a, emit)
@@ -225,6 +228,9 @@ func (x *Executor) resolve(ctx context.Context, a queue.ResolveLanding, emit fun
 		switch {
 		case id == "land/"+a.AttemptID && tested == a.TestedSHA:
 			if err := x.verifyLanding(ctx, a.TestedSHA, a.AttemptID); err != nil {
+				return err
+			}
+			if err := emit(queue.HeadCleanupRequested{BatchID: a.BatchID, LandedSHA: a.TestedSHA}); err != nil {
 				return err
 			}
 			return emit(queue.Landed{BatchID: a.BatchID, NewBaseSHA: a.TestedSHA, NewFence: sha})

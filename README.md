@@ -186,12 +186,8 @@ Run one server per installation during this Phase 1 rollout. See the
 [operating guide](docs/operating.md) for a systemd user unit, environment file,
 committer attribution, logs, upgrades, and GitHub's Closed badge after squash/rebase.
 
-After a confirmed landing, head branches in the base repository are deleted by
-default after PR closure, provided they are not the base/default branch,
-protected, or targeted by another open PR. Cleanup leases the original head SHA
-so newer work is preserved. Set `--delete-head-branch=false` or
-`OPENMERGE_DELETE_HEAD_BRANCH=false` to retain heads. This is a serve-wide option;
-per-repository `delete_head_branch` configuration is a follow-up.
+See [landed head cleanup](docs/operating.md#landed-head-cleanup) for the
+default behavior, safety checks, configuration, and upgrade semantics.
 
 Enable read-only queue inspection with `--api-listen :8081` (binds localhost;
 default off), then run `bin/openmerge queue status --json` or

@@ -71,10 +71,6 @@ Every matching `ChecksRefreshed` advances the refresh count, giving the next act
 
 ### Post-deployment addition: head cleanup (2026-10-16)
 
-Wire v1 adds the `delete_head_branch` action (`pr`, `head_sha`, `landed_sha`),
-pinned by a new golden fixture. No existing event/action payload or fixture
-changes. Folding a confirmed landing now schedules this effect, including on
-historical replay; acknowledgements use the existing `action_completed` event.
-Cleanup waits for any pending `MarkLanded`, rechecks landing and current head
-eligibility, and deletes with an old-SHA lease. The serve-wide default-on toggle
-can acknowledge it without deletion. Old workers must be drained before upgrade.
+See the canonical [landed head cleanup protocol](../operating.md#landed-head-cleanup)
+for its additive wire types, replay behavior, acknowledgements, and upgrade
+requirements.

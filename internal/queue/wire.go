@@ -120,6 +120,11 @@ type wireLanded struct {
 	NewFence   string `json:"new_fence"`
 }
 
+type wireHeadCleanupRequested struct {
+	BatchID   string `json:"batch_id"`
+	LandedSHA string `json:"landed_sha"`
+}
+
 type wireLandingAbandoned struct {
 	BatchID  string `json:"batch_id"`
 	NewFence string `json:"new_fence"`
@@ -389,6 +394,11 @@ func EncodeEvent(value Event) (string, []byte, error) {
 		return encodeWire("landing_started", wireLandingStarted(v))
 	case Landed:
 		return encodeWire("landed", wireLanded(v))
+	case HeadCleanupRequested:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("head_cleanup_requested", wireHeadCleanupRequested(v))
 	case LandingAbandoned:
 		return encodeWire("landing_abandoned", wireLandingAbandoned(v))
 	case Dequeued:
@@ -525,6 +535,16 @@ func DecodeEvent(payload []byte) (Event, error) {
 		return decodeWireData(envelope.Data, func(v wireLanded) Event {
 			return Landed(v)
 		})
+	case "head_cleanup_requested":
+		v, err := readWireData[wireHeadCleanupRequested](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := HeadCleanupRequested(v)
+		if err := event.Validate(); err != nil {
+			return nil, err
+		}
+		return event, nil
 	case "landing_abandoned":
 		return decodeWireData(envelope.Data, func(v wireLandingAbandoned) Event {
 			return LandingAbandoned(v)

@@ -160,6 +160,10 @@ func Apply(s State, e Event) State {
 				}
 			}
 		}
+	case HeadCleanupRequested:
+		if s.batchIn(e.BatchID, Landing) && s.Active.TestedSHA == e.LandedSHA {
+			s.Active.cleanupRequested = true
+		}
 	case Landed:
 		if s.batchIn(e.BatchID, Landing) {
 			for _, pr := range s.Active.PRs {
@@ -171,7 +175,9 @@ func Apply(s State, e Event) State {
 				if s.Active.Method == Squash || s.Active.Method == Rebase {
 					s.addEffect(MarkLanded{PR: pr.PR, HeadSHA: pr.HeadSHA, LandedSHA: e.NewBaseSHA})
 				}
-				s.addEffect(DeleteHeadBranch{PR: pr.PR, HeadSHA: pr.HeadSHA, LandedSHA: e.NewBaseSHA})
+				if s.Active.cleanupRequested {
+					s.addEffect(DeleteHeadBranch{PR: pr.PR, HeadSHA: pr.HeadSHA, LandedSHA: e.NewBaseSHA})
+				}
 				s.removeEntry(pr.PR)
 			}
 			s.BaseSHA, s.Fence = e.NewBaseSHA, e.NewFence

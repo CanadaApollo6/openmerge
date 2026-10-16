@@ -49,7 +49,7 @@ func TestCommitAuthorsPaginationAndRequestCost(t *testing.T) {
 }
 
 func TestHeadBranchDeletionGuards(t *testing.T) {
-	for _, scenario := range []string{"eligible", "fork", "base", "default", "protected", "unknown-protection", "open", "changed-head", "changed-branch", "missing", "targeted", "repo-error", "branch-error", "list-error", "reserved"} {
+	for _, scenario := range []string{"eligible", "fork", "base", "default", "protected", "unknown-protection", "open", "changed-head", "changed-branch", "missing", "targeted", "shared-head", "fork-namesake", "closed-shared-head", "repo-error", "branch-error", "list-error", "head-list-error", "reserved"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := newAPI(t)
 			pr := f.prs[2]
@@ -72,6 +72,19 @@ func TestHeadBranchDeletionGuards(t *testing.T) {
 			case "targeted":
 				for _, n := range []int{1, 3, 4} {
 					f.prs[n] = &gh.PullRequest{Number: new(n), State: new("open"), Base: &gh.PullRequestBranch{Ref: new("feature/topic")}}
+				}
+			case "shared-head", "fork-namesake", "closed-shared-head":
+				other := f.prs[1]
+				other.Head.Ref = new("feature/topic")
+				other.Head.Label = new("acme:feature/topic")
+				other.Head.Repo.ID = new(int64(50))
+				other.Base.Ref = new("release")
+				if scenario == "fork-namesake" {
+					other.Head.Label = new("contributor:feature/topic")
+					other.Head.Repo.ID = new(int64(51))
+				}
+				if scenario == "closed-shared-head" {
+					other.State = new("closed")
 				}
 			}
 			f.override = func(w http.ResponseWriter, r *http.Request) bool {
@@ -107,6 +120,15 @@ func TestHeadBranchDeletionGuards(t *testing.T) {
 					f.apiError(w, 503, "unavailable")
 					return true
 				}
+				if path == "repos/acme/project/pulls" && r.URL.Query().Get("head") != "" {
+					if r.URL.Query().Get("head") != "acme:feature/topic" || r.URL.Query().Get("base") != "" {
+						t.Errorf("head usage must be repository-qualified across all bases: %s", r.URL.RawQuery)
+					}
+					if scenario == "head-list-error" {
+						f.apiError(w, 503, "unavailable")
+						return true
+					}
+				}
 				return false
 			}
 			branch, err := f.driver.HeadBranchForDeletion(t.Context(), testRepo, 2, sha, "main")
@@ -115,7 +137,7 @@ func TestHeadBranchDeletionGuards(t *testing.T) {
 				t.Fatalf("branch=%q error=%v", branch, err)
 			}
 			want := ""
-			if scenario == "eligible" {
+			if scenario == "eligible" || scenario == "fork-namesake" || scenario == "closed-shared-head" {
 				want = "feature/topic"
 			}
 			if branch != want {

@@ -275,7 +275,8 @@ func (f *apiFixture) handle(w http.ResponseWriter, r *http.Request) {
 		list := []map[string]any{}
 		numbers := []int{}
 		for n, pr := range f.prs {
-			if pr.GetState() == "open" && (r.URL.Query().Get("base") == "" || pr.GetBase().GetRef() == r.URL.Query().Get("base")) {
+			if pr.GetState() == "open" && (r.URL.Query().Get("base") == "" || pr.GetBase().GetRef() == r.URL.Query().Get("base")) &&
+				(r.URL.Query().Get("head") == "" || pr.GetHead().GetLabel() == r.URL.Query().Get("head")) {
 				numbers = append(numbers, n)
 			}
 		}

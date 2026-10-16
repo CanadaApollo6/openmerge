@@ -62,7 +62,7 @@ func (f *Forge) HeadBranchForDeletion(ctx context.Context, repo forge.RepoRef, n
 		return "", fmt.Errorf("head cleanup is waiting for PR closure")
 	}
 	for _, other := range r.prs {
-		if !other.Closed && other.Base == branch {
+		if !other.Closed && (other.Base == branch || other.HeadInBaseRepo && other.HeadBranch == branch) {
 			return "", nil
 		}
 	}

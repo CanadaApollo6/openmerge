@@ -2,9 +2,11 @@ package executor_test
 
 import (
 	"errors"
+	"slices"
 	"testing"
 
 	"github.com/CanadaApollo6/openmerge/internal/executor"
+	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 )
 
@@ -65,6 +67,68 @@ func TestHeadCleanupRevalidatesLandingAndRetries(t *testing.T) {
 				if _, err := h.f.ReadRef(t.Context(), repo, "pr-1"); err == nil {
 					t.Fatal("retry failed to clean up")
 				}
+			}
+		})
+	}
+}
+
+func TestHeadCleanupIntentRecoversAfterEmitFailure(t *testing.T) {
+	for _, failIntent := range []bool{true, false} {
+		t.Run(map[bool]string{true: "intent", false: "landed"}[failIntent], func(t *testing.T) {
+			h := setup(t)
+			head := h.prs[0].HeadSHA
+			s := queue.State{BaseBranch: "main", BaseSHA: h.base, Fence: h.fence}
+			s = queue.Apply(s, queue.PRObserved{PR: 1, HeadSHA: head, Eligible: true, Trusted: true})
+			s = queue.Apply(s, queue.EnqueueRequested{PR: 1, At: epoch})
+			emit := func(e queue.Event) error {
+				_, data, err := queue.EncodeEvent(e)
+				if err != nil {
+					return err
+				}
+				e, err = queue.DecodeEvent(data)
+				if err == nil {
+					s = queue.Apply(s, e)
+				}
+				return err
+			}
+			build := h.buildAction()
+			build.BatchID, build.Ref = "b1", "openmerge/queue/main/b1"
+			must(t, h.x.Execute(t.Context(), build, emit))
+			tested := s.Active.TestedSHA
+			h.f.SetCheckRuns(repo, tested, []forge.CheckRun{{Name: "ci", State: forge.Success}, {Name: "lint", State: forge.Success}})
+			s = queue.Apply(s, queue.ChecksCompleted{TestedSHA: tested, Success: true})
+			cfg := queue.Config{MergeMethod: queue.Merge}
+			var land queue.Land
+			for _, action := range queue.Plan(cfg, s, epoch) {
+				if a, ok := action.(queue.Land); ok {
+					land = a
+				}
+			}
+			err := h.x.Execute(t.Context(), land, func(e queue.Event) error {
+				_, intent := e.(queue.HeadCleanupRequested)
+				_, landed := e.(queue.Landed)
+				if failIntent && intent || !failIntent && landed {
+					return errLog
+				}
+				return emit(e)
+			})
+			if !errors.Is(err, errLog) || s.Active == nil || s.Active.Phase != queue.Landing {
+				t.Fatalf("lost landing result did not remain recoverable: %v, %+v", err, s)
+			}
+			cleanup := queue.DeleteHeadBranch{PR: 1, HeadSHA: head, LandedSHA: tested}
+			hasCleanup := func() bool {
+				return slices.ContainsFunc(queue.Plan(cfg, s, epoch), func(a queue.Action) bool { return a.Key() == cleanup.Key() })
+			}
+			if hasCleanup() {
+				t.Fatal("cleanup scheduled before durable Landed")
+			}
+			must(t, h.x.Execute(t.Context(), queue.ResolveLanding{BatchID: "b1", AttemptID: "attempt", TestedSHA: tested, FenceToken: h.fence}, emit))
+			if !hasCleanup() {
+				t.Fatal("resolution lost cleanup intent")
+			}
+			must(t, h.x.Execute(t.Context(), cleanup, emit))
+			if hasCleanup() {
+				t.Fatal("acknowledged cleanup repeated")
 			}
 		})
 	}

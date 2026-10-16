@@ -22,6 +22,10 @@ func TestHeadCleanupRequiresConfirmedLandingAndCompletedClosure(t *testing.T) {
 			if hasCleanup(s) {
 				t.Fatal("cleanup before landing confirmation")
 			}
+			s = Apply(s, HeadCleanupRequested{BatchID: "b1", LandedSHA: "tested"})
+			if hasCleanup(s) {
+				t.Fatal("cleanup intent acted before Landed")
+			}
 			s = Apply(s, Landed{BatchID: "b1", NewBaseSHA: "tested", NewFence: "next"})
 			if hasCleanup(s) != (method == Merge) {
 				t.Fatal("cleanup did not wait for PR closure")
@@ -40,5 +44,60 @@ func TestHeadCleanupRequiresConfirmedLandingAndCompletedClosure(t *testing.T) {
 				t.Fatal("cleanup key lost head pin")
 			}
 		})
+	}
+}
+
+func TestHistoricalLandingsDoNotScheduleHeadCleanup(t *testing.T) {
+	for _, method := range []MergeMethod{Merge, Squash, Rebase} {
+		for _, intent := range []string{"absent", "wrong-batch", "wrong-sha", "before-landing"} {
+			t.Run(string(method)+"/"+intent, func(t *testing.T) {
+				s := State{BaseBranch: "main", BaseSHA: "base", Fence: "fence"}
+				// Replay the original wire events, including more than one landing.
+				for i, batch := range []string{"b1", "b2"} {
+					pr := i + 1
+					events := []Event{
+						PRObserved{PR: pr, HeadSHA: "head", Eligible: true, Trusted: true},
+						EnqueueRequested{PR: pr, At: epoch},
+						BatchStarted{BatchID: batch, BaseSHA: s.BaseSHA, PRs: []BatchPR{{PR: pr, HeadSHA: "head"}}, At: epoch},
+						TestRefBuilt{BatchID: batch, TestedSHA: "tested-" + batch, Method: method, At: epoch},
+						ChecksCompleted{TestedSHA: "tested-" + batch, Success: true},
+					}
+					if intent == "before-landing" {
+						events = append(events, HeadCleanupRequested{BatchID: batch, LandedSHA: "tested-" + batch})
+					}
+					events = append(events, LandingStarted{BatchID: batch, AttemptID: "attempt-" + batch, FenceToken: s.Fence, At: epoch})
+					switch intent {
+					case "wrong-batch":
+						events = append(events, HeadCleanupRequested{BatchID: "other", LandedSHA: "tested-" + batch})
+					case "wrong-sha":
+						events = append(events, HeadCleanupRequested{BatchID: batch, LandedSHA: "other"})
+					}
+					events = append(events, Landed{BatchID: batch, NewBaseSHA: "tested-" + batch, NewFence: "next-" + batch})
+					for _, event := range events {
+						_, data, err := EncodeEvent(event)
+						if err != nil {
+							t.Fatal(err)
+						}
+						replayed, err := DecodeEvent(data)
+						if err != nil {
+							t.Fatal(err)
+						}
+						s = Apply(s, replayed)
+					}
+				}
+				if len(s.Entries) != 0 || s.Active != nil || s.BaseSHA != "tested-b2" {
+					t.Fatalf("historical landings did not replay: %+v", s)
+				}
+				// Acknowledge closure too, so a hidden cleanup cannot evade the check.
+				for _, action := range Plan(Config{MergeMethod: method}, s, epoch) {
+					if _, ok := action.(MarkLanded); ok {
+						s = Apply(s, ActionCompleted{Key: action.Key()})
+					}
+				}
+				if deletions := actionsOf[DeleteHeadBranch](Plan(Config{MergeMethod: method}, s, epoch)); len(deletions) != 0 {
+					t.Fatalf("historical replay scheduled head cleanup: %+v", deletions)
+				}
+			})
+		}
 	}
 }

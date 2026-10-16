@@ -119,8 +119,9 @@ type Driver interface {
 	PullRequest(ctx context.Context, repo RepoRef, number int) (PullRequest, error)
 	CommitAuthors(ctx context.Context, repo RepoRef, number int) ([]CommitAuthor, error)
 	// HeadBranchForDeletion freshly checks a closed PR's pinned same-repository
-	// head. Empty means keep it (base/default/protected, changed, or targeted by
-	// an open PR). Errors fail closed. The caller must lease HeadSHA on deletion.
+	// head. Empty means keep it (base/default/protected, changed, or used as
+	// an open PR's base or head). Errors fail closed. The caller must lease
+	// HeadSHA on deletion.
 	HeadBranchForDeletion(ctx context.Context, repo RepoRef, number int, headSHA, base string) (string, error)
 	// ListOpenPullRequests filters by target branch; an empty base lists all.
 	ListOpenPullRequests(ctx context.Context, repo RepoRef, base string) ([]PullRequestSummary, error)

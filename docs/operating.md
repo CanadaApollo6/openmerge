@@ -206,22 +206,34 @@ Set it to false to retain heads. The option is server-wide until per-repository
 `delete_head_branch` configuration is added; it intentionally does not modify
 the queue config schema in this release.
 
-A confirmed `Landed` schedules the new `delete_head_branch` action, with an
-idempotency key pinned to PR, original head, and landed SHA. For squash/rebase,
-it waits until `MarkLanded` is acknowledged. The executor rechecks that the
-landed commit remains on the base, then checks the closed PR's repository,
-original head, base/default branch, protection, and open PRs targeting that head.
-It deletes with an exact-head git lease. Forks, protected heads, OpenMerge refs,
-base/default branches, and heads with dependants are retained. Missing or
-changed heads are no-ops; infrastructure errors retry. Disabling cleanup
-acknowledges the action without deletion; enabling it later does not revisit
-those acknowledged actions.
+After freshly verifying a successful landing, the executor records
+`HeadCleanupRequested{BatchID, LandedSHA}` before `Landed`, including during fence
+recovery. The intent refers to the original PR heads already pinned by the
+batch's stored events. Only a matching intent followed by `Landed` schedules
+`DeleteHeadBranch`, with an idempotency key pinned to PR, original head, and
+landed SHA. A failed append leaves the landing recoverable; retries can repeat
+the intent without duplicating cleanup. For squash/rebase, cleanup also waits
+until `MarkLanded` is acknowledged.
 
-On upgrade, replay can schedule cleanup for historical confirmed landings too.
-All current safety reads and leases still apply; set the option false before
-upgrading if historical heads should be retained. New action types are additive
-wire v1 changes with a golden fixture; existing payloads are unchanged. Drain
-old workers before upgrading; older binaries reject the new action type.
+Before deletion, the executor rechecks that the landed commit remains on the
+base. `Driver.HeadBranchForDeletion` checks the closed PR's repository, original
+head, base/default branch, protection, open PRs targeting the head, and open PRs
+sharing the repository-qualified head (`owner:branch`) across every base. Read
+errors fail closed and retry. Forks, protected heads, OpenMerge refs,
+base/default branches, and heads used by other open PRs are retained. Missing or
+changed heads are no-ops. `Git.DeleteBranch` uses an exact-head SHA lease to
+preserve concurrent pushes. Eligibility reads and deletion are not atomic:
+GitHub provides no transaction covering PR usage or protection changes and a git
+push. Protect long-lived integration branches or disable cleanup if that
+transaction guarantee is required.
+
+Disabling cleanup acknowledges the action without deletion; enabling it later
+does not revisit acknowledged actions. On upgrade, historical `Landed` events
+without a cleanup intent retain their heads: replay never opts old landings into
+cleanup. The new `head_cleanup_requested` event and `delete_head_branch` action
+are additive wire v1 types, each with a golden fixture; existing event/action
+payloads and fixtures are unchanged. Drain old workers before upgrading, because
+older binaries reject the new types.
 
 The durable pending-CI writes remain unchanged. Skipping a reopen based on an
 unlocked projection would race a concurrent passing `Land` preflight: a delayed

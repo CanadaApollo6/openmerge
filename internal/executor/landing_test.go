@@ -26,7 +26,8 @@ func TestLand(t *testing.T) {
 		{name: "fence lease rejected", moveFence: true},
 		{name: "infrastructure error", forgeError: true},
 		{name: "in-flight emit failure", failEmitAt: 1},
-		{name: "landed emit failure", failEmitAt: 2},
+		{name: "cleanup intent emit failure", failEmitAt: 2},
+		{name: "landed emit failure", failEmitAt: 3},
 		{name: "rejected emit failure", moveBase: true, failEmitAt: 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -61,7 +62,10 @@ func TestLand(t *testing.T) {
 				events = append(events, e)
 				return nil
 			})
-			wantCalls := 2
+			wantCalls := 3
+			if tc.moveBase || tc.failEmitAt == 2 {
+				wantCalls = 2
+			}
 			if tc.failEmitAt == 1 || tc.forgeError || tc.moveFence {
 				wantCalls = 1
 			}
@@ -109,6 +113,9 @@ func TestLand(t *testing.T) {
 					result = queue.LandingAbandoned{BatchID: "batch", NewFence: h.read(t, fenceRef)}
 				}
 				want := []queue.Event{queue.LandingStarted{BatchID: "batch", AttemptID: "attempt", FenceToken: h.fence, At: epoch}, result}
+				if _, landed := result.(queue.Landed); landed {
+					want = []queue.Event{want[0], queue.HeadCleanupRequested{BatchID: "batch", LandedSHA: tested}, result}
+				}
 				if !reflect.DeepEqual(events, want) {
 					t.Fatalf("events = %#v, want %#v", events, want)
 				}
@@ -248,7 +255,11 @@ func TestResolveLanding(t *testing.T) {
 				if tc.fenceID == "land/attempt" {
 					want = queue.Landed{BatchID: a.BatchID, NewBaseSHA: a.TestedSHA, NewFence: next}
 				}
-				if !reflect.DeepEqual(events, []queue.Event{want}) {
+				wantEvents := []queue.Event{want}
+				if _, landed := want.(queue.Landed); landed {
+					wantEvents = []queue.Event{queue.HeadCleanupRequested{BatchID: a.BatchID, LandedSHA: a.TestedSHA}, want}
+				}
+				if !reflect.DeepEqual(events, wantEvents) {
 					t.Fatalf("events = %#v, want %#v", events, want)
 				}
 			}
@@ -383,7 +394,11 @@ func TestResolveLostRaceRedecides(t *testing.T) {
 				if winner == "land" {
 					want = queue.Landed{BatchID: a.BatchID, NewBaseSHA: a.TestedSHA, NewFence: next}
 				}
-				if !reflect.DeepEqual(events, []queue.Event{want}) {
+				wantEvents := []queue.Event{want}
+				if _, landed := want.(queue.Landed); landed {
+					wantEvents = []queue.Event{queue.HeadCleanupRequested{BatchID: a.BatchID, LandedSHA: a.TestedSHA}, want}
+				}
+				if !reflect.DeepEqual(events, wantEvents) {
 					t.Fatalf("race recovery events = %#v, want %#v", events, want)
 				}
 			}

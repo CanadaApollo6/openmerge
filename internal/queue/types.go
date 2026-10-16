@@ -89,6 +89,7 @@ type Batch struct {
 	checksRefreshedAt time.Time
 	checkRefreshes    uint64
 	needsRefresh      bool
+	cleanupRequested  bool
 }
 
 // BatchPR pins the exact head used to build a test ref.
@@ -230,6 +231,12 @@ type LandingStarted struct {
 
 // Landed records the definitive base and fence after the atomic landing push.
 type Landed struct{ BatchID, NewBaseSHA, NewFence string }
+
+// HeadCleanupRequested opts a verified landing into head cleanup. The batch's
+// persisted PRs pin the original heads; historical Landed events alone do not.
+type HeadCleanupRequested struct{ BatchID, LandedSHA string }
+
+func (HeadCleanupRequested) queueEvent() {}
 
 // LandingAbandoned certifies that the advanced fence prevents any late landing.
 type LandingAbandoned struct{ BatchID, NewFence string }

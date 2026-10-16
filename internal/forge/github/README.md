@@ -284,13 +284,6 @@ uses two-item pages). GitHub limits this endpoint to 250 commits; any unreturned
 commits fall back to git email attribution. Supporting larger PRs with complete
 linked-user attribution is a follow-up.
 
-`HeadBranchForDeletion` freshly reads the closed PR, repository default branch,
-[branch protection](https://docs.github.com/en/rest/branches/branches#get-a-branch),
-and all open PRs targeting the head. Protection includes branch protections and
-rulesets; an omitted protection value fails closed. Only same-repository pinned
-heads outside base/default and OpenMerge namespaces qualify. Missing branches
-are a successful no-op; read failures retry. Deletion uses git with an explicit
-old-SHA lease, preserving concurrent head pushes. These reads and the push are
-not atomic: GitHub provides no transaction covering PR targeting or protection
-changes and deletion. Administrators should retain long-lived integration heads
-with protection or disable cleanup if they require that transaction guarantee.
+See the canonical [landed head cleanup protocol](../../../docs/operating.md#landed-head-cleanup)
+for `HeadBranchForDeletion` eligibility reads, deletion leases, configuration,
+and upgrade behavior.
