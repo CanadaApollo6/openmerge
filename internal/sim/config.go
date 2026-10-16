@@ -22,6 +22,8 @@ type Config struct {
 	DropWebhookRate float64
 	RepushRate      float64
 	ConflictRate    float64
+	// ExternalPushRate selects PRs accompanied by external base pushes (see doc.go).
+	ExternalPushRate float64
 	// CIMin/CIMax, when both positive, override fixed CIDuration.
 	CIDuration  time.Duration
 	CIMin       time.Duration
@@ -97,6 +99,11 @@ type Result struct {
 	DuplicateExecutions int                         `json:"duplicate_executions"`
 	RejectedReplays     int                         `json:"rejected_replays"`
 	DroppedWebhooks     int                         `json:"dropped_webhooks"`
+	ExternalPushes      int                         `json:"external_pushes"`
+
+	// First-enqueue latency includes time spent in earlier admissions.
+	MedianTimeFromFirstEnqueue time.Duration `json:"-"`
+	P95TimeFromFirstEnqueue    time.Duration `json:"-"`
 }
 
 func (cfg Config) normalized() (Config, error) {
@@ -110,6 +117,7 @@ func (cfg Config) normalized() (Config, error) {
 		{"broken rate", cfg.BrokenRate}, {"flake rate", cfg.FlakeRate},
 		{"drop webhook rate", cfg.DropWebhookRate},
 		{"repush rate", cfg.RepushRate}, {"conflict rate", cfg.ConflictRate},
+		{"external push rate", cfg.ExternalPushRate},
 		{"delayed push rate", cfg.Faults.DelayedPushRate}, {"duplicate execution rate", cfg.Faults.DuplicateExecutionRate},
 		{"forge error rate", cfg.Faults.ForgeErrorRate}, {"landing crash rate", cfg.Faults.LandingCrashRate},
 	}
@@ -180,11 +188,14 @@ func (r Result) MarshalJSON() ([]byte, error) {
 	type plain Result
 	return json.Marshal(struct {
 		plain
-		Mean   float64 `json:"mean_time_to_merge_seconds"`
-		Median float64 `json:"median_time_to_merge_seconds"`
-		P95    float64 `json:"p95_time_to_merge_seconds"`
-		Span   float64 `json:"simulated_span_seconds"`
-	}{plain(r), r.MeanTimeToMerge.Seconds(), r.MedianTimeToMerge.Seconds(), r.P95TimeToMerge.Seconds(), r.SimulatedSpan.Seconds()})
+		Mean        float64 `json:"mean_time_to_merge_seconds"`
+		Median      float64 `json:"median_time_to_merge_seconds"`
+		P95         float64 `json:"p95_time_to_merge_seconds"`
+		FirstMedian float64 `json:"median_time_from_first_enqueue_seconds"`
+		FirstP95    float64 `json:"p95_time_from_first_enqueue_seconds"`
+		Span        float64 `json:"simulated_span_seconds"`
+	}{plain(r), r.MeanTimeToMerge.Seconds(), r.MedianTimeToMerge.Seconds(), r.P95TimeToMerge.Seconds(),
+		r.MedianTimeFromFirstEnqueue.Seconds(), r.P95TimeFromFirstEnqueue.Seconds(), r.SimulatedSpan.Seconds()})
 }
 
 // MarshalJSON records every effective setting with durations in seconds.
@@ -193,6 +204,7 @@ func (cfg Config) MarshalJSON() ([]byte, error) {
 		"prs": cfg.PRs, "seed": cfg.Seed, "arrival_window_seconds": cfg.ArrivalWindow.Seconds(),
 		"broken_rate": cfg.BrokenRate, "flake_rate": cfg.FlakeRate, "drop_webhook_rate": cfg.DropWebhookRate,
 		"repush_rate": cfg.RepushRate, "conflict_rate": cfg.ConflictRate,
+		"external_push_rate":  cfg.ExternalPushRate,
 		"ci_duration_seconds": cfg.CIDuration.Seconds(), "ci_min_seconds": cfg.CIMin.Seconds(), "ci_max_seconds": cfg.CIMax.Seconds(),
 		"merge_method": cfg.MergeMethod, "retry_delay_seconds": cfg.RetryDelay.Seconds(), "max_steps": cfg.MaxSteps,
 		"planner": map[string]any{"merge_method": cfg.Planner.MergeMethod, "check_timeout_seconds": cfg.Planner.CheckTimeout.Seconds(),

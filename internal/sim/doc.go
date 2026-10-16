@@ -19,17 +19,33 @@
 // RepushRate updates queued PR heads and re-enqueues them after a head-changed
 // dequeue. ConflictRate selects adjacent PR pairs that edit a shared file,
 // producing a conflict for the second landing.
+// ExternalPushRate selects a fraction of trusted PRs accompanied by an external
+// fast-forward of main half a CI interval after their scheduled enqueue, and another
+// immediately after their first LandingStarted but before its push. Each push
+// adds a distinct file and delivers BaseMoved so the queue rebuilds on the new
+// base. External pushes retain existing commits and are not queue landings.
 //
-// After every step the simulator checks its invariants: main contains only
+// After every forge write and external push, main must retain every previously
+// observed main tip as an ancestor. After every step, queue landings contain only
 // commits covered by a tested tip whose CI passed and no broken PR; no PR lands
 // twice; a PR lands only with the head that was tested; no untrusted PR enters a
 // test ref; and the queue never stalls with work queued and no pending timer.
 // Landed events must
 // match the actual base transition and fence, and each forge landing must have
 // a Landed event after recovery settles. Abandoned attempts must never land.
+// CI membership must match the planner's intended batch. Before crediting a
+// landing, every intended PR must have its file changes in the landed tip; merge
+// landings must also retain each intended PR head as an ancestor.
 //
 // Result JSON includes the full effective config, seed, and durations in seconds.
 // Dequeued counts acknowledged dequeues, including re-pushes later merged.
+// MeanTimeToMerge, MedianTimeToMerge, and P95TimeToMerge measure the latest
+// enqueue through landing, resetting after a head-changed dequeue/re-enqueue.
+// MedianTimeFromFirstEnqueue and P95TimeFromFirstEnqueue include the entire wait
+// from first enqueue through landing, including earlier admissions. Their JSON
+// keys are median_time_from_first_enqueue_seconds and
+// p95_time_from_first_enqueue_seconds. Both metric families include only merged
+// PRs, use the midpoint median, and use nearest-rank p95.
 //
 // CI currently has unlimited runners; runner capacity is left for Phase 2.
 //

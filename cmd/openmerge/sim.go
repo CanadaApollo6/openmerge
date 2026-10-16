@@ -25,6 +25,7 @@ func runSim(args []string, stdout, stderr io.Writer) int {
 	flags.DurationVar(&cfg.ArrivalWindow, "window", cfg.ArrivalWindow, "PR arrival window")
 	flags.Float64Var(&cfg.RepushRate, "repush-rate", cfg.RepushRate, "fraction of queued PRs receiving a new head")
 	flags.Float64Var(&cfg.ConflictRate, "conflict-rate", cfg.ConflictRate, "fraction of adjacent PR pairs sharing a changed file")
+	flags.Float64Var(&cfg.ExternalPushRate, "external-push-rate", cfg.ExternalPushRate, "fraction of PRs accompanied by external main pushes during testing and before landing")
 	method := flags.String("merge-method", string(queue.Merge), "merge, squash, or rebase")
 	flags.Uint64Var(&cfg.Seed, "seed", cfg.Seed, "deterministic random seed")
 	faults := flags.Bool("faults", false, "inject transient forge failures and landing crashes")

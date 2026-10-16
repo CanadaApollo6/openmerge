@@ -352,10 +352,12 @@ func TestMedianAndReadableJSON(t *testing.T) {
 	s.prs = make([]pullRequest, 5)
 	for i, seconds := range []int{1, 3, 8, 10} {
 		s.prs[i+1].enqueued = s.start
+		s.prs[i+1].firstEnqueued = s.start.Add(-2 * time.Second)
 		s.prs[i+1].landed = s.start.Add(time.Duration(seconds) * time.Second)
 	}
 	r := s.metrics()
-	if r.MedianTimeToMerge != 5500*time.Millisecond || r.MeanTimeToMerge != 5500*time.Millisecond || r.P95TimeToMerge != 10*time.Second {
+	if r.MedianTimeToMerge != 5500*time.Millisecond || r.MeanTimeToMerge != 5500*time.Millisecond || r.P95TimeToMerge != 10*time.Second ||
+		r.MedianTimeFromFirstEnqueue != 7500*time.Millisecond || r.P95TimeFromFirstEnqueue != 12*time.Second {
 		t.Fatalf("incorrect statistics: %+v", r)
 	}
 	data, err := json.Marshal(r)
@@ -370,6 +372,184 @@ func TestMedianAndReadableJSON(t *testing.T) {
 	if got["median_time_to_merge_seconds"] != 5.5 || cfg["seed"] != float64(s.cfg.Seed) || cfg["ci_duration_seconds"] != 120.0 || strings.Contains(string(data), "_ns") {
 		t.Fatalf("unreadable/unidentified JSON: %s", data)
 	}
+	if got["median_time_from_first_enqueue_seconds"] != 7.5 || got["p95_time_from_first_enqueue_seconds"] != 12.0 {
+		t.Fatalf("missing first-enqueue statistics: %s", data)
+	}
+}
+
+func TestExternalPushesRebuildQueue(t *testing.T) {
+	for _, method := range []queue.MergeMethod{queue.Merge, queue.Squash, queue.Rebase} {
+		for _, mutant := range []bool{false, true} {
+			t.Run(string(method)+map[bool]string{false: "/base lease", true: "/fresh base mutant"}[mutant], func(t *testing.T) {
+				cfg := smallConfig()
+				cfg.PRs, cfg.ExternalPushRate, cfg.MergeMethod = 1, 1, method
+				s, err := newSimulation(cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if mutant {
+					s.executor.Git = freshBaseGit{Git: s.executor.Git}
+				}
+				r, err := s.run()
+				if mutant {
+					if err == nil || !strings.Contains(err.Error(), "main history lost observed tip") || r.Merged != 0 {
+						t.Fatalf("simulator missed lost external commit: %v; result=%+v", err, r)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatalf("simulator rejected mutation: %v; result=%+v", err, r)
+				}
+				if r.Merged != 1 || r.ExternalPushes != 2 || r.CIRuns != 3 || len(s.abandoned) != 1 {
+					t.Fatalf("external pushes did not rebuild and recover: %+v", r)
+				}
+				moves := 0
+				for _, entry := range s.events {
+					if _, ok := entry.Event.(queue.BaseMoved); ok {
+						moves++
+					}
+				}
+				if moves != r.ExternalPushes || len(s.mainTips) != 4 {
+					t.Fatalf("main transitions missing: webhooks=%d, tips=%v", moves, s.mainTips)
+				}
+				for _, tip := range s.mainTips {
+					retained, err := s.forge.IsAncestor(context.Background(), s.repo, tip, s.mainSHA)
+					if err != nil || !retained {
+						t.Fatalf("observed main tip disappeared: %s, %v", tip, err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestMissingBatchPRRejected(t *testing.T) {
+	for _, scenario := range []struct {
+		name, want                    string
+		method                        queue.MergeMethod
+		reportMembership, keepContent bool
+	}{
+		{name: "squash membership", method: queue.Squash, want: "CI membership"},
+		{name: "squash content", method: queue.Squash, reportMembership: true, want: "lacks intended PR 1 content"},
+		{name: "merge ancestry", method: queue.Merge, reportMembership: true, keepContent: true, want: "lacks intended PR 1 head"},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			s := onePR(t)
+			s.cfg.MergeMethod, s.cfg.Planner.MergeMethod = scenario.method, scenario.method
+			s.executor.Git = missingPRGit{Git: s.executor.Git, sim: s, reportMembership: scenario.reportMembership, keepContent: scenario.keepContent}
+			r, err := s.run()
+			if err == nil || !strings.Contains(err.Error(), scenario.want) || r.Merged != 0 {
+				t.Fatalf("simulator credited incomplete batch: %v; result=%+v", err, r)
+			}
+		})
+	}
+}
+
+func TestForeignBaseEqualityDoesNotResolveLanding(t *testing.T) {
+	for _, forged := range []bool{false, true} {
+		t.Run(map[bool]string{false: "resolve from fence", true: "forged base equality"}[forged], func(t *testing.T) {
+			s := onePR(t)
+			land := readyLanding(t, s)
+			s.cfg.Faults.FailFirst = map[string]int{"Land": 1}
+			if err := s.execute(land); err != nil {
+				t.Fatal(err)
+			}
+			// The first push failed before writing. A different actor now
+			// fast-forwards main to the tested SHA without moving our fence.
+			if err := s.forge.PushRef(s.repo, "main", land.TestedSHA); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.externalBaseMoved(land.TestedSHA); err != nil {
+				t.Fatal(err)
+			}
+			if forged {
+				s.record(queue.Landed{BatchID: land.BatchID, NewBaseSHA: land.TestedSHA, NewFence: land.FenceToken})
+			}
+			r, err := s.run()
+			if forged {
+				if err == nil || !strings.Contains(err.Error(), "no matching forge landing") || r.Merged != 0 {
+					t.Fatalf("base equality certified a landing: %v; result=%+v", err, r)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("simulator rejected mutation: %v; result=%+v", err, r)
+			}
+			if r.Merged != 1 || s.abandoned[land.TestedSHA] == "" || r.FaultsInjected != r.FaultsRecovered {
+				t.Fatalf("foreign base push did not abandon and rebuild: %+v", r)
+			}
+			for _, entry := range s.events {
+				if event, ok := entry.Event.(queue.Landed); ok && event.BatchID == land.BatchID {
+					t.Fatal("foreign push was credited to the uncertain attempt")
+				}
+			}
+		})
+	}
+}
+
+func TestTimeFromFirstEnqueueSurvivesRepush(t *testing.T) {
+	cfg := smallConfig()
+	cfg.PRs, cfg.RepushRate = 1, 1
+	s, r := runScenario(t, cfg)
+	var admissions []time.Time
+	for _, entry := range s.events {
+		if event, ok := entry.Event.(queue.EnqueueRequested); ok && event.PR == 1 {
+			admissions = append(admissions, event.At)
+		}
+	}
+	p := s.prs[1]
+	if len(admissions) != 2 || p.firstEnqueued != admissions[0] || p.enqueued != admissions[1] ||
+		r.MedianTimeFromFirstEnqueue != p.landed.Sub(admissions[0]) || r.P95TimeFromFirstEnqueue != r.MedianTimeFromFirstEnqueue ||
+		r.MedianTimeToMerge != p.landed.Sub(admissions[1]) || r.MedianTimeFromFirstEnqueue <= r.MedianTimeToMerge {
+		t.Fatalf("re-enqueue lost the initial wait: admissions=%v; result=%+v", admissions, r)
+	}
+}
+
+// freshBaseGit models a push that discards the captured base lease.
+type freshBaseGit struct{ forge.Git }
+
+func (g freshBaseGit) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequest) (string, error) {
+	sha, err := g.ReadRef(ctx, repo, req.Base)
+	if err != nil {
+		return "", err
+	}
+	req.ExpectedBaseSHA = sha
+	return g.Git.Land(ctx, repo, req)
+}
+
+// missingPRGit builds a new commit without replaying the PR. It can report
+// truthful empty membership, lie about membership, or copy content without the
+// head ancestry required for the merge method.
+type missingPRGit struct {
+	forge.Git
+	sim                           *simulation
+	reportMembership, keepContent bool
+}
+
+func (g missingPRGit) BuildTestRef(_ context.Context, repo forge.RepoRef, req forge.BuildRequest) (string, error) {
+	if err := g.sim.forge.SetRef(repo, req.Ref, req.BaseSHA); err != nil {
+		return "", err
+	}
+	var files map[string]string
+	if g.keepContent {
+		commit, err := g.sim.forge.Commit(repo, req.PRs[0].HeadSHA)
+		if err != nil {
+			return "", err
+		}
+		files = commit.Files
+	}
+	sha, err := g.sim.forge.PushBase(repo, req.Ref, "incomplete batch "+req.BatchID, files)
+	if err != nil {
+		return "", err
+	}
+	var prs []int
+	if g.reportMembership {
+		for _, pr := range req.PRs {
+			prs = append(prs, pr.Number)
+		}
+	}
+	g.sim.startCI(sha, prs)
+	return sha, nil
 }
 
 // freshFenceGit is the "executor re-reads the fence" mutant: it discards the

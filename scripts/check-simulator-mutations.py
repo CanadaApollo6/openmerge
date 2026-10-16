@@ -2,7 +2,7 @@
 """Replay reviewer mutations through Go overlays without editing the checkout.
 
 Run with `python3 scripts/check-simulator-mutations.py`. The regular Go suite
-also tests the fence mutants through explicit test seams.
+also tests the fence and content mutants through test-side wrappers.
 """
 
 import json
@@ -63,21 +63,44 @@ MUTANTS = {
         EXECUTOR,
         (f"if err == nil {{\n\t\t\t{ABANDON}\n\t\t}}", f"if true {{\n\t\t\t{ABANDON}\n\t\t}}"),
     ),
+    "ignore_base_lease": mutation(
+        FAKE, ("r.refs[req.Base] != req.ExpectedBaseSHA || ", "")
+    ),
+    "omit_squash_pr": mutation(
+        FAKE,
+        ("\tfor i, pr := range req.PRs {",
+         "\tbuildPRs := req.PRs\n\tif req.Method == forge.Squash { buildPRs = buildPRs[:len(buildPRs)-1] }\n\tfor i, pr := range buildPRs {"),
+    ),
+    "resolve_base_equality": mutation(
+        EXECUTOR,
+        ('\t\tswitch {\n\t\tcase id == "land/"+a.AttemptID && tested == a.TestedSHA:',
+         '\t\tbase, baseErr := x.Git.ReadRef(ctx, x.Repo, x.Base)\n\t\tif baseErr != nil { return baseErr }\n\t\tswitch {\n\t\tcase base == a.TestedSHA:'),
+    ),
+    "omit_pr_files": mutation(
+        FAKE, ("\t\t\t\tfiles[path] = value", "\t\t\t\tif i > 0 { files[path] = value }"),
+    ),
+    "omit_merge_parent": mutation(
+        FAKE, ("r.commit([]string{top, pr.HeadSHA}, content, message, files)",
+               "r.commit([]string{top}, content, message, files)"),
+    ),
 }
 
 # A failed test must report a simulator error, rather than merely an incorrect
 # aggregate returned by an otherwise successful Run.
 PROBE = '''package sim
-import "testing"
+import (
+    "testing"
+    "github.com/CanadaApollo6/openmerge/internal/queue"
+)
 func TestMutationRunProbe(t *testing.T) {
-    for _, mode := range []string{"passing", "broken"} {
+    for _, mode := range []string{"passing", "broken", "squash", "external"} {
         t.Run(mode, func(t *testing.T) {
             cfg := smallConfig()
             cfg.PRs, cfg.MaxSteps, cfg.Faults = 2, 10000, DefaultFaults()
             if mode == "broken" { cfg.BrokenRate = 1 }
-            s, err := newSimulation(cfg)
-            if err != nil { t.Fatal(err) }
-            r, err := s.run()
+            if mode == "squash" { cfg.MergeMethod = queue.Squash }
+            if mode == "external" { cfg.ExternalPushRate = 1 }
+            r, err := Run(cfg)
             if err != nil { t.Fatalf("simulator rejected mutation: %v; merged=%d", err, r.Merged) }
         })
     }
@@ -86,7 +109,7 @@ func TestMutationRunProbe(t *testing.T) {
 EVIDENCE = ("simulator rejected mutation:", "abandoned push accepted:", "wedge:")
 report = {}
 with tempfile.TemporaryDirectory(prefix="openmerge-mutations-") as directory:
-    for name, changes in MUTANTS.items():
+    for name, changes in {"control": {}, **MUTANTS}.items():
         folder = Path(directory) / name
         folder.mkdir()
         replacements = {}
@@ -101,14 +124,23 @@ with tempfile.TemporaryDirectory(prefix="openmerge-mutations-") as directory:
         overlay.write_text(json.dumps({"Replace": replacements}))
         run = subprocess.run(
             ["go", "test", "-count=1", "-overlay", str(overlay), "./internal/sim", "-run",
-             "TestMutationRunProbe|TestAbandonmentBeforePush/captured_token|TestExit500PRDay"],
+             "TestMutationRunProbe|TestAbandonmentBeforePush/captured_token|TestExit500PRDay|TestForeignBaseEqualityDoesNotResolveLanding/resolve_from_fence"],
             cwd=ROOT, capture_output=True, text=True, timeout=60,
         )
         output = run.stdout + run.stderr
+        if name == "control":
+            if run.returncode != 0:
+                raise SystemExit(f"unmutated simulator failed the mutation probes:\n{output}")
+            print("control: passed", flush=True)
+            continue
         evidence = next((line.strip() for line in output.splitlines()
                          if any(marker in line for marker in EVIDENCE)), "")
         if run.returncode == 0 or "build failed" in output or not evidence:
-            raise SystemExit(f"{name} was not rejected by the simulator:\n{output}")
-        report[name] = evidence.split("; result=", 1)[0]
-        print(f"{name}: detected", flush=True)
+            report[name] = {"status": "missed", "output": output}
+        else:
+            report[name] = {"status": "detected", "evidence": evidence.split("; result=", 1)[0]}
+        print(f"{name}: {report[name]['status']}", flush=True)
 print(json.dumps(report, indent=2))
+missed = sum(item["status"] == "missed" for item in report.values())
+print(f"{len(report) - missed} detected, {missed} missed", flush=True)
+raise SystemExit(1 if missed else 0)

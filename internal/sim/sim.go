@@ -26,6 +26,8 @@ type pullRequest struct {
 	head                     string
 	shared, repush, repushed bool
 	enqueued, landed         time.Time
+	firstEnqueued            time.Time
+	externalBeforeLand       bool
 	dequeued                 queue.DequeueReason
 }
 
@@ -35,6 +37,7 @@ type testRun struct {
 	done    bool
 	base    string
 	covered []string
+	method  queue.MergeMethod
 }
 
 type loggedEvent struct {
@@ -59,6 +62,7 @@ type simulation struct {
 	retryAt             map[string]time.Time
 	pendingFaults       map[string]int
 	mainSHA             string
+	mainTips            []string
 	rootSHA             string
 	landed              map[int]string
 	violation           error
@@ -101,6 +105,7 @@ func newSimulation(cfg Config) (*simulation, error) {
 	s.lastFence = fence
 	s.boundary = &faultForge{Forge: s.forge, sim: s, scope: "setup"}
 	s.mainSHA = base
+	s.mainTips = []string{base}
 	s.rootSHA = base
 	s.state = queue.State{BaseBranch: "main", BaseSHA: base, Fence: fence}
 	s.executor = executor.Executor{
@@ -116,6 +121,7 @@ func newSimulation(cfg Config) (*simulation, error) {
 	// variants always submit exactly the same PRs at exactly the same times.
 	rng := rand.New(rand.NewPCG(cfg.Seed, 1))
 	churn := rand.New(rand.NewPCG(cfg.Seed, 5))
+	external := rand.New(rand.NewPCG(cfg.Seed, 6))
 	shared := false
 	probes := cfg.PRs / 50
 	if cfg.PRs > 0 && probes == 0 {
@@ -131,6 +137,7 @@ func newSimulation(cfg Config) (*simulation, error) {
 		}
 		p.shared = shared && !p.untrusted
 		p.repush = churn.Float64() < cfg.RepushRate && !p.untrusted
+		p.externalBeforeLand = external.Float64() < cfg.ExternalPushRate && !p.untrusted
 		p.broken = !p.untrusted && rng.Float64() < cfg.BrokenRate
 		if p.broken {
 			s.result.Broken++
@@ -140,6 +147,13 @@ func newSimulation(cfg Config) (*simulation, error) {
 			delay = time.Duration(rng.Int64N(int64(cfg.ArrivalWindow)))
 		}
 		s.schedule(s.start.Add(delay), arrival, pr, "")
+		if p.externalBeforeLand {
+			duration := cfg.CIDuration
+			if cfg.CIMin > 0 {
+				duration = cfg.CIMin
+			}
+			s.schedule(s.start.Add(delay+time.Second+duration/2), externalPush, 0, "")
+		}
 	}
 	return s, nil
 }
@@ -239,6 +253,18 @@ func (s *simulation) execute(action queue.Action) error {
 			}
 		}
 		s.record(event)
+		if _, started := event.(queue.LandingStarted); started && s.violation == nil {
+			// Model another actor in the durable-start/pre-push window. Each
+			// selected PR triggers this once, so rebuilding can eventually land.
+			for _, pr := range s.state.Active.PRs {
+				if s.prs[pr.PR].externalBeforeLand {
+					s.prs[pr.PR].externalBeforeLand = false
+					if err := s.pushExternalBase(); err != nil {
+						return err
+					}
+				}
+			}
+		}
 		return s.violation
 	})
 	if err != nil {
@@ -300,7 +326,18 @@ func (s *simulation) record(event queue.Event) {
 }
 
 func (s *simulation) startCI(sha string, prs []int) {
-	run := &testRun{base: s.mainSHA, success: s.ci.Float64() >= s.cfg.FlakeRate}
+	batch := s.state.Active
+	if batch == nil || len(prs) != len(batch.PRs) {
+		s.violation = fmt.Errorf("CI membership %v differs from intended batch %v", prs, batch)
+		return
+	}
+	for i, pr := range batch.PRs {
+		if prs[i] != pr.PR {
+			s.violation = fmt.Errorf("CI membership %v differs from intended batch PRs %v", prs, batch.PRs)
+			return
+		}
+	}
+	run := &testRun{base: batch.BaseSHA, heads: slices.Clone(batch.PRs), method: s.cfg.MergeMethod, success: s.ci.Float64() >= s.cfg.FlakeRate}
 	commit, err := s.forge.Commit(s.repo, sha)
 	if err != nil {
 		s.violation = err
@@ -313,14 +350,6 @@ func (s *simulation) startCI(sha string, prs []int) {
 		if s.prs[pr].untrusted {
 			s.violation = fmt.Errorf("untrusted PR %d appears in test commit %s", pr, sha)
 		}
-	}
-	for _, pr := range prs {
-		actual, err := s.forge.PullRequest(context.Background(), s.repo, pr)
-		if err != nil {
-			s.violation = err
-			return
-		}
-		run.heads = append(run.heads, queue.BatchPR{PR: pr, HeadSHA: actual.HeadSHA})
 	}
 	run.covered, err = s.firstParentRange(run.base, sha)
 	if err != nil {
@@ -345,12 +374,13 @@ func (s *simulation) metrics() Result {
 	r.Blocked = make(map[queue.DequeueReason]int)
 	r.StillQueued = len(s.state.Entries)
 	r.SimulatedSpan = s.now.Sub(s.start)
-	var times []time.Duration
+	var times, firstTimes []time.Duration
 	for pr := 1; pr < len(s.prs); pr++ {
 		p := s.prs[pr]
 		if !p.landed.IsZero() {
 			r.Merged++
 			times = append(times, p.landed.Sub(p.enqueued))
+			firstTimes = append(firstTimes, p.landed.Sub(p.firstEnqueued))
 		}
 
 		if status := s.forge.Statuses(s.repo, pr)[p.head]; status.State == forge.Blocked {
@@ -358,20 +388,25 @@ func (s *simulation) metrics() Result {
 		}
 	}
 	if len(times) > 0 {
-		slices.Sort(times)
+		r.MedianTimeToMerge, r.P95TimeToMerge = percentiles(times)
+		r.MedianTimeFromFirstEnqueue, r.P95TimeFromFirstEnqueue = percentiles(firstTimes)
 		// Sum as floats to avoid overflowing Duration on large workloads.
 		var total float64
 		for _, elapsed := range times {
 			total += float64(elapsed)
 		}
 		r.MeanTimeToMerge = time.Duration(total / float64(len(times)))
-		r.MedianTimeToMerge = times[len(times)/2]
-		if len(times)%2 == 0 {
-			a, b := times[len(times)/2-1], times[len(times)/2]
-			r.MedianTimeToMerge = a + (b-a)/2
-		}
-		r.P95TimeToMerge = times[len(times)-len(times)/20-1] // nearest rank ceil(.95*n).
 		r.CIRunsPerMergedPR = float64(r.CIRuns) / float64(r.Merged)
 	}
 	return r
+}
+
+func percentiles(times []time.Duration) (median, p95 time.Duration) {
+	slices.Sort(times)
+	median = times[len(times)/2]
+	if len(times)%2 == 0 {
+		a, b := times[len(times)/2-1], times[len(times)/2]
+		median = a + (b-a)/2
+	}
+	return median, times[len(times)-len(times)/20-1] // nearest rank ceil(.95*n).
 }

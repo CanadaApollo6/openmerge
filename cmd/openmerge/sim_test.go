@@ -38,7 +38,7 @@ func TestSimOutputFailure(t *testing.T) {
 
 func TestSimWorkloadFlagsAndJSON(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	args := []string{"sim", "--prs", "6", "--broken-rate", "0", "--seed", "42", "--ci", "1s", "--ci-max", "2s", "--window", "0s", "--drop-webhooks", "1", "--merge-method", "rebase", "--repush-rate", "1", "--conflict-rate", "1", "--json"}
+	args := []string{"sim", "--prs", "6", "--broken-rate", "0", "--seed", "42", "--ci", "1s", "--ci-max", "2s", "--window", "0s", "--drop-webhooks", "1", "--merge-method", "rebase", "--repush-rate", "1", "--conflict-rate", "1", "--external-push-rate", "1", "--json"}
 	if code := run(args, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit=%d stderr=%s", code, stderr.String())
 	}
@@ -52,18 +52,21 @@ func TestSimWorkloadFlagsAndJSON(t *testing.T) {
 			Window   float64 `json:"arrival_window_seconds"`
 			Repush   float64 `json:"repush_rate"`
 			Conflict float64 `json:"conflict_rate"`
+			External float64 `json:"external_push_rate"`
 		} `json:"config"`
-		Dequeued map[string]int `json:"dequeued"`
-		Merged   int            `json:"merged"`
-		Median   float64        `json:"median_time_to_merge_seconds"`
+		Dequeued       map[string]int `json:"dequeued"`
+		Merged         int            `json:"merged"`
+		Median         float64        `json:"median_time_to_merge_seconds"`
+		FirstMedian    float64        `json:"median_time_from_first_enqueue_seconds"`
+		ExternalPushes int            `json:"external_pushes"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Config.Seed != 42 || got.Config.CIMin != 1 || got.Config.CIMax != 2 || got.Config.Drop != 1 || got.Config.Method != "rebase" || got.Config.Window != 0 || got.Config.Repush != 1 || got.Config.Conflict != 1 {
+	if got.Config.Seed != 42 || got.Config.CIMin != 1 || got.Config.CIMax != 2 || got.Config.Drop != 1 || got.Config.Method != "rebase" || got.Config.Window != 0 || got.Config.Repush != 1 || got.Config.Conflict != 1 || got.Config.External != 1 {
 		t.Fatalf("flags not reflected in effective config: %+v", got.Config)
 	}
-	if got.Dequeued["head-changed"] != 6 || got.Dequeued["conflict"] != 3 || got.Merged != 3 || got.Median <= 0 {
+	if got.Dequeued["head-changed"] != 6 || got.Dequeued["conflict"] != 3 || got.Merged != 3 || got.Median <= 0 || got.FirstMedian <= got.Median || got.ExternalPushes == 0 {
 		t.Fatalf("flags not reflected in workload: %+v", got)
 	}
 }
@@ -73,6 +76,7 @@ func TestSimInvalidWorkloadFlags(t *testing.T) {
 		{"--ci", "2s", "--ci-max", "1s"}, {"--ci-max", "-1s"},
 		{"--drop-webhooks", "2"}, {"--merge-method", "invalid"}, {"--window", "-1s"},
 		{"--repush-rate", "-1"}, {"--conflict-rate", "NaN"},
+		{"--external-push-rate", "-1"},
 	} {
 		var stdout, stderr bytes.Buffer
 		if code := run(append([]string{"sim", "--prs", "0"}, args...), &stdout, &stderr); code == 0 || stdout.Len() != 0 || stderr.Len() == 0 {

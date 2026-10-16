@@ -74,6 +74,7 @@ func (f *faultForge) before(method string) error {
 }
 
 func (f *faultForge) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequest) (string, error) {
+	defer f.sim.observeWrite()
 	if err := f.before("Land"); err != nil {
 		return "", err
 	}
@@ -103,6 +104,7 @@ func (f *faultForge) CheckRuns(ctx context.Context, repo forge.RepoRef, sha stri
 }
 
 func (f *faultForge) DeleteRef(ctx context.Context, repo forge.RepoRef, ref string) error {
+	defer f.sim.observeWrite()
 	if err := f.before("DeleteRef"); err != nil {
 		return err
 	}
@@ -110,6 +112,7 @@ func (f *faultForge) DeleteRef(ctx context.Context, repo forge.RepoRef, ref stri
 }
 
 func (f *faultForge) ReportStatus(ctx context.Context, repo forge.RepoRef, pr int, head string, status forge.Status) error {
+	defer f.sim.observeWrite()
 	if err := f.before("ReportStatus"); err != nil {
 		return err
 	}
@@ -117,6 +120,7 @@ func (f *faultForge) ReportStatus(ctx context.Context, repo forge.RepoRef, pr in
 }
 
 func (f *faultForge) MarkLanded(ctx context.Context, repo forge.RepoRef, number int, sha string) error {
+	defer f.sim.observeWrite()
 	if err := f.before("MarkLanded"); err != nil {
 		return err
 	}
@@ -124,6 +128,7 @@ func (f *faultForge) MarkLanded(ctx context.Context, repo forge.RepoRef, number 
 }
 
 func (f *faultForge) Comment(ctx context.Context, repo forge.RepoRef, pr int, key, body string) error {
+	defer f.sim.observeWrite()
 	if err := f.before("Comment"); err != nil {
 		return err
 	}
@@ -131,6 +136,7 @@ func (f *faultForge) Comment(ctx context.Context, repo forge.RepoRef, pr int, ke
 }
 
 func (f *faultForge) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.BuildRequest) (string, error) {
+	defer f.sim.observeWrite()
 	if err := f.before("BuildTestRef"); err != nil {
 		return "", err
 	}
@@ -138,6 +144,7 @@ func (f *faultForge) BuildTestRef(ctx context.Context, repo forge.RepoRef, req f
 }
 
 func (f *faultForge) EnsureFence(ctx context.Context, repo forge.RepoRef, ref string) (string, error) {
+	defer f.sim.observeWrite()
 	if err := f.before("EnsureFence"); err != nil {
 		return "", err
 	}
@@ -145,6 +152,7 @@ func (f *faultForge) EnsureFence(ctx context.Context, repo forge.RepoRef, ref st
 }
 
 func (f *faultForge) AdvanceFence(ctx context.Context, repo forge.RepoRef, ref, expected, next string) (string, error) {
+	defer f.sim.observeWrite()
 	if err := f.before("AdvanceFence"); err != nil {
 		return "", err
 	}

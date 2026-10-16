@@ -103,6 +103,24 @@ func (f *Forge) SetRef(repo forge.RepoRef, ref, sha string) error {
 	return nil
 }
 
+// PushBase fast-forwards a branch with an external commit, retaining its PRs.
+func (f *Forge) PushBase(repo forge.RepoRef, ref, message string, changes map[string]string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r := f.repo(repo)
+	base, ok := r.commits[r.refs[ref]]
+	if !ok {
+		return "", fmt.Errorf("unknown base ref %q", ref)
+	}
+	files := maps.Clone(base.Files)
+	for path, value := range changes {
+		files[path] = value
+	}
+	sha := r.commit([]string{base.SHA}, base.PRs, message, files)
+	r.refs[ref] = sha
+	return sha, nil
+}
+
 // PushRef creates a branch or fast-forwards it, like an ordinary git push.
 func (f *Forge) PushRef(repo forge.RepoRef, ref, sha string) error {
 	f.mu.Lock()

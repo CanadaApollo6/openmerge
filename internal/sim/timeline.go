@@ -23,6 +23,7 @@ const (
 	repush
 	delayedPush
 	duplicateLand
+	externalPush
 )
 
 type scheduledEvent struct {
@@ -62,6 +63,7 @@ func (s *simulation) schedule(at time.Time, kind eventKind, pr int, sha string) 
 }
 
 func (s *simulation) deliver(event scheduledEvent) error {
+	defer s.observeWrite()
 	switch event.kind {
 	case arrival:
 		p := &s.prs[event.pr]
@@ -78,6 +80,9 @@ func (s *simulation) deliver(event scheduledEvent) error {
 		s.schedule(s.now.Add(time.Second), enqueue, event.pr, "")
 	case enqueue:
 		s.prs[event.pr].enqueued = s.now
+		if s.prs[event.pr].firstEnqueued.IsZero() {
+			s.prs[event.pr].firstEnqueued = s.now
+		}
 		s.record(queue.EnqueueRequested{PR: event.pr, At: s.now})
 		p := &s.prs[event.pr]
 		if p.repush && !p.repushed {
@@ -98,6 +103,8 @@ func (s *simulation) deliver(event scheduledEvent) error {
 		}
 		s.prs[event.pr].head = pr.HeadSHA
 		s.record(queue.PRObserved{PR: event.pr, HeadSHA: pr.HeadSHA, Eligible: true, Trusted: !s.prs[event.pr].untrusted})
+	case externalPush:
+		return s.pushExternalBase()
 	case delayedPush:
 		_, err := s.forge.Land(context.Background(), s.repo, event.request)
 		if errors.Is(err, forge.ErrLeaseRejected) {
@@ -136,4 +143,32 @@ func (s *simulation) deliver(event scheduledEvent) error {
 		}
 	}
 	return nil
+}
+
+func (s *simulation) pushExternalBase() error {
+	if err := s.checkInvariants(); err != nil {
+		return err
+	}
+	n := s.result.ExternalPushes + 1
+	sha, err := s.forge.PushBase(s.repo, "main", fmt.Sprintf("external push %d", n),
+		map[string]string{fmt.Sprintf("external-%d.txt", n): "must survive"})
+	if err != nil {
+		return err
+	}
+	return s.externalBaseMoved(sha)
+}
+
+// The webhook/reconciler observes an independent actor's successful base push.
+// It is not evidence that our landing attempt succeeded, even for the same SHA.
+func (s *simulation) externalBaseMoved(sha string) error {
+	if err := s.observeMain(); err != nil {
+		return err
+	}
+	s.mainSHA = sha
+	s.result.ExternalPushes++
+	if batch := s.state.Active; batch != nil && batch.Phase != queue.Landing {
+		s.recoverFaults("checks/" + batch.ID)
+	}
+	s.record(queue.BaseMoved{SHA: sha})
+	return s.violation
 }

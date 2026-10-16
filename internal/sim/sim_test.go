@@ -169,6 +169,7 @@ func TestInvalidConfig(t *testing.T) {
 		{Faults: Faults{LandingCrashRate: -1}}, {CIDuration: -1},
 		{CIMin: time.Second}, {CIMax: time.Second}, {CIMin: time.Minute, CIMax: time.Second},
 		{RepushRate: -1}, {ConflictRate: math.NaN()},
+		{ExternalPushRate: -1}, {ExternalPushRate: 1.1}, {ExternalPushRate: math.NaN()},
 		{Faults: Faults{DelayedPushRate: 2}}, {Faults: Faults{DuplicateExecutionRate: -1}},
 		{Faults: Faults{Methods: map[string]float64{"AdvanceFence": 2}}},
 		{Faults: Faults{Methods: map[string]float64{"Unknown": 0.1}}},
@@ -214,6 +215,8 @@ func TestInvariantRejectsUnsafeHistory(t *testing.T) {
 			}
 			unsafePush := func(batch string) string {
 				t.Helper()
+				s.state.Active = &queue.Batch{ID: batch, BaseSHA: s.mainSHA,
+					PRs: []queue.BatchPR{{PR: number, HeadSHA: s.prs[number].head}}}
 				sha, err := s.forge.BuildTestRef(context.Background(), s.repo, forge.BuildRequest{
 					Ref: "openmerge/queue/main/" + batch, BaseSHA: s.mainSHA, BatchID: batch, Method: forge.Merge,
 					PRs: []forge.BuildPR{{Number: number, HeadSHA: s.prs[number].head}},

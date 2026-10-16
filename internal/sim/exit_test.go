@@ -32,6 +32,7 @@ func TestExit500PRDay(t *testing.T) {
 			cfg.DropWebhookRate = variant.drop
 			if variant.faults {
 				cfg.Faults = DefaultFaults()
+				cfg.ExternalPushRate = 0.02
 			}
 			if variant.delayed > 0 {
 				cfg.Faults.DelayedPushRate = variant.delayed
@@ -71,6 +72,9 @@ func TestExit500PRDay(t *testing.T) {
 				t.Fatalf("faults did not recover: %+v", result)
 			}
 			if variant.faults {
+				if result.ExternalPushes == 0 {
+					t.Fatal("external main pushes not exercised")
+				}
 				for _, method := range []string{"EnsureFence", "BuildTestRef", "CheckRuns", "ReportStatus", "DeleteRef", "Land", "ReadFence", "AdvanceFence"} {
 					if result.FaultsByMethod[method] == 0 {
 						t.Fatalf("%s fault not exercised", method)
