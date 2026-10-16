@@ -98,13 +98,13 @@ The exit test also requires verification on a real GitHub test organization.
 
 Built after Phase 1 closes, in parallel with Phase 2 where they don't overlap ([ADR 0005](docs/adr/0005-verification-modes.md)).
 
-- Per-queue `verification: post_merge` with `max_base_age`, `on_red` and `max_red`; admission on a pinned head, fresh trust gate at landing, composition on the current tip, and an honest tested-as/landed-as record (new event types and fence form)
-- **Green ref** `openmerge/green/<base>` for deploys, advanced only to green commits with no unresolved red ancestor
-- **Red commits:** one rerun, culprit from per-commit CI (verify refs only for skipped commits), one verified automatic remedy, then escalation with ordinary landings paused
+- Per-queue `verification: post_merge` with `max_base_age`, `on_red`, `max_red` and `max_remedies`; admission on a pinned head, fresh trust gate at landing, composition on the current tip, and an honest tested-as/landed-as record (new event types and fence form)
+- **Verification frontier and green ref** `openmerge/green/<base>` for deploys, advanced only to green commits whose predecessors all have known results and no unresolved failures
+- **Red episodes:** one rerun, suspects from per-commit CI (verify refs run every skipped commit in parallel), up to `max_remedies` verified automatic remedies, then escalation with ordinary landings paused until the episode closes
 - **Conflict events:** structured conflict reports to the author; the fixed push re-enters at the back until change identity (Phase 3)
 - Simulator: post-merge model with a finite CI runner pool, injected bad changes, interacting culprits and flakes
 
-**Exit:** at 30,000 simulated PRs/day, 30-minute CI, a 2,000-runner pool and 1% independent bad changes, a post-merge queue keeps median time-to-merge under CI duration plus 10 minutes and CI runs per merged PR under 2.5. The green ref never points at a commit that isn't green or has an unresolved red ancestor. Every independent bad change is remedied, with the base green again, within 4x CI duration, and every interacting or inconclusive case escalates within `max_red`.
+**Exit:** at 30,000 simulated PRs/day, 30-minute CI, a 2,000-runner pool and 1% independent bad changes, a post-merge queue keeps median time-to-merge under CI duration plus 10 minutes and CI runs per merged PR under 2.5. The green ref never points at a commit that isn't green, is outside the verification frontier, or has an unresolved red commit before it. When an episode contains at most `max_remedies` independent bad changes, every one is remedied and the base is green again within 4x CI duration; interacting or inconclusive episodes escalate within `max_red`.
 
 ### Phase 3 — Agent-native
 
