@@ -599,7 +599,7 @@ func RunDriver(t *testing.T, factory func(t *testing.T) Env) {
 	t.Run("comment-retry", func(t *testing.T) {
 		e := newEnv(t)
 		pr := e.PRs[0].Number
-		e.AddForeignComment(pr, "<!-- openmerge:key=action-1 -->")
+		e.AddForeignComment(pr, "<!-- openmerge:action-1 -->\n<!-- openmerge:key=action-1 -->")
 		must(t, e.Driver.Comment(ctx, e.Repo, pr, "action-1", "original"))
 		must(t, e.Driver.Comment(ctx, e.Repo, pr, "action-1", "retry"))
 		comments := e.Comments(pr)
