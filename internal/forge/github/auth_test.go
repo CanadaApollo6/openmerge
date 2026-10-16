@@ -160,7 +160,7 @@ func TestRateLimitBackoff(t *testing.T) {
 					w.Header().Set("X-RateLimit-Remaining", "0")
 					w.Header().Set("X-RateLimit-Reset", fmt.Sprint(f.clock.Add(3*time.Minute).Unix()))
 					if mode == "remaining-zero-success" {
-						f.json(w, f.prs[1])
+						f.json(w, f.prJSON(f.prs[1]))
 						return true
 					}
 					w.WriteHeader(403)

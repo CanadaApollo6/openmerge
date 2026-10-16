@@ -168,7 +168,7 @@ func (a *App) token(ctx context.Context, id int64) (string, error) {
 
 // Installation binds a driver to one installation. The server resolves repository
 // ownership to an installation before calling it. Identity comes from GET /app.
-// Repeated calls share permission caches, cooldowns, and local write serialization.
+// Repeated calls share conditional caches, cooldowns, and local write serialization.
 func (a *App) Installation(ctx context.Context, id int64) (*Driver, error) {
 	if id <= 0 {
 		return nil, errors.New("github requires a positive installation ID")
@@ -188,7 +188,7 @@ func (a *App) Installation(ctx context.Context, id int64) (*Driver, error) {
 		}
 		a.slug = app.GetSlug()
 	}
-	d := &Driver{app: a, installation: id, permissions: make(map[string]permission)}
+	d := &Driver{app: a, installation: id}
 	var err error
 	d.client, err = a.newClient(func(ctx context.Context) (string, error) { return a.token(ctx, id) })
 	if err != nil {
@@ -200,7 +200,7 @@ func (a *App) Installation(ctx context.Context, id int64) (*Driver, error) {
 
 func (a *App) newClient(token func(context.Context) (string, error)) (*gh.Client, error) {
 	client := a.http
-	client.Transport = &transport{base: a.http.Transport, token: token, origin: a.api, now: func() time.Time { return a.now() }}
+	client.Transport = &transport{base: a.http.Transport, token: token, origin: a.api, now: func() time.Time { return a.now() }, cache: newResponseCache(1024, 16<<20)}
 	base := a.api.String()
 	return gh.NewClient(gh.WithHTTPClient(&client), gh.WithURLs(&base, nil))
 }

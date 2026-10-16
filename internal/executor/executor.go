@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
@@ -78,12 +79,16 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 			return err
 		}
 		at := x.now()
-		if terminal, success := x.checkResult(checks); terminal {
+		terminal, success, ambiguity := x.checkResult(checks)
+		if terminal {
 			if err := emit(queue.ChecksCompleted{TestedSHA: a.TestedSHA, Success: success}); err != nil {
 				return err
 			}
 		}
-		return emit(queue.ChecksRefreshed{BatchID: a.BatchID, TestedSHA: a.TestedSHA, At: at})
+		if err := emit(queue.ChecksRefreshed{BatchID: a.BatchID, TestedSHA: a.TestedSHA, At: at}); err != nil {
+			return err
+		}
+		return ambiguity
 	case queue.Land:
 		attemptID, err := x.newID()
 		if err != nil {
@@ -179,11 +184,27 @@ func (x *Executor) resolve(ctx context.Context, a queue.ResolveLanding, emit fun
 	}
 }
 
-// Missing or unknown required checks keep the batch pending. Only the latest
-// run of each name participates; cancelled is a failure until superseded.
-func (x *Executor) checkResult(checks []forge.CheckRun) (terminal, success bool) {
+// CheckSourceAmbiguityError keeps required checks pending and gives the server
+// the conflicting producers to surface. No terminal check result is emitted.
+type CheckSourceAmbiguityError struct {
+	Name    string
+	Sources []string
+}
+
+func (e *CheckSourceAmbiguityError) Error() string {
+	return fmt.Sprintf("required check %q has ambiguous sources %q; use distinct check names", e.Name, e.Sources)
+}
+
+// Missing, unknown, or ambiguous required checks keep the batch pending. Only
+// the newest run within one source participates; cancelled counts as failure.
+func (x *Executor) checkResult(checks []forge.CheckRun) (terminal, success bool, ambiguity error) {
 	latest := make(map[string]forge.CheckRun)
+	sources := make(map[string]map[string]bool)
 	for _, check := range checks {
+		if sources[check.Name] == nil {
+			sources[check.Name] = make(map[string]bool)
+		}
+		sources[check.Name][check.Source] = true
 		old, ok := latest[check.Name]
 		if !ok || check.ID >= old.ID {
 			latest[check.Name] = check
@@ -191,6 +212,18 @@ func (x *Executor) checkResult(checks []forge.CheckRun) (terminal, success bool)
 	}
 	terminal, success = true, true
 	for _, name := range x.RequiredChecks {
+		if len(sources[name]) > 1 || sources[name][""] {
+			terminal = false
+			if ambiguity == nil {
+				var names []string
+				for source := range sources[name] {
+					names = append(names, source)
+				}
+				slices.Sort(names)
+				ambiguity = &CheckSourceAmbiguityError{Name: name, Sources: names}
+			}
+			continue
+		}
 		check, ok := latest[name]
 		if !ok {
 			terminal = false
@@ -208,7 +241,7 @@ func (x *Executor) checkResult(checks []forge.CheckRun) (terminal, success bool)
 			terminal = false
 		}
 	}
-	return terminal, success
+	return terminal, success, ambiguity
 }
 
 func (x *Executor) fenceRef() string { return "openmerge/fence/" + x.Base }

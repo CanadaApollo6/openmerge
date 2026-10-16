@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
@@ -51,6 +52,8 @@ type Env struct {
 	Observations         []forge.PullRequest
 	ContainsPR           func(sha string, pr int) bool
 	AddForeignComment    func(pr int, body string)
+	// SetCanWrite changes current permission without advancing a cache clock.
+	SetCanWrite func(user string, write bool)
 	// AddCheckRun creates a new run; the forge assigns its ID, even for reruns.
 	AddCheckRun func(sha, name string, state forge.CheckState)
 	// Statuses returns current OpenMerge checks by head, preserving duplicates.
@@ -523,7 +526,7 @@ func assertStatuses(t *testing.T, got map[string][]forge.Status, want map[string
 
 func assertPullRequest(t *testing.T, got, want forge.PullRequest) {
 	t.Helper()
-	if got.Number != want.Number || got.HeadSHA != want.HeadSHA || got.HeadInBaseRepo != want.HeadInBaseRepo || got.Closed != want.Closed {
+	if got.Number != want.Number || got.HeadSHA != want.HeadSHA || got.HeadInBaseRepo != want.HeadInBaseRepo || got.Closed != want.Closed || got.Base != want.Base || got.Draft != want.Draft || got.Author != want.Author {
 		t.Fatalf("PR observation = %+v, want number %d head %s in-base-repo %v closed %v", got, want.Number, want.HeadSHA, want.HeadInBaseRepo, want.Closed)
 	}
 	type approval struct {
@@ -585,6 +588,90 @@ func RunDriver(t *testing.T, factory func(t *testing.T) Env) {
 		validateObservations(t, e)
 		return e
 	}
+	t.Run("reconciliation", func(t *testing.T) {
+		e := newEnv(t)
+		all, err := e.Driver.ListOpenPullRequests(ctx, e.Repo, "")
+		must(t, err)
+		byNumber := map[int]forge.PullRequestSummary{}
+		for _, pr := range all {
+			if pr.UpdatedAt.IsZero() {
+				t.Fatal("summary lacks updated-at")
+			}
+			byNumber[pr.Number] = pr
+		}
+		for _, want := range e.Observations {
+			if !want.Closed && byNumber[want.Number].HeadSHA != want.HeadSHA {
+				t.Fatalf("missing head for PR %d: %+v", want.Number, all)
+			}
+		}
+		filtered, err := e.Driver.ListOpenPullRequests(ctx, e.Repo, e.Observations[0].Base)
+		must(t, err)
+		for _, summary := range filtered {
+			pr, err := e.Driver.PullRequest(ctx, e.Repo, summary.Number)
+			must(t, err)
+			if pr.Base != e.Observations[0].Base || pr.Closed {
+				t.Fatalf("wrong base: %+v", pr)
+			}
+		}
+		missing, err := e.Driver.ListOpenPullRequests(ctx, e.Repo, "openmerge-contract-missing-base")
+		must(t, err)
+		if len(missing) != 0 {
+			t.Fatalf("base filter ignored: %+v", missing)
+		}
+	})
+	t.Run("fresh-authorization", func(t *testing.T) {
+		e := newEnv(t)
+		for _, pr := range e.Observations {
+			for _, approval := range pr.Approvals {
+				if !approval.CanWrite {
+					continue
+				}
+				allowed, err := e.Driver.CanWrite(ctx, e.Repo, approval.User)
+				must(t, err)
+				if !allowed {
+					t.Fatal("fixture writer denied")
+				}
+				e.SetCanWrite(approval.User, false)
+				allowed, err = e.Driver.CanWrite(ctx, e.Repo, approval.User)
+				must(t, err)
+				if allowed {
+					t.Fatal("revoked writer retained command authority")
+				}
+				current, err := e.Driver.PullRequest(ctx, e.Repo, pr.Number)
+				must(t, err)
+				for _, a := range current.Approvals {
+					if a.User == approval.User && a.CanWrite {
+						t.Fatal("revoked writer retained approval authority")
+					}
+				}
+				return
+			}
+		}
+		t.Fatal("fixture lacks writer")
+	})
+	t.Run("poll-comments", func(t *testing.T) {
+		e := newEnv(t)
+		pr := e.PRs[0].Number
+		e.AddForeignComment(pr, "@openmerge enqueue")
+		comments, err := e.Driver.ListComments(ctx, e.Repo, pr, time.Time{})
+		must(t, err)
+		var command forge.Comment
+		for _, c := range comments {
+			if c.Body == "@openmerge enqueue" {
+				command = c
+			}
+		}
+		if command.ID <= 0 || command.Author == "" || command.CreatedAt.IsZero() {
+			t.Fatalf("incomplete command: %+v", command)
+		}
+		newer, err := e.Driver.ListComments(ctx, e.Repo, pr, command.CreatedAt)
+		must(t, err)
+		for _, c := range newer {
+			if !c.CreatedAt.After(command.CreatedAt) {
+				t.Fatalf("since filter ignored: %+v", c)
+			}
+		}
+	})
 	t.Run("delete-ref", func(t *testing.T) {
 		e := newEnv(t)
 		ref := e.NewBase(t)
@@ -646,6 +733,11 @@ func RunDriver(t *testing.T, factory func(t *testing.T) Env) {
 		e.AddCheckRun(e.PRs[0].HeadSHA, lint, forge.Success)
 		got, err := e.Driver.CheckRuns(ctx, e.Repo, e.PRs[0].HeadSHA)
 		must(t, err)
+		for _, run := range got {
+			if run.Source == "" {
+				t.Fatalf("check lacks a stable source: %+v", run)
+			}
+		}
 		var ciRuns, lintRuns []forge.CheckRun
 		for _, run := range got {
 			switch run.Name {
@@ -681,7 +773,10 @@ func RunDriver(t *testing.T, factory func(t *testing.T) Env) {
 			}
 			after, err := e.Driver.PullRequest(ctx, e.Repo, want.Number)
 			must(t, err)
-			// Retained approvals must still name the old SHA and access rights.
+			// Retained approvals keep the old SHA; stale write access is not trusted.
+			for i := range want.Approvals {
+				want.Approvals[i].CanWrite = false
+			}
 			assertPullRequest(t, after, want)
 		}
 	})

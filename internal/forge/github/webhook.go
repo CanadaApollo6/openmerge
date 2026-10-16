@@ -54,10 +54,10 @@ type ReviewChanged struct {
 
 func (ReviewChanged) webhookPayload() {}
 
-// ChecksCompleted asks the server to reread all checks and statuses on SHA.
-type ChecksCompleted struct{ SHA string }
+// ChecksChanged asks the server to reread checks and suites, including reruns.
+type ChecksChanged struct{ SHA string }
 
-func (ChecksCompleted) webhookPayload() {}
+func (ChecksChanged) webhookPayload() {}
 
 // BranchPushed includes deleted branches (Deleted is true and SHA is zero).
 type BranchPushed struct {
@@ -204,17 +204,17 @@ func VerifyAndParse(r *http.Request, secret []byte) (Event, error) {
 			e.Payload = ReviewChanged{Action: raw.Action, Number: raw.PullRequest.Number, HeadSHA: raw.PullRequest.Head.SHA, ReviewedSHA: raw.Review.CommitID, Author: raw.Review.User.Login, State: raw.Review.State}
 		}
 	case "check_run":
-		if raw.Action == "completed" {
-			e.Payload = ChecksCompleted{SHA: raw.CheckRun.HeadSHA}
+		if raw.Action == "completed" || raw.Action == "rerequested" {
+			e.Payload = ChecksChanged{SHA: raw.CheckRun.HeadSHA}
 		}
 	case "check_suite":
-		if raw.Action == "completed" {
-			e.Payload = ChecksCompleted{SHA: raw.CheckSuite.HeadSHA}
+		if raw.Action == "completed" || raw.Action == "requested" || raw.Action == "rerequested" {
+			e.Payload = ChecksChanged{SHA: raw.CheckSuite.HeadSHA}
 		}
 	case "status":
 		switch raw.State {
 		case "success", "failure", "error":
-			e.Payload = ChecksCompleted{SHA: raw.SHA}
+			e.Payload = ChecksChanged{SHA: raw.SHA}
 		}
 	case "push":
 		if strings.HasPrefix(raw.Ref, "refs/heads/") {
@@ -257,7 +257,7 @@ func validateEvent(e Event) error {
 			_, _, err := splitRepo(e.Repo)
 			return err
 		}
-	case ChecksCompleted:
+	case ChecksChanged:
 		if p.SHA != "" {
 			_, _, err := splitRepo(e.Repo)
 			return err

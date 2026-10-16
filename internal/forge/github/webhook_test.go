@@ -41,7 +41,7 @@ func TestWebhookFixtures(t *testing.T) {
 	}{
 		{"pull_request", PRChanged{Action: "synchronize", Number: 17, HeadSHA: sha, Base: "main"}},
 		{"pull_request_review", ReviewChanged{Action: "submitted", Number: 17, HeadSHA: sha, ReviewedSHA: sha, Author: "maintainer", State: "approved"}},
-		{"check_run", ChecksCompleted{SHA: sha}}, {"check_suite", ChecksCompleted{SHA: sha}}, {"status", ChecksCompleted{SHA: sha}},
+		{"check_run", ChecksChanged{SHA: sha}}, {"check_suite", ChecksChanged{SHA: sha}}, {"status", ChecksChanged{SHA: sha}},
 		{"push", BranchPushed{Ref: "refs/heads/main", SHA: sha}},
 		{"issue_comment", PRCommentCreated{Number: 17, Author: "maintainer", Body: "@openmerge enqueue", AuthorAssociation: "COLLABORATOR"}},
 		{"installation", InstallationChanged{Action: "created", Repositories: repoRefs([]webhookRepository{{FullName: "acme/project"}}), Added: repoRefs(nil), Removed: repoRefs(nil)}},
@@ -99,11 +99,15 @@ func TestWebhookActions(t *testing.T) {
 		}
 	}
 	for _, kind := range []string{"check_run", "check_suite"} {
-		body := mutateFixture(t, kind, func(raw map[string]any) { raw["action"] = "requested" })
-		e, err := VerifyAndParse(signedRequest(kind, body), webhookSecret)
-		must(t, err)
-		if _, ok := e.Payload.(Ignored); !ok {
-			t.Fatal("unfinished check was not ignored")
+		for _, action := range []string{"completed", "requested", "rerequested"} {
+			body := mutateFixture(t, kind, func(raw map[string]any) { raw["action"] = action })
+			e, err := VerifyAndParse(signedRequest(kind, body), webhookSecret)
+			must(t, err)
+			_, changed := e.Payload.(ChecksChanged)
+			want := kind == "check_suite" || action != "requested"
+			if changed != want {
+				t.Fatalf("%s %s normalized to %T", kind, action, e.Payload)
+			}
 		}
 	}
 	for _, action := range []string{"created", "deleted", "suspend", "unsuspend", "new_permissions_accepted"} {

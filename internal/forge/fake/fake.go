@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
@@ -27,15 +28,18 @@ type Commit struct {
 }
 
 type repository struct {
-	refs      map[string]string
-	commits   map[string]Commit
-	prs       map[int]forge.PullRequest
-	checks    map[string][]forge.CheckRun
-	statuses  map[int]map[string]forge.Status
-	comments  map[int][]Comment
-	prCommits map[int][]string
-	prBases   map[int]string
-	nonce     func() string
+	refs        map[string]string
+	commits     map[string]Commit
+	prs         map[int]forge.PullRequest
+	checks      map[string][]forge.CheckRun
+	statuses    map[int]map[string]forge.Status
+	comments    map[int][]Comment
+	prCommits   map[int][]string
+	prBases     map[int]string
+	nonce       func() string
+	permissions map[string]bool
+	updated     map[int]time.Time
+	nextComment int64
 }
 
 // Forge implements both forge interfaces. Use New to construct it. All helpers
@@ -89,8 +93,8 @@ func (f *Forge) repo(repo forge.RepoRef) *repository {
 	r := f.repos[repo]
 	if r == nil {
 		r = &repository{
-			nonce: f.nonce,
-			refs:  make(map[string]string), commits: make(map[string]Commit),
+			nonce: f.nonce, permissions: make(map[string]bool), updated: make(map[int]time.Time),
+			refs: make(map[string]string), commits: make(map[string]Commit),
 			prs: make(map[int]forge.PullRequest), checks: make(map[string][]forge.CheckRun),
 			statuses: make(map[int]map[string]forge.Status), comments: make(map[int][]Comment), prCommits: make(map[int][]string), prBases: make(map[int]string),
 		}
@@ -366,7 +370,65 @@ func (f *Forge) PullRequest(ctx context.Context, repo forge.RepoRef, number int)
 		return forge.PullRequest{}, fmt.Errorf("unknown PR %d", number)
 	}
 	pr.Approvals = slices.Clone(pr.Approvals)
+	if pr.Closed {
+		pr.Approvals = nil
+	}
+	for i := range pr.Approvals {
+		a := &pr.Approvals[i]
+		a.CanWrite = !pr.HeadInBaseRepo && a.SHA == pr.HeadSHA && f.repo(repo).permissions[a.User]
+	}
 	return pr, nil
+}
+
+// ListOpenPullRequests returns the current open heads for reconciliation.
+func (f *Forge) ListOpenPullRequests(ctx context.Context, repo forge.RepoRef, base string) ([]forge.PullRequestSummary, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.failure(ctx, "ListOpenPullRequests"); err != nil {
+		return nil, err
+	}
+	r := f.repo(repo)
+	result := []forge.PullRequestSummary{}
+	for _, pr := range r.prs {
+		if !pr.Closed && (base == "" || pr.Base == base) {
+			result = append(result, forge.PullRequestSummary{Number: pr.Number, HeadSHA: pr.HeadSHA, UpdatedAt: r.updated[pr.Number]})
+		}
+	}
+	slices.SortFunc(result, func(a, b forge.PullRequestSummary) int { return a.Number - b.Number })
+	return result, nil
+}
+
+// ListComments returns comments created after since, including other authors.
+func (f *Forge) ListComments(ctx context.Context, repo forge.RepoRef, pr int, since time.Time) ([]forge.Comment, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.failure(ctx, "ListComments"); err != nil {
+		return nil, err
+	}
+	result := []forge.Comment{}
+	for _, c := range f.repo(repo).comments[pr] {
+		if since.IsZero() || c.CreatedAt.After(since) {
+			result = append(result, forge.Comment{ID: c.ID, Author: c.Author, Body: c.Body, CreatedAt: c.CreatedAt})
+		}
+	}
+	return result, nil
+}
+
+// CanWrite reads current repository permissions without caching a decision.
+func (f *Forge) CanWrite(ctx context.Context, repo forge.RepoRef, user string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.failure(ctx, "CanWrite"); err != nil {
+		return false, err
+	}
+	return f.repo(repo).permissions[user], nil
+}
+
+func (r *repository) addComment(pr int, c Comment) {
+	r.nextComment++
+	c.ID = r.nextComment
+	c.CreatedAt = time.Now().UTC()
+	r.comments[pr] = append(r.comments[pr], c)
 }
 
 // CheckRuns returns a snapshot. Missing checks are represented by an empty list.
@@ -408,7 +470,7 @@ func (f *Forge) Comment(ctx context.Context, repo forge.RepoRef, pr int, key, bo
 			return nil
 		}
 	}
-	r.comments[pr] = append(r.comments[pr], Comment{Author: Identity, Key: key, Body: body + "\n" + marker})
+	r.addComment(pr, Comment{Author: Identity, Key: key, Body: body + "\n" + marker})
 	return nil
 }
 
@@ -416,7 +478,11 @@ func (f *Forge) Comment(ctx context.Context, repo forge.RepoRef, pr int, key, bo
 const Identity = "openmerge-bot"
 
 // Comment includes its author so user-supplied markers cannot suppress writes.
-type Comment struct{ Author, Key, Body string }
+type Comment struct {
+	ID                int64
+	Author, Key, Body string
+	CreatedAt         time.Time
+}
 
 // MarkLanded closes the PR and records one commit link across retries.
 func (f *Forge) MarkLanded(ctx context.Context, repo forge.RepoRef, number int, landedSHA string) error {
@@ -441,8 +507,9 @@ func (f *Forge) MarkLanded(ctx context.Context, repo forge.RepoRef, number int, 
 			return nil
 		}
 	}
-	r.comments[number] = append(r.comments[number], Comment{Author: Identity, Key: key, Body: "Landed in [" + landedSHA + "](/" + repo.Path + "/commit/" + landedSHA + ")"})
+	r.addComment(number, Comment{Author: Identity, Key: key, Body: "Landed in [" + landedSHA + "](/" + repo.Path + "/commit/" + landedSHA + ")"})
 	pr.Closed = true
+	r.updated[number] = time.Now().UTC()
 	r.prs[number] = pr
 	return nil
 }

@@ -24,12 +24,6 @@ type Driver struct {
 	installation int64
 	client       *gh.Client
 	writes       sync.Mutex
-	permissionMu sync.Mutex
-	permissions  map[string]permission
-}
-type permission struct {
-	write   bool
-	expires time.Time
 }
 
 var _ forge.Driver = (*Driver)(nil)
@@ -67,9 +61,12 @@ func (d *Driver) PullRequest(ctx context.Context, repo forge.RepoRef, number int
 	if err != nil {
 		return forge.PullRequest{}, safeError(err)
 	}
-	result := forge.PullRequest{Number: pr.GetNumber(), HeadSHA: pr.GetHead().GetSHA(), Closed: pr.GetState() == "closed"}
+	result := forge.PullRequest{Number: pr.GetNumber(), HeadSHA: pr.GetHead().GetSHA(), Base: pr.GetBase().GetRef(), Draft: pr.GetDraft(), Author: pr.GetUser().GetLogin(), Closed: pr.GetState() == "closed"}
 	head, base := pr.GetHead().GetRepo(), pr.GetBase().GetRepo()
 	result.HeadInBaseRepo = head.GetID() > 0 && head.GetID() == base.GetID()
+	if result.Closed {
+		return result, nil
+	}
 	reviews := make(map[string]*gh.PullRequestReview)
 	for page := 1; page != 0; {
 		list, res, e := d.client.PullRequests.ListReviews(ctx, owner, name, number, &gh.ListOptions{Page: page, PerPage: 100})
@@ -97,17 +94,20 @@ func (d *Driver) PullRequest(ctx context.Context, repo forge.RepoRef, number int
 		if review.GetState() != "APPROVED" || review.GetCommitID() == "" {
 			continue
 		}
-		write, e := d.CanWrite(ctx, repo, user)
-		if e != nil {
-			return forge.PullRequest{}, e
+		write := false
+		if !result.HeadInBaseRepo && review.GetCommitID() == result.HeadSHA {
+			write, err = d.CanWrite(ctx, repo, user)
+			if err != nil {
+				return forge.PullRequest{}, err
+			}
 		}
 		result.Approvals = append(result.Approvals, forge.Approval{User: user, SHA: review.GetCommitID(), CanWrite: write})
 	}
 	return result, nil
 }
 
-// CanWrite reads the collaborator permission API, caching grants and denials for
-// one minute. Webhook author association alone is never treated as permission.
+// CanWrite revalidates collaborator permission on every call. The transport may
+// reuse a body only after GitHub validates its ETag, never from a cached grant.
 func (d *Driver) CanWrite(ctx context.Context, repo forge.RepoRef, user string) (bool, error) {
 	owner, name, err := splitRepo(repo)
 	if err != nil {
@@ -115,12 +115,6 @@ func (d *Driver) CanWrite(ctx context.Context, repo forge.RepoRef, user string) 
 	}
 	if user == "" || strings.ContainsAny(user, "/\\?#%\r\n") {
 		return false, errors.New("invalid github login")
-	}
-	key := strings.ToLower(repo.Path + "/" + user)
-	d.permissionMu.Lock()
-	defer d.permissionMu.Unlock()
-	if cached, ok := d.permissions[key]; ok && d.app.now().Before(cached.expires) {
-		return cached.write, nil
 	}
 	level, res, err := d.client.Repositories.GetPermissionLevel(ctx, owner, name, user)
 	write := false
@@ -134,8 +128,55 @@ func (d *Driver) CanWrite(ctx context.Context, repo forge.RepoRef, user string) 
 			write = true
 		}
 	}
-	d.permissions[key] = permission{write: write, expires: d.app.now().Add(time.Minute)}
 	return write, nil
+}
+
+// ListOpenPullRequests follows every page without fetching reviews or permissions.
+func (d *Driver) ListOpenPullRequests(ctx context.Context, repo forge.RepoRef, base string) ([]forge.PullRequestSummary, error) {
+	owner, name, err := splitRepo(repo)
+	if err != nil {
+		return nil, err
+	}
+	result := []forge.PullRequestSummary{}
+	for page := 1; page != 0; {
+		prs, res, err := d.client.PullRequests.List(ctx, owner, name, &gh.PullRequestListOptions{State: "open", Base: base, ListOptions: gh.ListOptions{Page: page, PerPage: 100}})
+		if err != nil {
+			return nil, safeError(err)
+		}
+		for _, pr := range prs {
+			result = append(result, forge.PullRequestSummary{Number: pr.GetNumber(), HeadSHA: pr.GetHead().GetSHA(), UpdatedAt: pr.GetUpdatedAt().Time})
+		}
+		page = res.NextPage
+	}
+	return result, nil
+}
+
+// ListComments includes human and bot comments, retaining IDs for durable dedupe.
+func (d *Driver) ListComments(ctx context.Context, repo forge.RepoRef, pr int, since time.Time) ([]forge.Comment, error) {
+	owner, name, err := splitRepo(repo)
+	if err != nil {
+		return nil, err
+	}
+	result := []forge.Comment{}
+	for page := 1; page != 0; {
+		opts := &gh.IssueListCommentsOptions{ListOptions: gh.ListOptions{Page: page, PerPage: 100}}
+		if !since.IsZero() {
+			opts.Since = &since
+		}
+		comments, res, err := d.client.Issues.ListComments(ctx, owner, name, pr, opts)
+		if err != nil {
+			return nil, safeError(err)
+		}
+		for _, comment := range comments {
+			// GitHub filters by updated_at, which also includes edited comments.
+			// Commands are discovered by creation time, matching the forge contract.
+			if since.IsZero() || comment.GetCreatedAt().After(since) {
+				result = append(result, forge.Comment{ID: comment.GetID(), Author: comment.GetUser().GetLogin(), Body: comment.GetBody(), CreatedAt: comment.GetCreatedAt().Time})
+			}
+		}
+		page = res.NextPage
+	}
+	return result, nil
 }
 
 func (d *Driver) checkRuns(ctx context.Context, owner, name, sha string) ([]*gh.CheckRun, error) {
@@ -154,16 +195,8 @@ func (d *Driver) own(run *gh.CheckRun) bool {
 	return run.GetName() == "OpenMerge" && run.GetApp().GetID() == d.app.id
 }
 
-// CheckNameCollisionError fails closed when two independent GitHub ID sequences
-// use one check name, which the forge contract cannot order across API families.
-type CheckNameCollisionError struct{ Name string }
-
-func (*CheckNameCollisionError) Error() string {
-	return "github check name is shared by check runs and commit statuses; use distinct names"
-}
-
 // CheckRuns includes every rerun and legacy status. GitHub assigns increasing
-// native IDs within each API's run history; those IDs order reruns of a name.
+// native IDs within each source's history. Suite state overrides stale run results.
 func (d *Driver) CheckRuns(ctx context.Context, repo forge.RepoRef, sha string) ([]forge.CheckRun, error) {
 	owner, name, err := splitRepo(repo)
 	if err != nil {
@@ -173,12 +206,25 @@ func (d *Driver) CheckRuns(ctx context.Context, repo forge.RepoRef, sha string) 
 	if err != nil {
 		return nil, err
 	}
-	var result []forge.CheckRun
-	names := make(map[string]bool)
+	suites := make(map[int64]string)
+	for page := 1; page != 0; {
+		list, res, err := d.client.Checks.ListCheckSuitesForRef(ctx, owner, name, sha, &gh.ListCheckSuiteOptions{ListOptions: gh.ListOptions{Page: page, PerPage: 100}})
+		if err != nil {
+			return nil, safeError(err)
+		}
+		for _, suite := range list.CheckSuites {
+			suites[suite.GetID()] = suite.GetStatus()
+		}
+		page = res.NextPage
+	}
+	result := []forge.CheckRun{}
 	for _, run := range runs {
 		if !d.own(run) {
-			names[run.GetName()] = true
-			result = append(result, forge.CheckRun{ID: uint64(max(run.GetID(), 0)), Name: run.GetName(), State: checkState(run.GetStatus(), run.GetConclusion())})
+			state := checkState(run.GetStatus(), run.GetConclusion())
+			if run.GetCheckSuite().GetID() <= 0 || suites[run.GetCheckSuite().GetID()] != "completed" || run.GetApp().GetID() <= 0 {
+				state = forge.Pending
+			}
+			result = append(result, forge.CheckRun{ID: uint64(max(run.GetID(), 0)), Name: run.GetName(), Source: "app:" + strconv.FormatInt(run.GetApp().GetID(), 10), State: state})
 		}
 	}
 	for page := 1; page != 0; {
@@ -187,9 +233,6 @@ func (d *Driver) CheckRuns(ctx context.Context, repo forge.RepoRef, sha string) 
 			return nil, safeError(e)
 		}
 		for _, status := range statuses {
-			if names[status.GetContext()] {
-				return nil, &CheckNameCollisionError{Name: status.GetContext()}
-			}
 			state := forge.Pending
 			switch status.GetState() {
 			case "success":
@@ -197,7 +240,10 @@ func (d *Driver) CheckRuns(ctx context.Context, repo forge.RepoRef, sha string) 
 			case "failure", "error":
 				state = forge.Failure
 			}
-			result = append(result, forge.CheckRun{ID: uint64(max(status.GetID(), 0)), Name: status.GetContext(), State: state})
+			if status.GetCreator().GetLogin() == "" {
+				state = forge.Pending
+			}
+			result = append(result, forge.CheckRun{ID: uint64(max(status.GetID(), 0)), Name: status.GetContext(), Source: "status:" + strings.ToLower(status.GetCreator().GetLogin()), State: state})
 		}
 		page = res.NextPage
 	}

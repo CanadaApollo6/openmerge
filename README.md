@@ -35,6 +35,27 @@ go run ./cmd/openmerge sim --faults --json      # add per-method errors, lost ac
 
 Flags: `--prs`, `--broken-rate`, `--flake-rate`, `--ci`, `--ci-max`, `--seed`, `--faults`, `--drop-webhooks`, `--merge-method`, `--window`, `--repush-rate`, `--conflict-rate`, `--json`. `--ci-max` uses `--ci` as the minimum of a duration range. JSON reports the full effective configuration and mean, median, and p95 merge times in seconds. See the [`internal/sim` package docs](internal/sim) for the full model.
 
+## GitHub App integration
+
+The [GitHub driver setup guide](internal/forge/github/README.md#app-setup-and-troubleshooting)
+lists permissions and setup details. Subscribe to `pull_request`,
+`pull_request_review`, `check_run`, `check_suite`, `status`, `push`, and
+`issue_comment`; `installation` and `installation_repositories` arrive
+automatically. Rerun notifications trigger a fresh check/suite observation.
+
+Find the numeric installation ID at the end of the installed App's **Configure**
+URL under your account/organization settings, or in signed webhook
+`installation.id`. For 401s, verify the App ID/key pair and installation access,
+and synchronize the host clock: JWTs tolerate only the configured 60-second
+backdating margin. See the [troubleshooting guide](internal/forge/github/README.md#app-setup-and-troubleshooting).
+
+The bounded ETag cache revalidates every GET and replays validated 304 bodies
+inside the transport. A full open fork PR refresh with one approver and one
+active CI SHA costs about **6 REST requests per poll**, or **7** with command
+comment discovery (one page per endpoint). Unchanged responses usually return
+304 and consume no primary rate-limit quota; changed 200 responses do. Webhooks
+plus periodic reconciliation reduce traffic. See [polling costs and cache limits](internal/forge/github/README.md#polling-cost-and-conditional-requests).
+
 ## Contributing
 
 The project is just starting, and design feedback is the most useful contribution right now. Read [CONTRIBUTING.md](CONTRIBUTING.md) for setup and the DCO sign-off, and [GOVERNANCE.md](GOVERNANCE.md) for how decisions are made.

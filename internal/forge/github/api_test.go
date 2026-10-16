@@ -2,8 +2,10 @@ package github
 
 import (
 	"context"
+	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -11,6 +13,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -51,6 +54,9 @@ type apiFixture struct {
 	permissions     map[string]string
 	permissionCalls map[string]int
 	runs            map[string][]*gh.CheckRun
+	suites          map[string][]*gh.CheckSuite
+	installations   map[int64]bool
+	notModified     int
 	statuses        map[string][]*gh.RepoStatus
 	comments        map[int][]*gh.IssueComment
 	refs            map[string]bool
@@ -62,14 +68,14 @@ type apiFixture struct {
 
 func newAPI(t *testing.T) *apiFixture {
 	t.Helper()
-	f := &apiFixture{t: t, clock: epoch, prs: make(map[int]*gh.PullRequest), reviews: make(map[int][]*gh.PullRequestReview), permissions: map[string]string{"writer": "write", "reader": "read"}, permissionCalls: make(map[string]int), runs: make(map[string][]*gh.CheckRun), statuses: make(map[string][]*gh.RepoStatus), comments: make(map[int][]*gh.IssueComment), refs: make(map[string]bool), calls: make(map[string]int), next: 100}
+	f := &apiFixture{t: t, clock: epoch, prs: make(map[int]*gh.PullRequest), reviews: make(map[int][]*gh.PullRequestReview), permissions: map[string]string{"writer": "write", "reader": "read"}, permissionCalls: make(map[string]int), runs: make(map[string][]*gh.CheckRun), suites: make(map[string][]*gh.CheckSuite), installations: map[int64]bool{7: true, 8: true}, statuses: make(map[string][]*gh.RepoStatus), comments: make(map[int][]*gh.IssueComment), refs: make(map[string]bool), calls: make(map[string]int), next: 100}
 	for _, n := range []int{1, 2} {
 		headRepo := int64(50)
 		if n == 1 {
 			headRepo = 51
 		}
 		sha := fmt.Sprintf("%040x", n)
-		f.prs[n] = &gh.PullRequest{Number: new(n), State: new("open"), Head: &gh.PullRequestBranch{SHA: &sha, Repo: &gh.Repository{ID: &headRepo}}, Base: &gh.PullRequestBranch{Ref: new("main"), Repo: &gh.Repository{ID: new(int64(50))}}}
+		f.prs[n] = &gh.PullRequest{Number: new(n), State: new("open"), User: &gh.User{Login: new("contributor")}, UpdatedAt: &gh.Timestamp{Time: epoch}, Head: &gh.PullRequestBranch{SHA: &sha, Repo: &gh.Repository{ID: &headRepo}}, Base: &gh.PullRequestBranch{Ref: new("main"), Repo: &gh.Repository{ID: new(int64(50))}}}
 		user := "writer"
 		if n == 2 {
 			user = "reader"
@@ -86,36 +92,161 @@ func newAPI(t *testing.T) *apiFixture {
 	must(t, err)
 	return f
 }
+
+// Response schemas are independent REST fixtures, never SDK serialization.
+func (f *apiFixture) object(name string) map[string]any {
+	f.t.Helper()
+	data, err := os.ReadFile("testdata/rest/" + name + ".json")
+	must(f.t, err)
+	var result map[string]any
+	must(f.t, json.Unmarshal(data, &result))
+	return result
+}
+func (f *apiFixture) prJSON(pr *gh.PullRequest) map[string]any {
+	o := f.object("pull_request")
+	o["number"], o["state"], o["draft"] = pr.GetNumber(), pr.GetState(), pr.GetDraft()
+	o["user"].(map[string]any)["login"] = pr.GetUser().GetLogin()
+	for label, b := range map[string]*gh.PullRequestBranch{"head": pr.GetHead(), "base": pr.GetBase()} {
+		branch := o[label].(map[string]any)
+		branch["ref"], branch["sha"] = b.GetRef(), b.GetSHA()
+		if b.GetRepo() == nil {
+			branch["repo"] = nil
+		} else {
+			repo := branch["repo"].(map[string]any)
+			repo["id"], repo["name"], repo["full_name"] = b.GetRepo().GetID(), b.GetRepo().GetName(), b.GetRepo().GetFullName()
+		}
+	}
+	o["updated_at"] = pr.GetUpdatedAt().Format(time.RFC3339)
+	return o
+}
+func (f *apiFixture) runJSON(run *gh.CheckRun) map[string]any {
+	o := f.object("check_run")
+	o["id"], o["name"], o["head_sha"], o["external_id"] = run.GetID(), run.GetName(), run.GetHeadSHA(), run.GetExternalID()
+	o["status"], o["conclusion"] = run.GetStatus(), run.GetConclusion()
+	if run.App != nil {
+		o["app"].(map[string]any)["id"] = run.GetApp().GetID()
+	}
+	if run.CheckSuite != nil {
+		o["check_suite"].(map[string]any)["id"] = run.GetCheckSuite().GetID()
+	}
+	if run.Output != nil {
+		o["output"] = map[string]any{"title": run.GetOutput().GetTitle(), "summary": run.GetOutput().GetSummary(), "annotations_count": 0}
+	}
+	return o
+}
+func (f *apiFixture) commentJSON(c *gh.IssueComment) map[string]any {
+	o := f.object("comment")
+	o["id"], o["body"] = c.GetID(), c.GetBody()
+	o["user"].(map[string]any)["login"], o["user"].(map[string]any)["type"] = c.GetUser().GetLogin(), c.GetUser().GetType()
+	if c.CreatedAt != nil {
+		o["created_at"] = c.GetCreatedAt().Format(time.RFC3339)
+	}
+	if c.UpdatedAt != nil {
+		o["updated_at"] = c.GetUpdatedAt().Format(time.RFC3339)
+	}
+	return o
+}
 func (f *apiFixture) json(w http.ResponseWriter, v any) {
 	f.t.Helper()
-	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		f.t.Error(err)
 	}
 }
+func (f *apiFixture) apiError(w http.ResponseWriter, status int, message string) {
+	o := f.object("error")
+	o["message"], o["status"] = message, strconv.Itoa(status)
+	w.WriteHeader(status)
+	f.json(w, o)
+}
 func (f *apiFixture) id() int64 { f.next++; return f.next }
+func (f *apiFixture) assertJWT(r *http.Request) {
+	f.t.Helper()
+	parts := strings.Split(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "), ".")
+	if len(parts) != 3 {
+		f.t.Error("App endpoint missing JWT")
+		return
+	}
+	decode := func(raw string) []byte {
+		data, err := base64.RawURLEncoding.DecodeString(raw)
+		must(f.t, err)
+		return data
+	}
+	var header struct{ Alg, Typ string }
+	var claims struct {
+		Iss      string
+		Iat, Exp int64
+	}
+	must(f.t, json.Unmarshal(decode(parts[0]), &header))
+	must(f.t, json.Unmarshal(decode(parts[1]), &claims))
+	if header.Alg != "RS256" || header.Typ != "JWT" || claims.Iss != "42" || claims.Iat > f.clock.Unix() || claims.Exp <= f.clock.Unix() || claims.Exp-claims.Iat > 600 {
+		f.t.Error("App endpoint received invalid JWT claims")
+	}
+	digest := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
+	must(f.t, rsa.VerifyPKCS1v15(&f.app.key.PublicKey, crypto.SHA256, digest[:], decode(parts[2])))
+}
 func (f *apiFixture) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	out := httptest.NewRecorder()
+	out.Header().Set("Content-Type", "application/json")
+	out.Header().Set("X-RateLimit-Limit", "5000")
+	out.Header().Set("X-RateLimit-Remaining", "4999")
+	out.Header().Set("X-RateLimit-Reset", strconv.FormatInt(f.clock.Add(time.Hour).Unix(), 10))
+	out.Header().Set("X-RateLimit-Resource", "core")
+	f.handle(out, r)
+	status := out.Code
+	if r.Method == "GET" && status == 200 {
+		etag := fmt.Sprintf(`"%x"`, sha256.Sum256(append(out.Body.Bytes(), []byte(out.Header().Get("Link"))...)))
+		out.Header().Set("ETag", etag)
+		out.Header().Set("Cache-Control", "private, max-age=60, s-maxage=60")
+		out.Header().Set("Vary", "Accept, Authorization, X-GitHub-Api-Version, Accept-Encoding, X-Requested-With")
+		if r.Header.Get("If-None-Match") == etag {
+			status = 304
+			f.notModified++
+		}
+	}
+	for key, values := range out.Header() {
+		w.Header()[key] = values
+	}
+	if status == 304 {
+		w.Header().Del("Link")
+	}
+	w.WriteHeader(status)
+	if status != 304 {
+		_, err := w.Write(out.Body.Bytes())
+		if err != nil {
+			f.t.Error(err)
+		}
+	}
+}
+func (f *apiFixture) handle(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v3/")
 	f.calls[r.Method+" "+path]++
+	if path == "app" || strings.HasPrefix(path, "app/") {
+		f.assertJWT(r)
+	} else if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer secret-installation-") {
+		f.t.Error("API request missing installation credential")
+	}
 	if f.override != nil && f.override(w, r) {
 		return
 	}
 	if path == "app" {
-		f.json(w, map[string]any{"id": 42, "slug": "queue-app"})
+		f.json(w, f.object("app"))
 		return
 	}
 	if strings.HasPrefix(path, "app/installations/") {
-		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ey") {
-			f.t.Error("token endpoint did not use JWT")
+		parts := strings.Split(path, "/")
+		id, _ := strconv.ParseInt(parts[2], 10, 64)
+		if !f.installations[id] || len(parts) != 4 || parts[3] != "access_tokens" || r.Method != "POST" {
+			f.apiError(w, 404, "Not Found")
+			return
 		}
 		f.tokens++
-		f.json(w, map[string]any{"token": fmt.Sprintf("secret-installation-%d", f.tokens), "expires_at": f.clock.Add(time.Hour).Format(time.RFC3339)})
+		o := f.object("installation_token")
+		o["token"], o["expires_at"] = fmt.Sprintf("secret-installation-%d", f.tokens), f.clock.Add(time.Hour).Format(time.RFC3339)
+		w.WriteHeader(201)
+		f.json(w, o)
 		return
-	}
-	if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer secret-installation-") {
-		f.t.Error("API request missing installation credential")
 	}
 	path = strings.TrimPrefix(path, "repos/acme/project/")
 	parts := strings.Split(path, "/")
@@ -124,82 +255,161 @@ func (f *apiFixture) serve(w http.ResponseWriter, r *http.Request) {
 		number, _ = strconv.Atoi(parts[1])
 	}
 	switch {
+	case path == "pulls" && r.Method == "GET":
+		if r.URL.Query().Get("state") != "open" {
+			f.t.Error("PR reconciliation must request open PRs")
+		}
+		list := []map[string]any{}
+		numbers := []int{}
+		for n, pr := range f.prs {
+			if pr.GetState() == "open" && (r.URL.Query().Get("base") == "" || pr.GetBase().GetRef() == r.URL.Query().Get("base")) {
+				numbers = append(numbers, n)
+			}
+		}
+		slices.Sort(numbers)
+		for _, n := range numbers {
+			list = append(list, f.prJSON(f.prs[n]))
+		}
+		f.json(w, paginate(f, r, w, list))
 	case len(parts) == 2 && parts[0] == "pulls":
 		pr := f.prs[number]
 		if pr == nil {
-			http.NotFound(w, r)
+			f.apiError(w, 404, "Not Found")
 			return
 		}
 		if r.Method == "PATCH" {
-			var update gh.PullRequest
+			var update struct{ State string }
 			must(f.t, json.NewDecoder(r.Body).Decode(&update))
-			pr.State = update.State
+			pr.State = &update.State
+			pr.UpdatedAt = &gh.Timestamp{Time: f.clock}
 		}
-		f.json(w, pr)
+		f.json(w, f.prJSON(pr))
 	case len(parts) == 3 && parts[0] == "pulls" && parts[2] == "reviews":
-		f.json(w, paginate(f, r, w, f.reviews[number]))
-	case len(parts) == 3 && parts[0] == "collaborators":
+		list := []map[string]any{}
+		for _, review := range f.reviews[number] {
+			o := f.object("review")
+			o["id"], o["state"], o["commit_id"] = review.GetID(), review.GetState(), review.GetCommitID()
+			o["user"].(map[string]any)["login"] = review.GetUser().GetLogin()
+			list = append(list, o)
+		}
+		f.json(w, paginate(f, r, w, list))
+	case len(parts) == 3 && parts[0] == "collaborators" && parts[2] == "permission":
 		user := parts[1]
 		f.permissionCalls[user]++
 		permission := f.permissions[user]
 		if permission == "" {
-			http.NotFound(w, r)
+			f.apiError(w, 404, "Not Found")
 			return
 		}
-		f.json(w, map[string]string{"permission": permission})
+		o := f.object("permission")
+		o["permission"], o["role_name"] = permission, permission
+		o["user"].(map[string]any)["login"] = user
+		f.json(w, o)
 	case len(parts) == 3 && parts[0] == "commits" && parts[2] == "check-runs":
 		if r.URL.Query().Get("filter") != "all" {
 			f.t.Error("check list omitted filter=all")
 		}
-		f.json(w, map[string]any{"check_runs": paginate(f, r, w, f.runs[parts[1]])})
+		list := []map[string]any{}
+		for _, run := range f.runs[parts[1]] {
+			list = append(list, f.runJSON(run))
+		}
+		f.json(w, map[string]any{"total_count": len(list), "check_runs": paginate(f, r, w, list)})
+	case len(parts) == 3 && parts[0] == "commits" && parts[2] == "check-suites":
+		suites, explicit := f.suites[parts[1]]
+		if !explicit {
+			seen := map[int64]bool{}
+			for _, run := range f.runs[parts[1]] {
+				id := int64(99)
+				if run.CheckSuite != nil {
+					id = run.GetCheckSuite().GetID()
+				}
+				if !seen[id] {
+					suites = append(suites, &gh.CheckSuite{ID: &id, Status: new("completed")})
+					seen[id] = true
+				}
+			}
+		}
+		list := []map[string]any{}
+		for _, suite := range suites {
+			o := f.object("check_suite")
+			o["id"], o["status"], o["head_sha"] = suite.GetID(), suite.GetStatus(), parts[1]
+			list = append(list, o)
+		}
+		f.json(w, map[string]any{"total_count": len(list), "check_suites": paginate(f, r, w, list)})
 	case len(parts) == 3 && parts[0] == "commits" && parts[2] == "statuses":
-		f.json(w, paginate(f, r, w, f.statuses[parts[1]]))
+		list := []map[string]any{}
+		for _, status := range f.statuses[parts[1]] {
+			o := f.object("status")
+			o["id"], o["context"], o["state"] = status.GetID(), status.GetContext(), status.GetState()
+			if status.Creator != nil {
+				o["creator"].(map[string]any)["login"] = status.GetCreator().GetLogin()
+			}
+			list = append(list, o)
+		}
+		f.json(w, paginate(f, r, w, list))
 	case path == "check-runs" && r.Method == "POST":
-		var run gh.CheckRun
-		must(f.t, json.NewDecoder(r.Body).Decode(&run))
-		run.ID = new(f.id())
-		run.App = &gh.App{ID: new(int64(42))}
-		f.runs[run.GetHeadSHA()] = append(f.runs[run.GetHeadSHA()], &run)
-		f.json(w, run)
+		var input struct {
+			Name               string
+			HeadSHA            string `json:"head_sha"`
+			ExternalID         string `json:"external_id"`
+			Status, Conclusion *string
+			Output             *gh.CheckRunOutput
+		}
+		must(f.t, json.NewDecoder(r.Body).Decode(&input))
+		run := &gh.CheckRun{ID: new(f.id()), Name: &input.Name, HeadSHA: &input.HeadSHA, ExternalID: &input.ExternalID, Status: input.Status, Conclusion: input.Conclusion, Output: input.Output, App: &gh.App{ID: new(int64(42))}}
+		f.runs[run.GetHeadSHA()] = append(f.runs[run.GetHeadSHA()], run)
+		w.WriteHeader(201)
+		f.json(w, f.runJSON(run))
 	case len(parts) == 2 && parts[0] == "check-runs" && r.Method == "PATCH":
 		id, _ := strconv.ParseInt(parts[1], 10, 64)
 		for _, runs := range f.runs {
 			for _, run := range runs {
 				if run.GetID() == id {
-					var update gh.CheckRun
+					var update struct {
+						Status, Conclusion *string
+						Output             *gh.CheckRunOutput
+					}
 					must(f.t, json.NewDecoder(r.Body).Decode(&update))
 					run.Status, run.Conclusion, run.Output = update.Status, update.Conclusion, update.Output
-					f.json(w, run)
+					f.json(w, f.runJSON(run))
 					return
 				}
 			}
 		}
-		http.NotFound(w, r)
+		f.apiError(w, 404, "Not Found")
 	case len(parts) == 3 && parts[0] == "issues" && parts[2] == "comments":
 		if r.Method == "POST" {
-			var c gh.IssueComment
-			must(f.t, json.NewDecoder(r.Body).Decode(&c))
-			c.ID = new(f.id())
-			c.User = &gh.User{Login: new("queue-app[bot]"), Type: new("Bot")}
-			f.comments[number] = append(f.comments[number], &c)
-			f.json(w, c)
+			var input struct{ Body string }
+			must(f.t, json.NewDecoder(r.Body).Decode(&input))
+			c := &gh.IssueComment{ID: new(f.id()), Body: &input.Body, User: &gh.User{Login: new("queue-app[bot]"), Type: new("Bot")}, CreatedAt: &gh.Timestamp{Time: f.clock}, UpdatedAt: &gh.Timestamp{Time: f.clock}}
+			f.comments[number] = append(f.comments[number], c)
+			w.WriteHeader(201)
+			f.json(w, f.commentJSON(c))
 		} else {
-			f.json(w, paginate(f, r, w, f.comments[number]))
+			list := []map[string]any{}
+			since, _ := time.Parse(time.RFC3339, r.URL.Query().Get("since"))
+			for _, c := range f.comments[number] {
+				o := f.commentJSON(c)
+				updated, _ := time.Parse(time.RFC3339, o["updated_at"].(string))
+				if since.IsZero() || updated.After(since) {
+					list = append(list, o)
+				}
+			}
+			f.json(w, paginate(f, r, w, list))
 		}
 	case strings.HasPrefix(path, "git/refs/") && r.Method == "DELETE":
 		ref := strings.TrimPrefix(path, "git/refs/heads/")
 		if !f.refs[ref] {
-			w.WriteHeader(422)
-			f.json(w, map[string]string{"message": "Reference does not exist"})
+			f.apiError(w, 422, "Reference does not exist")
 			return
 		}
 		delete(f.refs, ref)
 		w.WriteHeader(204)
 	case path == "contents/.openmerge.yml":
-		f.json(w, map[string]string{"type": "file", "encoding": "base64", "content": base64.StdEncoding.EncodeToString([]byte("queue: main\n"))})
+		f.json(w, f.object("content"))
 	default:
 		f.t.Errorf("unexpected GitHub request %s %s", r.Method, r.URL.String())
-		http.NotFound(w, r)
+		f.apiError(w, 404, "Not Found")
 	}
 }
 
@@ -218,7 +428,7 @@ func paginate[T any](f *apiFixture, r *http.Request, w http.ResponseWriter, list
 		next.RawQuery = q.Encode()
 		w.Header().Set("Link", fmt.Sprintf("<%s%s>; rel=\"next\"", f.server.URL, next.String()))
 	}
-	return slices.Clone(list[start:end])
+	return append([]T{}, list[start:end]...)
 }
 func (f *apiFixture) env() forgetest.Env {
 	e := forgetest.Env{Driver: f.driver, Repo: testRepo, Base: "main", BaseSHA: strings.Repeat("a", 40)}
@@ -230,7 +440,7 @@ func (f *apiFixture) env() forgetest.Env {
 		if n == 2 {
 			user = "reader"
 		}
-		e.Observations = append(e.Observations, forge.PullRequest{Number: n, HeadSHA: sha, HeadInBaseRepo: n == 2, Approvals: []forge.Approval{{User: user, SHA: sha, CanWrite: n == 1}}})
+		e.Observations = append(e.Observations, forge.PullRequest{Number: n, HeadSHA: sha, Base: "main", Author: "contributor", HeadInBaseRepo: n == 2, Approvals: []forge.Approval{{User: user, SHA: sha, CanWrite: n == 1}}})
 	}
 	e.NewBase = func(*testing.T) string {
 		f.mu.Lock()
@@ -247,8 +457,17 @@ func (f *apiFixture) env() forgetest.Env {
 		f.prs[pr].Head.SHA = &sha
 		return sha
 	}
+	e.SetCanWrite = func(user string, write bool) {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if write {
+			f.permissions[user] = "write"
+		} else {
+			f.permissions[user] = "read"
+		}
+	}
 	e.AddForeignComment = func(pr int, body string) {
-		f.comments[pr] = append(f.comments[pr], &gh.IssueComment{Body: &body, User: &gh.User{Login: new("attacker"), Type: new("User")}})
+		f.comments[pr] = append(f.comments[pr], &gh.IssueComment{ID: new(f.id()), Body: &body, User: &gh.User{Login: new("attacker"), Type: new("User")}, CreatedAt: &gh.Timestamp{Time: f.clock}, UpdatedAt: &gh.Timestamp{Time: f.clock}})
 	}
 	e.AddCheckRun = func(sha, name string, state forge.CheckState) {
 		status, conclusion := "completed", string(state)

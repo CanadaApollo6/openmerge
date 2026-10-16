@@ -68,6 +68,7 @@ type transport struct {
 	until     time.Time
 	secondary bool
 	strikes   uint
+	cache     *responseCache
 }
 
 func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -87,7 +88,7 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	copyReq := req.Clone(req.Context())
 	copyReq.Header.Set("Authorization", "Bearer "+token)
-	res, err := t.base.RoundTrip(copyReq)
+	res, err := t.conditionalGET(copyReq, token)
 	if err != nil {
 		return nil, safeError(err)
 	}

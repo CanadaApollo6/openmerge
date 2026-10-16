@@ -2,7 +2,10 @@ package github
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
+	"fmt"
 	"net/http"
 	"reflect"
 	"strings"
@@ -36,7 +39,7 @@ func TestApprovalRules(t *testing.T) {
 				if len(got.Approvals) != 0 {
 					t.Fatalf("revoked approval counted: %+v", got.Approvals)
 				}
-			} else if !reflect.DeepEqual(got.Approvals, []forge.Approval{{User: "writer", SHA: tc.want, CanWrite: true}}) {
+			} else if !reflect.DeepEqual(got.Approvals, []forge.Approval{{User: "writer", SHA: tc.want, CanWrite: false}}) {
 				t.Fatalf("approval=%+v", got.Approvals)
 			}
 		})
@@ -68,14 +71,8 @@ func TestPermissions(t *testing.T) {
 	f.permissions["writer"] = "read"
 	got, err = f.driver.CanWrite(ctx, testRepo, "writer")
 	must(t, err)
-	if !got || f.permissionCalls["writer"] != count {
-		t.Fatal("permission TTL not cached")
-	}
-	f.clock = f.clock.Add(time.Minute)
-	got, err = f.driver.CanWrite(ctx, testRepo, "writer")
-	must(t, err)
-	if got {
-		t.Fatal("permission revocation not refreshed")
+	if got || f.permissionCalls["writer"] != count+1 {
+		t.Fatal("permission revocation was hidden by a cached grant")
 	}
 	f.override = func(w http.ResponseWriter, r *http.Request) bool {
 		if strings.Contains(r.URL.Path, "collaborators/") {
@@ -157,7 +154,8 @@ func TestStatusMappingsAndConcurrentWrites(t *testing.T) {
 		t.Fatal("concurrent writes duplicated effects")
 	}
 	// New process state: rediscover persisted identity rather than trusting a cache.
-	app, err := New(Config{AppID: 42, PrivateKey: testPEM(t), APIBaseURL: f.server.URL + "/api/v3/"})
+	key := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(f.app.key)})
+	app, err := New(Config{AppID: 42, PrivateKey: key, APIBaseURL: f.server.URL + "/api/v3/"})
 	must(t, err)
 	app.now = func() time.Time { return epoch }
 	driver, err := app.Installation(ctx, 7)
@@ -253,9 +251,146 @@ func TestCheckNamesAcrossAPIsFailClosed(t *testing.T) {
 	f := newAPI(t)
 	f.runs["sha"] = []*gh.CheckRun{{ID: new(int64(9999)), Name: new("CI"), Status: new("completed"), Conclusion: new("success")}}
 	f.statuses["sha"] = []*gh.RepoStatus{{ID: new(int64(1)), Context: new("CI"), State: new("pending")}}
-	_, err := f.driver.CheckRuns(context.Background(), testRepo, "sha")
-	var collision *CheckNameCollisionError
-	if !errors.As(err, &collision) || collision.Name != "CI" {
-		t.Fatalf("cross-API native IDs were compared unsafely: %v", err)
+	runs, err := f.driver.CheckRuns(context.Background(), testRepo, "sha")
+	must(t, err)
+	if len(runs) != 2 || runs[0].Source != "app:99" || runs[1].Source != "status:ci-user" {
+		t.Fatalf("sources lost: %+v", runs)
+	}
+}
+
+func TestPermissionReadsOnlyForRelevantApprovals(t *testing.T) {
+	for _, mode := range []string{"current-fork", "stale-fork", "same-repo", "closed"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newAPI(t)
+			switch mode {
+			case "stale-fork":
+				f.reviews[1][0].CommitID = new("old")
+			case "same-repo":
+				f.prs[1].Head.Repo = f.prs[1].Base.Repo
+			case "closed":
+				f.prs[1].State = new("closed")
+			}
+			for range 2 {
+				_, err := f.driver.PullRequest(context.Background(), testRepo, 1)
+				must(t, err)
+			}
+			want := 0
+			if mode == "current-fork" {
+				want = 2
+			}
+			if f.permissionCalls["writer"] != want {
+				t.Fatalf("irrelevant or cached permission read: %d want %d", f.permissionCalls["writer"], want)
+			}
+			if mode == "closed" && f.calls["GET repos/acme/project/pulls/1/reviews"] != 0 {
+				t.Fatal("closed PR loaded reviews")
+			}
+		})
+	}
+}
+
+func TestSuiteStateRevalidatesStaleSuccess(t *testing.T) {
+	f := newAPI(t)
+	f.runs["tested"] = []*gh.CheckRun{{ID: new(int64(100)), Name: new("CI"), Status: new("completed"), Conclusion: new("success"), CheckSuite: &gh.CheckSuite{ID: new(int64(9))}}}
+	for _, state := range []string{"completed", "completed", "queued", "in_progress", "completed", "missing"} {
+		f.suites["tested"] = []*gh.CheckSuite{{ID: new(int64(1)), Status: new("completed")}, {ID: new(int64(2)), Status: new("completed")}, {ID: new(int64(9)), Status: &state}}
+		if state == "missing" {
+			f.suites["tested"] = nil
+		}
+		events, err := reviewRefresh(f)
+		must(t, err)
+		if reviewCompletedSuccess(events) != (state == "completed") {
+			t.Fatalf("suite %s emitted %+v", state, events)
+		}
+	}
+	if f.notModified == 0 {
+		t.Fatal("test did not exercise conditional replay")
+	}
+}
+
+func TestServerReadsPaginationMetadataAndCommentCursor(t *testing.T) {
+	f := newAPI(t)
+	for _, n := range []int{3, 4, 5} {
+		f.prs[n] = &gh.PullRequest{Number: &n, State: new("open"), Draft: new(true), User: &gh.User{Login: new("author")}, Head: &gh.PullRequestBranch{SHA: new(strings.Repeat("b", 40))}, Base: &gh.PullRequestBranch{Ref: new("release/v1")}, UpdatedAt: &gh.Timestamp{Time: epoch.Add(time.Minute)}}
+	}
+	for range 2 {
+		prs, err := f.driver.ListOpenPullRequests(context.Background(), testRepo, "release/v1")
+		must(t, err)
+		if len(prs) != 3 || prs[2].Number != 5 || prs[2].UpdatedAt != epoch.Add(time.Minute) {
+			t.Fatalf("pagination or base filter lost PRs: %+v", prs)
+		}
+	}
+	pr, err := f.driver.PullRequest(context.Background(), testRepo, 3)
+	must(t, err)
+	if pr.Base != "release/v1" || !pr.Draft || pr.Author != "author" {
+		t.Fatalf("metadata lost: %+v", pr)
+	}
+	for i := range 5 {
+		f.comments[1] = append(f.comments[1], &gh.IssueComment{ID: new(int64(i + 1)), Body: new("@openmerge enqueue"), User: &gh.User{Login: new("writer")}, CreatedAt: &gh.Timestamp{Time: epoch.Add(time.Duration(i) * time.Minute)}, UpdatedAt: &gh.Timestamp{Time: epoch.Add(10 * time.Minute)}})
+	}
+	// GitHub's updated_at cursor returns an edited old comment too; it must not
+	// become a new command just because its body was edited after the cursor.
+	comments, err := f.driver.ListComments(context.Background(), testRepo, 1, epoch.Add(time.Minute))
+	must(t, err)
+	if len(comments) != 3 || comments[0].ID != 3 || comments[2].ID != 5 {
+		t.Fatalf("created-at filter or pagination failed: %+v", comments)
+	}
+	for _, c := range comments {
+		if c.Author != "writer" || c.Body != "@openmerge enqueue" || c.CreatedAt.IsZero() {
+			t.Fatalf("incomplete comment: %+v", c)
+		}
+	}
+}
+
+func TestPollCycleRequestBudget(t *testing.T) {
+	for _, withComments := range []bool{false, true} {
+		t.Run(fmt.Sprint(withComments), func(t *testing.T) {
+			f := newAPI(t)
+			f.runs["tested"] = []*gh.CheckRun{{ID: new(int64(100)), Name: new("CI"), Status: new("completed"), Conclusion: new("success")}}
+			poll := func() {
+				t.Helper()
+				ctx := context.Background()
+				_, err := f.driver.PullRequest(ctx, testRepo, 1)
+				must(t, err)
+				_, err = f.driver.CheckRuns(ctx, testRepo, "tested")
+				must(t, err)
+				if withComments {
+					_, err = f.driver.ListComments(ctx, testRepo, 1, time.Time{})
+					must(t, err)
+				}
+			}
+			requests := func() int {
+				n := 0
+				for path, count := range f.calls {
+					if strings.HasPrefix(path, "GET repos/") {
+						n += count
+					}
+				}
+				return n
+			}
+			want := 6
+			if withComments {
+				want++
+			}
+			poll()
+			if requests() != want || f.notModified != 0 {
+				t.Fatalf("cold poll: requests=%d 304s=%d", requests(), f.notModified)
+			}
+			poll()
+			if requests() != 2*want || f.notModified != want {
+				t.Fatalf("unchanged poll skipped revalidation or used primary quota: requests=%d 304s=%d", requests(), f.notModified)
+			}
+			f.prs[1].Head.SHA = new("new-head")
+			f.reviews[1][0].CommitID = new("new-head")
+			f.permissions["writer"] = "read"
+			f.runs["tested"][0].Conclusion = new("failure")
+			f.suites["tested"] = []*gh.CheckSuite{{ID: new(int64(99)), Status: new("queued")}}
+			f.statuses["tested"] = []*gh.RepoStatus{{ID: new(int64(101)), Context: new("legacy"), State: new("pending")}}
+			f.comments[1] = []*gh.IssueComment{{ID: new(int64(102)), Body: new("@openmerge enqueue"), User: &gh.User{Login: new("writer")}}}
+			poll()
+			if requests() != 3*want || f.notModified != want {
+				t.Fatalf("changed poll: requests=%d 304s=%d", requests(), f.notModified)
+			}
+			t.Logf("REST requests per cycle=%d; unchanged: %d validated 304s, 0 primary-limit charges; all pages changed: %d primary-limit charges", want, want, want)
+		})
 	}
 }

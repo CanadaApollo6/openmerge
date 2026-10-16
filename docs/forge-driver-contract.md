@@ -10,11 +10,23 @@ This is the reference for anyone writing or reviewing a forge driver. [ADR 0004]
 
 ## Pull requests and approvals
 
-`PullRequest` reports the PR number, current head SHA, whether the head branch lives in the base repository, whether the PR is closed, and its approvals.
+`PullRequest` reports the PR number, current head SHA, target branch (`Base`), draft flag, author login, whether the head branch lives in the base repository, whether the PR is closed, and its approvals.
 
-Each approval reports the approver, whether the approver can write to the base repository, and **the exact head SHA that was approved**. A stale approval, given before a later push, keeps the old SHA. The planner's trust gate depends on this ([ADR 0004](adr/0004-forge-driver-interface.md), "Test refs never run untrusted code").
+Each approval reports the approver, a `CanWrite` trust decision, and **the exact head SHA that was approved**. For a current-head fork approval, the driver freshly reads write permission on every observation. Conditional HTTP revalidation is allowed; a locally cached grant without contacting the forge is not. Stale approvals and approvals on same-repository PRs have `CanWrite: false`, without permission reads. Closed PRs may omit approvals and must not trigger review or permission reads. A stale approval, given before a later push, keeps the old SHA. The planner's trust gate depends on this ([ADR 0004](adr/0004-forge-driver-interface.md), "Test refs never run untrusted code").
 
 Some forges, such as GitLab, do not record which commit an approval was for. A driver for such a forge may report approvals only when the forge is configured to reset approvals on every push, and must verify that setting. Otherwise it reports no approvals, which fails closed: fork PRs cannot enter the queue. The driver's documentation states which behavior it uses.
+
+`ListOpenPullRequests(repo, base)` returns every open PR targeting `base`, with
+number, head SHA, and updated-at timestamp. Empty `base` lists all open PRs.
+It is a paginated reconciliation read, without per-PR review/permission lookups.
+
+`ListComments(repo, pr, since)` returns comment ID, author login, body, and
+created-at time for human and bot issue-thread comments created strictly after
+`since`; zero means all comments. Drivers follow every page. The server dedupes
+commands by comment ID and overlaps time cursors to handle timestamp precision
+and comments created during pagination. Edits of old comments do not create new
+commands. `CanWrite(repo, user)` freshly authorizes commands by current repository
+permission; webhook author association is never sufficient.
 
 ## Statuses
 
@@ -32,11 +44,13 @@ Commit-status APIs that lack cancelled and action-required keep the normalized s
 
 ## Check runs
 
-`CheckRun` has a `Name`, a normalized `State` (pending, success, failure, cancelled, skipped, neutral), and an `ID` that increases with each run of the same name. Drivers translate native run identifiers into that ordering.
+`CheckRun` has a `Name`, a stable nonempty `Source`, a normalized `State` (pending, success, failure, cancelled, skipped, neutral), and an `ID` that increases with each run of the same name **from the same source**. Drivers translate native run identifiers into that ordering. GitHub uses `app:<numeric-app-id>` for check runs and `status:<lowercase-creator-login>` for commit statuses. The fake preserves explicit sources and defaults unspecified test sources to `fake:ci`. IDs from different sources are never comparable.
 
 The executor aggregates as follows:
 
-- The newest run of each name wins, regardless of the order the forge returns them. A pending rerun supersedes an older result.
+- A required name reported by more than one source is ambiguous and stays pending, even if every source reports success. A missing source also stays pending. The executor emits `ChecksRefreshed`, emits no terminal `ChecksCompleted`, and returns `executor.CheckSourceAmbiguityError` with the name and sorted sources for the server to surface. Unrequired names do not block the batch.
+- Within one source, the newest run of each name wins, regardless of response order. A pending rerun supersedes an older result.
+- A GitHub check run whose suite is not completed is pending even if the run still reports an old success. Missing suite observations and unknown producer identities also fail safe as pending. Drivers must refresh suite state as well as run state. GitHub `check_suite` requested/rerequested/completed and `check_run` rerequested/completed webhooks normalize to `ChecksChanged{SHA}` and trigger these reads.
 - Cancelled counts as failure until a newer run supersedes it.
 - Skipped and neutral count as failure unless the `AllowSkippedNeutral` option is set.
 - A required check with no run, or an unknown state, is pending.

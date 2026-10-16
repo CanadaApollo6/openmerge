@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
@@ -30,8 +31,15 @@ func (f *Forge) OpenPRWithFiles(repo forge.RepoRef, number int, baseSHA string, 
 		files[path] = value
 	}
 	head := r.commit([]string{baseSHA}, append(slices.Clone(base.PRs), number), fmt.Sprintf("PR %d", number), files)
-	pr := forge.PullRequest{Number: number, HeadSHA: head, HeadInBaseRepo: headInBaseRepo}
+	baseRef := ""
+	for ref, sha := range r.refs {
+		if sha == baseSHA && (baseRef == "" || ref < baseRef) {
+			baseRef = ref
+		}
+	}
+	pr := forge.PullRequest{Number: number, HeadSHA: head, Base: baseRef, Author: "contributor", HeadInBaseRepo: headInBaseRepo}
 	r.prs[number] = pr
+	r.updated[number] = time.Now().UTC()
 	r.prBases[number] = baseSHA
 	r.prCommits[number] = []string{head}
 	return pr, nil
@@ -51,6 +59,7 @@ func (f *Forge) PushPR(repo forge.RepoRef, number int, message string) (forge.Pu
 	pr.HeadSHA = r.commit([]string{pr.HeadSHA}, r.commits[pr.HeadSHA].PRs, message, files)
 	r.prCommits[number] = append(r.prCommits[number], pr.HeadSHA)
 	r.prs[number] = pr
+	r.updated[number] = time.Now().UTC()
 	pr.Approvals = slices.Clone(pr.Approvals)
 	return pr, nil
 }
@@ -66,6 +75,7 @@ func (f *Forge) ClosePR(repo forge.RepoRef, number int) error {
 	}
 	pr.Closed = true
 	r.prs[number] = pr
+	r.updated[number] = time.Now().UTC()
 	return nil
 }
 
@@ -80,7 +90,31 @@ func (f *Forge) Approve(repo forge.RepoRef, number int, approval forge.Approval)
 	}
 	pr.Approvals = slices.DeleteFunc(pr.Approvals, func(a forge.Approval) bool { return a.User == approval.User })
 	pr.Approvals = append(pr.Approvals, approval)
+	r.permissions[approval.User] = approval.CanWrite
 	r.prs[number] = pr
+	r.updated[number] = time.Now().UTC()
+	return nil
+}
+
+// SetCanWrite changes current command and review authorization.
+func (f *Forge) SetCanWrite(repo forge.RepoRef, user string, write bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.repo(repo).permissions[user] = write
+}
+
+// SetPRMetadata changes the base, draft flag, and author of an existing PR.
+func (f *Forge) SetPRMetadata(repo forge.RepoRef, number int, base string, draft bool, author string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r := f.repo(repo)
+	pr, ok := r.prs[number]
+	if !ok {
+		return fmt.Errorf("unknown PR %d", number)
+	}
+	pr.Base, pr.Draft, pr.Author = base, draft, author
+	r.prs[number] = pr
+	r.updated[number] = time.Now().UTC()
 	return nil
 }
 
@@ -88,7 +122,13 @@ func (f *Forge) Approve(repo forge.RepoRef, number int, approval forge.Approval)
 func (f *Forge) SetCheckRuns(repo forge.RepoRef, sha string, checks []forge.CheckRun) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.repo(repo).checks[sha] = slices.Clone(checks)
+	checks = slices.Clone(checks)
+	for i := range checks {
+		if checks[i].Source == "" {
+			checks[i].Source = "fake:ci"
+		}
+	}
+	f.repo(repo).checks[sha] = checks
 }
 
 // SetRef simulates external branch updates, including rewrites and rollbacks.
@@ -222,7 +262,7 @@ func (f *Forge) AddComment(repo forge.RepoRef, pr int, author, body string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	r := f.repo(repo)
-	r.comments[pr] = append(r.comments[pr], Comment{Author: author, Body: body})
+	r.addComment(pr, Comment{Author: author, Body: body})
 }
 
 // CommentRecords returns all comments, including comments by other identities.

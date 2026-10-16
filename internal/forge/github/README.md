@@ -24,15 +24,31 @@ never appear in driver errors or logs.
 - Reviews use GitHub's `commit_id`, including an old SHA after a push. Each
   reviewer's newest decisive review ID wins. `CHANGES_REQUESTED` and `DISMISSED`
   revoke previous approvals; `COMMENTED` and `PENDING` do not. Writer permission
-  comes from the collaborator permission API, cached for one minute. Missing
-  permissions deny access; other API failures propagate without granting trust.
+  comes from a freshly revalidated collaborator permission API request on every
+  current-head fork approval. Stale reviews and same-repository PRs do not cause
+  permission reads; their approval `CanWrite` is false. Closed PRs skip reviews
+  and permissions entirely. Missing permissions deny access; other API failures
+  propagate without granting trust. There is no boolean permission cache or
+  permission lock held across network calls.
 - Check runs use `filter=all`, and all review, check, status, and comment lists
-  follow pagination. Native check run IDs and native status IDs monotonically
-  order reruns within their respective histories. Unknown outcomes are pending.
+  follow pagination. Native IDs order reruns within one producer. Check runs carry `Source:
+  "app:<id>"`; statuses carry `Source: "status:<lowercase-creator-login>"`.
+  Check suites for the SHA are read on every check refresh. A queued, running,
+  missing, or unknown suite makes its run pending regardless of stale success.
+  Missing producer identities and unknown outcomes are pending.
   Only the `OpenMerge` check owned by this App is excluded from CI observations.
-- Check runs and legacy statuses have independent ID sequences. Reusing a name
-  across both APIs cannot meet the contract's ordering rule with native IDs.
-  `CheckNameCollisionError` fails closed in that case; use distinct check names.
+- Multiple Apps, multiple status creators, or a check/status pair using a required
+  name are ambiguous. The executor keeps that check pending and returns
+  `executor.CheckSourceAmbiguityError{Name, Sources}` after recording the refresh.
+  No terminal check result is emitted. The server surfaces that diagnostic;
+  configure distinct names for independent producers.
+- `ListOpenPullRequests` paginates open PR summaries, filtered by target branch
+  (or all branches for an empty filter), without loading approvals. `PullRequest`
+  includes `Base`, `Draft`, and `Author`.
+- `ListComments` paginates issue-thread comments, including humans and bots.
+  GitHub's `since` filters updated-at; the driver additionally filters created-at
+  so an edit of an old command cannot become a new command. The server overlaps
+  its timestamp cursor and dedupes by ID. `CanWrite` freshly authorizes commands.
 - One App-owned `OpenMerge` check is discovered by head SHA and external ID
   `openmerge/pr/<number>`. queued/testing/landing map to `in_progress`; merged,
   dequeued, blocked, and paused map to completed checks with conclusions
@@ -71,11 +87,17 @@ actions and must not overlap retries with unresolved HTTP writes.
 `VerifyAndParse(request, secret)` requires POST, a nonempty secret and delivery
 ID, and an HMAC-SHA256 signature verified with `hmac.Equal`. It reads at most
 25 MiB plus one byte, rejecting oversized bodies before JSON parsing.
-`Event.Payload` is one of `PRChanged`, `ReviewChanged`, `ChecksCompleted`,
+`Event.Payload` is one of `PRChanged`, `ReviewChanged`, `ChecksChanged`,
 `BranchPushed`, `PRCommentCreated`, `InstallationChanged`, or `Ignored`.
 Unknown event names and unsupported actions are acknowledged as `Ignored`.
-The JSON files under `testdata/` are synthetic, real-shaped webhook fixtures;
-no credentials or live user data are captured.
+`check_suite` requested/rerequested/completed and `check_run` rerequested/completed
+all produce `ChecksChanged{SHA}`; reruns must trigger a complete check/suite refresh.
+The JSON files under `testdata/` are synthetic webhook fixtures and independent
+REST fixtures (`testdata/rest/`). The HTTP fake serves those schemas rather than
+serializing go-github response structs. It supplies 201 creates, JSON errors,
+`total_count` for check collections, empty arrays, pagination, ETags, and rate
+headers; it verifies App JWTs on every App endpoint and rejects unknown
+installation IDs. No credentials or live user data are captured.
 
 This package does not implement HTTP serving, persistence, worker loops, or
 commands. The server PR still owns:
@@ -88,13 +110,81 @@ commands. The server PR still owns:
 - Constructing gitops repositories, cache ownership, and executor wiring.
 - Branch/ruleset protection and App permission validation, including protected
   base bypass and exclusive, nondeletable `openmerge/fence/*` ownership. APIs for
-  ruleset inspection, PR labels/files/draft metadata, and installation repository
+  ruleset inspection, PR labels/files, and installation repository
   enumeration are not included; add narrow reads when their consumers arrive.
 
 Required App repository permissions are contents read/write (Git fetch/push and
 config), pull requests read/write (reviews, comments, closure), checks read/write,
 commit statuses read, and metadata read (collaborator permissions). Startup
 validation of installed permissions and organization rules remains server work.
+
+## App setup and troubleshooting
+
+Subscribe to **Pull requests** (`pull_request`), **Pull request reviews**
+(`pull_request_review`), **Check runs** (`check_run`), **Check suites**
+(`check_suite`), **Commit statuses** (`status`), **Pushes** (`push`), and
+**Issue comments** (`issue_comment`). The parser also accepts `installation` and
+`installation_repositories`, which GitHub sends automatically to Apps. These nine
+event names are the supported set in `webhook.go`. Use the same webhook secret
+in App settings and the server. The server must durably dedupe delivery IDs.
+
+Find the installation ID in your personal/organization **Settings → Applications
+→ Installed GitHub Apps → Configure** URL: its last component is the numeric
+installation ID (`.../settings/installations/12345`). You can also obtain `id`
+from the App-authenticated [repository installation endpoint](https://docs.github.com/en/rest/apps/apps#get-a-repository-installation)
+or the signed installation webhook's `installation.id`. The App ID and
+installation ID are different values.
+
+For HTTP 401, first check that the configured App ID is the numeric App ID and
+the RSA private key belongs to that App. Check that the installation ID belongs
+to the intended account and still has access to the repository. Synchronize the
+host clock with NTP: JWTs are backdated 60 seconds, expire after nine minutes,
+and fail with larger skew. After correcting the clock or credentials, recreate
+the App to discard old installation tokens. See GitHub's
+[JWT requirements](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app).
+HTTP 403 can mean missing installed permissions or a rate limit; inspect the
+normalized `APIError`/`RateLimitError` and confirm the installation accepted any
+new permissions. The driver deliberately omits raw response bodies from errors.
+
+## Polling cost and conditional requests
+
+Keep one App/installation driver alive across polls. Every GET still contacts
+GitHub, supplying `If-None-Match` when an ETag is cached. A 304 replays the cached
+body and pagination headers as a 200 **inside the HTTP transport**, before
+go-github can treat 304 as an error. GitHub's
+[conditional request guidance](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api#use-conditional-requests)
+states that correctly authenticated 304s do not count against the primary rate
+limit. They still consume network requests and can encounter secondary limits.
+Prefer webhooks with periodic reconciliation, and honor `RateLimitError.RetryAt`.
+
+The concurrent LRU is bounded to 1,024 entries and 16 MiB of stored URL, hashed
+identity/header, response-header, and body data per client transport. Keys include
+the complete URL/query, a SHA-256 token identity, and request headers. Token
+rotation and representation changes cannot reuse another identity's body.
+Eviction, restart, token refresh, missing ETags, and uncacheable/oversized responses
+cause normal GETs. Errors never replay a cached grant or CI result; writes are
+never cached or retried. Permission entries are evicted by the same LRU.
+
+For a PR with one current-head fork approver and at most one page per endpoint:
+
+- Full PR refresh: **3 GETs** (PR, reviews, permission). Same-repository PRs use
+  **2** (PR and reviews); a closed PR uses **1**.
+- Active tested-SHA check refresh: **3 GETs** (check runs, suites, statuses),
+  shareable by all PRs in the same batch.
+- Polling-only command discovery: **1 GET** for a page of comments. Each command
+  authorization adds a fresh `CanWrite` GET.
+
+Thus one open fork PR plus one active CI SHA uses **6 GETs/cycle**, or **7** with
+comment discovery. A warm unchanged cycle still makes 6/7 requests, typically
+all validated 304s and **zero primary-limit charges**. If every response changes,
+it makes 6/7 normal 200s and consumes 6/7 primary-limit requests; partial changes
+charge only the pages returning 200. These are estimates, verified by
+`TestPollCycleRequestBudget`, conditional on endpoint ETag support. Add one per
+extra page, one per additional relevant approver, and repository-level
+`ListOpenPullRequests` pages shared across PRs. Initial App lookup and token
+exchange are separate costs; tokens renew roughly every 55 minutes. Keep a stable comment
+cursor until progress, then overlap it and dedupe IDs; changing the query URL
+misses the prior ETag. The driver does not implement the server's polling loop.
 
 ## Dependency rationale (ADR 0001 / PR body)
 

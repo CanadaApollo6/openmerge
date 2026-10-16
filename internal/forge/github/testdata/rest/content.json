@@ -1,0 +1,10 @@
+{
+  "type": "file",
+  "encoding": "base64",
+  "size": 12,
+  "name": ".openmerge.yml",
+  "path": ".openmerge.yml",
+  "content": "cXVldWU6IG1haW4K",
+  "sha": "cccccccccccccccccccccccccccccccccccccccc",
+  "url": "https://api.github.test/repos/acme/project/contents/.openmerge.yml"
+}

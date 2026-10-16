@@ -1,0 +1,16 @@
+{
+  "id": 1,
+  "node_id": "PRR_1",
+  "user": {
+    "login": "contributor",
+    "id": 12,
+    "node_id": "MDQ6VXNlcjEy",
+    "type": "User",
+    "site_admin": false
+  },
+  "body": "Looks good",
+  "state": "APPROVED",
+  "commit_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "submitted_at": "2026-10-16T00:00:00Z",
+  "html_url": "https://github.test/acme/project/pull/1#pullrequestreview-1"
+}

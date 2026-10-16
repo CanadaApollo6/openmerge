@@ -4,6 +4,7 @@ package forge
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // RepoRef identifies a repository by its opaque forge-relative path, including
@@ -15,9 +16,27 @@ type RepoRef struct{ Path string }
 type PullRequest struct {
 	Number         int
 	HeadSHA        string
+	Base           string
+	Draft          bool
+	Author         string
 	HeadInBaseRepo bool
 	Approvals      []Approval
 	Closed         bool
+}
+
+// PullRequestSummary is the lightweight reconciliation view of an open PR.
+type PullRequestSummary struct {
+	Number    int
+	HeadSHA   string
+	UpdatedAt time.Time
+}
+
+// Comment is an issue-thread comment available for command discovery.
+type Comment struct {
+	ID        int64
+	Author    string
+	Body      string
+	CreatedAt time.Time
 }
 
 // Approval pins a reviewer's approval and write access to the reviewed SHA.
@@ -45,11 +64,13 @@ const (
 )
 
 // CheckRun is a named check on a particular commit. ID increases monotonically
-// for each new run of a name; updates to that run retain its ID.
+// for each new run of a name from one Source; updates retain their ID.
+// Sources identify independent producers whose IDs cannot be compared.
 type CheckRun struct {
-	ID    uint64
-	Name  string
-	State CheckState
+	ID     uint64
+	Name   string
+	Source string
+	State  CheckState
 }
 
 // StatusState is the normalized queue lifecycle, independent of forge terminology.
@@ -82,6 +103,13 @@ type Driver interface {
 	// ReadFile reads a file at an explicit branch or commit; missing is an error.
 	ReadFile(ctx context.Context, repo RepoRef, ref, path string) ([]byte, error)
 	PullRequest(ctx context.Context, repo RepoRef, number int) (PullRequest, error)
+	// ListOpenPullRequests filters by target branch; an empty base lists all.
+	ListOpenPullRequests(ctx context.Context, repo RepoRef, base string) ([]PullRequestSummary, error)
+	// ListComments returns comments created after since; zero means all comments.
+	ListComments(ctx context.Context, repo RepoRef, pr int, since time.Time) ([]Comment, error)
+	// CanWrite freshly authorizes a user. Conditional revalidation is allowed;
+	// cached grants without a round trip to the forge are not.
+	CanWrite(ctx context.Context, repo RepoRef, user string) (bool, error)
 	CheckRuns(ctx context.Context, repo RepoRef, sha string) ([]CheckRun, error)
 	// DeleteRef succeeds even when ref is already missing.
 	DeleteRef(ctx context.Context, repo RepoRef, ref string) error
