@@ -6,7 +6,7 @@
 
 Agents now open pull requests faster than CI and humans can land them. The merge path — queuing, batching, speculative testing, flaky-test handling, and the rules around them — has become the bottleneck, and the best tools for it are closed, paywalled, or tied to a single forge. OpenMerge brings the ideas that Mergify popularized to everyone, under the Apache 2.0 license.
 
-> **Status: pre-alpha.** Phase 1 is in progress: the planner, Postgres store, GitHub App driver, polling server, read-only API/CLI, and Compose quickstart are available. All core conditions have runtime observations, with classic protection and installed App grant checks alongside ruleset validation. The version-1 JSON Schema and fast-forward mode are available; only the real GitHub exit test remains. See the [roadmap](ROADMAP.md).
+> **Status: pre-alpha.** Phase 1 is complete, and OpenMerge lands its own PRs: the planner, Postgres store, GitHub App driver, polling server, read-only API/CLI, and Compose quickstart are available. All core conditions have runtime observations, with classic protection and installed App grant checks alongside ruleset validation. The version-1 JSON Schema and fast-forward mode are available. Phase 2 (throughput) and 2b (post-merge verification) are next. See the [roadmap](ROADMAP.md).
 
 ## What it will do
 
@@ -304,9 +304,8 @@ leave every `files` predicate unknown, including counts and exclusions.
 Uncomputed mergeability is unknown and retried on polls. See the
 [condition reference](internal/config/README.md#conditions).
 
-Phase 1 code is implemented, including the [version-1 JSON Schema](schema/openmerge.v1.json)
-and fast-forward mode. The remaining Phase 1 exit work is the real
-GitHub test-organization test. The Mergify importer is
+Phase 1 is complete, including the [version-1 JSON Schema](schema/openmerge.v1.json)
+and fast-forward mode. The Mergify importer is
 planned for Phase 5; the native grammar already accepts the core attribute names.
 Operators must grant the App protected-base bypass and exclusive, nondeletable `openmerge/fence/*`
 ownership as described in the [forge contract](docs/forge-driver-contract.md#the-fence).
