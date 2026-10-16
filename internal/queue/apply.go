@@ -116,6 +116,7 @@ func Apply(s State, e Event) State {
 		}
 	case ChecksReopened:
 		if s.Active != nil && s.Active.Phase == Testing && s.Active.TestedSHA == e.TestedSHA {
+			s.Active.checksGeneration++
 			s.Active.checksPassed = false
 			s.Active.needsRefresh = true
 		} else if s.Active != nil {

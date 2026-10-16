@@ -107,6 +107,11 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 			if err := emit(result); err != nil {
 				return err
 			}
+			if !terminal {
+				if err := emit(queue.ChecksRefreshed{BatchID: a.BatchID, TestedSHA: a.TestedSHA, At: at}); err != nil {
+					return err
+				}
+			}
 			if ambiguity != nil {
 				return ambiguity
 			}

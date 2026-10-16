@@ -28,13 +28,19 @@
 // event-log order, including retained pre-build results; timestamps never suppress
 // them. Every reopen revokes success and invalidates timeout evidence without
 // extending the original deadline. A stale pending costs another read; a delayed
-// pass can restore projected success, so Land must freshly re-read checks before
-// LandingStarted. A reopen committed before that start makes CanStart refuse it.
+// pass can restore projected success. Each matching reopen increments the batch
+// checks generation, pinned in the Land key and payload. Both store start gates
+// re-plan under the queue lock, so an old Land stays stale after a delayed pass;
+// a new Land must freshly re-read checks before LandingStarted. A delayed older
+// terminal failure after a passing rerun still fails the batch conservatively.
 // Refresh keys use the batch and count of recorded refreshes; every matching
 // ChecksRefreshed advances the count, even if its read time went backward. Timeout
 // requires that refresh's own At to be at or after the deadline, with no reopen
-// applied since it. Until then Plan requests a refresh even if the normal interval
-// has not elapsed. Worker clocks affect timeout liveness, as StartedTestingAt
+// applied since it. Pending Land preflights also record Reopened then Refreshed
+// at read time, so repeated passing-refresh/pending-preflight flips time out. A
+// passing refresh after the deadline may land if its preflight also passes.
+// Until qualifying timeout evidence, Plan requests a refresh even if the normal
+// interval has not elapsed. Worker clocks affect timeout liveness, as StartedTestingAt
 // already does, never landing safety. Equal timestamps have no special meaning.
 //
 // Non-conflict build failures keep PRs queued. Plan backs off from the recorded
@@ -94,7 +100,7 @@
 // key. Build keys include the method and composition, dequeue keys include the admission, and
 // report keys distinguish both admissions and outcome revisions. Landing always
 // carries the tested batch's base, tested SHA, and method, together with the
-// current fence.
+// current fence and checks generation (required checks_generation in wire v1).
 //
 // Test commits are unique per batch: the executor includes the batch ID in the
 // top commit of every test ref. As a guard against an executor that breaks this,

@@ -208,3 +208,30 @@ func TestChecksReopenedWireValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestLandGenerationSurvivesDelayedPass(t *testing.T) {
+	s := readyState()
+	land := onlyAction[Land](t, Plan(testConfig, s, epoch))
+	start := LandingStarted{BatchID: land.BatchID, AttemptID: "attempt", FenceToken: land.FenceToken, At: epoch}
+	for generation := uint64(1); generation <= 3; generation++ {
+		// Identical timestamps and repeated reopens still invalidate the old action.
+		s = foldCheckEvents(t, s, ChecksReopened{TestedSHA: land.TestedSHA, At: epoch}, ChecksCompleted{TestedSHA: land.TestedSHA, Success: true})
+		next := onlyAction[Land](t, Plan(testConfig, s, epoch))
+		_, wire, err := EncodeAction(next)
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoded, err := DecodeAction(wire)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if next.ChecksGeneration != generation || next.Key() == land.Key() || CanStart(testConfig, s, land, start) || !CanStart(testConfig, s, decoded, start) {
+			t.Fatalf("generation did not fence old action: old=%+v next=%+v", land, next)
+		}
+		land = next
+	}
+	s = foldCheckEvents(t, s, ChecksReopened{TestedSHA: "unrelated", At: epoch})
+	if !CanStart(testConfig, s, land, start) {
+		t.Fatal("unrelated reopen invalidated Land")
+	}
+}

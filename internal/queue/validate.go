@@ -73,6 +73,7 @@ func (e ChecksReopened) Validate() error {
 }
 
 // Validate requires both fences and the exact heads checked before landing.
+// Every uint64 checks generation is valid, including zero before any reopen.
 func (a Land) Validate() error {
 	if err := requireActionText("batch_id", a.BatchID, "expected_base_sha", a.ExpectedBaseSHA,
 		"tested_sha", a.TestedSHA, "ref", a.Ref, "fence_token", a.FenceToken); err != nil {

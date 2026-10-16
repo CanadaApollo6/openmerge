@@ -100,6 +100,9 @@ func TestActionSemanticValidation(t *testing.T) {
 			if _, number := data[field].(float64); number {
 				invalid = 0
 			}
+			if field == "checks_generation" {
+				invalid = -1 // Zero is the valid initial generation.
+			}
 			if field == "prs" {
 				invalid = []any{}
 			}

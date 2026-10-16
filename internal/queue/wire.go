@@ -142,13 +142,14 @@ type wireRefreshChecks struct {
 }
 
 type wireLand struct {
-	BatchID         string        `json:"batch_id"`
-	ExpectedBaseSHA string        `json:"expected_base_sha"`
-	TestedSHA       string        `json:"tested_sha"`
-	Ref             string        `json:"ref"`
-	FenceToken      string        `json:"fence_token"`
-	PRs             []wireBatchPR `json:"prs"`
-	Method          string        `json:"method"`
+	BatchID          string        `json:"batch_id"`
+	ExpectedBaseSHA  string        `json:"expected_base_sha"`
+	TestedSHA        string        `json:"tested_sha"`
+	Ref              string        `json:"ref"`
+	FenceToken       string        `json:"fence_token"`
+	PRs              []wireBatchPR `json:"prs"`
+	Method           string        `json:"method"`
+	ChecksGeneration uint64        `json:"checks_generation"`
 }
 
 type wireResolveLanding struct {
@@ -486,7 +487,7 @@ func EncodeAction(value Action) (string, []byte, error) {
 	case RefreshChecks:
 		return encodeWire("refresh_checks", wireRefreshChecks{BatchID: v.BatchID, TestedSHA: v.TestedSHA, Epoch: v.epoch})
 	case Land:
-		return encodeWire("land", wireLand{BatchID: v.BatchID, ExpectedBaseSHA: v.ExpectedBaseSHA, TestedSHA: v.TestedSHA, Ref: v.Ref, FenceToken: v.FenceToken, PRs: encodeBatchPRs(v.PRs), Method: string(v.Method)})
+		return encodeWire("land", wireLand{BatchID: v.BatchID, ExpectedBaseSHA: v.ExpectedBaseSHA, TestedSHA: v.TestedSHA, Ref: v.Ref, FenceToken: v.FenceToken, PRs: encodeBatchPRs(v.PRs), Method: string(v.Method), ChecksGeneration: v.ChecksGeneration})
 	case ResolveLanding:
 		return encodeWire("resolve_landing", wireResolveLanding(v))
 	case DeleteRef:
@@ -521,7 +522,7 @@ func DecodeAction(payload []byte) (Action, error) {
 		})
 	case "land":
 		return decodeWireAction(envelope.Data, func(v wireLand) Action {
-			return Land{BatchID: v.BatchID, ExpectedBaseSHA: v.ExpectedBaseSHA, TestedSHA: v.TestedSHA, Ref: v.Ref, FenceToken: v.FenceToken, PRs: decodeBatchPRs(v.PRs), Method: MergeMethod(v.Method)}
+			return Land{BatchID: v.BatchID, ExpectedBaseSHA: v.ExpectedBaseSHA, TestedSHA: v.TestedSHA, Ref: v.Ref, FenceToken: v.FenceToken, PRs: decodeBatchPRs(v.PRs), Method: MergeMethod(v.Method), ChecksGeneration: v.ChecksGeneration}
 		})
 	case "resolve_landing":
 		return decodeWireAction(envelope.Data, func(v wireResolveLanding) Action {

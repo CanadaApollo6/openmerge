@@ -55,6 +55,10 @@ MUTANTS = {
         ("s.requestDequeue(prs[0].PR, reason)", "for _, pr := range prs { s.requestDequeue(pr.PR, reason) }"),
     ),
     "no_ci_gate": mutation(PLAN, ("if batch.checksPassed {", "if true {")),
+    "land_ignores_generation": mutation(
+        PLAN,
+        ("ChecksGeneration: batch.checksGeneration,", "ChecksGeneration: 0,"),
+    ),
     "reopen_does_not_clear_success": mutation(
         APPLY,
         ("s.Active.checksPassed = false", "// mutant preserves success after a reopen"),
@@ -163,7 +167,7 @@ with tempfile.TemporaryDirectory(prefix="openmerge-mutations-") as directory:
         overlay.write_text(json.dumps({"Replace": replacements}))
         run = subprocess.run(
             ["go", "test", "-count=1", "-overlay", str(overlay), "./internal/sim", "-run",
-             "TestMutationRunProbe|TestStaleBatchTimeoutInSimulator|TestChangedCompositionInSimulator|TestBatchFormationWaitInSimulator|TestAbandonmentBeforePush/captured_token|TestExit500PRDay|TestForeignBaseEqualityDoesNotResolveLanding/resolve_from_fence"],
+             "TestMutationRunProbe|TestDelayedPassCannotReviveLandingInSimulator|TestStaleBatchTimeoutInSimulator|TestChangedCompositionInSimulator|TestBatchFormationWaitInSimulator|TestAbandonmentBeforePush/captured_token|TestExit500PRDay|TestForeignBaseEqualityDoesNotResolveLanding/resolve_from_fence"],
             cwd=ROOT, capture_output=True, text=True, timeout=60,
         )
         output = run.stdout + run.stderr

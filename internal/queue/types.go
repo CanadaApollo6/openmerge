@@ -80,6 +80,7 @@ type Batch struct {
 	LandingAttempt   LandingAttempt
 
 	checksPassed      bool
+	checksGeneration  uint64
 	checksRefreshedAt time.Time
 	checkRefreshes    uint64
 	needsRefresh      bool
@@ -143,8 +144,8 @@ type ChecksCompleted struct {
 	Success   bool
 }
 
-// ChecksReopened revokes success and timeout evidence in event-log order without
-// restarting the check deadline, including when no pass is recorded yet.
+// ChecksReopened revokes success, planned landings and timeout evidence in log
+// order without restarting the check deadline, even without a recorded pass.
 type ChecksReopened struct {
 	TestedSHA string
 	At        time.Time
@@ -286,11 +287,13 @@ type RefreshChecks struct {
 	epoch              uint64
 }
 
-// Land requires an atomic compare-and-swap on both the base and fence.
+// Land pins the checks generation and requires an atomic compare-and-swap on
+// both the base and fence. Every reopen invalidates an earlier planned Land.
 type Land struct {
 	BatchID, ExpectedBaseSHA, TestedSHA, Ref, FenceToken string
 	PRs                                                  []BatchPR
 	Method                                               MergeMethod
+	ChecksGeneration                                     uint64
 }
 
 // ResolveLanding carries the pinned commit and durable attempt fence so the
@@ -356,7 +359,9 @@ func (a RefreshChecks) Key() string {
 
 // Key identifies the start action. The executor mints a separate random attempt
 // ID; once LandingStarted is durable, only ResolveLanding may be executed.
-func (a Land) Key() string { return "batch/" + a.BatchID + "/land" }
+func (a Land) Key() string {
+	return fmt.Sprintf("batch/%s/land/%d", a.BatchID, a.ChecksGeneration)
+}
 
 // Key correlates resolution retries with the durable landing attempt.
 func (a ResolveLanding) Key() string {

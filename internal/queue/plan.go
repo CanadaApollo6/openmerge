@@ -109,6 +109,7 @@ func plan(cfg Config, s State, now time.Time) []Action {
 				BatchID: batch.ID, ExpectedBaseSHA: batch.BaseSHA, TestedSHA: batch.TestedSHA,
 				Ref: batch.TestRef, FenceToken: s.Fence,
 				Method: batch.Method, PRs: slices.Clone(batch.PRs),
+				ChecksGeneration: batch.checksGeneration,
 			})
 			return actions
 		}
