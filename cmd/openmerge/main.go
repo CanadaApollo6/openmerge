@@ -14,8 +14,9 @@ var version = "dev"
 const usage = `Usage: openmerge <command>
 
 Commands:
-  version  Print version and build information
-  help     Show this help
+  version                 Print version and build information
+  config validate [path]  Validate repository configuration
+  help                    Show this help
 `
 
 func main() {
@@ -41,6 +42,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 			}
 		}
 		output = fmt.Sprintf("openmerge %s\ncommit: %s\ngo: %s\n", release, commit, goVersion)
+	case (len(args) == 2 || len(args) == 3) && args[0] == "config" && args[1] == "validate":
+		return validateConfig(args[2:], stdout, stderr)
 	default:
 		_, _ = fmt.Fprintf(stderr, "Unknown command %q\n\n%s", strings.Join(args, " "), usage)
 		return 2

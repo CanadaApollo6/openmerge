@@ -1,0 +1,13 @@
+version: 1
+
+queues:
+  - name: default
+    enter_when:                    # must hold to join and to stay in the queue
+      - "#approved-reviews-by >= 1"
+      - check-success = lint
+    merge_when:                    # checked against the tested batch before landing
+      - check-success = integration
+    merge_method: squash           # merge | squash | rebase
+    batch:
+      max_size: 8
+      max_wait: 30s

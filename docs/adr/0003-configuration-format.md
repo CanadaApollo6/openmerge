@@ -34,7 +34,7 @@ queues:
       - check-success = lint
     merge_when:                    # checked against the tested batch before landing
       - check-success = integration
-    merge_method: squash           # merge | squash | rebase | fast-forward
+    merge_method: squash           # merge | squash | rebase
     batch:
       max_size: 8
       max_wait: 30s
@@ -48,7 +48,9 @@ Later phases add top-level keys (`priorities`, `rules`, `scopes`, `commands`) as
 - Operators: `=`, `!=`, `~=` (RE2 regular expression), `glob`, `<`, `<=`, `>`, `>=`.
 - On list attributes, an operator holds if any element matches, except `!=`, which holds if no element matches.
 - A YAML list of conditions means all must hold. `and:`, `or:`, and `not:` nest.
-- An unknown attribute or operator is a validation error that names the closest valid one.
+- An unknown attribute or operator is a validation error; close misspellings name the closest valid one.
+
+Missing or mistyped attribute data makes a condition unknown, and unknown never passes, including under `not`.
 
 Attributes cover people and reviews, branch and PR metadata, files and line counts, CI results, queue state, and time windows. Each attribute is documented in a generated reference with its type and an example. The concrete Phase 1 list is part of the Phase 1 implementation.
 
