@@ -35,11 +35,17 @@
 // LandingStarted is the durable transition into Landing, before any forge call.
 // Cancellation and invalidation wait for its definitive result. After ResolveAfter,
 // Plan requests fence-and-read resolution; a deadline alone never fails a landing.
-// Rejection or fenced abandonment rebuilds a fresh batch unless a dequeue is pending.
+// A rejected push follows the same resolution. Only fenced abandonment rebuilds
+// a fresh batch or allows a pending dequeue; a lease refusal alone settles nothing.
+// The executor generates a random attempt ID before recording LandingStarted.
+// A batch in Landing can only resolve that recorded ID, never start another Land.
 //
 // Every Dequeue is completed with Dequeued, which removes the entry and clears its
 // batch. Until that result, the entry stays queued and cannot start another batch.
-// ReportStatus and DeleteRef repeat until ActionCompleted acknowledges their keys.
+// ReportStatus, MarkLanded, and DeleteRef repeat until ActionCompleted acknowledges
+// their keys. Squash/rebase Landed events record a MarkLanded effect per pinned PR
+// so PR closing survives a crash. Merge landings need none. Status and dequeue
+// actions also pin the head SHA, with normalized lifecycle states and stable reasons.
 // Acknowledgement removes the pending effect; retained keys are pruned when their
 // batch or queued PR disappears, keeping the acknowledgement set bounded. Executors
 // must honor the event watermark in ADR 0002 before executing consequential actions.
@@ -50,12 +56,13 @@
 // Plan owns time/config-dependent decisions and never changes state. Admissions
 // and batches have separate monotonic IDs. Build and landing results must match
 // the current BatchID and phase; each batch allows only one landing attempt.
-// ResolveLanding carries that attempt ID. Dequeued must echo the entry's admission
-// ID, plus the BatchID for timeout actions, so late results cannot remove a new
-// subject. ActionCompleted echoes the exact effect key. Build keys include the
-// method, dequeue keys include the admission, and report keys distinguish both
-// admissions and outcome revisions. Landing always carries the tested batch's
-// base, tested SHA, and method, together with the current fence.
+// ResolveLanding carries that attempt ID, fence SHA, and tested SHA. Dequeued must
+// echo the entry's admission ID, plus the BatchID for timeout actions, so late
+// results cannot remove a new subject. ActionCompleted echoes the exact effect
+// key. Build keys include the method, dequeue keys include the admission, and
+// report keys distinguish both admissions and outcome revisions. Landing always
+// carries the tested batch's base, tested SHA, and method, together with the
+// current fence.
 //
 // Test commits are unique per batch: the executor includes the batch ID in the
 // top commit of every test ref. As a guard against an executor that breaks this,

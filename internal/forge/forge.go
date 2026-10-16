@@ -1,0 +1,153 @@
+// Package forge defines the forge API and git transport needed by the queue.
+package forge
+
+import (
+	"context"
+	"errors"
+)
+
+// RepoRef identifies a repository by its opaque forge-relative path, including
+// nested groups (for example, group/subgroup/name). Drivers must not split it.
+type RepoRef struct{ Path string }
+
+// PullRequest is an exact-head observation used to evaluate queue admission.
+type PullRequest struct {
+	Number         int
+	HeadSHA        string
+	HeadInBaseRepo bool
+	Approvals      []Approval
+	Closed         bool
+}
+
+// Approval pins a reviewer's approval and write access to the reviewed SHA.
+// A driver that cannot attribute an approval to a commit may report it at the
+// current head only when the forge is configured to reset approvals on push.
+// Without that guarantee it must report no approvals (fail closed). Each driver
+// must document whether it uses commit attribution or requires approval resets.
+type Approval struct {
+	User     string
+	SHA      string
+	CanWrite bool
+}
+
+// CheckState normalizes forge check outcomes.
+type CheckState string
+
+// Normalized check states.
+const (
+	Pending   CheckState = "pending"
+	Success   CheckState = "success"
+	Failure   CheckState = "failure"
+	Cancelled CheckState = "cancelled"
+	Skipped   CheckState = "skipped"
+	Neutral   CheckState = "neutral"
+)
+
+// CheckRun is a named check on a particular commit. ID increases monotonically
+// for each new run of a name; updates to that run retain its ID.
+type CheckRun struct {
+	ID    uint64
+	Name  string
+	State CheckState
+}
+
+// StatusState is the normalized queue lifecycle, independent of forge terminology.
+type StatusState string
+
+// Normalized queue lifecycle states.
+const (
+	Queued   StatusState = "queued"
+	Testing  StatusState = "testing"
+	Landing  StatusState = "landing"
+	Merged   StatusState = "merged"
+	Dequeued StatusState = "dequeued"
+	Blocked  StatusState = "blocked"
+	Paused   StatusState = "paused"
+)
+
+// Status is upserted as the driver's OpenMerge check on one PR head commit.
+// Drivers map queued/testing/landing to pending, merged to success, dequeued to
+// cancelled, blocked to failure, and paused to action-required. Commit-status
+// APIs without cancelled/action-required use failure and describe the state. Reason is a stable machine-readable dequeue/block reason;
+// Summary is human-readable. Neither is used as a forge check conclusion.
+type Status struct {
+	State   StatusState
+	Reason  string
+	Summary string
+}
+
+// Driver exposes forge API operations. Mutations must converge when retried.
+type Driver interface {
+	PullRequest(ctx context.Context, repo RepoRef, number int) (PullRequest, error)
+	CheckRuns(ctx context.Context, repo RepoRef, sha string) ([]CheckRun, error)
+	// DeleteRef succeeds even when ref is already missing.
+	DeleteRef(ctx context.Context, repo RepoRef, ref string) error
+	ReportStatus(ctx context.Context, repo RepoRef, pr int, headSHA string, s Status) error
+	// MarkLanded idempotently closes a PR with a link to landedSHA, or uses a
+	// native mark-merged operation. It must not synthesize another git merge.
+	MarkLanded(ctx context.Context, repo RepoRef, pr int, landedSHA string) error
+	// Comment embeds key in a hidden marker and skips an existing keyed comment
+	// only when that comment was authored by this driver's own identity.
+	Comment(ctx context.Context, repo RepoRef, pr int, key, body string) error
+}
+
+// MergeMethod describes the git shape of a tested commit.
+type MergeMethod string
+
+// Supported tested-commit shapes.
+const (
+	Merge  MergeMethod = "merge"
+	Squash MergeMethod = "squash"
+	Rebase MergeMethod = "rebase"
+)
+
+// BuildPR pins an admitted PR head. A build rejects a head that no longer
+// matches that PR rather than substituting a different commit.
+type BuildPR struct {
+	Number  int
+	HeadSHA string
+}
+
+// BuildRequest composes pinned heads on BaseSHA and pushes Ref. The top commit
+// must carry BatchID, making the tested SHA unique across batches.
+type BuildRequest struct {
+	Ref, BaseSHA string
+	PRs          []BuildPR
+	Method       MergeMethod
+	BatchID      string
+}
+
+// ErrConflict distinguishes a content conflict from an infrastructure failure.
+var ErrConflict = errors.New("merge conflict")
+
+// ErrLeaseRejected reports an atomic lease refusal. A rejected git push provides
+// no actual ref values; callers must read the fence to settle the attempt.
+var ErrLeaseRejected = errors.New("git lease rejected")
+
+// LandRequest leases both refs in one atomic push. NextFenceID is land/<attempt>
+// where the attempt ID is random and durably recorded before this call. The new
+// fence's parent is ExpectedFence and its message is
+// "openmerge fence land/<attempt> tested=<TestedSHA>". PRs pin the landed heads;
+// Land must reject the request without changing refs if any pin differs from
+// that PR's actual head.
+type LandRequest struct {
+	Base, ExpectedBaseSHA, TestedSHA  string
+	Fence, ExpectedFence, NextFenceID string
+	PRs                               []BuildPR
+}
+
+// Git builds exact tested commits and performs forge-enforced fenced writes.
+type Git interface {
+	BuildTestRef(ctx context.Context, repo RepoRef, req BuildRequest) (testedSHA string, err error)
+	Land(ctx context.Context, repo RepoRef, req LandRequest) (newFenceSHA string, err error)
+	// EnsureFence creates the initial fence only if absent, safely under
+	// concurrency, otherwise returning the existing SHA without changing it.
+	EnsureFence(ctx context.Context, repo RepoRef, fenceRef string) (sha string, err error)
+	// AdvanceFence leases expectedSHA and mints a child commit using nextID.
+	AdvanceFence(ctx context.Context, repo RepoRef, fenceRef, expectedSHA, nextID string) (newSHA string, err error)
+	// ReadFence reads identity and tested SHA from the current fence commit.
+	// A non-OpenMerge commit has empty identity fields; a missing ref is an error.
+	ReadFence(ctx context.Context, repo RepoRef, fenceRef string) (sha, id, testedSHA string, err error)
+	ReadRef(ctx context.Context, repo RepoRef, ref string) (sha string, err error)
+	IsAncestor(ctx context.Context, repo RepoRef, ancestor, descendant string) (bool, error)
+}

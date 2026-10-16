@@ -105,17 +105,17 @@ func TestApplyAndPlan(t *testing.T) {
 		{
 			name: "enqueue without observation", initial: func() State { return queued() },
 			events: []Event{EnqueueRequested{PR: 1, At: epoch}},
-			want:   []string{"report:1:not-eligible:PR does not satisfy queue entry conditions"},
+			want:   []string{"report:1:blocked:PR does not satisfy queue entry conditions"},
 		},
 		{
 			name: "ineligible enqueue", initial: func() State { return queued() },
 			events: []Event{PRObserved{PR: 1, HeadSHA: "head1", Trusted: true}, EnqueueRequested{PR: 1, At: epoch}},
-			want:   []string{"report:1:not-eligible:PR does not satisfy queue entry conditions"},
+			want:   []string{"report:1:blocked:PR does not satisfy queue entry conditions"},
 		},
 		{
 			name: "untrusted enqueue", initial: func() State { return queued() },
 			events: []Event{PRObserved{PR: 1, HeadSHA: "head1", Eligible: true}, EnqueueRequested{PR: 1, At: epoch}},
-			want:   []string{"report:1:untrusted:PR head has not passed the trust gate"},
+			want:   []string{"report:1:blocked:PR head has not passed the trust gate"},
 		},
 		{
 			name: "duplicate enqueue", initial: func() State { return queued(1) },
@@ -261,7 +261,7 @@ func TestApplyAndPlan(t *testing.T) {
 		},
 		{
 			name: "dequeue during landing rejected", initial: landingState,
-			events:  []Event{DequeueRequested{PR: 1}, LandingRejected{BatchID: "b1", ActualBaseSHA: "base2", ActualFence: "f1"}},
+			events:  []Event{DequeueRequested{PR: 1}, BaseMoved{SHA: "base2"}, LandingAbandoned{BatchID: "b1", NewFence: "f1"}},
 			entries: []int{1}, base: "base2", fence: "f1",
 			want: []string{"dequeue:1:requested", "delete:openmerge/queue/main/b1"},
 		},
@@ -273,7 +273,7 @@ func TestApplyAndPlan(t *testing.T) {
 		},
 		{
 			name: "landing rejection rebuilds without dequeue", initial: landingState,
-			events:  []Event{LandingRejected{BatchID: "b1", ActualBaseSHA: "base2", ActualFence: "f1"}},
+			events:  []Event{BaseMoved{SHA: "base2"}, LandingAbandoned{BatchID: "b1", NewFence: "f1"}},
 			entries: []int{1}, batch: "b2", phase: Building, base: "base2", fence: "f1",
 			want: []string{"delete:openmerge/queue/main/b1", "build:b2:base2:[{1 head1}]"},
 		},
@@ -410,7 +410,7 @@ func TestChangesDuringLanding(t *testing.T) {
 					s = Apply(s, Landed{BatchID: "b1", NewBaseSHA: "tested1", NewFence: "f1"})
 					assertPlan(t, testConfig, s, epoch, "report:1:merged:already landed", "delete:openmerge/queue/main/b1")
 				} else {
-					s = Apply(s, LandingRejected{BatchID: "b1", ActualBaseSHA: "base2", ActualFence: "f1"})
+					s = Apply(Apply(s, BaseMoved{SHA: "base2"}), LandingAbandoned{BatchID: "b1", NewFence: "f1"})
 					assertPlan(t, testConfig, s, epoch, "dequeue:1:"+string(tt.reason), "delete:openmerge/queue/main/b1")
 				}
 			})
@@ -421,7 +421,7 @@ func TestChangesDuringLanding(t *testing.T) {
 func TestEffectAcknowledgements(t *testing.T) {
 	t.Run("report repeats until acknowledged and never returns", func(t *testing.T) {
 		s := Apply(queued(), EnqueueRequested{PR: 1, At: epoch})
-		actions := assertPlan(t, testConfig, s, epoch, "report:1:not-eligible:PR does not satisfy queue entry conditions")
+		actions := assertPlan(t, testConfig, s, epoch, "report:1:blocked:PR does not satisfy queue entry conditions")
 		assertPlan(t, testConfig, s, epoch.Add(time.Hour), descriptions(actions)...)
 		s = Apply(s, ActionCompleted{Key: actions[0].Key()})
 		assertPlan(t, testConfig, s, epoch)
@@ -469,7 +469,6 @@ func TestIgnoredResultEvents(t *testing.T) {
 		TestRefBuildFailed{BatchID: "old", Conflict: true},
 		LandingStarted{BatchID: "old", AttemptID: "old", At: epoch},
 		Landed{BatchID: "old", NewBaseSHA: "wrong", NewFence: "wrong"},
-		LandingRejected{BatchID: "old", ActualBaseSHA: "wrong", ActualFence: "wrong"},
 		LandingAbandoned{BatchID: "old", NewFence: "wrong"},
 	}
 	for _, initial := range []func() State{testingState, landingState} {
@@ -530,7 +529,7 @@ func TestApplyDoesNotMutateInput(t *testing.T) {
 		ChecksCompleted{TestedSHA: "tested1"}, LandingStarted{BatchID: "b1", AttemptID: "a2", At: epoch},
 		ChecksRefreshed{BatchID: "b1", TestedSHA: "tested1", At: epoch},
 		Landed{BatchID: "b1", NewBaseSHA: "test", NewFence: "f1"},
-		LandingRejected{BatchID: "b1", ActualBaseSHA: "base2", ActualFence: "f1"},
+		BaseMoved{SHA: "base2"}, LandingAbandoned{BatchID: "b1", NewFence: "f1"},
 		LandingAbandoned{BatchID: "b1", NewFence: "f1"}, Dequeued{PR: 1, AdmissionID: 1, Reason: Requested},
 		ActionCompleted{Key: (DeleteRef{Ref: "openmerge/queue/main/b1"}).Key()},
 	}
@@ -637,7 +636,8 @@ func TestSerialScenarios(t *testing.T) {
 	})
 	t.Run("landing rejected then succeeds", func(t *testing.T) {
 		sc := scenario{t: t, s: landingState(), now: epoch}
-		sc.step(LandingRejected{BatchID: "b1", ActualBaseSHA: "external", ActualFence: "f1"}, "delete:openmerge/queue/main/b1", "build:b2:external:[{1 head1}]")
+		sc.s = Apply(sc.s, BaseMoved{SHA: "external"})
+		sc.step(LandingAbandoned{BatchID: "b1", NewFence: "f1"}, "delete:openmerge/queue/main/b1", "build:b2:external:[{1 head1}]")
 		sc.acknowledgeEffects()
 		sc.step(ChecksCompleted{TestedSHA: "tested1", Success: true}, "build:b2:external:[{1 head1}]")
 		sc.land("b2", "rebuilt", "external", "f1", "f2")

@@ -27,7 +27,10 @@ func Plan(cfg Config, s State, now time.Time) []Action {
 	}
 	if batch.Phase == Landing {
 		if now.Sub(batch.LandingAttempt.StartedAt) > cfg.ResolveAfter {
-			actions = append(actions, ResolveLanding{BatchID: batch.ID, AttemptID: batch.LandingAttempt.ID})
+			actions = append(actions, ResolveLanding{
+				BatchID: batch.ID, AttemptID: batch.LandingAttempt.ID,
+				TestedSHA: batch.TestedSHA, FenceToken: batch.LandingAttempt.FenceToken,
+			})
 		}
 		return actions
 	}
@@ -64,7 +67,7 @@ func Plan(cfg Config, s State, now time.Time) []Action {
 			actions = append(actions, Land{
 				BatchID: batch.ID, ExpectedBaseSHA: batch.BaseSHA, TestedSHA: batch.TestedSHA,
 				Ref: batch.TestRef, FenceToken: s.Fence,
-				Method: batch.Method,
+				Method: batch.Method, PRs: slices.Clone(batch.PRs),
 			})
 			return actions
 		}
@@ -72,7 +75,7 @@ func Plan(cfg Config, s State, now time.Time) []Action {
 		timedOut := cfg.CheckTimeout > 0 && now.After(deadline)
 		if timedOut && batch.checkRefreshes > 0 && !batch.checksRefreshedAt.Before(deadline) {
 			for _, pr := range batch.PRs {
-				actions = append(actions, Dequeue{PR: pr.PR, AdmissionID: s.entry(pr.PR).AdmissionID, Reason: ChecksTimeout, BatchID: batch.ID, scope: "batch/" + batch.ID})
+				actions = append(actions, Dequeue{PR: pr.PR, HeadSHA: pr.HeadSHA, AdmissionID: s.entry(pr.PR).AdmissionID, Reason: ChecksTimeout, BatchID: batch.ID, scope: "batch/" + batch.ID})
 			}
 			deletion := DeleteRef{Ref: batch.TestRef}
 			if _, done := s.acknowledged[deletion.Key()]; !done {
@@ -118,7 +121,7 @@ func (s State) buildFailureReport() ReportStatus {
 		detail = fmt.Sprintf("Test ref build failed (%d consecutive failures): %s", s.buildRetry.failures, s.buildRetry.detail)
 	}
 	return ReportStatus{
-		PR: s.Entries[0].PR, Status: "build-failed", revision: s.buildRetry.revision, admission: s.Entries[0].AdmissionID,
+		PR: s.Entries[0].PR, HeadSHA: s.Entries[0].HeadSHA, Status: "paused", Reason: "build-failed", revision: s.buildRetry.revision, admission: s.Entries[0].AdmissionID,
 		Detail: detail,
 	}
 }
