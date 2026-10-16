@@ -106,17 +106,18 @@ outcome: an in-flight landing may still merge the PR. Paused entries retain thei
 actual batch phase in `active_batch` and landing resolution continues while paused.
 
 PR detail includes previously observed, rejected, dequeued and landed PRs.
-Outside the queue, `position` is zero, `admitted_at` retains the last successful
-admission (or `null` if never admitted), and `head_sha` is the latest recorded
+Outside the queue, `position` is zero (rendered as `-` in the CLI table),
+`admitted_at` retains the last successful admission (or `null` if never admitted), and `head_sha` is the latest recorded
 head. An admitted entry always pins the admitted head despite later observations.
 An unknown PR returns 404 without contacting GitHub.
 
 WHY has `summary` (human-readable, not a parsing contract), `limit`, and `events`.
-Events are the last N relevant committed events, in increasing journal ID order:
+Events are the last N relevant evidence rows after grouping repeated CI pairs,
+in increasing journal ID order:
 direct PR observations/commands/outcomes, its batch and tested-SHA events, and
 base/pause/resume/refresh/poison/rules events while admitted. Unrelated PR/batch/CI
 events and action-delivery acknowledgements are excluded. Each item has `id`,
-`type` (event discriminator), `at` (journal recording time, UTC RFC3339), and
+`type` (event discriminator or the CI pair type described below), `at` (journal recording time, UTC RFC3339), and
 `summary` (a short sanitized explanation). These fields are part of API v1;
 summary wording is for humans, not a parsing contract. Raw persisted wire
 envelopes are not exposed and are outside API v1 stability. Results can contain
@@ -187,3 +188,20 @@ HTTP diagnostic. Error output never includes the raw response body.
 
 These exit codes describe the read operation. Automation must inspect JSON
 `status`, `paused`, and reasons to decide what to do next.
+
+### Repeated CI observations
+
+The why view collapses consecutive identical `checks_reopened` +
+`checks_refreshed` pairs for the same batch and tested SHA into one evidence row.
+The row uses `type: "checks_reopened+checks_refreshed"`, the first event's `id`
+and `at`, plus optional `count` (number of observations/pairs), `end_id` (last
+refresh event), and `until` (last refresh record time). `events=N` limits rows
+**after grouping**, retaining useful preceding evidence during long pending CI.
+The CLI renders the count and time range on one line. Unpaired events, changed
+outcomes, and intervening relevant decisions remain separate rows.
+
+Reopen summaries say `CI still pending` when the fold has no success to revoke.
+`CI reopened; previous success revoked` appears only when that event actually
+cleared recorded success, including success retained before test-ref creation.
+A pending read after `LandingStarted` does not revoke a landing; its summary
+explains that landing already started. The underlying journal is unchanged.

@@ -50,6 +50,7 @@ type apiFixture struct {
 	mu              sync.Mutex
 	clock           time.Time
 	prs             map[int]*gh.PullRequest
+	commits         map[int][]*gh.RepositoryCommit
 	reviews         map[int][]*gh.PullRequestReview
 	permissions     map[string]string
 	permissionCalls map[string]int
@@ -72,14 +73,14 @@ type apiFixture struct {
 
 func newAPI(t *testing.T) *apiFixture {
 	t.Helper()
-	f := &apiFixture{t: t, clock: epoch, prs: make(map[int]*gh.PullRequest), reviews: make(map[int][]*gh.PullRequestReview), permissions: map[string]string{"writer": "write", "reader": "read"}, permissionCalls: make(map[string]int), runs: make(map[string][]*gh.CheckRun), suites: make(map[string][]*gh.CheckSuite), installations: map[int64]bool{7: true, 8: true}, statuses: make(map[string][]*gh.RepoStatus), comments: make(map[int][]*gh.IssueComment), refs: make(map[string]bool), calls: make(map[string]int), next: 100}
+	f := &apiFixture{t: t, clock: epoch, prs: make(map[int]*gh.PullRequest), commits: make(map[int][]*gh.RepositoryCommit), reviews: make(map[int][]*gh.PullRequestReview), permissions: map[string]string{"writer": "write", "reader": "read"}, permissionCalls: make(map[string]int), runs: make(map[string][]*gh.CheckRun), suites: make(map[string][]*gh.CheckSuite), installations: map[int64]bool{7: true, 8: true}, statuses: make(map[string][]*gh.RepoStatus), comments: make(map[int][]*gh.IssueComment), refs: make(map[string]bool), calls: make(map[string]int), next: 100}
 	for _, n := range []int{1, 2} {
 		headRepo := int64(50)
 		if n == 1 {
 			headRepo = 51
 		}
 		sha := fmt.Sprintf("%040x", n)
-		f.prs[n] = &gh.PullRequest{Number: new(n), State: new("open"), Title: new(fmt.Sprintf("Test change %d", n)), Body: new("Test PR body"), User: &gh.User{Login: new("contributor"), ID: new(int64(12))}, UpdatedAt: &gh.Timestamp{Time: epoch}, Head: &gh.PullRequestBranch{SHA: &sha, Label: new(fmt.Sprintf("contributor:pr-%d", n)), Repo: &gh.Repository{ID: &headRepo}}, Base: &gh.PullRequestBranch{Ref: new("main"), Repo: &gh.Repository{ID: new(int64(50))}}}
+		f.prs[n] = &gh.PullRequest{Number: new(n), State: new("open"), Title: new(fmt.Sprintf("Test change %d", n)), Body: new("Test PR body"), User: &gh.User{Login: new("contributor"), ID: new(int64(12))}, UpdatedAt: &gh.Timestamp{Time: epoch}, Head: &gh.PullRequestBranch{SHA: &sha, Label: new(fmt.Sprintf("contributor:pr-%d", n)), Ref: new(fmt.Sprintf("pr-%d", n)), Repo: &gh.Repository{ID: &headRepo}}, Base: &gh.PullRequestBranch{Ref: new("main"), Repo: &gh.Repository{ID: new(int64(50))}}}
 		user := "writer"
 		if n == 2 {
 			user = "reader"
@@ -291,7 +292,8 @@ func (f *apiFixture) handle(w http.ResponseWriter, r *http.Request) {
 		list := []map[string]any{}
 		numbers := []int{}
 		for n, pr := range f.prs {
-			if pr.GetState() == "open" && (r.URL.Query().Get("base") == "" || pr.GetBase().GetRef() == r.URL.Query().Get("base")) {
+			if pr.GetState() == "open" && (r.URL.Query().Get("base") == "" || pr.GetBase().GetRef() == r.URL.Query().Get("base")) &&
+				(r.URL.Query().Get("head") == "" || pr.GetHead().GetLabel() == r.URL.Query().Get("head")) {
 				numbers = append(numbers, n)
 			}
 		}
@@ -313,6 +315,16 @@ func (f *apiFixture) handle(w http.ResponseWriter, r *http.Request) {
 			pr.UpdatedAt = &gh.Timestamp{Time: f.clock}
 		}
 		f.json(w, f.prJSON(pr))
+	case len(parts) == 3 && parts[0] == "pulls" && parts[2] == "commits":
+		list := []map[string]any{}
+		for _, commit := range f.commits[number] {
+			var author any
+			if commit.Author != nil {
+				author = map[string]any{"login": commit.GetAuthor().GetLogin(), "id": commit.GetAuthor().GetID()}
+			}
+			list = append(list, map[string]any{"sha": commit.GetSHA(), "author": author})
+		}
+		f.json(w, paginate(f, r, w, list))
 	case len(parts) == 3 && parts[0] == "pulls" && parts[2] == "reviews":
 		list := []map[string]any{}
 		for _, review := range f.reviews[number] {

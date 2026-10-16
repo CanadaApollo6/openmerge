@@ -234,3 +234,45 @@ OpenMerge posts an idempotent **Landed in [commit]** comment linking the tested,
 landed SHA and then closes each PR. This is expected; no second GitHub merge is
 performed to change the badge. PR title/body edits after the test-ref build do
 not alter the commit that lands.
+
+## Landed head cleanup
+
+`serve --delete-head-branch` / `OPENMERGE_DELETE_HEAD_BRANCH` defaults to true.
+Set it to false to retain heads. The option is server-wide until per-repository
+`delete_head_branch` configuration is added; it intentionally does not modify
+the queue config schema in this release.
+
+After freshly verifying a successful landing, the executor records
+`HeadCleanupRequested{BatchID, LandedSHA}` before `Landed`, including during fence
+recovery. The intent refers to the original PR heads already pinned by the
+batch's stored events. Only a matching intent followed by `Landed` schedules
+`DeleteHeadBranch`, with an idempotency key pinned to PR, original head, and
+landed SHA. A failed append leaves the landing recoverable; retries can repeat
+the intent without duplicating cleanup. For squash/rebase, cleanup also waits
+until `MarkLanded` is acknowledged.
+
+Before deletion, the executor rechecks that the landed commit remains on the
+base. `Driver.HeadBranchForDeletion` checks the closed PR's repository, original
+head, base/default branch, protection, open PRs targeting the head, and open PRs
+sharing the repository-qualified head (`owner:branch`) across every base. Read
+errors fail closed and retry. Forks, protected heads, OpenMerge refs,
+base/default branches, and heads used by other open PRs are retained. Missing or
+changed heads are no-ops. `Git.DeleteBranch` uses an exact-head SHA lease to
+preserve concurrent pushes. Eligibility reads and deletion are not atomic:
+GitHub provides no transaction covering PR usage or protection changes and a git
+push. Protect long-lived integration branches or disable cleanup if that
+transaction guarantee is required.
+
+Disabling cleanup acknowledges the action without deletion; enabling it later
+does not revisit acknowledged actions. On upgrade, historical `Landed` events
+without a cleanup intent retain their heads: replay never opts old landings into
+cleanup. The new `head_cleanup_requested` event and `delete_head_branch` action
+are additive wire v1 types, each with a golden fixture; existing event/action
+payloads and fixtures are unchanged. Drain old workers before upgrading, because
+older binaries reject the new types.
+
+The durable pending-CI writes remain unchanged. Skipping a reopen based on an
+unlocked projection would race a concurrent passing `Land` preflight: a delayed
+success could restore success without invalidating the old generation. The why
+view instead groups identical consecutive reopen/refresh pairs and explains
+whether the fold actually revoked recorded success. Stored evidence is retained.

@@ -49,6 +49,13 @@ type PullRequestSummary struct {
 	UpdatedAt time.Time
 }
 
+// CommitAuthor associates an immutable commit with its linked forge user.
+// Empty Login and zero ID mean no linked user; git email is then the fallback.
+type CommitAuthor struct {
+	SHA, Login string
+	ID         int64
+}
+
 // Comment is an issue-thread comment available for command discovery.
 type Comment struct {
 	ID        int64
@@ -124,6 +131,12 @@ type Driver interface {
 	// ReadFile reads a file at an explicit branch or commit; missing is an error.
 	ReadFile(ctx context.Context, repo RepoRef, ref, path string) ([]byte, error)
 	PullRequest(ctx context.Context, repo RepoRef, number int) (PullRequest, error)
+	CommitAuthors(ctx context.Context, repo RepoRef, number int) ([]CommitAuthor, error)
+	// HeadBranchForDeletion freshly checks a closed PR's pinned same-repository
+	// head. Empty means keep it (base/default/protected, changed, or used as
+	// an open PR's base or head). Errors fail closed. The caller must lease
+	// HeadSHA on deletion.
+	HeadBranchForDeletion(ctx context.Context, repo RepoRef, number int, headSHA, base string) (string, error)
 	// ListOpenPullRequests filters by target branch; an empty base lists all.
 	ListOpenPullRequests(ctx context.Context, repo RepoRef, base string) ([]PullRequestSummary, error)
 	// ListComments returns comments created at or after since; zero means all comments.
@@ -205,4 +218,6 @@ type Git interface {
 	ReadFence(ctx context.Context, repo RepoRef, fenceRef string) (sha, id, testedSHA string, err error)
 	ReadRef(ctx context.Context, repo RepoRef, ref string) (sha string, err error)
 	IsAncestor(ctx context.Context, repo RepoRef, ancestor, descendant string) (bool, error)
+	// DeleteBranch deletes only expectedSHA; missing or changed refs are no-ops.
+	DeleteBranch(ctx context.Context, repo RepoRef, branch, expectedSHA string) error
 }

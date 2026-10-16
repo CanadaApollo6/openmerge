@@ -209,6 +209,12 @@ func TestEveryForgeCallBoundary(t *testing.T) {
 	s := onePR(t)
 	s.cfg.Faults.Methods = make(map[string]float64)
 	calls := map[string]func() error{
+		"CommitAuthors": func() error { _, e := s.boundary.CommitAuthors(context.Background(), s.repo, 1); return e },
+		"HeadBranchForDeletion": func() error {
+			_, e := s.boundary.HeadBranchForDeletion(context.Background(), s.repo, 1, "", "main")
+			return e
+		},
+		"DeleteBranch": func() error { return s.boundary.DeleteBranch(context.Background(), s.repo, "", "") },
 		"PullRequest":  func() error { _, e := s.boundary.PullRequest(context.Background(), s.repo, 1); return e },
 		"CheckRuns":    func() error { _, e := s.boundary.CheckRuns(context.Background(), s.repo, ""); return e },
 		"DeleteRef":    func() error { return s.boundary.DeleteRef(context.Background(), s.repo, "") },
@@ -244,7 +250,7 @@ func TestEveryForgeCallBoundary(t *testing.T) {
 }
 
 func TestEveryActionRecoversItsMethodFault(t *testing.T) {
-	for _, target := range []string{"BuildTestRef", "RefreshChecks", "Land", "ResolveLanding", "DeleteRef", "ReportStatus", "Dequeue", "MarkLanded"} {
+	for _, target := range []string{"BuildTestRef", "RefreshChecks", "Land", "ResolveLanding", "DeleteRef", "ReportStatus", "Dequeue", "MarkLanded", "DeleteHeadBranch"} {
 		t.Run(target, func(t *testing.T) {
 			cfg := smallConfig()
 			cfg.PRs = 1
@@ -262,7 +268,7 @@ func TestEveryActionRecoversItsMethodFault(t *testing.T) {
 				t.Fatal(err)
 			}
 			injected := false
-			method := map[string]string{"BuildTestRef": "BuildTestRef", "RefreshChecks": "CheckRuns", "Land": "Land", "ResolveLanding": "ReadFence", "DeleteRef": "DeleteRef", "ReportStatus": "ReportStatus", "Dequeue": "ReportStatus", "MarkLanded": "MarkLanded"}[target]
+			method := map[string]string{"BuildTestRef": "BuildTestRef", "RefreshChecks": "CheckRuns", "Land": "Land", "ResolveLanding": "ReadFence", "DeleteRef": "DeleteRef", "ReportStatus": "ReportStatus", "Dequeue": "ReportStatus", "MarkLanded": "MarkLanded", "DeleteHeadBranch": "DeleteBranch"}[target]
 			for n := 0; n < 1000; n++ {
 				for _, a := range queue.Plan(s.cfg.Planner, s.state, s.now) {
 					if reflect.TypeOf(a).Name() == target && !injected {

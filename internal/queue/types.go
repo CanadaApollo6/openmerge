@@ -88,6 +88,7 @@ type Batch struct {
 	checksRefreshedAt time.Time
 	checkRefreshes    uint64
 	needsRefresh      bool
+	cleanupRequested  bool
 }
 
 // BatchPR pins the exact head used to build a test ref.
@@ -230,6 +231,12 @@ type LandingStarted struct {
 // Landed records the definitive base and fence after the atomic landing push.
 type Landed struct{ BatchID, NewBaseSHA, NewFence string }
 
+// HeadCleanupRequested opts a verified landing into head cleanup. The batch's
+// persisted PRs pin the original heads; historical Landed events alone do not.
+type HeadCleanupRequested struct{ BatchID, LandedSHA string }
+
+func (HeadCleanupRequested) queueEvent() {}
+
 // LandingAbandoned certifies that the advanced fence prevents any late landing.
 type LandingAbandoned struct{ BatchID, NewFence string }
 
@@ -326,6 +333,20 @@ type ResolveLanding struct{ BatchID, AttemptID, TestedSHA, FenceToken string }
 
 // DeleteRef is repeatable cleanup, acknowledged separately from queue transitions.
 type DeleteRef struct{ Ref string }
+
+// DeleteHeadBranch cleans a confirmed landing after MarkLanded, if required,
+// has completed. Execution revalidates branch eligibility and leases HeadSHA.
+type DeleteHeadBranch struct {
+	PR                 int
+	HeadSHA, LandedSHA string
+}
+
+func (DeleteHeadBranch) queueAction() {}
+
+// Key distinguishes landed heads while keeping retries of one cleanup stable.
+func (a DeleteHeadBranch) Key() string {
+	return fmt.Sprintf("pr/%d/delete-head/%s/%s", a.PR, a.HeadSHA, a.LandedSHA)
+}
 
 // Dequeue remains pending until the executor records a Dequeued result.
 type Dequeue struct {

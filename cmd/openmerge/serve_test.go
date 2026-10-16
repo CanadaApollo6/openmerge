@@ -89,12 +89,31 @@ func TestServeOptions(t *testing.T) {
 	t.Setenv("OPENMERGE_API_LISTEN", "")
 	t.Setenv("OPENMERGE_API_TOKEN", "")
 	t.Setenv("OPENMERGE_API_TOKEN_FILE", "")
+	t.Setenv("OPENMERGE_DELETE_HEAD_BRANCH", "true")
 	options, err := parseServe([]string{"--poll-interval=5s"}, io.Discard)
 	if err != nil || options.poll != 5*time.Second || options.app != 42 || options.logLevel != "debug" || options.committerName != "queue-app[bot]" || options.committerEmail != "99+queue-app[bot]@users.noreply.github.com" {
 		t.Fatalf("options=%+v error=%v", options, err)
 	}
 	if options.apiListen != "" || options.rulesInterval != 10*time.Minute {
 		t.Fatal("API enabled by default or unexpected rules interval")
+	}
+	if !options.deleteHeadBranch {
+		t.Fatal("cleanup default disabled")
+	}
+	t.Setenv("OPENMERGE_DELETE_HEAD_BRANCH", "false")
+	if got, err := parseServe(nil, io.Discard); err != nil || got.deleteHeadBranch {
+		t.Fatalf("cleanup env: %+v %v", got, err)
+	}
+	t.Setenv("OPENMERGE_DELETE_HEAD_BRANCH", "invalid")
+	if _, err := parseServe(nil, io.Discard); err == nil {
+		t.Fatal("invalid cleanup env accepted")
+	}
+	if got, err := parseServe([]string{"--delete-head-branch=true"}, io.Discard); err != nil || !got.deleteHeadBranch {
+		t.Fatalf("cleanup flag override: %+v %v", got, err)
+	}
+	t.Setenv("OPENMERGE_DELETE_HEAD_BRANCH", "true")
+	if got, err := parseServe([]string{"--delete-head-branch=false"}, io.Discard); err != nil || got.deleteHeadBranch {
+		t.Fatalf("cleanup flag: %+v %v", got, err)
 	}
 	if got, err := parseServe([]string{"--api-listen=:8081", "--rules-interval=2m"}, io.Discard); err != nil || got.apiListen != "127.0.0.1:8081" || got.rulesInterval != 2*time.Minute {
 		t.Fatalf("API/rules options=%+v %v", got, err)

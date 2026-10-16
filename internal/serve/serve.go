@@ -32,11 +32,12 @@ type Target struct {
 
 // Options bounds API polling and concurrent queue execution.
 type Options struct {
-	PollInterval  time.Duration
-	RulesInterval time.Duration
-	Concurrency   int
-	ActionTimeout time.Duration
-	Logger        *slog.Logger
+	PollInterval            time.Duration
+	RulesInterval           time.Duration
+	Concurrency             int
+	ActionTimeout           time.Duration
+	DisableDeleteHeadBranch bool
+	Logger                  *slog.Logger
 	// BackoffUntil exposes the driver's shared quota/cooldown deadline.
 	BackoffUntil func() time.Time
 }

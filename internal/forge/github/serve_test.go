@@ -81,6 +81,9 @@ func TestServeCommentToLanding(t *testing.T) {
 		tree := localGit(t, remote, "100644 blob "+configBlob+"\t.openmerge.yml\n100644 blob "+blob+fmt.Sprintf("\tpr-%d.txt\n", n), "mktree")
 		heads[n] = localGit(t, remote, fmt.Sprintf("PR %d\n\nSigned-off-by: Real <real@example.test>\nCo-authored-by: Carol <carol@example.test>\nOpenMerge-Batch: contributor", n), "commit-tree", tree, "-p", base)
 		localGit(t, remote, "", "update-ref", HeadRef(n), heads[n])
+		if n == 2 {
+			localGit(t, remote, "", "update-ref", "refs/heads/pr-2", heads[n])
+		}
 		f.prs[n].Head.SHA = new(heads[n])
 		f.reviews[n] = nil
 		f.prs[n].Body = new("Description\nSigned-off-by: Forged <forged@example.test>\nCo-authored-by: Impostor <impostor@example.test>\nOpenMerge-Batch: body")
@@ -92,7 +95,15 @@ func TestServeCommentToLanding(t *testing.T) {
 	addComment(2, 11, "reader")
 	addComment(2, 12, "writer")
 	f.override = func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path == "/api/v3/repos/acme/project" {
+			f.json(w, map[string]any{"id": 50, "default_branch": "main"})
+			return true
+		}
 		path := strings.TrimPrefix(r.URL.Path, "/api/v3/repos/acme/project/")
+		if path == "branches/pr-2" {
+			f.json(w, map[string]any{"name": "pr-2", "protected": false, "commit": map[string]any{"sha": heads[2]}})
+			return true
+		}
 		if strings.HasPrefix(path, "contents/") {
 			if path != "contents/.openmerge.yml" {
 				f.apiError(w, 404, "Not Found")
@@ -122,7 +133,7 @@ func TestServeCommentToLanding(t *testing.T) {
 	}
 	committer, err := f.driver.Committer(t.Context())
 	must(t, err)
-	git, err := gitops.New(t.Context(), gitops.Config{WorkDir: t.TempDir(), Remote: func(context.Context, forge.RepoRef) (string, gitops.Auth, error) { return remote, gitops.Auth{}, nil }, HeadRef: HeadRef, PullRequest: f.driver.PullRequest, Committer: committer})
+	git, err := gitops.New(t.Context(), gitops.Config{WorkDir: t.TempDir(), Remote: func(context.Context, forge.RepoRef) (string, gitops.Auth, error) { return remote, gitops.Auth{}, nil }, HeadRef: HeadRef, PullRequest: f.driver.PullRequestMetadata, CommitAuthors: f.driver.CommitAuthors, Committer: committer})
 	must(t, err)
 	initial, err := git.EnsureFence(t.Context(), testRepo, "openmerge/fence/main")
 	must(t, err)
@@ -143,7 +154,7 @@ func TestServeCommentToLanding(t *testing.T) {
 			f.mu.Lock()
 			closed := f.prs[2].GetState() == "closed"
 			f.mu.Unlock()
-			if closed {
+			if _, err := git.ReadRef(t.Context(), testRepo, "pr-2"); closed && err != nil {
 				break
 			}
 		}

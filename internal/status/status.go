@@ -93,10 +93,14 @@ type Why struct {
 
 // Event exposes stable evidence metadata without the private persistence payload.
 type Event struct {
-	ID      int64     `json:"id"`
-	Type    string    `json:"type"`
-	At      time.Time `json:"at"`
-	Summary string    `json:"summary"`
+	ID      int64      `json:"id"`
+	Type    string     `json:"type"`
+	At      time.Time  `json:"at"`
+	Summary string     `json:"summary"`
+	Count   int        `json:"count,omitempty"`
+	EndID   int64      `json:"end_id,omitempty"`
+	Until   *time.Time `json:"until,omitempty"`
+	pairKey string
 }
 
 // Project replays committed history. A positive PR selects its explanation;
@@ -108,6 +112,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 	heads := make(map[int]string)
 	tested, inheritedPause := explanationContext(j, pr)
 	events := make([]Event, 0)
+	var previous queue.Event
 	var watermark int64
 	for _, record := range j.Events {
 		before := s
@@ -163,9 +168,11 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 		}
 		if pr > 0 && (inheritedPause[record.ID] || affects(record.Event, pr, before, s, tested)) {
 			kind, _, _ := queue.EncodeEvent(record.Event)
-			events = append(events, Event{record.ID, kind, record.RecordedAt.UTC(), sanitizer.Sanitize(eventSummary(record.Event))})
-			if len(events) > limit {
-				events = slices.Delete(events, 0, 1)
+			events = appendEvidence(events, Event{ID: record.ID, Type: kind, At: record.RecordedAt.UTC(), Summary: sanitizer.Sanitize(eventSummary(record.Event, before, s))}, record.Event, previous, before)
+			previous = record.Event
+			// Keep one extra row until a reopen's matching refresh arrives.
+			if len(events) > limit+1 {
+				events = slices.Delete(events, 0, len(events)-limit-1)
 			}
 		}
 	}
@@ -247,6 +254,9 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 	case "dequeue-pending":
 		summary += "; dequeue requested; an in-flight landing must settle first if present"
 	}
+	if len(events) > limit {
+		events = slices.Delete(events, 0, len(events)-limit)
+	}
 	return q, &e, &Why{Summary: summary, Limit: limit, Events: events}
 }
 
@@ -326,7 +336,7 @@ func explanationContext(j store.Journal, pr int) (map[string]bool, map[int64]boo
 	return result, inherited
 }
 
-func eventSummary(event queue.Event) string {
+func eventSummary(event queue.Event, before, after queue.State) string {
 	switch e := event.(type) {
 	case queue.PRObserved:
 		return fmt.Sprintf("Observed PR #%d; eligible=%t, trusted=%t", e.PR, e.Eligible, e.Trusted)
@@ -368,7 +378,13 @@ func eventSummary(event queue.Event) string {
 	case queue.ChecksCompleted:
 		return fmt.Sprintf("Recorded terminal CI result; success=%t", e.Success)
 	case queue.ChecksReopened:
-		return "CI reopened; previous success revoked"
+		if before.ChecksPassed(e.TestedSHA) && !after.ChecksPassed(e.TestedSHA) {
+			return "CI reopened; previous success revoked"
+		}
+		if after.ChecksPassed(e.TestedSHA) {
+			return "Observed pending CI; landing already started"
+		}
+		return "CI still pending"
 	case queue.ChecksRefreshed:
 		return "Refreshed the batch CI observations"
 	case queue.LandingStarted:

@@ -1,0 +1,1 @@
+{"version":1,"type":"delete_head_branch","data":{"pr":2,"head_sha":"head","landed_sha":"tested"}}

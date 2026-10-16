@@ -51,6 +51,12 @@ func plan(cfg Config, s State, now time.Time) []Action {
 			}
 		}
 		for _, effect := range s.effects {
+			if cleanup, ok := effect.(DeleteHeadBranch); ok && slices.ContainsFunc(s.effects, func(pending Action) bool {
+				mark, ok := pending.(MarkLanded)
+				return ok && mark == MarkLanded(cleanup)
+			}) {
+				continue
+			}
 			if deletion, ok := effect.(DeleteRef); ok && s.Active != nil && s.Active.Phase == Landing && deletion.Ref == s.Active.TestRef {
 				continue
 			}

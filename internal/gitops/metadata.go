@@ -143,7 +143,7 @@ func (s *session) addTrailers(ctx context.Context, message string, trailers ...s
 	return out, nil
 }
 
-func (s *session) prMessage(ctx context.Context, req forge.BuildRequest, pr forge.PullRequest, author Identity, last bool) (string, error) {
+func (s *session) prMessage(ctx context.Context, repo forge.RepoRef, req forge.BuildRequest, pr forge.PullRequest, author Identity, last bool) (string, error) {
 	title := strings.TrimSpace(stripMetadataLines(pr.Title, "OpenMerge-Batch"))
 	if title == "" {
 		title = fmt.Sprintf("PR %d", pr.Number)
@@ -165,6 +165,31 @@ func (s *session) prMessage(ctx context.Context, req forge.BuildRequest, pr forg
 	var trailers []string
 	seen := make(map[string]bool)
 	coauthors := map[string]bool{strings.ToLower(author.Email): true}
+	if s.r.cfg.CommitAuthors != nil {
+		linked, err := s.r.cfg.CommitAuthors(ctx, repo, pr.Number)
+		if err != nil {
+			return "", err
+		}
+		own := make(map[string]bool)
+		for _, commit := range linked {
+			matches := commit.Login != "" && strings.EqualFold(commit.Login, pr.Author)
+			if commit.ID > 0 && pr.AuthorID > 0 {
+				matches = commit.ID == pr.AuthorID
+			}
+			own[commit.SHA] = matches
+		}
+		// Collect every own email first, so trailers in earlier commits cannot
+		// reintroduce another email belonging to the primary author.
+		for _, sha := range strings.Fields(originals) {
+			if own[sha] {
+				id, _, _, err := s.original(ctx, sha)
+				if err != nil {
+					return "", err
+				}
+				coauthors[strings.ToLower(id.Email)] = true
+			}
+		}
+	}
 	add := func(trailer string) {
 		key, value, _ := strings.Cut(trailer, ": ")
 		if key == "Co-authored-by" {

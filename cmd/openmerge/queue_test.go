@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/status"
 )
@@ -174,5 +175,32 @@ func TestStatusPrintsProblemsPerRulesSource(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "rules (permissions)") {
 		t.Fatal("cleared source printed as a block")
+	}
+}
+
+func TestStatusTableInactivePositionAndPendingRange(t *testing.T) {
+	for _, state := range []string{"merged", "dequeued", "not-queued", "queued"} {
+		t.Run(state, func(t *testing.T) {
+			position, want := 0, "-"
+			if state == "queued" {
+				position, want = 2, "2"
+			}
+			until := time.Date(2026, 10, 16, 12, 1, 0, 0, time.UTC)
+			response := status.Response{Queue: &status.Queue{Repository: "owner/repo", Base: "main"}, PR: &status.Entry{PR: 1, Position: position, Status: state, HeadSHA: "head"}, Why: &status.Why{Summary: "PR #1: " + state, Events: []status.Event{{ID: 6, EndID: 15, At: until.Add(-time.Minute), Until: &until, Summary: "CI still pending", Count: 5}}}}
+			var out bytes.Buffer
+			if err := printStatus(&out, response); err != nil {
+				t.Fatal(err)
+			}
+			lines := strings.Split(out.String(), "\n")
+			fields := strings.Fields(lines[1])
+			if len(fields) < 6 || fields[2] != want {
+				t.Fatalf("bad position: %s", &out)
+			}
+			for _, text := range []string{"CI still pending (5 observations)", "2026-10-16T12:00:00Z – 2026-10-16T12:01:00Z", "6–15"} {
+				if !strings.Contains(out.String(), text) {
+					t.Fatalf("missing %q: %s", text, &out)
+				}
+			}
+		})
 	}
 }

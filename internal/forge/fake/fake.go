@@ -36,6 +36,8 @@ type repository struct {
 	comments    map[int][]Comment
 	prCommits   map[int][]string
 	prBases     map[int]string
+	authors     map[string]forge.CommitAuthor
+	protected   map[string]bool
 	nonce       func() string
 	permissions map[string]bool
 	updated     map[int]time.Time
@@ -93,7 +95,7 @@ func (f *Forge) repo(repo forge.RepoRef) *repository {
 	r := f.repos[repo]
 	if r == nil {
 		r = &repository{
-			nonce: f.nonce, permissions: make(map[string]bool), updated: make(map[int]time.Time),
+			nonce: f.nonce, permissions: make(map[string]bool), updated: make(map[int]time.Time), authors: make(map[string]forge.CommitAuthor), protected: make(map[string]bool),
 			refs: make(map[string]string), commits: make(map[string]Commit),
 			prs: make(map[int]forge.PullRequest), checks: make(map[string][]forge.CheckRun),
 			statuses: make(map[int]map[string]forge.Status), comments: make(map[int][]Comment), prCommits: make(map[int][]string), prBases: make(map[int]string),

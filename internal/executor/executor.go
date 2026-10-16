@@ -30,6 +30,8 @@ type Executor struct {
 	AllowNoRequiredChecks bool
 	// AllowSkippedNeutral explicitly permits skipped and neutral required checks.
 	AllowSkippedNeutral bool
+	// DisableDeleteHeadBranch retains landed heads; default false enables cleanup.
+	DisableDeleteHeadBranch bool
 	// CheckPolicy evaluates repository merge conditions on the tested SHA.
 	// Nil retains the explicit RequiredChecks policy.
 	CheckPolicy func([]forge.CheckRun) (terminal, success bool, err error)
@@ -151,12 +153,31 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		if err := x.verifyLanding(ctx, a.TestedSHA, attemptID); err != nil {
 			return err
 		}
+		if err := emit(queue.HeadCleanupRequested{BatchID: a.BatchID, LandedSHA: a.TestedSHA}); err != nil {
+			return err
+		}
 		return emit(queue.Landed{BatchID: a.BatchID, NewBaseSHA: a.TestedSHA, NewFence: next})
 	case queue.ResolveLanding:
 		return x.resolve(ctx, a, emit)
 	case queue.DeleteRef:
 		if err := x.Driver.DeleteRef(ctx, x.Repo, a.Ref); err != nil {
 			return err
+		}
+		return emit(queue.ActionCompleted{Key: a.Key()})
+	case queue.DeleteHeadBranch:
+		if !x.DisableDeleteHeadBranch {
+			if err := x.verifyLanding(ctx, a.LandedSHA, ""); err != nil {
+				return err
+			}
+			branch, err := x.Driver.HeadBranchForDeletion(ctx, x.Repo, a.PR, a.HeadSHA, x.Base)
+			if err != nil {
+				return err
+			}
+			if branch != "" {
+				if err := x.Git.DeleteBranch(ctx, x.Repo, branch, a.HeadSHA); err != nil {
+					return err
+				}
+			}
 		}
 		return emit(queue.ActionCompleted{Key: a.Key()})
 	case queue.ReportStatus:
@@ -207,6 +228,9 @@ func (x *Executor) resolve(ctx context.Context, a queue.ResolveLanding, emit fun
 		switch {
 		case id == "land/"+a.AttemptID && tested == a.TestedSHA:
 			if err := x.verifyLanding(ctx, a.TestedSHA, a.AttemptID); err != nil {
+				return err
+			}
+			if err := emit(queue.HeadCleanupRequested{BatchID: a.BatchID, LandedSHA: a.TestedSHA}); err != nil {
 				return err
 			}
 			return emit(queue.Landed{BatchID: a.BatchID, NewBaseSHA: a.TestedSHA, NewFence: sha})

@@ -67,7 +67,11 @@ PR with `<title> (#<number>)` and the trimmed body (without OpenMerge HTML
 markers or attribution/batch trailer lines). Merge creates a two-parent commit per PR with
 `Merge pull request #<number> from <head>` and the title. Both use the PR author,
 collect other commit authors/coauthor trailers, and retain distinct sign-offs
-from the PR's commits. Rebase preserves each original author and author date
+from the PR's commits. `CommitAuthors` supplies linked forge users at build time:
+commits matching the PR author's ID (or login when IDs are unavailable) contribute
+no self co-author credit, including trailers with those commits' email aliases.
+Unlinked commits and standalone use retain email-based deduplication. Sign-offs
+are retained independently. Rebase preserves each original author and author date
 while replaying linear PR histories in topological order, using each original
 commit's parent as the explicit merge base.
 

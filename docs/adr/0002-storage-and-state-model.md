@@ -75,3 +75,10 @@ Previously deployed event/action types and their fixtures are unchanged.
 - **Mutable state rows without an event log.** Simpler to start, but loses replay, makes "why" questions unanswerable after the fact, and turns webhook ordering bugs into silent corruption.
 - **SQLite.** Attractive for single-node installs and development. It lost as the primary store because multiple workers need row-level locking and `SKIP LOCKED`. The store interface should not preclude a SQLite backend for single-process development later; that would need its own ADR.
 - **An external workflow engine** (Temporal and similar). Durable execution would cover crash recovery, but it is a heavy dependency for self-hosters and hides the queue logic inside workflow code that is harder to simulate than a pure planner.
+
+
+### Post-deployment addition: head cleanup (2026-10-16)
+
+See the canonical [landed head cleanup protocol](../operating.md#landed-head-cleanup)
+for its additive wire types, replay behavior, acknowledgements, and upgrade
+requirements.
