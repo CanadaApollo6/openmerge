@@ -24,12 +24,18 @@
 // Retention only improves latency: a Testing batch without an outcome requests
 // RefreshChecks immediately and then every RefreshInterval (default 1m). The
 // executor records ChecksCompleted or ChecksReopened first, then ChecksRefreshed
-// with the same observation time for every successful read. Older observations
-// cannot change current evidence; equal times follow event-log order. A reopen
-// revokes success without extending the original deadline. Refresh keys use the batch
-// and count of recorded refreshes. A checks timeout requires a refresh at or after
-// its deadline; until then Plan requests a refresh even if the normal interval
-// has not elapsed.
+// stamped at read time for every successful read. Observations fold strictly in
+// event-log order, including retained pre-build results; timestamps never suppress
+// them. Every reopen revokes success and invalidates timeout evidence without
+// extending the original deadline. A stale pending costs another read; a delayed
+// pass can restore projected success, so Land must freshly re-read checks before
+// LandingStarted. A reopen committed before that start makes CanStart refuse it.
+// Refresh keys use the batch and count of recorded refreshes; every matching
+// ChecksRefreshed advances the count, even if its read time went backward. Timeout
+// requires that refresh's own At to be at or after the deadline, with no reopen
+// applied since it. Until then Plan requests a refresh even if the normal interval
+// has not elapsed. Worker clocks affect timeout liveness, as StartedTestingAt
+// already does, never landing safety. Equal timestamps have no special meaning.
 //
 // Non-conflict build failures keep PRs queued. Plan backs off from the recorded
 // TestRefBuildFailed.At by BuildBackoff, doubling per consecutive failure (with

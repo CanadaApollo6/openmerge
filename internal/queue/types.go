@@ -80,9 +80,9 @@ type Batch struct {
 	LandingAttempt   LandingAttempt
 
 	checksPassed      bool
-	checksObservedAt  time.Time
 	checksRefreshedAt time.Time
 	checkRefreshes    uint64
+	needsRefresh      bool
 }
 
 // BatchPR pins the exact head used to build a test ref.
@@ -137,22 +137,22 @@ type PRObserved struct {
 // Observing the current BaseSHA again is a no-op, including for build retries.
 type BaseMoved struct{ SHA string }
 
-// ChecksCompleted is correlated by tested SHA and ordered by observation time.
+// ChecksCompleted records a terminal CI observation in event-log order.
 type ChecksCompleted struct {
 	TestedSHA string
 	Success   bool
-	At        time.Time
 }
 
-// ChecksReopened records a pending observation and revokes any older success
-// without restarting the check deadline, including when no pass is recorded yet.
+// ChecksReopened revokes success and timeout evidence in event-log order without
+// restarting the check deadline, including when no pass is recorded yet.
 type ChecksReopened struct {
 	TestedSHA string
 	At        time.Time
 }
 
-// ChecksRefreshed records a forge read after ChecksCompleted or ChecksReopened,
-// sharing its observation time. It is correlated by both batch and tested SHA.
+// ChecksRefreshed records a forge read after ChecksCompleted or ChecksReopened.
+// At is the read time used for timeout evidence, never observation ordering.
+// It is correlated by both batch and tested SHA.
 type ChecksRefreshed struct {
 	BatchID, TestedSHA string
 	At                 time.Time
@@ -278,8 +278,8 @@ func (a FailBatch) Key() string { return "batch/" + a.BatchID + "/fail/" + strin
 
 // RefreshChecks reads forge CI status for TestedSHA. The executor first appends
 // ChecksCompleted if terminal or ChecksReopened otherwise, then always appends
-// ChecksRefreshed with the same read time. Even a pending observation without a
-// prior pass must fence older results; the executor has no projection to consult.
+// ChecksRefreshed stamped at read time. Even a pending observation without a
+// prior pass must revoke success; the executor has no projection to consult.
 // A failed read records no refresh.
 type RefreshChecks struct {
 	BatchID, TestedSHA string

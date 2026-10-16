@@ -26,7 +26,7 @@ func testingState() State {
 }
 
 func readyState() State {
-	return applySerial(testingState(), ChecksCompleted{TestedSHA: "tested1", Success: true, At: epoch})
+	return applySerial(testingState(), ChecksCompleted{TestedSHA: "tested1", Success: true})
 }
 
 func landingState() State {
@@ -150,25 +150,25 @@ func TestApplyAndPlan(t *testing.T) {
 		},
 		{
 			name: "matching checks permit exact SHA landing", initial: testingState,
-			events:  []Event{ChecksCompleted{TestedSHA: "tested1", Success: true, At: epoch}},
+			events:  []Event{ChecksCompleted{TestedSHA: "tested1", Success: true}},
 			entries: []int{1}, batch: "b1", phase: Testing,
 			want: []string{"land:b1:base1:tested1:f0"},
 		},
 		{
 			name: "unrelated successful checks ignored", initial: testingState,
-			events:  []Event{ChecksCompleted{TestedSHA: "old-sha", Success: true, At: epoch}},
+			events:  []Event{ChecksCompleted{TestedSHA: "old-sha", Success: true}},
 			entries: []int{1}, batch: "b1", phase: Testing,
 			want: []string{"refresh:b1:tested1"},
 		},
 		{
 			name: "unrelated failed checks ignored", initial: testingState,
-			events:  []Event{ChecksCompleted{TestedSHA: "old-sha", Success: false, At: epoch}},
+			events:  []Event{ChecksCompleted{TestedSHA: "old-sha", Success: false}},
 			entries: []int{1}, batch: "b1", phase: Testing,
 			want: []string{"refresh:b1:tested1"},
 		},
 		{
 			name: "failed checks request dequeue", initial: testingState,
-			events:  []Event{ChecksCompleted{TestedSHA: "tested1", Success: false, At: epoch}},
+			events:  []Event{ChecksCompleted{TestedSHA: "tested1", Success: false}},
 			entries: []int{1}, batch: "b1", phase: Testing,
 			want: []string{"dequeue:1:checks-failed", "delete:openmerge/queue/main/b1"},
 		},
@@ -288,13 +288,13 @@ func TestApplyAndPlan(t *testing.T) {
 		},
 		{
 			name: "stale build result and checks after base move", initial: testingState,
-			events:  []Event{BaseMoved{SHA: "base2"}, TestRefBuilt{Method: Merge, BatchID: "b1", TestedSHA: "old", At: epoch}, ChecksCompleted{TestedSHA: "tested1", Success: true, At: epoch}},
+			events:  []Event{BaseMoved{SHA: "base2"}, TestRefBuilt{Method: Merge, BatchID: "b1", TestedSHA: "old", At: epoch}, ChecksCompleted{TestedSHA: "tested1", Success: true}},
 			entries: []int{1}, batch: "b2", phase: Building, base: "base2",
 			want: []string{"delete:openmerge/queue/main/b1", "build:b2:base2:[{1 head1}]"},
 		},
 		{
 			name: "old SHA checks cannot settle rebuilt testing batch", initial: testingState,
-			events:  []Event{BaseMoved{SHA: "base2"}, TestRefBuilt{Method: Merge, BatchID: "b2", TestedSHA: "tested2", At: epoch}, ChecksCompleted{TestedSHA: "tested1", Success: true, At: epoch}, ChecksCompleted{TestedSHA: "tested1", At: epoch}},
+			events:  []Event{BaseMoved{SHA: "base2"}, TestRefBuilt{Method: Merge, BatchID: "b2", TestedSHA: "tested2", At: epoch}, ChecksCompleted{TestedSHA: "tested1", Success: true}, ChecksCompleted{TestedSHA: "tested1"}},
 			entries: []int{1}, batch: "b2", phase: Testing, base: "base2",
 			want: []string{"delete:openmerge/queue/main/b1", "refresh:b2:tested2"},
 		},
@@ -529,7 +529,7 @@ func TestApplyDoesNotMutateInput(t *testing.T) {
 		EnqueueRequested{PR: 2, At: epoch}, DequeueRequested{PR: 1}, PRClosed{PR: 1}, BaseMoved{SHA: "base2"}, ResumeRequested{},
 		TestRefBuilt{Method: Merge, BatchID: "b1", TestedSHA: "test", At: epoch}, TestRefBuildFailed{BatchID: "b1", Conflict: true},
 		TestRefBuildFailed{BatchID: "b1", At: epoch},
-		ChecksCompleted{TestedSHA: "tested1", At: epoch}, LandingStarted{FenceToken: "fence", BatchID: "b1", AttemptID: "a2", At: epoch},
+		ChecksCompleted{TestedSHA: "tested1"}, LandingStarted{FenceToken: "fence", BatchID: "b1", AttemptID: "a2", At: epoch},
 		ChecksRefreshed{BatchID: "b1", TestedSHA: "tested1", At: epoch},
 		Landed{BatchID: "b1", NewBaseSHA: "test", NewFence: "f1"},
 		BaseMoved{SHA: "base2"}, LandingAbandoned{BatchID: "b1", NewFence: "f1"},
@@ -540,7 +540,7 @@ func TestApplyDoesNotMutateInput(t *testing.T) {
 		func() State { return queued(1) }, testingState, landingState,
 		func() State { return applySerial(testingState(), DequeueRequested{PR: 1}) },
 		func() State {
-			return applySerial(queued(1), ChecksCompleted{TestedSHA: "test", Success: true, At: epoch})
+			return applySerial(queued(1), ChecksCompleted{TestedSHA: "test", Success: true})
 		},
 	} {
 		for _, event := range events {
@@ -606,7 +606,7 @@ func (sc *scenario) acknowledgeEffects() {
 func (sc *scenario) land(batch, tested, base, fence, nextFence string, next ...string) {
 	sc.t.Helper()
 	sc.step(TestRefBuilt{Method: Merge, BatchID: batch, TestedSHA: tested, At: sc.now}, "refresh:"+batch+":"+tested)
-	sc.step(ChecksCompleted{TestedSHA: tested, Success: true, At: epoch}, "land:"+batch+":"+base+":"+tested+":"+fence)
+	sc.step(ChecksCompleted{TestedSHA: tested, Success: true}, "land:"+batch+":"+base+":"+tested+":"+fence)
 	sc.step(LandingStarted{BatchID: batch, AttemptID: "attempt-" + batch, FenceToken: fence, At: sc.now})
 	pr := sc.s.Active.PRs[0].PR
 	want := []string{fmt.Sprintf("report:%d:merged:PR landed", pr), "delete:openmerge/queue/main/" + batch}
@@ -630,7 +630,7 @@ func TestSerialScenarios(t *testing.T) {
 		sc := scenario{t: t, s: queued(1, 2, 3), now: epoch}
 		sc.land("b1", "tested1", "base1", "f0", "f1", "build:b2:tested1:[{2 head2}]")
 		sc.step(TestRefBuilt{Method: Merge, BatchID: "b2", TestedSHA: "bad", At: epoch}, "refresh:b2:bad")
-		sc.step(ChecksCompleted{TestedSHA: "bad", At: epoch}, "dequeue:2:checks-failed", "delete:openmerge/queue/main/b2")
+		sc.step(ChecksCompleted{TestedSHA: "bad"}, "dequeue:2:checks-failed", "delete:openmerge/queue/main/b2")
 		sc.acknowledgeEffects()
 		sc.step(Dequeued{PR: 2, AdmissionID: 2, Reason: ChecksFailed}, "report:2:dequeued:checks-failed", "build:b3:tested1:[{3 head3}]")
 		sc.acknowledgeEffects()
@@ -644,7 +644,7 @@ func TestSerialScenarios(t *testing.T) {
 		sc.s = applySerial(sc.s, BaseMoved{SHA: "external"})
 		sc.step(LandingAbandoned{BatchID: "b1", NewFence: "f1"}, "delete:openmerge/queue/main/b1", "build:b2:external:[{1 head1}]")
 		sc.acknowledgeEffects()
-		sc.step(ChecksCompleted{TestedSHA: "tested1", Success: true, At: epoch}, "build:b2:external:[{1 head1}]")
+		sc.step(ChecksCompleted{TestedSHA: "tested1", Success: true}, "build:b2:external:[{1 head1}]")
 		sc.land("b2", "rebuilt", "external", "f1", "f2")
 		if len(sc.s.Entries) != 0 || sc.s.BaseSHA != "rebuilt" || sc.s.Fence != "f2" {
 			t.Fatalf("unexpected final state: %+v", sc.s)

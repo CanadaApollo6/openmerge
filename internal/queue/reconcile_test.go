@@ -12,7 +12,7 @@ func TestReviewRound1Sequences(t *testing.T) {
 	t.Run("early-success-and-failure", func(t *testing.T) {
 		for _, success := range []bool{true, false} {
 			s := queued(1)
-			s = applySerial(s, ChecksCompleted{TestedSHA: "early", Success: success, At: epoch})
+			s = applySerial(s, ChecksCompleted{TestedSHA: "early", Success: success})
 			s = applySerial(s, TestRefBuilt{BatchID: s.Active.ID, TestedSHA: "early", At: epoch, Method: Merge})
 			a := Plan(testConfig, s, epoch.Add(time.Hour))
 			if success {
@@ -61,9 +61,9 @@ func TestReviewNeededEarlyCheckSurvivesUnrelatedTraffic(t *testing.T) {
 				cfg := testConfig
 				cfg.CheckTimeout = timeout
 				s := queued(1)
-				s = applySerial(s, ChecksCompleted{TestedSHA: "needed", Success: success, At: epoch})
+				s = applySerial(s, ChecksCompleted{TestedSHA: "needed", Success: success})
 				for i := 0; i < 64; i++ {
-					s = applySerial(s, ChecksCompleted{TestedSHA: fmt.Sprintf("unrelated-%d", i), Success: true, At: epoch})
+					s = applySerial(s, ChecksCompleted{TestedSHA: fmt.Sprintf("unrelated-%d", i), Success: true})
 				}
 				s = applySerial(s, TestRefBuilt{BatchID: s.Active.ID, TestedSHA: "needed", Method: Merge, At: epoch})
 				now := epoch.Add(time.Hour)
@@ -73,7 +73,7 @@ func TestReviewNeededEarlyCheckSurvivesUnrelatedTraffic(t *testing.T) {
 					t.Fatalf("lost check must be reconciled before timeout: %v", descriptions(a))
 				}
 				// Executor re-reads the forge and logs the terminal outcome first.
-				s = applySerial(s, ChecksCompleted{TestedSHA: refresh.TestedSHA, Success: success, At: epoch})
+				s = applySerial(s, ChecksCompleted{TestedSHA: refresh.TestedSHA, Success: success})
 				s = applySerial(s, ChecksRefreshed{BatchID: refresh.BatchID, TestedSHA: refresh.TestedSHA, At: now})
 				a = Plan(cfg, s, now)
 				if success {
@@ -106,14 +106,14 @@ func TestReviewSameBaseObservationPreservesFailureBudget(t *testing.T) {
 func TestReviewDelayedOldCheckOnReusedSHA(t *testing.T) {
 	s := queued(1)
 	s = applySerial(s, TestRefBuilt{BatchID: s.Active.ID, TestedSHA: "same", Method: Merge, At: epoch})
-	s = applySerial(s, ChecksCompleted{TestedSHA: "same", Success: false, At: epoch})
+	s = applySerial(s, ChecksCompleted{TestedSHA: "same", Success: false})
 	d := onlyAction[Dequeue](t, Plan(testConfig, s, epoch))
 	s = applySerial(s, Dequeued{PR: 1, AdmissionID: d.AdmissionID, Reason: d.Reason})
 	s = applySerial(s, EnqueueRequested{PR: 1, At: epoch.Add(time.Minute)})
 	b := onlyAction[BuildTestRef](t, Plan(testConfig, s, epoch))
-	s = applySerial(s, ChecksCompleted{TestedSHA: "same", Success: false, At: epoch}) // late old run result, during new build
+	s = applySerial(s, ChecksCompleted{TestedSHA: "same", Success: false}) // late old run result, during new build
 	s = applySerial(s, TestRefBuilt{BatchID: b.BatchID, TestedSHA: "same", Method: Merge, At: epoch.Add(time.Minute)})
-	s = applySerial(s, ChecksCompleted{TestedSHA: "same", Success: true, At: epoch}) // new run succeeds before any dequeue execution
+	s = applySerial(s, ChecksCompleted{TestedSHA: "same", Success: true}) // new run succeeds before any dequeue execution
 	a := Plan(testConfig, s, epoch.Add(time.Minute))
 	if len(actionsOf[Land](a)) != 0 || len(actionsOf[Dequeue](a)) != 0 || s.Active.Phase != Building || s.Active.ID == b.BatchID || s.buildRetry.failures != 1 {
 		t.Fatalf("reused SHA was not rejected as a build failure: %v", descriptions(a))
@@ -130,8 +130,8 @@ func TestReviewDelayedOldCheckOnReusedSHA(t *testing.T) {
 	// A compliant retry uses a new test commit, so the old SHA cannot affect it.
 	retry := onlyAction[BuildTestRef](t, a)
 	s = applySerial(s, TestRefBuilt{BatchID: retry.BatchID, TestedSHA: "unique", Method: Merge, At: epoch.Add(time.Minute)})
-	s = applySerial(s, ChecksCompleted{TestedSHA: "same", Success: false, At: epoch})
-	s = applySerial(s, ChecksCompleted{TestedSHA: "unique", Success: true, At: epoch})
+	s = applySerial(s, ChecksCompleted{TestedSHA: "same", Success: false})
+	s = applySerial(s, ChecksCompleted{TestedSHA: "unique", Success: true})
 	if land := onlyAction[Land](t, Plan(testConfig, s, epoch.Add(time.Minute))); land.TestedSHA != "unique" {
 		t.Fatalf("old failure contaminated the unique retry: %+v", land)
 	}
@@ -230,7 +230,7 @@ func TestReviewPauseChangesAndBackoff(t *testing.T) {
 func TestReviewReplayDeterminism(t *testing.T) {
 	events := []Event{PRObserved{PR: 1, HeadSHA: "head1", Eligible: true, Trusted: true}, EnqueueRequested{PR: 1, At: epoch}}
 	for i := 0; i < 80; i++ {
-		events = append(events, ChecksCompleted{TestedSHA: fmt.Sprintf("sha-%d", i), Success: i%2 == 0, At: epoch})
+		events = append(events, ChecksCompleted{TestedSHA: fmt.Sprintf("sha-%d", i), Success: i%2 == 0})
 	}
 	events = append(events, TestRefBuilt{BatchID: "b1", TestedSHA: "sha-79", Method: Squash, At: epoch})
 	var reference State
@@ -262,13 +262,13 @@ func TestReviewReplayDeterminism(t *testing.T) {
 func TestReviewReusedSHAOrdering(t *testing.T) {
 	s := queued(1)
 	s = applySerial(s, TestRefBuilt{BatchID: s.Active.ID, TestedSHA: "same", Method: Merge, At: epoch})
-	s = applySerial(s, ChecksCompleted{TestedSHA: "same", Success: false, At: epoch})
+	s = applySerial(s, ChecksCompleted{TestedSHA: "same", Success: false})
 	d := onlyAction[Dequeue](t, Plan(testConfig, s, epoch))
 	s = applySerial(s, Dequeued{PR: 1, AdmissionID: d.AdmissionID, Reason: d.Reason})
 	s = applySerial(s, EnqueueRequested{PR: 1, At: epoch})
 	built := TestRefBuilt{BatchID: s.Active.ID, TestedSHA: "same", Method: Merge, At: epoch}
-	oldFailure := ChecksCompleted{TestedSHA: "same", Success: false, At: epoch}
-	freshSuccess := ChecksCompleted{TestedSHA: "same", Success: true, At: epoch}
+	oldFailure := ChecksCompleted{TestedSHA: "same", Success: false}
+	freshSuccess := ChecksCompleted{TestedSHA: "same", Success: true}
 	for _, tc := range []struct {
 		name   string
 		events []Event
@@ -324,7 +324,7 @@ func TestReviewMethodsAndKeys(t *testing.T) {
 			t.Fatal("unstable build key")
 		}
 		s = applySerial(s, TestRefBuilt{BatchID: b.BatchID, TestedSHA: "sha", Method: b.Method, At: epoch})
-		s = applySerial(s, ChecksCompleted{TestedSHA: "sha", Success: true, At: epoch})
+		s = applySerial(s, ChecksCompleted{TestedSHA: "sha", Success: true})
 		cfg.MergeMethod = Merge
 		l := onlyAction[Land](t, Plan(cfg, s, epoch))
 		if l.Method != method {
@@ -364,7 +364,7 @@ func TestChecksRefreshCadenceAndKeys(t *testing.T) {
 			if second.Key() == first.Key() {
 				t.Fatal("recorded refresh did not advance the epoch")
 			}
-			s = applySerial(s, ChecksCompleted{TestedSHA: "unrelated", Success: true, At: epoch})
+			s = applySerial(s, ChecksCompleted{TestedSHA: "unrelated", Success: true})
 			if again := onlyAction[RefreshChecks](t, Plan(cfg, s, epoch.Add(2*interval))); again.Key() != second.Key() {
 				t.Fatal("unrelated observation or replanning changed the refresh key")
 			}
@@ -436,13 +436,15 @@ func TestChecksRefreshRejectsStaleSubjects(t *testing.T) {
 	}
 }
 
-func TestChecksRefreshTimeDoesNotRegress(t *testing.T) {
+func TestChecksRefreshUsesLastLoggedReadTime(t *testing.T) {
 	s := testingState()
 	now := epoch.Add(time.Minute)
 	s = applySerial(s, ChecksRefreshed{BatchID: "b1", TestedSHA: "tested1", At: now})
 	s = applySerial(s, ChecksRefreshed{BatchID: "b1", TestedSHA: "tested1", At: epoch})
-	assertPlan(t, testConfig, s, now)
-	onlyAction[RefreshChecks](t, Plan(testConfig, s, now.Add(time.Minute)))
+	onlyAction[RefreshChecks](t, Plan(testConfig, s, now))
+	if s.Active.checkRefreshes != 2 || !s.Active.checksRefreshedAt.Equal(epoch) {
+		t.Fatalf("refresh did not advance bookkeeping in log order: %+v", s.Active)
+	}
 }
 
 func TestTestedSHAOwnershipSurvivesBatchCompletion(t *testing.T) {
@@ -466,7 +468,7 @@ func TestTestedSHAOwnershipSurvivesBatchCompletion(t *testing.T) {
 				d := onlyAction[Dequeue](t, Plan(cfg, s, epoch))
 				s = applySerial(s, Dequeued{PR: d.PR, AdmissionID: d.AdmissionID, Reason: d.Reason})
 			default:
-				s = applySerial(s, ChecksCompleted{TestedSHA: "tested1", Success: true, At: epoch})
+				s = applySerial(s, ChecksCompleted{TestedSHA: "tested1", Success: true})
 				s = applySerial(s, LandingStarted{BatchID: "b1", AttemptID: "attempt1", FenceToken: "f0", At: epoch})
 				switch transition {
 				case "landed":
@@ -477,7 +479,7 @@ func TestTestedSHAOwnershipSurvivesBatchCompletion(t *testing.T) {
 					s = applySerial(s, LandingAbandoned{BatchID: "b1", NewFence: "f1"})
 				}
 			}
-			s = applySerial(s, ChecksCompleted{TestedSHA: "tested1", Success: false, At: epoch})
+			s = applySerial(s, ChecksCompleted{TestedSHA: "tested1", Success: false})
 			if len(s.checks) != 0 {
 				t.Fatal("late outcome for discarded batch was retained")
 			}

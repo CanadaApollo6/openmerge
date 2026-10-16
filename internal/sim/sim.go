@@ -345,6 +345,13 @@ func (s *simulation) record(event queue.Event) {
 	}
 	s.events = append(s.events, loggedEvent{At: s.now, Event: event})
 	s.state = queue.Apply(s.state, event)
+	if reopened, ok := event.(queue.ChecksReopened); ok && batch != nil && batch.Phase == queue.Testing && batch.TestedSHA == reopened.TestedSHA {
+		for _, action := range queue.Plan(s.cfg.Planner, s.state, s.now) {
+			if _, landing := action.(queue.Land); landing {
+				s.violation = fmt.Errorf("reopened checks for %s still authorize landing", reopened.TestedSHA)
+			}
+		}
+	}
 	if failed, ok := event.(queue.BatchFailed); ok && batch != nil && failed.BatchID != batch.ID && !reflect.DeepEqual(batch, s.state.Active) {
 		s.violation = fmt.Errorf("stale failure for batch %s changed current batch %s", failed.BatchID, batch.ID)
 	}

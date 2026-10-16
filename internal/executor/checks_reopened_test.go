@@ -67,7 +67,7 @@ func TestRecordedSuccessIsRechecked(t *testing.T) {
 				}
 				var want queue.Event = queue.ChecksReopened{TestedSHA: land.TestedSHA, At: epoch}
 				if mode == "failed" {
-					want = queue.ChecksCompleted{TestedSHA: land.TestedSHA, Success: false, At: epoch}
+					want = queue.ChecksCompleted{TestedSHA: land.TestedSHA, Success: false}
 				}
 				if len(events) == 0 || !reflect.DeepEqual(events[0], want) {
 					t.Fatalf("missing revocation: %+v, want %+v", events, want)
@@ -125,10 +125,97 @@ func TestDelayedRefreshCannotTimeoutNewerPassingChecks(t *testing.T) {
 		s = queue.Apply(s, replayed)
 		return nil
 	}))
-	for _, a := range queue.Plan(cfg, s, deadline.Add(2*time.Second)) {
-		if _, ok := a.(queue.Land); ok {
-			return
-		}
+	now := deadline.Add(2 * time.Second)
+	actions := queue.Plan(cfg, s, now)
+	if len(actions) != 1 {
+		t.Fatalf("expected another read, got %+v", actions)
 	}
-	t.Fatal("delayed pending observation discarded the newer passing checks")
+	refresh, ok := actions[0].(queue.RefreshChecks)
+	if !ok {
+		t.Fatalf("delayed pending must request another read: %T", actions[0])
+	}
+	h.x.Now = func() time.Time { return now }
+	must(t, h.x.Execute(context.Background(), refresh, func(e queue.Event) error { s = queue.Apply(s, e); return nil }))
+	actions = queue.Plan(cfg, s, now)
+	if len(actions) != 1 {
+		t.Fatalf("expected landing after fresh pass: %+v", actions)
+	}
+	nextLand, ok := actions[0].(queue.Land)
+	if !ok {
+		t.Fatalf("fresh passing read did not enable landing: %T", actions[0])
+	}
+	must(t, h.x.Execute(context.Background(), nextLand, func(e queue.Event) error { s = queue.Apply(s, e); return nil }))
+	if h.read(t, "main") != land.TestedSHA || s.Active != nil {
+		t.Fatal("fresh passing checks did not land")
+	}
+}
+
+// These are the reviewer's two worker-clock reproductions, with events replayed
+// through the wire format before they enter the projection.
+func TestFastPendingCannotSuppressLaterPass(t *testing.T) {
+	h := setup(t)
+	s, land := reviewReady(t, h, h.base, h.fence, h.prs[0])
+	cfg := queue.Config{MergeMethod: queue.Merge, CheckTimeout: time.Minute}
+	deadline := s.Active.StartedTestingAt.Add(cfg.CheckTimeout)
+	fast, slow := *h.x, *h.x
+	fast.Now = func() time.Time { return deadline.Add(2 * time.Second) }
+	slow.Now = func() time.Time { return deadline.Add(time.Second) }
+	refresh := queue.RefreshChecks{BatchID: land.BatchID, TestedSHA: land.TestedSHA}
+	emit := replayChecks(t, &s)
+	h.f.SetCheckRuns(repo, land.TestedSHA, []forge.CheckRun{{Name: "ci", State: forge.Pending}, {Name: "lint", State: forge.Success}})
+	must(t, fast.Execute(context.Background(), refresh, emit))
+	h.f.SetCheckRuns(repo, land.TestedSHA, []forge.CheckRun{{Name: "ci", State: forge.Success}, {Name: "lint", State: forge.Success}})
+	must(t, slow.Execute(context.Background(), refresh, emit))
+	actions := queue.Plan(cfg, s, deadline.Add(3*time.Second))
+	if len(actions) != 1 {
+		t.Fatalf("expected Land, got %+v", actions)
+	}
+	if _, ok := actions[0].(queue.Land); !ok {
+		t.Fatalf("fast pending suppressed later pass: %T", actions[0])
+	}
+}
+
+func TestFastPassCannotHideReopenBeforeLandingStarted(t *testing.T) {
+	h := setup(t)
+	s, land := reviewReady(t, h, h.base, h.fence, h.prs[0])
+	cfg := queue.Config{MergeMethod: queue.Merge}
+	fast, slow := *h.x, *h.x
+	fast.Now = func() time.Time { return epoch.Add(5 * time.Second) }
+	slow.Now = func() time.Time { return epoch.Add(time.Second) }
+	refresh := queue.RefreshChecks{BatchID: land.BatchID, TestedSHA: land.TestedSHA}
+	emit := replayChecks(t, &s)
+	must(t, fast.Execute(context.Background(), refresh, emit))
+	h.x.NewID = func() (string, error) {
+		// Land's preflight has passed, but the reopen commits before its start.
+		h.f.SetCheckRuns(repo, land.TestedSHA, []forge.CheckRun{{Name: "ci", State: forge.Pending}, {Name: "lint", State: forge.Success}})
+		must(t, slow.Execute(context.Background(), refresh, emit))
+		return "durable-reopen", nil
+	}
+	blocked := false
+	err := h.x.Execute(context.Background(), land, func(e queue.Event) error {
+		if _, ok := e.(queue.LandingStarted); ok && !queue.CanStart(cfg, s, land, e) {
+			blocked = true
+			return errLog
+		}
+		return emit(e)
+	})
+	if !blocked || !errors.Is(err, errLog) || h.read(t, "main") != h.base || h.read(t, fenceRef) != h.fence || s.Active.Phase != queue.Testing {
+		t.Fatalf("durable reopen failed to block landing: blocked=%v err=%v state=%+v", blocked, err, s.Active)
+	}
+}
+
+func replayChecks(t *testing.T, s *queue.State) func(queue.Event) error {
+	t.Helper()
+	return func(e queue.Event) error {
+		_, wire, err := queue.EncodeEvent(e)
+		if err != nil {
+			return err
+		}
+		decoded, err := queue.DecodeEvent(wire)
+		if err != nil {
+			return err
+		}
+		*s = queue.Apply(*s, decoded)
+		return nil
+	}
 }

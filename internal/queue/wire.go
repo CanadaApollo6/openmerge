@@ -38,9 +38,8 @@ type wireBaseMoved struct {
 }
 
 type wireChecksCompleted struct {
-	TestedSHA string    `json:"tested_sha"`
-	Success   bool      `json:"success"`
-	At        time.Time `json:"at"`
+	TestedSHA string `json:"tested_sha"`
+	Success   bool   `json:"success"`
 }
 
 type wireChecksReopened struct {

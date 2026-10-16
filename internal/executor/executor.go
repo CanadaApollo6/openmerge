@@ -82,7 +82,7 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		at := x.now()
 		terminal, success, ambiguity := x.checkResult(checks)
 		if terminal {
-			if err := emit(queue.ChecksCompleted{TestedSHA: a.TestedSHA, Success: success, At: at}); err != nil {
+			if err := emit(queue.ChecksCompleted{TestedSHA: a.TestedSHA, Success: success}); err != nil {
 				return err
 			}
 		} else if err := emit(queue.ChecksReopened{TestedSHA: a.TestedSHA, At: at}); err != nil {
@@ -102,7 +102,7 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 			at := x.now()
 			var result queue.Event = queue.ChecksReopened{TestedSHA: a.TestedSHA, At: at}
 			if terminal {
-				result = queue.ChecksCompleted{TestedSHA: a.TestedSHA, Success: false, At: at}
+				result = queue.ChecksCompleted{TestedSHA: a.TestedSHA, Success: false}
 			}
 			if err := emit(result); err != nil {
 				return err

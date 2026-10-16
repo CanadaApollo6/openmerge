@@ -55,6 +55,10 @@ MUTANTS = {
         ("s.requestDequeue(prs[0].PR, reason)", "for _, pr := range prs { s.requestDequeue(pr.PR, reason) }"),
     ),
     "no_ci_gate": mutation(PLAN, ("if batch.checksPassed {", "if true {")),
+    "reopen_does_not_clear_success": mutation(
+        APPLY,
+        ("s.Active.checksPassed = false", "// mutant preserves success after a reopen"),
+    ),
     "no_landing_ci_guard": mutation(
         EXECUTOR,
         ("if !terminal || !success {", "if (!terminal || !success) && false {"),

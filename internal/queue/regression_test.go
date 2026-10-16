@@ -36,7 +36,7 @@ func TestChecksBeforeTestRefBuilt(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			s := queued(1)
 			batchID := s.Active.ID
-			s = applySerial(s, ChecksCompleted{TestedSHA: "early", Success: success, At: epoch})
+			s = applySerial(s, ChecksCompleted{TestedSHA: "early", Success: success})
 			s = applySerial(s, TestRefBuilt{Method: Merge, BatchID: batchID, TestedSHA: "early", At: epoch})
 			actions := Plan(testConfig, s, epoch.Add(time.Hour))
 			if success {
@@ -56,7 +56,7 @@ func TestRetainedChecksArePruned(t *testing.T) {
 		t.Run(transition, func(t *testing.T) {
 			s := queued(1, 2)
 			batchID := s.Active.ID
-			s = applySerial(s, ChecksCompleted{TestedSHA: "retained", Success: true, At: epoch})
+			s = applySerial(s, ChecksCompleted{TestedSHA: "retained", Success: true})
 			switch transition {
 			case "base-moved":
 				s = applySerial(s, BaseMoved{SHA: "base2"})
@@ -68,7 +68,7 @@ func TestRetainedChecksArePruned(t *testing.T) {
 				s = applySerial(s, Dequeued{PR: dequeue.PR, AdmissionID: dequeue.AdmissionID, Reason: dequeue.Reason})
 			default:
 				s = applySerial(s, TestRefBuilt{BatchID: batchID, TestedSHA: "first", Method: Merge, At: epoch})
-				s = applySerial(s, ChecksCompleted{TestedSHA: "first", Success: true, At: epoch})
+				s = applySerial(s, ChecksCompleted{TestedSHA: "first", Success: true})
 				s = applySerial(s, LandingStarted{BatchID: batchID, AttemptID: "attempt", FenceToken: "f0", At: epoch})
 				switch transition {
 				case "landed":
@@ -87,7 +87,7 @@ func TestRetainedChecksArePruned(t *testing.T) {
 			if actions := Plan(testConfig, s, epoch); len(actionsOf[Land](actions)) != 0 || len(actionsOf[Dequeue](actions)) != 0 {
 				t.Fatalf("old outcome crossed batch lifetime: %v", actions)
 			}
-			s = applySerial(s, ChecksCompleted{TestedSHA: "retained", Success: true, At: epoch})
+			s = applySerial(s, ChecksCompleted{TestedSHA: "retained", Success: true})
 			onlyAction[Land](t, Plan(testConfig, s, epoch))
 		})
 	}
@@ -96,7 +96,7 @@ func TestRetainedChecksArePruned(t *testing.T) {
 func TestRetainedChecksCapacity(t *testing.T) {
 	s := queued(1)
 	for i := 0; i <= maxRetainedChecks; i++ {
-		s = applySerial(s, ChecksCompleted{TestedSHA: fmt.Sprintf("sha-%d", i), Success: true, At: epoch})
+		s = applySerial(s, ChecksCompleted{TestedSHA: fmt.Sprintf("sha-%d", i), Success: true})
 	}
 	for _, tc := range []struct {
 		name string
@@ -121,8 +121,8 @@ func TestRetainedChecksUseLatestOutcome(t *testing.T) {
 	for _, success := range []bool{true, false} {
 		t.Run(fmt.Sprintf("latest success=%t", success), func(t *testing.T) {
 			s := queued(1)
-			s = applySerial(s, ChecksCompleted{TestedSHA: "early", Success: !success, At: epoch})
-			s = applySerial(s, ChecksCompleted{TestedSHA: "early", Success: success, At: epoch})
+			s = applySerial(s, ChecksCompleted{TestedSHA: "early", Success: !success})
+			s = applySerial(s, ChecksCompleted{TestedSHA: "early", Success: success})
 			s = applySerial(s, TestRefBuilt{BatchID: s.Active.ID, TestedSHA: "early", Method: Merge, At: epoch})
 			actions := Plan(testConfig, s, epoch)
 			if success {
@@ -312,7 +312,7 @@ func TestSuccessfulBuildResetsFailures(t *testing.T) {
 	s := withBuildFailures(t, cfg, 1)
 	build := onlyAction[BuildTestRef](t, Plan(cfg, s, epoch.Add(time.Minute)))
 	s = applySerial(s, TestRefBuilt{BatchID: build.BatchID, TestedSHA: "tested", Method: build.Method, At: epoch})
-	s = applySerial(s, ChecksCompleted{TestedSHA: "tested", Success: true, At: epoch})
+	s = applySerial(s, ChecksCompleted{TestedSHA: "tested", Success: true})
 	s = applySerial(s, LandingStarted{BatchID: build.BatchID, AttemptID: "attempt", FenceToken: "f0", At: epoch})
 	s = applySerial(applySerial(s, BaseMoved{SHA: "base1"}), LandingAbandoned{BatchID: build.BatchID, NewFence: "f1"})
 	build = onlyAction[BuildTestRef](t, Plan(cfg, s, epoch))
@@ -355,7 +355,7 @@ func TestMergeMethodPinnedBetweenBuildAndLand(t *testing.T) {
 				t.Fatal("build key did not distinguish the configured method")
 			}
 			s = applySerial(s, TestRefBuilt{BatchID: build.BatchID, TestedSHA: "tested", Method: build.Method, At: epoch})
-			s = applySerial(s, ChecksCompleted{TestedSHA: "tested", Success: true, At: epoch})
+			s = applySerial(s, ChecksCompleted{TestedSHA: "tested", Success: true})
 			land := onlyAction[Land](t, Plan(cfg, s, epoch))
 			if land.Method != actual || s.Active.Method != actual || land.TestedSHA != "tested" || land.ExpectedBaseSHA != build.BaseSHA || land.FenceToken != s.Fence {
 				t.Fatalf("config change altered landing payload: %+v", land)

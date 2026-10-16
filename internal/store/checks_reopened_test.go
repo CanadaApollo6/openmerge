@@ -72,7 +72,7 @@ func TestLandPreflightReopenRemainsRetryable(t *testing.T) {
 		t.Fatal("pending checks authorized the old Land")
 	}
 	f.SetCheckRuns(repo, land.TestedSHA, []forge.CheckRun{{ID: 2, Name: "ci", State: forge.Success}})
-	appendEvents(t, s, q, queue.ChecksCompleted{TestedSHA: land.TestedSHA, Success: true, At: epoch})
+	appendEvents(t, s, q, queue.ChecksCompleted{TestedSHA: land.TestedSHA, Success: true})
 	retry := claim()
 	if retry.Key != c.Key {
 		t.Fatal("test did not reuse the stable Land key")
@@ -86,21 +86,128 @@ func TestLandPreflightReopenRemainsRetryable(t *testing.T) {
 	}
 }
 
-func TestDelayedReopenPreservesPassingChecksOnReplay(t *testing.T) {
+func TestDelayedReopenRequiresFreshReadOnReplay(t *testing.T) {
 	s := newStore(t)
-	q, land := readyLand(t, s)
+	q, _ := readyLand(t, s)
 	deadline := epoch.Add(config.CheckTimeout)
 	appendEvents(t, s, q,
-		queue.ChecksCompleted{TestedSHA: "tested", Success: true, At: deadline.Add(time.Second)},
+		queue.ChecksCompleted{TestedSHA: "tested", Success: true},
 		queue.ChecksRefreshed{BatchID: "b1", TestedSHA: "tested", At: deadline.Add(time.Second)},
 		queue.ChecksReopened{TestedSHA: "tested", At: epoch.Add(time.Second)},
 		queue.ChecksRefreshed{BatchID: "b1", TestedSHA: "tested", At: epoch.Add(time.Second)})
 	state, _, err := s.Load(t.Context(), q)
 	must(t, err)
-	for _, action := range queue.Plan(config, state, deadline.Add(2*time.Second)) {
-		if action.Key() == land.Key {
-			return
-		}
+	actions := queue.Plan(config, state, deadline.Add(2*time.Second))
+	if len(actions) != 1 {
+		t.Fatalf("expected one refresh: %+v", actions)
 	}
-	t.Fatal("durable replay replaced a newer pass with a stale reopen")
+	if _, ok := actions[0].(queue.RefreshChecks); !ok {
+		t.Fatalf("delayed reopen reused timeout evidence: %T", actions[0])
+	}
+}
+
+func TestSkewedRefreshAdvancesDurableActionKey(t *testing.T) {
+	s := newStore(t)
+	q, land := readyLand(t, s)
+	f := fake.New()
+	repo := forge.RepoRef{Path: "owner/repo"}
+	f.Init(repo, "main", "openmerge/fence/main")
+	fast := executor.Executor{Driver: f, Git: f, Repo: repo, Base: "main", RequiredChecks: []string{"ci"}, Now: func() time.Time { return epoch.Add(5 * time.Second) }}
+	proceed, err := s.BeginConsequential(t.Context(), land, config, epoch)
+	must(t, err)
+	if !proceed {
+		t.Fatal("initial Land rejected")
+	}
+	// The fast Land reader records only a reopen, without a refresh event.
+	err = fast.Execute(t.Context(), land.Action, s.Emit(t.Context(), land, config))
+	if !errors.Is(err, executor.ErrChecksNotSuccessful) {
+		t.Fatalf("wrong preflight result: %v", err)
+	}
+	must(t, s.Complete(t.Context(), land, Failed))
+	claims, err := s.Claim(t.Context(), 1, time.Minute, epoch.Add(time.Second))
+	must(t, err)
+	if len(claims) != 1 {
+		t.Fatal("missing released Land")
+	}
+	proceed, err = s.BeginConsequential(t.Context(), claims[0], config, epoch.Add(time.Second))
+	must(t, err)
+	if proceed {
+		t.Fatal("pending checks authorized stale Land")
+	}
+	_, err = s.Plan(t.Context(), q, config, epoch.Add(time.Second))
+	must(t, err)
+	claims, err = s.Claim(t.Context(), 1, time.Minute, epoch.Add(time.Second))
+	must(t, err)
+	if len(claims) != 1 {
+		t.Fatal("missing refresh")
+	}
+	first := claims[0]
+	if _, ok := first.Action.(queue.RefreshChecks); !ok {
+		t.Fatalf("wrong action: %T", first.Action)
+	}
+	slow := fast
+	slow.Now = func() time.Time { return epoch.Add(time.Second) }
+	// This successful pending read used to be suppressed, then marked Done;
+	// the unchanged epoch made the planner reuse an unclaimable terminal key.
+	must(t, slow.Execute(t.Context(), first.Action, s.Emit(t.Context(), first, config)))
+	must(t, s.Complete(t.Context(), first, Done))
+	now := epoch.Add(2 * time.Minute)
+	work, err := s.Plan(t.Context(), q, config, now)
+	must(t, err)
+	if len(work) != 1 {
+		t.Fatalf("new refresh not runnable: %+v", work)
+	}
+	claims, err = s.Claim(t.Context(), 1, time.Minute, now)
+	must(t, err)
+	if len(claims) != 1 {
+		t.Fatal("new refresh not claimable")
+	}
+	next := claims[0]
+	if _, ok := next.Action.(queue.RefreshChecks); !ok || next.Key == first.Key {
+		t.Fatalf("completed refresh key reused: first=%s next=%+v", first.Key, next)
+	}
+	f.SetCheckRuns(repo, "tested", []forge.CheckRun{{Name: "ci", State: forge.Success}})
+	slow.Now = func() time.Time { return now }
+	must(t, slow.Execute(t.Context(), next.Action, s.Emit(t.Context(), next, config)))
+	must(t, s.Complete(t.Context(), next, Done))
+	_, err = s.Plan(t.Context(), q, config, now)
+	must(t, err)
+	claims, err = s.Claim(t.Context(), 1, time.Minute, now)
+	must(t, err)
+	if len(claims) != 1 || claims[0].Key != land.Key {
+		t.Fatalf("passing read failed to restore runnable Land: %+v", claims)
+	}
+	proceed, err = s.BeginConsequential(t.Context(), claims[0], config, now)
+	must(t, err)
+	if !proceed {
+		t.Fatal("fresh pass did not authorize recovered Land")
+	}
+}
+
+func TestLandingStartRejectsSkewedDurableReopen(t *testing.T) {
+	s := newStore(t)
+	q, claim := readyLand(t, s)
+	land := claim.Action.(queue.Land)
+	appendEvents(t, s, q,
+		queue.ChecksCompleted{TestedSHA: land.TestedSHA, Success: true},
+		queue.ChecksRefreshed{BatchID: land.BatchID, TestedSHA: land.TestedSHA, At: epoch.Add(5 * time.Second)})
+	proceed, err := s.BeginConsequential(t.Context(), claim, config, epoch)
+	must(t, err)
+	if !proceed {
+		t.Fatal("initial Land rejected")
+	}
+	f := fake.New()
+	repo := forge.RepoRef{Path: "owner/repo"}
+	f.Init(repo, "main", "openmerge/fence/main")
+	f.SetCheckRuns(repo, land.TestedSHA, []forge.CheckRun{{Name: "ci", State: forge.Success}})
+	git := &startGit{Git: f}
+	var watermark int64
+	x := executor.Executor{Driver: f, Git: git, Repo: repo, Base: "main", RequiredChecks: []string{"ci"}, Now: func() time.Time { return epoch }, NewID: func() (string, error) {
+		// Commit the slower reader's reopen after the passing preflight and before
+		// Emit takes the queue lock to record LandingStarted.
+		watermark = appendEvents(t, s, q, queue.ChecksReopened{TestedSHA: land.TestedSHA, At: epoch.Add(time.Second)})
+		return "skewed-reopen", nil
+	}}
+	err = x.Execute(t.Context(), land, s.Emit(t.Context(), claim, config))
+	assertStaleStart(t, s, q, claim, watermark, git.calls, err)
 }

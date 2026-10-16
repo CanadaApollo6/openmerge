@@ -435,7 +435,7 @@ func readyLand(t *testing.T, s *Store) (QueueID, ClaimedAction) {
 	appendEvents(t, s, q, append(seedEvents(),
 		queue.BatchStarted{BatchID: "b1", BaseSHA: "base", PRs: []queue.BatchPR{{PR: 1, HeadSHA: "head"}}, At: epoch},
 		queue.TestRefBuilt{BatchID: "b1", TestedSHA: "tested", Method: queue.Squash, At: epoch},
-		queue.ChecksCompleted{TestedSHA: "tested", Success: true, At: epoch})...)
+		queue.ChecksCompleted{TestedSHA: "tested", Success: true})...)
 	_, err := s.Plan(t.Context(), q, config, epoch)
 	must(t, err)
 	claims, err := s.Claim(t.Context(), 1, time.Minute, epoch)

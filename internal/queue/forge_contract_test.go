@@ -75,7 +75,7 @@ func TestMarkLandedEffectsArePinnedAndAcknowledged(t *testing.T) {
 			// Simulate a future multi-PR batch to pin one closing effect per head.
 			s.Active.PRs = append(s.Active.PRs, BatchPR{PR: 2, HeadSHA: "head2"})
 			s = applySerial(s, TestRefBuilt{BatchID: "b1", TestedSHA: "tested", Method: method, At: epoch})
-			s = applySerial(s, ChecksCompleted{TestedSHA: "tested", Success: true, At: epoch})
+			s = applySerial(s, ChecksCompleted{TestedSHA: "tested", Success: true})
 			s = applySerial(s, LandingStarted{BatchID: "b1", AttemptID: "attempt", FenceToken: "f0", At: epoch})
 			s = applySerial(s, Landed{BatchID: "b1", NewBaseSHA: "tested", NewFence: "f1"})
 			before := Plan(testConfig, s, epoch)

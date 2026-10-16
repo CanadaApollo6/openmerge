@@ -92,7 +92,7 @@ func Apply(s State, e Event) State {
 			s.buildRetry = buildRetryState{}
 			if check, retained := s.checks[e.TestedSHA]; retained {
 				delete(s.checks, e.TestedSHA)
-				s.Active.checksObservedAt = check.at
+				s.Active.needsRefresh = !check.terminal
 				if check.terminal {
 					s.completeChecks(check.success)
 				}
@@ -108,31 +108,26 @@ func Apply(s State, e Event) State {
 		}
 	case ChecksCompleted:
 		if s.Active != nil && s.Active.Phase == Testing && s.Active.TestedSHA == e.TestedSHA {
-			if !e.At.Before(s.Active.checksObservedAt) {
-				s.Active.checksObservedAt = e.At
-				s.completeChecks(e.Success)
-			}
+			s.completeChecks(e.Success)
 		} else if s.Active != nil {
 			if _, used := s.testedBatches[e.TestedSHA]; !used {
-				s.retainChecks(e.TestedSHA, retainedCheck{terminal: true, success: e.Success, at: e.At})
+				s.retainChecks(e.TestedSHA, retainedCheck{terminal: true, success: e.Success})
 			}
 		}
 	case ChecksReopened:
 		if s.Active != nil && s.Active.Phase == Testing && s.Active.TestedSHA == e.TestedSHA {
-			if !e.At.Before(s.Active.checksObservedAt) {
-				s.Active.checksObservedAt = e.At
-				s.Active.checksPassed = false
-			}
+			s.Active.checksPassed = false
+			s.Active.needsRefresh = true
 		} else if s.Active != nil {
 			if _, used := s.testedBatches[e.TestedSHA]; !used {
-				s.retainChecks(e.TestedSHA, retainedCheck{at: e.At})
+				s.retainChecks(e.TestedSHA, retainedCheck{})
 			}
 		}
 	case ChecksRefreshed:
-		if s.batchIn(e.BatchID, Testing) && s.Active.TestedSHA == e.TestedSHA && !e.At.Before(s.Active.checksObservedAt) {
-			s.Active.checksObservedAt = e.At
+		if s.batchIn(e.BatchID, Testing) && s.Active.TestedSHA == e.TestedSHA {
 			s.Active.checksRefreshedAt = e.At
 			s.Active.checkRefreshes++
+			s.Active.needsRefresh = false
 		}
 	case LandingStarted:
 		if s.batchIn(e.BatchID, Testing) {
@@ -289,14 +284,10 @@ const maxRetainedChecks = 64
 
 type retainedCheck struct {
 	terminal, success bool
-	at                time.Time
 	revision          uint64
 }
 
 func (s *State) retainChecks(sha string, check retainedCheck) {
-	if current, exists := s.checks[sha]; exists && check.at.Before(current.at) {
-		return
-	}
 	check.revision = s.revision
 	s.checks[sha] = check
 	if len(s.checks) > maxRetainedChecks {

@@ -20,7 +20,8 @@
 // pushes, and duplicate executions. CIRerunRate restarts successful CI once per
 // tested SHA during the landing preflight, after the queue recorded success.
 // The rerun must revoke that success and finish before landing; it keeps the
-// original checks deadline. CIReruns counts these additional CI runs. Recovery
+// original checks deadline. Recording a reopen must revoke the planner's landing
+// permission until a later pass. CIReruns counts these additional CI runs. Recovery
 // must fence off abandoned attempts; their captured requests are replayed later and must be rejected. DropWebhookRate
 // skips CI completion notifications so only RefreshChecks can find the outcome.
 // RepushRate updates queued PR heads and re-enqueues them after a head-changed

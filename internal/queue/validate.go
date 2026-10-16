@@ -56,15 +56,9 @@ func (a RefreshChecks) Validate() error {
 	return requireActionText("batch_id", a.BatchID, "tested_sha", a.TestedSHA)
 }
 
-// Validate requires the completed commit and observation time.
+// Validate requires the completed commit.
 func (e ChecksCompleted) Validate() error {
-	if err := requireActionText("tested_sha", e.TestedSHA); err != nil {
-		return err
-	}
-	if e.At.IsZero() {
-		return fmt.Errorf("at must not be zero")
-	}
-	return nil
+	return requireActionText("tested_sha", e.TestedSHA)
 }
 
 // Validate requires the reopened commit and observation time.
