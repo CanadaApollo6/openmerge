@@ -40,7 +40,8 @@ Flags: `--prs`, `--broken-rate`, `--flake-rate`, `--ci`, `--ci-max`, `--seed`, `
 Create a private App from a [GitHub App manifest](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest):
 
 ```bash
-openmerge setup github --user --repo CanadaApollo6/openmerge --name OpenMerge-YourName
+make build
+./bin/openmerge setup github --user --repo CanadaApollo6/openmerge --name OpenMerge-YourName
 # For an organization-owned App, use --owner ORG instead of --user.
 ```
 
@@ -54,18 +55,19 @@ Credentials go into `$XDG_CONFIG_HOME/openmerge/<app-slug>/` (normally
 `~/.config/openmerge/<app-slug>/`): `app-id`, `slug`, `client-id`,
 `private-key.pem`, and `webhook-secret`. The directory is private (0700), files
 are 0600, and an existing directory is refused. `--config-dir DIR` selects a
-new directory. Keep the private key and webhook secret safe; neither is printed.
-The manifest generates the key automatically. For an existing App, its settings
-page's **Private keys → Generate a private key** downloads a replacement PEM.
+new directory. The manifest generates and auto-saves the private key at
+`<config-dir>/private-key.pem`; you do not need to download one. Keep the key and
+webhook secret safe; neither is printed.
 
 Open the printed `https://github.com/apps/<app-slug>/installations/new` URL.
 Choose the owning account, **Only select repositories**, select your repository,
 and install. The private App is available to its owner. `--repo owner/name`
 targets the printed repository selection, ruleset commands and serve command.
 The printed next steps show installation, ruleset preview, ruleset apply, then
-`openmerge serve` once that command is available, with the App ID, private key
+`./bin/openmerge serve` once that command is available, with the App ID, private key
 path and installation ID; also supply a Postgres URL.
-The App ID and installation ID are different.
+Find the **installation ID** under **Settings → Applications → Installed GitHub
+Apps → Configure**: it is the number at the end of the URL, not the App ID.
 
 Polling is the default: `hook_attributes.active=false` disables deliveries.
 For webhooks, pass `--webhook-url https://YOUR-HOST/YOUR-WEBHOOK-PATH`; App
@@ -83,8 +85,13 @@ settings and configure the same secret on the server.
 
 Configure repository rules with a **separate repository-admin token** in
 `GITHUB_TOKEN`. A fine-grained PAT needs access to the selected repository and
-**Administration: read** to inspect, **Administration: write** to apply; approve
-organization access/SSO where required. The runtime App deliberately has no
+**Administration: read** to inspect, **Administration: write** to apply. Create it
+under **Settings → Developer settings → Personal access tokens → Fine-grained
+tokens**: choose the repository's **Resource owner**, **Only select repositories**
+with just the target repo, and **Repository permissions → Administration: Read
+and write**. Use a fine-grained token; avoid classic tokens. Approve organization
+access/SSO where required, then export it as `GITHUB_TOKEN` for the commands below.
+The runtime App deliberately has no
 administration or organization-members permission: its collaborator permission
 check uses metadata read. The manifest uses contents, workflows, pull requests
 and checks write, plus statuses, issues and metadata read. Workflows write lets
@@ -93,8 +100,8 @@ comments use pull requests write. Issues read permits command reads and the
 `issue_comment` subscription. See the [permission table](internal/forge/github/README.md#setup-and-ruleset-validation).
 
 ```bash
-openmerge setup rulesets --repo CanadaApollo6/openmerge --config-dir ~/.config/openmerge/APP-SLUG
-openmerge setup rulesets --repo CanadaApollo6/openmerge --config-dir ~/.config/openmerge/APP-SLUG --apply
+./bin/openmerge setup rulesets --repo CanadaApollo6/openmerge --config-dir ~/.config/openmerge/APP-SLUG
+./bin/openmerge setup rulesets --repo CanadaApollo6/openmerge --config-dir ~/.config/openmerge/APP-SLUG --apply
 # Alternatively supply --app-id NUMERIC_APP_ID.
 ```
 

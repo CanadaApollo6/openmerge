@@ -200,15 +200,21 @@ func TestManifestConversionErrorsDoNotExposeSecrets(t *testing.T) {
 	f.override = func(w http.ResponseWriter, _ *http.Request) bool {
 		w.WriteHeader(422)
 		f.json(w, map[string]any{
-			"message":        "Conversion failed for one-use-code",
-			"webhook_secret": "setup-webhook-secret",
-			"client_secret":  "unused-oauth-secret",
+			"message":           "one-use-code setup-webhook-secret",
+			"errors":            []any{map[string]any{"resource": "secret-resource", "field": "secret-field", "code": "secret-code", "message": "secret-detail"}, "secret-string-detail"},
+			"documentation_url": "https://docs.github.com/en/rest/apps/apps?secret=one-use-code",
+			"webhook_secret":    "setup-webhook-secret",
+			"client_secret":     "unused-oauth-secret",
 		})
 		return true
 	}
 	_, err := convertManifest(context.Background(), f.server.URL+"/api/v3/", "one-use-code")
 	var api *APIError
-	if !errors.As(err, &api) || api.StatusCode != 422 || strings.Contains(err.Error(), "one-use-code") || strings.Contains(err.Error(), "setup-webhook-secret") || strings.Contains(err.Error(), "unused-oauth-secret") || !strings.Contains(err.Error(), "Conversion failed") {
+	if !errors.As(err, &api) || api.StatusCode != 422 {
 		t.Fatalf("unsafe conversion error: %v", err)
+	}
+	const want = "github API request failed (HTTP 422): GitHub App manifest conversion failed; documentation_url=https://docs.github.com/en/rest/apps/apps"
+	if err.Error() != want {
+		t.Fatalf("conversion error = %q, want %q", err.Error(), want)
 	}
 }

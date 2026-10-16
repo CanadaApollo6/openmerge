@@ -233,11 +233,15 @@ func TestSetupRulesIntegrationBypassRejection(t *testing.T) {
 	}{
 		{"conflict", 409, "Integration bypass actor conflicts with repository", nil, true, false},
 		{"actor field", 422, "Validation failed", []any{map[string]any{"resource": "RepositoryRuleset", "field": "bypass_actors[0].actor_id", "code": "invalid"}}, true, false},
+		{"actor resource", 422, "Validation failed", []any{map[string]any{"resource": "bypass_actors", "field": "actor_id", "code": "invalid"}}, true, false},
 		{"actor detail string", 422, "Validation failed", []any{"Integration is not a valid bypass actor type"}, true, false},
 		{"unrelated validation", 422, "Validation failed", []any{map[string]any{"field": "conditions", "code": "invalid"}}, false, false},
 		{"unrelated conflict", 409, "Repository rules changed", nil, false, true},
 		{"permission denied", 403, "Resource not accessible by integration", nil, false, true},
-		{"personal bare conflict", 409, "Conflict", nil, true, true},
+		{"personal bare conflict", 409, "Conflict", nil, false, true},
+		{"personal conditions conflict", 409, "Conflict", []any{map[string]any{"field": "conditions", "code": "invalid"}}, false, true},
+		{"integration tests check", 422, "Validation failed: integration-tests is not a valid check", nil, false, true},
+		{"integration id check", 422, "Validation failed", []any{map[string]any{"field": "rules.parameters.required_status_checks", "message": "integration_id is not a valid check name"}}, false, true},
 		{"organization bare conflict", 409, "Conflict", nil, false, false},
 	} {
 		for _, update := range []bool{false, true} {
@@ -270,8 +274,46 @@ func TestSetupRulesIntegrationBypassRejection(t *testing.T) {
 						t.Errorf("guidance %q expected=%v: %v", guidance, tt.guide, err)
 					}
 				}
+				if !strings.Contains(err.Error(), tt.message) {
+					t.Errorf("lost GitHub diagnostic: %v", err)
+				}
+				wantHint := !tt.guide && (tt.status == 409 || tt.status == 422)
+				if strings.Contains(err.Error(), "If this concerns bypass actors, verify the App installation and repository support") != wantHint {
+					t.Errorf("conditional hint expected=%v: %v", wantHint, err)
+				}
 			})
 		}
+	}
+}
+
+func TestSetupRulesSanitizesErrorContext(t *testing.T) {
+	for _, status := range []int{403, 422} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			f := rulesAPI(t)
+			f.setupRules[10]["name"] = "protected setup-admin-secret xxx.yyy.zzz -----BEGIN PRIVATE KEY-----\nprivate-key-material\n-----END PRIVATE KEY-----"
+			f.setupRules[10]["bypass_actors"] = []any{}
+			f.override = func(w http.ResponseWriter, r *http.Request) bool {
+				if r.Method != http.MethodPut {
+					return false
+				}
+				w.WriteHeader(status)
+				f.json(w, map[string]string{"message": "bypass actors rejected setup-admin-secret", "documentation_url": "https://docs.github.com/en/rest/repos/rules"})
+				return true
+			}
+			_, err := runRules(t, f, true)
+			var api *APIError
+			if !errors.As(err, &api) || api.StatusCode != status {
+				t.Fatalf("lost typed status: %v", err)
+			}
+			for _, secret := range []string{"setup-admin-secret", "xxx.yyy.zzz", "private-key-material", "BEGIN PRIVATE KEY"} {
+				if strings.Contains(err.Error(), secret) {
+					t.Errorf("error context leaked %q: %v", secret, err)
+				}
+			}
+			if !strings.Contains(err.Error(), "protected [REDACTED]") || !strings.Contains(err.Error(), "documentation_url=https://docs.github.com/en/rest/repos/rules") {
+				t.Errorf("lost useful context: %v", err)
+			}
+		})
 	}
 }
 

@@ -225,6 +225,7 @@ func convertManifest(ctx context.Context, api, code string) (appCredentials, err
 		return credentials, err
 	}
 	client.secrets = append(client.secrets, code)
+	client.manifestConversion = true
 	err = client.request(ctx, http.MethodPost, "app-manifests/"+code+"/conversions", nil, &credentials)
 	if err != nil {
 		return appCredentials{}, err

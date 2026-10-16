@@ -5,12 +5,115 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
 )
+
+func TestSetupAPICredentialFormsInEveryDiagnosticField(t *testing.T) {
+	credentials := []struct {
+		name, value string
+		known       bool
+	}{
+		{"admin token", "opaque-admin-token", true},
+		{"manifest code", "one-use-code", true},
+		{"installation token", "opaque-installation-token", true},
+		{"held JWT", "opaque-held-jwt", true},
+		{"webhook secret", "setup-webhook-secret", true},
+		{"private key bytes", "private-key-bytes-without-armor", true},
+		{"bare JWT", "xxx.yyy.zzz", false},
+		{"base64url JWT", "abc_DEF.ghi-jkl.mno_PQR-stu", false},
+		{"RSA PEM", "-----BEGIN RSA PRIVATE KEY-----\nprivate-key-material\n-----END RSA PRIVATE KEY-----", false},
+		{"PKCS8 PEM", "-----BEGIN PRIVATE KEY-----\nprivate-key-material\n-----END PRIVATE KEY-----", false},
+		{"other PEM", "-----BEGIN EC PRIVATE KEY-----\nprivate-key-material\n-----END EC PRIVATE KEY-----", false},
+		{"unterminated PEM", "-----BEGIN PRIVATE KEY-----\nprivate-key-material", false},
+		{"PAT", "ghp_otherCredential123", false},
+		{"OAuth token", "gho_otherCredential123", false},
+		{"user token", "ghu_otherCredential123", false},
+		{"installation format", "ghs_otherCredential123", false},
+		{"refresh token", "ghr_otherCredential123", false},
+		{"fine grained PAT", "github_pat_otherCredential123", false},
+		{"bearer", "Bearer otherCredential123", false},
+		{"basic", "Basic otherCredential123", false},
+	}
+	for _, credential := range credentials {
+		for _, field := range []string{"message", "string error", "resource", "field", "code", "detail message", "wrapped context"} {
+			t.Run(credential.name+"/"+field, func(t *testing.T) {
+				client := &setupAPI{}
+				if credential.known {
+					client.secrets = []string{credential.value}
+				}
+				value := "Useful explanation: " + credential.value
+				body := map[string]any{}
+				switch field {
+				case "wrapped context":
+					body["message"] = "Validation failed"
+				case "message":
+					body["message"] = value
+				case "string error":
+					body["errors"] = []any{value}
+				default:
+					key := field
+					if key == "detail message" {
+						key = "message"
+					}
+					body["errors"] = []any{map[string]string{key: value}}
+				}
+				data, err := json.Marshal(body)
+				must(t, err)
+				err = client.responseError(&http.Response{StatusCode: 422, Body: io.NopCloser(strings.NewReader(string(data)))})
+				if field == "wrapped context" {
+					err = client.wrapError(fmt.Errorf("unsafe echoed value %s: %w", credential.value, err), "Useful explanation: %s", credential.value)
+				}
+				err = fmt.Errorf("setting up repository: %w", err)
+				var status *APIError
+				if !errors.As(err, &status) || status.StatusCode != 422 {
+					t.Fatalf("lost HTTP status: %v", err)
+				}
+				text := err.Error()
+				if !strings.Contains(text, "Useful explanation: [REDACTED]") || strings.Contains(text, credential.value) || strings.Contains(text, "private-key-material") {
+					t.Fatalf("unsafe diagnostic: %s", text)
+				}
+				for cause := errors.Unwrap(err); cause != nil; cause = errors.Unwrap(cause) {
+					if strings.Contains(cause.Error(), credential.value) || strings.Contains(cause.Error(), "private-key-material") {
+						t.Fatalf("unsafe wrapped cause: %v", cause)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestSetupAPIDiagnosticsBoundAndCleanFreeText(t *testing.T) {
+	client := &setupAPI{secrets: []string{"overlapping", "overlapping-secret"}}
+	for _, tt := range []struct{ name, input, want string }{
+		{"overlapping credentials", "overlapping-secret overlapping", "[REDACTED] [REDACTED]"},
+		{"controls", "useful\x00\n\x1b\u202e explanation", "useful explanation"},
+		{"bounded Unicode", strings.Repeat("é", 1100), strings.Repeat("é", 1024) + "…"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := json.Marshal(map[string]any{"message": tt.input, "errors": []any{map[string]string{"resource": tt.input, "field": tt.input, "code": tt.input, "message": tt.input}, tt.input}})
+			must(t, err)
+			err = client.responseError(&http.Response{StatusCode: 422, Body: io.NopCloser(strings.NewReader(string(data)))})
+			var diagnostic *setupAPIError
+			if !errors.As(err, &diagnostic) || len(diagnostic.details) != 2 {
+				t.Fatalf("missing diagnostic: %v", err)
+			}
+			for _, got := range []string{diagnostic.message, diagnostic.details[0].Resource, diagnostic.details[0].Field, diagnostic.details[0].Code, diagnostic.details[0].Message, diagnostic.details[1].Message} {
+				if got != tt.want {
+					t.Errorf("diagnostic field = %q, want %q", got, tt.want)
+				}
+			}
+			wrapped := client.wrapError(err, "%s", tt.input)
+			if !strings.HasPrefix(wrapped.Error(), tt.want+": ") {
+				t.Errorf("unsafe wrapped context: %v", wrapped)
+			}
+		})
+	}
+}
 
 func TestSetupAPIDiagnosticsRedactCredentials(t *testing.T) {
 	const token = "admin+credential/with?punctuation"

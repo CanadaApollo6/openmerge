@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -18,9 +19,10 @@ import (
 )
 
 type setupAPI struct {
-	base    *url.URL
-	http    *http.Client
-	secrets []string
+	base               *url.URL
+	http               *http.Client
+	secrets            []string
+	manifestConversion bool
 }
 
 func setupClient(api, token string) (*setupAPI, error) {
@@ -106,17 +108,20 @@ func (e *setupAPIError) Error() string {
 	return out.String()
 }
 
-var setupTokenPattern = regexp.MustCompile(`\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b|(?i:\b(?:bearer|basic)\s+\S+)`)
+var setupCredentialPattern = regexp.MustCompile(`(?s:-----BEGIN [^-]+-----.*?(?:-----END [^-]+-----|$))|[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b|(?i:\b(?:bearer|basic)\s+\S+)`)
 
 func (c *setupAPI) sanitize(value string) string {
-	for _, secret := range c.secrets {
+	value = setupCredentialPattern.ReplaceAllString(value, "[REDACTED]")
+	secrets := slices.Clone(c.secrets)
+	// Replace longer credentials first so overlapping values cannot leave a suffix.
+	slices.SortFunc(secrets, func(a, b string) int { return len(b) - len(a) })
+	for _, secret := range secrets {
 		if secret != "" {
 			for _, encoded := range []string{secret, url.QueryEscape(secret), url.PathEscape(secret)} {
 				value = strings.ReplaceAll(value, encoded, "[REDACTED]")
 			}
 		}
 	}
-	value = setupTokenPattern.ReplaceAllString(value, "[REDACTED]")
 	value = strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			return ' '
@@ -130,8 +135,26 @@ func (c *setupAPI) sanitize(value string) string {
 	return string(runes)
 }
 
+// Keep only a diagnostic built at our response boundary (or a fixed transport
+// error) as the cause. An incoming %w wrapper may itself contain credentials.
+func (c *setupAPI) wrapError(err error, format string, args ...any) error {
+	var diagnostic *setupAPIError
+	if errors.As(err, &diagnostic) {
+		err = diagnostic
+	} else {
+		err = safeError(err)
+	}
+	return fmt.Errorf("%s: %w", c.sanitize(fmt.Sprintf(format, args...)), err)
+}
+
 func (c *setupAPI) responseError(res *http.Response) error {
 	status := &APIError{StatusCode: res.StatusCode}
+	diagnostic := &setupAPIError{status: status}
+	if c.manifestConversion {
+		// A failed exchange may echo credentials we have never received. No
+		// response prose is safe, even after credential pattern matching.
+		diagnostic.message = "GitHub App manifest conversion failed"
+	}
 	data, err := io.ReadAll(io.LimitReader(res.Body, (64<<10)+1))
 	var body struct {
 		Message          string            `json:"message"`
@@ -139,27 +162,31 @@ func (c *setupAPI) responseError(res *http.Response) error {
 		DocumentationURL string            `json:"documentation_url"`
 	}
 	if err != nil || len(data) > 64<<10 || json.Unmarshal(data, &body) != nil {
-		return status
+		return diagnostic
 	}
-	diagnostic := &setupAPIError{status: status, message: c.sanitize(body.Message)}
-	for _, raw := range body.Errors[:min(len(body.Errors), 10)] {
-		var detail setupErrorDetail
-		var message string
-		if json.Unmarshal(raw, &message) == nil {
-			detail.Message = message
-		} else if json.Unmarshal(raw, &detail) != nil {
-			continue
+	if !c.manifestConversion {
+		diagnostic.message = c.sanitize(body.Message)
+		for _, raw := range body.Errors[:min(len(body.Errors), 10)] {
+			var detail setupErrorDetail
+			var message string
+			if json.Unmarshal(raw, &message) == nil {
+				detail.Message = message
+			} else if json.Unmarshal(raw, &detail) != nil {
+				continue
+			}
+			detail.Resource, detail.Field = c.sanitize(detail.Resource), c.sanitize(detail.Field)
+			detail.Code, detail.Message = c.sanitize(detail.Code), c.sanitize(detail.Message)
+			diagnostic.details = append(diagnostic.details, detail)
 		}
-		detail.Resource, detail.Field = c.sanitize(detail.Resource), c.sanitize(detail.Field)
-		detail.Code, detail.Message = c.sanitize(detail.Code), c.sanitize(detail.Message)
-		diagnostic.details = append(diagnostic.details, detail)
 	}
 	// Only GitHub documentation links are useful here; drop credentials, query
 	// strings and fragments, which can contain echoed request secrets.
 	if u, err := url.Parse(body.DocumentationURL); err == nil && u.Scheme == "https" && u.Host == "docs.github.com" && u.User == nil {
 		u.RawQuery, u.Fragment = "", ""
-		if safe := c.sanitize(u.String()); safe == u.String() {
-			diagnostic.documentationURL = safe
+		// The host is fixed above; only the path is untrusted free text. This
+		// avoids treating docs.github.com itself as a base64url JWT triple.
+		if c.sanitize(u.Path) == u.Path && c.sanitize(u.EscapedPath()) == u.EscapedPath() {
+			diagnostic.documentationURL = u.String()
 		}
 	}
 	return diagnostic
