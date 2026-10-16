@@ -10,6 +10,12 @@ import (
 )
 
 func validateConfig(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 1 && (args[0] == "--help" || args[0] == "-h") {
+		if _, err := fmt.Fprintln(stdout, "Usage: openmerge config validate [path]"); err != nil {
+			return 1
+		}
+		return 0
+	}
 	var path string
 	var data []byte
 	var err error
@@ -26,10 +32,7 @@ func validateConfig(args []string, stdout, stderr io.Writer) int {
 		})
 	}
 	if err != nil {
-		if path == "" {
-			path = ".openmerge.yml"
-		}
-		_, _ = fmt.Fprintf(stderr, "%s:1: %s\n", path, err)
+		_, _ = fmt.Fprintln(stderr, err)
 		return 1
 	}
 	_, warnings, err := config.Load(data)
@@ -52,7 +55,7 @@ func validateConfig(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	for _, warning := range warnings {
-		if _, err := fmt.Fprintf(stdout, "%s:%d: warning: %s: %s\n", path, warning.Line, warning.Path, warning.Message); err != nil {
+		if _, err := fmt.Fprintf(stderr, "%s:%d: warning: %s: %s\n", path, warning.Line, warning.Path, warning.Message); err != nil {
 			return 1
 		}
 	}

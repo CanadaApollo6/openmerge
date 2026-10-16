@@ -20,6 +20,11 @@ func expand(n *yaml.Node, active map[*yaml.Node]bool, depth int, budget *int) (*
 	if n.Kind == yaml.AliasNode {
 		return expand(n.Alias, active, depth+1, budget)
 	}
+	if n.Kind == yaml.MappingNode {
+		if err := validateMapping(n); err != nil {
+			return nil, err
+		}
+	}
 	cloned := *n
 	cloned.Content = nil
 	for _, child := range n.Content {
@@ -35,6 +40,26 @@ func expand(n *yaml.Node, active map[*yaml.Node]bool, depth int, budget *int) (*
 	return &cloned, nil
 }
 
+// Check each source mapping before merging can discard duplicate fields.
+// Overrides between distinct mappings remain valid.
+func validateMapping(n *yaml.Node) *Diagnostic {
+	seen := make(map[string]int)
+	for i := 0; i < len(n.Content); i += 2 {
+		key := n.Content[i]
+		if key.ShortTag() == "!!merge" && (key.Kind != yaml.ScalarNode || key.Value != "<<") {
+			return &Diagnostic{Line: key.Line, Message: "YAML merge key must be a scalar with value <<"}
+		}
+		if key.Kind != yaml.ScalarNode {
+			return &Diagnostic{Line: key.Line, Message: "expected a scalar mapping key"}
+		}
+		if line, exists := seen[key.Value]; exists {
+			return &Diagnostic{Line: key.Line, Message: fmt.Sprintf("duplicate key %q (first defined on line %d)", key.Value, line)}
+		}
+		seen[key.Value] = key.Line
+	}
+	return nil
+}
+
 // YAML merge keys inherit fields; explicit fields override inherited ones and
 // earlier mappings in a merge sequence take precedence, per YAML merge semantics.
 func mergeMappings(n *yaml.Node) (*yaml.Node, *Diagnostic) {
@@ -43,13 +68,10 @@ func mergeMappings(n *yaml.Node) (*yaml.Node, *Diagnostic) {
 	var merge *yaml.Node
 	for i := 0; i < len(n.Content); i += 2 {
 		key, value := n.Content[i], n.Content[i+1]
-		if key.ShortTag() != "!!merge" {
+		if key.Kind != yaml.ScalarNode || key.Value != "<<" {
 			direct = append(direct, key, value)
 			seen[key.Value] = true
 			continue
-		}
-		if merge != nil {
-			return nil, &Diagnostic{Line: key.Line, Message: "duplicate YAML merge key"}
 		}
 		merge = value
 	}
@@ -91,16 +113,13 @@ func (p *parser) fields(n *yaml.Node, path string, allowed ...string) map[string
 		if path != "" {
 			childPath = path + "." + childPath
 		}
-		if _, exists := fields[key.Value]; exists {
-			p.error(key, childPath, "duplicate key")
-		}
 		fields[key.Value] = value
 		known := false
 		for _, name := range allowed {
 			known = known || key.Value == name
 		}
 		if !known {
-			p.error(key, childPath, "unknown key %q; did you mean %q?", key.Value, condition.Closest(key.Value, allowed))
+			p.error(key, childPath, "unknown key %q%s", key.Value, condition.Suggestion(key.Value, allowed))
 		}
 	}
 	return fields
@@ -127,7 +146,11 @@ func (p *parser) expression(n *yaml.Node, path string) condition.Expression {
 		return expression
 	}
 	if n.Kind != yaml.MappingNode {
-		p.error(n, path, "expected a condition string or an and/or/not mapping")
+		message := "expected a condition string or an and/or/not mapping"
+		if n.Kind == yaml.ScalarNode && n.ShortTag() == "!!null" {
+			message += "; conditions starting with # must be quoted"
+		}
+		p.error(n, path, "%s", message)
 		return condition.Expression{}
 	}
 	fields := p.fields(n, path, "and", "or", "not")

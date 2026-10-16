@@ -63,9 +63,22 @@ func TestRun(t *testing.T) {
 			wantStdout: "ok\n",
 		},
 		{
+			name: "validate help", args: []string{"config", "validate", "--help"},
+			wantStdout: "Usage: openmerge config validate \\[path\\]\n",
+		},
+		{
+			name: "validate short help", args: []string{"config", "validate", "-h"},
+			wantStdout: "Usage: openmerge config validate \\[path\\]\n",
+		},
+		{
+			name: "validate missing explicit path", args: []string{"config", "validate", "missing.yml"}, wantCode: 1,
+			wantStderr: "open missing.yml: no such file or directory\n",
+		},
+		{
 			name: "validate warnings", args: []string{"config", "validate"},
 			files:      map[string]string{".openmerge.yml": "version: 1\nqueues:\n  - name: default\n    batch: {max_size: 8, max_wait: 30s}\n"},
-			wantStdout: regexp.QuoteMeta("ok\n.openmerge.yml:4: warning: queues[0].batch: batching is not yet active; Phase 1 executes max_size 1 without waiting\n"),
+			wantStdout: "ok\n",
+			wantStderr: ".openmerge.yml:4: warning: queues[0].batch: batching is not yet active; Phase 1 executes max_size 1 without waiting\n",
 		},
 		{
 			name: "validate all errors", args: []string{"config", "validate"}, wantCode: 1,
@@ -76,12 +89,22 @@ func TestRun(t *testing.T) {
 		},
 		{
 			name: "validate missing config", args: []string{"config", "validate"}, wantCode: 1,
-			wantStderr: ".openmerge.yml:1: no OpenMerge configuration found\n",
+			wantStderr: "no OpenMerge configuration found; searched: .openmerge.yml, .openmerge.yaml, .github/openmerge.yml, .github/openmerge.yaml\n",
 		},
 		{
 			name: "validate ambiguous lookup", args: []string{"config", "validate"}, wantCode: 1,
 			files:      map[string]string{".openmerge.yml": "", ".github/openmerge.yml": ""},
-			wantStderr: ".openmerge.yml:1: multiple OpenMerge configuration files found: .openmerge.yml, .github/openmerge.yml\n",
+			wantStderr: "multiple OpenMerge configuration files found: .openmerge.yml, .github/openmerge.yml\n",
+		},
+		{
+			name: "validate ambiguity without root yml", args: []string{"config", "validate"}, wantCode: 1,
+			files:      map[string]string{".github/openmerge.yml": "", ".github/openmerge.yaml": ""},
+			wantStderr: "multiple OpenMerge configuration files found: .github/openmerge.yml, .github/openmerge.yaml\n",
+		},
+		{
+			name: "validate all ambiguous files", args: []string{"config", "validate"}, wantCode: 1,
+			files:      map[string]string{".openmerge.yml": "", ".openmerge.yaml": "", ".github/openmerge.yml": "", ".github/openmerge.yaml": ""},
+			wantStderr: "multiple OpenMerge configuration files found: .openmerge.yml, .openmerge.yaml, .github/openmerge.yml, .github/openmerge.yaml\n",
 		},
 		{
 			name: "validate YAML syntax error", args: []string{"config", "validate"}, wantCode: 1,

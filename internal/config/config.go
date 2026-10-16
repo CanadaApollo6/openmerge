@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -24,9 +25,10 @@ var ErrNotFound = errors.New("no OpenMerge configuration found")
 // A read error is never treated as an absent file.
 func Find(read func(path string) ([]byte, bool, error)) (path string, data []byte, err error) {
 	var found []string
-	for _, candidate := range []string{
+	paths := []string{
 		".openmerge.yml", ".openmerge.yaml", ".github/openmerge.yml", ".github/openmerge.yaml",
-	} {
+	}
+	for _, candidate := range paths {
 		contents, exists, readErr := read(candidate)
 		if readErr != nil {
 			return "", nil, fmt.Errorf("read %s: %w", candidate, readErr)
@@ -38,7 +40,7 @@ func Find(read func(path string) ([]byte, bool, error)) (path string, data []byt
 	}
 	switch len(found) {
 	case 0:
-		return "", nil, ErrNotFound
+		return "", nil, fmt.Errorf("%w; searched: %s", ErrNotFound, strings.Join(paths, ", "))
 	case 1:
 		return path, data, nil
 	default:
@@ -151,10 +153,16 @@ func Load(data []byte) (Config, []Diagnostic, error) {
 			cfg.Queues = append(cfg.Queues, p.queue(item, fmt.Sprintf("queues[%d]", i)))
 		}
 	}
+	sortDiagnostics(p.errors)
+	sortDiagnostics(p.warnings)
 	if len(p.errors) != 0 {
 		return Config{}, nil, p.errors
 	}
 	return cfg, p.warnings, nil
+}
+
+func sortDiagnostics(diagnostics []Diagnostic) {
+	slices.SortStableFunc(diagnostics, func(a, b Diagnostic) int { return a.Line - b.Line })
 }
 
 var yamlLine = regexp.MustCompile(`\bline (\d+)`)

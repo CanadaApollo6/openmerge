@@ -5,6 +5,7 @@ package condition
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -46,21 +47,36 @@ type Snapshot map[string]Value
 // Attribute returns a value, or a missing Value if the name is absent.
 func (s Snapshot) Attribute(name string) Value { return s[name] }
 
-var attributes = map[string]valueKind{
-	"base": stringValue, "head": stringValue, "author": stringValue, "title": stringValue,
-	"label": listValue, "draft": boolValue, "conflict": boolValue,
-	"approved-reviews-by": listValue, "files": listValue,
-	"check-success": listValue, "check-failure": listValue, "check-pending": listValue,
-}
-
-// Keep suggestion candidates ordered so equal distances have stable results.
-var attributeNames = []string{
-	"base", "head", "author", "title", "label", "draft", "conflict",
-	"approved-reviews-by", "files", "check-success", "check-failure", "check-pending",
+// Registry order breaks spelling-suggestion ties deterministically.
+var attributes = []struct {
+	name string
+	kind valueKind
+}{
+	{"base", stringValue}, {"head", stringValue}, {"author", stringValue}, {"title", stringValue},
+	{"label", listValue}, {"draft", boolValue}, {"conflict", boolValue},
+	{"approved-reviews-by", listValue}, {"files", listValue},
+	{"check-success", listValue}, {"check-failure", listValue}, {"check-pending", listValue},
 }
 
 var operators = []string{"=", "!=", "~=", "glob", "<", "<=", ">", ">="}
-var attributePrefix = regexp.MustCompile(`(?s)^(-?)(#?)([a-z][a-z0-9-]*)(.*)$`)
+var attributePrefix = regexp.MustCompile(`(?s)^(-?)(#?)([A-Za-z_][A-Za-z0-9_-]*)(.*)$`)
+
+func attributeKind(name string) valueKind {
+	for _, attribute := range attributes {
+		if attribute.name == name {
+			return attribute.kind
+		}
+	}
+	return missingValue
+}
+
+func attributeNames() []string {
+	names := make([]string, len(attributes))
+	for i, attribute := range attributes {
+		names[i] = attribute.name
+	}
+	return names
+}
 
 type expressionKind uint8
 
@@ -105,9 +121,9 @@ func Parse(text string) (Expression, error) {
 		return Expression{}, fmt.Errorf("expected [-][#]attribute [operator value]")
 	}
 	e := Expression{kind: atom, negative: m[1] != "", length: m[2] != "", name: m[3]}
-	typ, ok := attributes[e.name]
-	if !ok {
-		return Expression{}, fmt.Errorf("unknown attribute %q; did you mean %q?", e.name, Closest(e.name, attributeNames))
+	typ := attributeKind(e.name)
+	if typ == missingValue {
+		return Expression{}, fmt.Errorf("unknown attribute %q%s", e.name, Suggestion(e.name, attributeNames()))
 	}
 	if e.length && typ != listValue {
 		return Expression{}, fmt.Errorf("#%s requires a list attribute", e.name)
@@ -130,7 +146,7 @@ func Parse(text string) (Expression, error) {
 	}
 	e.op, e.value = rest[:end], strings.TrimSpace(rest[end:])
 	if !contains(operators, e.op) {
-		return Expression{}, fmt.Errorf("unknown operator %q; did you mean %q?", e.op, Closest(e.op, operators))
+		return Expression{}, fmt.Errorf("unknown operator %q%s; valid operators: %s", e.op, Suggestion(e.op, operators), strings.Join(operators, ", "))
 	}
 	if e.value == "" {
 		return Expression{}, fmt.Errorf("operator %q requires a value", e.op)
@@ -189,43 +205,136 @@ func (e Expression) String() string {
 	}
 	text := prefix + e.name
 	if e.op != "" {
-		text += " " + e.op + " " + e.value
+		value := e.value
+		if !e.length && attributeKind(e.name) != boolValue {
+			value = strconv.Quote(value)
+		}
+		text += " " + e.op + " " + value
 	}
 	return text
 }
 
-// Evaluate returns whether the expression holds and the failed conditions in
-// source order. AND reports its failed children; OR and NOT report the whole
-// group, preserving their meaning. Success always returns a nil failure list.
-// Missing or mistyped attributes fail closed, including negated atoms.
-func (e Expression) Evaluate(pr PR) (bool, []string) {
-	switch e.kind {
-	case all:
-		var failures []string
-		for _, child := range e.children {
-			_, failed := child.Evaluate(pr)
-			failures = append(failures, failed...)
+// Attributes returns a sorted, unique copy of every referenced attribute name,
+// including attributes under NOT and in alternatives that might short-circuit.
+func (e Expression) Attributes() []string {
+	seen := make(map[string]bool)
+	var visit func(Expression)
+	visit = func(expression Expression) {
+		if expression.kind == atom {
+			seen[expression.name] = true
 		}
-		return len(failures) == 0, failures
-	case anyOf:
+		for _, child := range expression.children {
+			visit(child)
+		}
+	}
+	visit(e)
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// Failure describes a condition that did not pass. Actual is a string, bool,
+// []string, list length (int), or nil for missing data and logical groups.
+// Children retain a group's evidence, including met operands under failed NOT.
+// Unknown is the result of this condition; child evidence can still be unknown
+// when an AND is definitively not met. Missing distinguishes absent from mistyped.
+type Failure struct {
+	Condition string    `json:"condition"`
+	Attribute string    `json:"attribute,omitempty"`
+	Actual    any       `json:"actual"`
+	Missing   bool      `json:"missing"`
+	Unknown   bool      `json:"unknown"`
+	Children  []Failure `json:"children,omitempty"`
+}
+
+// String returns the normalized expression, with string operands quoted.
+func (f Failure) String() string { return f.Condition }
+
+type result uint8
+
+const (
+	notMet result = iota
+	met
+	unknown
+)
+
+type evaluation struct {
+	result   result
+	evidence Failure
+	failures []Failure
+}
+
+// Evaluate admits only met conditions. Missing or mistyped data is unknown,
+// which never passes, even under NOT or the '-' prefix. AND collects failed
+// children in source order; failed OR/NOT groups retain their operand evidence.
+// Success always returns nil failures.
+func (e Expression) Evaluate(pr PR) (bool, []Failure) {
+	evaluated := e.evaluate(pr)
+	return evaluated.result == met, evaluated.failures
+}
+
+func (e Expression) evaluate(pr PR) evaluation {
+	evaluated := evaluation{evidence: Failure{Condition: e.String()}}
+	switch e.kind {
+	case all, anyOf:
+		evaluated.result = met
+		if e.kind == anyOf {
+			evaluated.result = notMet
+		}
 		for _, child := range e.children {
-			if ok, _ := child.Evaluate(pr); ok {
-				return true, nil
+			value := child.evaluate(pr)
+			evaluated.evidence.Children = append(evaluated.evidence.Children, value.evidence)
+			if e.kind == all {
+				evaluated.failures = append(evaluated.failures, value.failures...)
+				if value.result == notMet || evaluated.result == met {
+					evaluated.result = value.result
+				}
+			} else if value.result == met || evaluated.result == notMet {
+				evaluated.result = value.result
 			}
 		}
 	case not:
-		if ok, _ := e.children[0].Evaluate(pr); !ok {
-			return true, nil
+		child := e.children[0].evaluate(pr)
+		evaluated.evidence.Children = []Failure{child.evidence}
+		evaluated.result = unknown
+		switch child.result {
+		case met:
+			evaluated.result = notMet
+		case notMet:
+			evaluated.result = met
 		}
 	case atom:
+		var value Value
 		if pr != nil {
-			v := pr.Attribute(e.name)
-			if v.kind == attributes[e.name] && e.matches(v) != e.negative {
-				return true, nil
+			value = pr.Attribute(e.name)
+		}
+		evaluated.evidence.Attribute = e.name
+		evaluated.evidence.Missing = value.kind == missingValue
+		switch value.kind {
+		case stringValue:
+			evaluated.evidence.Actual = value.text
+		case boolValue:
+			evaluated.evidence.Actual = value.flag
+		case listValue:
+			evaluated.evidence.Actual = append([]string{}, value.list...)
+			if e.length {
+				evaluated.evidence.Actual = len(value.list)
 			}
 		}
+		if value.kind != attributeKind(e.name) {
+			evaluated.result = unknown
+		} else if e.matches(value) != e.negative {
+			evaluated.result = met
+		}
 	}
-	return false, []string{e.String()}
+	evaluated.evidence.Unknown = evaluated.result == unknown
+	if evaluated.result != met && e.kind != all {
+		evaluated.failures = []Failure{evaluated.evidence}
+	}
+	return evaluated
 }
 
 func (e Expression) matches(v Value) bool {

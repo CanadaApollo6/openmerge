@@ -19,7 +19,7 @@ func TestFind(t *testing.T) {
 		files []string
 		want  string
 	}{
-		{"none", nil, ErrNotFound.Error()},
+		{"none", nil, ErrNotFound.Error() + "; searched: " + strings.Join(paths, ", ")},
 		{"root yml", paths[:1], ""}, {"root yaml", paths[1:2], ""},
 		{"github yml", paths[2:3], ""}, {"github yaml", paths[3:], ""},
 		{"two", []string{paths[0], paths[2]}, "multiple OpenMerge configuration files found: .openmerge.yml, .github/openmerge.yml"},
@@ -144,7 +144,7 @@ func TestLoadErrors(t *testing.T) {
 		{"missing name", "version: 1\nqueues: [{}]", "line 2: queues[0].name: required"},
 		{"empty name", "version: 1\nqueues: [{name: ' '}]", "line 2: queues[0].name: must not be empty"},
 		{"typed name", "version: 1\nqueues: [{name: true}]", "line 2: queues[0].name: expected a string"},
-		{"unknown root", prefix + "prioritis: []", `line 4: prioritis: unknown key "prioritis"; did you mean "version"?`},
+		{"unknown root", prefix + "prioritis: []", `line 4: prioritis: unknown key "prioritis"`},
 		{"unknown queue", prefix + "    merge_methd: squash", `line 4: queues[0].merge_methd: unknown key "merge_methd"; did you mean "merge_method"?`},
 		{"unknown batch", prefix + "    batch:\n      max_siz: 2", `line 5: queues[0].batch.max_siz: unknown key "max_siz"; did you mean "max_size"?`},
 		{"invalid method", prefix + "    merge_method: fast-forward", "line 4: queues[0].merge_method: expected merge, squash, or rebase"},
@@ -177,14 +177,14 @@ func TestLoadErrors(t *testing.T) {
 		{"NOT shape", prefix + "    enter_when: [{not: [draft, conflict]}]", "line 4: queues[0].enter_when[0].not: expected a condition string"},
 		{"empty group", prefix + "    enter_when: [{}]", "line 4: queues[0].enter_when[0]: expected exactly one of and, or, not"},
 		{"group siblings", prefix + "    enter_when: [{and: [], or: []}]", "line 4: queues[0].enter_when[0]: expected exactly one of and, or, not"},
-		{"duplicate key", prefix + "    name: other", "line 4: queues[0].name: duplicate key"},
+		{"duplicate key", prefix + "    name: other", `line 4: duplicate key "name" (first defined on line 3)`},
 		{"nonstring key", prefix + "    1: oops", "line 4: queues[0]: expected a string key"},
 		{"syntax", "version: 1\nqueues: [\n", "line 2: yaml: line 2: did not find expected node content"},
 		{"extra document", prefix + "---\nversion: 1\n", "expected exactly one YAML document"},
 		{"undefined alias", prefix + "    enter_when: *missing", "unknown anchor 'missing' referenced"},
 		{"cyclic alias", prefix + "    enter_when: &cycle [*cycle]", "line 4: cyclic alias or YAML expansion limit exceeded"},
 		{"invalid merge", prefix + "    batch: {<<: 1}", "line 4: YAML merge requires a mapping or list of mappings"},
-		{"duplicate merge", prefix + "    batch: {<<: {}, <<: {}}", "line 4: duplicate YAML merge key"},
+		{"duplicate merge", prefix + "    batch: {<<: {}, <<: {}}", `line 4: duplicate key "<<"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -236,9 +236,14 @@ queues:
 			{condition.Snapshot{"draft": condition.Bool(false), "label": condition.Strings("ready"), "approved-reviews-by": condition.Strings("alice")}, true, nil},
 			{condition.Snapshot{"draft": condition.Bool(false), "author": condition.String("maintainer")}, true, nil},
 			{condition.Snapshot{"draft": condition.Bool(true), "author": condition.String("maintainer")}, false, []string{"not (draft)"}},
-			{condition.Snapshot{"draft": condition.Bool(false)}, false, []string{"or (and (label = ready; #approved-reviews-by >= 1); author = maintainer)"}},
+			{condition.Snapshot{"draft": condition.Bool(false)}, false, []string{`or (and (label = "ready"; #approved-reviews-by >= 1); author = "maintainer")`}},
 		} {
-			if got, failures := e.Evaluate(tt.pr); got != tt.want || !reflect.DeepEqual(failures, tt.fail) {
+			got, failures := e.Evaluate(tt.pr)
+			var conditions []string
+			for _, failure := range failures {
+				conditions = append(conditions, failure.String())
+			}
+			if got != tt.want || !reflect.DeepEqual(conditions, tt.fail) {
 				t.Errorf("Evaluate = %v, %v; want %v, %v", got, failures, tt.want, tt.fail)
 			}
 		}

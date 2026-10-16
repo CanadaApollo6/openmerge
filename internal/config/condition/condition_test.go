@@ -52,7 +52,7 @@ func TestEvaluate(t *testing.T) {
 			if !tt.want {
 				wantFailed = []string{e.String()}
 			}
-			if !reflect.DeepEqual(failed, wantFailed) {
+			if !reflect.DeepEqual(failureConditions(failed), wantFailed) {
 				t.Errorf("failures = %q, want %q", failed, wantFailed)
 			}
 		})
@@ -60,12 +60,12 @@ func TestEvaluate(t *testing.T) {
 }
 
 func TestAttributeTypes(t *testing.T) {
-	for _, name := range attributeNames {
+	for _, name := range attributeNames() {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			var valid string
 			var invalid []string
-			switch attributes[name] {
+			switch attributeKind(name) {
 			case stringValue:
 				valid = name + " = value"
 				invalid = []string{name, "#" + name + " = 1", name + " > 3"}
@@ -190,14 +190,14 @@ func TestGroupsAndFailures(t *testing.T) {
 		{"NOT succeeds", Not(draft), true, nil},
 		{"NOT fails", Not(Not(draft)), false, []string{"not (not (draft))"}},
 		{"OR suppresses failed alternatives", Any(draft, Not(conflict)), true, nil},
-		{"nested failure", All(Not(draft), Any(conflict, ready)), false, []string{"or (conflict; label = ready)"}},
-		{"nested AND", All(All(draft), ready), false, []string{"draft", "label = ready"}},
+		{"nested failure", All(Not(draft), Any(conflict, ready)), false, []string{`or (conflict; label = "ready")`}},
+		{"nested AND", All(All(draft), ready), false, []string{"draft", `label = "ready"`}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			got, failed := tt.e.Evaluate(pr)
-			if got != tt.want || !reflect.DeepEqual(failed, tt.fail) {
+			if got != tt.want || !reflect.DeepEqual(failureConditions(failed), tt.fail) {
 				t.Fatalf("Evaluate = %v, %q; want %v, %q", got, failed, tt.want, tt.fail)
 			}
 		})
@@ -236,4 +236,12 @@ func TestStableStringAndSnapshotCopy(t *testing.T) {
 	if ok, _ := ready.Evaluate(Snapshot{"label": v}); !ok {
 		t.Fatal("Strings retained mutable caller data")
 	}
+}
+
+func failureConditions(failures []Failure) []string {
+	var conditions []string
+	for _, failure := range failures {
+		conditions = append(conditions, failure.String())
+	}
+	return conditions
 }
