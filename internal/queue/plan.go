@@ -2,6 +2,7 @@ package queue
 
 import (
 	"fmt"
+	"reflect"
 	"slices"
 	"time"
 )
@@ -234,4 +235,32 @@ func (s State) batchCandidates(cfg Config, now time.Time) ([]BatchPR, time.Time)
 		}
 	}
 	return prs, time.Time{}
+}
+
+// CanStart revalidates a durable start against the current plan, including the
+// complete action payload. Callers must serialize this check with the append.
+func CanStart(cfg Config, s State, action Action, event Event) bool {
+	var at time.Time
+	switch e := event.(type) {
+	case BatchStarted:
+		a, ok := action.(BuildTestRef)
+		if !ok || e.Validate() != nil || a.BatchID != e.BatchID || a.BaseSHA != e.BaseSHA || !slices.Equal(a.PRs, e.PRs) {
+			return false
+		}
+		at = e.At
+	case LandingStarted:
+		a, ok := action.(Land)
+		if !ok || e.AttemptID == "" || a.BatchID != e.BatchID || a.FenceToken != e.FenceToken {
+			return false
+		}
+		at = e.At
+	default:
+		return false
+	}
+	for _, planned := range Plan(cfg, s, at) {
+		if planned.Key() == action.Key() && reflect.DeepEqual(planned, action) {
+			return true
+		}
+	}
+	return false
 }

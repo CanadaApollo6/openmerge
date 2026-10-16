@@ -6,7 +6,9 @@
 // docs/adr/0004-forge-driver-interface.md for the persistence and fencing contracts.
 //
 // Plan chooses the first BatchMaxSize eligible, trusted pinned heads in queue
-// order (default size 1). Partial batches wait until the oldest has waited
+// order (default size 1). Formation skips entries that are currently ineligible,
+// untrusted, or awaiting dequeue, relaxing strict FIFO compared with serial mode.
+// Partial batches wait until the oldest runnable entry has waited
 // BatchMaxWait; NextWake exposes that deadline. Size 1 never waits. A build key
 // hashes the base and ordered composition, so revalidation cancels stale proposals.
 // The executor durably records BatchStarted before building. Only that event

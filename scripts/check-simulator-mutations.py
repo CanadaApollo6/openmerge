@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PLAN = "internal/queue/plan.go"
 APPLY = "internal/queue/apply.go"
 EXECUTOR = "internal/executor/executor.go"
+TYPES = "internal/queue/types.go"
 FAKE = "internal/forge/fake/fake.go"
 
 
@@ -29,6 +30,20 @@ def mutation(path, *edits):
 LAND_SHA = "Base: x.Base, ExpectedBaseSHA: a.ExpectedBaseSHA, TestedSHA: a.TestedSHA,"
 ABANDON = "return emit(queue.LandingAbandoned{BatchID: a.BatchID, NewFence: next})"
 MUTANTS = {
+    "uncorrelated_batch_timeout": mutation(
+        APPLY,
+        ("e.Reason == ChecksTimeout && s.batchIn(e.BatchID, Testing) && !s.Active.checksPassed",
+         "e.Reason == ChecksTimeout && s.Active != nil && s.Active.Phase == Testing && !s.Active.checksPassed"),
+    ),
+    "build_key_omits_composition": mutation(
+        TYPES,
+        ("for _, pr := range a.PRs {", "for _, pr := range a.PRs[:0] {"),
+    ),
+    "ignore_batch_max_wait": mutation(
+        PLAN,
+        ("if len(prs) > 0 && size > 1 && cfg.BatchMaxWait > 0 {",
+         "if len(prs) > 0 && size > 1 && false {"),
+    ),
     "drop_passing_subbatch_pr": mutation(
         APPLY,
         ("s.Active.checksPassed = true",
@@ -139,7 +154,7 @@ with tempfile.TemporaryDirectory(prefix="openmerge-mutations-") as directory:
         overlay.write_text(json.dumps({"Replace": replacements}))
         run = subprocess.run(
             ["go", "test", "-count=1", "-overlay", str(overlay), "./internal/sim", "-run",
-             "TestMutationRunProbe|TestAbandonmentBeforePush/captured_token|TestExit500PRDay|TestForeignBaseEqualityDoesNotResolveLanding/resolve_from_fence"],
+             "TestMutationRunProbe|TestStaleBatchTimeoutInSimulator|TestChangedCompositionInSimulator|TestBatchFormationWaitInSimulator|TestAbandonmentBeforePush/captured_token|TestExit500PRDay|TestForeignBaseEqualityDoesNotResolveLanding/resolve_from_fence"],
             cwd=ROOT, capture_output=True, text=True, timeout=60,
         )
         output = run.stdout + run.stderr

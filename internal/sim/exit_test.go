@@ -153,6 +153,11 @@ func TestExit2000PRDayBatch8(t *testing.T) {
 	if result.BisectionCIRuns == 0 {
 		t.Fatal("no bisection CI exercised")
 	}
+	// Seed 42 baseline: 0.40535 runs/merge and 161h56m52s median. Leave
+	// approximately 10% headroom while catching throughput/latency regressions.
+	if result.CIRunsPerMergedPR > 0.446 || result.MedianTimeToMerge > 179*time.Hour {
+		t.Fatalf("batch-8 performance regressed: runs/merge=%.5f (max 0.446), median=%s (max 179h)", result.CIRunsPerMergedPR, result.MedianTimeToMerge)
+	}
 	data, err := json.Marshal(result)
 	if err != nil {
 		t.Fatal(err)

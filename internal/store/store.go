@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"time"
 
@@ -109,20 +110,18 @@ func lockQueue(ctx context.Context, tx pgx.Tx, q QueueID) error {
 // carries the delivery key, so deduplication returns the original final watermark.
 // An empty key disables deduplication. Empty deliveries are rejected.
 func (s *Store) Append(ctx context.Context, q QueueID, events []queue.Event, dedupeKey string) (int64, error) {
-	return s.append(ctx, q, events, dedupeKey, false)
+	return s.append(ctx, q, events, dedupeKey, nil)
 }
 
-// ErrBatchStarted rejects a stale build before it can overwrite a test ref.
-var ErrBatchStarted = errors.New("batch composition is no longer authorized to build")
+// ErrStale rejects a start whose action is no longer in the current plan.
+var ErrStale = errors.New("action is no longer authorized to start")
 
-// ErrLandingStarted rejects a superseded executor before it calls the forge.
-var ErrLandingStarted = errors.New("landing has already started or its batch is no longer testing")
-
-func (s *Store) append(ctx context.Context, q QueueID, events []queue.Event, dedupeKey string, executorEmit bool) (int64, error) {
+func (s *Store) append(ctx context.Context, q QueueID, events []queue.Event, dedupeKey string, execution *emission) (int64, error) {
 	if len(events) == 0 {
 		return 0, errors.New("cannot append an empty delivery")
 	}
 	var watermark int64
+	var stale bool
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		if err := s.lockQueue(ctx, tx, q); err != nil {
 			return err
@@ -143,55 +142,11 @@ func (s *Store) append(ctx context.Context, q QueueID, events []queue.Event, ded
 					return err
 				}
 			}
-			if start, ok := event.(queue.BatchStarted); ok && executorEmit {
-				state, _, err := load(ctx, tx, q)
-				if err != nil {
+			if execution != nil {
+				var err error
+				stale, err = s.authorizeStart(ctx, tx, *execution, event)
+				if err != nil || stale {
 					return err
-				}
-				next := queue.Apply(state, start)
-				if next.Active == nil || next.Active.Phase != queue.Building || next.Active.ID != start.BatchID || next.Active.BaseSHA != start.BaseSHA || !slices.Equal(next.Active.PRs, start.PRs) {
-					return ErrBatchStarted
-				}
-				// Match the composition against the live in-flight build, rather than
-				// trusting a stale worker's event or its former action key.
-				var payload []byte
-				err = tx.QueryRow(ctx, `SELECT payload FROM actions WHERE queue_id=$1 AND type='build_test_ref'
-					AND status='in_flight' AND lease_until > $2`, q, start.At).Scan(&payload)
-				if errors.Is(err, pgx.ErrNoRows) {
-					return ErrClaimLost
-				}
-				if err != nil {
-					return err
-				}
-				action, err := queue.DecodeAction(payload)
-				if err != nil {
-					return err
-				}
-				build, ok := action.(queue.BuildTestRef)
-				if !ok || build.BatchID != start.BatchID || build.BaseSHA != start.BaseSHA || !slices.Equal(build.PRs, start.PRs) {
-					return ErrBatchStarted
-				}
-			}
-			if start, ok := event.(queue.LandingStarted); ok && executorEmit {
-				state, _, err := load(ctx, tx, q)
-				if err != nil {
-					return err
-				}
-				if state.Active == nil || state.Active.ID != start.BatchID || state.Active.Phase != queue.Testing {
-					return ErrLandingStarted
-				}
-				// A lease can expire between BeginConsequential and this emit.
-				// Do not let a paused Land start after a replacement cancelled
-				// it or a conflicting action acquired its execution window.
-				landKey := "batch/" + start.BatchID + "/land"
-				var authorized bool
-				if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT FROM actions WHERE queue_id = $1 AND key = $2
-					AND status = 'in_flight' AND lease_until > $3) AND NOT EXISTS
-					(SELECT FROM actions WHERE queue_id = $1 AND key <> $2 AND status = 'in_flight' AND lease_until > $3)`, q, landKey, start.At).Scan(&authorized); err != nil {
-					return err
-				}
-				if !authorized {
-					return ErrClaimLost
 				}
 			}
 			name, payload, err := queue.EncodeEvent(event)
@@ -212,16 +167,81 @@ func (s *Store) append(ctx context.Context, q QueueID, events []queue.Event, ded
 	if err != nil {
 		return 0, err
 	}
+	if stale {
+		return 0, ErrStale
+	}
 	return watermark, nil
 }
 
-// Emit returns the executor callback. A nil error means the event has committed.
+type emission struct {
+	claim ClaimedAction
+	cfg   queue.Config
+}
+
+// Emit returns the executor callback bound to this claim and planner config.
+// A nil error means the event has committed. ErrStale means a start was rejected
+// and its action cancelled; the executor must return before any forge call.
 // Use a worker context whose lifetime covers execution and result persistence.
-func (s *Store) Emit(ctx context.Context, q QueueID) func(queue.Event) error {
+func (s *Store) Emit(ctx context.Context, claim ClaimedAction, cfg queue.Config) func(queue.Event) error {
 	return func(e queue.Event) error {
-		_, err := s.append(ctx, q, []queue.Event{e}, "", true)
+		_, err := s.append(ctx, claim.QueueID, []queue.Event{e}, "", &emission{claim, cfg})
 		return err
 	}
+}
+
+// The caller holds the queue lock through validation, cancellation and append.
+func (s *Store) authorizeStart(ctx context.Context, tx pgx.Tx, execution emission, event queue.Event) (bool, error) {
+	var at time.Time
+	switch start := event.(type) {
+	case queue.BatchStarted:
+		at = start.At
+	case queue.LandingStarted:
+		at = start.At
+	default:
+		return false, nil
+	}
+	claim := execution.claim
+	var record actionRecord
+	err := tx.QueryRow(ctx, `SELECT id, queue_id, key, payload, watermark FROM actions
+		WHERE queue_id = $1 AND key = $2 AND attempt_id = $3
+		AND status = 'in_flight' AND lease_until > $4 FOR UPDATE`, claim.QueueID, claim.Key, claim.AttemptID, at).
+		Scan(&record.id, &record.queue, &record.key, &record.payload, &record.watermark)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, ErrClaimLost
+	}
+	if err != nil {
+		return false, err
+	}
+	stored, err := restoreAction(record)
+	if err != nil {
+		return false, err
+	}
+	// Malformed events or modified caller payloads must not cancel valid work.
+	if !reflect.DeepEqual(claim.Action, stored.Action) {
+		return false, ErrStale
+	}
+	switch start := event.(type) {
+	case queue.BatchStarted:
+		build, ok := stored.Action.(queue.BuildTestRef)
+		if !ok || build.BatchID != start.BatchID || build.BaseSHA != start.BaseSHA || !slices.Equal(build.PRs, start.PRs) {
+			return false, ErrStale
+		}
+	case queue.LandingStarted:
+		land, ok := stored.Action.(queue.Land)
+		if !ok || land.BatchID != start.BatchID || land.FenceToken != start.FenceToken {
+			return false, ErrStale
+		}
+	}
+	state, _, err := load(ctx, tx, claim.QueueID)
+	if err != nil {
+		return false, err
+	}
+	if stored.Key == stored.Action.Key() && queue.CanStart(execution.cfg, state, stored.Action, event) {
+		return false, nil
+	}
+	_, err = tx.Exec(ctx, `UPDATE actions SET status = 'cancelled', attempt_id = NULL,
+		lease_until = NULL, updated_at = $2 WHERE id = $1`, record.id, at)
+	return true, err
 }
 
 // Load derives state from the immutable bootstrap and every committed event.

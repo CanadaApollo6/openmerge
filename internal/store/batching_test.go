@@ -40,8 +40,8 @@ func TestBatchStartedRoundTripAndCompositionRevalidation(t *testing.T) {
 	if !proceed {
 		t.Fatal("current composition rejected")
 	}
-	emit := s.Emit(t.Context(), q)
-	if err := emit(queue.BatchStarted{BatchID: stale.BatchID, BaseSHA: stale.BaseSHA, PRs: stale.PRs, At: epoch}); !errors.Is(err, ErrBatchStarted) {
+	emit := s.Emit(t.Context(), claims[0], cfg)
+	if err := emit(queue.BatchStarted{BatchID: stale.BatchID, BaseSHA: stale.BaseSHA, PRs: stale.PRs, At: epoch}); !errors.Is(err, ErrStale) {
 		t.Fatalf("stale emit=%v", err)
 	}
 	started := queue.BatchStarted{BatchID: build.BatchID, BaseSHA: build.BaseSHA, PRs: build.PRs, At: epoch}

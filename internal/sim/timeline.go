@@ -120,12 +120,12 @@ func (s *simulation) deliver(event scheduledEvent) error {
 		}
 	case duplicateLand:
 		s.boundary.scope = event.scope
-		err := s.executor.Execute(context.Background(), event.action, func(e queue.Event) error { s.record(e); return s.violation })
+		err := s.executor.Execute(context.Background(), event.action, func(e queue.Event) error { return s.emit(event.action, e) })
 		if inv := s.checkInvariants(); inv != nil {
 			return inv
 		}
 		var tampered *executor.ErrFenceTampered
-		if err != nil && !errors.As(err, &tampered) && !errors.Is(err, forge.ErrLeaseRejected) && !errors.Is(err, errForge) && !errors.Is(err, errDelayed) {
+		if err != nil && !errors.Is(err, errStale) && !errors.As(err, &tampered) && !errors.Is(err, forge.ErrLeaseRejected) && !errors.Is(err, errForge) && !errors.Is(err, errDelayed) {
 			return err
 		}
 		s.recoverFaults(event.scope)

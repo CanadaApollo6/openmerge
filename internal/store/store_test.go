@@ -488,21 +488,18 @@ func TestLandingStartedStopsReexecutingLand(t *testing.T) {
 	if !proceed {
 		t.Fatal("valid landing did not proceed")
 	}
-	emit := s.Emit(t.Context(), q)
+	emit := s.Emit(t.Context(), claim, config)
 	must(t, emit(queue.LandingStarted{FenceToken: "fence", BatchID: "b1", AttemptID: "first", At: epoch}))
-	if err := emit(queue.LandingStarted{FenceToken: "fence", BatchID: "b1", AttemptID: "late-copy", At: epoch}); !errors.Is(err, ErrLandingStarted) {
+	if err := emit(queue.LandingStarted{FenceToken: "fence", BatchID: "b1", AttemptID: "late-copy", At: epoch}); !errors.Is(err, ErrStale) {
 		t.Fatalf("a second executor could start another landing: %v", err)
 	}
-	must(t, s.Complete(t.Context(), claim, Failed))
+	if err := s.Complete(t.Context(), claim, Failed); !errors.Is(err, ErrClaimLost) {
+		t.Fatalf("stale landing retained its claim: %v", err)
+	}
 	claims, err := s.Claim(t.Context(), 1, time.Minute, epoch)
 	must(t, err)
-	if len(claims) != 1 {
-		t.Fatal("failed land was not available for revalidation")
-	}
-	proceed, err = s.BeginConsequential(t.Context(), claims[0], config, epoch)
-	must(t, err)
-	if proceed {
-		t.Fatal("retried Land after LandingStarted committed")
+	if len(claims) != 0 {
+		t.Fatal("cancelled landing remained claimable")
 	}
 	actions, err := s.Plan(t.Context(), q, config, epoch.Add(2*time.Minute))
 	must(t, err)
@@ -578,7 +575,7 @@ func TestInFlightLandDefersConflictingDequeue(t *testing.T) {
 	if !proceed {
 		t.Fatal("dequeue could not recover an expired execution window")
 	}
-	err = s.Emit(t.Context(), q)(queue.LandingStarted{FenceToken: "fence", BatchID: "b1", AttemptID: "late", At: epoch.Add(time.Minute)})
+	err = s.Emit(t.Context(), land, config)(queue.LandingStarted{FenceToken: "fence", BatchID: "b1", AttemptID: "late", At: epoch.Add(time.Minute)})
 	if !errors.Is(err, ErrClaimLost) {
 		t.Fatalf("paused worker started a landing after losing its window: %v", err)
 	}
@@ -592,7 +589,7 @@ func TestResolveLandingCanRecoverUncompletedInFlightLand(t *testing.T) {
 	if !proceed {
 		t.Fatal("landing did not proceed")
 	}
-	must(t, s.Emit(t.Context(), q)(queue.LandingStarted{FenceToken: "fence", BatchID: "b1", AttemptID: "attempt", At: epoch}))
+	must(t, s.Emit(t.Context(), claim, config)(queue.LandingStarted{FenceToken: "fence", BatchID: "b1", AttemptID: "attempt", At: epoch}))
 	now := epoch.Add(2 * time.Minute)
 	_, err = s.Plan(t.Context(), q, config, now)
 	must(t, err)

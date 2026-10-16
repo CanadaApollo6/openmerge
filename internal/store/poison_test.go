@@ -99,7 +99,7 @@ func TestPoisonedLandRepairsPausesAndResumes(t *testing.T) {
 					if len(claims) != 1 {
 						t.Fatal(claims)
 					}
-					must(t, x.Execute(t.Context(), claims[0].Action, s.Emit(t.Context(), q)))
+					must(t, x.Execute(t.Context(), claims[0].Action, s.Emit(t.Context(), claims[0], config)))
 					must(t, s.Complete(t.Context(), claims[0], Done))
 					status := f.Statuses(repo, 1)[land.PRs[0].HeadSHA]
 					if status.State != forge.Paused || status.Reason != "action-poisoned" || !strings.Contains(status.Summary, key) {
@@ -132,7 +132,7 @@ func TestPoisonedLandRepairsPausesAndResumes(t *testing.T) {
 				if !ok {
 					t.Fatal("repaired landing not authorized")
 				}
-				must(t, x.Execute(t.Context(), claims[0].Action, s.Emit(t.Context(), q)))
+				must(t, x.Execute(t.Context(), claims[0].Action, s.Emit(t.Context(), claims[0], config)))
 				must(t, s.Complete(t.Context(), claims[0], Done))
 				state, _, err = s.Load(t.Context(), q)
 				must(t, err)

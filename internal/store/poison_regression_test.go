@@ -22,7 +22,7 @@ func startUncertainLanding(t *testing.T, s *Store) (QueueID, time.Time) {
 	if !ok {
 		t.Fatal("land not authorized")
 	}
-	must(t, s.Emit(t.Context(), q)(queue.LandingStarted{BatchID: "b1", AttemptID: "uncertain", FenceToken: "fence", At: epoch}))
+	must(t, s.Emit(t.Context(), c, config)(queue.LandingStarted{BatchID: "b1", AttemptID: "uncertain", FenceToken: "fence", At: epoch}))
 	must(t, s.Complete(t.Context(), c, Done))
 	return q, epoch.Add(2 * time.Minute)
 }

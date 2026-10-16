@@ -71,7 +71,7 @@ func TestExecutorDurablyLandsThreePRsSerially(t *testing.T) {
 			errLost := errors.New("lost landing result before durable emit")
 			lost := false
 			var tested, landed []string
-			durableEmit := s.Emit(t.Context(), q)
+			var durableEmit func(queue.Event) error
 			emit := func(event queue.Event) error {
 				if _, ok := event.(queue.Landed); ok && loseResult && len(landed) == 1 && !lost {
 					lost = true
@@ -116,6 +116,7 @@ func TestExecutorDurablyLandsThreePRsSerially(t *testing.T) {
 						continue
 					}
 				}
+				durableEmit = s.Emit(t.Context(), claim, config)
 				err = x.Execute(t.Context(), claim.Action, emit)
 				status := Done
 				if err != nil {
@@ -180,7 +181,7 @@ func TestCancelledResolveLandingReactivatesAndSettles(t *testing.T) {
 	})
 	now := epoch
 	x := executor.Executor{Driver: f, Git: f, Repo: repo, Base: "main", RequiredChecks: []string{"ci"}, Now: func() time.Time { return now }}
-	durableEmit := s.Emit(t.Context(), q)
+	var durableEmit func(queue.Event) error
 	lost := errors.New("lost landing result")
 	// Build, read CI, and land; the forge succeeds after LandingStarted commits,
 	// but the Landed result never reaches the log.
@@ -200,6 +201,7 @@ func TestCancelledResolveLandingReactivatesAndSettles(t *testing.T) {
 				t.Fatal("initial action cancelled")
 			}
 		}
+		durableEmit = s.Emit(t.Context(), claim, config)
 		err = x.Execute(t.Context(), claim.Action, func(event queue.Event) error {
 			if _, ok := event.(queue.Landed); ok {
 				return lost
@@ -267,7 +269,7 @@ func TestCancelledResolveLandingReactivatesAndSettles(t *testing.T) {
 	if !proceed {
 		t.Fatal("reactivated resolution cancelled")
 	}
-	must(t, x.Execute(t.Context(), claims[0].Action, durableEmit))
+	must(t, x.Execute(t.Context(), claims[0].Action, s.Emit(t.Context(), claims[0], laterConfig)))
 	must(t, s.Complete(t.Context(), claims[0], Done))
 	state, _, err := s.Load(t.Context(), q)
 	must(t, err)
