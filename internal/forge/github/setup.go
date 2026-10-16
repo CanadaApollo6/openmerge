@@ -111,7 +111,7 @@ func setupApp(ctx context.Context, opts ManifestOptions, out io.Writer, api stri
 	}
 	manifest, err := json.Marshal(appManifest{
 		Name: name, URL: "https://github.com/CanadaApollo6/openmerge", RedirectURL: address + "/callback",
-		Permissions: map[string]string{"contents": "write", "pull_requests": "write", "checks": "write", "statuses": "read", "issues": "write", "metadata": "read"},
+		Permissions: map[string]string{"contents": "write", "workflows": "write", "pull_requests": "write", "checks": "write", "statuses": "read", "issues": "read", "metadata": "read"},
 		Events:      []string{"pull_request", "pull_request_review", "check_run", "check_suite", "status", "push", "issue_comment"}, Hook: hook,
 	})
 	if err != nil {
@@ -192,7 +192,15 @@ func setupApp(ctx context.Context, opts ManifestOptions, out io.Writer, api stri
 	if repo == "" {
 		repo = "OWNER/REPO"
 	}
-	_, err = fmt.Fprintf(out, "Saved App credentials in %s\nInstall: https://github.com/apps/%s/installations/new\nSelect Only select repositories and include %s.\nFind the installation ID at the end of Settings → Applications → Installed GitHub Apps → Configure (…/settings/installations/12345).\n\nAfter the serve command is available (see openmerge serve --help):\n  OPENMERGE_DATABASE_URL=POSTGRES_URL openmerge serve --repos %s --base main --github-app-id %d --github-installation-id INSTALLATION_ID --github-private-key %s\nWebhook secret (when enabling webhooks): %s\n", dir, credentials.Slug, repo, repo, credentials.ID, shellQuote(filepath.Join(dir, "private-key.pem")), filepath.Join(dir, "webhook-secret"))
+	var steps strings.Builder
+	fmt.Fprintf(&steps, "Saved App credentials in %s\n\n1. Install: https://github.com/apps/%s/installations/new\nSelect Only select repositories and include %s.\nFind the installation ID at the end of Settings → Applications → Installed GitHub Apps → Configure (…/settings/installations/12345).\n", dir, credentials.Slug, repo)
+	fmt.Fprintf(&steps, "\n2. Preview repository rulesets, then apply the changes. Set GITHUB_TOKEN to a separate repository-admin token (Administration read for preview, write for apply):\n  openmerge setup rulesets --config-dir %s --repo %s\n  openmerge setup rulesets --config-dir %s --repo %s --apply\n", shellQuote(dir), shellQuote(repo), shellQuote(dir), shellQuote(repo))
+	fmt.Fprintln(&steps, "\n3. Start the server after resolving all reported ruleset problems and checking classic branch protection (see openmerge serve --help when available). Replace DEFAULT_BRANCH with the repository's default branch:")
+	if opts.WebhookURL != "" {
+		fmt.Fprintf(&steps, "Webhook environment (serve requires the secret value):\n  export OPENMERGE_WEBHOOK_SECRET=\"$(cat %s)\"\n", shellQuote(filepath.Join(dir, "webhook-secret")))
+	}
+	fmt.Fprintf(&steps, "  OPENMERGE_DATABASE_URL=POSTGRES_URL openmerge serve --repos %s --base DEFAULT_BRANCH --github-app-id %d --github-installation-id INSTALLATION_ID --github-private-key %s\n", shellQuote(repo), credentials.ID, shellQuote(filepath.Join(dir, "private-key.pem")))
+	_, err = io.WriteString(out, steps.String())
 	return err
 }
 
@@ -216,6 +224,7 @@ func convertManifest(ctx context.Context, api, code string) (appCredentials, err
 	if err != nil {
 		return credentials, err
 	}
+	client.secrets = append(client.secrets, code)
 	err = client.request(ctx, http.MethodPost, "app-manifests/"+code+"/conversions", nil, &credentials)
 	if err != nil {
 		return appCredentials{}, err

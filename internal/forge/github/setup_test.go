@@ -7,6 +7,7 @@ import (
 	"errors"
 	"html"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -18,8 +19,14 @@ import (
 )
 
 func TestManifestSetup(t *testing.T) {
-	for _, organization := range []string{"", "acme"} {
-		t.Run("owner="+organization, func(t *testing.T) {
+	for _, tt := range []struct {
+		name, owner, repo, webhook string
+	}{
+		{"personal polling", "", "acme/project", ""},
+		{"organization webhook", "acme", "acme/project", "https://example.test/hooks/github"},
+		{"personal webhook without repo", "", "", "https://example.test/hooks/github"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
 			f := newAPI(t)
 			f.manifestPEM = string(testPEM(t))
 			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -46,12 +53,13 @@ func TestManifestSetup(t *testing.T) {
 				}
 				var manifest appManifest
 				must(t, json.Unmarshal([]byte(html.UnescapeString(string(match[1]))), &manifest))
-				if manifest.Public || manifest.Hook.Active || manifest.Hook.URL == "" || manifest.Permissions["checks"] != "write" || manifest.Permissions["statuses"] != "read" || manifest.Permissions["issues"] != "write" || len(manifest.Permissions) != 6 || len(manifest.Events) != 7 || manifest.Name != `My App <test>` {
+				permissions := map[string]string{"contents": "write", "workflows": "write", "pull_requests": "write", "checks": "write", "statuses": "read", "issues": "read", "metadata": "read"}
+				if manifest.Public || manifest.Hook.Active != (tt.webhook != "") || manifest.Hook.URL == "" || !maps.Equal(manifest.Permissions, permissions) || len(manifest.Events) != 7 || manifest.Name != `My App <test>` {
 					t.Fatalf("manifest = %+v", manifest)
 				}
 				wantAction := "https://github.com/settings/apps/new?state="
-				if organization != "" {
-					wantAction = "https://github.com/organizations/" + organization + "/settings/apps/new?state="
+				if tt.owner != "" {
+					wantAction = "https://github.com/organizations/" + tt.owner + "/settings/apps/new?state="
 				}
 				if !strings.Contains(html.UnescapeString(string(body)), wantAction+u.Query().Get("state")) {
 					t.Fatalf("wrong registration destination: %s", body)
@@ -73,8 +81,14 @@ func TestManifestSetup(t *testing.T) {
 					}
 				}
 			}
-			must(t, setupApp(context.Background(), ManifestOptions{Owner: organization, Repo: "acme/project", Name: `My App <test>`}, &out, f.server.URL+"/api/v3/", open))
-			dir := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "openmerge", "openmerge-test")
+			var dir string
+			if tt.webhook != "" {
+				dir = filepath.Join(t.TempDir(), "App's credentials")
+			}
+			must(t, setupApp(context.Background(), ManifestOptions{Owner: tt.owner, Repo: tt.repo, Name: `My App <test>`, ConfigDir: dir, WebhookURL: tt.webhook}, &out, f.server.URL+"/api/v3/", open))
+			if dir == "" {
+				dir = filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "openmerge", "openmerge-test")
+			}
 			info, err := os.Stat(dir)
 			must(t, err)
 			if info.Mode().Perm() != 0o700 {
@@ -94,6 +108,31 @@ func TestManifestSetup(t *testing.T) {
 			}
 			if !strings.Contains(out.String(), "https://github.com/apps/openmerge-test/installations/new") || !strings.Contains(out.String(), "--github-installation-id INSTALLATION_ID") || strings.Contains(out.String(), "setup-webhook-secret") || strings.Contains(out.String(), "BEGIN RSA") {
 				t.Fatalf("setup output = %s", out.String())
+			}
+			repo := tt.repo
+			if repo == "" {
+				repo = "OWNER/REPO"
+			}
+			previous := -1
+			for _, step := range []string{
+				"Install: https://github.com/apps/openmerge-test/installations/new",
+				"openmerge setup rulesets --config-dir " + shellQuote(dir) + " --repo " + shellQuote(repo) + "\n",
+				"openmerge setup rulesets --config-dir " + shellQuote(dir) + " --repo " + shellQuote(repo) + " --apply",
+				"openmerge serve --repos " + shellQuote(repo),
+			} {
+				index := strings.Index(out.String(), step)
+				if index < 0 || index <= previous {
+					t.Fatalf("missing or misordered next step %q: %s", step, out.String())
+				}
+				previous = index
+			}
+			webhookCommand := `export OPENMERGE_WEBHOOK_SECRET="$(cat ` + shellQuote(filepath.Join(dir, "webhook-secret")) + `)"`
+			if tt.webhook != "" {
+				if !strings.Contains(out.String(), "Webhook environment (serve requires the secret value):") || !strings.Contains(out.String(), webhookCommand) {
+					t.Fatalf("missing webhook value command: %s", out.String())
+				}
+			} else if strings.Contains(out.String(), "OPENMERGE_WEBHOOK_SECRET") || strings.Contains(out.String(), "Webhook environment") {
+				t.Fatalf("polling setup printed webhook instructions: %s", out.String())
 			}
 			if res, err := http.Get(address); err == nil {
 				_ = res.Body.Close()
@@ -159,12 +198,17 @@ func TestManifestRefusesInvalidOptionsAndOverwrite(t *testing.T) {
 func TestManifestConversionErrorsDoNotExposeSecrets(t *testing.T) {
 	f := newAPI(t)
 	f.override = func(w http.ResponseWriter, _ *http.Request) bool {
-		f.apiError(w, 422, "one-use-code setup-webhook-secret")
+		w.WriteHeader(422)
+		f.json(w, map[string]any{
+			"message":        "Conversion failed for one-use-code",
+			"webhook_secret": "setup-webhook-secret",
+			"client_secret":  "unused-oauth-secret",
+		})
 		return true
 	}
 	_, err := convertManifest(context.Background(), f.server.URL+"/api/v3/", "one-use-code")
 	var api *APIError
-	if !errors.As(err, &api) || api.StatusCode != 422 || strings.Contains(err.Error(), "one-use-code") || strings.Contains(err.Error(), "setup-webhook-secret") {
+	if !errors.As(err, &api) || api.StatusCode != 422 || strings.Contains(err.Error(), "one-use-code") || strings.Contains(err.Error(), "setup-webhook-secret") || strings.Contains(err.Error(), "unused-oauth-secret") || !strings.Contains(err.Error(), "Conversion failed") {
 		t.Fatalf("unsafe conversion error: %v", err)
 	}
 }

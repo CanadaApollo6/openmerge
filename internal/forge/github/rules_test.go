@@ -76,7 +76,7 @@ func TestValidateRules(t *testing.T) {
 		{"push rules apply everywhere", func(r []Ruleset) []Ruleset { r[0].Target = "push"; r[0].BypassActors = []BypassActor{}; return r }, []RuleProblemCode{BaseBypassMissing, RefBlocked, RefBlocked}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			problems := ValidateRules(tt.edit(fixtureRules(t)), "main", 42)
+			problems := ValidateRules(tt.edit(fixtureRules(t)), "main", "main", 42)
 			codes := make([]RuleProblemCode, 0, len(problems))
 			for _, p := range problems {
 				codes = append(codes, p.Code)
@@ -107,5 +107,36 @@ func TestRulesetPathMatching(t *testing.T) {
 		if got := matches(tt.pattern, tt.ref, "refs/heads/main"); got != tt.want {
 			t.Errorf("matches(%q,%q) = %v", tt.pattern, tt.ref, got)
 		}
+	}
+}
+
+func TestValidateRulesDistinguishesDefaultFromLandingBase(t *testing.T) {
+	for _, tt := range []struct {
+		name, base, conditions string
+		want                   []RuleProblemCode
+	}{
+		{"release excludes default", "release/v1", `{"ref_name":{"include":["refs/heads/release/v1"],"exclude":["~DEFAULT_BRANCH"]}}`, []RuleProblemCode{BaseBypassMissing}},
+		{"default only does not include release", "release/v1", `{"ref_name":{"include":["~DEFAULT_BRANCH"],"exclude":[]}}`, nil},
+		{"default only includes main", "main", `{"ref_name":{"include":["~DEFAULT_BRANCH"],"exclude":[]}}`, []RuleProblemCode{BaseBypassMissing}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			rules := fixtureRules(t)
+			rules[0].Conditions = json.RawMessage(tt.conditions)
+			rules[0].BypassActors = []BypassActor{}
+			problems := ValidateRules(rules, tt.base, "main", 42)
+			var codes []RuleProblemCode
+			for _, p := range problems {
+				codes = append(codes, p.Code)
+				if p.Code == BaseBypassMissing && p.Ref != "refs/heads/"+tt.base {
+					t.Errorf("wrong landing ref: %+v", p)
+				}
+			}
+			if !slices.Equal(codes, tt.want) {
+				t.Fatalf("problems = %+v; want %v", problems, tt.want)
+			}
+		})
+	}
+	if problems := ValidateRules(fixtureRules(t), "release/v1", "", 42); len(problems) != 1 || problems[0].Code != RulesUnknown {
+		t.Fatalf("unknown default did not fail closed: %+v", problems)
 	}
 }

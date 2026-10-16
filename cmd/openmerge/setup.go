@@ -45,7 +45,7 @@ func runSetup(args []string, stdout, stderr io.Writer) int {
 	case "github":
 		flags.StringVar(&manifest.Owner, "owner", "", "organization that will own the App")
 		flags.BoolVar(&user, "user", false, "create under the signed-in personal account (default)")
-		flags.StringVar(&manifest.Repo, "repo", "", "repository to install on")
+		flags.StringVar(&manifest.Repo, "repo", "", "repository for installation guidance and next-step commands")
 		flags.StringVar(&manifest.Name, "name", "", "App name (editable on GitHub)")
 		flags.StringVar(&manifest.ConfigDir, "config-dir", "", "new directory for credentials")
 		flags.StringVar(&manifest.WebhookURL, "webhook-url", "", "enable delivery to this public HTTPS URL")

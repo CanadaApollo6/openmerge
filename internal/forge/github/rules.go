@@ -77,12 +77,14 @@ func (p RuleProblem) Error() string { return p.Message }
 // including bypass_actors (an admin read is needed to see these). Classic branch
 // protection is separate and must also be checked by the caller. Unknown
 // patterns fail closed; queue/fence overlaps are deliberately conservative.
-func ValidateRules(rulesets []Ruleset, base string, appID int64) []RuleProblem {
+// defaultBranch is the repository default, which may differ from the landing base.
+func ValidateRules(rulesets []Ruleset, base, defaultBranch string, appID int64) []RuleProblem {
 	var problems []RuleProblem
-	if appID <= 0 || base == "" {
-		return []RuleProblem{{Code: RulesUnknown, Message: "supply a positive App ID and base branch before validating rules"}}
+	if appID <= 0 || base == "" || defaultBranch == "" {
+		return []RuleProblem{{Code: RulesUnknown, Message: "supply a positive App ID, landing base and repository default branch before validating rules"}}
 	}
 	baseRef := "refs/heads/" + strings.TrimPrefix(base, "refs/heads/")
+	defaultRef := "refs/heads/" + strings.TrimPrefix(defaultBranch, "refs/heads/")
 	protected := false
 	for _, r := range rulesets {
 		if r.Enforcement == "disabled" || r.Enforcement == "evaluate" || r.Target == "tag" {
@@ -109,15 +111,15 @@ func ValidateRules(rulesets []Ruleset, base string, appID int64) []RuleProblem {
 			continue
 		}
 		bypass := appBypass(r, appID)
-		if len(r.Rules) > 0 && (r.Target == "push" || applies(c, baseRef, baseRef)) && !bypass {
+		if len(r.Rules) > 0 && (r.Target == "push" || applies(c, baseRef, defaultRef)) && !bypass {
 			problem(BaseBypassMissing, baseRef, fmt.Sprintf("add Integration App %d with bypass_mode=always so the atomic base push can land", appID))
 		}
 		for _, prefix := range []string{fencePrefix, queuePrefix} {
-			if len(r.Rules) > 0 && (r.Target == "push" || overlaps(c, prefix, baseRef)) && !bypass {
+			if len(r.Rules) > 0 && (r.Target == "push" || overlaps(c, prefix, defaultRef)) && !bypass {
 				problem(RefBlocked, prefix+"*", fmt.Sprintf("may block App creation/force-push in %s*; add the App bypass or exclude this namespace", prefix))
 			}
 		}
-		if r.Target == "branch" && r.Enforcement == "active" && bypass && len(r.BypassActors) == 1 && covers(c, fencePrefix, baseRef) && hasFenceRules(r) {
+		if r.Target == "branch" && r.Enforcement == "active" && bypass && len(r.BypassActors) == 1 && covers(c, fencePrefix, defaultRef) && hasFenceRules(r) {
 			protected = true
 		}
 	}
@@ -174,12 +176,12 @@ func validPatterns(c refConditions) bool {
 }
 
 // GitHub uses pathname-aware fnmatch: * cannot cross '/', **/ can.
-func matches(pattern, ref, base string) bool {
+func matches(pattern, ref, defaultRef string) bool {
 	if pattern == "~ALL" {
 		return true
 	}
 	if pattern == "~DEFAULT_BRANCH" {
-		return ref == base
+		return ref == defaultRef
 	}
 	var match func([]string, []string) bool
 	match = func(p, v []string) bool {
@@ -198,9 +200,9 @@ func matches(pattern, ref, base string) bool {
 	return match(strings.Split(pattern, "/"), strings.Split(ref, "/"))
 }
 
-func applies(c refConditions, ref, base string) bool {
-	return slices.ContainsFunc(c.RefName.Include, func(p string) bool { return matches(p, ref, base) }) &&
-		!slices.ContainsFunc(c.RefName.Exclude, func(p string) bool { return matches(p, ref, base) })
+func applies(c refConditions, ref, defaultRef string) bool {
+	return slices.ContainsFunc(c.RefName.Include, func(p string) bool { return matches(p, ref, defaultRef) }) &&
+		!slices.ContainsFunc(c.RefName.Exclude, func(p string) bool { return matches(p, ref, defaultRef) })
 }
 
 func patternCovers(pattern, prefix string) bool {
@@ -215,12 +217,12 @@ func patternCovers(pattern, prefix string) bool {
 	return false
 }
 
-func patternOverlaps(pattern, prefix, base string) bool {
+func patternOverlaps(pattern, prefix, defaultRef string) bool {
 	if pattern == "~ALL" {
 		return true
 	}
 	if pattern == "~DEFAULT_BRANCH" {
-		return strings.HasPrefix(base, prefix)
+		return strings.HasPrefix(defaultRef, prefix)
 	}
 	literal := pattern
 	if i := strings.IndexAny(literal, "*?["); i >= 0 {
@@ -229,12 +231,12 @@ func patternOverlaps(pattern, prefix, base string) bool {
 	return strings.HasPrefix(literal, prefix) || strings.HasPrefix(prefix, literal)
 }
 
-func overlaps(c refConditions, prefix, base string) bool {
-	return slices.ContainsFunc(c.RefName.Include, func(p string) bool { return patternOverlaps(p, prefix, base) }) &&
+func overlaps(c refConditions, prefix, defaultRef string) bool {
+	return slices.ContainsFunc(c.RefName.Include, func(p string) bool { return patternOverlaps(p, prefix, defaultRef) }) &&
 		!slices.ContainsFunc(c.RefName.Exclude, func(p string) bool { return patternCovers(p, prefix) })
 }
 
-func covers(c refConditions, prefix, base string) bool {
+func covers(c refConditions, prefix, defaultRef string) bool {
 	return slices.ContainsFunc(c.RefName.Include, func(p string) bool { return patternCovers(p, prefix) }) &&
-		!slices.ContainsFunc(c.RefName.Exclude, func(p string) bool { return patternOverlaps(p, prefix, base) })
+		!slices.ContainsFunc(c.RefName.Exclude, func(p string) bool { return patternOverlaps(p, prefix, defaultRef) })
 }

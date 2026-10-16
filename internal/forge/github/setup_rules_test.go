@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"reflect"
@@ -185,7 +187,7 @@ func TestPlanRulesPreservesOriginalSnapshot(t *testing.T) {
 	rules[0].BypassActors[0].BypassMode = "pull_request"
 	before, err := json.Marshal(rules)
 	must(t, err)
-	_, err = planRules(ruleSnapshot{Base: "main", Rulesets: rules}, "acme/project", 42)
+	_, err = planRules(ruleSnapshot{DefaultBranch: "main", Rulesets: rules}, "acme/project", 42)
 	must(t, err)
 	after, err := json.Marshal(rules)
 	must(t, err)
@@ -217,5 +219,76 @@ func TestSetupRulesDisallowsFenceUpstreamUpdates(t *testing.T) {
 	params := rules[1].(map[string]any)["parameters"].(map[string]any)
 	if params["update_allows_fetch_and_merge"] != false || params["future_parameter"] != "preserve" || !strings.Contains(out, "+ update.update_allows_fetch_and_merge=false") {
 		t.Fatalf("fence update parameters lost or unsafe: %v, %s", params, out)
+	}
+}
+
+func TestSetupRulesIntegrationBypassRejection(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		status   int
+		message  string
+		details  []any
+		guide    bool
+		personal bool
+	}{
+		{"conflict", 409, "Integration bypass actor conflicts with repository", nil, true, false},
+		{"actor field", 422, "Validation failed", []any{map[string]any{"resource": "RepositoryRuleset", "field": "bypass_actors[0].actor_id", "code": "invalid"}}, true, false},
+		{"actor detail string", 422, "Validation failed", []any{"Integration is not a valid bypass actor type"}, true, false},
+		{"unrelated validation", 422, "Validation failed", []any{map[string]any{"field": "conditions", "code": "invalid"}}, false, false},
+		{"unrelated conflict", 409, "Repository rules changed", nil, false, true},
+		{"permission denied", 403, "Resource not accessible by integration", nil, false, true},
+		{"personal bare conflict", 409, "Conflict", nil, true, true},
+		{"organization bare conflict", 409, "Conflict", nil, false, false},
+	} {
+		for _, update := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/update=%v", tt.name, update), func(t *testing.T) {
+				f := rulesAPI(t)
+				if update {
+					f.setupRules[10]["bypass_actors"] = []any{}
+				} else {
+					delete(f.setupRules, 11)
+				}
+				f.override = func(w http.ResponseWriter, r *http.Request) bool {
+					if tt.personal && r.URL.Path == "/api/v3/repos/acme/project" {
+						f.json(w, map[string]any{"default_branch": "main", "permissions": map[string]bool{"admin": true}, "owner": map[string]string{"type": "User"}})
+						return true
+					}
+					if r.Method != http.MethodPost && r.Method != http.MethodPut {
+						return false
+					}
+					w.WriteHeader(tt.status)
+					f.json(w, map[string]any{"message": tt.message, "credential": "setup-admin-secret", "errors": tt.details, "documentation_url": "https://docs.github.com/en/rest/repos/rules"})
+					return true
+				}
+				_, err := runRules(t, f, true)
+				var api *APIError
+				if !errors.As(err, &api) || api.StatusCode != tt.status || strings.Contains(err.Error(), "setup-admin-secret") || f.setupWrites != 0 {
+					t.Fatalf("unsafe apply failure: %v; writes=%d", err, f.setupWrites)
+				}
+				for _, guidance := range []string{"Install App 42 on acme/project first", "personal-account repository", "Keep protections enabled", "organization-owned repository", "defer OpenMerge"} {
+					if strings.Contains(err.Error(), guidance) != tt.guide {
+						t.Errorf("guidance %q expected=%v: %v", guidance, tt.guide, err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestSetupRulesUsesRepositoryDefaultBranch(t *testing.T) {
+	f := rulesAPI(t)
+	f.setupRules[10]["conditions"] = map[string]any{"ref_name": map[string]any{"include": []string{"~DEFAULT_BRANCH"}, "exclude": []string{}}}
+	f.setupRules[10]["bypass_actors"] = []any{}
+	f.override = func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != "/api/v3/repos/acme/project" {
+			return false
+		}
+		f.json(w, map[string]any{"default_branch": "release/v1", "permissions": map[string]bool{"admin": true}})
+		return true
+	}
+	out, err := runRules(t, f, true)
+	must(t, err)
+	if !strings.Contains(out, "base release/v1") || !strings.Contains(out, "base_bypass_missing") || f.setupWrites != 1 {
+		t.Fatalf("did not validate and repair the repository default branch: %s; writes=%d", out, f.setupWrites)
 	}
 }

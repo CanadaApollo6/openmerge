@@ -22,8 +22,9 @@ type RulesOptions struct {
 }
 
 type ruleSnapshot struct {
-	Base     string
-	Rulesets []Ruleset
+	DefaultBranch string
+	Personal      bool
+	Rulesets      []Ruleset
 }
 
 type ruleChange struct {
@@ -62,9 +63,9 @@ func setupRules(ctx context.Context, opts RulesOptions, token string, out io.Wri
 	if err != nil {
 		return err
 	}
-	problems := ValidateRules(snapshot.Rulesets, snapshot.Base, opts.AppID)
+	problems := ValidateRules(snapshot.Rulesets, snapshot.DefaultBranch, snapshot.DefaultBranch, opts.AppID)
 	var summary strings.Builder
-	fmt.Fprintf(&summary, "Repository %s; base %s; App %d\n", opts.Repo, snapshot.Base, opts.AppID)
+	fmt.Fprintf(&summary, "Repository %s; base %s; App %d\n", opts.Repo, snapshot.DefaultBranch, opts.AppID)
 	for _, p := range problems {
 		fmt.Fprintf(&summary, "! [%s] %s\n", p.Code, p.Message)
 	}
@@ -96,6 +97,9 @@ func setupRules(ctx context.Context, opts RulesOptions, token string, out io.Wri
 			}
 			var result Ruleset
 			if err := client.request(ctx, method, endpoint, change.Body, &result); err != nil {
+				if integrationBypassRejected(err, snapshot.Personal) {
+					return fmt.Errorf("applying ruleset %q failed while configuring the App's Integration bypass. Install App %d on %s first, then rerun the ruleset preview and --apply. If GitHub still rejects the installed App on a personal-account repository, that repository cannot use the required App-only fence ruleset in its current configuration. Keep protections enabled; use an organization-owned repository that accepts the App bypass, or defer OpenMerge until GitHub supports it. Rerun inspection to review any completed changes: %w", change.Name, opts.AppID, opts.Repo, err)
+				}
 				return fmt.Errorf("applying ruleset %q failed; rerun to inspect any completed changes: %w", change.Name, err)
 			}
 		}
@@ -103,7 +107,7 @@ func setupRules(ctx context.Context, opts RulesOptions, token string, out io.Wri
 		if err != nil {
 			return err
 		}
-		problems = ValidateRules(fresh.Rulesets, fresh.Base, opts.AppID)
+		problems = ValidateRules(fresh.Rulesets, fresh.DefaultBranch, fresh.DefaultBranch, opts.AppID)
 		if _, err := fmt.Fprintln(out, "Applied changes; re-read repository rules."); err != nil {
 			return err
 		}
@@ -120,10 +124,39 @@ func setupRules(ctx context.Context, opts RulesOptions, token string, out io.Wri
 	return err
 }
 
+func integrationBypassRejected(err error, personal bool) bool {
+	var status *APIError
+	if !errors.As(err, &status) || status.StatusCode != http.StatusUnprocessableEntity && status.StatusCode != http.StatusConflict && status.StatusCode != http.StatusBadRequest {
+		return false
+	}
+	var api *setupAPIError
+	if !errors.As(err, &api) {
+		return personal && status.StatusCode == http.StatusConflict
+	}
+	// Personal repository actor restrictions can return only HTTP 409/Conflict,
+	// without a validation field. Give conditional guidance for that response.
+	if personal && status.StatusCode == http.StatusConflict && (api.message == "" || strings.EqualFold(api.message, "Conflict")) {
+		return true
+	}
+	if slices.ContainsFunc(api.details, func(detail setupErrorDetail) bool {
+		return strings.Contains(strings.ToLower(detail.Field), "bypass_actor")
+	}) {
+		return true
+	}
+	var messages strings.Builder
+	messages.WriteString(api.message)
+	for _, detail := range api.details {
+		messages.WriteString(" " + detail.Message)
+	}
+	text := strings.ToLower(messages.String())
+	return strings.Contains(text, "bypass actor") || strings.Contains(text, "bypass_actor") || strings.Contains(text, "integration")
+}
+
 func (c *setupAPI) rules(ctx context.Context, repo string) (ruleSnapshot, error) {
 	var info struct {
-		DefaultBranch string               `json:"default_branch"`
-		Permissions   struct{ Admin bool } `json:"permissions"`
+		DefaultBranch string                `json:"default_branch"`
+		Permissions   struct{ Admin bool }  `json:"permissions"`
+		Owner         struct{ Type string } `json:"owner"`
 	}
 	if err := c.request(ctx, http.MethodGet, "repos/"+repo, nil, &info); err != nil {
 		return ruleSnapshot{}, err
@@ -131,7 +164,7 @@ func (c *setupAPI) rules(ctx context.Context, repo string) (ruleSnapshot, error)
 	if !info.Permissions.Admin || info.DefaultBranch == "" {
 		return ruleSnapshot{}, errors.New("GITHUB_TOKEN must have repository admin access to inspect complete ruleset bypass lists")
 	}
-	snapshot := ruleSnapshot{Base: info.DefaultBranch}
+	snapshot := ruleSnapshot{DefaultBranch: info.DefaultBranch, Personal: info.Owner.Type == "User"}
 	seen := make(map[int64]bool)
 	for page := 1; ; page++ {
 		var list []Ruleset
@@ -183,7 +216,7 @@ func planRules(snapshot ruleSnapshot, repo string, appID int64) ([]ruleChange, e
 			continue
 		}
 		var c refConditions
-		if local && r.Target == "branch" && r.Enforcement == "active" && json.Unmarshal(r.Conditions, &c) == nil && validPatterns(c) && applies(c, "refs/heads/"+snapshot.Base, "refs/heads/"+snapshot.Base) && !appBypass(r, appID) {
+		if local && r.Target == "branch" && r.Enforcement == "active" && json.Unmarshal(r.Conditions, &c) == nil && validPatterns(c) && applies(c, "refs/heads/"+snapshot.DefaultBranch, "refs/heads/"+snapshot.DefaultBranch) && !appBypass(r, appID) {
 			actors := slices.Clone(r.BypassActors)
 			found := false
 			for i, actor := range actors {
@@ -231,7 +264,7 @@ func planRules(snapshot ruleSnapshot, repo string, appID int64) ([]ruleChange, e
 		old, _ := json.Marshal(fence.BypassActors)
 		lines = append(lines, "- bypass_actors="+string(old), fmt.Sprintf("+ only Integration App %d bypass_mode=always", appID))
 	}
-	if !covers(conditions, fencePrefix, "refs/heads/"+snapshot.Base) {
+	if !covers(conditions, fencePrefix, "refs/heads/"+snapshot.DefaultBranch) {
 		// Only append includes; retain all existing conditions verbatim.
 		var raw map[string]json.RawMessage
 		if err := json.Unmarshal(fence.Conditions, &raw); err != nil || len(raw) != 1 {
