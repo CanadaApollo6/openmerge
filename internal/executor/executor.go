@@ -38,6 +38,10 @@ type Executor struct {
 // LandingStarted precedes the git push;
 // after it is recorded, the caller must only execute ResolveLanding for that
 // batch, never retry Land. Its uncertain result is recovered from the fence.
+// Before recording Landed or closing a PR with MarkLanded, Execute freshly reads
+// the base and verifies that it contains the tested commit. ErrLandingNotOnBase
+// leaves the batch in Landing without a result event and recurs on resolution
+// retries while the commit remains absent. A failed MarkLanded stays unacknowledged.
 // Infrastructure build errors emit TestRefBuildFailed and also return the error.
 func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(queue.Event) error) error {
 	if len(x.RequiredChecks) == 0 && !x.AllowNoRequiredChecks {
@@ -102,6 +106,9 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		if err != nil {
 			return err
 		}
+		if err := x.verifyLanding(ctx, a.TestedSHA, attemptID); err != nil {
+			return err
+		}
 		return emit(queue.Landed{BatchID: a.BatchID, NewBaseSHA: a.TestedSHA, NewFence: next})
 	case queue.ResolveLanding:
 		return x.resolve(ctx, a, emit)
@@ -116,6 +123,9 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		}
 		return emit(queue.ActionCompleted{Key: a.Key()})
 	case queue.MarkLanded:
+		if err := x.verifyLanding(ctx, a.LandedSHA, ""); err != nil {
+			return err
+		}
 		if err := x.Driver.MarkLanded(ctx, x.Repo, a.PR, a.LandedSHA); err != nil {
 			return err
 		}
@@ -150,6 +160,9 @@ func (x *Executor) resolve(ctx context.Context, a queue.ResolveLanding, emit fun
 		}
 		switch {
 		case id == "land/"+a.AttemptID && tested == a.TestedSHA:
+			if err := x.verifyLanding(ctx, a.TestedSHA, a.AttemptID); err != nil {
+				return err
+			}
 			return emit(queue.Landed{BatchID: a.BatchID, NewBaseSHA: a.TestedSHA, NewFence: sha})
 		case id == "abandon/"+a.AttemptID:
 			return emit(queue.LandingAbandoned{BatchID: a.BatchID, NewFence: sha})

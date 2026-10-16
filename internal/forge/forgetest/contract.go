@@ -63,6 +63,16 @@ type Env struct {
 // Run checks observable contracts. Every subtest receives a fresh environment.
 // Repeated API writes model a crash after the effect but before its recording.
 func Run(t *testing.T, newEnv func(t *testing.T) Env) {
+	run(t, newEnv, true)
+}
+
+// RunGit checks only the Git-side contracts. Driver and API fixture hooks may
+// be nil; the remaining Env fields have the same requirements as Run.
+func RunGit(t *testing.T, newEnv func(t *testing.T) Env) {
+	run(t, newEnv, false)
+}
+
+func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 	t.Helper()
 	factory := newEnv
 	ctx := context.Background()
@@ -80,20 +90,22 @@ func Run(t *testing.T, newEnv func(t *testing.T) Env) {
 		if len(e.PRs) < 2 || len(e.ConflictingPRs) != 2 {
 			t.Fatal("contract needs unique-file PRs and a conflicting pair")
 		}
-		fork, sameRepo, writer, reader := false, false, false, false
-		for _, pr := range e.Observations {
-			fork = fork || !pr.HeadInBaseRepo && len(pr.Approvals) > 0
-			sameRepo = sameRepo || pr.HeadInBaseRepo && len(pr.Approvals) > 0
-			for _, approval := range pr.Approvals {
-				if approval.User == "" || approval.SHA != pr.HeadSHA {
-					t.Fatal("fixture approvals must identify a reviewer and the approved head")
+		if driver {
+			fork, sameRepo, writer, reader := false, false, false, false
+			for _, pr := range e.Observations {
+				fork = fork || !pr.HeadInBaseRepo && len(pr.Approvals) > 0
+				sameRepo = sameRepo || pr.HeadInBaseRepo && len(pr.Approvals) > 0
+				for _, approval := range pr.Approvals {
+					if approval.User == "" || approval.SHA != pr.HeadSHA {
+						t.Fatal("fixture approvals must identify a reviewer and the approved head")
+					}
+					writer = writer || approval.CanWrite
+					reader = reader || !approval.CanWrite
 				}
-				writer = writer || approval.CanWrite
-				reader = reader || !approval.CanWrite
 			}
-		}
-		if !fork || !sameRepo || !writer || !reader {
-			t.Fatal("contract needs approved fork and same-repo PRs, with writable and non-writable reviewers")
+			if !fork || !sameRepo || !writer || !reader {
+				t.Fatal("contract needs approved fork and same-repo PRs, with writable and non-writable reviewers")
+			}
 		}
 		if e.Base == "" {
 			t.Fatal("factory must create a fresh base before opening PRs")
@@ -185,6 +197,40 @@ func Run(t *testing.T, newEnv func(t *testing.T) Env) {
 			}
 		})
 	}
+	t.Run("land/never-leaves-fence-unchanged", func(t *testing.T) {
+		e := newEnv(t)
+		tested := build(t, e, e.BaseSHA, "unique-fence", e.PRs[0])
+		req := forge.LandRequest{Base: e.Base, ExpectedBaseSHA: e.BaseSHA, TestedSHA: tested,
+			Fence: e.FenceRef, ExpectedFence: e.FenceSHA, NextFenceID: "land/same-attempt", PRs: e.PRs[:1]}
+		next, err := e.Git.Land(ctx, e.Repo, req)
+		must(t, err)
+		if next == e.FenceSHA || read(t, e, e.FenceRef) != next {
+			t.Fatal("a landing push must never leave the fence unchanged")
+		}
+		if e.CanRollbackBase {
+			must(t, e.RollbackBase(e.Base, e.BaseSHA))
+			_, err = e.Git.Land(ctx, e.Repo, req)
+			if !errors.Is(err, forge.ErrLeaseRejected) || read(t, e, e.Base) != e.BaseSHA || read(t, e, e.FenceRef) != next {
+				t.Fatalf("duplicate landing after rollback was not refused without effects: %v", err)
+			}
+		}
+	})
+	for _, matchingLease := range []bool{false, true} {
+		t.Run(fmt.Sprintf("land/already-tested/matching-lease=%v", matchingLease), func(t *testing.T) {
+			e := newEnv(t)
+			tested := build(t, e, e.BaseSHA, "already-tested", e.PRs[0])
+			must(t, e.PushBase(e.Base, tested))
+			expected := e.BaseSHA
+			if matchingLease {
+				expected = tested
+			}
+			_, err := e.Git.Land(ctx, e.Repo, forge.LandRequest{Base: e.Base, ExpectedBaseSHA: expected, TestedSHA: tested,
+				Fence: e.FenceRef, ExpectedFence: e.FenceSHA, NextFenceID: "land/already-tested", PRs: e.PRs[:1]})
+			if !errors.Is(err, forge.ErrLeaseRejected) || read(t, e, e.Base) != tested || read(t, e, e.FenceRef) != e.FenceSHA {
+				t.Fatalf("already-tested base was not refused without a push: %v", err)
+			}
+		})
+	}
 	t.Run("advance-fence", func(t *testing.T) {
 		e := newEnv(t)
 		next, err := e.Git.AdvanceFence(ctx, e.Repo, e.FenceRef, e.FenceSHA, "abandon/contract")
@@ -220,6 +266,9 @@ func Run(t *testing.T, newEnv func(t *testing.T) Env) {
 			must(t, err)
 			if !ancestor {
 				t.Fatal("base is not an ancestor of test commit")
+			}
+			if method == forge.Squash && e.CommitCount(e.BaseSHA, first) != len(e.PRs) {
+				t.Fatal("squash did not create exactly one single-parent commit per PR")
 			}
 			for _, pr := range e.PRs {
 				if !e.ContainsPR(first, pr.Number) {
@@ -276,11 +325,13 @@ func Run(t *testing.T, newEnv func(t *testing.T) Env) {
 				if read(t, e, e.Base) != e.BaseSHA || read(t, e, e.FenceRef) != e.FenceSHA {
 					t.Fatal("rejected Land moved a ref")
 				}
-				for _, pinned := range e.PRs {
-					pr, err := e.Driver.PullRequest(ctx, e.Repo, pinned.Number)
-					must(t, err)
-					if pr.Closed {
-						t.Fatal("rejected Land closed a PR")
+				if driver {
+					for _, pinned := range e.PRs {
+						pr, err := e.Driver.PullRequest(ctx, e.Repo, pinned.Number)
+						must(t, err)
+						if pr.Closed {
+							t.Fatal("rejected Land closed a PR")
+						}
 					}
 				}
 			})
@@ -329,106 +380,108 @@ func Run(t *testing.T, newEnv func(t *testing.T) Env) {
 			t.Fatalf("BuildTestRef error = %v, want ErrConflict", err)
 		}
 	})
-	t.Run("delete-ref", func(t *testing.T) {
-		e := newEnv(t)
-		build(t, e, e.BaseSHA, "delete", e.PRs[0])
-		for range 2 {
-			must(t, e.Driver.DeleteRef(ctx, e.Repo, testRef(e, "delete")))
-		}
-		if _, err := e.Git.ReadRef(ctx, e.Repo, testRef(e, "delete")); err == nil {
-			t.Fatal("deleted ref still exists")
-		}
-		must(t, e.Driver.DeleteRef(ctx, e.Repo, testRef(e, "never-existed")))
-	})
-	t.Run("comment-retry", func(t *testing.T) {
-		e := newEnv(t)
-		pr := e.PRs[0].Number
-		e.AddForeignComment(pr, "<!-- openmerge:action-1 -->")
-		must(t, e.Driver.Comment(ctx, e.Repo, pr, "action-1", "original"))
-		must(t, e.Driver.Comment(ctx, e.Repo, pr, "action-1", "retry"))
-		comments := e.Comments(pr)
-		if len(comments) != 1 || !strings.Contains(comments["action-1"], "original") || !strings.Contains(comments["action-1"], "<!--") || !strings.Contains(comments["action-1"], "action-1") {
-			t.Fatalf("comment retry did not preserve one marked original: %v", comments)
-		}
-		must(t, e.Driver.Comment(ctx, e.Repo, pr, "action-2", "another"))
-		if len(e.Comments(pr)) != 2 {
-			t.Fatal("distinct comment keys were collapsed")
-		}
-	})
-	t.Run("status-upsert", func(t *testing.T) {
-		e := newEnv(t)
-		pr := e.PRs[0].Number
-		head := e.PRs[0].HeadSHA
-		first := forge.Status{State: forge.Queued}
-		last := forge.Status{State: forge.Blocked, Reason: "untrusted", Summary: "Approval required"}
-		must(t, e.Driver.ReportStatus(ctx, e.Repo, pr, head, first))
-		for range 2 {
-			must(t, e.Driver.ReportStatus(ctx, e.Repo, pr, head, last))
-		}
-		assertStatuses(t, e.Statuses(pr), map[string]forge.Status{head: last})
-		nextHead := e.PushPR(pr)
-		if nextHead == "" || nextHead == head {
-			t.Fatal("PushPR did not create a new head")
-		}
-		must(t, e.Driver.ReportStatus(ctx, e.Repo, pr, nextHead, first))
-		assertStatuses(t, e.Statuses(pr), map[string]forge.Status{head: last, nextHead: first})
-		otherHead := e.PRs[1].HeadSHA
-		must(t, e.Driver.ReportStatus(ctx, e.Repo, e.PRs[1].Number, otherHead, first))
-		assertStatuses(t, e.Statuses(pr), map[string]forge.Status{head: last, nextHead: first})
-		assertStatuses(t, e.Statuses(e.PRs[1].Number), map[string]forge.Status{otherHead: first})
-	})
-	t.Run("reads", func(t *testing.T) {
-		e := newEnv(t)
-		for _, want := range e.Observations {
-			pr, err := e.Driver.PullRequest(ctx, e.Repo, want.Number)
-			must(t, err)
-			assertPullRequest(t, pr, want)
-		}
-		ci, lint := e.Base+"-ci", e.Base+"-lint"
-		e.AddCheckRun(e.PRs[0].HeadSHA, ci, forge.Failure)
-		e.AddCheckRun(e.PRs[0].HeadSHA, ci, forge.Pending)
-		e.AddCheckRun(e.PRs[0].HeadSHA, lint, forge.Success)
-		got, err := e.Driver.CheckRuns(ctx, e.Repo, e.PRs[0].HeadSHA)
-		must(t, err)
-		var ciRuns, lintRuns []forge.CheckRun
-		for _, run := range got {
-			switch run.Name {
-			case ci:
-				ciRuns = append(ciRuns, run)
-			case lint:
-				lintRuns = append(lintRuns, run)
+	if driver {
+		t.Run("delete-ref", func(t *testing.T) {
+			e := newEnv(t)
+			build(t, e, e.BaseSHA, "delete", e.PRs[0])
+			for range 2 {
+				must(t, e.Driver.DeleteRef(ctx, e.Repo, testRef(e, "delete")))
 			}
-		}
-		slices.SortFunc(ciRuns, func(a, b forge.CheckRun) int {
-			return cmp.Compare(a.ID, b.ID)
+			if _, err := e.Git.ReadRef(ctx, e.Repo, testRef(e, "delete")); err == nil {
+				t.Fatal("deleted ref still exists")
+			}
+			must(t, e.Driver.DeleteRef(ctx, e.Repo, testRef(e, "never-existed")))
 		})
-		if len(ciRuns) != 2 || ciRuns[1].ID <= ciRuns[0].ID || ciRuns[0].State != forge.Failure || ciRuns[1].State != forge.Pending || len(lintRuns) != 1 || lintRuns[0].State != forge.Success {
-			t.Fatalf("CheckRuns lost rerun order or normalized states: %v", got)
-		}
-	})
-	t.Run("approvals-after-push", func(t *testing.T) {
-		e := newEnv(t)
-		for _, want := range e.Observations {
-			if want.Closed || len(want.Approvals) == 0 {
-				continue
+		t.Run("comment-retry", func(t *testing.T) {
+			e := newEnv(t)
+			pr := e.PRs[0].Number
+			e.AddForeignComment(pr, "<!-- openmerge:action-1 -->")
+			must(t, e.Driver.Comment(ctx, e.Repo, pr, "action-1", "original"))
+			must(t, e.Driver.Comment(ctx, e.Repo, pr, "action-1", "retry"))
+			comments := e.Comments(pr)
+			if len(comments) != 1 || !strings.Contains(comments["action-1"], "original") || !strings.Contains(comments["action-1"], "<!--") || !strings.Contains(comments["action-1"], "action-1") {
+				t.Fatalf("comment retry did not preserve one marked original: %v", comments)
 			}
-			before, err := e.Driver.PullRequest(ctx, e.Repo, want.Number)
-			must(t, err)
-			assertPullRequest(t, before, want)
-			nextHead := e.PushPR(want.Number)
-			if nextHead == "" || nextHead == want.HeadSHA {
+			must(t, e.Driver.Comment(ctx, e.Repo, pr, "action-2", "another"))
+			if len(e.Comments(pr)) != 2 {
+				t.Fatal("distinct comment keys were collapsed")
+			}
+		})
+		t.Run("status-upsert", func(t *testing.T) {
+			e := newEnv(t)
+			pr := e.PRs[0].Number
+			head := e.PRs[0].HeadSHA
+			first := forge.Status{State: forge.Queued}
+			last := forge.Status{State: forge.Blocked, Reason: "untrusted", Summary: "Approval required"}
+			must(t, e.Driver.ReportStatus(ctx, e.Repo, pr, head, first))
+			for range 2 {
+				must(t, e.Driver.ReportStatus(ctx, e.Repo, pr, head, last))
+			}
+			assertStatuses(t, e.Statuses(pr), map[string]forge.Status{head: last})
+			nextHead := e.PushPR(pr)
+			if nextHead == "" || nextHead == head {
 				t.Fatal("PushPR did not create a new head")
 			}
-			want.HeadSHA = nextHead
-			if e.ApprovalsResetOnPush {
-				want.Approvals = nil
+			must(t, e.Driver.ReportStatus(ctx, e.Repo, pr, nextHead, first))
+			assertStatuses(t, e.Statuses(pr), map[string]forge.Status{head: last, nextHead: first})
+			otherHead := e.PRs[1].HeadSHA
+			must(t, e.Driver.ReportStatus(ctx, e.Repo, e.PRs[1].Number, otherHead, first))
+			assertStatuses(t, e.Statuses(pr), map[string]forge.Status{head: last, nextHead: first})
+			assertStatuses(t, e.Statuses(e.PRs[1].Number), map[string]forge.Status{otherHead: first})
+		})
+		t.Run("reads", func(t *testing.T) {
+			e := newEnv(t)
+			for _, want := range e.Observations {
+				pr, err := e.Driver.PullRequest(ctx, e.Repo, want.Number)
+				must(t, err)
+				assertPullRequest(t, pr, want)
 			}
-			after, err := e.Driver.PullRequest(ctx, e.Repo, want.Number)
+			ci, lint := e.Base+"-ci", e.Base+"-lint"
+			e.AddCheckRun(e.PRs[0].HeadSHA, ci, forge.Failure)
+			e.AddCheckRun(e.PRs[0].HeadSHA, ci, forge.Pending)
+			e.AddCheckRun(e.PRs[0].HeadSHA, lint, forge.Success)
+			got, err := e.Driver.CheckRuns(ctx, e.Repo, e.PRs[0].HeadSHA)
 			must(t, err)
-			// Retained approvals must still name the old SHA and access rights.
-			assertPullRequest(t, after, want)
-		}
-	})
+			var ciRuns, lintRuns []forge.CheckRun
+			for _, run := range got {
+				switch run.Name {
+				case ci:
+					ciRuns = append(ciRuns, run)
+				case lint:
+					lintRuns = append(lintRuns, run)
+				}
+			}
+			slices.SortFunc(ciRuns, func(a, b forge.CheckRun) int {
+				return cmp.Compare(a.ID, b.ID)
+			})
+			if len(ciRuns) != 2 || ciRuns[1].ID <= ciRuns[0].ID || ciRuns[0].State != forge.Failure || ciRuns[1].State != forge.Pending || len(lintRuns) != 1 || lintRuns[0].State != forge.Success {
+				t.Fatalf("CheckRuns lost rerun order or normalized states: %v", got)
+			}
+		})
+		t.Run("approvals-after-push", func(t *testing.T) {
+			e := newEnv(t)
+			for _, want := range e.Observations {
+				if want.Closed || len(want.Approvals) == 0 {
+					continue
+				}
+				before, err := e.Driver.PullRequest(ctx, e.Repo, want.Number)
+				must(t, err)
+				assertPullRequest(t, before, want)
+				nextHead := e.PushPR(want.Number)
+				if nextHead == "" || nextHead == want.HeadSHA {
+					t.Fatal("PushPR did not create a new head")
+				}
+				want.HeadSHA = nextHead
+				if e.ApprovalsResetOnPush {
+					want.Approvals = nil
+				}
+				after, err := e.Driver.PullRequest(ctx, e.Repo, want.Number)
+				must(t, err)
+				// Retained approvals must still name the old SHA and access rights.
+				assertPullRequest(t, after, want)
+			}
+		})
+	}
 	t.Run("ensure-fence", func(t *testing.T) {
 		e := newEnv(t)
 		ref := "openmerge/fence/" + e.NewBase(t)
@@ -528,27 +581,29 @@ func Run(t *testing.T, newEnv func(t *testing.T) Env) {
 			}
 		}
 	})
-	for _, method := range []forge.MergeMethod{forge.Squash, forge.Rebase} {
-		t.Run("mark-landed/"+string(method), func(t *testing.T) {
-			e := newEnv(t)
-			sha, err := e.Git.BuildTestRef(ctx, e.Repo, forge.BuildRequest{Ref: testRef(e, "close"), BaseSHA: e.BaseSHA, PRs: e.PRs, Method: method, BatchID: "close"})
-			must(t, err)
-			_, err = e.Git.Land(ctx, e.Repo, forge.LandRequest{Base: e.Base, ExpectedBaseSHA: e.BaseSHA, TestedSHA: sha, Fence: e.FenceRef, ExpectedFence: e.FenceSHA, NextFenceID: "land/close", PRs: e.PRs})
-			must(t, err)
-			for _, pr := range e.PRs {
-				for range 2 {
-					must(t, e.Driver.MarkLanded(ctx, e.Repo, pr.Number, sha))
-				}
-				got, err := e.Driver.PullRequest(ctx, e.Repo, pr.Number)
+	if driver {
+		for _, method := range []forge.MergeMethod{forge.Squash, forge.Rebase} {
+			t.Run("mark-landed/"+string(method), func(t *testing.T) {
+				e := newEnv(t)
+				sha, err := e.Git.BuildTestRef(ctx, e.Repo, forge.BuildRequest{Ref: testRef(e, "close"), BaseSHA: e.BaseSHA, PRs: e.PRs, Method: method, BatchID: "close"})
 				must(t, err)
-				if !got.Closed {
-					t.Fatal("MarkLanded left the PR open")
+				_, err = e.Git.Land(ctx, e.Repo, forge.LandRequest{Base: e.Base, ExpectedBaseSHA: e.BaseSHA, TestedSHA: sha, Fence: e.FenceRef, ExpectedFence: e.FenceSHA, NextFenceID: "land/close", PRs: e.PRs})
+				must(t, err)
+				for _, pr := range e.PRs {
+					for range 2 {
+						must(t, e.Driver.MarkLanded(ctx, e.Repo, pr.Number, sha))
+					}
+					got, err := e.Driver.PullRequest(ctx, e.Repo, pr.Number)
+					must(t, err)
+					if !got.Closed {
+						t.Fatal("MarkLanded left the PR open")
+					}
+					if !e.Landed(pr.Number, sha) {
+						t.Fatal("MarkLanded did not converge to native merged evidence or one closing commit link")
+					}
 				}
-				if !e.Landed(pr.Number, sha) {
-					t.Fatal("MarkLanded did not converge to native merged evidence or one closing commit link")
-				}
-			}
-		})
+			})
+		}
 	}
 
 }

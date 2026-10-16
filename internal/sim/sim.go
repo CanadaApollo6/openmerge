@@ -73,6 +73,7 @@ type simulation struct {
 	boundary            *faultForge
 	initialized         bool
 	attempts            map[string]string
+	disturbance         map[string]int // per landing attempt: disturbances seen when it started
 	abandoned           map[string]string
 	observed            map[string]*forgeLanding
 	lastFence           string
@@ -96,12 +97,12 @@ func newSimulation(cfg Config) (*simulation, error) {
 	}
 	start := time.Unix(0, 0).UTC()
 	s := &simulation{
-		cfg: cfg, start: start, now: start, forge: fake.New(), repo: forge.RepoRef{Path: "sim/project"},
+		cfg: cfg, start: start, now: start, forge: fake.NewDeterministic(), repo: forge.RepoRef{Path: "sim/project"},
 		ci: rand.New(rand.NewPCG(cfg.Seed, 2)), webhook: rand.New(rand.NewPCG(cfg.Seed, 3)),
 		faults: rand.New(rand.NewPCG(cfg.Seed, 4)), tests: make(map[string]*testRun),
 		completed: make(map[string]bool), planned: make(map[string]queue.Action), retryAt: make(map[string]time.Time),
 		pendingFaults: make(map[string]int), landed: make(map[int]string),
-		attempts: make(map[string]string), abandoned: make(map[string]string), observed: make(map[string]*forgeLanding),
+		attempts: make(map[string]string), disturbance: make(map[string]int), abandoned: make(map[string]string), observed: make(map[string]*forgeLanding),
 		result: Result{Config: cfg, FaultsByMethod: make(map[string]int), PRs: cfg.PRs, Dequeued: make(map[queue.DequeueReason]int), Blocked: make(map[queue.DequeueReason]int)},
 	}
 	base, fence := s.forge.Init(s.repo, "main", "openmerge/fence/main")
@@ -299,6 +300,7 @@ func (s *simulation) record(event queue.Event) {
 	case queue.LandingStarted:
 		if batch != nil && batch.ID == event.BatchID {
 			s.attempts[event.AttemptID] = batch.TestedSHA
+			s.disturbance[event.AttemptID] = s.disturbances()
 		}
 	case queue.Landed:
 		if batch != nil && batch.ID == event.BatchID && batch.Phase == queue.Landing {

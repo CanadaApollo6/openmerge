@@ -99,7 +99,7 @@ func TestLand(t *testing.T) {
 				}
 				c, err := h.f.Commit(repo, h.read(t, fenceRef))
 				must(t, err)
-				if c.Message != "openmerge fence land/attempt tested="+tested {
+				if !strings.HasPrefix(c.Message, "openmerge fence land/attempt tested="+tested+" nonce=") {
 					t.Fatalf("fence did not record the landing attempt: %+v", c)
 				}
 			}
@@ -130,7 +130,7 @@ func TestRejectedLandReadFenceFailure(t *testing.T) {
 	}
 }
 
-func TestRecoverLostLandingResult(t *testing.T) {
+func TestRecoverLostLandingResultAfterRollback(t *testing.T) {
 	h := setup(t)
 	ctx := context.Background()
 	s, a := reviewReady(t, h, h.base, h.fence, h.prs[0])
@@ -148,7 +148,6 @@ func TestRecoverLostLandingResult(t *testing.T) {
 	must(t, h.f.SetRef(repo, "main", h.base))
 	h.f.FailNext("Land", errIO)
 	h.f.FailNext("AdvanceFence", errIO)
-	h.f.FailNext("ReadRef", errIO)
 	restarted := *h.x
 	actions := queue.Plan(queue.Config{ResolveAfter: time.Minute}, s, epoch.Add(2*time.Minute))
 	if len(actions) != 1 {
@@ -159,13 +158,15 @@ func TestRecoverLostLandingResult(t *testing.T) {
 		t.Fatalf("recovery attempted a new Land: %T", actions[0])
 	}
 	var events []queue.Event
-	must(t, restarted.Execute(ctx, action, record(&events)))
-	want := []queue.Event{queue.Landed{BatchID: a.BatchID, NewBaseSHA: a.TestedSHA, NewFence: next}}
-	if !reflect.DeepEqual(events, want) {
-		t.Fatalf("recovery events = %#v, want %#v", events, want)
+	for range 3 {
+		err := restarted.Execute(ctx, action, record(&events))
+		var absent *executor.ErrLandingNotOnBase
+		if !errors.As(err, &absent) || absent.TestedSHA != a.TestedSHA || absent.BaseTip != h.base || absent.AttemptID != action.AttemptID || len(events) != 0 {
+			t.Fatalf("rolled-back landing was acknowledged: %v, events=%#v", err, events)
+		}
 	}
-	if _, err := h.f.ReadRef(ctx, repo, "main"); !errors.Is(err, errIO) {
-		t.Fatalf("recovery read mutable base: %v", err)
+	if s.Active == nil || s.Active.Phase != queue.Landing {
+		t.Fatal("unverified attempt left Landing")
 	}
 	if h.read(t, "main") != h.base || h.read(t, fenceRef) != next {
 		t.Fatal("recovery changed refs")
@@ -297,10 +298,14 @@ func TestResolveFenceTampered(t *testing.T) {
 			if !errors.As(err, &tampered) || len(events) != 0 {
 				t.Fatalf("error = %v, events = %v, want ErrFenceTampered without an event", err, events)
 			}
-			if tampered.AttemptID != a.AttemptID || tampered.ExpectedFence != h.fence || tampered.ActualFence != next || tampered.ActualFenceID != id {
+			wantID := id
+			if id == "unrelated" || id == "land/other-attempt" {
+				wantID = ""
+			}
+			if tampered.AttemptID != a.AttemptID || tampered.ExpectedFence != h.fence || tampered.ActualFence != next || tampered.ActualFenceID != wantID {
 				t.Fatalf("tampering diagnostics lost the fence identities: %+v", tampered)
 			}
-			for _, detail := range []string{h.fence, next, "land/attempt", "abandon/attempt", "ID \"" + id + "\"", "protection"} {
+			for _, detail := range []string{h.fence, next, "land/attempt", "abandon/attempt", "ID \"" + wantID + "\"", "protection"} {
 				if !strings.Contains(err.Error(), detail) {
 					t.Fatalf("tampering error %q omits %q", err, detail)
 				}

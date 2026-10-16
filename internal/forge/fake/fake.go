@@ -4,6 +4,7 @@ package fake
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -34,6 +35,7 @@ type repository struct {
 	comments  map[int][]Comment
 	prCommits map[int][]string
 	prBases   map[int]string
+	nonce     func() string
 }
 
 // Forge implements both forge interfaces. Use New to construct it. All helpers
@@ -46,6 +48,7 @@ type Forge struct {
 	failures                    map[string][]error
 	onTestRef                   func(string, []int)
 	disableFenceLeaseForTesting bool
+	nonce                       func() string
 }
 
 var (
@@ -55,9 +58,30 @@ var (
 
 // New returns an empty forge, with no repositories or refs.
 func New() *Forge {
+	return newForge(func() string {
+		var nonce [16]byte
+		if _, err := rand.Read(nonce[:]); err != nil {
+			panic(err)
+		}
+		return fmt.Sprintf("%x", nonce)
+	})
+}
+
+// NewDeterministic uses unique counter nonces for repeatable simulations.
+// New uses crypto/rand nonces, as the real Git transport does.
+func NewDeterministic() *Forge {
+	var next uint64
+	return newForge(func() string {
+		next++
+		return fmt.Sprintf("%032x", next)
+	})
+}
+
+func newForge(nonce func() string) *Forge {
 	return &Forge{
 		repos:    make(map[forge.RepoRef]*repository),
 		failures: make(map[string][]error),
+		nonce:    nonce,
 	}
 }
 
@@ -65,7 +89,8 @@ func (f *Forge) repo(repo forge.RepoRef) *repository {
 	r := f.repos[repo]
 	if r == nil {
 		r = &repository{
-			refs: make(map[string]string), commits: make(map[string]Commit),
+			nonce: f.nonce,
+			refs:  make(map[string]string), commits: make(map[string]Commit),
 			prs: make(map[int]forge.PullRequest), checks: make(map[string][]forge.CheckRun),
 			statuses: make(map[int]map[string]forge.Status), comments: make(map[int][]Comment), prCommits: make(map[int][]string), prBases: make(map[int]string),
 		}
@@ -83,7 +108,7 @@ func (f *Forge) Init(repo forge.RepoRef, base, fenceRef string) (baseSHA, fenceS
 		r.refs[base] = r.commit(nil, nil, "initial base")
 	}
 	if r.refs[fenceRef] == "" {
-		r.refs[fenceRef] = r.commit(nil, nil, "openmerge fence initial")
+		r.refs[fenceRef] = r.mintFence(nil, "initial", "")
 	}
 	return r.refs[base], r.refs[fenceRef]
 }
@@ -134,7 +159,7 @@ func (f *Forge) OnTestRef(fn func(sha string, prs []int)) {
 	f.onTestRef = fn
 }
 
-// BuildTestRef composes merge commits, one squash, or rebased PR commits. Each
+// BuildTestRef composes merge commits, one squash per PR, or rebased PR commits. Each
 // shape's top commit contains the batch ID. Failed builds never move the ref.
 func (f *Forge) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.BuildRequest) (string, error) {
 	f.mu.Lock()
@@ -196,20 +221,17 @@ func (f *Forge) build(ctx context.Context, r *repository, req forge.BuildRequest
 				top = r.commit([]string{top}, content, message, files)
 			}
 		}
-		if req.Method == forge.Merge {
-			message := fmt.Sprintf("merge PR %d %s", pr.Number, pr.HeadSHA)
+		if req.Method == forge.Merge || req.Method == forge.Squash {
+			message := fmt.Sprintf("%s PR %d %s", req.Method, pr.Number, pr.HeadSHA)
 			if i == len(req.PRs)-1 {
 				message += "\nOpenMerge-Batch: " + req.BatchID
 			}
-			top = r.commit([]string{top, pr.HeadSHA}, content, message, files)
+			parents := []string{top}
+			if req.Method == forge.Merge {
+				parents = append(parents, pr.HeadSHA)
+			}
+			top = r.commit(parents, content, message, files)
 		}
-	}
-	if req.Method == forge.Squash {
-		heads := make([]string, 0, len(req.PRs))
-		for _, pr := range req.PRs {
-			heads = append(heads, pr.HeadSHA)
-		}
-		top = r.commit([]string{top}, content, fmt.Sprintf("squash %v\nOpenMerge-Batch: %s", heads, req.BatchID), files)
 	}
 	changed := r.refs[req.Ref] != top
 	r.refs[req.Ref] = top
@@ -224,7 +246,7 @@ func (f *Forge) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequ
 		return "", err
 	}
 	r := f.repo(repo)
-	if r.refs[req.Base] != req.ExpectedBaseSHA || !f.disableFenceLeaseForTesting && r.refs[req.Fence] != req.ExpectedFence {
+	if r.refs[req.Base] == req.TestedSHA || r.refs[req.Base] != req.ExpectedBaseSHA || !f.disableFenceLeaseForTesting && r.refs[req.Fence] != req.ExpectedFence {
 		return "", forge.ErrLeaseRejected
 	}
 	if req.Base == req.Fence {
@@ -254,17 +276,22 @@ func (f *Forge) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequ
 }
 
 func (r *repository) fence(expected, id, tested string) (string, error) {
-	if id == "" {
-		return "", errors.New("next fence ID is required")
+	if id == "" || strings.ContainsAny(id, " \t\r\n\x00") {
+		return "", errors.New("single-token fence ID is required")
 	}
 	if _, ok := r.commits[expected]; !ok {
 		return "", fmt.Errorf("unknown fence commit %q", expected)
 	}
+	return r.mintFence([]string{expected}, id, tested), nil
+}
+
+func (r *repository) mintFence(parents []string, id, tested string) string {
 	message := "openmerge fence " + id
 	if tested != "" {
 		message += " tested=" + tested
 	}
-	return r.commit([]string{expected}, nil, message), nil
+	message += " nonce=" + r.nonce()
+	return r.commit(parents, nil, message)
 }
 
 // AdvanceFence advances only when the current fence matches expectedSHA.
@@ -298,11 +325,7 @@ func (f *Forge) ReadFence(ctx context.Context, repo forge.RepoRef, fenceRef stri
 	if !ok {
 		return "", "", "", fmt.Errorf("unknown ref %q", fenceRef)
 	}
-	id, ok := strings.CutPrefix(r.commits[sha].Message, "openmerge fence ")
-	if !ok {
-		return sha, "", "", nil
-	}
-	id, tested, _ := strings.Cut(id, " tested=")
+	id, tested := forge.ParseFenceMessage(r.commits[sha].Message)
 	return sha, id, tested, nil
 }
 
@@ -433,7 +456,7 @@ func (f *Forge) EnsureFence(ctx context.Context, repo forge.RepoRef, fenceRef st
 	}
 	r := f.repo(repo)
 	if r.refs[fenceRef] == "" {
-		r.refs[fenceRef] = r.commit(nil, nil, "openmerge fence initial")
+		r.refs[fenceRef] = r.mintFence(nil, "initial", "")
 	}
 	return r.refs[fenceRef], nil
 }

@@ -108,22 +108,35 @@ func TestContractWithoutRollbacks(t *testing.T) {
 
 func TestReadFenceMessages(t *testing.T) {
 	f, _ := fixture(t)
-	for _, tc := range []struct{ message, id string }{
+	const nonce = "0123456789abcdef0123456789abcdef"
+	sha40, sha64 := strings.Repeat("a", 40), strings.Repeat("b", 64)
+	for _, tc := range []struct{ message, id, tested string }{
 		{message: "ordinary commit"},
 		{message: "prefix openmerge fence land/attempt"},
 		{message: "openmerge fences land/attempt"},
 		{message: "openmerge fence "},
-		{message: "openmerge fence land/attempt", id: "land/attempt"},
-		{message: "openmerge fence abandon/attempt", id: "abandon/attempt"},
+		{message: "openmerge fence land/attempt"},
+		{message: "openmerge fence abandon/attempt"},
+		{message: "openmerge fence abandon/attempt nonce=0123456789abcdef0123456789abcdef", id: "abandon/attempt"},
+		{message: "openmerge fence land/attempt tested=sha nonce=0123456789abcdef0123456789abcdef"},
+		{message: "openmerge fence land/probe tested=" + sha40 + " nonce=" + nonce, id: "land/probe", tested: sha40},
+		{message: "openmerge fence land/probe tested=" + sha64 + " nonce=" + nonce, id: "land/probe", tested: sha64},
+		{message: "openmerge fence land/probe tested=" + sha40 + " nonce=not-hex tested=" + sha64},
+		{message: "openmerge fence land/probe tested=" + sha40 + " nonce="},
+		{message: "openmerge fence land/probe nonce=abcd tested=" + sha40},
+		{message: "openmerge fence abandon/probe nonce=abcd\nopenmerge fence land/other tested=" + sha40},
+		{message: "openmerge fence land/probe tested=" + sha40 + " nonce=" + nonce + " tested=" + sha64},
+		{message: "openmerge fence land/probe tested=" + sha40 + " nonce=" + nonce + " nonce=" + nonce},
+		{message: "openmerge fence land/probe tested=" + sha40 + " nonce=" + nonce + " extra"},
 	} {
 		t.Run(tc.message, func(t *testing.T) {
 			pr, err := f.PushPR(repo, 1, tc.message)
 			must(t, err)
 			must(t, f.SetRef(repo, fenceRef, pr.HeadSHA))
-			sha, id, _, err := f.ReadFence(context.Background(), repo, fenceRef)
+			sha, id, tested, err := f.ReadFence(context.Background(), repo, fenceRef)
 			must(t, err)
-			if sha != pr.HeadSHA || id != tc.id {
-				t.Fatalf("ReadFence = (%q, %q), want (%q, %q)", sha, id, pr.HeadSHA, tc.id)
+			if sha != pr.HeadSHA || id != tc.id || tested != tc.tested {
+				t.Fatalf("ReadFence = (%q, %q, %q), want (%q, %q, %q)", sha, id, tested, pr.HeadSHA, tc.id, tc.tested)
 			}
 		})
 	}
@@ -139,7 +152,7 @@ func TestReadFenceErrors(t *testing.T) {
 	}
 	sha, id, _, err := f.ReadFence(ctx, repo, fenceRef)
 	must(t, err)
-	if sha != e.FenceSHA || id != "initial" {
+	if sha != e.FenceSHA || id != "" {
 		t.Fatalf("failed read changed the fence: SHA %q ID %q", sha, id)
 	}
 	canceled, cancel := context.WithCancel(ctx)
@@ -179,9 +192,6 @@ func TestCommitGraph(t *testing.T) {
 			parents, length := 1, 4
 			if method == forge.Merge {
 				parents = 2
-			}
-			if method == forge.Squash {
-				length = 3
 			}
 			history, err := f.History(repo, req.Ref)
 			must(t, err)
@@ -285,14 +295,14 @@ func TestHookAndFenceCommits(t *testing.T) {
 	must(t, err)
 	c, err := f.Commit(repo, next)
 	must(t, err)
-	if !slices.Equal(c.Parents, []string{e.FenceSHA}) || c.Message != "openmerge fence land tested="+sha {
+	if !slices.Equal(c.Parents, []string{e.FenceSHA}) || !strings.HasPrefix(c.Message, "openmerge fence land tested="+sha+" nonce=") {
 		t.Fatalf("fence token is not the expected child commit: %+v", c)
 	}
 	next2, err := f.AdvanceFence(ctx, repo, fenceRef, next, "resolve")
 	must(t, err)
 	c, err = f.Commit(repo, next2)
 	must(t, err)
-	if !slices.Equal(c.Parents, []string{next}) || c.Message != "openmerge fence resolve" {
+	if !slices.Equal(c.Parents, []string{next}) || !strings.HasPrefix(c.Message, "openmerge fence resolve nonce=") {
 		t.Fatalf("advance did not mint a child fence commit: %+v", c)
 	}
 }
@@ -340,7 +350,7 @@ func TestConcurrentWritesAndLeaseRace(t *testing.T) {
 	must(t, err)
 	c, err := f.Commit(repo, fence)
 	must(t, err)
-	if (base == sha) != (c.Message == "openmerge fence land tested="+sha) {
+	if (base == sha) != strings.HasPrefix(c.Message, "openmerge fence land tested="+sha+" nonce=") {
 		t.Fatal("base and fence were not updated atomically")
 	}
 }
