@@ -34,7 +34,7 @@ queues:
       - check-success = lint
     merge_when:                    # checked against the tested batch before landing
       - check-success = integration
-    merge_method: squash           # merge | squash | rebase | fast-forward
+    merge_method: squash           # merge | squash | rebase
     batch:
       max_size: 8
       max_wait: 30s
