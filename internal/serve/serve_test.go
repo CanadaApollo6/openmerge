@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -370,5 +371,31 @@ func TestRollbackBeforeMarkLandedRemainsVisible(t *testing.T) {
 		if status.State != forge.Paused || status.Reason != "landing-not-on-base" {
 			t.Fatalf("post-landing pause hidden: %+v", status)
 		}
+	}
+	landed := state.BaseSHA
+	// The base observation still contains the pre-landing tip. Reconciliation
+	// must nevertheless notice that the projected base was rolled back.
+	must(t, s.cycle(t.Context(), w))
+	state, _, err = s.store.Load(t.Context(), w.id)
+	must(t, err)
+	if state.BaseSHA != base {
+		t.Fatalf("rollback vanished: projected base=%s, actual=%s", state.BaseSHA, base)
+	}
+	// Repeat paused cycles to exercise the already durable MarkLanded claim.
+	must(t, s.cycle(t.Context(), w))
+	must(t, f.SetRef(repo, "main", landed))
+	f.AddComment(repo, 1, "writer", "@openmerge refresh")
+	must(t, s.cycle(t.Context(), w))
+	pr, err = f.PullRequest(t.Context(), repo, 1)
+	must(t, err)
+	if !pr.Closed {
+		t.Fatalf("restored landing did not close/mark PR: %+v", pr)
+	}
+	marked := false
+	for _, body := range f.Comments(repo, 1) {
+		marked = marked || strings.Contains(body, "Landed in ["+landed+"]")
+	}
+	if !marked {
+		t.Fatal("restored landing omitted landed marker")
 	}
 }

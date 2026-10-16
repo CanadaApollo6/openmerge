@@ -54,6 +54,12 @@ Later phases add top-level keys (`priorities`, `rules`, `scopes`, `commands`) as
 
 Missing or mistyped attribute data makes a condition unknown, and unknown never passes, including under `not`.
 
+Phase 1 requires each queue's `merge_when` to reference at least one check
+predicate; missing, empty, and metadata-only merge conditions are invalid, with
+no opt-out. CI is evaluated on the tested SHA. Missing and pending check results
+remain unknown within logical groups; an OR fails only when all alternatives
+are definitely false.
+
 Attributes cover people and reviews, branch and PR metadata, files and line counts, CI results, queue state, and time windows. Each attribute is documented in a generated reference with its type and an example. The concrete Phase 1 list is part of the Phase 1 implementation.
 
 **Templating.** Only `{{ name }}` substitution of documented variables. No expression language.

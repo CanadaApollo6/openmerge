@@ -16,7 +16,9 @@ func TestCheckPolicyKeepsPendingRerunsAndAmbiguity(t *testing.T) {
 	checks := []forge.CheckRun{{ID: 1, Name: "ci", Source: "app:1", State: forge.Failure}, {ID: 2, Name: "ci", Source: "app:1", State: forge.Pending}}
 	met, err := evaluate(expression, pr, checks)
 	must(t, err)
-	if met || failedCheck(expression, checks) {
+	terminal, _, err := mergeResult(expression, pr, checks)
+	must(t, err)
+	if met || terminal {
 		t.Fatal("stale failure overrode pending rerun")
 	}
 	checks[1].State = forge.Success

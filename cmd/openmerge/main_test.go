@@ -80,12 +80,12 @@ func TestRun(t *testing.T) {
 		},
 		{
 			name: "validate discovered config", args: []string{"config", "validate"},
-			files:      map[string]string{".github/openmerge.yaml": "version: 1\nqueues: [{name: default}]\n"},
+			files:      map[string]string{".github/openmerge.yaml": "version: 1\nqueues: [{name: default, merge_when: [check-success = ci]}]\n"},
 			wantStdout: "ok\n",
 		},
 		{
 			name: "validate explicit config", args: []string{"config", "validate", "custom.yml"},
-			files:      map[string]string{"custom.yml": "version: 1\nqueues: [{name: default}]\n", ".openmerge.yml": "invalid"},
+			files:      map[string]string{"custom.yml": "version: 1\nqueues: [{name: default, merge_when: [check-success = ci]}]\n", ".openmerge.yml": "invalid"},
 			wantStdout: "ok\n",
 		},
 		{
@@ -102,7 +102,7 @@ func TestRun(t *testing.T) {
 		},
 		{
 			name: "validate warnings", args: []string{"config", "validate"},
-			files:      map[string]string{".openmerge.yml": "version: 1\nqueues:\n  - name: default\n    batch: {max_size: 8, max_wait: 30s}\n"},
+			files:      map[string]string{".openmerge.yml": "version: 1\nqueues:\n  - name: default\n    batch: {max_size: 8, max_wait: 30s}\n    merge_when: [check-success = ci]\n"},
 			wantStdout: "ok\n",
 			wantStderr: "",
 		},
@@ -177,7 +177,7 @@ func (brokenWriter) Write([]byte) (int, error) { return 0, errors.New("closed") 
 
 func TestValidationOutputFailure(t *testing.T) {
 	t.Chdir(t.TempDir())
-	if err := os.WriteFile(".openmerge.yml", []byte("version: 1\nqueues: [{name: default}]\n"), 0o600); err != nil {
+	if err := os.WriteFile(".openmerge.yml", []byte("version: 1\nqueues: [{name: default, merge_when: [check-success = ci]}]\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var stderr bytes.Buffer

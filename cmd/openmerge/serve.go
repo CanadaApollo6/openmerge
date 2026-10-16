@@ -52,20 +52,17 @@ func parseServe(args []string, output io.Writer) (serveOptions, error) {
 	flags.Int64Var(&o.installation, "github-installation-id", 0, "installation ID (OPENMERGE_GITHUB_INSTALLATION_ID)")
 	flags.DurationVar(&o.poll, "poll-interval", time.Minute, "reconcile interval (OPENMERGE_POLL_INTERVAL)")
 	flags.IntVar(&o.concurrency, "concurrency", 4, "concurrent queues (OPENMERGE_CONCURRENCY)")
-	var defaults []string
+	if err := flags.Parse(args); err != nil {
+		return o, err
+	}
+	overridden := make(map[string]bool)
+	flags.Visit(func(f *flag.Flag) { overridden[f.Name] = true })
 	for _, entry := range []struct{ flag, env string }{{"github-app-id", "GITHUB_APP_ID"}, {"github-installation-id", "GITHUB_INSTALLATION_ID"}, {"poll-interval", "POLL_INTERVAL"}, {"concurrency", "CONCURRENCY"}} {
-		overridden := false
-		for _, arg := range args {
-			if arg == "--"+entry.flag || arg == "-"+entry.flag || strings.HasPrefix(arg, "--"+entry.flag+"=") || strings.HasPrefix(arg, "-"+entry.flag+"=") {
-				overridden = true
+		if value, ok := os.LookupEnv("OPENMERGE_" + entry.env); ok && !overridden[entry.flag] {
+			if err := flags.Set(entry.flag, value); err != nil {
+				return o, fmt.Errorf("OPENMERGE_%s: %w", entry.env, err)
 			}
 		}
-		if value, ok := os.LookupEnv("OPENMERGE_" + entry.env); ok && !overridden {
-			defaults = append(defaults, "--"+entry.flag+"="+value)
-		}
-	}
-	if err := flags.Parse(append(defaults, args...)); err != nil {
-		return o, err
 	}
 	if flags.NArg() != 0 {
 		return o, errors.New("serve accepts flags only")
@@ -110,7 +107,7 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 func startServe(ctx context.Context, o serveOptions, logger *slog.Logger) error {
 	db, err := store.Open(ctx, o.database)
 	if err != nil {
-		return errors.New("open/migrate database failed; check OPENMERGE_DATABASE_URL and Postgres availability")
+		return fmt.Errorf("open/migrate database failed; check OPENMERGE_DATABASE_URL and Postgres availability: %w", err)
 	}
 	defer db.Close()
 	key, err := os.ReadFile(o.key)

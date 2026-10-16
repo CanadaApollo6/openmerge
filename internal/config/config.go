@@ -186,6 +186,7 @@ func (p *parser) error(n *yaml.Node, path, format string, args ...any) {
 }
 
 func (p *parser) queue(n *yaml.Node, path string) Queue {
+	before := len(p.errors)
 	q := Queue{MergeMethod: queue.Squash, CheckTimeout: time.Hour, Batch: Batch{MaxSize: 1}}
 	fields := p.fields(n, path, "name", "enter_when", "merge_when", "merge_method", "check_timeout", "batch")
 	if name := fields["name"]; name == nil {
@@ -201,6 +202,13 @@ func (p *parser) queue(n *yaml.Node, path string) Queue {
 	}
 	if n := fields["merge_when"]; n != nil {
 		q.MergeWhen = condition.All(p.conditionList(n, path+".merge_when")...)
+	}
+	if len(p.errors) == before && !slices.ContainsFunc(q.MergeWhen.Attributes(), func(name string) bool { return strings.HasPrefix(name, "check-") }) {
+		location := fields["merge_when"]
+		if location == nil {
+			location = n
+		}
+		p.error(location, path+".merge_when", "queue %q must reference at least one check predicate in merge_when (for example check-success = ci); Phase 1 has no opt-out", q.Name)
 	}
 	if n := fields["merge_method"]; n != nil {
 		method := p.text(n, path+".merge_method")

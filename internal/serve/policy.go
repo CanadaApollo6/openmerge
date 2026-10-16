@@ -80,26 +80,36 @@ func checkSnapshot(expression condition.Expression, checks []forge.CheckRun) (co
 		}
 		lists[attribute] = append(lists[attribute], name)
 	}
-	result := make(condition.Snapshot)
-	for attribute, values := range lists {
-		result[attribute] = condition.Strings(values...)
-	}
-	return result, nil
+	return condition.CheckResults(lists["check-success"], lists["check-failure"], lists["check-pending"]), nil
 }
 
-func evaluate(expression condition.Expression, pr forge.PullRequest, checks []forge.CheckRun) (bool, error) {
+func policyValues(expression condition.Expression, pr forge.PullRequest, checks []forge.CheckRun) (condition.Snapshot, error) {
 	values := snapshot(pr)
 	if hasChecks(expression) {
 		ci, err := checkSnapshot(expression, checks)
 		if err != nil {
-			return false, err
+			return nil, err
 		}
 		for name, value := range ci {
 			values[name] = value
 		}
 	}
-	met, _ := expression.Evaluate(values)
-	return met, nil
+	return values, nil
+}
+
+func evaluate(expression condition.Expression, pr forge.PullRequest, checks []forge.CheckRun) (bool, error) {
+	_, success, err := mergeResult(expression, pr, checks)
+	return success, err
+}
+
+func mergeResult(expression condition.Expression, pr forge.PullRequest, checks []forge.CheckRun) (terminal, success bool, err error) {
+	values, err := policyValues(expression, pr, checks)
+	if err != nil {
+		return false, false, err
+	}
+	success, _ = expression.Evaluate(values)
+	definitelyFalse, _ := condition.Not(expression).Evaluate(values)
+	return success || definitelyFalse, success, nil
 }
 
 func (s *Server) eligible(ctx context.Context, w *worker, pr forge.PullRequest) (bool, error) {
@@ -119,24 +129,4 @@ func (s *Server) eligible(ctx context.Context, w *worker, pr forge.PullRequest) 
 		return false, s.pause(ctx, w, "ambiguous-check-sources", err.Error())
 	}
 	return met, nil
-}
-
-// Older failures from one producer cannot override its pending rerun.
-func failedCheck(expression condition.Expression, checks []forge.CheckRun) bool {
-	latest := make(map[string]forge.CheckRun)
-	for _, check := range checks {
-		if old, ok := latest[check.Name]; !ok || check.ID >= old.ID {
-			latest[check.Name] = check
-		}
-	}
-	for _, check := range latest {
-		if !expression.ReferencesCheck(check.Name) {
-			continue
-		}
-		switch check.State {
-		case forge.Failure, forge.Cancelled, forge.Neutral, forge.Skipped:
-			return true
-		}
-	}
-	return false
 }

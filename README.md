@@ -96,8 +96,17 @@ cooldowns. Each extra PR, CI SHA, page, and permission check increases the
 [request budget](internal/forge/github/README.md#polling-cost-and-conditional-requests);
 use a longer polling interval for larger repositories.
 
-Writers can post a standalone `@openmerge queue`, `@openmerge dequeue`, or
-`@openmerge refresh` line. Refresh rechecks eligibility, requests fresh CI, and
+Writers can post a standalone `@openmerge queue [sha]`, `@openmerge dequeue`, or
+`@openmerge refresh` line with at most three leading spaces. Fenced code
+(```` ``` ```` or `~~~`), indented code (four spaces or a tab), and blockquotes
+(including lazy paragraph continuations) are ignored. An optional queue SHA is
+a 7–40 hex prefix of the current head; a mismatch is refused. Without a SHA,
+durable head observations reject commands that predate a head change. A
+one-second safety margin treats uncertain ordering as changed and asks the
+writer to re-issue the command, optionally with a SHA. With no prior head
+evidence, an unpinned command applies to the head first observed. Acceptance
+replies name the exact SHA; entry conditions and fresh trust checks still apply.
+Refresh rechecks eligibility, requests fresh CI, and
 resumes an operator pause after its cause is fixed; it does not enqueue a new
 entry. Fork heads need an approval of that exact SHA from a current writer.
 The App ignores its own commands and replies once to unauthorized commands.
@@ -106,6 +115,10 @@ or invalid base configuration pauses work, and a base move reloads it. CI
 producer ambiguity stays blocked until an unambiguous refresh succeeds.
 `landing-not-on-base` pauses new work while fence resolution continues; restore
 the tested commit on the base before resuming after an external rollback.
+Pending closure work is retained while paused and runs after refresh resumes it.
+Every queue's `merge_when` must reference at least one check predicate; Phase 1
+has no opt-out. Pending or missing check alternatives keep an OR condition
+pending until the whole condition passes or is definitely false.
 
 The current driver supplies conditions on `base`, `draft`, `author`,
 `approved-reviews-by`, and checks. Configurations referencing `head`, `title`,

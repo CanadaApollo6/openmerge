@@ -7,12 +7,20 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestServeDatabaseErrorKeepsCause(t *testing.T) {
+	err := startServe(t.Context(), serveOptions{database: "postgres://localhost/db?port=invalid"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err == nil || errors.Unwrap(err) == nil || !strings.Contains(err.Error(), "invalid port") {
+		t.Fatalf("database cause lost: %v", err)
+	}
+}
 
 func TestServeOptions(t *testing.T) {
 	t.Setenv("OPENMERGE_DATABASE_URL", "postgres://local/test")
@@ -36,6 +44,9 @@ func TestServeOptions(t *testing.T) {
 	}
 	if _, err := parseServe([]string{"--poll-interval=5s"}, io.Discard); err != nil {
 		t.Fatalf("explicit flag did not override env: %v", err)
+	}
+	if _, err := parseServe([]string{"--git-cache-dir", "--poll-interval=5s"}, io.Discard); err == nil {
+		t.Fatal("a flag-like string value incorrectly overrode the poll environment")
 	}
 }
 

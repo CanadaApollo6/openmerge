@@ -83,7 +83,7 @@ func TestDefaultsAndOverrides(t *testing.T) {
 		{"timeout", "    check_timeout: 1h2m3s\n", queue.Squash, time.Hour + 2*time.Minute + 3*time.Second, Batch{MaxSize: 1}, 0},
 		{"disabled string", "    check_timeout: '0'\n", queue.Squash, 0, Batch{MaxSize: 1}, 0},
 		{"disabled scalar", "    check_timeout: 0\n", queue.Squash, 0, Batch{MaxSize: 1}, 0},
-		{"empty lists", "    enter_when: []\n    merge_when: []\n", queue.Squash, time.Hour, Batch{MaxSize: 1}, 0},
+		{"empty admission", "    enter_when: []\n", queue.Squash, time.Hour, Batch{MaxSize: 1}, 0},
 		{"empty batch", "    batch: {}\n", queue.Squash, time.Hour, Batch{MaxSize: 1}, 0},
 		{"serial batch", "    batch: {max_size: 1, max_wait: 0s}\n", queue.Squash, time.Hour, Batch{MaxSize: 1}, 0},
 		{"future batch", "    batch: {max_size: 128, max_wait: 30s}\n", queue.Squash, time.Hour, Batch{128, 30 * time.Second}, 0},
@@ -92,7 +92,7 @@ func TestDefaultsAndOverrides(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			cfg, warnings, err := Load([]byte("version: 1\nqueues:\n  - name: default\n" + tt.fields))
+			cfg, warnings, err := Load([]byte("version: 1\nqueues:\n  - name: default\n    merge_when: [check-success = ci]\n" + tt.fields))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -104,7 +104,7 @@ func TestDefaultsAndOverrides(t *testing.T) {
 				t.Errorf("queue = %+v, warnings = %v", q, warnings)
 			}
 			for _, expression := range []condition.Expression{q.EnterWhen, q.MergeWhen} {
-				if ok, failed := expression.Evaluate(nil); !ok || failed != nil {
+				if ok, failed := expression.Evaluate(condition.Snapshot{"check-success": condition.Strings("ci")}); !ok || failed != nil {
 					t.Errorf("empty conditions = %v, %v", ok, failed)
 				}
 			}
@@ -209,6 +209,7 @@ func TestNestedConditionsAndAnchors(t *testing.T) {
 queues:
   - name: default
     enter_when: &conditions
+      - check-success = ci
       - not: draft
       - or:
           - and:
@@ -233,6 +234,7 @@ queues:
 			{condition.Snapshot{"draft": condition.Bool(true), "author": condition.String("maintainer")}, false, []string{"not (draft)"}},
 			{condition.Snapshot{"draft": condition.Bool(false)}, false, []string{`or (and (label = "ready"; #approved-reviews-by >= 1); author = "maintainer")`}},
 		} {
+			tt.pr["check-success"] = condition.Strings("ci")
 			got, failures := e.Evaluate(tt.pr)
 			var conditions []string
 			for _, failure := range failures {
@@ -247,15 +249,19 @@ queues:
 
 func TestAliasReuseAndMergeKeys(t *testing.T) {
 	tests := []struct{ name, fields string }{
-		{"scalar", "    merge_method: &method squash\n    enter_when: [&condition 'label = ready']\n    merge_when: [*condition]\n"},
-		{"queue", "    <<: &queue {merge_method: squash, enter_when: ['label = ready']}\n    merge_when: ['label = ready']\n"},
+		{"scalar", "    merge_method: &method squash\n    enter_when: [&condition 'check-success = ci']\n    merge_when: [*condition]\n"},
+		{"queue", "    <<: &queue {merge_method: squash, enter_when: ['label = ready']}\n    merge_when: ['check-success = ci']\n"},
 		{"batch mapping", "    batch: {<<: &batch {max_size: 8, max_wait: 30s}, max_size: 1, max_wait: 0s}\n"},
 		{"batch sequence", "    batch: {<<: [{max_size: 1}, {max_size: 8, max_wait: 0s}]}\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			cfg, warnings, err := Load([]byte("version: 1\nqueues:\n  - name: default\n" + tt.fields))
+			fields := tt.fields
+			if !strings.Contains(fields, "merge_when:") {
+				fields += "    merge_when: [check-success = ci]\n"
+			}
+			cfg, warnings, err := Load([]byte("version: 1\nqueues:\n  - name: default\n" + fields))
 			if err != nil || len(warnings) != 0 {
 				t.Fatalf("Load = %v, warnings = %v", err, warnings)
 			}
@@ -263,7 +269,7 @@ func TestAliasReuseAndMergeKeys(t *testing.T) {
 			if q.Batch.MaxSize != 1 || q.Batch.MaxWait != 0 || q.MergeMethod != queue.Squash {
 				t.Fatalf("queue = %+v", q)
 			}
-			if ok, _ := q.EnterWhen.Evaluate(condition.Snapshot{"label": condition.Strings("ready")}); !ok {
+			if ok, _ := q.EnterWhen.Evaluate(condition.Snapshot{"label": condition.Strings("ready"), "check-success": condition.Strings("ci")}); !ok {
 				t.Fatal("anchor conditions did not evaluate")
 			}
 		})

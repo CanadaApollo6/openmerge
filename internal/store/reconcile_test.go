@@ -1,10 +1,99 @@
 package store
 
 import (
+	"errors"
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 )
+
+func TestPausedConsequentialClaimDefersUntilResume(t *testing.T) {
+	for _, superseded := range []bool{false, true} {
+		t.Run(fmt.Sprint(superseded), func(t *testing.T) {
+			s := newStore(t)
+			q := ensureQueue(t, s, "")
+			appendEvents(t, s, q, queue.BaseMoved{SHA: "base"}, queue.PRObserved{PR: 1, HeadSHA: "head", Eligible: true, Trusted: true}, queue.EnqueueRequested{PR: 1, At: epoch})
+			_, err := s.Plan(t.Context(), q, config, epoch)
+			must(t, err)
+			claims, err := s.ClaimQueue(t.Context(), q, 1, time.Minute, epoch)
+			must(t, err)
+			claim := claims[0]
+			appendEvents(t, s, q, queue.PauseRequested{Reason: "operator", Detail: "repairing base"})
+			if superseded {
+				appendEvents(t, s, q, queue.PRObserved{PR: 1, HeadSHA: "new-head", Eligible: true, Trusted: true})
+			}
+			proceed, err := s.BeginConsequential(t.Context(), claim, config, epoch)
+			if superseded {
+				must(t, err)
+				if proceed || count(t, s, `SELECT count(*) FROM actions WHERE key = $1 AND status = 'cancelled'`, claim.Key) != 1 {
+					t.Fatal("superseded paused work was not cancelled")
+				}
+				return
+			}
+			if proceed || !errors.Is(err, ErrActionDeferred) {
+				t.Fatalf("paused claim was consumed: proceed=%v error=%v", proceed, err)
+			}
+			must(t, s.Complete(t.Context(), claim, Failed))
+			if count(t, s, `SELECT count(*) FROM actions WHERE key = $1 AND status = 'planned' AND poison_count = 0`, claim.Key) != 1 {
+				t.Fatal("deferral consumed retry budget or retained claim")
+			}
+			claims, err = s.ClaimQueue(t.Context(), q, 1, time.Minute, epoch, claim.Key)
+			must(t, err)
+			if len(claims) != 0 {
+				t.Fatal("same-cycle deferral exclusion ignored")
+			}
+			appendEvents(t, s, q, queue.ResumeRequested{})
+			claims, err = s.ClaimQueue(t.Context(), q, 1, time.Minute, epoch)
+			must(t, err)
+			if len(claims) != 1 {
+				t.Fatal("resumed action was lost")
+			}
+			proceed, err = s.BeginConsequential(t.Context(), claims[0], config, epoch)
+			must(t, err)
+			if !proceed {
+				t.Fatal("resumed action did not run")
+			}
+		})
+	}
+}
+
+func TestHeadCommandObservationTiming(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		heads   []string
+		times   []time.Duration
+		changed bool
+	}{
+		{"first discovery", nil, nil, false},
+		{"old head before command", []string{"a", "b"}, []time.Duration{-10 * time.Second, 2 * time.Second}, true},
+		{"reissued after stable observation", []string{"a", "b"}, []time.Duration{-10 * time.Second, -2 * time.Second}, false},
+		{"change near command", []string{"a", "b"}, []time.Duration{-10 * time.Second, -500 * time.Millisecond}, true},
+		{"old head near command", []string{"a"}, []time.Duration{500 * time.Millisecond}, true},
+		{"old head at margin", []string{"a"}, []time.Duration{time.Second}, true},
+		{"only evidence after margin", []string{"a", "b"}, []time.Duration{2 * time.Second, 3 * time.Second}, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newStore(t)
+			q := ensureQueue(t, s, "")
+			for i, head := range tt.heads {
+				id := appendEvents(t, s, q, queue.PRObserved{PR: 1, HeadSHA: head, Eligible: true, Trusted: true})
+				_, err := s.pool.Exec(t.Context(), `UPDATE events SET recorded_at = $2 WHERE id = $1`, id, epoch.Add(tt.times[i]))
+				must(t, err)
+			}
+			// Other PRs must not supply evidence about this command.
+			id := appendEvents(t, s, q, queue.PRObserved{PR: 2, HeadSHA: "other", Eligible: true, Trusted: true})
+			_, err := s.pool.Exec(t.Context(), `UPDATE events SET recorded_at = $2 WHERE id = $1`, id, epoch)
+			must(t, err)
+			changed, err := s.HeadChangedSince(t.Context(), q, 1, "b", epoch)
+			must(t, err)
+			if changed != tt.changed {
+				t.Fatalf("changed=%v, want %v", changed, tt.changed)
+			}
+		})
+	}
+}
 
 func TestRecordTransitionsAndCommandReceipts(t *testing.T) {
 	s := newStore(t)

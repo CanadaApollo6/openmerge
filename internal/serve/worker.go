@@ -50,10 +50,10 @@ func (s *Server) trustGate(ctx context.Context, w *worker, prs []queue.BatchPR) 
 }
 
 func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedAction) (result error) {
+	completion := store.Done
 	// Completion survives shutdown cancellation. Uncertain writes are retried via
 	// their durable idempotency keys or resolved through the landing fence.
 	defer func() {
-		completion := store.Done
 		if result != nil {
 			completion = store.Failed
 		}
@@ -95,10 +95,14 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 			}
 		}
 		if !current {
+			if queue.DeferredByPause(cfg, state, claim.Action, time.Now()) {
+				return store.ErrActionDeferred
+			}
+			completion = store.Cancelled
 			return nil
 		}
 	}
-	x := executor.Executor{Driver: w.Driver, Git: w.Git, Repo: w.repo(), Base: w.Key.BaseBranch, AllowNoRequiredChecks: true}
+	x := executor.Executor{Driver: w.Driver, Git: w.Git, Repo: w.repo(), Base: w.Key.BaseBranch}
 	var finalChecks []forge.CheckRun
 	x.CheckPolicy = func(checks []forge.CheckRun) (bool, bool, error) {
 		finalChecks = checks
@@ -108,19 +112,18 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 		if state.Active == nil {
 			return false, false, errors.New("no active batch for check policy")
 		}
+		pending := false
 		for _, pin := range state.Active.PRs {
-			met, err := evaluate(w.cfg.MergeWhen, w.prs[pin.PR], checks)
+			terminal, met, err := mergeResult(w.cfg.MergeWhen, w.prs[pin.PR], checks)
 			if err != nil {
 				return false, false, err
 			}
-			if !met {
-				if failedCheck(w.cfg.MergeWhen, checks) {
-					return true, false, nil
-				}
-				return false, false, nil
+			if terminal && !met {
+				return true, false, nil
 			}
+			pending = pending || !terminal
 		}
-		return true, true, nil
+		return !pending, !pending, nil
 	}
 	x.BeforeLand = func(ctx context.Context, land queue.Land) error {
 		if err := s.trustGate(ctx, w, land.PRs); err != nil {

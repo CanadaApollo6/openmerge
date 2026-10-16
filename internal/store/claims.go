@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -27,18 +26,24 @@ const claimQuery = `SELECT id, queue_id, key, payload, watermark FROM actions
       AND (status = 'planned' OR lease_until <= $1)
     ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED`
 
+const claimQueueQuery = `SELECT id, queue_id, key, payload, watermark FROM actions
+    WHERE status IN ('planned', 'claimed', 'in_flight')
+      AND (status = 'planned' OR lease_until <= $1)
+      AND queue_id = $3 AND key <> ALL($4::text[])
+    ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED`
+
 // Claim skips rows locked by other claimers. Claimed and in-flight work becomes
 // claimable at lease expiry; consequential work must always be revalidated.
 func (s *Store) Claim(ctx context.Context, limit int, lease time.Duration, now time.Time) ([]ClaimedAction, error) {
-	return s.claim(ctx, 0, limit, lease, now)
+	return s.claim(ctx, 0, limit, lease, now, nil)
 }
 
-// ClaimQueue claims work only for a configured queue.
-func (s *Store) ClaimQueue(ctx context.Context, q QueueID, limit int, lease time.Duration, now time.Time) ([]ClaimedAction, error) {
-	return s.claim(ctx, q, limit, lease, now)
+// ClaimQueue claims work only for a configured queue, excluding deferred keys.
+func (s *Store) ClaimQueue(ctx context.Context, q QueueID, limit int, lease time.Duration, now time.Time, skip ...string) ([]ClaimedAction, error) {
+	return s.claim(ctx, q, limit, lease, now, skip)
 }
 
-func (s *Store) claim(ctx context.Context, q QueueID, limit int, lease time.Duration, now time.Time) ([]ClaimedAction, error) {
+func (s *Store) claim(ctx context.Context, q QueueID, limit int, lease time.Duration, now time.Time, skip []string) ([]ClaimedAction, error) {
 	if limit <= 0 || lease.Microseconds() <= 0 {
 		return nil, errors.New("claim limit and lease must be positive")
 	}
@@ -49,8 +54,8 @@ func (s *Store) claim(ctx context.Context, q QueueID, limit int, lease time.Dura
 			query := claimQuery
 			args := []any{now, limit - len(result)}
 			if q != 0 {
-				query = strings.Replace(query, "ORDER BY id", "AND queue_id = $3 ORDER BY id", 1)
-				args = append(args, q)
+				query = claimQueueQuery
+				args = append(args, q, append([]string{}, skip...))
 			}
 			rows, err := tx.Query(ctx, query, args...)
 			if err != nil {
@@ -123,15 +128,21 @@ var ErrClaimLost = errors.New("action claim is no longer owned by this worker")
 // window. Retry this claim later, or release it with Complete(..., Failed).
 var ErrQueueBusy = errors.New("another consequential action is in flight")
 
+// ErrActionDeferred asks the worker to release paused work with Complete(Failed)
+// and exclude it from further claims until resume, without consuming an outcome.
+var ErrActionDeferred = errors.New("action deferred until queue resumes")
+
 // BeginConsequential revalidates a claim under the queue planning lock and
 // commits its in-flight record before the caller may perform any forge I/O.
-// False with no error cancels a stale action. ErrQueueBusy leaves work claimed.
+// False with no error cancels a stale action. ErrQueueBusy and ErrActionDeferred
+// leave work claimed for the caller to release with Complete(Failed).
 // Beginning extends the lease by its original duration. Forge calls and result
 // persistence must finish within that lease.
 // ResolveLanding may proceed alongside the original Land it is resolving.
 func (s *Store) BeginConsequential(ctx context.Context, a ClaimedAction, cfg queue.Config, now time.Time) (bool, error) {
 	var proceed bool
 	var decodeErr error
+	var deferred bool
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		if err := s.lockQueue(ctx, tx, a.QueueID); err != nil {
 			return err
@@ -174,6 +185,10 @@ func (s *Store) BeginConsequential(ctx context.Context, a ClaimedAction, cfg que
 				}
 			}
 			if !current {
+				if queue.DeferredByPause(cfg, state, stored.Action, now) {
+					deferred = true
+					return nil
+				}
 				_, err := tx.Exec(ctx, `UPDATE actions SET status = 'cancelled', attempt_id = NULL,
 					lease_until = NULL, updated_at = $2 WHERE id = $1`, record.id, now)
 				return err
@@ -196,6 +211,9 @@ func (s *Store) BeginConsequential(ctx context.Context, a ClaimedAction, cfg que
 	if err != nil {
 		return false, err
 	}
+	if deferred {
+		return false, ErrActionDeferred
+	}
 	return proceed, decodeErr
 }
 
@@ -208,6 +226,8 @@ const (
 	Done Completion = "done"
 	// Failed releases the action back to planned for revalidation and retry.
 	Failed Completion = "failed"
+	// Cancelled records an action superseded by the current unpaused plan.
+	Cancelled Completion = "cancelled"
 )
 
 // Complete changes only the caller's current claim. A failed Land whose
@@ -220,8 +240,10 @@ func (s *Store) Complete(ctx context.Context, a ClaimedAction, status Completion
 		next = "done"
 	case Failed:
 		next = "planned"
+	case Cancelled:
+		next = "cancelled"
 	default:
-		return errors.New("completion must be done or failed")
+		return errors.New("completion must be done, failed or cancelled")
 	}
 	result, err := s.pool.Exec(ctx, `UPDATE actions SET status = $4, attempt_id = NULL,
 		lease_until = NULL, updated_at = now() WHERE queue_id = $1 AND key = $2

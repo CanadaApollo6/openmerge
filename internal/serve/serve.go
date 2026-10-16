@@ -53,6 +53,7 @@ type worker struct {
 	blockedDetail string
 	prs           map[int]forge.PullRequest
 	summaries     map[int]forge.PullRequestSummary
+	deferred      []string
 }
 
 // New bootstraps fences without replacing a previously recorded landing token.
@@ -200,11 +201,14 @@ func (s *Server) cycle(ctx context.Context, w *worker) error {
 	if err := s.reconcile(ctx, w, force); err != nil {
 		return err
 	}
+	state, _, err := s.store.Load(ctx, w.id)
+	if err != nil {
+		return err
+	}
+	if state.PauseReason(w.plannerConfig(s.options.PollInterval)) == "" {
+		w.deferred = nil
+	}
 	if force {
-		state, _, err := s.store.Load(ctx, w.id)
-		if err != nil {
-			return err
-		}
 		if state.Active != nil && state.Active.Phase == queue.Testing {
 			if _, err := s.store.Append(ctx, w.id, []queue.Event{queue.RefreshRequested{}}, ""); err != nil {
 				return err
@@ -220,7 +224,7 @@ func (s *Server) cycle(ctx context.Context, w *worker) error {
 		if _, err := s.store.Plan(ctx, w.id, cfg, time.Now()); err != nil {
 			return err
 		}
-		claims, err := s.store.ClaimQueue(ctx, w.id, 1, s.options.ActionTimeout+time.Minute, time.Now())
+		claims, err := s.store.ClaimQueue(ctx, w.id, 1, s.options.ActionTimeout+time.Minute, time.Now(), w.deferred...)
 		if err != nil {
 			return err
 		}
@@ -228,6 +232,10 @@ func (s *Server) cycle(ctx context.Context, w *worker) error {
 			break
 		}
 		if err := s.execute(ctx, w, claims[0]); err != nil {
+			if err == store.ErrActionDeferred {
+				w.deferred = append(w.deferred, claims[0].Key)
+				continue
+			}
 			return err
 		}
 	}

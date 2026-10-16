@@ -27,8 +27,14 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 	if err != nil {
 		return err
 	}
-	if err := s.record(ctx, w, "base", tip, queue.BaseMoved{SHA: tip}); err != nil {
+	state, _, err := s.store.Load(ctx, w.id)
+	if err != nil {
 		return err
+	}
+	if state.BaseSHA != tip {
+		if _, err := s.store.Append(ctx, w.id, []queue.Event{queue.BaseMoved{SHA: tip}}, ""); err != nil {
+			return err
+		}
 	}
 	if tip != w.configTip {
 		_, data, loadErr := config.Find(func(path string) ([]byte, bool, error) {
@@ -58,7 +64,7 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 			w.configTip = ""
 		}
 	}
-	state, _, err := s.store.Load(ctx, w.id)
+	state, _, err = s.store.Load(ctx, w.id)
 	if err != nil {
 		return err
 	}
@@ -167,19 +173,6 @@ func trusted(pr forge.PullRequest) bool {
 	return slices.ContainsFunc(pr.Approvals, func(a forge.Approval) bool { return a.SHA == pr.HeadSHA && a.CanWrite })
 }
 
-func command(body string) string {
-	for _, line := range strings.Split(body, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) == 2 && fields[0] == "@openmerge" {
-			switch fields[1] {
-			case "queue", "dequeue", "refresh":
-				return fields[1]
-			}
-		}
-	}
-	return ""
-}
-
 func (s *Server) commands(ctx context.Context, w *worker, number int) error {
 	key := fmt.Sprintf("cursor/%d", number)
 	raw, err := s.store.Observation(ctx, w.id, key)
@@ -219,6 +212,7 @@ func (s *Server) commands(ctx context.Context, w *worker, number int) error {
 		}
 		if len(seen) == 0 {
 			var events []queue.Event
+			var outcome any = true
 			if cmd := command(c.Body); cmd != "" && c.Author != w.BotLogin {
 				allowed, err := w.Driver.CanWrite(ctx, w.repo(), c.Author)
 				if err != nil {
@@ -229,13 +223,36 @@ func (s *Server) commands(ctx context.Context, w *worker, number int) error {
 						return err
 					}
 				} else {
-					switch cmd {
+					fields := strings.Fields(cmd)
+					switch fields[0] {
 					case "queue":
 						// Trust must be freshly read even if UpdatedAt did not change.
-						if _, err := s.observe(ctx, w, number); err != nil {
+						pr, err := s.observe(ctx, w, number)
+						if err != nil {
 							return err
 						}
-						events = append(events, queue.EnqueueRequested{PR: number, At: c.CreatedAt})
+						var refusal string
+						if len(fields) == 2 {
+							if !shaPrefix(fields[1]) || !strings.HasPrefix(strings.ToLower(pr.HeadSHA), strings.ToLower(fields[1])) {
+								refusal = "The SHA must be a 7–40 hex prefix matching the current head."
+							}
+						} else {
+							changed, err := s.store.HeadChangedSince(ctx, w.id, number, pr.HeadSHA, c.CreatedAt)
+							if err != nil {
+								return err
+							}
+							if changed {
+								refusal = "The head changed since this command, or its timing is ambiguous."
+							}
+						}
+						if refusal != "" {
+							if err := w.Driver.Comment(ctx, w.repo(), number, receipt+"/head-changed", refusal+" Please re-issue @openmerge queue, optionally with the current SHA."); err != nil {
+								return err
+							}
+						} else {
+							events = append(events, queue.EnqueueRequested{PR: number, At: c.CreatedAt})
+							outcome = queueReceipt{QueuedSHA: pr.HeadSHA}
+						}
 					case "dequeue":
 						events = append(events, queue.DequeueRequested{PR: number})
 					case "refresh":
@@ -248,13 +265,37 @@ func (s *Server) commands(ctx context.Context, w *worker, number int) error {
 					}
 				}
 			}
-			if err := s.record(ctx, w, receipt, true, events...); err != nil {
+			if err := s.record(ctx, w, receipt, outcome, events...); err != nil {
 				return err
 			}
+		}
+		// A committed receipt also repairs a crash before the acceptance reply.
+		// Its immutable command outcome pins the exact SHA, even after a push.
+		if err := s.replyQueued(ctx, w, number, receipt); err != nil {
+			return err
 		}
 		if c.CreatedAt.After(since) {
 			since = c.CreatedAt
 		}
 	}
 	return s.record(ctx, w, key, since)
+}
+
+type queueReceipt struct {
+	QueuedSHA string
+}
+
+func (s *Server) replyQueued(ctx context.Context, w *worker, number int, receipt string) error {
+	raw, err := s.store.Observation(ctx, w.id, receipt)
+	if err != nil || len(raw) == 0 || raw[0] != '{' {
+		return err
+	}
+	var outcome queueReceipt
+	if err := json.Unmarshal(raw, &outcome); err != nil {
+		return err
+	}
+	if outcome.QueuedSHA == "" {
+		return nil
+	}
+	return w.Driver.Comment(ctx, w.repo(), number, receipt+"/queued", "Queue request accepted for exact SHA "+outcome.QueuedSHA+"; entry conditions and the fresh trust gate still apply.")
 }

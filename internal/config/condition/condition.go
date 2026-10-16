@@ -21,10 +21,13 @@ const (
 
 // Value is a typed PR attribute. Its zero value represents missing data.
 type Value struct {
-	kind valueKind
-	text string
-	list []string
-	flag bool
+	kind      valueKind
+	text      string
+	list      []string
+	flag      bool
+	checks    bool
+	observed  []string
+	unsettled []string
 }
 
 // String constructs a string attribute.
@@ -32,6 +35,23 @@ func String(s string) Value { return Value{kind: stringValue, text: s} }
 
 // Strings constructs a list attribute, copying the caller's slice.
 func Strings(s ...string) Value { return Value{kind: listValue, list: append([]string(nil), s...)} }
+
+// CheckResults builds CI attributes with per-name pending/missing knowledge.
+// Pending runs may still join either terminal list. Missing named checks are
+// unknown, so negation cannot authorize a batch before its CI appears.
+func CheckResults(success, failure, pending []string) Snapshot {
+	observed := append(append(append([]string{}, success...), failure...), pending...)
+	result := Snapshot{}
+	for name, list := range map[string][]string{"check-success": success, "check-failure": failure, "check-pending": pending} {
+		value := Strings(list...)
+		value.checks, value.observed = true, observed
+		if name != "check-pending" {
+			value.unsettled = append([]string{}, pending...)
+		}
+		result[name] = value
+	}
+	return result
+}
 
 // Bool constructs a boolean attribute.
 func Bool(b bool) Value { return Value{kind: boolValue, flag: b} }
@@ -324,7 +344,7 @@ func (e Expression) evaluate(pr PR) evaluation {
 				evaluated.evidence.Actual = len(value.list)
 			}
 		}
-		if value.kind != attributeKind(e.name) {
+		if value.kind != attributeKind(e.name) || value.checks && e.checkUnknown(value) {
 			evaluated.result = unknown
 		} else if e.matches(value) != e.negative {
 			evaluated.result = met
@@ -335,6 +355,24 @@ func (e Expression) evaluate(pr PR) evaluation {
 		evaluated.failures = []Failure{evaluated.evidence}
 	}
 	return evaluated
+}
+
+func (e Expression) checkUnknown(value Value) bool {
+	if !slices.ContainsFunc(value.observed, e.ReferencesCheck) {
+		return true
+	}
+	matched := e.matches(value)
+	possible := Strings(value.list...)
+	for _, name := range value.unsettled {
+		if !e.length && !e.ReferencesCheck(name) {
+			continue
+		}
+		possible.list = append(possible.list, name)
+		if e.matches(possible) != matched {
+			return true
+		}
+	}
+	return false
 }
 
 func (e Expression) matches(v Value) bool {

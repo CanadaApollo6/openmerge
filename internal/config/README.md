@@ -24,12 +24,15 @@ are supported.
 Warnings and errors go to stderr. Discovery errors list every found file or all
 four searched paths, without inventing a file/line location. `--help` prints usage.
 
-Version 1 requires exactly one named queue. Defaults are:
+Version 1 requires exactly one named queue. Its `merge_when` must reference at
+least one check predicate, such as `check-success = ci`, including inside logical
+groups. Missing, empty, or metadata-only merge conditions are rejected with the
+queue name and an example. Phase 1 has no opt-out. Defaults are:
 
 - `merge_method: squash` (also accepts `merge` and `rebase`).
 - `check_timeout: 1h`; `0`, `"0"`, or `0s` disables it. Durations must be
   nonnegative Go duration strings, with unquoted integer zero also accepted.
-- `enter_when: []` and `merge_when: []`, both true.
+- `enter_when: []`, true. `merge_when` must be supplied with a check predicate.
 - `batch: {max_size: 1, max_wait: 0s}`. Sizes 1 through 128 are accepted.
   The queue tests up to `max_size` PRs together, with one active batch at a time.
   A partial batch waits until its oldest member has waited `max_wait`; size 1
@@ -58,6 +61,10 @@ AND is not met if any child is not met; otherwise it is unknown if any child is
 unknown, and met if all are met. OR is met if any child is met; otherwise it is
 unknown if any child is unknown, and not met if all are not met. A condition list
 is implicit AND and admits or merges only when met. Unknown never passes.
+`condition.CheckResults(success, failure, pending)` supplies per-check unknown
+values for missing or pending CI. Logical groups use the same three-valued
+evaluation: a failed OR alternative cannot fail the batch while another can
+still pass; only a definitely false whole merge condition is terminal failure.
 
 Phase 1 attributes are:
 

@@ -20,6 +20,17 @@ func Plan(cfg Config, s State, now time.Time) []Action {
 	return actions
 }
 
+// DeferredByPause distinguishes temporarily suppressed work from actions that
+// the resumed plan has superseded. Resume is projected without appending it.
+func DeferredByPause(cfg Config, s State, action Action, now time.Time) bool {
+	if s.PauseReason(cfg) == "" {
+		return false
+	}
+	return slices.ContainsFunc(Plan(cfg, Apply(s, ResumeRequested{}), now), func(planned Action) bool {
+		return planned.Key() == action.Key()
+	})
+}
+
 func plan(cfg Config, s State, now time.Time) []Action {
 	var actions []Action
 	if s.actionPoison.key != "" || s.pause.Reason != "" {
