@@ -75,7 +75,12 @@ Immediately before `LandingStarted`, the executor freshly reads `CheckRuns` for 
 
 ## Building test refs
 
-`Driver.ReadFile` identifies an absent file with `forge.ErrFileNotFound` so base-branch configuration discovery can distinguish absence from a failed read.
+`Driver.DefaultBranch` freshly observes the repository's default branch and
+errors if it is missing or unreadable. Configuration authority never falls back
+to the queue's base. The server resolves the observed default branch to a commit
+with `Git.ReadRef`, then pins every config path read to that commit.
+`Driver.ReadFile` identifies an absent file with `forge.ErrFileNotFound` so
+default-branch configuration discovery can distinguish absence from a failed read.
 
 `BuildTestRef` composes the test commit locally with git and pushes it to `openmerge/queue/...`. It must:
 

@@ -138,6 +138,9 @@ var ErrFileNotFound = errors.New("file does not exist at ref")
 
 // Driver exposes forge API operations. Mutations must converge when retried.
 type Driver interface {
+	// DefaultBranch freshly observes repository configuration authority. An
+	// unreadable or missing default must fail, never fall back to a queue's base.
+	DefaultBranch(ctx context.Context, repo RepoRef) (string, error)
 	// ReadFile reads a file at an explicit branch or commit; missing is an error.
 	ReadFile(ctx context.Context, repo RepoRef, ref, path string) ([]byte, error)
 	PullRequest(ctx context.Context, repo RepoRef, number int) (PullRequest, error)

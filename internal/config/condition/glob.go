@@ -6,6 +6,15 @@ import (
 	"strings"
 )
 
+// CompileGlob compiles a whole-path glob for conditions and queue base selectors.
+func CompileGlob(pattern string) (*regexp.Regexp, error) {
+	expression, err := globPattern(pattern)
+	if err != nil {
+		return nil, err
+	}
+	return regexp.Compile(expression)
+}
+
 // Globs match a whole slash-separated path: * and ? stay within a segment,
 // ** crosses slashes, and **/ also matches zero directories. A backslash quotes
 // the next character. Other characters (including brackets) are literal.

@@ -53,21 +53,23 @@ type Server struct {
 
 type worker struct {
 	Target
-	id             store.QueueID
-	wake           chan struct{}
-	cfg            config.Queue
-	configTip      string
-	configError    error
-	blockedSHA     string
-	blockedDetail  string
-	prs            map[int]forge.PullRequest
-	summaries      map[int]forge.PullRequestSummary
-	deferred       []string
-	logState       queue.State
-	logWatermark   int64
-	logChecks      string
-	rulesNextCheck time.Time
-	rulesFailures  int
+	id               store.QueueID
+	wake             chan struct{}
+	cfg              config.Queue
+	configBranch     string
+	configTip        string
+	configError      error
+	deleteHeadBranch *bool
+	blockedSHA       string
+	blockedDetail    string
+	prs              map[int]forge.PullRequest
+	summaries        map[int]forge.PullRequestSummary
+	deferred         []string
+	logState         queue.State
+	logWatermark     int64
+	logChecks        string
+	rulesNextCheck   time.Time
+	rulesFailures    int
 }
 
 // New bootstraps fences without replacing a previously recorded landing token.

@@ -23,55 +23,54 @@ func (s *Server) record(ctx context.Context, w *worker, key string, value any, e
 }
 
 func (s *Server) configuration(ctx context.Context, w *worker) error {
-	tip, err := w.Git.ReadRef(ctx, w.repo(), w.Key.BaseBranch)
-	if err != nil {
-		return err
+	branch, loadErr := w.Driver.DefaultBranch(ctx, w.repo())
+	if loadErr == nil && branch == "" {
+		loadErr = errors.New("repository default branch is missing")
+	}
+	tip, baseErr := w.Git.ReadRef(ctx, w.repo(), w.Key.BaseBranch)
+	if baseErr != nil {
+		if loadErr == nil && branch != w.Key.BaseBranch {
+			return baseErr
+		}
+		loadErr = errors.Join(loadErr, fmt.Errorf("read default-branch tip: %w", baseErr))
 	}
 	state, _, err := s.store.Load(ctx, w.id)
 	if err != nil {
 		return err
 	}
-	if state.BaseSHA != tip {
+	if baseErr == nil && state.BaseSHA != tip {
 		if _, err := s.store.Append(ctx, w.id, []queue.Event{queue.BaseMoved{SHA: tip}}, ""); err != nil {
 			return err
 		}
+		// Conflict observations can change when this base moves even if the
+		// default branch (and therefore the policy) stays at the same commit.
+		w.summaries = make(map[int]forge.PullRequestSummary)
 	}
-	if tip != w.configTip {
-		_, data, loadErr := config.Find(func(path string) ([]byte, bool, error) {
-			data, err := w.Driver.ReadFile(ctx, w.repo(), tip, path)
-			if errors.Is(err, forge.ErrFileNotFound) {
-				return nil, false, nil
-			}
-			return data, err == nil, err
-		})
-		if loadErr == nil {
-			cfg, warnings, err := config.Load(data)
-			loadErr = err
-			if err == nil {
-				if w.CheckProtection != nil && w.cfg.MergeMethod != cfg.Queues[0].MergeMethod {
-					w.rulesNextCheck = time.Time{}
-				}
-				w.cfg = cfg.Queues[0]
-				for _, warning := range warnings {
-					s.options.Logger.Warn("repository configuration", "repository", w.Key.Repository, "diagnostic", warning.Error())
-				}
-			}
-		}
-		// Retry read failures too: permissions and network errors can recover at the
-		// same tip. A failed read never leaves the previous policy usable.
-		w.configError = loadErr
-		if loadErr == nil {
-			w.configTip = tip
+	configTip := ""
+	if loadErr == nil {
+		if branch == w.Key.BaseBranch {
+			configTip = tip
 		} else {
-			w.configTip = ""
+			configTip, loadErr = w.Git.ReadRef(ctx, w.repo(), branch)
 		}
+	}
+	if loadErr == nil && (configTip != w.configTip || branch != w.configBranch) {
+		loadErr = s.loadConfiguration(ctx, w, branch, configTip)
+	}
+	// Retry failures even at the same tip. Failed metadata/ref/file reads must
+	// pause admission and must never leave a previously valid policy usable.
+	w.configError = loadErr
+	if loadErr == nil {
+		w.configBranch, w.configTip = branch, configTip
+	} else {
+		w.configBranch, w.configTip = "", ""
 	}
 	state, _, err = s.store.Load(ctx, w.id)
 	if err != nil {
 		return err
 	}
 	if w.configError != nil {
-		return s.pause(ctx, w, "invalid-config", "Base-branch configuration: "+w.configError.Error())
+		return s.pause(ctx, w, "invalid-config", "Default-branch configuration: "+w.configError.Error())
 	} else if state.PauseReason(queue.Config{}) == "invalid-config" {
 		_, err = s.store.Append(ctx, w.id, []queue.Event{queue.ResumeRequested{}}, "")
 		if err == nil {
@@ -81,12 +80,52 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 	return err
 }
 
+func (s *Server) loadConfiguration(ctx context.Context, w *worker, branch, tip string) error {
+	_, data, err := config.Find(func(path string) ([]byte, bool, error) {
+		data, err := w.Driver.ReadFile(ctx, w.repo(), tip, path)
+		if errors.Is(err, forge.ErrFileNotFound) {
+			return nil, false, nil
+		}
+		return data, err == nil, err
+	})
+	if err != nil {
+		return err
+	}
+	cfg, warnings, err := config.Load(data)
+	if err != nil {
+		return err
+	}
+	for _, warning := range warnings {
+		s.options.Logger.Warn("repository configuration", "repository", w.Key.Repository, "diagnostic", warning.Error())
+	}
+	for _, q := range cfg.Queues {
+		if !q.MatchesBase(w.Key.BaseBranch, branch) {
+			selector := q.Base
+			if selector == "" {
+				selector = branch
+			}
+			s.options.Logger.Info("queue not yet served", "repository", w.Key.Repository, "queue", q.Name, "base", selector, "served_base", w.Key.BaseBranch)
+		}
+	}
+	selected, diagnostics := cfg.ResolveBranch(w.Key.BaseBranch, branch)
+	if len(diagnostics) != 0 {
+		return diagnostics
+	}
+	if w.CheckProtection != nil && w.cfg.MergeMethod != selected.MergeMethod {
+		w.rulesNextCheck = time.Time{}
+	}
+	w.cfg = selected
+	w.deleteHeadBranch = cfg.DeleteHeadBranch
+	return nil
+}
+
 func (s *Server) reconcile(ctx context.Context, w *worker, force bool) error {
 	oldTip := w.configTip
+	oldBranch := w.configBranch
 	if err := s.configuration(ctx, w); err != nil {
 		return err
 	}
-	force = force || oldTip != w.configTip
+	force = force || oldTip != w.configTip || oldBranch != w.configBranch
 	summaries, err := w.Driver.ListOpenPullRequests(ctx, w.repo(), w.Key.BaseBranch)
 	if err != nil {
 		return err

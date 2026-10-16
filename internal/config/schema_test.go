@@ -29,6 +29,13 @@ var compiledSchema = sync.OnceValues(func() (*jsonschema.Schema, error) {
 	}
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()
+	compiler.RegisterFormat(&jsonschema.Format{Name: "openmerge-base", Validate: func(v any) error {
+		if text, ok := v.(string); ok {
+			_, err := condition.CompileGlob(text)
+			return err
+		}
+		return nil
+	}})
 	compiler.RegisterFormat(&jsonschema.Format{Name: "openmerge-condition", Validate: func(v any) error {
 		if text, ok := v.(string); ok {
 			_, err := condition.Parse(text)

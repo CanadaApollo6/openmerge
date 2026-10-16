@@ -1,8 +1,8 @@
 # Operating OpenMerge
 
 Build with `make build` and complete the [GitHub App and ruleset setup](../README.md#running-openmerge-serve)
-before starting a service. The base branch needs a valid `.openmerge.yml`, and CI
-must run on pushes to `openmerge/queue/**`. Use one server per installation and a
+before starting a service. The repository's default branch needs a valid
+`.openmerge.yml`, and CI must run on pushes to `openmerge/queue/**`. Use one server per installation and a
 process-exclusive git cache. Postgres must be available before startup; startup
 applies database migrations and ensures the fence without resetting it.
 
@@ -161,7 +161,7 @@ refreshes observations, and resolves any uncertain landing through its fence.
 Do not reset or delete `openmerge/fence/*` refs to recover a service.
 A writer can post `@openmerge refresh` after fixing a configuration, build or
 landing problem to clear a pause and request fresh observations. Invalid
-base-branch configuration remains paused until corrected on the base branch.
+default-branch configuration remains paused until corrected on the default branch.
 
 ## Runtime repository rules
 
@@ -280,9 +280,10 @@ not alter the commit that lands.
 ## Landed head cleanup
 
 `serve --delete-head-branch` / `OPENMERGE_DELETE_HEAD_BRANCH` defaults to true.
-Set it to false to retain heads. The option is server-wide until per-repository
-`delete_head_branch` configuration is added; it intentionally does not modify
-the queue config schema in this release.
+Set it to false to retain heads by default. A top-level `delete_head_branch`
+boolean in the default branch's `.openmerge.yml` overrides this default for that
+repository; omission inherits the flag. See the
+[configuration reference](../internal/config/README.md).
 
 After freshly verifying a successful landing, the executor records
 `HeadCleanupRequested{BatchID, LandedSHA}` before `Landed`, including during fence
