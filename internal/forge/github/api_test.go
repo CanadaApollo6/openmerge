@@ -63,6 +63,9 @@ type apiFixture struct {
 	calls           map[string]int
 	next            int64
 	tokens          int
+	setupRules      map[int64]map[string]any
+	manifestPEM     string
+	setupWrites     int
 	override        func(http.ResponseWriter, *http.Request) bool
 }
 
@@ -222,6 +225,9 @@ func (f *apiFixture) serve(w http.ResponseWriter, r *http.Request) {
 func (f *apiFixture) handle(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v3/")
 	f.calls[r.Method+" "+path]++
+	if f.handleSetup(w, r, path) {
+		return
+	}
 	if path == "app" || strings.HasPrefix(path, "app/") {
 		f.assertJWT(r)
 	} else if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer secret-installation-") {
