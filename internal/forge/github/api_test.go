@@ -65,6 +65,7 @@ type apiFixture struct {
 	tokens          int
 	setupRules      map[int64]map[string]any
 	manifestPEM     string
+	noHookSecret    bool
 	setupWrites     int
 	override        func(http.ResponseWriter, *http.Request) bool
 }
