@@ -61,6 +61,26 @@ func TestOperationalLogsCommittedLanding(t *testing.T) {
 	}
 }
 
+func TestOperationalLogsIgnoreStaleRulesEvents(t *testing.T) {
+	s, w, _, _ := fixture(t, repositoryConfig)
+	var output bytes.Buffer
+	s.options.Logger = slog.New(slog.NewJSONHandler(&output, nil))
+	_, err := s.store.Append(t.Context(), w.id, []queue.Event{
+		queue.RulesBlocked{Problems: []string{"original"}},
+		queue.RulesBlocked{Problems: []string{"newer"}, Basis: 1},
+		queue.RulesCleared{Basis: 1},
+		queue.RulesBlocked{Problems: []string{"stale"}, Basis: 1},
+	}, "")
+	must(t, err)
+	s.logCommitted(t.Context(), w)
+	if strings.Contains(output.String(), "cleared") || strings.Contains(output.String(), "stale") || strings.Contains(output.String(), "resumed") {
+		t.Fatalf("ignored rules event logged as a transition: %s", &output)
+	}
+	if strings.Count(output.String(), `"msg":"repository rules blocked"`) != 2 || !strings.Contains(output.String(), "newer") {
+		t.Fatalf("missing committed rules transitions: %s", &output)
+	}
+}
+
 func TestOperationalLogsDequeueAndPause(t *testing.T) {
 	s, w, f, _ := fixture(t, repositoryConfig)
 	var output bytes.Buffer

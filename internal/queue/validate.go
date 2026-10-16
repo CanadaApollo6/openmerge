@@ -174,6 +174,9 @@ func (e PauseRequested) Validate() error {
 
 // Validate prevents an empty rules block from masquerading as a clear event.
 func (e RulesBlocked) Validate() error {
+	if err := (RulesCleared{Basis: e.Basis}).Validate(); err != nil {
+		return err
+	}
 	if len(e.Problems) == 0 {
 		return fmt.Errorf("problems must not be empty")
 	}
@@ -181,6 +184,14 @@ func (e RulesBlocked) Validate() error {
 		if err := requireActionText("problem", problem); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// Validate reserves room for the next rules revision; zero is the initial basis.
+func (e RulesCleared) Validate() error {
+	if e.Basis == ^uint64(0) {
+		return fmt.Errorf("basis must allow incrementing the rules revision")
 	}
 	return nil
 }

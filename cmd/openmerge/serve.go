@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/forge/github"
 	"github.com/CanadaApollo6/openmerge/internal/gitops"
@@ -121,17 +122,18 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	}
 	var level slog.Level
 	_ = level.UnmarshalText([]byte(o.logLevel)) // validated by parseServe
-	logger := slog.New(slog.NewJSONHandler(stderr, &slog.HandlerOptions{Level: level}))
+	sanitizer := diagnostic.NewSanitizer(o.apiToken, o.secret, o.database)
+	logger := slog.New(slog.NewJSONHandler(stderr, &slog.HandlerOptions{Level: level, ReplaceAttr: sanitizer.LogAttr}))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := startServe(ctx, o, logger); err != nil {
+	if err := startServe(ctx, o, logger, sanitizer); err != nil {
 		logger.Error("serve stopped", "error", err)
 		return 1
 	}
 	return 0
 }
 
-func startServe(ctx context.Context, o serveOptions, logger *slog.Logger) error {
+func startServe(ctx context.Context, o serveOptions, logger *slog.Logger, sanitizer *diagnostic.Sanitizer) error {
 	db, err := store.Open(ctx, o.database)
 	if err != nil {
 		return fmt.Errorf("open/migrate database failed; check OPENMERGE_DATABASE_URL and Postgres availability: %w", err)
@@ -141,7 +143,7 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger) error 
 	if err != nil {
 		return fmt.Errorf("read GitHub private key: %w", err)
 	}
-	app, err := github.New(github.Config{AppID: o.app, PrivateKey: key})
+	app, err := github.New(github.Config{AppID: o.app, PrivateKey: key, Sanitizer: sanitizer})
 	if err != nil {
 		return err
 	}
@@ -173,7 +175,7 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger) error 
 	for _, endpoint := range []struct {
 		name, address string
 		handler       http.Handler
-	}{{"webhook", o.listen, webhookHandler(service, []byte(o.secret))}, {"status API", o.apiListen, status.Handler(db, keys, o.apiToken)}} {
+	}{{"webhook", o.listen, webhookHandler(service, []byte(o.secret))}, {"status API", o.apiListen, status.Handler(db, keys, o.apiToken, sanitizer)}} {
 		if endpoint.address == "" {
 			continue
 		}

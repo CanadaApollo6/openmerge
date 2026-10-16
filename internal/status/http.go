@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
@@ -96,7 +97,11 @@ func ReadToken(value, file string) (string, error) {
 }
 
 // Handler exposes GET only and confines reads to this server's configured keys.
-func Handler(source Source, keys []store.QueueKey, token string) http.Handler {
+func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diagnostic.Sanitizer) http.Handler {
+	if sanitizer == nil {
+		sanitizer = diagnostic.NewSanitizer()
+	}
+	sanitizer.AddSecrets(token)
 	keys = slices.Clone(keys)
 	slices.SortFunc(keys, func(a, b store.QueueKey) int {
 		return strings.Compare(a.Repository+"\x00"+a.BaseBranch+"\x00"+a.Installation+"\x00"+a.Lane, b.Repository+"\x00"+b.BaseBranch+"\x00"+b.Installation+"\x00"+b.Lane)
@@ -153,7 +158,7 @@ func Handler(source Source, keys []store.QueueKey, token string) http.Handler {
 		if list {
 			queues := make([]Queue, 0, len(journals))
 			for _, journal := range journals {
-				q, _, _ := Project(journal, 0, 0)
+				q, _, _ := Project(journal, 0, 0, sanitizer)
 				queues = append(queues, q)
 			}
 			writeJSON(w, struct {
@@ -166,7 +171,7 @@ func Handler(source Source, keys []store.QueueKey, token string) http.Handler {
 			fail(w, http.StatusNotFound, "not-found", "queue not found")
 			return
 		}
-		q, entry, why := Project(journals[0], pr, limit)
+		q, entry, why := Project(journals[0], pr, limit, sanitizer)
 		if pr > 0 && entry == nil {
 			fail(w, http.StatusNotFound, "not-found", "PR has no recorded queue history")
 			return

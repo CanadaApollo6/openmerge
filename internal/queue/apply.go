@@ -62,9 +62,16 @@ func Apply(s State, e Event) State {
 	case PauseRequested:
 		s.pause, s.pauseRevision = e, s.revision
 	case RulesBlocked:
-		s.rulesBlock, s.rulesRevision = RulesBlocked{Problems: slices.Clone(e.Problems)}, s.revision
+		if e.Basis == s.rulesRevision {
+			s.rulesBlock = RulesBlocked{Problems: slices.Clone(e.Problems), Basis: e.Basis}
+			s.rulesRevision++
+			s.rulesPauseRevision = s.revision
+		}
 	case RulesCleared:
-		s.rulesBlock = RulesBlocked{}
+		if e.Basis == s.rulesRevision {
+			s.rulesBlock = RulesBlocked{}
+			s.rulesRevision++
+		}
 	case ResumeRequested:
 		s.pause = PauseRequested{}
 		s.buildRetry = buildRetryState{}

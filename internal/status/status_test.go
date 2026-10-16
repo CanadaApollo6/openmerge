@@ -42,7 +42,7 @@ func testingEvents() []queue.Event {
 
 func TestExplainCurrentStateWithRelevantBoundedHistory(t *testing.T) {
 	events := append(testingEvents(), queue.PRObserved{PR: 2, HeadSHA: "other", Eligible: true, Trusted: true}, queue.ChecksCompleted{TestedSHA: "other", Success: true}, queue.PauseRequested{Reason: "repository-rules", Detail: "fence missing deletion"})
-	q, pr, why := Project(journal(events...), 1, 2)
+	q, pr, why := Project(journal(events...), 1, 2, nil)
 	if !q.Paused || q.PauseReason != "repository-rules" || q.ActiveBatch.ID != "b1" || len(q.Entries) != 1 || q.Watermark != int64(len(events)) {
 		t.Fatalf("queue=%+v", q)
 	}
@@ -55,7 +55,7 @@ func TestExplainCurrentStateWithRelevantBoundedHistory(t *testing.T) {
 	if !strings.Contains(why.Events[0].Type, "test_ref_built") {
 		t.Fatal("lost event type")
 	}
-	_, missing, _ := Project(journal(events...), 99, 20)
+	_, missing, _ := Project(journal(events...), 99, 20, nil)
 	if missing != nil {
 		t.Fatal("invented an unknown PR")
 	}
@@ -63,17 +63,17 @@ func TestExplainCurrentStateWithRelevantBoundedHistory(t *testing.T) {
 
 func TestOutcomesAndReadmission(t *testing.T) {
 	events := append(admission(), queue.DequeueRequested{PR: 1}, queue.Dequeued{PR: 1, AdmissionID: 999, Reason: queue.Requested})
-	_, pr, _ := Project(journal(events...), 1, 20)
+	_, pr, _ := Project(journal(events...), 1, 20, nil)
 	if pr.Status != "dequeue-pending" || pr.LastDequeueReason != "" {
 		t.Fatalf("stale dequeue invented an outcome: %+v", pr)
 	}
 	events = append(events, queue.Dequeued{PR: 1, AdmissionID: 1, Reason: queue.Requested})
-	_, pr, _ = Project(journal(events...), 1, 20)
+	_, pr, _ = Project(journal(events...), 1, 20, nil)
 	if pr.Status != "dequeued" || pr.Position != 0 || pr.LastDequeueReason != "requested" {
 		t.Fatalf("dequeue outcome=%+v", pr)
 	}
 	events = append(events, queue.EnqueueRequested{PR: 1, At: at.Add(time.Hour)})
-	_, pr, _ = Project(journal(events...), 1, 20)
+	_, pr, _ = Project(journal(events...), 1, 20, nil)
 	if pr.Status != "queued" || pr.Position != 1 || pr.LastDequeueReason != "requested" || !pr.AdmittedAt.Equal(at.Add(time.Hour)) {
 		t.Fatalf("readmission=%+v", pr)
 	}
@@ -81,17 +81,17 @@ func TestOutcomesAndReadmission(t *testing.T) {
 
 func TestRepushPinsAdmissionAndReopenExplainsNewObservation(t *testing.T) {
 	events := append(admission(), queue.PRObserved{PR: 1, HeadSHA: "new-head", Eligible: true, Trusted: true})
-	_, pr, _ := Project(journal(events...), 1, 20)
+	_, pr, _ := Project(journal(events...), 1, 20, nil)
 	if pr.Status != "dequeue-pending" || pr.HeadSHA != "head" || pr.Reason != "head-changed" {
 		t.Fatalf("repush changed admitted head: %+v", pr)
 	}
 	events = append(events, queue.Dequeued{PR: 1, AdmissionID: 1, Reason: queue.HeadChanged})
-	_, pr, _ = Project(journal(events...), 1, 20)
+	_, pr, _ = Project(journal(events...), 1, 20, nil)
 	if pr.Status != "dequeued" || pr.HeadSHA != "new-head" || pr.LastDequeueReason != "head-changed" {
 		t.Fatalf("dequeued PR lost current observation: %+v", pr)
 	}
 	events = []queue.Event{queue.PRObserved{PR: 1, HeadSHA: "head", Eligible: true, Trusted: true}, queue.PRClosed{PR: 1}, queue.PRObserved{PR: 1, HeadSHA: "head", Eligible: true, Trusted: true}}
-	_, pr, _ = Project(journal(events...), 1, 20)
+	_, pr, _ = Project(journal(events...), 1, 20, nil)
 	if pr.Status != "not-queued" {
 		t.Fatalf("reopen retained closed state: %+v", pr)
 	}
@@ -99,17 +99,17 @@ func TestRepushPinsAdmissionAndReopenExplainsNewObservation(t *testing.T) {
 
 func TestLandingWhilePausedIsUncertainUntilSettled(t *testing.T) {
 	events := append(testingEvents(), queue.ChecksCompleted{TestedSHA: "tested", Success: true}, queue.LandingStarted{BatchID: "b1", AttemptID: "attempt", FenceToken: "fence", At: at}, queue.DequeueRequested{PR: 1}, queue.PauseRequested{Reason: "repository-rules", Detail: "bad fence"})
-	_, pr, why := Project(journal(events...), 1, 20)
+	_, pr, why := Project(journal(events...), 1, 20, nil)
 	if pr.Status != "paused" || !strings.Contains(why.Summary, "still being resolved") {
 		t.Fatalf("uncertain landing lost: %+v %+v", pr, why)
 	}
 	events = append(events, queue.Landed{BatchID: "stale", NewBaseSHA: "wrong", NewFence: "wrong"})
-	_, pr, _ = Project(journal(events...), 1, 20)
+	_, pr, _ = Project(journal(events...), 1, 20, nil)
 	if pr.Position != 1 {
 		t.Fatal("stale landing removed PR")
 	}
 	events = append(events, queue.Landed{BatchID: "b1", NewBaseSHA: "tested", NewFence: "next"}, queue.PRClosed{PR: 1})
-	_, pr, _ = Project(journal(events...), 1, 20)
+	_, pr, _ = Project(journal(events...), 1, 20, nil)
 	if pr.Status != "merged" || pr.Position != 0 {
 		t.Fatalf("closed observation erased merge: %+v", pr)
 	}
@@ -117,7 +117,7 @@ func TestLandingWhilePausedIsUncertainUntilSettled(t *testing.T) {
 
 func TestExplanationIncludesRetainedCIBeforeTestRefWasRecorded(t *testing.T) {
 	events := append(admission(), queue.BatchStarted{BatchID: "b1", BaseSHA: "base", PRs: []queue.BatchPR{{PR: 1, HeadSHA: "head"}}, At: at}, queue.ChecksCompleted{TestedSHA: "tested", Success: true}, queue.TestRefBuilt{BatchID: "b1", TestedSHA: "tested", At: at, Method: queue.Squash})
-	_, _, why := Project(journal(events...), 1, 2)
+	_, _, why := Project(journal(events...), 1, 2, nil)
 	if len(why.Events) != 2 || why.Events[0].ID != 5 || why.Events[1].ID != 6 {
 		t.Fatalf("retained CI evidence lost: %+v", why.Events)
 	}
@@ -125,18 +125,18 @@ func TestExplanationIncludesRetainedCIBeforeTestRefWasRecorded(t *testing.T) {
 
 func TestExplanationIncludesCurrentPauseInheritedAtAdmission(t *testing.T) {
 	events := append([]queue.Event{queue.PauseRequested{Reason: "repository-rules", Detail: "fence rules need repair"}}, admission()...)
-	_, pr, why := Project(journal(events...), 1, 20)
+	_, pr, why := Project(journal(events...), 1, 20, nil)
 	if pr.Status != "paused" || len(why.Events) == 0 || why.Events[0].ID != 1 {
 		t.Fatalf("admission inherited an unexplained pause: %+v %+v", pr, why)
 	}
 }
 
 func TestBlockedPRAndEmptyStableJSON(t *testing.T) {
-	_, pr, why := Project(journal(queue.PRObserved{PR: 1, HeadSHA: "fork", Eligible: true}, queue.EnqueueRequested{PR: 1, At: at}), 1, 20)
+	_, pr, why := Project(journal(queue.PRObserved{PR: 1, HeadSHA: "fork", Eligible: true}, queue.EnqueueRequested{PR: 1, At: at}), 1, 20, nil)
 	if pr.Status != "blocked" || pr.Reason != "untrusted" || !strings.Contains(why.Summary, "untrusted") {
 		t.Fatalf("untrusted admission=%+v %+v", pr, why)
 	}
-	q, _, _ := Project(journal(), 0, 0)
+	q, _, _ := Project(journal(), 0, 0, nil)
 	data, err := json.Marshal(q)
 	if err != nil {
 		t.Fatal(err)
@@ -162,7 +162,7 @@ func TestHTTPReadOnlyAuthRoutingAndErrors(t *testing.T) {
 	s := &source{journals: []store.Journal{journal(testingEvents()...)}}
 	other := key
 	other.Repository = "other/private"
-	handler := Handler(s, []store.QueueKey{other, key}, "secret")
+	handler := Handler(s, []store.QueueKey{other, key}, "secret", nil)
 	for _, tc := range []struct {
 		method, path, token string
 		code                int
@@ -221,7 +221,7 @@ func authorized(path string) *http.Request {
 func TestEmptyListSlashBaseAndAmbiguity(t *testing.T) {
 	s := &source{}
 	w := httptest.NewRecorder()
-	Handler(s, nil, "").ServeHTTP(w, httptest.NewRequest("GET", "/v1/queues", nil))
+	Handler(s, nil, "", nil).ServeHTTP(w, httptest.NewRequest("GET", "/v1/queues", nil))
 	if w.Body.String() != "{\"version\":1,\"queues\":[]}\n" {
 		t.Fatalf("empty list=%s", w.Body)
 	}
@@ -231,14 +231,14 @@ func TestEmptyListSlashBaseAndAmbiguity(t *testing.T) {
 	j.Key, j.Seed.BaseBranch = slash, slash.BaseBranch
 	s.journals = []store.Journal{j}
 	w = httptest.NewRecorder()
-	Handler(s, []store.QueueKey{slash}, "").ServeHTTP(w, httptest.NewRequest("GET", "/v1/queues/owner/repo/release%2Fv1", nil))
+	Handler(s, []store.QueueKey{slash}, "", nil).ServeHTTP(w, httptest.NewRequest("GET", "/v1/queues/owner/repo/release%2Fv1", nil))
 	if w.Code != 200 || !reflect.DeepEqual(s.keys, []store.QueueKey{slash}) {
 		t.Fatalf("encoded base=%d %+v", w.Code, s.keys)
 	}
 	other := key
 	other.Installation = "8"
 	w = httptest.NewRecorder()
-	Handler(s, []store.QueueKey{key, other}, "").ServeHTTP(w, httptest.NewRequest("GET", "/v1/queues/owner/repo/main", nil))
+	Handler(s, []store.QueueKey{key, other}, "", nil).ServeHTTP(w, httptest.NewRequest("GET", "/v1/queues/owner/repo/main", nil))
 	if w.Code != 409 {
 		t.Fatal("ambiguous queue silently selected")
 	}

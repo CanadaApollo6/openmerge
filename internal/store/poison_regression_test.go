@@ -210,7 +210,7 @@ func TestRulesClearPreservesDurableActionPoison(t *testing.T) {
 		_, err = s.Claim(t.Context(), 1, time.Minute, epoch)
 		must(t, err)
 	}
-	appendEvents(t, s, q, queue.RulesBlocked{Problems: []string{"bad fence"}}, queue.RulesCleared{})
+	appendEvents(t, s, q, queue.RulesBlocked{Problems: []string{"bad fence"}}, queue.RulesCleared{Basis: 1})
 	state, _, err := s.Load(t.Context(), q)
 	must(t, err)
 	if state.PauseReason(config) != "action-poisoned" || len(state.RulesProblems()) != 0 {

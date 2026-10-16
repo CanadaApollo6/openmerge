@@ -70,7 +70,7 @@ func TestServeCommitter(t *testing.T) {
 }
 
 func TestServeDatabaseErrorKeepsCause(t *testing.T) {
-	err := startServe(t.Context(), serveOptions{database: "postgres://localhost/db?port=invalid"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	err := startServe(t.Context(), serveOptions{database: "postgres://localhost/db?port=invalid"}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	if err == nil || errors.Unwrap(err) == nil || !strings.Contains(err.Error(), "invalid port") {
 		t.Fatalf("database cause lost: %v", err)
 	}

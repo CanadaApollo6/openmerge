@@ -49,9 +49,13 @@ func (s *Server) logEvent(ctx context.Context, w *worker, before, after queue.St
 	}
 	switch e := event.(type) {
 	case queue.RulesBlocked:
-		log("repository rules blocked", 0, "", after.BaseSHA, "repository-rules", "detail", strings.Join(e.Problems, "; "))
+		if before.RulesRevision() != after.RulesRevision() {
+			log("repository rules blocked", 0, "", after.BaseSHA, "repository-rules", "detail", strings.Join(e.Problems, "; "))
+		}
 	case queue.RulesCleared:
-		log("repository rules cleared", 0, "", after.BaseSHA, "repository-rules")
+		if before.RulesRevision() != after.RulesRevision() {
+			log("repository rules cleared", 0, "", after.BaseSHA, "repository-rules")
+		}
 	case queue.Dequeued:
 		for _, old := range before.Entries {
 			removed := true

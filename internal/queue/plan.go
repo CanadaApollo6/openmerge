@@ -27,7 +27,7 @@ func DeferredByPause(cfg Config, s State, action Action, now time.Time) bool {
 	if s.PauseReason(cfg) == "" {
 		return false
 	}
-	unblocked := Apply(Apply(s, ResumeRequested{}), RulesCleared{})
+	unblocked := Apply(Apply(s, ResumeRequested{}), RulesCleared{Basis: s.rulesRevision})
 	return slices.ContainsFunc(Plan(cfg, unblocked, now), func(planned Action) bool {
 		return planned.Key() == action.Key()
 	})
@@ -172,6 +172,9 @@ func (s State) workBlocked() bool {
 // RulesProblems returns the independent repository rules block, if any.
 func (s State) RulesProblems() []string { return slices.Clone(s.rulesBlock.Problems) }
 
+// RulesRevision identifies the last applied rules observation, independently of other events.
+func (s State) RulesRevision() uint64 { return s.rulesRevision }
+
 // Block describes one active reason that prevents new work.
 type Block struct{ Reason, Detail string }
 
@@ -232,7 +235,7 @@ func (s State) pauseReport() ReportStatus {
 		}
 	}
 	if len(s.rulesBlock.Problems) > 0 {
-		return ReportStatus{PR: s.Entries[0].PR, HeadSHA: s.Entries[0].HeadSHA, Status: "paused", Reason: "repository-rules", Detail: strings.Join(s.rulesBlock.Problems, "; "), revision: s.rulesRevision, admission: s.Entries[0].AdmissionID}
+		return ReportStatus{PR: s.Entries[0].PR, HeadSHA: s.Entries[0].HeadSHA, Status: "paused", Reason: "repository-rules", Detail: strings.Join(s.rulesBlock.Problems, "; "), revision: s.rulesPauseRevision, admission: s.Entries[0].AdmissionID}
 	}
 	return ReportStatus{
 		PR: s.Entries[0].PR, HeadSHA: s.Entries[0].HeadSHA, Status: "paused", Reason: "build-failed", revision: s.buildRetry.revision, admission: s.Entries[0].AdmissionID,

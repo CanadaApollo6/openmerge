@@ -2,10 +2,12 @@
 package diagnostic
 
 import (
+	"log/slog"
 	"net/url"
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"unicode"
 )
 
@@ -13,26 +15,83 @@ var credentialPattern = regexp.MustCompile(`(?s:-----BEGIN [^-]+-----.*?(?:-----
 
 // Sanitize redacts credentials and bounds diagnostic text for logs, APIs and terminals.
 func Sanitize(value string, knownSecrets ...string) string {
-	value = credentialPattern.ReplaceAllString(value, "[REDACTED]")
+	value = normalize(value)
 	secrets := slices.Clone(knownSecrets)
 	// Replace longer credentials first so overlapping values cannot leave a suffix.
 	slices.SortFunc(secrets, func(a, b string) int { return len(b) - len(a) })
 	for _, secret := range secrets {
 		if secret != "" {
-			for _, encoded := range []string{secret, url.QueryEscape(secret), url.PathEscape(secret)} {
+			for _, encoded := range []string{normalize(secret), url.QueryEscape(secret), url.PathEscape(secret)} {
+				if encoded == "" {
+					continue
+				}
 				value = strings.ReplaceAll(value, encoded, "[REDACTED]")
 			}
 		}
 	}
+	value = credentialPattern.ReplaceAllString(value, "[REDACTED]")
+	runes := []rune(value)
+	if len(runes) > 1024 {
+		return string(runes[:1024]) + "…"
+	}
+	return string(runes)
+}
+
+func normalize(value string) string {
 	value = strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
 			return ' '
 		}
 		return r
 	}, value)
-	runes := []rune(strings.Join(strings.Fields(value), " "))
-	if len(runes) > 1024 {
-		return string(runes[:1024]) + "…"
+	return strings.Join(strings.Fields(value), " ")
+}
+
+// Sanitizer shares process credentials across API and log boundaries, including
+// tokens learned after startup. Retained credentials also redact old diagnostics.
+type Sanitizer struct {
+	mu      sync.RWMutex
+	secrets []string
+}
+
+// NewSanitizer registers the credentials available at startup.
+func NewSanitizer(secrets ...string) *Sanitizer {
+	s := &Sanitizer{}
+	s.AddSecrets(secrets...)
+	return s
+}
+
+// AddSecrets registers credentials before their first use. A nil receiver is allowed.
+func (s *Sanitizer) AddSecrets(secrets ...string) {
+	if s == nil {
+		return
 	}
-	return string(runes)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, secret := range secrets {
+		if secret != "" && !slices.Contains(s.secrets, secret) {
+			s.secrets = append(s.secrets, secret)
+		}
+	}
+}
+
+// Sanitize uses all registered secrets; a nil receiver still redacts patterns.
+func (s *Sanitizer) Sanitize(value string) string {
+	if s == nil {
+		return Sanitize(value)
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return Sanitize(value, s.secrets...)
+}
+
+// LogAttr redacts messages, string attributes and error values in slog handlers.
+func (s *Sanitizer) LogAttr(_ []string, attr slog.Attr) slog.Attr {
+	attr.Value = attr.Value.Resolve()
+	if attr.Value.Kind() == slog.KindString {
+		attr.Value = slog.StringValue(s.Sanitize(attr.Value.String()))
+	} else if err, ok := attr.Value.Any().(error); ok {
+		attr.Value = slog.StringValue(s.Sanitize(err.Error()))
+	}
+	return attr
 }

@@ -7,9 +7,11 @@ import (
 	"io"
 	"net"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
@@ -62,7 +64,7 @@ func TestHTTPBodyLimitIncludingUnknownLength(t *testing.T) {
 				r.TransferEncoding = []string{"chunked"}
 			}
 			w := httptest.NewRecorder()
-			Handler(s, []store.QueueKey{key}, "").ServeHTTP(w, r)
+			Handler(s, []store.QueueKey{key}, "", nil).ServeHTTP(w, r)
 			if size == 4096 && w.Code != 200 || size > 4096 && (w.Code != 413 || len(s.keys) != 0 || !strings.Contains(w.Body.String(), `"error":"request-too-large"`)) {
 				t.Fatalf("size=%d unknown=%t: %d %s", size, unknownLength, w.Code, w.Body)
 			}
@@ -72,7 +74,7 @@ func TestHTTPBodyLimitIncludingUnknownLength(t *testing.T) {
 	r := httptest.NewRequest("GET", "/v1/queues", nil)
 	r.Body = io.NopCloser(brokenBody{})
 	w := httptest.NewRecorder()
-	Handler(s, []store.QueueKey{key}, "").ServeHTTP(w, r)
+	Handler(s, []store.QueueKey{key}, "", nil).ServeHTTP(w, r)
 	if w.Code != 400 || strings.Contains(w.Body.String(), "private-read-error") || len(s.keys) > 0 {
 		t.Fatalf("body error leaked or reached DB: %d %s", w.Code, w.Body)
 	}
@@ -90,7 +92,7 @@ func TestWhySummariesRedactDiagnosticsAndExposeEveryBlock(t *testing.T) {
 		queue.RulesBlocked{Problems: []string{detail}},
 	}
 	events = append(events, admission()...)
-	q, _, why := Project(journal(events...), 1, 20)
+	q, _, why := Project(journal(events...), 1, 20, nil)
 	if len(q.Blocks) != 3 || !q.Paused || len(why.Events) != 5 {
 		t.Fatalf("missing inherited evidence/blocks: %+v %+v", q, why)
 	}
@@ -108,9 +110,94 @@ func TestWhySummariesRedactDiagnosticsAndExposeEveryBlock(t *testing.T) {
 			t.Fatalf("unstable/unbounded event: %+v", event)
 		}
 	}
-	events = append(events, queue.RulesCleared{})
-	q, _, why = Project(journal(events...), 1, 20)
+	events = append(events, queue.RulesCleared{Basis: 1})
+	q, _, why = Project(journal(events...), 1, 20, nil)
 	if len(q.Blocks) != 2 || !strings.Contains(why.Summary, "action-poisoned") || !strings.Contains(why.Summary, "landing-not-on-base") || strings.Contains(why.Summary, "repository-rules") {
 		t.Fatalf("rules recovery hid or cleared another block: %+v %+v", q, why)
+	}
+}
+
+func TestStatusRedactsAllProcessSecrets(t *testing.T) {
+	const token = "opaque-api-secret"
+	sanitizer := diagnostic.NewSanitizer("opaque-webhook-secret", "opaque-private-key-line", "old-installation-secret")
+	source := &source{}
+	handler := Handler(source, []store.QueueKey{key}, token, sanitizer)
+	// A refresh after Handler construction must protect both new and old diagnostics.
+	sanitizer.AddSecrets("new-installation-secret")
+	for _, secret := range []string{token, "opaque-webhook-secret", "opaque-private-key-line", "old-installation-secret", "new-installation-secret", "Bearer\u00a0unregistered-secret", "Basic\u2003unregistered-secret"} {
+		t.Run(secret, func(t *testing.T) {
+			events := []queue.Event{
+				queue.PauseRequested{Reason: "operator", Detail: "repair " + secret},
+				queue.RulesBlocked{Problems: []string{"repair " + secret}},
+				queue.ActionPoisoned{Key: "invalid", Reason: "repair " + secret},
+			}
+			source.journals = []store.Journal{journal(append(events, admission()...)...)}
+			for _, path := range []string{"/v1/queues", "/v1/queues/owner/repo/main", "/v1/queues/owner/repo/main/prs/1"} {
+				r := httptest.NewRequest("GET", path, nil)
+				r.Header.Set("Authorization", "Bearer "+token)
+				w := httptest.NewRecorder()
+				handler.ServeHTTP(w, r)
+				if w.Code != 200 || strings.Contains(w.Body.String(), strings.Fields(secret)[len(strings.Fields(secret))-1]) || !strings.Contains(w.Body.String(), "[REDACTED]") {
+					t.Fatalf("unsafe status response %s: %d %s", path, w.Code, w.Body)
+				}
+				var response Response
+				if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+					t.Fatal(err)
+				}
+				queues := response.Queues
+				if response.Queue != nil {
+					queues = append(queues, *response.Queue)
+				}
+				for _, q := range queues {
+					if q.PauseDetail != "repair [REDACTED]" || len(q.Blocks) != 3 {
+						t.Fatalf("missing diagnostic/block: %+v", q)
+					}
+					for _, block := range q.Blocks {
+						if !strings.Contains(block.Detail, "repair [REDACTED]") {
+							t.Fatalf("unsafe block: %+v", block)
+						}
+					}
+				}
+				if response.Why != nil {
+					if !strings.Contains(response.Why.Summary, "[REDACTED]") {
+						t.Fatalf("unsafe explanation: %+v", response.Why)
+					}
+					for _, event := range response.Why.Events[:3] {
+						if !strings.Contains(event.Summary, "[REDACTED]") {
+							t.Fatalf("unsafe event: %+v", event)
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestStatusKeepsRulesEvidenceWhenStaleEventsAreIgnored(t *testing.T) {
+	events := []queue.Event{
+		queue.RulesBlocked{Problems: []string{"initial"}},
+		queue.RulesBlocked{Problems: []string{"newer"}, Basis: 1},
+		queue.RulesCleared{Basis: 1},
+		queue.RulesBlocked{Problems: []string{"stale"}, Basis: 1},
+	}
+	for _, afterAdmission := range []bool{false, true} {
+		sequence := append(slices.Clone(events), admission()...)
+		if afterAdmission {
+			sequence = append(admission(), events...)
+		}
+		q, _, why := Project(journal(sequence...), 1, 20, nil)
+		if q.PauseDetail != "newer" || !strings.Contains(why.Summary, "newer") {
+			t.Fatalf("stale rules event changed explanation: %+v %+v", q, why)
+		}
+		found := false
+		for _, event := range why.Events {
+			if event.Type == "rules_cleared" || strings.Contains(event.Summary, "stale") {
+				t.Fatalf("ignored event reported as applied: %+v", event)
+			}
+			found = found || event.Summary == "Repository rules block: newer"
+		}
+		if !found {
+			t.Fatal("lost active rules block evidence")
+		}
 	}
 }

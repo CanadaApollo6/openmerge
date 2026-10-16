@@ -94,7 +94,7 @@ type Event struct {
 // Project replays committed history. A positive PR selects its explanation;
 // queue lists retain only admitted entries. Stale result events never invent
 // outcomes: terminal states require an admission to actually leave the fold.
-func Project(j store.Journal, pr, limit int) (Queue, *Entry, *Why) {
+func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Queue, *Entry, *Why) {
 	s := j.Seed
 	known := make(map[int]Entry)
 	heads := make(map[int]string)
@@ -155,7 +155,7 @@ func Project(j store.Journal, pr, limit int) (Queue, *Entry, *Why) {
 		}
 		if pr > 0 && (inheritedPause[record.ID] || affects(record.Event, pr, before, s, tested)) {
 			kind, _, _ := queue.EncodeEvent(record.Event)
-			events = append(events, Event{record.ID, kind, record.RecordedAt.UTC(), diagnostic.Sanitize(eventSummary(record.Event))})
+			events = append(events, Event{record.ID, kind, record.RecordedAt.UTC(), sanitizer.Sanitize(eventSummary(record.Event))})
 			if len(events) > limit {
 				events = slices.Delete(events, 0, 1)
 			}
@@ -167,9 +167,9 @@ func Project(j store.Journal, pr, limit int) (Queue, *Entry, *Why) {
 		known[n] = e
 	}
 	q := Queue{Installation: j.Key.Installation, Repository: j.Key.Repository, Base: j.Key.BaseBranch, Lane: j.Key.Lane,
-		Watermark: watermark, BaseSHA: s.BaseSHA, PauseReason: diagnostic.Sanitize(s.PauseReason(queue.Config{})), PauseDetail: diagnostic.Sanitize(s.PauseDetail(queue.Config{})), Blocks: make([]Block, 0), Entries: make([]Entry, 0, len(s.Entries))}
+		Watermark: watermark, BaseSHA: s.BaseSHA, PauseReason: sanitizer.Sanitize(s.PauseReason(queue.Config{})), PauseDetail: sanitizer.Sanitize(s.PauseDetail(queue.Config{})), Blocks: make([]Block, 0), Entries: make([]Entry, 0, len(s.Entries))}
 	for _, block := range s.Blocks(queue.Config{}) {
-		q.Blocks = append(q.Blocks, Block{diagnostic.Sanitize(block.Reason), diagnostic.Sanitize(block.Detail)})
+		q.Blocks = append(q.Blocks, Block{sanitizer.Sanitize(block.Reason), sanitizer.Sanitize(block.Detail)})
 	}
 	q.Paused = len(q.Blocks) > 0
 	if b := s.Active; b != nil {
@@ -270,6 +270,7 @@ func explanationContext(j store.Journal, pr int) (map[string]bool, map[int64]boo
 	}
 	s := j.Seed
 	for _, record := range j.Events {
+		before := s
 		s = queue.Apply(s, record.Event)
 		switch record.Event.(type) {
 		case queue.PauseRequested:
@@ -282,9 +283,13 @@ func explanationContext(j store.Journal, pr int) (map[string]bool, map[int64]boo
 				causes["poison"] = record.ID
 			}
 		case queue.RulesBlocked:
-			causes["rules"] = record.ID
+			if s.RulesRevision() != before.RulesRevision() {
+				causes["rules"] = record.ID
+			}
 		case queue.RulesCleared:
-			delete(causes, "rules")
+			if s.RulesRevision() != before.RulesRevision() {
+				delete(causes, "rules")
+			}
 		}
 		if inBatch(s, pr) && s.Active.TestedSHA != "" {
 			result[s.Active.TestedSHA] = true
@@ -357,6 +362,8 @@ func affects(event queue.Event, pr int, before, after queue.State, tested map[st
 		return n == pr
 	}
 	switch e := event.(type) {
+	case queue.RulesBlocked, queue.RulesCleared:
+		return before.RulesRevision() != after.RulesRevision() && (entryIn(before, pr) || entryIn(after, pr))
 	case queue.BatchStarted:
 		return slices.ContainsFunc(e.PRs, func(p queue.BatchPR) bool { return p.PR == pr })
 	case queue.ChecksCompleted:
