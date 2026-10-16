@@ -47,6 +47,22 @@ Every matching `ChecksRefreshed` advances the refresh count, giving the next act
 
 ## Consequences
 
+Post-deployment additive observation types also include `pr_metadata_observed`
+(the non-CI attributes used alongside `pr_observed` eligibility, revoking a
+testing member's cached merge-policy success until a fresh evaluation) and
+`fence_initialized` (deferred initial fence observation after a startup rules or
+permission block). The latter only fills an absent token; it cannot replace a
+legacy immutable seed or any later fence. Repository rules are tracked per source
+(`rulesets`, `classic_protection`, `permissions`) by `rules_source_blocked` and
+`rules_source_cleared`, each carrying its source and a per-source `basis`: a
+failing read always applies, a clear needs the source's current revision, and one
+source never blocks or clears another. Stored legacy `rules_blocked` and
+`rules_cleared` events fold into the `rulesets` source unchanged.
+`head_cleanup_requested` records cleanup intent at landing time, so replaying
+older `landed` events schedules no head-branch deletion. All have wire-v1 golden
+fixtures.
+Previously deployed event/action types and their fixtures are unchanged.
+
 - Self-hosting stays at one binary plus one database. Backups, high availability, and observability reuse standard Postgres tooling.
 - Missed webhooks degrade latency, not correctness: the reconciler catches up.
 - Debugging becomes replay. A bug report can ship the relevant event range, and a test can reproduce the exact decision.

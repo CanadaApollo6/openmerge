@@ -89,6 +89,12 @@ The batch method is empty until construction completes. Empty strings mean no
 reason/SHA/method is recorded, not an omitted field. `admitted_at` is the queue
 request's recorded admission time, not the time of the HTTP read.
 
+When rules sources have been observed, `rules_sources` lists objects with
+`source` (`rulesets`, `classic_protection`, or `permissions`), `problems` (an array),
+and `revision` (the source's current observation revision). Cleared sources have
+an empty problems array. Each source recovers independently; a read error retains
+only that source's previous state. Stored legacy rules events appear as `rulesets`.
+
 ENTRY status values are `queued`, `building`, `testing`, `landing`,
 `dequeue-pending`, `paused`, `merged`, `dequeued`, `closed`, `blocked`, and
 `not-queued`. `reason` is the pause or pending/terminal dequeue reason where

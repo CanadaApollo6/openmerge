@@ -123,6 +123,19 @@ func (f *apiFixture) prJSON(pr *gh.PullRequest) map[string]any {
 		}
 	}
 	o["updated_at"] = pr.GetUpdatedAt().Format(time.RFC3339)
+	if pr.Mergeable != nil {
+		o["mergeable"] = pr.GetMergeable()
+	}
+	if pr.ChangedFiles != nil {
+		o["changed_files"] = pr.GetChangedFiles()
+	}
+	if pr.Labels != nil {
+		labels := []map[string]any{}
+		for _, label := range pr.Labels {
+			labels = append(labels, map[string]any{"name": label.GetName()})
+		}
+		o["labels"] = labels
+	}
 	return o
 }
 func (f *apiFixture) runJSON(run *gh.CheckRun) map[string]any {
@@ -268,6 +281,10 @@ func (f *apiFixture) handle(w http.ResponseWriter, r *http.Request) {
 		number, _ = strconv.Atoi(parts[1])
 	}
 	switch {
+	case strings.HasPrefix(path, "branches/") && strings.HasSuffix(path, "/protection"):
+		f.apiError(w, 404, "Branch not protected")
+	case len(parts) == 3 && parts[0] == "pulls" && parts[2] == "files":
+		f.json(w, []any{})
 	case path == "pulls" && r.Method == "GET":
 		if r.URL.Query().Get("state") != "open" {
 			f.t.Error("PR reconciliation must request open PRs")

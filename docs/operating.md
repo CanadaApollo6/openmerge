@@ -127,24 +127,35 @@ Serve reads the repository's actual default branch, lists **all pages** of
 repository and inherited rulesets, and fetches each detail at startup. It repeats
 this every ten minutes (`--rules-interval` / `OPENMERGE_RULES_INTERVAL`), at the
 next worker cycle. Reads share the driver's conditional cache and quota budget.
-Only a successful read with definite problems sets a durable `repository-rules`
-block. A read failure (including network, 5xx, quota/rate limit or authentication
-errors) logs WARN and preserves the previous state: healthy queues continue,
-and an existing rules block stays blocked. Failed reads retry after one minute,
+The same cycle checks classic protection on the base and its exact
+`openmerge/fence/<base>` ref, plus the granted permissions from the installation
+token response. Each source (`rulesets`, `classic_protection`, `permissions`)
+owns its block and revision. Definite findings block even when another part of
+that source's read fails; partial reads retain its previous findings too. A
+complete passing inspection clears only that source's block. An unreadable
+classic protection endpoint cannot veto ruleset or permission recovery.
+A read failure (including network, 5xx, quota/rate limit or authentication errors)
+logs WARN and preserves only that source's previous state: healthy queues continue,
+and an existing block for that source stays blocked. Failed reads retry after one minute,
 then two, four, and at most five minutes, capped by `--rules-interval` if shorter.
 The worker wakes for that deadline even if its normal poll interval is longer;
 the driver's shared quota cooldown can defer the read further.
 
-Rules blocks appear in the API, PR check, journal and logs. Identical successful
-results do not append duplicate events. A later passing check appends
-`RulesCleared` and removes only the rules block; generic pauses, action poison,
+Rules blocks appear in the API, PR check, journal and logs. Every definite
+failure advances its source's revision, including unchanged problems, so an older
+passing read cannot clear a newer confirmed failure for that source. Passing
+checks on healthy sources append nothing. A later complete passing check appends
+`RulesSourceCleared` with that source's current basis; generic pauses, action poison,
 build failures and `landing-not-on-base` remain independent. An operator
 `@openmerge refresh` cannot clear a known rules block. All active reasons are
-shown by status/API. Blocks still permit `ResolveLanding`: a push already in
+shown by status/API, including `rules_sources` with per-source problems and revisions.
+Blocks still permit `ResolveLanding`: a push already in
 flight must settle truthfully through its fence.
 
-The new `rules_blocked` and `rules_cleared` events extend wire v1. Existing event
-types and their replay behavior are unchanged. A legacy `PauseRequested` with
+The new `rules_source_blocked` and `rules_source_cleared` events extend wire v1.
+Stored `rules_blocked` and `rules_cleared` events retain their payloads and basis
+semantics and fold into the `rulesets` source. Existing event/action fixtures
+remain unchanged. A legacy `PauseRequested` with
 reason `repository-rules` remains a generic pause on replay; after repairing its
 cause, a writer must clear it with `@openmerge refresh`. A passing rules check
 never emits a generic resume during upgrades.
@@ -167,9 +178,34 @@ ownership or base/queue push permission when bypass actors are hidden.
 Run `openmerge setup rulesets` with the separate repository-admin token before
 deployment and after policy changes to audit full bypass ownership. That command
 continues to fail closed on hidden lists; never give its admin token to serve.
-Classic branch protection and validation of installed App permission grants are
-still operator responsibilities and follow-ups. Ruleset checks are periodic
-observations, not an atomic policy lease; do not weaken fence ownership while
+Classic protection reads use the installation token, never the setup admin
+token. GitHub requires [Administration read](https://docs.github.com/en/rest/branches/branch-protection#get-branch-protection)
+for this endpoint. The manifest does not request it; without that grant, the
+read can be unavailable. Only a 404 explicitly saying `Branch not protected`
+establishes no classic protection. Generic 403/404 responses log WARN and keep
+state. Continue the manual protection audit whenever these reads are unavailable.
+
+Visible classic required PR reviews without an App bypass, required status
+checks, signed commits, locks, or push restrictions excluding the App are
+reported as problems. Linear history blocks `merge` mode on the base; squash,
+rebase, and the single-parent fence are compatible. Method-dependent validation
+is repeated after base configuration loads or changes. Both base and fence
+updates are fast-forwards from their leased tips, so disallowing force pushes
+does not block these operations; `--force-with-lease` supplies compare-and-swap.
+Classic status requirements are conservatively rejected in favor of an App-bypass
+ruleset and explicit `merge_when` CI, rather than assuming GitHub will accept the push.
+
+Installed permissions are compared to the [required set](../internal/forge/github/README.md#setup-and-ruleset-validation).
+Missing `contents: write` or `workflows: write` logs ERROR and blocks through
+`RulesBlocked`; other missing grants log WARN. Diagnostics name each permission,
+required access, and actual access. Grants refresh with the token (about 55
+minutes), or after restarting serve. A new blocked queue defers fence creation
+and records `fence_initialized` after recovery; this additive wire-v1 event only
+fills an absent token and never replaces a recorded fence. Changed PR condition
+inputs use the new `pr_metadata_observed` event. Both have golden fixtures;
+existing event/action types and fixtures are unchanged.
+
+Protection checks are periodic observations, not an atomic policy lease; do not weaken fence ownership while
 OpenMerge is running. Runtime validation does not modify repository policy.
 
 ## Upgrade or restart

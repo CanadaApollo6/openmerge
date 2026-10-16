@@ -2,53 +2,87 @@ package serve
 
 import (
 	"context"
+	"slices"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 )
 
 func (s *Server) repositoryRules(ctx context.Context, w *worker) error {
-	if w.CheckRules == nil || time.Now().Before(w.rulesNextCheck) {
+	if w.CheckRules == nil && w.CheckProtection == nil && w.CheckPermissions == nil || time.Now().Before(w.rulesNextCheck) {
 		return nil
 	}
 	state, _, err := s.store.Load(ctx, w.id)
 	if err != nil {
 		return err
 	}
-	readCtx, cancel := context.WithTimeout(ctx, s.options.ActionTimeout)
-	problems, warnings, err := w.CheckRules(readCtx)
-	cancel()
-	if ctx.Err() != nil {
-		return ctx.Err()
+	type ruleCheck struct {
+		source queue.RulesSource
+		read   func(context.Context) ([]string, []string, error)
 	}
-	for _, warning := range warnings {
-		s.options.Logger.Warn("repository rules", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "diagnostic", warning)
+	checks := []ruleCheck{
+		{queue.Rulesets, w.CheckRules},
+		{queue.Permissions, w.CheckPermissions},
 	}
-	if err != nil {
-		w.rulesFailures++
-		delay := min(time.Minute*time.Duration(1<<min(w.rulesFailures-1, 3)), 5*time.Minute, s.options.RulesInterval)
-		w.rulesNextCheck = time.Now().Add(delay)
-		s.options.Logger.Warn("repository rules read failed; keeping previous state", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "error", err, "retry_in", delay)
-		return nil
+	if w.CheckProtection != nil {
+		checks = append(checks, ruleCheck{queue.ClassicProtection, func(ctx context.Context) ([]string, []string, error) {
+			return w.CheckProtection(ctx, forge.MergeMethod(w.cfg.MergeMethod))
+		}})
 	}
-	// Every failing read is recorded, even when the problems are unchanged, so it
-	// advances the rules revision and invalidates any older read still in flight:
-	// a stale pass can then never clear a block that a newer read confirmed. A
-	// passing read is recorded only when it clears a block; a stale failing read can
-	// at worst block a healthy queue until the next check, which fails safe.
-	var event queue.Event
-	switch {
-	case len(problems) > 0:
-		event = queue.RulesBlocked{Problems: problems, Basis: state.RulesRevision()}
-	case len(state.RulesProblems()) > 0:
-		event = queue.RulesCleared{Basis: state.RulesRevision()}
+	var events []queue.Event
+	failed := false
+	for _, check := range checks {
+		if check.read == nil {
+			continue
+		}
+		readCtx, cancel := context.WithTimeout(ctx, s.options.ActionTimeout)
+		problems, warnings, readErr := check.read(readCtx)
+		cancel()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		for _, warning := range warnings {
+			s.options.Logger.Warn("repository rules", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "source", check.source, "diagnostic", warning)
+		}
+		previous := state.RulesSourceProblems(check.source)
+		if readErr != nil {
+			failed = true
+			s.options.Logger.Warn("repository rules read failed; keeping previous state for source", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "source", check.source, "error", readErr)
+			if len(problems) == 0 {
+				continue
+			}
+			// Partial reads can add definite blocks but cannot remove any of this
+			// source's previous findings. Other sources remain independent.
+			problems = append(slices.Clone(problems), previous...)
+			slices.Sort(problems)
+			problems = slices.Compact(problems)
+		}
+		basis := state.RulesSourceRevision(check.source)
+		switch {
+		case len(problems) > 0:
+			for _, problem := range problems {
+				s.options.Logger.Error("repository rules block landing", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "source", check.source, "diagnostic", problem)
+			}
+			// Every definite failure invalidates older in-flight passes, even if
+			// unchanged or based on a stale revision. Clears require this basis.
+			events = append(events, queue.RulesSourceBlocked{Source: check.source, Problems: problems, Basis: basis})
+		case len(previous) > 0:
+			events = append(events, queue.RulesSourceCleared{Source: check.source, Basis: basis})
+		}
 	}
-	if event != nil {
-		if _, err := s.store.Append(ctx, w.id, []queue.Event{event}, ""); err != nil {
+	if len(events) > 0 {
+		if _, err := s.store.Append(ctx, w.id, events, ""); err != nil {
 			return err
 		}
 	}
-	w.rulesFailures = 0
-	w.rulesNextCheck = time.Now().Add(s.options.RulesInterval)
+	if failed {
+		w.rulesFailures++
+		delay := min(time.Minute*time.Duration(1<<min(w.rulesFailures-1, 3)), 5*time.Minute, s.options.RulesInterval)
+		w.rulesNextCheck = time.Now().Add(delay)
+	} else {
+		w.rulesFailures = 0
+		w.rulesNextCheck = time.Now().Add(s.options.RulesInterval)
+	}
 	return nil
 }

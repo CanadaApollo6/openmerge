@@ -15,6 +15,16 @@ func Apply(s State, e Event) State {
 	s = cloneState(s)
 	s.revision++
 	switch e := e.(type) {
+	case FenceInitialized:
+		if s.Fence == "" && e.Validate() == nil {
+			s.Fence = e.Token
+		}
+	case PRMetadataObserved:
+		// Fold the invalidation here, where the active phase is serialized with
+		// the observation. A pre-append phase read could race TestRefBuilt.
+		if s.Active != nil && slices.ContainsFunc(s.Active.PRs, func(pin BatchPR) bool { return pin.PR == e.PR }) {
+			s.refreshChecks()
+		}
 	case PRObserved:
 		s.observations[e.PR] = e
 		if entry := s.entry(e.PR); entry != nil {
@@ -55,23 +65,20 @@ func Apply(s State, e Event) State {
 			s.rebuildBatch()
 		}
 	case RefreshRequested:
-		if s.Active != nil && s.Active.Phase == Testing {
-			s.Active.checksPassed, s.Active.needsRefresh = false, true
-			s.Active.checksGeneration++
-		}
+		s.refreshChecks()
 	case PauseRequested:
 		s.pause, s.pauseRevision = e, s.revision
 	case RulesBlocked:
-		// A failing read is always evidence, even if another read finished first:
-		// applying it can only block, which fails safe until the next check.
-		s.rulesBlock = RulesBlocked{Problems: slices.Clone(e.Problems), Basis: e.Basis}
-		s.rulesRevision++
-		s.rulesPauseRevision = s.revision
+		s.blockRulesSource(Rulesets, e.Problems)
 	case RulesCleared:
-		// A pass clears only if no rules event was applied since its read began.
-		if e.Basis == s.rulesRevision {
-			s.rulesBlock = RulesBlocked{}
-			s.rulesRevision++
+		s.clearRulesSource(Rulesets, e.Basis)
+	case RulesSourceBlocked:
+		if e.Validate() == nil {
+			s.blockRulesSource(e.Source, e.Problems)
+		}
+	case RulesSourceCleared:
+		if e.Validate() == nil {
+			s.clearRulesSource(e.Source, e.Basis)
 		}
 	case ResumeRequested:
 		s.pause = PauseRequested{}
@@ -204,8 +211,22 @@ func Apply(s State, e Event) State {
 	return s
 }
 
+func (s *State) refreshChecks() {
+	if s.Active != nil && s.Active.Phase == Testing {
+		s.Active.checksPassed, s.Active.needsRefresh = false, true
+		s.Active.checksGeneration++
+	}
+}
+
 func cloneState(s State) State {
-	s.rulesBlock.Problems = slices.Clone(s.rulesBlock.Problems)
+	s.rulesSources = maps.Clone(s.rulesSources)
+	if s.rulesSources == nil {
+		s.rulesSources = make(map[RulesSource]rulesSourceState)
+	}
+	for source, current := range s.rulesSources {
+		current.problems = slices.Clone(current.problems)
+		s.rulesSources[source] = current
+	}
 	s.Entries = slices.Clone(s.Entries)
 	s.pending = slices.Clone(s.pending)
 	for i := range s.pending {

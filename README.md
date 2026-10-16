@@ -6,7 +6,7 @@
 
 Agents now open pull requests faster than CI and humans can land them. The merge path — queuing, batching, speculative testing, flaky-test handling, and the rules around them — has become the bottleneck, and the best tools for it are closed, paywalled, or tied to a single forge. OpenMerge brings the ideas that Mergify popularized to everyone, under the Apache 2.0 license.
 
-> **Status: pre-alpha.** Phase 1 is in progress: the planner, Postgres store, GitHub App driver, and polling server are in place. Read-only API/CLI, runtime ruleset validation and a Compose quickstart are available. Classic branch protection checks, installed App permission validation, and label/file conditions remain Phase 1 follow-ups. See the [roadmap](ROADMAP.md).
+> **Status: pre-alpha.** Phase 1 is in progress: the planner, Postgres store, GitHub App driver, polling server, read-only API/CLI, and Compose quickstart are available. All core conditions have runtime observations, with classic protection and installed App grant checks alongside ruleset validation. JSON Schema, fast-forward mode, and the real GitHub exit test remain. See the [roadmap](ROADMAP.md).
 
 ## What it will do
 
@@ -129,8 +129,11 @@ it. Do not substitute a broader bypass that breaks App-only fence ownership.
 
 Review classic branch protection separately in **Settings → Branches**, including
 wildcard rules for queue/fence refs: this command validates rulesets only.
-`serve` validates visible rulesets at startup and periodically; run
+`serve` validates visible rulesets and reads classic protection at startup and periodically; run
 `setup rulesets` first to audit the full bypass lists with an admin token.
+Classic protection reads need installation Administration read; unreadable
+protection produces WARN and retains only its own previous block state. The default App
+manifest does not request Administration. Audit it manually when unreadable.
 
 ## GitHub integration details
 
@@ -196,10 +199,14 @@ Bearer authentication uses `OPENMERGE_API_TOKEN` or
 `OPENMERGE_API_TOKEN_FILE` and is required for any non-loopback bind. See
 [API v1 and CLI](docs/api.md) for the JSON contract, PR event explanations, token handling and stable exit codes.
 
-Startup and every ten minutes (`--rules-interval`) validate repository and
-inherited rulesets with the App installation. Definite problems from a
-successful read block new work as `repository-rules`; a later passing check clears only that rules block.
-Read failures log WARN, retain the previous state, and retry after one minute
+Startup and every ten minutes (`--rules-interval`) validate repository/inherited
+rulesets, classic protection on the base and its fence, and the installation
+token's actual permission grants. Missing `contents: write` or `workflows: write`
+logs ERROR and blocks new work as `repository-rules`, before initial fence
+creation. Other missing required grants log WARN with the exact permission.
+Definite policy problems also block. Rulesets, classic protection, and permissions
+track independent blocks and revisions; each passing source clears only its own block.
+Read failures log WARN, retain that source’s previous state, and retry after one minute
 with exponential backoff capped at five minutes (or the configured rules interval
 if shorter). Other pauses and action poison remain independent.
 Hidden bypass lists produce WARN logs and require the separate admin-token setup
@@ -288,12 +295,19 @@ Loading also rejects conditions that pass with missing or failed checks.
 Pending or missing check alternatives keep an OR condition pending until the
 whole condition passes or is definitely false.
 
-The current driver supplies conditions on `base`, `draft`, `author`,
-`approved-reviews-by`, and checks. Configurations referencing `head`, `title`,
-`label`, `files`, or `conflict` pause with an explicit diagnostic until those
-metadata reads are implemented. Phase 1 remains in progress. Classic branch
-protection checks, installed App permission validation, and the remaining metadata conditions (including labels
-and files) are follow-ups. Operators must grant the App protected-base bypass and exclusive, nondeletable `openmerge/fence/*`
+The driver supplies all core conditions: `base`, `label`, `author`,
+`#approved-reviews-by`, `check-success/failure/pending`, `files`, `draft`, and
+`conflict`, plus `head` and `title`. Missing observations remain unknown even
+under negation. File lists are fetched only when a condition uses `files`. Renames include both
+old and new paths; lists are paginated and capped at 1,000 distinct paths. Larger PRs
+leave every `files` predicate unknown, including counts and exclusions.
+Uncomputed mergeability is unknown and retried on polls. See the
+[condition reference](internal/config/README.md#conditions).
+
+Phase 1 still needs JSON Schema publication, fast-forward mode, and the real
+GitHub test-organization exit test. The Mergify importer is
+planned for Phase 5; the native grammar already accepts the core attribute names.
+Operators must grant the App protected-base bypass and exclusive, nondeletable `openmerge/fence/*`
 ownership as described in the [forge contract](docs/forge-driver-contract.md#the-fence).
 
 ## Contributing

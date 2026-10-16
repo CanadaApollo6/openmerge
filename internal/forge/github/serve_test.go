@@ -133,7 +133,7 @@ func TestServeCommentToLanding(t *testing.T) {
 	}
 	committer, err := f.driver.Committer(t.Context())
 	must(t, err)
-	git, err := gitops.New(t.Context(), gitops.Config{WorkDir: t.TempDir(), Remote: func(context.Context, forge.RepoRef) (string, gitops.Auth, error) { return remote, gitops.Auth{}, nil }, HeadRef: HeadRef, PullRequest: f.driver.PullRequest, CommitAuthors: f.driver.CommitAuthors, Committer: committer})
+	git, err := gitops.New(t.Context(), gitops.Config{WorkDir: t.TempDir(), Remote: func(context.Context, forge.RepoRef) (string, gitops.Auth, error) { return remote, gitops.Auth{}, nil }, HeadRef: HeadRef, PullRequest: f.driver.PullRequestMetadata, CommitAuthors: f.driver.CommitAuthors, Committer: committer})
 	must(t, err)
 	initial, err := git.EnsureFence(t.Context(), testRepo, "openmerge/fence/main")
 	must(t, err)

@@ -52,9 +52,10 @@ type App struct {
 }
 
 type tokenEntry struct {
-	mu      sync.Mutex
-	token   string
-	expires time.Time
+	mu          sync.Mutex
+	token       string
+	expires     time.Time
+	permissions map[string]string
 }
 
 // New loads a PKCS#1 or PKCS#8 RSA PEM private key without exposing it in errors.
@@ -175,6 +176,11 @@ func (a *App) token(ctx context.Context, id int64) (string, error) {
 		return "", errors.New("github returned an empty or short-lived installation token")
 	}
 	entry.token, entry.expires = token.GetToken(), token.GetExpiresAt().Time
+	p := token.GetPermissions()
+	entry.permissions = map[string]string{
+		"contents": p.GetContents(), "workflows": p.GetWorkflows(), "pull_requests": p.GetPullRequests(),
+		"checks": p.GetChecks(), "statuses": p.GetStatuses(), "issues": p.GetIssues(), "metadata": p.GetMetadata(),
+	}
 	return entry.token, nil
 }
 

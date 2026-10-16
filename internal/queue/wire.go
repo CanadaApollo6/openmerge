@@ -83,6 +83,17 @@ type wireRulesCleared struct {
 	Basis uint64 `json:"basis"`
 }
 
+type wireRulesSourceBlocked struct {
+	Source   RulesSource `json:"source"`
+	Problems []string    `json:"problems"`
+	Basis    uint64      `json:"basis"`
+}
+
+type wireRulesSourceCleared struct {
+	Source RulesSource `json:"source"`
+	Basis  uint64      `json:"basis"`
+}
+
 type wireBatchStarted struct {
 	BatchID string        `json:"batch_id"`
 	BaseSHA string        `json:"base_sha"`
@@ -335,6 +346,13 @@ func decodeBatchPRs(prs []wireBatchPR) []BatchPR {
 // EncodeEvent returns the stable type discriminator and versioned JSON.
 func EncodeEvent(value Event) (string, []byte, error) {
 	switch v := value.(type) {
+	case FenceInitialized:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("fence_initialized", wireFenceInitialized(v))
+	case PRMetadataObserved:
+		return encodeWire("pr_metadata_observed", wirePRMetadataObserved(v))
 	case PRObserved:
 		return encodeWire("pr_observed", wirePRObserved(v))
 	case BaseMoved:
@@ -376,6 +394,16 @@ func EncodeEvent(value Event) (string, []byte, error) {
 			return "", nil, err
 		}
 		return encodeWire("rules_cleared", wireRulesCleared(v))
+	case RulesSourceBlocked:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("rules_source_blocked", wireRulesSourceBlocked(v))
+	case RulesSourceCleared:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("rules_source_cleared", wireRulesSourceCleared(v))
 	case BatchStarted:
 		if err := v.Validate(); err != nil {
 			return "", nil, err
@@ -419,6 +447,17 @@ func DecodeEvent(payload []byte) (Event, error) {
 		return nil, err
 	}
 	switch envelope.Type {
+	case "fence_initialized":
+		v, err := readWireData[wireFenceInitialized](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := FenceInitialized(v)
+		return event, event.Validate()
+	case "pr_metadata_observed":
+		return decodeWireData(envelope.Data, func(v wirePRMetadataObserved) Event {
+			return PRMetadataObserved(v)
+		})
 	case "pr_observed":
 		return decodeWireData(envelope.Data, func(v wirePRObserved) Event {
 			return PRObserved(v)
@@ -495,6 +534,26 @@ func DecodeEvent(payload []byte) (Event, error) {
 			return nil, err
 		}
 		event := RulesCleared(v)
+		if err := event.Validate(); err != nil {
+			return nil, err
+		}
+		return event, nil
+	case "rules_source_blocked":
+		v, err := readWireData[wireRulesSourceBlocked](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := RulesSourceBlocked(v)
+		if err := event.Validate(); err != nil {
+			return nil, err
+		}
+		return event, nil
+	case "rules_source_cleared":
+		v, err := readWireData[wireRulesSourceCleared](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := RulesSourceCleared(v)
 		if err := event.Validate(); err != nil {
 			return nil, err
 		}

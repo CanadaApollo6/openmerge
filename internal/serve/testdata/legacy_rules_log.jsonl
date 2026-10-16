@@ -1,0 +1,4 @@
+{"version":1,"type":"rules_blocked","data":{"problems":["old fence problem"],"basis":0}}
+{"version":1,"type":"rules_cleared","data":{"basis":1}}
+{"version":1,"type":"rules_blocked","data":{"problems":["repair ruleset"],"basis":2}}
+{"version":1,"type":"rules_cleared","data":{"basis":2}}

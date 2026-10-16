@@ -218,7 +218,7 @@ func TestConditionalGETConcurrentReaders(t *testing.T) {
 		})
 	}
 	wg.Wait()
-	if f.permissionCalls["writer"] != 21 || f.notModified != 60 {
+	if f.permissionCalls["writer"] != 21 || f.notModified != 101 {
 		t.Fatalf("permission checks were skipped: permission calls=%d 304s=%d", f.permissionCalls["writer"], f.notModified)
 	}
 }

@@ -154,7 +154,7 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger, saniti
 		return err
 	}
 	committer := serveCommitter(ctx, o, logger, driver)
-	git, err := gitops.New(ctx, gitops.Config{WorkDir: o.cache, Remote: driver.Remote, HeadRef: github.HeadRef, PullRequest: driver.PullRequest, CommitAuthors: driver.CommitAuthors, Committer: committer})
+	git, err := gitops.New(ctx, gitops.Config{WorkDir: o.cache, Remote: driver.Remote, HeadRef: github.HeadRef, PullRequest: driver.PullRequestMetadata, CommitAuthors: driver.CommitAuthors, Committer: committer})
 	if err != nil {
 		return err
 	}
@@ -165,6 +165,8 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger, saniti
 		keys = append(keys, key)
 		targets = append(targets, serve.Target{Key: key, Driver: driver, Git: git, BotLogin: driver.BotLogin(), CheckRules: func(ctx context.Context) ([]string, []string, error) {
 			return driver.ValidateRepositoryRules(ctx, forge.RepoRef{Path: repo}, o.base)
+		}, CheckPermissions: driver.ValidateInstallationPermissions, CheckProtection: func(ctx context.Context, method forge.MergeMethod) ([]string, []string, error) {
+			return driver.ValidateClassicProtection(ctx, forge.RepoRef{Path: repo}, o.base, method)
 		}})
 	}
 	service, err := serve.New(ctx, db, targets, serve.Options{PollInterval: o.poll, RulesInterval: o.rulesInterval, Concurrency: o.concurrency, Logger: logger, BackoffUntil: driver.BackoffUntil, DisableDeleteHeadBranch: !o.deleteHeadBranch})

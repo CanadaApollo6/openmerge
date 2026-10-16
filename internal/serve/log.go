@@ -56,6 +56,14 @@ func (s *Server) logEvent(ctx context.Context, w *worker, before, after queue.St
 		if before.RulesRevision() != after.RulesRevision() {
 			log("repository rules cleared", 0, "", after.BaseSHA, "repository-rules")
 		}
+	case queue.RulesSourceBlocked:
+		if before.RulesSourceRevision(e.Source) != after.RulesSourceRevision(e.Source) {
+			log("repository rules blocked", 0, "", after.BaseSHA, "repository-rules", "source", e.Source, "detail", strings.Join(e.Problems, "; "))
+		}
+	case queue.RulesSourceCleared:
+		if before.RulesSourceRevision(e.Source) != after.RulesSourceRevision(e.Source) {
+			log("repository rules cleared", 0, "", after.BaseSHA, "repository-rules", "source", e.Source)
+		}
 	case queue.Dequeued:
 		for _, old := range before.Entries {
 			removed := true

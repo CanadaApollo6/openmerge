@@ -158,8 +158,7 @@ func (c *setupAPI) responseError(res *http.Response) error {
 	// strings and fragments, which can contain echoed request secrets.
 	if u, err := url.Parse(body.DocumentationURL); err == nil && u.Scheme == "https" && u.Host == "docs.github.com" && u.User == nil {
 		u.RawQuery, u.Fragment = "", ""
-		// The host is fixed above; only the path is untrusted free text. This
-		// avoids treating docs.github.com itself as a base64url JWT triple.
+		// The host is fixed above; only the path is untrusted free text.
 		if c.sanitize(u.Path) == u.Path && c.sanitize(u.EscapedPath()) == u.EscapedPath() {
 			diagnostic.documentationURL = u.String()
 		}

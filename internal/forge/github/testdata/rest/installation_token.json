@@ -4,7 +4,11 @@
   "permissions": {
     "checks": "write",
     "contents": "write",
-    "pull_requests": "write"
+    "pull_requests": "write",
+    "workflows": "write",
+    "statuses": "read",
+    "issues": "read",
+    "metadata": "read"
   },
   "repository_selection": "selected"
 }

@@ -84,6 +84,25 @@ Phase 1 attributes are:
 - Lists of strings: `label`, `approved-reviews-by`, `files`, `check-success`,
   `check-failure`, `check-pending`.
 
+Serve observes every attribute above. Labels come from the PR; `files` contains
+the changed filenames (including deleted paths, and the new path of a rename).
+File reads follow pagination and are capped at 1,000 paths. Above that cap the
+entire attribute is unknown: a matching path in a partial list cannot make a
+condition pass or fail, including `!=`, `#files`, `-`, and `not`. An observed
+empty list is known. `conflict` is the inverse of GitHub's nullable `mergeable`;
+null stays unknown and is retried even when the PR's update timestamp is unchanged.
+Head/base changes while reading file pages reject the mixed observation and retry.
+Current-head approvals supply `approved-reviews-by`. Entry checks read the PR
+head; merge checks read the exact tested batch SHA. `head` is GitHub's
+`owner:branch` label, falling back to the branch ref.
+
+Changed non-CI inputs are journaled as `pr_metadata_observed` alongside
+`pr_observed` eligibility/trust, using an additive wire-v1 event with a golden
+fixture. Existing persisted event/action formats are unchanged. Core attribute
+names and condition syntax remain Mergify-compatible; there is no importer yet.
+Changing an active member's metadata revokes cached merge permission and
+rechecks its merge conditions, even if the tested SHA's CI is still green.
+
 Strings and lists accept `=`, `!=`, `~=`, and `glob`. Lists match any element;
 `!=` succeeds only when no element equals the value, including on empty lists.
 `#` takes list length and accepts integer comparisons `=`, `!=`, `<`, `<=`, `>`,

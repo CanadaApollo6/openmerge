@@ -49,6 +49,16 @@ never appear in driver errors or logs.
   `AuthorEmail` is `<id>+<login>@users.noreply.github.com`. The git transport
   reads this metadata again at test-ref build time, checking the pinned head;
   title/body edits after building never change the commit that lands.
+- Labels are read from the PR. Serve requests changed files only when an entry
+  or merge condition uses `files`; commit metadata reads omit them. Renames
+  include both the previous and current filename. Distinct paths follow all pages
+  up to the shared 1,000-path cap; larger PRs expose no partial list and `FilesKnown` is
+  false. A declared count above the cap skips file reads. Within the cap,
+  count mismatches and changes to head/base or condition/trust metadata reject the
+  observation for retry. `ConflictKnown` is false while GitHub's `mergeable` is
+  null; otherwise conflict is its inverse. Known empty labels/files differ from
+  absent data. Serve journals these inputs with eligibility and retries
+  unresolved mergeability on polls even without a changed `updated_at`.
 - `ListComments` paginates issue-thread comments, including humans and bots.
   GitHub's `since` filters updated-at; the driver additionally filters created-at
   so an edit of an old command cannot become a new command. The server overlaps
@@ -111,8 +121,8 @@ The package also provides the manifest callback and ruleset setup behind
 
 - Installation/repository discovery and reconciliation, token eviction after
   suspension/deletion.
-- Installed App permission validation and classic branch protection checks. PR labels/files and
-  installation repository enumeration remain follow-ups.
+- Installation repository enumeration remains a follow-up. Core PR condition
+  observations, permission validation, and runtime classic protection reads are implemented.
 
 ## Setup and ruleset validation
 
@@ -135,7 +145,10 @@ No comment-posting path requires Issues: write.
 
 `CanWrite` does not read organization membership or administration endpoints.
 See GitHub's [collaborator permission requirements](https://docs.github.com/en/rest/collaborators/collaborators#get-repository-permissions-for-a-user).
-Startup validation of installed permissions remains server work.
+`ValidateInstallationPermissions` compares the installation token response's
+granted `permissions` against this table, including on token renewal. Missing
+Contents/Workflows write becomes an ERROR and a durable rules block in serve;
+other missing grants are WARN diagnostics. An omitted permission is not a grant.
 
 `SetupRules` uses a separate admin `GITHUB_TOKEN`, with Administration read for
 inspection and write for apply. It reads all pages and detailed rulesets,
@@ -156,7 +169,21 @@ are conservative diagnostics. Classic branch protection is outside this function
 `serve` calls it through `ValidateRepositoryRules` at startup and on a slow
 interval, using the installation client. Hidden bypass lists are explicitly
 assumed App-only for structural validation and produce WARN logs; visible
-problems pause as `repository-rules` until a later passing read. See the
+problems pause as `repository-rules` until a later passing read.
+`ValidateClassicProtection` independently reads the exact base and fence refs,
+including required signatures (a separate read if omitted from the full
+response). Required reviews without this App's bypass, required statuses,
+signatures, locks, incompatible linear history, and push restrictions excluding
+the App are problems. App identity uses the App ID, never the installation ID.
+Linear history is compatible with squash/rebase and the fence's single-parent
+updates. Force pushes are unnecessary for the current leased fast-forward
+updates. Only the explicit `Branch not protected` 404 is a pass; generic 403/404
+is unreadable. This endpoint needs installation Administration read, which is
+not requested by the default manifest. Serve logs WARN and preserves only the
+classic-protection source’s existing state when unreadable. Definite problems
+from partially readable protection still block. Ruleset and permission sources
+can independently block or recover, with their own revisions.
+See the
 [runtime rules policy](../../../docs/operating.md#runtime-repository-rules),
 including GitHub's permission documentation. Do not treat ruleset-only validation
 as proof about classic protection or hidden bypass ownership.
@@ -229,23 +256,25 @@ never cached or retried. Permission entries are evicted by the same LRU.
 
 For a PR with one current-head fork approver and at most one page per endpoint:
 
-- Full PR refresh: **3 GETs** (PR, reviews, permission). Same-repository PRs use
-  **2** (PR and reviews); a closed PR uses **1**.
+- Full PR refresh: **5 GETs** (PR, files, pinned-head/base recheck, reviews,
+  permission). Same-repository PRs use **4**; a closed PR uses **1**. Declared
+  file counts above the cap skip the files/recheck pair.
 - Active tested-SHA check refresh: **3 GETs** (check runs, suites, statuses),
   shareable by all PRs in the same batch. Landing preflight repeats these **3 GETs**
   before recording an attempt.
 - Polling-only command discovery: **1 GET** for a page of comments. Each command
   authorization adds a fresh `CanWrite` GET.
 
-Thus one open fork PR plus one active CI SHA uses **6 GETs/cycle**, or **7** with
-comment discovery. A warm unchanged cycle still makes 6/7 requests, typically
-all validated 304s and **zero primary-limit charges**. If every response changes,
-it makes 6/7 normal 200s and consumes 6/7 primary-limit requests; partial changes
-charge only the pages returning 200. These are estimates, verified by
+Thus one open fork PR plus one active CI SHA uses **8 GETs/cycle**, or **9** with
+comment discovery. A warm unchanged cycle still makes 8/9 requests, typically
+all validated 304s and **zero primary-limit charges**. The in-cycle PR recheck
+can itself return 304 even on the first cycle. Changed responses charge only
+the pages returning 200. These are estimates, verified by
 `TestPollCycleRequestBudget`, conditional on endpoint ETag support. Add one per
 extra page, one per additional relevant approver, and repository-level
 `ListOpenPullRequests` pages shared across PRs. Initial App lookup and token
-exchange are separate costs; tokens renew roughly every 55 minutes. Keep a stable comment
+exchange and periodic repository protection/rules reads are separate costs;
+tokens renew roughly every 55 minutes. Keep a stable comment
 cursor until progress, then overlap it and dedupe IDs; changing the query URL
 misses the prior ETag. The driver does not implement the server's polling loop.
 
