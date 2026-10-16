@@ -103,6 +103,47 @@ func (f *Forge) SetRef(repo forge.RepoRef, ref, sha string) error {
 	return nil
 }
 
+// PushRef creates a branch or fast-forwards it, like an ordinary git push.
+func (f *Forge) PushRef(repo forge.RepoRef, ref, sha string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r := f.repo(repo)
+	if _, ok := r.commits[sha]; !ok {
+		return fmt.Errorf("unknown commit %q", sha)
+	}
+	if current, exists := r.refs[ref]; exists && !r.isAncestor(current, sha) {
+		return forge.ErrLeaseRejected
+	}
+	r.refs[ref] = sha
+	return nil
+}
+
+// CommitCount counts commits reachable from head but not base, like rev-list.
+func (f *Forge) CommitCount(repo forge.RepoRef, base, head string) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r := f.repo(repo)
+	for _, sha := range []string{base, head} {
+		if _, ok := r.commits[sha]; !ok {
+			return 0, fmt.Errorf("unknown commit %q", sha)
+		}
+	}
+	count := 0
+	pending := []string{head}
+	seen := make(map[string]bool)
+	for len(pending) > 0 {
+		sha := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		if seen[sha] || r.isAncestor(sha, base) {
+			continue
+		}
+		seen[sha] = true
+		count++
+		pending = append(pending, r.commits[sha].Parents...)
+	}
+	return count, nil
+}
+
 // Commit returns a copy of a commit, including its content and all parents.
 func (f *Forge) Commit(repo forge.RepoRef, sha string) (Commit, error) {
 	f.mu.Lock()

@@ -2,10 +2,12 @@
 package forgetest
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -13,10 +15,12 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
 
-// Env supplies an isolated repository with a base root, a fence root and at least
-// two PRs adding unique files, and a separate pair adding conflicting file content.
-// Observations includes a fork PR and a same-repository PR with exact approvals.
-// Hooks perform sandbox setup and inspect API write effects;
+// Env supplies a sandbox with at least two PRs based on BaseSHA adding unique
+// files, and a separate pair adding conflicting file content. Observations are
+// independent fixture expectations, including approved fork and same-repository
+// PRs and both writable and non-writable reviewers.
+// The factory creates Base with NewBase before opening PRs targeted at it.
+// Hooks perform ordinary sandbox setup and inspect API write effects;
 // they may close over t to report setup/inspection failures on real forges.
 type Env struct {
 	Driver                            forge.Driver
@@ -24,13 +28,32 @@ type Env struct {
 	Repo                              forge.RepoRef
 	Base, FenceRef, BaseSHA, FenceSHA string
 	PRs                               []forge.BuildPR
-	SetRef                            func(ref, sha string) error
-	ConflictingPRs                    []forge.BuildPR
-	Observations                      []forge.PullRequest
-	ContainsPR                        func(sha string, pr int) bool
-	AddForeignComment                 func(pr int, body string)
-	SetCheckRuns                      func(sha string, checks []forge.CheckRun)
-	Statuses                          func(pr int) map[string]forge.Status
+	// NewBase creates a fresh, uniquely named branch at BaseSHA by ordinary push.
+	// Run derives its fence name from that branch and initializes it with EnsureFence.
+	// The factory must clean up its branches, fence refs, test refs, and PRs.
+	NewBase func(t *testing.T) string
+	// PushBase permits only ordinary fast-forward updates.
+	PushBase func(base, sha string) error
+	// CanRollbackBase enables the optional rollback scenario. RollbackBase must
+	// only rewrite fresh unprotected test branches, never a protected base/fence.
+	CanRollbackBase bool
+	RollbackBase    func(base, sha string) error
+	// PushPR adds one commit with a unique file and returns the new actual head.
+	PushPR func(pr int) string
+	// CommitCount inspects the git graph, equivalent to git rev-list --count base..head.
+	CommitCount func(base, head string) int
+	// ApprovalsResetOnPush requires old approvals to disappear after a push.
+	// Otherwise approvals must remain attributed to the previously approved SHA.
+	ApprovalsResetOnPush bool
+	ConflictingPRs       []forge.BuildPR
+	Observations         []forge.PullRequest
+	ContainsPR           func(sha string, pr int) bool
+	AddForeignComment    func(pr int, body string)
+	// AddCheckRun creates a new run; the forge assigns its ID, even for reruns.
+	AddCheckRun func(sha, name string, state forge.CheckState)
+	// Statuses returns current OpenMerge checks by head, preserving duplicates.
+	// Superseded commit-status history is excluded, as by a forge's combined-status API.
+	Statuses func(pr int) map[string][]forge.Status
 	// Comments returns only driver-authored comments, keyed by marker.
 	Comments func(pr int) map[string]string
 	// Landed verifies native merged evidence or exactly one closing commit link.
@@ -42,27 +65,51 @@ type Env struct {
 func Run(t *testing.T, newEnv func(t *testing.T) Env) {
 	t.Helper()
 	factory := newEnv
+	ctx := context.Background()
+	withFence := func(t *testing.T, e Env) Env {
+		t.Helper()
+		e.FenceRef = "openmerge/fence/" + e.Base
+		var err error
+		e.FenceSHA, err = e.Git.EnsureFence(ctx, e.Repo, e.FenceRef)
+		must(t, err)
+		return e
+	}
 	newEnv = func(t *testing.T) Env {
 		t.Helper()
 		e := factory(t)
 		if len(e.PRs) < 2 || len(e.ConflictingPRs) != 2 {
 			t.Fatal("contract needs unique-file PRs and a conflicting pair")
 		}
-		fork, sameRepo := false, false
+		fork, sameRepo, writer, reader := false, false, false, false
 		for _, pr := range e.Observations {
 			fork = fork || !pr.HeadInBaseRepo && len(pr.Approvals) > 0
 			sameRepo = sameRepo || pr.HeadInBaseRepo && len(pr.Approvals) > 0
+			for _, approval := range pr.Approvals {
+				if approval.User == "" || approval.SHA != pr.HeadSHA {
+					t.Fatal("fixture approvals must identify a reviewer and the approved head")
+				}
+				writer = writer || approval.CanWrite
+				reader = reader || !approval.CanWrite
+			}
 		}
-		if !fork || !sameRepo {
-			t.Fatal("contract needs fork and same-repo observations")
+		if !fork || !sameRepo || !writer || !reader {
+			t.Fatal("contract needs approved fork and same-repo PRs, with writable and non-writable reviewers")
 		}
-		return e
+		if e.Base == "" {
+			t.Fatal("factory must create a fresh base before opening PRs")
+		}
+		base, err := e.Git.ReadRef(ctx, e.Repo, e.Base)
+		must(t, err)
+		if base != e.BaseSHA {
+			t.Fatal("fresh base does not point to BaseSHA")
+		}
+		return withFence(t, e)
 	}
-	ctx := context.Background()
+	testRef := func(e Env, name string) string { return "openmerge/queue/" + e.Base + "/" + name }
 	build := func(t *testing.T, e Env, base, batch string, prs ...forge.BuildPR) string {
 		t.Helper()
 		sha, err := e.Git.BuildTestRef(ctx, e.Repo, forge.BuildRequest{
-			Ref: "openmerge/queue/contract/" + batch, BaseSHA: base,
+			Ref: testRef(e, batch), BaseSHA: base,
 			PRs: prs, Method: forge.Merge, BatchID: batch,
 		})
 		must(t, err)
@@ -89,23 +136,27 @@ func Run(t *testing.T, newEnv func(t *testing.T) Env) {
 	}
 	t.Run("read-fence", func(t *testing.T) {
 		e := newEnv(t)
-		must(t, e.SetRef(e.FenceRef, e.BaseSHA))
+		// Read an ordinary commit without replacing an existing fence.
+		e.FenceRef = e.NewBase(t)
 		readFence(t, e, e.BaseSHA, "")
-		if _, _, _, err := e.Git.ReadFence(ctx, e.Repo, "openmerge/fence/missing"); err == nil {
+		if _, _, _, err := e.Git.ReadFence(ctx, e.Repo, testRef(e, "missing")); err == nil {
 			t.Fatal("ReadFence accepted a missing ref")
 		}
 	})
 	for _, moved := range []string{"matching", "forward", "rollback", "fence"} {
 		t.Run("land/"+moved, func(t *testing.T) {
 			e := newEnv(t)
+			if moved == "rollback" && !e.CanRollbackBase {
+				t.Skip("sandbox does not allow rollbacks of fresh unprotected test branches")
+			}
 			current := build(t, e, e.BaseSHA, "current", e.PRs[0])
-			must(t, e.SetRef(e.Base, current))
+			must(t, e.PushBase(e.Base, current))
 			tested := build(t, e, current, "tested", e.PRs[1])
 			switch moved {
 			case "forward":
-				must(t, e.SetRef(e.Base, build(t, e, current, "forward", e.PRs[1])))
+				must(t, e.PushBase(e.Base, build(t, e, current, "forward", e.PRs[1])))
 			case "rollback":
-				must(t, e.SetRef(e.Base, e.BaseSHA))
+				must(t, e.RollbackBase(e.Base, e.BaseSHA))
 			case "fence":
 				_, err := e.Git.AdvanceFence(ctx, e.Repo, e.FenceRef, e.FenceSHA, "other-worker")
 				must(t, err)
@@ -162,7 +213,7 @@ func Run(t *testing.T, newEnv func(t *testing.T) Env) {
 	for _, method := range []forge.MergeMethod{forge.Merge, forge.Squash, forge.Rebase} {
 		t.Run("unique-test-commit/"+string(method), func(t *testing.T) {
 			e := newEnv(t)
-			req := forge.BuildRequest{Ref: "openmerge/queue/contract/unique", BaseSHA: e.BaseSHA, PRs: e.PRs, Method: method, BatchID: "first"}
+			req := forge.BuildRequest{Ref: testRef(e, "unique"), BaseSHA: e.BaseSHA, PRs: e.PRs, Method: method, BatchID: "first"}
 			first, err := e.Git.BuildTestRef(ctx, e.Repo, req)
 			must(t, err)
 			ancestor, err := e.Git.IsAncestor(ctx, e.Repo, e.BaseSHA, first)
@@ -188,10 +239,91 @@ func Run(t *testing.T, newEnv func(t *testing.T) Env) {
 			}
 		})
 	}
+	for _, method := range []forge.MergeMethod{forge.Merge, forge.Squash, forge.Rebase} {
+		for _, mismatch := range []string{"other-pr-head", "stale-head"} {
+			t.Run("build-rejects-head/"+string(method)+"/"+mismatch, func(t *testing.T) {
+				e := newEnv(t)
+				req := forge.BuildRequest{Ref: testRef(e, "head-validation"), BaseSHA: e.BaseSHA, PRs: slices.Clone(e.PRs), Method: method, BatchID: "valid"}
+				before, err := e.Git.BuildTestRef(ctx, e.Repo, req)
+				must(t, err)
+				if mismatch == "stale-head" {
+					e.PushPR(req.PRs[1].Number)
+				} else {
+					req.PRs[1].HeadSHA = req.PRs[0].HeadSHA
+				}
+				req.BatchID = "invalid"
+				if _, err := e.Git.BuildTestRef(ctx, e.Repo, req); err == nil {
+					t.Fatal("BuildTestRef accepted a head that is not the PR's actual head")
+				}
+				if read(t, e, req.Ref) != before {
+					t.Fatal("rejected build moved the test ref")
+				}
+			})
+			t.Run("land-rejects-head/"+string(method)+"/"+mismatch, func(t *testing.T) {
+				e := newEnv(t)
+				tested, err := e.Git.BuildTestRef(ctx, e.Repo, forge.BuildRequest{Ref: testRef(e, "head-validation"), BaseSHA: e.BaseSHA, PRs: e.PRs, Method: method, BatchID: "valid"})
+				must(t, err)
+				prs := slices.Clone(e.PRs)
+				if mismatch == "stale-head" {
+					e.PushPR(prs[1].Number)
+				} else {
+					prs[1].HeadSHA = prs[0].HeadSHA
+				}
+				_, err = e.Git.Land(ctx, e.Repo, forge.LandRequest{Base: e.Base, ExpectedBaseSHA: e.BaseSHA, TestedSHA: tested, Fence: e.FenceRef, ExpectedFence: e.FenceSHA, NextFenceID: "land/invalid-head", PRs: prs})
+				if err == nil {
+					t.Fatal("Land accepted a head that is not the PR's actual head")
+				}
+				if read(t, e, e.Base) != e.BaseSHA || read(t, e, e.FenceRef) != e.FenceSHA {
+					t.Fatal("rejected Land moved a ref")
+				}
+				for _, pinned := range e.PRs {
+					pr, err := e.Driver.PullRequest(ctx, e.Repo, pinned.Number)
+					must(t, err)
+					if pr.Closed {
+						t.Fatal("rejected Land closed a PR")
+					}
+				}
+			})
+		}
+	}
+	t.Run("rebase-replays-each-commit", func(t *testing.T) {
+		e := newEnv(t)
+		prs := slices.Clone(e.PRs[:2])
+		want := 0
+		for i := range prs {
+			before := e.CommitCount(e.BaseSHA, prs[i].HeadSHA)
+			pushes := i + 1
+			for range pushes {
+				prs[i].HeadSHA = e.PushPR(prs[i].Number)
+			}
+			count := e.CommitCount(e.BaseSHA, prs[i].HeadSHA)
+			if before < 1 || count != before+pushes {
+				t.Fatalf("PushPR did not add %d distinct commits to PR %d", pushes, prs[i].Number)
+			}
+			want += count
+		}
+		tested, err := e.Git.BuildTestRef(ctx, e.Repo, forge.BuildRequest{Ref: testRef(e, "replay"), BaseSHA: e.BaseSHA, PRs: prs, Method: forge.Rebase, BatchID: "replay"})
+		must(t, err)
+		ancestor, err := e.Git.IsAncestor(ctx, e.Repo, e.BaseSHA, tested)
+		must(t, err)
+		if !ancestor || e.CommitCount(e.BaseSHA, tested) != want {
+			t.Fatalf("rebase did not replay all %d PR commits on the base", want)
+		}
+		for _, pr := range prs {
+			if !e.ContainsPR(tested, pr.Number) {
+				t.Fatalf("rebase omitted PR %d content", pr.Number)
+			}
+			ancestor, err := e.Git.IsAncestor(ctx, e.Repo, pr.HeadSHA, tested)
+			must(t, err)
+			if ancestor {
+				t.Fatalf("rebase merged PR %d instead of replaying its commits", pr.Number)
+			}
+		}
+	})
 	t.Run("conflict", func(t *testing.T) {
 		e := newEnv(t)
 		_, err := e.Git.BuildTestRef(ctx, e.Repo, forge.BuildRequest{
-			Ref: "openmerge/queue/contract/conflict", BaseSHA: e.BaseSHA, PRs: e.ConflictingPRs, Method: forge.Merge, BatchID: "conflict",
+			Ref: testRef(e, "conflict"), BaseSHA: e.BaseSHA, PRs: e.ConflictingPRs, Method: forge.Merge, BatchID: "conflict",
 		})
 		if !errors.Is(err, forge.ErrConflict) {
 			t.Fatalf("BuildTestRef error = %v, want ErrConflict", err)
@@ -201,12 +333,12 @@ func Run(t *testing.T, newEnv func(t *testing.T) Env) {
 		e := newEnv(t)
 		build(t, e, e.BaseSHA, "delete", e.PRs[0])
 		for range 2 {
-			must(t, e.Driver.DeleteRef(ctx, e.Repo, "openmerge/queue/contract/delete"))
+			must(t, e.Driver.DeleteRef(ctx, e.Repo, testRef(e, "delete")))
 		}
-		if _, err := e.Git.ReadRef(ctx, e.Repo, "openmerge/queue/contract/delete"); err == nil {
+		if _, err := e.Git.ReadRef(ctx, e.Repo, testRef(e, "delete")); err == nil {
 			t.Fatal("deleted ref still exists")
 		}
-		must(t, e.Driver.DeleteRef(ctx, e.Repo, "never-existed"))
+		must(t, e.Driver.DeleteRef(ctx, e.Repo, testRef(e, "never-existed")))
 	})
 	t.Run("comment-retry", func(t *testing.T) {
 		e := newEnv(t)
@@ -227,42 +359,79 @@ func Run(t *testing.T, newEnv func(t *testing.T) Env) {
 		e := newEnv(t)
 		pr := e.PRs[0].Number
 		head := e.PRs[0].HeadSHA
-		otherHead := e.PRs[1].HeadSHA
 		first := forge.Status{State: forge.Queued}
 		last := forge.Status{State: forge.Blocked, Reason: "untrusted", Summary: "Approval required"}
 		must(t, e.Driver.ReportStatus(ctx, e.Repo, pr, head, first))
-		must(t, e.Driver.ReportStatus(ctx, e.Repo, pr, otherHead, first))
 		for range 2 {
 			must(t, e.Driver.ReportStatus(ctx, e.Repo, pr, head, last))
 		}
-		if got := e.Statuses(pr); !reflect.DeepEqual(got, map[string]forge.Status{head: last, otherHead: first}) {
-			t.Fatalf("statuses crossed commit boundaries: %v", got)
+		assertStatuses(t, e.Statuses(pr), map[string]forge.Status{head: last})
+		nextHead := e.PushPR(pr)
+		if nextHead == "" || nextHead == head {
+			t.Fatal("PushPR did not create a new head")
 		}
+		must(t, e.Driver.ReportStatus(ctx, e.Repo, pr, nextHead, first))
+		assertStatuses(t, e.Statuses(pr), map[string]forge.Status{head: last, nextHead: first})
+		otherHead := e.PRs[1].HeadSHA
 		must(t, e.Driver.ReportStatus(ctx, e.Repo, e.PRs[1].Number, otherHead, first))
-		if len(e.Statuses(pr)) != 2 || len(e.Statuses(e.PRs[1].Number)) != 1 {
-			t.Fatal("status upsert crossed PR boundaries")
-		}
+		assertStatuses(t, e.Statuses(pr), map[string]forge.Status{head: last, nextHead: first})
+		assertStatuses(t, e.Statuses(e.PRs[1].Number), map[string]forge.Status{otherHead: first})
 	})
 	t.Run("reads", func(t *testing.T) {
 		e := newEnv(t)
 		for _, want := range e.Observations {
 			pr, err := e.Driver.PullRequest(ctx, e.Repo, want.Number)
 			must(t, err)
-			if !reflect.DeepEqual(pr, want) {
-				t.Fatalf("PR observation = %+v, want open %v", pr, want)
-			}
+			assertPullRequest(t, pr, want)
 		}
-		want := []forge.CheckRun{{ID: 1, Name: "ci", State: forge.Failure}, {ID: 2, Name: "ci", State: forge.Pending}, {ID: 1, Name: "lint", State: forge.Success}}
-		e.SetCheckRuns(e.PRs[0].HeadSHA, want)
+		ci, lint := e.Base+"-ci", e.Base+"-lint"
+		e.AddCheckRun(e.PRs[0].HeadSHA, ci, forge.Failure)
+		e.AddCheckRun(e.PRs[0].HeadSHA, ci, forge.Pending)
+		e.AddCheckRun(e.PRs[0].HeadSHA, lint, forge.Success)
 		got, err := e.Driver.CheckRuns(ctx, e.Repo, e.PRs[0].HeadSHA)
 		must(t, err)
-		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("CheckRuns = %v, want %v", got, want)
+		var ciRuns, lintRuns []forge.CheckRun
+		for _, run := range got {
+			switch run.Name {
+			case ci:
+				ciRuns = append(ciRuns, run)
+			case lint:
+				lintRuns = append(lintRuns, run)
+			}
+		}
+		slices.SortFunc(ciRuns, func(a, b forge.CheckRun) int {
+			return cmp.Compare(a.ID, b.ID)
+		})
+		if len(ciRuns) != 2 || ciRuns[1].ID <= ciRuns[0].ID || ciRuns[0].State != forge.Failure || ciRuns[1].State != forge.Pending || len(lintRuns) != 1 || lintRuns[0].State != forge.Success {
+			t.Fatalf("CheckRuns lost rerun order or normalized states: %v", got)
+		}
+	})
+	t.Run("approvals-after-push", func(t *testing.T) {
+		e := newEnv(t)
+		for _, want := range e.Observations {
+			if want.Closed || len(want.Approvals) == 0 {
+				continue
+			}
+			before, err := e.Driver.PullRequest(ctx, e.Repo, want.Number)
+			must(t, err)
+			assertPullRequest(t, before, want)
+			nextHead := e.PushPR(want.Number)
+			if nextHead == "" || nextHead == want.HeadSHA {
+				t.Fatal("PushPR did not create a new head")
+			}
+			want.HeadSHA = nextHead
+			if e.ApprovalsResetOnPush {
+				want.Approvals = nil
+			}
+			after, err := e.Driver.PullRequest(ctx, e.Repo, want.Number)
+			must(t, err)
+			// Retained approvals must still name the old SHA and access rights.
+			assertPullRequest(t, after, want)
 		}
 	})
 	t.Run("ensure-fence", func(t *testing.T) {
 		e := newEnv(t)
-		ref := "openmerge/fence/bootstrap"
+		ref := "openmerge/fence/" + e.NewBase(t)
 		type result struct {
 			sha string
 			err error
@@ -282,7 +451,8 @@ func Run(t *testing.T, newEnv func(t *testing.T) Env) {
 				t.Fatal("concurrent bootstrap replaced the fence")
 			}
 		}
-		must(t, e.SetRef(ref, e.BaseSHA))
+		// Start with a separate existing ordinary ref; do not reset a fence.
+		ref = e.NewBase(t)
 		sha, err := e.Git.EnsureFence(ctx, e.Repo, ref)
 		must(t, err)
 		if sha != e.BaseSHA {
@@ -293,10 +463,13 @@ func Run(t *testing.T, newEnv func(t *testing.T) Env) {
 		e := newEnv(t)
 		tested := build(t, e, e.BaseSHA, "atomic", e.PRs[0])
 		for i := range 64 {
+			if i > 0 {
+				e.Base = e.NewBase(t)
+				e = withFence(t, e)
+			}
 			fence := read(t, e, e.FenceRef)
-			// Keep each iteration's base distinct from the target so partial updates
-			// are observable even after an earlier landing won.
-			must(t, e.SetRef(e.Base, e.BaseSHA))
+			// Each race starts on fresh refs, so partial updates remain observable
+			// without rolling back a base that a prior iteration already landed.
 			base := e.BaseSHA
 			id := fmt.Sprintf("atomic-%d", i)
 			type result struct {
@@ -358,7 +531,7 @@ func Run(t *testing.T, newEnv func(t *testing.T) Env) {
 	for _, method := range []forge.MergeMethod{forge.Squash, forge.Rebase} {
 		t.Run("mark-landed/"+string(method), func(t *testing.T) {
 			e := newEnv(t)
-			sha, err := e.Git.BuildTestRef(ctx, e.Repo, forge.BuildRequest{Ref: "openmerge/queue/contract/close", BaseSHA: e.BaseSHA, PRs: e.PRs, Method: method, BatchID: "close"})
+			sha, err := e.Git.BuildTestRef(ctx, e.Repo, forge.BuildRequest{Ref: testRef(e, "close"), BaseSHA: e.BaseSHA, PRs: e.PRs, Method: method, BatchID: "close"})
 			must(t, err)
 			_, err = e.Git.Land(ctx, e.Repo, forge.LandRequest{Base: e.Base, ExpectedBaseSHA: e.BaseSHA, TestedSHA: sha, Fence: e.FenceRef, ExpectedFence: e.FenceSHA, NextFenceID: "land/close", PRs: e.PRs})
 			must(t, err)
@@ -378,6 +551,39 @@ func Run(t *testing.T, newEnv func(t *testing.T) Env) {
 		})
 	}
 
+}
+
+func assertStatuses(t *testing.T, got map[string][]forge.Status, want map[string]forge.Status) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("status heads = %v, want %v", got, want)
+	}
+	for head, status := range want {
+		if len(got[head]) != 1 || got[head][0] != status {
+			t.Fatalf("head %s statuses = %v, want one latest status %+v", head, got[head], status)
+		}
+	}
+}
+
+func assertPullRequest(t *testing.T, got, want forge.PullRequest) {
+	t.Helper()
+	if got.Number != want.Number || got.HeadSHA != want.HeadSHA || got.HeadInBaseRepo != want.HeadInBaseRepo || got.Closed != want.Closed {
+		t.Fatalf("PR observation = %+v, want number %d head %s in-base-repo %v closed %v", got, want.Number, want.HeadSHA, want.HeadInBaseRepo, want.Closed)
+	}
+	type approval struct {
+		user, sha string
+		canWrite  bool
+	}
+	project := func(approvals []forge.Approval) map[approval]int {
+		counts := make(map[approval]int)
+		for _, a := range approvals {
+			counts[approval{a.User, a.SHA, a.CanWrite}]++
+		}
+		return counts
+	}
+	if !maps.Equal(project(got.Approvals), project(want.Approvals)) {
+		t.Fatalf("PR %d approvals = %+v, want user/SHA/can-write %+v", want.Number, got.Approvals, want.Approvals)
+	}
 }
 
 func must(t *testing.T, err error) {

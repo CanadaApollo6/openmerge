@@ -29,13 +29,34 @@ func fixture(t *testing.T) (*fake.Forge, forgetest.Env) {
 		must(t, err)
 		e.PRs = append(e.PRs, forge.BuildPR{Number: n, HeadSHA: pr.HeadSHA})
 	}
-	e.SetRef = func(ref, sha string) error { return f.SetRef(repo, ref, sha) }
-	for i, pr := range e.PRs {
-		if i < 2 {
-			must(t, f.Approve(repo, pr.Number, forge.Approval{User: "maintainer", SHA: pr.HeadSHA, CanWrite: i == 0}))
-		}
-		observed, err := f.PullRequest(context.Background(), repo, pr.Number)
+	var baseID int
+	e.NewBase = func(t *testing.T) string {
+		t.Helper()
+		baseID++
+		ref := fmt.Sprintf("contract-%d", baseID)
+		must(t, f.PushRef(repo, ref, base))
+		return ref
+	}
+	e.PushBase = func(ref, sha string) error { return f.PushRef(repo, ref, sha) }
+	e.CanRollbackBase = true
+	e.RollbackBase = func(ref, sha string) error { return f.SetRef(repo, ref, sha) }
+	e.PushPR = func(number int) string {
+		pr, err := f.PushPR(repo, number, "contract push")
 		must(t, err)
+		return pr.HeadSHA
+	}
+	e.CommitCount = func(base, head string) int {
+		count, err := f.CommitCount(repo, base, head)
+		must(t, err)
+		return count
+	}
+	for i, pr := range e.PRs {
+		observed := forge.PullRequest{Number: pr.Number, HeadSHA: pr.HeadSHA, HeadInBaseRepo: i != 0}
+		if i < 2 {
+			approval := forge.Approval{User: "maintainer", SHA: pr.HeadSHA, CanWrite: i == 0}
+			must(t, f.Approve(repo, pr.Number, approval))
+			observed.Approvals = []forge.Approval{approval}
+		}
 		e.Observations = append(e.Observations, observed)
 	}
 	for _, n := range []int{10, 11} {
@@ -45,8 +66,20 @@ func fixture(t *testing.T) (*fake.Forge, forgetest.Env) {
 	}
 	e.ContainsPR = func(sha string, pr int) bool { return f.ContainsPR(repo, sha, pr) }
 	e.AddForeignComment = func(pr int, body string) { f.AddComment(repo, pr, "human", body) }
-	e.SetCheckRuns = func(sha string, checks []forge.CheckRun) { f.SetCheckRuns(repo, sha, checks) }
-	e.Statuses = func(pr int) map[string]forge.Status { return f.Statuses(repo, pr) }
+	checks := make(map[string][]forge.CheckRun)
+	var checkID uint64 = 100
+	e.AddCheckRun = func(sha, name string, state forge.CheckState) {
+		checkID += 17
+		checks[sha] = append(checks[sha], forge.CheckRun{ID: checkID, Name: name, State: state})
+		f.SetCheckRuns(repo, sha, checks[sha])
+	}
+	e.Statuses = func(pr int) map[string][]forge.Status {
+		statuses := make(map[string][]forge.Status)
+		for head, status := range f.Statuses(repo, pr) {
+			statuses[head] = []forge.Status{status}
+		}
+		return statuses
+	}
 	e.Comments = func(pr int) map[string]string { return f.Comments(repo, pr) }
 	e.Landed = func(pr int, sha string) bool {
 		comments := f.Comments(repo, pr)
@@ -56,7 +89,21 @@ func fixture(t *testing.T) (*fake.Forge, forgetest.Env) {
 }
 
 func TestContract(t *testing.T) {
-	forgetest.Run(t, func(t *testing.T) forgetest.Env { _, e := fixture(t); return e })
+	forgetest.Run(t, func(t *testing.T) forgetest.Env {
+		_, e := fixture(t)
+		e.Base = e.NewBase(t)
+		return e
+	})
+}
+
+func TestContractWithoutRollbacks(t *testing.T) {
+	forgetest.Run(t, func(t *testing.T) forgetest.Env {
+		_, e := fixture(t)
+		e.Base = e.NewBase(t)
+		e.CanRollbackBase = false
+		e.RollbackBase = nil
+		return e
+	})
 }
 
 func TestReadFenceMessages(t *testing.T) {

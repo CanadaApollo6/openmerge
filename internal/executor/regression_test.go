@@ -62,6 +62,34 @@ func TestFenceDerivedFromBase(t *testing.T) {
 	}
 }
 
+func TestLandRequiresFenceSetup(t *testing.T) {
+	for _, token := range []string{"empty", "stale"} {
+		t.Run(token, func(t *testing.T) {
+			h := setup(t)
+			ctx := context.Background()
+			a := queue.Land{BatchID: "batch", ExpectedBaseSHA: h.base, TestedSHA: h.tested(t), PRs: []queue.BatchPR{{PR: 1, HeadSHA: h.prs[0].HeadSHA}}}
+			if token == "stale" {
+				a.FenceToken = h.fence
+			}
+			must(t, h.f.DeleteRef(ctx, repo, fenceRef))
+			var events []queue.Event
+			err := h.x.Execute(ctx, a, record(&events))
+			want := []queue.Event{queue.LandingStarted{BatchID: a.BatchID, AttemptID: "attempt", FenceToken: a.FenceToken, At: epoch}}
+			if err == nil || !reflect.DeepEqual(events, want) || h.read(t, "main") != h.base {
+				t.Fatalf("missing fence allowed a landing: %v, events %#v", err, events)
+			}
+			if _, err := h.f.ReadRef(ctx, repo, fenceRef); err == nil {
+				t.Fatal("Land bootstrapped the missing fence")
+			}
+			pr, err := h.f.PullRequest(ctx, repo, 1)
+			must(t, err)
+			if pr.Closed {
+				t.Fatal("failed landing closed the PR")
+			}
+		})
+	}
+}
+
 func TestResolveRequiresMatchingTestedSHA(t *testing.T) {
 	for _, tested := range []string{"", "wrong-tested-sha"} {
 		t.Run(tested, func(t *testing.T) {

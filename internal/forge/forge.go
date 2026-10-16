@@ -20,6 +20,10 @@ type PullRequest struct {
 }
 
 // Approval pins a reviewer's approval and write access to the reviewed SHA.
+// A driver that cannot attribute an approval to a commit may report it at the
+// current head only when the forge is configured to reset approvals on push.
+// Without that guarantee it must report no approvals (fail closed). Each driver
+// must document whether it uses commit attribution or requires approval resets.
 type Approval struct {
 	User     string
 	SHA      string
@@ -123,7 +127,9 @@ var ErrLeaseRejected = errors.New("git lease rejected")
 // LandRequest leases both refs in one atomic push. NextFenceID is land/<attempt>
 // where the attempt ID is random and durably recorded before this call. The new
 // fence's parent is ExpectedFence and its message is
-// "openmerge fence land/<attempt> tested=<TestedSHA>". PRs pin the landed heads.
+// "openmerge fence land/<attempt> tested=<TestedSHA>". PRs pin the landed heads;
+// Land must reject the request without changing refs if any pin differs from
+// that PR's actual head.
 type LandRequest struct {
 	Base, ExpectedBaseSHA, TestedSHA  string
 	Fence, ExpectedFence, NextFenceID string

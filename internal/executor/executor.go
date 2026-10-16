@@ -17,6 +17,9 @@ import (
 
 // Executor uses explicit dependencies so the same code runs with real or fake git.
 // Nil Now uses time.Now; nil NewID generates a cryptographically random attempt.
+// Callers must run Git.EnsureFence for "openmerge/fence/" + Base during setup
+// and record its token before executing queue actions. Execute never bootstraps
+// a missing fence during landing.
 type Executor struct {
 	Driver                forge.Driver
 	Git                   forge.Git

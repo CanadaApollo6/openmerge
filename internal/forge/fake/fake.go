@@ -38,6 +38,8 @@ type repository struct {
 
 // Forge implements both forge interfaces. Use New to construct it. All helpers
 // are synchronized too; callbacks run without the lock and may call the forge.
+// Approvals retain their exact reviewed SHA across pushes; no approval-reset
+// configuration is required.
 type Forge struct {
 	mu        sync.Mutex
 	repos     map[forge.RepoRef]*repository
@@ -230,13 +232,19 @@ func (f *Forge) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequ
 	if _, ok := r.commits[req.TestedSHA]; !ok {
 		return "", fmt.Errorf("unknown tested commit %q", req.TestedSHA)
 	}
+	for _, pinned := range req.PRs {
+		pr, ok := r.prs[pinned.Number]
+		if !ok || pr.HeadSHA != pinned.HeadSHA {
+			return "", fmt.Errorf("PR %d head %q does not match actual head %q", pinned.Number, pinned.HeadSHA, pr.HeadSHA)
+		}
+	}
 	next, err := r.fence(req.ExpectedFence, req.NextFenceID, req.TestedSHA)
 	if err != nil {
 		return "", err
 	}
 	r.refs[req.Base], r.refs[req.Fence] = req.TestedSHA, next
 	for _, pinned := range req.PRs {
-		if pr, ok := r.prs[pinned.Number]; ok && pr.HeadSHA == pinned.HeadSHA && r.isAncestor(pinned.HeadSHA, req.TestedSHA) {
+		if pr := r.prs[pinned.Number]; r.isAncestor(pinned.HeadSHA, req.TestedSHA) {
 			pr.Closed = true
 			r.prs[pr.Number] = pr
 		}

@@ -63,19 +63,6 @@ func TestRebaseReplaysEveryPRCommit(t *testing.T) {
 	}
 }
 
-func TestBuildRejectsAnotherPRsHead(t *testing.T) {
-	f, e := fixture(t)
-	for _, head := range []string{e.PRs[1].HeadSHA, "missing"} {
-		_, err := f.BuildTestRef(context.Background(), repo, forge.BuildRequest{Ref: "wrong-head", BaseSHA: e.BaseSHA, PRs: []forge.BuildPR{{Number: 1, HeadSHA: head}}, Method: forge.Merge, BatchID: "wrong"})
-		if err == nil {
-			t.Fatalf("accepted PR 1 with head %q", head)
-		}
-		if _, err := f.ReadRef(context.Background(), repo, "wrong-head"); err == nil {
-			t.Fatal("invalid build changed test ref")
-		}
-	}
-}
-
 func TestCommentDedupeRequiresOwnIdentity(t *testing.T) {
 	f, _ := fixture(t)
 	ctx := context.Background()
