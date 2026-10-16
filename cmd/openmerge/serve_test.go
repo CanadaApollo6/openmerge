@@ -29,15 +29,26 @@ func TestServeOptions(t *testing.T) {
 	t.Setenv("OPENMERGE_GITHUB_PRIVATE_KEY", "key.pem")
 	t.Setenv("OPENMERGE_REPOS", "owner/repo")
 	t.Setenv("OPENMERGE_POLL_INTERVAL", "30s")
+	t.Setenv("OPENMERGE_LOG_LEVEL", "debug")
+	t.Setenv("OPENMERGE_GIT_COMMITTER_NAME", "queue-app[bot]")
+	t.Setenv("OPENMERGE_GIT_COMMITTER_EMAIL", "99+queue-app[bot]@users.noreply.github.com")
 	options, err := parseServe([]string{"--poll-interval=5s"}, io.Discard)
-	if err != nil || options.poll != 5*time.Second || options.app != 42 {
+	if err != nil || options.poll != 5*time.Second || options.app != 42 || options.logLevel != "debug" || options.committerName != "queue-app[bot]" || options.committerEmail != "99+queue-app[bot]@users.noreply.github.com" {
 		t.Fatalf("options=%+v error=%v", options, err)
 	}
-	for _, args := range [][]string{{"--poll-interval=0"}, {"--concurrency=0"}, {"--webhook-listen=:8080"}, {"--repos=invalid"}, {"unexpected"}} {
+	for _, args := range [][]string{{"--log-level=bogus"}, {"--poll-interval=0"}, {"--concurrency=0"}, {"--webhook-listen=:8080"}, {"--repos=invalid"}, {"unexpected"}} {
 		if _, err := parseServe(args, io.Discard); err == nil {
 			t.Fatalf("accepted %v", args)
 		}
 	}
+	t.Setenv("OPENMERGE_LOG_LEVEL", "bogus")
+	if _, err := parseServe(nil, io.Discard); err == nil {
+		t.Fatal("malformed log level env accepted")
+	}
+	if options, err := parseServe([]string{"--log-level=warn"}, io.Discard); err != nil || options.logLevel != "warn" {
+		t.Fatalf("log flag did not override env: %+v %v", options, err)
+	}
+	t.Setenv("OPENMERGE_LOG_LEVEL", "info")
 	t.Setenv("OPENMERGE_POLL_INTERVAL", "broken")
 	if _, err := parseServe(nil, io.Discard); err == nil {
 		t.Fatal("malformed env accepted")

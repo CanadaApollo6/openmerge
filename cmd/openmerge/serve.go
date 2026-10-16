@@ -25,6 +25,7 @@ import (
 type serveOptions struct {
 	database, key, repos, base, cache, listen, secret string
 	app, installation                                 int64
+	logLevel, committerName, committerEmail           string
 	poll                                              time.Duration
 	concurrency                                       int
 }
@@ -46,6 +47,9 @@ func parseServe(args []string, output io.Writer) (serveOptions, error) {
 	flags.StringVar(&o.cache, "git-cache-dir", env("GIT_CACHE_DIR", ".openmerge-cache"), "process-exclusive git cache (OPENMERGE_GIT_CACHE_DIR)")
 	flags.StringVar(&o.listen, "webhook-listen", env("WEBHOOK_LISTEN", ""), "optional webhook address (OPENMERGE_WEBHOOK_LISTEN)")
 	flags.StringVar(&o.secret, "webhook-secret", env("WEBHOOK_SECRET", ""), "webhook HMAC secret (OPENMERGE_WEBHOOK_SECRET)")
+	flags.StringVar(&o.logLevel, "log-level", env("LOG_LEVEL", "info"), "debug, info, warn or error (OPENMERGE_LOG_LEVEL)")
+	flags.StringVar(&o.committerName, "git-committer-name", env("GIT_COMMITTER_NAME", ""), "commit identity name; defaults to App login (OPENMERGE_GIT_COMMITTER_NAME)")
+	flags.StringVar(&o.committerEmail, "git-committer-email", env("GIT_COMMITTER_EMAIL", ""), "commit identity email; set numeric App bot no-reply email (OPENMERGE_GIT_COMMITTER_EMAIL)")
 	// Parse typed environment values through flag.Value so malformed values fail
 	// startup, while an explicit flag can override the environment.
 	flags.Int64Var(&o.app, "github-app-id", 0, "App ID (OPENMERGE_GITHUB_APP_ID)")
@@ -63,6 +67,10 @@ func parseServe(args []string, output io.Writer) (serveOptions, error) {
 				return o, fmt.Errorf("OPENMERGE_%s: %w", entry.env, err)
 			}
 		}
+	}
+	var level slog.Level
+	if err := level.UnmarshalText([]byte(o.logLevel)); err != nil {
+		return o, fmt.Errorf("invalid log level: %w", err)
 	}
 	if flags.NArg() != 0 {
 		return o, errors.New("serve accepts flags only")
@@ -94,7 +102,9 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stderr, err)
 		return 2
 	}
-	logger := slog.New(slog.NewJSONHandler(stderr, nil))
+	var level slog.Level
+	_ = level.UnmarshalText([]byte(o.logLevel)) // validated by parseServe
+	logger := slog.New(slog.NewJSONHandler(stderr, &slog.HandlerOptions{Level: level}))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := startServe(ctx, o, logger); err != nil {
@@ -122,7 +132,14 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger) error 
 	if err != nil {
 		return err
 	}
-	git, err := gitops.New(ctx, gitops.Config{WorkDir: o.cache, Remote: driver.Remote, HeadRef: github.HeadRef})
+	committer := gitops.Identity{Name: driver.BotLogin(), Email: driver.BotLogin() + "@users.noreply.github.com"}
+	if o.committerName != "" {
+		committer.Name = o.committerName
+	}
+	if o.committerEmail != "" {
+		committer.Email = o.committerEmail
+	}
+	git, err := gitops.New(ctx, gitops.Config{WorkDir: o.cache, Remote: driver.Remote, HeadRef: github.HeadRef, PullRequest: driver.PullRequest, Committer: committer})
 	if err != nil {
 		return err
 	}

@@ -44,7 +44,11 @@ never appear in driver errors or logs.
   configure distinct names for independent producers.
 - `ListOpenPullRequests` paginates open PR summaries, filtered by target branch
   (or all branches for an empty filter), without loading approvals. `PullRequest`
-  includes `Base`, `Draft`, and `Author`.
+  includes `Base`, `Draft`, `Author`, numeric `AuthorID`, `Title`, `Body`, and
+  `HeadBranch` (GitHub's owner:branch label, falling back to the ref).
+  `AuthorEmail` is `<id>+<login>@users.noreply.github.com`. The git transport
+  reads this metadata again at test-ref build time, checking the pinned head;
+  title/body edits after building never change the commit that lands.
 - `ListComments` paginates issue-thread comments, including humans and bots.
   GitHub's `since` filters updated-at; the driver additionally filters created-at
   so an edit of an old command cannot become a new command. The server overlaps

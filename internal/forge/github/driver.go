@@ -62,6 +62,14 @@ func (d *Driver) PullRequest(ctx context.Context, repo forge.RepoRef, number int
 		return forge.PullRequest{}, safeError(err)
 	}
 	result := forge.PullRequest{Number: pr.GetNumber(), HeadSHA: pr.GetHead().GetSHA(), Base: pr.GetBase().GetRef(), Draft: pr.GetDraft(), Author: pr.GetUser().GetLogin(), Closed: pr.GetState() == "closed"}
+	result.Title, result.Body, result.HeadBranch = pr.GetTitle(), pr.GetBody(), pr.GetHead().GetLabel()
+	if result.HeadBranch == "" {
+		result.HeadBranch = pr.GetHead().GetRef()
+	}
+	result.AuthorID = pr.GetUser().GetID()
+	if result.AuthorID > 0 && result.Author != "" {
+		result.AuthorEmail = fmt.Sprintf("%d+%s@users.noreply.github.com", result.AuthorID, result.Author)
+	}
 	head, base := pr.GetHead().GetRepo(), pr.GetBase().GetRepo()
 	result.HeadInBaseRepo = head.GetID() > 0 && head.GetID() == base.GetID()
 	if result.Closed {

@@ -79,7 +79,7 @@ func newAPI(t *testing.T) *apiFixture {
 			headRepo = 51
 		}
 		sha := fmt.Sprintf("%040x", n)
-		f.prs[n] = &gh.PullRequest{Number: new(n), State: new("open"), User: &gh.User{Login: new("contributor")}, UpdatedAt: &gh.Timestamp{Time: epoch}, Head: &gh.PullRequestBranch{SHA: &sha, Repo: &gh.Repository{ID: &headRepo}}, Base: &gh.PullRequestBranch{Ref: new("main"), Repo: &gh.Repository{ID: new(int64(50))}}}
+		f.prs[n] = &gh.PullRequest{Number: new(n), State: new("open"), Title: new(fmt.Sprintf("Test change %d", n)), Body: new("Test PR body"), User: &gh.User{Login: new("contributor"), ID: new(int64(12))}, UpdatedAt: &gh.Timestamp{Time: epoch}, Head: &gh.PullRequestBranch{SHA: &sha, Label: new(fmt.Sprintf("contributor:pr-%d", n)), Repo: &gh.Repository{ID: &headRepo}}, Base: &gh.PullRequestBranch{Ref: new("main"), Repo: &gh.Repository{ID: new(int64(50))}}}
 		user := "writer"
 		if n == 2 {
 			user = "reader"
@@ -109,10 +109,11 @@ func (f *apiFixture) object(name string) map[string]any {
 func (f *apiFixture) prJSON(pr *gh.PullRequest) map[string]any {
 	o := f.object("pull_request")
 	o["number"], o["state"], o["draft"] = pr.GetNumber(), pr.GetState(), pr.GetDraft()
-	o["user"].(map[string]any)["login"] = pr.GetUser().GetLogin()
+	o["title"], o["body"] = pr.GetTitle(), pr.GetBody()
+	o["user"].(map[string]any)["login"], o["user"].(map[string]any)["id"] = pr.GetUser().GetLogin(), pr.GetUser().GetID()
 	for label, b := range map[string]*gh.PullRequestBranch{"head": pr.GetHead(), "base": pr.GetBase()} {
 		branch := o[label].(map[string]any)
-		branch["ref"], branch["sha"] = b.GetRef(), b.GetSHA()
+		branch["ref"], branch["sha"], branch["label"] = b.GetRef(), b.GetSHA(), b.GetLabel()
 		if b.GetRepo() == nil {
 			branch["repo"] = nil
 		} else {

@@ -171,7 +171,8 @@ bin/openmerge serve --repos CanadaApollo6/openmerge --base main \
 
 `--database-url`, `--github-app-id`, `--github-private-key`,
 `--github-installation-id`, `--repos`, `--base`, `--git-cache-dir`,
-`--poll-interval`, `--concurrency`, `--webhook-listen`, and `--webhook-secret`
+`--poll-interval`, `--concurrency`, `--webhook-listen`, `--webhook-secret`,
+`--log-level`, `--git-committer-name`, and `--git-committer-email`
 all have matching `OPENMERGE_` environment variables: uppercase the flag name
 and replace hyphens with underscores. Flags override environment variables.
 `--repos` is a comma-separated list owned by one installation; the base defaults
@@ -179,7 +180,9 @@ to `main`, polling to `60s`, concurrency to four queues, and the git cache to
 `.openmerge-cache`. Use a separate cache for each process. Logs are structured
 JSON on stderr. Startup applies migrations and ensures each base's fence;
 SIGINT/SIGTERM cancels bounded I/O and releases claims before closing Postgres.
-Run one server per installation during this Phase 1 rollout.
+Run one server per installation during this Phase 1 rollout. See the
+[operating guide](docs/operating.md) for a systemd user unit, environment file,
+committer attribution, logs, upgrades, and GitHub's Closed badge after squash/rebase.
 
 Polling requires no public URL. Optional webhooks use
 `--webhook-listen 127.0.0.1:8080 --webhook-secret "$OPENMERGE_WEBHOOK_SECRET"`

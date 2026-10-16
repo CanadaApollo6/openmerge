@@ -52,6 +52,22 @@ func TestValidateRules(t *testing.T) {
 		}, []RuleProblemCode{FenceUnprotected}},
 		// GitHub omits update parameters when fetch-and-merge is false (its default).
 		{"fence update parameters omitted", func(r []Ruleset) []Ruleset { r[1].Rules[1].Parameters = nil; return r }, nil},
+		{"fence update parameters null", func(r []Ruleset) []Ruleset {
+			r[1].Rules[1].Parameters = json.RawMessage(`null`)
+			return r
+		}, nil},
+		{"fence update parameters malformed JSON", func(r []Ruleset) []Ruleset {
+			r[1].Rules[1].Parameters = json.RawMessage(`{"update_allows_fetch_and_merge":`)
+			return r
+		}, []RuleProblemCode{FenceUnprotected}},
+		{"fence update parameters wrong type", func(r []Ruleset) []Ruleset {
+			r[1].Rules[1].Parameters = json.RawMessage(`{"update_allows_fetch_and_merge":"false"}`)
+			return r
+		}, []RuleProblemCode{FenceUnprotected}},
+		{"fence update parameters array", func(r []Ruleset) []Ruleset {
+			r[1].Rules[1].Parameters = json.RawMessage(`[]`)
+			return r
+		}, []RuleProblemCode{FenceUnprotected}},
 		{"fence update parameters without the field", func(r []Ruleset) []Ruleset {
 			r[1].Rules[1].Parameters = json.RawMessage(`{}`)
 			return r

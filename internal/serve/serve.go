@@ -54,6 +54,9 @@ type worker struct {
 	prs           map[int]forge.PullRequest
 	summaries     map[int]forge.PullRequestSummary
 	deferred      []string
+	logState      queue.State
+	logWatermark  int64
+	logChecks     string
 }
 
 // New bootstraps fences without replacing a previously recorded landing token.
@@ -94,7 +97,7 @@ func New(ctx context.Context, db *store.Store, targets []Target, options Options
 		if err != nil {
 			return nil, err
 		}
-		state, _, err := db.Load(ctx, id)
+		state, watermark, err := db.Load(ctx, id)
 		if err != nil {
 			return nil, err
 		}
@@ -103,7 +106,7 @@ func New(ctx context.Context, db *store.Store, targets []Target, options Options
 				return nil, err
 			}
 		}
-		s.queues = append(s.queues, &worker{Target: target, id: id, wake: make(chan struct{}, 1), prs: make(map[int]forge.PullRequest), summaries: make(map[int]forge.PullRequestSummary)})
+		s.queues = append(s.queues, &worker{Target: target, id: id, logState: state, logWatermark: watermark, wake: make(chan struct{}, 1), prs: make(map[int]forge.PullRequest), summaries: make(map[int]forge.PullRequestSummary)})
 	}
 	return s, nil
 }
@@ -156,6 +159,7 @@ func (s *Server) loop(ctx context.Context, w *worker) {
 		if s.options.BackoffUntil != nil {
 			if until := s.options.BackoffUntil(); until.After(time.Now()) {
 				delay = time.Until(until)
+				s.options.Logger.Debug("quota backoff", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "until", until)
 				continue
 			}
 		}
@@ -170,7 +174,11 @@ func (s *Server) loop(ctx context.Context, w *worker) {
 			return
 		}
 		delay = s.options.PollInterval
-		if err != nil {
+		var quota *quotaBackoff
+		if errors.As(err, &quota) {
+			delay = max(time.Millisecond, time.Until(quota.until))
+			s.options.Logger.Debug("quota backoff", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "until", quota.until)
+		} else if err != nil {
 			failures++
 			delay = min(5*time.Second*time.Duration(1<<min(failures-1, 6)), 5*time.Minute)
 			s.options.Logger.Error("queue cycle failed", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "error", err, "retry_in", delay)
@@ -193,7 +201,12 @@ func (w *worker) plannerConfig(interval time.Duration) queue.Config {
 	return cfg
 }
 
-func (s *Server) cycle(ctx context.Context, w *worker) error {
+func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
+	s.options.Logger.Debug("reconcile cycle started", "repository", w.Key.Repository, "base", w.Key.BaseBranch)
+	defer func() {
+		s.logCommitted(ctx, w)
+		s.options.Logger.Debug("reconcile cycle finished", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "error", result)
+	}()
 	force, err := s.store.TakeNotification(ctx, w.id)
 	if err != nil {
 		return err
@@ -201,6 +214,7 @@ func (s *Server) cycle(ctx context.Context, w *worker) error {
 	if err := s.reconcile(ctx, w, force); err != nil {
 		return err
 	}
+	s.logCommitted(ctx, w)
 	state, _, err := s.store.Load(ctx, w.id)
 	if err != nil {
 		return err
@@ -245,8 +259,14 @@ func (s *Server) cycle(ctx context.Context, w *worker) error {
 func (s *Server) quota() error {
 	if s.options.BackoffUntil != nil {
 		if until := s.options.BackoffUntil(); until.After(time.Now()) {
-			return fmt.Errorf("forge quota reserved until %s", until.UTC().Format(time.RFC3339))
+			return &quotaBackoff{until: until}
 		}
 	}
 	return nil
+}
+
+type quotaBackoff struct{ until time.Time }
+
+func (e *quotaBackoff) Error() string {
+	return fmt.Sprintf("forge quota reserved until %s", e.until.UTC().Format(time.RFC3339))
 }

@@ -10,7 +10,14 @@ This is the reference for anyone writing or reviewing a forge driver. [ADR 0004]
 
 ## Pull requests and approvals
 
-`PullRequest` reports the PR number, current head SHA, target branch (`Base`), draft flag, author login, whether the head branch lives in the base repository, whether the PR is closed, and its approvals.
+`PullRequest` reports the PR number, current head SHA, target branch (`Base`), draft flag, title, body, head branch label, author login, numeric author ID,
+and forge-provided commit email, whether the head branch lives in the base repository, whether the PR is closed, and its approvals.
+
+GitHub returns `<id>+<login>@users.noreply.github.com` as `AuthorEmail` and
+`<owner>:<head-branch>` as `HeadBranch` (falling back to the branch ref when the
+label is absent). Other forges supply their equivalent commit identity; gitops
+does not construct forge-specific email addresses. The fake supplies fixture
+metadata on the same observation. Closed PRs retain commit metadata.
 
 Each approval reports the approver, a `CanWrite` trust decision, and **the exact head SHA that was approved**. For a current-head fork approval, the driver freshly reads write permission on every observation. Conditional HTTP revalidation is allowed; a locally cached grant without contacting the forge is not. Stale approvals and approvals on same-repository PRs have `CanWrite: false`, without permission reads. Closed PRs may omit approvals and must not trigger review or permission reads. A stale approval, given before a later push, keeps the old SHA. The planner's trust gate depends on this ([ADR 0004](adr/0004-forge-driver-interface.md), "Test refs never run untrusted code").
 
@@ -73,8 +80,29 @@ Immediately before `LandingStarted`, the executor freshly reads `CheckRuns` for 
 
 - refuse a request whose pinned head is not the PR's current head;
 - produce the shape the merge method asks for: merge commits that keep each PR head as an ancestor, a single squashed commit per PR, or each PR commit replayed separately for rebase;
-- put the batch ID in the top commit, so a tested SHA identifies exactly one batch;
+- capture each PR's current title/body, head label and commit identity at build
+  time, rejecting metadata whose number/head differs from the pin, or whose
+  author identity/title is missing or invalid;
+- squash to `<title> (#<number>)` plus the trimmed PR body, removing only
+  `<!-- openmerge:... -->` marker comments; merge to
+  `Merge pull request #<number> from <head>` followed by the PR title;
+- author squash/merge commits as the PR author; collect distinct other original
+  commit authors and existing `Co-authored-by` trailers, and every distinct
+  `Signed-off-by` trailer, in one trailer block (not sign-off-like prose);
+- replay rebase commits with their original author name, email and author date,
+  retaining their message/trailers and adding `OpenMerge-Replayed-From`;
+- use the configured committer on all generated commits;
+- put the batch ID in the top commit's trailer block only, so a tested SHA
+  identifies exactly one batch; every earlier squash/merge still carries its
+  own PR metadata;
 - return `ErrConflict` for merge conflicts or rebase histories containing PR merge commits, and any other error for infrastructure failures.
+
+The CLI git transport receives the metadata reader as `gitops.Config.PullRequest`.
+`serve` always supplies the installation driver's reader. Standalone Git-only
+fixtures may omit it and use generic titles and `Config.Author`; that fallback
+is not the production attribution contract. The fake models commit graph/content
+and supplies PR metadata; actual Git identity/trailer behavior is verified with
+local bare repositories and the GitHub HTTP-fixture server integration test.
 
 ## Landing
 
