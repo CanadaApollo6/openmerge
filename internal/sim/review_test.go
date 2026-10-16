@@ -156,6 +156,8 @@ func TestAbandonmentBeforePush(t *testing.T) {
 			err := s.executor.Execute(context.Background(), land, func(e queue.Event) error {
 				s.record(e)
 				if started, ok := e.(queue.LandingStarted); ok {
+					// The reviewer's pause window is itself the disturbance that justifies abandoning.
+					s.injectFault("landing/" + land.BatchID)
 					return s.executor.Execute(context.Background(), queue.ResolveLanding{BatchID: land.BatchID, AttemptID: started.AttemptID, TestedSHA: land.TestedSHA, FenceToken: started.FenceToken}, func(e queue.Event) error { s.record(e); return s.violation })
 				}
 				return s.violation

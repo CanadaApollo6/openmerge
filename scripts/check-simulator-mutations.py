@@ -105,8 +105,8 @@ MUTANTS = {
         FAKE, ("\t\t\t\tfiles[path] = value", "\t\t\t\tif i > 0 { files[path] = value }"),
     ),
     "omit_merge_parent": mutation(
-        FAKE, ("r.commit([]string{top, pr.HeadSHA}, content, message, files)",
-               "r.commit([]string{top}, content, message, files)"),
+        FAKE, ("\t\t\t\tparents = append(parents, pr.HeadSHA)\n",
+               "\t\t\t\t// mutant omits the PR head parent\n"),
     ),
 }
 

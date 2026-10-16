@@ -214,8 +214,20 @@ func (s *simulation) verifyAbandoned(batch *queue.Batch, event queue.LandingAban
 	if event.NewFence != fence || id != "abandon/"+batch.LandingAttempt.ID {
 		return fmt.Errorf("landing-abandoned event for batch %s without successful AdvanceFence: expected abandon/%s, event fence %s, actual %s (%s)", batch.ID, batch.LandingAttempt.ID, event.NewFence, fence, id)
 	}
+	if started, ok := s.disturbance[batch.LandingAttempt.ID]; ok && s.disturbances() == started && len(s.pendingFaults) == 0 {
+		return fmt.Errorf("landing attempt %s for batch %s was abandoned with no injected fault or external base push since it started", batch.LandingAttempt.ID, batch.ID)
+	}
 	s.abandoned[batch.TestedSHA] = batch.LandingAttempt.ID
 	return s.checkInvariants()
+}
+
+// disturbances counts everything that can legitimately make a landing attempt
+// fail: injected faults, delayed or duplicated pushes, and external base pushes.
+// A landing abandoned with no new disturbance and no fault still pending
+// recovery is a bug in the simulator's world, where main only moves forward.
+func (s *simulation) disturbances() int {
+	r := s.result
+	return r.FaultsInjected + r.DelayedPushes + r.DuplicateExecutions + r.ExternalPushes
 }
 
 func (s *simulation) checkSettled() error {
