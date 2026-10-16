@@ -111,8 +111,7 @@ The package also provides the manifest callback and ruleset setup behind
 
 - Installation/repository discovery and reconciliation, token eviction after
   suspension/deletion.
-- Wiring `ValidateRules` into `serve` startup, installed App permission
-  validation, and classic branch protection checks. PR labels/files and
+- Installed App permission validation and classic branch protection checks. PR labels/files and
   installation repository enumeration remain follow-ups.
 
 ## Setup and ruleset validation
@@ -127,7 +126,7 @@ Required App repository permissions:
 | Checks | write | CI reads and OpenMerge check reporting |
 | Commit statuses | read | CI status observations |
 | Issues | read | Issue-thread command reads and `issue_comment` webhook subscription |
-| Metadata | read | `GET /repos/{owner}/{repo}/collaborators/{user}/permission` |
+| Metadata | read | Collaborator permissions, repository/default branch and ruleset reads |
 
 All comment posting goes through `Driver.Comment`, including `MarkLanded`.
 It uses `POST /repos/{owner}/{repo}/issues/{issue_number}/comments` for PR threads;
@@ -154,8 +153,13 @@ policy covering the entire fence namespace with all four ref restrictions and ex
 always-allowed App bypass. Every other applicable policy must allow the App.
 Pathname-aware patterns cover nested base names; uncertain namespace overlaps
 are conservative diagnostics. Classic branch protection is outside this function.
-`serve` startup does not call it yet; do not treat ruleset-only
-validation as proof about classic protection.
+`serve` calls it through `ValidateRepositoryRules` at startup and on a slow
+interval, using the installation client. Hidden bypass lists are explicitly
+assumed App-only for structural validation and produce WARN logs; visible
+problems pause as `repository-rules` until a later passing read. See the
+[runtime rules policy](../../../docs/operating.md#runtime-repository-rules),
+including GitHub's permission documentation. Do not treat ruleset-only validation
+as proof about classic protection or hidden bypass ownership.
 
 ## App setup and troubleshooting
 

@@ -34,6 +34,9 @@ func (s *Server) trustGate(ctx context.Context, w *worker, prs []queue.BatchPR) 
 	if err := s.configuration(ctx, w); err != nil {
 		return err
 	}
+	if err := s.repositoryRules(ctx, w); err != nil {
+		return err
+	}
 	if w.configError != nil {
 		return errTrustGate
 	}

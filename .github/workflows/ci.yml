@@ -42,3 +42,5 @@ jobs:
         with:
           version: v2.14.0
       - run: make build
+      - run: docker build --tag openmerge:ci .
+      - run: docker run --rm --entrypoint sh openmerge:ci -c 'test "$(id -u)" != 0 && git --version && openmerge version'

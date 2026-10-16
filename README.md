@@ -172,7 +172,8 @@ bin/openmerge serve --repos CanadaApollo6/openmerge --base main \
 `--database-url`, `--github-app-id`, `--github-private-key`,
 `--github-installation-id`, `--repos`, `--base`, `--git-cache-dir`,
 `--poll-interval`, `--concurrency`, `--webhook-listen`, `--webhook-secret`,
-`--log-level`, `--git-committer-name`, and `--git-committer-email`
+`--api-listen`, `--api-token-file`, `--rules-interval`, `--log-level`,
+`--git-committer-name`, and `--git-committer-email`
 all have matching `OPENMERGE_` environment variables: uppercase the flag name
 and replace hyphens with underscores. Flags override environment variables.
 `--repos` is a comma-separated list owned by one installation; the base defaults
@@ -183,6 +184,19 @@ SIGINT/SIGTERM cancels bounded I/O and releases claims before closing Postgres.
 Run one server per installation during this Phase 1 rollout. See the
 [operating guide](docs/operating.md) for a systemd user unit, environment file,
 committer attribution, logs, upgrades, and GitHub's Closed badge after squash/rebase.
+
+Enable read-only queue inspection with `--api-listen :8081` (binds localhost;
+default off), then run `bin/openmerge queue status --json` or
+`bin/openmerge queue status --repo CanadaApollo6/openmerge --pr 42`.
+Optional bearer authentication uses `OPENMERGE_API_TOKEN` or
+`OPENMERGE_API_TOKEN_FILE`. See [API v1 and CLI](docs/api.md) for the JSON
+contract, PR event explanations, token handling and stable exit codes.
+
+Startup and every ten minutes (`--rules-interval`) validate repository and
+inherited rulesets with the App installation. Visible problems pause the queue
+as `repository-rules`; a later passing check clears that pause automatically.
+Hidden bypass lists produce WARN logs and require the separate admin-token setup
+audit. See [runtime rules validation](docs/operating.md#runtime-repository-rules).
 
 Polling requires no public URL. Optional webhooks use
 `--webhook-listen 127.0.0.1:8080 --webhook-secret "$OPENMERGE_WEBHOOK_SECRET"`
@@ -213,6 +227,44 @@ therefore equivalent; use the SHA form when intent must bind to a specific head.
 Refresh rechecks eligibility, requests fresh CI, and
 resumes an operator pause after its cause is fixed; it does not enqueue a new
 entry. Fork heads need an approval of that exact SHA from a current writer.
+
+## Docker compose quickstart
+
+Complete the [App and ruleset setup](#setting-up-the-github-app), put
+`.openmerge.yml` on the base branch, and enable CI on `openmerge/queue/**` first.
+Then configure and start the single binary plus its own Postgres:
+
+```sh
+cp deploy/.env.example deploy/.env
+chmod 600 deploy/.env
+# Edit deploy/.env: App/installation IDs, repo, absolute key path, random DB password.
+docker compose --env-file deploy/.env -f deploy/compose.yaml config --quiet
+docker compose --env-file deploy/.env -f deploy/compose.yaml up --build -d
+docker compose --env-file deploy/.env -f deploy/compose.yaml logs -f openmerge
+```
+
+The image runs as UID/GID 1000 and includes git and CA certificates. The existing
+private key is mounted read-only; ensure it is readable by UID 1000 (a 0600 file
+owned by that UID works). Keep the key outside the checkout. The build context
+includes only Go sources/module files. Postgres has no published host port;
+the status API is published on **127.0.0.1:8081**. Polling needs no webhook URL.
+Set an optional API token in the env file and use the same token in your CLI:
+
+```sh
+OPENMERGE_API_TOKEN=YOUR_API_TOKEN bin/openmerge queue status --json
+# Or use the container's binary and configured environment:
+docker compose --env-file deploy/.env -f deploy/compose.yaml exec openmerge openmerge queue status --json
+```
+
+Named volumes retain Postgres data and the process-exclusive git cache across
+container replacements. Back up the database before upgrades. `docker compose
+--env-file deploy/.env -f deploy/compose.yaml down` stops this deployment while
+retaining volumes; adding `--volumes` deletes them. Do not run this alongside an
+existing server for the same installation. See the [operating guide](docs/operating.md).
+
+CI builds the image and checks its non-root user, git and binary. Compose config
+is validated locally; a full credentialed container deployment has not been
+tested here because the Docker daemon is unavailable to the implementation host.
 The App ignores its own commands and replies once to unauthorized commands.
 The existing queue check shows blocked and paused reasons. Missing, ambiguous,
 or invalid base configuration pauses work, and a base move reloads it. CI
