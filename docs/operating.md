@@ -38,6 +38,22 @@ arbitrary fork SHAs and report those results in the base repository: otherwise
 a copied queue commit could authorize landing. Prefer check runs with matching
 queue push suites for external CI.
 
+### Remedy for `unbound-check-provenance`
+
+This diagnostic means a check named in `merge_when` has runs on the tested SHA,
+but none belongs to the queue push suite. The PR check, status API `why`, and
+logs name the check, App source, observed `head_branch` (including `null`), and
+expected test ref. Configure the provider to create check suites for the queue
+**push**; GitHub sets `head_branch` on push-created suites. Alternatively, report
+commit statuses on the tested SHA, subject to the fork-trust caveat above.
+The batch keeps waiting for bound CI; a timeout retains reason `checks-timeout`
+and includes the provenance diagnostic in its detail.
+
+The additive wire-v1 `check_provenance_observed` event records diagnostic changes
+and recovery so explanations survive restarts. Existing event/action payloads
+and fixtures remain unchanged. Drain older workers before upgrading, because
+older binaries reject the new event type.
+
 ## Run as a systemd user service
 
 Create the installation directory and install the binary:

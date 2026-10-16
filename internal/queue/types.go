@@ -90,6 +90,7 @@ type Batch struct {
 	checkRefreshes    uint64
 	needsRefresh      bool
 	cleanupRequested  bool
+	unboundChecks     []UnboundCheck
 }
 
 // BatchPR pins the exact head used to build a test ref.

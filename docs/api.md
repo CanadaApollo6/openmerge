@@ -98,7 +98,12 @@ only that source's previous state. Stored legacy rules events appear as `ruleset
 ENTRY status values are `queued`, `building`, `testing`, `landing`,
 `dequeue-pending`, `paused`, `merged`, `dequeued`, `closed`, `blocked`, and
 `not-queued`. `reason` is the pause or pending/terminal dequeue reason where
-applicable. `last_dequeue_reason` retains the most recent **completed** dequeue,
+applicable. During testing, `reason: unbound-check-provenance` and optional
+`detail` explain required checks observed only in suites outside the queue push.
+`detail` names the check, App source, observed branch (or `null`), and expected
+ref; `why.summary` carries the same explanation. A provenance timeout keeps
+`checks-timeout` as its dequeue reason and retains that diagnostic in `detail`.
+`last_dequeue_reason` retains the most recent **completed** dequeue,
 even after readmission; it is empty if none exists. Dequeue values are
 `not-eligible`, `untrusted`, `head-changed`, `checks-failed`, `checks-timeout`,
 `conflict`, `closed`, and `requested`. A pending dequeue is not a definitive

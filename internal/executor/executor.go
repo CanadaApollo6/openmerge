@@ -36,6 +36,12 @@ type Executor struct {
 	// CheckPolicy evaluates repository merge conditions on the tested SHA.
 	// Nil retains the explicit RequiredChecks policy.
 	CheckPolicy func([]forge.CheckRun) (terminal, success bool, err error)
+	// ReferencesCheck selects names relevant to CheckPolicy diagnostics. Nil uses RequiredChecks.
+	ReferencesCheck func(string) bool
+	// PreviousUnboundChecks suppresses unchanged diagnostic observations.
+	PreviousUnboundChecks []queue.UnboundCheck
+	// ChecksTimeoutDetail supplies durable provenance context for a timeout dequeue.
+	ChecksTimeoutDetail string
 	// BeforeLand freshly revalidates PR trust after the final checks read.
 	BeforeLand func(context.Context, queue.Land) error
 	NewID      func() (string, error)
@@ -92,6 +98,9 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 			return err
 		}
 		at := x.now()
+		if err := x.observeCheckProvenance(checks, a.BatchID, a.TestedSHA, emit); err != nil {
+			return err
+		}
 		terminal, success, ambiguity := x.checkResult(checks, a.BatchID)
 		if terminal {
 			if err := emit(queue.ChecksCompleted{TestedSHA: a.TestedSHA, Success: success}); err != nil {
@@ -107,6 +116,9 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 	case queue.Land:
 		checks, err := x.Driver.CheckRuns(ctx, x.Repo, a.TestedSHA)
 		if err != nil {
+			return err
+		}
+		if err := x.observeCheckProvenance(checks, a.BatchID, a.TestedSHA, emit); err != nil {
 			return err
 		}
 		terminal, success, ambiguity := x.checkResult(checks, a.BatchID)
@@ -212,7 +224,11 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		}
 		return emit(queue.ActionCompleted{Key: a.Key()})
 	case queue.Dequeue:
-		if err := x.Driver.ReportStatus(ctx, x.Repo, a.PR, a.HeadSHA, forge.Status{State: forge.Dequeued, Reason: string(a.Reason), Summary: dequeueSummary(a.Reason)}); err != nil {
+		detail := dequeueSummary(a.Reason)
+		if a.Reason == queue.ChecksTimeout && x.ChecksTimeoutDetail != "" {
+			detail = x.ChecksTimeoutDetail
+		}
+		if err := x.Driver.ReportStatus(ctx, x.Repo, a.PR, a.HeadSHA, forge.Status{State: forge.Dequeued, Reason: string(a.Reason), Summary: detail}); err != nil {
 			return err
 		}
 		return emit(queue.Dequeued{PR: a.PR, AdmissionID: a.AdmissionID, Reason: a.Reason, BatchID: a.BatchID})

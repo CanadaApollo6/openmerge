@@ -149,6 +149,10 @@ func Apply(s State, e Event) State {
 				s.retainChecks(e.TestedSHA, retainedCheck{})
 			}
 		}
+	case CheckProvenanceObserved:
+		if e.Validate() == nil && s.batchIn(e.BatchID, Testing) && s.Active.TestedSHA == e.TestedSHA {
+			s.Active.unboundChecks = slices.Clone(e.Checks)
+		}
 	case ChecksRefreshed:
 		if s.batchIn(e.BatchID, Testing) && s.Active.TestedSHA == e.TestedSHA {
 			s.Active.checksRefreshedAt = e.At
@@ -199,10 +203,11 @@ func Apply(s State, e Event) State {
 	case Dequeued:
 		if entry := s.entry(e.PR); entry != nil && entry.AdmissionID == e.AdmissionID && !s.isLanding(e.PR) &&
 			(e.BatchID == "" || s.Active != nil && s.Active.ID == e.BatchID) {
+			detail := s.DequeueDetail(e.PR, e.Reason)
 			if s.inBatch(e.PR) {
 				s.rebuildBatch()
 			}
-			s.reportHead(e.PR, entry.HeadSHA, "dequeued", string(e.Reason), dequeueDetail(e.Reason))
+			s.reportHead(e.PR, entry.HeadSHA, "dequeued", string(e.Reason), detail)
 			s.removeEntry(e.PR)
 		}
 	case ActionCompleted:
@@ -236,6 +241,7 @@ func cloneState(s State) State {
 	if s.Active != nil {
 		batch := *s.Active
 		batch.PRs = slices.Clone(batch.PRs)
+		batch.unboundChecks = slices.Clone(batch.unboundChecks)
 		s.Active = &batch
 	}
 	s.observations = maps.Clone(s.observations)

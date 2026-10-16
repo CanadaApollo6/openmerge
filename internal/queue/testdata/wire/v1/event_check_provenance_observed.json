@@ -1,0 +1,1 @@
+{"version":1,"type":"check_provenance_observed","data":{"batch_id":"b1","tested_sha":"tested","checks":[{"name":"ci","source":"app:15368","head_branch":""}]}}

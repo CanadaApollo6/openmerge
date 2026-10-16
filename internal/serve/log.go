@@ -75,7 +75,7 @@ func (s *Server) logEvent(ctx context.Context, w *worker, before, after queue.St
 				if batch == "" && before.Active != nil {
 					batch = before.Active.ID
 				}
-				log("dequeued", e.PR, batch, old.HeadSHA, string(e.Reason))
+				log("dequeued", e.PR, batch, old.HeadSHA, string(e.Reason), "detail", before.DequeueDetail(e.PR, e.Reason))
 			}
 		}
 	case queue.FastForwardRefBuilt:
@@ -89,6 +89,18 @@ func (s *Server) logEvent(ctx context.Context, w *worker, before, after queue.St
 	case queue.TestRefBuilt:
 		if after.Active != nil && after.Active.TestedSHA == e.TestedSHA {
 			batchLog("test ref built", "", after.Active, "ref", after.Active.TestRef)
+		}
+	case queue.CheckProvenanceObserved:
+		if before.CheckProvenanceDetail() != after.CheckProvenanceDetail() {
+			reason := "unbound-check-provenance"
+			if after.CheckProvenanceDetail() == "" {
+				reason = ""
+			}
+			batchLog("check provenance", reason, after.Active, "detail", after.CheckProvenanceDetail())
+		}
+	case queue.BatchFailed:
+		if before.Active != nil && before.Active.ID == e.BatchID && before.Active.Phase == queue.Testing && !before.ChecksPassed(before.Active.TestedSHA) {
+			batchLog("batch failed", string(e.Reason), before.Active, "detail", before.DequeueDetail(before.Active.PRs[0].PR, e.Reason))
 		}
 	case queue.ChecksCompleted:
 		result := fmt.Sprint(e.Success)

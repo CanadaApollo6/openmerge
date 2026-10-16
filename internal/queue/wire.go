@@ -377,6 +377,12 @@ func EncodeEvent(value Event) (string, []byte, error) {
 		return encodeWire("pr_observed", wirePRObserved(v))
 	case BaseMoved:
 		return encodeWire("base_moved", wireBaseMoved(v))
+	case CheckProvenanceObserved:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		v.Checks = append([]UnboundCheck{}, v.Checks...)
+		return encodeWire("check_provenance_observed", v)
 	case ChecksCompleted:
 		if err := v.Validate(); err != nil {
 			return "", nil, err
@@ -514,6 +520,12 @@ func DecodeEvent(payload []byte) (Event, error) {
 		return decodeWireData(envelope.Data, func(v wireBaseMoved) Event {
 			return BaseMoved(v)
 		})
+	case "check_provenance_observed":
+		v, err := readWireData[CheckProvenanceObserved](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		return v, v.Validate()
 	case "checks_completed":
 		v, err := readWireData[wireChecksCompleted](envelope.Data)
 		if err != nil {
