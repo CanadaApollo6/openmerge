@@ -61,32 +61,35 @@ func TestLegacyRulesPauseKeepsItsReplaySemantics(t *testing.T) {
 	}
 }
 
-func TestRulesEventsRejectStaleReadBasis(t *testing.T) {
+func TestRulesBlockAlwaysAppliesAndClearNeedsCurrentBasis(t *testing.T) {
 	state := Apply(State{}, RulesBlocked{Problems: []string{"original"}})
 	basis := state.RulesRevision()
 	// An unrelated event must not invalidate the pending rules read.
 	state = Apply(state, BaseMoved{SHA: "base"})
-	state = Apply(state, RulesBlocked{Problems: []string{"newer"}, Basis: basis})
-	for _, stale := range []Event{
-		RulesCleared{Basis: basis},
-		RulesBlocked{Problems: []string{"older"}, Basis: basis},
-		RulesCleared{Basis: basis + 2},
-	} {
+	// A failing read applies even when its basis is stale: it can only block.
+	state = Apply(state, RulesBlocked{Problems: []string{"newer"}, Basis: basis - 1})
+	if state.RulesRevision() != basis+1 || !slices.Equal(state.RulesProblems(), []string{"newer"}) {
+		t.Fatalf("failing read was not applied: revision=%d problems=%v", state.RulesRevision(), state.RulesProblems())
+	}
+	// A pass whose read began before that block, or names a future revision, is ignored.
+	for _, stale := range []Event{RulesCleared{Basis: basis}, RulesCleared{Basis: basis + 2}} {
 		state = Apply(state, stale)
 		if state.RulesRevision() != basis+1 || !slices.Equal(state.RulesProblems(), []string{"newer"}) {
-			t.Fatalf("stale %T changed rules state: revision=%d problems=%v", stale, state.RulesRevision(), state.RulesProblems())
+			t.Fatalf("stale %+v changed rules state: revision=%d problems=%v", stale, state.RulesRevision(), state.RulesProblems())
 		}
 	}
 	state = Apply(state, RulesCleared{Basis: state.RulesRevision()})
 	if len(state.RulesProblems()) != 0 || state.RulesRevision() != basis+2 {
 		t.Fatal("current recovery did not clear and advance the rules revision")
 	}
-	state = Apply(state, RulesBlocked{Problems: []string{"late block"}, Basis: basis + 1})
-	if len(state.RulesProblems()) != 0 || state.RulesRevision() != basis+2 {
-		t.Fatal("old block revived after recovery")
+	// A failure that overlapped the clear still blocks (Astra's reverse ordering).
+	state = Apply(state, RulesBlocked{Problems: []string{"overlapping failure"}, Basis: basis})
+	if !slices.Equal(state.RulesProblems(), []string{"overlapping failure"}) || state.RulesRevision() != basis+3 {
+		t.Fatal("failure that overlapped a clear was discarded")
 	}
 	state = Apply(state, RulesCleared{Basis: state.RulesRevision()})
-	if state.RulesRevision() != basis+3 {
+	state = Apply(state, RulesCleared{Basis: state.RulesRevision()})
+	if len(state.RulesProblems()) != 0 || state.RulesRevision() != basis+5 {
 		t.Fatal("an applied clear must advance even when no block remains")
 	}
 }

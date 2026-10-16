@@ -277,3 +277,49 @@ func TestOverlappingRulesReadsCannotClearNewerBlock(t *testing.T) {
 		})
 	}
 }
+
+func TestOverlappingFailureAfterClearStillBlocks(t *testing.T) {
+	s, w, _, _ := fixture(t, repositoryConfig)
+	w.CheckRules = func(context.Context) ([]string, []string, error) {
+		return []string{"original rules failure"}, nil, nil
+	}
+	must(t, s.repositoryRules(t.Context(), w))
+	// The slower read fails; a faster read that began at the same revision passes
+	// and clears first. The failure must still block when it arrives.
+	slower := *w
+	slower.rulesNextCheck = time.Time{}
+	started, release := make(chan struct{}), make(chan struct{})
+	defer close(release)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	slower.CheckRules = func(ctx context.Context) ([]string, []string, error) {
+		close(started)
+		select {
+		case <-release:
+			return []string{"slower rules failure"}, nil, nil
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
+		}
+	}
+	done := make(chan error, 1)
+	go func() { done <- s.repositoryRules(ctx, &slower) }()
+	select {
+	case <-started:
+	case <-ctx.Done():
+		t.Fatal("slower read never started")
+	}
+	w.rulesNextCheck = time.Time{}
+	w.CheckRules = func(context.Context) ([]string, []string, error) { return nil, nil, nil }
+	must(t, s.repositoryRules(ctx, w))
+	select {
+	case release <- struct{}{}:
+	case <-ctx.Done():
+		t.Fatal("slower read timed out")
+	}
+	must(t, <-done)
+	state, _, err := s.store.Load(ctx, w.id)
+	must(t, err)
+	if state.PauseDetail(queue.Config{}) != "slower rules failure" {
+		t.Fatalf("failure that overlapped a clear was discarded: revision=%d blocks=%+v", state.RulesRevision(), state.Blocks(queue.Config{}))
+	}
+}

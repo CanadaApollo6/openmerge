@@ -62,12 +62,13 @@ func Apply(s State, e Event) State {
 	case PauseRequested:
 		s.pause, s.pauseRevision = e, s.revision
 	case RulesBlocked:
-		if e.Basis == s.rulesRevision {
-			s.rulesBlock = RulesBlocked{Problems: slices.Clone(e.Problems), Basis: e.Basis}
-			s.rulesRevision++
-			s.rulesPauseRevision = s.revision
-		}
+		// A failing read is always evidence, even if another read finished first:
+		// applying it can only block, which fails safe until the next check.
+		s.rulesBlock = RulesBlocked{Problems: slices.Clone(e.Problems), Basis: e.Basis}
+		s.rulesRevision++
+		s.rulesPauseRevision = s.revision
 	case RulesCleared:
+		// A pass clears only if no rules event was applied since its read began.
 		if e.Basis == s.rulesRevision {
 			s.rulesBlock = RulesBlocked{}
 			s.rulesRevision++
