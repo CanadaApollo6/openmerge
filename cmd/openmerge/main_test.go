@@ -55,12 +55,12 @@ func TestRun(t *testing.T) {
 		{
 			name: "sim human summary", args: []string{"sim", "--prs", "0"},
 			wantStdout: regexp.QuoteMeta("Merged 0/0 PRs; dequeued 0; queued 0; blocked 0 untrusted forks\n" +
-				"Time to merge: mean 0s, p95 0s; CI runs 0 (0.00/merged PR)\n" +
-				"Simulated 0s in 0 steps; faults recovered 0/0\n"),
+				"Time to merge: mean 0s, median 0s, p95 0s; CI runs 0 (0.00/merged PR)\n" +
+				"Simulated 0s in 1 steps; faults recovered 0/0\n"),
 		},
 		{
 			name: "sim json and options", args: []string{"sim", "--prs", "3", "--broken-rate", "0", "--flake-rate", "0", "--ci", "1s", "--seed", "42", "--faults", "--json"},
-			wantStdout: `\{"prs":3,"broken":0,"untrusted":1,"merged":3,"dequeued":\{\},"blocked":\{"untrusted":1\},"still_queued":0,.*\}\n`,
+			wantStdout: `\{"config":\{.*\},"prs":3,"broken":0,"untrusted":1,"merged":3,"dequeued":\{\},"blocked":\{"untrusted":1\},"still_queued":0,.*\}\n`,
 		},
 		{
 			name: "sim negative count", args: []string{"sim", "--prs", "-1"}, wantCode: 1,

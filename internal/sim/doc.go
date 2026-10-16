@@ -12,13 +12,24 @@
 // with a configured probability. Failed CI, including flakes, dequeues with
 // checks-failed: automatic retries belong to a later phase.
 //
-// Faults inject transient forge errors and crashes after a landing push but
-// before its result is recorded, which the executor must resolve through the
-// fence. DropWebhookRate skips CI completion notifications so only RefreshChecks
-// reconciliation can find the outcome.
+// Faults inject per-method forge errors, lost landing acknowledgements, delayed
+// pushes, and duplicate executions. Recovery must fence off abandoned attempts;
+// their captured requests are replayed later and must be rejected. DropWebhookRate
+// skips CI completion notifications so only RefreshChecks can find the outcome.
+// RepushRate updates queued PR heads and re-enqueues them after a head-changed
+// dequeue. ConflictRate selects adjacent PR pairs that edit a shared file,
+// producing a conflict for the second landing.
 //
 // After every step the simulator checks its invariants: main contains only
-// tested commits whose CI passed and no broken PR; no PR lands twice; a PR lands
-// only with the head that was tested; no untrusted PR enters a test ref; and the
-// queue never stalls with work queued and no pending timer.
+// commits covered by a tested tip whose CI passed and no broken PR; no PR lands
+// twice; a PR lands only with the head that was tested; no untrusted PR enters a
+// test ref; and the queue never stalls with work queued and no pending timer.
+// Landed events must
+// match the actual base transition and fence, and each forge landing must have
+// a Landed event after recovery settles. Abandoned attempts must never land.
+//
+// Result JSON includes the full effective config, seed, and durations in seconds.
+// Dequeued counts acknowledged dequeues, including re-pushes later merged.
+//
+// CI currently has unlimited runners; runner capacity is left for Phase 2.
 package sim

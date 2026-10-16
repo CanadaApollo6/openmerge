@@ -8,6 +8,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/sim"
 )
 
@@ -19,9 +20,15 @@ func runSim(args []string, stdout, stderr io.Writer) int {
 	flags.Float64Var(&cfg.BrokenRate, "broken-rate", cfg.BrokenRate, "fraction of PRs with broken changes")
 	flags.Float64Var(&cfg.FlakeRate, "flake-rate", cfg.FlakeRate, "chance that a non-broken test commit fails CI")
 	flags.DurationVar(&cfg.CIDuration, "ci", cfg.CIDuration, "duration of each CI run")
+	flags.DurationVar(&cfg.CIMax, "ci-max", 0, "maximum CI duration (uses --ci as the minimum)")
+	flags.Float64Var(&cfg.DropWebhookRate, "drop-webhooks", cfg.DropWebhookRate, "fraction of CI webhooks dropped")
+	flags.DurationVar(&cfg.ArrivalWindow, "window", cfg.ArrivalWindow, "PR arrival window")
+	flags.Float64Var(&cfg.RepushRate, "repush-rate", cfg.RepushRate, "fraction of queued PRs receiving a new head")
+	flags.Float64Var(&cfg.ConflictRate, "conflict-rate", cfg.ConflictRate, "fraction of adjacent PR pairs sharing a changed file")
+	method := flags.String("merge-method", string(queue.Merge), "merge, squash, or rebase")
 	flags.Uint64Var(&cfg.Seed, "seed", cfg.Seed, "deterministic random seed")
 	faults := flags.Bool("faults", false, "inject transient forge failures and landing crashes")
-	asJSON := flags.Bool("json", false, "print result as JSON (durations in nanoseconds)")
+	asJSON := flags.Bool("json", false, "print result as JSON (durations in seconds)")
 	flags.Usage = func() {
 		_, _ = fmt.Fprintln(flags.Output(), "Usage: openmerge sim [--prs N] [--broken-rate R] [--flake-rate R] [--ci DURATION] [--seed S] [--faults] [--json]")
 		flags.PrintDefaults()
@@ -39,6 +46,10 @@ func runSim(args []string, stdout, stderr io.Writer) int {
 	if cfg.CIDuration <= 0 {
 		_, _ = fmt.Fprintln(stderr, "CI duration must be positive")
 		return 2
+	}
+	cfg.MergeMethod = queue.MergeMethod(*method)
+	if cfg.CIMax != 0 {
+		cfg.CIMin = cfg.CIDuration
 	}
 	if *faults {
 		cfg.Faults = sim.DefaultFaults()
@@ -60,10 +71,10 @@ func runSim(args []string, stdout, stderr io.Writer) int {
 	}
 	_, err = fmt.Fprintf(stdout,
 		"Merged %d/%d PRs; dequeued %d; queued %d; blocked %d untrusted forks\n"+
-			"Time to merge: mean %s, p95 %s; CI runs %d (%.2f/merged PR)\n"+
+			"Time to merge: mean %s, median %s, p95 %s; CI runs %d (%.2f/merged PR)\n"+
 			"Simulated %s in %d steps; faults recovered %d/%d\n",
 		result.Merged, result.PRs, dequeued, result.StillQueued, result.Blocked["untrusted"],
-		result.MeanTimeToMerge.Round(time.Second), result.P95TimeToMerge.Round(time.Second), result.CIRuns, result.CIRunsPerMergedPR,
+		result.MeanTimeToMerge.Round(time.Second), result.MedianTimeToMerge.Round(time.Second), result.P95TimeToMerge.Round(time.Second), result.CIRuns, result.CIRunsPerMergedPR,
 		result.SimulatedSpan.Round(time.Minute), result.Steps, result.FaultsRecovered, result.FaultsInjected)
 	if err != nil {
 		return 1

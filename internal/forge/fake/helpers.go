@@ -237,3 +237,11 @@ func (f *Forge) ContainsPR(repo forge.RepoRef, sha string, number int) bool {
 	}
 	return true
 }
+
+// DisableFenceLeaseForTesting deliberately breaks Land's fence lease so simulator
+// mutation tests can prove they detect an abandoned push. Never use in production.
+func (f *Forge) DisableFenceLeaseForTesting() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.disableFenceLeaseForTesting = true
+}

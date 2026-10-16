@@ -41,10 +41,11 @@ type repository struct {
 // Approvals retain their exact reviewed SHA across pushes; no approval-reset
 // configuration is required.
 type Forge struct {
-	mu        sync.Mutex
-	repos     map[forge.RepoRef]*repository
-	failures  map[string][]error
-	onTestRef func(string, []int)
+	mu                          sync.Mutex
+	repos                       map[forge.RepoRef]*repository
+	failures                    map[string][]error
+	onTestRef                   func(string, []int)
+	disableFenceLeaseForTesting bool
 }
 
 var (
@@ -223,7 +224,7 @@ func (f *Forge) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequ
 		return "", err
 	}
 	r := f.repo(repo)
-	if r.refs[req.Base] != req.ExpectedBaseSHA || r.refs[req.Fence] != req.ExpectedFence {
+	if r.refs[req.Base] != req.ExpectedBaseSHA || !f.disableFenceLeaseForTesting && r.refs[req.Fence] != req.ExpectedFence {
 		return "", forge.ErrLeaseRejected
 	}
 	if req.Base == req.Fence {

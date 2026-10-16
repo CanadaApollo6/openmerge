@@ -151,7 +151,7 @@ func TestWedgesFailLoudly(t *testing.T) {
 		want string
 	}{
 		{name: "step limit", cfg: Config{PRs: 1, MaxSteps: 2}, want: "wedge: exceeded 2 steps"},
-		{name: "paused build", cfg: Config{PRs: 1, Faults: Faults{ForgeErrorRate: 1}}, want: "wedge:"},
+		{name: "paused build", cfg: Config{PRs: 1, Faults: Faults{Methods: map[string]float64{"BuildTestRef": 1}}}, want: "wedge:"},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			_, err := Run(scenario.cfg)
@@ -168,6 +168,13 @@ func TestInvalidConfig(t *testing.T) {
 		{DropWebhookRate: math.NaN()}, {Faults: Faults{ForgeErrorRate: math.Inf(1)}},
 		{Faults: Faults{LandingCrashRate: -1}}, {CIDuration: -1},
 		{CIMin: time.Second}, {CIMax: time.Second}, {CIMin: time.Minute, CIMax: time.Second},
+		{RepushRate: -1}, {ConflictRate: math.NaN()},
+		{Faults: Faults{DelayedPushRate: 2}}, {Faults: Faults{DuplicateExecutionRate: -1}},
+		{Faults: Faults{Methods: map[string]float64{"AdvanceFence": 2}}},
+		{Faults: Faults{Methods: map[string]float64{"Unknown": 0.1}}},
+		{Faults: Faults{FailFirst: map[string]int{"Land": -1}}},
+		{Faults: Faults{FailFirst: map[string]int{"Unknown": 1}}},
+		{Faults: Faults{ReplayDelay: -1}},
 		{MergeMethod: "fast-forward"}, {RetryDelay: -1}, {MaxSteps: -1},
 	} {
 		if _, err := Run(cfg); err == nil {

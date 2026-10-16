@@ -11,14 +11,20 @@ import (
 
 func TestExit500PRDay(t *testing.T) {
 	for _, variant := range []struct {
-		name   string
-		faults bool
-		drop   float64
+		name               string
+		faults             bool
+		drop               float64
+		delayed, duplicate float64
+		method             queue.MergeMethod
 	}{
 		{name: "baseline"},
 		{name: "faults", faults: true},
 		{name: "dropped-webhooks", drop: 0.3},
 		{name: "faults-and-dropped-webhooks", faults: true, drop: 0.3},
+		{name: "delayed-pushes", delayed: 0.1},
+		{name: "duplicate-execution", duplicate: 0.1},
+		{name: "faults-squash", faults: true, method: queue.Squash},
+		{name: "faults-rebase", faults: true, method: queue.Rebase},
 	} {
 		t.Run(variant.name, func(t *testing.T) {
 			cfg := DefaultConfig()
@@ -27,6 +33,13 @@ func TestExit500PRDay(t *testing.T) {
 			if variant.faults {
 				cfg.Faults = DefaultFaults()
 			}
+			if variant.delayed > 0 {
+				cfg.Faults.DelayedPushRate = variant.delayed
+			}
+			if variant.duplicate > 0 {
+				cfg.Faults.DuplicateExecutionRate = variant.duplicate
+			}
+			cfg.MergeMethod = variant.method
 			s, result := runScenario(t, cfg)
 			if result.Merged != cfg.PRs-result.Broken || result.Dequeued[queue.ChecksFailed] != result.Broken || result.StillQueued != 0 {
 				t.Fatalf("day did not drain all passing PRs: %+v", result)
@@ -56,6 +69,27 @@ func TestExit500PRDay(t *testing.T) {
 			}
 			if variant.faults && (result.FaultsInjected == 0 || result.FaultsRecovered != result.FaultsInjected) {
 				t.Fatalf("faults did not recover: %+v", result)
+			}
+			if variant.faults {
+				for _, method := range []string{"EnsureFence", "BuildTestRef", "CheckRuns", "ReportStatus", "DeleteRef", "Land", "ReadFence", "AdvanceFence"} {
+					if result.FaultsByMethod[method] == 0 {
+						t.Fatalf("%s fault not exercised", method)
+					}
+				}
+				if variant.method == queue.Squash || variant.method == queue.Rebase {
+					if result.FaultsByMethod["MarkLanded"] == 0 {
+						t.Fatal("MarkLanded fault not exercised")
+					}
+				}
+			}
+			if variant.delayed > 0 && (result.DelayedPushes == 0 || result.RejectedReplays != result.DelayedPushes) {
+				t.Fatalf("late abandoned pushes not rejected: %+v", result)
+			}
+			if variant.duplicate > 0 && result.DuplicateExecutions == 0 {
+				t.Fatal("duplicate executions not exercised")
+			}
+			if result.FaultsRecovered != result.FaultsInjected {
+				t.Fatalf("unrecovered fault: %+v", result)
 			}
 			if variant.drop > 0 && result.DroppedWebhooks == 0 {
 				t.Fatal("no webhooks dropped")

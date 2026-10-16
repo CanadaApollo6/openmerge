@@ -31,6 +31,9 @@ type Executor struct {
 	AllowSkippedNeutral bool
 	NewID               func() (string, error)
 	Now                 func() time.Time
+	// LandingFenceTokenForTesting injects a faulty token source in simulator mutation tests.
+	// Production callers must leave this nil: a landing uses its captured fence.
+	LandingFenceTokenForTesting func(context.Context, string) (string, error)
 }
 
 // Execute stops at the first failed emit. emit must durably record its event
@@ -82,13 +85,20 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		if err := emit(queue.LandingStarted{BatchID: a.BatchID, AttemptID: attemptID, FenceToken: a.FenceToken, At: x.now()}); err != nil {
 			return err
 		}
+		token := a.FenceToken
+		if x.LandingFenceTokenForTesting != nil {
+			token, err = x.LandingFenceTokenForTesting(ctx, token)
+			if err != nil {
+				return err
+			}
+		}
 		prs := make([]forge.BuildPR, len(a.PRs))
 		for i, pr := range a.PRs {
 			prs[i] = forge.BuildPR{Number: pr.PR, HeadSHA: pr.HeadSHA}
 		}
 		next, err := x.Git.Land(ctx, x.Repo, forge.LandRequest{
 			Base: x.Base, ExpectedBaseSHA: a.ExpectedBaseSHA, TestedSHA: a.TestedSHA,
-			Fence: x.fenceRef(), ExpectedFence: a.FenceToken, NextFenceID: "land/" + attemptID, PRs: prs,
+			Fence: x.fenceRef(), ExpectedFence: token, NextFenceID: "land/" + attemptID, PRs: prs,
 		})
 		if errors.Is(err, forge.ErrLeaseRejected) {
 			return x.resolve(ctx, queue.ResolveLanding{BatchID: a.BatchID, AttemptID: attemptID, TestedSHA: a.TestedSHA, FenceToken: a.FenceToken}, emit)
