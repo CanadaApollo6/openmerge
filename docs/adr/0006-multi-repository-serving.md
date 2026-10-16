@@ -21,7 +21,7 @@ Three Phase 1 limits stand in the way: repositories and the base branch are proc
 
 **Existing queues keep their identity.** A queue's key stays (installation, repository, base branch, lane) as in [ADR 0002](0002-storage-and-state-model.md): the installation ID as a decimal string, the repository's `owner/name` compared case-insensitively against stored keys and reused exactly as stored, the base branch name, and the empty default lane. A queue's YAML `name` is not part of the key. Registering a queue is idempotent and atomic in the store, and one worker runs per key however many discovery paths race to register it. The live Phase 1 queue is therefore found, not recreated, and its log and fence carry on.
 
-**Removal never pretends a landing failed.** A repository is removed only after a successful listing omits it, its config file is deleted, or the allowlist drops it; a failed listing or read changes nothing. A suspended installation is treated the same way. A removed queue stops admitting work and reports `paused: repository-removed` where it still can. An attempt that started landing stays recorded until it is settled through the fence. If credentials are gone, the queue waits, unsettled and blocking further landings, until access returns. Token loss is never evidence that a landing was abandoned.
+**Removal never pretends a landing failed.** A repository is removed only after a successful listing omits it, its config file is deleted, or the allowlist drops it. A failed listing or read never removes anything: the repository stays served, and a configuration it cannot read pauses admission as described above. A suspended installation is treated the same way. A removed queue stops admitting work and reports `paused: repository-removed` where it still can. An attempt that started landing stays recorded until it is settled through the fence. If credentials are gone, the queue waits, unsettled and blocking further landings, until access returns. Token loss is never evidence that a landing was abandoned.
 
 ### Queues and branches
 
@@ -29,7 +29,9 @@ Three Phase 1 limits stand in the way: repositories and the base branch are proc
 
 **Branches come and go safely.** OpenMerge expands `base` globs at discovery and on `create` and `delete` webhooks. A newly matching branch becomes a queue only after its selector is checked for overlaps and its protection rules pass. A branch matched by two queues is a configuration error for those queues only; other queues keep running. When a base branch is deleted, its queue goes dormant and keeps its log and fence. If the branch is recreated, any unsettled attempt is resolved through the fence before the queue admits work again.
 
-**Settlement runs first and on its own.** Each worker cycle resolves in-flight landings before anything else, and a configuration error, read failure or pause never skips that step.
+**Retiring a queue follows the same rule.** Removing a queue entry, or narrowing its `base` so a branch no longer matches, retires that queue: it admits no new work and starts no new landings, but an attempt already started is settled through the fence and keeps its real outcome.
+
+**Settlement runs first and on its own.** Each worker cycle resolves in-flight landings before anything else, and a configuration error, read failure or pause never skips that step. At startup, OpenMerge also loads every queue with an unsettled attempt from the store, whatever the current configuration, allowlist or discovery result says, and runs a settlement-only worker for it until the attempt resolves. A restart can never strand a landing by excluding its queue.
 
 ### Inputs
 
@@ -61,6 +63,7 @@ Three Phase 1 limits stand in the way: repositories and the base branch are proc
 - Release branches get their own queues under one policy file, which only default-branch writers can change.
 - Webhooks cut idle polling by about `backstop_interval / poll_interval` and cut transition latency from up to a poll interval to seconds for idle queues, while active queues keep their one-minute safety net.
 - The simulator and store gain multi-queue and lifecycle tests: concurrent registration of an existing key, removal and reinstatement mid-landing, branch deletion and recreation, overlapping globs, and unsigned-request floods.
+- Implementation notes from review: protection, merge-method and fence coverage are validated for each concrete base, including literal selectors and after configuration changes; the status API shows each repository's last-delivery age so one repository's missing webhook is visible even while its installation is healthy; budget reservations are atomic across workers, and discovery and rules checks get a minimum share so they cannot starve.
 - Implementation lands in four PRs: (1) multi-queue config with per-queue `base`, the config-authority change and per-repository settings, served from flags; (2) multiple base-branch workers per repository with branch lifecycle and settlement-first cycles; (3) installation discovery, canonical keys, removal and suspension, budget per installation, and discovery status; (4) webhook health and backstop scheduling, plus onboarding and migration docs.
 
 ## Alternatives considered
