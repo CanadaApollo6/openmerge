@@ -28,20 +28,21 @@ type Commit struct {
 }
 
 type repository struct {
-	refs        map[string]string
-	commits     map[string]Commit
-	prs         map[int]forge.PullRequest
-	checks      map[string][]forge.CheckRun
-	statuses    map[int]map[string]forge.Status
-	comments    map[int][]Comment
-	prCommits   map[int][]string
-	prBases     map[int]string
-	authors     map[string]forge.CommitAuthor
-	protected   map[string]bool
-	nonce       func() string
-	permissions map[string]bool
-	updated     map[int]time.Time
-	nextComment int64
+	refs          map[string]string
+	commits       map[string]Commit
+	prs           map[int]forge.PullRequest
+	checks        map[string][]forge.CheckRun
+	statuses      map[int]map[string]forge.Status
+	comments      map[int][]Comment
+	prCommits     map[int][]string
+	prBases       map[int]string
+	authors       map[string]forge.CommitAuthor
+	protected     map[string]bool
+	linearHistory map[string]bool
+	nonce         func() string
+	permissions   map[string]bool
+	updated       map[int]time.Time
+	nextComment   int64
 }
 
 // Forge implements both forge interfaces. Use New to construct it. All helpers

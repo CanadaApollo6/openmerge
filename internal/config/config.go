@@ -50,24 +50,24 @@ func Find(read func(path string) ([]byte, bool, error)) (path string, data []byt
 
 // Config is a validated version 1 configuration. Phase 1 has exactly one queue.
 type Config struct {
-	Version int
-	Queues  []Queue
+	Version int     `yaml:"version"`
+	Queues  []Queue `yaml:"queues"`
 }
 
 // Queue contains admission/merge conditions and serial planner settings.
 type Queue struct {
-	Name         string
-	EnterWhen    condition.Expression
-	MergeWhen    condition.Expression
-	MergeMethod  queue.MergeMethod
-	CheckTimeout time.Duration
-	Batch        Batch
+	Name         string               `yaml:"name"`
+	EnterWhen    condition.Expression `yaml:"enter_when"`
+	MergeWhen    condition.Expression `yaml:"merge_when"`
+	MergeMethod  queue.MergeMethod    `yaml:"merge_method"`
+	CheckTimeout time.Duration        `yaml:"check_timeout"`
+	Batch        Batch                `yaml:"batch"`
 }
 
 // Batch controls serial batch formation.
 type Batch struct {
-	MaxSize int
-	MaxWait time.Duration
+	MaxSize int           `yaml:"max_size"`
+	MaxWait time.Duration `yaml:"max_wait"`
 }
 
 // QueueConfig maps a loaded queue to the planner. Operational defaults are a
@@ -133,7 +133,7 @@ func Load(data []byte) (Config, []Diagnostic, error) {
 		return Config{}, nil, Errors{*err}
 	}
 	p := parser{}
-	fields := p.fields(root, "", "version", "queues")
+	fields := p.fields(root, "", configKeys...)
 	cfg := Config{}
 	if n := fields["version"]; n == nil {
 		p.error(root, "version", "required; supported versions: 1")
@@ -188,7 +188,7 @@ func (p *parser) error(n *yaml.Node, path, format string, args ...any) {
 func (p *parser) queue(n *yaml.Node, path string) Queue {
 	before := len(p.errors)
 	q := Queue{MergeMethod: queue.Squash, CheckTimeout: time.Hour, Batch: Batch{MaxSize: 1}}
-	fields := p.fields(n, path, "name", "enter_when", "merge_when", "merge_method", "check_timeout", "batch")
+	fields := p.fields(n, path, queueKeys...)
 	if name := fields["name"]; name == nil {
 		p.error(n, path+".name", "required")
 	} else {
@@ -232,7 +232,7 @@ func (p *parser) queue(n *yaml.Node, path string) Queue {
 		q.CheckTimeout = p.duration(n, path+".check_timeout")
 	}
 	if n := fields["batch"]; n != nil {
-		fields := p.fields(n, path+".batch", "max_size", "max_wait")
+		fields := p.fields(n, path+".batch", batchKeys...)
 		if n := fields["max_size"]; n != nil {
 			if n.Kind != yaml.ScalarNode || n.ShortTag() != "!!int" || n.Decode(&q.Batch.MaxSize) != nil || q.Batch.MaxSize < 1 || q.Batch.MaxSize > 128 {
 				p.error(n, path+".batch.max_size", "expected an integer from 1 to 128")

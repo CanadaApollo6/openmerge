@@ -214,5 +214,17 @@ the landing attempt's unique fence, rather than a rewritten batch trailer,
 identifies the atomic write. No commit attribution changes are made. Confirmed
 landings use the existing head-branch cleanup protocol.
 
+CI must run on pushes to `openmerge/queue/**`. Fast-forward requires check runs
+whose check suite `head_branch` equals the current queue test ref. Successful PR
+workflow checks do not establish queue CI: `pull_request` workflows can test
+GitHub's synthetic merge commit while reporting against the PR head. Commit
+statuses have no branch provenance and remain pending in fast-forward mode.
+The same provenance gate runs again immediately before landing.
+
+When readable classic protection or an active ruleset requires linear history,
+a head containing merge commits outside the current base history is dequeued at
+build time with `merge-commits-not-allowed`. Remove those merge commits and queue
+the branch again. If the requirement is unknown, builds behave as before.
+
 Template substitution, importing, migration, and multi-queue execution remain
 outside the Phase 1 surface.

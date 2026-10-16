@@ -107,7 +107,7 @@ func TestClassicProtectionInstallationReadsAndUnreadableState(t *testing.T) {
 }
 
 func TestClassicLinearHistoryUsesConfiguredCommitShape(t *testing.T) {
-	for _, method := range []forge.MergeMethod{"", forge.Merge, forge.Squash, forge.Rebase} {
+	for _, method := range []forge.MergeMethod{"", forge.Merge, forge.Squash, forge.Rebase, forge.FastForward} {
 		t.Run(string(method), func(t *testing.T) {
 			f := newAPI(t)
 			f.override = func(w http.ResponseWriter, r *http.Request) bool {

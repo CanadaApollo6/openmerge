@@ -29,6 +29,10 @@ type countingDriver struct {
 	pulls, comments, checks, permissions int
 }
 
+func (d *countingDriver) LinearHistoryRequired(ctx context.Context, r forge.RepoRef, base string) (bool, error) {
+	return d.Driver.(forge.LinearHistoryReader).LinearHistoryRequired(ctx, r, base)
+}
+
 func (d *countingDriver) PullRequest(ctx context.Context, r forge.RepoRef, n int) (forge.PullRequest, error) {
 	d.pulls++
 	return d.Driver.PullRequest(ctx, r, n)

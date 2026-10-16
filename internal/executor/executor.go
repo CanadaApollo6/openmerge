@@ -35,6 +35,9 @@ type Executor struct {
 	// CheckPolicy evaluates repository merge conditions on the tested SHA.
 	// Nil retains the explicit RequiredChecks policy.
 	CheckPolicy func([]forge.CheckRun) (terminal, success bool, err error)
+	// ActiveBatch is the durable snapshot authorizing this execution. RefreshChecks
+	// needs its method and ref because its persisted action predates fast-forward.
+	ActiveBatch *queue.Batch
 	// BeforeLand freshly revalidates PR trust after the final checks read.
 	BeforeLand func(context.Context, queue.Land) error
 	NewID      func() (string, error)
@@ -89,6 +92,9 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		if err != nil {
 			return err
 		}
+		if batch := x.ActiveBatch; batch != nil && batch.ID == a.BatchID && batch.TestedSHA == a.TestedSHA && batch.Method == queue.FastForward {
+			checks = fastForwardChecks(checks, batch.TestRef)
+		}
 		at := x.now()
 		terminal, success, ambiguity := x.checkResult(checks)
 		if terminal {
@@ -106,6 +112,9 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		checks, err := x.Driver.CheckRuns(ctx, x.Repo, a.TestedSHA)
 		if err != nil {
 			return err
+		}
+		if a.Method == queue.FastForward {
+			checks = fastForwardChecks(checks, a.Ref)
 		}
 		terminal, success, ambiguity := x.checkResult(checks)
 		if !terminal || !success {

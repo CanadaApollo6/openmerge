@@ -96,6 +96,16 @@ type CheckRun struct {
 	Name   string
 	Source string
 	State  CheckState
+	// HeadBranch is the check suite's triggering branch, without refs/heads/.
+	// Empty means unknown; legacy commit statuses have no branch provenance.
+	HeadBranch string
+}
+
+// LinearHistoryReader reports base policy independently of landing permission.
+// An error means unknown; a readable requirement from either protection source
+// wins even when the other source is unreadable.
+type LinearHistoryReader interface {
+	LinearHistoryRequired(context.Context, RepoRef, string) (bool, error)
 }
 
 // StatusState is the normalized queue lifecycle, independent of forge terminology.
@@ -223,6 +233,8 @@ type Git interface {
 	ReadFence(ctx context.Context, repo RepoRef, fenceRef string) (sha, id, testedSHA string, err error)
 	ReadRef(ctx context.Context, repo RepoRef, ref string) (sha string, err error)
 	IsAncestor(ctx context.Context, repo RepoRef, ancestor, descendant string) (bool, error)
+	// HasMergeCommits inspects all commits reachable from head but not base.
+	HasMergeCommits(ctx context.Context, repo RepoRef, base, head string) (bool, error)
 	// DeleteBranch deletes only expectedSHA; missing or changed refs are no-ops.
 	DeleteBranch(ctx context.Context, repo RepoRef, branch, expectedSHA string) error
 }

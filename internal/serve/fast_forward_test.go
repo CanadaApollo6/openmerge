@@ -26,7 +26,7 @@ func TestServeFastForwardExactHeadAndDivergence(t *testing.T) {
 				_, err = f.PushBase(repo, "main", "concurrent update", map[string]string{"other": "change"})
 				must(t, err)
 			}
-			f.SetCheckRuns(repo, pr.HeadSHA, []forge.CheckRun{{ID: 1, Name: "ci", State: forge.Success}})
+			f.SetCheckRuns(repo, pr.HeadSHA, []forge.CheckRun{{ID: 1, Name: "ci", State: forge.Success, HeadBranch: state.Active.TestRef}})
 			time.Sleep(2 * time.Millisecond)
 			must(t, s.cycle(t.Context(), w))
 			state, _, err = s.store.Load(t.Context(), w.id)
@@ -88,7 +88,9 @@ func TestServeFastForwardBatchSelection(t *testing.T) {
 			var tested [][]int
 			f.OnTestRef(func(sha string, prs []int) {
 				tested = append(tested, prs)
-				f.SetCheckRuns(repo, sha, []forge.CheckRun{{ID: 1, Name: "ci", State: forge.Success}})
+				state, _, err := s.store.Load(t.Context(), w.id)
+				must(t, err)
+				f.SetCheckRuns(repo, sha, []forge.CheckRun{{ID: 1, Name: "ci", State: forge.Success, HeadBranch: state.Active.TestRef}})
 			})
 			f.AddComment(repo, 1, "writer", "@openmerge queue")
 			f.AddComment(repo, 2, "writer", "@openmerge queue")
@@ -109,4 +111,68 @@ func TestServeFastForwardBatchSelection(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestServeFastForwardPRChecksCannotReplaceQueueCI(t *testing.T) {
+	for _, source := range []string{"app:11", "status:ci"} {
+		t.Run(source, func(t *testing.T) {
+			s, w, f, _ := fixture(t, repositoryConfig+"    merge_method: fast-forward\n")
+			pr, err := f.PullRequest(t.Context(), repo, 1)
+			must(t, err)
+			base, err := f.ReadRef(t.Context(), repo, "main")
+			must(t, err)
+			f.SetCheckRuns(repo, pr.HeadSHA, []forge.CheckRun{{ID: 100, Name: "ci", Source: source, State: forge.Success, HeadBranch: pr.HeadBranch}})
+			f.AddComment(repo, 1, "writer", "@openmerge queue")
+			must(t, s.cycle(t.Context(), w))
+			state, _, err := s.store.Load(t.Context(), w.id)
+			must(t, err)
+			if state.Active == nil || state.Active.Phase != queue.Testing || state.BaseSHA != base {
+				t.Fatalf("PR checks bypassed queue CI: %+v", state.Active)
+			}
+			ref := state.Active.TestRef
+			if tested, err := f.ReadRef(t.Context(), repo, ref); err != nil || tested != pr.HeadSHA {
+				t.Fatalf("queue ref not published: %s %v", tested, err)
+			}
+			// Replay must recover provenance requirements from the durable batch.
+			s, err = New(t.Context(), s.store, []Target{w.Target}, s.options)
+			must(t, err)
+			w = s.queues[0]
+			time.Sleep(2 * time.Millisecond)
+			must(t, s.cycle(t.Context(), w))
+			if tip, err := f.ReadRef(t.Context(), repo, "main"); err != nil || tip != base {
+				t.Fatalf("restart landed without queue CI: %s %v", tip, err)
+			}
+			f.SetCheckRuns(repo, pr.HeadSHA, []forge.CheckRun{{ID: 1, Name: "ci", Source: "app:11", State: forge.Success, HeadBranch: ref}})
+			time.Sleep(2 * time.Millisecond)
+			must(t, s.cycle(t.Context(), w))
+			if tip, err := f.ReadRef(t.Context(), repo, "main"); err != nil || tip != pr.HeadSHA {
+				t.Fatalf("queue-ref CI did not allow landing: %s %v", tip, err)
+			}
+		})
+	}
+}
+
+func TestServeFastForwardMergeHeadDequeuedBeforeCI(t *testing.T) {
+	s, w, f, _ := fixture(t, repositoryConfig+"    merge_method: fast-forward\n")
+	base, err := f.ReadRef(t.Context(), repo, "main")
+	must(t, err)
+	first, err := f.PullRequest(t.Context(), repo, 1)
+	must(t, err)
+	merged, err := f.BuildTestRef(t.Context(), repo, forge.BuildRequest{Ref: "test-merge", BaseSHA: base, PRs: []forge.BuildPR{{Number: 1, HeadSHA: first.HeadSHA}}, Method: forge.Merge, BatchID: "merge"})
+	must(t, err)
+	pr, err := f.OpenPR(repo, 2, merged, true)
+	must(t, err)
+	must(t, f.SetPRMetadata(repo, 2, "main", false, "contributor"))
+	f.SetLinearHistoryRequired(repo, "main", true)
+	f.AddComment(repo, 2, "writer", "@openmerge queue")
+	must(t, s.cycle(t.Context(), w))
+	state, _, err := s.store.Load(t.Context(), w.id)
+	must(t, err)
+	status := f.Statuses(repo, 2)[pr.HeadSHA]
+	if state.Active != nil || len(state.Entries) != 0 || state.BaseSHA != base || status.Reason != string(queue.MergeCommitsNotAllowed) || !strings.Contains(status.Summary, "remove merge commits") {
+		t.Fatalf("merge head not clearly dequeued: active=%+v status=%+v", state.Active, status)
+	}
+	s, err = New(t.Context(), s.store, []Target{w.Target}, s.options)
+	must(t, err)
+	must(t, s.cycle(t.Context(), s.queues[0]))
 }

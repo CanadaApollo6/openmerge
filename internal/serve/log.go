@@ -84,6 +84,8 @@ func (s *Server) logEvent(ctx context.Context, w *worker, before, after queue.St
 		}
 	case queue.FastForwardBlocked:
 		batchLog("fast-forward blocked", "fast-forward-required", before.Active)
+	case queue.FastForwardMergeCommitsBlocked:
+		log("fast-forward blocked", e.PR, e.BatchID, "", string(queue.MergeCommitsNotAllowed))
 	case queue.TestRefBuilt:
 		if after.Active != nil && after.Active.TestedSHA == e.TestedSHA {
 			batchLog("test ref built", "", after.Active, "ref", after.Active.TestRef)

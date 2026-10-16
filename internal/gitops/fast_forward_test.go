@@ -91,3 +91,33 @@ func TestFastForwardPreservesHeadsAndAtomicLeases(t *testing.T) {
 		})
 	}
 }
+
+func TestHasMergeCommitsInspectsOnlyNewHistory(t *testing.T) {
+	f := newFixture(t)
+	tree := gitCommand(t, f.source, "", nil, "rev-parse", f.heads[1]+"^{tree}")
+	merged := gitCommand(t, f.source, "merge side branch\n", nil, "commit-tree", tree, "-p", f.heads[1], "-p", f.heads[2])
+	linearAfterMerge := f.commit(merged, "linear child", map[string]string{"after": "value"})
+	// Include a merge through the second parent, beyond the first-parent path.
+	sideMerge := gitCommand(t, f.source, "side merge\n", nil, "commit-tree", tree, "-p", f.heads[3], "-p", merged)
+	f.push("history", linearAfterMerge, false)
+	f.push("side-history", sideMerge, false)
+	for _, tc := range []struct {
+		name, base, head string
+		want             bool
+	}{
+		{"linear", f.base, f.heads[1], false},
+		{"merge at head", f.base, merged, true},
+		{"merge inside range", f.base, linearAfterMerge, true},
+		{"second parent", f.heads[3], sideMerge, true},
+		{"old merge on base", merged, linearAfterMerge, false},
+		{"equal", merged, merged, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := f.g.HasMergeCommits(t.Context(), testRepo, tc.base, tc.head)
+			must(t, err)
+			if got != tc.want {
+				t.Fatalf("has merges=%t, want %t", got, tc.want)
+			}
+		})
+	}
+}

@@ -35,6 +35,9 @@ never appear in driver errors or logs.
   "app:<id>"`; statuses carry `Source: "status:<lowercase-creator-login>"`.
   Check suites for the SHA are read on every check refresh. A queued, running,
   missing, or unknown suite makes its run pending regardless of stale success.
+  `CheckRun.HeadBranch` comes from that freshly read suite's `head_branch`, never
+  from the PR branch or embedded run data. Fast-forward accepts only suites for
+  the current queue test ref; commit statuses have no provenance and stay pending.
   Missing producer identities and unknown outcomes are pending.
   Only the `OpenMerge` check owned by this App is excluded from CI observations.
 - Multiple Apps, multiple status creators, or a check/status pair using a required
@@ -42,6 +45,11 @@ never appear in driver errors or logs.
   `executor.CheckSourceAmbiguityError{Name, Sources}` after recording the refresh.
   No terminal check result is emitted. The server surfaces that diagnostic;
   configure distinct names for independent producers.
+- Fast-forward build validation reads the base's classic linear-history setting
+  and effective active branch rules (`rules/branches/{base}`, including inherited
+  rulesets). Either readable requirement rejects new merge commits before the
+  queue ref is pushed, even when the other source cannot be read. Unknown policy
+  retains the existing behavior.
 - `ListOpenPullRequests` paginates open PR summaries, filtered by target branch
   (or all branches for an empty filter), without loading approvals. `PullRequest`
   includes `Base`, `Draft`, `Author`, numeric `AuthorID`, `Title`, `Body`, and

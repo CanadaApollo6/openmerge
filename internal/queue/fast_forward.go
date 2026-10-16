@@ -25,9 +25,28 @@ type FastForwardRefBuilt struct {
 // Other members remain queued; OpenMerge never rebases a fast-forward head.
 type FastForwardBlocked struct{ BatchID string }
 
-func (FastForwardBatchSelected) queueEvent() {}
-func (FastForwardRefBuilt) queueEvent()      {}
-func (FastForwardBlocked) queueEvent()       {}
+// FastForwardMergeCommitsBlocked rejects a selected head whose new history
+// contains merges while the base requires linear history.
+type FastForwardMergeCommitsBlocked struct {
+	BatchID string
+	PR      int
+}
+
+func (FastForwardBatchSelected) queueEvent()       {}
+func (FastForwardRefBuilt) queueEvent()            {}
+func (FastForwardBlocked) queueEvent()             {}
+func (FastForwardMergeCommitsBlocked) queueEvent() {}
+
+// Validate pins the rejection to one member of a building batch.
+func (e FastForwardMergeCommitsBlocked) Validate() error {
+	if err := requireActionText("batch_id", e.BatchID); err != nil {
+		return err
+	}
+	if e.PR <= 0 {
+		return fmt.Errorf("pr must be positive")
+	}
+	return nil
+}
 
 // Validate requires a batch and a nonempty, bounded list of distinct heads.
 func (e FastForwardBatchSelected) Validate() error {
@@ -67,6 +86,11 @@ type wireFastForwardBlocked struct {
 	BatchID string `json:"batch_id"`
 }
 
+type wireFastForwardMergeCommitsBlocked struct {
+	BatchID string `json:"batch_id"`
+	PR      int    `json:"pr"`
+}
+
 func (s *State) selectFastForward(e FastForwardBatchSelected) {
 	if e.Validate() != nil || !s.batchIn(e.BatchID, Building) || len(e.PRs) > len(s.Active.PRs) || !slices.Equal(e.PRs, s.Active.PRs[:len(e.PRs)]) {
 		return
@@ -80,6 +104,9 @@ func (s *State) selectFastForward(e FastForwardBatchSelected) {
 }
 
 func dequeueDetail(reason DequeueReason) string {
+	if reason == MergeCommitsNotAllowed {
+		return "Base requires linear history; remove merge commits from the branch and queue it again"
+	}
 	if reason == FastForwardRequired {
 		return "Head cannot fast-forward onto the current base; update the branch and queue it again"
 	}

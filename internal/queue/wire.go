@@ -346,6 +346,11 @@ func decodeBatchPRs(prs []wireBatchPR) []BatchPR {
 // EncodeEvent returns the stable type discriminator and versioned JSON.
 func EncodeEvent(value Event) (string, []byte, error) {
 	switch v := value.(type) {
+	case FastForwardMergeCommitsBlocked:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("fast_forward_merge_commits_blocked", wireFastForwardMergeCommitsBlocked(v))
 	case FastForwardBatchSelected:
 		if err := v.Validate(); err != nil {
 			return "", nil, err
@@ -462,6 +467,13 @@ func DecodeEvent(payload []byte) (Event, error) {
 		return nil, err
 	}
 	switch envelope.Type {
+	case "fast_forward_merge_commits_blocked":
+		v, err := readWireData[wireFastForwardMergeCommitsBlocked](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := FastForwardMergeCommitsBlocked(v)
+		return event, event.Validate()
 	case "fast_forward_batch_selected":
 		v, err := readWireData[wireFastForwardBatchSelected](envelope.Data)
 		if err != nil {

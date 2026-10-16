@@ -60,6 +60,7 @@ Commit-status APIs that lack cancelled and action-required keep the normalized s
 
 The executor aggregates as follows:
 
+- Fast-forward checks must carry `HeadBranch`, the check suite's triggering branch without `refs/heads/`, matching the active queue test ref. Other branch runs and unknown branch provenance are excluded before condition evaluation and source/rerun aggregation, both during refresh and immediately before landing. Legacy commit statuses lack provenance and remain pending in fast-forward mode. Other merge methods retain their existing behavior because their generated SHA belongs only to the test ref. Callers supply the durable `ActiveBatch` snapshot to the executor for refreshes; the final landing read uses the pinned action's method and ref.
 - A required name reported by more than one source is ambiguous and stays pending, even if every source reports success. A missing source also stays pending. The executor emits `ChecksReopened` followed by `ChecksRefreshed`, emits no terminal `ChecksCompleted`, and returns `executor.CheckSourceAmbiguityError` with the name and sorted sources for the server to surface. Unrequired names do not block the batch.
 - Within one source, the newest run of each name wins, regardless of response order. A pending rerun supersedes an older result.
 - A GitHub check run whose suite is not completed is pending even if the run still reports an old success. Missing suite observations and unknown producer identities also fail safe as pending. Drivers must refresh suite state as well as run state. GitHub `check_suite` requested/rerequested/completed and `check_run` rerequested/completed webhooks normalize to `ChecksChanged{SHA}` and trigger these reads.
@@ -101,6 +102,14 @@ For fast-forward, the executor records `FastForwardBatchSelected` before the pus
 choosing the longest consecutive linear prefix and retaining the remaining PRs in
 queue order. A non-descendant first head is dequeued as `fast-forward-required`;
 the author must update and requeue it. No rebase or attribution rewrite occurs.
+Before publishing, `LinearHistoryReader` checks whether either readable base
+protection source requires linear history. GitHub reads classic protection and
+the effective active branch rules, including inherited rulesets. When required,
+`Git.HasMergeCommits` inspects all new history (`base..head`, all parent edges).
+An offending selected head is dequeued as `merge-commits-not-allowed` through
+the new `FastForwardMergeCommitsBlocked` event; other heads keep queue order.
+Unknown requirements preserve existing behavior; graph read errors are retryable
+build failures. Existing event/action formats remain unchanged.
 `FastForwardRefBuilt` permits the unchanged head to be tested in another batch
 after abandonment or bisection. Landing still uses the same base/fence leases.
 

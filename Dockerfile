@@ -2,8 +2,7 @@ FROM golang:1.27.2-bookworm AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
-COPY cmd/ cmd/
-COPY internal/ internal/
+COPY . .
 ARG VERSION=dev
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /openmerge ./cmd/openmerge
 

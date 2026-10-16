@@ -78,3 +78,46 @@ func TestFastForwardMayRetestUnchangedHeadAfterFailure(t *testing.T) {
 		s = Apply(s, LandingAbandoned{BatchID: id, NewFence: id})
 	}
 }
+
+func TestMergeCommitRejectionIsCorrelatedAndReplayable(t *testing.T) {
+	at := time.Date(2026, 10, 16, 12, 0, 0, 0, time.UTC)
+	s := State{BaseBranch: "main", BaseSHA: "base", Fence: "fence"}
+	pins := []BatchPR{{PR: 1, HeadSHA: "one"}, {PR: 2, HeadSHA: "two"}}
+	for _, pin := range pins {
+		s = Apply(s, PRObserved{PR: pin.PR, HeadSHA: pin.HeadSHA, Eligible: true, Trusted: true})
+		s = Apply(s, EnqueueRequested{PR: pin.PR, At: at})
+	}
+	s = Apply(s, BatchStarted{BatchID: "b1", BaseSHA: "base", PRs: pins, At: at})
+	for _, event := range []Event{
+		FastForwardMergeCommitsBlocked{BatchID: "b1", PR: 2}, // Not a selected FF batch yet.
+		FastForwardMergeCommitsBlocked{BatchID: "stale", PR: 2},
+	} {
+		after := Apply(s, event)
+		after.revision = s.revision
+		if !reflect.DeepEqual(after, s) {
+			t.Fatal("uncorrelated event changed state")
+		}
+	}
+	s = Apply(s, FastForwardBatchSelected{BatchID: "b1", PRs: pins})
+	before := s
+	s = Apply(s, FastForwardMergeCommitsBlocked{BatchID: "b1", PR: 3})
+	before.revision = s.revision
+	if !reflect.DeepEqual(before, s) {
+		t.Fatal("non-member rejection changed state")
+	}
+	event := FastForwardMergeCommitsBlocked{BatchID: "b1", PR: 2}
+	_, encoded, err := EncodeEvent(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeEvent(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s = Apply(s, decoded)
+	after := Apply(s, decoded)
+	after.revision = s.revision
+	if !reflect.DeepEqual(after, s) || s.PendingDequeue(2) != MergeCommitsNotAllowed || s.PendingDequeue(1) != "" || s.Active != nil {
+		t.Fatal("replay did not preserve a single correlated rejection")
+	}
+}

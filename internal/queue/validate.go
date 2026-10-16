@@ -108,7 +108,7 @@ func (a Dequeue) Validate() error {
 		return err
 	}
 	switch a.Reason {
-	case NotEligible, Untrusted, HeadChanged, ChecksFailed, Conflict, Closed, Requested, FastForwardRequired:
+	case NotEligible, Untrusted, HeadChanged, ChecksFailed, Conflict, Closed, Requested, FastForwardRequired, MergeCommitsNotAllowed:
 		return nil
 	case ChecksTimeout:
 		return requireActionText("batch_id", a.BatchID)

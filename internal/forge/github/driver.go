@@ -295,14 +295,14 @@ func (d *Driver) CheckRuns(ctx context.Context, repo forge.RepoRef, sha string) 
 	if err != nil {
 		return nil, err
 	}
-	suites := make(map[int64]string)
+	suites := make(map[int64]*gh.CheckSuite)
 	for page := 1; page != 0; {
 		list, res, err := d.client.Checks.ListCheckSuitesForRef(ctx, owner, name, sha, &gh.ListCheckSuiteOptions{ListOptions: gh.ListOptions{Page: page, PerPage: 100}})
 		if err != nil {
 			return nil, safeError(err)
 		}
 		for _, suite := range list.CheckSuites {
-			suites[suite.GetID()] = suite.GetStatus()
+			suites[suite.GetID()] = suite
 		}
 		page = res.NextPage
 	}
@@ -310,10 +310,11 @@ func (d *Driver) CheckRuns(ctx context.Context, repo forge.RepoRef, sha string) 
 	for _, run := range runs {
 		if !d.own(run) {
 			state := checkState(run.GetStatus(), run.GetConclusion())
-			if run.GetCheckSuite().GetID() <= 0 || suites[run.GetCheckSuite().GetID()] != "completed" || run.GetApp().GetID() <= 0 {
+			suite := suites[run.GetCheckSuite().GetID()]
+			if run.GetCheckSuite().GetID() <= 0 || suite.GetStatus() != "completed" || run.GetApp().GetID() <= 0 {
 				state = forge.Pending
 			}
-			result = append(result, forge.CheckRun{ID: uint64(max(run.GetID(), 0)), Name: run.GetName(), Source: "app:" + strconv.FormatInt(run.GetApp().GetID(), 10), State: state})
+			result = append(result, forge.CheckRun{ID: uint64(max(run.GetID(), 0)), Name: run.GetName(), Source: "app:" + strconv.FormatInt(run.GetApp().GetID(), 10), State: state, HeadBranch: suite.GetHeadBranch()})
 		}
 	}
 	for page := 1; page != 0; {

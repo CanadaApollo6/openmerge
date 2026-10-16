@@ -112,6 +112,11 @@ func Apply(s State, e Event) State {
 			s.requestDequeue(s.Active.PRs[0].PR, FastForwardRequired)
 			s.rebuildBatch()
 		}
+	case FastForwardMergeCommitsBlocked:
+		if e.Validate() == nil && s.batchIn(e.BatchID, Building) && s.Active.Method == FastForward && slices.ContainsFunc(s.Active.PRs, func(pr BatchPR) bool { return pr.PR == e.PR }) {
+			s.requestDequeue(e.PR, MergeCommitsNotAllowed)
+			s.rebuildBatch()
+		}
 	case FastForwardRefBuilt:
 		if e.Validate() == nil && s.batchIn(e.BatchID, Building) && s.Active.Method == FastForward && e.TestedSHA == s.Active.PRs[len(s.Active.PRs)-1].HeadSHA {
 			s.applyBuilt(TestRefBuilt{BatchID: e.BatchID, TestedSHA: e.TestedSHA, At: e.At, Method: FastForward})

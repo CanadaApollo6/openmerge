@@ -41,6 +41,7 @@ type testRun struct {
 	base    string
 	covered []string
 	method  queue.MergeMethod
+	ref     string
 }
 
 type loggedEvent struct {
@@ -246,6 +247,7 @@ func (s *simulation) step() (bool, error) {
 }
 
 func (s *simulation) execute(action queue.Action) error {
+	s.executor.ActiveBatch = s.state.Active
 	s.boundary.scope = faultScope(action)
 	if a, ok := action.(queue.Land); ok && s.faults.Float64() < s.cfg.Faults.DuplicateExecutionRate {
 		s.sequence++
@@ -370,7 +372,7 @@ func (s *simulation) startCI(sha string, prs []int) {
 			return
 		}
 	}
-	run := &testRun{base: batch.BaseSHA, heads: slices.Clone(batch.PRs), method: s.cfg.MergeMethod, success: s.ci.Float64() >= s.cfg.FlakeRate}
+	run := &testRun{base: batch.BaseSHA, heads: slices.Clone(batch.PRs), method: s.cfg.MergeMethod, ref: batch.TestRef, success: s.ci.Float64() >= s.cfg.FlakeRate}
 	commit, err := s.forge.Commit(s.repo, sha)
 	if err != nil {
 		s.violation = err
@@ -394,7 +396,7 @@ func (s *simulation) startCI(sha string, prs []int) {
 	if batch.FromBisection {
 		s.result.BisectionCIRuns++
 	}
-	s.forge.SetCheckRuns(s.repo, sha, []forge.CheckRun{{ID: 1, Name: "ci", State: forge.Pending}})
+	s.forge.SetCheckRuns(s.repo, sha, []forge.CheckRun{{ID: 1, Name: "ci", State: forge.Pending, HeadBranch: run.ref}})
 	s.schedule(s.now.Add(s.ciDuration()), ciComplete, 0, sha)
 }
 

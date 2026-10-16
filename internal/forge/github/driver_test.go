@@ -121,6 +121,27 @@ func TestCheckNormalization(t *testing.T) {
 		t.Fatal("legacy status did not retain native ordering ID")
 	}
 }
+
+func TestCheckSuiteBranchProvenance(t *testing.T) {
+	f := newAPI(t)
+	ref := "openmerge/queue/main/b1"
+	f.runs["tested"] = []*gh.CheckRun{
+		{ID: new(int64(1)), Name: new("ci"), Status: new("completed"), Conclusion: new("success"), CheckSuite: &gh.CheckSuite{ID: new(int64(9)), HeadBranch: new("wrong-embedded-branch")}},
+		{ID: new(int64(2)), Name: new("ci"), Status: new("completed"), Conclusion: new("success"), CheckSuite: &gh.CheckSuite{ID: new(int64(10))}},
+	}
+	f.suites["tested"] = []*gh.CheckSuite{
+		{ID: new(int64(1)), Status: new("completed"), HeadBranch: new("unrelated")},
+		{ID: new(int64(2)), Status: new("completed"), HeadBranch: new("unrelated")},
+		{ID: new(int64(9)), Status: new("completed"), HeadBranch: &ref},
+		{ID: new(int64(10)), Status: new("completed")},
+	}
+	f.statuses["tested"] = []*gh.RepoStatus{{ID: new(int64(3)), Context: new("legacy"), State: new("success"), Creator: &gh.User{Login: new("writer")}}}
+	checks, err := f.driver.CheckRuns(t.Context(), testRepo, "tested")
+	must(t, err)
+	if len(checks) != 3 || checks[0].HeadBranch != ref || checks[1].HeadBranch != "" || checks[2].HeadBranch != "" || checks[2].State != forge.Success {
+		t.Fatalf("incorrect provenance or changed status normalization: %+v", checks)
+	}
+}
 func TestStatusMappingsAndConcurrentWrites(t *testing.T) {
 	f := newAPI(t)
 	sha := f.prs[1].GetHead().GetSHA()

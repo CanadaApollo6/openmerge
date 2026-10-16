@@ -374,6 +374,8 @@ func eventSummary(event queue.Event, before, after queue.State) string {
 		return "Recorded the unchanged head as the batch test commit"
 	case queue.FastForwardBlocked:
 		return "Head cannot fast-forward onto the current base; update the branch and queue it again"
+	case queue.FastForwardMergeCommitsBlocked:
+		return "Base requires linear history; remove merge commits from the branch and queue it again"
 	case queue.TestRefBuilt:
 		return "Recorded the batch test commit"
 	case queue.TestRefBuildFailed:
@@ -430,6 +432,8 @@ func affects(event queue.Event, pr int, before, after queue.State, tested map[st
 	case queue.FastForwardRefBuilt:
 		return inBatch(before, pr) && before.Active.ID == e.BatchID
 	case queue.FastForwardBlocked:
+		return inBatch(before, pr) && before.Active.ID == e.BatchID
+	case queue.FastForwardMergeCommitsBlocked:
 		return inBatch(before, pr) && before.Active.ID == e.BatchID
 	case queue.TestRefBuilt:
 		return inBatch(before, pr) && before.Active.ID == e.BatchID

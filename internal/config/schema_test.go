@@ -8,7 +8,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -51,6 +53,64 @@ var compiledSchema = sync.OnceValues(func() (*jsonschema.Schema, error) {
 	}
 	return compiler.Compile("openmerge.v1.json")
 })
+
+type keySchema struct {
+	Ref        string                `json:"$ref"`
+	Properties map[string]*keySchema `json:"properties"`
+	Items      *keySchema            `json:"items"`
+	Defs       map[string]*keySchema `json:"$defs"`
+}
+
+func TestSchemaKeysMatchLoader(t *testing.T) {
+	var published keySchema
+	if err := json.Unmarshal([]byte(schema.V1), &published); err != nil {
+		t.Fatal(err)
+	}
+	var walk func(reflect.Type, *keySchema, string)
+	walk = func(typ reflect.Type, node *keySchema, path string) {
+		t.Helper()
+		for typ.Kind() == reflect.Pointer {
+			typ = typ.Elem()
+		}
+		if node == nil {
+			t.Errorf("%s: schema node missing for %s", path, typ)
+			return
+		}
+		if node.Ref != "" {
+			name, ok := strings.CutPrefix(node.Ref, "#/$defs/")
+			if !ok || published.Defs[name] == nil {
+				t.Fatalf("%s: unsupported schema ref %q", path, node.Ref)
+			}
+			node = published.Defs[name]
+		}
+		if typ.Kind() == reflect.Slice || typ.Kind() == reflect.Array {
+			walk(typ.Elem(), node.Items, path+"[]")
+			return
+		}
+		// Compiled expressions have their own grammar/schema agreement corpus;
+		// they are not config mapping structs decoded through YAML field tags.
+		if typ.Kind() != reflect.Struct || typ.PkgPath() != reflect.TypeFor[Config]().PkgPath() {
+			return
+		}
+		keys := yamlKeys(typ)
+		for name := range node.Properties {
+			if !slices.Contains(keys, name) {
+				t.Errorf("%s.%s: schema key is not accepted by loader", path, name)
+			}
+		}
+		keyIndex := 0
+		for i := 0; i < typ.NumField(); i++ {
+			field := typ.Field(i)
+			if !field.IsExported() || field.Tag.Get("yaml") == "-" {
+				continue
+			}
+			name := keys[keyIndex]
+			keyIndex++
+			walk(field.Type, node.Properties[name], path+"."+name)
+		}
+	}
+	walk(reflect.TypeFor[Config](), &published, "config")
+}
 
 // JSON Schema operates on the YAML data model after syntax/alias processing.
 // YAML-only failures (documents, duplicates, tags, expansion limits) have no
