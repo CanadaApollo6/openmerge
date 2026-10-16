@@ -9,6 +9,7 @@ An ADR records one significant decision: the context that forced it, what we cho
 | [0003](0003-configuration-format.md) | Native `.openmerge.yml` with a condition grammar, plus a Mergify importer | Accepted |
 | [0004](0004-forge-driver-interface.md) | All forge access goes through a narrow driver interface, with a fake forge from day one | Accepted |
 | [0005](0005-verification-modes.md) | Offer post-merge verification as a per-queue mode alongside strict landing | Accepted |
+| [0006](0006-multi-repository-serving.md) | Serve every installed repository from one process, driven by webhooks with polling as the backstop | Proposed |
 
 ## Writing a new ADR
 
