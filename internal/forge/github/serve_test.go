@@ -79,10 +79,11 @@ func TestServeCommentToLanding(t *testing.T) {
 	for _, n := range []int{1, 2} {
 		blob := localGit(t, remote, fmt.Sprintf("PR %d", n), "hash-object", "-w", "--stdin")
 		tree := localGit(t, remote, "100644 blob "+configBlob+"\t.openmerge.yml\n100644 blob "+blob+fmt.Sprintf("\tpr-%d.txt\n", n), "mktree")
-		heads[n] = localGit(t, remote, fmt.Sprintf("PR %d", n), "commit-tree", tree, "-p", base)
+		heads[n] = localGit(t, remote, fmt.Sprintf("PR %d\n\nSigned-off-by: Real <real@example.test>\nCo-authored-by: Carol <carol@example.test>\nOpenMerge-Batch: contributor", n), "commit-tree", tree, "-p", base)
 		localGit(t, remote, "", "update-ref", HeadRef(n), heads[n])
 		f.prs[n].Head.SHA = new(heads[n])
 		f.reviews[n] = nil
+		f.prs[n].Body = new("Description\nSigned-off-by: Forged <forged@example.test>\nCo-authored-by: Impostor <impostor@example.test>\nOpenMerge-Batch: body")
 	}
 	addComment := func(pr int, id int64, author string) {
 		f.comments[pr] = append(f.comments[pr], &gh.IssueComment{ID: new(id), Body: new("@openmerge queue"), User: &gh.User{Login: &author, Type: new("User")}, CreatedAt: &gh.Timestamp{Time: epoch}, UpdatedAt: &gh.Timestamp{Time: epoch}})
@@ -119,7 +120,9 @@ func TestServeCommentToLanding(t *testing.T) {
 		}
 		return false
 	}
-	git, err := gitops.New(t.Context(), gitops.Config{WorkDir: t.TempDir(), Remote: func(context.Context, forge.RepoRef) (string, gitops.Auth, error) { return remote, gitops.Auth{}, nil }, HeadRef: HeadRef, PullRequest: f.driver.PullRequest, Committer: gitops.Identity{Name: "queue-app[bot]", Email: "99+queue-app[bot]@users.noreply.github.com"}})
+	committer, err := f.driver.Committer(t.Context())
+	must(t, err)
+	git, err := gitops.New(t.Context(), gitops.Config{WorkDir: t.TempDir(), Remote: func(context.Context, forge.RepoRef) (string, gitops.Auth, error) { return remote, gitops.Auth{}, nil }, HeadRef: HeadRef, PullRequest: f.driver.PullRequest, Committer: committer})
 	must(t, err)
 	initial, err := git.EnsureFence(t.Context(), testRepo, "openmerge/fence/main")
 	must(t, err)
@@ -153,6 +156,18 @@ func TestServeCommentToLanding(t *testing.T) {
 	must(t, err)
 	if content := localGit(t, remote, "", "show", tip+":pr-2.txt"); content != "PR 2" {
 		t.Fatal("wrong PR landed")
+	}
+	if identity := localGit(t, remote, "", "show", "-s", "--format=%an <%ae>|%cn <%ce>", tip); identity != "contributor <12+contributor@users.noreply.github.com>|queue-app[bot] <99+queue-app[bot]@users.noreply.github.com>" {
+		t.Fatalf("landed identity=%s", identity)
+	}
+	message := localGit(t, remote, "", "show", "-s", "--format=%B", tip)
+	batch := forge.ParseBatchMessage(message)
+	if batch == "" {
+		t.Fatalf("landed message has no authoritative batch: %s", message)
+	}
+	wantMessage := "Test change 2 (#2)\n\nDescription\n\nCo-authored-by: Fixture <fixture@localhost>\nSigned-off-by: Real <real@example.test>\nCo-authored-by: Carol <carol@example.test>\nOpenMerge-Batch: " + batch
+	if message != wantMessage {
+		t.Fatalf("landed message=%q, want %q", message, wantMessage)
 	}
 	if _, _, tested, err := git.ReadFence(t.Context(), testRepo, "openmerge/fence/main"); err != nil || tested != tip {
 		t.Fatalf("fence tested=%s, tip=%s, error=%v", tested, tip, err)

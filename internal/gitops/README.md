@@ -64,7 +64,7 @@ operation for collection.
 number/head mismatch or invalid author/title before pushing. `serve` supplies
 the installation driver's reader. Squash creates one single-parent commit per
 PR with `<title> (#<number>)` and the trimmed body (without OpenMerge HTML
-markers). Merge creates a two-parent commit per PR with
+markers or attribution/batch trailer lines). Merge creates a two-parent commit per PR with
 `Merge pull request #<number> from <head>` and the title. Both use the PR author,
 collect other commit authors/coauthor trailers, and retain distinct sign-offs
 from the PR's commits. Rebase preserves each original author and author date
@@ -80,8 +80,12 @@ and numeric no-reply email configuration. If the history reachable from a PR
 head but not the base contains a merge commit, rebase returns a wrapped
 `forge.ErrConflict` asking for the merge or squash method. This avoids resurrecting
 content deliberately discarded by a merge resolution. Replayed
-messages keep the original message and add `OpenMerge-Replayed-From`. The top
-commit carries `OpenMerge-Batch`. A fixed clock makes identical builds repeatable.
+messages keep the original message and add `OpenMerge-Replayed-From`.
+`OpenMerge-Batch` is reserved: contributor-supplied lines with that key are
+removed from PR titles, bodies and replayed messages. Only the top generated
+commit carries the authoritative batch trailer. `forge.ParseBatchMessage`
+reads it only from the final trailer block and rejects duplicate or misplaced
+keys. A fixed clock makes identical builds repeatable.
 
 Git 2.38/2.39 lack `merge-tree --merge-base`. On those versions, replay creates
 an unreferenced synthetic commit with the current tree and the desired base as

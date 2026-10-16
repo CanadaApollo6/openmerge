@@ -49,7 +49,7 @@ func parseServe(args []string, output io.Writer) (serveOptions, error) {
 	flags.StringVar(&o.secret, "webhook-secret", env("WEBHOOK_SECRET", ""), "webhook HMAC secret (OPENMERGE_WEBHOOK_SECRET)")
 	flags.StringVar(&o.logLevel, "log-level", env("LOG_LEVEL", "info"), "debug, info, warn or error (OPENMERGE_LOG_LEVEL)")
 	flags.StringVar(&o.committerName, "git-committer-name", env("GIT_COMMITTER_NAME", ""), "commit identity name; defaults to App login (OPENMERGE_GIT_COMMITTER_NAME)")
-	flags.StringVar(&o.committerEmail, "git-committer-email", env("GIT_COMMITTER_EMAIL", ""), "commit identity email; set numeric App bot no-reply email (OPENMERGE_GIT_COMMITTER_EMAIL)")
+	flags.StringVar(&o.committerEmail, "git-committer-email", env("GIT_COMMITTER_EMAIL", ""), "commit identity email; defaults to numeric App bot no-reply email (OPENMERGE_GIT_COMMITTER_EMAIL)")
 	// Parse typed environment values through flag.Value so malformed values fail
 	// startup, while an explicit flag can override the environment.
 	flags.Int64Var(&o.app, "github-app-id", 0, "App ID (OPENMERGE_GITHUB_APP_ID)")
@@ -132,13 +132,7 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger) error 
 	if err != nil {
 		return err
 	}
-	committer := gitops.Identity{Name: driver.BotLogin(), Email: driver.BotLogin() + "@users.noreply.github.com"}
-	if o.committerName != "" {
-		committer.Name = o.committerName
-	}
-	if o.committerEmail != "" {
-		committer.Email = o.committerEmail
-	}
+	committer := serveCommitter(ctx, o, logger, driver)
 	git, err := gitops.New(ctx, gitops.Config{WorkDir: o.cache, Remote: driver.Remote, HeadRef: github.HeadRef, PullRequest: driver.PullRequest, Committer: committer})
 	if err != nil {
 		return err
@@ -186,6 +180,32 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger) error 
 	default:
 		return nil
 	}
+}
+
+type committerDriver interface {
+	BotLogin() string
+	Committer(context.Context) (gitops.Identity, error)
+}
+
+func serveCommitter(ctx context.Context, o serveOptions, logger *slog.Logger, driver committerDriver) gitops.Identity {
+	login := driver.BotLogin()
+	committer := gitops.Identity{Name: login, Email: login + "@users.noreply.github.com"}
+	if o.committerEmail == "" {
+		discovered, err := driver.Committer(ctx)
+		if err != nil {
+			logger.Warn("GitHub App committer discovery failed; using fallback identity. Replace <bot-user-id> with the ID from GET /users/"+login,
+				"error", err, "manual_setting", fmt.Sprintf("OPENMERGE_GIT_COMMITTER_NAME=%s OPENMERGE_GIT_COMMITTER_EMAIL=<bot-user-id>+%s@users.noreply.github.com", login, login))
+		} else {
+			committer = discovered
+		}
+	}
+	if o.committerName != "" {
+		committer.Name = o.committerName
+	}
+	if o.committerEmail != "" {
+		committer.Email = o.committerEmail
+	}
+	return committer
 }
 
 type webhookReceiver interface {

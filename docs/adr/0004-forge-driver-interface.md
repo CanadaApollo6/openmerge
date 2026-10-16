@@ -49,8 +49,9 @@ Each PR in a batch gets its own metadata; only the top commit gets
 `OpenMerge-Batch`. Rebase preserves each original author and author date,
 retains its message and trailers, and adds replay provenance and the top batch
 trailer. Generated commits use the configured App committer. GitHub derives the
-PR author's numeric no-reply email from the PR user record; operators configure
-the App bot's numeric no-reply email separately (see the [operating guide](../operating.md)).
+PR author's numeric no-reply email from the PR user record; startup discovers
+the App bot's numeric no-reply email from its user record, with explicit
+operator overrides (see the [operating guide](../operating.md)).
 Metadata is read and pinned during test-ref construction; landing never rewrites
 it, even if the PR title or body changes after testing.
 

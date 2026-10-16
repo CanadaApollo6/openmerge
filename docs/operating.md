@@ -8,7 +8,14 @@ applies database migrations and ensures the fence without resetting it.
 
 ## Run as a systemd user service
 
-Install `bin/openmerge` as `~/.local/bin/openmerge`. Create
+Create the installation directory and install the binary:
+
+```sh
+mkdir -p ~/.local/bin ~/.config/openmerge
+install -m 755 bin/openmerge ~/.local/bin/openmerge
+```
+
+Create
 `~/.config/openmerge/environment` with absolute paths appropriate to your account:
 
 ```ini
@@ -21,17 +28,27 @@ OPENMERGE_BASE=main
 OPENMERGE_GIT_CACHE_DIR=/home/you/.local/state/openmerge/git-cache
 OPENMERGE_POLL_INTERVAL=60s
 OPENMERGE_LOG_LEVEL=info
+```
+
+Set the database host, port, credentials and database name to match your
+Postgres instance. The example uses port `5432`; `make db` uses `54329`.
+
+At startup, OpenMerge reads `/app` with its App JWT for the slug, then
+`/users/<app-slug>[bot]` for the numeric **bot user ID**, which differs from the
+App ID and installation ID. Generated commits use `<app-slug>[bot]` and
+`<bot-user-id>+<app-slug>[bot]@users.noreply.github.com`. Explicit
+`--git-committer-name` / `--git-committer-email` flags or
+`OPENMERGE_GIT_COMMITTER_NAME` / `OPENMERGE_GIT_COMMITTER_EMAIL` environment
+variables override discovery. For example:
+
+```ini
 OPENMERGE_GIT_COMMITTER_NAME=my-openmerge[bot]
 OPENMERGE_GIT_COMMITTER_EMAIL=789+my-openmerge[bot]@users.noreply.github.com
 ```
 
-The committer uses the App's **bot user ID** (`789` above), which differs from the
-App ID and installation ID. Find it from GitHub's `/users/<app-slug>[bot]` user
-record. Configure the matching slug and email with `--git-committer-name` and
-`--git-committer-email` or the environment variables above. OpenMerge does not
-look up the numeric bot ID automatically. Without overrides, it uses the App's
-`<app-slug>[bot]` login and `<app-slug>[bot]@users.noreply.github.com` as a fallback;
-set the numeric no-reply email for GitHub account attribution. Squash and merge
+If bot user discovery fails, serving continues with
+`<app-slug>[bot]@users.noreply.github.com`; a WARN log gives the manual settings
+and lookup needed for numeric account attribution. Squash and merge
 commit authors use the PR author's login and numeric GitHub no-reply email.
 Rebase preserves the original author name, email and author date. All generated
 commits, including fences and replayed commits, use the configured committer.
@@ -48,8 +65,6 @@ Save this as `~/.config/systemd/user/openmerge.service`:
 ```ini
 [Unit]
 Description=OpenMerge merge queue
-After=network-online.target
-Wants=network-online.target
 
 [Service]
 Type=simple

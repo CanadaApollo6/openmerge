@@ -242,6 +242,10 @@ func (f *apiFixture) handle(w http.ResponseWriter, r *http.Request) {
 		f.json(w, f.object("app"))
 		return
 	}
+	if path == "users/queue-app[bot]" && r.Method == "GET" {
+		f.json(w, f.object("bot_user"))
+		return
+	}
 	if strings.HasPrefix(path, "app/installations/") {
 		parts := strings.Split(path, "/")
 		id, _ := strconv.ParseInt(parts[2], 10, 64)

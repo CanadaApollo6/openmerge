@@ -170,6 +170,11 @@ func (r *Repo) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.B
 				if err != nil {
 					return "", err
 				}
+				subject, _, _ := strings.Cut(message, "\n")
+				message = stripMetadataLines(message, "OpenMerge-Batch")
+				if stripMetadataLines(subject, "OpenMerge-Batch") == "" {
+					message = fmt.Sprintf("PR %d\n\n%s", pr.Number, strings.TrimSpace(message))
+				}
 				// Replaying must create a new identity even if author, clock,
 				// tree and first parent happen to match the original commit.
 				trailers := []string{"OpenMerge-Replayed-From: " + original}

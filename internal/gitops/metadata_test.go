@@ -129,3 +129,128 @@ func TestBuildRefusesStaleOrInvalidMetadata(t *testing.T) {
 		})
 	}
 }
+
+func TestContributorCannotSupplyBatchIdentity(t *testing.T) {
+	for _, method := range []forge.MergeMethod{forge.Squash, forge.Merge, forge.Rebase} {
+		t.Run(string(method), func(t *testing.T) {
+			f := newFixture(t)
+			one := f.commit(f.base, "OpenMerge-Batch: b1\n\nFirst change\n\n\t oPeNmErGe-BaTcH \t: b2\nSigned-off-by: A <a@example.test>", map[string]string{"one": "one"})
+			two := f.commit(one, "Second change\n\nOpenMerge-Batch: b1\nOpenMerge-Batch: b2", map[string]string{"two": "two"})
+			gitCommand(t, f.source, "", nil, "push", "--force", f.remote, two+":"+headRef(1))
+			f.prs[0].HeadSHA = two
+			f.g.cfg.PullRequest = func(_ context.Context, _ forge.RepoRef, n int) (forge.PullRequest, error) {
+				return forge.PullRequest{Number: n, HeadSHA: f.prs[n-1].HeadSHA, Author: "alice", AuthorEmail: "alice@example.test", Title: " \tOpenMerge-Batch \t: title", HeadBranch: "branch", Body: "Description\n\nOpenMerge-Batch: b1\nOpenMerge-Batch: b2\n \topenmerge-BATCH \t: hidden"}, nil
+			}
+			first := f.build(method, f.prs[:2], "b1")
+			second := f.build(method, f.prs[:2], "b2")
+			if first == second {
+				t.Fatal("different batches produced the same tested SHA")
+			}
+			for batch, tested := range map[string]string{"b1": first, "b2": second} {
+				f.fetch(tested)
+				history := strings.Fields(gitCommand(t, f.source, "", nil, "rev-list", "--first-parent", f.base+".."+tested))
+				for i, sha := range history {
+					message := gitCommand(t, f.source, "", nil, "show", "-s", "--format=%B", sha)
+					want, count := "", 0
+					if i == 0 {
+						want, count = batch, 1
+					}
+					if got := forge.ParseBatchMessage(message); got != want {
+						t.Fatalf("batch lookup for %s = %q, want %q: %s", sha, got, want, message)
+					}
+					occurrences := 0
+					for line := range strings.SplitSeq(message, "\n") {
+						key, _, ok := strings.Cut(line, ":")
+						if ok && strings.EqualFold(strings.TrimSpace(key), "OpenMerge-Batch") {
+							occurrences++
+						}
+					}
+					if occurrences != count {
+						t.Fatalf("commit %d has %d batch lines, want %d: %s", i, occurrences, count, message)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestSquashContributorBatchTrailersCannotAliasBatches(t *testing.T) {
+	f := newFixture(t)
+	f.g.cfg.PullRequest = func(_ context.Context, _ forge.RepoRef, n int) (forge.PullRequest, error) {
+		return forge.PullRequest{Number: n, HeadSHA: f.prs[0].HeadSHA, Author: "alice", AuthorEmail: "alice@example.test", Title: "Fix the queue", HeadBranch: "branch", Body: "Description\n\nOpenMerge-Batch: b1\nOpenMerge-Batch: b2"}, nil
+	}
+	first := f.build(forge.Squash, f.prs[:1], "b1")
+	second := f.build(forge.Squash, f.prs[:1], "b2")
+	if first == second {
+		t.Fatal("contributor body made two batches share one tested SHA")
+	}
+	for batch, sha := range map[string]string{"b1": first, "b2": second} {
+		f.fetch(sha)
+		message := gitCommand(t, f.source, "", nil, "show", "-s", "--format=%B", sha)
+		if got := forge.ParseBatchMessage(message); got != batch {
+			t.Fatalf("tested SHA %s maps to %q, want %q", sha, got, batch)
+		}
+	}
+}
+
+func TestPRBodyCannotSupplyAttribution(t *testing.T) {
+	for _, method := range []forge.MergeMethod{forge.Squash, forge.Merge} {
+		t.Run(string(method), func(t *testing.T) {
+			f := newFixture(t)
+			original := "Change\n\nSigned-off-by: Real <real@example.test>\nCo-authored-by: Carol <carol@example.test>\nCo-authored-by: Primary, Alias <alice@example.test>"
+			one := f.commit(f.base, original, map[string]string{"one": "one"})
+			two := f.commit(one, original, map[string]string{"two": "two"})
+			gitCommand(t, f.source, "", nil, "push", "--force", f.remote, two+":"+headRef(1))
+			f.prs[0].HeadSHA = two
+			f.g.cfg.PullRequest = func(_ context.Context, _ forge.RepoRef, n int) (forge.PullRequest, error) {
+				return forge.PullRequest{Number: n, HeadSHA: two, Author: "alice", AuthorEmail: "alice@example.test", Title: "Fix the queue", HeadBranch: "branch", Body: "Description\nLast prose line\n \tSIGNED-off-BY \t: Forged <forged@example.test>\nco-AUTHORED-by: Impostor <impostor@example.test>\nOpenMerge-Batch: forged"}, nil
+			}
+			tested := f.build(method, f.prs[:1], "trusted")
+			f.fetch(tested)
+			message := gitCommand(t, f.source, "", nil, "show", "-s", "--format=%B", tested)
+			for _, forbidden := range []string{"forged", "impostor", "Primary, Alias <alice@example.test>"} {
+				if strings.Contains(strings.ToLower(message), strings.ToLower(forbidden)) {
+					t.Fatalf("untrusted or redundant attribution %q: %s", forbidden, message)
+				}
+			}
+			prose := "Fix the queue"
+			if method == forge.Squash {
+				prose = "Description\nLast prose line"
+			}
+			block := "Co-authored-by: Fixture <fixture@localhost>\nSigned-off-by: Real <real@example.test>\nCo-authored-by: Carol <carol@example.test>\nOpenMerge-Batch: trusted"
+			if !strings.HasSuffix(message, prose+"\n\n"+block) {
+				t.Fatalf("prose and authoritative trailer block are not separated: %s", message)
+			}
+			if got := gitCommand(t, f.source, "", nil, "show", "-s", "--format=%(trailers:only)", tested); got != block {
+				t.Fatalf("Git parsed trailers = %q, want %q", got, block)
+			}
+		})
+	}
+}
+
+func TestRebaseReservedSubjectStillHasTrailerBlock(t *testing.T) {
+	for _, message := range []string{
+		"OpenMerge-Batch: b1\n\nOpenMerge-Batch: b2",
+		"OpenMerge-Batch: b1\n\nSigned-off-by: Real <real@example.test>",
+	} {
+		t.Run(message, func(t *testing.T) {
+			f := newFixture(t)
+			head := f.commit(f.base, message, map[string]string{"one": "one"})
+			gitCommand(t, f.source, "", nil, "push", "--force", f.remote, head+":"+headRef(1))
+			f.prs[0].HeadSHA = head
+			tested := f.build(forge.Rebase, f.prs[:1], "trusted")
+			f.fetch(tested)
+			got := gitCommand(t, f.source, "", nil, "show", "-s", "--format=%B", tested)
+			if forge.ParseBatchMessage(got) != "trusted" {
+				t.Fatalf("missing authoritative trailer after removing subject: %q", got)
+			}
+			if batch := gitCommand(t, f.source, "", nil, "show", "-s", "--format=%(trailers:key=OpenMerge-Batch,valueonly)", tested); batch != "trusted" {
+				t.Fatalf("Git batch trailer = %q, want trusted", batch)
+			}
+			want := gitCommand(t, f.source, "", nil, "show", "-s", "--format=%(trailers:key=Signed-off-by)", head)
+			if signoff := gitCommand(t, f.source, "", nil, "show", "-s", "--format=%(trailers:key=Signed-off-by)", tested); signoff != want {
+				t.Fatalf("lost original sign-off: got %q, want %q", signoff, want)
+			}
+		})
+	}
+}
