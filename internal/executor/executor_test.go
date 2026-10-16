@@ -15,7 +15,7 @@ import (
 )
 
 var (
-	repo   = forge.RepoRef{Owner: "owner", Name: "repo"}
+	repo   = forge.RepoRef{Path: "owner/repo"}
 	epoch  = time.Date(2026, 10, 15, 12, 0, 0, 0, time.UTC)
 	errIO  = errors.New("infrastructure unavailable")
 	errLog = errors.New("event log unavailable")
@@ -41,8 +41,8 @@ func setup(t *testing.T) *harness {
 		h.prs = append(h.prs, forge.BuildPR{Number: n, HeadSHA: pr.HeadSHA})
 	}
 	h.x = &executor.Executor{
-		Driver: f, Git: f, Repo: repo, Base: "main", FenceRef: fenceRef,
-		RequiredChecks: []string{"ci", "lint"}, Now: func() time.Time { return epoch },
+		Driver: f, Git: f, Repo: repo, Base: "main",
+		RequiredChecks: []string{"ci", "lint"}, NewID: func() (string, error) { return "attempt", nil }, Now: func() time.Time { return epoch },
 	}
 	return h
 }
@@ -157,6 +157,7 @@ func TestRefreshChecks(t *testing.T) {
 			sha := h.tested(t)
 			if tc.emptyRequired {
 				h.x.RequiredChecks = nil
+				h.x.AllowNoRequiredChecks = true
 			}
 			h.f.SetCheckRuns(repo, sha, tc.checks)
 			var events []queue.Event
@@ -224,25 +225,27 @@ func TestEffectsAndRetries(t *testing.T) {
 					t.Fatal("ref was not deleted")
 				}
 			}},
-		{name: "report", method: "ReportStatus", action: func(*harness) queue.Action { return queue.ReportStatus{PR: 1, Status: "merged", Detail: "PR landed"} },
+		{name: "report", method: "ReportStatus", action: func(h *harness) queue.Action {
+			return queue.ReportStatus{PR: 1, HeadSHA: h.prs[0].HeadSHA, Status: "merged", Detail: "PR landed"}
+		},
 			want: func(a queue.Action) queue.Event { return queue.ActionCompleted{Key: a.Key()} },
 			check: func(t *testing.T, h *harness) {
 				t.Helper()
-				want := forge.Status{Context: "openmerge", State: "merged", Detail: "PR landed"}
-				if got := h.f.Statuses(repo, 1); len(got) != 1 || got["openmerge"] != want {
+				want := forge.Status{State: forge.Merged, Summary: "PR landed"}
+				if got := h.f.Statuses(repo, 1); len(got) != 1 || got[h.prs[0].HeadSHA] != want {
 					t.Fatalf("statuses = %v, want %v", got, want)
 				}
 			}},
-		{name: "dequeue", method: "ReportStatus", action: func(*harness) queue.Action {
-			return queue.Dequeue{PR: 1, AdmissionID: 42, Reason: queue.ChecksTimeout, BatchID: "batch"}
+		{name: "dequeue", method: "ReportStatus", action: func(h *harness) queue.Action {
+			return queue.Dequeue{PR: 1, HeadSHA: h.prs[0].HeadSHA, AdmissionID: 42, Reason: queue.ChecksTimeout, BatchID: "batch"}
 		},
 			want: func(queue.Action) queue.Event {
 				return queue.Dequeued{PR: 1, AdmissionID: 42, Reason: queue.ChecksTimeout, BatchID: "batch"}
 			},
 			check: func(t *testing.T, h *harness) {
 				t.Helper()
-				want := forge.Status{Context: "openmerge", State: "dequeued", Detail: "checks-timeout"}
-				if got := h.f.Statuses(repo, 1); len(got) != 1 || got["openmerge"] != want {
+				want := forge.Status{State: forge.Dequeued, Reason: "checks-timeout"}
+				if got := h.f.Statuses(repo, 1); len(got) != 1 || got[h.prs[0].HeadSHA] != want {
 					t.Fatalf("statuses = %v, want %v", got, want)
 				}
 			}},

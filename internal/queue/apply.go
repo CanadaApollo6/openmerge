@@ -29,9 +29,9 @@ func Apply(s State, e Event) State {
 			observation, known := s.observations[e.PR]
 			switch {
 			case !known || !observation.Eligible:
-				s.report(e.PR, string(NotEligible), "PR does not satisfy queue entry conditions")
+				s.report(e.PR, "blocked", string(NotEligible), "PR does not satisfy queue entry conditions")
 			case !observation.Trusted:
-				s.report(e.PR, string(Untrusted), "PR head has not passed the trust gate")
+				s.report(e.PR, "blocked", string(Untrusted), "PR head has not passed the trust gate")
 			default:
 				s.nextAdmission++
 				s.Entries = append(s.Entries, Entry{PR: e.PR, AdmissionID: s.nextAdmission, HeadSHA: observation.HeadSHA, EnqueuedAt: e.At})
@@ -112,15 +112,13 @@ func Apply(s State, e Event) State {
 				if entry := s.entry(pr.PR); entry != nil && entry.DequeueRequested {
 					detail = "already landed"
 				}
+				s.reportHead(pr.PR, pr.HeadSHA, "merged", "", detail)
+				if s.Active.Method == Squash || s.Active.Method == Rebase {
+					s.addEffect(MarkLanded{PR: pr.PR, HeadSHA: pr.HeadSHA, LandedSHA: e.NewBaseSHA})
+				}
 				s.removeEntry(pr.PR)
-				s.report(pr.PR, "merged", detail)
 			}
 			s.BaseSHA, s.Fence = e.NewBaseSHA, e.NewFence
-			s.discardBatch()
-		}
-	case LandingRejected:
-		if s.batchIn(e.BatchID, Landing) {
-			s.BaseSHA, s.Fence = e.ActualBaseSHA, e.ActualFence
 			s.discardBatch()
 		}
 	case LandingAbandoned:
@@ -134,8 +132,8 @@ func Apply(s State, e Event) State {
 			if s.inBatch(e.PR) {
 				s.discardBatch()
 			}
+			s.reportHead(e.PR, entry.HeadSHA, "dequeued", string(e.Reason), string(e.Reason))
 			s.removeEntry(e.PR)
-			s.report(e.PR, "dequeued", string(e.Reason))
 		}
 	case ActionCompleted:
 		s.completeEffect(e.Key)
@@ -214,7 +212,7 @@ func (s *State) requestDequeue(pr int, reason DequeueReason) {
 		entry.DequeueRequested = true
 	}
 	if current, pending := s.dequeues[pr]; !pending || reason == Requested && current.Reason != Requested {
-		s.dequeues[pr] = Dequeue{PR: pr, AdmissionID: entry.AdmissionID, Reason: reason, scope: fmt.Sprintf("event/%d", s.revision)}
+		s.dequeues[pr] = Dequeue{PR: pr, HeadSHA: entry.HeadSHA, AdmissionID: entry.AdmissionID, Reason: reason, scope: fmt.Sprintf("event/%d", s.revision)}
 	}
 	if s.inBatch(pr) && !s.isLanding(pr) {
 		s.addEffect(DeleteRef{Ref: s.Active.TestRef})
@@ -296,8 +294,16 @@ type effectScope struct {
 	batch     string
 }
 
-func (s *State) report(pr int, status, detail string) {
-	report := ReportStatus{PR: pr, Status: status, Detail: detail, revision: s.revision}
+func (s *State) report(pr int, status, reason, detail string) {
+	head := s.observations[pr].HeadSHA
+	if entry := s.entry(pr); entry != nil {
+		head = entry.HeadSHA
+	}
+	s.reportHead(pr, head, status, reason, detail)
+}
+
+func (s *State) reportHead(pr int, head, status, reason, detail string) {
+	report := ReportStatus{PR: pr, HeadSHA: head, Status: status, Reason: reason, Detail: detail, revision: s.revision}
 	if entry := s.entry(pr); entry != nil {
 		report.admission = entry.AdmissionID
 	}

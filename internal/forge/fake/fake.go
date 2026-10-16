@@ -1,5 +1,5 @@
 // Package fake implements a concurrent in-memory forge and a tiny commit graph.
-// Commit content is the sorted set of PR numbers present in that commit.
+// Commits retain file snapshots, PR content markers, and all parent edges.
 package fake
 
 import (
@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -21,15 +22,18 @@ type Commit struct {
 	Parents []string
 	PRs     []int
 	Message string
+	Files   map[string]string
 }
 
 type repository struct {
-	refs     map[string]string
-	commits  map[string]Commit
-	prs      map[int]forge.PullRequest
-	checks   map[string][]forge.CheckRun
-	statuses map[int]map[string]forge.Status
-	comments map[int]map[string]string
+	refs      map[string]string
+	commits   map[string]Commit
+	prs       map[int]forge.PullRequest
+	checks    map[string][]forge.CheckRun
+	statuses  map[int]map[string]forge.Status
+	comments  map[int][]Comment
+	prCommits map[int][]string
+	prBases   map[int]string
 }
 
 // Forge implements both forge interfaces. Use New to construct it. All helpers
@@ -37,7 +41,6 @@ type repository struct {
 type Forge struct {
 	mu        sync.Mutex
 	repos     map[forge.RepoRef]*repository
-	conflicts map[[2]int]bool
 	failures  map[string][]error
 	onTestRef func(string, []int)
 }
@@ -50,7 +53,7 @@ var (
 // New returns an empty forge, with no repositories or refs.
 func New() *Forge {
 	return &Forge{
-		repos: make(map[forge.RepoRef]*repository), conflicts: make(map[[2]int]bool),
+		repos:    make(map[forge.RepoRef]*repository),
 		failures: make(map[string][]error),
 	}
 }
@@ -61,7 +64,7 @@ func (f *Forge) repo(repo forge.RepoRef) *repository {
 		r = &repository{
 			refs: make(map[string]string), commits: make(map[string]Commit),
 			prs: make(map[int]forge.PullRequest), checks: make(map[string][]forge.CheckRun),
-			statuses: make(map[int]map[string]forge.Status), comments: make(map[int]map[string]string),
+			statuses: make(map[int]map[string]forge.Status), comments: make(map[int][]Comment), prCommits: make(map[int][]string), prBases: make(map[int]string),
 		}
 		f.repos[repo] = r
 	}
@@ -77,16 +80,23 @@ func (f *Forge) Init(repo forge.RepoRef, base, fenceRef string) (baseSHA, fenceS
 		r.refs[base] = r.commit(nil, nil, "initial base")
 	}
 	if r.refs[fenceRef] == "" {
-		r.refs[fenceRef] = r.commit(nil, nil, "initial fence")
+		r.refs[fenceRef] = r.commit(nil, nil, "openmerge fence initial")
 	}
 	return r.refs[base], r.refs[fenceRef]
 }
 
-func (r *repository) commit(parents []string, prs []int, message string) string {
+func (r *repository) commit(parents []string, prs []int, message string, files ...map[string]string) string {
+	content := map[string]string{}
+	if len(parents) > 0 {
+		content = maps.Clone(r.commits[parents[0]].Files)
+	}
+	if len(files) > 0 {
+		content = maps.Clone(files[0])
+	}
 	prs = slices.Clone(prs)
 	slices.Sort(prs)
 	prs = slices.Compact(prs)
-	c := Commit{Parents: slices.Clone(parents), PRs: prs, Message: message}
+	c := Commit{Parents: slices.Clone(parents), PRs: prs, Message: message, Files: content}
 	// These fields contain no values that JSON cannot encode.
 	data, _ := json.Marshal(c)
 	c.SHA = fmt.Sprintf("%x", sha256.Sum256(data))
@@ -111,20 +121,6 @@ func (f *Forge) FailNext(method string, err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.failures[method] = append(f.failures[method], err)
-}
-
-// SetConflict makes a pair of PRs incompatible, in either order or against base.
-func (f *Forge) SetConflict(prA, prB int) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.conflicts[pair(prA, prB)] = true
-}
-
-func pair(a, b int) [2]int {
-	if a > b {
-		a, b = b, a
-	}
-	return [2]int{a, b}
 }
 
 // OnTestRef installs a callback for newly pushed test refs. prs contains only
@@ -163,40 +159,54 @@ func (f *Forge) build(ctx context.Context, r *repository, req forge.BuildRequest
 		return "", nil, false, fmt.Errorf("unsupported merge method %q", req.Method)
 	}
 	content := slices.Clone(base.PRs)
+	files := maps.Clone(base.Files)
 	prs := make([]int, 0, len(req.PRs))
-	for _, pr := range req.PRs {
-		if _, ok := r.commits[pr.HeadSHA]; !ok {
-			return "", nil, false, fmt.Errorf("unknown PR head %q", pr.HeadSHA)
-		}
-		for _, present := range content {
-			if f.conflicts[pair(pr.Number, present)] {
-				return "", nil, false, fmt.Errorf("PRs %d and %d: %w", pr.Number, present, forge.ErrConflict)
-			}
+	top := req.BaseSHA
+	for i, pr := range req.PRs {
+		actual, ok := r.prs[pr.Number]
+		if !ok || actual.HeadSHA != pr.HeadSHA {
+			return "", nil, false, fmt.Errorf("PR %d head %q does not match actual head %q", pr.Number, pr.HeadSHA, actual.HeadSHA)
 		}
 		content = append(content, pr.Number)
 		prs = append(prs, pr.Number)
+		for j, original := range r.prCommits[pr.Number] {
+			c := r.commits[original]
+			parent := r.commits[c.Parents[0]]
+			// Replay each file delta against the evolving test tree. A different edit
+			// to the same file is a conflict, just as with these add-file fixtures in git.
+			for path, value := range c.Files {
+				before, existed := parent.Files[path]
+				if existed && before == value {
+					continue
+				}
+				current, present := files[path]
+				if (present != existed || current != before) && (!present || current != value) {
+					return "", nil, false, fmt.Errorf("PR %d file %s: %w", pr.Number, path, forge.ErrConflict)
+				}
+				files[path] = value
+			}
+			if req.Method == forge.Rebase {
+				message := fmt.Sprintf("rebase PR %d commit %s", pr.Number, original)
+				if i == len(req.PRs)-1 && j == len(r.prCommits[pr.Number])-1 {
+					message += "\nOpenMerge-Batch: " + req.BatchID
+				}
+				top = r.commit([]string{top}, content, message, files)
+			}
+		}
+		if req.Method == forge.Merge {
+			message := fmt.Sprintf("merge PR %d %s", pr.Number, pr.HeadSHA)
+			if i == len(req.PRs)-1 {
+				message += "\nOpenMerge-Batch: " + req.BatchID
+			}
+			top = r.commit([]string{top, pr.HeadSHA}, content, message, files)
+		}
 	}
-	top := req.BaseSHA
 	if req.Method == forge.Squash {
 		heads := make([]string, 0, len(req.PRs))
 		for _, pr := range req.PRs {
 			heads = append(heads, pr.HeadSHA)
 		}
-		top = r.commit([]string{top}, content, fmt.Sprintf("squash %v\nOpenMerge-Batch: %s", heads, req.BatchID))
-	} else {
-		content = slices.Clone(base.PRs)
-		for i, pr := range req.PRs {
-			content = append(content, pr.Number)
-			parents := []string{top}
-			if req.Method == forge.Merge {
-				parents = append(parents, pr.HeadSHA)
-			}
-			message := fmt.Sprintf("%s PR %d %s", req.Method, pr.Number, pr.HeadSHA)
-			if i == len(req.PRs)-1 {
-				message += "\nOpenMerge-Batch: " + req.BatchID
-			}
-			top = r.commit(parents, content, message)
-		}
+		top = r.commit([]string{top}, content, fmt.Sprintf("squash %v\nOpenMerge-Batch: %s", heads, req.BatchID), files)
 	}
 	changed := r.refs[req.Ref] != top
 	r.refs[req.Ref] = top
@@ -212,7 +222,7 @@ func (f *Forge) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequ
 	}
 	r := f.repo(repo)
 	if r.refs[req.Base] != req.ExpectedBaseSHA || r.refs[req.Fence] != req.ExpectedFence {
-		return "", &forge.LandRejectedError{ActualBaseSHA: r.refs[req.Base], ActualFence: r.refs[req.Fence]}
+		return "", forge.ErrLeaseRejected
 	}
 	if req.Base == req.Fence {
 		return "", errors.New("base and fence must be distinct refs")
@@ -220,22 +230,32 @@ func (f *Forge) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequ
 	if _, ok := r.commits[req.TestedSHA]; !ok {
 		return "", fmt.Errorf("unknown tested commit %q", req.TestedSHA)
 	}
-	next, err := r.fence(req.ExpectedFence, req.NextFenceID)
+	next, err := r.fence(req.ExpectedFence, req.NextFenceID, req.TestedSHA)
 	if err != nil {
 		return "", err
 	}
 	r.refs[req.Base], r.refs[req.Fence] = req.TestedSHA, next
+	for _, pinned := range req.PRs {
+		if pr, ok := r.prs[pinned.Number]; ok && pr.HeadSHA == pinned.HeadSHA && r.isAncestor(pinned.HeadSHA, req.TestedSHA) {
+			pr.Closed = true
+			r.prs[pr.Number] = pr
+		}
+	}
 	return next, nil
 }
 
-func (r *repository) fence(expected, id string) (string, error) {
+func (r *repository) fence(expected, id, tested string) (string, error) {
 	if id == "" {
 		return "", errors.New("next fence ID is required")
 	}
 	if _, ok := r.commits[expected]; !ok {
 		return "", fmt.Errorf("unknown fence commit %q", expected)
 	}
-	return r.commit([]string{expected}, nil, "openmerge fence "+id), nil
+	message := "openmerge fence " + id
+	if tested != "" {
+		message += " tested=" + tested
+	}
+	return r.commit([]string{expected}, nil, message), nil
 }
 
 // AdvanceFence advances only when the current fence matches expectedSHA.
@@ -247,9 +267,9 @@ func (f *Forge) AdvanceFence(ctx context.Context, repo forge.RepoRef, fenceRef, 
 	}
 	r := f.repo(repo)
 	if r.refs[fenceRef] != expectedSHA {
-		return "", &forge.LandRejectedError{ActualFence: r.refs[fenceRef]}
+		return "", forge.ErrLeaseRejected
 	}
-	next, err := r.fence(expectedSHA, nextID)
+	next, err := r.fence(expectedSHA, nextID, "")
 	if err != nil {
 		return "", err
 	}
@@ -258,22 +278,23 @@ func (f *Forge) AdvanceFence(ctx context.Context, repo forge.RepoRef, fenceRef, 
 }
 
 // ReadFence returns the current fence SHA and the ID recorded in its message.
-func (f *Forge) ReadFence(ctx context.Context, repo forge.RepoRef, fenceRef string) (string, string, error) {
+func (f *Forge) ReadFence(ctx context.Context, repo forge.RepoRef, fenceRef string) (string, string, string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.failure(ctx, "ReadFence"); err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	r := f.repo(repo)
 	sha, ok := r.refs[fenceRef]
 	if !ok {
-		return "", "", fmt.Errorf("unknown ref %q", fenceRef)
+		return "", "", "", fmt.Errorf("unknown ref %q", fenceRef)
 	}
 	id, ok := strings.CutPrefix(r.commits[sha].Message, "openmerge fence ")
 	if !ok {
-		id = ""
+		return sha, "", "", nil
 	}
-	return sha, id, nil
+	id, tested, _ := strings.Cut(id, " tested=")
+	return sha, id, tested, nil
 }
 
 // ReadRef returns an error when the ref does not exist.
@@ -326,8 +347,8 @@ func (f *Forge) CheckRuns(ctx context.Context, repo forge.RepoRef, sha string) (
 	return slices.Clone(f.repo(repo).checks[sha]), nil
 }
 
-// ReportStatus upserts one context on one PR, preserving other contexts.
-func (f *Forge) ReportStatus(ctx context.Context, repo forge.RepoRef, pr int, status forge.Status) error {
+// ReportStatus upserts the OpenMerge check on exactly one PR head.
+func (f *Forge) ReportStatus(ctx context.Context, repo forge.RepoRef, pr int, headSHA string, status forge.Status) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.failure(ctx, "ReportStatus"); err != nil {
@@ -337,7 +358,7 @@ func (f *Forge) ReportStatus(ctx context.Context, repo forge.RepoRef, pr int, st
 	if r.statuses[pr] == nil {
 		r.statuses[pr] = make(map[string]forge.Status)
 	}
-	r.statuses[pr][status.Context] = status
+	r.statuses[pr][headSHA] = status
 	return nil
 }
 
@@ -349,11 +370,94 @@ func (f *Forge) Comment(ctx context.Context, repo forge.RepoRef, pr int, key, bo
 		return err
 	}
 	r := f.repo(repo)
-	if r.comments[pr] == nil {
-		r.comments[pr] = make(map[string]string)
+	marker := "<!-- openmerge:" + key + " -->"
+	for _, comment := range r.comments[pr] {
+		if comment.Author == Identity && strings.Contains(comment.Body, marker) {
+			return nil
+		}
 	}
-	if _, exists := r.comments[pr][key]; !exists {
-		r.comments[pr][key] = body + "\n<!-- openmerge:" + key + " -->"
-	}
+	r.comments[pr] = append(r.comments[pr], Comment{Author: Identity, Key: key, Body: body + "\n" + marker})
 	return nil
+}
+
+// Identity is the authenticated bot identity used by this fake driver.
+const Identity = "openmerge-bot"
+
+// Comment includes its author so user-supplied markers cannot suppress writes.
+type Comment struct{ Author, Key, Body string }
+
+// MarkLanded closes the PR and records one commit link across retries.
+func (f *Forge) MarkLanded(ctx context.Context, repo forge.RepoRef, number int, landedSHA string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.failure(ctx, "MarkLanded"); err != nil {
+		return err
+	}
+	r := f.repo(repo)
+	pr, ok := r.prs[number]
+	if !ok {
+		return fmt.Errorf("unknown PR %d", number)
+	}
+	if _, ok := r.commits[landedSHA]; !ok {
+		return fmt.Errorf("unknown landed commit %q", landedSHA)
+	}
+	key := "landed/" + landedSHA
+	for _, c := range r.comments[number] {
+		if c.Author == Identity && c.Key == key {
+			pr.Closed = true
+			r.prs[number] = pr
+			return nil
+		}
+	}
+	r.comments[number] = append(r.comments[number], Comment{Author: Identity, Key: key, Body: "Landed in [" + landedSHA + "](/" + repo.Path + "/commit/" + landedSHA + ")"})
+	pr.Closed = true
+	r.prs[number] = pr
+	return nil
+}
+
+// EnsureFence initializes a missing fence without replacing an existing token.
+func (f *Forge) EnsureFence(ctx context.Context, repo forge.RepoRef, fenceRef string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.failure(ctx, "EnsureFence"); err != nil {
+		return "", err
+	}
+	r := f.repo(repo)
+	if r.refs[fenceRef] == "" {
+		r.refs[fenceRef] = r.commit(nil, nil, "openmerge fence initial")
+	}
+	return r.refs[fenceRef], nil
+}
+
+// IsAncestor traverses every parent edge, including merged PR histories.
+func (f *Forge) IsAncestor(ctx context.Context, repo forge.RepoRef, ancestor, descendant string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.failure(ctx, "IsAncestor"); err != nil {
+		return false, err
+	}
+	r := f.repo(repo)
+	for _, sha := range []string{ancestor, descendant} {
+		if _, ok := r.commits[sha]; !ok {
+			return false, fmt.Errorf("unknown commit %q", sha)
+		}
+	}
+	return r.isAncestor(ancestor, descendant), nil
+}
+
+func (r *repository) isAncestor(ancestor, descendant string) bool {
+	pending := []string{descendant}
+	seen := make(map[string]bool)
+	for len(pending) > 0 {
+		sha := pending[len(pending)-1]
+		pending = pending[:len(pending)-1]
+		if sha == ancestor {
+			return true
+		}
+		if !seen[sha] {
+			seen[sha] = true
+			pending = append(pending, r.commits[sha].Parents...)
+		}
+	}
+	return false
 }

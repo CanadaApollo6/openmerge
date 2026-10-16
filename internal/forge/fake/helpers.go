@@ -10,6 +10,11 @@ import (
 
 // OpenPR creates a PR head based on baseSHA. PushPR creates subsequent heads.
 func (f *Forge) OpenPR(repo forge.RepoRef, number int, baseSHA string, headInBaseRepo bool) (forge.PullRequest, error) {
+	return f.OpenPRWithFiles(repo, number, baseSHA, headInBaseRepo, map[string]string{fmt.Sprintf("pr-%d.txt", number): fmt.Sprintf("PR %d", number)})
+}
+
+// OpenPRWithFiles creates a PR adding or changing the supplied files.
+func (f *Forge) OpenPRWithFiles(repo forge.RepoRef, number int, baseSHA string, headInBaseRepo bool, changes map[string]string) (forge.PullRequest, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	r := f.repo(repo)
@@ -20,9 +25,15 @@ func (f *Forge) OpenPR(repo forge.RepoRef, number int, baseSHA string, headInBas
 	if _, exists := r.prs[number]; exists {
 		return forge.PullRequest{}, fmt.Errorf("PR %d already exists", number)
 	}
-	head := r.commit([]string{baseSHA}, append(slices.Clone(base.PRs), number), fmt.Sprintf("PR %d", number))
+	files := maps.Clone(base.Files)
+	for path, value := range changes {
+		files[path] = value
+	}
+	head := r.commit([]string{baseSHA}, append(slices.Clone(base.PRs), number), fmt.Sprintf("PR %d", number), files)
 	pr := forge.PullRequest{Number: number, HeadSHA: head, HeadInBaseRepo: headInBaseRepo}
 	r.prs[number] = pr
+	r.prBases[number] = baseSHA
+	r.prCommits[number] = []string{head}
 	return pr, nil
 }
 
@@ -35,7 +46,10 @@ func (f *Forge) PushPR(repo forge.RepoRef, number int, message string) (forge.Pu
 	if !ok {
 		return forge.PullRequest{}, fmt.Errorf("unknown PR %d", number)
 	}
-	pr.HeadSHA = r.commit([]string{pr.HeadSHA}, r.commits[pr.HeadSHA].PRs, message)
+	files := maps.Clone(r.commits[pr.HeadSHA].Files)
+	files[fmt.Sprintf("pr-%d-commit-%d.txt", number, len(r.prCommits[number])+1)] = message
+	pr.HeadSHA = r.commit([]string{pr.HeadSHA}, r.commits[pr.HeadSHA].PRs, message, files)
+	r.prCommits[number] = append(r.prCommits[number], pr.HeadSHA)
 	r.prs[number] = pr
 	pr.Approvals = slices.Clone(pr.Approvals)
 	return pr, nil
@@ -97,7 +111,7 @@ func (f *Forge) Commit(repo forge.RepoRef, sha string) (Commit, error) {
 	if !ok {
 		return Commit{}, fmt.Errorf("unknown commit %q", sha)
 	}
-	c.Parents, c.PRs = slices.Clone(c.Parents), slices.Clone(c.PRs)
+	c.Parents, c.PRs, c.Files = slices.Clone(c.Parents), slices.Clone(c.PRs), maps.Clone(c.Files)
 	return c, nil
 }
 
@@ -113,7 +127,7 @@ func (f *Forge) History(repo forge.RepoRef, ref string) ([]Commit, error) {
 	var history []Commit
 	for sha != "" {
 		c := r.commits[sha]
-		c.Parents, c.PRs = slices.Clone(c.Parents), slices.Clone(c.PRs)
+		c.Parents, c.PRs, c.Files = slices.Clone(c.Parents), slices.Clone(c.PRs), maps.Clone(c.Files)
 		history = append(history, c)
 		sha = ""
 		if len(c.Parents) > 0 {
@@ -124,7 +138,7 @@ func (f *Forge) History(repo forge.RepoRef, ref string) ([]Commit, error) {
 	return history, nil
 }
 
-// Statuses returns a snapshot keyed by context name.
+// Statuses returns a snapshot keyed by head SHA.
 func (f *Forge) Statuses(repo forge.RepoRef, pr int) map[string]forge.Status {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -135,5 +149,50 @@ func (f *Forge) Statuses(repo forge.RepoRef, pr int) map[string]forge.Status {
 func (f *Forge) Comments(repo forge.RepoRef, pr int) map[string]string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return maps.Clone(f.repo(repo).comments[pr])
+	result := make(map[string]string)
+	for _, c := range f.repo(repo).comments[pr] {
+		if c.Author == Identity {
+			result[c.Key] = c.Body
+		}
+	}
+	return result
+}
+
+// AddComment posts a comment as an arbitrary identity, for dedupe tests.
+func (f *Forge) AddComment(repo forge.RepoRef, pr int, author, body string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r := f.repo(repo)
+	r.comments[pr] = append(r.comments[pr], Comment{Author: author, Body: body})
+}
+
+// CommentRecords returns all comments, including comments by other identities.
+func (f *Forge) CommentRecords(repo forge.RepoRef, pr int) []Comment {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.repo(repo).comments[pr])
+}
+
+// ContainsPR checks the PR's actual changed file content, rather than ancestry.
+func (f *Forge) ContainsPR(repo forge.RepoRef, sha string, number int) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r := f.repo(repo)
+	pr, ok := r.prs[number]
+	if !ok {
+		return false
+	}
+	commit, ok := r.commits[sha]
+	if !ok {
+		return false
+	}
+	base := r.commits[r.prBases[number]]
+	for path, value := range r.commits[pr.HeadSHA].Files {
+		if before, existed := base.Files[path]; !existed || before != value {
+			if got, exists := commit.Files[path]; !exists || got != value {
+				return false
+			}
+		}
+	}
+	return true
 }

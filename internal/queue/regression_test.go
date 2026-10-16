@@ -74,7 +74,7 @@ func TestRetainedChecksArePruned(t *testing.T) {
 				case "landed":
 					s = Apply(s, Landed{BatchID: batchID, NewBaseSHA: "first", NewFence: "f1"})
 				case "rejected":
-					s = Apply(s, LandingRejected{BatchID: batchID, ActualBaseSHA: "base2", ActualFence: "f1"})
+					s = Apply(Apply(s, BaseMoved{SHA: "base2"}), LandingAbandoned{BatchID: batchID, NewFence: "f1"})
 				case "abandoned":
 					s = Apply(s, LandingAbandoned{BatchID: batchID, NewFence: "f1"})
 				}
@@ -210,7 +210,7 @@ func TestBuildFailuresPause(t *testing.T) {
 				t.Fatalf("failure limit did not pause the queued PR: %+v, %v", s, actions)
 			}
 			report := onlyAction[ReportStatus](t, actions)
-			if report.PR != 1 || report.Status != "build-failed" || !strings.Contains(report.Detail, "Queue paused") || !strings.Contains(report.Detail, fmt.Sprint(effectiveLimit)) {
+			if report.PR != 1 || report.Reason != "build-failed" || !strings.Contains(report.Detail, "Queue paused") || !strings.Contains(report.Detail, fmt.Sprint(effectiveLimit)) {
 				t.Fatalf("pause is not explained: %+v", report)
 			}
 			s = Apply(s, PRObserved{PR: 1, HeadSHA: "head1", Eligible: true, Trusted: true})
@@ -314,7 +314,7 @@ func TestSuccessfulBuildResetsFailures(t *testing.T) {
 	s = Apply(s, TestRefBuilt{BatchID: build.BatchID, TestedSHA: "tested", Method: build.Method, At: epoch})
 	s = Apply(s, ChecksCompleted{TestedSHA: "tested", Success: true})
 	s = Apply(s, LandingStarted{BatchID: build.BatchID, AttemptID: "attempt", FenceToken: "f0", At: epoch})
-	s = Apply(s, LandingRejected{BatchID: build.BatchID, ActualBaseSHA: "base1", ActualFence: "f1"})
+	s = Apply(Apply(s, BaseMoved{SHA: "base1"}), LandingAbandoned{BatchID: build.BatchID, NewFence: "f1"})
 	build = onlyAction[BuildTestRef](t, Plan(cfg, s, epoch))
 	s = Apply(s, TestRefBuildFailed{BatchID: build.BatchID, At: epoch})
 	if s.PauseReason(cfg) != "" {

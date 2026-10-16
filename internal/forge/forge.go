@@ -4,11 +4,11 @@ package forge
 import (
 	"context"
 	"errors"
-	"fmt"
 )
 
-// RepoRef identifies a repository within a forge installation.
-type RepoRef struct{ Owner, Name string }
+// RepoRef identifies a repository by its opaque forge-relative path, including
+// nested groups (for example, group/subgroup/name). Drivers must not split it.
+type RepoRef struct{ Path string }
 
 // PullRequest is an exact-head observation used to evaluate queue admission.
 type PullRequest struct {
@@ -31,19 +31,46 @@ type CheckState string
 
 // Normalized check states.
 const (
-	Pending CheckState = "pending"
-	Success CheckState = "success"
-	Failure CheckState = "failure"
+	Pending   CheckState = "pending"
+	Success   CheckState = "success"
+	Failure   CheckState = "failure"
+	Cancelled CheckState = "cancelled"
+	Skipped   CheckState = "skipped"
+	Neutral   CheckState = "neutral"
 )
 
-// CheckRun is a named check on a particular commit.
+// CheckRun is a named check on a particular commit. ID increases monotonically
+// for each new run of a name; updates to that run retain its ID.
 type CheckRun struct {
+	ID    uint64
 	Name  string
 	State CheckState
 }
 
-// Status is upserted by Context for one PR. State and Detail are queue outcomes.
-type Status struct{ Context, State, Detail string }
+// StatusState is the normalized queue lifecycle, independent of forge terminology.
+type StatusState string
+
+// Normalized queue lifecycle states.
+const (
+	Queued   StatusState = "queued"
+	Testing  StatusState = "testing"
+	Landing  StatusState = "landing"
+	Merged   StatusState = "merged"
+	Dequeued StatusState = "dequeued"
+	Blocked  StatusState = "blocked"
+	Paused   StatusState = "paused"
+)
+
+// Status is upserted as the driver's OpenMerge check on one PR head commit.
+// Drivers map queued/testing/landing to pending, merged to success, dequeued to
+// cancelled, blocked to failure, and paused to action-required. Commit-status
+// APIs without cancelled/action-required use failure and describe the state. Reason is a stable machine-readable dequeue/block reason;
+// Summary is human-readable. Neither is used as a forge check conclusion.
+type Status struct {
+	State   StatusState
+	Reason  string
+	Summary string
+}
 
 // Driver exposes forge API operations. Mutations must converge when retried.
 type Driver interface {
@@ -51,8 +78,12 @@ type Driver interface {
 	CheckRuns(ctx context.Context, repo RepoRef, sha string) ([]CheckRun, error)
 	// DeleteRef succeeds even when ref is already missing.
 	DeleteRef(ctx context.Context, repo RepoRef, ref string) error
-	ReportStatus(ctx context.Context, repo RepoRef, pr int, status Status) error
-	// Comment embeds key in a hidden marker and skips an existing keyed comment.
+	ReportStatus(ctx context.Context, repo RepoRef, pr int, headSHA string, s Status) error
+	// MarkLanded idempotently closes a PR with a link to landedSHA, or uses a
+	// native mark-merged operation. It must not synthesize another git merge.
+	MarkLanded(ctx context.Context, repo RepoRef, pr int, landedSHA string) error
+	// Comment embeds key in a hidden marker and skips an existing keyed comment
+	// only when that comment was authored by this driver's own identity.
 	Comment(ctx context.Context, repo RepoRef, pr int, key, body string) error
 }
 
@@ -66,7 +97,8 @@ const (
 	Rebase MergeMethod = "rebase"
 )
 
-// BuildPR pins one PR head, independently of later pushes.
+// BuildPR pins an admitted PR head. A build rejects a head that no longer
+// matches that PR rather than substituting a different commit.
 type BuildPR struct {
 	Number  int
 	HeadSHA string
@@ -81,34 +113,35 @@ type BuildRequest struct {
 	BatchID      string
 }
 
-// ErrConflict distinguishes a merge conflict from infrastructure failures.
+// ErrConflict distinguishes a content conflict from an infrastructure failure.
 var ErrConflict = errors.New("merge conflict")
 
-// LandRequest leases both refs in one atomic push. NextFenceID is a unique opaque
-// ID, not a SHA: git creates a fence commit with ExpectedFence as its parent and
-// message "openmerge fence <id>" and returns its SHA. Each attempt and purpose
-// must have a distinct ID; retries of that operation use the same ID.
+// ErrLeaseRejected reports an atomic lease refusal. A rejected git push provides
+// no actual ref values; callers must read the fence to settle the attempt.
+var ErrLeaseRejected = errors.New("git lease rejected")
+
+// LandRequest leases both refs in one atomic push. NextFenceID is land/<attempt>
+// where the attempt ID is random and durably recorded before this call. The new
+// fence's parent is ExpectedFence and its message is
+// "openmerge fence land/<attempt> tested=<TestedSHA>". PRs pin the landed heads.
 type LandRequest struct {
 	Base, ExpectedBaseSHA, TestedSHA  string
 	Fence, ExpectedFence, NextFenceID string
-}
-
-// LandRejectedError reports an atomic lease refusal; neither ref was changed.
-// AdvanceFence only fills ActualFence, since it does not read a base branch.
-type LandRejectedError struct{ ActualBaseSHA, ActualFence string }
-
-func (e *LandRejectedError) Error() string {
-	return fmt.Sprintf("git lease rejected (base %q, fence %q)", e.ActualBaseSHA, e.ActualFence)
+	PRs                               []BuildPR
 }
 
 // Git builds exact tested commits and performs forge-enforced fenced writes.
 type Git interface {
 	BuildTestRef(ctx context.Context, repo RepoRef, req BuildRequest) (testedSHA string, err error)
 	Land(ctx context.Context, repo RepoRef, req LandRequest) (newFenceSHA string, err error)
+	// EnsureFence creates the initial fence only if absent, safely under
+	// concurrency, otherwise returning the existing SHA without changing it.
+	EnsureFence(ctx context.Context, repo RepoRef, fenceRef string) (sha string, err error)
 	// AdvanceFence leases expectedSHA and mints a child commit using nextID.
 	AdvanceFence(ctx context.Context, repo RepoRef, fenceRef, expectedSHA, nextID string) (newSHA string, err error)
-	// ReadFence reads one commit's SHA and ID from its "openmerge fence <id>"
-	// message. A non-OpenMerge commit has an empty ID; a missing ref is an error.
-	ReadFence(ctx context.Context, repo RepoRef, fenceRef string) (sha, id string, err error)
+	// ReadFence reads identity and tested SHA from the current fence commit.
+	// A non-OpenMerge commit has empty identity fields; a missing ref is an error.
+	ReadFence(ctx context.Context, repo RepoRef, fenceRef string) (sha, id, testedSHA string, err error)
 	ReadRef(ctx context.Context, repo RepoRef, ref string) (sha string, err error)
+	IsAncestor(ctx context.Context, repo RepoRef, ancestor, descendant string) (bool, error)
 }

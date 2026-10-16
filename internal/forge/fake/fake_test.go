@@ -15,7 +15,7 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/forge/forgetest"
 )
 
-var repo = forge.RepoRef{Owner: "owner", Name: "repo"}
+var repo = forge.RepoRef{Path: "group/subgroup/repo"}
 
 const fenceRef = "openmerge/fence/main"
 
@@ -25,15 +25,33 @@ func fixture(t *testing.T) (*fake.Forge, forgetest.Env) {
 	base, fence := f.Init(repo, "main", fenceRef)
 	e := forgetest.Env{Driver: f, Git: f, Repo: repo, Base: "main", FenceRef: fenceRef, BaseSHA: base, FenceSHA: fence}
 	for _, n := range []int{1, 2, 3} {
-		pr, err := f.OpenPR(repo, n, base, true)
+		pr, err := f.OpenPR(repo, n, base, n != 1)
 		must(t, err)
 		e.PRs = append(e.PRs, forge.BuildPR{Number: n, HeadSHA: pr.HeadSHA})
 	}
 	e.SetRef = func(ref, sha string) error { return f.SetRef(repo, ref, sha) }
-	e.SetConflict = f.SetConflict
+	for i, pr := range e.PRs {
+		if i < 2 {
+			must(t, f.Approve(repo, pr.Number, forge.Approval{User: "maintainer", SHA: pr.HeadSHA, CanWrite: i == 0}))
+		}
+		observed, err := f.PullRequest(context.Background(), repo, pr.Number)
+		must(t, err)
+		e.Observations = append(e.Observations, observed)
+	}
+	for _, n := range []int{10, 11} {
+		pr, err := f.OpenPRWithFiles(repo, n, base, true, map[string]string{"conflict.txt": fmt.Sprint(n)})
+		must(t, err)
+		e.ConflictingPRs = append(e.ConflictingPRs, forge.BuildPR{Number: n, HeadSHA: pr.HeadSHA})
+	}
+	e.ContainsPR = func(sha string, pr int) bool { return f.ContainsPR(repo, sha, pr) }
+	e.AddForeignComment = func(pr int, body string) { f.AddComment(repo, pr, "human", body) }
 	e.SetCheckRuns = func(sha string, checks []forge.CheckRun) { f.SetCheckRuns(repo, sha, checks) }
 	e.Statuses = func(pr int) map[string]forge.Status { return f.Statuses(repo, pr) }
 	e.Comments = func(pr int) map[string]string { return f.Comments(repo, pr) }
+	e.Landed = func(pr int, sha string) bool {
+		comments := f.Comments(repo, pr)
+		return len(comments) == 1 && strings.Contains(comments["landed/"+sha], "commit/"+sha)
+	}
 	return f, e
 }
 
@@ -55,7 +73,7 @@ func TestReadFenceMessages(t *testing.T) {
 			pr, err := f.PushPR(repo, 1, tc.message)
 			must(t, err)
 			must(t, f.SetRef(repo, fenceRef, pr.HeadSHA))
-			sha, id, err := f.ReadFence(context.Background(), repo, fenceRef)
+			sha, id, _, err := f.ReadFence(context.Background(), repo, fenceRef)
 			must(t, err)
 			if sha != pr.HeadSHA || id != tc.id {
 				t.Fatalf("ReadFence = (%q, %q), want (%q, %q)", sha, id, pr.HeadSHA, tc.id)
@@ -69,17 +87,17 @@ func TestReadFenceErrors(t *testing.T) {
 	ctx := context.Background()
 	injected := errors.New("read unavailable")
 	f.FailNext("ReadFence", injected)
-	if sha, id, err := f.ReadFence(ctx, repo, fenceRef); !errors.Is(err, injected) || sha != "" || id != "" {
+	if sha, id, _, err := f.ReadFence(ctx, repo, fenceRef); !errors.Is(err, injected) || sha != "" || id != "" {
 		t.Fatalf("injected read failure = (%q, %q, %v)", sha, id, err)
 	}
-	sha, id, err := f.ReadFence(ctx, repo, fenceRef)
+	sha, id, _, err := f.ReadFence(ctx, repo, fenceRef)
 	must(t, err)
-	if sha != e.FenceSHA || id != "" {
+	if sha != e.FenceSHA || id != "initial" {
 		t.Fatalf("failed read changed the fence: SHA %q ID %q", sha, id)
 	}
 	canceled, cancel := context.WithCancel(ctx)
 	cancel()
-	if sha, id, err := f.ReadFence(canceled, repo, fenceRef); !errors.Is(err, context.Canceled) || sha != "" || id != "" {
+	if sha, id, _, err := f.ReadFence(canceled, repo, fenceRef); !errors.Is(err, context.Canceled) || sha != "" || id != "" {
 		t.Fatalf("canceled read = (%q, %q, %v)", sha, id, err)
 	}
 }
@@ -125,8 +143,9 @@ func TestCommitGraph(t *testing.T) {
 			}
 		})
 	}
-	f.SetConflict(1, 2)
-	_, err = f.BuildTestRef(ctx, repo, forge.BuildRequest{Ref: "blocked", BaseSHA: base, PRs: e.PRs[1:2], Method: forge.Merge, BatchID: "conflict"})
+	conflictBase, err := f.BuildTestRef(ctx, repo, forge.BuildRequest{Ref: "conflict-base", BaseSHA: e.BaseSHA, PRs: e.ConflictingPRs[:1], Method: forge.Merge, BatchID: "conflict-base"})
+	must(t, err)
+	_, err = f.BuildTestRef(ctx, repo, forge.BuildRequest{Ref: "blocked", BaseSHA: conflictBase, PRs: e.ConflictingPRs[1:], Method: forge.Merge, BatchID: "conflict"})
 	if !errors.Is(err, forge.ErrConflict) {
 		t.Fatalf("base-content conflict = %v", err)
 	}
@@ -160,12 +179,16 @@ func TestPRLifecycleAndSnapshots(t *testing.T) {
 	if fork.HeadInBaseRepo {
 		t.Fatal("fork head reported as in base repository")
 	}
-	// Building the old pinned head still works after a push and close.
-	sha, err := f.BuildTestRef(ctx, repo, forge.BuildRequest{Ref: "old", BaseSHA: e.BaseSHA, PRs: e.PRs[:1], Method: forge.Merge, BatchID: "old"})
+	// Stale and mismatched PR heads must never build a test ref.
+	_, err = f.BuildTestRef(ctx, repo, forge.BuildRequest{Ref: "old", BaseSHA: e.BaseSHA, PRs: e.PRs[:1], Method: forge.Merge, BatchID: "old"})
+	if err == nil {
+		t.Fatal("build accepted stale PR head")
+	}
+	sha, err := f.BuildTestRef(ctx, repo, forge.BuildRequest{Ref: "old", BaseSHA: e.BaseSHA, PRs: []forge.BuildPR{{Number: 1, HeadSHA: pushed.HeadSHA}}, Method: forge.Merge, BatchID: "current"})
 	must(t, err)
 	c, err := f.Commit(repo, sha)
 	must(t, err)
-	if c.Parents[1] != approval.SHA {
+	if c.Parents[1] != pushed.HeadSHA {
 		t.Fatal("build substituted the current head for the pinned head")
 	}
 	c.Parents[0], c.PRs[0] = "mutated", 999
@@ -215,7 +238,7 @@ func TestHookAndFenceCommits(t *testing.T) {
 	must(t, err)
 	c, err := f.Commit(repo, next)
 	must(t, err)
-	if !slices.Equal(c.Parents, []string{e.FenceSHA}) || c.Message != "openmerge fence land" {
+	if !slices.Equal(c.Parents, []string{e.FenceSHA}) || c.Message != "openmerge fence land tested="+sha {
 		t.Fatalf("fence token is not the expected child commit: %+v", c)
 	}
 	next2, err := f.AdvanceFence(ctx, repo, fenceRef, next, "resolve")
@@ -234,7 +257,7 @@ func TestConcurrentWritesAndLeaseRace(t *testing.T) {
 	for i := range 16 {
 		wg.Go(func() {
 			must(t, f.Comment(ctx, repo, 1, "same-key", "body"))
-			must(t, f.ReportStatus(ctx, repo, 1, forge.Status{Context: fmt.Sprint(i), State: "queued"}))
+			must(t, f.ReportStatus(ctx, repo, 1, fmt.Sprint(i), forge.Status{State: forge.Queued}))
 			f.SetCheckRuns(repo, e.PRs[0].HeadSHA, []forge.CheckRun{{Name: "ci", State: forge.Success}})
 			_, err := f.CheckRuns(ctx, repo, e.PRs[0].HeadSHA)
 			must(t, err)
@@ -259,9 +282,8 @@ func TestConcurrentWritesAndLeaseRace(t *testing.T) {
 	})
 	wg.Wait()
 	first, second := <-results, <-results
-	var rejected *forge.LandRejectedError
-	firstWon := first == nil && errors.As(second, &rejected)
-	secondWon := second == nil && errors.As(first, &rejected)
+	firstWon := first == nil && errors.Is(second, forge.ErrLeaseRejected)
+	secondWon := second == nil && errors.Is(first, forge.ErrLeaseRejected)
 	if !firstWon && !secondWon {
 		t.Fatalf("both leased writes won or unexpected failure: %v, %v", first, second)
 	}
@@ -271,17 +293,17 @@ func TestConcurrentWritesAndLeaseRace(t *testing.T) {
 	must(t, err)
 	c, err := f.Commit(repo, fence)
 	must(t, err)
-	if (base == sha) != (c.Message == "openmerge fence land") {
+	if (base == sha) != (c.Message == "openmerge fence land tested="+sha) {
 		t.Fatal("base and fence were not updated atomically")
 	}
 }
 
 func TestRepositoryIsolation(t *testing.T) {
 	f, e := fixture(t)
-	other := forge.RepoRef{Owner: repo.Owner, Name: "other"}
+	other := forge.RepoRef{Path: "group/subgroup/other"}
 	f.Init(other, "main", fenceRef)
 	ctx := context.Background()
-	must(t, f.ReportStatus(ctx, repo, 1, forge.Status{Context: "queue", State: "merged"}))
+	must(t, f.ReportStatus(ctx, repo, 1, e.PRs[0].HeadSHA, forge.Status{State: forge.Merged}))
 	must(t, f.Comment(ctx, repo, 1, "key", "body"))
 	f.SetCheckRuns(repo, e.PRs[0].HeadSHA, []forge.CheckRun{{Name: "ci", State: forge.Success}})
 	checks, err := f.CheckRuns(ctx, other, e.PRs[0].HeadSHA)

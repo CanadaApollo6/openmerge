@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/executor"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
@@ -49,7 +50,7 @@ func TestLand(t *testing.T) {
 			err := h.x.Execute(ctx, a, func(e queue.Event) error {
 				calls++
 				if calls == 1 {
-					want := queue.LandingStarted{BatchID: "batch", AttemptID: a.Key(), FenceToken: h.fence, At: epoch}
+					want := queue.LandingStarted{BatchID: "batch", AttemptID: "attempt", FenceToken: h.fence, At: epoch}
 					if e != want || h.read(t, "main") != beforeBase || h.read(t, fenceRef) != beforeFence {
 						t.Fatalf("git changed before durable LandingStarted, or wrong record: %+v", e)
 					}
@@ -61,7 +62,7 @@ func TestLand(t *testing.T) {
 				return nil
 			})
 			wantCalls := 2
-			if tc.failEmitAt == 1 || tc.forgeError {
+			if tc.failEmitAt == 1 || tc.forgeError || tc.moveFence {
 				wantCalls = 1
 			}
 			if calls != wantCalls {
@@ -72,6 +73,11 @@ func TestLand(t *testing.T) {
 				if !errors.Is(err, errLog) {
 					t.Fatalf("error = %v, want emit error", err)
 				}
+			case tc.moveFence:
+				var tampered *executor.ErrFenceTampered
+				if !errors.As(err, &tampered) {
+					t.Fatalf("error = %v, want fence tampering", err)
+				}
 			case tc.forgeError:
 				if !errors.Is(err, errIO) {
 					t.Fatalf("error = %v, want infrastructure error", err)
@@ -79,9 +85,13 @@ func TestLand(t *testing.T) {
 			default:
 				must(t, err)
 			}
-			if tc.failEmitAt == 1 || tc.forgeError || tc.moveBase || tc.moveFence {
+			if tc.failEmitAt == 1 || tc.forgeError || tc.moveFence {
 				if h.read(t, "main") != beforeBase || h.read(t, fenceRef) != beforeFence {
 					t.Fatal("failed or rejected landing changed refs")
+				}
+			} else if tc.moveBase {
+				if h.read(t, "main") != beforeBase || h.read(t, fenceRef) == beforeFence {
+					t.Fatal("rejection was not fenced")
 				}
 			} else {
 				if h.read(t, "main") != tested || h.read(t, fenceRef) == beforeFence {
@@ -89,16 +99,16 @@ func TestLand(t *testing.T) {
 				}
 				c, err := h.f.Commit(repo, h.read(t, fenceRef))
 				must(t, err)
-				if c.Message != "openmerge fence land/"+a.Key() {
+				if c.Message != "openmerge fence land/attempt tested="+tested {
 					t.Fatalf("fence did not record the landing attempt: %+v", c)
 				}
 			}
 			if err == nil {
 				var result queue.Event = queue.Landed{BatchID: "batch", NewBaseSHA: tested, NewFence: h.read(t, fenceRef)}
 				if tc.moveBase || tc.moveFence {
-					result = queue.LandingRejected{BatchID: "batch", ActualBaseSHA: beforeBase, ActualFence: beforeFence}
+					result = queue.LandingAbandoned{BatchID: "batch", NewFence: h.read(t, fenceRef)}
 				}
-				want := []queue.Event{queue.LandingStarted{BatchID: "batch", AttemptID: a.Key(), FenceToken: h.fence, At: epoch}, result}
+				want := []queue.Event{queue.LandingStarted{BatchID: "batch", AttemptID: "attempt", FenceToken: h.fence, At: epoch}, result}
 				if !reflect.DeepEqual(events, want) {
 					t.Fatalf("events = %#v, want %#v", events, want)
 				}
@@ -107,64 +117,58 @@ func TestLand(t *testing.T) {
 	}
 }
 
-func TestLandReadFenceFailure(t *testing.T) {
+func TestRejectedLandReadFenceFailure(t *testing.T) {
 	h := setup(t)
 	a := queue.Land{BatchID: "batch", ExpectedBaseSHA: h.base, TestedSHA: h.tested(t), FenceToken: h.fence}
+	h.f.FailNext("Land", forge.ErrLeaseRejected)
 	h.f.FailNext("ReadFence", errIO)
 	var events []queue.Event
 	err := h.x.Execute(context.Background(), a, record(&events))
-	want := []queue.Event{queue.LandingStarted{BatchID: a.BatchID, AttemptID: a.Key(), FenceToken: a.FenceToken, At: epoch}}
+	want := []queue.Event{queue.LandingStarted{BatchID: a.BatchID, AttemptID: "attempt", FenceToken: a.FenceToken, At: epoch}}
 	if !errors.Is(err, errIO) || !reflect.DeepEqual(events, want) || h.read(t, "main") != h.base || h.read(t, fenceRef) != h.fence {
 		t.Fatalf("failed fence read changed refs or lost the durable attempt: %v, %#v", err, events)
 	}
 }
 
 func TestRecoverLostLandingResult(t *testing.T) {
-	for _, retry := range []string{"land", "resolve"} {
-		t.Run(retry, func(t *testing.T) {
-			h := setup(t)
-			ctx := context.Background()
-			a := queue.Land{BatchID: "batch", ExpectedBaseSHA: h.base, TestedSHA: h.tested(t), FenceToken: h.fence}
-			var started queue.LandingStarted
-			err := h.x.Execute(ctx, a, func(e queue.Event) error {
-				if e, ok := e.(queue.LandingStarted); ok {
-					started = e
-					return nil
-				}
-				return errLog
-			})
-			if !errors.Is(err, errLog) || h.read(t, "main") != a.TestedSHA {
-				t.Fatalf("did not lose the result after the landing push: %v", err)
-			}
-			next := h.read(t, fenceRef)
-			// Recovery must neither push again nor depend on the mutable base.
-			must(t, h.f.SetRef(repo, "main", h.base))
-			h.f.FailNext("Land", errIO)
-			h.f.FailNext("AdvanceFence", errIO)
-			h.f.FailNext("ReadRef", errIO)
-			// A new executor models a restart without process-local retry state.
-			restarted := *h.x
-			var action queue.Action = a
-			if retry == "resolve" {
-				action = queue.ResolveLanding{BatchID: a.BatchID, AttemptID: started.AttemptID, TestedSHA: a.TestedSHA, FenceToken: a.FenceToken}
-			}
-			var events []queue.Event
-			must(t, restarted.Execute(ctx, action, record(&events)))
-			want := []queue.Event{queue.Landed{BatchID: a.BatchID, NewBaseSHA: a.TestedSHA, NewFence: next}}
-			if retry == "land" {
-				want = append([]queue.Event{started}, want...)
-			}
-			if !reflect.DeepEqual(events, want) {
-				t.Fatalf("recovery events = %#v, want %#v", events, want)
-			}
-			// The injected read failure is still pending: recovery never read base.
-			if _, err := h.f.ReadRef(ctx, repo, "main"); !errors.Is(err, errIO) {
-				t.Fatalf("recovery consumed the base read failure: %v", err)
-			}
-			if h.read(t, "main") != h.base || h.read(t, fenceRef) != next {
-				t.Fatal("recovery changed refs")
-			}
-		})
+	h := setup(t)
+	ctx := context.Background()
+	s, a := reviewReady(t, h, h.base, h.fence, h.prs[0])
+	err := h.x.Execute(ctx, a, func(e queue.Event) error {
+		if _, ok := e.(queue.Landed); ok {
+			return errLog
+		}
+		s = queue.Apply(s, e)
+		return nil
+	})
+	if !errors.Is(err, errLog) || h.read(t, "main") != a.TestedSHA {
+		t.Fatalf("did not lose result after push: %v", err)
+	}
+	next := h.read(t, fenceRef)
+	must(t, h.f.SetRef(repo, "main", h.base))
+	h.f.FailNext("Land", errIO)
+	h.f.FailNext("AdvanceFence", errIO)
+	h.f.FailNext("ReadRef", errIO)
+	restarted := *h.x
+	actions := queue.Plan(queue.Config{ResolveAfter: time.Minute}, s, epoch.Add(2*time.Minute))
+	if len(actions) != 1 {
+		t.Fatalf("recovery actions: %v", actions)
+	}
+	action, ok := actions[0].(queue.ResolveLanding)
+	if !ok || action.AttemptID != s.Active.LandingAttempt.ID {
+		t.Fatalf("recovery attempted a new Land: %T", actions[0])
+	}
+	var events []queue.Event
+	must(t, restarted.Execute(ctx, action, record(&events)))
+	want := []queue.Event{queue.Landed{BatchID: a.BatchID, NewBaseSHA: a.TestedSHA, NewFence: next}}
+	if !reflect.DeepEqual(events, want) {
+		t.Fatalf("recovery events = %#v, want %#v", events, want)
+	}
+	if _, err := h.f.ReadRef(ctx, repo, "main"); !errors.Is(err, errIO) {
+		t.Fatalf("recovery read mutable base: %v", err)
+	}
+	if h.read(t, "main") != h.base || h.read(t, fenceRef) != next {
+		t.Fatal("recovery changed refs")
 	}
 }
 
@@ -229,7 +233,7 @@ func TestResolveLanding(t *testing.T) {
 					t.Fatal("recovery or failed advance changed fence")
 				}
 			} else {
-				sha, id, err := h.f.ReadFence(ctx, repo, fenceRef)
+				sha, id, _, err := h.f.ReadFence(ctx, repo, fenceRef)
 				must(t, err)
 				if sha == beforeFence || id != "abandon/attempt" {
 					t.Fatalf("advance did not record the abandonment: SHA %s ID %q", sha, id)
@@ -315,7 +319,7 @@ type raceGit struct {
 	reads, advances int
 }
 
-func (g *raceGit) ReadFence(ctx context.Context, repo forge.RepoRef, ref string) (string, string, error) {
+func (g *raceGit) ReadFence(ctx context.Context, repo forge.RepoRef, ref string) (string, string, string, error) {
 	g.reads++
 	return g.Git.ReadFence(ctx, repo, ref)
 }
@@ -389,13 +393,12 @@ func TestResolveRepeatedLeaseRejectionIsBounded(t *testing.T) {
 	h := setup(t)
 	a := queue.ResolveLanding{BatchID: "batch", AttemptID: "attempt", TestedSHA: h.tested(t), FenceToken: h.fence}
 	git := &raceGit{Git: h.f, beforeAdvance: func() {
-		h.f.FailNext("AdvanceFence", &forge.LandRejectedError{ActualFence: h.fence})
+		h.f.FailNext("AdvanceFence", forge.ErrLeaseRejected)
 	}}
 	h.x.Git = git
 	var events []queue.Event
 	err := h.x.Execute(context.Background(), a, record(&events))
-	var rejected *forge.LandRejectedError
-	if !errors.As(err, &rejected) || len(events) != 0 || git.reads != 2 || git.advances != 2 {
+	if !errors.Is(err, forge.ErrLeaseRejected) || len(events) != 0 || git.reads != 2 || git.advances != 2 {
 		t.Fatalf("repeated rejection did not stop after one re-decision: %v, reads %d, advances %d", err, git.reads, git.advances)
 	}
 }

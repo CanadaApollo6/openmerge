@@ -35,11 +35,17 @@
 // LandingStarted is the durable transition into Landing, before any forge call.
 // Cancellation and invalidation wait for its definitive result. After ResolveAfter,
 // Plan requests fence-and-read resolution; a deadline alone never fails a landing.
-// Rejection or fenced abandonment rebuilds a fresh batch unless a dequeue is pending.
+// A rejected push follows the same resolution. Only fenced abandonment rebuilds
+// a fresh batch or allows a pending dequeue; a lease refusal alone settles nothing.
+// The executor generates a random attempt ID before recording LandingStarted.
+// A batch in Landing can only resolve that recorded ID, never start another Land.
 //
 // Every Dequeue is completed with Dequeued, which removes the entry and clears its
 // batch. Until that result, the entry stays queued and cannot start another batch.
-// ReportStatus and DeleteRef repeat until ActionCompleted acknowledges their keys.
+// ReportStatus, MarkLanded, and DeleteRef repeat until ActionCompleted acknowledges
+// their keys. Squash/rebase Landed events record a MarkLanded effect per pinned PR
+// so PR closing survives a crash. Merge landings need none. Status and dequeue
+// actions also pin the head SHA, with normalized lifecycle states and stable reasons.
 // Acknowledgement removes the pending effect; retained keys are pruned when their
 // batch or queued PR disappears, keeping the acknowledgement set bounded. Executors
 // must honor the event watermark in ADR 0002 before executing consequential actions.

@@ -5,6 +5,8 @@ package executor
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
@@ -14,22 +16,29 @@ import (
 )
 
 // Executor uses explicit dependencies so the same code runs with real or fake git.
-// Nil Now uses time.Now. Each batch's stable landing key identifies its attempt.
+// Nil Now uses time.Now; nil NewID generates a cryptographically random attempt.
 type Executor struct {
-	Driver         forge.Driver
-	Git            forge.Git
-	Repo           forge.RepoRef
-	Base           string
-	FenceRef       string
-	RequiredChecks []string
-	Now            func() time.Time
+	Driver                forge.Driver
+	Git                   forge.Git
+	Repo                  forge.RepoRef
+	Base                  string
+	RequiredChecks        []string
+	AllowNoRequiredChecks bool
+	// AllowSkippedNeutral explicitly permits skipped and neutral required checks.
+	AllowSkippedNeutral bool
+	NewID               func() (string, error)
+	Now                 func() time.Time
 }
 
 // Execute stops at the first failed emit. emit must durably record its event
 // before returning nil. In particular, LandingStarted precedes the git push;
-// after it is recorded an uncertain result is recovered from the fence commit.
+// after it is recorded, the caller must only execute ResolveLanding for that
+// batch, never retry Land. Its uncertain result is recovered from the fence.
 // Infrastructure build errors emit TestRefBuildFailed and also return the error.
 func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(queue.Event) error) error {
+	if len(x.RequiredChecks) == 0 && !x.AllowNoRequiredChecks {
+		return errors.New("required checks must be configured or AllowNoRequiredChecks explicitly enabled")
+	}
 	switch a := action.(type) {
 	case queue.BuildTestRef:
 		prs := make([]forge.BuildPR, len(a.PRs))
@@ -63,26 +72,25 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		}
 		return emit(queue.ChecksRefreshed{BatchID: a.BatchID, TestedSHA: a.TestedSHA, At: at})
 	case queue.Land:
-		attemptID := a.Key()
+		attemptID, err := x.newID()
+		if err != nil {
+			return err
+		}
 		if err := emit(queue.LandingStarted{BatchID: a.BatchID, AttemptID: attemptID, FenceToken: a.FenceToken, At: x.now()}); err != nil {
 			return err
 		}
-		sha, id, err := x.Git.ReadFence(ctx, x.Repo, x.FenceRef)
-		if err != nil {
-			return err
-		}
-		if id == "land/"+attemptID {
-			return emit(queue.Landed{BatchID: a.BatchID, NewBaseSHA: a.TestedSHA, NewFence: sha})
+		prs := make([]forge.BuildPR, len(a.PRs))
+		for i, pr := range a.PRs {
+			prs[i] = forge.BuildPR{Number: pr.PR, HeadSHA: pr.HeadSHA}
 		}
 		next, err := x.Git.Land(ctx, x.Repo, forge.LandRequest{
 			Base: x.Base, ExpectedBaseSHA: a.ExpectedBaseSHA, TestedSHA: a.TestedSHA,
-			Fence: x.FenceRef, ExpectedFence: a.FenceToken, NextFenceID: "land/" + attemptID,
+			Fence: x.fenceRef(), ExpectedFence: a.FenceToken, NextFenceID: "land/" + attemptID, PRs: prs,
 		})
+		if errors.Is(err, forge.ErrLeaseRejected) {
+			return x.resolve(ctx, queue.ResolveLanding{BatchID: a.BatchID, AttemptID: attemptID, TestedSHA: a.TestedSHA, FenceToken: a.FenceToken}, emit)
+		}
 		if err != nil {
-			var rejected *forge.LandRejectedError
-			if errors.As(err, &rejected) {
-				return emit(queue.LandingRejected{BatchID: a.BatchID, ActualBaseSHA: rejected.ActualBaseSHA, ActualFence: rejected.ActualFence})
-			}
 			return err
 		}
 		return emit(queue.Landed{BatchID: a.BatchID, NewBaseSHA: a.TestedSHA, NewFence: next})
@@ -94,12 +102,17 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		}
 		return emit(queue.ActionCompleted{Key: a.Key()})
 	case queue.ReportStatus:
-		if err := x.Driver.ReportStatus(ctx, x.Repo, a.PR, forge.Status{Context: "openmerge", State: a.Status, Detail: a.Detail}); err != nil {
+		if err := x.Driver.ReportStatus(ctx, x.Repo, a.PR, a.HeadSHA, forge.Status{State: forge.StatusState(a.Status), Reason: a.Reason, Summary: a.Detail}); err != nil {
+			return err
+		}
+		return emit(queue.ActionCompleted{Key: a.Key()})
+	case queue.MarkLanded:
+		if err := x.Driver.MarkLanded(ctx, x.Repo, a.PR, a.LandedSHA); err != nil {
 			return err
 		}
 		return emit(queue.ActionCompleted{Key: a.Key()})
 	case queue.Dequeue:
-		if err := x.Driver.ReportStatus(ctx, x.Repo, a.PR, forge.Status{Context: "openmerge", State: "dequeued", Detail: string(a.Reason)}); err != nil {
+		if err := x.Driver.ReportStatus(ctx, x.Repo, a.PR, a.HeadSHA, forge.Status{State: forge.Dequeued, Reason: string(a.Reason)}); err != nil {
 			return err
 		}
 		return emit(queue.Dequeued{PR: a.PR, AdmissionID: a.AdmissionID, Reason: a.Reason, BatchID: a.BatchID})
@@ -112,65 +125,88 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 // attempt. It indicates that ADR 0004's fence namespace protection is missing.
 type ErrFenceTampered struct {
 	AttemptID, ExpectedFence, ActualFence, ActualFenceID string
+	ExpectedTestedSHA, ActualTestedSHA                   string
 }
 
 func (e *ErrFenceTampered) Error() string {
-	return fmt.Sprintf("fence tampered for landing attempt %q: expected SHA %q or IDs %q / %q, got SHA %q ID %q; fence protection is missing",
-		e.AttemptID, e.ExpectedFence, "land/"+e.AttemptID, "abandon/"+e.AttemptID, e.ActualFence, e.ActualFenceID)
+	return fmt.Sprintf("fence tampered for landing attempt %q: expected SHA %q or IDs %q / %q, got SHA %q ID %q tested=%q (expected tested=%q); fence protection is missing",
+		e.AttemptID, e.ExpectedFence, "land/"+e.AttemptID, "abandon/"+e.AttemptID, e.ActualFence, e.ActualFenceID, e.ActualTestedSHA, e.ExpectedTestedSHA)
 }
 
 func (x *Executor) resolve(ctx context.Context, a queue.ResolveLanding, emit func(queue.Event) error) error {
 	for decision := 0; ; decision++ {
-		sha, id, err := x.Git.ReadFence(ctx, x.Repo, x.FenceRef)
+		sha, id, tested, err := x.Git.ReadFence(ctx, x.Repo, x.fenceRef())
 		if err != nil {
 			return err
 		}
 		switch {
-		case id == "land/"+a.AttemptID:
+		case id == "land/"+a.AttemptID && tested == a.TestedSHA:
 			return emit(queue.Landed{BatchID: a.BatchID, NewBaseSHA: a.TestedSHA, NewFence: sha})
 		case id == "abandon/"+a.AttemptID:
 			return emit(queue.LandingAbandoned{BatchID: a.BatchID, NewFence: sha})
-		case sha != a.FenceToken:
-			return &ErrFenceTampered{AttemptID: a.AttemptID, ExpectedFence: a.FenceToken, ActualFence: sha, ActualFenceID: id}
+		case sha != a.FenceToken || id == "land/"+a.AttemptID:
+			return &ErrFenceTampered{AttemptID: a.AttemptID, ExpectedFence: a.FenceToken, ActualFence: sha, ActualFenceID: id, ExpectedTestedSHA: a.TestedSHA, ActualTestedSHA: tested}
 		}
-		next, err := x.Git.AdvanceFence(ctx, x.Repo, x.FenceRef, a.FenceToken, "abandon/"+a.AttemptID)
+		next, err := x.Git.AdvanceFence(ctx, x.Repo, x.fenceRef(), a.FenceToken, "abandon/"+a.AttemptID)
 		if err == nil {
 			return emit(queue.LandingAbandoned{BatchID: a.BatchID, NewFence: next})
 		}
-		var rejected *forge.LandRejectedError
-		if decision == 1 || !errors.As(err, &rejected) {
+		if decision == 1 || !errors.Is(err, forge.ErrLeaseRejected) {
 			return err
 		}
 	}
 }
 
-// Missing or nonterminal required checks keep the batch pending. For duplicate
-// names, failure dominates pending, and pending dominates success.
+// Missing or unknown required checks keep the batch pending. Only the latest
+// run of each name participates; cancelled is a failure until superseded.
 func (x *Executor) checkResult(checks []forge.CheckRun) (terminal, success bool) {
-	success = true
-	terminal = true
-	for _, required := range x.RequiredChecks {
-		found, pending, failed := false, false, false
-		for _, check := range checks {
-			if check.Name == required {
-				found = true
-				switch check.State {
-				case forge.Failure:
-					failed = true
-				case forge.Success:
-				default:
-					pending = true
-				}
-			}
+	latest := make(map[string]forge.CheckRun)
+	for _, check := range checks {
+		old, ok := latest[check.Name]
+		if !ok || check.ID >= old.ID {
+			latest[check.Name] = check
 		}
-		if !found || pending && !failed {
+	}
+	terminal, success = true, true
+	for _, name := range x.RequiredChecks {
+		check, ok := latest[name]
+		if !ok {
 			terminal = false
+			continue
 		}
-		if failed {
+		switch check.State {
+		case forge.Success:
+		case forge.Skipped, forge.Neutral:
+			if !x.AllowSkippedNeutral {
+				success = false
+			}
+		case forge.Failure, forge.Cancelled:
 			success = false
+		default:
+			terminal = false
 		}
 	}
 	return terminal, success
+}
+
+func (x *Executor) fenceRef() string { return "openmerge/fence/" + x.Base }
+
+func (x *Executor) newID() (string, error) {
+	if x.NewID != nil {
+		id, err := x.NewID()
+		if err != nil {
+			return "", err
+		}
+		if id == "" {
+			return "", errors.New("landing attempt ID must not be empty")
+		}
+		return id, nil
+	}
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(id[:]), nil
 }
 
 func (x *Executor) now() time.Time {

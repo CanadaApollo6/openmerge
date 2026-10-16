@@ -100,7 +100,7 @@ func TestSerialQueueEndToEnd(t *testing.T) {
 				}
 			}
 			for _, pr := range h.prs {
-				if got := h.f.Statuses(repo, pr.Number)["openmerge"]; got.State != "merged" {
+				if got := h.f.Statuses(repo, pr.Number)[pr.HeadSHA]; got.State != "merged" {
 					t.Fatalf("PR %d did not receive merged status: %+v", pr.Number, got)
 				}
 			}

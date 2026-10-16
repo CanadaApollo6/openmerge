@@ -180,9 +180,6 @@ type LandingStarted struct {
 // Landed records the definitive base and fence after the atomic landing push.
 type Landed struct{ BatchID, NewBaseSHA, NewFence string }
 
-// LandingRejected keeps the PR queued and supplies the base and fence to retry on.
-type LandingRejected struct{ BatchID, ActualBaseSHA, ActualFence string }
-
 // LandingAbandoned certifies that the advanced fence prevents any late landing.
 type LandingAbandoned struct{ BatchID, NewFence string }
 
@@ -194,7 +191,7 @@ type Dequeued struct {
 	BatchID     string
 }
 
-// ActionCompleted acknowledges only ReportStatus and DeleteRef effects.
+// ActionCompleted acknowledges ReportStatus, MarkLanded, and DeleteRef effects.
 type ActionCompleted struct{ Key string }
 
 func (PRObserved) queueEvent()         {}
@@ -209,7 +206,6 @@ func (TestRefBuilt) queueEvent()       {}
 func (TestRefBuildFailed) queueEvent() {}
 func (LandingStarted) queueEvent()     {}
 func (Landed) queueEvent()             {}
-func (LandingRejected) queueEvent()    {}
 func (LandingAbandoned) queueEvent()   {}
 func (Dequeued) queueEvent()           {}
 func (ActionCompleted) queueEvent()    {}
@@ -242,6 +238,7 @@ type RefreshChecks struct {
 // Land requires an atomic compare-and-swap on both the base and fence.
 type Land struct {
 	BatchID, ExpectedBaseSHA, TestedSHA, Ref, FenceToken string
+	PRs                                                  []BatchPR
 	Method                                               MergeMethod
 }
 
@@ -254,6 +251,7 @@ type DeleteRef struct{ Ref string }
 
 // Dequeue remains pending until the executor records a Dequeued result.
 type Dequeue struct {
+	HeadSHA     string
 	PR          int
 	AdmissionID uint64
 	Reason      DequeueReason
@@ -263,10 +261,10 @@ type Dequeue struct {
 
 // ReportStatus makes admission failures and definitive outcomes visible to callers.
 type ReportStatus struct {
-	PR             int
-	Status, Detail string
-	revision       uint64
-	admission      uint64
+	PR                              int
+	HeadSHA, Status, Reason, Detail string
+	revision                        uint64
+	admission                       uint64
 }
 
 func (BuildTestRef) queueAction()   {}
@@ -277,6 +275,19 @@ func (DeleteRef) queueAction()      {}
 func (Dequeue) queueAction()        {}
 func (ReportStatus) queueAction()   {}
 
+// MarkLanded closes PRs whose heads are not reachable after squash or rebase.
+type MarkLanded struct {
+	PR                 int
+	HeadSHA, LandedSHA string
+}
+
+func (MarkLanded) queueAction() {}
+
+// Key pins closing to the PR head and the exact landed commit.
+func (a MarkLanded) Key() string {
+	return fmt.Sprintf("pr/%d/head/%s/landed/%s", a.PR, a.HeadSHA, a.LandedSHA)
+}
+
 // Key distinguishes the planned method as well as the unique batch.
 func (a BuildTestRef) Key() string { return "batch/" + a.BatchID + "/build/" + string(a.Method) }
 
@@ -285,8 +296,8 @@ func (a RefreshChecks) Key() string {
 	return fmt.Sprintf("batch/%s/checks/refresh/%d", a.BatchID, a.epoch)
 }
 
-// Key identifies the single landing attempt allowed for this batch and serves as
-// its durable attempt ID, so executor retries recognize the same fence commit.
+// Key identifies the start action. The executor mints a separate random attempt
+// ID; once LandingStarted is durable, only ResolveLanding may be executed.
 func (a Land) Key() string { return "batch/" + a.BatchID + "/land" }
 
 // Key correlates resolution retries with the durable landing attempt.

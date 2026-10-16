@@ -120,7 +120,7 @@ func TestReviewDelayedOldCheckOnReusedSHA(t *testing.T) {
 	}
 	var failureReports []ReportStatus
 	for _, report := range actionsOf[ReportStatus](a) {
-		if report.Status == "build-failed" {
+		if report.Reason == "build-failed" {
 			failureReports = append(failureReports, report)
 		}
 	}
@@ -156,7 +156,7 @@ func TestReviewAdmissionDuringLanding(t *testing.T) {
 				case "landed":
 					s = Apply(s, Landed{BatchID: "b1", NewBaseSHA: "tested1", NewFence: "f1"})
 				case "rejected":
-					s = Apply(s, LandingRejected{BatchID: "b1", ActualBaseSHA: "base1", ActualFence: "f1"})
+					s = Apply(Apply(s, BaseMoved{SHA: "base1"}), LandingAbandoned{BatchID: "b1", NewFence: "f1"})
 				case "abandoned":
 					s = Apply(s, LandingAbandoned{BatchID: "b1", NewFence: "f1"})
 				}
@@ -197,7 +197,7 @@ func TestReviewPauseChangesAndBackoff(t *testing.T) {
 	s = Apply(s, Dequeued{PR: d.PR, AdmissionID: d.AdmissionID, Reason: d.Reason})
 	var pausedReports []ReportStatus
 	for _, r := range actionsOf[ReportStatus](Plan(cfg, s, epoch)) {
-		if r.Status == "build-failed" {
+		if r.Reason == "build-failed" {
 			pausedReports = append(pausedReports, r)
 		}
 	}
@@ -472,7 +472,7 @@ func TestTestedSHAOwnershipSurvivesBatchCompletion(t *testing.T) {
 				case "landed":
 					s = Apply(s, Landed{BatchID: "b1", NewBaseSHA: "tested1", NewFence: "f1"})
 				case "rejected":
-					s = Apply(s, LandingRejected{BatchID: "b1", ActualBaseSHA: "base1", ActualFence: "f1"})
+					s = Apply(Apply(s, BaseMoved{SHA: "base1"}), LandingAbandoned{BatchID: "b1", NewFence: "f1"})
 				case "abandoned":
 					s = Apply(s, LandingAbandoned{BatchID: "b1", NewFence: "f1"})
 				}
@@ -489,7 +489,7 @@ func TestTestedSHAOwnershipSurvivesBatchCompletion(t *testing.T) {
 			}
 			var report ReportStatus
 			for _, r := range actionsOf[ReportStatus](a) {
-				if r.Status == "build-failed" {
+				if r.Reason == "build-failed" {
 					report = r
 				}
 			}
