@@ -2,6 +2,8 @@
 package diagnostic
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"log/slog"
 	"net/url"
 	"regexp"
@@ -11,7 +13,8 @@ import (
 	"unicode"
 )
 
-var credentialPattern = regexp.MustCompile(`(?s:-----BEGIN [^-]+-----.*?(?:-----END [^-]+-----|$))|[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b|(?i:\b(?:bearer|basic)\s+\S+)`)
+var credentialPattern = regexp.MustCompile(`(?s:-----BEGIN [^-]+-----.*?(?:-----END [^-]+-----|$))|\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b|(?i:\b(?:bearer|basic)\s+\S+)`)
+var jwtPattern = regexp.MustCompile(`[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*`)
 
 // Sanitize redacts credentials and bounds diagnostic text for logs, APIs and terminals.
 func Sanitize(value string, knownSecrets ...string) string {
@@ -30,6 +33,19 @@ func Sanitize(value string, knownSecrets ...string) string {
 		}
 	}
 	value = credentialPattern.ReplaceAllString(value, "[REDACTED]")
+	value = jwtPattern.ReplaceAllStringFunc(value, func(candidate string) string {
+		// A JWT has a base64url JSON header with an algorithm. Dots alone
+		// also occur in ordinary addresses, hostnames, paths and versions.
+		encoded, _, _ := strings.Cut(candidate, ".")
+		data, err := base64.RawURLEncoding.DecodeString(encoded)
+		var header struct {
+			Algorithm string `json:"alg"`
+		}
+		if err != nil || json.Unmarshal(data, &header) != nil || header.Algorithm == "" {
+			return candidate
+		}
+		return "[REDACTED]"
+	})
 	runes := []rune(value)
 	if len(runes) > 1024 {
 		return string(runes[:1024]) + "…"

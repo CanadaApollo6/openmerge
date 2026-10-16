@@ -287,10 +287,11 @@ func TestSetupRulesIntegrationBypassRejection(t *testing.T) {
 }
 
 func TestSetupRulesSanitizesErrorContext(t *testing.T) {
+	const jwt = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOjF9.c2lnbmF0dXJl"
 	for _, status := range []int{403, 422} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {
 			f := rulesAPI(t)
-			f.setupRules[10]["name"] = "protected setup-admin-secret xxx.yyy.zzz -----BEGIN PRIVATE KEY-----\nprivate-key-material\n-----END PRIVATE KEY-----"
+			f.setupRules[10]["name"] = "protected setup-admin-secret " + jwt + " -----BEGIN PRIVATE KEY-----\nprivate-key-material\n-----END PRIVATE KEY-----"
 			f.setupRules[10]["bypass_actors"] = []any{}
 			f.override = func(w http.ResponseWriter, r *http.Request) bool {
 				if r.Method != http.MethodPut {
@@ -305,7 +306,7 @@ func TestSetupRulesSanitizesErrorContext(t *testing.T) {
 			if !errors.As(err, &api) || api.StatusCode != status {
 				t.Fatalf("lost typed status: %v", err)
 			}
-			for _, secret := range []string{"setup-admin-secret", "xxx.yyy.zzz", "private-key-material", "BEGIN PRIVATE KEY"} {
+			for _, secret := range []string{"setup-admin-secret", jwt, "private-key-material", "BEGIN PRIVATE KEY"} {
 				if strings.Contains(err.Error(), secret) {
 					t.Errorf("error context leaked %q: %v", secret, err)
 				}
