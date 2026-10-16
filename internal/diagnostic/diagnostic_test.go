@@ -28,6 +28,11 @@ func TestSanitize(t *testing.T) {
 		{"JWT", "token eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOjF9.c2lnbmF0dXJl", "token [REDACTED]", nil},
 		{"base64url JWT", "eyJhbGciOiJIUzI1NiJ9.e30.mno_PQR-stu", "[REDACTED]", nil},
 		{"unsigned JWT", "eyJhbGciOiJub25lIn0.e30.", "[REDACTED]", nil},
+		// Go's struct decoding matches keys case-insensitively; these headers
+		// once made a valid token escape redaction.
+		{"JWT with ALG key", "eyJhbGciOiJIUzI1NiIsIkFMRyI6NDJ9.e30.c2ln", "[REDACTED]", nil},
+		{"JWT with Alg key", "eyJhbGciOiJIUzI1NiIsIkFsZyI6IiJ9.e30.c2ln", "[REDACTED]", nil},
+		{"JWT without alg", "eyJ0eXAiOiJKV1QifQ.e30.c2ln", "[REDACTED]", nil},
 		{"known dotted credential", "abc.def.ghi", "[REDACTED]", []string{"abc.def.ghi"}},
 		{"empty", "unchanged", "unchanged", []string{"", "\n"}},
 		{"bounded", strings.Repeat("界", 1025), strings.Repeat("界", 1024) + "…", nil},

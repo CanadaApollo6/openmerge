@@ -34,14 +34,13 @@ func Sanitize(value string, knownSecrets ...string) string {
 	}
 	value = credentialPattern.ReplaceAllString(value, "[REDACTED]")
 	value = jwtPattern.ReplaceAllStringFunc(value, func(candidate string) string {
-		// A JWT has a base64url JSON header with an algorithm. Dots alone
-		// also occur in ordinary addresses, hostnames, paths and versions.
-		encoded, _, _ := strings.Cut(candidate, ".")
-		data, err := base64.RawURLEncoding.DecodeString(encoded)
-		var header struct {
-			Algorithm string `json:"alg"`
-		}
-		if err != nil || json.Unmarshal(data, &header) != nil || header.Algorithm == "" {
+		// A JWT's header and claims are both base64url-encoded JSON objects.
+		// Dots alone also occur in addresses, hostnames, paths and versions,
+		// which do not decode to two objects. Any object qualifies, whatever its
+		// keys, so unusual but valid headers cannot opt out of redaction.
+		header, rest, _ := strings.Cut(candidate, ".")
+		claims, _, _ := strings.Cut(rest, ".")
+		if !jsonObject(header) || !jsonObject(claims) {
 			return candidate
 		}
 		return "[REDACTED]"
@@ -51,6 +50,12 @@ func Sanitize(value string, knownSecrets ...string) string {
 		return string(runes[:1024]) + "…"
 	}
 	return string(runes)
+}
+
+func jsonObject(segment string) bool {
+	data, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(segment, "="))
+	var object map[string]json.RawMessage
+	return err == nil && json.Unmarshal(data, &object) == nil && object != nil
 }
 
 func normalize(value string) string {
