@@ -35,7 +35,99 @@ go run ./cmd/openmerge sim --faults --json      # add per-method errors, lost ac
 
 Flags: `--prs`, `--broken-rate`, `--flake-rate`, `--ci`, `--ci-max`, `--seed`, `--faults`, `--drop-webhooks`, `--merge-method`, `--window`, `--repush-rate`, `--conflict-rate`, `--json`. `--ci-max` uses `--ci` as the minimum of a duration range. JSON reports the full effective configuration and mean, median, and p95 merge times in seconds. See the [`internal/sim` package docs](internal/sim) for the full model.
 
-## GitHub App integration
+## Setting up the GitHub App
+
+Create a private App from a [GitHub App manifest](https://docs.github.com/en/apps/sharing-github-apps/registering-a-github-app-from-a-manifest):
+
+```bash
+make build
+./bin/openmerge setup github --user --repo CanadaApollo6/openmerge --name OpenMerge-YourName
+# For an organization-owned App, use --owner ORG instead of --user.
+```
+
+The command opens a local page that submits the manifest to GitHub. Review the
+App name and click **Create GitHub App**; GitHub redirects to the one-use
+localhost callback. Finish within ten minutes, on the same machine. If browser
+opening fails, open the printed URL yourself. Ctrl-C cancels and closes the
+listener.
+
+Credentials go into `$XDG_CONFIG_HOME/openmerge/<app-slug>/` (normally
+`~/.config/openmerge/<app-slug>/`): `app-id`, `slug`, `client-id`,
+`private-key.pem`, and `webhook-secret`. The directory is private (0700), files
+are 0600, and an existing directory is refused. `--config-dir DIR` selects a
+new directory. The manifest generates and auto-saves the private key at
+`<config-dir>/private-key.pem`; you do not need to download one. Keep the key and
+webhook secret safe; neither is printed.
+
+Open the printed `https://github.com/apps/<app-slug>/installations/new` URL.
+Choose the owning account, **Only select repositories**, select your repository,
+and install. The private App is available to its owner. `--repo owner/name`
+targets the printed repository selection, ruleset commands and serve command.
+The printed next steps show installation, ruleset preview, ruleset apply, then
+`./bin/openmerge serve` once that command is available, with the App ID, private key
+path and installation ID; also supply a Postgres URL.
+Find the **installation ID** under **Settings → Applications → Installed GitHub
+Apps → Configure**: it is the number at the end of the URL, not the App ID.
+
+Polling is the default: `hook_attributes.active=false` disables deliveries.
+For webhooks, pass `--webhook-url https://YOUR-HOST/YOUR-WEBHOOK-PATH`; App
+webhooks deliver JSON (`application/json`). Route that URL to the server's
+webhook listener and use the saved `webhook-secret` for signature verification.
+When webhooks are enabled, setup prints this environment assignment for serve
+(with your actual, shell-quoted path); the secret value itself is never printed:
+
+```bash
+export OPENMERGE_WEBHOOK_SECRET="$(cat ~/.config/openmerge/APP-SLUG/webhook-secret)"
+```
+
+To enable delivery later, edit **Webhook → Active / Webhook URL** in App
+settings and configure the same secret on the server.
+
+Configure repository rules with a **separate repository-admin token** in
+`GITHUB_TOKEN`. A fine-grained PAT needs access to the selected repository and
+**Administration: read** to inspect, **Administration: write** to apply. Create it
+under **Settings → Developer settings → Personal access tokens → Fine-grained
+tokens**: choose the repository's **Resource owner**, **Only select repositories**
+with just the target repo, and **Repository permissions → Administration: Read
+and write**. Use a fine-grained token; avoid classic tokens. Approve organization
+access/SSO where required, then export it as `GITHUB_TOKEN` for the commands below.
+The runtime App deliberately has no
+administration or organization-members permission: its collaborator permission
+check uses metadata read. The manifest uses contents, workflows, pull requests
+and checks write, plus statuses, issues and metadata read. Workflows write lets
+test-ref builds and landings include changes to `.github/workflows/`; PR-thread
+comments use pull requests write. Issues read permits command reads and the
+`issue_comment` subscription. See the [permission table](internal/forge/github/README.md#setup-and-ruleset-validation).
+
+```bash
+./bin/openmerge setup rulesets --repo CanadaApollo6/openmerge --config-dir ~/.config/openmerge/APP-SLUG
+./bin/openmerge setup rulesets --repo CanadaApollo6/openmerge --config-dir ~/.config/openmerge/APP-SLUG --apply
+# Alternatively supply --app-id NUMERIC_APP_ID.
+```
+
+Both commands print problems and a change preview; unresolved problems exit
+nonzero. `--apply` adds an **always** Integration bypass for the App to active
+repository rulesets targeting the default branch, preserving other actors and
+rules. It creates/repairs only `openmerge-fence`: creation, update, deletion and
+force-push restrictions, with only this App allowed to bypass. Both direct and
+nested `openmerge/fence/*` names are covered. It never edits inherited rulesets;
+organization/enterprise owners must fix reported blockers. Rules that may block
+creation or force-push in `openmerge/queue/*` are reported for manual correction.
+An unprotected base needs no bypass. Apply is idempotent; serialize policy edits
+while it runs (GitHub ruleset updates have no compare-and-swap).
+
+Install the App on the selected repository before applying rulesets. If GitHub
+rejects an `Integration` bypass actor, setup prints sanitized API diagnostics and
+installation guidance. Personal-account repositories may still reject that actor
+after installation. If so, keep protection enabled: use an organization-owned
+repository that accepts the App bypass, or defer OpenMerge until GitHub supports
+it. Do not substitute a broader bypass that breaks App-only fence ownership.
+
+Review classic branch protection separately in **Settings → Branches**, including
+wildcard rules for queue/fence refs: this command validates rulesets only.
+Startup enforcement through `serve` is a follow-up after the server PR merges.
+
+## GitHub integration details
 
 The [GitHub driver setup guide](internal/forge/github/README.md#app-setup-and-troubleshooting)
 lists permissions and setup details. Subscribe to `pull_request`,
