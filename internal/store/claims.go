@@ -19,39 +19,53 @@ type ClaimedAction struct {
 	LeaseUntil time.Time
 }
 
+// The explicit status predicate matches actions_claimable; its id order avoids
+// sorting retained done/cancelled/poisoned history on every worker claim.
+const claimQuery = `SELECT id, queue_id, key, payload, watermark FROM actions
+    WHERE status IN ('planned', 'claimed', 'in_flight')
+      AND (status = 'planned' OR lease_until <= $1)
+    ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED`
+
 // Claim skips rows locked by other claimers. Claimed and in-flight work becomes
 // claimable at lease expiry; consequential work must always be revalidated.
 func (s *Store) Claim(ctx context.Context, limit int, lease time.Duration, now time.Time) ([]ClaimedAction, error) {
-	if limit <= 0 || lease <= 0 {
+	if limit <= 0 || lease.Microseconds() <= 0 {
 		return nil, errors.New("claim limit and lease must be positive")
 	}
 	var result []ClaimedAction
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT id, queue_id, key, payload, watermark FROM actions
-			WHERE status = 'planned' OR (status IN ('claimed', 'in_flight') AND lease_until <= $1)
-			ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED`, now, limit)
-		if err != nil {
-			return err
-		}
-		records, err := pgx.CollectRows(rows, scanAction)
-		if err != nil {
-			return err
-		}
-		for _, record := range records {
-			action, err := restoreAction(ctx, tx, record)
+		for len(result) < limit {
+			rows, err := tx.Query(ctx, claimQuery, now, limit-len(result))
 			if err != nil {
 				return err
 			}
-			var token [16]byte
-			if _, err := rand.Read(token[:]); err != nil {
+			records, err := pgx.CollectRows(rows, scanAction)
+			if err != nil {
 				return err
 			}
-			claim := ClaimedAction{PlannedAction: action, AttemptID: hex.EncodeToString(token[:])}
-			if err := tx.QueryRow(ctx, `UPDATE actions SET status = 'claimed', attempt_id = $2,
-				lease_until = $3, updated_at = $4 WHERE id = $1 RETURNING lease_until`, record.id, claim.AttemptID, now.Add(lease), now).Scan(&claim.LeaseUntil); err != nil {
-				return err
+			if len(records) == 0 {
+				break
 			}
-			result = append(result, claim)
+			for _, record := range records {
+				action, err := restoreAction(record)
+				if err != nil {
+					if err := poisonAction(ctx, tx, record.id, err); err != nil {
+						return err
+					}
+					continue
+				}
+				var token [16]byte
+				if _, err := rand.Read(token[:]); err != nil {
+					return err
+				}
+				claim := ClaimedAction{PlannedAction: action, AttemptID: hex.EncodeToString(token[:])}
+				if err := tx.QueryRow(ctx, `UPDATE actions SET status = 'claimed', attempt_id = $2,
+					lease_until = $3, updated_at = $4, lease_duration_us = $5 WHERE id = $1 RETURNING lease_until`,
+					record.id, claim.AttemptID, now.Add(lease), now, lease.Microseconds()).Scan(&claim.LeaseUntil); err != nil {
+					return err
+				}
+				result = append(result, claim)
+			}
 		}
 		return nil
 	})
@@ -81,11 +95,14 @@ var ErrQueueBusy = errors.New("another consequential action is in flight")
 // BeginConsequential revalidates a claim under the queue planning lock and
 // commits its in-flight record before the caller may perform any forge I/O.
 // False with no error cancels a stale action. ErrQueueBusy leaves work claimed.
+// Beginning extends the lease by its original duration. Forge calls and result
+// persistence must finish within that lease.
 // ResolveLanding may proceed alongside the original Land it is resolving.
 func (s *Store) BeginConsequential(ctx context.Context, a ClaimedAction, cfg queue.Config, now time.Time) (bool, error) {
 	var proceed bool
+	var decodeErr error
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		if err := lockQueue(ctx, tx, a.QueueID); err != nil {
+		if err := s.lockQueue(ctx, tx, a.QueueID); err != nil {
 			return err
 		}
 		var record actionRecord
@@ -101,14 +118,15 @@ func (s *Store) BeginConsequential(ctx context.Context, a ClaimedAction, cfg que
 		if err != nil {
 			return err
 		}
-		stored, err := restoreAction(ctx, tx, record)
+		stored, err := restoreAction(record)
 		if err != nil {
-			return err
+			decodeErr = err
+			return poisonAction(ctx, tx, record.id, err)
 		}
 		if !Consequential(stored.Action) {
 			return errors.New("action does not require consequential validation")
 		}
-		state, watermark, err := load(ctx, tx, a.QueueID, nil)
+		state, watermark, err := load(ctx, tx, a.QueueID)
 		if err != nil {
 			return err
 		}
@@ -135,11 +153,15 @@ func (s *Store) BeginConsequential(ctx context.Context, a ClaimedAction, cfg que
 		if conflicting {
 			return ErrQueueBusy
 		}
-		_, err = tx.Exec(ctx, `UPDATE actions SET status = 'in_flight', updated_at = $2 WHERE id = $1`, record.id, now)
+		_, err = tx.Exec(ctx, `UPDATE actions SET status = 'in_flight', updated_at = $2,
+			lease_until = $2::timestamptz + lease_duration_us * interval '1 microsecond' WHERE id = $1`, record.id, now)
 		proceed = err == nil
 		return err
 	})
-	return proceed, err
+	if err != nil {
+		return false, err
+	}
+	return proceed, decodeErr
 }
 
 // Completion selects success or retry. Failed means retryable infrastructure

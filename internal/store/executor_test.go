@@ -163,3 +163,120 @@ func TestExecutorDurablyLandsThreePRsSerially(t *testing.T) {
 		})
 	}
 }
+
+func TestCancelledResolveLandingReactivatesAndSettles(t *testing.T) {
+	s := newStore(t)
+	q := ensureQueue(t, s, "")
+	f := fake.New()
+	repo := forge.RepoRef{Path: "owner/repo"}
+	base, fence := f.Init(repo, "main", "openmerge/fence/main")
+	must(t, s.InitializeFence(t.Context(), q, fence))
+	pr, err := f.OpenPR(repo, 1, base, true)
+	must(t, err)
+	appendEvents(t, s, q, queue.BaseMoved{SHA: base},
+		queue.PRObserved{PR: 1, HeadSHA: pr.HeadSHA, Eligible: true, Trusted: true}, queue.EnqueueRequested{PR: 1, At: epoch})
+	f.OnTestRef(func(sha string, _ []int) {
+		f.SetCheckRuns(repo, sha, []forge.CheckRun{{ID: 1, Name: "ci", State: forge.Success}})
+	})
+	now := epoch
+	x := executor.Executor{Driver: f, Git: f, Repo: repo, Base: "main", RequiredChecks: []string{"ci"}, Now: func() time.Time { return now }}
+	durableEmit := s.Emit(t.Context(), q)
+	lost := errors.New("lost landing result")
+	// Build, read CI, and land; the forge succeeds after LandingStarted commits,
+	// but the Landed result never reaches the log.
+	for step := 0; step < 3; step++ {
+		_, err := s.Plan(t.Context(), q, config, now)
+		must(t, err)
+		claims, err := s.Claim(t.Context(), 1, time.Minute, now)
+		must(t, err)
+		if len(claims) != 1 {
+			t.Fatalf("step %d: %+v", step, claims)
+		}
+		claim := claims[0]
+		if Consequential(claim.Action) {
+			proceed, err := s.BeginConsequential(t.Context(), claim, config, now)
+			must(t, err)
+			if !proceed {
+				t.Fatal("initial action cancelled")
+			}
+		}
+		err = x.Execute(t.Context(), claim.Action, func(event queue.Event) error {
+			if _, ok := event.(queue.Landed); ok {
+				return lost
+			}
+			return durableEmit(event)
+		})
+		completion := Done
+		if step == 2 {
+			if !errors.Is(err, lost) {
+				t.Fatalf("landing result was not lost: %v", err)
+			}
+			completion = Failed
+		} else {
+			must(t, err)
+		}
+		must(t, s.Complete(t.Context(), claim, completion))
+	}
+	now = epoch.Add(2 * time.Minute)
+	_, err = s.Plan(t.Context(), q, config, now)
+	must(t, err)
+	claims, err := s.Claim(t.Context(), 10, time.Minute, now)
+	must(t, err)
+	var resolution ClaimedAction
+	for _, claim := range claims {
+		switch claim.Action.(type) {
+		case queue.Land:
+			proceed, err := s.BeginConsequential(t.Context(), claim, config, now)
+			must(t, err)
+			if proceed {
+				t.Fatal("repeated uncertain landing")
+			}
+		case queue.ResolveLanding:
+			resolution = claim
+		}
+	}
+	if resolution.Key == "" {
+		t.Fatal("resolution was not planned")
+	}
+	laterConfig := config
+	laterConfig.ResolveAfter = 5 * time.Minute
+	watermark := appendEvents(t, s, q, queue.PRObserved{PR: 99, HeadSHA: "unrelated"})
+	proceed, err := s.BeginConsequential(t.Context(), resolution, laterConfig, now)
+	must(t, err)
+	if proceed {
+		t.Fatal("resolution ignored moved deadline")
+	}
+	var status string
+	must(t, s.pool.QueryRow(t.Context(), `SELECT status FROM actions WHERE queue_id = $1 AND key = $2`, q, resolution.Key).Scan(&status))
+	if status != "cancelled" {
+		t.Fatalf("status = %s", status)
+	}
+	now = epoch.Add(6 * time.Minute)
+	planned, err := s.Plan(t.Context(), q, laterConfig, now)
+	must(t, err)
+	if len(planned) != 1 || planned[0].Key != resolution.Key || planned[0].Watermark != watermark {
+		t.Fatalf("cancelled key not reactivated at current watermark: %+v", planned)
+	}
+	claims, err = s.Claim(t.Context(), 1, time.Minute, now)
+	must(t, err)
+	if len(claims) != 1 || claims[0].Key != resolution.Key || claims[0].AttemptID == resolution.AttemptID {
+		t.Fatalf("resolution not reclaimable: %+v", claims)
+	}
+	proceed, err = s.BeginConsequential(t.Context(), claims[0], laterConfig, now)
+	must(t, err)
+	if !proceed {
+		t.Fatal("reactivated resolution cancelled")
+	}
+	must(t, x.Execute(t.Context(), claims[0].Action, durableEmit))
+	must(t, s.Complete(t.Context(), claims[0], Done))
+	state, _, err := s.Load(t.Context(), q)
+	must(t, err)
+	if state.Active != nil || len(state.Entries) != 0 || state.BaseSHA == base {
+		t.Fatalf("landing did not settle: %+v", state)
+	}
+	history, err := f.History(repo, "main")
+	must(t, err)
+	if len(history) != 2 || state.BaseSHA != history[1].SHA {
+		t.Fatalf("resolved wrong tested commit: %+v / %+v", state, history)
+	}
+}

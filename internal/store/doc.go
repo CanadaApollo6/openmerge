@@ -2,13 +2,12 @@
 //
 // Events are append-only. Load folds the complete log from an immutable queue
 // bootstrap (base branch and initial forge fence). Snapshots can later replace
-// that prefix, provided replay and historical action reconstruction still see
-// exactly the same state at every retained action watermark.
+// that prefix as long as they preserve the replayed projection.
 //
-// Action JSON includes a stable type discriminator, exported action data and
-// the planner's config and time. Some queue action keys include private fields;
-// decoding replays the action's event prefix and invokes the pure planner to
-// recover those fields without exposing queue internals or using reflection.
+// Events and actions use queue's versioned wire format, including private action
+// key inputs. Decoding never invokes the planner or loads an event prefix. Keys
+// are stored separately when actions are inserted. Undecodable actions are
+// quarantined as poisoned and exposed by Store.Poisoned; other work continues.
 //
 // Append, Plan and BeginConsequential share a transaction-scoped queue lock.
 // Serializing appends makes event IDs also reflect commit order within a queue:
@@ -16,8 +15,9 @@
 // No lock or connection-local state survives a transaction, including migrations.
 //
 // Workers claim actions, call BeginConsequential for consequential actions, then
-// pass Action and Emit to executor.Execute and call Complete. Expired in-flight
-// claims can be recovered; BeginConsequential revalidates them. Emit admits only
+// pass Action and Emit to executor.Execute and call Complete. BeginConsequential
+// renews the lease; forge calls and result persistence must finish within it.
+// Expired in-flight claims can be recovered; BeginConsequential revalidates them. Emit admits only
 // one LandingStarted per batch during a valid in-flight execution window, so a
 // paused worker cannot start another landing after a replacement has recorded
 // its attempt or a conflicting action has begun. Once LandingStarted is durable,

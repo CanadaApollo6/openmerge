@@ -135,6 +135,29 @@ func TestEnsureQueueIdentityAndFenceBootstrap(t *testing.T) {
 	if _, err := s.EnsureQueue(t.Context(), QueueKey{}); err == nil {
 		t.Fatal("accepted an empty identity")
 	}
+	key := QueueKey{Installation: "installation/1", Repository: "owner/repo", BaseBranch: "main"}
+	var stored QueueKey
+	must(t, s.pool.QueryRow(t.Context(), `SELECT installation, repository, base, lane FROM queues WHERE id = $1`, q).
+		Scan(&stored.Installation, &stored.Repository, &stored.BaseBranch, &stored.Lane))
+	if stored != key {
+		t.Fatalf("identity columns = %+v, want %+v", stored, key)
+	}
+	for _, different := range []QueueKey{
+		{Installation: "installation/2", Repository: key.Repository, BaseBranch: key.BaseBranch},
+		{Installation: key.Installation, Repository: "another/repo", BaseBranch: key.BaseBranch},
+		{Installation: key.Installation, Repository: key.Repository, BaseBranch: "release/1"},
+	} {
+		id, err := s.EnsureQueue(t.Context(), different)
+		must(t, err)
+		if id == q {
+			t.Fatalf("different identity reused %d: %+v", q, different)
+		}
+		again, err := s.EnsureQueue(t.Context(), different)
+		must(t, err)
+		if again != id {
+			t.Fatalf("unstable identity: %+v", different)
+		}
+	}
 	must(t, s.InitializeFence(t.Context(), q, "initial"))
 	appendEvents(t, s, q, seedEvents()...)
 	must(t, s.InitializeFence(t.Context(), q, "initial"))
@@ -219,17 +242,22 @@ func TestLoadEqualsInMemoryFold(t *testing.T) {
 	}
 }
 
-func waitForQueueLockWaiters(t *testing.T, s *Store, want int) {
+// Each contender signals from the lock boundary, before issuing the blocking
+// query. The transaction holder controls release; no server statistics are polled.
+func queueLockContenders(t *testing.T, s *Store, want int) func() {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		n := count(t, s, `SELECT count(*) FROM pg_stat_activity WHERE application_name = current_setting('application_name') AND wait_event = 'advisory'`)
-		if n >= want {
-			return
+	arrived := make(chan struct{}, want)
+	s.beforeQueueLock = func() { arrived <- struct{}{} }
+	return func() {
+		t.Helper()
+		for range want {
+			select {
+			case <-arrived:
+			case <-time.After(5 * time.Second):
+				t.Fatal("contender did not reach queue lock")
+			}
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("did not observe %d concurrent queue-lock waiters", want)
 }
 
 func TestPlanSerializesAndIsIdempotent(t *testing.T) {
@@ -256,22 +284,24 @@ func TestPlanSerializesAndIsIdempotent(t *testing.T) {
 		err     error
 	}
 	results := make(chan result, 2)
+	waitForContenders := queueLockContenders(t, s, 2)
 	for range 2 {
 		go func() {
 			actions, err := s.Plan(t.Context(), q, config, epoch)
 			results <- result{actions, err}
 		}()
 	}
-	waitForQueueLockWaiters(t, s, 2)
+	waitForContenders()
 	if n := count(t, s, `SELECT count(*) FROM actions`); n != 0 {
 		t.Fatal("a planner interleaved with the queue-lock holder")
 	}
-	name, payload, err := encodeEvent(queue.ResumeRequested{})
+	name, payload, err := queue.EncodeEvent(queue.ResumeRequested{})
 	must(t, err)
 	var watermark int64
 	must(t, tx.QueryRow(t.Context(), `INSERT INTO events(queue_id, type, payload) VALUES ($1, $2, $3::jsonb) RETURNING id`, q, name, string(payload)).Scan(&watermark))
 	must(t, tx.Commit(t.Context()))
 	first, second := <-results, <-results
+	s.beforeQueueLock = nil
 	must(t, first.err)
 	must(t, second.err)
 	if !reflect.DeepEqual(first.actions, second.actions) || len(first.actions) != 1 || first.actions[0].Watermark != watermark {
@@ -292,21 +322,23 @@ func TestAppendCannotCommitBehindAPlannedWatermark(t *testing.T) {
 	must(t, err)
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	must(t, lockQueue(t.Context(), tx, q))
-	name, payload, err := encodeEvent(queue.ResumeRequested{})
+	name, payload, err := queue.EncodeEvent(queue.ResumeRequested{})
 	must(t, err)
 	var earlier int64
 	must(t, tx.QueryRow(t.Context(), `INSERT INTO events(queue_id, type, payload) VALUES ($1, $2, $3::jsonb) RETURNING id`, q, name, string(payload)).Scan(&earlier))
 	appended := make(chan error, 1)
+	waitForContender := queueLockContenders(t, s, 1)
 	go func() {
 		_, err := s.Append(t.Context(), q, []queue.Event{queue.ResumeRequested{}}, "later")
 		appended <- err
 	}()
-	waitForQueueLockWaiters(t, s, 1)
+	waitForContender()
 	if n := count(t, s, `SELECT count(*) FROM events`); n != 3 {
 		t.Fatal("append committed while an earlier event was uncommitted")
 	}
 	must(t, tx.Commit(t.Context()))
 	must(t, <-appended)
+	s.beforeQueueLock = nil
 	actions, err := s.Plan(t.Context(), q, config, epoch)
 	must(t, err)
 	if len(actions) != 1 || actions[0].Watermark <= earlier {
