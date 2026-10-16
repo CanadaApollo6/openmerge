@@ -6,7 +6,7 @@
 
 Agents now open pull requests faster than CI and humans can land them. The merge path — queuing, batching, speculative testing, flaky-test handling, and the rules around them — has become the bottleneck, and the best tools for it are closed, paywalled, or tied to a single forge. OpenMerge brings the ideas that Mergify popularized to everyone, under the Apache 2.0 license.
 
-> **Status: pre-alpha.** Phase 0 (research, design decisions, project scaffold) is wrapping up and Phase 1 is next. There is no usable merge queue yet. See the [roadmap](ROADMAP.md).
+> **Status: pre-alpha.** Phase 1 is in progress: the planner, configuration, forge contract, and simulator are in place; storage, the GitHub driver, and the server are next. It cannot run against a real repository yet. See the [roadmap](ROADMAP.md).
 
 ## What it will do
 
@@ -24,35 +24,16 @@ Agents now open pull requests faster than CI and humans can land them. The merge
 - [Architecture decisions](docs/adr/README.md): the ADRs behind the design
 - [Research](docs/research/README.md): how Mergify works, and the wider merge-queue landscape
 
-## Run the queue simulator
+## Try the simulator
+
+The simulator runs the real planner and executor against an in-memory forge on a virtual clock, and checks after every step that main only ever contains tested, passing commits.
 
 ```bash
-go run ./cmd/openmerge sim --seed 42
-go run ./cmd/openmerge sim --seed 42 --faults --json
-go test ./internal/sim -run TestExit500PRDay -count=1 -v
+go run ./cmd/openmerge sim --seed 42            # a 500-PR day: 5% broken changes, 2-minute CI
+go run ./cmd/openmerge sim --faults --json      # add forge errors and crashes mid-landing
 ```
 
-The simulator runs the real serial planner and executor against an in-memory
-forge, with a virtual clock and reproducible random streams. Defaults are 500
-trusted PRs arriving over 24 hours, 5% broken changes, no flakes, and two-minute
-CI (720 serial runs/day). It adds one untrusted fork probe per 50 PRs, with at
-least one for a nonempty workload; those are blocked before testing. Every step
-checks that main contains only passing tested commits, PRs land once with their
-tested heads, and untrusted code never enters test refs. A stalled queue fails
-with a wedge error.
-
-`--prs`, `--broken-rate`, `--flake-rate`, `--ci`, and `--seed` change the workload.
-`--faults` injects transient forge errors and crashes after landing pushes; the
-executor must resolve those pushes through the fence. `--json` includes outcomes,
-merge latency, CI cost, span, steps, and recovered faults; durations are in
-nanoseconds. The simulation drains outstanding work beyond the arrival window
-when needed. Failed CI, including flakes on good PRs, dequeues with
-`checks-failed`; automatic CI retries belong to a later phase.
-
-Go callers can start with `sim.DefaultConfig()` and override arrival window,
-CI duration range, merge method, planner timers, fault probabilities, and
-`DropWebhookRate`. The exit test also drops 30% of CI webhooks to verify that
-`RefreshChecks` reconciliation recovers their outcomes.
+Flags: `--prs`, `--broken-rate`, `--flake-rate`, `--ci`, `--seed`, `--faults`, `--json`. See the [`internal/sim` package docs](internal/sim) for the full model.
 
 ## Contributing
 

@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/sim"
 )
@@ -62,8 +63,8 @@ func runSim(args []string, stdout, stderr io.Writer) int {
 			"Time to merge: mean %s, p95 %s; CI runs %d (%.2f/merged PR)\n"+
 			"Simulated %s in %d steps; faults recovered %d/%d\n",
 		result.Merged, result.PRs, dequeued, result.StillQueued, result.Blocked["untrusted"],
-		result.MeanTimeToMerge, result.P95TimeToMerge, result.CIRuns, result.CIRunsPerMergedPR,
-		result.SimulatedSpan, result.Steps, result.FaultsRecovered, result.FaultsInjected)
+		result.MeanTimeToMerge.Round(time.Second), result.P95TimeToMerge.Round(time.Second), result.CIRuns, result.CIRunsPerMergedPR,
+		result.SimulatedSpan.Round(time.Minute), result.Steps, result.FaultsRecovered, result.FaultsInjected)
 	if err != nil {
 		return 1
 	}
