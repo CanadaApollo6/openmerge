@@ -21,12 +21,17 @@ number, head SHA, and updated-at timestamp. Empty `base` lists all open PRs.
 It is a paginated reconciliation read, without per-PR review/permission lookups.
 
 `ListComments(repo, pr, since)` returns comment ID, author login, body, and
-created-at time for human and bot issue-thread comments created strictly after
-`since`; zero means all comments. Drivers follow every page. The server dedupes
-commands by comment ID and overlaps time cursors to handle timestamp precision
-and comments created during pagination. Edits of old comments do not create new
+created-at time for human and bot issue-thread comments created at or after
+`since` (inclusive); zero means all comments. Drivers follow every page. The server dedupes
+commands by comment ID and must overlap time cursors to handle timestamp precision
+and comments created during pagination. GitHub has a second-granular exclusive
+updated-time filter; its driver queries from the preceding second, then filters
+inclusively by creation time. Boundary comments can therefore repeat, including
+distinct comments created in the same second. Edits of old comments do not create new
 commands. `CanWrite(repo, user)` freshly authorizes commands by current repository
 permission; webhook author association is never sufficient.
+
+For conditional HTTP reads, cache only a single syntactically valid strong or weak entity-tag ([RFC 9110 §8.8.3](https://www.rfc-editor.org/rfc/rfc9110.html#section-8.8.3)). Wildcards, lists, multiple field lines, and unquoted validators are invalid. A 304 carrying a different or invalid ETag must evict the entry and fail closed or refetch unconditionally, never replay the body. Persist allowed 304 header updates ([RFC 9111 §4.3.4](https://www.rfc-editor.org/rfc/rfc9111.html#section-4.3.4)); `no-store` or `Vary: *` on a 200 or 304 prevents caching and replay. Inspect every field line and comma-separated value case-insensitively.
 
 ## Statuses
 
@@ -48,13 +53,15 @@ Commit-status APIs that lack cancelled and action-required keep the normalized s
 
 The executor aggregates as follows:
 
-- A required name reported by more than one source is ambiguous and stays pending, even if every source reports success. A missing source also stays pending. The executor emits `ChecksRefreshed`, emits no terminal `ChecksCompleted`, and returns `executor.CheckSourceAmbiguityError` with the name and sorted sources for the server to surface. Unrequired names do not block the batch.
+- A required name reported by more than one source is ambiguous and stays pending, even if every source reports success. A missing source also stays pending. The executor emits `ChecksReopened` followed by `ChecksRefreshed`, emits no terminal `ChecksCompleted`, and returns `executor.CheckSourceAmbiguityError` with the name and sorted sources for the server to surface. Unrequired names do not block the batch.
 - Within one source, the newest run of each name wins, regardless of response order. A pending rerun supersedes an older result.
 - A GitHub check run whose suite is not completed is pending even if the run still reports an old success. Missing suite observations and unknown producer identities also fail safe as pending. Drivers must refresh suite state as well as run state. GitHub `check_suite` requested/rerequested/completed and `check_run` rerequested/completed webhooks normalize to `ChecksChanged{SHA}` and trigger these reads.
 - Cancelled counts as failure until a newer run supersedes it.
 - Skipped and neutral count as failure unless the `AllowSkippedNeutral` option is set.
 - A required check with no run, or an unknown state, is pending.
 - An empty list of required checks is a configuration error unless `AllowNoRequiredChecks` is set.
+
+`ChecksReopened{TestedSHA, At}` clears recorded success for the active testing batch and any retained terminal result for that SHA. It preserves the original test-start time and timeout deadline, so repeated reruns cannot postpone timeout indefinitely. Immediately before `LandingStarted`, the executor freshly reads `CheckRuns` for the tested SHA and requires terminal success. Pending or ambiguous results emit `ChecksReopened`; terminal failure emits `ChecksCompleted{Success:false}`. Both decline `Land` with an error before minting an attempt or pushing. The action remains unacknowledged for replanning after a later passing rerun. A read error also prevents starting the landing. This preflight cannot prevent CI from reopening after the read or revoke an already-started fenced attempt.
 
 ## Building test refs
 

@@ -161,7 +161,9 @@ func (d *Driver) ListComments(ctx context.Context, repo forge.RepoRef, pr int, s
 	for page := 1; page != 0; {
 		opts := &gh.IssueListCommentsOptions{ListOptions: gh.ListOptions{Page: page, PerPage: 100}}
 		if !since.IsZero() {
-			opts.Since = &since
+			// GitHub uses an exclusive, second-granular updated_at filter.
+			overlap := since.Truncate(time.Second).Add(-time.Second)
+			opts.Since = &overlap
 		}
 		comments, res, err := d.client.Issues.ListComments(ctx, owner, name, pr, opts)
 		if err != nil {
@@ -170,7 +172,7 @@ func (d *Driver) ListComments(ctx context.Context, repo forge.RepoRef, pr int, s
 		for _, comment := range comments {
 			// GitHub filters by updated_at, which also includes edited comments.
 			// Commands are discovered by creation time, matching the forge contract.
-			if since.IsZero() || comment.GetCreatedAt().After(since) {
+			if since.IsZero() || !comment.GetCreatedAt().Before(since) {
 				result = append(result, forge.Comment{ID: comment.GetID(), Author: comment.GetUser().GetLogin(), Body: comment.GetBody(), CreatedAt: comment.GetCreatedAt().Time})
 			}
 		}

@@ -99,7 +99,7 @@ func TestReviewCrossAPICollisionFailsClosedInExecutor(t *testing.T) {
 	f.statuses["tested"] = []*gh.RepoStatus{{ID: new(int64(101)), Context: new("CI"), State: new("pending")}}
 	events, err := reviewRefresh(f)
 	var collision *executor.CheckSourceAmbiguityError
-	if !errors.As(err, &collision) || len(events) != 1 || reviewCompletedSuccess(events) {
+	if !errors.As(err, &collision) || len(events) != 2 || reviewCompletedSuccess(events) {
 		t.Fatalf("not fail closed: events=%+v err=%v", events, err)
 	}
 }

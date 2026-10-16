@@ -61,6 +61,7 @@ func (h *harness) tested(t *testing.T) string {
 		}
 		return nil
 	}))
+	h.f.SetCheckRuns(repo, sha, []forge.CheckRun{{Name: "ci", State: forge.Success}, {Name: "lint", State: forge.Success}})
 	return sha
 }
 
@@ -171,6 +172,8 @@ func TestRefreshChecks(t *testing.T) {
 			var want []queue.Event
 			if tc.terminal {
 				want = append(want, queue.ChecksCompleted{TestedSHA: sha, Success: tc.success})
+			} else {
+				want = append(want, queue.ChecksReopened{TestedSHA: sha, At: epoch})
 			}
 			want = append(want, queue.ChecksRefreshed{BatchID: "batch", TestedSHA: sha, At: epoch})
 			if !reflect.DeepEqual(events, want) {
@@ -353,7 +356,10 @@ func TestAmbiguousRequiredCheckSourcesStayPending(t *testing.T) {
 				if ambiguity.Name != "ci" || len(ambiguity.Sources) != 2 || !slices.IsSorted(ambiguity.Sources) {
 					t.Fatalf("unusable diagnostic: %+v", ambiguity)
 				}
-				if len(events) != 1 {
+				if len(events) != 2 {
+					t.Fatalf("ambiguous check did not reopen: %+v", events)
+				}
+				if _, ok := events[0].(queue.ChecksReopened); !ok {
 					t.Fatalf("ambiguous check emitted terminal event: %+v", events)
 				}
 			} else {

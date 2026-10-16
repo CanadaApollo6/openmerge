@@ -37,6 +37,7 @@ type testRun struct {
 	heads   []queue.BatchPR
 	success bool
 	done    bool
+	rerun   bool
 	base    string
 	covered []string
 	method  queue.MergeMethod
@@ -282,7 +283,7 @@ func (s *simulation) execute(action queue.Action) error {
 		return nil
 	}
 	if err != nil {
-		if !errors.Is(err, errForge) && !errors.Is(err, errCrash) && !errors.Is(err, errDelayed) {
+		if !errors.Is(err, errForge) && !errors.Is(err, errCrash) && !errors.Is(err, errDelayed) && !errors.Is(err, executor.ErrChecksNotSuccessful) {
 			return fmt.Errorf("execute %s: %w", action.Key(), err)
 		}
 		s.retryAt[action.Key()] = s.now.Add(s.cfg.RetryDelay)
@@ -386,6 +387,10 @@ func (s *simulation) startCI(sha string, prs []int) {
 		s.result.BisectionCIRuns++
 	}
 	s.forge.SetCheckRuns(s.repo, sha, []forge.CheckRun{{ID: 1, Name: "ci", State: forge.Pending}})
+	s.schedule(s.now.Add(s.ciDuration()), ciComplete, 0, sha)
+}
+
+func (s *simulation) ciDuration() time.Duration {
 	duration := s.cfg.CIDuration
 	if s.cfg.CIMin > 0 {
 		duration = s.cfg.CIMin
@@ -393,7 +398,7 @@ func (s *simulation) startCI(sha string, prs []int) {
 			duration += time.Duration(s.ci.Int64N(int64(s.cfg.CIMax - s.cfg.CIMin)))
 		}
 	}
-	s.schedule(s.now.Add(duration), ciComplete, 0, sha)
+	return duration
 }
 
 func (s *simulation) metrics() Result {

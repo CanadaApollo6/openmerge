@@ -36,8 +36,8 @@ type Config struct {
 }
 
 // Faults injects errors at every forge boundary, lost landing acknowledgements,
-// late pushes and duplicate Land executions. Methods overrides ForgeErrorRate
-// per method; FailFirst guarantees coverage of the first N calls to each method.
+// late pushes, duplicate Land executions, and CI reruns after success. Methods
+// overrides ForgeErrorRate per method; FailFirst fails the first N calls.
 type Faults struct {
 	ForgeErrorRate         float64
 	Methods                map[string]float64
@@ -45,6 +45,7 @@ type Faults struct {
 	LandingCrashRate       float64
 	DelayedPushRate        float64
 	DuplicateExecutionRate float64
+	CIRerunRate            float64
 	ReplayDelay            time.Duration
 }
 
@@ -90,6 +91,7 @@ type Result struct {
 	P95TimeToMerge      time.Duration               `json:"-"`
 	BisectionCIRuns     int                         `json:"bisection_ci_runs"`
 	CIRuns              int                         `json:"ci_runs"`
+	CIReruns            int                         `json:"ci_reruns"`
 	CIRunsPerMergedPR   float64                     `json:"ci_runs_per_merged_pr"`
 	SimulatedSpan       time.Duration               `json:"-"`
 	Steps               int                         `json:"steps"`
@@ -121,6 +123,7 @@ func (cfg Config) normalized() (Config, error) {
 		{"external push rate", cfg.ExternalPushRate},
 		{"delayed push rate", cfg.Faults.DelayedPushRate}, {"duplicate execution rate", cfg.Faults.DuplicateExecutionRate},
 		{"forge error rate", cfg.Faults.ForgeErrorRate}, {"landing crash rate", cfg.Faults.LandingCrashRate},
+		{"CI rerun rate", cfg.Faults.CIRerunRate},
 	}
 	for method, count := range cfg.Faults.FailFirst {
 		if !slices.Contains(forgeMethods, method) || count < 0 {
@@ -216,6 +219,6 @@ func (cfg Config) MarshalJSON() ([]byte, error) {
 			"build_retries": cfg.Planner.BuildRetries, "build_backoff_seconds": cfg.Planner.BuildBackoff.Seconds()},
 		"faults": map[string]any{"forge_error_rate": cfg.Faults.ForgeErrorRate, "methods": cfg.Faults.Methods, "fail_first": cfg.Faults.FailFirst,
 			"landing_crash_rate": cfg.Faults.LandingCrashRate, "delayed_push_rate": cfg.Faults.DelayedPushRate,
-			"duplicate_execution_rate": cfg.Faults.DuplicateExecutionRate, "replay_delay_seconds": cfg.Faults.ReplayDelay.Seconds()},
+			"duplicate_execution_rate": cfg.Faults.DuplicateExecutionRate, "ci_rerun_rate": cfg.Faults.CIRerunRate, "replay_delay_seconds": cfg.Faults.ReplayDelay.Seconds()},
 	})
 }

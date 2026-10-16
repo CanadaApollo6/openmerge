@@ -111,6 +111,11 @@ func Apply(s State, e Event) State {
 				s.retainChecks(e)
 			}
 		}
+	case ChecksReopened:
+		delete(s.checks, e.TestedSHA)
+		if s.Active != nil && s.Active.Phase == Testing && s.Active.TestedSHA == e.TestedSHA {
+			s.Active.checksPassed = false
+		}
 	case ChecksRefreshed:
 		if s.batchIn(e.BatchID, Testing) && s.Active.TestedSHA == e.TestedSHA {
 			if s.Active.checkRefreshes == 0 || e.At.After(s.Active.checksRefreshedAt) {

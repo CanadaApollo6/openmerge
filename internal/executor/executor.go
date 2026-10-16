@@ -36,7 +36,8 @@ type Executor struct {
 
 // Execute stops at the first failed emit. emit must durably record its event
 // before returning nil. BatchStarted precedes test-ref construction, and
-// LandingStarted precedes the git push;
+// Land freshly requires terminal-success checks before recording LandingStarted,
+// which precedes the git push;
 // after it is recorded, the caller must only execute ResolveLanding for that
 // batch, never retry Land. Its uncertain result is recovered from the fence.
 // Before recording Landed or closing a PR with MarkLanded, Execute freshly reads
@@ -84,12 +85,32 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 			if err := emit(queue.ChecksCompleted{TestedSHA: a.TestedSHA, Success: success}); err != nil {
 				return err
 			}
+		} else if err := emit(queue.ChecksReopened{TestedSHA: a.TestedSHA, At: at}); err != nil {
+			return err
 		}
 		if err := emit(queue.ChecksRefreshed{BatchID: a.BatchID, TestedSHA: a.TestedSHA, At: at}); err != nil {
 			return err
 		}
 		return ambiguity
 	case queue.Land:
+		checks, err := x.Driver.CheckRuns(ctx, x.Repo, a.TestedSHA)
+		if err != nil {
+			return err
+		}
+		terminal, success, ambiguity := x.checkResult(checks)
+		if !terminal || !success {
+			var result queue.Event = queue.ChecksReopened{TestedSHA: a.TestedSHA, At: x.now()}
+			if terminal {
+				result = queue.ChecksCompleted{TestedSHA: a.TestedSHA, Success: false}
+			}
+			if err := emit(result); err != nil {
+				return err
+			}
+			if ambiguity != nil {
+				return ambiguity
+			}
+			return ErrChecksNotSuccessful
+		}
 		attemptID, err := x.newID()
 		if err != nil {
 			return err
@@ -144,6 +165,10 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		return fmt.Errorf("unsupported queue action %T", action)
 	}
 }
+
+// ErrChecksNotSuccessful leaves Land unacknowledged so a later passing rerun can
+// plan the same action key again. Replan before retrying; no attempt was started.
+var ErrChecksNotSuccessful = errors.New("required checks are no longer successful")
 
 // ErrFenceTampered reports a fence move belonging to neither outcome of the
 // attempt. It indicates that ADR 0004's fence namespace protection is missing.

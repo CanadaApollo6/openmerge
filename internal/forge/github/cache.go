@@ -96,10 +96,27 @@ func (t *transport) conditionalGET(req *http.Request, token string) (*http.Respo
 		if cached == nil {
 			return nil, errors.New("github returned 304 without a cached representation")
 		}
+		if tags := res.Header.Values("ETag"); len(tags) != 0 {
+			tag, valid := entityTag(res.Header)
+			if !valid || tag != cached.header.Get("ETag") {
+				t.cache.put(key, nil)
+				return nil, errors.New("github returned 304 with a mismatched ETag")
+			}
+		}
 		header := cached.header.Clone()
 		for name, values := range res.Header {
+			if name == "Content-Length" || name == "Content-Range" || cached.uncompressed && name == "Content-Encoding" {
+				continue
+			}
 			header[name] = append([]string(nil), values...)
 		}
+		if !cacheableHeader(header) {
+			t.cache.put(key, nil)
+			return nil, errors.New("github returned 304 with uncacheable metadata")
+		}
+		tag, _ := entityTag(header)
+		header.Set("ETag", tag)
+		t.cache.put(key, newCachedResponse(key, header, cached.body, cached.uncompressed))
 		res.StatusCode, res.Status = http.StatusOK, "200 OK"
 		res.Header, res.Body = header, io.NopCloser(bytes.NewReader(cached.body))
 		res.ContentLength = int64(len(cached.body))
@@ -108,13 +125,7 @@ func (t *transport) conditionalGET(req *http.Request, token string) (*http.Respo
 		return res, nil
 	}
 	// The key covers every explicit request header, including all Vary dimensions.
-	cacheable := res.StatusCode == http.StatusOK && res.Header.Get("ETag") != "" && !strings.Contains(strings.ToLower(res.Header.Get("Cache-Control")), "no-store")
-	for _, vary := range strings.Split(res.Header.Get("Vary"), ",") {
-		if strings.TrimSpace(vary) == "*" {
-			cacheable = false
-		}
-	}
-	if !cacheable {
+	if res.StatusCode != http.StatusOK || !cacheableHeader(res.Header) {
 		t.cache.put(key, nil)
 		return res, nil
 	}
@@ -130,7 +141,15 @@ func (t *transport) conditionalGET(req *http.Request, token string) (*http.Respo
 	}
 	_ = res.Body.Close()
 	res.Body = io.NopCloser(bytes.NewReader(body))
-	value := &cachedResponse{key: key, header: res.Header.Clone(), body: body, uncompressed: res.Uncompressed}
+	header := res.Header.Clone()
+	tag, _ := entityTag(header)
+	header.Set("ETag", tag)
+	t.cache.put(key, newCachedResponse(key, header, body, res.Uncompressed))
+	return res, nil
+}
+
+func newCachedResponse(key cacheKey, header http.Header, body []byte, uncompressed bool) *cachedResponse {
+	value := &cachedResponse{key: key, header: header.Clone(), body: body, uncompressed: uncompressed}
 	value.size = len(body) + len(key.url) + 2*sha256.Size
 	for name, values := range value.header {
 		value.size += len(name)
@@ -138,6 +157,46 @@ func (t *transport) conditionalGET(req *http.Request, token string) (*http.Respo
 			value.size += len(v)
 		}
 	}
-	t.cache.put(key, value)
-	return res, nil
+	return value
+}
+
+// RFC 9110 section 8.8.3 permits one quoted opaque tag, optionally prefixed W/.
+func entityTag(header http.Header) (string, bool) {
+	values := header.Values("ETag")
+	if len(values) != 1 {
+		return "", false
+	}
+	tag := strings.Trim(values[0], " \t")
+	opaque := strings.TrimPrefix(tag, "W/")
+	if len(opaque) < 2 || opaque[0] != '"' || opaque[len(opaque)-1] != '"' {
+		return "", false
+	}
+	for i := 1; i < len(opaque)-1; i++ {
+		if opaque[i] < 0x21 || opaque[i] == '"' || opaque[i] == 0x7f {
+			return "", false
+		}
+	}
+	return tag, true
+}
+
+func cacheableHeader(header http.Header) bool {
+	if _, valid := entityTag(header); !valid {
+		return false
+	}
+	for _, line := range header.Values("Cache-Control") {
+		for _, value := range strings.Split(line, ",") {
+			name, _, _ := strings.Cut(value, "=")
+			if strings.EqualFold(strings.TrimSpace(name), "no-store") {
+				return false
+			}
+		}
+	}
+	for _, line := range header.Values("Vary") {
+		for _, value := range strings.Split(line, ",") {
+			if strings.TrimSpace(value) == "*" {
+				return false
+			}
+		}
+	}
+	return true
 }

@@ -666,9 +666,21 @@ func RunDriver(t *testing.T, factory func(t *testing.T) Env) {
 		}
 		newer, err := e.Driver.ListComments(ctx, e.Repo, pr, command.CreatedAt)
 		must(t, err)
+		found := false
 		for _, c := range newer {
-			if !c.CreatedAt.After(command.CreatedAt) {
+			if c.CreatedAt.Before(command.CreatedAt) {
 				t.Fatalf("since filter ignored: %+v", c)
+			}
+			found = found || c.ID == command.ID
+		}
+		if !found {
+			t.Fatal("inclusive cursor omitted its boundary comment")
+		}
+		after, err := e.Driver.ListComments(ctx, e.Repo, pr, command.CreatedAt.Add(time.Nanosecond))
+		must(t, err)
+		for _, c := range after {
+			if c.ID == command.ID {
+				t.Fatal("cursor included an older comment")
 			}
 		}
 	})

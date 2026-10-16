@@ -427,8 +427,8 @@ func TestReconciliationMetadataAndCurrentPermissions(t *testing.T) {
 	}
 	later, err := f.ListComments(ctx, repo, 1, comments[0].CreatedAt)
 	must(t, err)
-	if len(later) != 0 {
-		t.Fatal("since cursor rediscovered the old command")
+	if len(later) != 1 || later[0].ID != comments[0].ID {
+		t.Fatal("inclusive cursor omitted its boundary comment")
 	}
 	must(t, f.ClosePR(repo, 1))
 	summaries, err = f.ListOpenPullRequests(ctx, repo, "release/v1")

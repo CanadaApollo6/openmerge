@@ -105,7 +105,7 @@ type Driver interface {
 	PullRequest(ctx context.Context, repo RepoRef, number int) (PullRequest, error)
 	// ListOpenPullRequests filters by target branch; an empty base lists all.
 	ListOpenPullRequests(ctx context.Context, repo RepoRef, base string) ([]PullRequestSummary, error)
-	// ListComments returns comments created after since; zero means all comments.
+	// ListComments returns comments created at or after since; zero means all comments.
 	ListComments(ctx context.Context, repo RepoRef, pr int, since time.Time) ([]Comment, error)
 	// CanWrite freshly authorizes a user. Conditional revalidation is allowed;
 	// cached grants without a round trip to the forge are not.

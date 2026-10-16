@@ -42,6 +42,11 @@ type wireChecksCompleted struct {
 	Success   bool   `json:"success"`
 }
 
+type wireChecksReopened struct {
+	TestedSHA string    `json:"tested_sha"`
+	At        time.Time `json:"at"`
+}
+
 type wireChecksRefreshed struct {
 	BatchID   string    `json:"batch_id"`
 	TestedSHA string    `json:"tested_sha"`
@@ -310,6 +315,11 @@ func EncodeEvent(value Event) (string, []byte, error) {
 		return encodeWire("base_moved", wireBaseMoved(v))
 	case ChecksCompleted:
 		return encodeWire("checks_completed", wireChecksCompleted(v))
+	case ChecksReopened:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("checks_reopened", wireChecksReopened(v))
 	case ChecksRefreshed:
 		return encodeWire("checks_refreshed", wireChecksRefreshed(v))
 	case PRClosed:
@@ -370,6 +380,16 @@ func DecodeEvent(payload []byte) (Event, error) {
 		return decodeWireData(envelope.Data, func(v wireChecksCompleted) Event {
 			return ChecksCompleted(v)
 		})
+	case "checks_reopened":
+		v, err := readWireData[wireChecksReopened](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := ChecksReopened(v)
+		if err := event.Validate(); err != nil {
+			return nil, err
+		}
+		return event, nil
 	case "checks_refreshed":
 		return decodeWireData(envelope.Data, func(v wireChecksRefreshed) Event {
 			return ChecksRefreshed(v)

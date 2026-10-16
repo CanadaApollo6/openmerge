@@ -41,6 +41,7 @@ func TestLandingVerification(t *testing.T) {
 				ctx := context.Background()
 				tested, err := h.f.BuildTestRef(ctx, repo, forge.BuildRequest{Ref: "test", BaseSHA: h.base, PRs: h.prs[:1], Method: forge.Squash, BatchID: "batch"})
 				must(t, err)
+				h.f.SetCheckRuns(repo, tested, []forge.CheckRun{{Name: "ci", State: forge.Success}, {Name: "lint", State: forge.Success}})
 				driver := &closingDriver{Driver: h.f}
 				h.x.Driver = driver
 				mutate := func() {

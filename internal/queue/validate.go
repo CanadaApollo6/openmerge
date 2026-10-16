@@ -56,6 +56,17 @@ func (a RefreshChecks) Validate() error {
 	return requireActionText("batch_id", a.BatchID, "tested_sha", a.TestedSHA)
 }
 
+// Validate requires the reopened commit and observation time.
+func (e ChecksReopened) Validate() error {
+	if err := requireActionText("tested_sha", e.TestedSHA); err != nil {
+		return err
+	}
+	if e.At.IsZero() {
+		return fmt.Errorf("at must not be zero")
+	}
+	return nil
+}
+
 // Validate requires both fences and the exact heads checked before landing.
 func (a Land) Validate() error {
 	if err := requireActionText("batch_id", a.BatchID, "expected_base_sha", a.ExpectedBaseSHA,

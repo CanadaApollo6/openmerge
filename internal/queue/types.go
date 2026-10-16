@@ -142,7 +142,13 @@ type ChecksCompleted struct {
 	Success   bool
 }
 
-// ChecksRefreshed records a forge read after any terminal ChecksCompleted result.
+// ChecksReopened revokes a terminal result without restarting the check deadline.
+type ChecksReopened struct {
+	TestedSHA string
+	At        time.Time
+}
+
+// ChecksRefreshed records a forge read after ChecksCompleted or ChecksReopened.
 // It is correlated by both batch and tested SHA, even when checks are still pending.
 type ChecksRefreshed struct {
 	BatchID, TestedSHA string
@@ -223,6 +229,7 @@ func (BatchFailed) queueEvent()  {}
 func (PRObserved) queueEvent()         {}
 func (BaseMoved) queueEvent()          {}
 func (ChecksCompleted) queueEvent()    {}
+func (ChecksReopened) queueEvent()     {}
 func (ChecksRefreshed) queueEvent()    {}
 func (PRClosed) queueEvent()           {}
 func (EnqueueRequested) queueEvent()   {}
@@ -267,8 +274,8 @@ func (FailBatch) queueAction() {}
 func (a FailBatch) Key() string { return "batch/" + a.BatchID + "/fail/" + string(a.Reason) }
 
 // RefreshChecks reads forge CI status for TestedSHA. The executor first appends
-// ChecksCompleted if terminal, then always appends ChecksRefreshed with the read
-// time. A failed read must be retried without recording a successful refresh.
+// ChecksCompleted if terminal or ChecksReopened otherwise, then always appends
+// ChecksRefreshed with the read time. A failed read records no refresh.
 type RefreshChecks struct {
 	BatchID, TestedSHA string
 	epoch              uint64

@@ -398,7 +398,7 @@ func (f *Forge) ListOpenPullRequests(ctx context.Context, repo forge.RepoRef, ba
 	return result, nil
 }
 
-// ListComments returns comments created after since, including other authors.
+// ListComments returns comments created at or after since, including other authors.
 func (f *Forge) ListComments(ctx context.Context, repo forge.RepoRef, pr int, since time.Time) ([]forge.Comment, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -407,7 +407,7 @@ func (f *Forge) ListComments(ctx context.Context, repo forge.RepoRef, pr int, si
 	}
 	result := []forge.Comment{}
 	for _, c := range f.repo(repo).comments[pr] {
-		if since.IsZero() || c.CreatedAt.After(since) {
+		if since.IsZero() || !c.CreatedAt.Before(since) {
 			result = append(result, forge.Comment{ID: c.ID, Author: c.Author, Body: c.Body, CreatedAt: c.CreatedAt})
 		}
 	}

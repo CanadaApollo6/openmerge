@@ -331,7 +331,7 @@ func TestServerReadsPaginationMetadataAndCommentCursor(t *testing.T) {
 	// become a new command just because its body was edited after the cursor.
 	comments, err := f.driver.ListComments(context.Background(), testRepo, 1, epoch.Add(time.Minute))
 	must(t, err)
-	if len(comments) != 3 || comments[0].ID != 3 || comments[2].ID != 5 {
+	if len(comments) != 4 || comments[0].ID != 2 || comments[3].ID != 5 {
 		t.Fatalf("created-at filter or pagination failed: %+v", comments)
 	}
 	for _, c := range comments {

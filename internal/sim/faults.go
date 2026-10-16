@@ -100,6 +100,17 @@ func (f *faultForge) CheckRuns(ctx context.Context, repo forge.RepoRef, sha stri
 	if err := f.before("CheckRuns"); err != nil {
 		return nil, err
 	}
+	run := f.sim.tests[sha]
+	if run != nil && run.done && run.success && !run.rerun && f.sim.cfg.Faults.CIRerunRate > 0 &&
+		f.sim.state.Active != nil && f.scope == "landing/"+f.sim.state.Active.ID &&
+		f.sim.faults.Float64() < f.sim.cfg.Faults.CIRerunRate {
+		run.rerun, run.done = true, false
+		f.SetCheckRuns(repo, sha, []forge.CheckRun{{ID: 2, Name: "ci", State: forge.Pending}})
+		f.sim.result.CIRuns++
+		f.sim.result.CIReruns++
+		f.sim.injectFault("checks/" + f.sim.state.Active.ID)
+		f.sim.schedule(f.sim.now.Add(f.sim.ciDuration()), ciComplete, 0, sha)
+	}
 	return f.Forge.CheckRuns(ctx, repo, sha)
 }
 

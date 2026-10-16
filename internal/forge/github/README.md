@@ -161,6 +161,9 @@ The concurrent LRU is bounded to 1,024 entries and 16 MiB of stored URL, hashed
 identity/header, response-header, and body data per client transport. Keys include
 the complete URL/query, a SHA-256 token identity, and request headers. Token
 rotation and representation changes cannot reuse another identity's body.
+Only a single valid strong or weak entity-tag is stored. A mismatched or malformed
+304 validator evicts the entry and returns an error. Allowed 304 metadata updates
+are retained; `no-store` and `Vary: *`, on any field line, evict and prevent replay.
 Eviction, restart, token refresh, missing ETags, and uncacheable/oversized responses
 cause normal GETs. Errors never replay a cached grant or CI result; writes are
 never cached or retried. Permission entries are evicted by the same LRU.
@@ -170,7 +173,8 @@ For a PR with one current-head fork approver and at most one page per endpoint:
 - Full PR refresh: **3 GETs** (PR, reviews, permission). Same-repository PRs use
   **2** (PR and reviews); a closed PR uses **1**.
 - Active tested-SHA check refresh: **3 GETs** (check runs, suites, statuses),
-  shareable by all PRs in the same batch.
+  shareable by all PRs in the same batch. Landing preflight repeats these **3 GETs**
+  before recording an attempt.
 - Polling-only command discovery: **1 GET** for a page of comments. Each command
   authorization adds a fresh `CanWrite` GET.
 
