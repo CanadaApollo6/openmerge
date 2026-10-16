@@ -57,7 +57,7 @@ Each phase has an exit test. A phase is done when its exit test passes on the fa
 
 **Exit:** ADRs merged; a contributor can clone, run `make test`, and see a green (empty) suite.
 
-### Phase 1 — MVP: a queue that never lies
+### Phase 1 — MVP: a queue that never lies (in progress)
 
 - GitHub App (webhook intake, reconciler, installation tokens, rate-limit budget)
 - Fake forge with a scripted CI simulator; a simulation test suite for the planner
@@ -69,6 +69,15 @@ Each phase has an exit test. A phase is done when its exit test passes on the fa
 - Commands: `@openmerge queue | dequeue | refresh` with permission checks
 - REST API and CLI (`openmerge queue status --json`) from day one
 - Single binary + Postgres; `docker compose up` quickstart
+
+Implemented so far: the planner and simulator, durable Postgres workers, GitHub
+App setup and polling/webhook driver, runtime ruleset validation, batching and
+bisection, exact-tested landing, commands, read-only API/CLI, and the Compose
+quickstart. Phase 1 is **not complete**. Remaining follow-ups include automated
+classic branch protection checks, validation of installed App permission grants,
+and runtime metadata reads for label/file conditions (also head, title and
+conflict). Operators still audit classic protection and App permissions.
+The exit test also requires verification on a real GitHub test organization.
 
 **Exit:** OpenMerge merges its own PRs. A simulated 500-PR day with 5% failure rate lands every passing PR with main green throughout.
 

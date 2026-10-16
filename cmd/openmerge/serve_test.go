@@ -99,6 +99,16 @@ func TestServeOptions(t *testing.T) {
 	if got, err := parseServe([]string{"--api-listen=:8081", "--rules-interval=2m"}, io.Discard); err != nil || got.apiListen != "127.0.0.1:8081" || got.rulesInterval != 2*time.Minute {
 		t.Fatalf("API/rules options=%+v %v", got, err)
 	}
+	for _, address := range []string{"0.0.0.0:8081", "[::]:8081"} {
+		if _, err := parseServe([]string{"--api-listen=" + address}, io.Discard); err == nil || !strings.Contains(err.Error(), "requires a bearer token") {
+			t.Fatalf("unauthenticated wildcard bind %s: %v", address, err)
+		}
+		t.Setenv("OPENMERGE_API_TOKEN", "secret")
+		if got, err := parseServe([]string{"--api-listen=" + address}, io.Discard); err != nil || got.apiListen != address || got.apiToken != "secret" {
+			t.Fatalf("authenticated wildcard bind %s: %+v %v", address, got, err)
+		}
+		t.Setenv("OPENMERGE_API_TOKEN", "")
+	}
 	for _, args := range [][]string{{"--log-level=bogus"}, {"--poll-interval=0"}, {"--rules-interval=0"}, {"--api-listen=8081"}, {"--concurrency=0"}, {"--webhook-listen=:8080"}, {"--repos=invalid"}, {"unexpected"}} {
 		if _, err := parseServe(args, io.Discard); err == nil {
 			t.Fatalf("accepted %v", args)

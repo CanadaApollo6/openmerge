@@ -32,7 +32,7 @@ services:
       OPENMERGE_BASE: ${OPENMERGE_BASE:-main}
       OPENMERGE_GIT_CACHE_DIR: /var/lib/openmerge/git
       OPENMERGE_API_LISTEN: 0.0.0.0:8081
-      OPENMERGE_API_TOKEN: ${OPENMERGE_API_TOKEN:-}
+      OPENMERGE_API_TOKEN: ${OPENMERGE_API_TOKEN:?set OPENMERGE_API_TOKEN to a random bearer token}
       OPENMERGE_LOG_LEVEL: ${OPENMERGE_LOG_LEVEL:-info}
     volumes:
       - git-cache:/var/lib/openmerge/git

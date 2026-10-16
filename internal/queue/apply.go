@@ -61,6 +61,10 @@ func Apply(s State, e Event) State {
 		}
 	case PauseRequested:
 		s.pause, s.pauseRevision = e, s.revision
+	case RulesBlocked:
+		s.rulesBlock, s.rulesRevision = RulesBlocked{Problems: slices.Clone(e.Problems)}, s.revision
+	case RulesCleared:
+		s.rulesBlock = RulesBlocked{}
 	case ResumeRequested:
 		s.pause = PauseRequested{}
 		s.buildRetry = buildRetryState{}
@@ -186,6 +190,7 @@ func Apply(s State, e Event) State {
 }
 
 func cloneState(s State) State {
+	s.rulesBlock.Problems = slices.Clone(s.rulesBlock.Problems)
 	s.Entries = slices.Clone(s.Entries)
 	s.pending = slices.Clone(s.pending)
 	for i := range s.pending {
@@ -411,7 +416,7 @@ func (s *State) addEffect(action Action) {
 }
 
 func (s *State) completeEffect(key string) {
-	if len(s.Entries) > 0 && (s.buildRetry.failures > 0 || s.actionPoison.key != "" || s.pause.Reason != "") && s.pauseReport().Key() == key {
+	if len(s.Entries) > 0 && (s.buildRetry.failures > 0 || s.workBlocked()) && s.pauseReport().Key() == key {
 		s.acknowledged[key] = effectScope{pr: s.Entries[0].PR, admission: s.Entries[0].AdmissionID}
 	}
 	for _, effect := range s.effects {

@@ -52,8 +52,8 @@ func TestExplainCurrentStateWithRelevantBoundedHistory(t *testing.T) {
 	if len(why.Events) != 2 || why.Events[0].ID != 5 || why.Events[1].ID != 8 {
 		t.Fatalf("unrelated events or incorrect ordering: %+v", why.Events)
 	}
-	if !strings.Contains(string(why.Events[0].Event), `"version":1`) {
-		t.Fatal("lost event wire envelope")
+	if !strings.Contains(why.Events[0].Type, "test_ref_built") {
+		t.Fatal("lost event type")
 	}
 	_, missing, _ := Project(journal(events...), 99, 20)
 	if missing != nil {
@@ -141,7 +141,7 @@ func TestBlockedPRAndEmptyStableJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"installation":"7","repo":"owner/repo","base":"main","lane":"","watermark":0,"base_sha":"","paused":false,"pause_reason":"","pause_detail":"","active_batch":null,"entries":[]}`
+	want := `{"installation":"7","repo":"owner/repo","base":"main","lane":"","watermark":0,"base_sha":"","paused":false,"pause_reason":"","pause_detail":"","blocks":[],"active_batch":null,"entries":[]}`
 	if string(data) != want {
 		t.Fatalf("schema drift: %s", data)
 	}
@@ -245,14 +245,14 @@ func TestEmptyListSlashBaseAndAmbiguity(t *testing.T) {
 }
 
 func TestListenAndTokens(t *testing.T) {
-	for input, want := range map[string]string{"": "", ":8081": "127.0.0.1:8081", "[::1]:0": "[::1]:0", "0.0.0.0:8081": "0.0.0.0:8081"} {
-		got, err := ListenAddress(input)
+	for input, want := range map[string]string{"": "", ":8081": "127.0.0.1:8081", "[::1]:0": "[::1]:0"} {
+		got, err := ListenAddress(input, "")
 		if err != nil || got != want {
 			t.Fatalf("listen %q=%q %v", input, got, err)
 		}
 	}
 	for _, input := range []string{"8081", "localhost", ":-1", ":65536", ":http"} {
-		if _, err := ListenAddress(input); err == nil {
+		if _, err := ListenAddress(input, ""); err == nil {
 			t.Fatalf("accepted %s", input)
 		}
 	}

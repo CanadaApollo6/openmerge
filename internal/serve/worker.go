@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/executor"
@@ -222,16 +223,13 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 		return err
 	}
 	reason := state.PauseReason(w.plannerConfig(s.options.PollInterval))
-	if w.configError != nil {
-		for n, pr := range w.prs {
-			if err := s.status(ctx, w, n, pr.HeadSHA, forge.Status{State: forge.Paused, Reason: "invalid-config", Summary: w.configError.Error()}); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
 	if reason != "" {
-		status := forge.Status{State: forge.Paused, Reason: reason, Summary: state.PauseDetail(w.plannerConfig(s.options.PollInterval)) + "; a writer can @openmerge refresh after fixing the cause"}
+		var reasons, details []string
+		for _, block := range state.Blocks(w.plannerConfig(s.options.PollInterval)) {
+			reasons = append(reasons, block.Reason)
+			details = append(details, block.Reason+": "+block.Detail)
+		}
+		status := forge.Status{State: forge.Paused, Reason: strings.Join(reasons, ", "), Summary: strings.Join(details, "; ") + "; rules blocks clear after a passing check; a writer can @openmerge refresh after fixing other causes"}
 		for n, pr := range w.prs {
 			if pr.Closed {
 				continue

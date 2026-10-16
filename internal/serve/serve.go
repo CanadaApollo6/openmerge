@@ -47,21 +47,21 @@ type Server struct {
 
 type worker struct {
 	Target
-	id            store.QueueID
-	wake          chan struct{}
-	cfg           config.Queue
-	configTip     string
-	configError   error
-	blockedSHA    string
-	blockedDetail string
-	prs           map[int]forge.PullRequest
-	summaries     map[int]forge.PullRequestSummary
-	deferred      []string
-	logState      queue.State
-	logWatermark  int64
-	logChecks     string
-	rulesChecked  time.Time
-	rulesProblem  string
+	id             store.QueueID
+	wake           chan struct{}
+	cfg            config.Queue
+	configTip      string
+	configError    error
+	blockedSHA     string
+	blockedDetail  string
+	prs            map[int]forge.PullRequest
+	summaries      map[int]forge.PullRequestSummary
+	deferred       []string
+	logState       queue.State
+	logWatermark   int64
+	logChecks      string
+	rulesNextCheck time.Time
+	rulesFailures  int
 }
 
 // New bootstraps fences without replacing a previously recorded landing token.
@@ -203,6 +203,9 @@ func (s *Server) loop(ctx context.Context, w *worker) {
 				}
 			}
 		}
+		if !w.rulesNextCheck.IsZero() {
+			delay = min(delay, max(time.Millisecond, time.Until(w.rulesNextCheck)))
+		}
 	}
 }
 
@@ -227,9 +230,6 @@ func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
 		return err
 	}
 	if err := s.reconcile(ctx, w, force); err != nil {
-		return err
-	}
-	if err := s.enforceRules(ctx, w); err != nil {
 		return err
 	}
 	s.logCommitted(ctx, w)

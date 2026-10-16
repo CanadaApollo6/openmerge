@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"slices"
@@ -24,9 +26,16 @@ type Source interface {
 	Journals(context.Context, []store.QueueKey) ([]store.Journal, error)
 }
 
-// ListenAddress makes a port-only address loopback-only. Public binding requires
-// an explicit host such as 0.0.0.0 or ::; an empty address disables the API.
-func ListenAddress(address string) (string, error) {
+// ListenAddress makes a port-only address loopback-only. Without a token every
+// resolved address must be loopback; the returned address pins that resolution.
+// An empty address disables the API.
+func ListenAddress(address, token string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return listenAddress(ctx, address, token, net.DefaultResolver.LookupIPAddr)
+}
+
+func listenAddress(ctx context.Context, address, token string, lookup func(context.Context, string) ([]net.IPAddr, error)) (string, error) {
 	if address == "" {
 		return "", nil
 	}
@@ -40,6 +49,24 @@ func ListenAddress(address string) (string, error) {
 	}
 	if host == "" {
 		host = "127.0.0.1"
+	}
+	if token == "" {
+		if ip, err := netip.ParseAddr(host); err == nil {
+			if !ip.IsLoopback() {
+				return "", errors.New("non-loopback API listen requires a bearer token")
+			}
+		} else {
+			ips, err := lookup(ctx, host)
+			if err != nil || len(ips) == 0 {
+				return "", errors.New("API listen hostname must resolve only to loopback without a bearer token")
+			}
+			for _, ip := range ips {
+				if !ip.IP.IsLoopback() {
+					return "", errors.New("non-loopback API listen requires a bearer token")
+				}
+			}
+			host = ips[0].String()
+		}
 	}
 	return net.JoinHostPort(host, port), nil
 }
@@ -85,6 +112,17 @@ func Handler(source Source, keys []store.QueueKey, token string) http.Handler {
 				fail(w, http.StatusUnauthorized, "unauthorized", "valid bearer token required")
 				return
 			}
+		}
+		const maxRequestBody = 4 << 10
+		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				fail(w, http.StatusRequestEntityTooLarge, "request-too-large", "request body exceeds 4096 bytes")
+			} else {
+				fail(w, http.StatusBadRequest, "invalid-request", "request body could not be read")
+			}
+			return
 		}
 		if r.Method != http.MethodGet {
 			w.Header().Set("Allow", http.MethodGet)

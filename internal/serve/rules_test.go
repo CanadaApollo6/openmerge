@@ -47,7 +47,7 @@ func TestRulesStartupPauseSlowRecheckAndAutomaticRecovery(t *testing.T) {
 		t.Fatal("unchanged pause appended duplicate events")
 	}
 	bad = false
-	w.rulesChecked = time.Now().Add(-s.options.RulesInterval)
+	w.rulesNextCheck = time.Time{}
 	must(t, s.cycle(t.Context(), w))
 	state, _, err = s.store.Load(t.Context(), w.id)
 	must(t, err)
@@ -56,24 +56,111 @@ func TestRulesStartupPauseSlowRecheckAndAutomaticRecovery(t *testing.T) {
 	}
 }
 
-func TestRulesReadFailurePausesAndHiddenBypassOnlyWarns(t *testing.T) {
+func TestRulesReadFailurePreservesStateAndRetriesSooner(t *testing.T) {
 	s, w, _, _ := fixture(t, repositoryConfig)
 	var logs strings.Builder
 	s.options.Logger = slog.New(slog.NewTextHandler(&logs, nil))
-	w.CheckRules = func(context.Context) ([]string, []string, error) { return nil, nil, errors.New("HTTP 403") }
+	calls := 0
+	w.CheckRules = func(context.Context) ([]string, []string, error) {
+		calls++
+		// A partial result must never be enforced when any part of the read fails.
+		return []string{"partial problem"}, nil, errors.New("HTTP 403")
+	}
+	for _, blocked := range []bool{false, true} {
+		if blocked {
+			_, err := s.store.Append(t.Context(), w.id, []queue.Event{queue.RulesBlocked{Problems: []string{"known problem"}}}, "")
+			must(t, err)
+		}
+		_, watermark, err := s.store.Load(t.Context(), w.id)
+		must(t, err)
+		w.rulesNextCheck, w.rulesFailures = time.Time{}, 0
+		for _, delay := range []time.Duration{time.Minute, 2 * time.Minute, 4 * time.Minute, 5 * time.Minute, 5 * time.Minute} {
+			w.rulesNextCheck = time.Time{}
+			before := time.Now()
+			must(t, s.repositoryRules(t.Context(), w))
+			if w.rulesNextCheck.Before(before.Add(delay)) || w.rulesNextCheck.After(time.Now().Add(delay)) {
+				t.Fatalf("retry deadline %s did not use %s", w.rulesNextCheck, delay)
+			}
+			previous := calls
+			must(t, s.repositoryRules(t.Context(), w))
+			if calls != previous {
+				t.Fatal("rules read ignored retry backoff")
+			}
+		}
+		state, unchanged, err := s.store.Load(t.Context(), w.id)
+		must(t, err)
+		if unchanged != watermark || (len(state.RulesProblems()) > 0) != blocked {
+			t.Fatal("failed read changed the previous rules state")
+		}
+	}
+	w.CheckRules = func(context.Context) ([]string, []string, error) { return nil, []string{"bypass actors hidden"}, nil }
+	w.rulesNextCheck = time.Time{}
 	must(t, s.repositoryRules(t.Context(), w))
 	state, _, err := s.store.Load(t.Context(), w.id)
 	must(t, err)
-	if state.PauseReason(queue.Config{}) != "repository-rules" || !strings.Contains(state.PauseDetail(queue.Config{}), "HTTP 403") {
-		t.Fatal("read failure did not fail closed visibly")
-	}
-	w.CheckRules = func(context.Context) ([]string, []string, error) { return nil, []string{"bypass actors hidden"}, nil }
-	w.rulesChecked = time.Time{}
-	must(t, s.repositoryRules(t.Context(), w))
-	state, _, err = s.store.Load(t.Context(), w.id)
-	must(t, err)
-	if state.PauseReason(queue.Config{}) != "" || !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "bypass actors hidden") {
+	if state.PauseReason(queue.Config{}) != "" || w.rulesFailures != 0 || !strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "keeping previous state") || !strings.Contains(logs.String(), "bypass actors hidden") {
 		t.Fatalf("hidden bypass behavior: state=%+v logs=%s", state, &logs)
+	}
+}
+
+func TestRulesRecoveryNeverResumesPoisonOrLandingPause(t *testing.T) {
+	s, w, f, _ := fixture(t, repositoryConfig)
+	w.CheckRules = func(context.Context) ([]string, []string, error) {
+		return []string{"fence is not protected"}, nil, nil
+	}
+	must(t, s.repositoryRules(t.Context(), w))
+	_, err := s.store.Append(t.Context(), w.id, []queue.Event{
+		queue.ActionPoisoned{Key: "bad-action", Reason: "invalid payload"},
+		queue.PauseRequested{Reason: "landing-not-on-base", Detail: "restore tested commit"},
+	}, "")
+	must(t, err)
+	must(t, s.cycle(t.Context(), w))
+	statuses := f.Statuses(repo, 1)
+	if len(statuses) == 0 {
+		t.Fatal("no paused PR status was reported")
+	}
+	for _, status := range statuses {
+		for _, reason := range []string{"repository-rules", "action-poisoned", "landing-not-on-base"} {
+			if !strings.Contains(status.Reason, reason) || !strings.Contains(status.Summary, reason) {
+				t.Fatalf("status hid %s: %+v", reason, status)
+			}
+		}
+	}
+	w.CheckRules = func(context.Context) ([]string, []string, error) { return nil, nil, nil }
+	w.rulesNextCheck = time.Time{}
+	must(t, s.repositoryRules(t.Context(), w))
+	state, _, err := s.store.Load(t.Context(), w.id)
+	must(t, err)
+	blocks := state.Blocks(queue.Config{})
+	if len(state.RulesProblems()) != 0 || len(blocks) != 2 || blocks[0].Reason != "landing-not-on-base" || blocks[1].Reason != "action-poisoned" {
+		t.Fatalf("rules recovery cleared another cause: %+v", blocks)
+	}
+	// Replaying after restart retains both independent non-rules causes.
+	restarted, err := New(t.Context(), s.store, []Target{w.Target}, s.options)
+	must(t, err)
+	state, _, err = restarted.store.Load(t.Context(), w.id)
+	must(t, err)
+	if len(state.Blocks(queue.Config{})) != 2 {
+		t.Fatal("restart lost unrelated pause or poison")
+	}
+}
+
+func TestRulesStartupReadFailureDoesNotStopHealthyWork(t *testing.T) {
+	s, w, f, _ := fixture(t, repositoryConfig)
+	calls := 0
+	w.CheckRules = func(context.Context) ([]string, []string, error) {
+		calls++
+		return nil, nil, errors.New("HTTP 503")
+	}
+	restarted, err := New(t.Context(), s.store, []Target{w.Target}, s.options)
+	must(t, err)
+	w = restarted.queues[0]
+	f.AddComment(repo, 1, "writer", "@openmerge queue")
+	must(t, restarted.cycle(t.Context(), w))
+	state, _, err := s.store.Load(t.Context(), w.id)
+	must(t, err)
+	if calls != 1 || state.PauseReason(queue.Config{}) != "" || state.Active == nil {
+		t.Fatalf("failed read stopped healthy queue or ignored backoff: calls=%d state=%+v", calls, state)
 	}
 }
 
@@ -103,7 +190,7 @@ func TestRulesDoNotClearUnrelatedPauseAndResolveLandingStillExecutes(t *testing.
 	w.CheckRules = func(context.Context) ([]string, []string, error) {
 		return []string{"rules changed during landing"}, nil, nil
 	}
-	w.rulesChecked = time.Time{}
+	w.rulesNextCheck = time.Time{}
 	must(t, s.repositoryRules(t.Context(), w))
 	// The durable start is already present. Its resolution must run even though
 	// repository rules now pause all new work.

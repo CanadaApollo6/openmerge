@@ -14,6 +14,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
 	"github.com/CanadaApollo6/openmerge/internal/status"
 )
 
@@ -83,15 +84,7 @@ func runQueue(args []string, stdout, stderr io.Writer) int {
 	}
 	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
-		_, _ = fmt.Fprintln(stderr, "status API returned", response.Status)
-		switch response.StatusCode {
-		case http.StatusNotFound:
-			return 3
-		case http.StatusUnauthorized, http.StatusForbidden:
-			return 4
-		default:
-			return 1
-		}
+		return queueAPIError(response, token, stderr)
 	}
 	const maxResponse = 32 << 20
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxResponse+1))
@@ -112,6 +105,37 @@ func runQueue(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func queueAPIError(response *http.Response, token string, stderr io.Writer) int {
+	const maxErrorBody = 8 << 10
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxErrorBody+1))
+	var failure struct {
+		Version int    `json:"version"`
+		Error   string `json:"error"`
+		Message string `json:"message"`
+	}
+	valid := err == nil && len(body) <= maxErrorBody && json.Unmarshal(body, &failure) == nil && failure.Version == status.Version && failure.Error != "" && failure.Message != ""
+	if valid {
+		_, _ = fmt.Fprintf(stderr, "status API: %s: %s (HTTP %d)\n", diagnostic.Sanitize(failure.Error, token), diagnostic.Sanitize(failure.Message, token), response.StatusCode)
+	} else {
+		_, _ = fmt.Fprintln(stderr, "status API returned HTTP", response.StatusCode)
+	}
+	switch response.StatusCode {
+	case http.StatusNotFound:
+		return 3
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return 4
+	case http.StatusConflict:
+		if valid && failure.Error == "ambiguous-queue" {
+			return 5
+		}
+	case http.StatusBadRequest, http.StatusRequestEntityTooLarge:
+		if valid && (failure.Error == "invalid-request" || failure.Error == "request-too-large") {
+			return 2
+		}
+	}
+	return 1
+}
+
 func envDefault(key, fallback string) string {
 	if value, ok := os.LookupEnv(key); ok {
 		return value
@@ -129,6 +153,14 @@ func printStatus(out io.Writer, response status.Response) error {
 		queues = []status.Queue{*response.Queue}
 	}
 	for _, q := range queues {
+		var reasons []string
+		for _, block := range q.Blocks {
+			reasons = append(reasons, block.Reason)
+		}
+		pauseReason := q.PauseReason
+		if len(reasons) > 0 {
+			pauseReason = strings.Join(reasons, ", ")
+		}
 		entries := q.Entries
 		if response.PR != nil {
 			entries = []status.Entry{*response.PR}
@@ -138,11 +170,14 @@ func printStatus(out io.Writer, response status.Response) error {
 			if q.Paused {
 				state = "paused"
 			}
-			if _, err := fmt.Fprintf(table, "%s\t%s\t-\t-\t-\t%s\t%s\n", q.Repository, q.Base, state, q.PauseReason); err != nil {
+			if _, err := fmt.Fprintf(table, "%s\t%s\t-\t-\t-\t%s\t%s\n", q.Repository, q.Base, state, pauseReason); err != nil {
 				return err
 			}
 		}
 		for _, entry := range entries {
+			if entry.Status == "paused" {
+				entry.Reason = pauseReason
+			}
 			head := entry.HeadSHA[:min(12, len(entry.HeadSHA))]
 			if _, err := fmt.Fprintf(table, "%s\t%s\t%d\t#%d\t%s\t%s\t%s\n", q.Repository, q.Base, entry.Position, entry.PR, head, entry.Status, entry.Reason); err != nil {
 				return err
@@ -157,13 +192,7 @@ func printStatus(out io.Writer, response status.Response) error {
 			return err
 		}
 		for _, event := range response.Why.Events {
-			var envelope struct {
-				Type string `json:"type"`
-			}
-			if err := json.Unmarshal(event.Event, &envelope); err != nil {
-				return err
-			}
-			if _, err := fmt.Fprintf(out, "  %d  %s  %s\n", event.ID, event.RecordedAt.Format(time.RFC3339), envelope.Type); err != nil {
+			if _, err := fmt.Fprintf(out, "  %d  %s  %s  %s\n", event.ID, event.At.Format(time.RFC3339), event.Type, event.Summary); err != nil {
 				return err
 			}
 		}

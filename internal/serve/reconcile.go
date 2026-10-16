@@ -245,7 +245,7 @@ func (s *Server) commands(ctx context.Context, w *worker, number int) error {
 						if _, err := s.observe(ctx, w, number); err != nil {
 							return err
 						}
-						if w.configError == nil && w.rulesProblem == "" {
+						if w.configError == nil {
 							events = append(events, queue.ResumeRequested{}, queue.RefreshRequested{})
 						}
 					}

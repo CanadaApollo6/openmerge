@@ -3,11 +3,13 @@
 Enable the API on `openmerge serve` with `--api-listen :8081` or
 `OPENMERGE_API_LISTEN=:8081`. It is **off by default**. A port-only address binds
 `127.0.0.1`; explicit `127.0.0.1:8081` and `[::1]:8081` also work. Binding
-`0.0.0.0:8081` or `[::]:8081` deliberately exposes other interfaces. Use HTTPS
+`0.0.0.0:8081` or `[::]:8081` exposes other interfaces and requires a bearer token.
+Without a token, every resolved address of a hostname must be loopback; startup
+rejects unresolved or mixed/public results and pins the loopback address. Use HTTPS
 ingress when crossing a trusted local boundary; the binary serves HTTP.
 The API and webhook listeners are separate and shut down with the worker.
 
-Authentication is optional. Set `OPENMERGE_API_TOKEN` **or**
+Authentication is optional only for loopback binds. Set `OPENMERGE_API_TOKEN` **or**
 `--api-token-file /path/to/token` (`OPENMERGE_API_TOKEN_FILE`) before startup.
 The file must be readable and nonempty; surrounding whitespace is trimmed.
 Tokens use visible ASCII without spaces. Conflicting token sources fail startup.
@@ -19,7 +21,9 @@ Never use an App private key, GitHub token, or webhook secret as the API token.
 
 All responses are JSON with `version: 1`, `Content-Type: application/json`, and
 `Cache-Control: no-store`. Only **GET** is accepted; there are no write endpoints.
-HEAD and other methods return 405 with `Allow: GET`.
+HEAD and other methods return 405 with `Allow: GET`. Request bodies are limited
+to 4096 bytes, including chunked bodies; oversized bodies return 413. Bodies
+within the limit are ignored.
 
 | Path | Response |
 | --- | --- |
@@ -50,6 +54,7 @@ Example queue response:
     "paused": false,
     "pause_reason": "",
     "pause_detail": "",
+    "blocks": [],
     "active_batch": {
       "id": "b1",
       "phase": "testing",
@@ -74,6 +79,12 @@ Example queue response:
 
 Queue entries are ordered by admission and positions are 1-based, including the
 active batch. `active_batch` is `null` when idle and `entries` is always an array.
+`blocks` is always an array of `{ "reason": "...", "detail": "..." }` objects
+covering every active cause: generic pause, action poison, repository rules, and
+the build retry limit. `paused` is true when any block exists; `pause_reason` and
+`pause_detail` describe the first block. Clearing repository rules never clears
+the other causes. Diagnostic strings are credential-redacted, stripped of
+control/format characters and bounded to 1024 characters plus an ellipsis.
 The batch method is empty until construction completes. Empty strings mean no
 reason/SHA/method is recorded, not an omitted field. `admitted_at` is the queue
 request's recorded admission time, not the time of the HTTP read.
@@ -97,15 +108,18 @@ An unknown PR returns 404 without contacting GitHub.
 WHY has `summary` (human-readable, not a parsing contract), `limit`, and `events`.
 Events are the last N relevant committed events, in increasing journal ID order:
 direct PR observations/commands/outcomes, its batch and tested-SHA events, and
-base/pause/resume/refresh/poison events while admitted. Unrelated PR/batch/CI
+base/pause/resume/refresh/poison/rules events while admitted. Unrelated PR/batch/CI
 events and action-delivery acknowledgements are excluded. Each item has `id`,
-`recorded_at` (UTC RFC3339), and `event`, the original versioned queue wire
-envelope (`version`, `type`, `data`). Results can contain fewer than N events.
+`type` (event discriminator), `at` (journal recording time, UTC RFC3339), and
+`summary` (a short sanitized explanation). These fields are part of API v1;
+summary wording is for humans, not a parsing contract. Raw persisted wire
+envelopes are not exposed and are outside API v1 stability. Results can contain
+fewer than N events.
 IDs order evidence; wall-clock timestamps do not authorize landing.
 CI observed before `TestRefBuilt` is correlated with the batch that later
 consumed it, so retained/reordered CI evidence remains explainable.
-An admitted PR also includes the currently effective external pause event when
-that pause predates its admission.
+An admitted PR also includes current pause, poison and rules-block evidence when
+those causes predate admission.
 
 The API replays the same journal as the planner in a read-only repeatable-read
 transaction. Current state, `watermark` (last queue event ID, zero if empty), and
@@ -125,6 +139,7 @@ Errors use `{"version":1,"error":"CODE","message":"DETAIL"}`:
 | 404 | `not-found` | Unknown endpoint, unserved queue, or unknown PR |
 | 405 | `method-not-allowed` | Unsupported method |
 | 409 | `ambiguous-queue` | Multiple partitions match |
+| 413 | `request-too-large` | Request body exceeds 4096 bytes |
 | 503 | `unavailable` | Database read/decode/deadline failure |
 
 Clients should ignore added fields within v1. Breaking response changes require
@@ -149,16 +164,20 @@ Timeout is 20 seconds; responses over 32 MiB are rejected.
 Omit `--repo` to list all queues. `--repo owner/name` selects a queue;
 `--base` then defaults to `main`. Explicit `--base` and `--pr` require `--repo`.
 Human output is a compact table; PR detail adds its explanation and event IDs,
-timestamps and types. `--json` writes the successful API JSON **byte for byte**,
+timestamps, types and summaries. `--json` writes the successful API JSON **byte for byte**,
 including its trailing newline; errors go to stderr and produce no stdout JSON.
+On non-200 responses, the CLI reads at most 8 KiB of error JSON and prints its
+sanitized `error` code and `message`; malformed/oversized errors use a generic
+HTTP diagnostic. Error output never includes the raw response body.
 
 | Exit | Meaning |
 | --- | --- |
 | 0 | Successful read or help; a paused/dequeued/blocked PR is still a successful read |
 | 1 | Transport, server, protocol/version/size or output failure |
-| 2 | Invalid flags, arguments, URL or local token configuration |
+| 2 | Invalid flags, arguments, URL or local token configuration; API `invalid-request` (400) or `request-too-large` (413) |
 | 3 | Queue/PR/endpoint not found (HTTP 404) |
 | 4 | Authentication/authorization failure (HTTP 401/403) |
+| 5 | Ambiguous queue (HTTP 409, `ambiguous-queue`); select a uniquely served partition |
 
 These exit codes describe the read operation. Automation must inspect JSON
 `status`, `paused`, and reasons to decide what to do next.

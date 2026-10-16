@@ -42,5 +42,13 @@ jobs:
         with:
           version: v2.14.0
       - run: make build
+      - run: docker compose -f deploy/compose.yaml config --quiet
+        env:
+          OPENMERGE_POSTGRES_PASSWORD: ci-placeholder-password
+          OPENMERGE_GITHUB_APP_ID: "123"
+          OPENMERGE_GITHUB_INSTALLATION_ID: "456"
+          OPENMERGE_REPOS: owner/repository
+          OPENMERGE_GITHUB_PRIVATE_KEY_PATH: /tmp/openmerge-ci-placeholder.pem
+          OPENMERGE_API_TOKEN: ci-placeholder-token
       - run: docker build --tag openmerge:ci .
       - run: docker run --rm --entrypoint sh openmerge:ci -c 'test "$(id -u)" != 0 && git --version && openmerge version'

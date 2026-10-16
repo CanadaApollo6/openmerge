@@ -3,11 +3,12 @@
 package status
 
 import (
-	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
@@ -35,8 +36,15 @@ type Queue struct {
 	Paused       bool    `json:"paused"`
 	PauseReason  string  `json:"pause_reason"`
 	PauseDetail  string  `json:"pause_detail"`
+	Blocks       []Block `json:"blocks"`
 	ActiveBatch  *Batch  `json:"active_batch"`
 	Entries      []Entry `json:"entries"`
+}
+
+// Block describes one active cause preventing new work; multiple may coexist.
+type Block struct {
+	Reason string `json:"reason"`
+	Detail string `json:"detail"`
 }
 
 // Batch pins the tested inputs and the operation currently awaiting an outcome.
@@ -75,11 +83,12 @@ type Why struct {
 	Events  []Event `json:"events"`
 }
 
-// Event retains a journal ID and timestamp, plus the versioned queue envelope.
+// Event exposes stable evidence metadata without the private persistence payload.
 type Event struct {
-	ID         int64           `json:"id"`
-	RecordedAt time.Time       `json:"recorded_at"`
-	Event      json.RawMessage `json:"event"`
+	ID      int64     `json:"id"`
+	Type    string    `json:"type"`
+	At      time.Time `json:"at"`
+	Summary string    `json:"summary"`
 }
 
 // Project replays committed history. A positive PR selects its explanation;
@@ -144,8 +153,9 @@ func Project(j store.Journal, pr, limit int) (Queue, *Entry, *Why) {
 			e.PR, e.HeadSHA, e.AdmittedAt = admitted.PR, admitted.HeadSHA, &admitted.EnqueuedAt
 			known[e.PR] = e
 		}
-		if pr > 0 && (record.ID == inheritedPause || affects(record.Event, pr, before, s, tested)) {
-			events = append(events, Event{record.ID, record.RecordedAt.UTC(), record.Payload})
+		if pr > 0 && (inheritedPause[record.ID] || affects(record.Event, pr, before, s, tested)) {
+			kind, _, _ := queue.EncodeEvent(record.Event)
+			events = append(events, Event{record.ID, kind, record.RecordedAt.UTC(), diagnostic.Sanitize(eventSummary(record.Event))})
 			if len(events) > limit {
 				events = slices.Delete(events, 0, 1)
 			}
@@ -157,8 +167,11 @@ func Project(j store.Journal, pr, limit int) (Queue, *Entry, *Why) {
 		known[n] = e
 	}
 	q := Queue{Installation: j.Key.Installation, Repository: j.Key.Repository, Base: j.Key.BaseBranch, Lane: j.Key.Lane,
-		Watermark: watermark, BaseSHA: s.BaseSHA, PauseReason: s.PauseReason(queue.Config{}), PauseDetail: s.PauseDetail(queue.Config{}), Entries: make([]Entry, 0, len(s.Entries))}
-	q.Paused = q.PauseReason != ""
+		Watermark: watermark, BaseSHA: s.BaseSHA, PauseReason: diagnostic.Sanitize(s.PauseReason(queue.Config{})), PauseDetail: diagnostic.Sanitize(s.PauseDetail(queue.Config{})), Blocks: make([]Block, 0), Entries: make([]Entry, 0, len(s.Entries))}
+	for _, block := range s.Blocks(queue.Config{}) {
+		q.Blocks = append(q.Blocks, Block{diagnostic.Sanitize(block.Reason), diagnostic.Sanitize(block.Detail)})
+	}
+	q.Paused = len(q.Blocks) > 0
 	if b := s.Active; b != nil {
 		q.ActiveBatch = &Batch{ID: b.ID, Phase: string(b.Phase), BaseSHA: b.BaseSHA, TestedSHA: b.TestedSHA, TestRef: b.TestRef, Method: string(b.Method), PRs: make([]BatchPR, 0, len(b.PRs))}
 		for _, pin := range b.PRs {
@@ -190,7 +203,9 @@ func Project(j store.Journal, pr, limit int) (Queue, *Entry, *Why) {
 		summary += " (" + e.Reason + ")"
 	}
 	if q.Paused && e.Position > 0 {
-		summary += ": " + q.PauseDetail
+		for _, block := range q.Blocks {
+			summary += "; " + block.Reason + ": " + block.Detail
+		}
 		if inBatch(s, pr) && s.Active.Phase == queue.Landing {
 			summary += "; landing outcome is still being resolved through its fence"
 		}
@@ -246,29 +261,95 @@ func inBatch(s queue.State, pr int) bool {
 
 // Correlate CI that arrived before TestRefBuilt with the batch that ultimately
 // consumed it. Looking only at the state at arrival would lose retained evidence.
-func explanationContext(j store.Journal, pr int) (map[string]bool, int64) {
+func explanationContext(j store.Journal, pr int) (map[string]bool, map[int64]bool) {
 	result := make(map[string]bool)
+	causes := make(map[string]int64)
+	inherited := make(map[int64]bool)
 	if pr == 0 {
-		return result, 0
+		return result, inherited
 	}
 	s := j.Seed
-	var pauseID int64
 	for _, record := range j.Events {
 		s = queue.Apply(s, record.Event)
 		switch record.Event.(type) {
 		case queue.PauseRequested:
-			pauseID = record.ID
+			causes["pause"] = record.ID
 		case queue.ResumeRequested:
-			pauseID = 0
+			delete(causes, "pause")
+			delete(causes, "poison")
+		case queue.ActionPoisoned:
+			if causes["poison"] == 0 {
+				causes["poison"] = record.ID
+			}
+		case queue.RulesBlocked:
+			causes["rules"] = record.ID
+		case queue.RulesCleared:
+			delete(causes, "rules")
 		}
 		if inBatch(s, pr) && s.Active.TestedSHA != "" {
 			result[s.Active.TestedSHA] = true
 		}
 	}
-	if !entryIn(s, pr) {
-		pauseID = 0
+	if entryIn(s, pr) {
+		for _, id := range causes {
+			inherited[id] = true
+		}
 	}
-	return result, pauseID
+	return result, inherited
+}
+
+func eventSummary(event queue.Event) string {
+	switch e := event.(type) {
+	case queue.PRObserved:
+		return fmt.Sprintf("Observed PR #%d; eligible=%t, trusted=%t", e.PR, e.Eligible, e.Trusted)
+	case queue.BaseMoved:
+		return "Observed base branch movement"
+	case queue.EnqueueRequested:
+		return fmt.Sprintf("Requested admission for PR #%d", e.PR)
+	case queue.DequeueRequested:
+		return fmt.Sprintf("Requested dequeue for PR #%d", e.PR)
+	case queue.PRClosed:
+		return fmt.Sprintf("Observed PR #%d closed", e.PR)
+	case queue.PauseRequested:
+		return "Queue pause requested (" + e.Reason + "): " + e.Detail
+	case queue.ResumeRequested:
+		return "Requested clearing generic pauses, build failures and action poison"
+	case queue.RulesBlocked:
+		return "Repository rules block: " + strings.Join(e.Problems, "; ")
+	case queue.RulesCleared:
+		return "Repository rules passed; rules block cleared"
+	case queue.ActionPoisoned:
+		return "Action quarantined after repeated invalid execution: " + e.Reason
+	case queue.RefreshRequested:
+		return "Requested fresh CI observations"
+	case queue.BatchStarted:
+		return "Started constructing a test batch"
+	case queue.BatchFailed:
+		return "Batch failed: " + string(e.Reason)
+	case queue.TestRefBuilt:
+		return "Recorded the batch test commit"
+	case queue.TestRefBuildFailed:
+		if e.Conflict {
+			return "Test ref build failed with a merge conflict"
+		}
+		return "Test ref build failed; retry policy applies"
+	case queue.ChecksCompleted:
+		return fmt.Sprintf("Recorded terminal CI result; success=%t", e.Success)
+	case queue.ChecksReopened:
+		return "CI reopened; previous success revoked"
+	case queue.ChecksRefreshed:
+		return "Refreshed the batch CI observations"
+	case queue.LandingStarted:
+		return "Recorded a landing attempt; outcome awaits fence resolution"
+	case queue.Landed:
+		return "Confirmed batch landing"
+	case queue.LandingAbandoned:
+		return "Confirmed landing abandonment through the fence"
+	case queue.Dequeued:
+		return fmt.Sprintf("Recorded PR #%d dequeue: %s", e.PR, e.Reason)
+	default:
+		return "Recorded queue event"
+	}
 }
 
 func affects(event queue.Event, pr int, before, after queue.State, tested map[string]bool) bool {

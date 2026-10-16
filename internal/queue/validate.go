@@ -171,3 +171,16 @@ func (a FailBatch) Validate() error {
 func (e PauseRequested) Validate() error {
 	return requireActionText("reason", e.Reason, "detail", e.Detail)
 }
+
+// Validate prevents an empty rules block from masquerading as a clear event.
+func (e RulesBlocked) Validate() error {
+	if len(e.Problems) == 0 {
+		return fmt.Errorf("problems must not be empty")
+	}
+	for _, problem := range e.Problems {
+		if err := requireActionText("problem", problem); err != nil {
+			return err
+		}
+	}
+	return nil
+}

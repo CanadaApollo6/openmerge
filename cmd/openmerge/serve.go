@@ -91,15 +91,15 @@ func parseServe(args []string, output io.Writer) (serveOptions, error) {
 		return o, errors.New("webhook listen requires a webhook secret")
 	}
 	var err error
-	o.apiListen, err = status.ListenAddress(o.apiListen)
-	if err != nil {
-		return o, err
-	}
 	if o.apiListen != "" {
 		o.apiToken, err = status.ReadToken(env("API_TOKEN", ""), o.apiTokenFile)
 		if err != nil {
 			return o, err
 		}
+	}
+	o.apiListen, err = status.ListenAddress(o.apiListen, o.apiToken)
+	if err != nil {
+		return o, err
 	}
 	for _, repo := range strings.Split(o.repos, ",") {
 		parts := strings.Split(repo, "/")

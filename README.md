@@ -6,7 +6,7 @@
 
 Agents now open pull requests faster than CI and humans can land them. The merge path — queuing, batching, speculative testing, flaky-test handling, and the rules around them — has become the bottleneck, and the best tools for it are closed, paywalled, or tied to a single forge. OpenMerge brings the ideas that Mergify popularized to everyone, under the Apache 2.0 license.
 
-> **Status: pre-alpha.** Phase 1 is in progress: the planner, Postgres store, GitHub App driver, and polling server are in place. Operator-managed App permissions and branch protection are still required. See the [roadmap](ROADMAP.md).
+> **Status: pre-alpha.** Phase 1 is in progress: the planner, Postgres store, GitHub App driver, and polling server are in place. Read-only API/CLI, runtime ruleset validation and a Compose quickstart are available. Classic branch protection checks, installed App permission validation, and label/file conditions remain Phase 1 follow-ups. See the [roadmap](ROADMAP.md).
 
 ## What it will do
 
@@ -129,7 +129,8 @@ it. Do not substitute a broader bypass that breaks App-only fence ownership.
 
 Review classic branch protection separately in **Settings → Branches**, including
 wildcard rules for queue/fence refs: this command validates rulesets only.
-`serve` does not yet enforce these rules at startup; run `setup rulesets` first.
+`serve` validates visible rulesets at startup and periodically; run
+`setup rulesets` first to audit the full bypass lists with an admin token.
 
 ## GitHub integration details
 
@@ -188,13 +189,16 @@ committer attribution, logs, upgrades, and GitHub's Closed badge after squash/re
 Enable read-only queue inspection with `--api-listen :8081` (binds localhost;
 default off), then run `bin/openmerge queue status --json` or
 `bin/openmerge queue status --repo CanadaApollo6/openmerge --pr 42`.
-Optional bearer authentication uses `OPENMERGE_API_TOKEN` or
-`OPENMERGE_API_TOKEN_FILE`. See [API v1 and CLI](docs/api.md) for the JSON
-contract, PR event explanations, token handling and stable exit codes.
+Bearer authentication uses `OPENMERGE_API_TOKEN` or
+`OPENMERGE_API_TOKEN_FILE` and is required for any non-loopback bind. See
+[API v1 and CLI](docs/api.md) for the JSON contract, PR event explanations, token handling and stable exit codes.
 
 Startup and every ten minutes (`--rules-interval`) validate repository and
-inherited rulesets with the App installation. Visible problems pause the queue
-as `repository-rules`; a later passing check clears that pause automatically.
+inherited rulesets with the App installation. Definite problems from a
+successful read block new work as `repository-rules`; a later passing check clears only that rules block.
+Read failures log WARN, retain the previous state, and retry after one minute
+with exponential backoff capped at five minutes (or the configured rules interval
+if shorter). Other pauses and action poison remain independent.
 Hidden bypass lists produce WARN logs and require the separate admin-token setup
 audit. See [runtime rules validation](docs/operating.md#runtime-repository-rules).
 
@@ -237,7 +241,8 @@ Then configure and start the single binary plus its own Postgres:
 ```sh
 cp deploy/.env.example deploy/.env
 chmod 600 deploy/.env
-# Edit deploy/.env: App/installation IDs, repo, absolute key path, random DB password.
+# Edit deploy/.env: App/installation IDs, repo, absolute key path.
+# Generate separate DB password and API token: openssl rand -hex 32 (twice).
 docker compose --env-file deploy/.env -f deploy/compose.yaml config --quiet
 docker compose --env-file deploy/.env -f deploy/compose.yaml up --build -d
 docker compose --env-file deploy/.env -f deploy/compose.yaml logs -f openmerge
@@ -248,7 +253,8 @@ private key is mounted read-only; ensure it is readable by UID 1000 (a 0600 file
 owned by that UID works). Keep the key outside the checkout. The build context
 includes only Go sources/module files. Postgres has no published host port;
 the status API is published on **127.0.0.1:8081**. Polling needs no webhook URL.
-Set an optional API token in the env file and use the same token in your CLI:
+Compose requires an API token because the listener also binds the container
+network. Set a random token in the env file and use the same token in your CLI:
 
 ```sh
 OPENMERGE_API_TOKEN=YOUR_API_TOKEN bin/openmerge queue status --json
@@ -262,9 +268,9 @@ container replacements. Back up the database before upgrades. `docker compose
 retaining volumes; adding `--volumes` deletes them. Do not run this alongside an
 existing server for the same installation. See the [operating guide](docs/operating.md).
 
-CI builds the image and checks its non-root user, git and binary. Compose config
-is validated locally; a full credentialed container deployment has not been
-tested here because the Docker daemon is unavailable to the implementation host.
+CI validates the Compose configuration, builds the image, and checks its
+non-root user, git and binary. It runs the Go suite with Postgres and fake/local
+forge fixtures; credentialed GitHub deployment is outside that CI coverage.
 The App ignores its own commands and replies once to unauthorized commands.
 The existing queue check shows blocked and paused reasons. Missing, ambiguous,
 or invalid base configuration pauses work, and a base move reloads it. CI
@@ -282,9 +288,9 @@ whole condition passes or is definitely false.
 The current driver supplies conditions on `base`, `draft`, `author`,
 `approved-reviews-by`, and checks. Configurations referencing `head`, `title`,
 `label`, `files`, or `conflict` pause with an explicit diagnostic until those
-metadata reads are implemented. Ruleset validation/injection, App setup,
-REST/CLI status, and Docker Compose remain follow-ups. Operators must grant the
-App protected-base bypass and exclusive, nondeletable `openmerge/fence/*`
+metadata reads are implemented. Phase 1 remains in progress. Classic branch
+protection checks, installed App permission validation, and the remaining metadata conditions (including labels
+and files) are follow-ups. Operators must grant the App protected-base bypass and exclusive, nondeletable `openmerge/fence/*`
 ownership as described in the [forge contract](docs/forge-driver-contract.md#the-fence).
 
 ## Contributing

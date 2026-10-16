@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strings"
 	"time"
 )
 
@@ -26,14 +27,15 @@ func DeferredByPause(cfg Config, s State, action Action, now time.Time) bool {
 	if s.PauseReason(cfg) == "" {
 		return false
 	}
-	return slices.ContainsFunc(Plan(cfg, Apply(s, ResumeRequested{}), now), func(planned Action) bool {
+	unblocked := Apply(Apply(s, ResumeRequested{}), RulesCleared{})
+	return slices.ContainsFunc(Plan(cfg, unblocked, now), func(planned Action) bool {
 		return planned.Key() == action.Key()
 	})
 }
 
 func plan(cfg Config, s State, now time.Time) []Action {
 	var actions []Action
-	if s.actionPoison.key != "" || s.pause.Reason != "" {
+	if s.workBlocked() {
 		if len(s.Entries) > 0 {
 			report := s.pauseReport()
 			if _, done := s.acknowledged[report.Key()]; !done {
@@ -55,7 +57,7 @@ func plan(cfg Config, s State, now time.Time) []Action {
 	}
 	batch := s.Active
 	if batch == nil {
-		if s.actionPoison.key != "" || s.pause.Reason != "" {
+		if s.workBlocked() {
 			return actions
 		}
 		if s.PauseReason(cfg) != "" || s.buildRetry.detail != "" {
@@ -83,7 +85,7 @@ func plan(cfg Config, s State, now time.Time) []Action {
 		}
 		return actions
 	}
-	if s.actionPoison.key != "" || s.pause.Reason != "" {
+	if s.workBlocked() {
 		return actions
 	}
 	for _, pr := range batch.PRs {
@@ -163,9 +165,37 @@ type actionPoisonState struct {
 	revision    uint64
 }
 
-// PauseReason reports an external pause, poison pause or build failure limit.
-// ResumeRequested clears either pause. A changed base or successful build clears
-// only the build failure streak. Apply has no config, so Plan evaluates its limit.
+func (s State) workBlocked() bool {
+	return s.pause.Reason != "" || s.actionPoison.key != "" || len(s.rulesBlock.Problems) > 0
+}
+
+// RulesProblems returns the independent repository rules block, if any.
+func (s State) RulesProblems() []string { return slices.Clone(s.rulesBlock.Problems) }
+
+// Block describes one active reason that prevents new work.
+type Block struct{ Reason, Detail string }
+
+// Blocks returns all active reasons, with the primary pause first.
+func (s State) Blocks(cfg Config) []Block {
+	blocks := make([]Block, 0, 4)
+	if s.pause.Reason != "" {
+		blocks = append(blocks, Block{s.pause.Reason, s.pause.Detail})
+	}
+	if s.actionPoison.key != "" {
+		blocks = append(blocks, Block{"action-poisoned", s.poisonDetail()})
+	}
+	if len(s.rulesBlock.Problems) > 0 {
+		blocks = append(blocks, Block{"repository-rules", strings.Join(s.rulesBlock.Problems, "; ")})
+	}
+	if s.buildLimitReached(cfg) {
+		blocks = append(blocks, Block{"build-failed", s.buildFailureDetail()})
+	}
+	return blocks
+}
+
+// PauseReason reports the primary active block. RulesCleared never clears a
+// generic pause, poison or build failure. Apply has no config, so Plan evaluates
+// the build failure limit.
 func (s State) PauseReason(cfg Config) string {
 	if s.pause.Reason != "" {
 		return s.pause.Reason
@@ -173,14 +203,21 @@ func (s State) PauseReason(cfg Config) string {
 	if s.actionPoison.key != "" {
 		return "action-poisoned"
 	}
+	if len(s.rulesBlock.Problems) > 0 {
+		return "repository-rules"
+	}
+	if s.buildLimitReached(cfg) {
+		return "build-failed"
+	}
+	return ""
+}
+
+func (s State) buildLimitReached(cfg Config) bool {
 	limit := cfg.BuildRetries
 	if limit <= 0 {
 		limit = 3
 	}
-	if s.buildRetry.failures >= limit {
-		return "build-failed"
-	}
-	return ""
+	return s.buildRetry.failures >= limit
 }
 
 func (s State) pauseReport() ReportStatus {
@@ -191,17 +228,28 @@ func (s State) pauseReport() ReportStatus {
 		return ReportStatus{
 			PR: s.Entries[0].PR, HeadSHA: s.Entries[0].HeadSHA, Status: "paused", Reason: "action-poisoned",
 			revision: s.actionPoison.revision, admission: s.Entries[0].AdmissionID,
-			Detail: fmt.Sprintf("Queue paused after repeated invalid action %s: %s; resume the queue to retry", s.actionPoison.key, s.actionPoison.reason),
+			Detail: s.poisonDetail(),
 		}
 	}
+	if len(s.rulesBlock.Problems) > 0 {
+		return ReportStatus{PR: s.Entries[0].PR, HeadSHA: s.Entries[0].HeadSHA, Status: "paused", Reason: "repository-rules", Detail: strings.Join(s.rulesBlock.Problems, "; "), revision: s.rulesRevision, admission: s.Entries[0].AdmissionID}
+	}
+	return ReportStatus{
+		PR: s.Entries[0].PR, HeadSHA: s.Entries[0].HeadSHA, Status: "paused", Reason: "build-failed", revision: s.buildRetry.revision, admission: s.Entries[0].AdmissionID,
+		Detail: s.buildFailureDetail(),
+	}
+}
+
+func (s State) poisonDetail() string {
+	return fmt.Sprintf("Queue paused after repeated invalid action %s: %s; resume the queue to retry", s.actionPoison.key, s.actionPoison.reason)
+}
+
+func (s State) buildFailureDetail() string {
 	detail := fmt.Sprintf("Queue paused after %d consecutive build failures; resume the queue or update the base branch", s.buildRetry.failures)
 	if s.buildRetry.detail != "" {
 		detail = fmt.Sprintf("Test ref build failed (%d consecutive failures): %s", s.buildRetry.failures, s.buildRetry.detail)
 	}
-	return ReportStatus{
-		PR: s.Entries[0].PR, HeadSHA: s.Entries[0].HeadSHA, Status: "paused", Reason: "build-failed", revision: s.buildRetry.revision, admission: s.Entries[0].AdmissionID,
-		Detail: detail,
-	}
+	return detail
 }
 
 func (cfg Config) buildRetryDelay(failures int) time.Duration {
@@ -285,14 +333,8 @@ func CanStart(cfg Config, s State, action Action, event Event) bool {
 
 // PauseDetail gives the human-readable explanation used by queue status checks.
 func (s State) PauseDetail(cfg Config) string {
-	if s.PauseReason(cfg) == "" {
-		return ""
+	if blocks := s.Blocks(cfg); len(blocks) > 0 {
+		return blocks[0].Detail
 	}
-	if s.pause.Reason != "" {
-		return s.pause.Detail
-	}
-	if len(s.Entries) > 0 {
-		return s.pauseReport().Detail
-	}
-	return s.PauseReason(cfg)
+	return ""
 }
