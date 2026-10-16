@@ -161,6 +161,13 @@ func TestReportStatusRedactsReasonAndSummary(t *testing.T) {
 	if !strings.Contains(out.GetSummary(), "\n") || !strings.Contains(out.GetSummary(), "openmerge/queue/main/b7") {
 		t.Fatalf("summary lost layout or non-secret detail: %q", out.GetSummary())
 	}
+	// An unregistered multi-line PEM must be removed whole, not line by line.
+	pem := "-----BEGIN PRIVATE KEY-----\nMIIBVQIBADANBgkqhkiG9w0BAQEFAASCAT8wggE7\nAgEAAkEAq7BFUpkGp3+LQmlQ\n-----END PRIVATE KEY-----"
+	must(t, f.driver.ReportStatus(context.Background(), testRepo, 1, sha, forge.Status{State: forge.Blocked, Reason: "x", Summary: "before\n" + pem + "\nafter"}))
+	out = f.runs[sha][0].GetOutput()
+	if strings.Contains(out.GetSummary(), "MIIBVQ") || strings.Contains(out.GetSummary(), "AgEAAkEA") || !strings.Contains(out.GetSummary(), "before\n") || !strings.Contains(out.GetSummary(), "after") {
+		t.Fatalf("multi-line PEM leaked or layout lost: %q", out.GetSummary())
+	}
 }
 
 func TestStatusMappingsAndConcurrentWrites(t *testing.T) {
@@ -219,6 +226,16 @@ func TestSpoofedMarkersAndPagination(t *testing.T) {
 		t.Fatal("spoof suppressed comment or paginated dedupe failed")
 	}
 }
+func TestCommentBodiesAreRedacted(t *testing.T) {
+	f := newAPI(t)
+	body := "landed in abc123\ntoken ghp_commentsecret789\n-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA\n-----END RSA PRIVATE KEY-----\ndone"
+	must(t, f.driver.Comment(context.Background(), testRepo, 1, "redact", body))
+	got := f.comments[1][len(f.comments[1])-1].GetBody()
+	if strings.Contains(got, "ghp_commentsecret789") || strings.Contains(got, "MIIEpAIBAAKCAQEA") || !strings.Contains(got, "landed in abc123\n") || !strings.Contains(got, "<!-- openmerge:key=redact -->") {
+		t.Fatalf("comment leaked a secret or lost content/marker: %q", got)
+	}
+}
+
 func TestDeleteRefAndReadFile(t *testing.T) {
 	f := newAPI(t)
 	ctx := context.Background()

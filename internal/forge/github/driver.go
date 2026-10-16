@@ -382,22 +382,16 @@ func (d *Driver) ReportStatus(ctx context.Context, repo forge.RepoRef, pr int, h
 		return errors.New("unknown OpenMerge status state")
 	}
 	// Reasons and summaries can quote check names, branches and diagnostics from
-	// outside OpenMerge; redact them before they reach a public PR. Lines are
-	// sanitized separately so multi-line summaries keep their layout.
-	sanitize := d.app.sanitizer.Sanitize
+	// outside OpenMerge; redact them before they reach a public PR.
 	title := string(s.State)
 	if s.Reason != "" {
-		title += ": " + sanitize(s.Reason)
+		title += ": " + d.app.sanitizer.Sanitize(s.Reason)
 	}
 	summary := s.Summary
 	if summary == "" {
 		summary = title
 	} else {
-		lines := strings.Split(summary, "\n")
-		for i, line := range lines {
-			lines[i] = sanitize(line)
-		}
-		summary = strings.Join(lines, "\n")
+		summary = d.app.sanitizer.SanitizeText(summary)
 	}
 	output := &gh.CheckRunOutput{Title: &title, Summary: &summary}
 	external := "openmerge/pr/" + strconv.Itoa(pr)
@@ -448,7 +442,8 @@ func (d *Driver) Comment(ctx context.Context, repo forge.RepoRef, pr int, key, b
 		}
 		page = res.NextPage
 	}
-	_, _, err = d.client.Issues.CreateComment(ctx, owner, name, pr, gh.IssueCommentRequest{Body: body + "\n\n" + marker})
+	// Comment bodies are redacted like statuses; the marker is OpenMerge's own.
+	_, _, err = d.client.Issues.CreateComment(ctx, owner, name, pr, gh.IssueCommentRequest{Body: d.app.sanitizer.SanitizeText(body) + "\n\n" + marker})
 	return safeError(err)
 }
 
