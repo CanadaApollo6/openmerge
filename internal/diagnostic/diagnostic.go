@@ -14,7 +14,7 @@ import (
 )
 
 var credentialPattern = regexp.MustCompile(`(?s:-----BEGIN [^-]+-----.*?(?:-----END [^-]+-----|$))|\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b|(?i:\b(?:bearer|basic)\s+\S+)`)
-var jwtPattern = regexp.MustCompile(`[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*`)
+var jwtPattern = regexp.MustCompile(`[A-Za-z0-9_-]+={0,2}(?:\.[A-Za-z0-9_-]*={0,2}){2,}`)
 
 // Sanitize redacts credentials and bounds diagnostic text for logs, APIs and terminals.
 func Sanitize(value string, knownSecrets ...string) string {
@@ -34,16 +34,17 @@ func Sanitize(value string, knownSecrets ...string) string {
 	}
 	value = credentialPattern.ReplaceAllString(value, "[REDACTED]")
 	value = jwtPattern.ReplaceAllStringFunc(value, func(candidate string) string {
-		// A JWT's header and claims are both base64url-encoded JSON objects.
-		// Dots alone also occur in addresses, hostnames, paths and versions,
-		// which do not decode to two objects. Any object qualifies, whatever its
-		// keys, so unusual but valid headers cannot opt out of redaction.
-		header, rest, _ := strings.Cut(candidate, ".")
-		claims, _, _ := strings.Cut(rest, ".")
-		if !jsonObject(header) || !jsonObject(claims) {
-			return candidate
+		// JWS and JWE compact tokens have a base64url JSON object header, and may
+		// sit behind a prefix such as "v1." or carry padding. Fail closed: a run
+		// of three or more dotted segments is redacted whole when any segment
+		// decodes to a non-empty JSON object. Addresses, hostnames, paths and
+		// versions do not.
+		for _, segment := range strings.Split(candidate, ".") {
+			if jsonObject(segment) {
+				return "[REDACTED]"
+			}
 		}
-		return "[REDACTED]"
+		return candidate
 	})
 	runes := []rune(value)
 	if len(runes) > 1024 {
@@ -55,7 +56,7 @@ func Sanitize(value string, knownSecrets ...string) string {
 func jsonObject(segment string) bool {
 	data, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(segment, "="))
 	var object map[string]json.RawMessage
-	return err == nil && json.Unmarshal(data, &object) == nil && object != nil
+	return err == nil && json.Unmarshal(data, &object) == nil && len(object) > 0
 }
 
 func normalize(value string) string {

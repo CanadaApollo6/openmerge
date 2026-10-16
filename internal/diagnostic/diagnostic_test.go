@@ -32,6 +32,10 @@ func TestSanitize(t *testing.T) {
 		// once made a valid token escape redaction.
 		{"JWT with ALG key", "eyJhbGciOiJIUzI1NiIsIkFMRyI6NDJ9.e30.c2ln", "[REDACTED]", nil},
 		{"JWT with Alg key", "eyJhbGciOiJIUzI1NiIsIkFsZyI6IiJ9.e30.c2ln", "[REDACTED]", nil},
+		{"JWE five parts", "eyJhbGciOiJSU0EtT0FFUCIsImVuYyI6IkEyNTZHQ00ifQ.ZW5jcnlwdGVka2V5.aXY.Y2lwaGVy.dGFn", "[REDACTED]", nil},
+		{"prefixed JWT", "?token=v1.eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0.c2ln&x=1", "?token=[REDACTED]&x=1", nil},
+		{"padded JWT", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ5In0=.c2ln", "[REDACTED]", nil},
+		{"JSON-label hostname fails closed", "eyJhbGciOjF9.config.local", "[REDACTED]", nil},
 		{"JWT without alg", "eyJ0eXAiOiJKV1QifQ.e30.c2ln", "[REDACTED]", nil},
 		{"known dotted credential", "abc.def.ghi", "[REDACTED]", []string{"abc.def.ghi"}},
 		{"empty", "unchanged", "unchanged", []string{"", "\n"}},
@@ -72,7 +76,7 @@ func TestSanitizePreservesNonSecretConfig(t *testing.T) {
 		"docs.github.com", "api.internal.example.test:443", "localhost:54329",
 		"abc.def.ghi", "xxx.yyy.zzz", "abc_DEF.ghi-jkl.mno_PQR-stu",
 		"v1.2.3", "/etc/openmerge/config.local.yml", "poll_interval=1m0s",
-		"e30.config.local", "eyJhbGciOjF9.config.local", "eyJ0eXAiOiJKV1QifQ.config.local",
+		"e30.config.local",
 		"postgres://postgres@localhost:54329/postgres?sslmode=disable",
 	} {
 		t.Run(value, func(t *testing.T) {
