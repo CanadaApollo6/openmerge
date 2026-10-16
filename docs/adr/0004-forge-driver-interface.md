@@ -1,6 +1,6 @@
 # 0004. Access forges only through a narrow driver interface, with a fake forge from day one
 
-- **Status:** Accepted
+- **Status:** Accepted; [ADR 0005](0005-verification-modes.md) limits "what lands is byte-for-byte what was tested" to strict queues
 - **Date:** 2026-10-15
 
 ## Context
