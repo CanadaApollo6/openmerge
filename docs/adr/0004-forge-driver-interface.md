@@ -18,22 +18,22 @@ Forges also differ in ways the engine must know about. Some have check runs and 
 
 ```go
 type Driver interface {
- PullRequest(ctx context.Context, repo RepoRef, number int) (PullRequest, error)
- CheckRuns(ctx context.Context, repo RepoRef, sha string) ([]CheckRun, error)
- DeleteRef(ctx context.Context, repo RepoRef, ref string) error
- ReportStatus(ctx context.Context, repo RepoRef, pr int, headSHA string, s Status) error
- MarkLanded(ctx context.Context, repo RepoRef, pr int, landedSHA string) error
- Comment(ctx context.Context, repo RepoRef, pr int, key, body string) error
+	PullRequest(ctx context.Context, repo RepoRef, number int) (PullRequest, error)
+	CheckRuns(ctx context.Context, repo RepoRef, sha string) ([]CheckRun, error)
+	DeleteRef(ctx context.Context, repo RepoRef, ref string) error
+	ReportStatus(ctx context.Context, repo RepoRef, pr int, headSHA string, s Status) error
+	MarkLanded(ctx context.Context, repo RepoRef, pr int, landedSHA string) error
+	Comment(ctx context.Context, repo RepoRef, pr int, key, body string) error
 }
 
 type Git interface {
- BuildTestRef(ctx context.Context, repo RepoRef, req BuildRequest) (testedSHA string, err error)
- Land(ctx context.Context, repo RepoRef, req LandRequest) (newFenceSHA string, err error)
- EnsureFence(ctx context.Context, repo RepoRef, fenceRef string) (sha string, err error)
- AdvanceFence(ctx context.Context, repo RepoRef, fenceRef, expectedSHA, nextID string) (newSHA string, err error)
- ReadFence(ctx context.Context, repo RepoRef, fenceRef string) (sha, id, testedSHA string, err error)
- ReadRef(ctx context.Context, repo RepoRef, ref string) (sha string, err error)
- IsAncestor(ctx context.Context, repo RepoRef, ancestor, descendant string) (bool, error)
+	BuildTestRef(ctx context.Context, repo RepoRef, req BuildRequest) (testedSHA string, err error)
+	Land(ctx context.Context, repo RepoRef, req LandRequest) (newFenceSHA string, err error)
+	EnsureFence(ctx context.Context, repo RepoRef, fenceRef string) (sha string, err error)
+	AdvanceFence(ctx context.Context, repo RepoRef, fenceRef, expectedSHA, nextID string) (newSHA string, err error)
+	ReadFence(ctx context.Context, repo RepoRef, fenceRef string) (sha, id, testedSHA string, err error)
+	ReadRef(ctx context.Context, repo RepoRef, ref string) (sha string, err error)
+	IsAncestor(ctx context.Context, repo RepoRef, ancestor, descendant string) (bool, error)
 }
 ```
 
