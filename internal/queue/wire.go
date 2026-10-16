@@ -74,6 +74,15 @@ type wirePauseRequested struct {
 type wireResumeRequested struct {
 }
 
+type wireRulesBlocked struct {
+	Problems []string `json:"problems"`
+	Basis    uint64   `json:"basis"`
+}
+
+type wireRulesCleared struct {
+	Basis uint64 `json:"basis"`
+}
+
 type wireBatchStarted struct {
 	BatchID string        `json:"batch_id"`
 	BaseSHA string        `json:"base_sha"`
@@ -346,6 +355,16 @@ func EncodeEvent(value Event) (string, []byte, error) {
 		return encodeWire("pause_requested", wirePauseRequested(v))
 	case ResumeRequested:
 		return encodeWire("resume_requested", wireResumeRequested{})
+	case RulesBlocked:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("rules_blocked", wireRulesBlocked(v))
+	case RulesCleared:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("rules_cleared", wireRulesCleared(v))
 	case BatchStarted:
 		if err := v.Validate(); err != nil {
 			return "", nil, err
@@ -444,6 +463,26 @@ func DecodeEvent(payload []byte) (Event, error) {
 		return decodeWireData(envelope.Data, func(_ wireResumeRequested) Event {
 			return ResumeRequested{}
 		})
+	case "rules_blocked":
+		v, err := readWireData[wireRulesBlocked](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := RulesBlocked(v)
+		if err := event.Validate(); err != nil {
+			return nil, err
+		}
+		return event, nil
+	case "rules_cleared":
+		v, err := readWireData[wireRulesCleared](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := RulesCleared(v)
+		if err := event.Validate(); err != nil {
+			return nil, err
+		}
+		return event, nil
 	case "batch_started":
 		v, err := readWireData[wireBatchStarted](envelope.Data)
 		if err != nil {

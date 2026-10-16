@@ -61,6 +61,18 @@ func Apply(s State, e Event) State {
 		}
 	case PauseRequested:
 		s.pause, s.pauseRevision = e, s.revision
+	case RulesBlocked:
+		// A failing read is always evidence, even if another read finished first:
+		// applying it can only block, which fails safe until the next check.
+		s.rulesBlock = RulesBlocked{Problems: slices.Clone(e.Problems), Basis: e.Basis}
+		s.rulesRevision++
+		s.rulesPauseRevision = s.revision
+	case RulesCleared:
+		// A pass clears only if no rules event was applied since its read began.
+		if e.Basis == s.rulesRevision {
+			s.rulesBlock = RulesBlocked{}
+			s.rulesRevision++
+		}
 	case ResumeRequested:
 		s.pause = PauseRequested{}
 		s.buildRetry = buildRetryState{}
@@ -186,6 +198,7 @@ func Apply(s State, e Event) State {
 }
 
 func cloneState(s State) State {
+	s.rulesBlock.Problems = slices.Clone(s.rulesBlock.Problems)
 	s.Entries = slices.Clone(s.Entries)
 	s.pending = slices.Clone(s.pending)
 	for i := range s.pending {
@@ -411,7 +424,7 @@ func (s *State) addEffect(action Action) {
 }
 
 func (s *State) completeEffect(key string) {
-	if len(s.Entries) > 0 && (s.buildRetry.failures > 0 || s.actionPoison.key != "" || s.pause.Reason != "") && s.pauseReport().Key() == key {
+	if len(s.Entries) > 0 && (s.buildRetry.failures > 0 || s.workBlocked()) && s.pauseReport().Key() == key {
 		s.acknowledged[key] = effectScope{pr: s.Entries[0].PR, admission: s.Entries[0].AdmissionID}
 	}
 	for _, effect := range s.effects {

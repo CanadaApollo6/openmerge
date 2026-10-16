@@ -9,12 +9,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"regexp"
-	"slices"
 	"strings"
 	"time"
-	"unicode"
 
+	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
 
@@ -108,31 +106,8 @@ func (e *setupAPIError) Error() string {
 	return out.String()
 }
 
-var setupCredentialPattern = regexp.MustCompile(`(?s:-----BEGIN [^-]+-----.*?(?:-----END [^-]+-----|$))|[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)\b|(?i:\b(?:bearer|basic)\s+\S+)`)
-
 func (c *setupAPI) sanitize(value string) string {
-	value = setupCredentialPattern.ReplaceAllString(value, "[REDACTED]")
-	secrets := slices.Clone(c.secrets)
-	// Replace longer credentials first so overlapping values cannot leave a suffix.
-	slices.SortFunc(secrets, func(a, b string) int { return len(b) - len(a) })
-	for _, secret := range secrets {
-		if secret != "" {
-			for _, encoded := range []string{secret, url.QueryEscape(secret), url.PathEscape(secret)} {
-				value = strings.ReplaceAll(value, encoded, "[REDACTED]")
-			}
-		}
-	}
-	value = strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
-			return ' '
-		}
-		return r
-	}, value)
-	runes := []rune(strings.Join(strings.Fields(value), " "))
-	if len(runes) > 1024 {
-		return string(runes[:1024]) + "…"
-	}
-	return string(runes)
+	return diagnostic.Sanitize(value, c.secrets...)
 }
 
 // Keep only a diagnostic built at our response boundary (or a fixed transport

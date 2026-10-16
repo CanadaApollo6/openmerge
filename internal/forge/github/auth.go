@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
 	gh "github.com/google/go-github/v93/github"
 )
 
@@ -31,20 +32,23 @@ type Config struct {
 	PrivateKey             []byte
 	APIBaseURL, GitBaseURL string
 	HTTPClient             *http.Client
+	// Sanitizer shares private-key material and refreshed tokens with API/log redaction.
+	Sanitizer *diagnostic.Sanitizer
 }
 
 // App owns the signing key and per-installation credential cache.
 type App struct {
-	id       int64
-	key      *rsa.PrivateKey
-	api, git *url.URL
-	http     http.Client
-	client   *gh.Client
-	now      func() time.Time
-	mu       sync.Mutex
-	tokens   map[int64]*tokenEntry
-	drivers  map[int64]*Driver
-	slug     string
+	id        int64
+	key       *rsa.PrivateKey
+	api, git  *url.URL
+	http      http.Client
+	client    *gh.Client
+	now       func() time.Time
+	mu        sync.Mutex
+	tokens    map[int64]*tokenEntry
+	drivers   map[int64]*Driver
+	slug      string
+	sanitizer *diagnostic.Sanitizer
 }
 
 type tokenEntry struct {
@@ -55,12 +59,19 @@ type tokenEntry struct {
 
 // New loads a PKCS#1 or PKCS#8 RSA PEM private key without exposing it in errors.
 func New(cfg Config) (*App, error) {
+	cfg.Sanitizer.AddSecrets(string(cfg.PrivateKey))
 	if cfg.AppID <= 0 {
 		return nil, errors.New("github requires a positive App ID")
 	}
 	block, rest := pem.Decode(cfg.PrivateKey)
 	if block == nil || len(strings.TrimSpace(string(rest))) != 0 {
 		return nil, errors.New("github requires one RSA PEM private key")
+	}
+	cfg.Sanitizer.AddSecrets(base64.StdEncoding.EncodeToString(block.Bytes))
+	for line := range strings.SplitSeq(string(cfg.PrivateKey), "\n") {
+		if !strings.HasPrefix(line, "-----") {
+			cfg.Sanitizer.AddSecrets(strings.TrimSpace(line))
+		}
 	}
 	var key *rsa.PrivateKey
 	switch block.Type {
@@ -90,7 +101,7 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &App{id: cfg.AppID, key: key, api: api, git: git, now: time.Now, tokens: make(map[int64]*tokenEntry), drivers: make(map[int64]*Driver)}
+	a := &App{id: cfg.AppID, key: key, api: api, git: git, now: time.Now, tokens: make(map[int64]*tokenEntry), drivers: make(map[int64]*Driver), sanitizer: cfg.Sanitizer}
 	if cfg.HTTPClient != nil {
 		a.http = *cfg.HTTPClient
 	}
@@ -159,6 +170,7 @@ func (a *App) token(ctx context.Context, id int64) (string, error) {
 	if err != nil {
 		return "", safeError(err)
 	}
+	a.sanitizer.AddSecrets(token.GetToken())
 	if token.GetToken() == "" || !token.GetExpiresAt().After(a.now().Add(5*time.Minute)) {
 		return "", errors.New("github returned an empty or short-lived installation token")
 	}

@@ -70,7 +70,7 @@ func TestServeCommitter(t *testing.T) {
 }
 
 func TestServeDatabaseErrorKeepsCause(t *testing.T) {
-	err := startServe(t.Context(), serveOptions{database: "postgres://localhost/db?port=invalid"}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	err := startServe(t.Context(), serveOptions{database: "postgres://localhost/db?port=invalid"}, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 	if err == nil || errors.Unwrap(err) == nil || !strings.Contains(err.Error(), "invalid port") {
 		t.Fatalf("database cause lost: %v", err)
 	}
@@ -86,11 +86,30 @@ func TestServeOptions(t *testing.T) {
 	t.Setenv("OPENMERGE_LOG_LEVEL", "debug")
 	t.Setenv("OPENMERGE_GIT_COMMITTER_NAME", "queue-app[bot]")
 	t.Setenv("OPENMERGE_GIT_COMMITTER_EMAIL", "99+queue-app[bot]@users.noreply.github.com")
+	t.Setenv("OPENMERGE_API_LISTEN", "")
+	t.Setenv("OPENMERGE_API_TOKEN", "")
+	t.Setenv("OPENMERGE_API_TOKEN_FILE", "")
 	options, err := parseServe([]string{"--poll-interval=5s"}, io.Discard)
 	if err != nil || options.poll != 5*time.Second || options.app != 42 || options.logLevel != "debug" || options.committerName != "queue-app[bot]" || options.committerEmail != "99+queue-app[bot]@users.noreply.github.com" {
 		t.Fatalf("options=%+v error=%v", options, err)
 	}
-	for _, args := range [][]string{{"--log-level=bogus"}, {"--poll-interval=0"}, {"--concurrency=0"}, {"--webhook-listen=:8080"}, {"--repos=invalid"}, {"unexpected"}} {
+	if options.apiListen != "" || options.rulesInterval != 10*time.Minute {
+		t.Fatal("API enabled by default or unexpected rules interval")
+	}
+	if got, err := parseServe([]string{"--api-listen=:8081", "--rules-interval=2m"}, io.Discard); err != nil || got.apiListen != "127.0.0.1:8081" || got.rulesInterval != 2*time.Minute {
+		t.Fatalf("API/rules options=%+v %v", got, err)
+	}
+	for _, address := range []string{"0.0.0.0:8081", "[::]:8081"} {
+		if _, err := parseServe([]string{"--api-listen=" + address}, io.Discard); err == nil || !strings.Contains(err.Error(), "requires a bearer token") {
+			t.Fatalf("unauthenticated wildcard bind %s: %v", address, err)
+		}
+		t.Setenv("OPENMERGE_API_TOKEN", "secret")
+		if got, err := parseServe([]string{"--api-listen=" + address}, io.Discard); err != nil || got.apiListen != address || got.apiToken != "secret" {
+			t.Fatalf("authenticated wildcard bind %s: %+v %v", address, got, err)
+		}
+		t.Setenv("OPENMERGE_API_TOKEN", "")
+	}
+	for _, args := range [][]string{{"--log-level=bogus"}, {"--poll-interval=0"}, {"--rules-interval=0"}, {"--api-listen=8081"}, {"--concurrency=0"}, {"--webhook-listen=:8080"}, {"--repos=invalid"}, {"unexpected"}} {
 		if _, err := parseServe(args, io.Discard); err == nil {
 			t.Fatalf("accepted %v", args)
 		}

@@ -198,6 +198,34 @@ func TestPoisonCountsStayBoundedUntilResume(t *testing.T) {
 	t.Log("one notification per three incidents, stable across 30 idle plan/claim cycles; resume resets counter")
 }
 
+func TestRulesClearPreservesDurableActionPoison(t *testing.T) {
+	s := newStore(t)
+	q, c := readyLand(t, s)
+	must(t, s.Complete(t.Context(), c, Failed))
+	// Three malformed action deliveries poison the real persisted action row.
+	for range 3 {
+		_, err := s.Plan(t.Context(), q, config, epoch)
+		must(t, err)
+		corruptTestedSHA(t, s, q, c.Key)
+		_, err = s.Claim(t.Context(), 1, time.Minute, epoch)
+		must(t, err)
+	}
+	appendEvents(t, s, q, queue.RulesBlocked{Problems: []string{"bad fence"}}, queue.RulesCleared{Basis: 1})
+	state, _, err := s.Load(t.Context(), q)
+	must(t, err)
+	if state.PauseReason(config) != "action-poisoned" || len(state.RulesProblems()) != 0 {
+		t.Fatalf("rules recovery resumed action poison: %+v", state.Blocks(config))
+	}
+	if n := count(t, s, `SELECT poison_count FROM actions WHERE queue_id=$1 AND key=$2`, q, c.Key); n != 3 {
+		t.Fatalf("rules recovery reset poison counter: %d", n)
+	}
+	for _, action := range queue.Plan(config, state, epoch) {
+		if _, ok := action.(queue.ReportStatus); !ok {
+			t.Fatalf("poisoned queue started work: %T", action)
+		}
+	}
+}
+
 // Corrupt the pause report past its own cap, then keep planning and claiming.
 // Neither another pause event nor another report key may appear until resume.
 func TestPoisonedPauseReportsDoNotCreateNewPauses(t *testing.T) {

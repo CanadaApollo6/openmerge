@@ -21,11 +21,14 @@ type Target struct {
 	Driver   forge.Driver
 	Git      forge.Git
 	BotLogin string
+	// CheckRules is supplied by the forge adapter, without admin credentials.
+	CheckRules func(context.Context) (problems, warnings []string, err error)
 }
 
 // Options bounds API polling and concurrent queue execution.
 type Options struct {
 	PollInterval  time.Duration
+	RulesInterval time.Duration
 	Concurrency   int
 	ActionTimeout time.Duration
 	Logger        *slog.Logger
@@ -44,19 +47,21 @@ type Server struct {
 
 type worker struct {
 	Target
-	id            store.QueueID
-	wake          chan struct{}
-	cfg           config.Queue
-	configTip     string
-	configError   error
-	blockedSHA    string
-	blockedDetail string
-	prs           map[int]forge.PullRequest
-	summaries     map[int]forge.PullRequestSummary
-	deferred      []string
-	logState      queue.State
-	logWatermark  int64
-	logChecks     string
+	id             store.QueueID
+	wake           chan struct{}
+	cfg            config.Queue
+	configTip      string
+	configError    error
+	blockedSHA     string
+	blockedDetail  string
+	prs            map[int]forge.PullRequest
+	summaries      map[int]forge.PullRequestSummary
+	deferred       []string
+	logState       queue.State
+	logWatermark   int64
+	logChecks      string
+	rulesNextCheck time.Time
+	rulesFailures  int
 }
 
 // New bootstraps fences without replacing a previously recorded landing token.
@@ -70,10 +75,13 @@ func New(ctx context.Context, db *store.Store, targets []Target, options Options
 	if options.Concurrency == 0 {
 		options.Concurrency = 4
 	}
+	if options.RulesInterval == 0 {
+		options.RulesInterval = 10 * time.Minute
+	}
 	if options.ActionTimeout == 0 {
 		options.ActionTimeout = 2 * time.Minute
 	}
-	if options.PollInterval < 0 || options.Concurrency < 1 || options.ActionTimeout < 0 {
+	if options.PollInterval < 0 || options.RulesInterval < 0 || options.Concurrency < 1 || options.ActionTimeout < 0 {
 		return nil, errors.New("poll interval, concurrency and action timeout must be positive")
 	}
 	if options.Logger == nil {
@@ -106,7 +114,11 @@ func New(ctx context.Context, db *store.Store, targets []Target, options Options
 				return nil, err
 			}
 		}
-		s.queues = append(s.queues, &worker{Target: target, id: id, logState: state, logWatermark: watermark, wake: make(chan struct{}, 1), prs: make(map[int]forge.PullRequest), summaries: make(map[int]forge.PullRequestSummary)})
+		w := &worker{Target: target, id: id, logState: state, logWatermark: watermark, wake: make(chan struct{}, 1), prs: make(map[int]forge.PullRequest), summaries: make(map[int]forge.PullRequestSummary)}
+		if err := s.repositoryRules(ctx, w); err != nil {
+			return nil, err
+		}
+		s.queues = append(s.queues, w)
 	}
 	return s, nil
 }
@@ -191,6 +203,9 @@ func (s *Server) loop(ctx context.Context, w *worker) {
 				}
 			}
 		}
+		if !w.rulesNextCheck.IsZero() {
+			delay = min(delay, max(time.Millisecond, time.Until(w.rulesNextCheck)))
+		}
 	}
 }
 
@@ -209,6 +224,9 @@ func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
 	}()
 	force, err := s.store.TakeNotification(ctx, w.id)
 	if err != nil {
+		return err
+	}
+	if err := s.repositoryRules(ctx, w); err != nil {
 		return err
 	}
 	if err := s.reconcile(ctx, w, force); err != nil {

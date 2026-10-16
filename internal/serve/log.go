@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 )
@@ -47,6 +48,14 @@ func (s *Server) logEvent(ctx context.Context, w *worker, before, after queue.St
 		}
 	}
 	switch e := event.(type) {
+	case queue.RulesBlocked:
+		if before.RulesRevision() != after.RulesRevision() {
+			log("repository rules blocked", 0, "", after.BaseSHA, "repository-rules", "detail", strings.Join(e.Problems, "; "))
+		}
+	case queue.RulesCleared:
+		if before.RulesRevision() != after.RulesRevision() {
+			log("repository rules cleared", 0, "", after.BaseSHA, "repository-rules")
+		}
 	case queue.Dequeued:
 		for _, old := range before.Entries {
 			removed := true

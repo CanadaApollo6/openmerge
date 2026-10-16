@@ -43,20 +43,23 @@ type State struct {
 	pending    []pendingGroup
 	Fence      string
 
-	nextBatch     uint64
-	nextAdmission uint64
-	revision      uint64
-	observations  map[int]PRObserved
-	dequeues      map[int]Dequeue
-	effects       []Action
-	acknowledged  map[string]effectScope
-	checks        map[string]retainedCheck
-	testedBatches map[string]string
-	testedOrder   []string // insertion order of testedBatches, oldest first
-	buildRetry    buildRetryState
-	actionPoison  actionPoisonState
-	pause         PauseRequested
-	pauseRevision uint64
+	nextBatch          uint64
+	nextAdmission      uint64
+	revision           uint64
+	observations       map[int]PRObserved
+	dequeues           map[int]Dequeue
+	effects            []Action
+	acknowledged       map[string]effectScope
+	checks             map[string]retainedCheck
+	testedBatches      map[string]string
+	testedOrder        []string // insertion order of testedBatches, oldest first
+	buildRetry         buildRetryState
+	actionPoison       actionPoisonState
+	pause              PauseRequested
+	pauseRevision      uint64
+	rulesBlock         RulesBlocked
+	rulesRevision      uint64
+	rulesPauseRevision uint64
 }
 
 // Entry records the head admitted to the queue, independently of later observations.
@@ -173,7 +176,8 @@ type EnqueueRequested struct {
 // DequeueRequested defers acknowledgement when landing has an uncertain outcome.
 type DequeueRequested struct{ PR int }
 
-// ResumeRequested clears build failures and poison pauses and resumes the queue.
+// ResumeRequested clears build failures and generic pauses, including poison.
+// Repository rules are independent and can only be cleared by RulesCleared.
 type ResumeRequested struct{}
 
 // RefreshRequested invalidates cached CI evidence and requests an early read.
@@ -181,6 +185,15 @@ type RefreshRequested struct{}
 
 // PauseRequested stops new work while leaving landing resolution available.
 type PauseRequested struct{ Reason, Detail string }
+
+// RulesBlocked records definite problems from a read begun at Basis rules revision.
+type RulesBlocked struct {
+	Problems []string
+	Basis    uint64
+}
+
+// RulesCleared removes only the rules block if Basis still matches its revision.
+type RulesCleared struct{ Basis uint64 }
 
 // BatchStarted durably records the planner's composition before any build I/O.
 type BatchStarted struct {
@@ -249,6 +262,8 @@ func (DequeueRequested) queueEvent()   {}
 func (ResumeRequested) queueEvent()    {}
 func (RefreshRequested) queueEvent()   {}
 func (PauseRequested) queueEvent()     {}
+func (RulesBlocked) queueEvent()       {}
+func (RulesCleared) queueEvent()       {}
 func (TestRefBuilt) queueEvent()       {}
 func (TestRefBuildFailed) queueEvent() {}
 func (LandingStarted) queueEvent()     {}

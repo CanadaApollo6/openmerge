@@ -18,6 +18,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
+
 	"github.com/CanadaApollo6/openmerge/internal/gitops"
 )
 
@@ -157,6 +159,62 @@ func TestTokenCacheAndRefresh(t *testing.T) {
 	must(t, err)
 	if d != f.driver {
 		t.Fatal("installation did not reuse driver")
+	}
+}
+
+func TestAppRegistersPrivateKeyMaterial(t *testing.T) {
+	key := testPEM(t)
+	sanitizer := diagnostic.NewSanitizer()
+	_, err := New(Config{AppID: 42, PrivateKey: key, Sanitizer: sanitizer})
+	must(t, err)
+	block, _ := pem.Decode(key)
+	values := []string{string(key), base64.StdEncoding.EncodeToString(block.Bytes)}
+	for line := range strings.SplitSeq(string(key), "\n") {
+		if line != "" && !strings.HasPrefix(line, "-----") {
+			values = append(values, line)
+		}
+	}
+	for _, value := range values {
+		if got := sanitizer.Sanitize("key: " + value); got != "key: [REDACTED]" {
+			t.Fatal("private key material was not registered for diagnostic redaction")
+		}
+	}
+}
+
+func TestAppRegistersInstallationTokensOnRefresh(t *testing.T) {
+	f := newAPI(t)
+	sanitizer := diagnostic.NewSanitizer()
+	key := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(f.app.key)})
+	app, err := New(Config{AppID: 42, PrivateKey: key, APIBaseURL: f.server.URL + "/api/v3/", Sanitizer: sanitizer})
+	must(t, err)
+	app.now = func() time.Time { return f.clock }
+	var previous []string
+	for i, token := range []string{"opaque-installation-one", "opaque-installation-two", "opaque-installation-three"} {
+		f.override = func(w http.ResponseWriter, r *http.Request) bool {
+			if !strings.Contains(r.URL.Path, "access_tokens") {
+				return false
+			}
+			f.json(w, map[string]any{"token": token, "expires_at": f.clock.Add(time.Hour)})
+			return true
+		}
+		id := int64(7)
+		switch i {
+		case 1:
+			f.clock = f.clock.Add(time.Hour)
+		case 2:
+			id = 8
+		}
+		got, err := app.token(t.Context(), id)
+		must(t, err)
+		if got != token {
+			t.Fatal("local fixture did not refresh installation token")
+		}
+		previous = append(previous, token)
+		for _, secret := range previous {
+			if got := sanitizer.Sanitize("problem: " + secret); got != "problem: [REDACTED]" {
+				t.Fatal("installation token was not registered for diagnostic redaction")
+			}
+		}
 	}
 }
 func TestTokenFailureNeverLeaks(t *testing.T) {

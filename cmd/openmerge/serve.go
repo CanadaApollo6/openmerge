@@ -16,9 +16,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
+	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/forge/github"
 	"github.com/CanadaApollo6/openmerge/internal/gitops"
 	"github.com/CanadaApollo6/openmerge/internal/serve"
+	"github.com/CanadaApollo6/openmerge/internal/status"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
@@ -26,7 +29,8 @@ type serveOptions struct {
 	database, key, repos, base, cache, listen, secret string
 	app, installation                                 int64
 	logLevel, committerName, committerEmail           string
-	poll                                              time.Duration
+	apiListen, apiToken, apiTokenFile                 string
+	poll, rulesInterval                               time.Duration
 	concurrency                                       int
 }
 
@@ -47,6 +51,8 @@ func parseServe(args []string, output io.Writer) (serveOptions, error) {
 	flags.StringVar(&o.cache, "git-cache-dir", env("GIT_CACHE_DIR", ".openmerge-cache"), "process-exclusive git cache (OPENMERGE_GIT_CACHE_DIR)")
 	flags.StringVar(&o.listen, "webhook-listen", env("WEBHOOK_LISTEN", ""), "optional webhook address (OPENMERGE_WEBHOOK_LISTEN)")
 	flags.StringVar(&o.secret, "webhook-secret", env("WEBHOOK_SECRET", ""), "webhook HMAC secret (OPENMERGE_WEBHOOK_SECRET)")
+	flags.StringVar(&o.apiListen, "api-listen", env("API_LISTEN", ""), "optional status API address; :port binds loopback (OPENMERGE_API_LISTEN)")
+	flags.StringVar(&o.apiTokenFile, "api-token-file", env("API_TOKEN_FILE", ""), "API bearer token file (or OPENMERGE_API_TOKEN)")
 	flags.StringVar(&o.logLevel, "log-level", env("LOG_LEVEL", "info"), "debug, info, warn or error (OPENMERGE_LOG_LEVEL)")
 	flags.StringVar(&o.committerName, "git-committer-name", env("GIT_COMMITTER_NAME", ""), "commit identity name; defaults to App login (OPENMERGE_GIT_COMMITTER_NAME)")
 	flags.StringVar(&o.committerEmail, "git-committer-email", env("GIT_COMMITTER_EMAIL", ""), "commit identity email; defaults to numeric App bot no-reply email (OPENMERGE_GIT_COMMITTER_EMAIL)")
@@ -55,13 +61,14 @@ func parseServe(args []string, output io.Writer) (serveOptions, error) {
 	flags.Int64Var(&o.app, "github-app-id", 0, "App ID (OPENMERGE_GITHUB_APP_ID)")
 	flags.Int64Var(&o.installation, "github-installation-id", 0, "installation ID (OPENMERGE_GITHUB_INSTALLATION_ID)")
 	flags.DurationVar(&o.poll, "poll-interval", time.Minute, "reconcile interval (OPENMERGE_POLL_INTERVAL)")
+	flags.DurationVar(&o.rulesInterval, "rules-interval", 10*time.Minute, "repository rules validation interval (OPENMERGE_RULES_INTERVAL)")
 	flags.IntVar(&o.concurrency, "concurrency", 4, "concurrent queues (OPENMERGE_CONCURRENCY)")
 	if err := flags.Parse(args); err != nil {
 		return o, err
 	}
 	overridden := make(map[string]bool)
 	flags.Visit(func(f *flag.Flag) { overridden[f.Name] = true })
-	for _, entry := range []struct{ flag, env string }{{"github-app-id", "GITHUB_APP_ID"}, {"github-installation-id", "GITHUB_INSTALLATION_ID"}, {"poll-interval", "POLL_INTERVAL"}, {"concurrency", "CONCURRENCY"}} {
+	for _, entry := range []struct{ flag, env string }{{"github-app-id", "GITHUB_APP_ID"}, {"github-installation-id", "GITHUB_INSTALLATION_ID"}, {"poll-interval", "POLL_INTERVAL"}, {"rules-interval", "RULES_INTERVAL"}, {"concurrency", "CONCURRENCY"}} {
 		if value, ok := os.LookupEnv("OPENMERGE_" + entry.env); ok && !overridden[entry.flag] {
 			if err := flags.Set(entry.flag, value); err != nil {
 				return o, fmt.Errorf("OPENMERGE_%s: %w", entry.env, err)
@@ -78,11 +85,22 @@ func parseServe(args []string, output io.Writer) (serveOptions, error) {
 	if o.database == "" || o.key == "" || o.app <= 0 || o.installation <= 0 || o.repos == "" {
 		return o, errors.New("database URL, GitHub App ID, private key path, installation ID and repos are required")
 	}
-	if o.poll <= 0 || o.concurrency <= 0 || o.base == "" || o.cache == "" {
+	if o.poll <= 0 || o.rulesInterval <= 0 || o.concurrency <= 0 || o.base == "" || o.cache == "" {
 		return o, errors.New("poll interval, concurrency, base and git cache must be nonempty and positive")
 	}
 	if o.listen != "" && o.secret == "" {
 		return o, errors.New("webhook listen requires a webhook secret")
+	}
+	var err error
+	if o.apiListen != "" {
+		o.apiToken, err = status.ReadToken(env("API_TOKEN", ""), o.apiTokenFile)
+		if err != nil {
+			return o, err
+		}
+	}
+	o.apiListen, err = status.ListenAddress(o.apiListen, o.apiToken)
+	if err != nil {
+		return o, err
 	}
 	for _, repo := range strings.Split(o.repos, ",") {
 		parts := strings.Split(repo, "/")
@@ -104,17 +122,18 @@ func runServe(args []string, stdout, stderr io.Writer) int {
 	}
 	var level slog.Level
 	_ = level.UnmarshalText([]byte(o.logLevel)) // validated by parseServe
-	logger := slog.New(slog.NewJSONHandler(stderr, &slog.HandlerOptions{Level: level}))
+	sanitizer := diagnostic.NewSanitizer(o.apiToken, o.secret, o.database)
+	logger := slog.New(slog.NewJSONHandler(stderr, &slog.HandlerOptions{Level: level, ReplaceAttr: sanitizer.LogAttr}))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := startServe(ctx, o, logger); err != nil {
+	if err := startServe(ctx, o, logger, sanitizer); err != nil {
 		logger.Error("serve stopped", "error", err)
 		return 1
 	}
 	return 0
 }
 
-func startServe(ctx context.Context, o serveOptions, logger *slog.Logger) error {
+func startServe(ctx context.Context, o serveOptions, logger *slog.Logger, sanitizer *diagnostic.Sanitizer) error {
 	db, err := store.Open(ctx, o.database)
 	if err != nil {
 		return fmt.Errorf("open/migrate database failed; check OPENMERGE_DATABASE_URL and Postgres availability: %w", err)
@@ -124,7 +143,7 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger) error 
 	if err != nil {
 		return fmt.Errorf("read GitHub private key: %w", err)
 	}
-	app, err := github.New(github.Config{AppID: o.app, PrivateKey: key})
+	app, err := github.New(github.Config{AppID: o.app, PrivateKey: key, Sanitizer: sanitizer})
 	if err != nil {
 		return err
 	}
@@ -138,23 +157,33 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger) error 
 		return err
 	}
 	var targets []serve.Target
+	var keys []store.QueueKey
 	for _, repo := range strings.Split(o.repos, ",") {
-		targets = append(targets, serve.Target{Key: store.QueueKey{Installation: strconv.FormatInt(o.installation, 10), Repository: repo, BaseBranch: o.base}, Driver: driver, Git: git, BotLogin: driver.BotLogin()})
+		key := store.QueueKey{Installation: strconv.FormatInt(o.installation, 10), Repository: repo, BaseBranch: o.base}
+		keys = append(keys, key)
+		targets = append(targets, serve.Target{Key: key, Driver: driver, Git: git, BotLogin: driver.BotLogin(), CheckRules: func(ctx context.Context) ([]string, []string, error) {
+			return driver.ValidateRepositoryRules(ctx, forge.RepoRef{Path: repo}, o.base)
+		}})
 	}
-	service, err := serve.New(ctx, db, targets, serve.Options{PollInterval: o.poll, Concurrency: o.concurrency, Logger: logger, BackoffUntil: driver.BackoffUntil})
+	service, err := serve.New(ctx, db, targets, serve.Options{PollInterval: o.poll, RulesInterval: o.rulesInterval, Concurrency: o.concurrency, Logger: logger, BackoffUntil: driver.BackoffUntil})
 	if err != nil {
 		return err
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	var server *http.Server
-	serveErrors := make(chan error, 1)
-	if o.listen != "" {
-		listener, err := net.Listen("tcp", o.listen)
+	serveErrors := make(chan error, 2)
+	for _, endpoint := range []struct {
+		name, address string
+		handler       http.Handler
+	}{{"webhook", o.listen, webhookHandler(service, []byte(o.secret))}, {"status API", o.apiListen, status.Handler(db, keys, o.apiToken, sanitizer)}} {
+		if endpoint.address == "" {
+			continue
+		}
+		listener, err := net.Listen("tcp", endpoint.address)
 		if err != nil {
 			return err
 		}
-		server = &http.Server{Handler: webhookHandler(service, []byte(o.secret)), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: time.Minute}
+		server := &http.Server{Handler: endpoint.handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: time.Minute, BaseContext: func(net.Listener) context.Context { return runCtx }}
 		go func() {
 			err := server.Serve(listener)
 			if !errors.Is(err, http.ErrServerClosed) {
@@ -166,11 +195,12 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger) error 
 			shutdown, stop := context.WithTimeout(context.Background(), 10*time.Second)
 			defer stop()
 			if err := server.Shutdown(shutdown); err != nil {
-				logger.Error("webhook shutdown", "error", err)
+				logger.Error("HTTP shutdown", "listener", endpoint.name, "error", err)
 			}
 		}()
+		logger.Info("HTTP listening", "listener", endpoint.name, "address", listener.Addr().String())
 	}
-	logger.Info("OpenMerge serving", "repositories", o.repos, "base", o.base, "poll_interval", o.poll, "webhooks", server != nil)
+	logger.Info("OpenMerge serving", "repositories", o.repos, "base", o.base, "poll_interval", o.poll, "webhooks", o.listen != "", "api", o.apiListen != "")
 	if err := service.Run(runCtx); err != nil {
 		return err
 	}

@@ -16,6 +16,7 @@ const usage = `Usage: openmerge <command>
 Commands:
   version                 Print version and build information
   config validate [path]  Validate repository configuration
+  queue status [options]  Read queue status and PR explanations
   serve [options]         Run the GitHub merge queue server
   setup <github|rulesets>  Set up the GitHub App and repository rules
   sim [options]           Simulate a day of merge queue traffic
@@ -49,6 +50,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return validateConfig(args[2:], stdout, stderr)
 	case len(args) > 0 && args[0] == "serve":
 		return runServe(args[1:], stdout, stderr)
+	case len(args) > 0 && args[0] == "queue":
+		return runQueue(args[1:], stdout, stderr)
 	case len(args) > 0 && args[0] == "setup":
 		return runSetup(args[1:], stdout, stderr)
 	case len(args) > 0 && args[0] == "sim":

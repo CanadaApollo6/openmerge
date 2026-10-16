@@ -6,6 +6,12 @@ must run on pushes to `openmerge/queue/**`. Use one server per installation and 
 process-exclusive git cache. Postgres must be available before startup; startup
 applies database migrations and ensures the fence without resetting it.
 
+For containers, use the [compose quickstart](../README.md#docker-compose-quickstart).
+For recorded queue state and PR explanations, enable `OPENMERGE_API_LISTEN=:8081`
+and use `openmerge queue status [--json]`. The [API guide](api.md) documents the
+bearer token requirements, response contract, CLI and exit codes. No database or
+GitHub credentials are needed by an API client.
+
 ## Run as a systemd user service
 
 Create the installation directory and install the binary:
@@ -114,6 +120,57 @@ Do not reset or delete `openmerge/fence/*` refs to recover a service.
 A writer can post `@openmerge refresh` after fixing a configuration, build or
 landing problem to clear a pause and request fresh observations. Invalid
 base-branch configuration remains paused until corrected on the base branch.
+
+## Runtime repository rules
+
+Serve reads the repository's actual default branch, lists **all pages** of
+repository and inherited rulesets, and fetches each detail at startup. It repeats
+this every ten minutes (`--rules-interval` / `OPENMERGE_RULES_INTERVAL`), at the
+next worker cycle. Reads share the driver's conditional cache and quota budget.
+Only a successful read with definite problems sets a durable `repository-rules`
+block. A read failure (including network, 5xx, quota/rate limit or authentication
+errors) logs WARN and preserves the previous state: healthy queues continue,
+and an existing rules block stays blocked. Failed reads retry after one minute,
+then two, four, and at most five minutes, capped by `--rules-interval` if shorter.
+The worker wakes for that deadline even if its normal poll interval is longer;
+the driver's shared quota cooldown can defer the read further.
+
+Rules blocks appear in the API, PR check, journal and logs. Identical successful
+results do not append duplicate events. A later passing check appends
+`RulesCleared` and removes only the rules block; generic pauses, action poison,
+build failures and `landing-not-on-base` remain independent. An operator
+`@openmerge refresh` cannot clear a known rules block. All active reasons are
+shown by status/API. Blocks still permit `ResolveLanding`: a push already in
+flight must settle truthfully through its fence.
+
+The new `rules_blocked` and `rules_cleared` events extend wire v1. Existing event
+types and their replay behavior are unchanged. A legacy `PauseRequested` with
+reason `repository-rules` remains a generic pause on replay; after repairing its
+cause, a writer must clear it with `@openmerge refresh`. A passing rules check
+never emits a generic resume during upgrades.
+
+The runtime uses only the App installation token. GitHub documents
+[ruleset list/detail reads](https://docs.github.com/en/rest/repos/rules#get-a-repository-ruleset)
+as requiring Metadata read, which the manifest already grants. It also documents
+that bypass actors are returned only to callers with write access to the ruleset.
+The App has no Administration permission, so bypass lists can be hidden.
+
+Policy: enforce everything visible, including ref conditions and the fence's
+creation/update/deletion/non-fast-forward structure. A **hidden** bypass list
+produces a WARN rather than a pause caused solely by that missing information.
+Validation assumes an App-only always bypass for that ruleset while checking its
+visible structure. A visible empty/incorrect bypass list, malformed conditions,
+missing rule details, or structurally unprotected fence still pauses. This avoids
+wedging an otherwise working installation but does **not** prove exclusive fence
+ownership or base/queue push permission when bypass actors are hidden.
+
+Run `openmerge setup rulesets` with the separate repository-admin token before
+deployment and after policy changes to audit full bypass ownership. That command
+continues to fail closed on hidden lists; never give its admin token to serve.
+Classic branch protection and validation of installed App permission grants are
+still operator responsibilities and follow-ups. Ruleset checks are periodic
+observations, not an atomic policy lease; do not weaken fence ownership while
+OpenMerge is running. Runtime validation does not modify repository policy.
 
 ## Upgrade or restart
 
