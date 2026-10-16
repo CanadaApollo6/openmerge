@@ -1,0 +1,120 @@
+package gitops
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"net/url"
+	"os"
+	"os/exec"
+	"regexp"
+	"strings"
+)
+
+// Auth supplies HTTP credentials to Git's askpass helper through the child
+// process environment. For tokens, use the forge's token username and password.
+type Auth struct{ Username, Password string }
+
+const askpassScript = `#!/bin/sh
+case "$1" in
+  *Username*) printf '%s\n' "$OPENMERGE_GIT_USERNAME" ;;
+  *Password*) printf '%s\n' "$OPENMERGE_GIT_PASSWORD" ;;
+  *) exit 1 ;;
+esac
+`
+
+var urlUserinfo = regexp.MustCompile(`([A-Za-z][A-Za-z0-9+.-]*://)[^/\s]*@`)
+
+type session struct {
+	r           *Repo
+	dir, remote string
+	auth        Auth
+}
+
+func (s *session) scrub(message string) string {
+	message = urlUserinfo.ReplaceAllString(message, "${1}[redacted]@")
+	for _, secret := range []string{s.auth.Password, s.auth.Username} {
+		if secret != "" {
+			for _, encoded := range []string{secret, url.QueryEscape(secret), url.PathEscape(secret)} {
+				message = strings.ReplaceAll(message, encoded, "[redacted]")
+			}
+		}
+	}
+	return message
+}
+
+// Never inherit tracing, credentials, injected config, alternate object stores,
+// or repository selection from the process running OpenMerge.
+func gitEnv() []string {
+	var env []string
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if !strings.HasPrefix(key, "GIT_") && !strings.HasPrefix(key, "OPENMERGE_GIT_") && key != "LC_ALL" && key != "LANG" {
+			env = append(env, entry)
+		}
+	}
+	return append(env, "LC_ALL=C", "LANG=C", "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull)
+}
+
+func (s *session) run(ctx context.Context, input string, args ...string) (stdout, stderr string, err error) {
+	argv := []string{"-c", "core.hooksPath=" + os.DevNull, "-c", "credential.helper=", "-c", "commit.gpgSign=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false"}
+	if s.dir != "" {
+		argv = append(argv, "--git-dir="+s.dir)
+	}
+	argv = append(argv, args...)
+	cmd := exec.CommandContext(ctx, s.r.git, argv...)
+	cmd.Env = append(gitEnv(), "GIT_ASKPASS="+s.r.askpass,
+		"OPENMERGE_GIT_USERNAME="+s.auth.Username, "OPENMERGE_GIT_PASSWORD="+s.auth.Password)
+	cmd.Env = append(cmd.Env, s.r.identityEnv()...)
+	cmd.Stdin = strings.NewReader(input)
+	var out, diagnostic bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &diagnostic
+	err = cmd.Run()
+	if ctx.Err() != nil {
+		err = ctx.Err()
+	}
+	return out.String(), diagnostic.String(), err
+}
+
+func (s *session) command(ctx context.Context, input string, args ...string) (string, error) {
+	out, diagnostic, err := s.run(ctx, input, args...)
+	if err != nil {
+		return "", s.failure(args[0], diagnostic, err)
+	}
+	return strings.TrimSpace(out), nil
+}
+
+func (s *session) failure(operation, diagnostic string, err error) error {
+	// exec errors do not contain argv. Remote diagnostics may contain URLs or
+	// echoed credentials, so sanitize them before they leave this package.
+	return fmt.Errorf("git %s: %s: %w", operation, s.scrub(strings.TrimSpace(diagnostic)), err)
+}
+
+func exitCode(err error, code int) bool {
+	var status *exec.ExitError
+	return errors.As(err, &status) && status.ExitCode() == code
+}
+
+func cleanRemote(remote string, auth Auth) (string, Auth, error) {
+	if remote == "" || strings.HasPrefix(remote, "-") || strings.ContainsAny(remote, "\x00\r\n") {
+		return "", auth, errors.New("invalid git remote")
+	}
+	if strings.Contains(remote, "://") {
+		u, err := url.Parse(remote)
+		if err != nil {
+			return "", auth, errors.New("invalid git remote URL")
+		}
+		if u.User != nil {
+			if auth.Username == "" {
+				auth.Username = u.User.Username()
+			}
+			if auth.Password == "" {
+				auth.Password, _ = u.User.Password()
+			}
+			u.User = nil
+		}
+		remote = u.String()
+	}
+	return remote, auth, nil
+}

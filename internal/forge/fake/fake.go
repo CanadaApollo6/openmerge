@@ -134,7 +134,7 @@ func (f *Forge) OnTestRef(fn func(sha string, prs []int)) {
 	f.onTestRef = fn
 }
 
-// BuildTestRef composes merge commits, one squash, or rebased PR commits. Each
+// BuildTestRef composes merge commits, one squash per PR, or rebased PR commits. Each
 // shape's top commit contains the batch ID. Failed builds never move the ref.
 func (f *Forge) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.BuildRequest) (string, error) {
 	f.mu.Lock()
@@ -196,20 +196,17 @@ func (f *Forge) build(ctx context.Context, r *repository, req forge.BuildRequest
 				top = r.commit([]string{top}, content, message, files)
 			}
 		}
-		if req.Method == forge.Merge {
-			message := fmt.Sprintf("merge PR %d %s", pr.Number, pr.HeadSHA)
+		if req.Method == forge.Merge || req.Method == forge.Squash {
+			message := fmt.Sprintf("%s PR %d %s", req.Method, pr.Number, pr.HeadSHA)
 			if i == len(req.PRs)-1 {
 				message += "\nOpenMerge-Batch: " + req.BatchID
 			}
-			top = r.commit([]string{top, pr.HeadSHA}, content, message, files)
+			parents := []string{top}
+			if req.Method == forge.Merge {
+				parents = append(parents, pr.HeadSHA)
+			}
+			top = r.commit(parents, content, message, files)
 		}
-	}
-	if req.Method == forge.Squash {
-		heads := make([]string, 0, len(req.PRs))
-		for _, pr := range req.PRs {
-			heads = append(heads, pr.HeadSHA)
-		}
-		top = r.commit([]string{top}, content, fmt.Sprintf("squash %v\nOpenMerge-Batch: %s", heads, req.BatchID), files)
 	}
 	changed := r.refs[req.Ref] != top
 	r.refs[req.Ref] = top

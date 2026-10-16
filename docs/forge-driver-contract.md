@@ -101,7 +101,15 @@ Refs, statuses, and check runs are idempotent by name or external ID. Comments e
 
 ## Running the contract suite
 
-`forgetest.Run(t, newEnv)` runs the driver rules above. It checks the normalized status round trip, not each forge's native conclusion mapping, which each driver documents. The environment provides:
+`forgetest.Run(t, newEnv)` runs the driver rules above. It checks the normalized status round trip, not each forge's native conclusion mapping, which each driver documents.
+
+`forgetest.RunGit(t, newGitEnv)` runs the Git-side rules alone, without a forge API
+implementation or API fixture hooks. `internal/gitops` runs it against temporary
+local bare repositories, including rollback scenarios. Its [transport notes](../internal/gitops/README.md#landing-and-real-git-findings)
+document an unresolved Git CLI no-op lease exception to the strict landing
+contract; the fake does not model that exception.
+
+The environment provides:
 
 - a fresh, uniquely named base and fence per subtest, created by ordinary pushes, so the suite never rewrites a protected ref;
 - PRs that each add a unique file, a pair of PRs whose changes conflict, a fork PR, and approvals from a writer and a non-writer;

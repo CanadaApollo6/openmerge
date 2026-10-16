@@ -1,0 +1,256 @@
+// Package gitops implements forge.Git using the git executable and bare caches.
+// Cache locks coordinate goroutines and Repo instances in this process only.
+// A work directory must not be shared by multiple OpenMerge processes.
+package gitops
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/CanadaApollo6/openmerge/internal/forge"
+)
+
+// Remote resolves an opaque forge repository path and fresh credentials.
+type Remote func(context.Context, forge.RepoRef) (url string, auth Auth, err error)
+
+// Identity is used on generated commits, including replayed PR commits.
+type Identity struct{ Name, Email string }
+
+// Config supplies the cache, transport, PR ref mapping, and commit metadata.
+// HeadRef is forge specific; GitHub uses refs/pull/<number>/head.
+// Nil Now uses time.Now. Zero identities use OpenMerge <openmerge@localhost>.
+type Config struct {
+	WorkDir           string
+	Remote            Remote
+	HeadRef           func(pr int) string
+	Author, Committer Identity
+	Now               func() time.Time
+}
+
+// Repo is a CLI-backed Git implementation. Construct it with New.
+type Repo struct {
+	cfg          Config
+	git          string
+	askpass      string
+	explicitBase bool
+}
+
+var (
+	_          forge.Git = (*Repo)(nil)
+	cacheLocks sync.Map  // absolute bare repository path -> *sync.Mutex
+)
+
+// New checks Git >= 2.38 once and prepares a credential-free askpass helper.
+func New(ctx context.Context, cfg Config) (*Repo, error) {
+	if cfg.WorkDir == "" || cfg.Remote == nil || cfg.HeadRef == nil {
+		return nil, errors.New("gitops requires WorkDir, Remote, and HeadRef")
+	}
+	for _, id := range []*Identity{&cfg.Author, &cfg.Committer} {
+		if *id == (Identity{}) {
+			*id = Identity{Name: "OpenMerge", Email: "openmerge@localhost"}
+		}
+		if id.Name == "" || id.Email == "" || strings.ContainsAny(id.Name+id.Email, "<>\x00\r\n") {
+			return nil, errors.New("invalid git commit identity")
+		}
+	}
+	if cfg.Now == nil {
+		cfg.Now = time.Now
+	}
+	git, err := exec.LookPath("git")
+	if err != nil {
+		return nil, errors.New("gitops requires git >= 2.38 on PATH")
+	}
+	r := &Repo{cfg: cfg, git: git}
+	s := &session{r: r}
+	version, err := s.command(ctx, "", "--version")
+	if err != nil {
+		return nil, err
+	}
+	var major, minor int
+	if n, _ := fmt.Sscanf(version, "git version %d.%d", &major, &minor); n != 2 || major < 2 || major == 2 && minor < 38 {
+		return nil, fmt.Errorf("gitops requires git >= 2.38; found %q", version)
+	}
+	// --merge-base was added after 2.38. Older versions use synthetic parents
+	// to give merge-tree the same explicit base when replaying a commit.
+	out, diagnostic, _ := s.run(ctx, "", "merge-tree", "-h")
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	r.explicitBase = strings.Contains(out+diagnostic, "--merge-base")
+	r.cfg.WorkDir, err = filepath.Abs(cfg.WorkDir)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(r.cfg.WorkDir, 0o700); err != nil {
+		return nil, err
+	}
+	// Atomic replacement keeps constructors from truncating an executing helper.
+	helper, err := os.CreateTemp(r.cfg.WorkDir, ".askpass-*")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = os.Remove(helper.Name()) }()
+	if err := helper.Chmod(0o700); err != nil {
+		_ = helper.Close()
+		return nil, err
+	}
+	_, writeErr := helper.WriteString(askpassScript)
+	closeErr := helper.Close()
+	if err := errors.Join(writeErr, closeErr); err != nil {
+		return nil, err
+	}
+	r.askpass = filepath.Join(r.cfg.WorkDir, "askpass")
+	if err := os.Rename(helper.Name(), r.askpass); err != nil {
+		return nil, err
+	}
+	return r, nil
+}
+
+func (r *Repo) identityEnv() []string {
+	date := r.cfg.Now().Format("2006-01-02T15:04:05-07:00")
+	return []string{"GIT_AUTHOR_NAME=" + r.cfg.Author.Name, "GIT_AUTHOR_EMAIL=" + r.cfg.Author.Email,
+		"GIT_COMMITTER_NAME=" + r.cfg.Committer.Name, "GIT_COMMITTER_EMAIL=" + r.cfg.Committer.Email,
+		"GIT_AUTHOR_DATE=" + date, "GIT_COMMITTER_DATE=" + date}
+}
+
+func (r *Repo) open(ctx context.Context, repo forge.RepoRef) (*session, func(), error) {
+	key := fmt.Sprintf("%x.git", sha256.Sum256([]byte(repo.Path)))
+	dir := filepath.Join(r.cfg.WorkDir, key)
+	lock, _ := cacheLocks.LoadOrStore(dir, &sync.Mutex{})
+	mu := lock.(*sync.Mutex)
+	mu.Lock()
+	fail := func(err error) (*session, func(), error) { mu.Unlock(); return nil, nil, err }
+	if err := ctx.Err(); err != nil {
+		return fail(err)
+	}
+	remote, auth, err := r.cfg.Remote(ctx, repo)
+	if ctx.Err() != nil {
+		return fail(ctx.Err())
+	}
+	s := &session{r: r, auth: auth}
+	if err != nil {
+		return fail(errors.New(s.scrub("resolve git remote: " + err.Error())))
+	}
+	s.remote, s.auth, err = cleanRemote(remote, auth)
+	if err != nil {
+		return fail(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "HEAD")); errors.Is(err, os.ErrNotExist) {
+		if _, err := s.command(ctx, "", "init", "--bare", "--template=", "--", dir); err != nil {
+			return fail(err)
+		}
+	} else if err != nil {
+		return fail(err)
+	}
+	s.dir = dir
+	return s, mu.Unlock, nil
+}
+
+func validSHA(sha string) bool {
+	if len(sha) != 40 && len(sha) != 64 {
+		return false
+	}
+	_, err := hex.DecodeString(sha)
+	return err == nil
+}
+
+func (s *session) branch(ctx context.Context, ref string) (string, error) {
+	if !strings.HasPrefix(ref, "refs/") {
+		ref = "refs/heads/" + ref
+	}
+	if !strings.HasPrefix(ref, "refs/heads/") {
+		return "", errors.New("expected a branch ref")
+	}
+	_, err := s.command(ctx, "", "check-ref-format", ref)
+	return ref, err
+}
+
+func (s *session) fetch(ctx context.Context, specs ...string) error {
+	args := []string{"fetch", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "--", s.remote}
+	_, err := s.command(ctx, "", append(args, specs...)...)
+	return err
+}
+
+func (s *session) commits(ctx context.Context, shas ...string) error {
+	for _, sha := range shas {
+		if !validSHA(sha) {
+			return errors.New("expected a full git commit SHA")
+		}
+		if _, _, err := s.run(ctx, "", "cat-file", "-e", sha+"^{commit}"); err == nil {
+			continue
+		}
+		if err := s.fetch(ctx, sha); err != nil {
+			return err
+		}
+		if _, err := s.command(ctx, "", "cat-file", "-e", sha+"^{commit}"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *session) read(ctx context.Context, refs ...string) (map[string]string, error) {
+	args := append([]string{"ls-remote", "--refs", "--", s.remote}, refs...)
+	out, err := s.command(ctx, "", args...)
+	if err != nil {
+		return nil, err
+	}
+	values := make(map[string]string)
+	for line := range strings.SplitSeq(out, "\n") {
+		sha, ref, ok := strings.Cut(line, "\t")
+		if ok && validSHA(sha) {
+			values[ref] = sha
+		}
+	}
+	return values, nil
+}
+
+// ReadRef queries the remote rather than trusting the local cache.
+func (r *Repo) ReadRef(ctx context.Context, repo forge.RepoRef, ref string) (string, error) {
+	s, unlock, err := r.open(ctx, repo)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+	full, err := s.branch(ctx, ref)
+	if err != nil {
+		return "", err
+	}
+	values, err := s.read(ctx, full)
+	if err != nil {
+		return "", err
+	}
+	if values[full] == "" {
+		return "", errors.New("git ref does not exist")
+	}
+	return values[full], nil
+}
+
+// IsAncestor checks graph reachability after obtaining any missing commits.
+func (r *Repo) IsAncestor(ctx context.Context, repo forge.RepoRef, ancestor, descendant string) (bool, error) {
+	s, unlock, err := r.open(ctx, repo)
+	if err != nil {
+		return false, err
+	}
+	defer unlock()
+	if err := s.commits(ctx, ancestor, descendant); err != nil {
+		return false, err
+	}
+	_, diagnostic, err := s.run(ctx, "", "merge-base", "--is-ancestor", ancestor, descendant)
+	if exitCode(err, 1) {
+		return false, nil
+	}
+	if err != nil {
+		return false, s.failure("merge-base", diagnostic, err)
+	}
+	return true, nil
+}

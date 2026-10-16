@@ -180,9 +180,6 @@ func TestCommitGraph(t *testing.T) {
 			if method == forge.Merge {
 				parents = 2
 			}
-			if method == forge.Squash {
-				length = 3
-			}
 			history, err := f.History(repo, req.Ref)
 			must(t, err)
 			if len(c.Parents) != parents || len(history) != length || history[1].SHA != base {
