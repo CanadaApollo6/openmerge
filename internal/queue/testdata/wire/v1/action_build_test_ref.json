@@ -1,0 +1,1 @@
+{"version":1,"type":"build_test_ref","data":{"batch_id":"b1","base_sha":"base","prs":[{"pr":2,"head_sha":"head"}],"ref":"refs/openmerge/test/b1","method":"squash"}}

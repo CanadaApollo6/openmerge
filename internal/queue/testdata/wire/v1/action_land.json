@@ -1,0 +1,1 @@
+{"version":1,"type":"land","data":{"batch_id":"b1","expected_base_sha":"base","tested_sha":"tested","ref":"refs/openmerge/test/b1","fence_token":"fence","prs":[{"pr":2,"head_sha":"head"}],"method":"squash"}}

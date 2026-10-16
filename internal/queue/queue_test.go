@@ -67,6 +67,9 @@ func assertPlan(t *testing.T, cfg Config, s State, now time.Time, want ...string
 	}
 	keys := make(map[string]bool)
 	for _, action := range got {
+		if err := action.Validate(); err != nil {
+			t.Fatalf("Plan emitted invalid %T: %v", action, err)
+		}
 		if action.Key() == "" || keys[action.Key()] {
 			t.Fatalf("empty or duplicate action key: %q", action.Key())
 		}
@@ -467,7 +470,7 @@ func TestIgnoredResultEvents(t *testing.T) {
 	events := []Event{
 		TestRefBuilt{Method: Merge, BatchID: "old", TestedSHA: "old", At: epoch},
 		TestRefBuildFailed{BatchID: "old", Conflict: true},
-		LandingStarted{BatchID: "old", AttemptID: "old", At: epoch},
+		LandingStarted{FenceToken: "fence", BatchID: "old", AttemptID: "old", At: epoch},
 		Landed{BatchID: "old", NewBaseSHA: "wrong", NewFence: "wrong"},
 		LandingAbandoned{BatchID: "old", NewFence: "wrong"},
 	}
@@ -526,7 +529,7 @@ func TestApplyDoesNotMutateInput(t *testing.T) {
 		EnqueueRequested{PR: 2, At: epoch}, DequeueRequested{PR: 1}, PRClosed{PR: 1}, BaseMoved{SHA: "base2"}, ResumeRequested{},
 		TestRefBuilt{Method: Merge, BatchID: "b1", TestedSHA: "test", At: epoch}, TestRefBuildFailed{BatchID: "b1", Conflict: true},
 		TestRefBuildFailed{BatchID: "b1", At: epoch},
-		ChecksCompleted{TestedSHA: "tested1"}, LandingStarted{BatchID: "b1", AttemptID: "a2", At: epoch},
+		ChecksCompleted{TestedSHA: "tested1"}, LandingStarted{FenceToken: "fence", BatchID: "b1", AttemptID: "a2", At: epoch},
 		ChecksRefreshed{BatchID: "b1", TestedSHA: "tested1", At: epoch},
 		Landed{BatchID: "b1", NewBaseSHA: "test", NewFence: "f1"},
 		BaseMoved{SHA: "base2"}, LandingAbandoned{BatchID: "b1", NewFence: "f1"},

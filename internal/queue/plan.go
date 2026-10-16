@@ -8,18 +8,38 @@ import (
 
 // Plan returns intended actions in queue order, then recorded side effects, then
 // the active batch's next action. Replanning unchanged inputs preserves all keys.
+// Invalid inputs that would produce an unsafe action panic before it is emitted.
 func Plan(cfg Config, s State, now time.Time) []Action {
-	var actions []Action
-	for _, entry := range s.Entries {
-		if action, pending := s.dequeues[entry.PR]; pending && !s.isLanding(entry.PR) {
-			actions = append(actions, action)
+	actions := plan(cfg, s, now)
+	for _, action := range actions {
+		if err := action.Validate(); err != nil {
+			panic(fmt.Sprintf("queue planner emitted invalid %T: %v", action, err))
 		}
 	}
-	for _, effect := range s.effects {
-		if deletion, ok := effect.(DeleteRef); ok && s.Active != nil && s.Active.Phase == Landing && deletion.Ref == s.Active.TestRef {
-			continue
+	return actions
+}
+
+func plan(cfg Config, s State, now time.Time) []Action {
+	var actions []Action
+	if s.actionPoison.key != "" {
+		if len(s.Entries) > 0 {
+			report := s.pauseReport()
+			if _, done := s.acknowledged[report.Key()]; !done {
+				actions = append(actions, report)
+			}
 		}
-		actions = append(actions, effect)
+	} else {
+		for _, entry := range s.Entries {
+			if action, pending := s.dequeues[entry.PR]; pending && !s.isLanding(entry.PR) {
+				actions = append(actions, action)
+			}
+		}
+		for _, effect := range s.effects {
+			if deletion, ok := effect.(DeleteRef); ok && s.Active != nil && s.Active.Phase == Landing && deletion.Ref == s.Active.TestRef {
+				continue
+			}
+			actions = append(actions, effect)
+		}
 	}
 	batch := s.Active
 	if batch == nil {
@@ -32,6 +52,9 @@ func Plan(cfg Config, s State, now time.Time) []Action {
 				TestedSHA: batch.TestedSHA, FenceToken: batch.LandingAttempt.FenceToken,
 			})
 		}
+		return actions
+	}
+	if s.actionPoison.key != "" {
 		return actions
 	}
 	for _, pr := range batch.PRs {
@@ -47,7 +70,7 @@ func Plan(cfg Config, s State, now time.Time) []Action {
 	case Building:
 		paused := s.PauseReason(cfg) != ""
 		if paused || s.buildRetry.detail != "" {
-			report := s.buildFailureReport()
+			report := s.pauseReport()
 			if _, done := s.acknowledged[report.Key()]; !done {
 				actions = append(actions, report)
 			}
@@ -101,10 +124,18 @@ type buildRetryState struct {
 	detail   string
 }
 
-// PauseReason derives the configured pause from recorded failures. Apply has no
-// config input, so the retry limit is evaluated here and by Plan, never in the fold.
-// ResumeRequested, a changed BaseSHA, or a successful build clears the streak.
+type actionPoisonState struct {
+	key, reason string
+	revision    uint64
+}
+
+// PauseReason reports a poison pause or the configured build failure limit.
+// ResumeRequested clears either pause. A changed base or successful build clears
+// only the build failure streak. Apply has no config, so Plan evaluates its limit.
 func (s State) PauseReason(cfg Config) string {
+	if s.actionPoison.key != "" {
+		return "action-poisoned"
+	}
 	limit := cfg.BuildRetries
 	if limit <= 0 {
 		limit = 3
@@ -115,7 +146,14 @@ func (s State) PauseReason(cfg Config) string {
 	return ""
 }
 
-func (s State) buildFailureReport() ReportStatus {
+func (s State) pauseReport() ReportStatus {
+	if s.actionPoison.key != "" {
+		return ReportStatus{
+			PR: s.Entries[0].PR, HeadSHA: s.Entries[0].HeadSHA, Status: "paused", Reason: "action-poisoned",
+			revision: s.actionPoison.revision, admission: s.Entries[0].AdmissionID,
+			Detail: fmt.Sprintf("Queue paused after repeated invalid action %s: %s; resume the queue to retry", s.actionPoison.key, s.actionPoison.reason),
+		}
+	}
 	detail := fmt.Sprintf("Queue paused after %d consecutive build failures; resume the queue or update the base branch", s.buildRetry.failures)
 	if s.buildRetry.detail != "" {
 		detail = fmt.Sprintf("Test ref build failed (%d consecutive failures): %s", s.buildRetry.failures, s.buildRetry.detail)

@@ -9,6 +9,9 @@ import (
 
 // Apply folds one event without mutating s or any slices or maps reachable from it.
 func Apply(s State, e Event) State {
+	if _, poisoned := e.(ActionPoisoned); poisoned && s.actionPoison.key != "" {
+		return s
+	}
 	s = cloneState(s)
 	s.revision++
 	switch e := e.(type) {
@@ -53,6 +56,9 @@ func Apply(s State, e Event) State {
 		}
 	case ResumeRequested:
 		s.buildRetry = buildRetryState{}
+		s.actionPoison = actionPoisonState{}
+	case ActionPoisoned:
+		s.actionPoison = actionPoisonState{key: e.Key, reason: e.Reason, revision: s.revision}
 	case TestRefBuilt:
 		if s.batchIn(e.BatchID, Building) {
 			if earlier, used := s.testedBatches[e.TestedSHA]; used {
@@ -323,7 +329,7 @@ func (s *State) addEffect(action Action) {
 }
 
 func (s *State) completeEffect(key string) {
-	if len(s.Entries) > 0 && s.buildRetry.failures > 0 && s.buildFailureReport().Key() == key {
+	if len(s.Entries) > 0 && (s.buildRetry.failures > 0 || s.actionPoison.key != "") && s.pauseReport().Key() == key {
 		s.acknowledged[key] = effectScope{pr: s.Entries[0].PR, admission: s.Entries[0].AdmissionID}
 	}
 	for _, effect := range s.effects {

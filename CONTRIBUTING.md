@@ -27,8 +27,26 @@ make build   # produces bin/openmerge
 | `make fmt` | Fails if any file is not gofmt-formatted |
 | `make build` | Builds `bin/openmerge` |
 | `make check` | All of the above |
+| `make db` | Starts a disposable Postgres 18.6 container, or user-owned Postgres through mise |
+| `make db-stop` | Stops the development Postgres |
 
-The test suite never needs forge credentials. Engine and end-to-end tests run against the in-memory fake forge ([ADR 0004](docs/adr/0004-forge-driver-interface.md)). Once storage lands, tests that need Postgres read `OPENMERGE_TEST_DATABASE_URL` and skip with a message when it is unset ([ADR 0002](docs/adr/0002-storage-and-state-model.md)).
+The test suite never needs forge credentials. Engine tests use the in-memory fake forge ([ADR 0004](docs/adr/0004-forge-driver-interface.md)). Store tests use real Postgres through `OPENMERGE_TEST_DATABASE_URL`, and skip with a clear message when it is unset ([ADR 0002](docs/adr/0002-storage-and-state-model.md)). CI always supplies a Postgres 18.6 service. Each database test creates and removes its own schema, so the configured database user needs permission to create schemas.
+
+For local store development, run `make db`, export the URL it prints, then run `make check`. The target prints the selected runtime: it uses Docker when `docker info` succeeds without sudo, otherwise it installs `postgres@18.6` through mise and runs `initdb` and `pg_ctl` as your own user. Postgres is deliberately absent from `mise.toml`, so other contributors do not download it. Both runtimes listen only on localhost, on port 54329. Stop the database with `make db-stop`; Docker data is removed with its disposable container, while mise's data remains in `/tmp/om-pg` until you remove it.
+
+The mise path can also be run directly, without Docker or sudo:
+
+```bash
+mise install postgres@18.6
+PG=$(mise where postgres@18.6)
+"$PG/bin/initdb" -D /tmp/om-pg -U postgres --auth=trust
+"$PG/bin/pg_ctl" -D /tmp/om-pg -o '-h localhost -p 54329 -k /tmp' -l /tmp/om-pg.log -w start
+export OPENMERGE_TEST_DATABASE_URL='postgres://postgres@localhost:54329/postgres?sslmode=disable'
+make check
+"$PG/bin/pg_ctl" -D /tmp/om-pg -w stop
+```
+
+`OPENMERGE_DEV_PGDATA` overrides the mise data directory used by `make db` and `make db-stop`. Its default local cluster uses trust authentication; use it only for development.
 
 ## Making a change
 
