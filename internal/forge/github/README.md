@@ -101,23 +101,62 @@ serializing go-github response structs. It supplies 201 creates, JSON errors,
 headers; it verifies App JWTs on every App endpoint and rejects unknown
 installation IDs. No credentials or live user data are captured.
 
-This package does not implement HTTP serving, persistence, worker loops, or
-commands; `cmd/openmerge serve` and `internal/serve` provide those. Remaining
-installation automation and ruleset work includes:
+The package also provides the manifest callback and ruleset setup behind
+`openmerge setup`. HTTP serving, persistence, worker loops, and commands live in
+`cmd/openmerge serve` and `internal/serve`. Remaining work includes:
 
 - Installation/repository discovery and reconciliation, token eviction after
   suspension/deletion.
-- Branch/ruleset protection and App permission validation, including protected
-  base bypass and exclusive, nondeletable `openmerge/fence/*` ownership. APIs for
-  ruleset inspection, PR labels/files, and installation repository
-  enumeration are not included; add narrow reads when their consumers arrive.
+- Wiring `ValidateRules` into `serve` startup, installed App permission
+  validation, and classic branch protection checks. PR labels/files and
+  installation repository enumeration remain follow-ups.
 
-Required App repository permissions are contents read/write (Git fetch/push and
-config), pull requests read/write (reviews, comments, closure), checks read/write,
-commit statuses read, and metadata read (collaborator permissions). Startup
-validation of installed permissions and organization rules remains server work.
+## Setup and ruleset validation
+
+Required App repository permissions:
+
+| Permission | Access | Driver use |
+|---|---|---|
+| Contents | write | Git fetch/push, refs and config |
+| Workflows | write | Test-ref builds and base landings that change `.github/workflows/` |
+| Pull requests | write | PR/review reads, PR-thread comments and closure |
+| Checks | write | CI reads and OpenMerge check reporting |
+| Commit statuses | read | CI status observations |
+| Issues | read | Issue-thread command reads and `issue_comment` webhook subscription |
+| Metadata | read | `GET /repos/{owner}/{repo}/collaborators/{user}/permission` |
+
+All comment posting goes through `Driver.Comment`, including `MarkLanded`.
+It uses `POST /repos/{owner}/{repo}/issues/{issue_number}/comments` for PR threads;
+GitHub accepts [Pull requests: write for this endpoint](https://docs.github.com/en/rest/issues/comments#create-an-issue-comment).
+No comment-posting path requires Issues: write.
+
+`CanWrite` does not read organization membership or administration endpoints.
+See GitHub's [collaborator permission requirements](https://docs.github.com/en/rest/collaborators/collaborators#get-repository-permissions-for-a-user).
+Startup validation of installed permissions remains server work.
+
+`SetupRules` uses a separate admin `GITHUB_TOKEN`, with Administration read for
+inspection and write for apply. It reads all pages and detailed rulesets,
+including inherited policies; hidden bypass lists fail closed. Base edits send
+only the updated bypass list. Fence edits retain existing rules and parameters;
+incompatible conditions require manual correction. Writes are never retried
+automatically. After a partial failure, rerun inspection before applying again.
+
+`ValidateRules(rulesets, base, defaultBranch, appID)` is pure and returns typed
+`RuleProblem`s with stable codes, policy IDs, refs and actionable messages. Supply complete
+details including visible bypass lists, the landing base, and the repository's
+actual default branch from `GET /repos/{owner}/{repo}`. `~DEFAULT_BRANCH` always
+uses that default, even when landing on a release branch. It requires one active
+policy covering the entire fence namespace with all four ref restrictions and exactly one
+always-allowed App bypass. Every other applicable policy must allow the App.
+Pathname-aware patterns cover nested base names; uncertain namespace overlaps
+are conservative diagnostics. Classic branch protection is outside this function.
+`serve` startup does not call it yet; do not treat ruleset-only
+validation as proof about classic protection.
 
 ## App setup and troubleshooting
+
+Start with [Setting up the GitHub App](../../../README.md#setting-up-the-github-app)
+for the manifest flow, generated key, installation, webhooks and rulesets.
 
 Subscribe to **Pull requests** (`pull_request`), **Pull request reviews**
 (`pull_request_review`), **Check runs** (`check_run`), **Check suites**
@@ -144,6 +183,15 @@ the App to discard old installation tokens. See GitHub's
 HTTP 403 can mean missing installed permissions or a rate limit; inspect the
 normalized `APIError`/`RateLimitError` and confirm the installation accepted any
 new permissions. The driver deliberately omits raw response bodies from errors.
+Setup additionally reports bounded, sanitized GitHub `message`, `errors[]`
+resource/field/code/message details, and `documentation_url` links to GitHub Docs.
+It redacts the admin token and manifest code, omits validation values and unknown
+response fields, and strips credentials/query strings/fragments from diagnostic links.
+An Integration bypass rejection during `setup rulesets --apply` explains that the
+App must be installed on the repository first. If GitHub still rejects it on a
+personal-account repository, keep protections enabled and use an organization-owned
+repository that accepts the App bypass, or defer OpenMerge; a broader bypass would
+break exclusive fence ownership.
 
 ## Polling cost and conditional requests
 
