@@ -47,6 +47,7 @@ type State struct {
 	acknowledged  map[string]effectScope
 	checks        map[string]retainedCheck
 	testedBatches map[string]string
+	testedOrder   []string // insertion order of testedBatches, oldest first
 	buildRetry    buildRetryState
 }
 

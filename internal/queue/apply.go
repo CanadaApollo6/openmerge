@@ -59,7 +59,7 @@ func Apply(s State, e Event) State {
 				s.failBuild(e.At, fmt.Sprintf("tested SHA %s was already recorded for batch %s; the top commit must carry the batch ID", e.TestedSHA, earlier))
 				break
 			}
-			s.testedBatches[e.TestedSHA] = e.BatchID
+			s.recordTestedSHA(e.TestedSHA, e.BatchID)
 			s.Active.TestedSHA = e.TestedSHA
 			s.Active.Method = e.Method
 			s.Active.StartedTestingAt = e.At
@@ -166,6 +166,7 @@ func cloneState(s State) State {
 		s.checks = make(map[string]retainedCheck)
 	}
 	s.testedBatches = maps.Clone(s.testedBatches)
+	s.testedOrder = slices.Clone(s.testedOrder)
 	if s.testedBatches == nil {
 		s.testedBatches = make(map[string]string)
 	}
@@ -343,5 +344,19 @@ func (s *State) pruneAcknowledgements() {
 			continue
 		}
 		delete(s.acknowledged, key)
+	}
+}
+
+// testedHistory bounds the reuse guard. Uniqueness comes from the batch ID in
+// each test commit; the guard only needs to catch an executor that violates it
+// with a recent SHA, so older entries are evicted rather than kept forever.
+const testedHistory = 64
+
+func (s *State) recordTestedSHA(sha, batchID string) {
+	s.testedBatches[sha] = batchID
+	s.testedOrder = append(s.testedOrder, sha)
+	for len(s.testedOrder) > testedHistory {
+		delete(s.testedBatches, s.testedOrder[0])
+		s.testedOrder = s.testedOrder[1:]
 	}
 }

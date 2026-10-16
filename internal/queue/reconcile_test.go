@@ -505,3 +505,22 @@ func TestTestedSHAOwnershipSurvivesBatchCompletion(t *testing.T) {
 		})
 	}
 }
+
+func TestTestedSHAHistoryIsBounded(t *testing.T) {
+	s := cloneState(State{BaseBranch: "main", BaseSHA: "base"})
+	for i := range 3 * testedHistory {
+		s.recordTestedSHA(fmt.Sprintf("sha-%d", i), fmt.Sprintf("b%d", i))
+	}
+	if got := len(s.testedBatches); got != testedHistory {
+		t.Fatalf("tested history size = %d, want %d", got, testedHistory)
+	}
+	if len(s.testedOrder) != testedHistory {
+		t.Fatalf("tested order size = %d, want %d", len(s.testedOrder), testedHistory)
+	}
+	if _, kept := s.testedBatches[fmt.Sprintf("sha-%d", 3*testedHistory-1)]; !kept {
+		t.Fatal("most recent tested SHA was evicted")
+	}
+	if _, kept := s.testedBatches["sha-0"]; kept {
+		t.Fatal("oldest tested SHA was not evicted")
+	}
+}

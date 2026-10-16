@@ -58,8 +58,9 @@
 // base, tested SHA, and method, together with the current fence.
 //
 // Test commits are unique per batch: the executor includes the batch ID in the
-// top commit of every test ref. Apply retains SHA ownership across batch lifetimes
-// and rejects reuse as a non-conflict build failure with an explanatory report.
+// top commit of every test ref. As a guard against an executor that breaks this,
+// Apply remembers the last 64 tested SHAs and rejects reuse of one as a
+// non-conflict build failure with an explanatory report.
 // Late outcomes for discarded or completed batches are not retained. Snapshots
-// must preserve SHA ownership as well as the batch and admission counters.
+// must preserve the tested-SHA history as well as the batch and admission counters.
 package queue
