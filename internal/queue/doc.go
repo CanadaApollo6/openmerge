@@ -15,14 +15,22 @@
 // 64 distinct SHAs are retained per active batch; the least recently observed SHA
 // is evicted first. Matching outcomes are consumed by TestRefBuilt. Discarding or
 // completing the batch drops all remaining outcomes; idle queues retain none.
+// Retention only improves latency: a Testing batch without an outcome requests
+// RefreshChecks immediately and then every RefreshInterval (default 1m). The
+// executor records any terminal ChecksCompleted first, then records ChecksRefreshed
+// for every successful read, including pending checks. Refresh keys use the batch
+// and count of recorded refreshes. A checks timeout requires a refresh at or after
+// its deadline; until then Plan requests a refresh even if the normal interval
+// has not elapsed.
 //
 // Non-conflict build failures keep PRs queued. Plan backs off from the recorded
 // TestRefBuildFailed.At by BuildBackoff, doubling per consecutive failure (with
 // duration saturation). BuildRetries limits failures, defaulting to 3. At the limit,
 // State.PauseReason returns "build-failed" and Plan reports the pause on the head PR
 // without building. The pause is derived from Config and the recorded streak,
-// because Apply has no config input. ResumeRequested and BaseMoved clear the streak
-// and delay; successful builds also reset it. Conflicts still dequeue normally.
+// because Apply has no config input. ResumeRequested and a changed BaseSHA clear
+// the streak and delay; duplicate BaseMoved observations do nothing. Successful
+// builds also reset it. Conflicts still dequeue normally.
 //
 // LandingStarted is the durable transition into Landing, before any forge call.
 // Cancellation and invalidation wait for its definitive result. After ResolveAfter,
@@ -48,4 +56,10 @@
 // method, dequeue keys include the admission, and report keys distinguish both
 // admissions and outcome revisions. Landing always carries the tested batch's
 // base, tested SHA, and method, together with the current fence.
+//
+// Test commits are unique per batch: the executor includes the batch ID in the
+// top commit of every test ref. Apply retains SHA ownership across batch lifetimes
+// and rejects reuse as a non-conflict build failure with an explanatory report.
+// Late outcomes for discarded or completed batches are not retained. Snapshots
+// must preserve SHA ownership as well as the batch and admission counters.
 package queue

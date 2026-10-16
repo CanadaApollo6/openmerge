@@ -170,6 +170,7 @@ func TestStaleDequeueCannotRemoveNewAdmission(t *testing.T) {
 
 func TestStaleTimeoutCannotRemoveRebuiltBatch(t *testing.T) {
 	s := testingState()
+	s = Apply(s, ChecksRefreshed{BatchID: s.Active.ID, TestedSHA: s.Active.TestedSHA, At: epoch.Add(time.Hour)})
 	timeout := onlyAction[Dequeue](t, Plan(testConfig, s, epoch.Add(time.Hour)))
 	if timeout.BatchID != s.Active.ID || timeout.AdmissionID != s.Entries[0].AdmissionID {
 		t.Fatalf("timeout omitted its subject: %+v", timeout)

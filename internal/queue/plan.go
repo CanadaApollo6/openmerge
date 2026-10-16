@@ -42,12 +42,15 @@ func Plan(cfg Config, s State, now time.Time) []Action {
 	}
 	switch batch.Phase {
 	case Building:
-		if s.PauseReason(cfg) != "" {
+		paused := s.PauseReason(cfg) != ""
+		if paused || s.buildRetry.detail != "" {
 			report := s.buildFailureReport()
 			if _, done := s.acknowledged[report.Key()]; !done {
 				actions = append(actions, report)
 			}
-			return actions
+			if paused {
+				return actions
+			}
 		}
 		if s.buildRetry.failures > 0 && now.Sub(s.buildRetry.failedAt) < cfg.buildRetryDelay(s.buildRetry.failures) {
 			return actions
@@ -63,13 +66,25 @@ func Plan(cfg Config, s State, now time.Time) []Action {
 				Ref: batch.TestRef, FenceToken: s.Fence,
 				Method: batch.Method,
 			})
-		} else if cfg.CheckTimeout > 0 && now.Sub(batch.StartedTestingAt) > cfg.CheckTimeout {
+			return actions
+		}
+		deadline := batch.StartedTestingAt.Add(cfg.CheckTimeout)
+		timedOut := cfg.CheckTimeout > 0 && now.After(deadline)
+		if timedOut && batch.checkRefreshes > 0 && !batch.checksRefreshedAt.Before(deadline) {
 			for _, pr := range batch.PRs {
 				actions = append(actions, Dequeue{PR: pr.PR, AdmissionID: s.entry(pr.PR).AdmissionID, Reason: ChecksTimeout, BatchID: batch.ID, scope: "batch/" + batch.ID})
 			}
 			deletion := DeleteRef{Ref: batch.TestRef}
 			if _, done := s.acknowledged[deletion.Key()]; !done {
 				actions = append(actions, deletion)
+			}
+		} else {
+			interval := cfg.RefreshInterval
+			if interval <= 0 {
+				interval = time.Minute
+			}
+			if timedOut || batch.checkRefreshes == 0 || now.Sub(batch.checksRefreshedAt) >= interval {
+				actions = append(actions, RefreshChecks{BatchID: batch.ID, TestedSHA: batch.TestedSHA, epoch: batch.checkRefreshes})
 			}
 		}
 	}
@@ -80,11 +95,12 @@ type buildRetryState struct {
 	failures int
 	failedAt time.Time
 	revision uint64
+	detail   string
 }
 
 // PauseReason derives the configured pause from recorded failures. Apply has no
 // config input, so the retry limit is evaluated here and by Plan, never in the fold.
-// ResumeRequested, BaseMoved, or a successful build clears the failure streak.
+// ResumeRequested, a changed BaseSHA, or a successful build clears the streak.
 func (s State) PauseReason(cfg Config) string {
 	limit := cfg.BuildRetries
 	if limit <= 0 {
@@ -97,9 +113,13 @@ func (s State) PauseReason(cfg Config) string {
 }
 
 func (s State) buildFailureReport() ReportStatus {
+	detail := fmt.Sprintf("Queue paused after %d consecutive build failures; resume the queue or update the base branch", s.buildRetry.failures)
+	if s.buildRetry.detail != "" {
+		detail = fmt.Sprintf("Test ref build failed (%d consecutive failures): %s", s.buildRetry.failures, s.buildRetry.detail)
+	}
 	return ReportStatus{
 		PR: s.Entries[0].PR, Status: "build-failed", revision: s.buildRetry.revision, admission: s.Entries[0].AdmissionID,
-		Detail: fmt.Sprintf("Queue paused after %d consecutive build failures; resume the queue or update the base branch", s.buildRetry.failures),
+		Detail: detail,
 	}
 }
 

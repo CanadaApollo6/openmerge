@@ -39,6 +39,8 @@ func descriptions(actions []Action) []string {
 		switch a := action.(type) {
 		case BuildTestRef:
 			result = append(result, fmt.Sprintf("build:%s:%s:%v", a.BatchID, a.BaseSHA, a.PRs))
+		case RefreshChecks:
+			result = append(result, "refresh:"+a.BatchID+":"+a.TestedSHA)
 		case Land:
 			result = append(result, fmt.Sprintf("land:%s:%s:%s:%s", a.BatchID, a.ExpectedBaseSHA, a.TestedSHA, a.FenceToken))
 		case ResolveLanding:
@@ -136,6 +138,7 @@ func TestApplyAndPlan(t *testing.T) {
 			name: "built starts testing", initial: func() State { return queued(1) },
 			events:  []Event{TestRefBuilt{Method: Merge, BatchID: "b1", TestedSHA: "tested1", At: epoch}},
 			entries: []int{1}, batch: "b1", phase: Testing,
+			want: []string{"refresh:b1:tested1"},
 			checkState: func(t *testing.T, s State) {
 				if s.Active.TestedSHA != "tested1" || s.Active.StartedTestingAt != epoch {
 					t.Fatal("test SHA or event timestamp lost")
@@ -152,11 +155,13 @@ func TestApplyAndPlan(t *testing.T) {
 			name: "unrelated successful checks ignored", initial: testingState,
 			events:  []Event{ChecksCompleted{TestedSHA: "old-sha", Success: true}},
 			entries: []int{1}, batch: "b1", phase: Testing,
+			want: []string{"refresh:b1:tested1"},
 		},
 		{
 			name: "unrelated failed checks ignored", initial: testingState,
 			events:  []Event{ChecksCompleted{TestedSHA: "old-sha", Success: false}},
 			entries: []int{1}, batch: "b1", phase: Testing,
+			want: []string{"refresh:b1:tested1"},
 		},
 		{
 			name: "failed checks request dequeue", initial: testingState,
@@ -228,6 +233,7 @@ func TestApplyAndPlan(t *testing.T) {
 		{
 			name: "unchanged base preserves testing", initial: testingState,
 			events: []Event{BaseMoved{SHA: "base1"}}, entries: []int{1}, batch: "b1", phase: Testing,
+			want: []string{"refresh:b1:tested1"},
 		},
 		{
 			name: "base moves during landing", initial: landingState,
@@ -287,7 +293,7 @@ func TestApplyAndPlan(t *testing.T) {
 			name: "old SHA checks cannot settle rebuilt testing batch", initial: testingState,
 			events:  []Event{BaseMoved{SHA: "base2"}, TestRefBuilt{Method: Merge, BatchID: "b2", TestedSHA: "tested2", At: epoch}, ChecksCompleted{TestedSHA: "tested1", Success: true}, ChecksCompleted{TestedSHA: "tested1"}},
 			entries: []int{1}, batch: "b2", phase: Testing, base: "base2",
-			want: []string{"delete:openmerge/queue/main/b1"},
+			want: []string{"delete:openmerge/queue/main/b1", "refresh:b2:tested2"},
 		},
 		{
 			name: "explicit command supersedes deferred invalidation", initial: landingState,
@@ -364,10 +370,11 @@ func TestPlanTimers(t *testing.T) {
 		age  time.Duration
 		want []string
 	}{
-		{"checks before deadline", testingState(), testConfig, 9 * time.Minute, nil},
-		{"checks at deadline", testingState(), testConfig, 10 * time.Minute, nil},
-		{"checks after deadline", testingState(), testConfig, 10*time.Minute + time.Nanosecond, []string{"dequeue:1:checks-timeout", "delete:openmerge/queue/main/b1"}},
-		{"checks unlimited", testingState(), Config{}, 100 * time.Hour, nil},
+		{"checks before deadline", testingState(), testConfig, 9 * time.Minute, []string{"refresh:b1:tested1"}},
+		{"checks at deadline", testingState(), testConfig, 10 * time.Minute, []string{"refresh:b1:tested1"}},
+		{"checks after deadline need refresh", testingState(), testConfig, 10*time.Minute + time.Nanosecond, []string{"refresh:b1:tested1"}},
+		{"checks after deadline and refresh", Apply(testingState(), ChecksRefreshed{BatchID: "b1", TestedSHA: "tested1", At: epoch.Add(10 * time.Minute)}), testConfig, 10*time.Minute + time.Nanosecond, []string{"dequeue:1:checks-timeout", "delete:openmerge/queue/main/b1"}},
+		{"checks unlimited", testingState(), Config{}, 100 * time.Hour, []string{"refresh:b1:tested1"}},
 		{"successful checks do not time out", readyState(), testConfig, time.Hour, []string{"land:b1:base1:tested1:f0"}},
 		{"landing before delay", landingState(), testConfig, 59 * time.Second, nil},
 		{"landing at delay", landingState(), testConfig, time.Minute, nil},
@@ -424,6 +431,7 @@ func TestEffectAcknowledgements(t *testing.T) {
 	t.Run("delete acknowledgement survives until dequeue result", func(t *testing.T) {
 		s := testingState()
 		now := epoch.Add(time.Hour)
+		s = Apply(s, ChecksRefreshed{BatchID: "b1", TestedSHA: "tested1", At: now})
 		actions := assertPlan(t, testConfig, s, now, "dequeue:1:checks-timeout", "delete:openmerge/queue/main/b1")
 		s = Apply(s, ActionCompleted{Key: actions[1].Key()})
 		remaining := assertPlan(t, testConfig, s, now, "dequeue:1:checks-timeout")
@@ -520,6 +528,7 @@ func TestApplyDoesNotMutateInput(t *testing.T) {
 		TestRefBuilt{Method: Merge, BatchID: "b1", TestedSHA: "test", At: epoch}, TestRefBuildFailed{BatchID: "b1", Conflict: true},
 		TestRefBuildFailed{BatchID: "b1", At: epoch},
 		ChecksCompleted{TestedSHA: "tested1"}, LandingStarted{BatchID: "b1", AttemptID: "a2", At: epoch},
+		ChecksRefreshed{BatchID: "b1", TestedSHA: "tested1", At: epoch},
 		Landed{BatchID: "b1", NewBaseSHA: "test", NewFence: "f1"},
 		LandingRejected{BatchID: "b1", ActualBaseSHA: "base2", ActualFence: "f1"},
 		LandingAbandoned{BatchID: "b1", NewFence: "f1"}, Dequeued{PR: 1, AdmissionID: 1, Reason: Requested},
@@ -549,6 +558,7 @@ func TestApplyDoesNotMutateInput(t *testing.T) {
 				next.observations[1] = PRObserved{}
 				next.dequeues[1] = Dequeue{}
 				next.checks["caller mutation"] = retainedCheck{}
+				next.testedBatches["caller mutation"] = "b99"
 				next.acknowledged["caller mutation"] = effectScope{}
 				if !reflect.DeepEqual(s, original) {
 					t.Fatal("returned state aliases input")
@@ -591,7 +601,7 @@ func (sc *scenario) acknowledgeEffects() {
 
 func (sc *scenario) land(batch, tested, base, fence, nextFence string, next ...string) {
 	sc.t.Helper()
-	sc.step(TestRefBuilt{Method: Merge, BatchID: batch, TestedSHA: tested, At: sc.now})
+	sc.step(TestRefBuilt{Method: Merge, BatchID: batch, TestedSHA: tested, At: sc.now}, "refresh:"+batch+":"+tested)
 	sc.step(ChecksCompleted{TestedSHA: tested, Success: true}, "land:"+batch+":"+base+":"+tested+":"+fence)
 	sc.step(LandingStarted{BatchID: batch, AttemptID: "attempt-" + batch, FenceToken: fence, At: sc.now})
 	pr := sc.s.Active.PRs[0].PR
@@ -615,7 +625,7 @@ func TestSerialScenarios(t *testing.T) {
 	t.Run("middle PR fails checks", func(t *testing.T) {
 		sc := scenario{t: t, s: queued(1, 2, 3), now: epoch}
 		sc.land("b1", "tested1", "base1", "f0", "f1", "build:b2:tested1:[{2 head2}]")
-		sc.step(TestRefBuilt{Method: Merge, BatchID: "b2", TestedSHA: "bad", At: epoch})
+		sc.step(TestRefBuilt{Method: Merge, BatchID: "b2", TestedSHA: "bad", At: epoch}, "refresh:b2:bad")
 		sc.step(ChecksCompleted{TestedSHA: "bad"}, "dequeue:2:checks-failed", "delete:openmerge/queue/main/b2")
 		sc.acknowledgeEffects()
 		sc.step(Dequeued{PR: 2, AdmissionID: 2, Reason: ChecksFailed}, "report:2:dequeued:checks-failed", "build:b3:tested1:[{3 head3}]")
@@ -637,9 +647,10 @@ func TestSerialScenarios(t *testing.T) {
 	})
 	t.Run("timeout dequeue advances to next PR", func(t *testing.T) {
 		sc := scenario{t: t, s: queued(1, 2), now: epoch}
-		sc.step(TestRefBuilt{Method: Merge, BatchID: "b1", TestedSHA: "slow", At: epoch})
+		sc.step(TestRefBuilt{Method: Merge, BatchID: "b1", TestedSHA: "slow", At: epoch}, "refresh:b1:slow")
 		sc.now = epoch.Add(11 * time.Minute)
-		assertPlan(t, testConfig, sc.s, sc.now, "dequeue:1:checks-timeout", "delete:openmerge/queue/main/b1")
+		assertPlan(t, testConfig, sc.s, sc.now, "refresh:b1:slow")
+		sc.step(ChecksRefreshed{BatchID: "b1", TestedSHA: "slow", At: sc.now}, "dequeue:1:checks-timeout", "delete:openmerge/queue/main/b1")
 		sc.step(Dequeued{PR: 1, AdmissionID: 1, Reason: ChecksTimeout}, "delete:openmerge/queue/main/b1", "report:1:dequeued:checks-timeout", "build:b2:base1:[{2 head2}]")
 		sc.acknowledgeEffects()
 		sc.land("b2", "tested2", "base1", "f0", "f1")

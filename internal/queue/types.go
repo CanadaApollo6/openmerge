@@ -11,6 +11,8 @@ type Config struct {
 	MergeMethod  MergeMethod
 	CheckTimeout time.Duration
 	ResolveAfter time.Duration
+	// RefreshInterval bounds the delay before reconciling checks; nonpositive defaults to 1m.
+	RefreshInterval time.Duration
 	// BuildRetries is the consecutive non-conflict failure limit; zero defaults to 3.
 	BuildRetries int
 	// BuildBackoff is the first retry delay, doubled for each consecutive failure.
@@ -44,6 +46,7 @@ type State struct {
 	effects       []Action
 	acknowledged  map[string]effectScope
 	checks        map[string]retainedCheck
+	testedBatches map[string]string
 	buildRetry    buildRetryState
 }
 
@@ -68,7 +71,9 @@ type Batch struct {
 	StartedTestingAt time.Time
 	LandingAttempt   LandingAttempt
 
-	checksPassed bool
+	checksPassed      bool
+	checksRefreshedAt time.Time
+	checkRefreshes    uint64
 }
 
 // BatchPR pins the exact head used to build a test ref.
@@ -119,13 +124,21 @@ type PRObserved struct {
 	Eligible, Trusted bool
 }
 
-// BaseMoved invalidates test work, but cannot settle an in-flight landing.
+// BaseMoved invalidates test work when the SHA changes, but cannot settle a landing.
+// Observing the current BaseSHA again is a no-op, including for build retries.
 type BaseMoved struct{ SHA string }
 
 // ChecksCompleted is correlated by tested SHA, independently of webhook order.
 type ChecksCompleted struct {
 	TestedSHA string
 	Success   bool
+}
+
+// ChecksRefreshed records a forge read after any terminal ChecksCompleted result.
+// It is correlated by both batch and tested SHA, even when checks are still pending.
+type ChecksRefreshed struct {
+	BatchID, TestedSHA string
+	At                 time.Time
 }
 
 // PRClosed revokes the observation so a closed PR cannot be admitted again.
@@ -186,6 +199,7 @@ type ActionCompleted struct{ Key string }
 func (PRObserved) queueEvent()         {}
 func (BaseMoved) queueEvent()          {}
 func (ChecksCompleted) queueEvent()    {}
+func (ChecksRefreshed) queueEvent()    {}
 func (PRClosed) queueEvent()           {}
 func (EnqueueRequested) queueEvent()   {}
 func (DequeueRequested) queueEvent()   {}
@@ -207,11 +221,21 @@ type Action interface {
 }
 
 // BuildTestRef pins the input heads, base, and merge method at planning time.
+// The executor must include BatchID in the top commit (for example, an
+// OpenMerge-Batch trailer), so each tested SHA identifies exactly one batch.
 type BuildTestRef struct {
 	BatchID, BaseSHA string
 	PRs              []BatchPR
 	Ref              string
 	Method           MergeMethod
+}
+
+// RefreshChecks reads forge CI status for TestedSHA. The executor first appends
+// ChecksCompleted if terminal, then always appends ChecksRefreshed with the read
+// time. A failed read must be retried without recording a successful refresh.
+type RefreshChecks struct {
+	BatchID, TestedSHA string
+	epoch              uint64
 }
 
 // Land requires an atomic compare-and-swap on both the base and fence.
@@ -244,6 +268,7 @@ type ReportStatus struct {
 }
 
 func (BuildTestRef) queueAction()   {}
+func (RefreshChecks) queueAction()  {}
 func (Land) queueAction()           {}
 func (ResolveLanding) queueAction() {}
 func (DeleteRef) queueAction()      {}
@@ -252,6 +277,11 @@ func (ReportStatus) queueAction()   {}
 
 // Key distinguishes the planned method as well as the unique batch.
 func (a BuildTestRef) Key() string { return "batch/" + a.BatchID + "/build/" + string(a.Method) }
+
+// Key stays stable until a refresh result advances this batch's refresh epoch.
+func (a RefreshChecks) Key() string {
+	return fmt.Sprintf("batch/%s/checks/refresh/%d", a.BatchID, a.epoch)
+}
 
 // Key identifies the single landing attempt allowed for this batch.
 func (a Land) Key() string { return "batch/" + a.BatchID + "/land" }

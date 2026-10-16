@@ -46,7 +46,7 @@ type Driver interface {
 
 **Capabilities are explicit.** Each driver declares what it supports: check runs vs commit statuses, fast-forward landing, a native merge queue, labels, reactions. The planner reads capabilities instead of branching on forge names.
 
-**Test refs are built with git, not forge merge APIs.** A shared git component fetches the base and the queued PRs, composes the speculative commits locally, and pushes them to `openmerge/queue/...` refs over the driver's `GitRemote`. This works the same on every forge. The host running OpenMerge needs the `git` executable, which the container image includes.
+**Test refs are built with git, not forge merge APIs.** A shared git component fetches the base and the queued PRs, composes the speculative commits locally, and pushes them to `openmerge/queue/...` refs over the driver's `GitRemote`. The top commit of every test ref carries the batch ID, so a tested SHA identifies exactly one batch. This works the same on every forge. The host running OpenMerge needs the `git` executable, which the container image includes.
 
 **Landing is a compare-and-swap on the base branch.** `LandRequest` carries the PR, the merge method, the expected base SHA, the tested commit SHA, and the base branch's current fence token (below). A driver must make the base check atomic with the write: a preflight read followed by a merge call is not enough, because the base can move in between.
 

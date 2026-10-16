@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"time"
 )
 
 // Apply folds one event without mutating s or any slices or maps reachable from it.
@@ -42,6 +43,9 @@ func Apply(s State, e Event) State {
 		delete(s.observations, e.PR)
 		s.requestDequeue(e.PR, Closed)
 	case BaseMoved:
+		if e.SHA == s.BaseSHA {
+			break
+		}
 		s.BaseSHA = e.SHA
 		s.buildRetry = buildRetryState{}
 		if s.Active != nil && s.Active.Phase != Landing && s.Active.BaseSHA != e.SHA {
@@ -51,6 +55,11 @@ func Apply(s State, e Event) State {
 		s.buildRetry = buildRetryState{}
 	case TestRefBuilt:
 		if s.batchIn(e.BatchID, Building) {
+			if earlier, used := s.testedBatches[e.TestedSHA]; used {
+				s.failBuild(e.At, fmt.Sprintf("tested SHA %s was already recorded for batch %s; the top commit must carry the batch ID", e.TestedSHA, earlier))
+				break
+			}
+			s.testedBatches[e.TestedSHA] = e.BatchID
 			s.Active.TestedSHA = e.TestedSHA
 			s.Active.Method = e.Method
 			s.Active.StartedTestingAt = e.At
@@ -68,17 +77,23 @@ func Apply(s State, e Event) State {
 					s.requestDequeue(pr.PR, Conflict)
 				}
 			} else {
-				s.buildRetry.failures++
-				s.buildRetry.failedAt = e.At
-				s.buildRetry.revision = s.revision
-				s.discardBatch()
+				s.failBuild(e.At, "")
 			}
 		}
 	case ChecksCompleted:
 		if s.Active != nil && s.Active.Phase == Testing && s.Active.TestedSHA == e.TestedSHA {
 			s.completeChecks(e.Success)
 		} else if s.Active != nil {
-			s.retainChecks(e)
+			if _, used := s.testedBatches[e.TestedSHA]; !used {
+				s.retainChecks(e)
+			}
+		}
+	case ChecksRefreshed:
+		if s.batchIn(e.BatchID, Testing) && s.Active.TestedSHA == e.TestedSHA {
+			if s.Active.checkRefreshes == 0 || e.At.After(s.Active.checksRefreshedAt) {
+				s.Active.checksRefreshedAt = e.At
+			}
+			s.Active.checkRefreshes++
 		}
 	case LandingStarted:
 		if s.batchIn(e.BatchID, Testing) {
@@ -150,6 +165,10 @@ func cloneState(s State) State {
 	if s.checks == nil {
 		s.checks = make(map[string]retainedCheck)
 	}
+	s.testedBatches = maps.Clone(s.testedBatches)
+	if s.testedBatches == nil {
+		s.testedBatches = make(map[string]string)
+	}
 	s.acknowledged = maps.Clone(s.acknowledged)
 	if s.acknowledged == nil {
 		s.acknowledged = make(map[string]effectScope)
@@ -212,8 +231,17 @@ func (s *State) discardBatch() {
 	clear(s.checks)
 }
 
+func (s *State) failBuild(at time.Time, detail string) {
+	s.buildRetry.failures++
+	s.buildRetry.failedAt = at
+	s.buildRetry.revision = s.revision
+	s.buildRetry.detail = detail
+	s.discardBatch()
+}
+
 // maxRetainedChecks bounds unrelated or reordered CI observations per active batch.
 // Eviction drops the least recently observed SHA, using the event revision.
+// Missing outcomes are reconciled by RefreshChecks; retention only saves a read.
 const maxRetainedChecks = 64
 
 type retainedCheck struct {
