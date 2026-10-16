@@ -91,12 +91,20 @@ The exit test also requires verification on a real GitHub test organization.
 - Pause, scheduled freezes with exclusions, `schedule` conditions
 - Read-only web dashboard: queue graph, batch history, why-is-my-PR-stuck explainer
 - **MCP server** exposing queue status, enqueue/dequeue, failure explanations
-- **Post-merge verification mode** ([ADR 0005](docs/adr/0005-verification-modes.md)): per-queue `verification: post_merge`, admission tests bounded by `max_base_age`, landing composed on the current tip with an honest tested/landed record
-- **Green ref** `openmerge/green/<base>` for deploys, advanced only to passing commits
-- **Culprit finding on main:** rerun once, bisect landed commits on `openmerge/verify/**`, then `on_red: revert | pause | notify`, with a structured report to the culprit's author and a `max_red` circuit breaker
-- **Conflict handoff:** a conflict sends the author a structured event and holds the PR's position for `conflict_grace`
 
-**Exit:** at 2,000 simulated PRs/day with 30-minute CI, a strict queue keeps median time-to-merge under 2x CI duration with CI runs per merged PR under 1.5. At 30,000 simulated PRs/day with 30-minute CI and 1% bad changes, a post-merge queue keeps median time-to-merge under CI duration plus 5 minutes, the green ref is never red, and every bad landing is reverted within 3x CI duration.
+**Exit:** at 2,000 simulated PRs/day with 30-minute CI, median time-to-merge stays under 2x CI duration, and CI runs per merged PR stays under 1.5.
+
+### Phase 2b — Post-merge verification mode
+
+Built after Phase 1 closes, in parallel with Phase 2 where they don't overlap ([ADR 0005](docs/adr/0005-verification-modes.md)).
+
+- Per-queue `verification: post_merge` with `max_base_age`, `on_red` and `max_red`; admission on a pinned head, fresh trust gate at landing, composition on the current tip, and an honest tested-as/landed-as record (new event types and fence form)
+- **Green ref** `openmerge/green/<base>` for deploys, advanced only to green commits with no unresolved red ancestor
+- **Red commits:** one rerun, culprit from per-commit CI (verify refs only for skipped commits), one verified automatic remedy, then escalation with ordinary landings paused
+- **Conflict events:** structured conflict reports to the author; the fixed push re-enters at the back until change identity (Phase 3)
+- Simulator: post-merge model with a finite CI runner pool, injected bad changes, interacting culprits and flakes
+
+**Exit:** at 30,000 simulated PRs/day, 30-minute CI, a 2,000-runner pool and 1% independent bad changes, a post-merge queue keeps median time-to-merge under CI duration plus 10 minutes and CI runs per merged PR under 2.5. The green ref never points at a commit that isn't green or has an unresolved red ancestor. Every independent bad change is remedied, with the base green again, within 4x CI duration, and every interacting or inconclusive case escalates within `max_red`.
 
 ### Phase 3 — Agent-native
 
@@ -104,6 +112,7 @@ The exit test also requires verification on a real GitHub test organization.
 - Per-author and per-agent concurrency, CI-spend, and retry budgets, with escalation to a human
 - Agent-aware policy rules (policy-bot style): e.g. agent-authored PRs touching `infra/**` need two human approvals
 - Structured failure explanations: which batch, which check, which tests, flaky or real, suggested next action
+- **Conflict grace:** with change identity, a conflicting PR may hold its position for one non-renewable `conflict_grace` with bounded retries, while PRs behind it keep landing
 - **Change classification for approvals:** comment-only, docs-only, generated, or owned-directory changes, so policy can ask for human review of intent only where it matters
 - **Write API and lookups agents need:** enqueue/dequeue/refresh over the API, and "which commit landed PR N" without scanning history
 - A ready-made **queue-watcher agent skill** that reads the structured logs and "why" API and reports anomalies
@@ -150,7 +159,7 @@ The exit test also requires verification on a real GitHub test organization.
 | Strict serial | always green | lowest | small repos, regulated code | 1 |
 | Batched + speculative (default) | always green | high | most teams | 2 |
 | Optimistic | green except rare intermittent bugs | higher | high flake rates | 2 |
-| Post-merge verify + auto-revert | briefly red, auto-healed; deploy from the green ref | highest | agent-scale repositories | 2 |
+| Post-merge verify + auto-revert | briefly red, auto-healed; deploy from the green ref | highest | agent-scale repositories | 2b |
 | Lanes (scopes) | green per lane | scales with independence | monorepos | 4 |
 
 ## Decisions
