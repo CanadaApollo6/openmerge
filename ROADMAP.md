@@ -82,10 +82,8 @@ Classic reads use installation permissions, so operators still audit protection
 when Administration read is unavailable and hidden ruleset bypass ownership.
 
 Phase 1 is **not complete**. Remaining work: publish the version-1 JSON Schema,
-implement the listed fast-forward mode (merge/squash/rebase are available),
-finish landing/status polish (co-author dedupe, why-view summaries, head-branch
-deletion and the status table), and verify the exit test on a real GitHub test
-organization. The Mergify importer remains a Phase 5 deliverable.
+implement the listed fast-forward mode (merge/squash/rebase are available), and
+verify the exit test on a real GitHub test organization. The Mergify importer remains a Phase 5 deliverable.
 
 **Exit:** OpenMerge merges its own PRs. A simulated 500-PR day with 5% failure rate lands every passing PR with main green throughout.
 
