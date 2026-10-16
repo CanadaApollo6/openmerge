@@ -145,6 +145,11 @@ func (a MarkLanded) Validate() error {
 	return requireActionText("head_sha", a.HeadSHA, "landed_sha", a.LandedSHA)
 }
 
+// Validate pins cleanup to the landed PR and original head.
+func (a DeleteHeadBranch) Validate() error {
+	return (MarkLanded(a)).Validate()
+}
+
 // Validate requires a durable composition, base and recorded clock origin.
 func (e BatchStarted) Validate() error {
 	if err := requireActionText("batch_id", e.BatchID, "base_sha", e.BaseSHA); err != nil {

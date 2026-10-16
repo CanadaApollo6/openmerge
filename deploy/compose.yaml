@@ -34,6 +34,7 @@ services:
       OPENMERGE_API_LISTEN: 0.0.0.0:8081
       OPENMERGE_API_TOKEN: ${OPENMERGE_API_TOKEN:?set OPENMERGE_API_TOKEN to a random bearer token}
       OPENMERGE_LOG_LEVEL: ${OPENMERGE_LOG_LEVEL:-info}
+      OPENMERGE_DELETE_HEAD_BRANCH: ${OPENMERGE_DELETE_HEAD_BRANCH:-true}
     volumes:
       - git-cache:/var/lib/openmerge/git
       - type: bind

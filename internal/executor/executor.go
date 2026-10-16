@@ -30,6 +30,8 @@ type Executor struct {
 	AllowNoRequiredChecks bool
 	// AllowSkippedNeutral explicitly permits skipped and neutral required checks.
 	AllowSkippedNeutral bool
+	// DisableDeleteHeadBranch retains landed heads; default false enables cleanup.
+	DisableDeleteHeadBranch bool
 	// CheckPolicy evaluates repository merge conditions on the tested SHA.
 	// Nil retains the explicit RequiredChecks policy.
 	CheckPolicy func([]forge.CheckRun) (terminal, success bool, err error)
@@ -157,6 +159,22 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 	case queue.DeleteRef:
 		if err := x.Driver.DeleteRef(ctx, x.Repo, a.Ref); err != nil {
 			return err
+		}
+		return emit(queue.ActionCompleted{Key: a.Key()})
+	case queue.DeleteHeadBranch:
+		if !x.DisableDeleteHeadBranch {
+			if err := x.verifyLanding(ctx, a.LandedSHA, ""); err != nil {
+				return err
+			}
+			branch, err := x.Driver.HeadBranchForDeletion(ctx, x.Repo, a.PR, a.HeadSHA, x.Base)
+			if err != nil {
+				return err
+			}
+			if branch != "" {
+				if err := x.Git.DeleteBranch(ctx, x.Repo, branch, a.HeadSHA); err != nil {
+					return err
+				}
+			}
 		}
 		return emit(queue.ActionCompleted{Key: a.Key()})
 	case queue.ReportStatus:

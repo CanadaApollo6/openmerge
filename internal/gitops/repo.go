@@ -38,8 +38,9 @@ type Config struct {
 	Author, Committer Identity
 	// PullRequest supplies current metadata at build time. Production callers
 	// must set it; nil uses Author and generic messages for standalone git use.
-	PullRequest func(context.Context, forge.RepoRef, int) (forge.PullRequest, error)
-	Now         func() time.Time
+	PullRequest   func(context.Context, forge.RepoRef, int) (forge.PullRequest, error)
+	CommitAuthors func(context.Context, forge.RepoRef, int) ([]forge.CommitAuthor, error)
+	Now           func() time.Time
 	// GCInterval and GCThresholdBytes trigger best-effort cache collection after
 	// an operation. Zero selects one hour / 512 MiB; negative disables a trigger.
 	GCInterval       time.Duration

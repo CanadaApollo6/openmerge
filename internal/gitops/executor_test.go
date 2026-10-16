@@ -30,7 +30,7 @@ func TestExecutorSerialQueueOverRealGit(t *testing.T) {
 			driver := fake.New()
 			now := epoch
 			x := executor.Executor{Driver: driver, Git: f.g, Repo: testRepo, Base: "main",
-				RequiredChecks: []string{"ci"}, Now: func() time.Time { return now }}
+				DisableDeleteHeadBranch: true, RequiredChecks: []string{"ci"}, Now: func() time.Time { return now }}
 			cfg := queue.Config{MergeMethod: queue.Merge, CheckTimeout: time.Minute, ResolveAfter: time.Minute}
 			s := queue.State{BaseBranch: "main", BaseSHA: f.base, Fence: fence}
 			for _, pr := range f.prs {

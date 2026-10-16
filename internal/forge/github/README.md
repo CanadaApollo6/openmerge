@@ -271,3 +271,26 @@ and [check runs](https://docs.github.com/en/rest/checks/runs).
 mappings, approval supersession, refresh concurrency, cooldowns, spoofing,
 restart recovery, signature mismatches at every digest byte, and webhook fixture
 normalization. No live API tests or credentials are needed.
+
+## Build attribution and landed head cleanup
+
+`CommitAuthors` follows the [PR commits API](https://docs.github.com/en/rest/pulls/pulls#list-commits-on-a-pull-request)
+and exposes the linked `author.login` / `author.id`, separately from git commit
+names/emails. It runs once per PR in a squash/merge test-ref build, never in the
+poll loop; rebase preserves original authors and makes no extra call. Measured
+by `TestCommitAuthorsPaginationAndRequestCost`: **one additional request** for a
+single-page PR, one more per page (100 commits per page in production; the test
+uses two-item pages). GitHub limits this endpoint to 250 commits; any unreturned
+commits fall back to git email attribution. Supporting larger PRs with complete
+linked-user attribution is a follow-up.
+
+`HeadBranchForDeletion` freshly reads the closed PR, repository default branch,
+[branch protection](https://docs.github.com/en/rest/branches/branches#get-a-branch),
+and all open PRs targeting the head. Protection includes branch protections and
+rulesets; an omitted protection value fails closed. Only same-repository pinned
+heads outside base/default and OpenMerge namespaces qualify. Missing branches
+are a successful no-op; read failures retry. Deletion uses git with an explicit
+old-SHA lease, preserving concurrent head pushes. These reads and the push are
+not atomic: GitHub provides no transaction covering PR targeting or protection
+changes and deletion. Administrators should retain long-lived integration heads
+with protection or disable cleanup if they require that transaction guarantee.

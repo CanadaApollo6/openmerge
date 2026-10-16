@@ -202,6 +202,12 @@ type wireMarkLanded struct {
 	LandedSHA string `json:"landed_sha"`
 }
 
+type wireDeleteHeadBranch struct {
+	PR        int    `json:"pr"`
+	HeadSHA   string `json:"head_sha"`
+	LandedSHA string `json:"landed_sha"`
+}
+
 func encodeWire(name string, data any) (string, []byte, error) {
 	raw, err := json.Marshal(data)
 	if err != nil {
@@ -561,6 +567,8 @@ func EncodeAction(value Action) (string, []byte, error) {
 		return encodeWire("report_status", wireReportStatus{PR: v.PR, HeadSHA: v.HeadSHA, Status: v.Status, Reason: v.Reason, Detail: v.Detail, Revision: v.revision, Admission: v.admission})
 	case MarkLanded:
 		return encodeWire("mark_landed", wireMarkLanded(v))
+	case DeleteHeadBranch:
+		return encodeWire("delete_head_branch", wireDeleteHeadBranch(v))
 	default:
 		return "", nil, fmt.Errorf("unregistered queue action %T", value)
 	}
@@ -606,6 +614,10 @@ func DecodeAction(payload []byte) (Action, error) {
 	case "mark_landed":
 		return decodeWireAction(envelope.Data, func(v wireMarkLanded) Action {
 			return MarkLanded(v)
+		})
+	case "delete_head_branch":
+		return decodeWireAction(envelope.Data, func(v wireDeleteHeadBranch) Action {
+			return DeleteHeadBranch(v)
 		})
 	default:
 		return nil, fmt.Errorf("unknown queue action type %q", envelope.Type)

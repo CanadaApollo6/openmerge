@@ -198,3 +198,33 @@ OpenMerge posts an idempotent **Landed in [commit]** comment linking the tested,
 landed SHA and then closes each PR. This is expected; no second GitHub merge is
 performed to change the badge. PR title/body edits after the test-ref build do
 not alter the commit that lands.
+
+## Landed head cleanup
+
+`serve --delete-head-branch` / `OPENMERGE_DELETE_HEAD_BRANCH` defaults to true.
+Set it to false to retain heads. The option is server-wide until per-repository
+`delete_head_branch` configuration is added; it intentionally does not modify
+the queue config schema in this release.
+
+A confirmed `Landed` schedules the new `delete_head_branch` action, with an
+idempotency key pinned to PR, original head, and landed SHA. For squash/rebase,
+it waits until `MarkLanded` is acknowledged. The executor rechecks that the
+landed commit remains on the base, then checks the closed PR's repository,
+original head, base/default branch, protection, and open PRs targeting that head.
+It deletes with an exact-head git lease. Forks, protected heads, OpenMerge refs,
+base/default branches, and heads with dependants are retained. Missing or
+changed heads are no-ops; infrastructure errors retry. Disabling cleanup
+acknowledges the action without deletion; enabling it later does not revisit
+those acknowledged actions.
+
+On upgrade, replay can schedule cleanup for historical confirmed landings too.
+All current safety reads and leases still apply; set the option false before
+upgrading if historical heads should be retained. New action types are additive
+wire v1 changes with a golden fixture; existing payloads are unchanged. Drain
+old workers before upgrading; older binaries reject the new action type.
+
+The durable pending-CI writes remain unchanged. Skipping a reopen based on an
+unlocked projection would race a concurrent passing `Land` preflight: a delayed
+success could restore success without invalidating the old generation. The why
+view instead groups identical consecutive reopen/refresh pairs and explains
+whether the fold actually revoked recorded success. Stored evidence is retained.

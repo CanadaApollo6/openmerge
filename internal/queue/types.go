@@ -328,6 +328,20 @@ type ResolveLanding struct{ BatchID, AttemptID, TestedSHA, FenceToken string }
 // DeleteRef is repeatable cleanup, acknowledged separately from queue transitions.
 type DeleteRef struct{ Ref string }
 
+// DeleteHeadBranch cleans a confirmed landing after MarkLanded, if required,
+// has completed. Execution revalidates branch eligibility and leases HeadSHA.
+type DeleteHeadBranch struct {
+	PR                 int
+	HeadSHA, LandedSHA string
+}
+
+func (DeleteHeadBranch) queueAction() {}
+
+// Key distinguishes landed heads while keeping retries of one cleanup stable.
+func (a DeleteHeadBranch) Key() string {
+	return fmt.Sprintf("pr/%d/delete-head/%s/%s", a.PR, a.HeadSHA, a.LandedSHA)
+}
+
 // Dequeue remains pending until the executor records a Dequeued result.
 type Dequeue struct {
 	HeadSHA     string

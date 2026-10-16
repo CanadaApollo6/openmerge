@@ -9,6 +9,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/CanadaApollo6/openmerge/internal/status"
 )
 
 const statusJSON = `{"version":1,"queue":{"installation":"7","repo":"owner/repo","base":"release/v1","lane":"","watermark":3,"base_sha":"base","paused":true,"pause_reason":"repository-rules","pause_detail":"fix fence","blocks":[{"reason":"repository-rules","detail":"fix fence"},{"reason":"action-poisoned","detail":"invalid action"}],"active_batch":null,"entries":[{"position":1,"pr":1,"head_sha":"0123456789012345","admitted_at":"2026-10-16T12:00:00Z","status":"paused","reason":"repository-rules","last_dequeue_reason":""}]},"pr":{"position":1,"pr":1,"head_sha":"0123456789012345","admitted_at":"2026-10-16T12:00:00Z","status":"paused","reason":"repository-rules","last_dequeue_reason":""},"why":{"summary":"PR #1: paused (repository-rules): fix fence","limit":20,"events":[{"id":3,"type":"rules_blocked","at":"2026-10-16T12:00:00Z","summary":"Repository rules block: fix fence"}]}}
@@ -148,5 +151,32 @@ func TestQueueStatusUsageAndOutputFailures(t *testing.T) {
 		if code := runQueue(append([]string{"status", "--api", server.URL, "--repo", "owner/repo", "--pr", "1"}, extra...), brokenWriter{}, io.Discard); code != 1 {
 			t.Fatalf("output failure=%d", code)
 		}
+	}
+}
+
+func TestStatusTableInactivePositionAndPendingRange(t *testing.T) {
+	for _, state := range []string{"merged", "dequeued", "not-queued", "queued"} {
+		t.Run(state, func(t *testing.T) {
+			position, want := 0, "-"
+			if state == "queued" {
+				position, want = 2, "2"
+			}
+			until := time.Date(2026, 10, 16, 12, 1, 0, 0, time.UTC)
+			response := status.Response{Queue: &status.Queue{Repository: "owner/repo", Base: "main"}, PR: &status.Entry{PR: 1, Position: position, Status: state, HeadSHA: "head"}, Why: &status.Why{Summary: "PR #1: " + state, Events: []status.Event{{ID: 6, EndID: 15, At: until.Add(-time.Minute), Until: &until, Summary: "CI still pending", Count: 5}}}}
+			var out bytes.Buffer
+			if err := printStatus(&out, response); err != nil {
+				t.Fatal(err)
+			}
+			lines := strings.Split(out.String(), "\n")
+			fields := strings.Fields(lines[1])
+			if len(fields) < 6 || fields[2] != want {
+				t.Fatalf("bad position: %s", &out)
+			}
+			for _, text := range []string{"CI still pending (5 observations)", "2026-10-16T12:00:00Z – 2026-10-16T12:01:00Z", "6–15"} {
+				if !strings.Contains(out.String(), text) {
+					t.Fatalf("missing %q: %s", text, &out)
+				}
+			}
+		})
 	}
 }

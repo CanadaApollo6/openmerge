@@ -32,6 +32,7 @@ type serveOptions struct {
 	apiListen, apiToken, apiTokenFile                 string
 	poll, rulesInterval                               time.Duration
 	concurrency                                       int
+	deleteHeadBranch                                  bool
 }
 
 func parseServe(args []string, output io.Writer) (serveOptions, error) {
@@ -62,13 +63,14 @@ func parseServe(args []string, output io.Writer) (serveOptions, error) {
 	flags.Int64Var(&o.installation, "github-installation-id", 0, "installation ID (OPENMERGE_GITHUB_INSTALLATION_ID)")
 	flags.DurationVar(&o.poll, "poll-interval", time.Minute, "reconcile interval (OPENMERGE_POLL_INTERVAL)")
 	flags.DurationVar(&o.rulesInterval, "rules-interval", 10*time.Minute, "repository rules validation interval (OPENMERGE_RULES_INTERVAL)")
+	flags.BoolVar(&o.deleteHeadBranch, "delete-head-branch", true, "delete eligible same-repository landed heads (OPENMERGE_DELETE_HEAD_BRANCH)")
 	flags.IntVar(&o.concurrency, "concurrency", 4, "concurrent queues (OPENMERGE_CONCURRENCY)")
 	if err := flags.Parse(args); err != nil {
 		return o, err
 	}
 	overridden := make(map[string]bool)
 	flags.Visit(func(f *flag.Flag) { overridden[f.Name] = true })
-	for _, entry := range []struct{ flag, env string }{{"github-app-id", "GITHUB_APP_ID"}, {"github-installation-id", "GITHUB_INSTALLATION_ID"}, {"poll-interval", "POLL_INTERVAL"}, {"rules-interval", "RULES_INTERVAL"}, {"concurrency", "CONCURRENCY"}} {
+	for _, entry := range []struct{ flag, env string }{{"delete-head-branch", "DELETE_HEAD_BRANCH"}, {"github-app-id", "GITHUB_APP_ID"}, {"github-installation-id", "GITHUB_INSTALLATION_ID"}, {"poll-interval", "POLL_INTERVAL"}, {"rules-interval", "RULES_INTERVAL"}, {"concurrency", "CONCURRENCY"}} {
 		if value, ok := os.LookupEnv("OPENMERGE_" + entry.env); ok && !overridden[entry.flag] {
 			if err := flags.Set(entry.flag, value); err != nil {
 				return o, fmt.Errorf("OPENMERGE_%s: %w", entry.env, err)
@@ -152,7 +154,7 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger, saniti
 		return err
 	}
 	committer := serveCommitter(ctx, o, logger, driver)
-	git, err := gitops.New(ctx, gitops.Config{WorkDir: o.cache, Remote: driver.Remote, HeadRef: github.HeadRef, PullRequest: driver.PullRequest, Committer: committer})
+	git, err := gitops.New(ctx, gitops.Config{WorkDir: o.cache, Remote: driver.Remote, HeadRef: github.HeadRef, PullRequest: driver.PullRequest, CommitAuthors: driver.CommitAuthors, Committer: committer})
 	if err != nil {
 		return err
 	}
@@ -165,7 +167,7 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger, saniti
 			return driver.ValidateRepositoryRules(ctx, forge.RepoRef{Path: repo}, o.base)
 		}})
 	}
-	service, err := serve.New(ctx, db, targets, serve.Options{PollInterval: o.poll, RulesInterval: o.rulesInterval, Concurrency: o.concurrency, Logger: logger, BackoffUntil: driver.BackoffUntil})
+	service, err := serve.New(ctx, db, targets, serve.Options{PollInterval: o.poll, RulesInterval: o.rulesInterval, Concurrency: o.concurrency, Logger: logger, BackoffUntil: driver.BackoffUntil, DisableDeleteHeadBranch: !o.deleteHeadBranch})
 	if err != nil {
 		return err
 	}

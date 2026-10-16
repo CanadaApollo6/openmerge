@@ -106,7 +106,7 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 			return nil
 		}
 	}
-	x := executor.Executor{Driver: w.Driver, Git: w.Git, Repo: w.repo(), Base: w.Key.BaseBranch}
+	x := executor.Executor{Driver: w.Driver, Git: w.Git, Repo: w.repo(), Base: w.Key.BaseBranch, DisableDeleteHeadBranch: s.options.DisableDeleteHeadBranch}
 	var finalChecks []forge.CheckRun
 	x.CheckPolicy = func(checks []forge.CheckRun) (bool, bool, error) {
 		finalChecks = checks

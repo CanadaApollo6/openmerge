@@ -39,7 +39,7 @@ func (s *simulation) recoverFaults(scope string) {
 	delete(s.pendingFaults, scope)
 }
 
-var forgeMethods = []string{"PullRequest", "CheckRuns", "DeleteRef", "ReportStatus", "MarkLanded", "Comment", "BuildTestRef", "Land", "EnsureFence", "AdvanceFence", "ReadFence", "ReadRef", "IsAncestor"}
+var forgeMethods = []string{"CommitAuthors", "HeadBranchForDeletion", "DeleteBranch", "PullRequest", "CheckRuns", "DeleteRef", "ReportStatus", "MarkLanded", "Comment", "BuildTestRef", "Land", "EnsureFence", "AdvanceFence", "ReadFence", "ReadRef", "IsAncestor"}
 
 type pushTimeout struct{}
 
@@ -189,4 +189,24 @@ func (f *faultForge) IsAncestor(ctx context.Context, repo forge.RepoRef, ancesto
 		return false, err
 	}
 	return f.Forge.IsAncestor(ctx, repo, ancestor, descendant)
+}
+
+func (f *faultForge) CommitAuthors(ctx context.Context, repo forge.RepoRef, number int) ([]forge.CommitAuthor, error) {
+	if err := f.before("CommitAuthors"); err != nil {
+		return nil, err
+	}
+	return f.Forge.CommitAuthors(ctx, repo, number)
+}
+func (f *faultForge) HeadBranchForDeletion(ctx context.Context, repo forge.RepoRef, number int, headSHA, base string) (string, error) {
+	if err := f.before("HeadBranchForDeletion"); err != nil {
+		return "", err
+	}
+	return f.Forge.HeadBranchForDeletion(ctx, repo, number, headSHA, base)
+}
+func (f *faultForge) DeleteBranch(ctx context.Context, repo forge.RepoRef, branch, expectedSHA string) error {
+	defer f.sim.observeWrite()
+	if err := f.before("DeleteBranch"); err != nil {
+		return err
+	}
+	return f.Forge.DeleteBranch(ctx, repo, branch, expectedSHA)
 }

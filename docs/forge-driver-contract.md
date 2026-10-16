@@ -193,3 +193,14 @@ The environment provides:
 - `ContainsPR(sha, pr)` to check that a commit contains a PR's changes.
 
 Scenarios that only the fake can stage, such as rolling a branch back, are gated behind an environment capability and skipped with a message elsewhere. The fake runs the whole suite in every CI build. Real drivers run it against a sandbox repository when credentials are present, and skip with a message otherwise.
+
+
+After confirmed landing (and `MarkLanded` acknowledgement when needed), the planner
+also emits `DeleteHeadBranch`. `Driver.HeadBranchForDeletion` supplies only an
+eligible, closed, pinned, same-repository head after fresh base/default,
+protection, and dependant-PR reads. `Git.DeleteBranch` leases the original head
+SHA and treats missing or changed refs as successful no-ops. The executor verifies
+the landed commit is still on base before requesting either operation. Cleanup
+is default-on and can be disabled through serve. Eligibility reads cannot be
+transactional with the remote git delete; this limitation does not affect landing
+correctness, and the SHA lease protects newer branch work.

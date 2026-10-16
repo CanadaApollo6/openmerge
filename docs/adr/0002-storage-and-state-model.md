@@ -67,3 +67,14 @@ Every matching `ChecksRefreshed` advances the refresh count, giving the next act
 - **Mutable state rows without an event log.** Simpler to start, but loses replay, makes "why" questions unanswerable after the fact, and turns webhook ordering bugs into silent corruption.
 - **SQLite.** Attractive for single-node installs and development. It lost as the primary store because multiple workers need row-level locking and `SKIP LOCKED`. The store interface should not preclude a SQLite backend for single-process development later; that would need its own ADR.
 - **An external workflow engine** (Temporal and similar). Durable execution would cover crash recovery, but it is a heavy dependency for self-hosters and hides the queue logic inside workflow code that is harder to simulate than a pure planner.
+
+
+### Post-deployment addition: head cleanup (2026-10-16)
+
+Wire v1 adds the `delete_head_branch` action (`pr`, `head_sha`, `landed_sha`),
+pinned by a new golden fixture. No existing event/action payload or fixture
+changes. Folding a confirmed landing now schedules this effect, including on
+historical replay; acknowledgements use the existing `action_completed` event.
+Cleanup waits for any pending `MarkLanded`, rechecks landing and current head
+eligibility, and deletes with an old-SHA lease. The serve-wide default-on toggle
+can acknowledge it without deletion. Old workers must be drained before upgrade.

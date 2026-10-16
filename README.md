@@ -174,7 +174,7 @@ bin/openmerge serve --repos CanadaApollo6/openmerge --base main \
 `--github-installation-id`, `--repos`, `--base`, `--git-cache-dir`,
 `--poll-interval`, `--concurrency`, `--webhook-listen`, `--webhook-secret`,
 `--api-listen`, `--api-token-file`, `--rules-interval`, `--log-level`,
-`--git-committer-name`, and `--git-committer-email`
+`--git-committer-name`, `--git-committer-email`, and `--delete-head-branch`
 all have matching `OPENMERGE_` environment variables: uppercase the flag name
 and replace hyphens with underscores. Flags override environment variables.
 `--repos` is a comma-separated list owned by one installation; the base defaults
@@ -185,6 +185,13 @@ SIGINT/SIGTERM cancels bounded I/O and releases claims before closing Postgres.
 Run one server per installation during this Phase 1 rollout. See the
 [operating guide](docs/operating.md) for a systemd user unit, environment file,
 committer attribution, logs, upgrades, and GitHub's Closed badge after squash/rebase.
+
+After a confirmed landing, head branches in the base repository are deleted by
+default after PR closure, provided they are not the base/default branch,
+protected, or targeted by another open PR. Cleanup leases the original head SHA
+so newer work is preserved. Set `--delete-head-branch=false` or
+`OPENMERGE_DELETE_HEAD_BRANCH=false` to retain heads. This is a serve-wide option;
+per-repository `delete_head_branch` configuration is a follow-up.
 
 Enable read-only queue inspection with `--api-listen :8081` (binds localhost;
 default off), then run `bin/openmerge queue status --json` or
