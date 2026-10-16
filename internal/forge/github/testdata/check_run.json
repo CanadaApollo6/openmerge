@@ -1,0 +1,29 @@
+{
+  "repository": {
+    "id": 50,
+    "full_name": "acme/project",
+    "name": "project",
+    "owner": {
+      "login": "acme"
+    }
+  },
+  "installation": {
+    "id": 7
+  },
+  "sender": {
+    "login": "maintainer",
+    "id": 12,
+    "type": "User"
+  },
+  "action": "completed",
+  "check_run": {
+    "id": 234,
+    "name": "CI",
+    "status": "completed",
+    "conclusion": "success",
+    "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "app": {
+      "id": 99
+    }
+  }
+}

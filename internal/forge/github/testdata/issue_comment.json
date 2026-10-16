@@ -1,0 +1,35 @@
+{
+  "repository": {
+    "id": 50,
+    "full_name": "acme/project",
+    "name": "project",
+    "owner": {
+      "login": "acme"
+    }
+  },
+  "installation": {
+    "id": 7
+  },
+  "sender": {
+    "login": "maintainer",
+    "id": 12,
+    "type": "User"
+  },
+  "action": "created",
+  "issue": {
+    "number": 17,
+    "pull_request": {
+      "url": "https://api.github.com/repos/acme/project/pulls/17"
+    }
+  },
+  "comment": {
+    "id": 567,
+    "body": "@openmerge enqueue",
+    "author_association": "COLLABORATOR",
+    "user": {
+      "login": "maintainer",
+      "id": 12,
+      "type": "User"
+    }
+  }
+}

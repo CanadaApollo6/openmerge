@@ -1,0 +1,22 @@
+{
+  "installation": {
+    "id": 7,
+    "account": {
+      "login": "acme"
+    },
+    "repository_selection": "selected"
+  },
+  "sender": {
+    "login": "maintainer",
+    "id": 12,
+    "type": "User"
+  },
+  "action": "created",
+  "repositories": [
+    {
+      "id": 50,
+      "full_name": "acme/project",
+      "private": false
+    }
+  ]
+}

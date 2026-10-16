@@ -493,3 +493,24 @@ func (r *repository) isAncestor(ancestor, descendant string) bool {
 	}
 	return false
 }
+
+// ReadFile reads a file from a branch, full ref, or commit snapshot.
+func (f *Forge) ReadFile(ctx context.Context, repo forge.RepoRef, ref, path string) ([]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if err := f.failure(ctx, "ReadFile"); err != nil {
+		return nil, err
+	}
+	r := f.repo(repo)
+	sha := ref
+	if value := r.refs[ref]; value != "" {
+		sha = value
+	} else if value := r.refs[strings.TrimPrefix(ref, "refs/heads/")]; value != "" {
+		sha = value
+	}
+	content, ok := r.commits[sha].Files[path]
+	if !ok {
+		return nil, errors.New("file does not exist at ref")
+	}
+	return []byte(content), nil
+}

@@ -4,7 +4,9 @@ This is the reference for anyone writing or reviewing a forge driver. [ADR 0004]
 
 ## Repositories
 
-`RepoRef` holds one opaque `Path` (`owner/name`, or `group/subgroup/name` on GitLab). A driver must not assume an owner/name split.
+`RepoRef` holds one opaque `Path` (`owner/name`, or `group/subgroup/name` on GitLab). Forge-neutral code must not assume an owner/name split; a concrete driver interprets and validates the path for its forge.
+
+`ReadFile` reads a file at an explicit branch or commit. A missing file or ref is an error, not an empty configuration.
 
 ## Pull requests and approvals
 
@@ -107,6 +109,13 @@ Refs, statuses, and check runs are idempotent by name or external ID. Comments e
 ## Running the contract suite
 
 `forgetest.Run(t, newEnv)` runs the driver rules above. It checks the normalized status round trip, not each forge's native conclusion mapping, which each driver documents.
+
+`forgetest.RunDriver(t, newDriverEnv)` runs the API-side contracts alone against
+an API sandbox or HTTP fixture. Its environment needs Driver, Repo, PRs,
+Observations, BaseSHA, NewBase (a disposable ref), RefExists, and the API setup
+and observation hooks below; it does not need Git, fences, or conflicting PRs.
+`Run` retains the Git/API integration scenarios, including deleting a built test
+ref and closing PRs after squash/rebase landings.
 
 `forgetest.RunGit(t, newGitEnv)` runs the Git-side rules alone, without a forge API
 implementation or API fixture hooks. `internal/gitops` runs it against temporary

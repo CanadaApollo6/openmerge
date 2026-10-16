@@ -1,0 +1,22 @@
+{
+  "repository": {
+    "id": 50,
+    "full_name": "acme/project",
+    "name": "project",
+    "owner": {
+      "login": "acme"
+    }
+  },
+  "installation": {
+    "id": 7
+  },
+  "sender": {
+    "login": "maintainer",
+    "id": 12,
+    "type": "User"
+  },
+  "id": 456,
+  "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "state": "success",
+  "context": "legacy-ci"
+}
