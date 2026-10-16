@@ -28,18 +28,18 @@ func plan(cfg Config, s State, now time.Time) []Action {
 				actions = append(actions, report)
 			}
 		}
-		return actions
-	}
-	for _, entry := range s.Entries {
-		if action, pending := s.dequeues[entry.PR]; pending && !s.isLanding(entry.PR) {
-			actions = append(actions, action)
+	} else {
+		for _, entry := range s.Entries {
+			if action, pending := s.dequeues[entry.PR]; pending && !s.isLanding(entry.PR) {
+				actions = append(actions, action)
+			}
 		}
-	}
-	for _, effect := range s.effects {
-		if deletion, ok := effect.(DeleteRef); ok && s.Active != nil && s.Active.Phase == Landing && deletion.Ref == s.Active.TestRef {
-			continue
+		for _, effect := range s.effects {
+			if deletion, ok := effect.(DeleteRef); ok && s.Active != nil && s.Active.Phase == Landing && deletion.Ref == s.Active.TestRef {
+				continue
+			}
+			actions = append(actions, effect)
 		}
-		actions = append(actions, effect)
 	}
 	batch := s.Active
 	if batch == nil {
@@ -52,6 +52,9 @@ func plan(cfg Config, s State, now time.Time) []Action {
 				TestedSHA: batch.TestedSHA, FenceToken: batch.LandingAttempt.FenceToken,
 			})
 		}
+		return actions
+	}
+	if s.actionPoison.key != "" {
 		return actions
 	}
 	for _, pr := range batch.PRs {

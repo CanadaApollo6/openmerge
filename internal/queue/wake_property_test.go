@@ -15,8 +15,14 @@ func TestNextWakeMatchesPlanAcrossTimers(t *testing.T) {
 					for _, failures := range []int{0, 1, 2, 3} {
 						for _, backoff := range []time.Duration{0, time.Second} {
 							for _, elapsed := range []time.Duration{0, time.Nanosecond, 500 * time.Millisecond, time.Second, 2 * time.Second, 5 * time.Second, 30 * time.Second, time.Minute, 2 * time.Minute} {
-								cfg := Config{CheckTimeout: timeout, ResolveAfter: resolve, RefreshInterval: interval, BuildBackoff: backoff}
-								s := State{Entries: []Entry{{PR: 1, AdmissionID: 1, HeadSHA: "head"}}, Active: &Batch{ID: "b1", Phase: phase, PRs: []BatchPR{{PR: 1, HeadSHA: "head"}}, StartedTestingAt: start, LandingAttempt: LandingAttempt{StartedAt: start}, checkRefreshes: 1, checksRefreshedAt: start}, observations: map[int]PRObserved{1: {PR: 1, HeadSHA: "head", Eligible: true, Trusted: true}}, buildRetry: buildRetryState{failures: failures, failedAt: start}}
+								cfg := Config{MergeMethod: Merge, CheckTimeout: timeout, ResolveAfter: resolve, RefreshInterval: interval, BuildBackoff: backoff}
+								s := testingState()
+								s.Active.Phase = phase
+								s.Active.StartedTestingAt = start
+								s.Active.LandingAttempt = LandingAttempt{ID: "attempt", FenceToken: s.Fence, StartedAt: start}
+								s.Active.checkRefreshes = 1
+								s.Active.checksRefreshedAt = start
+								s.buildRetry = buildRetryState{failures: failures, failedAt: start, revision: s.revision}
 								now := start.Add(elapsed)
 								if len(Plan(cfg, s, now)) != 0 {
 									continue

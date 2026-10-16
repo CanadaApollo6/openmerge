@@ -5,6 +5,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"testing"
 	"time"
@@ -186,7 +187,13 @@ func TestActionPoisonPauseAndResume(t *testing.T) {
 			t.Fatalf("pause is not visible on head PR: %+v", report)
 		}
 		s = Apply(s, ActionCompleted{Key: report.Key()})
-		if actions := Plan(testConfig, s, epoch.Add(time.Hour)); len(actions) != 0 {
+		actions := Plan(testConfig, s, epoch.Add(time.Hour))
+		if s.Active != nil && s.Active.Phase == Landing {
+			resolve := onlyAction[ResolveLanding](t, actions)
+			if len(actions) != 1 || resolve.AttemptID != s.Active.LandingAttempt.ID {
+				t.Fatalf("paused landing did not retain only its resolver: %+v", actions)
+			}
+		} else if len(actions) != 0 {
 			t.Fatalf("paused work continued: %+v", actions)
 		}
 		s = Apply(s, BaseMoved{SHA: "another-base"})
@@ -197,5 +204,61 @@ func TestActionPoisonPauseAndResume(t *testing.T) {
 		if s.PauseReason(testConfig) != "" || len(Plan(testConfig, s, epoch.Add(time.Hour))) == 0 {
 			t.Fatal("resume did not retry work")
 		}
+	}
+}
+
+func TestActionPoisonedWhilePausedIsNoOp(t *testing.T) {
+	s := Apply(readyState(), ActionPoisoned{Key: "bad/key", Reason: "invalid payload"})
+	report := onlyAction[ReportStatus](t, Plan(testConfig, s, epoch))
+	for _, acknowledged := range []bool{false, true} {
+		if acknowledged {
+			s = Apply(s, ActionCompleted{Key: report.Key()})
+		}
+		for range 5 {
+			after := Apply(s, ActionPoisoned{Key: report.Key(), Reason: "corrupt pause report"})
+			if !reflect.DeepEqual(s, after) {
+				t.Fatal("repeated poison changed the paused state or its revision")
+			}
+			s = after
+		}
+	}
+	s = Apply(s, ResumeRequested{})
+	s = Apply(s, ActionPoisoned{Key: "new/key", Reason: "new incident"})
+	if next := onlyAction[ReportStatus](t, Plan(testConfig, s, epoch)); next.Key() == report.Key() {
+		t.Fatal("resume did not permit a new pause report")
+	}
+}
+
+func TestPausedLandingRespectsResolutionDeadline(t *testing.T) {
+	for _, reason := range []string{"action-poisoned", "build-failed"} {
+		t.Run(reason, func(t *testing.T) {
+			s := landingState()
+			if reason == "action-poisoned" {
+				s = Apply(s, ActionPoisoned{Key: "unrelated", Reason: "invalid payload"})
+			} else {
+				// Build failures normally reset on success; retain a pause here
+				// to assert that resolution is independent of the pause reason.
+				s.buildRetry = buildRetryState{failures: 3, revision: s.revision}
+			}
+			if s.PauseReason(testConfig) != reason {
+				t.Fatal("missing pause")
+			}
+			deadline := epoch.Add(testConfig.ResolveAfter)
+			if actions := Plan(testConfig, s, deadline); len(actionsOf[ResolveLanding](actions)) != 0 {
+				t.Fatal("pause bypassed resolution deadline")
+			}
+			actions := Plan(testConfig, s, deadline.Add(time.Nanosecond))
+			resolve := onlyAction[ResolveLanding](t, actions)
+			if resolve.AttemptID != "attempt1" || resolve.FenceToken != "f0" || resolve.TestedSHA != "tested1" {
+				t.Fatalf("pause changed resolution inputs: %+v", resolve)
+			}
+			for _, action := range actions {
+				switch action.(type) {
+				case ResolveLanding, ReportStatus:
+				default:
+					t.Fatalf("pause started new work: %+v", action)
+				}
+			}
+		})
 	}
 }

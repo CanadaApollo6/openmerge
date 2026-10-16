@@ -9,6 +9,9 @@ import (
 
 // Apply folds one event without mutating s or any slices or maps reachable from it.
 func Apply(s State, e Event) State {
+	if _, poisoned := e.(ActionPoisoned); poisoned && s.actionPoison.key != "" {
+		return s
+	}
 	s = cloneState(s)
 	s.revision++
 	switch e := e.(type) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -239,7 +240,8 @@ type PlannedAction struct {
 
 // Plan serializes planning and writes the pure planner's actions atomically.
 // Cancelled and poisoned keys are reactivated with current inputs. Three poison
-// incidents pause the queue until ResumeRequested; done keys remain terminal.
+// incidents pause the queue until ResumeRequested, except ResolveLanding always
+// repairs without pausing. Done keys remain terminal.
 // It returns unclaimed work, quarantining invalid rows for operators.
 func (s *Store) Plan(ctx context.Context, q QueueID, cfg queue.Config, now time.Time) ([]PlannedAction, error) {
 	var result []PlannedAction
@@ -263,7 +265,8 @@ func (s *Store) Plan(ctx context.Context, q QueueID, cfg queue.Config, now time.
 				VALUES ($1, $2, $3, $4::jsonb, $5) ON CONFLICT (queue_id, key) DO UPDATE
 				SET status = 'planned', type = EXCLUDED.type, payload = EXCLUDED.payload,
 					watermark = EXCLUDED.watermark, error = NULL, updated_at = now()
-				WHERE actions.status = 'cancelled' OR (actions.status = 'poisoned' AND actions.poison_count < 3)`, q, action.Key(), name, string(payload), watermark); err != nil {
+				WHERE actions.status = 'cancelled' OR (actions.status = 'poisoned'
+					AND (actions.poison_count < 3 OR EXCLUDED.type = 'resolve_landing'))`, q, action.Key(), name, string(payload), watermark); err != nil {
 				return err
 			}
 		}
@@ -287,7 +290,10 @@ func (s *Store) Plan(ctx context.Context, q QueueID, cfg queue.Config, now time.
 		}
 		paused, err := publishPoisonPauses(ctx, tx, q)
 		if paused {
-			result = nil
+			result = slices.DeleteFunc(result, func(action PlannedAction) bool {
+				_, resolving := action.Action.(queue.ResolveLanding)
+				return !resolving
+			})
 		}
 		return err
 	})
@@ -325,9 +331,11 @@ func poisonAction(ctx context.Context, tx pgx.Tx, id int64, cause error) error {
 
 // The caller holds the queue lock. Notification and its event commit together;
 // Plan also drains pending notifications if a claimer stopped after quarantine.
+// ResolveLanding never pauses. Other poisoned work shares one pause until resume.
 func publishPoisonPauses(ctx context.Context, tx pgx.Tx, q QueueID) (bool, error) {
 	rows, err := tx.Query(ctx, `UPDATE actions SET poison_notified = true
 		WHERE queue_id = $1 AND status = 'poisoned' AND poison_count >= 3 AND NOT poison_notified
+			AND type <> 'resolve_landing'
 		RETURNING key, error`, q)
 	if err != nil {
 		return false, err
@@ -340,16 +348,22 @@ func publishPoisonPauses(ctx context.Context, tx pgx.Tx, q QueueID) (bool, error
 	if err != nil {
 		return false, err
 	}
-	for _, event := range events {
-		name, payload, err := queue.EncodeEvent(event)
-		if err != nil {
-			return false, err
-		}
-		if _, err := tx.Exec(ctx, `INSERT INTO events(queue_id, type, payload) VALUES ($1, $2, $3::jsonb)`, q, name, string(payload)); err != nil {
-			return false, err
-		}
+	if len(events) == 0 {
+		return false, nil
 	}
-	return len(events) > 0, nil
+	state, _, err := load(ctx, tx, q)
+	if err != nil {
+		return false, err
+	}
+	if state.PauseReason(queue.Config{}) == "action-poisoned" {
+		return false, nil
+	}
+	name, payload, err := queue.EncodeEvent(events[0])
+	if err != nil {
+		return false, err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO events(queue_id, type, payload) VALUES ($1, $2, $3::jsonb)`, q, name, string(payload))
+	return err == nil, err
 }
 
 // PoisonedAction retains the row identity, original payload and decoding error

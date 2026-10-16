@@ -33,8 +33,10 @@
 // builds also reset it. Conflicts still dequeue normally.
 //
 // ActionPoisoned records repeated invalid durable work. It pauses all work except
-// the head PR's paused ReportStatus, with reason "action-poisoned", regardless of
-// batch phase. Only ResumeRequested clears this pause; the active batch survives.
+// the head PR's paused ReportStatus and resolution of an in-flight landing.
+// Its reason is "action-poisoned"; further poison events are ignored until
+// ResumeRequested clears this pause. The active batch survives.
+// Pausing stops new work; it never stops settling a landing already in flight.
 // Every Action validates its semantic inputs. Plan checks this invariant before
 // emitting actions; invalid state/config inputs panic rather than emit unsafe work.
 // Wire v1 requires every field, including zero/empty values, and rejects JSON null.
