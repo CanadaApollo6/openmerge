@@ -218,57 +218,62 @@ func TestRulesDoNotClearUnrelatedPauseAndResolveLandingStillExecutes(t *testing.
 }
 
 func TestOverlappingRulesReadsCannotClearNewerBlock(t *testing.T) {
-	s, w, _, _ := fixture(t, repositoryConfig)
-	w.CheckRules = func(context.Context) ([]string, []string, error) {
-		return []string{"original rules failure"}, nil, nil
-	}
-	must(t, s.repositoryRules(t.Context(), w))
-	// Independent process-local workers share the durable queue, not scheduling state.
-	older := *w
-	older.rulesNextCheck = time.Time{}
-	started, release := make(chan struct{}), make(chan struct{})
-	defer close(release)
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	older.CheckRules = func(ctx context.Context) ([]string, []string, error) {
-		close(started)
-		select {
-		case <-release:
-			return nil, nil, nil
-		case <-ctx.Done():
-			return nil, nil, ctx.Err()
-		}
-	}
-	done := make(chan error, 1)
-	go func() { done <- s.repositoryRules(ctx, &older) }()
-	select {
-	case <-started:
-	case <-ctx.Done():
-		t.Fatal("older read never started")
-	}
-	w.rulesNextCheck = time.Time{}
-	w.CheckRules = func(context.Context) ([]string, []string, error) {
-		return []string{"newer rules failure"}, nil, nil
-	}
-	must(t, s.repositoryRules(ctx, w))
-	// Release without closing so the deferred close also handles test failures.
-	select {
-	case release <- struct{}{}:
-	case <-ctx.Done():
-		t.Fatal("older read timed out")
-	}
-	must(t, <-done)
-	state, _, err := s.store.Load(ctx, w.id)
-	must(t, err)
-	if state.RulesRevision() != 2 || state.PauseDetail(queue.Config{}) != "newer rules failure" {
-		t.Fatalf("older passing read cleared newer block: revision=%d blocks=%+v", state.RulesRevision(), state.Blocks(queue.Config{}))
-	}
-	w.rulesNextCheck = time.Time{}
-	w.CheckRules = func(context.Context) ([]string, []string, error) { return nil, nil, nil }
-	must(t, s.repositoryRules(ctx, w))
-	state, _, err = s.store.Load(ctx, w.id)
-	must(t, err)
-	if state.RulesRevision() != 3 || len(state.RulesProblems()) != 0 {
-		t.Fatal("fresh recovery failed after stale recovery was ignored")
+	// An unchanged newer failure must also invalidate the older in-flight pass.
+	for _, newer := range []string{"newer rules failure", "original rules failure"} {
+		t.Run(newer, func(t *testing.T) {
+			s, w, _, _ := fixture(t, repositoryConfig)
+			w.CheckRules = func(context.Context) ([]string, []string, error) {
+				return []string{"original rules failure"}, nil, nil
+			}
+			must(t, s.repositoryRules(t.Context(), w))
+			// Independent process-local workers share the durable queue, not scheduling state.
+			older := *w
+			older.rulesNextCheck = time.Time{}
+			started, release := make(chan struct{}), make(chan struct{})
+			defer close(release)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			older.CheckRules = func(ctx context.Context) ([]string, []string, error) {
+				close(started)
+				select {
+				case <-release:
+					return nil, nil, nil
+				case <-ctx.Done():
+					return nil, nil, ctx.Err()
+				}
+			}
+			done := make(chan error, 1)
+			go func() { done <- s.repositoryRules(ctx, &older) }()
+			select {
+			case <-started:
+			case <-ctx.Done():
+				t.Fatal("older read never started")
+			}
+			w.rulesNextCheck = time.Time{}
+			w.CheckRules = func(context.Context) ([]string, []string, error) {
+				return []string{newer}, nil, nil
+			}
+			must(t, s.repositoryRules(ctx, w))
+			// Release without closing so the deferred close also handles test failures.
+			select {
+			case release <- struct{}{}:
+			case <-ctx.Done():
+				t.Fatal("older read timed out")
+			}
+			must(t, <-done)
+			state, _, err := s.store.Load(ctx, w.id)
+			must(t, err)
+			if state.RulesRevision() != 2 || state.PauseDetail(queue.Config{}) != newer {
+				t.Fatalf("older passing read cleared newer block: revision=%d blocks=%+v", state.RulesRevision(), state.Blocks(queue.Config{}))
+			}
+			w.rulesNextCheck = time.Time{}
+			w.CheckRules = func(context.Context) ([]string, []string, error) { return nil, nil, nil }
+			must(t, s.repositoryRules(ctx, w))
+			state, _, err = s.store.Load(ctx, w.id)
+			must(t, err)
+			if state.RulesRevision() != 3 || len(state.RulesProblems()) != 0 {
+				t.Fatal("fresh recovery failed after stale recovery was ignored")
+			}
+		})
 	}
 }
