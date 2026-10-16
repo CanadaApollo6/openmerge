@@ -37,8 +37,11 @@ func (f *Forge) OpenPRWithFiles(repo forge.RepoRef, number int, baseSHA string, 
 			baseRef = ref
 		}
 	}
-	pr := forge.PullRequest{Number: number, HeadSHA: head, Base: baseRef, Author: "contributor", AuthorID: 12, AuthorEmail: "12+contributor@users.noreply.github.com", Title: fmt.Sprintf("PR %d", number), HeadBranch: fmt.Sprintf("contributor:pr-%d", number), HeadInBaseRepo: headInBaseRepo}
+	pr := forge.PullRequest{Number: number, HeadSHA: head, Base: baseRef, Author: "contributor", AuthorID: 12, AuthorEmail: "12+contributor@users.noreply.github.com", Title: fmt.Sprintf("PR %d", number), HeadBranch: fmt.Sprintf("pr-%d", number), HeadInBaseRepo: headInBaseRepo}
 	r.prs[number] = pr
+	if pr.HeadInBaseRepo {
+		r.refs[pr.HeadBranch] = pr.HeadSHA
+	}
 	r.updated[number] = time.Now().UTC()
 	r.prBases[number] = baseSHA
 	r.prCommits[number] = []string{head}
@@ -59,6 +62,9 @@ func (f *Forge) PushPR(repo forge.RepoRef, number int, message string) (forge.Pu
 	pr.HeadSHA = r.commit([]string{pr.HeadSHA}, r.commits[pr.HeadSHA].PRs, message, files)
 	r.prCommits[number] = append(r.prCommits[number], pr.HeadSHA)
 	r.prs[number] = pr
+	if pr.HeadInBaseRepo {
+		r.refs[pr.HeadBranch] = pr.HeadSHA
+	}
 	r.updated[number] = time.Now().UTC()
 	pr.Approvals = slices.Clone(pr.Approvals)
 	return pr, nil

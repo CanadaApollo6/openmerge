@@ -193,3 +193,7 @@ The environment provides:
 - `ContainsPR(sha, pr)` to check that a commit contains a PR's changes.
 
 Scenarios that only the fake can stage, such as rolling a branch back, are gated behind an environment capability and skipped with a message elsewhere. The fake runs the whole suite in every CI build. Real drivers run it against a sandbox repository when credentials are present, and skip with a message otherwise.
+
+
+The [operating guide](operating.md#landed-head-cleanup) defines the landed-head
+cleanup protocol, including `Driver.HeadBranchForDeletion` and `Git.DeleteBranch`.

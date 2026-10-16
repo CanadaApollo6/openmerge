@@ -179,7 +179,11 @@ func printStatus(out io.Writer, response status.Response) error {
 				entry.Reason = pauseReason
 			}
 			head := entry.HeadSHA[:min(12, len(entry.HeadSHA))]
-			if _, err := fmt.Fprintf(table, "%s\t%s\t%d\t#%d\t%s\t%s\t%s\n", q.Repository, q.Base, entry.Position, entry.PR, head, entry.Status, entry.Reason); err != nil {
+			position := "-"
+			if entry.Position > 0 {
+				position = strconv.Itoa(entry.Position)
+			}
+			if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t#%d\t%s\t%s\t%s\n", q.Repository, q.Base, position, entry.PR, head, entry.Status, entry.Reason); err != nil {
 				return err
 			}
 		}
@@ -192,6 +196,12 @@ func printStatus(out io.Writer, response status.Response) error {
 			return err
 		}
 		for _, event := range response.Why.Events {
+			if event.Count > 0 && event.Until != nil {
+				if _, err := fmt.Fprintf(out, "  %d–%d  %s – %s  %s (%d observations)\n", event.ID, event.EndID, event.At.Format(time.RFC3339), event.Until.Format(time.RFC3339), event.Summary, event.Count); err != nil {
+					return err
+				}
+				continue
+			}
 			if _, err := fmt.Fprintf(out, "  %d  %s  %s  %s\n", event.ID, event.At.Format(time.RFC3339), event.Type, event.Summary); err != nil {
 				return err
 			}

@@ -109,6 +109,8 @@ func TestLandingVerification(t *testing.T) {
 					wantResults = 1
 					if stage == "mark-landed" {
 						wantCalls = 1
+					} else {
+						wantResults = 2
 					}
 				}
 				if len(results) != wantResults || driver.calls != wantCalls {

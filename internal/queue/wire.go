@@ -120,6 +120,11 @@ type wireLanded struct {
 	NewFence   string `json:"new_fence"`
 }
 
+type wireHeadCleanupRequested struct {
+	BatchID   string `json:"batch_id"`
+	LandedSHA string `json:"landed_sha"`
+}
+
 type wireLandingAbandoned struct {
 	BatchID  string `json:"batch_id"`
 	NewFence string `json:"new_fence"`
@@ -197,6 +202,12 @@ type wireReportStatus struct {
 }
 
 type wireMarkLanded struct {
+	PR        int    `json:"pr"`
+	HeadSHA   string `json:"head_sha"`
+	LandedSHA string `json:"landed_sha"`
+}
+
+type wireDeleteHeadBranch struct {
 	PR        int    `json:"pr"`
 	HeadSHA   string `json:"head_sha"`
 	LandedSHA string `json:"landed_sha"`
@@ -383,6 +394,11 @@ func EncodeEvent(value Event) (string, []byte, error) {
 		return encodeWire("landing_started", wireLandingStarted(v))
 	case Landed:
 		return encodeWire("landed", wireLanded(v))
+	case HeadCleanupRequested:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("head_cleanup_requested", wireHeadCleanupRequested(v))
 	case LandingAbandoned:
 		return encodeWire("landing_abandoned", wireLandingAbandoned(v))
 	case Dequeued:
@@ -519,6 +535,16 @@ func DecodeEvent(payload []byte) (Event, error) {
 		return decodeWireData(envelope.Data, func(v wireLanded) Event {
 			return Landed(v)
 		})
+	case "head_cleanup_requested":
+		v, err := readWireData[wireHeadCleanupRequested](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := HeadCleanupRequested(v)
+		if err := event.Validate(); err != nil {
+			return nil, err
+		}
+		return event, nil
 	case "landing_abandoned":
 		return decodeWireData(envelope.Data, func(v wireLandingAbandoned) Event {
 			return LandingAbandoned(v)
@@ -561,6 +587,8 @@ func EncodeAction(value Action) (string, []byte, error) {
 		return encodeWire("report_status", wireReportStatus{PR: v.PR, HeadSHA: v.HeadSHA, Status: v.Status, Reason: v.Reason, Detail: v.Detail, Revision: v.revision, Admission: v.admission})
 	case MarkLanded:
 		return encodeWire("mark_landed", wireMarkLanded(v))
+	case DeleteHeadBranch:
+		return encodeWire("delete_head_branch", wireDeleteHeadBranch(v))
 	default:
 		return "", nil, fmt.Errorf("unregistered queue action %T", value)
 	}
@@ -606,6 +634,10 @@ func DecodeAction(payload []byte) (Action, error) {
 	case "mark_landed":
 		return decodeWireAction(envelope.Data, func(v wireMarkLanded) Action {
 			return MarkLanded(v)
+		})
+	case "delete_head_branch":
+		return decodeWireAction(envelope.Data, func(v wireDeleteHeadBranch) Action {
+			return DeleteHeadBranch(v)
 		})
 	default:
 		return nil, fmt.Errorf("unknown queue action type %q", envelope.Type)

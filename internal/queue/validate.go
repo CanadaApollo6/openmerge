@@ -14,6 +14,11 @@ func requireActionText(fields ...string) error {
 	return nil
 }
 
+// Validate pins the cleanup opt-in to one batch and its verified landing.
+func (e HeadCleanupRequested) Validate() error {
+	return requireActionText("batch_id", e.BatchID, "landed_sha", e.LandedSHA)
+}
+
 func validateBatchPRs(prs []BatchPR) error {
 	if len(prs) == 0 {
 		return fmt.Errorf("prs must contain at least one PR")
@@ -143,6 +148,11 @@ func (a MarkLanded) Validate() error {
 		return fmt.Errorf("pr must be positive")
 	}
 	return requireActionText("head_sha", a.HeadSHA, "landed_sha", a.LandedSHA)
+}
+
+// Validate pins cleanup to the landed PR and original head.
+func (a DeleteHeadBranch) Validate() error {
+	return (MarkLanded(a)).Validate()
 }
 
 // Validate requires a durable composition, base and recorded clock origin.

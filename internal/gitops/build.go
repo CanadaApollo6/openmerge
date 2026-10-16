@@ -196,7 +196,7 @@ func (r *Repo) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.B
 		if err != nil {
 			return "", err
 		}
-		message, err := s.prMessage(ctx, req, metadata, author, i == len(req.PRs)-1)
+		message, err := s.prMessage(ctx, repo, req, metadata, author, i == len(req.PRs)-1)
 		if err != nil {
 			return "", err
 		}
