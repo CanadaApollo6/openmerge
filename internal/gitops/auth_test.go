@@ -186,3 +186,120 @@ func TestCancellationAndInfrastructureErrors(t *testing.T) {
 		t.Fatalf("infrastructure error misclassified: %v", err)
 	}
 }
+
+func TestFinalPushRefreshesCredentials(t *testing.T) {
+	for _, operation := range []string{"land", "advance"} {
+		for _, failRefresh := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/fail-refresh=%v", operation, failRefresh), func(t *testing.T) {
+				f := newFixture(t)
+				ctx := context.Background()
+				initial, err := f.g.EnsureFence(ctx, testRepo, testFence)
+				must(t, err)
+				tested := f.build(forge.Merge, f.prs[:1], "refresh")
+				gitPath, err := exec.LookPath("git")
+				must(t, err)
+				marker := filepath.Join(t.TempDir(), "pushed")
+				wrapper := filepath.Join(t.TempDir(), "git")
+				writeExecutable(t, wrapper, "for a in \"$@\"; do\nif [ \"$a\" = push ]; then\n[ \"$OPENMERGE_GIT_PASSWORD\" = fresh-token ] || exit 90\nprintf fresh > "+shellQuote(marker)+"\nfi\ndone\nexec "+shellQuote(gitPath)+" \"$@\"\n")
+				f.g.git = wrapper
+				calls := 0
+				f.g.cfg.Remote = func(context.Context, forge.RepoRef) (string, Auth, error) {
+					calls++
+					if calls == 1 {
+						return f.remote, Auth{Password: "expired-token"}, nil
+					}
+					if failRefresh {
+						return "", Auth{}, fmt.Errorf("token refresh failed: %w", ErrAuth)
+					}
+					return f.remote, Auth{Password: "fresh-token"}, nil
+				}
+				if operation == "land" {
+					_, err = f.g.Land(ctx, testRepo, forge.LandRequest{Base: "main", ExpectedBaseSHA: f.base, TestedSHA: tested,
+						Fence: testFence, ExpectedFence: initial, NextFenceID: "land/refresh", PRs: f.prs[:1]})
+				} else {
+					_, err = f.g.AdvanceFence(ctx, testRepo, testFence, initial, "abandon/refresh")
+				}
+				if calls != 2 {
+					t.Fatalf("resolved credentials %d times, want operation start and final push", calls)
+				}
+				if failRefresh {
+					if !errors.Is(err, ErrAuth) {
+						t.Fatalf("refresh failure lost ErrAuth: %v", err)
+					}
+					if _, err := os.Stat(marker); !os.IsNotExist(err) {
+						t.Fatal("push ran after credential refresh failed")
+					}
+					if gitCommand(t, f.remote, "", nil, "rev-parse", "refs/heads/main") != f.base || gitCommand(t, f.remote, "", nil, "rev-parse", "refs/heads/"+testFence) != initial {
+						t.Fatal("failed refresh changed refs")
+					}
+				} else {
+					must(t, err)
+					if data, err := os.ReadFile(marker); err != nil || string(data) != "fresh" {
+						t.Fatalf("push did not use refreshed credentials: %v", err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestAuthenticationErrors(t *testing.T) {
+	f := newFixture(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Basic realm="git"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer server.Close()
+	f.g.cfg.Remote = func(context.Context, forge.RepoRef) (string, Auth, error) {
+		return server.URL + "/repo.git", Auth{Username: "user", Password: "bad-token"}, nil
+	}
+	_, err := f.g.ReadRef(context.Background(), testRepo, "main")
+	if !errors.Is(err, ErrAuth) || strings.Contains(err.Error(), "bad-token") {
+		t.Fatalf("HTTP authentication failure was not classified and scrubbed: %v", err)
+	}
+	for _, diagnostic := range []string{"Permission denied (publickey).", "HTTP Basic: Access denied", "The requested URL returned error: 403"} {
+		s := &session{}
+		if !errors.Is(s.failure("fetch", diagnostic, errors.New("failed")), ErrAuth) {
+			t.Fatalf("authentication diagnostic not classified: %s", diagnostic)
+		}
+	}
+}
+
+func TestEmptyDiagnostics(t *testing.T) {
+	f := newFixture(t)
+	wrapper := filepath.Join(t.TempDir(), "git")
+	writeExecutable(t, wrapper, "exit 42\n")
+	f.g.git = wrapper
+	s := &session{r: f.g}
+	_, err := s.command(context.Background(), "", "fetch")
+	if err == nil || err.Error() != "git fetch: exit status 42" {
+		t.Fatalf("empty diagnostic error = %v", err)
+	}
+	writeExecutable(t, wrapper, "printf 'transport refused\\n'\nexit 42\n")
+	_, err = s.command(context.Background(), "", "fetch")
+	if err == nil || err.Error() != "git fetch: transport refused: exit status 42" {
+		t.Fatalf("stdout diagnostic was discarded: %v", err)
+	}
+}
+
+func TestNewErrorsIncludeWorkDir(t *testing.T) {
+	for _, kind := range []string{"configuration", "identity", "filesystem"} {
+		t.Run(kind, func(t *testing.T) {
+			workDir := filepath.Join(t.TempDir(), "work-dir")
+			cfg := Config{WorkDir: workDir, HeadRef: headRef,
+				Remote: func(context.Context, forge.RepoRef) (string, Auth, error) { return "unused", Auth{}, nil }}
+			switch kind {
+			case "configuration":
+				cfg.Remote = nil
+			case "identity":
+				cfg.Author = Identity{Name: "missing email"}
+			case "filesystem":
+				must(t, os.WriteFile(workDir, nil, 0o600))
+			}
+			_, err := New(context.Background(), cfg)
+			if err == nil || !strings.Contains(err.Error(), workDir) {
+				t.Fatalf("New did not identify WorkDir: %v", err)
+			}
+		})
+	}
+}

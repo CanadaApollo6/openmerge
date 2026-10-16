@@ -96,7 +96,7 @@ func newSimulation(cfg Config) (*simulation, error) {
 	}
 	start := time.Unix(0, 0).UTC()
 	s := &simulation{
-		cfg: cfg, start: start, now: start, forge: fake.New(), repo: forge.RepoRef{Path: "sim/project"},
+		cfg: cfg, start: start, now: start, forge: fake.NewDeterministic(), repo: forge.RepoRef{Path: "sim/project"},
 		ci: rand.New(rand.NewPCG(cfg.Seed, 2)), webhook: rand.New(rand.NewPCG(cfg.Seed, 3)),
 		faults: rand.New(rand.NewPCG(cfg.Seed, 4)), tests: make(map[string]*testRun),
 		completed: make(map[string]bool), planned: make(map[string]queue.Action), retryAt: make(map[string]time.Time),

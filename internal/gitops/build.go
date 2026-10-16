@@ -5,15 +5,24 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
 
-func (s *session) heads(ctx context.Context, prs []forge.BuildPR) error {
+func (s *session) heads(ctx context.Context, prs []forge.BuildPR) (err error) {
 	if len(prs) == 0 {
 		return nil
 	}
 	var specs []string
+	var temporaryRefs, cachedRefs []string
+	var missing []forge.BuildPR
+	cached := make(map[string]string)
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		err = errors.Join(err, s.deleteRefs(cleanupCtx, temporaryRefs))
+	}()
 	for _, pr := range prs {
 		if pr.Number <= 0 || !validSHA(pr.HeadSHA) {
 			return errors.New("PR number and full pinned head SHA are required")
@@ -25,12 +34,36 @@ func (s *session) heads(ctx context.Context, prs []forge.BuildPR) error {
 		if _, err := s.command(ctx, "", "check-ref-format", ref); err != nil {
 			return err
 		}
-		specs = append(specs, fmt.Sprintf("+%s:refs/openmerge-cache/pr/%d", ref, pr.Number))
+		if _, _, err := s.run(ctx, "", "cat-file", "-e", pr.HeadSHA+"^{commit}"); err == nil {
+			cachedRefs = append(cachedRefs, ref)
+			cached[ref] = pr.HeadSHA
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		temporary := fmt.Sprintf("refs/openmerge-cache/pr/%d", pr.Number)
+		temporaryRefs = append(temporaryRefs, temporary)
+		missing = append(missing, pr)
+		specs = append(specs, "+"+ref+":"+temporary)
 	}
-	if err := s.fetch(ctx, specs...); err != nil {
-		return err
+	if len(cachedRefs) > 0 {
+		values, err := s.read(ctx, cachedRefs...)
+		if err != nil {
+			return err
+		}
+		for ref, expected := range cached {
+			if values[ref] != expected {
+				return fmt.Errorf("PR head %s no longer has its pinned head", ref)
+			}
+		}
 	}
-	for _, pr := range prs {
+	if len(specs) > 0 {
+		if err := s.fetch(ctx, specs...); err != nil {
+			return err
+		}
+	}
+	for _, pr := range missing {
 		actual, err := s.command(ctx, "", "rev-parse", fmt.Sprintf("refs/openmerge-cache/pr/%d^{commit}", pr.Number))
 		if err != nil {
 			return err
@@ -109,6 +142,13 @@ func (r *Repo) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.B
 	top := req.BaseSHA
 	for i, pr := range req.PRs {
 		if req.Method == forge.Rebase {
+			merges, err := s.command(ctx, "", "rev-list", "--merges", "--max-count=1", pr.HeadSHA, "^"+req.BaseSHA)
+			if err != nil {
+				return "", err
+			}
+			if merges != "" {
+				return "", fmt.Errorf("rebase cannot replay merge commits in PR #%d; use the merge or squash method: %w", pr.Number, forge.ErrConflict)
+			}
 			originals, err := s.command(ctx, "", "rev-list", "--reverse", "--topo-order", pr.HeadSHA, "^"+req.BaseSHA)
 			if err != nil {
 				return "", err

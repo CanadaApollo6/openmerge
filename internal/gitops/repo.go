@@ -20,6 +20,9 @@ import (
 )
 
 // Remote resolves an opaque forge repository path and fresh credentials.
+// Initial credentials must last through preflight reads and fetches. Land and
+// AdvanceFence resolve again immediately before pushing; the fresh credentials
+// must remain valid for that push.
 type Remote func(context.Context, forge.RepoRef) (url string, auth Auth, err error)
 
 // Identity is used on generated commits, including replayed PR commits.
@@ -34,6 +37,10 @@ type Config struct {
 	HeadRef           func(pr int) string
 	Author, Committer Identity
 	Now               func() time.Time
+	// GCInterval and GCThresholdBytes trigger best-effort cache collection after
+	// an operation. Zero selects one hour / 512 MiB; negative disables a trigger.
+	GCInterval       time.Duration
+	GCThresholdBytes int64
 }
 
 // Repo is a CLI-backed Git implementation. Construct it with New.
@@ -50,7 +57,12 @@ var (
 )
 
 // New checks Git >= 2.38 once and prepares a credential-free askpass helper.
-func New(ctx context.Context, cfg Config) (*Repo, error) {
+func New(ctx context.Context, cfg Config) (repo *Repo, err error) {
+	defer func() {
+		if err != nil {
+			err = fmt.Errorf("gitops work directory %q: %w", cfg.WorkDir, err)
+		}
+	}()
 	if cfg.WorkDir == "" || cfg.Remote == nil || cfg.HeadRef == nil {
 		return nil, errors.New("gitops requires WorkDir, Remote, and HeadRef")
 	}
@@ -64,6 +76,12 @@ func New(ctx context.Context, cfg Config) (*Repo, error) {
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
+	}
+	if cfg.GCInterval == 0 {
+		cfg.GCInterval = time.Hour
+	}
+	if cfg.GCThresholdBytes == 0 {
+		cfg.GCThresholdBytes = 512 << 20
 	}
 	git, err := exec.LookPath("git")
 	if err != nil {
@@ -132,16 +150,8 @@ func (r *Repo) open(ctx context.Context, repo forge.RepoRef) (*session, func(), 
 	if err := ctx.Err(); err != nil {
 		return fail(err)
 	}
-	remote, auth, err := r.cfg.Remote(ctx, repo)
-	if ctx.Err() != nil {
-		return fail(ctx.Err())
-	}
-	s := &session{r: r, auth: auth}
-	if err != nil {
-		return fail(errors.New(s.scrub("resolve git remote: " + err.Error())))
-	}
-	s.remote, s.auth, err = cleanRemote(remote, auth)
-	if err != nil {
+	s := &session{r: r}
+	if err := s.resolveRemote(ctx, repo); err != nil {
 		return fail(err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "HEAD")); errors.Is(err, os.ErrNotExist) {
@@ -152,7 +162,30 @@ func (r *Repo) open(ctx context.Context, repo forge.RepoRef) (*session, func(), 
 		return fail(err)
 	}
 	s.dir = dir
-	return s, mu.Unlock, nil
+	return s, func() {
+		defer mu.Unlock()
+		// All commands, including push, have completed before maintenance runs.
+		maintenanceCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		_ = s.maintainCache(maintenanceCtx)
+	}, nil
+}
+
+func (s *session) resolveRemote(ctx context.Context, repo forge.RepoRef) error {
+	remote, auth, err := s.r.cfg.Remote(ctx, repo)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if err != nil {
+		fresh := &session{auth: auth}
+		diagnostic := s.scrub(fresh.scrub(err.Error()))
+		if errors.Is(err, ErrAuth) || authFailure(err.Error()) {
+			return fmt.Errorf("resolve git remote: %s: %w", diagnostic, ErrAuth)
+		}
+		return fmt.Errorf("resolve git remote: %s", diagnostic)
+	}
+	s.remote, s.auth, err = cleanRemote(remote, auth)
+	return err
 }
 
 func validSHA(sha string) bool {

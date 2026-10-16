@@ -127,7 +127,9 @@ var ErrLeaseRejected = errors.New("git lease rejected")
 // LandRequest leases both refs in one atomic push. NextFenceID is land/<attempt>
 // where the attempt ID is random and durably recorded before this call. The new
 // fence's parent is ExpectedFence and its message is
-// "openmerge fence land/<attempt> tested=<TestedSHA>". PRs pin the landed heads;
+// "openmerge fence land/<attempt> tested=<TestedSHA> nonce=<random-hex>".
+// Each push mints a fresh nonce of at least 128 bits, even for the same attempt.
+// PRs pin the landed heads;
 // Land must reject the request without changing refs if any pin differs from
 // that PR's actual head.
 type LandRequest struct {
@@ -143,9 +145,9 @@ type Git interface {
 	// EnsureFence creates the initial fence only if absent, safely under
 	// concurrency, otherwise returning the existing SHA without changing it.
 	EnsureFence(ctx context.Context, repo RepoRef, fenceRef string) (sha string, err error)
-	// AdvanceFence leases expectedSHA and mints a child commit using nextID.
+	// AdvanceFence leases expectedSHA and mints a child with nextID and a fresh nonce.
 	AdvanceFence(ctx context.Context, repo RepoRef, fenceRef, expectedSHA, nextID string) (newSHA string, err error)
-	// ReadFence reads identity and tested SHA from the current fence commit.
+	// ReadFence reads identity and tested SHA, ignoring the fence commit's nonce.
 	// A non-OpenMerge commit has empty identity fields; a missing ref is an error.
 	ReadFence(ctx context.Context, repo RepoRef, fenceRef string) (sha, id, testedSHA string, err error)
 	ReadRef(ctx context.Context, repo RepoRef, ref string) (sha string, err error)

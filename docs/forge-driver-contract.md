@@ -47,7 +47,7 @@ The executor aggregates as follows:
 - refuse a request whose pinned head is not the PR's current head;
 - produce the shape the merge method asks for: merge commits that keep each PR head as an ancestor, a single squashed commit per PR, or each PR commit replayed separately for rebase;
 - put the batch ID in the top commit, so a tested SHA identifies exactly one batch;
-- return `ErrConflict` for merge conflicts, and any other error for infrastructure failures.
+- return `ErrConflict` for merge conflicts or rebase histories containing PR merge commits, and any other error for infrastructure failures.
 
 ## Landing
 
@@ -61,6 +61,9 @@ git push --atomic \
 ```
 
 - The forge applies the push only if both refs still hold the expected values. A base that moved forward, was rolled back, or was rewritten is refused.
+- Every landing push changes the fence. Mint a fresh fence nonce with at least 128 bits from `crypto/rand` for each push, including copies of the same attempt. Git skips leases on up-to-date refs; unique fences ensure that a duplicate cannot skip its consumed fence lease after a base rollback.
+- If preflight sees the base already equal to the tested SHA, return `ErrLeaseRejected` without pushing, even if it also equals the expected base. The executor settles the attempt through the fence.
+- The CLI transport's [skipped-lease notes](../internal/gitops/README.md#skipped-leases-and-external-rollbacks) describe the residual external-writer case: pushing exactly the tested commit and rolling it back inside the push window is indistinguishable from an administrator rolling main back after landing, outside OpenMerge's guarantees.
 - On refusal the driver returns only `ErrLeaseRejected`. A rejected git push reports no actual ref values.
 - Drivers land through git, never through a forge merge or ref-update endpoint. Those check the PR head or ancestry, not the expected old value.
 - `Land` refuses a `LandRequest` whose pinned PR heads do not match the PRs.
@@ -73,8 +76,10 @@ After a landing with merge commits, the forge marks the PRs merged because their
 
 Each base branch has a fence branch, `openmerge/fence/<base>`, derived from the base name and not separately configurable. Its tip is a small commit whose message names an attempt and its purpose:
 
-- `openmerge fence land/<attempt> tested=<sha>`, minted by the landing push;
-- `openmerge fence abandon/<attempt>`, minted when OpenMerge gives up on an attempt.
+- `openmerge fence land/<attempt> tested=<sha> nonce=<random-hex>`, minted by the landing push;
+- `openmerge fence abandon/<attempt> nonce=<random-hex>`, minted when OpenMerge gives up on an attempt.
+
+`ReadFence` ignores the nonce and returns only the attempt identity and tested SHA. The fake must mint unique fences too.
 
 `EnsureFence` runs at setup. It creates the first fence commit with a create-only push, reading back a concurrent winner, or returns the existing fence unchanged.
 
@@ -105,9 +110,9 @@ Refs, statuses, and check runs are idempotent by name or external ID. Comments e
 
 `forgetest.RunGit(t, newGitEnv)` runs the Git-side rules alone, without a forge API
 implementation or API fixture hooks. `internal/gitops` runs it against temporary
-local bare repositories, including rollback scenarios. Its [transport notes](../internal/gitops/README.md#landing-and-real-git-findings)
-document an unresolved Git CLI no-op lease exception to the strict landing
-contract; the fake does not model that exception.
+local bare repositories, including rollback scenarios, unique fence updates,
+and refusal when preflight observes an already-tested base. The transport boundary
+is documented alongside the Landing rules above.
 
 The environment provides:
 

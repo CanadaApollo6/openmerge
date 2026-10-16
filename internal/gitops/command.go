@@ -16,6 +16,9 @@ import (
 // process environment. For tokens, use the forge's token username and password.
 type Auth struct{ Username, Password string }
 
+// ErrAuth identifies rejected or unavailable Git transport credentials.
+var ErrAuth = errors.New("git authentication failed")
+
 const askpassScript = `#!/bin/sh
 case "$1" in
   *Username*) printf '%s\n' "$OPENMERGE_GIT_USERNAME" ;;
@@ -80,6 +83,9 @@ func (s *session) run(ctx context.Context, input string, args ...string) (stdout
 func (s *session) command(ctx context.Context, input string, args ...string) (string, error) {
 	out, diagnostic, err := s.run(ctx, input, args...)
 	if err != nil {
+		if strings.TrimSpace(diagnostic) == "" {
+			diagnostic = out
+		}
 		return "", s.failure(args[0], diagnostic, err)
 	}
 	return strings.TrimSpace(out), nil
@@ -88,7 +94,25 @@ func (s *session) command(ctx context.Context, input string, args ...string) (st
 func (s *session) failure(operation, diagnostic string, err error) error {
 	// exec errors do not contain argv. Remote diagnostics may contain URLs or
 	// echoed credentials, so sanitize them before they leave this package.
-	return fmt.Errorf("git %s: %s: %w", operation, s.scrub(strings.TrimSpace(diagnostic)), err)
+	if authFailure(diagnostic) {
+		err = errors.Join(ErrAuth, err)
+	}
+	diagnostic = s.scrub(strings.TrimSpace(diagnostic))
+	if diagnostic == "" {
+		return fmt.Errorf("git %s: %w", operation, err)
+	}
+	return fmt.Errorf("git %s: %s: %w", operation, diagnostic, err)
+}
+
+func authFailure(diagnostic string) bool {
+	diagnostic = strings.ToLower(diagnostic)
+	for _, marker := range []string{"authentication failed", "http basic: access denied", "could not read username",
+		"could not read password", "permission denied (", "returned error: 401", "returned error: 403"} {
+		if strings.Contains(diagnostic, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func exitCode(err error, code int) bool {

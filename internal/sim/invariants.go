@@ -77,6 +77,7 @@ func (s *simulation) observeAbandonments() error {
 			return err
 		}
 		if attempt, ok := strings.CutPrefix(commit.Message, "openmerge fence abandon/"); ok {
+			attempt, _, _ = strings.Cut(attempt, " ")
 			if tested := s.attempts[attempt]; tested != "" {
 				s.abandoned[tested] = attempt
 			}

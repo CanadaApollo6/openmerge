@@ -2,6 +2,8 @@ package gitops
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"strings"
 
@@ -25,6 +27,11 @@ func (s *session) fence(ctx context.Context, parent, id, tested string) (string,
 	if tested != "" {
 		message += " tested=" + tested
 	}
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		return "", err
+	}
+	message += " nonce=" + hex.EncodeToString(nonce)
 	if parent == "" {
 		return s.commit(ctx, tree, message)
 	}
@@ -53,6 +60,9 @@ func (s *session) pushLease(ctx context.Context, args ...string) error {
 	}
 	if ctx.Err() == nil && leaseRejected(out, diagnostic) {
 		return forge.ErrLeaseRejected
+	}
+	if strings.TrimSpace(diagnostic) == "" {
+		diagnostic = out
 	}
 	return s.failure("push", diagnostic, err)
 }
@@ -86,7 +96,7 @@ func (r *Repo) Land(ctx context.Context, repo forge.RepoRef, req forge.LandReque
 	if err != nil {
 		return "", err
 	}
-	if values[base] != req.ExpectedBaseSHA || values[fence] != req.ExpectedFence {
+	if values[base] == req.TestedSHA || values[base] != req.ExpectedBaseSHA || values[fence] != req.ExpectedFence {
 		return "", forge.ErrLeaseRejected
 	}
 	if err := s.commits(ctx, req.TestedSHA); err != nil {
@@ -94,6 +104,9 @@ func (r *Repo) Land(ctx context.Context, repo forge.RepoRef, req forge.LandReque
 	}
 	next, err := s.fence(ctx, req.ExpectedFence, req.NextFenceID, req.TestedSHA)
 	if err != nil {
+		return "", err
+	}
+	if err := s.resolveRemote(ctx, repo); err != nil {
 		return "", err
 	}
 	err = s.pushLease(ctx, "--force-with-lease="+base+":"+req.ExpectedBaseSHA,
@@ -121,6 +134,9 @@ func (r *Repo) AdvanceFence(ctx context.Context, repo forge.RepoRef, ref, expect
 	}
 	next, err := s.fence(ctx, expected, nextID, "")
 	if err != nil {
+		return "", err
+	}
+	if err := s.resolveRemote(ctx, repo); err != nil {
 		return "", err
 	}
 	if err := s.pushLease(ctx, "--force-with-lease="+full+":"+expected, "--", s.remote, next+":"+full); err != nil {
@@ -200,6 +216,7 @@ func (r *Repo) ReadFence(ctx context.Context, repo forge.RepoRef, ref string) (s
 	if !ok {
 		return sha, "", "", nil
 	}
+	id, _, _ = strings.Cut(id, " nonce=")
 	id, tested, _ := strings.Cut(id, " tested=")
 	return sha, id, tested, nil
 }

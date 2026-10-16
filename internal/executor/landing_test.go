@@ -99,7 +99,7 @@ func TestLand(t *testing.T) {
 				}
 				c, err := h.f.Commit(repo, h.read(t, fenceRef))
 				must(t, err)
-				if c.Message != "openmerge fence land/attempt tested="+tested {
+				if !strings.HasPrefix(c.Message, "openmerge fence land/attempt tested="+tested+" nonce=") {
 					t.Fatalf("fence did not record the landing attempt: %+v", c)
 				}
 			}

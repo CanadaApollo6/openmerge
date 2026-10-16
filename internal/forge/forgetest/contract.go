@@ -197,6 +197,40 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 			}
 		})
 	}
+	t.Run("land/never-leaves-fence-unchanged", func(t *testing.T) {
+		e := newEnv(t)
+		tested := build(t, e, e.BaseSHA, "unique-fence", e.PRs[0])
+		req := forge.LandRequest{Base: e.Base, ExpectedBaseSHA: e.BaseSHA, TestedSHA: tested,
+			Fence: e.FenceRef, ExpectedFence: e.FenceSHA, NextFenceID: "land/same-attempt", PRs: e.PRs[:1]}
+		next, err := e.Git.Land(ctx, e.Repo, req)
+		must(t, err)
+		if next == e.FenceSHA || read(t, e, e.FenceRef) != next {
+			t.Fatal("a landing push must never leave the fence unchanged")
+		}
+		if e.CanRollbackBase {
+			must(t, e.RollbackBase(e.Base, e.BaseSHA))
+			_, err = e.Git.Land(ctx, e.Repo, req)
+			if !errors.Is(err, forge.ErrLeaseRejected) || read(t, e, e.Base) != e.BaseSHA || read(t, e, e.FenceRef) != next {
+				t.Fatalf("duplicate landing after rollback was not refused without effects: %v", err)
+			}
+		}
+	})
+	for _, matchingLease := range []bool{false, true} {
+		t.Run(fmt.Sprintf("land/already-tested/matching-lease=%v", matchingLease), func(t *testing.T) {
+			e := newEnv(t)
+			tested := build(t, e, e.BaseSHA, "already-tested", e.PRs[0])
+			must(t, e.PushBase(e.Base, tested))
+			expected := e.BaseSHA
+			if matchingLease {
+				expected = tested
+			}
+			_, err := e.Git.Land(ctx, e.Repo, forge.LandRequest{Base: e.Base, ExpectedBaseSHA: expected, TestedSHA: tested,
+				Fence: e.FenceRef, ExpectedFence: e.FenceSHA, NextFenceID: "land/already-tested", PRs: e.PRs[:1]})
+			if !errors.Is(err, forge.ErrLeaseRejected) || read(t, e, e.Base) != tested || read(t, e, e.FenceRef) != e.FenceSHA {
+				t.Fatalf("already-tested base was not refused without a push: %v", err)
+			}
+		})
+	}
 	t.Run("advance-fence", func(t *testing.T) {
 		e := newEnv(t)
 		next, err := e.Git.AdvanceFence(ctx, e.Repo, e.FenceRef, e.FenceSHA, "abandon/contract")

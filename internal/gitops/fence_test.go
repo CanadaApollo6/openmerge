@@ -2,6 +2,7 @@ package gitops
 
 import (
 	"context"
+	"encoding/hex"
 	"strings"
 	"testing"
 
@@ -134,11 +135,34 @@ func TestFenceCommitShape(t *testing.T) {
 		if got := gitCommand(t, f.source, "", nil, "show", "-s", "--format=%P", tc.sha); got != tc.parent {
 			t.Fatalf("fence parent = %q, want %q", got, tc.parent)
 		}
-		if got := gitCommand(t, f.source, "", nil, "show", "-s", "--format=%B", tc.sha); got != tc.message {
-			t.Fatalf("fence message = %q, want %q", got, tc.message)
+		message := gitCommand(t, f.source, "", nil, "show", "-s", "--format=%B", tc.sha)
+		prefix, nonce, ok := strings.Cut(message, " nonce=")
+		decoded, err := hex.DecodeString(nonce)
+		if !ok || prefix != tc.message || err != nil || len(decoded) < 16 {
+			t.Fatalf("fence message = %q, want %q with a random nonce", message, tc.message)
 		}
 		if tree := gitCommand(t, f.source, "", nil, "ls-tree", "-r", tc.sha); tree != "" {
 			t.Fatalf("fence tree is not empty: %s", tree)
+		}
+	}
+}
+
+func TestFenceCommitsDifferForIdenticalCopies(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	initial, err := f.g.EnsureFence(ctx, testRepo, testFence)
+	must(t, err)
+	tested := f.build(forge.Merge, f.prs[:1], "copies")
+	s, unlock, err := f.g.open(ctx, testRepo)
+	must(t, err)
+	defer unlock()
+	for _, testedSHA := range []string{"", tested} {
+		first, err := s.fence(ctx, initial, "same-attempt", testedSHA)
+		must(t, err)
+		second, err := s.fence(ctx, initial, "same-attempt", testedSHA)
+		must(t, err)
+		if first == second {
+			t.Fatal("identical fence copies reused an object despite the fixed clock")
 		}
 	}
 }
