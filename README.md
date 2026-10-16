@@ -53,7 +53,7 @@ listener.
 
 Credentials go into `$XDG_CONFIG_HOME/openmerge/<app-slug>/` (normally
 `~/.config/openmerge/<app-slug>/`): `app-id`, `slug`, `client-id`,
-`private-key.pem`, and `webhook-secret`. The directory is private (0700), files
+`private-key.pem`, and, in webhook mode only, `webhook-secret`. The directory is private (0700), files
 are 0600, and an existing directory is refused. `--config-dir DIR` selects a
 new directory. The manifest generates and auto-saves the private key at
 `<config-dir>/private-key.pem`; you do not need to download one. Keep the key and
@@ -81,8 +81,11 @@ When webhooks are enabled, setup prints this environment assignment for serve
 export OPENMERGE_WEBHOOK_SECRET="$(cat ~/.config/openmerge/APP-SLUG/webhook-secret)"
 ```
 
-To enable delivery later, edit **Webhook → Active / Webhook URL** in App
-settings and configure the same secret on the server.
+A polling-mode App has no webhook or secret. To enable delivery later, open the
+App settings, set **Webhook → Active** and the **Webhook URL**, generate a random
+**Webhook secret** (for example `openssl rand -hex 32`), subscribe to Pull request, Pull request review,
+Check run, Check suite, Status, Push and Issue comment events,
+and give the same secret to serve as `OPENMERGE_WEBHOOK_SECRET`.
 
 Configure repository rules with a **separate repository-admin token** in
 `GITHUB_TOKEN`. A fine-grained PAT needs access to the selected repository and
