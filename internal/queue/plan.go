@@ -27,7 +27,10 @@ func Plan(cfg Config, s State, now time.Time) []Action {
 	}
 	if batch.Phase == Landing {
 		if now.Sub(batch.LandingAttempt.StartedAt) > cfg.ResolveAfter {
-			actions = append(actions, ResolveLanding{BatchID: batch.ID, AttemptID: batch.LandingAttempt.ID})
+			actions = append(actions, ResolveLanding{
+				BatchID: batch.ID, AttemptID: batch.LandingAttempt.ID,
+				TestedSHA: batch.TestedSHA, FenceToken: batch.LandingAttempt.FenceToken,
+			})
 		}
 		return actions
 	}

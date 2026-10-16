@@ -50,12 +50,13 @@
 // Plan owns time/config-dependent decisions and never changes state. Admissions
 // and batches have separate monotonic IDs. Build and landing results must match
 // the current BatchID and phase; each batch allows only one landing attempt.
-// ResolveLanding carries that attempt ID. Dequeued must echo the entry's admission
-// ID, plus the BatchID for timeout actions, so late results cannot remove a new
-// subject. ActionCompleted echoes the exact effect key. Build keys include the
-// method, dequeue keys include the admission, and report keys distinguish both
-// admissions and outcome revisions. Landing always carries the tested batch's
-// base, tested SHA, and method, together with the current fence.
+// ResolveLanding carries that attempt ID, fence SHA, and tested SHA. Dequeued must
+// echo the entry's admission ID, plus the BatchID for timeout actions, so late
+// results cannot remove a new subject. ActionCompleted echoes the exact effect
+// key. Build keys include the method, dequeue keys include the admission, and
+// report keys distinguish both admissions and outcome revisions. Landing always
+// carries the tested batch's base, tested SHA, and method, together with the
+// current fence.
 //
 // Test commits are unique per batch: the executor includes the batch ID in the
 // top commit of every test ref. As a guard against an executor that breaks this,

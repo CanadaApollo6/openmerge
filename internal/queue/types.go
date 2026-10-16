@@ -245,8 +245,9 @@ type Land struct {
 	Method                                               MergeMethod
 }
 
-// ResolveLanding fences and reads the outcome instead of inferring failure from time.
-type ResolveLanding struct{ BatchID, AttemptID string }
+// ResolveLanding carries the pinned commit and durable attempt fence so the
+// executor can fence and read the outcome without consulting mutable queue state.
+type ResolveLanding struct{ BatchID, AttemptID, TestedSHA, FenceToken string }
 
 // DeleteRef is repeatable cleanup, acknowledged separately from queue transitions.
 type DeleteRef struct{ Ref string }
@@ -284,7 +285,8 @@ func (a RefreshChecks) Key() string {
 	return fmt.Sprintf("batch/%s/checks/refresh/%d", a.BatchID, a.epoch)
 }
 
-// Key identifies the single landing attempt allowed for this batch.
+// Key identifies the single landing attempt allowed for this batch and serves as
+// its durable attempt ID, so executor retries recognize the same fence commit.
 func (a Land) Key() string { return "batch/" + a.BatchID + "/land" }
 
 // Key correlates resolution retries with the durable landing attempt.
