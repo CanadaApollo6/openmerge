@@ -21,7 +21,7 @@ Agent-scale users have already left this model. Anthropic reports growing from a
 |---|---|---|---|
 | `max_base_age` | duration, at least the check timeout | `1h` | How long ago the admission test's base may have been the tip, checked again at landing |
 | `on_red` | `revert` \| `pause` \| `notify` | `revert` | Remedy for a confirmed red commit |
-| `max_red` | duration | `30m` | Longest a suspect may stay open before it escalates |
+| `max_red` | duration, at least 3x the check timeout | `2h` | Longest a suspect may stay open before it escalates |
 | `max_open_suspects` | integer, 1 to 100 | `25` | Open suspects at once before the queue escalates |
 
 ### Admission and landing
