@@ -20,9 +20,13 @@
 // No lock or connection-local state survives a transaction, including migrations.
 //
 // Workers claim actions, call BeginConsequential for consequential actions, then
-// pass Action and Emit to executor.Execute and call Complete. BeginConsequential
+// pass Action and Emit (with the same planner config) to executor.Execute and call
+// Complete. BeginConsequential
 // renews the lease; forge calls and result persistence must finish within it.
-// Expired in-flight claims can be recovered; BeginConsequential revalidates them. Emit admits only
+// Expired in-flight claims can be recovered; BeginConsequential revalidates them.
+// Emit replans under the queue lock before BatchStarted or LandingStarted and
+// requires the same key and complete payload. A stale start appends nothing,
+// cancels its action, and returns ErrStale before any forge call. Emit admits only
 // one LandingStarted per batch during a valid in-flight execution window, so a
 // paused worker cannot start another landing after a replacement has recorded
 // its attempt or a conflicting action has begun. Once LandingStarted is durable,

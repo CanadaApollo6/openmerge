@@ -107,3 +107,59 @@ func TestSerialQueueEndToEnd(t *testing.T) {
 		})
 	}
 }
+
+func TestBatchQueueEndToEnd(t *testing.T) {
+	for _, method := range []queue.MergeMethod{queue.Merge, queue.Squash, queue.Rebase} {
+		t.Run(string(method), func(t *testing.T) {
+			h := setup(t)
+			cfg := queue.Config{MergeMethod: method, BatchMaxSize: 8}
+			s := queue.State{BaseBranch: "main", BaseSHA: h.base, Fence: h.fence}
+			for _, pr := range h.prs {
+				s = queue.Apply(s, queue.PRObserved{PR: pr.Number, HeadSHA: pr.HeadSHA, Eligible: true, Trusted: true})
+				s = queue.Apply(s, queue.EnqueueRequested{PR: pr.Number, At: epoch})
+			}
+			builds, lands, marks := 0, 0, 0
+			h.f.OnTestRef(func(sha string, prs []int) {
+				builds++
+				if s.Active == nil || len(s.Active.PRs) != 3 || len(prs) != 3 {
+					t.Fatal("build preceded durable composition")
+				}
+				h.f.SetCheckRuns(repo, sha, []forge.CheckRun{{Name: "ci", State: forge.Success}, {Name: "lint", State: forge.Success}})
+			})
+			for step := 0; step < 40; step++ {
+				actions := queue.Plan(cfg, s, epoch)
+				if len(actions) == 0 {
+					break
+				}
+				a := actions[0]
+				if _, ok := a.(queue.Land); ok {
+					lands++
+				}
+				if _, ok := a.(queue.MarkLanded); ok {
+					marks++
+				}
+				must(t, h.x.Execute(t.Context(), a, func(e queue.Event) error { s = queue.Apply(s, e); return nil }))
+			}
+			if builds != 1 || lands != 1 || len(s.Entries) != 0 || s.Active != nil {
+				t.Fatalf("builds=%d lands=%d state=%+v", builds, lands, s)
+			}
+			wantMarks := 0
+			if method != queue.Merge {
+				wantMarks = 3
+			}
+			if marks != wantMarks {
+				t.Fatalf("MarkLanded=%d want=%d", marks, wantMarks)
+			}
+			for _, pr := range h.prs {
+				if !h.f.ContainsPR(repo, s.BaseSHA, pr.Number) {
+					t.Fatal("landed tip dropped PR", pr.Number)
+				}
+				observed, err := h.f.PullRequest(t.Context(), repo, pr.Number)
+				must(t, err)
+				if !observed.Closed {
+					t.Fatal("landed PR remains open", pr.Number)
+				}
+			}
+		})
+	}
+}

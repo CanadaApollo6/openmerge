@@ -1,0 +1,1 @@
+{"version":1,"type":"batch_started","data":{"batch_id":"b1","base_sha":"base","prs":[{"pr":2,"head_sha":"head"},{"pr":3,"head_sha":"head3"}],"at":"2026-10-15T12:00:00Z"}}

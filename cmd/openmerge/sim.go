@@ -17,6 +17,8 @@ func runSim(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("sim", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	flags.IntVar(&cfg.PRs, "prs", cfg.PRs, "number of trusted PRs (plus extra untrusted fork probes)")
+	flags.IntVar(&cfg.Planner.BatchMaxSize, "batch-size", cfg.Planner.BatchMaxSize, "maximum PRs per batch (0 defaults to 1; max 128)")
+	flags.DurationVar(&cfg.Planner.BatchMaxWait, "batch-wait", cfg.Planner.BatchMaxWait, "maximum wait to form a partial batch")
 	flags.Float64Var(&cfg.BrokenRate, "broken-rate", cfg.BrokenRate, "fraction of PRs with broken changes")
 	flags.Float64Var(&cfg.FlakeRate, "flake-rate", cfg.FlakeRate, "chance that a non-broken test commit fails CI")
 	flags.DurationVar(&cfg.CIDuration, "ci", cfg.CIDuration, "duration of each CI run")

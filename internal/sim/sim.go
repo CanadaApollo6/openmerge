@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand/v2"
+	"reflect"
 	"slices"
 	"time"
 
@@ -19,6 +20,7 @@ var (
 	errForge   = errors.New("simulated forge failure")
 	errDelayed = &pushTimeout{}
 	errCrash   = errors.New("simulated crash before Landed emit")
+	errStale   = errors.New("action is no longer authorized to start")
 )
 
 type pullRequest struct {
@@ -59,6 +61,7 @@ type simulation struct {
 	scheduled           timeline
 	sequence, attempt   uint64
 	completed           map[string]bool
+	planned             map[string]queue.Action
 	retryAt             map[string]time.Time
 	pendingFaults       map[string]int
 	mainSHA             string
@@ -96,7 +99,7 @@ func newSimulation(cfg Config) (*simulation, error) {
 		cfg: cfg, start: start, now: start, forge: fake.New(), repo: forge.RepoRef{Path: "sim/project"},
 		ci: rand.New(rand.NewPCG(cfg.Seed, 2)), webhook: rand.New(rand.NewPCG(cfg.Seed, 3)),
 		faults: rand.New(rand.NewPCG(cfg.Seed, 4)), tests: make(map[string]*testRun),
-		completed: make(map[string]bool), retryAt: make(map[string]time.Time),
+		completed: make(map[string]bool), planned: make(map[string]queue.Action), retryAt: make(map[string]time.Time),
 		pendingFaults: make(map[string]int), landed: make(map[int]string),
 		attempts: make(map[string]string), abandoned: make(map[string]string), observed: make(map[string]*forgeLanding),
 		result: Result{Config: cfg, FaultsByMethod: make(map[string]int), PRs: cfg.PRs, Dequeued: make(map[queue.DequeueReason]int), Blocked: make(map[queue.DequeueReason]int)},
@@ -200,7 +203,10 @@ func (s *simulation) step() (bool, error) {
 	if len(s.scheduled) > 0 && !s.scheduled[0].at.After(s.now) {
 		return false, s.deliver(heap.Pop(&s.scheduled).(scheduledEvent))
 	}
-	actions := queue.Plan(s.cfg.Planner, s.state, s.now)
+	actions, err := s.plan()
+	if err != nil {
+		return false, err
+	}
 	var next time.Time
 	consider := func(at time.Time) {
 		if at.After(s.now) && (next.IsZero() || at.Before(next)) {
@@ -246,6 +252,9 @@ func (s *simulation) execute(action queue.Action) error {
 		heap.Push(&s.scheduled, scheduledEvent{at: s.now.Add(s.cfg.Faults.ReplayDelay), sequence: s.sequence, kind: duplicateLand, action: a, scope: scope})
 	}
 	err := s.executor.Execute(context.Background(), action, func(event queue.Event) error {
+		if err := s.authorizeStart(action, event); err != nil {
+			return err
+		}
 		if _, landed := event.(queue.Landed); landed {
 			if _, pushed := action.(queue.Land); pushed && s.faults.Float64() < s.cfg.Faults.LandingCrashRate {
 				s.injectFault(faultScope(action))
@@ -267,6 +276,10 @@ func (s *simulation) execute(action queue.Action) error {
 		}
 		return s.violation
 	})
+	if errors.Is(err, errStale) {
+		delete(s.retryAt, action.Key())
+		return nil
+	}
 	if err != nil {
 		if !errors.Is(err, errForge) && !errors.Is(err, errCrash) && !errors.Is(err, errDelayed) {
 			return fmt.Errorf("execute %s: %w", action.Key(), err)
@@ -308,6 +321,12 @@ func (s *simulation) record(event queue.Event) {
 		}
 		s.recoverFaults("landing/" + event.BatchID)
 	case queue.Dequeued:
+		if event.Reason == queue.ChecksFailed || event.Reason == queue.ChecksTimeout || event.Reason == queue.Conflict {
+			if batch == nil || len(batch.PRs) != 1 || batch.PRs[0].PR != event.PR {
+				s.violation = fmt.Errorf("failure dequeued PR %d without isolating it in a singleton batch", event.PR)
+				return
+			}
+		}
 		for _, entry := range s.state.Entries {
 			if entry.PR == event.PR && entry.AdmissionID == event.AdmissionID {
 				s.prs[event.PR].dequeued = event.Reason
@@ -323,6 +342,9 @@ func (s *simulation) record(event queue.Event) {
 	}
 	s.events = append(s.events, loggedEvent{At: s.now, Event: event})
 	s.state = queue.Apply(s.state, event)
+	if failed, ok := event.(queue.BatchFailed); ok && batch != nil && failed.BatchID != batch.ID && !reflect.DeepEqual(batch, s.state.Active) {
+		s.violation = fmt.Errorf("stale failure for batch %s changed current batch %s", failed.BatchID, batch.ID)
+	}
 }
 
 func (s *simulation) startCI(sha string, prs []int) {
@@ -358,6 +380,9 @@ func (s *simulation) startCI(sha string, prs []int) {
 	}
 	s.tests[sha] = run
 	s.result.CIRuns++
+	if batch.FromBisection {
+		s.result.BisectionCIRuns++
+	}
 	s.forge.SetCheckRuns(s.repo, sha, []forge.CheckRun{{ID: 1, Name: "ci", State: forge.Pending}})
 	duration := s.cfg.CIDuration
 	if s.cfg.CIMin > 0 {
@@ -409,4 +434,35 @@ func percentiles(times []time.Duration) (median, p95 time.Duration) {
 		median = a + (b-a)/2
 	}
 	return median, times[len(times)-len(times)/20-1] // nearest rank ceil(.95*n).
+}
+
+// Retain planned payloads independently of execution so a reused key cannot
+// silently replace a previously published composition.
+func (s *simulation) plan() ([]queue.Action, error) {
+	actions := queue.Plan(s.cfg.Planner, s.state, s.now)
+	for _, action := range actions {
+		if previous, exists := s.planned[action.Key()]; exists && !reflect.DeepEqual(previous, action) {
+			return nil, fmt.Errorf("action key %s reused for a changed payload", action.Key())
+		}
+		s.planned[action.Key()] = action
+	}
+	return actions, nil
+}
+
+func (s *simulation) authorizeStart(action queue.Action, event queue.Event) error {
+	switch event.(type) {
+	case queue.BatchStarted, queue.LandingStarted:
+		if !queue.CanStart(s.cfg.Planner, s.state, action, event) {
+			return errStale
+		}
+	}
+	return nil
+}
+
+func (s *simulation) emit(action queue.Action, event queue.Event) error {
+	if err := s.authorizeStart(action, event); err != nil {
+		return err
+	}
+	s.record(event)
+	return s.violation
 }

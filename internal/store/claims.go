@@ -93,7 +93,7 @@ func (s *Store) Claim(ctx context.Context, limit int, lease time.Duration, now t
 // Consequential reports whether an action must pass the durable in-flight gate.
 func Consequential(action queue.Action) bool {
 	switch action.(type) {
-	case queue.BuildTestRef, queue.Land, queue.ResolveLanding, queue.Dequeue:
+	case queue.BuildTestRef, queue.Land, queue.ResolveLanding, queue.Dequeue, queue.FailBatch:
 		return true
 	default:
 		return false

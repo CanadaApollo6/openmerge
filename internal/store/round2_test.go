@@ -81,7 +81,7 @@ func TestR2SettledResolveNotReactivated(t *testing.T) {
 	if !ok {
 		t.Fatal("land blocked")
 	}
-	must(t, s.Emit(t.Context(), q)(queue.LandingStarted{BatchID: "b1", AttemptID: "old", FenceToken: "f1", At: epoch}))
+	must(t, s.Emit(t.Context(), c, config)(queue.LandingStarted{BatchID: "b1", AttemptID: "old", FenceToken: "fence", At: epoch}))
 	must(t, s.Complete(t.Context(), c, Done))
 	now := epoch.Add(2 * time.Minute)
 	_, err = s.Plan(t.Context(), q, config, now)
@@ -121,7 +121,7 @@ func TestR2PoisonedActiveWork(t *testing.T) {
 				if !ok {
 					t.Fatal("land blocked")
 				}
-				must(t, s.Emit(t.Context(), q)(queue.LandingStarted{BatchID: "b1", AttemptID: "uncertain", FenceToken: "f1", At: epoch}))
+				must(t, s.Emit(t.Context(), c, config)(queue.LandingStarted{BatchID: "b1", AttemptID: "uncertain", FenceToken: "fence", At: epoch}))
 				must(t, s.Complete(t.Context(), c, Done))
 				now = epoch.Add(2 * time.Minute)
 				_, err = s.Plan(t.Context(), q, config, now)
@@ -214,7 +214,7 @@ func r2ReadyForge(t *testing.T, s *Store) (QueueID, *fake.Forge, forge.RepoRef, 
 				t.Fatal("blocked")
 			}
 		}
-		must(t, x.Execute(t.Context(), c.Action, s.Emit(t.Context(), q)))
+		must(t, x.Execute(t.Context(), c.Action, s.Emit(t.Context(), c, config)))
 		must(t, s.Complete(t.Context(), c, Done))
 	}
 	return q, f, repo, x
@@ -271,7 +271,7 @@ func TestR2MissingDequeueAdmission(t *testing.T) {
 		if _, bad := c.Action.(queue.Dequeue); bad {
 			t.Fatal("dequeue without admission was claimed")
 		}
-		must(t, x.Execute(t.Context(), c.Action, s.Emit(t.Context(), q)))
+		must(t, x.Execute(t.Context(), c.Action, s.Emit(t.Context(), c, config)))
 		must(t, s.Complete(t.Context(), c, Done))
 	}
 	state, _, err := s.Load(t.Context(), q)
@@ -302,7 +302,7 @@ func TestR2MissingDequeueAdmission(t *testing.T) {
 	if !ok {
 		t.Fatal("repaired dequeue cancelled")
 	}
-	must(t, x.Execute(t.Context(), cs[0].Action, s.Emit(t.Context(), q)))
+	must(t, x.Execute(t.Context(), cs[0].Action, s.Emit(t.Context(), cs[0], config)))
 	must(t, s.Complete(t.Context(), cs[0], Done))
 	state, _, err = s.Load(t.Context(), q)
 	must(t, err)

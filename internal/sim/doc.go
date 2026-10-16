@@ -4,6 +4,10 @@
 // (internal/executor), and the in-memory fake forge together on a virtual
 // clock, with every random choice drawn from a seeded source, so a seed always
 // reproduces the same run.
+// Start-event emits revalidate the action's key and complete payload against
+// the current plan before any build or landing I/O. Cancelled starts append
+// nothing. Published action keys must retain their original payload, and stale
+// batch failures must not change a newer batch.
 //
 // The default workload is 500 trusted PRs arriving over 24 hours, 5% of them
 // broken, no flakes, and two-minute CI (720 serial runs per day). One untrusted
@@ -33,6 +37,13 @@
 // Landed events must
 // match the actual base transition and fence, and each forge landing must have
 // a Landed event after recovery settles. Abandoned attempts must never land.
+// Exit tests run all 500-PR variants with both size 1 and size 8 (30s max wait),
+// and bound runs per merge and median latency for a 2,000-PR day with size 8
+// and 30-minute CI. BisectionCIRuns counts
+// builds from pending bisection groups, including rebuilds of those groups.
+// Failure dequeues must isolate a singleton; settled workloads must account for
+// every admitted PR and retain merged reports for every landed PR.
+//
 // CI membership must match the planner's intended batch. Before crediting a
 // landing, every intended PR must have its file changes in the landed tip; merge
 // landings must also retain each intended PR head as an ancestor.

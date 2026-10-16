@@ -34,7 +34,8 @@ type Executor struct {
 }
 
 // Execute stops at the first failed emit. emit must durably record its event
-// before returning nil. In particular, LandingStarted precedes the git push;
+// before returning nil. BatchStarted precedes test-ref construction, and
+// LandingStarted precedes the git push;
 // after it is recorded, the caller must only execute ResolveLanding for that
 // batch, never retry Land. Its uncertain result is recovered from the fence.
 // Infrastructure build errors emit TestRefBuildFailed and also return the error.
@@ -44,6 +45,9 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 	}
 	switch a := action.(type) {
 	case queue.BuildTestRef:
+		if err := emit(queue.BatchStarted{BatchID: a.BatchID, BaseSHA: a.BaseSHA, PRs: append([]queue.BatchPR(nil), a.PRs...), At: x.now()}); err != nil {
+			return err
+		}
 		prs := make([]forge.BuildPR, len(a.PRs))
 		for i, pr := range a.PRs {
 			prs[i] = forge.BuildPR{Number: pr.PR, HeadSHA: pr.HeadSHA}
@@ -62,6 +66,8 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 			return err
 		}
 		return emit(queue.TestRefBuilt{BatchID: a.BatchID, TestedSHA: sha, Method: a.Method, At: x.now()})
+	case queue.FailBatch:
+		return emit(queue.BatchFailed(a))
 	case queue.RefreshChecks:
 		checks, err := x.Driver.CheckRuns(ctx, x.Repo, a.TestedSHA)
 		if err != nil {

@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSimFlagErrorsAndHelp(t *testing.T) {
@@ -77,10 +79,45 @@ func TestSimInvalidWorkloadFlags(t *testing.T) {
 		{"--drop-webhooks", "2"}, {"--merge-method", "invalid"}, {"--window", "-1s"},
 		{"--repush-rate", "-1"}, {"--conflict-rate", "NaN"},
 		{"--external-push-rate", "-1"},
+		{"--batch-size", "-1"}, {"--batch-size", "129"},
+		{"--batch-wait", "-1s"}, {"--batch-wait", "invalid"},
 	} {
 		var stdout, stderr bytes.Buffer
 		if code := run(append([]string{"sim", "--prs", "0"}, args...), &stdout, &stderr); code == 0 || stdout.Len() != 0 || stderr.Len() == 0 {
 			t.Fatalf("accepted %v: code=%d out=%s err=%s", args, code, stdout.String(), stderr.String())
+		}
+	}
+}
+
+func TestSimBatchFlags(t *testing.T) {
+	for _, scenario := range []struct {
+		prs    int
+		median time.Duration
+	}{
+		{prs: 4, median: time.Second},
+		{prs: 3, median: 31 * time.Second},
+	} {
+		var stdout, stderr bytes.Buffer
+		args := []string{"sim", "--prs", fmt.Sprint(scenario.prs), "--window", "0s", "--broken-rate", "0", "--ci", "1s", "--batch-size", "4", "--batch-wait", "30s", "--json"}
+		if code := run(args, &stdout, &stderr); code != 0 {
+			t.Fatalf("exit=%d stderr=%s", code, stderr.String())
+		}
+		var got struct {
+			Config struct {
+				Planner struct {
+					Size int     `json:"batch_max_size"`
+					Wait float64 `json:"batch_max_wait_seconds"`
+				} `json:"planner"`
+			} `json:"config"`
+			Merged int     `json:"merged"`
+			Runs   int     `json:"ci_runs"`
+			Median float64 `json:"median_time_to_merge_seconds"`
+		}
+		if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.Config.Planner.Size != 4 || got.Config.Planner.Wait != 30 || got.Merged != scenario.prs || got.Runs != 1 || got.Median != scenario.median.Seconds() {
+			t.Fatalf("batch flags did not control formation: %+v", got)
 		}
 	}
 }

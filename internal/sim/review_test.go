@@ -124,6 +124,12 @@ func TestSimulatorDetectsFenceMutants(t *testing.T) {
 				if err != nil || r.Merged != 1 || r.DelayedPushes != 1 || r.DuplicateExecutions != duplicate || r.RejectedReplays != 1 || len(s.abandoned) != 1 {
 					t.Fatalf("fault not exercised/recovered: %+v, %v", r, err)
 				}
+			} else if mutant == "fresh executor token" {
+				// The start-event gate cancels this duplicate before its forge call.
+				// TestAbandonmentBeforePush covers the fresh-token bug after a valid start.
+				if err != nil || r.Merged != 1 || r.RejectedReplays != 1 {
+					t.Fatalf("duplicate bypassed the start gate: %+v, %v", r, err)
+				}
 			} else if err == nil || !strings.Contains(err.Error(), "abandoned attempt") || r.Merged != 0 {
 				t.Fatalf("simulator missed fence mutant: %+v, %v", r, err)
 			} else {

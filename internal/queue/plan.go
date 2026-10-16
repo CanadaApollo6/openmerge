@@ -2,6 +2,7 @@ package queue
 
 import (
 	"fmt"
+	"reflect"
 	"slices"
 	"time"
 )
@@ -43,6 +44,23 @@ func plan(cfg Config, s State, now time.Time) []Action {
 	}
 	batch := s.Active
 	if batch == nil {
+		if s.actionPoison.key != "" {
+			return actions
+		}
+		if s.PauseReason(cfg) != "" || s.buildRetry.detail != "" {
+			if len(s.Entries) > 0 {
+				report := s.pauseReport()
+				if _, done := s.acknowledged[report.Key()]; !done {
+					actions = append(actions, report)
+				}
+			}
+		}
+		if s.PauseReason(cfg) == "" && (s.buildRetry.failures == 0 || now.Sub(s.buildRetry.failedAt) >= cfg.buildRetryDelay(s.buildRetry.failures)) {
+			if prs, _ := s.batchCandidates(cfg, now); len(prs) > 0 {
+				id := s.nextBatchID()
+				actions = append(actions, BuildTestRef{BatchID: id, BaseSHA: s.BaseSHA, PRs: prs, Ref: "openmerge/queue/" + s.BaseBranch + "/" + id, Method: cfg.MergeMethod})
+			}
+		}
 		return actions
 	}
 	if batch.Phase == Landing {
@@ -97,6 +115,10 @@ func plan(cfg Config, s State, now time.Time) []Action {
 		deadline := batch.StartedTestingAt.Add(cfg.CheckTimeout)
 		timedOut := cfg.CheckTimeout > 0 && now.After(deadline)
 		if timedOut && batch.checkRefreshes > 0 && !batch.checksRefreshedAt.Before(deadline) {
+			if len(batch.PRs) > 1 {
+				actions = append(actions, FailBatch{BatchID: batch.ID, Reason: ChecksTimeout})
+				return actions
+			}
 			for _, pr := range batch.PRs {
 				actions = append(actions, Dequeue{PR: pr.PR, HeadSHA: pr.HeadSHA, AdmissionID: s.entry(pr.PR).AdmissionID, Reason: ChecksTimeout, BatchID: batch.ID, scope: "batch/" + batch.ID})
 			}
@@ -177,4 +199,68 @@ func (cfg Config) buildRetryDelay(failures int) time.Duration {
 		delay *= 2
 	}
 	return delay
+}
+
+// batchCandidates gives pending sub-batches priority and never waits to retest them.
+func (s State) batchCandidates(cfg Config, now time.Time) ([]BatchPR, time.Time) {
+	if len(s.pending) > 0 {
+		return slices.Clone(s.pending[0].prs), time.Time{}
+	}
+	size := cfg.BatchMaxSize
+	if size == 0 {
+		size = 1
+	}
+	if size < 1 || size > 128 || cfg.BatchMaxWait < 0 {
+		panic("invalid batch configuration")
+	}
+	var prs []BatchPR
+	var oldest time.Time
+	for _, entry := range s.Entries {
+		pr := BatchPR{PR: entry.PR, HeadSHA: entry.HeadSHA}
+		if !s.runnablePRs([]BatchPR{pr}) {
+			continue
+		}
+		if len(prs) == 0 || entry.EnqueuedAt.Before(oldest) {
+			oldest = entry.EnqueuedAt
+		}
+		prs = append(prs, pr)
+		if len(prs) == size {
+			return prs, time.Time{}
+		}
+	}
+	if len(prs) > 0 && size > 1 && cfg.BatchMaxWait > 0 {
+		deadline := oldest.Add(cfg.BatchMaxWait)
+		if now.Before(deadline) {
+			return nil, deadline
+		}
+	}
+	return prs, time.Time{}
+}
+
+// CanStart revalidates a durable start against the current plan, including the
+// complete action payload. Callers must serialize this check with the append.
+func CanStart(cfg Config, s State, action Action, event Event) bool {
+	var at time.Time
+	switch e := event.(type) {
+	case BatchStarted:
+		a, ok := action.(BuildTestRef)
+		if !ok || e.Validate() != nil || a.BatchID != e.BatchID || a.BaseSHA != e.BaseSHA || !slices.Equal(a.PRs, e.PRs) {
+			return false
+		}
+		at = e.At
+	case LandingStarted:
+		a, ok := action.(Land)
+		if !ok || e.AttemptID == "" || a.BatchID != e.BatchID || a.FenceToken != e.FenceToken {
+			return false
+		}
+		at = e.At
+	default:
+		return false
+	}
+	for _, planned := range Plan(cfg, s, at) {
+		if planned.Key() == action.Key() && reflect.DeepEqual(planned, action) {
+			return true
+		}
+	}
+	return false
 }

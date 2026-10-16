@@ -135,7 +135,7 @@ func TestBeginConsequentialRenewsOriginalLease(t *testing.T) {
 	if len(claims) != 0 {
 		t.Fatal("slow forge call was reclaimed within renewed lease")
 	}
-	must(t, s.Emit(t.Context(), q)(queue.LandingStarted{FenceToken: "fence", BatchID: "b1", AttemptID: "slow", At: epoch.Add(61 * time.Second)}))
+	must(t, s.Emit(t.Context(), claim, config)(queue.LandingStarted{FenceToken: "fence", BatchID: "b1", AttemptID: "slow", At: epoch.Add(61 * time.Second)}))
 	claims, err = s.Claim(t.Context(), 1, time.Minute, renewed)
 	must(t, err)
 	if len(claims) != 1 {

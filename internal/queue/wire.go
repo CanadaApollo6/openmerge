@@ -64,6 +64,17 @@ type wireDequeueRequested struct {
 type wireResumeRequested struct {
 }
 
+type wireBatchStarted struct {
+	BatchID string        `json:"batch_id"`
+	BaseSHA string        `json:"base_sha"`
+	PRs     []wireBatchPR `json:"prs"`
+	At      time.Time     `json:"at"`
+}
+type wireBatchFailed struct {
+	BatchID string `json:"batch_id"`
+	Reason  string `json:"reason"`
+}
+
 type wireTestRefBuilt struct {
 	BatchID   string    `json:"batch_id"`
 	TestedSHA string    `json:"tested_sha"`
@@ -309,6 +320,16 @@ func EncodeEvent(value Event) (string, []byte, error) {
 		return encodeWire("dequeue_requested", wireDequeueRequested(v))
 	case ResumeRequested:
 		return encodeWire("resume_requested", wireResumeRequested{})
+	case BatchStarted:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("batch_started", wireBatchStarted{BatchID: v.BatchID, BaseSHA: v.BaseSHA, PRs: encodeBatchPRs(v.PRs), At: v.At})
+	case BatchFailed:
+		if err := (FailBatch(v)).Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("batch_failed", wireBatchFailed{BatchID: v.BatchID, Reason: string(v.Reason)})
 	case TestRefBuilt:
 		return encodeWire("test_ref_built", wireTestRefBuilt{BatchID: v.BatchID, TestedSHA: v.TestedSHA, At: v.At, Method: string(v.Method)})
 	case TestRefBuildFailed:
@@ -369,6 +390,26 @@ func DecodeEvent(payload []byte) (Event, error) {
 		return decodeWireData(envelope.Data, func(_ wireResumeRequested) Event {
 			return ResumeRequested{}
 		})
+	case "batch_started":
+		v, err := readWireData[wireBatchStarted](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := BatchStarted{BatchID: v.BatchID, BaseSHA: v.BaseSHA, PRs: decodeBatchPRs(v.PRs), At: v.At}
+		if err := event.Validate(); err != nil {
+			return nil, err
+		}
+		return event, nil
+	case "batch_failed":
+		v, err := readWireData[wireBatchFailed](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := BatchFailed{BatchID: v.BatchID, Reason: DequeueReason(v.Reason)}
+		if err := FailBatch(event).Validate(); err != nil {
+			return nil, err
+		}
+		return event, nil
 	case "test_ref_built":
 		return decodeWireData(envelope.Data, func(v wireTestRefBuilt) Event {
 			return TestRefBuilt{BatchID: v.BatchID, TestedSHA: v.TestedSHA, At: v.At, Method: MergeMethod(v.Method)}
@@ -409,6 +450,8 @@ func DecodeEvent(payload []byte) (Event, error) {
 // EncodeAction returns the stable type discriminator and versioned JSON.
 func EncodeAction(value Action) (string, []byte, error) {
 	switch v := value.(type) {
+	case FailBatch:
+		return encodeWire("fail_batch", wireBatchFailed{BatchID: v.BatchID, Reason: string(v.Reason)})
 	case BuildTestRef:
 		return encodeWire("build_test_ref", wireBuildTestRef{BatchID: v.BatchID, BaseSHA: v.BaseSHA, PRs: encodeBatchPRs(v.PRs), Ref: v.Ref, Method: string(v.Method)})
 	case RefreshChecks:
@@ -437,6 +480,8 @@ func DecodeAction(payload []byte) (Action, error) {
 		return nil, err
 	}
 	switch envelope.Type {
+	case "fail_batch":
+		return decodeWireAction(envelope.Data, func(v wireBatchFailed) Action { return FailBatch{BatchID: v.BatchID, Reason: DequeueReason(v.Reason)} })
 	case "build_test_ref":
 		return decodeWireAction(envelope.Data, func(v wireBuildTestRef) Action {
 			return BuildTestRef{BatchID: v.BatchID, BaseSHA: v.BaseSHA, PRs: decodeBatchPRs(v.PRs), Ref: v.Ref, Method: MergeMethod(v.Method)}

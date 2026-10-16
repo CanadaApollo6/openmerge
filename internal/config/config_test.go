@@ -86,8 +86,8 @@ func TestDefaultsAndOverrides(t *testing.T) {
 		{"empty lists", "    enter_when: []\n    merge_when: []\n", queue.Squash, time.Hour, Batch{MaxSize: 1}, 0},
 		{"empty batch", "    batch: {}\n", queue.Squash, time.Hour, Batch{MaxSize: 1}, 0},
 		{"serial batch", "    batch: {max_size: 1, max_wait: 0s}\n", queue.Squash, time.Hour, Batch{MaxSize: 1}, 0},
-		{"future batch", "    batch: {max_size: 128, max_wait: 30s}\n", queue.Squash, time.Hour, Batch{128, 30 * time.Second}, 1},
-		{"inactive wait", "    batch: {max_wait: 5s}\n", queue.Squash, time.Hour, Batch{1, 5 * time.Second}, 1},
+		{"future batch", "    batch: {max_size: 128, max_wait: 30s}\n", queue.Squash, time.Hour, Batch{128, 30 * time.Second}, 0},
+		{"inactive wait", "    batch: {max_wait: 5s}\n", queue.Squash, time.Hour, Batch{1, 5 * time.Second}, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -110,16 +110,11 @@ func TestDefaultsAndOverrides(t *testing.T) {
 			}
 			wantPlanner := queue.Config{
 				MergeMethod: tt.method, CheckTimeout: tt.timeout,
+				BatchMaxSize: tt.batch.MaxSize, BatchMaxWait: tt.batch.MaxWait,
 				ResolveAfter: time.Minute, RefreshInterval: time.Minute, BuildRetries: 3, BuildBackoff: 5 * time.Second,
 			}
 			if got := q.QueueConfig(); got != wantPlanner {
 				t.Errorf("QueueConfig = %+v, want %+v", got, wantPlanner)
-			}
-			if len(warnings) != 0 {
-				want := Diagnostic{Line: 4, Path: "queues[0].batch", Message: "batching is not yet active; Phase 1 executes max_size 1 without waiting"}
-				if warnings[0] != want {
-					t.Errorf("warning = %v, want %v", warnings[0], want)
-				}
 			}
 		})
 	}
@@ -224,7 +219,7 @@ queues:
     batch: &batch {max_size: 8, max_wait: 30s}
 `)
 	cfg, warnings, err := Load(data)
-	if err != nil || len(warnings) != 1 {
+	if err != nil || len(warnings) != 0 {
 		t.Fatalf("Load: %v, warnings: %v", err, warnings)
 	}
 	for _, e := range []condition.Expression{cfg.Queues[0].EnterWhen, cfg.Queues[0].MergeWhen} {
@@ -296,7 +291,7 @@ func TestGoldenExampleMatchesADR(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ADR example does not validate: %s", err)
 	}
-	if len(warnings) != 1 || cfg.Queues[0].Batch != (Batch{8, 30 * time.Second}) {
+	if len(warnings) != 0 || cfg.Queues[0].Batch != (Batch{8, 30 * time.Second}) {
 		t.Fatalf("example = %+v, warnings = %v", cfg, warnings)
 	}
 	pr := condition.Snapshot{"approved-reviews-by": condition.Strings("alice"), "check-success": condition.Strings("lint", "integration")}

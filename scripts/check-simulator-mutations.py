@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PLAN = "internal/queue/plan.go"
 APPLY = "internal/queue/apply.go"
 EXECUTOR = "internal/executor/executor.go"
+TYPES = "internal/queue/types.go"
 FAKE = "internal/forge/fake/fake.go"
 
 
@@ -29,6 +30,30 @@ def mutation(path, *edits):
 LAND_SHA = "Base: x.Base, ExpectedBaseSHA: a.ExpectedBaseSHA, TestedSHA: a.TestedSHA,"
 ABANDON = "return emit(queue.LandingAbandoned{BatchID: a.BatchID, NewFence: next})"
 MUTANTS = {
+    "uncorrelated_batch_timeout": mutation(
+        APPLY,
+        ("e.Reason == ChecksTimeout && s.batchIn(e.BatchID, Testing) && !s.Active.checksPassed",
+         "e.Reason == ChecksTimeout && s.Active != nil && s.Active.Phase == Testing && !s.Active.checksPassed"),
+    ),
+    "build_key_omits_composition": mutation(
+        TYPES,
+        ("for _, pr := range a.PRs {", "for _, pr := range a.PRs[:0] {"),
+    ),
+    "ignore_batch_max_wait": mutation(
+        PLAN,
+        ("if len(prs) > 0 && size > 1 && cfg.BatchMaxWait > 0 {",
+         "if len(prs) > 0 && size > 1 && false {"),
+    ),
+    "drop_passing_subbatch_pr": mutation(
+        APPLY,
+        ("s.Active.checksPassed = true",
+         "if s.Active.FromBisection && len(s.Active.PRs) > 1 { s.Active.PRs = s.Active.PRs[1:] }\n\t\ts.Active.checksPassed = true"),
+    ),
+    "dequeue_whole_failing_batch": mutation(
+        APPLY,
+        ("if len(prs) == 1 {", "if true {"),
+        ("s.requestDequeue(prs[0].PR, reason)", "for _, pr := range prs { s.requestDequeue(pr.PR, reason) }"),
+    ),
     "no_ci_gate": mutation(PLAN, ("if batch.checksPassed {", "if true {")),
     "wrong_sha": mutation(
         EXECUTOR, (LAND_SHA, LAND_SHA.replace("TestedSHA: a.TestedSHA", "TestedSHA: a.PRs[0].HeadSHA"))
@@ -37,7 +62,7 @@ MUTANTS = {
         EXECUTOR, (LAND_SHA, LAND_SHA.replace("TestedSHA: a.TestedSHA", "TestedSHA: a.ExpectedBaseSHA"))
     ),
     "skip_trust": {
-        **mutation(APPLY, ("case !e.Trusted:", "case false:"), ("case !observation.Trusted:", "case false:")),
+        **mutation(APPLY, ("case !e.Trusted:", "case false:"), ("case !observation.Trusted:", "case false:"), (" || !observation.Trusted", "")),
         **mutation(PLAN, (" || !observation.Trusted", "")),
     },
     "no_dequeued": mutation(
@@ -93,13 +118,18 @@ import (
     "github.com/CanadaApollo6/openmerge/internal/queue"
 )
 func TestMutationRunProbe(t *testing.T) {
-    for _, mode := range []string{"passing", "broken", "squash", "external"} {
+    for _, mode := range []string{"passing", "broken", "squash", "external", "batching"} {
         t.Run(mode, func(t *testing.T) {
             cfg := smallConfig()
             cfg.PRs, cfg.MaxSteps, cfg.Faults = 2, 10000, DefaultFaults()
             if mode == "broken" { cfg.BrokenRate = 1 }
             if mode == "squash" { cfg.MergeMethod = queue.Squash }
             if mode == "external" { cfg.ExternalPushRate = 1 }
+            if mode == "batching" {
+                cfg.PRs, cfg.BrokenRate, cfg.Faults = 16, 0.2, Faults{}
+                cfg.ArrivalWindow = 0
+                cfg.Planner.BatchMaxSize = 8
+            }
             r, err := Run(cfg)
             if err != nil { t.Fatalf("simulator rejected mutation: %v; merged=%d", err, r.Merged) }
         })
@@ -124,7 +154,7 @@ with tempfile.TemporaryDirectory(prefix="openmerge-mutations-") as directory:
         overlay.write_text(json.dumps({"Replace": replacements}))
         run = subprocess.run(
             ["go", "test", "-count=1", "-overlay", str(overlay), "./internal/sim", "-run",
-             "TestMutationRunProbe|TestAbandonmentBeforePush/captured_token|TestExit500PRDay|TestForeignBaseEqualityDoesNotResolveLanding/resolve_from_fence"],
+             "TestMutationRunProbe|TestStaleBatchTimeoutInSimulator|TestChangedCompositionInSimulator|TestBatchFormationWaitInSimulator|TestAbandonmentBeforePush/captured_token|TestExit500PRDay|TestForeignBaseEqualityDoesNotResolveLanding/resolve_from_fence"],
             cwd=ROOT, capture_output=True, text=True, timeout=60,
         )
         output = run.stdout + run.stderr

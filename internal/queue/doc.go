@@ -1,13 +1,19 @@
-// Package queue implements the serial merge queue as a pure event fold and planner.
+// Package queue implements a merge queue with one active batch as a pure event fold and planner.
 // Apply copies the state it changes; Plan reads state and an explicit clock and
 // returns deterministic, keyed actions. Build actions carry the configured merge
 // method; build results pin the actual method for landing. Neither function
 // performs I/O. See docs/adr/0002-storage-and-state-model.md and
 // docs/adr/0004-forge-driver-interface.md for the persistence and fencing contracts.
 //
-// Apply allocates a Building batch as soon as the first runnable entry exists,
-// using a monotonically increasing ID. This makes build keys stable without
-// allowing Plan to mutate state. TestRefBuilt enters Testing; a matching successful
+// Plan chooses the first BatchMaxSize eligible, trusted pinned heads in queue
+// order (default size 1). Formation skips entries that are currently ineligible,
+// untrusted, or awaiting dequeue, relaxing strict FIFO compared with serial mode.
+// Partial batches wait until the oldest runnable entry has waited
+// BatchMaxWait; NextWake exposes that deadline. Size 1 never waits. A build key
+// hashes the base and ordered composition, so revalidation cancels stale proposals.
+// The executor durably records BatchStarted before building. Only that event
+// creates a Building batch and advances the monotonic batch ID; Apply never
+// recomputes composition from configuration. TestRefBuilt enters Testing; a matching successful
 // check enables landing. TestRefBuilt.At and LandingStarted.At carry the recorded
 // timer origins, so replay never substitutes the current clock.
 //
@@ -30,7 +36,14 @@
 // without building. The pause is derived from Config and the recorded streak,
 // because Apply has no config input. ResumeRequested and a changed BaseSHA clear
 // the streak and delay; duplicate BaseMoved observations do nothing. Successful
-// builds also reset it. Conflicts still dequeue normally.
+// builds also reset it. Checks failures, timeouts and build conflicts split a
+// multi-PR batch into two ordered pending halves, without dequeuing its members.
+// Pending groups run before fresh work, first half then second, with no batch wait.
+// A passing sub-batch lands its tested tip once; a failing singleton is dequeued
+// with its precise reason. FailBatch/BatchFailed make timer-driven splits durable.
+// Batch.FromBisection records provenance for metrics. Invalidated members leave
+// their pending groups. Base moves, abandoned landings and infrastructure retries
+// rebuild only the current composition, preserving its bisection provenance.
 //
 // ActionPoisoned records repeated invalid durable work. It pauses all work except
 // the head PR's paused ReportStatus and resolution of an in-flight landing.
@@ -50,8 +63,9 @@
 // The executor generates a random attempt ID before recording LandingStarted.
 // A batch in Landing can only resolve that recorded ID, never start another Land.
 //
-// Every Dequeue is completed with Dequeued, which removes the entry and clears its
-// batch. Until that result, the entry stays queued and cannot start another batch.
+// Every Dequeue is completed with Dequeued, which removes the entry and rebuilds
+// the remaining members of its batch. Until that result, the entry stays queued
+// and cannot join another batch.
 // ReportStatus, MarkLanded, and DeleteRef repeat until ActionCompleted acknowledges
 // their keys. Squash/rebase Landed events record a MarkLanded effect per pinned PR
 // so PR closing survives a crash. Merge landings need none. Status and dequeue
@@ -62,14 +76,14 @@
 //
 // # Invariants
 //
-// Apply owns admissions, batch allocation, recorded timers, and phase transitions;
+// Apply owns admissions, recorded batch composition, timers, and phase transitions;
 // Plan owns time/config-dependent decisions and never changes state. Admissions
 // and batches have separate monotonic IDs. Build and landing results must match
 // the current BatchID and phase; each batch allows only one landing attempt.
 // ResolveLanding carries that attempt ID, fence SHA, and tested SHA. Dequeued must
 // echo the entry's admission ID, plus the BatchID for timeout actions, so late
 // results cannot remove a new subject. ActionCompleted echoes the exact effect
-// key. Build keys include the method, dequeue keys include the admission, and
+// key. Build keys include the method and composition, dequeue keys include the admission, and
 // report keys distinguish both admissions and outcome revisions. Landing always
 // carries the tested batch's base, tested SHA, and method, together with the
 // current fence.
@@ -79,5 +93,5 @@
 // Apply remembers the last 64 tested SHAs and rejects reuse of one as a
 // non-conflict build failure with an explanatory report.
 // Late outcomes for discarded or completed batches are not retained. Snapshots
-// must preserve the tested-SHA history as well as the batch and admission counters.
+// must preserve pending groups and the tested-SHA history as well as batch and admission counters.
 package queue
