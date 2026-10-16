@@ -147,8 +147,9 @@ type Git interface {
 	EnsureFence(ctx context.Context, repo RepoRef, fenceRef string) (sha string, err error)
 	// AdvanceFence leases expectedSHA and mints a child with nextID and a fresh nonce.
 	AdvanceFence(ctx context.Context, repo RepoRef, fenceRef, expectedSHA, nextID string) (newSHA string, err error)
-	// ReadFence reads identity and tested SHA, ignoring the fence commit's nonce.
-	// A non-OpenMerge commit has empty identity fields; a missing ref is an error.
+	// ReadFence reads identity and tested SHA from an exact single-line land or
+	// abandon message, validating the 32-hex nonce and 40/64-hex tested SHA.
+	// Unrecognized messages have empty identity fields; a missing ref is an error.
 	ReadFence(ctx context.Context, repo RepoRef, fenceRef string) (sha, id, testedSHA string, err error)
 	ReadRef(ctx context.Context, repo RepoRef, ref string) (sha string, err error)
 	IsAncestor(ctx context.Context, repo RepoRef, ancestor, descendant string) (bool, error)

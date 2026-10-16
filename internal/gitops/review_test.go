@@ -206,9 +206,9 @@ func TestReviewBinaryAndRenameConflict(t *testing.T) {
 	}
 }
 
-// This reproduction records the residual external-writer race described in
-// README.md. It is indistinguishable from an administrator rolling main back
-// after landing; uniqueness prevents duplicates, not arbitrary external rewrites.
+// This reproduction records the transport-level fence-only push described in
+// README.md. TestR2ExternalRollbackFailsSafe covers executor detection before
+// recording Landed or closing a PR.
 func TestReviewExternalTestedThenRollbackLimit(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()

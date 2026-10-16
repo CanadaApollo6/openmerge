@@ -110,7 +110,11 @@ Git skips both the update and its lease check when an advertised destination
 already equals the source SHA. Every fence commit therefore includes a fresh
 nonce containing at least 128 random bits from `crypto/rand`, including copies of
 the same attempt with identical parents, messages, and second-resolution clocks.
-`ReadFence` ignores the nonce when reading the attempt and tested SHA.
+`ReadFence` validates an exact one-line landing or abandonment message before
+returning the attempt and tested SHA. The tested SHA must contain 40 or 64 hex
+characters, and the nonce exactly 32 hex characters. Duplicate keys, extra
+tokens, invalid hex, and multiline messages return empty identity fields, so a
+changed malformed fence is treated as tampered.
 
 A landing push always changes the fence, so Git always checks its lease. If one
 copy lands and an external writer rolls the base back, a delayed copy mints a
@@ -120,25 +124,39 @@ same uniqueness rule for abandonment commits.
 
 If preflight sees the base already equal to the tested SHA, Land returns
 `forge.ErrLeaseRejected` without pushing, even when the expected base also equals
-that SHA. The executor resolves through the fence: a matching `land/<attempt>`
-records the earlier landing; otherwise it abandons the attempt through its lease.
+that SHA. The executor resolves through the fence. A matching `land/<attempt>`
+requires verification that the tested commit is still on the freshly read base
+before recording the earlier landing. An unchanged starting fence is instead
+advanced through its lease to abandon the attempt.
 
-One residual case remains outside OpenMerge's guarantees: an external writer
-pushes exactly the tested commit after preflight but before push advertisement,
-then rolls it back inside the push window. Git can skip the base update while
-still advancing the unique fence. This is indistinguishable from an administrator
-rolling main back immediately after a successful landing. OpenMerge does not
-protect main from such external rewrites. Another preliminary read cannot close
-that window; a strict old-OID check for no-op refs would require server support or
-a different transport protocol.
+An external writer can push exactly the tested commit after preflight but before
+push advertisement, then roll it back inside the push window. Git can skip the
+base update while still advancing the unique fence. The executor detects this
+outcome: before emitting `Landed`, both normal completion and fence-based recovery
+freshly read the base and require the tested commit to equal its tip or be an
+ancestor. If it is absent, `executor.ErrLandingNotOnBase` includes the tested SHA,
+base tip, and attempt ID. No landing result is recorded; the batch stays in
+`Landing`, and every resolution retry returns the error while the commit remains
+absent. The executor also repeats the reachability check immediately before
+`Driver.MarkLanded`, returning the same error without closing the PR or
+acknowledging the action if the landed commit is absent. That action carries no
+attempt ID, so its error's attempt ID is empty.
+
+These checks detect the residual push-window rollback instead of accepting a
+false landing. They do not prevent an administrator from rewriting main after a
+verification read. A strict old-OID check for Git's no-op refs would still require
+server support or a different transport protocol.
 
 `TestGitSkipsLeaseForUpToDateRef` records the upstream behavior. The shared
 contract covers refusal of already-tested bases, including matching expected
 leases, and duplicate landings after rollback. `TestReviewDuplicateLandAfterRollback`
 stages the duplicate after preflight against real Git;
-`TestReviewExternalTestedThenRollbackLimit` preserves the external-writer
-reproduction as a test of the documented boundary. The fake checks its leases
-under a lock, mints unique fences, and refuses already-tested bases.
+`TestReviewExternalTestedThenRollbackLimit` preserves the transport-level
+fence-only push reproduction. `TestR2ExternalRollbackFailsSafe` verifies that
+normal completion, lost-response recovery, repeated resolution, and stale
+`MarkLanded` actions refuse to record a landing or close a PR after that rollback.
+The fake checks its leases under a lock, mints unique fences, and refuses
+already-tested bases.
 Its normal constructor uses cryptographic randomness; the simulator explicitly
 uses `fake.NewDeterministic` with unique counter nonces to keep seeded runs
 repeatable.

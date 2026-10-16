@@ -58,7 +58,13 @@ var (
 
 // New returns an empty forge, with no repositories or refs.
 func New() *Forge {
-	return newForge(func() string { return fmt.Sprintf("%x", rand.Text()) })
+	return newForge(func() string {
+		var nonce [16]byte
+		if _, err := rand.Read(nonce[:]); err != nil {
+			panic(err)
+		}
+		return fmt.Sprintf("%x", nonce)
+	})
 }
 
 // NewDeterministic uses unique counter nonces for repeatable simulations.
@@ -319,12 +325,7 @@ func (f *Forge) ReadFence(ctx context.Context, repo forge.RepoRef, fenceRef stri
 	if !ok {
 		return "", "", "", fmt.Errorf("unknown ref %q", fenceRef)
 	}
-	id, ok := strings.CutPrefix(r.commits[sha].Message, "openmerge fence ")
-	if !ok {
-		return sha, "", "", nil
-	}
-	id, _, _ = strings.Cut(id, " nonce=")
-	id, tested, _ := strings.Cut(id, " tested=")
+	id, tested := forge.ParseFenceMessage(r.commits[sha].Message)
 	return sha, id, tested, nil
 }
 

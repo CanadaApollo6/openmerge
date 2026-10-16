@@ -186,7 +186,8 @@ func (r *Repo) EnsureFence(ctx context.Context, repo forge.RepoRef, ref string) 
 }
 
 // ReadFence reads the current remote token and parses its commit message.
-// Ordinary commits return empty identity fields; missing refs are errors.
+// Malformed and bootstrap messages return empty identity fields; missing refs
+// are errors.
 func (r *Repo) ReadFence(ctx context.Context, repo forge.RepoRef, ref string) (string, string, string, error) {
 	s, unlock, err := r.open(ctx, repo)
 	if err != nil {
@@ -208,15 +209,10 @@ func (r *Repo) ReadFence(ctx context.Context, repo forge.RepoRef, ref string) (s
 	if err := s.commits(ctx, sha); err != nil {
 		return "", "", "", err
 	}
-	message, err := s.command(ctx, "", "show", "-s", "--format=%B", sha)
+	message, diagnostic, err := s.run(ctx, "", "show", "-s", "--format=format:%B", sha)
 	if err != nil {
-		return "", "", "", err
+		return "", "", "", s.failure("show", diagnostic, err)
 	}
-	id, ok := strings.CutPrefix(message, "openmerge fence ")
-	if !ok {
-		return sha, "", "", nil
-	}
-	id, _, _ = strings.Cut(id, " nonce=")
-	id, tested, _ := strings.Cut(id, " tested=")
+	id, tested := forge.ParseFenceMessage(message)
 	return sha, id, tested, nil
 }

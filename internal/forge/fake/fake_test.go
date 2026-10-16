@@ -108,15 +108,26 @@ func TestContractWithoutRollbacks(t *testing.T) {
 
 func TestReadFenceMessages(t *testing.T) {
 	f, _ := fixture(t)
+	const nonce = "0123456789abcdef0123456789abcdef"
+	sha40, sha64 := strings.Repeat("a", 40), strings.Repeat("b", 64)
 	for _, tc := range []struct{ message, id, tested string }{
 		{message: "ordinary commit"},
 		{message: "prefix openmerge fence land/attempt"},
 		{message: "openmerge fences land/attempt"},
 		{message: "openmerge fence "},
-		{message: "openmerge fence land/attempt", id: "land/attempt"},
-		{message: "openmerge fence abandon/attempt", id: "abandon/attempt"},
+		{message: "openmerge fence land/attempt"},
+		{message: "openmerge fence abandon/attempt"},
 		{message: "openmerge fence abandon/attempt nonce=0123456789abcdef0123456789abcdef", id: "abandon/attempt"},
-		{message: "openmerge fence land/attempt tested=sha nonce=0123456789abcdef0123456789abcdef", id: "land/attempt", tested: "sha"},
+		{message: "openmerge fence land/attempt tested=sha nonce=0123456789abcdef0123456789abcdef"},
+		{message: "openmerge fence land/probe tested=" + sha40 + " nonce=" + nonce, id: "land/probe", tested: sha40},
+		{message: "openmerge fence land/probe tested=" + sha64 + " nonce=" + nonce, id: "land/probe", tested: sha64},
+		{message: "openmerge fence land/probe tested=" + sha40 + " nonce=not-hex tested=" + sha64},
+		{message: "openmerge fence land/probe tested=" + sha40 + " nonce="},
+		{message: "openmerge fence land/probe nonce=abcd tested=" + sha40},
+		{message: "openmerge fence abandon/probe nonce=abcd\nopenmerge fence land/other tested=" + sha40},
+		{message: "openmerge fence land/probe tested=" + sha40 + " nonce=" + nonce + " tested=" + sha64},
+		{message: "openmerge fence land/probe tested=" + sha40 + " nonce=" + nonce + " nonce=" + nonce},
+		{message: "openmerge fence land/probe tested=" + sha40 + " nonce=" + nonce + " extra"},
 	} {
 		t.Run(tc.message, func(t *testing.T) {
 			pr, err := f.PushPR(repo, 1, tc.message)
@@ -141,7 +152,7 @@ func TestReadFenceErrors(t *testing.T) {
 	}
 	sha, id, _, err := f.ReadFence(ctx, repo, fenceRef)
 	must(t, err)
-	if sha != e.FenceSHA || id != "initial" {
+	if sha != e.FenceSHA || id != "" {
 		t.Fatalf("failed read changed the fence: SHA %q ID %q", sha, id)
 	}
 	canceled, cancel := context.WithCancel(ctx)

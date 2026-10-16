@@ -63,14 +63,14 @@ git push --atomic \
 - The forge applies the push only if both refs still hold the expected values. A base that moved forward, was rolled back, or was rewritten is refused.
 - Every landing push changes the fence. Mint a fresh fence nonce with at least 128 bits from `crypto/rand` for each push, including copies of the same attempt. Git skips leases on up-to-date refs; unique fences ensure that a duplicate cannot skip its consumed fence lease after a base rollback.
 - If preflight sees the base already equal to the tested SHA, return `ErrLeaseRejected` without pushing, even if it also equals the expected base. The executor settles the attempt through the fence.
-- The CLI transport's [skipped-lease notes](../internal/gitops/README.md#skipped-leases-and-external-rollbacks) describe the residual external-writer case: pushing exactly the tested commit and rolling it back inside the push window is indistinguishable from an administrator rolling main back after landing, outside OpenMerge's guarantees.
+- The CLI transport's [skipped-lease notes](../internal/gitops/README.md#skipped-leases-and-external-rollbacks) describe a residual external-writer case: pushing exactly the tested commit and rolling it back inside the push window can advance only the fence. The executor detects the missing tested commit with a fresh base read and reachability check before recording `Landed`, in both normal completion and recovery. It returns `executor.ErrLandingNotOnBase` with the tested SHA, base tip, and attempt ID, emits no result event, and leaves the batch in `Landing`. Every resolution retry repeats the check and returns the error while the commit is absent.
 - On refusal the driver returns only `ErrLeaseRejected`. A rejected git push reports no actual ref values.
 - Drivers land through git, never through a forge merge or ref-update endpoint. Those check the PR head or ancestry, not the expected old value.
 - `Land` refuses a `LandRequest` whose pinned PR heads do not match the PRs.
 - A refused build or landing leaves every ref and PR unchanged.
 - OpenMerge needs permission to push to the protected base branch, for example as an always-allowed ruleset bypass on GitHub.
 
-After a landing with merge commits, the forge marks the PRs merged because their heads are reachable. After squash or rebase it does not, so the planner emits `MarkLanded` for each PR. `Driver.MarkLanded` closes the PR with a link to the landed commit, or uses the forge's native mark-merged where one exists. It is idempotent and never merges again.
+After a landing with merge commits, the forge marks the PRs merged because their heads are reachable. After squash or rebase it does not, so the planner emits `MarkLanded` for each PR. `Driver.MarkLanded` closes the PR with a link to the landed commit, or uses the forge's native mark-merged where one exists. It is idempotent and never merges again. Immediately before calling `Driver.MarkLanded`, the executor freshly reads the base and verifies that the landed commit equals the tip or is its ancestor. An absent commit returns `executor.ErrLandingNotOnBase` without calling the driver, closing the PR, or acknowledging the action. `MarkLanded` carries no attempt ID, so that error's attempt ID is empty. These checks detect external rollbacks observed at verification; they cannot prevent subsequent external rewrites.
 
 ## The fence
 
@@ -79,7 +79,7 @@ Each base branch has a fence branch, `openmerge/fence/<base>`, derived from the 
 - `openmerge fence land/<attempt> tested=<sha> nonce=<random-hex>`, minted by the landing push;
 - `openmerge fence abandon/<attempt> nonce=<random-hex>`, minted when OpenMerge gives up on an attempt.
 
-`ReadFence` ignores the nonce and returns only the attempt identity and tested SHA. The fake must mint unique fences too.
+`ReadFence` accepts only these exact one-line formats, with one space between tokens, a nonempty single-token attempt ID, a tested SHA of 40 or 64 hex characters, and a nonce of exactly 32 hex characters. A terminal newline is allowed. Each key occurs exactly once in the shown order; extra tokens, multiline messages, invalid hex, and all other formats return the fence SHA with empty identity and tested-SHA fields. A changed unrecognized fence is treated as tampered by the executor. Bootstrap fences also have empty identity fields. The fake uses the same parser and must mint unique fences too.
 
 `EnsureFence` runs at setup. It creates the first fence commit with a create-only push, reading back a concurrent winner, or returns the existing fence unchanged.
 
@@ -93,7 +93,7 @@ Before any push, the executor mints a random attempt ID of at least 128 bits and
 
 A rejected landing push, a crash, and a timeout are all resolved the same way, by reading the fence:
 
-1. The fence names `land/<attempt>` with the attempt's tested SHA: the landing happened. Record `Landed`.
+1. The fence names `land/<attempt>` with the attempt's tested SHA: freshly read the base and require the tested commit to equal its tip or be its ancestor. Only then record `Landed`. Otherwise return `executor.ErrLandingNotOnBase` without an event, leaving the batch in `Landing` and reporting the same error on each retry while the commit is absent.
 2. The fence names `abandon/<attempt>`: an earlier resolution already abandoned it. Record `LandingAbandoned`.
 3. The fence is still the attempt's starting token: advance it to `abandon/<attempt>` with a leased push, then record `LandingAbandoned`. Any delayed copy of the landing push now fails its fence lease. If this lease is rejected, read the fence and decide once more; the landing may have just won.
 4. Anything else, including `land/<attempt>` with a different tested SHA, returns `ErrFenceTampered` without settling the attempt. It means the fence protection above is missing.
