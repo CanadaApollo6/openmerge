@@ -19,6 +19,10 @@ type PullRequest struct {
 	Base           string
 	Draft          bool
 	Author         string
+	AuthorID       int64
+	AuthorEmail    string // forge-provided commit email (GitHub numeric no-reply)
+	Title, Body    string
+	HeadBranch     string
 	HeadInBaseRepo bool
 	Approvals      []Approval
 	Closed         bool

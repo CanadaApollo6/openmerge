@@ -25,7 +25,7 @@ import (
 // must remain valid for that push.
 type Remote func(context.Context, forge.RepoRef) (url string, auth Auth, err error)
 
-// Identity is used on generated commits, including replayed PR commits.
+// Identity names an author or committer of a git commit.
 type Identity struct{ Name, Email string }
 
 // Config supplies the cache, transport, PR ref mapping, and commit metadata.
@@ -36,7 +36,10 @@ type Config struct {
 	Remote            Remote
 	HeadRef           func(pr int) string
 	Author, Committer Identity
-	Now               func() time.Time
+	// PullRequest supplies current metadata at build time. Production callers
+	// must set it; nil uses Author and generic messages for standalone git use.
+	PullRequest func(context.Context, forge.RepoRef, int) (forge.PullRequest, error)
+	Now         func() time.Time
 	// GCInterval and GCThresholdBytes trigger best-effort cache collection after
 	// an operation. Zero selects one hour / 512 MiB; negative disables a trigger.
 	GCInterval       time.Duration
@@ -70,7 +73,7 @@ func New(ctx context.Context, cfg Config) (repo *Repo, err error) {
 		if *id == (Identity{}) {
 			*id = Identity{Name: "OpenMerge", Email: "openmerge@localhost"}
 		}
-		if id.Name == "" || id.Email == "" || strings.ContainsAny(id.Name+id.Email, "<>\x00\r\n") {
+		if !validIdentity(*id) {
 			return nil, errors.New("invalid git commit identity")
 		}
 	}

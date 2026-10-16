@@ -62,6 +62,14 @@ func (d *Driver) PullRequest(ctx context.Context, repo forge.RepoRef, number int
 		return forge.PullRequest{}, safeError(err)
 	}
 	result := forge.PullRequest{Number: pr.GetNumber(), HeadSHA: pr.GetHead().GetSHA(), Base: pr.GetBase().GetRef(), Draft: pr.GetDraft(), Author: pr.GetUser().GetLogin(), Closed: pr.GetState() == "closed"}
+	result.Title, result.Body, result.HeadBranch = pr.GetTitle(), pr.GetBody(), pr.GetHead().GetLabel()
+	if result.HeadBranch == "" {
+		result.HeadBranch = pr.GetHead().GetRef()
+	}
+	result.AuthorID = pr.GetUser().GetID()
+	if result.AuthorID > 0 && result.Author != "" {
+		result.AuthorEmail = fmt.Sprintf("%d+%s@users.noreply.github.com", result.AuthorID, result.Author)
+	}
 	head, base := pr.GetHead().GetRepo(), pr.GetBase().GetRepo()
 	result.HeadInBaseRepo = head.GetID() > 0 && head.GetID() == base.GetID()
 	if result.Closed {
@@ -445,3 +453,17 @@ func HeadRef(pr int) string { return fmt.Sprintf("refs/pull/%d/head", pr) }
 
 // BotLogin identifies comments authored by this App.
 func (d *Driver) BotLogin() string { return d.app.slug + "[bot]" }
+
+// Committer resolves the App's bot user, whose ID differs from the App and
+// installation IDs. Callers can fall back or supply an explicit identity.
+func (d *Driver) Committer(ctx context.Context) (gitops.Identity, error) {
+	login := d.BotLogin()
+	user, _, err := d.client.Users.Get(ctx, login)
+	if err != nil {
+		return gitops.Identity{}, safeError(err)
+	}
+	if user.GetID() <= 0 || user.GetLogin() != login {
+		return gitops.Identity{}, errors.New("github App bot user identity does not match configuration")
+	}
+	return gitops.Identity{Name: login, Email: fmt.Sprintf("%d+%s@users.noreply.github.com", user.GetID(), login)}, nil
+}

@@ -73,7 +73,7 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 	} else if state.PauseReason(queue.Config{}) == "invalid-config" {
 		_, err = s.store.Append(ctx, w.id, []queue.Event{queue.ResumeRequested{}}, "")
 		if err == nil {
-			s.options.Logger.Info("base configuration restored", "repository", w.Key.Repository, "base", w.Key.BaseBranch)
+			s.logCommitted(ctx, w)
 		}
 	}
 	return err

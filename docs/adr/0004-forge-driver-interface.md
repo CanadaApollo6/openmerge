@@ -39,6 +39,27 @@ type Git interface {
 
 **Test refs are built with git, not forge merge APIs.** OpenMerge composes test commits locally and pushes them to `openmerge/queue/...`, so building works the same on every forge. The top commit of every test ref carries the batch ID, so a tested SHA identifies exactly one batch. The host needs the `git` executable, which the container image includes.
 
+Batch identity uses OpenMerge's own format, independently of Git trailer parsing:
+the final line must be exactly `OpenMerge-Batch: <id>` with an ID matching
+`[A-Za-z0-9._-]+`, and no other line may start with `OpenMerge-Batch`
+(case-insensitive after trimming leading whitespace).
+
+**Attribution is fixed before CI.** Squash commits use `<PR title> (#<number>)`,
+the trimmed PR body without OpenMerge's HTML marker comments, and the PR author
+(with the forge-provided commit email). Merge commits use
+`Merge pull request #<number> from <head>` followed by the title. Both collect
+distinct other commit authors as coauthors, retain existing coauthor trailers and
+every distinct sign-off from the PR's commits, and use a single trailer block.
+Each PR in a batch gets its own metadata; only the top commit gets
+`OpenMerge-Batch`. Rebase preserves each original author and author date,
+retains its message and trailers, and adds replay provenance and the top batch
+trailer. Generated commits use the configured App committer. GitHub derives the
+PR author's numeric no-reply email from the PR user record; startup discovers
+the App bot's numeric no-reply email from its user record, with explicit
+operator overrides (see the [operating guide](../operating.md)).
+Metadata is read and pinned during test-ref construction; landing never rewrites
+it, even if the PR title or body changes after testing.
+
 **Landing is a compare-and-swap on the base branch.** One atomic git push moves the base to the tested commit and the fence to a new token, leased on both, so a moved, rolled-back, or rewritten base is refused. What lands is byte-for-byte what was tested. Landing through a forge's merge API is not allowed: on GitHub, the merge endpoint's `sha` guards the PR head, not the base. A configuration that needs a landing the driver cannot make atomic fails validation.
 
 **A fence ref makes abandoned landings impossible to complete late.** Each base branch has a protected fence branch whose commits record which attempt moved it and why (`land/<attempt> tested=<sha>` or `abandon/<attempt>`). Attempt IDs are random and recorded durably before any push. A rejected, crashed, or timed-out landing is resolved by reading the fence, advancing it to `abandon/<attempt>` if nothing moved, so any delayed copy of the landing push fails. The forge enforces the outcome, so it never depends on clocks or deadlines.

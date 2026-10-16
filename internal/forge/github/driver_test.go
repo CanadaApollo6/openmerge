@@ -411,3 +411,12 @@ func TestLowQuotaExposesBackoff(t *testing.T) {
 		t.Fatalf("backoff=%s want %s", got, reset)
 	}
 }
+
+func TestPullRequestCommitMetadata(t *testing.T) {
+	f := newAPI(t)
+	pr, err := f.driver.PullRequest(t.Context(), testRepo, 2)
+	must(t, err)
+	if pr.Title != "Test change 2" || pr.Body != "Test PR body" || pr.HeadBranch != "contributor:pr-2" || pr.AuthorID != 12 || pr.AuthorEmail != "12+contributor@users.noreply.github.com" {
+		t.Fatalf("missing commit metadata: %+v", pr)
+	}
+}

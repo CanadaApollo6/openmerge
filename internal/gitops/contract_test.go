@@ -241,11 +241,14 @@ func TestCommitShapesAndMetadata(t *testing.T) {
 			}
 			metadata := gitCommand(t, f.source, "", nil, "show", "-s", "--format=%an <%ae>|%cn <%ce>|%aI|%cI", tested)
 			wantMetadata := "Author <author@example.test>|Committer <committer@example.test>|" + epoch.Format(time.RFC3339) + "|" + epoch.Format(time.RFC3339)
+			if method == forge.Rebase {
+				wantMetadata = "Fixture <fixture@localhost>|Committer <committer@example.test>|" + epoch.Format(time.RFC3339) + "|" + epoch.Format(time.RFC3339)
+			}
 			if metadata != wantMetadata {
 				t.Fatalf("metadata = %q, want %q", metadata, wantMetadata)
 			}
 			message := gitCommand(t, f.source, "", nil, "show", "-s", "--format=%B", tested)
-			if !strings.HasSuffix(message, "\n\nOpenMerge-Batch: shape") {
+			if !strings.HasSuffix(message, "\nOpenMerge-Batch: shape") {
 				t.Fatalf("missing batch trailer: %q", message)
 			}
 			for _, path := range []string{"base.txt", "pr-1.txt", "pr-2.txt", "extra.txt"} {

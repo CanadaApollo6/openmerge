@@ -53,3 +53,33 @@ func (s *Store) TakeNotification(ctx context.Context, q QueueID) (bool, error) {
 	})
 	return requested, err
 }
+
+// EventRecord is one committed journal entry, ordered by ID within a queue.
+type EventRecord struct {
+	ID    int64
+	Event queue.Event
+}
+
+// EventsAfter reads committed transitions for operational logging. It does not
+// acknowledge them or participate in queue authorization.
+func (s *Store) EventsAfter(ctx context.Context, q QueueID, after int64) ([]EventRecord, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id, payload FROM events WHERE queue_id = $1 AND id > $2 ORDER BY id`, q, after)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []EventRecord
+	for rows.Next() {
+		var record EventRecord
+		var payload []byte
+		if err := rows.Scan(&record.ID, &payload); err != nil {
+			return nil, err
+		}
+		record.Event, err = queue.DecodeEvent(payload)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, record)
+	}
+	return result, rows.Err()
+}

@@ -17,7 +17,49 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/CanadaApollo6/openmerge/internal/gitops"
 )
+
+func TestAppBotCommitter(t *testing.T) {
+	f := newAPI(t)
+	identity, err := f.driver.Committer(t.Context())
+	must(t, err)
+	want := gitops.Identity{Name: "queue-app[bot]", Email: "99+queue-app[bot]@users.noreply.github.com"}
+	if identity != want || f.calls["GET app"] != 1 || f.calls["GET users/queue-app[bot]"] != 1 {
+		t.Fatalf("committer=%+v calls=%v", identity, f.calls)
+	}
+}
+
+func TestAppBotCommitterDiscoveryFailure(t *testing.T) {
+	for _, mode := range []string{"missing", "zero ID", "negative ID", "wrong login"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newAPI(t)
+			f.override = func(w http.ResponseWriter, r *http.Request) bool {
+				if !strings.HasPrefix(r.URL.Path, "/api/v3/users/") {
+					return false
+				}
+				user := f.object("bot_user")
+				switch mode {
+				case "missing":
+					f.apiError(w, 404, "Not Found")
+					return true
+				case "zero ID":
+					user["id"] = 0
+				case "negative ID":
+					user["id"] = -1
+				case "wrong login":
+					user["login"] = "another-app[bot]"
+				}
+				f.json(w, user)
+				return true
+			}
+			if _, err := f.driver.Committer(t.Context()); err == nil {
+				t.Fatal("invalid bot user accepted")
+			}
+		})
+	}
+}
 
 func TestJWT(t *testing.T) {
 	f := newAPI(t)

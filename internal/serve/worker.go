@@ -23,7 +23,7 @@ func (s *Server) pause(ctx context.Context, w *worker, reason, detail string) er
 	}
 	_, err = s.store.Append(ctx, w.id, []queue.Event{queue.PauseRequested{Reason: reason, Detail: detail}}, "")
 	if err == nil {
-		s.options.Logger.Warn("queue paused", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "reason", reason, "detail", detail)
+		s.logCommitted(ctx, w)
 	}
 	return err
 }
@@ -140,7 +140,14 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 		}
 		return nil
 	}
-	err = x.Execute(actionCtx, claim.Action, s.store.Emit(actionCtx, claim, cfg))
+	emit := s.store.Emit(actionCtx, claim, cfg)
+	err = x.Execute(actionCtx, claim.Action, func(event queue.Event) error {
+		if err := emit(event); err != nil {
+			return err
+		}
+		s.logCommitted(actionCtx, w)
+		return nil
+	})
 	var absent *executor.ErrLandingNotOnBase
 	var ambiguity *executor.CheckSourceAmbiguityError
 	if errors.As(err, &absent) {

@@ -118,8 +118,8 @@ func (s *session) mergeTree(ctx context.Context, base, ours, theirs string) (str
 // BuildTestRef composes commits without an index or worktree, then force-pushes
 // the OpenMerge-owned test ref. All pinned heads are verified before composing.
 func (r *Repo) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.BuildRequest) (string, error) {
-	if req.Ref == "" || req.BatchID == "" || strings.ContainsAny(req.BatchID, "\x00\r\n") || len(req.PRs) == 0 {
-		return "", errors.New("test ref, single-line batch ID, and PRs are required")
+	if req.Ref == "" || !forge.ValidBatchID(req.BatchID) || len(req.PRs) == 0 {
+		return "", errors.New("test ref, valid batch ID, and PRs are required")
 	}
 	if req.Method != forge.Merge && req.Method != forge.Squash && req.Method != forge.Rebase {
 		return "", errors.New("unsupported git merge method")
@@ -141,6 +141,10 @@ func (r *Repo) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.B
 	}
 	top := req.BaseSHA
 	for i, pr := range req.PRs {
+		metadata, author, err := s.metadata(ctx, repo, pr)
+		if err != nil {
+			return "", err
+		}
 		if req.Method == forge.Rebase {
 			merges, err := s.command(ctx, "", "rev-list", "--merges", "--max-count=1", pr.HeadSHA, "^"+req.BaseSHA)
 			if err != nil {
@@ -162,17 +166,26 @@ func (r *Repo) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.B
 				if err != nil {
 					return "", err
 				}
-				message, err := s.command(ctx, "", "show", "-s", "--format=%B", original)
+				originalAuthor, date, message, err := s.original(ctx, original)
 				if err != nil {
 					return "", err
 				}
+				subject, _, _ := strings.Cut(message, "\n")
+				message = stripMetadataLines(message, "OpenMerge-Batch")
+				if stripMetadataLines(subject, "OpenMerge-Batch") == "" {
+					message = fmt.Sprintf("PR %d\n\n%s", pr.Number, strings.TrimSpace(message))
+				}
 				// Replaying must create a new identity even if author, clock,
 				// tree and first parent happen to match the original commit.
-				message += "\n\nOpenMerge-Replayed-From: " + original
+				trailers := []string{"OpenMerge-Replayed-From: " + original}
 				if i == len(req.PRs)-1 && j == len(commits)-1 {
-					message += "\n\nOpenMerge-Batch: " + req.BatchID
+					trailers = append(trailers, "OpenMerge-Batch: "+req.BatchID)
 				}
-				top, err = s.commit(ctx, tree, message, top)
+				message, err = s.addTrailers(ctx, message, trailers...)
+				if err != nil {
+					return "", err
+				}
+				top, err = s.commitAs(ctx, tree, message, originalAuthor, date, top)
 				if err != nil {
 					return "", err
 				}
@@ -183,15 +196,15 @@ func (r *Repo) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.B
 		if err != nil {
 			return "", err
 		}
-		message := fmt.Sprintf("%s PR %d %s", req.Method, pr.Number, pr.HeadSHA)
-		if i == len(req.PRs)-1 {
-			message += "\n\nOpenMerge-Batch: " + req.BatchID
+		message, err := s.prMessage(ctx, req, metadata, author, i == len(req.PRs)-1)
+		if err != nil {
+			return "", err
 		}
 		parents := []string{top}
 		if req.Method == forge.Merge {
 			parents = append(parents, pr.HeadSHA)
 		}
-		top, err = s.commit(ctx, tree, message, parents...)
+		top, err = s.commitAs(ctx, tree, message, author, "", parents...)
 		if err != nil {
 			return "", err
 		}

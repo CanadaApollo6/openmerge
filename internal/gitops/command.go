@@ -33,6 +33,8 @@ type session struct {
 	r           *Repo
 	dir, remote string
 	auth        Auth
+	author      Identity
+	authorDate  string
 }
 
 func (s *session) scrub(message string) string {
@@ -70,6 +72,12 @@ func (s *session) run(ctx context.Context, input string, args ...string) (stdout
 	cmd.Env = append(gitEnv(), "GIT_ASKPASS="+s.r.askpass,
 		"OPENMERGE_GIT_USERNAME="+s.auth.Username, "OPENMERGE_GIT_PASSWORD="+s.auth.Password)
 	cmd.Env = append(cmd.Env, s.r.identityEnv()...)
+	if s.author != (Identity{}) {
+		cmd.Env = append(cmd.Env, "GIT_AUTHOR_NAME="+s.author.Name, "GIT_AUTHOR_EMAIL="+s.author.Email)
+	}
+	if s.authorDate != "" {
+		cmd.Env = append(cmd.Env, "GIT_AUTHOR_DATE="+s.authorDate)
+	}
 	cmd.Stdin = strings.NewReader(input)
 	var out, diagnostic bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &diagnostic
