@@ -96,12 +96,11 @@ func (t *transport) conditionalGET(req *http.Request, token string) (*http.Respo
 		if cached == nil {
 			return nil, errors.New("github returned 304 without a cached representation")
 		}
-		if tags := res.Header.Values("ETag"); len(tags) != 0 {
-			tag, valid := entityTag(res.Header)
-			if !valid || tag != cached.header.Get("ETag") {
-				t.cache.put(key, nil)
-				return nil, errors.New("github returned 304 with a mismatched ETag")
-			}
+		tag, valid := entityTag(res.Header)
+		// If-None-Match uses weak comparison, but still requires a valid tag.
+		if !valid || strings.TrimPrefix(tag, "W/") != strings.TrimPrefix(cached.header.Get("ETag"), "W/") {
+			t.cache.put(key, nil)
+			return nil, errors.New("github returned 304 with a missing, invalid, or mismatched ETag")
 		}
 		header := cached.header.Clone()
 		for name, values := range res.Header {
@@ -114,7 +113,6 @@ func (t *transport) conditionalGET(req *http.Request, token string) (*http.Respo
 			t.cache.put(key, nil)
 			return nil, errors.New("github returned 304 with uncacheable metadata")
 		}
-		tag, _ := entityTag(header)
 		header.Set("ETag", tag)
 		t.cache.put(key, newCachedResponse(key, header, cached.body, cached.uncompressed))
 		res.StatusCode, res.Status = http.StatusOK, "200 OK"

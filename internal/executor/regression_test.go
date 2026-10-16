@@ -144,7 +144,7 @@ func TestLatestCheckRuns(t *testing.T) {
 			must(t, h.x.Execute(context.Background(), queue.RefreshChecks{BatchID: "batch", TestedSHA: "tested"}, record(&events)))
 			var want []queue.Event
 			if tc.terminal {
-				want = append(want, queue.ChecksCompleted{TestedSHA: "tested", Success: tc.success})
+				want = append(want, queue.ChecksCompleted{TestedSHA: "tested", Success: tc.success, At: epoch})
 			} else {
 				want = append(want, queue.ChecksReopened{TestedSHA: "tested", At: epoch})
 			}
@@ -168,7 +168,7 @@ func TestSquashRebaseClosingEffectSurvivesLostResult(t *testing.T) {
 			emit := func(e queue.Event) error { s = queue.Apply(s, e); return nil }
 			must(t, h.x.Execute(ctx, queue.Plan(cfg, s, epoch)[0], emit))
 			h.f.SetCheckRuns(repo, s.Active.TestedSHA, []forge.CheckRun{{Name: "ci", State: forge.Success}, {Name: "lint", State: forge.Success}})
-			s = queue.Apply(s, queue.ChecksCompleted{TestedSHA: s.Active.TestedSHA, Success: true})
+			s = queue.Apply(s, queue.ChecksCompleted{TestedSHA: s.Active.TestedSHA, Success: true, At: epoch})
 			tested := s.Active.TestedSHA
 			must(t, h.x.Execute(ctx, queue.Plan(cfg, s, epoch)[0], emit))
 			pr, err := h.f.PullRequest(ctx, repo, 1)

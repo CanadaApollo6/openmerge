@@ -161,9 +161,13 @@ The concurrent LRU is bounded to 1,024 entries and 16 MiB of stored URL, hashed
 identity/header, response-header, and body data per client transport. Keys include
 the complete URL/query, a SHA-256 token identity, and request headers. Token
 rotation and representation changes cannot reuse another identity's body.
-Only a single valid strong or weak entity-tag is stored. A mismatched or malformed
-304 validator evicts the entry and returns an error. Allowed 304 metadata updates
-are retained; `no-store` and `Vary: *`, on any field line, evict and prevent replay.
+Only a single valid strong or weak entity-tag is stored. A 304 must include one
+valid ETag with the same opaque-tag; `If-None-Match` uses weak comparison, ignoring
+the optional `W/` prefix. A missing, mismatched, or malformed 304 validator evicts
+the entry and returns an error without replay or an automatic retry; the next
+read is unconditional. These entries do not qualify for validatorless reuse.
+Allowed 304 metadata updates are retained; `no-store` and `Vary: *`, on any field
+line, evict and prevent replay.
 Eviction, restart, token refresh, missing ETags, and uncacheable/oversized responses
 cause normal GETs. Errors never replay a cached grant or CI result; writes are
 never cached or retried. Permission entries are evicted by the same LRU.

@@ -18,7 +18,7 @@ func eventSamples() []queue.Event {
 		queue.BatchStarted{BatchID: "b1", BaseSHA: "base", PRs: []queue.BatchPR{{PR: 2, HeadSHA: "head"}}, At: epoch},
 		queue.BatchFailed{BatchID: "b1", Reason: queue.ChecksTimeout},
 		queue.PRObserved{PR: 2, HeadSHA: "head", Eligible: true, Trusted: true},
-		queue.BaseMoved{SHA: "base"}, queue.ChecksCompleted{TestedSHA: "tested", Success: true},
+		queue.BaseMoved{SHA: "base"}, queue.ChecksCompleted{TestedSHA: "tested", Success: true, At: epoch},
 		queue.ChecksReopened{TestedSHA: "tested", At: epoch},
 		queue.ChecksRefreshed{BatchID: "b1", TestedSHA: "tested", At: epoch}, queue.PRClosed{PR: 2},
 		queue.EnqueueRequested{PR: 2, At: epoch}, queue.DequeueRequested{PR: 2}, queue.ResumeRequested{},

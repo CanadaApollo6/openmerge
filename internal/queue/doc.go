@@ -23,8 +23,10 @@
 // completing the batch drops all remaining outcomes; idle queues retain none.
 // Retention only improves latency: a Testing batch without an outcome requests
 // RefreshChecks immediately and then every RefreshInterval (default 1m). The
-// executor records any terminal ChecksCompleted first, then records ChecksRefreshed
-// for every successful read, including pending checks. Refresh keys use the batch
+// executor records ChecksCompleted or ChecksReopened first, then ChecksRefreshed
+// with the same observation time for every successful read. Older observations
+// cannot change current evidence; equal times follow event-log order. A reopen
+// revokes success without extending the original deadline. Refresh keys use the batch
 // and count of recorded refreshes. A checks timeout requires a refresh at or after
 // its deadline; until then Plan requests a refresh even if the normal interval
 // has not elapsed.

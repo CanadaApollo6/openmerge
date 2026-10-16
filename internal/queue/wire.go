@@ -38,8 +38,9 @@ type wireBaseMoved struct {
 }
 
 type wireChecksCompleted struct {
-	TestedSHA string `json:"tested_sha"`
-	Success   bool   `json:"success"`
+	TestedSHA string    `json:"tested_sha"`
+	Success   bool      `json:"success"`
+	At        time.Time `json:"at"`
 }
 
 type wireChecksReopened struct {
@@ -314,6 +315,9 @@ func EncodeEvent(value Event) (string, []byte, error) {
 	case BaseMoved:
 		return encodeWire("base_moved", wireBaseMoved(v))
 	case ChecksCompleted:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
 		return encodeWire("checks_completed", wireChecksCompleted(v))
 	case ChecksReopened:
 		if err := v.Validate(); err != nil {
@@ -377,9 +381,15 @@ func DecodeEvent(payload []byte) (Event, error) {
 			return BaseMoved(v)
 		})
 	case "checks_completed":
-		return decodeWireData(envelope.Data, func(v wireChecksCompleted) Event {
-			return ChecksCompleted(v)
-		})
+		v, err := readWireData[wireChecksCompleted](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := ChecksCompleted(v)
+		if err := event.Validate(); err != nil {
+			return nil, err
+		}
+		return event, nil
 	case "checks_reopened":
 		v, err := readWireData[wireChecksReopened](envelope.Data)
 		if err != nil {

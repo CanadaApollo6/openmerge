@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/executor"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
@@ -66,7 +67,7 @@ func TestRecordedSuccessIsRechecked(t *testing.T) {
 				}
 				var want queue.Event = queue.ChecksReopened{TestedSHA: land.TestedSHA, At: epoch}
 				if mode == "failed" {
-					want = queue.ChecksCompleted{TestedSHA: land.TestedSHA, Success: false}
+					want = queue.ChecksCompleted{TestedSHA: land.TestedSHA, Success: false, At: epoch}
 				}
 				if len(events) == 0 || !reflect.DeepEqual(events[0], want) {
 					t.Fatalf("missing revocation: %+v, want %+v", events, want)
@@ -97,4 +98,37 @@ func TestLandCheckRevocationMustBeDurable(t *testing.T) {
 	if !errors.Is(err, errLog) || h.read(t, "main") != h.base || h.read(t, fenceRef) != h.fence {
 		t.Fatalf("failed revocation allowed landing: %v", err)
 	}
+}
+
+func TestDelayedRefreshCannotTimeoutNewerPassingChecks(t *testing.T) {
+	h := setup(t)
+	s, land := reviewReady(t, h, h.base, h.fence, h.prs[0])
+	cfg := queue.Config{MergeMethod: queue.Merge, CheckTimeout: time.Minute}
+	deadline := s.Active.StartedTestingAt.Add(cfg.CheckTimeout)
+	h.f.SetCheckRuns(repo, land.TestedSHA, []forge.CheckRun{{Name: "ci", State: forge.Pending}, {Name: "lint", State: forge.Success}})
+	h.x.Now = func() time.Time { return epoch.Add(time.Second) }
+	delayed := true
+	a := queue.RefreshChecks{BatchID: land.BatchID, TestedSHA: land.TestedSHA}
+	must(t, h.x.Execute(context.Background(), a, func(e queue.Event) error {
+		if _, ok := e.(queue.ChecksReopened); ok && delayed {
+			delayed = false
+			// The pending reader stalls before persistence; another reader passes.
+			h.f.SetCheckRuns(repo, land.TestedSHA, []forge.CheckRun{{Name: "ci", State: forge.Success}, {Name: "lint", State: forge.Success}})
+			newer := *h.x
+			newer.Now = func() time.Time { return deadline.Add(time.Second) }
+			must(t, newer.Execute(context.Background(), a, func(e queue.Event) error { s = queue.Apply(s, e); return nil }))
+		}
+		_, wire, err := queue.EncodeEvent(e)
+		must(t, err)
+		replayed, err := queue.DecodeEvent(wire)
+		must(t, err)
+		s = queue.Apply(s, replayed)
+		return nil
+	}))
+	for _, a := range queue.Plan(cfg, s, deadline.Add(2*time.Second)) {
+		if _, ok := a.(queue.Land); ok {
+			return
+		}
+	}
+	t.Fatal("delayed pending observation discarded the newer passing checks")
 }

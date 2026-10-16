@@ -171,7 +171,7 @@ func TestRefreshChecks(t *testing.T) {
 			must(t, h.x.Execute(context.Background(), queue.RefreshChecks{BatchID: "batch", TestedSHA: sha}, record(&events)))
 			var want []queue.Event
 			if tc.terminal {
-				want = append(want, queue.ChecksCompleted{TestedSHA: sha, Success: tc.success})
+				want = append(want, queue.ChecksCompleted{TestedSHA: sha, Success: tc.success, At: epoch})
 			} else {
 				want = append(want, queue.ChecksReopened{TestedSHA: sha, At: epoch})
 			}

@@ -54,7 +54,7 @@ func TestBatchStartedRoundTripAndCompositionRevalidation(t *testing.T) {
 	}
 	// An identical start recovers a crash in the durable-start/pre-build window.
 	must(t, emit(started))
-	appendEvents(t, s, q, queue.TestRefBuilt{BatchID: build.BatchID, TestedSHA: "tested", Method: queue.Squash, At: epoch}, queue.ChecksCompleted{TestedSHA: "tested"})
+	appendEvents(t, s, q, queue.TestRefBuilt{BatchID: build.BatchID, TestedSHA: "tested", Method: queue.Squash, At: epoch}, queue.ChecksCompleted{TestedSHA: "tested", At: epoch})
 	must(t, s.Complete(t.Context(), claims[0], Done))
 	state, _, err = other.Load(t.Context(), q)
 	must(t, err)

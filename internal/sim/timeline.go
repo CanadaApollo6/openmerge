@@ -140,7 +140,7 @@ func (s *simulation) deliver(event scheduledEvent) error {
 		if s.webhook.Float64() < s.cfg.DropWebhookRate {
 			s.result.DroppedWebhooks++
 		} else {
-			s.record(queue.ChecksCompleted{TestedSHA: event.sha, Success: run.success})
+			s.record(queue.ChecksCompleted{TestedSHA: event.sha, Success: run.success, At: s.now})
 		}
 	}
 	return nil

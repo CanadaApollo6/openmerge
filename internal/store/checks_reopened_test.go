@@ -72,7 +72,7 @@ func TestLandPreflightReopenRemainsRetryable(t *testing.T) {
 		t.Fatal("pending checks authorized the old Land")
 	}
 	f.SetCheckRuns(repo, land.TestedSHA, []forge.CheckRun{{ID: 2, Name: "ci", State: forge.Success}})
-	appendEvents(t, s, q, queue.ChecksCompleted{TestedSHA: land.TestedSHA, Success: true})
+	appendEvents(t, s, q, queue.ChecksCompleted{TestedSHA: land.TestedSHA, Success: true, At: epoch})
 	retry := claim()
 	if retry.Key != c.Key {
 		t.Fatal("test did not reuse the stable Land key")
@@ -84,4 +84,23 @@ func TestLandPreflightReopenRemainsRetryable(t *testing.T) {
 	if state.Active != nil || len(state.Entries) != 0 || state.BaseSHA != land.TestedSHA {
 		t.Fatalf("passing rerun did not land after durable reopen: %+v", state)
 	}
+}
+
+func TestDelayedReopenPreservesPassingChecksOnReplay(t *testing.T) {
+	s := newStore(t)
+	q, land := readyLand(t, s)
+	deadline := epoch.Add(config.CheckTimeout)
+	appendEvents(t, s, q,
+		queue.ChecksCompleted{TestedSHA: "tested", Success: true, At: deadline.Add(time.Second)},
+		queue.ChecksRefreshed{BatchID: "b1", TestedSHA: "tested", At: deadline.Add(time.Second)},
+		queue.ChecksReopened{TestedSHA: "tested", At: epoch.Add(time.Second)},
+		queue.ChecksRefreshed{BatchID: "b1", TestedSHA: "tested", At: epoch.Add(time.Second)})
+	state, _, err := s.Load(t.Context(), q)
+	must(t, err)
+	for _, action := range queue.Plan(config, state, deadline.Add(2*time.Second)) {
+		if action.Key() == land.Key {
+			return
+		}
+	}
+	t.Fatal("durable replay replaced a newer pass with a stale reopen")
 }

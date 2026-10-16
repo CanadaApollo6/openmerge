@@ -32,7 +32,7 @@ func reviewReady(t *testing.T, h *harness, base, fence string, pr forge.BuildPR)
 	actions := queue.Plan(cfg, s, epoch)
 	must(t, h.x.Execute(context.Background(), actions[0], func(e queue.Event) error { s = queue.Apply(s, e); return nil }))
 	h.f.SetCheckRuns(repo, s.Active.TestedSHA, []forge.CheckRun{{Name: "ci", State: forge.Success}, {Name: "lint", State: forge.Success}})
-	s = queue.Apply(s, queue.ChecksCompleted{TestedSHA: s.Active.TestedSHA, Success: true})
+	s = queue.Apply(s, queue.ChecksCompleted{TestedSHA: s.Active.TestedSHA, Success: true, At: epoch})
 	actions = queue.Plan(cfg, s, epoch)
 	return s, actions[0].(queue.Land)
 }

@@ -159,7 +159,7 @@ func TestBisectionTrees(t *testing.T) {
 						now = now.Add(cfg.CheckTimeout + time.Second)
 						s = Apply(s, ChecksRefreshed{BatchID: a.BatchID, TestedSHA: sha, At: now})
 					} else {
-						s = Apply(s, ChecksCompleted{TestedSHA: sha, Success: !failing})
+						s = Apply(s, ChecksCompleted{TestedSHA: sha, Success: !failing, At: epoch})
 					}
 				case FailBatch:
 					s = Apply(s, BatchFailed(a))
@@ -200,7 +200,7 @@ func bisecting(t *testing.T) State {
 	t.Helper()
 	s := startPlanned(t, batchConfig(8), batchQueue(8))
 	s = Apply(s, TestRefBuilt{BatchID: s.Active.ID, TestedSHA: "failed", Method: Merge, At: epoch})
-	return Apply(s, ChecksCompleted{TestedSHA: "failed"})
+	return Apply(s, ChecksCompleted{TestedSHA: "failed", At: epoch})
 }
 
 func TestMidBisectionChanges(t *testing.T) {
@@ -247,7 +247,7 @@ func TestMidBisectionChanges(t *testing.T) {
 			old := s.Active.ID
 			if abandon {
 				s = Apply(s, TestRefBuilt{BatchID: old, TestedSHA: "passing", Method: Squash, At: epoch})
-				s = Apply(s, ChecksCompleted{TestedSHA: "passing", Success: true})
+				s = Apply(s, ChecksCompleted{TestedSHA: "passing", Success: true, At: epoch})
 				s = Apply(s, LandingStarted{BatchID: old, AttemptID: "attempt", FenceToken: s.Fence, At: epoch})
 			}
 			s = Apply(s, BaseMoved{SHA: "external"})
@@ -301,7 +301,7 @@ func TestBisectionFiltersInvalidMembersBeforeLateFailure(t *testing.T) {
 	id := s.Active.ID
 	s = Apply(s, TestRefBuilt{BatchID: id, TestedSHA: "late-failure", Method: Merge, At: epoch})
 	s = Apply(s, PRClosed{PR: 2})
-	s = Apply(s, ChecksCompleted{TestedSHA: "late-failure"})
+	s = Apply(s, ChecksCompleted{TestedSHA: "late-failure", At: epoch})
 	if len(s.pending) != 2 || !slices.Equal(batchNumbers(s.pending[0].prs), []int{1, 3}) || !slices.Equal(batchNumbers(s.pending[1].prs), []int{4, 5, 6, 7}) {
 		t.Fatal("late failure restored an invalid member", s.pending)
 	}

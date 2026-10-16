@@ -56,7 +56,7 @@ func TestConditionalGETRequiresOneValidEntityTag(t *testing.T) {
 }
 
 func TestConditionalGETRejectsUnsafe304AndEvicts(t *testing.T) {
-	for _, mode := range []string{"mismatch", "wildcard", "list", "multiple", "empty", "unquoted", "no-store", "vary-star"} {
+	for _, mode := range []string{"missing", "mismatch", "wildcard", "list", "multiple", "empty", "unquoted", "no-store", "vary-star"} {
 		t.Run(mode, func(t *testing.T) {
 			calls := 0
 			tr := cacheTransport(t, 4, 4096, roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -71,6 +71,8 @@ func TestConditionalGETRejectsUnsafe304AndEvicts(t *testing.T) {
 					}
 					code, body = 304, ""
 					switch mode {
+					case "missing":
+						h.Del("ETag")
 					case "mismatch":
 						h.Set("ETag", `"revoked"`)
 					case "wildcard":
@@ -132,6 +134,7 @@ func TestConditionalGETPersists304Headers(t *testing.T) {
 			h.Set("Link", "old")
 		} else {
 			code, body = 304, ""
+			h.Set("ETag", `W/"v1"`)
 			if r.Header.Get("If-None-Match") != `W/"v1"` {
 				t.Fatal("lost stored validator")
 			}
