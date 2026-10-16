@@ -1,6 +1,6 @@
 # 0006. Serve every installed repository from one process, driven by webhooks with polling as the backstop
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-16
 
 ## Context
@@ -53,9 +53,9 @@ Three Phase 1 limits stand in the way: repositories and the base branch are proc
 
 ### Onboarding and migration
 
-**Onboarding a repository:** install the App on it (an organization owner may need to approve), run `openmerge setup rulesets` for it with a repository-admin token, make sure CI runs on pushes to `openmerge/queue/**`, and commit `.openmerge.yml` to the default branch. A private App can only be installed on its owner's account, so an organization needs its own App (`openmerge setup github --owner ORG`) and its own `serve` process, which can share the database.
+**Onboarding a repository:** install the App on it (an organization owner may need to approve), run `openmerge setup rulesets` for it with a repository-admin token, make sure CI runs on pushes to `openmerge/queue/**`, and commit `.openmerge.yml` to the default branch. A private App can only be installed on its owner's account, so an organization needs its own App (`openmerge setup github --owner ORG`) and its own `serve` process. That process can share the database, since advisory locks already serialize queues across processes, but needs its own `--git-cache-dir` (each cache is process-exclusive) and its own listen addresses.
 
-**Migrating a Phase 1 deployment:** upgrade with the existing flags, which now act as an allowlist. Confirm in `openmerge queue status` that the existing queue appears with its history. Then remove `--installation-id`, `--repos` and `--base` and restart. The flags stay supported as allowlists, with a deprecation warning naming the replacement.
+**Migrating a Phase 1 deployment:** upgrade with the existing settings, which now act as an allowlist. Confirm in `openmerge queue status` that the existing queue appears with its history. Then remove `--github-installation-id`, `--repos` and `--base`, and their environment forms `OPENMERGE_GITHUB_INSTALLATION_ID`, `OPENMERGE_REPOS` and `OPENMERGE_BASE` (otherwise the allowlist stays in effect through the environment file), and restart. Dropping `--base` is only safe when it names the repository's default branch; otherwise the config must first gain a queue whose `base` is that branch, or the existing queue goes dormant. The flags stay supported as allowlists, with a deprecation warning naming the replacement.
 
 ## Consequences
 
