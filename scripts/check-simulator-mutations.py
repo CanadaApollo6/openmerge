@@ -55,6 +55,18 @@ MUTANTS = {
         ("s.requestDequeue(prs[0].PR, reason)", "for _, pr := range prs { s.requestDequeue(pr.PR, reason) }"),
     ),
     "no_ci_gate": mutation(PLAN, ("if batch.checksPassed {", "if true {")),
+    "land_ignores_generation": mutation(
+        PLAN,
+        ("ChecksGeneration: batch.checksGeneration,", "ChecksGeneration: 0,"),
+    ),
+    "reopen_does_not_clear_success": mutation(
+        APPLY,
+        ("s.Active.checksPassed = false", "// mutant preserves success after a reopen"),
+    ),
+    "no_landing_ci_guard": mutation(
+        EXECUTOR,
+        ("if !terminal || !success {", "if (!terminal || !success) && false {"),
+    ),
     "wrong_sha": mutation(
         EXECUTOR, (LAND_SHA, LAND_SHA.replace("TestedSHA: a.TestedSHA", "TestedSHA: a.PRs[0].HeadSHA"))
     ),
@@ -118,10 +130,11 @@ import (
     "github.com/CanadaApollo6/openmerge/internal/queue"
 )
 func TestMutationRunProbe(t *testing.T) {
-    for _, mode := range []string{"passing", "broken", "squash", "external", "batching"} {
+    for _, mode := range []string{"passing", "broken", "squash", "external", "batching", "ci-rerun"} {
         t.Run(mode, func(t *testing.T) {
             cfg := smallConfig()
             cfg.PRs, cfg.MaxSteps, cfg.Faults = 2, 10000, DefaultFaults()
+            if mode == "ci-rerun" { cfg.Faults = Faults{CIRerunRate: 1} }
             if mode == "broken" { cfg.BrokenRate = 1 }
             if mode == "squash" { cfg.MergeMethod = queue.Squash }
             if mode == "external" { cfg.ExternalPushRate = 1 }
@@ -154,7 +167,7 @@ with tempfile.TemporaryDirectory(prefix="openmerge-mutations-") as directory:
         overlay.write_text(json.dumps({"Replace": replacements}))
         run = subprocess.run(
             ["go", "test", "-count=1", "-overlay", str(overlay), "./internal/sim", "-run",
-             "TestMutationRunProbe|TestStaleBatchTimeoutInSimulator|TestChangedCompositionInSimulator|TestBatchFormationWaitInSimulator|TestAbandonmentBeforePush/captured_token|TestExit500PRDay|TestForeignBaseEqualityDoesNotResolveLanding/resolve_from_fence"],
+             "TestMutationRunProbe|TestDelayedPassCannotReviveLandingInSimulator|TestStaleBatchTimeoutInSimulator|TestChangedCompositionInSimulator|TestBatchFormationWaitInSimulator|TestAbandonmentBeforePush/captured_token|TestExit500PRDay|TestForeignBaseEqualityDoesNotResolveLanding/resolve_from_fence"],
             cwd=ROOT, capture_output=True, text=True, timeout=60,
         )
         output = run.stdout + run.stderr

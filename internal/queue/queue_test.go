@@ -539,7 +539,9 @@ func TestApplyDoesNotMutateInput(t *testing.T) {
 	for _, initial := range []func() State{
 		func() State { return queued(1) }, testingState, landingState,
 		func() State { return applySerial(testingState(), DequeueRequested{PR: 1}) },
-		func() State { return applySerial(queued(1), ChecksCompleted{TestedSHA: "test", Success: true}) },
+		func() State {
+			return applySerial(queued(1), ChecksCompleted{TestedSHA: "test", Success: true})
+		},
 	} {
 		for _, event := range events {
 			t.Run(fmt.Sprintf("%s/%T", initial().Active.Phase, event), func(t *testing.T) {

@@ -1,0 +1,54 @@
+{
+  "id": 101,
+  "node_id": "PR_101",
+  "number": 1,
+  "state": "open",
+  "title": "A test change",
+  "body": "Test PR",
+  "draft": false,
+  "user": {
+    "login": "contributor",
+    "id": 12,
+    "node_id": "MDQ6VXNlcjEy",
+    "type": "User",
+    "site_admin": false
+  },
+  "head": {
+    "ref": "main",
+    "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "repo": {
+      "id": 50,
+      "node_id": "R_50",
+      "name": "project",
+      "full_name": "acme/project",
+      "private": false,
+      "owner": {
+        "login": "acme",
+        "id": 1,
+        "type": "Organization"
+      }
+    }
+  },
+  "base": {
+    "ref": "main",
+    "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "repo": {
+      "id": 50,
+      "node_id": "R_50",
+      "name": "project",
+      "full_name": "acme/project",
+      "private": false,
+      "owner": {
+        "login": "acme",
+        "id": 1,
+        "type": "Organization"
+      }
+    }
+  },
+  "created_at": "2026-10-16T00:00:00Z",
+  "updated_at": "2026-10-16T00:00:00Z",
+  "closed_at": null,
+  "merged_at": null,
+  "mergeable": null,
+  "labels": []
+}

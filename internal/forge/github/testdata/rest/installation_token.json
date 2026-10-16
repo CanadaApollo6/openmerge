@@ -1,0 +1,10 @@
+{
+  "token": "fixture-token",
+  "expires_at": "2026-10-16T01:00:00Z",
+  "permissions": {
+    "checks": "write",
+    "contents": "write",
+    "pull_requests": "write"
+  },
+  "repository_selection": "selected"
+}

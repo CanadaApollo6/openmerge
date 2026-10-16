@@ -4,15 +4,34 @@ This is the reference for anyone writing or reviewing a forge driver. [ADR 0004]
 
 ## Repositories
 
-`RepoRef` holds one opaque `Path` (`owner/name`, or `group/subgroup/name` on GitLab). A driver must not assume an owner/name split.
+`RepoRef` holds one opaque `Path` (`owner/name`, or `group/subgroup/name` on GitLab). Forge-neutral code must not assume an owner/name split; a concrete driver interprets and validates the path for its forge.
+
+`ReadFile` reads a file at an explicit branch or commit. A missing file or ref is an error, not an empty configuration.
 
 ## Pull requests and approvals
 
-`PullRequest` reports the PR number, current head SHA, whether the head branch lives in the base repository, whether the PR is closed, and its approvals.
+`PullRequest` reports the PR number, current head SHA, target branch (`Base`), draft flag, author login, whether the head branch lives in the base repository, whether the PR is closed, and its approvals.
 
-Each approval reports the approver, whether the approver can write to the base repository, and **the exact head SHA that was approved**. A stale approval, given before a later push, keeps the old SHA. The planner's trust gate depends on this ([ADR 0004](adr/0004-forge-driver-interface.md), "Test refs never run untrusted code").
+Each approval reports the approver, a `CanWrite` trust decision, and **the exact head SHA that was approved**. For a current-head fork approval, the driver freshly reads write permission on every observation. Conditional HTTP revalidation is allowed; a locally cached grant without contacting the forge is not. Stale approvals and approvals on same-repository PRs have `CanWrite: false`, without permission reads. Closed PRs may omit approvals and must not trigger review or permission reads. A stale approval, given before a later push, keeps the old SHA. The planner's trust gate depends on this ([ADR 0004](adr/0004-forge-driver-interface.md), "Test refs never run untrusted code").
 
 Some forges, such as GitLab, do not record which commit an approval was for. A driver for such a forge may report approvals only when the forge is configured to reset approvals on every push, and must verify that setting. Otherwise it reports no approvals, which fails closed: fork PRs cannot enter the queue. The driver's documentation states which behavior it uses.
+
+`ListOpenPullRequests(repo, base)` returns every open PR targeting `base`, with
+number, head SHA, and updated-at timestamp. Empty `base` lists all open PRs.
+It is a paginated reconciliation read, without per-PR review/permission lookups.
+
+`ListComments(repo, pr, since)` returns comment ID, author login, body, and
+created-at time for human and bot issue-thread comments created at or after
+`since` (inclusive); zero means all comments. Drivers follow every page. The server dedupes
+commands by comment ID and must overlap time cursors to handle timestamp precision
+and comments created during pagination. GitHub has a second-granular exclusive
+updated-time filter; its driver queries from the preceding second, then filters
+inclusively by creation time. Boundary comments can therefore repeat, including
+distinct comments created in the same second. Edits of old comments do not create new
+commands. `CanWrite(repo, user)` freshly authorizes commands by current repository
+permission; webhook author association is never sufficient.
+
+For conditional HTTP reads, cache only a single syntactically valid strong or weak entity-tag ([RFC 9110 §8.8.3](https://www.rfc-editor.org/rfc/rfc9110.html#section-8.8.3)). Wildcards, lists, multiple field lines, and unquoted validators are invalid. A 304 must carry one valid ETag that matches the stored opaque-tag using weak comparison (ignore the optional `W/` prefix), as required for `If-None-Match` ([RFC 9110 §13.1.2](https://www.rfc-editor.org/rfc/rfc9110.html#section-13.1.2)). Missing, malformed, or nonmatching validators must evict the entry and fail closed or refetch unconditionally once; they must never replay the stored body. These entries do not qualify for validatorless reuse. Persist allowed 304 header updates ([RFC 9111 §4.3.4](https://www.rfc-editor.org/rfc/rfc9111.html#section-4.3.4)); `no-store` or `Vary: *` on a 200 or 304 prevents caching and replay. Inspect every field line and comma-separated value case-insensitively.
 
 ## Statuses
 
@@ -30,15 +49,21 @@ Commit-status APIs that lack cancelled and action-required keep the normalized s
 
 ## Check runs
 
-`CheckRun` has a `Name`, a normalized `State` (pending, success, failure, cancelled, skipped, neutral), and an `ID` that increases with each run of the same name. Drivers translate native run identifiers into that ordering.
+`CheckRun` has a `Name`, a stable nonempty `Source`, a normalized `State` (pending, success, failure, cancelled, skipped, neutral), and an `ID` that increases with each run of the same name **from the same source**. Drivers translate native run identifiers into that ordering. GitHub uses `app:<numeric-app-id>` for check runs and `status:<lowercase-creator-login>` for commit statuses. The fake preserves explicit sources and defaults unspecified test sources to `fake:ci`. IDs from different sources are never comparable.
 
 The executor aggregates as follows:
 
-- The newest run of each name wins, regardless of the order the forge returns them. A pending rerun supersedes an older result.
+- A required name reported by more than one source is ambiguous and stays pending, even if every source reports success. A missing source also stays pending. The executor emits `ChecksReopened` followed by `ChecksRefreshed`, emits no terminal `ChecksCompleted`, and returns `executor.CheckSourceAmbiguityError` with the name and sorted sources for the server to surface. Unrequired names do not block the batch.
+- Within one source, the newest run of each name wins, regardless of response order. A pending rerun supersedes an older result.
+- A GitHub check run whose suite is not completed is pending even if the run still reports an old success. Missing suite observations and unknown producer identities also fail safe as pending. Drivers must refresh suite state as well as run state. GitHub `check_suite` requested/rerequested/completed and `check_run` rerequested/completed webhooks normalize to `ChecksChanged{SHA}` and trigger these reads.
 - Cancelled counts as failure until a newer run supersedes it.
 - Skipped and neutral count as failure unless the `AllowSkippedNeutral` option is set.
 - A required check with no run, or an unknown state, is pending.
 - An empty list of required checks is a configuration error unless `AllowNoRequiredChecks` is set.
+
+`ChecksCompleted{TestedSHA, Success}`, `ChecksReopened{TestedSHA, At}`, and `ChecksRefreshed{BatchID, TestedSHA, At}` fold in event-log order, including retained observations received before the build result. Every reopen for the active tested SHA clears recorded success, increments the batch's checks generation, and invalidates timeout evidence. It preserves the original test-start time and timeout deadline, so repeated reruns cannot postpone timeout indefinitely. Every matching refresh advances the action epoch and records its own read time, even if that time precedes another worker's timestamp. A timeout requires a refresh read at or after the original deadline, with no reopen applied since it. A delayed pending observation can cost another read; a delayed pass may restore projected success. A delayed older terminal failure after a passing rerun still fails the batch conservatively. Worker clocks affect timeout liveness, never landing authorization. The stateless executor records a reopen on every non-terminal refresh, even without a prior pass, so revocation survives a failure to append the following refresh.
+
+Immediately before `LandingStarted`, the executor freshly reads `CheckRuns` for the tested SHA and requires terminal success. Pending or ambiguous results emit `ChecksReopened` followed by `ChecksRefreshed` stamped at read time; this read qualifies for timeout at or after the original deadline. A passing refresh after the deadline may still land if its preflight also passes. Terminal failure emits `ChecksCompleted{Success:false}`. Both decline `Land` with an error before minting an attempt or pushing. The action remains unacknowledged for replanning after a later passing rerun. A read error also prevents starting the landing. `Land` pins the checks generation in its key and payload. The store re-plans under the queue lock at `BeginConsequential` and `LandingStarted`; any intervening reopen invalidates the old action even if a delayed pass restores projected success. A new action at the new generation must perform its own preflight. The preflight cannot revoke an already-started fenced attempt or prevent a later rerun whose reopen has not committed.
 
 ## Building test refs
 
@@ -107,6 +132,13 @@ Refs, statuses, and check runs are idempotent by name or external ID. Comments e
 ## Running the contract suite
 
 `forgetest.Run(t, newEnv)` runs the driver rules above. It checks the normalized status round trip, not each forge's native conclusion mapping, which each driver documents.
+
+`forgetest.RunDriver(t, newDriverEnv)` runs the API-side contracts alone against
+an API sandbox or HTTP fixture. Its environment needs Driver, Repo, PRs,
+Observations, BaseSHA, NewBase (a disposable ref), RefExists, and the API setup
+and observation hooks below; it does not need Git, fences, or conflicting PRs.
+`Run` retains the Git/API integration scenarios, including deleting a built test
+ref and closing PRs after squash/rebase landings.
 
 `forgetest.RunGit(t, newGitEnv)` runs the Git-side rules alone, without a forge API
 implementation or API fixture hooks. `internal/gitops` runs it against temporary

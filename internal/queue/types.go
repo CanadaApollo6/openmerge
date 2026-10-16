@@ -80,8 +80,10 @@ type Batch struct {
 	LandingAttempt   LandingAttempt
 
 	checksPassed      bool
+	checksGeneration  uint64
 	checksRefreshedAt time.Time
 	checkRefreshes    uint64
+	needsRefresh      bool
 }
 
 // BatchPR pins the exact head used to build a test ref.
@@ -136,14 +138,22 @@ type PRObserved struct {
 // Observing the current BaseSHA again is a no-op, including for build retries.
 type BaseMoved struct{ SHA string }
 
-// ChecksCompleted is correlated by tested SHA, independently of webhook order.
+// ChecksCompleted records a terminal CI observation in event-log order.
 type ChecksCompleted struct {
 	TestedSHA string
 	Success   bool
 }
 
-// ChecksRefreshed records a forge read after any terminal ChecksCompleted result.
-// It is correlated by both batch and tested SHA, even when checks are still pending.
+// ChecksReopened revokes success, planned landings and timeout evidence in log
+// order without restarting the check deadline, even without a recorded pass.
+type ChecksReopened struct {
+	TestedSHA string
+	At        time.Time
+}
+
+// ChecksRefreshed records a forge read after ChecksCompleted or ChecksReopened.
+// At is the read time used for timeout evidence, never observation ordering.
+// It is correlated by both batch and tested SHA.
 type ChecksRefreshed struct {
 	BatchID, TestedSHA string
 	At                 time.Time
@@ -223,6 +233,7 @@ func (BatchFailed) queueEvent()  {}
 func (PRObserved) queueEvent()         {}
 func (BaseMoved) queueEvent()          {}
 func (ChecksCompleted) queueEvent()    {}
+func (ChecksReopened) queueEvent()     {}
 func (ChecksRefreshed) queueEvent()    {}
 func (PRClosed) queueEvent()           {}
 func (EnqueueRequested) queueEvent()   {}
@@ -267,18 +278,22 @@ func (FailBatch) queueAction() {}
 func (a FailBatch) Key() string { return "batch/" + a.BatchID + "/fail/" + string(a.Reason) }
 
 // RefreshChecks reads forge CI status for TestedSHA. The executor first appends
-// ChecksCompleted if terminal, then always appends ChecksRefreshed with the read
-// time. A failed read must be retried without recording a successful refresh.
+// ChecksCompleted if terminal or ChecksReopened otherwise, then always appends
+// ChecksRefreshed stamped at read time. Even a pending observation without a
+// prior pass must revoke success; the executor has no projection to consult.
+// A failed read records no refresh.
 type RefreshChecks struct {
 	BatchID, TestedSHA string
 	epoch              uint64
 }
 
-// Land requires an atomic compare-and-swap on both the base and fence.
+// Land pins the checks generation and requires an atomic compare-and-swap on
+// both the base and fence. Every reopen invalidates an earlier planned Land.
 type Land struct {
 	BatchID, ExpectedBaseSHA, TestedSHA, Ref, FenceToken string
 	PRs                                                  []BatchPR
 	Method                                               MergeMethod
+	ChecksGeneration                                     uint64
 }
 
 // ResolveLanding carries the pinned commit and durable attempt fence so the
@@ -344,7 +359,9 @@ func (a RefreshChecks) Key() string {
 
 // Key identifies the start action. The executor mints a separate random attempt
 // ID; once LandingStarted is durable, only ResolveLanding may be executed.
-func (a Land) Key() string { return "batch/" + a.BatchID + "/land" }
+func (a Land) Key() string {
+	return fmt.Sprintf("batch/%s/land/%d", a.BatchID, a.ChecksGeneration)
+}
 
 // Key correlates resolution retries with the durable landing attempt.
 func (a ResolveLanding) Key() string {

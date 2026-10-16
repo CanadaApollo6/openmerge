@@ -92,7 +92,10 @@ func Apply(s State, e Event) State {
 			s.buildRetry = buildRetryState{}
 			if check, retained := s.checks[e.TestedSHA]; retained {
 				delete(s.checks, e.TestedSHA)
-				s.completeChecks(check.success)
+				s.Active.needsRefresh = !check.terminal
+				if check.terminal {
+					s.completeChecks(check.success)
+				}
 			}
 		}
 	case TestRefBuildFailed:
@@ -108,15 +111,24 @@ func Apply(s State, e Event) State {
 			s.completeChecks(e.Success)
 		} else if s.Active != nil {
 			if _, used := s.testedBatches[e.TestedSHA]; !used {
-				s.retainChecks(e)
+				s.retainChecks(e.TestedSHA, retainedCheck{terminal: true, success: e.Success})
+			}
+		}
+	case ChecksReopened:
+		if s.Active != nil && s.Active.Phase == Testing && s.Active.TestedSHA == e.TestedSHA {
+			s.Active.checksGeneration++
+			s.Active.checksPassed = false
+			s.Active.needsRefresh = true
+		} else if s.Active != nil {
+			if _, used := s.testedBatches[e.TestedSHA]; !used {
+				s.retainChecks(e.TestedSHA, retainedCheck{})
 			}
 		}
 	case ChecksRefreshed:
 		if s.batchIn(e.BatchID, Testing) && s.Active.TestedSHA == e.TestedSHA {
-			if s.Active.checkRefreshes == 0 || e.At.After(s.Active.checksRefreshedAt) {
-				s.Active.checksRefreshedAt = e.At
-			}
+			s.Active.checksRefreshedAt = e.At
 			s.Active.checkRefreshes++
+			s.Active.needsRefresh = false
 		}
 	case LandingStarted:
 		if s.batchIn(e.BatchID, Testing) {
@@ -272,12 +284,13 @@ func (s *State) failBuild(at time.Time, detail string) {
 const maxRetainedChecks = 64
 
 type retainedCheck struct {
-	success  bool
-	revision uint64
+	terminal, success bool
+	revision          uint64
 }
 
-func (s *State) retainChecks(e ChecksCompleted) {
-	s.checks[e.TestedSHA] = retainedCheck{success: e.Success, revision: s.revision}
+func (s *State) retainChecks(sha string, check retainedCheck) {
+	check.revision = s.revision
+	s.checks[sha] = check
 	if len(s.checks) > maxRetainedChecks {
 		var oldest string
 		revision := ^uint64(0)

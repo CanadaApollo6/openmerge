@@ -43,7 +43,9 @@ type Git interface {
 
 **A fence ref makes abandoned landings impossible to complete late.** Each base branch has a protected fence branch whose commits record which attempt moved it and why (`land/<attempt> tested=<sha>` or `abandon/<attempt>`). Attempt IDs are random and recorded durably before any push. A rejected, crashed, or timed-out landing is resolved by reading the fence, advancing it to `abandon/<attempt>` if nothing moved, so any delayed copy of the landing push fails. The forge enforces the outcome, so it never depends on clocks or deadlines.
 
-**Statuses and checks are normalized.** Statuses attach to a PR head commit and use a fixed set of states (queued, testing, landing, merged, dequeued, blocked, paused). Check runs are aggregated by the newest run of each name.
+**Statuses and checks are normalized.** Statuses attach to a PR head commit and use a fixed set of states (queued, testing, landing, merged, dequeued, blocked, paused). Check runs are aggregated by the newest run of each name within one producer source; required names with multiple sources stay pending. Pending observations revoke previously recorded success, and the executor rechecks terminal success immediately before recording a landing attempt. The original check deadline survives reruns.
+
+**Comment cursors are inclusive.** `ListComments` returns comments created at or after `since`. GitHub uses a second-granular, exclusive updated-time filter, so its driver overlaps the API query by one second and applies the inclusive creation-time filter locally. Callers must overlap polling cursors and dedupe by comment ID; edits of older comments do not create commands.
 
 **Writes are recoverable after a crash.** Every write is idempotent by key. Comments carry a hidden marker, and a driver only trusts markers in comments it authored itself.
 

@@ -436,13 +436,15 @@ func TestChecksRefreshRejectsStaleSubjects(t *testing.T) {
 	}
 }
 
-func TestChecksRefreshTimeDoesNotRegress(t *testing.T) {
+func TestChecksRefreshUsesLastLoggedReadTime(t *testing.T) {
 	s := testingState()
 	now := epoch.Add(time.Minute)
 	s = applySerial(s, ChecksRefreshed{BatchID: "b1", TestedSHA: "tested1", At: now})
 	s = applySerial(s, ChecksRefreshed{BatchID: "b1", TestedSHA: "tested1", At: epoch})
-	assertPlan(t, testConfig, s, now)
-	onlyAction[RefreshChecks](t, Plan(testConfig, s, now.Add(time.Minute)))
+	onlyAction[RefreshChecks](t, Plan(testConfig, s, now))
+	if s.Active.checkRefreshes != 2 || !s.Active.checksRefreshedAt.Equal(epoch) {
+		t.Fatalf("refresh did not advance bookkeeping in log order: %+v", s.Active)
+	}
 }
 
 func TestTestedSHAOwnershipSurvivesBatchCompletion(t *testing.T) {

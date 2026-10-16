@@ -1,0 +1,43 @@
+{
+  "id": 100,
+  "node_id": "CR_100",
+  "name": "CI",
+  "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "external_id": "",
+  "status": "completed",
+  "conclusion": "success",
+  "started_at": "2026-10-16T00:00:00Z",
+  "completed_at": "2026-10-16T00:01:00Z",
+  "check_suite": {
+    "id": 99
+  },
+  "app": {
+    "id": 99,
+    "slug": "ci-app",
+    "name": "OpenMerge test App",
+    "owner": {
+      "login": "contributor",
+      "id": 12,
+      "node_id": "MDQ6VXNlcjEy",
+      "type": "User",
+      "site_admin": false
+    },
+    "permissions": {
+      "checks": "write",
+      "contents": "write",
+      "pull_requests": "write"
+    },
+    "events": [
+      "pull_request",
+      "check_run",
+      "check_suite",
+      "issue_comment"
+    ]
+  },
+  "output": {
+    "title": "CI",
+    "summary": "Passed",
+    "annotations_count": 0
+  },
+  "pull_requests": []
+}

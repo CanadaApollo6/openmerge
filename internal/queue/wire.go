@@ -42,6 +42,11 @@ type wireChecksCompleted struct {
 	Success   bool   `json:"success"`
 }
 
+type wireChecksReopened struct {
+	TestedSHA string    `json:"tested_sha"`
+	At        time.Time `json:"at"`
+}
+
 type wireChecksRefreshed struct {
 	BatchID   string    `json:"batch_id"`
 	TestedSHA string    `json:"tested_sha"`
@@ -137,13 +142,14 @@ type wireRefreshChecks struct {
 }
 
 type wireLand struct {
-	BatchID         string        `json:"batch_id"`
-	ExpectedBaseSHA string        `json:"expected_base_sha"`
-	TestedSHA       string        `json:"tested_sha"`
-	Ref             string        `json:"ref"`
-	FenceToken      string        `json:"fence_token"`
-	PRs             []wireBatchPR `json:"prs"`
-	Method          string        `json:"method"`
+	BatchID          string        `json:"batch_id"`
+	ExpectedBaseSHA  string        `json:"expected_base_sha"`
+	TestedSHA        string        `json:"tested_sha"`
+	Ref              string        `json:"ref"`
+	FenceToken       string        `json:"fence_token"`
+	PRs              []wireBatchPR `json:"prs"`
+	Method           string        `json:"method"`
+	ChecksGeneration uint64        `json:"checks_generation"`
 }
 
 type wireResolveLanding struct {
@@ -309,7 +315,15 @@ func EncodeEvent(value Event) (string, []byte, error) {
 	case BaseMoved:
 		return encodeWire("base_moved", wireBaseMoved(v))
 	case ChecksCompleted:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
 		return encodeWire("checks_completed", wireChecksCompleted(v))
+	case ChecksReopened:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("checks_reopened", wireChecksReopened(v))
 	case ChecksRefreshed:
 		return encodeWire("checks_refreshed", wireChecksRefreshed(v))
 	case PRClosed:
@@ -367,9 +381,25 @@ func DecodeEvent(payload []byte) (Event, error) {
 			return BaseMoved(v)
 		})
 	case "checks_completed":
-		return decodeWireData(envelope.Data, func(v wireChecksCompleted) Event {
-			return ChecksCompleted(v)
-		})
+		v, err := readWireData[wireChecksCompleted](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := ChecksCompleted(v)
+		if err := event.Validate(); err != nil {
+			return nil, err
+		}
+		return event, nil
+	case "checks_reopened":
+		v, err := readWireData[wireChecksReopened](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := ChecksReopened(v)
+		if err := event.Validate(); err != nil {
+			return nil, err
+		}
+		return event, nil
 	case "checks_refreshed":
 		return decodeWireData(envelope.Data, func(v wireChecksRefreshed) Event {
 			return ChecksRefreshed(v)
@@ -457,7 +487,7 @@ func EncodeAction(value Action) (string, []byte, error) {
 	case RefreshChecks:
 		return encodeWire("refresh_checks", wireRefreshChecks{BatchID: v.BatchID, TestedSHA: v.TestedSHA, Epoch: v.epoch})
 	case Land:
-		return encodeWire("land", wireLand{BatchID: v.BatchID, ExpectedBaseSHA: v.ExpectedBaseSHA, TestedSHA: v.TestedSHA, Ref: v.Ref, FenceToken: v.FenceToken, PRs: encodeBatchPRs(v.PRs), Method: string(v.Method)})
+		return encodeWire("land", wireLand{BatchID: v.BatchID, ExpectedBaseSHA: v.ExpectedBaseSHA, TestedSHA: v.TestedSHA, Ref: v.Ref, FenceToken: v.FenceToken, PRs: encodeBatchPRs(v.PRs), Method: string(v.Method), ChecksGeneration: v.ChecksGeneration})
 	case ResolveLanding:
 		return encodeWire("resolve_landing", wireResolveLanding(v))
 	case DeleteRef:
@@ -492,7 +522,7 @@ func DecodeAction(payload []byte) (Action, error) {
 		})
 	case "land":
 		return decodeWireAction(envelope.Data, func(v wireLand) Action {
-			return Land{BatchID: v.BatchID, ExpectedBaseSHA: v.ExpectedBaseSHA, TestedSHA: v.TestedSHA, Ref: v.Ref, FenceToken: v.FenceToken, PRs: decodeBatchPRs(v.PRs), Method: MergeMethod(v.Method)}
+			return Land{BatchID: v.BatchID, ExpectedBaseSHA: v.ExpectedBaseSHA, TestedSHA: v.TestedSHA, Ref: v.Ref, FenceToken: v.FenceToken, PRs: decodeBatchPRs(v.PRs), Method: MergeMethod(v.Method), ChecksGeneration: v.ChecksGeneration}
 		})
 	case "resolve_landing":
 		return decodeWireAction(envelope.Data, func(v wireResolveLanding) Action {

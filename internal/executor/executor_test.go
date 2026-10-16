@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -60,6 +61,7 @@ func (h *harness) tested(t *testing.T) string {
 		}
 		return nil
 	}))
+	h.f.SetCheckRuns(repo, sha, []forge.CheckRun{{Name: "ci", State: forge.Success}, {Name: "lint", State: forge.Success}})
 	return sha
 }
 
@@ -170,6 +172,8 @@ func TestRefreshChecks(t *testing.T) {
 			var want []queue.Event
 			if tc.terminal {
 				want = append(want, queue.ChecksCompleted{TestedSHA: sha, Success: tc.success})
+			} else {
+				want = append(want, queue.ChecksReopened{TestedSHA: sha, At: epoch})
 			}
 			want = append(want, queue.ChecksRefreshed{BatchID: "batch", TestedSHA: sha, At: epoch})
 			if !reflect.DeepEqual(events, want) {
@@ -321,5 +325,59 @@ func TestBatchStartedEmitFailurePreventsBuild(t *testing.T) {
 	}
 	if _, err := h.f.ReadRef(t.Context(), repo, h.buildAction().Ref); err == nil {
 		t.Fatal("unrecorded build pushed a ref")
+	}
+}
+
+func TestAmbiguousRequiredCheckSourcesStayPending(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		checks   []forge.CheckRun
+		required bool
+	}{
+		{"two apps", []forge.CheckRun{{ID: 1, Name: "ci", Source: "app:11", State: forge.Failure}, {ID: 2, Name: "ci", Source: "app:22", State: forge.Success}}, true},
+		{"two successful apps", []forge.CheckRun{{ID: 2, Name: "ci", Source: "app:22", State: forge.Success}, {ID: 1, Name: "ci", Source: "app:11", State: forge.Success}}, true},
+		{"independent status creators", []forge.CheckRun{{ID: 100, Name: "ci", Source: "status:original", State: forge.Failure}, {ID: 200, Name: "ci", Source: "status:other", State: forge.Success}}, true},
+		{"cross api", []forge.CheckRun{{ID: 9999, Name: "ci", Source: "app:11", State: forge.Success}, {ID: 1, Name: "ci", Source: "status:writer", State: forge.Pending}}, true},
+		{"same source rerun", []forge.CheckRun{{ID: 2, Name: "ci", Source: "app:11", State: forge.Success}, {ID: 1, Name: "ci", Source: "app:11", State: forge.Failure}}, false},
+		{"unrelated ambiguity", []forge.CheckRun{{ID: 2, Name: "ci", Source: "app:11", State: forge.Success}, {ID: 1, Name: "other", Source: "app:11", State: forge.Failure}, {ID: 2, Name: "other", Source: "app:22", State: forge.Success}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := setup(t)
+			h.x.RequiredChecks = []string{"ci"}
+			sha := h.tested(t)
+			h.f.SetCheckRuns(repo, sha, tc.checks)
+			var events []queue.Event
+			err := h.x.Execute(context.Background(), queue.RefreshChecks{BatchID: "batch", TestedSHA: sha}, record(&events))
+			var ambiguity *executor.CheckSourceAmbiguityError
+			if errors.As(err, &ambiguity) != tc.required {
+				t.Fatalf("ambiguity=%v want %v", err, tc.required)
+			}
+			if tc.required {
+				if ambiguity.Name != "ci" || len(ambiguity.Sources) != 2 || !slices.IsSorted(ambiguity.Sources) {
+					t.Fatalf("unusable diagnostic: %+v", ambiguity)
+				}
+				if len(events) != 2 {
+					t.Fatalf("ambiguous check did not reopen: %+v", events)
+				}
+				if _, ok := events[0].(queue.ChecksReopened); !ok {
+					t.Fatalf("ambiguous check emitted terminal event: %+v", events)
+				}
+			} else {
+				must(t, err)
+				if len(events) != 2 {
+					t.Fatalf("unambiguous check did not complete: %+v", events)
+				}
+			}
+			if _, ok := events[len(events)-1].(queue.ChecksRefreshed); !ok {
+				t.Fatalf("missing refresh watermark: %+v", events)
+			}
+			// Durable emit failures take priority over diagnostics.
+			if tc.required {
+				err = h.x.Execute(context.Background(), queue.RefreshChecks{BatchID: "batch", TestedSHA: sha}, func(queue.Event) error { return errLog })
+				if !errors.Is(err, errLog) {
+					t.Fatalf("ambiguity hid emit failure: %v", err)
+				}
+			}
+		})
 	}
 }

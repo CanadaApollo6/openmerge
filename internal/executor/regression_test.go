@@ -27,12 +27,13 @@ func TestRequiredChecksMustBeExplicit(t *testing.T) {
 func TestRandomAttemptIDsAndGenerationFailure(t *testing.T) {
 	h := setup(t)
 	h.x.NewID = nil
+	sha := h.tested(t)
 	seen := make(map[string]bool)
 	for range 32 {
 		// A crash after the start record leaves the push unexecuted. Each new queue
 		// generation must still mint a fresh ID, even with identical action keys.
 		var id string
-		err := h.x.Execute(context.Background(), queue.Land{BatchID: "b1", FenceToken: h.fence}, func(e queue.Event) error { id = e.(queue.LandingStarted).AttemptID; return errLog })
+		err := h.x.Execute(context.Background(), queue.Land{BatchID: "b1", FenceToken: h.fence, TestedSHA: sha}, func(e queue.Event) error { id = e.(queue.LandingStarted).AttemptID; return errLog })
 		decoded, decodeErr := hex.DecodeString(id)
 		if !errors.Is(err, errLog) || decodeErr != nil || len(decoded) < 16 || seen[id] {
 			t.Fatalf("invalid or reused random attempt %q: %v", id, err)
@@ -41,7 +42,7 @@ func TestRandomAttemptIDsAndGenerationFailure(t *testing.T) {
 	}
 	h.x.NewID = func() (string, error) { return "", errIO }
 	var events []queue.Event
-	if err := h.x.Execute(context.Background(), queue.Land{}, record(&events)); !errors.Is(err, errIO) || len(events) != 0 {
+	if err := h.x.Execute(context.Background(), queue.Land{TestedSHA: sha}, record(&events)); !errors.Is(err, errIO) || len(events) != 0 {
 		t.Fatalf("ID failure started a landing: %v, %v", err, events)
 	}
 }
@@ -144,6 +145,8 @@ func TestLatestCheckRuns(t *testing.T) {
 			var want []queue.Event
 			if tc.terminal {
 				want = append(want, queue.ChecksCompleted{TestedSHA: "tested", Success: tc.success})
+			} else {
+				want = append(want, queue.ChecksReopened{TestedSHA: "tested", At: epoch})
 			}
 			want = append(want, queue.ChecksRefreshed{BatchID: "batch", TestedSHA: "tested", At: epoch})
 			if !reflect.DeepEqual(events, want) {
@@ -164,6 +167,7 @@ func TestSquashRebaseClosingEffectSurvivesLostResult(t *testing.T) {
 			cfg := queue.Config{MergeMethod: method}
 			emit := func(e queue.Event) error { s = queue.Apply(s, e); return nil }
 			must(t, h.x.Execute(ctx, queue.Plan(cfg, s, epoch)[0], emit))
+			h.f.SetCheckRuns(repo, s.Active.TestedSHA, []forge.CheckRun{{Name: "ci", State: forge.Success}, {Name: "lint", State: forge.Success}})
 			s = queue.Apply(s, queue.ChecksCompleted{TestedSHA: s.Active.TestedSHA, Success: true})
 			tested := s.Active.TestedSHA
 			must(t, h.x.Execute(ctx, queue.Plan(cfg, s, epoch)[0], emit))

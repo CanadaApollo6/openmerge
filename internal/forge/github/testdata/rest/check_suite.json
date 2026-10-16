@@ -1,0 +1,34 @@
+{
+  "id": 99,
+  "node_id": "CS_99",
+  "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "head_branch": "main",
+  "status": "completed",
+  "conclusion": "success",
+  "app": {
+    "id": 99,
+    "slug": "ci-app",
+    "name": "OpenMerge test App",
+    "owner": {
+      "login": "contributor",
+      "id": 12,
+      "node_id": "MDQ6VXNlcjEy",
+      "type": "User",
+      "site_admin": false
+    },
+    "permissions": {
+      "checks": "write",
+      "contents": "write",
+      "pull_requests": "write"
+    },
+    "events": [
+      "pull_request",
+      "check_run",
+      "check_suite",
+      "issue_comment"
+    ]
+  },
+  "before": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "after": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "pull_requests": []
+}

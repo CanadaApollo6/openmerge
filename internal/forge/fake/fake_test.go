@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/forge/fake"
@@ -51,9 +52,13 @@ func fixture(t *testing.T) (*fake.Forge, forgetest.Env) {
 		return count
 	}
 	for i, pr := range e.PRs {
-		observed := forge.PullRequest{Number: pr.Number, HeadSHA: pr.HeadSHA, HeadInBaseRepo: i != 0}
+		observed := forge.PullRequest{Number: pr.Number, HeadSHA: pr.HeadSHA, Base: "main", Author: "contributor", HeadInBaseRepo: i != 0}
 		if i < 2 {
-			approval := forge.Approval{User: "maintainer", SHA: pr.HeadSHA, CanWrite: i == 0}
+			user := "maintainer"
+			if i == 1 {
+				user = "reader"
+			}
+			approval := forge.Approval{User: user, SHA: pr.HeadSHA, CanWrite: i == 0}
 			must(t, f.Approve(repo, pr.Number, approval))
 			observed.Approvals = []forge.Approval{approval}
 		}
@@ -64,6 +69,7 @@ func fixture(t *testing.T) (*fake.Forge, forgetest.Env) {
 		must(t, err)
 		e.ConflictingPRs = append(e.ConflictingPRs, forge.BuildPR{Number: n, HeadSHA: pr.HeadSHA})
 	}
+	e.SetCanWrite = func(user string, write bool) { f.SetCanWrite(repo, user, write) }
 	e.ContainsPR = func(sha string, pr int) bool { return f.ContainsPR(repo, sha, pr) }
 	e.AddForeignComment = func(pr int, body string) { f.AddComment(repo, pr, "human", body) }
 	checks := make(map[string][]forge.CheckRun)
@@ -221,14 +227,16 @@ func TestPRLifecycleAndSnapshots(t *testing.T) {
 	pushed.Approvals[0].SHA = "mutated"
 	pr, err := f.PullRequest(ctx, repo, 1)
 	must(t, err)
-	if pr.Approvals[0] != approval {
+	wantApproval := approval
+	wantApproval.CanWrite = false
+	if pr.Approvals[0] != wantApproval {
 		t.Fatal("PushPR exposed mutable approval state")
 	}
 	pr.Approvals[0].User = "mutated"
 	must(t, f.ClosePR(repo, 1))
 	closed, err := f.PullRequest(ctx, repo, 1)
 	must(t, err)
-	if !closed.Closed || closed.HeadSHA != pushed.HeadSHA || closed.Approvals[0] != approval {
+	if !closed.Closed || closed.HeadSHA != pushed.HeadSHA || len(closed.Approvals) != 0 {
 		t.Fatalf("unexpected closed PR: %+v", closed)
 	}
 	fork, err := f.OpenPR(repo, 4, e.BaseSHA, false)
@@ -377,5 +385,62 @@ func must(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestReconciliationMetadataAndCurrentPermissions(t *testing.T) {
+	f, e := fixture(t)
+	ctx := context.Background()
+	must(t, f.SetPRMetadata(repo, 1, "release/v1", true, "author"))
+	pr, err := f.PullRequest(ctx, repo, 1)
+	must(t, err)
+	if pr.Base != "release/v1" || !pr.Draft || pr.Author != "author" {
+		t.Fatalf("metadata lost: %+v", pr)
+	}
+	summaries, err := f.ListOpenPullRequests(ctx, repo, "release/v1")
+	must(t, err)
+	if len(summaries) != 1 || summaries[0].Number != 1 || summaries[0].HeadSHA != pr.HeadSHA || summaries[0].UpdatedAt.IsZero() {
+		t.Fatalf("incorrect reconciliation view: %+v", summaries)
+	}
+	f.SetCanWrite(repo, "maintainer", false)
+	allowed, err := f.CanWrite(ctx, repo, "maintainer")
+	must(t, err)
+	if allowed {
+		t.Fatal("revoked user retained command permission")
+	}
+	pr, err = f.PullRequest(ctx, repo, 1)
+	must(t, err)
+	if pr.Approvals[0].CanWrite {
+		t.Fatal("revoked user retained approval permission")
+	}
+	f.SetCanWrite(repo, "maintainer", true)
+	pr, err = f.PullRequest(ctx, repo, 1)
+	must(t, err)
+	if !pr.Approvals[0].CanWrite {
+		t.Fatal("permission restoration was not observed")
+	}
+	f.AddComment(repo, 1, "author", "@openmerge enqueue")
+	comments, err := f.ListComments(ctx, repo, 1, time.Time{})
+	must(t, err)
+	if len(comments) != 1 || comments[0].ID <= 0 || comments[0].Author != "author" || comments[0].CreatedAt.IsZero() {
+		t.Fatalf("incomplete command: %+v", comments)
+	}
+	later, err := f.ListComments(ctx, repo, 1, comments[0].CreatedAt)
+	must(t, err)
+	if len(later) != 1 || later[0].ID != comments[0].ID {
+		t.Fatal("inclusive cursor omitted its boundary comment")
+	}
+	must(t, f.ClosePR(repo, 1))
+	summaries, err = f.ListOpenPullRequests(ctx, repo, "release/v1")
+	must(t, err)
+	if len(summaries) != 0 {
+		t.Fatal("closed PR remained in reconciliation")
+	}
+	checks := []forge.CheckRun{{ID: 1, Name: "CI", Source: "app:11", State: forge.Failure}, {ID: 2, Name: "CI", Source: "app:22", State: forge.Success}}
+	f.SetCheckRuns(repo, e.PRs[0].HeadSHA, checks)
+	got, err := f.CheckRuns(ctx, repo, e.PRs[0].HeadSHA)
+	must(t, err)
+	if !reflect.DeepEqual(got, checks) {
+		t.Fatalf("producer identities lost: %+v", got)
 	}
 }

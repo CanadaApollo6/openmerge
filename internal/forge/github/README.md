@@ -1,0 +1,218 @@
+# GitHub App driver
+
+`New(Config)` loads an App ID and a PKCS#1 or PKCS#8 RSA PEM key (at least
+2048 bits). `app.Installation(ctx, id)` discovers the App slug using `GET /app`
+and returns a shared, installation-scoped `forge.Driver`. Keep one `App` per
+credential set; the caller must select the installation that owns the repository.
+
+For GitHub Enterprise Server, set `APIBaseURL` to `https://HOST/api/v3/`.
+`GitBaseURL` defaults to `https://HOST/` (`https://github.com/` for the public
+API). Both can be configured independently. HTTPS is required except for
+loopback HTTP test servers. API credentials are restricted to the configured
+origin and API path, and redirects are disabled.
+
+Pass `driver.Remote` and `github.HeadRef` into `gitops.Config`. The remote URL
+contains no credentials; `gitops.Auth` supplies `x-access-token` and the fresh
+installation token through gitops' askpass transport. App JWTs use RS256,
+`iat = now - 60s`, and `exp = now + 9m` (ten minutes between the claims).
+Installation tokens are refreshed at five minutes before expiry. Concurrent
+refreshes are coalesced per installation. Credentials and raw API diagnostics
+never appear in driver errors or logs.
+
+## API behavior
+
+- Reviews use GitHub's `commit_id`, including an old SHA after a push. Each
+  reviewer's newest decisive review ID wins. `CHANGES_REQUESTED` and `DISMISSED`
+  revoke previous approvals; `COMMENTED` and `PENDING` do not. Writer permission
+  comes from a freshly revalidated collaborator permission API request on every
+  current-head fork approval. Stale reviews and same-repository PRs do not cause
+  permission reads; their approval `CanWrite` is false. Closed PRs skip reviews
+  and permissions entirely. Missing permissions deny access; other API failures
+  propagate without granting trust. There is no boolean permission cache or
+  permission lock held across network calls.
+- Check runs use `filter=all`, and all review, check, status, and comment lists
+  follow pagination. Native IDs order reruns within one producer. Check runs carry `Source:
+  "app:<id>"`; statuses carry `Source: "status:<lowercase-creator-login>"`.
+  Check suites for the SHA are read on every check refresh. A queued, running,
+  missing, or unknown suite makes its run pending regardless of stale success.
+  Missing producer identities and unknown outcomes are pending.
+  Only the `OpenMerge` check owned by this App is excluded from CI observations.
+- Multiple Apps, multiple status creators, or a check/status pair using a required
+  name are ambiguous. The executor keeps that check pending and returns
+  `executor.CheckSourceAmbiguityError{Name, Sources}` after recording the refresh.
+  No terminal check result is emitted. The server surfaces that diagnostic;
+  configure distinct names for independent producers.
+- `ListOpenPullRequests` paginates open PR summaries, filtered by target branch
+  (or all branches for an empty filter), without loading approvals. `PullRequest`
+  includes `Base`, `Draft`, and `Author`.
+- `ListComments` paginates issue-thread comments, including humans and bots.
+  GitHub's `since` filters updated-at; the driver additionally filters created-at
+  so an edit of an old command cannot become a new command. The server overlaps
+  its timestamp cursor and dedupes by ID. `CanWrite` freshly authorizes commands.
+- One App-owned `OpenMerge` check is discovered by head SHA and external ID
+  `openmerge/pr/<number>`. queued/testing/landing map to `in_progress`; merged,
+  dequeued, blocked, and paused map to completed checks with conclusions
+  success, cancelled, failure, and action_required respectively. Output title
+  includes state and Reason; output summary contains Summary (or the title if
+  the supplied summary is empty).
+- Comments carry `<!-- openmerge:key=<key> -->`. Dedupe trusts only comments
+  whose user login is `<app-slug>[bot]` and type is `Bot`.
+- `MarkLanded` posts a keyed link to the landed commit, then closes the PR.
+  GitHub cannot mark externally squashed/rebased commits as a native merge.
+  Retrying repairs a crash between the two writes; it never invokes a merge API.
+- `DeleteRef` accepts a branch name or a full heads/tags ref. HTTP 404 and 422
+  with exactly "Reference does not exist" (optional terminal period) succeed;
+  other validation and authorization failures remain errors.
+- `ReadFile` uses the contents API at an explicit ref. Missing files yield
+  `APIError{StatusCode: 404}`. Directory responses and unsupported encodings
+  (including contents over the API's inline size limit) fail closed.
+
+A primary limit, a secondary limit, or `Retry-After` establishes a cooldown.
+During it, requests return `RateLimitError{RetryAt, Secondary}` without network
+traffic. Repeated secondary limits back off exponentially from one minute,
+capped at 64 minutes, while honoring longer server reset/retry deadlines.
+The caller schedules another attempt at `RetryAt`; the transport never retries
+an uncertain write automatically. HTTP status failures yield `APIError` without
+response bodies or request URLs; cancellation and deadlines remain recognizable.
+
+GitHub offers no atomic create-if-absent for issue comments or check runs, and
+external IDs are not uniqueness constraints. Local writes are serialized per
+installation driver, and retries rediscover persisted effects. Exactly-once
+creation across independent processes, delayed in-flight requests, or stale API
+reads cannot be guaranteed by GitHub's API. The server must serialize durable
+actions and must not overlap retries with unresolved HTTP writes.
+
+## Webhooks and the server boundary
+
+`VerifyAndParse(request, secret)` requires POST, a nonempty secret and delivery
+ID, and an HMAC-SHA256 signature verified with `hmac.Equal`. It reads at most
+25 MiB plus one byte, rejecting oversized bodies before JSON parsing.
+`Event.Payload` is one of `PRChanged`, `ReviewChanged`, `ChecksChanged`,
+`BranchPushed`, `PRCommentCreated`, `InstallationChanged`, or `Ignored`.
+Unknown event names and unsupported actions are acknowledged as `Ignored`.
+`check_suite` requested/rerequested/completed and `check_run` rerequested/completed
+all produce `ChecksChanged{SHA}`; reruns must trigger a complete check/suite refresh.
+The JSON files under `testdata/` are synthetic webhook fixtures and independent
+REST fixtures (`testdata/rest/`). The HTTP fake serves those schemas rather than
+serializing go-github response structs. It supplies 201 creates, JSON errors,
+`total_count` for check collections, empty arrays, pagination, ETags, and rate
+headers; it verifies App JWTs on every App endpoint and rejects unknown
+installation IDs. No credentials or live user data are captured.
+
+This package does not implement HTTP serving, persistence, worker loops, or
+commands. The server PR still owns:
+
+- Durable delivery dedupe, webhook response handling, and event-to-queue routing.
+- Installation/repository discovery and reconciliation, token eviction after
+  suspension/deletion, and persistent action serialization and retry scheduling.
+- Base-branch `.openmerge.yml` loading/validation and configuration reloads.
+- Command parsing and permission checks (`CanWrite` is available).
+- Constructing gitops repositories, cache ownership, and executor wiring.
+- Branch/ruleset protection and App permission validation, including protected
+  base bypass and exclusive, nondeletable `openmerge/fence/*` ownership. APIs for
+  ruleset inspection, PR labels/files, and installation repository
+  enumeration are not included; add narrow reads when their consumers arrive.
+
+Required App repository permissions are contents read/write (Git fetch/push and
+config), pull requests read/write (reviews, comments, closure), checks read/write,
+commit statuses read, and metadata read (collaborator permissions). Startup
+validation of installed permissions and organization rules remains server work.
+
+## App setup and troubleshooting
+
+Subscribe to **Pull requests** (`pull_request`), **Pull request reviews**
+(`pull_request_review`), **Check runs** (`check_run`), **Check suites**
+(`check_suite`), **Commit statuses** (`status`), **Pushes** (`push`), and
+**Issue comments** (`issue_comment`). The parser also accepts `installation` and
+`installation_repositories`, which GitHub sends automatically to Apps. These nine
+event names are the supported set in `webhook.go`. Use the same webhook secret
+in App settings and the server. The server must durably dedupe delivery IDs.
+
+Find the installation ID in your personal/organization **Settings → Applications
+→ Installed GitHub Apps → Configure** URL: its last component is the numeric
+installation ID (`.../settings/installations/12345`). You can also obtain `id`
+from the App-authenticated [repository installation endpoint](https://docs.github.com/en/rest/apps/apps#get-a-repository-installation)
+or the signed installation webhook's `installation.id`. The App ID and
+installation ID are different values.
+
+For HTTP 401, first check that the configured App ID is the numeric App ID and
+the RSA private key belongs to that App. Check that the installation ID belongs
+to the intended account and still has access to the repository. Synchronize the
+host clock with NTP: JWTs are backdated 60 seconds, expire after nine minutes,
+and fail with larger skew. After correcting the clock or credentials, recreate
+the App to discard old installation tokens. See GitHub's
+[JWT requirements](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app).
+HTTP 403 can mean missing installed permissions or a rate limit; inspect the
+normalized `APIError`/`RateLimitError` and confirm the installation accepted any
+new permissions. The driver deliberately omits raw response bodies from errors.
+
+## Polling cost and conditional requests
+
+Keep one App/installation driver alive across polls. Every GET still contacts
+GitHub, supplying `If-None-Match` when an ETag is cached. A 304 replays the cached
+body and pagination headers as a 200 **inside the HTTP transport**, before
+go-github can treat 304 as an error. GitHub's
+[conditional request guidance](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api#use-conditional-requests)
+states that correctly authenticated 304s do not count against the primary rate
+limit. They still consume network requests and can encounter secondary limits.
+Prefer webhooks with periodic reconciliation, and honor `RateLimitError.RetryAt`.
+
+The concurrent LRU is bounded to 1,024 entries and 16 MiB of stored URL, hashed
+identity/header, response-header, and body data per client transport. Keys include
+the complete URL/query, a SHA-256 token identity, and request headers. Token
+rotation and representation changes cannot reuse another identity's body.
+Only a single valid strong or weak entity-tag is stored. A 304 must include one
+valid ETag with the same opaque-tag; `If-None-Match` uses weak comparison, ignoring
+the optional `W/` prefix. A missing, mismatched, or malformed 304 validator evicts
+the entry and returns an error without replay or an automatic retry; the next
+read is unconditional. These entries do not qualify for validatorless reuse.
+Allowed 304 metadata updates are retained; `no-store` and `Vary: *`, on any field
+line, evict and prevent replay.
+Eviction, restart, token refresh, missing ETags, and uncacheable/oversized responses
+cause normal GETs. Errors never replay a cached grant or CI result; writes are
+never cached or retried. Permission entries are evicted by the same LRU.
+
+For a PR with one current-head fork approver and at most one page per endpoint:
+
+- Full PR refresh: **3 GETs** (PR, reviews, permission). Same-repository PRs use
+  **2** (PR and reviews); a closed PR uses **1**.
+- Active tested-SHA check refresh: **3 GETs** (check runs, suites, statuses),
+  shareable by all PRs in the same batch. Landing preflight repeats these **3 GETs**
+  before recording an attempt.
+- Polling-only command discovery: **1 GET** for a page of comments. Each command
+  authorization adds a fresh `CanWrite` GET.
+
+Thus one open fork PR plus one active CI SHA uses **6 GETs/cycle**, or **7** with
+comment discovery. A warm unchanged cycle still makes 6/7 requests, typically
+all validated 304s and **zero primary-limit charges**. If every response changes,
+it makes 6/7 normal 200s and consumes 6/7 primary-limit requests; partial changes
+charge only the pages returning 200. These are estimates, verified by
+`TestPollCycleRequestBudget`, conditional on endpoint ETag support. Add one per
+extra page, one per additional relevant approver, and repository-level
+`ListOpenPullRequests` pages shared across PRs. Initial App lookup and token
+exchange are separate costs; tokens renew roughly every 55 minutes. Keep a stable comment
+cursor until progress, then overlap it and dedupe IDs; changing the query URL
+misses the prior ETag. The driver does not implement the server's polling loop.
+
+## Dependency rationale (ADR 0001 / PR body)
+
+The new direct dependency is `github.com/google/go-github/v93 v93.0.0`, the
+current release when implemented (verified with GitHub's releases API). It
+carries the REST request/response schema, endpoint encoding, and pagination
+metadata for App authentication, reviews, permissions, checks, statuses, PRs,
+comments, refs, and repository contents. That is the forge SDK exception
+explicitly allowed by ADR 0001, and all SDK imports stay inside this package.
+`github.com/google/go-querystring v1.2.0` is an indirect SDK dependency for query
+encoding. JWT signing and webhook authentication use only the standard library;
+no JWT or authentication framework is added.
+
+Upstream references: [go-github releases](https://github.com/google/go-github/releases),
+[App JWT requirements](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app),
+[rate-limit handling](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api),
+and [check runs](https://docs.github.com/en/rest/checks/runs).
+
+`TestDriverContract` runs `forgetest.RunDriver` against an in-package
+`httptest.Server`, with deliberately short pages. Focused tests cover all native
+mappings, approval supersession, refresh concurrency, cooldowns, spoofing,
+restart recovery, signature mismatches at every digest byte, and webhook fixture
+normalization. No live API tests or credentials are needed.

@@ -109,12 +109,13 @@ func plan(cfg Config, s State, now time.Time) []Action {
 				BatchID: batch.ID, ExpectedBaseSHA: batch.BaseSHA, TestedSHA: batch.TestedSHA,
 				Ref: batch.TestRef, FenceToken: s.Fence,
 				Method: batch.Method, PRs: slices.Clone(batch.PRs),
+				ChecksGeneration: batch.checksGeneration,
 			})
 			return actions
 		}
 		deadline := batch.StartedTestingAt.Add(cfg.CheckTimeout)
 		timedOut := cfg.CheckTimeout > 0 && now.After(deadline)
-		if timedOut && batch.checkRefreshes > 0 && !batch.checksRefreshedAt.Before(deadline) {
+		if timedOut && !batch.needsRefresh && batch.checkRefreshes > 0 && !batch.checksRefreshedAt.Before(deadline) {
 			if len(batch.PRs) > 1 {
 				actions = append(actions, FailBatch{BatchID: batch.ID, Reason: ChecksTimeout})
 				return actions
@@ -131,7 +132,7 @@ func plan(cfg Config, s State, now time.Time) []Action {
 			if interval <= 0 {
 				interval = time.Minute
 			}
-			if timedOut || batch.checkRefreshes == 0 || now.Sub(batch.checksRefreshedAt) >= interval {
+			if timedOut || batch.needsRefresh || batch.checkRefreshes == 0 || now.Sub(batch.checksRefreshedAt) >= interval {
 				actions = append(actions, RefreshChecks{BatchID: batch.ID, TestedSHA: batch.TestedSHA, epoch: batch.checkRefreshes})
 			}
 		}

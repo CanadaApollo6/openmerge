@@ -1,0 +1,16 @@
+{
+  "id": 1,
+  "node_id": "IC_1",
+  "body": "@openmerge enqueue",
+  "user": {
+    "login": "contributor",
+    "id": 12,
+    "node_id": "MDQ6VXNlcjEy",
+    "type": "User",
+    "site_admin": false
+  },
+  "created_at": "2026-10-16T00:00:00Z",
+  "updated_at": "2026-10-16T00:00:00Z",
+  "author_association": "CONTRIBUTOR",
+  "html_url": "https://github.test/acme/project/pull/1#issuecomment-1"
+}

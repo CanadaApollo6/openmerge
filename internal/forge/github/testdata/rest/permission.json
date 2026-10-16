@@ -1,0 +1,11 @@
+{
+  "permission": "write",
+  "role_name": "write",
+  "user": {
+    "login": "contributor",
+    "id": 12,
+    "node_id": "MDQ6VXNlcjEy",
+    "type": "User",
+    "site_admin": false
+  }
+}

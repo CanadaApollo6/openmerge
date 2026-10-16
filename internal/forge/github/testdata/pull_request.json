@@ -1,0 +1,44 @@
+{
+  "repository": {
+    "id": 50,
+    "full_name": "acme/project",
+    "name": "project",
+    "owner": {
+      "login": "acme"
+    }
+  },
+  "installation": {
+    "id": 7
+  },
+  "sender": {
+    "login": "maintainer",
+    "id": 12,
+    "type": "User"
+  },
+  "action": "synchronize",
+  "number": 17,
+  "pull_request": {
+    "number": 17,
+    "state": "open",
+    "head": {
+      "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "ref": "topic",
+      "repo": {
+        "id": 51,
+        "full_name": "contributor/project"
+      }
+    },
+    "base": {
+      "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "ref": "main",
+      "repo": {
+        "id": 50,
+        "full_name": "acme/project",
+        "name": "project",
+        "owner": {
+          "login": "acme"
+        }
+      }
+    }
+  }
+}

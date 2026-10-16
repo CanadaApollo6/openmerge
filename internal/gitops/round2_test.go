@@ -24,6 +24,10 @@ type r2Driver struct {
 	closed []int
 }
 
+func (d *r2Driver) CheckRuns(context.Context, forge.RepoRef, string) ([]forge.CheckRun, error) {
+	return nil, nil
+}
+
 func (d *r2Driver) MarkLanded(_ context.Context, _ forge.RepoRef, pr int, _ string) error {
 	d.closed = append(d.closed, pr)
 	return nil
