@@ -5,7 +5,8 @@ import (
 	"fmt"
 )
 
-// ErrLandingNotOnBase reports a tested commit absent from the freshly read base.
+// ErrLandingNotOnBase reports a landing commit absent from the freshly read base.
+// TestedSHA names the pinned head for fast-forward and the tested SHA otherwise.
 // AttemptID is empty for MarkLanded actions, which do not carry an attempt ID.
 type ErrLandingNotOnBase struct {
 	TestedSHA, BaseTip, AttemptID string

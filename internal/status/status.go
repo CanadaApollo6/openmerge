@@ -371,7 +371,7 @@ func eventSummary(event queue.Event, before, after queue.State) string {
 	case queue.FastForwardBatchSelected:
 		return "Selected a consecutive fast-forward chain"
 	case queue.FastForwardRefBuilt:
-		return "Recorded the unchanged head as the batch test commit"
+		return "Recorded a unique marker testing the head tree and history"
 	case queue.FastForwardBlocked:
 		return "Head cannot fast-forward onto the current base; update the branch and queue it again"
 	case queue.FastForwardMergeCommitsBlocked:

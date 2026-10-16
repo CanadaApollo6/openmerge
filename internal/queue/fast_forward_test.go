@@ -37,18 +37,18 @@ func TestFastForwardSelectionReplayAndStaleEvents(t *testing.T) {
 	if len(s.pending) != 1 || !slices.Equal(s.pending[0].prs, pins[2:]) {
 		t.Fatal("selection lost/repeated remainder")
 	}
-	s = Apply(s, FastForwardRefBuilt{BatchID: "b1", TestedSHA: "three", At: at})
+	s = Apply(s, FastForwardRefBuilt{BatchID: "b1", TestedSHA: "marker", HeadSHA: "three", At: at})
 	if s.Active.Phase != Building {
 		t.Fatal("unselected head became tested")
 	}
-	s = Apply(s, FastForwardRefBuilt{BatchID: "b1", TestedSHA: "two", At: at})
+	s = Apply(s, FastForwardRefBuilt{BatchID: "b1", TestedSHA: "marker", HeadSHA: "two", At: at})
 	s = Apply(s, FastForwardBlocked{BatchID: "b1"})
 	if s.Active.Phase != Testing || s.PendingDequeue(1) != "" {
 		t.Fatal("late build rejection revoked test")
 	}
 	s = Apply(s, BaseMoved{SHA: "new-base"})
 	s = Apply(s, FastForwardBlocked{BatchID: "b1"})
-	s = Apply(s, FastForwardRefBuilt{BatchID: "b1", TestedSHA: "two", At: at})
+	s = Apply(s, FastForwardRefBuilt{BatchID: "b1", TestedSHA: "marker", HeadSHA: "two", At: at})
 	if s.Active != nil {
 		t.Fatal("stale result restored canceled batch")
 	}
@@ -70,7 +70,7 @@ func TestFastForwardMayRetestUnchangedHeadAfterFailure(t *testing.T) {
 	for _, id := range []string{"b1", "b2"} {
 		s = Apply(s, BatchStarted{BatchID: id, BaseSHA: "base", PRs: pins, At: at})
 		s = Apply(s, FastForwardBatchSelected{BatchID: id, PRs: pins})
-		s = Apply(s, FastForwardRefBuilt{BatchID: id, TestedSHA: "head", At: at})
+		s = Apply(s, FastForwardRefBuilt{BatchID: id, TestedSHA: "marker-" + id, HeadSHA: "head", At: at})
 		if s.Active == nil || s.Active.Phase != Testing {
 			t.Fatal("unchanged head rejected on retry")
 		}

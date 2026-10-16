@@ -122,7 +122,7 @@ func TestCheckNormalization(t *testing.T) {
 	}
 }
 
-func TestCheckSuiteBranchProvenance(t *testing.T) {
+func TestCheckSuiteWithoutBranchCountsNormally(t *testing.T) {
 	f := newAPI(t)
 	ref := "openmerge/queue/main/b1"
 	f.runs["tested"] = []*gh.CheckRun{
@@ -138,7 +138,7 @@ func TestCheckSuiteBranchProvenance(t *testing.T) {
 	f.statuses["tested"] = []*gh.RepoStatus{{ID: new(int64(3)), Context: new("legacy"), State: new("success"), Creator: &gh.User{Login: new("writer")}}}
 	checks, err := f.driver.CheckRuns(t.Context(), testRepo, "tested")
 	must(t, err)
-	if len(checks) != 3 || checks[0].HeadBranch != ref || checks[1].HeadBranch != "" || checks[2].HeadBranch != "" || checks[2].State != forge.Success {
+	if len(checks) != 3 || checks[0].State != forge.Success || checks[1].State != forge.Success || checks[2].State != forge.Success {
 		t.Fatalf("incorrect provenance or changed status normalization: %+v", checks)
 	}
 }

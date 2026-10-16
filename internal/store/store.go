@@ -332,7 +332,7 @@ func (s *Store) Plan(ctx context.Context, q QueueID, cfg queue.Config, now time.
 				SET status = 'planned', type = EXCLUDED.type, payload = EXCLUDED.payload,
 					watermark = EXCLUDED.watermark, error = NULL, updated_at = now()
 				WHERE actions.status = 'cancelled' OR (actions.status = 'poisoned'
-					AND (actions.poison_count < 3 OR EXCLUDED.type = 'resolve_landing'))`, q, action.Key(), name, string(payload), watermark); err != nil {
+					AND (actions.poison_count < 3 OR EXCLUDED.type IN ('resolve_landing', 'fast_forward_resolve_landing')))`, q, action.Key(), name, string(payload), watermark); err != nil {
 				return err
 			}
 		}
@@ -357,8 +357,7 @@ func (s *Store) Plan(ctx context.Context, q QueueID, cfg queue.Config, now time.
 		paused, err := publishPoisonPauses(ctx, tx, q)
 		if paused {
 			result = slices.DeleteFunc(result, func(action PlannedAction) bool {
-				_, resolving := action.Action.(queue.ResolveLanding)
-				return !resolving
+				return !queue.IsLandingResolution(action.Action)
 			})
 		}
 		return err
@@ -401,7 +400,7 @@ func poisonAction(ctx context.Context, tx pgx.Tx, id int64, cause error) error {
 func publishPoisonPauses(ctx context.Context, tx pgx.Tx, q QueueID) (bool, error) {
 	rows, err := tx.Query(ctx, `UPDATE actions SET poison_notified = true
 		WHERE queue_id = $1 AND status = 'poisoned' AND poison_count >= 3 AND NOT poison_notified
-			AND type <> 'resolve_landing'
+			AND type NOT IN ('resolve_landing', 'fast_forward_resolve_landing')
 		RETURNING key, error`, q)
 	if err != nil {
 		return false, err

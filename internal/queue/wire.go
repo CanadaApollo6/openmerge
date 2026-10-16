@@ -684,6 +684,8 @@ func EncodeAction(value Action) (string, []byte, error) {
 		return encodeWire("refresh_checks", wireRefreshChecks{BatchID: v.BatchID, TestedSHA: v.TestedSHA, Epoch: v.epoch})
 	case Land:
 		return encodeWire("land", wireLand{BatchID: v.BatchID, ExpectedBaseSHA: v.ExpectedBaseSHA, TestedSHA: v.TestedSHA, Ref: v.Ref, FenceToken: v.FenceToken, PRs: encodeBatchPRs(v.PRs), Method: string(v.Method), ChecksGeneration: v.ChecksGeneration})
+	case FastForwardResolveLanding:
+		return encodeWire("fast_forward_resolve_landing", wireFastForwardResolveLanding{v.BatchID, v.AttemptID, v.TestedSHA, v.FenceToken, v.HeadSHA})
 	case ResolveLanding:
 		return encodeWire("resolve_landing", wireResolveLanding(v))
 	case DeleteRef:
@@ -721,6 +723,10 @@ func DecodeAction(payload []byte) (Action, error) {
 	case "land":
 		return decodeWireAction(envelope.Data, func(v wireLand) Action {
 			return Land{BatchID: v.BatchID, ExpectedBaseSHA: v.ExpectedBaseSHA, TestedSHA: v.TestedSHA, Ref: v.Ref, FenceToken: v.FenceToken, PRs: decodeBatchPRs(v.PRs), Method: MergeMethod(v.Method), ChecksGeneration: v.ChecksGeneration}
+		})
+	case "fast_forward_resolve_landing":
+		return decodeWireAction(envelope.Data, func(v wireFastForwardResolveLanding) Action {
+			return FastForwardResolveLanding{ResolveLanding: ResolveLanding{BatchID: v.BatchID, AttemptID: v.AttemptID, TestedSHA: v.TestedSHA, FenceToken: v.FenceToken}, HeadSHA: v.HeadSHA}
 		})
 	case "resolve_landing":
 		return decodeWireAction(envelope.Data, func(v wireResolveLanding) Action {

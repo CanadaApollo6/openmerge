@@ -167,7 +167,7 @@ func (f *Forge) OnTestRef(fn func(sha string, prs []int)) {
 }
 
 // BuildTestRef composes merge/squash/rebase commits with a batch ID, or verifies
-// and publishes an unchanged fast-forward chain. Failed builds never move the ref.
+// and publishes an empty marker over a fast-forward chain. Failed builds never move the ref.
 func (f *Forge) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.BuildRequest) (string, error) {
 	f.mu.Lock()
 	sha, prs, changed, err := f.build(ctx, f.repo(repo), req)
@@ -248,6 +248,10 @@ func (f *Forge) build(ctx context.Context, r *repository, req forge.BuildRequest
 			top = r.commit(parents, content, message, files)
 		}
 	}
+	if req.Method == forge.FastForward {
+		head := r.commits[top]
+		top = r.commit([]string{top}, head.PRs, fmt.Sprintf("OpenMerge fast-forward test %s\n\nOpenMerge-Batch: %s", r.nonce(), req.BatchID), head.Files)
+	}
 	changed := r.refs[req.Ref] != top
 	r.refs[req.Ref] = top
 	return top, prs, changed, nil
@@ -261,7 +265,17 @@ func (f *Forge) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequ
 		return "", err
 	}
 	r := f.repo(repo)
-	if r.refs[req.Base] == req.TestedSHA || r.refs[req.Base] != req.ExpectedBaseSHA || !f.disableFenceLeaseForTesting && r.refs[req.Fence] != req.ExpectedFence {
+	landed := req.TestedSHA
+	if req.FastForwardHeadSHA != "" {
+		if len(req.PRs) == 0 || req.PRs[len(req.PRs)-1].HeadSHA != req.FastForwardHeadSHA {
+			return "", errors.New("fast-forward landing head must match the final pinned PR")
+		}
+		if err := r.verifyFastForward(req.ExpectedBaseSHA, req.TestedSHA, req.FastForwardHeadSHA); err != nil {
+			return "", err
+		}
+		landed = req.FastForwardHeadSHA
+	}
+	if r.refs[req.Base] == landed || r.refs[req.Base] != req.ExpectedBaseSHA || !f.disableFenceLeaseForTesting && r.refs[req.Fence] != req.ExpectedFence {
 		return "", forge.ErrLeaseRejected
 	}
 	if req.Base == req.Fence {
@@ -280,9 +294,9 @@ func (f *Forge) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequ
 	if err != nil {
 		return "", err
 	}
-	r.refs[req.Base], r.refs[req.Fence] = req.TestedSHA, next
+	r.refs[req.Base], r.refs[req.Fence] = landed, next
 	for _, pinned := range req.PRs {
-		if pr := r.prs[pinned.Number]; r.isAncestor(pinned.HeadSHA, req.TestedSHA) {
+		if pr := r.prs[pinned.Number]; r.isAncestor(pinned.HeadSHA, landed) {
 			pr.Closed = true
 			r.prs[pr.Number] = pr
 		}

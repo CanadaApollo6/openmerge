@@ -328,9 +328,13 @@ queues:
     batch: {max_size: 8, max_wait: 30s}
 ```
 
-Fast-forward tests the PR head itself and lands that exact SHA. For a batch, each
-head must strictly descend from the previous head, starting at the base; the last
-head is tested and landed. The executor selects the longest consecutive linear
+Fast-forward tests the exact head tree and history via a unique marker commit;
+it lands the head itself. The marker is one empty commit with the head as its
+only parent, the same tree, the configured App committer, and an authoritative
+`OpenMerge-Batch` trailer. A random nonce makes each build unique, so existing
+checks on the head cannot authorize landing. For a batch, each head must strictly
+descend from the previous head, starting at the base; the marker tests the last
+head, which is what lands. The executor selects the longest consecutive linear
 prefix in queue order; unrelated heads fall back to a singleton. A head equal to
 or diverged from the current base is dequeued as `fast-forward-required`: the
 author must update the branch and queue it again. OpenMerge never rebases it.

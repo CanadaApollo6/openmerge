@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -57,10 +56,10 @@ func (x *Executor) buildFastForward(ctx context.Context, a queue.BuildTestRef, e
 	if err != nil {
 		return x.fastForwardBuildError(a.BatchID, err, emit)
 	}
-	if sha != prs[len(prs)-1].HeadSHA {
-		return x.fastForwardBuildError(a.BatchID, fmt.Errorf("fast-forward returned %s instead of pinned head %s", sha, prs[len(prs)-1].HeadSHA), emit)
+	if err := x.Git.VerifyFastForward(ctx, x.Repo, a.BaseSHA, sha, prs[len(prs)-1].HeadSHA); err != nil {
+		return x.fastForwardBuildError(a.BatchID, fmt.Errorf("invalid fast-forward marker: %w", err), emit)
 	}
-	return emit(queue.FastForwardRefBuilt{BatchID: a.BatchID, TestedSHA: sha, At: x.now()})
+	return emit(queue.FastForwardRefBuilt{BatchID: a.BatchID, TestedSHA: sha, HeadSHA: prs[len(prs)-1].HeadSHA, At: x.now()})
 }
 
 func (x *Executor) fastForwardBuildError(batch string, err error, emit func(queue.Event) error) error {
@@ -78,20 +77,4 @@ func dequeueSummary(reason queue.DequeueReason) string {
 		return "Head cannot fast-forward onto the current base; update the branch and queue it again"
 	}
 	return ""
-}
-
-// A fast-forward SHA also belongs to the PR. Only queue-ref suites establish
-// that CI tested this batch; PR workflows may test a synthetic merge instead.
-func fastForwardChecks(checks []forge.CheckRun, ref string) []forge.CheckRun {
-	branch := strings.TrimPrefix(ref, "refs/heads/")
-	filtered := make([]forge.CheckRun, 0, len(checks))
-	for _, check := range checks {
-		if strings.HasPrefix(check.Source, "status:") {
-			check.State = forge.Pending
-		} else if branch == "" || check.HeadBranch != branch {
-			continue
-		}
-		filtered = append(filtered, check)
-	}
-	return filtered
 }

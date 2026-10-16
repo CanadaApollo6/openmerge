@@ -113,6 +113,8 @@ type LandingAttempt struct {
 	ID         string
 	FenceToken string
 	StartedAt  time.Time
+	// FastForwardHeadSHA is captured from this attempt, independent of configuration.
+	FastForwardHeadSHA string
 }
 
 // DequeueReason values are a stable public contract for agents.

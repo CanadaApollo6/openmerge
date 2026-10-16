@@ -35,9 +35,6 @@ type Executor struct {
 	// CheckPolicy evaluates repository merge conditions on the tested SHA.
 	// Nil retains the explicit RequiredChecks policy.
 	CheckPolicy func([]forge.CheckRun) (terminal, success bool, err error)
-	// ActiveBatch is the durable snapshot authorizing this execution. RefreshChecks
-	// needs its method and ref because its persisted action predates fast-forward.
-	ActiveBatch *queue.Batch
 	// BeforeLand freshly revalidates PR trust after the final checks read.
 	BeforeLand func(context.Context, queue.Land) error
 	NewID      func() (string, error)
@@ -51,7 +48,8 @@ type Executor struct {
 // after it is recorded, the caller must only execute ResolveLanding for that
 // batch, never retry Land. Its uncertain result is recovered from the fence.
 // Before recording Landed or closing a PR with MarkLanded, Execute freshly reads
-// the base and verifies that it contains the tested commit. ErrLandingNotOnBase
+// the base and verifies that it contains the landed commit (the pinned head for
+// fast-forward, otherwise the tested SHA). ErrLandingNotOnBase
 // leaves the batch in Landing without a result event and recurs on resolution
 // retries while the commit remains absent. A failed MarkLanded stays unacknowledged.
 // Infrastructure build errors emit TestRefBuildFailed and also return the error.
@@ -92,9 +90,6 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		if err != nil {
 			return err
 		}
-		if batch := x.ActiveBatch; batch != nil && batch.ID == a.BatchID && batch.TestedSHA == a.TestedSHA && batch.Method == queue.FastForward {
-			checks = fastForwardChecks(checks, batch.TestRef)
-		}
 		at := x.now()
 		terminal, success, ambiguity := x.checkResult(checks)
 		if terminal {
@@ -112,9 +107,6 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		checks, err := x.Driver.CheckRuns(ctx, x.Repo, a.TestedSHA)
 		if err != nil {
 			return err
-		}
-		if a.Method == queue.FastForward {
-			checks = fastForwardChecks(checks, a.Ref)
 		}
 		terminal, success, ambiguity := x.checkResult(checks)
 		if !terminal || !success {
@@ -141,6 +133,17 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 				return err
 			}
 		}
+		landedSHA, fastForwardHead := a.TestedSHA, ""
+		if a.Method == queue.FastForward {
+			if len(a.PRs) == 0 {
+				return errors.New("fast-forward requires pinned heads")
+			}
+			fastForwardHead = a.PRs[len(a.PRs)-1].HeadSHA
+			if err := x.Git.VerifyFastForward(ctx, x.Repo, a.ExpectedBaseSHA, a.TestedSHA, fastForwardHead); err != nil {
+				return err
+			}
+			landedSHA = fastForwardHead
+		}
 		attemptID, err := x.newID()
 		if err != nil {
 			return err
@@ -154,21 +157,23 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		}
 		next, err := x.Git.Land(ctx, x.Repo, forge.LandRequest{
 			Base: x.Base, ExpectedBaseSHA: a.ExpectedBaseSHA, TestedSHA: a.TestedSHA,
-			Fence: x.fenceRef(), ExpectedFence: a.FenceToken, NextFenceID: "land/" + attemptID, PRs: prs,
+			Fence: x.fenceRef(), ExpectedFence: a.FenceToken, NextFenceID: "land/" + attemptID, PRs: prs, FastForwardHeadSHA: fastForwardHead,
 		})
 		if errors.Is(err, forge.ErrLeaseRejected) {
-			return x.resolve(ctx, queue.ResolveLanding{BatchID: a.BatchID, AttemptID: attemptID, TestedSHA: a.TestedSHA, FenceToken: a.FenceToken}, emit)
+			return x.resolveLanding(ctx, queue.ResolveLanding{BatchID: a.BatchID, AttemptID: attemptID, TestedSHA: a.TestedSHA, FenceToken: a.FenceToken}, landedSHA, emit)
 		}
 		if err != nil {
 			return err
 		}
-		if err := x.verifyLanding(ctx, a.TestedSHA, attemptID); err != nil {
+		if err := x.verifyLanding(ctx, landedSHA, attemptID); err != nil {
 			return err
 		}
-		if err := emit(queue.HeadCleanupRequested{BatchID: a.BatchID, LandedSHA: a.TestedSHA}); err != nil {
+		if err := emit(queue.HeadCleanupRequested{BatchID: a.BatchID, LandedSHA: landedSHA}); err != nil {
 			return err
 		}
-		return emit(queue.Landed{BatchID: a.BatchID, NewBaseSHA: a.TestedSHA, NewFence: next})
+		return emit(queue.Landed{BatchID: a.BatchID, NewBaseSHA: landedSHA, NewFence: next})
+	case queue.FastForwardResolveLanding:
+		return x.resolveLanding(ctx, a.ResolveLanding, a.HeadSHA, emit)
 	case queue.ResolveLanding:
 		return x.resolve(ctx, a, emit)
 	case queue.DeleteRef:
@@ -232,6 +237,10 @@ func (e *ErrFenceTampered) Error() string {
 }
 
 func (x *Executor) resolve(ctx context.Context, a queue.ResolveLanding, emit func(queue.Event) error) error {
+	return x.resolveLanding(ctx, a, a.TestedSHA, emit)
+}
+
+func (x *Executor) resolveLanding(ctx context.Context, a queue.ResolveLanding, landedSHA string, emit func(queue.Event) error) error {
 	for decision := 0; ; decision++ {
 		sha, id, tested, err := x.Git.ReadFence(ctx, x.Repo, x.fenceRef())
 		if err != nil {
@@ -239,13 +248,13 @@ func (x *Executor) resolve(ctx context.Context, a queue.ResolveLanding, emit fun
 		}
 		switch {
 		case id == "land/"+a.AttemptID && tested == a.TestedSHA:
-			if err := x.verifyLanding(ctx, a.TestedSHA, a.AttemptID); err != nil {
+			if err := x.verifyLanding(ctx, landedSHA, a.AttemptID); err != nil {
 				return err
 			}
-			if err := emit(queue.HeadCleanupRequested{BatchID: a.BatchID, LandedSHA: a.TestedSHA}); err != nil {
+			if err := emit(queue.HeadCleanupRequested{BatchID: a.BatchID, LandedSHA: landedSHA}); err != nil {
 				return err
 			}
-			return emit(queue.Landed{BatchID: a.BatchID, NewBaseSHA: a.TestedSHA, NewFence: sha})
+			return emit(queue.Landed{BatchID: a.BatchID, NewBaseSHA: landedSHA, NewFence: sha})
 		case id == "abandon/"+a.AttemptID:
 			return emit(queue.LandingAbandoned{BatchID: a.BatchID, NewFence: sha})
 		case sha != a.FenceToken || id == "land/"+a.AttemptID:

@@ -105,12 +105,20 @@ paths' resulting commit IDs. Newer Git uses `--merge-base=<original>^` directly.
 ## Fast-forward preparation
 
 `forge.FastForward` verifies remote head pins and requires each head to strictly
-extend its predecessor, starting at the requested base. It pushes the final head
-unchanged; there is no metadata read, commit creation or batch trailer rewrite.
+extend its predecessor, starting at the requested base. It tests the exact head
+tree and history via a unique marker commit; it lands the head itself. The test
+ref receives one empty marker with only the final head as parent and the same
+tree. Its queue-authored message contains a random 128-bit nonce and the
+authoritative `OpenMerge-Batch` trailer, and its committer is the configured App
+committer. There is no contributor metadata read or original commit rewrite.
 Non-descendant or equal heads return `forge.ErrNotFastForward` without moving
 the test ref. The executor selects a consecutive linear prefix before invoking
 this operation and dequeues a diverged first head as `fast-forward-required`.
-Land uses the same base/fence CAS protocol below for every method.
+`VerifyFastForward` validates the marker's only parent, identical tree, and strict
+head ancestry from the leased base before `LandingStarted` and inside `Land`.
+Land uses the same base/fence CAS protocol below, pushing the pinned head to base
+while recording `tested=<marker>` in the fence. The durable fast-forward recovery
+action carries both SHAs; base-membership verification uses the landed head.
 
 ## Landing and real Git findings
 

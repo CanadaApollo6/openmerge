@@ -118,6 +118,18 @@ func (s *simulation) checkInvariants() error {
 		return err
 	}
 	run := s.tests[tip]
+	if s.cfg.MergeMethod == queue.FastForward {
+		_, _, tested, err := s.forge.ReadFence(context.Background(), s.repo, "openmerge/fence/main")
+		if err != nil {
+			return err
+		}
+		run = s.tests[tested]
+		if run != nil {
+			if err := s.forge.VerifyFastForward(context.Background(), s.repo, run.base, tested, tip); err != nil {
+				return err
+			}
+		}
+	}
 	if run == nil || !run.done || !run.success {
 		return fmt.Errorf("main is not green: first-parent commit %s has no passing completed CI run covering its landing", tip)
 	}
@@ -179,12 +191,16 @@ func (s *simulation) verifyLanded(batch *queue.Batch, event queue.Landed) error 
 	if err := s.checkInvariants(); err != nil {
 		return err
 	}
-	landing := s.observed[batch.TestedSHA]
+	landedSHA := batch.TestedSHA
+	if head := batch.LandingAttempt.FastForwardHeadSHA; head != "" {
+		landedSHA = head
+	}
+	landing := s.observed[landedSHA]
 	tip, err := s.forge.ReadRef(context.Background(), s.repo, "main")
 	if err != nil {
 		return err
 	}
-	if landing == nil || landing.verified || landing.base != batch.BaseSHA || tip != batch.TestedSHA || event.NewBaseSHA != batch.TestedSHA {
+	if landing == nil || landing.verified || landing.base != batch.BaseSHA || tip != landedSHA || event.NewBaseSHA != landedSHA {
 		return fmt.Errorf("landed event for batch %s has no matching forge landing: expected %s -> tested %s, event tip %s, actual main tip %s", batch.ID, batch.BaseSHA, batch.TestedSHA, event.NewBaseSHA, tip)
 	}
 	run := s.tests[batch.TestedSHA]
@@ -257,15 +273,19 @@ func (s *simulation) checkSettled() error {
 	return nil
 }
 
-// Generated test commits identify one batch. Fast-forward can test the same
-// head after abandoning an earlier attempt, so its fence identifies the write.
+// Generated test commits identify one batch. Fast-forward lands the marker's
+// parent, so its fence binds that head to the unique tested marker and attempt.
 func (s *simulation) checkAbandonedLanding(tip string) error {
 	if s.cfg.MergeMethod == queue.FastForward {
 		_, id, tested, err := s.forge.ReadFence(context.Background(), s.repo, "openmerge/fence/main")
 		if err != nil {
 			return err
 		}
-		if attempt, ok := strings.CutPrefix(id, "land/"); ok && tested == tip && s.abandonedAttempts[attempt] {
+		marker, err := s.forge.Commit(s.repo, tested)
+		if err != nil && tested != "" {
+			return err
+		}
+		if attempt, ok := strings.CutPrefix(id, "land/"); ok && len(marker.Parents) == 1 && marker.Parents[0] == tip && s.abandonedAttempts[attempt] {
 			return fmt.Errorf("abandoned attempt %s became main tip %s", attempt, tip)
 		}
 		return nil

@@ -18,8 +18,8 @@ func TestFastForwardSimulatorDequeuesIndependentHeads(t *testing.T) {
 			t.Fatalf("wrong fast-forward outcome: %+v", result)
 		}
 		for tip, run := range s.tests {
-			if len(run.heads) != 1 || tip != run.heads[0].HeadSHA {
-				t.Fatal("simulator rewrote head or combined siblings")
+			if len(run.heads) != 1 || tip == run.heads[0].HeadSHA {
+				t.Fatal("simulator failed to create a marker or combined siblings")
 			}
 		}
 	}

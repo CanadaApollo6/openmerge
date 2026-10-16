@@ -2,6 +2,7 @@ package gitops
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"strings"
@@ -216,6 +217,21 @@ func (r *Repo) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.B
 			parents = append(parents, pr.HeadSHA)
 		}
 		top, err = s.commitAs(ctx, tree, message, author, "", parents...)
+		if err != nil {
+			return "", err
+		}
+	}
+	if req.Method == forge.FastForward {
+		tree, err := s.command(ctx, "", "rev-parse", top+"^{tree}")
+		if err != nil {
+			return "", err
+		}
+		var nonce [16]byte
+		if _, err := rand.Read(nonce[:]); err != nil {
+			return "", err
+		}
+		message := fmt.Sprintf("OpenMerge fast-forward test %x\n\nOpenMerge-Batch: %s", nonce, req.BatchID)
+		top, err = s.commit(ctx, tree, message, top)
 		if err != nil {
 			return "", err
 		}

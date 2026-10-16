@@ -67,8 +67,9 @@ func (s *session) pushLease(ctx context.Context, args ...string) error {
 	return s.failure("push", diagnostic, err)
 }
 
-// Land verifies pinned PR heads and pushes the exact tested commit and a child
-// fence token in one atomic push with explicit old-SHA leases on both refs.
+// Land verifies pinned PR heads and pushes the landing commit and a child
+// fence token atomically with old-SHA leases on both refs. Fast-forward lands
+// the verified marker parent; the fence still identifies the tested marker.
 func (r *Repo) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequest) (string, error) {
 	s, unlock, err := r.open(ctx, repo)
 	if err != nil {
@@ -89,6 +90,16 @@ func (r *Repo) Land(ctx context.Context, repo forge.RepoRef, req forge.LandReque
 	if err := s.heads(ctx, req.PRs); err != nil {
 		return "", err
 	}
+	landed := req.TestedSHA
+	if req.FastForwardHeadSHA != "" {
+		if len(req.PRs) == 0 || req.PRs[len(req.PRs)-1].HeadSHA != req.FastForwardHeadSHA {
+			return "", errors.New("fast-forward landing head must match the final pinned PR")
+		}
+		if err := s.verifyFastForward(ctx, req.ExpectedBaseSHA, req.TestedSHA, req.FastForwardHeadSHA); err != nil {
+			return "", err
+		}
+		landed = req.FastForwardHeadSHA
+	}
 	// Git skips lease checks for a destination already equal to the source.
 	// Refuse that stale no-op before pushing the other ref. See README.md for
 	// the remaining external-writer race inherent in the prescribed CLI push.
@@ -96,7 +107,7 @@ func (r *Repo) Land(ctx context.Context, repo forge.RepoRef, req forge.LandReque
 	if err != nil {
 		return "", err
 	}
-	if values[base] == req.TestedSHA || values[base] != req.ExpectedBaseSHA || values[fence] != req.ExpectedFence {
+	if values[base] == landed || values[base] != req.ExpectedBaseSHA || values[fence] != req.ExpectedFence {
 		return "", forge.ErrLeaseRejected
 	}
 	if err := s.commits(ctx, req.TestedSHA); err != nil {
@@ -111,7 +122,7 @@ func (r *Repo) Land(ctx context.Context, repo forge.RepoRef, req forge.LandReque
 	}
 	err = s.pushLease(ctx, "--force-with-lease="+base+":"+req.ExpectedBaseSHA,
 		"--force-with-lease="+fence+":"+req.ExpectedFence, "--", s.remote,
-		req.TestedSHA+":"+base, next+":"+fence)
+		landed+":"+base, next+":"+fence)
 	if err != nil {
 		return "", err
 	}

@@ -373,7 +373,7 @@ func (f *apiFixture) handle(w http.ResponseWriter, r *http.Request) {
 		list := []map[string]any{}
 		for _, suite := range suites {
 			o := f.object("check_suite")
-			o["id"], o["status"], o["head_sha"], o["head_branch"] = suite.GetID(), suite.GetStatus(), parts[1], suite.GetHeadBranch()
+			o["id"], o["status"], o["head_sha"], o["head_branch"] = suite.GetID(), suite.GetStatus(), parts[1], suite.HeadBranch
 			list = append(list, o)
 		}
 		f.json(w, map[string]any{"total_count": len(list), "check_suites": paginate(f, r, w, list)})

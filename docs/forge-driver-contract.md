@@ -60,7 +60,7 @@ Commit-status APIs that lack cancelled and action-required keep the normalized s
 
 The executor aggregates as follows:
 
-- Fast-forward checks must carry `HeadBranch`, the check suite's triggering branch without `refs/heads/`, matching the active queue test ref. Other branch runs and unknown branch provenance are excluded before condition evaluation and source/rerun aggregation, both during refresh and immediately before landing. Legacy commit statuses lack provenance and remain pending in fast-forward mode. Other merge methods retain their existing behavior because their generated SHA belongs only to the test ref. Callers supply the durable `ActiveBatch` snapshot to the executor for refreshes; the final landing read uses the pinned action's method and ref.
+- Fast-forward check evaluation uses the unique marker SHA, just like generated SHAs for other methods. Runs and legacy statuses on it count normally; branch provenance is unnecessary, including for fork pushes with null `head_branch`. Checks on the original head cannot satisfy marker CI.
 - A required name reported by more than one source is ambiguous and stays pending, even if every source reports success. A missing source also stays pending. The executor emits `ChecksReopened` followed by `ChecksRefreshed`, emits no terminal `ChecksCompleted`, and returns `executor.CheckSourceAmbiguityError` with the name and sorted sources for the server to surface. Unrequired names do not block the batch.
 - Within one source, the newest run of each name wins, regardless of response order. A pending rerun supersedes an older result.
 - A GitHub check run whose suite is not completed is pending even if the run still reports an old success. Missing suite observations and unknown producer identities also fail safe as pending. Drivers must refresh suite state as well as run state. GitHub `check_suite` requested/rerequested/completed and `check_run` rerequested/completed webhooks normalize to `ChecksChanged{SHA}` and trigger these reads.
@@ -80,7 +80,7 @@ Immediately before `LandingStarted`, the executor freshly reads `CheckRuns` for 
 `BuildTestRef` composes the test commit locally with git and pushes it to `openmerge/queue/...`. It must:
 
 - refuse a request whose pinned head is not the PR's current head;
-- produce the shape the merge method asks for: merge commits that keep each PR head as an ancestor, a single squashed commit per PR, each PR commit replayed separately for rebase, or the unchanged final head of a strictly increasing ancestry chain for fast-forward;
+- produce the shape the merge method asks for: merge commits that keep each PR head as an ancestor, a single squashed commit per PR, each PR commit replayed separately for rebase, or one empty marker above the final head of a strictly increasing ancestry chain for fast-forward;
 - for generated commits, capture each PR's current title/body, head label and
   commit identity at build time, rejecting metadata whose number/head differs from the pin, or whose
   author identity/title is missing or invalid;
@@ -94,7 +94,7 @@ Immediately before `LandingStarted`, the executor freshly reads `CheckRuns` for 
   retaining their message/trailers and adding `OpenMerge-Replayed-From`;
 - use the configured committer on all generated commits;
 - put the batch ID in the top commit's trailer block only, so a tested SHA
-  identifies exactly one batch (fast-forward preserves original heads and has no batch trailer); every earlier squash/merge still carries its
+  identifies exactly one batch (including the fast-forward marker); every earlier squash/merge still carries its
   own PR metadata;
 - return `ErrConflict` for merge conflicts or rebase histories containing PR merge commits; return `ErrNotFastForward` when a fast-forward head does not strictly extend its predecessor/base; use other errors for infrastructure failures.
 
@@ -110,8 +110,22 @@ An offending selected head is dequeued as `merge-commits-not-allowed` through
 the new `FastForwardMergeCommitsBlocked` event; other heads keep queue order.
 Unknown requirements preserve existing behavior; graph read errors are retryable
 build failures. Existing event/action formats remain unchanged.
-`FastForwardRefBuilt` permits the unchanged head to be tested in another batch
-after abandonment or bisection. Landing still uses the same base/fence leases.
+Fast-forward tests the exact head tree and history via a unique marker commit;
+it lands the head itself. `FastForwardRefBuilt` records the marker and pinned head.
+The marker has the head as its only parent and the same tree, uses the configured
+App committer, and carries only queue-authored text with a random 128-bit nonce
+and the authoritative batch trailer. Every build, including retries with the
+same ref, batch ID and clock, mints a fresh marker.
+
+Before `LandingStarted` and again inside `Git.Land`, `VerifyFastForward` requires
+the marker's only parent to be the pinned final head, the marker tree to equal
+the head tree, and the head to strictly descend from the leased base. Landing
+uses the existing atomic base/fence leases, pushes the head to base, and records
+`tested=<marker>` in the unchanged strict fence form. The attempt captures the
+landing head; the additive `FastForwardResolveLanding` action persists that head
+and the tested marker independently of current configuration. Successful landing,
+recovery, base-membership verification and head cleanup use the head as landed
+SHA. Other methods retain their exact-tested-SHA behavior.
 
 Batch identity is OpenMerge's own format, independent of Git trailer parsing:
 the final line is exactly `OpenMerge-Batch: <id>` with an ID matching
@@ -174,7 +188,7 @@ Before any push, the executor mints a random attempt ID of at least 128 bits and
 
 A rejected landing push, a crash, and a timeout are all resolved the same way, by reading the fence:
 
-1. The fence names `land/<attempt>` with the attempt's tested SHA: freshly read the base and require the tested commit to equal its tip or be its ancestor. Only then record `Landed`. Otherwise return `executor.ErrLandingNotOnBase` without an event, leaving the batch in `Landing` and reporting the same error on each retry while the commit is absent.
+1. The fence names `land/<attempt>` with the attempt's tested SHA: freshly read the base and require the landed commit (the pinned marker parent for a fast-forward attempt, otherwise the tested commit) to equal its tip or be its ancestor. Only then record `Landed`. Otherwise return `executor.ErrLandingNotOnBase` without an event, leaving the batch in `Landing` and reporting the same error on each retry while the commit is absent.
 2. The fence names `abandon/<attempt>`: an earlier resolution already abandoned it. Record `LandingAbandoned`.
 3. The fence is still the attempt's starting token: advance it to `abandon/<attempt>` with a leased push, then record `LandingAbandoned`. Any delayed copy of the landing push now fails its fence lease. If this lease is rejected, read the fence and decide once more; the landing may have just won.
 4. Anything else, including `land/<attempt>` with a different tested SHA, returns `ErrFenceTampered` without settling the attempt. It means the fence protection above is missing.

@@ -19,14 +19,18 @@ func TestServeFastForwardExactHeadAndDivergence(t *testing.T) {
 			must(t, s.cycle(t.Context(), w))
 			state, _, err := s.store.Load(t.Context(), w.id)
 			must(t, err)
-			if state.Active == nil || state.Active.TestedSHA != pr.HeadSHA || state.Active.Method != queue.FastForward {
-				t.Fatalf("not testing exact head: %+v", state.Active)
+			if state.Active == nil || state.Active.TestedSHA == pr.HeadSHA || state.Active.Method != queue.FastForward {
+				t.Fatalf("not testing a unique head marker: %+v", state.Active)
+			}
+			marker := state.Active.TestedSHA
+			if err := f.VerifyFastForward(t.Context(), repo, state.BaseSHA, marker, pr.HeadSHA); err != nil {
+				t.Fatal(err)
 			}
 			if diverged {
 				_, err = f.PushBase(repo, "main", "concurrent update", map[string]string{"other": "change"})
 				must(t, err)
 			}
-			f.SetCheckRuns(repo, pr.HeadSHA, []forge.CheckRun{{ID: 1, Name: "ci", State: forge.Success, HeadBranch: state.Active.TestRef}})
+			f.SetCheckRuns(repo, marker, []forge.CheckRun{{ID: 1, Name: "ci", State: forge.Success}})
 			time.Sleep(2 * time.Millisecond)
 			must(t, s.cycle(t.Context(), w))
 			state, _, err = s.store.Load(t.Context(), w.id)
@@ -50,8 +54,8 @@ func TestServeFastForwardExactHeadAndDivergence(t *testing.T) {
 				}
 				_, id, tested, err := f.ReadFence(t.Context(), repo, "openmerge/fence/main")
 				must(t, err)
-				if !strings.HasPrefix(id, "land/") || tested != pr.HeadSHA {
-					t.Fatal("missing landing fence")
+				if !strings.HasPrefix(id, "land/") || tested != marker {
+					t.Fatal("missing marker landing fence")
 				}
 				if _, err := f.ReadRef(t.Context(), repo, pr.HeadBranch); err == nil {
 					t.Fatal("head cleanup missing")
@@ -88,9 +92,7 @@ func TestServeFastForwardBatchSelection(t *testing.T) {
 			var tested [][]int
 			f.OnTestRef(func(sha string, prs []int) {
 				tested = append(tested, prs)
-				state, _, err := s.store.Load(t.Context(), w.id)
-				must(t, err)
-				f.SetCheckRuns(repo, sha, []forge.CheckRun{{ID: 1, Name: "ci", State: forge.Success, HeadBranch: state.Active.TestRef}})
+				f.SetCheckRuns(repo, sha, []forge.CheckRun{{ID: 1, Name: "ci", State: forge.Success}})
 			})
 			f.AddComment(repo, 1, "writer", "@openmerge queue")
 			f.AddComment(repo, 2, "writer", "@openmerge queue")
@@ -121,7 +123,7 @@ func TestServeFastForwardPRChecksCannotReplaceQueueCI(t *testing.T) {
 			must(t, err)
 			base, err := f.ReadRef(t.Context(), repo, "main")
 			must(t, err)
-			f.SetCheckRuns(repo, pr.HeadSHA, []forge.CheckRun{{ID: 100, Name: "ci", Source: source, State: forge.Success, HeadBranch: pr.HeadBranch}})
+			f.SetCheckRuns(repo, pr.HeadSHA, []forge.CheckRun{{ID: 100, Name: "ci", Source: source, State: forge.Success}})
 			f.AddComment(repo, 1, "writer", "@openmerge queue")
 			must(t, s.cycle(t.Context(), w))
 			state, _, err := s.store.Load(t.Context(), w.id)
@@ -129,11 +131,11 @@ func TestServeFastForwardPRChecksCannotReplaceQueueCI(t *testing.T) {
 			if state.Active == nil || state.Active.Phase != queue.Testing || state.BaseSHA != base {
 				t.Fatalf("PR checks bypassed queue CI: %+v", state.Active)
 			}
-			ref := state.Active.TestRef
-			if tested, err := f.ReadRef(t.Context(), repo, ref); err != nil || tested != pr.HeadSHA {
+			ref, marker := state.Active.TestRef, state.Active.TestedSHA
+			if tested, err := f.ReadRef(t.Context(), repo, ref); err != nil || tested != marker || marker == pr.HeadSHA {
 				t.Fatalf("queue ref not published: %s %v", tested, err)
 			}
-			// Replay must recover provenance requirements from the durable batch.
+			// Replay must recover the unique tested marker from the durable batch.
 			s, err = New(t.Context(), s.store, []Target{w.Target}, s.options)
 			must(t, err)
 			w = s.queues[0]
@@ -142,7 +144,7 @@ func TestServeFastForwardPRChecksCannotReplaceQueueCI(t *testing.T) {
 			if tip, err := f.ReadRef(t.Context(), repo, "main"); err != nil || tip != base {
 				t.Fatalf("restart landed without queue CI: %s %v", tip, err)
 			}
-			f.SetCheckRuns(repo, pr.HeadSHA, []forge.CheckRun{{ID: 1, Name: "ci", Source: "app:11", State: forge.Success, HeadBranch: ref}})
+			f.SetCheckRuns(repo, marker, []forge.CheckRun{{ID: 1, Name: "ci", Source: source, State: forge.Success}})
 			time.Sleep(2 * time.Millisecond)
 			must(t, s.cycle(t.Context(), w))
 			if tip, err := f.ReadRef(t.Context(), repo, "main"); err != nil || tip != pr.HeadSHA {

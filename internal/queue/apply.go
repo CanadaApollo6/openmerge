@@ -118,7 +118,7 @@ func Apply(s State, e Event) State {
 			s.rebuildBatch()
 		}
 	case FastForwardRefBuilt:
-		if e.Validate() == nil && s.batchIn(e.BatchID, Building) && s.Active.Method == FastForward && e.TestedSHA == s.Active.PRs[len(s.Active.PRs)-1].HeadSHA {
+		if e.Validate() == nil && s.batchIn(e.BatchID, Building) && s.Active.Method == FastForward && e.HeadSHA == s.Active.PRs[len(s.Active.PRs)-1].HeadSHA && e.TestedSHA != e.HeadSHA {
 			s.applyBuilt(TestRefBuilt{BatchID: e.BatchID, TestedSHA: e.TestedSHA, At: e.At, Method: FastForward})
 		}
 	case TestRefBuilt:
@@ -159,6 +159,9 @@ func Apply(s State, e Event) State {
 		if s.batchIn(e.BatchID, Testing) {
 			s.Active.Phase = Landing
 			s.Active.LandingAttempt = LandingAttempt{ID: e.AttemptID, FenceToken: e.FenceToken, StartedAt: e.At}
+			if s.Active.Method == FastForward {
+				s.Active.LandingAttempt.FastForwardHeadSHA = s.Active.PRs[len(s.Active.PRs)-1].HeadSHA
+			}
 			for _, pr := range s.Active.PRs {
 				if _, pending := s.dequeues[pr.PR]; pending {
 					s.entry(pr.PR).DequeueRequested = true
@@ -166,7 +169,7 @@ func Apply(s State, e Event) State {
 			}
 		}
 	case HeadCleanupRequested:
-		if s.batchIn(e.BatchID, Landing) && s.Active.TestedSHA == e.LandedSHA {
+		if s.batchIn(e.BatchID, Landing) && (s.Active.TestedSHA == e.LandedSHA && s.Active.LandingAttempt.FastForwardHeadSHA == "" || s.Active.LandingAttempt.FastForwardHeadSHA == e.LandedSHA) {
 			s.Active.cleanupRequested = true
 		}
 	case Landed:
@@ -496,13 +499,11 @@ func (s *State) recordTestedSHA(sha, batchID string) {
 
 func (s *State) applyBuilt(e TestRefBuilt) {
 	if s.batchIn(e.BatchID, Building) {
-		if earlier, used := s.testedBatches[e.TestedSHA]; used && e.Method != FastForward {
+		if earlier, used := s.testedBatches[e.TestedSHA]; used {
 			s.failBuild(e.At, fmt.Sprintf("tested SHA %s was already recorded for batch %s; the top commit must carry the batch ID", e.TestedSHA, earlier))
 			return
 		}
-		if e.Method != FastForward {
-			s.recordTestedSHA(e.TestedSHA, e.BatchID)
-		}
+		s.recordTestedSHA(e.TestedSHA, e.BatchID)
 		s.Active.TestedSHA = e.TestedSHA
 		s.Active.Method = e.Method
 		s.Active.StartedTestingAt = e.At

@@ -14,11 +14,10 @@ type FastForwardBatchSelected struct {
 	PRs     []BatchPR
 }
 
-// FastForwardRefBuilt records a test ref pointing at the unchanged final head.
-// Unlike generated commits, the same SHA can be tested in several batches.
+// FastForwardRefBuilt records a unique empty marker above the pinned final head.
 type FastForwardRefBuilt struct {
-	BatchID, TestedSHA string
-	At                 time.Time
+	BatchID, TestedSHA, HeadSHA string
+	At                          time.Time
 }
 
 // FastForwardBlocked rejects the first member when it cannot extend the base.
@@ -61,7 +60,7 @@ func (e FastForwardBatchSelected) Validate() error {
 
 // Validate requires the pinned test commit and its check timer origin.
 func (e FastForwardRefBuilt) Validate() error {
-	if err := requireActionText("batch_id", e.BatchID, "tested_sha", e.TestedSHA); err != nil {
+	if err := requireActionText("batch_id", e.BatchID, "tested_sha", e.TestedSHA, "head_sha", e.HeadSHA); err != nil {
 		return err
 	}
 	if e.At.IsZero() {
@@ -80,6 +79,7 @@ type wireFastForwardBatchSelected struct {
 type wireFastForwardRefBuilt struct {
 	BatchID   string    `json:"batch_id"`
 	TestedSHA string    `json:"tested_sha"`
+	HeadSHA   string    `json:"head_sha"`
 	At        time.Time `json:"at"`
 }
 type wireFastForwardBlocked struct {
@@ -111,4 +111,44 @@ func dequeueDetail(reason DequeueReason) string {
 		return "Head cannot fast-forward onto the current base; update the branch and queue it again"
 	}
 	return string(reason)
+}
+
+// FastForwardResolveLanding persists the head landed by a marker-tested attempt.
+// ResolveLanding retains its original wire shape and exact-tested-SHA behavior.
+type FastForwardResolveLanding struct {
+	ResolveLanding
+	HeadSHA string
+}
+
+func (FastForwardResolveLanding) queueAction() {}
+
+// Key pins recovery to both the landing attempt and its head.
+func (a FastForwardResolveLanding) Key() string { return a.ResolveLanding.Key() + "/head/" + a.HeadSHA }
+
+// Validate requires a pinned head distinct from the tested marker.
+func (a FastForwardResolveLanding) Validate() error {
+	if err := a.ResolveLanding.Validate(); err != nil {
+		return err
+	}
+	if a.HeadSHA == a.TestedSHA {
+		return fmt.Errorf("head_sha must differ from tested_sha")
+	}
+	return requireActionText("head_sha", a.HeadSHA)
+}
+
+// IsLandingResolution identifies both durable recovery action forms.
+func IsLandingResolution(a Action) bool {
+	switch a.(type) {
+	case ResolveLanding, FastForwardResolveLanding:
+		return true
+	}
+	return false
+}
+
+type wireFastForwardResolveLanding struct {
+	BatchID    string `json:"batch_id"`
+	AttemptID  string `json:"attempt_id"`
+	TestedSHA  string `json:"tested_sha"`
+	FenceToken string `json:"fence_token"`
+	HeadSHA    string `json:"head_sha"`
 }

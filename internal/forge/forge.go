@@ -96,9 +96,6 @@ type CheckRun struct {
 	Name   string
 	Source string
 	State  CheckState
-	// HeadBranch is the check suite's triggering branch, without refs/heads/.
-	// Empty means unknown; legacy commit statuses have no branch provenance.
-	HeadBranch string
 }
 
 // LinearHistoryReader reports base policy independently of landing permission.
@@ -186,7 +183,7 @@ type BuildPR struct {
 
 // BuildRequest prepares pinned heads on BaseSHA and pushes Ref. Generated top
 // commits carry BatchID, making those SHAs unique across batches. Fast-forward
-// instead requires a strict ancestry chain and pushes the unchanged final head.
+// requires a strict ancestry chain and adds one empty marker above the final head.
 type BuildRequest struct {
 	Ref, BaseSHA string
 	PRs          []BuildPR
@@ -216,12 +213,17 @@ type LandRequest struct {
 	Base, ExpectedBaseSHA, TestedSHA  string
 	Fence, ExpectedFence, NextFenceID string
 	PRs                               []BuildPR
+	// FastForwardHeadSHA lands this pinned head instead of the tested marker.
+	FastForwardHeadSHA string
 }
 
 // Git builds exact tested commits and performs forge-enforced fenced writes.
 type Git interface {
 	BuildTestRef(ctx context.Context, repo RepoRef, req BuildRequest) (testedSHA string, err error)
 	Land(ctx context.Context, repo RepoRef, req LandRequest) (newFenceSHA string, err error)
+	// VerifyFastForward requires a single-parent, identical-tree marker above
+	// head, with head strictly descending from base. It never changes refs.
+	VerifyFastForward(ctx context.Context, repo RepoRef, base, tested, head string) error
 	// EnsureFence creates the initial fence only if absent, safely under
 	// concurrency, otherwise returning the existing SHA without changing it.
 	EnsureFence(ctx context.Context, repo RepoRef, fenceRef string) (sha string, err error)

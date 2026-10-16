@@ -136,7 +136,7 @@ func (s *simulation) deliver(event scheduledEvent) error {
 		if run.success {
 			state = forge.Success
 		}
-		s.forge.SetCheckRuns(s.repo, event.sha, []forge.CheckRun{{ID: 1, Name: "ci", State: state, HeadBranch: run.ref}})
+		s.forge.SetCheckRuns(s.repo, event.sha, []forge.CheckRun{{ID: 1, Name: "ci", State: state}})
 		if s.webhook.Float64() < s.cfg.DropWebhookRate {
 			s.result.DroppedWebhooks++
 		} else {

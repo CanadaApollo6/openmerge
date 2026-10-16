@@ -4,14 +4,15 @@ import (
 	"errors"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/executor"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 )
 
-func TestFastForwardRequiresQueueRefChecks(t *testing.T) {
-	for _, scenario := range []string{"PR checks", "previous batch", "unknown branch", "commit statuses", "spoofed status branch"} {
+func TestFastForwardRequiresMarkerCI(t *testing.T) {
+	for _, scenario := range []string{"head same App", "head other App", "historical same ref and SHA", "completed rerun", "fork null head_branch", "commit statuses"} {
 		t.Run(scenario, func(t *testing.T) {
 			h := setup(t)
 			state := queue.State{BaseBranch: "main", BaseSHA: h.base, Fence: h.fence}
@@ -20,56 +21,42 @@ func TestFastForwardRequiresQueueRefChecks(t *testing.T) {
 			state = queue.Apply(state, queue.PRObserved{PR: 1, HeadSHA: head, Eligible: true, Trusted: true})
 			state = queue.Apply(state, queue.EnqueueRequested{PR: 1, At: epoch})
 			build := queue.Plan(cfg, state, epoch)[0].(queue.BuildTestRef)
-			branch, source := "pr-1", "app:11"
-			switch scenario {
-			case "previous batch":
-				branch = "openmerge/queue/main/old-batch"
-			case "unknown branch":
-				branch = ""
-			case "commit statuses":
-				branch, source = "", "status:ci"
-			case "spoofed status branch":
-				branch, source = build.Ref, "status:ci"
+			source := "app:11"
+			if scenario == "head other App" {
+				source = "app:22"
 			}
-			checks := []forge.CheckRun{{ID: 10, Name: "ci", Source: source, State: forge.Success, HeadBranch: branch}, {ID: 11, Name: "lint", Source: source, State: forge.Success, HeadBranch: branch}}
-			// Reproduction: the PR has successful checks before publishing the
-			// unchanged head. No queue CI callback is installed.
-			h.f.SetCheckRuns(repo, head, checks)
+			if scenario == "commit statuses" {
+				source = "status:ci"
+			}
+			if scenario == "fork null head_branch" {
+				must(t, h.f.SetPRMetadata(repo, 1, "main", false, "contributor"))
+			}
+			h.f.SetCheckRuns(repo, head, []forge.CheckRun{{ID: 100, Name: "ci", Source: source, State: forge.Success}, {ID: 101, Name: "lint", Source: source, State: forge.Success}})
 			emit := func(e queue.Event) error { state = queue.Apply(state, e); return nil }
 			must(t, h.x.Execute(t.Context(), build, emit))
-			if h.read(t, build.Ref) != head {
-				t.Fatal("test ref was not published")
+			marker := state.Active.TestedSHA
+			if marker == head || h.read(t, build.Ref) != marker {
+				t.Fatal("test ref must publish a new marker")
 			}
-			h.x.ActiveBatch = state.Active
-			must(t, h.x.Execute(t.Context(), queue.RefreshChecks{BatchID: build.BatchID, TestedSHA: head}, emit))
+			must(t, h.x.Execute(t.Context(), queue.RefreshChecks{BatchID: build.BatchID, TestedSHA: marker}, emit))
 			for _, a := range queue.Plan(cfg, state, epoch) {
-				if _, landing := a.(queue.Land); landing {
-					t.Fatal("PR checks authorized landing without queue CI")
+				if _, ok := a.(queue.Land); ok {
+					t.Fatal("head CI authorized landing without marker CI")
 				}
 			}
-			// Also protect the final read, including a stale authorization based
-			// on earlier checks. A restart need not retain executor-local state.
-			h.x.ActiveBatch = nil
-			land := queue.Land{BatchID: build.BatchID, TestedSHA: head, ExpectedBaseSHA: build.BaseSHA, Ref: build.Ref, Method: queue.FastForward, PRs: build.PRs, FenceToken: h.fence}
+			land := queue.Land{BatchID: build.BatchID, TestedSHA: marker, ExpectedBaseSHA: build.BaseSHA, Ref: build.Ref, Method: queue.FastForward, PRs: build.PRs, FenceToken: h.fence}
 			if err := h.x.Execute(t.Context(), land, emit); !errors.Is(err, executor.ErrChecksNotSuccessful) {
 				t.Fatalf("final guard: %v", err)
 			}
 			if h.read(t, "main") != h.base || h.read(t, fenceRef) != h.fence {
-				t.Fatal("unproven checks moved landing refs")
+				t.Fatal("head CI moved landing refs")
 			}
-			// Old PR runs must not mask queue results, even with newer native IDs.
-			for i, name := range []string{"ci", "lint"} {
-				checks = append(checks, forge.CheckRun{ID: uint64(i + 1), Name: name, Source: "app:22", State: forge.Success, HeadBranch: build.Ref})
-			}
-			if source == "status:ci" {
-				checks = checks[2:] // Status producers remain pending in FF mode.
-			}
-			h.f.SetCheckRuns(repo, head, checks)
-			h.x.ActiveBatch = state.Active
-			must(t, h.x.Execute(t.Context(), queue.RefreshChecks{BatchID: build.BatchID, TestedSHA: head}, emit))
+			// Both statuses and runs count normally on this attempt's unique marker.
+			h.f.SetCheckRuns(repo, marker, []forge.CheckRun{{ID: 1, Name: "ci", Source: source, State: forge.Success}, {ID: 2, Name: "lint", Source: source, State: forge.Success}})
+			must(t, h.x.Execute(t.Context(), queue.RefreshChecks{BatchID: build.BatchID, TestedSHA: marker}, emit))
 			must(t, h.x.Execute(t.Context(), land, emit))
 			if h.read(t, "main") != head {
-				t.Fatal("queue-ref CI did not allow landing")
+				t.Fatal("marker CI did not land the pinned head")
 			}
 		})
 	}
@@ -119,7 +106,7 @@ func TestFastForwardLinearHistoryBuildValidation(t *testing.T) {
 				must(t, err)
 			}
 			if scenario == "not required" || scenario == "unknown" || scenario == "required linear" {
-				if h.read(t, build.Ref) != pins[0].HeadSHA || state.Active.Phase != queue.Testing {
+				if h.read(t, build.Ref) == pins[0].HeadSHA || state.Active.Phase != queue.Testing {
 					t.Fatal("unknown/disabled requirement changed build behavior")
 				}
 				return
@@ -139,7 +126,7 @@ func TestFastForwardLinearHistoryBuildValidation(t *testing.T) {
 						must(t, h.x.Execute(t.Context(), retry, func(e queue.Event) error { state = queue.Apply(state, e); return nil }))
 					}
 				}
-				if state.Active == nil || state.Active.TestedSHA != pins[0].HeadSHA {
+				if state.Active == nil || state.Active.TestedSHA == pins[0].HeadSHA {
 					t.Fatal("valid prefix lost after rejecting merge head")
 				}
 			}
@@ -207,11 +194,12 @@ func TestFastForwardQueueCompositionAndLanding(t *testing.T) {
 				selected = pins[:2]
 			}
 			head := selected[len(selected)-1].HeadSHA
-			if state.Active == nil || !slices.Equal(state.Active.PRs, selected) || state.Active.TestedSHA != head {
+			if state.Active == nil || !slices.Equal(state.Active.PRs, selected) || state.Active.TestedSHA == head {
 				t.Fatalf("wrong composition: %+v", state.Active)
 			}
-			h.f.SetCheckRuns(repo, head, []forge.CheckRun{{Name: "ci", State: forge.Success, HeadBranch: build.Ref}, {Name: "lint", State: forge.Success, HeadBranch: build.Ref}})
-			state = queue.Apply(state, queue.ChecksCompleted{TestedSHA: head, Success: true})
+			marker := state.Active.TestedSHA
+			h.f.SetCheckRuns(repo, marker, []forge.CheckRun{{Name: "ci", State: forge.Success}, {Name: "lint", State: forge.Success}})
+			state = queue.Apply(state, queue.ChecksCompleted{TestedSHA: marker, Success: true})
 			land := queue.Plan(cfg, state, epoch)[0].(queue.Land)
 			if scenario == "base-race" {
 				must(t, h.f.SetRef(repo, "main", h.prs[2].HeadSHA))
@@ -240,7 +228,17 @@ func TestFastForwardQueueCompositionAndLanding(t *testing.T) {
 				return
 			}
 			if dropped {
-				must(t, h.x.Execute(t.Context(), queue.ResolveLanding{BatchID: land.BatchID, AttemptID: "attempt", TestedSHA: head, FenceToken: land.FenceToken}, emit))
+				// Replay the persisted recovery action with changed configuration.
+				actions := queue.Plan(queue.Config{MergeMethod: queue.Squash}, state, epoch.Add(time.Hour))
+				for _, a := range actions {
+					if resolve, ok := a.(queue.FastForwardResolveLanding); ok {
+						_, payload, err := queue.EncodeAction(resolve)
+						must(t, err)
+						restored, err := queue.DecodeAction(payload)
+						must(t, err)
+						must(t, h.x.Execute(t.Context(), restored, emit))
+					}
+				}
 			}
 			if h.read(t, "main") != head || state.Active != nil || h.read(t, fenceRef) == h.fence {
 				t.Fatal("did not land unchanged head through fence")

@@ -35,9 +35,9 @@ never appear in driver errors or logs.
   "app:<id>"`; statuses carry `Source: "status:<lowercase-creator-login>"`.
   Check suites for the SHA are read on every check refresh. A queued, running,
   missing, or unknown suite makes its run pending regardless of stale success.
-  `CheckRun.HeadBranch` comes from that freshly read suite's `head_branch`, never
-  from the PR branch or embedded run data. Fast-forward accepts only suites for
-  the current queue test ref; commit statuses have no provenance and stay pending.
+  Fast-forward tests a unique empty marker above the pinned head, so runs and
+  statuses count normally on that marker. Suites need no `head_branch`
+  provenance, including fork pushes where GitHub returns null.
   Missing producer identities and unknown outcomes are pending.
   Only the `OpenMerge` check owned by this App is excluded from CI observations.
 - Multiple Apps, multiple status creators, or a check/status pair using a required

@@ -247,7 +247,6 @@ func (s *simulation) step() (bool, error) {
 }
 
 func (s *simulation) execute(action queue.Action) error {
-	s.executor.ActiveBatch = s.state.Active
 	s.boundary.scope = faultScope(action)
 	if a, ok := action.(queue.Land); ok && s.faults.Float64() < s.cfg.Faults.DuplicateExecutionRate {
 		s.sequence++
@@ -386,7 +385,15 @@ func (s *simulation) startCI(sha string, prs []int) {
 			s.violation = fmt.Errorf("untrusted PR %d appears in test commit %s", pr, sha)
 		}
 	}
-	run.covered, err = s.firstParentRange(run.base, sha)
+	coveredTip := sha
+	if run.method == queue.FastForward {
+		coveredTip = run.heads[len(run.heads)-1].HeadSHA
+		if err := s.forge.VerifyFastForward(context.Background(), s.repo, run.base, sha, coveredTip); err != nil {
+			s.violation = err
+			return
+		}
+	}
+	run.covered, err = s.firstParentRange(run.base, coveredTip)
 	if err != nil {
 		s.violation = err
 		return
@@ -396,7 +403,7 @@ func (s *simulation) startCI(sha string, prs []int) {
 	if batch.FromBisection {
 		s.result.BisectionCIRuns++
 	}
-	s.forge.SetCheckRuns(s.repo, sha, []forge.CheckRun{{ID: 1, Name: "ci", State: forge.Pending, HeadBranch: run.ref}})
+	s.forge.SetCheckRuns(s.repo, sha, []forge.CheckRun{{ID: 1, Name: "ci", State: forge.Pending}})
 	s.schedule(s.now.Add(s.ciDuration()), ciComplete, 0, sha)
 }
 

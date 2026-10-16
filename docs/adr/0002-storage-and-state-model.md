@@ -96,9 +96,12 @@ requirements.
 Fast-forward uses three additive wire-v1 event types:
 `fast_forward_batch_selected` pins a consecutive prefix of a building batch and
 keeps the remainder pending in order; `fast_forward_ref_built` records the
-unchanged final head and permits testing that SHA in another batch;
+unique tested marker and its pinned final head;
 `fast_forward_blocked` dequeues the first member with `fast-forward-required`
 when it cannot extend the current base. All have golden fixtures. Existing
-event/action wire structs and fixtures are unchanged. Atomic landing and its
-unique attempt fence are unchanged. As with other additive event types, drain
-older workers before upgrading; rollback requires restoring the earlier log.
+deployed event/action wire structs and fixtures are unchanged. The new
+`fast_forward_resolve_landing` action carries the tested marker and the landing
+head captured in `LandingAttempt` before the push. Recovery is independent of
+current merge-method configuration. Atomic landing retains its strict fence
+format: `tested=` identifies the marker, while the base receives the head. As
+with other additive event types, drain older workers before upgrading; rollback requires restoring the earlier log.

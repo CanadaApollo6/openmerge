@@ -94,12 +94,25 @@ it, even if the PR title or body changes after testing.
 
 ### Fast-forward landing
 
-`fast-forward` prepares no new commits: its test ref points to the last PR head.
+`fast-forward` tests the exact head tree and history via a unique marker commit;
+it lands the head itself. Its test ref points to one empty marker above the last
+PR head. The marker has only that head as parent, the same tree, the configured
+App committer, a random 128-bit nonce, and the authoritative `OpenMerge-Batch`
+trailer. Its message contains no contributor metadata. Existing suites, historical
+same-ref/SHA suites, completed reruns, and statuses on the original head cannot
+satisfy CI on this unique tested SHA. Fork checks need no branch provenance.
 Consecutive queued heads may batch only when each strictly descends from its
 predecessor, starting at the current base. The executor selects a linear prefix;
 unrelated heads start singly. A head that cannot extend the base (including an
 already equal head) is dequeued as `fast-forward-required`, asking the author
 to update and requeue. It is never rebased by OpenMerge. Base movement causes
 ancestry to be checked again. The existing two-ref atomic leased landing still
-applies, and the landed SHA is the exact tested head. Attribution and signatures
-remain untouched, and ordinary confirmed-landing head cleanup applies.
+applies: `tested=` records the marker, while the base receives its pinned parent.
+Before `LandingStarted` and again inside git landing, require the marker's only
+parent to be the pinned head, its tree to equal the head tree, and the head to
+strictly descend from the leased base. The landing attempt captures that head;
+`FastForwardResolveLanding` persists it separately from the tested marker and
+recovers via the existing strict fence form. Landing verification and cleanup
+use the landed head. Other methods continue to land their exact tested SHA.
+Original attribution and signatures remain untouched, and ordinary confirmed
+landing head cleanup applies.
