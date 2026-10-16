@@ -173,12 +173,13 @@ func TestStatusRedactsAllProcessSecrets(t *testing.T) {
 	}
 }
 
-func TestStatusKeepsRulesEvidenceWhenStaleEventsAreIgnored(t *testing.T) {
+func TestStatusKeepsRulesEvidenceWhenStaleClearIsIgnored(t *testing.T) {
+	// Failing reads always apply; only the stale clear (basis 1 after the
+	// revision reached 2) is ignored.
 	events := []queue.Event{
 		queue.RulesBlocked{Problems: []string{"initial"}},
 		queue.RulesBlocked{Problems: []string{"newer"}, Basis: 1},
 		queue.RulesCleared{Basis: 1},
-		queue.RulesBlocked{Problems: []string{"stale"}, Basis: 1},
 	}
 	for _, afterAdmission := range []bool{false, true} {
 		sequence := append(slices.Clone(events), admission()...)
