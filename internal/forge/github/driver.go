@@ -381,13 +381,23 @@ func (d *Driver) ReportStatus(ctx context.Context, repo forge.RepoRef, pr int, h
 	default:
 		return errors.New("unknown OpenMerge status state")
 	}
+	// Reasons and summaries can quote check names, branches and diagnostics from
+	// outside OpenMerge; redact them before they reach a public PR. Lines are
+	// sanitized separately so multi-line summaries keep their layout.
+	sanitize := d.app.sanitizer.Sanitize
 	title := string(s.State)
 	if s.Reason != "" {
-		title += ": " + s.Reason
+		title += ": " + sanitize(s.Reason)
 	}
 	summary := s.Summary
 	if summary == "" {
 		summary = title
+	} else {
+		lines := strings.Split(summary, "\n")
+		for i, line := range lines {
+			lines[i] = sanitize(line)
+		}
+		summary = strings.Join(lines, "\n")
 	}
 	output := &gh.CheckRunOutput{Title: &title, Summary: &summary}
 	external := "openmerge/pr/" + strconv.Itoa(pr)

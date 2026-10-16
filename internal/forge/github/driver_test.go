@@ -142,6 +142,27 @@ func TestCheckSuiteWithoutBranchCountsNormally(t *testing.T) {
 		t.Fatalf("incorrect provenance or changed status normalization: %+v", checks)
 	}
 }
+func TestReportStatusRedactsReasonAndSummary(t *testing.T) {
+	f := newAPI(t)
+	sha := f.prs[1].GetHead().GetSHA()
+	// Check names and branches come from outside OpenMerge and can carry tokens.
+	status := forge.Status{
+		State:   forge.Blocked,
+		Reason:  "unbound-check-provenance ghp_reasonsecret123",
+		Summary: "check ci-ghp_summarysecret456 from app x\nexpected openmerge/queue/main/b7, saw Bearer abc.def",
+	}
+	must(t, f.driver.ReportStatus(context.Background(), testRepo, 1, sha, status))
+	out := f.runs[sha][0].GetOutput()
+	for _, secret := range []string{"ghp_reasonsecret123", "ghp_summarysecret456", "Bearer abc.def"} {
+		if strings.Contains(out.GetTitle()+out.GetSummary(), secret) {
+			t.Fatalf("status leaked %q: title=%q summary=%q", secret, out.GetTitle(), out.GetSummary())
+		}
+	}
+	if !strings.Contains(out.GetSummary(), "\n") || !strings.Contains(out.GetSummary(), "openmerge/queue/main/b7") {
+		t.Fatalf("summary lost layout or non-secret detail: %q", out.GetSummary())
+	}
+}
+
 func TestStatusMappingsAndConcurrentWrites(t *testing.T) {
 	f := newAPI(t)
 	sha := f.prs[1].GetHead().GetSHA()
