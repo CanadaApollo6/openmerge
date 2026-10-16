@@ -1,6 +1,6 @@
 # Forge driver contract
 
-This is the reference for anyone writing or reviewing a forge driver. [ADR 0004](adr/0004-forge-driver-interface.md) records why the interface looks this way; this page records exactly what a driver must do. The Go interfaces live in [`internal/forge/forge.go`](../internal/forge/forge.go), and [`internal/forge/forgetest`](../internal/forge/forgetest) checks every rule below that can be checked automatically.
+This is the reference for anyone writing or reviewing a forge driver. [ADR 0004](adr/0004-forge-driver-interface.md) records why the interface looks this way; this page records exactly what a driver must do. The Go interfaces live in [`internal/forge/forge.go`](../internal/forge/forge.go), [`internal/forge/forgetest`](../internal/forge/forgetest) checks the rules a driver is responsible for. Rules the executor applies on top of a driver, such as check aggregation and attempt resolution, are covered by the executor's tests instead.
 
 ## Repositories
 
@@ -64,6 +64,7 @@ git push --atomic \
 - On refusal the driver returns only `ErrLeaseRejected`. A rejected git push reports no actual ref values.
 - Drivers land through git, never through a forge merge or ref-update endpoint. Those check the PR head or ancestry, not the expected old value.
 - `Land` refuses a `LandRequest` whose pinned PR heads do not match the PRs.
+- A refused build or landing leaves every ref and PR unchanged.
 - OpenMerge needs permission to push to the protected base branch, for example as an always-allowed ruleset bypass on GitHub.
 
 After a landing with merge commits, the forge marks the PRs merged because their heads are reachable. After squash or rebase it does not, so the planner emits `MarkLanded` for each PR. `Driver.MarkLanded` closes the PR with a link to the landed commit, or uses the forge's native mark-merged where one exists. It is idempotent and never merges again.
@@ -77,7 +78,7 @@ Each base branch has a fence branch, `openmerge/fence/<base>`, derived from the 
 
 `EnsureFence` runs at setup. It creates the first fence commit with a create-only push, reading back a concurrent winner, or returns the existing fence unchanged.
 
-The `openmerge/fence/*` namespace must be protected so that only OpenMerge can update it and no one can delete, recreate, or reset it. Otherwise a writer could restore an old token and revive an abandoned landing. Setup validates this protection before the queue starts.
+The `openmerge/fence/*` namespace must be protected so that only OpenMerge can update it and no one can delete, recreate, or reset it. Otherwise a writer could restore an old token and revive an abandoned landing. `openmerge serve` will validate this protection at startup; until then it is an operator requirement.
 
 ### Attempts
 
@@ -100,7 +101,7 @@ Refs, statuses, and check runs are idempotent by name or external ID. Comments e
 
 ## Running the contract suite
 
-`forgetest.Run(t, newEnv)` runs every rule above that can be checked. The environment provides:
+`forgetest.Run(t, newEnv)` runs the driver rules above. It checks the normalized status round trip, not each forge's native conclusion mapping, which each driver documents. The environment provides:
 
 - a fresh, uniquely named base and fence per subtest, created by ordinary pushes, so the suite never rewrites a protected ref;
 - PRs that each add a unique file, a pair of PRs whose changes conflict, a fork PR, and approvals from a writer and a non-writer;

@@ -49,7 +49,7 @@ type Git interface {
 
 **Test refs never run untrusted code with trusted privileges.** Pushing a test ref runs CI with the base repository's privileges, often including secrets. So, independent of any `enter_when` conditions, OpenMerge will not put a PR into a test ref unless its head branch lives in the base repository, or someone with write access approved its current head SHA. Who opened the PR does not matter: a fork PR needs an exact-head approval even when a maintainer opened it, because others may be able to push to that fork. A new push revokes the approval. Repositories should still scope deployment secrets to protected environments that queue refs cannot reach.
 
-**The fake forge ships first, and every driver passes the same contract suite.** `internal/forge/fake` is an in-memory driver used by all engine and end-to-end tests. `forgetest.Run` checks every contract rule that can be checked automatically. The fake runs it in every CI build, and real drivers run it against a sandbox repository when credentials are present.
+**The fake forge ships first, and every driver passes the same contract suite.** `internal/forge/fake` is an in-memory driver used by all engine and end-to-end tests. `forgetest.Run` checks the rules a driver is responsible for. The fake runs it in every CI build, and real drivers run it against a sandbox repository when credentials are present.
 
 ## Consequences
 
