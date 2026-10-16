@@ -69,7 +69,8 @@ path and installation ID; also supply a Postgres URL.
 Find the **installation ID** under **Settings → Applications → Installed GitHub
 Apps → Configure**: it is the number at the end of the URL, not the App ID.
 
-Polling is the default: `hook_attributes.active=false` disables deliveries.
+Polling is the default: the manifest then has no webhook and no event
+subscriptions, because GitHub rejects loopback hook URLs even when inactive.
 For webhooks, pass `--webhook-url https://YOUR-HOST/YOUR-WEBHOOK-PATH`; App
 webhooks deliver JSON (`application/json`). Route that URL to the server's
 webhook listener and use the saved `webhook-secret` for signature verification.

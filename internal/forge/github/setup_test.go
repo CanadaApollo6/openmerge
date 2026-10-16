@@ -29,6 +29,7 @@ func TestManifestSetup(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			f := newAPI(t)
 			f.manifestPEM = string(testPEM(t))
+			f.noHookSecret = tt.webhook == ""
 			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 			var out bytes.Buffer
 			var address string
@@ -54,8 +55,16 @@ func TestManifestSetup(t *testing.T) {
 				var manifest appManifest
 				must(t, json.Unmarshal([]byte(html.UnescapeString(string(match[1]))), &manifest))
 				permissions := map[string]string{"contents": "write", "workflows": "write", "pull_requests": "write", "checks": "write", "statuses": "read", "issues": "read", "metadata": "read"}
-				if manifest.Public || manifest.Hook.Active != (tt.webhook != "") || manifest.Hook.URL == "" || !maps.Equal(manifest.Permissions, permissions) || len(manifest.Events) != 7 || manifest.Name != `My App <test>` {
+				if manifest.Public || !maps.Equal(manifest.Permissions, permissions) || manifest.Name != `My App <test>` {
 					t.Fatalf("manifest = %+v", manifest)
+				}
+				// Polling mode must send no hook at all: GitHub rejects loopback
+				// hook URLs even when the hook is inactive.
+				if tt.webhook == "" && (manifest.Hook != nil || len(manifest.Events) != 0 || strings.Contains(string(match[1]), "hook_attributes")) {
+					t.Fatalf("polling manifest has a hook: %s", match[1])
+				}
+				if tt.webhook != "" && (manifest.Hook == nil || !manifest.Hook.Active || manifest.Hook.URL != tt.webhook || len(manifest.Events) != 7) {
+					t.Fatalf("webhook manifest = %+v", manifest)
 				}
 				wantAction := "https://github.com/settings/apps/new?state="
 				if tt.owner != "" {
@@ -94,7 +103,13 @@ func TestManifestSetup(t *testing.T) {
 			if info.Mode().Perm() != 0o700 {
 				t.Fatalf("directory mode = %o", info.Mode().Perm())
 			}
-			for name, want := range map[string]string{"app-id": "42\n", "slug": "openmerge-test\n", "client-id": "Iv1.test\n", "private-key.pem": f.manifestPEM, "webhook-secret": "setup-webhook-secret"} {
+			files := map[string]string{"app-id": "42\n", "slug": "openmerge-test\n", "client-id": "Iv1.test\n", "private-key.pem": f.manifestPEM}
+			if tt.webhook != "" {
+				files["webhook-secret"] = "setup-webhook-secret"
+			} else if _, err := os.Stat(filepath.Join(dir, "webhook-secret")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("polling setup wrote a webhook secret: %v", err)
+			}
+			for name, want := range files {
 				data, err := os.ReadFile(filepath.Join(dir, name))
 				must(t, err)
 				info, err := os.Stat(filepath.Join(dir, name))
@@ -208,7 +223,7 @@ func TestManifestConversionErrorsDoNotExposeSecrets(t *testing.T) {
 		})
 		return true
 	}
-	_, err := convertManifest(context.Background(), f.server.URL+"/api/v3/", "one-use-code")
+	_, err := convertManifest(context.Background(), f.server.URL+"/api/v3/", "one-use-code", true)
 	var api *APIError
 	if !errors.As(err, &api) || api.StatusCode != 422 {
 		t.Fatalf("unsafe conversion error: %v", err)

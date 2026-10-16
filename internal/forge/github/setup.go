@@ -34,8 +34,8 @@ type appManifest struct {
 	RedirectURL string            `json:"redirect_url"`
 	Public      bool              `json:"public"`
 	Permissions map[string]string `json:"default_permissions"`
-	Events      []string          `json:"default_events"`
-	Hook        manifestHook      `json:"hook_attributes"`
+	Events      []string          `json:"default_events,omitempty"`
+	Hook        *manifestHook     `json:"hook_attributes,omitempty"`
 }
 
 type manifestHook struct {
@@ -105,14 +105,18 @@ func setupApp(ctx context.Context, opts ManifestOptions, out io.Writer, api stri
 	if name == "" {
 		name = "OpenMerge"
 	}
-	hook := manifestHook{URL: address + "/webhook", Active: false}
+	// GitHub validates a manifest hook URL even when the hook is inactive and
+	// rejects loopback addresses, so polling mode sends no hook and no events.
+	var hook *manifestHook
+	var events []string
 	if opts.WebhookURL != "" {
-		hook = manifestHook{URL: opts.WebhookURL, Active: true}
+		hook = &manifestHook{URL: opts.WebhookURL, Active: true}
+		events = []string{"pull_request", "pull_request_review", "check_run", "check_suite", "status", "push", "issue_comment"}
 	}
 	manifest, err := json.Marshal(appManifest{
 		Name: name, URL: "https://github.com/CanadaApollo6/openmerge", RedirectURL: address + "/callback",
 		Permissions: map[string]string{"contents": "write", "workflows": "write", "pull_requests": "write", "checks": "write", "statuses": "read", "issues": "read", "metadata": "read"},
-		Events:      []string{"pull_request", "pull_request_review", "check_run", "check_suite", "status", "push", "issue_comment"}, Hook: hook,
+		Events:      events, Hook: hook,
 	})
 	if err != nil {
 		_ = listener.Close()
@@ -180,7 +184,7 @@ func setupApp(ctx context.Context, opts ManifestOptions, out io.Writer, api stri
 		return err
 	case code = <-codes:
 	}
-	credentials, err := convertManifest(ctx, api, code)
+	credentials, err := convertManifest(ctx, api, code, opts.WebhookURL != "")
 	if err != nil {
 		return err
 	}
@@ -218,7 +222,7 @@ func simpleName(value string) bool {
 	return true
 }
 
-func convertManifest(ctx context.Context, api, code string) (appCredentials, error) {
+func convertManifest(ctx context.Context, api, code string, webhook bool) (appCredentials, error) {
 	var credentials appCredentials
 	client, err := setupClient(api, "")
 	if err != nil {
@@ -230,7 +234,7 @@ func convertManifest(ctx context.Context, api, code string) (appCredentials, err
 	if err != nil {
 		return appCredentials{}, err
 	}
-	if !simpleName(credentials.Slug) || credentials.ClientID == "" || credentials.WebhookSecret == "" {
+	if !simpleName(credentials.Slug) || credentials.ClientID == "" || webhook && credentials.WebhookSecret == "" {
 		return appCredentials{}, errors.New("GitHub manifest response is missing App credentials")
 	}
 	if _, err := New(Config{AppID: credentials.ID, PrivateKey: []byte(credentials.PEM)}); err != nil {
@@ -262,10 +266,14 @@ func saveCredentials(dir string, c appCredentials) (string, error) {
 	if err := os.Chmod(dir, 0o700); err != nil {
 		return "", err
 	}
-	for name, value := range map[string]string{
+	files := map[string]string{
 		"app-id": strconv.FormatInt(c.ID, 10) + "\n", "slug": c.Slug + "\n", "client-id": c.ClientID + "\n",
-		"private-key.pem": c.PEM, "webhook-secret": c.WebhookSecret,
-	} {
+		"private-key.pem": c.PEM,
+	}
+	if c.WebhookSecret != "" {
+		files["webhook-secret"] = c.WebhookSecret
+	}
+	for name, value := range files {
 		file, err := os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err != nil {
 			return "", err

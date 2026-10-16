@@ -34,7 +34,12 @@ func (f *apiFixture) handleSetup(w http.ResponseWriter, r *http.Request, path st
 			return true
 		}
 		w.WriteHeader(201)
-		f.json(w, map[string]any{"id": 42, "slug": "openmerge-test", "client_id": "Iv1.test", "pem": f.manifestPEM, "webhook_secret": "setup-webhook-secret", "client_secret": "unused-oauth-secret"})
+		// GitHub returns a null webhook secret for an App created without a hook.
+		var secret any = "setup-webhook-secret"
+		if f.noHookSecret {
+			secret = nil
+		}
+		f.json(w, map[string]any{"id": 42, "slug": "openmerge-test", "client_id": "Iv1.test", "pem": f.manifestPEM, "webhook_secret": secret, "client_secret": "unused-oauth-secret"})
 		return true
 	}
 	if path == "repos/acme/project" {
