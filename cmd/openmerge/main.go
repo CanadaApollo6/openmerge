@@ -16,6 +16,7 @@ const usage = `Usage: openmerge <command>
 Commands:
   version                 Print version and build information
   config validate [path]  Validate repository configuration
+  serve [options]         Run the GitHub merge queue server
   sim [options]           Simulate a day of merge queue traffic
   help                    Show this help
 `
@@ -45,6 +46,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		output = fmt.Sprintf("openmerge %s\ncommit: %s\ngo: %s\n", release, commit, goVersion)
 	case (len(args) == 2 || len(args) == 3) && args[0] == "config" && args[1] == "validate":
 		return validateConfig(args[2:], stdout, stderr)
+	case len(args) > 0 && args[0] == "serve":
+		return runServe(args[1:], stdout, stderr)
 	case len(args) > 0 && args[0] == "sim":
 		return runSim(args[1:], stdout, stderr)
 	default:

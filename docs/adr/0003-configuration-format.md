@@ -20,6 +20,8 @@ Reading `.mergify.yml` natively would make OpenMerge a drop-in replacement, but 
 
 **Source of truth.** Configuration is always read from the base branch, never from a pull request's head. A PR cannot change the rules it is judged by. A PR that edits the config gets a validation check showing the parsed result and any errors, and the change takes effect once merged.
 
+**Server loading.** The polling server pins all configuration reads to the observed base tip and pauses on missing, invalid, or currently unobservable attributes, reloading when the base moves; it never falls back to a merge-capable configuration.
+
 **Versioned schema.** The file starts with `version: 1`. Within version 1, changes are additive only: new keys and new condition attributes, never renames or removals. A breaking change requires `version: 2` and ships with `openmerge config migrate`, which rewrites the file mechanically. We publish a JSON Schema for each version so editors validate as you type.
 
 **Shape (version 1, Phase 1 surface).**

@@ -71,7 +71,9 @@ A primary limit, a secondary limit, or `Retry-After` establishes a cooldown.
 During it, requests return `RateLimitError{RetryAt, Secondary}` without network
 traffic. Repeated secondary limits back off exponentially from one minute,
 capped at 64 minutes, while honoring longer server reset/retry deadlines.
-The caller schedules another attempt at `RetryAt`; the transport never retries
+`Driver.BackoffUntil()` also exposes the shared cooldown and reserves the last
+100 primary requests until reset for the polling server. The caller schedules
+another attempt at `RetryAt`; the transport never retries
 an uncertain write automatically. HTTP status failures yield `APIError` without
 response bodies or request URLs; cancellation and deadlines remain recognizable.
 
@@ -100,14 +102,11 @@ headers; it verifies App JWTs on every App endpoint and rejects unknown
 installation IDs. No credentials or live user data are captured.
 
 This package does not implement HTTP serving, persistence, worker loops, or
-commands. The server PR still owns:
+commands; `cmd/openmerge serve` and `internal/serve` provide those. Remaining
+installation automation and ruleset work includes:
 
-- Durable delivery dedupe, webhook response handling, and event-to-queue routing.
 - Installation/repository discovery and reconciliation, token eviction after
-  suspension/deletion, and persistent action serialization and retry scheduling.
-- Base-branch `.openmerge.yml` loading/validation and configuration reloads.
-- Command parsing and permission checks (`CanWrite` is available).
-- Constructing gitops repositories, cache ownership, and executor wiring.
+  suspension/deletion.
 - Branch/ruleset protection and App permission validation, including protected
   base bypass and exclusive, nondeletable `openmerge/fence/*` ownership. APIs for
   ruleset inspection, PR labels/files, and installation repository

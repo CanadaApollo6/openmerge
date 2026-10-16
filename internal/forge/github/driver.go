@@ -411,7 +411,12 @@ func (d *Driver) ReadFile(ctx context.Context, repo forge.RepoRef, ref, path str
 	}
 	file, _, _, err := d.client.Repositories.GetContents(ctx, owner, name, path, &gh.RepositoryContentGetOptions{Ref: ref})
 	if err != nil {
-		return nil, safeError(err)
+		normalized := safeError(err)
+		var api *APIError
+		if errors.As(normalized, &api) && api.StatusCode == 404 {
+			return nil, fmt.Errorf("%w: %w", forge.ErrFileNotFound, normalized)
+		}
+		return nil, normalized
 	}
 	if file == nil || file.GetType() != "file" {
 		return nil, errors.New("github content is not a file")
@@ -437,3 +442,6 @@ func (d *Driver) Remote(ctx context.Context, repo forge.RepoRef) (string, gitops
 
 // HeadRef maps a GitHub pull request to its fetchable head ref.
 func HeadRef(pr int) string { return fmt.Sprintf("refs/pull/%d/head", pr) }
+
+// BotLogin identifies comments authored by this App.
+func (d *Driver) BotLogin() string { return d.app.slug + "[bot]" }

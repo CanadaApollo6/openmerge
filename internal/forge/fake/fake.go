@@ -577,7 +577,7 @@ func (f *Forge) ReadFile(ctx context.Context, repo forge.RepoRef, ref, path stri
 	}
 	content, ok := r.commits[sha].Files[path]
 	if !ok {
-		return nil, errors.New("file does not exist at ref")
+		return nil, forge.ErrFileNotFound
 	}
 	return []byte(content), nil
 }

@@ -196,6 +196,9 @@ func (r *Repo) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.B
 			return "", err
 		}
 	}
+	if err := s.resolveRemote(ctx, repo); err != nil {
+		return "", err
+	}
 	if _, err := s.command(ctx, "", "push", "--porcelain", "--force", "--", s.remote, top+":"+ref); err != nil {
 		return "", err
 	}

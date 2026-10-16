@@ -387,3 +387,18 @@ func contains(values []string, target string) bool {
 	}
 	return false
 }
+
+// ReferencesCheck reports whether a named producer can affect a check predicate.
+// Counts and exclusions inspect the entire list; equality/pattern predicates
+// inspect only matching names. This also visits predicates beneath NOT and OR.
+func (e Expression) ReferencesCheck(name string) bool {
+	if e.kind == atom && strings.HasPrefix(e.name, "check-") {
+		return e.length || e.op == "!=" || e.matches(Strings(name))
+	}
+	for _, child := range e.children {
+		if child.ReferencesCheck(name) {
+			return true
+		}
+	}
+	return false
+}

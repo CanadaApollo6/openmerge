@@ -67,6 +67,8 @@ Immediately before `LandingStarted`, the executor freshly reads `CheckRuns` for 
 
 ## Building test refs
 
+`Driver.ReadFile` identifies an absent file with `forge.ErrFileNotFound` so base-branch configuration discovery can distinguish absence from a failed read.
+
 `BuildTestRef` composes the test commit locally with git and pushes it to `openmerge/queue/...`. It must:
 
 - refuse a request whose pinned head is not the PR's current head;
@@ -108,7 +110,7 @@ Each base branch has a fence branch, `openmerge/fence/<base>`, derived from the 
 
 `EnsureFence` runs at setup. It creates the first fence commit with a create-only push, reading back a concurrent winner, or returns the existing fence unchanged.
 
-The `openmerge/fence/*` namespace must be protected so that only OpenMerge can update it and no one can delete, recreate, or reset it. Otherwise a writer could restore an old token and revive an abandoned landing. `openmerge serve` will validate this protection at startup; until then it is an operator requirement.
+The `openmerge/fence/*` namespace must be protected so that only OpenMerge can update it and no one can delete, recreate, or reset it. Otherwise a writer could restore an old token and revive an abandoned landing. `openmerge serve` currently leaves validation of this protection to the operator; automated ruleset validation is a follow-up.
 
 ### Attempts
 

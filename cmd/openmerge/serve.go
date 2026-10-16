@@ -1,0 +1,201 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+
+	"github.com/CanadaApollo6/openmerge/internal/forge/github"
+	"github.com/CanadaApollo6/openmerge/internal/gitops"
+	"github.com/CanadaApollo6/openmerge/internal/serve"
+	"github.com/CanadaApollo6/openmerge/internal/store"
+)
+
+type serveOptions struct {
+	database, key, repos, base, cache, listen, secret string
+	app, installation                                 int64
+	poll                                              time.Duration
+	concurrency                                       int
+}
+
+func parseServe(args []string, output io.Writer) (serveOptions, error) {
+	var o serveOptions
+	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
+	flags.SetOutput(output)
+	env := func(name, fallback string) string {
+		if value, ok := os.LookupEnv("OPENMERGE_" + name); ok {
+			return value
+		}
+		return fallback
+	}
+	flags.StringVar(&o.database, "database-url", env("DATABASE_URL", ""), "Postgres URL (OPENMERGE_DATABASE_URL)")
+	flags.StringVar(&o.key, "github-private-key", env("GITHUB_PRIVATE_KEY", ""), "RSA PEM key path (OPENMERGE_GITHUB_PRIVATE_KEY)")
+	flags.StringVar(&o.repos, "repos", env("REPOS", ""), "comma-separated owner/repo names (OPENMERGE_REPOS)")
+	flags.StringVar(&o.base, "base", env("BASE", "main"), "base branch (OPENMERGE_BASE)")
+	flags.StringVar(&o.cache, "git-cache-dir", env("GIT_CACHE_DIR", ".openmerge-cache"), "process-exclusive git cache (OPENMERGE_GIT_CACHE_DIR)")
+	flags.StringVar(&o.listen, "webhook-listen", env("WEBHOOK_LISTEN", ""), "optional webhook address (OPENMERGE_WEBHOOK_LISTEN)")
+	flags.StringVar(&o.secret, "webhook-secret", env("WEBHOOK_SECRET", ""), "webhook HMAC secret (OPENMERGE_WEBHOOK_SECRET)")
+	// Parse typed environment values through flag.Value so malformed values fail
+	// startup, while an explicit flag can override the environment.
+	flags.Int64Var(&o.app, "github-app-id", 0, "App ID (OPENMERGE_GITHUB_APP_ID)")
+	flags.Int64Var(&o.installation, "github-installation-id", 0, "installation ID (OPENMERGE_GITHUB_INSTALLATION_ID)")
+	flags.DurationVar(&o.poll, "poll-interval", time.Minute, "reconcile interval (OPENMERGE_POLL_INTERVAL)")
+	flags.IntVar(&o.concurrency, "concurrency", 4, "concurrent queues (OPENMERGE_CONCURRENCY)")
+	var defaults []string
+	for _, entry := range []struct{ flag, env string }{{"github-app-id", "GITHUB_APP_ID"}, {"github-installation-id", "GITHUB_INSTALLATION_ID"}, {"poll-interval", "POLL_INTERVAL"}, {"concurrency", "CONCURRENCY"}} {
+		overridden := false
+		for _, arg := range args {
+			if arg == "--"+entry.flag || arg == "-"+entry.flag || strings.HasPrefix(arg, "--"+entry.flag+"=") || strings.HasPrefix(arg, "-"+entry.flag+"=") {
+				overridden = true
+			}
+		}
+		if value, ok := os.LookupEnv("OPENMERGE_" + entry.env); ok && !overridden {
+			defaults = append(defaults, "--"+entry.flag+"="+value)
+		}
+	}
+	if err := flags.Parse(append(defaults, args...)); err != nil {
+		return o, err
+	}
+	if flags.NArg() != 0 {
+		return o, errors.New("serve accepts flags only")
+	}
+	if o.database == "" || o.key == "" || o.app <= 0 || o.installation <= 0 || o.repos == "" {
+		return o, errors.New("database URL, GitHub App ID, private key path, installation ID and repos are required")
+	}
+	if o.poll <= 0 || o.concurrency <= 0 || o.base == "" || o.cache == "" {
+		return o, errors.New("poll interval, concurrency, base and git cache must be nonempty and positive")
+	}
+	if o.listen != "" && o.secret == "" {
+		return o, errors.New("webhook listen requires a webhook secret")
+	}
+	for _, repo := range strings.Split(o.repos, ",") {
+		parts := strings.Split(repo, "/")
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" || strings.ContainsAny(repo, " \\?#%\r\n") {
+			return o, fmt.Errorf("invalid repository %q; expected owner/repo", repo)
+		}
+	}
+	return o, nil
+}
+
+func runServe(args []string, stdout, stderr io.Writer) int {
+	o, err := parseServe(args, stdout)
+	if errors.Is(err, flag.ErrHelp) {
+		return 0
+	}
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, err)
+		return 2
+	}
+	logger := slog.New(slog.NewJSONHandler(stderr, nil))
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := startServe(ctx, o, logger); err != nil {
+		logger.Error("serve stopped", "error", err)
+		return 1
+	}
+	return 0
+}
+
+func startServe(ctx context.Context, o serveOptions, logger *slog.Logger) error {
+	db, err := store.Open(ctx, o.database)
+	if err != nil {
+		return errors.New("open/migrate database failed; check OPENMERGE_DATABASE_URL and Postgres availability")
+	}
+	defer db.Close()
+	key, err := os.ReadFile(o.key)
+	if err != nil {
+		return fmt.Errorf("read GitHub private key: %w", err)
+	}
+	app, err := github.New(github.Config{AppID: o.app, PrivateKey: key})
+	if err != nil {
+		return err
+	}
+	driver, err := app.Installation(ctx, o.installation)
+	if err != nil {
+		return err
+	}
+	git, err := gitops.New(ctx, gitops.Config{WorkDir: o.cache, Remote: driver.Remote, HeadRef: github.HeadRef})
+	if err != nil {
+		return err
+	}
+	var targets []serve.Target
+	for _, repo := range strings.Split(o.repos, ",") {
+		targets = append(targets, serve.Target{Key: store.QueueKey{Installation: strconv.FormatInt(o.installation, 10), Repository: repo, BaseBranch: o.base}, Driver: driver, Git: git, BotLogin: driver.BotLogin()})
+	}
+	service, err := serve.New(ctx, db, targets, serve.Options{PollInterval: o.poll, Concurrency: o.concurrency, Logger: logger, BackoffUntil: driver.BackoffUntil})
+	if err != nil {
+		return err
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	var server *http.Server
+	serveErrors := make(chan error, 1)
+	if o.listen != "" {
+		listener, err := net.Listen("tcp", o.listen)
+		if err != nil {
+			return err
+		}
+		server = &http.Server{Handler: webhookHandler(service, []byte(o.secret)), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 30 * time.Second, IdleTimeout: time.Minute}
+		go func() {
+			err := server.Serve(listener)
+			if !errors.Is(err, http.ErrServerClosed) {
+				serveErrors <- err
+				cancel()
+			}
+		}()
+		defer func() {
+			shutdown, stop := context.WithTimeout(context.Background(), 10*time.Second)
+			defer stop()
+			if err := server.Shutdown(shutdown); err != nil {
+				logger.Error("webhook shutdown", "error", err)
+			}
+		}()
+	}
+	logger.Info("OpenMerge serving", "repositories", o.repos, "base", o.base, "poll_interval", o.poll, "webhooks", server != nil)
+	if err := service.Run(runCtx); err != nil {
+		return err
+	}
+	select {
+	case err := <-serveErrors:
+		return err
+	default:
+		return nil
+	}
+}
+
+type webhookReceiver interface {
+	Notify(context.Context, string, string, string) error
+}
+
+func webhookHandler(service webhookReceiver, secret []byte) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		event, err := github.VerifyAndParse(r, secret)
+		if err != nil {
+			var rejected *github.WebhookError
+			code := http.StatusBadRequest
+			if errors.As(err, &rejected) {
+				code = rejected.StatusCode
+			}
+			http.Error(w, err.Error(), code)
+			return
+		}
+		if _, ignored := event.Payload.(github.Ignored); !ignored {
+			if err := service.Notify(r.Context(), strconv.FormatInt(event.InstallationID, 10), event.Repo.Path, event.DeliveryID); err != nil {
+				http.Error(w, "delivery persistence failed", http.StatusServiceUnavailable)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+}

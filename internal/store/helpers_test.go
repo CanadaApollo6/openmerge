@@ -21,7 +21,7 @@ func eventSamples() []queue.Event {
 		queue.BaseMoved{SHA: "base"}, queue.ChecksCompleted{TestedSHA: "tested", Success: true},
 		queue.ChecksReopened{TestedSHA: "tested", At: epoch},
 		queue.ChecksRefreshed{BatchID: "b1", TestedSHA: "tested", At: epoch}, queue.PRClosed{PR: 2},
-		queue.EnqueueRequested{PR: 2, At: epoch}, queue.DequeueRequested{PR: 2}, queue.ResumeRequested{},
+		queue.EnqueueRequested{PR: 2, At: epoch}, queue.DequeueRequested{PR: 2}, queue.ResumeRequested{}, queue.PauseRequested{Reason: "landing-not-on-base", Detail: "restore tested commit"},
 		queue.TestRefBuilt{BatchID: "b1", TestedSHA: "tested", At: epoch, Method: queue.Squash},
 		queue.TestRefBuildFailed{BatchID: "b1", Conflict: true, At: epoch},
 		queue.LandingStarted{BatchID: "b1", AttemptID: "attempt", FenceToken: "fence", At: epoch},

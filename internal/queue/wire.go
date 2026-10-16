@@ -66,6 +66,11 @@ type wireDequeueRequested struct {
 	PR int `json:"pr"`
 }
 
+type wirePauseRequested struct {
+	Reason string `json:"reason"`
+	Detail string `json:"detail"`
+}
+
 type wireResumeRequested struct {
 }
 
@@ -332,6 +337,13 @@ func EncodeEvent(value Event) (string, []byte, error) {
 		return encodeWire("enqueue_requested", wireEnqueueRequested(v))
 	case DequeueRequested:
 		return encodeWire("dequeue_requested", wireDequeueRequested(v))
+	case RefreshRequested:
+		return encodeWire("refresh_requested", wireResumeRequested{})
+	case PauseRequested:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("pause_requested", wirePauseRequested(v))
 	case ResumeRequested:
 		return encodeWire("resume_requested", wireResumeRequested{})
 	case BatchStarted:
@@ -416,6 +428,18 @@ func DecodeEvent(payload []byte) (Event, error) {
 		return decodeWireData(envelope.Data, func(v wireDequeueRequested) Event {
 			return DequeueRequested(v)
 		})
+	case "refresh_requested":
+		return decodeWireData(envelope.Data, func(wireResumeRequested) Event { return RefreshRequested{} })
+	case "pause_requested":
+		v, err := readWireData[wirePauseRequested](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := PauseRequested(v)
+		if err := event.Validate(); err != nil {
+			return nil, err
+		}
+		return event, nil
 	case "resume_requested":
 		return decodeWireData(envelope.Data, func(_ wireResumeRequested) Event {
 			return ResumeRequested{}

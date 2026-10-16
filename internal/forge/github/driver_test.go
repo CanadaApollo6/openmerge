@@ -394,3 +394,20 @@ func TestPollCycleRequestBudget(t *testing.T) {
 		})
 	}
 }
+
+func TestLowQuotaExposesBackoff(t *testing.T) {
+	f := newAPI(t)
+	reset := f.clock.Add(time.Hour)
+	f.override = func(w http.ResponseWriter, r *http.Request) bool {
+		if strings.Contains(r.URL.Path, "collaborators/") {
+			w.Header().Set("X-RateLimit-Remaining", "99")
+			w.Header().Set("X-RateLimit-Reset", fmt.Sprint(reset.Unix()))
+		}
+		return false
+	}
+	_, err := f.driver.CanWrite(t.Context(), testRepo, "writer")
+	must(t, err)
+	if got := f.driver.BackoffUntil(); !got.Equal(reset) {
+		t.Fatalf("backoff=%s want %s", got, reset)
+	}
+}

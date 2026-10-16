@@ -30,8 +30,13 @@ type Executor struct {
 	AllowNoRequiredChecks bool
 	// AllowSkippedNeutral explicitly permits skipped and neutral required checks.
 	AllowSkippedNeutral bool
-	NewID               func() (string, error)
-	Now                 func() time.Time
+	// CheckPolicy evaluates repository merge conditions on the tested SHA.
+	// Nil retains the explicit RequiredChecks policy.
+	CheckPolicy func([]forge.CheckRun) (terminal, success bool, err error)
+	// BeforeLand freshly revalidates PR trust after the final checks read.
+	BeforeLand func(context.Context, queue.Land) error
+	NewID      func() (string, error)
+	Now        func() time.Time
 }
 
 // Execute stops at the first failed emit. emit must durably record its event
@@ -46,7 +51,7 @@ type Executor struct {
 // retries while the commit remains absent. A failed MarkLanded stays unacknowledged.
 // Infrastructure build errors emit TestRefBuildFailed and also return the error.
 func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(queue.Event) error) error {
-	if len(x.RequiredChecks) == 0 && !x.AllowNoRequiredChecks {
+	if len(x.RequiredChecks) == 0 && !x.AllowNoRequiredChecks && x.CheckPolicy == nil {
 		return errors.New("required checks must be configured or AllowNoRequiredChecks explicitly enabled")
 	}
 	switch a := action.(type) {
@@ -116,6 +121,11 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 				return ambiguity
 			}
 			return ErrChecksNotSuccessful
+		}
+		if x.BeforeLand != nil {
+			if err := x.BeforeLand(ctx, a); err != nil {
+				return err
+			}
 		}
 		attemptID, err := x.newID()
 		if err != nil {
@@ -229,6 +239,9 @@ func (e *CheckSourceAmbiguityError) Error() string {
 // Missing, unknown, or ambiguous required checks keep the batch pending. Only
 // the newest run within one source participates; cancelled counts as failure.
 func (x *Executor) checkResult(checks []forge.CheckRun) (terminal, success bool, ambiguity error) {
+	if x.CheckPolicy != nil {
+		return x.CheckPolicy(checks)
+	}
 	latest := make(map[string]forge.CheckRun)
 	sources := make(map[string]map[string]bool)
 	for _, check := range checks {

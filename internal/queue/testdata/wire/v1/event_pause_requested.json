@@ -1,0 +1,1 @@
+{"version":1,"type":"pause_requested","data":{"reason":"landing-not-on-base","detail":"Tested commit is absent from main; restore it before resuming"}}

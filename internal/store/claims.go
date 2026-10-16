@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -29,6 +30,15 @@ const claimQuery = `SELECT id, queue_id, key, payload, watermark FROM actions
 // Claim skips rows locked by other claimers. Claimed and in-flight work becomes
 // claimable at lease expiry; consequential work must always be revalidated.
 func (s *Store) Claim(ctx context.Context, limit int, lease time.Duration, now time.Time) ([]ClaimedAction, error) {
+	return s.claim(ctx, 0, limit, lease, now)
+}
+
+// ClaimQueue claims work only for a configured queue.
+func (s *Store) ClaimQueue(ctx context.Context, q QueueID, limit int, lease time.Duration, now time.Time) ([]ClaimedAction, error) {
+	return s.claim(ctx, q, limit, lease, now)
+}
+
+func (s *Store) claim(ctx context.Context, q QueueID, limit int, lease time.Duration, now time.Time) ([]ClaimedAction, error) {
 	if limit <= 0 || lease.Microseconds() <= 0 {
 		return nil, errors.New("claim limit and lease must be positive")
 	}
@@ -36,7 +46,13 @@ func (s *Store) Claim(ctx context.Context, limit int, lease time.Duration, now t
 	poisonedQueues := make(map[QueueID]bool)
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		for len(result) < limit {
-			rows, err := tx.Query(ctx, claimQuery, now, limit-len(result))
+			query := claimQuery
+			args := []any{now, limit - len(result)}
+			if q != 0 {
+				query = strings.Replace(query, "ORDER BY id", "AND queue_id = $3 ORDER BY id", 1)
+				args = append(args, q)
+			}
+			rows, err := tx.Query(ctx, query, args...)
 			if err != nil {
 				return err
 			}
