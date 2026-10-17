@@ -10,8 +10,14 @@ import (
 // ApplyPolicy supplies runtime configuration which the historical digest does
 // not encode. No default window is guessed when that configuration is absent.
 func ApplyPolicy(q *Queue, selected *Entry, cfg queue.Config, now time.Time) {
-	q.Window = cfg.MaxDepth()
-	q.BatchSize = max(1, cfg.BatchMaxSize)
+	q.Window = q.state.Window(cfg)
+	q.BatchSize = q.state.BatchSize(cfg)
+	failures, samples := q.state.FailureEstimate()
+	q.FailureEstimate = &FailureEstimate{Failures: failures, Samples: samples, TargetPassRate: cfg.BatchTargetPassRate}
+	if samples > 0 {
+		q.FailureEstimate.Rate = float64(failures) / float64(samples)
+	}
+	q.LastWindowFailure = q.state.LastWindowFailure()
 	for i := range q.Entries {
 		q.Entries[i].Gate = holdingGate(q, q.Entries[i], cfg, now)
 	}
@@ -62,7 +68,7 @@ func holdingGate(q *Queue, e Entry, cfg queue.Config, now time.Time) string {
 			return "bisection"
 		}
 	}
-	if len(q.Chain) >= cfg.MaxDepth() {
+	if len(q.Chain) >= q.Window {
 		return "window-full"
 	}
 	for _, b := range q.state.Batches() {
@@ -83,7 +89,7 @@ func holdingGate(q *Queue, e Entry, cfg queue.Config, now time.Time) string {
 			}
 		}
 	}
-	if cfg.BatchMaxWait > 0 && unbatched < max(1, cfg.BatchMaxSize) && !oldest.IsZero() && now.Before(oldest.Add(cfg.BatchMaxWait)) {
+	if cfg.BatchMaxWait > 0 && unbatched < q.BatchSize && !oldest.IsZero() && now.Before(oldest.Add(cfg.BatchMaxWait)) {
 		return "max_wait"
 	}
 	return "batch-admission"
@@ -130,6 +136,33 @@ func LedgerSummary(entry *Entry) string {
 			fragment = string(runes[:160]) + "…"
 		}
 		text += fragment
+	}
+	return text
+}
+
+// AdaptiveSummary is bounded queue-level evidence shared by CLI and PR checks.
+func AdaptiveSummary(q *Queue) string {
+	text := fmt.Sprintf("window: %d; batch size: %d", q.Window, q.BatchSize)
+	if e := q.FailureEstimate; e != nil {
+		text += fmt.Sprintf("; p̂: %.4f (%d/%d)", e.Rate, e.Failures, e.Samples)
+		if e.TargetPassRate > 0 {
+			text += fmt.Sprintf("; target: %g", e.TargetPassRate)
+		}
+	}
+	if len(q.Chain) > 0 {
+		text += "; chain: "
+		for i, b := range q.Chain[:min(8, len(q.Chain))] {
+			if i > 0 {
+				text += " → "
+			}
+			text += fmt.Sprintf("%.40s(%.24s)", b.ID, b.Phase)
+		}
+		if len(q.Chain) > 8 {
+			text += fmt.Sprintf(" (+%d)", len(q.Chain)-8)
+		}
+	}
+	if f := q.LastWindowFailure; f != nil {
+		text += fmt.Sprintf("; last window failure: revision %d %.40s %.24s", f.Revision, f.BatchID, f.Reason)
 	}
 	return text
 }

@@ -2,7 +2,6 @@ package serve
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -10,7 +9,7 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
-// QueuePolicy exposes the configured fixed window to read-only status clients.
+// QueuePolicy exposes the current adaptive policy to read-only status clients.
 func (s *Server) QueuePolicy(key store.QueueKey) (queue.Config, bool) {
 	for _, w := range s.workers() {
 		if w.Key == key {
@@ -52,5 +51,5 @@ func (s *Server) ledgerSummary(ctx context.Context, w *worker, pr int) (string, 
 	}
 	entry := q.LedgerEntry(pr)
 	status.ApplyPolicy(q, entry, w.plannerConfig(s.options.PollInterval), time.Now())
-	return fmt.Sprintf("; window: %d; batch size: %d", q.Window, q.BatchSize) + status.LedgerSummary(entry), nil
+	return "\n\nQueue: " + status.AdaptiveSummary(q) + status.LedgerSummary(entry), nil
 }

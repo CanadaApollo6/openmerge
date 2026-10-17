@@ -172,6 +172,15 @@ func jsonValue(n *yaml.Node, key string) (any, error) {
 			var value any
 			err := n.Decode(&value)
 			return value, err
+		case "!!float":
+			if key != "target_pass_rate" {
+				return nil, fmt.Errorf("float is not accepted for %s", key)
+			}
+			var value float64
+			if err := n.Decode(&value); err != nil {
+				return nil, err
+			}
+			return value, nil
 		case "!!int":
 			if (key == "check_timeout" || key == "max_wait") && n.Value != "0" {
 				return nil, fmt.Errorf("only literal integer 0 is a duration")

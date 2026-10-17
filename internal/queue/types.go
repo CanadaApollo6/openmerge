@@ -13,9 +13,10 @@ type Config struct {
 	// Empty preserves replay/planning for logs predating ConfigApplied.
 	ConfigDigest string
 	// BatchMaxSize defaults to 1; BatchMaxWait bounds formation of partial batches.
-	BatchMaxSize int
-	BatchMaxWait time.Duration
-	MergeMethod  MergeMethod
+	BatchTargetPassRate float64 `json:",omitempty"`
+	BatchMaxSize        int
+	BatchMaxWait        time.Duration
+	MergeMethod         MergeMethod
 	// ChecksRetryFailed is the effective retry limit (0 or 1). Its zero value is
 	// omitted so legacy policy digests and simulator JSON remain unchanged.
 	ChecksRetryFailed   int `json:",omitempty"`
@@ -60,7 +61,7 @@ type State struct {
 	nextBatch          uint64
 	nextAdmission      uint64
 	revision           uint64
-	observations       map[int]PRObserved
+	observations       observations
 	dequeues           map[int]Dequeue
 	effects            []Action
 	acknowledged       map[string]effectScope
@@ -79,6 +80,8 @@ type State struct {
 	rulesPauseRevision uint64
 
 	// Only confirmations of still-pending mutation intents are retained.
+	window                *adaptiveWindow
+	outcomes              []changeOutcome
 	cancellationConfirmed map[string][]CheckRun
 }
 
@@ -115,13 +118,14 @@ type Batch struct {
 	ObservedRuns       []CheckRun       `json:",omitempty"`
 	LastObservedRuns   []CheckRun       `json:",omitempty"`
 
-	checksPassed      bool
-	checksGeneration  uint64
-	checksRefreshedAt time.Time
-	checkRefreshes    uint64
-	needsRefresh      bool
-	cleanupRequested  bool
-	unboundChecks     []UnboundCheck
+	windowFailureRecorded bool
+	checksPassed          bool
+	checksGeneration      uint64
+	checksRefreshedAt     time.Time
+	checkRefreshes        uint64
+	needsRefresh          bool
+	cleanupRequested      bool
+	unboundChecks         []UnboundCheck
 }
 
 // BatchPR pins the exact head used to build a test ref.

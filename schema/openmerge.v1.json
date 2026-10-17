@@ -105,6 +105,7 @@
           },
           "description": "Serial batch formation. Failing batches are bisected in queue order.",
           "properties": {
+            "target_pass_rate": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1, "description": "Opt in to exact adaptive fresh-batch sizing from the last 200 check outcomes; cold start below 20."},
             "max_size": {
               "type": "integer",
               "minimum": 1,
@@ -126,7 +127,7 @@
             "max_depth": 1,
             "min_depth": 1
           },
-          "description": "Fixed admission window. The loader also requires min_depth <= max_depth. Depth above one enables one failed-check rerun on the oldest batch.",
+          "description": "Adaptive admission window (AIMD). The loader also requires min_depth <= max_depth. Depth above one enables one failed-check rerun on the oldest batch.",
           "properties": {
             "max_depth": {
               "type": "integer",

@@ -91,6 +91,9 @@ func TestCancellationAccumulatesIncrementalConfirmations(t *testing.T) {
 	first := cancel.Runs[0]
 	first.State = "cancelled"
 	s = Apply(s, CheckCancellationReported{BatchID: cancel.BatchID, TestedSHA: cancel.TestedSHA, Confirmed: []CheckRun{first}})
+	if len(s.cancellationConfirmed[CancelChecks(cancel).Key()]) != 1 {
+		t.Fatal("test must hold a retained cancellation confirmation")
+	}
 	s = snapshotRoundTrip(t, cfg, s, at)
 	remaining := onlyAction[CancelChecks](t, Plan(cfg, s, at))
 	if len(remaining.Runs) != 1 || remaining.Runs[0].ID != 42 {

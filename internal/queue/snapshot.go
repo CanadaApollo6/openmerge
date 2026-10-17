@@ -13,15 +13,16 @@ import (
 
 // SnapshotVersion is separate from the additive event wire version. Snapshots
 // contain bounded projection state, never a copy of the event history.
-const SnapshotVersion = 1
+const SnapshotVersion = 2
 
 // Decoder resource limits are deliberately above ordinary queue sizes. This
-// codec is not wired into store persistence; PR 5 must add adaptive window state.
+// codec is not wired into store persistence.
 const maxSnapshotEntries = 100000
 const maxSnapshotEffects = 100000
 const maxSnapshotBytes = 64 << 20
 
 type batchSnapshot struct {
+	WindowFailureRecorded bool
 	Batch                 Batch
 	ChecksPassed          bool
 	ChecksGeneration      uint64
@@ -64,6 +65,8 @@ type rulesSnapshot struct {
 	Revision uint64
 }
 type stateSnapshot struct {
+	Window                                                                   *adaptiveWindow
+	Outcomes                                                                 []changeOutcome
 	Version                                                                  int
 	Lifecycle                                                                LifecycleChanged
 	BaseBranch, BaseSHA, Fence, ConfigCommit, ConfigDigest                   string
@@ -93,8 +96,10 @@ type stateSnapshot struct {
 // including per-batch revocation generations, timer evidence and retry fences.
 // The store currently replays journals; this is its compaction boundary.
 func EncodeSnapshot(s State) ([]byte, error) {
+	s = cloneState(s)
 	v := stateSnapshot{
-		Version:            SnapshotVersion,
+		Version: SnapshotVersion,
+		Window:  s.window, Outcomes: s.outcomes,
 		Lifecycle:          s.Lifecycle,
 		BaseBranch:         s.BaseBranch,
 		BaseSHA:            s.BaseSHA,
@@ -106,7 +111,7 @@ func EncodeSnapshot(s State) ([]byte, error) {
 		NextBatch:          s.nextBatch,
 		NextAdmission:      s.nextAdmission,
 		Revision:           s.revision,
-		Observations:       s.observations,
+		Observations:       s.observations.snapshot(),
 		Dequeues:           make(map[int]dequeueSnapshot),
 		Acknowledged:       make(map[string]scopeSnapshot),
 		Checks:             make(map[string]checkSnapshot),
@@ -125,7 +130,7 @@ func EncodeSnapshot(s State) ([]byte, error) {
 	}
 	v.CancellationConfirmed = s.cancellationConfirmed
 	for _, b := range s.Batches() {
-		v.Chain = append(v.Chain, batchSnapshot{*b, b.checksPassed, b.checksGeneration, b.checksRefreshedAt, b.checkRefreshes, b.needsRefresh, b.cleanupRequested, b.LandingAttempt.cleanupPolicyRecorded, b.unboundChecks})
+		v.Chain = append(v.Chain, batchSnapshot{b.windowFailureRecorded, *b, b.checksPassed, b.checksGeneration, b.checksRefreshedAt, b.checkRefreshes, b.needsRefresh, b.cleanupRequested, b.LandingAttempt.cleanupPolicyRecorded, b.unboundChecks})
 	}
 	for _, g := range s.pending {
 		v.Pending = append(v.Pending, groupSnapshot{g.prs, g.bisection})
@@ -174,6 +179,7 @@ func DecodeSnapshot(data []byte) (State, error) {
 		return State{}, fmt.Errorf("invalid snapshot version or bounds")
 	}
 	s := State{
+		window: v.Window, outcomes: v.Outcomes,
 		Lifecycle:          v.Lifecycle,
 		BaseBranch:         v.BaseBranch,
 		BaseSHA:            v.BaseSHA,
@@ -185,7 +191,7 @@ func DecodeSnapshot(data []byte) (State, error) {
 		nextBatch:          v.NextBatch,
 		nextAdmission:      v.NextAdmission,
 		revision:           v.Revision,
-		observations:       v.Observations,
+		observations:       restoreObservations(v.Observations),
 		dequeues:           make(map[int]Dequeue),
 		acknowledged:       make(map[string]effectScope),
 		checks:             make(map[string]retainedCheck),
@@ -201,6 +207,9 @@ func DecodeSnapshot(data []byte) (State, error) {
 		lifecycleRevision:  v.LifecycleRevision,
 		rulesPauseRevision: v.RulesPauseRevision,
 		rulesSources:       make(map[RulesSource]rulesSourceState),
+	}
+	if err := validateAdaptiveSnapshot(s); err != nil {
+		return State{}, err
 	}
 	seen := make(map[string]bool)
 	seenPRs := make(map[int]bool)
@@ -258,6 +267,7 @@ func DecodeSnapshot(data []byte) (State, error) {
 			}
 		}
 		b.checksPassed, b.checksGeneration, b.checksRefreshedAt, b.checkRefreshes, b.needsRefresh, b.cleanupRequested, b.unboundChecks = item.ChecksPassed, item.ChecksGeneration, item.ChecksRefreshedAt, item.CheckRefreshes, item.NeedsRefresh, item.CleanupRequested, item.UnboundChecks
+		b.windowFailureRecorded = item.WindowFailureRecorded
 		b.LandingAttempt.cleanupPolicyRecorded = item.CleanupPolicyRecorded
 		if i == 0 {
 			s.Active = &b
@@ -403,6 +413,39 @@ func requireSnapshotFields(raw []byte, schema reflect.Type, path string) error {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+func validateAdaptiveSnapshot(s State) error {
+	if s.window != nil {
+		w := s.window
+		if !w.BoundsRecorded && w.Bounds != (WindowBounds{MinDepth: 1, MaxDepth: 1}) {
+			return fmt.Errorf("invalid snapshot unrecorded window bounds")
+		}
+		if w.BoundsRecorded && w.LegacySpeculative {
+			return fmt.Errorf("invalid snapshot legacy window")
+		}
+		if w.Bounds.validate() != nil || w.Current < w.Bounds.MinDepth || w.Current > w.Bounds.MaxDepth {
+			return fmt.Errorf("invalid snapshot window")
+		}
+		if f := w.LastHalved; f != nil {
+			if f.BatchID == "" || f.Revision == 0 || f.Revision > s.revision || (f.Reason != ChecksFailed && f.Reason != ChecksTimeout && f.Reason != Conflict) {
+				return fmt.Errorf("invalid snapshot window failure")
+			}
+		}
+	}
+	if len(s.outcomes) > 200 {
+		return fmt.Errorf("snapshot outcomes exceed ring bound")
+	}
+	seen := make(map[uint64]bool)
+	var previous uint64
+	for _, o := range s.outcomes {
+		if o.PR <= 0 || o.AdmissionID == 0 || o.AdmissionID > s.nextAdmission || seen[o.AdmissionID] || o.Revision == 0 || o.Revision < previous || o.Revision > s.revision {
+			return fmt.Errorf("invalid or duplicate snapshot outcome")
+		}
+		seen[o.AdmissionID] = true
+		previous = o.Revision
 	}
 	return nil
 }

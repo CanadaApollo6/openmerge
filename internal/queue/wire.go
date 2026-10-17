@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"strings"
 	"time"
 )
 
@@ -275,7 +276,7 @@ func decodeJSON(payload []byte, value any) error {
 	return requireWireFields(payload, reflect.TypeOf(value).Elem(), "wire")
 }
 
-// Every v1 field is required, including false/zero values and nested PR fields.
+// Every non-optional v1 field is required, including false/zero and nested fields.
 // Inspect only the explicit wire schema; time and RawMessage decode themselves.
 func requireWireFields(raw []byte, schema reflect.Type, path string) error {
 	if len(bytes.TrimSpace(raw)) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
@@ -285,6 +286,8 @@ func requireWireFields(raw []byte, schema reflect.Type, path string) error {
 		return nil
 	}
 	switch schema.Kind() {
+	case reflect.Pointer:
+		return requireWireFields(raw, schema.Elem(), path)
 	case reflect.Struct:
 		var fields map[string]json.RawMessage
 		if err := json.Unmarshal(raw, &fields); err != nil {
@@ -292,8 +295,12 @@ func requireWireFields(raw []byte, schema reflect.Type, path string) error {
 		}
 		for i := 0; i < schema.NumField(); i++ {
 			field := schema.Field(i)
-			name := field.Tag.Get("json")
-			if err := requireWireFields(fields[name], field.Type, path+"."+name); err != nil {
+			name, options, _ := strings.Cut(field.Tag.Get("json"), ",")
+			value, exists := fields[name]
+			if !exists && options == "omitempty" {
+				continue
+			}
+			if err := requireWireFields(value, field.Type, path+"."+name); err != nil {
 				return err
 			}
 		}

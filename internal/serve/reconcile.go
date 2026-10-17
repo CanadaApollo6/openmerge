@@ -75,10 +75,10 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 		// default branch (and therefore the policy) stays at the same commit.
 		w.summaries = make(map[int]forge.PullRequestSummary)
 	}
-	if loadErr == nil && state.ConfigDigest != w.configDigest {
+	if loadErr == nil && (state.ConfigDigest != w.configDigest || w.cfg.QueueConfig().MaxDepth() > 1 && !state.WindowInitialized()) {
 		// Publish the policy before using it. Replay invalidates work built under
 		// another digest, and start gates reject workers holding an older policy.
-		_, err = s.store.Append(ctx, w.id, []queue.Event{queue.ConfigApplied{Commit: configTip, Digest: w.configDigest}}, "")
+		_, err = s.store.Append(ctx, w.id, []queue.Event{w.cfg.QueueConfig().Applied(configTip, w.configDigest)}, "")
 		if err != nil {
 			return err
 		}

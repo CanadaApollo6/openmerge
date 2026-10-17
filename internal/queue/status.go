@@ -25,3 +25,12 @@ func (s State) PendingBisection() bool {
 	}
 	return false
 }
+
+// PendingBatchSize reports the next retained retry/bisection boundary. A nonzero
+// value is exempt from adaptive resizing, which applies only to fresh batches.
+func (s State) PendingBatchSize() int {
+	if len(s.pending) == 0 {
+		return 0
+	}
+	return len(s.pending[0].prs)
+}

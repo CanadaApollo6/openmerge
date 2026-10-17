@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// BuildChainedTestRef admits one member of the fixed window. Construction still
+// BuildChainedTestRef admits one member of the adaptive window. Construction still
 // uses BuildTestRef's pinned inputs and its unique per-batch action key.
 type BuildChainedTestRef struct {
 	BuildTestRef
@@ -190,7 +190,7 @@ func cloneBatch(b *Batch) *Batch {
 	return &c
 }
 
-// MaxDepth gives the fixed admission window; zero is the legacy default of one.
+// MaxDepth gives the admission ceiling; zero is the legacy default of one.
 func (cfg Config) MaxDepth() int {
 	if cfg.SpeculationMaxDepth == 0 {
 		return 1
@@ -241,6 +241,9 @@ func (s *State) startChainedBatch(e ChainedBatchStarted) {
 		s.pending = s.pending[1:]
 	}
 	b := &Batch{Speculative: true, ID: e.BatchID, BaseSHA: e.BaseSHA, ConfigDigest: s.ConfigDigest, PRs: slices.Clone(e.PRs), FromBisection: fromBisection, TestRef: "openmerge/queue/" + s.BaseBranch + "/" + e.BatchID, Phase: Building, ParentBatchID: e.ParentBatchID, ChainPosition: e.Position}
+	if s.window != nil && !s.window.BoundsRecorded {
+		s.window.LegacySpeculative = true
+	}
 	s.nextBatch++
 	if s.Active == nil {
 		s.Active = b
@@ -336,7 +339,7 @@ func (s State) entryPosition(pr int) int {
 }
 
 func planChainAdmission(cfg Config, s State, now time.Time) []Action {
-	if cfg.ConfigDigest != s.ConfigDigest || s.PauseReason(cfg) != "" || len(s.Batches()) >= cfg.MaxDepth() {
+	if cfg.ConfigDigest != s.ConfigDigest || s.PauseReason(cfg) != "" || len(s.Batches()) >= s.Window(cfg) {
 		return nil
 	}
 	if s.buildRetry.failures > 0 && now.Sub(s.buildRetry.failedAt) < cfg.buildRetryDelay(s.buildRetry.failures) {

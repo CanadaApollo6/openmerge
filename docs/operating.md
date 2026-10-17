@@ -750,7 +750,7 @@ success could restore success without invalidating the old generation. The why
 view instead groups identical consecutive reopen/refresh pairs and explains
 whether the fold actually revoked recorded success. Stored evidence is retained.
 
-### Speculative testing with a fixed window
+### Speculative testing with an adaptive window
 
 A queue may set `speculation.max_depth` above 1 to test a dependent chain:
 
@@ -767,9 +767,16 @@ queues:
 ```
 
 Both depths default to 1; require `1 <= min_depth <= max_depth <= 32`.
-This implementation uses a fixed window equal to `max_depth`. `min_depth` is
-validated and included in the effective policy digest, reserved for the later
-adaptive-window step. The default stays 1 per ADR 0009 until its dogfooding
+A new queue starts with W = `max_depth`. Every landing (including a bisection
+half) grows W by one up to that ceiling. A confirmed original-batch failure,
+including a check timeout or build conflict, halves W, rounding down with a floor
+of `min_depth`. Bisection failures do not halve it again. Provisional failures,
+invalidations, cancellation and duplicate observations do not change W. Idle
+queues retain W; configuration changes clamp it to the new bounds. A shrinking
+window blocks new admissions and does not cancel admitted work (a configuration
+change independently invalidates unstarted landings as before).
+
+The default stays 1 per ADR 0009 until its dogfooding
 criteria are met. Explicit depth-1 defaults retain the pre-speculation config
 digest, so upgrading unchanged YAML does not discard active work or pending
 bisection groups. Changing either setting invalidates
@@ -788,8 +795,37 @@ predecessors settle; an invalidated predecessor discards those results without
 blaming their changes. Confirmed failure invalidates the suffix and bisects the
 oldest batch, with both halves ahead of unrelated build retries and fresh work.
 Admission conservatively stops behind any provisional or failed batch, even
-while free window slots remain; PR 5 must explicitly decide whether to retain
-that rule.
+while free window slots remain. This policy is retained: an eight-seed one-day
+comparison admitted 35 extra wasted adaptive-profile runs when that block was
+removed, with slightly worse median and p95. See the
+[planner-backed evidence](research/phase2-chain.md).
+
+Adaptive batch size is separately opt-in:
+
+```yaml
+batch:
+  max_size: 8
+  max_wait: 5m
+  target_pass_rate: 0.8
+```
+
+`target_pass_rate` must be a number strictly between 0 and 1. The planner counts
+checks-failure and timeout dequeues against those dequeues plus landed changes,
+using the last 200 such changes in log order. Conflicts and other dequeues are
+excluded. Below 20 samples it uses `max_size`; afterward it chooses the largest
+k <= `max_size` with `(1 − p̂)^k >= target`, never below one. Equality passes using
+exact integer/rational comparisons of the target's canonical decimal; no floating
+point exponentiation or logarithm decides admission. A policy digest change
+restarts this history and follows the existing invalidation/regrouping protocol.
+While policy is unchanged, pending bisection and infrastructure retry groups keep
+their sizes as the estimate updates. Leave the target unset to preserve fixed
+batch sizing.
+
+At small volumes a 200-change history can be several weeks old. Treat this as a
+size ceiling, not a prediction of independent CI outcomes: interacting failures
+and runner overload can make the estimate misleading. Inspect its sample count,
+CI timeout dequeues and the last window failure before raising depth or changing
+the target. A lower target permits larger batches and more failure-isolation work.
 
 Keep `max_depth` at 1 unless the repository has at least `max_depth` CI runners
 available for these checks. This guidance is per repository; multiple base queues
@@ -840,15 +876,21 @@ Reruns keep separate rows. A change also appears in successor runs whose tested
 commits contain it. Legacy aggregate events have no run identities; status labels
 those rows as aggregates instead of inventing IDs. The status API adds
 `run_ledger` and `gate` to entries, and current `window` and `batch_size` to queues
-when runtime configuration is available. Chain, position, batches ahead and
+when runtime configuration is available. `failure_estimate` contains `failures`,
+`samples`, display-only `rate` (p̂), and the optional `target_pass_rate`.
+`last_window_failure` identifies the queue-fold `revision`, `batch_id` and `reason`
+that last halved W. This revision is an ordinal within the queue log, not a global
+database event ID. These inputs also appear in human CLI output. Chain, position, batches ahead and
 invalidation reasons remain visible. Gate names explain checks, predecessor
 settlement, bisection, `max_wait` and a full window. `landing-preflight` includes
 approval: approval and other final merge conditions are evaluated by the executor
 at preflight, so that gate does not distinguish approval separately. The existing
 PR check summary
-includes the configured window and batch size and up to eight recent ledger rows;
+includes a separate bounded queue paragraph with W, fresh-batch size, p̂ and
+sample count, last window failure and an eight-batch chain excerpt, followed by
+up to eight recent ledger rows;
 API/CLI retain the full recorded history.
-No new summary comment is posted. Adaptive inputs remain for PR 5.
+No new summary comment is posted.
 
 Cancellation adds wire-v1 events `batch_runs_observed` (all accepted CI names,
 separate from the retry-policy subset), `check_cancellation_requested` and
@@ -869,9 +911,21 @@ The additive wire-v1 chain types require compatible workers. Drain old workers
 before upgrading. Returning to depth 1 does not make an older binary
 able to replay those records; rollback across their first use requires a database
 restore. Existing depth-1 event/action wire types and fixtures are unchanged.
-Journals written by pre-merge heads of this PR are intentionally unreadable;
+Journals written by pre-merge heads of PR 4 are intentionally unreadable;
 compatibility is claimed only with `origin/main`.
 
-Snapshots currently have an encode/decode codec only; the store still replays
-journals and does not write or load these snapshots. PR 5 must include the
-adaptive window state in the codec before snapshots can support that policy.
+Snapshots currently have a version-2 encode/decode codec only; the store still
+replays journals and does not write or load these snapshots. The codec retains W,
+its bounds and last failure, each batch's once-only failure marker, the ordered
+last-200 outcome ring and pending cancellation confirmations. The full encoding
+must be a byte fixed point across encode/decode, including retained confirmations.
+Persistence/compaction and historical ledger retention remain separate work.
+
+Speculative `config_applied` events add optional `window` bounds so replay can
+clamp at the exact policy transition; a digest alone cannot recover those bounds.
+No new event/action type is needed. Default depth-1 events omit the field. Existing
+speculative journals receive one same-digest bounds initialization without
+invalidating admitted batches or clearing their outcome history; adaptation starts
+from their old fixed ceiling. A previously serial queue carries W = 1 into a
+higher ceiling. Mixed old/new speculative workers cannot read the added bounds;
+drain old workers before upgrading.

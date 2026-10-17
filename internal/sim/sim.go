@@ -3,6 +3,8 @@ package sim
 import (
 	"container/heap"
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -54,40 +56,44 @@ type loggedEvent struct {
 }
 
 type simulation struct {
-	ciWaiting           []*ciJob
-	ciRunning           int
-	ciJobs              []*ciJob
-	interactions        [][2]int
-	cfg                 Config
-	now, start          time.Time
-	forge               *fake.Forge
-	repo                forge.RepoRef
-	state               queue.State
-	executor            executor.Executor
-	ci, webhook, faults *rand.Rand
-	prs                 []pullRequest
-	tests               map[string]*testRun
-	events              []loggedEvent
-	scheduled           timeline
-	sequence, attempt   uint64
-	completed           map[string]bool
-	planned             map[string]queue.Action
-	retryAt             map[string]time.Time
-	pendingFaults       map[string]int
-	mainSHA             string
-	mainTips            []string
-	rootSHA             string
-	landed              map[int]string
-	violation           error
-	result              Result
-	boundary            *faultForge
-	initialized         bool
-	attempts            map[string]string
-	disturbance         map[string]int // per landing attempt: disturbances seen when it started
-	abandoned           map[string]string
-	abandonedAttempts   map[string]bool
-	observed            map[string]*forgeLanding
-	lastFence           string
+	expectedWindow             int
+	windowFailures             map[string]bool
+	expectedOutcomes           []bool
+	windowArea, coldWindowArea float64
+	ciWaiting                  []*ciJob
+	ciRunning                  int
+	ciJobs                     []*ciJob
+	interactions               [][2]int
+	cfg                        Config
+	now, start                 time.Time
+	forge                      *fake.Forge
+	repo                       forge.RepoRef
+	state                      queue.State
+	executor                   executor.Executor
+	ci, webhook, faults        *rand.Rand
+	prs                        []pullRequest
+	tests                      map[string]*testRun
+	events                     []loggedEvent
+	scheduled                  timeline
+	sequence, attempt          uint64
+	completed                  map[string]bool
+	planned                    map[string]queue.Action
+	retryAt                    map[string]time.Time
+	pendingFaults              map[string]int
+	mainSHA                    string
+	mainTips                   []string
+	rootSHA                    string
+	landed                     map[int]string
+	violation                  error
+	result                     Result
+	boundary                   *faultForge
+	initialized                bool
+	attempts                   map[string]string
+	disturbance                map[string]int // per landing attempt: disturbances seen when it started
+	abandoned                  map[string]string
+	abandonedAttempts          map[string]bool
+	observed                   map[string]*forgeLanding
+	lastFence                  string
 }
 
 // Run drains a workload, outstanding CI, and durable side effects. It returns a
@@ -101,13 +107,19 @@ func Run(cfg Config) (Result, error) {
 	return s.run()
 }
 
-func newSimulation(cfg Config) (*simulation, error) {
+// The optional storage override is used to prove compact/full fake equivalence.
+func newSimulation(cfg Config, compactTrees ...bool) (*simulation, error) {
 	cfg, err := cfg.normalized()
 	if err != nil {
 		return nil, err
 	}
+	if cfg.Planner.MaxDepth() > 1 || cfg.Planner.BatchTargetPassRate > 0 {
+		policy, _ := json.Marshal(cfg.Planner)
+		cfg.Planner.ConfigDigest = fmt.Sprintf("%x", sha256.Sum256(policy))
+	}
 	start := time.Unix(0, 0).UTC()
 	s := &simulation{
+		expectedWindow: cfg.Planner.MaxDepth(), windowFailures: make(map[string]bool),
 		cfg: cfg, start: start, now: start, forge: fake.NewDeterministic(), repo: forge.RepoRef{Path: "sim/project"},
 		ci: rand.New(rand.NewPCG(cfg.Seed, 2)), webhook: rand.New(rand.NewPCG(cfg.Seed, 3)),
 		faults: rand.New(rand.NewPCG(cfg.Seed, 4)), tests: make(map[string]*testRun),
@@ -116,6 +128,13 @@ func newSimulation(cfg Config) (*simulation, error) {
 		attempts: make(map[string]string), disturbance: make(map[string]int), abandoned: make(map[string]string), abandonedAttempts: make(map[string]bool), observed: make(map[string]*forgeLanding),
 		result: Result{Config: cfg, FaultsByMethod: make(map[string]int), PRs: cfg.PRs, Dequeued: make(map[queue.DequeueReason]int), Blocked: make(map[queue.DequeueReason]int)},
 	}
+	compact := cfg.PRs > 2000
+	if len(compactTrees) > 0 {
+		compact = compactTrees[0]
+	}
+	if compact {
+		s.forge.CompactTrees(s.repo)
+	}
 	base, fence := s.forge.Init(s.repo, "main", "openmerge/fence/main")
 	s.lastFence = fence
 	s.boundary = &faultForge{Forge: s.forge, sim: s, scope: "setup"}
@@ -123,6 +142,7 @@ func newSimulation(cfg Config) (*simulation, error) {
 	s.mainTips = []string{base}
 	s.rootSHA = base
 	s.state = queue.State{BaseBranch: "main", BaseSHA: base, Fence: fence}
+
 	s.executor = executor.Executor{
 		Driver: s.boundary, Git: s.boundary, Repo: s.repo, Base: "main", RequiredChecks: []string{"ci"},
 		Now: func() time.Time { return s.now },
@@ -205,7 +225,7 @@ func (s *simulation) run() (Result, error) {
 func (s *simulation) step() (bool, error) {
 	if !s.initialized {
 		if retry := s.retryAt["setup"]; retry.After(s.now) {
-			s.now = retry
+			s.advance(retry)
 		}
 		_, err := s.boundary.EnsureFence(context.Background(), s.repo, "openmerge/fence/main")
 		if errors.Is(err, errForge) {
@@ -214,6 +234,9 @@ func (s *simulation) step() (bool, error) {
 		}
 		if err != nil {
 			return false, err
+		}
+		if s.cfg.Planner.ConfigDigest != "" {
+			s.record(s.cfg.Planner.Applied("sim-policy", s.cfg.Planner.ConfigDigest))
 		}
 		s.initialized = true
 		s.recoverFaults("setup")
@@ -252,7 +275,7 @@ func (s *simulation) step() (bool, error) {
 		consider(at)
 	}
 	if !next.IsZero() {
-		s.now = next
+		s.advance(next)
 		return false, nil
 	}
 	if len(s.state.Entries) > 0 || len(actions) > 0 {
@@ -404,7 +427,9 @@ func (s *simulation) record(event queue.Event) {
 		}
 	}
 	s.events = append(s.events, loggedEvent{At: s.now, Event: event})
+	before := s.state
 	s.state = queue.Apply(s.state, event)
+	s.observeAdaptation(before, event)
 	if s.cfg.Planner.MaxDepth() > 1 {
 		for _, b := range s.state.Following {
 			for _, pr := range b.PRs {
@@ -455,7 +480,7 @@ func (s *simulation) startCI(sha string, prs []int) {
 		}
 	}
 	run := &testRun{batchID: batch.ID, startedTestingAt: batch.StartedTestingAt, base: batch.BaseSHA, heads: slices.Clone(batch.PRs), method: s.cfg.MergeMethod, ref: batch.TestRef, success: s.ci.Float64() >= s.cfg.FlakeRate}
-	commit, err := s.forge.Commit(s.repo, sha)
+	commit, err := s.forge.CommitMetadata(s.repo, sha)
 	if err != nil {
 		s.violation = err
 		return
@@ -585,4 +610,20 @@ func (s *simulation) emit(action queue.Action, event queue.Event) error {
 	}
 	s.record(event)
 	return s.violation
+}
+
+func (s *simulation) advance(next time.Time) {
+	window := float64(s.state.Window(s.cfg.Planner))
+	s.windowArea += next.Sub(s.now).Seconds() * window
+	end := minTime(next, s.start.Add(24*time.Hour))
+	if end.After(s.now) {
+		s.coldWindowArea += end.Sub(s.now).Seconds() * window
+	}
+	s.now = next
+}
+func minTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return a
+	}
+	return b
 }

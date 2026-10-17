@@ -30,6 +30,27 @@ def mutation(path, *edits):
 LAND_SHA = "Base: x.Base, ExpectedBaseSHA: a.ExpectedBaseSHA, TestedSHA: a.TestedSHA,"
 ABANDON = "return emit(queue.LandingAbandoned{BatchID: a.BatchID, NewFence: next})"
 MUTANTS = {
+    "window_does_not_halve": mutation(
+        "internal/queue/adaptive.go", ("s.window.Current/2", "s.window.Current")
+    ),
+    "window_does_not_grow": mutation(
+        "internal/queue/adaptive.go", ("s.window.Current+1", "s.window.Current")
+    ),
+    "halves_halve_window_again": mutation(
+        "internal/queue/adaptive.go", ("b.FromBisection || b.windowFailureRecorded", "b.windowFailureRecorded")
+    ),
+    "ignore_adaptive_formation": mutation(
+        PLAN, ("size := s.BatchSize(cfg)", "size := max(1,cfg.BatchMaxSize)")
+    ),
+    "ignore_adaptive_size": mutation(
+        "internal/queue/adaptive.go", ("if target == 0 || samples < 20 {", "if true {")
+    ),
+    "adaptive_equality_rejected": mutation(
+        "internal/queue/adaptive.go", ("if left.Cmp(right) < 0 {", "if left.Cmp(right) <= 0 {")
+    ),
+    "outcome_ring_too_short": mutation(
+        "internal/queue/adaptive.go", ("len(s.outcomes)-200:", "len(s.outcomes)-199:")
+    ),
     "cancel_landing_or_landed_batch": mutation(
         "internal/queue/check_cancellation.go",
         ("!b.Speculative || b.Phase == Landing || b.TestedSHA", "!b.Speculative || b.TestedSHA"),
@@ -40,8 +61,8 @@ MUTANTS = {
     "blame_provisional_failure": mutation(
         APPLY, ("if b.Speculative && b != s.Active {\n\t\tb.ProvisionalFailure", "if false {\n\t\tb.ProvisionalFailure")
     ),
-    "ignore_fixed_window": mutation(
-        "internal/queue/chain.go", ("len(s.Batches()) >= cfg.MaxDepth()", "false")
+    "ignore_adaptive_window": mutation(
+        "internal/queue/chain.go", ("len(s.Batches()) >= s.Window(cfg)", "false")
     ),
     "chain_built_on_wrong_commit": mutation(
         APPLY, ("b.LandingSHA = e.TestedSHA", "b.LandingSHA = b.BaseSHA")
@@ -145,10 +166,12 @@ PROBE = '''package sim
 import (
     "testing"
     "time"
+    "strings"
+    "fmt"
     "github.com/CanadaApollo6/openmerge/internal/queue"
 )
 func TestMutationRunProbe(t *testing.T) {
-    for _, mode := range []string{"passing", "broken", "squash", "external", "batching", "ci-rerun", "chain", "chain-broken", "chain-timeout"} {
+    for _, mode := range []string{"passing", "broken", "squash", "external", "batching", "ci-rerun", "chain", "chain-broken", "chain-timeout", "adaptive", "adaptive-boundary"} {
         t.Run(mode, func(t *testing.T) {
             cfg := smallConfig()
             cfg.PRs, cfg.MaxSteps, cfg.Faults = 2, 10000, DefaultFaults()
@@ -171,6 +194,43 @@ func TestMutationRunProbe(t *testing.T) {
                 cfg.BrokenRate=0
                 if mode == "chain-broken" { cfg.BrokenRate=.5 }
                 if mode == "chain-timeout" { cfg.Planner.CheckTimeout=90*time.Second }
+            }
+            if mode == "adaptive" || mode == "adaptive-boundary" {
+                cfg.PRs,cfg.ArrivalWindow,cfg.Faults = 256,0,Faults{}
+                cfg.Planner.SpeculationMaxDepth=4
+                cfg.CI=&CIConfig{Runners:50,RerunsSupported:true,CancellationSupported:true}
+                cfg.Planner.BatchMaxSize=8
+                cfg.Planner.BatchTargetPassRate=.8
+                cfg.BrokenRate=.1
+            }
+            if mode == "adaptive-boundary" {
+                cfg.Planner.BatchTargetPassRate=.81
+                sim,err:=newSimulation(cfg)
+                if err!=nil { t.Fatal(err) }
+                sim.record(sim.cfg.Planner.Applied("boundary",strings.Repeat("a",64)))
+                sim.cfg.Planner.ConfigDigest=strings.Repeat("a",64)
+                for pr:=1;pr<=20;pr++ {
+                    sim.record(queue.PRObserved{PR:pr,HeadSHA:"h",Eligible:true,Trusted:true})
+                    sim.record(queue.EnqueueRequested{PR:pr,At:sim.now})
+                    id:=fmt.Sprintf("b%d",pr)
+                    sim.record(queue.ChainedBatchStarted{BatchID:id,BaseSHA:sim.state.BaseSHA,PRs:[]queue.BatchPR{{PR:pr,HeadSHA:"h"}},At:sim.now,Position:1})
+                    sha:=fmt.Sprintf("sha%d",pr)
+                    sim.record(queue.ChainedTestRefBuilt{BatchID:id,TestedSHA:sha,LandingSHA:sha,Method:queue.Merge,At:sim.now,Position:1})
+                    if pr<=2 {
+                        sim.record(queue.ChecksFailureConfirmed{BatchID:id,TestedSHA:sha,Reason:queue.ChecksFailed})
+                        sim.record(queue.Dequeued{PR:pr,AdmissionID:uint64(pr),Reason:queue.ChecksFailed})
+                    } else {
+                        sim.record(queue.ChecksCompleted{TestedSHA:sha,Success:true})
+                        sim.record(queue.LandingStarted{BatchID:id,AttemptID:id,FenceToken:sim.state.Fence,At:sim.now})
+                        // Fold directly: these test commits have no fake git graph.
+                        before:=sim.state
+                        e:=queue.Landed{BatchID:id,NewBaseSHA:sha,NewFence:"fence"}
+                        sim.state=queue.Apply(sim.state,e)
+                        sim.observeAdaptation(before,e)
+                    }
+                }
+                if err:=sim.checkAdaptiveInvariants();err!=nil { t.Fatalf("simulator rejected mutation: %v",err) }
+                return
             }
             r, err := Run(cfg)
             if err != nil { t.Fatalf("simulator rejected mutation: %v; merged=%d", err, r.Merged) }

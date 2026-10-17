@@ -28,27 +28,29 @@ type Response struct {
 
 // Queue describes one served installation/repository/base/lane partition.
 type Queue struct {
-	Readiness     *Readiness                 `json:"readiness,omitempty"`
-	State         string                     `json:"state"`
-	Installation  string                     `json:"installation"`
-	Repository    string                     `json:"repo"`
-	Base          string                     `json:"base"`
-	Lane          string                     `json:"lane"`
-	Watermark     int64                      `json:"watermark"`
-	BaseSHA       string                     `json:"base_sha"`
-	Paused        bool                       `json:"paused"`
-	PauseReason   string                     `json:"pause_reason"`
-	PauseDetail   string                     `json:"pause_detail"`
-	Blocks        []Block                    `json:"blocks"`
-	Chain         []*Batch                   `json:"chain,omitempty"`
-	Invalidations []queue.BatchesInvalidated `json:"invalidations,omitempty"`
-	ActiveBatch   *Batch                     `json:"active_batch"`
-	Entries       []Entry                    `json:"entries"`
-	Window        int                        `json:"window,omitempty"`
-	BatchSize     int                        `json:"batch_size,omitempty"`
-	state         queue.State
-	runLedger     map[int][]Run
-	RulesSources  []RulesSource `json:"rules_sources,omitempty"`
+	Readiness         *Readiness                 `json:"readiness,omitempty"`
+	State             string                     `json:"state"`
+	Installation      string                     `json:"installation"`
+	Repository        string                     `json:"repo"`
+	Base              string                     `json:"base"`
+	Lane              string                     `json:"lane"`
+	Watermark         int64                      `json:"watermark"`
+	BaseSHA           string                     `json:"base_sha"`
+	Paused            bool                       `json:"paused"`
+	PauseReason       string                     `json:"pause_reason"`
+	PauseDetail       string                     `json:"pause_detail"`
+	Blocks            []Block                    `json:"blocks"`
+	Chain             []*Batch                   `json:"chain,omitempty"`
+	Invalidations     []queue.BatchesInvalidated `json:"invalidations,omitempty"`
+	ActiveBatch       *Batch                     `json:"active_batch"`
+	Entries           []Entry                    `json:"entries"`
+	FailureEstimate   *FailureEstimate           `json:"failure_estimate,omitempty"`
+	LastWindowFailure *queue.WindowFailure       `json:"last_window_failure,omitempty"`
+	Window            int                        `json:"window,omitempty"`
+	BatchSize         int                        `json:"batch_size,omitempty"`
+	state             queue.State
+	runLedger         map[int][]Run
+	RulesSources      []RulesSource `json:"rules_sources,omitempty"`
 }
 
 // RulesSource lists one source's independently revisioned policy findings.
@@ -817,4 +819,12 @@ func provisionalFailure(b *queue.Batch) string {
 		return string(queue.ChecksFailed)
 	}
 	return ""
+}
+
+// FailureEstimate exposes the exact planner inputs; Rate is display-only.
+type FailureEstimate struct {
+	Failures       int     `json:"failures"`
+	Samples        int     `json:"samples"`
+	Rate           float64 `json:"rate"`
+	TargetPassRate float64 `json:"target_pass_rate,omitempty"`
 }

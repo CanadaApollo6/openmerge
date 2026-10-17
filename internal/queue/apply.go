@@ -20,9 +20,23 @@ func Apply(s State, e Event) State {
 			s.Lifecycle, s.lifecycleRevision = e, s.revision
 		}
 	case ConfigApplied:
-		if e.Validate() != nil || e.Digest == s.ConfigDigest {
+		if e.Validate() != nil {
 			break
 		}
+		if e.Digest == s.ConfigDigest {
+			// Upgrade a pre-adaptation journal once without invalidating its
+			// chain or resetting outcomes. Later duplicates change nothing.
+			if !s.WindowInitialized() && e.Window != nil {
+				if s.window != nil {
+					s.window.Current = e.Window.MaxDepth
+					s.window.LastHalved = nil
+				}
+				s.applyWindow(e.Window)
+			}
+			break
+		}
+		s.applyWindow(e.Window)
+		s.outcomes = nil
 		s.ConfigCommit, s.ConfigDigest = e.Commit, e.Digest
 		s.buildRetry = buildRetryState{}
 		// Entries retain admission order and age; old retry/bisection groups
@@ -42,7 +56,7 @@ func Apply(s State, e Event) State {
 			s.refreshChecks(b)
 		}
 	case PRObserved:
-		s.observations[e.PR] = e
+		s.observations.put(e.PR, e)
 		if entry := s.entry(e.PR); entry != nil {
 			switch {
 			case entry.HeadSHA != e.HeadSHA:
@@ -58,7 +72,7 @@ func Apply(s State, e Event) State {
 			break
 		}
 		if s.entry(e.PR) == nil {
-			observation, known := s.observations[e.PR]
+			observation, known := s.observations.get(e.PR)
 			switch {
 			case !known || !observation.Eligible:
 				s.report(e.PR, "blocked", string(NotEligible), "PR does not satisfy queue entry conditions")
@@ -72,7 +86,7 @@ func Apply(s State, e Event) State {
 	case DequeueRequested:
 		s.requestDequeue(e.PR, Requested)
 	case PRClosed:
-		delete(s.observations, e.PR)
+		s.observations.remove(e.PR)
 		s.requestDequeue(e.PR, Closed)
 	case BaseMoved:
 		if e.SHA == s.BaseSHA {
@@ -283,7 +297,9 @@ func Apply(s State, e Event) State {
 			if s.Active.Speculative && e.NewBaseSHA != s.Active.LandingCommit() {
 				break
 			}
+			s.growWindow()
 			for _, pr := range s.Active.PRs {
+				s.recordOutcome(s.entry(pr.PR), false)
 				detail := "PR landed"
 				if entry := s.entry(pr.PR); entry != nil && entry.DequeueRequested {
 					detail = "already landed"
@@ -315,6 +331,12 @@ func Apply(s State, e Event) State {
 	case Dequeued:
 		if entry := s.entry(e.PR); entry != nil && entry.AdmissionID == e.AdmissionID && !s.isLanding(e.PR) &&
 			(e.BatchID == "" || s.Active != nil && s.Active.ID == e.BatchID) {
+			if e.Reason == ChecksFailed || e.Reason == ChecksTimeout {
+				if b := s.BatchForPR(e.PR); b != nil && b == s.Active {
+					s.halveWindow(b, e.Reason)
+				}
+				s.recordOutcome(entry, true)
+			}
 			detail := s.DequeueDetail(e.PR, e.Reason)
 			if b := s.BatchForPR(e.PR); b != nil {
 				s.rebuildBatch(b)
@@ -355,6 +377,12 @@ func cloneState(s State) State {
 		current.problems = slices.Clone(current.problems)
 		s.rulesSources[source] = current
 	}
+	s.outcomes = slices.Clone(s.outcomes)
+	if s.window != nil {
+		w := *s.window
+		w.LastHalved = s.LastWindowFailure()
+		s.window = &w
+	}
 	s.Entries = slices.Clone(s.Entries)
 	s.pending = slices.Clone(s.pending)
 	for i := range s.pending {
@@ -368,10 +396,6 @@ func cloneState(s State) State {
 	s.Invalidations = slices.Clone(s.Invalidations)
 	for i := range s.Invalidations {
 		s.Invalidations[i].BatchIDs = slices.Clone(s.Invalidations[i].BatchIDs)
-	}
-	s.observations = maps.Clone(s.observations)
-	if s.observations == nil {
-		s.observations = make(map[int]PRObserved)
 	}
 	s.dequeues = maps.Clone(s.dequeues)
 	if s.dequeues == nil {
@@ -526,7 +550,7 @@ type pendingGroup struct {
 func (s State) runnablePRs(prs []BatchPR) bool {
 	for _, pr := range prs {
 		entry := s.entry(pr.PR)
-		observation, known := s.observations[pr.PR]
+		observation, known := s.observations.get(pr.PR)
 		if entry == nil || entry.HeadSHA != pr.HeadSHA || !known || !observation.Eligible || !observation.Trusted || observation.HeadSHA != pr.HeadSHA {
 			return false
 		}
@@ -567,6 +591,9 @@ func (s *State) failBatch(b *Batch, reason DequeueReason) {
 		b.checksPassed = false
 		return
 	}
+	if reason == ChecksFailed || reason == ChecksTimeout || reason == Conflict {
+		s.halveWindow(b, reason)
+	}
 	if b.Speculative && len(s.Following) > 0 {
 		s.invalidateFrom(s.Following[0], "predecessor-failed")
 	}
@@ -600,7 +627,8 @@ type effectScope struct {
 }
 
 func (s *State) report(pr int, status, reason, detail string) {
-	head := s.observations[pr].HeadSHA
+	observation, _ := s.observations.get(pr)
+	head := observation.HeadSHA
 	if entry := s.entry(pr); entry != nil {
 		head = entry.HeadSHA
 	}
