@@ -40,6 +40,7 @@ const (
 
 // State is a replayable projection for one base branch. Its zero value is empty.
 type State struct {
+	Lifecycle    LifecycleChanged
 	BaseBranch   string
 	BaseSHA      string
 	ConfigCommit string
@@ -63,6 +64,7 @@ type State struct {
 	actionPoison       actionPoisonState
 	pause              PauseRequested
 	pauseRevision      uint64
+	lifecycleRevision  uint64
 	rulesSources       map[RulesSource]rulesSourceState
 	rulesPauseRevision uint64
 }

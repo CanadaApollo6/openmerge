@@ -28,6 +28,7 @@ within the limit are ignored.
 | Path | Response |
 | --- | --- |
 | `/v1/queues` | `{"version":1,"queues":[QUEUE,...]}`; empty list is `[]` |
+| `/v1/queues/{owner}/{repo}` | List every served queue for this repository |
 | `/v1/queues/{owner}/{repo}/{base}` | `{"version":1,"queue":QUEUE}` |
 | `/v1/queues/{owner}/{repo}/{base}/prs/{n}` | `{"version":1,"queue":QUEUE,"pr":ENTRY,"why":WHY}` |
 
@@ -45,6 +46,7 @@ Example queue response:
 {
   "version": 1,
   "queue": {
+    "state": "active",
     "installation": "456",
     "repo": "acme/project",
     "base": "main",
@@ -76,6 +78,14 @@ Example queue response:
   }
 }
 ```
+
+Queue `state` is `active`, `dormant`, `retired`, or `overlapping`.
+An absent lifecycle event means `active`; startup validation and settlement-only
+mode are in memory and do not change the persisted state. Lists include newly
+discovered bases and retained inactive queues without restarting the API.
+Lifecycle blocks prevent admission and new landings; they never suppress
+resolution of a recorded landing attempt.
+`openmerge queue status --repo owner/repo` lists every base; `--base` selects one.
 
 Queue entries are ordered by admission and positions are 1-based, including the
 active batch. `active_batch` is `null` when idle and `entries` is always an array.
@@ -173,8 +183,9 @@ migrations. `--api` defaults to `OPENMERGE_API_URL`, then
 It uses the same token environment/file options as serve. Redirects are refused.
 Timeout is 20 seconds; responses over 32 MiB are rejected.
 
-Omit `--repo` to list all queues. `--repo owner/name` selects a queue;
-`--base` then defaults to `main`. Explicit `--base` and `--pr` require `--repo`.
+Omit `--repo` to list all queues. `--repo owner/name` lists every served base
+in that repository; add `--base` to select one queue. PR detail defaults to
+`--base main`. Explicit `--base` and `--pr` require `--repo`.
 Human output is a compact table; PR detail adds its explanation and event IDs,
 timestamps, types and summaries. `--json` writes the successful API JSON **byte for byte**,
 including its trailing newline; errors go to stderr and produce no stdout JSON.

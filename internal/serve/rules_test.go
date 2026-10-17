@@ -285,7 +285,7 @@ func TestOverlappingRulesReadsCannotClearNewerBlock(t *testing.T) {
 			}
 			must(t, s.repositoryRules(t.Context(), w))
 			// Independent process-local workers share the durable queue, not scheduling state.
-			older := *w
+			older := worker{Target: w.Target, id: w.id, cfg: w.cfg}
 			older.rulesNextCheck = time.Time{}
 			started, release := make(chan struct{}), make(chan struct{})
 			defer close(release)
@@ -344,7 +344,7 @@ func TestOverlappingFailureAfterClearStillBlocks(t *testing.T) {
 	must(t, s.repositoryRules(t.Context(), w))
 	// The slower read fails; a faster read that began at the same revision passes
 	// and clears first. The failure must still block when it arrives.
-	slower := *w
+	slower := worker{Target: w.Target, id: w.id, cfg: w.cfg}
 	slower.rulesNextCheck = time.Time{}
 	started, release := make(chan struct{}), make(chan struct{})
 	defer close(release)

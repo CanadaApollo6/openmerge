@@ -15,6 +15,10 @@ func Apply(s State, e Event) State {
 	s = cloneState(s)
 	s.revision++
 	switch e := e.(type) {
+	case LifecycleChanged:
+		if e.Validate() == nil {
+			s.Lifecycle, s.lifecycleRevision = e, s.revision
+		}
 	case ConfigApplied:
 		if e.Validate() != nil || e.Digest == s.ConfigDigest {
 			break
@@ -50,6 +54,9 @@ func Apply(s State, e Event) State {
 			}
 		}
 	case EnqueueRequested:
+		if s.lifecycleBlocked() {
+			break
+		}
 		if s.entry(e.PR) == nil {
 			observation, known := s.observations[e.PR]
 			switch {

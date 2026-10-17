@@ -203,3 +203,23 @@ func TestWebhookRejections(t *testing.T) {
 type zeroReader struct{}
 
 func (zeroReader) Read(p []byte) (int, error) { clear(p); return len(p), nil }
+
+func TestBranchCreateDeleteNotifications(t *testing.T) {
+	for _, kind := range []string{"create", "delete"} {
+		for _, refType := range []string{"branch", "tag"} {
+			body := []byte(`{"ref":"release/v2","ref_type":"` + refType + `","repository":{"full_name":"acme/project"},"installation":{"id":7}}`)
+			e, err := VerifyAndParse(signedRequest(kind, body), webhookSecret)
+			must(t, err)
+			if refType == "tag" {
+				if _, ok := e.Payload.(Ignored); !ok {
+					t.Fatal("tag triggered branch discovery")
+				}
+				continue
+			}
+			changed, ok := e.Payload.(BranchChanged)
+			if !ok || changed.Ref != "release/v2" || changed.Deleted != (kind == "delete") || e.InstallationID != 7 {
+				t.Fatalf("bad branch notification: %+v", e)
+			}
+		}
+	}
+}

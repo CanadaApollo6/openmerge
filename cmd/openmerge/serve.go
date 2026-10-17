@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/config/condition"
 	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/forge/github"
@@ -30,7 +31,7 @@ type serveOptions struct {
 	app, installation                                 int64
 	logLevel, committerName, committerEmail           string
 	apiListen, apiToken, apiTokenFile                 string
-	poll, rulesInterval                               time.Duration
+	poll, rulesInterval, discoveryInterval            time.Duration
 	concurrency                                       int
 	deleteHeadBranch                                  bool
 }
@@ -48,7 +49,7 @@ func parseServe(args []string, output io.Writer) (serveOptions, error) {
 	flags.StringVar(&o.database, "database-url", env("DATABASE_URL", ""), "Postgres URL (OPENMERGE_DATABASE_URL)")
 	flags.StringVar(&o.key, "github-private-key", env("GITHUB_PRIVATE_KEY", ""), "RSA PEM key path (OPENMERGE_GITHUB_PRIVATE_KEY)")
 	flags.StringVar(&o.repos, "repos", env("REPOS", ""), "comma-separated owner/repo names (OPENMERGE_REPOS)")
-	flags.StringVar(&o.base, "base", env("BASE", "main"), "base branch (OPENMERGE_BASE)")
+	flags.StringVar(&o.base, "base", env("BASE", ""), "deprecated optional comma-separated base branch/glob allowlist (OPENMERGE_BASE)")
 	flags.StringVar(&o.cache, "git-cache-dir", env("GIT_CACHE_DIR", ".openmerge-cache"), "process-exclusive git cache (OPENMERGE_GIT_CACHE_DIR)")
 	flags.StringVar(&o.listen, "webhook-listen", env("WEBHOOK_LISTEN", ""), "optional webhook address (OPENMERGE_WEBHOOK_LISTEN)")
 	flags.StringVar(&o.secret, "webhook-secret", env("WEBHOOK_SECRET", ""), "webhook HMAC secret (OPENMERGE_WEBHOOK_SECRET)")
@@ -62,6 +63,7 @@ func parseServe(args []string, output io.Writer) (serveOptions, error) {
 	flags.Int64Var(&o.app, "github-app-id", 0, "App ID (OPENMERGE_GITHUB_APP_ID)")
 	flags.Int64Var(&o.installation, "github-installation-id", 0, "installation ID (OPENMERGE_GITHUB_INSTALLATION_ID)")
 	flags.DurationVar(&o.poll, "poll-interval", time.Minute, "reconcile interval (OPENMERGE_POLL_INTERVAL)")
+	flags.DurationVar(&o.discoveryInterval, "discovery-interval", 10*time.Minute, "branch refresh interval (OPENMERGE_DISCOVERY_INTERVAL)")
 	flags.DurationVar(&o.rulesInterval, "rules-interval", 10*time.Minute, "repository rules validation interval (OPENMERGE_RULES_INTERVAL)")
 	flags.BoolVar(&o.deleteHeadBranch, "delete-head-branch", true, "default for deleting eligible landed heads; repository config overrides (OPENMERGE_DELETE_HEAD_BRANCH)")
 	flags.IntVar(&o.concurrency, "concurrency", 4, "concurrent queues (OPENMERGE_CONCURRENCY)")
@@ -70,10 +72,20 @@ func parseServe(args []string, output io.Writer) (serveOptions, error) {
 	}
 	overridden := make(map[string]bool)
 	flags.Visit(func(f *flag.Flag) { overridden[f.Name] = true })
-	for _, entry := range []struct{ flag, env string }{{"delete-head-branch", "DELETE_HEAD_BRANCH"}, {"github-app-id", "GITHUB_APP_ID"}, {"github-installation-id", "GITHUB_INSTALLATION_ID"}, {"poll-interval", "POLL_INTERVAL"}, {"rules-interval", "RULES_INTERVAL"}, {"concurrency", "CONCURRENCY"}} {
+	for _, entry := range []struct{ flag, env string }{{"delete-head-branch", "DELETE_HEAD_BRANCH"}, {"github-app-id", "GITHUB_APP_ID"}, {"github-installation-id", "GITHUB_INSTALLATION_ID"}, {"poll-interval", "POLL_INTERVAL"}, {"discovery-interval", "DISCOVERY_INTERVAL"}, {"rules-interval", "RULES_INTERVAL"}, {"concurrency", "CONCURRENCY"}} {
 		if value, ok := os.LookupEnv("OPENMERGE_" + entry.env); ok && !overridden[entry.flag] {
 			if err := flags.Set(entry.flag, value); err != nil {
 				return o, fmt.Errorf("OPENMERGE_%s: %w", entry.env, err)
+			}
+		}
+	}
+	if o.base != "" {
+		for _, base := range strings.Split(o.base, ",") {
+			if base == "" {
+				return o, errors.New("base allowlist must not contain empty selectors")
+			}
+			if _, err := condition.CompileGlob(base); err != nil {
+				return o, fmt.Errorf("invalid base allowlist: %w", err)
 			}
 		}
 	}
@@ -87,8 +99,8 @@ func parseServe(args []string, output io.Writer) (serveOptions, error) {
 	if o.database == "" || o.key == "" || o.app <= 0 || o.installation <= 0 || o.repos == "" {
 		return o, errors.New("database URL, GitHub App ID, private key path, installation ID and repos are required")
 	}
-	if o.poll <= 0 || o.rulesInterval <= 0 || o.concurrency <= 0 || o.base == "" || o.cache == "" {
-		return o, errors.New("poll interval, concurrency, base and git cache must be nonempty and positive")
+	if o.poll <= 0 || o.rulesInterval <= 0 || o.discoveryInterval <= 0 || o.concurrency <= 0 || o.cache == "" {
+		return o, errors.New("poll, rules and discovery intervals, concurrency and git cache must be nonempty and positive")
 	}
 	if o.listen != "" && o.secret == "" {
 		return o, errors.New("webhook listen requires a webhook secret")
@@ -158,18 +170,36 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger, saniti
 	if err != nil {
 		return err
 	}
-	var targets []serve.Target
-	var keys []store.QueueKey
-	for _, repo := range strings.Split(o.repos, ",") {
-		key := store.QueueKey{Installation: strconv.FormatInt(o.installation, 10), Repository: repo, BaseBranch: o.base}
-		keys = append(keys, key)
-		targets = append(targets, serve.Target{Key: key, Driver: driver, Git: git, BotLogin: driver.BotLogin(), CheckRules: func(ctx context.Context) ([]string, []string, error) {
-			return driver.ValidateRepositoryRules(ctx, forge.RepoRef{Path: repo}, o.base)
-		}, CheckPermissions: driver.ValidateInstallationPermissions, CheckProtection: func(ctx context.Context, method forge.MergeMethod) ([]string, []string, error) {
-			return driver.ValidateClassicProtection(ctx, forge.RepoRef{Path: repo}, o.base, method)
-		}})
+	if o.base != "" {
+		logger.Warn("--base / OPENMERGE_BASE is deprecated; configure queues[].base in the default-branch .openmerge.yml; the flag now only narrows configured bases", "allowlist", o.base)
 	}
-	service, err := serve.New(ctx, db, targets, serve.Options{PollInterval: o.poll, RulesInterval: o.rulesInterval, Concurrency: o.concurrency, Logger: logger, BackoffUntil: driver.BackoffUntil, DisableDeleteHeadBranch: !o.deleteHeadBranch})
+	installation := strconv.FormatInt(o.installation, 10)
+	targetFor := func(repo, base string) serve.Target {
+		key := store.QueueKey{Installation: installation, Repository: repo, BaseBranch: base}
+		return serve.Target{Key: key, Driver: driver, Git: git, BotLogin: driver.BotLogin(), CheckRules: func(ctx context.Context) ([]string, []string, error) {
+			return driver.ValidateRepositoryRules(ctx, forge.RepoRef{Path: repo}, base)
+		}, CheckPermissions: driver.ValidateInstallationPermissions, CheckProtection: func(ctx context.Context, method forge.MergeMethod) ([]string, []string, error) {
+			return driver.ValidateClassicProtection(ctx, forge.RepoRef{Path: repo}, base, method)
+		}}
+	}
+	var repositories []serve.Repository
+	for _, repo := range strings.Split(o.repos, ",") {
+		repositories = append(repositories, serve.Repository{Installation: installation, Name: repo,
+			Branches: func(ctx context.Context) ([]string, error) {
+				return driver.ListBranches(ctx, forge.RepoRef{Path: repo})
+			},
+			Target: func(base string) serve.Target { return targetFor(repo, base) },
+		})
+	}
+	var bases []string
+	if o.base != "" {
+		bases = strings.Split(o.base, ",")
+	}
+	service, err := serve.NewRepositories(ctx, db, repositories, serve.Options{PollInterval: o.poll, RulesInterval: o.rulesInterval, DiscoveryInterval: o.discoveryInterval, BaseAllowlist: bases, Concurrency: o.concurrency, Logger: logger, BackoffUntil: driver.BackoffUntil, DisableDeleteHeadBranch: !o.deleteHeadBranch,
+		RecoveryTarget: func(key store.QueueKey) (serve.Target, bool) {
+			return targetFor(key.Repository, key.BaseBranch), key.Installation == installation
+		},
+	})
 	if err != nil {
 		return err
 	}
@@ -179,7 +209,7 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger, saniti
 	for _, endpoint := range []struct {
 		name, address string
 		handler       http.Handler
-	}{{"webhook", o.listen, webhookHandler(service, []byte(o.secret))}, {"status API", o.apiListen, status.Handler(db, keys, o.apiToken, sanitizer)}} {
+	}{{"webhook", o.listen, webhookHandler(service, []byte(o.secret))}, {"status API", o.apiListen, status.DynamicHandler(db, service.Keys, o.apiToken, sanitizer)}} {
 		if endpoint.address == "" {
 			continue
 		}
@@ -259,7 +289,16 @@ func webhookHandler(service webhookReceiver, secret []byte) http.Handler {
 			return
 		}
 		if _, ignored := event.Payload.(github.Ignored); !ignored {
-			if err := service.Notify(r.Context(), strconv.FormatInt(event.InstallationID, 10), event.Repo.Path, event.DeliveryID); err != nil {
+			notify := service.Notify
+			switch event.Payload.(type) {
+			case github.BranchChanged:
+				if branches, ok := service.(interface {
+					NotifyBranches(context.Context, string, string, string) error
+				}); ok {
+					notify = branches.NotifyBranches
+				}
+			}
+			if err := notify(r.Context(), strconv.FormatInt(event.InstallationID, 10), event.Repo.Path, event.DeliveryID); err != nil {
 				http.Error(w, "delivery persistence failed", http.StatusServiceUnavailable)
 				return
 			}

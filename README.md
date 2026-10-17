@@ -169,19 +169,21 @@ export OPENMERGE_DATABASE_URL='postgres://postgres@localhost:54329/postgres?sslm
 export OPENMERGE_GITHUB_APP_ID=123
 export OPENMERGE_GITHUB_PRIVATE_KEY=/absolute/path/openmerge.pem
 export OPENMERGE_GITHUB_INSTALLATION_ID=456
-bin/openmerge serve --repos CanadaApollo6/openmerge --base main \
+bin/openmerge serve --repos CanadaApollo6/openmerge \
   --git-cache-dir /absolute/path/openmerge-cache --poll-interval 60s
 ```
 
 `--database-url`, `--github-app-id`, `--github-private-key`,
 `--github-installation-id`, `--repos`, `--base`, `--git-cache-dir`,
 `--poll-interval`, `--concurrency`, `--webhook-listen`, `--webhook-secret`,
-`--api-listen`, `--api-token-file`, `--rules-interval`, `--log-level`,
+`--api-listen`, `--api-token-file`, `--rules-interval`, `--discovery-interval`, `--log-level`,
 `--git-committer-name`, `--git-committer-email`, and `--delete-head-branch`
 all have matching `OPENMERGE_` environment variables: uppercase the flag name
 and replace hyphens with underscores. Flags override environment variables.
-`--repos` is a comma-separated list owned by one installation; the base defaults
-to `main`, polling to `60s`, concurrency to four queues, and the git cache to
+`--repos` is a comma-separated list owned by one installation. Configured bases
+expand into independent workers; optional `--base` is a deprecated branch/glob
+allowlist. Polling defaults to `60s`, branch refresh to `10m`, concurrency to
+four queues, and the git cache to
 `.openmerge-cache`. Use a separate cache for each process. Logs are structured
 JSON on stderr. Startup applies migrations and ensures each base's fence;
 SIGINT/SIGTERM cancels bounded I/O and releases claims before closing Postgres.
@@ -308,11 +310,13 @@ Phase 1 is complete, including the [version-1 JSON Schema](schema/openmerge.v1.j
 and fast-forward mode. The Mergify importer is
 planned for Phase 5; the native grammar already accepts the core attribute names.
 
-Phase 2.1 PR 1 adds multiple named queues with optional branch/glob `base`
-selectors and repository-level `delete_head_branch`, under the default branch's
-policy. Serving still uses `--repos` and one `--base`; other queues are logged
-as `not yet served`. Multiple base workers, installation discovery and webhook
-health follow in PRs 2–4. See the [configuration reference](internal/config/README.md).
+Phase 2.1 PRs 1–2 add multiple named queues with branch/glob `base` selectors,
+repository-level `delete_head_branch`, and independent workers for every concrete
+base, under the default branch's policy. Branch deletion/recreation and queue
+retirement preserve logs and fences; settlement runs before config and admission,
+including recovery outside current allowlists. Status lists every queue and its
+lifecycle state. Serving still selects repositories with `--repos`; installation
+discovery and webhook health follow in PRs 3–4. See the [configuration reference](internal/config/README.md).
 
 Operators must grant the App protected-base bypass and exclusive, nondeletable `openmerge/fence/*`
 ownership as described in the [forge contract](docs/forge-driver-contract.md#the-fence).

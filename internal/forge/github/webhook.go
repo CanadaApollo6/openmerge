@@ -67,6 +67,14 @@ type BranchPushed struct {
 
 func (BranchPushed) webhookPayload() {}
 
+// BranchChanged requests a full branch listing; tags do not affect queues.
+type BranchChanged struct {
+	Ref     string
+	Deleted bool
+}
+
+func (BranchChanged) webhookPayload() {}
+
 // PRCommentCreated defers command parsing and live authorization to the server.
 type PRCommentCreated struct {
 	Number                          int
@@ -127,6 +135,7 @@ type webhookEnvelope struct {
 	Ref     string `json:"ref"`
 	After   string `json:"after"`
 	Deleted bool   `json:"deleted"`
+	RefType string `json:"ref_type"`
 	Issue   struct {
 		Number      int             `json:"number"`
 		PullRequest json.RawMessage `json:"pull_request"`
@@ -181,7 +190,7 @@ func VerifyAndParse(r *http.Request, secret []byte) (Event, error) {
 	kind := r.Header.Get("X-GitHub-Event")
 	e := Event{DeliveryID: delivery, Payload: Ignored{Event: kind}}
 	switch kind {
-	case "pull_request", "pull_request_review", "check_run", "check_suite", "status", "push", "issue_comment", "installation", "installation_repositories":
+	case "pull_request", "pull_request_review", "check_run", "check_suite", "status", "push", "create", "delete", "issue_comment", "installation", "installation_repositories":
 	default:
 		return e, nil
 	}
@@ -215,6 +224,10 @@ func VerifyAndParse(r *http.Request, secret []byte) (Event, error) {
 		switch raw.State {
 		case "success", "failure", "error":
 			e.Payload = ChecksChanged{SHA: raw.SHA}
+		}
+	case "create", "delete":
+		if raw.RefType == "branch" {
+			e.Payload = BranchChanged{Ref: raw.Ref, Deleted: kind == "delete"}
 		}
 	case "push":
 		if strings.HasPrefix(raw.Ref, "refs/heads/") {
@@ -259,6 +272,11 @@ func validateEvent(e Event) error {
 		}
 	case ChecksChanged:
 		if p.SHA != "" {
+			_, _, err := splitRepo(e.Repo)
+			return err
+		}
+	case BranchChanged:
+		if p.Ref != "" && e.InstallationID > 0 {
 			_, _, err := splitRepo(e.Repo)
 			return err
 		}

@@ -12,6 +12,65 @@ and use `openmerge queue status [--json]`. The [API guide](api.md) documents the
 bearer token requirements, response contract, CLI and exit codes. No database or
 GitHub credentials are needed by an API client.
 
+## Multiple bases and branch lifecycle
+
+Repositories remain explicitly selected with `--repos owner/repo,owner/other` and
+one installation per process. Put all queue policies in each repository's
+**default-branch** `.openmerge.yml`; a release branch's file cannot override it.
+Use `queues[].base` for literals or globs, for example `release/*`. Omitted `base`
+selects the observed default branch. Every matching concrete base gets its own
+serial worker, protection/rules checks and `openmerge/fence/<base>` fence.
+Protect every selected base and its fence before enabling the selector.
+
+At startup and every `--discovery-interval` / `OPENMERGE_DISCOVERY_INTERVAL`
+(default `10m`), the server lists all branch pages using conditional requests.
+Verified branch create/delete notifications also request a fresh listing.
+Subscribe the App to branch `create` and `delete` events when using webhooks; deliveries only wake
+reconciliation and never establish branch existence. Polling repairs missed
+deliveries. OpenMerge's internal `openmerge/*` refs are excluded from expansion.
+Failed listings keep the previous expansion, log a warning and retry with
+backoff. They never pause or resume a queue. Branch refresh honors the rules
+cache; a transient rules-read failure keeps the previous rules and lifecycle.
+
+`--base` / `OPENMERGE_BASE` is now an optional, deprecated comma-separated
+branch/glob allowlist. Existing `--base main` deployments keep their exact
+installation/repository/main/empty-lane key, history and fence. To serve release
+queues, add their selectors to the default-branch config and remove or widen
+both the flag and its environment value. The allowlist cannot create a queue
+absent from config. A selector overlap blocks only the involved queue entries;
+other entries continue serving. Fix the selectors and let branch refresh retry.
+
+A deleted base becomes **dormant**. A removed queue entry or narrowed selector
+makes its old bases **retired**. Neither admits PRs nor starts landings; logs and
+fences are retained. Recreating a base first settles any previous attempt through
+its fence and repeats overlap/protection validation before activation. Do not
+reset the fence or remove its stored history to reactivate a queue.
+
+Every worker cycle settles in-flight landings before notifications, config,
+rules, PR reads or admission. Config errors, operator pauses and read failures
+cannot bypass settlement. Startup scans historical queues in the configured
+installation, including repositories/bases excluded by current `--repos`,
+`--base` or config, and recovers their attempts with settlement-only workers.
+Unavailable credentials or a missing base can leave an attempt unsettled;
+access returning permits a retry, and never implies an abandoned push.
+
+`openmerge queue status --repo owner/repo` lists all its served bases; add
+`--base release/v1` for one queue. The API list is dynamic as branches appear.
+The `state` field / CLI `STATE` column is `active`, `dormant`, `retired`, or
+`overlapping`. `active` may still have independent pauses. Startup settlement
+and validation are in-memory gates and do not append lifecycle events. An
+always-active queue, including an existing single `main` queue, writes no
+lifecycle events on upgrade or restart.
+
+Once a real lifecycle transition is recorded, its `lifecycle_changed` event
+requires a binary that understands it. Reactivation does not remove that event:
+an older binary cannot replay that queue, even after restoring single-queue
+configuration. Keep a compatible binary when rolling back; do not edit the log.
+
+Follow-up: prune workers for long-dormant queues to bound worker and polling
+costs. Retain their logs and fences, settle recorded landings first, and restore
+the same queue identity when a matching branch returns.
+
 ## Queue CI provenance
 
 For every merge method, CI must run on `push` events for
