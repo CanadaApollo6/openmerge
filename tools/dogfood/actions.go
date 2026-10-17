@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/store"
 	"github.com/google/go-github/v93/github"
 )
 
@@ -56,12 +57,14 @@ func (a githubActions) Attempt(ctx context.Context, id int64, n int) (*github.Wo
 }
 
 type Attempt struct {
-	ID         int64     `json:"run_id"`
-	Number     int       `json:"run_attempt"`
-	At         time.Time `json:"at"`
-	SHA        string    `json:"head_sha"`
-	Branch     string    `json:"branch"`
-	Conclusion string    `json:"conclusion"`
+	ID          int64     `json:"run_id"`
+	Number      int       `json:"run_attempt"`
+	At          time.Time `json:"at"`
+	SHA         string    `json:"head_sha"`
+	Branch      string    `json:"branch"`
+	Conclusion  string    `json:"conclusion"`
+	Status      string    `json:"status"`
+	CompletedAt time.Time `json:"completed_at"`
 }
 
 func queueCI(r *github.WorkflowRun) bool {
@@ -84,15 +87,11 @@ func attempts(ctx context.Context, a Actions, runs []*github.WorkflowRun) ([]*gi
 				continue
 			}
 			seen[key] = true
-			run := r
-			if r.GetRunAttempt() > 1 {
-				var err error
-				run, err = a.Attempt(ctx, r.GetID(), n)
-				if err != nil {
-					return nil, fmt.Errorf("run %d attempt %d: %w", r.GetID(), n, err)
-				}
+			run, err := a.Attempt(ctx, r.GetID(), n)
+			if err != nil {
+				return nil, fmt.Errorf("run %d attempt %d: %w", r.GetID(), n, err)
 			}
-			if run.GetID() != r.GetID() || run.GetRunAttempt() != n || run.GetHeadSHA() != r.GetHeadSHA() || !queueCI(run) {
+			if run.GetID() != r.GetID() || run.GetRunAttempt() != n || run.GetHeadSHA() != r.GetHeadSHA() || run.GetHeadBranch() != r.GetHeadBranch() || !queueCI(run) {
 				return nil, fmt.Errorf("run %d attempt %d has inconsistent Actions metadata", r.GetID(), n)
 			}
 			result = append(result, run)
@@ -100,36 +99,71 @@ func attempts(ctx context.Context, a Actions, runs []*github.WorkflowRun) ([]*gi
 	}
 	return result, nil
 }
-func countRuns(ctx context.Context, a Actions, w Window) ([]Attempt, error) {
+func countRuns(ctx context.Context, a Actions, base string, batches []string) ([]Attempt, error) {
 	runs, err := a.List(ctx, "")
 	if err != nil {
 		return nil, err
 	}
-	var candidates []*github.WorkflowRun
-	for _, r := range runs {
-		if r.GetCreatedAt().IsZero() && queueCI(r) {
-			return nil, fmt.Errorf("run %d has no creation time", r.GetID())
-		}
-		if r.GetCreatedAt().Before(w.To.Time) {
-			candidates = append(candidates, r)
-		}
-	}
-	expanded, err := attempts(ctx, a, candidates)
+	expanded, err := attempts(ctx, a, runs)
 	if err != nil {
 		return nil, err
 	}
+	refs := map[string]bool{}
+	for _, id := range batches {
+		refs["openmerge/queue/"+base+"/"+id] = true
+	}
 	var result []Attempt
 	for _, r := range expanded {
-		at := r.GetCreatedAt().Time
-		if r.GetRunAttempt() > 1 {
-			at = r.GetRunStartedAt().Time
+		if !refs[r.GetHeadBranch()] {
+			continue
+		}
+		at := r.GetRunStartedAt().Time
+		// Queued attempts have no start yet; creation is enough to count them.
+		if at.IsZero() {
+			at = r.GetCreatedAt().Time
 		}
 		if at.IsZero() {
-			return nil, fmt.Errorf("run %d attempt %d has no attempt timestamp; retry when the rerun has started", r.GetID(), r.GetRunAttempt())
+			return nil, fmt.Errorf("run %d attempt %d has no timestamp", r.GetID(), r.GetRunAttempt())
 		}
-		if !at.Before(w.From.Time) && at.Before(w.To.Time) {
-			result = append(result, Attempt{ID: r.GetID(), Number: r.GetRunAttempt(), At: at, SHA: r.GetHeadSHA(), Branch: r.GetHeadBranch(), Conclusion: r.GetConclusion()})
+		if r.GetStatus() == "" {
+			return nil, fmt.Errorf("run %d has no status", r.GetID())
 		}
+		done := time.Time{}
+		if r.GetStatus() == "completed" {
+			done = r.GetUpdatedAt().Time
+			if done.IsZero() || done.Before(at) {
+				return nil, fmt.Errorf("run %d attempt %d has invalid completion timestamp", r.GetID(), r.GetRunAttempt())
+			}
+		}
+		result = append(result, Attempt{ID: r.GetID(), Number: r.GetRunAttempt(), At: at, SHA: r.GetHeadSHA(), Branch: r.GetHeadBranch(), Conclusion: r.GetConclusion(), Status: r.GetStatus(), CompletedAt: done})
 	}
 	return result, nil
+}
+
+func finishDrain(r *Report, j store.Journal) {
+	end := r.QueueDrainedAt
+	complete := !end.IsZero() && r.Pending == 0
+	for _, run := range r.Runs {
+		if run.Status != "completed" || run.CompletedAt.After(r.ReportAt) {
+			complete = false
+		}
+		end = maxTime(end, run.CompletedAt)
+	}
+	r.RunAttempts = len(r.Runs)
+	if r.Landed > 0 {
+		r.RunsPerMerge = float64(r.RunAttempts) / float64(r.Landed)
+	}
+	r.DrainComplete = complete
+	if complete {
+		r.DrainEnd = maxTime(r.Window.To.Time, end)
+		r.DrainSeconds = r.DrainEnd.Sub(r.Window.To.Time).Seconds()
+	} else {
+		r.DrainSeconds = r.ReportAt.Sub(r.Window.To.Time).Seconds()
+		r.Warnings = append(r.Warnings, "drain incomplete at report time: cohort/queue or period CI still outstanding")
+		end = r.ReportAt
+	}
+	if r.NextConfig != nil && (!complete || r.NextConfig.Time.Before(r.DrainEnd)) {
+		r.Warnings = append(r.Warnings, "next configuration was applied before period drain completed")
+	}
+	r.HeldArrivals = heldArrivals(j, r.Window.To.Time, end, r.ReportAt)
 }

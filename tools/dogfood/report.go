@@ -80,6 +80,7 @@ type Change struct {
 	Seconds          float64   `json:"seconds"`
 	FirstSeconds     float64   `json:"first_seconds"`
 	Position         uint64    `json:"chain_position"`
+	Tested           bool      `json:"tested"`
 }
 type Percentiles struct {
 	Median float64 `json:"median_seconds"`
@@ -99,7 +100,36 @@ type Halving struct {
 	After   int                 `json:"after"`
 	Failure queue.WindowFailure `json:"failure"`
 }
+type Dequeue struct {
+	AdmissionID uint64    `json:"admission_id"`
+	PR          int       `json:"pr"`
+	EventID     int64     `json:"event_id"`
+	At          time.Time `json:"at"`
+}
+type HeldArrival struct {
+	PR         int       `json:"pr"`
+	EligibleAt time.Time `json:"first_eligible_at"`
+	AdmittedAt time.Time `json:"admitted_at"`
+}
 type Report struct {
+	ReportAt           time.Time     `json:"report_at"`
+	QueueDrainedAt     time.Time     `json:"queue_drained_at"`
+	DrainEnd           time.Time     `json:"drain_end"`
+	DrainSeconds       float64       `json:"drain_seconds"`
+	DrainComplete      bool          `json:"drain_complete"`
+	NextConfig         *Boundary     `json:"next_config,omitempty"`
+	Warnings           []string      `json:"warnings,omitempty"`
+	Batches            []string      `json:"started_batches"`
+	HeldArrivals       []HeldArrival `json:"held_arrivals"`
+	Dequeues           []Dequeue     `json:"dequeues"`
+	Dequeued           int           `json:"dequeued"`
+	Pending            int           `json:"pending"`
+	LandedAtClose      int           `json:"landed_at_window_close"`
+	EngagedAtClose     int           `json:"position_ge_2_at_window_close"`
+	DeepEngagedAtClose int           `json:"position_ge_3_at_window_close"`
+	DeepEngaged        int           `json:"landed_at_position_ge_3"`
+	AbortedReason      string        `json:"aborted_reason,omitempty"`
+
 	Version              int            `json:"version"`
 	Queue                store.QueueKey `json:"queue"`
 	Window               Window         `json:"window"`
@@ -158,31 +188,45 @@ func samePoint(a, b WindowPoint) bool {
 }
 
 func reportJournal(j store.Journal, w Window) (Report, error) {
-	r := Report{Version: 1, Queue: j.Key, Window: w, ArrivalsByDay: map[string]int{}}
+	return reportJournalAt(j, w, time.Now().UTC())
+}
+
+func reportJournalAt(j store.Journal, w Window, asOf time.Time) (Report, error) {
+	r := Report{Version: 2, Queue: j.Key, Window: w, ReportAt: asOf, ArrivalsByDay: map[string]int{}}
 	if err := w.validate(); err != nil {
 		return r, err
 	}
+	if asOf.Before(w.To.Time) {
+		return r, fmt.Errorf("report time precedes admission close")
+	}
 	s, cfg := j.Seed, queue.Config{}
 	admissions := map[uint64]Admission{}
+	cohort := map[uint64]bool{}
+	pending := map[uint64]bool{}
 	first := map[int]time.Time{}
 	lastTime := w.From.Time
-	initialized := false
+	initialized, periodEnded := false, false
+	idle := func() bool { return len(s.Entries) == 0 && len(s.Batches()) == 0 && len(pending) == 0 }
 	for _, rec := range j.Events {
-		if w.To.reached(rec) {
-			break
+		if rec.RecordedAt.After(asOf) {
+			continue
 		}
 		if rec.RecordedAt.IsZero() {
 			return r, fmt.Errorf("event %d has no recorded timestamp", rec.ID)
 		}
 		inside := w.contains(rec)
-		if inside {
-			if !initialized {
-				r.WindowHistory = append(r.WindowHistory, point(s, cfg, 0, w.From.Time))
-				initialized = true
+		inPeriod := w.From.reached(rec) && !periodEnded
+		if inside && !initialized {
+			r.WindowHistory = append(r.WindowHistory, point(s, cfg, 0, w.From.Time))
+			if len(s.Entries) > 0 || len(s.Batches()) > 0 {
+				r.Warnings = append(r.Warnings, "queue was not idle at period start")
 			}
-			// PostgreSQL's now() is the transaction start, which can precede a
-			// previous append that won the queue lock. Dwell time follows the
-			// high-water timestamp in journal order, without double-counting.
+			initialized = true
+		}
+		if inPeriod {
+			if w.To.reached(rec) && r.QueueDrainedAt.IsZero() && idle() {
+				r.QueueDrainedAt = maxTime(w.To.Time, lastTime)
+			}
 			nextTime := maxTime(lastTime, rec.RecordedAt)
 			accumulate(&r, s, lastTime, nextTime)
 			lastTime = nextTime
@@ -190,6 +234,30 @@ func reportJournal(j store.Journal, w Window) (Report, error) {
 		before := s
 		s = queue.Apply(s, rec.Event)
 		cfg = effectiveConfig(cfg, before, s, rec.Event)
+		if e, ok := rec.Event.(queue.ConfigApplied); ok && before.ConfigDigest != s.ConfigDigest && w.From.reached(rec) {
+			// The starting ConfigApplied is part of the period. A later changed
+			// configuration ends ownership, even if pushed before the drain finished.
+			isStart := rec.ID == w.From.EventID || w.From.EventID == 0 && rec.RecordedAt.Equal(w.From.Time)
+			if !isStart && r.NextConfig == nil {
+				r.NextConfig = &Boundary{Time: rec.RecordedAt, EventID: rec.ID, Commit: e.Commit}
+				periodEnded = true
+				if inside {
+					r.Warnings = append(r.Warnings, "configuration changed inside admission window")
+				}
+			}
+		}
+		if inPeriod && !periodEnded {
+			id := ""
+			switch e := rec.Event.(type) {
+			case queue.BatchStarted:
+				id = e.BatchID
+			case queue.ChainedBatchStarted:
+				id = e.BatchID
+			}
+			if id != "" && before.Batch(id) == nil && s.Batch(id) != nil {
+				r.Batches = append(r.Batches, id)
+			}
+		}
 		if e, ok := rec.Event.(queue.EnqueueRequested); ok {
 			a, b := entry(before, e.PR), entry(s, e.PR)
 			if b != nil && (a == nil || a.AdmissionID != b.AdmissionID) {
@@ -199,40 +267,71 @@ func reportJournal(j store.Journal, w Window) (Report, error) {
 					first[e.PR] = e.At
 				}
 				if inside {
+					cohort[b.AdmissionID], pending[b.AdmissionID] = true, true
 					r.Admissions = append(r.Admissions, ad)
 					r.ArrivalsByDay[rec.RecordedAt.UTC().Format("2006-01-02")]++
+				} else if inPeriod && !periodEnded {
+					r.Warnings = append(r.Warnings, fmt.Sprintf("admission %d accepted after window close; operator must stop queueing during drain", b.AdmissionID))
+					r.QueueDrainedAt = time.Time{}
 				}
 			}
 		}
-		if e, ok := rec.Event.(queue.Landed); ok && inside {
+		landed := map[uint64]bool{}
+		if e, ok := rec.Event.(queue.Landed); ok {
 			b := before.Batch(e.BatchID)
-			if b == nil || b.Phase != queue.Landing || s.Batch(e.BatchID) != nil {
+			accepted := b != nil && b.Phase == queue.Landing && s.Batch(e.BatchID) == nil
+			if !accepted && inPeriod {
 				return r, fmt.Errorf("landed event %d was not accepted by replay; run audit", rec.ID)
 			}
-			for _, pr := range b.PRs {
-				en := entry(before, pr.PR)
-				if en == nil {
-					return r, fmt.Errorf("landing %d has no admission for #%d", rec.ID, pr.PR)
-				}
-				ad, ok := admissions[en.AdmissionID]
-				if !ok {
-					return r, fmt.Errorf("landing %d has no enqueue history", rec.ID)
-				}
-				if !w.contains(store.JournalEvent{ID: ad.EventID, RecordedAt: ad.AcceptedAt}) {
-					continue
-				}
-				pos := max(uint64(1), b.ChainPosition)
-				c := Change{PR: pr.PR, AdmissionID: en.AdmissionID, AdmissionEventID: ad.EventID, LandedEventID: rec.ID, BatchID: b.ID, EnqueuedAt: ad.EnqueuedAt, FirstEnqueuedAt: first[pr.PR], LandedAt: rec.RecordedAt, Position: pos}
-				c.Seconds = c.LandedAt.Sub(c.EnqueuedAt).Seconds()
-				c.FirstSeconds = c.LandedAt.Sub(c.FirstEnqueuedAt).Seconds()
-				if c.Seconds < 0 || c.FirstSeconds < 0 {
-					return r, fmt.Errorf("landing %d precedes enqueue timestamp", rec.ID)
-				}
-				r.Changes = append(r.Changes, c)
-				if pos >= 2 {
-					r.Engaged++
+			if accepted {
+				for _, pr := range b.PRs {
+					en := entry(before, pr.PR)
+					if en == nil {
+						return r, fmt.Errorf("landing %d has no admission for #%d", rec.ID, pr.PR)
+					}
+					landed[en.AdmissionID] = true
+					if !cohort[en.AdmissionID] {
+						continue
+					}
+					ad := admissions[en.AdmissionID]
+					c := Change{PR: pr.PR, AdmissionID: en.AdmissionID, AdmissionEventID: ad.EventID, LandedEventID: rec.ID, BatchID: b.ID, EnqueuedAt: ad.EnqueuedAt, FirstEnqueuedAt: first[pr.PR], LandedAt: rec.RecordedAt, Position: max(uint64(1), b.ChainPosition), Tested: b.TestedSHA != "" && before.ChecksPassed(b.TestedSHA)}
+					c.Seconds, c.FirstSeconds = c.LandedAt.Sub(c.EnqueuedAt).Seconds(), c.LandedAt.Sub(c.FirstEnqueuedAt).Seconds()
+					if c.Seconds < 0 || c.FirstSeconds < 0 {
+						return r, fmt.Errorf("landing %d precedes enqueue timestamp", rec.ID)
+					}
+					r.Changes = append(r.Changes, c)
+					if inside {
+						r.LandedAtClose++
+					}
+					if c.Tested && c.Position >= 2 {
+						r.Engaged++
+						if inside {
+							r.EngagedAtClose++
+						}
+					}
+					if c.Tested && c.Position >= 3 {
+						r.DeepEngaged++
+						if inside {
+							r.DeepEngagedAtClose++
+						}
+					}
 				}
 			}
+		}
+		for _, en := range before.Entries {
+			if !pending[en.AdmissionID] {
+				continue
+			}
+			after := entry(s, en.PR)
+			if after == nil || after.AdmissionID != en.AdmissionID {
+				delete(pending, en.AdmissionID)
+				if !landed[en.AdmissionID] {
+					r.Dequeues = append(r.Dequeues, Dequeue{AdmissionID: en.AdmissionID, PR: en.PR, EventID: rec.ID, At: rec.RecordedAt})
+				}
+			}
+		}
+		if inPeriod && !periodEnded && w.To.reached(rec) && idle() && r.QueueDrainedAt.IsZero() {
+			r.QueueDrainedAt = maxTime(w.To.Time, lastTime)
 		}
 		if inside {
 			p := point(s, cfg, rec.ID, lastTime)
@@ -249,20 +348,60 @@ func reportJournal(j store.Journal, w Window) (Report, error) {
 		r.WindowHistory = append(r.WindowHistory, point(s, cfg, 0, w.From.Time))
 	}
 	accumulate(&r, s, lastTime, w.To.Time)
-	r.Landed = len(r.Changes)
+	if !periodEnded && idle() && r.QueueDrainedAt.IsZero() {
+		r.QueueDrainedAt = maxTime(w.To.Time, lastTime)
+	}
+	r.Landed, r.Dequeued, r.Pending = len(r.Changes), len(r.Dequeues), len(pending)
 	var times, firstTimes []float64
 	for _, c := range r.Changes {
 		times = append(times, c.Seconds)
 		firstTimes = append(firstTimes, c.FirstSeconds)
 	}
-	r.TimeToMerge = percentiles(times)
-	r.FirstEnqueue = percentiles(firstTimes)
+	r.TimeToMerge, r.FirstEnqueue = percentiles(times), percentiles(firstTimes)
 	r.ArrivalsPerDay = float64(len(r.Admissions)) / w.To.Time.Sub(w.From.Time).Hours() * 24
 	if r.NonIdleSeconds > 0 {
 		r.MultipleBatchShare = r.MultipleBatchSeconds / r.NonIdleSeconds
 	}
 	return r, nil
 }
+
+// First eligible observation is a conservative arrival proxy: PRs observed
+// earlier or already admitted do not count. Unadmitted PRs remain visible.
+func heldArrivals(j store.Journal, closedAt, end, asOf time.Time) []HeldArrival {
+	s := j.Seed
+	first := map[int]time.Time{}
+	admitted := map[int]time.Time{}
+	for _, rec := range j.Events {
+		if rec.RecordedAt.After(asOf) {
+			continue
+		}
+		if e, ok := rec.Event.(queue.PRObserved); ok && e.Eligible {
+			if _, seen := first[e.PR]; !seen {
+				first[e.PR] = rec.RecordedAt
+			}
+		}
+		before := s
+		s = queue.Apply(s, rec.Event)
+		if e, ok := rec.Event.(queue.EnqueueRequested); ok {
+			a, b := entry(before, e.PR), entry(s, e.PR)
+			if b != nil && (a == nil || a.AdmissionID != b.AdmissionID) {
+				if _, seen := admitted[e.PR]; !seen {
+					admitted[e.PR] = rec.RecordedAt
+				}
+			}
+		}
+	}
+	var result []HeldArrival
+	for pr, at := range first {
+		ad := admitted[pr]
+		if !at.Before(closedAt) && at.Before(end) && (ad.IsZero() || !ad.Before(end)) {
+			result = append(result, HeldArrival{PR: pr, EligibleAt: at, AdmittedAt: ad})
+		}
+	}
+	slices.SortFunc(result, func(a, b HeldArrival) int { return a.PR - b.PR })
+	return result
+}
+
 func accumulate(r *Report, s queue.State, from, to time.Time) {
 	from = maxTime(from, r.Window.From.Time)
 	to = minTime(to, r.Window.To.Time)

@@ -190,8 +190,18 @@ func audit(ctx context.Context, j store.Journal, since, until time.Time, g gitRe
 	}
 	return result, nil
 }
+
+// Audits use an exclusive upper bound; include a landing exactly at drain end.
+func auditWindow(r Report) Window {
+	end := r.DrainEnd
+	if end.IsZero() {
+		end = maxTime(r.Window.To.Time, r.ReportAt)
+	}
+	return Window{From: r.Window.From, To: Boundary{Time: end.Add(time.Nanosecond)}}
+}
 func attachAudit(r *Report, j store.Journal, a AuditResult) error {
-	if a.Version != 1 || a.Queue != r.Queue || a.Since.After(r.Window.From.Time) || a.Until.Before(r.Window.To.Time) {
+	w := auditWindow(*r)
+	if a.Version != 1 || a.Queue != r.Queue || a.Since.After(r.Window.From.Time) || a.Until.Before(w.To.Time) {
 		return fmt.Errorf("audit does not cover this queue and the complete report window")
 	}
 	checked := map[int64]bool{}
@@ -199,17 +209,17 @@ func attachAudit(r *Report, j store.Journal, a AuditResult) error {
 		checked[id] = true
 	}
 	for _, rec := range j.Events {
-		if _, ok := rec.Event.(queue.Landed); ok && r.Window.contains(rec) && !checked[rec.ID] {
+		if _, ok := rec.Event.(queue.Landed); ok && w.contains(rec) && !checked[rec.ID] {
 			return fmt.Errorf("audit is missing landed event %d", rec.ID)
 		}
 	}
 	// Keep only this period's evidence when a daily audit covers a wider range.
-	a.Since, a.Until = r.Window.From.Time, r.Window.To.Time
+	a.Since, a.Until = w.From.Time, w.To.Time
 	a.CheckedEventIDs = nil
 	a.Violations = append([]AuditViolation(nil), a.Violations...)
-	a.Violations = slicesInWindow(a.Violations, r.Window)
+	a.Violations = slicesInWindow(a.Violations, w)
 	for _, rec := range j.Events {
-		if checked[rec.ID] && r.Window.contains(rec) {
+		if checked[rec.ID] && w.contains(rec) {
 			a.CheckedEventIDs = append(a.CheckedEventIDs, rec.ID)
 		}
 	}

@@ -5,85 +5,115 @@ import (
 	"time"
 )
 
+type LatencySensitivity struct {
+	With           Percentiles `json:"with_holdovers"`
+	Without        Percentiles `json:"without_holdovers"`
+	WithCount      int         `json:"with_count"`
+	WithoutCount   int         `json:"without_count"`
+	HoldoverLanded int         `json:"holdover_landed"`
+}
 type Comparison struct {
-	Status  string   `json:"status"`
-	Reasons []string `json:"reasons"`
+	Status   string             `json:"status"`
+	Reasons  []string           `json:"reasons"`
+	BLatency LatencySensitivity `json:"b_latency_sensitivity"`
+}
+
+func holdoverSensitivity(a, b Report) LatencySensitivity {
+	held := map[int]bool{}
+	for _, h := range a.HeldArrivals {
+		held[h.PR] = true
+	}
+	var with, without []float64
+	for _, c := range b.Changes {
+		with = append(with, c.Seconds)
+		if !held[c.PR] {
+			without = append(without, c.Seconds)
+		}
+	}
+	return LatencySensitivity{With: percentiles(with), Without: percentiles(without), WithCount: len(with), WithoutCount: len(without), HoldoverLanded: len(with) - len(without)}
+}
+
+func engagementBy(r Report, deadline time.Time) (int, int) {
+	two, three := 0, 0
+	for _, c := range r.Changes {
+		if c.LandedAt.Before(r.Window.To.Time) && !c.LandedAt.After(deadline) && c.Tested {
+			if c.Position >= 2 {
+				two++
+			}
+			if c.Position >= 3 {
+				three++
+			}
+		}
+	}
+	return two, three
 }
 
 func compare(a, b Report) Comparison {
-	c := Comparison{Status: "inconclusive"}
+	c := Comparison{Status: "inconclusive", BLatency: holdoverSensitivity(a, b)}
 	add := func(reason string) { c.Reasons = append(c.Reasons, reason) }
 	for i, r := range []Report{a, b} {
 		label := []string{"A", "B"}[i]
-		if r.Version != 1 {
-			add(label + ": unsupported report version")
+		if r.AbortedReason != "" {
+			c.Status = "aborted"
+			add(label + ": " + r.AbortedReason)
+		}
+		if r.Audit != nil && len(r.Audit.Violations) > 0 {
+			c.Status = "aborted"
+			add(fmt.Sprintf("%s has %d audit violations: abort and restart after fixing the cause", label, len(r.Audit.Violations)))
+		}
+	}
+	if c.Status == "aborted" {
+		return c
+	}
+	for i, r := range []Report{a, b} {
+		label := []string{"A", "B"}[i]
+		if r.Version != 2 {
+			add(label + ": unsupported report version; regenerate under approved plan")
 		}
 		if err := r.Window.validate(); err != nil {
 			add(label + ": " + err.Error())
 		}
-		if r.Landed < 50 {
-			add(fmt.Sprintf("%s has %d landed changes; needs 50", label, r.Landed))
+		if !r.DrainComplete || r.DrainEnd.Before(r.Window.To.Time) || r.ReportAt.Before(r.DrainEnd) {
+			add(label + ": drain incomplete or not verified at report time")
+		}
+		for _, warning := range r.Warnings {
+			add(label + ": " + warning)
+		}
+		if r.LandedAtClose < 50 {
+			add(fmt.Sprintf("%s has %d landed changes at window close; needs 50", label, r.LandedAtClose))
 		}
 		if r.Landed != len(r.Changes) {
 			add(label + ": landed count does not match per-change evidence")
 		}
 		if r.Audit == nil {
 			add(label + ": independent landing audit is missing")
-		} else if r.Audit.Version != 1 || r.Audit.Queue != r.Queue || r.Audit.Since.After(r.Window.From.Time) || r.Audit.Until.Before(r.Window.To.Time) {
-			add(label + ": independent audit does not cover the period")
+		} else if r.Audit.Version != 1 || r.Audit.Queue != r.Queue || r.Audit.Since.After(r.Window.From.Time) || !r.Audit.Until.After(r.DrainEnd) {
+			add(label + ": independent audit does not cover the complete drain")
 		}
 		if !r.LogReviewed {
 			add(label + ": operator has not confirmed the change/incident log contains no material change or abort")
 		}
 	}
-	// Incorrect landings trigger the abort condition even before sample gates pass.
-	for i, r := range []Report{a, b} {
-		if r.Audit != nil && len(r.Audit.Violations) > 0 {
-			c.Status = "fail"
-			add(fmt.Sprintf("%s has %d audit violations: abort and restart after fixing the cause", []string{"A", "B"}[i], len(r.Audit.Violations)))
-		}
-	}
 	if a.Queue != b.Queue {
 		add("periods refer to different queues")
 	}
-	if !a.Window.To.Time.Equal(b.Window.From.Time) || a.Window.To.EventID != b.Window.From.EventID {
-		add("periods are not adjacent at the same boundary")
+	if a.NextConfig == nil || !a.NextConfig.Time.Equal(b.Window.From.Time) || a.NextConfig.EventID != b.Window.From.EventID || b.Window.From.Time.Before(a.DrainEnd) {
+		add("periods are not adjacent at a drained configuration boundary")
 	}
 	duration := a.Window.To.Time.Sub(a.Window.From.Time)
 	if duration < 14*24*time.Hour {
 		add("A has not run for 14 days")
 	}
-	bDuration := b.Window.To.Time.Sub(b.Window.From.Time)
-	if duration != bDuration {
-		// The decision rule permits extending B when its initial equal-length
-		// period was not comparable on traffic. Keep every day in the result.
-		initialArrivals := 0
-		for _, admission := range b.Admissions {
-			if !admission.AcceptedAt.Before(b.Window.From.Time) && admission.AcceptedAt.Before(b.Window.From.Time.Add(duration)) {
-				initialArrivals++
-			}
-		}
-		initialRate := float64(initialArrivals) / duration.Hours() * 24
-		if bDuration < duration || len(b.Admissions) == 0 || !trafficMismatch(a.ArrivalsPerDay, initialRate) {
-			add("periods do not have equal duration, and admissions do not justify extending B for traffic")
-		}
+	if duration != b.Window.To.Time.Sub(b.Window.From.Time) {
+		add("admission windows must have equal duration; B cannot be extended")
 	}
-	if a.Engaged < 10 {
+	deadline := a.Window.From.Time.Add(42 * 24 * time.Hour)
+	two, three := engagementBy(a, deadline)
+	if two < 10 || three < 3 {
 		if duration >= 42*24*time.Hour {
-			add("A reached six weeks without 10 landings at position >=2; default stays unchanged")
+			add("A reached six weeks without both engagement thresholds; later landings cannot rescue this comparison")
 		} else {
-			add("A needs 10 landings tested at position >=2")
-		}
-	}
-	if duration >= 42*24*time.Hour && a.Engaged >= 10 {
-		byDeadline := 0
-		for _, change := range a.Changes {
-			if change.Position >= 2 && !change.LandedAt.After(a.Window.From.Time.Add(42*24*time.Hour)) {
-				byDeadline++
-			}
-		}
-		if byDeadline < 10 {
-			add("A did not meet the engagement floor by six weeks; later landings cannot rescue this comparison")
+			add("A needs 10 changes landed from tested position >=2 and 3 from position >=3 before window close")
 		}
 	}
 	if !depthThroughout(a, 4) || !depthThroughout(b, 1) {
@@ -93,7 +123,7 @@ func compare(a, b Report) Comparison {
 		add("identical CI configuration has not been confirmed")
 	}
 	if trafficMismatch(a.ArrivalsPerDay, b.ArrivalsPerDay) {
-		add("arrivals per day differ by more than a factor of two (or are zero); not comparable: extend B or rerun both periods")
+		add("arrivals per day differ by more than a factor of two (or are zero); not comparable; pair is inconclusive")
 	}
 	if len(c.Reasons) > 0 {
 		return c

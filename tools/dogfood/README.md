@@ -2,7 +2,7 @@
 
 Run this separate program with `mise exec -- go run ./tools/dogfood`. It is not
 included in the `openmerge` binary. Its measurement contract is the
-[pre-registered plan](https://github.com/CanadaApollo6/openmerge/blob/0dbcf7f/docs/research/phase2-dogfood.md)
+[pre-registered plan](https://github.com/CanadaApollo6/openmerge/blob/1dbf8a7/docs/research/phase2-dogfood.md)
 from PR #48. It does not change queue policy or operate the queue.
 
 ## Deployment invocation
@@ -37,11 +37,13 @@ mise exec -- go run ./tools/dogfood audit \
 ```
 
 The dates above illustrate the syntax; replace them with the actual completed
-period. `--until` defaults to the invocation time. For a daily audit starting on
-A's second day, set `--since` to the previous day's audit start or end (overlap
-is safe). An audit of one day only covers that day; before comparing, run an
-audit spanning each complete report period. The full journal is replayed to
-recover tested batches and the previous queue head, including before `--since`.
+period. `--until` defaults to the invocation time. Run the audit **daily from
+A's second day through the end of B's drain**, including both drains. Keep `--since` at A's start for overlapping cumulative
+audits, or retain each daily result and run a final full-period audit before
+comparison. A one-day audit only covers that day. The final audit must extend
+past B's drain end (the audit upper bound is exclusive). The full journal is
+replayed to recover tested batches and the previous queue head, including before
+`--since`.
 Only landings in `[since, until)` cause git and Actions checks. Actions lookups
 are cached by tested SHA within the invocation.
 
@@ -72,125 +74,171 @@ complete verification. JSON output includes event IDs and individual violations;
 operational errors go to stderr and do not produce a successful audit document.
 This audits journaled queue pushes, rather than unrelated administrator pushes.
 
-## Reports
+## Boundaries and reports
 
-`--from` is inclusive and `--to` exclusive. Each accepts an RFC3339 timestamp
-(with fractional seconds if necessary), a `ConfigApplied` journal event ID
-(`event:123`, or `123`), or the exact configuration commit (`commit:<full SHA>`,
-or the full SHA alone). A commit must identify exactly one configuration event;
-use its event ID if the same commit was applied again. Event IDs are database
-journal IDs, not the fold's private revision counter. They preserve event order
-when a policy event and an admission share a timestamp.
+Each period has an admission window `[ConfigApplied, close)` and a drain. At A's
+start the queue must be idle. Record its exact `ConfigApplied` event ID and server
+revision. Keep the change/incident log throughout both windows and drains.
+
+At **each** boundary the operator must:
+
+1. Record the admission-window close time and **stop queueing new changes**.
+   A can close only after ≥14 days, ≥50 cohort landings, ≥10 cohort changes
+   landed from tested batches at position ≥2, and ≥3 from position ≥3. If both
+   engagement thresholds are not reached by six weeks, record inconclusive.
+   B closes at exactly `B start + A admission-window length`; never extend B.
+2. Wait for the drain. `openmerge queue status --json` must show **no entries,
+   no active batch and no chain**, and no `CI` run may remain queued or in
+   progress on any queue ref of that period's batches. Include discarded
+   batches: cancellation is unsupported and their runs can keep running.
+3. Run the report with that fixed close time; check `drain_complete`, its
+   computed end/duration, outcomes and warnings. Continue daily audits.
+4. **Only after the drain**, push the next configuration directly as prescribed
+   by the plan, and record its `ConfigApplied` event/server revision. Arrivals
+   held during A's drain can now be admitted in B. After B, run the final audit
+   through B's drain, regenerate both reports from the final journal/API
+   history, and compare them. A later rerun on an old batch remains charged to
+   its owning period and may reveal an invalid premature configuration switch.
+
+`--from` identifies the period's starting `ConfigApplied`: an event ID
+(`event:123` or `123`), exact config commit (`commit:<full SHA>` or full SHA), or
+an RFC3339 timestamp identifying exactly one config event. Prefer event IDs:
+these are database journal IDs and preserve order at identical timestamps.
+`--to` is the **operator-supplied, exclusive admission close**, normally an
+RFC3339 timestamp with fractional seconds as necessary. It also accepts a
+journal/config boundary, but is not the next period's start when a drain is
+needed. Neither the journal nor Actions listing is cut off at this close.
 
 ```sh
 mise exec -- go run ./tools/dogfood report \
   --database-url "$OM_DOGFOOD_DB" \
   --installation "$OM_DOGFOOD_INSTALLATION" --repository "$OM_DOGFOOD_REPO" \
-  --from event:123 --to event:456 --audit audit.json \
-  --ci-config 'CI check+sim-exits, workflow <commit>, server change log reviewed' \
-  --log-reviewed --json > A.json
+  --from event:123 --to '2026-10-31T12:00:00Z' --audit audit.json \
+  --ci-config 'CI check+sim-exits, workflow <commit>' --log-reviewed --json > A.json
 
 mise exec -- go run ./tools/dogfood report \
   --database-url "$OM_DOGFOOD_DB" \
   --installation "$OM_DOGFOOD_INSTALLATION" --repository "$OM_DOGFOOD_REPO" \
-  --from event:456 --to '2026-11-14T12:00:00Z' --audit audit.json \
-  --ci-config 'CI check+sim-exits, workflow <commit>, server change log reviewed' \
-  --log-reviewed --json > B.json
+  --from event:456 --to '2026-11-14T15:00:00Z' --audit audit.json \
+  --ci-config 'CI check+sim-exits, workflow <commit>' --log-reviewed --json > B.json
 
 mise exec -- go run ./tools/dogfood compare A.json B.json
 # Or compare --json A.json B.json
 ```
 
-Replace event IDs and dates with the real boundaries. B should initially end at
-`B start + A duration`, preserving fractional seconds. Omit `--json` for a human
-readout of metrics, per-change timings/positions, admission queue lengths, W and
-open-batch transitions, and halving evidence. JSON additionally retains distinct
-run attempts and arrival counts by UTC calendar day.
+Replace all dates/IDs: the examples assume A starts October 17 at 12:00 and B
+starts October 31 at 15:00, after a three-hour A drain. Both windows last exactly
+14 days. JSON report version **2** replaces the old time-sliced contract;
+regenerate old reports. Human output includes per-change timings/positions,
+outcomes, admission queue lengths, W/open-batch transitions, halvings and drain
+warnings. JSON also retains attempts, started batch IDs, individual dequeues and
+held arrivals. An incomplete drain emits a provisional report and exits **1**;
+`compare` cannot pass it. With an incomplete drain, duration is elapsed time
+since close and `drain_end` remains unset. Boundary warnings make comparison
+inconclusive even if the queue eventually drains.
 
-`--ci-config` is an operator-supplied identity for the identical CI setup in both
-periods, not each boundary's server revision. Use the log to record the boundary
-server revisions and every intervening upgrade. `--log-reviewed` asserts that the
-operator has reviewed that whole period and confirmed **no material CI/server
-change, incorrect landing, hour-long wedge, or unexplained failure**. Do not set
-it for an aborted or materially changed period: the plan restarts both periods.
-The tool cannot reconstruct that classification or historical wedge evidence
-from present-day workflow status. It never issues rollback commands.
+`--ci-config` identifies the identical CI setup across both periods, not their
+server revisions. The operator log must record revisions and every upgrade,
+and classify material changes before reviewing metrics. `--log-reviewed`
+asserts no material CI/server change, incorrect landing, hour-long wedge or
+unexplained failure over the window **and drain**. Missing confirmation or audit
+makes comparison inconclusive. Use `--aborted-reason '...'` to record an abort
+from the operator log; the tool cannot reconstruct historical wedges or
+unexplained failures and never issues rollback commands.
 
-Reports are still useful without these flags or `--audit`, but comparison then
-reports inconclusive. An attached audit must cover the exact queue, the full
-window, and **every** landed event in it, including excluded cohorts. Audit
-violations outside the report window are discarded; violations inside it are
-retained even for changes excluded from the latency cohort.
+An attached audit must cover the exact queue and **all** landing events from the
+start through the computed drain end, including landings outside the cohort.
+The audit upper bound is exclusive, so use a time strictly after drain end.
+Violations within that interval are retained; unrelated later violations are
+excluded when attaching a wider audit. Incorrect landings immediately give an
+aborted pair, regardless of sample size.
 
 ### Metric definitions
 
-- **Admissions and cohorts:** replay every event through `queue.Apply` from the
-  store's seed. An `enqueue_requested` counts only if it creates an admission.
-  Rejected or duplicate requests do not reset the clock. A landed change uses
-  its latest accepted admission and belongs to that admission's period. An A
-  admission landing at/after the A→B boundary belongs to neither period. Traffic
-  counts all accepted admissions, including re-enqueues and admissions that did
-  not land; admission queue length includes the newly admitted change and all
-  other entries, including entries in open batches.
-- **Latency:** original admission `At` → landing journal `RecordedAt`, in
-  seconds. The secondary clock starts at the first accepted enqueue of that PR,
-  including pre-period history. Median and p95 use nearest rank, without
-  interpolation. With no cohort landings, scalar percentiles and runs/merge are
-  zero placeholders and the sample gate prevents a comparison from passing.
-- **Engagement:** each cohort landing retains the batch's recorded chain
-  position; the serial protocol is position 1. The floor counts changes, not
-  batches. A later chain promotion does not erase the original position.
-- **W and utilization:** the actual fold supplies W, bounds, halving evidence,
-  and admitted open batches. Non-idle means at least one queued entry or open
-  batch. Integrate event-to-event wall time, including the final interval up to
-  `--to`; the numerator is time with more than one open batch. PostgreSQL records
-  transaction start timestamps, which can be slightly out of event order after
-  lock contention. Dwell time uses their high-water mark in journal order to
-  avoid double-counting; latency always uses the original event timestamps.
-- **Actions cost:** count distinct `(run_id, run_attempt)` for workflow name
-  `CI` and branch prefix `openmerge/queue/`, including failures, cancelled runs,
-  and invalidated batches. A workflow covers both required jobs and counts once
-  per attempt. Attempt 1 belongs to its `created_at`; reruns belong to their
-  attempt-specific `run_started_at`, obtained through the attempt endpoint.
-  A rerun with no start timestamp fails the measurement rather than borrowing
-  the first attempt's creation time. Divide by cohort landed changes.
+- **Cohort and outcomes:** replay from the journal seed through `queue.Apply`.
+  An `enqueue_requested` counts only if it creates an accepted admission inside
+  the window. Rejected/duplicate requests do not reset the clock. Follow each
+  counted admission until it lands or leaves the queue, including in the drain;
+  report landed, dequeued and pending counts. Re-enqueues are distinct counted
+  admissions. The gate retains the landed count **at admission close**, so drain
+  landings cannot rescue a short sample. Queue length includes all entries.
+- **Latency:** latest counted admission's original `At` → landing journal
+  `RecordedAt`; the secondary figure uses the PR's first accepted enqueue.
+  Median/p95 are nearest rank, without interpolation. Latency includes only
+  cohort landings. Zero scalar values with a zero count are undefined
+  placeholders, never evidence of fast merges.
+- **Engagement:** use the recorded position of the batch that **actually landed**
+  each change, with recorded successful checks on that batch's tested commit.
+  A batch that was merely started, or a position-2 test discarded before the
+  change later lands at position 1, contributes nothing to the floor. Promotion
+  preserves a landing batch's original position. Require both ≥10 at position
+  ≥2 and ≥3 at position ≥3 **before A closes**, and by the six-week deadline.
+- **Actions cost:** list the entire repository's runs with
+  `GET /repos/{owner}/{repo}/actions/runs`, filter workflow name `CI` and
+  `head_branch` prefix `openmerge/queue/` client-side; never use the API's exact
+  `branch` filter for a prefix. Fetch **every** attempt 1..`run_attempt` through
+  `GET .../actions/runs/{run_id}/attempts/{n}` and deduplicate `(run_id, attempt)`.
+  Attribute by the exact queue ref `openmerge/queue/<base>/<batch>` to the period
+  whose replay accepted that batch's start, including starts during its drain.
+  The single `nextBatch` counter survives `ConfigApplied`; batch IDs do not
+  repeat between periods. Include failed, cancelled and discarded-batch runs,
+  and reruns after close or an apparent drain, regardless of attempt time.
+  Divide **all** these attempts by the cohort's eventual landed changes.
+- **Drain:** compute the first post-close idle queue state with all cohort
+  admissions settled, and wait for every attempt on the period's batch refs to
+  complete. The end is the later of queue settlement and those terminal times.
+  Actions exposes `updated_at`, which is used conservatively as the completion
+  timestamp; this may overestimate drain duration. Any nonterminal attempt,
+  unsettled cohort or nonempty queue prevents completion. Applying the next
+  config before this end is a boundary violation. No time filter discards a
+  late attempt to make a boundary look valid.
+- **Held arrivals (proxy):** count distinct PRs whose **first journal observation
+  with `pr_observed eligible=true`** is in `[close, drain_end)` and whose first
+  accepted admission is at/after drain end, or has not happened yet. Record PR,
+  first eligibility and later admission time (zero if still waiting). Exclude
+  previously eligible or previously admitted PRs and duplicates. This is a
+  conservative journal proxy, not GitHub creation time or a complete count of
+  demand: a PR never observed by the server cannot be counted. `compare` matches
+  A's held PRs to B's cohort landings and reports B median/p95 and sample size
+  both with and without those holdovers. Regenerating A after B captures later
+  admissions; the PR match also works if A was reported while they still waited.
+- **W and utilization:** actual fold supplies W, bounds, halvings and batches.
+  Integrate non-idle (entries or batches) and multiple-batch time over the
+  admission window. Dwell time uses the journal timestamp high-water mark to
+  avoid double-counting transaction timestamp reordering; latency retains the
+  original event timestamps. Arrivals/day divides accepted admissions by the
+  fixed admission-window duration, with UTC daily counts alongside it.
 
-The API adapter paginates `GET /repos/{owner}/{repo}/actions/runs`, filters
-workflow/ref/time locally, and expands historical rerun attempts with
-`GET /repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}`.
-Reports intentionally list the whole repository history: an old run can be
-rerun inside the measured period, so filtering by initial creation time would
-miss its cost. It also avoids the documented 1,000-result cap on filtered
-searches. Audit lookups use `head_sha` and reject that cap or incomplete pages
-instead of silently accepting a partial history. See
+The API adapter paginates unfiltered report listings, avoiding the 1,000-result
+cap on filtered searches. Audit lookups use `head_sha` and fail closed on that
+cap or incomplete pages, missing objects or missing attempt metadata. See
 [GitHub's workflow-run API contract](https://docs.github.com/en/rest/actions/workflow-runs).
 
 ### Comparison and exit status
 
-`compare` makes no network or database requests. It returns:
+`compare` is offline and returns exactly one pair outcome, with reasons:
 
-- **0 / pass:** A median, p95 and runs/merge are each no worse than B; both have
-  zero audited violations and at least 50 cohort landings; A ran at least 14
-  days with at least 10 landings at position ≥2; the periods are adjacent, use
-  depths 4 and 1, share the confirmed CI configuration and reviewed log, and
-  arrivals/day are within a factor of two (exactly two is allowed).
-- **1 / fail:** an audit violation (also the immediate abort trigger), or worse
-  median, p95 or runs/merge after all comparability/sample gates are satisfied.
-- **2 / inconclusive:** a missing sample, engagement, audit, operator review,
-  duration, adjacency, depth, CI or traffic gate. A still missing the engagement
-  floor at six weeks is inconclusive; landings after that deadline cannot rescue
-  it. The default stays unchanged.
+- **0 / pass:** A median, p95 and runs/merge are each no worse than B after
+  **B's drain**; zero incorrect landings in both periods; all gates below pass.
+- **1 / fail:** an inferior comparative metric after all eligibility gates pass.
+- **2 / inconclusive:** either period has fewer than 50 landed at window close,
+  A is shorter than 14 days, B's window is not exactly A's length, arrivals/day
+  differ by more than 2× (exactly 2× is allowed), or engagement is insufficient.
+  A reaching six weeks without **both** thresholds is inconclusive; later
+  landings cannot rescue it. Also covers missing/incomplete drain, audit, log,
+  depth, adjacency or CI evidence. **Never extend B** or remove/splice days.
+- **3 / aborted:** any audited incorrect landing or `--aborted-reason` from the
+  operator log (including an hour-long wedge or unexplained failure).
 
-The baseline comparison requires equal durations. The decision rule permits
-extending B for traffic: the tool permits a longer B only when its admissions
-show that its *initial equal-duration prefix* failed the factor-of-two check.
-The full extended B must now satisfy that check. No days are removed or spliced
-out. Otherwise unequal periods remain inconclusive. Input/transport errors exit
-1 and do not represent a completed comparison.
+Periods must be adjacent at the next recorded `ConfigApplied`, after A's drain,
+with max depths 4 then 1 and identical confirmed CI. Boundary mistakes and
+material changes cannot produce a pass. Fail, inconclusive and aborted leave
+the default unchanged; rerun only after logging a change addressing the cause.
+Input/transport failures exit 1 without claiming a completed comparison.
 
-For the exact `compare` exit code in a script, build the standalone tool with
-`mise exec -- go build -o /tmp/openmerge-dogfood-report ./tools/dogfood`; `go run` itself exits 1
-when the child exits 2 and prints `exit status 2` to stderr.
+For exact exit codes build the standalone tool with
+`mise exec -- go build -o /tmp/openmerge-dogfood-report ./tools/dogfood`;
+`go run` itself returns 1 when the child exits 2 or 3.
 
 ## Tests
 

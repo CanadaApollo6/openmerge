@@ -114,6 +114,7 @@ func mustReport(t *testing.T, f *fixture, w Window) Report {
 	if err != nil {
 		t.Fatal(err)
 	}
+	finishDrain(&r, f.j)
 	return r
 }
 func TestReportReenqueueAndRejectedDuplicate(t *testing.T) {
@@ -144,8 +145,8 @@ func TestCohortsAcrossConfigBoundary(t *testing.T) {
 	f.enqueue(50, 2, "h2")
 	b2 := f.start(60, 2, "t2", queue.Merge, false)
 	f.begin(90, b2)
-	b := f.config(100, 1, "b")
 	f.land(110, b2, "")
+	b := f.config(115, 1, "b")
 	f.enqueue(120, 3, "h3")
 	b3 := f.start(130, 3, "t3", queue.Merge, false)
 	f.begin(140, b3)
@@ -161,9 +162,9 @@ func TestCohortsAcrossConfigBoundary(t *testing.T) {
 	if middle.EventID != b.ID {
 		t.Fatal("wrong boundary")
 	}
-	ra := mustReport(t, f, Window{From: start, To: middle})
+	ra := mustReport(t, f, Window{From: start, To: Boundary{Time: epoch.Add(100 * time.Second)}})
 	rb := mustReport(t, f, Window{From: middle, To: Boundary{Time: epoch.Add(200 * time.Second)}})
-	if ra.Landed != 1 || rb.Landed != 1 || ra.Changes[0].PR != 1 || rb.Changes[0].PR != 3 || len(ra.Admissions) != 2 || len(rb.Admissions) != 1 {
+	if ra.Landed != 2 || rb.Landed != 1 || ra.Changes[0].PR != 1 || rb.Changes[0].PR != 3 || len(ra.Admissions) != 2 || len(rb.Admissions) != 1 || !ra.DrainComplete || ra.DrainEnd != epoch.Add(110*time.Second) {
 		t.Fatalf("A=%+v B=%+v", ra, rb)
 	}
 }

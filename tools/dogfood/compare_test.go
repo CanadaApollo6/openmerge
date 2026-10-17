@@ -15,16 +15,26 @@ import (
 func comparableReports() (Report, Report) {
 	key := store.QueueKey{Installation: "1", Repository: "CanadaApollo6/openmerge", BaseBranch: "main"}
 	middle := Boundary{Time: epoch.Add(14 * 24 * time.Hour), EventID: 100, Commit: "policy-b"}
-	a := Report{Version: 1, Queue: key, Window: Window{From: Boundary{Time: epoch}, To: middle}, Landed: 50, Engaged: 10, CIConfig: "ci-unchanged", LogReviewed: true, ArrivalsPerDay: 4, RunsPerMerge: 1.5, TimeToMerge: Percentiles{Median: 30, P95: 90}}
+	a := Report{Version: 2, Queue: key, Window: Window{From: Boundary{Time: epoch}, To: middle}, Landed: 50, LandedAtClose: 50, Engaged: 10, DeepEngaged: 3, CIConfig: "ci-unchanged", LogReviewed: true, ArrivalsPerDay: 4, RunsPerMerge: 1.5, TimeToMerge: Percentiles{Median: 30, P95: 90}}
 	b := a
 	b.Window = Window{From: middle, To: Boundary{Time: epoch.Add(28 * 24 * time.Hour)}}
 	b.Engaged = 0
+	a.NextConfig = &middle
 	for i, r := range []*Report{&a, &b} {
 		r.Changes = make([]Change, 50)
 		for n := range r.Changes {
-			r.Changes[n] = Change{PR: n + 1, LandedEventID: int64(n + 1)}
+			r.Changes[n] = Change{PR: n + 1, AdmissionID: uint64(n + 1), LandedEventID: int64(n + 1), LandedAt: r.Window.From.Time.Add(time.Hour), Tested: true, Position: 1}
+			if i == 0 && n < 10 {
+				r.Changes[n].Position = 2
+			}
+			if i == 0 && n < 3 {
+				r.Changes[n].Position = 3
+			}
 		}
-		r.Audit = &AuditResult{Version: 1, Queue: key, Since: r.Window.From.Time, Until: r.Window.To.Time}
+		r.DrainComplete = true
+		r.DrainEnd = r.Window.To.Time
+		r.ReportAt = r.DrainEnd.Add(time.Hour)
+		r.Audit = &AuditResult{Version: 1, Queue: key, Since: r.Window.From.Time, Until: r.Window.To.Time.Add(time.Second)}
 		r.WindowHistory = []WindowPoint{{At: r.Window.From.Time, MaxDepth: []int{4, 1}[i], W: 1}}
 	}
 	return a, b
@@ -39,16 +49,48 @@ func TestDecisionRule(t *testing.T) {
 		{"median worse", "fail", "median", func(a, _ *Report) { a.TimeToMerge.Median++ }},
 		{"p95 worse", "fail", "p95", func(a, _ *Report) { a.TimeToMerge.P95++ }},
 		{"runs worse", "fail", "runs per", func(a, _ *Report) { a.RunsPerMerge++ }},
-		{"incorrect landing aborts even small cohort", "fail", "abort", func(a, _ *Report) { a.Landed = 1; a.Audit.Violations = []AuditViolation{{Check: "tested_commit"}} }},
-		{"B incorrect landing", "fail", "B has 1 audit", func(_, b *Report) { b.Audit.Violations = []AuditViolation{{Check: "ci_success"}} }},
-		{"insufficient changes", "inconclusive", "needs 50", func(a, _ *Report) { a.Landed = 49; a.Changes = a.Changes[:49] }},
+		{"incorrect landing aborts even small cohort", "aborted", "abort", func(a, _ *Report) { a.Landed = 1; a.Audit.Violations = []AuditViolation{{Check: "tested_commit"}} }},
+		{"B incorrect landing", "aborted", "B has 1 audit", func(_, b *Report) { b.Audit.Violations = []AuditViolation{{Check: "ci_success"}} }},
+		{"insufficient changes", "inconclusive", "needs 50", func(a, _ *Report) { a.Landed = 49; a.LandedAtClose = 49; a.Changes = a.Changes[:49] }},
+		{"B fewer than 50 landed", "inconclusive", "B has 49", func(_, b *Report) { b.LandedAtClose = 49; b.Landed = 49; b.Changes = b.Changes[:49] }},
+		{"B insufficient at close despite drain landings", "inconclusive", "B has 49", func(_, b *Report) { b.LandedAtClose = 49 }},
+		{"position three floor", "inconclusive", "position >=3", func(a, _ *Report) {
+			for i := range a.Changes {
+				if a.Changes[i].Position == 3 {
+					a.Changes[i].Position = 2
+				}
+			}
+		}},
+		{"untested landing cannot engage", "inconclusive", "position >=2", func(a, _ *Report) { a.Changes[9].Tested = false }},
+		{"incomplete drain", "inconclusive", "drain incomplete", func(_, b *Report) { b.DrainComplete = false }},
+		{"operator abort", "aborted", "wedge", func(a, _ *Report) { a.AbortedReason = "hour-long wedge" }},
 		{"short A", "inconclusive", "14 days", func(a, _ *Report) { a.Window.From.Time = a.Window.From.Time.Add(time.Hour) }},
-		{"insufficient engagement", "inconclusive", "position >=2", func(a, _ *Report) { a.Engaged = 9 }},
+		{"insufficient engagement", "inconclusive", "position >=2", func(a, _ *Report) { a.Engaged = 9; a.Changes[9].Position = 1 }},
 		{"six weeks without engagement", "inconclusive", "six weeks", func(a, b *Report) {
 			a.Engaged = 9
+			a.Changes[9].Position = 1
 			a.Window.To.Time = epoch.Add(42 * 24 * time.Hour)
 			b.Window.From = a.Window.To
+			a.NextConfig = &b.Window.From
 			b.Window.To.Time = epoch.Add(84 * 24 * time.Hour)
+		}},
+		{"six weeks with position two floor but not position three", "inconclusive", "six weeks", func(a, b *Report) {
+			a.Window.To.Time = epoch.Add(42 * 24 * time.Hour)
+			a.DrainEnd = a.Window.To.Time
+			a.ReportAt = a.DrainEnd.Add(time.Hour)
+			a.Audit.Until = a.ReportAt
+			b.Window.From = a.Window.To
+			a.NextConfig = &b.Window.From
+			b.Window.To.Time = epoch.Add(84 * 24 * time.Hour)
+			b.DrainEnd = b.Window.To.Time
+			b.ReportAt = b.DrainEnd.Add(time.Hour)
+			b.Audit.Since = b.Window.From.Time
+			b.Audit.Until = b.ReportAt
+			for i := range a.Changes {
+				if a.Changes[i].Position == 3 {
+					a.Changes[i].Position = 2
+				}
+			}
 		}},
 		{"arrivals exactly factor two", "pass", "", func(a, _ *Report) { a.ArrivalsPerDay = 8 }},
 		{"A arrivals exceed factor two", "inconclusive", "not comparable", func(a, _ *Report) { a.ArrivalsPerDay = 8.01 }},
@@ -86,14 +128,19 @@ func TestCompareCLIExitStatusesAndJSON(t *testing.T) {
 	for _, status := range []struct {
 		name string
 		code int
-	}{{"pass", 0}, {"fail", 1}, {"inconclusive", 2}} {
+	}{{"pass", 0}, {"fail", 1}, {"inconclusive", 2}, {"aborted", 3}} {
 		t.Run(status.name, func(t *testing.T) {
 			a, b := comparableReports()
 			switch status.name {
 			case "fail":
 				a.RunsPerMerge++
+			case "aborted":
+				a.AbortedReason = "hour-long wedge"
 			case "inconclusive":
 				a.Engaged = 0
+				for i := range a.Changes {
+					a.Changes[i].Position = 1
+				}
 			}
 			dir := t.TempDir()
 			for name, r := range map[string]Report{"a.json": a, "b.json": b} {
@@ -139,12 +186,17 @@ func TestLateEngagementCannotRescueSixWeekDeadline(t *testing.T) {
 	a, b := comparableReports()
 	a.Window.To.Time = epoch.Add(43 * 24 * time.Hour)
 	b.Window.From = a.Window.To
+	a.NextConfig = &b.Window.From
 	b.Window.To.Time = epoch.Add(86 * 24 * time.Hour)
-	a.Audit.Until = a.Window.To.Time
-	b.Audit.Since, b.Audit.Until = b.Window.From.Time, b.Window.To.Time
+	a.DrainEnd = a.Window.To.Time
+	a.ReportAt = a.DrainEnd.Add(time.Hour)
+	a.Audit.Until = a.DrainEnd.Add(time.Second)
+	b.DrainEnd = b.Window.To.Time
+	b.ReportAt = b.DrainEnd.Add(time.Hour)
+	b.Audit.Since, b.Audit.Until = b.Window.From.Time, b.DrainEnd.Add(time.Second)
 	for i := range a.Changes {
 		a.Changes[i].LandedAt = epoch.Add(42*24*time.Hour + time.Second)
-		a.Changes[i].Position = 2
+		a.Changes[i].Position = 3
 	}
 	if c := compare(a, b); c.Status != "inconclusive" || !strings.Contains(strings.Join(c.Reasons, " "), "later landings") {
 		t.Fatal(c)
@@ -157,26 +209,10 @@ func TestLateEngagementCannotRescueSixWeekDeadline(t *testing.T) {
 	}
 }
 
-func TestBExtensionForInitiallyIncomparableTraffic(t *testing.T) {
+func TestBExtensionNeverRescuesTraffic(t *testing.T) {
 	a, b := comparableReports()
 	b.Window.To.Time = b.Window.To.Time.Add(14 * 24 * time.Hour)
-	b.Audit.Until = b.Window.To.Time
-	// Initially one arrival/day versus A's four; the full extended B has four/day.
-	for n := range 14 {
-		b.Admissions = append(b.Admissions, Admission{AcceptedAt: b.Window.From.Time.Add(time.Duration(n) * 24 * time.Hour)})
-	}
-	if c := compare(a, b); c.Status != "pass" {
-		t.Fatal(c)
-	}
-	b.ArrivalsPerDay = 1
-	if c := compare(a, b); c.Status != "inconclusive" || !strings.Contains(strings.Join(c.Reasons, " "), "not comparable") {
-		t.Fatal(c)
-	}
-	b.ArrivalsPerDay = 4
-	for n := range 42 {
-		b.Admissions = append(b.Admissions, Admission{AcceptedAt: b.Window.From.Time.Add(time.Duration(n%14) * 24 * time.Hour)})
-	}
 	if c := compare(a, b); c.Status != "inconclusive" || !strings.Contains(strings.Join(c.Reasons, " "), "equal duration") {
-		t.Fatal("extension without initial traffic mismatch accepted", c)
+		t.Fatal(c)
 	}
 }

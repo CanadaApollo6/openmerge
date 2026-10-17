@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 	"github.com/google/go-github/v93/github"
 )
@@ -97,10 +98,11 @@ func reportCommand(ctx context.Context, args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("report", flag.ContinueOnError)
 	var o options
 	o.flags(fs)
-	from, to := fs.String("from", "", "ConfigApplied event ID, commit SHA, or RFC3339 time"), fs.String("to", "", "exclusive ConfigApplied event ID, commit SHA, or RFC3339 time")
+	from, to := fs.String("from", "", "ConfigApplied event ID, commit SHA, or RFC3339 time"), fs.String("to", "", "exclusive admission-window close (RFC3339 time or journal boundary)")
 	auditFile := fs.String("audit", "", "JSON audit covering the entire period (otherwise comparison is inconclusive)")
 	ci := fs.String("ci-config", "", "operator-recorded CI configuration identity (use the same value for A and B)")
 	reviewed := fs.Bool("log-reviewed", false, "confirm no abort or material CI/server change in the period, from the operator's log")
+	aborted := fs.String("aborted-reason", "", "operator-recorded abort (incorrect landing, hour-long wedge, or unexplained failure)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -115,6 +117,19 @@ func reportCommand(ctx context.Context, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// Resolve timestamp starts back to the exact ConfigApplied event.
+	if start.EventID == 0 {
+		var matches []Boundary
+		for _, rec := range j.Events {
+			if e, ok := rec.Event.(queue.ConfigApplied); ok && e.Validate() == nil && rec.RecordedAt.Equal(start.Time) {
+				matches = append(matches, Boundary{Time: rec.RecordedAt, EventID: rec.ID, Commit: e.Commit})
+			}
+		}
+		if len(matches) != 1 {
+			return fmt.Errorf("--from must identify exactly one ConfigApplied; prefer event:<id>")
+		}
+		start = matches[0]
+	}
 	end, err := boundary(j, *to)
 	if err != nil {
 		return err
@@ -126,19 +141,16 @@ func reportCommand(ctx context.Context, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	r.CIConfig, r.LogReviewed = *ci, *reviewed
+	r.CIConfig, r.LogReviewed, r.AbortedReason = *ci, *reviewed, *aborted
 	a, err := actionsClient(ctx, o.repository)
 	if err != nil {
 		return err
 	}
-	r.Runs, err = countRuns(ctx, a, r.Window)
+	r.Runs, err = countRuns(ctx, a, r.Queue.BaseBranch, r.Batches)
 	if err != nil {
 		return err
 	}
-	r.RunAttempts = len(r.Runs)
-	if r.Landed > 0 {
-		r.RunsPerMerge = float64(r.RunAttempts) / float64(r.Landed)
-	}
+	finishDrain(&r, j)
 	if *auditFile != "" {
 		var audit AuditResult
 		if err := readJSON(*auditFile, &audit); err != nil {
@@ -149,14 +161,26 @@ func reportCommand(ctx context.Context, args []string, out io.Writer) error {
 		}
 	}
 	if o.json {
-		return writeJSON(out, r)
+		err = writeJSON(out, r)
+	} else {
+		err = printReport(out, r)
 	}
-	return printReport(out, r)
+	if err != nil {
+		return err
+	}
+	if !r.DrainComplete {
+		return fmt.Errorf("drain incomplete; report is provisional and cannot pass comparison")
+	}
+	return nil
 }
 func printReport(out io.Writer, r Report) error {
 	var b []byte
 	b = fmt.Appendf(b, "%s %s: %s -> %s (exclusive)\n", r.Queue.Repository, r.Queue.BaseBranch, r.Window.From.Time.Format(time.RFC3339Nano), r.Window.To.Time.Format(time.RFC3339Nano))
-	b = fmt.Appendf(b, "Landed: %d; tested at position >=2: %d\nTime to merge (nearest rank): median %.1fs; p95 %.1fs\nFrom first enqueue: median %.1fs; p95 %.1fs\n", r.Landed, r.Engaged, r.TimeToMerge.Median, r.TimeToMerge.P95, r.FirstEnqueue.Median, r.FirstEnqueue.P95)
+	b = fmt.Appendf(b, "Landed: %d; landed from tested position >=2: %d\nTime to merge (nearest rank): median %.1fs; p95 %.1fs\nFrom first enqueue: median %.1fs; p95 %.1fs\n", r.Landed, r.Engaged, r.TimeToMerge.Median, r.TimeToMerge.P95, r.FirstEnqueue.Median, r.FirstEnqueue.P95)
+	b = fmt.Appendf(b, "Dequeued: %d; pending cohort: %d; landed at admission close: %d\nPosition >=3 landings: %d\nDrain complete: %t; end: %s; duration: %.1fs; held arrivals (proxy): %d\n", r.Dequeued, r.Pending, r.LandedAtClose, r.DeepEngaged, r.DrainComplete, r.DrainEnd.Format(time.RFC3339Nano), r.DrainSeconds, len(r.HeldArrivals))
+	for _, warning := range r.Warnings {
+		b = fmt.Appendf(b, "WARNING: %s\n", warning)
+	}
 	b = fmt.Appendf(b, "Traffic: %d accepted arrivals; %.3f/day\nCI run attempts: %d; runs/merge: %.3f\nMultiple batches: %.1fs / %.1fs non-idle (%.2f%%)\n", len(r.Admissions), r.ArrivalsPerDay, r.RunAttempts, r.RunsPerMerge, r.MultipleBatchSeconds, r.NonIdleSeconds, 100*r.MultipleBatchShare)
 	if r.Landed == 0 {
 		b = fmt.Appendf(b, "%s\n", "No landed cohort: percentiles and runs/merge are undefined (JSON scalar values are zero).")
@@ -270,6 +294,7 @@ func run(ctx context.Context, args []string, out, errs io.Writer) int {
 							err = writeJSON(out, c)
 						} else {
 							text := c.Status + "\n- " + strings.Join(c.Reasons, "\n- ") + "\n"
+							text += fmt.Sprintf("B latency with holdovers (%d landed): median %.1fs, p95 %.1fs; without (%d landed, %d holdovers removed): median %.1fs, p95 %.1fs\n", c.BLatency.WithCount, c.BLatency.With.Median, c.BLatency.With.P95, c.BLatency.WithoutCount, c.BLatency.HoldoverLanded, c.BLatency.Without.Median, c.BLatency.Without.P95)
 							_, err = io.WriteString(out, text)
 						}
 						if err == nil {
@@ -278,6 +303,8 @@ func run(ctx context.Context, args []string, out, errs io.Writer) int {
 								return 0
 							case "fail":
 								return 1
+							case "aborted":
+								return 3
 							default:
 								return 2
 							}
