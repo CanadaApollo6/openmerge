@@ -63,6 +63,9 @@ type State struct {
 	buildRetry         buildRetryState
 	actionPoison       actionPoisonState
 	pause              PauseRequested
+	blockPauseRevision uint64
+	blockSources       map[BlockSource]BlockSourceBlocked
+	blockRevisions     map[BlockSource]uint64
 	pauseRevision      uint64
 	lifecycleRevision  uint64
 	rulesSources       map[RulesSource]rulesSourceState

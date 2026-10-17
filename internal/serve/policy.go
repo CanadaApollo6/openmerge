@@ -8,6 +8,7 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/config/condition"
 	"github.com/CanadaApollo6/openmerge/internal/executor"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
+	"github.com/CanadaApollo6/openmerge/internal/queue"
 )
 
 func snapshot(pr forge.PullRequest) condition.Snapshot {
@@ -126,7 +127,7 @@ func (s *Server) eligible(ctx context.Context, w *worker, pr forge.PullRequest) 
 	}
 	met, err := evaluate(w.cfg.EnterWhen, pr, checks)
 	if err != nil {
-		return false, s.pause(ctx, w, "ambiguous-check-sources", err.Error())
+		return false, s.block(ctx, w, queue.CheckSources, err.Error(), "")
 	}
 	return met, nil
 }

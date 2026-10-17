@@ -83,6 +83,18 @@ type wireRulesCleared struct {
 	Basis uint64 `json:"basis"`
 }
 
+type wireBlockSourceBlocked struct {
+	Source  BlockSource `json:"source"`
+	Detail  string      `json:"detail"`
+	Subject string      `json:"subject"`
+	Basis   uint64      `json:"basis"`
+}
+
+type wireBlockSourceCleared struct {
+	Source BlockSource `json:"source"`
+	Basis  uint64      `json:"basis"`
+}
+
 type wireRulesSourceBlocked struct {
 	Source   RulesSource `json:"source"`
 	Problems []string    `json:"problems"`
@@ -435,6 +447,16 @@ func EncodeEvent(value Event) (string, []byte, error) {
 			return "", nil, err
 		}
 		return encodeWire("rules_cleared", wireRulesCleared(v))
+	case BlockSourceBlocked:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("block_source_blocked", wireBlockSourceBlocked(v))
+	case BlockSourceCleared:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("block_source_cleared", wireBlockSourceCleared(v))
 	case RulesSourceBlocked:
 		if err := v.Validate(); err != nil {
 			return "", nil, err
@@ -629,6 +651,26 @@ func DecodeEvent(payload []byte) (Event, error) {
 			return nil, err
 		}
 		event := RulesCleared(v)
+		if err := event.Validate(); err != nil {
+			return nil, err
+		}
+		return event, nil
+	case "block_source_blocked":
+		v, err := readWireData[wireBlockSourceBlocked](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := BlockSourceBlocked(v)
+		if err := event.Validate(); err != nil {
+			return nil, err
+		}
+		return event, nil
+	case "block_source_cleared":
+		v, err := readWireData[wireBlockSourceCleared](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := BlockSourceCleared(v)
 		if err := event.Validate(); err != nil {
 			return nil, err
 		}

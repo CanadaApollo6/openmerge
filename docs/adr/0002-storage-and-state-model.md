@@ -66,6 +66,29 @@ their heads, including legacy in-flight attempts resolved after upgrading. All
 have wire-v1 golden fixtures.
 Previously deployed event/action types and their fixtures are unchanged.
 
+Queue blocks also have independent sources: `config`, `check-sources`,
+`landing-not-on-base`, `action-poisoned`, `operator`, and `build-failed`. Additive
+wire-v1
+`block_source_blocked{source,detail,subject,basis}` and
+`block_source_cleared{source,basis}` use the same observation semantics as rules:
+failures always apply, and clears require that source's current revision. The
+subject durably pins the missing landing commit or quarantined action key.
+Lifecycle and build retries retain their existing state. Build failures advance
+the `build-failed` source revision; a current-basis `block_source_cleared` resets
+the retry streak and backoff. Explicit refresh clears `operator`,
+`action-poisoned`, and `build-failed`, plus `landing-not-on-base` after freshly
+verifying ancestry; config, check sources, rules, and lifecycle recover through
+their own observations. Base or effective config changes and successful builds
+also reset build retries. Legacy shared pauses are displayed as the `operator`
+source; no production path currently emits new operator blocks. Explicit refresh
+can clear the legacy projection. Legacy pause/resume, poison, and
+rules events retain their original fold behavior and unchanged wire fixtures;
+the two new types have golden fixtures. Landing settlement remains available
+under every block. Once either `block_source_*` event is stored, older binaries
+cannot replay that queue, even after every block clears. As with
+`lifecycle_changed`, downgrading to an incompatible binary requires restoring a
+database backup from before those events were recorded; do not edit the log.
+
 `config_applied{commit,digest}` records the governing default-branch commit when
 the effective per-queue policy changes. The SHA-256 digest covers parsed admission
 and merge conditions, planner settings, and the effective head-cleanup setting;

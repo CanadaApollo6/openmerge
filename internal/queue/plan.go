@@ -27,6 +27,9 @@ func DeferredByPause(cfg Config, s State, action Action, now time.Time) bool {
 		return false
 	}
 	unblocked := Apply(s, ResumeRequested{})
+	for _, source := range blockSourceOrder {
+		unblocked = Apply(unblocked, BlockSourceCleared{Source: source, Basis: unblocked.BlockSourceRevision(source)})
+	}
 	for _, source := range s.RulesSources() {
 		unblocked = Apply(unblocked, RulesSourceCleared{Source: source.Source, Basis: source.Revision})
 	}
@@ -182,31 +185,40 @@ type actionPoisonState struct {
 }
 
 func (s State) workBlocked() bool {
-	return s.lifecycleBlocked() || s.pause.Reason != "" || s.actionPoison.key != "" || s.hasRulesProblems()
+	return s.lifecycleBlocked() || s.hasBlockSources() || s.pause.Reason != "" || s.actionPoison.key != "" || s.hasRulesProblems()
 }
 
 // Block describes one active reason that prevents new work.
-type Block struct{ Reason, Detail string }
+type Block struct {
+	Source         BlockSource
+	Reason, Detail string
+	Revision       uint64
+}
 
 // Blocks returns all active reasons, with the primary pause first.
 func (s State) Blocks(cfg Config) []Block {
 	blocks := make([]Block, 0, 4)
 	if s.lifecycleBlocked() {
-		blocks = append(blocks, Block{s.LifecycleState(), s.Lifecycle.Detail})
+		blocks = append(blocks, Block{Source: "lifecycle", Reason: s.LifecycleState(), Detail: s.Lifecycle.Detail, Revision: s.lifecycleRevision})
+	}
+	for _, source := range blockSourceOrder {
+		if block := s.blockSources[source]; block.Detail != "" {
+			blocks = append(blocks, Block{Source: source, Reason: source.reason(), Detail: block.Detail, Revision: s.BlockSourceRevision(source)})
+		}
 	}
 	if s.pause.Reason != "" {
-		blocks = append(blocks, Block{s.pause.Reason, s.pause.Detail})
+		blocks = append(blocks, Block{Source: Operator, Reason: s.pause.Reason, Detail: s.pause.Detail, Revision: s.BlockSourceRevision(Operator)})
 	}
 	if s.actionPoison.key != "" {
-		blocks = append(blocks, Block{"action-poisoned", s.poisonDetail()})
+		blocks = append(blocks, Block{Source: ActionPoison, Reason: "action-poisoned", Detail: s.poisonDetail(), Revision: s.BlockSourceRevision(ActionPoison)})
 	}
 	for _, source := range rulesSourceOrder {
 		if len(s.rulesSources[source].problems) > 0 {
-			blocks = append(blocks, Block{"repository-rules", s.rulesSourceDetail(source)})
+			blocks = append(blocks, Block{Source: BlockSource(source), Reason: "repository-rules", Detail: s.rulesSourceDetail(source), Revision: s.RulesSourceRevision(source)})
 		}
 	}
 	if s.buildLimitReached(cfg) {
-		blocks = append(blocks, Block{"build-failed", s.buildFailureDetail()})
+		blocks = append(blocks, Block{Source: BuildFailed, Reason: "build-failed", Detail: s.buildFailureDetail(), Revision: s.BlockSourceRevision(BuildFailed)})
 	}
 	return blocks
 }
@@ -217,6 +229,11 @@ func (s State) Blocks(cfg Config) []Block {
 func (s State) PauseReason(cfg Config) string {
 	if s.lifecycleBlocked() {
 		return s.LifecycleState()
+	}
+	for _, source := range blockSourceOrder {
+		if s.blockSources[source].Detail != "" {
+			return source.reason()
+		}
 	}
 	if s.pause.Reason != "" {
 		return s.pause.Reason
@@ -245,6 +262,11 @@ func (s State) pauseReport() ReportStatus {
 	if s.lifecycleBlocked() {
 		return ReportStatus{PR: s.Entries[0].PR, HeadSHA: s.Entries[0].HeadSHA, Status: "paused", Reason: s.LifecycleState(), Detail: s.Lifecycle.Detail, revision: s.lifecycleRevision, admission: s.Entries[0].AdmissionID}
 	}
+	for _, source := range blockSourceOrder {
+		if block := s.blockSources[source]; block.Detail != "" {
+			return ReportStatus{PR: s.Entries[0].PR, HeadSHA: s.Entries[0].HeadSHA, Status: "paused", Reason: source.reason(), Detail: block.Detail, revision: s.blockPauseRevision, admission: s.Entries[0].AdmissionID}
+		}
+	}
 	if s.pause.Reason != "" {
 		return ReportStatus{PR: s.Entries[0].PR, HeadSHA: s.Entries[0].HeadSHA, Status: "paused", Reason: s.pause.Reason, Detail: s.pause.Detail, revision: s.pauseRevision, admission: s.Entries[0].AdmissionID}
 	}
@@ -265,11 +287,11 @@ func (s State) pauseReport() ReportStatus {
 }
 
 func (s State) poisonDetail() string {
-	return fmt.Sprintf("Queue paused after repeated invalid action %s: %s; resume the queue to retry", s.actionPoison.key, s.actionPoison.reason)
+	return fmt.Sprintf("Queue paused after repeated invalid action %s: %s; a writer can comment @openmerge refresh to retry", s.actionPoison.key, s.actionPoison.reason)
 }
 
 func (s State) buildFailureDetail() string {
-	detail := fmt.Sprintf("Queue paused after %d consecutive build failures; resume the queue or update the base branch", s.buildRetry.failures)
+	detail := fmt.Sprintf("Queue paused after %d consecutive build failures; a writer can comment @openmerge refresh or update the base branch", s.buildRetry.failures)
 	if s.buildRetry.detail != "" {
 		detail = fmt.Sprintf("Test ref build failed (%d consecutive failures): %s", s.buildRetry.failures, s.buildRetry.detail)
 	}

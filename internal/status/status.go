@@ -52,8 +52,10 @@ type RulesSource struct {
 
 // Block describes one active cause preventing new work; multiple may coexist.
 type Block struct {
-	Reason string `json:"reason"`
-	Detail string `json:"detail"`
+	Source   string `json:"source"`
+	Revision uint64 `json:"revision"`
+	Reason   string `json:"reason"`
+	Detail   string `json:"detail"`
 }
 
 // Batch pins the tested inputs and the operation currently awaiting an outcome.
@@ -189,7 +191,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 	q := Queue{State: s.LifecycleState(), Installation: j.Key.Installation, Repository: j.Key.Repository, Base: j.Key.BaseBranch, Lane: j.Key.Lane,
 		Watermark: watermark, BaseSHA: s.BaseSHA, PauseReason: sanitizer.Sanitize(s.PauseReason(queue.Config{})), PauseDetail: sanitizer.Sanitize(s.PauseDetail(queue.Config{})), Blocks: make([]Block, 0), Entries: make([]Entry, 0, len(s.Entries))}
 	for _, block := range s.Blocks(queue.Config{}) {
-		q.Blocks = append(q.Blocks, Block{sanitizer.Sanitize(block.Reason), sanitizer.Sanitize(block.Detail)})
+		q.Blocks = append(q.Blocks, Block{Source: string(block.Source), Revision: block.Revision, Reason: sanitizer.Sanitize(block.Reason), Detail: sanitizer.Sanitize(block.Detail)})
 	}
 	for _, source := range s.RulesSources() {
 		problems := make([]string, 0, len(source.Problems))
@@ -240,8 +242,9 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 	}
 	if q.Paused && (e.Position > 0 || s.LifecycleState() != "active") {
 		for _, block := range q.Blocks {
-			summary += "; " + block.Reason + ": " + block.Detail
+			summary += "; " + block.Reason + " [" + block.Source + "]: " + block.Detail
 		}
+		summary += "; " + queue.BlockRecovery(s.Blocks(queue.Config{}))
 		if inBatch(s, pr) && s.Active.Phase == queue.Landing {
 			summary += "; landing outcome is still being resolved through its fence"
 		}
@@ -330,6 +333,27 @@ func explanationContext(j store.Journal, pr int) (map[string]bool, map[int64]boo
 			if causes["poison"] == 0 {
 				causes["poison"] = record.ID
 			}
+		case queue.BlockSourceBlocked:
+			if s.BlockSourceRevision(e.Source) != before.BlockSourceRevision(e.Source) {
+				key := "block/" + string(e.Source)
+				if e.Source == queue.Operator {
+					delete(causes, "pause")
+				}
+				if e.Source == queue.ActionPoison {
+					delete(causes, "poison")
+				}
+				causes[key] = record.ID
+			}
+		case queue.BlockSourceCleared:
+			if s.BlockSourceRevision(e.Source) != before.BlockSourceRevision(e.Source) {
+				delete(causes, "block/"+string(e.Source))
+				if e.Source == queue.Operator {
+					delete(causes, "pause")
+				}
+				if e.Source == queue.ActionPoison {
+					delete(causes, "poison")
+				}
+			}
 		case queue.RulesBlocked:
 			if s.RulesRevision() != before.RulesRevision() {
 				causes["rules/rulesets"] = record.ID
@@ -389,6 +413,13 @@ func eventSummary(event queue.Event, before, after queue.State) string {
 		return "Queue pause requested (" + e.Reason + "): " + e.Detail
 	case queue.ResumeRequested:
 		return "Requested clearing generic pauses, build failures and action poison"
+	case queue.BlockSourceBlocked:
+		return "Queue block (" + string(e.Source) + "): " + e.Detail
+	case queue.BlockSourceCleared:
+		if before.BlockSourceRevision(e.Source) == after.BlockSourceRevision(e.Source) {
+			return "Ignored stale clear for " + string(e.Source)
+		}
+		return "Queue block cleared (" + string(e.Source) + ")"
 	case queue.RulesBlocked:
 		return "Repository rules block: " + strings.Join(e.Problems, "; ")
 	case queue.RulesCleared:
@@ -461,6 +492,10 @@ func affects(event queue.Event, pr int, before, after queue.State, tested map[st
 		return n == pr
 	}
 	switch e := event.(type) {
+	case queue.BlockSourceBlocked:
+		return before.BlockSourceRevision(e.Source) != after.BlockSourceRevision(e.Source) && (entryIn(before, pr) || entryIn(after, pr))
+	case queue.BlockSourceCleared:
+		return before.BlockSourceRevision(e.Source) != after.BlockSourceRevision(e.Source) && (entryIn(before, pr) || entryIn(after, pr))
 	case queue.RulesBlocked, queue.RulesCleared:
 		return before.RulesRevision() != after.RulesRevision() && (entryIn(before, pr) || entryIn(after, pr))
 	case queue.RulesSourceBlocked:

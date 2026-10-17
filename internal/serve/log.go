@@ -48,6 +48,14 @@ func (s *Server) logEvent(ctx context.Context, w *worker, before, after queue.St
 		}
 	}
 	switch e := event.(type) {
+	case queue.BlockSourceBlocked:
+		if before.BlockSourceRevision(e.Source) != after.BlockSourceRevision(e.Source) {
+			log("queue block set", 0, "", after.BaseSHA, string(e.Source), "source", e.Source, "detail", e.Detail, "revision", after.BlockSourceRevision(e.Source))
+		}
+	case queue.BlockSourceCleared:
+		if before.BlockSourceRevision(e.Source) != after.BlockSourceRevision(e.Source) {
+			log("queue block cleared", 0, "", after.BaseSHA, string(e.Source), "source", e.Source, "revision", after.BlockSourceRevision(e.Source))
+		}
 	case queue.RulesBlocked:
 		if before.RulesRevision() != after.RulesRevision() {
 			log("repository rules blocked", 0, "", after.BaseSHA, "repository-rules", "detail", strings.Join(e.Problems, "; "))

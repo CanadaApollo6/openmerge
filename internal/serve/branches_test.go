@@ -258,7 +258,7 @@ func TestSettlementPrecedesFailedConfigurationAndStaleActions(t *testing.T) {
 	s, f := managedFixture(t, releaseConfig, Options{})
 	w := baseWorker(t, s, "main")
 	recordLanding(t, s, w, f, true)
-	must(t, s.pause(t.Context(), w, "operator-pause", "hold admissions"))
+	must(t, s.block(t.Context(), w, queue.Operator, "hold admissions", ""))
 	// Place reporting ahead of resolution in durable action order.
 	_, err := s.store.Plan(t.Context(), w.id, w.plannerConfig(time.Minute), time.Now().Add(-2*time.Hour))
 	must(t, err)

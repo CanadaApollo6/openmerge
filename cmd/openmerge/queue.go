@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -199,6 +200,18 @@ func printStatus(out io.Writer, response status.Response) error {
 		return err
 	}
 	for _, q := range queues {
+		for _, block := range q.Blocks {
+			if slices.ContainsFunc(q.RulesSources, func(source status.RulesSource) bool { return source.Source == block.Source && len(source.Problems) > 0 }) {
+				continue
+			}
+			source := block.Source
+			if source == "" {
+				source = block.Reason
+			}
+			if _, err := fmt.Fprintf(out, "%s %s block (%s): %s\n", q.Repository, q.Base, source, block.Detail); err != nil {
+				return err
+			}
+		}
 		for _, source := range q.RulesSources {
 			if len(source.Problems) > 0 {
 				if _, err := fmt.Fprintf(out, "%s %s rules (%s): %s\n", q.Repository, q.Base, source.Source, strings.Join(source.Problems, "; ")); err != nil {

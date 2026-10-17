@@ -164,9 +164,13 @@ func TestStatusPrintsProblemsPerRulesSource(t *testing.T) {
 		{Source: "classic_protection", Problems: []string{"remove required reviews"}, Revision: 2},
 		{Source: "permissions", Problems: []string{}, Revision: 2},
 	}
+	response.Queue.Blocks = append(response.Queue.Blocks, status.Block{Source: "rulesets", Reason: "repository-rules", Detail: "repair fence rules", Revision: 1})
 	var out bytes.Buffer
 	if err := printStatus(&out, response); err != nil {
 		t.Fatal(err)
+	}
+	if strings.Count(out.String(), "repair fence rules") != 1 {
+		t.Fatal("rules source printed twice")
 	}
 	for _, text := range []string{"rules (rulesets): repair fence rules", "rules (classic_protection): remove required reviews"} {
 		if !strings.Contains(out.String(), text) {
@@ -222,6 +226,23 @@ func TestQueueStatusRepositoryListsEveryBase(t *testing.T) {
 	for _, text := range []string{"main", "release/v1", "active", "dormant", "STATE"} {
 		if !strings.Contains(out.String(), text) {
 			t.Fatalf("missing %s: %s", text, &out)
+		}
+	}
+}
+
+func TestStatusPrintsEveryIndependentBlock(t *testing.T) {
+	response := status.Response{Queue: &status.Queue{Repository: "owner/repo", Base: "main", Blocks: []status.Block{
+		{Source: "config", Reason: "invalid-config", Detail: "configuration unavailable", Revision: 3},
+		{Source: "operator", Reason: "legacy-hold", Detail: "legacy operator detail", Revision: 1},
+		{Source: "action-poisoned", Reason: "action-poisoned", Detail: "invalid action", Revision: 2},
+	}}}
+	var out bytes.Buffer
+	if err := printStatus(&out, response); err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{"block (config): configuration unavailable", "block (operator): legacy operator detail", "block (action-poisoned): invalid action"} {
+		if !strings.Contains(out.String(), text) {
+			t.Fatalf("missing %q in %s", text, &out)
 		}
 	}
 }

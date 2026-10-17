@@ -48,8 +48,10 @@
 // duration saturation). BuildRetries limits failures, defaulting to 3. At the limit,
 // State.PauseReason returns "build-failed" and Plan reports the pause on the head PR
 // without building. The pause is derived from Config and the recorded streak,
-// because Apply has no config input. ResumeRequested and a changed BaseSHA clear
-// the streak and delay; duplicate BaseMoved observations do nothing. Successful
+// because Apply has no config input. An explicit refresh clears the streak and
+// delay through a current-basis BlockSourceCleared for build-failed. Legacy
+// ResumeRequested, a changed BaseSHA or effective config also reset retries;
+// duplicate BaseMoved observations do nothing. Successful
 // builds also reset it. Checks failures, timeouts and build conflicts split a
 // multi-PR batch into two ordered pending halves, without dequeuing its members.
 // Pending groups run before fresh work, first half then second, with no batch wait.
@@ -59,11 +61,16 @@
 // their pending groups. Base moves, abandoned landings and infrastructure retries
 // rebuild only the current composition, preserving its bisection provenance.
 //
-// ActionPoisoned records repeated invalid durable work. It pauses all work except
+// Legacy ActionPoisoned records repeated invalid durable work. It pauses all work except
 // the head PR's paused ReportStatus and resolution of an in-flight landing.
 // Its reason is "action-poisoned"; further poison events are ignored until
 // ResumeRequested clears this pause. The active batch survives.
 // PauseRequested shares that path with an explicit reason and operator detail.
+// New observations use BlockSourceBlocked and BlockSourceCleared, independently
+// revisioned like rules sources. Config and check-source blocks clear on observed
+// recovery; operator, poison and build retries clear on explicit refresh. Landing blocks require
+// fresh ancestry verification of their durable subject before refresh clears them.
+// Legacy shared pauses project as the operator source without changing replay.
 // RefreshRequested revokes cached check success and requests an early refresh.
 // Pausing stops new work; it never stops settling a landing already in flight.
 // Every Action validates its semantic inputs. Plan checks this invariant before
