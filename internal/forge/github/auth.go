@@ -56,6 +56,9 @@ type tokenEntry struct {
 	token       string
 	expires     time.Time
 	permissions map[string]string
+	retryAt     time.Time
+	lastError   error
+	failures    int
 }
 
 // New loads a PKCS#1 or PKCS#8 RSA PEM private key without exposing it in errors.
@@ -117,6 +120,11 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, safeError(err)
 	}
+	t, ok := a.client.Client().Transport.(*transport)
+	if !ok {
+		return nil, errors.New("github client transport is unavailable")
+	}
+	t.appIdentity = true
 	return a, nil
 }
 
@@ -151,7 +159,7 @@ func (a *App) jwt(context.Context) (string, error) {
 	return payload + "." + encode(signature), nil
 }
 
-func (a *App) token(ctx context.Context, id int64) (string, error) {
+func (a *App) token(ctx context.Context, id int64) (result string, resultErr error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
@@ -167,6 +175,27 @@ func (a *App) token(ctx context.Context, id int64) (string, error) {
 	if a.now().Before(entry.expires.Add(-5 * time.Minute)) {
 		return entry.token, nil
 	}
+	if a.now().Before(entry.retryAt) {
+		return "", entry.lastError
+	}
+	defer func() {
+		if resultErr == nil {
+			entry.failures = 0
+			entry.lastError = nil
+			entry.retryAt = time.Time{}
+			return
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		entry.failures++
+		entry.lastError = resultErr
+		entry.retryAt = a.now().Add(min(5*time.Second*time.Duration(1<<min(entry.failures-1, 6)), 5*time.Minute))
+		var rate *RateLimitError
+		if errors.As(resultErr, &rate) {
+			entry.retryAt = rate.RetryAt
+		}
+	}()
 	token, _, err := a.client.Apps.CreateInstallationToken(ctx, id, nil)
 	if err != nil {
 		return "", safeError(err)

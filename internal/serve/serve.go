@@ -6,17 +6,21 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/config"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
+	"github.com/CanadaApollo6/openmerge/internal/status"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
 // Target identifies an explicitly configured repository and base branch.
 type Target struct {
+	// Resolve binds historical credentials lazily; failures never discard a landing.
+	Resolve  func(context.Context) (Target, error)
 	Key      store.QueueKey
 	Driver   forge.Driver
 	Git      forge.Git
@@ -49,23 +53,39 @@ type Options struct {
 // Server owns one serial reconciler/worker per target, with bounded concurrency.
 // Each process must have its own git cache directory.
 type Server struct {
-	store           *store.Store
-	options         Options
-	queues          []*worker
-	slots           chan struct{}
-	mu              sync.RWMutex
-	refreshMu       sync.Mutex
-	repositories    []Repository
-	refresh         chan struct{}
-	refreshFailures int
-	refreshRetryAt  time.Time
+	store               *store.Store
+	options             Options
+	queues              []*worker
+	slots               chan struct{}
+	mu                  sync.RWMutex
+	refreshMu           sync.Mutex
+	registerMu          sync.Mutex
+	discovery           *Discovery
+	discoveryStatus     status.Discovery
+	discoveryBudgets    map[string]func() status.Budget
+	discoveryBackoffs   map[string]time.Time
+	dormantRepositories map[string]bool
+	repositories        []Repository
+	refresh             chan struct{}
+	refreshFailures     int
+	refreshNextAt       time.Time
+	refreshRetryAt      time.Time
+	refreshNotBefore    time.Time
 }
 
 type worker struct {
-	mu       sync.Mutex
-	managed  bool
-	ready    bool // Branch and policy validation is process-local, never a lifecycle event.
-	recovery bool
+	settlementOnly  bool
+	mu              sync.Mutex
+	managed         bool
+	ready           bool // Branch and policy validation is process-local, never a lifecycle event.
+	waiting         string
+	lifecycleState  string
+	lifecycleDetail string
+	accessBlocked   bool
+	rulesWaiting    string
+	validationNext  time.Time
+	reportingNext   time.Time
+	recovery        bool
 	Target
 	id               store.QueueID
 	wake             chan struct{}
@@ -76,6 +96,7 @@ type worker struct {
 	configError      error
 	deleteHeadBranch *bool
 	prs              map[int]forge.PullRequest
+	diagnosticHeads  map[int]string
 	summaries        map[int]forge.PullRequestSummary
 	deferred         []string
 	logState         queue.State
@@ -99,7 +120,8 @@ func New(ctx context.Context, db *store.Store, targets []Target, options Options
 		if target.Driver == nil || target.Git == nil || target.BotLogin == "" {
 			return nil, errors.New("target requires driver, git and App login")
 		}
-		id, err := db.EnsureQueue(ctx, target.Key)
+		id, key, err := s.canonicalQueue(ctx, target)
+		target.Key = key
 		if err != nil {
 			return nil, err
 		}
@@ -152,7 +174,7 @@ func newServer(db *store.Store, options Options) (*Server, error) {
 // repository identifies installation-wide changes. Payloads never grant trust.
 func (s *Server) Notify(ctx context.Context, installation, repository, delivery string) error {
 	for _, w := range s.workers() {
-		if w.Key.Installation != installation || repository != "" && w.Key.Repository != repository {
+		if w.Key.Installation != installation || repository != "" && !strings.EqualFold(w.Key.Repository, repository) {
 			continue
 		}
 		if err := s.store.Notify(ctx, w.id, delivery); err != nil {
@@ -198,11 +220,13 @@ func (s *Server) Run(ctx context.Context) error {
 	defer wg.Wait()
 	for {
 		s.refreshMu.Lock()
+		nextAt := s.refreshNextAt
 		retryAt := s.refreshRetryAt
+		notBefore := s.refreshNotBefore
 		s.refreshMu.Unlock()
 		delay := s.options.DiscoveryInterval
-		if !retryAt.IsZero() {
-			delay = max(0, time.Until(retryAt))
+		if !nextAt.IsZero() {
+			delay = max(0, time.Until(maxTime(nextAt, maxTime(retryAt, notBefore))))
 		}
 		timer.Reset(delay)
 		select {
@@ -211,10 +235,13 @@ func (s *Server) Run(ctx context.Context) error {
 		case <-timer.C:
 		case <-s.refresh:
 		}
-		if time.Now().Before(retryAt) {
+		if deadline := maxTime(retryAt, notBefore); time.Now().Before(deadline) {
+			s.refreshMu.Lock()
+			s.refreshNextAt = deadline
+			s.refreshMu.Unlock()
 			continue
 		}
-		_ = s.RefreshBranches(ctx)
+		_ = s.Refresh(ctx)
 		start()
 	}
 }
@@ -228,6 +255,7 @@ func (s *Server) workers() []*worker {
 func (s *Server) loop(ctx context.Context, w *worker) {
 	delay := time.Duration(0)
 	failures := 0
+	var retryNotBefore time.Time
 	for {
 		timer := time.NewTimer(delay)
 		select {
@@ -241,12 +269,9 @@ func (s *Server) loop(ctx context.Context, w *worker) {
 		if ctx.Err() != nil {
 			return
 		}
-		if s.options.BackoffUntil != nil {
-			if until := s.options.BackoffUntil(); until.After(time.Now()) {
-				delay = time.Until(until)
-				s.options.Logger.Debug("quota backoff", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "until", until)
-				continue
-			}
+		if time.Now().Before(retryNotBefore) {
+			delay = time.Until(retryNotBefore)
+			continue
 		}
 		select {
 		case s.slots <- struct{}{}:
@@ -285,10 +310,17 @@ func (s *Server) loop(ctx context.Context, w *worker) {
 			w.mu.Unlock()
 		}
 		w.mu.Lock()
-		if w.rulesNextCheck.After(time.Now()) {
+		if err == nil && w.validationPending() && w.validationNext.After(time.Now()) {
+			delay = min(delay, max(time.Millisecond, time.Until(w.validationNext)))
+		}
+		if err == nil && w.rulesNextCheck.After(time.Now()) {
 			delay = min(delay, max(time.Millisecond, time.Until(w.rulesNextCheck)))
 		}
 		w.mu.Unlock()
+		retryNotBefore = time.Time{}
+		if err != nil {
+			retryNotBefore = time.Now().Add(delay)
+		}
 	}
 }
 
@@ -321,13 +353,46 @@ func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
 	defer w.mu.Unlock()
 	s.options.Logger.Debug("reconcile cycle started", "repository", w.Key.Repository, "base", w.Key.BaseBranch)
 	defer func() {
+		var rate interface{ RetryAfter() time.Time }
+		if errors.As(result, &rate) {
+			result = &quotaBackoff{until: rate.RetryAfter()}
+		}
+		if !w.validationPending() {
+			w.validationNext = time.Time{}
+		} else if !w.validationNext.After(time.Now()) {
+			w.validationNext = time.Now().Add(5 * time.Second)
+		}
 		s.logCommitted(ctx, w)
 		s.options.Logger.Debug("reconcile cycle finished", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "error", result)
 	}()
-	unsettled, err := s.settle(ctx, w)
+	current, _, err := s.store.Load(ctx, w.id)
+	if err != nil {
+		return err
+	}
+	w.accessBlocked = current.SourceBlocked(queue.RepositoryAccess)
+	if (w.settlementOnly || current.SourceBlocked(queue.RepositoryAccess)) && (current.Active == nil || current.Active.Phase != queue.Landing) {
+		return nil
+	}
+	resolveCtx := ctx
+	if current.Active != nil && current.Active.Phase == queue.Landing {
+		resolveCtx = forge.WithRequestClass(ctx, forge.SettlementRequest)
+	}
+	if err := s.resolveTarget(resolveCtx, w); err != nil {
+		return err
+	}
+	unsettled, err := s.settle(forge.WithRequestClass(ctx, forge.SettlementRequest), w)
 	if err != nil || unsettled {
 		return err
 	}
+	state, _, err := s.store.Load(ctx, w.id)
+	if err != nil {
+		return err
+	}
+	class := forge.IdleRequest
+	if state.Active != nil {
+		class = forge.ActiveRequest
+	}
+	ctx = forge.WithRequestClass(ctx, class)
 	if w.managed {
 		state, _, err := s.store.Load(ctx, w.id)
 		if err != nil {
@@ -336,8 +401,19 @@ func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
 		if w.recovery {
 			return s.lifecycle(ctx, w, "retired", "Recovered landing settled; queue excluded by repository allowlist")
 		}
-		if !w.ready || state.LifecycleState() != "active" {
+		if state.SourceBlocked(queue.RepositoryAccess) {
+			_ = s.reportRepositoryRemoval(ctx, w, state)
 			return nil
+		}
+		if !w.ready || state.LifecycleState() != "active" {
+			if w.validationPending() && !time.Now().Before(w.validationNext) {
+				w.validationNext = time.Now().Add(5 * time.Second)
+				select {
+				case s.refresh <- struct{}{}:
+				default:
+				}
+			}
+			return s.reportWaiting(ctx, w)
 		}
 	}
 	force, err := s.store.TakeNotification(ctx, w.id)
@@ -365,7 +441,7 @@ func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
 		return err
 	}
 	s.logCommitted(ctx, w)
-	state, _, err := s.store.Load(ctx, w.id)
+	state, _, err = s.store.Load(ctx, w.id)
 	if err != nil {
 		return err
 	}
@@ -422,4 +498,17 @@ type quotaBackoff struct{ until time.Time }
 
 func (e *quotaBackoff) Error() string {
 	return fmt.Sprintf("forge quota reserved until %s", e.until.UTC().Format(time.RFC3339))
+}
+
+func (e *quotaBackoff) RetryAfter() time.Time { return e.until }
+
+func (w *worker) validationPending() bool {
+	return w.managed && !w.ready && !w.settlementOnly && !w.accessBlocked && (w.lifecycleState == "" || w.lifecycleState == "active")
+}
+
+func maxTime(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
 }

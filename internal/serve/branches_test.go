@@ -264,7 +264,9 @@ func TestSettlementPrecedesFailedConfigurationAndStaleActions(t *testing.T) {
 	_, err := s.store.Plan(t.Context(), w.id, w.plannerConfig(time.Minute), time.Now().Add(-2*time.Hour))
 	must(t, err)
 	f.FailNext("DefaultBranch", errors.New("metadata unavailable"))
-	must(t, s.cycle(t.Context(), w))
+	if err := s.cycle(t.Context(), w); err == nil {
+		t.Fatal("metadata failure swallowed")
+	}
 	if state := lifecycleState(t, s, w); state.Active != nil || len(state.Entries) != 0 {
 		t.Fatal("configuration failure skipped fence settlement")
 	}
@@ -661,7 +663,15 @@ func TestManagedStartupClassicProtectionUnavailable(t *testing.T) {
 				switch phase {
 				case "startup":
 					w.rulesNextCheck = time.Time{}
-					must(t, s.RefreshBranches(t.Context()))
+					err := s.RefreshBranches(t.Context())
+					if mode == "read failure" {
+						var pending *validationPending
+						if !errors.As(err, &pending) {
+							t.Fatalf("missing validation retry: %v", err)
+						}
+					} else {
+						must(t, err)
+					}
 				case "branch refresh":
 					s, err = NewRepositories(t.Context(), db, []Repository{r}, options)
 					must(t, err)

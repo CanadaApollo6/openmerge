@@ -308,6 +308,8 @@ func TestDefaultBranchFailuresPauseAndRetryAtSameTip(t *testing.T) {
 			s, w, f, _ := releaseFixture(t, releaseConfig)
 			must(t, s.configuration(t.Context(), w))
 			validTip := w.configTip
+			_, before, err := s.store.Load(t.Context(), w.id)
+			must(t, err)
 			switch failure {
 			case "metadata":
 				f.FailNext("DefaultBranch", errors.New("metadata unreadable"))
@@ -326,10 +328,21 @@ func TestDefaultBranchFailuresPauseAndRetryAtSameTip(t *testing.T) {
 				_, err := f.PushBase(repo, "main", "invalid authority", map[string]string{".openmerge.yml": "version: invalid"})
 				must(t, err)
 			}
-			must(t, s.configuration(t.Context(), w))
+			readErr := s.configuration(t.Context(), w)
+			transient := failure == "metadata" || failure == "tip" || failure == "file"
+			if transient && readErr == nil || !transient && readErr != nil {
+				t.Fatalf("unexpected read result: %v", readErr)
+			}
+			if transient {
+				events, err := s.store.EventsAfter(t.Context(), w.id, before)
+				must(t, err)
+				if len(events) != 0 {
+					t.Fatalf("transient read wrote events: %+v", events)
+				}
+			}
 			state, _, err := s.store.Load(t.Context(), w.id)
 			must(t, err)
-			if w.configError == nil || w.configTip != "" || state.PauseReason(queue.Config{}) != "invalid-config" {
+			if w.configError == nil || w.configTip != "" || state.PauseReason(queue.Config{}) != map[bool]string{true: "", false: "invalid-config"}[transient] {
 				t.Fatalf("authority failure did not pause: worker=%+v state=%+v", w, state)
 			}
 			w.Git = f
@@ -349,10 +362,12 @@ func TestUnreadableDefaultBaseTipPausesAndRecovers(t *testing.T) {
 	must(t, s.configuration(t.Context(), w))
 	tip := w.configTip
 	w.Git = &configReadGit{Git: f, failRef: "main"}
-	must(t, s.configuration(t.Context(), w))
+	if err := s.configuration(t.Context(), w); err == nil {
+		t.Fatal("unreadable tip accepted")
+	}
 	state, _, err := s.store.Load(t.Context(), w.id)
 	must(t, err)
-	if w.configError == nil || w.configTip != "" || state.BaseSHA != tip || state.PauseReason(queue.Config{}) != "invalid-config" {
+	if w.configError == nil || w.configTip != "" || state.BaseSHA != tip || state.PauseReason(queue.Config{}) != "" {
 		t.Fatalf("unreadable default/base tip did not pause: worker=%+v state=%+v", w, state)
 	}
 	w.Git = f
@@ -376,10 +391,13 @@ func TestDefaultBranchRenameReevaluatesOmittedBase(t *testing.T) {
 			if deleteOld {
 				must(t, f.DeleteRef(t.Context(), repo, "main"))
 			}
-			must(t, s.configuration(t.Context(), w))
+			readErr := s.configuration(t.Context(), w)
+			if deleteOld && readErr == nil || !deleteOld && readErr != nil {
+				t.Fatalf("read result=%v", readErr)
+			}
 			state, _, err := s.store.Load(t.Context(), w.id)
 			must(t, err)
-			if w.configError == nil || w.configBranch != "" || state.PauseReason(queue.Config{}) != "invalid-config" {
+			if w.configError == nil || w.configBranch != "" || state.PauseReason(queue.Config{}) != map[bool]string{true: "", false: "invalid-config"}[deleteOld] {
 				t.Fatal("old base retained omitted-base policy after default branch rename")
 			}
 			must(t, f.SetRef(repo, "main", tip))

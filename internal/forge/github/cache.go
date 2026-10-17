@@ -74,7 +74,7 @@ func (c *responseCache) put(key cacheKey, value *cachedResponse) {
 
 // conditionalGET always contacts GitHub. Only a validated 304 replays data; an
 // error never falls back to a cached authorization or CI result.
-func (t *transport) conditionalGET(req *http.Request, token string) (*http.Response, error) {
+func (t *transport) conditionalGET(req *http.Request, token string, revalidated func()) (*http.Response, error) {
 	if t.cache == nil || req.Method != http.MethodGet || req.Header.Get("If-None-Match") != "" || req.Header.Get("If-Modified-Since") != "" || req.Header.Get("Range") != "" {
 		return t.base.RoundTrip(req)
 	}
@@ -82,7 +82,13 @@ func (t *transport) conditionalGET(req *http.Request, token string) (*http.Respo
 	headers.Del("Authorization")
 	digest := sha256.New()
 	_ = headers.Write(digest) // Hash writes cannot fail; Header.Write sorts keys.
-	key := cacheKey{url: req.URL.String(), token: sha256.Sum256([]byte(token)), headers: [sha256.Size]byte(digest.Sum(nil))}
+	identity := sha256.Sum256([]byte(token))
+	// JWT renewal does not change this App transport's authorization identity.
+	// Installation-token caches remain token-scoped as grants can change.
+	if t.appIdentity {
+		identity = sha256.Sum256([]byte("app"))
+	}
+	key := cacheKey{url: req.URL.String(), token: identity, headers: [sha256.Size]byte(digest.Sum(nil))}
 	cached := t.cache.get(key)
 	if cached != nil {
 		req.Header.Set("If-None-Match", cached.header.Get("ETag"))
@@ -92,6 +98,7 @@ func (t *transport) conditionalGET(req *http.Request, token string) (*http.Respo
 		return nil, err
 	}
 	if res.StatusCode == http.StatusNotModified {
+		revalidated()
 		_ = res.Body.Close()
 		if cached == nil {
 			return nil, errors.New("github returned 304 without a cached representation")

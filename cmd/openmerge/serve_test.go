@@ -253,3 +253,51 @@ func TestServeBaseIsOptionalAllowlistAndDiscoveryInterval(t *testing.T) {
 		}
 	}
 }
+
+func TestDiscoveryServeAllowlistsOptionalAndNarrowing(t *testing.T) {
+	for key, value := range map[string]string{"DATABASE_URL": "postgres://local/test", "GITHUB_APP_ID": "42", "GITHUB_PRIVATE_KEY": "key.pem", "GITHUB_INSTALLATION_ID": "", "REPOS": "", "BASE": ""} {
+		t.Setenv("OPENMERGE_"+key, value)
+	}
+	// Empty string is malformed for an explicitly supplied typed env value.
+	t.Setenv("OPENMERGE_GITHUB_INSTALLATION_ID", "0")
+	o, err := parseServe(nil, io.Discard)
+	if err != nil || o.installation != 0 || o.repos != "" || o.base != "" || o.discoveryInterval != 10*time.Minute {
+		t.Fatalf("discovery defaults=%+v %v", o, err)
+	}
+	for _, pattern := range []string{"Owner/*", "*/repo?", "owner/repo,Other/*"} {
+		if _, err := parseServe([]string{"--repos=" + pattern}, io.Discard); err != nil {
+			t.Fatalf("glob %s: %v", pattern, err)
+		}
+	}
+	if _, err := parseServe([]string{"--github-installation-id=-1"}, io.Discard); err == nil {
+		t.Fatal("negative installation accepted")
+	}
+}
+
+type discoveryNotification struct {
+	notification
+	discoveryCalls int
+}
+
+func (n *discoveryNotification) NotifyDiscovery(_ context.Context, _, _, _ string) error {
+	n.discoveryCalls++
+	return nil
+}
+
+func TestInstallationWebhooksOnlyRequestDiscovery(t *testing.T) {
+	for _, event := range []string{"installation", "installation_repositories"} {
+		n := &discoveryNotification{}
+		body := `{"action":"deleted","installation":{"id":7},"repositories_removed":[{"full_name":"owner/repo"}]}`
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+		req.Header.Set("X-GitHub-Event", event)
+		req.Header.Set("X-GitHub-Delivery", "delivery")
+		mac := hmac.New(sha256.New, []byte("secret"))
+		_, _ = mac.Write([]byte(body))
+		req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+		response := httptest.NewRecorder()
+		webhookHandler(n, []byte("secret")).ServeHTTP(response, req)
+		if response.Code != http.StatusAccepted || n.discoveryCalls != 1 || n.calls != 0 {
+			t.Fatalf("payload changed membership: status=%d discovery=%d notifications=%d", response.Code, n.discoveryCalls, n.calls)
+		}
+	}
+}

@@ -68,7 +68,9 @@ func TestConfigRecoveryPreservesSafetySources(t *testing.T) {
 				must(t, err)
 				d := &defaultBranchFailure{Driver: w.Driver, fail: true}
 				w.Driver = d
-				must(t, s.cycle(t.Context(), w))
+				if err := s.cycle(t.Context(), w); err == nil {
+					t.Fatal("transient read error swallowed")
+				}
 				d.fail = false
 				must(t, s.cycle(t.Context(), w))
 				state, _, err := s.store.Load(t.Context(), w.id)

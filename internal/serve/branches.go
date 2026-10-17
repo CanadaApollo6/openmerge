@@ -11,6 +11,7 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/config"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
+	"github.com/CanadaApollo6/openmerge/internal/status"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
@@ -38,11 +39,12 @@ func NewRepositories(ctx context.Context, db *store.Store, repos []Repository, o
 		}
 	}
 	s.repositories = repos
-	keys, err := db.QueueKeys(ctx)
+	stored, err := db.StoredQueues(ctx)
 	if err != nil {
 		return nil, err
 	}
-	for _, key := range keys {
+	for _, historical := range stored {
+		key := historical.Key
 		var target Target
 		found := false
 		for _, repo := range repos {
@@ -57,10 +59,7 @@ func NewRepositories(ctx context.Context, db *store.Store, repos []Repository, o
 		if !found {
 			continue
 		}
-		id, err := db.EnsureQueue(ctx, key)
-		if err != nil {
-			return nil, err
-		}
+		id := historical.ID
 		state, _, err := db.Load(ctx, id)
 		if err != nil {
 			return nil, err
@@ -73,7 +72,7 @@ func NewRepositories(ctx context.Context, db *store.Store, repos []Repository, o
 			continue
 		}
 		target.Key = key
-		w, err := s.register(ctx, target)
+		w, err := s.registerID(ctx, target, id)
 		if err != nil {
 			return nil, err
 		}
@@ -89,15 +88,54 @@ func NewRepositories(ctx context.Context, db *store.Store, repos []Repository, o
 }
 
 func (s *Server) register(ctx context.Context, target Target) (*worker, error) {
-	if target.Driver == nil || target.Git == nil || target.BotLogin == "" {
+	if target.Resolve == nil && (target.Driver == nil || target.Git == nil || target.BotLogin == "") {
 		return nil, errors.New("target requires driver, git and App login")
 	}
-	id, err := s.store.EnsureQueue(ctx, target.Key)
+	id, key, err := s.canonicalQueue(ctx, target)
+	target.Key = key
 	if err != nil {
 		return nil, err
 	}
+	s.registerMu.Lock()
+	defer s.registerMu.Unlock()
+	return s.registerID(ctx, target, id)
+}
+
+// Read the forge only when an uncached partition has competing fence histories.
+// Workers use the resulting cache; a failed read leaves every variant waiting
+// for the next discovery sweep while their landing settlement continues.
+func (s *Server) canonicalQueue(ctx context.Context, target Target) (store.QueueID, store.QueueKey, error) {
+	id, key, err := s.store.CanonicalQueue(ctx, target.Key)
+	if !errors.Is(err, store.ErrFenceOwnershipRequired) {
+		return id, key, err
+	}
+	readCtx, cancel := context.WithTimeout(ctx, s.options.ActionTimeout)
+	defer cancel()
+	if target.Git == nil && target.Resolve != nil {
+		resolved, resolveErr := target.Resolve(readCtx)
+		if resolveErr != nil {
+			return 0, key, fmt.Errorf("%w: resolve fence reader: %w", err, resolveErr)
+		}
+		target.Git = resolved.Git
+	}
+	if target.Git == nil {
+		return 0, key, err
+	}
+	sha, _, _, readErr := target.Git.ReadFence(readCtx, forge.RepoRef{Path: target.Key.Repository}, "openmerge/fence/"+target.Key.BaseBranch)
+	if readErr != nil {
+		return 0, key, fmt.Errorf("%w: read actual fence: %w", err, readErr)
+	}
+	return s.store.CanonicalQueueWithFence(ctx, target.Key, sha)
+}
+
+func (s *Server) registerID(ctx context.Context, target Target, id store.QueueID) (*worker, error) {
 	for _, w := range s.workers() {
 		if w.id == id {
+			w.mu.Lock()
+			if w.Driver == nil && target.Driver != nil {
+				w.bind(target)
+			}
+			w.mu.Unlock()
 			return w, nil
 		}
 	}
@@ -105,7 +143,7 @@ func (s *Server) register(ctx context.Context, target Target) (*worker, error) {
 	if err != nil {
 		return nil, err
 	}
-	w := &worker{Target: target, id: id, managed: true, logState: state, logWatermark: watermark, wake: make(chan struct{}, 1), prs: make(map[int]forge.PullRequest), summaries: make(map[int]forge.PullRequestSummary)}
+	w := &worker{Target: target, id: id, managed: true, logState: state, logWatermark: watermark, lifecycleState: state.LifecycleState(), lifecycleDetail: state.Lifecycle.Detail, accessBlocked: state.SourceBlocked(queue.RepositoryAccess), wake: make(chan struct{}, 1), prs: make(map[int]forge.PullRequest), summaries: make(map[int]forge.PullRequestSummary)}
 	s.mu.Lock()
 	s.queues = append(s.queues, w)
 	s.mu.Unlock()
@@ -117,8 +155,11 @@ func (s *Server) lifecycle(ctx context.Context, w *worker, state, detail string)
 	if err != nil {
 		return err
 	}
+	w.lifecycleState, w.lifecycleDetail = state, detail
 	if state != "active" {
 		w.ready = false
+		w.waiting = detail
+		w.validationNext = time.Time{}
 	}
 	event := queue.LifecycleChanged{State: state, Detail: detail}
 	if current.LifecycleState() == state {
@@ -138,6 +179,7 @@ func (s *Server) allowedBase(base string) bool {
 // RefreshBranches serializes successful listings, while each worker continues
 // settling independently during slow discovery. No partial listing removes work.
 func (s *Server) RefreshBranches(ctx context.Context) error {
+	ctx = forge.WithRequestClass(ctx, forge.DiscoveryRequest)
 	s.refreshMu.Lock()
 	defer s.refreshMu.Unlock()
 	var result error
@@ -147,13 +189,7 @@ func (s *Server) RefreshBranches(ctx context.Context) error {
 			s.options.Logger.Warn("branch refresh failed; keeping previous expansion", "repository", repo.Name, "error", err)
 		}
 	}
-	if result != nil {
-		s.refreshFailures++
-		delay := min(5*time.Second*time.Duration(1<<min(s.refreshFailures-1, 6)), 5*time.Minute, s.options.DiscoveryInterval)
-		s.refreshRetryAt = time.Now().Add(delay)
-	} else {
-		s.refreshFailures, s.refreshRetryAt = 0, time.Time{}
-	}
+	s.refreshResult(result)
 	return result
 }
 
@@ -161,24 +197,36 @@ func (s *Server) refreshRepository(ctx context.Context, repo Repository) error {
 	target := repo.Target("")
 	branch, err := target.Driver.DefaultBranch(ctx, forge.RepoRef{Path: repo.Name})
 	if err != nil {
-		return err
+		return &repositoryReadError{"default branch", err}
 	}
 	tip, err := target.Git.ReadRef(ctx, forge.RepoRef{Path: repo.Name}, branch)
 	if err != nil {
-		return err
+		return &repositoryReadError{"default-branch tip", err}
 	}
 	cfg, err := s.repositoryConfig(ctx, target, tip)
 	if err != nil {
-		return err
+		return &repositoryReadError{"configuration", err}
 	}
 	branches, err := repo.Branches(ctx)
 	if err != nil {
-		return err
+		return &repositoryReadError{"branch listing", err}
 	}
 	// Internal test and fence refs must never recursively become queue bases.
 	branches = slices.DeleteFunc(branches, func(base string) bool { return strings.HasPrefix(base, "openmerge/") })
 	slices.Sort(branches)
 	branches = slices.Compact(branches)
+	if s.discovery != nil {
+		dormant := true
+		for _, base := range branches {
+			if s.allowedBase(base) && len(matchingQueues(cfg, base, branch)) > 0 {
+				dormant = false
+				break
+			}
+		}
+		s.mu.Lock()
+		s.dormantRepositories[repo.Installation+"/"+strings.ToLower(repo.Name)] = dormant
+		s.mu.Unlock()
+	}
 	// An overlap invalidates the involved queue entries, including their other
 	// bases, without blocking independent queues in the same policy file.
 	overlaps := make(map[string]bool)
@@ -190,23 +238,16 @@ func (s *Server) refreshRepository(ctx context.Context, repo Repository) error {
 			}
 		}
 	}
+	var result error
 	for _, base := range branches {
 		if !s.allowedBase(base) || len(matchingQueues(cfg, base, branch)) == 0 {
 			continue
 		}
 		target := repo.Target(base)
-		// Reuse spelling and identity of any previously stored partition.
-		for _, w := range s.workers() {
-			if w.Key.Installation == repo.Installation && strings.EqualFold(w.Key.Repository, repo.Name) && w.Key.BaseBranch == base && w.Key.Lane == "" {
-				target.Key = w.Key
-				break
-			}
-		}
 		if _, err := s.register(ctx, target); err != nil {
-			return err
+			result = errors.Join(result, fmt.Errorf("base %s registration: %w", base, err))
 		}
 	}
-	var result error
 	for _, w := range s.workers() {
 		if w.Key.Installation != repo.Installation || !strings.EqualFold(w.Key.Repository, repo.Name) {
 			continue
@@ -236,7 +277,33 @@ func matchingQueues(cfg config.Config, base, defaultBranch string) []config.Queu
 	return matches
 }
 
-func (s *Server) refreshWorker(ctx context.Context, w *worker, cfg config.Config, branch, tip string, branches []string, overlaps map[string]bool) error {
+func (s *Server) refreshWorker(ctx context.Context, w *worker, cfg config.Config, branch, tip string, branches []string, overlaps map[string]bool) (result error) {
+	if !w.ready {
+		w.waiting = "validation pending"
+	}
+	w.validationNext = time.Time{}
+	defer func() {
+		if result != nil {
+			w.ready = false
+			w.waiting = result.Error()
+		}
+		if w.validationPending() && w.validationNext.IsZero() {
+			w.validationNext = time.Now().Add(5 * time.Second)
+		}
+	}()
+	id, _, err := s.store.CanonicalQueue(ctx, w.Key)
+	if err != nil {
+		w.ready = false
+		w.waiting = err.Error()
+		return &validationPending{w.waiting}
+	}
+	if id != w.id {
+		w.settlementOnly = true
+		w.ready = false
+		w.waiting = "historical case-variant queue; settlement only"
+		return nil
+	}
+	w.settlementOnly = false
 	matches := matchingQueues(cfg, w.Key.BaseBranch, branch)
 	switch {
 	case !s.allowedBase(w.Key.BaseBranch) || len(matches) == 0 || w.Key.Lane != "":
@@ -246,9 +313,18 @@ func (s *Server) refreshWorker(ctx context.Context, w *worker, cfg config.Config
 	case slices.ContainsFunc(matches, func(q config.Queue) bool { return overlaps[q.Name] }):
 		return s.lifecycle(ctx, w, "overlapping", "Queue selector overlaps another queue on an existing branch")
 	}
+	w.lifecycleState = "active"
+	if err := s.resolveTarget(ctx, w); err != nil {
+		return err
+	}
 	// Before reactivation, settle any old attempt. Failed protection reads leave
 	// a new/recreated queue blocked until a complete validation succeeds.
 	if unsettled, err := s.settle(ctx, w); err != nil || unsettled {
+		w.ready = false
+		w.waiting = "landing settlement pending"
+		if err == nil {
+			return &validationPending{w.waiting}
+		}
 		return err
 	}
 	if err := s.configuration(ctx, w); err != nil {
@@ -267,7 +343,15 @@ func (s *Server) refreshWorker(ctx context.Context, w *worker, cfg config.Config
 	if err != nil {
 		return err
 	}
-	if w.rulesFailures > 0 || len(state.RulesProblems()) > 0 {
+	if w.rulesWaiting != "" && !w.ready || len(state.RulesProblems()) > 0 {
+		w.waiting = w.rulesWaiting
+		if w.waiting == "" {
+			w.waiting = "repository rules block admission"
+		}
+		w.validationNext = w.rulesNextCheck
+		if w.rulesWaiting != "" {
+			return &validationPending{w.waiting}
+		}
 		return nil
 	}
 	if err := s.initializeFence(ctx, w); err != nil {
@@ -277,6 +361,8 @@ func (s *Server) refreshWorker(ctx context.Context, w *worker, cfg config.Config
 		return err
 	}
 	w.ready = true
+	w.validationNext = time.Time{}
+	w.waiting = ""
 	return nil
 }
 
@@ -289,3 +375,37 @@ func (s *Server) Keys() []store.QueueKey {
 	}
 	return keys
 }
+
+// Journals supplies persisted history alongside this process's readiness snapshot.
+func (s *Server) Journals(ctx context.Context, keys []store.QueueKey) ([]store.Journal, error) {
+	return s.store.Journals(ctx, keys)
+}
+
+// QueueReadiness returns the current admission gate without persisting transient failures.
+func (s *Server) QueueReadiness(key store.QueueKey) *status.Readiness {
+	for _, w := range s.workers() {
+		if w.Key == key {
+			w.mu.Lock()
+			defer w.mu.Unlock()
+			r := &status.Readiness{Ready: !w.managed || w.ready}
+			if !r.Ready {
+				r.Reason = w.readinessReason()
+			}
+			return r
+		}
+	}
+	return nil
+}
+
+type validationPending struct{ reason string }
+
+func (e *validationPending) Error() string { return e.reason }
+
+// repositoryReadError identifies failures before independent base validation.
+type repositoryReadError struct {
+	phase string
+	err   error
+}
+
+func (e *repositoryReadError) Error() string { return e.phase + " could not be read: " + e.err.Error() }
+func (e *repositoryReadError) Unwrap() error { return e.err }

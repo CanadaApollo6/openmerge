@@ -39,14 +39,6 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 	if err != nil {
 		return err
 	}
-	if baseErr == nil && state.BaseSHA != tip {
-		if _, err := s.store.Append(ctx, w.id, []queue.Event{queue.BaseMoved{SHA: tip}}, ""); err != nil {
-			return err
-		}
-		// Conflict observations can change when this base moves even if the
-		// default branch (and therefore the policy) stays at the same commit.
-		w.summaries = make(map[int]forge.PullRequestSummary)
-	}
 	configTip := ""
 	if loadErr == nil {
 		if branch == w.Key.BaseBranch {
@@ -57,6 +49,31 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 	}
 	if loadErr == nil && (configTip != w.configTip || branch != w.configBranch) {
 		loadErr = s.loadConfiguration(ctx, w, branch, configTip)
+	}
+	// Read failures stop this cycle in memory, without writing block/clear or
+	// base/config observations. A parsed invalid file or proven deletion is a
+	// definite condition and can be recorded independently.
+	var invalid config.Errors
+	if loadErr != nil && !errors.Is(loadErr, config.ErrNotFound) && !errors.As(loadErr, &invalid) {
+		w.configError = loadErr
+		w.configBranch, w.configTip = "", ""
+		if w.managed {
+			w.ready = false
+			w.waiting = "configuration could not be read; discovery will retry"
+			select {
+			case s.refresh <- struct{}{}:
+			default:
+			}
+		}
+		return loadErr
+	}
+	if baseErr == nil && state.BaseSHA != tip {
+		if _, err := s.store.Append(ctx, w.id, []queue.Event{queue.BaseMoved{SHA: tip}}, ""); err != nil {
+			return err
+		}
+		// Conflict observations can change when this base moves even if the
+		// default branch (and therefore the policy) stays at the same commit.
+		w.summaries = make(map[int]forge.PullRequestSummary)
 	}
 	if loadErr == nil && state.ConfigDigest != w.configDigest {
 		// Publish the policy before using it. Replay invalidates work built under
@@ -326,6 +343,10 @@ func (s *Server) commands(ctx context.Context, w *worker, number int) error {
 			var events []queue.Event
 			var outcome any = true
 			if cmd := command(c.Body); cmd != "" && c.Author != w.BotLogin {
+				fields := strings.Fields(cmd)
+				if fields[0] == "queue" && w.managed && !w.ready {
+					return s.ignoreWaitingCommand(ctx, w, number, c)
+				}
 				allowed, err := w.Driver.CanWrite(ctx, w.repo(), c.Author)
 				if err != nil {
 					return err
@@ -335,7 +356,6 @@ func (s *Server) commands(ctx context.Context, w *worker, number int) error {
 						return err
 					}
 				} else {
-					fields := strings.Fields(cmd)
 					switch fields[0] {
 					case "queue":
 						// Trust must be freshly read even if UpdatedAt did not change.

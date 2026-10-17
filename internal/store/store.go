@@ -58,14 +58,139 @@ func (s *Store) Close() { s.pool.Close() }
 
 // EnsureQueue returns the same ID for every occurrence of this queue key.
 func (s *Store) EnsureQueue(ctx context.Context, key QueueKey) (QueueID, error) {
+	id, _, err := s.CanonicalQueue(ctx, key)
+	return id, err
+}
+
+// ErrFenceOwnershipRequired leaves conflicting histories unselected until a
+// caller supplies an actual fence ref observation. Settlement is still allowed.
+var ErrFenceOwnershipRequired = errors.New("conflicting case-variant queue histories: unique fence ownership required; operator reconciliation required (docs/operating.md#case-variant-history-recovery)")
+
+// CanonicalQueue atomically finds or registers a partition, preserving the first
+// stored repository spelling, or a durably chosen historical variant. Conflicting
+// histories must settle before admission. Every registration takes the same lock, so
+// differently cased discoveries cannot split a queue's history or fence.
+func (s *Store) CanonicalQueue(ctx context.Context, key QueueKey) (QueueID, QueueKey, error) {
+	return s.canonicalQueue(ctx, key, "")
+}
+
+// CanonicalQueueWithFence reconciles uncached fenced histories against the SHA
+// read from the actual forge fence ref. Empty or ambiguous evidence fails closed.
+// An existing selection takes precedence; unrelated events never select a fence.
+func (s *Store) CanonicalQueueWithFence(ctx context.Context, key QueueKey, actualFence string) (QueueID, QueueKey, error) {
+	return s.canonicalQueue(ctx, key, actualFence)
+}
+
+func (s *Store) canonicalQueue(ctx context.Context, key QueueKey, actualFence string) (QueueID, QueueKey, error) {
 	if key.Installation == "" || key.Repository == "" || key.BaseBranch == "" {
-		return 0, errors.New("installation, repository and base branch are required")
+		return 0, key, errors.New("installation, repository and base branch are required")
 	}
 	var id QueueID
-	err := s.pool.QueryRow(ctx, `INSERT INTO queues(installation, repository, base, lane) VALUES ($1, $2, $3, $4)
-		ON CONFLICT (installation, repository, base, lane) DO UPDATE SET lane = EXCLUDED.lane RETURNING id`,
-		key.Installation, key.Repository, key.BaseBranch, key.Lane).Scan(&id)
-	return id, err
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		// Registration uses its own namespace, separate from queue event locks.
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(1330464082, hashtext($1 || '/' || lower($2) || '/' || $3 || '/' || $4))`, key.Installation, key.Repository, key.BaseBranch, key.Lane); err != nil {
+			return err
+		}
+		rows, err := tx.Query(ctx, `SELECT id, repository FROM queues WHERE installation=$1 AND lower(repository)=lower($2) AND base=$3 AND lane=$4 ORDER BY id`, key.Installation, key.Repository, key.BaseBranch, key.Lane)
+		if err != nil {
+			return err
+		}
+		type match struct {
+			id         QueueID
+			repository string
+		}
+		matches, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (match, error) {
+			var m match
+			err := row.Scan(&m.id, &m.repository)
+			return m, err
+		})
+		if err != nil {
+			return err
+		}
+		if len(matches) == 0 {
+			if err := tx.QueryRow(ctx, `INSERT INTO queues(installation, repository, base, lane) VALUES ($1,$2,$3,$4) RETURNING id`, key.Installation, key.Repository, key.BaseBranch, key.Lane).Scan(&id); err != nil {
+				return err
+			}
+			matches = append(matches, match{id: id, repository: key.Repository})
+		}
+		variantIDs := make([]int64, len(matches))
+		for i, m := range matches {
+			variantIDs[i] = int64(m.id)
+		}
+		var cachedID QueueID
+		var cachedVariants []int64
+		err = tx.QueryRow(ctx, `SELECT queue_id, variant_ids FROM canonical_queues WHERE installation=$1 AND repository=lower($2) AND base=$3 AND lane=$4`, key.Installation, key.Repository, key.BaseBranch, key.Lane).Scan(&cachedID, &cachedVariants)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if err == nil && slices.Equal(variantIDs, cachedVariants) {
+			for _, m := range matches {
+				if m.id == cachedID {
+					id, key.Repository = m.id, m.repository
+					return nil
+				}
+			}
+			return errors.New("canonical queue is absent from its variant set")
+		}
+		chosen := matches[0]
+		cached := false
+		for _, m := range matches {
+			if m.id == cachedID {
+				chosen, cached = m, true
+				break
+			}
+		}
+		live := make(map[QueueID]bool)
+		var fenced, owners []match
+		for _, m := range matches {
+			if len(matches) == 1 {
+				break
+			}
+			state, _, err := load(ctx, tx, m.id)
+			if err != nil {
+				return err
+			}
+			if state.Active != nil && state.Active.Phase == queue.Landing && (!cached || m.id != cachedID) {
+				return fmt.Errorf("conflicting case-variant queue histories: landing settlement pending for queue %d", m.id)
+			}
+			protected := slices.ContainsFunc(state.Blocks(queue.Config{}), func(block queue.Block) bool {
+				return block.Source != queue.RepositoryAccess && block.Source != queue.ConfigSource && block.Source != "lifecycle"
+			})
+			if len(state.Entries) > 0 || state.Active != nil || protected {
+				live[m.id] = true
+				if !cached {
+					chosen = m
+				}
+			}
+			if state.Fence != "" {
+				fenced = append(fenced, m)
+				if state.Fence == actualFence {
+					owners = append(owners, m)
+				}
+			}
+		}
+		if !cached {
+			switch {
+			case len(fenced) > 1:
+				if len(owners) != 1 {
+					return ErrFenceOwnershipRequired
+				}
+				chosen = owners[0]
+			case len(fenced) == 1:
+				chosen = fenced[0]
+			}
+		}
+		for liveID := range live {
+			if liveID != chosen.id {
+				return errors.New("conflicting case-variant queue histories have live state; operator reconciliation required (docs/operating.md#case-variant-history-recovery)")
+			}
+		}
+		id, key.Repository = chosen.id, chosen.repository
+		_, err = tx.Exec(ctx, `INSERT INTO canonical_queues(installation,repository,base,lane,queue_id,variant_ids) VALUES ($1,lower($2),$3,$4,$5,$6)
+			ON CONFLICT (installation,repository,base,lane) DO UPDATE SET queue_id=EXCLUDED.queue_id, variant_ids=EXCLUDED.variant_ids`, key.Installation, key.Repository, key.BaseBranch, key.Lane, id, variantIDs)
+		return err
+	})
+	return id, key, err
 }
 
 // InitializeFence persists the forge's initial fence before admitting any events.

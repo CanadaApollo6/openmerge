@@ -58,6 +58,12 @@ func must(t *testing.T, err error) {
 }
 func database(t *testing.T) *store.Store {
 	t.Helper()
+	db, _ := databaseConnection(t)
+	return db
+}
+
+func databaseConnection(t *testing.T) (*store.Store, *pgx.Conn) {
+	t.Helper()
 	raw := os.Getenv("OPENMERGE_TEST_DATABASE_URL")
 	if raw == "" {
 		t.Skip("run make db and set OPENMERGE_TEST_DATABASE_URL")
@@ -80,7 +86,9 @@ func database(t *testing.T) *store.Store {
 	db, err := store.Open(t.Context(), u.String())
 	must(t, err)
 	t.Cleanup(db.Close)
-	return db
+	_, err = conn.Exec(t.Context(), "SET search_path TO "+pgx.Identifier{schema}.Sanitize())
+	must(t, err)
+	return db, conn
 }
 func fixture(t *testing.T, contents string) (*Server, *worker, *fake.Forge, *countingDriver) {
 	t.Helper()

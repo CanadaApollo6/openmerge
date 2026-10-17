@@ -16,17 +16,19 @@ import (
 // Version is the public response schema version.
 const Version = 1
 
-// Response carries exactly one of queues, queue, or queue + PR + why.
+// Response carries queue detail, queue lists, or discovery observations.
 type Response struct {
-	Version int     `json:"version"`
-	Queues  []Queue `json:"queues,omitempty"`
-	Queue   *Queue  `json:"queue,omitempty"`
-	PR      *Entry  `json:"pr,omitempty"`
-	Why     *Why    `json:"why,omitempty"`
+	Version   int        `json:"version"`
+	Discovery *Discovery `json:"discovery,omitempty"`
+	Queues    []Queue    `json:"queues,omitempty"`
+	Queue     *Queue     `json:"queue,omitempty"`
+	PR        *Entry     `json:"pr,omitempty"`
+	Why       *Why       `json:"why,omitempty"`
 }
 
 // Queue describes one served installation/repository/base/lane partition.
 type Queue struct {
+	Readiness    *Readiness    `json:"readiness,omitempty"`
 	State        string        `json:"state"`
 	Installation string        `json:"installation"`
 	Repository   string        `json:"repo"`
@@ -537,4 +539,10 @@ func affects(event queue.Event, pr int, before, after queue.State, tested map[st
 	default:
 		return entryIn(before, pr) || entryIn(after, pr)
 	}
+}
+
+// Readiness is a process-local admission gate, separate from durable blocks.
+type Readiness struct {
+	Ready  bool   `json:"ready"`
+	Reason string `json:"reason,omitempty"`
 }

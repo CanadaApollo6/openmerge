@@ -70,39 +70,54 @@ type transport struct {
 	remaining   int
 	reset       time.Time
 	budgetKnown bool
+	limit       int
+	inflight    int
+	spent       [6]int
 	strikes     uint
 	cache       *responseCache
+	appIdentity bool
 }
 
 func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.URL.Scheme != t.origin.Scheme || req.URL.Host != t.origin.Host || !strings.HasPrefix(req.URL.Path, t.origin.Path) {
 		return nil, errors.New("github refused credentials outside API origin")
 	}
-	t.mu.Lock()
-	if t.now().Before(t.until) {
-		err := &RateLimitError{RetryAt: t.until, Secondary: t.secondary}
-		t.mu.Unlock()
+	ticket, err := t.reserve(req.Context())
+	if err != nil {
 		return nil, err
 	}
-	t.mu.Unlock()
+	defer func() { t.mu.Lock(); t.inflight--; t.mu.Unlock() }()
 	token, err := t.token(req.Context())
 	if err != nil {
 		return nil, safeError(err)
 	}
 	copyReq := req.Clone(req.Context())
 	copyReq.Header.Set("Authorization", "Bearer "+token)
-	res, err := t.conditionalGET(copyReq, token)
+	notModified := false
+	res, err := t.conditionalGET(copyReq, token, func() { notModified = true })
 	if err != nil {
 		return nil, safeError(err)
+	}
+	if notModified && ticket.charged {
+		t.mu.Lock()
+		if ticket.window.Equal(t.reset) {
+			t.remaining++
+			t.spent[ticket.class] = max(0, t.spent[ticket.class]-1)
+		}
+		t.mu.Unlock()
 	}
 	if remaining, err := strconv.Atoi(res.Header.Get("X-RateLimit-Remaining")); err == nil {
 		if reset, err := strconv.ParseInt(res.Header.Get("X-RateLimit-Reset"), 10, 64); err == nil {
 			t.mu.Lock()
 			resetAt := time.Unix(reset, 0)
 			if !t.budgetKnown || resetAt.After(t.reset) {
-				t.remaining, t.reset, t.budgetKnown = remaining, resetAt, true
+				t.remaining, t.reset, t.budgetKnown = max(0, remaining-t.inflight+1), resetAt, true
+				t.spent = [6]int{}
 			} else if resetAt.Equal(t.reset) {
-				t.remaining = min(t.remaining, remaining)
+				t.remaining = min(t.remaining, max(0, remaining-t.inflight+1))
+			}
+			if limit, err := strconv.Atoi(res.Header.Get("X-RateLimit-Limit")); err == nil && limit > 0 {
+				t.limit = limit
 			}
 			t.mu.Unlock()
 		}
@@ -170,15 +185,21 @@ func maxTime(a, b time.Time) time.Time {
 	return a
 }
 
-// BackoffUntil reserves the last 100 primary requests for recovery and honors
+// BackoffUntil reserves settlement capacity for legacy callers and honors
 // transport cooldowns. Missing rate headers never invent a budget.
 func (d *Driver) BackoffUntil() time.Time {
-	t := d.client.Client().Transport.(*transport)
+	t, ok := d.client.Client().Transport.(*transport)
+	if !ok {
+		return time.Time{}
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	until := t.until
-	if t.budgetKnown && t.remaining < 100 && t.reset.After(t.now()) {
+	if t.budgetKnown && t.remaining < max(100, t.settlementReserve()) && t.reset.After(t.now()) {
 		until = maxTime(until, t.reset)
 	}
 	return until
 }
+
+// RetryAfter exposes quota deadlines without coupling workers to the adapter.
+func (e *RateLimitError) RetryAfter() time.Time { return e.RetryAt }

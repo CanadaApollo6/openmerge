@@ -98,14 +98,14 @@ func ReadToken(value, file string) (string, error) {
 
 // DynamicHandler snapshots the current worker keys for every request, including
 // branches created after the listener started and recovery-only partitions.
-func DynamicHandler(source Source, keys func() []store.QueueKey, token string, sanitizer *diagnostic.Sanitizer) http.Handler {
+func DynamicHandler(source Source, keys func() []store.QueueKey, token string, sanitizer *diagnostic.Sanitizer, discovery ...func() Discovery) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		Handler(source, keys(), token, sanitizer).ServeHTTP(w, r)
+		Handler(source, keys(), token, sanitizer, discovery...).ServeHTTP(w, r)
 	})
 }
 
 // Handler exposes GET only and confines reads to this server's configured keys.
-func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diagnostic.Sanitizer) http.Handler {
+func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diagnostic.Sanitizer, discovery ...func() Discovery) http.Handler {
 	if sanitizer == nil {
 		sanitizer = diagnostic.NewSanitizer()
 	}
@@ -142,6 +142,15 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 			fail(w, http.StatusMethodNotAllowed, "method-not-allowed", "only GET is supported")
 			return
 		}
+		if r.URL.Path == "/v1/discovery" && len(discovery) > 0 {
+			if r.URL.RawQuery != "" {
+				fail(w, http.StatusBadRequest, "invalid-request", "discovery accepts no query")
+				return
+			}
+			snapshot := sanitizeDiscovery(discovery[0](), sanitizer)
+			writeJSON(w, Response{Version: Version, Discovery: &snapshot})
+			return
+		}
 		selected, pr, limit, err := route(r, keys)
 		if err != nil {
 			fail(w, http.StatusBadRequest, "invalid-request", err.Error())
@@ -167,12 +176,20 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 			queues := make([]Queue, 0, len(journals))
 			for _, journal := range journals {
 				q, _, _ := Project(journal, 0, 0, sanitizer)
+				applyReadiness(source, &q, sanitizer)
 				queues = append(queues, q)
 			}
+			// Preserve [] for an empty queue list; discovery is additive in v1.
+			var snapshot *Discovery
+			if len(discovery) > 0 {
+				value := sanitizeDiscovery(discovery[0](), sanitizer)
+				snapshot = &value
+			}
 			writeJSON(w, struct {
-				Version int     `json:"version"`
-				Queues  []Queue `json:"queues"`
-			}{Version, queues})
+				Version   int        `json:"version"`
+				Queues    []Queue    `json:"queues"`
+				Discovery *Discovery `json:"discovery,omitempty"`
+			}{Version, queues, snapshot})
 			return
 		}
 		if len(journals) == 0 {
@@ -180,6 +197,10 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 			return
 		}
 		q, entry, why := Project(journals[0], pr, limit, sanitizer)
+		applyReadiness(source, &q, sanitizer)
+		if why != nil && q.Readiness != nil && !q.Readiness.Ready {
+			why.Summary += "; waiting: " + q.Readiness.Reason
+		}
 		if pr > 0 && entry == nil {
 			fail(w, http.StatusNotFound, "not-found", "PR has no recorded queue history")
 			return
@@ -223,7 +244,7 @@ func route(r *http.Request, keys []store.QueueKey) ([]store.QueueKey, int, int, 
 	}
 	selected := make([]store.QueueKey, 0)
 	for _, key := range keys {
-		if len(parts) == 2 || key.Repository == parts[2]+"/"+parts[3] && (len(parts) == 4 || key.BaseBranch == parts[4]) {
+		if len(parts) == 2 || strings.EqualFold(key.Repository, parts[2]+"/"+parts[3]) && (len(parts) == 4 || key.BaseBranch == parts[4]) {
 			selected = append(selected, key)
 		}
 	}
@@ -246,4 +267,15 @@ func writeJSON(w http.ResponseWriter, value any) {
 	// DTOs contain only JSON-safe values. A disconnected reader cannot change
 	// committed state and must not cause a second response to be written.
 	_ = json.NewEncoder(w).Encode(value)
+}
+
+func applyReadiness(source Source, q *Queue, sanitizer *diagnostic.Sanitizer) {
+	if runtime, ok := source.(interface {
+		QueueReadiness(store.QueueKey) *Readiness
+	}); ok {
+		q.Readiness = runtime.QueueReadiness(store.QueueKey{Installation: q.Installation, Repository: q.Repository, BaseBranch: q.Base, Lane: q.Lane})
+		if q.Readiness != nil {
+			q.Readiness.Reason = sanitizer.Sanitize(q.Readiness.Reason)
+		}
+	}
 }

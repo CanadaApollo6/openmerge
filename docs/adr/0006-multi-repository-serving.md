@@ -49,7 +49,7 @@ Three Phase 1 limits stand in the way: repositories and the base branch are proc
 
 **Repository behavior lives in the repository.** Settings that differ between teams move into `.openmerge.yml` as additive keys, starting with `delete_head_branch`. The server flag becomes the default for repositories that do not set it.
 
-**Discovery is observable.** The status API and CLI list every repository the App can see, with its state (served, not configured, invalid config, removed, suspended, dormant base), the last successful sweep, and the remaining budget per installation. OpenMerge does not comment on repositories that have no config file.
+**Discovery is observable.** The status API and CLI list every repository the App can see, with its state (served, validating, unavailable, not configured, invalid config, removed, suspended, dormant base), the last successful sweep, and the remaining budget per installation. OpenMerge does not comment on repositories that have no config file.
 
 ### Onboarding and migration
 

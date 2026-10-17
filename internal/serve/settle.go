@@ -4,12 +4,14 @@ import (
 	"context"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 )
 
 // settle runs before notifications, configuration, rules, and PR reads. It only
 // claims fence resolution; stale reporting/cleanup actions cannot delay it.
 func (s *Server) settle(ctx context.Context, w *worker) (bool, error) {
+	ctx = forge.WithRequestClass(ctx, forge.SettlementRequest)
 	state, _, err := s.store.Load(ctx, w.id)
 	if err != nil {
 		return true, err

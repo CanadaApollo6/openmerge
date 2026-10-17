@@ -48,7 +48,7 @@ func parseServe(args []string, output io.Writer) (serveOptions, error) {
 	}
 	flags.StringVar(&o.database, "database-url", env("DATABASE_URL", ""), "Postgres URL (OPENMERGE_DATABASE_URL)")
 	flags.StringVar(&o.key, "github-private-key", env("GITHUB_PRIVATE_KEY", ""), "RSA PEM key path (OPENMERGE_GITHUB_PRIVATE_KEY)")
-	flags.StringVar(&o.repos, "repos", env("REPOS", ""), "comma-separated owner/repo names (OPENMERGE_REPOS)")
+	flags.StringVar(&o.repos, "repos", env("REPOS", ""), "deprecated optional comma-separated owner/repo glob allowlist (OPENMERGE_REPOS)")
 	flags.StringVar(&o.base, "base", env("BASE", ""), "deprecated optional comma-separated base branch/glob allowlist (OPENMERGE_BASE)")
 	flags.StringVar(&o.cache, "git-cache-dir", env("GIT_CACHE_DIR", ".openmerge-cache"), "process-exclusive git cache (OPENMERGE_GIT_CACHE_DIR)")
 	flags.StringVar(&o.listen, "webhook-listen", env("WEBHOOK_LISTEN", ""), "optional webhook address (OPENMERGE_WEBHOOK_LISTEN)")
@@ -61,9 +61,9 @@ func parseServe(args []string, output io.Writer) (serveOptions, error) {
 	// Parse typed environment values through flag.Value so malformed values fail
 	// startup, while an explicit flag can override the environment.
 	flags.Int64Var(&o.app, "github-app-id", 0, "App ID (OPENMERGE_GITHUB_APP_ID)")
-	flags.Int64Var(&o.installation, "github-installation-id", 0, "installation ID (OPENMERGE_GITHUB_INSTALLATION_ID)")
+	flags.Int64Var(&o.installation, "github-installation-id", 0, "deprecated optional installation allowlist (OPENMERGE_GITHUB_INSTALLATION_ID)")
 	flags.DurationVar(&o.poll, "poll-interval", time.Minute, "reconcile interval (OPENMERGE_POLL_INTERVAL)")
-	flags.DurationVar(&o.discoveryInterval, "discovery-interval", 10*time.Minute, "branch refresh interval (OPENMERGE_DISCOVERY_INTERVAL)")
+	flags.DurationVar(&o.discoveryInterval, "discovery-interval", 10*time.Minute, "installation/repository discovery interval (OPENMERGE_DISCOVERY_INTERVAL)")
 	flags.DurationVar(&o.rulesInterval, "rules-interval", 10*time.Minute, "repository rules validation interval (OPENMERGE_RULES_INTERVAL)")
 	flags.BoolVar(&o.deleteHeadBranch, "delete-head-branch", true, "default for deleting eligible landed heads; repository config overrides (OPENMERGE_DELETE_HEAD_BRANCH)")
 	flags.IntVar(&o.concurrency, "concurrency", 4, "concurrent queues (OPENMERGE_CONCURRENCY)")
@@ -96,8 +96,8 @@ func parseServe(args []string, output io.Writer) (serveOptions, error) {
 	if flags.NArg() != 0 {
 		return o, errors.New("serve accepts flags only")
 	}
-	if o.database == "" || o.key == "" || o.app <= 0 || o.installation <= 0 || o.repos == "" {
-		return o, errors.New("database URL, GitHub App ID, private key path, installation ID and repos are required")
+	if o.database == "" || o.key == "" || o.app <= 0 || o.installation < 0 {
+		return o, errors.New("database URL, GitHub App ID and private key path are required; installation allowlist must be nonnegative")
 	}
 	if o.poll <= 0 || o.rulesInterval <= 0 || o.discoveryInterval <= 0 || o.concurrency <= 0 || o.cache == "" {
 		return o, errors.New("poll, rules and discovery intervals, concurrency and git cache must be nonempty and positive")
@@ -116,10 +116,13 @@ func parseServe(args []string, output io.Writer) (serveOptions, error) {
 	if err != nil {
 		return o, err
 	}
-	for _, repo := range strings.Split(o.repos, ",") {
+	for _, repo := range splitAllowlist(o.repos) {
 		parts := strings.Split(repo, "/")
-		if len(parts) != 2 || parts[0] == "" || parts[1] == "" || strings.ContainsAny(repo, " \\?#%\r\n") {
-			return o, fmt.Errorf("invalid repository %q; expected owner/repo", repo)
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" || strings.ContainsAny(repo, " \\#%\r\n") {
+			return o, fmt.Errorf("invalid repository %q; expected owner/repo glob", repo)
+		}
+		if _, err := condition.CompileGlob(strings.ToLower(repo)); err != nil {
+			return o, fmt.Errorf("invalid repository allowlist: %w", err)
 		}
 	}
 	return o, nil
@@ -161,45 +164,64 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger, saniti
 	if err != nil {
 		return err
 	}
-	driver, err := app.Installation(ctx, o.installation)
-	if err != nil {
-		return err
+	for _, setting := range []struct{ flag, env, replacement, value string }{
+		{"--github-installation-id", "OPENMERGE_GITHUB_INSTALLATION_ID", "App installation access", strconv.FormatInt(o.installation, 10)},
+		{"--repos", "OPENMERGE_REPOS", "App repository access and a default-branch .openmerge.yml", o.repos},
+		{"--base", "OPENMERGE_BASE", "queues[].base in the default-branch .openmerge.yml", o.base},
+	} {
+		if setting.value != "" && setting.value != "0" {
+			logger.Warn(setting.flag+" / "+setting.env+" is deprecated; use "+setting.replacement+"; this setting now only narrows discovery", "allowlist", setting.value)
+		}
 	}
-	committer := serveCommitter(ctx, o, logger, driver)
-	git, err := gitops.New(ctx, gitops.Config{WorkDir: o.cache, Remote: driver.Remote, HeadRef: github.HeadRef, PullRequest: driver.PullRequestMetadata, CommitAuthors: driver.CommitAuthors, Committer: committer})
-	if err != nil {
-		return err
-	}
-	if o.base != "" {
-		logger.Warn("--base / OPENMERGE_BASE is deprecated; configure queues[].base in the default-branch .openmerge.yml; the flag now only narrows configured bases", "allowlist", o.base)
-	}
-	installation := strconv.FormatInt(o.installation, 10)
-	targetFor := func(repo, base string) serve.Target {
-		key := store.QueueKey{Installation: installation, Repository: repo, BaseBranch: base}
-		return serve.Target{Key: key, Driver: driver, Git: git, BotLogin: driver.BotLogin(), CheckRules: func(ctx context.Context) ([]string, []string, error) {
-			return driver.ValidateRepositoryRules(ctx, forge.RepoRef{Path: repo}, base)
-		}, CheckPermissions: driver.ValidateInstallationPermissions, CheckProtection: func(ctx context.Context, method forge.MergeMethod) ([]string, []string, error) {
-			return driver.ValidateClassicProtection(ctx, forge.RepoRef{Path: repo}, base, method)
-		}}
-	}
-	var repositories []serve.Repository
-	for _, repo := range strings.Split(o.repos, ",") {
-		repositories = append(repositories, serve.Repository{Installation: installation, Name: repo,
-			Branches: func(ctx context.Context) ([]string, error) {
-				return driver.ListBranches(ctx, forge.RepoRef{Path: repo})
-			},
-			Target: func(base string) serve.Target { return targetFor(repo, base) },
-		})
-	}
-	var bases []string
-	if o.base != "" {
-		bases = strings.Split(o.base, ",")
-	}
-	service, err := serve.NewRepositories(ctx, db, repositories, serve.Options{PollInterval: o.poll, RulesInterval: o.rulesInterval, DiscoveryInterval: o.discoveryInterval, BaseAllowlist: bases, Concurrency: o.concurrency, Logger: logger, BackoffUntil: driver.BackoffUntil, DisableDeleteHeadBranch: !o.deleteHeadBranch,
-		RecoveryTarget: func(key store.QueueKey) (serve.Target, bool) {
-			return targetFor(key.Repository, key.BaseBranch), key.Installation == installation
+	factory := &installationTargets{app: app, options: o, logger: logger, bundles: make(map[string]*installationBundle)}
+	discovery := serve.Discovery{
+		App: strconv.FormatInt(o.app, 10),
+		InstallationAllowlist: func() string {
+			if o.installation > 0 {
+				return strconv.FormatInt(o.installation, 10)
+			}
+			return ""
+		}(),
+		RepositoryAllowlist: splitAllowlist(o.repos),
+		Target:              factory.target,
+		Installations: func(ctx context.Context) ([]serve.Installation, error) {
+			listed, err := app.ListInstallations(ctx)
+			if err != nil {
+				return nil, err
+			}
+			result := make([]serve.Installation, 0, len(listed))
+			for _, item := range listed {
+				id := strconv.FormatInt(item.ID, 10)
+				result = append(result, serve.Installation{ID: id, Suspended: item.Suspended,
+					Repositories: func(ctx context.Context) ([]serve.Repository, error) {
+						bundle, err := factory.bundle(ctx, id)
+						if err != nil {
+							return nil, err
+						}
+						names, err := bundle.driver.ListRepositories(ctx)
+						if err != nil {
+							return nil, err
+						}
+						repos := make([]serve.Repository, 0, len(names))
+						for _, name := range names {
+							repos = append(repos, serve.Repository{Installation: id, Name: name,
+								Branches: func(ctx context.Context) ([]string, error) {
+									return bundle.driver.ListBranches(ctx, forge.RepoRef{Path: name})
+								},
+								Target: func(base string) serve.Target {
+									return bundle.target(store.QueueKey{Installation: id, Repository: name, BaseBranch: base})
+								},
+							})
+						}
+						return repos, nil
+					},
+					Budget: func() status.Budget { return factory.budget(id) },
+				})
+			}
+			return result, nil
 		},
-	})
+	}
+	service, err := serve.NewDiscovery(ctx, db, discovery, serve.Options{PollInterval: o.poll, RulesInterval: o.rulesInterval, DiscoveryInterval: o.discoveryInterval, BaseAllowlist: splitAllowlist(o.base), Concurrency: o.concurrency, Logger: logger, DisableDeleteHeadBranch: !o.deleteHeadBranch})
 	if err != nil {
 		return err
 	}
@@ -209,7 +231,7 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger, saniti
 	for _, endpoint := range []struct {
 		name, address string
 		handler       http.Handler
-	}{{"webhook", o.listen, webhookHandler(service, []byte(o.secret))}, {"status API", o.apiListen, status.DynamicHandler(db, service.Keys, o.apiToken, sanitizer)}} {
+	}{{"webhook", o.listen, webhookHandler(service, []byte(o.secret))}, {"status API", o.apiListen, status.DynamicHandler(service, service.Keys, o.apiToken, sanitizer, service.DiscoveryStatus)}} {
 		if endpoint.address == "" {
 			continue
 		}
@@ -291,6 +313,12 @@ func webhookHandler(service webhookReceiver, secret []byte) http.Handler {
 		if _, ignored := event.Payload.(github.Ignored); !ignored {
 			notify := service.Notify
 			switch event.Payload.(type) {
+			case github.InstallationChanged:
+				if discovery, ok := service.(interface {
+					NotifyDiscovery(context.Context, string, string, string) error
+				}); ok {
+					notify = discovery.NotifyDiscovery
+				}
 			case github.BranchChanged:
 				if branches, ok := service.(interface {
 					NotifyBranches(context.Context, string, string, string) error
@@ -305,4 +333,11 @@ func webhookHandler(service webhookReceiver, secret []byte) http.Handler {
 		}
 		w.WriteHeader(http.StatusAccepted)
 	})
+}
+
+func splitAllowlist(value string) []string {
+	if value == "" {
+		return nil
+	}
+	return strings.Split(value, ",")
 }

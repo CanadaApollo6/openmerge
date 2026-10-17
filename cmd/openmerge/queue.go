@@ -30,6 +30,7 @@ func runQueue(args []string, stdout, stderr io.Writer) int {
 	repo := flags.String("repo", "", "owner/name; omit to list all served queues")
 	base := flags.String("base", "main", "base branch; omit to list all repository queues (PR detail defaults to main)")
 	pr := flags.Int("pr", 0, "PR number; requires --repo")
+	discovery := flags.Bool("discovery", false, "list every discovered repository and installation budget")
 	asJSON := flags.Bool("json", false, "write the API response bytes unchanged")
 	tokenFile := flags.String("api-token-file", os.Getenv("OPENMERGE_API_TOKEN_FILE"), "bearer token file (or OPENMERGE_API_TOKEN)")
 	if err := flags.Parse(args[1:]); errors.Is(err, flag.ErrHelp) {
@@ -51,6 +52,10 @@ func runQueue(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stderr, "status accepts flags only; --pr must be positive; --pr/--base require --repo")
 		return 2
 	}
+	if *discovery && (*repo != "" || baseSet || prSet) {
+		_, _ = fmt.Fprintln(stderr, "--discovery cannot be combined with --repo, --base or --pr")
+		return 2
+	}
 	list := !baseSet && !prSet
 	path := "/v1/queues"
 	if *repo != "" {
@@ -66,6 +71,9 @@ func runQueue(args []string, stdout, stderr io.Writer) int {
 		if *pr > 0 {
 			path += "/prs/" + strconv.Itoa(*pr)
 		}
+	}
+	if *discovery {
+		path = "/v1/discovery"
 	}
 	token, err := status.ReadToken(os.Getenv("OPENMERGE_API_TOKEN"), *tokenFile)
 	if err != nil {
@@ -94,7 +102,7 @@ func runQueue(args []string, stdout, stderr io.Writer) int {
 	const maxResponse = 32 << 20
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxResponse+1))
 	var result status.Response
-	if err != nil || len(body) > maxResponse || json.Unmarshal(body, &result) != nil || result.Version != status.Version || list && result.Queues == nil || !list && result.Queue == nil || *pr > 0 && (result.PR == nil || result.Why == nil) {
+	if err != nil || len(body) > maxResponse || json.Unmarshal(body, &result) != nil || result.Version != status.Version || list && !*discovery && result.Queues == nil || *discovery && result.Discovery == nil || !list && result.Queue == nil || *pr > 0 && (result.PR == nil || result.Why == nil) {
 		_, _ = fmt.Fprintln(stderr, "invalid, oversized or unsupported status API response")
 		return 1
 	}
@@ -149,6 +157,14 @@ func envDefault(key, fallback string) string {
 }
 
 func printStatus(out io.Writer, response status.Response) error {
+	if response.Discovery != nil {
+		if err := printDiscovery(out, *response.Discovery); err != nil {
+			return err
+		}
+	}
+	if response.Queues == nil && response.Queue == nil {
+		return nil
+	}
 	table := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
 	if _, err := fmt.Fprintln(table, "REPO\tBASE\tPOS\tPR\tHEAD\tSTATUS\tREASON\tSTATE"); err != nil {
 		return err
@@ -160,6 +176,9 @@ func printStatus(out io.Writer, response status.Response) error {
 	for _, q := range queues {
 		if q.State == "" {
 			q.State = "active"
+		}
+		if q.State == "active" && q.Readiness != nil && !q.Readiness.Ready {
+			q.State = "waiting: " + q.Readiness.Reason
 		}
 		var reasons []string
 		for _, block := range q.Blocks {
@@ -234,6 +253,42 @@ func printStatus(out io.Writer, response status.Response) error {
 			if _, err := fmt.Fprintf(out, "  %d  %s  %s  %s\n", event.ID, event.At.Format(time.RFC3339), event.Type, event.Summary); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+func printDiscovery(out io.Writer, d status.Discovery) error {
+	at := "never"
+	if d.LastSuccessfulSweep != nil {
+		at = d.LastSuccessfulSweep.UTC().Format(time.RFC3339)
+	}
+	if _, err := fmt.Fprintln(out, "Last successful discovery sweep:", at); err != nil {
+		return err
+	}
+	table := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	if _, err := fmt.Fprintln(table, "INSTALLATION\tREPOSITORY\tDISCOVERY STATE\tLAST SUCCESSFUL SWEEP"); err != nil {
+		return err
+	}
+	for _, r := range d.Repositories {
+		at = "never"
+		if r.LastSuccessfulSweep != nil {
+			at = r.LastSuccessfulSweep.UTC().Format(time.RFC3339)
+		}
+		if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t%s\n", r.Installation, r.Name, r.State, at); err != nil {
+			return err
+		}
+	}
+	if err := table.Flush(); err != nil {
+		return err
+	}
+	for _, i := range d.Installations {
+		remaining := "unknown"
+		if i.Budget.Known {
+			remaining = fmt.Sprintf("%d/%d (%d reserved for settlement)", i.Budget.Remaining, i.Budget.Limit, i.Budget.SettlementReserve)
+		}
+		if _, err := fmt.Fprintf(out, "Installation %s remaining budget: %s\n", i.ID, remaining); err != nil {
+			return err
 		}
 	}
 	return nil

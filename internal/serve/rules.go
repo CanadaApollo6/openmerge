@@ -11,6 +11,7 @@ import (
 )
 
 func (s *Server) repositoryRules(ctx context.Context, w *worker) error {
+	ctx = forge.WithRequestClass(ctx, forge.RulesRequest)
 	if w.CheckRules == nil && w.CheckProtection == nil && w.CheckPermissions == nil || time.Now().Before(w.rulesNextCheck) {
 		return nil
 	}
@@ -33,6 +34,9 @@ func (s *Server) repositoryRules(ctx context.Context, w *worker) error {
 	}
 	var events []queue.Event
 	failed := false
+	var quota error
+	var quotaUntil time.Time
+	w.rulesWaiting = ""
 	for _, check := range checks {
 		if check.read == nil {
 			continue
@@ -55,6 +59,11 @@ func (s *Server) repositoryRules(ctx context.Context, w *worker) error {
 		}
 		if readErr != nil {
 			failed = true
+			var rate interface{ RetryAfter() time.Time }
+			if errors.As(readErr, &rate) && rate.RetryAfter().After(quotaUntil) {
+				quota, quotaUntil = readErr, rate.RetryAfter()
+			}
+			w.rulesWaiting = "repository rules not yet verified: " + string(check.source) + " read failed"
 			s.options.Logger.Warn("repository rules read failed; keeping previous state for source", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "source", check.source, "error", readErr)
 			if len(problems) == 0 {
 				continue
@@ -90,6 +99,14 @@ func (s *Server) repositoryRules(ctx context.Context, w *worker) error {
 	} else {
 		w.rulesFailures = 0
 		w.rulesNextCheck = time.Now().Add(s.options.RulesInterval)
+	}
+	if quota != nil {
+		w.rulesNextCheck = quotaUntil
+		if w.managed && !w.ready {
+			w.waiting = w.rulesWaiting
+			w.validationNext = quotaUntil
+		}
+		return quota
 	}
 	return nil
 }
