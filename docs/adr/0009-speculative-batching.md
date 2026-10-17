@@ -281,8 +281,12 @@ The planner-backed adaptive exit runs with `-sim-adaptive-full-exit`: seeds 1–
 30 days each, in both cancellation modes and paired against fixed size 8, with
 per-seed and pooled median/cost assertions and an additional p95-vs-fixed
 regression assertion. The first-day adaptive harness runs in `make check`; the
-full paired gate is opt-in because it is substantially more expensive. All
-workload pins and ADR pass thresholds are unchanged. Large simulations use an
+full paired gate is opt-in locally because it is substantially more expensive.
+The non-required [full adaptive workflow](../../.github/workflows/sim-full.yml)
+runs it on pushes to `main`, nightly, and on demand; it does not gate landing.
+See [repository CI checks](../operating.md#repository-ci-checks) for the required
+and full adaptive jobs. All workload pins and ADR pass thresholds are unchanged.
+Large simulations use an
 opt-in fake-forge tree/PR-marker delta codec and delta-derived synthetic commit
 IDs to bound memory and hashing, with full changed-file and ancestry invariants;
 legacy fake identities are unchanged. Immutable observation shards avoid copying

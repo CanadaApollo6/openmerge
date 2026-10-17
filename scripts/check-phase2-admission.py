@@ -32,6 +32,13 @@ with tempfile.TemporaryDirectory(prefix="om-admission-") as directory:
         print(f"{policy}: exit={result.returncode}", flush=True)
         if result.returncode:
             raise SystemExit(result.stdout + result.stderr)
-        for line in result.stdout.splitlines():
-            if " ADMISSION " in line:
-                print(line.split(" ADMISSION ", 1)[1], flush=True)
+        records = [line.split(" ADMISSION ", 1)[1]
+                   for line in result.stdout.splitlines() if " ADMISSION " in line]
+        expected = {f"{profile} cancellation={cancel}"
+                    for profile in ("Team", "Slow", "Adaptive")
+                    for cancel in ("true", "false")}
+        if len(records) != len(expected) or {record.split(":", 1)[0] for record in records} != expected:
+            raise SystemExit(f"{policy}: expected all {len(expected)} ADMISSION records, "
+                             f"got {len(records)}: {records}\n{result.stdout}{result.stderr}")
+        for record in records:
+            print(record, flush=True)

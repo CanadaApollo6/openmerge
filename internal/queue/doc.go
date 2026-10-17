@@ -169,7 +169,8 @@
 // must preserve pending groups and the tested-SHA history as well as batch and admission counters.
 package queue
 
-// W starts at max_depth, grows per landing, and halves once per original-batch
-// confirmed failure. Logged config bounds clamp it at a policy transition. The
-// last 200 checks/timeout dequeues and landed changes determine opt-in batch size
+// W starts at max_depth, grows per landing, and halves once per confirmed checks
+// failure or timeout of an original batch. Build conflicts do not halve W.
+// Logged config bounds clamp it at a policy transition. The last 200
+// checks/timeout dequeues and landed changes determine opt-in batch size
 // through exact rational comparisons. Snapshots retain both bounded projections.
