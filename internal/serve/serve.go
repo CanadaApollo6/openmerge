@@ -63,6 +63,7 @@ type Server struct {
 	discovery           *Discovery
 	discoveryStatus     status.Discovery
 	discoveryBudgets    map[string]func() status.Budget
+	discoveryBackoffs   map[string]time.Time
 	dormantRepositories map[string]bool
 	repositories        []Repository
 	refresh             chan struct{}
@@ -71,10 +72,15 @@ type Server struct {
 }
 
 type worker struct {
-	mu       sync.Mutex
-	managed  bool
-	ready    bool // Branch and policy validation is process-local, never a lifecycle event.
-	recovery bool
+	settlementOnly bool
+	mu             sync.Mutex
+	managed        bool
+	ready          bool // Branch and policy validation is process-local, never a lifecycle event.
+	waiting        string
+	rulesWaiting   string
+	validationNext time.Time
+	reportingNext  time.Time
+	recovery       bool
 	Target
 	id               store.QueueID
 	wake             chan struct{}
@@ -288,6 +294,9 @@ func (s *Server) loop(ctx context.Context, w *worker) {
 			w.mu.Unlock()
 		}
 		w.mu.Lock()
+		if w.managed && !w.ready && !w.validationNext.IsZero() {
+			delay = min(delay, max(time.Millisecond, time.Until(w.validationNext)))
+		}
 		if w.rulesNextCheck.After(time.Now()) {
 			delay = min(delay, max(time.Millisecond, time.Until(w.rulesNextCheck)))
 		}
@@ -324,12 +333,19 @@ func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
 	defer w.mu.Unlock()
 	s.options.Logger.Debug("reconcile cycle started", "repository", w.Key.Repository, "base", w.Key.BaseBranch)
 	defer func() {
+		var rate interface{ RetryAfter() time.Time }
+		if errors.As(result, &rate) {
+			result = &quotaBackoff{until: rate.RetryAfter()}
+		}
 		s.logCommitted(ctx, w)
 		s.options.Logger.Debug("reconcile cycle finished", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "error", result)
 	}()
 	current, _, err := s.store.Load(ctx, w.id)
 	if err != nil {
 		return err
+	}
+	if (w.settlementOnly || current.SourceBlocked(queue.RepositoryAccess)) && (current.Active == nil || current.Active.Phase != queue.Landing) {
+		return nil
 	}
 	resolveCtx := ctx
 	if current.Active != nil && current.Active.Phase == queue.Landing {
@@ -360,10 +376,18 @@ func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
 			return s.lifecycle(ctx, w, "retired", "Recovered landing settled; queue excluded by repository allowlist")
 		}
 		if state.SourceBlocked(queue.RepositoryAccess) {
-			return s.reportRepositoryRemoval(ctx, w, state)
+			_ = s.reportRepositoryRemoval(ctx, w, state)
+			return nil
 		}
 		if !w.ready || state.LifecycleState() != "active" {
-			return nil
+			if !time.Now().Before(w.validationNext) {
+				w.validationNext = time.Now().Add(5 * time.Second)
+				select {
+				case s.refresh <- struct{}{}:
+				default:
+				}
+			}
+			return s.reportWaiting(ctx, w)
 		}
 	}
 	force, err := s.store.TakeNotification(ctx, w.id)
@@ -449,3 +473,5 @@ type quotaBackoff struct{ until time.Time }
 func (e *quotaBackoff) Error() string {
 	return fmt.Sprintf("forge quota reserved until %s", e.until.UTC().Format(time.RFC3339))
 }
+
+func (e *quotaBackoff) RetryAfter() time.Time { return e.until }

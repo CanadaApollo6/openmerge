@@ -45,7 +45,10 @@ App; default lanes remain empty. Repository path matching is case-insensitive.
 `last_successful_sweep` (null before success), `repositories` and `installations`.
 Every repository has `installation`, `repo`, `state`, optional `detail`, and
 `last_successful_sweep`. States are `served`, `not configured`, `invalid config`,
-`removed`, `suspended`, and `dormant base`. Failed listings retain the previous
+`removed`, `suspended`, `dormant base`, `validating`, and `unavailable`. A new or
+restarted queue stays `validating` until validation succeeds. A transient config
+read sets `unavailable` with a retry detail; it does not create a durable block.
+Failed listings retain the previous
 state and successful timestamp. Installations expose `installation`, `suspended`,
 `last_successful_sweep`, and `budget` (`known`, `limit`, `remaining`,
 `settlement_reserve`, `reset_at`). Budget reads are local snapshots after atomic
@@ -117,6 +120,15 @@ When rules sources have been observed, `rules_sources` lists objects with
 and `revision` (the source's current observation revision). Cleared sources have
 an empty problems array. Each source recovers independently; a read error retains
 only that source's previous state. Stored legacy rules events appear as `rulesets`.
+
+Served queue objects also include `readiness: {"ready": true}` or
+`readiness: {"ready": false, "reason": "repository rules not yet verified: rulesets read failed"}`.
+This process-local admission gate is independent of durable `state` and `blocks`.
+The CLI displays `waiting` and its reason while gated, and PR checks show
+`validation-pending`. Validation retries on a bounded schedule, including after
+landing settlement, without waiting for the discovery interval. A fresh process
+must verify rules before admitting work; an already verified worker retains its
+prior rules on a transient re-read failure.
 
 ENTRY status values are `queued`, `building`, `testing`, `landing`,
 `dequeue-pending`, `paused`, `merged`, `dequeued`, `closed`, `blocked`, and

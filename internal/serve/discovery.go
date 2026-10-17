@@ -55,23 +55,25 @@ func NewDiscovery(ctx context.Context, db *store.Store, discovery Discovery, opt
 	}
 	s.discovery = &discovery
 	s.discoveryBudgets = make(map[string]func() status.Budget)
+	s.discoveryBackoffs = make(map[string]time.Time)
 	s.dormantRepositories = make(map[string]bool)
 	s.discoveryStatus = status.Discovery{Repositories: []status.Repository{}, Installations: []status.Installation{}}
 	owners, err := db.InstallationApps(ctx)
 	if err != nil {
 		return nil, err
 	}
-	keys, err := db.QueueKeys(ctx)
+	stored, err := db.StoredQueues(ctx)
 	if err != nil {
 		return nil, err
 	}
-	for _, key := range keys {
+	for _, historical := range stored {
+		key := historical.Key
 		owner := owners[key.Installation]
 		if discovery.App != "" && owner != "" && owner != discovery.App {
 			continue
 		}
 		target := Target{Key: key, Resolve: func(ctx context.Context) (Target, error) { return discovery.Target(ctx, key) }}
-		w, err := s.register(ctx, target)
+		w, err := s.registerID(ctx, target, historical.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -83,7 +85,7 @@ func NewDiscovery(ctx context.Context, db *store.Store, discovery Discovery, opt
 		if discovery.App != "" && owner == "" {
 			continue
 		}
-		r := status.Repository{Installation: key.Installation, Name: key.Repository, State: "served"}
+		r := status.Repository{Installation: key.Installation, Name: key.Repository, State: "validating"}
 		if state.SourceBlocked(queue.RepositoryAccess) {
 			r.State = "removed"
 			r.Detail = state.BlockSourceDetail(queue.RepositoryAccess)
@@ -122,14 +124,47 @@ func (s *Server) Refresh(ctx context.Context) error {
 }
 
 func (s *Server) refreshResult(err error) {
-	if err != nil {
-		s.refreshFailures++
-		delay := min(5*time.Second*time.Duration(1<<min(s.refreshFailures-1, 6)), 5*time.Minute, s.options.DiscoveryInterval)
-		s.refreshRetryAt = time.Now().Add(delay)
-		s.options.Logger.Warn("discovery failed; retaining previous observations", "error", err)
-	} else {
+	if err == nil {
 		s.refreshFailures = 0
 		s.refreshRetryAt = time.Time{}
+		return
+	}
+	var rate interface{ RetryAfter() time.Time }
+	limited := errors.As(err, &rate)
+	var delay time.Duration
+	if limited {
+		delay = max(time.Millisecond, time.Until(rate.RetryAfter()))
+	} else {
+		s.refreshFailures++
+		delay = min(5*time.Second*time.Duration(1<<min(s.refreshFailures-1, 6)), 5*time.Minute, s.options.DiscoveryInterval)
+	}
+	retryAt := time.Now().Add(delay)
+	if limited {
+		retryAt = rate.RetryAfter()
+	}
+	if s.discovery != nil {
+		intervalAt := time.Now().Add(s.options.DiscoveryInterval)
+		if intervalAt.Before(retryAt) {
+			retryAt = intervalAt
+		}
+	}
+	var pending *validationPending
+	if errors.As(err, &pending) {
+		for _, w := range s.workers() {
+			w.mu.Lock()
+			if !w.ready && !w.validationNext.IsZero() && !time.Now().Before(s.discoveryBackoffs[w.Key.Installation]) {
+				if w.validationNext.Before(retryAt) {
+					retryAt = w.validationNext
+				}
+			}
+			w.mu.Unlock()
+		}
+	}
+	s.refreshRetryAt = retryAt
+	if limited {
+		s.options.Logger.Debug("discovery quota backoff", "until", s.refreshRetryAt)
+	} else {
+		s.options.Logger.Warn("discovery failed; retaining previous observations", "error", err)
 	}
 }
 
@@ -162,7 +197,7 @@ func (s *Server) discover(ctx context.Context) error {
 		if present[w.Key.Installation] {
 			r := s.repositoryStatus(w.Key.Installation, w.Key.Repository)
 			if r.LastSuccessfulSweep == nil && r.State == "not configured" {
-				r.State = "served"
+				r.State = "validating"
 				s.setRepositoryStatus(r)
 			}
 		}
@@ -174,111 +209,17 @@ func (s *Server) discover(ctx context.Context) error {
 		}
 	}
 	for _, installation := range installations {
-		s.setInstallationStatus(installation, false)
-		if installation.Suspended {
-			for _, r := range s.DiscoveryStatus().Repositories {
-				if r.Installation == installation.ID {
-					result = errors.Join(result, s.removeRepository(ctx, r, "suspended", "Installation suspended"))
-				}
-			}
-			s.setInstallationStatus(installation, true)
-			continue
-		}
-		if installation.Repositories == nil {
-			result = errors.Join(result, errors.New("installation requires repository listing"))
-			continue
-		}
-		readCtx, cancel := context.WithTimeout(ctx, s.options.ActionTimeout)
-		repos, err := installation.Repositories(readCtx)
-		cancel()
-		if err != nil {
-			result = errors.Join(result, fmt.Errorf("installation %s listing: %w", installation.ID, err))
-			continue
-		}
-		seen := make(map[string]bool)
-		for _, repo := range repos {
-			seen[strings.ToLower(repo.Name)] = true
-		}
-		for _, r := range s.DiscoveryStatus().Repositories {
-			if r.Installation == installation.ID && !seen[strings.ToLower(r.Name)] {
-				result = errors.Join(result, s.removeRepository(ctx, r, "removed", "Repository absent from successful installation listing"))
-			}
-		}
-		for _, repo := range repos {
-			repo.Installation = installation.ID
-			if repo.Name == "" || repo.Target == nil || repo.Branches == nil {
-				result = errors.Join(result, errors.New("discovered repository requires name, target and branches"))
-				continue
-			}
-			r := s.repositoryStatus(repo.Installation, repo.Name)
-			now := time.Now().UTC()
-			r.LastSuccessfulSweep = &now
-			if !s.allowedRepository(repo) {
-				result = errors.Join(result, s.removeRepository(ctx, r, "removed", "Excluded by repository or installation allowlist"))
-				continue
-			}
-			basis := make(map[store.QueueID]uint64)
-			for _, w := range s.repositoryWorkers(repo.Installation, repo.Name) {
-				state, _, err := s.store.Load(ctx, w.id)
-				if err != nil {
-					return err
-				}
-				basis[w.id] = state.BlockSourceRevision(queue.RepositoryAccess)
-			}
-			readCtx, cancel := context.WithTimeout(ctx, s.options.ActionTimeout)
-			err := s.refreshRepository(readCtx, repo)
-			cancel()
-			var invalid config.Errors
-			switch {
-			case errors.Is(err, config.ErrNotFound):
-				// A complete four-path read proves deletion; transport failures cannot.
-				state := "not configured"
-				if len(s.repositoryWorkers(repo.Installation, repo.Name)) > 0 {
-					state = "removed"
-				}
-				result = errors.Join(result, s.removeRepository(ctx, r, state, "No default-branch OpenMerge configuration"))
-			case errors.As(err, &invalid):
-				r.State, r.Detail = "invalid config", err.Error()
-				result = errors.Join(result, s.blockRepositoryConfig(ctx, repo, err))
-				s.setRepositoryStatus(r)
-			case err != nil:
-				if r.LastSuccessfulSweep != nil && s.repositoryStatus(repo.Installation, repo.Name).LastSuccessfulSweep == nil {
-					r.State, r.Detail = "invalid config", "Configuration could not be read; discovery will retry"
-					s.setRepositoryStatus(r)
-				}
-				// Block admission in memory until a complete refresh. No durable event,
-				// membership change, or successful config observation follows a failed read.
-				for _, w := range s.repositoryWorkers(repo.Installation, repo.Name) {
-					w.mu.Lock()
-					w.ready = false
-					w.mu.Unlock()
-				}
-				result = errors.Join(result, fmt.Errorf("%s: %w", repo.Name, err))
-			default:
-				r.State, r.Detail = "served", ""
-				s.mu.RLock()
-				dormant := s.dormantRepositories[repo.Installation+"/"+strings.ToLower(repo.Name)]
-				s.mu.RUnlock()
-				if dormant {
-					r.State = "dormant base"
-				}
-				for _, w := range s.repositoryWorkers(repo.Installation, repo.Name) {
-					w.mu.Lock()
-					state, _, loadErr := s.store.Load(ctx, w.id)
-					if loadErr == nil && state.SourceBlocked(queue.RepositoryAccess) {
-						_, loadErr = s.store.Append(ctx, w.id, []queue.Event{queue.BlockSourceCleared{Source: queue.RepositoryAccess, Basis: basis[w.id]}}, "")
-					}
-					if state.LifecycleState() == "dormant" {
-						r.State = "dormant base"
-					}
-					w.mu.Unlock()
-					result = errors.Join(result, loadErr)
-				}
-				s.setRepositoryStatus(r)
-			}
-		}
-		s.setInstallationStatus(installation, true)
+		result = errors.Join(result, s.discoverInstallation(ctx, installation))
 	}
+
+	s.mu.Lock()
+	s.discoveryStatus.Installations = slices.DeleteFunc(s.discoveryStatus.Installations, func(i status.Installation) bool { return !present[i.ID] })
+	for id := range s.discoveryBudgets {
+		if !present[id] {
+			delete(s.discoveryBudgets, id)
+		}
+	}
+	s.mu.Unlock()
 	if result == nil {
 		now := time.Now().UTC()
 		s.mu.Lock()
@@ -316,6 +257,16 @@ func (s *Server) removeRepository(ctx context.Context, r status.Repository, stat
 		}
 		w.mu.Lock()
 		w.ready = false
+		w.waiting = detail
+		if err == nil && w.Driver != nil {
+			reportCtx, cancel := context.WithTimeout(ctx, s.options.ActionTimeout)
+			// Access loss must persist even if its diagnostic cannot be written.
+			current, _, loadErr := s.store.Load(ctx, w.id)
+			if loadErr == nil {
+				_ = s.reportRepositoryRemoval(reportCtx, w, current)
+			}
+			cancel()
+		}
 		w.mu.Unlock()
 		result = errors.Join(result, err)
 		select {
@@ -336,7 +287,11 @@ func (s *Server) blockRepositoryConfig(ctx context.Context, repo Repository, cau
 	for _, w := range s.repositoryWorkers(repo.Installation, repo.Name) {
 		w.mu.Lock()
 		w.ready = false
-		err := s.block(ctx, w, queue.ConfigSource, cause.Error(), "")
+		w.waiting = cause.Error()
+		current, _, err := s.store.Load(ctx, w.id)
+		if err == nil && (!current.SourceBlocked(queue.ConfigSource) || current.BlockSourceDetail(queue.ConfigSource) != cause.Error()) {
+			err = s.block(ctx, w, queue.ConfigSource, cause.Error(), "")
+		}
 		w.mu.Unlock()
 		if err != nil {
 			return err
@@ -428,6 +383,20 @@ func (s *Server) DiscoveryStatus() status.Discovery {
 		budgets[id] = read
 	}
 	s.mu.RUnlock()
+	for i := range result.Repositories {
+		r := &result.Repositories[i]
+		if r.State != "served" && r.State != "validating" {
+			continue
+		}
+		r.State, r.Detail = "served", ""
+		for _, w := range s.repositoryWorkers(r.Installation, r.Name) {
+			w.mu.Lock()
+			if !w.ready && !w.settlementOnly {
+				r.State, r.Detail = "validating", w.readinessReason()
+			}
+			w.mu.Unlock()
+		}
+	}
 	for i := range result.Installations {
 		if read := budgets[result.Installations[i].ID]; read != nil {
 			result.Installations[i].Budget = read()
@@ -466,4 +435,148 @@ func (w *worker) bind(target Target) {
 	w.Driver, w.Git, w.BotLogin = target.Driver, target.Git, target.BotLogin
 	w.CheckRules, w.CheckPermissions, w.CheckProtection = target.CheckRules, target.CheckPermissions, target.CheckProtection
 	w.Resolve = target.Resolve
+}
+
+func (s *Server) recordDiscoveryBackoff(installation string, err error) {
+	var quota interface{ RetryAfter() time.Time }
+	if errors.As(err, &quota) {
+		s.discoveryBackoffs[installation] = quota.RetryAfter()
+	}
+}
+
+func (s *Server) discoverInstallation(ctx context.Context, installation Installation) error {
+	var result error
+	s.setInstallationStatus(installation, false)
+	if s.discovery.InstallationAllowlist != "" && s.discovery.InstallationAllowlist != installation.ID {
+		for _, r := range s.DiscoveryStatus().Repositories {
+			if r.Installation == installation.ID {
+				result = errors.Join(result, s.removeRepository(ctx, r, "removed", "Excluded by repository or installation allowlist"))
+			}
+		}
+		s.setInstallationStatus(installation, result == nil)
+		return result
+	}
+	if installation.Suspended {
+		for _, r := range s.DiscoveryStatus().Repositories {
+			if r.Installation == installation.ID {
+				result = errors.Join(result, s.removeRepository(ctx, r, "suspended", "Installation suspended"))
+			}
+		}
+		s.setInstallationStatus(installation, result == nil)
+		return result
+	}
+	if until := s.discoveryBackoffs[installation.ID]; time.Now().Before(until) {
+		result = errors.Join(result, &quotaBackoff{until: until})
+		return result
+	}
+	if installation.Repositories == nil {
+		result = errors.Join(result, errors.New("installation requires repository listing"))
+		return result
+	}
+	readCtx, cancel := context.WithTimeout(ctx, s.options.ActionTimeout)
+	repos, err := installation.Repositories(readCtx)
+	cancel()
+	if err != nil {
+		s.recordDiscoveryBackoff(installation.ID, err)
+		result = errors.Join(result, fmt.Errorf("installation %s listing: %w", installation.ID, err))
+		return result
+	}
+	seen := make(map[string]bool)
+	for _, repo := range repos {
+		seen[strings.ToLower(repo.Name)] = true
+	}
+	for _, r := range s.DiscoveryStatus().Repositories {
+		if r.Installation == installation.ID && !seen[strings.ToLower(r.Name)] {
+			result = errors.Join(result, s.removeRepository(ctx, r, "removed", "Repository absent from successful installation listing"))
+		}
+	}
+	for _, repo := range repos {
+		repo.Installation = installation.ID
+		if repo.Name == "" || repo.Target == nil || repo.Branches == nil {
+			result = errors.Join(result, errors.New("discovered repository requires name, target and branches"))
+			continue
+		}
+		r := s.repositoryStatus(repo.Installation, repo.Name)
+		now := time.Now().UTC()
+		if !s.allowedRepository(repo) {
+			result = errors.Join(result, s.removeRepository(ctx, r, "removed", "Excluded by repository or installation allowlist"))
+			continue
+		}
+		basis := make(map[store.QueueID]uint64)
+		basisFailed := false
+		for _, w := range s.repositoryWorkers(repo.Installation, repo.Name) {
+			state, _, err := s.store.Load(ctx, w.id)
+			if err != nil {
+				result = errors.Join(result, err)
+				basisFailed = true
+				break
+			}
+			basis[w.id] = state.BlockSourceRevision(queue.RepositoryAccess)
+		}
+		if basisFailed {
+			continue
+		}
+		readCtx, cancel := context.WithTimeout(ctx, s.options.ActionTimeout)
+		err := s.refreshRepository(readCtx, repo)
+		cancel()
+		s.recordDiscoveryBackoff(installation.ID, err)
+		var invalid config.Errors
+		switch {
+		case errors.Is(err, config.ErrNotFound):
+			// A complete four-path read proves deletion; transport failures cannot.
+			state := "not configured"
+			if len(s.repositoryWorkers(repo.Installation, repo.Name)) > 0 {
+				state = "removed"
+			}
+			result = errors.Join(result, s.removeRepository(ctx, r, state, "No default-branch OpenMerge configuration"))
+		case errors.As(err, &invalid):
+			r.State, r.Detail = "invalid config", err.Error()
+			r.LastSuccessfulSweep = &now
+			result = errors.Join(result, s.blockRepositoryConfig(ctx, repo, err))
+			s.setRepositoryStatus(r)
+		case err != nil:
+			r.State, r.Detail = "unavailable", "Configuration could not be read; discovery will retry"
+			var pending *validationPending
+			if errors.As(err, &pending) {
+				r.State, r.Detail = "validating", pending.Error()
+			}
+			s.setRepositoryStatus(r)
+			// Block admission in memory until a complete refresh. No durable event,
+			// membership change, or successful config observation follows a failed read.
+			for _, w := range s.repositoryWorkers(repo.Installation, repo.Name) {
+				w.mu.Lock()
+				w.ready = false
+				w.waiting = r.Detail
+				w.mu.Unlock()
+			}
+			result = errors.Join(result, fmt.Errorf("%s: %w", repo.Name, err))
+		default:
+			r.State, r.Detail = "served", ""
+			r.LastSuccessfulSweep = &now
+			s.mu.RLock()
+			dormant := s.dormantRepositories[repo.Installation+"/"+strings.ToLower(repo.Name)]
+			s.mu.RUnlock()
+			if dormant {
+				r.State = "dormant base"
+			}
+			for _, w := range s.repositoryWorkers(repo.Installation, repo.Name) {
+				w.mu.Lock()
+				state, _, loadErr := s.store.Load(ctx, w.id)
+				if loadErr == nil && state.SourceBlocked(queue.RepositoryAccess) {
+					_, loadErr = s.store.Append(ctx, w.id, []queue.Event{queue.BlockSourceCleared{Source: queue.RepositoryAccess, Basis: basis[w.id]}}, "")
+				}
+				if !w.ready && state.LifecycleState() == "active" {
+					r.State, r.Detail = "validating", w.readinessReason()
+				}
+				if state.LifecycleState() == "dormant" {
+					r.State = "dormant base"
+				}
+				w.mu.Unlock()
+				result = errors.Join(result, loadErr)
+			}
+			s.setRepositoryStatus(r)
+		}
+	}
+	s.setInstallationStatus(installation, result == nil)
+	return result
 }

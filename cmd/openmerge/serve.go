@@ -231,7 +231,7 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger, saniti
 	for _, endpoint := range []struct {
 		name, address string
 		handler       http.Handler
-	}{{"webhook", o.listen, webhookHandler(service, []byte(o.secret))}, {"status API", o.apiListen, status.DynamicHandler(db, service.Keys, o.apiToken, sanitizer, service.DiscoveryStatus)}} {
+	}{{"webhook", o.listen, webhookHandler(service, []byte(o.secret))}, {"status API", o.apiListen, status.DynamicHandler(service, service.Keys, o.apiToken, sanitizer, service.DiscoveryStatus)}} {
 		if endpoint.address == "" {
 			continue
 		}

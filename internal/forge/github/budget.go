@@ -19,7 +19,10 @@ type Budget struct {
 
 // Budget returns the installation's current capacity without an API request.
 func (d *Driver) Budget() Budget {
-	t := d.client.Client().Transport.(*transport)
+	t, ok := d.client.Client().Transport.(*transport)
+	if !ok {
+		return Budget{}
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return Budget{Known: t.budgetKnown, Limit: t.limit, Remaining: t.remaining, SettlementReserve: t.settlementReserve(), ResetAt: t.reset}

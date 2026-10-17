@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"time"
 )
 
 type installationBundle struct {
@@ -20,26 +21,56 @@ type installationBundle struct {
 	git    *gitops.Repo
 }
 
-type installationTargets struct {
-	mu      sync.Mutex
-	locks   sync.Map
-	app     *github.App
-	options serveOptions
-	logger  *slog.Logger
-	bundles map[string]*installationBundle
+type bundleFailure struct {
+	err   error
+	next  time.Time
+	count int
 }
 
-func (f *installationTargets) bundle(ctx context.Context, id string) (*installationBundle, error) {
+type installationTargets struct {
+	mu       sync.Mutex
+	locks    sync.Map
+	app      *github.App
+	options  serveOptions
+	logger   *slog.Logger
+	bundles  map[string]*installationBundle
+	failures map[string]bundleFailure
+}
+
+func (f *installationTargets) bundle(ctx context.Context, id string) (result *installationBundle, resultErr error) {
 	guard, _ := f.locks.LoadOrStore(id, &sync.Mutex{})
 	lock := guard.(*sync.Mutex)
 	lock.Lock()
 	defer lock.Unlock()
 	f.mu.Lock()
 	cached := f.bundles[id]
+	failure := f.failures[id]
 	f.mu.Unlock()
 	if cached != nil {
 		return cached, nil
 	}
+	if time.Now().Before(failure.next) {
+		return nil, failure.err
+	}
+	defer func() {
+		f.mu.Lock()
+		defer f.mu.Unlock()
+		if resultErr == nil {
+			delete(f.failures, id)
+			return
+		}
+		failure.count++
+		failure.err = resultErr
+		failure.next = time.Now().Add(min(5*time.Second*time.Duration(1<<min(failure.count-1, 6)), 5*time.Minute))
+		var rate *github.RateLimitError
+		if errors.As(resultErr, &rate) {
+			failure.next = rate.RetryAt
+		}
+		if f.failures == nil {
+			f.failures = make(map[string]bundleFailure)
+		}
+		f.failures[id] = failure
+	}()
 	number, err := strconv.ParseInt(id, 10, 64)
 	if err != nil || number <= 0 {
 		return nil, errors.New("invalid stored installation ID")

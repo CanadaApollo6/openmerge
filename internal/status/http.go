@@ -176,6 +176,7 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 			queues := make([]Queue, 0, len(journals))
 			for _, journal := range journals {
 				q, _, _ := Project(journal, 0, 0, sanitizer)
+				applyReadiness(source, &q, sanitizer)
 				queues = append(queues, q)
 			}
 			// Preserve [] for an empty queue list; discovery is additive in v1.
@@ -196,6 +197,10 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 			return
 		}
 		q, entry, why := Project(journals[0], pr, limit, sanitizer)
+		applyReadiness(source, &q, sanitizer)
+		if why != nil && q.Readiness != nil && !q.Readiness.Ready {
+			why.Summary += "; waiting: " + q.Readiness.Reason
+		}
 		if pr > 0 && entry == nil {
 			fail(w, http.StatusNotFound, "not-found", "PR has no recorded queue history")
 			return
@@ -262,4 +267,15 @@ func writeJSON(w http.ResponseWriter, value any) {
 	// DTOs contain only JSON-safe values. A disconnected reader cannot change
 	// committed state and must not cause a second response to be written.
 	_ = json.NewEncoder(w).Encode(value)
+}
+
+func applyReadiness(source Source, q *Queue, sanitizer *diagnostic.Sanitizer) {
+	if runtime, ok := source.(interface {
+		QueueReadiness(store.QueueKey) *Readiness
+	}); ok {
+		q.Readiness = runtime.QueueReadiness(store.QueueKey{Installation: q.Installation, Repository: q.Repository, BaseBranch: q.Base, Lane: q.Lane})
+		if q.Readiness != nil {
+			q.Readiness.Reason = sanitizer.Sanitize(q.Readiness.Reason)
+		}
+	}
 }

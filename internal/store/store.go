@@ -63,7 +63,8 @@ func (s *Store) EnsureQueue(ctx context.Context, key QueueKey) (QueueID, error) 
 }
 
 // CanonicalQueue atomically finds or registers a partition, preserving the first
-// stored repository spelling. Every registration path takes the same lock, so
+// stored repository spelling, or the sole live historical variant. Conflicting
+// histories must settle before admission. Every registration takes the same lock, so
 // differently cased discoveries cannot split a queue's history or fence.
 func (s *Store) CanonicalQueue(ctx context.Context, key QueueKey) (QueueID, QueueKey, error) {
 	if key.Installation == "" || key.Repository == "" || key.BaseBranch == "" {
@@ -75,9 +76,50 @@ func (s *Store) CanonicalQueue(ctx context.Context, key QueueKey) (QueueID, Queu
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(1330464082, hashtext($1 || '/' || lower($2) || '/' || $3 || '/' || $4))`, key.Installation, key.Repository, key.BaseBranch, key.Lane); err != nil {
 			return err
 		}
-		err := tx.QueryRow(ctx, `SELECT id, repository FROM queues WHERE installation=$1 AND lower(repository)=lower($2) AND base=$3 AND lane=$4 ORDER BY id LIMIT 1`, key.Installation, key.Repository, key.BaseBranch, key.Lane).Scan(&id, &key.Repository)
-		if !errors.Is(err, pgx.ErrNoRows) {
+		rows, err := tx.Query(ctx, `SELECT id, repository FROM queues WHERE installation=$1 AND lower(repository)=lower($2) AND base=$3 AND lane=$4 ORDER BY id`, key.Installation, key.Repository, key.BaseBranch, key.Lane)
+		if err != nil {
 			return err
+		}
+		type match struct {
+			id         QueueID
+			repository string
+		}
+		matches, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (match, error) {
+			var m match
+			err := row.Scan(&m.id, &m.repository)
+			return m, err
+		})
+		if err != nil {
+			return err
+		}
+		if len(matches) == 1 {
+			id, key.Repository = matches[0].id, matches[0].repository
+			return nil
+		}
+		if len(matches) > 0 {
+			chosen := matches[0]
+			live := 0
+			for _, m := range matches {
+				state, _, err := load(ctx, tx, m.id)
+				if err != nil {
+					return err
+				}
+				if len(matches) > 1 && state.Active != nil && state.Active.Phase == queue.Landing {
+					return fmt.Errorf("case-variant queue histories: landing settlement pending for queue %d", m.id)
+				}
+				protected := slices.ContainsFunc(state.Blocks(queue.Config{}), func(block queue.Block) bool {
+					return block.Source != queue.RepositoryAccess && block.Source != queue.ConfigSource && block.Source != "lifecycle"
+				})
+				if len(state.Entries) > 0 || state.Active != nil || protected {
+					live++
+					chosen = m
+				}
+			}
+			if live > 1 {
+				return errors.New("conflicting case-variant queue histories have live state; operator reconciliation required")
+			}
+			id, key.Repository = chosen.id, chosen.repository
+			return nil
 		}
 		return tx.QueryRow(ctx, `INSERT INTO queues(installation, repository, base, lane) VALUES ($1,$2,$3,$4) RETURNING id`, key.Installation, key.Repository, key.BaseBranch, key.Lane).Scan(&id)
 	})

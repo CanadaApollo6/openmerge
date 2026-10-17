@@ -28,6 +28,7 @@ type Response struct {
 
 // Queue describes one served installation/repository/base/lane partition.
 type Queue struct {
+	Readiness    *Readiness    `json:"readiness,omitempty"`
 	State        string        `json:"state"`
 	Installation string        `json:"installation"`
 	Repository   string        `json:"repo"`
@@ -538,4 +539,10 @@ func affects(event queue.Event, pr int, before, after queue.State, tested map[st
 	default:
 		return entryIn(before, pr) || entryIn(after, pr)
 	}
+}
+
+// Readiness is a process-local admission gate, separate from durable blocks.
+type Readiness struct {
+	Ready  bool   `json:"ready"`
+	Reason string `json:"reason,omitempty"`
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/config"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
+	"github.com/CanadaApollo6/openmerge/internal/status"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
@@ -38,11 +39,12 @@ func NewRepositories(ctx context.Context, db *store.Store, repos []Repository, o
 		}
 	}
 	s.repositories = repos
-	keys, err := db.QueueKeys(ctx)
+	stored, err := db.StoredQueues(ctx)
 	if err != nil {
 		return nil, err
 	}
-	for _, key := range keys {
+	for _, historical := range stored {
+		key := historical.Key
 		var target Target
 		found := false
 		for _, repo := range repos {
@@ -57,10 +59,7 @@ func NewRepositories(ctx context.Context, db *store.Store, repos []Repository, o
 		if !found {
 			continue
 		}
-		id, err := db.EnsureQueue(ctx, key)
-		if err != nil {
-			return nil, err
-		}
+		id := historical.ID
 		state, _, err := db.Load(ctx, id)
 		if err != nil {
 			return nil, err
@@ -73,7 +72,7 @@ func NewRepositories(ctx context.Context, db *store.Store, repos []Repository, o
 			continue
 		}
 		target.Key = key
-		w, err := s.register(ctx, target)
+		w, err := s.registerID(ctx, target, id)
 		if err != nil {
 			return nil, err
 		}
@@ -99,6 +98,10 @@ func (s *Server) register(ctx context.Context, target Target) (*worker, error) {
 	if err != nil {
 		return nil, err
 	}
+	return s.registerID(ctx, target, id)
+}
+
+func (s *Server) registerID(ctx context.Context, target Target, id store.QueueID) (*worker, error) {
 	for _, w := range s.workers() {
 		if w.id == id {
 			w.mu.Lock()
@@ -156,13 +159,7 @@ func (s *Server) RefreshBranches(ctx context.Context) error {
 			s.options.Logger.Warn("branch refresh failed; keeping previous expansion", "repository", repo.Name, "error", err)
 		}
 	}
-	if result != nil {
-		s.refreshFailures++
-		delay := min(5*time.Second*time.Duration(1<<min(s.refreshFailures-1, 6)), 5*time.Minute, s.options.DiscoveryInterval)
-		s.refreshRetryAt = time.Now().Add(delay)
-	} else {
-		s.refreshFailures, s.refreshRetryAt = 0, time.Time{}
-	}
+	s.refreshResult(result)
 	return result
 }
 
@@ -224,7 +221,7 @@ func (s *Server) refreshRepository(ctx context.Context, repo Repository) error {
 			}
 		}
 		if _, err := s.register(ctx, target); err != nil {
-			return err
+			return &validationPending{err.Error()}
 		}
 	}
 	var result error
@@ -258,6 +255,23 @@ func matchingQueues(cfg config.Config, base, defaultBranch string) []config.Queu
 }
 
 func (s *Server) refreshWorker(ctx context.Context, w *worker, cfg config.Config, branch, tip string, branches []string, overlaps map[string]bool) error {
+	if !w.ready {
+		w.waiting = "validation pending"
+	}
+	w.validationNext = time.Now().Add(5 * time.Second)
+	id, _, err := s.store.CanonicalQueue(ctx, w.Key)
+	if err != nil {
+		w.ready = false
+		w.waiting = err.Error()
+		return &validationPending{w.waiting}
+	}
+	if id != w.id {
+		w.settlementOnly = true
+		w.ready = false
+		w.waiting = "historical case-variant queue; settlement only"
+		return nil
+	}
+	w.settlementOnly = false
 	if err := s.resolveTarget(ctx, w); err != nil {
 		return err
 	}
@@ -273,6 +287,11 @@ func (s *Server) refreshWorker(ctx context.Context, w *worker, cfg config.Config
 	// Before reactivation, settle any old attempt. Failed protection reads leave
 	// a new/recreated queue blocked until a complete validation succeeds.
 	if unsettled, err := s.settle(ctx, w); err != nil || unsettled {
+		w.ready = false
+		w.waiting = "landing settlement pending"
+		if err == nil {
+			return &validationPending{w.waiting}
+		}
 		return err
 	}
 	if err := s.configuration(ctx, w); err != nil {
@@ -291,7 +310,15 @@ func (s *Server) refreshWorker(ctx context.Context, w *worker, cfg config.Config
 	if err != nil {
 		return err
 	}
-	if w.rulesFailures > 0 || len(state.RulesProblems()) > 0 {
+	if w.rulesWaiting != "" && !w.ready || len(state.RulesProblems()) > 0 {
+		w.waiting = w.rulesWaiting
+		if w.waiting == "" {
+			w.waiting = "repository rules block admission"
+		}
+		w.validationNext = w.rulesNextCheck
+		if w.rulesWaiting != "" {
+			return &validationPending{w.waiting}
+		}
 		return nil
 	}
 	if err := s.initializeFence(ctx, w); err != nil {
@@ -301,6 +328,7 @@ func (s *Server) refreshWorker(ctx context.Context, w *worker, cfg config.Config
 		return err
 	}
 	w.ready = true
+	w.waiting = ""
 	return nil
 }
 
@@ -313,3 +341,28 @@ func (s *Server) Keys() []store.QueueKey {
 	}
 	return keys
 }
+
+// Journals supplies persisted history alongside this process's readiness snapshot.
+func (s *Server) Journals(ctx context.Context, keys []store.QueueKey) ([]store.Journal, error) {
+	return s.store.Journals(ctx, keys)
+}
+
+// QueueReadiness returns the current admission gate without persisting transient failures.
+func (s *Server) QueueReadiness(key store.QueueKey) *status.Readiness {
+	for _, w := range s.workers() {
+		if w.Key == key {
+			w.mu.Lock()
+			defer w.mu.Unlock()
+			r := &status.Readiness{Ready: !w.managed || w.ready}
+			if !r.Ready {
+				r.Reason = w.readinessReason()
+			}
+			return r
+		}
+	}
+	return nil
+}
+
+type validationPending struct{ reason string }
+
+func (e *validationPending) Error() string { return e.reason }

@@ -135,7 +135,11 @@ func TestFailedDiscoveryReadsPreserveDurableState(t *testing.T) {
 			events, err := s.store.EventsAfter(t.Context(), w.id, watermark)
 			must(t, err)
 			after := s.DiscoveryStatus()
-			if len(events) != 0 || after.Repositories[0].State != "served" || !after.LastSuccessfulSweep.Equal(*before.LastSuccessfulSweep) {
+			wantState := "served"
+			if failure == "metadata" || failure == "file" || failure == "branches" {
+				wantState = "unavailable"
+			}
+			if len(events) != 0 || after.Repositories[0].State != wantState || !after.LastSuccessfulSweep.Equal(*before.LastSuccessfulSweep) || !after.Repositories[0].LastSuccessfulSweep.Equal(*before.Repositories[0].LastSuccessfulSweep) || !after.Installations[0].LastSuccessfulSweep.Equal(*before.Installations[0].LastSuccessfulSweep) {
 				t.Fatalf("failure changed state: events=%+v status=%+v", events, after)
 			}
 		})

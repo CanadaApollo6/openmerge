@@ -55,6 +55,11 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 	actionCtx, cancel := context.WithTimeout(ctx, s.options.ActionTimeout)
 	defer cancel()
 	switch action := claim.Action.(type) {
+	case queue.ReportStatus:
+		if time.Now().Before(w.reportingNext) {
+			return store.ErrActionDeferred
+		}
+		actionCtx = forge.WithRequestClass(actionCtx, forge.ReportingRequest)
 	case queue.BuildTestRef:
 		if err := s.trustGate(actionCtx, w, action.PRs); err != nil && !errors.Is(err, errTrustGate) {
 			return err
@@ -172,6 +177,13 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 		}
 		return nil // refresh events committed; the next epoch re-reads CI
 	}
+	if _, reporting := claim.Action.(queue.ReportStatus); reporting && err != nil {
+		var quota interface{ RetryAfter() time.Time }
+		if errors.As(err, &quota) {
+			w.reportingNext = quota.RetryAfter()
+			return store.ErrActionDeferred
+		}
+	}
 	if errors.Is(err, store.ErrStale) {
 		return nil
 	}
@@ -182,6 +194,9 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 }
 
 func (s *Server) status(ctx context.Context, w *worker, pr int, head string, status forge.Status) error {
+	if time.Now().Before(w.reportingNext) {
+		return nil
+	}
 	ctx = forge.WithRequestClass(ctx, forge.ReportingRequest)
 	key := fmt.Sprintf("status/%d", pr)
 	value := struct {
@@ -201,6 +216,12 @@ func (s *Server) status(ctx context.Context, w *worker, pr int, head string, sta
 		return nil
 	}
 	if err := w.Driver.ReportStatus(ctx, w.repo(), pr, head, status); err != nil {
+		var rate interface{ RetryAfter() time.Time }
+		if errors.As(err, &rate) {
+			w.reportingNext = rate.RetryAfter()
+			s.options.Logger.Debug("status reporting deferred", "repository", w.Key.Repository, "until", rate.RetryAfter())
+			return nil
+		}
 		return err
 	}
 	return s.store.Record(ctx, w.id, key, data)
@@ -222,6 +243,16 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 	state, _, err := s.store.Load(ctx, w.id)
 	if err != nil {
 		return err
+	}
+	if w.managed && !w.ready {
+		for n, pr := range w.prs {
+			if !pr.Closed {
+				if err := s.status(ctx, w, n, pr.HeadSHA, forge.Status{State: forge.Paused, Reason: "validation-pending", Summary: w.readinessReason()}); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
 	}
 	reason := state.PauseReason(w.plannerConfig(s.options.PollInterval))
 	if reason != "" {
@@ -273,4 +304,31 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 		}
 	}
 	return nil
+}
+
+func (w *worker) readinessReason() string {
+	if w.waiting != "" {
+		return w.waiting
+	}
+	return "validation pending"
+}
+
+func (s *Server) reportWaiting(ctx context.Context, w *worker) error {
+	summaries, err := w.Driver.ListOpenPullRequests(ctx, w.repo(), w.Key.BaseBranch)
+	if err != nil {
+		return err
+	}
+	for _, pr := range summaries {
+		w.prs[pr.Number] = forge.PullRequest{Number: pr.Number, HeadSHA: pr.HeadSHA}
+		comments, err := w.Driver.ListComments(ctx, w.repo(), pr.Number, time.Time{})
+		if err != nil {
+			return err
+		}
+		for _, comment := range comments {
+			if fields := strings.Fields(command(comment.Body)); len(fields) > 0 && fields[0] == "queue" {
+				s.options.Logger.Info("ignored @openmerge queue command", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "pr", pr.Number, "reason", w.readinessReason())
+			}
+		}
+	}
+	return s.report(ctx, w)
 }

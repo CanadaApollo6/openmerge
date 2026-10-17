@@ -276,3 +276,15 @@ func TestQueueDiscoveryStatus(t *testing.T) {
 		t.Fatal("conflicting selectors accepted")
 	}
 }
+
+func TestQueueStatusShowsProcessReadiness(t *testing.T) {
+	var out bytes.Buffer
+	reason := "repository rules not yet verified: classic-protection read failed"
+	response := status.Response{Queues: []status.Queue{{Repository: "owner/repo", Base: "main", State: "active", Readiness: &status.Readiness{Ready: false, Reason: reason}}}}
+	if err := printStatus(&out, response); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "waiting: "+reason) {
+		t.Fatalf("readiness hidden: %s", &out)
+	}
+}

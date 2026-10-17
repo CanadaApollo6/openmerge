@@ -188,7 +188,10 @@ func maxTime(a, b time.Time) time.Time {
 // BackoffUntil reserves settlement capacity for legacy callers and honors
 // transport cooldowns. Missing rate headers never invent a budget.
 func (d *Driver) BackoffUntil() time.Time {
-	t := d.client.Client().Transport.(*transport)
+	t, ok := d.client.Client().Transport.(*transport)
+	if !ok {
+		return time.Time{}
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	until := t.until
@@ -197,3 +200,6 @@ func (d *Driver) BackoffUntil() time.Time {
 	}
 	return until
 }
+
+// RetryAfter exposes quota deadlines without coupling workers to the adapter.
+func (e *RateLimitError) RetryAfter() time.Time { return e.RetryAt }

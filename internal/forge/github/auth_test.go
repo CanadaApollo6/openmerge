@@ -381,3 +381,37 @@ func TestCancellationAndTransportErrorScrubbing(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestTokenFailuresAreCachedPerInstallation(t *testing.T) {
+	f := newAPI(t)
+	calls := 0
+	f.override = func(w http.ResponseWriter, r *http.Request) bool {
+		if !strings.Contains(r.URL.Path, "access_tokens") {
+			return false
+		}
+		calls++
+		f.apiError(w, 403, "installation suspended")
+		return true
+	}
+	for range 4 {
+		if _, err := f.app.token(t.Context(), 7); err == nil {
+			t.Fatal("failed token accepted")
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("negative cache missed: %d requests", calls)
+	}
+	if _, err := f.app.token(t.Context(), 8); err == nil {
+		t.Fatal("other installation failure ignored")
+	}
+	if calls != 2 {
+		t.Fatal("token cache crossed installation boundary")
+	}
+	f.clock = f.clock.Add(6 * time.Second)
+	if _, err := f.app.token(t.Context(), 7); err == nil {
+		t.Fatal("failed token accepted")
+	}
+	if calls != 3 {
+		t.Fatal("token failure never retried")
+	}
+}
