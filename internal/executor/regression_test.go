@@ -75,7 +75,10 @@ func TestLandRequiresFenceSetup(t *testing.T) {
 			must(t, h.f.DeleteRef(ctx, repo, fenceRef))
 			var events []queue.Event
 			err := h.x.Execute(ctx, a, record(&events))
-			want := []queue.Event{queue.LandingStarted{BatchID: a.BatchID, AttemptID: "attempt", FenceToken: a.FenceToken, At: epoch}}
+			want := []queue.Event{
+				queue.LandingStarted{BatchID: a.BatchID, AttemptID: "attempt", FenceToken: a.FenceToken, At: epoch},
+				queue.LandingCleanupPolicyRecorded{BatchID: a.BatchID, AttemptID: "attempt", DeleteHeadBranch: true},
+			}
 			if err == nil || !reflect.DeepEqual(events, want) || h.read(t, "main") != h.base {
 				t.Fatalf("missing fence allowed a landing: %v, events %#v", err, events)
 			}

@@ -31,7 +31,8 @@ type Executor struct {
 	AllowNoRequiredChecks bool
 	// AllowSkippedNeutral explicitly permits skipped and neutral required checks.
 	AllowSkippedNeutral bool
-	// DisableDeleteHeadBranch retains landed heads; default false enables cleanup.
+	// DisableDeleteHeadBranch pins retention when a landing starts. DeleteHeadBranch
+	// actions already authorized by a recorded attempt must execute with it false.
 	DisableDeleteHeadBranch bool
 	// CheckPolicy evaluates repository merge conditions on the tested SHA.
 	// Nil retains the explicit RequiredChecks policy.
@@ -51,7 +52,7 @@ type Executor struct {
 // Execute stops at the first failed emit. emit must durably record its event
 // before returning nil. BatchStarted precedes test-ref construction, and
 // Land freshly requires terminal-success checks before recording LandingStarted,
-// which precedes the git push;
+// followed by LandingCleanupPolicyRecorded before the git push;
 // after it is recorded, the caller must only execute ResolveLanding for that
 // batch, never retry Land. Its uncertain result is recovered from the fence.
 // Before recording Landed or closing a PR with MarkLanded, Execute freshly reads
@@ -162,6 +163,9 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 			return err
 		}
 		if err := emit(queue.LandingStarted{BatchID: a.BatchID, AttemptID: attemptID, FenceToken: a.FenceToken, At: x.now()}); err != nil {
+			return err
+		}
+		if err := emit(queue.LandingCleanupPolicyRecorded{BatchID: a.BatchID, AttemptID: attemptID, DeleteHeadBranch: !x.DisableDeleteHeadBranch}); err != nil {
 			return err
 		}
 		prs := make([]forge.BuildPR, len(a.PRs))

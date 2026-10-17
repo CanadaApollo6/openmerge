@@ -285,13 +285,16 @@ boolean in the default branch's `.openmerge.yml` overrides this default for that
 repository; omission inherits the flag. See the
 [configuration reference](../internal/config/README.md).
 
+Immediately after `LandingStarted`, before pushing, the executor records
+`LandingCleanupPolicyRecorded{BatchID, AttemptID, DeleteHeadBranch}` with the
+effective cleanup choice. The first decision for an attempt is immutable.
 After freshly verifying a successful landing, the executor records
 `HeadCleanupRequested{BatchID, LandedSHA}` before `Landed`, including during fence
 recovery. The intent refers to the original PR heads already pinned by the
-batch's stored events. Only a matching intent followed by `Landed` schedules
-`DeleteHeadBranch`, with an idempotency key pinned to PR, original head, and
-landed SHA. A failed append leaves the landing recoverable; retries can repeat
-the intent without duplicating cleanup. For squash/rebase, cleanup also waits
+batch's stored events. Only an enabled attempt policy and a matching intent
+followed by `Landed` schedule `DeleteHeadBranch`, with an idempotency key pinned
+to PR, original head, and landed SHA. A failed append leaves the landing
+recoverable; retries can repeat the intent without duplicating cleanup. For squash/rebase, cleanup also waits
 until `MarkLanded` is acknowledged.
 
 Before deletion, the executor rechecks that the landed commit remains on the
@@ -306,13 +309,14 @@ GitHub provides no transaction covering PR usage or protection changes and a git
 push. Protect long-lived integration branches or disable cleanup if that
 transaction guarantee is required.
 
-Disabling cleanup acknowledges the action without deletion; enabling it later
-does not revisit acknowledged actions. On upgrade, historical `Landed` events
-without a cleanup intent retain their heads: replay never opts old landings into
-cleanup. The new `head_cleanup_requested` event and `delete_head_branch` action
-are additive wire v1 types, each with a golden fixture; existing event/action
-payloads and fixtures are unchanged. Drain old workers before upgrading, because
-older binaries reject the new types.
+Configuration changes affect cleanup choices for future attempts. Started
+attempts and pending cleanup actions keep their recorded choice across restarts
+and retries. On upgrade, attempts without a cleanup-policy record retain their
+heads, even if recovery records a cleanup intent. A crash between the start and
+policy records also retains the heads. The `landing_cleanup_policy_recorded`
+event adds a wire v1 type and golden fixture; existing event/action payloads and
+fixtures are unchanged. Drain old workers before upgrading, because older
+binaries reject the new type.
 
 The durable pending-CI writes remain unchanged. Skipping a reopen based on an
 unlocked projection would race a concurrent passing `Land` preflight: a delayed

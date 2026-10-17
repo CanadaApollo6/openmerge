@@ -80,3 +80,54 @@ func TestConfigAppliedIdenticalDigestPreservesBatchAndStartedLandingSettles(t *t
 		t.Fatal("started landing did not settle after policy change")
 	}
 }
+
+func TestConfigAppliedReducedBatchLimitReformsGroups(t *testing.T) {
+	for _, window := range []string{"building", "testing", "base-before", "base-after", "pending-bisection", "landing-abandoned"} {
+		t.Run(window, func(t *testing.T) {
+			cfg := batchConfig(2)
+			cfg.ConfigDigest = strings.Repeat("a", 64)
+			s := Apply(batchQueue(4), ConfigApplied{Commit: "policy-a", Digest: cfg.ConfigDigest})
+			if window == "pending-bisection" {
+				cfg.BatchMaxSize = 4
+			}
+			s = startPlanned(t, cfg, s)
+			if window != "building" {
+				s = Apply(s, TestRefBuilt{BatchID: "b1", TestedSHA: "tested-b1", Method: Merge, At: epoch})
+			}
+			switch window {
+			case "base-before":
+				s = Apply(s, BaseMoved{SHA: "base2"})
+			case "pending-bisection":
+				s = Apply(s, ChecksCompleted{TestedSHA: "tested-b1", Success: false})
+			case "landing-abandoned":
+				s = Apply(s, LandingStarted{BatchID: "b1", AttemptID: "attempt", FenceToken: "f0", At: epoch})
+			}
+			admissions := append([]Entry(nil), s.Entries...)
+			cfg.ConfigDigest, cfg.BatchMaxSize = strings.Repeat("b", 64), 1
+			s = Apply(s, ConfigApplied{Commit: "policy-b", Digest: cfg.ConfigDigest})
+			if window == "base-after" {
+				s = Apply(s, BaseMoved{SHA: "base2"})
+			}
+			if window == "landing-abandoned" {
+				s = Apply(s, BaseMoved{SHA: "base2"})
+				s = Apply(s, LandingAbandoned{BatchID: "b1", NewFence: "f1"})
+			}
+			if !reflect.DeepEqual(s.Entries, admissions) {
+				t.Fatal("configuration change replaced or reordered admissions")
+			}
+			for _, entry := range admissions {
+				build := plannedBuild(t, cfg, s, epoch)
+				if !reflect.DeepEqual(build.PRs, []BatchPR{{PR: entry.PR, HeadSHA: entry.HeadSHA}}) || build.BaseSHA != s.BaseSHA {
+					t.Fatalf("rebuild ignored reduced size or admission order: %+v", build)
+				}
+				s = startPlanned(t, cfg, s)
+				s = Apply(s, TestRefBuilt{BatchID: build.BatchID, TestedSHA: "tested-" + build.BatchID, Method: Merge, At: epoch})
+				s = Apply(s, LandingStarted{BatchID: build.BatchID, AttemptID: "attempt-" + build.BatchID, FenceToken: s.Fence, At: epoch})
+				s = Apply(s, Landed{BatchID: build.BatchID, NewBaseSHA: "tested-" + build.BatchID, NewFence: "f-" + build.BatchID})
+			}
+			if len(s.Entries) != 0 {
+				t.Fatal("configuration change lost progress")
+			}
+		})
+	}
+}

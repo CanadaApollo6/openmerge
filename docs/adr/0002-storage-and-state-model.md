@@ -58,20 +58,25 @@ legacy immutable seed or any later fence. Repository rules are tracked per sourc
 failing read always applies, a clear needs the source's current revision, and one
 source never blocks or clears another. Stored legacy `rules_blocked` and
 `rules_cleared` events fold into the `rulesets` source unchanged.
-`head_cleanup_requested` records cleanup intent at landing time, so replaying
-older `landed` events schedules no head-branch deletion. All have wire-v1 golden
-fixtures.
+`landing_cleanup_policy_recorded{batch_id,attempt_id,delete_head_branch}` pins the
+first cleanup decision after `landing_started`, before the push. A matching
+`head_cleanup_requested` followed by `landed` schedules deletion only when that
+attempt recorded an enabled policy. Attempts without a policy record retain
+their heads, including legacy in-flight attempts resolved after upgrading. All
+have wire-v1 golden fixtures.
 Previously deployed event/action types and their fixtures are unchanged.
 
 `config_applied{commit,digest}` records the governing default-branch commit when
 the effective per-queue policy changes. The SHA-256 digest covers parsed admission
 and merge conditions, planner settings, and the effective head-cleanup setting;
 formatting, selectors, other queues, and unrelated commits do not change it.
-Replay invalidates building/testing batches and requeues their admissions on a
-digest change, including the first application to a legacy batch. A batch pins
-the current digest when `batch_started` folds. Planning and the queue-locked
-`LandingStarted` revalidation require the worker's digest to match the durable
-policy and the batch. A landing already started settles through its existing
+Replay discards building/testing batches and pending retry/bisection groups on a
+digest change, including the first application to a legacy batch. Admissions keep
+their order and enqueue times; the planner forms new groups using the new batch
+limits and wait. An abandoned landing also regroups if its policy changed. A
+batch pins the current digest when `batch_started` folds. Planning and the
+queue-locked `LandingStarted` revalidation require the worker's digest to match
+the durable policy and the batch. A landing already started settles through its existing
 fence even after a configuration change. This additive type has a wire-v1 golden
 fixture; existing event/action types and fixtures remain unchanged.
 
