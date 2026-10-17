@@ -163,6 +163,13 @@ func DecodeSnapshot(data []byte) (State, error) {
 	if len(data) > maxSnapshotBytes {
 		return State{}, fmt.Errorf("snapshot exceeds byte bound")
 	}
+	var header struct{ Version int }
+	if err := json.Unmarshal(data, &header); err != nil {
+		return State{}, err
+	}
+	if header.Version != SnapshotVersion {
+		return State{}, fmt.Errorf("unsupported snapshot version %d", header.Version)
+	}
 	if err := requireSnapshotFields(data, reflect.TypeFor[stateSnapshot](), "snapshot"); err != nil {
 		return State{}, err
 	}
@@ -175,8 +182,8 @@ func DecodeSnapshot(data []byte) (State, error) {
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		return State{}, fmt.Errorf("trailing snapshot data")
 	}
-	if v.Version != SnapshotVersion || len(v.Chain) > 32 || len(v.Invalidations) > 32 || len(v.TestedOrder) > testedHistory || len(v.Checks) > maxRetainedChecks || len(v.Entries) > maxSnapshotEntries || len(v.Effects) > maxSnapshotEffects {
-		return State{}, fmt.Errorf("invalid snapshot version or bounds")
+	if len(v.Chain) > 32 || len(v.Invalidations) > 32 || len(v.TestedOrder) > testedHistory || len(v.Checks) > maxRetainedChecks || len(v.Entries) > maxSnapshotEntries || len(v.Effects) > maxSnapshotEffects {
+		return State{}, fmt.Errorf("invalid snapshot bounds")
 	}
 	s := State{
 		window: v.Window, outcomes: v.Outcomes,
@@ -418,6 +425,9 @@ func requireSnapshotFields(raw []byte, schema reflect.Type, path string) error {
 }
 
 func validateAdaptiveSnapshot(s State) error {
+	if s.ConfigDigest != "" && s.window == nil {
+		return fmt.Errorf("configured snapshot window is null")
+	}
 	if s.window != nil {
 		w := s.window
 		if !w.BoundsRecorded && w.Bounds != (WindowBounds{MinDepth: 1, MaxDepth: 1}) {
@@ -430,7 +440,7 @@ func validateAdaptiveSnapshot(s State) error {
 			return fmt.Errorf("invalid snapshot window")
 		}
 		if f := w.LastHalved; f != nil {
-			if f.BatchID == "" || f.Revision == 0 || f.Revision > s.revision || (f.Reason != ChecksFailed && f.Reason != ChecksTimeout && f.Reason != Conflict) {
+			if f.BatchID == "" || f.Revision == 0 || f.Revision > s.revision || (f.Reason != ChecksFailed && f.Reason != ChecksTimeout) {
 				return fmt.Errorf("invalid snapshot window failure")
 			}
 		}

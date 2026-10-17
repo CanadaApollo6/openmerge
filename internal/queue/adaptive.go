@@ -45,7 +45,7 @@ type changeOutcome struct {
 }
 
 // Window returns the admission limit. Legacy logs without recorded bounds keep
-// their fixed window until reconciliation records the current policy bounds.
+// their fixed window until reconciliation records their historical policy bounds.
 func (s State) Window(cfg Config) int {
 	if s.window == nil || !s.window.BoundsRecorded && s.window.LegacySpeculative {
 		return cfg.MaxDepth()
@@ -100,7 +100,7 @@ func (s *State) halveWindow(b *Batch, reason DequeueReason) {
 		return
 	}
 	b.windowFailureRecorded = true
-	if s.window != nil {
+	if s.window != nil && s.window.Current > s.window.Bounds.MinDepth {
 		s.window.Current = max(s.window.Bounds.MinDepth, s.window.Current/2)
 		s.window.LastHalved = &WindowFailure{Revision: s.revision, BatchID: b.ID, Reason: reason}
 	}

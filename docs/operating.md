@@ -768,10 +768,11 @@ queues:
 
 Both depths default to 1; require `1 <= min_depth <= max_depth <= 32`.
 A new queue starts with W = `max_depth`. Every landing (including a bisection
-half) grows W by one up to that ceiling. A confirmed original-batch failure,
-including a check timeout or build conflict, halves W, rounding down with a floor
-of `min_depth`. Bisection failures do not halve it again. Provisional failures,
-invalidations, cancellation and duplicate observations do not change W. Idle
+half) grows W by one up to that ceiling. A confirmed checks failure or timeout
+of an original batch halves W, rounding down with a floor of `min_depth`. Build
+conflicts do not measure CI health and leave W unchanged. Bisection failures do
+not halve it again. Provisional failures, invalidations, cancellation and
+duplicate observations do not change W. Idle
 queues retain W; configuration changes clamp it to the new bounds. A shrinking
 window blocks new admissions and does not cancel admitted work (a configuration
 change independently invalidates unstarted landings as before).
@@ -919,6 +920,8 @@ replays journals and does not write or load these snapshots. The codec retains W
 its bounds and last failure, each batch's once-only failure marker, the ordered
 last-200 outcome ring and pending cancellation confirmations. The full encoding
 must be a byte fixed point across encode/decode, including retained confirmations.
+A configured queue must have a non-null window; unsupported versions are rejected
+before validating their schema.
 Persistence/compaction and historical ledger retention remain separate work.
 
 Speculative `config_applied` events add optional `window` bounds so replay can
@@ -926,6 +929,9 @@ clamp at the exact policy transition; a digest alone cannot recover those bounds
 No new event/action type is needed. Default depth-1 events omit the field. Existing
 speculative journals receive one same-digest bounds initialization without
 invalidating admitted batches or clearing their outcome history; adaptation starts
-from their old fixed ceiling. A previously serial queue carries W = 1 into a
-higher ceiling. Mixed old/new speculative workers cannot read the added bounds;
+from their old fixed ceiling. If policy changes during the upgrade, reconciliation
+first reads the policy at the recorded config commit and verifies its digest,
+records its fixed ceiling, then clamps W under the new policy. Historical policy
+read or digest failures stop that transition. A previously serial queue carries
+W = 1 into a higher ceiling. Mixed old/new speculative workers cannot read the added bounds;
 drain old workers before upgrading.

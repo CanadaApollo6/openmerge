@@ -3,6 +3,7 @@ package queue
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"reflect"
@@ -67,9 +68,13 @@ func TestAdaptiveWindowSingletonDuplicateAndMinimum(t *testing.T) {
 	for _, want := range []int{3, 2, 2} {
 		var b *Batch
 		s, b = admitChain(t, cfg, s, at)
+		before, previousW := s.LastWindowFailure(), s.Window(cfg)
 		e := ChecksFailureConfirmed{BatchID: b.ID, TestedSHA: b.TestedSHA, Generation: b.checksGeneration, Reason: ChecksTimeout}
 		s = Apply(s, e)
 		f := s.LastWindowFailure()
+		if previousW == cfg.SpeculationMinDepth && !reflect.DeepEqual(before, f) {
+			t.Fatal("floor failure changed evidence")
+		}
 		s = Apply(s, e)
 		s = Apply(s, BatchFailed{BatchID: b.ID, Reason: ChecksTimeout})
 		if s.Window(cfg) != want || !reflect.DeepEqual(f, s.LastWindowFailure()) {
@@ -259,6 +264,8 @@ func TestAdaptiveSnapshotValidationAndFixedPoint(t *testing.T) {
 	s = Apply(s, Dequeued{PR: 1, AdmissionID: s.entry(1).AdmissionID, Reason: ChecksFailed})
 	snapshotRoundTrip(t, cfg, s, at)
 	for _, mutate := range []func(*stateSnapshot){
+		func(v *stateSnapshot) { v.Window = nil },
+		func(v *stateSnapshot) { v.Window.LastHalved.Reason = Conflict },
 		func(v *stateSnapshot) { v.Window.Current = 0 }, func(v *stateSnapshot) { v.Window.Bounds.MinDepth = 5 },
 		func(v *stateSnapshot) { v.Window.LastHalved.Revision = v.Revision + 1 },
 		func(v *stateSnapshot) { v.Outcomes = append(v.Outcomes, v.Outcomes[0]) },
@@ -336,5 +343,51 @@ func TestOldIdlePolicyInitializesBoundsAtItsFixedCeiling(t *testing.T) {
 	s = Apply(s, cfg.Applied("new-binary", cfg.ConfigDigest))
 	if s.Window(cfg) != 4 || !s.WindowInitialized() {
 		t.Fatal("old idle policy initialized below its fixed ceiling")
+	}
+}
+
+func TestAdaptiveWindowBuildConflictsAreNeutral(t *testing.T) {
+	for _, provisional := range []bool{false, true} {
+		t.Run(fmt.Sprint("provisional=", provisional), func(t *testing.T) {
+			cfg, s, at := adaptiveState(t, 8, 4)
+			var head *Batch
+			if provisional {
+				s, head = admitChain(t, cfg, s, at)
+			}
+			var build BuildChainedTestRef
+			for _, action := range Plan(cfg, s, at) {
+				if a, ok := action.(BuildChainedTestRef); ok {
+					build = a
+				}
+			}
+			if build.BatchID == "" {
+				t.Fatal("no original build")
+			}
+			s = Apply(s, ChainedBatchStarted{BatchID: build.BatchID, BaseSHA: build.BaseSHA, PRs: build.PRs, ParentBatchID: build.ParentBatchID, Position: build.Position, At: at})
+			b := s.Batch(build.BatchID)
+			s = Apply(s, TestRefBuildFailed{BatchID: b.ID, Conflict: true, At: at})
+			if provisional {
+				s = settleChain(s, head, at)
+				s = Apply(s, BatchDiagnosed{BatchID: b.ID, Reason: Conflict})
+			}
+			if s.Window(cfg) != 8 || s.LastWindowFailure() != nil {
+				t.Fatal("build conflict halved W")
+			}
+			if f, n := s.FailureEstimate(); f != 0 || n != map[bool]int{false: 0, true: 1}[provisional] {
+				t.Fatalf("conflict entered estimate: %d/%d", f, n)
+			}
+			snapshotRoundTrip(t, cfg, s, at)
+		})
+	}
+}
+func TestAdaptiveWindowFailureAtInitialFloorHasNoHalvingEvidence(t *testing.T) {
+	cfg, s, at := adaptiveState(t, 4, 1)
+	cfg.SpeculationMinDepth = 4
+	cfg.ConfigDigest = strings.Repeat("b", 64)
+	s = Apply(s, cfg.Applied("floor", cfg.ConfigDigest))
+	s, b := admitChain(t, cfg, s, at)
+	s = confirmOriginal(s, b, ChecksTimeout)
+	if s.Window(cfg) != 4 || s.LastWindowFailure() != nil {
+		t.Fatal("failure at floor recorded a halving")
 	}
 }

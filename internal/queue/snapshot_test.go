@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -196,5 +197,12 @@ func TestSnapshotRejectsMissingAdaptiveFields(t *testing.T) {
 		if _, err := DecodeSnapshot(data); err == nil {
 			t.Fatalf("accepted missing %s", field)
 		}
+	}
+}
+
+func TestSnapshotRejectsOldVersionBeforeMissingAdaptiveFields(t *testing.T) {
+	_, err := DecodeSnapshot([]byte(`{"Version":1}`))
+	if err == nil || !strings.Contains(err.Error(), "unsupported snapshot version 1") {
+		t.Fatalf("wrong version error: %v", err)
 	}
 }

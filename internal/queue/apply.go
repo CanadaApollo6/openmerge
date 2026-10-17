@@ -591,7 +591,7 @@ func (s *State) failBatch(b *Batch, reason DequeueReason) {
 		b.checksPassed = false
 		return
 	}
-	if reason == ChecksFailed || reason == ChecksTimeout || reason == Conflict {
+	if reason == ChecksFailed || reason == ChecksTimeout {
 		s.halveWindow(b, reason)
 	}
 	if b.Speculative && len(s.Following) > 0 {

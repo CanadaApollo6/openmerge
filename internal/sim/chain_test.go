@@ -192,3 +192,22 @@ func TestCompactAndFullFakeProduceIdenticalPlannerOutcomes(t *testing.T) {
 		}
 	}
 }
+
+func TestAdaptiveBuildConflictInSimulator(t *testing.T) {
+	cfg := smallConfig()
+	cfg.PRs, cfg.ArrivalWindow, cfg.Faults = 8, 0, Faults{}
+	cfg.Planner.SpeculationMaxDepth = 4
+	cfg.CI = &CIConfig{Runners: 50, RerunsSupported: true}
+	s, err := newSimulation(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.forge.FailNext("BuildTestRef", forge.ErrConflict)
+	r, err := s.run()
+	if err != nil {
+		t.Fatalf("simulator rejected mutation: %v", err)
+	}
+	if r.Dequeued[queue.Conflict] != 1 {
+		t.Fatal("original conflict was not exercised")
+	}
+}

@@ -60,7 +60,7 @@ func TestAdaptiveSummarySurvivesLongDiagnosticHeader(t *testing.T) {
 	// The forge bounds each line to 1024 runes. Queue inputs get their own line
 	// so a long pause/provenance diagnostic cannot truncate them away.
 	text := diagnostic.NewSanitizer().SanitizeText(strings.Repeat("x", 2048) + suffix)
-	for _, want := range []string{"Queue: window: 2", "batch size: 1", "p̂: 0.0000 (0/0)", "last window failure: revision", "b1 checks-timeout"} {
+	for _, want := range []string{"Queue: window: 2", "batch size: 1", "p̂: n/a (0 samples)", "last window failure: revision", "b1 checks-timeout"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("summary lost %q after bounding: %s", want, text)
 		}

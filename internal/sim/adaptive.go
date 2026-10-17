@@ -39,10 +39,6 @@ func (s *simulation) observeAdaptation(before queue.State, event queue.Event) {
 		failed = head != nil && head.ID == e.BatchID && head.Phase == queue.Testing && head.InvalidationReason == "" && (s.state.Batch(e.BatchID) == nil || s.state.Active.CheckRetry != nil && s.state.Active.CheckRetry.Confirmed)
 	case queue.BatchFailed:
 		failed = head != nil && head.ID == e.BatchID && head.Phase == queue.Testing && !before.ChecksPassed(head.TestedSHA)
-	case queue.TestRefBuildFailed:
-		failed = e.Conflict && head != nil && head.ID == e.BatchID && head.Phase == queue.Building
-	case queue.BatchDiagnosed:
-		failed = head != nil && head.ID == e.BatchID && head.ProvisionalFailure == e.Reason && e.Reason == queue.Conflict
 	case queue.ChecksCompleted:
 		failed = !e.Success && head != nil && !head.Speculative && head.Phase == queue.Testing && head.TestedSHA == e.TestedSHA
 	}

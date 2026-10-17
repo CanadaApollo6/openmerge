@@ -144,7 +144,11 @@ func LedgerSummary(entry *Entry) string {
 func AdaptiveSummary(q *Queue) string {
 	text := fmt.Sprintf("window: %d; batch size: %d", q.Window, q.BatchSize)
 	if e := q.FailureEstimate; e != nil {
-		text += fmt.Sprintf("; p̂: %.4f (%d/%d)", e.Rate, e.Failures, e.Samples)
+		if e.Samples == 0 {
+			text += "; p̂: n/a (0 samples)"
+		} else {
+			text += fmt.Sprintf("; p̂: %.4f (%d/%d)", e.Rate, e.Failures, e.Samples)
+		}
 		if e.TargetPassRate > 0 {
 			text += fmt.Sprintf("; target: %g", e.TargetPassRate)
 		}

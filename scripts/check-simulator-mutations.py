@@ -30,6 +30,10 @@ def mutation(path, *edits):
 LAND_SHA = "Base: x.Base, ExpectedBaseSHA: a.ExpectedBaseSHA, TestedSHA: a.TestedSHA,"
 ABANDON = "return emit(queue.LandingAbandoned{BatchID: a.BatchID, NewFence: next})"
 MUTANTS = {
+    "conflict_halves_window": mutation(
+        APPLY, ("if reason == ChecksFailed || reason == ChecksTimeout {",
+                "if reason == ChecksFailed || reason == ChecksTimeout || reason == Conflict {")
+    ),
     "window_does_not_halve": mutation(
         "internal/queue/adaptive.go", ("s.window.Current/2", "s.window.Current")
     ),
@@ -256,7 +260,7 @@ with tempfile.TemporaryDirectory(prefix="openmerge-mutations-") as directory:
         overlay.write_text(json.dumps({"Replace": replacements}))
         run = subprocess.run(
             ["go", "test", "-count=1", "-overlay", str(overlay), "./internal/sim", "-run",
-             "TestMutationRunProbe|TestProvisionalConflictInSimulator|TestDelayedPassCannotReviveLandingInSimulator|TestStaleBatchTimeoutInSimulator|TestChangedCompositionInSimulator|TestBatchFormationWaitInSimulator|TestAbandonmentBeforePush/captured_token|TestExit500PRDay|TestForeignBaseEqualityDoesNotResolveLanding/resolve_from_fence"],
+             "TestMutationRunProbe|TestAdaptiveBuildConflictInSimulator|TestProvisionalConflictInSimulator|TestDelayedPassCannotReviveLandingInSimulator|TestStaleBatchTimeoutInSimulator|TestChangedCompositionInSimulator|TestBatchFormationWaitInSimulator|TestAbandonmentBeforePush/captured_token|TestExit500PRDay|TestForeignBaseEqualityDoesNotResolveLanding/resolve_from_fence"],
             cwd=ROOT, capture_output=True, text=True, timeout=60,
         )
         output = run.stdout + run.stderr

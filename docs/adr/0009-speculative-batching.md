@@ -77,7 +77,7 @@ first use requires a compatible database restore.
 
 **The window bounds every admitted, unlanded batch.** A queue keeps a window *W* between `speculation.min_depth` and `speculation.max_depth` (`1 ≤ min_depth ≤ max_depth ≤ 32`; `min_depth` defaults to 1, and `max_depth` defaults to 1). Batches that are building, testing, passed and waiting to land, or landing all count against it. A passing batch does not free its slot until it lands. A new batch is admitted only while fewer than *W* batches are open.
 
-**The window grows on landings and halves on confirmed failures.** *W* starts at `max_depth` for a new queue, as Zuul's window starts high, so it speculates immediately; confirmed failures bring it down toward `min_depth`. Becoming idle does not reset *W*: an existing queue keeps the window its history gives it. A configuration change that alters `min_depth` or `max_depth` clamps *W* into the new bounds rather than resetting it. Each landing, including the landing of a bisection half, increases *W* by one, up to `max_depth`. Each confirmed failure of an original (not bisection) batch halves *W* once, rounding down and never below `min_depth`. Failures found while bisecting that batch, including timeouts, do not halve it again. A check timeout of an original batch is a confirmed failure and halves *W* once, which also eases load when the window itself is overloading CI. Provisional failures, invalidated batches, cancellations and duplicate observations change nothing. A shrinking window never cancels batches already admitted; it only stops new ones until enough have landed. This is additive-increase, multiplicative-decrease, as in Zuul. *W* is computed from the recorded history, so the planner stays a pure function of the log ([ADR 0002](0002-storage-and-state-model.md)). The simulator reports the window's equilibrium; it is not assumed to be optimal.
+**The window grows on landings and halves on confirmed failures.** *W* starts at `max_depth` for a new queue, as Zuul's window starts high, so it speculates immediately; confirmed failures bring it down toward `min_depth`. Becoming idle does not reset *W*: an existing queue keeps the window its history gives it. A configuration change that alters `min_depth` or `max_depth` clamps *W* into the new bounds rather than resetting it. Each landing, including the landing of a bisection half, increases *W* by one, up to `max_depth`. Each confirmed checks failure of an original (not bisection) batch halves *W* once, rounding down and never below `min_depth`. Failures found while bisecting that batch, including timeouts, do not halve it again. A check timeout of an original batch is a confirmed failure and halves *W* once, which also eases load when the window itself is overloading CI. Build conflicts do not measure CI health and do not change *W*. Provisional failures, invalidated batches, cancellations and duplicate observations change nothing. A shrinking window never cancels batches already admitted; it only stops new ones until enough have landed. This is additive-increase, multiplicative-decrease, as in Zuul. *W* is computed from the recorded history, so the planner stays a pure function of the log ([ADR 0002](0002-storage-and-state-model.md)). The simulator reports the window's equilibrium; it is not assumed to be optimal.
 
 ### Batch size
 
@@ -226,7 +226,8 @@ latency with 50 runners. See [measured results](../research/phase2-chain.md).
 ### Adaptive implementation notes (PR 5)
 
 W and the outcome estimator are projections of accepted existing events. A
-confirmed original checks failure, timeout or build conflict halves W once;
+confirmed checks failure or timeout of an original batch halves W once;
+build conflicts leave W unchanged because they say nothing about CI health.
 `FromBisection` and a snapshotted per-batch marker prevent repeated decrease.
 Every settled landing increments W, including halves. A new queue starts at its
 ceiling, idle retains W, and config changes clamp it. Admission counts all open
@@ -239,7 +240,10 @@ Default depth-1 encodings omit it, including retry-enabled depth-1 queues; no ne
 event/action type is introduced. Before adaptation, old speculative journals keep
 their fixed admission policy. Reconciliation records a one-time same-digest bounds
 initialization at the old ceiling without invalidating admitted work or resetting
-outcomes. A serial queue enabling speculation clamps W=1 rather than restarting
+outcomes. When the first reconciliation also changes policy, it reads and verifies
+the historical policy at the recorded config commit, initializes its fixed ceiling
+under the old digest, then applies the replacement bounds. A serial queue enabling
+speculation clamps W=1 rather than restarting
 at the higher ceiling. Subsequent policy transitions use the recorded bounds.
 
 Fresh size uses the last 200 landed or checks/timeout-dequeued changes in log

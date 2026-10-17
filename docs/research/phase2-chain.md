@@ -174,6 +174,25 @@ including service after day 1. It is not wall-clock CI consumption within day 1.
 | 7 | 892 | 6.163 | 21.305 | 3.590278 | 0.681614 | 1.355393 / 1.363229 |
 | 8 | 847 | 6.346 | 19.887 | 3.613056 | 0.732782 | 1.458876 / 1.465565 |
 
+## Round 1 fixes
+
+Legacy upgrades read the policy at the recorded `ConfigCommit` when the digest
+also changes. Reconciliation records that policy's fixed ceiling under its old
+digest before applying the new bounds, so an old W=8 clamps to 4 instead of 1.
+Unchanged digests initialize once and retain admitted work; serial upgrades keep
+W=1. Historical read or digest failures stop the transition rather than invent W.
+Only confirmed checks failures and timeouts of original batches halve W, as in
+ADR 0009. Build conflicts measure neither CI health nor failure rate and change
+neither W nor the outcome ring. The independent simulator oracle excludes them.
+Failures at the floor preserve the last actual halving event. Empty estimates
+render as `p̂: n/a (0 samples)`. Configured snapshots reject a null window;
+unsupported versions are rejected before checking their version-specific fields.
+
+Delayed duplicate landing actions may run after checks reopen or fail. The
+executor safely rejects those replays with `ErrChecksNotSuccessful`; the timeline
+accepts that rejection just as it accepts a stale action or a rejected lease,
+after checking invariants. This tolerance does not authorize a landing.
+
 ## Explicit implementation decisions
 
 **Retain conservative admission.** A separate eight-seed, one-day experiment
@@ -231,21 +250,43 @@ A backstop repetition exposed a racy immediate assertion: either server can own
 the shared action claim when a peer cycle returns. That test now uses its existing
 bounded durable-state wait. Production backstop timing is unchanged.
 
+Round 1 reruns match `c3707e9` exactly: all **64** per-seed profile records
+(including every day-1 metric and window measurement) and all **10** pooled or
+cancellation tally lines have zero deltas. All original and additional gates
+pass in both cancellation modes. The pinned exit workloads contain no build
+conflicts, so the CI-only halving fix changes the injected-conflict cases rather
+than their metrics. The admission experiment also reproduces its prior results.
+The full adaptive command exits **0** in **1,164.400 seconds**, versus the review's
+953.052 seconds (+211.348 seconds of wall time), with other validation running
+concurrently. All numeric tables above remain current.
+
+The final `make check` exits **0** (simulator race suite: 555.747s; server race
+suite: 427.378s). The first attempt exited **2**: the new active-migration fixture
+used an invalid batch ID, and the simulator package reached its default 10-minute
+timeout in the existing cancellation-savings test. The corrected fixture passes
+five race repetitions. The first broad backstop repetition exited **1** on an
+idle-reconciliation deadline; its full five-repetition rerun exits **0**. Logs are
+`/tmp/om-pr46-fix1{,-initial,-backstops,-backstops-rerun,-exits,-mutations,-compatibility,-admission,-regressions,-deltas}.log`.
+The new server regression also fails as expected (exit **1**) with only the old
+reconciliation implementation overlaid: 8→4 gives 1 and 8→12 gives 1. It passes
+with the final implementation.
+
 Commands (all final runs exit **0**, with no real GitHub calls from tests):
 
 ```sh
-mise exec -- env OPENMERGE_TEST_DATABASE_URL='postgres://postgres@localhost:54329/postgres?sslmode=disable' make check > /tmp/om-p2-pr5.log 2>&1; echo exit=$?
+mise exec -- env OPENMERGE_TEST_DATABASE_URL='postgres://postgres@localhost:54329/postgres?sslmode=disable' make check > /tmp/om-pr46-fix1.log 2>&1; echo exit=$?
 mise exec -- python3 scripts/check-simulator-mutations.py
 mise exec -- go test ./internal/sim -run '^TestExitAdopter' -sim-adaptive-full-exit -v -count=1 -timeout=60m
 mise exec -- python3 scripts/check-phase2-admission.py
 mise exec -- python3 scripts/check-phase2-compatibility.py /tmp/om-p2-pr5-baseline
-OPENMERGE_TEST_DATABASE_URL='postgres://postgres@localhost:54329/postgres?sslmode=disable' mise exec -- go test ./internal/serve -run 'Backstop' -race -count=5
+OPENMERGE_TEST_DATABASE_URL='postgres://postgres@localhost:54329/postgres?sslmode=disable' mise exec -- go test ./internal/serve -run 'Backstop|TestLegacyWindow' -race -count=5
+mise exec -- go test ./internal/queue ./internal/status -run 'TestReviewPR46|TestAdaptive|TestSnapshotRejectsOld' -race -count=5
 ```
 
-The mutation sweep detects **35/35** mutations, including missing increase or
+The mutation sweep detects **36/36** mutations, including missing increase or
 decrease, repeated bisection decrease, admission beyond W, ignored sizing,
-rejected equality and a shortened outcome ring. The compatibility script itself
-runs both 17-exit suites and the retry-envelope probe against the clean baseline.
+rejected equality, a shortened outcome ring and conflicts incorrectly halving W.
+The compatibility script itself runs both 17-exit suites and the retry-envelope probe against the clean baseline.
 `make check` includes formatting, lint, all default tests under the race detector
 and a build. The explicit full-profile command supplies the expensive gate.
 
