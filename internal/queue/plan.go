@@ -287,11 +287,11 @@ func (s State) pauseReport() ReportStatus {
 }
 
 func (s State) poisonDetail() string {
-	return fmt.Sprintf("Queue paused after repeated invalid action %s: %s; resume the queue to retry", s.actionPoison.key, s.actionPoison.reason)
+	return fmt.Sprintf("Queue paused after repeated invalid action %s: %s; a writer can comment @openmerge refresh to retry", s.actionPoison.key, s.actionPoison.reason)
 }
 
 func (s State) buildFailureDetail() string {
-	detail := fmt.Sprintf("Queue paused after %d consecutive build failures; resume the queue or update the base branch", s.buildRetry.failures)
+	detail := fmt.Sprintf("Queue paused after %d consecutive build failures; a writer can comment @openmerge refresh or update the base branch", s.buildRetry.failures)
 	if s.buildRetry.detail != "" {
 		detail = fmt.Sprintf("Test ref build failed (%d consecutive failures): %s", s.buildRetry.failures, s.buildRetry.detail)
 	}

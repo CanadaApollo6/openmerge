@@ -10,7 +10,9 @@ import (
 	"time"
 )
 
-// The golden hashes were captured from the deployed #28 fold (62ef3a8).
+// The golden hashes were captured from the deployed #28 fold (62ef3a8), then
+// re-captured when only the poison and build-failure detail text changed from
+// "resume the queue" to the actual @openmerge refresh command.
 // Snapshot only pre-existing state and planner outputs, including wire payloads
 // and idempotency keys; additive source metadata is intentionally excluded.
 func TestLegacyBlockReplayGolden(t *testing.T) {
