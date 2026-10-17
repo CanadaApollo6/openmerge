@@ -177,7 +177,7 @@ func printStatus(out io.Writer, response status.Response) error {
 		if q.State == "" {
 			q.State = "active"
 		}
-		if q.Readiness != nil && !q.Readiness.Ready {
+		if q.State == "active" && q.Readiness != nil && !q.Readiness.Ready {
 			q.State = "waiting: " + q.Readiness.Reason
 		}
 		var reasons []string

@@ -356,8 +356,7 @@ func (s *Server) commands(ctx context.Context, w *worker, number int) error {
 					switch fields[0] {
 					case "queue":
 						if w.managed && !w.ready {
-							s.options.Logger.Info("ignored @openmerge queue command", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "pr", number, "reason", w.readinessReason())
-							break
+							return s.logIgnoredCommand(ctx, w, number, c.ID)
 						}
 						// Trust must be freshly read even if UpdatedAt did not change.
 						pr, err := s.observe(ctx, w, number)

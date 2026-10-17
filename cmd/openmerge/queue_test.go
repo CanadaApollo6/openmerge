@@ -288,3 +288,16 @@ func TestQueueStatusShowsProcessReadiness(t *testing.T) {
 		t.Fatalf("readiness hidden: %s", &out)
 	}
 }
+
+func TestQueueStatusPreservesInactiveLifecycle(t *testing.T) {
+	for _, lifecycle := range []string{"dormant", "retired", "overlapping"} {
+		var out bytes.Buffer
+		response := status.Response{Queues: []status.Queue{{Repository: "owner/repo", Base: "main", State: lifecycle, Readiness: &status.Readiness{Ready: false, Reason: "validation pending"}}}}
+		if err := printStatus(&out, response); err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(out.String(), "waiting:") || !strings.Contains(out.String(), lifecycle) {
+			t.Fatalf("lifecycle hidden: %s", out.String())
+		}
+	}
+}

@@ -59,6 +59,9 @@ func (f *installationTargets) bundle(ctx context.Context, id string) (result *in
 			delete(f.failures, id)
 			return
 		}
+		if ctx.Err() != nil {
+			return
+		}
 		failure.count++
 		failure.err = resultErr
 		failure.next = time.Now().Add(min(5*time.Second*time.Duration(1<<min(failure.count-1, 6)), 5*time.Minute))

@@ -69,18 +69,22 @@ type Server struct {
 	refresh             chan struct{}
 	refreshFailures     int
 	refreshRetryAt      time.Time
+	refreshNotBefore    time.Time
 }
 
 type worker struct {
-	settlementOnly bool
-	mu             sync.Mutex
-	managed        bool
-	ready          bool // Branch and policy validation is process-local, never a lifecycle event.
-	waiting        string
-	rulesWaiting   string
-	validationNext time.Time
-	reportingNext  time.Time
-	recovery       bool
+	settlementOnly  bool
+	mu              sync.Mutex
+	managed         bool
+	ready           bool // Branch and policy validation is process-local, never a lifecycle event.
+	waiting         string
+	lifecycleState  string
+	lifecycleDetail string
+	accessBlocked   bool
+	rulesWaiting    string
+	validationNext  time.Time
+	reportingNext   time.Time
+	recovery        bool
 	Target
 	id               store.QueueID
 	wake             chan struct{}
@@ -91,6 +95,7 @@ type worker struct {
 	configError      error
 	deleteHeadBranch *bool
 	prs              map[int]forge.PullRequest
+	diagnosticHeads  map[int]string
 	summaries        map[int]forge.PullRequestSummary
 	deferred         []string
 	logState         queue.State
@@ -215,6 +220,7 @@ func (s *Server) Run(ctx context.Context) error {
 	for {
 		s.refreshMu.Lock()
 		retryAt := s.refreshRetryAt
+		notBefore := s.refreshNotBefore
 		s.refreshMu.Unlock()
 		delay := s.options.DiscoveryInterval
 		if !retryAt.IsZero() {
@@ -227,7 +233,10 @@ func (s *Server) Run(ctx context.Context) error {
 		case <-timer.C:
 		case <-s.refresh:
 		}
-		if time.Now().Before(retryAt) {
+		if deadline := maxTime(retryAt, notBefore); time.Now().Before(deadline) {
+			s.refreshMu.Lock()
+			s.refreshRetryAt = deadline
+			s.refreshMu.Unlock()
 			continue
 		}
 		_ = s.Refresh(ctx)
@@ -244,6 +253,7 @@ func (s *Server) workers() []*worker {
 func (s *Server) loop(ctx context.Context, w *worker) {
 	delay := time.Duration(0)
 	failures := 0
+	var retryNotBefore time.Time
 	for {
 		timer := time.NewTimer(delay)
 		select {
@@ -256,6 +266,10 @@ func (s *Server) loop(ctx context.Context, w *worker) {
 		}
 		if ctx.Err() != nil {
 			return
+		}
+		if time.Now().Before(retryNotBefore) {
+			delay = time.Until(retryNotBefore)
+			continue
 		}
 		select {
 		case s.slots <- struct{}{}:
@@ -294,13 +308,17 @@ func (s *Server) loop(ctx context.Context, w *worker) {
 			w.mu.Unlock()
 		}
 		w.mu.Lock()
-		if w.managed && !w.ready && !w.validationNext.IsZero() {
+		if err == nil && w.validationPending() && w.validationNext.After(time.Now()) {
 			delay = min(delay, max(time.Millisecond, time.Until(w.validationNext)))
 		}
-		if w.rulesNextCheck.After(time.Now()) {
+		if err == nil && w.rulesNextCheck.After(time.Now()) {
 			delay = min(delay, max(time.Millisecond, time.Until(w.rulesNextCheck)))
 		}
 		w.mu.Unlock()
+		retryNotBefore = time.Time{}
+		if err != nil {
+			retryNotBefore = time.Now().Add(delay)
+		}
 	}
 }
 
@@ -337,6 +355,11 @@ func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
 		if errors.As(result, &rate) {
 			result = &quotaBackoff{until: rate.RetryAfter()}
 		}
+		if !w.validationPending() {
+			w.validationNext = time.Time{}
+		} else if !w.validationNext.After(time.Now()) {
+			w.validationNext = time.Now().Add(5 * time.Second)
+		}
 		s.logCommitted(ctx, w)
 		s.options.Logger.Debug("reconcile cycle finished", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "error", result)
 	}()
@@ -344,6 +367,7 @@ func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
 	if err != nil {
 		return err
 	}
+	w.accessBlocked = current.SourceBlocked(queue.RepositoryAccess)
 	if (w.settlementOnly || current.SourceBlocked(queue.RepositoryAccess)) && (current.Active == nil || current.Active.Phase != queue.Landing) {
 		return nil
 	}
@@ -380,7 +404,7 @@ func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
 			return nil
 		}
 		if !w.ready || state.LifecycleState() != "active" {
-			if !time.Now().Before(w.validationNext) {
+			if w.validationPending() && !time.Now().Before(w.validationNext) {
 				w.validationNext = time.Now().Add(5 * time.Second)
 				select {
 				case s.refresh <- struct{}{}:
@@ -475,3 +499,14 @@ func (e *quotaBackoff) Error() string {
 }
 
 func (e *quotaBackoff) RetryAfter() time.Time { return e.until }
+
+func (w *worker) validationPending() bool {
+	return w.managed && !w.ready && !w.settlementOnly && !w.accessBlocked && (w.lifecycleState == "" || w.lifecycleState == "active")
+}
+
+func maxTime(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
+}

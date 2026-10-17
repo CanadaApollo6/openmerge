@@ -116,7 +116,7 @@ func (s *Server) registerID(ctx context.Context, target Target, id store.QueueID
 	if err != nil {
 		return nil, err
 	}
-	w := &worker{Target: target, id: id, managed: true, logState: state, logWatermark: watermark, wake: make(chan struct{}, 1), prs: make(map[int]forge.PullRequest), summaries: make(map[int]forge.PullRequestSummary)}
+	w := &worker{Target: target, id: id, managed: true, logState: state, logWatermark: watermark, lifecycleState: state.LifecycleState(), lifecycleDetail: state.Lifecycle.Detail, accessBlocked: state.SourceBlocked(queue.RepositoryAccess), wake: make(chan struct{}, 1), prs: make(map[int]forge.PullRequest), summaries: make(map[int]forge.PullRequestSummary)}
 	s.mu.Lock()
 	s.queues = append(s.queues, w)
 	s.mu.Unlock()
@@ -128,8 +128,11 @@ func (s *Server) lifecycle(ctx context.Context, w *worker, state, detail string)
 	if err != nil {
 		return err
 	}
+	w.lifecycleState, w.lifecycleDetail = state, detail
 	if state != "active" {
 		w.ready = false
+		w.waiting = detail
+		w.validationNext = time.Time{}
 	}
 	event := queue.LifecycleChanged{State: state, Detail: detail}
 	if current.LifecycleState() == state {
@@ -167,19 +170,19 @@ func (s *Server) refreshRepository(ctx context.Context, repo Repository) error {
 	target := repo.Target("")
 	branch, err := target.Driver.DefaultBranch(ctx, forge.RepoRef{Path: repo.Name})
 	if err != nil {
-		return err
+		return &repositoryReadError{"default branch", err}
 	}
 	tip, err := target.Git.ReadRef(ctx, forge.RepoRef{Path: repo.Name}, branch)
 	if err != nil {
-		return err
+		return &repositoryReadError{"default-branch tip", err}
 	}
 	cfg, err := s.repositoryConfig(ctx, target, tip)
 	if err != nil {
-		return err
+		return &repositoryReadError{"configuration", err}
 	}
 	branches, err := repo.Branches(ctx)
 	if err != nil {
-		return err
+		return &repositoryReadError{"branch listing", err}
 	}
 	// Internal test and fence refs must never recursively become queue bases.
 	branches = slices.DeleteFunc(branches, func(base string) bool { return strings.HasPrefix(base, "openmerge/") })
@@ -208,6 +211,7 @@ func (s *Server) refreshRepository(ctx context.Context, repo Repository) error {
 			}
 		}
 	}
+	var result error
 	for _, base := range branches {
 		if !s.allowedBase(base) || len(matchingQueues(cfg, base, branch)) == 0 {
 			continue
@@ -221,10 +225,9 @@ func (s *Server) refreshRepository(ctx context.Context, repo Repository) error {
 			}
 		}
 		if _, err := s.register(ctx, target); err != nil {
-			return &validationPending{err.Error()}
+			result = errors.Join(result, fmt.Errorf("base %s registration: %w", base, err))
 		}
 	}
-	var result error
 	for _, w := range s.workers() {
 		if w.Key.Installation != repo.Installation || !strings.EqualFold(w.Key.Repository, repo.Name) {
 			continue
@@ -254,11 +257,20 @@ func matchingQueues(cfg config.Config, base, defaultBranch string) []config.Queu
 	return matches
 }
 
-func (s *Server) refreshWorker(ctx context.Context, w *worker, cfg config.Config, branch, tip string, branches []string, overlaps map[string]bool) error {
+func (s *Server) refreshWorker(ctx context.Context, w *worker, cfg config.Config, branch, tip string, branches []string, overlaps map[string]bool) (result error) {
 	if !w.ready {
 		w.waiting = "validation pending"
 	}
-	w.validationNext = time.Now().Add(5 * time.Second)
+	w.validationNext = time.Time{}
+	defer func() {
+		if result != nil {
+			w.ready = false
+			w.waiting = result.Error()
+		}
+		if w.validationPending() && w.validationNext.IsZero() {
+			w.validationNext = time.Now().Add(5 * time.Second)
+		}
+	}()
 	id, _, err := s.store.CanonicalQueue(ctx, w.Key)
 	if err != nil {
 		w.ready = false
@@ -272,9 +284,6 @@ func (s *Server) refreshWorker(ctx context.Context, w *worker, cfg config.Config
 		return nil
 	}
 	w.settlementOnly = false
-	if err := s.resolveTarget(ctx, w); err != nil {
-		return err
-	}
 	matches := matchingQueues(cfg, w.Key.BaseBranch, branch)
 	switch {
 	case !s.allowedBase(w.Key.BaseBranch) || len(matches) == 0 || w.Key.Lane != "":
@@ -283,6 +292,10 @@ func (s *Server) refreshWorker(ctx context.Context, w *worker, cfg config.Config
 		return s.lifecycle(ctx, w, "dormant", "Base branch is absent; log and fence retained")
 	case slices.ContainsFunc(matches, func(q config.Queue) bool { return overlaps[q.Name] }):
 		return s.lifecycle(ctx, w, "overlapping", "Queue selector overlaps another queue on an existing branch")
+	}
+	w.lifecycleState = "active"
+	if err := s.resolveTarget(ctx, w); err != nil {
+		return err
 	}
 	// Before reactivation, settle any old attempt. Failed protection reads leave
 	// a new/recreated queue blocked until a complete validation succeeds.
@@ -328,6 +341,7 @@ func (s *Server) refreshWorker(ctx context.Context, w *worker, cfg config.Config
 		return err
 	}
 	w.ready = true
+	w.validationNext = time.Time{}
 	w.waiting = ""
 	return nil
 }
@@ -366,3 +380,12 @@ func (s *Server) QueueReadiness(key store.QueueKey) *status.Readiness {
 type validationPending struct{ reason string }
 
 func (e *validationPending) Error() string { return e.reason }
+
+// repositoryReadError identifies failures before independent base validation.
+type repositoryReadError struct {
+	phase string
+	err   error
+}
+
+func (e *repositoryReadError) Error() string { return e.phase + " could not be read: " + e.err.Error() }
+func (e *repositoryReadError) Unwrap() error { return e.err }

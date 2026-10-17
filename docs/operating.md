@@ -327,6 +327,87 @@ events: an older binary cannot replay that queue. As with `lifecycle_changed`,
 downgrading to an incompatible binary requires restoring a database backup from
 before those events were recorded. Do not edit the event log to downgrade.
 
+## Case-variant history recovery
+
+`conflicting case-variant queue histories` means an older deployment created
+separate rows for different spellings of the same repository. Admission fails
+closed, but each persisted queue ID still settles its own landing. Do not rename
+or delete rows, reset fences, merge event logs, or copy command receipts between
+histories.
+
+1. Back up the database. Identify every row for the installation/base/lane,
+   including its exact repository spelling:
+
+   ```sql
+   SELECT id, installation, repository, base, lane, initial_fence
+   FROM queues
+   WHERE installation = 'INSTALLATION' AND lower(repository) = lower('OWNER/REPO')
+     AND base = 'BASE' AND lane = '' ORDER BY id;
+   SELECT queue_id, id, recorded_at, payload FROM events
+   WHERE queue_id IN (FIRST_ID, SECOND_ID) ORDER BY id;
+   SELECT queue_id, key, convert_from(value, 'UTF8') FROM observations
+   WHERE queue_id IN (FIRST_ID, SECOND_ID)
+     AND (key LIKE 'cursor/%' OR key LIKE 'comment/%') ORDER BY queue_id, key;
+   ```
+
+   Compare `openmerge queue status --json`, the landing-start/result events,
+   current entries and batches, every block source/revision, and command cursors
+   and receipts. Replay with `Store.Load` rather than inferring current state
+   from the last event alone.
+2. Leave the recovering server running until **every** recorded landing has a
+   real result. Restore missing installation access first if necessary. Its
+   workers resolve each attempt against the actual base and fence, even while
+   canonical admission is blocked. A timeout or missing credentials is not
+   abandonment. If the fence cannot establish an outcome, retain the block and
+   investigate the recorded push; do not manufacture `Landed` or abandonment.
+3. Stop every server that can write these partitions before maintenance. Choose
+   the history whose replayed `Fence` matches the actual
+   `openmerge/fence/BASE` token and whose command receipts belong to the last
+   serving worker. Prefer the sole live history; when all have drained, discovery
+   chooses the fenced history with the latest event watermark. If the fence and
+   receipt evidence disagree, investigate the original worker's logs/backup
+   before selecting. The selected row's ID, spelling, receipts and cursors stay
+   intact.
+4. Drain entries from each unselected history using a small maintenance program
+   **inside this repository** (so it can import `internal/store` and
+   `internal/queue`). Connect with `store.Open`, inspect with `db.Load`, and
+   append the following existing events for each entry, using its current
+   admission ID. Refuse to run while any loaded batch is `queue.Landing`:
+
+   ```go
+   for _, entry := range state.Entries {
+       _, err := db.Append(ctx, discardedID, []queue.Event{
+           queue.DequeueRequested{PR: entry.PR},
+           queue.Dequeued{PR: entry.PR, AdmissionID: entry.AdmissionID,
+               Reason: queue.Requested},
+       }, "")
+       if err != nil { return err }
+   }
+   ```
+
+   Run the reviewed program with `mise exec -- go run ./PATH`, using an explicit
+   maintenance database URL. This cancels non-landing work through the reducer;
+   it does not edit history. Re-enqueue any still-wanted PRs with fresh commands
+   after service recovery. Inspect `state.Blocks(queue.Config{})` on **every**
+   variant. Repair each independent safety problem before clearing its own
+   source with `db.Append`: `queue.BlockSourceCleared{Source: source, Basis:
+   state.BlockSourceRevision(source)}` or `queue.RulesSourceCleared{Source:
+   source, Basis: state.RulesSourceRevision(source)}` for a rules source. Reload
+   before each clear. Do not clear unrelated holds to make selection succeed;
+   if a hold must remain, keep its history selected. Multiple histories with
+   unresolved holds must remain blocked until those causes are reconciled.
+5. Call `db.CanonicalQueue(ctx, selectedKey)` in the maintenance program. Check
+   that the returned ID is the chosen history, then call `db.Load` on that ID
+   and verify its fence and receipts again. Keep an entry on the selected history
+   until this call if it must take precedence over other drained histories.
+   Canonical selection is now stored in `canonical_queues`; subsequent sweeps
+   read that selection without replaying all variants. A newly imported legacy
+   variant invalidates the cache and requires reconciliation again.
+6. Restart serving and inspect status. The selected queue validates normally;
+   the others remain settlement-only. Confirm one new PR lands and historical
+   commands receive no new acceptance replies. Keep the backup and the inspected
+   IDs/events as the recovery record.
+
 ## Runtime repository rules
 
 Serve reads the repository's actual default branch, lists **all pages** of

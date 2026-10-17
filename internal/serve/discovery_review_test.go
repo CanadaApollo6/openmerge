@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http/httptest"
 	"strings"
@@ -30,6 +31,10 @@ func TestCaseVariantHistoriesSettleByPersistedID(t *testing.T) {
 			must(t, err)
 			err = conn.QueryRow(t.Context(), `INSERT INTO queues(installation,repository,base,lane) VALUES ('7','owner/repo','main','') RETURNING id`).Scan(&newer)
 			must(t, err)
+			if !bothLive {
+				_, err = db.Append(t.Context(), older, []queue.Event{queue.FenceInitialized{Token: "stale-fence"}}, "")
+				must(t, err)
+			}
 			f := fake.New()
 			f.Init(repo, "main", "openmerge/fence/main")
 			upper := forge.RepoRef{Path: "Owner/Repo"}
@@ -45,6 +50,11 @@ func TestCaseVariantHistoriesSettleByPersistedID(t *testing.T) {
 			must(t, err)
 			must(t, s.initializeFence(t.Context(), w))
 			recordLanding(t, s, w, f, true)
+			f.SetCanWrite(repo, "writer", true)
+			f.AddComment(repo, 41, "writer", "@openmerge queue")
+			historicalComment := f.CommentRecords(repo, 41)[0]
+			must(t, s.record(t.Context(), w, fmt.Sprintf("comment/%d", historicalComment.ID), true))
+			must(t, s.record(t.Context(), w, "cursor/41", historicalComment.CreatedAt))
 			_, err = db.Append(t.Context(), newer, []queue.Event{queue.PRObserved{PR: 98, HeadSHA: "new", Eligible: true, Trusted: true}, queue.EnqueueRequested{PR: 98, At: time.Now()}}, "")
 			must(t, err)
 			if bothLive {
@@ -87,6 +97,54 @@ func TestCaseVariantHistoriesSettleByPersistedID(t *testing.T) {
 				}
 			} else {
 				must(t, err)
+				// Drain the chosen newer history completely, then rediscover and
+				// land again. A stale older fence must never become canonical.
+				state = lifecycleState(t, restarted, w)
+				for _, entry := range state.Entries {
+					_, err = db.Append(t.Context(), newer, []queue.Event{queue.Dequeued{PR: entry.PR, AdmissionID: entry.AdmissionID, Reason: queue.Requested}}, "")
+					must(t, err)
+				}
+				restarted, err = NewDiscovery(t.Context(), db, d.source(), Options{})
+				must(t, err)
+				must(t, restarted.Refresh(t.Context()))
+				id, _, err := db.CanonicalQueue(t.Context(), key)
+				must(t, err)
+				if id != newer {
+					t.Fatal("canonical history flipped after draining")
+				}
+				var canonical *worker
+				for _, candidate := range restarted.workers() {
+					if candidate.id == newer {
+						canonical = candidate
+					}
+				}
+				base, err := f.ReadRef(t.Context(), repo, "main")
+				must(t, err)
+				_, err = f.OpenPR(repo, 42, base, true)
+				must(t, err)
+				f.AddComment(repo, 42, "writer", "@openmerge queue")
+				f.OnTestRef(func(sha string, _ []int) {
+					f.SetCheckRuns(repo, sha, []forge.CheckRun{{ID: 1, Name: "ci", Source: "app:1", State: forge.Success, HeadBranch: "openmerge/queue/main/b2"}})
+				})
+				for range 3 {
+					must(t, restarted.cycle(t.Context(), canonical))
+					time.Sleep(2 * time.Millisecond)
+				}
+				state = lifecycleState(t, restarted, canonical)
+				if state.Active != nil || !f.ContainsPR(repo, state.BaseSHA, 42) {
+					t.Fatal("new landing failed after draining canonical history")
+				}
+				events, err := db.EventsAfter(t.Context(), newer, 0)
+				must(t, err)
+				requests := 0
+				for _, event := range events {
+					if e, ok := event.Event.(queue.EnqueueRequested); ok && e.PR == 41 {
+						requests++
+					}
+				}
+				if requests != 1 {
+					t.Fatalf("historical queue command replayed: %d requests", requests)
+				}
 				for _, historical := range restarted.workers() {
 					if !historical.settlementOnly {
 						continue

@@ -63,7 +63,7 @@ func (s *Store) EnsureQueue(ctx context.Context, key QueueKey) (QueueID, error) 
 }
 
 // CanonicalQueue atomically finds or registers a partition, preserving the first
-// stored repository spelling, or the sole live historical variant. Conflicting
+// stored repository spelling, or a durably chosen historical variant. Conflicting
 // histories must settle before admission. Every registration takes the same lock, so
 // differently cased discoveries cannot split a queue's history or fence.
 func (s *Store) CanonicalQueue(ctx context.Context, key QueueKey) (QueueID, QueueKey, error) {
@@ -92,36 +92,62 @@ func (s *Store) CanonicalQueue(ctx context.Context, key QueueKey) (QueueID, Queu
 		if err != nil {
 			return err
 		}
-		if len(matches) == 1 {
-			id, key.Repository = matches[0].id, matches[0].repository
-			return nil
+		if len(matches) == 0 {
+			if err := tx.QueryRow(ctx, `INSERT INTO queues(installation, repository, base, lane) VALUES ($1,$2,$3,$4) RETURNING id`, key.Installation, key.Repository, key.BaseBranch, key.Lane).Scan(&id); err != nil {
+				return err
+			}
+			matches = append(matches, match{id: id, repository: key.Repository})
 		}
-		if len(matches) > 0 {
-			chosen := matches[0]
-			live := 0
+		variantIDs := make([]int64, len(matches))
+		for i, m := range matches {
+			variantIDs[i] = int64(m.id)
+		}
+		var cachedID QueueID
+		var cachedVariants []int64
+		err = tx.QueryRow(ctx, `SELECT queue_id, variant_ids FROM canonical_queues WHERE installation=$1 AND repository=lower($2) AND base=$3 AND lane=$4`, key.Installation, key.Repository, key.BaseBranch, key.Lane).Scan(&cachedID, &cachedVariants)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		if err == nil && slices.Equal(variantIDs, cachedVariants) {
 			for _, m := range matches {
-				state, _, err := load(ctx, tx, m.id)
-				if err != nil {
-					return err
-				}
-				if len(matches) > 1 && state.Active != nil && state.Active.Phase == queue.Landing {
-					return fmt.Errorf("case-variant queue histories: landing settlement pending for queue %d", m.id)
-				}
-				protected := slices.ContainsFunc(state.Blocks(queue.Config{}), func(block queue.Block) bool {
-					return block.Source != queue.RepositoryAccess && block.Source != queue.ConfigSource && block.Source != "lifecycle"
-				})
-				if len(state.Entries) > 0 || state.Active != nil || protected {
-					live++
-					chosen = m
+				if m.id == cachedID {
+					id, key.Repository = m.id, m.repository
+					return nil
 				}
 			}
-			if live > 1 {
-				return errors.New("conflicting case-variant queue histories have live state; operator reconciliation required")
-			}
-			id, key.Repository = chosen.id, chosen.repository
-			return nil
+			return errors.New("canonical queue is absent from its variant set")
 		}
-		return tx.QueryRow(ctx, `INSERT INTO queues(installation, repository, base, lane) VALUES ($1,$2,$3,$4) RETURNING id`, key.Installation, key.Repository, key.BaseBranch, key.Lane).Scan(&id)
+		chosen := matches[0]
+		live := 0
+		var latestFence int64
+		for _, m := range matches {
+			if len(matches) == 1 {
+				break
+			}
+			state, watermark, err := load(ctx, tx, m.id)
+			if err != nil {
+				return err
+			}
+			if state.Active != nil && state.Active.Phase == queue.Landing {
+				return fmt.Errorf("case-variant queue histories: landing settlement pending for queue %d", m.id)
+			}
+			protected := slices.ContainsFunc(state.Blocks(queue.Config{}), func(block queue.Block) bool {
+				return block.Source != queue.RepositoryAccess && block.Source != queue.ConfigSource && block.Source != "lifecycle"
+			})
+			if len(state.Entries) > 0 || state.Active != nil || protected {
+				live++
+				chosen = m
+			} else if live == 0 && state.Fence != "" && watermark >= latestFence {
+				chosen, latestFence = m, watermark
+			}
+		}
+		if live > 1 {
+			return errors.New("conflicting case-variant queue histories have live state; operator reconciliation required (docs/operating.md#case-variant-history-recovery)")
+		}
+		id, key.Repository = chosen.id, chosen.repository
+		_, err = tx.Exec(ctx, `INSERT INTO canonical_queues(installation,repository,base,lane,queue_id,variant_ids) VALUES ($1,lower($2),$3,$4,$5,$6)
+			ON CONFLICT (installation,repository,base,lane) DO UPDATE SET queue_id=EXCLUDED.queue_id, variant_ids=EXCLUDED.variant_ids`, key.Installation, key.Repository, key.BaseBranch, key.Lane, id, variantIDs)
+		return err
 	})
 	return id, key, err
 }

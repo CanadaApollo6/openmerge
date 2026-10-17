@@ -247,7 +247,7 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 	if w.managed && !w.ready {
 		for n, pr := range w.prs {
 			if !pr.Closed {
-				if err := s.status(ctx, w, n, pr.HeadSHA, forge.Status{State: forge.Paused, Reason: "validation-pending", Summary: w.readinessReason()}); err != nil {
+				if err := s.status(ctx, w, n, pr.HeadSHA, w.waitingStatus()); err != nil {
 					return err
 				}
 			}
@@ -307,10 +307,24 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 }
 
 func (w *worker) readinessReason() string {
+	if w.lifecycleState != "" && w.lifecycleState != "active" {
+		if w.lifecycleDetail != "" {
+			return w.lifecycleDetail
+		}
+		return "queue is " + w.lifecycleState
+	}
 	if w.waiting != "" {
 		return w.waiting
 	}
 	return "validation pending"
+}
+
+func (w *worker) waitingStatus() forge.Status {
+	reason := "validation-pending"
+	if w.lifecycleState != "" && w.lifecycleState != "active" {
+		reason = w.lifecycleState
+	}
+	return forge.Status{State: forge.Paused, Reason: reason, Summary: w.readinessReason()}
 }
 
 func (s *Server) reportWaiting(ctx context.Context, w *worker) error {
@@ -318,17 +332,75 @@ func (s *Server) reportWaiting(ctx context.Context, w *worker) error {
 	if err != nil {
 		return err
 	}
+	w.diagnosticHeads = make(map[int]string, len(summaries))
 	for _, pr := range summaries {
-		w.prs[pr.Number] = forge.PullRequest{Number: pr.Number, HeadSHA: pr.HeadSHA}
-		comments, err := w.Driver.ListComments(ctx, w.repo(), pr.Number, time.Time{})
+		w.diagnosticHeads[pr.Number] = pr.HeadSHA
+		// Diagnostic heads never replace complete policy observations.
+		if err := s.waitingCommands(ctx, w, pr.Number); err != nil {
+			return err
+		}
+		if err := s.status(ctx, w, pr.Number, pr.HeadSHA, w.waitingStatus()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Server) waitingCommands(ctx context.Context, w *worker, number int) error {
+	key := fmt.Sprintf("waiting-cursor/%d", number)
+	var since time.Time
+	for _, cursor := range []string{key, fmt.Sprintf("cursor/%d", number)} {
+		raw, err := s.store.Observation(ctx, w.id, cursor)
 		if err != nil {
 			return err
 		}
-		for _, comment := range comments {
-			if fields := strings.Fields(command(comment.Body)); len(fields) > 0 && fields[0] == "queue" {
-				s.options.Logger.Info("ignored @openmerge queue command", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "pr", pr.Number, "reason", w.readinessReason())
+		if len(raw) > 0 {
+			var at time.Time
+			if err := json.Unmarshal(raw, &at); err != nil {
+				return err
 			}
+			since = maxTime(since, at)
 		}
 	}
-	return s.report(ctx, w)
+	comments, err := w.Driver.ListComments(ctx, w.repo(), number, since)
+	if err != nil {
+		return err
+	}
+	for _, c := range comments {
+		if fields := strings.Fields(command(c.Body)); len(fields) > 0 && fields[0] == "queue" && c.Author != w.BotLogin {
+			receipt, err := s.store.Observation(ctx, w.id, fmt.Sprintf("comment/%d", c.ID))
+			if err != nil {
+				return err
+			}
+			if len(receipt) == 0 {
+				allowed, err := w.Driver.CanWrite(ctx, w.repo(), c.Author)
+				if err != nil {
+					return err
+				}
+				if allowed {
+					if err := s.logIgnoredCommand(ctx, w, number, c.ID); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		since = maxTime(since, c.CreatedAt)
+	}
+	return s.record(ctx, w, key, since)
+}
+
+func (s *Server) logIgnoredCommand(ctx context.Context, w *worker, number int, commentID int64) error {
+	// Force reconciliation to read pending commands when readiness recovers,
+	// even if the forge's PR summary and configuration have not changed.
+	delete(w.summaries, number)
+	key := fmt.Sprintf("ignored/comment/%d", commentID)
+	seen, err := s.store.Observation(ctx, w.id, key)
+	if err != nil || len(seen) > 0 {
+		return err
+	}
+	if err := s.record(ctx, w, key, true); err != nil {
+		return err
+	}
+	s.options.Logger.Info("ignored @openmerge queue command", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "pr", number, "comment", commentID, "reason", w.readinessReason())
+	return nil
 }

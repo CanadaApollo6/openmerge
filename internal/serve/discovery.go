@@ -124,6 +124,8 @@ func (s *Server) Refresh(ctx context.Context) error {
 }
 
 func (s *Server) refreshResult(err error) {
+	now := time.Now()
+	s.refreshNotBefore = now.Add(min(time.Second, s.options.DiscoveryInterval))
 	if err == nil {
 		s.refreshFailures = 0
 		s.refreshRetryAt = time.Time{}
@@ -131,41 +133,54 @@ func (s *Server) refreshResult(err error) {
 	}
 	var rate interface{ RetryAfter() time.Time }
 	limited := errors.As(err, &rate)
-	var delay time.Duration
+	pending := onlyValidationPending(err)
+	delay := min(5*time.Second, s.options.DiscoveryInterval)
 	if limited {
 		delay = max(time.Millisecond, time.Until(rate.RetryAfter()))
-	} else {
+	} else if !pending {
 		s.refreshFailures++
 		delay = min(5*time.Second*time.Duration(1<<min(s.refreshFailures-1, 6)), 5*time.Minute, s.options.DiscoveryInterval)
 	}
-	retryAt := time.Now().Add(delay)
+	retryAt := now.Add(delay)
 	if limited {
 		retryAt = rate.RetryAfter()
 	}
-	if s.discovery != nil {
-		intervalAt := time.Now().Add(s.options.DiscoveryInterval)
-		if intervalAt.Before(retryAt) {
-			retryAt = intervalAt
-		}
+	if s.discovery != nil && now.Add(s.options.DiscoveryInterval).Before(retryAt) {
+		retryAt = now.Add(s.options.DiscoveryInterval)
 	}
-	var pending *validationPending
-	if errors.As(err, &pending) {
+	if pending {
 		for _, w := range s.workers() {
 			w.mu.Lock()
-			if !w.ready && !w.validationNext.IsZero() && !time.Now().Before(s.discoveryBackoffs[w.Key.Installation]) {
-				if w.validationNext.Before(retryAt) {
-					retryAt = w.validationNext
-				}
+			if w.validationPending() && w.validationNext.After(now) && !now.Before(s.discoveryBackoffs[w.Key.Installation]) && w.validationNext.Before(retryAt) {
+				retryAt = w.validationNext
 			}
 			w.mu.Unlock()
 		}
 	}
-	s.refreshRetryAt = retryAt
+	s.refreshRetryAt = maxTime(retryAt, s.refreshNotBefore)
 	if limited {
 		s.options.Logger.Debug("discovery quota backoff", "until", s.refreshRetryAt)
 	} else {
 		s.options.Logger.Warn("discovery failed; retaining previous observations", "error", err)
 	}
+}
+
+func onlyValidationPending(err error) bool {
+	if _, ok := err.(*validationPending); ok {
+		return true
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, child := range joined.Unwrap() {
+			if !onlyValidationPending(child) {
+				return false
+			}
+		}
+		return true
+	}
+	if wrapped := errors.Unwrap(err); wrapped != nil {
+		return onlyValidationPending(wrapped)
+	}
+	return false
 }
 
 func (s *Server) discover(ctx context.Context) error {
@@ -257,6 +272,8 @@ func (s *Server) removeRepository(ctx context.Context, r status.Repository, stat
 		}
 		w.mu.Lock()
 		w.ready = false
+		w.accessBlocked = true
+		w.validationNext = time.Time{}
 		w.waiting = detail
 		if err == nil && w.Driver != nil {
 			reportCtx, cancel := context.WithTimeout(ctx, s.options.ActionTimeout)
@@ -314,6 +331,9 @@ func (s *Server) reportRepositoryRemoval(ctx context.Context, w *worker, state q
 		if !pr.Closed {
 			heads[n] = pr.HeadSHA
 		}
+	}
+	for pr, head := range w.diagnosticHeads {
+		heads[pr] = head
 	}
 	for pr, head := range heads {
 		if err := s.status(ctx, w, pr, head, forge.Status{State: forge.Paused, Reason: "repository-removed", Summary: state.BlockSourceDetail(queue.RepositoryAccess)}); err != nil {
@@ -388,10 +408,9 @@ func (s *Server) DiscoveryStatus() status.Discovery {
 		if r.State != "served" && r.State != "validating" {
 			continue
 		}
-		r.State, r.Detail = "served", ""
 		for _, w := range s.repositoryWorkers(r.Installation, r.Name) {
 			w.mu.Lock()
-			if !w.ready && !w.settlementOnly {
+			if w.validationPending() {
 				r.State, r.Detail = "validating", w.readinessReason()
 			}
 			w.mu.Unlock()
@@ -521,6 +540,21 @@ func (s *Server) discoverInstallation(ctx context.Context, installation Installa
 		cancel()
 		s.recordDiscoveryBackoff(installation.ID, err)
 		var invalid config.Errors
+		var readFailure *repositoryReadError
+		if err == nil || !errors.As(err, &readFailure) {
+			for _, w := range s.repositoryWorkers(repo.Installation, repo.Name) {
+				w.mu.Lock()
+				state, _, loadErr := s.store.Load(ctx, w.id)
+				if loadErr == nil && state.SourceBlocked(queue.RepositoryAccess) {
+					_, loadErr = s.store.Append(ctx, w.id, []queue.Event{queue.BlockSourceCleared{Source: queue.RepositoryAccess, Basis: basis[w.id]}}, "")
+				}
+				if loadErr == nil {
+					w.accessBlocked = false
+				}
+				w.mu.Unlock()
+				result = errors.Join(result, loadErr)
+			}
+		}
 		switch {
 		case errors.Is(err, config.ErrNotFound):
 			// A complete four-path read proves deletion; transport failures cannot.
@@ -535,20 +569,22 @@ func (s *Server) discoverInstallation(ctx context.Context, installation Installa
 			result = errors.Join(result, s.blockRepositoryConfig(ctx, repo, err))
 			s.setRepositoryStatus(r)
 		case err != nil:
-			r.State, r.Detail = "unavailable", "Configuration could not be read; discovery will retry"
-			var pending *validationPending
-			if errors.As(err, &pending) {
-				r.State, r.Detail = "validating", pending.Error()
+			r.State, r.Detail = "validating", err.Error()
+			if readFailure != nil {
+				r.State = "unavailable"
+				// Only repository-wide reads invalidate every base. Independent
+				// registration/validation failures leave healthy bases running.
+				for _, w := range s.repositoryWorkers(repo.Installation, repo.Name) {
+					w.mu.Lock()
+					w.ready = false
+					w.waiting = r.Detail
+					if w.validationPending() {
+						w.validationNext = time.Now().Add(5 * time.Second)
+					}
+					w.mu.Unlock()
+				}
 			}
 			s.setRepositoryStatus(r)
-			// Block admission in memory until a complete refresh. No durable event,
-			// membership change, or successful config observation follows a failed read.
-			for _, w := range s.repositoryWorkers(repo.Installation, repo.Name) {
-				w.mu.Lock()
-				w.ready = false
-				w.waiting = r.Detail
-				w.mu.Unlock()
-			}
 			result = errors.Join(result, fmt.Errorf("%s: %w", repo.Name, err))
 		default:
 			r.State, r.Detail = "served", ""
@@ -561,18 +597,10 @@ func (s *Server) discoverInstallation(ctx context.Context, installation Installa
 			}
 			for _, w := range s.repositoryWorkers(repo.Installation, repo.Name) {
 				w.mu.Lock()
-				state, _, loadErr := s.store.Load(ctx, w.id)
-				if loadErr == nil && state.SourceBlocked(queue.RepositoryAccess) {
-					_, loadErr = s.store.Append(ctx, w.id, []queue.Event{queue.BlockSourceCleared{Source: queue.RepositoryAccess, Basis: basis[w.id]}}, "")
-				}
-				if !w.ready && state.LifecycleState() == "active" {
+				if w.validationPending() {
 					r.State, r.Detail = "validating", w.readinessReason()
 				}
-				if state.LifecycleState() == "dormant" {
-					r.State = "dormant base"
-				}
 				w.mu.Unlock()
-				result = errors.Join(result, loadErr)
 			}
 			s.setRepositoryStatus(r)
 		}

@@ -663,7 +663,15 @@ func TestManagedStartupClassicProtectionUnavailable(t *testing.T) {
 				switch phase {
 				case "startup":
 					w.rulesNextCheck = time.Time{}
-					must(t, s.RefreshBranches(t.Context()))
+					err := s.RefreshBranches(t.Context())
+					if mode == "read failure" {
+						var pending *validationPending
+						if !errors.As(err, &pending) {
+							t.Fatalf("missing validation retry: %v", err)
+						}
+					} else {
+						must(t, err)
+					}
 				case "branch refresh":
 					s, err = NewRepositories(t.Context(), db, []Repository{r}, options)
 					must(t, err)
