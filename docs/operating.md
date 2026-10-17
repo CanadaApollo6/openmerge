@@ -66,9 +66,83 @@ to all requests. Unknown budgets remain explicitly unknown until headers arrive.
 (or `--discovery --json`) shows every known repository's state: `served`,
 `validating`, `unavailable`, `not configured`, `invalid config`, `removed`,
 `suspended`, or `dormant base`,
-plus last successful sweeps and remaining budget per installation. Repositories
+plus last successful sweeps, remaining budget and webhook health per installation,
+and last-delivery age per repository. Repositories
 without config get no workers or comments. The read-only `/v1/discovery` endpoint
 uses the same authentication as queue status.
+
+## Webhook setup and health
+
+Polling works without a public endpoint: leave `--webhook-listen` /
+`OPENMERGE_WEBHOOK_LISTEN` unset and every queue polls at `--poll-interval` /
+`OPENMERGE_POLL_INTERVAL` (default `1m`). Webhooks reduce idle API traffic and
+wake affected queues immediately. Trust, CI and landing decisions always use
+fresh forge reads; delivery payloads never authorize a transition.
+
+To enable webhooks:
+
+1. Expose a public HTTPS endpoint through your ingress and route it to a private
+   listener such as `--webhook-listen 127.0.0.1:8080`. Keep the status API on its
+   separate listen address.
+2. Set the App's webhook URL and enable delivery with JSON content. New Apps can
+   use `openmerge setup github --webhook-url https://HOST/PATH`. For an existing
+   polling App, enable **Webhook → Active** in its settings and create a random
+   secret, for example with `openssl rand -hex 32`.
+3. Set the same secret in GitHub and `OPENMERGE_WEBHOOK_SECRET` (or
+   `--webhook-secret`). Manifest setup saves it in the App's private config
+   directory as `webhook-secret`; follow the README's export example.
+4. Subscribe to `pull_request`, `pull_request_review`, `check_run`, `check_suite`,
+   `status`, `push`, `create`, `delete`, and `issue_comment`. The `installation`
+   and `installation_repositories` events arrive automatically. Check a GitHub
+   delivery's response and `openmerge queue status --discovery` after restart.
+   Trigger a real repository event (for example, update a pull request) to verify
+   health: GitHub's `ping` has no installation and cannot mark it healthy.
+
+An installation is healthy for `--webhook-health-window` /
+`OPENMERGE_WEBHOOK_HEALTH_WINDOW` (default `30m`) after each verified delivery,
+including ignored event kinds/actions and redeliveries. The timestamps are
+process-local, never journal events: every restart starts unhealthy. Each
+repository must also have received a verified delivery in this process within
+the health window before its idle queues can use the backstop. Until its first
+delivery, and after its own window expires, it keeps `poll_interval` even if
+other repositories keep the installation healthy. Eligible idle queues poll at
+`--backstop-interval` / `OPENMERGE_BACKSTOP_INTERVAL` (default `10m`). At health expiry they resume the
+normal `poll_interval`; a quiet installation therefore falls back to fast
+polling. For this purpose, idle includes building and queued-but-not-testing
+queues; planner deadlines still apply. Queues in testing or landing, or with an
+unsettled attempt, always keep `poll_interval`, whatever the health. Planner,
+validation and rules deadlines can
+wake workers sooner; webhook wakes do not bypass error or quota backoff. While
+waiting on the backstop, each worker checks the database event watermark every
+`poll_interval`. Any changed history triggers a normal reconciliation, which
+re-plans ready work and recomputes planner deadlines before an idle queue returns
+to its backstop. Unchanged checks consume no forge API budget and never write
+durable state. Activity checks and webhook wakes both respect error and quota
+backoff.
+
+Every attributable verified delivery records an installation and repository
+observation and wakes matching queues for a fresh read. Delivery IDs deduplicate
+durable refresh hints for typed payloads across restarts. Ignored or incomplete
+payloads only set an in-memory wake/refresh hint and write no delivery rows.
+Discovery and branch refreshes also deduplicate delivery IDs in a bounded,
+listener-local cache, including deliveries before matching workers exist. The
+cache resets after 4096 distinct deliveries; an evicted redelivery may request
+another coalesced sweep. Startup already runs a full discovery sweep. Health is
+renewed only after any required delivery persistence succeeds. Invalid signatures
+never update health, request discovery, wake queues or consume forge budget. They produce only a
+fixed-cardinality rejection counter in logs, emitted at powers of two with no
+request data, so a flood cannot create one log entry per request.
+
+When rotating the secret, update both the App setting and the server secret,
+then restart the listener. During a mismatch, signature rejections appear in
+logs, health expires, and normal fast polling resumes; the restart also resets
+health. Trigger a real repository event after rotation to verify delivery.
+
+Status/API show each installation's health and last verified delivery time, and
+each repository's last-delivery age (`never` before a delivery this process).
+Inspect the repository ages even while the installation is healthy: deliveries
+for one repository do not prove another's webhook is working. See the
+[API fields](api.md#endpoints).
 
 ## Migrating a Phase 1 deployment
 
@@ -86,8 +160,13 @@ uses the same authentication as queue status.
    add a queue with that `base` to the default-branch config; without that
    selector the old queue becomes dormant/retired and admits no new work.
 
-Keep a compatible binary for rollback once new block sources are recorded;
-restoring single-queue YAML does not remove events from the log. Never reset
+Before downgrading to a binary that accepts only one queue, remove extra queues
+and unsupported config keys. This alone does not make a Phase 1 rollback safe:
+new lifecycle/block-source event types require a compatible replaying binary,
+or restoration of a database backup from before those events. Health/backstop
+scheduling itself adds no durable event types or migration. Keep the backup and
+previous binary when upgrading; restoring single-queue YAML does not remove
+events from the log. Never reset
 fences, edit stored events, or run two processes against the same git cache.
 
 ## Multiple bases and branch lifecycle
@@ -273,9 +352,8 @@ journalctl --user -u openmerge.service -f
 
 For operation after logout, enable lingering for the service account with
 `loginctl enable-linger "$USER"` (your system may require an administrator).
-The sample uses polling and needs no public listener. To enable webhooks, add
-`OPENMERGE_WEBHOOK_LISTEN=127.0.0.1:8080` and `OPENMERGE_WEBHOOK_SECRET` to the
-environment file, and configure the same secret and HTTPS ingress in the App.
+The sample uses polling and needs no public listener. For delivery setup and
+scheduling defaults, follow [Webhook setup and health](#webhook-setup-and-health).
 
 ## Logs and recovery
 

@@ -267,7 +267,7 @@ func printDiscovery(out io.Writer, d status.Discovery) error {
 		return err
 	}
 	table := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	if _, err := fmt.Fprintln(table, "INSTALLATION\tREPOSITORY\tDISCOVERY STATE\tLAST SUCCESSFUL SWEEP"); err != nil {
+	if _, err := fmt.Fprintln(table, "INSTALLATION\tREPOSITORY\tDISCOVERY STATE\tLAST SUCCESSFUL SWEEP\tLAST DELIVERY AGE"); err != nil {
 		return err
 	}
 	for _, r := range d.Repositories {
@@ -275,7 +275,11 @@ func printDiscovery(out io.Writer, d status.Discovery) error {
 		if r.LastSuccessfulSweep != nil {
 			at = r.LastSuccessfulSweep.UTC().Format(time.RFC3339)
 		}
-		if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t%s\n", r.Installation, r.Name, r.State, at); err != nil {
+		age := "never"
+		if r.LastDeliveryAgeSeconds != nil {
+			age = (time.Duration(*r.LastDeliveryAgeSeconds * float64(time.Second))).Round(time.Second).String()
+		}
+		if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\n", r.Installation, r.Name, r.State, at, age); err != nil {
 			return err
 		}
 	}
@@ -283,6 +287,18 @@ func printDiscovery(out io.Writer, d status.Discovery) error {
 		return err
 	}
 	for _, i := range d.Installations {
+		health, last := "unhealthy", "never"
+		if !i.WebhooksConfigured {
+			health = "not configured"
+		} else if i.WebhookHealthy {
+			health = "healthy"
+		}
+		if i.LastVerifiedDelivery != nil {
+			last = i.LastVerifiedDelivery.UTC().Format(time.RFC3339)
+		}
+		if _, err := fmt.Fprintf(out, "Installation %s webhooks: %s; last verified delivery: %s\n", i.ID, health, last); err != nil {
+			return err
+		}
 		remaining := "unknown"
 		if i.Budget.Known {
 			remaining = fmt.Sprintf("%d/%d (%d reserved for settlement)", i.Budget.Remaining, i.Budget.Limit, i.Budget.SettlementReserve)

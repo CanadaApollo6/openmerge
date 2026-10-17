@@ -6,7 +6,7 @@
 
 Agents now open pull requests faster than CI and humans can land them. The merge path — queuing, batching, speculative testing, flaky-test handling, and the rules around them — has become the bottleneck, and the best tools for it are closed, paywalled, or tied to a single forge. OpenMerge brings the ideas that Mergify popularized to everyone, under the Apache 2.0 license.
 
-> **Status: pre-alpha.** Phase 1 is complete, and OpenMerge lands its own PRs: the planner, Postgres store, GitHub App driver, polling server, read-only API/CLI, and Compose quickstart are available. All core conditions have runtime observations, with classic protection and installed App grant checks alongside ruleset validation. The version-1 JSON Schema and fast-forward mode are available. Phase 2.1 adds multi-base workers and App-wide installation discovery; webhook health/backstop scheduling is next, followed by throughput and post-merge verification. See the [roadmap](ROADMAP.md).
+> **Status: pre-alpha.** Phase 1 is complete, and OpenMerge lands its own PRs: the planner, Postgres store, GitHub App driver, polling server, read-only API/CLI, and Compose quickstart are available. All core conditions have runtime observations, with classic protection and installed App grant checks alongside ruleset validation. The version-1 JSON Schema and fast-forward mode are available. Phase 2.1 adds multi-base workers, App-wide installation discovery, and webhook health with backstop polling; throughput and post-merge verification follow. See the [roadmap](ROADMAP.md).
 
 ## What it will do
 
@@ -64,7 +64,7 @@ Choose the owning account, **Only select repositories**, select your repository,
 and install. The private App is available to its owner. `--repo owner/name`
 targets the printed repository selection, ruleset commands and serve command.
 The printed next steps show installation, ruleset preview, ruleset apply, then
-`./bin/openmerge serve` once that command is available, with the App ID, private key
+`./bin/openmerge serve`, with the App ID, private key
 path and installation ID; also supply a Postgres URL.
 Find the **installation ID** under **Settings → Applications → Installed GitHub
 Apps → Configure**: it is the number at the end of the URL, not the App ID.
@@ -84,7 +84,7 @@ export OPENMERGE_WEBHOOK_SECRET="$(cat ~/.config/openmerge/APP-SLUG/webhook-secr
 A polling-mode App has no webhook or secret. To enable delivery later, open the
 App settings, set **Webhook → Active** and the **Webhook URL**, generate a random
 **Webhook secret** (for example `openssl rand -hex 32`), subscribe to Pull request, Pull request review,
-Check run, Check suite, Status, Push and Issue comment events,
+Check run, Check suite, Status, Push, Create, Delete and Issue comment events,
 and give the same secret to serve as `OPENMERGE_WEBHOOK_SECRET`.
 
 Configure repository rules with a **separate repository-admin token** in
@@ -135,11 +135,21 @@ Classic protection reads need installation Administration read; unreadable
 protection produces WARN and retains only its own previous block state. The default App
 manifest does not request Administration. Audit it manually when unreadable.
 
+For subsequent repositories, install the App, run the ruleset setup with the
+separate repo-admin token, enable CI on `openmerge/queue/**`, and commit
+`.openmerge.yml` to the default branch. No server edit is needed. A private App
+belongs to its owning account; organizations need their own App
+(`openmerge setup github --owner ORG`) and `serve` process. Processes can share
+Postgres but need separate git caches and listen addresses. See
+[onboarding](docs/operating.md#installation-discovery-and-onboarding) and
+[Phase 1 migration](docs/operating.md#migrating-a-phase-1-deployment) for the
+allowlist removal, non-default `--base` caveat, and rollback constraints.
+
 ## GitHub integration details
 
 The [GitHub driver setup guide](internal/forge/github/README.md#app-setup-and-troubleshooting)
 lists permissions and setup details. Subscribe to `pull_request`,
-`pull_request_review`, `check_run`, `check_suite`, `status`, `push`, and
+`pull_request_review`, `check_run`, `check_suite`, `status`, `push`, `create`, `delete`, and
 `issue_comment`; `installation` and `installation_repositories` arrive
 automatically. Rerun notifications trigger a fresh check/suite observation.
 
@@ -174,7 +184,7 @@ bin/openmerge serve \
 
 `--database-url`, `--github-app-id`, `--github-private-key`,
 `--github-installation-id`, `--repos`, `--base`, `--git-cache-dir`,
-`--poll-interval`, `--concurrency`, `--webhook-listen`, `--webhook-secret`,
+`--poll-interval`, `--backstop-interval`, `--webhook-health-window`, `--concurrency`, `--webhook-listen`, `--webhook-secret`,
 `--api-listen`, `--api-token-file`, `--rules-interval`, `--discovery-interval`, `--log-level`,
 `--git-committer-name`, `--git-committer-email`, and `--delete-head-branch`
 all have matching `OPENMERGE_` environment variables: uppercase the flag name
@@ -184,7 +194,9 @@ allowlists; remove their `OPENMERGE_*` environment values too when migrating.
 `--repos` accepts comma-separated case-insensitive owner/name globs. With no
 allowlists, one process serves every configured repository visible to its App.
 The default branch's policy expands into independent base workers. Polling
-defaults to `60s`, installation/repository discovery to `10m`, concurrency to four
+defaults to `60s` for active queues or unhealthy/missing webhooks, and `10m` for
+idle queues with healthy webhooks. The health window defaults to `30m`,
+installation/repository discovery to `10m`, concurrency to four
 queues, and the git cache to `.openmerge-cache`. Each process needs its own cache
 and listen addresses. Logs are structured JSON on stderr. Startup applies
 migrations and recovers stored landings before discovery; SIGINT/SIGTERM cancels
@@ -220,11 +232,17 @@ audit. See [runtime rules validation](docs/operating.md#runtime-repository-rules
 
 Polling requires no public URL. Optional webhooks use
 `--webhook-listen 127.0.0.1:8080 --webhook-secret "$OPENMERGE_WEBHOOK_SECRET"`
-behind your HTTPS ingress. Signed delivery IDs are persisted and deduplicated;
-a webhook only schedules a fresh read, including early CI refreshes. Polling
-continues to recover missed deliveries. Unchanged PR summaries skip detail and
-comment reads; active test SHAs still refresh CI. The shared driver reserves the
-last 100 primary API requests until reset and honors primary/secondary-limit
+behind your HTTPS ingress. Verified deliveries record process-local health and
+wake affected queues for fresh reads; delivery IDs deduplicate refresh work.
+Testing, landing and unsettled attempts keep the fast polling interval. Idle
+queues use backstop polling only while both their installation and their own
+repository have received a verified delivery within the health window; restart
+or expiry returns to fast polling.
+Invalid signatures change neither health nor scheduling. Status shows installation
+health and each repository's delivery age. See [webhook setup and health](docs/operating.md#webhook-setup-and-health)
+for events, secrets and fallback behavior. Unchanged PR summaries skip detail and
+comment reads; active test SHAs still refresh CI. Each installation reserves the
+last 10% of its primary budget for settlement and honors primary/secondary-limit
 cooldowns. Each extra PR, CI SHA, page, and permission check increases the
 [request budget](internal/forge/github/README.md#polling-cost-and-conditional-requests);
 use a longer polling interval for larger repositories.
@@ -314,15 +332,15 @@ Phase 1 is complete, including the [version-1 JSON Schema](schema/openmerge.v1.j
 and fast-forward mode. The Mergify importer is
 planned for Phase 5; the native grammar already accepts the core attribute names.
 
-Phase 2.1 PRs 1–3 add multiple named queues with branch/glob `base` selectors,
+Phase 2.1 adds multiple named queues with branch/glob `base` selectors,
 repository-level `delete_head_branch`, and independent workers for every concrete
 base, under the default branch's policy. Branch deletion/recreation and queue
 retirement preserve logs and fences; settlement runs before config and admission,
 including recovery outside current allowlists. Status lists every queue and its
 lifecycle state. Installation discovery now serves configured repositories across
 the App, preserving canonical keys, settlement on removal/suspension, and
-per-installation budgets with discovery status. Webhook health and backstop
-scheduling follow in PR 4. See the [configuration reference](internal/config/README.md).
+per-installation budgets with discovery status. Verified webhook health reduces
+idle polling while active queues retain their fast safety net. See the [configuration reference](internal/config/README.md).
 
 Operators must grant the App protected-base bypass and exclusive, nondeletable `openmerge/fence/*`
 ownership as described in the [forge contract](docs/forge-driver-contract.md#the-fence).

@@ -16,19 +16,24 @@ type Discovery struct {
 
 // Repository records an authoritative discovery result, independently of queues.
 type Repository struct {
-	Installation        string     `json:"installation"`
-	Name                string     `json:"repo"`
-	State               string     `json:"state"`
-	Detail              string     `json:"detail,omitempty"`
-	LastSuccessfulSweep *time.Time `json:"last_successful_sweep"`
+	Installation           string     `json:"installation"`
+	Name                   string     `json:"repo"`
+	State                  string     `json:"state"`
+	Detail                 string     `json:"detail,omitempty"`
+	LastSuccessfulSweep    *time.Time `json:"last_successful_sweep"`
+	LastVerifiedDelivery   *time.Time `json:"last_verified_delivery"`
+	LastDeliveryAgeSeconds *float64   `json:"last_delivery_age_seconds"`
 }
 
 // Installation exposes capacity after atomic reservations by all its workers.
 type Installation struct {
-	ID                  string     `json:"installation"`
-	Suspended           bool       `json:"suspended"`
-	LastSuccessfulSweep *time.Time `json:"last_successful_sweep"`
-	Budget              Budget     `json:"budget"`
+	ID                   string     `json:"installation"`
+	Suspended            bool       `json:"suspended"`
+	LastSuccessfulSweep  *time.Time `json:"last_successful_sweep"`
+	Budget               Budget     `json:"budget"`
+	WebhooksConfigured   bool       `json:"webhooks_configured"`
+	WebhookHealthy       bool       `json:"webhook_healthy"`
+	LastVerifiedDelivery *time.Time `json:"last_verified_delivery"`
 }
 
 // Budget reports unknown capacity explicitly until rate headers are observed.

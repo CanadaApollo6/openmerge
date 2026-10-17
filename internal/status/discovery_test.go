@@ -14,10 +14,11 @@ import (
 
 func TestDiscoveryEndpointsUseAuthenticationAndFreshSnapshots(t *testing.T) {
 	now := time.Now().UTC()
+	age := 125.0
 	calls := 0
 	read := func() Discovery {
 		calls++
-		return Discovery{LastSuccessfulSweep: &now, Repositories: []Repository{{Installation: "7", Name: "owner/not-configured", State: "not configured", LastSuccessfulSweep: &now}}, Installations: []Installation{{ID: "7", Budget: Budget{Known: true, Limit: 1000, Remaining: 1000 - calls}}}}
+		return Discovery{LastSuccessfulSweep: &now, Repositories: []Repository{{Installation: "7", Name: "owner/not-configured", State: "not configured", LastSuccessfulSweep: &now, LastVerifiedDelivery: &now, LastDeliveryAgeSeconds: &age}}, Installations: []Installation{{ID: "7", WebhooksConfigured: true, WebhookHealthy: true, LastVerifiedDelivery: &now, Budget: Budget{Known: true, Limit: 1000, Remaining: 1000 - calls}}}}
 	}
 	handler := DynamicHandler(emptyDiscoverySource{}, func() []store.QueueKey { return nil }, "secret", nil, read)
 	for _, path := range []string{"/v1/discovery", "/v1/queues"} {
@@ -35,6 +36,9 @@ func TestDiscoveryEndpointsUseAuthenticationAndFreshSnapshots(t *testing.T) {
 		var body Response
 		if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &body) != nil || body.Discovery == nil || len(body.Discovery.Repositories) != 1 || body.Discovery.Installations[0].Budget.Remaining != 999-i {
 			t.Fatalf("discovery response: %s", response.Body.String())
+		}
+		if !body.Discovery.Installations[0].WebhookHealthy || !body.Discovery.Installations[0].WebhooksConfigured || body.Discovery.Installations[0].LastVerifiedDelivery == nil || body.Discovery.Repositories[0].LastDeliveryAgeSeconds == nil || *body.Discovery.Repositories[0].LastDeliveryAgeSeconds != age {
+			t.Fatalf("webhook visibility missing: %s", response.Body.String())
 		}
 		if response.Header().Get("Cache-Control") != "no-store" {
 			t.Fatal("discovery response cacheable")
