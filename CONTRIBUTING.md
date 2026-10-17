@@ -16,19 +16,30 @@ You need Go (the version in `go.mod`), `git`, and `make`. If you use [mise](http
 ```bash
 git clone https://github.com/CanadaApollo6/openmerge
 cd openmerge
-make check   # formatting, lint, and tests: the same gates CI runs
+make ci      # Go checks from both required CI jobs: check and sim-exits
 make build   # produces bin/openmerge
 ```
 
 | Target | What it does |
 |---|---|
-| `make test` | Runs every test with the race detector |
+| `make test` | Runs the Go suite with `-race -short` (long simulator workloads are skipped) |
+| `make test-sim-exits` | Runs the full simulator suite without race instrumentation; the full adaptive exit needs its separate opt-in target |
+| `make test-sim-adaptive-full` | Runs the full paired adaptive/fixed-size exit (not required for landing) |
 | `make lint` | Runs golangci-lint |
 | `make fmt` | Fails if any file is not gofmt-formatted |
 | `make build` | Builds `bin/openmerge` |
-| `make check` | All of the above |
+| `make check` | Formatting, lint, short race tests, and build |
+| `make ci` | Runs `make check` and `make test-sim-exits` |
 | `make db` | Starts a disposable Postgres 18.6 container, or user-owned Postgres through mise |
 | `make db-stop` | Stops the development Postgres |
+
+Both `check` and `sim-exits` are required CI checks. `make ci` combines their Go
+checks locally; CI also validates and smoke-tests the container build. `make test`
+uses `-short` to skip the legacy exits, 30-day adopter exits, cancellation savings,
+serial capacity comparison, and admission evidence. Safety regressions and
+first-day adopter/adaptive harnesses still run. When touching `internal/sim` or
+`internal/queue`, run `make test-sim-exits` locally, or use `make ci` to include it.
+The full adaptive exit runs separately; see [repository CI checks](docs/operating.md#repository-ci-checks).
 
 The test suite never needs forge credentials. Engine tests use the in-memory fake forge ([ADR 0004](docs/adr/0004-forge-driver-interface.md)). Store tests use real Postgres through `OPENMERGE_TEST_DATABASE_URL`, and skip with a clear message when it is unset ([ADR 0002](docs/adr/0002-storage-and-state-model.md)). CI always supplies a Postgres 18.6 service. Each database test creates and removes its own schema, so the configured database user needs permission to create schemas.
 
@@ -53,7 +64,7 @@ make check
 1. Fork the repo and create a branch from `main`.
 2. Keep each pull request to one logical change. Small PRs get reviewed faster.
 3. Add or update tests for any behavior change. Planner logic gets table-driven tests; queue behavior gets a fake-forge scenario.
-4. Run `make check` before pushing.
+4. Run `make check` before pushing, plus `make test-sim-exits` when touching `internal/sim` or `internal/queue` (`make ci` runs both).
 5. Open a pull request and fill in the template. CI must pass and every commit must be signed off (below).
 
 ### Commit messages

@@ -303,7 +303,8 @@ Installation discovery and webhook health/backstop scheduling are supported.
 
 `speculation.max_depth` and `speculation.min_depth` default to 1, with
 `1 <= min_depth <= max_depth <= 32`. The adaptive window starts at `max_depth`, grows per landing, halves once per
-confirmed original failure and is bounded below by `min_depth`. Depth above 1 enables one bounded
+confirmed checks failure or timeout of an original batch and is bounded below by
+`min_depth`. Build conflicts do not halve the window. Depth above 1 enables one bounded
 same-commit failed-check retry on the oldest batch automatically. Both settings
 participate in the effective per-queue configuration digest.
 

@@ -126,6 +126,8 @@ func (s *simulation) deliver(event scheduledEvent) error {
 			return inv
 		}
 		var tampered *executor.ErrFenceTampered
+		// Checks may reopen or fail before a delayed replay; tolerate its rejection
+		// only after checking invariants above, never as landing authorization.
 		if err != nil && !errors.Is(err, errStale) && !errors.Is(err, executor.ErrChecksNotSuccessful) && !errors.As(err, &tampered) && !errors.Is(err, forge.ErrLeaseRejected) && !errors.Is(err, errForge) && !errors.Is(err, errDelayed) {
 			return err
 		}

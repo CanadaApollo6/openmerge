@@ -1,7 +1,7 @@
 TOOLCHAIN := $(if $(shell command -v go 2>/dev/null),,mise exec --)
 VERSION ?= $(shell git describe --tags --always --dirty)
 
-.PHONY: build test test-sim-exits test-sim-adaptive-full lint fmt check clean db db-stop
+.PHONY: build test test-sim-exits test-sim-adaptive-full lint fmt check ci clean db db-stop
 
 build:
 	CGO_ENABLED=0 $(TOOLCHAIN) go build -ldflags "-X main.version=$(VERSION)" -o bin/openmerge ./cmd/openmerge
@@ -28,6 +28,9 @@ fmt:
 	fi
 
 check: fmt lint test build
+
+# Go checks from both required CI jobs: check and sim-exits.
+ci: check test-sim-exits
 
 clean:
 	rm -rf bin/
