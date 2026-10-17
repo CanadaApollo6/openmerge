@@ -224,7 +224,7 @@ func auditCommand(ctx context.Context, args []string, out io.Writer) error {
 	since := fs.String("since", "", "inclusive RFC3339 time (required)")
 	until := fs.String("until", time.Now().UTC().Format(time.RFC3339Nano), "exclusive RFC3339 time (default now)")
 	repo := fs.String("git-repo", "", "existing complete clone or bare repository (no fetches)")
-	cache := fs.String("git-cache", "", "server git-cache root; selects hashed owner/repo.git without modifying it")
+	cache := fs.String("git-cache", "", "server git-cache root; selects <installation>/<sha256(owner/repo)>.git without modifying it")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -247,6 +247,9 @@ func auditCommand(ctx context.Context, args []string, out io.Writer) error {
 	}
 	if *cache != "" {
 		*repo = cacheRepoPath(*cache, o.installation, o.repository)
+		if _, err := os.Stat(*repo); err != nil {
+			return fmt.Errorf("--git-cache resolved to %s: %w (check the cache root and --installation)", *repo, err)
+		}
 	}
 	j, err := o.journal(ctx)
 	if err != nil {

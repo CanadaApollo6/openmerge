@@ -156,3 +156,5 @@ the cause is fixed. The rollback must not depend on the queue making progress:
 | Date | Event |
 |---|---|
 | 2026-10-17 | Plan adopted. Live server on a4b173f (ADR 0009 PR 5). Depth-1 history before this date is not comparable: CI changed with #46. |
+| 2026-10-17 | **Period A started** at 21:35:24Z: `ConfigApplied` journal event 1287 for configuration commit 6fa7d08 (`max_depth: 4`, `min_depth: 1`). Server revision a4b173f. W starts at 1. The live App still lacks `actions: write`, so retries and cancellation are unsupported. |
+| 2026-10-17 | First depth-4 landing (#50, batch b27, position 1); W grew to 2. Audit since the start: 1 landing, 0 violations. |
