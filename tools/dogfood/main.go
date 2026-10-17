@@ -246,7 +246,7 @@ func auditCommand(ctx context.Context, args []string, out io.Writer) error {
 		return fmt.Errorf("provide exactly one of --git-repo or --git-cache")
 	}
 	if *cache != "" {
-		*repo = filepath.Join(*cache, fmt.Sprintf("%x.git", sha256.Sum256([]byte(o.repository))))
+		*repo = cacheRepoPath(*cache, o.installation, o.repository)
 	}
 	j, err := o.journal(ctx)
 	if err != nil {
@@ -338,4 +338,11 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 	os.Exit(run(ctx, os.Args[1:], os.Stdout, os.Stderr))
+}
+
+// cacheRepoPath mirrors the server's layout: each installation has its own
+// work directory beneath the cache root (cmd/openmerge/installations.go), and
+// gitops keys the repository by the SHA-256 of its exact owner/repo spelling.
+func cacheRepoPath(cache, installation, repository string) string {
+	return filepath.Join(cache, installation, fmt.Sprintf("%x.git", sha256.Sum256([]byte(repository))))
 }

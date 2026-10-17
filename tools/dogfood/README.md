@@ -53,7 +53,8 @@ are cached by tested SHA within the invocation.
 
 Alternatively pass `--git-repo /path/to/complete/clone-or-bare.git`. The two git
 flags are mutually exclusive. `--git-cache` selects the existing
-`<sha256(exact owner/repo)>.git` beneath the supplied cache root. It never opens
+`<installation>/<sha256(exact owner/repo)>.git` beneath the supplied cache root,
+matching the server's per-installation layout. It never opens
 `gitops.Repo`, creates a repository, fetches, prunes, runs GC, or changes a ref.
 Git reads disable optional locks, replacement objects and lazy fetching. A
 complete clone must already contain tested commits, including fast-forward
