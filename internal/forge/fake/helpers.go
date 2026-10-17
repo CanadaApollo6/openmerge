@@ -20,18 +20,18 @@ func (f *Forge) OpenPRWithFiles(repo forge.RepoRef, number int, baseSHA string, 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	r := f.repo(repo)
-	base, ok := r.commits[baseSHA]
+	_, ok := r.commits[baseSHA]
 	if !ok {
 		return forge.PullRequest{}, fmt.Errorf("unknown base commit %q", baseSHA)
 	}
 	if _, exists := r.prs[number]; exists {
 		return forge.PullRequest{}, fmt.Errorf("PR %d already exists", number)
 	}
-	files := maps.Clone(base.Files)
+	files := maps.Clone(r.files(baseSHA))
 	for path, value := range changes {
 		files[path] = value
 	}
-	head := r.commit([]string{baseSHA}, append(slices.Clone(base.PRs), number), fmt.Sprintf("PR %d", number), files)
+	head := r.commit([]string{baseSHA}, append(slices.Clone(r.prsFor(baseSHA)), number), fmt.Sprintf("PR %d", number), files)
 	baseRef := ""
 	for ref, sha := range r.refs {
 		if sha == baseSHA && (baseRef == "" || ref < baseRef) {
@@ -40,7 +40,7 @@ func (f *Forge) OpenPRWithFiles(repo forge.RepoRef, number int, baseSHA string, 
 	}
 	pr := forge.PullRequest{Number: number, HeadSHA: head, Base: baseRef, Author: "contributor", AuthorID: 12, AuthorEmail: "12+contributor@users.noreply.github.com", Title: fmt.Sprintf("PR %d", number), HeadBranch: fmt.Sprintf("pr-%d", number), HeadInBaseRepo: headInBaseRepo, LabelsKnown: true, FilesKnown: true, ConflictKnown: true}
 	for path, content := range changes {
-		if old, exists := base.Files[path]; !exists || old != content {
+		if old, exists := r.files(baseSHA)[path]; !exists || old != content {
 			pr.Files = append(pr.Files, path)
 		}
 	}
@@ -67,9 +67,9 @@ func (f *Forge) PushPR(repo forge.RepoRef, number int, message string) (forge.Pu
 	if !ok {
 		return forge.PullRequest{}, fmt.Errorf("unknown PR %d", number)
 	}
-	files := maps.Clone(r.commits[pr.HeadSHA].Files)
+	files := maps.Clone(r.files(pr.HeadSHA))
 	files[fmt.Sprintf("pr-%d-commit-%d.txt", number, len(r.prCommits[number])+1)] = message
-	pr.HeadSHA = r.commit([]string{pr.HeadSHA}, r.commits[pr.HeadSHA].PRs, message, files)
+	pr.HeadSHA = r.commit([]string{pr.HeadSHA}, r.prsFor(pr.HeadSHA), message, files)
 	r.prCommits[number] = append(r.prCommits[number], pr.HeadSHA)
 	r.prs[number] = pr
 	if pr.HeadInBaseRepo {
@@ -200,11 +200,11 @@ func (f *Forge) PushBase(repo forge.RepoRef, ref, message string, changes map[st
 	if !ok {
 		return "", fmt.Errorf("unknown base ref %q", ref)
 	}
-	files := maps.Clone(base.Files)
+	files := maps.Clone(r.files(r.refs[ref]))
 	for path, value := range changes {
 		files[path] = value
 	}
-	sha := r.commit([]string{base.SHA}, base.PRs, message, files)
+	sha := r.commit([]string{base.SHA}, r.prsFor(base.SHA), message, files)
 	r.refs[ref] = sha
 	return sha, nil
 }
@@ -258,7 +258,7 @@ func (f *Forge) Commit(repo forge.RepoRef, sha string) (Commit, error) {
 	if !ok {
 		return Commit{}, fmt.Errorf("unknown commit %q", sha)
 	}
-	c.Parents, c.PRs, c.Files = slices.Clone(c.Parents), slices.Clone(c.PRs), maps.Clone(c.Files)
+	c.Parents, c.PRs, c.Files = slices.Clone(c.Parents), slices.Clone(f.repo(repo).prsFor(c.SHA)), maps.Clone(f.repo(repo).files(c.SHA))
 	return c, nil
 }
 
@@ -274,7 +274,7 @@ func (f *Forge) History(repo forge.RepoRef, ref string) ([]Commit, error) {
 	var history []Commit
 	for sha != "" {
 		c := r.commits[sha]
-		c.Parents, c.PRs, c.Files = slices.Clone(c.Parents), slices.Clone(c.PRs), maps.Clone(c.Files)
+		c.Parents, c.PRs, c.Files = slices.Clone(c.Parents), slices.Clone(f.repo(repo).prsFor(c.SHA)), maps.Clone(f.repo(repo).files(c.SHA))
 		history = append(history, c)
 		sha = ""
 		if len(c.Parents) > 0 {
@@ -329,14 +329,13 @@ func (f *Forge) ContainsPR(repo forge.RepoRef, sha string, number int) bool {
 	if !ok {
 		return false
 	}
-	commit, ok := r.commits[sha]
+	_, ok = r.commits[sha]
 	if !ok {
 		return false
 	}
-	base := r.commits[r.prBases[number]]
-	for path, value := range r.commits[pr.HeadSHA].Files {
-		if before, existed := base.Files[path]; !existed || before != value {
-			if got, exists := commit.Files[path]; !exists || got != value {
+	for path, value := range r.files(pr.HeadSHA) {
+		if before, existed := r.files(r.prBases[number])[path]; !existed || before != value {
+			if got, exists := r.files(sha)[path]; !exists || got != value {
 				return false
 			}
 		}
@@ -350,4 +349,12 @@ func (f *Forge) DisableFenceLeaseForTesting() {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.disableFenceLeaseForTesting = true
+}
+
+func (r *repository) commitMetadata(sha string) (Commit, error) {
+	c, ok := r.commits[sha]
+	if !ok {
+		return Commit{}, fmt.Errorf("unknown commit %q", sha)
+	}
+	return c, nil
 }

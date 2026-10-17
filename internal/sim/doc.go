@@ -79,7 +79,8 @@
 // internal/sim/capacity models ADR 0009 without calling the planner. Its depth-1
 // comparison reproduces both serial baselines. Generate the full opt-in curve
 // and adopter report with mise exec -- go run ./cmd/capacity-report. The chain
-// exit tests are skipped until PR 3; -sim-adopter-depth1 exercises their full
+// exits drive the planner; -sim-adaptive-full-exit enables the full paired
+// sizing exit, while its first-day harness runs by default. -sim-adopter-depth1 exercises their full
 // pinned inputs against today's serial planner, without speculative gate
 // assertions. TestAdopterDepth1Harness runs a first-day smoke slice by default.
 //

@@ -6,7 +6,7 @@
 // docs/adr/0004-forge-driver-interface.md for the persistence and fencing contracts.
 //
 // With SpeculationMaxDepth above one, Active is the oldest unlanded batch and
-// Following is its ordered suffix. The fixed window counts every admitted batch,
+// Following is its ordered suffix. The adaptive window counts every admitted batch,
 // including passed and landing batches. Each successor is built on its parent's
 // LandingSHA, distinct from TestedSHA for fast-forward markers. Only Active can
 // land, on exactly its recorded BaseSHA after its predecessor settled through
@@ -20,9 +20,8 @@
 // bounded recent invalidations support status while the log retains history.
 // The invalidation marker blocks eligibility immediately, before its action is
 // executed. Late results cannot revive it; a late build result reissues cleanup.
-// There is no CI cancellation capability in this step: invalidated CI finishes.
-// Admission stops behind any provisional or failed batch; PR 5 must explicitly
-// decide whether to retain that conservative policy. Unrelated build retries
+// Retired work requests best-effort cancellation of its identified runs.
+// Admission stops behind any provisional or failed batch. Unrelated build retries
 // wait for all bisection halves to resolve.
 //
 // Only the settled oldest batch consumes a same-commit retry or diagnoses a
@@ -169,3 +168,8 @@
 // Late outcomes for discarded or completed batches are not retained. Snapshots
 // must preserve pending groups and the tested-SHA history as well as batch and admission counters.
 package queue
+
+// W starts at max_depth, grows per landing, and halves once per original-batch
+// confirmed failure. Logged config bounds clamp it at a policy transition. The
+// last 200 checks/timeout dequeues and landed changes determine opt-in batch size
+// through exact rational comparisons. Snapshots retain both bounded projections.

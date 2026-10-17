@@ -399,11 +399,9 @@ func TestBackstopDetectsAnotherServerStartingTesting(t *testing.T) {
 	}
 	f.AddComment(repo, 1, "writer", "@openmerge queue")
 	must(t, other.cycle(t.Context(), other.workers()[0]))
-	state, _, err := s.store.Load(t.Context(), w.id)
-	must(t, err)
-	if state.Active == nil || state.Active.Phase != queue.Testing {
-		t.Fatalf("second server did not start testing: %+v", state.Active)
-	}
+	// Either worker may hold the action claim when the peer cycle returns.
+	// Await the shared durable result rather than assuming the peer owned it.
+	awaitTesting(t, s, w, time.Now().Add(3*s.options.PollInterval))
 	// Allow one poll_interval plus DB/CI scheduling overhead, far below the
 	// hour-long forge backstop. No webhook is sent to the waiting server.
 	for range 2 {

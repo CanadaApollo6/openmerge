@@ -479,3 +479,81 @@ func TestRepositoryDeleteHeadBranchOverridesServeDefault(t *testing.T) {
 		})
 	}
 }
+
+func TestLegacyWindowUpgradeUsesHistoricalPolicyBeforeClamp(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		oldDepth, newDepth int
+		idle               bool
+	}{
+		{"unchanged idle", 8, 8, true}, {"unchanged active", 8, 8, false},
+		{"clamp idle", 8, 4, true}, {"clamp active", 8, 4, false},
+		{"higher ceiling", 8, 12, true}, {"serial to speculative", 1, 4, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			contents := repositoryConfig + fmt.Sprintf("    speculation:\n      max_depth: %d\n", tc.oldDepth)
+			s, w, f, _ := fixture(t, contents)
+			oldTip, err := f.ReadRef(t.Context(), repo, "main")
+			must(t, err)
+			cfg, _, err := config.Load([]byte(contents))
+			must(t, err)
+			old := cfg.Queues[0]
+			events := []queue.Event{queue.BaseMoved{SHA: oldTip}, queue.ConfigApplied{Commit: oldTip, Digest: old.Digest(true)}}
+			if !tc.idle {
+				pr, err := f.PullRequest(t.Context(), repo, 1)
+				must(t, err)
+				events = append(events, queue.PRObserved{PR: 1, HeadSHA: pr.HeadSHA, Eligible: true, Trusted: true}, queue.EnqueueRequested{PR: 1, At: time.Now()}, queue.ChainedBatchStarted{BatchID: "b1", BaseSHA: oldTip, PRs: []queue.BatchPR{{PR: 1, HeadSHA: pr.HeadSHA}}, Position: 1, At: time.Now()})
+			}
+			_, err = s.store.Append(t.Context(), w.id, events, "")
+			must(t, err)
+			want := min(tc.oldDepth, tc.newDepth)
+			changed := tc.oldDepth != tc.newDepth
+			if changed {
+				_, err = f.PushBase(repo, "main", "new policy", map[string]string{".openmerge.yml": repositoryConfig + fmt.Sprintf("    speculation:\n      max_depth: %d\n", tc.newDepth)})
+				must(t, err)
+			}
+			must(t, s.configuration(t.Context(), w))
+			state, revision, err := s.store.Load(t.Context(), w.id)
+			must(t, err)
+			if state.Window(w.cfg.QueueConfig()) != want || !state.WindowInitialized() {
+				t.Fatalf("window=%d want=%d initialized=%t", state.Window(w.cfg.QueueConfig()), want, state.WindowInitialized())
+			}
+			if !changed && !tc.idle && (state.Active == nil || state.Active.ID != "b1" || state.Active.InvalidationReason != "") {
+				t.Fatal("migration discarded admitted work")
+			}
+			restarted, err := New(t.Context(), s.store, []Target{w.Target}, s.options)
+			must(t, err)
+			must(t, restarted.configuration(t.Context(), restarted.queues[0]))
+			state, after, err := s.store.Load(t.Context(), w.id)
+			must(t, err)
+			if after != revision || state.Window(w.cfg.QueueConfig()) != want {
+				t.Fatal("restart repeated migration or reset window")
+			}
+		})
+	}
+}
+
+func TestLegacyWindowUpgradeRejectsUnrecoverableHistoricalPolicy(t *testing.T) {
+	for _, mismatch := range []bool{false, true} {
+		t.Run(fmt.Sprint("digest mismatch=", mismatch), func(t *testing.T) {
+			s, w, f, _ := fixture(t, repositoryConfig+"    speculation: {max_depth: 4}\n")
+			tip, err := f.ReadRef(t.Context(), repo, "main")
+			must(t, err)
+			commit := strings.Repeat("f", 40)
+			if mismatch {
+				commit = tip
+			}
+			digest := strings.Repeat("b", 64)
+			_, err = s.store.Append(t.Context(), w.id, []queue.Event{queue.BaseMoved{SHA: tip}, queue.ConfigApplied{Commit: commit, Digest: digest}}, "")
+			must(t, err)
+			if err := s.configuration(t.Context(), w); err == nil {
+				t.Fatal("invented a window without matching historical policy")
+			}
+			state, _, err := s.store.Load(t.Context(), w.id)
+			must(t, err)
+			if state.ConfigDigest != digest || state.WindowInitialized() {
+				t.Fatal("failed migration published the replacement policy")
+			}
+		})
+	}
+}

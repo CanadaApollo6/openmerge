@@ -76,7 +76,7 @@ func assertPlan(t *testing.T, cfg Config, s State, now time.Time, want ...string
 		keys[action.Key()] = true
 		if build, ok := action.(BuildTestRef); ok {
 			for _, pr := range build.PRs {
-				observation := s.observations[pr.PR]
+				observation, _ := s.observations.get(pr.PR)
 				if !observation.Trusted || observation.HeadSHA != pr.HeadSHA {
 					t.Fatalf("untrusted head in BuildTestRef: %+v", pr)
 				}
@@ -559,7 +559,7 @@ func TestApplyDoesNotMutateInput(t *testing.T) {
 				if len(next.effects) > 0 {
 					next.effects[0] = DeleteRef{Ref: "caller mutation"}
 				}
-				next.observations[1] = PRObserved{}
+				next.observations.put(1, PRObserved{})
 				next.dequeues[1] = Dequeue{}
 				next.checks["caller mutation"] = retainedCheck{}
 				next.testedBatches["caller mutation"] = "b99"

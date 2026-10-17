@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -17,6 +18,16 @@ func snapshotRoundTrip(t *testing.T, cfg Config, s State, now time.Time) State {
 	restored, err := DecodeSnapshot(data)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(s.window, restored.window) || (len(s.outcomes) > 0 && !reflect.DeepEqual(s.outcomes, restored.outcomes)) || (len(s.cancellationConfirmed) > 0 && !reflect.DeepEqual(s.cancellationConfirmed, restored.cancellationConfirmed)) {
+		t.Fatal("snapshot lost adaptive state or retained confirmations")
+	}
+	encoded, err := EncodeSnapshot(restored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(data, encoded) {
+		t.Fatalf("snapshot bytes changed after round trip:\n%s\n%s", data, encoded)
 	}
 	if !reflect.DeepEqual(Plan(cfg, s, now), Plan(cfg, restored, now)) {
 		t.Fatalf("snapshot changed plan: %#v / %#v", Plan(cfg, s, now), Plan(cfg, restored, now))
@@ -73,7 +84,7 @@ func TestSnapshotRejectsMissingAndUnknownState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, invalid := range [][]byte{[]byte(`{}`), bytes.Replace(data, []byte(`"Version":1`), []byte(`"Version":2`), 1), append(data, []byte(`{}`)...)} {
+	for _, invalid := range [][]byte{[]byte(`{}`), bytes.Replace(data, []byte(`"Version":2`), []byte(`"Version":3`), 1), append(data, []byte(`{}`)...)} {
 		if _, err := DecodeSnapshot(invalid); err == nil {
 			t.Fatal("accepted malformed snapshot")
 		}
@@ -163,5 +174,35 @@ func TestSnapshotRejectsInvalidChainAndBounds(t *testing.T) {
 				t.Fatal("accepted invalid snapshot")
 			}
 		})
+	}
+}
+
+func TestEmptySnapshotByteFixedPoint(t *testing.T) {
+	snapshotRoundTrip(t, Config{}, State{}, time.Unix(1, 0).UTC())
+}
+
+func TestSnapshotRejectsMissingAdaptiveFields(t *testing.T) {
+	cfg, s, at := adaptiveState(t, 4, 1)
+	s, b := admitChain(t, cfg, s, at)
+	s = confirmOriginal(s, b, ChecksFailed)
+	snapshotRoundTrip(t, cfg, s, at)
+	for _, field := range []string{"Window", "Outcomes"} {
+		data, _ := EncodeSnapshot(s)
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(data, &fields); err != nil {
+			t.Fatal(err)
+		}
+		delete(fields, field)
+		data, _ = json.Marshal(fields)
+		if _, err := DecodeSnapshot(data); err == nil {
+			t.Fatalf("accepted missing %s", field)
+		}
+	}
+}
+
+func TestSnapshotRejectsOldVersionBeforeMissingAdaptiveFields(t *testing.T) {
+	_, err := DecodeSnapshot([]byte(`{"Version":1}`))
+	if err == nil || !strings.Contains(err.Error(), "unsupported snapshot version 1") {
+		t.Fatalf("wrong version error: %v", err)
 	}
 }

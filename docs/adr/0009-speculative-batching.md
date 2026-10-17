@@ -77,7 +77,7 @@ first use requires a compatible database restore.
 
 **The window bounds every admitted, unlanded batch.** A queue keeps a window *W* between `speculation.min_depth` and `speculation.max_depth` (`1 ≤ min_depth ≤ max_depth ≤ 32`; `min_depth` defaults to 1, and `max_depth` defaults to 1). Batches that are building, testing, passed and waiting to land, or landing all count against it. A passing batch does not free its slot until it lands. A new batch is admitted only while fewer than *W* batches are open.
 
-**The window grows on landings and halves on confirmed failures.** *W* starts at `max_depth` for a new queue, as Zuul's window starts high, so it speculates immediately; confirmed failures bring it down toward `min_depth`. Becoming idle does not reset *W*: an existing queue keeps the window its history gives it. A configuration change that alters `min_depth` or `max_depth` clamps *W* into the new bounds rather than resetting it. Each landing, including the landing of a bisection half, increases *W* by one, up to `max_depth`. Each confirmed failure of an original (not bisection) batch halves *W* once, rounding down and never below `min_depth`. Failures found while bisecting that batch, including timeouts, do not halve it again. A check timeout of an original batch is a confirmed failure and halves *W* once, which also eases load when the window itself is overloading CI. Provisional failures, invalidated batches, cancellations and duplicate observations change nothing. A shrinking window never cancels batches already admitted; it only stops new ones until enough have landed. This is additive-increase, multiplicative-decrease, as in Zuul. *W* is computed from the recorded history, so the planner stays a pure function of the log ([ADR 0002](0002-storage-and-state-model.md)). The simulator reports the window's equilibrium; it is not assumed to be optimal.
+**The window grows on landings and halves on confirmed failures.** *W* starts at `max_depth` for a new queue, as Zuul's window starts high, so it speculates immediately; confirmed failures bring it down toward `min_depth`. Becoming idle does not reset *W*: an existing queue keeps the window its history gives it. A configuration change that alters `min_depth` or `max_depth` clamps *W* into the new bounds rather than resetting it. Each landing, including the landing of a bisection half, increases *W* by one, up to `max_depth`. Each confirmed checks failure of an original (not bisection) batch halves *W* once, rounding down and never below `min_depth`. Failures found while bisecting that batch, including timeouts, do not halve it again. A check timeout of an original batch is a confirmed failure and halves *W* once, which also eases load when the window itself is overloading CI. Build conflicts do not measure CI health and do not change *W*. Provisional failures, invalidated batches, cancellations and duplicate observations change nothing. A shrinking window never cancels batches already admitted; it only stops new ones until enough have landed. This is additive-increase, multiplicative-decrease, as in Zuul. *W* is computed from the recorded history, so the planner stays a pure function of the log ([ADR 0002](0002-storage-and-state-model.md)). The simulator reports the window's equilibrium; it is not assumed to be optimal.
 
 ### Batch size
 
@@ -222,6 +222,73 @@ compatibility is claimed only with `origin/main`.
 Both planner-backed adopter modes pass. Unsupported totals match PR 3 exactly;
 supported cancellation reduces runner-minutes without changing run counts or
 latency with 50 runners. See [measured results](../research/phase2-chain.md).
+
+### Adaptive implementation notes (PR 5)
+
+W and the outcome estimator are projections of accepted existing events. A
+confirmed checks failure or timeout of an original batch halves W once;
+build conflicts leave W unchanged because they say nothing about CI health.
+`FromBisection` and a snapshotted per-batch marker prevent repeated decrease.
+Every settled landing increments W, including halves. A new queue starts at its
+ceiling, idle retains W, and config changes clamp it. Admission counts all open
+phases and never discards work merely because W shrank.
+
+`config_applied` gains optional `window: {min_depth, max_depth}` bounds, with its
+own additive golden fixture. The digest alone cannot recover historic bounds,
+so omitting this information would make config clamping impossible to replay.
+Default depth-1 encodings omit it, including retry-enabled depth-1 queues; no new
+event/action type is introduced. Before adaptation, old speculative journals keep
+their fixed admission policy. Reconciliation records a one-time same-digest bounds
+initialization at the old ceiling without invalidating admitted work or resetting
+outcomes. When the first reconciliation also changes policy, it reads and verifies
+the historical policy at the recorded config commit, initializes its fixed ceiling
+under the old digest, then applies the replacement bounds. A serial queue enabling
+speculation clamps W=1 rather than restarting
+at the higher ceiling. Subsequent policy transitions use the recorded bounds.
+
+Fresh size uses the last 200 landed or checks/timeout-dequeued changes in log
+order; conflict dequeues are excluded. Fewer than 20 samples use `max_size`, and a
+digest change restarts the ring. Pending groups are not resized by the estimator;
+policy changes retain the existing invalidation and regrouping protocol. The target's
+shortest canonical decimal (`strconv.FormatFloat`, IEEE-754 round-trip) is read as
+an exact rational; integer powers compare `(samples − failures)^k / samples^k`
+with that rational. Equality passes. No floating-point pow/log or tolerance can
+flip a replay decision. Tests cover exact equality and the adjacent representable
+targets on each side.
+
+**Admission decision: retain the conservative barrier.** In an eight-seed one-day
+planner experiment with the pinned rates, relaxing the provisional/failed-batch
+barrier increased adaptive runs 4,981 → 5,016 and wasted runs 2,508 → 2,543,
+with slightly worse median and p95; Team and Slow were unchanged. This is a
+non-gating policy experiment, separate from the full 30-day exit profiles.
+Building fresh work on a known failing prefix offers no measured benefit here.
+The overlay, exact results and limitations are recorded in
+[phase2-chain.md](../research/phase2-chain.md).
+
+**Snapshot decision: keep store persistence out of scope.** The version-2 codec
+includes W, recorded bounds/upgrade state, the last window failure, per-batch
+once-only markers and the last-200 outcome ring. It validates bounds, event
+revisions, outcome identity/order and duplicates. Every snapshot test compares
+full encoded bytes after decode/encode, including a state holding retained
+cancellation confirmations. Connecting store compaction would also require a
+ledger-retention decision; it is not a safe incidental change.
+
+API, CLI and the bounded existing PR check summary show W, fresh size, p̂ with
+its failures/sample count and target, the last halving event's queue-fold revision,
+batch and reason, and the chain. No summary comment channel is added.
+
+The planner-backed adaptive exit runs with `-sim-adaptive-full-exit`: seeds 1–8,
+30 days each, in both cancellation modes and paired against fixed size 8, with
+per-seed and pooled median/cost assertions and an additional p95-vs-fixed
+regression assertion. The first-day adaptive harness runs in `make check`; the
+full paired gate is opt-in because it is substantially more expensive. All
+workload pins and ADR pass thresholds are unchanged. Large simulations use an
+opt-in fake-forge tree/PR-marker delta codec and delta-derived synthetic commit
+IDs to bound memory and hashing, with full changed-file and ancestry invariants;
+legacy fake identities are unchanged. Immutable observation shards avoid copying
+all historical PR observations on every event while preserving re-admission and
+snapshot bytes. The measured equilibrium, cold starts, compatibility checks and
+adopter deltas are in the results report. The default `max_depth` remains 1.
 
 ## Consequences
 

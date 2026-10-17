@@ -28,6 +28,8 @@ type Commit struct {
 }
 
 type repository struct {
+	deltas        map[string]fileDelta
+	materialized  []string
 	defaultBranch string
 	refs          map[string]string
 	commits       map[string]Commit
@@ -128,20 +130,28 @@ func (f *Forge) Init(repo forge.RepoRef, base, fenceRef string) (baseSHA, fenceS
 
 func (r *repository) commit(parents []string, prs []int, message string, files ...map[string]string) string {
 	content := map[string]string{}
-	if len(parents) > 0 {
-		content = maps.Clone(r.commits[parents[0]].Files)
-	}
 	if len(files) > 0 {
 		content = maps.Clone(files[0])
+	} else if len(parents) > 0 {
+		content = maps.Clone(r.files(parents[0]))
 	}
 	prs = slices.Clone(prs)
 	slices.Sort(prs)
 	prs = slices.Compact(prs)
 	c := Commit{Parents: slices.Clone(parents), PRs: prs, Message: message, Files: content}
 	// These fields contain no values that JSON cannot encode.
-	data, _ := json.Marshal(c)
-	c.SHA = fmt.Sprintf("%x", sha256.Sum256(data))
+	var delta fileDelta
+	if r.deltas == nil {
+		data, _ := json.Marshal(c)
+		c.SHA = fmt.Sprintf("%x", sha256.Sum256(data))
+	} else {
+		delta = r.treeDelta(c)
+		c.SHA = compactSHA(c, delta)
+	}
 	r.commits[c.SHA] = c
+	if r.deltas != nil {
+		r.compactTree(c, delta)
+	}
 	return c.SHA
 }
 
@@ -189,7 +199,7 @@ func (f *Forge) build(ctx context.Context, r *repository, req forge.BuildRequest
 	if err := f.failure(ctx, "BuildTestRef"); err != nil {
 		return "", nil, false, err
 	}
-	base, ok := r.commits[req.BaseSHA]
+	_, ok := r.commits[req.BaseSHA]
 	if !ok {
 		return "", nil, false, fmt.Errorf("unknown base commit %q", req.BaseSHA)
 	}
@@ -199,8 +209,8 @@ func (f *Forge) build(ctx context.Context, r *repository, req forge.BuildRequest
 	if req.Method != forge.Merge && req.Method != forge.Squash && req.Method != forge.Rebase && req.Method != forge.FastForward {
 		return "", nil, false, fmt.Errorf("unsupported merge method %q", req.Method)
 	}
-	content := slices.Clone(base.PRs)
-	files := maps.Clone(base.Files)
+	content := slices.Clone(r.prsFor(req.BaseSHA))
+	files := maps.Clone(r.files(req.BaseSHA))
 	prs := make([]int, 0, len(req.PRs))
 	top := req.BaseSHA
 	for i, pr := range req.PRs {
@@ -216,21 +226,28 @@ func (f *Forge) build(ctx context.Context, r *repository, req forge.BuildRequest
 			prs = append(prs, pr.Number)
 			continue
 		}
+		var added []int
+		if !slices.Contains(content, pr.Number) {
+			added = []int{pr.Number}
+		}
+		edits := make(map[string]string)
 		content = append(content, pr.Number)
 		prs = append(prs, pr.Number)
 		for j, original := range r.prCommits[pr.Number] {
 			c := r.commits[original]
-			parent := r.commits[c.Parents[0]]
 			// Replay each file delta against the evolving test tree. A different edit
 			// to the same file is a conflict, just as with these add-file fixtures in git.
-			for path, value := range c.Files {
-				before, existed := parent.Files[path]
+			for path, value := range r.files(original) {
+				before, existed := r.files(c.Parents[0])[path]
 				if existed && before == value {
 					continue
 				}
 				current, present := files[path]
 				if (present != existed || current != before) && (!present || current != value) {
 					return "", nil, false, fmt.Errorf("PR %d file %s: %w", pr.Number, path, forge.ErrConflict)
+				}
+				if !present || current != value {
+					edits[path] = value
 				}
 				files[path] = value
 			}
@@ -239,7 +256,9 @@ func (f *Forge) build(ctx context.Context, r *repository, req forge.BuildRequest
 				if i == len(req.PRs)-1 && j == len(r.prCommits[pr.Number])-1 {
 					message += "\nOpenMerge-Batch: " + req.BatchID
 				}
-				top = r.commit([]string{top}, content, message, files)
+				top = r.buildCommit([]string{top}, content, message, files, edits, added)
+				clear(edits)
+				added = nil
 			}
 		}
 		if req.Method == forge.Merge || req.Method == forge.Squash {
@@ -251,12 +270,14 @@ func (f *Forge) build(ctx context.Context, r *repository, req forge.BuildRequest
 			if req.Method == forge.Merge {
 				parents = append(parents, pr.HeadSHA)
 			}
-			top = r.commit(parents, content, message, files)
+			top = r.buildCommit(parents, content, message, files, edits, added)
 		}
 	}
 	if req.Method == forge.FastForward {
-		head := r.commits[top]
-		top = r.commit([]string{top}, head.PRs, fmt.Sprintf("OpenMerge fast-forward test %s\n\nOpenMerge-Batch: %s", r.nonce(), req.BatchID), head.Files)
+		top = r.commit([]string{top}, r.prsFor(top), fmt.Sprintf("OpenMerge fast-forward test %s\n\nOpenMerge-Batch: %s", r.nonce(), req.BatchID), r.files(top))
+	}
+	if req.Method != forge.FastForward {
+		r.materializeTip(top, files, content)
 	}
 	changed := r.refs[req.Ref] != top
 	r.refs[req.Ref] = top
@@ -405,7 +426,7 @@ func (f *Forge) PullRequest(ctx context.Context, repo forge.RepoRef, number int)
 	if pr.FilesKnown {
 		pr.Files = []string{}
 		r := f.repo(repo)
-		before, after := r.commits[r.prBases[number]].Files, r.commits[pr.HeadSHA].Files
+		before, after := r.files(r.prBases[number]), r.files(pr.HeadSHA)
 		for path, content := range after {
 			if old, exists := before[path]; !exists || old != content {
 				pr.Files = append(pr.Files, path)
@@ -626,7 +647,7 @@ func (f *Forge) ReadFile(ctx context.Context, repo forge.RepoRef, ref, path stri
 	} else if value := r.refs[strings.TrimPrefix(ref, "refs/heads/")]; value != "" {
 		sha = value
 	}
-	content, ok := r.commits[sha].Files[path]
+	content, ok := r.files(sha)[path]
 	if !ok {
 		return nil, forge.ErrFileNotFound
 	}

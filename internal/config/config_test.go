@@ -88,8 +88,8 @@ func TestDefaultsAndOverrides(t *testing.T) {
 		{"empty admission", "    enter_when: []\n", queue.Squash, time.Hour, Batch{MaxSize: 1}, 0},
 		{"empty batch", "    batch: {}\n", queue.Squash, time.Hour, Batch{MaxSize: 1}, 0},
 		{"serial batch", "    batch: {max_size: 1, max_wait: 0s}\n", queue.Squash, time.Hour, Batch{MaxSize: 1}, 0},
-		{"future batch", "    batch: {max_size: 128, max_wait: 30s}\n", queue.Squash, time.Hour, Batch{128, 30 * time.Second}, 0},
-		{"inactive wait", "    batch: {max_wait: 5s}\n", queue.Squash, time.Hour, Batch{1, 5 * time.Second}, 0},
+		{"future batch", "    batch: {max_size: 128, max_wait: 30s}\n", queue.Squash, time.Hour, Batch{MaxSize: 128, MaxWait: 30 * time.Second}, 0},
+		{"inactive wait", "    batch: {max_wait: 5s}\n", queue.Squash, time.Hour, Batch{MaxSize: 1, MaxWait: 5 * time.Second}, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -346,7 +346,7 @@ func TestGoldenExampleMatchesADR(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ADR example does not validate: %s", err)
 	}
-	if len(warnings) != 0 || cfg.Queues[0].Batch != (Batch{8, 30 * time.Second}) {
+	if len(warnings) != 0 || cfg.Queues[0].Batch != (Batch{MaxSize: 8, MaxWait: 30 * time.Second}) {
 		t.Fatalf("example = %+v, warnings = %v", cfg, warnings)
 	}
 	pr := condition.Snapshot{"approved-reviews-by": condition.Strings("alice"), "check-success": condition.Strings("lint", "integration")}

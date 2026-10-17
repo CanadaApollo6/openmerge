@@ -37,6 +37,8 @@ func (c CIConfig) validate() error {
 // attempt of a landed batch, including failed diagnosis, superseded retries and
 // invalidated work. A queued cancellation is not a started or wasted run.
 type CIMetrics struct {
+	MeanWindow, Day1MeanWindow, SteadyMeanWindow                             float64
+	FinalWindow                                                              int
 	RunsStarted, RerunsStarted, WastedRuns                                   int
 	CancellationsRequested, CancellationsConfirmed, CancellationsUnsupported int
 	RunnerMinutes, RunnerMinutesPerMergedChange                              float64
@@ -187,7 +189,14 @@ func (s *simulation) retryObservation(sha string, run *testRun, terminal, succes
 }
 
 func (s *simulation) ciMetrics(merged int) *CIMetrics {
-	m := &CIMetrics{}
+	m := &CIMetrics{FinalWindow: s.state.Window(s.cfg.Planner)}
+	if span := s.now.Sub(s.start).Seconds(); span > 0 {
+		m.MeanWindow = s.windowArea / span
+		m.Day1MeanWindow = s.coldWindowArea / min(span, (24*time.Hour).Seconds())
+		if span > (24 * time.Hour).Seconds() {
+			m.SteadyMeanWindow = (s.windowArea - s.coldWindowArea) / (span - (24 * time.Hour).Seconds())
+		}
+	}
 	for _, job := range s.ciJobs {
 		if job.cancellationRequested {
 			m.CancellationsRequested++

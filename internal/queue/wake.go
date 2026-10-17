@@ -35,7 +35,7 @@ func nextQueueWake(cfg Config, s State, now time.Time) (time.Time, bool) {
 			consider(at)
 		}
 	}
-	if s.PauseReason(cfg) == "" && len(s.Batches()) < cfg.MaxDepth() {
+	if s.PauseReason(cfg) == "" && len(s.Batches()) < s.Window(cfg) {
 		_, at := s.batchCandidates(cfg, now)
 		consider(at)
 	}

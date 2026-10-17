@@ -48,7 +48,7 @@ func (s *simulation) observeWrite() {
 func (s *simulation) firstParentRange(base, tip string) ([]string, error) {
 	var added []string
 	for sha := tip; sha != base; {
-		commit, err := s.forge.Commit(s.repo, sha)
+		commit, err := s.forge.CommitMetadata(s.repo, sha)
 		if err != nil {
 			return nil, err
 		}
@@ -72,7 +72,7 @@ func (s *simulation) observeAbandonments() error {
 		return fmt.Errorf("fence history: %w", err)
 	}
 	for _, sha := range added {
-		commit, err := s.forge.Commit(s.repo, sha)
+		commit, err := s.forge.CommitMetadata(s.repo, sha)
 		if err != nil {
 			return err
 		}
@@ -89,6 +89,9 @@ func (s *simulation) observeAbandonments() error {
 }
 
 func (s *simulation) checkInvariants() error {
+	if err := s.checkAdaptiveInvariants(); err != nil {
+		return err
+	}
 	if s.cfg.Planner.MaxDepth() > 1 && len(s.state.Batches()) > s.cfg.Planner.MaxDepth() {
 		return fmt.Errorf("admitted chain exceeded fixed window: %d > %d", len(s.state.Batches()), s.cfg.Planner.MaxDepth())
 	}
@@ -142,7 +145,7 @@ func (s *simulation) checkInvariants() error {
 	if run.base != s.mainSHA || !slices.Equal(added, run.covered) {
 		return fmt.Errorf("main landing %s from %s differs from CI coverage based on %s", tip, s.mainSHA, run.base)
 	}
-	commit, err := s.forge.Commit(s.repo, tip)
+	commit, err := s.forge.CommitMetadata(s.repo, tip)
 	if err != nil {
 		return err
 	}
@@ -153,7 +156,7 @@ func (s *simulation) checkInvariants() error {
 		if attempt := s.abandoned[sha]; attempt != "" && s.cfg.MergeMethod != queue.FastForward {
 			return fmt.Errorf("abandoned attempt %s became main tip %s", attempt, sha)
 		}
-		commit, err := s.forge.Commit(s.repo, sha)
+		commit, err := s.forge.CommitMetadata(s.repo, sha)
 		if err != nil {
 			return err
 		}
@@ -299,7 +302,7 @@ func (s *simulation) checkAbandonedLanding(tip string) error {
 		if err != nil {
 			return err
 		}
-		marker, err := s.forge.Commit(s.repo, tested)
+		marker, err := s.forge.CommitMetadata(s.repo, tested)
 		if err != nil && tested != "" {
 			return err
 		}
@@ -311,5 +314,25 @@ func (s *simulation) checkAbandonedLanding(tip string) error {
 	if attempt := s.abandoned[tip]; attempt != "" && (tip != s.mainSHA || s.observed[tip] != nil) {
 		return fmt.Errorf("abandoned attempt %s became main tip %s", attempt, tip)
 	}
+	return nil
+}
+
+func (s *simulation) checkAdaptiveInvariants() error {
+	if got := s.state.Window(s.cfg.Planner); got != s.expectedWindow {
+		return fmt.Errorf("adaptive window differs from event oracle: %d != %d", got, s.expectedWindow)
+	}
+	failures := 0
+	for _, f := range s.expectedOutcomes {
+		if f {
+			failures++
+		}
+	}
+	if f, n := s.state.FailureEstimate(); f != failures || n != len(s.expectedOutcomes) {
+		return fmt.Errorf("outcome ring differs from accepted departures")
+	}
+	if got, want := s.state.BatchSize(s.cfg.Planner), s.expectedBatchSize(); got != want {
+		return fmt.Errorf("adaptive size differs from rational oracle: %d != %d", got, want)
+	}
+
 	return nil
 }

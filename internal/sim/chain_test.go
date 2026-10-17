@@ -2,6 +2,8 @@ package sim
 
 import (
 	"fmt"
+	"github.com/CanadaApollo6/openmerge/internal/sim/capacity"
+	"reflect"
 	"testing"
 	"time"
 
@@ -135,5 +137,77 @@ func TestSpeculationEnablesRerunFaultCapability(t *testing.T) {
 	cfg.Planner.SpeculationMaxDepth = 4
 	if _, err := Run(cfg); err != nil {
 		t.Fatalf("implicit speculative retry capability rejected: %v", err)
+	}
+}
+
+func TestAdaptiveCompactPlannerHarness(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.PRs = 2100
+	cfg.ArrivalWindow = 3 * 24 * time.Hour
+	cfg.Planner.SpeculationMaxDepth = 4
+	cfg.Planner.BatchMaxSize = 8
+	cfg.Planner.BatchMaxWait = 5 * time.Minute
+	cfg.Planner.BatchTargetPassRate = .8
+	cfg.Planner.CheckTimeout = 3 * time.Minute
+	cfg.CI = &CIConfig{Runners: 50, RerunsSupported: true, CancellationSupported: true}
+	_, r := runScenario(t, cfg)
+	if r.Merged+sumDequeued(r) != cfg.PRs {
+		t.Fatal("compact simulation lost changes")
+	}
+}
+
+func TestCompactAndFullFakeProduceIdenticalPlannerOutcomes(t *testing.T) {
+	for _, adaptive := range []bool{false, true} {
+		cfg := plannerProfile(capacity.AdaptiveWorkload(), 42, true, 1)
+		cfg.Planner.SpeculationMaxDepth = 4
+		if adaptive {
+			cfg.Planner.BatchTargetPassRate = .8
+		}
+		full, err := newSimulation(cfg, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a, err := full.run()
+		if err != nil {
+			t.Fatal(err)
+		}
+		compact, err := newSimulation(cfg, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := compact.run()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(a, b) {
+			t.Fatalf("tree storage changed outcomes: full=%+v compact=%+v", a, b)
+		}
+		if len(full.events) != len(compact.events) {
+			t.Fatal("tree storage changed event count")
+		}
+		for i, event := range full.events {
+			if !event.At.Equal(compact.events[i].At) || reflect.TypeOf(event.Event) != reflect.TypeOf(compact.events[i].Event) {
+				t.Fatalf("tree storage changed event order/time at %d", i)
+			}
+		}
+	}
+}
+
+func TestAdaptiveBuildConflictInSimulator(t *testing.T) {
+	cfg := smallConfig()
+	cfg.PRs, cfg.ArrivalWindow, cfg.Faults = 8, 0, Faults{}
+	cfg.Planner.SpeculationMaxDepth = 4
+	cfg.CI = &CIConfig{Runners: 50, RerunsSupported: true}
+	s, err := newSimulation(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.forge.FailNext("BuildTestRef", forge.ErrConflict)
+	r, err := s.run()
+	if err != nil {
+		t.Fatalf("simulator rejected mutation: %v", err)
+	}
+	if r.Dequeued[queue.Conflict] != 1 {
+		t.Fatal("original conflict was not exercised")
 	}
 }

@@ -302,7 +302,12 @@ entries and automatic expansion into concrete base workers are supported.
 Installation discovery and webhook health/backstop scheduling are supported.
 
 `speculation.max_depth` and `speculation.min_depth` default to 1, with
-`1 <= min_depth <= max_depth <= 32`. The current fixed window is `max_depth`;
-`min_depth` reserves the adaptive lower bound. Depth above 1 enables one bounded
+`1 <= min_depth <= max_depth <= 32`. The adaptive window starts at `max_depth`, grows per landing, halves once per
+confirmed original failure and is bounded below by `min_depth`. Depth above 1 enables one bounded
 same-commit failed-check retry on the oldest batch automatically. Both settings
 participate in the effective per-queue configuration digest.
+
+`batch.target_pass_rate` optionally enables adaptive fresh-batch sizing; it must
+be strictly between 0 and 1. It estimates checks/timeout failure frequency from
+the last 200 departures (minimum 20 samples), uses exact rational comparisons,
+and restarts the history at a policy digest change. Unset keeps fixed sizing.

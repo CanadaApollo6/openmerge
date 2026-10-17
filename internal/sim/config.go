@@ -193,6 +193,9 @@ func (cfg Config) normalized() (Config, error) {
 	if cfg.Planner.ChecksRetryFailed != 0 && cfg.Planner.ChecksRetryFailed != 1 {
 		return cfg, fmt.Errorf("checks retry failed must be 0 or 1")
 	}
+	if !queue.ValidTargetPassRate(cfg.Planner.BatchTargetPassRate) {
+		return cfg, fmt.Errorf("invalid target pass rate")
+	}
 	if cfg.Planner.BatchMaxSize < 0 || cfg.Planner.BatchMaxSize > 128 || cfg.Planner.BatchMaxWait < 0 {
 		return cfg, fmt.Errorf("invalid planner batching settings")
 	}
@@ -250,6 +253,9 @@ func (cfg Config) MarshalJSON() ([]byte, error) {
 	if cfg.Planner.MaxDepth() > 1 {
 		planner["speculation_max_depth"] = cfg.Planner.MaxDepth()
 		planner["speculation_min_depth"] = max(1, cfg.Planner.SpeculationMinDepth)
+	}
+	if cfg.Planner.BatchTargetPassRate > 0 {
+		planner["batch_target_pass_rate"] = cfg.Planner.BatchTargetPassRate
 	}
 	values := map[string]any{
 		"prs": cfg.PRs, "seed": cfg.Seed, "arrival_window_seconds": cfg.ArrivalWindow.Seconds(),

@@ -11,6 +11,10 @@ import (
 )
 
 func TestExit500PRDay(t *testing.T) {
+	if testing.Short() {
+		t.Skip("full simulator workload: run make test-sim-exits")
+	}
+
 	for _, size := range []int{1, 8} {
 		for _, variant := range []struct {
 			name               string
@@ -139,6 +143,10 @@ func runScenario(t *testing.T, cfg Config) (*simulation, Result) {
 }
 
 func TestExit2000PRDayBatch8(t *testing.T) {
+	if testing.Short() {
+		t.Skip("full simulator workload: run make test-sim-exits")
+	}
+
 	cfg := DefaultConfig()
 	cfg.Seed = 42
 	cfg.PRs = 2000

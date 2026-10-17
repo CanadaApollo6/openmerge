@@ -14,6 +14,9 @@ func Plan(cfg Config, s State, now time.Time) []Action {
 	if cfg.MaxDepth() < 1 || cfg.MaxDepth() > 32 || cfg.SpeculationMinDepth < 0 || max(1, cfg.SpeculationMinDepth) > cfg.MaxDepth() {
 		panic("invalid speculation window")
 	}
+	if !ValidTargetPassRate(cfg.BatchTargetPassRate) {
+		panic("invalid target pass rate")
+	}
 	actions := plan(cfg, s, now)
 	for _, action := range actions {
 		if err := action.Validate(); err != nil {
@@ -140,7 +143,7 @@ func planBatch(cfg Config, s State, batch *Batch, now time.Time) []Action {
 		if _, pending := s.dequeues[pr.PR]; pending {
 			return actions
 		}
-		observation, known := s.observations[pr.PR]
+		observation, known := s.observations.get(pr.PR)
 		if !known || !observation.Eligible || !observation.Trusted || observation.HeadSHA != pr.HeadSHA {
 			return actions
 		}
@@ -389,7 +392,7 @@ func (s State) batchCandidates(cfg Config, now time.Time) ([]BatchPR, time.Time)
 	if len(s.pending) > 0 {
 		return slices.Clone(s.pending[0].prs), time.Time{}
 	}
-	size := cfg.BatchMaxSize
+	size := s.BatchSize(cfg)
 	if size == 0 {
 		size = 1
 	}

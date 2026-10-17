@@ -107,17 +107,25 @@ ADR 0006 lands in four PRs:
 
 ### Phase 2 — Throughput
 
-- Speculative chain of batches with a **Zuul-style AIMD window** (grows on landing, halves once per failed batch), landing strictly in chain order through the existing fence; only the oldest unlanded batch is blamed ([ADR 0009](docs/adr/0009-speculative-batching.md)); `max_depth` defaults to 1 until the adopter profiles pass and two weeks of dogfooding show a benefit, then 4
-- Opt-in dynamic batch sizing from observed failure rate (`batch.target_pass_rate`)
-- Bounded same-commit check retries before a failure counts (a prerequisite for speculation); optimistic failure resolution deferred
+- [x] Speculative chain of batches with a **Zuul-style AIMD window** (grows on landing, halves once per failed batch), landing strictly in chain order through the existing fence; only the oldest unlanded batch is blamed ([ADR 0009](docs/adr/0009-speculative-batching.md)); `max_depth` defaults to 1 until the adopter profiles pass and two weeks of dogfooding show a benefit, then 4
+- [x] Opt-in dynamic batch sizing from observed failure rate (`batch.target_pass_rate`)
+- [x] Bounded same-commit check retries before a failure counts (a prerequisite for speculation); optimistic failure resolution deferred
 - [x] Optional CI cancellation capability (`actions: write` on GitHub) and a per-change CI run ledger
-- Priorities (`priority_rules`, numeric levels, optional preemption) and multiple queues
-- Check timeouts (automatic, p95-based)
-- Pause, scheduled freezes with exclusions, `schedule` conditions
-- Read-only web dashboard: queue graph, batch history, why-is-my-PR-stuck explainer
-- **MCP server** exposing queue status, enqueue/dequeue, failure explanations
+- [ ] Priorities (`priority_rules`, numeric levels, optional preemption) and multiple queues
+- [ ] Check timeouts (automatic, p95-based)
+- [ ] Pause, scheduled freezes with exclusions, `schedule` conditions
+- [ ] Read-only web dashboard: queue graph, batch history, why-is-my-PR-stuck explainer
+- [ ] **MCP server** exposing queue status, enqueue/dequeue, failure explanations
 
 **Exit:** the strict adopter profiles in [ADR 0009](docs/adr/0009-speculative-batching.md) pass in simulation (20 changes/day with 30-minute CI: p95 time to merge under 60 minutes; 5 changes/day with 3-hour CI: p95 under 4.5 hours; both under 1.5 CI runs per merged change), and the simulator publishes strict capacity across defect rates. The earlier 2,000 PRs/day strict target is superseded: strict capacity is bounded by failure resolution rather than depth, and Phase 2b's exit covers high volume.
+
+**Strict batching exit achieved:** ADR 0009's planner-backed Team and Slow gates
+pass in both cancellation modes, and all eight paired adaptive-sizing seeds pass
+the cost/median gate plus the added p95 regression assertion. The capacity curve,
+window equilibrium and day-1 results are published in
+[the results report](docs/research/phase2-chain.md). The remaining unchecked
+Phase 2 items above stay open. Default depth stays **1** until the separate
+ADR 0009 dogfooding criteria are met.
 
 ### Phase 2b — Post-merge verification mode
 

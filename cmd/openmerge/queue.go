@@ -220,7 +220,7 @@ func printStatus(out io.Writer, response status.Response) error {
 	}
 	for _, q := range queues {
 		if q.Window > 0 {
-			if _, err := fmt.Fprintf(out, "%s %s window: %d; batch size: %d\n", q.Repository, q.Base, q.Window, q.BatchSize); err != nil {
+			if _, err := fmt.Fprintf(out, "%s %s %s\n", q.Repository, q.Base, status.AdaptiveSummary(&q)); err != nil {
 				return err
 			}
 		}

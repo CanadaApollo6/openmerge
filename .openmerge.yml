@@ -6,4 +6,5 @@ queues:
       - check-success = sign-off
     merge_when:
       - check-success = check
+      - check-success = sim-exits
     merge_method: squash

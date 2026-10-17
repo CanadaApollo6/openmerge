@@ -20,8 +20,8 @@ func (f *Forge) VerifyFastForward(ctx context.Context, repo forge.RepoRef, base,
 
 func (r *repository) verifyFastForward(base, tested, head string) error {
 	marker, ok := r.commits[tested]
-	original, headOK := r.commits[head]
-	if !ok || !headOK || len(marker.Parents) != 1 || marker.Parents[0] != head || !maps.Equal(marker.Files, original.Files) {
+	_, headOK := r.commits[head]
+	if !ok || !headOK || len(marker.Parents) != 1 || marker.Parents[0] != head || !maps.Equal(r.files(tested), r.files(head)) {
 		return errors.New("fast-forward marker must have only the pinned head as parent and the same tree")
 	}
 	if base == head || !r.isAncestor(base, head) {

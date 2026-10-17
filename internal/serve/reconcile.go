@@ -75,10 +75,31 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 		// default branch (and therefore the policy) stays at the same commit.
 		w.summaries = make(map[int]forge.PullRequestSummary)
 	}
-	if loadErr == nil && state.ConfigDigest != w.configDigest {
+	if loadErr == nil && (state.ConfigDigest != w.configDigest || w.cfg.QueueConfig().MaxDepth() > 1 && !state.WindowInitialized()) {
 		// Publish the policy before using it. Replay invalidates work built under
 		// another digest, and start gates reject workers holding an older policy.
-		_, err = s.store.Append(ctx, w.id, []queue.Event{queue.ConfigApplied{Commit: configTip, Digest: w.configDigest}}, "")
+		events := []queue.Event{}
+		if state.ConfigDigest != "" && state.ConfigDigest != w.configDigest && !state.WindowInitialized() && w.cfg.QueueConfig().MaxDepth() > 1 {
+			// Old journals omit bounds. Recover the fixed window from the policy
+			// that actually ran before clamping it under the replacement policy.
+			previous, readErr := s.repositoryConfig(ctx, w.Target, state.ConfigCommit)
+			if readErr != nil {
+				return fmt.Errorf("read historical window policy: %w", readErr)
+			}
+			selected, diagnostics := previous.ResolveBranch(w.Key.BaseBranch, branch)
+			if len(diagnostics) != 0 {
+				return diagnostics
+			}
+			// The serve cleanup default may have changed since the old policy.
+			if selected.Digest(true) != state.ConfigDigest && selected.Digest(false) != state.ConfigDigest {
+				return fmt.Errorf("historical window policy does not match recorded digest")
+			}
+			if selected.QueueConfig().MaxDepth() > 1 {
+				events = append(events, selected.QueueConfig().Applied(state.ConfigCommit, state.ConfigDigest))
+			}
+		}
+		events = append(events, w.cfg.QueueConfig().Applied(configTip, w.configDigest))
+		_, err = s.store.Append(ctx, w.id, events, "")
 		if err != nil {
 			return err
 		}

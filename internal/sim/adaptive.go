@@ -1,0 +1,85 @@
+package sim
+
+import (
+	"fmt"
+	"math/big"
+	"strconv"
+
+	"github.com/CanadaApollo6/openmerge/internal/queue"
+)
+
+// These oracles observe accepted transitions independently of the reducer's
+// adaptation helpers. A smaller W may coexist with already-admitted work.
+func (s *simulation) observeAdaptation(before queue.State, event queue.Event) {
+	head := before.Active
+	failed := false
+	switch e := event.(type) {
+	case queue.ChainedBatchStarted:
+		if before.PendingBatchSize() == 0 && len(e.PRs) > s.expectedBatchSize() {
+			s.violation = fmt.Errorf("fresh batch exceeded adaptive size: %d > %d", len(e.PRs), s.expectedBatchSize())
+		}
+		if b := s.state.Batch(e.BatchID); b != nil && before.Batch(e.BatchID) == nil && len(before.Batches()) >= s.expectedWindow {
+			s.violation = fmt.Errorf("admission exceeded adaptive window: %d >= %d", len(before.Batches()), s.expectedWindow)
+		}
+	case queue.Landed:
+		if head != nil && head.ID == e.BatchID && head.Phase == queue.Landing && s.state.Batch(e.BatchID) == nil {
+			s.expectedWindow = min(s.cfg.Planner.MaxDepth(), s.expectedWindow+1)
+			for range head.PRs {
+				s.oracleOutcome(false)
+			}
+		}
+	case queue.Dequeued:
+		for _, entry := range before.Entries {
+			if entry.PR == e.PR && entry.AdmissionID == e.AdmissionID && !hasAdmission(s.state, entry.AdmissionID) && (e.Reason == queue.ChecksFailed || e.Reason == queue.ChecksTimeout) {
+				s.oracleOutcome(true)
+				failed = head != nil && len(head.PRs) == 1 && head.PRs[0].PR == e.PR
+			}
+		}
+	case queue.ChecksFailureConfirmed:
+		failed = head != nil && head.ID == e.BatchID && head.Phase == queue.Testing && head.InvalidationReason == "" && (s.state.Batch(e.BatchID) == nil || s.state.Active.CheckRetry != nil && s.state.Active.CheckRetry.Confirmed)
+	case queue.BatchFailed:
+		failed = head != nil && head.ID == e.BatchID && head.Phase == queue.Testing && !before.ChecksPassed(head.TestedSHA)
+	case queue.ChecksCompleted:
+		failed = !e.Success && head != nil && !head.Speculative && head.Phase == queue.Testing && head.TestedSHA == e.TestedSHA
+	}
+	if failed && !head.FromBisection && !s.windowFailures[head.ID] {
+		s.expectedWindow = max(max(1, s.cfg.Planner.SpeculationMinDepth), s.expectedWindow/2)
+		s.windowFailures[head.ID] = true
+	}
+}
+func hasAdmission(s queue.State, id uint64) bool {
+	for _, e := range s.Entries {
+		if e.AdmissionID == id {
+			return true
+		}
+	}
+	return false
+}
+func (s *simulation) oracleOutcome(failed bool) {
+	s.expectedOutcomes = append(s.expectedOutcomes, failed)
+	if len(s.expectedOutcomes) > 200 {
+		s.expectedOutcomes = s.expectedOutcomes[1:]
+	}
+}
+func (s *simulation) expectedBatchSize() int {
+	size := max(1, s.cfg.Planner.BatchMaxSize)
+	if s.cfg.Planner.BatchTargetPassRate == 0 || len(s.expectedOutcomes) < 20 {
+		return size
+	}
+	good := len(s.expectedOutcomes)
+	for _, f := range s.expectedOutcomes {
+		if f {
+			good--
+		}
+	}
+	rate, _ := new(big.Rat).SetString(strconv.FormatFloat(s.cfg.Planner.BatchTargetPassRate, 'g', -1, 64))
+	probability := big.NewRat(1, 1)
+	pass := big.NewRat(int64(good), int64(len(s.expectedOutcomes)))
+	for k := 1; k <= size; k++ {
+		probability.Mul(probability, pass)
+		if probability.Cmp(rate) < 0 {
+			return max(1, k-1)
+		}
+	}
+	return size
+}

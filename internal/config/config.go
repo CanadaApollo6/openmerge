@@ -71,7 +71,7 @@ type Queue struct {
 	basePatternSource string
 }
 
-// Speculation bounds the per-queue fixed admission window.
+// Speculation bounds the per-queue adaptive admission window.
 type Speculation struct {
 	MaxDepth int `yaml:"max_depth"`
 	MinDepth int `yaml:"min_depth"`
@@ -86,8 +86,9 @@ type Checks struct {
 
 // Batch controls serial batch formation.
 type Batch struct {
-	MaxSize int           `yaml:"max_size"`
-	MaxWait time.Duration `yaml:"max_wait"`
+	TargetPassRate float64       `yaml:"target_pass_rate,omitempty"`
+	MaxSize        int           `yaml:"max_size"`
+	MaxWait        time.Duration `yaml:"max_wait"`
 }
 
 // QueueConfig maps a loaded queue to the planner. Operational defaults are a
@@ -105,8 +106,9 @@ func (q Queue) QueueConfig() queue.Config {
 	return queue.Config{
 		SpeculationMaxDepth: maxDepth, SpeculationMinDepth: minDepth,
 		MergeMethod: q.MergeMethod, CheckTimeout: q.CheckTimeout,
-		ChecksRetryFailed: q.retryLimit(),
-		BatchMaxSize:      q.Batch.MaxSize, BatchMaxWait: q.Batch.MaxWait,
+		ChecksRetryFailed:   q.retryLimit(),
+		BatchTargetPassRate: q.Batch.TargetPassRate,
+		BatchMaxSize:        q.Batch.MaxSize, BatchMaxWait: q.Batch.MaxWait,
 		ResolveAfter: time.Minute, RefreshInterval: time.Minute,
 		BuildRetries: 3, BuildBackoff: 5 * time.Second,
 	}
@@ -320,6 +322,11 @@ func (p *parser) queue(n *yaml.Node, path string) Queue {
 		if n := fields["max_size"]; n != nil {
 			if n.Kind != yaml.ScalarNode || n.ShortTag() != "!!int" || n.Decode(&q.Batch.MaxSize) != nil || q.Batch.MaxSize < 1 || q.Batch.MaxSize > 128 {
 				p.error(n, path+".batch.max_size", "expected an integer from 1 to 128")
+			}
+		}
+		if n := fields["target_pass_rate"]; n != nil {
+			if n.Kind != yaml.ScalarNode || (n.ShortTag() != "!!float" && n.ShortTag() != "!!int") || n.Decode(&q.Batch.TargetPassRate) != nil || q.Batch.TargetPassRate == 0 || !queue.ValidTargetPassRate(q.Batch.TargetPassRate) {
+				p.error(n, path+".batch.target_pass_rate", "expected a number strictly between 0 and 1")
 			}
 		}
 		if n := fields["max_wait"]; n != nil {
