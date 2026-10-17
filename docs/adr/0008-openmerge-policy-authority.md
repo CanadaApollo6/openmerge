@@ -165,7 +165,7 @@ A queue is **overdue** when it passes that deadline plus a bounded grace, and **
 
 Each part lands as its prerequisites exist:
 
-1. `setup import-protection`, as a read-only report usable in `github` mode.
+1. `setup import-protection`, as a read-only report usable in `github` mode. Implemented as an admin-token, GET-only audit with stable JSON item IDs, repeatable `--base`/`--accept`, local `--out` drafts, inherited/classic protection reads, CODEOWNERS comparisons and workflow-trigger inspection. Approval fragments require the release implementing ADR 0007 Stage A; owner requirements remain annotated pending its full schema. Installation prerequisites cannot be accepted; bypass acceptance remains "to verify at switch". See the [operating guide](../operating.md#auditing-protection-before-a-policy-authority-switch).
 2. After ADR 0007 Stage A: `policy_authority` and `break_glass`, the two write rulesets, the `write_restriction` source, rule-aware content validation, the pull request check message, outside-push warnings with `openmerge admin acknowledge`, `/v1/live` and `/v1/health`, and the new durable event types for write-restriction state changes, verifications and acknowledgements, so the later export has records from the first day of `openmerge` mode. Its exit test is the switch procedure on an organization sandbox repository.
 3. After Stage A decision snapshots exist: `audit export`.
 
