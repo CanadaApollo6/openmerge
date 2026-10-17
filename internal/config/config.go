@@ -57,14 +57,16 @@ type Config struct {
 
 // Queue contains admission/merge conditions and serial planner settings.
 type Queue struct {
-	Name         string               `yaml:"name"`
-	Base         string               `yaml:"base,omitempty"`
-	EnterWhen    condition.Expression `yaml:"enter_when"`
-	MergeWhen    condition.Expression `yaml:"merge_when"`
-	MergeMethod  queue.MergeMethod    `yaml:"merge_method"`
-	CheckTimeout time.Duration        `yaml:"check_timeout"`
-	Batch        Batch                `yaml:"batch"`
-	baseLine     int
+	Name              string               `yaml:"name"`
+	Base              string               `yaml:"base,omitempty"`
+	EnterWhen         condition.Expression `yaml:"enter_when"`
+	MergeWhen         condition.Expression `yaml:"merge_when"`
+	MergeMethod       queue.MergeMethod    `yaml:"merge_method"`
+	CheckTimeout      time.Duration        `yaml:"check_timeout"`
+	Batch             Batch                `yaml:"batch"`
+	baseLine          int
+	basePattern       *regexp.Regexp
+	basePatternSource string
 }
 
 // Batch controls serial batch formation.
@@ -220,8 +222,13 @@ func (p *parser) queue(n *yaml.Node, path string) Queue {
 		if n.ShortTag() == "!!str" {
 			if strings.TrimSpace(q.Base) == "" {
 				p.error(n, path+".base", "must not be empty")
-			} else if _, err := condition.CompileGlob(q.Base); err != nil {
-				p.error(n, path+".base", "invalid glob %q: %v", q.Base, err)
+			} else {
+				var err error
+				q.basePattern, err = condition.CompileGlob(q.Base)
+				q.basePatternSource = q.Base
+				if err != nil {
+					p.error(n, path+".base", "invalid glob %q: %v", q.Base, err)
+				}
 			}
 		}
 	}

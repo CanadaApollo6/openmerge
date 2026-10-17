@@ -29,10 +29,7 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 	}
 	tip, baseErr := w.Git.ReadRef(ctx, w.repo(), w.Key.BaseBranch)
 	if baseErr != nil {
-		if loadErr == nil && branch != w.Key.BaseBranch {
-			return baseErr
-		}
-		loadErr = errors.Join(loadErr, fmt.Errorf("read default-branch tip: %w", baseErr))
+		loadErr = errors.Join(loadErr, fmt.Errorf("read queue base %q (default branch %q): %w", w.Key.BaseBranch, branch, baseErr))
 	}
 	state, _, err := s.store.Load(ctx, w.id)
 	if err != nil {
@@ -56,6 +53,14 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 	}
 	if loadErr == nil && (configTip != w.configTip || branch != w.configBranch) {
 		loadErr = s.loadConfiguration(ctx, w, branch, configTip)
+	}
+	if loadErr == nil && state.ConfigDigest != w.configDigest {
+		// Publish the policy before using it. Replay invalidates work built under
+		// another digest, and start gates reject workers holding an older policy.
+		_, err = s.store.Append(ctx, w.id, []queue.Event{queue.ConfigApplied{Commit: configTip, Digest: w.configDigest}}, "")
+		if err != nil {
+			return err
+		}
 	}
 	// Retry failures even at the same tip. Failed metadata/ref/file reads must
 	// pause admission and must never leave a previously valid policy usable.
@@ -116,16 +121,20 @@ func (s *Server) loadConfiguration(ctx context.Context, w *worker, branch, tip s
 	}
 	w.cfg = selected
 	w.deleteHeadBranch = cfg.DeleteHeadBranch
+	deleteHeadBranch := !s.options.DisableDeleteHeadBranch
+	if cfg.DeleteHeadBranch != nil {
+		deleteHeadBranch = *cfg.DeleteHeadBranch
+	}
+	w.configDigest = selected.Digest(deleteHeadBranch)
 	return nil
 }
 
 func (s *Server) reconcile(ctx context.Context, w *worker, force bool) error {
-	oldTip := w.configTip
-	oldBranch := w.configBranch
+	oldDigest := w.configDigest
 	if err := s.configuration(ctx, w); err != nil {
 		return err
 	}
-	force = force || oldTip != w.configTip || oldBranch != w.configBranch
+	force = force || oldDigest != w.configDigest
 	summaries, err := w.Driver.ListOpenPullRequests(ctx, w.repo(), w.Key.BaseBranch)
 	if err != nil {
 		return err

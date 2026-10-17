@@ -36,6 +36,9 @@ func DeferredByPause(cfg Config, s State, action Action, now time.Time) bool {
 }
 
 func plan(cfg Config, s State, now time.Time) []Action {
+	if cfg.ConfigDigest != s.ConfigDigest && (s.Active == nil || s.Active.Phase != Landing) {
+		return nil
+	}
 	var actions []Action
 	if s.workBlocked() {
 		if len(s.Entries) > 0 {
@@ -328,7 +331,8 @@ func CanStart(cfg Config, s State, action Action, event Event) bool {
 		at = e.At
 	case LandingStarted:
 		a, ok := action.(Land)
-		if !ok || e.AttemptID == "" || a.BatchID != e.BatchID || a.FenceToken != e.FenceToken {
+		if !ok || e.AttemptID == "" || a.BatchID != e.BatchID || a.FenceToken != e.FenceToken ||
+			s.Active == nil || s.Active.ConfigDigest != s.ConfigDigest || cfg.ConfigDigest != s.ConfigDigest {
 			return false
 		}
 		at = e.At

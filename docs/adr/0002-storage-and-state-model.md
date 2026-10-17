@@ -63,6 +63,18 @@ older `landed` events schedules no head-branch deletion. All have wire-v1 golden
 fixtures.
 Previously deployed event/action types and their fixtures are unchanged.
 
+`config_applied{commit,digest}` records the governing default-branch commit when
+the effective per-queue policy changes. The SHA-256 digest covers parsed admission
+and merge conditions, planner settings, and the effective head-cleanup setting;
+formatting, selectors, other queues, and unrelated commits do not change it.
+Replay invalidates building/testing batches and requeues their admissions on a
+digest change, including the first application to a legacy batch. A batch pins
+the current digest when `batch_started` folds. Planning and the queue-locked
+`LandingStarted` revalidation require the worker's digest to match the durable
+policy and the batch. A landing already started settles through its existing
+fence even after a configuration change. This additive type has a wire-v1 golden
+fixture; existing event/action types and fixtures remain unchanged.
+
 - Self-hosting stays at one binary plus one database. Backups, high availability, and observability reuse standard Postgres tooling.
 - Missed webhooks degrade latency, not correctness: the reconciler catches up.
 - Debugging becomes replay. A bug report can ship the relevant event range, and a test can reproduce the exact decision.

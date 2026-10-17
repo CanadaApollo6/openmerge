@@ -58,6 +58,7 @@ type worker struct {
 	cfg              config.Queue
 	configBranch     string
 	configTip        string
+	configDigest     string
 	configError      error
 	deleteHeadBranch *bool
 	blockedSHA       string
@@ -230,6 +231,7 @@ func (s *Server) initializeFence(ctx context.Context, w *worker) error {
 
 func (w *worker) plannerConfig(interval time.Duration) queue.Config {
 	cfg := w.cfg.QueueConfig()
+	cfg.ConfigDigest = w.configDigest
 	cfg.RefreshInterval = interval
 	return cfg
 }

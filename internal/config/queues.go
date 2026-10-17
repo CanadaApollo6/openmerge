@@ -1,10 +1,13 @@
 package config
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/CanadaApollo6/openmerge/internal/config/condition"
+	"github.com/CanadaApollo6/openmerge/internal/queue"
 )
 
 // MatchesBase resolves an omitted selector to the repository's default branch.
@@ -13,8 +16,28 @@ func (q Queue) MatchesBase(branch, defaultBranch string) bool {
 	if q.Base == "" {
 		return branch == defaultBranch
 	}
-	pattern, err := condition.CompileGlob(q.Base)
-	return err == nil && pattern.MatchString(branch)
+	pattern := q.basePattern
+	if pattern == nil || q.Base != q.basePatternSource {
+		// Queue literals and edited selectors still use the loaded grammar.
+		var err error
+		pattern, err = condition.CompileGlob(q.Base)
+		if err != nil {
+			return false
+		}
+	}
+	return pattern.MatchString(branch)
+}
+
+// Digest identifies the effective policy for a resolved queue, independently of
+// YAML formatting, selectors, other queues, and the default branch's commit.
+func (q Queue) Digest(deleteHeadBranch bool) string {
+	policy := struct {
+		EnterWhen, MergeWhen string
+		Planner              queue.Config
+		DeleteHeadBranch     bool
+	}{q.EnterWhen.String(), q.MergeWhen.String(), q.QueueConfig(), deleteHeadBranch}
+	data, _ := json.Marshal(policy)
+	return fmt.Sprintf("%x", sha256.Sum256(data))
 }
 
 // ResolveBranch selects policy for one concrete branch. Overlap diagnostics name

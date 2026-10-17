@@ -15,6 +15,15 @@ func Apply(s State, e Event) State {
 	s = cloneState(s)
 	s.revision++
 	switch e := e.(type) {
+	case ConfigApplied:
+		if e.Validate() != nil || e.Digest == s.ConfigDigest {
+			break
+		}
+		s.ConfigCommit, s.ConfigDigest = e.Commit, e.Digest
+		s.buildRetry = buildRetryState{}
+		if s.Active != nil && s.Active.Phase != Landing {
+			s.rebuildBatch()
+		}
 	case FenceInitialized:
 		if s.Fence == "" && e.Validate() == nil {
 			s.Fence = e.Token
@@ -98,7 +107,7 @@ func Apply(s State, e Event) State {
 				s.pending = s.pending[1:]
 			}
 			s.nextBatch++
-			s.Active = &Batch{ID: e.BatchID, BaseSHA: e.BaseSHA, PRs: slices.Clone(e.PRs), FromBisection: fromBisection,
+			s.Active = &Batch{ID: e.BatchID, BaseSHA: e.BaseSHA, ConfigDigest: s.ConfigDigest, PRs: slices.Clone(e.PRs), FromBisection: fromBisection,
 				TestRef: "openmerge/queue/" + s.BaseBranch + "/" + e.BatchID, Phase: Building}
 		}
 	case BatchFailed:

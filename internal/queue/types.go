@@ -9,6 +9,9 @@ import (
 // Config controls a queue with one active batch. ResolveAfter is the wait before fencing and
 // reading an uncertain landing; it never makes the landing a failure.
 type Config struct {
+	// ConfigDigest must match the durable policy before starting new work.
+	// Empty preserves replay/planning for logs predating ConfigApplied.
+	ConfigDigest string
 	// BatchMaxSize defaults to 1; BatchMaxWait bounds formation of partial batches.
 	BatchMaxSize int
 	BatchMaxWait time.Duration
@@ -37,12 +40,14 @@ const (
 
 // State is a replayable projection for one base branch. Its zero value is empty.
 type State struct {
-	BaseBranch string
-	BaseSHA    string
-	Entries    []Entry
-	Active     *Batch
-	pending    []pendingGroup
-	Fence      string
+	BaseBranch   string
+	BaseSHA      string
+	ConfigCommit string
+	ConfigDigest string
+	Entries      []Entry
+	Active       *Batch
+	pending      []pendingGroup
+	Fence        string
 
 	nextBatch          uint64
 	nextAdmission      uint64
@@ -77,6 +82,7 @@ type Batch struct {
 	ID               string
 	PRs              []BatchPR
 	BaseSHA          string
+	ConfigDigest     string
 	TestRef          string
 	TestedSHA        string
 	Method           MergeMethod
