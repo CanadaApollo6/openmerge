@@ -141,6 +141,7 @@ Phase 3 treats the change, not the pull request, as the unit of work, in three s
 - **Pushes outside the queue (A):** observed base moves OpenMerge did not make are recorded as landed outside the queue, with no OpenMerge verification before landing
 - **Review briefs (A):** templated reviewer, operator and agent views with a file and hunk inventory (labelled incomplete when it is); receipt approvals record the brief's digest
 - Per-author and per-agent concurrency, CI-spend, and retry budgets, with escalation to a human
+- **Policy authority ([ADR 0008](docs/adr/0008-openmerge-policy-authority.md)):** `policy_authority: openmerge` keeps only an App-only write ruleset (plus break-glass) on GitHub and moves every other rule into `.openmerge.yml`; `setup import-protection` translates existing protection, drift and unverified writers block the queue, `audit export` gives auditors a hash-chained record, and `/v1/health` exposes readiness for monitoring
 - Structured failure explanations: which batch, which check, which tests, flaky or real, suggested next action
 - **Conflict grace:** with change identity, a conflicting change may hold its position for one non-renewable `conflict_grace` with bounded retries, while entries behind it keep landing
 - **Write API and lookups agents need:** enqueue/dequeue/refresh over the API, and "which commit landed PR N" without scanning history
