@@ -345,10 +345,7 @@ func (s *Server) commands(ctx context.Context, w *worker, number int) error {
 			if cmd := command(c.Body); cmd != "" && c.Author != w.BotLogin {
 				fields := strings.Fields(cmd)
 				if fields[0] == "queue" && w.managed && !w.ready {
-					ignored, err := s.store.Observation(ctx, w.id, fmt.Sprintf("ignored/comment/%d", c.ID))
-					if err != nil || len(ignored) > 0 {
-						return err
-					}
+					return s.ignoreWaitingCommand(ctx, w, number, c)
 				}
 				allowed, err := w.Driver.CanWrite(ctx, w.repo(), c.Author)
 				if err != nil {
@@ -361,9 +358,6 @@ func (s *Server) commands(ctx context.Context, w *worker, number int) error {
 				} else {
 					switch fields[0] {
 					case "queue":
-						if w.managed && !w.ready {
-							return s.logIgnoredCommand(ctx, w, number, c.ID)
-						}
 						// Trust must be freshly read even if UpdatedAt did not change.
 						pr, err := s.observe(ctx, w, number)
 						if err != nil {

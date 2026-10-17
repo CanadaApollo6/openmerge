@@ -91,13 +91,13 @@ func (s *Server) register(ctx context.Context, target Target) (*worker, error) {
 	if target.Resolve == nil && (target.Driver == nil || target.Git == nil || target.BotLogin == "") {
 		return nil, errors.New("target requires driver, git and App login")
 	}
-	s.registerMu.Lock()
-	defer s.registerMu.Unlock()
 	id, key, err := s.canonicalQueue(ctx, target)
 	target.Key = key
 	if err != nil {
 		return nil, err
 	}
+	s.registerMu.Lock()
+	defer s.registerMu.Unlock()
 	return s.registerID(ctx, target, id)
 }
 

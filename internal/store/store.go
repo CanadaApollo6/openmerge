@@ -176,7 +176,7 @@ func (s *Store) canonicalQueue(ctx context.Context, key QueueKey, actualFence st
 					return ErrFenceOwnershipRequired
 				}
 				chosen = owners[0]
-			case len(live) == 0 && len(fenced) == 1:
+			case len(fenced) == 1:
 				chosen = fenced[0]
 			}
 		}

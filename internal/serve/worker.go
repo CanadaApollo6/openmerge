@@ -389,8 +389,12 @@ func (s *Server) ignoreWaitingCommand(ctx context.Context, w *worker, number int
 		return err
 	}
 	allowed, err := w.Driver.CanWrite(ctx, w.repo(), comment.Author)
-	if err != nil || !allowed {
+	if err != nil {
 		return err
+	}
+	if !allowed {
+		delete(w.summaries, number)
+		return s.record(ctx, w, fmt.Sprintf("ignored/comment/%d", comment.ID), true)
 	}
 	return s.logIgnoredCommand(ctx, w, number, comment.ID)
 }

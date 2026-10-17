@@ -2,6 +2,8 @@ package store
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -168,5 +170,71 @@ func TestCanonicalVariantSetChangeRetainsCachedOwner(t *testing.T) {
 	must(t, db.pool.QueryRow(t.Context(), `SELECT queue_id FROM canonical_queues`).Scan(&cached))
 	if cached != owner {
 		t.Fatal("conflict overwrote cached owner")
+	}
+}
+
+func TestCanonicalUnfencedLiveVariantCannotBypassFencedReceipts(t *testing.T) {
+	for _, live := range []string{"entry", "rules hold"} {
+		t.Run(live, func(t *testing.T) {
+			db := openTestStore(t, databaseURL(t))
+			key := QueueKey{Installation: "7", Repository: "Owner/Repo", BaseBranch: "release/it's-ready", Lane: "batch"}
+			var owner, unfenced QueueID
+			must(t, db.pool.QueryRow(t.Context(), `INSERT INTO queues(installation,repository,base,lane) VALUES ($1,$2,$3,$4) RETURNING id`, key.Installation, key.Repository, key.BaseBranch, key.Lane).Scan(&owner))
+			must(t, db.pool.QueryRow(t.Context(), `INSERT INTO queues(installation,repository,base,lane) VALUES ($1,lower($2),$3,$4) RETURNING id`, key.Installation, key.Repository, key.BaseBranch, key.Lane).Scan(&unfenced))
+			appendEvents(t, db, owner, queue.FenceInitialized{Token: "existing"})
+			must(t, db.Record(t.Context(), owner, "comment/123", []byte(`true`)))
+			must(t, db.Record(t.Context(), owner, "cursor/1", []byte(`"2026-10-16T00:00:00Z"`)))
+			if live == "entry" {
+				appendEvents(t, db, unfenced, queue.PRObserved{PR: 1, HeadSHA: "head", Eligible: true, Trusted: true}, queue.EnqueueRequested{PR: 1, At: time.Now()})
+			} else {
+				appendEvents(t, db, unfenced, queue.RulesSourceBlocked{Source: queue.Rulesets, Problems: []string{"bootstrap rules hold"}})
+			}
+			for _, fence := range []string{"", "existing"} {
+				got, _, err := db.CanonicalQueueWithFence(t.Context(), key, fence)
+				if err == nil || !strings.Contains(err.Error(), "conflicting case-variant queue histories have live state") || got != 0 {
+					t.Fatalf("unfenced history bypassed receipts: id=%d err=%v", got, err)
+				}
+				var count int
+				must(t, db.pool.QueryRow(t.Context(), `SELECT count(*) FROM canonical_queues`).Scan(&count))
+				if count != 0 {
+					t.Fatal("conflict cached a choice")
+				}
+			}
+			// Follow the documented drain/clear procedure before running its SQL.
+			state, _, err := db.Load(t.Context(), unfenced)
+			must(t, err)
+			if live == "entry" {
+				appendEvents(t, db, unfenced, queue.DequeueRequested{PR: 1}, queue.Dequeued{PR: 1, AdmissionID: state.Entries[0].AdmissionID, Reason: queue.Requested})
+			} else {
+				appendEvents(t, db, unfenced, queue.RulesSourceCleared{Source: queue.Rulesets, Basis: state.RulesSourceRevision(queue.Rulesets)})
+			}
+			doc, err := os.ReadFile("../../docs/operating.md")
+			must(t, err)
+			_, sql, ok := strings.Cut(string(doc), "```sql\n   BEGIN;")
+			if !ok {
+				t.Fatal("operator recovery SQL missing")
+			}
+			sql, _, _ = strings.Cut(sql, "```")
+			escape := func(value string) string { return strings.ReplaceAll(value, "'", "''") }
+			sql = strings.NewReplacer("INSTALLATION", escape(key.Installation), "OWNER/REPO", escape(key.Repository), "BASE", escape(key.BaseBranch), "LANE", escape(key.Lane), "SELECTED_ID", fmt.Sprint(owner)).Replace("BEGIN;" + sql)
+			_, err = db.pool.Exec(t.Context(), sql)
+			must(t, err)
+			got, canonical, err := db.CanonicalQueue(t.Context(), key)
+			must(t, err)
+			if got != owner || canonical != key {
+				t.Fatalf("operator SQL selected %d %+v, want %d %+v", got, canonical, owner, key)
+			}
+			receipt, err := db.Observation(t.Context(), got, "comment/123")
+			must(t, err)
+			cursor, err := db.Observation(t.Context(), got, "cursor/1")
+			must(t, err)
+			state, _, err = db.Load(t.Context(), got)
+			must(t, err)
+			other, _, err := db.Load(t.Context(), unfenced)
+			must(t, err)
+			if state.Fence != "existing" || string(receipt) != "true" || len(cursor) == 0 || other.Fence != "" {
+				t.Fatalf("recovery lost history: owner=%+v other=%+v receipt=%s cursor=%s", state, other, receipt, cursor)
+			}
+		})
 	}
 }

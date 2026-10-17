@@ -332,9 +332,17 @@ before those events were recorded. Do not edit the event log to downgrade.
 
 `conflicting case-variant queue histories` means an older deployment created
 separate rows for different spellings of the same repository. Admission fails
-closed, but each persisted queue ID still settles its own landing. Do not rename
+closed. In discovery mode, each persisted queue ID still settles its own landing.
+In configured-target (flag) mode, startup fails fast on
+`ErrFenceOwnershipRequired` or a fence-read failure; use discovery mode to keep
+settlement running during reconciliation. Do not rename
 or delete rows, reset fences, merge event logs, or copy command receipts between
 histories.
+
+In the SQL below, replace `LANE` with the exact lane (empty for the default
+lane), including in the advisory-lock key. Escape single quotes in every SQL
+string substitution by doubling them: a base named `release/it's-ready` becomes
+`'release/it''s-ready'`.
 
 1. Back up the database. Identify every row for the installation/base/lane,
    including its exact repository spelling:
@@ -343,7 +351,7 @@ histories.
    SELECT id, installation, repository, base, lane, initial_fence
    FROM queues
    WHERE installation = 'INSTALLATION' AND lower(repository) = lower('OWNER/REPO')
-     AND base = 'BASE' AND lane = '' ORDER BY id;
+     AND base = 'BASE' AND lane = 'LANE' ORDER BY id;
    SELECT queue_id, id, recorded_at, payload FROM events
    WHERE queue_id IN (FIRST_ID, SECOND_ID) ORDER BY id;
    SELECT queue_id, key, convert_from(value, 'UTF8') FROM observations
@@ -371,7 +379,9 @@ histories.
    writes no canonical mapping. Event watermarks and lifecycle/access events
    never establish ownership. If fence and receipt evidence disagree, investigate
    the original worker's logs/backup before selecting. The selected row's ID,
-   spelling, receipts and cursors stay intact.
+   spelling, receipts and cursors stay intact. A live unfenced variant alongside
+   any fenced history is a conflict, even if the fenced history has drained;
+   it cannot adopt the fence and bypass the fenced history's command receipts.
 4. Drain entries from each unselected history using a small maintenance program
    **inside this repository** (so it can import `internal/store` and
    `internal/queue`). Connect with `store.Open`, inspect with `db.Load`, and
@@ -413,12 +423,13 @@ histories.
    Run this SQL against the explicit maintenance database, substituting the
    inspected partition and `SELECTED_ID`. It changes only the canonical mapping,
    preserving all histories and receipts. The partition predicates prevent
-   selecting an unrelated queue ID. Require exactly one returned row:
+   selecting an unrelated queue ID. Apply the quoting and lane substitutions
+   above consistently. Require exactly one returned row:
 
    ```sql
    BEGIN;
    SELECT pg_advisory_xact_lock(1330464082,
-     hashtext('INSTALLATION' || '/' || lower('OWNER/REPO') || '/' || 'BASE' || '/' || ''));
+     hashtext('INSTALLATION' || '/' || lower('OWNER/REPO') || '/' || 'BASE' || '/' || 'LANE'));
    INSERT INTO canonical_queues
        (installation, repository, base, lane, queue_id, variant_ids)
    SELECT q.installation, lower(q.repository), q.base, q.lane, q.id,
@@ -428,7 +439,7 @@ histories.
                AND v.base=q.base AND v.lane=q.lane ORDER BY v.id)
    FROM queues q
    WHERE q.id=SELECTED_ID AND q.installation='INSTALLATION'
-     AND lower(q.repository)=lower('OWNER/REPO') AND q.base='BASE' AND q.lane=''
+     AND lower(q.repository)=lower('OWNER/REPO') AND q.base='BASE' AND q.lane='LANE'
    ON CONFLICT (installation, repository, base, lane) DO UPDATE
      SET queue_id=EXCLUDED.queue_id, variant_ids=EXCLUDED.variant_ids
    RETURNING queue_id, variant_ids;

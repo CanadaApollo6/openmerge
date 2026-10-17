@@ -68,6 +68,7 @@ type Server struct {
 	repositories        []Repository
 	refresh             chan struct{}
 	refreshFailures     int
+	refreshNextAt       time.Time
 	refreshRetryAt      time.Time
 	refreshNotBefore    time.Time
 }
@@ -219,12 +220,13 @@ func (s *Server) Run(ctx context.Context) error {
 	defer wg.Wait()
 	for {
 		s.refreshMu.Lock()
+		nextAt := s.refreshNextAt
 		retryAt := s.refreshRetryAt
 		notBefore := s.refreshNotBefore
 		s.refreshMu.Unlock()
 		delay := s.options.DiscoveryInterval
-		if !retryAt.IsZero() {
-			delay = max(0, time.Until(retryAt))
+		if !nextAt.IsZero() {
+			delay = max(0, time.Until(maxTime(nextAt, maxTime(retryAt, notBefore))))
 		}
 		timer.Reset(delay)
 		select {
@@ -235,7 +237,7 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 		if deadline := maxTime(retryAt, notBefore); time.Now().Before(deadline) {
 			s.refreshMu.Lock()
-			s.refreshRetryAt = deadline
+			s.refreshNextAt = deadline
 			s.refreshMu.Unlock()
 			continue
 		}

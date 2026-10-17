@@ -126,9 +126,10 @@ func (s *Server) Refresh(ctx context.Context) error {
 func (s *Server) refreshResult(err error) {
 	now := time.Now()
 	s.refreshNotBefore = now.Add(min(time.Second, s.options.DiscoveryInterval))
+	s.refreshNextAt = now.Add(s.options.DiscoveryInterval)
+	s.refreshRetryAt = time.Time{}
 	if err == nil {
 		s.refreshFailures = 0
-		s.refreshRetryAt = time.Time{}
 		return
 	}
 	var rate interface{ RetryAfter() time.Time }
@@ -165,7 +166,12 @@ func (s *Server) refreshResult(err error) {
 			w.mu.Unlock()
 		}
 	}
-	s.refreshRetryAt = maxTime(retryAt, s.refreshNotBefore)
+	s.refreshNextAt = maxTime(retryAt, s.refreshNotBefore)
+	// Scheduled installation/validation retries must not suppress later wakes
+	// from healthy installations. Only global quota or failure backoff does.
+	if limited || !pending {
+		s.refreshRetryAt = s.refreshNextAt
+	}
 	if limited {
 		s.options.Logger.Debug("discovery quota backoff", "until", s.refreshRetryAt)
 	} else {

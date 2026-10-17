@@ -1,5 +1,6 @@
 -- A chosen history remains canonical after its queue drains. Cache the complete
--- variant set so importing another legacy row forces reconciliation again.
+-- variant set so an imported legacy row is checked for conflicts while the
+-- existing canonical choice is retained.
 CREATE TABLE canonical_queues (
     installation text NOT NULL,
     repository text NOT NULL CHECK (repository = lower(repository)),
