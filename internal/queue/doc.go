@@ -21,11 +21,14 @@
 // The invalidation marker blocks eligibility immediately, before its action is
 // executed. Late results cannot revive it; a late build result reissues cleanup.
 // There is no CI cancellation capability in this step: invalidated CI finishes.
+// Admission stops behind any provisional or failed batch; PR 5 must explicitly
+// decide whether to retain that conservative policy. Unrelated build retries
+// wait for all bisection halves to resolve.
 //
 // Only the settled oldest batch consumes a same-commit retry or diagnoses a
 // failure. Later check results and conflicts are provisional. A confirmed oldest
 // failure invalidates the suffix, then splits or dequeues as in serial mode.
-// DiagnoseBatch/BatchDiagnosed promote provisional build/legacy failures once
+// DiagnoseBatch/BatchDiagnosed promote provisional build failures once
 // they reach the head. Pending halves form a new chain ahead of fresh work; no
 // fresh batches are admitted while a half remains unresolved. Leaving changes
 // invalidate their batch and suffix; config changes invalidate all non-landing

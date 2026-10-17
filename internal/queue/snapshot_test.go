@@ -2,6 +2,7 @@ package queue
 
 import (
 	"bytes"
+	"encoding/json"
 	"reflect"
 	"testing"
 	"time"
@@ -34,7 +35,7 @@ func TestChainSnapshotPreservesRevocationRetriesAndPendingHalves(t *testing.T) {
 	s = Apply(s, failed)
 	s = Apply(s, ChecksReopened{TestedSHA: tail.TestedSHA, At: now.Add(time.Minute)})
 	s = snapshotRoundTrip(t, cfg, s, now.Add(time.Minute))
-	s = Apply(s, ChecksCompleted{TestedSHA: head.TestedSHA, Success: false})
+	s = Apply(s, ChecksFailureConfirmed{BatchID: head.ID, TestedSHA: head.TestedSHA, Generation: head.checksGeneration, Reason: ChecksFailed})
 	s = snapshotRoundTrip(t, cfg, s, now)
 	for _, a := range Plan(cfg, s, now) {
 		if a, ok := a.(InvalidateBatches); ok {
@@ -89,5 +90,72 @@ func TestSnapshotRejectsMissingNestedGeneration(t *testing.T) {
 	data = bytes.Replace(data, []byte(`"ChecksGeneration":0,`), nil, 1)
 	if _, err := DecodeSnapshot(data); err == nil {
 		t.Fatal("snapshot silently manufactured a checks generation")
+	}
+}
+
+func TestSnapshotContinuationBetweenSuffixInvalidations(t *testing.T) {
+	cfg, s, now := chainState(t, 4, 3)
+	s, first := admitChain(t, cfg, s, now)
+	s, _ = admitChain(t, cfg, s, now)
+	s, _ = admitChain(t, cfg, s, now)
+	s = Apply(s, ChecksCompleted{TestedSHA: first.TestedSHA, Success: true})
+	s = Apply(s, LandingStarted{BatchID: first.ID, AttemptID: "attempt", FenceToken: s.Fence, At: now})
+	restored := snapshotRoundTrip(t, cfg, s, now)
+	events := []Event{DequeueRequested{PR: 3}, BaseMoved{SHA: "outside"}, BatchesInvalidated{BatchIDs: []string{"b2"}, Reason: "base-moved"}, BatchesInvalidated{BatchIDs: []string{"b3"}, Reason: "dequeue"}}
+	// Use the recorded reasons so each event follows the actual planner decision.
+	for i, e := range events {
+		if _, ok := e.(BatchesInvalidated); ok {
+			a, pending := s.pendingInvalidation()
+			if !pending {
+				t.Fatal("no invalidation")
+			}
+			e = BatchesInvalidated(a)
+		}
+		s, restored = Apply(s, e), Apply(restored, e)
+		restored = snapshotRoundTrip(t, cfg, restored, now)
+		want, _ := EncodeSnapshot(s)
+		got, _ := EncodeSnapshot(restored)
+		if !bytes.Equal(want, got) {
+			t.Fatalf("snapshot replay differs after event %d", i)
+		}
+	}
+}
+
+func TestSnapshotRejectsInvalidChainAndBounds(t *testing.T) {
+	cfg, s, now := chainState(t, 4, 3)
+	s, _ = admitChain(t, cfg, s, now)
+	s, _ = admitChain(t, cfg, s, now)
+	for _, tc := range []struct {
+		name   string
+		mutate func(*stateSnapshot)
+	}{
+		{"root parent", func(v *stateSnapshot) { v.Chain[0].Batch.ParentBatchID = "missing" }},
+		{"root position", func(v *stateSnapshot) { v.Chain[0].Batch.ChainPosition = 0 }},
+		{"root base", func(v *stateSnapshot) { v.Chain[0].Batch.BaseSHA = "wrong" }},
+		{"duplicate PR", func(v *stateSnapshot) { v.Chain[1].Batch.PRs = v.Chain[0].Batch.PRs }},
+		{"unmarked gap", func(v *stateSnapshot) { v.Chain[1].Batch.ParentBatchID = "missing"; v.Chain[1].Batch.ChainPosition = 3 }},
+		{"entries bound", func(v *stateSnapshot) { v.Entries = make([]Entry, 100001) }},
+		{"effects bound", func(v *stateSnapshot) {
+			v.Effects = make([]json.RawMessage, 100001)
+			for i := range v.Effects {
+				_, v.Effects[i], _ = EncodeAction(DeleteRef{Ref: "openmerge/queue/main/b1"})
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			data, _ := EncodeSnapshot(s)
+			var v stateSnapshot
+			if err := json.Unmarshal(data, &v); err != nil {
+				t.Fatal(err)
+			}
+			tc.mutate(&v)
+			data, err := json.Marshal(v)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := DecodeSnapshot(data); err == nil {
+				t.Fatal("accepted invalid snapshot")
+			}
+		})
 	}
 }

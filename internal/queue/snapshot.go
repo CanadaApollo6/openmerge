@@ -14,6 +14,12 @@ import (
 // contain bounded projection state, never a copy of the event history.
 const SnapshotVersion = 1
 
+// Decoder resource limits are deliberately above ordinary queue sizes. This
+// codec is not wired into store persistence; PR 5 must add adaptive window state.
+const maxSnapshotEntries = 100000
+const maxSnapshotEffects = 100000
+const maxSnapshotBytes = 64 << 20
+
 type batchSnapshot struct {
 	Batch                 Batch
 	ChecksPassed          bool
@@ -146,6 +152,9 @@ func EncodeSnapshot(s State) ([]byte, error) {
 // DecodeSnapshot rejects incomplete/unknown schemas rather than manufacturing
 // missing timer or fence evidence. Subsequent events use the ordinary Apply.
 func DecodeSnapshot(data []byte) (State, error) {
+	if len(data) > maxSnapshotBytes {
+		return State{}, fmt.Errorf("snapshot exceeds byte bound")
+	}
 	if err := requireSnapshotFields(data, reflect.TypeFor[stateSnapshot](), "snapshot"); err != nil {
 		return State{}, err
 	}
@@ -158,7 +167,7 @@ func DecodeSnapshot(data []byte) (State, error) {
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		return State{}, fmt.Errorf("trailing snapshot data")
 	}
-	if v.Version != SnapshotVersion || len(v.Chain) > 32 || len(v.Invalidations) > 32 || len(v.TestedOrder) > testedHistory || len(v.Checks) > maxRetainedChecks {
+	if v.Version != SnapshotVersion || len(v.Chain) > 32 || len(v.Invalidations) > 32 || len(v.TestedOrder) > testedHistory || len(v.Checks) > maxRetainedChecks || len(v.Entries) > maxSnapshotEntries || len(v.Effects) > maxSnapshotEffects {
 		return State{}, fmt.Errorf("invalid snapshot version or bounds")
 	}
 	s := State{
@@ -191,18 +200,44 @@ func DecodeSnapshot(data []byte) (State, error) {
 		rulesSources:       make(map[RulesSource]rulesSourceState),
 	}
 	seen := make(map[string]bool)
+	seenPRs := make(map[int]bool)
+	invalidating := false
 	for i, item := range v.Chain {
 		b := item.Batch
-		if b.ID == "" || seen[b.ID] || validateBatchPRs(b.PRs) != nil {
+		if b.ID == "" || seen[b.ID] || b.BaseSHA == "" || b.ParentBatchID == b.ID || validateBatchPRs(b.PRs) != nil {
 			return State{}, fmt.Errorf("invalid snapshot batch")
 		}
+		for _, pr := range b.PRs {
+			if seenPRs[pr.PR] {
+				return State{}, fmt.Errorf("duplicate PR in snapshot chain")
+			}
+			seenPRs[pr.PR] = true
+		}
 		seen[b.ID] = true
+		if b.Speculative {
+			if validateChainPosition(b.ParentBatchID, b.ChainPosition) != nil {
+				return State{}, fmt.Errorf("invalid snapshot position")
+			}
+		} else if i > 0 || b.ParentBatchID != "" || b.ChainPosition != 0 {
+			return State{}, fmt.Errorf("invalid legacy snapshot position")
+		}
+		if invalidating && b.InvalidationReason == "" {
+			return State{}, fmt.Errorf("invalid snapshot suffix")
+		}
+		invalidating = invalidating || b.InvalidationReason != ""
+		if i == 0 && b.InvalidationReason == "" && b.Phase != Landing && b.BaseSHA != v.BaseSHA {
+			return State{}, fmt.Errorf("invalid snapshot root base")
+		}
 		if b.Phase != Building && b.Phase != Testing && b.Phase != Landing || i > 0 && b.Phase == Landing {
 			return State{}, fmt.Errorf("invalid snapshot phase")
 		}
 		if i > 0 {
 			parent := v.Chain[i-1].Batch
-			if b.ParentBatchID != parent.ID || b.BaseSHA != parent.LandingCommit() || b.ChainPosition != parent.ChainPosition+1 {
+			if b.ParentBatchID == parent.ID {
+				if b.BaseSHA != parent.LandingCommit() || b.ChainPosition != parent.ChainPosition+1 {
+					return State{}, fmt.Errorf("invalid snapshot chain")
+				}
+			} else if b.InvalidationReason == "" || b.ChainPosition <= parent.ChainPosition+1 || seen[b.ParentBatchID] {
 				return State{}, fmt.Errorf("invalid snapshot chain")
 			}
 		}

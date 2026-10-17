@@ -139,6 +139,9 @@ func Apply(s State, e Event) State {
 		s.actionPoison = actionPoisonState{key: e.Key, reason: e.Reason, revision: s.revision}
 	case BatchDiagnosed:
 		if s.Active != nil && s.Active.ID == e.BatchID && s.Active.InvalidationReason == "" && s.Active.ProvisionalFailure == e.Reason {
+			if s.Active.Speculative && s.Active.Phase == Testing && (e.Reason == ChecksFailed || e.Reason == ChecksTimeout) {
+				break
+			}
 			s.Active.ProvisionalFailure = ""
 			s.failBatch(s.Active, e.Reason)
 		}
@@ -484,6 +487,9 @@ func (s *State) completeChecks(b *Batch, success bool) {
 	}
 	if success {
 		b.checksPassed = true
+	} else if b.Speculative {
+		b.ProvisionalFailure = ChecksFailed
+		s.refreshChecks(b)
 	} else {
 		s.failBatch(b, ChecksFailed)
 	}

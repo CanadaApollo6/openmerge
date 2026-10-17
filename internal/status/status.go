@@ -91,7 +91,7 @@ type BatchPR struct {
 type Entry struct {
 	BatchID           string     `json:"batch_id,omitempty"`
 	BatchPosition     uint64     `json:"batch_position,omitempty"`
-	BatchesAhead      int        `json:"batches_ahead"`
+	BatchesAhead      *int       `json:"batches_ahead"`
 	Position          int        `json:"position"`
 	PR                int        `json:"pr"`
 	HeadSHA           string     `json:"head_sha"`
@@ -220,7 +220,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 	}
 	q.Paused = len(q.Blocks) > 0
 	for i, b := range s.Batches() {
-		item := &Batch{ID: b.ID, Phase: string(b.Phase), BaseSHA: b.BaseSHA, TestedSHA: b.TestedSHA, TestRef: b.TestRef, Method: string(b.Method), PRs: make([]BatchPR, 0, len(b.PRs)), CheckRetry: cloneCheckRetry(b.CheckRetry), Position: max(1, b.ChainPosition), ParentBatchID: b.ParentBatchID, BatchesAhead: i, LandingSHA: b.LandingCommit(), InvalidationReason: b.InvalidationReason, ProvisionalFailure: string(b.ProvisionalFailure)}
+		item := &Batch{ID: b.ID, Phase: string(b.Phase), BaseSHA: b.BaseSHA, TestedSHA: b.TestedSHA, TestRef: b.TestRef, Method: string(b.Method), PRs: make([]BatchPR, 0, len(b.PRs)), CheckRetry: cloneCheckRetry(b.CheckRetry), Position: max(1, b.ChainPosition), ParentBatchID: b.ParentBatchID, BatchesAhead: i, LandingSHA: b.LandingCommit(), InvalidationReason: b.InvalidationReason, ProvisionalFailure: provisionalFailure(b)}
 		if item.CheckRetry != nil {
 			item.CheckRetry.Detail = sanitizer.Sanitize(item.CheckRetry.Detail)
 		}
@@ -241,7 +241,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 			e.BatchID, e.BatchPosition = b.ID, max(1, b.ChainPosition)
 			for i, candidate := range s.Batches() {
 				if candidate.ID == b.ID {
-					e.BatchesAhead = i
+					e.BatchesAhead = &i
 					break
 				}
 			}
@@ -747,4 +747,16 @@ func affects(event queue.Event, pr int, before, after queue.State, tested map[st
 type Readiness struct {
 	Ready  bool   `json:"ready"`
 	Reason string `json:"reason,omitempty"`
+}
+
+// Identified failures on later batches have not yet consumed their head-only
+// rerun. Expose that distinction alongside the raw check retry state.
+func provisionalFailure(b *queue.Batch) string {
+	if b.ProvisionalFailure != "" {
+		return string(b.ProvisionalFailure)
+	}
+	if b.CheckRetry != nil && !b.CheckRetry.Confirmed && b.CheckRetry.RerunState == "failed" {
+		return string(queue.ChecksFailed)
+	}
+	return ""
 }

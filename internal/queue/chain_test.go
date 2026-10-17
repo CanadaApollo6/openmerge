@@ -104,8 +104,8 @@ func TestChainProvisionalConflictNeverBlamesSuffix(t *testing.T) {
 	if s.PendingDequeue(2) != "" || s.Batch(second.BatchID).ProvisionalFailure != Conflict {
 		t.Fatal("provisional conflict blamed a change")
 	}
-	// Confirm a legacy head failure, invalidating the dependent conflict.
-	s = Apply(s, ChecksCompleted{TestedSHA: first.TestedSHA, Success: false})
+	// Confirm a head failure, invalidating the dependent conflict.
+	s = Apply(s, ChecksFailureConfirmed{BatchID: first.ID, TestedSHA: first.TestedSHA, Generation: first.checksGeneration, Reason: ChecksFailed})
 	for _, a := range Plan(cfg, s, now) {
 		if a, ok := a.(InvalidateBatches); ok {
 			s = Apply(s, BatchesInvalidated(a))
@@ -123,8 +123,17 @@ func TestChainProvisionalConflictNeverBlamesSuffix(t *testing.T) {
 func TestChainProvisionalFailurePromotesAfterSettlement(t *testing.T) {
 	cfg, s, now := chainState(t, 3, 2)
 	s, first := admitChain(t, cfg, s, now)
-	s, second := admitChain(t, cfg, s, now)
-	s = Apply(s, ChecksCompleted{TestedSHA: second.TestedSHA, Success: false})
+	var second BuildChainedTestRef
+	for _, a := range Plan(cfg, s, now) {
+		if a, ok := a.(BuildChainedTestRef); ok {
+			second = a
+		}
+	}
+	if second.BatchID == "" {
+		t.Fatal("no successor build")
+	}
+	s = Apply(s, ChainedBatchStarted{BatchID: second.BatchID, BaseSHA: second.BaseSHA, PRs: second.PRs, At: now, ParentBatchID: second.ParentBatchID, Position: second.Position})
+	s = Apply(s, TestRefBuildFailed{BatchID: second.BatchID, Conflict: true, At: now})
 	if s.PendingDequeue(2) != "" {
 		t.Fatal("provisional failure blamed change")
 	}
@@ -136,7 +145,7 @@ func TestChainProvisionalFailurePromotesAfterSettlement(t *testing.T) {
 			diagnosed = true
 		}
 	}
-	if !diagnosed || s.PendingDequeue(2) != ChecksFailed {
+	if !diagnosed || s.PendingDequeue(2) != Conflict {
 		t.Fatal("settled oldest was not diagnosed")
 	}
 }
@@ -217,7 +226,7 @@ func TestConfigChangeDropsAllOldBisectionGroups(t *testing.T) {
 	cfg, s, now := chainState(t, 4, 8)
 	cfg.BatchMaxSize = 4
 	s, b := admitChain(t, cfg, s, now)
-	s = Apply(s, ChecksCompleted{TestedSHA: b.TestedSHA, Success: false})
+	s = Apply(s, ChecksFailureConfirmed{BatchID: b.ID, TestedSHA: b.TestedSHA, Generation: b.checksGeneration, Reason: ChecksFailed})
 	s, first := admitChain(t, cfg, s, now)
 	s, second := admitChain(t, cfg, s, now)
 	if !first.FromBisection || !second.FromBisection {

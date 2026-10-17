@@ -2,7 +2,11 @@
 
 The real planner and executor use fixed W = 4. Seeds 1–8 each admit 30 days of uniform arrivals, with the ADR 0009 pinned policy: batch size 8, five-minute max wait, 2% broken changes, 1% flaky runs, 50 runners, and timeout 1.5 × CI. The one-second observation/enqueue delay remains in the simulator. No thresholds were changed.
 
-Both requested cancellation capability settings pass. The effective behavior is **unsupported** in both runs: PR 3 never requests cancellation, and invalidated runs finish. The adaptive-sizing exit test stays skipped for PR 5. The PR 1 model includes AIMD and its configured cancellation behavior, so its numerical predictions are a comparison, not an expected byte-identical trace.
+The unsupported-cancellation mode passes. The supported mode is explicitly
+skipped with “cancellation arrives in ADR 0009 PR 4”: PR 3 never requests
+cancellation for speculative batches, and invalidated runs finish. Earlier runs
+with both capability settings produced identical planner traces by construction;
+they did not exercise speculative cancellation. The adaptive-sizing exit test stays skipped for PR 5. The PR 1 model includes AIMD and its configured cancellation behavior, so its numerical predictions are a comparison, not an expected byte-identical trace.
 
 ## Pooled results
 
@@ -18,7 +22,7 @@ The small cost/tail differences are measured, not reconciled into the capacity m
 
 ## Per-seed and cold-start results
 
-Both capability settings produce identical planner results, so each seed is listed once. Day 1 means changes arriving in the first 24 hours, followed through resolution; it has no pass criterion. Cold-start cost is not calculated here.
+The unsupported-cancellation planner results are listed once per seed. Day 1 means changes arriving in the first 24 hours, followed through resolution; it has no pass criterion. Cold-start cost is not calculated here.
 
 ### Team
 

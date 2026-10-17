@@ -144,6 +144,11 @@ func planBatch(cfg Config, s State, batch *Batch, now time.Time) []Action {
 	}
 	if batch.ProvisionalFailure != "" {
 		if batch == s.Active {
+			if batch.Phase == Testing && cfg.RetryLimit() == 1 && (batch.ProvisionalFailure == ChecksFailed || batch.ProvisionalFailure == ChecksTimeout) {
+				// Legacy aggregate observations lack producer/attempt identities. Refresh
+				// them through the retry-aware executor before spending the rerun budget.
+				return append(actions, RefreshChecks{BatchID: batch.ID, TestedSHA: batch.TestedSHA, epoch: batch.checkRefreshes})
+			}
 			return append(actions, DiagnoseBatch{BatchID: batch.ID, Reason: batch.ProvisionalFailure})
 		}
 		return actions
@@ -364,13 +369,16 @@ func (cfg Config) buildRetryDelay(failures int) time.Duration {
 
 // batchCandidates gives pending sub-batches priority and never waits to retest them.
 func (s State) batchCandidates(cfg Config, now time.Time) ([]BatchPR, time.Time) {
-	if len(s.pending) > 0 {
+	if len(s.pending) > 0 && s.pending[0].bisection {
 		return slices.Clone(s.pending[0].prs), time.Time{}
 	}
 	for _, b := range s.Batches() {
 		if b.FromBisection {
 			return nil, time.Time{}
 		}
+	}
+	if len(s.pending) > 0 {
+		return slices.Clone(s.pending[0].prs), time.Time{}
 	}
 	size := cfg.BatchMaxSize
 	if size == 0 {

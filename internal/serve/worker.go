@@ -314,10 +314,20 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 						break
 					}
 				}
-				status.Summary += fmt.Sprintf("; chain position %d, built on %s; %d batches ahead", batch.ChainPosition, batch.ParentBatchID, ahead)
+				status.Summary += fmt.Sprintf("; chain position %d", batch.ChainPosition)
+				if batch.ParentBatchID != "" {
+					status.Summary += ", built on " + batch.ParentBatchID
+				}
+				status.Summary += fmt.Sprintf("; %d batches ahead", ahead)
 			}
 			if retry := batch.CheckRetry; retry != nil {
 				status.Summary += "; " + checkRetryStatus(retry)
+				if !retry.Confirmed && retry.RerunState == "failed" {
+					status.Summary += "; provisional failure: checks-failed"
+				}
+			}
+			if batch.ProvisionalFailure != "" {
+				status.Summary += "; provisional failure: " + string(batch.ProvisionalFailure)
 			}
 			if batch.InvalidationReason != "" {
 				status.Summary += "; invalidated: " + batch.InvalidationReason

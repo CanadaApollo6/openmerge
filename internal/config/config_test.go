@@ -112,7 +112,7 @@ func TestDefaultsAndOverrides(t *testing.T) {
 					t.Errorf("empty conditions = %v, %v", ok, failed)
 				}
 			}
-			wantPlanner := queue.Config{SpeculationMaxDepth: 1, SpeculationMinDepth: 1,
+			wantPlanner := queue.Config{
 				MergeMethod: tt.method, CheckTimeout: tt.timeout,
 				ChecksRetryFailed: q.Checks.RetryFailed,
 				BatchMaxSize:      tt.batch.MaxSize, BatchMaxWait: tt.batch.MaxWait,

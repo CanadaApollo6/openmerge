@@ -316,6 +316,7 @@ func (s *State) observeChecks(e ChecksObserved) {
 		}
 		return
 	}
+	b.ProvisionalFailure = ""
 	r.ObservedRuns = latest
 	if !e.Terminal {
 		s.refreshChecks(b)

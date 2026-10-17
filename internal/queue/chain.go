@@ -301,11 +301,18 @@ func (s *State) applyInvalidation(e BatchesInvalidated) {
 			return
 		}
 	}
+	// Pending infrastructure retries must not jump ahead of earlier members
+	// returned to Entries by this invalidation. Preserve those batch boundaries
+	// alongside retries, then order all recovered work by original admission.
+	preserveGroups := slices.ContainsFunc(s.pending, func(g pendingGroup) bool { return !g.bisection })
 	var groups []pendingGroup
 	for _, id := range e.BatchIDs {
 		b := s.Batch(id)
-		if b.FromBisection && b.ConfigDigest == s.ConfigDigest && e.Reason != "config-changed" {
-			groups = append(groups, pendingGroup{prs: slices.Clone(b.PRs), bisection: true})
+		if (b.FromBisection || preserveGroups) && b.ConfigDigest == s.ConfigDigest && e.Reason != "config-changed" {
+			prs := slices.DeleteFunc(slices.Clone(b.PRs), func(pr BatchPR) bool { return !s.runnablePRs([]BatchPR{pr}) })
+			if len(prs) > 0 {
+				groups = append(groups, pendingGroup{prs: prs, bisection: b.FromBisection})
+			}
 		}
 		s.discardBatch(b)
 	}
@@ -348,7 +355,7 @@ func planChainAdmission(cfg Config, s State, now time.Time) []Action {
 	return []Action{BuildChainedTestRef{BuildTestRef: BuildTestRef{BatchID: id, BaseSHA: base, PRs: prs, Ref: "openmerge/queue/" + s.BaseBranch + "/" + id, Method: cfg.MergeMethod}, ParentBatchID: parent, Position: position}}
 }
 
-// DiagnoseBatch promotes an already recorded provisional build/legacy failure
+// DiagnoseBatch promotes an already recorded provisional build failure
 // only when its predecessors have landed and settled.
 type DiagnoseBatch struct {
 	BatchID string        `json:"batch_id"`

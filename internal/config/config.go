@@ -94,8 +94,16 @@ type Batch struct {
 // 1m uncertain-landing resolution wait, 1m check refresh, 3 consecutive build
 // failures before pausing, and a 5s initial build backoff (doubled per failure).
 func (q Queue) QueueConfig() queue.Config {
+	// Zero encodes the legacy depth-1 policy without adding JSON digest fields.
+	maxDepth, minDepth := q.Speculation.MaxDepth, q.Speculation.MinDepth
+	if maxDepth == 1 {
+		maxDepth = 0
+	}
+	if minDepth == 1 {
+		minDepth = 0
+	}
 	return queue.Config{
-		SpeculationMaxDepth: max(1, q.Speculation.MaxDepth), SpeculationMinDepth: max(1, q.Speculation.MinDepth),
+		SpeculationMaxDepth: maxDepth, SpeculationMinDepth: minDepth,
 		MergeMethod: q.MergeMethod, CheckTimeout: q.CheckTimeout,
 		ChecksRetryFailed: q.retryLimit(),
 		BatchMaxSize:      q.Batch.MaxSize, BatchMaxWait: q.Batch.MaxWait,

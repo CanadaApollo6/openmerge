@@ -769,7 +769,10 @@ queues:
 Both depths default to 1; require `1 <= min_depth <= max_depth <= 32`.
 This implementation uses a fixed window equal to `max_depth`. `min_depth` is
 validated and included in the effective policy digest, reserved for the later
-adaptive-window step. The default remains 1. Changing either setting invalidates
+adaptive-window step. The default stays 1 per ADR 0009 until its dogfooding
+criteria are met. Explicit depth-1 defaults retain the pre-speculation config
+digest, so upgrading unchanged YAML does not discard active work or pending
+bisection groups. Changing either setting invalidates
 unstarted landings under the existing configuration protocol.
 
 Every admitted batch occupies a slot until it lands or is invalidated, including
@@ -783,15 +786,28 @@ failed required checks, even when `checks.retry_failed` is omitted or set to 0.
 Depth 1 keeps its opt-in retry policy. Later failures are provisional until all
 predecessors settle; an invalidated predecessor discards those results without
 blaming their changes. Confirmed failure invalidates the suffix and bisects the
-oldest batch, with both halves ahead of fresh work.
+oldest batch, with both halves ahead of unrelated build retries and fresh work.
+Admission conservatively stops behind any provisional or failed batch, even
+while free window slots remain; PR 5 must explicitly decide whether to retain
+that rule.
 
-CI cancellation is not implemented in this release step. Invalidated runs finish
-and consume runners; late results cannot revive their batches. Test refs are
+Keep `max_depth` at 1 unless the repository has at least `max_depth` CI runners
+available for these checks. Forge-side runner queueing counts toward
+`check_timeout`: with two runners and depth four, queued runs can time out and
+cause bisection or dequeues before they finish.
+
+CI cancellation arrives in ADR 0009 PR 4. Until then, invalidated runs finish
+and consume runners: a broken batch can cost approximately W runs plus its
+same-commit rerun, before bisection. Late results cannot revive their batches. Test refs are
 cleaned, including a fresh cleanup action after a delayed builder reports.
 Status/API expose the ordered chain, parent batch, tested/landing commits,
 per-change batch position and number ahead, and recent invalidation reasons.
 
 The additive wire-v1 chain types require compatible workers. Drain old workers
-before enabling speculation. Returning to depth 1 does not make an older binary
+before upgrading. Returning to depth 1 does not make an older binary
 able to replay those records; rollback across their first use requires a database
 restore. Existing depth-1 event/action wire types and fixtures are unchanged.
+
+Snapshots currently have an encode/decode codec only; the store still replays
+journals and does not write or load these snapshots. PR 5 must include the
+adaptive window state in the codec before snapshots can support that policy.

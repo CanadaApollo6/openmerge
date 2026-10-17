@@ -152,7 +152,7 @@ ADR 0009 step 3 adds `chained_batch_started` for durable admission and
 `chained_test_ref_built` for its tested/landing commit pair, parent batch and
 chain position. Commits are pinned by the result because they do not exist at
 admission. `batches_invalidated` records exact discarded batch IDs and cause;
-`batch_diagnosed` promotes an oldest provisional build/legacy failure. Their
+`batch_diagnosed` promotes an oldest provisional build failure. Their
 new actions are `build_chained_test_ref`, `invalidate_batches`, `diagnose_batch`,
 and `cleanup_invalidated_ref` (a new cleanup key when a builder reports after
 an earlier deletion finished). Each has a golden fixture. All previously
@@ -160,4 +160,5 @@ deployed wire structs and fixtures remain unchanged, and depth 1 emits only its
 existing protocol. Compact projection snapshots now have an explicit codec for
 the chain, checks/retry generations and deadlines, pending groups, effects and
 fences. Store persistence still uses journal replay; enabling database retention
-or compaction is separate work.
+or compaction is separate work. PR 5 must extend the codec with adaptive window
+state before snapshots can support that policy.
