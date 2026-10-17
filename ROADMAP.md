@@ -132,18 +132,22 @@ Built after Phase 1 closes, in parallel with Phase 2 where they don't overlap ([
 
 ### Phase 3 — Agent-native
 
+Phase 3 treats the change, not the pull request, as the unit of work, with pull requests as one optional view ([ADR 0007](docs/adr/0007-changes-not-prs.md)).
+
 - **Change identity:** a queue entry tracks a logical change across re-pushes and rebases; a superseding push cancels stale runs instead of stacking new ones
 - Per-author and per-agent concurrency, CI-spend, and retry budgets, with escalation to a human
-- Agent-aware policy rules (policy-bot style): e.g. agent-authored PRs touching `infra/**` need two human approvals
+- **Direct submission:** `openmerge change submit` (CLI, API, MCP) for authenticated writers and agents acting for an accountable human; `changes.pull_requests: required | when_review_needed | never` per repository, default `required`
+- **Policy approvals:** agent-aware rules (policy-bot style) map change classes, paths and authors to required approvals, e.g. agent-authored changes touching `infra/**` need two owners; approvals bind to exact heads and are recorded in the landed commit
 - Structured failure explanations: which batch, which check, which tests, flaky or real, suggested next action
 - **Conflict grace:** with change identity, a conflicting PR may hold its position for one non-renewable `conflict_grace` with bounded retries, while PRs behind it keep landing
-- **Change classification for approvals:** comment-only, docs-only, generated, or owned-directory changes, so policy can ask for human review of intent only where it matters
+- **Change classification for approvals:** deterministic comment-only, docs-only, generated, or owned-directory classes, so policy can ask for human review of intent only where it matters
+- **Review briefs:** reviewer, operator and agent views generated from the event log; model-written prose is labelled and never counts as evidence
 - **Write API and lookups agents need:** enqueue/dequeue/refresh over the API, and "which commit landed PR N" without scanning history
 - A ready-made **queue-watcher agent skill** that reads the structured logs and "why" API and reports anomalies
 - Outbound webhooks and OpenTelemetry export for every queue event
 - Agent skills and docs written for agents (`llms.txt`, Markdown docs, stable `--json` and exit codes)
 
-**Exit:** an unattended coding agent can take a PR from "opened" to "merged or definitively rejected" using only the CLI or MCP, with no human reading logs.
+**Exit:** an unattended coding agent can take a change from "submitted" to "landed or definitively rejected" using only the CLI or MCP, with a pull request only where policy requires a human, who approves from the generated brief without reading logs.
 
 ### Phase 4 — Monorepos and CI intelligence
 
