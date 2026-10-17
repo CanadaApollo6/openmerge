@@ -50,7 +50,7 @@ func (a *fakeActions) Attempt(_ context.Context, id int64, n int) (*github.Workf
 	return r, nil
 }
 func runFixture(id int64, n, created, started, completed int, sha string) *github.WorkflowRun {
-	return &github.WorkflowRun{ID: new(id), Name: new("CI"), HeadBranch: new("openmerge/queue/main/b1"), HeadSHA: new(sha), RunAttempt: new(n), CreatedAt: &github.Timestamp{Time: epoch.Add(time.Duration(created) * time.Second)}, RunStartedAt: &github.Timestamp{Time: epoch.Add(time.Duration(started) * time.Second)}, UpdatedAt: &github.Timestamp{Time: epoch.Add(time.Duration(completed) * time.Second)}, Status: new("completed"), Conclusion: new("success")}
+	return &github.WorkflowRun{ID: new(id), Name: new("CI"), Path: new(".github/workflows/ci.yml"), HeadBranch: new("openmerge/queue/main/b1"), HeadSHA: new(sha), RunAttempt: new(n), CreatedAt: &github.Timestamp{Time: epoch.Add(time.Duration(created) * time.Second)}, RunStartedAt: &github.Timestamp{Time: epoch.Add(time.Duration(started) * time.Second)}, UpdatedAt: &github.Timestamp{Time: epoch.Add(time.Duration(completed) * time.Second)}, Status: new("completed"), Conclusion: new("success")}
 }
 func TestRunAttemptDedupAndBatchAttributionAcrossBoundary(t *testing.T) {
 	first := runFixture(1, 2, 10, 120, 130, "old")
@@ -80,12 +80,12 @@ func TestRunAttemptDedupAndBatchAttributionAcrossBoundary(t *testing.T) {
 	for _, key := range a.attemptCalls {
 		counts[key]++
 	}
-	for _, key := range [][2]int64{{1, 1}, {1, 2}, {2, 1}, {3, 1}, {5, 1}} {
-		if counts[key] != 2 {
+	for _, key := range [][2]int64{{1, 1}, {1, 2}, {2, 1}, {3, 1}} {
+		if counts[key] != 1 {
 			t.Fatalf("attempt endpoint calls: %v", counts)
 		}
 	}
-	if counts[[2]int64{4, 1}] != 0 {
+	if counts[[2]int64{4, 1}] != 0 || counts[[2]int64{5, 1}] != 0 {
 		t.Fatal("nonqueue run expanded")
 	}
 }

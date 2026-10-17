@@ -15,6 +15,13 @@ type Actions interface {
 	List(context.Context, string) ([]*github.WorkflowRun, error)
 	Attempt(context.Context, int64, int) (*github.WorkflowRun, error)
 }
+
+// AuditSource adds independent forge history to the Actions evidence.
+type AuditSource interface {
+	Actions
+	BaseTip(context.Context, string) (string, error)
+	Ancestor(context.Context, string, string) (bool, error)
+}
 type githubActions struct {
 	client      *github.Client
 	owner, repo string
@@ -56,6 +63,35 @@ func (a githubActions) Attempt(ctx context.Context, id int64, n int) (*github.Wo
 	return run, err
 }
 
+func (a githubActions) BaseTip(ctx context.Context, branch string) (string, error) {
+	b, _, err := a.client.Repositories.GetBranch(ctx, a.owner, a.repo, branch, 0)
+	if err != nil {
+		return "", fmt.Errorf("read base branch tip: %w", err)
+	}
+	sha := b.GetCommit().GetSHA()
+	if !validSHA(sha) {
+		return "", fmt.Errorf("base branch has no valid commit SHA")
+	}
+	return sha, nil
+}
+func (a githubActions) Ancestor(ctx context.Context, landed, tip string) (bool, error) {
+	if !validSHA(landed) || !validSHA(tip) {
+		return false, fmt.Errorf("invalid ancestry commit SHA")
+	}
+	comparison, _, err := a.client.Repositories.CompareCommits(ctx, a.owner, a.repo, landed, tip, &github.ListOptions{PerPage: 1})
+	if err != nil {
+		return false, fmt.Errorf("compare landing with base tip: %w", err)
+	}
+	switch comparison.GetStatus() {
+	case "ahead", "identical":
+		return true, nil
+	case "behind", "diverged":
+		return false, nil
+	default:
+		return false, fmt.Errorf("missing or unknown comparison status %q", comparison.GetStatus())
+	}
+}
+
 type Attempt struct {
 	ID          int64     `json:"run_id"`
 	Number      int       `json:"run_attempt"`
@@ -68,7 +104,7 @@ type Attempt struct {
 }
 
 func queueCI(r *github.WorkflowRun) bool {
-	return r.GetName() == "CI" && strings.HasPrefix(r.GetHeadBranch(), "openmerge/queue/")
+	return r.GetPath() == ".github/workflows/ci.yml" && strings.HasPrefix(r.GetHeadBranch(), "openmerge/queue/")
 }
 
 func attempts(ctx context.Context, a Actions, runs []*github.WorkflowRun) ([]*github.WorkflowRun, error) {
@@ -104,13 +140,19 @@ func countRuns(ctx context.Context, a Actions, base string, batches []string) ([
 	if err != nil {
 		return nil, err
 	}
-	expanded, err := attempts(ctx, a, runs)
-	if err != nil {
-		return nil, err
-	}
 	refs := map[string]bool{}
 	for _, id := range batches {
 		refs["openmerge/queue/"+base+"/"+id] = true
+	}
+	var own []*github.WorkflowRun
+	for _, r := range runs {
+		if refs[r.GetHeadBranch()] {
+			own = append(own, r)
+		}
+	}
+	expanded, err := attempts(ctx, a, own)
+	if err != nil {
+		return nil, err
 	}
 	var result []Attempt
 	for _, r := range expanded {

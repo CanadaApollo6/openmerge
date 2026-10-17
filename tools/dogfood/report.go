@@ -155,11 +155,11 @@ type Report struct {
 }
 
 type landing struct {
-	Record   store.JournalEvent
-	Previous string
-	Observed string
-	Batch    *queue.Batch
-	Accepted bool
+	Record     store.JournalEvent
+	Previous   string
+	PushBefore time.Time
+	Batch      *queue.Batch
+	Accepted   bool
 }
 
 func entry(s queue.State, pr int) *queue.Entry {

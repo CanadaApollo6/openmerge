@@ -24,6 +24,7 @@ import (
 type options struct {
 	database, installation, repository, base, lane string
 	json                                           bool
+	journalTimeout                                 time.Duration
 }
 
 func (o *options) flags(fs *flag.FlagSet) {
@@ -32,13 +33,19 @@ func (o *options) flags(fs *flag.FlagSet) {
 	fs.StringVar(&o.repository, "repository", "CanadaApollo6/openmerge", "GitHub owner/repo")
 	fs.StringVar(&o.base, "base", "main", "journal base branch")
 	fs.StringVar(&o.lane, "lane", "", "exact journal lane (default empty)")
+	fs.DurationVar(&o.journalTimeout, "journal-timeout", store.DefaultJournalReadTimeout, "maximum journal read lifetime (at least 1ms)")
 	fs.BoolVar(&o.json, "json", false, "emit JSON only")
 }
 func (o options) journal(ctx context.Context) (store.Journal, error) {
 	if o.database == "" || o.installation == "" {
 		return store.Journal{}, fmt.Errorf("--database-url and --installation are required")
 	}
-	r, err := store.OpenJournalReader(ctx, o.database)
+	if o.journalTimeout < time.Millisecond {
+		return store.Journal{}, fmt.Errorf("--journal-timeout must be at least 1ms")
+	}
+	ctx, cancel := context.WithTimeout(ctx, o.journalTimeout)
+	defer cancel()
+	r, err := store.OpenJournalReader(ctx, o.database, o.journalTimeout)
 	if err != nil {
 		return store.Journal{}, err
 	}
@@ -53,7 +60,7 @@ func (o options) journal(ctx context.Context) (store.Journal, error) {
 	}
 	return journals[0], nil
 }
-func actionsClient(ctx context.Context, repository string) (Actions, error) {
+func actionsClient(ctx context.Context, repository string) (AuditSource, error) {
 	owner, repo, ok := strings.Cut(repository, "/")
 	if !ok || owner == "" || repo == "" || strings.Contains(repo, "/") {
 		return nil, fmt.Errorf("repository must be owner/repo")
@@ -177,7 +184,12 @@ func printReport(out io.Writer, r Report) error {
 	var b []byte
 	b = fmt.Appendf(b, "%s %s: %s -> %s (exclusive)\n", r.Queue.Repository, r.Queue.BaseBranch, r.Window.From.Time.Format(time.RFC3339Nano), r.Window.To.Time.Format(time.RFC3339Nano))
 	b = fmt.Appendf(b, "Landed: %d; landed from tested position >=2: %d\nTime to merge (nearest rank): median %.1fs; p95 %.1fs\nFrom first enqueue: median %.1fs; p95 %.1fs\n", r.Landed, r.Engaged, r.TimeToMerge.Median, r.TimeToMerge.P95, r.FirstEnqueue.Median, r.FirstEnqueue.P95)
-	b = fmt.Appendf(b, "Dequeued: %d; pending cohort: %d; landed at admission close: %d\nPosition >=3 landings: %d\nDrain complete: %t; end: %s; duration: %.1fs; held arrivals (proxy): %d\n", r.Dequeued, r.Pending, r.LandedAtClose, r.DeepEngaged, r.DrainComplete, r.DrainEnd.Format(time.RFC3339Nano), r.DrainSeconds, len(r.HeldArrivals))
+	end := "incomplete"
+	if r.DrainComplete {
+		end = r.DrainEnd.Format(time.RFC3339Nano)
+	}
+	b = fmt.Appendf(b, "At-close engagement >=2: %d; >=3: %d\n", r.EngagedAtClose, r.DeepEngagedAtClose)
+	b = fmt.Appendf(b, "Dequeued: %d; pending cohort: %d; landed at admission close: %d\nPosition >=3 landings: %d\nDrain complete: %t; end: %s; duration: %.1fs; held arrivals (first-eligibility lower bound): %d\n", r.Dequeued, r.Pending, r.LandedAtClose, r.DeepEngaged, r.DrainComplete, end, r.DrainSeconds, len(r.HeldArrivals))
 	for _, warning := range r.Warnings {
 		b = fmt.Appendf(b, "WARNING: %s\n", warning)
 	}
@@ -294,7 +306,7 @@ func run(ctx context.Context, args []string, out, errs io.Writer) int {
 							err = writeJSON(out, c)
 						} else {
 							text := c.Status + "\n- " + strings.Join(c.Reasons, "\n- ") + "\n"
-							text += fmt.Sprintf("B latency with holdovers (%d landed): median %.1fs, p95 %.1fs; without (%d landed, %d holdovers removed): median %.1fs, p95 %.1fs\n", c.BLatency.WithCount, c.BLatency.With.Median, c.BLatency.With.P95, c.BLatency.WithoutCount, c.BLatency.HoldoverLanded, c.BLatency.Without.Median, c.BLatency.Without.P95)
+							text += fmt.Sprintf("B latency with holdovers (%d landed): median %.1fs, p95 %.1fs; without identified holdovers (%d landed, %d removed; may include returning holdovers): median %.1fs, p95 %.1fs\n", c.BLatency.WithCount, c.BLatency.With.Median, c.BLatency.With.P95, c.BLatency.WithoutCount, c.BLatency.HoldoverLanded, c.BLatency.Without.Median, c.BLatency.Without.P95)
 							_, err = io.WriteString(out, text)
 						}
 						if err == nil {

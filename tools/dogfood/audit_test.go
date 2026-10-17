@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os/exec"
 	"strings"
 	"testing"
@@ -54,7 +57,7 @@ func auditFixture(t *testing.T, method queue.MergeMethod, base, head, tested, la
 }
 func auditTest(t *testing.T, f *fixture, g *gitFixture, a *fakeActions) AuditResult {
 	t.Helper()
-	r, err := audit(t.Context(), f.j, epoch, epoch.Add(time.Hour), gitReader{dir: g.dir}, a)
+	r, err := audit(t.Context(), f.j, epoch, epoch.Add(time.Hour), gitReader{dir: g.dir}, auditSource(t, f, g, a))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +153,7 @@ func TestAuditChecksPreviousQueueHeadAcrossExternalBaseMove(t *testing.T) {
 	f.begin(80, id)
 	f.land(90, id, two)
 	a := &fakeActions{runs: []*github.WorkflowRun{runFixture(1, 1, 10, 11, 20, one), runFixture(2, 1, 70, 71, 75, two)}}
-	r, err := audit(t.Context(), f.j, epoch.Add(55*time.Second), epoch.Add(time.Hour), gitReader{dir: g.dir}, a)
+	r, err := audit(t.Context(), f.j, epoch.Add(55*time.Second), epoch.Add(time.Hour), gitReader{dir: g.dir}, auditSource(t, f, g, a))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,6 +185,14 @@ func TestAuditSinceAndCoverage(t *testing.T) {
 	if err := attachAudit(&r, f.j, audited); err != nil {
 		t.Fatal(err)
 	}
+	if err := validateEvidence(r); err != nil {
+		t.Fatal("generated report rejected", err)
+	}
+	legacy := audited
+	legacy.Version = 1
+	if err := attachAudit(&r, f.j, legacy); err == nil {
+		t.Fatal("legacy audit accepted")
+	}
 	missing := audited
 	missing.CheckedEventIDs = nil
 	if err := attachAudit(&r, f.j, missing); err == nil {
@@ -192,12 +203,12 @@ func TestAuditSinceAndCoverage(t *testing.T) {
 	if err := attachAudit(&r, f.j, wrong); err == nil {
 		t.Fatal("wrong queue audit accepted")
 	}
-	after, err := audit(t.Context(), f.j, epoch.Add(41*time.Second), epoch.Add(time.Hour), gitReader{dir: g.dir}, a)
+	after, err := audit(t.Context(), f.j, epoch.Add(41*time.Second), epoch.Add(time.Hour), gitReader{dir: g.dir}, auditSource(t, f, g, a))
 	if err != nil || len(after.CheckedEventIDs) != 0 {
 		t.Fatalf("after=%+v err=%v", after, err)
 	}
 	a.err = fmt.Errorf("API unavailable")
-	if _, err := audit(t.Context(), f.j, epoch, epoch.Add(time.Hour), gitReader{dir: g.dir}, a); err == nil {
+	if _, err := audit(t.Context(), f.j, epoch, epoch.Add(time.Hour), gitReader{dir: g.dir}, auditSource(t, f, g, a)); err == nil {
 		t.Fatal("API error accepted")
 	}
 }
@@ -222,7 +233,7 @@ func TestAuditCoverageIncludesOutOfCohortLandings(t *testing.T) {
 	if r.Landed != 0 {
 		t.Fatal("unexpected cohort")
 	}
-	a := AuditResult{Version: 1, Queue: f.j.Key, Since: epoch, Until: epoch.Add(time.Hour)}
+	a := AuditResult{Version: 2, Queue: f.j.Key, Since: epoch, Until: epoch.Add(time.Hour)}
 	if err := attachAudit(&r, f.j, a); err == nil {
 		t.Fatal("uncounted landing escaped independent audit coverage")
 	}
@@ -249,4 +260,59 @@ func TestAuditOwnPushObservationBeforeLegacySettlement(t *testing.T) {
 	if len(r.Violations) != 0 {
 		t.Fatal(r)
 	}
+}
+
+// The forge fixture reads an independently pinned main when supplied by a
+// reproduction; older object-only fixtures default to their final landing.
+type fakeAuditSource struct {
+	Actions
+	forge githubActions
+}
+
+func (a fakeAuditSource) BaseTip(ctx context.Context, branch string) (string, error) {
+	return a.forge.BaseTip(ctx, branch)
+}
+func (a fakeAuditSource) Ancestor(ctx context.Context, landed, tip string) (bool, error) {
+	return a.forge.Ancestor(ctx, landed, tip)
+}
+func auditSource(t *testing.T, f *fixture, g *gitFixture, a Actions) AuditSource {
+	t.Helper()
+	var tip string
+	for _, l := range collectLandings(f.j) {
+		tip = l.Record.Event.(queue.Landed).NewBaseSHA
+	}
+	cmd := exec.Command("git", "-C", g.dir, "rev-parse", "--verify", "refs/heads/main")
+	if out, err := cmd.Output(); err == nil {
+		tip = strings.TrimSpace(string(out))
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/repos/o/r/branches/main":
+			_, _ = fmt.Fprintf(w, `{"commit":{"sha":%q}}`, tip)
+		case strings.HasPrefix(r.URL.Path, "/repos/o/r/compare/"):
+			landed, head, ok := strings.Cut(strings.TrimPrefix(r.URL.Path, "/repos/o/r/compare/"), "...")
+			if !ok || head != tip {
+				http.Error(w, "wrong comparison", 400)
+				return
+			}
+			status := "diverged"
+			cmd := exec.Command("git", "-C", g.dir, "merge-base", "--is-ancestor", landed, head)
+			if err := cmd.Run(); err == nil {
+				status = "ahead"
+				if landed == head {
+					status = "identical"
+				}
+			}
+			_, _ = fmt.Fprintf(w, `{"status":%q}`, status)
+		default:
+			http.Error(w, "unexpected request", 400)
+		}
+	}))
+	t.Cleanup(server.Close)
+	base := server.URL + "/"
+	client, err := github.NewClient(github.WithHTTPClient(server.Client()), github.WithURLs(&base, &base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fakeAuditSource{Actions: a, forge: githubActions{client: client, owner: "o", repo: "r"}}
 }

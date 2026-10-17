@@ -21,6 +21,7 @@ type AuditViolation struct {
 	Message string    `json:"message"`
 }
 type AuditResult struct {
+	BaseTip         string           `json:"base_tip"`
 	Version         int              `json:"version"`
 	Queue           store.QueueKey   `json:"queue"`
 	Since           time.Time        `json:"since"`
@@ -104,23 +105,35 @@ func (g gitReader) tested(ctx context.Context, b *queue.Batch, head string) erro
 }
 func collectLandings(j store.Journal) []landing {
 	s := j.Seed
+	starts := map[string]time.Time{}
 	var result []landing
 	for _, r := range j.Events {
 		before := s
 		s = queue.Apply(s, r.Event)
+		if e, ok := r.Event.(queue.LandingStarted); ok {
+			b := s.Batch(e.BatchID)
+			if prior := before.Batch(e.BatchID); prior != nil && prior.Phase == queue.Testing && b != nil && b.Phase == queue.Landing && b.LandingAttempt.ID == e.AttemptID {
+				starts[e.BatchID] = minTime(e.At, r.RecordedAt)
+			}
+		}
 		if e, ok := r.Event.(queue.Landed); ok {
 			b := before.Batch(e.BatchID)
 			previous := before.BaseSHA
+			var cutoff time.Time
 			if b != nil {
 				previous = b.BaseSHA
+				cutoff = b.LandingAttempt.StartedAt
+				if at, ok := starts[e.BatchID]; ok {
+					cutoff = minTime(cutoff, at)
+				}
 			}
-			result = append(result, landing{Record: r, Previous: previous, Observed: before.BaseSHA, Batch: b, Accepted: b != nil && b.Phase == queue.Landing && s.Batch(e.BatchID) == nil})
+			result = append(result, landing{Record: r, Previous: previous, PushBefore: cutoff, Batch: b, Accepted: b != nil && b.Phase == queue.Landing && s.Batch(e.BatchID) == nil})
 		}
 	}
 	return result
 }
-func audit(ctx context.Context, j store.Journal, since, until time.Time, g gitReader, a Actions) (AuditResult, error) {
-	result := AuditResult{Version: 1, Queue: j.Key, Since: since, Until: until}
+func audit(ctx context.Context, j store.Journal, since, until time.Time, g gitReader, a AuditSource) (AuditResult, error) {
+	result := AuditResult{Version: 2, Queue: j.Key, Since: since, Until: until}
 	if since.IsZero() || !until.After(since) {
 		return result, fmt.Errorf("audit needs a positive time window")
 	}
@@ -131,6 +144,12 @@ func audit(ctx context.Context, j store.Journal, since, until time.Time, g gitRe
 	if shallow != "false" {
 		return result, fmt.Errorf("audit needs a complete, non-shallow repository")
 	}
+	// Read the forge tip once, independently of journal observations and cache refs.
+	tip, err := a.BaseTip(ctx, j.Key.BaseBranch)
+	if err != nil {
+		return result, err
+	}
+	result.BaseTip = tip
 	success := map[string][]*github.WorkflowRun{}
 	var previousQueueHead string
 	for _, l := range collectLandings(j) {
@@ -151,15 +170,18 @@ func audit(ctx context.Context, j store.Journal, since, until time.Time, g gitRe
 			violation("journal", fmt.Errorf("landed event %d is not a valid replay transition", id))
 		}
 		violation("tested_commit", g.tested(ctx, l.Batch, e.NewBaseSHA))
-		// The tested base is authoritative even if a forge observation already
-		// reported our own push. Also check an intervening external head and the
-		// previous queue landing, including one before --since.
+		// Later admin observations can descend from our push. Only the tested base
+		// and preceding queue landing must precede this landing.
 		violation("main_forward", g.forward(ctx, l.Previous, e.NewBaseSHA))
-		if l.Observed != "" && l.Observed != l.Previous && l.Observed != e.NewBaseSHA {
-			violation("main_forward", g.forward(ctx, l.Observed, e.NewBaseSHA))
-		}
-		if previous != "" && previous != l.Previous && previous != l.Observed {
+		if previous != "" && previous != l.Previous {
 			violation("main_forward", g.forward(ctx, previous, e.NewBaseSHA))
+		}
+		contained, err := a.Ancestor(ctx, e.NewBaseSHA, tip)
+		if err != nil {
+			return result, err
+		}
+		if !contained {
+			violation("main_membership", fmt.Errorf("landed %s is not reachable from current %s tip %s", e.NewBaseSHA, j.Key.BaseBranch, tip))
 		}
 		if l.Batch == nil || l.Batch.TestedSHA == "" {
 			violation("ci_success", fmt.Errorf("no tested commit to query"))
@@ -180,12 +202,12 @@ func audit(ctx context.Context, j store.Journal, since, until time.Time, g gitRe
 		}
 		passed := false
 		for _, r := range runs {
-			if r.GetHeadSHA() == sha && r.GetStatus() == "completed" && r.GetConclusion() == "success" && !r.GetUpdatedAt().IsZero() && !r.GetUpdatedAt().After(l.Record.RecordedAt) {
+			if r.GetHeadSHA() == sha && r.GetStatus() == "completed" && r.GetConclusion() == "success" && !r.GetUpdatedAt().IsZero() && !l.PushBefore.IsZero() && !l.PushBefore.After(l.Record.RecordedAt) && r.GetUpdatedAt().Before(l.PushBefore) {
 				passed = true
 			}
 		}
 		if !passed {
-			violation("ci_success", fmt.Errorf("CI has no successful queue-ref attempt on %s completed by landing time", sha))
+			violation("ci_success", fmt.Errorf("CI has no successful queue-ref attempt on %s completed before LandingStarted (the conservative pre-push deadline)", sha))
 		}
 	}
 	return result, nil
@@ -201,7 +223,7 @@ func auditWindow(r Report) Window {
 }
 func attachAudit(r *Report, j store.Journal, a AuditResult) error {
 	w := auditWindow(*r)
-	if a.Version != 1 || a.Queue != r.Queue || a.Since.After(r.Window.From.Time) || a.Until.Before(w.To.Time) {
+	if a.Version != 2 || a.Queue != r.Queue || a.Since.After(r.Window.From.Time) || a.Until.Before(w.To.Time) {
 		return fmt.Errorf("audit does not cover this queue and the complete report window")
 	}
 	checked := map[int64]bool{}

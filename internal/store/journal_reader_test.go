@@ -8,7 +8,7 @@ import (
 
 func TestJournalReaderDoesNotMigrateAnEmptyDatabase(t *testing.T) {
 	url := databaseURL(t)
-	r, err := OpenJournalReader(t.Context(), url)
+	r, err := OpenJournalReader(t.Context(), url, DefaultJournalReadTimeout)
 	must(t, err)
 	defer r.Close()
 	_, err = r.Journals(t.Context(), []QueueKey{{Installation: "1", Repository: "o/r", BaseBranch: "main"}})
@@ -36,7 +36,7 @@ func TestJournalReaderReadsExistingJournalWithoutMutations(t *testing.T) {
 	id, err := s.EnsureQueue(t.Context(), key)
 	must(t, err)
 	appendEvents(t, s, id, seedEvents()...)
-	r, err := OpenJournalReader(t.Context(), url)
+	r, err := OpenJournalReader(t.Context(), url, DefaultJournalReadTimeout)
 	must(t, err)
 	defer r.Close()
 	journals, err := r.Journals(t.Context(), []QueueKey{key})

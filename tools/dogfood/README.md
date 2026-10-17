@@ -21,8 +21,12 @@ export OM_DOGFOOD_REPO='CanadaApollo6/openmerge'
 The connection string is required: there is no implicit deployment connection.
 The only added internal API is `store.OpenJournalReader`, a restricted journal
 reader that skips migrations and connection pings. Connections default to
-read-only; the existing `Store.Journals` reader places **every query** in an
-explicit `REPEATABLE READ, READ ONLY` transaction. No queue discovery, locks,
+read-only, with `statement_timeout` and `idle_in_transaction_session_timeout`
+set to the read deadline and `lock_timeout` capped at five seconds. The default
+journal deadline is **two minutes**, overridable with `--journal-timeout 30s`
+(minimum 1ms). A bounded context covers connection acquisition and the entire
+snapshot read, including all queries and decoding. The existing `Store.Journals`
+reader places **every query** in an explicit `REPEATABLE READ, READ ONLY` transaction. No queue discovery, locks,
 commands, schema changes, or snapshot writes run through this tool. Supply
 `--lane` if the target has a nonempty lane; `--base` defaults to `main`.
 
@@ -44,7 +48,7 @@ comparison. A one-day audit only covers that day. The final audit must extend
 past B's drain end (the audit upper bound is exclusive). The full journal is
 replayed to recover tested batches and the previous queue head, including before
 `--since`.
-Only landings in `[since, until)` cause git and Actions checks. Actions lookups
+Only landings in `[since, until)` cause per-landing git and API checks. Actions lookups
 are cached by tested SHA within the invocation.
 
 Alternatively pass `--git-repo /path/to/complete/clone-or-bare.git`. The two git
@@ -62,17 +66,29 @@ For each `landed` event, the audit checks:
 - the new main head is the recorded tested commit; for fast-forward, it is the
   head pinned in the batch and landing attempt, and the tested marker has that
   head as its **only parent with an identical tree**;
-- the new head strictly descends from the tested base, any intervening observed
-  main head, and the previous queue landing, even if that landing predates
-  `--since`;
-- a `CI` workflow attempt on an `openmerge/queue/` branch concluded `success` on
-  the tested commit by the landing's recorded time. A later success cannot
-  justify a landing retroactively.
+- the new head strictly descends from the base the batch was tested on and the
+  previous queue landing, even if that landing predates `--since`. A later
+  administrator push may descend from the queue landing and is allowed;
+- independently read `GET /repos/{owner}/{repo}/branches/{base}` (normally
+  `main`) once, then `GET .../compare/{landed}...{tip}` for each landing. Only
+  `ahead` or `identical` proves the landing is still in current main's history.
+  A rewind that removes a landing is a violation. Missing branch/comparison
+  evidence fails closed; no fetch or cache-ref mutation is needed;
+- an attempt of **`.github/workflows/ci.yml`** on an `openmerge/queue/` branch
+  concluded `success` on the tested commit **strictly before `LandingStarted`**.
+  Use the earlier of that event's `At` and journal `RecordedAt`; when replaying
+  a seeded in-flight attempt, require its recorded `StartedAt`. The durable
+  event precedes the push, so this is a conservative deadline even if it rejects
+  a success between starting the attempt and pushing. Settlement's `Landed`
+  timestamp can be delayed and never extends the deadline. Missing deadline
+  evidence fails closed.
 
 An audit exits **0** on success and **1** on any violation or inability to
 complete verification. JSON output includes event IDs and individual violations;
 operational errors go to stderr and do not produce a successful audit document.
-This audits journaled queue pushes, rather than unrelated administrator pushes.
+Audit JSON version **2** records the independently read `base_tip`. Regenerate
+version-1 audits: comparison and attachment reject them. This audits journaled
+queue pushes; administrator pushes are allowed while preserving those landings.
 
 ## Boundaries and reports
 
@@ -174,9 +190,10 @@ aborted pair, regardless of sample size.
   preserves a landing batch's original position. Require both ≥10 at position
   ≥2 and ≥3 at position ≥3 **before A closes**, and by the six-week deadline.
 - **Actions cost:** list the entire repository's runs with
-  `GET /repos/{owner}/{repo}/actions/runs`, filter workflow name `CI` and
-  `head_branch` prefix `openmerge/queue/` client-side; never use the API's exact
-  `branch` filter for a prefix. Fetch **every** attempt 1..`run_attempt` through
+  `GET /repos/{owner}/{repo}/actions/runs`, filter workflow path
+  `.github/workflows/ci.yml` and the period's **exact batch refs before expanding
+  attempts**; never use the API's exact `branch` filter for a prefix. Display
+  names are not identity. Fetch **every** attempt 1..`run_attempt` through
   `GET .../actions/runs/{run_id}/attempts/{n}` and deduplicate `(run_id, attempt)`.
   Attribute by the exact queue ref `openmerge/queue/<base>/<batch>` to the period
   whose replay accepted that batch's start, including starts during its drain.
@@ -192,16 +209,19 @@ aborted pair, regardless of sample size.
   unsettled cohort or nonempty queue prevents completion. Applying the next
   config before this end is a boundary violation. No time filter discards a
   late attempt to make a boundary look valid.
-- **Held arrivals (proxy):** count distinct PRs whose **first journal observation
+- **Held arrivals (first-eligibility lower bound):** count distinct PRs whose **first journal observation
   with `pr_observed eligible=true`** is in `[close, drain_end)` and whose first
   accepted admission is at/after drain end, or has not happened yet. Record PR,
   first eligibility and later admission time (zero if still waiting). Exclude
   previously eligible or previously admitted PRs and duplicates. This is a
-  conservative journal proxy, not GitHub creation time or a complete count of
+  first-eligibility lower bound, not GitHub creation time or a complete count of
   demand: a PR never observed by the server cannot be counted. `compare` matches
   A's held PRs to B's cohort landings and reports B median/p95 and sample size
   both with and without those holdovers. Regenerating A after B captures later
-  admissions; the PR match also works if A was reported while they still waited.
+  admissions. Returning PRs that were eligible or admitted before the drain are
+  excluded from this lower bound: the **without-holdover sensitivity can still
+  include returning holdovers**. Both reports must be regenerated after both
+  drain ends before comparison.
 - **W and utilization:** actual fold supplies W, bounds, halvings and batches.
   Integrate non-idle (entries or batches) and multiple-batch time over the
   admission window. Dwell time uses the journal timestamp high-water mark to
@@ -216,7 +236,12 @@ cap or incomplete pages, missing objects or missing attempt metadata. See
 
 ### Comparison and exit status
 
-`compare` is offline and returns exactly one pair outcome, with reasons:
+`compare` is offline. It requires both reports to have been generated at or
+after **both** drain ends, recomputes percentiles, arrivals/day and UTC daily
+counts, runs/merge, at-close landings and engagement from the evidence arrays,
+and rejects mismatching summary fields. Every cohort landed-event ID must be
+covered by the attached audit's `checked_event_ids`. It returns exactly one
+pair outcome, with reasons:
 
 - **0 / pass:** A median, p95 and runs/merge are each no worse than B after
   **B's drain**; zero incorrect landings in both periods; all gates below pass.

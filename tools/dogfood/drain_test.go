@@ -50,7 +50,7 @@ func TestCohortDrainOutcomesAndHeldArrivals(t *testing.T) {
 		t.Fatal(r.HeldArrivals)
 	}
 	// The landing at t=80 is outside the admission window but inside the drain.
-	audit := AuditResult{Version: 1, Queue: r.Queue, Since: epoch, Until: epoch.Add(101 * time.Second)}
+	audit := AuditResult{Version: 2, Queue: r.Queue, Since: epoch, Until: epoch.Add(101 * time.Second)}
 	if err := attachAudit(&r, f.j, audit); err == nil {
 		t.Fatal("drain landing escaped audit")
 	}
@@ -170,7 +170,7 @@ func TestIncompleteDrainRetainsAuditViolationsAfterClose(t *testing.T) {
 	if r.DrainComplete {
 		t.Fatal("second change still queued")
 	}
-	a := AuditResult{Version: 1, Queue: r.Queue, Since: epoch, Until: epoch.Add(101 * time.Second), CheckedEventIDs: []int64{landed.ID}, Violations: []AuditViolation{{EventID: landed.ID, At: landed.RecordedAt, Check: "tested_commit"}}}
+	a := AuditResult{Version: 2, Queue: r.Queue, Since: epoch, Until: epoch.Add(101 * time.Second), CheckedEventIDs: []int64{landed.ID}, Violations: []AuditViolation{{EventID: landed.ID, At: landed.RecordedAt, Check: "tested_commit"}}}
 	if err := attachAudit(&r, f.j, a); err != nil || len(r.Audit.Violations) != 1 {
 		t.Fatal("provisional drain lost violation", err)
 	}

@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"time"
+
+	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
 type LatencySensitivity struct {
@@ -36,7 +38,7 @@ func holdoverSensitivity(a, b Report) LatencySensitivity {
 func engagementBy(r Report, deadline time.Time) (int, int) {
 	two, three := 0, 0
 	for _, c := range r.Changes {
-		if c.LandedAt.Before(r.Window.To.Time) && !c.LandedAt.After(deadline) && c.Tested {
+		if !r.Window.To.reached(store.JournalEvent{ID: c.LandedEventID, RecordedAt: c.LandedAt}) && !c.LandedAt.After(deadline) && c.Tested {
 			if c.Position >= 2 {
 				two++
 			}
@@ -73,27 +75,34 @@ func compare(a, b Report) Comparison {
 		if err := r.Window.validate(); err != nil {
 			add(label + ": " + err.Error())
 		}
+		if err := validateEvidence(r); err != nil {
+			add(label + ": " + err.Error())
+		}
+		if r.ReportAt.Before(a.DrainEnd) || r.ReportAt.Before(b.DrainEnd) {
+			add(label + ": regenerate both reports after both drain ends")
+		}
 		if !r.DrainComplete || r.DrainEnd.Before(r.Window.To.Time) || r.ReportAt.Before(r.DrainEnd) {
 			add(label + ": drain incomplete or not verified at report time")
 		}
 		for _, warning := range r.Warnings {
 			add(label + ": " + warning)
 		}
-		if r.LandedAtClose < 50 {
-			add(fmt.Sprintf("%s has %d landed changes at window close; needs 50", label, r.LandedAtClose))
+		if n := summarizeEvidence(r).LandedAtClose; n < 50 {
+			add(fmt.Sprintf("%s has %d landed changes at window close; needs 50", label, n))
 		}
 		if r.Landed != len(r.Changes) {
 			add(label + ": landed count does not match per-change evidence")
 		}
 		if r.Audit == nil {
 			add(label + ": independent landing audit is missing")
-		} else if r.Audit.Version != 1 || r.Audit.Queue != r.Queue || r.Audit.Since.After(r.Window.From.Time) || !r.Audit.Until.After(r.DrainEnd) {
+		} else if r.Audit.Version != 2 || r.Audit.Queue != r.Queue || r.Audit.Since.After(r.Window.From.Time) || !r.Audit.Until.After(r.DrainEnd) {
 			add(label + ": independent audit does not cover the complete drain")
 		}
 		if !r.LogReviewed {
 			add(label + ": operator has not confirmed the change/incident log contains no material change or abort")
 		}
 	}
+	a, b = summarizeEvidence(a), summarizeEvidence(b)
 	if a.Queue != b.Queue {
 		add("periods refer to different queues")
 	}
