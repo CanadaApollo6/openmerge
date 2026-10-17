@@ -320,14 +320,15 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 				}
 				status.Summary += fmt.Sprintf("; %d batches ahead", ahead)
 			}
+			provisional := batch.ProvisionalFailure
 			if retry := batch.CheckRetry; retry != nil {
 				status.Summary += "; " + checkRetryStatus(retry)
-				if !retry.Confirmed && retry.RerunState == "failed" {
-					status.Summary += "; provisional failure: checks-failed"
+				if provisional == "" && !retry.Confirmed && retry.RerunState == "failed" {
+					provisional = queue.ChecksFailed
 				}
 			}
-			if batch.ProvisionalFailure != "" {
-				status.Summary += "; provisional failure: " + string(batch.ProvisionalFailure)
+			if provisional != "" {
+				status.Summary += "; provisional failure: " + string(provisional)
 			}
 			if batch.InvalidationReason != "" {
 				status.Summary += "; invalidated: " + batch.InvalidationReason

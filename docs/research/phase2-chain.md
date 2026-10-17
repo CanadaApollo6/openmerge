@@ -1,6 +1,6 @@
 # Fixed-window chain: planner-backed adopter results
 
-The real planner and executor use fixed W = 4. Seeds 1–8 each admit 30 days of uniform arrivals, with the ADR 0009 pinned policy: batch size 8, five-minute max wait, 2% broken changes, 1% flaky runs, 50 runners, and timeout 1.5 × CI. The one-second observation/enqueue delay remains in the simulator. No thresholds were changed.
+The real planner and executor use fixed W = 4. Seeds 1–8 each admit 30 days of uniform arrivals, with the ADR 0009 pinned policy: batch size 8, five-minute max wait, 2% broken changes, 1% flaky runs, 50 runners, and timeout 1.5 × CI. The one-second observation/enqueue delay remains in the simulator. No thresholds were changed. This evidence validates depth 4; depths above 4 remain unvalidated.
 
 The unsupported-cancellation mode passes. The supported mode is explicitly
 skipped with “cancellation arrives in ADR 0009 PR 4”: PR 3 never requests

@@ -792,7 +792,9 @@ while free window slots remain; PR 5 must explicitly decide whether to retain
 that rule.
 
 Keep `max_depth` at 1 unless the repository has at least `max_depth` CI runners
-available for these checks. Forge-side runner queueing counts toward
+available for these checks. This guidance is per repository; multiple base queues
+multiply concurrent runs and must share that runner capacity. The exit evidence
+validates depth 4; depths above 4 are unvalidated. Forge-side runner queueing counts toward
 `check_timeout`: with two runners and depth four, queued runs can time out and
 cause bisection or dequeues before they finish.
 

@@ -143,15 +143,21 @@ func planBatch(cfg Config, s State, batch *Batch, now time.Time) []Action {
 		}
 	}
 	if batch.ProvisionalFailure != "" {
-		if batch == s.Active {
-			if batch.Phase == Testing && cfg.RetryLimit() == 1 && (batch.ProvisionalFailure == ChecksFailed || batch.ProvisionalFailure == ChecksTimeout) {
+		if batch != s.Active {
+			return actions
+		}
+		if batch.Phase == Testing && cfg.RetryLimit() == 1 && (batch.ProvisionalFailure == ChecksFailed || batch.ProvisionalFailure == ChecksTimeout) {
+			if batch.CheckRetry == nil {
 				// Legacy aggregate observations lack producer/attempt identities. Refresh
 				// them through the retry-aware executor before spending the rerun budget.
 				return append(actions, RefreshChecks{BatchID: batch.ID, TestedSHA: batch.TestedSHA, epoch: batch.checkRefreshes})
 			}
+			// Identified evidence already exists. Rejected stale observations may
+			// leave the provisional marker set; they must not bypass dispatch or
+			// the recorded deadline and its qualifying-refresh requirement below.
+		} else {
 			return append(actions, DiagnoseBatch{BatchID: batch.ID, Reason: batch.ProvisionalFailure})
 		}
-		return actions
 	}
 	switch batch.Phase {
 	case Building:

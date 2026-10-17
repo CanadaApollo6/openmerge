@@ -140,8 +140,10 @@ whether to retain the conservative admission rule when adding adaptation.
 
 Snapshot support is a codec, not yet connected to store persistence. PR 5 must
 add adaptive window state to it. Until PR 4 provides cancellation, invalidated
-CI runs finish and occupy runners; available runner capacity should be at least
-`max_depth`, since forge-side queueing consumes `check_timeout`. Depth-1 config
+CI runs finish and occupy runners; available runner capacity per repository should
+be at least `max_depth` per active base queue, since multiple bases multiply
+concurrent runs and forge-side queueing consumes `check_timeout`. The exit evidence
+validates depth 4; depths above 4 remain unvalidated. Depth-1 config
 keeps its legacy policy digest, and the default remains 1 until the dogfooding
 criteria above are met.
 

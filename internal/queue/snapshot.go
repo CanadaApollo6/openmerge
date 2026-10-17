@@ -253,7 +253,20 @@ func DecodeSnapshot(data []byte) (State, error) {
 		if validateBatchPRs(g.PRs) != nil {
 			return State{}, fmt.Errorf("invalid pending group")
 		}
+		for _, pr := range g.PRs {
+			if seenPRs[pr.PR] {
+				return State{}, fmt.Errorf("duplicate PR in snapshot chain or pending groups")
+			}
+			seenPRs[pr.PR] = true
+		}
 		s.pending = append(s.pending, pendingGroup{g.PRs, g.Bisection})
+	}
+	entryPRs := make(map[int]bool)
+	for _, entry := range v.Entries {
+		if entry.PR <= 0 || entry.HeadSHA == "" || entryPRs[entry.PR] {
+			return State{}, fmt.Errorf("invalid or duplicate snapshot entry")
+		}
+		entryPRs[entry.PR] = true
 	}
 	for pr, d := range v.Dequeues {
 		d.Action.scope = d.Scope

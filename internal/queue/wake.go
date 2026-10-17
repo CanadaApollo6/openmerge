@@ -16,7 +16,7 @@ func NextWake(cfg Config, s State, now time.Time) (time.Time, bool) {
 		}
 	}
 	for _, b := range s.Batches() {
-		if b.InvalidationReason != "" || b.ProvisionalFailure != "" {
+		if b.InvalidationReason != "" || b.ProvisionalFailure != "" && b != s.Active {
 			continue
 		}
 		local := s

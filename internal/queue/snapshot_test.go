@@ -133,6 +133,12 @@ func TestSnapshotRejectsInvalidChainAndBounds(t *testing.T) {
 		{"root position", func(v *stateSnapshot) { v.Chain[0].Batch.ChainPosition = 0 }},
 		{"root base", func(v *stateSnapshot) { v.Chain[0].Batch.BaseSHA = "wrong" }},
 		{"duplicate PR", func(v *stateSnapshot) { v.Chain[1].Batch.PRs = v.Chain[0].Batch.PRs }},
+		{"pending chain PR", func(v *stateSnapshot) { v.Pending = []groupSnapshot{{PRs: v.Chain[0].Batch.PRs}} }},
+		{"duplicate pending PR", func(v *stateSnapshot) {
+			v.Pending = []groupSnapshot{{PRs: []BatchPR{{PR: 3, HeadSHA: "h3"}}}, {PRs: []BatchPR{{PR: 3, HeadSHA: "h3"}}}}
+		}},
+		{"duplicate chain entry", func(v *stateSnapshot) { v.Entries = append(v.Entries, v.Entries[0]) }},
+		{"duplicate waiting entry", func(v *stateSnapshot) { v.Entries = append(v.Entries, v.Entries[2]) }},
 		{"unmarked gap", func(v *stateSnapshot) { v.Chain[1].Batch.ParentBatchID = "missing"; v.Chain[1].Batch.ChainPosition = 3 }},
 		{"entries bound", func(v *stateSnapshot) { v.Entries = make([]Entry, 100001) }},
 		{"effects bound", func(v *stateSnapshot) {
