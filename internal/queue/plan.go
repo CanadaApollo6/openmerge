@@ -218,7 +218,7 @@ func (s State) Blocks(cfg Config) []Block {
 		}
 	}
 	if s.buildLimitReached(cfg) {
-		blocks = append(blocks, Block{Source: "build-failed", Reason: "build-failed", Detail: s.buildFailureDetail(), Revision: s.buildRetry.revision})
+		blocks = append(blocks, Block{Source: BuildFailed, Reason: "build-failed", Detail: s.buildFailureDetail(), Revision: s.BlockSourceRevision(BuildFailed)})
 	}
 	return blocks
 }

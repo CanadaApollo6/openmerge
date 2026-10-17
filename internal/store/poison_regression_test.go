@@ -227,8 +227,8 @@ func TestRulesClearPreservesDurableActionPoison(t *testing.T) {
 }
 
 // Corrupt the pause report past its own cap, then keep planning and claiming.
-// Neither another pause event nor another report key may appear until resume.
-func TestPoisonedPauseReportsDoNotCreateNewPauses(t *testing.T) {
+// Its new poison must advance the source without creating another report key.
+func TestPoisonedPauseReportsAdvanceRevisionWithoutNewReportKeys(t *testing.T) {
 	s := newStore(t)
 	q, c := readyLand(t, s)
 	must(t, s.Complete(t.Context(), c, Failed))
@@ -270,8 +270,17 @@ func TestPoisonedPauseReportsDoNotCreateNewPauses(t *testing.T) {
 			if len(claims) != 0 {
 				t.Fatal(claims)
 			}
-			if n := count(t, s, `SELECT count(*) FROM events WHERE queue_id=$1 AND type='block_source_blocked' AND payload->'data'->>'source'='action-poisoned'`, q); n != cycle+1 {
-				t.Fatalf("pause event count=%d, want %d", n, cycle+1)
+			wantEvents := 2*cycle + 1
+			if incident >= 3 {
+				wantEvents++
+			}
+			if n := count(t, s, `SELECT count(*) FROM events WHERE queue_id=$1 AND type='block_source_blocked' AND payload->'data'->>'source'='action-poisoned'`, q); n != wantEvents {
+				t.Fatalf("pause event count=%d, want %d", n, wantEvents)
+			}
+			state, _, err := s.Load(t.Context(), q)
+			must(t, err)
+			if state.BlockSourceRevision(queue.ActionPoison) != uint64(wantEvents+cycle) {
+				t.Fatal("pause report poison did not advance the source revision")
 			}
 			if n := count(t, s, `SELECT count(*) FROM actions WHERE queue_id=$1 AND type='report_status'`, q); n != cycle+1 {
 				t.Fatalf("pause report count=%d, want %d", n, cycle+1)

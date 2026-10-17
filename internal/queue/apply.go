@@ -102,14 +102,19 @@ func Apply(s State, e Event) State {
 		}
 	case BlockSourceBlocked:
 		if e.Validate() == nil {
-			s.clearLegacySource(e.Source)
+			alreadyPoisoned := e.Source == ActionPoison && s.SourceBlocked(ActionPoison)
+			s.clearSourceState(e.Source)
 			s.blockSources[e.Source] = e
 			s.blockRevisions[e.Source]++
-			s.blockPauseRevision = s.revision
+			// A poisoned pause report must not mint another report key. Its
+			// source revision still advances to invalidate prepared clears.
+			if !alreadyPoisoned {
+				s.blockPauseRevision = s.revision
+			}
 		}
 	case BlockSourceCleared:
 		if e.Validate() == nil && e.Basis == s.BlockSourceRevision(e.Source) {
-			s.clearLegacySource(e.Source)
+			s.clearSourceState(e.Source)
 			delete(s.blockSources, e.Source)
 			s.blockRevisions[e.Source]++
 			s.blockPauseRevision = s.revision
@@ -382,6 +387,7 @@ func (s *State) discardBatch() {
 }
 
 func (s *State) failBuild(at time.Time, detail string) {
+	s.blockRevisions[BuildFailed]++
 	s.buildRetry.failures++
 	s.buildRetry.failedAt = at
 	s.buildRetry.revision = s.revision

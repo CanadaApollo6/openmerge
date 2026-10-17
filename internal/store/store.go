@@ -314,7 +314,7 @@ type PlannedAction struct {
 
 // Plan serializes planning and writes the pure planner's actions atomically.
 // Cancelled and poisoned keys are reactivated with current inputs. Three poison
-// incidents pause the queue until ResumeRequested, except ResolveLanding always
+// incidents pause the queue until an action-poisoned clear, except ResolveLanding always
 // repairs without pausing. Done keys remain terminal.
 // It returns unclaimed work, quarantining invalid rows for operators.
 func (s *Store) Plan(ctx context.Context, q QueueID, cfg queue.Config, now time.Time) ([]PlannedAction, error) {
@@ -428,20 +428,20 @@ func publishPoisonPauses(ctx context.Context, tx pgx.Tx, q QueueID) (bool, error
 	if err != nil {
 		return false, err
 	}
-	if state.SourceBlocked(queue.ActionPoison) {
-		return false, nil
+	for i, poison := range events {
+		name, payload, err := queue.EncodeEvent(queue.BlockSourceBlocked{
+			Source: queue.ActionPoison, Subject: poison.Key,
+			Detail: fmt.Sprintf("Queue paused after repeated invalid action %s: %s; refresh the queue to retry", poison.Key, poison.Reason),
+			Basis:  state.BlockSourceRevision(queue.ActionPoison) + uint64(i),
+		})
+		if err != nil {
+			return false, err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO events(queue_id, type, payload) VALUES ($1, $2, $3::jsonb)`, q, name, string(payload)); err != nil {
+			return false, err
+		}
 	}
-	poison := events[0]
-	name, payload, err := queue.EncodeEvent(queue.BlockSourceBlocked{
-		Source: queue.ActionPoison, Subject: poison.Key,
-		Detail: fmt.Sprintf("Queue paused after repeated invalid action %s: %s; refresh the queue to retry", poison.Key, poison.Reason),
-		Basis:  state.BlockSourceRevision(queue.ActionPoison),
-	})
-	if err != nil {
-		return false, err
-	}
-	_, err = tx.Exec(ctx, `INSERT INTO events(queue_id, type, payload) VALUES ($1, $2, $3::jsonb)`, q, name, string(payload))
-	return err == nil, err
+	return true, nil
 }
 
 // PoisonedAction retains the row identity, original payload and decoding error

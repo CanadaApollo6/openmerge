@@ -317,3 +317,38 @@ func TestIndependentBlockStatusAndInheritedEvidence(t *testing.T) {
 		t.Fatal("block detail escaped sanitization")
 	}
 }
+
+func TestWhyNamesActiveRefreshAndAutomaticRecoverySources(t *testing.T) {
+	events := admission()
+	for i := range 3 {
+		batch := "b" + strconv.Itoa(i+1)
+		events = append(events,
+			queue.BatchStarted{BatchID: batch, BaseSHA: "base", PRs: []queue.BatchPR{{PR: 1, HeadSHA: "head"}}, At: at},
+			queue.TestRefBuildFailed{BatchID: batch, At: at})
+	}
+	events = append(events,
+		queue.PauseRequested{Reason: "legacy-hold", Detail: "hold"},
+		queue.BlockSourceBlocked{Source: queue.ConfigSource, Detail: "config"},
+		queue.BlockSourceBlocked{Source: queue.CheckSources, Detail: "checks"},
+		queue.BlockSourceBlocked{Source: queue.ActionPoison, Subject: "action", Detail: "poison"},
+		queue.BlockSourceBlocked{Source: queue.LandingNotOnBase, Subject: "tested", Detail: "missing landing"},
+		queue.RulesSourceBlocked{Source: queue.Rulesets, Problems: []string{"rules"}},
+		queue.RulesSourceBlocked{Source: queue.ClassicProtection, Problems: []string{"protection"}},
+		queue.RulesSourceBlocked{Source: queue.Permissions, Problems: []string{"grants"}},
+		queue.LifecycleChanged{State: "dormant", Detail: "missing base"})
+	_, _, why := Project(journal(events...), 1, 20, nil)
+	for _, want := range []string{
+		"@openmerge refresh to clear: action-poisoned, operator, build-failed",
+		"@openmerge refresh clears landing-not-on-base only after fresh ancestry verification confirms the landed commit is on the base",
+		"clear automatically when their conditions recover: lifecycle, config, check-sources, rulesets, classic_protection, permissions",
+	} {
+		if !strings.Contains(why.Summary, want) {
+			t.Fatalf("missing %q in %s", want, why.Summary)
+		}
+	}
+	// With only a configuration block, refresh must not claim to clear anything.
+	_, _, why = Project(journal(append(admission(), queue.BlockSourceBlocked{Source: queue.ConfigSource, Detail: "config"})...), 1, 20, nil)
+	if strings.Contains(why.Summary, "@openmerge refresh") || !strings.Contains(why.Summary, "clear automatically when their conditions recover: config") {
+		t.Fatal(why.Summary)
+	}
+}

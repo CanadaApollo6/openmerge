@@ -3,6 +3,7 @@ package queue
 import (
 	"fmt"
 	"slices"
+	"strings"
 )
 
 // BlockSource owns one independently observed reason to stop new work.
@@ -15,9 +16,10 @@ const (
 	LandingNotOnBase BlockSource = "landing-not-on-base"
 	ActionPoison     BlockSource = "action-poisoned"
 	Operator         BlockSource = "operator"
+	BuildFailed      BlockSource = "build-failed"
 )
 
-var blockSourceOrder = [...]BlockSource{ConfigSource, CheckSources, LandingNotOnBase, ActionPoison, Operator}
+var blockSourceOrder = [...]BlockSource{ConfigSource, CheckSources, LandingNotOnBase, ActionPoison, Operator, BuildFailed}
 
 // BlockSourceBlocked always applies a definite failure. Subject pins the SHA
 // requiring landing verification, or identifies the quarantined action key.
@@ -72,7 +74,7 @@ func (e BlockSourceCleared) Validate() error {
 
 // OperatorClearable excludes automatically observed conditions and lifecycle.
 func (source BlockSource) OperatorClearable() bool {
-	return source == Operator || source == ActionPoison || source == LandingNotOnBase
+	return source == Operator || source == ActionPoison || source == LandingNotOnBase || source == BuildFailed
 }
 
 // BlockSourceRevision is independent of every other source's observations.
@@ -83,7 +85,7 @@ func (s State) BlockSourceRevision(source BlockSource) uint64 {
 // BlockSourceSubject returns the durable evidence to verify before clearing.
 func (s State) BlockSourceSubject(source BlockSource) string { return s.blockSources[source].Subject }
 
-// BlockSourceDetail includes legacy blocks under their compatible source.
+// BlockSourceDetail includes legacy blocks and the recorded build retry streak.
 func (s State) BlockSourceDetail(source BlockSource) string {
 	if detail := s.blockSources[source].Detail; detail != "" {
 		return detail
@@ -94,21 +96,55 @@ func (s State) BlockSourceDetail(source BlockSource) string {
 	if source == ActionPoison && s.actionPoison.key != "" {
 		return s.poisonDetail()
 	}
+	if source == BuildFailed && s.buildRetry.failures > 0 {
+		return s.buildFailureDetail()
+	}
 	return ""
 }
 
-// SourceBlocked also recognizes legacy pauses with an empty detail.
+// SourceBlocked also recognizes legacy pauses and pending build retries, even
+// before their configured failure limit, so refresh can reset their backoff.
 func (s State) SourceBlocked(source BlockSource) bool {
-	return s.blockSources[source].Detail != "" || source == Operator && s.pause.Reason != "" || source == ActionPoison && s.actionPoison.key != ""
+	return s.blockSources[source].Detail != "" || source == Operator && s.pause.Reason != "" || source == ActionPoison && s.actionPoison.key != "" || source == BuildFailed && s.buildRetry.failures > 0
 }
 
-func (s *State) clearLegacySource(source BlockSource) {
+func (s *State) clearSourceState(source BlockSource) {
 	switch source {
 	case Operator:
 		s.pause = PauseRequested{}
 	case ActionPoison:
 		s.actionPoison = actionPoisonState{}
+	case BuildFailed:
+		s.buildRetry = buildRetryState{}
 	}
+}
+
+// BlockRecovery names the active sources an operator can clear or must repair.
+// Landing recovery remains conditional on a fresh ancestry verification.
+func BlockRecovery(blocks []Block) string {
+	var refresh, automatic []string
+	landing := false
+	for _, block := range blocks {
+		switch {
+		case block.Source == LandingNotOnBase:
+			landing = true
+		case block.Source.OperatorClearable():
+			refresh = append(refresh, string(block.Source))
+		default:
+			automatic = append(automatic, string(block.Source))
+		}
+	}
+	var details []string
+	if len(refresh) > 0 {
+		details = append(details, "a writer can @openmerge refresh to clear: "+strings.Join(refresh, ", "))
+	}
+	if landing {
+		details = append(details, "@openmerge refresh clears landing-not-on-base only after fresh ancestry verification confirms the landed commit is on the base")
+	}
+	if len(automatic) > 0 {
+		details = append(details, "clear automatically when their conditions recover: "+strings.Join(automatic, ", "))
+	}
+	return strings.Join(details, "; ")
 }
 
 func (s State) hasBlockSources() bool {

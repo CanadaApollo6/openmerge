@@ -65,7 +65,9 @@ lifecycle events on upgrade or restart.
 Once a real lifecycle transition is recorded, its `lifecycle_changed` event
 requires a binary that understands it. Reactivation does not remove that event:
 an older binary cannot replay that queue, even after restoring single-queue
-configuration. Keep a compatible binary when rolling back; do not edit the log.
+configuration. Keep a compatible binary when rolling back. Downgrading to an
+incompatible binary requires restoring a database backup from before those
+events were recorded; do not edit the log.
 
 Follow-up: prune workers for long-dormant queues to bound worker and polling
 costs. Retain their logs and fences, settle recorded landings first, and restore
@@ -221,12 +223,37 @@ Do not reset or delete `openmerge/fence/*` refs to recover a service.
 Every active block is listed with its source and detail in status, why, and the
 CLI. Source set/clear observations are logged independently, even when another
 source already blocks the queue. A writer can post `@openmerge refresh` to clear
-operator pauses and action poison and request fresh observations. It clears a
-`landing-not-on-base` block only after a fresh ancestry check confirms the durable
+`operator`, `action-poisoned`, and `build-failed` blocks, reset build-retry backoff,
+and request fresh observations. It clears a `landing-not-on-base` block only
+after a fresh ancestry check confirms the durable
 landing commit is on the base. Config, ambiguous check sources, repository rules,
 and queue lifecycle clear through their own recovery observations; refresh never
-clears them. Build retries retain their existing recovery on base or config change.
-Legacy shared pauses appear under `operator` and can still be cleared by refresh.
+clears them. Build retries also reset on base or effective config changes and
+successful builds. Legacy shared pauses appear under `operator` and can still be
+cleared by refresh; no production path currently emits new `operator` blocks.
+
+| Source | What sets it | How it clears |
+| --- | --- | --- |
+| `config` | Invalid or unreadable default-branch configuration | Automatically after a successful configuration read and validation |
+| `check-sources` | Ambiguous providers for a named admission or batch check | Automatically after a complete recheck finds unambiguous sources across the queue |
+| `rulesets` | Definite repository or inherited ruleset problems | Automatically after a complete passing inspection of that source |
+| `classic_protection` | Definite base or fence classic-protection problems | Automatically after a complete passing inspection of that source |
+| `permissions` | Missing required installation permissions | Automatically after a complete passing inspection of refreshed grants |
+| `lifecycle` | A dormant, retired, or overlapping queue | Automatically when the base/configuration is eligible again, after settlement and validation |
+| `operator` | Legacy shared pause events; no current production emitter | A writer's `@openmerge refresh` |
+| `action-poisoned` | A durable action reaches three decode/validation incidents | A writer's `@openmerge refresh`, which also resets poison incident counts |
+| `build-failed` | Non-conflict build failures reach the retry limit | A writer's `@openmerge refresh`, which resets the streak and backoff even below the limit; base or effective config changes also reset retries |
+| `landing-not-on-base` | Fresh verification cannot find the durable landing commit on the base | A writer's `@openmerge refresh`, only after fresh ancestry verification confirms that commit is on the base |
+
+Every new definite failure advances its source's revision even if already
+blocked, so a clear prepared before that failure cannot remove it. Each clear
+affects only its own source.
+
+The additive wire-v1 `block_source_blocked` and `block_source_cleared` events
+require a compatible binary once recorded. Clearing blocks does not remove these
+events: an older binary cannot replay that queue. As with `lifecycle_changed`,
+downgrading to an incompatible binary requires restoring a database backup from
+before those events were recorded. Do not edit the event log to downgrade.
 
 ## Runtime repository rules
 

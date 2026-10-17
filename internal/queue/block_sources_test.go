@@ -35,18 +35,37 @@ func TestBlockSourcesOwnTheirRevisionsAndClears(t *testing.T) {
 			// An unchanged failure with an old basis invalidates an overlapping pass.
 			state = Apply(state, sourceFailure(source))
 			blocked := state
-			for _, stale := range []uint64{basis, 2, 4} {
+			state = Apply(state, sourceFailure(source))
+			for _, stale := range []uint64{basis, 2, 3, 5} {
 				state = Apply(state, BlockSourceCleared{Source: source, Basis: stale})
-				if !state.SourceBlocked(source) || state.BlockSourceRevision(source) != 3 {
+				if !state.SourceBlocked(source) || state.BlockSourceRevision(source) != 4 {
 					t.Fatal("stale/future clear removed a failure")
 				}
 			}
-			state = Apply(state, BlockSourceCleared{Source: source, Basis: 3})
+			state = Apply(state, BlockSourceCleared{Source: source, Basis: 4})
 			if !blocked.SourceBlocked(source) || state.SourceBlocked(source) {
 				t.Fatal("clearing a snapshot mutated another snapshot")
 			}
 		})
 	}
+}
+
+func TestBuildRetryClearUsesCurrentSourceRevision(t *testing.T) {
+	cfg := testConfig
+	cfg.BuildRetries, cfg.BuildBackoff = 3, time.Hour
+	state := withBuildFailures(t, cfg, 1)
+	preparedClear := BlockSourceCleared{Source: BuildFailed, Basis: state.BlockSourceRevision(BuildFailed)}
+	build := onlyAction[BuildTestRef](t, Plan(cfg, state, epoch.Add(time.Hour)))
+	state = applySerial(state, TestRefBuildFailed{BatchID: build.BatchID, At: epoch})
+	state = Apply(state, preparedClear)
+	if state.buildRetry.failures != 2 || len(actionsOf[BuildTestRef](Plan(cfg, state, epoch))) != 0 {
+		t.Fatal("prepared clear reset a newer build failure or its backoff")
+	}
+	state = Apply(state, BlockSourceCleared{Source: BuildFailed, Basis: state.BlockSourceRevision(BuildFailed)})
+	if state.buildRetry != (buildRetryState{}) {
+		t.Fatal("current build-failed clear did not reset retries")
+	}
+	onlyAction[BuildTestRef](t, Plan(cfg, state, epoch))
 }
 
 func TestEveryBlockSourceStopsStartsAndPreservesSettlement(t *testing.T) {

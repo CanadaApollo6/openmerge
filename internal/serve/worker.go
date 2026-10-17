@@ -225,11 +225,12 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 	reason := state.PauseReason(w.plannerConfig(s.options.PollInterval))
 	if reason != "" {
 		var reasons, details []string
-		for _, block := range state.Blocks(w.plannerConfig(s.options.PollInterval)) {
+		blocks := state.Blocks(w.plannerConfig(s.options.PollInterval))
+		for _, block := range blocks {
 			reasons = append(reasons, block.Reason)
 			details = append(details, block.Reason+" ["+string(block.Source)+"]: "+block.Detail)
 		}
-		status := forge.Status{State: forge.Paused, Reason: strings.Join(reasons, ", "), Summary: strings.Join(details, "; ") + "; automatic blocks clear when their conditions recover; a writer can @openmerge refresh operator-clearable blocks"}
+		status := forge.Status{State: forge.Paused, Reason: strings.Join(reasons, ", "), Summary: strings.Join(details, "; ") + "; " + queue.BlockRecovery(blocks)}
 		if detail := state.CheckProvenanceDetail(); detail != "" {
 			status.Reason += ", unbound-check-provenance"
 			status.Summary += "; " + detail

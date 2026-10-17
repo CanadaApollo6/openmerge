@@ -30,7 +30,7 @@ func (s *Server) operatorClears(ctx context.Context, w *worker) ([]queue.Event, 
 		return nil, err
 	}
 	var events []queue.Event
-	for _, source := range []queue.BlockSource{queue.Operator, queue.ActionPoison, queue.LandingNotOnBase} {
+	for _, source := range []queue.BlockSource{queue.Operator, queue.ActionPoison, queue.BuildFailed, queue.LandingNotOnBase} {
 		if !state.SourceBlocked(source) {
 			continue
 		}

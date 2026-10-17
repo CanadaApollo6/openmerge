@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -12,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -165,6 +167,19 @@ func TestRefreshClearsOnlyOperatorClearableSources(t *testing.T) {
 	must(t, err)
 	// An invalid config does not prevent explicitly clearing a separate source.
 	w.configError = errors.New("config unavailable")
+	pr, err := s.observe(t.Context(), w, 1)
+	must(t, err)
+	must(t, s.report(t.Context(), w))
+	summary := f.Statuses(repo, 1)[pr.HeadSHA].Summary
+	for _, want := range []string{
+		"@openmerge refresh to clear: action-poisoned, operator",
+		"@openmerge refresh clears landing-not-on-base only after fresh ancestry verification",
+		"clear automatically when their conditions recover: lifecycle, config, check-sources, rulesets, classic_protection, permissions",
+	} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("missing %q in %s", want, summary)
+		}
+	}
 	f.AddComment(repo, 1, "writer", "@openmerge refresh")
 	must(t, s.commands(t.Context(), w, 1))
 	state, _, err := s.store.Load(t.Context(), w.id)
@@ -176,6 +191,65 @@ func TestRefreshClearsOnlyOperatorClearableSources(t *testing.T) {
 	}
 	if len(state.Blocks(queue.Config{})) != 6 || !state.SourceBlocked(queue.ConfigSource) || !state.SourceBlocked(queue.CheckSources) {
 		t.Fatalf("automatic sources changed: %+v", state.Blocks(queue.Config{}))
+	}
+}
+
+func TestExplicitRefreshResetsBuildRetriesAndBackoff(t *testing.T) {
+	for _, failures := range []int{1, 3} {
+		t.Run(fmt.Sprint(failures), func(t *testing.T) {
+			s, w, f, _ := fixture(t, repositoryConfig)
+			must(t, s.configuration(t.Context(), w))
+			_, err := s.observe(t.Context(), w, 1)
+			must(t, err)
+			now := time.Now()
+			_, err = s.store.Append(t.Context(), w.id, []queue.Event{queue.EnqueueRequested{PR: 1, At: now}}, "")
+			must(t, err)
+			cfg := w.plannerConfig(s.options.PollInterval)
+			for range failures {
+				state, _, err := s.store.Load(t.Context(), w.id)
+				must(t, err)
+				built := false
+				for _, action := range queue.Plan(cfg, state, now.Add(time.Hour)) {
+					if build, ok := action.(queue.BuildTestRef); ok {
+						_, err = s.store.Append(t.Context(), w.id, []queue.Event{
+							queue.BatchStarted{BatchID: build.BatchID, BaseSHA: build.BaseSHA, PRs: build.PRs, At: now},
+							queue.TestRefBuildFailed{BatchID: build.BatchID, At: now},
+						}, "")
+						must(t, err)
+						built = true
+					}
+				}
+				if !built {
+					t.Fatal("missing build to fail")
+				}
+			}
+			before, _, err := s.store.Load(t.Context(), w.id)
+			must(t, err)
+			if !before.SourceBlocked(queue.BuildFailed) {
+				t.Fatal("missing build retry streak")
+			}
+			if failures == 3 {
+				must(t, s.report(t.Context(), w))
+				pr, err := f.PullRequest(t.Context(), repo, 1)
+				must(t, err)
+				if summary := f.Statuses(repo, 1)[pr.HeadSHA].Summary; !strings.Contains(summary, "@openmerge refresh to clear: build-failed") {
+					t.Fatal(summary)
+				}
+			}
+			f.AddComment(repo, 1, "writer", "@openmerge refresh")
+			must(t, s.commands(t.Context(), w, 1))
+			state, _, err := s.store.Load(t.Context(), w.id)
+			must(t, err)
+			if state.SourceBlocked(queue.BuildFailed) || state.PauseReason(cfg) != "" {
+				t.Fatal("refresh retained the build failure streak")
+			}
+			for _, action := range queue.Plan(cfg, state, now) {
+				if _, ok := action.(queue.BuildTestRef); ok {
+					return
+				}
+			}
+			t.Fatal("refresh did not clear the build backoff")
+		})
 	}
 }
 
