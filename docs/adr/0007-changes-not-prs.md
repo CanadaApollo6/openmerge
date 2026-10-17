@@ -167,6 +167,644 @@ Briefs are available through the CLI and API, and through MCP when it ships. Whe
 
 **Generated prose is never evidence.** In Stage C, an operator may configure a model to add a summary to briefs. It appears in a delimited section labelled as generated, is never read by policy or the planner, and is off by default; choosing a provider means choosing where private diffs are sent. Because the factual inventory does not depend on it, text planted in a diff or an intent to steer the summary ("this is a trivial change") cannot hide what the change touches. This extends principle 1, "never lie about what was tested", to review: OpenMerge never presents a summary as if someone reviewed the code.
 
+### Implementation
+
+Stage A lands in the PRs below. This section plans the accepted decision; it
+does not enable Stages B or C. **Pushes outside the queue is already in flight
+in a separate implementation.** It has no work items in this sequence. ADR 0008
+must wait for both that work and Stage A before enabling policy authority.
+
+#### Boundaries and compatibility
+
+The current integration points are `internal/queue/{types,apply,plan,wire,snapshot}.go`,
+`internal/config`, `internal/serve/{reconcile,policy,worker,command}.go`,
+`internal/executor`, `internal/store`, `internal/forge`, `internal/gitops`,
+`internal/status`, and `cmd/openmerge`. Keep classification and approval evaluation as pure functions
+over recorded inputs. `serve` performs reads and identity resolution, the queue
+fold owns durable state, and the executor performs effects through the forge
+interfaces. Neither the planner nor the condition evaluator performs I/O.
+
+PR numbers below identify implementation steps, not GitHub issue numbers. Each
+step targets about 1–2.5k changed lines, including tests and fixtures, with a
+3k review ceiling. Split a step at its stated boundary if it exceeds that
+ceiling; do not combine independent steps to reduce the PR count. The estimates
+are planning budgets, not measurements.
+
+| PR | Scope | Depends on | Parallel work |
+|---|---|---|---|
+| 1 | Change identity and revision projection | None | Independent of 2, 3, and 5 |
+| 2 | Pinned diff and governing-file reads | None | Independent of 1, 3, and 5 |
+| 3 | Forge identities, review stances, and membership | None | Independent of 1, 2, and 5 |
+| 4 | Classification and owner evaluation | 2 | Parallel with 6 once its prerequisites land |
+| 5 | Approval schema design and pure policy evaluation | None | Independent of 1, 2, and 3 |
+| 6 | Durable stances and accountability | 1, 3, 5 | Parallel with 4 |
+| 7 | Briefs, digest, and receipt validation | 1, 4, 5, 6 | Parallel with 8 and 9 |
+| 8 | Waiting projection and batch selection | 1, 5, 6 | Parallel with 7, 9, and 10 |
+| 9 | Atomic landing decision storage | 1, 5, 6 | Parallel with 7, 8, and 10 |
+| 10 | Build-time commit trailers | 1, 4 | Parallel with 6–9 |
+| 11 | Runtime activation and landing policy gate | 1–10 | Integration point |
+| 12 | Complete CLI, API, check reporting, and exit scenarios | 11 | Stage A acceptance |
+
+PRs 1–10 provide tested components without accepting unenforced approval
+configuration. The public loader and published schema continue to reject the
+new approval keys until PR 11 connects every enforcement path. Proposed schema
+fixtures in PR 5 are separate from the published schema. There is no production
+flag that permits partial enforcement. PR 7 can expose read-only briefs over
+recorded evidence, including explicit missing evidence for legacy records.
+
+The runtime opt-in for Stage A evidence is a queue's `approvals` section.
+`changes.pull_requests: required` alone keeps the existing PR-only behavior.
+Queues without `approvals` retain their existing conditions, policy digest,
+build messages, and event/action protocol. Change IDs may be derived for those
+queues without writing new records. Repository-level classification, groups,
+and agent settings feed queues that opt into approvals. ADR 0008's later
+mandatory owner gate in authority mode is a separate activation path, including
+for queues without `approvals`.
+
+All new persisted types listed below use additive wire-v1 envelopes with
+explicit structs, strict decoding, required-field and value validation, and
+fixtures in `internal/queue/testdata/wire/v1`. Existing event/action encodings,
+keys, and golden fixtures stay **byte-identical**, including `ConfigApplied`
+with and without its existing optional window bounds. PR-only batches retain
+`Entry`, `BatchPR`, `BatchStarted`, `ChainedBatchStarted`, `BuildTestRef`,
+`BuildChainedTestRef`, `Land`, `LandingStarted`, and the existing resolve actions.
+A side projection keyed by change and revision holds Stage A evidence. No
+change-keyed batch actions or invented PR numbers are needed in this stage.
+
+Each PR that adds a type tests encode/decode, missing and unknown fields,
+invalid values, historical replay, and immutable `Apply`. Each projection
+addition also extends the snapshot codec and proves snapshot-plus-tail and
+full-journal replay produce the same state and next actions. The current
+version-2 snapshot codec is not connected to store persistence. Introduce a
+new snapshot version for Stage A state while retaining version-2 decoding;
+do not turn on compaction or change retention in this work. Keep bounded live
+facts in snapshots and historical decision evidence in the journal.
+
+Until PR 11, no existing queue starts writing Stage A types. From PR 11 onward,
+**every existing queue that adds `approvals`**, at depth 1 or a speculative
+depth, writes the new observation types. Receipt, wait, and decision records
+appear when those operations occur. Removing `approvals` does not erase them.
+Drain old workers before activation. An older binary that cannot decode the
+new types needs a compatible database restore from before their first use;
+removing the config keys alone is insufficient for rollback.
+
+#### PR 1: Derive change IDs and project revisions
+
+- Scope: implement **Changes and their identity (Stage A)**, paragraphs
+  "A change is a durable record", "Each live change has exactly one source",
+  "A re-push follows today's rule", and "Storage stays additive", for PRs only.
+  Add queue-owned change and revision value types and a replayable side
+  projection without replacing the PR batch protocol.
+- Config and loader: no keys or schema changes.
+- Identity: define a versioned, domain-separated SHA-256 encoding of the
+  existing canonical queue key and PR number. Length-prefix fields; use the
+  stored repository spelling and installation/base/lane identity from ADR 0006,
+  never YAML queue names or process-local database IDs. Pin vectors for case
+  alias reuse, distinct installations, bases, lanes, and PRs. Derive legacy
+  change IDs on read without a backfill or log rewrite.
+- Revisions: use a durable per-change observation sequence, not the head hash
+  alone. H1, H2, then H1 again are three revisions. Unchanged observations and
+  re-enqueueing an unchanged head do not invent revisions. New revision facts
+  carry the expected predecessor revision; reject stale updates atomically.
+  Old journal observations establish the sequence on replay, without inventing
+  accountability, classification, or approvals for old records.
+- Events: add `change_revision_observed` with queue-local PR alias, change ID,
+  revision, predecessor, head, and observation basis. Add its golden fixture.
+  No new actions. Runtime emission waits for PR 11.
+- Planner and executor: preserve `HeadChanged` dequeue and work invalidation.
+  A landing on H1 settles for H1 even if H2 is observed meanwhile. Do not add
+  direct-submission refs or alter trust. Reserve the conflict-grace integration
+  point described under Open questions rather than claiming it exists today.
+- Tests and exit: deterministic replay across restart and repeated enqueue,
+  H1/H2/H1, stale updates, PR closure, multi-base isolation, and a head change
+  during an unsettled landing. Existing wire bytes and legacy plans are equal.
+
+#### PR 2: Read pinned diff inputs through the forge boundary
+
+- Scope: implement the observation inputs in **Classification (Stage A)** and
+  the file/hunk inventory in **Briefs (Stage A, prose in Stage C)**. This PR is
+  independent of identity and approval policy.
+- Config, events, actions, and landing gate: no changes. Add read capabilities
+  and fake-forge contract cases only; no new runtime records or decisions.
+- Forge: introduce a narrow revision-diff capability with explicit base and
+  head object IDs. Return merge base, both endpoints, old/new paths, object
+  modes, binary/submodule flags, rename evidence, hunks, completeness, and
+  typed failure reasons. The existing `PullRequest.Files` list is insufficient:
+  it lacks endpoints, old paths, modes, and hunks, and is capped at 1,000 paths.
+  Never mistake a partial list for a complete diff.
+- Reuse `Driver.ReadFile` at an immutable governing commit. Add object-ID and
+  explicit-absence evidence for config, the selected `CODEOWNERS`, and every
+  governing `.gitattributes` file used by changed paths. Use a git-backed
+  reader where an API cannot provide the pinned comparison or modes; keep
+  transport inside the forge implementation. Bound files, bytes, and hunks,
+  and return incomplete evidence at limits instead of truncating silently.
+- Tests and exit: fake contract and GitHub HTTP/local-git tests for merge-base
+  comparisons, renames, deletes, binary and mode changes, symlinks, submodules,
+  missing objects, pagination limits, read errors, and a default branch that
+  moves between reads. Every successful result identifies immutable inputs.
+
+#### PR 3: Observe forge users, teams, and native stances
+
+- Scope: implement the driver prerequisites in **Configuration / Identities**,
+  **Policy approvals (Stage A) / Approvals are head-bound**, and
+  **Accountability**, plus the Stage A permission in **Consequences**.
+- Config and wire: no public keys or new event/action types. Keep the existing
+  `Approval` view and its legacy semantics intact. Add a richer review reader
+  rather than deriving new evidence from `Approval{User,SHA,CanWrite}`.
+- Forge: provide stable user IDs with login and account kind, login-to-ID and
+  team-to-ID resolution, paginated team membership by user ID, and complete
+  native stance observations. Reviews retain source review ID, commit ID,
+  submission time, state, and dismissal evidence; comments retain author ID,
+  comment ID, and creation time. Include requests for changes and dismissals
+  that the current driver reduces away. Comment-only reviews are not approvals
+  or withdrawals. Conditional revalidation is acceptable; a cached grant with
+  no forge round trip cannot authorize landing.
+- Setup: request **organization members read** (`members: read`) for team
+  resolution, and inspect the installed grant, not just the App manifest.
+  Document that existing Apps and installations must accept the addition.
+  Missing permission does not stop unrelated personal/user-only queues.
+  Named configuration identities that cannot resolve will pause affected
+  queues in PR 11; an unreadable effective owner requirement blocks its change.
+- Planner, executor, and gate: no behavior change yet. Keep these reads under
+  ADR 0006's installation budgets, preserving settlement's reserved capacity.
+- Tests and exit: fake contracts and GitHub fixtures cover renamed/reassigned
+  logins, stable IDs, nested/inherited team membership as the forge exposes it,
+  inaccessible teams, missing grants, pagination, duplicate/out-of-order
+  reviews, and dismissed reviews. No user token or new forge write is needed.
+
+#### PR 4: Classify revisions and compute effective owners
+
+- Scope: implement **Classification (Stage A)** and **Policy approvals / Path
+  ownership comes only from CODEOWNERS** as pure evaluation over PR 2 inputs.
+- Config and loader: no public keys yet. Accept typed classification settings
+  in component tests; PR 11 publishes `classification` with PR 5's schema.
+- Classification: pin a classifier version that fixes diff options, rename
+  pairing, and inventory limits. Record base/head/merge-base, governing commit,
+  governing file object IDs or absence, inventory completeness, labels, and
+  reasons. Read policy files at the default-branch commit for release queues
+  too. `docs` and `generated` require every file to qualify. Read generated
+  attributes with directory precedence and unset/override semantics from the
+  governing tree, without consulting head attributes or host git attributes.
+- Ownership: implement GitHub's `.github/CODEOWNERS`, root `CODEOWNERS`, then
+  `docs/CODEOWNERS` file-selection precedence and last matching entry, with its
+  own pattern parser, not `condition.CompileGlob`. Retain invalid or unsupported
+  owner diagnostics. Resolve effective owners per policy path, including both
+  sides of renames. A group owns no paths. An uncovered path, email-only owner,
+  or unreadable team cannot satisfy that path's mandatory owner requirement.
+- Mark `policy` for all four accepted config paths from `config.Find`, every
+  forge-recognized `CODEOWNERS` location, all `.gitattributes` files, CI workflow
+  definitions, and configured sensitive paths. Forged PR labels never affect
+  classification. Binary files, modes, symlinks, submodules, unpaired renames,
+  overflow, and failed reads add `unknown`. Retain known facts alongside it.
+  Incomplete inventory makes policy ownership unresolvable even if no observed
+  path is sensitive. Do not add comment-only detection.
+- Events: add `change_classified`, including input fingerprint, classifier
+  version, inventory, and explanations, with golden fixtures for complete and
+  incomplete observations. No new actions. Runtime emission waits for PR 11.
+- Planner and executor: expose invalidation inputs for `ConfigApplied`; never
+  re-diff in the landing gate. Respect the pinned-base question below.
+- Tests and exit: a classification matrix covers every uncertainty, attribute
+  override, owner precedence, path dialect, deleted/renamed policy path, and
+  a PR trying to weaken its own config or owners. Repeated inputs yield equal
+  classifications and hashes. Snapshots preserve the current evidence.
+
+#### PR 5: Define approval config and evaluate requirements
+
+- Scope: implement **Configuration / Matching, Opt-in, Identities** and
+  **Policy approvals / Policy adds requirements, An unknown match never lowers
+  a requirement, Path ownership, The policy digest** as pure policy code.
+  This PR is independent and can be developed beside PRs 1–3.
+- Proposed schema: repository keys `classification.{docs,generated,sensitive}`
+  are lists of whole-path globs; `groups` maps pool names to lists of bare user
+  logins or `org/team`; `agents` lists `{identity, accountable}` records with a
+  user login and nonempty human-login list. Queue keys are
+  `changes.pull_requests` (only `required`, default `required` in Stage A) and
+  `approvals.{default,rules}`. Rules require `when` and `require`; `when` accepts
+  only `labels`, `paths`, `touches`, and `authors`. `authors` accepts `human` and
+  `agent`. Known classification labels and `owned:<owner>` are distinct from
+  forge labels. Preserve the existing condition grammar and glob dialect.
+- Validate unknown/duplicate keys, scalar/list types, empty names and match
+  lists, malformed globs and identities, duplicate agent mappings, nonexistent
+  group references, and positive integer counts. Reject `default: none` and
+  Stage B/C values. The accepted example fixes `none`, `any_writer`, and
+  `{group, count}` requirements, with optional `receipt: true` on a requirement
+  object. Resolve the remaining requirement syntax question below before
+  publishing the schema. Parsing performs no forge calls. Validate that
+  accountable IDs identify humans after resolution; do not demand that a PR
+  author or its accountable humans have write permission.
+- Do not make `config.Load` accept these keys yet. Keep a candidate schema and
+  parser/evaluator agreement fixtures until PR 11 installs the public loader,
+  key registry, generated schema command, and `schema/openmerge.v1.json`
+  together. Existing accepted configs and digests remain identical meanwhile.
+- Evaluation: AND the facets within each rule, accumulate every true or
+  unknown rule's requirements separately, and apply the default when no rule
+  definitely matches. `none` helps only on a definite match and cancels nothing.
+  One ID can satisfy several eligible requirements, once per requirement.
+  Always add per-file policy owners for opted-in queues. Return explainable
+  unmet/unresolvable requirements rather than a single approval count.
+- Digest: canonicalize settings, defaults, groups, agents, resolved user/team
+  IDs, governing owners and attributes content, and classifier version into
+  one policy digest. Fold it into the existing effective queue config digest.
+  No separate batch invalidation generation. Keep semantic policy independent
+  of unrelated queues and commits, subject to the config-blob conflict under
+  Open questions. Membership and
+  current write grants are fresh eligibility observations, not static policy.
+- Events/actions: none; reuse unchanged `ConfigApplied` at activation. Planner
+  and executor consume the same pure evaluator; no gate changes yet.
+- Tests and exit: truth tables for true/false/unknown facets and overlapping
+  rules, default fallback, receipt counts, owner unions, canonicalization,
+  identity reassignment, unchanged legacy digests, and invalid config cases.
+
+#### PR 6: Fold stances and record accountability
+
+- Scope: implement **Policy approvals / Approvals are head-bound; receipts
+  also bind intent** except receipt command handling, and **Accountability**.
+- Config and loader: no new keys beyond PR 5's proposal; no public activation.
+- Events: add `change_accountability_observed`, `change_intent_observed`,
+  `review_stance_observed`, and `approval_eligibility_observed`. Include stable
+  IDs and display logins, change/revision/head, source IDs and source times,
+  read basis, and known/unknown eligibility with reasons as appropriate.
+  Intent records pin normalized title and body and their digest. Add golden
+  fixtures for person, mapped agent, unmapped bot, approval, changes requested,
+  dismissal, withdrawal, and unknown eligibility. No new actions.
+- Keep actor, PR author, accountable humans, and reviewers separate. Apply
+  configured agent mappings before forge account kind; unmapped bots retain
+  "not recorded" accountability. Never infer a human from git author/email.
+  A fork author's accountability does not grant test-ref trust.
+- Fold per-user-ID latest stances using source ordering within a channel and
+  log order across channels. Retain the source-time barrier for withdrawals
+  and requests for changes: an approval clears either only when its source
+  proves it is newer. Repeated or late older observations cannot resurrect
+  approval. A native approval binds its reviewed head; intent/brief are
+  explicitly "not recorded", never filled from observation-time intent.
+- Count eligible distinct IDs; exclude the author, submitter where present,
+  and every accountable human. Outstanding requests for changes from eligible
+  reviewers block. Eligibility means eligibility for an applicable requirement,
+  not simply appearing in a review list. Share this derived set with condition
+  snapshots under `approvals`; retain login comparisons for conditions and
+  native approvals in that set even for receipt-only requirements.
+- Planner and executor: facts change the per-change approval-input fingerprint
+  without resetting CI timers or classifying a revision again. Runtime and
+  landing re-reads wait for PR 11. Revision changes clear current trust/review
+  facts; intent changes clear receipt eligibility without discarding tests.
+- Tests and exit: permutations across channels, equal/missing source times,
+  dismissals, duplicate polling, removed team members, revoked writers, self
+  and accountable approvals, ID dedupe across aliases, and snapshot replay.
+  Pin the ambiguous cases identified under Open questions before activation.
+
+#### PR 7: Build factual briefs and validate receipt bindings
+
+- Scope: implement **Briefs (Stage A, prose in Stage C)**, **Policy approvals /
+  What intent means**, and the receipt digest portion of **Approvals are
+  head-bound; receipts also bind intent**.
+- Config and loader: no additions. No model settings or generated prose.
+- Brief: provide one recorded-fact model with reviewer, operator, and agent
+  renderers. Include pinned inputs, the author's claimed intent, complete or
+  explicitly incomplete file/hunk inventory, label reasons, requirements and
+  eligible pools, and test links. Operator output explains each blocker and
+  what clears it. Agent output uses stable reason codes and structured next
+  steps rather than prose parsing. Missing historical facts say "not recorded".
+- Digest: define a versioned canonical serialization and SHA-256 vectors over
+  change/revision/head, diff endpoints/merge-base, inventory and completeness,
+  labels/reasons, intent digest, policy digest, and requirements. Sort unordered
+  sets, preserve meaningful order, and specify absent versus empty values.
+  Exclude queue position, approval progress, timestamps, links to tests, and
+  rendered text. Normalize intent line endings and surrounding whitespace as
+  the decision requires. A renderer change alone cannot invalidate a receipt.
+- Events: add `approval_receipt_recorded` with the supplied digest and explicit
+  change/revision/head/intent/policy bindings, actor ID/login, source comment ID
+  and creation time. Use `review_stance_observed` for `unapprove` withdrawal.
+  Add golden fixtures, including rejected-binding tests. No new actions or
+  actual commands yet. Validate the supplied digest against current evidence
+  at acceptance and again at landing; never replace it with a current digest.
+- Expose a read-only reviewer brief endpoint and CLI view over recorded facts
+  so PR 11's receipt command is usable as soon as activated. Use the scoped
+  route and command shapes specified in PR 12, with authenticated reads under
+  the current status listener. No write bearer-token authentication is added.
+- Planner and executor: no testing gate. Native reviews remain head-only and
+  visibly lack receipt bindings. Tests prove intent edits invalidate receipts
+  but leave tests valid; changing each included digest field changes the hash,
+  and changing each excluded field does not. Rendered and JSON fixtures agree.
+
+#### PR 8: Skip approval waits without rebuilding them
+
+- Scope: implement **Policy approvals / Approvals gate landing, not testing**,
+  the waiting and batching behavior, and ADR 0009 **Interaction with other
+  decisions / Approvals**. Public config still stays disabled until PR 11.
+- Config and loader: no additions. No new action type is needed.
+- Events: add `approval_gate_rejected` with batch/composition, per-member
+  change/revision, approval-input fingerprint, and stable waiting reasons;
+  add `approval_inputs_changed` to wake a wait only on a changed fingerprint
+  with a current observation basis. Golden fixtures cover multi-member failure,
+  stale wake, and unknown eligibility. Existing stance, intent, revision, and
+  `ConfigApplied` events also invalidate the appropriate wait basis.
+- Preserve `Entry` positions, admission IDs, and enqueue times. Initially allow
+  testing without approvals. After a rejected gate, skip unchanged waiting
+  revisions in **all** selection paths: fresh batches, retained retry groups,
+  bisection halves, fast-forward prefixes, and speculative admission. Filter
+  or retire empty pending groups so an all-waiting half cannot become a barrier.
+  Compute `max_wait` from eligible candidates, not a skipped entry's age.
+- Rejecting composition B discards B and its speculative suffix through
+  `invalidateFrom` and existing `InvalidateBatches`/`BatchesInvalidated` effects.
+  Earlier batches remain valid. Rebatch non-waiting members in their original
+  order with fresh batch IDs and checks on the new composition. Preserve any
+  real unresolved bisection barrier, but never diagnose an approval wait as a
+  CI failure, halve W, or add it to the defect estimator. Late build/check
+  results cannot revive discarded work. Use the existing cancellation ledger
+  and cleanup paths; unsupported cancellation remains wasted CI.
+- Wake on a new stance/receipt observation, changed observed permissions or
+  membership, `ConfigApplied`, intent edit, or new revision. An ordinary poll,
+  duplicate observation, elapsed time, or `refresh` alone does not rebuild an
+  unchanged waiting composition. A permission-only change must still be
+  discoverable while no batch is active: schedule read-only gate-input probes
+  through reconciliation, without constructing test refs. Record changes only.
+- Executor integration waits for PR 11; the reducer and pure planner tests
+  inject outcomes now. Exit requires zero new builds over repeated unchanged
+  polls, progress behind a waiting first entry, precise suffix invalidation at
+  depth 4, safe cancellation races, and full replay/snapshot equivalence.
+
+#### PR 9: Store all decision snapshots with landing start
+
+- Scope: implement **Policy approvals / Approvals gate landing, not testing**,
+  the atomic immutable snapshot, and **Changes and their identity / A landing
+  settles before an update applies**. Keep the fence protocol unchanged.
+- Config and loader: no additions. No new action type. `Land` stays byte-identical.
+- Events: add `landing_decision_recorded`, one per member, keyed by batch and
+  random attempt ID. Record change/revision/head, classification and its input
+  evidence, policy digest, intent digest, requirements, eligible identities and
+  the approval/receipt source records actually relied on, accountability, and
+  tested/landed commit identities. PR-only evidence explicitly marks direct
+  protection observations not applicable. Include native reviews' absent brief
+  and intent bindings. Add a full golden fixture and legacy absence tests.
+- Store/executor: `Store.Emit` currently commits one event per call. Introduce
+  a claim-bound, queue-locked landing-start operation that authorizes the
+  existing action against the latest projection, validates all member decisions
+  against their input basis, and appends the complete decision set **and the
+  unchanged `LandingStarted` in one transaction**. Reject missing, duplicate,
+  stale, extra, or mismatched members. Separate pre-start callback emissions
+  cannot provide this guarantee. A single-event legacy start remains available
+  only when no approval policy applies.
+- Forge reads happen before that transaction. If a receipt, head, intent,
+  permission observation, policy change, check reopen, or claim loss commits
+  before the lock-protected start, re-plan and reject stale evidence. Once
+  committed, no later update changes the snapshots or stops fence settlement.
+  Do not hold a database transaction open across a forge request or git push.
+  Remote changes not yet observed have the same read-to-push boundary as CI.
+- Generated remedies remain an explicit decision variant for ADR 0005, naming
+  suspect, evidence, and `on_red` instead of approvals. Do not implement remedy
+  generation or post-merge mode here. Preserve distinct tested T and landed L
+  for fast-forward today and for post-merge when it arrives; never claim L was
+  tested when only T was tested. ADR 0008 later adds per-check producer/results
+  through additive evidence, without changing this deployed event payload.
+- Tests and exit: real Postgres races and fault injection prove all-or-nothing
+  snapshots/start, lost leases, stale preflight, config/head/intent/check races,
+  retry after rollback, crash after commit/before push, crash after push, and
+  settlement under pause or removal. No snapshot may authorize H2 from H1.
+
+#### PR 10: Add change and classification trailers before CI
+
+- Scope: implement **Policy approvals / Commits carry what is known at build
+  time**, preserving ADR 0004 attribution and exact tested commits.
+- Config and loader: no additions. Events/actions: none. Build actions retain
+  their existing wire bytes; the executor loads matching recorded classification
+  under the pinned batch config and supplies internal build metadata. The
+  runtime path activates with PR 11, so legacy builds remain unchanged.
+- Add `OpenMerge-Change` and `OpenMerge-Classification` to each squash/merge
+  commit's single trailer block and to the last replayed commit of each change
+  for rebase. Define a deterministic label ordering and change/revision value
+  spelling with fixtures. Keep contributor sign-offs, coauthors, author dates,
+  and replay provenance. Remove conflicting reserved input trailers before
+  writing authoritative generated ones. Only the top commit has the final
+  `OpenMerge-Batch` line accepted by `forge.ParseBatchMessage`.
+- Fast-forward leaves original history and signatures untouched. Put one change
+  trailer per member on the tested marker; resolve its classification-marker
+  spelling under Open questions. Never rewrite a tested commit to add approvals
+  or a new intent. Metadata changes that affect build inputs require new work,
+  not edits at landing. Gate and fence behavior stay unchanged.
+- Tests and exit: real local git plus fake-forge contract tests for every method,
+  several changes per batch, multiline bodies, adversarial reserved trailers,
+  retained DCO/coauthors, and a receipt arriving while CI runs. Verify marker
+  parent/tree and tested/landed identities as in the existing fast-forward path.
+
+#### PR 11: Activate configuration, observations, and the landing gate
+
+- Scope: connect the preceding components for all Stage A portions of
+  **Configuration**, **Changes and their identity**, **Classification**,
+  **Policy approvals**, **Accountability**, and **Briefs**. Resolve the blocking
+  Open questions below before this PR. No Stages B/C settings are accepted.
+- Config: publish the PR 5 schema and loader together. Stage A only accepts
+  `changes.pull_requests: required`. No `policy_authority`, `break_glass`,
+  direct-submission, model, or new conflict-grace settings enter this PR.
+  Preserve the existing schema/loader docs-fence agreement tests. Keep proposed
+  config fragments in `text` fences until the public loader accepts them.
+- `serve` resolves declared users/teams to stable IDs while assembling effective
+  config at the governing commit. Unresolved names pause affected queues through
+  the existing config source and basis-checked recovery, never fall back to the
+  last valid approval policy. Revalidate mappings even at an unchanged commit
+  so login reuse changes the policy digest. Re-read membership/write grants at
+  each landing and in waiting probes. Governing owner/attribute content and
+  classifier-version changes flow through the policy component of
+  `ConfigApplied`, invalidating all not-yet-landing batches.
+- Ingest change/revision, intent, classification, accountability, native stance,
+  and eligibility records through deduplicated reconciler observations. Webhooks
+  wake polling; they are not authority. Add the whole-comment commands
+  `@openmerge approve <brief-digest>` and `@openmerge unapprove` with the current
+  writer authorization, inclusive comment cursor, durable receipt dedupe, and
+  App-self-comment exclusion. A mismatch is rejected with the supplied and
+  current digest explained, never rebound. Receipt acceptance and command
+  dedupe commit atomically. Edits to old comments do not create new commands.
+- Keep exact-head fork trust independent of policy, even for `require: none`.
+  Approval rules never weaken `enter_when` or `merge_when`. Under `approvals`,
+  supply `approved-reviews-by` from the shared eligible stance set in admission,
+  reconciliation, retries, and final preflight. Without `approvals`, preserve
+  today's raw native-review condition behavior. A review term in `enter_when`
+  still prevents early testing; document moving such terms into `approvals`.
+- Separate CI failure evidence from unmet approval policy in the current
+  `CheckPolicy`/`BeforeLand` path. An approval wait is not `ChecksFailed`, a
+  failed rerun, a timeout, a bisection trigger, or a terminal dequeue. Evaluate
+  the full existing condition expression at landing, including nested logical
+  groups; do not strip review terms mechanically. CI observations must retain
+  their own timers, producer checks, and same-commit retry decisions.
+- After fresh checks and trust, re-read stances, intent, membership, and grants
+  for every batch member. Reuse recorded classification, evaluate all additive
+  requirements, revalidate receipt digests, then call PR 9's atomic start.
+  On an unsatisfied gate record PR 8's rejection and skip waits. On success
+  freeze every decision and start once; settlement remains first under every
+  pause, config error, or installation loss. Provide a minimal waiting reason,
+  reviewer brief link, and digest in the existing check from activation onward.
+- No new event/action types beyond PRs 1, 4, 6–9. This is their first production
+  writer and the rollback boundary described above. Tests and exit: opt-in and
+  legacy end-to-end queues at depths 1 and 4, multiple bases and installations,
+  revoked permissions, changed owners, stale receipts, dropped webhooks,
+  unreadable teams, and config changed mid-landing. Prove no eligible policy
+  bypass and no unapproved composition lands.
+
+#### PR 12: Complete CLI/API reporting and Stage A acceptance
+
+- Scope: complete **Briefs**, **Consequences / Stage A exit**, and visibility of
+  **Accountability** and **Policy approvals**. No config, event, action, or
+  landing-gate changes. Public DTOs remain separate from queue wire structs.
+- Extend existing queue status and PR lookup additively with change/revision,
+  accountability, classification reasons, exact waiting gate and requirements,
+  stance provenance, receipt validity, and landed commit/decision links. Old
+  records report "not recorded". Do not infer decisions from commit trailers.
+- Finish scoped reads at
+  `GET /v1/queues/{owner}/{repo}/{base}/changes/{id}`,
+  `.../changes/{id}/brief?audience=reviewer|operator|agent`, and
+  `.../changes/{id}/decisions` with bounded pagination and revision selection.
+  Resolve IDs only within the selected queue; preserve ambiguous-installation
+  diagnostics and escape branch names as existing routes do. Decisions include
+  attempt and source event references, including abandoned attempts distinctly
+  from confirmed landings. Reads never fetch mutable forge facts.
+- Finish `openmerge change show <id>` and
+  `openmerge change brief <id> --audience reviewer|operator|agent`, with queue
+  selectors, `--json`, and the existing status command's stable error/exit-code
+  conventions. Keep `queue status --pr N` as a lookup alias. For Stage A, agents
+  open PRs and queue them with the existing authenticated forge-comment commands;
+  the CLI reads briefs and outcomes. `gh pr comment` provides the existing
+  forge-authenticated command path in the CLI-only exit scenario.
+  `change submit`, direct writes, and
+  `change approve` remain Stage B after its authentication/authorization ADR.
+  The read-only status bearer token must not become a user write credential.
+- Update the one existing OpenMerge check, without a new comment channel, with
+  the reviewer summary, brief digest, full brief link, incomplete-inventory
+  warning, accountability where known, native-versus-receipt evidence, and
+  actionable waiting reasons. Retain the bounded CI ledger and mode's honest
+  tested/landed wording. Escape untrusted title/body/path text and bound summaries
+  without omitting safety-relevant warnings. The API retains full evidence.
+- MCP is later Phase 2/3 work: tools call these same versioned read projections
+  and eventual authenticated command handlers. Do not add an MCP server or a
+  second approval evaluator to Stage A.
+- Tests and exit: CLI/HTTP/check golden responses, invalid and cross-queue IDs,
+  auth isolation, pagination, size limits, rendering, and old clients/records.
+  The fake-forge scenario drives an agent-opened PR to landed or definitively
+  rejected using CLI reads and forge-authenticated commands: low-risk `none`,
+  exact-head human review, receipt-required intent review, and read-back of
+  every landing decision. Run an organization sandbox acceptance for team
+  owners and permission installation; never require GitHub credentials in CI.
+
+#### Open questions
+
+These are gaps or tensions to resolve explicitly, not changes to accepted
+requirements. Blocking items must be settled before PR 11 publishes the schema
+or starts writing evidence. Component tests should pin the resolution.
+
+1. **Requirement syntax and human-only approval (PR 5, blocking).** The example
+   fixes `any_writer`, `none`, and `{group, count}` but does not enumerate the
+   requirement union, count defaults, or how a rule requires a human for an
+   unmapped bot. Recommend accepting those fixed forms, defaulting object count
+   to 1, and adding an explicit human-kind requirement form rather than treating
+   every writer as human. Specify where `receipt: true` is valid, including a
+   receipt from any writer, before freezing schema fixtures.
+2. **Classification's pinned base (PRs 4/11, blocking).** "Once per revision"
+   pins a base tip, while "a change to any of these inputs" could include that
+   tip or merge base. Speculative compositions also use predecessor landing
+   commits. Recommend a revision's first observed queue-base tip as its diff
+   basis, separate from speculative build bases; ordinary predecessor landings
+   do not reclassify the same revision. Governing config/owners/attributes and
+   classifier-version changes explicitly refresh its evidence. Confirm whether
+   other base movement requires reclassification, and receipt invalidation,
+   before implementing that case. Continue invalidating stale test compositions.
+3. **Conflict grace is described but not implemented (PR 1 boundary).** Today's
+   `TestRefBuildFailed` conflict path removes work and records no structured
+   file report, retry budget, or grace deadline. ADR 0005 supplies no concrete
+   config schema for those bounds. Recommend a separate bounded conflict-grace
+   PR/design before advertising that exception; Stage A identity must neither
+   renew a future deadline on revision updates nor block following changes.
+   Do not silently introduce grace configuration in this plan's activation PR.
+4. **Source times and mutated native reviews (PRs 3/6, blocking).** Reviews have
+   review IDs and submission times, but a dismissal can change a review with
+   the same ID, and a polling response may lack the dismissal's own time. The
+   decision does not define ties or a missing time for cross-channel clearing.
+   Recommend conservative withdrawal precedence until a later approval has
+   provably newer source time; retain dismissal identity/time when available.
+   Also pin how `unapprove`, which has no revision argument, binds if its comment
+   is first processed after a push. Recommend current revision at authenticated
+   processing, recorded explicitly, without letting a late approval bind there.
+5. **Unknown or no applicable reviewer pool (PRs 5/6/11, blocking).** The ADR
+   defines eligibility by applicable requirements; a definite `none` rule may
+   leave no approval pool while `merge_when` still contains a review condition.
+   It also does not say how incomplete membership affects negative conditions.
+   Recommend no implicit extra pool: an uncountable review condition stays
+   unmet, with a diagnostic recommending an explicit pool. Unknown eligibility
+   supplies an unknown condition attribute, never a known empty list that
+   negation could turn into permission. Keep the grammar unchanged.
+6. **Fast-forward classification trailers (PR 10, blocking for that method).**
+   The decision explicitly puts per-change trailers on its marker but does not
+   specify where each member's classification goes there. Recommend paired
+   change/classification records on the marker, keyed by change ID, keeping
+   contributor heads untouched and the sole batch trailer last. Confirm the
+   value format before golden commit fixtures become a contract.
+7. **Config blob identity versus semantic digest (PRs 4/5/11, blocking).**
+   Classification records the governing config object's ID and invalidates on
+   input changes. ADR 0002's effective digest ignores formatting and unrelated
+   queues. Editing either changes the config blob while leaving semantic policy
+   equal, so existing `ConfigApplied` behavior cannot supply both promises.
+   Recommend confirming an opt-in Stage A amendment that includes the governing
+   config blob in its policy digest, accepting extra invalidation on those edits
+   for approval-enabled queues. Alternatively narrow the classification input
+   rule to semantic config changes. Keep legacy digests untouched either way;
+   do not silently choose an interpretation in implementation.
+
+#### Risks
+
+- Approval policy can weaken accidentally through incomplete inventories,
+  mistaken `CODEOWNERS` dialects, `unknown` handling, or mixed condition/policy
+  counts. Treat those as negative safety cases, not only matching examples.
+- Identity and membership reads add rate pressure and failure modes across
+  bases. Cache immutable content and dedupe observations, but revalidate grants
+  at the gate and keep settlement's budget. A read failure must never reuse an
+  old grant as fresh evidence.
+- Polling cannot atomically observe every remote edit with a git push. Record
+  exactly which reads authorized the durable start; preserve the fence's
+  settlement guarantee instead of claiming continuous review authorization.
+- Incorrect wait clearing can either starve a change or repeatedly spend CI.
+  Persist fingerprints and observation bases, probe idle waits, and test every
+  selection path and speculative suffix, including a late builder response.
+- Inventory/hunk and decision records increase journal size and can contain
+  private source. Bound observations, authenticate reads, sanitize rendering,
+  and leave retention/compaction disabled until audit and ledger preservation
+  are designed together. ADR 0008 audit export needs the original evidence.
+- Accepting config before enforcement or activating only part of a batch gate
+  creates a policy bypass. PR 11 is the only activation point; older workers
+  must be drained. An incompatible rollback requires restoring the database.
+- PR 11 overlaps the landing gate used by ADR 0005 and policy authority work.
+  Keep strict/fast-forward fence forms unchanged, expose explicit decision
+  variants, and coordinate additive evidence formats before parallel work lands.
+
+#### CI and simulator impact
+
+This stage does not reduce the checks needed for a tested composition. Approval
+reads and classification are control-plane work, not new CI runs. A rejected
+batch and its dependent speculative suffix waste their already-started runs;
+remaining members need new compositions and tests. At depth W, a rejection at
+chain position k can discard up to W − k + 1 admitted batches. Cancellation
+reduces runner-minutes only where supported. While approval inputs stay equal,
+waiting changes cause **zero additional builds or tests**. Repeated approval
+input changes can cause repeated speculation; the ADR provides no total CI-spend
+cap, and this plan does not invent one.
+
+Extend `internal/sim` to drive the real planner with review/receipt arrivals,
+intent edits, membership/permission changes, policy updates, finite runners,
+and cancellations both supported and unsupported. Add small deterministic
+safety scenarios at depths 1 and 4 to `make check`, plus all-waiting queues,
+multiple pending bisection groups, and policy changes during an unsettled attempt.
+Assert approved snapshots for every opted-in landing, no self-approval, exact
+composition evidence, no wait-as-defect accounting, and no unchanged-input
+retest churn. Preserve all legacy simulator results when approvals are absent.
+
+Planning allowance is roughly 20–30 focused unit/contract/race scenario groups
+across the sequence, plus a small seeded approval workload in `make check`.
+Target under 10% extra short-suite runtime, to be measured against the same
+checkout/toolchain before activation; this is a budget, not a claimed result.
+Keep the existing required `sim-exits` Team/Slow profiles and thresholds intact.
+Add an approval-aware paired profile beside them, reporting review delay
+separately from CI/queue delay, runs and runner-minutes per landed change,
+invalidated compositions, and rebuilds per unchanged approval fingerprint.
+Do not apply the old latency target to time deliberately spent waiting for a
+reviewer. Full eight-seed, 30-day approval/adaptive combinations belong in the
+existing non-required full-simulation workflow until runtime is measured.
+
 ## Consequences
 
 - Repositories that change nothing see nothing change: `required` is the default, queues without an `approvals` section keep today's rules, and pull requests keep their current flow.

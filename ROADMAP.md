@@ -143,6 +143,12 @@ Built after Phase 1 closes, in parallel with Phase 2 where they don't overlap ([
 
 Phase 3 treats the change, not the pull request, as the unit of work, in three stages ([ADR 0007](docs/adr/0007-changes-not-prs.md)). Stage A works entirely on pull requests; Stages B and C follow once their prerequisites exist.
 
+Stage A's [12-PR implementation plan](docs/adr/0007-changes-not-prs.md#implementation)
+starts with independent identity, forge-read, and policy work, then adds evidence
+and the landing gate before runtime activation and CLI/API acceptance. It records
+dependencies, rollback boundaries, and open questions. Pushes outside the queue
+is already in flight separately.
+
 - **Change identity (A):** a server-assigned change with one revision per head; a new head leaves the queue as today (conflict grace aside) and its stale runs are cancelled, and a started landing always settles first
 - **Classification (A):** conservative labels (`docs`, `generated`, `owned:<owner>`, `policy`, `unknown`) pinned to base and head; anything uncertain is `unknown`; comment-only detection deferred
 - **Policy approvals (A):** opt-in, agent-aware rules (policy-bot style) that only add requirements on top of `enter_when`/`merge_when`, e.g. agent-authored changes touching `infra/**` need two approvals from a group; unknown matches never lower requirements; head-bound native reviews, `@openmerge approve <brief-digest>` receipts that also bind intent, no self-approval, and a decision snapshot in the landing-start gate; changes waiting for approval are skipped by batching instead of holding a batch
