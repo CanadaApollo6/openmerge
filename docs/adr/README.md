@@ -11,7 +11,7 @@ An ADR records one significant decision: the context that forced it, what we cho
 | [0005](0005-verification-modes.md) | Offer post-merge verification as a per-queue mode alongside strict landing | Accepted |
 | [0006](0006-multi-repository-serving.md) | Serve every installed repository from one process, driven by webhooks with polling as the backstop | Accepted |
 | [0007](0007-changes-not-prs.md) | Make the change the unit of work, with pull requests as one optional view | Accepted |
-| [0008](0008-openmerge-policy-authority.md) | Let GitHub enforce who can write, and OpenMerge enforce everything else | Proposed |
+| [0008](0008-openmerge-policy-authority.md) | Make OpenMerge authoritative for queue policy behind forge write restrictions | Proposed |
 
 ## Writing a new ADR
 
