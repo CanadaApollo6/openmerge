@@ -23,6 +23,10 @@ func (s *Server) record(ctx context.Context, w *worker, key string, value any, e
 }
 
 func (s *Server) configuration(ctx context.Context, w *worker) error {
+	basis, _, err := s.store.Load(ctx, w.id)
+	if err != nil {
+		return err
+	}
 	branch, loadErr := w.Driver.DefaultBranch(ctx, w.repo())
 	if loadErr == nil && branch == "" {
 		loadErr = errors.New("repository default branch is missing")
@@ -70,14 +74,10 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 	} else {
 		w.configBranch, w.configTip = "", ""
 	}
-	state, _, err = s.store.Load(ctx, w.id)
-	if err != nil {
-		return err
-	}
 	if w.configError != nil {
-		return s.pause(ctx, w, "invalid-config", "Default-branch configuration: "+w.configError.Error())
-	} else if state.PauseReason(queue.Config{}) == "invalid-config" {
-		_, err = s.store.Append(ctx, w.id, []queue.Event{queue.ResumeRequested{}}, "")
+		return s.block(ctx, w, queue.ConfigSource, "Default-branch configuration: "+w.configError.Error(), "")
+	} else if basis.SourceBlocked(queue.ConfigSource) {
+		_, err = s.store.Append(ctx, w.id, []queue.Event{queue.BlockSourceCleared{Source: queue.ConfigSource, Basis: basis.BlockSourceRevision(queue.ConfigSource)}}, "")
 		if err == nil {
 			s.logCommitted(ctx, w)
 		}
@@ -159,6 +159,11 @@ func (s *Server) reconcile(ctx context.Context, w *worker, force bool) error {
 			return s.report(ctx, w)
 		}
 	}
+	state, _, err := s.store.Load(ctx, w.id)
+	if err != nil {
+		return err
+	}
+	force = force || state.SourceBlocked(queue.CheckSources)
 	summaries, err := w.Driver.ListOpenPullRequests(ctx, w.repo(), w.Key.BaseBranch)
 	if err != nil {
 		return err
@@ -182,7 +187,7 @@ func (s *Server) reconcile(ctx context.Context, w *worker, force bool) error {
 		}
 		w.summaries[summary.Number] = summary
 	}
-	state, _, err := s.store.Load(ctx, w.id)
+	state, _, err = s.store.Load(ctx, w.id)
 	if err != nil {
 		return err
 	}
@@ -203,6 +208,9 @@ func (s *Server) reconcile(ctx context.Context, w *worker, force bool) error {
 		}
 		delete(w.prs, n)
 		delete(w.summaries, n)
+	}
+	if err := s.recheckCheckSources(ctx, w); err != nil {
+		return err
 	}
 	return s.report(ctx, w)
 }
@@ -349,9 +357,12 @@ func (s *Server) commands(ctx context.Context, w *worker, number int) error {
 						if _, err := s.observe(ctx, w, number); err != nil {
 							return err
 						}
-						if w.configError == nil {
-							events = append(events, queue.ResumeRequested{}, queue.RefreshRequested{})
+						clears, err := s.operatorClears(ctx, w)
+						if err != nil {
+							return err
 						}
+						events = append(events, clears...)
+						events = append(events, queue.RefreshRequested{})
 					}
 				}
 			}

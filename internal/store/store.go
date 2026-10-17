@@ -150,7 +150,15 @@ func (s *Store) append(ctx context.Context, q QueueID, events []queue.Event, ded
 			}
 		}
 		for i, event := range events {
-			if _, resume := event.(queue.ResumeRequested); resume {
+			_, resetPoison := event.(queue.ResumeRequested)
+			if cleared, ok := event.(queue.BlockSourceCleared); ok && cleared.Source == queue.ActionPoison && cleared.Validate() == nil {
+				state, _, err := load(ctx, tx, q)
+				if err != nil {
+					return err
+				}
+				resetPoison = cleared.Basis == state.BlockSourceRevision(queue.ActionPoison)
+			}
+			if resetPoison {
 				if _, err := tx.Exec(ctx, `UPDATE actions SET poison_count = 0, poison_notified = false
 					WHERE queue_id = $1 AND poison_count > 0`, q); err != nil {
 					return err
@@ -396,7 +404,7 @@ func poisonAction(ctx context.Context, tx pgx.Tx, id int64, cause error) error {
 
 // The caller holds the queue lock. Notification and its event commit together;
 // Plan also drains pending notifications if a claimer stopped after quarantine.
-// ResolveLanding never pauses. Other poisoned work shares one pause until resume.
+// ResolveLanding never blocks. Other poisoned work shares the action-poisoned source.
 func publishPoisonPauses(ctx context.Context, tx pgx.Tx, q QueueID) (bool, error) {
 	rows, err := tx.Query(ctx, `UPDATE actions SET poison_notified = true
 		WHERE queue_id = $1 AND status = 'poisoned' AND poison_count >= 3 AND NOT poison_notified
@@ -420,10 +428,15 @@ func publishPoisonPauses(ctx context.Context, tx pgx.Tx, q QueueID) (bool, error
 	if err != nil {
 		return false, err
 	}
-	if state.PauseReason(queue.Config{}) == "action-poisoned" {
+	if state.SourceBlocked(queue.ActionPoison) {
 		return false, nil
 	}
-	name, payload, err := queue.EncodeEvent(events[0])
+	poison := events[0]
+	name, payload, err := queue.EncodeEvent(queue.BlockSourceBlocked{
+		Source: queue.ActionPoison, Subject: poison.Key,
+		Detail: fmt.Sprintf("Queue paused after repeated invalid action %s: %s; refresh the queue to retry", poison.Key, poison.Reason),
+		Basis:  state.BlockSourceRevision(queue.ActionPoison),
+	})
 	if err != nil {
 		return false, err
 	}

@@ -279,3 +279,41 @@ func TestSourceProblemsAndExplanationsRemainIndependent(t *testing.T) {
 		t.Fatal("one source's recovery removed another source's block")
 	}
 }
+
+func TestIndependentBlockStatusAndInheritedEvidence(t *testing.T) {
+	events := []queue.Event{
+		queue.PauseRequested{Reason: "legacy-hold", Detail: "legacy detail"},
+		queue.BlockSourceBlocked{Source: queue.ConfigSource, Detail: "config ghp_private123"},
+		queue.BlockSourceBlocked{Source: queue.ActionPoison, Subject: "action", Detail: "poison detail"},
+		queue.BlockSourceBlocked{Source: queue.ConfigSource, Detail: "new config ghp_private123", Basis: 1},
+		queue.BlockSourceCleared{Source: queue.ConfigSource, Basis: 1},
+		queue.BlockSourceCleared{Source: queue.Operator, Basis: 1},
+	}
+	events = append(events, admission()...)
+	q, _, why := Project(journal(events...), 1, 20, nil)
+	if len(q.Blocks) != 2 || q.Blocks[0].Source != "config" || q.Blocks[0].Revision != 2 || q.Blocks[1].Source != "action-poisoned" {
+		t.Fatalf("missing independent block sources: %+v", q.Blocks)
+	}
+	for _, source := range []string{"config", "action-poisoned"} {
+		if !strings.Contains(why.Summary, source) {
+			t.Fatal(why.Summary)
+		}
+	}
+	found := map[string]bool{}
+	for _, event := range why.Events {
+		if event.ID == 1 || event.ID == 2 || event.ID == 5 || event.ID == 6 {
+			t.Fatalf("inherited cleared/stale evidence: %+v", event)
+		}
+		found[event.Type] = true
+	}
+	if !found["block_source_blocked"] {
+		t.Fatal("active source evidence missing")
+	}
+	body, err := json.Marshal(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "private123") {
+		t.Fatal("block detail escaped sanitization")
+	}
+}

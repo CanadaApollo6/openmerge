@@ -9,10 +9,11 @@
 // are stored separately when actions are inserted. Missing/null wire fields and
 // semantically invalid actions are quarantined as poisoned and exposed by
 // Store.Poisoned. Replanning repairs a poisoned key with fresh inputs, preserving
-// its incident count. Three incidents append ActionPoisoned once per pause and
+// its incident count. Three incidents append an action-poisoned BlockSourceBlocked and
 // pause the queue visibly on its head PR. ResolveLanding is exempt from this cap:
-// it always repairs without pausing. ResumeRequested clears the pause and incident
-// counts; the next plan retries current work. Done keys remain terminal.
+// it always repairs without pausing. A current-basis BlockSourceCleared for
+// action-poisoned clears that source and incident counts; legacy ResumeRequested
+// retains its original reset behavior; the next plan retries current work. Done keys remain terminal.
 //
 // Append, Plan and BeginConsequential share a transaction-scoped queue lock.
 // Serializing appends makes event IDs also reflect commit order within a queue:

@@ -89,9 +89,9 @@ func TestOperationalLogsDequeueAndPause(t *testing.T) {
 	f.AddComment(repo, 1, "writer", "@openmerge dequeue")
 	must(t, s.Notify(t.Context(), "7", repo.Path, "dequeue-command"))
 	must(t, s.cycle(t.Context(), w))
-	must(t, s.pause(t.Context(), w, "invalid-config", "broken configuration"))
-	must(t, s.pause(t.Context(), w, "invalid-config", "broken configuration"))
-	_, err := s.store.Append(t.Context(), w.id, []queue.Event{queue.ResumeRequested{}}, "")
+	must(t, s.block(t.Context(), w, queue.ConfigSource, "broken configuration", ""))
+	must(t, s.block(t.Context(), w, queue.ConfigSource, "broken configuration", ""))
+	_, err := s.store.Append(t.Context(), w.id, []queue.Event{queue.BlockSourceCleared{Source: queue.ConfigSource, Basis: 2}}, "")
 	must(t, err)
 	s.logCommitted(t.Context(), w)
 	found := map[string]int{}

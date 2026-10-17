@@ -218,9 +218,15 @@ Logs are best effort, not the durable event journal. A process crash can leave a
 committed transition unlogged. On restart, OpenMerge resumes from Postgres,
 refreshes observations, and resolves any uncertain landing through its fence.
 Do not reset or delete `openmerge/fence/*` refs to recover a service.
-A writer can post `@openmerge refresh` after fixing a configuration, build or
-landing problem to clear a pause and request fresh observations. Invalid
-default-branch configuration remains paused until corrected on the default branch.
+Every active block is listed with its source and detail in status, why, and the
+CLI. Source set/clear observations are logged independently, even when another
+source already blocks the queue. A writer can post `@openmerge refresh` to clear
+operator pauses and action poison and request fresh observations. It clears a
+`landing-not-on-base` block only after a fresh ancestry check confirms the durable
+landing commit is on the base. Config, ambiguous check sources, repository rules,
+and queue lifecycle clear through their own recovery observations; refresh never
+clears them. Build retries retain their existing recovery on base or config change.
+Legacy shared pauses appear under `operator` and can still be cleared by refresh.
 
 ## Runtime repository rules
 

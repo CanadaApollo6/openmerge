@@ -281,7 +281,7 @@ func TestDeferredBacklogDoesNotStarvePausedWork(t *testing.T) {
 	must(t, err)
 	_, err = s.store.Plan(t.Context(), w.id, w.plannerConfig(time.Millisecond), time.Now())
 	must(t, err)
-	must(t, s.pause(t.Context(), w, "operator", "repairing base"))
+	must(t, s.block(t.Context(), w, queue.Operator, "repairing base", ""))
 	for range 2 {
 		must(t, s.cycle(t.Context(), w))
 	}

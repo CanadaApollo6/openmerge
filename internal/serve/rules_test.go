@@ -225,14 +225,14 @@ func TestRulesStartupReadFailureDoesNotStopHealthyWork(t *testing.T) {
 func TestRulesDoNotClearUnrelatedPauseAndResolveLandingStillExecutes(t *testing.T) {
 	s, w, f, _ := fixture(t, repositoryConfig)
 	w.CheckRules = func(context.Context) ([]string, []string, error) { return nil, nil, nil }
-	must(t, s.pause(t.Context(), w, "landing-not-on-base", "manual repair needed"))
+	must(t, s.block(t.Context(), w, queue.LandingNotOnBase, "manual repair needed", "tested"))
 	must(t, s.repositoryRules(t.Context(), w))
 	state, _, err := s.store.Load(t.Context(), w.id)
 	must(t, err)
 	if state.PauseReason(queue.Config{}) != "landing-not-on-base" {
 		t.Fatal("passing rules check cleared an unrelated pause")
 	}
-	_, err = s.store.Append(t.Context(), w.id, []queue.Event{queue.ResumeRequested{}}, "")
+	_, err = s.store.Append(t.Context(), w.id, []queue.Event{queue.BlockSourceCleared{Source: queue.LandingNotOnBase, Basis: state.BlockSourceRevision(queue.LandingNotOnBase)}}, "")
 	must(t, err)
 	w.CheckRules = nil
 	w.Git = missingLanding{w.Git}
@@ -243,7 +243,9 @@ func TestRulesDoNotClearUnrelatedPauseAndResolveLandingStillExecutes(t *testing.
 	if err := s.cycle(t.Context(), w); err == nil {
 		t.Fatal("expected uncertain landing")
 	}
-	_, err = s.store.Append(t.Context(), w.id, []queue.Event{queue.ResumeRequested{}}, "")
+	state, _, err = s.store.Load(t.Context(), w.id)
+	must(t, err)
+	_, err = s.store.Append(t.Context(), w.id, []queue.Event{queue.BlockSourceCleared{Source: queue.LandingNotOnBase, Basis: state.BlockSourceRevision(queue.LandingNotOnBase)}}, "")
 	must(t, err)
 	w.CheckRules = func(context.Context) ([]string, []string, error) {
 		return []string{"rules changed during landing"}, nil, nil

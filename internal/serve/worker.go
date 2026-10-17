@@ -14,21 +14,6 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
-func (s *Server) pause(ctx context.Context, w *worker, reason, detail string) error {
-	state, _, err := s.store.Load(ctx, w.id)
-	if err != nil {
-		return err
-	}
-	if state.PauseReason(w.plannerConfig(s.options.PollInterval)) == reason && state.PauseDetail(w.plannerConfig(s.options.PollInterval)) == detail {
-		return nil
-	}
-	_, err = s.store.Append(ctx, w.id, []queue.Event{queue.PauseRequested{Reason: reason, Detail: detail}}, "")
-	if err == nil {
-		s.logCommitted(ctx, w)
-	}
-	return err
-}
-
 var errTrustGate = errors.New("PR no longer passes the exact-head trust gate")
 
 func (s *Server) trustGate(ctx context.Context, w *worker, prs []queue.BatchPR) error {
@@ -174,22 +159,18 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 	var absent *executor.ErrLandingNotOnBase
 	var ambiguity *executor.CheckSourceAmbiguityError
 	if errors.As(err, &absent) {
-		if pauseErr := s.pause(actionCtx, w, "landing-not-on-base", absent.Error()); pauseErr != nil {
+		if pauseErr := s.block(actionCtx, w, queue.LandingNotOnBase, absent.Error(), absent.TestedSHA); pauseErr != nil {
 			return errors.Join(err, pauseErr)
 		}
 	} else if errors.As(err, &ambiguity) {
-		w.blockedSHA, w.blockedDetail = state.Active.TestedSHA, ambiguity.Error()
-		// Keep check refreshes running: ambiguity is a visible block, not a pause
-		// that would prevent discovering a corrected CI producer configuration.
+		if blockErr := s.block(actionCtx, w, queue.CheckSources, ambiguity.Error(), ""); blockErr != nil {
+			return errors.Join(err, blockErr)
+		}
+		// The independent recovery observer re-reads producers while starts stop.
 		if reportErr := s.reportBatch(actionCtx, w, state, forge.Status{State: forge.Blocked, Reason: "ambiguous-check-sources", Summary: ambiguity.Error()}); reportErr != nil {
 			return errors.Join(err, reportErr)
 		}
 		return nil // refresh events committed; the next epoch re-reads CI
-	}
-	if err == nil {
-		if _, refreshing := claim.Action.(queue.RefreshChecks); refreshing {
-			w.blockedSHA, w.blockedDetail = "", ""
-		}
 	}
 	if errors.Is(err, store.ErrStale) {
 		return nil
@@ -246,9 +227,13 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 		var reasons, details []string
 		for _, block := range state.Blocks(w.plannerConfig(s.options.PollInterval)) {
 			reasons = append(reasons, block.Reason)
-			details = append(details, block.Reason+": "+block.Detail)
+			details = append(details, block.Reason+" ["+string(block.Source)+"]: "+block.Detail)
 		}
-		status := forge.Status{State: forge.Paused, Reason: strings.Join(reasons, ", "), Summary: strings.Join(details, "; ") + "; rules blocks clear after a passing check; a writer can @openmerge refresh after fixing other causes"}
+		status := forge.Status{State: forge.Paused, Reason: strings.Join(reasons, ", "), Summary: strings.Join(details, "; ") + "; automatic blocks clear when their conditions recover; a writer can @openmerge refresh operator-clearable blocks"}
+		if detail := state.CheckProvenanceDetail(); detail != "" {
+			status.Reason += ", unbound-check-provenance"
+			status.Summary += "; " + detail
+		}
 		for n, pr := range w.prs {
 			if pr.Closed {
 				continue
@@ -270,9 +255,6 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 			if status.State == "building" {
 				status.State = forge.Testing
 			}
-		}
-		if state.Active != nil && state.Active.TestedSHA == w.blockedSHA && w.blockedDetail != "" {
-			status = forge.Status{State: forge.Blocked, Reason: "ambiguous-check-sources", Summary: w.blockedDetail}
 		}
 		if state.Active != nil && (status.State == forge.Testing || status.Reason == "ambiguous-check-sources") {
 			if detail := state.CheckProvenanceDetail(); detail != "" {

@@ -91,7 +91,7 @@ func TestPoisonedLandRepairsPausesAndResumes(t *testing.T) {
 							t.Fatalf("paused action reactivated or report missing: %+v", planned)
 						}
 					}
-					if n := count(t, s, `SELECT count(*) FROM events WHERE queue_id = $1 AND type = 'action_poisoned'`, q); n != 1 {
+					if n := count(t, s, `SELECT count(*) FROM events WHERE queue_id = $1 AND type = 'block_source_blocked' AND payload->'data'->>'source' = 'action-poisoned'`, q); n != 1 {
 						t.Fatalf("poison event count = %d", n)
 					}
 					claims, err := s.Claim(t.Context(), 1, time.Minute, epoch)
@@ -110,7 +110,7 @@ func TestPoisonedLandRepairsPausesAndResumes(t *testing.T) {
 					if len(planned) != 0 {
 						t.Fatal("acknowledged pause kept producing work")
 					}
-					appendEvents(t, s, q, queue.ResumeRequested{})
+					clearActionPoison(t, s, q)
 					if n := count(t, s, `SELECT poison_count FROM actions WHERE queue_id = $1 AND key = $2`, q, key); n != 0 {
 						t.Fatal("resume did not reset incidents")
 					}
@@ -161,7 +161,7 @@ func TestPlanPublishesInterruptedPoisonNotification(t *testing.T) {
 	if report, ok := planned[0].Action.(queue.ReportStatus); !ok || report.Reason != "action-poisoned" {
 		t.Fatalf("missed pending pause: %+v", planned)
 	}
-	if n := count(t, s, `SELECT count(*) FROM events WHERE queue_id = $1 AND type = 'action_poisoned'`, q); n != 1 {
+	if n := count(t, s, `SELECT count(*) FROM events WHERE queue_id = $1 AND type = 'block_source_blocked' AND payload->'data'->>'source' = 'action-poisoned'`, q); n != 1 {
 		t.Fatal("interrupted notification was lost")
 	}
 }
@@ -199,7 +199,7 @@ func TestPoisonPauseAndQuarantineRollbackTogether(t *testing.T) {
 	if !errors.Is(err, rollback) {
 		t.Fatal(err)
 	}
-	if r2Status(t, s, q, claim.Key) != "claimed" || count(t, s, `SELECT count(*) FROM events WHERE type = 'action_poisoned'`) != 0 {
+	if r2Status(t, s, q, claim.Key) != "claimed" || count(t, s, `SELECT count(*) FROM events WHERE type = 'block_source_blocked' AND payload->'data'->>'source' = 'action-poisoned'`) != 0 {
 		t.Fatal("partial poison transaction committed")
 	}
 }
@@ -224,5 +224,33 @@ func TestPoisonMigrationCountsExistingQuarantine(t *testing.T) {
 	must(t, err)
 	if len(poison) != 1 || poison[0].Incidents != 1 || poison[0].Error != "bad payload" {
 		t.Fatalf("upgrade lost quarantine history: %+v", poison)
+	}
+}
+
+func clearActionPoison(t *testing.T, s *Store, q QueueID) {
+	t.Helper()
+	state, _, err := s.Load(t.Context(), q)
+	must(t, err)
+	appendEvents(t, s, q, queue.BlockSourceCleared{Source: queue.ActionPoison, Basis: state.BlockSourceRevision(queue.ActionPoison)})
+}
+
+func TestOnlyCurrentPoisonSourceClearResetsIncidents(t *testing.T) {
+	s := newStore(t)
+	q, claim := readyLand(t, s)
+	appendEvents(t, s, q, queue.BlockSourceBlocked{Source: queue.ActionPoison, Detail: "poisoned", Subject: claim.Key}, queue.BlockSourceBlocked{Source: queue.ConfigSource, Detail: "config failure"})
+	_, err := s.pool.Exec(t.Context(), `UPDATE actions SET poison_count = 3, poison_notified = true WHERE queue_id = $1 AND key = $2`, q, claim.Key)
+	must(t, err)
+	appendEvents(t, s, q, queue.BlockSourceCleared{Source: queue.ConfigSource, Basis: 1}, queue.BlockSourceCleared{Source: queue.ActionPoison, Basis: 0})
+	if n := count(t, s, `SELECT poison_count FROM actions WHERE queue_id = $1 AND key = $2`, q, claim.Key); n != 3 {
+		t.Fatal("unrelated/stale clear reset poison incidents")
+	}
+	state, _, err := s.Load(t.Context(), q)
+	must(t, err)
+	if !state.SourceBlocked(queue.ActionPoison) {
+		t.Fatal("stale clear removed poison block")
+	}
+	clearActionPoison(t, s, q)
+	if n := count(t, s, `SELECT poison_count FROM actions WHERE queue_id = $1 AND key = $2`, q, claim.Key); n != 0 {
+		t.Fatal("current poison clear did not reset incidents")
 	}
 }

@@ -86,6 +86,7 @@ func Apply(s State, e Event) State {
 	case RefreshRequested:
 		s.refreshChecks()
 	case PauseRequested:
+		s.blockRevisions[Operator]++
 		s.pause, s.pauseRevision = e, s.revision
 	case RulesBlocked:
 		s.blockRulesSource(Rulesets, e.Problems)
@@ -99,11 +100,28 @@ func Apply(s State, e Event) State {
 		if e.Validate() == nil {
 			s.clearRulesSource(e.Source, e.Basis)
 		}
+	case BlockSourceBlocked:
+		if e.Validate() == nil {
+			s.clearLegacySource(e.Source)
+			s.blockSources[e.Source] = e
+			s.blockRevisions[e.Source]++
+			s.blockPauseRevision = s.revision
+		}
+	case BlockSourceCleared:
+		if e.Validate() == nil && e.Basis == s.BlockSourceRevision(e.Source) {
+			s.clearLegacySource(e.Source)
+			delete(s.blockSources, e.Source)
+			s.blockRevisions[e.Source]++
+			s.blockPauseRevision = s.revision
+		}
 	case ResumeRequested:
+		s.blockRevisions[Operator]++
+		s.blockRevisions[ActionPoison]++
 		s.pause = PauseRequested{}
 		s.buildRetry = buildRetryState{}
 		s.actionPoison = actionPoisonState{}
 	case ActionPoisoned:
+		s.blockRevisions[ActionPoison]++
 		s.actionPoison = actionPoisonState{key: e.Key, reason: e.Reason, revision: s.revision}
 	case BatchStarted:
 		if e.Validate() == nil && s.Active == nil && e.BatchID == s.nextBatchID() && e.BaseSHA == s.BaseSHA && s.runnablePRs(e.PRs) {
@@ -253,6 +271,15 @@ func (s *State) refreshChecks() {
 }
 
 func cloneState(s State) State {
+	s.blockSources = maps.Clone(s.blockSources)
+	if s.blockSources == nil {
+		s.blockSources = make(map[BlockSource]BlockSourceBlocked)
+	}
+	s.blockRevisions = maps.Clone(s.blockRevisions)
+	if s.blockRevisions == nil {
+		s.blockRevisions = make(map[BlockSource]uint64)
+	}
+
 	s.rulesSources = maps.Clone(s.rulesSources)
 	if s.rulesSources == nil {
 		s.rulesSources = make(map[RulesSource]rulesSourceState)

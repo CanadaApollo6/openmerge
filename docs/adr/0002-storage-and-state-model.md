@@ -66,6 +66,21 @@ their heads, including legacy in-flight attempts resolved after upgrading. All
 have wire-v1 golden fixtures.
 Previously deployed event/action types and their fixtures are unchanged.
 
+Queue blocks also have independent sources: `config`, `check-sources`,
+`landing-not-on-base`, `action-poisoned`, and `operator`. Additive wire-v1
+`block_source_blocked{source,detail,subject,basis}` and
+`block_source_cleared{source,basis}` use the same observation semantics as rules:
+failures always apply, and clears require that source's current revision. The
+subject durably pins the missing landing commit or quarantined action key.
+Lifecycle and build retries retain their existing state and recovery rules.
+Refresh clears only operator and poison blocks, plus landing blocks after freshly
+verifying ancestry; config, check sources, rules, and lifecycle recover through
+their own observations. Legacy shared pauses are displayed as the operator
+source, and explicit refresh can clear them. Legacy pause/resume, poison, and
+rules events retain their original fold behavior and unchanged wire fixtures;
+the two new types have golden fixtures. Landing settlement remains available
+under every block.
+
 `config_applied{commit,digest}` records the governing default-branch commit when
 the effective per-queue policy changes. The SHA-256 digest covers parsed admission
 and merge conditions, planner settings, and the effective head-cleanup setting;

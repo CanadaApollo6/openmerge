@@ -187,10 +187,10 @@ func TestPoisonCountsStayBoundedUntilResume(t *testing.T) {
 		if n := count(t, s, `SELECT poison_count FROM actions WHERE queue_id=$1 AND key=$2`, q, c.Key); n != 3 {
 			t.Fatalf("counter grew while idle: %d", n)
 		}
-		if n := count(t, s, `SELECT count(*) FROM events WHERE queue_id=$1 AND type='action_poisoned'`, q); n != cycle+1 {
+		if n := count(t, s, `SELECT count(*) FROM events WHERE queue_id=$1 AND type='block_source_blocked' AND payload->'data'->>'source'='action-poisoned'`, q); n != cycle+1 {
 			t.Fatalf("event flood: %d", n)
 		}
-		appendEvents(t, s, q, queue.ResumeRequested{})
+		clearActionPoison(t, s, q)
 		if n := count(t, s, `SELECT poison_count FROM actions WHERE queue_id=$1 AND key=$2`, q, c.Key); n != 0 {
 			t.Fatal("resume failed")
 		}
@@ -270,7 +270,7 @@ func TestPoisonedPauseReportsDoNotCreateNewPauses(t *testing.T) {
 			if len(claims) != 0 {
 				t.Fatal(claims)
 			}
-			if n := count(t, s, `SELECT count(*) FROM events WHERE queue_id=$1 AND type='action_poisoned'`, q); n != cycle+1 {
+			if n := count(t, s, `SELECT count(*) FROM events WHERE queue_id=$1 AND type='block_source_blocked' AND payload->'data'->>'source'='action-poisoned'`, q); n != cycle+1 {
 				t.Fatalf("pause event count=%d, want %d", n, cycle+1)
 			}
 			if n := count(t, s, `SELECT count(*) FROM actions WHERE queue_id=$1 AND type='report_status'`, q); n != cycle+1 {
@@ -286,7 +286,7 @@ func TestPoisonedPauseReportsDoNotCreateNewPauses(t *testing.T) {
 		if len(pure) != 1 || pure[0].Key() != reportKey {
 			t.Fatalf("pause report changed: %+v", pure)
 		}
-		appendEvents(t, s, q, queue.ResumeRequested{})
+		clearActionPoison(t, s, q)
 	}
 }
 
@@ -341,7 +341,7 @@ func TestPoisonedResolverAlwaysReactivates(t *testing.T) {
 				if state.PauseReason(config) != "" {
 					t.Fatal("resolver poison paused queue")
 				}
-				if n := count(t, s, `SELECT count(*) FROM events WHERE queue_id=$1 AND type='action_poisoned'`, q); n != 0 {
+				if n := count(t, s, `SELECT count(*) FROM events WHERE queue_id=$1 AND type='block_source_blocked' AND payload->'data'->>'source'='action-poisoned'`, q); n != 0 {
 					t.Fatal("resolver poison appended pause event")
 				}
 			}

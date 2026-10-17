@@ -75,8 +75,6 @@ type worker struct {
 	configDigest     string
 	configError      error
 	deleteHeadBranch *bool
-	blockedSHA       string
-	blockedDetail    string
 	prs              map[int]forge.PullRequest
 	summaries        map[int]forge.PullRequestSummary
 	deferred         []string
