@@ -134,9 +134,9 @@ Built after Phase 1 closes, in parallel with Phase 2 where they don't overlap ([
 
 Phase 3 treats the change, not the pull request, as the unit of work, in three stages ([ADR 0007](docs/adr/0007-changes-not-prs.md)). Stage A works entirely on pull requests; Stages B and C follow once their prerequisites exist.
 
-- **Change identity (A):** a server-assigned change with one revision per head; a superseding push cancels stale runs instead of stacking new ones, and a started landing always settles first
+- **Change identity (A):** a server-assigned change with one revision per head; a new head leaves the queue as today (conflict grace aside) and its stale runs are cancelled, and a started landing always settles first
 - **Classification (A):** conservative labels (`docs`, `generated`, `owned:<owner>`, `policy`, `unknown`) pinned to base and head; anything uncertain is `unknown`; comment-only detection deferred
-- **Policy approvals (A):** opt-in, agent-aware rules (policy-bot style) that only add requirements on top of `enter_when`/`merge_when`, e.g. agent-authored changes touching `infra/**` need two owners; `unknown` never lands without approval; head- and intent-bound approvals, `@openmerge approve <sha>` receipts, no self-approval, and a decision snapshot in the landing-start gate
+- **Policy approvals (A):** opt-in, agent-aware rules (policy-bot style) that only add requirements on top of `enter_when`/`merge_when`, e.g. agent-authored changes touching `infra/**` need two approvals from a group; unknown matches never lower requirements; head-bound native reviews, `@openmerge approve <brief-digest>` receipts that also bind intent, no self-approval, and a decision snapshot in the landing-start gate; changes waiting for approval are skipped by batching instead of holding a batch
 - **Accountability (A):** separate actor, accountable human and reviewer identities; agents map to accountable humans in default-branch config
 - **Pushes outside the queue (A):** observed base moves OpenMerge did not make are recorded as landed outside the queue, with no OpenMerge verification before landing
 - **Review briefs (A):** templated reviewer, operator and agent views with a file and hunk inventory (labelled incomplete when it is); receipt approvals record the brief's digest

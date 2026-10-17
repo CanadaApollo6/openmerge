@@ -22,39 +22,44 @@ The decision has three stages. Each is usable on its own, and each later stage d
 
 | Stage | Adds | Needs before it ships |
 |---|---|---|
-| A | Change identity, classification, policy approvals, approval receipts and briefs, all on pull requests | This ADR |
+| A | Change identity, classification, policy approvals, approval receipts and briefs, all on pull requests | This ADR; organization members read for team owners |
 | B | Direct submission without a pull request (`when_review_needed`) | A follow-up ADR on user authentication and authorization |
 | C | Queues with no pull requests at all (`never`), and optional model-written prose in briefs | Notification and request-changes channels outside pull requests; a model-provider decision |
 
 ### Configuration
 
-Everything new is opt-in and lives in the default-branch configuration ([ADR 0006](0006-multi-repository-serving.md)). Key names are fixed here; the full schema lands with the implementation.
+Everything new is opt-in and lives in the default-branch configuration ([ADR 0006](0006-multi-repository-serving.md)). Key names are fixed here; the full schema lands with the implementation. This is a fragment of a proposed file, not one current releases load:
 
-```yaml
+```text
 version: 1
 classification:
-  docs: ["docs/**", "*.md"]
-  generated: ["gen/**"]          # in addition to .gitattributes linguist-generated
+  docs: ["docs/**", "**/*.md"]
+  generated: ["gen/**"]            # in addition to .gitattributes linguist-generated
   sensitive: ["infra/**", "auth/**"]
-owners:
-  infra: ["@acme/platform"]      # or CODEOWNERS when omitted
+groups:
+  platform: ["acme/platform"]      # approver pools; users are bare logins, teams org/team
 agents:
   - identity: "acme-coder[bot]"
     accountable: ["alice", "bob"]
 queues:
   - name: main
+    merge_when: ["check-success = ci"]
     changes:
-      pull_requests: required    # Stage B adds when_review_needed; Stage C adds never
+      pull_requests: required      # Stage B adds when_review_needed; Stage C adds never
     approvals:
-      default: any_writer        # required once any rule exists; never `none` for unknown
+      default: any_writer          # required; never none
       rules:
-        - when: { labels: [docs], authors: [human, agent] }
+        - when: { labels: [docs] }
           require: none
-        - when: { paths: ["infra/**"], authors: [agent] }
-          require: { owners: infra, count: 2 }
+        - when: { touches: ["infra/**"], authors: [agent] }
+          require: { group: platform, count: 2 }
 ```
 
-Within one rule, every listed facet must match. A queue without an `approvals` section behaves exactly as today. Logins in configuration are resolved to stable forge user IDs when the configuration loads; records store both, and decisions compare IDs.
+**Matching.** Within one rule, every listed facet must match. `labels` matches when the change carries every listed label. `paths` matches when every changed file matches one of its globs; `touches` matches when any changed file does. `authors` matches the kind (`human` or `agent`) of the forge account that authored the pull request, or of the submitter for a direct change. Globs use OpenMerge's whole-path dialect; `CODEOWNERS` keeps GitHub's.
+
+**Opt-in.** A queue without an `approvals` section behaves exactly as today: none of the requirements below apply to it. A queue with one must set `approvals.default`, and the loader rejects `none` as the default.
+
+**Identities.** Configuration names users by login and teams as `org/team`. They are resolved to stable forge IDs when the configuration loads, and the resolved IDs are part of the policy digest, so a reused login cannot silently take over a rule. Records store both; decisions compare IDs. Conditions keep comparing logins, as they do today.
 
 ### Changes and their identity (Stage A)
 
@@ -70,11 +75,11 @@ Within one rule, every listed facet must match. A queue without an `approvals` s
 
 ### Classification (Stage A)
 
-**Classification records observations, not guarantees.** OpenMerge diffs each revision's head against its merge base with the pinned base tip. It records the diff endpoints and merge base, the classifier version, and the object IDs of the governing configuration, `CODEOWNERS` and `.gitattributes` files. All of these are read at the governing default-branch commit, never from the head. The labels are:
+**Classification records observations, not guarantees.** OpenMerge diffs each revision's head against its merge base with the pinned base tip, once per revision, and the landing gate reuses that classification rather than diffing again. It records the diff endpoints and merge base, the classifier version (which fixes diff and rename semantics), and the object IDs of the governing configuration, `CODEOWNERS` and `.gitattributes` files. All of these are read at the governing default-branch commit, never from the head. For release queues this differs from GitHub, which reads `CODEOWNERS` from the target branch; OpenMerge follows ADR 0006 so a release branch cannot weaken its own owners. A change to any of these inputs (including the classifier version) invalidates classifications and batches not yet landing, even when the head and base are unchanged; an attempt that has started keeps its frozen snapshot. The labels are:
 
 - `docs`: every changed file matches `classification.docs`;
 - `generated`: every changed file is marked `linguist-generated` or matches `classification.generated`. This records where a file sits, not that a generator produced it;
-- `owned:<owner>`: changed files covered by an owner rule;
+- `owned:<owner>`: changed files covered by a `CODEOWNERS` entry for that owner;
 - `policy`: the change adds, deletes, modifies or renames (on either side) any accepted OpenMerge config path, any `CODEOWNERS` location the forge reads, any `.gitattributes` file, any CI workflow definition, or any `classification.sensitive` path;
 - `unknown`: anything that cannot be observed safely.
 
@@ -84,17 +89,28 @@ A change can carry several labels. **Anything uncertain is `unknown`:** binary f
 
 ### Policy approvals (Stage A)
 
-**Policy adds requirements; it never removes them.** `enter_when` and `merge_when` still apply to every change. Requirements order as none < any writer < specific owners, then by count. Every rule that matches a change applies, and all of their requirements must be met, so a rule saying "no approval needed" cannot cancel another that requires one; requirements naming different owners must each be met. A change that no rule matches, or that is labelled `unknown`, needs `approvals.default`, which must be set once any rule exists and can never be `none` for `unknown`. A `policy` change always needs owner approval. If an owner requirement cannot be resolved (no owner covers the path, or a `CODEOWNERS` entry names only an email address), the change cannot land and its brief says why.
+**Policy adds requirements; it never removes them.** `enter_when` and `merge_when` still apply to every change. Requirements order as none < any writer < a group or owners, then by count. Every rule that matches a change adds its requirement, and all of them must be met, so a rule saying "no approval needed" cannot cancel another that requires one; requirements naming different groups or owners must each be met. `approvals.default` applies to every change that no rule definitely matches.
 
-**The effective policy has a digest.** It covers approval rules, the default, owner definitions including the `CODEOWNERS` content at the governing commit, classification settings and agent mappings. A digest change invalidates batches in flight, as configuration changes already do.
+**An unknown match never lowers a requirement.** A facet's match can be true, false or unknown, for example when the inventory is incomplete or the change is labelled `unknown`. A rule whose match is unknown is enforced as if it matched, and a rule like `require: none` only helps when it definitely matches. An incomplete inventory cannot show that no policy path was touched, so it also brings in the policy owner requirement below.
 
-**Approvals are head-bound facts.** An approval names the revision's exact head and the intent it approved; a new revision or an intent edit invalidates it. Each approver counts once, by user ID. The author, submitter and accountable human of a revision never count toward its approvals unless a rule explicitly allows self-approval. An outstanding request for changes from an eligible reviewer blocks. Write permission and owner membership are re-read when approvals are evaluated. When a queue has an `approvals` section, `approved-reviews-by` in conditions uses this same approval set and exclusions, so a condition and a policy rule never disagree about who approved.
+**Path ownership comes only from `CODEOWNERS`.** `groups` are approver pools that rules name; they own no paths. A `policy` change needs approval from the `CODEOWNERS` owners of each policy file it touches. If an owner requirement cannot be resolved (no entry covers the path, an entry names only an email address, or a team cannot be read), the change cannot land and its brief says why.
 
-**Approvals come with a receipt where one exists.** `@openmerge approve <sha>`, a writer-only comment command authenticated like the existing commands, records an approval receipt: the revision, its head, the intent digest, and the digest of the brief it was given against. In Stage B, `openmerge change approve <id> --sha <head>` records the same receipt. A native GitHub review on the exact head also counts as an approval, but it carries less evidence: OpenMerge records when it first observed the review and the intent digest current then, labelled as observed, and records no brief digest. It never rebinds an older approval to newer values.
+**The policy digest is part of the configuration digest.** It covers approval rules, the default, groups, `CODEOWNERS` and `.gitattributes` content at the governing commit, classification settings, agent mappings and the resolved forge IDs. It is a component of the queue's existing configuration digest, so a change to any of it invalidates batches in flight with no second mechanism.
 
-**Approvals gate landing, not testing.** A revision may be tested before its approvals are met. Inside the existing landing-start gate, OpenMerge evaluates the policy and records an immutable decision snapshot: the revision, its classification and inputs, the policy digest, the approvals relied on with their receipts or observation records, the intent digest, and the protection observation for direct changes (below). The snapshot is frozen once `LandingStarted` is durable, and the attempt then settles through the fence like any other. If the snapshot cannot be satisfied when the gate runs, the batch is not landed: it is discarded, and its changes return to their queue positions. A change waiting for approval never holds a tested batch hostage.
+**What intent means.** For a pull request, the intent is its title and body, with line endings normalized, surrounding whitespace trimmed and OpenMerge's own marker comments removed. For a direct submission, it is the stated intent. The intent digest covers that text. Editing the intent is not a new revision and does not discard tests.
 
-**Commits carry what is known at build time.** `OpenMerge-Change` and `OpenMerge-Classification` trailers go in the existing single trailer block, before the final `OpenMerge-Batch` line that ADR 0004 requires: on squash and merge commits, on the last replayed commit of each change for rebase, and on the batch marker for fast-forward, which lands the original head untouched. Approvals stay in the log, because they usually arrive while CI runs. In post-merge queues, the decision snapshot names both the tested commit T and the landed commit L, as ADR 0005 requires; L is never described as tested.
+**Approvals are head-bound; receipts also bind intent.** Each user's latest stance, from either channel, is the one that counts: an approval, a request for changes, or a withdrawal. Each approver counts once, by user ID, and only toward requirements they are eligible for. The author, submitter and accountable human of a revision never count toward its approvals; Stage A has no self-approval exceptions. An outstanding request for changes from an eligible reviewer blocks. Write permission and group membership are re-read inside the landing gate. When a queue has an `approvals` section, `approved-reviews-by` in conditions uses this same approval set and exclusions, so a condition and a policy rule never disagree about who approved.
+
+- *A receipt* is created by `@openmerge approve <brief-digest>`, a writer-only comment command authenticated like the existing commands, or in Stage B by `openmerge change approve <id> --brief <brief-digest>`. The brief digest the reviewer supplies identifies what they approved: the revision, head, intent digest and policy digest. OpenMerge checks that it matches the current revision and intent, rejects it otherwise, and never substitutes current values. Editing the intent invalidates receipts given against the old intent.
+- *A native GitHub review* on the exact head counts as an approval of that head. OpenMerge records the review's commit and submission time; its intent and brief bindings are "not recorded", and it is never bound to the intent current when it was observed. A rule can set `receipt: true` to require receipts, so that review of intent is proven rather than assumed.
+
+**Approvals gate landing, not testing.** A revision may be tested before its approvals are met. Receipts and native review observations are events in the log, so the planner can see approval state. Inside the existing landing-start gate, where the executor already re-reads state before `LandingStarted`, OpenMerge evaluates policy for every member of the batch and records an immutable decision snapshot per member: the revision, its classification and inputs, the policy digest, the approvals relied on with their receipts or observation records, the intent digest, and the protection observation for direct changes (below). All member snapshots and `LandingStarted` are recorded atomically; from then on the attempt settles through the fence like any other.
+
+If any member's snapshot cannot be satisfied, nothing lands. The gate records which changes are waiting for approval. They keep their queue positions but are skipped by batch formation until their approval state changes, much as conflicting changes are under conflict grace, and the other members are batched and tested again without them. A composition that failed the gate is never retested unchanged, and its test results never authorize a subset of it. Testing before approval is speculative: it spends CI on changes that may never be approved, a cost queues accept when they want review and CI to run in parallel.
+
+**Generated remedies are a separate source.** The reverts that ADR 0005 generates for a confirmed suspect are not submitted by anyone and are exempt from approval policy, as they are from admission testing. Their decision snapshot records the suspect, the evidence and the queue's `on_red` policy instead of approvals.
+
+**Commits carry what is known at build time.** `OpenMerge-Change` and `OpenMerge-Classification` trailers go in each commit's single trailer block: on squash and merge commits, and on the last replayed commit of each change for rebase. Only the top commit also carries the final `OpenMerge-Batch` line that ADR 0004 requires. Fast-forward lands the original heads untouched, so the batch marker carries one `OpenMerge-Change` trailer per change. Approvals stay in the log, because they usually arrive while CI runs. In post-merge queues, the decision snapshot names both the tested commit T and the landed commit L, as ADR 0005 requires; L is never described as tested.
 
 ### Accountability (Stage A for pull requests, Stage B for submissions)
 
@@ -111,9 +127,9 @@ This model cannot prove that a person, rather than an agent holding their token,
 
 **OpenMerge already lands by bypassing pull request rules.** Its atomic push needs the App on the bypass list of rulesets and classic protection that cover the base. GitHub evaluates required reviews, code owner review, last-push approval and conversation resolution only on a pull request, and never on a bypassed push. Even with pull requests, OpenMerge's push is not GitHub-enforced: OpenMerge reads reviews through its trust gate and conditions, and reproduces native rules such as `CODEOWNERS` review or last-push approval only where its own policy declares them.
 
-**A direct change never lands while GitHub would require a pull request.** Before accepting a direct submission, and again inside the landing-start gate, OpenMerge freshly reads the rulesets and classic protection that apply to the base. Any active rule that depends on a pull request blocks a direct landing: a `pull_request` ruleset rule of any kind, including one requiring zero approvals; classic required reviews; code owner review; last-push approval. Protection that is incomplete or unreadable blocks it too. The observation goes into the decision snapshot. Once a landing has started, it settles through the fence as always.
+**A direct change never lands while GitHub would require a pull request.** Before accepting a direct submission, and again inside the landing-start gate, OpenMerge freshly reads the rulesets and classic protection that apply to the base. Any active rule that depends on a pull request blocks a direct landing: a `pull_request` ruleset rule of any kind, including one requiring zero approvals; classic required reviews; code owner review; last-push approval; classic required conversation resolution. Protection that is incomplete or unreadable blocks it too. The observation goes into the decision snapshot. Once a landing has started, it settles through the fence as always.
 
-A team that wants direct submission moves its review requirements into OpenMerge policy and removes them from GitHub, and in doing so accepts that OpenMerge, not GitHub, enforces review on that base. This has a cost: merges made through the GitHub interface are no longer reviewed by anyone, and OpenMerge only records them afterwards (see Pushes outside the queue). OpenMerge enforces its queue, not every path to the base. Teams that need review evidence on every change keep pull requests (`required`).
+A team that wants direct submission moves its review requirements into OpenMerge policy and removes them from GitHub, and in doing so accepts that OpenMerge, not GitHub, enforces review on that base. This has a cost: merges made through the GitHub interface are no longer required by GitHub to receive review, and OpenMerge only records them afterwards (see Pushes outside the queue). OpenMerge enforces its queue, not every path to the base. Teams that need review evidence on every change keep `required`, which keeps every change on a pull request; any review requirement they want OpenMerge to enforce still has to be configured.
 
 ### Direct submission (Stage B)
 
@@ -127,7 +143,7 @@ The setting is part of the queue's configuration digest. Older binaries reject t
 
 **Submitting a change pushes a commit, not a branch.** `openmerge change submit` asks the server for a change ID, keyed by a client idempotency key, then pushes the local `HEAD` to `openmerge/submit/<id>` and records the pinned SHA with a stated intent. The submission ref is only where OpenMerge fetches the commit from: moving it later does nothing until an authorized update names the revision it replaces. Submission refs need write access, unlike the App-only queue and fence refs. In this stage, direct submission covers commits pushed to the repository itself; fork heads stay pull-request only.
 
-**An opened pull request is an alias, not a second source.** It is opened as the App, from the submission ref, titled from the intent. It attaches atomically to its change and never replaces the change's submitter or accountable human. Its reviews count as approvals; every other condition attribute stays sourced from the submission. A push to its branch is not a revision update. Closing it stops the change from being admitted again until it is reopened or updated by an authorized actor; a landing already started still settles. Merging it through the GitHub interface is a push outside the queue.
+**An opened pull request is an alias, not a second source.** It is opened as the App, from the submission ref, titled from the intent. It attaches atomically to its change and never replaces the change's submitter or accountable human. Its reviews count as approvals; every other condition attribute stays sourced from the submission. A push to its branch is not a revision update. Closing it withdraws the change's pending or admitted work and invalidates batches not yet landing; reopening it, or an authorized update, makes the change eligible again. A landing already started still settles. Merging it through the GitHub interface is a push outside the queue.
 
 **Conditions see what a direct change actually has.** For a direct change: `base` is the queue's base; `head` is the submission ref; `files` comes from the recorded diff; `conflict` comes from composition; `approved-reviews-by` is the approval set; check attributes come from CI as today; `draft`, `label`, `title` and `author` are unknown, and unknown never passes, including under negation. New string attributes `submitter` and `accountable` (a list) exist for every change.
 
@@ -147,7 +163,7 @@ The setting is part of the queue's configuration digest. Older binaries reject t
 - *Operator:* where the change is in the queue, what blocks it, and what clears each block.
 - *Agent:* structured next steps (fix this check, rebase onto this commit, wait for this approval) as stable JSON.
 
-Briefs are available through the CLI and API, and through MCP when it ships. When a pull request exists, its OpenMerge check shows a summary of the reviewer brief, its digest and a link to the whole brief. A brief's digest covers its pinned factual content, not volatile fields such as queue position. A receipt approval records the digest of the brief it was given against; a native review records none, and the brief says so.
+Briefs are available through the CLI and API, and through MCP when it ships. When a pull request exists, its OpenMerge check shows a summary of the reviewer brief, its digest and a link to the whole brief. A brief's digest covers the head, the diff endpoints and merge base, the inventory and whether it is complete, the labels and their reasons, the intent digest, the policy digest and the requirements. It excludes queue position, approval progress, timestamps, test links and generated prose. The reviewer supplies that digest to give a receipt; a native review records none, and the brief says so.
 
 **Generated prose is never evidence.** In Stage C, an operator may configure a model to add a summary to briefs. It appears in a delimited section labelled as generated, is never read by policy or the planner, and is off by default; choosing a provider means choosing where private diffs are sent. Because the factual inventory does not depend on it, text planted in a diff or an intent to steer the summary ("this is a trivial change") cannot hide what the change touches. This extends principle 1, "never lie about what was tested", to review: OpenMerge never presents a summary as if someone reviewed the code.
 
@@ -158,9 +174,10 @@ Briefs are available through the CLI and API, and through MCP when it ships. Whe
 - Phase 3's exit tests, all on the fake forge:
   - *Stage A:* an agent opens a pull request and takes it to landed or definitively rejected through the CLI or MCP. A low-risk change lands on policy alone. A change that needs a human waits until a scripted reviewer approves its exact head. Every landing's decision snapshot can be read back, with brief digests for receipt approvals.
   - *Stage B:* the same, starting from `openmerge change submit` with no pull request, and refusing to land when the base's protection requires a pull request.
+- Adopting approval policy means moving approval terms out of `enter_when` and `merge_when` into `approvals`; conditions keep expressing everything else. Until a queue does, its condition-based review requirements apply in full, and an approval term in `enter_when` also prevents testing before approval. Stage A's gain is risk-based approval and an audit trail; removing the branch-and-pull-request ceremony is Stage B.
 - OpenMerge becomes the enforcer of review policy for queues that use direct submission. The policy engine, owner resolution and approval counting need the same simulator and contract testing as landing.
-- The forge driver grows: reading diffs against a base, reporting status on a bare commit, opening a pull request for a change, resolving team membership for owner rules, and verifying a user's identity. Each gets a fake-forge contract test. Other forges also center on pull or merge requests, so this does not make Phase 5 easier, but it keeps those operations behind the driver.
-- Setup grows in Stage B: the App needs pull request write permission to open aliases, and `setup rulesets` must allow writers to push `openmerge/submit/**` while keeping queue and fence refs App-only.
+- The forge driver grows: reading diffs against a base, reading review stances (requests for changes and dismissals, which the driver discards today), reporting status on a bare commit, opening a pull request for a change, resolving team membership for owner rules, and verifying a user's identity. Each gets a fake-forge contract test. Other forges also center on pull or merge requests, so this does not make Phase 5 easier, but it keeps those operations behind the driver.
+- Setup grows: Stage A needs organization members read to resolve team owners and groups. In Stage B, `setup rulesets` must allow writers to push `openmerge/submit/**` while keeping queue and fence refs App-only; the App already has pull request write permission for opening aliases.
 - Landing without a pull request gives things up: integrations keyed by pull requests, release notes built from them, and `#N` links in history. Briefs and change IDs replace some of that, not all; teams choose per queue.
 - Every landed change records its accountable human where one is known, and says "not recorded" where it is not.
 
