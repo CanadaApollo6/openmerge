@@ -301,3 +301,21 @@ func TestQueueStatusPreservesInactiveLifecycle(t *testing.T) {
 		}
 	}
 }
+
+func TestDiscoveryPrintsWebhookHealthAndRepositoryAge(t *testing.T) {
+	at := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	age := 125.0
+	var out strings.Builder
+	err := printDiscovery(&out, status.Discovery{
+		Repositories:  []status.Repository{{Installation: "7", Name: "owner/active", LastDeliveryAgeSeconds: &age}, {Installation: "7", Name: "owner/quiet"}},
+		Installations: []status.Installation{{ID: "7", WebhooksConfigured: true, WebhookHealthy: true, LastVerifiedDelivery: &at}, {ID: "8", WebhooksConfigured: true}, {ID: "9"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"LAST DELIVERY AGE", "2m5s", "owner/quiet", "never", "Installation 7 webhooks: healthy; last verified delivery: 2026-10-17T12:00:00Z", "Installation 8 webhooks: unhealthy", "Installation 9 webhooks: not configured"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("missing %q: %s", want, &out)
+		}
+	}
+}

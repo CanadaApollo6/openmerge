@@ -301,3 +301,86 @@ func TestInstallationWebhooksOnlyRequestDiscovery(t *testing.T) {
 		}
 	}
 }
+
+func TestWebhookIgnoredDeliveriesAndUnsignedFlood(t *testing.T) {
+	secret := []byte("test-secret")
+	receiver := &notification{}
+	var logs strings.Builder
+	handler := webhookHandler(receiver, secret, slog.New(slog.NewTextHandler(&logs, nil)))
+	body := `{"action":"assigned","installation":{"id":7},"repository":{"full_name":"owner/repo"}}`
+	deliver := func(kind, signature string) int {
+		r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+		r.Header.Set("X-Hub-Signature-256", signature)
+		r.Header.Set("X-GitHub-Event", kind)
+		r.Header.Set("X-GitHub-Delivery", "ignored-delivery")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w.Code
+	}
+	for range 4096 {
+		if got := deliver("pull_request", "sha256=bad"); got != http.StatusUnauthorized {
+			t.Fatalf("unsigned request: %d", got)
+		}
+	}
+	// Notify is the only path from the HTTP boundary into health, timers,
+	// persistence and forge work. No rejected request may enter that path.
+	if receiver.calls != 0 || receiver.installation != "" {
+		t.Fatal("unverified flood changed health/scheduling or requested forge work")
+	}
+	if count := strings.Count(logs.String(), "webhook signature rejections"); count != 13 || !strings.Contains(logs.String(), "count=4096") {
+		t.Fatalf("rejections were not counted with bounded log volume: %s", logs.String())
+	}
+	if strings.Contains(logs.String(), body) || strings.Contains(logs.String(), "sha256=bad") {
+		t.Fatal("rejection counter included untrusted request data")
+	}
+	mac := hmac.New(sha256.New, secret)
+	_, _ = mac.Write([]byte(body))
+	signed := "sha256=" + hex.EncodeToString(mac.Sum(nil))
+	for _, kind := range []string{"pull_request", "unknown_future_event"} {
+		if got := deliver(kind, signed); got != http.StatusAccepted {
+			t.Fatalf("verified %s: %d", kind, got)
+		}
+	}
+	// A signed but incomplete typed payload is still an authenticated envelope.
+	body = strings.Replace(body, "assigned", "opened", 1)
+	mac = hmac.New(sha256.New, secret)
+	_, _ = mac.Write([]byte(body))
+	if got := deliver("pull_request", "sha256="+hex.EncodeToString(mac.Sum(nil))); got != http.StatusBadRequest {
+		t.Fatalf("incomplete typed payload: %d", got)
+	}
+	if receiver.calls != 3 || receiver.installation != "7" || receiver.repo != "owner/repo" {
+		t.Fatalf("ignored deliveries failed to record/wake their repository: %+v", receiver)
+	}
+}
+
+func TestWebhookSchedulingSettings(t *testing.T) {
+	for key, value := range map[string]string{"DATABASE_URL": "postgres://local/test", "GITHUB_APP_ID": "42", "GITHUB_PRIVATE_KEY": "key.pem", "BACKSTOP_INTERVAL": "10m", "WEBHOOK_HEALTH_WINDOW": "30m"} {
+		t.Setenv("OPENMERGE_"+key, value)
+	}
+	o, err := parseServe(nil, io.Discard)
+	if err != nil || o.backstop != 10*time.Minute || o.webhookHealthWindow != 30*time.Minute {
+		t.Fatalf("settings = %+v, %v", o, err)
+	}
+	t.Setenv("OPENMERGE_BACKSTOP_INTERVAL", "3m")
+	t.Setenv("OPENMERGE_WEBHOOK_HEALTH_WINDOW", "9m")
+	o, err = parseServe(nil, io.Discard)
+	if err != nil || o.backstop != 3*time.Minute || o.webhookHealthWindow != 9*time.Minute {
+		t.Fatalf("environment = %+v, %v", o, err)
+	}
+	for _, flag := range []string{"backstop-interval", "webhook-health-window"} {
+		for _, value := range []string{"0", "-1m", "invalid"} {
+			if _, err := parseServe([]string{"--" + flag + "=" + value}, io.Discard); err == nil {
+				t.Fatalf("accepted %s=%s", flag, value)
+			}
+		}
+	}
+	t.Setenv("OPENMERGE_BACKSTOP_INTERVAL", "invalid")
+	t.Setenv("OPENMERGE_WEBHOOK_HEALTH_WINDOW", "invalid")
+	if _, err := parseServe(nil, io.Discard); err == nil {
+		t.Fatal("invalid environment accepted")
+	}
+	o, err = parseServe([]string{"--backstop-interval=4m", "--webhook-health-window=8m"}, io.Discard)
+	if err != nil || o.backstop != 4*time.Minute || o.webhookHealthWindow != 8*time.Minute {
+		t.Fatalf("overrides = %+v, %v", o, err)
+	}
+}

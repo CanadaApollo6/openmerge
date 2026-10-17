@@ -36,10 +36,13 @@ type Target struct {
 
 // Options bounds API polling and concurrent queue execution.
 type Options struct {
-	PollInterval      time.Duration
-	RulesInterval     time.Duration
-	DiscoveryInterval time.Duration
-	BaseAllowlist     []string
+	PollInterval        time.Duration
+	BackstopInterval    time.Duration
+	WebhookHealthWindow time.Duration
+	WebhooksConfigured  bool
+	RulesInterval       time.Duration
+	DiscoveryInterval   time.Duration
+	BaseAllowlist       []string
 	// RecoveryTarget supplies credentials for historical queues outside --repos.
 	RecoveryTarget          func(store.QueueKey) (Target, bool)
 	Concurrency             int
@@ -54,6 +57,7 @@ type Options struct {
 // Each process must have its own git cache directory.
 type Server struct {
 	store               *store.Store
+	webhooks            webhookObservations
 	options             Options
 	queues              []*worker
 	slots               chan struct{}
@@ -149,6 +153,12 @@ func newServer(db *store.Store, options Options) (*Server, error) {
 	if options.PollInterval == 0 {
 		options.PollInterval = time.Minute
 	}
+	if options.BackstopInterval == 0 {
+		options.BackstopInterval = 10 * time.Minute
+	}
+	if options.WebhookHealthWindow == 0 {
+		options.WebhookHealthWindow = 30 * time.Minute
+	}
 	if options.Concurrency == 0 {
 		options.Concurrency = 4
 	}
@@ -161,8 +171,8 @@ func newServer(db *store.Store, options Options) (*Server, error) {
 	if options.ActionTimeout == 0 {
 		options.ActionTimeout = 2 * time.Minute
 	}
-	if options.DiscoveryInterval < 0 || options.PollInterval < 0 || options.RulesInterval < 0 || options.Concurrency < 1 || options.ActionTimeout < 0 {
-		return nil, errors.New("poll interval, concurrency and action timeout must be positive")
+	if options.BackstopInterval < 0 || options.WebhookHealthWindow < 0 || options.DiscoveryInterval < 0 || options.PollInterval < 0 || options.RulesInterval < 0 || options.Concurrency < 1 || options.ActionTimeout < 0 {
+		return nil, errors.New("intervals, health window, concurrency and action timeout must be positive")
 	}
 	if options.Logger == nil {
 		options.Logger = slog.Default()
@@ -173,12 +183,17 @@ func newServer(db *store.Store, options Options) (*Server, error) {
 // Notify durably deduplicates a webhook and wakes only matching targets. An empty
 // repository identifies installation-wide changes. Payloads never grant trust.
 func (s *Server) Notify(ctx context.Context, installation, repository, delivery string) error {
+	s.webhooks.observe(installation, repository, time.Now())
 	for _, w := range s.workers() {
 		if w.Key.Installation != installation || repository != "" && !strings.EqualFold(w.Key.Repository, repository) {
 			continue
 		}
-		if err := s.store.Notify(ctx, w.id, delivery); err != nil {
+		fresh, err := s.store.NotifyDelivery(ctx, w.id, delivery)
+		if err != nil {
 			return err
+		}
+		if !fresh {
+			continue
 		}
 		select {
 		case w.wake <- struct{}{}:
@@ -303,6 +318,7 @@ func (s *Server) loop(ctx context.Context, w *worker) {
 			w.mu.Lock()
 			state, _, err := s.store.Load(ctx, w.id)
 			if err == nil {
+				delay = s.pollDelay(w.Key.Installation, state, time.Now())
 				if at, ok := queue.NextWake(w.plannerConfig(s.options.PollInterval), state, time.Now()); ok {
 					delay = min(delay, max(time.Millisecond, time.Until(at)))
 				}

@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -32,6 +33,7 @@ type serveOptions struct {
 	logLevel, committerName, committerEmail           string
 	apiListen, apiToken, apiTokenFile                 string
 	poll, rulesInterval, discoveryInterval            time.Duration
+	backstop, webhookHealthWindow                     time.Duration
 	concurrency                                       int
 	deleteHeadBranch                                  bool
 }
@@ -63,6 +65,8 @@ func parseServe(args []string, output io.Writer) (serveOptions, error) {
 	flags.Int64Var(&o.app, "github-app-id", 0, "App ID (OPENMERGE_GITHUB_APP_ID)")
 	flags.Int64Var(&o.installation, "github-installation-id", 0, "deprecated optional installation allowlist (OPENMERGE_GITHUB_INSTALLATION_ID)")
 	flags.DurationVar(&o.poll, "poll-interval", time.Minute, "reconcile interval (OPENMERGE_POLL_INTERVAL)")
+	flags.DurationVar(&o.backstop, "backstop-interval", 10*time.Minute, "idle polling interval while webhooks are healthy (OPENMERGE_BACKSTOP_INTERVAL)")
+	flags.DurationVar(&o.webhookHealthWindow, "webhook-health-window", 30*time.Minute, "verified delivery health window (OPENMERGE_WEBHOOK_HEALTH_WINDOW)")
 	flags.DurationVar(&o.discoveryInterval, "discovery-interval", 10*time.Minute, "installation/repository discovery interval (OPENMERGE_DISCOVERY_INTERVAL)")
 	flags.DurationVar(&o.rulesInterval, "rules-interval", 10*time.Minute, "repository rules validation interval (OPENMERGE_RULES_INTERVAL)")
 	flags.BoolVar(&o.deleteHeadBranch, "delete-head-branch", true, "default for deleting eligible landed heads; repository config overrides (OPENMERGE_DELETE_HEAD_BRANCH)")
@@ -72,7 +76,7 @@ func parseServe(args []string, output io.Writer) (serveOptions, error) {
 	}
 	overridden := make(map[string]bool)
 	flags.Visit(func(f *flag.Flag) { overridden[f.Name] = true })
-	for _, entry := range []struct{ flag, env string }{{"delete-head-branch", "DELETE_HEAD_BRANCH"}, {"github-app-id", "GITHUB_APP_ID"}, {"github-installation-id", "GITHUB_INSTALLATION_ID"}, {"poll-interval", "POLL_INTERVAL"}, {"discovery-interval", "DISCOVERY_INTERVAL"}, {"rules-interval", "RULES_INTERVAL"}, {"concurrency", "CONCURRENCY"}} {
+	for _, entry := range []struct{ flag, env string }{{"delete-head-branch", "DELETE_HEAD_BRANCH"}, {"github-app-id", "GITHUB_APP_ID"}, {"github-installation-id", "GITHUB_INSTALLATION_ID"}, {"poll-interval", "POLL_INTERVAL"}, {"backstop-interval", "BACKSTOP_INTERVAL"}, {"webhook-health-window", "WEBHOOK_HEALTH_WINDOW"}, {"discovery-interval", "DISCOVERY_INTERVAL"}, {"rules-interval", "RULES_INTERVAL"}, {"concurrency", "CONCURRENCY"}} {
 		if value, ok := os.LookupEnv("OPENMERGE_" + entry.env); ok && !overridden[entry.flag] {
 			if err := flags.Set(entry.flag, value); err != nil {
 				return o, fmt.Errorf("OPENMERGE_%s: %w", entry.env, err)
@@ -99,8 +103,8 @@ func parseServe(args []string, output io.Writer) (serveOptions, error) {
 	if o.database == "" || o.key == "" || o.app <= 0 || o.installation < 0 {
 		return o, errors.New("database URL, GitHub App ID and private key path are required; installation allowlist must be nonnegative")
 	}
-	if o.poll <= 0 || o.rulesInterval <= 0 || o.discoveryInterval <= 0 || o.concurrency <= 0 || o.cache == "" {
-		return o, errors.New("poll, rules and discovery intervals, concurrency and git cache must be nonempty and positive")
+	if o.backstop <= 0 || o.webhookHealthWindow <= 0 || o.poll <= 0 || o.rulesInterval <= 0 || o.discoveryInterval <= 0 || o.concurrency <= 0 || o.cache == "" {
+		return o, errors.New("poll, backstop, webhook health, rules and discovery intervals, concurrency and git cache must be nonempty and positive")
 	}
 	if o.listen != "" && o.secret == "" {
 		return o, errors.New("webhook listen requires a webhook secret")
@@ -221,7 +225,7 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger, saniti
 			return result, nil
 		},
 	}
-	service, err := serve.NewDiscovery(ctx, db, discovery, serve.Options{PollInterval: o.poll, RulesInterval: o.rulesInterval, DiscoveryInterval: o.discoveryInterval, BaseAllowlist: splitAllowlist(o.base), Concurrency: o.concurrency, Logger: logger, DisableDeleteHeadBranch: !o.deleteHeadBranch})
+	service, err := serve.NewDiscovery(ctx, db, discovery, serve.Options{PollInterval: o.poll, BackstopInterval: o.backstop, WebhookHealthWindow: o.webhookHealthWindow, WebhooksConfigured: o.listen != "", RulesInterval: o.rulesInterval, DiscoveryInterval: o.discoveryInterval, BaseAllowlist: splitAllowlist(o.base), Concurrency: o.concurrency, Logger: logger, DisableDeleteHeadBranch: !o.deleteHeadBranch})
 	if err != nil {
 		return err
 	}
@@ -231,7 +235,7 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger, saniti
 	for _, endpoint := range []struct {
 		name, address string
 		handler       http.Handler
-	}{{"webhook", o.listen, webhookHandler(service, []byte(o.secret))}, {"status API", o.apiListen, status.DynamicHandler(service, service.Keys, o.apiToken, sanitizer, service.DiscoveryStatus)}} {
+	}{{"webhook", o.listen, webhookHandler(service, []byte(o.secret), logger)}, {"status API", o.apiListen, status.DynamicHandler(service, service.Keys, o.apiToken, sanitizer, service.DiscoveryStatus)}} {
 		if endpoint.address == "" {
 			continue
 		}
@@ -298,19 +302,16 @@ type webhookReceiver interface {
 	Notify(context.Context, string, string, string) error
 }
 
-func webhookHandler(service webhookReceiver, secret []byte) http.Handler {
+func webhookHandler(service webhookReceiver, secret []byte, logs ...*slog.Logger) http.Handler {
+	logger := slog.Default()
+	if len(logs) > 0 {
+		logger = logs[0]
+	}
+	var mu sync.Mutex
+	var rejectedSignatures uint64
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		event, err := github.VerifyAndParse(r, secret)
-		if err != nil {
-			var rejected *github.WebhookError
-			code := http.StatusBadRequest
-			if errors.As(err, &rejected) {
-				code = rejected.StatusCode
-			}
-			http.Error(w, err.Error(), code)
-			return
-		}
-		if _, ignored := event.Payload.(github.Ignored); !ignored {
+		if event.InstallationID > 0 {
 			notify := service.Notify
 			switch event.Payload.(type) {
 			case github.InstallationChanged:
@@ -330,6 +331,25 @@ func webhookHandler(service webhookReceiver, secret []byte) http.Handler {
 				http.Error(w, "delivery persistence failed", http.StatusServiceUnavailable)
 				return
 			}
+		}
+		if err != nil {
+			var rejected *github.WebhookError
+			code := http.StatusBadRequest
+			if errors.As(err, &rejected) {
+				code = rejected.StatusCode
+			}
+			if code == http.StatusUnauthorized {
+				mu.Lock()
+				if rejectedSignatures < 1<<63 {
+					rejectedSignatures++
+					if rejectedSignatures&(rejectedSignatures-1) == 0 {
+						logger.Warn("webhook signature rejections", "count", rejectedSignatures)
+					}
+				}
+				mu.Unlock()
+			}
+			http.Error(w, err.Error(), code)
+			return
 		}
 		w.WriteHeader(http.StatusAccepted)
 	})

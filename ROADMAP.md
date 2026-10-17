@@ -91,7 +91,7 @@ Phase 1 is **complete**. The Mergify importer remains a Phase 5 deliverable.
 
 **Exit:** OpenMerge merges its own PRs. A simulated 500-PR day with 5% failure rate lands every passing PR with main green throughout.
 
-### Phase 2.1 — Serve every installed repository (in progress)
+### Phase 2.1 — Serve every installed repository (complete)
 
 ADR 0006 lands in four PRs:
 
@@ -100,10 +100,10 @@ ADR 0006 lands in four PRs:
   and per-repository `delete_head_branch`. Serving still uses `--repos` and one
   `--base`; other configured queues are logged as `not yet served`. The existing
   single-queue `main` config and queue key are preserved.
-- [ ] PR 2: multiple base workers, branch lifecycle and settlement-first cycles.
-- [ ] PR 3: installation discovery, canonical keys, removal/suspension,
+- [x] PR 2: multiple base workers, branch lifecycle and settlement-first cycles.
+- [x] PR 3: installation discovery, canonical keys, removal/suspension,
   installation budgets and discovery status.
-- [ ] PR 4: webhook health, backstop scheduling, onboarding and migration docs.
+- [x] PR 4: webhook health, backstop scheduling, onboarding and migration docs.
 
 ### Phase 2 — Throughput
 

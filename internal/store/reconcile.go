@@ -33,11 +33,17 @@ func (s *Store) Observation(ctx context.Context, q QueueID, key string) ([]byte,
 
 // Notify commits delivery deduplication and its reconciliation request together.
 func (s *Store) Notify(ctx context.Context, q QueueID, delivery string) error {
-	_, err := s.pool.Exec(ctx, `WITH received AS (
+	_, err := s.NotifyDelivery(ctx, q, delivery)
+	return err
+}
+
+// NotifyDelivery also reports whether this delivery created a fresh hint.
+func (s *Store) NotifyDelivery(ctx context.Context, q QueueID, delivery string) (bool, error) {
+	result, err := s.pool.Exec(ctx, `WITH received AS (
  INSERT INTO webhook_deliveries(queue_id, delivery_id) VALUES ($1, $2)
  ON CONFLICT DO NOTHING RETURNING queue_id)
  UPDATE queues SET reconcile_requested = true WHERE id IN (SELECT queue_id FROM received)`, q, delivery)
-	return err
+	return result.RowsAffected() > 0, err
 }
 
 // TakeNotification consumes a hint; polling and a full read after restart repair

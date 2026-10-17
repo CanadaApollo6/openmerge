@@ -100,8 +100,11 @@ func NewDiscovery(ctx context.Context, db *store.Store, discovery Discovery, opt
 }
 
 // NotifyDiscovery coalesces verified installation notifications into a complete
-// sweep. It does not wake queue admission or apply an event's partial repo list.
-func (s *Server) NotifyDiscovery(_ context.Context, _, _, _ string) error {
+// sweep and wakes affected workers. Partial payload lists never change access.
+func (s *Server) NotifyDiscovery(ctx context.Context, installation, repository, delivery string) error {
+	if err := s.Notify(ctx, installation, repository, delivery); err != nil {
+		return err
+	}
 	select {
 	case s.refresh <- struct{}{}:
 	default:
@@ -449,8 +452,15 @@ func (s *Server) DiscoveryStatus() status.Discovery {
 		budgets[id] = read
 	}
 	s.mu.RUnlock()
+	now := time.Now()
 	for i := range result.Repositories {
 		r := &result.Repositories[i]
+		_, last := s.webhooks.snapshot(r.Installation, r.Name)
+		if !last.IsZero() {
+			age := max(0, now.Sub(last).Seconds())
+			r.LastVerifiedDelivery = &last
+			r.LastDeliveryAgeSeconds = &age
+		}
 		if r.State != "served" && r.State != "validating" {
 			continue
 		}
@@ -463,6 +473,13 @@ func (s *Server) DiscoveryStatus() status.Discovery {
 		}
 	}
 	for i := range result.Installations {
+		installation := &result.Installations[i]
+		last, _ := s.webhooks.snapshot(installation.ID, "")
+		installation.WebhooksConfigured = s.options.WebhooksConfigured
+		installation.WebhookHealthy = s.webhookHealthy(last, now)
+		if !last.IsZero() {
+			installation.LastVerifiedDelivery = &last
+		}
 		if read := budgets[result.Installations[i].ID]; read != nil {
 			result.Installations[i].Budget = read()
 		}

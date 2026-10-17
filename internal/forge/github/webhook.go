@@ -25,7 +25,9 @@ type WebhookError struct {
 func (e *WebhookError) Error() string { return "github webhook: " + e.Reason }
 
 // Event contains authenticated delivery metadata. The server persists DeliveryID
-// for deduplication before acting on Payload. No permissions are inferred here.
+// for deduplication before acting on Payload. On payload validation errors, an
+// authenticated envelope is still returned for observation/wake hints. No
+// permissions are inferred here.
 type Event struct {
 	DeliveryID     string
 	Repo           forge.RepoRef
@@ -189,14 +191,14 @@ func VerifyAndParse(r *http.Request, secret []byte) (Event, error) {
 	}
 	kind := r.Header.Get("X-GitHub-Event")
 	e := Event{DeliveryID: delivery, Payload: Ignored{Event: kind}}
-	switch kind {
-	case "pull_request", "pull_request_review", "check_run", "check_suite", "status", "push", "create", "delete", "issue_comment", "installation", "installation_repositories":
-	default:
-		return e, nil
-	}
 	var raw webhookEnvelope
 	if err = json.Unmarshal(body, &raw); err != nil {
-		return reject(400, "invalid JSON")
+		switch kind {
+		case "pull_request", "pull_request_review", "check_run", "check_suite", "status", "push", "create", "delete", "issue_comment", "installation", "installation_repositories":
+			return reject(400, "invalid JSON")
+		default:
+			return e, nil
+		}
 	}
 	e.Repo = forge.RepoRef{Path: raw.Repository.FullName}
 	e.InstallationID = raw.Installation.ID
@@ -241,7 +243,7 @@ func VerifyAndParse(r *http.Request, secret []byte) (Event, error) {
 		e.Payload = InstallationChanged{Action: raw.Action, Repositories: repoRefs(raw.Repositories), Added: repoRefs(raw.Added), Removed: repoRefs(raw.Removed)}
 	}
 	if err = validateEvent(e); err != nil {
-		return reject(400, "incomplete event payload")
+		return e, &WebhookError{StatusCode: 400, Reason: "incomplete event payload"}
 	}
 	return e, nil
 }

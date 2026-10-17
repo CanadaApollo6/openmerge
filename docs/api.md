@@ -56,6 +56,24 @@ reservations; `known: false` means capacity has not been observed. Discovery
 reads never call GitHub. `openmerge queue status --discovery [--json]` selects
 this view; ordinary queue lists include it too.
 
+Webhook visibility is additive to discovery responses:
+
+- Installations include `webhooks_configured` (boolean), `webhook_healthy`
+  (boolean), and `last_verified_delivery` (RFC3339 time or null).
+- Repositories include `last_verified_delivery` (RFC3339 time or null) and
+  `last_delivery_age_seconds` (nonnegative number of seconds or null).
+
+These observations are process-local and reset to null/unhealthy after a
+restart. An installation is healthy only with a configured listener and a
+verified delivery within `webhook_health_window` (default 30 minutes).
+Redeliveries refresh the observation, while delivery IDs still deduplicate
+refresh work. Invalid signatures never change these fields. Repository ages
+remain independent: a repository can have a null or old delivery time while
+another repository keeps its installation healthy. `openmerge queue status`
+and `--discovery` show health, last verified time, and repository delivery ages;
+`--json` preserves these fields. Reads compute ages locally without forge calls.
+See [webhook setup and scheduling](operating.md#webhook-setup-and-health).
+
 Example queue response:
 
 ```json
