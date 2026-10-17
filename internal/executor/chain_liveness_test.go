@@ -22,6 +22,7 @@ func newChainExecutor(t *testing.T, count int) *chainExecutor {
 	c.state = queue.State{BaseBranch: "main", BaseSHA: h.base, Fence: h.fence}
 	c.x.RequiredChecks = []string{"ci"}
 	c.x.ChecksRetryFailed, c.x.CheckTimeout = 1, c.cfg.CheckTimeout
+	c.x.Speculative = true
 	c.x.Now = func() time.Time { return c.now }
 	for _, pr := range h.prs[:count] {
 		c.state = queue.Apply(c.state, queue.PRObserved{PR: pr.Number, HeadSHA: pr.HeadSHA, Eligible: true, Trusted: true})
@@ -55,6 +56,7 @@ func (c *chainExecutor) execute(t *testing.T, action queue.Action) {
 	t.Helper()
 	if b := c.state.ActionBatch(action); b != nil {
 		c.x.StartedTestingAt, c.x.CheckRetry = b.StartedTestingAt, b.CheckRetry
+		c.x.PreviousObservedRuns = b.LastObservedRuns
 	}
 	must(t, c.x.Execute(t.Context(), action, func(e queue.Event) error {
 		switch e.(type) {

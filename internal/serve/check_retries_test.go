@@ -32,7 +32,7 @@ func TestChainSummaryRootAndMixedWorkerFailure(t *testing.T) {
 			t.Fatal("missing PR status")
 		}
 		for _, status := range statuses {
-			if status.State != forge.Testing || status.Summary != want {
+			if status.State != forge.Testing || !strings.HasPrefix(status.Summary, want+"; window: 4; batch size: 1; gate: checks") {
 				t.Fatalf("status=%+v, want testing with summary %q", status, want)
 			}
 		}
@@ -48,4 +48,11 @@ func TestChainSummaryRootAndMixedWorkerFailure(t *testing.T) {
 	must(t, err)
 	must(t, s.report(t.Context(), w))
 	assertSummary("Batch b1; chain position 1; 0 batches ahead; check retry failed; provisional failure: checks-failed")
+	for _, summary := range f.Statuses(repo, 1) {
+		for _, want := range []string{"CI run ledger:", "ci/app:ci#1.1=failure"} {
+			if !strings.Contains(summary.Summary, want) {
+				t.Fatalf("missing %q in %s", want, summary.Summary)
+			}
+		}
+	}
 }

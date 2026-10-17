@@ -33,9 +33,11 @@ func (c CIConfig) validate() error {
 }
 
 // CIMetrics counts service actually consumed, including cancelled and orphaned
-// runs. A queued run cancelled before acquiring a runner is not a started run.
+// runs. WastedRuns counts started attempts other than the final successful
+// attempt of a landed batch, including failed diagnosis, superseded retries and
+// invalidated work. A queued cancellation is not a started or wasted run.
 type CIMetrics struct {
-	RunsStarted, RerunsStarted                                               int
+	RunsStarted, RerunsStarted, WastedRuns                                   int
 	CancellationsRequested, CancellationsConfirmed, CancellationsUnsupported int
 	RunnerMinutes, RunnerMinutesPerMergedChange                              float64
 	Merges                                                                   []MergeSample
@@ -55,7 +57,8 @@ type ciJob struct {
 	duration                         time.Duration
 	started, finished                time.Time
 	cancelled, cancellationRequested bool
-	rerun                            bool
+	rerun, cancellationUnsupported   bool
+	success                          bool
 }
 
 func (s *simulation) interactionFails(prs []int) bool {
@@ -74,7 +77,7 @@ func (s *simulation) submitCI(sha string, duration time.Duration) {
 		id = previous.id + 1
 		attempt = previous.attempt + 1
 	}
-	job := &ciJob{id: id, attempt: attempt, sha: sha, duration: duration, rerun: s.tests[sha].done || s.tests[sha].rerun}
+	job := &ciJob{id: id, attempt: attempt, sha: sha, duration: duration, rerun: s.tests[sha].done || s.tests[sha].rerun, success: s.tests[sha].success}
 	s.tests[sha].job = job
 	s.ciJobs = append(s.ciJobs, job)
 	s.ciWaiting = append(s.ciWaiting, job)
@@ -109,6 +112,7 @@ func (s *simulation) cancelCI(sha string) {
 	}
 	job.cancellationRequested = true
 	if !s.cfg.CI.CancellationSupported {
+		job.cancellationUnsupported = true
 		return
 	}
 	job.cancelled = true
@@ -187,16 +191,19 @@ func (s *simulation) ciMetrics(merged int) *CIMetrics {
 	for _, job := range s.ciJobs {
 		if job.cancellationRequested {
 			m.CancellationsRequested++
-			if job.cancelled {
-				m.CancellationsConfirmed++
-			} else {
+			if job.cancellationUnsupported {
 				m.CancellationsUnsupported++
+			} else if job.cancelled || !job.finished.IsZero() {
+				m.CancellationsConfirmed++
 			}
 		}
 		if job.started.IsZero() {
 			continue
 		}
 		m.RunsStarted++
+		if run := s.tests[job.sha]; run == nil || !run.landed || run.job != job || job.cancelled {
+			m.WastedRuns++
+		}
 		if job.rerun {
 			m.RerunsStarted++
 		}

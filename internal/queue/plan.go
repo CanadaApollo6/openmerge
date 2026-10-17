@@ -69,6 +69,9 @@ func plan(cfg Config, s State, now time.Time) []Action {
 			}
 		}
 		for _, effect := range s.effects {
+			if retry, ok := effect.(RetryCheckCancellation); ok && now.Before(retry.At) {
+				continue
+			}
 			if cleanup, ok := effect.(DeleteHeadBranch); ok && slices.ContainsFunc(s.effects, func(pending Action) bool {
 				mark, ok := pending.(MarkLanded)
 				return ok && mark == MarkLanded(cleanup)

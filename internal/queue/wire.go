@@ -376,6 +376,30 @@ func decodeBatchPRs(prs []wireBatchPR) []BatchPR {
 // EncodeEvent returns the stable type discriminator and versioned JSON.
 func EncodeEvent(value Event) (string, []byte, error) {
 	switch v := value.(type) {
+	case BatchRunsObserved:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("batch_runs_observed", v)
+
+	case CheckCancellationRequested:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("check_cancellation_requested", v)
+	case CheckCancellationDeferred:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("check_cancellation_deferred", v)
+	case CheckCancellationReported:
+		if v.Confirmed == nil {
+			v.Confirmed = []CheckRun{}
+		}
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("check_cancellation_reported", v)
 	case ChainedTestRefBuilt:
 		if err := v.Validate(); err != nil {
 			return "", nil, err
@@ -576,6 +600,32 @@ func DecodeEvent(payload []byte) (Event, error) {
 		return nil, err
 	}
 	switch envelope.Type {
+	case "batch_runs_observed":
+		v, err := readWireData[BatchRunsObserved](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		return v, v.Validate()
+
+	case "check_cancellation_requested":
+		v, err := readWireData[CheckCancellationRequested](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		return v, v.Validate()
+	case "check_cancellation_deferred":
+		v, err := readWireData[CheckCancellationDeferred](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		return v, v.Validate()
+	case "check_cancellation_reported":
+		v, err := readWireData[CheckCancellationReported](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		return v, v.Validate()
+
 	case "chained_test_ref_built":
 		v, err := readWireData[ChainedTestRefBuilt](envelope.Data)
 		if err != nil {
@@ -887,6 +937,28 @@ func DecodeEvent(payload []byte) (Event, error) {
 // EncodeAction returns the stable type discriminator and versioned JSON.
 func EncodeAction(value Action) (string, []byte, error) {
 	switch v := value.(type) {
+	case ObserveRetiredChecks:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("observe_retired_checks", v)
+
+	case RetryCheckCancellation:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("retry_check_cancellation", v)
+	case RecordCheckCancellation:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("record_check_cancellation", v)
+	case CancelChecks:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("cancel_checks", v)
+
 	case CleanupInvalidatedRef:
 		return encodeWire("cleanup_invalidated_ref", v)
 	case BuildChainedTestRef:
@@ -946,6 +1018,16 @@ func DecodeAction(payload []byte) (Action, error) {
 		return nil, err
 	}
 	switch envelope.Type {
+	case "observe_retired_checks":
+		return decodeWireAction(envelope.Data, func(v ObserveRetiredChecks) Action { return v })
+
+	case "retry_check_cancellation":
+		return decodeWireAction(envelope.Data, func(v RetryCheckCancellation) Action { return v })
+	case "record_check_cancellation":
+		return decodeWireAction(envelope.Data, func(v RecordCheckCancellation) Action { return v })
+	case "cancel_checks":
+		return decodeWireAction(envelope.Data, func(v CancelChecks) Action { return v })
+
 	case "cleanup_invalidated_ref":
 		v, err := readWireData[CleanupInvalidatedRef](envelope.Data)
 		if err != nil {

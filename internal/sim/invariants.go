@@ -201,6 +201,11 @@ func (s *simulation) verifyPRContent(tip string, pr queue.BatchPR, method queue.
 }
 
 func (s *simulation) verifyLanded(batch *queue.Batch, event queue.Landed) error {
+	for _, job := range s.ciJobs {
+		if job.sha == batch.TestedSHA && job.cancellationRequested {
+			return fmt.Errorf("cancelled batch %s later landed", batch.ID)
+		}
+	}
 	if err := s.checkInvariants(); err != nil {
 		return err
 	}

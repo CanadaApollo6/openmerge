@@ -219,6 +219,16 @@ func printStatus(out io.Writer, response status.Response) error {
 		return err
 	}
 	for _, q := range queues {
+		if q.Window > 0 {
+			if _, err := fmt.Fprintf(out, "%s %s window: %d; batch size: %d\n", q.Repository, q.Base, q.Window, q.BatchSize); err != nil {
+				return err
+			}
+		}
+		for _, batch := range q.Chain {
+			if _, err := fmt.Fprintf(out, "  batch %s position %d: %s tested %s (%d ahead)\n", batch.ID, batch.Position, batch.Phase, batch.TestedSHA, batch.BatchesAhead); err != nil {
+				return err
+			}
+		}
 		for _, block := range q.Blocks {
 			if slices.ContainsFunc(q.RulesSources, func(source status.RulesSource) bool { return source.Source == block.Source && len(source.Problems) > 0 }) {
 				continue
@@ -234,6 +244,44 @@ func printStatus(out io.Writer, response status.Response) error {
 		for _, source := range q.RulesSources {
 			if len(source.Problems) > 0 {
 				if _, err := fmt.Fprintf(out, "%s %s rules (%s): %s\n", q.Repository, q.Base, source.Source, strings.Join(source.Problems, "; ")); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if response.PR != nil {
+		entry := response.PR
+		if entry.Gate != "" {
+			if _, err := fmt.Fprintln(out, "Gate: "+entry.Gate); err != nil {
+				return err
+			}
+		}
+		if len(entry.RunLedger) > 0 {
+			if _, err := fmt.Fprintln(out, "CI run ledger:"); err != nil {
+				return err
+			}
+			for _, run := range entry.RunLedger {
+				identity := "aggregate (identity unavailable)"
+				if run.Identity != nil {
+					identity = fmt.Sprintf("%s/%s#%d.%d", run.Identity.Name, run.Identity.Source, run.Identity.ID, run.Identity.Attempt)
+					if run.Identity.WorkflowRunID > 0 {
+						identity += fmt.Sprintf(" workflow=%d", run.Identity.WorkflowRunID)
+					}
+					if run.Identity.URL != "" {
+						identity += " " + run.Identity.URL
+					}
+				}
+				detail := ""
+				if run.WastedReason != "" {
+					detail += "; wasted: " + run.WastedReason
+				}
+				if run.Cancellation != "" {
+					detail += "; cancellation: " + run.Cancellation
+				}
+				if run.CancellationDetail != "" {
+					detail += " (" + run.CancellationDetail + ")"
+				}
+				if _, err := fmt.Fprintf(out, "  %s %s %s %s: %s%s\n", run.BatchID, run.TestedSHA, run.TestRef, identity, run.Outcome, detail); err != nil {
 					return err
 				}
 			}

@@ -280,7 +280,7 @@ restart; the WARN persists until then.
 
 `actions: write` is broader than rerun-failed-jobs: it also permits cancellation,
 artifact/cache management and deployment approvals. OpenMerge uses only the
-rerun-failed-jobs endpoint for retries (and, after ADR 0009 PR 4, cancel).
+rerun-failed-jobs endpoint for retries and the workflow-run cancel endpoint for cancellation.
 
 Each workflow dispatch writes a durable intent before its POST and acceptance
 immediately after. A lost response or restart leaves an uncertain intent; the
@@ -798,17 +798,79 @@ validates depth 4; depths above 4 are unvalidated. Forge-side runner queueing co
 `check_timeout`: with two runners and depth four, queued runs can time out and
 cause bisection or dequeues before they finish.
 
-CI cancellation arrives in ADR 0009 PR 4. Until then, invalidated runs finish
-and consume runners: a broken batch can cost approximately W runs plus its
-same-commit rerun, before bisection. Late results cannot revive their batches. Test refs are
+Speculative batches permanently discarded by the planner request best-effort CI
+cancellation for their recorded runs. This includes stale tested commits after a
+new PR head, dequeue or closure, and suffixes invalidated behind a failure.
+Landing and landed batches never request cancellation; becoming the oldest batch
+alone never makes a batch a cancellation target. Depth-1 queues keep their
+existing bisection/dequeue behavior and do not request cancellation, even with
+retries enabled. Late results cannot revive discarded batches. Test refs are
 cleaned, including a fresh cleanup action after a delayed builder reports.
-Status/API expose the ordered chain, parent batch, tested/landing commits,
-per-change batch position and number ahead, and recent invalidation reasons.
+
+GitHub Actions cancellation needs **Actions: Read and write** (`actions: write`),
+already requested by `openmerge setup github` for retries. Existing Apps and
+installations must approve that permission as described above. The optional
+capability cancels only workflows attributed to a recorded job, tested SHA,
+queue ref and attempt. Unidentified runs, other CI providers, and newer attempts
+that were not recorded are left alone. Missing capability or a permission 403
+records `unsupported`; invalidated runs then finish and count as wasted. Quota
+and transient errors retry without blocking another batch's landing.
+
+`check_cancellation_requested` records intent before the first call. Restarted
+workers repeat the same idempotent cancellation. An accepted cancel POST means
+`requested`; only a forge read reporting cancellation or completion means
+`confirmed`. Neither state proves landing eligibility. A completed run can
+therefore be confirmed even when cancellation arrived too late to save runner
+time. Pending reads, repeated 404s, timeouts and other forge errors finish the
+current action and persist a delayed successor with its own key. New queue work
+remains claimable while it waits. Each cancellation phase gets eight total
+attempts, with waits of 30s, 1m, 2m, 4m, 8m, 16m and 30m. Confirmed subsets are
+retained across retries and restarts. An unsupported result switches to a separate
+read-only follow-up phase with the same budget. Branchless commit statuses use
+status provenance; Actions checks must still match the queue ref. These reads
+update outcomes while retaining `unsupported`. If either phase exhausts its
+budget, status records `abandoned` and the final error or pending reason. Work may
+continue at the provider after abandonment; no further cancellation calls or
+follow-up reads are scheduled for that intent.
+
+Use `openmerge queue status --repo OWNER/REPO --pr N` (or `--json`) to see the
+change's complete recorded CI run ledger: batch, tested SHA, producer/job/workflow
+identity and attempt, outcome, cancellation status, and wasted-work reason.
+Reruns keep separate rows. A change also appears in successor runs whose tested
+commits contain it. Legacy aggregate events have no run identities; status labels
+those rows as aggregates instead of inventing IDs. The status API adds
+`run_ledger` and `gate` to entries, and current `window` and `batch_size` to queues
+when runtime configuration is available. Chain, position, batches ahead and
+invalidation reasons remain visible. Gate names explain checks, predecessor
+settlement, bisection, `max_wait` and a full window. `landing-preflight` includes
+approval: approval and other final merge conditions are evaluated by the executor
+at preflight, so that gate does not distinguish approval separately. The existing
+PR check summary
+includes the configured window and batch size and up to eight recent ledger rows;
+API/CLI retain the full recorded history.
+No new summary comment is posted. Adaptive inputs remain for PR 5.
+
+Cancellation adds wire-v1 events `batch_runs_observed` (all accepted CI names,
+separate from the retry-policy subset), `check_cancellation_requested` and
+`check_cancellation_reported` and `check_cancellation_deferred`, and actions
+`record_check_cancellation` and
+`cancel_checks`, plus the read-only `observe_retired_checks` follow-up and scheduled
+`retry_check_cancellation` successors. Empty or unchanged history reads emit no
+`batch_runs_observed`; simultaneous historical attempts keep separate ledger rows.
+Queues that start at depth 1, with or without retries, use their existing protocol
+exclusively. After a downgrade from a higher depth, in-flight speculative intents
+keep emitting cancellation events until they drain.
+Pending intents survive snapshot encode/decode. Historical run
+ledgers are reconstructed from journals, not stored unboundedly in snapshots.
+Store retention/compaction remains disabled; enabling it must preserve ledger
+history or explicitly define a retention window.
 
 The additive wire-v1 chain types require compatible workers. Drain old workers
 before upgrading. Returning to depth 1 does not make an older binary
 able to replay those records; rollback across their first use requires a database
 restore. Existing depth-1 event/action wire types and fixtures are unchanged.
+Journals written by pre-merge heads of this PR are intentionally unreadable;
+compatibility is claimed only with `origin/main`.
 
 Snapshots currently have an encode/decode codec only; the store still replays
 journals and does not write or load these snapshots. PR 5 must include the

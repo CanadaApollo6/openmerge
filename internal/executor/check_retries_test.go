@@ -141,7 +141,7 @@ func TestRetryLandRejectsStaleSuccessUntilEveryFailedRunIsNewer(t *testing.T) {
 		{ID: 7, Attempt: 2, Name: "ci", Source: "app:ci", State: "success"},
 		{ID: 8, Attempt: 1, Name: "lint", Source: "app:lint", State: "success"},
 	}) {
-		t.Fatalf("stale observation=%#v", events[0])
+		t.Fatalf("stale observation=%#v", events[1])
 	}
 	if _, ok := events[1].(queue.ChecksRefreshed); !ok {
 		t.Fatalf("missing refresh watermark: %#v", events)

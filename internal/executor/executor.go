@@ -33,6 +33,9 @@ type Executor struct {
 	// ChecksRetryFailed enables the queue's one bounded same-commit failed-check
 	// retry. Zero keeps the legacy check event path byte-for-byte unchanged.
 	ChecksRetryFailed int
+	// Speculative restricts the PR 4 protocol to queues with max_depth > 1.
+	Speculative          bool
+	PreviousObservedRuns []queue.CheckRun
 	// CheckTimeout and StartedTestingAt are the durable timer inputs for retry
 	// observations. StartedTestingAt must come from the active batch, never the
 	// executor's wall clock.
@@ -81,6 +84,17 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		return errors.New("required checks must be configured or AllowNoRequiredChecks explicitly enabled")
 	}
 	switch a := action.(type) {
+	case queue.RetryCheckCancellation:
+		if a.ReadOnly {
+			return x.observeRetiredChecks(ctx, queue.ObserveRetiredChecks(a.Cancellation), a.Key(), emit)
+		}
+		return x.cancelChecks(ctx, queue.CancelChecks(a.Cancellation), emit)
+	case queue.ObserveRetiredChecks:
+		return x.observeRetiredChecks(ctx, a, a.Key(), emit)
+	case queue.RecordCheckCancellation:
+		return emit(queue.CheckCancellationRequested(a))
+	case queue.CancelChecks:
+		return x.cancelChecks(ctx, a, emit)
 	case queue.CleanupInvalidatedRef:
 		if err := x.Driver.DeleteRef(ctx, x.Repo, a.Ref); err != nil {
 			return err
@@ -161,6 +175,11 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 			terminal, success, ambiguity = x.checkResult(checks, a.BatchID)
 		}
 		if x.retryObservationAllowed(ambiguity) {
+			if err := x.observeBatchRuns(checks, a.BatchID, a.TestedSHA, emit); err != nil {
+				return err
+			}
+		}
+		if x.retryObservationAllowed(ambiguity) {
 			if x.ChecksRetryFailed == 1 {
 				if err := emit(x.checksObserved(a.BatchID, a.TestedSHA, checks, terminal, success)); err != nil {
 					return err
@@ -209,6 +228,11 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		}
 		if x.ChecksRetryFailed != 1 {
 			terminal, success, ambiguity = x.checkResult(checks, a.BatchID)
+		}
+		if x.retryObservationAllowed(ambiguity) {
+			if err := x.observeBatchRuns(checks, a.BatchID, a.TestedSHA, emit); err != nil {
+				return err
+			}
 		}
 		if terminal && success && x.ChecksRetryFailed == 1 && !x.retryIdentitySatisfied(checks, a.BatchID) {
 			// A stale provider read may report the original failed run as a
@@ -515,10 +539,14 @@ func (x *Executor) originalCheckDeadline() time.Time {
 // provenance filtering. Keeping only required names prevents unrelated failed
 // checks from consuming the bounded retry budget.
 func (x *Executor) retryRuns(checks []forge.CheckRun, batchID string) []queue.CheckRun {
+	return x.observedRuns(checks, batchID, true)
+}
+
+func (x *Executor) observedRuns(checks []forge.CheckRun, batchID string, relevantOnly bool) []queue.CheckRun {
 	observed := x.newestRetryChecks(x.filteredChecks(checks, batchID))
 	latest := make(map[string]forge.CheckRun)
 	for _, check := range observed {
-		if !x.relevantCheck(check.Name) {
+		if relevantOnly && !x.relevantCheck(check.Name) {
 			continue
 		}
 		key := check.Name + "\x00" + check.Source

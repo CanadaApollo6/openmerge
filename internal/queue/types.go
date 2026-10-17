@@ -77,6 +77,9 @@ type State struct {
 	lifecycleRevision  uint64
 	rulesSources       map[RulesSource]rulesSourceState
 	rulesPauseRevision uint64
+
+	// Only confirmations of still-pending mutation intents are retained.
+	cancellationConfirmed map[string][]CheckRun
 }
 
 // Entry records the head admitted to the queue, independently of later observations.
@@ -109,6 +112,8 @@ type Batch struct {
 	StartedTestingAt   time.Time
 	LandingAttempt     LandingAttempt
 	CheckRetry         *CheckRetryState `json:",omitempty"`
+	ObservedRuns       []CheckRun       `json:",omitempty"`
+	LastObservedRuns   []CheckRun       `json:",omitempty"`
 
 	checksPassed      bool
 	checksGeneration  uint64

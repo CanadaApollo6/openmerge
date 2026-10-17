@@ -157,7 +157,7 @@ func (s *simulation) deliver(event scheduledEvent) error {
 				attempt = 1
 			}
 		}
-		s.forge.SetCheckRuns(s.repo, event.sha, []forge.CheckRun{{ID: id, Attempt: attempt, Name: "ci", State: state}})
+		s.forge.SetCheckRuns(s.repo, event.sha, []forge.CheckRun{{ID: id, Attempt: attempt, Name: "ci", State: state, HeadBranch: run.ref}})
 		if s.webhook.Float64() < s.cfg.DropWebhookRate {
 			s.result.DroppedWebhooks++
 		} else if s.retryChecksEnabled() {

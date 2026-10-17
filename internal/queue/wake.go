@@ -6,6 +6,16 @@ import "time"
 // plan. Callers must first drain ready actions (and schedule failed-action
 // retries themselves). A paused build has no timer: it needs an external event.
 func NextWake(cfg Config, s State, now time.Time) (time.Time, bool) {
+	next, ok := nextQueueWake(cfg, s, now)
+	for _, effect := range s.effects {
+		if retry, yes := effect.(RetryCheckCancellation); yes && retry.At.After(now) && (!ok || retry.At.Before(next)) {
+			next, ok = retry.At, true
+		}
+	}
+	return next, ok
+}
+
+func nextQueueWake(cfg Config, s State, now time.Time) (time.Time, bool) {
 	if s.Active == nil || (cfg.MaxDepth() == 1 && len(s.Following) == 0) {
 		return nextWakeSingle(cfg, s, now)
 	}

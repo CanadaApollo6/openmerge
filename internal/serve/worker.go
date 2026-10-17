@@ -116,11 +116,13 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 	}
 	x := executor.Executor{Driver: w.Driver, Git: w.Git, Repo: w.repo(), Base: w.Key.BaseBranch, DisableDeleteHeadBranch: disableDeleteHeadBranch}
 	batch := state.ActionBatch(claim.Action)
+	x.Speculative = cfg.MaxDepth() > 1
 	x.ChecksRetryFailed = cfg.RetryLimit()
 	x.CheckTimeout = cfg.CheckTimeout
 	if batch != nil {
 		x.StartedTestingAt = batch.StartedTestingAt
 		x.CheckRetry = batch.CheckRetry
+		x.PreviousObservedRuns = batch.LastObservedRuns
 	}
 	if batch != nil {
 		x.PreviousUnboundChecks = state.BatchUnboundChecks(batch.ID)
@@ -179,13 +181,29 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 		return nil
 	}
 	emit := s.store.Emit(actionCtx, claim, cfg)
-	err = x.Execute(actionCtx, claim.Action, func(event queue.Event) error {
+	executionAction := claim.Action
+	if report, ok := executionAction.(queue.ReportStatus); ok {
+		summary, err := s.ledgerSummary(actionCtx, w, report.PR)
+		if err != nil {
+			return err
+		}
+		report.Detail += summary
+		executionAction = report
+	}
+	err = x.Execute(actionCtx, executionAction, func(event queue.Event) error {
 		if err := emit(event); err != nil {
 			return err
 		}
 		s.logCommitted(actionCtx, w)
 		return nil
 	})
+	if err != nil {
+		if deferred, ok := queue.DeferCheckCancellation(claim.Action, time.Now(), err.Error()); ok {
+			persist, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			return s.store.Emit(persist, claim, cfg)(deferred)
+		}
+	}
 	var absent *executor.ErrLandingNotOnBase
 	var ambiguity *executor.CheckSourceAmbiguityError
 	if errors.As(err, &absent) {
@@ -223,6 +241,11 @@ func (s *Server) status(ctx context.Context, w *worker, pr int, head string, sta
 		return nil
 	}
 	ctx = forge.WithRequestClass(ctx, forge.ReportingRequest)
+	summary, err := s.ledgerSummary(ctx, w, pr)
+	if err != nil {
+		return err
+	}
+	status.Summary += summary
 	key := fmt.Sprintf("status/%d", pr)
 	value := struct {
 		Head   string

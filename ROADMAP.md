@@ -110,7 +110,7 @@ ADR 0006 lands in four PRs:
 - Speculative chain of batches with a **Zuul-style AIMD window** (grows on landing, halves once per failed batch), landing strictly in chain order through the existing fence; only the oldest unlanded batch is blamed ([ADR 0009](docs/adr/0009-speculative-batching.md)); `max_depth` defaults to 1 until the adopter profiles pass and two weeks of dogfooding show a benefit, then 4
 - Opt-in dynamic batch sizing from observed failure rate (`batch.target_pass_rate`)
 - Bounded same-commit check retries before a failure counts (a prerequisite for speculation); optimistic failure resolution deferred
-- Optional CI cancellation capability (`actions: write` on GitHub) and a per-change CI run ledger
+- [x] Optional CI cancellation capability (`actions: write` on GitHub) and a per-change CI run ledger
 - Priorities (`priority_rules`, numeric levels, optional preemption) and multiple queues
 - Check timeouts (automatic, p95-based)
 - Pause, scheduled freezes with exclusions, `schedule` conditions

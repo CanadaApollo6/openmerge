@@ -260,7 +260,8 @@ func isUnsupportedRerunError(err error) bool {
 	return errors.As(err, &response) && response.Response != nil && response.Response.StatusCode == 403 && strings.Contains(strings.ToLower(response.Message), "resource not accessible by integration")
 }
 
-// CheckRunsForRetry joins each check ID to its actual Actions job attempt.
+// CheckRunsForRetry joins each check ID to its actual Actions job attempt,
+// including passing and optional checks retained in speculative run history.
 // A workflow's current run_attempt must never be assigned to retained old jobs.
 // Legacy/default-off CheckRuns performs no additional Actions API reads.
 func (d *Driver) CheckRunsForRetry(ctx context.Context, repo forge.RepoRef, sha string, workflows []uint64) ([]forge.CheckRun, error) {
@@ -277,7 +278,7 @@ func (d *Driver) CheckRunsForRetry(ctx context.Context, repo forge.RepoRef, sha 
 		needed[id] = true
 	}
 	for _, check := range checks {
-		if rerunnableCheckState(check.State) {
+		if check.WorkflowRunID > 0 {
 			needed[check.WorkflowRunID] = true
 		}
 	}

@@ -2,27 +2,56 @@
 
 The real planner and executor use fixed W = 4. Seeds 1–8 each admit 30 days of uniform arrivals, with the ADR 0009 pinned policy: batch size 8, five-minute max wait, 2% broken changes, 1% flaky runs, 50 runners, and timeout 1.5 × CI. The one-second observation/enqueue delay remains in the simulator. No thresholds were changed. This evidence validates depth 4; depths above 4 remain unvalidated.
 
-The unsupported-cancellation mode passes. The supported mode is explicitly
-skipped with “cancellation arrives in ADR 0009 PR 4”: PR 3 never requests
-cancellation for speculative batches, and invalidated runs finish. Earlier runs
-with both capability settings produced identical planner traces by construction;
-they did not exercise speculative cancellation. The adaptive-sizing exit test stays skipped for PR 5. The PR 1 model includes AIMD and its configured cancellation behavior, so its numerical predictions are a comparison, not an expected byte-identical trace.
+Both cancellation modes pass through the real planner, durable cancellation
+intent and executor's optional forge capability. Supported cancellation stops only
+the identified attempts of permanently retired batches and releases their runner
+capacity; unsupported cancellation lets those attempts finish. A durable
+`observe_retired_checks` follow-up reads pending unsupported attempts until their
+exact identities report terminal outcomes or its eight-attempt budget is exhausted.
+Pending reads and cancellation faults use the same durable successor actions and
+30s-to-30m exponential backoff in production and simulation; they do not occupy
+the oldest claimable action during the wait. Historical observations cannot
+authorize landing. Neither outcome can revive a retired batch. The adaptive-sizing exit test stays skipped for PR 5. The
+PR 1 model includes AIMD and its configured cancellation behavior, so its numerical
+predictions are a comparison, not an expected byte-identical trace.
 
 ## Pooled results
 
-- Team: 4,716 merged, 4,690 runs, p50/p95 **35/35 minutes**, **0.99448685 runs/merge**, 29.83460560 runner-minutes/merge, **2.26887193%** at or above 60 minutes. Passes p95 < 60 minutes and runs/merge < 1.5.
-- Slow CI: 1,179 merged, 1,224 runs, p50/p95 **185/185 minutes**, **1.03816794 runs/merge**, 186.87022901 runner-minutes/merge, **2.12044105%** at or above 270 minutes. Passes p95 < 270 minutes and runs/merge < 1.5.
+- Team, either mode: 4,716 merged, 4,690 runs, p50/p95 **35/35 minutes**, **0.99448685 runs/merge**, **2.26887193%** at or above 60 minutes, and **299 wasted runs**. Runner-minutes/merge: **29.74587169 supported / 29.83460560 unsupported**. Passes p95 < 60 minutes and runs/merge < 1.5.
+- Slow CI, either mode: 1,179 merged, 1,224 runs, p50/p95 **185/185 minutes**, **1.03816794 runs/merge**, **2.12044105%** at or above 270 minutes, and **73 wasted runs**. Runner-minutes/merge: **185.83018837 supported / 186.87022901 unsupported**. Passes p95 < 270 minutes and runs/merge < 1.5.
+
+Team requested cancellation for 159 identified attempts; Slow CI requested 42.
+All are confirmed in supported mode and reported unsupported in unsupported mode.
+The round-1 scheduling fix reproduces every pooled and per-seed adopter result in
+both modes, including runner cost. Supported cancellations in these profiles
+confirm immediately, so their dispatch time is unchanged. Delayed unsupported
+follow-ups only read history; they do not affect CI service or queue gates. Of
+Team's 159 requests, 26 stop running attempts and 133 arrive after completion,
+saving 418.46911058 runner-minutes. Of Slow CI's 42 requests, 12 stop running
+attempts and 30 arrive after completion, saving 1226.20790709 runner-minutes.
+Neither profile cancels an attempt before it starts.
+The unsupported results, including runner cost, are identical to PR 3. Both modes
+start the same number of runs and have the same latency: the 50-runner pool is
+not saturated in these profiles. Cancellation saves service after invalidation,
+which reduces runner-minutes without reducing the count of runs already started.
+
+A wasted run is any started attempt other than the final successful attempt of a
+landed batch. This deliberately broad cost measure includes failed diagnostic and
+bisection attempts, superseded reruns, timed-out work, and invalidated or cancelled
+attempts. A cancelled attempt still counts as started and wasted; a queued attempt
+cancelled before it gets a runner counts as neither. Runner-minutes count service
+actually consumed, including time up to cancellation.
 
 Against the PR 1 model (both cancellation settings have the same predicted runs and latency):
 
-- Team model: 4,692 runs, p95 35 minutes, 0.99491094 runs/merge, 2.33248516% tail. Planner difference: **−2 runs**, **0 minutes p95**, **−0.00042409 runs/merge**, **−0.06361323 percentage points** tail. Runner-minutes/merge: model 29.75001654 supported / 29.84732824 unsupported; planner delta +0.08458906 / −0.01272265.
-- Slow model: 1,225 runs, p95 185 minutes, 1.03901612 runs/merge, 2.29007634% tail. Planner difference: **−1 run**, **0 minutes p95**, **−0.00084818 runs/merge**, **−0.16963528 percentage points** tail. Runner-minutes/merge: model 185.87542776 supported / 187.02290076 unsupported; planner delta +0.99480125 / −0.15267176.
+- Team model: 4,692 runs, p95 35 minutes, 0.99491094 runs/merge, 2.33248516% tail. Planner difference: **−2 runs**, **0 minutes p95**, **−0.00042409 runs/merge**, **−0.06361323 percentage points** tail. Runner-minutes/merge: model 29.75001654 supported / 29.84732824 unsupported; planner delta −0.00414485 / −0.01272265.
+- Slow model: 1,225 runs, p95 185 minutes, 1.03901612 runs/merge, 2.29007634% tail. Planner difference: **−1 run**, **0 minutes p95**, **−0.00084818 runs/merge**, **−0.16963528 percentage points** tail. Runner-minutes/merge: model 185.87542776 supported / 187.02290076 unsupported; planner delta −0.04523938 / −0.15267176.
 
 The small cost/tail differences are measured, not reconciled into the capacity model. The model and planner have different window control, event/refresh/fence overhead, and no shared execution trace. These results validate the pinned adopter gates without establishing trace equivalence.
 
 ## Per-seed and cold-start results
 
-The unsupported-cancellation planner results are listed once per seed. Day 1 means changes arriving in the first 24 hours, followed through resolution; it has no pass criterion. Cold-start cost is not calculated here.
+Both modes have the same per-seed merged/run counts and latency results, listed once per seed. Day 1 means changes arriving in the first 24 hours, followed through resolution; it has no pass criterion. Cold-start cost is not calculated here.
 
 ### Team
 
@@ -52,8 +81,8 @@ The unsupported-cancellation planner results are listed once per seed. Day 1 mea
 mise exec -- go test ./internal/sim -run 'TestExitAdopter(Team|Slow)$' -v -count=1
 ```
 
-The tests also run the pinned PR 1 capacity model for each seed and print pooled deltas. Full commands and final exit statuses are recorded in the PR description.
+The tests run both capability modes, assert that each actually exercises cancellation, and also run the pinned PR 1 capacity model for each seed and print pooled deltas, wasted runs and cancellation outcomes. Full commands and final exit statuses are recorded in the PR description.
 
 ## Depth-1 compatibility
 
-All 17 JSON records from `TestExit500PRDay` and `TestExit2000PRDayBatch8` match commit `7ffd878` byte-for-byte. SHA-256 of the newline-joined records in test order: `bc7c730e66e11a6b3ec3e2253e81061d49358d592cb673e634fac89bf41b26c6`. Existing event/action golden files were not edited.
+All 17 JSON records from `TestExit500PRDay` and `TestExit2000PRDayBatch8` were byte-compared against clean `origin/main` commit `002f2f7` and match exactly (also unchanged from PR 3’s `7ffd878` comparison). SHA-256 of the newline-joined records in test order: `bc7c730e66e11a6b3ec3e2253e81061d49358d592cb673e634fac89bf41b26c6`. Existing event/action golden files were not edited.

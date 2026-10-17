@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
+	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
@@ -177,6 +178,7 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 			for _, journal := range journals {
 				q, _, _ := Project(journal, 0, 0, sanitizer)
 				applyReadiness(source, &q, sanitizer)
+				applyPolicy(source, &q, nil)
 				queues = append(queues, q)
 			}
 			// Preserve [] for an empty queue list; discovery is additive in v1.
@@ -198,6 +200,7 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 		}
 		q, entry, why := Project(journals[0], pr, limit, sanitizer)
 		applyReadiness(source, &q, sanitizer)
+		applyPolicy(source, &q, entry)
 		if why != nil && q.Readiness != nil && !q.Readiness.Ready {
 			why.Summary += "; waiting: " + q.Readiness.Reason
 		}
@@ -276,6 +279,17 @@ func applyReadiness(source Source, q *Queue, sanitizer *diagnostic.Sanitizer) {
 		q.Readiness = runtime.QueueReadiness(store.QueueKey{Installation: q.Installation, Repository: q.Repository, BaseBranch: q.Base, Lane: q.Lane})
 		if q.Readiness != nil {
 			q.Readiness.Reason = sanitizer.Sanitize(q.Readiness.Reason)
+		}
+	}
+}
+
+func applyPolicy(source Source, q *Queue, selected *Entry) {
+	if runtime, ok := source.(interface {
+		QueuePolicy(store.QueueKey) (queue.Config, bool)
+	}); ok {
+		cfg, found := runtime.QueuePolicy(store.QueueKey{Installation: q.Installation, Repository: q.Repository, BaseBranch: q.Base, Lane: q.Lane})
+		if found {
+			ApplyPolicy(q, selected, cfg, time.Now())
 		}
 	}
 }
