@@ -132,22 +132,25 @@ Built after Phase 1 closes, in parallel with Phase 2 where they don't overlap ([
 
 ### Phase 3 — Agent-native
 
-Phase 3 treats the change, not the pull request, as the unit of work, with pull requests as one optional view ([ADR 0007](docs/adr/0007-changes-not-prs.md)).
+Phase 3 treats the change, not the pull request, as the unit of work, in three stages ([ADR 0007](docs/adr/0007-changes-not-prs.md)). Stage A works entirely on pull requests; Stages B and C follow once their prerequisites exist.
 
-- **Change identity:** a queue entry tracks a logical change across re-pushes and rebases; a superseding push cancels stale runs instead of stacking new ones
+- **Change identity (A):** a server-assigned change with one revision per head; a superseding push cancels stale runs instead of stacking new ones, and a started landing always settles first
+- **Classification (A):** conservative labels (`docs`, `generated`, `owned:<owner>`, `policy`, `unknown`) pinned to base and head; anything uncertain is `unknown`; comment-only detection deferred
+- **Policy approvals (A):** agent-aware rules (policy-bot style) that only add requirements on top of `enter_when`/`merge_when`, e.g. agent-authored changes touching `infra/**` need two owners; head-bound approvals, no self-approval, and a decision snapshot in the log before every landing
+- **Accountability (A):** separate actor, accountable human and reviewer identities; agents map to accountable humans in default-branch config
+- **Pushes outside the queue (A):** base moves OpenMerge did not make are recorded as landed outside the queue and not tested by OpenMerge
+- **Review briefs (A):** templated reviewer, operator and agent views with a complete file and hunk inventory; approvals record the brief's digest
 - Per-author and per-agent concurrency, CI-spend, and retry budgets, with escalation to a human
-- **Direct submission:** `openmerge change submit` (CLI, API, MCP) for authenticated writers and agents acting for an accountable human; `changes.pull_requests: required | when_review_needed | never` per repository, default `required`
-- **Policy approvals:** agent-aware rules (policy-bot style) map change classes, paths and authors to required approvals, e.g. agent-authored changes touching `infra/**` need two owners; approvals bind to exact heads and are recorded in the landed commit
 - Structured failure explanations: which batch, which check, which tests, flaky or real, suggested next action
-- **Conflict grace:** with change identity, a conflicting PR may hold its position for one non-renewable `conflict_grace` with bounded retries, while PRs behind it keep landing
-- **Change classification for approvals:** deterministic comment-only, docs-only, generated, or owned-directory classes, so policy can ask for human review of intent only where it matters
-- **Review briefs:** reviewer, operator and agent views generated from the event log; model-written prose is labelled and never counts as evidence
+- **Conflict grace:** with change identity, a conflicting change may hold its position for one non-renewable `conflict_grace` with bounded retries, while entries behind it keep landing
 - **Write API and lookups agents need:** enqueue/dequeue/refresh over the API, and "which commit landed PR N" without scanning history
+- **Direct submission (B):** after a user-authentication ADR, `openmerge change submit` pushes `HEAD` to `openmerge/submit/<id>`; `changes.pull_requests: when_review_needed` per queue, refused on bases where GitHub would require reviews
+- **PR-less queues and generated prose (C):** `changes.pull_requests: never` once notifications and request-changes work outside pull requests; optional, labelled model summaries in briefs
 - A ready-made **queue-watcher agent skill** that reads the structured logs and "why" API and reports anomalies
 - Outbound webhooks and OpenTelemetry export for every queue event
 - Agent skills and docs written for agents (`llms.txt`, Markdown docs, stable `--json` and exit codes)
 
-**Exit:** an unattended coding agent can take a change from "submitted" to "landed or definitively rejected" using only the CLI or MCP, with a pull request only where policy requires a human, who approves from the generated brief without reading logs.
+**Exit:** on the fake forge, an unattended coding agent takes a change from submitted to landed or definitively rejected using only the CLI or MCP. Low-risk changes land on policy alone, a change that needs a human waits until a scripted reviewer approves its exact head, and every landing's decision snapshot can be read back.
 
 ### Phase 4 — Monorepos and CI intelligence
 
