@@ -107,16 +107,16 @@ ADR 0006 lands in four PRs:
 
 ### Phase 2 — Throughput
 
-- Speculative chain of batches with a **Zuul-style AIMD window** (grows on success, halves on failure)
-- Dynamic batch sizing from observed failure rate
-- **Optimistic failure resolution** (a failed batch waits for its successors; a later pass that contains it clears a flake)
+- Speculative chain of batches with a **Zuul-style AIMD window** (grows on success, halves on failure), landing strictly in chain order through the existing fence ([ADR 0009](docs/adr/0009-speculative-batching.md)); `max_depth` defaults to 1 until the exit test and dogfooding justify a wider default
+- Dynamic batch sizing from observed failure rate (`batch.target_pass_rate`)
+- **Optimistic failure resolution**, opt-in (`on_failure: wait_for_successor`): a failed batch waits for its successor, whose passing tested commit lands both
 - Priorities (`priority_rules`, numeric levels, optional preemption) and multiple queues
 - Check timeouts (automatic, p95-based) and bounded CI retries
 - Pause, scheduled freezes with exclusions, `schedule` conditions
 - Read-only web dashboard: queue graph, batch history, why-is-my-PR-stuck explainer
 - **MCP server** exposing queue status, enqueue/dequeue, failure explanations
 
-**Exit:** at 2,000 simulated PRs/day with 30-minute CI, median time-to-merge stays under 2x CI duration, and CI runs per merged PR stays under 1.5.
+**Exit:** at 2,000 simulated PRs/day with 30-minute CI, median time-to-merge stays under 2x CI duration, and CI runs per merged PR stays under 1.5. The simulator also reports adopter profiles (20 PRs/day with 30-minute CI; 5 PRs/day with 3-hour CI) against depth 1.
 
 ### Phase 2b — Post-merge verification mode
 
