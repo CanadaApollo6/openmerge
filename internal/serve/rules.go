@@ -11,6 +11,7 @@ import (
 )
 
 func (s *Server) repositoryRules(ctx context.Context, w *worker) error {
+	ctx = forge.WithRequestClass(ctx, forge.RulesRequest)
 	if w.CheckRules == nil && w.CheckProtection == nil && w.CheckPermissions == nil || time.Now().Before(w.rulesNextCheck) {
 		return nil
 	}

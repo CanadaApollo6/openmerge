@@ -16,13 +16,14 @@ import (
 // Version is the public response schema version.
 const Version = 1
 
-// Response carries exactly one of queues, queue, or queue + PR + why.
+// Response carries queue detail, queue lists, or discovery observations.
 type Response struct {
-	Version int     `json:"version"`
-	Queues  []Queue `json:"queues,omitempty"`
-	Queue   *Queue  `json:"queue,omitempty"`
-	PR      *Entry  `json:"pr,omitempty"`
-	Why     *Why    `json:"why,omitempty"`
+	Version   int        `json:"version"`
+	Discovery *Discovery `json:"discovery,omitempty"`
+	Queues    []Queue    `json:"queues,omitempty"`
+	Queue     *Queue     `json:"queue,omitempty"`
+	PR        *Entry     `json:"pr,omitempty"`
+	Why       *Why       `json:"why,omitempty"`
 }
 
 // Queue describes one served installation/repository/base/lane partition.

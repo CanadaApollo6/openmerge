@@ -89,15 +89,23 @@ func NewRepositories(ctx context.Context, db *store.Store, repos []Repository, o
 }
 
 func (s *Server) register(ctx context.Context, target Target) (*worker, error) {
-	if target.Driver == nil || target.Git == nil || target.BotLogin == "" {
+	if target.Resolve == nil && (target.Driver == nil || target.Git == nil || target.BotLogin == "") {
 		return nil, errors.New("target requires driver, git and App login")
 	}
-	id, err := s.store.EnsureQueue(ctx, target.Key)
+	s.registerMu.Lock()
+	defer s.registerMu.Unlock()
+	id, key, err := s.store.CanonicalQueue(ctx, target.Key)
+	target.Key = key
 	if err != nil {
 		return nil, err
 	}
 	for _, w := range s.workers() {
 		if w.id == id {
+			w.mu.Lock()
+			if w.Driver == nil && target.Driver != nil {
+				w.bind(target)
+			}
+			w.mu.Unlock()
 			return w, nil
 		}
 	}
@@ -138,6 +146,7 @@ func (s *Server) allowedBase(base string) bool {
 // RefreshBranches serializes successful listings, while each worker continues
 // settling independently during slow discovery. No partial listing removes work.
 func (s *Server) RefreshBranches(ctx context.Context) error {
+	ctx = forge.WithRequestClass(ctx, forge.DiscoveryRequest)
 	s.refreshMu.Lock()
 	defer s.refreshMu.Unlock()
 	var result error
@@ -179,6 +188,18 @@ func (s *Server) refreshRepository(ctx context.Context, repo Repository) error {
 	branches = slices.DeleteFunc(branches, func(base string) bool { return strings.HasPrefix(base, "openmerge/") })
 	slices.Sort(branches)
 	branches = slices.Compact(branches)
+	if s.discovery != nil {
+		dormant := true
+		for _, base := range branches {
+			if s.allowedBase(base) && len(matchingQueues(cfg, base, branch)) > 0 {
+				dormant = false
+				break
+			}
+		}
+		s.mu.Lock()
+		s.dormantRepositories[repo.Installation+"/"+strings.ToLower(repo.Name)] = dormant
+		s.mu.Unlock()
+	}
 	// An overlap invalidates the involved queue entries, including their other
 	// bases, without blocking independent queues in the same policy file.
 	overlaps := make(map[string]bool)
@@ -237,6 +258,9 @@ func matchingQueues(cfg config.Config, base, defaultBranch string) []config.Queu
 }
 
 func (s *Server) refreshWorker(ctx context.Context, w *worker, cfg config.Config, branch, tip string, branches []string, overlaps map[string]bool) error {
+	if err := s.resolveTarget(ctx, w); err != nil {
+		return err
+	}
 	matches := matchingQueues(cfg, w.Key.BaseBranch, branch)
 	switch {
 	case !s.allowedBase(w.Key.BaseBranch) || len(matches) == 0 || w.Key.Lane != "":

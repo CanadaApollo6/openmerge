@@ -27,6 +27,7 @@ within the limit are ignored.
 
 | Path | Response |
 | --- | --- |
+| `/v1/discovery` | `{"version":1,"discovery":DISCOVERY}`; visible/removed repositories, sweeps, installation budgets |
 | `/v1/queues` | `{"version":1,"queues":[QUEUE,...]}`; empty list is `[]` |
 | `/v1/queues/{owner}/{repo}` | List every served queue for this repository |
 | `/v1/queues/{owner}/{repo}/{base}` | `{"version":1,"queue":QUEUE}` |
@@ -37,8 +38,20 @@ URL-encode each path component, including slashes in base branch names:
 PR detail accepts `?events=N`: default 20, range 1–100. Other query parameters
 are rejected. A queue is identified internally by installation/repo/base/lane;
 lists include all four fields. A detail path matching multiple served partitions
-returns 409 rather than choosing one. Phase 1 serve uses one installation and
-the default (empty) lane.
+returns 409 rather than choosing one. Discovery serves every installation of one
+App; default lanes remain empty. Repository path matching is case-insensitive.
+
+`/v1/queues` also includes an additive `discovery` object. It contains
+`last_successful_sweep` (null before success), `repositories` and `installations`.
+Every repository has `installation`, `repo`, `state`, optional `detail`, and
+`last_successful_sweep`. States are `served`, `not configured`, `invalid config`,
+`removed`, `suspended`, and `dormant base`. Failed listings retain the previous
+state and successful timestamp. Installations expose `installation`, `suspended`,
+`last_successful_sweep`, and `budget` (`known`, `limit`, `remaining`,
+`settlement_reserve`, `reset_at`). Budget reads are local snapshots after atomic
+reservations; `known: false` means capacity has not been observed. Discovery
+reads never call GitHub. `openmerge queue status --discovery [--json]` selects
+this view; ordinary queue lists include it too.
 
 Example queue response:
 

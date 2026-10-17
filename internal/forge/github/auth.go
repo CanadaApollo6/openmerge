@@ -117,6 +117,7 @@ func New(cfg Config) (*App, error) {
 	if err != nil {
 		return nil, safeError(err)
 	}
+	a.client.Client().Transport.(*transport).appIdentity = true
 	return a, nil
 }
 

@@ -246,3 +246,33 @@ func TestStatusPrintsEveryIndependentBlock(t *testing.T) {
 		}
 	}
 }
+
+func TestQueueDiscoveryStatus(t *testing.T) {
+	t.Setenv("OPENMERGE_API_TOKEN", "")
+	t.Setenv("OPENMERGE_API_TOKEN_FILE", "")
+	body := `{"version":1,"discovery":{"last_successful_sweep":"2026-10-16T12:00:00Z","repositories":[{"installation":"7","repo":"owner/unconfigured","state":"not configured","last_successful_sweep":"2026-10-16T12:00:00Z"}],"installations":[{"installation":"7","suspended":false,"last_successful_sweep":"2026-10-16T12:00:00Z","budget":{"known":true,"limit":1000,"remaining":400,"settlement_reserve":100}}]}}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/discovery" {
+			t.Errorf("path=%s", r.URL.Path)
+		}
+		_, _ = io.WriteString(w, body)
+	}))
+	defer server.Close()
+	args := []string{"queue", "status", "--api", server.URL, "--discovery"}
+	var out, errOut bytes.Buffer
+	if code := run(args, &out, &errOut); code != 0 {
+		t.Fatalf("code=%d err=%s", code, &errOut)
+	}
+	for _, text := range []string{"owner/unconfigured", "not configured", "2026-10-16T12:00:00Z", "400/1000", "100 reserved for settlement"} {
+		if !strings.Contains(out.String(), text) {
+			t.Fatalf("missing %q in %s", text, &out)
+		}
+	}
+	out.Reset()
+	if code := run(append(args, "--json"), &out, &errOut); code != 0 || out.String() != body {
+		t.Fatal("discovery JSON changed")
+	}
+	if code := run(append(args, "--repo", "owner/repo"), io.Discard, &errOut); code != 2 {
+		t.Fatal("conflicting selectors accepted")
+	}
+}

@@ -6,17 +6,21 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/config"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
+	"github.com/CanadaApollo6/openmerge/internal/status"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
 // Target identifies an explicitly configured repository and base branch.
 type Target struct {
+	// Resolve binds historical credentials lazily; failures never discard a landing.
+	Resolve  func(context.Context) (Target, error)
 	Key      store.QueueKey
 	Driver   forge.Driver
 	Git      forge.Git
@@ -49,16 +53,21 @@ type Options struct {
 // Server owns one serial reconciler/worker per target, with bounded concurrency.
 // Each process must have its own git cache directory.
 type Server struct {
-	store           *store.Store
-	options         Options
-	queues          []*worker
-	slots           chan struct{}
-	mu              sync.RWMutex
-	refreshMu       sync.Mutex
-	repositories    []Repository
-	refresh         chan struct{}
-	refreshFailures int
-	refreshRetryAt  time.Time
+	store               *store.Store
+	options             Options
+	queues              []*worker
+	slots               chan struct{}
+	mu                  sync.RWMutex
+	refreshMu           sync.Mutex
+	registerMu          sync.Mutex
+	discovery           *Discovery
+	discoveryStatus     status.Discovery
+	discoveryBudgets    map[string]func() status.Budget
+	dormantRepositories map[string]bool
+	repositories        []Repository
+	refresh             chan struct{}
+	refreshFailures     int
+	refreshRetryAt      time.Time
 }
 
 type worker struct {
@@ -99,7 +108,8 @@ func New(ctx context.Context, db *store.Store, targets []Target, options Options
 		if target.Driver == nil || target.Git == nil || target.BotLogin == "" {
 			return nil, errors.New("target requires driver, git and App login")
 		}
-		id, err := db.EnsureQueue(ctx, target.Key)
+		id, key, err := db.CanonicalQueue(ctx, target.Key)
+		target.Key = key
 		if err != nil {
 			return nil, err
 		}
@@ -152,7 +162,7 @@ func newServer(db *store.Store, options Options) (*Server, error) {
 // repository identifies installation-wide changes. Payloads never grant trust.
 func (s *Server) Notify(ctx context.Context, installation, repository, delivery string) error {
 	for _, w := range s.workers() {
-		if w.Key.Installation != installation || repository != "" && w.Key.Repository != repository {
+		if w.Key.Installation != installation || repository != "" && !strings.EqualFold(w.Key.Repository, repository) {
 			continue
 		}
 		if err := s.store.Notify(ctx, w.id, delivery); err != nil {
@@ -214,7 +224,7 @@ func (s *Server) Run(ctx context.Context) error {
 		if time.Now().Before(retryAt) {
 			continue
 		}
-		_ = s.RefreshBranches(ctx)
+		_ = s.Refresh(ctx)
 		start()
 	}
 }
@@ -240,13 +250,6 @@ func (s *Server) loop(ctx context.Context, w *worker) {
 		}
 		if ctx.Err() != nil {
 			return
-		}
-		if s.options.BackoffUntil != nil {
-			if until := s.options.BackoffUntil(); until.After(time.Now()) {
-				delay = time.Until(until)
-				s.options.Logger.Debug("quota backoff", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "until", until)
-				continue
-			}
 		}
 		select {
 		case s.slots <- struct{}{}:
@@ -324,10 +327,30 @@ func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
 		s.logCommitted(ctx, w)
 		s.options.Logger.Debug("reconcile cycle finished", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "error", result)
 	}()
-	unsettled, err := s.settle(ctx, w)
+	current, _, err := s.store.Load(ctx, w.id)
+	if err != nil {
+		return err
+	}
+	resolveCtx := ctx
+	if current.Active != nil && current.Active.Phase == queue.Landing {
+		resolveCtx = forge.WithRequestClass(ctx, forge.SettlementRequest)
+	}
+	if err := s.resolveTarget(resolveCtx, w); err != nil {
+		return err
+	}
+	unsettled, err := s.settle(forge.WithRequestClass(ctx, forge.SettlementRequest), w)
 	if err != nil || unsettled {
 		return err
 	}
+	state, _, err := s.store.Load(ctx, w.id)
+	if err != nil {
+		return err
+	}
+	class := forge.IdleRequest
+	if state.Active != nil {
+		class = forge.ActiveRequest
+	}
+	ctx = forge.WithRequestClass(ctx, class)
 	if w.managed {
 		state, _, err := s.store.Load(ctx, w.id)
 		if err != nil {
@@ -335,6 +358,9 @@ func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
 		}
 		if w.recovery {
 			return s.lifecycle(ctx, w, "retired", "Recovered landing settled; queue excluded by repository allowlist")
+		}
+		if state.SourceBlocked(queue.RepositoryAccess) {
+			return s.reportRepositoryRemoval(ctx, w, state)
 		}
 		if !w.ready || state.LifecycleState() != "active" {
 			return nil
@@ -365,7 +391,7 @@ func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
 		return err
 	}
 	s.logCommitted(ctx, w)
-	state, _, err := s.store.Load(ctx, w.id)
+	state, _, err = s.store.Load(ctx, w.id)
 	if err != nil {
 		return err
 	}

@@ -182,6 +182,7 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 }
 
 func (s *Server) status(ctx context.Context, w *worker, pr int, head string, status forge.Status) error {
+	ctx = forge.WithRequestClass(ctx, forge.ReportingRequest)
 	key := fmt.Sprintf("status/%d", pr)
 	value := struct {
 		Head   string

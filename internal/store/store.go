@@ -58,14 +58,30 @@ func (s *Store) Close() { s.pool.Close() }
 
 // EnsureQueue returns the same ID for every occurrence of this queue key.
 func (s *Store) EnsureQueue(ctx context.Context, key QueueKey) (QueueID, error) {
+	id, _, err := s.CanonicalQueue(ctx, key)
+	return id, err
+}
+
+// CanonicalQueue atomically finds or registers a partition, preserving the first
+// stored repository spelling. Every registration path takes the same lock, so
+// differently cased discoveries cannot split a queue's history or fence.
+func (s *Store) CanonicalQueue(ctx context.Context, key QueueKey) (QueueID, QueueKey, error) {
 	if key.Installation == "" || key.Repository == "" || key.BaseBranch == "" {
-		return 0, errors.New("installation, repository and base branch are required")
+		return 0, key, errors.New("installation, repository and base branch are required")
 	}
 	var id QueueID
-	err := s.pool.QueryRow(ctx, `INSERT INTO queues(installation, repository, base, lane) VALUES ($1, $2, $3, $4)
-		ON CONFLICT (installation, repository, base, lane) DO UPDATE SET lane = EXCLUDED.lane RETURNING id`,
-		key.Installation, key.Repository, key.BaseBranch, key.Lane).Scan(&id)
-	return id, err
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		// Registration uses its own namespace, separate from queue event locks.
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(1330464082, hashtext($1 || '/' || lower($2) || '/' || $3 || '/' || $4))`, key.Installation, key.Repository, key.BaseBranch, key.Lane); err != nil {
+			return err
+		}
+		err := tx.QueryRow(ctx, `SELECT id, repository FROM queues WHERE installation=$1 AND lower(repository)=lower($2) AND base=$3 AND lane=$4 ORDER BY id LIMIT 1`, key.Installation, key.Repository, key.BaseBranch, key.Lane).Scan(&id, &key.Repository)
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		return tx.QueryRow(ctx, `INSERT INTO queues(installation, repository, base, lane) VALUES ($1,$2,$3,$4) RETURNING id`, key.Installation, key.Repository, key.BaseBranch, key.Lane).Scan(&id)
+	})
+	return id, key, err
 }
 
 // InitializeFence persists the forge's initial fence before admitting any events.

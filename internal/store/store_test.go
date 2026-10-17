@@ -106,8 +106,8 @@ func TestMigrationsConcurrentOpenAndReopen(t *testing.T) {
 		must(t, err)
 	}
 	s := openTestStore(t, url)
-	if n := count(t, s, `SELECT count(*) FROM schema_migrations`); n != 3 {
-		t.Fatalf("migration count = %d, want 3", n)
+	if n := count(t, s, `SELECT count(*) FROM schema_migrations`); n != 4 {
+		t.Fatalf("migration count = %d, want 4", n)
 	}
 	q := ensureQueue(t, s, "")
 	appendEvents(t, s, q, seedEvents()...)

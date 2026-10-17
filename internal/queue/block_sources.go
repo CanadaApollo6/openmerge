@@ -11,6 +11,7 @@ type BlockSource string
 
 // Independently managed runtime block sources. Rules and lifecycle keep their existing events.
 const (
+	RepositoryAccess BlockSource = "repository-removed"
 	ConfigSource     BlockSource = "config"
 	CheckSources     BlockSource = "check-sources"
 	LandingNotOnBase BlockSource = "landing-not-on-base"
@@ -19,7 +20,7 @@ const (
 	BuildFailed      BlockSource = "build-failed"
 )
 
-var blockSourceOrder = [...]BlockSource{ConfigSource, CheckSources, LandingNotOnBase, ActionPoison, Operator, BuildFailed}
+var blockSourceOrder = [...]BlockSource{RepositoryAccess, ConfigSource, CheckSources, LandingNotOnBase, ActionPoison, Operator, BuildFailed}
 
 // BlockSourceBlocked always applies a definite failure. Subject pins the SHA
 // requiring landing verification, or identifies the quarantined action key.

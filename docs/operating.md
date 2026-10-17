@@ -2,7 +2,7 @@
 
 Build with `make build` and complete the [GitHub App and ruleset setup](../README.md#running-openmerge-serve)
 before starting a service. The repository's default branch needs a valid
-`.openmerge.yml`, and CI must run on pushes to `openmerge/queue/**`. Use one server per installation and a
+`.openmerge.yml`, and CI must run on pushes to `openmerge/queue/**`. Use one server per App and a
 process-exclusive git cache. Postgres must be available before startup; startup
 applies database migrations and ensures the fence without resetting it.
 
@@ -12,10 +12,86 @@ and use `openmerge queue status [--json]`. The [API guide](api.md) documents the
 bearer token requirements, response contract, CLI and exit codes. No database or
 GitHub credentials are needed by an API client.
 
+## Installation discovery and onboarding
+
+One `serve` process serves one GitHub App, across its installations. At startup,
+every `--discovery-interval` / `OPENMERGE_DISCOVERY_INTERVAL` (default `10m`),
+and after a verified `installation` or `installation_repositories` webhook, it
+lists installations and their repositories. Webhook payload lists only request
+a listing; they never grant or revoke repository access.
+
+To onboard a repository:
+
+1. Install the App on it. An organization owner may need to approve access.
+2. Run `openmerge setup rulesets --repo OWNER/REPO` with a repository-admin token,
+   following the setup preview/apply instructions in the README. Protect every
+   selected base and its fence.
+3. Enable CI on pushes to `openmerge/queue/**`.
+4. Commit `.openmerge.yml` to the default branch. The next discovery sweep serves
+   it without a service configuration change.
+
+A private App can only be installed on its owner's account. An organization
+needs its own App (`openmerge setup github --owner ORG`) and its own `serve`
+process. Processes may share Postgres, but each needs a distinct
+`--git-cache-dir` / `OPENMERGE_GIT_CACHE_DIR`, `--webhook-listen` /
+`OPENMERGE_WEBHOOK_LISTEN`, and `--api-listen` / `OPENMERGE_API_LISTEN`.
+
+`--github-installation-id` / `OPENMERGE_GITHUB_INSTALLATION_ID`, `--repos` /
+`OPENMERGE_REPOS`, and `--base` / `OPENMERGE_BASE` are optional, deprecated
+**narrowing allowlists**. The warnings name the replacement: App installation
+access; App repository access plus default-branch config; and `queues[].base`,
+respectively. With none given, every discovered configured repository is served.
+Repository selectors are comma-separated, case-insensitive `owner/name` globs
+(e.g. `--repos 'MyOrg/*,me/project?'`); `*` and `?` stay within a path segment.
+An allowlist cannot add a repository or base absent from App access/config.
+
+Only a successful complete listing can establish removal or suspension. A
+confirmed config-file deletion or allowlist exclusion also stops admission and
+new landing starts. The independent `repository-removed` block reports a paused
+status where credentials permit it. A landing that has started always settles
+through its recorded fence; losing access leaves it unsettled until access
+returns. Transient listing/config reads preserve durable state. Unreadable
+configuration stops the affected worker in memory and is retried; invalid
+configuration has its own durable block. Reinstatement never clears operator,
+landing, config, or rules blocks owned by another observer.
+
+Each installation has its own driver, token and atomic request budget. Settlement
+has the last 10% of the observed window reserved. Active testing/landing gets
+capacity before idle polling, and reporting yields first. Discovery and rules
+each retain a 1% minimum share. A validated 304 returns its local reservation;
+uncertain requests conservatively consume capacity. Hard GitHub cooldowns apply
+to all requests. Unknown budgets remain explicitly unknown until headers arrive.
+
+`openmerge queue status` includes discovery; `openmerge queue status --discovery`
+(or `--discovery --json`) shows every known repository's state: `served`,
+`not configured`, `invalid config`, `removed`, `suspended`, or `dormant base`,
+plus last successful sweeps and remaining budget per installation. Repositories
+without config get no workers or comments. The read-only `/v1/discovery` endpoint
+uses the same authentication as queue status.
+
+## Migrating a Phase 1 deployment
+
+1. Upgrade using the existing flags and environment. They now narrow discovery.
+   Confirm in `openmerge queue status --repo OWNER/REPO` that the existing queue,
+   history and fence remain present. Installation IDs remain decimal strings;
+   repository casing is compared case-insensitively and the stored spelling is
+   retained. Queue names never change partition identity.
+2. Remove `--github-installation-id`, `--repos` and `--base`, **and unset**
+   `OPENMERGE_GITHUB_INSTALLATION_ID`, `OPENMERGE_REPOS` and `OPENMERGE_BASE`
+   in the environment file. A remaining environment value keeps the allowlist
+   in effect even when its flag is removed.
+3. Restart and inspect `openmerge queue status --discovery` and queue history.
+   Dropping `--base` is safe when it names the default branch. Otherwise first
+   add a queue with that `base` to the default-branch config; without that
+   selector the old queue becomes dormant/retired and admits no new work.
+
+Keep a compatible binary for rollback once new block sources are recorded;
+restoring single-queue YAML does not remove events from the log. Never reset
+fences, edit stored events, or run two processes against the same git cache.
+
 ## Multiple bases and branch lifecycle
 
-Repositories remain explicitly selected with `--repos owner/repo,owner/other` and
-one installation per process. Put all queue policies in each repository's
+Repositories are discovered from every installation of the configured App. Put all queue policies in each repository's
 **default-branch** `.openmerge.yml`; a release branch's file cannot override it.
 Use `queues[].base` for literals or globs, for example `release/*`. Omitted `base`
 selects the observed default branch. Every matching concrete base gets its own
@@ -23,7 +99,7 @@ serial worker, protection/rules checks and `openmerge/fence/<base>` fence.
 Protect every selected base and its fence before enabling the selector.
 
 At startup and every `--discovery-interval` / `OPENMERGE_DISCOVERY_INTERVAL`
-(default `10m`), the server lists all branch pages using conditional requests.
+(default `10m`), the server lists all App installations, their repositories, and configured branches using paginated conditional requests.
 Verified branch create/delete notifications also request a fresh listing.
 Subscribe the App to branch `create` and `delete` events when using webhooks; deliveries only wake
 reconciliation and never establish branch existence. Polling repairs missed
@@ -48,8 +124,7 @@ reset the fence or remove its stored history to reactivate a queue.
 
 Every worker cycle settles in-flight landings before notifications, config,
 rules, PR reads or admission. Config errors, operator pauses and read failures
-cannot bypass settlement. Startup scans historical queues in the configured
-installation, including repositories/bases excluded by current `--repos`,
+cannot bypass settlement. Startup scans historical queues before discovery, including repositories/bases excluded by current `--github-installation-id`, `--repos`,
 `--base` or config, and recovers their attempts with settlement-only workers.
 Unavailable credentials or a missing base can leave an attempt unsettled;
 access returning permits a retry, and never implies an abandoned push.
@@ -130,10 +205,7 @@ Create
 ```ini
 OPENMERGE_DATABASE_URL=postgres://openmerge:password@127.0.0.1:5432/openmerge?sslmode=disable
 OPENMERGE_GITHUB_APP_ID=123
-OPENMERGE_GITHUB_INSTALLATION_ID=456
 OPENMERGE_GITHUB_PRIVATE_KEY=/home/you/.config/openmerge/app.pem
-OPENMERGE_REPOS=owner/repository
-OPENMERGE_BASE=main
 OPENMERGE_GIT_CACHE_DIR=/home/you/.local/state/openmerge/git-cache
 OPENMERGE_POLL_INTERVAL=60s
 OPENMERGE_LOG_LEVEL=info
