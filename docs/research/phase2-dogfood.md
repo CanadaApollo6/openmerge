@@ -10,19 +10,30 @@ adjacent depth-1 period of equal length under the same CI configuration
 
 | Period | Setting | Starts | Ends |
 |---|---|---|---|
-| A | `speculation.max_depth: 4` (W adaptive, `min_depth: 1`) | at the journal's `ConfigApplied` for the depth-4 policy | after 14 days, at least 50 landed changes, **and** the engagement floor below |
-| B | default depth 1 | at the journal's `ConfigApplied` for the depth-1 policy, pushed when A ends | after as many days as A **and** at least 50 landed changes |
+| A | `speculation.max_depth: 4` (W adaptive, `min_depth: 1`) | at the journal's `ConfigApplied` for the depth-4 policy | its admission window closes once it has lasted at least 14 days, at least 50 of its admitted changes have landed, **and** the engagement floor below is met; then the queue drains |
+| B | default depth 1 | at the journal's `ConfigApplied` for the depth-1 policy, pushed once A has drained | its admission window closes after exactly as long as A's; then the queue drains |
+
+**Drained boundaries.** Each period has an *admission window* (from its
+`ConfigApplied` to the moment it closes) and a *drain* (after it closes, no new
+change is queued until every change admitted in the window has landed or left
+the queue). The next period's configuration is pushed only after the drain. So
+every change, every CI run and every landing belongs to exactly one period, no
+change straddles a configuration switch, and none is cut off by a period's end.
+The queue is idle at A's start. Changes that arrive during a drain wait,
+unqueued, for the next period.
 
 **Engagement floor.** Our arrivals are bursty and often one change at a time, so
-period A could run for weeks without ever having two batches open. A cannot end
-until at least 10 of its landed changes were tested in a batch at chain position 2
-or deeper (built on an unlanded batch). If A reaches 6 weeks without meeting the
-floor, the result is recorded as inconclusive and the default does not change.
+period A could run for weeks without ever having two batches open. A's admission
+window cannot close until at least 10 of its changes **landed from** a batch at
+chain position 2 or deeper (the recorded position of the batch that landed them,
+built on an unlanded batch and actually tested), and at least 3 landed from
+position 3 or deeper, so the evidence for a default of 4 is not gathered entirely
+at depth 2. If A reaches 6 weeks without meeting the floor, the pair is recorded
+as inconclusive and the default does not change.
 
-**Cohorts.** A change belongs to the period in which its counted admission (below)
-was accepted. Changes admitted in A whose landing follows B's `ConfigApplied` are
-excluded from both periods; the configuration change invalidates their batches
-anyway.
+**Cohorts.** A period's cohort is the changes whose counted admission (below) was
+accepted in its admission window. Drained boundaries make this the same set as
+the changes that landed or left during the period.
 
 This queue already exists, so W carries its depth-1 value into the new ceiling:
 it starts at 1 and grows by one per landing (1 → 2 → 3 → 4) unless a confirmed
@@ -54,24 +65,30 @@ Each metric uses a source that records the same thing at depth 1 and depth 4.
   change was re-enqueued) to the `RecordedAt` of its `landed` journal event. The
   time from its first enqueue is reported as a secondary figure, as the simulator
   does.
-- **Runs per merged change:** the number of distinct GitHub Actions run attempts
-  of the `CI` workflow (one per tested commit, covering both required jobs) on
-  `openmerge/queue/**` refs during the period,
-  counting each run once and each rerun attempt separately, divided by changes
-  landed in the period. This comes from the Actions API
-  (`GET /repos/{owner}/{repo}/actions/runs`, filtered by branch prefix and
-  `run_attempt`), not from the status ledger: at depth 1 the ledger records only
-  an aggregate result per batch, and the ledger attributes a speculative run to
-  every change in its chain, so summing per-change ledgers would count shared runs
-  several times. The count includes failed runs and runs of invalidated batches,
-  which is the cost speculation adds.
+- **Runs per merged change:** the number of GitHub Actions run attempts of the
+  `CI` workflow (one per tested commit, covering both required jobs) on
+  `openmerge/queue/**` refs whose attempt started between the period's
+  `ConfigApplied` and the end of its drain, divided by the cohort's landed
+  changes. Every attempt counts once: list runs from
+  `GET /repos/{owner}/{repo}/actions/runs` (the `branch` filter is exact-match,
+  so the `openmerge/queue/` prefix is filtered client-side on `head_branch`), then
+  enumerate attempts 1 through `run_attempt` of each run with
+  `GET .../actions/runs/{run_id}/attempts/{n}`, deduplicate by
+  `(run_id, attempt)`, and assign each attempt to a period by its own
+  `run_started_at`. Drained boundaries mean these runs are exactly the cohort's.
+  The source is the same at both depths, unlike the status ledger, which records
+  only an aggregate per batch at depth 1 and attributes a speculative run to every
+  change in its chain. The count includes failed runs and runs of invalidated
+  batches, which is the cost speculation adds.
+- **Outcomes:** landed and dequeued counts per period, so a period that ejects
+  more changes cannot hide them from latency, which only counts landed changes.
 - **Incorrect landings:** checked against git and GitHub, not only the journal:
   every commit added to `main` by the queue must equal the recorded tested commit
   (or, for fast-forward, the verified head beneath it); `main` must only move
   forward (each new head descends from the previous one); and the `CI` workflow
   must have succeeded on that tested commit. The target is zero. An audit script
-  performs these checks daily from the second day of A, so the abort condition
-  can actually fire.
+  performs these checks daily from the second day of A through the end of B's
+  drain, so the abort condition can fire and both periods are covered.
 - **Window behaviour (period A only):** W over time, halving events, the share
   of non-idle time with more than one batch open, and the chain position of each
   landed change, reconstructed by replaying the journal (status only exposes the
@@ -84,10 +101,16 @@ Each metric uses a source that records the same thing at depth 1 and depth 4.
 Fixed before A starts. Percentiles use the nearest-rank method over the period's
 landed changes. A passes if, against B: median time to merge is no worse, 95th
 percentile time to merge is no worse, runs per merged change is no worse, and
-there were no incorrect landings in either period. If arrivals per day differ by
-more than a factor of two between the periods, the comparison is recorded as not
-comparable and B is extended until the factor is within two, or both periods are
-rerun.
+there were no incorrect landings in either period. The gates are checked when
+B's admission window closes at A's length, never by extending B: if B then has
+fewer than 50 landed changes, or arrivals per day differ by more than a factor of
+two between the periods, the pair is recorded as inconclusive.
+
+Every pair that is started is logged with its outcome: pass, fail, inconclusive
+or aborted. A pair that fails the rule leaves the default at 1. A new pair may be
+run only after a logged change to the system that addresses the failure or the
+cause of inconclusiveness, never as a retrial of the same system, so repeated
+attempts cannot produce a pass by chance.
 
 The measurement and audit scripts must exist and be reviewed before A's second
 day; they read the live journal read-only and the Actions API.
@@ -111,7 +134,13 @@ the cause is fixed. The rollback must not depend on the queue making progress:
 3. **Restart and verify.** Start the server, then confirm with
    `openmerge queue status` that the configuration change was applied and the
    queue reports `window: 1`. Configuration changes invalidate open speculative
-   batches; their changes return to the queue in order.
+   batches; their changes return to the queue in order. On restart the server
+   first settles any outstanding landing, and only then applies configuration. If
+   settlement cannot complete (for example the recorded landing is missing from
+   `main`), the configuration is not applied: stop the server again and leave the
+   incident contained until it is recovered by hand. Use ordinary forward pushes
+   (a revert commit, not a reset or force-push) so an accepted landing stays in
+   `main`'s history and settlement can succeed.
 4. **Record.** Add the incident to the log below and file an issue.
 
 ## Log
