@@ -14,11 +14,17 @@ adjacent depth-1 period of equal length under the same CI configuration
 | B | default depth 1 | at the journal's `ConfigApplied` for the depth-1 policy, pushed once A has drained | its admission window closes after exactly as long as A's; then the queue drains |
 
 **Drained boundaries.** Each period has an *admission window* (from its
-`ConfigApplied` to the moment it closes) and a *drain* (after it closes, no new
-change is queued until every change admitted in the window has landed or left
-the queue). The next period's configuration is pushed only after the drain. So
-every change, every CI run and every landing belongs to exactly one period, no
-change straddles a configuration switch, and none is cut off by a period's end.
+`ConfigApplied` to the moment it closes) and a *drain*. During the drain no new
+change is queued; it ends when every change admitted in the window has landed or
+left the queue (`openmerge queue status --json` shows no entries, no active batch
+and no chain) **and** no `CI` run on a queue ref of that period's batches is still
+queued or in progress (runs of discarded batches keep running when cancellation
+is unsupported). The next period's configuration is pushed only after the drain.
+So every change and every landing belongs to exactly one period, no change
+straddles a configuration switch, and none is cut off by a period's end. The
+report logs each drain's duration and how many arrivals were held during it, and
+reports B's latency with and without the changes held over from A's drain, as a
+sensitivity figure.
 The queue is idle at A's start. Changes that arrive during a drain wait,
 unqueued, for the next period.
 
@@ -67,15 +73,16 @@ Each metric uses a source that records the same thing at depth 1 and depth 4.
   does.
 - **Runs per merged change:** the number of GitHub Actions run attempts of the
   `CI` workflow (one per tested commit, covering both required jobs) on
-  `openmerge/queue/**` refs whose attempt started between the period's
-  `ConfigApplied` and the end of its drain, divided by the cohort's landed
-  changes. Every attempt counts once: list runs from
+  `openmerge/queue/**` refs testing batches the period started, divided by the
+  cohort's landed changes. Every attempt counts once: list runs from
   `GET /repos/{owner}/{repo}/actions/runs` (the `branch` filter is exact-match,
   so the `openmerge/queue/` prefix is filtered client-side on `head_branch`), then
   enumerate attempts 1 through `run_attempt` of each run with
   `GET .../actions/runs/{run_id}/attempts/{n}`, deduplicate by
-  `(run_id, attempt)`, and assign each attempt to a period by its own
-  `run_started_at`. Drained boundaries mean these runs are exactly the cohort's.
+  `(run_id, attempt)`, and assign each attempt to the period whose journal
+  started the batch that its queue ref (`openmerge/queue/<base>/<batch>`) names,
+  whenever the attempt itself ran. Waiting for CI in the drain keeps that
+  attribution and attempt start times consistent.
   The source is the same at both depths, unlike the status ledger, which records
   only an aggregate per batch at depth 1 and attributes a speculative run to every
   change in its chain. The count includes failed runs and runs of invalidated
@@ -101,8 +108,9 @@ Each metric uses a source that records the same thing at depth 1 and depth 4.
 Fixed before A starts. Percentiles use the nearest-rank method over the period's
 landed changes. A passes if, against B: median time to merge is no worse, 95th
 percentile time to merge is no worse, runs per merged change is no worse, and
-there were no incorrect landings in either period. The gates are checked when
-B's admission window closes at A's length, never by extending B: if B then has
+there were no incorrect landings in either period. The comparative metrics are
+computed after B's drain. The eligibility gates are checked when B's admission
+window closes at A's length, never by extending B: if B then has
 fewer than 50 landed changes, or arrivals per day differ by more than a factor of
 two between the periods, the pair is recorded as inconclusive.
 
