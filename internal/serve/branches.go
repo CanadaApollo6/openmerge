@@ -23,7 +23,7 @@ type Repository struct {
 }
 
 // NewRepositories restores historical attempts before consulting branch/config
-// reads. Failed reads pause ordinary work but cannot prevent recovery startup.
+// reads. Workers await validation in memory without changing stored lifecycle.
 func NewRepositories(ctx context.Context, db *store.Store, repos []Repository, options Options) (*Server, error) {
 	if len(repos) == 0 {
 		return nil, errors.New("at least one repository is required")
@@ -78,18 +78,13 @@ func NewRepositories(ctx context.Context, db *store.Store, repos []Repository, o
 			return nil, err
 		}
 		w.recovery = !served
-		if err := s.lifecycle(ctx, w, "settling-only", "Recovering stored queue before branch validation"); err != nil {
-			return nil, err
-		}
 	}
 	for _, w := range s.workers() {
 		if _, err := s.settle(ctx, w); err != nil {
 			s.options.Logger.Error("startup landing settlement failed; worker will retry", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "error", err)
 		}
 	}
-	if err := s.RefreshBranches(ctx); err != nil {
-		s.options.Logger.Error("initial branch refresh failed; settlement remains enabled", "error", err)
-	}
+	_ = s.RefreshBranches(ctx) // Failed reads are logged and retried without blocking settlement.
 	return s, nil
 }
 
@@ -111,9 +106,6 @@ func (s *Server) register(ctx context.Context, target Target) (*worker, error) {
 		return nil, err
 	}
 	w := &worker{Target: target, id: id, managed: true, logState: state, logWatermark: watermark, wake: make(chan struct{}, 1), prs: make(map[int]forge.PullRequest), summaries: make(map[int]forge.PullRequestSummary)}
-	if err := s.lifecycle(ctx, w, "settling-only", "Waiting for branch and protection validation"); err != nil {
-		return nil, err
-	}
 	s.mu.Lock()
 	s.queues = append(s.queues, w)
 	s.mu.Unlock()
@@ -125,8 +117,11 @@ func (s *Server) lifecycle(ctx context.Context, w *worker, state, detail string)
 	if err != nil {
 		return err
 	}
+	if state != "active" {
+		w.ready = false
+	}
 	event := queue.LifecycleChanged{State: state, Detail: detail}
-	if current.LifecycleState() == state && (state == "active" || current.Lifecycle.Detail == detail) {
+	if current.LifecycleState() == state {
 		return nil
 	}
 	_, err = s.store.Append(ctx, w.id, []queue.Event{event}, "")
@@ -149,18 +144,15 @@ func (s *Server) RefreshBranches(ctx context.Context) error {
 	for _, repo := range s.repositories {
 		if err := s.refreshRepository(ctx, repo); err != nil {
 			result = errors.Join(result, fmt.Errorf("%s: %w", repo.Name, err))
-			for _, w := range s.workers() {
-				if w.Key.Installation != repo.Installation || !strings.EqualFold(w.Key.Repository, repo.Name) {
-					continue
-				}
-				w.mu.Lock()
-				err := s.pause(ctx, w, "branch-refresh-failed", err.Error())
-				w.mu.Unlock()
-				if err != nil {
-					return errors.Join(result, err)
-				}
-			}
+			s.options.Logger.Warn("branch refresh failed; keeping previous expansion", "repository", repo.Name, "error", err)
 		}
+	}
+	if result != nil {
+		s.refreshFailures++
+		delay := min(5*time.Second*time.Duration(1<<min(s.refreshFailures-1, 6)), 5*time.Minute, s.options.DiscoveryInterval)
+		s.refreshRetryAt = time.Now().Add(delay)
+	} else {
+		s.refreshFailures, s.refreshRetryAt = 0, time.Time{}
 	}
 	return result
 }
@@ -214,6 +206,7 @@ func (s *Server) refreshRepository(ctx context.Context, repo Repository) error {
 			return err
 		}
 	}
+	var result error
 	for _, w := range s.workers() {
 		if w.Key.Installation != repo.Installation || !strings.EqualFold(w.Key.Repository, repo.Name) {
 			continue
@@ -221,19 +214,16 @@ func (s *Server) refreshRepository(ctx context.Context, repo Repository) error {
 		w.mu.Lock()
 		err := s.refreshWorker(ctx, w, cfg, branch, tip, branches, overlaps)
 		if err != nil {
-			s.options.Logger.Error("base validation failed; other queues remain served", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "error", err)
-			err = s.lifecycle(ctx, w, "settling-only", "Base validation failed: "+err.Error())
+			s.options.Logger.Warn("base validation failed; keeping previous state", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "error", err)
+			result = errors.Join(result, err)
 		}
 		w.mu.Unlock()
-		if err != nil {
-			return err
-		}
 		select {
 		case w.wake <- struct{}{}:
 		default:
 		}
 	}
-	return nil
+	return result
 }
 
 func matchingQueues(cfg config.Config, base, defaultBranch string) []config.Queue {
@@ -270,7 +260,6 @@ func (s *Server) refreshWorker(ctx context.Context, w *worker, cfg config.Config
 	if w.configTip != tip || w.configBranch != branch {
 		return errors.New("default-branch policy changed during branch refresh")
 	}
-	w.rulesNextCheck = time.Time{}
 	if err := s.repositoryRules(ctx, w); err != nil {
 		return err
 	}
@@ -279,7 +268,7 @@ func (s *Server) refreshWorker(ctx context.Context, w *worker, cfg config.Config
 		return err
 	}
 	if w.rulesFailures > 0 || len(state.RulesProblems()) > 0 {
-		return s.lifecycle(ctx, w, "settling-only", "Waiting for per-base protection validation")
+		return nil
 	}
 	if err := s.initializeFence(ctx, w); err != nil {
 		return err
@@ -287,11 +276,8 @@ func (s *Server) refreshWorker(ctx context.Context, w *worker, cfg config.Config
 	if err := s.lifecycle(ctx, w, "active", ""); err != nil {
 		return err
 	}
-	state, _, err = s.store.Load(ctx, w.id)
-	if err == nil && state.PauseReason(queue.Config{}) == "branch-refresh-failed" {
-		_, err = s.store.Append(ctx, w.id, []queue.Event{queue.ResumeRequested{}}, "")
-	}
-	return err
+	w.ready = true
+	return nil
 }
 
 // Keys returns a stable snapshot for the read-only status API.

@@ -291,7 +291,7 @@ func webhookHandler(service webhookReceiver, secret []byte) http.Handler {
 		if _, ignored := event.Payload.(github.Ignored); !ignored {
 			notify := service.Notify
 			switch event.Payload.(type) {
-			case github.BranchChanged, github.BranchPushed:
+			case github.BranchChanged:
 				if branches, ok := service.(interface {
 					NotifyBranches(context.Context, string, string, string) error
 				}); ok {

@@ -164,6 +164,45 @@ func (n *notification) Notify(_ context.Context, installation, repo, delivery st
 	n.installation, n.repo, n.delivery = installation, repo, delivery
 	return n.err
 }
+
+type branchNotification struct {
+	notification
+	branchCalls int
+}
+
+func (n *branchNotification) NotifyBranches(ctx context.Context, installation, repo, delivery string) error {
+	n.branchCalls++
+	return n.Notify(ctx, installation, repo, delivery)
+}
+
+func TestOnlyBranchCreateDeleteWebhooksRequestListings(t *testing.T) {
+	for _, event := range []string{"push", "create", "delete"} {
+		t.Run(event, func(t *testing.T) {
+			body := `{"ref":"release/v1","ref_type":"branch","after":"abc123","installation":{"id":7},"repository":{"full_name":"owner/repo"}}`
+			if event == "push" {
+				body = strings.Replace(body, `"release/v1"`, `"refs/heads/release/v1"`, 1)
+			}
+			secret := []byte("test-secret")
+			mac := hmac.New(sha256.New, secret)
+			_, _ = mac.Write([]byte(body))
+			receiver := &branchNotification{}
+			r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+			r.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+			r.Header.Set("X-GitHub-Event", event)
+			r.Header.Set("X-GitHub-Delivery", "branch-delivery")
+			response := httptest.NewRecorder()
+			webhookHandler(receiver, secret).ServeHTTP(response, r)
+			wantBranches := 1
+			if event == "push" {
+				wantBranches = 0
+			}
+			if response.Code != http.StatusAccepted || receiver.calls != 1 || receiver.branchCalls != wantBranches {
+				t.Fatalf("routing %s: response=%d receiver=%+v", event, response.Code, receiver)
+			}
+		})
+	}
+}
+
 func TestWebhookOnlySchedulesReconciliation(t *testing.T) {
 	body := `{"action":"created","installation":{"id":7},"repository":{"full_name":"owner/repo"},"issue":{"number":1,"pull_request":{}},"comment":{"body":"@openmerge queue","user":{"login":"untrusted"}}}`
 	secret := []byte("webhook-test")

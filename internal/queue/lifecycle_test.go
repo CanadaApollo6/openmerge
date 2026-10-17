@@ -6,7 +6,7 @@ import (
 )
 
 func TestLifecycleBlocksAdmissionsAndStartsButKeepsResolution(t *testing.T) {
-	for _, state := range []string{"dormant", "retired", "overlapping", "settling-only"} {
+	for _, state := range []string{"dormant", "retired", "overlapping"} {
 		t.Run(state, func(t *testing.T) {
 			s := Apply(State{}, PRObserved{PR: 1, HeadSHA: "head", Eligible: true, Trusted: true})
 			s = Apply(s, LifecycleChanged{State: state, Detail: "base unavailable"})

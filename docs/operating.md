@@ -24,10 +24,13 @@ Protect every selected base and its fence before enabling the selector.
 
 At startup and every `--discovery-interval` / `OPENMERGE_DISCOVERY_INTERVAL`
 (default `10m`), the server lists all branch pages using conditional requests.
-Verified branch create/delete and push notifications also request a fresh listing. Subscribe the App
-to branch `create` and `delete` events when using webhooks; deliveries only wake
+Verified branch create/delete notifications also request a fresh listing.
+Subscribe the App to branch `create` and `delete` events when using webhooks; deliveries only wake
 reconciliation and never establish branch existence. Polling repairs missed
 deliveries. OpenMerge's internal `openmerge/*` refs are excluded from expansion.
+Failed listings keep the previous expansion, log a warning and retry with
+backoff. They never pause or resume a queue. Branch refresh honors the rules
+cache; a transient rules-read failure keeps the previous rules and lifecycle.
 
 `--base` / `OPENMERGE_BASE` is now an optional, deprecated comma-separated
 branch/glob allowlist. Existing `--base main` deployments keep their exact
@@ -53,9 +56,20 @@ access returning permits a retry, and never implies an abandoned push.
 
 `openmerge queue status --repo owner/repo` lists all its served bases; add
 `--base release/v1` for one queue. The API list is dynamic as branches appear.
-The `state` field / CLI `STATE` column is `active`, `dormant`, `retired`,
-`overlapping`, or `settling-only`. `active` may still have independent pauses;
-`settling-only` also covers a newly discovered base awaiting protection checks.
+The `state` field / CLI `STATE` column is `active`, `dormant`, `retired`, or
+`overlapping`. `active` may still have independent pauses. Startup settlement
+and validation are in-memory gates and do not append lifecycle events. An
+always-active queue, including an existing single `main` queue, writes no
+lifecycle events on upgrade or restart.
+
+Once a real lifecycle transition is recorded, its `lifecycle_changed` event
+requires a binary that understands it. Reactivation does not remove that event:
+an older binary cannot replay that queue, even after restoring single-queue
+configuration. Keep a compatible binary when rolling back; do not edit the log.
+
+Follow-up: prune workers for long-dormant queues to bound worker and polling
+costs. Retain their logs and fences, settle recorded landings first, and restore
+the same queue identity when a matching branch returns.
 
 ## Queue CI provenance
 

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -135,7 +136,7 @@ func TestOverlapsBlockOnlyInvolvedQueuesAndProtectionIsPerBase(t *testing.T) {
 			t.Fatalf("no protection check for %s", base)
 		}
 	}
-	if lifecycleState(t, restarted, baseWorker(t, restarted, "release/v1")).LifecycleState() != "settling-only" || lifecycleState(t, restarted, baseWorker(t, restarted, "release/v2")).LifecycleState() != "active" {
+	if baseWorker(t, restarted, "release/v1").ready || !baseWorker(t, restarted, "release/v2").ready || len(lifecycleState(t, restarted, baseWorker(t, restarted, "release/v1")).RulesProblems()) == 0 {
 		t.Fatal("per-base protection not enforced")
 	}
 }
@@ -221,7 +222,7 @@ func TestRetirementAndRestartOutsideAllowlistsSettleRealOutcome(t *testing.T) {
 			restarted, err := NewRepositories(t.Context(), s.store, []Repository{managedRepository(f, other.Path)}, options)
 			must(t, err)
 			recovered := baseWorker(t, restarted, "release/v1")
-			if recovered.id != w.id || lifecycleState(t, restarted, recovered).LifecycleState() != "settling-only" {
+			if recovered.id != w.id || recovered.ready || !recovered.recovery {
 				t.Fatal("attempt not recovered outside allowlists")
 			}
 			must(t, restarted.cycle(t.Context(), recovered))
@@ -291,6 +292,20 @@ func TestMainDeploymentReusesExactStoredKeyAndHistory(t *testing.T) {
 			t.Fatal("old event log changed")
 		}
 	}
+	for range 2 {
+		s, err = NewRepositories(t.Context(), legacy.store, []Repository{managedRepository(f, repo.Path)}, options)
+		must(t, err)
+		if !baseWorker(t, s, "main").ready {
+			t.Fatal("main did not validate after restart")
+		}
+	}
+	after, err = s.store.EventsAfter(t.Context(), w.id, 0)
+	must(t, err)
+	for _, event := range after {
+		if _, ok := event.Event.(queue.LifecycleChanged); ok {
+			t.Fatalf("always-active main wrote lifecycle event on upgrade/restart: %+v", event)
+		}
+	}
 }
 
 func TestBranchRefreshFailuresNeverRetireAndAllowlistOnlyNarrows(t *testing.T) {
@@ -308,12 +323,165 @@ func TestBranchRefreshFailuresNeverRetireAndAllowlistOnlyNarrows(t *testing.T) {
 		t.Fatal("failed listing removed queue")
 	}
 	must(t, s.cycle(t.Context(), w))
-	if state := lifecycleState(t, s, w); state.Active != nil || state.PauseReason(queue.Config{}) != "branch-refresh-failed" {
-		t.Fatal("read failure skipped settlement or resumed work")
+	if state := lifecycleState(t, s, w); state.Active != nil || state.PauseReason(queue.Config{}) != "" {
+		t.Fatal("read failure skipped settlement or paused work")
 	}
 	must(t, s.RefreshBranches(t.Context()))
 	if lifecycleState(t, s, w).PauseReason(queue.Config{}) != "" {
-		t.Fatal("successful refresh failed to clear its own block")
+		t.Fatal("successful refresh introduced a block")
+	}
+}
+
+func TestBranchRefreshFailureAndRecoveryPreserveSafetyBlocks(t *testing.T) {
+	for _, block := range []string{"landing-not-on-base", "action-poisoned", "both"} {
+		t.Run(block, func(t *testing.T) {
+			s, f := managedFixture(t, releaseConfig, Options{})
+			w := baseWorker(t, s, "release/v1")
+			var events []queue.Event
+			if block != "action-poisoned" {
+				events = append(events, queue.PauseRequested{Reason: "landing-not-on-base", Detail: "inspect the fence"})
+			}
+			if block != "landing-not-on-base" {
+				events = append(events, queue.ActionPoisoned{Key: "bad-action", Reason: "invalid execution"})
+			}
+			_, err := s.store.Append(t.Context(), w.id, events, "")
+			must(t, err)
+			before := lifecycleState(t, s, w).Blocks(queue.Config{})
+			_, watermark, err := s.store.Load(t.Context(), w.id)
+			must(t, err)
+			for attempt := range 2 {
+				f.FailNext("ListBranches", errors.New("page two failed"))
+				if err := s.RefreshBranches(t.Context()); err == nil {
+					t.Fatal("listing failure swallowed")
+				}
+				if s.refreshFailures != attempt+1 || time.Until(s.refreshRetryAt) < time.Duration(4*(attempt+1))*time.Second {
+					t.Fatal("failed refresh did not back off")
+				}
+			}
+			must(t, s.RefreshBranches(t.Context()))
+			if s.refreshFailures != 0 || !s.refreshRetryAt.IsZero() {
+				t.Fatal("successful refresh retained retry backoff")
+			}
+			after := lifecycleState(t, s, w).Blocks(queue.Config{})
+			if !slices.Equal(before, after) {
+				t.Fatalf("refresh changed safety blocks: before=%+v after=%+v", before, after)
+			}
+			written, err := s.store.EventsAfter(t.Context(), w.id, watermark)
+			must(t, err)
+			if len(written) != 0 {
+				t.Fatalf("failed/successful listing changed durable state: %+v", written)
+			}
+		})
+	}
+}
+
+func TestStartupValidationIsInMemoryUntilSuccessful(t *testing.T) {
+	for _, failure := range []string{"listing", "rules"} {
+		t.Run(failure, func(t *testing.T) {
+			s, f := managedFixture(t, repositoryConfig, Options{})
+			w := baseWorker(t, s, "main")
+			tip, err := f.ReadRef(t.Context(), repo, "main")
+			must(t, err)
+			_, err = f.OpenPR(repo, 1, tip, true)
+			must(t, err)
+			f.SetCanWrite(repo, "writer", true)
+			f.AddComment(repo, 1, "writer", "@openmerge queue")
+			_, watermark, err := s.store.Load(t.Context(), w.id)
+			must(t, err)
+			r := managedRepository(f, repo.Path)
+			failRules := failure == "rules"
+			if failRules {
+				original := r.Target
+				r.Target = func(base string) Target {
+					target := original(base)
+					target.CheckRules = func(context.Context) ([]string, []string, error) {
+						if failRules {
+							return nil, nil, errors.New("rules unavailable")
+						}
+						return nil, nil, nil
+					}
+					return target
+				}
+			} else {
+				f.FailNext("ListBranches", errors.New("branches unavailable"))
+			}
+			restarted, err := NewRepositories(t.Context(), s.store, []Repository{r}, s.options)
+			must(t, err)
+			current := baseWorker(t, restarted, "main")
+			must(t, restarted.cycle(t.Context(), current))
+			state := lifecycleState(t, restarted, current)
+			if current.ready || state.Lifecycle.State != "" || len(state.Entries) != 0 {
+				t.Fatal("failed startup validation persisted lifecycle or admitted work")
+			}
+			written, err := s.store.EventsAfter(t.Context(), w.id, watermark)
+			must(t, err)
+			if len(written) != 0 {
+				t.Fatalf("failed startup read changed durable state: %+v", written)
+			}
+			failRules, current.rulesNextCheck = false, time.Time{}
+			must(t, restarted.RefreshBranches(t.Context()))
+			must(t, restarted.cycle(t.Context(), current))
+			if state := lifecycleState(t, restarted, current); !current.ready || len(state.Entries) != 1 || state.Active == nil {
+				t.Fatal("successful validation did not enable queued work")
+			}
+			written, err = s.store.EventsAfter(t.Context(), w.id, watermark)
+			must(t, err)
+			for _, event := range written {
+				if _, ok := event.Event.(queue.LifecycleChanged); ok {
+					t.Fatalf("startup read recovery polluted lifecycle: %+v", event)
+				}
+			}
+		})
+	}
+}
+
+func TestBranchRefreshHonorsRulesCacheAndReadFailuresKeepActive(t *testing.T) {
+	s, f := managedFixture(t, releaseConfig, Options{})
+	r := managedRepository(f, repo.Path)
+	original := r.Target
+	reads, fail := 0, false
+	r.Target = func(base string) Target {
+		target := original(base)
+		if base != "main" {
+			return target
+		}
+		target.CheckRules = func(context.Context) ([]string, []string, error) {
+			reads++
+			if fail {
+				return nil, nil, errors.New("rules unavailable")
+			}
+			return nil, nil, nil
+		}
+		return target
+	}
+	s, err := NewRepositories(t.Context(), s.store, []Repository{r}, s.options)
+	must(t, err)
+	w := baseWorker(t, s, "main")
+	initialReads, nextCheck := reads, w.rulesNextCheck
+	for range 3 {
+		must(t, s.RefreshBranches(t.Context()))
+	}
+	if reads != initialReads || w.rulesNextCheck != nextCheck {
+		t.Fatal("branch refresh bypassed rules cache")
+	}
+	_, watermark, err := s.store.Load(t.Context(), w.id)
+	must(t, err)
+	fail, w.rulesNextCheck = true, time.Time{}
+	must(t, s.RefreshBranches(t.Context()))
+	if !w.ready || lifecycleState(t, s, w).LifecycleState() != "active" {
+		t.Fatal("transient rules failure demoted an active queue")
+	}
+	retryAt := w.rulesNextCheck
+	must(t, s.RefreshBranches(t.Context()))
+	if w.rulesNextCheck != retryAt || reads != initialReads+1 {
+		t.Fatal("refresh bypassed failed rules read backoff")
+	}
+	fail, w.rulesNextCheck = false, time.Time{}
+	must(t, s.RefreshBranches(t.Context()))
+	written, err := s.store.EventsAfter(t.Context(), w.id, watermark)
+	must(t, err)
+	if len(written) != 0 {
+		t.Fatalf("transient rules read/recovery changed durable state: %+v", written)
 	}
 }
 

@@ -79,10 +79,12 @@ Example queue response:
 }
 ```
 
-Queue `state` is `active`, `dormant`, `retired`, `overlapping`, or
-`settling-only`. Lists include newly discovered bases and retained inactive
-queues without restarting the API. Lifecycle blocks prevent admission and new
-landings; they never suppress resolution of a recorded landing attempt.
+Queue `state` is `active`, `dormant`, `retired`, or `overlapping`.
+An absent lifecycle event means `active`; startup validation and settlement-only
+mode are in memory and do not change the persisted state. Lists include newly
+discovered bases and retained inactive queues without restarting the API.
+Lifecycle blocks prevent admission and new landings; they never suppress
+resolution of a recorded landing attempt.
 `openmerge queue status --repo owner/repo` lists every base; `--base` selects one.
 
 Queue entries are ordered by admission and positions are 1-based, including the

@@ -231,11 +231,14 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 	if !ok {
 		return q, nil, nil
 	}
+	if s.LifecycleState() != "active" && e.Position == 0 && e.Status != "merged" && e.Status != "closed" {
+		e.Status, e.Reason = "paused", q.State
+	}
 	summary := fmt.Sprintf("PR #%d: %s", pr, e.Status)
 	if e.Reason != "" {
 		summary += " (" + e.Reason + ")"
 	}
-	if q.Paused && e.Position > 0 {
+	if q.Paused && (e.Position > 0 || s.LifecycleState() != "active") {
 		for _, block := range q.Blocks {
 			summary += "; " + block.Reason + ": " + block.Detail
 		}
@@ -312,6 +315,12 @@ func explanationContext(j store.Journal, pr int) (map[string]bool, map[int64]boo
 		before := s
 		s = queue.Apply(s, record.Event)
 		switch e := record.Event.(type) {
+		case queue.LifecycleChanged:
+			if s.LifecycleState() == "active" {
+				delete(causes, "lifecycle")
+			} else {
+				causes["lifecycle"] = record.ID
+			}
 		case queue.PauseRequested:
 			causes["pause"] = record.ID
 		case queue.ResumeRequested:
@@ -346,6 +355,9 @@ func explanationContext(j store.Journal, pr int) (map[string]bool, map[int64]boo
 		for _, id := range causes {
 			inherited[id] = true
 		}
+	}
+	if id := causes["lifecycle"]; id != 0 {
+		inherited[id] = true
 	}
 	return result, inherited
 }

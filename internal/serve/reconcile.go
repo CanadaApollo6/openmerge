@@ -130,21 +130,23 @@ func (s *Server) loadConfiguration(ctx context.Context, w *worker, branch, tip s
 		deleteHeadBranch = *cfg.DeleteHeadBranch
 	}
 	digest := selected.Digest(deleteHeadBranch)
-	if w.managed && digest != w.configDigest {
-		if err := s.lifecycle(ctx, w, "settling-only", "Validating changed configuration before admission"); err != nil {
-			return err
+	if digest != w.configDigest {
+		// Invalidate at the digest's only write site, including refreshes and
+		// policies awaiting activation before the next reconciliation.
+		w.summaries = make(map[int]forge.PullRequestSummary)
+		if w.managed {
+			w.ready = false
+			select {
+			case s.refresh <- struct{}{}:
+			default:
+			}
 		}
-		select {
-		case s.refresh <- struct{}{}:
-		default:
-		}
+		w.configDigest = digest
 	}
-	w.configDigest = digest
 	return nil
 }
 
 func (s *Server) reconcile(ctx context.Context, w *worker, force bool) error {
-	oldDigest := w.configDigest
 	if err := s.configuration(ctx, w); err != nil {
 		return err
 	}
@@ -153,11 +155,10 @@ func (s *Server) reconcile(ctx context.Context, w *worker, force bool) error {
 		if err != nil {
 			return err
 		}
-		if w.configError != nil || state.LifecycleState() != "active" {
+		if w.configError != nil || !w.ready || state.LifecycleState() != "active" {
 			return s.report(ctx, w)
 		}
 	}
-	force = force || oldDigest != w.configDigest
 	summaries, err := w.Driver.ListOpenPullRequests(ctx, w.repo(), w.Key.BaseBranch)
 	if err != nil {
 		return err

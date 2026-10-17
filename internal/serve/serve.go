@@ -49,19 +49,22 @@ type Options struct {
 // Server owns one serial reconciler/worker per target, with bounded concurrency.
 // Each process must have its own git cache directory.
 type Server struct {
-	store        *store.Store
-	options      Options
-	queues       []*worker
-	slots        chan struct{}
-	mu           sync.RWMutex
-	refreshMu    sync.Mutex
-	repositories []Repository
-	refresh      chan struct{}
+	store           *store.Store
+	options         Options
+	queues          []*worker
+	slots           chan struct{}
+	mu              sync.RWMutex
+	refreshMu       sync.Mutex
+	repositories    []Repository
+	refresh         chan struct{}
+	refreshFailures int
+	refreshRetryAt  time.Time
 }
 
 type worker struct {
 	mu       sync.Mutex
 	managed  bool
+	ready    bool // Branch and policy validation is process-local, never a lifecycle event.
 	recovery bool
 	Target
 	id               store.QueueID
@@ -192,19 +195,28 @@ func (s *Server) Run(ctx context.Context) error {
 		}
 	}
 	start()
-	ticker := time.NewTicker(s.options.DiscoveryInterval)
-	defer ticker.Stop()
+	timer := time.NewTimer(s.options.DiscoveryInterval)
+	defer timer.Stop()
 	defer wg.Wait()
 	for {
+		s.refreshMu.Lock()
+		retryAt := s.refreshRetryAt
+		s.refreshMu.Unlock()
+		delay := s.options.DiscoveryInterval
+		if !retryAt.IsZero() {
+			delay = max(0, time.Until(retryAt))
+		}
+		timer.Reset(delay)
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-ticker.C:
+		case <-timer.C:
 		case <-s.refresh:
 		}
-		if err := s.RefreshBranches(ctx); err != nil {
-			s.options.Logger.Error("branch refresh failed", "error", err)
+		if time.Now().Before(retryAt) {
+			continue
 		}
+		_ = s.RefreshBranches(ctx)
 		start()
 	}
 }
@@ -326,7 +338,7 @@ func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
 		if w.recovery {
 			return s.lifecycle(ctx, w, "retired", "Recovered landing settled; queue excluded by repository allowlist")
 		}
-		if state.LifecycleState() != "active" {
+		if !w.ready || state.LifecycleState() != "active" {
 			return nil
 		}
 	}
@@ -342,6 +354,9 @@ func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
 	}
 	if err := s.reconcile(ctx, w, force); err != nil {
 		return err
+	}
+	if w.managed && !w.ready {
+		return nil
 	}
 	// Loading a different configuration invalidates method-dependent protection
 	// checks, including the first read after startup's method was unknown.
@@ -368,6 +383,9 @@ func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
 	}
 	// Bound a hot queue's turn so other targets and cancellation get service.
 	for range 64 {
+		if w.managed && !w.ready {
+			break
+		}
 		if err := s.quota(); err != nil {
 			return err
 		}

@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -114,6 +115,35 @@ func TestWhySummariesRedactDiagnosticsAndExposeEveryBlock(t *testing.T) {
 	q, _, why = Project(journal(events...), 1, 20, nil)
 	if len(q.Blocks) != 2 || !strings.Contains(why.Summary, "action-poisoned") || !strings.Contains(why.Summary, "landing-not-on-base") || strings.Contains(why.Summary, "repository-rules") {
 		t.Fatalf("rules recovery hid or cleared another block: %+v %+v", q, why)
+	}
+}
+
+func TestWhyInactiveQueueExplainsLifecycleWithoutAdmission(t *testing.T) {
+	for _, state := range []string{"dormant", "retired"} {
+		for _, eligible := range []bool{false, true} {
+			t.Run(state+"/eligible="+strconv.FormatBool(eligible), func(t *testing.T) {
+				events := []queue.Event{
+					queue.LifecycleChanged{State: state, Detail: "base unavailable ghp_private123"},
+					queue.PauseRequested{Reason: "landing-not-on-base", Detail: "inspect fence"},
+					queue.PRObserved{PR: 1, HeadSHA: "head", Eligible: eligible, Trusted: true},
+				}
+				q, entry, why := Project(journal(events...), 1, 20, nil)
+				if entry.Position != 0 || entry.Status != "paused" || entry.Reason != state || q.State != state {
+					t.Fatalf("inactive PR explanation lacks lifecycle: %+v %+v", q, entry)
+				}
+				if len(why.Events) != 2 || why.Events[0].Type != "lifecycle_changed" {
+					t.Fatalf("inactive PR explanation lost lifecycle evidence: %+v", why.Events)
+				}
+				for _, want := range []string{state, "base unavailable [REDACTED]", "landing-not-on-base", "inspect fence"} {
+					if !strings.Contains(why.Summary, want) {
+						t.Fatalf("explanation lacks %q: %s", want, why.Summary)
+					}
+				}
+				if strings.Contains(why.Summary, "@openmerge queue") || strings.Contains(why.Summary, "private123") {
+					t.Fatalf("unsafe or impossible queue suggestion: %s", why.Summary)
+				}
+			})
+		}
 	}
 }
 

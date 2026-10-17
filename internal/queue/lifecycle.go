@@ -16,7 +16,7 @@ func (e LifecycleChanged) Validate() error {
 	switch e.State {
 	case "active":
 		return nil
-	case "dormant", "retired", "overlapping", "settling-only":
+	case "dormant", "retired", "overlapping":
 		return requireActionText("detail", e.Detail)
 	default:
 		return fmt.Errorf("invalid queue lifecycle %q", e.State)

@@ -79,6 +79,12 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 			return err
 		}
 	}
+	if w.managed && !w.ready {
+		switch claim.Action.(type) {
+		case queue.BuildTestRef, queue.Land:
+			return store.ErrActionDeferred
+		}
+	}
 	cfg := w.plannerConfig(s.options.PollInterval)
 	if store.Consequential(claim.Action) {
 		proceed, err := s.store.BeginConsequential(actionCtx, claim, cfg, time.Now())
