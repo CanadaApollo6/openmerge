@@ -34,6 +34,7 @@ type pullRequest struct {
 }
 
 type testRun struct {
+	job     *ciJob
 	heads   []queue.BatchPR
 	success bool
 	done    bool
@@ -50,6 +51,10 @@ type loggedEvent struct {
 }
 
 type simulation struct {
+	ciWaiting           []*ciJob
+	ciRunning           int
+	ciJobs              []*ciJob
+	interactions        [][2]int
 	cfg                 Config
 	now, start          time.Time
 	forge               *fake.Forge
@@ -160,6 +165,14 @@ func newSimulation(cfg Config) (*simulation, error) {
 				duration = cfg.CIMin
 			}
 			s.schedule(s.start.Add(delay+time.Second+duration/2), externalPush, 0, "")
+		}
+	}
+	if cfg.CI != nil {
+		rng := rand.New(rand.NewPCG(cfg.Seed, 7))
+		for pr := 1; pr < cfg.PRs; pr += 2 {
+			if rng.Float64() < cfg.CI.InteractionRate {
+				s.interactions = append(s.interactions, [2]int{pr, pr + 1})
+			}
 		}
 	}
 	return s, nil
@@ -347,6 +360,11 @@ func (s *simulation) record(event queue.Event) {
 	}
 	s.events = append(s.events, loggedEvent{At: s.now, Event: event})
 	s.state = queue.Apply(s.state, event)
+	if s.cfg.CI != nil && batch != nil && (s.state.Active == nil || s.state.Active.ID != batch.ID) {
+		if _, landed := event.(queue.Landed); !landed {
+			s.cancelCI(batch.TestedSHA)
+		}
+	}
 	if reopened, ok := event.(queue.ChecksReopened); ok && batch != nil && batch.Phase == queue.Testing && batch.TestedSHA == reopened.TestedSHA {
 		for _, action := range queue.Plan(s.cfg.Planner, s.state, s.now) {
 			if _, landing := action.(queue.Land); landing {
@@ -385,6 +403,9 @@ func (s *simulation) startCI(sha string, prs []int) {
 			s.violation = fmt.Errorf("untrusted PR %d appears in test commit %s", pr, sha)
 		}
 	}
+	if s.interactionFails(commit.PRs) {
+		run.success = false
+	}
 	coveredTip := sha
 	if run.method == queue.FastForward {
 		coveredTip = run.heads[len(run.heads)-1].HeadSHA
@@ -399,12 +420,19 @@ func (s *simulation) startCI(sha string, prs []int) {
 		return
 	}
 	s.tests[sha] = run
-	s.result.CIRuns++
+	if s.cfg.CI == nil {
+		s.result.CIRuns++
+	}
 	if batch.FromBisection {
 		s.result.BisectionCIRuns++
 	}
 	s.forge.SetCheckRuns(s.repo, sha, []forge.CheckRun{{ID: 1, Name: "ci", State: forge.Pending}})
-	s.schedule(s.now.Add(s.ciDuration()), ciComplete, 0, sha)
+	duration := s.ciDuration()
+	if s.cfg.CI == nil {
+		s.schedule(s.now.Add(duration), ciComplete, 0, sha)
+	} else {
+		s.submitCI(sha, duration)
+	}
 }
 
 func (s *simulation) ciDuration() time.Duration {
@@ -446,6 +474,9 @@ func (s *simulation) metrics() Result {
 		}
 		r.MeanTimeToMerge = time.Duration(total / float64(len(times)))
 		r.CIRunsPerMergedPR = float64(r.CIRuns) / float64(r.Merged)
+	}
+	if s.cfg.CI != nil {
+		r.CI = s.ciMetrics(r.Merged)
 	}
 	return r
 }

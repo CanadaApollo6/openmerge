@@ -62,7 +62,26 @@
 // p95_time_from_first_enqueue_seconds. Both metric families include only merged
 // PRs, use the midpoint median, and use nearest-rank p95.
 //
-// CI currently has unlimited runners; runner capacity is left for Phase 2.
+// CI is unlimited by default, preserving v1 timing, draws and JSON. Setting
+// Config.CI opts into a finite FIFO runner pool, service-time accounting,
+// best-effort cancellation, the same-commit failed-check rerun capability, and
+// interacting pairs. The real planner still decides failures exactly as before;
+// it does not request failed-check reruns until ADR 0009 PR 2. CIConfig declares
+// provider capabilities rather than changing planner policy. Cancellation is
+// requested when a tested batch disappears without landing. Unsupported runs
+// finish normally and remain charged. A supported cancellation releases its
+// runner immediately; cancelled waiting jobs never count as started runs.
+// CI metrics retain per-change samples for pooled p50/p95 and first-day slices,
+// plus the fraction at or beyond CI.TailThreshold and consumed runner-minutes.
+// Profiles set Planner.CheckTimeout to 1.5 times fixed CI service duration,
+// including the 3-hour slow profile; runner waiting is part of that deadline.
+//
+// internal/sim/capacity models ADR 0009 without calling the planner. Its depth-1
+// comparison reproduces both serial baselines. Generate the full opt-in curve
+// and adopter report with mise exec -- go run ./cmd/capacity-report. The chain
+// exit tests are skipped until PR 3; -sim-adopter-depth1 exercises their full
+// pinned inputs against today's serial planner, without speculative gate
+// assertions. TestAdopterDepth1Harness runs a first-day smoke slice by default.
 //
 // scripts/check-simulator-mutations.py replays reviewer mutations of the planner,
 // executor, and fake forge through Go overlays and confirms the simulator rejects

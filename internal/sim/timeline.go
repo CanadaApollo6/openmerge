@@ -27,6 +27,7 @@ const (
 )
 
 type scheduledEvent struct {
+	job      *ciJob
 	at       time.Time
 	sequence uint64
 	kind     eventKind
@@ -130,13 +131,25 @@ func (s *simulation) deliver(event scheduledEvent) error {
 		}
 		s.recoverFaults(event.scope)
 	case ciComplete:
+		if event.job != nil {
+			if event.job.cancelled {
+				return nil
+			}
+			event.job.finished = s.now
+			s.ciRunning--
+			s.admitCI()
+		}
 		run := s.tests[event.sha]
 		run.done = true
 		state := forge.Failure
 		if run.success {
 			state = forge.Success
 		}
-		s.forge.SetCheckRuns(s.repo, event.sha, []forge.CheckRun{{ID: 1, Name: "ci", State: state}})
+		id := uint64(1)
+		if event.job != nil {
+			id = event.job.id
+		}
+		s.forge.SetCheckRuns(s.repo, event.sha, []forge.CheckRun{{ID: id, Name: "ci", State: state}})
 		if s.webhook.Float64() < s.cfg.DropWebhookRate {
 			s.result.DroppedWebhooks++
 		} else {
