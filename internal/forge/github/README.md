@@ -42,8 +42,12 @@ never appear in driver errors or logs.
   Only the `OpenMerge` check owned by this App is excluded from CI observations.
 - Same-commit check retries are optional. For GitHub Actions, an explicit
   retry request uses the workflow run ID from a validated Actions check URL and
-  `POST .../actions/runs/{id}/rerun-failed-jobs`; other Apps use check-run
-  rerequest where GitHub permits it. Check reads do not call the Actions API.
+  `POST .../actions/runs/{id}/rerun-failed-jobs`. Foreign-App check runs and
+  commit statuses are unsupported. Each target's intent must commit before POST,
+  and acceptance immediately after. Uncertain outcomes are reconciled from the
+  workflow status/run_attempt; unchanged failures never authorize a second POST.
+  Retry-enabled observations join Actions job run_attempt to each check-run ID,
+  preserving old jobs' original attempts. Default-off reads use no Actions API.
   Missing `actions: write` is a WARN and leaves ordinary check processing
   available. Existing installations must approve the new permission in App
   installation settings before Actions retries can run.

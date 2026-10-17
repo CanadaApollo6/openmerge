@@ -176,6 +176,7 @@ func rerunFingerprint(req forge.RerunChecksRequest) (string, error) {
 			return "", errors.New("each failed run needs a name and source")
 		}
 		runs[i].Attempt = effectiveAttempt(runs[i].Attempt)
+		runs[i].URL, runs[i].WorkflowRunURL = "", ""
 	}
 	slices.SortFunc(runs, func(a, b forge.CheckRun) int {
 		if a.Name != b.Name {

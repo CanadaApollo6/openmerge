@@ -235,7 +235,7 @@ func (a *App) Installation(ctx context.Context, id int64) (*Driver, error) {
 		}
 		a.slug = app.GetSlug()
 	}
-	d := &Driver{app: a, installation: id, rerunKeys: make(map[string]githubRerunRecord)}
+	d := &Driver{app: a, installation: id}
 	var err error
 	d.client, err = a.newClient(func(ctx context.Context) (string, error) { return a.token(ctx, id) })
 	if err != nil {

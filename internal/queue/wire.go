@@ -370,6 +370,11 @@ func EncodeEvent(value Event) (string, []byte, error) {
 		}
 		v.Runs = append([]CheckRun{}, v.Runs...)
 		return encodeWire("check_rerun_requested", v)
+	case CheckRerunDispatchProgress:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("check_rerun_dispatch_progress", v)
 	case CheckRerunDispatched:
 		if err := v.Validate(); err != nil {
 			return "", nil, err
@@ -541,6 +546,12 @@ func DecodeEvent(payload []byte) (Event, error) {
 		return v, v.Validate()
 	case "check_rerun_requested":
 		v, err := readWireData[CheckRerunRequested](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		return v, v.Validate()
+	case "check_rerun_dispatch_progress":
+		v, err := readWireData[CheckRerunDispatchProgress](envelope.Data)
 		if err != nil {
 			return nil, err
 		}

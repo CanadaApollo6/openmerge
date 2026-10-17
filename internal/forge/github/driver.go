@@ -25,8 +25,6 @@ type Driver struct {
 	installation int64
 	client       *gh.Client
 	writes       sync.Mutex
-	rerunKeys    map[string]githubRerunRecord
-	rerunOrder   []string
 }
 
 var (
@@ -321,7 +319,14 @@ func (d *Driver) CheckRuns(ctx context.Context, repo forge.RepoRef, sha string) 
 			}
 			id := uint64(max(run.GetID(), 0))
 			source := "app:" + strconv.FormatInt(run.GetApp().GetID(), 10)
-			result = append(result, forge.CheckRun{ID: id, Attempt: nextCheckRunAttempt(run), Name: run.GetName(), Source: source, State: state, HeadBranch: suite.GetHeadBranch()})
+			workflowID := uint64(max(workflowRunID(run, d.app.git, owner, name), 0))
+			workflowURL := ""
+			checkURL := ""
+			if workflowID > 0 {
+				workflowURL = fmt.Sprintf("%s/%s/%s/actions/runs/%d", strings.TrimSuffix(d.app.git.String(), "/"), owner, name, workflowID)
+				checkURL = actionsCheckURL(run, d.app.git, owner, name, workflowID)
+			}
+			result = append(result, forge.CheckRun{WorkflowRunID: workflowID, WorkflowRunURL: workflowURL, URL: checkURL, ID: id, Attempt: nextCheckRunAttempt(run), Name: run.GetName(), Source: source, State: state, HeadBranch: suite.GetHeadBranch()})
 		}
 	}
 	for page := 1; page != 0; {

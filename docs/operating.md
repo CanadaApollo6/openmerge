@@ -254,10 +254,42 @@ arbitrary fork SHAs and report those results in the base repository: otherwise
 a copied queue commit could authorize landing. Prefer check runs with matching
 queue push suites for external CI.
 
-Queues may opt into one same-commit retry of failed required checks with
-`checks.retry_failed: 1`; the default `0` preserves the immediate-failure
-behavior. Retry observations are bound to the accepted producer and queue test
-ref, and the retry receives a separate deadline from the original check run.
+Queues may opt into one same-commit retry of failed GitHub Actions checks with
+`checks.retry_failed: 1`; the default `0` preserves immediate failure. Non-Actions
+check runs and commit statuses report unsupported. Only effective merge-policy
+failures are targets; accepted skipped/neutral checks and satisfied alternatives
+are excluded. Retry observations bind the producer, workflow/job attempt and
+queue test ref, with a separate deadline from the original check run.
+
+```yaml
+version: 1
+queues:
+  - name: default
+    merge_when: [check-success = ci]
+    checks:
+      retry_failed: 1
+```
+
+Updating the manifest does not change an existing App. The App owner must add
+**Actions: Read and write** in the App's permission settings. GitHub then prompts
+each installation to approve the change. Until approval, a retry-enabled queue
+behaves exactly like retry-off and logs a WARN.
+
+`actions: write` is broader than rerun-failed-jobs: it also permits cancellation,
+artifact/cache management and deployment approvals. OpenMerge uses only the
+rerun-failed-jobs endpoint for retries (and, after ADR 0009 PR 4, cancel).
+
+Each workflow dispatch writes a durable intent before its POST and acceptance
+immediately after. A lost response or restart leaves an uncertain intent; the
+worker reads the workflow's status/run_attempt to reconcile it and never repeats
+that POST from an unchanged original observation. This favors bounded waiting
+over duplicate execution: a crash between intent and POST can consume the retry
+without starting CI, ending at the retry deadline when a timeout is configured.
+Workflow and job URLs remain
+in the flaky evidence shown in status/API output.
+
+Drain older workers before upgrading. After the first retry event is written,
+rolling back to an older binary requires a database restore (ADR 0002/0009).
 
 ### Remedy for `unbound-check-provenance`
 

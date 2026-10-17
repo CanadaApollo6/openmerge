@@ -13,21 +13,9 @@ import (
 	gh "github.com/google/go-github/v93/github"
 )
 
-type githubRerunRecord struct {
-	fingerprint string
-	result      forge.RerunChecksResult
-}
-
-type rerunCandidate struct {
-	run         *gh.CheckRun
-	observed    forge.CheckRun
-	workflowRun int64
-}
-
-// RerunFailedChecks rereads the exact check identity before issuing a narrow
-// provider request. CheckRuns intentionally does not call the Actions API;
-// this capability is opt-in and only uses an Actions endpoint when a requested
-// check exposes a validated Actions workflow URL.
+// RerunFailedChecks uses a durable intent per Actions workflow, committed
+// before POST. An uncertain intent can only be reconciled by a fresh read; an
+// unchanged failed run never authorizes a second POST, including after restart.
 func (d *Driver) RerunFailedChecks(ctx context.Context, repo forge.RepoRef, req forge.RerunChecksRequest) (forge.RerunChecksResult, error) {
 	owner, name, err := splitRepo(repo)
 	if err != nil {
@@ -36,179 +24,132 @@ func (d *Driver) RerunFailedChecks(ctx context.Context, repo forge.RepoRef, req 
 	if req.TestedSHA == "" || req.TestRef == "" || req.Key == "" || len(req.Runs) == 0 {
 		return forge.RerunChecksResult{}, errors.New("tested SHA, test ref, key, and failed runs are required")
 	}
-	fingerprint := githubRerunFingerprint(req)
 	d.writes.Lock()
 	defer d.writes.Unlock()
-	if d.rerunKeys == nil {
-		d.rerunKeys = make(map[string]githubRerunRecord)
+	unsupported := func(detail string) (forge.RerunChecksResult, error) {
+		return forge.RerunChecksResult{Unsupported: true, Detail: detail}, nil
 	}
-	cacheKey := repo.Path + "\x00" + req.TestRef + "\x00" + req.Key
-	if prior, ok := d.rerunKeys[cacheKey]; ok {
-		if prior.fingerprint != fingerprint {
-			return forge.RerunChecksResult{}, fmt.Errorf("rerun key %q was already used for another request", req.Key)
-		}
-		return prior.result, nil
-	}
-
 	for _, requested := range req.Runs {
 		if strings.HasPrefix(requested.Source, "status:") {
-			return d.recordRerun(cacheKey, fingerprint, forge.RerunChecksResult{Unsupported: true, Detail: "commit statuses cannot be rerun"}), nil
+			return unsupported("commit statuses cannot be rerun; retries support GitHub Actions checks only")
 		}
-		if !rerunnableCheckState(requested.State) {
-			return d.recordRerun(cacheKey, fingerprint, forge.RerunChecksResult{
-				Unsupported: true,
-				Detail:      fmt.Sprintf("check %q is not rerunnable in state %q", requested.Name, requested.State),
-			}), nil
+		if requested.Source != "app:15368" {
+			return unsupported("non-Actions check runs cannot be rerun; retries support GitHub Actions checks only")
 		}
-		if requested.Name == "" || requested.Source == "" {
-			return d.recordRerun(cacheKey, fingerprint, forge.RerunChecksResult{Unsupported: true, Detail: "check provenance is unavailable"}), nil
+		if requested.ID == 0 || !rerunnableCheckState(requested.State) {
+			return unsupported("failed Actions check identity is unavailable")
 		}
-		if requested.ID == 0 {
-			return d.recordRerun(cacheKey, fingerprint, forge.RerunChecksResult{Unsupported: true, Detail: "check run has no native ID"}), nil
-		}
-		if requested.HeadBranch != "" && requested.HeadBranch != req.TestRef {
-			return d.recordRerun(cacheKey, fingerprint, forge.RerunChecksResult{Unsupported: true, Detail: "check is not bound to the requested test ref"}), nil
-		}
-		if !strings.HasPrefix(requested.Source, "app:") || requested.Source == "app:0" {
-			return d.recordRerun(cacheKey, fingerprint, forge.RerunChecksResult{Unsupported: true, Detail: "check producer cannot be rerequested"}), nil
+		if requested.HeadBranch != req.TestRef {
+			return unsupported("check is not bound to the requested test ref")
 		}
 	}
-
-	candidates, err := d.rerunCandidates(ctx, owner, name, req.TestedSHA)
+	checks, err := d.CheckRuns(ctx, repo, req.TestedSHA)
 	if err != nil {
 		return forge.RerunChecksResult{}, err
 	}
-
-	type plan struct {
-		candidate rerunCandidate
-		dispatch  bool
+	targets := make(map[uint64]forge.RerunTarget)
+	for _, target := range req.Targets {
+		targets[target.WorkflowRunID] = target
 	}
-	plans := make([]plan, 0, len(req.Runs))
-	unsupported := false
+	ids := make(map[uint64]bool)
+	originalAttempts := make(map[uint64]uint64)
 	for _, requested := range req.Runs {
-		requestedAttempt := effectiveGitHubAttempt(requested.Attempt)
-		var exact, newest *rerunCandidate
-		for i := range candidates {
-			candidate := &candidates[i]
-			if candidate.observed.Name != requested.Name || candidate.observed.Source != requested.Source || candidate.observed.HeadBranch != req.TestRef {
+		workflowID := requested.WorkflowRunID
+		var exact *forge.CheckRun
+		newer := false
+		for i := range checks {
+			check := &checks[i]
+			if check.Name != requested.Name || check.Source != requested.Source || check.HeadBranch != req.TestRef {
 				continue
 			}
-			if newest == nil || newerGitHubCheck(candidate.observed, newest.observed) {
-				newest = candidate
+			if check.ID == requested.ID {
+				exact = check
+				if workflowID == 0 {
+					workflowID = check.WorkflowRunID
+				}
 			}
-			if candidate.observed.ID == requested.ID && effectiveGitHubAttempt(candidate.observed.Attempt) == requestedAttempt {
-				exact = candidate
+			if newerGitHubCheck(*check, requested) {
+				newer = true
 			}
 		}
-		if exact == nil {
-			if newest != nil && newerGitHubCheck(newest.observed, forge.CheckRun{ID: requested.ID, Attempt: requestedAttempt}) {
-				// The original may remain failed in the API. A newer run is
-				// sufficient evidence that a previous request took effect.
-				plans = append(plans, plan{})
-				continue
-			}
-			unsupported = true
+		if workflowID == 0 {
+			return unsupported("validated GitHub Actions workflow run identity is unavailable")
+		}
+		if _, exists := targets[workflowID]; !exists && (newer || exact != nil && !rerunnableCheckState(exact.State)) {
 			continue
 		}
-		if newest != nil && (newest.observed.ID != exact.observed.ID || effectiveGitHubAttempt(newest.observed.Attempt) != effectiveGitHubAttempt(exact.observed.Attempt)) {
-			plans = append(plans, plan{})
+		if exact != nil && exact.WorkflowRunID != workflowID {
+			return forge.RerunChecksResult{}, errors.New("workflow target differs from the recorded check")
+		}
+		if exact == nil && len(req.Targets) == 0 {
+			return forge.RerunChecksResult{}, errors.New("exact failed Actions check is not currently observable")
+		}
+		ids[workflowID] = true
+		originalAttempts[workflowID] = max(originalAttempts[workflowID], effectiveGitHubAttempt(requested.Attempt))
+	}
+	ordered := make([]uint64, 0, len(ids))
+	for id := range ids {
+		ordered = append(ordered, id)
+	}
+	slices.Sort(ordered)
+	var uncertain error
+	for _, id := range ordered {
+		target, exists := targets[id]
+		if exists && target.Accepted {
 			continue
 		}
-		if !rerunnableCheckState(exact.observed.State) {
-			plans = append(plans, plan{})
-			continue
-		}
-		plans = append(plans, plan{candidate: *exact, dispatch: true})
-	}
-	if unsupported {
-		return d.recordRerun(cacheKey, fingerprint, forge.RerunChecksResult{Unsupported: true, Detail: "exact failed check is no longer observable"}), nil
-	}
-
-	actions := make(map[int64]struct{})
-	checkRuns := make(map[int64]struct{})
-	for _, item := range plans {
-		if !item.dispatch {
-			continue
-		}
-		if item.candidate.workflowRun > 0 {
-			actions[item.candidate.workflowRun] = struct{}{}
-		} else {
-			checkRuns[int64(item.candidate.observed.ID)] = struct{}{}
-		}
-	}
-	if len(actions) == 0 && len(checkRuns) == 0 {
-		return d.recordRerun(cacheKey, fingerprint, forge.RerunChecksResult{Detail: "rerun already observed"}), nil
-	}
-	for runID := range actions {
-		if _, err := d.client.Actions.RerunFailedJobsByID(ctx, owner, name, runID); err != nil {
-			normalized := safeError(err)
-			if isUnsupportedRerunError(normalized) {
-				return d.recordRerun(cacheKey, fingerprint, forge.RerunChecksResult{Unsupported: true, Detail: "GitHub Actions reruns are not permitted for this installation"}), nil
-			}
-			return forge.RerunChecksResult{}, normalized
-		}
-	}
-	for checkID := range checkRuns {
-		if _, err := d.client.Checks.ReRequestCheckRun(ctx, owner, name, checkID); err != nil {
-			normalized := safeError(err)
-			if isUnsupportedRerunError(normalized) {
-				return d.recordRerun(cacheKey, fingerprint, forge.RerunChecksResult{Unsupported: true, Detail: "check reruns are not permitted for this installation"}), nil
-			}
-			return forge.RerunChecksResult{}, normalized
-		}
-	}
-	return d.recordRerun(cacheKey, fingerprint, forge.RerunChecksResult{Detail: "rerun requested"}), nil
-}
-
-func (d *Driver) recordRerun(key, fingerprint string, result forge.RerunChecksResult) forge.RerunChecksResult {
-	if _, exists := d.rerunKeys[key]; !exists {
-		d.rerunOrder = append(d.rerunOrder, key)
-		if len(d.rerunOrder) > 1024 {
-			oldest := d.rerunOrder[0]
-			d.rerunOrder = d.rerunOrder[1:]
-			delete(d.rerunKeys, oldest)
-		}
-	}
-	d.rerunKeys[key] = githubRerunRecord{fingerprint: fingerprint, result: result}
-	return result
-}
-
-func (d *Driver) rerunCandidates(ctx context.Context, owner, name, sha string) ([]rerunCandidate, error) {
-	runs, err := d.checkRuns(ctx, owner, name, sha)
-	if err != nil {
-		return nil, err
-	}
-	suites := make(map[int64]*gh.CheckSuite)
-	for page := 1; page != 0; {
-		list, res, err := d.client.Checks.ListCheckSuitesForRef(ctx, owner, name, sha, &gh.ListCheckSuiteOptions{ListOptions: gh.ListOptions{Page: page, PerPage: 100}})
+		run, _, err := d.client.Actions.GetWorkflowRunByID(ctx, owner, name, int64(id))
 		if err != nil {
-			return nil, safeError(err)
+			return forge.RerunChecksResult{}, safeError(err)
 		}
-		for _, suite := range list.CheckSuites {
-			suites[suite.GetID()] = suite
+		if run.GetHeadSHA() != req.TestedSHA || run.GetHeadBranch() != req.TestRef || run.GetRunAttempt() < 1 {
+			return forge.RerunChecksResult{}, errors.New("github Actions workflow does not match the recorded commit and queue ref")
 		}
-		page = res.NextPage
-	}
-	result := make([]rerunCandidate, 0, len(runs))
-	for _, run := range runs {
-		if d.own(run) || run.GetHeadSHA() != sha {
+		if uint64(run.GetRunAttempt()) < originalAttempts[id] {
+			return forge.RerunChecksResult{}, errors.New("stale Actions workflow attempt")
+		}
+		if req.Progress == nil {
+			return forge.RerunChecksResult{}, errors.New("github Actions rerun requires durable dispatch progress")
+		}
+		if exists {
+			if uint64(run.GetRunAttempt()) > target.Attempt || run.GetStatus() != "completed" {
+				target.Accepted = true
+				if err := req.Progress(target); err != nil {
+					return forge.RerunChecksResult{}, err
+				}
+				continue
+			}
+			uncertain = errors.New("github Actions rerun outcome is uncertain; waiting for a newer workflow attempt")
 			continue
 		}
-		id := uint64(max(run.GetID(), 0))
-		source := "app:" + strconv.FormatInt(run.GetApp().GetID(), 10)
-		suite := suites[run.GetCheckSuite().GetID()]
-		state := checkState(run.GetStatus(), run.GetConclusion())
-		if run.GetCheckSuite().GetID() <= 0 || suite.GetStatus() != "completed" || run.GetApp().GetID() <= 0 {
-			state = forge.Pending
+		// A prior/external rerun can be visible before any new check-run ID.
+		if run.GetStatus() != "completed" || uint64(run.GetRunAttempt()) > originalAttempts[id] {
+			continue
 		}
-		attempt := nextCheckRunAttempt(run)
-		result = append(result, rerunCandidate{
-			run:         run,
-			observed:    forge.CheckRun{ID: id, Attempt: attempt, Name: run.GetName(), Source: source, State: state, HeadBranch: suite.GetHeadBranch()},
-			workflowRun: workflowRunID(run, d.app.git, owner, name),
-		})
+		target = forge.RerunTarget{WorkflowRunID: id, Attempt: uint64(run.GetRunAttempt())}
+		if err := req.Progress(target); err != nil {
+			return forge.RerunChecksResult{}, err
+		}
+		if _, err := d.client.Actions.RerunFailedJobsByID(ctx, owner, name, int64(id)); err != nil {
+			if isUnsupportedRerunError(err) {
+				var response *gh.ErrorResponse
+				errors.As(err, &response)
+				return unsupported("GitHub Actions rerun refused: " + d.app.sanitizer.Sanitize(response.Message))
+			}
+			// Even a 5xx may follow acceptance. Leave the committed intent and
+			// reconcile it on the next execution instead of repeating the POST.
+			uncertain = safeError(err)
+			continue
+		}
+		target.Accepted = true
+		if err := req.Progress(target); err != nil {
+			return forge.RerunChecksResult{}, err
+		}
 	}
-	return result, nil
+	if uncertain != nil {
+		return forge.RerunChecksResult{}, uncertain
+	}
+	return forge.RerunChecksResult{Detail: "Actions rerun requested or already observed"}, nil
 }
 
 func nextCheckRunAttempt(run *gh.CheckRun) uint64 {
@@ -286,39 +227,68 @@ func newerGitHubCheck(candidate, current forge.CheckRun) bool {
 	return effectiveGitHubAttempt(candidate.Attempt) > effectiveGitHubAttempt(current.Attempt)
 }
 
-func githubRerunFingerprint(req forge.RerunChecksRequest) string {
-	runs := slices.Clone(req.Runs)
-	for i := range runs {
-		runs[i].Attempt = effectiveGitHubAttempt(runs[i].Attempt)
-	}
-	slices.SortFunc(runs, func(a, b forge.CheckRun) int {
-		if a.Name != b.Name {
-			return strings.Compare(a.Name, b.Name)
-		}
-		if a.Source != b.Source {
-			return strings.Compare(a.Source, b.Source)
-		}
-		if a.ID != b.ID {
-			if a.ID < b.ID {
-				return -1
-			}
-			return 1
-		}
-		if a.Attempt < b.Attempt {
-			return -1
-		}
-		if a.Attempt > b.Attempt {
-			return 1
-		}
-		return strings.Compare(a.HeadBranch, b.HeadBranch)
-	})
-	return fmt.Sprintf("%s\x00%s\x00%#v", req.TestedSHA, req.TestRef, runs)
+func isUnsupportedRerunError(err error) bool {
+	var response *gh.ErrorResponse
+	return errors.As(err, &response) && response.Response != nil && response.Response.StatusCode == 403 && strings.Contains(strings.ToLower(response.Message), "resource not accessible by integration")
 }
 
-func isUnsupportedRerunError(err error) bool {
-	var api *APIError
-	if !errors.As(err, &api) {
-		return false
+// CheckRunsForRetry joins each check ID to its actual Actions job attempt.
+// A workflow's current run_attempt must never be assigned to retained old jobs.
+// Legacy/default-off CheckRuns performs no additional Actions API reads.
+func (d *Driver) CheckRunsForRetry(ctx context.Context, repo forge.RepoRef, sha string) ([]forge.CheckRun, error) {
+	checks, err := d.CheckRuns(ctx, repo, sha)
+	if err != nil {
+		return nil, err
 	}
-	return api.StatusCode == 403 || api.StatusCode == 404 || api.StatusCode == 422
+	owner, name, err := splitRepo(repo)
+	if err != nil {
+		return nil, err
+	}
+	attempts := make(map[uint64]map[uint64]uint64)
+	for _, check := range checks {
+		id := check.WorkflowRunID
+		if id == 0 || attempts[id] != nil {
+			continue
+		}
+		attempts[id] = make(map[uint64]uint64)
+		for page := 1; page != 0; {
+			jobs, res, err := d.client.Actions.ListWorkflowJobs(ctx, owner, name, int64(id), &gh.ListWorkflowJobsOptions{Filter: "all", ListOptions: gh.ListOptions{Page: page, PerPage: 100}})
+			if err != nil {
+				return nil, safeError(err)
+			}
+			for _, job := range jobs.Jobs {
+				u, err := url.Parse(job.GetCheckRunURL())
+				if err != nil {
+					continue
+				}
+				parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+				if len(parts) < 2 || parts[len(parts)-2] != "check-runs" {
+					continue
+				}
+				checkID, err := strconv.ParseUint(parts[len(parts)-1], 10, 64)
+				if err == nil && job.GetRunAttempt() > 0 {
+					attempts[id][checkID] = uint64(job.GetRunAttempt())
+				}
+			}
+			page = res.NextPage
+		}
+	}
+	for i := range checks {
+		if attempt := attempts[checks[i].WorkflowRunID][checks[i].ID]; attempt > 0 {
+			checks[i].Attempt = attempt
+		}
+	}
+	return checks, nil
+}
+
+func actionsCheckURL(run *gh.CheckRun, base *url.URL, owner, name string, workflowID uint64) string {
+	prefix := fmt.Sprintf("/%s/%s/actions/runs/%d", owner, name, workflowID)
+	for _, raw := range []string{run.GetDetailsURL(), run.GetHTMLURL()} {
+		u, err := url.Parse(raw)
+		if err == nil && base != nil && strings.EqualFold(u.Host, base.Host) && (u.Path == prefix || strings.HasPrefix(u.Path, prefix+"/")) {
+			u.RawQuery, u.Fragment, u.User = "", "", nil
+			return u.String()
+		}
+	}
+	return ""
 }

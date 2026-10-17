@@ -463,3 +463,30 @@ func (e Expression) ReferencesCheck(name string) bool {
 	}
 	return false
 }
+
+// BlocksCheck selects checks from effective unsatisfied policy branches.
+// Satisfied OR alternatives and accepted skipped/neutral predicates do not
+// contribute targets. NOT propagates the opposite desired truth value.
+func (e Expression) BlocksCheck(pr PR, name string) bool {
+	return e.blocksCheck(pr, name, true)
+}
+
+func (e Expression) blocksCheck(pr PR, name string, desired bool) bool {
+	value := e.evaluate(pr).result
+	if value == unknown || (value == met) == desired {
+		return false
+	}
+	switch e.kind {
+	case atom:
+		return e.ReferencesCheck(name)
+	case not:
+		return e.children[0].blocksCheck(pr, name, !desired)
+	default:
+		for _, child := range e.children {
+			if child.blocksCheck(pr, name, desired) {
+				return true
+			}
+		}
+		return false
+	}
+}

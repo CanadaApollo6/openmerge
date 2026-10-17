@@ -9,29 +9,34 @@ import (
 // CheckRun identifies one producer's check attempt. Some forges retain the run
 // ID across reruns; Attempt distinguishes those executions. State is normalized.
 type CheckRun struct {
-	ID      uint64 `json:"id"`
-	Attempt uint64 `json:"attempt"`
-	Name    string `json:"name"`
-	Source  string `json:"source"`
-	State   string `json:"state"`
+	WorkflowRunID  uint64 `json:"workflow_run_id"`
+	WorkflowRunURL string `json:"workflow_run_url"`
+	URL            string `json:"url"`
+	RetryIgnored   bool   `json:"retry_ignored"`
+	ID             uint64 `json:"id"`
+	Attempt        uint64 `json:"attempt"`
+	Name           string `json:"name"`
+	Source         string `json:"source"`
+	State          string `json:"state"`
 }
 
 // CheckRetryState is bounded to the active batch and survives projection copies
 // and snapshots. Reopening checks never replaces its budget or timer origins.
 type CheckRetryState struct {
-	OriginalDeadline time.Time     `json:"original_deadline"`
-	Deadline         time.Time     `json:"deadline"`
-	RequestedAt      time.Time     `json:"requested_at"`
-	Timeout          time.Duration `json:"timeout"`
-	Requested        bool          `json:"requested"`
-	Dispatched       bool          `json:"dispatched"`
-	Unsupported      bool          `json:"unsupported"`
-	Confirmed        bool          `json:"confirmed"`
-	Detail           string        `json:"detail"`
-	Generation       uint64        `json:"generation"`
-	FailedRuns       []CheckRun    `json:"failed_runs"`
-	ObservedRuns     []CheckRun    `json:"observed_runs"`
-	RerunState       string        `json:"rerun_state"`
+	Dispatches       []CheckRerunTarget `json:"dispatches,omitempty"`
+	OriginalDeadline time.Time          `json:"original_deadline"`
+	Deadline         time.Time          `json:"deadline"`
+	RequestedAt      time.Time          `json:"requested_at"`
+	Timeout          time.Duration      `json:"timeout"`
+	Requested        bool               `json:"requested"`
+	Dispatched       bool               `json:"dispatched"`
+	Unsupported      bool               `json:"unsupported"`
+	Confirmed        bool               `json:"confirmed"`
+	Detail           string             `json:"detail"`
+	Generation       uint64             `json:"generation"`
+	FailedRuns       []CheckRun         `json:"failed_runs"`
+	ObservedRuns     []CheckRun         `json:"observed_runs"`
+	RerunState       string             `json:"rerun_state"`
 }
 
 // ChecksObserved is the identified observation used only by retry-enabled
@@ -56,6 +61,24 @@ type CheckRerunRequested struct {
 	At               time.Time     `json:"at"`
 	Deadline         time.Time     `json:"deadline"`
 	Timeout          time.Duration `json:"timeout"`
+}
+
+// CheckRerunTarget pins the pre-POST workflow attempt. Acceptance may be
+// reconciled from the provider after an ambiguous response or process restart.
+type CheckRerunTarget struct {
+	WorkflowRunID uint64    `json:"workflow_run_id"`
+	Attempt       uint64    `json:"attempt"`
+	Accepted      bool      `json:"accepted"`
+	At            time.Time `json:"at"`
+}
+
+// CheckRerunDispatchProgress records one remote target independently of the
+// aggregate dispatch result. Its intent is a durable, single-use POST fence.
+type CheckRerunDispatchProgress struct {
+	Target     CheckRerunTarget `json:"target"`
+	BatchID    string           `json:"batch_id"`
+	TestedSHA  string           `json:"tested_sha"`
+	Generation uint64           `json:"generation"`
 }
 
 // CheckRerunDispatched records the capability's result, never a transient error.
@@ -104,13 +127,14 @@ type ConfirmCheckFailure struct {
 	Reason     DequeueReason `json:"reason"`
 }
 
-func (ChecksObserved) queueEvent()         {}
-func (CheckRerunRequested) queueEvent()    {}
-func (CheckRerunDispatched) queueEvent()   {}
-func (ChecksFailureConfirmed) queueEvent() {}
-func (RecordCheckRerun) queueAction()      {}
-func (RerunChecks) queueAction()           {}
-func (ConfirmCheckFailure) queueAction()   {}
+func (ChecksObserved) queueEvent()             {}
+func (CheckRerunRequested) queueEvent()        {}
+func (CheckRerunDispatchProgress) queueEvent() {}
+func (CheckRerunDispatched) queueEvent()       {}
+func (ChecksFailureConfirmed) queueEvent()     {}
+func (RecordCheckRerun) queueAction()          {}
+func (RerunChecks) queueAction()               {}
+func (ConfirmCheckFailure) queueAction()       {}
 
 // Key pins the one request to its pre-rerun checks generation.
 func (a RecordCheckRerun) Key() string {
@@ -202,6 +226,14 @@ func (e CheckRerunRequested) Validate() error {
 
 // Validate binds capability results to their recorded batch and commit.
 func (e CheckRerunDispatched) Validate() error {
+	return requireActionText("batch_id", e.BatchID, "tested_sha", e.TestedSHA)
+}
+
+// Validate requires a native workflow attempt and a durable progress timestamp.
+func (e CheckRerunDispatchProgress) Validate() error {
+	if e.Target.WorkflowRunID == 0 || e.Target.Attempt == 0 || e.Target.At.IsZero() {
+		return fmt.Errorf("invalid workflow dispatch progress")
+	}
 	return requireActionText("batch_id", e.BatchID, "tested_sha", e.TestedSHA)
 }
 
@@ -300,7 +332,7 @@ func (s *State) observeChecks(e ChecksObserved) {
 	if !r.Requested {
 		var failed []CheckRun
 		for _, run := range e.Runs {
-			if run.State != "success" && run.State != "pending" {
+			if !run.RetryIgnored && run.State != "success" && run.State != "pending" {
 				failed = append(failed, run)
 			}
 		}
@@ -380,12 +412,32 @@ func (s *State) dispatchCheckRerun(e CheckRerunDispatched) {
 	if r == nil || !r.Requested || r.Dispatched || r.Generation != e.Generation || r.Confirmed {
 		return
 	}
+
 	r.Dispatched, r.Unsupported, r.Detail = true, e.Unsupported, e.Detail
 	if e.Unsupported {
 		s.Active.checksPassed = false
 		r.RerunState = "unsupported"
 	}
 }
+func (s *State) progressCheckRerun(e CheckRerunDispatchProgress) {
+	if e.Validate() != nil || !s.batchIn(e.BatchID, Testing) || s.Active.TestedSHA != e.TestedSHA {
+		return
+	}
+	r := s.Active.CheckRetry
+	if r == nil || !r.Requested || r.Dispatched || r.Generation != e.Generation || r.Confirmed {
+		return
+	}
+	target := e.Target
+	index := slices.IndexFunc(r.Dispatches, func(old CheckRerunTarget) bool { return old.WorkflowRunID == target.WorkflowRunID })
+	if index < 0 {
+		if !target.Accepted {
+			r.Dispatches = append(r.Dispatches, target)
+		}
+	} else if r.Dispatches[index].Attempt == target.Attempt && !r.Dispatches[index].Accepted && target.Accepted {
+		r.Dispatches[index] = target
+	}
+}
+
 func (s *State) confirmCheckFailure(e ChecksFailureConfirmed) {
 	if e.Validate() != nil || !s.batchIn(e.BatchID, Testing) || s.Active.TestedSHA != e.TestedSHA || s.Active.checksGeneration != e.Generation || s.Active.checksPassed {
 		return
@@ -422,11 +474,12 @@ func (b Batch) checkDeadline(cfg Config) (time.Time, bool) {
 	return b.StartedTestingAt.Add(cfg.CheckTimeout), cfg.CheckTimeout > 0
 }
 
-// retryOldestBatch is the PR 3 oldest-batch hook. Config.ChecksRetryFailed is
-// the effective retry limit shared by planner and executor; Queue.QueueConfig
-// can enable it for max_depth > 1 by changing its policy assignment. Once the
-// chain exists this hook must defer later batches' provisional failures.
-func retryOldestBatch(_ Config, _ State) bool { return true }
+// retryOldestBatch is the PR 3 selection hook. Today's serial planner passes
+// Active as both arguments; PR 3 must supply the chain's actual oldest batch.
+// Later batches retain provisional failures without consuming retry budget.
+func retryOldestBatch(candidate, oldest *Batch) bool {
+	return candidate != nil && oldest != nil && candidate.ID == oldest.ID
+}
 
 func planCheckRetry(cfg Config, s State, now time.Time) (Action, bool) {
 	b := s.Active
@@ -441,7 +494,7 @@ func planCheckRetry(cfg Config, s State, now time.Time) (Action, bool) {
 		return confirm(ChecksFailed), true
 	}
 	if !r.Requested && r.RerunState == "failed" {
-		if !retryOldestBatch(cfg, s) {
+		if !retryOldestBatch(b, s.Active) {
 			// A later batch's failure is provisional until its predecessors settle.
 			return nil, true
 		}

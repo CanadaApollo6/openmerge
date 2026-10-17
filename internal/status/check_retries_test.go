@@ -11,7 +11,7 @@ import (
 
 func TestCheckRetryProjectionAndEvidence(t *testing.T) {
 	timeout := time.Minute
-	original := []queue.CheckRun{{ID: 7, Attempt: 1, Name: "ci", Source: "app:ci", State: "failure"}}
+	original := []queue.CheckRun{{WorkflowRunID: 700, WorkflowRunURL: "https://github.test/acme/project/actions/runs/700", URL: "https://github.test/acme/project/actions/runs/700/job/701", ID: 7, Attempt: 1, Name: "ci", Source: "app:ci", State: "failure"}}
 	events := append(testingEvents(),
 		queue.ChecksObserved{
 			BatchID: "b1", TestedSHA: "tested", Runs: original, Terminal: true,
@@ -49,7 +49,7 @@ func TestCheckRetryProjectionAndEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `"check_retry"`) || !strings.Contains(string(data), `"rerun_state":"passed"`) {
+	if !strings.Contains(string(data), `"check_retry"`) || !strings.Contains(string(data), `"rerun_state":"passed"`) || !strings.Contains(string(data), `"workflow_run_id":700`) || !strings.Contains(string(data), `/job/701`) {
 		t.Fatalf("retry missing from API JSON: %s", data)
 	}
 	var summaries []string
@@ -62,6 +62,8 @@ func TestCheckRetryProjectionAndEvidence(t *testing.T) {
 		"Requested bounded retry",
 		"Dispatched bounded check retry: provider accepted retry",
 		"ci/app:ci#7.1=failure",
+		"workflow=700 https://github.test/acme/project/actions/runs/700",
+		"job=https://github.test/acme/project/actions/runs/700/job/701",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("evidence summaries=%q missing %q", joined, want)

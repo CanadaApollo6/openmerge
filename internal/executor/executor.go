@@ -52,6 +52,8 @@ type Executor struct {
 	CheckPolicy func([]forge.CheckRun) (terminal, success bool, err error)
 	// ReferencesCheck selects names relevant to CheckPolicy diagnostics. Nil uses RequiredChecks.
 	ReferencesCheck func(string) bool
+	// RetryFailure selects failed names from the effective policy failures.
+	RetryFailure func([]forge.CheckRun, string) bool
 	// PreviousUnboundChecks suppresses unchanged diagnostic observations.
 	PreviousUnboundChecks []queue.UnboundCheck
 	// ChecksTimeoutDetail supplies durable provenance context for a timeout dequeue.
@@ -107,7 +109,7 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 	case queue.FailBatch:
 		return emit(queue.BatchFailed(a))
 	case queue.RefreshChecks:
-		checks, err := x.Driver.CheckRuns(ctx, x.Repo, a.TestedSHA)
+		checks, err := x.readChecks(ctx, a.TestedSHA)
 		if err != nil {
 			return err
 		}
@@ -152,7 +154,7 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		}
 		return ambiguity
 	case queue.Land:
-		checks, err := x.Driver.CheckRuns(ctx, x.Repo, a.TestedSHA)
+		checks, err := x.readChecks(ctx, a.TestedSHA)
 		if err != nil {
 			return err
 		}
@@ -476,8 +478,9 @@ func (x *Executor) originalCheckDeadline() time.Time {
 // provenance filtering. Keeping only required names prevents unrelated failed
 // checks from consuming the bounded retry budget.
 func (x *Executor) retryRuns(checks []forge.CheckRun, batchID string) []queue.CheckRun {
+	observed := x.newestRetryChecks(x.filteredChecks(checks, batchID))
 	latest := make(map[string]forge.CheckRun)
-	for _, check := range x.newestRetryChecks(x.filteredChecks(checks, batchID)) {
+	for _, check := range observed {
 		if !x.relevantCheck(check.Name) {
 			continue
 		}
@@ -492,7 +495,15 @@ func (x *Executor) retryRuns(checks []forge.CheckRun, batchID string) []queue.Ch
 	runs := make([]queue.CheckRun, 0, len(keys))
 	for _, key := range keys {
 		check := latest[key]
-		runs = append(runs, queue.CheckRun{ID: check.ID, Attempt: canonicalCheckAttempt(check.Attempt), Name: check.Name, Source: check.Source, State: string(check.State)})
+		ignored := false
+		if check.State != forge.Success && check.State != forge.Pending {
+			if x.RetryFailure != nil {
+				ignored = !x.RetryFailure(observed, check.Name)
+			} else {
+				ignored = x.AllowSkippedNeutral && (check.State == forge.Skipped || check.State == forge.Neutral)
+			}
+		}
+		runs = append(runs, queue.CheckRun{WorkflowRunID: check.WorkflowRunID, WorkflowRunURL: check.WorkflowRunURL, URL: check.URL, RetryIgnored: ignored, ID: check.ID, Attempt: canonicalCheckAttempt(check.Attempt), Name: check.Name, Source: check.Source, State: string(check.State)})
 	}
 	return runs
 }
@@ -559,7 +570,7 @@ func canonicalCheckAttempt(attempt uint64) uint64 {
 }
 
 func toForgeCheckRun(run queue.CheckRun) forge.CheckRun {
-	return forge.CheckRun{ID: run.ID, Attempt: canonicalCheckAttempt(run.Attempt), Name: run.Name, Source: run.Source, State: forge.CheckState(run.State)}
+	return forge.CheckRun{WorkflowRunID: run.WorkflowRunID, WorkflowRunURL: run.WorkflowRunURL, URL: run.URL, ID: run.ID, Attempt: canonicalCheckAttempt(run.Attempt), Name: run.Name, Source: run.Source, State: forge.CheckState(run.State)}
 }
 
 func (x *Executor) rerunChecks(ctx context.Context, a queue.RerunChecks, emit func(queue.Event) error) error {
@@ -574,7 +585,17 @@ func (x *Executor) rerunChecks(ctx context.Context, a queue.RerunChecks, emit fu
 			runs[i].HeadBranch = a.TestRef
 		}
 	}
-	result, err := runner.RerunFailedChecks(ctx, x.Repo, forge.RerunChecksRequest{TestedSHA: a.TestedSHA, TestRef: a.TestRef, Runs: runs, Key: a.Key()})
+	var targets []forge.RerunTarget
+	if x.CheckRetry != nil {
+		for _, target := range x.CheckRetry.Dispatches {
+			targets = append(targets, forge.RerunTarget{WorkflowRunID: target.WorkflowRunID, Attempt: target.Attempt, Accepted: target.Accepted})
+		}
+	}
+	result, err := runner.RerunFailedChecks(ctx, x.Repo, forge.RerunChecksRequest{TestedSHA: a.TestedSHA, TestRef: a.TestRef, Runs: runs, Key: a.Key(), Targets: targets,
+		Progress: func(target forge.RerunTarget) error {
+			return emit(queue.CheckRerunDispatchProgress{BatchID: a.BatchID, TestedSHA: a.TestedSHA, Generation: a.Generation, Target: queue.CheckRerunTarget{WorkflowRunID: target.WorkflowRunID, Attempt: target.Attempt, Accepted: target.Accepted, At: x.now()}})
+		},
+	})
 	if err != nil {
 		return err
 	}
@@ -606,4 +627,13 @@ func (x *Executor) now() time.Time {
 		return x.Now()
 	}
 	return time.Now()
+}
+
+func (x *Executor) readChecks(ctx context.Context, sha string) ([]forge.CheckRun, error) {
+	if x.ChecksRetryFailed == 1 {
+		if reader, ok := x.Driver.(forge.RetryCheckReader); ok {
+			return reader.CheckRunsForRetry(ctx, x.Repo, sha)
+		}
+	}
+	return x.Driver.CheckRuns(ctx, x.Repo, sha)
 }

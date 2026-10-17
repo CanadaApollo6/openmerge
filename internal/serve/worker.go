@@ -119,6 +119,18 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 	}
 	x.PreviousUnboundChecks = state.UnboundChecks()
 	x.ReferencesCheck = w.cfg.MergeWhen.ReferencesCheck
+	if cfg.ChecksRetryFailed == 1 {
+		x.RetryFailure = func(checks []forge.CheckRun, name string) bool {
+			if state.Active == nil {
+				return false
+			}
+			prs := make([]forge.PullRequest, 0, len(state.Active.PRs))
+			for _, pin := range state.Active.PRs {
+				prs = append(prs, w.prs[pin.PR])
+			}
+			return retryPolicyFailure(w.cfg.MergeWhen, prs, checks, name)
+		}
+	}
 	if dequeue, ok := claim.Action.(queue.Dequeue); ok {
 		x.ChecksTimeoutDetail = state.DequeueDetail(dequeue.PR, dequeue.Reason)
 	}
@@ -343,7 +355,14 @@ func checkRetryStatus(retry *queue.CheckRetryState) string {
 func checkRunIdentities(runs []queue.CheckRun) string {
 	identities := make([]string, 0, len(runs))
 	for _, run := range runs {
-		identities = append(identities, fmt.Sprintf("%s/%s#%d.%d", run.Name, run.Source, run.ID, run.Attempt))
+		identity := fmt.Sprintf("%s/%s#%d.%d", run.Name, run.Source, run.ID, run.Attempt)
+		if run.WorkflowRunID > 0 {
+			identity += fmt.Sprintf(" workflow=%d %s", run.WorkflowRunID, run.WorkflowRunURL)
+		}
+		if run.URL != "" {
+			identity += " job=" + run.URL
+		}
+		identities = append(identities, identity)
 	}
 	return strings.Join(identities, ", ")
 }

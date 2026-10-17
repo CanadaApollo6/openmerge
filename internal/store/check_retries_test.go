@@ -128,3 +128,59 @@ func TestCheckRetryLandingGatesRejectOldGeneration(t *testing.T) {
 		})
 	}
 }
+
+func TestCheckRetryProgressFencesDuplicateAndExpiredClaims(t *testing.T) {
+	for _, window := range []string{"duplicate-intent", "expired-claim"} {
+		t.Run(window, func(t *testing.T) {
+			s := newStore(t)
+			q, request, cfg := readyCheckRerun(t, s)
+			a := request.Action.(queue.RecordCheckRerun)
+			must(t, s.Complete(t.Context(), request, Done))
+			appendEvents(t, s, q, queue.CheckRerunRequested{BatchID: a.BatchID, TestedSHA: a.TestedSHA, Generation: a.Generation, Runs: a.Runs, OriginalDeadline: a.OriginalDeadline, At: epoch, Deadline: epoch.Add(time.Minute), Timeout: time.Minute})
+			_, err := s.Plan(t.Context(), q, cfg, epoch)
+			must(t, err)
+			claims, err := s.ClaimQueue(t.Context(), q, 1, time.Second, epoch)
+			must(t, err)
+			if len(claims) != 1 {
+				t.Fatalf("claims=%+v", claims)
+			}
+			claim := claims[0]
+			proceed, err := s.BeginConsequential(t.Context(), claim, cfg, epoch)
+			must(t, err)
+			if !proceed {
+				t.Fatal("dispatch declined")
+			}
+			intent := queue.CheckRerunDispatchProgress{BatchID: a.BatchID, TestedSHA: a.TestedSHA, Generation: a.Generation, Target: queue.CheckRerunTarget{WorkflowRunID: 700, Attempt: 1, At: epoch}}
+			must(t, s.Emit(t.Context(), claim, cfg)(intent))
+			if window == "duplicate-intent" {
+				if err := s.Emit(t.Context(), claim, cfg)(intent); !errors.Is(err, ErrStale) {
+					t.Fatalf("duplicate intent=%v", err)
+				}
+				return
+			}
+			now := epoch.Add(2 * time.Second)
+			claims, err = s.ClaimQueue(t.Context(), q, 1, time.Minute, now)
+			must(t, err)
+			if len(claims) != 1 {
+				t.Fatalf("replacement claims=%+v", claims)
+			}
+			proceed, err = s.BeginConsequential(t.Context(), claims[0], cfg, now)
+			must(t, err)
+			if !proceed {
+				t.Fatal("replacement dispatch declined")
+			}
+			accepted := intent
+			accepted.Target.Accepted = true
+			accepted.Target.At = now
+			if err := s.Emit(t.Context(), claim, cfg)(accepted); !errors.Is(err, ErrClaimLost) {
+				t.Fatalf("expired progress=%v", err)
+			}
+			must(t, s.Emit(t.Context(), claims[0], cfg)(accepted))
+			state, _, err := s.Load(t.Context(), q)
+			must(t, err)
+			if len(state.Active.CheckRetry.Dispatches) != 1 || !state.Active.CheckRetry.Dispatches[0].Accepted {
+				t.Fatalf("progress=%+v", state.Active.CheckRetry)
+			}
+		})
+	}
+}

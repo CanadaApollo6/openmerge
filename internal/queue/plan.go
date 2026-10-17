@@ -375,6 +375,23 @@ func CanStart(cfg Config, s State, action Action, event Event) bool {
 			return false
 		}
 		at = e.At
+	case CheckRerunDispatchProgress:
+		a, ok := action.(RerunChecks)
+		if !ok || e.Validate() != nil || a.BatchID != e.BatchID || a.TestedSHA != e.TestedSHA || a.Generation != e.Generation || s.Active == nil || s.Active.CheckRetry == nil {
+			return false
+		}
+		r := s.Active.CheckRetry
+		if s.Active.ID != e.BatchID || s.Active.TestedSHA != e.TestedSHA || s.Active.Phase != Testing || !r.Requested || r.Dispatched || r.Confirmed || r.Generation != e.Generation {
+			return false
+		}
+		index := slices.IndexFunc(r.Dispatches, func(old CheckRerunTarget) bool { return old.WorkflowRunID == e.Target.WorkflowRunID })
+		if e.Target.Accepted {
+			return index >= 0 && !r.Dispatches[index].Accepted && r.Dispatches[index].Attempt == e.Target.Attempt
+		}
+		if index >= 0 {
+			return false
+		}
+		at = e.Target.At
 	case LandingStarted:
 		a, ok := action.(Land)
 		if !ok || e.AttemptID == "" || a.BatchID != e.BatchID || a.FenceToken != e.FenceToken ||

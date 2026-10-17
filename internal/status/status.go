@@ -319,6 +319,7 @@ func cloneCheckRetry(retry *queue.CheckRetryState) *queue.CheckRetryState {
 		return nil
 	}
 	cloned := *retry
+	cloned.Dispatches = slices.Clone(retry.Dispatches)
 	cloned.FailedRuns = slices.Clone(retry.FailedRuns)
 	cloned.ObservedRuns = slices.Clone(retry.ObservedRuns)
 	if cloned.RerunState == "requested" && cloned.Dispatched {
@@ -344,6 +345,14 @@ func retryEvidence(event queue.Event, before, after queue.State, sanitizer *diag
 		}
 	case queue.CheckRerunRequested:
 		runs, state = e.Runs, "requested"
+	case queue.CheckRerunDispatchProgress:
+		if before.Active != nil && before.Active.CheckRetry != nil {
+			runs = before.Active.CheckRetry.FailedRuns
+		}
+		state = "requested"
+		if e.Target.Accepted {
+			state = "running"
+		}
 	case queue.CheckRerunDispatched:
 		if before.Active != nil && before.Active.CheckRetry != nil {
 			runs = before.Active.CheckRetry.FailedRuns
@@ -367,6 +376,8 @@ func retryEvidence(event queue.Event, before, after queue.State, sanitizer *diag
 		runsCopy[i].Name = sanitizer.Sanitize(runsCopy[i].Name)
 		runsCopy[i].Source = sanitizer.Sanitize(runsCopy[i].Source)
 		runsCopy[i].State = sanitizer.Sanitize(runsCopy[i].State)
+		runsCopy[i].URL = sanitizer.Sanitize(runsCopy[i].URL)
+		runsCopy[i].WorkflowRunURL = sanitizer.Sanitize(runsCopy[i].WorkflowRunURL)
 	}
 	return runsCopy, state
 }
@@ -546,6 +557,12 @@ func eventSummary(event queue.Event, before, after queue.State) string {
 		return fmt.Sprintf("Observed retry-aware terminal CI result; success=%t; runs: %s", e.Success, checkRunSummary(e.Runs))
 	case queue.CheckRerunRequested:
 		return fmt.Sprintf("Requested bounded retry of %d failed check(s): %s", len(e.Runs), checkRunSummary(e.Runs))
+	case queue.CheckRerunDispatchProgress:
+		phase := "intent"
+		if e.Target.Accepted {
+			phase = "acceptance"
+		}
+		return fmt.Sprintf("Recorded Actions rerun %s for workflow %d after attempt %d", phase, e.Target.WorkflowRunID, e.Target.Attempt)
 	case queue.CheckRerunDispatched:
 		if e.Unsupported {
 			if e.Detail != "" {
@@ -591,7 +608,14 @@ func checkRunSummary(runs []queue.CheckRun) string {
 	}
 	identities := make([]string, 0, len(runs))
 	for _, run := range runs {
-		identities = append(identities, fmt.Sprintf("%s/%s#%d.%d=%s", run.Name, run.Source, run.ID, run.Attempt, run.State))
+		identity := fmt.Sprintf("%s/%s#%d.%d=%s", run.Name, run.Source, run.ID, run.Attempt, run.State)
+		if run.WorkflowRunID > 0 {
+			identity += fmt.Sprintf(" workflow=%d %s", run.WorkflowRunID, run.WorkflowRunURL)
+		}
+		if run.URL != "" {
+			identity += " job=" + run.URL
+		}
+		identities = append(identities, identity)
 	}
 	return strings.Join(identities, ", ")
 }
@@ -618,6 +642,8 @@ func affects(event queue.Event, pr int, before, after queue.State, tested map[st
 	case queue.ChecksObserved:
 		return inBatch(before, pr) && before.Active.ID == e.BatchID && before.Active.TestedSHA == e.TestedSHA
 	case queue.CheckRerunRequested:
+		return inBatch(before, pr) && before.Active.ID == e.BatchID && before.Active.TestedSHA == e.TestedSHA
+	case queue.CheckRerunDispatchProgress:
 		return inBatch(before, pr) && before.Active.ID == e.BatchID && before.Active.TestedSHA == e.TestedSHA
 	case queue.CheckRerunDispatched:
 		return inBatch(before, pr) && before.Active.ID == e.BatchID && before.Active.TestedSHA == e.TestedSHA

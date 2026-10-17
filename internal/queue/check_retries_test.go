@@ -375,3 +375,11 @@ func TestMixedStaleObservationRetainsFreshProducerAndRequiresRefresh(t *testing.
 		})
 	}
 }
+
+func TestRetryOldestBatchSelection(t *testing.T) {
+	oldest := &Batch{ID: "b1"}
+	later := &Batch{ID: "b2"}
+	if !retryOldestBatch(oldest, oldest) || retryOldestBatch(later, oldest) || retryOldestBatch(nil, oldest) || retryOldestBatch(later, nil) {
+		t.Fatal("only the oldest provisional batch may consume a retry")
+	}
+}

@@ -177,6 +177,8 @@ func Apply(s State, e Event) State {
 		s.observeChecks(e)
 	case CheckRerunRequested:
 		s.requestCheckRerun(e)
+	case CheckRerunDispatchProgress:
+		s.progressCheckRerun(e)
 	case CheckRerunDispatched:
 		s.dispatchCheckRerun(e)
 	case ChecksFailureConfirmed:
@@ -312,6 +314,7 @@ func cloneState(s State) State {
 		batch.unboundChecks = slices.Clone(batch.unboundChecks)
 		if batch.CheckRetry != nil {
 			retry := *batch.CheckRetry
+			retry.Dispatches = slices.Clone(retry.Dispatches)
 			retry.FailedRuns = slices.Clone(retry.FailedRuns)
 			retry.ObservedRuns = slices.Clone(retry.ObservedRuns)
 			batch.CheckRetry = &retry

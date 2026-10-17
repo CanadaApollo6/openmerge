@@ -46,7 +46,10 @@
 // Retry-enabled queues use identified ChecksObserved instead of ChecksCompleted.
 // Failed producer/run/attempt identities are retained separately from the latest
 // observation. RecordCheckRerun and its queue-locked CheckRerunRequested consume
-// one retry and pin its own deadline before RerunChecks dispatches it. A delayed
+// one retry and pin its own deadline before RerunChecks dispatches it. Per-target
+// CheckRerunDispatchProgress fences each Actions POST with a durable intent and
+// records acceptance; ambiguous outcomes require provider reconciliation.
+// A delayed
 // observation of an original run can neither confirm failure nor replace a rerun
 // pass. Each originally failed producer must supply a newer attempt on the same
 // tested SHA and test ref; Land preflight checks those identities too. Reopening

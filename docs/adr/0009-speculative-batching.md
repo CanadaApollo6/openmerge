@@ -50,7 +50,11 @@ that policy decision.
 Retry-enabled queues write additive `checks_observed` records with the accepted
 producer, run ID and attempt, and the original deadline. `check_rerun_requested`
 pins the failed identities, request time and rerun deadline before the optional
-forge call; `check_rerun_dispatched` records support or an unsupported reason.
+forge call. `check_rerun_dispatch_progress` persists each Actions workflow's
+pre-POST intent and subsequent acceptance. Ambiguous outcomes reconcile from
+workflow status/run_attempt without repeating the POST; `check_rerun_dispatched`
+records aggregate support or an unsupported reason. Only GitHub Actions check
+runs are supported in this implementation.
 `checks_failure_confirmed` makes blame durable. The corresponding new actions
 are `record_check_rerun`, `rerun_checks` and `confirm_check_failure`. Pending
 observations still require a qualifying `checks_refreshed` read to time out.
