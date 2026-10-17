@@ -12,6 +12,7 @@ An ADR records one significant decision: the context that forced it, what we cho
 | [0006](0006-multi-repository-serving.md) | Serve every installed repository from one process, driven by webhooks with polling as the backstop | Accepted |
 | [0007](0007-changes-not-prs.md) | Make the change the unit of work, with pull requests as one optional view | Accepted |
 | [0008](0008-openmerge-policy-authority.md) | Make OpenMerge authoritative for queue policy behind forge write restrictions | Accepted |
+| [0009](0009-speculative-batching.md) | Test a speculative chain of batches with an adaptive window | Accepted |
 
 ## Writing a new ADR
 
