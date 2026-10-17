@@ -107,16 +107,17 @@ ADR 0006 lands in four PRs:
 
 ### Phase 2 — Throughput
 
-- Speculative chain of batches with a **Zuul-style AIMD window** (grows on success, halves on failure), landing strictly in chain order through the existing fence ([ADR 0009](docs/adr/0009-speculative-batching.md)); `max_depth` defaults to 1 until the exit test and dogfooding justify a wider default
-- Dynamic batch sizing from observed failure rate (`batch.target_pass_rate`)
-- **Optimistic failure resolution**, opt-in (`on_failure: wait_for_successor`): a failed batch waits for its successor, whose passing tested commit lands both
+- Speculative chain of batches with a **Zuul-style AIMD window** (grows on landing, halves on confirmed failure), landing strictly in chain order through the existing fence; only the oldest unlanded batch is blamed ([ADR 0009](docs/adr/0009-speculative-batching.md)); `max_depth` defaults to 1 until the exit test, adopter profiles and two weeks of dogfooding justify more
+- Opt-in dynamic batch sizing from observed failure rate (`batch.target_pass_rate`)
+- Bounded same-commit check retries before a failure counts (a prerequisite for speculation); optimistic failure resolution deferred
+- Optional CI cancellation capability (`actions: write` on GitHub) and a per-change CI run ledger
 - Priorities (`priority_rules`, numeric levels, optional preemption) and multiple queues
-- Check timeouts (automatic, p95-based) and bounded CI retries
+- Check timeouts (automatic, p95-based)
 - Pause, scheduled freezes with exclusions, `schedule` conditions
 - Read-only web dashboard: queue graph, batch history, why-is-my-PR-stuck explainer
 - **MCP server** exposing queue status, enqueue/dequeue, failure explanations
 
-**Exit:** at 2,000 simulated PRs/day with 30-minute CI, median time-to-merge stays under 2x CI duration, and CI runs per merged PR stays under 1.5. The simulator also reports adopter profiles (20 PRs/day with 30-minute CI; 5 PRs/day with 3-hour CI) against depth 1.
+**Exit:** at 2,000 simulated PRs/day with 30-minute CI, median time-to-merge stays under 2x CI duration, and CI runs per merged PR stays under 1.5. The pinned workload is 2% broken changes, 1% flaky runs, 200 runners, batch 8 and `max_depth: 12` (strict speculation is not expected to meet it at 5% broken, which is post-merge territory). Adopter profiles (20 PRs/day with 30-minute CI; 5 PRs/day with 3-hour CI) must keep p95 time to merge under 2x and 1.5x CI at `max_depth: 4`.
 
 ### Phase 2b — Post-merge verification mode
 
