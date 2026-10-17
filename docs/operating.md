@@ -244,11 +244,21 @@ the timeout also accommodates the separate database/server packages.
 `sim-exits` runs `make test-sim-exits` without race instrumentation and with a
 60-minute package timeout. It runs the entire simulator suite, including all
 17 legacy exits, Team and Slow's eight-seed 30-day adopter exits in both
-cancellation modes, the full paired adaptive/fixed-size exit, cancellation
-savings, serial capacity comparison, and admission evidence. Independent adopter
-cancellation modes and adaptive seeds run in parallel, capped at two tests to
-bound memory. Workload inputs, output records, and assertions are the same in
-both paths. Direct
+cancellation modes, first-day adaptive harnesses, cancellation savings, serial
+capacity comparison, and admission evidence. It omits `-sim-adaptive-full-exit`;
+the full adaptive exit remains opt-in. Independent adopter cancellation modes
+run in parallel, capped at four tests to match the CI runner's four vCPUs. The
+target for this required job is under eight minutes on CI.
+
+The non-required `sim-adaptive-full` job in [sim-full.yml](../.github/workflows/sim-full.yml)
+runs `make test-sim-adaptive-full`: the pinned eight-seed 30-day paired
+adaptive/fixed-size exit in both cancellation modes, without race instrumentation,
+with a 60-minute package timeout and four-test concurrency. It runs on pushes to
+`main`, nightly at 06:00 UTC, and via `workflow_dispatch`. It does not run on PRs
+or `openmerge/queue/**` pushes and is not in `.openmerge.yml`, so this full
+adaptive evidence does not gate landing.
+
+Workload inputs, output records, and assertions are unchanged. Direct
 `go test` invocations remain full-length unless passed `-short`, so the mutation,
 compatibility, and admission scripts continue to exercise their original tests.
 
