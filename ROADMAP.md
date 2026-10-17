@@ -132,18 +132,25 @@ Built after Phase 1 closes, in parallel with Phase 2 where they don't overlap ([
 
 ### Phase 3 — Agent-native
 
-- **Change identity:** a queue entry tracks a logical change across re-pushes and rebases; a superseding push cancels stale runs instead of stacking new ones
+Phase 3 treats the change, not the pull request, as the unit of work, in three stages ([ADR 0007](docs/adr/0007-changes-not-prs.md)). Stage A works entirely on pull requests; Stages B and C follow once their prerequisites exist.
+
+- **Change identity (A):** a server-assigned change with one revision per head; a new head leaves the queue as today (conflict grace aside) and its stale runs are cancelled, and a started landing always settles first
+- **Classification (A):** conservative labels (`docs`, `generated`, `owned:<owner>`, `policy`, `unknown`) pinned to base and head; anything uncertain is `unknown`; comment-only detection deferred
+- **Policy approvals (A):** opt-in, agent-aware rules (policy-bot style) that only add requirements on top of `enter_when`/`merge_when`, e.g. agent-authored changes touching `infra/**` need two approvals from a group; unknown matches never lower requirements; head-bound native reviews, `@openmerge approve <brief-digest>` receipts that also bind intent, no self-approval, and a decision snapshot in the landing-start gate; changes waiting for approval are skipped by batching instead of holding a batch
+- **Accountability (A):** separate actor, accountable human and reviewer identities; agents map to accountable humans in default-branch config
+- **Pushes outside the queue (A):** observed base moves OpenMerge did not make are recorded as landed outside the queue, with no OpenMerge verification before landing
+- **Review briefs (A):** templated reviewer, operator and agent views with a file and hunk inventory (labelled incomplete when it is); receipt approvals record the brief's digest
 - Per-author and per-agent concurrency, CI-spend, and retry budgets, with escalation to a human
-- Agent-aware policy rules (policy-bot style): e.g. agent-authored PRs touching `infra/**` need two human approvals
 - Structured failure explanations: which batch, which check, which tests, flaky or real, suggested next action
-- **Conflict grace:** with change identity, a conflicting PR may hold its position for one non-renewable `conflict_grace` with bounded retries, while PRs behind it keep landing
-- **Change classification for approvals:** comment-only, docs-only, generated, or owned-directory changes, so policy can ask for human review of intent only where it matters
+- **Conflict grace:** with change identity, a conflicting change may hold its position for one non-renewable `conflict_grace` with bounded retries, while entries behind it keep landing
 - **Write API and lookups agents need:** enqueue/dequeue/refresh over the API, and "which commit landed PR N" without scanning history
+- **Direct submission (B):** after a user authentication and authorization ADR, `openmerge change submit` pushes `HEAD` to `openmerge/submit/<id>`; `changes.pull_requests: when_review_needed` per queue, never landing while the base's protection requires a pull request
+- **PR-less queues and generated prose (C):** `changes.pull_requests: never` once notifications and request-changes work outside pull requests; optional, labelled model summaries in briefs
 - A ready-made **queue-watcher agent skill** that reads the structured logs and "why" API and reports anomalies
 - Outbound webhooks and OpenTelemetry export for every queue event
 - Agent skills and docs written for agents (`llms.txt`, Markdown docs, stable `--json` and exit codes)
 
-**Exit:** an unattended coding agent can take a PR from "opened" to "merged or definitively rejected" using only the CLI or MCP, with no human reading logs.
+**Exit (on the fake forge):** for Stage A, an unattended coding agent opens a pull request and takes it to landed or definitively rejected using only the CLI or MCP; a low-risk change lands on policy alone, a change that needs a human waits until a scripted reviewer approves its exact head, and every landing's decision snapshot can be read back. For Stage B, the same starting from `openmerge change submit` with no pull request.
 
 ### Phase 4 — Monorepos and CI intelligence
 
