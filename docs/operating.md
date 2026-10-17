@@ -64,7 +64,8 @@ to all requests. Unknown budgets remain explicitly unknown until headers arrive.
 
 `openmerge queue status` includes discovery; `openmerge queue status --discovery`
 (or `--discovery --json`) shows every known repository's state: `served`,
-`not configured`, `invalid config`, `removed`, `suspended`, or `dormant base`,
+`validating`, `unavailable`, `not configured`, `invalid config`, `removed`,
+`suspended`, or `dormant base`,
 plus last successful sweeps and remaining budget per installation. Repositories
 without config get no workers or comments. The read-only `/v1/discovery` endpoint
 uses the same authentication as queue status.
@@ -363,11 +364,14 @@ histories.
 3. Stop every server that can write these partitions before maintenance. Choose
    the history whose replayed `Fence` matches the actual
    `openmerge/fence/BASE` token and whose command receipts belong to the last
-   serving worker. Prefer the sole live history; when all have drained, discovery
-   chooses the fenced history with the latest event watermark. If the fence and
-   receipt evidence disagree, investigate the original worker's logs/backup
-   before selecting. The selected row's ID, spelling, receipts and cursors stay
-   intact.
+   serving worker. With no usable cached choice and multiple fenced histories,
+   discovery reads that ref and selects only the unique history whose replayed
+   `Fence` equals its SHA (the last initialized, landed, or abandoned fence
+   commit). A failed read, no match, or multiple matches blocks admission and
+   writes no canonical mapping. Event watermarks and lifecycle/access events
+   never establish ownership. If fence and receipt evidence disagree, investigate
+   the original worker's logs/backup before selecting. The selected row's ID,
+   spelling, receipts and cursors stay intact.
 4. Drain entries from each unselected history using a small maintenance program
    **inside this repository** (so it can import `internal/store` and
    `internal/queue`). Connect with `store.Open`, inspect with `db.Load`, and
@@ -396,13 +400,47 @@ histories.
    before each clear. Do not clear unrelated holds to make selection succeed;
    if a hold must remain, keep its history selected. Multiple histories with
    unresolved holds must remain blocked until those causes are reconciled.
-5. Call `db.CanonicalQueue(ctx, selectedKey)` in the maintenance program. Check
-   that the returned ID is the chosen history, then call `db.Load` on that ID
-   and verify its fence and receipts again. Keep an entry on the selected history
-   until this call if it must take precedence over other drained histories.
-   Canonical selection is now stored in `canonical_queues`; subsequent sweeps
-   read that selection without replaying all variants. A newly imported legacy
-   variant invalidates the cache and requires reconciliation again.
+5. Record the chosen ID explicitly, including when correcting a **wrong cached
+   selection**. Keep all servers stopped. Reload every variant with `db.Load`;
+   refuse this step if any is landing, or any unselected history has entries,
+   an active batch, or an unresolved independent safety hold. Confirm the
+   selected history's replayed `Fence` still equals the actual fence ref SHA and
+   inspect its receipts/cursors. Do not use `initial_fence` alone: subsequent
+   landing/abandonment events advance the fence. If ownership cannot be proven,
+   leave admission blocked and investigate; changing the mapping cannot repair
+   a mismatched fence.
+
+   Run this SQL against the explicit maintenance database, substituting the
+   inspected partition and `SELECTED_ID`. It changes only the canonical mapping,
+   preserving all histories and receipts. The partition predicates prevent
+   selecting an unrelated queue ID. Require exactly one returned row:
+
+   ```sql
+   BEGIN;
+   SELECT pg_advisory_xact_lock(1330464082,
+     hashtext('INSTALLATION' || '/' || lower('OWNER/REPO') || '/' || 'BASE' || '/' || ''));
+   INSERT INTO canonical_queues
+       (installation, repository, base, lane, queue_id, variant_ids)
+   SELECT q.installation, lower(q.repository), q.base, q.lane, q.id,
+       ARRAY(SELECT v.id FROM queues v
+             WHERE v.installation=q.installation
+               AND lower(v.repository)=lower(q.repository)
+               AND v.base=q.base AND v.lane=q.lane ORDER BY v.id)
+   FROM queues q
+   WHERE q.id=SELECTED_ID AND q.installation='INSTALLATION'
+     AND lower(q.repository)=lower('OWNER/REPO') AND q.base='BASE' AND q.lane=''
+   ON CONFLICT (installation, repository, base, lane) DO UPDATE
+     SET queue_id=EXCLUDED.queue_id, variant_ids=EXCLUDED.variant_ids
+   RETURNING queue_id, variant_ids;
+   COMMIT;
+   ```
+
+   Call `db.CanonicalQueue(ctx, selectedKey)` and require the inspected ID. Reload
+   and verify its fence/receipts again. A cached ID still present in the variant
+   set remains selected when drained or when another legacy row is imported;
+   an imported variant with live state, a landing, or an independent hold
+   blocks admission instead of flipping that selection. Resolve that conflict
+   with the same procedure. Never depend on the order of maintenance appends.
 6. Restart serving and inspect status. The selected queue validates normally;
    the others remain settlement-only. Confirm one new PR lands and historical
    commands receive no new acceptance replies. Keep the backup and the inspected

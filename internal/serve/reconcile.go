@@ -343,6 +343,13 @@ func (s *Server) commands(ctx context.Context, w *worker, number int) error {
 			var events []queue.Event
 			var outcome any = true
 			if cmd := command(c.Body); cmd != "" && c.Author != w.BotLogin {
+				fields := strings.Fields(cmd)
+				if fields[0] == "queue" && w.managed && !w.ready {
+					ignored, err := s.store.Observation(ctx, w.id, fmt.Sprintf("ignored/comment/%d", c.ID))
+					if err != nil || len(ignored) > 0 {
+						return err
+					}
+				}
 				allowed, err := w.Driver.CanWrite(ctx, w.repo(), c.Author)
 				if err != nil {
 					return err
@@ -352,7 +359,6 @@ func (s *Server) commands(ctx context.Context, w *worker, number int) error {
 						return err
 					}
 				} else {
-					fields := strings.Fields(cmd)
 					switch fields[0] {
 					case "queue":
 						if w.managed && !w.ready {

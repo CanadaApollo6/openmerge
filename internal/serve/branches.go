@@ -93,12 +93,39 @@ func (s *Server) register(ctx context.Context, target Target) (*worker, error) {
 	}
 	s.registerMu.Lock()
 	defer s.registerMu.Unlock()
-	id, key, err := s.store.CanonicalQueue(ctx, target.Key)
+	id, key, err := s.canonicalQueue(ctx, target)
 	target.Key = key
 	if err != nil {
 		return nil, err
 	}
 	return s.registerID(ctx, target, id)
+}
+
+// Read the forge only when an uncached partition has competing fence histories.
+// Workers use the resulting cache; a failed read leaves every variant waiting
+// for the next discovery sweep while their landing settlement continues.
+func (s *Server) canonicalQueue(ctx context.Context, target Target) (store.QueueID, store.QueueKey, error) {
+	id, key, err := s.store.CanonicalQueue(ctx, target.Key)
+	if !errors.Is(err, store.ErrFenceOwnershipRequired) {
+		return id, key, err
+	}
+	readCtx, cancel := context.WithTimeout(ctx, s.options.ActionTimeout)
+	defer cancel()
+	if target.Git == nil && target.Resolve != nil {
+		resolved, resolveErr := target.Resolve(readCtx)
+		if resolveErr != nil {
+			return 0, key, fmt.Errorf("%w: resolve fence reader: %w", err, resolveErr)
+		}
+		target.Git = resolved.Git
+	}
+	if target.Git == nil {
+		return 0, key, err
+	}
+	sha, _, _, readErr := target.Git.ReadFence(readCtx, forge.RepoRef{Path: target.Key.Repository}, "openmerge/fence/"+target.Key.BaseBranch)
+	if readErr != nil {
+		return 0, key, fmt.Errorf("%w: read actual fence: %w", err, readErr)
+	}
+	return s.store.CanonicalQueueWithFence(ctx, target.Key, sha)
 }
 
 func (s *Server) registerID(ctx context.Context, target Target, id store.QueueID) (*worker, error) {
@@ -217,13 +244,6 @@ func (s *Server) refreshRepository(ctx context.Context, repo Repository) error {
 			continue
 		}
 		target := repo.Target(base)
-		// Reuse spelling and identity of any previously stored partition.
-		for _, w := range s.workers() {
-			if w.Key.Installation == repo.Installation && strings.EqualFold(w.Key.Repository, repo.Name) && w.Key.BaseBranch == base && w.Key.Lane == "" {
-				target.Key = w.Key
-				break
-			}
-		}
 		if _, err := s.register(ctx, target); err != nil {
 			result = errors.Join(result, fmt.Errorf("base %s registration: %w", base, err))
 		}

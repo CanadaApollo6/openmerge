@@ -119,7 +119,7 @@ func New(ctx context.Context, db *store.Store, targets []Target, options Options
 		if target.Driver == nil || target.Git == nil || target.BotLogin == "" {
 			return nil, errors.New("target requires driver, git and App login")
 		}
-		id, key, err := db.CanonicalQueue(ctx, target.Key)
+		id, key, err := s.canonicalQueue(ctx, target)
 		target.Key = key
 		if err != nil {
 			return nil, err

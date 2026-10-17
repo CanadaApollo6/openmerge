@@ -373,20 +373,26 @@ func (s *Server) waitingCommands(ctx context.Context, w *worker, number int) err
 				return err
 			}
 			if len(receipt) == 0 {
-				allowed, err := w.Driver.CanWrite(ctx, w.repo(), c.Author)
-				if err != nil {
+				if err := s.ignoreWaitingCommand(ctx, w, number, c); err != nil {
 					return err
-				}
-				if allowed {
-					if err := s.logIgnoredCommand(ctx, w, number, c.ID); err != nil {
-						return err
-					}
 				}
 			}
 		}
 		since = maxTime(since, c.CreatedAt)
 	}
 	return s.record(ctx, w, key, since)
+}
+
+func (s *Server) ignoreWaitingCommand(ctx context.Context, w *worker, number int, comment forge.Comment) error {
+	seen, err := s.store.Observation(ctx, w.id, fmt.Sprintf("ignored/comment/%d", comment.ID))
+	if err != nil || len(seen) > 0 {
+		return err
+	}
+	allowed, err := w.Driver.CanWrite(ctx, w.repo(), comment.Author)
+	if err != nil || !allowed {
+		return err
+	}
+	return s.logIgnoredCommand(ctx, w, number, comment.ID)
 }
 
 func (s *Server) logIgnoredCommand(ctx context.Context, w *worker, number int, commentID int64) error {

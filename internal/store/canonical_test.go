@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -75,7 +76,11 @@ func TestCanonicalSelectionSurvivesDrainAndReopen(t *testing.T) {
 	must(t, err)
 	must(t, db.Record(t.Context(), newer, "comment/123", []byte(`true`)))
 	must(t, db.Record(t.Context(), newer, "cursor/1", []byte(`"2026-10-16T00:00:00Z"`)))
-	got, canonical, err := db.CanonicalQueue(t.Context(), key)
+	// Model an upgrade without a cached choice. Fence ownership, rather than
+	// the newer history's live entry, authorizes its selection.
+	_, err = db.pool.Exec(t.Context(), `DELETE FROM canonical_queues`)
+	must(t, err)
+	got, canonical, err := db.CanonicalQueueWithFence(t.Context(), key, "current")
 	must(t, err)
 	if got != newer || canonical.Repository != "owner/repo" {
 		t.Fatalf("wrong live selection: %d %+v", got, canonical)
@@ -98,5 +103,70 @@ func TestCanonicalSelectionSurvivesDrainAndReopen(t *testing.T) {
 	must(t, err)
 	if len(state.Entries) != 0 || state.Fence != "current" || string(receipt) != "true" || len(cursor) == 0 {
 		t.Fatalf("canonical history lost: %+v receipt=%s cursor=%s", state, receipt, cursor)
+	}
+}
+
+func TestCanonicalColdStartRequiresUniqueFenceOwner(t *testing.T) {
+	for _, evidence := range []string{"current", "", "unknown", "shared"} {
+		t.Run(evidence, func(t *testing.T) {
+			db := openTestStore(t, databaseURL(t))
+			key := QueueKey{Installation: "7", Repository: "Owner/Repo", BaseBranch: "main"}
+			var stale, owner QueueID
+			must(t, db.pool.QueryRow(t.Context(), `INSERT INTO queues(installation,repository,base,lane) VALUES ('7','Owner/Repo','main','') RETURNING id`).Scan(&stale))
+			must(t, db.pool.QueryRow(t.Context(), `INSERT INTO queues(installation,repository,base,lane) VALUES ('7','owner/repo','main','') RETURNING id`).Scan(&owner))
+			staleFence, ownerFence := "stale", "current"
+			if evidence == "shared" {
+				staleFence, ownerFence = evidence, evidence
+			}
+			appendEvents(t, db, stale, queue.FenceInitialized{Token: staleFence})
+			appendEvents(t, db, owner, queue.FenceInitialized{Token: ownerFence})
+			// The stale variant logs last, as a lifecycle/access worker would.
+			appendEvents(t, db, stale, queue.LifecycleChanged{State: "active"})
+			got, _, err := db.CanonicalQueueWithFence(t.Context(), key, evidence)
+			if evidence == "current" {
+				must(t, err)
+				if got != owner {
+					t.Fatalf("selected stale fence history %d, want %d", got, owner)
+				}
+			} else {
+				if !errors.Is(err, ErrFenceOwnershipRequired) {
+					t.Fatalf("ambiguous fence accepted: id=%d err=%v", got, err)
+				}
+				var count int
+				must(t, db.pool.QueryRow(t.Context(), `SELECT count(*) FROM canonical_queues`).Scan(&count))
+				if count != 0 {
+					t.Fatal("failed fence observation cached a choice")
+				}
+			}
+		})
+	}
+}
+
+func TestCanonicalVariantSetChangeRetainsCachedOwner(t *testing.T) {
+	db := openTestStore(t, databaseURL(t))
+	key := QueueKey{Installation: "7", Repository: "Owner/Repo", BaseBranch: "main"}
+	owner, err := db.EnsureQueue(t.Context(), key)
+	must(t, err)
+	appendEvents(t, db, owner, queue.FenceInitialized{Token: "owner"})
+	var imported QueueID
+	must(t, db.pool.QueryRow(t.Context(), `INSERT INTO queues(installation,repository,base,lane) VALUES ('7','owner/repo','main','') RETURNING id`).Scan(&imported))
+	appendEvents(t, db, imported, queue.FenceInitialized{Token: "stale"}, queue.LifecycleChanged{State: "active"})
+	got, _, err := db.CanonicalQueue(t.Context(), key)
+	must(t, err)
+	if got != owner {
+		t.Fatalf("variant import flipped cached owner to %d", got)
+	}
+	// Import a third history with live state. Even fresh fence evidence must
+	// not flip the existing choice or bypass that history's admission/holds.
+	var competing QueueID
+	must(t, db.pool.QueryRow(t.Context(), `INSERT INTO queues(installation,repository,base,lane) VALUES ('7','OWNER/REPO','main','') RETURNING id`).Scan(&competing))
+	appendEvents(t, db, competing, queue.FenceInitialized{Token: "competing"}, queue.PRObserved{PR: 1, HeadSHA: "head", Eligible: true, Trusted: true}, queue.EnqueueRequested{PR: 1, At: time.Now()})
+	if _, _, err := db.CanonicalQueueWithFence(t.Context(), key, "competing"); err == nil {
+		t.Fatal("live imported history flipped cached choice")
+	}
+	var cached QueueID
+	must(t, db.pool.QueryRow(t.Context(), `SELECT queue_id FROM canonical_queues`).Scan(&cached))
+	if cached != owner {
+		t.Fatal("conflict overwrote cached owner")
 	}
 }

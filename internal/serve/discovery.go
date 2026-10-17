@@ -132,9 +132,13 @@ func (s *Server) refreshResult(err error) {
 		return
 	}
 	var rate interface{ RetryAfter() time.Time }
-	limited := errors.As(err, &rate)
-	pending := onlyValidationPending(err)
+	schedulingErr := discoverySchedulingError(err, false)
+	limited := errors.As(schedulingErr, &rate)
+	pending := schedulingErr == nil || onlyValidationPending(schedulingErr)
 	delay := min(5*time.Second, s.options.DiscoveryInterval)
+	if schedulingErr == nil {
+		delay = s.options.DiscoveryInterval
+	}
 	if limited {
 		delay = max(time.Millisecond, time.Until(rate.RetryAfter()))
 	} else if !pending {
@@ -145,10 +149,14 @@ func (s *Server) refreshResult(err error) {
 	if limited {
 		retryAt = rate.RetryAfter()
 	}
-	if s.discovery != nil && now.Add(s.options.DiscoveryInterval).Before(retryAt) {
-		retryAt = now.Add(s.options.DiscoveryInterval)
+	if !limited {
+		for _, until := range s.discoveryBackoffs {
+			if until.After(now) && until.Before(retryAt) {
+				retryAt = until
+			}
+		}
 	}
-	if pending {
+	if pending && !limited {
 		for _, w := range s.workers() {
 			w.mu.Lock()
 			if w.validationPending() && w.validationNext.After(now) && !now.Before(s.discoveryBackoffs[w.Key.Installation]) && w.validationNext.Before(retryAt) {
@@ -163,6 +171,36 @@ func (s *Server) refreshResult(err error) {
 	} else {
 		s.options.Logger.Warn("discovery failed; retaining previous observations", "error", err)
 	}
+}
+
+// Installation quota deadlines live in discoveryBackoffs, so they must not
+// become an App-wide retry barrier when joined with another installation's work.
+type installationDiscoveryError struct{ err error }
+
+func (e *installationDiscoveryError) Error() string { return e.err.Error() }
+func (e *installationDiscoveryError) Unwrap() error { return e.err }
+
+func discoverySchedulingError(err error, installation bool) error {
+	if err == nil {
+		return nil
+	}
+	if local, ok := err.(*installationDiscoveryError); ok {
+		return discoverySchedulingError(local.err, true)
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		var result error
+		for _, child := range joined.Unwrap() {
+			result = errors.Join(result, discoverySchedulingError(child, installation))
+		}
+		return result
+	}
+	if _, limited := err.(interface{ RetryAfter() time.Time }); installation && limited {
+		return nil
+	}
+	if wrapped := errors.Unwrap(err); wrapped != nil {
+		return discoverySchedulingError(wrapped, installation)
+	}
+	return err
 }
 
 func onlyValidationPending(err error) bool {
@@ -224,7 +262,9 @@ func (s *Server) discover(ctx context.Context) error {
 		}
 	}
 	for _, installation := range installations {
-		result = errors.Join(result, s.discoverInstallation(ctx, installation))
+		if err := s.discoverInstallation(ctx, installation); err != nil {
+			result = errors.Join(result, &installationDiscoveryError{err})
+		}
 	}
 
 	s.mu.Lock()

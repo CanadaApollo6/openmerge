@@ -31,6 +31,9 @@ func TestCaseVariantHistoriesSettleByPersistedID(t *testing.T) {
 			must(t, err)
 			err = conn.QueryRow(t.Context(), `INSERT INTO queues(installation,repository,base,lane) VALUES ('7','owner/repo','main','') RETURNING id`).Scan(&newer)
 			must(t, err)
+			// These are legacy histories from before canonical mappings existed.
+			_, err = conn.Exec(t.Context(), `DELETE FROM canonical_queues`)
+			must(t, err)
 			if !bothLive {
 				_, err = db.Append(t.Context(), older, []queue.Event{queue.FenceInitialized{Token: "stale-fence"}}, "")
 				must(t, err)

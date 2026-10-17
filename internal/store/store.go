@@ -62,11 +62,26 @@ func (s *Store) EnsureQueue(ctx context.Context, key QueueKey) (QueueID, error) 
 	return id, err
 }
 
+// ErrFenceOwnershipRequired leaves conflicting histories unselected until a
+// caller supplies an actual fence ref observation. Settlement is still allowed.
+var ErrFenceOwnershipRequired = errors.New("conflicting case-variant queue histories: unique fence ownership required; operator reconciliation required (docs/operating.md#case-variant-history-recovery)")
+
 // CanonicalQueue atomically finds or registers a partition, preserving the first
 // stored repository spelling, or a durably chosen historical variant. Conflicting
 // histories must settle before admission. Every registration takes the same lock, so
 // differently cased discoveries cannot split a queue's history or fence.
 func (s *Store) CanonicalQueue(ctx context.Context, key QueueKey) (QueueID, QueueKey, error) {
+	return s.canonicalQueue(ctx, key, "")
+}
+
+// CanonicalQueueWithFence reconciles uncached fenced histories against the SHA
+// read from the actual forge fence ref. Empty or ambiguous evidence fails closed.
+// An existing selection takes precedence; unrelated events never select a fence.
+func (s *Store) CanonicalQueueWithFence(ctx context.Context, key QueueKey, actualFence string) (QueueID, QueueKey, error) {
+	return s.canonicalQueue(ctx, key, actualFence)
+}
+
+func (s *Store) canonicalQueue(ctx context.Context, key QueueKey, actualFence string) (QueueID, QueueKey, error) {
 	if key.Installation == "" || key.Repository == "" || key.BaseBranch == "" {
 		return 0, key, errors.New("installation, repository and base branch are required")
 	}
@@ -118,31 +133,57 @@ func (s *Store) CanonicalQueue(ctx context.Context, key QueueKey) (QueueID, Queu
 			return errors.New("canonical queue is absent from its variant set")
 		}
 		chosen := matches[0]
-		live := 0
-		var latestFence int64
+		cached := false
+		for _, m := range matches {
+			if m.id == cachedID {
+				chosen, cached = m, true
+				break
+			}
+		}
+		live := make(map[QueueID]bool)
+		var fenced, owners []match
 		for _, m := range matches {
 			if len(matches) == 1 {
 				break
 			}
-			state, watermark, err := load(ctx, tx, m.id)
+			state, _, err := load(ctx, tx, m.id)
 			if err != nil {
 				return err
 			}
-			if state.Active != nil && state.Active.Phase == queue.Landing {
-				return fmt.Errorf("case-variant queue histories: landing settlement pending for queue %d", m.id)
+			if state.Active != nil && state.Active.Phase == queue.Landing && (!cached || m.id != cachedID) {
+				return fmt.Errorf("conflicting case-variant queue histories: landing settlement pending for queue %d", m.id)
 			}
 			protected := slices.ContainsFunc(state.Blocks(queue.Config{}), func(block queue.Block) bool {
 				return block.Source != queue.RepositoryAccess && block.Source != queue.ConfigSource && block.Source != "lifecycle"
 			})
 			if len(state.Entries) > 0 || state.Active != nil || protected {
-				live++
-				chosen = m
-			} else if live == 0 && state.Fence != "" && watermark >= latestFence {
-				chosen, latestFence = m, watermark
+				live[m.id] = true
+				if !cached {
+					chosen = m
+				}
+			}
+			if state.Fence != "" {
+				fenced = append(fenced, m)
+				if state.Fence == actualFence {
+					owners = append(owners, m)
+				}
 			}
 		}
-		if live > 1 {
-			return errors.New("conflicting case-variant queue histories have live state; operator reconciliation required (docs/operating.md#case-variant-history-recovery)")
+		if !cached {
+			switch {
+			case len(fenced) > 1:
+				if len(owners) != 1 {
+					return ErrFenceOwnershipRequired
+				}
+				chosen = owners[0]
+			case len(live) == 0 && len(fenced) == 1:
+				chosen = fenced[0]
+			}
+		}
+		for liveID := range live {
+			if liveID != chosen.id {
+				return errors.New("conflicting case-variant queue histories have live state; operator reconciliation required (docs/operating.md#case-variant-history-recovery)")
+			}
 		}
 		id, key.Repository = chosen.id, chosen.repository
 		_, err = tx.Exec(ctx, `INSERT INTO canonical_queues(installation,repository,base,lane,queue_id,variant_ids) VALUES ($1,lower($2),$3,$4,$5,$6)
