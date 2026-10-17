@@ -20,6 +20,7 @@ type Run struct {
 	WastedReason       string          `json:"wasted_reason,omitempty"`
 	Cancellation       string          `json:"cancellation,omitempty"`
 	CancellationDetail string          `json:"cancellation_detail,omitempty"`
+	producerKey        string
 	identityKey        string
 }
 
@@ -100,15 +101,32 @@ func runLedger(j store.Journal, sanitizer *diagnostic.Sanitizer) map[int][]Run {
 		b.runs = slices.DeleteFunc(b.runs, func(r Run) bool { return r.Identity == nil })
 		for _, run := range runs {
 			key := runKey(run)
+			producerKey := run.Source + "\x00" + run.Name
 			i := slices.IndexFunc(b.runs, func(r Run) bool { return r.Identity != nil && r.identityKey == runKey(run) })
 			run.Name = sanitizer.Sanitize(run.Name)
 			run.Source = sanitizer.Sanitize(run.Source)
 			run.URL = sanitizer.Sanitize(run.URL)
 			run.WorkflowRunURL = sanitizer.Sanitize(run.WorkflowRunURL)
 			run.RetryUnsupported = sanitizer.Sanitize(run.RetryUnsupported)
-			row := Run{BatchID: b.id, TestedSHA: b.sha, TestRef: b.ref, Identity: &run, Outcome: sanitizer.Sanitize(run.State), WastedReason: b.invalidation, identityKey: key}
+			row := Run{BatchID: b.id, TestedSHA: b.sha, TestRef: b.ref, Identity: &run, Outcome: sanitizer.Sanitize(run.State), WastedReason: b.invalidation, identityKey: key, producerKey: producerKey}
 			if row.Outcome == "" {
 				row.Outcome = "pending"
+			}
+			for j := range b.runs {
+				old := &b.runs[j]
+				if old.Identity == nil || old.producerKey != producerKey {
+					continue
+				}
+				previous := old.Identity
+				if previous.ID < run.ID || previous.ID == run.ID && max(previous.Attempt, 1) < max(run.Attempt, 1) {
+					if old.WastedReason == "" {
+						old.WastedReason = "rerun"
+					}
+				} else if run.ID < previous.ID || run.ID == previous.ID && max(run.Attempt, 1) < max(previous.Attempt, 1) {
+					if row.WastedReason == "" {
+						row.WastedReason = "rerun"
+					}
+				}
 			}
 			if i < 0 {
 				b.runs = append(b.runs, row)

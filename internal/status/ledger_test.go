@@ -240,3 +240,28 @@ func TestRunLedgerIncludesNonRequiredWorkflowsAlongsideRetrySubset(t *testing.T)
 		t.Fatalf("retry subset changed other workflow evidence: %+v", entry.RunLedger)
 	}
 }
+
+func TestRunLedgerMarksManualRerunsWithoutQueueRequest(t *testing.T) {
+	original := identified("b1", 1, 1, "success")
+	rerun := identified("b1", 2, 1, "success")
+	for _, lateOriginal := range []bool{false, true} {
+		events := ledgerChain()
+		if lateOriginal {
+			events = append(events, rerun, original)
+		} else {
+			events = append(events, original, rerun, original)
+		}
+		_, entry, _ := Project(journal(events...), 1, 1, nil)
+		if len(entry.RunLedger) != 2 {
+			t.Fatalf("missing manual rerun: %+v", entry.RunLedger)
+		}
+		for _, run := range entry.RunLedger {
+			if run.Identity.ID == 1 && run.WastedReason != "rerun" {
+				t.Fatal("superseded manual attempt has no waste reason")
+			}
+			if run.Identity.ID == 2 && run.WastedReason != "" {
+				t.Fatal("late original marked newer attempt wasted")
+			}
+		}
+	}
+}
