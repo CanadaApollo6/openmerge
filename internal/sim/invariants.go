@@ -136,6 +136,13 @@ func (s *simulation) checkInvariants() error {
 	if run.base != s.mainSHA || !slices.Equal(added, run.covered) {
 		return fmt.Errorf("main landing %s from %s differs from CI coverage based on %s", tip, s.mainSHA, run.base)
 	}
+	commit, err := s.forge.Commit(s.repo, tip)
+	if err != nil {
+		return err
+	}
+	if s.interactionFails(commit.PRs) {
+		return fmt.Errorf("main contains an interacting failure on %s", tip)
+	}
 	for _, sha := range added {
 		if attempt := s.abandoned[sha]; attempt != "" && s.cfg.MergeMethod != queue.FastForward {
 			return fmt.Errorf("abandoned attempt %s became main tip %s", attempt, sha)

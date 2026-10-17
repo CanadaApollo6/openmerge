@@ -108,10 +108,17 @@ func (f *faultForge) CheckRuns(ctx context.Context, repo forge.RepoRef, sha stri
 		f.sim.faults.Float64() < f.sim.cfg.Faults.CIRerunRate {
 		run.rerun, run.done = true, false
 		f.SetCheckRuns(repo, sha, []forge.CheckRun{{ID: 2, Name: "ci", State: forge.Pending}})
-		f.sim.result.CIRuns++
+		if f.sim.cfg.CI == nil {
+			f.sim.result.CIRuns++
+		}
 		f.sim.result.CIReruns++
 		f.sim.injectFault("checks/" + f.sim.state.Active.ID)
-		f.sim.schedule(f.sim.now.Add(f.sim.ciDuration()), ciComplete, 0, sha)
+		duration := f.sim.ciDuration()
+		if f.sim.cfg.CI == nil {
+			f.sim.schedule(f.sim.now.Add(duration), ciComplete, 0, sha)
+		} else {
+			f.sim.submitCI(sha, duration)
+		}
 	}
 	return f.Forge.CheckRuns(ctx, repo, sha)
 }

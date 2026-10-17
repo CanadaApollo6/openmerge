@@ -14,6 +14,9 @@ import (
 // PRs (at least one for a nonempty workload). Arrivals have uniform jitter in
 // ArrivalWindow; enqueue follows observation by one simulated second.
 type Config struct {
+	// CI enables Phase 2 workload capabilities. Nil preserves the legacy workload,
+	// random draws, timing, and JSON exactly.
+	CI              *CIConfig `json:",omitempty"`
 	PRs             int
 	Seed            uint64
 	ArrivalWindow   time.Duration
@@ -78,6 +81,7 @@ func DefaultConfig() Config {
 // Result contains aggregate outcomes. JSON durations are floating-point seconds.
 // Untrusted probes are extra PRs, counted separately from PRs and Broken.
 type Result struct {
+	CI                  *CIMetrics                  `json:"ci_workload,omitempty"`
 	Config              Config                      `json:"config"`
 	PRs                 int                         `json:"prs"`
 	Broken              int                         `json:"broken"`
@@ -110,6 +114,11 @@ type Result struct {
 }
 
 func (cfg Config) normalized() (Config, error) {
+	if cfg.CI != nil {
+		if err := cfg.CI.validate(); err != nil {
+			return cfg, err
+		}
+	}
 	if cfg.PRs < 0 || cfg.ArrivalWindow < 0 {
 		return cfg, fmt.Errorf("PR count and arrival window must be nonnegative")
 	}
@@ -207,7 +216,7 @@ func (r Result) MarshalJSON() ([]byte, error) {
 
 // MarshalJSON records every effective setting with durations in seconds.
 func (cfg Config) MarshalJSON() ([]byte, error) {
-	return json.Marshal(map[string]any{
+	values := map[string]any{
 		"prs": cfg.PRs, "seed": cfg.Seed, "arrival_window_seconds": cfg.ArrivalWindow.Seconds(),
 		"broken_rate": cfg.BrokenRate, "flake_rate": cfg.FlakeRate, "drop_webhook_rate": cfg.DropWebhookRate,
 		"repush_rate": cfg.RepushRate, "conflict_rate": cfg.ConflictRate,
@@ -220,5 +229,9 @@ func (cfg Config) MarshalJSON() ([]byte, error) {
 		"faults": map[string]any{"forge_error_rate": cfg.Faults.ForgeErrorRate, "methods": cfg.Faults.Methods, "fail_first": cfg.Faults.FailFirst,
 			"landing_crash_rate": cfg.Faults.LandingCrashRate, "delayed_push_rate": cfg.Faults.DelayedPushRate,
 			"duplicate_execution_rate": cfg.Faults.DuplicateExecutionRate, "ci_rerun_rate": cfg.Faults.CIRerunRate, "replay_delay_seconds": cfg.Faults.ReplayDelay.Seconds()},
-	})
+	}
+	if cfg.CI != nil {
+		values["ci_workload"] = cfg.CI
+	}
+	return json.Marshal(values)
 }
