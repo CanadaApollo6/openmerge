@@ -107,7 +107,7 @@ ADR 0006 lands in four PRs:
 
 ### Phase 2 — Throughput
 
-- Speculative chain of batches with a **Zuul-style AIMD window** (grows on landing, halves on confirmed failure), landing strictly in chain order through the existing fence; only the oldest unlanded batch is blamed ([ADR 0009](docs/adr/0009-speculative-batching.md)); `max_depth` defaults to 1 until the exit test, adopter profiles and two weeks of dogfooding justify more
+- Speculative chain of batches with a **Zuul-style AIMD window** (grows on landing, halves once per failed batch), landing strictly in chain order through the existing fence; only the oldest unlanded batch is blamed ([ADR 0009](docs/adr/0009-speculative-batching.md)); `max_depth` defaults to 1 until the adopter profiles pass and two weeks of dogfooding show a benefit, then 4
 - Opt-in dynamic batch sizing from observed failure rate (`batch.target_pass_rate`)
 - Bounded same-commit check retries before a failure counts (a prerequisite for speculation); optimistic failure resolution deferred
 - Optional CI cancellation capability (`actions: write` on GitHub) and a per-change CI run ledger
@@ -117,7 +117,7 @@ ADR 0006 lands in four PRs:
 - Read-only web dashboard: queue graph, batch history, why-is-my-PR-stuck explainer
 - **MCP server** exposing queue status, enqueue/dequeue, failure explanations
 
-**Exit:** at 2,000 simulated PRs/day with 30-minute CI, median time-to-merge stays under 2x CI duration, and CI runs per merged PR stays under 1.5. The pinned workload is 2% broken changes, 1% flaky runs, 200 runners, batch 8 and `max_depth: 12` (strict speculation is not expected to meet it at 5% broken, which is post-merge territory). Adopter profiles (20 PRs/day with 30-minute CI; 5 PRs/day with 3-hour CI) must keep p95 time to merge under 2x and 1.5x CI at `max_depth: 4`.
+**Exit:** the strict adopter profiles in [ADR 0009](docs/adr/0009-speculative-batching.md) pass in simulation (20 changes/day with 30-minute CI: p95 time to merge under 60 minutes; 5 changes/day with 3-hour CI: p95 under 4.5 hours; both under 1.5 CI runs per merged change), and the simulator publishes strict capacity across defect rates. The earlier 2,000 PRs/day target moves to Phase 2b, because strict capacity is bounded by failure resolution rather than depth.
 
 ### Phase 2b — Post-merge verification mode
 
