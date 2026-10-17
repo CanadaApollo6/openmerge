@@ -63,7 +63,9 @@ and one concrete base per repository. Other queue entries are logged as
 `queue not yet served`; globs do not create additional workers yet. The default
 branch's config governs even a release-base worker. A default-branch move or
 rename reloads policy; a base-only move updates queue state without reloading
-policy. Missing, ambiguous, invalid or unreadable default-branch config pauses
+policy. When the effective policy for a queue changes, a batch built under the
+old policy is rebuilt under the new one (shown in `why` as "rebuilt the active
+batch under the new policy"); a landing that has already started is settled first. Missing, ambiguous, invalid or unreadable default-branch config pauses
 the queue and retries, with no fallback to the base branch or PR head. A single
 queue with omitted `base` on default branch `main` resolves as before. Queue
 identity remains (installation, repository, concrete base, lane); YAML queue

@@ -355,6 +355,15 @@ func eventSummary(event queue.Event, before, after queue.State) string {
 		return fmt.Sprintf("Observed PR #%d; eligible=%t, trusted=%t", e.PR, e.Eligible, e.Trusted)
 	case queue.BaseMoved:
 		return "Observed base branch movement"
+	case queue.ConfigApplied:
+		commit := e.Commit
+		if len(commit) > 12 {
+			commit = commit[:12]
+		}
+		if before.Active != nil && (after.Active == nil || after.Active.ID != before.Active.ID) {
+			return fmt.Sprintf("Applied configuration from %s; rebuilt the active batch under the new policy", commit)
+		}
+		return fmt.Sprintf("Applied configuration from %s", commit)
 	case queue.EnqueueRequested:
 		return fmt.Sprintf("Requested admission for PR #%d", e.PR)
 	case queue.DequeueRequested:
