@@ -113,6 +113,29 @@ Example queue response:
 }
 ```
 
+Queues add `outside_pushes` after observing a base move that OpenMerge did not
+land. It contains the latest 20 observations, oldest first, independent of the
+PR explanation's event limit. Each includes `event_id`, `previous_sha`,
+`new_sha`, `at`, `ancestry_known`, `rewrite`, `history_known`, `commits`,
+`truncated`, and `verification_before_landing: "none"`. The initial base read
+establishes a baseline and is not an outside push. Outstanding landings settle
+through the existing fence before classification; an OpenMerge landing followed
+by an admin push records only the move from the landed commit to the admin tip.
+
+`rewrite: true` means the previous tip is not an ancestor of the new tip. When
+`ancestry_known` is false, `rewrite: false` is not proof of a fast-forward.
+`commits` lists commits reachable from the new tip but not the previous tip,
+including merged side histories, newest first in topological order. It holds at
+most 100 IDs; `truncated: true` means more exist. A rollback can have a known
+empty list. Unreadable or unavailable history sets `history_known: false` with
+an empty list. Neither the record nor status attributes the push to commit
+authors. Later verification must be separate evidence and cannot change the
+claim about verification before landing. The durable journal retains every
+observation; status and the snapshot projection retain only the bounded tail.
+`openmerge queue status` prints these observations, including rewrites, unknown
+history and truncation; `--json` preserves the additive API fields. This record
+does not add outside-push warnings or acknowledgement commands (ADR 0008).
+
 When bounded failed-check retries are enabled and active, `active_batch` also
 contains `check_retry`. It reports the original and current deadlines, request
 and dispatch state, generation, failed/observed check identities, and the

@@ -308,3 +308,11 @@ type Git interface {
 	// DeleteBranch deletes only expectedSHA; missing or changed refs are no-ops.
 	DeleteBranch(ctx context.Context, repo RepoRef, branch, expectedSHA string) error
 }
+
+// CommitHistoryReader optionally enumerates commits reachable from head but not
+// base, newest first in topological order. The result contains at most limit
+// entries; truncated means more exist. An unreadable/incomplete graph is an error.
+// This read-only capability does not attribute commits to a pusher.
+type CommitHistoryReader interface {
+	CommitsBetween(ctx context.Context, repo RepoRef, base, head string, limit int) (commits []string, truncated bool, err error)
+}

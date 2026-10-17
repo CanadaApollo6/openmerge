@@ -162,3 +162,22 @@ the chain, checks/retry generations and deadlines, pending groups, effects and
 fences. Store persistence still uses journal replay; enabling database retention
 or compaction is separate work. PR 5 must extend the codec with adaptive window
 state before snapshots can support that policy.
+
+### Post-deployment addition: observed outside pushes (2026-10-17)
+
+ADR 0007 Stage A adds wire-v1 `outside_push_recorded`, committed atomically
+with the unchanged `base_moved` event after outstanding landing settlement.
+It records both tips, ancestry knowledge and rewrite status, a bounded history
+(or explicit unknown), truncation, observation time and no OpenMerge verification
+before landing. The pure projection retains the latest 20 observations without
+advancing planner revisions; snapshot v2's optional `OutsidePushes` field is
+omitted for legacy states. Batch planning, landing and check observation retain
+their existing algorithms and encodings.
+
+Every queue starts writing this type when it observes an outside push, with no
+configuration opt-in. Older workers must be drained before upgrading. Once the
+new type has been recorded, rolling back to an older binary requires restoring
+a database backup from before that event; removing configuration or clearing the
+status tail does not make the journal readable by the old binary. Do not edit
+the event log. The new type has a golden fixture; all existing fixtures remain
+byte-identical.

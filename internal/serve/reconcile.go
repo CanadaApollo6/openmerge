@@ -67,8 +67,15 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 		}
 		return loadErr
 	}
-	if baseErr == nil && state.BaseSHA != tip {
-		if _, err := s.store.Append(ctx, w.id, []queue.Event{queue.BaseMoved{SHA: tip}}, ""); err != nil {
+	// cycle settles first. Configuration also runs inside start gates and in
+	// recovery helpers: defer base classification there until settlement completes.
+	if baseErr == nil && state.BaseSHA != tip && (state.Active == nil || state.Active.Phase != queue.Landing) {
+		var outside *queue.OutsidePushRecorded
+		if state.BaseSHA != "" {
+			observed := outsidePush(ctx, w.Git, w.repo(), state.BaseSHA, tip)
+			outside = &observed
+		}
+		if err := s.store.RecordBaseMove(ctx, w.id, state.BaseSHA, tip, outside); err != nil {
 			return err
 		}
 		// Conflict observations can change when this base moves even if the

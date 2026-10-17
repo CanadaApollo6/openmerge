@@ -46,6 +46,7 @@ const (
 
 // State is a replayable projection for one base branch. Its zero value is empty.
 type State struct {
+	outsidePushes []OutsidePushRecorded
 	Lifecycle     LifecycleChanged
 	BaseBranch    string
 	BaseSHA       string

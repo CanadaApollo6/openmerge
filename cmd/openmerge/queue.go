@@ -219,6 +219,24 @@ func printStatus(out io.Writer, response status.Response) error {
 		return err
 	}
 	for _, q := range queues {
+		for _, push := range q.OutsidePushes {
+			movement := "fast-forward"
+			if !push.AncestryKnown {
+				movement = "ancestry unknown"
+			} else if push.Rewrite {
+				movement = "rewrite"
+			}
+			history := "unknown"
+			if push.HistoryKnown {
+				history = "[" + strings.Join(push.Commits, ", ") + "]"
+				if push.Truncated {
+					history += " (truncated)"
+				}
+			}
+			if _, err := fmt.Fprintf(out, "%s %s outside push (event %d): %s -> %s; %s; commits %s; OpenMerge verification before landing: none\n", q.Repository, q.Base, push.EventID, push.PreviousSHA, push.NewSHA, movement, history); err != nil {
+				return err
+			}
+		}
 		if q.Window > 0 {
 			if _, err := fmt.Fprintf(out, "%s %s %s\n", q.Repository, q.Base, status.AdaptiveSummary(&q)); err != nil {
 				return err
