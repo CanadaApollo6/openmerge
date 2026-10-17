@@ -28,6 +28,7 @@ type Commit struct {
 }
 
 type repository struct {
+	defaultBranch string
 	refs          map[string]string
 	commits       map[string]Commit
 	prs           map[int]forge.PullRequest
@@ -111,6 +112,9 @@ func (f *Forge) Init(repo forge.RepoRef, base, fenceRef string) (baseSHA, fenceS
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	r := f.repo(repo)
+	if r.defaultBranch == "" {
+		r.defaultBranch = base
+	}
 	if r.refs[base] == "" {
 		r.refs[base] = r.commit(nil, nil, "initial base")
 	}

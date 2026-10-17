@@ -160,8 +160,8 @@ plus periodic reconciliation reduce traffic. See [polling costs and cache limits
 
 Build with `make build`, start local Postgres with `make db`, and install a
 GitHub App using the [driver setup guide](internal/forge/github/README.md#app-setup-and-troubleshooting).
-Commit a valid `.openmerge.yml` on the base branch and configure CI to run on
-pushes to `openmerge/queue/**`. This repository includes both; its required
+Commit a valid `.openmerge.yml` on the repository's default branch and configure
+CI to run on pushes to `openmerge/queue/**`. This repository includes both; its required
 batch check is `check`, with PR DCO sign-off required at admission.
 
 ```bash
@@ -185,7 +185,7 @@ to `main`, polling to `60s`, concurrency to four queues, and the git cache to
 `.openmerge-cache`. Use a separate cache for each process. Logs are structured
 JSON on stderr. Startup applies migrations and ensures each base's fence;
 SIGINT/SIGTERM cancels bounded I/O and releases claims before closing Postgres.
-Run one server per installation during this Phase 1 rollout. See the
+Run one server per installation during this rollout. See the
 [operating guide](docs/operating.md) for a systemd user unit, environment file,
 committer attribution, logs, upgrades, and GitHub's Closed badge after squash/rebase.
 
@@ -245,7 +245,7 @@ entry. Fork heads need an approval of that exact SHA from a current writer.
 ## Docker compose quickstart
 
 Complete the [App and ruleset setup](#setting-up-the-github-app), put
-`.openmerge.yml` on the base branch, and enable CI on `openmerge/queue/**` first.
+`.openmerge.yml` on the default branch, and enable CI on `openmerge/queue/**` first.
 Then configure and start the single binary plus its own Postgres:
 
 ```sh
@@ -283,8 +283,8 @@ non-root user, git and binary. It runs the Go suite with Postgres and fake/local
 forge fixtures; credentialed GitHub deployment is outside that CI coverage.
 The App ignores its own commands and replies once to unauthorized commands.
 The existing queue check shows blocked and paused reasons. Missing, ambiguous,
-or invalid base configuration pauses work, and a base move reloads it. CI
-producer ambiguity stays blocked until an unambiguous refresh succeeds.
+or invalid default-branch configuration pauses work, and a default-branch move
+reloads it. CI producer ambiguity stays blocked until an unambiguous refresh succeeds.
 `landing-not-on-base` pauses new work while fence resolution continues; restore
 the tested commit on the base before resuming after an external rollback.
 Pending closure work is retained while paused and runs after refresh resumes it.
@@ -307,6 +307,13 @@ Uncomputed mergeability is unknown and retried on polls. See the
 Phase 1 is complete, including the [version-1 JSON Schema](schema/openmerge.v1.json)
 and fast-forward mode. The Mergify importer is
 planned for Phase 5; the native grammar already accepts the core attribute names.
+
+Phase 2.1 PR 1 adds multiple named queues with optional branch/glob `base`
+selectors and repository-level `delete_head_branch`, under the default branch's
+policy. Serving still uses `--repos` and one `--base`; other queues are logged
+as `not yet served`. Multiple base workers, installation discovery and webhook
+health follow in PRs 2–4. See the [configuration reference](internal/config/README.md).
+
 Operators must grant the App protected-base bypass and exclusive, nondeletable `openmerge/fence/*`
 ownership as described in the [forge contract](docs/forge-driver-contract.md#the-fence).
 

@@ -106,7 +106,15 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 			return nil
 		}
 	}
-	x := executor.Executor{Driver: w.Driver, Git: w.Git, Repo: w.repo(), Base: w.Key.BaseBranch, DisableDeleteHeadBranch: s.options.DisableDeleteHeadBranch}
+	disableDeleteHeadBranch := s.options.DisableDeleteHeadBranch
+	if w.deleteHeadBranch != nil {
+		disableDeleteHeadBranch = !*w.deleteHeadBranch
+	}
+	if _, cleanup := claim.Action.(queue.DeleteHeadBranch); cleanup {
+		// The queue schedules cleanup only from the attempt's recorded policy.
+		disableDeleteHeadBranch = false
+	}
+	x := executor.Executor{Driver: w.Driver, Git: w.Git, Repo: w.repo(), Base: w.Key.BaseBranch, DisableDeleteHeadBranch: disableDeleteHeadBranch}
 	x.PreviousUnboundChecks = state.UnboundChecks()
 	x.ReferencesCheck = w.cfg.MergeWhen.ReferencesCheck
 	if dequeue, ok := claim.Action.(queue.Dequeue); ok {

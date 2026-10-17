@@ -275,3 +275,15 @@ func TestListenAndTokens(t *testing.T) {
 		t.Fatal("empty token file silently disabled auth")
 	}
 }
+
+func TestConfigAppliedSummaryExplainsRebuild(t *testing.T) {
+	active := queue.State{Active: &queue.Batch{ID: "b1"}}
+	idle := queue.State{}
+	event := queue.ConfigApplied{Commit: "0123456789abcdef0123", Digest: strings.Repeat("a", 64)}
+	if got := eventSummary(event, active, idle); !strings.Contains(got, "rebuilt the active batch") || !strings.Contains(got, "0123456789ab") || strings.Contains(got, "0123456789abc") {
+		t.Fatalf("rebuild not explained: %q", got)
+	}
+	if got := eventSummary(event, idle, idle); strings.Contains(got, "rebuilt") || !strings.Contains(got, "Applied configuration") {
+		t.Fatalf("unchanged batch misreported: %q", got)
+	}
+}

@@ -15,6 +15,18 @@ func Apply(s State, e Event) State {
 	s = cloneState(s)
 	s.revision++
 	switch e := e.(type) {
+	case ConfigApplied:
+		if e.Validate() != nil || e.Digest == s.ConfigDigest {
+			break
+		}
+		s.ConfigCommit, s.ConfigDigest = e.Commit, e.Digest
+		s.buildRetry = buildRetryState{}
+		// Entries retain admission order and age; old retry/bisection groups
+		// must not bypass the new policy's batch limits or formation delay.
+		s.pending = nil
+		if s.Active != nil && s.Active.Phase != Landing {
+			s.discardBatch()
+		}
 	case FenceInitialized:
 		if s.Fence == "" && e.Validate() == nil {
 			s.Fence = e.Token
@@ -98,7 +110,7 @@ func Apply(s State, e Event) State {
 				s.pending = s.pending[1:]
 			}
 			s.nextBatch++
-			s.Active = &Batch{ID: e.BatchID, BaseSHA: e.BaseSHA, PRs: slices.Clone(e.PRs), FromBisection: fromBisection,
+			s.Active = &Batch{ID: e.BatchID, BaseSHA: e.BaseSHA, ConfigDigest: s.ConfigDigest, PRs: slices.Clone(e.PRs), FromBisection: fromBisection,
 				TestRef: "openmerge/queue/" + s.BaseBranch + "/" + e.BatchID, Phase: Building}
 		}
 	case BatchFailed:
@@ -172,8 +184,13 @@ func Apply(s State, e Event) State {
 				}
 			}
 		}
+	case LandingCleanupPolicyRecorded:
+		if e.Validate() == nil && s.batchIn(e.BatchID, Landing) && s.Active.LandingAttempt.ID == e.AttemptID && !s.Active.LandingAttempt.cleanupPolicyRecorded {
+			s.Active.LandingAttempt.DeleteHeadBranch = e.DeleteHeadBranch
+			s.Active.LandingAttempt.cleanupPolicyRecorded = true
+		}
 	case HeadCleanupRequested:
-		if s.batchIn(e.BatchID, Landing) && (s.Active.TestedSHA == e.LandedSHA && s.Active.LandingAttempt.FastForwardHeadSHA == "" || s.Active.LandingAttempt.FastForwardHeadSHA == e.LandedSHA) {
+		if s.batchIn(e.BatchID, Landing) && s.Active.LandingAttempt.DeleteHeadBranch && (s.Active.TestedSHA == e.LandedSHA && s.Active.LandingAttempt.FastForwardHeadSHA == "" || s.Active.LandingAttempt.FastForwardHeadSHA == e.LandedSHA) {
 			s.Active.cleanupRequested = true
 		}
 	case Landed:
@@ -198,7 +215,11 @@ func Apply(s State, e Event) State {
 	case LandingAbandoned:
 		if s.batchIn(e.BatchID, Landing) {
 			s.Fence = e.NewFence
-			s.rebuildBatch()
+			if s.Active.ConfigDigest != s.ConfigDigest {
+				s.discardBatch()
+			} else {
+				s.rebuildBatch()
+			}
 		}
 	case Dequeued:
 		if entry := s.entry(e.PR); entry != nil && entry.AdmissionID == e.AdmissionID && !s.isLanding(e.PR) &&

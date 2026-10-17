@@ -2,7 +2,8 @@
 
 `config.Find(read)` checks the four paths from ADR 0003. The reader reports
 existence separately from read failures, so an empty file still counts toward
-ambiguity. Repository readers must fetch from the base branch. The validation
+ambiguity. Repository readers must fetch from the repository's default branch,
+pinning all four reads to its observed commit, as specified in ADR 0006. The validation
 CLI reads local files so authors can check edits before merging them.
 
 `config.Load(data)` returns `(Config, []Diagnostic, error)`. Errors are a
@@ -24,7 +25,56 @@ are supported.
 Warnings and errors go to stderr. Discovery errors list every found file or all
 four searched paths, without inventing a file/line location. `--help` prints usage.
 
-Version 1 requires exactly one named queue. Its `merge_when` is a conjunction
+Version 1 requires one or more queues with unique names. Each queue has an
+optional `base`: a branch name or a whole-path glob. Omitting it selects the
+repository's default branch. `*` and `?` stay within a slash-separated segment;
+`**` crosses slashes, and `**/` also matches zero segments. Backslash escapes
+the next character; other characters, including brackets, are literal. This is
+the same grammar as the condition `glob` operator. An explicit empty selector
+is invalid.
+
+```yaml
+version: 1
+delete_head_branch: false
+queues:
+  - name: default
+    merge_when: [check-success = ci]
+  - name: releases
+    base: release/*
+    merge_when: [check-success = release-ci]
+```
+
+Top-level `delete_head_branch` is an optional boolean. `true` enables eligible
+landed-head cleanup and `false` retains heads. Omission inherits the server's
+`--delete-head-branch` / `OPENMERGE_DELETE_HEAD_BRANCH` setting, whose default is
+true. A repository's explicit setting overrides that server default.
+
+`config.Load` validates the whole file, including queue-name uniqueness, without
+forge reads. `Config.ResolveBranch(branch, defaultBranch)` selects one queue for
+a concrete base and returns per-queue diagnostics if several selectors match.
+An overlap prevents those queues from serving the overlapping branch; resolving
+unaffected branches still succeeds. No match also pauses that base. The local
+validation CLI cannot detect branch-dependent overlaps, since it has neither
+the observed default branch nor a branch listing. Syntax, condition and duplicate
+name errors remain whole-file failures.
+
+During Phase 2.1 PR 1, `serve --repos ... --base ...` still selects repositories
+and one concrete base per repository. Other queue entries are logged as
+`queue not yet served`; globs do not create additional workers yet. The default
+branch's config governs even a release-base worker. A default-branch move or
+rename reloads policy; a base-only move updates queue state without reloading
+policy. When the effective policy for a queue changes, a batch built under the
+old policy is rebuilt under the new one (shown in `why` as "rebuilt the active
+batch under the new policy"); a landing that has already started is settled first. Missing, ambiguous, invalid or unreadable default-branch config pauses
+the queue and retries, with no fallback to the base branch or PR head. A single
+queue with omitted `base` on default branch `main` resolves as before. Queue
+identity remains (installation, repository, concrete base, lane); YAML queue
+names never enter that key.
+
+These are additive version-1 changes. Older binaries reject extra queues and
+the new keys; remove them before downgrading.
+
+Each queue's `merge_when` is a conjunction
 (the condition list, flattening nested `and` groups) with at least one positive
 `check-success = <non-empty name>` term directly in that conjunction. Checks
 under `or`/`not`, counts, exclusions, and patterns do not supply this requirement.
@@ -38,7 +88,7 @@ merge_when:
 
 Loading also evaluates the condition with missing checks and with failed checks;
 either passing result rejects the configuration. Invalid conditions report the
-queue name and an example fix. Phase 1 has no opt-out. Defaults are:
+queue name and an example fix. There is no opt-out. Defaults are:
 
 - `merge_method: squash` (also accepts `merge`, `rebase`, and `fast-forward`).
 - `check_timeout: 1h`; `0`, `"0"`, or `0s` disables it. Durations must be
@@ -185,9 +235,13 @@ validator. Required checks are expressed with recursive `contains` restricted
 to `and` groups. The loader additionally evaluates missing/failed-check rejection.
 Patterns document the atom syntax and Go duration spelling. JSON Schema cannot
 compile Go RE2/globs or enforce Go integer/duration range exactly. The test
-validator asserts `openmerge-condition` and `openmerge-duration` formats with
-the loader's atom parser and `time.ParseDuration`; editors may ignore these
-formats. Always run `openmerge config validate` for complete validation.
+validator asserts `openmerge-condition`, `openmerge-base` and
+`openmerge-duration` formats with the loader's atom/glob parsers and
+`time.ParseDuration`; editors may ignore these formats. JSON Schema also cannot
+require uniqueness of queue names across different array items: the loader
+enforces that rule. Concrete branch overlaps are checked separately by
+`ResolveBranch`, so they never invalidate an otherwise valid file or unrelated
+base. Always run `openmerge config validate` for complete file validation.
 
 YAML-only rules (one document, aliases/merges, duplicate keys, strict scalar tags,
 resource limits) run before schema validation. In particular, YAML `1.0` is a
@@ -224,5 +278,6 @@ a head containing merge commits outside the current base history is dequeued at
 build time with `merge-commits-not-allowed`. Remove those merge commits and queue
 the branch again. If the requirement is unknown, builds behave as before.
 
-Template substitution, importing, migration, and multi-queue execution remain
-outside the Phase 1 surface.
+Template substitution, importing and migration remain deferred. Multiple queue
+entries are supported; automatic expansion into multiple base workers follows
+in Phase 2.1 PR 2.

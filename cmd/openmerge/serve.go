@@ -63,7 +63,7 @@ func parseServe(args []string, output io.Writer) (serveOptions, error) {
 	flags.Int64Var(&o.installation, "github-installation-id", 0, "installation ID (OPENMERGE_GITHUB_INSTALLATION_ID)")
 	flags.DurationVar(&o.poll, "poll-interval", time.Minute, "reconcile interval (OPENMERGE_POLL_INTERVAL)")
 	flags.DurationVar(&o.rulesInterval, "rules-interval", 10*time.Minute, "repository rules validation interval (OPENMERGE_RULES_INTERVAL)")
-	flags.BoolVar(&o.deleteHeadBranch, "delete-head-branch", true, "delete eligible same-repository landed heads (OPENMERGE_DELETE_HEAD_BRANCH)")
+	flags.BoolVar(&o.deleteHeadBranch, "delete-head-branch", true, "default for deleting eligible landed heads; repository config overrides (OPENMERGE_DELETE_HEAD_BRANCH)")
 	flags.IntVar(&o.concurrency, "concurrency", 4, "concurrent queues (OPENMERGE_CONCURRENCY)")
 	if err := flags.Parse(args); err != nil {
 		return o, err

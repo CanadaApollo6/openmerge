@@ -22,6 +22,7 @@ func TestHeadCleanupRequiresConfirmedLandingAndCompletedClosure(t *testing.T) {
 			if hasCleanup(s) {
 				t.Fatal("cleanup before landing confirmation")
 			}
+			s = Apply(s, LandingCleanupPolicyRecorded{BatchID: "b1", AttemptID: "attempt", DeleteHeadBranch: true})
 			s = Apply(s, HeadCleanupRequested{BatchID: "b1", LandedSHA: "tested"})
 			if hasCleanup(s) {
 				t.Fatal("cleanup intent acted before Landed")
@@ -49,7 +50,7 @@ func TestHeadCleanupRequiresConfirmedLandingAndCompletedClosure(t *testing.T) {
 
 func TestHistoricalLandingsDoNotScheduleHeadCleanup(t *testing.T) {
 	for _, method := range []MergeMethod{Merge, Squash, Rebase} {
-		for _, intent := range []string{"absent", "wrong-batch", "wrong-sha", "before-landing"} {
+		for _, intent := range []string{"absent", "matching-without-policy", "wrong-batch", "wrong-sha", "before-landing"} {
 			t.Run(string(method)+"/"+intent, func(t *testing.T) {
 				s := State{BaseBranch: "main", BaseSHA: "base", Fence: "fence"}
 				// Replay the original wire events, including more than one landing.
@@ -67,6 +68,8 @@ func TestHistoricalLandingsDoNotScheduleHeadCleanup(t *testing.T) {
 					}
 					events = append(events, LandingStarted{BatchID: batch, AttemptID: "attempt-" + batch, FenceToken: s.Fence, At: epoch})
 					switch intent {
+					case "matching-without-policy":
+						events = append(events, HeadCleanupRequested{BatchID: batch, LandedSHA: "tested-" + batch})
 					case "wrong-batch":
 						events = append(events, HeadCleanupRequested{BatchID: "other", LandedSHA: "tested-" + batch})
 					case "wrong-sha":

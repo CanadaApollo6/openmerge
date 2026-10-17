@@ -346,6 +346,16 @@ func decodeBatchPRs(prs []wireBatchPR) []BatchPR {
 // EncodeEvent returns the stable type discriminator and versioned JSON.
 func EncodeEvent(value Event) (string, []byte, error) {
 	switch v := value.(type) {
+	case LandingCleanupPolicyRecorded:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("landing_cleanup_policy_recorded", wireLandingCleanupPolicyRecorded(v))
+	case ConfigApplied:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("config_applied", wireConfigApplied(v))
 	case FastForwardMergeCommitsBlocked:
 		if err := v.Validate(); err != nil {
 			return "", nil, err
@@ -473,6 +483,20 @@ func DecodeEvent(payload []byte) (Event, error) {
 		return nil, err
 	}
 	switch envelope.Type {
+	case "landing_cleanup_policy_recorded":
+		v, err := readWireData[wireLandingCleanupPolicyRecorded](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := LandingCleanupPolicyRecorded(v)
+		return event, event.Validate()
+	case "config_applied":
+		v, err := readWireData[wireConfigApplied](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := ConfigApplied(v)
+		return event, event.Validate()
 	case "fast_forward_merge_commits_blocked":
 		v, err := readWireData[wireFastForwardMergeCommitsBlocked](envelope.Data)
 		if err != nil {

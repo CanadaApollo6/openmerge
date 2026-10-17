@@ -1,5 +1,5 @@
 // Package config loads the version 1 repository configuration from ADR 0003.
-// Callers must read repository configuration from the base branch, never a PR head.
+// Callers must pin repository configuration to the default branch, never a PR head.
 package config
 
 import (
@@ -48,20 +48,25 @@ func Find(read func(path string) ([]byte, bool, error)) (path string, data []byt
 	}
 }
 
-// Config is a validated version 1 configuration. Phase 1 has exactly one queue.
+// Config is a validated version 1 repository configuration.
 type Config struct {
-	Version int     `yaml:"version"`
-	Queues  []Queue `yaml:"queues"`
+	Version          int     `yaml:"version"`
+	Queues           []Queue `yaml:"queues"`
+	DeleteHeadBranch *bool   `yaml:"delete_head_branch,omitempty"`
 }
 
 // Queue contains admission/merge conditions and serial planner settings.
 type Queue struct {
-	Name         string               `yaml:"name"`
-	EnterWhen    condition.Expression `yaml:"enter_when"`
-	MergeWhen    condition.Expression `yaml:"merge_when"`
-	MergeMethod  queue.MergeMethod    `yaml:"merge_method"`
-	CheckTimeout time.Duration        `yaml:"check_timeout"`
-	Batch        Batch                `yaml:"batch"`
+	Name              string               `yaml:"name"`
+	Base              string               `yaml:"base,omitempty"`
+	EnterWhen         condition.Expression `yaml:"enter_when"`
+	MergeWhen         condition.Expression `yaml:"merge_when"`
+	MergeMethod       queue.MergeMethod    `yaml:"merge_method"`
+	CheckTimeout      time.Duration        `yaml:"check_timeout"`
+	Batch             Batch                `yaml:"batch"`
+	baseLine          int
+	basePattern       *regexp.Regexp
+	basePatternSource string
 }
 
 // Batch controls serial batch formation.
@@ -116,7 +121,7 @@ func Load(data []byte) (Config, []Diagnostic, error) {
 	var doc yaml.Node
 	if err := decoder.Decode(&doc); err != nil {
 		if errors.Is(err, io.EOF) {
-			return Config{}, nil, Errors{{Line: 1, Message: "version: 1 and exactly one queue are required"}}
+			return Config{}, nil, Errors{{Line: 1, Message: "version: 1 and at least one queue are required"}}
 		}
 		return Config{}, nil, syntaxError(err)
 	}
@@ -141,17 +146,30 @@ func Load(data []byte) (Config, []Diagnostic, error) {
 		p.error(n, "version", "unsupported version %q; supported versions: 1", n.Value)
 	}
 	if n := fields["queues"]; n == nil {
-		p.error(root, "queues", "exactly one queue is required")
+		p.error(root, "queues", "at least one queue is required")
 	} else if n.Kind != yaml.SequenceNode {
-		p.error(n, "queues", "expected a list containing exactly one queue")
+		p.error(n, "queues", "expected a list containing at least one queue")
 	} else {
 		if len(n.Content) == 0 {
-			p.error(n, "queues", "exactly one queue is required")
-		} else if len(n.Content) > 1 {
-			p.error(n, "queues", "multiple queues arrive in a later release; Phase 1 supports exactly one queue")
+			p.error(n, "queues", "at least one queue is required")
 		}
+		names := make(map[string]int)
 		for i, item := range n.Content {
-			cfg.Queues = append(cfg.Queues, p.queue(item, fmt.Sprintf("queues[%d]", i)))
+			q := p.queue(item, fmt.Sprintf("queues[%d]", i))
+			if first, exists := names[q.Name]; exists && q.Name != "" {
+				p.error(item, fmt.Sprintf("queues[%d].name", i), "duplicate queue name %q (first defined at queues[%d])", q.Name, first)
+			} else {
+				names[q.Name] = i
+			}
+			cfg.Queues = append(cfg.Queues, q)
+		}
+	}
+	if n := fields["delete_head_branch"]; n != nil {
+		var enabled bool
+		if n.Kind != yaml.ScalarNode || n.ShortTag() != "!!bool" || n.Decode(&enabled) != nil {
+			p.error(n, "delete_head_branch", "expected a boolean")
+		} else {
+			cfg.DeleteHeadBranch = &enabled
 		}
 	}
 	sortDiagnostics(p.errors)
@@ -188,6 +206,7 @@ func (p *parser) error(n *yaml.Node, path, format string, args ...any) {
 func (p *parser) queue(n *yaml.Node, path string) Queue {
 	before := len(p.errors)
 	q := Queue{MergeMethod: queue.Squash, CheckTimeout: time.Hour, Batch: Batch{MaxSize: 1}}
+	q.baseLine = max(1, n.Line)
 	fields := p.fields(n, path, queueKeys...)
 	if name := fields["name"]; name == nil {
 		p.error(n, path+".name", "required")
@@ -195,6 +214,22 @@ func (p *parser) queue(n *yaml.Node, path string) Queue {
 		q.Name = p.text(name, path+".name")
 		if name.ShortTag() == "!!str" && strings.TrimSpace(q.Name) == "" {
 			p.error(name, path+".name", "must not be empty")
+		}
+	}
+	if n := fields["base"]; n != nil {
+		q.baseLine = max(1, n.Line)
+		q.Base = p.text(n, path+".base")
+		if n.ShortTag() == "!!str" {
+			if strings.TrimSpace(q.Base) == "" {
+				p.error(n, path+".base", "must not be empty")
+			} else {
+				var err error
+				q.basePattern, err = condition.CompileGlob(q.Base)
+				q.basePatternSource = q.Base
+				if err != nil {
+					p.error(n, path+".base", "invalid glob %q: %v", q.Base, err)
+				}
+			}
 		}
 	}
 	if n := fields["enter_when"]; n != nil {

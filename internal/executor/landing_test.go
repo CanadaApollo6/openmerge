@@ -26,9 +26,10 @@ func TestLand(t *testing.T) {
 		{name: "fence lease rejected", moveFence: true},
 		{name: "infrastructure error", forgeError: true},
 		{name: "in-flight emit failure", failEmitAt: 1},
-		{name: "cleanup intent emit failure", failEmitAt: 2},
-		{name: "landed emit failure", failEmitAt: 3},
-		{name: "rejected emit failure", moveBase: true, failEmitAt: 2},
+		{name: "cleanup policy emit failure", failEmitAt: 2},
+		{name: "cleanup intent emit failure", failEmitAt: 3},
+		{name: "landed emit failure", failEmitAt: 4},
+		{name: "rejected emit failure", moveBase: true, failEmitAt: 3},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := setup(t)
@@ -56,17 +57,26 @@ func TestLand(t *testing.T) {
 						t.Fatalf("git changed before durable LandingStarted, or wrong record: %+v", e)
 					}
 				}
+				if calls == 2 {
+					want := queue.LandingCleanupPolicyRecorded{BatchID: "batch", AttemptID: "attempt", DeleteHeadBranch: true}
+					if e != want || h.read(t, "main") != beforeBase || h.read(t, fenceRef) != beforeFence {
+						t.Fatalf("git changed before durable cleanup policy, or wrong record: %+v", e)
+					}
+				}
 				if calls == tc.failEmitAt {
 					return errLog
 				}
 				events = append(events, e)
 				return nil
 			})
-			wantCalls := 3
-			if tc.moveBase || tc.failEmitAt == 2 {
+			wantCalls := 4
+			if tc.moveBase || tc.failEmitAt == 3 {
+				wantCalls = 3
+			}
+			if tc.failEmitAt == 2 || tc.forgeError || tc.moveFence {
 				wantCalls = 2
 			}
-			if tc.failEmitAt == 1 || tc.forgeError || tc.moveFence {
+			if tc.failEmitAt == 1 {
 				wantCalls = 1
 			}
 			if calls != wantCalls {
@@ -89,7 +99,7 @@ func TestLand(t *testing.T) {
 			default:
 				must(t, err)
 			}
-			if tc.failEmitAt == 1 || tc.forgeError || tc.moveFence {
+			if tc.failEmitAt == 1 || tc.failEmitAt == 2 || tc.forgeError || tc.moveFence {
 				if h.read(t, "main") != beforeBase || h.read(t, fenceRef) != beforeFence {
 					t.Fatal("failed or rejected landing changed refs")
 				}
@@ -112,9 +122,12 @@ func TestLand(t *testing.T) {
 				if tc.moveBase || tc.moveFence {
 					result = queue.LandingAbandoned{BatchID: "batch", NewFence: h.read(t, fenceRef)}
 				}
-				want := []queue.Event{queue.LandingStarted{BatchID: "batch", AttemptID: "attempt", FenceToken: h.fence, At: epoch}, result}
+				want := []queue.Event{
+					queue.LandingStarted{BatchID: "batch", AttemptID: "attempt", FenceToken: h.fence, At: epoch},
+					queue.LandingCleanupPolicyRecorded{BatchID: "batch", AttemptID: "attempt", DeleteHeadBranch: true}, result,
+				}
 				if _, landed := result.(queue.Landed); landed {
-					want = []queue.Event{want[0], queue.HeadCleanupRequested{BatchID: "batch", LandedSHA: tested}, result}
+					want = []queue.Event{want[0], want[1], queue.HeadCleanupRequested{BatchID: "batch", LandedSHA: tested}, result}
 				}
 				if !reflect.DeepEqual(events, want) {
 					t.Fatalf("events = %#v, want %#v", events, want)
@@ -131,7 +144,10 @@ func TestRejectedLandReadFenceFailure(t *testing.T) {
 	h.f.FailNext("ReadFence", errIO)
 	var events []queue.Event
 	err := h.x.Execute(context.Background(), a, record(&events))
-	want := []queue.Event{queue.LandingStarted{BatchID: a.BatchID, AttemptID: "attempt", FenceToken: a.FenceToken, At: epoch}}
+	want := []queue.Event{
+		queue.LandingStarted{BatchID: a.BatchID, AttemptID: "attempt", FenceToken: a.FenceToken, At: epoch},
+		queue.LandingCleanupPolicyRecorded{BatchID: a.BatchID, AttemptID: "attempt", DeleteHeadBranch: true},
+	}
 	if !errors.Is(err, errIO) || !reflect.DeepEqual(events, want) || h.read(t, "main") != h.base || h.read(t, fenceRef) != h.fence {
 		t.Fatalf("failed fence read changed refs or lost the durable attempt: %v, %#v", err, events)
 	}

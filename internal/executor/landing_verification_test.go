@@ -102,7 +102,10 @@ func TestLandingVerification(t *testing.T) {
 					if _, ok := events[0].(queue.LandingStarted); !ok {
 						t.Fatalf("first event is %T", events[0])
 					}
-					results = events[1:]
+					if len(events) < 2 || events[1] != (queue.LandingCleanupPolicyRecorded{BatchID: "batch", AttemptID: "attempt", DeleteHeadBranch: true}) {
+						t.Fatal("missing pinned landing cleanup policy")
+					}
+					results = events[2:]
 				}
 				wantResults, wantCalls := 0, 0
 				if success {

@@ -119,6 +119,14 @@ func (s *Server) logEvent(ctx context.Context, w *worker, before, after queue.St
 		if before.Active != nil && after.Active == nil {
 			batchLog("abandoned", "base-moved", before.Active)
 		}
+	case queue.ConfigApplied:
+		// The first application at startup is not a change worth an INFO line.
+		if before.ConfigDigest != "" && before.ConfigDigest != e.Digest {
+			log("configuration changed", 0, "", after.BaseSHA, "", "commit", e.Commit, "digest", e.Digest)
+		}
+		if before.Active != nil && (after.Active == nil || after.Active.ID != before.Active.ID) {
+			batchLog("abandoned", "config-changed", before.Active)
+		}
 	case queue.LandingStarted:
 		if after.Active != nil && after.Active.LandingAttempt.ID == e.AttemptID {
 			batchLog("landing started", "", after.Active, "attempt", e.AttemptID)

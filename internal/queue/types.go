@@ -9,6 +9,9 @@ import (
 // Config controls a queue with one active batch. ResolveAfter is the wait before fencing and
 // reading an uncertain landing; it never makes the landing a failure.
 type Config struct {
+	// ConfigDigest must match the durable policy before starting new work.
+	// Empty preserves replay/planning for logs predating ConfigApplied.
+	ConfigDigest string
 	// BatchMaxSize defaults to 1; BatchMaxWait bounds formation of partial batches.
 	BatchMaxSize int
 	BatchMaxWait time.Duration
@@ -37,12 +40,14 @@ const (
 
 // State is a replayable projection for one base branch. Its zero value is empty.
 type State struct {
-	BaseBranch string
-	BaseSHA    string
-	Entries    []Entry
-	Active     *Batch
-	pending    []pendingGroup
-	Fence      string
+	BaseBranch   string
+	BaseSHA      string
+	ConfigCommit string
+	ConfigDigest string
+	Entries      []Entry
+	Active       *Batch
+	pending      []pendingGroup
+	Fence        string
 
 	nextBatch          uint64
 	nextAdmission      uint64
@@ -77,6 +82,7 @@ type Batch struct {
 	ID               string
 	PRs              []BatchPR
 	BaseSHA          string
+	ConfigDigest     string
 	TestRef          string
 	TestedSHA        string
 	Method           MergeMethod
@@ -116,6 +122,9 @@ type LandingAttempt struct {
 	StartedAt  time.Time
 	// FastForwardHeadSHA is captured from this attempt, independent of configuration.
 	FastForwardHeadSHA string
+	// DeleteHeadBranch is pinned before the push; legacy attempts retain heads.
+	DeleteHeadBranch      bool
+	cleanupPolicyRecorded bool
 }
 
 // DequeueReason values are a stable public contract for agents.
@@ -237,8 +246,8 @@ type LandingStarted struct {
 // Landed records the definitive base and fence after the atomic landing push.
 type Landed struct{ BatchID, NewBaseSHA, NewFence string }
 
-// HeadCleanupRequested opts a verified landing into head cleanup. The batch's
-// persisted PRs pin the original heads; historical Landed events alone do not.
+// HeadCleanupRequested confirms cleanup for a verified landing whose attempt
+// recorded an enabled policy. The batch's persisted PRs pin the original heads.
 type HeadCleanupRequested struct{ BatchID, LandedSHA string }
 
 func (HeadCleanupRequested) queueEvent() {}
