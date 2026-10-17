@@ -84,7 +84,8 @@ before reactivation and repeat protection checks. Every cycle settles in-flight
 landings before config/rules/PR reads; startup also recovers attempts excluded
 by current config, `--repos`, or `--base`. Credential/read failures keep attempts
 unsettled until fence resolution succeeds. Status exposes `active`, `dormant`,
-`retired`, `overlapping`, and `settling-only` workers.
+`retired`, and `overlapping` queues; startup recovery runs in memory and is not
+recorded as a separate state.
 
 These are additive version-1 changes. Older binaries reject extra queues and
 the new keys; remove them before downgrading.
