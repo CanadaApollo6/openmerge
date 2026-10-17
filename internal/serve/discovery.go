@@ -102,14 +102,7 @@ func NewDiscovery(ctx context.Context, db *store.Store, discovery Discovery, opt
 // NotifyDiscovery coalesces verified installation notifications into a complete
 // sweep and wakes affected workers. Partial payload lists never change access.
 func (s *Server) NotifyDiscovery(ctx context.Context, installation, repository, delivery string) error {
-	if err := s.Notify(ctx, installation, repository, delivery); err != nil {
-		return err
-	}
-	select {
-	case s.refresh <- struct{}{}:
-	default:
-	}
-	return nil
+	return s.notifyRefresh(ctx, installation, repository, delivery)
 }
 
 // Refresh serializes discovery with branch expansion. A failure preserves the

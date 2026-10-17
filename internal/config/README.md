@@ -296,5 +296,4 @@ the branch again. If the requirement is unknown, builds behave as before.
 
 Template substitution, importing and migration remain deferred. Multiple queue
 entries and automatic expansion into concrete base workers are supported.
-Installation discovery and webhook health/backstop scheduling follow in
-Phase 2.1 PRs 3 and 4.
+Installation discovery and webhook health/backstop scheduling are supported.

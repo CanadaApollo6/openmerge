@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -63,7 +64,7 @@ func TestManifestSetup(t *testing.T) {
 				if tt.webhook == "" && (manifest.Hook != nil || len(manifest.Events) != 0 || strings.Contains(string(match[1]), "hook_attributes")) {
 					t.Fatalf("polling manifest has a hook: %s", match[1])
 				}
-				if tt.webhook != "" && (manifest.Hook == nil || !manifest.Hook.Active || manifest.Hook.URL != tt.webhook || len(manifest.Events) != 7) {
+				if tt.webhook != "" && (manifest.Hook == nil || !manifest.Hook.Active || manifest.Hook.URL != tt.webhook || !slices.Equal(manifest.Events, []string{"pull_request", "pull_request_review", "check_run", "check_suite", "status", "push", "create", "delete", "issue_comment"})) {
 					t.Fatalf("webhook manifest = %+v", manifest)
 				}
 				wantAction := "https://github.com/settings/apps/new?state="

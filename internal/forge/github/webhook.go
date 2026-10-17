@@ -25,7 +25,7 @@ type WebhookError struct {
 func (e *WebhookError) Error() string { return "github webhook: " + e.Reason }
 
 // Event contains authenticated delivery metadata. The server persists DeliveryID
-// for deduplication before acting on Payload. On payload validation errors, an
+// for typed-payload deduplication before acting on it. On payload validation errors, an
 // authenticated envelope is still returned for observation/wake hints. No
 // permissions are inferred here.
 type Event struct {

@@ -89,3 +89,12 @@ func (s *Store) EventsAfter(ctx context.Context, q QueueID, after int64) ([]Even
 	}
 	return result, rows.Err()
 }
+
+// Watermark reads the latest committed event ID using events_queue_watermark,
+// without decoding or replaying the queue's history.
+func (s *Store) Watermark(ctx context.Context, q QueueID) (int64, error) {
+	var watermark int64
+	err := s.pool.QueryRow(ctx, `SELECT COALESCE((SELECT id FROM events
+		WHERE queue_id = $1 ORDER BY id DESC LIMIT 1), 0)`, q).Scan(&watermark)
+	return watermark, err
+}

@@ -155,6 +155,7 @@ func TestServeOptions(t *testing.T) {
 
 type notification struct {
 	calls                        int
+	ignoredCalls                 int
 	installation, repo, delivery string
 	err                          error
 }
@@ -163,6 +164,11 @@ func (n *notification) Notify(_ context.Context, installation, repo, delivery st
 	n.calls++
 	n.installation, n.repo, n.delivery = installation, repo, delivery
 	return n.err
+}
+
+func (n *notification) NotifyIgnored(ctx context.Context, installation, repo, delivery string) error {
+	n.ignoredCalls++
+	return n.Notify(ctx, installation, repo, delivery)
 }
 
 type branchNotification struct {
@@ -223,7 +229,7 @@ func TestWebhookOnlySchedulesReconciliation(t *testing.T) {
 	if got := request(signed).Code; got != http.StatusAccepted {
 		t.Fatalf("signed delivery=%d", got)
 	}
-	if receiver.calls != 1 || receiver.installation != "7" || receiver.repo != "owner/repo" || receiver.delivery != "delivery" {
+	if receiver.calls != 1 || receiver.ignoredCalls != 0 || receiver.installation != "7" || receiver.repo != "owner/repo" || receiver.delivery != "delivery" {
 		t.Fatalf("routing=%+v", receiver)
 	}
 	if got := request("sha256=bad").Code; got != http.StatusUnauthorized || receiver.calls != 1 {
@@ -348,7 +354,7 @@ func TestWebhookIgnoredDeliveriesAndUnsignedFlood(t *testing.T) {
 	if got := deliver("pull_request", "sha256="+hex.EncodeToString(mac.Sum(nil))); got != http.StatusBadRequest {
 		t.Fatalf("incomplete typed payload: %d", got)
 	}
-	if receiver.calls != 3 || receiver.installation != "7" || receiver.repo != "owner/repo" {
+	if receiver.calls != 3 || receiver.ignoredCalls != 3 || receiver.installation != "7" || receiver.repo != "owner/repo" {
 		t.Fatalf("ignored deliveries failed to record/wake their repository: %+v", receiver)
 	}
 }

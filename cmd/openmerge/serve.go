@@ -300,6 +300,7 @@ func serveCommitter(ctx context.Context, o serveOptions, logger *slog.Logger, dr
 
 type webhookReceiver interface {
 	Notify(context.Context, string, string, string) error
+	NotifyIgnored(context.Context, string, string, string) error
 }
 
 func webhookHandler(service webhookReceiver, secret []byte, logs ...*slog.Logger) http.Handler {
@@ -314,6 +315,8 @@ func webhookHandler(service webhookReceiver, secret []byte, logs ...*slog.Logger
 		if event.InstallationID > 0 {
 			notify := service.Notify
 			switch event.Payload.(type) {
+			case github.Ignored, nil:
+				notify = service.NotifyIgnored
 			case github.InstallationChanged:
 				if discovery, ok := service.(interface {
 					NotifyDiscovery(context.Context, string, string, string) error
@@ -326,6 +329,9 @@ func webhookHandler(service webhookReceiver, secret []byte, logs ...*slog.Logger
 				}); ok {
 					notify = branches.NotifyBranches
 				}
+			}
+			if err != nil {
+				notify = service.NotifyIgnored
 			}
 			if err := notify(r.Context(), strconv.FormatInt(event.InstallationID, 10), event.Repo.Path, event.DeliveryID); err != nil {
 				http.Error(w, "delivery persistence failed", http.StatusServiceUnavailable)

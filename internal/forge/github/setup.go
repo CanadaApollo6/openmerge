@@ -111,7 +111,7 @@ func setupApp(ctx context.Context, opts ManifestOptions, out io.Writer, api stri
 	var events []string
 	if opts.WebhookURL != "" {
 		hook = &manifestHook{URL: opts.WebhookURL, Active: true}
-		events = []string{"pull_request", "pull_request_review", "check_run", "check_suite", "status", "push", "issue_comment"}
+		events = []string{"pull_request", "pull_request_review", "check_run", "check_suite", "status", "push", "create", "delete", "issue_comment"}
 	}
 	manifest, err := json.Marshal(appManifest{
 		Name: name, URL: "https://github.com/CanadaApollo6/openmerge", RedirectURL: address + "/callback",

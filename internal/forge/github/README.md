@@ -112,7 +112,8 @@ actions and must not overlap retries with unresolved HTTP writes.
 ID, and an HMAC-SHA256 signature verified with `hmac.Equal`. It reads at most
 25 MiB plus one byte, rejecting oversized bodies before JSON parsing.
 `Event.Payload` is one of `PRChanged`, `ReviewChanged`, `ChecksChanged`,
-`BranchPushed`, `PRCommentCreated`, `InstallationChanged`, or `Ignored`.
+`BranchPushed`, `BranchChanged`, `PRCommentCreated`, `InstallationChanged`,
+or `Ignored`.
 Unknown event names and unsupported actions are acknowledged as `Ignored`.
 `check_suite` requested/rerequested/completed and `check_run` rerequested/completed
 all produce `ChecksChanged{SHA}`; reruns must trigger a complete check/suite refresh.
@@ -203,11 +204,13 @@ for the manifest flow, generated key, installation, webhooks and rulesets.
 
 Subscribe to **Pull requests** (`pull_request`), **Pull request reviews**
 (`pull_request_review`), **Check runs** (`check_run`), **Check suites**
-(`check_suite`), **Commit statuses** (`status`), **Pushes** (`push`), and
+(`check_suite`), **Commit statuses** (`status`), **Pushes** (`push`),
+**Branch/tag creation** (`create`), **Branch/tag deletion** (`delete`), and
 **Issue comments** (`issue_comment`). The parser also accepts `installation` and
-`installation_repositories`, which GitHub sends automatically to Apps. These nine
-event names are the supported set in `webhook.go`. Use the same webhook secret
-in App settings and the server. The server must durably dedupe delivery IDs.
+`installation_repositories`, which GitHub sends automatically to Apps. These
+eleven event names are the supported set in `webhook.go`. Use the same webhook secret
+in App settings and the server. The server durably deduplicates typed-payload
+delivery IDs; ignored payloads only wake workers in memory.
 
 Find the installation ID in your personal/organization **Settings → Applications
 → Installed GitHub Apps → Configure** URL: its last component is the numeric

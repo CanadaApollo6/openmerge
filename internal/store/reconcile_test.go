@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
@@ -8,6 +9,32 @@ import (
 
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 )
+
+func TestWatermarkTracksOnlyCommittedEventsForQueue(t *testing.T) {
+	s := newStore(t)
+	q := ensureQueue(t, s, "")
+	watermark, err := s.Watermark(t.Context(), q)
+	must(t, err)
+	if watermark != 0 {
+		t.Fatalf("empty watermark = %d", watermark)
+	}
+	appendEvents(t, s, q, queue.BaseMoved{SHA: "base"})
+	_, expected, err := s.Load(t.Context(), q)
+	must(t, err)
+	other := ensureQueue(t, s, "other")
+	appendEvents(t, s, other, queue.BaseMoved{SHA: "other"})
+	must(t, s.Notify(t.Context(), q, "delivery"))
+	watermark, err = s.Watermark(t.Context(), q)
+	must(t, err)
+	if watermark != expected {
+		t.Fatalf("watermark = %d, want %d", watermark, expected)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := s.Watermark(ctx, q); err == nil {
+		t.Fatal("watermark read failure hidden")
+	}
+}
 
 func TestPausedConsequentialClaimDefersUntilResume(t *testing.T) {
 	for _, superseded := range []bool{false, true} {

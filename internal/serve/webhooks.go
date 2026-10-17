@@ -39,14 +39,19 @@ func (s *Server) webhookHealthy(last, now time.Time) bool {
 	return s.options.WebhooksConfigured && !last.IsZero() && now.Before(last.Add(s.options.WebhookHealthWindow))
 }
 
-func (s *Server) pollDelay(installation string, state queue.State, now time.Time) time.Duration {
-	if batch := state.Active; batch != nil && (batch.Phase == queue.Testing || batch.Phase == queue.Landing || batch.LandingAttempt.ID != "") {
+func (s *Server) pollDelay(installation, repository string, state queue.State, now time.Time) time.Duration {
+	if needsActivePolling(state) {
 		return s.options.PollInterval
 	}
-	last, _ := s.webhooks.snapshot(installation, "")
-	if !s.webhookHealthy(last, now) {
+	last, repoLast := s.webhooks.snapshot(installation, repository)
+	if !s.webhookHealthy(last, now) || !s.webhookHealthy(repoLast, now) {
 		return s.options.PollInterval
 	}
 	// Revisit health at expiry even when the configured backstop is longer.
-	return min(s.options.BackstopInterval, last.Add(s.options.WebhookHealthWindow).Sub(now))
+	return min(s.options.BackstopInterval, last.Add(s.options.WebhookHealthWindow).Sub(now), repoLast.Add(s.options.WebhookHealthWindow).Sub(now))
+}
+
+func needsActivePolling(state queue.State) bool {
+	batch := state.Active
+	return batch != nil && (batch.Phase == queue.Testing || batch.Phase == queue.Landing || batch.LandingAttempt.ID != "")
 }

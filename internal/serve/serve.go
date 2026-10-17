@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/config"
@@ -63,6 +64,8 @@ type Server struct {
 	slots               chan struct{}
 	mu                  sync.RWMutex
 	refreshMu           sync.Mutex
+	notificationMu      sync.Mutex
+	refreshDeliveries   map[string]bool
 	registerMu          sync.Mutex
 	discovery           *Discovery
 	discoveryStatus     status.Discovery
@@ -108,6 +111,8 @@ type worker struct {
 	logChecks        string
 	rulesNextCheck   time.Time
 	rulesFailures    int
+
+	notificationPending atomic.Bool
 }
 
 // New bootstraps fences without replacing a previously recorded landing token.
@@ -183,7 +188,6 @@ func newServer(db *store.Store, options Options) (*Server, error) {
 // Notify durably deduplicates a webhook and wakes only matching targets. An empty
 // repository identifies installation-wide changes. Payloads never grant trust.
 func (s *Server) Notify(ctx context.Context, installation, repository, delivery string) error {
-	s.webhooks.observe(installation, repository, time.Now())
 	for _, w := range s.workers() {
 		if w.Key.Installation != installation || repository != "" && !strings.EqualFold(w.Key.Repository, repository) {
 			continue
@@ -200,15 +204,49 @@ func (s *Server) Notify(ctx context.Context, installation, repository, delivery 
 		default:
 		}
 	}
+	s.webhooks.observe(installation, repository, time.Now())
+	return nil
+}
+
+// NotifyIgnored observes authenticated unsupported/incomplete payloads and wakes
+// matching workers without adding durable delivery IDs or refresh hints.
+func (s *Server) NotifyIgnored(_ context.Context, installation, repository, _ string) error {
+	for _, w := range s.workers() {
+		if w.Key.Installation != installation || repository != "" && !strings.EqualFold(w.Key.Repository, repository) {
+			continue
+		}
+		w.notificationPending.Store(true)
+		select {
+		case w.wake <- struct{}{}:
+		default:
+		}
+	}
+	s.webhooks.observe(installation, repository, time.Now())
 	return nil
 }
 
 // NotifyBranches also requests a complete listing, including when the first
 // matching branch has no worker yet. CI/comment notifications only wake workers.
 func (s *Server) NotifyBranches(ctx context.Context, installation, repository, delivery string) error {
+	return s.notifyRefresh(ctx, installation, repository, delivery)
+}
+
+// Discovery dedupe is listener-local and independent of worker registration.
+// Startup already performs a full discovery sweep; queue hints remain durable.
+func (s *Server) notifyRefresh(ctx context.Context, installation, repository, delivery string) error {
+	s.notificationMu.Lock()
+	defer s.notificationMu.Unlock()
 	if err := s.Notify(ctx, installation, repository, delivery); err != nil {
 		return err
 	}
+	key := installation + "/" + delivery
+	if s.refreshDeliveries[key] {
+		return nil
+	}
+	if s.refreshDeliveries == nil {
+		s.refreshDeliveries = make(map[string]bool)
+	}
+	s.refreshDeliveries[key] = true
 	select {
 	case s.refresh <- struct{}{}:
 	default:
@@ -271,16 +309,11 @@ func (s *Server) loop(ctx context.Context, w *worker) {
 	delay := time.Duration(0)
 	failures := 0
 	var retryNotBefore time.Time
+	var activityWatermark int64
+	checkActivity := false
 	for {
-		timer := time.NewTimer(delay)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return
-		case <-timer.C:
-		case <-w.wake:
-			timer.Stop()
-		}
+		err := s.waitForCycle(ctx, w, delay, checkActivity, activityWatermark)
+		checkActivity = false
 		if ctx.Err() != nil {
 			return
 		}
@@ -288,13 +321,15 @@ func (s *Server) loop(ctx context.Context, w *worker) {
 			delay = time.Until(retryNotBefore)
 			continue
 		}
-		select {
-		case s.slots <- struct{}{}:
-		case <-ctx.Done():
-			return
+		if err == nil {
+			select {
+			case s.slots <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			err = s.cycle(ctx, w)
+			<-s.slots
 		}
-		err := s.cycle(ctx, w)
-		<-s.slots
 		if err == nil && w.recovery {
 			state, _, loadErr := s.store.Load(ctx, w.id)
 			if loadErr == nil && (state.Active == nil || state.Active.Phase != queue.Landing) {
@@ -316,9 +351,11 @@ func (s *Server) loop(ctx context.Context, w *worker) {
 		} else {
 			failures = 0
 			w.mu.Lock()
-			state, _, err := s.store.Load(ctx, w.id)
-			if err == nil {
-				delay = s.pollDelay(w.Key.Installation, state, time.Now())
+			state, watermark, loadErr := s.store.Load(ctx, w.id)
+			if loadErr == nil {
+				activityWatermark = watermark
+				checkActivity = true
+				delay = s.pollDelay(w.Key.Installation, w.Key.Repository, state, time.Now())
 				if at, ok := queue.NextWake(w.plannerConfig(s.options.PollInterval), state, time.Now()); ok {
 					delay = min(delay, max(time.Millisecond, time.Until(at)))
 				}
@@ -337,6 +374,48 @@ func (s *Server) loop(ctx context.Context, w *worker) {
 		if err != nil {
 			retryNotBefore = time.Now().Add(delay)
 		}
+	}
+}
+
+// While the forge backstop waits, inspect only the indexed event watermark at
+// poll_interval. Replay changed history to detect another process starting active
+// work. These reads never take an API slot or write durable state.
+func (s *Server) waitForCycle(ctx context.Context, w *worker, delay time.Duration, checkActivity bool, watermark int64) error {
+	deadline := time.Now().Add(delay)
+	for {
+		remaining := time.Until(deadline)
+		wait := remaining
+		if checkActivity {
+			wait = min(wait, s.options.PollInterval)
+		}
+		timer := time.NewTimer(max(0, wait))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-w.wake:
+			timer.Stop()
+			return nil
+		case <-timer.C:
+		}
+		if !checkActivity || !time.Now().Before(deadline) {
+			return nil
+		}
+		latest, err := s.store.Watermark(ctx, w.id)
+		if err != nil {
+			return err
+		}
+		if latest == watermark {
+			continue
+		}
+		state, latest, err := s.store.Load(ctx, w.id)
+		if err != nil {
+			return err
+		}
+		if needsActivePolling(state) {
+			return nil
+		}
+		watermark = latest
 	}
 }
 
@@ -436,6 +515,7 @@ func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
 	if err != nil {
 		return err
 	}
+	force = w.notificationPending.Swap(false) || force
 	if err := s.repositoryRules(ctx, w); err != nil {
 		return err
 	}

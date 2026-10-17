@@ -95,24 +95,45 @@ To enable webhooks:
    `status`, `push`, `create`, `delete`, and `issue_comment`. The `installation`
    and `installation_repositories` events arrive automatically. Check a GitHub
    delivery's response and `openmerge queue status --discovery` after restart.
+   Trigger a real repository event (for example, update a pull request) to verify
+   health: GitHub's `ping` has no installation and cannot mark it healthy.
 
 An installation is healthy for `--webhook-health-window` /
 `OPENMERGE_WEBHOOK_HEALTH_WINDOW` (default `30m`) after each verified delivery,
 including ignored event kinds/actions and redeliveries. The timestamps are
-process-local, never journal events: every restart starts unhealthy. Idle queues
-in a healthy installation poll at `--backstop-interval` /
-`OPENMERGE_BACKSTOP_INTERVAL` (default `10m`). At health expiry they resume the
+process-local, never journal events: every restart starts unhealthy. Each
+repository must also have received a verified delivery in this process within
+the health window before its idle queues can use the backstop. Until its first
+delivery, and after its own window expires, it keeps `poll_interval` even if
+other repositories keep the installation healthy. Eligible idle queues poll at
+`--backstop-interval` / `OPENMERGE_BACKSTOP_INTERVAL` (default `10m`). At health expiry they resume the
 normal `poll_interval`; a quiet installation therefore falls back to fast
-polling. Queues in testing or landing, or with an unsettled attempt, always keep
-`poll_interval`, whatever the health. Planner, validation and rules deadlines can
-wake workers sooner; webhook wakes do not bypass error or quota backoff.
+polling. For this purpose, idle includes building and queued-but-not-testing
+queues; planner deadlines still apply. Queues in testing or landing, or with an
+unsettled attempt, always keep `poll_interval`, whatever the health. Planner,
+validation and rules deadlines can
+wake workers sooner; webhook wakes do not bypass error or quota backoff. While
+waiting on the backstop, each worker checks the database event watermark every
+`poll_interval`. Only changed histories are replayed; testing, landing or an
+unsettled attempt started by another process triggers immediate reconciliation.
+These checks consume no forge API budget and never write durable state.
 
 Every attributable verified delivery records an installation and repository
 observation and wakes matching queues for a fresh read. Delivery IDs deduplicate
-durable refresh hints across restarts. Invalid signatures never update health,
-request discovery, wake queues or consume forge budget. They produce only a
+durable refresh hints for typed payloads across restarts. Ignored or incomplete
+payloads only set an in-memory wake/refresh hint and write no delivery rows.
+Discovery and branch refreshes also deduplicate delivery IDs for the listener
+lifetime, including deliveries before matching workers exist; startup already
+runs a full discovery sweep. Health is renewed only after any required delivery
+persistence succeeds. Invalid signatures never update health, request discovery,
+wake queues or consume forge budget. They produce only a
 fixed-cardinality rejection counter in logs, emitted at powers of two with no
 request data, so a flood cannot create one log entry per request.
+
+When rotating the secret, update both the App setting and the server secret,
+then restart the listener. During a mismatch, signature rejections appear in
+logs, health expires, and normal fast polling resumes; the restart also resets
+health. Trigger a real repository event after rotation to verify delivery.
 
 Status/API show each installation's health and last verified delivery time, and
 each repository's last-delivery age (`never` before a delivery this process).
