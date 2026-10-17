@@ -74,8 +74,9 @@ func (d *Driver) classicProtection(ctx context.Context, owner, repo, base string
 
 // permissionDenied reports a plain 403 or a generic 404, which GitHub returns
 // for branch protection when the installation lacks Administration read.
-// safeError already maps rate limits to their own type, so those stay
-// ordinary, retryable failures.
+// Rate limits must never match: the transport and safeError turn primary and
+// recognized secondary limits into RateLimitError, and go-github's
+// AbuseRateLimitError into a generic failure, so all stay retryable.
 func permissionDenied(err error) bool {
 	var response *APIError
 	return errors.As(err, &response) && (response.StatusCode == http.StatusForbidden || response.StatusCode == http.StatusNotFound)

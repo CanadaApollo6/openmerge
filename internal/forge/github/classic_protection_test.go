@@ -51,7 +51,7 @@ func TestClassicProtectionProblemsAndAppIdentity(t *testing.T) {
 }
 
 func TestClassicProtectionInstallationReadsAndUnreadableState(t *testing.T) {
-	for _, mode := range []string{"none", "blocked fence", "forbidden", "not found", "missing signatures", "signatures forbidden", "server error", "rate limit", "secondary rate limit", "mixed unavailable and server error"} {
+	for _, mode := range []string{"none", "blocked fence", "forbidden", "not found", "missing signatures", "signatures forbidden", "server error", "rate limit", "secondary rate limit", "secondary rate limit by documentation url", "mixed unavailable and server error"} {
 		t.Run(mode, func(t *testing.T) {
 			f := newAPI(t)
 			reads := 0
@@ -86,6 +86,12 @@ func TestClassicProtectionInstallationReadsAndUnreadableState(t *testing.T) {
 				case "secondary rate limit":
 					w.Header().Set("Retry-After", "60")
 					f.apiError(w, 403, "secondary rate limit")
+				case "secondary rate limit by documentation url":
+					// Only go-github's documentation_url check recognizes this one; it
+					// must stay a retryable failure, never permission-denied.
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(403)
+					_, _ = w.Write([]byte(`{"message":"You have exceeded a limit","documentation_url":"https://docs.github.com/rest/using-the-rest-api/rate-limits-for-the-rest-api#about-secondary-rate-limits"}`))
 				case "mixed unavailable and server error":
 					if strings.Contains(r.URL.Path, "openmerge/fence/") {
 						f.apiError(w, 500, "secret policy body")
@@ -108,7 +114,7 @@ func TestClassicProtectionInstallationReadsAndUnreadableState(t *testing.T) {
 			}
 			problems, err := f.driver.classicProtection(t.Context(), "acme", "project", "release/v1", forge.Merge)
 			unavailable := mode == "forbidden" || mode == "not found" || mode == "signatures forbidden"
-			if unavailable || mode == "server error" || mode == "rate limit" || mode == "secondary rate limit" || mode == "mixed unavailable and server error" {
+			if unavailable || mode == "server error" || mode == "rate limit" || mode == "secondary rate limit" || mode == "secondary rate limit by documentation url" || mode == "mixed unavailable and server error" {
 				if err == nil || errors.Is(err, forge.ErrRulesUnavailable) != unavailable || strings.Contains(err.Error(), "secret policy body") || len(problems) > 0 {
 					t.Fatalf("unreadable treated as absent or partial result exposed: %v %v", problems, err)
 				}
