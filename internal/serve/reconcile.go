@@ -85,31 +85,35 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 	return err
 }
 
-func (s *Server) loadConfiguration(ctx context.Context, w *worker, branch, tip string) error {
+func (s *Server) repositoryConfig(ctx context.Context, target Target, tip string) (config.Config, error) {
 	_, data, err := config.Find(func(path string) ([]byte, bool, error) {
-		data, err := w.Driver.ReadFile(ctx, w.repo(), tip, path)
+		data, err := target.Driver.ReadFile(ctx, forge.RepoRef{Path: target.Key.Repository}, tip, path)
 		if errors.Is(err, forge.ErrFileNotFound) {
 			return nil, false, nil
 		}
 		return data, err == nil, err
 	})
 	if err != nil {
-		return err
+		return config.Config{}, err
 	}
 	cfg, warnings, err := config.Load(data)
 	if err != nil {
-		return err
+		return config.Config{}, err
 	}
 	for _, warning := range warnings {
-		s.options.Logger.Warn("repository configuration", "repository", w.Key.Repository, "diagnostic", warning.Error())
+		s.options.Logger.Warn("repository configuration", "repository", target.Key.Repository, "diagnostic", warning.Error())
 	}
-	for _, q := range cfg.Queues {
-		if !q.MatchesBase(w.Key.BaseBranch, branch) {
-			selector := q.Base
-			if selector == "" {
-				selector = branch
-			}
-			s.options.Logger.Info("queue not yet served", "repository", w.Key.Repository, "queue", q.Name, "base", selector, "served_base", w.Key.BaseBranch)
+	return cfg, nil
+}
+
+func (s *Server) loadConfiguration(ctx context.Context, w *worker, branch, tip string) error {
+	cfg, err := s.repositoryConfig(ctx, w.Target, tip)
+	if err != nil {
+		return err
+	}
+	if w.managed && len(matchingQueues(cfg, w.Key.BaseBranch, branch)) == 0 {
+		if err := s.lifecycle(ctx, w, "retired", "Queue removed or base selector narrowed"); err != nil {
+			return err
 		}
 	}
 	selected, diagnostics := cfg.ResolveBranch(w.Key.BaseBranch, branch)
@@ -125,7 +129,17 @@ func (s *Server) loadConfiguration(ctx context.Context, w *worker, branch, tip s
 	if cfg.DeleteHeadBranch != nil {
 		deleteHeadBranch = *cfg.DeleteHeadBranch
 	}
-	w.configDigest = selected.Digest(deleteHeadBranch)
+	digest := selected.Digest(deleteHeadBranch)
+	if w.managed && digest != w.configDigest {
+		if err := s.lifecycle(ctx, w, "settling-only", "Validating changed configuration before admission"); err != nil {
+			return err
+		}
+		select {
+		case s.refresh <- struct{}{}:
+		default:
+		}
+	}
+	w.configDigest = digest
 	return nil
 }
 
@@ -133,6 +147,15 @@ func (s *Server) reconcile(ctx context.Context, w *worker, force bool) error {
 	oldDigest := w.configDigest
 	if err := s.configuration(ctx, w); err != nil {
 		return err
+	}
+	if w.managed {
+		state, _, err := s.store.Load(ctx, w.id)
+		if err != nil {
+			return err
+		}
+		if w.configError != nil || state.LifecycleState() != "active" {
+			return s.report(ctx, w)
+		}
 	}
 	force = force || oldDigest != w.configDigest
 	summaries, err := w.Driver.ListOpenPullRequests(ctx, w.repo(), w.Key.BaseBranch)

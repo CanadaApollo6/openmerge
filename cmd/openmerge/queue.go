@@ -27,7 +27,7 @@ func runQueue(args []string, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	api := flags.String("api", envDefault("OPENMERGE_API_URL", "http://127.0.0.1:8081"), "status API origin (OPENMERGE_API_URL)")
 	repo := flags.String("repo", "", "owner/name; omit to list all served queues")
-	base := flags.String("base", "main", "base branch")
+	base := flags.String("base", "main", "base branch; omit to list all repository queues (PR detail defaults to main)")
 	pr := flags.Int("pr", 0, "PR number; requires --repo")
 	asJSON := flags.Bool("json", false, "write the API response bytes unchanged")
 	tokenFile := flags.String("api-token-file", os.Getenv("OPENMERGE_API_TOKEN_FILE"), "bearer token file (or OPENMERGE_API_TOKEN)")
@@ -50,6 +50,7 @@ func runQueue(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stderr, "status accepts flags only; --pr must be positive; --pr/--base require --repo")
 		return 2
 	}
+	list := !baseSet && !prSet
 	path := "/v1/queues"
 	if *repo != "" {
 		parts := strings.Split(*repo, "/")
@@ -57,7 +58,10 @@ func runQueue(args []string, stdout, stderr io.Writer) int {
 			_, _ = fmt.Fprintln(stderr, "--repo requires owner/name")
 			return 2
 		}
-		path += "/" + url.PathEscape(parts[0]) + "/" + url.PathEscape(parts[1]) + "/" + url.PathEscape(*base)
+		path += "/" + url.PathEscape(parts[0]) + "/" + url.PathEscape(parts[1])
+		if !list {
+			path += "/" + url.PathEscape(*base)
+		}
 		if *pr > 0 {
 			path += "/prs/" + strconv.Itoa(*pr)
 		}
@@ -89,7 +93,7 @@ func runQueue(args []string, stdout, stderr io.Writer) int {
 	const maxResponse = 32 << 20
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxResponse+1))
 	var result status.Response
-	if err != nil || len(body) > maxResponse || json.Unmarshal(body, &result) != nil || result.Version != status.Version || *repo == "" && result.Queues == nil || *repo != "" && result.Queue == nil || *pr > 0 && (result.PR == nil || result.Why == nil) {
+	if err != nil || len(body) > maxResponse || json.Unmarshal(body, &result) != nil || result.Version != status.Version || list && result.Queues == nil || !list && result.Queue == nil || *pr > 0 && (result.PR == nil || result.Why == nil) {
 		_, _ = fmt.Fprintln(stderr, "invalid, oversized or unsupported status API response")
 		return 1
 	}
@@ -145,7 +149,7 @@ func envDefault(key, fallback string) string {
 
 func printStatus(out io.Writer, response status.Response) error {
 	table := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	if _, err := fmt.Fprintln(table, "REPO\tBASE\tPOS\tPR\tHEAD\tSTATUS\tREASON"); err != nil {
+	if _, err := fmt.Fprintln(table, "REPO\tBASE\tPOS\tPR\tHEAD\tSTATUS\tREASON\tSTATE"); err != nil {
 		return err
 	}
 	queues := response.Queues
@@ -153,6 +157,9 @@ func printStatus(out io.Writer, response status.Response) error {
 		queues = []status.Queue{*response.Queue}
 	}
 	for _, q := range queues {
+		if q.State == "" {
+			q.State = "active"
+		}
 		var reasons []string
 		for _, block := range q.Blocks {
 			reasons = append(reasons, block.Reason)
@@ -170,7 +177,7 @@ func printStatus(out io.Writer, response status.Response) error {
 			if q.Paused {
 				state = "paused"
 			}
-			if _, err := fmt.Fprintf(table, "%s\t%s\t-\t-\t-\t%s\t%s\n", q.Repository, q.Base, state, pauseReason); err != nil {
+			if _, err := fmt.Fprintf(table, "%s\t%s\t-\t-\t-\t%s\t%s\t%s\n", q.Repository, q.Base, state, pauseReason, q.State); err != nil {
 				return err
 			}
 		}
@@ -183,7 +190,7 @@ func printStatus(out io.Writer, response status.Response) error {
 			if entry.Position > 0 {
 				position = strconv.Itoa(entry.Position)
 			}
-			if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t#%d\t%s\t%s\t%s\n", q.Repository, q.Base, position, entry.PR, head, entry.Status, entry.Reason); err != nil {
+			if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t#%d\t%s\t%s\t%s\t%s\n", q.Repository, q.Base, position, entry.PR, head, entry.Status, entry.Reason, q.State); err != nil {
 				return err
 			}
 		}

@@ -32,8 +32,12 @@ type Target struct {
 
 // Options bounds API polling and concurrent queue execution.
 type Options struct {
-	PollInterval            time.Duration
-	RulesInterval           time.Duration
+	PollInterval      time.Duration
+	RulesInterval     time.Duration
+	DiscoveryInterval time.Duration
+	BaseAllowlist     []string
+	// RecoveryTarget supplies credentials for historical queues outside --repos.
+	RecoveryTarget          func(store.QueueKey) (Target, bool)
 	Concurrency             int
 	ActionTimeout           time.Duration
 	DisableDeleteHeadBranch bool
@@ -45,13 +49,20 @@ type Options struct {
 // Server owns one serial reconciler/worker per target, with bounded concurrency.
 // Each process must have its own git cache directory.
 type Server struct {
-	store   *store.Store
-	options Options
-	queues  []*worker
-	slots   chan struct{}
+	store        *store.Store
+	options      Options
+	queues       []*worker
+	slots        chan struct{}
+	mu           sync.RWMutex
+	refreshMu    sync.Mutex
+	repositories []Repository
+	refresh      chan struct{}
 }
 
 type worker struct {
+	mu       sync.Mutex
+	managed  bool
+	recovery bool
 	Target
 	id               store.QueueID
 	wake             chan struct{}
@@ -78,25 +89,10 @@ func New(ctx context.Context, db *store.Store, targets []Target, options Options
 	if len(targets) == 0 {
 		return nil, errors.New("at least one repository is required")
 	}
-	if options.PollInterval == 0 {
-		options.PollInterval = time.Minute
+	s, err := newServer(db, options)
+	if err != nil {
+		return nil, err
 	}
-	if options.Concurrency == 0 {
-		options.Concurrency = 4
-	}
-	if options.RulesInterval == 0 {
-		options.RulesInterval = 10 * time.Minute
-	}
-	if options.ActionTimeout == 0 {
-		options.ActionTimeout = 2 * time.Minute
-	}
-	if options.PollInterval < 0 || options.RulesInterval < 0 || options.Concurrency < 1 || options.ActionTimeout < 0 {
-		return nil, errors.New("poll interval, concurrency and action timeout must be positive")
-	}
-	if options.Logger == nil {
-		options.Logger = slog.Default()
-	}
-	s := &Server{store: db, options: options, slots: make(chan struct{}, options.Concurrency)}
 	seen := make(map[store.QueueID]bool)
 	for _, target := range targets {
 		if target.Driver == nil || target.Git == nil || target.BotLogin == "" {
@@ -126,10 +122,35 @@ func New(ctx context.Context, db *store.Store, targets []Target, options Options
 	return s, nil
 }
 
+func newServer(db *store.Store, options Options) (*Server, error) {
+	if options.PollInterval == 0 {
+		options.PollInterval = time.Minute
+	}
+	if options.Concurrency == 0 {
+		options.Concurrency = 4
+	}
+	if options.DiscoveryInterval == 0 {
+		options.DiscoveryInterval = 10 * time.Minute
+	}
+	if options.RulesInterval == 0 {
+		options.RulesInterval = 10 * time.Minute
+	}
+	if options.ActionTimeout == 0 {
+		options.ActionTimeout = 2 * time.Minute
+	}
+	if options.DiscoveryInterval < 0 || options.PollInterval < 0 || options.RulesInterval < 0 || options.Concurrency < 1 || options.ActionTimeout < 0 {
+		return nil, errors.New("poll interval, concurrency and action timeout must be positive")
+	}
+	if options.Logger == nil {
+		options.Logger = slog.Default()
+	}
+	return &Server{store: db, options: options, slots: make(chan struct{}, options.Concurrency), refresh: make(chan struct{}, 1)}, nil
+}
+
 // Notify durably deduplicates a webhook and wakes only matching targets. An empty
 // repository identifies installation-wide changes. Payloads never grant trust.
 func (s *Server) Notify(ctx context.Context, installation, repository, delivery string) error {
-	for _, w := range s.queues {
+	for _, w := range s.workers() {
 		if w.Key.Installation != installation || repository != "" && w.Key.Repository != repository {
 			continue
 		}
@@ -144,15 +165,54 @@ func (s *Server) Notify(ctx context.Context, installation, repository, delivery 
 	return nil
 }
 
+// NotifyBranches also requests a complete listing, including when the first
+// matching branch has no worker yet. CI/comment notifications only wake workers.
+func (s *Server) NotifyBranches(ctx context.Context, installation, repository, delivery string) error {
+	if err := s.Notify(ctx, installation, repository, delivery); err != nil {
+		return err
+	}
+	select {
+	case s.refresh <- struct{}{}:
+	default:
+	}
+	return nil
+}
+
 // Run stops intake on cancellation, cancels bounded I/O, and waits for claims to
 // be released. Durable landing attempts remain resolvable after restart.
 func (s *Server) Run(ctx context.Context) error {
 	var wg sync.WaitGroup
-	for _, w := range s.queues {
-		wg.Go(func() { s.loop(ctx, w) })
+	started := make(map[store.QueueID]bool)
+	start := func() {
+		for _, w := range s.workers() {
+			if !started[w.id] {
+				started[w.id] = true
+				wg.Go(func() { s.loop(ctx, w) })
+			}
+		}
 	}
-	wg.Wait()
-	return nil
+	start()
+	ticker := time.NewTicker(s.options.DiscoveryInterval)
+	defer ticker.Stop()
+	defer wg.Wait()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		case <-s.refresh:
+		}
+		if err := s.RefreshBranches(ctx); err != nil {
+			s.options.Logger.Error("branch refresh failed", "error", err)
+		}
+		start()
+	}
+}
+
+func (s *Server) workers() []*worker {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return append([]*worker(nil), s.queues...)
 }
 
 func (s *Server) loop(ctx context.Context, w *worker) {
@@ -185,6 +245,12 @@ func (s *Server) loop(ctx context.Context, w *worker) {
 		}
 		err := s.cycle(ctx, w)
 		<-s.slots
+		if err == nil && w.recovery {
+			state, _, loadErr := s.store.Load(ctx, w.id)
+			if loadErr == nil && (state.Active == nil || state.Active.Phase != queue.Landing) {
+				return
+			}
+		}
 		if ctx.Err() != nil {
 			return
 		}
@@ -199,16 +265,20 @@ func (s *Server) loop(ctx context.Context, w *worker) {
 			s.options.Logger.Error("queue cycle failed", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "error", err, "retry_in", delay)
 		} else {
 			failures = 0
+			w.mu.Lock()
 			state, _, err := s.store.Load(ctx, w.id)
 			if err == nil {
 				if at, ok := queue.NextWake(w.plannerConfig(s.options.PollInterval), state, time.Now()); ok {
 					delay = min(delay, max(time.Millisecond, time.Until(at)))
 				}
 			}
+			w.mu.Unlock()
 		}
-		if !w.rulesNextCheck.IsZero() {
+		w.mu.Lock()
+		if w.rulesNextCheck.After(time.Now()) {
 			delay = min(delay, max(time.Millisecond, time.Until(w.rulesNextCheck)))
 		}
+		w.mu.Unlock()
 	}
 }
 
@@ -237,11 +307,29 @@ func (w *worker) plannerConfig(interval time.Duration) queue.Config {
 }
 
 func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
 	s.options.Logger.Debug("reconcile cycle started", "repository", w.Key.Repository, "base", w.Key.BaseBranch)
 	defer func() {
 		s.logCommitted(ctx, w)
 		s.options.Logger.Debug("reconcile cycle finished", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "error", result)
 	}()
+	unsettled, err := s.settle(ctx, w)
+	if err != nil || unsettled {
+		return err
+	}
+	if w.managed {
+		state, _, err := s.store.Load(ctx, w.id)
+		if err != nil {
+			return err
+		}
+		if w.recovery {
+			return s.lifecycle(ctx, w, "retired", "Recovered landing settled; queue excluded by repository allowlist")
+		}
+		if state.LifecycleState() != "active" {
+			return nil
+		}
+	}
 	force, err := s.store.TakeNotification(ctx, w.id)
 	if err != nil {
 		return err

@@ -182,7 +182,7 @@ type actionPoisonState struct {
 }
 
 func (s State) workBlocked() bool {
-	return s.pause.Reason != "" || s.actionPoison.key != "" || s.hasRulesProblems()
+	return s.lifecycleBlocked() || s.pause.Reason != "" || s.actionPoison.key != "" || s.hasRulesProblems()
 }
 
 // Block describes one active reason that prevents new work.
@@ -191,6 +191,9 @@ type Block struct{ Reason, Detail string }
 // Blocks returns all active reasons, with the primary pause first.
 func (s State) Blocks(cfg Config) []Block {
 	blocks := make([]Block, 0, 4)
+	if s.lifecycleBlocked() {
+		blocks = append(blocks, Block{s.LifecycleState(), s.Lifecycle.Detail})
+	}
 	if s.pause.Reason != "" {
 		blocks = append(blocks, Block{s.pause.Reason, s.pause.Detail})
 	}
@@ -212,6 +215,9 @@ func (s State) Blocks(cfg Config) []Block {
 // generic pause, poison or build failure. Apply has no config, so Plan evaluates
 // the build failure limit.
 func (s State) PauseReason(cfg Config) string {
+	if s.lifecycleBlocked() {
+		return s.LifecycleState()
+	}
 	if s.pause.Reason != "" {
 		return s.pause.Reason
 	}
@@ -236,6 +242,9 @@ func (s State) buildLimitReached(cfg Config) bool {
 }
 
 func (s State) pauseReport() ReportStatus {
+	if s.lifecycleBlocked() {
+		return ReportStatus{PR: s.Entries[0].PR, HeadSHA: s.Entries[0].HeadSHA, Status: "paused", Reason: s.LifecycleState(), Detail: s.Lifecycle.Detail, revision: s.lifecycleRevision, admission: s.Entries[0].AdmissionID}
+	}
 	if s.pause.Reason != "" {
 		return ReportStatus{PR: s.Entries[0].PR, HeadSHA: s.Entries[0].HeadSHA, Status: "paused", Reason: s.pause.Reason, Detail: s.pause.Detail, revision: s.pauseRevision, admission: s.Entries[0].AdmissionID}
 	}

@@ -141,7 +141,7 @@ func TestBlockedPRAndEmptyStableJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"installation":"7","repo":"owner/repo","base":"main","lane":"","watermark":0,"base_sha":"","paused":false,"pause_reason":"","pause_detail":"","blocks":[],"active_batch":null,"entries":[]}`
+	want := `{"state":"active","installation":"7","repo":"owner/repo","base":"main","lane":"","watermark":0,"base_sha":"","paused":false,"pause_reason":"","pause_detail":"","blocks":[],"active_batch":null,"entries":[]}`
 	if string(data) != want {
 		t.Fatalf("schema drift: %s", data)
 	}

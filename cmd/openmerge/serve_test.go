@@ -195,3 +195,22 @@ func TestWebhookOnlySchedulesReconciliation(t *testing.T) {
 		t.Fatalf("unpersisted delivery acknowledged: %d", got)
 	}
 }
+
+func TestServeBaseIsOptionalAllowlistAndDiscoveryInterval(t *testing.T) {
+	for name, value := range map[string]string{"DATABASE_URL": "postgres://local/test", "GITHUB_APP_ID": "42", "GITHUB_INSTALLATION_ID": "7", "GITHUB_PRIVATE_KEY": "key.pem", "REPOS": "owner/repo", "BASE": "", "DISCOVERY_INTERVAL": "2m"} {
+		t.Setenv("OPENMERGE_"+name, value)
+	}
+	options, err := parseServe(nil, io.Discard)
+	if err != nil || options.base != "" || options.discoveryInterval != 2*time.Minute {
+		t.Fatalf("options=%+v error=%v", options, err)
+	}
+	options, err = parseServe([]string{"--base=main,release/*", "--discovery-interval=30s"}, io.Discard)
+	if err != nil || options.base != "main,release/*" || options.discoveryInterval != 30*time.Second {
+		t.Fatalf("options=%+v error=%v", options, err)
+	}
+	for _, args := range [][]string{{"--base=main,"}, {"--base=release/\\"}, {"--discovery-interval=0"}} {
+		if _, err := parseServe(args, io.Discard); err == nil {
+			t.Fatalf("accepted %v", args)
+		}
+	}
+}

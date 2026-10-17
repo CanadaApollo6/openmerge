@@ -27,6 +27,7 @@ type Response struct {
 
 // Queue describes one served installation/repository/base/lane partition.
 type Queue struct {
+	State        string        `json:"state"`
 	Installation string        `json:"installation"`
 	Repository   string        `json:"repo"`
 	Base         string        `json:"base"`
@@ -185,7 +186,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 		e.HeadSHA = head
 		known[n] = e
 	}
-	q := Queue{Installation: j.Key.Installation, Repository: j.Key.Repository, Base: j.Key.BaseBranch, Lane: j.Key.Lane,
+	q := Queue{State: s.LifecycleState(), Installation: j.Key.Installation, Repository: j.Key.Repository, Base: j.Key.BaseBranch, Lane: j.Key.Lane,
 		Watermark: watermark, BaseSHA: s.BaseSHA, PauseReason: sanitizer.Sanitize(s.PauseReason(queue.Config{})), PauseDetail: sanitizer.Sanitize(s.PauseDetail(queue.Config{})), Blocks: make([]Block, 0), Entries: make([]Entry, 0, len(s.Entries))}
 	for _, block := range s.Blocks(queue.Config{}) {
 		q.Blocks = append(q.Blocks, Block{sanitizer.Sanitize(block.Reason), sanitizer.Sanitize(block.Detail)})
@@ -353,6 +354,8 @@ func eventSummary(event queue.Event, before, after queue.State) string {
 	switch e := event.(type) {
 	case queue.PRObserved:
 		return fmt.Sprintf("Observed PR #%d; eligible=%t, trusted=%t", e.PR, e.Eligible, e.Trusted)
+	case queue.LifecycleChanged:
+		return "Queue lifecycle: " + e.State + ": " + e.Detail
 	case queue.BaseMoved:
 		return "Observed base branch movement"
 	case queue.ConfigApplied:

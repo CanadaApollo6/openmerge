@@ -204,3 +204,24 @@ func TestStatusTableInactivePositionAndPendingRange(t *testing.T) {
 		})
 	}
 }
+
+func TestQueueStatusRepositoryListsEveryBase(t *testing.T) {
+	t.Setenv("OPENMERGE_API_TOKEN", "")
+	t.Setenv("OPENMERGE_API_TOKEN_FILE", "")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/queues/owner/repo" {
+			t.Errorf("requested %s", r.URL.Path)
+		}
+		_, _ = io.WriteString(w, `{"version":1,"queues":[{"repo":"owner/repo","base":"main","state":"active","entries":[]},{"repo":"owner/repo","base":"release/v1","state":"dormant","entries":[]}]}`)
+	}))
+	defer server.Close()
+	var out, stderr bytes.Buffer
+	if code := runQueue([]string{"status", "--api", server.URL, "--repo", "owner/repo"}, &out, &stderr); code != 0 {
+		t.Fatalf("code=%d: %s", code, &stderr)
+	}
+	for _, text := range []string{"main", "release/v1", "active", "dormant", "STATE"} {
+		if !strings.Contains(out.String(), text) {
+			t.Fatalf("missing %s: %s", text, &out)
+		}
+	}
+}

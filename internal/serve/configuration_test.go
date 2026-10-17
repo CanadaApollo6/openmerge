@@ -133,8 +133,8 @@ func TestReleaseBaseUsesDefaultBranchAuthorityAndReloads(t *testing.T) {
 			t.Fatalf("release configuration used a non-authoritative commit: %v", d.refs)
 		}
 	}
-	if !strings.Contains(output.String(), `"msg":"queue not yet served"`) || !strings.Contains(output.String(), `"queue":"default","base":"main"`) || len(s.queues) != 1 {
-		t.Fatalf("other bases were not logged/excluded: %s", &output)
+	if len(s.queues) != 1 {
+		t.Fatal("single-target constructor unexpectedly expanded repositories")
 	}
 	state, _, err := s.store.Load(t.Context(), w.id)
 	must(t, err)

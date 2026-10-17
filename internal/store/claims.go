@@ -30,20 +30,21 @@ const claimQueueQuery = `SELECT id, queue_id, key, payload, watermark FROM actio
     WHERE status IN ('planned', 'claimed', 'in_flight')
       AND (status = 'planned' OR lease_until <= $1)
       AND queue_id = $3 AND key <> ALL($4::text[])
+      AND (NOT $5::boolean OR type IN ('resolve_landing', 'fast_forward_resolve_landing'))
     ORDER BY id LIMIT $2 FOR UPDATE SKIP LOCKED`
 
 // Claim skips rows locked by other claimers. Claimed and in-flight work becomes
 // claimable at lease expiry; consequential work must always be revalidated.
 func (s *Store) Claim(ctx context.Context, limit int, lease time.Duration, now time.Time) ([]ClaimedAction, error) {
-	return s.claim(ctx, 0, limit, lease, now, nil)
+	return s.claim(ctx, 0, limit, lease, now, nil, false)
 }
 
 // ClaimQueue claims work only for a configured queue, excluding deferred keys.
 func (s *Store) ClaimQueue(ctx context.Context, q QueueID, limit int, lease time.Duration, now time.Time, skip ...string) ([]ClaimedAction, error) {
-	return s.claim(ctx, q, limit, lease, now, skip)
+	return s.claim(ctx, q, limit, lease, now, skip, false)
 }
 
-func (s *Store) claim(ctx context.Context, q QueueID, limit int, lease time.Duration, now time.Time, skip []string) ([]ClaimedAction, error) {
+func (s *Store) claim(ctx context.Context, q QueueID, limit int, lease time.Duration, now time.Time, skip []string, settlement bool) ([]ClaimedAction, error) {
 	if limit <= 0 || lease.Microseconds() <= 0 {
 		return nil, errors.New("claim limit and lease must be positive")
 	}
@@ -55,7 +56,7 @@ func (s *Store) claim(ctx context.Context, q QueueID, limit int, lease time.Dura
 			args := []any{now, limit - len(result)}
 			if q != 0 {
 				query = claimQueueQuery
-				args = append(args, q, append([]string{}, skip...))
+				args = append(args, q, append([]string{}, skip...), settlement)
 			}
 			rows, err := tx.Query(ctx, query, args...)
 			if err != nil {
@@ -255,4 +256,9 @@ func (s *Store) Complete(ctx context.Context, a ClaimedAction, status Completion
 		return ErrClaimLost
 	}
 	return nil
+}
+
+// ClaimSettlement cannot consume earlier reporting, cleanup, or admission work.
+func (s *Store) ClaimSettlement(ctx context.Context, q QueueID, lease time.Duration, now time.Time) ([]ClaimedAction, error) {
+	return s.claim(ctx, q, 1, lease, now, nil, true)
 }

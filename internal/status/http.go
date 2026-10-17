@@ -96,6 +96,14 @@ func ReadToken(value, file string) (string, error) {
 	return value, nil
 }
 
+// DynamicHandler snapshots the current worker keys for every request, including
+// branches created after the listener started and recovery-only partitions.
+func DynamicHandler(source Source, keys func() []store.QueueKey, token string, sanitizer *diagnostic.Sanitizer) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		Handler(source, keys(), token, sanitizer).ServeHTTP(w, r)
+	})
+}
+
 // Handler exposes GET only and confines reads to this server's configured keys.
 func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diagnostic.Sanitizer) http.Handler {
 	if sanitizer == nil {
@@ -143,7 +151,7 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 			fail(w, http.StatusNotFound, "not-found", "queue or endpoint not found")
 			return
 		}
-		list := r.URL.Path == "/v1/queues"
+		list := r.URL.Path == "/v1/queues" || strings.Count(r.URL.EscapedPath(), "/") == 4
 		if !list && len(selected) > 1 {
 			fail(w, http.StatusConflict, "ambiguous-queue", "multiple installations or lanes match this queue")
 			return
@@ -182,7 +190,7 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 
 func route(r *http.Request, keys []store.QueueKey) ([]store.QueueKey, int, int, error) {
 	parts := strings.Split(strings.TrimPrefix(r.URL.EscapedPath(), "/"), "/")
-	if len(parts) != 2 && len(parts) != 5 && len(parts) != 7 || parts[0] != "v1" || parts[1] != "queues" {
+	if len(parts) != 2 && len(parts) != 4 && len(parts) != 5 && len(parts) != 7 || parts[0] != "v1" || parts[1] != "queues" {
 		return nil, 0, 0, nil
 	}
 	for i := 2; i < len(parts); i++ {
@@ -215,7 +223,7 @@ func route(r *http.Request, keys []store.QueueKey) ([]store.QueueKey, int, int, 
 	}
 	selected := make([]store.QueueKey, 0)
 	for _, key := range keys {
-		if len(parts) == 2 || key.Repository == parts[2]+"/"+parts[3] && key.BaseBranch == parts[4] {
+		if len(parts) == 2 || key.Repository == parts[2]+"/"+parts[3] && (len(parts) == 4 || key.BaseBranch == parts[4]) {
 			selected = append(selected, key)
 		}
 	}

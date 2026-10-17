@@ -52,15 +52,21 @@ true. A repository's explicit setting overrides that server default.
 `config.Load` validates the whole file, including queue-name uniqueness, without
 forge reads. `Config.ResolveBranch(branch, defaultBranch)` selects one queue for
 a concrete base and returns per-queue diagnostics if several selectors match.
-An overlap prevents those queues from serving the overlapping branch; resolving
-unaffected branches still succeeds. No match also pauses that base. The local
+An overlap blocks all bases belonging to the involved queue entries; independent
+queue entries keep running. No match retires a previously served base. The local
 validation CLI cannot detect branch-dependent overlaps, since it has neither
 the observed default branch nor a branch listing. Syntax, condition and duplicate
 name errors remain whole-file failures.
 
-During Phase 2.1 PR 1, `serve --repos ... --base ...` still selects repositories
-and one concrete base per repository. Other queue entries are logged as
-`queue not yet served`; globs do not create additional workers yet. The default
+`serve --repos ...` expands every queue selector against the repository's current
+branches. Each concrete base has a serial worker and its own fence, rules and
+protection checks. Branch listings paginate and use conditional requests at
+startup, every `--discovery-interval` (default 10 minutes), and on verified
+branch `create`, `delete`, and `push` deliveries. Internal
+`openmerge/*` refs are excluded from base expansion. The optional, deprecated
+`--base` flag accepts comma-separated branch/glob selectors as an allowlist;
+it only narrows configured bases. Omission serves every configured match.
+The default
 branch's config governs even a release-base worker. A default-branch move or
 rename reloads policy; a base-only move updates queue state without reloading
 policy. When the effective policy for a queue changes, a batch built under the
@@ -70,6 +76,15 @@ the queue and retries, with no fallback to the base branch or PR head. A single
 queue with omitted `base` on default branch `main` resolves as before. Queue
 identity remains (installation, repository, concrete base, lane); YAML queue
 names never enter that key.
+
+Deleting a base makes its worker `dormant`, preserving its log and fence. Removing
+a queue entry or narrowing its selector makes affected workers `retired`. Both
+stop admissions and new landings. Recreated branches settle stored attempts
+before reactivation and repeat protection checks. Every cycle settles in-flight
+landings before config/rules/PR reads; startup also recovers attempts excluded
+by current config, `--repos`, or `--base`. Credential/read failures keep attempts
+unsettled until fence resolution succeeds. Status exposes `active`, `dormant`,
+`retired`, `overlapping`, and `settling-only` workers.
 
 These are additive version-1 changes. Older binaries reject extra queues and
 the new keys; remove them before downgrading.
@@ -279,5 +294,6 @@ build time with `merge-commits-not-allowed`. Remove those merge commits and queu
 the branch again. If the requirement is unknown, builds behave as before.
 
 Template substitution, importing and migration remain deferred. Multiple queue
-entries are supported; automatic expansion into multiple base workers follows
-in Phase 2.1 PR 2.
+entries and automatic expansion into concrete base workers are supported.
+Installation discovery and webhook health/backstop scheduling follow in
+Phase 2.1 PRs 3 and 4.
