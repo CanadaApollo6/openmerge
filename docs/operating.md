@@ -228,6 +228,30 @@ Follow-up: prune workers for long-dormant queues to bound worker and polling
 costs. Retain their logs and fences, settle recorded landings first, and restore
 the same queue identity when a matching branch returns.
 
+## Repository CI checks
+
+The repository requires both `check` and `sim-exits` in `.openmerge.yml`'s
+`merge_when`. They run in parallel on PRs and queue pushes. Queue policy is read
+from the default branch, so a new required check takes effect after the policy
+change lands there.
+
+`check` runs `make test`: the Go suite under `-race -short`, with an explicit
+15-minute per-package timeout. Simulator safety regressions, mutation-style
+checks, first-day adopter/adaptive harnesses, and compact/full fake equivalence
+remain in this path. The target for `internal/sim` is under three minutes on CI;
+the timeout also accommodates the separate database/server packages.
+
+`sim-exits` runs `make test-sim-exits` without race instrumentation and with a
+60-minute package timeout. It runs the entire simulator suite, including all
+17 legacy exits, Team and Slow's eight-seed 30-day adopter exits in both
+cancellation modes, the full paired adaptive/fixed-size exit, cancellation
+savings, serial capacity comparison, and admission evidence. Independent adopter
+cancellation modes and adaptive seeds run in parallel, capped at two tests to
+bound memory. Workload inputs, output records, and assertions are the same in
+both paths. Direct
+`go test` invocations remain full-length unless passed `-short`, so the mutation,
+compatibility, and admission scripts continue to exercise their original tests.
+
 ## Queue CI provenance
 
 For every merge method, CI must run on `push` events for

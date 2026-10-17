@@ -180,6 +180,9 @@ func TestCIInteractionAndLongTimeout(t *testing.T) {
 }
 
 func TestCapacityAgainstSerialPlanner(t *testing.T) {
+	if testing.Short() {
+		t.Skip("full simulator workload: run make test-sim-exits")
+	}
 	for _, scenario := range []struct{ n, size int }{{500, 1}, {500, 8}, {2000, 8}} {
 		n := scenario.n
 		cfg := DefaultConfig()

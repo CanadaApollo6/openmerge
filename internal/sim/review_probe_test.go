@@ -8,6 +8,10 @@ import (
 )
 
 func TestReviewCancellationActualSavings(t *testing.T) {
+	if testing.Short() {
+		t.Skip("full simulator workload: run make test-sim-exits")
+	}
+
 	for _, p := range []capacity.Profile{capacity.Team(), capacity.Slow()} {
 		requested, cancelled, queued := 0, 0, 0
 		var saved time.Duration

@@ -64,6 +64,7 @@ func adopterExit(t *testing.T, p capacity.Profile) {
 	}
 	for _, capability := range []bool{true, false} {
 		t.Run(map[bool]string{true: "cancellation-supported", false: "cancellation-unsupported"}[capability], func(t *testing.T) {
+			t.Parallel()
 			var samples, modelSamples []capacity.Sample
 			runs, modelRuns, wasted, requested, confirmed, unsupported := 0, 0, 0, 0, 0, 0
 			minutes, modelMinutes := 0., 0.
@@ -114,10 +115,20 @@ func adopterExit(t *testing.T, p capacity.Profile) {
 		})
 	}
 }
-func TestExitAdopterTeam(t *testing.T) { adopterExit(t, capacity.Team()) }
-func TestExitAdopterSlow(t *testing.T) { adopterExit(t, capacity.Slow()) }
+func TestExitAdopterTeam(t *testing.T) {
+	if testing.Short() {
+		t.Skip("full simulator workload: run make test-sim-exits")
+	}
+	adopterExit(t, capacity.Team())
+}
+func TestExitAdopterSlow(t *testing.T) {
+	if testing.Short() {
+		t.Skip("full simulator workload: run make test-sim-exits")
+	}
+	adopterExit(t, capacity.Slow())
+}
 func TestExitAdopterAdaptive(t *testing.T) {
-	if !*adaptiveFullExit {
+	if testing.Short() || !*adaptiveFullExit {
 		t.Skip("full planner-backed 8x30-day exit: enable -sim-adaptive-full-exit; the first-day harness runs by default")
 	}
 	adaptiveExit(t, 8, 30)

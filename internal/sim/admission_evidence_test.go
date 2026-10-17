@@ -9,6 +9,10 @@ import (
 // to compare speculative work behind a known provisional failure. The pinned
 // 30-day exit tests remain separate and unchanged.
 func TestAdmissionPolicyEvidence(t *testing.T) {
+	if testing.Short() {
+		t.Skip("full simulator workload: run make test-sim-exits")
+	}
+
 	for _, p := range []capacity.Profile{capacity.Team(), capacity.Slow(), capacity.AdaptiveWorkload()} {
 		for _, cancel := range []bool{true, false} {
 			var samples []capacity.Sample
