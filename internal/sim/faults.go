@@ -16,6 +16,11 @@ import (
 // webhook followed by the definitive landing/dequeue event.
 func faultScope(action queue.Action) string {
 	switch a := action.(type) {
+	case queue.RetryCheckCancellation:
+		if a.ReadOnly {
+			return queue.ObserveRetiredChecks(a.Cancellation).Key()
+		}
+		return queue.CancelChecks(a.Cancellation).Key()
 	case queue.BuildChainedTestRef:
 		return fmt.Sprintf("build/pr/%d", a.PRs[0].PR)
 	case queue.BuildTestRef:

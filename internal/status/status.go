@@ -135,16 +135,14 @@ type Event struct {
 // outcomes: terminal states require an admission to actually leave the fold.
 func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Queue, *Entry, *Why) {
 	s := j.Seed
-	ledger := runLedger(j, sanitizer)
 	known := make(map[int]Entry)
 	heads := make(map[int]string)
 	tested, inheritedPause := explanationContext(j, pr)
 	events := make([]Event, 0)
 	var previous queue.Event
 	var watermark int64
-	for _, record := range j.Events {
-		before := s
-		s = queue.Apply(s, record.Event)
+	ledger := runLedger(j, sanitizer, func(record store.JournalEvent, before, after queue.State) {
+		s = after
 		watermark = record.ID
 		n := directPR(record.Event)
 		if n > 0 {
@@ -202,6 +200,11 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 			evidence := Event{ID: record.ID, Type: kind, At: record.RecordedAt.UTC(), Summary: sanitizer.Sanitize(eventSummary(record.Event, before, s))}
 			evidence.Runs, evidence.RerunState = retryEvidence(record.Event, before, s, sanitizer)
 			switch e := record.Event.(type) {
+			case queue.CheckCancellationDeferred:
+				evidence.CancellationState = "requested"
+				if e.Abandoned {
+					evidence.CancellationState = "abandoned"
+				}
 			case queue.CheckCancellationRequested:
 				evidence.CancellationState = "requested"
 			case queue.CheckCancellationReported:
@@ -219,7 +222,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 				events = slices.Delete(events, 0, len(events)-limit-1)
 			}
 		}
-	}
+	})
 	for n, head := range heads {
 		e := known[n]
 		e.HeadSHA = head
@@ -629,6 +632,11 @@ func eventSummary(event queue.Event, before, after queue.State) string {
 		return fmt.Sprintf("Observed retry-aware terminal CI result; success=%t; runs: %s", e.Success, checkRunSummary(e.Runs))
 	case queue.CheckCancellationRequested:
 		return fmt.Sprintf("Requested cancellation for retired batch %s (%s); runs: %s", e.BatchID, e.Reason, checkRunSummary(e.Runs))
+	case queue.CheckCancellationDeferred:
+		if e.Abandoned {
+			return "Abandoned cancellation follow-up for batch " + e.BatchID + ": " + e.Detail
+		}
+		return "Deferred cancellation follow-up for batch " + e.BatchID + ": " + e.Detail
 	case queue.CheckCancellationReported:
 		if e.Unsupported {
 			return "Cancellation unsupported for batch " + e.BatchID + ": " + e.Detail
@@ -743,6 +751,8 @@ func affects(event queue.Event, pr int, before, after queue.State, tested map[st
 	case queue.ChecksCompleted:
 		return tested[e.TestedSHA]
 	case queue.CheckCancellationRequested:
+		return tested[e.TestedSHA]
+	case queue.CheckCancellationDeferred:
 		return tested[e.TestedSHA]
 	case queue.CheckCancellationReported:
 		return tested[e.TestedSHA]

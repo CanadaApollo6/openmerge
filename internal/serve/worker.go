@@ -116,11 +116,13 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 	}
 	x := executor.Executor{Driver: w.Driver, Git: w.Git, Repo: w.repo(), Base: w.Key.BaseBranch, DisableDeleteHeadBranch: disableDeleteHeadBranch}
 	batch := state.ActionBatch(claim.Action)
+	x.Speculative = cfg.MaxDepth() > 1
 	x.ChecksRetryFailed = cfg.RetryLimit()
 	x.CheckTimeout = cfg.CheckTimeout
 	if batch != nil {
 		x.StartedTestingAt = batch.StartedTestingAt
 		x.CheckRetry = batch.CheckRetry
+		x.PreviousObservedRuns = batch.LastObservedRuns
 	}
 	if batch != nil {
 		x.PreviousUnboundChecks = state.BatchUnboundChecks(batch.ID)
@@ -195,6 +197,13 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 		s.logCommitted(actionCtx, w)
 		return nil
 	})
+	if err != nil {
+		if deferred, ok := queue.DeferCheckCancellation(claim.Action, time.Now(), err.Error()); ok {
+			persist, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			return s.store.Emit(persist, claim, cfg)(deferred)
+		}
+	}
 	var absent *executor.ErrLandingNotOnBase
 	var ambiguity *executor.CheckSourceAmbiguityError
 	if errors.As(err, &absent) {

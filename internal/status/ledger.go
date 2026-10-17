@@ -32,10 +32,13 @@ type ledgerBatch struct {
 }
 
 func runKey(run queue.CheckRun) string {
-	return fmt.Sprintf("%s/%s/%d/%d/%d", run.Source, run.Name, run.ID, run.WorkflowRunID, run.Attempt)
+	return fmt.Sprintf("%s/%s/%d/%d/%d", run.Source, run.Name, run.ID, run.WorkflowRunID, max(run.Attempt, 1))
 }
 
-func runLedger(j store.Journal, sanitizer *diagnostic.Sanitizer) map[int][]Run {
+func runLedger(j store.Journal, sanitizer *diagnostic.Sanitizer, visit func(store.JournalEvent, queue.State, queue.State)) map[int][]Run {
+	type wasteRecord struct{ batch, reason string }
+	beforeWaste := make(map[int64][]wasteRecord)
+	afterWaste := make(map[int64][]wasteRecord)
 	batches := map[string]*ledgerBatch{}
 	order := []string{}
 	bySHA := map[string]string{}
@@ -91,8 +94,83 @@ func runLedger(j store.Journal, sanitizer *diagnostic.Sanitizer) map[int][]Run {
 				bySHA[b.TestedSHA] = b.ID
 			}
 		}
+		for _, b := range s.Batches() {
+			old := before.Batch(b.ID)
+			if b.InvalidationReason == "" || old == nil || old.InvalidationReason != "" {
+				continue
+			}
+			reason := b.InvalidationReason
+			switch b.InvalidationReason {
+			case "predecessor-failed":
+				if before.Active != nil {
+					reason = "invalidated behind failure " + before.Active.ID
+				}
+			case "predecessor-abandoned":
+				if before.Active != nil {
+					reason = "predecessor abandoned " + before.Active.ID
+				}
+			case "change-left-queue":
+				switch e := record.Event.(type) {
+				case queue.PRObserved:
+					reason = fmt.Sprintf("eligibility or trust changed for PR #%d", e.PR)
+					for _, entry := range before.Entries {
+						if entry.PR == e.PR && entry.HeadSHA != e.HeadSHA {
+							reason = fmt.Sprintf("superseded by a new head for PR #%d", e.PR)
+						}
+					}
+				case queue.DequeueRequested:
+					reason = fmt.Sprintf("dequeue of PR #%d", e.PR)
+				case queue.PRClosed:
+					reason = fmt.Sprintf("closed PR #%d", e.PR)
+				}
+			}
+			beforeWaste[record.ID] = append(beforeWaste[record.ID], wasteRecord{b.ID, reason})
+		}
+		saveWaste := func(id, reason string) {
+			afterWaste[record.ID] = append(afterWaste[record.ID], wasteRecord{id, reason})
+		}
+		// Legacy invalidations have no separate event. Explain their historical CI
+		// without adding any event or action to the compatible depth-one protocol.
+		for _, old := range before.Batches() {
+			if s.Batch(old.ID) == nil {
+				switch e := record.Event.(type) {
+				case queue.ChecksCompleted:
+					if !e.Success && len(old.PRs) > 1 {
+						saveWaste(old.ID, "confirmed failure (bisection)")
+					}
+				case queue.ChecksFailureConfirmed:
+					if e.Reason == queue.ChecksFailed && len(old.PRs) > 1 {
+						saveWaste(old.ID, "confirmed failure (bisection)")
+					}
+				case queue.BatchFailed:
+					if e.Reason == queue.ChecksFailed && len(old.PRs) > 1 {
+						saveWaste(old.ID, "confirmed failure (bisection)")
+					}
+				case queue.PRObserved:
+					reason := "eligibility or trust changed"
+					for _, entry := range before.Entries {
+						if entry.PR == e.PR && entry.HeadSHA != e.HeadSHA {
+							reason = "superseded by a new head"
+						}
+					}
+					saveWaste(old.ID, reason)
+				case queue.DequeueRequested:
+					saveWaste(old.ID, "dequeue")
+				case queue.PRClosed:
+					saveWaste(old.ID, "closed")
+				case queue.ConfigApplied:
+					saveWaste(old.ID, "config-changed")
+				case queue.BaseMoved:
+					saveWaste(old.ID, "base-moved")
+				case queue.Dequeued:
+					if e.Reason == queue.ChecksTimeout {
+						saveWaste(old.ID, "timeout")
+					}
+				}
+			}
+		}
+		visit(record, before, s)
 	}
-	s = j.Seed
 	observe := func(b *ledgerBatch, runs []queue.CheckRun) {
 		if b == nil {
 			return
@@ -100,6 +178,7 @@ func runLedger(j store.Journal, sanitizer *diagnostic.Sanitizer) map[int][]Run {
 		// Identified evidence replaces an aggregate placeholder for the same commit.
 		b.runs = slices.DeleteFunc(b.runs, func(r Run) bool { return r.Identity == nil })
 		for _, run := range runs {
+			run.Attempt = max(run.Attempt, 1)
 			key := runKey(run)
 			producerKey := run.Source + "\x00" + run.Name
 			i := slices.IndexFunc(b.runs, func(r Run) bool { return r.Identity != nil && r.identityKey == runKey(run) })
@@ -153,47 +232,8 @@ func runLedger(j store.Journal, sanitizer *diagnostic.Sanitizer) map[int][]Run {
 		}
 	}
 	for _, record := range j.Events {
-		before := s
-		s = queue.Apply(s, record.Event)
-		for _, b := range s.Batches() {
-			remember(b)
-			v := batches[b.ID]
-			if b.TestedSHA != "" {
-				v.sha, v.ref = b.TestedSHA, b.TestRef
-				bySHA[b.TestedSHA] = b.ID
-			}
-		}
-		for _, b := range s.Batches() {
-			old := before.Batch(b.ID)
-			if b.InvalidationReason == "" || old == nil || old.InvalidationReason != "" {
-				continue
-			}
-			reason := b.InvalidationReason
-			switch b.InvalidationReason {
-			case "predecessor-failed":
-				if before.Active != nil {
-					reason = "invalidated behind failure " + before.Active.ID
-				}
-			case "predecessor-abandoned":
-				if before.Active != nil {
-					reason = "predecessor abandoned " + before.Active.ID
-				}
-			case "change-left-queue":
-				switch e := record.Event.(type) {
-				case queue.PRObserved:
-					reason = fmt.Sprintf("eligibility or trust changed for PR #%d", e.PR)
-					for _, entry := range before.Entries {
-						if entry.PR == e.PR && entry.HeadSHA != e.HeadSHA {
-							reason = fmt.Sprintf("superseded by a new head for PR #%d", e.PR)
-						}
-					}
-				case queue.DequeueRequested:
-					reason = fmt.Sprintf("dequeue of PR #%d", e.PR)
-				case queue.PRClosed:
-					reason = fmt.Sprintf("closed PR #%d", e.PR)
-				}
-			}
-			waste(batches[b.ID], reason)
+		for _, item := range beforeWaste[record.ID] {
+			waste(batches[item.batch], item.reason)
 		}
 		switch e := record.Event.(type) {
 		case queue.BatchRunsObserved:
@@ -258,6 +298,18 @@ func runLedger(j store.Journal, sanitizer *diagnostic.Sanitizer) map[int][]Run {
 					}
 				}
 			}
+		case queue.CheckCancellationDeferred:
+			if e.Abandoned {
+				if b := batches[e.BatchID]; b != nil && b.sha == e.TestedSHA {
+					for i := range b.runs {
+						r := &b.runs[i]
+						if r.Cancellation == "requested" || r.Cancellation == "unsupported" && r.Outcome == "pending" {
+							r.Cancellation = "abandoned"
+							r.CancellationDetail = sanitizer.Sanitize(e.Detail)
+						}
+					}
+				}
+			}
 		case queue.CheckCancellationReported:
 			b := batches[e.BatchID]
 			if b != nil && b.sha == e.TestedSHA {
@@ -282,45 +334,9 @@ func runLedger(j store.Journal, sanitizer *diagnostic.Sanitizer) map[int][]Run {
 				}
 			}
 		}
-		// Legacy invalidations have no separate event. Explain their historical CI
-		// without adding any event or action to the compatible depth-one protocol.
-		for _, old := range before.Batches() {
-			if s.Batch(old.ID) == nil {
-				switch e := record.Event.(type) {
-				case queue.ChecksCompleted:
-					if !e.Success && len(old.PRs) > 1 {
-						waste(batches[old.ID], "confirmed failure (bisection)")
-					}
-				case queue.ChecksFailureConfirmed:
-					if e.Reason == queue.ChecksFailed && len(old.PRs) > 1 {
-						waste(batches[old.ID], "confirmed failure (bisection)")
-					}
-				case queue.BatchFailed:
-					if e.Reason == queue.ChecksFailed && len(old.PRs) > 1 {
-						waste(batches[old.ID], "confirmed failure (bisection)")
-					}
-				case queue.PRObserved:
-					reason := "eligibility or trust changed"
-					for _, entry := range before.Entries {
-						if entry.PR == e.PR && entry.HeadSHA != e.HeadSHA {
-							reason = "superseded by a new head"
-						}
-					}
-					waste(batches[old.ID], reason)
-				case queue.DequeueRequested:
-					waste(batches[old.ID], "dequeue")
-				case queue.PRClosed:
-					waste(batches[old.ID], "closed")
-				case queue.ConfigApplied:
-					waste(batches[old.ID], "config-changed")
-				case queue.BaseMoved:
-					waste(batches[old.ID], "base-moved")
-				case queue.Dequeued:
-					if e.Reason == queue.ChecksTimeout {
-						waste(batches[old.ID], "timeout")
-					}
-				}
-			}
+
+		for _, item := range afterWaste[record.ID] {
+			waste(batches[item.batch], item.reason)
 		}
 	}
 	result := map[int][]Run{}

@@ -207,6 +207,19 @@ func DecodeSnapshot(data []byte) (State, error) {
 		if b.ID == "" || seen[b.ID] || b.BaseSHA == "" || b.ParentBatchID == b.ID || validateBatchPRs(b.PRs) != nil {
 			return State{}, fmt.Errorf("invalid snapshot batch")
 		}
+		if len(b.ObservedRuns) > 0 {
+			if err := validateCheckRuns(b.ObservedRuns); err != nil {
+				return State{}, err
+			}
+			if err := validateHistoricalRuns(b.ObservedRuns); err != nil {
+				return State{}, err
+			}
+		}
+		if len(b.LastObservedRuns) > 0 {
+			if err := validateHistoricalRuns(b.LastObservedRuns); err != nil {
+				return State{}, err
+			}
+		}
 		for _, pr := range b.PRs {
 			if seenPRs[pr.PR] {
 				return State{}, fmt.Errorf("duplicate PR in snapshot chain")
@@ -284,11 +297,16 @@ func DecodeSnapshot(data []byte) (State, error) {
 	for source, r := range v.RulesSources {
 		s.rulesSources[source] = rulesSourceState{r.Problems, r.Revision}
 	}
+	effectKeys := make(map[string]bool)
 	for _, raw := range v.Effects {
 		a, err := DecodeAction(raw)
 		if err != nil {
 			return State{}, err
 		}
+		if effectKeys[a.Key()] {
+			return State{}, fmt.Errorf("duplicate snapshot effect key %q", a.Key())
+		}
+		effectKeys[a.Key()] = true
 		s.effects = append(s.effects, a)
 	}
 	return cloneState(s), nil

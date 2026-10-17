@@ -821,9 +821,17 @@ workers repeat the same idempotent cancellation. An accepted cancel POST means
 `requested`; only a forge read reporting cancellation or completion means
 `confirmed`. Neither state proves landing eligibility. A completed run can
 therefore be confirmed even when cancellation arrived too late to save runner
-time. Transport failures retain intent for retry. Unsupported cancellations
-schedule read-only follow-up observations until their recorded attempts finish,
-so the ledger updates their outcomes while keeping cancellation unsupported.
+time. Pending reads, repeated 404s, timeouts and other forge errors finish the
+current action and persist a delayed successor with its own key. New queue work
+remains claimable while it waits. Each cancellation phase gets eight total
+attempts, with waits of 30s, 1m, 2m, 4m, 8m, 16m and 30m. Confirmed subsets are
+retained across retries and restarts. An unsupported result switches to a separate
+read-only follow-up phase with the same budget. Branchless commit statuses use
+status provenance; Actions checks must still match the queue ref. These reads
+update outcomes while retaining `unsupported`. If either phase exhausts its
+budget, status records `abandoned` and the final error or pending reason. Work may
+continue at the provider after abandonment; no further cancellation calls or
+follow-up reads are scheduled for that intent.
 
 Use `openmerge queue status --repo OWNER/REPO --pr N` (or `--json`) to see the
 change's complete recorded CI run ledger: batch, tested SHA, producer/job/workflow
@@ -834,14 +842,23 @@ those rows as aggregates instead of inventing IDs. The status API adds
 `run_ledger` and `gate` to entries, and current `window` and `batch_size` to queues
 when runtime configuration is available. Chain, position, batches ahead and
 invalidation reasons remain visible. Gate names explain checks, predecessor
-settlement, bisection, `max_wait` and a full window. The existing PR check summary
-includes up to eight recent ledger rows; API/CLI retain the full recorded history.
+settlement, bisection, `max_wait` and a full window. `landing-preflight` includes
+approval: approval and other final merge conditions are evaluated by the executor
+at preflight, so that gate does not distinguish approval separately. The existing
+PR check summary
+includes the configured window and batch size and up to eight recent ledger rows;
+API/CLI retain the full recorded history.
 No new summary comment is posted. Adaptive inputs remain for PR 5.
 
 Cancellation adds wire-v1 events `batch_runs_observed` (all accepted CI names,
 separate from the retry-policy subset), `check_cancellation_requested` and
-`check_cancellation_reported`, and actions `record_check_cancellation` and
-`cancel_checks`, plus the read-only `observe_retired_checks` follow-up. Pending intents survive snapshot encode/decode. Historical run
+`check_cancellation_reported` and `check_cancellation_deferred`, and actions
+`record_check_cancellation` and
+`cancel_checks`, plus the read-only `observe_retired_checks` follow-up and scheduled
+`retry_check_cancellation` successors. Empty or unchanged history reads emit no
+`batch_runs_observed`; simultaneous historical attempts keep separate ledger rows.
+Depth-1 queues with or without retries use their existing protocol exclusively.
+Pending intents survive snapshot encode/decode. Historical run
 ledgers are reconstructed from journals, not stored unboundedly in snapshots.
 Store retention/compaction remains disabled; enabling it must preserve ledger
 history or explicitly define a retention window.

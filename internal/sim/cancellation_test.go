@@ -198,3 +198,28 @@ func TestRetiredObservationPreservesConfiguredFaults(t *testing.T) {
 		}
 	}
 }
+
+func TestCancellationSimulationUsesDurableRetrySchedule(t *testing.T) {
+	cfg := smallConfig()
+	cfg.PRs, cfg.ArrivalWindow, cfg.BrokenRate = 24, 0, .2
+	cfg.CIMin, cfg.CIMax = time.Minute, 3*time.Minute
+	cfg.Planner.CheckTimeout = 10 * time.Minute
+	cfg.Planner.SpeculationMaxDepth = 4
+	cfg.CI = &CIConfig{Runners: 2, CancellationSupported: true, RerunsSupported: true}
+	cfg.Faults = Faults{FailFirst: map[string]int{"CancelChecks": 1}}
+	s, _ := runScenario(t, cfg)
+	deferred := 0
+	for _, record := range s.events {
+		if _, ok := record.Event.(queue.CheckCancellationDeferred); ok {
+			deferred++
+		}
+	}
+	if deferred == 0 {
+		t.Fatal("forge failure bypassed production retry protocol")
+	}
+	for key := range s.retryAt {
+		if strings.Contains(key, "/cancel") {
+			t.Fatalf("cancellation still uses simulator-only retry path: %s", key)
+		}
+	}
+}

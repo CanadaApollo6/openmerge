@@ -387,7 +387,15 @@ func EncodeEvent(value Event) (string, []byte, error) {
 			return "", nil, err
 		}
 		return encodeWire("check_cancellation_requested", v)
+	case CheckCancellationDeferred:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("check_cancellation_deferred", v)
 	case CheckCancellationReported:
+		if v.Confirmed == nil {
+			v.Confirmed = []CheckRun{}
+		}
 		if err := v.Validate(); err != nil {
 			return "", nil, err
 		}
@@ -601,6 +609,12 @@ func DecodeEvent(payload []byte) (Event, error) {
 
 	case "check_cancellation_requested":
 		v, err := readWireData[CheckCancellationRequested](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		return v, v.Validate()
+	case "check_cancellation_deferred":
+		v, err := readWireData[CheckCancellationDeferred](envelope.Data)
 		if err != nil {
 			return nil, err
 		}
@@ -929,6 +943,11 @@ func EncodeAction(value Action) (string, []byte, error) {
 		}
 		return encodeWire("observe_retired_checks", v)
 
+	case RetryCheckCancellation:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("retry_check_cancellation", v)
 	case RecordCheckCancellation:
 		if err := v.Validate(); err != nil {
 			return "", nil, err
@@ -1002,6 +1021,8 @@ func DecodeAction(payload []byte) (Action, error) {
 	case "observe_retired_checks":
 		return decodeWireAction(envelope.Data, func(v ObserveRetiredChecks) Action { return v })
 
+	case "retry_check_cancellation":
+		return decodeWireAction(envelope.Data, func(v RetryCheckCancellation) Action { return v })
 	case "record_check_cancellation":
 		return decodeWireAction(envelope.Data, func(v RecordCheckCancellation) Action { return v })
 	case "cancel_checks":

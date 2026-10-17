@@ -2,6 +2,7 @@ package serve
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -51,5 +52,5 @@ func (s *Server) ledgerSummary(ctx context.Context, w *worker, pr int) (string, 
 	}
 	entry := q.LedgerEntry(pr)
 	status.ApplyPolicy(q, entry, w.plannerConfig(s.options.PollInterval), time.Now())
-	return status.LedgerSummary(entry), nil
+	return fmt.Sprintf("; window: %d; batch size: %d", q.Window, q.BatchSize) + status.LedgerSummary(entry), nil
 }

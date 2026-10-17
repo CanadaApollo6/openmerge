@@ -211,10 +211,13 @@ func Apply(s State, e Event) State {
 		s.observeBatchRuns(e)
 	case CheckCancellationRequested:
 		s.requestCancellation(e)
+	case CheckCancellationDeferred:
+		s.deferCancellation(e)
 	case CheckCancellationReported:
 		s.reportCancellation(e)
 	case ChecksObserved:
 		s.observeChecks(e)
+		s.observeRetiredRuns(e)
 	case CheckRerunRequested:
 		s.requestCheckRerun(e)
 	case CheckRerunDispatchProgress:

@@ -1,20 +1,22 @@
 package executor
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"slices"
+	"strings"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 )
 
-// ErrCancellationPending keeps the durable intent retryable until the provider
-// reports completion. A cancel POST alone never supplies that evidence.
+// ErrCancellationPending asks the caller to schedule a bounded follow-up.
+// A cancel POST alone never supplies evidence of completion.
 var ErrCancellationPending = errors.New("CI cancellation requested; completion is not yet confirmed")
 
 func (x *Executor) cancelChecks(ctx context.Context, a queue.CancelChecks, emit func(queue.Event) error) error {
-	report := queue.CheckCancellationReported{BatchID: a.BatchID, TestedSHA: a.TestedSHA}
+	report := queue.CheckCancellationReported{BatchID: a.BatchID, TestedSHA: a.TestedSHA, Confirmed: []queue.CheckRun{}}
 	canceller, ok := x.Driver.(forge.CheckCanceller)
 	if !ok {
 		report.Unsupported = true
@@ -56,7 +58,7 @@ func (x *Executor) cancelChecks(ctx context.Context, a queue.CancelChecks, emit 
 	return nil
 }
 
-func (x *Executor) observeRetiredChecks(ctx context.Context, a queue.ObserveRetiredChecks, emit func(queue.Event) error) error {
+func (x *Executor) observeRetiredChecks(ctx context.Context, a queue.ObserveRetiredChecks, key string, emit func(queue.Event) error) error {
 	var checks []forge.CheckRun
 	var err error
 	if reader, ok := x.Driver.(forge.RetryCheckReader); ok {
@@ -77,7 +79,7 @@ func (x *Executor) observeRetiredChecks(ctx context.Context, a queue.ObserveReti
 	terminal, success := true, true
 	for _, target := range a.Runs {
 		index := slices.IndexFunc(checks, func(r forge.CheckRun) bool {
-			return r.ID == target.ID && canonicalCheckAttempt(r.Attempt) == canonicalCheckAttempt(target.Attempt) && r.Source == target.Source && r.Name == target.Name && r.WorkflowRunID == target.WorkflowRunID && r.HeadBranch == a.TestRef
+			return r.ID == target.ID && canonicalCheckAttempt(r.Attempt) == canonicalCheckAttempt(target.Attempt) && r.Source == target.Source && r.Name == target.Name && r.WorkflowRunID == target.WorkflowRunID && (strings.HasPrefix(r.Source, "status:") || r.HeadBranch == a.TestRef)
 		})
 		if index < 0 {
 			terminal = false
@@ -94,7 +96,8 @@ func (x *Executor) observeRetiredChecks(ctx context.Context, a queue.ObserveReti
 		observed = append(observed, run)
 	}
 	// Retired IDs are never admitted again. These observations deliberately have
-	// no timers: the reducer ignores them and status retains historical outcomes.
+	// no check timers or landing evidence. The reducer only retires completed
+	// follow-up targets, and status retains their historical outcomes.
 	if len(observed) > 0 {
 		if err := emit(queue.ChecksObserved{BatchID: a.BatchID, TestedSHA: a.TestedSHA, Runs: observed, Terminal: terminal, Success: terminal && success}); err != nil {
 			return err
@@ -103,5 +106,37 @@ func (x *Executor) observeRetiredChecks(ctx context.Context, a queue.ObserveReti
 	if !terminal {
 		return ErrCancellationPending
 	}
-	return emit(queue.ActionCompleted{Key: a.Key()})
+	return emit(queue.ActionCompleted{Key: key})
+}
+
+func (x *Executor) observeBatchRuns(checks []forge.CheckRun, batchID, sha string, emit func(queue.Event) error) error {
+	if !x.Speculative {
+		return nil
+	}
+	runs := x.historicalRuns(checks, batchID)
+	if len(runs) == 0 || slices.Equal(runs, x.PreviousObservedRuns) {
+		return nil
+	}
+	return emit(queue.BatchRunsObserved{BatchID: batchID, TestedSHA: sha, Runs: runs})
+}
+func (x *Executor) historicalRuns(checks []forge.CheckRun, batchID string) []queue.CheckRun {
+	runs := make([]queue.CheckRun, 0)
+	for _, check := range x.filteredChecks(checks, batchID) {
+		if check.ID == 0 {
+			continue
+		}
+		run := queue.CheckRun{RetryUnsupported: check.RetryUnsupported, WorkflowRunID: check.WorkflowRunID, WorkflowRunURL: check.WorkflowRunURL, URL: check.URL, ID: check.ID, Attempt: canonicalCheckAttempt(check.Attempt), Name: check.Name, Source: check.Source, State: string(check.State)}
+		index := slices.IndexFunc(runs, func(old queue.CheckRun) bool {
+			return old.ID == run.ID && old.Attempt == run.Attempt && old.Name == run.Name && old.Source == run.Source && old.WorkflowRunID == run.WorkflowRunID
+		})
+		if index < 0 {
+			runs = append(runs, run)
+		} else {
+			runs[index] = run
+		}
+	}
+	slices.SortFunc(runs, func(a, b queue.CheckRun) int {
+		return cmp.Or(cmp.Compare(a.Name, b.Name), cmp.Compare(a.Source, b.Source), cmp.Compare(a.ID, b.ID), cmp.Compare(a.Attempt, b.Attempt), cmp.Compare(a.WorkflowRunID, b.WorkflowRunID))
+	})
+	return runs
 }

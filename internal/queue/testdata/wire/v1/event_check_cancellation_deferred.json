@@ -1,0 +1,1 @@
+{"version":1,"type":"check_cancellation_deferred","data":{"batch_id":"b1","tested_sha":"tested","key":"batch/b1/cancel","at":"2026-01-01T00:00:00Z","detail":"completion pending","abandoned":false}}

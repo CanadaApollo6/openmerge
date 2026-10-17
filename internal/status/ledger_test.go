@@ -265,3 +265,21 @@ func TestRunLedgerMarksManualRerunsWithoutQueueRequest(t *testing.T) {
 		}
 	}
 }
+
+func TestRunLedgerCanonicalizesZeroAndOneAttempts(t *testing.T) {
+	events := ledgerChain()
+	events = append(events, identified("b2", 2, 0, "pending"), identified("b2", 2, 1, "success"))
+	_, entry, _ := Project(journal(events...), 2, 1, nil)
+	if len(entry.RunLedger) != 1 || entry.RunLedger[0].Identity.Attempt != 1 || entry.RunLedger[0].Outcome != "success" {
+		t.Fatalf("duplicate canonical attempt: %+v", entry.RunLedger)
+	}
+}
+
+func TestRunLedgerCancellationExhaustionIsVisible(t *testing.T) {
+	events := ledgerChain()
+	events = append(events, identified("b2", 2, 1, "pending"), queue.CheckCancellationRequested{BatchID: "b2", TestedSHA: "tested-b2", TestRef: "ref", Reason: "closed", Runs: []queue.CheckRun{{ID: 2, Attempt: 1, WorkflowRunID: 102, Name: "ci", Source: "app:1", State: "pending"}}}, queue.CheckCancellationDeferred{BatchID: "b2", TestedSHA: "tested-b2", Key: "batch/b2/cancel/retry/7", At: at, Detail: "404 Not Found", Abandoned: true})
+	_, entry, _ := Project(journal(events...), 2, 1, nil)
+	if entry.RunLedger[0].Cancellation != "abandoned" || entry.RunLedger[0].CancellationDetail != "404 Not Found" {
+		t.Fatalf("exhaustion not visible: %+v", entry.RunLedger)
+	}
+}

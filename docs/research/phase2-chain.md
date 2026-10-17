@@ -7,9 +7,11 @@ intent and executor's optional forge capability. Supported cancellation stops on
 the identified attempts of permanently retired batches and releases their runner
 capacity; unsupported cancellation lets those attempts finish. A durable
 `observe_retired_checks` follow-up reads pending unsupported attempts until their
-exact identities report terminal outcomes, so their ledger results remain current
-even if completion webhooks are dropped. Historical observations do not set queue
-timers or authorize landing. Neither outcome can revive a retired batch. The adaptive-sizing exit test stays skipped for PR 5. The
+exact identities report terminal outcomes or its eight-attempt budget is exhausted.
+Pending reads and cancellation faults use the same durable successor actions and
+30s-to-30m exponential backoff in production and simulation; they do not occupy
+the oldest claimable action during the wait. Historical observations cannot
+authorize landing. Neither outcome can revive a retired batch. The adaptive-sizing exit test stays skipped for PR 5. The
 PR 1 model includes AIMD and its configured cancellation behavior, so its numerical
 predictions are a comparison, not an expected byte-identical trace.
 
@@ -20,6 +22,14 @@ predictions are a comparison, not an expected byte-identical trace.
 
 Team requested cancellation for 159 identified attempts; Slow CI requested 42.
 All are confirmed in supported mode and reported unsupported in unsupported mode.
+The round-1 scheduling fix reproduces every pooled and per-seed adopter result in
+both modes, including runner cost. Supported cancellations in these profiles
+confirm immediately, so their dispatch time is unchanged. Delayed unsupported
+follow-ups only read history; they do not affect CI service or queue gates. Of
+Team's 159 requests, 26 stop running attempts and 133 arrive after completion,
+saving 418.46911058 runner-minutes. Of Slow CI's 42 requests, 12 stop running
+attempts and 30 arrive after completion, saving 1226.20790709 runner-minutes.
+Neither profile cancels an attempt before it starts.
 The unsupported results, including runner cost, are identical to PR 3. Both modes
 start the same number of runs and have the same latency: the 50-runner pool is
 not saturated in these profiles. Cancellation saves service after invalidation,

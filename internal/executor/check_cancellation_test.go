@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/executor"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
@@ -192,5 +193,79 @@ func TestCancellationRetiredRerunUsesAttemptAwareReader(t *testing.T) {
 	}
 	if observed, ok := events[0].(queue.ChecksObserved); !ok || observed.Runs[0].Attempt != 2 || observed.Runs[0].State != "success" {
 		t.Fatalf("wrong completion: %+v", events)
+	}
+}
+
+func TestCancellationHistorySuppressesUnchangedAndEmptyRuns(t *testing.T) {
+	c := newChainExecutor(t, 1)
+	b := c.state.Active
+	c.checks(b, 101, 1, forge.Pending)
+	refresh := plannedChainAction[queue.RefreshChecks](t, c, b.ID)
+	c.execute(t, refresh)
+	c.x.PreviousObservedRuns = c.state.Active.LastObservedRuns
+	for _, mode := range []string{"unchanged", "empty"} {
+		if mode == "empty" {
+			c.f.SetCheckRuns(repo, b.TestedSHA, nil)
+		}
+		var events []queue.Event
+		must(t, c.x.Execute(t.Context(), refresh, record(&events)))
+		for _, event := range events {
+			if _, ok := event.(queue.BatchRunsObserved); ok {
+				t.Fatalf("%s history emitted", mode)
+			}
+		}
+	}
+}
+
+func TestCancellationDepthOneRetryCycleUsesOnlyExistingProtocol(t *testing.T) {
+	h := setup(t)
+	c := &chainExecutor{harness: h, cfg: queue.Config{MergeMethod: queue.Merge, ChecksRetryFailed: 1, CheckTimeout: time.Minute}, now: epoch}
+	c.x.ChecksRetryFailed = 1
+	c.x.CheckTimeout = c.cfg.CheckTimeout
+	c.x.RequiredChecks = []string{"ci"}
+	c.state = queue.State{BaseBranch: "main", BaseSHA: h.base, Fence: h.fence}
+	c.state = queue.Apply(c.state, queue.PRObserved{PR: 1, HeadSHA: h.prs[0].HeadSHA, Eligible: true, Trusted: true})
+	c.state = queue.Apply(c.state, queue.EnqueueRequested{PR: 1, At: epoch})
+	var events []queue.Event
+	emit := func(e queue.Event) error {
+		events = append(events, e)
+		switch e.(type) {
+		case queue.BatchRunsObserved, queue.CheckCancellationRequested, queue.CheckCancellationReported, queue.CheckCancellationDeferred:
+			t.Fatalf("depth-one emitted PR 4 event %T", e)
+		}
+		c.state = queue.Apply(c.state, e)
+		return nil
+	}
+	execute := func(a queue.Action) {
+		t.Helper()
+		if b := c.state.ActionBatch(a); b != nil {
+			c.x.StartedTestingAt = b.StartedTestingAt
+			c.x.CheckRetry = b.CheckRetry
+		}
+		must(t, c.x.Execute(t.Context(), a, emit))
+	}
+	execute(plannedChainAction[queue.BuildTestRef](t, c, ""))
+	b := c.state.Active
+	c.checks(b, 1, 1, forge.Failure)
+	execute(plannedChainAction[queue.RefreshChecks](t, c, b.ID))
+	execute(plannedChainAction[queue.RecordCheckRerun](t, c, b.ID))
+	execute(plannedChainAction[queue.RerunChecks](t, c, b.ID))
+	c.checks(b, 2, 2, forge.Success)
+	c.state = queue.Apply(c.state, queue.RefreshRequested{})
+	execute(plannedChainAction[queue.RefreshChecks](t, c, b.ID))
+	land := plannedChainAction[queue.Land](t, c, b.ID)
+	c.checks(b, 2, 2, forge.Failure)
+	if err := c.x.Execute(t.Context(), land, emit); !errors.Is(err, executor.ErrChecksNotSuccessful) {
+		t.Fatalf("failed land preflight=%v", err)
+	}
+	c.state = queue.Apply(c.state, queue.PRClosed{PR: 1})
+	for _, a := range queue.Plan(c.cfg, c.state, c.now) {
+		switch a.(type) {
+		case queue.RecordCheckCancellation, queue.CancelChecks, queue.ObserveRetiredChecks, queue.RetryCheckCancellation:
+			t.Fatalf("depth-one emitted PR 4 action %T", a)
+		}
+	}
+	if len(events) == 0 {
+		t.Fatal("empty cycle")
 	}
 }

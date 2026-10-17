@@ -159,7 +159,11 @@ legacy simulator results remain unchanged.
 
 `batch_runs_observed` records all accepted CI names and attempts, including
 non-required workflows, independently of the filtered retry-policy observations.
-It cannot supply landing evidence. GitHub enriches every observed Actions job
+Empty or unchanged reads emit no history event. History keeps all identities returned
+together, while cancellation and policy retain only the latest attempt per producer.
+Depth-1 queues, including retry-enabled ones, derive their ledger from existing
+events and never emit the PR 4 event types. It cannot supply landing evidence.
+GitHub enriches every observed Actions job
 with its actual attempt on this opt-in path; the default plain reader is unchanged.
 The reducer first permanently discards a non-landing speculative batch. Its
 recorded latest producer/run attempts become `record_check_cancellation` effects;
@@ -172,9 +176,19 @@ cancellation intent. Late checks cannot restore a retired batch.
 
 `check_cancellation_reported` distinguishes unsupported capability/permission
 from confirmed run completion. POST acceptance remains requested and is retried
-idempotently after restart until a read confirms completion. Quota and transport
-errors retain intent. Unsupported cancellations schedule read-only
-`observe_retired_checks` until the recorded attempts finish; those historical
+idempotently after restart. Pending reads and forge errors complete their action
+and persist `check_cancellation_deferred`, which schedules a distinct
+`retry_check_cancellation` successor. Its key is unique to the attempt and it is
+not planned before its recorded wake time, so even the oldest-ID store claim
+order lets newer queue work proceed during backoff. Each mutation or read-only
+phase gets eight total attempts, waiting 30s, 1m, 2m, 4m, 8m, 16m and 30m between
+them. Exhaustion records `abandoned` with the final reason; it never blocks the
+queue. Simulator and production use this same reducer, planner timer and attempt
+budget. Confirmation reports may be incremental: the reducer retains completed
+subsets and retries only the remaining identities.
+
+Unsupported cancellations schedule read-only `observe_retired_checks` until the
+recorded attempts finish or that phase exhausts its budget; those historical
 `checks_observed` events cannot revive the batch and keep cancellation marked
 unsupported while updating its outcome. GitHub validates every target against its Actions job,
 workflow, tested SHA, queue ref and current attempt before sending any cancels.
@@ -190,7 +204,10 @@ cancellation states and wasted-work causes. Legacy aggregate checks are labelled
 without fabricated run IDs. API/CLI show the full recorded ledger; the existing
 PR check summary includes a bounded eight-row excerpt rather than adding a new
 comment channel. Runtime policy supplies the current fixed window, batch size
-and holding gate. Adaptive inputs remain for PR 5. Snapshot state holds pending
+and holding gate. Approval is evaluated by executor preflight, so the current
+`landing-preflight` gate includes pending approval and other final policy checks;
+it does not distinguish approval separately. Adaptive inputs remain for PR 5.
+Snapshot state holds pending
 cancellation effects, not unbounded run history; future retention must define
 how historical ledgers are retained.
 

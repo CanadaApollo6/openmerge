@@ -110,6 +110,7 @@ type Batch struct {
 	LandingAttempt     LandingAttempt
 	CheckRetry         *CheckRetryState `json:",omitempty"`
 	ObservedRuns       []CheckRun       `json:",omitempty"`
+	LastObservedRuns   []CheckRun       `json:",omitempty"`
 
 	checksPassed      bool
 	checksGeneration  uint64

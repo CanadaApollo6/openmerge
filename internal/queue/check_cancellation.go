@@ -3,6 +3,7 @@ package queue
 import (
 	"fmt"
 	"slices"
+	"time"
 )
 
 // CheckCancellationRequested pins best-effort cancellation to runs observed on
@@ -85,7 +86,7 @@ func (e CheckCancellationReported) Validate() error {
 }
 
 func sameCancellationRun(a, b CheckRun) bool {
-	return a.ID == b.ID && a.Attempt == b.Attempt && a.Source == b.Source && a.Name == b.Name && a.WorkflowRunID == b.WorkflowRunID
+	return a.ID == b.ID && max(a.Attempt, 1) == max(b.Attempt, 1) && a.Source == b.Source && a.Name == b.Name && a.WorkflowRunID == b.WorkflowRunID
 }
 
 func (s *State) retireChecks(b *Batch) {
@@ -133,27 +134,125 @@ func (s *State) reportCancellation(e CheckCancellationReported) {
 	if e.Validate() != nil || s.Batch(e.BatchID) != nil {
 		return
 	}
-	for _, effect := range s.effects {
-		a, ok := effect.(CancelChecks)
-		if !ok || a.BatchID != e.BatchID || a.TestedSHA != e.TestedSHA {
+	for i, effect := range s.effects {
+		a, readOnly, _, ok := cancellationTarget(effect)
+		if !ok || readOnly || a.BatchID != e.BatchID || a.TestedSHA != e.TestedSHA {
 			continue
 		}
+		// Reports may contain disjoint subsets across calls. Remove each confirmed
+		// identity durably so later calls only need to confirm the remaining targets.
 		for _, run := range e.Confirmed {
 			if !slices.ContainsFunc(a.Runs, func(target CheckRun) bool { return sameCancellationRun(target, run) }) {
 				return
 			}
 		}
-		if e.Unsupported || len(a.Runs) == len(e.Confirmed) {
-			s.completeEffect(a.Key())
+		a.Runs = slices.DeleteFunc(slices.Clone(a.Runs), func(run CheckRun) bool {
+			return slices.ContainsFunc(e.Confirmed, func(c CheckRun) bool { return sameCancellationRun(run, c) })
+		})
+		if e.Unsupported || len(a.Runs) == 0 {
+			s.completeEffect(effect.Key())
 			if e.Unsupported {
-				pending := slices.DeleteFunc(slices.Clone(a.Runs), func(r CheckRun) bool {
-					return r.State != "pending" || slices.ContainsFunc(e.Confirmed, func(c CheckRun) bool { return sameCancellationRun(r, c) })
-				})
-				if len(pending) > 0 {
-					a.Runs = pending
+				a.Runs = slices.DeleteFunc(a.Runs, func(r CheckRun) bool { return r.State != "pending" })
+				if len(a.Runs) > 0 {
 					s.addEffect(ObserveRetiredChecks(a))
 				}
 			}
+		} else if retry, yes := effect.(RetryCheckCancellation); yes {
+			retry.Cancellation = a
+			s.effects[i] = retry
+		} else {
+			s.effects[i] = CancelChecks(a)
+		}
+		return
+	}
+}
+
+// CancellationAttemptLimit bounds each mutation or read-only follow-up phase.
+// Retries wait 30s, 1m, 2m, 4m, 8m, 16m and 30m (eight total attempts).
+const CancellationAttemptLimit = 8
+
+// RetryCheckCancellation is a durable, independently scheduled successor. Its
+// unique key lets the previous action finish instead of occupying the oldest
+// claimable row while other queue work waits.
+type RetryCheckCancellation struct {
+	Cancellation CheckCancellationRequested `json:"cancellation"`
+	ReadOnly     bool                       `json:"read_only"`
+	Attempt      int                        `json:"attempt"`
+	At           time.Time                  `json:"at"`
+}
+
+func (RetryCheckCancellation) queueAction() {}
+
+// Key separates each scheduled attempt from its completed predecessor.
+func (a RetryCheckCancellation) Key() string {
+	key := CancelChecks(a.Cancellation).Key()
+	if a.ReadOnly {
+		key = ObserveRetiredChecks(a.Cancellation).Key()
+	}
+	return fmt.Sprintf("%s/retry/%d", key, a.Attempt)
+}
+
+// Validate requires a bounded attempt number, wake time and exact targets.
+func (a RetryCheckCancellation) Validate() error {
+	if a.Attempt < 1 || a.Attempt >= CancellationAttemptLimit || a.At.IsZero() {
+		return fmt.Errorf("invalid cancellation retry schedule")
+	}
+	return a.Cancellation.Validate()
+}
+func cancellationTarget(action Action) (CheckCancellationRequested, bool, int, bool) {
+	switch a := action.(type) {
+	case CancelChecks:
+		return CheckCancellationRequested(a), false, 0, true
+	case ObserveRetiredChecks:
+		return CheckCancellationRequested(a), true, 0, true
+	case RetryCheckCancellation:
+		return a.Cancellation, a.ReadOnly, a.Attempt, true
+	default:
+		return CheckCancellationRequested{}, false, 0, false
+	}
+}
+
+// CheckCancellationDeferred settles one unsuccessful attempt. Exhaustion is
+// explicit historical evidence, never a queue block or landing observation.
+type CheckCancellationDeferred struct {
+	BatchID   string    `json:"batch_id"`
+	TestedSHA string    `json:"tested_sha"`
+	Key       string    `json:"key"`
+	At        time.Time `json:"at"`
+	Detail    string    `json:"detail"`
+	Abandoned bool      `json:"abandoned"`
+}
+
+func (CheckCancellationDeferred) queueEvent() {}
+
+// Validate requires the failed action identity and durable scheduling evidence.
+func (e CheckCancellationDeferred) Validate() error {
+	if e.At.IsZero() {
+		return fmt.Errorf("cancellation deferral requires a time")
+	}
+	return requireActionText("batch_id", e.BatchID, "tested_sha", e.TestedSHA, "key", e.Key, "detail", e.Detail)
+}
+
+// DeferCheckCancellation is shared by workers and simulation for pending reads,
+// timeouts, missing runs and other forge errors. Non-cancellation errors retain
+// the caller's ordinary failure handling.
+func DeferCheckCancellation(action Action, at time.Time, detail string) (CheckCancellationDeferred, bool) {
+	a, _, attempt, ok := cancellationTarget(action)
+	return CheckCancellationDeferred{BatchID: a.BatchID, TestedSHA: a.TestedSHA, Key: action.Key(), At: at, Detail: detail, Abandoned: attempt+1 >= CancellationAttemptLimit}, ok
+}
+func (s *State) deferCancellation(e CheckCancellationDeferred) {
+	if e.Validate() != nil || s.Batch(e.BatchID) != nil {
+		return
+	}
+	for _, effect := range s.effects {
+		a, readOnly, attempt, ok := cancellationTarget(effect)
+		if !ok || effect.Key() != e.Key || a.BatchID != e.BatchID || a.TestedSHA != e.TestedSHA || e.Abandoned != (attempt+1 >= CancellationAttemptLimit) {
+			continue
+		}
+		s.completeEffect(effect.Key())
+		if !e.Abandoned {
+			delay := min(30*time.Second*time.Duration(1<<attempt), 30*time.Minute)
+			s.addEffect(RetryCheckCancellation{Cancellation: a, ReadOnly: readOnly, Attempt: attempt + 1, At: e.At.Add(delay)})
 		}
 		return
 	}
@@ -181,12 +280,33 @@ type BatchRunsObserved struct {
 
 func (BatchRunsObserved) queueEvent() {}
 
-// Validate requires a batch commit and normalized, distinct producer names.
+// Validate requires a batch commit and nonempty, distinct canonical run identities.
 func (e BatchRunsObserved) Validate() error {
 	if err := requireActionText("batch_id", e.BatchID, "tested_sha", e.TestedSHA); err != nil {
 		return err
 	}
-	return validateCheckRuns(e.Runs)
+	return validateHistoricalRuns(e.Runs)
+}
+
+func validateHistoricalRuns(runs []CheckRun) error {
+	if len(runs) == 0 {
+		return fmt.Errorf("run observation requires identified runs")
+	}
+	seen := make(map[string]bool)
+	for _, run := range runs {
+		if run.ID == 0 {
+			return fmt.Errorf("run observation requires native run IDs")
+		}
+		if err := validateCheckRuns([]CheckRun{run}); err != nil {
+			return err
+		}
+		key := fmt.Sprintf("%s/%s/%d/%d/%d", run.Source, run.Name, run.ID, run.WorkflowRunID, max(run.Attempt, 1))
+		if seen[key] {
+			return fmt.Errorf("duplicate observed run identity")
+		}
+		seen[key] = true
+	}
+	return nil
 }
 func (s *State) observeBatchRuns(e BatchRunsObserved) {
 	b := s.Batch(e.BatchID)
@@ -194,4 +314,29 @@ func (s *State) observeBatchRuns(e BatchRunsObserved) {
 		return
 	}
 	b.ObservedRuns = latestObservedChecks(b.ObservedRuns, e.Runs)
+	b.LastObservedRuns = slices.Clone(e.Runs)
+}
+
+func (s *State) observeRetiredRuns(e ChecksObserved) {
+	if e.Validate() != nil || s.Batch(e.BatchID) != nil {
+		return
+	}
+	for i, effect := range s.effects {
+		a, readOnly, _, ok := cancellationTarget(effect)
+		if !ok || !readOnly || a.BatchID != e.BatchID || a.TestedSHA != e.TestedSHA {
+			continue
+		}
+		a.Runs = slices.DeleteFunc(slices.Clone(a.Runs), func(run CheckRun) bool {
+			return slices.ContainsFunc(e.Runs, func(observed CheckRun) bool { return observed.State != "pending" && sameCancellationRun(run, observed) })
+		})
+		if len(a.Runs) == 0 {
+			s.completeEffect(effect.Key())
+		} else if retry, yes := effect.(RetryCheckCancellation); yes {
+			retry.Cancellation = a
+			s.effects[i] = retry
+		} else {
+			s.effects[i] = ObserveRetiredChecks(a)
+		}
+		return
+	}
 }

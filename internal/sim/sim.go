@@ -269,12 +269,18 @@ func (s *simulation) execute(action queue.Action) error {
 	s.executor.CheckTimeout = s.cfg.Planner.CheckTimeout
 	s.executor.StartedTestingAt = time.Time{}
 	s.executor.CheckRetry = nil
+	s.executor.Speculative = s.cfg.Planner.MaxDepth() > 1
+	s.executor.PreviousObservedRuns = nil
 	if active := s.state.ActionBatch(action); active != nil {
 		s.executor.StartedTestingAt = active.StartedTestingAt
 		s.executor.CheckRetry = active.CheckRetry
+		s.executor.PreviousObservedRuns = active.LastObservedRuns
 	}
 	s.boundary.scope = faultScope(action)
 	_, s.boundary.retiredObservation = action.(queue.ObserveRetiredChecks)
+	if retry, ok := action.(queue.RetryCheckCancellation); ok {
+		s.boundary.retiredObservation = retry.ReadOnly
+	}
 	defer func() { s.boundary.retiredObservation = false }()
 	if a, ok := action.(queue.Land); ok && s.faults.Float64() < s.cfg.Faults.DuplicateExecutionRate {
 		s.sequence++
@@ -315,6 +321,15 @@ func (s *simulation) execute(action queue.Action) error {
 	if err != nil {
 		if !errors.Is(err, errForge) && !errors.Is(err, errCrash) && !errors.Is(err, errDelayed) && !errors.Is(err, executor.ErrChecksNotSuccessful) && !errors.Is(err, executor.ErrCancellationPending) {
 			return fmt.Errorf("execute %s: %w", action.Key(), err)
+		}
+		if deferred, ok := queue.DeferCheckCancellation(action, s.now, err.Error()); ok {
+			s.record(deferred)
+			s.completed[action.Key()] = true
+			delete(s.retryAt, action.Key())
+			if deferred.Abandoned {
+				s.recoverFaults(faultScope(action))
+			}
+			return nil
 		}
 		s.retryAt[action.Key()] = s.now.Add(s.cfg.RetryDelay)
 		return nil

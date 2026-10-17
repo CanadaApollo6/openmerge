@@ -15,6 +15,9 @@ type CancelChecksRequest struct {
 // that a recorded run finished. Accepting a cancellation request is not that
 // evidence: only a forge observation of cancellation or completion confirms it.
 // Confirmed runs retain their recorded identity and their observed outcome.
+// Each response may contain only newly confirmed targets; callers accumulate
+// subsets durably and may send only the remaining targets on later calls.
+// Drivers need not repeat confirmations from previous calls.
 type CancelChecksResult struct {
 	Unsupported string
 	Confirmed   []CheckRun
