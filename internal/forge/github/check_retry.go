@@ -97,6 +97,7 @@ func (d *Driver) RerunFailedChecks(ctx context.Context, repo forge.RepoRef, req 
 	}
 	slices.Sort(ordered)
 	var uncertain error
+	rerunOutstanding := slices.ContainsFunc(req.Targets, func(t forge.RerunTarget) bool { return !t.NotDispatched })
 	for _, id := range ordered {
 		target, exists := targets[id]
 		if exists && target.Accepted {
@@ -105,6 +106,9 @@ func (d *Driver) RerunFailedChecks(ctx context.Context, repo forge.RepoRef, req 
 		run, _, err := d.client.Actions.GetWorkflowRunByID(ctx, owner, name, int64(id))
 		if err != nil {
 			if isUnsupportedRerunError(err) {
+				if rerunOutstanding {
+					return forge.RerunChecksResult{OutcomeUnknown: true}, nil
+				}
 				return unsupported("Actions permission not granted; failed-check reruns unavailable")
 			}
 			return forge.RerunChecksResult{}, safeError(err)
@@ -147,6 +151,7 @@ func (d *Driver) RerunFailedChecks(ctx context.Context, repo forge.RepoRef, req 
 		if err := req.Progress(target); err != nil {
 			return forge.RerunChecksResult{}, err
 		}
+		rerunOutstanding = true
 		if _, err := d.client.Actions.RerunFailedJobsByID(ctx, owner, name, int64(id)); err != nil {
 			if isUnsupportedRerunError(err) {
 				var response *gh.ErrorResponse
@@ -290,6 +295,7 @@ func (d *Driver) CheckRunsForRetry(ctx context.Context, repo forge.RepoRef, sha 
 					// Return the untouched plain observation: no partial job enrichment.
 					for i := range checks {
 						if checks[i].Source == "app:15368" {
+							checks[i].RetryPermissionDenied = true
 							checks[i].RetryUnsupported = "Actions permission not granted; failed-check reruns unavailable"
 						}
 					}

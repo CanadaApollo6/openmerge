@@ -360,7 +360,9 @@ func retryEvidence(event queue.Event, before, after queue.State, sanitizer *diag
 		if before.Active != nil && before.Active.CheckRetry != nil {
 			runs = before.Active.CheckRetry.FailedRuns
 		}
-		if e.Unsupported {
+		if e.OutcomeUnknown {
+			state = "unknown"
+		} else if e.Unsupported {
 			state = "unsupported"
 		} else {
 			state = "running"
@@ -569,6 +571,9 @@ func eventSummary(event queue.Event, before, after queue.State) string {
 		}
 		return fmt.Sprintf("Recorded Actions rerun %s for workflow %d after attempt %d", phase, e.Target.WorkflowRunID, e.Target.Attempt)
 	case queue.CheckRerunDispatched:
+		if e.OutcomeUnknown {
+			return queue.ActionsPermissionLostDetail
+		}
 		if e.Unsupported {
 			if e.Detail != "" {
 				return "Check retry unsupported: " + e.Detail

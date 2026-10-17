@@ -24,6 +24,7 @@ type CheckRun struct {
 // CheckRetryState is bounded to the active batch and survives projection copies
 // and snapshots. Reopening checks never replaces its budget or timer origins.
 type CheckRetryState struct {
+	OutcomeUnknown   bool               `json:"outcome_unknown,omitempty"`
 	Dispatches       []CheckRerunTarget `json:"dispatches,omitempty"`
 	OriginalDeadline time.Time          `json:"original_deadline"`
 	Deadline         time.Time          `json:"deadline"`
@@ -85,11 +86,12 @@ type CheckRerunDispatchProgress struct {
 
 // CheckRerunDispatched records the capability's result, never a transient error.
 type CheckRerunDispatched struct {
-	BatchID     string `json:"batch_id"`
-	TestedSHA   string `json:"tested_sha"`
-	Generation  uint64 `json:"generation"`
-	Unsupported bool   `json:"unsupported"`
-	Detail      string `json:"detail"`
+	OutcomeUnknown bool   `json:"outcome_unknown"`
+	BatchID        string `json:"batch_id"`
+	TestedSHA      string `json:"tested_sha"`
+	Generation     uint64 `json:"generation"`
+	Unsupported    bool   `json:"unsupported"`
+	Detail         string `json:"detail"`
 }
 
 // ChecksFailureConfirmed is final for the recorded generation. It applies the
@@ -288,7 +290,7 @@ func (s *State) observeChecks(e ChecksObserved) {
 		b.CheckRetry = &CheckRetryState{OriginalDeadline: e.OriginalDeadline, Timeout: e.Timeout}
 	}
 	r := b.CheckRetry
-	if r.Unsupported {
+	if r.Unsupported || r.OutcomeUnknown {
 		return
 	}
 	if r.Timeout != e.Timeout || !r.OriginalDeadline.Equal(e.OriginalDeadline) {
@@ -415,7 +417,14 @@ func (s *State) dispatchCheckRerun(e CheckRerunDispatched) {
 		return
 	}
 	r := s.Active.CheckRetry
-	if r == nil || !r.Requested || r.Dispatched || r.Generation != e.Generation || r.Confirmed {
+	if r == nil || !r.Requested || r.Dispatched && !e.OutcomeUnknown || r.Generation != e.Generation || r.Confirmed || r.OutcomeUnknown {
+		return
+	}
+	if e.OutcomeUnknown {
+		r.OutcomeUnknown = true
+		r.Detail = ActionsPermissionLostDetail
+		s.Active.checksPassed = false
+		r.RerunState = "unknown"
 		return
 	}
 
@@ -430,7 +439,7 @@ func (s *State) progressCheckRerun(e CheckRerunDispatchProgress) {
 		return
 	}
 	r := s.Active.CheckRetry
-	if r == nil || !r.Requested || r.Dispatched || r.Generation != e.Generation || r.Confirmed {
+	if r == nil || !r.Requested || r.Dispatched || r.Generation != e.Generation || r.Confirmed || r.OutcomeUnknown {
 		return
 	}
 	target := e.Target
@@ -459,7 +468,7 @@ func (s *State) confirmCheckFailure(e ChecksFailureConfirmed) {
 	if detail := s.CheckRetryDetail(); detail != "" {
 		r.Detail = detail
 	}
-	if !r.Unsupported {
+	if !r.Unsupported && !r.OutcomeUnknown {
 		r.RerunState = "failed"
 	}
 	s.failBatch(e.Reason)
@@ -499,7 +508,7 @@ func planCheckRetry(cfg Config, s State, now time.Time) (Action, bool) {
 	confirm := func(reason DequeueReason) Action {
 		return ConfirmCheckFailure{BatchID: b.ID, TestedSHA: b.TestedSHA, Generation: b.checksGeneration, Reason: reason}
 	}
-	if r.Unsupported || r.RerunState == "failed" && r.Requested {
+	if r.Unsupported || r.OutcomeUnknown || r.RerunState == "failed" && r.Requested {
 		return confirm(ChecksFailed), true
 	}
 	if !r.Requested && r.RerunState == "failed" {
@@ -534,13 +543,16 @@ func validDispatchTransition(old, next CheckRerunTarget) bool {
 		(next.Accepted || old.NotDispatched != next.NotDispatched)
 }
 
-// CheckRetryDetail explains dispatches that never received positive acceptance.
+// ActionsPermissionLostDetail reports that a requested rerun cannot be verified.
+const ActionsPermissionLostDetail = "Actions permission lost during rerun; rerun outcome unknown"
+
+// CheckRetryDetail explains reruns whose outcome cannot be established.
 func (s State) CheckRetryDetail() string {
 	if s.Active == nil || s.Active.CheckRetry == nil {
 		return ""
 	}
 	r := s.Active.CheckRetry
-	if r.Unsupported {
+	if r.Unsupported || r.OutcomeUnknown {
 		return r.Detail
 	}
 	if r.Requested {

@@ -96,15 +96,17 @@ const (
 // Attempt together with ID to identify a run when Attempt is known.
 // Sources identify independent producers whose IDs cannot be compared.
 type CheckRun struct {
-	RetryUnsupported string
-	WorkflowRunID    uint64
-	WorkflowRunURL   string
-	URL              string
-	ID               uint64
-	Attempt          uint64
-	Name             string
-	Source           string
-	State            CheckState
+	// RetryPermissionDenied marks an un-enriched read that cannot verify a requested rerun.
+	RetryPermissionDenied bool
+	RetryUnsupported      string
+	WorkflowRunID         uint64
+	WorkflowRunURL        string
+	URL                   string
+	ID                    uint64
+	Attempt               uint64
+	Name                  string
+	Source                string
+	State                 CheckState
 	// HeadBranch is the check suite's triggering branch, without refs/heads/.
 	// Empty means unknown; commit statuses (Source "status:...") lack provenance.
 	HeadBranch string
@@ -143,8 +145,10 @@ type RetryCheckReader interface {
 // checks. A successful request does not mean that CI passed or even stopped;
 // the caller must observe CheckRuns again.
 type RerunChecksResult struct {
-	Unsupported bool
-	Detail      string
+	// OutcomeUnknown means Actions read permission was lost after a dispatch intent.
+	OutcomeUnknown bool
+	Unsupported    bool
+	Detail         string
 }
 
 // CheckRerunner is an optional forge capability. Drivers that do not support

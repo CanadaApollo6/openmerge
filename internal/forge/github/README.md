@@ -45,12 +45,22 @@ never appear in driver errors or logs.
   `POST .../actions/runs/{id}/rerun-failed-jobs`. Foreign-App check runs and
   commit statuses are unsupported. Each target's intent must commit before POST,
   and acceptance immediately after. Uncertain outcomes are reconciled from the
-  workflow status/run_attempt; unchanged failures never authorize a second POST.
+  workflow's increased `run_attempt`; status alone never proves acceptance.
+  Uncertain intents never authorize another POST. A durably recorded definite
+  refusal permits re-dispatch only under a fresh fenced intent. Every requested
+  rerun has a deadline, using one hour when `check_timeout: 0`.
   Retry-enabled observations join Actions job run_attempt to each check-run ID,
   preserving old jobs' original attempts. Default-off reads use no Actions API.
   Missing `actions: write` is a WARN and leaves ordinary check processing
   available. Existing installations must approve the new permission in App
-  installation settings before Actions retries can run.
+  installation settings before Actions retries can run. After the App owner
+  approves Actions, retries activate on the next installation-token renewal
+  (up to about an hour) or immediately on a serve restart; the WARN persists
+  until then. Before a retry request, outcomes match retry-off while events/status
+  still show retry state. Permission loss during an outstanding rerun or uncertain
+  dispatch reconciliation confirms failure immediately with "Actions permission
+  lost during rerun; rerun outcome unknown" in dequeue details, PR status and
+  `why`; the refused read is neither rerun evidence nor timeout evidence.
 - Multiple Apps, multiple status creators, or a check/status pair using a required
   name are ambiguous. The executor keeps that check pending and returns
   `executor.CheckSourceAmbiguityError{Name, Sources}` after recording the refresh.

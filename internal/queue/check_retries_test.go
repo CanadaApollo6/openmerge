@@ -401,3 +401,46 @@ func TestRetryOldestBatchSelection(t *testing.T) {
 		t.Fatal("only the oldest provisional batch may consume a retry")
 	}
 }
+
+func TestPermissionLostDuringRerunConfirmsUnknownOutcome(t *testing.T) {
+	for _, outcome := range []string{"success", "pending", "failure"} {
+		t.Run(outcome, func(t *testing.T) {
+			cfg, s := retryTesting(t, 1)
+			s = foldCheckEvents(t, s, retryObservation(cfg, s, 701, "failure"))
+			s = requestRetry(t, cfg, s, epoch)
+			s = dispatchRetry(t, cfg, s, epoch, false)
+			pending := retryObservation(cfg, s, 702, "pending")
+			pending.Runs[0].Attempt = 2
+			s = foldCheckEvents(t, s, pending)
+			unknown := CheckRerunDispatched{BatchID: s.Active.ID, TestedSHA: "tested", Generation: s.Active.CheckRetry.Generation, OutcomeUnknown: true}
+			stale := unknown
+			stale.Generation++
+			before := cloneState(s)
+			s = foldCheckEvents(t, s, stale)
+			if !reflect.DeepEqual(before.Active.CheckRetry, s.Active.CheckRetry) {
+				t.Fatal("stale permission result changed retry")
+			}
+			// Permission loss must win even if a previously refreshed pass exists.
+			if outcome == "success" {
+				pass := retryObservation(cfg, s, 702, outcome)
+				pass.Runs[0].Attempt = 2
+				s = foldCheckEvents(t, s, pass)
+			}
+			s = foldCheckEvents(t, s, unknown)
+			observed := retryObservation(cfg, s, 702, outcome)
+			observed.Runs[0].Attempt = 2
+			s = foldCheckEvents(t, s, observed, ChecksRefreshed{BatchID: s.Active.ID, TestedSHA: "tested", At: epoch.Add(time.Hour)})
+			confirm := onlyAction[ConfirmCheckFailure](t, Plan(cfg, s, epoch.Add(2*time.Hour)))
+			if confirm.Reason != ChecksFailed || s.ChecksPassed("tested") || s.Active.CheckRetry.Unsupported {
+				t.Fatalf("permission loss became ordinary CI evidence: %+v", s.Active)
+			}
+			s = foldCheckEvents(t, s, ChecksFailureConfirmed(confirm))
+			if detail := s.DequeueDetail(1, ChecksFailed); !strings.Contains(detail, ActionsPermissionLostDetail) || strings.Contains(detail, "timeout") {
+				t.Fatal(detail)
+			}
+			if !s.Active.CheckRetry.Confirmed || s.Active.CheckRetry.RerunState != "unknown" {
+				t.Fatalf("unknown outcome lost: %+v", s.Active.CheckRetry)
+			}
+		})
+	}
+}

@@ -56,7 +56,7 @@ type Executor struct {
 	RetryFailure func([]forge.CheckRun, string) bool
 	// PreviousUnboundChecks suppresses unchanged diagnostic observations.
 	PreviousUnboundChecks []queue.UnboundCheck
-	// ChecksTimeoutDetail supplies durable provenance context for a timeout dequeue.
+	// ChecksTimeoutDetail supplies durable check diagnostics for a failure dequeue.
 	ChecksTimeoutDetail string
 	// BeforeLand freshly revalidates PR trust after the final checks read.
 	BeforeLand func(context.Context, queue.Land) error
@@ -113,6 +113,12 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		if err != nil {
 			return err
 		}
+		if x.rerunPermissionLost(checks) {
+			if err := emit(queue.CheckRerunDispatched{BatchID: a.BatchID, TestedSHA: a.TestedSHA, Generation: x.CheckRetry.Generation, OutcomeUnknown: true}); err != nil {
+				return err
+			}
+			return nil
+		}
 		at := x.now()
 		var terminal, success bool
 		var ambiguity error
@@ -157,6 +163,12 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		checks, err := x.readChecks(ctx, a.TestedSHA)
 		if err != nil {
 			return err
+		}
+		if x.rerunPermissionLost(checks) {
+			if err := emit(queue.CheckRerunDispatched{BatchID: a.BatchID, TestedSHA: a.TestedSHA, Generation: x.CheckRetry.Generation, OutcomeUnknown: true}); err != nil {
+				return err
+			}
+			return ErrChecksNotSuccessful
 		}
 		var terminal, success bool
 		var ambiguity error
@@ -296,7 +308,7 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		return emit(queue.ActionCompleted{Key: a.Key()})
 	case queue.Dequeue:
 		detail := dequeueSummary(a.Reason)
-		if a.Reason == queue.ChecksTimeout && x.ChecksTimeoutDetail != "" {
+		if (a.Reason == queue.ChecksTimeout || x.ChecksRetryFailed == 1 && a.Reason == queue.ChecksFailed) && x.ChecksTimeoutDetail != "" {
 			detail = x.ChecksTimeoutDetail
 		}
 		if err := x.Driver.ReportStatus(ctx, x.Repo, a.PR, a.HeadSHA, forge.Status{State: forge.Dequeued, Reason: string(a.Reason), Summary: detail}); err != nil {
@@ -600,7 +612,7 @@ func (x *Executor) rerunChecks(ctx context.Context, a queue.RerunChecks, emit fu
 	if err != nil {
 		return err
 	}
-	return emit(queue.CheckRerunDispatched{BatchID: a.BatchID, TestedSHA: a.TestedSHA, Generation: a.Generation, Unsupported: result.Unsupported, Detail: result.Detail})
+	return emit(queue.CheckRerunDispatched{BatchID: a.BatchID, TestedSHA: a.TestedSHA, Generation: a.Generation, Unsupported: result.Unsupported, OutcomeUnknown: result.OutcomeUnknown, Detail: result.Detail})
 }
 
 func (x *Executor) fenceRef() string { return "openmerge/fence/" + x.Base }
@@ -646,4 +658,10 @@ func (x *Executor) readChecks(ctx context.Context, sha string) ([]forge.CheckRun
 		}
 	}
 	return x.Driver.CheckRuns(ctx, x.Repo, sha)
+}
+
+// Refused optional enrichment is safe only before the retry is requested.
+func (x *Executor) rerunPermissionLost(checks []forge.CheckRun) bool {
+	return x.ChecksRetryFailed == 1 && x.CheckRetry != nil && x.CheckRetry.Requested &&
+		slices.ContainsFunc(checks, func(check forge.CheckRun) bool { return check.RetryPermissionDenied })
 }

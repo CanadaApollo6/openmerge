@@ -273,7 +273,10 @@ queues:
 Updating the manifest does not change an existing App. The App owner must add
 **Actions: Read and write** in the App's permission settings. GitHub then prompts
 each installation to approve the change. Until approval, a retry-enabled queue
-behaves exactly like retry-off and logs a WARN.
+has the same outcomes as retry-off while events/status still show retry state,
+and logs a WARN. After the App owner approves Actions, retries activate on the
+next installation-token renewal (up to about an hour) or immediately on a serve
+restart; the WARN persists until then.
 
 `actions: write` is broader than rerun-failed-jobs: it also permits cancellation,
 artifact/cache management and deployment approvals. OpenMerge uses only the
@@ -281,12 +284,19 @@ rerun-failed-jobs endpoint for retries (and, after ADR 0009 PR 4, cancel).
 
 Each workflow dispatch writes a durable intent before its POST and acceptance
 immediately after. A lost response or restart leaves an uncertain intent; the
-worker reads the workflow's status/run_attempt to reconcile it and never repeats
-that POST from an unchanged original observation. This favors bounded waiting
-over duplicate execution: a crash between intent and POST can consume the retry
-without starting CI, ending at the retry deadline when a timeout is configured.
-Workflow and job URLs remain
-in the flaky evidence shown in status/API output.
+worker requires an increased workflow `run_attempt` to prove acceptance; status
+alone is insufficient. An uncertain intent never authorizes a repeated POST. A
+durably recorded definite refusal permits re-dispatch only under a fresh fenced
+intent. A crash between intent and POST can consume the retry without starting
+CI. Reruns are always bounded by the retry deadline, using one hour when
+`check_timeout: 0`. Workflow and job URLs remain in the flaky evidence shown in
+status/API output.
+
+If Actions permission is lost while a rerun is outstanding, including during
+reconciliation of uncertain acceptance, OpenMerge confirms the failure immediately
+with "Actions permission lost during rerun; rerun outcome unknown" in dequeue
+details, PR status and `why`. The refused read cannot prove CI success, failure or
+timeout. This can dequeue a PR whose rerun passed, keeping landing fail-closed.
 
 Drain older workers before upgrading. After the first retry event is written,
 rolling back to an older binary requires a database restore (ADR 0002/0009).

@@ -134,3 +134,31 @@ func TestUnconfirmedRetryExplainedInStatusAndWhy(t *testing.T) {
 		}
 	}
 }
+
+func TestPermissionLostDuringRerunExplainedInStatusAndWhy(t *testing.T) {
+	runs := []queue.CheckRun{{WorkflowRunID: 700, ID: 701, Attempt: 1, Name: "ci", Source: "app:15368", State: "failure"}}
+	events := append(testingEvents(),
+		queue.ChecksObserved{BatchID: "b1", TestedSHA: "tested", Runs: runs, Terminal: true, OriginalDeadline: at.Add(time.Minute), Timeout: time.Minute},
+		queue.CheckRerunRequested{BatchID: "b1", TestedSHA: "tested", Runs: runs, OriginalDeadline: at.Add(time.Minute), At: at, Deadline: at.Add(time.Minute), Timeout: time.Minute},
+		queue.CheckRerunDispatched{BatchID: "b1", TestedSHA: "tested", OutcomeUnknown: true},
+		queue.ChecksFailureConfirmed{BatchID: "b1", TestedSHA: "tested", Reason: queue.ChecksFailed},
+	)
+	for _, dequeued := range []bool{false, true} {
+		if dequeued {
+			events = append(events, queue.Dequeued{PR: 1, AdmissionID: 1, Reason: queue.ChecksFailed, BatchID: "b1"})
+		}
+		_, entry, why := Project(journal(events...), 1, 50, nil)
+		if entry == nil || !strings.Contains(entry.Detail, queue.ActionsPermissionLostDetail) {
+			t.Fatalf("status=%+v", entry)
+		}
+		found := false
+		for _, e := range why.Events {
+			if e.Type == "check_rerun_dispatched" && e.RerunState == "unknown" && strings.Contains(e.Summary, queue.ActionsPermissionLostDetail) {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("missing why explanation: %+v", why)
+		}
+	}
+}
