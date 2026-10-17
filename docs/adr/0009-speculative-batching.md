@@ -152,17 +152,19 @@ criteria above are met.
 
 ### Cancellation and visibility implementation notes (PR 4)
 
-Cancellation is opt-in through speculative admission (`max_depth > 1`). Depth-1
-bisection and dequeues, including depth-1 queues with retries, keep their existing
-protocol and do not cancel CI. Default policy digest, existing wire fixtures and
-legacy simulator results remain unchanged.
+Cancellation is opt-in through speculative admission (`max_depth > 1`). Queues
+that start at depth 1, including those with retries, keep their existing bisection
+and dequeue protocol and do not cancel CI. Default policy digest, existing wire
+fixtures and legacy simulator results remain unchanged.
 
 `batch_runs_observed` records all accepted CI names and attempts, including
 non-required workflows, independently of the filtered retry-policy observations.
 Empty or unchanged reads emit no history event. History keeps all identities returned
 together, while cancellation and policy retain only the latest attempt per producer.
-Depth-1 queues, including retry-enabled ones, derive their ledger from existing
-events and never emit the PR 4 event types. It cannot supply landing evidence.
+Queues that start at depth 1, including retry-enabled ones, derive their ledger
+from existing events and never emit the PR 4 event types. After a downgrade from
+a higher depth, in-flight speculative intents keep emitting cancellation events
+until they drain. The ledger cannot supply landing evidence.
 GitHub enriches every observed Actions job
 with its actual attempt on this opt-in path; the default plain reader is unchanged.
 The reducer first permanently discards a non-landing speculative batch. Its
@@ -185,7 +187,10 @@ phase gets eight total attempts, waiting 30s, 1m, 2m, 4m, 8m, 16m and 30m betwee
 them. Exhaustion records `abandoned` with the final reason; it never blocks the
 queue. Simulator and production use this same reducer, planner timer and attempt
 budget. Confirmation reports may be incremental: the reducer retains completed
-subsets and retries only the remaining identities.
+subsets and retries only the remaining identities. Overlapping reports from
+recovered actions tolerate earlier confirmations, apply newly confirmed targets,
+and reject identities outside the original intent. Confirmation identities are
+retained only while that mutation intent is pending, including across snapshots.
 
 Unsupported cancellations schedule read-only `observe_retired_checks` until the
 recorded attempts finish or that phase exhausts its budget; those historical
@@ -210,6 +215,9 @@ it does not distinguish approval separately. Adaptive inputs remain for PR 5.
 Snapshot state holds pending
 cancellation effects, not unbounded run history; future retention must define
 how historical ledgers are retained.
+
+Journals written by pre-merge heads of PR 4 are intentionally unreadable;
+compatibility is claimed only with `origin/main`.
 
 Both planner-backed adopter modes pass. Unsupported totals match PR 3 exactly;
 supported cancellation reduces runner-minutes without changing run counts or

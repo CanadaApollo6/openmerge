@@ -34,7 +34,9 @@ func (x *Executor) cancelChecks(ctx context.Context, a queue.CancelChecks, emit 
 	}
 	report.Unsupported, report.Detail = result.Unsupported != "", result.Unsupported
 	for _, confirmed := range result.Confirmed {
-		// A driver's answer cannot broaden the durable target set.
+		// Validate against this persisted action's targets. After lease recovery
+		// they can include runs whose confirmations already committed; the reducer
+		// tolerates those repeats without broadening the original intent.
 		index := slices.IndexFunc(a.Runs, func(r queue.CheckRun) bool {
 			return r.ID == confirmed.ID && canonicalCheckAttempt(r.Attempt) == canonicalCheckAttempt(confirmed.Attempt) && r.Source == confirmed.Source && r.Name == confirmed.Name && r.WorkflowRunID == confirmed.WorkflowRunID
 		})

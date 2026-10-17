@@ -857,7 +857,9 @@ separate from the retry-policy subset), `check_cancellation_requested` and
 `cancel_checks`, plus the read-only `observe_retired_checks` follow-up and scheduled
 `retry_check_cancellation` successors. Empty or unchanged history reads emit no
 `batch_runs_observed`; simultaneous historical attempts keep separate ledger rows.
-Depth-1 queues with or without retries use their existing protocol exclusively.
+Queues that start at depth 1, with or without retries, use their existing protocol
+exclusively. After a downgrade from a higher depth, in-flight speculative intents
+keep emitting cancellation events until they drain.
 Pending intents survive snapshot encode/decode. Historical run
 ledgers are reconstructed from journals, not stored unboundedly in snapshots.
 Store retention/compaction remains disabled; enabling it must preserve ledger
@@ -867,6 +869,8 @@ The additive wire-v1 chain types require compatible workers. Drain old workers
 before upgrading. Returning to depth 1 does not make an older binary
 able to replay those records; rollback across their first use requires a database
 restore. Existing depth-1 event/action wire types and fixtures are unchanged.
+Journals written by pre-merge heads of this PR are intentionally unreadable;
+compatibility is claimed only with `origin/main`.
 
 Snapshots currently have an encode/decode codec only; the store still replays
 journals and does not write or load these snapshots. PR 5 must include the

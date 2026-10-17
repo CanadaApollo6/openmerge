@@ -77,6 +77,9 @@ type State struct {
 	lifecycleRevision  uint64
 	rulesSources       map[RulesSource]rulesSourceState
 	rulesPauseRevision uint64
+
+	// Only confirmations of still-pending mutation intents are retained.
+	cancellationConfirmed map[string][]CheckRun
 }
 
 // Entry records the head admitted to the queue, independently of later observations.

@@ -139,15 +139,25 @@ func (s *State) reportCancellation(e CheckCancellationReported) {
 		if !ok || readOnly || a.BatchID != e.BatchID || a.TestedSHA != e.TestedSHA {
 			continue
 		}
-		// Reports may contain disjoint subsets across calls. Remove each confirmed
-		// identity durably so later calls only need to confirm the remaining targets.
+		// A reclaimed action can still carry targets confirmed before its worker
+		// crashed. Accept that overlap, but reject identities outside the intent.
+		key := CancelChecks(a).Key()
 		for _, run := range e.Confirmed {
-			if !slices.ContainsFunc(a.Runs, func(target CheckRun) bool { return sameCancellationRun(target, run) }) {
+			if !slices.ContainsFunc(a.Runs, func(target CheckRun) bool { return sameCancellationRun(target, run) }) &&
+				!slices.ContainsFunc(s.cancellationConfirmed[key], func(target CheckRun) bool { return sameCancellationRun(target, run) }) {
 				return
 			}
 		}
 		a.Runs = slices.DeleteFunc(slices.Clone(a.Runs), func(run CheckRun) bool {
-			return slices.ContainsFunc(e.Confirmed, func(c CheckRun) bool { return sameCancellationRun(run, c) })
+			index := slices.IndexFunc(e.Confirmed, func(c CheckRun) bool { return sameCancellationRun(run, c) })
+			if index < 0 {
+				return false
+			}
+			if s.cancellationConfirmed == nil {
+				s.cancellationConfirmed = make(map[string][]CheckRun)
+			}
+			s.cancellationConfirmed[key] = append(s.cancellationConfirmed[key], e.Confirmed[index])
+			return true
 		})
 		if e.Unsupported || len(a.Runs) == 0 {
 			s.completeEffect(effect.Key())
@@ -164,6 +174,20 @@ func (s *State) reportCancellation(e CheckCancellationReported) {
 			s.effects[i] = CancelChecks(a)
 		}
 		return
+	}
+}
+
+func (s *State) pruneCancellationConfirmations() {
+	for key := range s.cancellationConfirmed {
+		if !slices.ContainsFunc(s.effects, func(effect Action) bool {
+			a, readOnly, _, ok := cancellationTarget(effect)
+			return ok && !readOnly && CancelChecks(a).Key() == key
+		}) {
+			delete(s.cancellationConfirmed, key)
+		}
+	}
+	if len(s.cancellationConfirmed) == 0 {
+		s.cancellationConfirmed = nil
 	}
 }
 
@@ -240,21 +264,38 @@ func DeferCheckCancellation(action Action, at time.Time, detail string) (CheckCa
 	a, _, attempt, ok := cancellationTarget(action)
 	return CheckCancellationDeferred{BatchID: a.BatchID, TestedSHA: a.TestedSHA, Key: action.Key(), At: at, Detail: detail, Abandoned: attempt+1 >= CancellationAttemptLimit}, ok
 }
-func (s *State) deferCancellation(e CheckCancellationDeferred) {
+
+// CanDeferCheckCancellation reports whether a failure belongs to the current
+// action and phase, including its attempt budget. Status uses the same rule.
+func (s State) CanDeferCheckCancellation(e CheckCancellationDeferred) bool {
+	_, ok := s.cancellationDeferral(e)
+	return ok
+}
+
+func (s State) cancellationDeferral(e CheckCancellationDeferred) (Action, bool) {
 	if e.Validate() != nil || s.Batch(e.BatchID) != nil {
-		return
+		return nil, false
 	}
 	for _, effect := range s.effects {
-		a, readOnly, attempt, ok := cancellationTarget(effect)
+		a, _, attempt, ok := cancellationTarget(effect)
 		if !ok || effect.Key() != e.Key || a.BatchID != e.BatchID || a.TestedSHA != e.TestedSHA || e.Abandoned != (attempt+1 >= CancellationAttemptLimit) {
 			continue
 		}
-		s.completeEffect(effect.Key())
-		if !e.Abandoned {
-			delay := min(30*time.Second*time.Duration(1<<attempt), 30*time.Minute)
-			s.addEffect(RetryCheckCancellation{Cancellation: a, ReadOnly: readOnly, Attempt: attempt + 1, At: e.At.Add(delay)})
-		}
+		return effect, true
+	}
+	return nil, false
+}
+
+func (s *State) deferCancellation(e CheckCancellationDeferred) {
+	effect, ok := s.cancellationDeferral(e)
+	if !ok {
 		return
+	}
+	a, readOnly, attempt, _ := cancellationTarget(effect)
+	s.completeEffect(effect.Key())
+	if !e.Abandoned {
+		delay := min(30*time.Second*time.Duration(1<<attempt), 30*time.Minute)
+		s.addEffect(RetryCheckCancellation{Cancellation: a, ReadOnly: readOnly, Attempt: attempt + 1, At: e.At.Add(delay)})
 	}
 }
 

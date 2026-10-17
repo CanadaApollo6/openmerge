@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 )
@@ -74,6 +75,7 @@ type stateSnapshot struct {
 	Observations                                                             map[int]PRObserved
 	Dequeues                                                                 map[int]dequeueSnapshot
 	Effects                                                                  []json.RawMessage
+	CancellationConfirmed                                                    map[string][]CheckRun `json:",omitempty"`
 	Acknowledged                                                             map[string]scopeSnapshot
 	Checks                                                                   map[string]checkSnapshot
 	TestedBatches                                                            map[string]string
@@ -121,6 +123,7 @@ func EncodeSnapshot(s State) ([]byte, error) {
 		RulesPauseRevision: s.rulesPauseRevision,
 		RulesSources:       make(map[RulesSource]rulesSnapshot),
 	}
+	v.CancellationConfirmed = s.cancellationConfirmed
 	for _, b := range s.Batches() {
 		v.Chain = append(v.Chain, batchSnapshot{*b, b.checksPassed, b.checksGeneration, b.checksRefreshedAt, b.checkRefreshes, b.needsRefresh, b.cleanupRequested, b.LandingAttempt.cleanupPolicyRecorded, b.unboundChecks})
 	}
@@ -309,6 +312,28 @@ func DecodeSnapshot(data []byte) (State, error) {
 		effectKeys[a.Key()] = true
 		s.effects = append(s.effects, a)
 	}
+	for key, runs := range v.CancellationConfirmed {
+		if validateHistoricalRuns(runs) != nil || slices.ContainsFunc(runs, func(run CheckRun) bool { return run.State == "pending" }) {
+			return State{}, fmt.Errorf("invalid snapshot cancellation confirmations")
+		}
+		found := false
+		for _, effect := range s.effects {
+			a, readOnly, _, ok := cancellationTarget(effect)
+			if !ok || readOnly || CancelChecks(a).Key() != key {
+				continue
+			}
+			found = true
+			for _, run := range runs {
+				if slices.ContainsFunc(a.Runs, func(target CheckRun) bool { return sameCancellationRun(target, run) }) {
+					return State{}, fmt.Errorf("snapshot cancellation is both pending and confirmed")
+				}
+			}
+		}
+		if !found {
+			return State{}, fmt.Errorf("snapshot confirmation has no pending cancellation")
+		}
+	}
+	s.cancellationConfirmed = v.CancellationConfirmed
 	return cloneState(s), nil
 }
 

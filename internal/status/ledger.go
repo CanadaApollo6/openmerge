@@ -39,6 +39,7 @@ func runLedger(j store.Journal, sanitizer *diagnostic.Sanitizer, visit func(stor
 	type wasteRecord struct{ batch, reason string }
 	beforeWaste := make(map[int64][]wasteRecord)
 	afterWaste := make(map[int64][]wasteRecord)
+	abandoned := make(map[int64]bool)
 	batches := map[string]*ledgerBatch{}
 	order := []string{}
 	bySHA := map[string]string{}
@@ -72,6 +73,9 @@ func runLedger(j store.Journal, sanitizer *diagnostic.Sanitizer, visit func(stor
 	for _, record := range j.Events {
 		before := s
 		s = queue.Apply(s, record.Event)
+		if e, ok := record.Event.(queue.CheckCancellationDeferred); ok && e.Abandoned {
+			abandoned[record.ID] = before.CanDeferCheckCancellation(e)
+		}
 		// A retained legacy failure can consume the batch during ref-built.
 		// Retain those tested inputs even though the resulting fold is idle.
 		var built queue.TestRefBuilt
@@ -299,7 +303,7 @@ func runLedger(j store.Journal, sanitizer *diagnostic.Sanitizer, visit func(stor
 				}
 			}
 		case queue.CheckCancellationDeferred:
-			if e.Abandoned {
+			if abandoned[record.ID] {
 				if b := batches[e.BatchID]; b != nil && b.sha == e.TestedSHA {
 					for i := range b.runs {
 						r := &b.runs[i]

@@ -326,6 +326,7 @@ func Apply(s State, e Event) State {
 		s.completeEffect(e.Key)
 	}
 	s.pruneAcknowledgements()
+	s.pruneCancellationConfirmations()
 	return s
 }
 
@@ -377,6 +378,10 @@ func cloneState(s State) State {
 		s.dequeues = make(map[int]Dequeue)
 	}
 	s.effects = slices.Clone(s.effects)
+	s.cancellationConfirmed = maps.Clone(s.cancellationConfirmed)
+	for key, runs := range s.cancellationConfirmed {
+		s.cancellationConfirmed[key] = slices.Clone(runs)
+	}
 	s.checks = maps.Clone(s.checks)
 	if s.checks == nil {
 		s.checks = make(map[string]retainedCheck)

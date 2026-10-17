@@ -277,7 +277,43 @@ func TestRunLedgerCanonicalizesZeroAndOneAttempts(t *testing.T) {
 
 func TestRunLedgerCancellationExhaustionIsVisible(t *testing.T) {
 	events := ledgerChain()
-	events = append(events, identified("b2", 2, 1, "pending"), queue.CheckCancellationRequested{BatchID: "b2", TestedSHA: "tested-b2", TestRef: "ref", Reason: "closed", Runs: []queue.CheckRun{{ID: 2, Attempt: 1, WorkflowRunID: 102, Name: "ci", Source: "app:1", State: "pending"}}}, queue.CheckCancellationDeferred{BatchID: "b2", TestedSHA: "tested-b2", Key: "batch/b2/cancel/retry/7", At: at, Detail: "404 Not Found", Abandoned: true})
+	tail := identified("b2", 2, 1, "pending")
+	events = append(events, tail,
+		queue.PRClosed{PR: 2},
+		queue.BatchesInvalidated{BatchIDs: []string{"b2"}, Reason: "change-left-queue"})
+	state := journal(events...).Seed
+	for _, event := range events {
+		state = queue.Apply(state, event)
+	}
+	cfg := queue.Config{SpeculationMaxDepth: 4, MergeMethod: queue.Merge}
+	for _, action := range queue.Plan(cfg, state, at) {
+		if request, ok := action.(queue.RecordCheckCancellation); ok {
+			event := queue.CheckCancellationRequested(request)
+			events = append(events, event)
+			state = queue.Apply(state, event)
+		}
+	}
+	now := at
+	for attempt := range queue.CancellationAttemptLimit {
+		found := false
+		for _, action := range queue.Plan(cfg, state, now) {
+			deferred, ok := queue.DeferCheckCancellation(action, now, "404 Not Found")
+			if !ok {
+				continue
+			}
+			found = true
+			if deferred.Abandoned != (attempt == queue.CancellationAttemptLimit-1) {
+				t.Fatal("wrong exhaustion boundary")
+			}
+			events = append(events, deferred)
+			state = queue.Apply(state, deferred)
+			break
+		}
+		if !found {
+			t.Fatalf("missing cancellation attempt %d", attempt)
+		}
+		now = now.Add(24 * time.Hour)
+	}
 	_, entry, _ := Project(journal(events...), 2, 1, nil)
 	if entry.RunLedger[0].Cancellation != "abandoned" || entry.RunLedger[0].CancellationDetail != "404 Not Found" {
 		t.Fatalf("exhaustion not visible: %+v", entry.RunLedger)
