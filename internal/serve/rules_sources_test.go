@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"slices"
@@ -94,7 +95,7 @@ func TestRulesPartialFailuresRetainAndRecordDefiniteFindings(t *testing.T) {
 	must(t, err)
 	w.CheckRules = func(context.Context) ([]string, []string, error) { return nil, nil, nil }
 	w.CheckProtection = func(context.Context, forge.MergeMethod) ([]string, []string, error) {
-		return []string{"definite review block"}, nil, errors.New("fence unreadable")
+		return []string{"definite review block"}, nil, fmt.Errorf("fence unreadable: %w", forge.ErrRulesUnavailable)
 	}
 	must(t, s.repositoryRules(t.Context(), w))
 	state, _, err := s.store.Load(t.Context(), w.id)

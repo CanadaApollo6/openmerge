@@ -2,6 +2,7 @@ package serve
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"time"
 
@@ -46,6 +47,12 @@ func (s *Server) repositoryRules(ctx context.Context, w *worker) error {
 			s.options.Logger.Warn("repository rules", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "source", check.source, "diagnostic", warning)
 		}
 		previous := state.RulesSourceProblems(check.source)
+		if errors.Is(readErr, forge.ErrRulesUnavailable) && len(problems) == 0 {
+			// A permanent permission gap is not a failed check: retrying cannot
+			// fix it, and gating activation on it would wedge the queue.
+			s.options.Logger.Warn("repository rules unavailable; keeping previous state for source", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "source", check.source, "error", readErr)
+			continue
+		}
 		if readErr != nil {
 			failed = true
 			s.options.Logger.Warn("repository rules read failed; keeping previous state for source", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "source", check.source, "error", readErr)

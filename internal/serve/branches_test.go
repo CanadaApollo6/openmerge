@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -605,5 +606,84 @@ func TestIndependentBaseWorkersLandUnderDefaultBranchPolicy(t *testing.T) {
 		if !landed {
 			t.Fatalf("%s never landed", base)
 		}
+	}
+}
+
+func TestManagedStartupClassicProtectionUnavailable(t *testing.T) {
+	for _, mode := range []string{"unavailable", "previous problem", "read failure"} {
+		t.Run(mode, func(t *testing.T) {
+			db := database(t)
+			f := fake.New()
+			f.Init(repo, "main", "openmerge/fence/main")
+			tip, err := f.PushBase(repo, "main", "config", map[string]string{".openmerge.yml": repositoryConfig})
+			must(t, err)
+			r := managedRepository(f, repo.Path)
+			original := r.Target
+			reads := 0
+			r.Target = func(base string) Target {
+				target := original(base)
+				target.CheckProtection = func(context.Context, forge.MergeMethod) ([]string, []string, error) {
+					reads++
+					if mode == "read failure" {
+						return nil, nil, errors.New("classic protection HTTP 500")
+					}
+					return nil, nil, fmt.Errorf("classic protection HTTP 403: %w", forge.ErrRulesUnavailable)
+				}
+				return target
+			}
+			var previous []string
+			id, err := db.EnsureQueue(t.Context(), r.Target("main").Key)
+			must(t, err)
+			if mode == "previous problem" {
+				previous = []string{"known classic protection problem"}
+				_, err = db.Append(t.Context(), id, []queue.Event{queue.RulesSourceBlocked{Source: queue.ClassicProtection, Problems: previous}}, "")
+				must(t, err)
+			}
+			before, _, err := db.Load(t.Context(), id)
+			must(t, err)
+			var logs strings.Builder
+			options := Options{Logger: slog.New(slog.NewTextHandler(&logs, nil))}
+			s, err := NewRepositories(t.Context(), db, []Repository{r}, options)
+			must(t, err)
+			for _, phase := range []string{"startup", "branch refresh", "restart"} {
+				w := baseWorker(t, s, "main")
+				state := lifecycleState(t, s, w)
+				wantReady := mode == "unavailable"
+				if !w.managed || w.ready != wantReady || wantReady && (state.LifecycleState() != "active" || state.Fence == "") {
+					t.Fatalf("%s: ready=%v lifecycle=%s fence=%s", phase, w.ready, state.LifecycleState(), state.Fence)
+				}
+				if !slices.Equal(state.RulesSourceProblems(queue.ClassicProtection), previous) || state.RulesSourceRevision(queue.ClassicProtection) != before.RulesSourceRevision(queue.ClassicProtection) {
+					t.Fatalf("%s: unavailable source changed prior problems: %+v", phase, state.RulesSources())
+				}
+				if mode == "read failure" && w.rulesFailures == 0 || mode != "read failure" && w.rulesFailures != 0 {
+					t.Fatalf("%s: rulesFailures=%d", phase, w.rulesFailures)
+				}
+				switch phase {
+				case "startup":
+					w.rulesNextCheck = time.Time{}
+					must(t, s.RefreshBranches(t.Context()))
+				case "branch refresh":
+					s, err = NewRepositories(t.Context(), db, []Repository{r}, options)
+					must(t, err)
+				}
+			}
+			if reads != 3 {
+				t.Fatalf("expected startup, refresh and restart reads; got %d", reads)
+			}
+			if mode != "read failure" && (!strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "repository rules unavailable; keeping previous state for source")) {
+				t.Fatalf("missing unavailable warning: %s", &logs)
+			}
+			if mode == "unavailable" {
+				_, err = f.OpenPR(repo, 1, tip, true)
+				must(t, err)
+				f.SetCanWrite(repo, "writer", true)
+				f.AddComment(repo, 1, "writer", "@openmerge queue")
+				w := baseWorker(t, s, "main")
+				must(t, s.cycle(t.Context(), w))
+				if state := lifecycleState(t, s, w); len(state.Entries) != 1 || state.Active == nil {
+					t.Fatal("unavailable protection prevented queue comment from starting work")
+				}
+			}
+		})
 	}
 }

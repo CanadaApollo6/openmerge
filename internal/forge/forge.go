@@ -197,6 +197,11 @@ type BuildRequest struct {
 	BatchID      string
 }
 
+// ErrRulesUnavailable marks a rules read the installation is not permitted to
+// make, such as classic protection without Administration read. It is not a
+// transient failure: callers warn and keep the source's previous state.
+var ErrRulesUnavailable = errors.New("repository rules unavailable to this installation")
+
 // ErrConflict distinguishes a content conflict from an infrastructure failure.
 var ErrConflict = errors.New("merge conflict")
 
