@@ -34,15 +34,17 @@ type pullRequest struct {
 }
 
 type testRun struct {
-	job     *ciJob
-	heads   []queue.BatchPR
-	success bool
-	done    bool
-	rerun   bool
-	base    string
-	covered []string
-	method  queue.MergeMethod
-	ref     string
+	job              *ciJob
+	heads            []queue.BatchPR
+	success          bool
+	done             bool
+	rerun            bool
+	batchID          string
+	startedTestingAt time.Time
+	base             string
+	covered          []string
+	method           queue.MergeMethod
+	ref              string
 }
 
 type loggedEvent struct {
@@ -260,6 +262,16 @@ func (s *simulation) step() (bool, error) {
 }
 
 func (s *simulation) execute(action queue.Action) error {
+	// The executor is reused across virtual actions. Bind every retry-sensitive
+	// input to the currently projected batch before each execution.
+	s.executor.ChecksRetryFailed = s.cfg.Planner.ChecksRetryFailed
+	s.executor.CheckTimeout = s.cfg.Planner.CheckTimeout
+	s.executor.StartedTestingAt = time.Time{}
+	s.executor.CheckRetry = nil
+	if active := s.state.Active; active != nil {
+		s.executor.StartedTestingAt = active.StartedTestingAt
+		s.executor.CheckRetry = active.CheckRetry
+	}
 	s.boundary.scope = faultScope(action)
 	if a, ok := action.(queue.Land); ok && s.faults.Float64() < s.cfg.Faults.DuplicateExecutionRate {
 		s.sequence++
@@ -313,6 +325,10 @@ func (s *simulation) execute(action queue.Action) error {
 func (s *simulation) record(event queue.Event) {
 	batch := s.state.Active
 	switch event := event.(type) {
+	case queue.TestRefBuilt:
+		if run := s.tests[event.TestedSHA]; run != nil {
+			run.startedTestingAt = event.At
+		}
 	case queue.LandingStarted:
 		if batch != nil && batch.ID == event.BatchID {
 			s.attempts[event.AttemptID] = batch.TestedSHA
@@ -389,7 +405,7 @@ func (s *simulation) startCI(sha string, prs []int) {
 			return
 		}
 	}
-	run := &testRun{base: batch.BaseSHA, heads: slices.Clone(batch.PRs), method: s.cfg.MergeMethod, ref: batch.TestRef, success: s.ci.Float64() >= s.cfg.FlakeRate}
+	run := &testRun{batchID: batch.ID, startedTestingAt: batch.StartedTestingAt, base: batch.BaseSHA, heads: slices.Clone(batch.PRs), method: s.cfg.MergeMethod, ref: batch.TestRef, success: s.ci.Float64() >= s.cfg.FlakeRate}
 	commit, err := s.forge.Commit(s.repo, sha)
 	if err != nil {
 		s.violation = err
@@ -426,7 +442,7 @@ func (s *simulation) startCI(sha string, prs []int) {
 	if batch.FromBisection {
 		s.result.BisectionCIRuns++
 	}
-	s.forge.SetCheckRuns(s.repo, sha, []forge.CheckRun{{ID: 1, Name: "ci", State: forge.Pending}})
+	s.forge.SetCheckRuns(s.repo, sha, []forge.CheckRun{{ID: 1, Attempt: 1, Name: "ci", State: forge.Pending}})
 	duration := s.ciDuration()
 	if s.cfg.CI == nil {
 		s.schedule(s.now.Add(duration), ciComplete, 0, sha)
@@ -506,7 +522,7 @@ func (s *simulation) plan() ([]queue.Action, error) {
 
 func (s *simulation) authorizeStart(action queue.Action, event queue.Event) error {
 	switch event.(type) {
-	case queue.BatchStarted, queue.LandingStarted:
+	case queue.BatchStarted, queue.CheckRerunRequested, queue.LandingStarted:
 		if !queue.CanStart(s.cfg.Planner, s.state, action, event) {
 			return errStale
 		}

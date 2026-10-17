@@ -43,6 +43,22 @@
 // interval has not elapsed. Worker clocks affect timeout liveness, as StartedTestingAt
 // already does, never landing safety. Equal timestamps have no special meaning.
 //
+// Retry-enabled queues use identified ChecksObserved instead of ChecksCompleted.
+// Failed producer/run/attempt identities are retained separately from the latest
+// observation. RecordCheckRerun and its queue-locked CheckRerunRequested consume
+// one retry and pin its own deadline before RerunChecks dispatches it. A delayed
+// observation of an original run can neither confirm failure nor replace a rerun
+// pass. Each originally failed producer must supply a newer attempt on the same
+// tested SHA and test ref; Land preflight checks those identities too. Reopening
+// advances the landing generation but preserves the retry request, failed runs,
+// original deadline and rerun deadline. ConfirmCheckFailure durably diagnoses a
+// failed rerun, an unsupported capability or a qualifying timeout; confirmation
+// cannot be revoked. Passing batches waiting to land never time out. The
+// retryOldestBatch policy hook will defer provisional failures until that batch
+// is oldest. QueueConfig supplies the effective retry limit to planner and
+// executor, allowing the chain to enable it in one policy assignment. With retries disabled,
+// existing events, actions, keys and replay behavior are unchanged.
+//
 // Non-conflict build failures keep PRs queued. Plan backs off from the recorded
 // TestRefBuildFailed.At by BuildBackoff, doubling per consecutive failure (with
 // duration saturation). BuildRetries limits failures, defaulting to 3. At the limit,

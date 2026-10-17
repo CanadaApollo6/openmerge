@@ -33,6 +33,7 @@ type repository struct {
 	commits       map[string]Commit
 	prs           map[int]forge.PullRequest
 	checks        map[string][]forge.CheckRun
+	reruns        map[string]rerunRecord
 	statuses      map[int]map[string]forge.Status
 	comments      map[int][]Comment
 	prCommits     map[int][]string
@@ -60,8 +61,9 @@ type Forge struct {
 }
 
 var (
-	_ forge.Driver = (*Forge)(nil)
-	_ forge.Git    = (*Forge)(nil)
+	_ forge.Driver        = (*Forge)(nil)
+	_ forge.Git           = (*Forge)(nil)
+	_ forge.CheckRerunner = (*Forge)(nil)
 )
 
 // New returns an empty forge, with no repositories or refs.
@@ -99,7 +101,7 @@ func (f *Forge) repo(repo forge.RepoRef) *repository {
 		r = &repository{
 			nonce: f.nonce, permissions: make(map[string]bool), updated: make(map[int]time.Time), authors: make(map[string]forge.CommitAuthor), protected: make(map[string]bool),
 			refs: make(map[string]string), commits: make(map[string]Commit),
-			prs: make(map[int]forge.PullRequest), checks: make(map[string][]forge.CheckRun),
+			prs: make(map[int]forge.PullRequest), checks: make(map[string][]forge.CheckRun), reruns: make(map[string]rerunRecord),
 			statuses: make(map[int]map[string]forge.Status), comments: make(map[int][]Comment), prCommits: make(map[int][]string), prBases: make(map[int]string),
 		}
 		f.repos[repo] = r

@@ -97,8 +97,11 @@ and write**. Use a fine-grained token; avoid classic tokens. Approve organizatio
 access/SSO where required, then export it as `GITHUB_TOKEN` for the commands below.
 The runtime App deliberately has no
 administration or organization-members permission: its collaborator permission
-check uses metadata read. The manifest uses contents, workflows, pull requests
-and checks write, plus statuses, issues and metadata read. Workflows write lets
+check uses metadata read. The manifest uses contents, workflows, pull requests,
+checks and Actions write, plus statuses, issues and metadata read. Actions write
+permits explicit reruns of failed GitHub Actions jobs; existing installations
+must review and accept the updated permission in App installation settings.
+Workflows write lets
 test-ref builds and landings include changes to `.github/workflows/`; PR-thread
 comments use pull requests write. Issues read permits command reads and the
 `issue_comment` subscription. See the [permission table](internal/forge/github/README.md#setup-and-ruleset-validation).

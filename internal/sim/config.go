@@ -64,6 +64,14 @@ func DefaultFaults() Faults {
 	return Faults{Methods: methods, FailFirst: first, LandingCrashRate: 0.02, DelayedPushRate: 0.02, DuplicateExecutionRate: 0.02}
 }
 
+func configuredForgeMethods(cfg Config) []string {
+	methods := append([]string(nil), forgeMethods...)
+	if cfg.Planner.ChecksRetryFailed == 1 {
+		methods = append(methods, "RerunFailedChecks")
+	}
+	return methods
+}
+
 // DefaultConfig models a 500-PR day. Two-minute CI leaves serial capacity for
 // 720 runs/day; slower CI can legitimately drain past the arrival window.
 func DefaultConfig() Config {
@@ -134,13 +142,14 @@ func (cfg Config) normalized() (Config, error) {
 		{"forge error rate", cfg.Faults.ForgeErrorRate}, {"landing crash rate", cfg.Faults.LandingCrashRate},
 		{"CI rerun rate", cfg.Faults.CIRerunRate},
 	}
+	allowedMethods := configuredForgeMethods(cfg)
 	for method, count := range cfg.Faults.FailFirst {
-		if !slices.Contains(forgeMethods, method) || count < 0 {
+		if !slices.Contains(allowedMethods, method) || count < 0 {
 			return cfg, fmt.Errorf("invalid initial fault count %q: %d", method, count)
 		}
 	}
 	for method, rate := range cfg.Faults.Methods {
-		if !slices.Contains(forgeMethods, method) {
+		if !slices.Contains(allowedMethods, method) {
 			return cfg, fmt.Errorf("unknown forge method %q", method)
 		}
 		rates = append(rates, struct {
@@ -172,6 +181,9 @@ func (cfg Config) normalized() (Config, error) {
 		return cfg, fmt.Errorf("unsupported merge method %q", cfg.MergeMethod)
 	}
 	cfg.Planner.MergeMethod = cfg.MergeMethod
+	if cfg.Planner.ChecksRetryFailed != 0 && cfg.Planner.ChecksRetryFailed != 1 {
+		return cfg, fmt.Errorf("checks retry failed must be 0 or 1")
+	}
 	if cfg.Planner.BatchMaxSize < 0 || cfg.Planner.BatchMaxSize > 128 || cfg.Planner.BatchMaxWait < 0 {
 		return cfg, fmt.Errorf("invalid planner batching settings")
 	}
@@ -216,6 +228,16 @@ func (r Result) MarshalJSON() ([]byte, error) {
 
 // MarshalJSON records every effective setting with durations in seconds.
 func (cfg Config) MarshalJSON() ([]byte, error) {
+	planner := map[string]any{
+		"batch_max_size": cfg.Planner.BatchMaxSize, "batch_max_wait_seconds": cfg.Planner.BatchMaxWait.Seconds(), "merge_method": cfg.Planner.MergeMethod, "check_timeout_seconds": cfg.Planner.CheckTimeout.Seconds(),
+		"resolve_after_seconds": cfg.Planner.ResolveAfter.Seconds(), "refresh_interval_seconds": cfg.Planner.RefreshInterval.Seconds(),
+		"build_retries": cfg.Planner.BuildRetries, "build_backoff_seconds": cfg.Planner.BuildBackoff.Seconds(),
+	}
+	// Retry support is additive to the legacy exit record. Omitting the field
+	// for zero preserves the old JSON bytes exactly.
+	if cfg.Planner.ChecksRetryFailed != 0 {
+		planner["checks_retry_failed"] = cfg.Planner.ChecksRetryFailed
+	}
 	values := map[string]any{
 		"prs": cfg.PRs, "seed": cfg.Seed, "arrival_window_seconds": cfg.ArrivalWindow.Seconds(),
 		"broken_rate": cfg.BrokenRate, "flake_rate": cfg.FlakeRate, "drop_webhook_rate": cfg.DropWebhookRate,
@@ -223,9 +245,7 @@ func (cfg Config) MarshalJSON() ([]byte, error) {
 		"external_push_rate":  cfg.ExternalPushRate,
 		"ci_duration_seconds": cfg.CIDuration.Seconds(), "ci_min_seconds": cfg.CIMin.Seconds(), "ci_max_seconds": cfg.CIMax.Seconds(),
 		"merge_method": cfg.MergeMethod, "retry_delay_seconds": cfg.RetryDelay.Seconds(), "max_steps": cfg.MaxSteps,
-		"planner": map[string]any{"batch_max_size": cfg.Planner.BatchMaxSize, "batch_max_wait_seconds": cfg.Planner.BatchMaxWait.Seconds(), "merge_method": cfg.Planner.MergeMethod, "check_timeout_seconds": cfg.Planner.CheckTimeout.Seconds(),
-			"resolve_after_seconds": cfg.Planner.ResolveAfter.Seconds(), "refresh_interval_seconds": cfg.Planner.RefreshInterval.Seconds(),
-			"build_retries": cfg.Planner.BuildRetries, "build_backoff_seconds": cfg.Planner.BuildBackoff.Seconds()},
+		"planner": planner,
 		"faults": map[string]any{"forge_error_rate": cfg.Faults.ForgeErrorRate, "methods": cfg.Faults.Methods, "fail_first": cfg.Faults.FailFirst,
 			"landing_crash_rate": cfg.Faults.LandingCrashRate, "delayed_push_rate": cfg.Faults.DelayedPushRate,
 			"duplicate_execution_rate": cfg.Faults.DuplicateExecutionRate, "ci_rerun_rate": cfg.Faults.CIRerunRate, "replay_delay_seconds": cfg.Faults.ReplayDelay.Seconds()},

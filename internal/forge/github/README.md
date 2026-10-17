@@ -32,7 +32,7 @@ never appear in driver errors or logs.
   permission lock held across network calls.
 - Check runs use `filter=all`, and all review, check, status, and comment lists
   follow pagination. Native IDs order reruns within one producer. Check runs carry `Source:
-  "app:<id>"`; statuses carry `Source: "status:<lowercase-creator-login>"`.
+  "app:<id>"` and a provider-supplied `Attempt` when a native ID repeats; statuses carry `Source: "status:<lowercase-creator-login>"`.
   Check suites for the SHA are read on every check refresh. A queued, running,
   or unknown suite state makes its run pending regardless of stale success.
   `HeadBranch` preserves the refreshed suite's `head_branch`; missing suites
@@ -40,6 +40,13 @@ never appear in driver errors or logs.
   [queue CI provenance contract](../../../docs/operating.md#queue-ci-provenance).
   Missing producer identities and unknown outcomes are pending.
   Only the `OpenMerge` check owned by this App is excluded from CI observations.
+- Same-commit check retries are optional. For GitHub Actions, an explicit
+  retry request uses the workflow run ID from a validated Actions check URL and
+  `POST .../actions/runs/{id}/rerun-failed-jobs`; other Apps use check-run
+  rerequest where GitHub permits it. Check reads do not call the Actions API.
+  Missing `actions: write` is a WARN and leaves ordinary check processing
+  available. Existing installations must approve the new permission in App
+  installation settings before Actions retries can run.
 - Multiple Apps, multiple status creators, or a check/status pair using a required
   name are ambiguous. The executor keeps that check pending and returns
   `executor.CheckSourceAmbiguityError{Name, Sources}` after recording the refresh.
@@ -143,6 +150,7 @@ Required App repository permissions:
 | Workflows | write | Test-ref builds and base landings that change `.github/workflows/` |
 | Pull requests | write | PR/review reads, PR-thread comments and closure |
 | Checks | write | CI reads and OpenMerge check reporting |
+| Actions | write | Rerun failed GitHub Actions jobs when explicitly requested |
 | Commit statuses | read | CI status observations |
 | Issues | read | Issue-thread command reads and `issue_comment` webhook subscription |
 | Metadata | read | Collaborator permissions, repository/default branch and ruleset reads |

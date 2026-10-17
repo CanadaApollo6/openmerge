@@ -1,0 +1,1 @@
+{"version":1,"type":"checks_observed","data":{"batch_id":"b1","tested_sha":"tested","runs":[{"id":7,"attempt":1,"name":"ci","source":"app:1","state":"failure"}],"terminal":true,"success":false,"original_deadline":"2026-10-17T00:01:00Z","timeout":60000000000}}

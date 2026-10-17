@@ -24,6 +24,7 @@ queues:
 		"# comment\n" + source,
 		strings.ReplaceAll(source, "check-success = ci", "check-success=ci"),
 		source + "    merge_method: squash\n    check_timeout: 60m\n    batch: {max_size: 1, max_wait: 0}\n",
+		source + "    checks: {retry_failed: 0}\n",
 	} {
 		if got := digest(same, true); got != want {
 			t.Fatal("formatting or explicit defaults changed the effective policy digest")
@@ -36,6 +37,7 @@ queues:
 		source + "    check_timeout: 2h\n",
 		source + "    batch: {max_size: 2}\n",
 		source + "    batch: {max_wait: 1m}\n",
+		source + "    checks: {retry_failed: 1}\n",
 	} {
 		if got := digest(different, true); got == want {
 			t.Fatalf("policy change did not change digest: %s", different)

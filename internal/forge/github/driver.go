@@ -25,9 +25,14 @@ type Driver struct {
 	installation int64
 	client       *gh.Client
 	writes       sync.Mutex
+	rerunKeys    map[string]githubRerunRecord
+	rerunOrder   []string
 }
 
-var _ forge.Driver = (*Driver)(nil)
+var (
+	_ forge.Driver        = (*Driver)(nil)
+	_ forge.CheckRerunner = (*Driver)(nil)
+)
 
 // GitHub repository paths have exactly two components. RepoRef stays opaque to
 // the engine; this forge-specific boundary is responsible for interpreting it.
@@ -314,7 +319,9 @@ func (d *Driver) CheckRuns(ctx context.Context, repo forge.RepoRef, sha string) 
 			if run.GetCheckSuite().GetID() <= 0 || suite.GetStatus() != "completed" || run.GetApp().GetID() <= 0 {
 				state = forge.Pending
 			}
-			result = append(result, forge.CheckRun{ID: uint64(max(run.GetID(), 0)), Name: run.GetName(), Source: "app:" + strconv.FormatInt(run.GetApp().GetID(), 10), State: state, HeadBranch: suite.GetHeadBranch()})
+			id := uint64(max(run.GetID(), 0))
+			source := "app:" + strconv.FormatInt(run.GetApp().GetID(), 10)
+			result = append(result, forge.CheckRun{ID: id, Attempt: nextCheckRunAttempt(run), Name: run.GetName(), Source: source, State: state, HeadBranch: suite.GetHeadBranch()})
 		}
 	}
 	for page := 1; page != 0; {

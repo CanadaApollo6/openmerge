@@ -8,6 +8,7 @@ import (
 var (
 	configKeys = yamlKeys(reflect.TypeFor[Config]())
 	queueKeys  = yamlKeys(reflect.TypeFor[Queue]())
+	checksKeys = yamlKeys(reflect.TypeFor[Checks]())
 	batchKeys  = yamlKeys(reflect.TypeFor[Batch]())
 )
 

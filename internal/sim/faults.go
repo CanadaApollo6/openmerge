@@ -53,9 +53,15 @@ func (*pushTimeout) Temporary() bool { return true }
 // so an invariant cannot consume a fault intended for an executor operation.
 type faultForge struct {
 	*fake.Forge
-	sim   *simulation
-	scope string
-	calls map[string]int
+	sim    *simulation
+	scope  string
+	calls  map[string]int
+	reruns map[string]rerunResult
+}
+
+type rerunResult struct {
+	fingerprint string
+	result      forge.RerunChecksResult
 }
 
 func (f *faultForge) before(method string) error {
@@ -108,7 +114,7 @@ func (f *faultForge) CheckRuns(ctx context.Context, repo forge.RepoRef, sha stri
 		f.sim.faults.Float64() < f.sim.cfg.Faults.CIRerunRate {
 		run.rerun, run.done = true, false
 		if f.sim.cfg.CI == nil {
-			f.SetCheckRuns(repo, sha, []forge.CheckRun{{ID: 2, Name: "ci", State: forge.Pending}})
+			f.SetCheckRuns(repo, sha, []forge.CheckRun{{ID: 2, Attempt: 2, Name: "ci", State: forge.Pending}})
 			f.sim.result.CIRuns++
 		}
 		f.sim.result.CIReruns++
@@ -118,10 +124,53 @@ func (f *faultForge) CheckRuns(ctx context.Context, repo forge.RepoRef, sha stri
 			f.sim.schedule(f.sim.now.Add(duration), ciComplete, 0, sha)
 		} else {
 			f.sim.submitCI(sha, duration)
-			f.SetCheckRuns(repo, sha, []forge.CheckRun{{ID: run.job.id, Name: "ci", State: forge.Pending}})
+			attempt := run.job.attempt
+			if attempt == 0 {
+				attempt = 1
+			}
+			f.SetCheckRuns(repo, sha, []forge.CheckRun{{ID: run.job.id, Attempt: attempt, Name: "ci", State: forge.Pending}})
 		}
 	}
 	return f.Forge.CheckRuns(ctx, repo, sha)
+}
+
+// RerunFailedChecks is the simulator's optional forge capability. The action
+// key is the idempotency key: once a request has taken effect, replay returns
+// the original provider result without drawing another CI outcome or starting
+// another virtual run. Faults happen before that durable provider effect.
+func (f *faultForge) RerunFailedChecks(ctx context.Context, repo forge.RepoRef, req forge.RerunChecksRequest) (forge.RerunChecksResult, error) {
+	if repo != f.sim.repo {
+		return forge.RerunChecksResult{}, fmt.Errorf("rerun repository does not match simulation")
+	}
+	if err := ctx.Err(); err != nil {
+		return forge.RerunChecksResult{}, err
+	}
+	fingerprint := fmt.Sprintf("%s\x00%s\x00%#v", req.TestedSHA, req.TestRef, req.Runs)
+	if f.reruns == nil {
+		f.reruns = make(map[string]rerunResult)
+	}
+	if prior, ok := f.reruns[req.Key]; ok {
+		if prior.fingerprint != fingerprint {
+			return forge.RerunChecksResult{}, fmt.Errorf("rerun key %q was already used for another request", req.Key)
+		}
+		return prior.result, nil
+	}
+	defer f.sim.observeWrite()
+	if err := f.before("RerunFailedChecks"); err != nil {
+		return forge.RerunChecksResult{}, err
+	}
+	result := forge.RerunChecksResult{}
+	if f.sim.cfg.CI == nil || !f.sim.cfg.CI.RerunsSupported {
+		result = forge.RerunChecksResult{Unsupported: true, Detail: "CI provider does not support failed-check reruns"}
+	} else if !f.sim.rerunFailedCI(req.TestedSHA) {
+		run := f.sim.tests[req.TestedSHA]
+		if run == nil || run.job == nil || !run.job.rerun || run.done {
+			return forge.RerunChecksResult{}, fmt.Errorf("failed checks for %s are no longer rerunnable", req.TestedSHA)
+		}
+		result = forge.RerunChecksResult{Detail: "rerun already requested"}
+	}
+	f.reruns[req.Key] = rerunResult{fingerprint: fingerprint, result: result}
+	return result, nil
 }
 
 func (f *faultForge) DeleteRef(ctx context.Context, repo forge.RepoRef, ref string) error {

@@ -16,8 +16,11 @@ type Config struct {
 	BatchMaxSize int
 	BatchMaxWait time.Duration
 	MergeMethod  MergeMethod
-	CheckTimeout time.Duration
-	ResolveAfter time.Duration
+	// ChecksRetryFailed is the effective retry limit (0 or 1). Its zero value is
+	// omitted so legacy policy digests and simulator JSON remain unchanged.
+	ChecksRetryFailed int `json:",omitempty"`
+	CheckTimeout      time.Duration
+	ResolveAfter      time.Duration
 	// RefreshInterval bounds the delay before reconciling checks; nonpositive defaults to 1m.
 	RefreshInterval time.Duration
 	// BuildRetries is the consecutive non-conflict failure limit; zero defaults to 3.
@@ -94,6 +97,7 @@ type Batch struct {
 	Phase            Phase
 	StartedTestingAt time.Time
 	LandingAttempt   LandingAttempt
+	CheckRetry       *CheckRetryState `json:",omitempty"`
 
 	checksPassed      bool
 	checksGeneration  uint64

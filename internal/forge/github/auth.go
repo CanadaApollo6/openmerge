@@ -208,7 +208,7 @@ func (a *App) token(ctx context.Context, id int64) (result string, resultErr err
 	p := token.GetPermissions()
 	entry.permissions = map[string]string{
 		"contents": p.GetContents(), "workflows": p.GetWorkflows(), "pull_requests": p.GetPullRequests(),
-		"checks": p.GetChecks(), "statuses": p.GetStatuses(), "issues": p.GetIssues(), "metadata": p.GetMetadata(),
+		"checks": p.GetChecks(), "actions": p.GetActions(), "statuses": p.GetStatuses(), "issues": p.GetIssues(), "metadata": p.GetMetadata(),
 	}
 	return entry.token, nil
 }
@@ -235,7 +235,7 @@ func (a *App) Installation(ctx context.Context, id int64) (*Driver, error) {
 		}
 		a.slug = app.GetSlug()
 	}
-	d := &Driver{app: a, installation: id}
+	d := &Driver{app: a, installation: id, rerunKeys: make(map[string]githubRerunRecord)}
 	var err error
 	d.client, err = a.newClient(func(ctx context.Context) (string, error) { return a.token(ctx, id) })
 	if err != nil {

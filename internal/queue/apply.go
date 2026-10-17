@@ -173,6 +173,14 @@ func Apply(s State, e Event) State {
 				s.failBuild(e.At, "")
 			}
 		}
+	case ChecksObserved:
+		s.observeChecks(e)
+	case CheckRerunRequested:
+		s.requestCheckRerun(e)
+	case CheckRerunDispatched:
+		s.dispatchCheckRerun(e)
+	case ChecksFailureConfirmed:
+		s.confirmCheckFailure(e)
 	case ChecksCompleted:
 		if s.Active != nil && s.Active.Phase == Testing && s.Active.TestedSHA == e.TestedSHA {
 			s.completeChecks(e.Success)
@@ -302,6 +310,12 @@ func cloneState(s State) State {
 		batch := *s.Active
 		batch.PRs = slices.Clone(batch.PRs)
 		batch.unboundChecks = slices.Clone(batch.unboundChecks)
+		if batch.CheckRetry != nil {
+			retry := *batch.CheckRetry
+			retry.FailedRuns = slices.Clone(retry.FailedRuns)
+			retry.ObservedRuns = slices.Clone(retry.ObservedRuns)
+			batch.CheckRetry = &retry
+		}
 		s.Active = &batch
 	}
 	s.observations = maps.Clone(s.observations)
@@ -421,6 +435,9 @@ func (s *State) retainChecks(sha string, check retainedCheck) {
 }
 
 func (s *State) completeChecks(success bool) {
+	if s.Active.CheckRetry != nil && s.Active.CheckRetry.Confirmed {
+		return
+	}
 	if success {
 		s.Active.checksPassed = true
 	} else {

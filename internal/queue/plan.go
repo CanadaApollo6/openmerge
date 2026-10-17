@@ -145,9 +145,18 @@ func plan(cfg Config, s State, now time.Time) []Action {
 			})
 			return actions
 		}
-		deadline := batch.StartedTestingAt.Add(cfg.CheckTimeout)
-		timedOut := cfg.CheckTimeout > 0 && now.After(deadline)
+		if action, handled := planCheckRetry(cfg, s, now); handled {
+			if action != nil {
+				actions = append(actions, action)
+			}
+			return actions
+		}
+		deadline, timeoutEnabled := batch.checkDeadline(cfg)
+		timedOut := timeoutEnabled && now.After(deadline)
 		if timedOut && !batch.needsRefresh && batch.checkRefreshes > 0 && !batch.checksRefreshedAt.Before(deadline) {
+			if cfg.ChecksRetryFailed == 1 {
+				return append(actions, ConfirmCheckFailure{BatchID: batch.ID, TestedSHA: batch.TestedSHA, Generation: batch.checksGeneration, Reason: ChecksTimeout})
+			}
 			if len(batch.PRs) > 1 {
 				actions = append(actions, FailBatch{BatchID: batch.ID, Reason: ChecksTimeout})
 				return actions
@@ -357,6 +366,12 @@ func CanStart(cfg Config, s State, action Action, event Event) bool {
 	case BatchStarted:
 		a, ok := action.(BuildTestRef)
 		if !ok || e.Validate() != nil || a.BatchID != e.BatchID || a.BaseSHA != e.BaseSHA || !slices.Equal(a.PRs, e.PRs) {
+			return false
+		}
+		at = e.At
+	case CheckRerunRequested:
+		a, ok := action.(RecordCheckRerun)
+		if !ok || e.Validate() != nil || a.BatchID != e.BatchID || a.TestedSHA != e.TestedSHA || a.Generation != e.Generation || !slices.Equal(a.Runs, e.Runs) || a.Timeout != e.Timeout || !a.OriginalDeadline.Equal(e.OriginalDeadline) {
 			return false
 		}
 		at = e.At

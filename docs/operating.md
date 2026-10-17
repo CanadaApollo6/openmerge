@@ -254,6 +254,11 @@ arbitrary fork SHAs and report those results in the base repository: otherwise
 a copied queue commit could authorize landing. Prefer check runs with matching
 queue push suites for external CI.
 
+Queues may opt into one same-commit retry of failed required checks with
+`checks.retry_failed: 1`; the default `0` preserves the immediate-failure
+behavior. Retry observations are bound to the accepted producer and queue test
+ref, and the retry receives a separate deadline from the original check run.
+
 ### Remedy for `unbound-check-provenance`
 
 This diagnostic means a check named in `merge_when` has runs on the tested SHA,
@@ -617,7 +622,8 @@ ruleset and explicit `merge_when` CI, rather than assuming GitHub will accept th
 
 Installed permissions are compared to the [required set](../internal/forge/github/README.md#setup-and-ruleset-validation).
 Missing `contents: write` or `workflows: write` logs ERROR and blocks through
-`RulesBlocked`; other missing grants log WARN. Diagnostics name each permission,
+`RulesBlocked`; other missing grants, including `actions: write`, log WARN.
+Diagnostics name each permission,
 required access, and actual access. Grants refresh with the token (about 55
 minutes), or after restarting serve. A new blocked queue defers fence creation
 and records `fence_initialized` after recovery; this additive wire-v1 event only

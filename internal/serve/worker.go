@@ -111,6 +111,12 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 		disableDeleteHeadBranch = false
 	}
 	x := executor.Executor{Driver: w.Driver, Git: w.Git, Repo: w.repo(), Base: w.Key.BaseBranch, DisableDeleteHeadBranch: disableDeleteHeadBranch}
+	x.ChecksRetryFailed = cfg.ChecksRetryFailed
+	x.CheckTimeout = cfg.CheckTimeout
+	if state.Active != nil {
+		x.StartedTestingAt = state.Active.StartedTestingAt
+		x.CheckRetry = state.Active.CheckRetry
+	}
 	x.PreviousUnboundChecks = state.UnboundChecks()
 	x.ReferencesCheck = w.cfg.MergeWhen.ReferencesCheck
 	if dequeue, ok := claim.Action.(queue.Dequeue); ok {
@@ -283,6 +289,9 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 			for _, pr := range state.Active.PRs {
 				if pr.PR == entry.PR {
 					status = forge.Status{State: forge.StatusState(state.Active.Phase), Summary: "Batch " + state.Active.ID}
+					if retry := state.Active.CheckRetry; retry != nil {
+						status.Summary += "; " + checkRetryStatus(retry)
+					}
 				}
 			}
 			if status.State == "building" {
@@ -304,6 +313,39 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 		}
 	}
 	return nil
+}
+
+func checkRetryStatus(retry *queue.CheckRetryState) string {
+	if retry == nil {
+		return ""
+	}
+	state := retry.RerunState
+	if state == "" {
+		state = "observed"
+	}
+	if state == "requested" && retry.Dispatched {
+		state = "running"
+	}
+	detail := "check retry " + state
+	if retry.Detail != "" {
+		detail += ": " + retry.Detail
+	}
+	if state == "passed" && len(retry.FailedRuns) > 0 {
+		detail += fmt.Sprintf(" (%d flaky original", len(retry.FailedRuns))
+		if identities := checkRunIdentities(retry.FailedRuns); identities != "" {
+			detail += ": " + identities
+		}
+		detail += ")"
+	}
+	return detail
+}
+
+func checkRunIdentities(runs []queue.CheckRun) string {
+	identities := make([]string, 0, len(runs))
+	for _, run := range runs {
+		identities = append(identities, fmt.Sprintf("%s/%s#%d.%d", run.Name, run.Source, run.ID, run.Attempt))
+	}
+	return strings.Join(identities, ", ")
 }
 
 func (w *worker) readinessReason() string {

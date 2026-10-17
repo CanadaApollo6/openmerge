@@ -76,6 +76,24 @@ it, even if the PR title or body changes after testing.
 
 **The fake forge ships first, and every driver passes the same contract suite.** `internal/forge/fake` is an in-memory driver used by all engine and end-to-end tests. `forgetest.Run` checks the rules a driver is responsible for. The fake runs it in every CI build, and real drivers run it against a sandbox repository when credentials are present.
 
+### Optional failed-check reruns
+
+`CheckRerunner` is a narrow optional capability for the bounded retry policy in
+ADR 0009. Its request pins the tested SHA, queue test ref, failed producer/run
+identities and a stable idempotency key. It cannot change the commit, choose new
+checks, or authorize landing. A provider limitation returns `Unsupported` with
+a diagnostic; transport/read errors return an error and do not become durable
+queue evidence. `CheckRun.Attempt` distinguishes executions where the provider
+retains a native run ID; duplicated observations never invent an attempt.
+
+GitHub Actions uses the workflow runs behind the identified failed checks and
+requests failed jobs only. Other Apps use check-run rerequest where permitted;
+commit statuses cannot be rerun. Missing `actions: write` warns at runtime and
+a forbidden rerun is unsupported, allowing the first failure to be confirmed.
+New installations request that permission; existing installations must approve
+it. Original and rerun observations retain the exact-SHA, queue-ref and accepted
+producer requirements used for ordinary queue CI.
+
 ## Consequences
 
 - Adding a forge means implementing one interface and passing one suite, with no engine changes.

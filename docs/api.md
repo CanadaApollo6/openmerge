@@ -113,6 +113,14 @@ Example queue response:
 }
 ```
 
+When bounded failed-check retries are enabled and active, `active_batch` also
+contains `check_retry`. It reports the original and current deadlines, request
+and dispatch state, generation, failed/observed check identities, and the
+`rerun_state` (`requested`, `running`, `passed`, `failed`, or `unsupported`).
+The field is omitted for the default retry-disabled policy.
+Retry evidence rows in a PR's `why.events` include `runs` and `rerun_state`
+when present, so the original flaky identities remain visible after landing.
+
 Queue `state` is `active`, `dormant`, `retired`, or `overlapping`.
 An absent lifecycle event means `active`; startup validation and settlement-only
 mode are in memory and do not change the persisted state. Lists include newly

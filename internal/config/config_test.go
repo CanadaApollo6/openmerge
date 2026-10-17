@@ -82,6 +82,7 @@ func TestDefaultsAndOverrides(t *testing.T) {
 		{"fast-forward", "    merge_method: fast-forward\n", queue.FastForward, time.Hour, Batch{MaxSize: 1}, 0},
 		{"squash", "    merge_method: squash\n", queue.Squash, time.Hour, Batch{MaxSize: 1}, 0},
 		{"timeout", "    check_timeout: 1h2m3s\n", queue.Squash, time.Hour + 2*time.Minute + 3*time.Second, Batch{MaxSize: 1}, 0},
+		{"retry failed", "    checks: {retry_failed: 1}\n", queue.Squash, time.Hour, Batch{MaxSize: 1}, 0},
 		{"disabled string", "    check_timeout: '0'\n", queue.Squash, 0, Batch{MaxSize: 1}, 0},
 		{"disabled scalar", "    check_timeout: 0\n", queue.Squash, 0, Batch{MaxSize: 1}, 0},
 		{"empty admission", "    enter_when: []\n", queue.Squash, time.Hour, Batch{MaxSize: 1}, 0},
@@ -113,13 +114,46 @@ func TestDefaultsAndOverrides(t *testing.T) {
 			}
 			wantPlanner := queue.Config{
 				MergeMethod: tt.method, CheckTimeout: tt.timeout,
-				BatchMaxSize: tt.batch.MaxSize, BatchMaxWait: tt.batch.MaxWait,
+				ChecksRetryFailed: q.Checks.RetryFailed,
+				BatchMaxSize:      tt.batch.MaxSize, BatchMaxWait: tt.batch.MaxWait,
 				ResolveAfter: time.Minute, RefreshInterval: time.Minute, BuildRetries: 3, BuildBackoff: 5 * time.Second,
 			}
 			if got := q.QueueConfig(); got != wantPlanner {
 				t.Errorf("QueueConfig = %+v, want %+v", got, wantPlanner)
 			}
 		})
+	}
+}
+
+func TestRetryFailedValidation(t *testing.T) {
+	const prefix = "version: 1\nqueues:\n  - name: default\n    merge_when: [check-success = ci]\n    checks:\n      retry_failed: "
+	for _, tc := range []struct {
+		value, want string
+	}{
+		{"0", ""},
+		{"1", ""},
+		{"2", "line 6: queues[0].checks.retry_failed: expected an integer 0 or 1"},
+		{"-1", "line 6: queues[0].checks.retry_failed: expected an integer 0 or 1"},
+		{"true", "line 6: queues[0].checks.retry_failed: expected an integer 0 or 1"},
+	} {
+		t.Run(tc.value, func(t *testing.T) {
+			data := []byte(prefix + tc.value + "\n")
+			_, _, err := Load(data)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || err.Error() != tc.want {
+				t.Fatalf("error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+	data := []byte("version: 1\nqueues:\n  - name: default\n    merge_when: [check-success = ci]\n    checks: {retry_failed: 1}\n")
+	cfg, _, err := Load(data)
+	if err != nil || cfg.Queues[0].Checks.RetryFailed != 1 || cfg.Queues[0].QueueConfig().ChecksRetryFailed != 1 {
+		t.Fatalf("retry policy was not propagated: cfg=%+v err=%v", cfg, err)
 	}
 }
 

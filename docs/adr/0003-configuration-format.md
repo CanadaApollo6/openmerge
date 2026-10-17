@@ -44,6 +44,9 @@ queues:
 
 Later phases add top-level keys (`priorities`, `rules`, `scopes`, `commands`) as additive changes, each specified in the pull request that implements it.
 
+The optional Phase 2 queue key `checks.retry_failed` accepts `0` (the default)
+or `1` to enable one bounded same-commit retry of failed required checks.
+
 **Condition grammar.** A condition is a string `[-][#]attribute [operator value]`:
 
 - `-` negates; `#` takes the length of a list attribute; an attribute with no operator is a boolean test (`draft`).

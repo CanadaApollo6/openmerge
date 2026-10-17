@@ -358,6 +358,29 @@ func decodeBatchPRs(prs []wireBatchPR) []BatchPR {
 // EncodeEvent returns the stable type discriminator and versioned JSON.
 func EncodeEvent(value Event) (string, []byte, error) {
 	switch v := value.(type) {
+	case ChecksObserved:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		v.Runs = append([]CheckRun{}, v.Runs...)
+		return encodeWire("checks_observed", v)
+	case CheckRerunRequested:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		v.Runs = append([]CheckRun{}, v.Runs...)
+		return encodeWire("check_rerun_requested", v)
+	case CheckRerunDispatched:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("check_rerun_dispatched", v)
+	case ChecksFailureConfirmed:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("checks_failure_confirmed", v)
+
 	case LifecycleChanged:
 		if err := v.Validate(); err != nil {
 			return "", nil, err
@@ -510,6 +533,31 @@ func DecodeEvent(payload []byte) (Event, error) {
 		return nil, err
 	}
 	switch envelope.Type {
+	case "checks_observed":
+		v, err := readWireData[ChecksObserved](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		return v, v.Validate()
+	case "check_rerun_requested":
+		v, err := readWireData[CheckRerunRequested](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		return v, v.Validate()
+	case "check_rerun_dispatched":
+		v, err := readWireData[CheckRerunDispatched](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		return v, v.Validate()
+	case "checks_failure_confirmed":
+		v, err := readWireData[ChecksFailureConfirmed](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		return v, v.Validate()
+
 	case "lifecycle_changed":
 		v, err := readWireData[LifecycleChanged](envelope.Data)
 		if err != nil {
@@ -765,6 +813,22 @@ func DecodeEvent(payload []byte) (Event, error) {
 // EncodeAction returns the stable type discriminator and versioned JSON.
 func EncodeAction(value Action) (string, []byte, error) {
 	switch v := value.(type) {
+	case RecordCheckRerun:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("record_check_rerun", v)
+	case RerunChecks:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("rerun_checks", v)
+	case ConfirmCheckFailure:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("confirm_check_failure", v)
+
 	case FailBatch:
 		return encodeWire("fail_batch", wireBatchFailed{BatchID: v.BatchID, Reason: string(v.Reason)})
 	case BuildTestRef:
@@ -799,6 +863,13 @@ func DecodeAction(payload []byte) (Action, error) {
 		return nil, err
 	}
 	switch envelope.Type {
+	case "record_check_rerun":
+		return decodeWireAction(envelope.Data, func(v RecordCheckRerun) Action { return v })
+	case "rerun_checks":
+		return decodeWireAction(envelope.Data, func(v RerunChecks) Action { return v })
+	case "confirm_check_failure":
+		return decodeWireAction(envelope.Data, func(v ConfirmCheckFailure) Action { return v })
+
 	case "fail_batch":
 		return decodeWireAction(envelope.Data, func(v wireBatchFailed) Action { return FailBatch{BatchID: v.BatchID, Reason: DequeueReason(v.Reason)} })
 	case "build_test_ref":

@@ -281,6 +281,16 @@ func TestSchemaDefaultsMatchLoader(t *testing.T) {
 					Timeout struct {
 						Default string `json:"default"`
 					} `json:"check_timeout"`
+					Checks struct {
+						Default struct {
+							RetryFailed int `json:"retry_failed"`
+						} `json:"default"`
+						Properties struct {
+							RetryFailed struct {
+								Default int `json:"default"`
+							} `json:"retry_failed"`
+						} `json:"properties"`
+					} `json:"checks"`
 					Batch struct {
 						Default struct {
 							Size int    `json:"max_size"`
@@ -316,7 +326,7 @@ func TestSchemaDefaultsMatchLoader(t *testing.T) {
 		t.Fatal(err)
 	}
 	q := cfg.Queues[0]
-	if string(q.MergeMethod) != p.Method.Default || q.CheckTimeout != timeout || q.Batch.MaxSize != p.Batch.Default.Size || q.Batch.MaxWait != wait || p.Batch.Properties.Size.Default != p.Batch.Default.Size || p.Batch.Properties.Wait.Default != p.Batch.Default.Wait {
+	if string(q.MergeMethod) != p.Method.Default || q.CheckTimeout != timeout || q.Checks.RetryFailed != p.Checks.Default.RetryFailed || q.Batch.MaxSize != p.Batch.Default.Size || q.Batch.MaxWait != wait || p.Batch.Properties.Size.Default != p.Batch.Default.Size || p.Batch.Properties.Wait.Default != p.Batch.Default.Wait || p.Checks.Properties.RetryFailed.Default != p.Checks.Default.RetryFailed {
 		t.Fatal("published defaults differ from loader defaults")
 	}
 }

@@ -56,7 +56,7 @@ Commit-status APIs that lack cancelled and action-required keep the normalized s
 
 ## Check runs
 
-`CheckRun` has a `Name`, a stable nonempty `Source`, a normalized `State` (pending, success, failure, cancelled, skipped, neutral), and an `ID` that increases with each run of the same name **from the same source**. Drivers translate native run identifiers into that ordering. GitHub uses `app:<numeric-app-id>` for check runs and `status:<lowercase-creator-login>` for commit statuses. The fake preserves explicit sources and defaults unspecified test sources to `fake:ci`. IDs from different sources are never comparable.
+`CheckRun` has a `Name`, a stable nonempty `Source`, a normalized `State` (pending, success, failure, cancelled, skipped, neutral), and an `ID` that increases with each run of the same name **from the same source**. `Attempt` is one-based when the forge supplies it; zero means unknown for a legacy observation. It distinguishes repeated native IDs when known, and drivers must never invent attempts from response order. GitHub uses `app:<numeric-app-id>` for check runs and `status:<lowercase-creator-login>` for commit statuses. The fake preserves explicit sources and defaults unspecified test sources to `fake:ci`. IDs from different sources are never comparable.
 
 The executor aggregates as follows:
 
@@ -69,9 +69,28 @@ The executor aggregates as follows:
 - A required check with no run, or an unknown state, is pending.
 - An empty list of required checks is a configuration error unless `AllowNoRequiredChecks` is set.
 
-`ChecksCompleted{TestedSHA, Success}`, `ChecksReopened{TestedSHA, At}`, and `ChecksRefreshed{BatchID, TestedSHA, At}` fold in event-log order, including retained observations received before the build result. Every reopen for the active tested SHA clears recorded success, increments the batch's checks generation, and invalidates timeout evidence. It preserves the original test-start time and timeout deadline, so repeated reruns cannot postpone timeout indefinitely. Every matching refresh advances the action epoch and records its own read time, even if that time precedes another worker's timestamp. A timeout requires a refresh read at or after the original deadline, with no reopen applied since it. A delayed pending observation can cost another read; a delayed pass may restore projected success. A delayed older terminal failure after a passing rerun still fails the batch conservatively. Worker clocks affect timeout liveness, never landing authorization. The stateless executor records a reopen on every non-terminal refresh, even without a prior pass, so revocation survives a failure to append the following refresh.
+`CheckRerunner` is an optional capability. `RerunFailedChecks` receives the
+tested SHA, queue test ref, exact failed `Runs`, and an idempotency `Key`. A
+driver may rerun only those identities on that SHA/ref/source; it must return
+`Unsupported: true` rather than wedge a queue when the producer, state, native
+ID, or permission cannot support a safe rerun. A successful request only means
+that a new pending observation may appear; callers must refresh `CheckRuns`.
+Repeated keys are idempotent, including after a process-cache loss: the driver
+checks the newest same-name/source identity before dispatching and never
+replays an older failed observation over a newer pending or completed run.
 
-Immediately before `LandingStarted`, the executor freshly reads `CheckRuns` for the tested SHA and requires terminal success. Pending or ambiguous results emit `ChecksReopened` followed by `ChecksRefreshed` stamped at read time; this read qualifies for timeout at or after the original deadline. A passing refresh after the deadline may still land if its preflight also passes. Terminal failure emits `ChecksCompleted{Success:false}`. Both decline `Land` with an error before minting an attempt or pushing. The action remains unacknowledged for replanning after a later passing rerun. A read error also prevents starting the landing. `Land` pins the checks generation in its key and payload. The store re-plans under the queue lock at `BeginConsequential` and `LandingStarted`; any intervening reopen invalidates the old action even if a delayed pass restores projected success. A new action at the new generation must perform its own preflight. The preflight cannot revoke an already-started fenced attempt or prevent a later rerun whose reopen has not committed.
+For retry-off queues, `ChecksCompleted{TestedSHA, Success}`, `ChecksReopened{TestedSHA, At}`, and `ChecksRefreshed{BatchID, TestedSHA, At}` fold in event-log order, including retained observations received before the build result. Every reopen for the active tested SHA clears recorded success, increments the batch's checks generation, and invalidates timeout evidence. It preserves the original test-start time and timeout deadline, so repeated reruns cannot postpone timeout indefinitely. Every matching refresh advances the action epoch and records its own read time, even if that time precedes another worker's timestamp. A timeout requires a refresh read at or after the original deadline, with no reopen applied since it. A delayed pending observation can cost another read; a delayed pass may restore projected success. A delayed older terminal failure after a passing rerun still fails the batch conservatively. Worker clocks affect timeout liveness, never landing authorization. The stateless executor records a reopen on every non-terminal refresh, even without a prior pass, so revocation survives a failure to append the following refresh.
+
+Retry-enabled queues instead record identified `ChecksObserved` results and a
+single `CheckRerunRequested` before dispatch. Original run duplicates cannot
+confirm a rerun failure. Reopening retains the consumed budget and both recorded
+deadlines; only a newer same-producer attempt can pass or fail the rerun.
+`ChecksFailureConfirmed` makes failure final, including unsupported reruns and
+qualifying timeouts. Their landing preflight uses the same identified observation
+path and requires a newer identity for every originally failed check. See
+[ADR 0009](adr/0009-speculative-batching.md#confirmed-failures).
+
+Immediately before `LandingStarted`, the executor freshly reads `CheckRuns` for the tested SHA and requires terminal success. Pending or ambiguous results emit `ChecksReopened` (or retry-aware `ChecksObserved`) followed by `ChecksRefreshed` stamped at read time; this read qualifies for timeout at or after the original deadline. A passing refresh after the deadline may still land if its preflight also passes. Terminal failure emits `ChecksCompleted{Success:false}` for retry-off queues, or the identified `ChecksObserved` for retry-enabled queues. Both decline `Land` with an error before minting an attempt or pushing. The action remains unacknowledged for replanning after a later passing rerun. A read error also prevents starting the landing. `Land` pins the checks generation in its key and payload. The store re-plans under the queue lock at `BeginConsequential` and `LandingStarted`; any intervening reopen invalidates the old action even if a delayed pass restores projected success. A new action at the new generation must perform its own preflight. The preflight cannot revoke an already-started fenced attempt or prevent a later rerun whose reopen has not committed.
 
 ## Building test refs
 

@@ -39,6 +39,27 @@ It is also honest about the limit. A change in the *k*-th speculative batch keep
 
 This is the Phase 2 bounded-retry work, which is implemented before the chain. It records the original run and the rerun by identity, and the rerun request once. Duplicate observations of a run neither consume the retry nor confirm a failure. Reopening checks does not restore the retry budget. A confirmation, once recorded for a batch's checks generation, is final. The original timeout deadline governs the original run, and the rerun gets its own deadline of one check timeout from its request; both are recorded, so reopening checks cannot extend either. The existing qualifying-refresh rule still applies, and a batch waiting to land after passing never times out. Forges or CI providers that cannot rerun a check are reported as such, and their failures count as confirmed on first failure. A check timeout is a confirmed failure for blame, as today.
 
+For implementation step 2, before chains exist, `checks.retry_failed: 1` on a
+queue opts into this behavior; only `0` and `1` are valid and the default is `0`.
+`Queue.QueueConfig` maps this key to the effective `ChecksRetryFailed` policy
+used by both planner and executor; step 3 can enable retries for `max_depth > 1`
+by changing that one assignment. The planner's `retryOldestBatch` hook will
+restrict requests to the oldest batch. Later provisional failures must wait for
+that policy decision.
+
+Retry-enabled queues write additive `checks_observed` records with the accepted
+producer, run ID and attempt, and the original deadline. `check_rerun_requested`
+pins the failed identities, request time and rerun deadline before the optional
+forge call; `check_rerun_dispatched` records support or an unsupported reason.
+`checks_failure_confirmed` makes blame durable. The corresponding new actions
+are `record_check_rerun`, `rerun_checks` and `confirm_check_failure`. Pending
+observations still require a qualifying `checks_refreshed` read to time out.
+Both timer origins and the bounded retry state belong to the batch projection;
+snapshot compaction must preserve them. Existing `checks_completed` records
+always retain their immediate pass/failure meaning, even in a queue that later
+opts in. Older binaries cannot replay these additive types: rollback after
+first use requires a compatible database restore.
+
 ### The window
 
 **The window bounds every admitted, unlanded batch.** A queue keeps a window *W* between `speculation.min_depth` and `speculation.max_depth` (`1 ≤ min_depth ≤ max_depth ≤ 32`; `min_depth` defaults to 1, and `max_depth` defaults to 1). Batches that are building, testing, passed and waiting to land, or landing all count against it. A passing batch does not free its slot until it lands. A new batch is admitted only while fewer than *W* batches are open.

@@ -55,7 +55,7 @@ func TestManifestSetup(t *testing.T) {
 				}
 				var manifest appManifest
 				must(t, json.Unmarshal([]byte(html.UnescapeString(string(match[1]))), &manifest))
-				permissions := map[string]string{"contents": "write", "workflows": "write", "pull_requests": "write", "checks": "write", "statuses": "read", "issues": "read", "metadata": "read"}
+				permissions := map[string]string{"contents": "write", "workflows": "write", "pull_requests": "write", "checks": "write", "actions": "write", "statuses": "read", "issues": "read", "metadata": "read"}
 				if manifest.Public || !maps.Equal(manifest.Permissions, permissions) || manifest.Name != `My App <test>` {
 					t.Fatalf("manifest = %+v", manifest)
 				}

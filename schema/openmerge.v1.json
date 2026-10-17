@@ -77,6 +77,25 @@
           "default": "1h",
           "description": "Maximum check wait, measured from test-ref publication. Zero disables the timeout."
         },
+        "checks": {
+          "type": "object",
+          "additionalProperties": false,
+          "default": {
+            "retry_failed": 0
+          },
+          "description": "Optional bounded retry policy for failed required checks.",
+          "properties": {
+            "retry_failed": {
+              "type": "integer",
+              "enum": [
+                0,
+                1
+              ],
+              "default": 0,
+              "description": "Rerun failed required checks once before confirming failure."
+            }
+          }
+        },
         "batch": {
           "type": "object",
           "additionalProperties": false,

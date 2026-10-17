@@ -141,6 +141,7 @@ func (f *apiFixture) prJSON(pr *gh.PullRequest) map[string]any {
 func (f *apiFixture) runJSON(run *gh.CheckRun) map[string]any {
 	o := f.object("check_run")
 	o["id"], o["name"], o["head_sha"], o["external_id"] = run.GetID(), run.GetName(), run.GetHeadSHA(), run.GetExternalID()
+	o["url"], o["html_url"], o["details_url"] = run.GetURL(), run.GetHTMLURL(), run.GetDetailsURL()
 	o["status"], o["conclusion"] = run.GetStatus(), run.GetConclusion()
 	if run.App != nil {
 		o["app"].(map[string]any)["id"] = run.GetApp().GetID()
