@@ -121,7 +121,7 @@ A third profile exercises adaptive sizing: 5% broken with `target_pass_rate: 0.8
 
 **Feasibility gates the work.** The simulator drives the real planner, which cannot run chains until PR 3, so PR 1 also ships a standalone capacity model of these rules, documented and checked against the simulator's existing serial results. The model publishes the capacity curve and predicts the adopter profiles, reporting each seed separately and the fraction of changes beyond each 95th-percentile threshold, since the Slow profile's margin sits in that tail. Its evidence is provisional. If it predicts that the adopter profiles fail, this ADR is amended before PR 3 builds the chain. The planner-backed exit test is added in PR 1, skipped until PR 3, and must pass before Phase 2 exits and before any default changes. Parallel off-chain failure isolation (see Alternatives) is evaluated in the model.
 
-**The default changes only on evidence.** `max_depth` becomes 4 by default only when the adopter profiles pass and this project's own queue has run `max_depth: 4` for two weeks and at least 50 changes, with no incorrect landing and with observed runs per change and time to merge no worse than the queue's preceding period of equal length at depth 1. The change ships in a release note, and queues that set `max_depth` keep their setting.
+**The default changes only on evidence.** `max_depth` becomes 4 by default only when the adopter profiles pass and this project's own queue has run `max_depth: 4` for two weeks and at least 50 landed changes, with no incorrect landing and with observed runs per change and time to merge no worse than an adjacent period of equal length at depth 1, run immediately before or after the depth-4 period under the same CI configuration. The change ships in a release note, and queues that set `max_depth` keep their setting.
 
 ### Visibility
 
@@ -293,6 +293,16 @@ legacy fake identities are unchanged. Immutable observation shards avoid copying
 all historical PR observations on every event while preserving re-admission and
 snapshot bytes. The measured equilibrium, cold starts, compatibility checks and
 adopter deltas are in the results report. The default `max_depth` remains 1.
+
+### Dogfooding notes
+
+On 2026-10-17 the comparison period for the default change was relaxed from the
+period *preceding* the depth-4 run to an *adjacent* one, before or after it. This
+project's queue had only about a day and a half of depth-1 history, and #46 changed
+its required CI (`check` plus `sim-exits`), so no comparable preceding period
+existed. The queue therefore runs `max_depth: 4` first and a depth-1 period of
+equal length afterwards, both under the same CI configuration. The plan, metrics
+and log are in [the dogfooding report](../research/phase2-dogfood.md).
 
 ## Consequences
 

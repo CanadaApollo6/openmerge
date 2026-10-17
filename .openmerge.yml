@@ -8,3 +8,5 @@ queues:
       - check-success = check
       - check-success = sim-exits
     merge_method: squash
+    speculation:
+      max_depth: 4
