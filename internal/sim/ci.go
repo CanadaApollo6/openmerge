@@ -19,7 +19,8 @@ type CIConfig struct {
 	// InteractionRate selects disjoint adjacent PR-number pairs. Neither member
 	// is broken alone; a tested commit containing both fails, including on base.
 	InteractionRate float64
-	TailThreshold   time.Duration
+	// TailThreshold zero disables tail measurement.
+	TailThreshold time.Duration
 }
 
 func (c CIConfig) validate() error {
@@ -174,7 +175,7 @@ func (s *simulation) ciMetrics(merged int) *CIMetrics {
 		}
 		elapsed := p.landed.Sub(p.enqueued)
 		m.Merges = append(m.Merges, MergeSample{PR: pr, Enqueued: p.enqueued.Sub(s.start), TimeToMerge: elapsed})
-		if elapsed >= s.cfg.CI.TailThreshold {
+		if s.cfg.CI.TailThreshold > 0 && elapsed >= s.cfg.CI.TailThreshold {
 			beyond++
 		}
 	}

@@ -3,10 +3,12 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -24,11 +26,12 @@ func main() {
 }
 
 type pooled struct {
-	samples                                          []capacity.Sample
-	runs                                             int
-	minutes, windowTime                              float64
-	span                                             time.Duration
-	fresh, above, cancelled, unsupported, maxRunning int
+	samples                                                     []capacity.Sample
+	runs                                                        int
+	minutes, windowTime                                         float64
+	span                                                        time.Duration
+	fresh, above, requested, cancelled, unsupported, maxRunning int
+	deadlineRequested, deadlineConfirmed, deadlineUnsupported   int
 }
 
 func (p *pooled) add(r capacity.Result) {
@@ -39,6 +42,10 @@ func (p *pooled) add(r capacity.Result) {
 	p.span += r.Span
 	p.fresh += r.FreshBatches
 	p.above += r.FreshAboveAdaptiveCap
+	p.requested += r.CancelRequested
+	p.deadlineRequested += r.TimeoutCancelRequested
+	p.deadlineConfirmed += r.TimeoutCancelConfirmed
+	p.deadlineUnsupported += r.TimeoutCancelUnsupported
 	p.cancelled += r.CancelConfirmed
 	p.unsupported += r.CancelUnsupported
 	p.maxRunning = max(p.maxRunning, r.MaxRunning)
@@ -79,15 +86,15 @@ No wall clock, external service, or Python model is used. Values below are provi
 
 The model implements the ADR chain in Go: every open batch counts against W; W starts at max_depth, grows by one per landing (including halves), and halves once per confirmed original-batch failure or timeout, bounded by min_depth=1. Shrink alone never cancels. Only the oldest batch retries or diagnoses a failure. A retry takes a full CI duration on the same cumulative commit and gets a new timeout deadline. Failure invalidates the suffix and returns changes in order. Bisection halves chain ahead of fresh work; unresolved halves block fresh batches. The adaptive estimator uses the last 200 landed or checks/timeout-dequeued changes, with a cold start below 20. Fresh batch formation follows plan.go: full batches start immediately; partial batches wait until their oldest member reaches max_wait. Returned members retain their original arrival time.
 
-Each run needs one FIFO runner; CI is service time after admission. Timeout starts at request, so runner queueing can cause timeouts. A pass waiting to land does not time out. Cancellation is immediate when supported (a modelling assumption); otherwise queued and running invalidated work finishes and consumes capacity. Runs count at runner acquisition, including reruns and cancelled/orphaned runs. Runner-minutes count service actually consumed; a job cancelled before admission is not a started run. Equal-time arrivals/completions are delivered before planning. Samples use midpoint median and nearest-rank p95, pooled by change, never the average of seed percentiles. Tail means TTM >= the threshold; strict exit gates require p95 below it. Latency includes only merged changes, while every started run contributes to cost. All arrival workloads drain after arrivals stop.
+Each run needs one FIFO runner; CI is service time after admission. Timeout starts at request, so runner queueing can cause timeouts. A pass waiting to land does not time out. Cancellation is immediate when supported (a modelling assumption); otherwise queued and running invalidated work finishes and consumes capacity. Runs count at runner acquisition, including reruns and cancelled/orphaned runs. Runner-minutes count service actually consumed; a job cancelled before admission is not a started run, so queued-then-cancelled jobs contribute neither a run nor runner-minutes. Deadline-triggered stops use the same capability/service semantics but are accounted separately from suffix cancellation requests. Equal-time arrivals/completions are delivered before planning. Samples use midpoint median and nearest-rank p95, pooled by change, never the average of seed percentiles. A zero threshold disables tail measurement. Tail means TTM >= the threshold; strict exit gates require p95 below it. Latency includes only merged changes, while every started run contributes to cost. All arrival workloads drain after arrivals stop.
 
-Off-chain isolation removes a confirmed failing batch, rebuilds its suffix immediately, and tests its members independently on the settled base with the same runner pool and retry rule. Once that isolation group completes, passers return to the front in original order and must pass a new chain test before landing. Fresh work can proceed during isolation. Isolation itself never lands a change. This permits fresh changes to overtake isolated changes, as the ADR alternative proposes. Interaction-only failures can cycle under this alternative; the model returns an event-limit error rather than silently claiming capacity. The published profiles/curves use independent broken changes and flakes, not interactions; both simulator and model test interacting pairs separately.
+Off-chain isolation removes a confirmed failing batch, rebuilds its suffix immediately, and tests its members independently on the settled base with the same runner pool and retry rule. Once that isolation group completes, passers return to the front in original order and must pass a new chain test before landing. Fresh work can proceed during isolation. Isolation itself never lands a change. This permits fresh changes to overtake isolated changes, as the ADR alternative proposes. Isolation jobs sit outside W: the chain window does not bound isolation load. Its capacity gain assumes abundant runners; with scarce runners, request-based deadlines can create a timeout/isolation feedback loop that window halving cannot throttle. The runner-sensitivity table below exposes runner-scarcity failures even with interaction rate zero, including event-limit non-completion and severe timeout-driven loss. Interaction-only failures can also cycle; an event-limit error reports non-completion rather than capacity. The published profiles/curves use independent broken changes and flakes, not interactions; interaction rate is zero in every published workload. Interaction semantics differ outside these pins: the simulator checks only PRs in the tested commit, whereas the model also detects a pair split across a prior landing and the new batch. Neither interaction tests nor these pins establish equivalence for that case.
 
 Randomness uses separate PCG streams: (seed,1) for broken status and uniform arrivals, (seed,2) for per-run flakes, and (seed,7) for disjoint adjacent interacting pairs. Paired variants share arrivals and broken changes; different run schedules naturally consume different flake draws. Git execution, fence settlement, forge refresh, and the simulator's one-second observe/enqueue delay are omitted. Service completions and resolutions define span; stale timeout timers add no throughput time. Window equilibrium below is the time-weighted mean over the drained workload, not an optimality claim.
 
 ## Validation against the real serial planner
 
-Both runs use seed 42, 5% independent broken changes, no flakes, depth 1, no retries, and uniform arrivals over one day. The comparison test permits 10% disagreement; these results reproduce the baseline exactly. The 500/day serial exit-test suite also covers faults and dropped webhooks independently; the capacity model deliberately models neither.
+Both runs use seed 42, 5% independent broken changes, no flakes, depth 1, no retries, and uniform arrivals over one day. The comparison test requires exact merged/dequeued counts, started runs, runs/merged, median and p95; these fixtures reproduce the baseline exactly. The 500/day serial exit-test suite also covers faults and dropped webhooks independently; the capacity model deliberately models neither.
 
 | Workload | Engine | Merged | Median TTM | Runs/merged |
 |---|---|---:|---:|---:|
@@ -131,8 +138,9 @@ Both runs use seed 42, 5% independent broken changes, no flakes, depth 1, no ret
 				}
 				for _, adaptive := range variants {
 					fmt.Fprintf(&b, "### %s / %s / cancellation %s / adaptive %t\n\n", p.Name, mode(isolate), support(cancel), adaptive)
-					b.WriteString("| Seed | Merged | p50 min | p95 min | Runs | Reruns | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+					b.WriteString("| Seed | Merged | p50 min | p95 min | Runs | Reruns | Cancel requested | Cancel confirmed | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
 					var all pooled
+					worstTail := 0.
 					for seed := uint64(1); seed <= 8; seed++ {
 						c := p.Config(seed, cancel)
 						c.Isolation = isolate
@@ -143,6 +151,7 @@ Both runs use seed 42, 5% independent broken changes, no flakes, depth 1, no ret
 						}
 						all.add(r)
 						s := capacity.Summarize(r.Merges, r.Runs, r.RunnerMinutes, p.Threshold)
+						worstTail = max(worstTail, s.TailFraction)
 						var day1 []capacity.Sample
 						for _, sample := range r.Merges {
 							if sample.Arrival < 24*time.Hour {
@@ -155,7 +164,7 @@ Both runs use seed 42, 5% independent broken changes, no flakes, depth 1, no ret
 							coldRuns = r.FirstDayRuns / float64(cold.Merged)
 							coldMinutes = r.FirstDayRunnerMinutes / float64(cold.Merged)
 						}
-						fmt.Fprintf(&b, "| %d | %d | %.3f | %.3f | %d | %d | %.5f | %.5f | %.5f | %d | %.3f | %.3f | %.5f | %.5f | %.5f |\n", seed, s.Merged, s.Median.Minutes(), s.P95.Minutes(), r.Runs, r.Reruns, s.RunsPerMerge, s.RunnerMinutesPerMerge, s.TailFraction, cold.Merged, cold.Median.Minutes(), cold.P95.Minutes(), cold.TailFraction, coldRuns, coldMinutes)
+						fmt.Fprintf(&b, "| %d | %d | %.3f | %.3f | %d | %d | %d | %d | %.5f | %.5f | %.5f | %d | %.3f | %.3f | %.5f | %.5f | %.5f |\n", seed, s.Merged, s.Median.Minutes(), s.P95.Minutes(), r.Runs, r.Reruns, r.CancelRequested, r.CancelConfirmed, s.RunsPerMerge, s.RunnerMinutesPerMerge, s.TailFraction, cold.Merged, cold.Median.Minutes(), cold.P95.Minutes(), cold.TailFraction, coldRuns, coldMinutes)
 					}
 					s := all.stats(p.Threshold)
 					label := "Pooled"
@@ -171,25 +180,29 @@ Both runs use seed 42, 5% independent broken changes, no flakes, depth 1, no ret
 						}
 					}
 					if !isolate {
-						fmt.Fprintf(&headlines, "- %s, cancellation %s, adaptive %t: **%s**; p50 %.3fm, p95 %.3fm, %.5f runs/merged; tail %.3f%%.\n", p.Name, support(cancel), adaptive, verdict(pass), s.Median.Minutes(), s.P95.Minutes(), s.RunsPerMerge, 100*s.TailFraction)
+						fmt.Fprintf(&headlines, "- %s, cancellation %s, adaptive %t: **%s**; pooled tail >=%.0fm **%.3f%%**, worst-seed tail **%.3f%%**; p95 %.3fm, %.5f runs/merged.\n", p.Name, support(cancel), adaptive, verdict(pass), p.Threshold.Minutes(), 100*s.TailFraction, 100*worstTail, s.P95.Minutes(), s.RunsPerMerge)
 					}
 
-					fmt.Fprintf(&b, "\n**%s %s:** merged %d; p50 %.3f min; p95 %.3f min; runs/merged %.5f; runner-min/merged %.5f; tail >=%.0fm %.5f. Mean W %.3f; max occupied runners %d; confirmed cancellations %d; unsupported requests %d. Fresh batches above the contemporaneous adaptive cap: %d/%d (%.3f%%).\n\n", label, verdict(pass), s.Merged, s.Median.Minutes(), s.P95.Minutes(), s.RunsPerMerge, s.RunnerMinutesPerMerge, p.Threshold.Minutes(), s.TailFraction, all.windowTime/float64(all.span), all.maxRunning, all.cancelled, all.unsupported, all.above, all.fresh, 100*float64(all.above)/float64(all.fresh))
+					fmt.Fprintf(&b, "\n**%s %s:** merged %d; p50 %.3f min; p95 %.3f min; runs/merged %.5f; runner-min/merged %.5f; tail >=%.0fm %.5f. Mean W %.3f; max occupied runners %d; cancellation requests %d; confirmed %d; unsupported %d. Deadline stops requested/confirmed/unsupported %d/%d/%d. Fresh batches above the contemporaneous adaptive cap: %d/%d (%.3f%%).\n\n", label, verdict(pass), s.Merged, s.Median.Minutes(), s.P95.Minutes(), s.RunsPerMerge, s.RunnerMinutesPerMerge, p.Threshold.Minutes(), s.TailFraction, all.windowTime/float64(all.span), all.maxRunning, all.requested, all.cancelled, all.unsupported, all.deadlineRequested, all.deadlineConfirmed, all.deadlineUnsupported, all.above, all.fresh, 100*float64(all.above)/float64(all.fresh))
 				}
 			}
 		}
 	}
+	if err := writeControls(&b); err != nil {
+		return err
+	}
 	b.WriteString(`## Saturated capacity curve
 
-Each cell is a separate deterministic backlog experiment: seeds 1–4, 4,000 changes all available at time zero per seed, 30-minute CI, no flakes, fixed batch size, max_wait 5m, 45m timeout, 50 runners. Depth 1 has no retries (today's behavior); depth >1 has one confirming rerun. Capacity is pooled merged changes divided by total drained days, including startup and drain. This is a finite-backlog capacity estimate, not a stable-arrival SLA or a maximum arrival-rate assertion. Increase backlog size/seeds in the generator to study convergence. Cancellation modes are run separately even where numeric results coincide. Off-chain rows use identical seeds/workload. Cost and the achieved mean window make gains and speculation waste visible.
+Each cell is a separate deterministic backlog experiment: seeds 1–4, 4,000 changes all available at time zero per seed, 30-minute CI, no flakes, fixed batch size, max_wait 5m, 45m timeout, 50 runners. Depth 1 has no retries (today's behavior); depth >1 has one confirming rerun. Capacity is pooled merged changes divided by total drained days, including startup and drain. This is a finite-backlog capacity estimate, not a stable-arrival SLA or a maximum arrival-rate assertion. Increase backlog size/seeds in the generator to study convergence. The two cancellation modes are expected-identical under these fixed service times: suffix batches finish at 1 CI, while a failed head confirms only after its rerun at 2 CI. At invalidation there is no unfinished suffix run to cancel. The generator still checks both modes for exact agreement, publishing one row per pair with request/confirmed counts (both zero in every cell). This curve provides no evidence of cancellation benefit; the asynchronous arrival profiles above make only a few requests (28 for Team and 13 for Slow across eight seeds per mode). PR 3 inherits the fixed-CI pin and will not exercise cancellation through the saturated mechanism either. Variable CI durations would leave suffix work unfinished when the head confirms, making cancellation bind; that sensitivity is not measured here. Off-chain rows use identical seeds/workload. Cost and the achieved mean window make gains and speculation waste visible.
 
-| Broken % | Size | Depth | Diagnosis | Cancellation | Merged/day | Runs/merged | Runner-min/merged | Mean W |
-|---:|---:|---:|---|---|---:|---:|---:|---:|
+| Broken % | Size | Depth | Diagnosis | Cancellation | Merged/day | Runs/merged | Runner-min/merged | Mean W | Cancel requested | Cancel confirmed |
+|---:|---:|---:|---|---|---:|---:|---:|---:|---:|---:|
 `)
 	for _, broken := range []float64{.001, .002, .005, .01, .02, .05} {
 		for _, size := range []int{1, 2, 4, 8} {
 			for _, depth := range []int{1, 2, 4, 8, 12} {
 				for _, isolate := range []bool{false, true} {
+					var supported pooled
 					for _, cancel := range []bool{true, false} {
 						var all pooled
 						for seed := uint64(1); seed <= 4; seed++ {
@@ -201,15 +214,125 @@ Each cell is a separate deterministic backlog experiment: seeds 1–4, 4,000 cha
 							all.add(r)
 						}
 						s := all.stats(0)
-						fmt.Fprintf(&b, "| %.1f | %d | %d | %s | %s | %.2f | %.5f | %.5f | %.3f |\n", broken*100, size, depth, mode(isolate), support(cancel), float64(s.Merged)/(all.span.Hours()/24), s.RunsPerMerge, s.RunnerMinutesPerMerge, all.windowTime/float64(all.span))
+						if cancel {
+							supported = all
+							continue
+						}
+						if !reflect.DeepEqual(supported, all) {
+							return fmt.Errorf("fixed-CI cancellation modes differ at broken=%g size=%d depth=%d isolation=%t", broken, size, depth, isolate)
+						}
+						fmt.Fprintf(&b, "| %.1f | %d | %d | %s | both (identical) | %.2f | %.5f | %.5f | %.3f | %d | %d |\n", broken*100, size, depth, mode(isolate), float64(s.Merged)/(all.span.Hours()/24), s.RunsPerMerge, s.RunnerMinutesPerMerge, all.windowTime/float64(all.span), all.requested, all.cancelled)
 					}
 				}
 			}
 		}
 	}
-	b.WriteString("\n## Interpretation and limits\n\nThe adopter pass/fail declarations above are feasibility gates. A failing Team or Slow prediction requires an ADR amendment before PR 3; thresholds must not be tuned. The planner-backed chain tests remain skipped with the PR 3 dependency. Capacity is limited by confirmation and failure isolation, so a deeper window alone is not evidence for a high-volume strict SLA. Parallel isolation can improve the curve at the cost of independent diagnosis runs and mandatory retesting; the adopter and adaptive comparisons above expose its different costs at realistic loads. This model does not select that alternative or change the planner. Cancellation latency, correlated failures, arrival bursts, build conflicts, forge outages, and variable CI times need further measurements before production claims.\n")
+	b.WriteString("\n## Interpretation and limits\n\nThe adopter pass/fail declarations above are feasibility gates. A failing Team or Slow prediction requires an ADR amendment before PR 3; thresholds must not be tuned. The planner-backed chain tests remain skipped with the PR 3 dependency. Capacity is limited by confirmation and failure isolation, so a deeper window alone is not evidence for a high-volume strict SLA. Parallel isolation is a non-adopted alternative: its abundant-runner curve can improve at the cost of independent diagnosis runs, mandatory retesting, and unbounded off-chain load; the adopter and adaptive comparisons above expose its different costs at realistic loads. The maintainer decision is to wait for PR 3’s planner-backed results before considering isolation; this model does not select it or amend ADR 0009. Cancellation latency, correlated failures, arrival bursts, build conflicts, forge outages, and variable CI times need further measurements before production claims.\n")
 	if err := os.MkdirAll(filepath.Dir(output), 0755); err != nil {
 		return err
 	}
 	return os.WriteFile(output, []byte(strings.Replace(b.String(), "<!-- headline-results -->", headlines.String(), 1)), 0644)
+}
+
+// profileControl pools the same seeds and arrival identities as the pinned rows.
+func profileControl(p capacity.Profile, configure func(*capacity.Config)) (pooled, float64, error) {
+	var all pooled
+	worst := 0.
+	for seed := uint64(1); seed <= 8; seed++ {
+		c := p.Config(seed, false)
+		configure(&c)
+		r, err := capacity.Run(c)
+		if err != nil {
+			return all, worst, err
+		}
+		all.add(r)
+		worst = max(worst, capacity.Summarize(r.Merges, r.Runs, r.RunnerMinutes, p.Threshold).TailFraction)
+	}
+	return all, worst, nil
+}
+
+func writeControls(b *strings.Builder) error {
+	b.WriteString(`## Serial baseline and runner sensitivity
+
+These controls use the same eight seeds and 30-day profiles, bisection, fixed size 8, and cancellation unsupported. Depth 1 disables retries to model today's serial planner. The depth-4 rows retain one confirming rerun. Gates remain the pinned profile thresholds; Slow is the profile that discriminates the chain. Speculation as modelled needs runners >= depth to avoid queueing-induced deadline failures; this is a necessary capacity consideration, not a guarantee for isolation or arbitrary workloads.
+
+| Profile | Depth | Runners | Pooled tail % | Worst-seed tail % | p95 min | Runs/merged | Gate |
+|---|---:|---:|---:|---:|---:|---:|---|
+`)
+	for _, p := range []capacity.Profile{capacity.Team(), capacity.Slow()} {
+		all, worst, err := profileControl(p, func(c *capacity.Config) { c.MaxDepth, c.Retries = 1, false })
+		if err != nil {
+			return err
+		}
+		s := all.stats(p.Threshold)
+		fmt.Fprintf(b, "| %s | 1 | 50 | %.3f | %.3f | %.3f | %.5f | %s |\n", p.Name, 100*s.TailFraction, 100*worst, s.P95.Minutes(), s.RunsPerMerge, verdict(s.P95 < p.Threshold && s.RunsPerMerge < 1.5))
+	}
+	for _, runners := range []int{2, 4, 8, 50} {
+		p := capacity.Slow()
+		all, worst, err := profileControl(p, func(c *capacity.Config) { c.Runners = runners })
+		if err != nil {
+			return err
+		}
+		s := all.stats(p.Threshold)
+		fmt.Fprintf(b, "| Slow | 4 | %d | %.3f | %.3f | %.3f | %.5f | %s |\n", runners, 100*s.TailFraction, 100*worst, s.P95.Minutes(), s.RunsPerMerge, verdict(s.P95 < p.Threshold && s.RunsPerMerge < 1.5))
+	}
+	b.WriteString(`
+Slow's pooled p95 sits on a mass point at CI + max_wait (185m). Its useful margin is the tail fraction's distance below 5%, especially the worst seed, rather than the apparent distance from 185m to the 270m threshold.
+
+## Adaptive fixed-size controls
+
+The unchanged pin is 900/day, 2m CI, depth 4, 5% broken, fixed CI and a constant defect rate. These pooled bisection controls use eight seeds, 30 days, 50 runners and cancellation unsupported. The ADR gate checks runs/merged <1.5 and median no worse than fixed 8. A planner stuck at size 8 would still pass that gate. The measured median gain comes mainly from fill-to-cap starting full batches before max_wait; fixed size 4 matches adaptive. This workload tests converged-cap behaviour, not adaptation to a changing defect rate. PR 3/5 should add a p95-vs-fixed-8 assertion (the improvement below is about 35.6m to 23.1m); changing the ADR criterion remains a maintainer decision.
+
+| Policy | Pooled tail >=8m % | Worst-seed tail % | p50 min | p95 min | Runs/merged |
+|---|---:|---:|---:|---:|---:|
+`)
+	for _, policy := range []struct {
+		name     string
+		size     int
+		adaptive bool
+	}{{"Fixed 8", 8, false}, {"Fixed 4", 4, false}, {"Adaptive", 8, true}} {
+		p := capacity.AdaptiveWorkload()
+		all, worst, err := profileControl(p, func(c *capacity.Config) { c.MaxSize, c.Adaptive = policy.size, policy.adaptive })
+		if err != nil {
+			return err
+		}
+		s := all.stats(p.Threshold)
+		fmt.Fprintf(b, "| %s | %.3f | %.3f | %.3f | %.3f | %.5f |\n", policy.name, 100*s.TailFraction, 100*worst, s.Median.Minutes(), s.P95.Minutes(), s.RunsPerMerge)
+	}
+	b.WriteString(`
+## Isolation runner sensitivity (non-gating alternative)
+
+Single-seed diagnostic: seed 1, 4,000 changes at time zero, 2% broken, no flakes or interactions, size 8, depth 4, 30m fixed CI. Event-limit rows did not drain within 10,000,000 events and have no capacity estimate. Isolation load is outside the window: queued chain requests can breach the 1.5×CI request-based deadline, each original timeout spawns more isolation, and halving W cannot throttle that load. Scarcity can cause livelock or dequeue passing changes on timeout; completion and merged/dequeued counts must be read together. Disabling timeouts or extending them to 4×CI demonstrates the deadline mechanism; these are sensitivity controls, not proposed changes to the pins. The abundant-runner gain does not establish feasibility with scarce runners. Isolation remains non-adopted pending PR 3's planner-backed results.
+
+| Runners | Diagnosis | Cancellation | Timeout / CI | Completion | Merged/dequeued | Timeouts | Merged/day | Runs/merged | Cancel requested/confirmed | Deadline stops requested/confirmed |
+|---:|---|---|---:|---|---:|---:|---:|---:|---:|---:|
+`)
+	for _, runners := range []int{4, 8, 50} {
+		for _, isolate := range []bool{false, true} {
+			for _, cancel := range []bool{true, false} {
+				if !cancel && (!isolate || runners == 50) {
+					continue
+				}
+				timeouts := []time.Duration{45 * time.Minute}
+				if isolate && runners < 50 && cancel {
+					timeouts = append(timeouts, 0, 2*time.Hour)
+				}
+				for _, deadline := range timeouts {
+					c := capacity.Config{Seed: 1, Changes: 4000, CI: 30 * time.Minute, MaxWait: 5 * time.Minute, CheckTimeout: deadline, BrokenRate: .02, MaxSize: 8, MinDepth: 1, MaxDepth: 4, Runners: runners, Cancellation: cancel, Retries: true, Target: .8, Isolation: isolate}
+					r, err := capacity.Run(c)
+					if errors.Is(err, capacity.ErrEventLimit) {
+						fmt.Fprintf(b, "| %d | %s | %s | %.1f | EVENT LIMIT | %d/%d (partial) | %d | — | — | %d/%d | %d/%d |\n", runners, mode(isolate), support(cancel), float64(deadline)/float64(c.CI), len(r.Merges), r.Dequeued, r.Timeouts, r.CancelRequested, r.CancelConfirmed, r.TimeoutCancelRequested, r.TimeoutCancelConfirmed)
+						continue
+					}
+					if err != nil {
+						return err
+					}
+					s := capacity.Summarize(r.Merges, r.Runs, r.RunnerMinutes, 0)
+					fmt.Fprintf(b, "| %d | %s | %s | %.1f | drained | %d/%d | %d | %.2f | %.5f | %d/%d | %d/%d |\n", runners, mode(isolate), support(cancel), float64(deadline)/float64(c.CI), s.Merged, r.Dequeued, r.Timeouts, float64(s.Merged)/(r.Span.Hours()/24), s.RunsPerMerge, r.CancelRequested, r.CancelConfirmed, r.TimeoutCancelRequested, r.TimeoutCancelConfirmed)
+				}
+			}
+		}
+	}
+	b.WriteString("\n")
+	return nil
 }

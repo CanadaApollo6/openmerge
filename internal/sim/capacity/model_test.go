@@ -98,7 +98,7 @@ func TestTimeoutsAndLongCI(t *testing.T) {
 	c.CheckTimeout = time.Hour
 	c.Changes = 8
 	r = mustRun(t, c)
-	if r.OriginalFailures != 1 || r.BisectionFailures != 14 || r.FinalWindow != 2 || r.Dequeued != 8 || r.Reruns != 0 {
+	if r.OriginalFailures != 1 || r.BisectionFailures != 14 || r.FinalWindow != 2 || r.Dequeued != 8 || r.Reruns != 0 || r.TimeoutCancelRequested == 0 || r.TimeoutCancelConfirmed != r.TimeoutCancelRequested || r.CancelRequested != 0 {
 		t.Fatalf("timeout semantics: %+v", r)
 	}
 	c = testConfig()
@@ -200,5 +200,12 @@ func TestQueuedCompletionAtDeadlineWins(t *testing.T) {
 	r := mustRun(t, c)
 	if r.Timeouts != 0 || len(r.Merges) != 16 {
 		t.Fatalf("queued run finishing at deadline was killed: %+v", r)
+	}
+}
+
+func TestZeroThresholdDisablesTailMeasurement(t *testing.T) {
+	stats := Summarize([]Sample{{TTM: time.Minute}}, 1, 1, 0)
+	if stats.TailFraction != 0 {
+		t.Fatal("zero threshold must disable tail measurement")
 	}
 }

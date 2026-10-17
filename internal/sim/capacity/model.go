@@ -5,12 +5,16 @@ package capacity
 
 import (
 	"container/heap"
+	"errors"
 	"fmt"
 	"math"
 	"math/rand/v2"
 	"slices"
 	"time"
 )
+
+// ErrEventLimit means the workload did not drain within the model's event budget.
+var ErrEventLimit = errors.New("capacity model exceeded event limit")
 
 // Config describes one seed, drained to completion after uniform arrivals stop.
 // All CI durations are service time after acquiring one runner. CheckTimeout
@@ -38,6 +42,7 @@ type Result struct {
 	Merges                                                                              []Sample
 	Broken, Dequeued, Runs, Reruns, CancelRequested, CancelConfirmed, CancelUnsupported int
 	Timeouts, OriginalFailures, BisectionFailures, Invalidated, Landings                int
+	TimeoutCancelRequested, TimeoutCancelConfirmed, TimeoutCancelUnsupported            int
 	FreshBatches, FreshAboveAdaptiveCap, MaxRunning, MaxOpen                            int
 	FinalWindow                                                                         int
 	MeanWindow                                                                          float64 // time-weighted over the entire drained run
@@ -65,7 +70,7 @@ func Summarize(samples []Sample, runs int, runnerMinutes float64, threshold time
 	beyond := 0
 	for i, p := range samples {
 		times[i] = p.TTM
-		if p.TTM >= threshold {
+		if threshold > 0 && p.TTM >= threshold {
 			beyond++
 		}
 	}
@@ -226,7 +231,7 @@ func Run(c Config) (Result, error) {
 	}
 	for steps := 0; len(m.events) > 0; steps++ {
 		if steps > 10_000_000 {
-			return m.result, fmt.Errorf("capacity model exceeded event limit (possible interacting isolation cycle)")
+			return m.result, fmt.Errorf("%w (runners=%d queued=%d timeouts=%d isolation=%t interaction_rate=%g)", ErrEventLimit, c.Runners, len(m.runners), m.result.Timeouts, c.Isolation, c.InteractionRate)
 		}
 		e := heap.Pop(&m.events).(event)
 		m.windowTime += float64(e.at-m.now) * float64(m.window)
@@ -255,7 +260,7 @@ func Run(c Config) (Result, error) {
 			if !r.done && !r.cancelled && r.batch.state == runningChecks && r.batch.run == r {
 				r.batch.state = confirmed
 				m.result.Timeouts++
-				m.cancel(r)
+				m.cancel(r, true)
 			}
 		case wake:
 			if e.at == m.wakeAt {
@@ -359,18 +364,33 @@ func (m *model) finish(r *run) {
 	m.running--
 	m.result.Span = max(m.result.Span, m.now)
 }
-func (m *model) cancel(r *run) {
+
+// Deadline stops preserve the same service semantics, but are counted separately
+// from forge cancellation of an invalidated suffix.
+func (m *model) cancel(r *run, deadline bool) {
 	if r == nil || r.done || r.cancelled || r.requested {
 		return
 	}
 	r.requested = true
-	m.result.CancelRequested++
+	if deadline {
+		m.result.TimeoutCancelRequested++
+	} else {
+		m.result.CancelRequested++
+	}
 	if !m.cfg.Cancellation {
-		m.result.CancelUnsupported++
+		if deadline {
+			m.result.TimeoutCancelUnsupported++
+		} else {
+			m.result.CancelUnsupported++
+		}
 		return
 	}
 	r.cancelled = true
-	m.result.CancelConfirmed++
+	if deadline {
+		m.result.TimeoutCancelConfirmed++
+	} else {
+		m.result.CancelConfirmed++
+	}
 	if r.running {
 		r.finished = m.now
 		r.done = true
@@ -429,7 +449,7 @@ func (m *model) resolve() {
 				m.history(true)
 			}
 			b.state = retired
-			m.cancel(b.run)
+			m.cancel(b.run, false)
 		}
 		m.waiting = append(returned, m.waiting...)
 		m.isolations = append(m.isolations[:i], m.isolations[i+1:]...)
@@ -464,7 +484,7 @@ func (m *model) resolve() {
 			for _, b := range m.chain[1:] {
 				m.result.Invalidated++
 				b.state = retired
-				m.cancel(b.run)
+				m.cancel(b.run, false)
 				if b.half {
 					halves = append(halves, b.members)
 				} else {
@@ -474,7 +494,7 @@ func (m *model) resolve() {
 			m.chain = nil
 			m.waiting = append(returned, m.waiting...)
 			head.state = retired
-			m.cancel(head.run)
+			m.cancel(head.run, false)
 			if len(head.members) == 1 {
 				m.result.Dequeued++
 				m.history(true)

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/sim/capacity"
 )
@@ -99,6 +100,65 @@ func TestFailedRerunCapabilityDoesNotRequestRetry(t *testing.T) {
 }
 func slicesEvents(events []loggedEvent) []loggedEvent { return append([]loggedEvent(nil), events...) }
 
+func TestExternalRerunAfterSuccessfulRetryHasFreshIdentity(t *testing.T) {
+	cfg := smallConfig()
+	cfg.Seed, cfg.PRs, cfg.FlakeRate = 6, 1, .5
+	cfg.Faults.CIRerunRate = 1
+	cfg.CI = &CIConfig{Runners: 1, RerunsSupported: true}
+	s, err := newSimulation(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sha string
+	for i := 0; i < 100 && sha == ""; i++ {
+		if _, err := s.step(); err != nil {
+			t.Fatal(err)
+		}
+		for key, run := range s.tests {
+			if run.done {
+				sha = key
+			}
+		}
+	}
+	if sha == "" || s.tests[sha].success {
+		t.Fatal("fixture must complete a flaky first failure")
+	}
+	complete := func() {
+		t.Helper()
+		for i, e := range s.scheduled {
+			if e.kind == ciComplete && e.job == s.tests[sha].job {
+				heap.Remove(&s.scheduled, i)
+				s.now = e.at
+				if err := s.deliver(e); err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+		}
+		t.Fatal("missing CI completion")
+	}
+	check := func(id uint64, state forge.CheckState) {
+		t.Helper()
+		checks, err := s.forge.CheckRuns(context.Background(), s.repo, sha)
+		if err != nil || len(checks) != 1 || checks[0].ID != id || checks[0].State != state {
+			t.Fatalf("want run %d %s, got %+v (%v)", id, state, checks, err)
+		}
+	}
+	if !s.rerunFailedCI(sha) {
+		t.Fatal("retry rejected")
+	}
+	check(2, forge.Pending)
+	complete()
+	check(2, forge.Success)
+	f := &faultForge{Forge: s.forge, sim: s, scope: "landing/" + s.state.Active.ID}
+	checks, err := f.CheckRuns(context.Background(), s.repo, sha)
+	if err != nil || len(checks) != 1 || checks[0].ID != 3 || checks[0].State != forge.Pending {
+		t.Fatalf("external rerun reused completed retry identity: %+v (%v)", checks, err)
+	}
+	complete()
+	check(3, forge.Success)
+}
+
 func TestCIInteractionAndLongTimeout(t *testing.T) {
 	cfg := smallConfig()
 	cfg.PRs = 8
@@ -143,9 +203,18 @@ func TestCapacityAgainstSerialPlanner(t *testing.T) {
 		}
 		stats := capacity.Summarize(model.Merges, model.Runs, model.RunnerMinutes, 0)
 		t.Logf("n=%d size=%d planner: median=%s runs/merge=%.5f; model: median=%s runs/merge=%.5f", n, scenario.size, planner.MedianTimeToMerge, planner.CIRunsPerMergedPR, stats.Median, stats.RunsPerMerge)
-		if stats.Merged != planner.Merged || model.Dequeued != planner.Broken || stats.RunsPerMerge < planner.CIRunsPerMergedPR*.9 || stats.RunsPerMerge > planner.CIRunsPerMergedPR*1.1 || stats.Median < planner.MedianTimeToMerge*9/10 || stats.Median > planner.MedianTimeToMerge*11/10 {
-			t.Fatal("standalone model disagrees with serial simulator by >10%")
+		if stats.Merged != planner.Merged || model.Dequeued != planner.Broken || model.Runs != planner.CIRuns || stats.RunsPerMerge != planner.CIRunsPerMergedPR || stats.Median != planner.MedianTimeToMerge || stats.P95 != planner.P95TimeToMerge {
+			t.Fatal("standalone model disagrees with serial simulator")
 		}
+	}
+}
+
+func TestZeroTailThresholdDisablesMeasurement(t *testing.T) {
+	cfg := smallConfig()
+	cfg.CI = &CIConfig{Runners: 1}
+	_, r := runScenario(t, cfg)
+	if r.Merged == 0 || r.CI.TailFraction != 0 {
+		t.Fatalf("zero threshold should disable tail measurement: %+v", r.CI)
 	}
 }
 

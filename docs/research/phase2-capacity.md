@@ -5,29 +5,29 @@ No wall clock, external service, or Python model is used. Values below are provi
 
 ## Headline findings
 
-- Team, cancellation supported, adaptive false: **PASS**; p50 35.000m, p95 35.000m, 0.99491 runs/merged; tail 2.332%.
-- Team, cancellation unsupported, adaptive false: **PASS**; p50 35.000m, p95 35.000m, 0.99491 runs/merged; tail 2.332%.
-- Slow, cancellation supported, adaptive false: **PASS**; p50 185.000m, p95 185.000m, 1.03902 runs/merged; tail 2.290%.
-- Slow, cancellation unsupported, adaptive false: **PASS**; p50 185.000m, p95 185.000m, 1.03902 runs/merged; tail 2.290%.
-- Adaptive, cancellation supported, adaptive false: **PASS**; p50 7.000m, p95 35.598m, 0.75143 runs/merged; tail 47.524%.
-- Adaptive, cancellation supported, adaptive true: **PASS**; p50 6.329m, p95 23.099m, 0.75377 runs/merged; tail 35.619%.
-- Adaptive, cancellation unsupported, adaptive false: **PASS**; p50 7.000m, p95 35.598m, 0.75143 runs/merged; tail 47.524%.
-- Adaptive, cancellation unsupported, adaptive true: **PASS**; p50 6.329m, p95 23.099m, 0.75377 runs/merged; tail 35.619%.
+- Team, cancellation supported, adaptive false: **PASS**; pooled tail >=60m **2.332%**, worst-seed tail **3.741%**; p95 35.000m, 0.99491 runs/merged.
+- Team, cancellation unsupported, adaptive false: **PASS**; pooled tail >=60m **2.332%**, worst-seed tail **3.741%**; p95 35.000m, 0.99491 runs/merged.
+- Slow, cancellation supported, adaptive false: **PASS**; pooled tail >=270m **2.290%**, worst-seed tail **4.795%**; p95 185.000m, 1.03902 runs/merged.
+- Slow, cancellation unsupported, adaptive false: **PASS**; pooled tail >=270m **2.290%**, worst-seed tail **4.795%**; p95 185.000m, 1.03902 runs/merged.
+- Adaptive, cancellation supported, adaptive false: **PASS**; pooled tail >=8m **47.524%**, worst-seed tail **48.784%**; p95 35.598m, 0.75143 runs/merged.
+- Adaptive, cancellation supported, adaptive true: **PASS**; pooled tail >=8m **35.619%**, worst-seed tail **36.239%**; p95 23.099m, 0.75377 runs/merged.
+- Adaptive, cancellation unsupported, adaptive false: **PASS**; pooled tail >=8m **47.524%**, worst-seed tail **48.784%**; p95 35.598m, 0.75143 runs/merged.
+- Adaptive, cancellation unsupported, adaptive true: **PASS**; pooled tail >=8m **35.619%**, worst-seed tail **36.239%**; p95 23.099m, 0.75377 runs/merged.
 
 
 ## Model and measurement
 
 The model implements the ADR chain in Go: every open batch counts against W; W starts at max_depth, grows by one per landing (including halves), and halves once per confirmed original-batch failure or timeout, bounded by min_depth=1. Shrink alone never cancels. Only the oldest batch retries or diagnoses a failure. A retry takes a full CI duration on the same cumulative commit and gets a new timeout deadline. Failure invalidates the suffix and returns changes in order. Bisection halves chain ahead of fresh work; unresolved halves block fresh batches. The adaptive estimator uses the last 200 landed or checks/timeout-dequeued changes, with a cold start below 20. Fresh batch formation follows plan.go: full batches start immediately; partial batches wait until their oldest member reaches max_wait. Returned members retain their original arrival time.
 
-Each run needs one FIFO runner; CI is service time after admission. Timeout starts at request, so runner queueing can cause timeouts. A pass waiting to land does not time out. Cancellation is immediate when supported (a modelling assumption); otherwise queued and running invalidated work finishes and consumes capacity. Runs count at runner acquisition, including reruns and cancelled/orphaned runs. Runner-minutes count service actually consumed; a job cancelled before admission is not a started run. Equal-time arrivals/completions are delivered before planning. Samples use midpoint median and nearest-rank p95, pooled by change, never the average of seed percentiles. Tail means TTM >= the threshold; strict exit gates require p95 below it. Latency includes only merged changes, while every started run contributes to cost. All arrival workloads drain after arrivals stop.
+Each run needs one FIFO runner; CI is service time after admission. Timeout starts at request, so runner queueing can cause timeouts. A pass waiting to land does not time out. Cancellation is immediate when supported (a modelling assumption); otherwise queued and running invalidated work finishes and consumes capacity. Runs count at runner acquisition, including reruns and cancelled/orphaned runs. Runner-minutes count service actually consumed; a job cancelled before admission is not a started run, so queued-then-cancelled jobs contribute neither a run nor runner-minutes. Deadline-triggered stops use the same capability/service semantics but are accounted separately from suffix cancellation requests. Equal-time arrivals/completions are delivered before planning. Samples use midpoint median and nearest-rank p95, pooled by change, never the average of seed percentiles. A zero threshold disables tail measurement. Tail means TTM >= the threshold; strict exit gates require p95 below it. Latency includes only merged changes, while every started run contributes to cost. All arrival workloads drain after arrivals stop.
 
-Off-chain isolation removes a confirmed failing batch, rebuilds its suffix immediately, and tests its members independently on the settled base with the same runner pool and retry rule. Once that isolation group completes, passers return to the front in original order and must pass a new chain test before landing. Fresh work can proceed during isolation. Isolation itself never lands a change. This permits fresh changes to overtake isolated changes, as the ADR alternative proposes. Interaction-only failures can cycle under this alternative; the model returns an event-limit error rather than silently claiming capacity. The published profiles/curves use independent broken changes and flakes, not interactions; both simulator and model test interacting pairs separately.
+Off-chain isolation removes a confirmed failing batch, rebuilds its suffix immediately, and tests its members independently on the settled base with the same runner pool and retry rule. Once that isolation group completes, passers return to the front in original order and must pass a new chain test before landing. Fresh work can proceed during isolation. Isolation itself never lands a change. This permits fresh changes to overtake isolated changes, as the ADR alternative proposes. Isolation jobs sit outside W: the chain window does not bound isolation load. Its capacity gain assumes abundant runners; with scarce runners, request-based deadlines can create a timeout/isolation feedback loop that window halving cannot throttle. The runner-sensitivity table below exposes runner-scarcity failures even with interaction rate zero, including event-limit non-completion and severe timeout-driven loss. Interaction-only failures can also cycle; an event-limit error reports non-completion rather than capacity. The published profiles/curves use independent broken changes and flakes, not interactions; interaction rate is zero in every published workload. Interaction semantics differ outside these pins: the simulator checks only PRs in the tested commit, whereas the model also detects a pair split across a prior landing and the new batch. Neither interaction tests nor these pins establish equivalence for that case.
 
 Randomness uses separate PCG streams: (seed,1) for broken status and uniform arrivals, (seed,2) for per-run flakes, and (seed,7) for disjoint adjacent interacting pairs. Paired variants share arrivals and broken changes; different run schedules naturally consume different flake draws. Git execution, fence settlement, forge refresh, and the simulator's one-second observe/enqueue delay are omitted. Service completions and resolutions define span; stale timeout timers add no throughput time. Window equilibrium below is the time-weighted mean over the drained workload, not an optimality claim.
 
 ## Validation against the real serial planner
 
-Both runs use seed 42, 5% independent broken changes, no flakes, depth 1, no retries, and uniform arrivals over one day. The comparison test permits 10% disagreement; these results reproduce the baseline exactly. The 500/day serial exit-test suite also covers faults and dropped webhooks independently; the capacity model deliberately models neither.
+Both runs use seed 42, 5% independent broken changes, no flakes, depth 1, no retries, and uniform arrivals over one day. The comparison test requires exact merged/dequeued counts, started runs, runs/merged, median and p95; these fixtures reproduce the baseline exactly. The 500/day serial exit-test suite also covers faults and dropped webhooks independently; the capacity model deliberately models neither.
 
 | Workload | Engine | Merged | Median TTM | Runs/merged |
 |---|---|---:|---:|---:|
@@ -44,731 +44,535 @@ All profiles: seeds 1–8 independently run for 30 days; uniform arrivals, fixed
 
 ### Team / bisection / cancellation supported / adaptive false
 
-| Seed | Merged | p50 min | p95 min | Runs | Reruns | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | 587 | 35.000 | 35.000 | 591 | 17 | 1.00681 | 30.03969 | 0.01193 | 14 | 35.000 | 35.000 | 0.00000 | 1.14286 | 34.28571 |
-| 2 | 583 | 35.000 | 35.000 | 597 | 25 | 1.02401 | 30.61048 | 0.03259 | 20 | 35.000 | 35.000 | 0.05000 | 1.00000 | 30.00000 |
-| 3 | 590 | 35.000 | 35.000 | 592 | 20 | 1.00339 | 29.98677 | 0.03390 | 20 | 35.000 | 35.000 | 0.00000 | 0.95000 | 28.50000 |
-| 4 | 590 | 35.000 | 35.000 | 579 | 13 | 0.98136 | 29.44068 | 0.01356 | 16 | 35.000 | 35.000 | 0.00000 | 0.93750 | 28.12500 |
-| 5 | 592 | 35.000 | 35.000 | 592 | 19 | 1.00000 | 30.00000 | 0.02703 | 22 | 35.000 | 35.000 | 0.00000 | 0.86364 | 25.90909 |
-| 6 | 590 | 35.000 | 35.000 | 582 | 14 | 0.98644 | 29.45900 | 0.01695 | 16 | 35.000 | 35.000 | 0.00000 | 1.18750 | 35.62500 |
-| 7 | 588 | 35.000 | 35.000 | 589 | 22 | 1.00170 | 29.86140 | 0.03741 | 20 | 35.000 | 35.000 | 0.00000 | 0.90000 | 27.00000 |
-| 8 | 596 | 35.000 | 35.000 | 570 | 10 | 0.95638 | 28.62477 | 0.01342 | 19 | 35.000 | 35.000 | 0.00000 | 0.94737 | 28.42105 |
+| Seed | Merged | p50 min | p95 min | Runs | Reruns | Cancel requested | Cancel confirmed | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 587 | 35.000 | 35.000 | 591 | 17 | 5 | 5 | 1.00681 | 30.03969 | 0.01193 | 14 | 35.000 | 35.000 | 0.00000 | 1.14286 | 34.28571 |
+| 2 | 583 | 35.000 | 35.000 | 597 | 25 | 5 | 5 | 1.02401 | 30.61048 | 0.03259 | 20 | 35.000 | 35.000 | 0.05000 | 1.00000 | 30.00000 |
+| 3 | 590 | 35.000 | 35.000 | 592 | 20 | 5 | 5 | 1.00339 | 29.98677 | 0.03390 | 20 | 35.000 | 35.000 | 0.00000 | 0.95000 | 28.50000 |
+| 4 | 590 | 35.000 | 35.000 | 579 | 13 | 0 | 0 | 0.98136 | 29.44068 | 0.01356 | 16 | 35.000 | 35.000 | 0.00000 | 0.93750 | 28.12500 |
+| 5 | 592 | 35.000 | 35.000 | 592 | 19 | 0 | 0 | 1.00000 | 30.00000 | 0.02703 | 22 | 35.000 | 35.000 | 0.00000 | 0.86364 | 25.90909 |
+| 6 | 590 | 35.000 | 35.000 | 582 | 14 | 5 | 5 | 0.98644 | 29.45900 | 0.01695 | 16 | 35.000 | 35.000 | 0.00000 | 1.18750 | 35.62500 |
+| 7 | 588 | 35.000 | 35.000 | 589 | 22 | 6 | 6 | 1.00170 | 29.86140 | 0.03741 | 20 | 35.000 | 35.000 | 0.00000 | 0.90000 | 27.00000 |
+| 8 | 596 | 35.000 | 35.000 | 570 | 10 | 2 | 2 | 0.95638 | 28.62477 | 0.01342 | 19 | 35.000 | 35.000 | 0.00000 | 0.94737 | 28.42105 |
 
-**Pooled PASS:** merged 4716; p50 35.000 min; p95 35.000 min; runs/merged 0.99491; runner-min/merged 29.75002; tail >=60m 0.02332. Mean W 3.947; max occupied runners 4; confirmed cancellations 28; unsupported requests 0. Fresh batches above the contemporaneous adaptive cap: 0/4522 (0.000%).
+**Pooled PASS:** merged 4716; p50 35.000 min; p95 35.000 min; runs/merged 0.99491; runner-min/merged 29.75002; tail >=60m 0.02332. Mean W 3.947; max occupied runners 4; cancellation requests 28; confirmed 28; unsupported 0. Deadline stops requested/confirmed/unsupported 0/0/0. Fresh batches above the contemporaneous adaptive cap: 0/4522 (0.000%).
 
 ### Team / bisection / cancellation unsupported / adaptive false
 
-| Seed | Merged | p50 min | p95 min | Runs | Reruns | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | 587 | 35.000 | 35.000 | 591 | 17 | 1.00681 | 30.20443 | 0.01193 | 14 | 35.000 | 35.000 | 0.00000 | 1.14286 | 34.28571 |
-| 2 | 583 | 35.000 | 35.000 | 597 | 25 | 1.02401 | 30.72041 | 0.03259 | 20 | 35.000 | 35.000 | 0.05000 | 1.00000 | 30.00000 |
-| 3 | 590 | 35.000 | 35.000 | 592 | 20 | 1.00339 | 30.10169 | 0.03390 | 20 | 35.000 | 35.000 | 0.00000 | 0.95000 | 28.50000 |
-| 4 | 590 | 35.000 | 35.000 | 579 | 13 | 0.98136 | 29.44068 | 0.01356 | 16 | 35.000 | 35.000 | 0.00000 | 0.93750 | 28.12500 |
-| 5 | 592 | 35.000 | 35.000 | 592 | 19 | 1.00000 | 30.00000 | 0.02703 | 22 | 35.000 | 35.000 | 0.00000 | 0.86364 | 25.90909 |
-| 6 | 590 | 35.000 | 35.000 | 582 | 14 | 0.98644 | 29.59322 | 0.01695 | 16 | 35.000 | 35.000 | 0.00000 | 1.18750 | 35.62500 |
-| 7 | 588 | 35.000 | 35.000 | 589 | 22 | 1.00170 | 30.05102 | 0.03741 | 20 | 35.000 | 35.000 | 0.00000 | 0.90000 | 27.00000 |
-| 8 | 596 | 35.000 | 35.000 | 570 | 10 | 0.95638 | 28.69128 | 0.01342 | 19 | 35.000 | 35.000 | 0.00000 | 0.94737 | 28.42105 |
+| Seed | Merged | p50 min | p95 min | Runs | Reruns | Cancel requested | Cancel confirmed | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 587 | 35.000 | 35.000 | 591 | 17 | 5 | 0 | 1.00681 | 30.20443 | 0.01193 | 14 | 35.000 | 35.000 | 0.00000 | 1.14286 | 34.28571 |
+| 2 | 583 | 35.000 | 35.000 | 597 | 25 | 5 | 0 | 1.02401 | 30.72041 | 0.03259 | 20 | 35.000 | 35.000 | 0.05000 | 1.00000 | 30.00000 |
+| 3 | 590 | 35.000 | 35.000 | 592 | 20 | 5 | 0 | 1.00339 | 30.10169 | 0.03390 | 20 | 35.000 | 35.000 | 0.00000 | 0.95000 | 28.50000 |
+| 4 | 590 | 35.000 | 35.000 | 579 | 13 | 0 | 0 | 0.98136 | 29.44068 | 0.01356 | 16 | 35.000 | 35.000 | 0.00000 | 0.93750 | 28.12500 |
+| 5 | 592 | 35.000 | 35.000 | 592 | 19 | 0 | 0 | 1.00000 | 30.00000 | 0.02703 | 22 | 35.000 | 35.000 | 0.00000 | 0.86364 | 25.90909 |
+| 6 | 590 | 35.000 | 35.000 | 582 | 14 | 5 | 0 | 0.98644 | 29.59322 | 0.01695 | 16 | 35.000 | 35.000 | 0.00000 | 1.18750 | 35.62500 |
+| 7 | 588 | 35.000 | 35.000 | 589 | 22 | 6 | 0 | 1.00170 | 30.05102 | 0.03741 | 20 | 35.000 | 35.000 | 0.00000 | 0.90000 | 27.00000 |
+| 8 | 596 | 35.000 | 35.000 | 570 | 10 | 2 | 0 | 0.95638 | 28.69128 | 0.01342 | 19 | 35.000 | 35.000 | 0.00000 | 0.94737 | 28.42105 |
 
-**Pooled PASS:** merged 4716; p50 35.000 min; p95 35.000 min; runs/merged 0.99491; runner-min/merged 29.84733; tail >=60m 0.02332. Mean W 3.947; max occupied runners 4; confirmed cancellations 0; unsupported requests 28. Fresh batches above the contemporaneous adaptive cap: 0/4522 (0.000%).
+**Pooled PASS:** merged 4716; p50 35.000 min; p95 35.000 min; runs/merged 0.99491; runner-min/merged 29.84733; tail >=60m 0.02332. Mean W 3.947; max occupied runners 4; cancellation requests 28; confirmed 0; unsupported 28. Deadline stops requested/confirmed/unsupported 0/0/0. Fresh batches above the contemporaneous adaptive cap: 0/4522 (0.000%).
 
 ### Team / off-chain / cancellation supported / adaptive false
 
-| Seed | Merged | p50 min | p95 min | Runs | Reruns | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | 587 | 35.000 | 35.000 | 591 | 17 | 1.00681 | 30.03969 | 0.01193 | 14 | 35.000 | 35.000 | 0.00000 | 1.14286 | 34.28571 |
-| 2 | 583 | 35.000 | 35.000 | 601 | 25 | 1.03087 | 30.81631 | 0.02573 | 20 | 35.000 | 35.000 | 0.05000 | 1.00000 | 30.00000 |
-| 3 | 590 | 35.000 | 35.000 | 592 | 19 | 1.00339 | 29.98677 | 0.02881 | 20 | 35.000 | 35.000 | 0.00000 | 0.95000 | 28.50000 |
-| 4 | 590 | 35.000 | 35.000 | 580 | 13 | 0.98305 | 29.49153 | 0.01186 | 16 | 35.000 | 35.000 | 0.00000 | 0.93750 | 28.12500 |
-| 5 | 592 | 35.000 | 35.000 | 595 | 19 | 1.00507 | 30.15203 | 0.02365 | 22 | 35.000 | 35.000 | 0.00000 | 0.86364 | 25.90909 |
-| 6 | 590 | 35.000 | 35.000 | 582 | 14 | 0.98644 | 29.45900 | 0.01695 | 16 | 35.000 | 35.000 | 0.00000 | 1.18750 | 35.62500 |
-| 7 | 588 | 35.000 | 35.000 | 598 | 23 | 1.01701 | 30.32058 | 0.02381 | 20 | 35.000 | 35.000 | 0.00000 | 0.90000 | 27.00000 |
-| 8 | 596 | 35.000 | 35.000 | 570 | 10 | 0.95638 | 28.62477 | 0.01342 | 19 | 35.000 | 35.000 | 0.00000 | 0.94737 | 28.42105 |
+| Seed | Merged | p50 min | p95 min | Runs | Reruns | Cancel requested | Cancel confirmed | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 587 | 35.000 | 35.000 | 591 | 17 | 5 | 5 | 1.00681 | 30.03969 | 0.01193 | 14 | 35.000 | 35.000 | 0.00000 | 1.14286 | 34.28571 |
+| 2 | 583 | 35.000 | 35.000 | 601 | 25 | 5 | 5 | 1.03087 | 30.81631 | 0.02573 | 20 | 35.000 | 35.000 | 0.05000 | 1.00000 | 30.00000 |
+| 3 | 590 | 35.000 | 35.000 | 592 | 19 | 5 | 5 | 1.00339 | 29.98677 | 0.02881 | 20 | 35.000 | 35.000 | 0.00000 | 0.95000 | 28.50000 |
+| 4 | 590 | 35.000 | 35.000 | 580 | 13 | 0 | 0 | 0.98305 | 29.49153 | 0.01186 | 16 | 35.000 | 35.000 | 0.00000 | 0.93750 | 28.12500 |
+| 5 | 592 | 35.000 | 35.000 | 595 | 19 | 0 | 0 | 1.00507 | 30.15203 | 0.02365 | 22 | 35.000 | 35.000 | 0.00000 | 0.86364 | 25.90909 |
+| 6 | 590 | 35.000 | 35.000 | 582 | 14 | 5 | 5 | 0.98644 | 29.45900 | 0.01695 | 16 | 35.000 | 35.000 | 0.00000 | 1.18750 | 35.62500 |
+| 7 | 588 | 35.000 | 35.000 | 598 | 23 | 6 | 6 | 1.01701 | 30.32058 | 0.02381 | 20 | 35.000 | 35.000 | 0.00000 | 0.90000 | 27.00000 |
+| 8 | 596 | 35.000 | 35.000 | 570 | 10 | 2 | 2 | 0.95638 | 28.62477 | 0.01342 | 19 | 35.000 | 35.000 | 0.00000 | 0.94737 | 28.42105 |
 
-**Pooled PASS:** merged 4716; p50 35.000 min; p95 35.000 min; runs/merged 0.99852; runner-min/merged 29.85816; tail >=60m 0.01951. Mean W 3.949; max occupied runners 4; confirmed cancellations 28; unsupported requests 0. Fresh batches above the contemporaneous adaptive cap: 0/4545 (0.000%).
+**Pooled PASS:** merged 4716; p50 35.000 min; p95 35.000 min; runs/merged 0.99852; runner-min/merged 29.85816; tail >=60m 0.01951. Mean W 3.949; max occupied runners 4; cancellation requests 28; confirmed 28; unsupported 0. Deadline stops requested/confirmed/unsupported 0/0/0. Fresh batches above the contemporaneous adaptive cap: 0/4545 (0.000%).
 
 ### Team / off-chain / cancellation unsupported / adaptive false
 
-| Seed | Merged | p50 min | p95 min | Runs | Reruns | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | 587 | 35.000 | 35.000 | 591 | 17 | 1.00681 | 30.20443 | 0.01193 | 14 | 35.000 | 35.000 | 0.00000 | 1.14286 | 34.28571 |
-| 2 | 583 | 35.000 | 35.000 | 601 | 25 | 1.03087 | 30.92624 | 0.02573 | 20 | 35.000 | 35.000 | 0.05000 | 1.00000 | 30.00000 |
-| 3 | 590 | 35.000 | 35.000 | 592 | 19 | 1.00339 | 30.10169 | 0.02881 | 20 | 35.000 | 35.000 | 0.00000 | 0.95000 | 28.50000 |
-| 4 | 590 | 35.000 | 35.000 | 580 | 13 | 0.98305 | 29.49153 | 0.01186 | 16 | 35.000 | 35.000 | 0.00000 | 0.93750 | 28.12500 |
-| 5 | 592 | 35.000 | 35.000 | 595 | 19 | 1.00507 | 30.15203 | 0.02365 | 22 | 35.000 | 35.000 | 0.00000 | 0.86364 | 25.90909 |
-| 6 | 590 | 35.000 | 35.000 | 582 | 14 | 0.98644 | 29.59322 | 0.01695 | 16 | 35.000 | 35.000 | 0.00000 | 1.18750 | 35.62500 |
-| 7 | 588 | 35.000 | 35.000 | 598 | 23 | 1.01701 | 30.51020 | 0.02381 | 20 | 35.000 | 35.000 | 0.00000 | 0.90000 | 27.00000 |
-| 8 | 596 | 35.000 | 35.000 | 570 | 10 | 0.95638 | 28.69128 | 0.01342 | 19 | 35.000 | 35.000 | 0.00000 | 0.94737 | 28.42105 |
+| Seed | Merged | p50 min | p95 min | Runs | Reruns | Cancel requested | Cancel confirmed | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 587 | 35.000 | 35.000 | 591 | 17 | 5 | 0 | 1.00681 | 30.20443 | 0.01193 | 14 | 35.000 | 35.000 | 0.00000 | 1.14286 | 34.28571 |
+| 2 | 583 | 35.000 | 35.000 | 601 | 25 | 5 | 0 | 1.03087 | 30.92624 | 0.02573 | 20 | 35.000 | 35.000 | 0.05000 | 1.00000 | 30.00000 |
+| 3 | 590 | 35.000 | 35.000 | 592 | 19 | 5 | 0 | 1.00339 | 30.10169 | 0.02881 | 20 | 35.000 | 35.000 | 0.00000 | 0.95000 | 28.50000 |
+| 4 | 590 | 35.000 | 35.000 | 580 | 13 | 0 | 0 | 0.98305 | 29.49153 | 0.01186 | 16 | 35.000 | 35.000 | 0.00000 | 0.93750 | 28.12500 |
+| 5 | 592 | 35.000 | 35.000 | 595 | 19 | 0 | 0 | 1.00507 | 30.15203 | 0.02365 | 22 | 35.000 | 35.000 | 0.00000 | 0.86364 | 25.90909 |
+| 6 | 590 | 35.000 | 35.000 | 582 | 14 | 5 | 0 | 0.98644 | 29.59322 | 0.01695 | 16 | 35.000 | 35.000 | 0.00000 | 1.18750 | 35.62500 |
+| 7 | 588 | 35.000 | 35.000 | 598 | 23 | 6 | 0 | 1.01701 | 30.51020 | 0.02381 | 20 | 35.000 | 35.000 | 0.00000 | 0.90000 | 27.00000 |
+| 8 | 596 | 35.000 | 35.000 | 570 | 10 | 2 | 0 | 0.95638 | 28.69128 | 0.01342 | 19 | 35.000 | 35.000 | 0.00000 | 0.94737 | 28.42105 |
 
-**Pooled PASS:** merged 4716; p50 35.000 min; p95 35.000 min; runs/merged 0.99852; runner-min/merged 29.95547; tail >=60m 0.01951. Mean W 3.949; max occupied runners 5; confirmed cancellations 0; unsupported requests 28. Fresh batches above the contemporaneous adaptive cap: 0/4545 (0.000%).
+**Pooled PASS:** merged 4716; p50 35.000 min; p95 35.000 min; runs/merged 0.99852; runner-min/merged 29.95547; tail >=60m 0.01951. Mean W 3.949; max occupied runners 5; cancellation requests 28; confirmed 0; unsupported 28. Deadline stops requested/confirmed/unsupported 0/0/0. Fresh batches above the contemporaneous adaptive cap: 0/4545 (0.000%).
 
 ### Slow / bisection / cancellation supported / adaptive false
 
-| Seed | Merged | p50 min | p95 min | Runs | Reruns | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | 146 | 185.000 | 185.000 | 156 | 5 | 1.06849 | 191.06892 | 0.02740 | 3 | 185.000 | 185.000 | 0.00000 | 1.66667 | 300.00000 |
-| 2 | 145 | 185.000 | 185.000 | 157 | 6 | 1.08276 | 192.13366 | 0.02069 | 4 | 221.317 | 376.879 | 0.25000 | 1.75000 | 288.15851 |
-| 3 | 146 | 185.000 | 185.000 | 155 | 5 | 1.06164 | 190.55047 | 0.02055 | 3 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
-| 4 | 147 | 185.000 | 238.337 | 156 | 5 | 1.06122 | 190.15876 | 0.04762 | 7 | 185.000 | 185.000 | 0.00000 | 0.85714 | 154.28571 |
-| 5 | 146 | 185.000 | 268.138 | 154 | 6 | 1.05479 | 187.06733 | 0.04795 | 4 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
-| 6 | 149 | 185.000 | 185.000 | 148 | 1 | 0.99329 | 177.75940 | 0.00000 | 2 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
-| 7 | 150 | 185.000 | 185.000 | 149 | 2 | 0.99333 | 178.80000 | 0.01333 | 4 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
-| 8 | 150 | 185.000 | 185.000 | 150 | 1 | 1.00000 | 180.00000 | 0.00667 | 4 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
+| Seed | Merged | p50 min | p95 min | Runs | Reruns | Cancel requested | Cancel confirmed | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 146 | 185.000 | 185.000 | 156 | 5 | 3 | 3 | 1.06849 | 191.06892 | 0.02740 | 3 | 185.000 | 185.000 | 0.00000 | 1.66667 | 300.00000 |
+| 2 | 145 | 185.000 | 185.000 | 157 | 6 | 4 | 4 | 1.08276 | 192.13366 | 0.02069 | 4 | 221.317 | 376.879 | 0.25000 | 1.75000 | 288.15851 |
+| 3 | 146 | 185.000 | 185.000 | 155 | 5 | 1 | 1 | 1.06164 | 190.55047 | 0.02055 | 3 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
+| 4 | 147 | 185.000 | 238.337 | 156 | 5 | 1 | 1 | 1.06122 | 190.15876 | 0.04762 | 7 | 185.000 | 185.000 | 0.00000 | 0.85714 | 154.28571 |
+| 5 | 146 | 185.000 | 268.138 | 154 | 6 | 3 | 3 | 1.05479 | 187.06733 | 0.04795 | 4 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
+| 6 | 149 | 185.000 | 185.000 | 148 | 1 | 1 | 1 | 0.99329 | 177.75940 | 0.00000 | 2 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
+| 7 | 150 | 185.000 | 185.000 | 149 | 2 | 0 | 0 | 0.99333 | 178.80000 | 0.01333 | 4 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
+| 8 | 150 | 185.000 | 185.000 | 150 | 1 | 0 | 0 | 1.00000 | 180.00000 | 0.00667 | 4 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
 
-**Pooled PASS:** merged 1179; p50 185.000 min; p95 185.000 min; runs/merged 1.03902; runner-min/merged 185.87543; tail >=270m 0.02290. Mean W 3.938; max occupied runners 4; confirmed cancellations 13; unsupported requests 0. Fresh batches above the contemporaneous adaptive cap: 0/1194 (0.000%).
+**Pooled PASS:** merged 1179; p50 185.000 min; p95 185.000 min; runs/merged 1.03902; runner-min/merged 185.87543; tail >=270m 0.02290. Mean W 3.938; max occupied runners 4; cancellation requests 13; confirmed 13; unsupported 0. Deadline stops requested/confirmed/unsupported 0/0/0. Fresh batches above the contemporaneous adaptive cap: 0/1194 (0.000%).
 
 ### Slow / bisection / cancellation unsupported / adaptive false
 
-| Seed | Merged | p50 min | p95 min | Runs | Reruns | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | 146 | 185.000 | 185.000 | 156 | 5 | 1.06849 | 192.32877 | 0.02740 | 3 | 185.000 | 185.000 | 0.00000 | 1.66667 | 300.00000 |
-| 2 | 145 | 185.000 | 185.000 | 157 | 6 | 1.08276 | 194.89655 | 0.02069 | 4 | 221.317 | 376.879 | 0.25000 | 1.75000 | 315.00000 |
-| 3 | 146 | 185.000 | 185.000 | 155 | 5 | 1.06164 | 191.09589 | 0.02055 | 3 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
-| 4 | 147 | 185.000 | 238.337 | 156 | 5 | 1.06122 | 191.02041 | 0.04762 | 7 | 185.000 | 185.000 | 0.00000 | 0.85714 | 154.28571 |
-| 5 | 146 | 185.000 | 268.138 | 154 | 6 | 1.05479 | 189.86301 | 0.04795 | 4 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
-| 6 | 149 | 185.000 | 185.000 | 148 | 1 | 0.99329 | 178.79195 | 0.00000 | 2 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
-| 7 | 150 | 185.000 | 185.000 | 149 | 2 | 0.99333 | 178.80000 | 0.01333 | 4 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
-| 8 | 150 | 185.000 | 185.000 | 150 | 1 | 1.00000 | 180.00000 | 0.00667 | 4 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
+| Seed | Merged | p50 min | p95 min | Runs | Reruns | Cancel requested | Cancel confirmed | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 146 | 185.000 | 185.000 | 156 | 5 | 3 | 0 | 1.06849 | 192.32877 | 0.02740 | 3 | 185.000 | 185.000 | 0.00000 | 1.66667 | 300.00000 |
+| 2 | 145 | 185.000 | 185.000 | 157 | 6 | 4 | 0 | 1.08276 | 194.89655 | 0.02069 | 4 | 221.317 | 376.879 | 0.25000 | 1.75000 | 315.00000 |
+| 3 | 146 | 185.000 | 185.000 | 155 | 5 | 1 | 0 | 1.06164 | 191.09589 | 0.02055 | 3 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
+| 4 | 147 | 185.000 | 238.337 | 156 | 5 | 1 | 0 | 1.06122 | 191.02041 | 0.04762 | 7 | 185.000 | 185.000 | 0.00000 | 0.85714 | 154.28571 |
+| 5 | 146 | 185.000 | 268.138 | 154 | 6 | 3 | 0 | 1.05479 | 189.86301 | 0.04795 | 4 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
+| 6 | 149 | 185.000 | 185.000 | 148 | 1 | 1 | 0 | 0.99329 | 178.79195 | 0.00000 | 2 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
+| 7 | 150 | 185.000 | 185.000 | 149 | 2 | 0 | 0 | 0.99333 | 178.80000 | 0.01333 | 4 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
+| 8 | 150 | 185.000 | 185.000 | 150 | 1 | 0 | 0 | 1.00000 | 180.00000 | 0.00667 | 4 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
 
-**Pooled PASS:** merged 1179; p50 185.000 min; p95 185.000 min; runs/merged 1.03902; runner-min/merged 187.02290; tail >=270m 0.02290. Mean W 3.938; max occupied runners 4; confirmed cancellations 0; unsupported requests 13. Fresh batches above the contemporaneous adaptive cap: 0/1194 (0.000%).
+**Pooled PASS:** merged 1179; p50 185.000 min; p95 185.000 min; runs/merged 1.03902; runner-min/merged 187.02290; tail >=270m 0.02290. Mean W 3.938; max occupied runners 4; cancellation requests 13; confirmed 0; unsupported 13. Deadline stops requested/confirmed/unsupported 0/0/0. Fresh batches above the contemporaneous adaptive cap: 0/1194 (0.000%).
 
 ### Slow / off-chain / cancellation supported / adaptive false
 
-| Seed | Merged | p50 min | p95 min | Runs | Reruns | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | 146 | 185.000 | 185.000 | 156 | 5 | 1.06849 | 191.06892 | 0.02740 | 3 | 185.000 | 185.000 | 0.00000 | 1.66667 | 300.00000 |
-| 2 | 145 | 185.000 | 185.000 | 157 | 6 | 1.08276 | 192.13366 | 0.02069 | 4 | 221.317 | 376.879 | 0.25000 | 1.75000 | 288.15851 |
-| 3 | 146 | 185.000 | 185.000 | 155 | 5 | 1.06164 | 190.55047 | 0.02055 | 3 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
-| 4 | 147 | 185.000 | 238.337 | 156 | 5 | 1.06122 | 190.15876 | 0.04762 | 7 | 185.000 | 185.000 | 0.00000 | 0.85714 | 154.28571 |
-| 5 | 146 | 185.000 | 268.138 | 154 | 6 | 1.05479 | 187.06733 | 0.04795 | 4 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
-| 6 | 149 | 185.000 | 185.000 | 148 | 1 | 0.99329 | 177.75940 | 0.00000 | 2 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
-| 7 | 150 | 185.000 | 185.000 | 149 | 2 | 0.99333 | 178.80000 | 0.01333 | 4 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
-| 8 | 150 | 185.000 | 185.000 | 150 | 1 | 1.00000 | 180.00000 | 0.00667 | 4 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
+| Seed | Merged | p50 min | p95 min | Runs | Reruns | Cancel requested | Cancel confirmed | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 146 | 185.000 | 185.000 | 156 | 5 | 3 | 3 | 1.06849 | 191.06892 | 0.02740 | 3 | 185.000 | 185.000 | 0.00000 | 1.66667 | 300.00000 |
+| 2 | 145 | 185.000 | 185.000 | 157 | 6 | 4 | 4 | 1.08276 | 192.13366 | 0.02069 | 4 | 221.317 | 376.879 | 0.25000 | 1.75000 | 288.15851 |
+| 3 | 146 | 185.000 | 185.000 | 155 | 5 | 1 | 1 | 1.06164 | 190.55047 | 0.02055 | 3 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
+| 4 | 147 | 185.000 | 238.337 | 156 | 5 | 1 | 1 | 1.06122 | 190.15876 | 0.04762 | 7 | 185.000 | 185.000 | 0.00000 | 0.85714 | 154.28571 |
+| 5 | 146 | 185.000 | 268.138 | 154 | 6 | 3 | 3 | 1.05479 | 187.06733 | 0.04795 | 4 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
+| 6 | 149 | 185.000 | 185.000 | 148 | 1 | 1 | 1 | 0.99329 | 177.75940 | 0.00000 | 2 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
+| 7 | 150 | 185.000 | 185.000 | 149 | 2 | 0 | 0 | 0.99333 | 178.80000 | 0.01333 | 4 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
+| 8 | 150 | 185.000 | 185.000 | 150 | 1 | 0 | 0 | 1.00000 | 180.00000 | 0.00667 | 4 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
 
-**Pooled PASS:** merged 1179; p50 185.000 min; p95 185.000 min; runs/merged 1.03902; runner-min/merged 185.87543; tail >=270m 0.02290. Mean W 3.938; max occupied runners 4; confirmed cancellations 13; unsupported requests 0. Fresh batches above the contemporaneous adaptive cap: 0/1194 (0.000%).
+**Pooled PASS:** merged 1179; p50 185.000 min; p95 185.000 min; runs/merged 1.03902; runner-min/merged 185.87543; tail >=270m 0.02290. Mean W 3.938; max occupied runners 4; cancellation requests 13; confirmed 13; unsupported 0. Deadline stops requested/confirmed/unsupported 0/0/0. Fresh batches above the contemporaneous adaptive cap: 0/1194 (0.000%).
 
 ### Slow / off-chain / cancellation unsupported / adaptive false
 
-| Seed | Merged | p50 min | p95 min | Runs | Reruns | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | 146 | 185.000 | 185.000 | 156 | 5 | 1.06849 | 192.32877 | 0.02740 | 3 | 185.000 | 185.000 | 0.00000 | 1.66667 | 300.00000 |
-| 2 | 145 | 185.000 | 185.000 | 157 | 6 | 1.08276 | 194.89655 | 0.02069 | 4 | 221.317 | 376.879 | 0.25000 | 1.75000 | 315.00000 |
-| 3 | 146 | 185.000 | 185.000 | 155 | 5 | 1.06164 | 191.09589 | 0.02055 | 3 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
-| 4 | 147 | 185.000 | 238.337 | 156 | 5 | 1.06122 | 191.02041 | 0.04762 | 7 | 185.000 | 185.000 | 0.00000 | 0.85714 | 154.28571 |
-| 5 | 146 | 185.000 | 268.138 | 154 | 6 | 1.05479 | 189.86301 | 0.04795 | 4 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
-| 6 | 149 | 185.000 | 185.000 | 148 | 1 | 0.99329 | 178.79195 | 0.00000 | 2 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
-| 7 | 150 | 185.000 | 185.000 | 149 | 2 | 0.99333 | 178.80000 | 0.01333 | 4 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
-| 8 | 150 | 185.000 | 185.000 | 150 | 1 | 1.00000 | 180.00000 | 0.00667 | 4 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
+| Seed | Merged | p50 min | p95 min | Runs | Reruns | Cancel requested | Cancel confirmed | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 146 | 185.000 | 185.000 | 156 | 5 | 3 | 0 | 1.06849 | 192.32877 | 0.02740 | 3 | 185.000 | 185.000 | 0.00000 | 1.66667 | 300.00000 |
+| 2 | 145 | 185.000 | 185.000 | 157 | 6 | 4 | 0 | 1.08276 | 194.89655 | 0.02069 | 4 | 221.317 | 376.879 | 0.25000 | 1.75000 | 315.00000 |
+| 3 | 146 | 185.000 | 185.000 | 155 | 5 | 1 | 0 | 1.06164 | 191.09589 | 0.02055 | 3 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
+| 4 | 147 | 185.000 | 238.337 | 156 | 5 | 1 | 0 | 1.06122 | 191.02041 | 0.04762 | 7 | 185.000 | 185.000 | 0.00000 | 0.85714 | 154.28571 |
+| 5 | 146 | 185.000 | 268.138 | 154 | 6 | 3 | 0 | 1.05479 | 189.86301 | 0.04795 | 4 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
+| 6 | 149 | 185.000 | 185.000 | 148 | 1 | 1 | 0 | 0.99329 | 178.79195 | 0.00000 | 2 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
+| 7 | 150 | 185.000 | 185.000 | 149 | 2 | 0 | 0 | 0.99333 | 178.80000 | 0.01333 | 4 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
+| 8 | 150 | 185.000 | 185.000 | 150 | 1 | 0 | 0 | 1.00000 | 180.00000 | 0.00667 | 4 | 185.000 | 185.000 | 0.00000 | 1.00000 | 180.00000 |
 
-**Pooled PASS:** merged 1179; p50 185.000 min; p95 185.000 min; runs/merged 1.03902; runner-min/merged 187.02290; tail >=270m 0.02290. Mean W 3.938; max occupied runners 4; confirmed cancellations 0; unsupported requests 13. Fresh batches above the contemporaneous adaptive cap: 0/1194 (0.000%).
+**Pooled PASS:** merged 1179; p50 185.000 min; p95 185.000 min; runs/merged 1.03902; runner-min/merged 187.02290; tail >=270m 0.02290. Mean W 3.938; max occupied runners 4; cancellation requests 13; confirmed 0; unsupported 13. Deadline stops requested/confirmed/unsupported 0/0/0. Fresh batches above the contemporaneous adaptive cap: 0/1194 (0.000%).
 
 ### Adaptive / bisection / cancellation supported / adaptive false
 
-| Seed | Merged | p50 min | p95 min | Runs | Reruns | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | 25616 | 7.000 | 36.461 | 19390 | 4728 | 0.75695 | 1.51033 | 0.47658 | 865 | 7.468 | 31.041 | 0.48324 | 0.75607 | 1.50710 |
-| 2 | 25673 | 7.000 | 34.399 | 18946 | 4533 | 0.73797 | 1.47313 | 0.46457 | 876 | 9.547 | 37.357 | 0.51941 | 0.81096 | 1.61865 |
-| 3 | 25658 | 7.000 | 35.075 | 19001 | 4553 | 0.74055 | 1.47815 | 0.46609 | 822 | 7.000 | 49.779 | 0.46472 | 0.79121 | 1.58186 |
-| 4 | 25608 | 7.206 | 39.064 | 19643 | 4733 | 0.76706 | 1.53141 | 0.48637 | 835 | 7.000 | 27.507 | 0.36168 | 0.65569 | 1.30788 |
-| 5 | 25621 | 7.000 | 34.447 | 19218 | 4671 | 0.75009 | 1.49687 | 0.47633 | 905 | 7.000 | 26.123 | 0.46740 | 0.68218 | 1.35896 |
-| 6 | 25647 | 7.000 | 35.896 | 19124 | 4616 | 0.74566 | 1.48862 | 0.46855 | 845 | 7.000 | 24.524 | 0.47337 | 0.72497 | 1.44730 |
-| 7 | 25586 | 7.302 | 36.703 | 19615 | 4767 | 0.76663 | 1.52900 | 0.48784 | 892 | 7.000 | 22.016 | 0.38901 | 0.63453 | 1.26598 |
-| 8 | 25643 | 7.000 | 33.143 | 19145 | 4641 | 0.74660 | 1.49001 | 0.47561 | 847 | 7.030 | 28.012 | 0.47462 | 0.76358 | 1.52162 |
+| Seed | Merged | p50 min | p95 min | Runs | Reruns | Cancel requested | Cancel confirmed | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 25616 | 7.000 | 36.461 | 19390 | 4728 | 87 | 87 | 0.75695 | 1.51033 | 0.47658 | 865 | 7.468 | 31.041 | 0.48324 | 0.75607 | 1.50710 |
+| 2 | 25673 | 7.000 | 34.399 | 18946 | 4533 | 79 | 79 | 0.73797 | 1.47313 | 0.46457 | 876 | 9.547 | 37.357 | 0.51941 | 0.81096 | 1.61865 |
+| 3 | 25658 | 7.000 | 35.075 | 19001 | 4553 | 77 | 77 | 0.74055 | 1.47815 | 0.46609 | 822 | 7.000 | 49.779 | 0.46472 | 0.79121 | 1.58186 |
+| 4 | 25608 | 7.206 | 39.064 | 19643 | 4733 | 71 | 71 | 0.76706 | 1.53141 | 0.48637 | 835 | 7.000 | 27.507 | 0.36168 | 0.65569 | 1.30788 |
+| 5 | 25621 | 7.000 | 34.447 | 19218 | 4671 | 85 | 85 | 0.75009 | 1.49687 | 0.47633 | 905 | 7.000 | 26.123 | 0.46740 | 0.68218 | 1.35896 |
+| 6 | 25647 | 7.000 | 35.896 | 19124 | 4616 | 75 | 75 | 0.74566 | 1.48862 | 0.46855 | 845 | 7.000 | 24.524 | 0.47337 | 0.72497 | 1.44730 |
+| 7 | 25586 | 7.302 | 36.703 | 19615 | 4767 | 104 | 104 | 0.76663 | 1.52900 | 0.48784 | 892 | 7.000 | 22.016 | 0.38901 | 0.63453 | 1.26598 |
+| 8 | 25643 | 7.000 | 33.143 | 19145 | 4641 | 81 | 81 | 0.74660 | 1.49001 | 0.47561 | 847 | 7.030 | 28.012 | 0.47462 | 0.76358 | 1.52162 |
 
-**Fixed-8 selection check PASS:** merged 205052; p50 7.000 min; p95 35.598 min; runs/merged 0.75143; runner-min/merged 1.49967; tail >=8m 0.47524. Mean W 3.554; max occupied runners 4; confirmed cancellations 659; unsupported requests 0. Fresh batches above the contemporaneous adaptive cap: 25217/46355 (54.400%).
+**Fixed-8 selection check PASS:** merged 205052; p50 7.000 min; p95 35.598 min; runs/merged 0.75143; runner-min/merged 1.49967; tail >=8m 0.47524. Mean W 3.554; max occupied runners 4; cancellation requests 659; confirmed 659; unsupported 0. Deadline stops requested/confirmed/unsupported 0/0/0. Fresh batches above the contemporaneous adaptive cap: 25217/46355 (54.400%).
 
 ### Adaptive / bisection / cancellation supported / adaptive true
 
-| Seed | Merged | p50 min | p95 min | Runs | Reruns | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | 25616 | 6.305 | 22.638 | 19502 | 3888 | 0.76132 | 1.50752 | 0.35704 | 865 | 6.250 | 21.622 | 0.36532 | 0.78613 | 1.55399 |
-| 2 | 25673 | 6.348 | 23.619 | 18978 | 3768 | 0.73922 | 1.46633 | 0.35481 | 876 | 6.368 | 30.864 | 0.38927 | 0.83486 | 1.65825 |
-| 3 | 25658 | 6.445 | 23.474 | 19158 | 3785 | 0.74667 | 1.48193 | 0.35954 | 822 | 6.046 | 21.572 | 0.30779 | 0.76010 | 1.51681 |
-| 4 | 25608 | 6.337 | 23.601 | 19618 | 3857 | 0.76609 | 1.51961 | 0.35907 | 835 | 5.740 | 19.028 | 0.28743 | 0.69521 | 1.38325 |
-| 5 | 25621 | 6.298 | 23.638 | 19383 | 3840 | 0.75653 | 1.49958 | 0.35526 | 905 | 6.609 | 18.518 | 0.37127 | 0.70055 | 1.39438 |
-| 6 | 25650 | 6.217 | 22.532 | 18984 | 3790 | 0.74012 | 1.46879 | 0.34745 | 845 | 6.394 | 19.346 | 0.36686 | 0.75473 | 1.49979 |
-| 7 | 25586 | 6.343 | 23.443 | 19749 | 3876 | 0.77187 | 1.53024 | 0.36239 | 892 | 6.099 | 21.305 | 0.33072 | 0.68274 | 1.35706 |
-| 8 | 25643 | 6.335 | 22.089 | 19193 | 3812 | 0.74847 | 1.48467 | 0.35401 | 847 | 6.328 | 19.887 | 0.33530 | 0.73554 | 1.46379 |
+| Seed | Merged | p50 min | p95 min | Runs | Reruns | Cancel requested | Cancel confirmed | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 25616 | 6.305 | 22.638 | 19502 | 3888 | 370 | 370 | 0.76132 | 1.50752 | 0.35704 | 865 | 6.250 | 21.622 | 0.36532 | 0.78613 | 1.55399 |
+| 2 | 25673 | 6.348 | 23.619 | 18978 | 3768 | 290 | 290 | 0.73922 | 1.46633 | 0.35481 | 876 | 6.368 | 30.864 | 0.38927 | 0.83486 | 1.65825 |
+| 3 | 25658 | 6.445 | 23.474 | 19158 | 3785 | 281 | 281 | 0.74667 | 1.48193 | 0.35954 | 822 | 6.046 | 21.572 | 0.30779 | 0.76010 | 1.51681 |
+| 4 | 25608 | 6.337 | 23.601 | 19618 | 3857 | 317 | 317 | 0.76609 | 1.51961 | 0.35907 | 835 | 5.740 | 19.028 | 0.28743 | 0.69521 | 1.38325 |
+| 5 | 25621 | 6.298 | 23.638 | 19383 | 3840 | 331 | 331 | 0.75653 | 1.49958 | 0.35526 | 905 | 6.609 | 18.518 | 0.37127 | 0.70055 | 1.39438 |
+| 6 | 25650 | 6.217 | 22.532 | 18984 | 3790 | 295 | 295 | 0.74012 | 1.46879 | 0.34745 | 845 | 6.394 | 19.346 | 0.36686 | 0.75473 | 1.49979 |
+| 7 | 25586 | 6.343 | 23.443 | 19749 | 3876 | 346 | 346 | 0.77187 | 1.53024 | 0.36239 | 892 | 6.099 | 21.305 | 0.33072 | 0.68274 | 1.35706 |
+| 8 | 25643 | 6.335 | 22.089 | 19193 | 3812 | 299 | 299 | 0.74847 | 1.48467 | 0.35401 | 847 | 6.328 | 19.887 | 0.33530 | 0.73554 | 1.46379 |
 
-**Adaptive gate PASS:** merged 205055; p50 6.329 min; p95 23.099 min; runs/merged 0.75377; runner-min/merged 1.49481; tail >=8m 0.35619. Mean W 3.589; max occupied runners 4; confirmed cancellations 2529; unsupported requests 0. Fresh batches above the contemporaneous adaptive cap: 0/76090 (0.000%).
+**Adaptive gate PASS:** merged 205055; p50 6.329 min; p95 23.099 min; runs/merged 0.75377; runner-min/merged 1.49481; tail >=8m 0.35619. Mean W 3.589; max occupied runners 4; cancellation requests 2529; confirmed 2529; unsupported 0. Deadline stops requested/confirmed/unsupported 0/0/0. Fresh batches above the contemporaneous adaptive cap: 0/76090 (0.000%).
 
 ### Adaptive / bisection / cancellation unsupported / adaptive false
 
-| Seed | Merged | p50 min | p95 min | Runs | Reruns | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | 25616 | 7.000 | 36.461 | 19390 | 4728 | 0.75695 | 1.51390 | 0.47658 | 865 | 7.468 | 31.041 | 0.48324 | 0.75607 | 1.51214 |
-| 2 | 25673 | 7.000 | 34.399 | 18946 | 4533 | 0.73797 | 1.47595 | 0.46457 | 876 | 9.547 | 37.357 | 0.51941 | 0.81096 | 1.62192 |
-| 3 | 25658 | 7.000 | 35.075 | 19001 | 4553 | 0.74055 | 1.48110 | 0.46609 | 822 | 7.000 | 49.779 | 0.46472 | 0.79121 | 1.58242 |
-| 4 | 25608 | 7.206 | 39.064 | 19643 | 4733 | 0.76706 | 1.53413 | 0.48637 | 835 | 7.000 | 27.507 | 0.36168 | 0.65569 | 1.31138 |
-| 5 | 25621 | 7.000 | 34.447 | 19218 | 4671 | 0.75009 | 1.50018 | 0.47633 | 905 | 7.000 | 26.123 | 0.46740 | 0.68218 | 1.36436 |
-| 6 | 25647 | 7.000 | 35.896 | 19124 | 4616 | 0.74566 | 1.49132 | 0.46855 | 845 | 7.000 | 24.524 | 0.47337 | 0.72497 | 1.44994 |
-| 7 | 25586 | 7.302 | 36.703 | 19615 | 4767 | 0.76663 | 1.53326 | 0.48784 | 892 | 7.000 | 22.016 | 0.38901 | 0.63453 | 1.26906 |
-| 8 | 25643 | 7.000 | 33.143 | 19145 | 4641 | 0.74660 | 1.49320 | 0.47561 | 847 | 7.030 | 28.012 | 0.47462 | 0.76358 | 1.52715 |
+| Seed | Merged | p50 min | p95 min | Runs | Reruns | Cancel requested | Cancel confirmed | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 25616 | 7.000 | 36.461 | 19390 | 4728 | 87 | 0 | 0.75695 | 1.51390 | 0.47658 | 865 | 7.468 | 31.041 | 0.48324 | 0.75607 | 1.51214 |
+| 2 | 25673 | 7.000 | 34.399 | 18946 | 4533 | 79 | 0 | 0.73797 | 1.47595 | 0.46457 | 876 | 9.547 | 37.357 | 0.51941 | 0.81096 | 1.62192 |
+| 3 | 25658 | 7.000 | 35.075 | 19001 | 4553 | 77 | 0 | 0.74055 | 1.48110 | 0.46609 | 822 | 7.000 | 49.779 | 0.46472 | 0.79121 | 1.58242 |
+| 4 | 25608 | 7.206 | 39.064 | 19643 | 4733 | 71 | 0 | 0.76706 | 1.53413 | 0.48637 | 835 | 7.000 | 27.507 | 0.36168 | 0.65569 | 1.31138 |
+| 5 | 25621 | 7.000 | 34.447 | 19218 | 4671 | 85 | 0 | 0.75009 | 1.50018 | 0.47633 | 905 | 7.000 | 26.123 | 0.46740 | 0.68218 | 1.36436 |
+| 6 | 25647 | 7.000 | 35.896 | 19124 | 4616 | 75 | 0 | 0.74566 | 1.49132 | 0.46855 | 845 | 7.000 | 24.524 | 0.47337 | 0.72497 | 1.44994 |
+| 7 | 25586 | 7.302 | 36.703 | 19615 | 4767 | 104 | 0 | 0.76663 | 1.53326 | 0.48784 | 892 | 7.000 | 22.016 | 0.38901 | 0.63453 | 1.26906 |
+| 8 | 25643 | 7.000 | 33.143 | 19145 | 4641 | 81 | 0 | 0.74660 | 1.49320 | 0.47561 | 847 | 7.030 | 28.012 | 0.47462 | 0.76358 | 1.52715 |
 
-**Fixed-8 selection check PASS:** merged 205052; p50 7.000 min; p95 35.598 min; runs/merged 0.75143; runner-min/merged 1.50286; tail >=8m 0.47524. Mean W 3.554; max occupied runners 4; confirmed cancellations 0; unsupported requests 659. Fresh batches above the contemporaneous adaptive cap: 25217/46355 (54.400%).
+**Fixed-8 selection check PASS:** merged 205052; p50 7.000 min; p95 35.598 min; runs/merged 0.75143; runner-min/merged 1.50286; tail >=8m 0.47524. Mean W 3.554; max occupied runners 4; cancellation requests 659; confirmed 0; unsupported 659. Deadline stops requested/confirmed/unsupported 0/0/0. Fresh batches above the contemporaneous adaptive cap: 25217/46355 (54.400%).
 
 ### Adaptive / bisection / cancellation unsupported / adaptive true
 
-| Seed | Merged | p50 min | p95 min | Runs | Reruns | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | 25616 | 6.305 | 22.638 | 19502 | 3888 | 0.76132 | 1.52264 | 0.35704 | 865 | 6.250 | 21.622 | 0.36532 | 0.78613 | 1.57225 |
-| 2 | 25673 | 6.348 | 23.619 | 18978 | 3768 | 0.73922 | 1.47844 | 0.35481 | 876 | 6.368 | 30.864 | 0.38927 | 0.83486 | 1.66971 |
-| 3 | 25658 | 6.445 | 23.474 | 19158 | 3785 | 0.74667 | 1.49334 | 0.35954 | 822 | 6.046 | 21.572 | 0.30779 | 0.76010 | 1.52019 |
-| 4 | 25608 | 6.337 | 23.601 | 19618 | 3857 | 0.76609 | 1.53218 | 0.35907 | 835 | 5.740 | 19.028 | 0.28743 | 0.69521 | 1.39042 |
-| 5 | 25621 | 6.298 | 23.638 | 19383 | 3840 | 0.75653 | 1.51306 | 0.35526 | 905 | 6.609 | 18.518 | 0.37127 | 0.70055 | 1.40110 |
-| 6 | 25650 | 6.217 | 22.532 | 18984 | 3790 | 0.74012 | 1.48023 | 0.34745 | 845 | 6.394 | 19.346 | 0.36686 | 0.75473 | 1.50947 |
-| 7 | 25586 | 6.343 | 23.443 | 19749 | 3876 | 0.77187 | 1.54373 | 0.36239 | 892 | 6.099 | 21.305 | 0.33072 | 0.68274 | 1.36547 |
-| 8 | 25643 | 6.335 | 22.089 | 19193 | 3812 | 0.74847 | 1.49694 | 0.35401 | 847 | 6.328 | 19.887 | 0.33530 | 0.73554 | 1.47107 |
+| Seed | Merged | p50 min | p95 min | Runs | Reruns | Cancel requested | Cancel confirmed | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 25616 | 6.305 | 22.638 | 19502 | 3888 | 370 | 0 | 0.76132 | 1.52264 | 0.35704 | 865 | 6.250 | 21.622 | 0.36532 | 0.78613 | 1.57225 |
+| 2 | 25673 | 6.348 | 23.619 | 18978 | 3768 | 290 | 0 | 0.73922 | 1.47844 | 0.35481 | 876 | 6.368 | 30.864 | 0.38927 | 0.83486 | 1.66971 |
+| 3 | 25658 | 6.445 | 23.474 | 19158 | 3785 | 281 | 0 | 0.74667 | 1.49334 | 0.35954 | 822 | 6.046 | 21.572 | 0.30779 | 0.76010 | 1.52019 |
+| 4 | 25608 | 6.337 | 23.601 | 19618 | 3857 | 317 | 0 | 0.76609 | 1.53218 | 0.35907 | 835 | 5.740 | 19.028 | 0.28743 | 0.69521 | 1.39042 |
+| 5 | 25621 | 6.298 | 23.638 | 19383 | 3840 | 331 | 0 | 0.75653 | 1.51306 | 0.35526 | 905 | 6.609 | 18.518 | 0.37127 | 0.70055 | 1.40110 |
+| 6 | 25650 | 6.217 | 22.532 | 18984 | 3790 | 295 | 0 | 0.74012 | 1.48023 | 0.34745 | 845 | 6.394 | 19.346 | 0.36686 | 0.75473 | 1.50947 |
+| 7 | 25586 | 6.343 | 23.443 | 19749 | 3876 | 346 | 0 | 0.77187 | 1.54373 | 0.36239 | 892 | 6.099 | 21.305 | 0.33072 | 0.68274 | 1.36547 |
+| 8 | 25643 | 6.335 | 22.089 | 19193 | 3812 | 299 | 0 | 0.74847 | 1.49694 | 0.35401 | 847 | 6.328 | 19.887 | 0.33530 | 0.73554 | 1.47107 |
 
-**Adaptive gate PASS:** merged 205055; p50 6.329 min; p95 23.099 min; runs/merged 0.75377; runner-min/merged 1.50755; tail >=8m 0.35619. Mean W 3.589; max occupied runners 5; confirmed cancellations 0; unsupported requests 2529. Fresh batches above the contemporaneous adaptive cap: 0/76090 (0.000%).
+**Adaptive gate PASS:** merged 205055; p50 6.329 min; p95 23.099 min; runs/merged 0.75377; runner-min/merged 1.50755; tail >=8m 0.35619. Mean W 3.589; max occupied runners 5; cancellation requests 2529; confirmed 0; unsupported 2529. Deadline stops requested/confirmed/unsupported 0/0/0. Fresh batches above the contemporaneous adaptive cap: 0/76090 (0.000%).
 
 ### Adaptive / off-chain / cancellation supported / adaptive false
 
-| Seed | Merged | p50 min | p95 min | Runs | Reruns | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | 25615 | 5.808 | 14.958 | 16343 | 2732 | 0.63802 | 1.27374 | 0.17451 | 865 | 5.928 | 15.000 | 0.20347 | 0.67399 | 1.34364 |
-| 2 | 25672 | 5.778 | 14.860 | 16033 | 2628 | 0.62453 | 1.24685 | 0.16991 | 876 | 5.804 | 15.000 | 0.19521 | 0.65799 | 1.31500 |
-| 3 | 25657 | 5.801 | 14.844 | 16133 | 2671 | 0.62880 | 1.25528 | 0.17001 | 822 | 5.910 | 14.807 | 0.17640 | 0.65036 | 1.29969 |
-| 4 | 25608 | 5.827 | 14.958 | 16414 | 2757 | 0.64097 | 1.27998 | 0.17670 | 835 | 5.695 | 14.385 | 0.15808 | 0.60060 | 1.19952 |
-| 5 | 25621 | 5.791 | 14.845 | 16196 | 2720 | 0.63214 | 1.26231 | 0.17372 | 905 | 5.698 | 14.488 | 0.16906 | 0.59470 | 1.18658 |
-| 6 | 25648 | 5.812 | 14.913 | 16190 | 2697 | 0.63124 | 1.26020 | 0.17456 | 845 | 5.841 | 14.717 | 0.17515 | 0.63178 | 1.25981 |
-| 7 | 25586 | 5.818 | 14.997 | 16536 | 2776 | 0.64629 | 1.28994 | 0.17748 | 892 | 5.578 | 14.657 | 0.14574 | 0.56166 | 1.12193 |
-| 8 | 25643 | 5.788 | 15.000 | 16366 | 2718 | 0.63822 | 1.27455 | 0.17701 | 847 | 5.814 | 15.000 | 0.19244 | 0.65702 | 1.30832 |
+| Seed | Merged | p50 min | p95 min | Runs | Reruns | Cancel requested | Cancel confirmed | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 25615 | 5.808 | 14.958 | 16343 | 2732 | 87 | 87 | 0.63802 | 1.27374 | 0.17451 | 865 | 5.928 | 15.000 | 0.20347 | 0.67399 | 1.34364 |
+| 2 | 25672 | 5.778 | 14.860 | 16033 | 2628 | 82 | 82 | 0.62453 | 1.24685 | 0.16991 | 876 | 5.804 | 15.000 | 0.19521 | 0.65799 | 1.31500 |
+| 3 | 25657 | 5.801 | 14.844 | 16133 | 2671 | 93 | 93 | 0.62880 | 1.25528 | 0.17001 | 822 | 5.910 | 14.807 | 0.17640 | 0.65036 | 1.29969 |
+| 4 | 25608 | 5.827 | 14.958 | 16414 | 2757 | 75 | 75 | 0.64097 | 1.27998 | 0.17670 | 835 | 5.695 | 14.385 | 0.15808 | 0.60060 | 1.19952 |
+| 5 | 25621 | 5.791 | 14.845 | 16196 | 2720 | 83 | 83 | 0.63214 | 1.26231 | 0.17372 | 905 | 5.698 | 14.488 | 0.16906 | 0.59470 | 1.18658 |
+| 6 | 25648 | 5.812 | 14.913 | 16190 | 2697 | 86 | 86 | 0.63124 | 1.26020 | 0.17456 | 845 | 5.841 | 14.717 | 0.17515 | 0.63178 | 1.25981 |
+| 7 | 25586 | 5.818 | 14.997 | 16536 | 2776 | 95 | 95 | 0.64629 | 1.28994 | 0.17748 | 892 | 5.578 | 14.657 | 0.14574 | 0.56166 | 1.12193 |
+| 8 | 25643 | 5.788 | 15.000 | 16366 | 2718 | 83 | 83 | 0.63822 | 1.27455 | 0.17701 | 847 | 5.814 | 15.000 | 0.19244 | 0.65702 | 1.30832 |
 
-**Fixed-8 selection check FAIL:** merged 205050; p50 5.803 min; p95 14.923 min; runs/merged 0.63502; runner-min/merged 1.26784; tail >=8m 0.17424. Mean W 3.588; max occupied runners 9; confirmed cancellations 684; unsupported requests 0. Fresh batches above the contemporaneous adaptive cap: 26766/59887 (44.694%).
+**Fixed-8 selection check FAIL:** merged 205050; p50 5.803 min; p95 14.923 min; runs/merged 0.63502; runner-min/merged 1.26784; tail >=8m 0.17424. Mean W 3.588; max occupied runners 9; cancellation requests 684; confirmed 684; unsupported 0. Deadline stops requested/confirmed/unsupported 0/0/0. Fresh batches above the contemporaneous adaptive cap: 26766/59887 (44.694%).
 
 ### Adaptive / off-chain / cancellation supported / adaptive true
 
-| Seed | Merged | p50 min | p95 min | Runs | Reruns | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | 25616 | 4.169 | 12.810 | 17476 | 2762 | 0.68223 | 1.34775 | 0.11942 | 865 | 4.161 | 12.874 | 0.12717 | 0.68324 | 1.34816 |
-| 2 | 25673 | 4.323 | 12.894 | 17041 | 2667 | 0.66377 | 1.31538 | 0.12270 | 876 | 3.986 | 12.894 | 0.11986 | 0.75875 | 1.50085 |
-| 3 | 25658 | 4.316 | 12.927 | 17258 | 2705 | 0.67262 | 1.33173 | 0.12140 | 822 | 4.270 | 12.746 | 0.12774 | 0.71867 | 1.42559 |
-| 4 | 25608 | 4.205 | 12.642 | 17595 | 2792 | 0.68709 | 1.35948 | 0.11899 | 835 | 4.437 | 12.733 | 0.12575 | 0.65030 | 1.28605 |
-| 5 | 25621 | 4.211 | 12.863 | 17549 | 2772 | 0.68495 | 1.35675 | 0.12353 | 905 | 4.528 | 13.114 | 0.13812 | 0.65608 | 1.30262 |
-| 6 | 25650 | 4.272 | 12.697 | 17158 | 2716 | 0.66893 | 1.32514 | 0.12047 | 845 | 4.201 | 12.794 | 0.12189 | 0.66994 | 1.32779 |
-| 7 | 25586 | 4.152 | 12.754 | 17802 | 2815 | 0.69577 | 1.37692 | 0.11948 | 892 | 4.312 | 12.931 | 0.11996 | 0.60090 | 1.19756 |
-| 8 | 25643 | 4.272 | 12.727 | 17418 | 2751 | 0.67925 | 1.34543 | 0.12506 | 847 | 4.593 | 12.137 | 0.14286 | 0.66431 | 1.31959 |
+| Seed | Merged | p50 min | p95 min | Runs | Reruns | Cancel requested | Cancel confirmed | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 25616 | 4.169 | 12.810 | 17476 | 2762 | 402 | 402 | 0.68223 | 1.34775 | 0.11942 | 865 | 4.161 | 12.874 | 0.12717 | 0.68324 | 1.34816 |
+| 2 | 25673 | 4.323 | 12.894 | 17041 | 2667 | 311 | 311 | 0.66377 | 1.31538 | 0.12270 | 876 | 3.986 | 12.894 | 0.11986 | 0.75875 | 1.50085 |
+| 3 | 25658 | 4.316 | 12.927 | 17258 | 2705 | 346 | 346 | 0.67262 | 1.33173 | 0.12140 | 822 | 4.270 | 12.746 | 0.12774 | 0.71867 | 1.42559 |
+| 4 | 25608 | 4.205 | 12.642 | 17595 | 2792 | 361 | 361 | 0.68709 | 1.35948 | 0.11899 | 835 | 4.437 | 12.733 | 0.12575 | 0.65030 | 1.28605 |
+| 5 | 25621 | 4.211 | 12.863 | 17549 | 2772 | 338 | 338 | 0.68495 | 1.35675 | 0.12353 | 905 | 4.528 | 13.114 | 0.13812 | 0.65608 | 1.30262 |
+| 6 | 25650 | 4.272 | 12.697 | 17158 | 2716 | 332 | 332 | 0.66893 | 1.32514 | 0.12047 | 845 | 4.201 | 12.794 | 0.12189 | 0.66994 | 1.32779 |
+| 7 | 25586 | 4.152 | 12.754 | 17802 | 2815 | 366 | 366 | 0.69577 | 1.37692 | 0.11948 | 892 | 4.312 | 12.931 | 0.11996 | 0.60090 | 1.19756 |
+| 8 | 25643 | 4.272 | 12.727 | 17418 | 2751 | 327 | 327 | 0.67925 | 1.34543 | 0.12506 | 847 | 4.593 | 12.137 | 0.14286 | 0.66431 | 1.31959 |
 
-**Adaptive gate PASS:** merged 205055; p50 4.241 min; p95 12.791 min; runs/merged 0.67932; runner-min/merged 1.34480; tail >=8m 0.12138. Mean W 3.680; max occupied runners 9; confirmed cancellations 2783; unsupported requests 0. Fresh batches above the contemporaneous adaptive cap: 0/81539 (0.000%).
+**Adaptive gate PASS:** merged 205055; p50 4.241 min; p95 12.791 min; runs/merged 0.67932; runner-min/merged 1.34480; tail >=8m 0.12138. Mean W 3.680; max occupied runners 9; cancellation requests 2783; confirmed 2783; unsupported 0. Deadline stops requested/confirmed/unsupported 0/0/0. Fresh batches above the contemporaneous adaptive cap: 0/81539 (0.000%).
 
 ### Adaptive / off-chain / cancellation unsupported / adaptive false
 
-| Seed | Merged | p50 min | p95 min | Runs | Reruns | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | 25615 | 5.808 | 14.958 | 16343 | 2732 | 0.63802 | 1.27605 | 0.17451 | 865 | 5.928 | 15.000 | 0.20347 | 0.67399 | 1.34798 |
-| 2 | 25672 | 5.778 | 14.860 | 16033 | 2628 | 0.62453 | 1.24907 | 0.16991 | 876 | 5.804 | 15.000 | 0.19521 | 0.65799 | 1.31598 |
-| 3 | 25657 | 5.801 | 14.844 | 16133 | 2671 | 0.62880 | 1.25759 | 0.17001 | 822 | 5.910 | 14.807 | 0.17640 | 0.65036 | 1.30073 |
-| 4 | 25608 | 5.827 | 14.958 | 16414 | 2757 | 0.64097 | 1.28194 | 0.17670 | 835 | 5.695 | 14.385 | 0.15808 | 0.60060 | 1.20120 |
-| 5 | 25621 | 5.791 | 14.845 | 16196 | 2720 | 0.63214 | 1.26428 | 0.17372 | 905 | 5.698 | 14.488 | 0.16906 | 0.59470 | 1.18939 |
-| 6 | 25648 | 5.812 | 14.913 | 16190 | 2697 | 0.63124 | 1.26248 | 0.17456 | 845 | 5.841 | 14.717 | 0.17515 | 0.63178 | 1.26355 |
-| 7 | 25586 | 5.818 | 14.997 | 16536 | 2776 | 0.64629 | 1.29258 | 0.17748 | 892 | 5.578 | 14.657 | 0.14574 | 0.56166 | 1.12332 |
-| 8 | 25643 | 5.788 | 15.000 | 16366 | 2718 | 0.63822 | 1.27645 | 0.17701 | 847 | 5.814 | 15.000 | 0.19244 | 0.65702 | 1.31405 |
+| Seed | Merged | p50 min | p95 min | Runs | Reruns | Cancel requested | Cancel confirmed | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 25615 | 5.808 | 14.958 | 16343 | 2732 | 87 | 0 | 0.63802 | 1.27605 | 0.17451 | 865 | 5.928 | 15.000 | 0.20347 | 0.67399 | 1.34798 |
+| 2 | 25672 | 5.778 | 14.860 | 16033 | 2628 | 82 | 0 | 0.62453 | 1.24907 | 0.16991 | 876 | 5.804 | 15.000 | 0.19521 | 0.65799 | 1.31598 |
+| 3 | 25657 | 5.801 | 14.844 | 16133 | 2671 | 93 | 0 | 0.62880 | 1.25759 | 0.17001 | 822 | 5.910 | 14.807 | 0.17640 | 0.65036 | 1.30073 |
+| 4 | 25608 | 5.827 | 14.958 | 16414 | 2757 | 75 | 0 | 0.64097 | 1.28194 | 0.17670 | 835 | 5.695 | 14.385 | 0.15808 | 0.60060 | 1.20120 |
+| 5 | 25621 | 5.791 | 14.845 | 16196 | 2720 | 83 | 0 | 0.63214 | 1.26428 | 0.17372 | 905 | 5.698 | 14.488 | 0.16906 | 0.59470 | 1.18939 |
+| 6 | 25648 | 5.812 | 14.913 | 16190 | 2697 | 86 | 0 | 0.63124 | 1.26248 | 0.17456 | 845 | 5.841 | 14.717 | 0.17515 | 0.63178 | 1.26355 |
+| 7 | 25586 | 5.818 | 14.997 | 16536 | 2776 | 95 | 0 | 0.64629 | 1.29258 | 0.17748 | 892 | 5.578 | 14.657 | 0.14574 | 0.56166 | 1.12332 |
+| 8 | 25643 | 5.788 | 15.000 | 16366 | 2718 | 83 | 0 | 0.63822 | 1.27645 | 0.17701 | 847 | 5.814 | 15.000 | 0.19244 | 0.65702 | 1.31405 |
 
-**Fixed-8 selection check FAIL:** merged 205050; p50 5.803 min; p95 14.923 min; runs/merged 0.63502; runner-min/merged 1.27004; tail >=8m 0.17424. Mean W 3.588; max occupied runners 10; confirmed cancellations 0; unsupported requests 684. Fresh batches above the contemporaneous adaptive cap: 26766/59887 (44.694%).
+**Fixed-8 selection check FAIL:** merged 205050; p50 5.803 min; p95 14.923 min; runs/merged 0.63502; runner-min/merged 1.27004; tail >=8m 0.17424. Mean W 3.588; max occupied runners 10; cancellation requests 684; confirmed 0; unsupported 684. Deadline stops requested/confirmed/unsupported 0/0/0. Fresh batches above the contemporaneous adaptive cap: 26766/59887 (44.694%).
 
 ### Adaptive / off-chain / cancellation unsupported / adaptive true
 
-| Seed | Merged | p50 min | p95 min | Runs | Reruns | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 1 | 25616 | 4.169 | 12.810 | 17476 | 2762 | 0.68223 | 1.36446 | 0.11942 | 865 | 4.161 | 12.874 | 0.12717 | 0.68324 | 1.36647 |
-| 2 | 25673 | 4.323 | 12.894 | 17041 | 2667 | 0.66377 | 1.32754 | 0.12270 | 876 | 3.986 | 12.894 | 0.11986 | 0.75875 | 1.51750 |
-| 3 | 25658 | 4.316 | 12.927 | 17258 | 2705 | 0.67262 | 1.34523 | 0.12140 | 822 | 4.270 | 12.746 | 0.12774 | 0.71867 | 1.43735 |
-| 4 | 25608 | 4.205 | 12.642 | 17595 | 2792 | 0.68709 | 1.37418 | 0.11899 | 835 | 4.437 | 12.733 | 0.12575 | 0.65030 | 1.30060 |
-| 5 | 25621 | 4.211 | 12.863 | 17549 | 2772 | 0.68495 | 1.36989 | 0.12353 | 905 | 4.528 | 13.114 | 0.13812 | 0.65608 | 1.31215 |
-| 6 | 25650 | 4.272 | 12.697 | 17158 | 2716 | 0.66893 | 1.33786 | 0.12047 | 845 | 4.201 | 12.794 | 0.12189 | 0.66994 | 1.33988 |
-| 7 | 25586 | 4.152 | 12.754 | 17802 | 2815 | 0.69577 | 1.39154 | 0.11948 | 892 | 4.312 | 12.931 | 0.11996 | 0.60090 | 1.20179 |
-| 8 | 25643 | 4.272 | 12.727 | 17418 | 2751 | 0.67925 | 1.35850 | 0.12506 | 847 | 4.593 | 12.137 | 0.14286 | 0.66431 | 1.32861 |
+| Seed | Merged | p50 min | p95 min | Runs | Reruns | Cancel requested | Cancel confirmed | Runs/merged | Runner-min/merged | Tail fraction | Day-1 n | Day-1 p50 min | Day-1 p95 min | Day-1 tail | Day-1 runs/merged | Day-1 runner-min/merged |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 25616 | 4.169 | 12.810 | 17476 | 2762 | 402 | 0 | 0.68223 | 1.36446 | 0.11942 | 865 | 4.161 | 12.874 | 0.12717 | 0.68324 | 1.36647 |
+| 2 | 25673 | 4.323 | 12.894 | 17041 | 2667 | 311 | 0 | 0.66377 | 1.32754 | 0.12270 | 876 | 3.986 | 12.894 | 0.11986 | 0.75875 | 1.51750 |
+| 3 | 25658 | 4.316 | 12.927 | 17258 | 2705 | 346 | 0 | 0.67262 | 1.34523 | 0.12140 | 822 | 4.270 | 12.746 | 0.12774 | 0.71867 | 1.43735 |
+| 4 | 25608 | 4.205 | 12.642 | 17595 | 2792 | 361 | 0 | 0.68709 | 1.37418 | 0.11899 | 835 | 4.437 | 12.733 | 0.12575 | 0.65030 | 1.30060 |
+| 5 | 25621 | 4.211 | 12.863 | 17549 | 2772 | 338 | 0 | 0.68495 | 1.36989 | 0.12353 | 905 | 4.528 | 13.114 | 0.13812 | 0.65608 | 1.31215 |
+| 6 | 25650 | 4.272 | 12.697 | 17158 | 2716 | 332 | 0 | 0.66893 | 1.33786 | 0.12047 | 845 | 4.201 | 12.794 | 0.12189 | 0.66994 | 1.33988 |
+| 7 | 25586 | 4.152 | 12.754 | 17802 | 2815 | 366 | 0 | 0.69577 | 1.39154 | 0.11948 | 892 | 4.312 | 12.931 | 0.11996 | 0.60090 | 1.20179 |
+| 8 | 25643 | 4.272 | 12.727 | 17418 | 2751 | 327 | 0 | 0.67925 | 1.35850 | 0.12506 | 847 | 4.593 | 12.137 | 0.14286 | 0.66431 | 1.32861 |
 
-**Adaptive gate PASS:** merged 205055; p50 4.241 min; p95 12.791 min; runs/merged 0.67932; runner-min/merged 1.35863; tail >=8m 0.12138. Mean W 3.680; max occupied runners 10; confirmed cancellations 0; unsupported requests 2783. Fresh batches above the contemporaneous adaptive cap: 0/81539 (0.000%).
+**Adaptive gate PASS:** merged 205055; p50 4.241 min; p95 12.791 min; runs/merged 0.67932; runner-min/merged 1.35863; tail >=8m 0.12138. Mean W 3.680; max occupied runners 10; cancellation requests 2783; confirmed 0; unsupported 2783. Deadline stops requested/confirmed/unsupported 0/0/0. Fresh batches above the contemporaneous adaptive cap: 0/81539 (0.000%).
+
+## Serial baseline and runner sensitivity
+
+These controls use the same eight seeds and 30-day profiles, bisection, fixed size 8, and cancellation unsupported. Depth 1 disables retries to model today's serial planner. The depth-4 rows retain one confirming rerun. Gates remain the pinned profile thresholds; Slow is the profile that discriminates the chain. Speculation as modelled needs runners >= depth to avoid queueing-induced deadline failures; this is a necessary capacity consideration, not a guarantee for isolation or arbitrary workloads.
+
+| Profile | Depth | Runners | Pooled tail % | Worst-seed tail % | p95 min | Runs/merged | Gate |
+|---|---:|---:|---:|---:|---:|---:|---|
+| Team | 1 | 50 | 1.261 | 2.076 | 56.680 | 0.92196 | PASS |
+| Slow | 1 | 50 | 26.684 | 31.973 | 346.371 | 0.88150 | FAIL |
+| Slow | 4 | 2 | 8.181 | 13.889 | 365.000 | 1.08268 | FAIL |
+| Slow | 4 | 4 | 2.290 | 4.795 | 185.000 | 1.03902 | PASS |
+| Slow | 4 | 8 | 2.290 | 4.795 | 185.000 | 1.03902 | PASS |
+| Slow | 4 | 50 | 2.290 | 4.795 | 185.000 | 1.03902 | PASS |
+
+Slow's pooled p95 sits on a mass point at CI + max_wait (185m). Its useful margin is the tail fraction's distance below 5%, especially the worst seed, rather than the apparent distance from 185m to the 270m threshold.
+
+## Adaptive fixed-size controls
+
+The unchanged pin is 900/day, 2m CI, depth 4, 5% broken, fixed CI and a constant defect rate. These pooled bisection controls use eight seeds, 30 days, 50 runners and cancellation unsupported. The ADR gate checks runs/merged <1.5 and median no worse than fixed 8. A planner stuck at size 8 would still pass that gate. The measured median gain comes mainly from fill-to-cap starting full batches before max_wait; fixed size 4 matches adaptive. This workload tests converged-cap behaviour, not adaptation to a changing defect rate. PR 3/5 should add a p95-vs-fixed-8 assertion (the improvement below is about 35.6m to 23.1m); changing the ADR criterion remains a maintainer decision.
+
+| Policy | Pooled tail >=8m % | Worst-seed tail % | p50 min | p95 min | Runs/merged |
+|---|---:|---:|---:|---:|---:|
+| Fixed 8 | 47.524 | 48.784 | 7.000 | 35.598 | 0.75143 |
+| Fixed 4 | 35.883 | 37.004 | 6.341 | 23.164 | 0.73486 |
+| Adaptive | 35.619 | 36.239 | 6.329 | 23.099 | 0.75377 |
+
+## Isolation runner sensitivity (non-gating alternative)
+
+Single-seed diagnostic: seed 1, 4,000 changes at time zero, 2% broken, no flakes or interactions, size 8, depth 4, 30m fixed CI. Event-limit rows did not drain within 10,000,000 events and have no capacity estimate. Isolation load is outside the window: queued chain requests can breach the 1.5×CI request-based deadline, each original timeout spawns more isolation, and halving W cannot throttle that load. Scarcity can cause livelock or dequeue passing changes on timeout; completion and merged/dequeued counts must be read together. Disabling timeouts or extending them to 4×CI demonstrates the deadline mechanism; these are sensitivity controls, not proposed changes to the pins. The abundant-runner gain does not establish feasibility with scarce runners. Isolation remains non-adopted pending PR 3's planner-backed results.
+
+| Runners | Diagnosis | Cancellation | Timeout / CI | Completion | Merged/dequeued | Timeouts | Merged/day | Runs/merged | Cancel requested/confirmed | Deadline stops requested/confirmed |
+|---:|---|---|---:|---|---:|---:|---:|---:|---:|---:|
+| 4 | bisection | supported | 1.5 | drained | 3922/78 | 0 | 243.22 | 0.43116 | 0/0 | 0/0 |
+| 4 | off-chain | supported | 1.5 | EVENT LIMIT | 32/3960 (partial) | 1002865 | — | — | 0/0 | 1002865/1002865 |
+| 4 | off-chain | supported | 0.0 | drained | 3922/78 | 0 | 429.81 | 0.38322 | 0/0 | 0/0 |
+| 4 | off-chain | supported | 4.0 | drained | 3922/78 | 0 | 429.81 | 0.38322 | 0/0 | 0/0 |
+| 4 | off-chain | unsupported | 1.5 | drained | 32/3968 | 4465 | 1.37 | 139.96875 | 0/0 | 4465/0 |
+| 8 | bisection | supported | 1.5 | drained | 3922/78 | 0 | 243.22 | 0.43116 | 0/0 | 0/0 |
+| 8 | off-chain | supported | 1.5 | EVENT LIMIT | 32/1 (partial) | 555333 | — | — | 0/0 | 555333/555333 |
+| 8 | off-chain | supported | 0.0 | drained | 3922/78 | 0 | 517.19 | 0.38322 | 0/0 | 0/0 |
+| 8 | off-chain | supported | 4.0 | drained | 3922/78 | 0 | 517.19 | 0.38322 | 0/0 | 0/0 |
+| 8 | off-chain | unsupported | 1.5 | EVENT LIMIT | 32/1 (partial) | 555333 | — | — | 0/0 | 555333/0 |
+| 50 | bisection | supported | 1.5 | drained | 3922/78 | 0 | 243.22 | 0.43116 | 0/0 | 0/0 |
+| 50 | off-chain | supported | 1.5 | drained | 3922/78 | 0 | 649.16 | 0.38169 | 0/0 | 0/0 |
 
 ## Saturated capacity curve
 
-Each cell is a separate deterministic backlog experiment: seeds 1–4, 4,000 changes all available at time zero per seed, 30-minute CI, no flakes, fixed batch size, max_wait 5m, 45m timeout, 50 runners. Depth 1 has no retries (today's behavior); depth >1 has one confirming rerun. Capacity is pooled merged changes divided by total drained days, including startup and drain. This is a finite-backlog capacity estimate, not a stable-arrival SLA or a maximum arrival-rate assertion. Increase backlog size/seeds in the generator to study convergence. Cancellation modes are run separately even where numeric results coincide. Off-chain rows use identical seeds/workload. Cost and the achieved mean window make gains and speculation waste visible.
+Each cell is a separate deterministic backlog experiment: seeds 1–4, 4,000 changes all available at time zero per seed, 30-minute CI, no flakes, fixed batch size, max_wait 5m, 45m timeout, 50 runners. Depth 1 has no retries (today's behavior); depth >1 has one confirming rerun. Capacity is pooled merged changes divided by total drained days, including startup and drain. This is a finite-backlog capacity estimate, not a stable-arrival SLA or a maximum arrival-rate assertion. Increase backlog size/seeds in the generator to study convergence. The two cancellation modes are expected-identical under these fixed service times: suffix batches finish at 1 CI, while a failed head confirms only after its rerun at 2 CI. At invalidation there is no unfinished suffix run to cancel. The generator still checks both modes for exact agreement, publishing one row per pair with request/confirmed counts (both zero in every cell). This curve provides no evidence of cancellation benefit; the asynchronous arrival profiles above make only a few requests (28 for Team and 13 for Slow across eight seeds per mode). PR 3 inherits the fixed-CI pin and will not exercise cancellation through the saturated mechanism either. Variable CI durations would leave suffix work unfinished when the head confirms, making cancellation bind; that sensitivity is not measured here. Off-chain rows use identical seeds/workload. Cost and the achieved mean window make gains and speculation waste visible.
 
-| Broken % | Size | Depth | Diagnosis | Cancellation | Merged/day | Runs/merged | Runner-min/merged | Mean W |
-|---:|---:|---:|---|---|---:|---:|---:|---:|
-| 0.1 | 1 | 1 | bisection | supported | 47.95 | 1.00106 | 30.03191 | 1.000 |
-| 0.1 | 1 | 1 | bisection | unsupported | 47.95 | 1.00106 | 30.03191 | 1.000 |
-| 0.1 | 1 | 1 | off-chain | supported | 47.95 | 1.00106 | 30.03191 | 1.000 |
-| 0.1 | 1 | 1 | off-chain | unsupported | 47.95 | 1.00106 | 30.03191 | 1.000 |
-| 0.1 | 1 | 2 | bisection | supported | 95.53 | 1.00319 | 30.09573 | 1.998 |
-| 0.1 | 1 | 2 | bisection | unsupported | 95.53 | 1.00319 | 30.09573 | 1.998 |
-| 0.1 | 1 | 2 | off-chain | supported | 95.53 | 1.00319 | 30.09573 | 1.998 |
-| 0.1 | 1 | 2 | off-chain | unsupported | 95.53 | 1.00319 | 30.09573 | 1.998 |
-| 0.1 | 1 | 4 | bisection | supported | 190.13 | 1.00532 | 30.15954 | 3.992 |
-| 0.1 | 1 | 4 | bisection | unsupported | 190.13 | 1.00532 | 30.15954 | 3.992 |
-| 0.1 | 1 | 4 | off-chain | supported | 190.13 | 1.00532 | 30.15954 | 3.992 |
-| 0.1 | 1 | 4 | off-chain | unsupported | 190.13 | 1.00532 | 30.15954 | 3.992 |
-| 0.1 | 1 | 8 | bisection | supported | 376.99 | 1.00957 | 30.28718 | 7.967 |
-| 0.1 | 1 | 8 | bisection | unsupported | 376.99 | 1.00957 | 30.28718 | 7.967 |
-| 0.1 | 1 | 8 | off-chain | supported | 376.99 | 1.00957 | 30.28718 | 7.967 |
-| 0.1 | 1 | 8 | off-chain | unsupported | 376.99 | 1.00957 | 30.28718 | 7.967 |
-| 0.1 | 1 | 12 | bisection | supported | 559.99 | 1.01383 | 30.41482 | 11.926 |
-| 0.1 | 1 | 12 | bisection | unsupported | 559.99 | 1.01383 | 30.41482 | 11.926 |
-| 0.1 | 1 | 12 | off-chain | supported | 559.99 | 1.01383 | 30.41482 | 11.926 |
-| 0.1 | 1 | 12 | off-chain | unsupported | 559.99 | 1.01383 | 30.41482 | 11.926 |
-| 0.1 | 2 | 1 | bisection | supported | 95.49 | 0.50266 | 15.07977 | 1.000 |
-| 0.1 | 2 | 1 | bisection | unsupported | 95.49 | 0.50266 | 15.07977 | 1.000 |
-| 0.1 | 2 | 1 | off-chain | supported | 95.79 | 0.50322 | 15.09667 | 1.000 |
-| 0.1 | 2 | 1 | off-chain | unsupported | 95.79 | 0.50322 | 15.09667 | 1.000 |
-| 0.1 | 2 | 2 | bisection | supported | 188.36 | 0.50585 | 15.17550 | 1.991 |
-| 0.1 | 2 | 2 | bisection | unsupported | 188.36 | 0.50585 | 15.17550 | 1.991 |
-| 0.1 | 2 | 2 | off-chain | supported | 190.09 | 0.50641 | 15.19239 | 1.996 |
-| 0.1 | 2 | 2 | off-chain | unsupported | 190.09 | 0.50641 | 15.19239 | 1.996 |
-| 0.1 | 2 | 4 | bisection | supported | 370.26 | 0.50854 | 15.25621 | 3.954 |
-| 0.1 | 2 | 4 | bisection | unsupported | 370.26 | 0.50854 | 15.25621 | 3.954 |
-| 0.1 | 2 | 4 | off-chain | supported | 376.81 | 0.50854 | 15.25621 | 3.983 |
-| 0.1 | 2 | 4 | off-chain | unsupported | 376.81 | 0.50854 | 15.25621 | 3.983 |
-| 0.1 | 2 | 8 | bisection | supported | 711.67 | 0.51279 | 15.38385 | 7.801 |
-| 0.1 | 2 | 8 | bisection | unsupported | 711.67 | 0.51279 | 15.38385 | 7.801 |
-| 0.1 | 2 | 8 | off-chain | supported | 740.53 | 0.51279 | 15.38385 | 7.934 |
-| 0.1 | 2 | 8 | off-chain | unsupported | 740.53 | 0.51279 | 15.38385 | 7.934 |
-| 0.1 | 2 | 12 | bisection | supported | 1031.16 | 0.51705 | 15.51148 | 11.550 |
-| 0.1 | 2 | 12 | bisection | unsupported | 1031.16 | 0.51705 | 15.51148 | 11.550 |
-| 0.1 | 2 | 12 | off-chain | supported | 1094.41 | 0.51705 | 15.51148 | 11.854 |
-| 0.1 | 2 | 12 | off-chain | unsupported | 1094.41 | 0.51705 | 15.51148 | 11.854 |
-| 0.1 | 4 | 1 | bisection | supported | 188.59 | 0.25452 | 7.63561 | 1.000 |
-| 0.1 | 4 | 1 | bisection | unsupported | 188.59 | 0.25452 | 7.63561 | 1.000 |
-| 0.1 | 4 | 1 | off-chain | supported | 191.13 | 0.25540 | 7.66189 | 1.000 |
-| 0.1 | 4 | 1 | off-chain | unsupported | 191.13 | 0.25540 | 7.66189 | 1.000 |
-| 0.1 | 4 | 2 | bisection | supported | 361.71 | 0.25921 | 7.77639 | 1.980 |
-| 0.1 | 4 | 2 | bisection | unsupported | 361.71 | 0.25921 | 7.77639 | 1.980 |
-| 0.1 | 4 | 2 | off-chain | supported | 376.44 | 0.25859 | 7.75762 | 1.992 |
-| 0.1 | 4 | 2 | off-chain | unsupported | 376.44 | 0.25859 | 7.75762 | 1.992 |
-| 0.1 | 4 | 4 | bisection | supported | 693.03 | 0.26215 | 7.86461 | 3.893 |
-| 0.1 | 4 | 4 | bisection | unsupported | 693.03 | 0.26215 | 7.86461 | 3.893 |
-| 0.1 | 4 | 4 | off-chain | supported | 739.10 | 0.26071 | 7.82144 | 3.967 |
-| 0.1 | 4 | 4 | off-chain | unsupported | 739.10 | 0.26071 | 7.82144 | 3.967 |
-| 0.1 | 4 | 8 | bisection | supported | 1251.52 | 0.26672 | 8.00163 | 7.491 |
-| 0.1 | 4 | 8 | bisection | unsupported | 1251.52 | 0.26672 | 8.00163 | 7.491 |
-| 0.1 | 4 | 8 | off-chain | supported | 1428.65 | 0.26497 | 7.94907 | 7.873 |
-| 0.1 | 4 | 8 | off-chain | unsupported | 1428.65 | 0.26497 | 7.94907 | 7.873 |
-| 0.1 | 4 | 12 | bisection | supported | 1716.30 | 0.27098 | 8.12926 | 10.868 |
-| 0.1 | 4 | 12 | bisection | unsupported | 1716.30 | 0.27098 | 8.12926 | 10.868 |
-| 0.1 | 4 | 12 | off-chain | supported | 2067.88 | 0.26922 | 8.07671 | 11.725 |
-| 0.1 | 4 | 12 | off-chain | unsupported | 2067.88 | 0.26922 | 8.07671 | 11.725 |
-| 0.1 | 8 | 1 | bisection | supported | 364.98 | 0.13151 | 3.94544 | 1.000 |
-| 0.1 | 8 | 1 | bisection | unsupported | 364.98 | 0.13151 | 3.94544 | 1.000 |
-| 0.1 | 8 | 1 | off-chain | supported | 380.36 | 0.13471 | 4.04117 | 1.000 |
-| 0.1 | 8 | 1 | off-chain | unsupported | 380.36 | 0.13471 | 4.04117 | 1.000 |
-| 0.1 | 8 | 2 | bisection | supported | 664.23 | 0.13808 | 4.14253 | 1.958 |
-| 0.1 | 8 | 2 | bisection | unsupported | 664.23 | 0.13808 | 4.14253 | 1.958 |
-| 0.1 | 8 | 2 | off-chain | supported | 736.97 | 0.13790 | 4.13690 | 1.984 |
-| 0.1 | 8 | 2 | off-chain | unsupported | 736.97 | 0.13790 | 4.13690 | 1.984 |
-| 0.1 | 8 | 4 | bisection | supported | 1193.13 | 0.14159 | 4.24764 | 3.776 |
-| 0.1 | 8 | 4 | bisection | unsupported | 1193.13 | 0.14159 | 4.24764 | 3.776 |
-| 0.1 | 8 | 4 | off-chain | supported | 1428.65 | 0.14002 | 4.20071 | 3.937 |
-| 0.1 | 8 | 4 | off-chain | unsupported | 1428.65 | 0.14002 | 4.20071 | 3.937 |
-| 0.1 | 8 | 8 | bisection | supported | 1942.24 | 0.14647 | 4.39404 | 7.013 |
-| 0.1 | 8 | 8 | bisection | unsupported | 1942.24 | 0.14647 | 4.39404 | 7.013 |
-| 0.1 | 8 | 8 | off-chain | supported | 2673.11 | 0.14428 | 4.32835 | 7.763 |
-| 0.1 | 8 | 8 | off-chain | unsupported | 2673.11 | 0.14428 | 4.32835 | 7.763 |
-| 0.1 | 8 | 12 | bisection | supported | 2435.50 | 0.15072 | 4.52168 | 9.917 |
-| 0.1 | 8 | 12 | bisection | unsupported | 2435.50 | 0.15072 | 4.52168 | 9.917 |
-| 0.1 | 8 | 12 | off-chain | supported | 3724.19 | 0.14853 | 4.45598 | 11.505 |
-| 0.1 | 8 | 12 | off-chain | unsupported | 3724.19 | 0.14853 | 4.45598 | 11.505 |
-| 0.2 | 1 | 1 | bisection | supported | 47.90 | 1.00219 | 30.06577 | 1.000 |
-| 0.2 | 1 | 1 | bisection | unsupported | 47.90 | 1.00219 | 30.06577 | 1.000 |
-| 0.2 | 1 | 1 | off-chain | supported | 47.90 | 1.00219 | 30.06577 | 1.000 |
-| 0.2 | 1 | 1 | off-chain | unsupported | 47.90 | 1.00219 | 30.06577 | 1.000 |
-| 0.2 | 1 | 2 | bisection | supported | 95.09 | 1.00658 | 30.19731 | 1.996 |
-| 0.2 | 1 | 2 | bisection | unsupported | 95.09 | 1.00658 | 30.19731 | 1.996 |
-| 0.2 | 1 | 2 | off-chain | supported | 95.09 | 1.00658 | 30.19731 | 1.996 |
-| 0.2 | 1 | 2 | off-chain | unsupported | 95.09 | 1.00658 | 30.19731 | 1.996 |
-| 0.2 | 1 | 4 | bisection | supported | 188.24 | 1.01096 | 30.32884 | 3.983 |
-| 0.2 | 1 | 4 | bisection | unsupported | 188.24 | 1.01096 | 30.32884 | 3.983 |
-| 0.2 | 1 | 4 | off-chain | supported | 188.24 | 1.01096 | 30.32884 | 3.983 |
-| 0.2 | 1 | 4 | off-chain | unsupported | 188.24 | 1.01096 | 30.32884 | 3.983 |
-| 0.2 | 1 | 8 | bisection | supported | 370.38 | 1.01973 | 30.59192 | 7.932 |
-| 0.2 | 1 | 8 | bisection | unsupported | 370.38 | 1.01973 | 30.59192 | 7.932 |
-| 0.2 | 1 | 8 | off-chain | supported | 370.38 | 1.01973 | 30.59192 | 7.932 |
-| 0.2 | 1 | 8 | off-chain | unsupported | 370.38 | 1.01973 | 30.59192 | 7.932 |
-| 0.2 | 1 | 12 | bisection | supported | 545.81 | 1.02850 | 30.85500 | 11.850 |
-| 0.2 | 1 | 12 | bisection | unsupported | 545.81 | 1.02850 | 30.85500 | 11.850 |
-| 0.2 | 1 | 12 | off-chain | supported | 545.81 | 1.02850 | 30.85500 | 11.850 |
-| 0.2 | 1 | 12 | off-chain | unsupported | 545.81 | 1.02850 | 30.85500 | 11.850 |
-| 0.2 | 2 | 1 | bisection | supported | 94.96 | 0.50548 | 15.16442 | 1.000 |
-| 0.2 | 2 | 1 | bisection | unsupported | 94.96 | 0.50548 | 15.16442 | 1.000 |
-| 0.2 | 2 | 1 | off-chain | supported | 95.56 | 0.50667 | 15.20013 | 1.000 |
-| 0.2 | 2 | 1 | off-chain | unsupported | 95.56 | 0.50667 | 15.20013 | 1.000 |
-| 0.2 | 2 | 2 | bisection | supported | 184.66 | 0.51206 | 15.36173 | 1.983 |
-| 0.2 | 2 | 2 | bisection | unsupported | 184.66 | 0.51206 | 15.36173 | 1.983 |
-| 0.2 | 2 | 2 | off-chain | supported | 188.15 | 0.51325 | 15.39743 | 1.991 |
-| 0.2 | 2 | 2 | off-chain | unsupported | 188.15 | 0.51325 | 15.39743 | 1.991 |
-| 0.2 | 2 | 4 | bisection | supported | 356.93 | 0.51757 | 15.52709 | 3.910 |
-| 0.2 | 2 | 4 | bisection | unsupported | 356.93 | 0.51757 | 15.52709 | 3.910 |
-| 0.2 | 2 | 4 | off-chain | supported | 369.49 | 0.51763 | 15.52897 | 3.966 |
-| 0.2 | 2 | 4 | off-chain | unsupported | 369.49 | 0.51763 | 15.52897 | 3.966 |
-| 0.2 | 2 | 8 | bisection | supported | 662.91 | 0.52634 | 15.79017 | 7.619 |
-| 0.2 | 2 | 8 | bisection | unsupported | 662.91 | 0.52634 | 15.79017 | 7.619 |
-| 0.2 | 2 | 8 | off-chain | supported | 714.18 | 0.52640 | 15.79205 | 7.870 |
-| 0.2 | 2 | 8 | off-chain | unsupported | 714.18 | 0.52640 | 15.79205 | 7.870 |
-| 0.2 | 2 | 12 | bisection | supported | 930.00 | 0.53511 | 16.05324 | 11.167 |
-| 0.2 | 2 | 12 | bisection | unsupported | 930.00 | 0.53511 | 16.05324 | 11.167 |
-| 0.2 | 2 | 12 | off-chain | supported | 1036.97 | 0.53517 | 16.05512 | 11.716 |
-| 0.2 | 2 | 12 | off-chain | unsupported | 1036.97 | 0.53517 | 16.05512 | 11.716 |
-| 0.2 | 4 | 1 | bisection | supported | 185.10 | 0.25932 | 7.77952 | 1.000 |
-| 0.2 | 4 | 1 | bisection | unsupported | 185.10 | 0.25932 | 7.77952 | 1.000 |
-| 0.2 | 4 | 1 | off-chain | supported | 190.25 | 0.26107 | 7.83213 | 1.000 |
-| 0.2 | 4 | 1 | off-chain | unsupported | 190.25 | 0.26107 | 7.83213 | 1.000 |
-| 0.2 | 4 | 2 | bisection | supported | 340.89 | 0.26915 | 8.07454 | 1.956 |
-| 0.2 | 4 | 2 | bisection | unsupported | 340.89 | 0.26915 | 8.07454 | 1.956 |
-| 0.2 | 4 | 2 | off-chain | supported | 368.78 | 0.26765 | 8.02944 | 1.983 |
-| 0.2 | 4 | 2 | off-chain | unsupported | 368.78 | 0.26765 | 8.02944 | 1.983 |
-| 0.2 | 4 | 4 | bisection | supported | 629.16 | 0.27554 | 8.26621 | 3.787 |
-| 0.2 | 4 | 4 | bisection | unsupported | 629.16 | 0.27554 | 8.26621 | 3.787 |
-| 0.2 | 4 | 4 | off-chain | supported | 713.52 | 0.27203 | 8.16098 | 3.935 |
-| 0.2 | 4 | 4 | off-chain | unsupported | 713.52 | 0.27203 | 8.16098 | 3.935 |
-| 0.2 | 4 | 8 | bisection | supported | 1045.46 | 0.28500 | 8.54995 | 7.091 |
-| 0.2 | 4 | 8 | bisection | unsupported | 1045.46 | 0.28500 | 8.54995 | 7.091 |
-| 0.2 | 4 | 8 | off-chain | supported | 1337.38 | 0.28080 | 8.42405 | 7.756 |
-| 0.2 | 4 | 8 | off-chain | unsupported | 1337.38 | 0.28080 | 8.42405 | 7.756 |
-| 0.2 | 4 | 12 | bisection | supported | 1353.92 | 0.29377 | 8.81303 | 10.106 |
-| 0.2 | 4 | 12 | bisection | unsupported | 1353.92 | 0.29377 | 8.81303 | 10.106 |
-| 0.2 | 4 | 12 | off-chain | supported | 1887.49 | 0.28951 | 8.68525 | 11.473 |
-| 0.2 | 4 | 12 | off-chain | unsupported | 1887.49 | 0.28951 | 8.68525 | 11.473 |
-| 0.2 | 8 | 1 | bisection | supported | 346.75 | 0.13843 | 4.15283 | 1.000 |
-| 0.2 | 8 | 1 | bisection | unsupported | 346.75 | 0.13843 | 4.15283 | 1.000 |
-| 0.2 | 8 | 1 | off-chain | supported | 376.94 | 0.14488 | 4.34638 | 1.000 |
-| 0.2 | 8 | 1 | off-chain | unsupported | 376.94 | 0.14488 | 4.34638 | 1.000 |
-| 0.2 | 8 | 2 | bisection | supported | 579.67 | 0.15208 | 4.56248 | 1.916 |
-| 0.2 | 8 | 2 | bisection | unsupported | 579.67 | 0.15208 | 4.56248 | 1.916 |
-| 0.2 | 8 | 2 | off-chain | supported | 711.53 | 0.15146 | 4.54369 | 1.968 |
-| 0.2 | 8 | 2 | off-chain | unsupported | 711.53 | 0.15146 | 4.54369 | 1.968 |
-| 0.2 | 8 | 4 | bisection | supported | 962.71 | 0.15979 | 4.79361 | 3.603 |
-| 0.2 | 8 | 4 | bisection | unsupported | 962.71 | 0.15979 | 4.79361 | 3.603 |
-| 0.2 | 8 | 4 | off-chain | supported | 1335.05 | 0.15584 | 4.67523 | 3.878 |
-| 0.2 | 8 | 4 | off-chain | unsupported | 1335.05 | 0.15584 | 4.67523 | 3.878 |
-| 0.2 | 8 | 8 | bisection | supported | 1400.95 | 0.17006 | 5.10179 | 6.479 |
-| 0.2 | 8 | 8 | bisection | unsupported | 1400.95 | 0.17006 | 5.10179 | 6.479 |
-| 0.2 | 8 | 8 | off-chain | supported | 2357.91 | 0.16448 | 4.93454 | 7.554 |
-| 0.2 | 8 | 8 | off-chain | unsupported | 2357.91 | 0.16448 | 4.93454 | 7.554 |
-| 0.2 | 8 | 12 | bisection | supported | 1633.94 | 0.17877 | 5.36298 | 9.026 |
-| 0.2 | 8 | 12 | bisection | unsupported | 1633.94 | 0.17877 | 5.36298 | 9.026 |
-| 0.2 | 8 | 12 | off-chain | supported | 3166.61 | 0.17307 | 5.19198 | 11.074 |
-| 0.2 | 8 | 12 | off-chain | unsupported | 3166.61 | 0.17307 | 5.19198 | 11.074 |
-| 0.5 | 1 | 1 | bisection | supported | 47.77 | 1.00484 | 30.14507 | 1.000 |
-| 0.5 | 1 | 1 | bisection | unsupported | 47.77 | 1.00484 | 30.14507 | 1.000 |
-| 0.5 | 1 | 1 | off-chain | supported | 47.77 | 1.00484 | 30.14507 | 1.000 |
-| 0.5 | 1 | 1 | off-chain | unsupported | 47.77 | 1.00484 | 30.14507 | 1.000 |
-| 0.5 | 1 | 2 | bisection | supported | 93.93 | 1.01451 | 30.43522 | 1.991 |
-| 0.5 | 1 | 2 | bisection | unsupported | 93.93 | 1.01451 | 30.43522 | 1.991 |
-| 0.5 | 1 | 2 | off-chain | supported | 93.93 | 1.01451 | 30.43522 | 1.991 |
-| 0.5 | 1 | 2 | off-chain | unsupported | 93.93 | 1.01451 | 30.43522 | 1.991 |
-| 0.5 | 1 | 4 | bisection | supported | 184.35 | 1.02418 | 30.72537 | 3.963 |
-| 0.5 | 1 | 4 | bisection | unsupported | 184.35 | 1.02418 | 30.72537 | 3.963 |
-| 0.5 | 1 | 4 | off-chain | supported | 184.35 | 1.02418 | 30.72537 | 3.963 |
-| 0.5 | 1 | 4 | off-chain | unsupported | 184.35 | 1.02418 | 30.72537 | 3.963 |
-| 0.5 | 1 | 8 | bisection | supported | 355.16 | 1.04346 | 31.30377 | 7.855 |
-| 0.5 | 1 | 8 | bisection | unsupported | 355.16 | 1.04346 | 31.30377 | 7.855 |
-| 0.5 | 1 | 8 | off-chain | supported | 355.16 | 1.04346 | 31.30377 | 7.855 |
-| 0.5 | 1 | 8 | off-chain | unsupported | 355.16 | 1.04346 | 31.30377 | 7.855 |
-| 0.5 | 1 | 12 | bisection | supported | 516.77 | 1.06261 | 31.87841 | 11.679 |
-| 0.5 | 1 | 12 | bisection | unsupported | 516.77 | 1.06261 | 31.87841 | 11.679 |
-| 0.5 | 1 | 12 | off-chain | supported | 516.77 | 1.06261 | 31.87841 | 11.679 |
-| 0.5 | 1 | 12 | off-chain | unsupported | 516.77 | 1.06261 | 31.87841 | 11.679 |
-| 0.5 | 2 | 1 | bisection | supported | 93.73 | 0.51209 | 15.36268 | 1.000 |
-| 0.5 | 2 | 1 | bisection | unsupported | 93.73 | 0.51209 | 15.36268 | 1.000 |
-| 0.5 | 2 | 1 | off-chain | supported | 95.07 | 0.51454 | 15.43616 | 1.000 |
-| 0.5 | 2 | 1 | off-chain | unsupported | 95.07 | 0.51454 | 15.43616 | 1.000 |
-| 0.5 | 2 | 2 | bisection | supported | 176.51 | 0.52660 | 15.79790 | 1.963 |
-| 0.5 | 2 | 2 | bisection | unsupported | 176.51 | 0.52660 | 15.79790 | 1.963 |
-| 0.5 | 2 | 2 | off-chain | supported | 183.90 | 0.52905 | 15.87138 | 1.981 |
-| 0.5 | 2 | 2 | off-chain | unsupported | 183.90 | 0.52905 | 15.87138 | 1.981 |
-| 0.5 | 2 | 4 | bisection | supported | 329.30 | 0.53891 | 16.16718 | 3.813 |
-| 0.5 | 2 | 4 | bisection | unsupported | 329.30 | 0.53891 | 16.16718 | 3.813 |
-| 0.5 | 2 | 4 | off-chain | supported | 354.50 | 0.53865 | 16.15964 | 3.927 |
-| 0.5 | 2 | 4 | off-chain | unsupported | 354.50 | 0.53865 | 16.15964 | 3.927 |
-| 0.5 | 2 | 8 | bisection | supported | 571.66 | 0.55806 | 16.74182 | 7.260 |
-| 0.5 | 2 | 8 | bisection | unsupported | 571.66 | 0.55806 | 16.74182 | 7.260 |
-| 0.5 | 2 | 8 | off-chain | supported | 661.16 | 0.55768 | 16.73052 | 7.718 |
-| 0.5 | 2 | 8 | off-chain | unsupported | 661.16 | 0.55768 | 16.73052 | 7.718 |
-| 0.5 | 2 | 12 | bisection | supported | 755.24 | 0.57703 | 17.31081 | 10.461 |
-| 0.5 | 2 | 12 | bisection | unsupported | 755.24 | 0.57703 | 17.31081 | 10.461 |
-| 0.5 | 2 | 12 | off-chain | supported | 927.55 | 0.57659 | 17.29762 | 11.394 |
-| 0.5 | 2 | 12 | off-chain | unsupported | 927.55 | 0.57659 | 17.29762 | 11.394 |
-| 0.5 | 4 | 1 | bisection | supported | 177.42 | 0.27055 | 8.11656 | 1.000 |
-| 0.5 | 4 | 1 | bisection | unsupported | 177.42 | 0.27055 | 8.11656 | 1.000 |
-| 0.5 | 4 | 1 | off-chain | supported | 188.30 | 0.27426 | 8.22772 | 1.000 |
-| 0.5 | 4 | 1 | off-chain | unsupported | 188.30 | 0.27426 | 8.22772 | 1.000 |
-| 0.5 | 4 | 2 | bisection | supported | 299.96 | 0.29241 | 8.77222 | 1.920 |
-| 0.5 | 4 | 2 | bisection | unsupported | 299.96 | 0.29241 | 8.77222 | 1.920 |
-| 0.5 | 4 | 2 | off-chain | supported | 353.19 | 0.28864 | 8.65917 | 1.963 |
-| 0.5 | 4 | 2 | off-chain | unsupported | 353.19 | 0.28864 | 8.65917 | 1.963 |
-| 0.5 | 4 | 4 | bisection | supported | 516.42 | 0.30610 | 9.18294 | 3.622 |
-| 0.5 | 4 | 4 | bisection | unsupported | 516.42 | 0.30610 | 9.18294 | 3.622 |
-| 0.5 | 4 | 4 | off-chain | supported | 657.75 | 0.29812 | 8.94367 | 3.855 |
-| 0.5 | 4 | 4 | off-chain | unsupported | 657.75 | 0.29812 | 8.94367 | 3.855 |
-| 0.5 | 4 | 8 | bisection | supported | 762.02 | 0.32651 | 9.79526 | 6.527 |
-| 0.5 | 4 | 8 | bisection | unsupported | 762.02 | 0.32651 | 9.79526 | 6.527 |
-| 0.5 | 4 | 8 | off-chain | supported | 1159.79 | 0.31690 | 9.50700 | 7.475 |
-| 0.5 | 4 | 8 | off-chain | unsupported | 1159.79 | 0.31690 | 9.50700 | 7.475 |
-| 0.5 | 4 | 12 | bisection | supported | 901.30 | 0.34535 | 10.36048 | 9.166 |
-| 0.5 | 4 | 12 | bisection | unsupported | 901.30 | 0.34535 | 10.36048 | 9.166 |
-| 0.5 | 4 | 12 | off-chain | supported | 1540.94 | 0.33555 | 10.06657 | 10.933 |
-| 0.5 | 4 | 12 | off-chain | unsupported | 1540.94 | 0.33555 | 10.06657 | 10.933 |
-| 0.5 | 8 | 1 | bisection | supported | 310.69 | 0.15449 | 4.63480 | 1.000 |
-| 0.5 | 8 | 1 | bisection | unsupported | 310.69 | 0.15449 | 4.63480 | 1.000 |
-| 0.5 | 8 | 1 | off-chain | supported | 369.59 | 0.16806 | 5.04176 | 1.000 |
-| 0.5 | 8 | 1 | off-chain | unsupported | 369.59 | 0.16806 | 5.04176 | 1.000 |
-| 0.5 | 8 | 2 | bisection | supported | 450.12 | 0.18401 | 5.52032 | 1.862 |
-| 0.5 | 8 | 2 | bisection | unsupported | 450.12 | 0.18401 | 5.52032 | 1.862 |
-| 0.5 | 8 | 2 | off-chain | supported | 655.49 | 0.18225 | 5.46756 | 1.932 |
-| 0.5 | 8 | 2 | off-chain | unsupported | 655.49 | 0.18225 | 5.46756 | 1.932 |
-| 0.5 | 8 | 4 | bisection | supported | 669.27 | 0.20053 | 6.01583 | 3.417 |
-| 0.5 | 8 | 4 | bisection | unsupported | 669.27 | 0.20053 | 6.01583 | 3.417 |
-| 0.5 | 8 | 4 | off-chain | supported | 1156.28 | 0.19155 | 5.74640 | 3.741 |
-| 0.5 | 8 | 4 | off-chain | unsupported | 1156.28 | 0.19155 | 5.74640 | 3.741 |
-| 0.5 | 8 | 8 | bisection | supported | 853.02 | 0.22263 | 6.67902 | 5.978 |
-| 0.5 | 8 | 8 | bisection | unsupported | 853.02 | 0.22263 | 6.67902 | 5.978 |
-| 0.5 | 8 | 8 | off-chain | supported | 1850.62 | 0.20995 | 6.29844 | 7.148 |
-| 0.5 | 8 | 8 | off-chain | unsupported | 1850.62 | 0.20995 | 6.29844 | 7.148 |
-| 0.5 | 8 | 12 | bisection | supported | 925.31 | 0.24116 | 7.23482 | 8.275 |
-| 0.5 | 8 | 12 | bisection | unsupported | 925.31 | 0.24116 | 7.23482 | 8.275 |
-| 0.5 | 8 | 12 | off-chain | supported | 2330.20 | 0.22766 | 6.82974 | 10.287 |
-| 0.5 | 8 | 12 | off-chain | unsupported | 2330.20 | 0.22766 | 6.82974 | 10.287 |
-| 1.0 | 1 | 1 | bisection | supported | 47.54 | 1.00965 | 30.28964 | 1.000 |
-| 1.0 | 1 | 1 | bisection | unsupported | 47.54 | 1.00965 | 30.28964 | 1.000 |
-| 1.0 | 1 | 1 | off-chain | supported | 47.54 | 1.00965 | 30.28964 | 1.000 |
-| 1.0 | 1 | 1 | off-chain | unsupported | 47.54 | 1.00965 | 30.28964 | 1.000 |
-| 1.0 | 1 | 2 | bisection | supported | 91.98 | 1.02890 | 30.86704 | 1.981 |
-| 1.0 | 1 | 2 | bisection | unsupported | 91.98 | 1.02890 | 30.86704 | 1.981 |
-| 1.0 | 1 | 2 | off-chain | supported | 91.98 | 1.02890 | 30.86704 | 1.981 |
-| 1.0 | 1 | 2 | off-chain | unsupported | 91.98 | 1.02890 | 30.86704 | 1.981 |
-| 1.0 | 1 | 4 | bisection | supported | 177.47 | 1.04815 | 31.44444 | 3.927 |
-| 1.0 | 1 | 4 | bisection | unsupported | 177.47 | 1.04815 | 31.44444 | 3.927 |
-| 1.0 | 1 | 4 | off-chain | supported | 177.47 | 1.04815 | 31.44444 | 3.927 |
-| 1.0 | 1 | 4 | off-chain | unsupported | 177.47 | 1.04815 | 31.44444 | 3.927 |
-| 1.0 | 1 | 8 | bisection | supported | 330.29 | 1.08651 | 32.59544 | 7.726 |
-| 1.0 | 1 | 8 | bisection | unsupported | 330.29 | 1.08651 | 32.59544 | 7.726 |
-| 1.0 | 1 | 8 | off-chain | supported | 330.29 | 1.08651 | 32.59544 | 7.726 |
-| 1.0 | 1 | 8 | off-chain | unsupported | 330.29 | 1.08651 | 32.59544 | 7.726 |
-| 1.0 | 1 | 12 | bisection | supported | 466.66 | 1.12450 | 33.73509 | 11.407 |
-| 1.0 | 1 | 12 | bisection | unsupported | 466.66 | 1.12450 | 33.73509 | 11.407 |
-| 1.0 | 1 | 12 | off-chain | supported | 466.66 | 1.12450 | 33.73509 | 11.407 |
-| 1.0 | 1 | 12 | off-chain | unsupported | 466.66 | 1.12450 | 33.73509 | 11.407 |
-| 1.0 | 2 | 1 | bisection | supported | 91.58 | 0.52414 | 15.72411 | 1.000 |
-| 1.0 | 2 | 1 | bisection | unsupported | 91.58 | 0.52414 | 15.72411 | 1.000 |
-| 1.0 | 2 | 1 | off-chain | supported | 94.18 | 0.52900 | 15.86988 | 1.000 |
-| 1.0 | 2 | 1 | off-chain | unsupported | 94.18 | 0.52900 | 15.86988 | 1.000 |
-| 1.0 | 2 | 2 | bisection | supported | 163.44 | 0.55310 | 16.59305 | 1.935 |
-| 1.0 | 2 | 2 | bisection | unsupported | 163.44 | 0.55310 | 16.59305 | 1.935 |
-| 1.0 | 2 | 2 | off-chain | supported | 176.69 | 0.55790 | 16.73692 | 1.964 |
-| 1.0 | 2 | 2 | off-chain | unsupported | 176.69 | 0.55790 | 16.73692 | 1.964 |
-| 1.0 | 2 | 4 | bisection | supported | 289.44 | 0.57695 | 17.30864 | 3.681 |
-| 1.0 | 2 | 4 | bisection | unsupported | 289.44 | 0.57695 | 17.30864 | 3.681 |
-| 1.0 | 2 | 4 | off-chain | supported | 329.57 | 0.57702 | 17.31053 | 3.862 |
-| 1.0 | 2 | 4 | off-chain | unsupported | 329.57 | 0.57702 | 17.31053 | 3.862 |
-| 1.0 | 2 | 8 | bisection | supported | 458.23 | 0.61501 | 18.45018 | 6.831 |
-| 1.0 | 2 | 8 | bisection | unsupported | 458.23 | 0.61501 | 18.45018 | 6.831 |
-| 1.0 | 2 | 8 | off-chain | supported | 579.33 | 0.61463 | 18.43882 | 7.491 |
-| 1.0 | 2 | 8 | off-chain | unsupported | 579.33 | 0.61463 | 18.43882 | 7.491 |
-| 1.0 | 2 | 12 | bisection | supported | 568.93 | 0.65224 | 19.56711 | 9.693 |
-| 1.0 | 2 | 12 | bisection | unsupported | 568.93 | 0.65224 | 19.56711 | 9.693 |
-| 1.0 | 2 | 12 | off-chain | supported | 778.56 | 0.65148 | 19.54439 | 10.933 |
-| 1.0 | 2 | 12 | off-chain | unsupported | 778.56 | 0.65148 | 19.54439 | 10.933 |
-| 1.0 | 4 | 1 | bisection | supported | 164.93 | 0.29103 | 8.73099 | 1.000 |
-| 1.0 | 4 | 1 | bisection | unsupported | 164.93 | 0.29103 | 8.73099 | 1.000 |
-| 1.0 | 4 | 1 | off-chain | supported | 184.80 | 0.29835 | 8.95059 | 1.000 |
-| 1.0 | 4 | 1 | off-chain | unsupported | 184.80 | 0.29835 | 8.95059 | 1.000 |
-| 1.0 | 4 | 2 | bisection | supported | 246.89 | 0.33470 | 10.04102 | 1.863 |
-| 1.0 | 4 | 2 | bisection | unsupported | 246.89 | 0.33470 | 10.04102 | 1.863 |
-| 1.0 | 4 | 2 | off-chain | supported | 327.73 | 0.32700 | 9.81006 | 1.932 |
-| 1.0 | 4 | 2 | off-chain | unsupported | 327.73 | 0.32700 | 9.81006 | 1.932 |
-| 1.0 | 4 | 4 | bisection | supported | 390.68 | 0.36253 | 10.87588 | 3.421 |
-| 1.0 | 4 | 4 | bisection | unsupported | 390.68 | 0.36253 | 10.87588 | 3.421 |
-| 1.0 | 4 | 4 | off-chain | supported | 575.38 | 0.34574 | 10.37231 | 3.738 |
-| 1.0 | 4 | 4 | off-chain | unsupported | 575.38 | 0.34574 | 10.37231 | 3.738 |
-| 1.0 | 4 | 8 | bisection | supported | 507.44 | 0.40273 | 12.08178 | 6.010 |
-| 1.0 | 4 | 8 | bisection | unsupported | 507.44 | 0.40273 | 12.08178 | 6.010 |
-| 1.0 | 4 | 8 | off-chain | supported | 926.50 | 0.38146 | 11.44381 | 7.055 |
-| 1.0 | 4 | 8 | off-chain | unsupported | 926.50 | 0.38146 | 11.44381 | 7.055 |
-| 1.0 | 4 | 12 | bisection | supported | 565.12 | 0.43870 | 13.16085 | 8.336 |
-| 1.0 | 4 | 12 | bisection | unsupported | 565.12 | 0.43870 | 13.16085 | 8.336 |
-| 1.0 | 4 | 12 | off-chain | supported | 1152.51 | 0.41585 | 12.47555 | 10.082 |
-| 1.0 | 4 | 12 | off-chain | unsupported | 1152.51 | 0.41585 | 12.47555 | 10.082 |
-| 1.0 | 8 | 1 | bisection | supported | 261.04 | 0.18388 | 5.51650 | 1.000 |
-| 1.0 | 8 | 1 | bisection | unsupported | 261.04 | 0.18388 | 5.51650 | 1.000 |
-| 1.0 | 8 | 1 | off-chain | supported | 356.61 | 0.21083 | 6.32486 | 1.000 |
-| 1.0 | 8 | 1 | off-chain | unsupported | 356.61 | 0.21083 | 6.32486 | 1.000 |
-| 1.0 | 8 | 2 | bisection | supported | 318.13 | 0.24326 | 7.29791 | 1.795 |
-| 1.0 | 8 | 2 | bisection | unsupported | 318.13 | 0.24326 | 7.29791 | 1.795 |
-| 1.0 | 8 | 2 | off-chain | supported | 572.78 | 0.23897 | 7.16918 | 1.880 |
-| 1.0 | 8 | 2 | off-chain | unsupported | 572.78 | 0.23897 | 7.16918 | 1.880 |
-| 1.0 | 8 | 4 | bisection | supported | 426.62 | 0.27753 | 8.32587 | 3.225 |
-| 1.0 | 8 | 4 | bisection | unsupported | 426.62 | 0.27753 | 8.32587 | 3.225 |
-| 1.0 | 8 | 4 | off-chain | supported | 915.35 | 0.25633 | 7.68978 | 3.515 |
-| 1.0 | 8 | 4 | off-chain | unsupported | 915.35 | 0.25633 | 7.68978 | 3.515 |
-| 1.0 | 8 | 8 | bisection | supported | 491.70 | 0.32139 | 9.64157 | 5.602 |
-| 1.0 | 8 | 8 | bisection | unsupported | 491.70 | 0.32139 | 9.64157 | 5.602 |
-| 1.0 | 8 | 8 | off-chain | supported | 1316.01 | 0.28832 | 8.64959 | 6.332 |
-| 1.0 | 8 | 8 | off-chain | unsupported | 1316.01 | 0.28832 | 8.64959 | 6.332 |
-| 1.0 | 8 | 12 | bisection | supported | 514.30 | 0.35521 | 10.65628 | 7.596 |
-| 1.0 | 8 | 12 | bisection | unsupported | 514.30 | 0.35521 | 10.65628 | 7.596 |
-| 1.0 | 8 | 12 | off-chain | supported | 1515.25 | 0.31735 | 9.52041 | 8.867 |
-| 1.0 | 8 | 12 | off-chain | unsupported | 1515.25 | 0.31735 | 9.52041 | 8.867 |
-| 2.0 | 1 | 1 | bisection | supported | 47.12 | 1.01872 | 30.56157 | 1.000 |
-| 2.0 | 1 | 1 | bisection | unsupported | 47.12 | 1.01872 | 30.56157 | 1.000 |
-| 2.0 | 1 | 1 | off-chain | supported | 47.12 | 1.01872 | 30.56157 | 1.000 |
-| 2.0 | 1 | 1 | off-chain | unsupported | 47.12 | 1.01872 | 30.56157 | 1.000 |
-| 2.0 | 1 | 2 | bisection | supported | 88.54 | 1.05577 | 31.67325 | 1.965 |
-| 2.0 | 1 | 2 | bisection | unsupported | 88.54 | 1.05577 | 31.67325 | 1.965 |
-| 2.0 | 1 | 2 | off-chain | supported | 88.54 | 1.05577 | 31.67325 | 1.965 |
-| 2.0 | 1 | 2 | off-chain | unsupported | 88.54 | 1.05577 | 31.67325 | 1.965 |
-| 2.0 | 1 | 4 | bisection | supported | 165.76 | 1.09283 | 32.78492 | 3.864 |
-| 2.0 | 1 | 4 | bisection | unsupported | 165.76 | 1.09283 | 32.78492 | 3.864 |
-| 2.0 | 1 | 4 | off-chain | supported | 165.76 | 1.09283 | 32.78492 | 3.864 |
-| 2.0 | 1 | 4 | off-chain | unsupported | 165.76 | 1.09283 | 32.78492 | 3.864 |
-| 2.0 | 1 | 8 | bisection | supported | 291.98 | 1.16605 | 34.98154 | 7.504 |
-| 2.0 | 1 | 8 | bisection | unsupported | 291.98 | 1.16605 | 34.98154 | 7.504 |
-| 2.0 | 1 | 8 | off-chain | supported | 291.98 | 1.16605 | 34.98154 | 7.504 |
-| 2.0 | 1 | 8 | off-chain | unsupported | 291.98 | 1.16605 | 34.98154 | 7.504 |
-| 2.0 | 1 | 12 | bisection | supported | 392.45 | 1.23768 | 37.13040 | 10.954 |
-| 2.0 | 1 | 12 | bisection | unsupported | 392.45 | 1.23768 | 37.13040 | 10.954 |
-| 2.0 | 1 | 12 | off-chain | supported | 392.45 | 1.23768 | 37.13040 | 10.954 |
-| 2.0 | 1 | 12 | off-chain | unsupported | 392.45 | 1.23768 | 37.13040 | 10.954 |
-| 2.0 | 2 | 1 | bisection | supported | 87.82 | 0.54654 | 16.39628 | 1.000 |
-| 2.0 | 2 | 1 | bisection | unsupported | 87.82 | 0.54654 | 16.39628 | 1.000 |
-| 2.0 | 2 | 1 | off-chain | supported | 92.54 | 0.55603 | 16.68089 | 1.000 |
-| 2.0 | 2 | 1 | off-chain | unsupported | 92.54 | 0.55603 | 16.68089 | 1.000 |
-| 2.0 | 2 | 2 | bisection | supported | 143.60 | 0.60244 | 18.07335 | 1.886 |
-| 2.0 | 2 | 2 | bisection | unsupported | 143.60 | 0.60244 | 18.07335 | 1.886 |
-| 2.0 | 2 | 2 | off-chain | supported | 164.57 | 0.61174 | 18.35222 | 1.935 |
-| 2.0 | 2 | 2 | off-chain | unsupported | 164.57 | 0.61174 | 18.35222 | 1.935 |
-| 2.0 | 2 | 4 | bisection | supported | 235.22 | 0.64861 | 19.45817 | 3.485 |
-| 2.0 | 2 | 4 | bisection | unsupported | 235.22 | 0.64861 | 19.45817 | 3.485 |
-| 2.0 | 2 | 4 | off-chain | supported | 289.96 | 0.64803 | 19.44098 | 3.749 |
-| 2.0 | 2 | 4 | off-chain | unsupported | 289.96 | 0.64803 | 19.44098 | 3.749 |
-| 2.0 | 2 | 8 | bisection | supported | 331.53 | 0.72023 | 21.60703 | 6.299 |
-| 2.0 | 2 | 8 | bisection | unsupported | 331.53 | 0.72023 | 21.60703 | 6.299 |
-| 2.0 | 2 | 8 | off-chain | supported | 467.96 | 0.71775 | 21.53254 | 7.102 |
-| 2.0 | 2 | 8 | off-chain | unsupported | 467.96 | 0.71775 | 21.53254 | 7.102 |
-| 2.0 | 2 | 12 | bisection | supported | 384.83 | 0.78830 | 23.64892 | 8.798 |
-| 2.0 | 2 | 12 | bisection | unsupported | 384.83 | 0.78830 | 23.64892 | 8.798 |
-| 2.0 | 2 | 12 | off-chain | supported | 592.21 | 0.78429 | 23.52859 | 10.169 |
-| 2.0 | 2 | 12 | off-chain | unsupported | 592.21 | 0.78429 | 23.52859 | 10.169 |
-| 2.0 | 4 | 1 | bisection | supported | 145.88 | 0.32905 | 9.87139 | 1.000 |
-| 2.0 | 4 | 1 | bisection | unsupported | 145.88 | 0.32905 | 9.87139 | 1.000 |
-| 2.0 | 4 | 1 | off-chain | supported | 178.69 | 0.34274 | 10.28206 | 1.000 |
-| 2.0 | 4 | 1 | off-chain | unsupported | 178.69 | 0.34274 | 10.28206 | 1.000 |
-| 2.0 | 4 | 2 | bisection | supported | 185.32 | 0.41322 | 12.39654 | 1.811 |
-| 2.0 | 4 | 2 | bisection | unsupported | 185.32 | 0.41322 | 12.39654 | 1.811 |
-| 2.0 | 4 | 2 | off-chain | supported | 288.40 | 0.39730 | 11.91901 | 1.881 |
-| 2.0 | 4 | 2 | off-chain | unsupported | 288.40 | 0.39730 | 11.91901 | 1.881 |
-| 2.0 | 4 | 4 | bisection | supported | 268.00 | 0.46555 | 13.96664 | 3.250 |
-| 2.0 | 4 | 4 | bisection | unsupported | 268.00 | 0.46555 | 13.96664 | 3.250 |
-| 2.0 | 4 | 4 | off-chain | supported | 463.65 | 0.43162 | 12.94855 | 3.539 |
-| 2.0 | 4 | 4 | off-chain | unsupported | 463.65 | 0.43162 | 12.94855 | 3.539 |
-| 2.0 | 4 | 8 | bisection | supported | 313.60 | 0.53967 | 16.18999 | 5.562 |
-| 2.0 | 4 | 8 | bisection | unsupported | 313.60 | 0.53967 | 16.18999 | 5.562 |
-| 2.0 | 4 | 8 | off-chain | supported | 666.57 | 0.49497 | 14.84910 | 6.422 |
-| 2.0 | 4 | 8 | off-chain | unsupported | 666.57 | 0.49497 | 14.84910 | 6.422 |
-| 2.0 | 4 | 12 | bisection | supported | 333.14 | 0.60257 | 18.07717 | 7.579 |
-| 2.0 | 4 | 12 | bisection | unsupported | 333.14 | 0.60257 | 18.07717 | 7.579 |
-| 2.0 | 4 | 12 | off-chain | supported | 770.06 | 0.55189 | 16.55673 | 8.887 |
-| 2.0 | 4 | 12 | off-chain | unsupported | 770.06 | 0.55189 | 16.55673 | 8.887 |
-| 2.0 | 8 | 1 | bisection | supported | 202.11 | 0.23749 | 7.12467 | 1.000 |
-| 2.0 | 8 | 1 | bisection | unsupported | 202.11 | 0.23749 | 7.12467 | 1.000 |
-| 2.0 | 8 | 1 | off-chain | supported | 335.81 | 0.28505 | 8.55151 | 1.000 |
-| 2.0 | 8 | 1 | off-chain | unsupported | 335.81 | 0.28505 | 8.55151 | 1.000 |
-| 2.0 | 8 | 2 | bisection | supported | 207.17 | 0.35146 | 10.54374 | 1.763 |
-| 2.0 | 8 | 2 | bisection | unsupported | 207.17 | 0.35146 | 10.54374 | 1.763 |
-| 2.0 | 8 | 2 | off-chain | supported | 468.25 | 0.33713 | 10.11397 | 1.813 |
-| 2.0 | 8 | 2 | off-chain | unsupported | 468.25 | 0.33713 | 10.11397 | 1.813 |
-| 2.0 | 8 | 4 | bisection | supported | 256.25 | 0.41354 | 12.40609 | 3.161 |
-| 2.0 | 8 | 4 | bisection | unsupported | 256.25 | 0.41354 | 12.40609 | 3.161 |
-| 2.0 | 8 | 4 | off-chain | supported | 676.74 | 0.36687 | 11.00598 | 3.238 |
-| 2.0 | 8 | 4 | off-chain | unsupported | 676.74 | 0.36687 | 11.00598 | 3.238 |
-| 2.0 | 8 | 8 | bisection | supported | 278.60 | 0.49268 | 14.78034 | 5.390 |
-| 2.0 | 8 | 8 | bisection | unsupported | 278.60 | 0.49268 | 14.78034 | 5.390 |
-| 2.0 | 8 | 8 | off-chain | supported | 841.39 | 0.42003 | 12.60092 | 5.465 |
-| 2.0 | 8 | 8 | off-chain | unsupported | 841.39 | 0.42003 | 12.60092 | 5.465 |
-| 2.0 | 8 | 12 | bisection | supported | 283.31 | 0.54756 | 16.42684 | 7.076 |
-| 2.0 | 8 | 12 | bisection | unsupported | 283.31 | 0.54756 | 16.42684 | 7.076 |
-| 2.0 | 8 | 12 | off-chain | supported | 914.91 | 0.45836 | 13.75080 | 7.023 |
-| 2.0 | 8 | 12 | off-chain | unsupported | 914.91 | 0.45836 | 13.75080 | 7.023 |
-| 5.0 | 1 | 1 | bisection | supported | 45.62 | 1.05215 | 31.56441 | 1.000 |
-| 5.0 | 1 | 1 | bisection | unsupported | 45.62 | 1.05215 | 31.56441 | 1.000 |
-| 5.0 | 1 | 1 | off-chain | supported | 45.62 | 1.05215 | 31.56441 | 1.000 |
-| 5.0 | 1 | 1 | off-chain | unsupported | 45.62 | 1.05215 | 31.56441 | 1.000 |
-| 5.0 | 1 | 2 | bisection | supported | 77.74 | 1.15440 | 34.63208 | 1.912 |
-| 5.0 | 1 | 2 | bisection | unsupported | 77.74 | 1.15440 | 34.63208 | 1.912 |
-| 5.0 | 1 | 2 | off-chain | supported | 77.74 | 1.15440 | 34.63208 | 1.912 |
-| 5.0 | 1 | 2 | off-chain | unsupported | 77.74 | 1.15440 | 34.63208 | 1.912 |
-| 5.0 | 1 | 4 | bisection | supported | 132.16 | 1.25291 | 37.58730 | 3.649 |
-| 5.0 | 1 | 4 | bisection | unsupported | 132.16 | 1.25291 | 37.58730 | 3.649 |
-| 5.0 | 1 | 4 | off-chain | supported | 132.16 | 1.25291 | 37.58730 | 3.649 |
-| 5.0 | 1 | 4 | off-chain | unsupported | 132.16 | 1.25291 | 37.58730 | 3.649 |
-| 5.0 | 1 | 8 | bisection | supported | 201.47 | 1.44302 | 43.29059 | 6.824 |
-| 5.0 | 1 | 8 | bisection | unsupported | 201.47 | 1.44302 | 43.29059 | 6.824 |
-| 5.0 | 1 | 8 | off-chain | supported | 201.47 | 1.44302 | 43.29059 | 6.824 |
-| 5.0 | 1 | 8 | off-chain | unsupported | 201.47 | 1.44302 | 43.29059 | 6.824 |
-| 5.0 | 1 | 12 | bisection | supported | 245.11 | 1.61873 | 48.56185 | 9.606 |
-| 5.0 | 1 | 12 | bisection | unsupported | 245.11 | 1.61873 | 48.56185 | 9.606 |
-| 5.0 | 1 | 12 | off-chain | supported | 245.11 | 1.61873 | 48.56185 | 9.606 |
-| 5.0 | 1 | 12 | off-chain | unsupported | 245.11 | 1.61873 | 48.56185 | 9.606 |
-| 5.0 | 2 | 1 | bisection | supported | 76.35 | 0.62866 | 18.85974 | 1.000 |
-| 5.0 | 2 | 1 | bisection | unsupported | 76.35 | 0.62866 | 18.85974 | 1.000 |
-| 5.0 | 2 | 1 | off-chain | supported | 87.03 | 0.65450 | 19.63504 | 1.000 |
-| 5.0 | 2 | 1 | off-chain | unsupported | 87.03 | 0.65450 | 19.63504 | 1.000 |
-| 5.0 | 2 | 2 | bisection | supported | 99.27 | 0.78339 | 23.50168 | 1.782 |
-| 5.0 | 2 | 2 | bisection | unsupported | 99.27 | 0.78339 | 23.50168 | 1.782 |
-| 5.0 | 2 | 2 | off-chain | supported | 131.45 | 0.80522 | 24.15664 | 1.846 |
-| 5.0 | 2 | 2 | off-chain | unsupported | 131.45 | 0.80522 | 24.15664 | 1.846 |
-| 5.0 | 2 | 4 | bisection | supported | 138.19 | 0.90307 | 27.09213 | 3.088 |
-| 5.0 | 2 | 4 | bisection | unsupported | 138.19 | 0.90307 | 27.09213 | 3.088 |
-| 5.0 | 2 | 4 | off-chain | supported | 199.71 | 0.89636 | 26.89091 | 3.399 |
-| 5.0 | 2 | 4 | off-chain | unsupported | 199.71 | 0.89636 | 26.89091 | 3.399 |
-| 5.0 | 2 | 8 | bisection | supported | 164.85 | 1.08029 | 32.40876 | 5.323 |
-| 5.0 | 2 | 8 | bisection | unsupported | 164.85 | 1.08029 | 32.40876 | 5.323 |
-| 5.0 | 2 | 8 | off-chain | supported | 271.05 | 1.05951 | 31.78536 | 5.992 |
-| 5.0 | 2 | 8 | off-chain | unsupported | 271.05 | 1.05951 | 31.78536 | 5.992 |
-| 5.0 | 2 | 12 | bisection | supported | 175.25 | 1.22476 | 36.74295 | 7.095 |
-| 5.0 | 2 | 12 | bisection | unsupported | 175.25 | 1.22476 | 36.74295 | 7.095 |
-| 5.0 | 2 | 12 | off-chain | supported | 304.01 | 1.19471 | 35.84139 | 8.010 |
-| 5.0 | 2 | 12 | off-chain | unsupported | 304.01 | 1.19471 | 35.84139 | 8.010 |
-| 5.0 | 4 | 1 | bisection | supported | 103.60 | 0.46334 | 13.90018 | 1.000 |
-| 5.0 | 4 | 1 | bisection | unsupported | 103.60 | 0.46334 | 13.90018 | 1.000 |
-| 5.0 | 4 | 1 | off-chain | supported | 160.57 | 0.49411 | 14.82344 | 1.000 |
-| 5.0 | 4 | 1 | off-chain | unsupported | 160.57 | 0.49411 | 14.82344 | 1.000 |
-| 5.0 | 4 | 2 | bisection | supported | 98.76 | 0.69113 | 20.73387 | 1.731 |
-| 5.0 | 4 | 2 | bisection | unsupported | 98.76 | 0.69113 | 20.73387 | 1.731 |
-| 5.0 | 4 | 2 | off-chain | supported | 205.56 | 0.63800 | 19.13987 | 1.757 |
-| 5.0 | 4 | 2 | off-chain | unsupported | 205.56 | 0.63800 | 19.13987 | 1.757 |
-| 5.0 | 4 | 4 | bisection | supported | 126.20 | 0.82942 | 24.88262 | 3.036 |
-| 5.0 | 4 | 4 | bisection | unsupported | 126.20 | 0.82942 | 24.88262 | 3.036 |
-| 5.0 | 4 | 4 | off-chain | supported | 276.49 | 0.71355 | 21.40659 | 3.016 |
-| 5.0 | 4 | 4 | off-chain | unsupported | 276.49 | 0.71355 | 21.40659 | 3.016 |
-| 5.0 | 4 | 8 | bisection | supported | 132.60 | 0.99566 | 29.86980 | 4.828 |
-| 5.0 | 4 | 8 | bisection | unsupported | 132.60 | 0.99566 | 29.86980 | 4.828 |
-| 5.0 | 4 | 8 | off-chain | supported | 326.30 | 0.83435 | 25.03058 | 4.844 |
-| 5.0 | 4 | 8 | off-chain | unsupported | 326.30 | 0.83435 | 25.03058 | 4.844 |
-| 5.0 | 4 | 12 | bisection | supported | 134.67 | 1.10219 | 33.06569 | 6.079 |
-| 5.0 | 4 | 12 | bisection | unsupported | 134.67 | 1.10219 | 33.06569 | 6.079 |
-| 5.0 | 4 | 12 | off-chain | supported | 346.11 | 0.91701 | 27.51036 | 6.039 |
-| 5.0 | 4 | 12 | off-chain | unsupported | 346.11 | 0.91701 | 27.51036 | 6.039 |
-| 5.0 | 8 | 1 | bisection | supported | 114.34 | 0.41981 | 12.59420 | 1.000 |
-| 5.0 | 8 | 1 | bisection | unsupported | 114.34 | 0.41981 | 12.59420 | 1.000 |
-| 5.0 | 8 | 1 | off-chain | supported | 282.81 | 0.52640 | 15.79207 | 1.000 |
-| 5.0 | 8 | 1 | off-chain | unsupported | 282.81 | 0.52640 | 15.79207 | 1.000 |
-| 5.0 | 8 | 2 | bisection | supported | 94.23 | 0.72407 | 21.72223 | 1.727 |
-| 5.0 | 8 | 2 | bisection | unsupported | 94.23 | 0.72407 | 21.72223 | 1.727 |
-| 5.0 | 8 | 2 | off-chain | supported | 298.91 | 0.65766 | 19.72973 | 1.655 |
-| 5.0 | 8 | 2 | off-chain | unsupported | 298.91 | 0.65766 | 19.72973 | 1.655 |
-| 5.0 | 8 | 4 | bisection | supported | 107.19 | 0.87973 | 26.39179 | 3.107 |
-| 5.0 | 8 | 4 | bisection | unsupported | 107.19 | 0.87973 | 26.39179 | 3.107 |
-| 5.0 | 8 | 4 | off-chain | supported | 350.76 | 0.71204 | 21.36122 | 2.571 |
-| 5.0 | 8 | 4 | off-chain | unsupported | 350.76 | 0.71204 | 21.36122 | 2.571 |
-| 5.0 | 8 | 8 | bisection | supported | 110.50 | 1.05425 | 31.62754 | 5.019 |
-| 5.0 | 8 | 8 | bisection | unsupported | 110.50 | 1.05425 | 31.62754 | 5.019 |
-| 5.0 | 8 | 8 | off-chain | supported | 377.42 | 0.78069 | 23.42079 | 3.583 |
-| 5.0 | 8 | 8 | off-chain | unsupported | 377.42 | 0.78069 | 23.42079 | 3.583 |
-| 5.0 | 8 | 12 | bisection | supported | 110.61 | 1.12422 | 33.72657 | 5.863 |
-| 5.0 | 8 | 12 | bisection | unsupported | 110.61 | 1.12422 | 33.72657 | 5.863 |
-| 5.0 | 8 | 12 | off-chain | supported | 380.18 | 0.80423 | 24.12705 | 3.899 |
-| 5.0 | 8 | 12 | off-chain | unsupported | 380.18 | 0.80423 | 24.12705 | 3.899 |
+| Broken % | Size | Depth | Diagnosis | Cancellation | Merged/day | Runs/merged | Runner-min/merged | Mean W | Cancel requested | Cancel confirmed |
+|---:|---:|---:|---|---|---:|---:|---:|---:|---:|---:|
+| 0.1 | 1 | 1 | bisection | both (identical) | 47.95 | 1.00106 | 30.03191 | 1.000 | 0 | 0 |
+| 0.1 | 1 | 1 | off-chain | both (identical) | 47.95 | 1.00106 | 30.03191 | 1.000 | 0 | 0 |
+| 0.1 | 1 | 2 | bisection | both (identical) | 95.53 | 1.00319 | 30.09573 | 1.998 | 0 | 0 |
+| 0.1 | 1 | 2 | off-chain | both (identical) | 95.53 | 1.00319 | 30.09573 | 1.998 | 0 | 0 |
+| 0.1 | 1 | 4 | bisection | both (identical) | 190.13 | 1.00532 | 30.15954 | 3.992 | 0 | 0 |
+| 0.1 | 1 | 4 | off-chain | both (identical) | 190.13 | 1.00532 | 30.15954 | 3.992 | 0 | 0 |
+| 0.1 | 1 | 8 | bisection | both (identical) | 376.99 | 1.00957 | 30.28718 | 7.967 | 0 | 0 |
+| 0.1 | 1 | 8 | off-chain | both (identical) | 376.99 | 1.00957 | 30.28718 | 7.967 | 0 | 0 |
+| 0.1 | 1 | 12 | bisection | both (identical) | 559.99 | 1.01383 | 30.41482 | 11.926 | 0 | 0 |
+| 0.1 | 1 | 12 | off-chain | both (identical) | 559.99 | 1.01383 | 30.41482 | 11.926 | 0 | 0 |
+| 0.1 | 2 | 1 | bisection | both (identical) | 95.49 | 0.50266 | 15.07977 | 1.000 | 0 | 0 |
+| 0.1 | 2 | 1 | off-chain | both (identical) | 95.79 | 0.50322 | 15.09667 | 1.000 | 0 | 0 |
+| 0.1 | 2 | 2 | bisection | both (identical) | 188.36 | 0.50585 | 15.17550 | 1.991 | 0 | 0 |
+| 0.1 | 2 | 2 | off-chain | both (identical) | 190.09 | 0.50641 | 15.19239 | 1.996 | 0 | 0 |
+| 0.1 | 2 | 4 | bisection | both (identical) | 370.26 | 0.50854 | 15.25621 | 3.954 | 0 | 0 |
+| 0.1 | 2 | 4 | off-chain | both (identical) | 376.81 | 0.50854 | 15.25621 | 3.983 | 0 | 0 |
+| 0.1 | 2 | 8 | bisection | both (identical) | 711.67 | 0.51279 | 15.38385 | 7.801 | 0 | 0 |
+| 0.1 | 2 | 8 | off-chain | both (identical) | 740.53 | 0.51279 | 15.38385 | 7.934 | 0 | 0 |
+| 0.1 | 2 | 12 | bisection | both (identical) | 1031.16 | 0.51705 | 15.51148 | 11.550 | 0 | 0 |
+| 0.1 | 2 | 12 | off-chain | both (identical) | 1094.41 | 0.51705 | 15.51148 | 11.854 | 0 | 0 |
+| 0.1 | 4 | 1 | bisection | both (identical) | 188.59 | 0.25452 | 7.63561 | 1.000 | 0 | 0 |
+| 0.1 | 4 | 1 | off-chain | both (identical) | 191.13 | 0.25540 | 7.66189 | 1.000 | 0 | 0 |
+| 0.1 | 4 | 2 | bisection | both (identical) | 361.71 | 0.25921 | 7.77639 | 1.980 | 0 | 0 |
+| 0.1 | 4 | 2 | off-chain | both (identical) | 376.44 | 0.25859 | 7.75762 | 1.992 | 0 | 0 |
+| 0.1 | 4 | 4 | bisection | both (identical) | 693.03 | 0.26215 | 7.86461 | 3.893 | 0 | 0 |
+| 0.1 | 4 | 4 | off-chain | both (identical) | 739.10 | 0.26071 | 7.82144 | 3.967 | 0 | 0 |
+| 0.1 | 4 | 8 | bisection | both (identical) | 1251.52 | 0.26672 | 8.00163 | 7.491 | 0 | 0 |
+| 0.1 | 4 | 8 | off-chain | both (identical) | 1428.65 | 0.26497 | 7.94907 | 7.873 | 0 | 0 |
+| 0.1 | 4 | 12 | bisection | both (identical) | 1716.30 | 0.27098 | 8.12926 | 10.868 | 0 | 0 |
+| 0.1 | 4 | 12 | off-chain | both (identical) | 2067.88 | 0.26922 | 8.07671 | 11.725 | 0 | 0 |
+| 0.1 | 8 | 1 | bisection | both (identical) | 364.98 | 0.13151 | 3.94544 | 1.000 | 0 | 0 |
+| 0.1 | 8 | 1 | off-chain | both (identical) | 380.36 | 0.13471 | 4.04117 | 1.000 | 0 | 0 |
+| 0.1 | 8 | 2 | bisection | both (identical) | 664.23 | 0.13808 | 4.14253 | 1.958 | 0 | 0 |
+| 0.1 | 8 | 2 | off-chain | both (identical) | 736.97 | 0.13790 | 4.13690 | 1.984 | 0 | 0 |
+| 0.1 | 8 | 4 | bisection | both (identical) | 1193.13 | 0.14159 | 4.24764 | 3.776 | 0 | 0 |
+| 0.1 | 8 | 4 | off-chain | both (identical) | 1428.65 | 0.14002 | 4.20071 | 3.937 | 0 | 0 |
+| 0.1 | 8 | 8 | bisection | both (identical) | 1942.24 | 0.14647 | 4.39404 | 7.013 | 0 | 0 |
+| 0.1 | 8 | 8 | off-chain | both (identical) | 2673.11 | 0.14428 | 4.32835 | 7.763 | 0 | 0 |
+| 0.1 | 8 | 12 | bisection | both (identical) | 2435.50 | 0.15072 | 4.52168 | 9.917 | 0 | 0 |
+| 0.1 | 8 | 12 | off-chain | both (identical) | 3724.19 | 0.14853 | 4.45598 | 11.505 | 0 | 0 |
+| 0.2 | 1 | 1 | bisection | both (identical) | 47.90 | 1.00219 | 30.06577 | 1.000 | 0 | 0 |
+| 0.2 | 1 | 1 | off-chain | both (identical) | 47.90 | 1.00219 | 30.06577 | 1.000 | 0 | 0 |
+| 0.2 | 1 | 2 | bisection | both (identical) | 95.09 | 1.00658 | 30.19731 | 1.996 | 0 | 0 |
+| 0.2 | 1 | 2 | off-chain | both (identical) | 95.09 | 1.00658 | 30.19731 | 1.996 | 0 | 0 |
+| 0.2 | 1 | 4 | bisection | both (identical) | 188.24 | 1.01096 | 30.32884 | 3.983 | 0 | 0 |
+| 0.2 | 1 | 4 | off-chain | both (identical) | 188.24 | 1.01096 | 30.32884 | 3.983 | 0 | 0 |
+| 0.2 | 1 | 8 | bisection | both (identical) | 370.38 | 1.01973 | 30.59192 | 7.932 | 0 | 0 |
+| 0.2 | 1 | 8 | off-chain | both (identical) | 370.38 | 1.01973 | 30.59192 | 7.932 | 0 | 0 |
+| 0.2 | 1 | 12 | bisection | both (identical) | 545.81 | 1.02850 | 30.85500 | 11.850 | 0 | 0 |
+| 0.2 | 1 | 12 | off-chain | both (identical) | 545.81 | 1.02850 | 30.85500 | 11.850 | 0 | 0 |
+| 0.2 | 2 | 1 | bisection | both (identical) | 94.96 | 0.50548 | 15.16442 | 1.000 | 0 | 0 |
+| 0.2 | 2 | 1 | off-chain | both (identical) | 95.56 | 0.50667 | 15.20013 | 1.000 | 0 | 0 |
+| 0.2 | 2 | 2 | bisection | both (identical) | 184.66 | 0.51206 | 15.36173 | 1.983 | 0 | 0 |
+| 0.2 | 2 | 2 | off-chain | both (identical) | 188.15 | 0.51325 | 15.39743 | 1.991 | 0 | 0 |
+| 0.2 | 2 | 4 | bisection | both (identical) | 356.93 | 0.51757 | 15.52709 | 3.910 | 0 | 0 |
+| 0.2 | 2 | 4 | off-chain | both (identical) | 369.49 | 0.51763 | 15.52897 | 3.966 | 0 | 0 |
+| 0.2 | 2 | 8 | bisection | both (identical) | 662.91 | 0.52634 | 15.79017 | 7.619 | 0 | 0 |
+| 0.2 | 2 | 8 | off-chain | both (identical) | 714.18 | 0.52640 | 15.79205 | 7.870 | 0 | 0 |
+| 0.2 | 2 | 12 | bisection | both (identical) | 930.00 | 0.53511 | 16.05324 | 11.167 | 0 | 0 |
+| 0.2 | 2 | 12 | off-chain | both (identical) | 1036.97 | 0.53517 | 16.05512 | 11.716 | 0 | 0 |
+| 0.2 | 4 | 1 | bisection | both (identical) | 185.10 | 0.25932 | 7.77952 | 1.000 | 0 | 0 |
+| 0.2 | 4 | 1 | off-chain | both (identical) | 190.25 | 0.26107 | 7.83213 | 1.000 | 0 | 0 |
+| 0.2 | 4 | 2 | bisection | both (identical) | 340.89 | 0.26915 | 8.07454 | 1.956 | 0 | 0 |
+| 0.2 | 4 | 2 | off-chain | both (identical) | 368.78 | 0.26765 | 8.02944 | 1.983 | 0 | 0 |
+| 0.2 | 4 | 4 | bisection | both (identical) | 629.16 | 0.27554 | 8.26621 | 3.787 | 0 | 0 |
+| 0.2 | 4 | 4 | off-chain | both (identical) | 713.52 | 0.27203 | 8.16098 | 3.935 | 0 | 0 |
+| 0.2 | 4 | 8 | bisection | both (identical) | 1045.46 | 0.28500 | 8.54995 | 7.091 | 0 | 0 |
+| 0.2 | 4 | 8 | off-chain | both (identical) | 1337.38 | 0.28080 | 8.42405 | 7.756 | 0 | 0 |
+| 0.2 | 4 | 12 | bisection | both (identical) | 1353.92 | 0.29377 | 8.81303 | 10.106 | 0 | 0 |
+| 0.2 | 4 | 12 | off-chain | both (identical) | 1887.49 | 0.28951 | 8.68525 | 11.473 | 0 | 0 |
+| 0.2 | 8 | 1 | bisection | both (identical) | 346.75 | 0.13843 | 4.15283 | 1.000 | 0 | 0 |
+| 0.2 | 8 | 1 | off-chain | both (identical) | 376.94 | 0.14488 | 4.34638 | 1.000 | 0 | 0 |
+| 0.2 | 8 | 2 | bisection | both (identical) | 579.67 | 0.15208 | 4.56248 | 1.916 | 0 | 0 |
+| 0.2 | 8 | 2 | off-chain | both (identical) | 711.53 | 0.15146 | 4.54369 | 1.968 | 0 | 0 |
+| 0.2 | 8 | 4 | bisection | both (identical) | 962.71 | 0.15979 | 4.79361 | 3.603 | 0 | 0 |
+| 0.2 | 8 | 4 | off-chain | both (identical) | 1335.05 | 0.15584 | 4.67523 | 3.878 | 0 | 0 |
+| 0.2 | 8 | 8 | bisection | both (identical) | 1400.95 | 0.17006 | 5.10179 | 6.479 | 0 | 0 |
+| 0.2 | 8 | 8 | off-chain | both (identical) | 2357.91 | 0.16448 | 4.93454 | 7.554 | 0 | 0 |
+| 0.2 | 8 | 12 | bisection | both (identical) | 1633.94 | 0.17877 | 5.36298 | 9.026 | 0 | 0 |
+| 0.2 | 8 | 12 | off-chain | both (identical) | 3166.61 | 0.17307 | 5.19198 | 11.074 | 0 | 0 |
+| 0.5 | 1 | 1 | bisection | both (identical) | 47.77 | 1.00484 | 30.14507 | 1.000 | 0 | 0 |
+| 0.5 | 1 | 1 | off-chain | both (identical) | 47.77 | 1.00484 | 30.14507 | 1.000 | 0 | 0 |
+| 0.5 | 1 | 2 | bisection | both (identical) | 93.93 | 1.01451 | 30.43522 | 1.991 | 0 | 0 |
+| 0.5 | 1 | 2 | off-chain | both (identical) | 93.93 | 1.01451 | 30.43522 | 1.991 | 0 | 0 |
+| 0.5 | 1 | 4 | bisection | both (identical) | 184.35 | 1.02418 | 30.72537 | 3.963 | 0 | 0 |
+| 0.5 | 1 | 4 | off-chain | both (identical) | 184.35 | 1.02418 | 30.72537 | 3.963 | 0 | 0 |
+| 0.5 | 1 | 8 | bisection | both (identical) | 355.16 | 1.04346 | 31.30377 | 7.855 | 0 | 0 |
+| 0.5 | 1 | 8 | off-chain | both (identical) | 355.16 | 1.04346 | 31.30377 | 7.855 | 0 | 0 |
+| 0.5 | 1 | 12 | bisection | both (identical) | 516.77 | 1.06261 | 31.87841 | 11.679 | 0 | 0 |
+| 0.5 | 1 | 12 | off-chain | both (identical) | 516.77 | 1.06261 | 31.87841 | 11.679 | 0 | 0 |
+| 0.5 | 2 | 1 | bisection | both (identical) | 93.73 | 0.51209 | 15.36268 | 1.000 | 0 | 0 |
+| 0.5 | 2 | 1 | off-chain | both (identical) | 95.07 | 0.51454 | 15.43616 | 1.000 | 0 | 0 |
+| 0.5 | 2 | 2 | bisection | both (identical) | 176.51 | 0.52660 | 15.79790 | 1.963 | 0 | 0 |
+| 0.5 | 2 | 2 | off-chain | both (identical) | 183.90 | 0.52905 | 15.87138 | 1.981 | 0 | 0 |
+| 0.5 | 2 | 4 | bisection | both (identical) | 329.30 | 0.53891 | 16.16718 | 3.813 | 0 | 0 |
+| 0.5 | 2 | 4 | off-chain | both (identical) | 354.50 | 0.53865 | 16.15964 | 3.927 | 0 | 0 |
+| 0.5 | 2 | 8 | bisection | both (identical) | 571.66 | 0.55806 | 16.74182 | 7.260 | 0 | 0 |
+| 0.5 | 2 | 8 | off-chain | both (identical) | 661.16 | 0.55768 | 16.73052 | 7.718 | 0 | 0 |
+| 0.5 | 2 | 12 | bisection | both (identical) | 755.24 | 0.57703 | 17.31081 | 10.461 | 0 | 0 |
+| 0.5 | 2 | 12 | off-chain | both (identical) | 927.55 | 0.57659 | 17.29762 | 11.394 | 0 | 0 |
+| 0.5 | 4 | 1 | bisection | both (identical) | 177.42 | 0.27055 | 8.11656 | 1.000 | 0 | 0 |
+| 0.5 | 4 | 1 | off-chain | both (identical) | 188.30 | 0.27426 | 8.22772 | 1.000 | 0 | 0 |
+| 0.5 | 4 | 2 | bisection | both (identical) | 299.96 | 0.29241 | 8.77222 | 1.920 | 0 | 0 |
+| 0.5 | 4 | 2 | off-chain | both (identical) | 353.19 | 0.28864 | 8.65917 | 1.963 | 0 | 0 |
+| 0.5 | 4 | 4 | bisection | both (identical) | 516.42 | 0.30610 | 9.18294 | 3.622 | 0 | 0 |
+| 0.5 | 4 | 4 | off-chain | both (identical) | 657.75 | 0.29812 | 8.94367 | 3.855 | 0 | 0 |
+| 0.5 | 4 | 8 | bisection | both (identical) | 762.02 | 0.32651 | 9.79526 | 6.527 | 0 | 0 |
+| 0.5 | 4 | 8 | off-chain | both (identical) | 1159.79 | 0.31690 | 9.50700 | 7.475 | 0 | 0 |
+| 0.5 | 4 | 12 | bisection | both (identical) | 901.30 | 0.34535 | 10.36048 | 9.166 | 0 | 0 |
+| 0.5 | 4 | 12 | off-chain | both (identical) | 1540.94 | 0.33555 | 10.06657 | 10.933 | 0 | 0 |
+| 0.5 | 8 | 1 | bisection | both (identical) | 310.69 | 0.15449 | 4.63480 | 1.000 | 0 | 0 |
+| 0.5 | 8 | 1 | off-chain | both (identical) | 369.59 | 0.16806 | 5.04176 | 1.000 | 0 | 0 |
+| 0.5 | 8 | 2 | bisection | both (identical) | 450.12 | 0.18401 | 5.52032 | 1.862 | 0 | 0 |
+| 0.5 | 8 | 2 | off-chain | both (identical) | 655.49 | 0.18225 | 5.46756 | 1.932 | 0 | 0 |
+| 0.5 | 8 | 4 | bisection | both (identical) | 669.27 | 0.20053 | 6.01583 | 3.417 | 0 | 0 |
+| 0.5 | 8 | 4 | off-chain | both (identical) | 1156.28 | 0.19155 | 5.74640 | 3.741 | 0 | 0 |
+| 0.5 | 8 | 8 | bisection | both (identical) | 853.02 | 0.22263 | 6.67902 | 5.978 | 0 | 0 |
+| 0.5 | 8 | 8 | off-chain | both (identical) | 1850.62 | 0.20995 | 6.29844 | 7.148 | 0 | 0 |
+| 0.5 | 8 | 12 | bisection | both (identical) | 925.31 | 0.24116 | 7.23482 | 8.275 | 0 | 0 |
+| 0.5 | 8 | 12 | off-chain | both (identical) | 2330.20 | 0.22766 | 6.82974 | 10.287 | 0 | 0 |
+| 1.0 | 1 | 1 | bisection | both (identical) | 47.54 | 1.00965 | 30.28964 | 1.000 | 0 | 0 |
+| 1.0 | 1 | 1 | off-chain | both (identical) | 47.54 | 1.00965 | 30.28964 | 1.000 | 0 | 0 |
+| 1.0 | 1 | 2 | bisection | both (identical) | 91.98 | 1.02890 | 30.86704 | 1.981 | 0 | 0 |
+| 1.0 | 1 | 2 | off-chain | both (identical) | 91.98 | 1.02890 | 30.86704 | 1.981 | 0 | 0 |
+| 1.0 | 1 | 4 | bisection | both (identical) | 177.47 | 1.04815 | 31.44444 | 3.927 | 0 | 0 |
+| 1.0 | 1 | 4 | off-chain | both (identical) | 177.47 | 1.04815 | 31.44444 | 3.927 | 0 | 0 |
+| 1.0 | 1 | 8 | bisection | both (identical) | 330.29 | 1.08651 | 32.59544 | 7.726 | 0 | 0 |
+| 1.0 | 1 | 8 | off-chain | both (identical) | 330.29 | 1.08651 | 32.59544 | 7.726 | 0 | 0 |
+| 1.0 | 1 | 12 | bisection | both (identical) | 466.66 | 1.12450 | 33.73509 | 11.407 | 0 | 0 |
+| 1.0 | 1 | 12 | off-chain | both (identical) | 466.66 | 1.12450 | 33.73509 | 11.407 | 0 | 0 |
+| 1.0 | 2 | 1 | bisection | both (identical) | 91.58 | 0.52414 | 15.72411 | 1.000 | 0 | 0 |
+| 1.0 | 2 | 1 | off-chain | both (identical) | 94.18 | 0.52900 | 15.86988 | 1.000 | 0 | 0 |
+| 1.0 | 2 | 2 | bisection | both (identical) | 163.44 | 0.55310 | 16.59305 | 1.935 | 0 | 0 |
+| 1.0 | 2 | 2 | off-chain | both (identical) | 176.69 | 0.55790 | 16.73692 | 1.964 | 0 | 0 |
+| 1.0 | 2 | 4 | bisection | both (identical) | 289.44 | 0.57695 | 17.30864 | 3.681 | 0 | 0 |
+| 1.0 | 2 | 4 | off-chain | both (identical) | 329.57 | 0.57702 | 17.31053 | 3.862 | 0 | 0 |
+| 1.0 | 2 | 8 | bisection | both (identical) | 458.23 | 0.61501 | 18.45018 | 6.831 | 0 | 0 |
+| 1.0 | 2 | 8 | off-chain | both (identical) | 579.33 | 0.61463 | 18.43882 | 7.491 | 0 | 0 |
+| 1.0 | 2 | 12 | bisection | both (identical) | 568.93 | 0.65224 | 19.56711 | 9.693 | 0 | 0 |
+| 1.0 | 2 | 12 | off-chain | both (identical) | 778.56 | 0.65148 | 19.54439 | 10.933 | 0 | 0 |
+| 1.0 | 4 | 1 | bisection | both (identical) | 164.93 | 0.29103 | 8.73099 | 1.000 | 0 | 0 |
+| 1.0 | 4 | 1 | off-chain | both (identical) | 184.80 | 0.29835 | 8.95059 | 1.000 | 0 | 0 |
+| 1.0 | 4 | 2 | bisection | both (identical) | 246.89 | 0.33470 | 10.04102 | 1.863 | 0 | 0 |
+| 1.0 | 4 | 2 | off-chain | both (identical) | 327.73 | 0.32700 | 9.81006 | 1.932 | 0 | 0 |
+| 1.0 | 4 | 4 | bisection | both (identical) | 390.68 | 0.36253 | 10.87588 | 3.421 | 0 | 0 |
+| 1.0 | 4 | 4 | off-chain | both (identical) | 575.38 | 0.34574 | 10.37231 | 3.738 | 0 | 0 |
+| 1.0 | 4 | 8 | bisection | both (identical) | 507.44 | 0.40273 | 12.08178 | 6.010 | 0 | 0 |
+| 1.0 | 4 | 8 | off-chain | both (identical) | 926.50 | 0.38146 | 11.44381 | 7.055 | 0 | 0 |
+| 1.0 | 4 | 12 | bisection | both (identical) | 565.12 | 0.43870 | 13.16085 | 8.336 | 0 | 0 |
+| 1.0 | 4 | 12 | off-chain | both (identical) | 1152.51 | 0.41585 | 12.47555 | 10.082 | 0 | 0 |
+| 1.0 | 8 | 1 | bisection | both (identical) | 261.04 | 0.18388 | 5.51650 | 1.000 | 0 | 0 |
+| 1.0 | 8 | 1 | off-chain | both (identical) | 356.61 | 0.21083 | 6.32486 | 1.000 | 0 | 0 |
+| 1.0 | 8 | 2 | bisection | both (identical) | 318.13 | 0.24326 | 7.29791 | 1.795 | 0 | 0 |
+| 1.0 | 8 | 2 | off-chain | both (identical) | 572.78 | 0.23897 | 7.16918 | 1.880 | 0 | 0 |
+| 1.0 | 8 | 4 | bisection | both (identical) | 426.62 | 0.27753 | 8.32587 | 3.225 | 0 | 0 |
+| 1.0 | 8 | 4 | off-chain | both (identical) | 915.35 | 0.25633 | 7.68978 | 3.515 | 0 | 0 |
+| 1.0 | 8 | 8 | bisection | both (identical) | 491.70 | 0.32139 | 9.64157 | 5.602 | 0 | 0 |
+| 1.0 | 8 | 8 | off-chain | both (identical) | 1316.01 | 0.28832 | 8.64959 | 6.332 | 0 | 0 |
+| 1.0 | 8 | 12 | bisection | both (identical) | 514.30 | 0.35521 | 10.65628 | 7.596 | 0 | 0 |
+| 1.0 | 8 | 12 | off-chain | both (identical) | 1515.25 | 0.31735 | 9.52041 | 8.867 | 0 | 0 |
+| 2.0 | 1 | 1 | bisection | both (identical) | 47.12 | 1.01872 | 30.56157 | 1.000 | 0 | 0 |
+| 2.0 | 1 | 1 | off-chain | both (identical) | 47.12 | 1.01872 | 30.56157 | 1.000 | 0 | 0 |
+| 2.0 | 1 | 2 | bisection | both (identical) | 88.54 | 1.05577 | 31.67325 | 1.965 | 0 | 0 |
+| 2.0 | 1 | 2 | off-chain | both (identical) | 88.54 | 1.05577 | 31.67325 | 1.965 | 0 | 0 |
+| 2.0 | 1 | 4 | bisection | both (identical) | 165.76 | 1.09283 | 32.78492 | 3.864 | 0 | 0 |
+| 2.0 | 1 | 4 | off-chain | both (identical) | 165.76 | 1.09283 | 32.78492 | 3.864 | 0 | 0 |
+| 2.0 | 1 | 8 | bisection | both (identical) | 291.98 | 1.16605 | 34.98154 | 7.504 | 0 | 0 |
+| 2.0 | 1 | 8 | off-chain | both (identical) | 291.98 | 1.16605 | 34.98154 | 7.504 | 0 | 0 |
+| 2.0 | 1 | 12 | bisection | both (identical) | 392.45 | 1.23768 | 37.13040 | 10.954 | 0 | 0 |
+| 2.0 | 1 | 12 | off-chain | both (identical) | 392.45 | 1.23768 | 37.13040 | 10.954 | 0 | 0 |
+| 2.0 | 2 | 1 | bisection | both (identical) | 87.82 | 0.54654 | 16.39628 | 1.000 | 0 | 0 |
+| 2.0 | 2 | 1 | off-chain | both (identical) | 92.54 | 0.55603 | 16.68089 | 1.000 | 0 | 0 |
+| 2.0 | 2 | 2 | bisection | both (identical) | 143.60 | 0.60244 | 18.07335 | 1.886 | 0 | 0 |
+| 2.0 | 2 | 2 | off-chain | both (identical) | 164.57 | 0.61174 | 18.35222 | 1.935 | 0 | 0 |
+| 2.0 | 2 | 4 | bisection | both (identical) | 235.22 | 0.64861 | 19.45817 | 3.485 | 0 | 0 |
+| 2.0 | 2 | 4 | off-chain | both (identical) | 289.96 | 0.64803 | 19.44098 | 3.749 | 0 | 0 |
+| 2.0 | 2 | 8 | bisection | both (identical) | 331.53 | 0.72023 | 21.60703 | 6.299 | 0 | 0 |
+| 2.0 | 2 | 8 | off-chain | both (identical) | 467.96 | 0.71775 | 21.53254 | 7.102 | 0 | 0 |
+| 2.0 | 2 | 12 | bisection | both (identical) | 384.83 | 0.78830 | 23.64892 | 8.798 | 0 | 0 |
+| 2.0 | 2 | 12 | off-chain | both (identical) | 592.21 | 0.78429 | 23.52859 | 10.169 | 0 | 0 |
+| 2.0 | 4 | 1 | bisection | both (identical) | 145.88 | 0.32905 | 9.87139 | 1.000 | 0 | 0 |
+| 2.0 | 4 | 1 | off-chain | both (identical) | 178.69 | 0.34274 | 10.28206 | 1.000 | 0 | 0 |
+| 2.0 | 4 | 2 | bisection | both (identical) | 185.32 | 0.41322 | 12.39654 | 1.811 | 0 | 0 |
+| 2.0 | 4 | 2 | off-chain | both (identical) | 288.40 | 0.39730 | 11.91901 | 1.881 | 0 | 0 |
+| 2.0 | 4 | 4 | bisection | both (identical) | 268.00 | 0.46555 | 13.96664 | 3.250 | 0 | 0 |
+| 2.0 | 4 | 4 | off-chain | both (identical) | 463.65 | 0.43162 | 12.94855 | 3.539 | 0 | 0 |
+| 2.0 | 4 | 8 | bisection | both (identical) | 313.60 | 0.53967 | 16.18999 | 5.562 | 0 | 0 |
+| 2.0 | 4 | 8 | off-chain | both (identical) | 666.57 | 0.49497 | 14.84910 | 6.422 | 0 | 0 |
+| 2.0 | 4 | 12 | bisection | both (identical) | 333.14 | 0.60257 | 18.07717 | 7.579 | 0 | 0 |
+| 2.0 | 4 | 12 | off-chain | both (identical) | 770.06 | 0.55189 | 16.55673 | 8.887 | 0 | 0 |
+| 2.0 | 8 | 1 | bisection | both (identical) | 202.11 | 0.23749 | 7.12467 | 1.000 | 0 | 0 |
+| 2.0 | 8 | 1 | off-chain | both (identical) | 335.81 | 0.28505 | 8.55151 | 1.000 | 0 | 0 |
+| 2.0 | 8 | 2 | bisection | both (identical) | 207.17 | 0.35146 | 10.54374 | 1.763 | 0 | 0 |
+| 2.0 | 8 | 2 | off-chain | both (identical) | 468.25 | 0.33713 | 10.11397 | 1.813 | 0 | 0 |
+| 2.0 | 8 | 4 | bisection | both (identical) | 256.25 | 0.41354 | 12.40609 | 3.161 | 0 | 0 |
+| 2.0 | 8 | 4 | off-chain | both (identical) | 676.74 | 0.36687 | 11.00598 | 3.238 | 0 | 0 |
+| 2.0 | 8 | 8 | bisection | both (identical) | 278.60 | 0.49268 | 14.78034 | 5.390 | 0 | 0 |
+| 2.0 | 8 | 8 | off-chain | both (identical) | 841.39 | 0.42003 | 12.60092 | 5.465 | 0 | 0 |
+| 2.0 | 8 | 12 | bisection | both (identical) | 283.31 | 0.54756 | 16.42684 | 7.076 | 0 | 0 |
+| 2.0 | 8 | 12 | off-chain | both (identical) | 914.91 | 0.45836 | 13.75080 | 7.023 | 0 | 0 |
+| 5.0 | 1 | 1 | bisection | both (identical) | 45.62 | 1.05215 | 31.56441 | 1.000 | 0 | 0 |
+| 5.0 | 1 | 1 | off-chain | both (identical) | 45.62 | 1.05215 | 31.56441 | 1.000 | 0 | 0 |
+| 5.0 | 1 | 2 | bisection | both (identical) | 77.74 | 1.15440 | 34.63208 | 1.912 | 0 | 0 |
+| 5.0 | 1 | 2 | off-chain | both (identical) | 77.74 | 1.15440 | 34.63208 | 1.912 | 0 | 0 |
+| 5.0 | 1 | 4 | bisection | both (identical) | 132.16 | 1.25291 | 37.58730 | 3.649 | 0 | 0 |
+| 5.0 | 1 | 4 | off-chain | both (identical) | 132.16 | 1.25291 | 37.58730 | 3.649 | 0 | 0 |
+| 5.0 | 1 | 8 | bisection | both (identical) | 201.47 | 1.44302 | 43.29059 | 6.824 | 0 | 0 |
+| 5.0 | 1 | 8 | off-chain | both (identical) | 201.47 | 1.44302 | 43.29059 | 6.824 | 0 | 0 |
+| 5.0 | 1 | 12 | bisection | both (identical) | 245.11 | 1.61873 | 48.56185 | 9.606 | 0 | 0 |
+| 5.0 | 1 | 12 | off-chain | both (identical) | 245.11 | 1.61873 | 48.56185 | 9.606 | 0 | 0 |
+| 5.0 | 2 | 1 | bisection | both (identical) | 76.35 | 0.62866 | 18.85974 | 1.000 | 0 | 0 |
+| 5.0 | 2 | 1 | off-chain | both (identical) | 87.03 | 0.65450 | 19.63504 | 1.000 | 0 | 0 |
+| 5.0 | 2 | 2 | bisection | both (identical) | 99.27 | 0.78339 | 23.50168 | 1.782 | 0 | 0 |
+| 5.0 | 2 | 2 | off-chain | both (identical) | 131.45 | 0.80522 | 24.15664 | 1.846 | 0 | 0 |
+| 5.0 | 2 | 4 | bisection | both (identical) | 138.19 | 0.90307 | 27.09213 | 3.088 | 0 | 0 |
+| 5.0 | 2 | 4 | off-chain | both (identical) | 199.71 | 0.89636 | 26.89091 | 3.399 | 0 | 0 |
+| 5.0 | 2 | 8 | bisection | both (identical) | 164.85 | 1.08029 | 32.40876 | 5.323 | 0 | 0 |
+| 5.0 | 2 | 8 | off-chain | both (identical) | 271.05 | 1.05951 | 31.78536 | 5.992 | 0 | 0 |
+| 5.0 | 2 | 12 | bisection | both (identical) | 175.25 | 1.22476 | 36.74295 | 7.095 | 0 | 0 |
+| 5.0 | 2 | 12 | off-chain | both (identical) | 304.01 | 1.19471 | 35.84139 | 8.010 | 0 | 0 |
+| 5.0 | 4 | 1 | bisection | both (identical) | 103.60 | 0.46334 | 13.90018 | 1.000 | 0 | 0 |
+| 5.0 | 4 | 1 | off-chain | both (identical) | 160.57 | 0.49411 | 14.82344 | 1.000 | 0 | 0 |
+| 5.0 | 4 | 2 | bisection | both (identical) | 98.76 | 0.69113 | 20.73387 | 1.731 | 0 | 0 |
+| 5.0 | 4 | 2 | off-chain | both (identical) | 205.56 | 0.63800 | 19.13987 | 1.757 | 0 | 0 |
+| 5.0 | 4 | 4 | bisection | both (identical) | 126.20 | 0.82942 | 24.88262 | 3.036 | 0 | 0 |
+| 5.0 | 4 | 4 | off-chain | both (identical) | 276.49 | 0.71355 | 21.40659 | 3.016 | 0 | 0 |
+| 5.0 | 4 | 8 | bisection | both (identical) | 132.60 | 0.99566 | 29.86980 | 4.828 | 0 | 0 |
+| 5.0 | 4 | 8 | off-chain | both (identical) | 326.30 | 0.83435 | 25.03058 | 4.844 | 0 | 0 |
+| 5.0 | 4 | 12 | bisection | both (identical) | 134.67 | 1.10219 | 33.06569 | 6.079 | 0 | 0 |
+| 5.0 | 4 | 12 | off-chain | both (identical) | 346.11 | 0.91701 | 27.51036 | 6.039 | 0 | 0 |
+| 5.0 | 8 | 1 | bisection | both (identical) | 114.34 | 0.41981 | 12.59420 | 1.000 | 0 | 0 |
+| 5.0 | 8 | 1 | off-chain | both (identical) | 282.81 | 0.52640 | 15.79207 | 1.000 | 0 | 0 |
+| 5.0 | 8 | 2 | bisection | both (identical) | 94.23 | 0.72407 | 21.72223 | 1.727 | 0 | 0 |
+| 5.0 | 8 | 2 | off-chain | both (identical) | 298.91 | 0.65766 | 19.72973 | 1.655 | 0 | 0 |
+| 5.0 | 8 | 4 | bisection | both (identical) | 107.19 | 0.87973 | 26.39179 | 3.107 | 0 | 0 |
+| 5.0 | 8 | 4 | off-chain | both (identical) | 350.76 | 0.71204 | 21.36122 | 2.571 | 0 | 0 |
+| 5.0 | 8 | 8 | bisection | both (identical) | 110.50 | 1.05425 | 31.62754 | 5.019 | 0 | 0 |
+| 5.0 | 8 | 8 | off-chain | both (identical) | 377.42 | 0.78069 | 23.42079 | 3.583 | 0 | 0 |
+| 5.0 | 8 | 12 | bisection | both (identical) | 110.61 | 1.12422 | 33.72657 | 5.863 | 0 | 0 |
+| 5.0 | 8 | 12 | off-chain | both (identical) | 380.18 | 0.80423 | 24.12705 | 3.899 | 0 | 0 |
 
 ## Interpretation and limits
 
-The adopter pass/fail declarations above are feasibility gates. A failing Team or Slow prediction requires an ADR amendment before PR 3; thresholds must not be tuned. The planner-backed chain tests remain skipped with the PR 3 dependency. Capacity is limited by confirmation and failure isolation, so a deeper window alone is not evidence for a high-volume strict SLA. Parallel isolation can improve the curve at the cost of independent diagnosis runs and mandatory retesting; the adopter and adaptive comparisons above expose its different costs at realistic loads. This model does not select that alternative or change the planner. Cancellation latency, correlated failures, arrival bursts, build conflicts, forge outages, and variable CI times need further measurements before production claims.
+The adopter pass/fail declarations above are feasibility gates. A failing Team or Slow prediction requires an ADR amendment before PR 3; thresholds must not be tuned. The planner-backed chain tests remain skipped with the PR 3 dependency. Capacity is limited by confirmation and failure isolation, so a deeper window alone is not evidence for a high-volume strict SLA. Parallel isolation is a non-adopted alternative: its abundant-runner curve can improve at the cost of independent diagnosis runs, mandatory retesting, and unbounded off-chain load; the adopter and adaptive comparisons above expose its different costs at realistic loads. The maintainer decision is to wait for PR 3’s planner-backed results before considering isolation; this model does not select it or amend ADR 0009. Cancellation latency, correlated failures, arrival bursts, build conflicts, forge outages, and variable CI times need further measurements before production claims.
