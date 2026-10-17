@@ -248,7 +248,7 @@ func Apply(s State, e Event) State {
 			b.needsRefresh = false
 		}
 	case LandingStarted:
-		if s.batchIn(e.BatchID, Testing) && s.Active.ID == e.BatchID && s.Active.InvalidationReason == "" && (!s.Active.Speculative || s.Active.BaseSHA == s.BaseSHA) {
+		if s.batchIn(e.BatchID, Testing) && s.Active.ID == e.BatchID && s.Active.InvalidationReason == "" && s.Active.ProvisionalFailure == "" && (!s.Active.Speculative || s.Active.BaseSHA == s.BaseSHA) {
 			s.Active.Phase = Landing
 			s.Active.LandingAttempt = LandingAttempt{ID: e.AttemptID, FenceToken: e.FenceToken, StartedAt: e.At}
 			if s.Active.Method == FastForward {
@@ -486,6 +486,12 @@ func (s *State) completeChecks(b *Batch, success bool) {
 		return
 	}
 	if success {
+		// An aggregate pass has no attempt identities and cannot clear a
+		// provisional failure. Only a qualifying identified observation can
+		// resolve it; preserve the retry/deadline path until that arrives.
+		if b.ProvisionalFailure != "" {
+			return
+		}
 		b.checksPassed = true
 	} else if b.Speculative {
 		b.ProvisionalFailure = ChecksFailed

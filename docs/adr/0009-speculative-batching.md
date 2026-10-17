@@ -66,7 +66,11 @@ snapshot compaction must preserve them. Existing `checks_completed` records
 retain their immediate pass/failure meaning for legacy depth-1 batches. An
 aggregate failure on a chained batch is provisional; at the head it requires a
 retry-aware refresh and the same-commit rerun path before blame (unsupported
-forges excepted). Older binaries cannot replay these additive types: rollback after
+forges excepted). A later aggregate pass cannot resolve a recorded provisional
+failure: it lacks the attempt identities required to prove a rerun passed. Only
+a qualifying identified observation resolves the marker; until then, landing is
+blocked and the recorded retry/timeout path remains active.
+Older binaries cannot replay these additive types: rollback after
 first use requires a compatible database restore.
 
 ### The window

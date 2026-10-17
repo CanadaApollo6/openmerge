@@ -6,7 +6,7 @@ import "time"
 // plan. Callers must first drain ready actions (and schedule failed-action
 // retries themselves). A paused build has no timer: it needs an external event.
 func NextWake(cfg Config, s State, now time.Time) (time.Time, bool) {
-	if s.Active == nil || cfg.MaxDepth() == 1 && len(s.Following) == 0 {
+	if s.Active == nil || (cfg.MaxDepth() == 1 && len(s.Following) == 0) {
 		return nextWakeSingle(cfg, s, now)
 	}
 	var next time.Time
@@ -16,7 +16,7 @@ func NextWake(cfg Config, s State, now time.Time) (time.Time, bool) {
 		}
 	}
 	for _, b := range s.Batches() {
-		if b.InvalidationReason != "" || b.ProvisionalFailure != "" && b != s.Active {
+		if b.InvalidationReason != "" || (b.ProvisionalFailure != "" && b != s.Active) {
 			continue
 		}
 		local := s
@@ -68,7 +68,7 @@ func nextWakeSingle(cfg Config, s State, now time.Time) (time.Time, bool) {
 				consider(s.buildRetry.failedAt.Add(cfg.buildRetryDelay(s.buildRetry.failures)))
 			}
 		case Testing:
-			if !batch.checksPassed {
+			if !batch.checksPassed || batch.ProvisionalFailure != "" {
 				if deadline, enabled := batch.checkDeadline(cfg); enabled {
 					consider(deadline.Add(time.Nanosecond))
 				}

@@ -42,7 +42,7 @@ type CheckRetryState struct {
 }
 
 // ChecksObserved is the identified observation used only by retry-enabled
-// queues. Existing ChecksCompleted events always retain their legacy meaning.
+// queues. ChecksCompleted events retain their legacy meaning at depth one.
 type ChecksObserved struct {
 	BatchID          string        `json:"batch_id"`
 	TestedSHA        string        `json:"tested_sha"`
@@ -407,7 +407,7 @@ func (s *State) requestCheckRerun(e CheckRerunRequested) {
 		e.Runs[i].Attempt = max(e.Runs[i].Attempt, 1)
 	}
 	r := b.CheckRetry
-	if r == nil || r.Requested || r.Confirmed || b.checksPassed || !slices.Equal(r.FailedRuns, e.Runs) || r.Timeout != e.Timeout || !r.OriginalDeadline.Equal(e.OriginalDeadline) {
+	if r == nil || r.Requested || r.Confirmed || (b.checksPassed && b.ProvisionalFailure == "") || !slices.Equal(r.FailedRuns, e.Runs) || r.Timeout != e.Timeout || !r.OriginalDeadline.Equal(e.OriginalDeadline) {
 		return
 	}
 	r.Requested, r.RequestedAt, r.Deadline, r.Generation = true, e.At, e.Deadline, e.Generation
@@ -459,7 +459,7 @@ func (s *State) progressCheckRerun(e CheckRerunDispatchProgress) {
 
 func (s *State) confirmCheckFailure(e ChecksFailureConfirmed) {
 	b := s.Batch(e.BatchID)
-	if e.Validate() != nil || b != s.Active || !s.batchIn(e.BatchID, Testing) || b.TestedSHA != e.TestedSHA || b.checksGeneration != e.Generation || b.checksPassed {
+	if e.Validate() != nil || b != s.Active || !s.batchIn(e.BatchID, Testing) || b.TestedSHA != e.TestedSHA || b.checksGeneration != e.Generation || (b.checksPassed && b.ProvisionalFailure == "") {
 		return
 	}
 	if b.CheckRetry == nil {

@@ -181,7 +181,7 @@ func planBatch(cfg Config, s State, batch *Batch, now time.Time) []Action {
 			actions = append(actions, build)
 		}
 	case Testing:
-		if batch.checksPassed {
+		if batch.checksPassed && batch.ProvisionalFailure == "" {
 			if batch != s.Active || batch.BaseSHA != s.BaseSHA {
 				return actions
 			}

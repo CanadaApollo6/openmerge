@@ -67,7 +67,7 @@ MUTANTS = {
         ("if len(prs) == 1 {", "if true {"),
         ("if true {\n\t\ts.requestDequeue(prs[0].PR, reason)", "if true {\n\t\tfor _, pr := range prs { s.requestDequeue(pr.PR, reason) }"),
     ),
-    "no_ci_gate": mutation(PLAN, ("if batch.checksPassed {", "if true {")),
+    "no_ci_gate": mutation(PLAN, ('if batch.checksPassed && batch.ProvisionalFailure == "" {', "if true {")),
     "land_ignores_generation": mutation(
         PLAN,
         ("ChecksGeneration: batch.checksGeneration,", "ChecksGeneration: 0,"),

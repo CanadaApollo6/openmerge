@@ -14,11 +14,13 @@ func TestChainStaleRefreshesAreBoundedByRecordedDeadline(t *testing.T) {
 			for _, identity := range [][2]uint64{{1, 3}, {2, 1}, {2, 2}} {
 				for _, refreshOffset := range []time.Duration{-time.Nanosecond, 0, time.Nanosecond} {
 					for _, reopened := range []bool{false, true} {
-						name := fmt.Sprintf("%s/%s/%v/refresh%v/reopened%v", phase, result, identity, refreshOffset, reopened)
-						t.Run(name, func(t *testing.T) {
-							assertStaleChainDeadline(t, phase, result, identity, refreshOffset, reopened)
-						})
-						checked++
+						for _, legacyPass := range []bool{false, true} {
+							name := fmt.Sprintf("%s/%s/%v/refresh%v/reopened%v/legacyPass%v", phase, result, identity, refreshOffset, reopened, legacyPass)
+							t.Run(name, func(t *testing.T) {
+								assertStaleChainDeadline(t, phase, result, identity, refreshOffset, reopened, legacyPass)
+							})
+							checked++
+						}
 					}
 				}
 			}
@@ -27,7 +29,7 @@ func TestChainStaleRefreshesAreBoundedByRecordedDeadline(t *testing.T) {
 	t.Logf("checked %d stale-read/deadline combinations", checked)
 }
 
-func assertStaleChainDeadline(t *testing.T, phase, result string, identity [2]uint64, refreshOffset time.Duration, reopened bool) {
+func assertStaleChainDeadline(t *testing.T, phase, result string, identity [2]uint64, refreshOffset time.Duration, reopened, legacyPass bool) {
 	t.Helper()
 	cfg, s, now := chainState(t, 4, 2)
 	s, first := admitChain(t, cfg, s, now)
@@ -67,12 +69,16 @@ func assertStaleChainDeadline(t *testing.T, phase, result string, identity [2]ui
 	}
 	for step := range 2 {
 		s = Apply(s, stale)
+		if legacyPass {
+			s = Apply(s, ChecksCompleted{TestedSHA: second.TestedSHA, Success: true})
+		}
 		r := s.Active.CheckRetry
 		if r.Requested != before.Requested || !r.RequestedAt.Equal(before.RequestedAt) || !r.OriginalDeadline.Equal(before.OriginalDeadline) || !r.Deadline.Equal(before.Deadline) || !reflect.DeepEqual(r.FailedRuns, before.FailedRuns) || r.ObservedRuns[0].ID != 2 || r.ObservedRuns[0].Attempt != 2 {
 			t.Fatal("stale observation changed identities, retry budget or deadlines")
 		}
 		s = snapshotRoundTrip(t, cfg, s, at)
 		plan := Plan(cfg, s, at)
+		assertNoProvisionalLand(t, cfg, s, at)
 		if step == 0 && (s.Active.needsRefresh || refreshOffset < 0) {
 			refresh := onlyAction[RefreshChecks](t, plan)
 			s = Apply(s, ChecksRefreshed{BatchID: refresh.BatchID, TestedSHA: refresh.TestedSHA, At: at})
@@ -99,7 +105,13 @@ func TestProvisionalHeadKeepsRetryDeadlineWake(t *testing.T) {
 	s = requestRetry(t, cfg, s, now)
 	s = dispatchRetry(t, cfg, s, now, false)
 	s = Apply(s, ChecksCompleted{TestedSHA: b.TestedSHA, Success: false})
+	s = Apply(s, ChecksCompleted{TestedSHA: b.TestedSHA, Success: true})
 	s = Apply(s, ChecksRefreshed{BatchID: b.ID, TestedSHA: b.TestedSHA, At: now})
+	// Older projections could retain aggregate success alongside the marker.
+	// Even that snapshot must keep the planner gate and deadline wake intact.
+	s.Active.checksPassed = true
+	s = snapshotRoundTrip(t, cfg, s, now)
+	assertNoProvisionalLand(t, cfg, s, now)
 	if plan := Plan(cfg, s, now); len(plan) != 0 {
 		t.Fatalf("expected drained head before deadline, got %#v", plan)
 	}
