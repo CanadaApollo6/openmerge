@@ -77,6 +77,77 @@ func RunGit(t *testing.T, newEnv func(t *testing.T) Env) {
 	run(t, newEnv, false)
 }
 
+// RunCheckRerunner exercises the optional same-commit retry contract. The
+// observer is deliberately supplied by the fixture: a successful request only
+// schedules work, so the driver must expose the new pending attempt through its
+// ordinary CheckRuns observation without making CI calls here.
+func RunCheckRerunner(t *testing.T, repo forge.RepoRef, rerunner forge.CheckRerunner, request forge.RerunChecksRequest, observe func() ([]forge.CheckRun, error)) {
+	t.Helper()
+	if request.TestedSHA == "" || request.TestRef == "" || request.Key == "" || len(request.Runs) == 0 {
+		t.Fatal("rerun contract needs a complete request")
+	}
+	before, err := observe()
+	must(t, err)
+	result, err := rerunner.RerunFailedChecks(context.Background(), repo, request)
+	must(t, err)
+	if result.Unsupported {
+		t.Fatalf("capable rerunner reported unsupported: %+v", result)
+	}
+	afterFirst, err := observe()
+	must(t, err)
+	result, err = rerunner.RerunFailedChecks(context.Background(), repo, request)
+	must(t, err)
+	if result.Unsupported {
+		t.Fatalf("idempotent rerun reported unsupported: %+v", result)
+	}
+	afterSecond, err := observe()
+	must(t, err)
+	if len(afterSecond) != len(afterFirst) {
+		t.Fatalf("duplicate rerun changed observed run count: first=%d second=%d", len(afterFirst), len(afterSecond))
+	}
+	for _, requested := range request.Runs {
+		if !hasNewPendingAttempt(before, afterFirst, requested, request.TestRef) {
+			t.Fatalf("rerun did not add a pending newer attempt for %+v: before=%+v after=%+v", requested, before, afterFirst)
+		}
+	}
+}
+
+func hasNewPendingAttempt(before, after []forge.CheckRun, requested forge.CheckRun, testRef string) bool {
+	for _, candidate := range after {
+		if candidate.Name != requested.Name || candidate.Source != requested.Source || candidate.HeadBranch != testRef || candidate.State != forge.Pending {
+			continue
+		}
+		if !checkRunNewer(candidate, requested) {
+			continue
+		}
+		seen := false
+		for _, old := range before {
+			if old == candidate {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			return true
+		}
+	}
+	return false
+}
+
+func checkRunNewer(candidate, current forge.CheckRun) bool {
+	if candidate.ID != current.ID {
+		return candidate.ID > current.ID
+	}
+	return attemptOrFirst(candidate.Attempt) > attemptOrFirst(current.Attempt)
+}
+
+func attemptOrFirst(attempt uint64) uint64 {
+	if attempt == 0 {
+		return 1
+	}
+	return attempt
+}
+
 func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 	t.Helper()
 	factory := newEnv

@@ -62,13 +62,14 @@ type Block struct {
 
 // Batch pins the tested inputs and the operation currently awaiting an outcome.
 type Batch struct {
-	ID        string    `json:"id"`
-	Phase     string    `json:"phase"`
-	BaseSHA   string    `json:"base_sha"`
-	TestedSHA string    `json:"tested_sha"`
-	TestRef   string    `json:"test_ref"`
-	Method    string    `json:"method"`
-	PRs       []BatchPR `json:"prs"`
+	ID         string                 `json:"id"`
+	Phase      string                 `json:"phase"`
+	BaseSHA    string                 `json:"base_sha"`
+	TestedSHA  string                 `json:"tested_sha"`
+	TestRef    string                 `json:"test_ref"`
+	Method     string                 `json:"method"`
+	PRs        []BatchPR              `json:"prs"`
+	CheckRetry *queue.CheckRetryState `json:"check_retry,omitempty"`
 }
 
 // BatchPR identifies an exact head in a batch.
@@ -99,14 +100,16 @@ type Why struct {
 
 // Event exposes stable evidence metadata without the private persistence payload.
 type Event struct {
-	ID      int64      `json:"id"`
-	Type    string     `json:"type"`
-	At      time.Time  `json:"at"`
-	Summary string     `json:"summary"`
-	Count   int        `json:"count,omitempty"`
-	EndID   int64      `json:"end_id,omitempty"`
-	Until   *time.Time `json:"until,omitempty"`
-	pairKey string
+	ID         int64            `json:"id"`
+	Type       string           `json:"type"`
+	At         time.Time        `json:"at"`
+	Summary    string           `json:"summary"`
+	Count      int              `json:"count,omitempty"`
+	EndID      int64            `json:"end_id,omitempty"`
+	Until      *time.Time       `json:"until,omitempty"`
+	Runs       []queue.CheckRun `json:"runs,omitempty"`
+	RerunState string           `json:"rerun_state,omitempty"`
+	pairKey    string
 }
 
 // Project replays committed history. A positive PR selects its explanation;
@@ -154,7 +157,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 			case queue.Dequeued:
 				if entryIn(before, n) && !entryIn(s, n) {
 					e.Status, e.Reason, e.LastDequeueReason = "dequeued", string(v.Reason), string(v.Reason)
-					if v.Reason == queue.ChecksTimeout && before.CheckProvenanceDetail() != "" && inBatch(before, n) {
+					if (before.CheckRetryDetail() != "" || v.Reason == queue.ChecksTimeout && before.CheckProvenanceDetail() != "") && inBatch(before, n) {
 						e.Detail = sanitizer.Sanitize(before.DequeueDetail(n, v.Reason))
 					}
 				}
@@ -177,7 +180,9 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 		}
 		if pr > 0 && (inheritedPause[record.ID] || affects(record.Event, pr, before, s, tested)) {
 			kind, _, _ := queue.EncodeEvent(record.Event)
-			events = appendEvidence(events, Event{ID: record.ID, Type: kind, At: record.RecordedAt.UTC(), Summary: sanitizer.Sanitize(eventSummary(record.Event, before, s))}, record.Event, previous, before)
+			evidence := Event{ID: record.ID, Type: kind, At: record.RecordedAt.UTC(), Summary: sanitizer.Sanitize(eventSummary(record.Event, before, s))}
+			evidence.Runs, evidence.RerunState = retryEvidence(record.Event, before, s, sanitizer)
+			events = appendEvidence(events, evidence, record.Event, previous, before)
 			previous = record.Event
 			// Keep one extra row until a reopen's matching refresh arrives.
 			if len(events) > limit+1 {
@@ -204,7 +209,10 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 	}
 	q.Paused = len(q.Blocks) > 0
 	if b := s.Active; b != nil {
-		q.ActiveBatch = &Batch{ID: b.ID, Phase: string(b.Phase), BaseSHA: b.BaseSHA, TestedSHA: b.TestedSHA, TestRef: b.TestRef, Method: string(b.Method), PRs: make([]BatchPR, 0, len(b.PRs))}
+		q.ActiveBatch = &Batch{ID: b.ID, Phase: string(b.Phase), BaseSHA: b.BaseSHA, TestedSHA: b.TestedSHA, TestRef: b.TestRef, Method: string(b.Method), PRs: make([]BatchPR, 0, len(b.PRs)), CheckRetry: cloneCheckRetry(b.CheckRetry)}
+		if q.ActiveBatch.CheckRetry != nil {
+			q.ActiveBatch.CheckRetry.Detail = sanitizer.Sanitize(q.ActiveBatch.CheckRetry.Detail)
+		}
 		for _, pin := range b.PRs {
 			q.ActiveBatch.PRs = append(q.ActiveBatch.PRs, BatchPR{pin.PR, pin.HeadSHA})
 		}
@@ -224,6 +232,9 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 		}
 		if reason := s.PendingDequeue(e.PR); reason != "" {
 			e.Status, e.Reason = "dequeue-pending", string(reason)
+			if s.CheckRetryDetail() != "" {
+				e.Detail = sanitizer.Sanitize(s.DequeueDetail(e.PR, reason))
+			}
 		}
 		if q.Paused {
 			e.Status, e.Reason = "paused", q.PauseReason
@@ -304,6 +315,87 @@ func entryIn(s queue.State, pr int) bool {
 
 func inBatch(s queue.State, pr int) bool {
 	return s.Active != nil && slices.ContainsFunc(s.Active.PRs, func(p queue.BatchPR) bool { return p.PR == pr })
+}
+
+func cloneCheckRetry(retry *queue.CheckRetryState) *queue.CheckRetryState {
+	if retry == nil {
+		return nil
+	}
+	cloned := *retry
+	cloned.Dispatches = slices.Clone(retry.Dispatches)
+	cloned.FailedRuns = slices.Clone(retry.FailedRuns)
+	cloned.ObservedRuns = slices.Clone(retry.ObservedRuns)
+	if cloned.RerunState == "requested" && cloned.Dispatched {
+		cloned.RerunState = "running"
+	}
+	return &cloned
+}
+
+func retryEvidence(event queue.Event, before, after queue.State, sanitizer *diagnostic.Sanitizer) ([]queue.CheckRun, string) {
+	var runs []queue.CheckRun
+	var state string
+	switch e := event.(type) {
+	case queue.ChecksObserved:
+		runs, state = e.Runs, retryState(after, e.BatchID, e.TestedSHA)
+		if state == "" {
+			if !e.Terminal {
+				state = "running"
+			} else if e.Success {
+				state = "passed"
+			} else {
+				state = "failed"
+			}
+		}
+	case queue.CheckRerunRequested:
+		runs, state = e.Runs, "requested"
+	case queue.CheckRerunDispatchProgress:
+		if before.Active != nil && before.Active.CheckRetry != nil {
+			runs = before.Active.CheckRetry.FailedRuns
+		}
+		state = "requested"
+		if e.Target.Accepted {
+			state = "running"
+		}
+	case queue.CheckRerunDispatched:
+		if before.Active != nil && before.Active.CheckRetry != nil {
+			runs = before.Active.CheckRetry.FailedRuns
+		}
+		if e.OutcomeUnknown {
+			state = "unknown"
+		} else if e.Unsupported {
+			state = "unsupported"
+		} else {
+			state = "running"
+		}
+	case queue.ChecksFailureConfirmed:
+		if before.Active != nil && before.Active.CheckRetry != nil {
+			runs = before.Active.CheckRetry.FailedRuns
+		}
+		state = "failed"
+	}
+	if len(runs) == 0 {
+		return nil, state
+	}
+	runsCopy := slices.Clone(runs)
+	for i := range runsCopy {
+		runsCopy[i].Name = sanitizer.Sanitize(runsCopy[i].Name)
+		runsCopy[i].Source = sanitizer.Sanitize(runsCopy[i].Source)
+		runsCopy[i].State = sanitizer.Sanitize(runsCopy[i].State)
+		runsCopy[i].URL = sanitizer.Sanitize(runsCopy[i].URL)
+		runsCopy[i].WorkflowRunURL = sanitizer.Sanitize(runsCopy[i].WorkflowRunURL)
+	}
+	return runsCopy, state
+}
+
+func retryState(s queue.State, batchID, testedSHA string) string {
+	if s.Active == nil || s.Active.ID != batchID || s.Active.TestedSHA != testedSHA || s.Active.CheckRetry == nil {
+		return ""
+	}
+	state := s.Active.CheckRetry.RerunState
+	if state == "requested" && s.Active.CheckRetry.Dispatched {
+		return "running"
+	}
+	return state
 }
 
 // Correlate CI that arrived before TestRefBuilt with the batch that ultimately
@@ -463,6 +555,41 @@ func eventSummary(event queue.Event, before, after queue.State) string {
 		return "Check provenance diagnostic cleared"
 	case queue.ChecksCompleted:
 		return fmt.Sprintf("Recorded terminal CI result; success=%t", e.Success)
+	case queue.ChecksObserved:
+		if !e.Terminal {
+			return "Observed pending retry-aware CI; runs: " + checkRunSummary(e.Runs)
+		}
+		return fmt.Sprintf("Observed retry-aware terminal CI result; success=%t; runs: %s", e.Success, checkRunSummary(e.Runs))
+	case queue.CheckRerunRequested:
+		return fmt.Sprintf("Requested bounded retry of %d failed check(s): %s", len(e.Runs), checkRunSummary(e.Runs))
+	case queue.CheckRerunDispatchProgress:
+		phase := "intent"
+		if e.Target.Accepted {
+			phase = "acceptance"
+		} else if e.Target.NotDispatched {
+			phase = "definite refusal"
+		}
+		return fmt.Sprintf("Recorded Actions rerun %s for workflow %d after attempt %d", phase, e.Target.WorkflowRunID, e.Target.Attempt)
+	case queue.CheckRerunDispatched:
+		if e.OutcomeUnknown {
+			return queue.ActionsPermissionLostDetail
+		}
+		if e.Unsupported {
+			if e.Detail != "" {
+				return "Check retry unsupported: " + e.Detail
+			}
+			return "Check retry unsupported by the forge"
+		}
+		if e.Detail != "" {
+			return "Dispatched bounded check retry: " + e.Detail
+		}
+		return "Dispatched bounded check retry"
+	case queue.ChecksFailureConfirmed:
+		detail := string(e.Reason)
+		if retry := before.CheckRetryDetail(); retry != "" {
+			detail += ": " + retry
+		}
+		return "Confirmed check failure: " + detail
 	case queue.ChecksReopened:
 		if before.ChecksPassed(e.TestedSHA) && !after.ChecksPassed(e.TestedSHA) {
 			return "CI reopened; previous success revoked"
@@ -489,6 +616,24 @@ func eventSummary(event queue.Event, before, after queue.State) string {
 	}
 }
 
+func checkRunSummary(runs []queue.CheckRun) string {
+	if len(runs) == 0 {
+		return "none"
+	}
+	identities := make([]string, 0, len(runs))
+	for _, run := range runs {
+		identity := fmt.Sprintf("%s/%s#%d.%d=%s", run.Name, run.Source, run.ID, run.Attempt, run.State)
+		if run.WorkflowRunID > 0 {
+			identity += fmt.Sprintf(" workflow=%d %s", run.WorkflowRunID, run.WorkflowRunURL)
+		}
+		if run.URL != "" {
+			identity += " job=" + run.URL
+		}
+		identities = append(identities, identity)
+	}
+	return strings.Join(identities, ", ")
+}
+
 func affects(event queue.Event, pr int, before, after queue.State, tested map[string]bool) bool {
 	if n := directPR(event); n > 0 {
 		return n == pr
@@ -508,6 +653,16 @@ func affects(event queue.Event, pr int, before, after queue.State, tested map[st
 		return slices.ContainsFunc(e.PRs, func(p queue.BatchPR) bool { return p.PR == pr })
 	case queue.ChecksCompleted:
 		return tested[e.TestedSHA]
+	case queue.ChecksObserved:
+		return inBatch(before, pr) && before.Active.ID == e.BatchID && before.Active.TestedSHA == e.TestedSHA
+	case queue.CheckRerunRequested:
+		return inBatch(before, pr) && before.Active.ID == e.BatchID && before.Active.TestedSHA == e.TestedSHA
+	case queue.CheckRerunDispatchProgress:
+		return inBatch(before, pr) && before.Active.ID == e.BatchID && before.Active.TestedSHA == e.TestedSHA
+	case queue.CheckRerunDispatched:
+		return inBatch(before, pr) && before.Active.ID == e.BatchID && before.Active.TestedSHA == e.TestedSHA
+	case queue.ChecksFailureConfirmed:
+		return inBatch(before, pr) && before.Active.ID == e.BatchID && before.Active.TestedSHA == e.TestedSHA
 	case queue.ChecksReopened:
 		return tested[e.TestedSHA]
 	case queue.CheckProvenanceObserved:

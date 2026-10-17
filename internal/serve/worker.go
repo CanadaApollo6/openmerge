@@ -111,8 +111,26 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 		disableDeleteHeadBranch = false
 	}
 	x := executor.Executor{Driver: w.Driver, Git: w.Git, Repo: w.repo(), Base: w.Key.BaseBranch, DisableDeleteHeadBranch: disableDeleteHeadBranch}
+	x.ChecksRetryFailed = cfg.ChecksRetryFailed
+	x.CheckTimeout = cfg.CheckTimeout
+	if state.Active != nil {
+		x.StartedTestingAt = state.Active.StartedTestingAt
+		x.CheckRetry = state.Active.CheckRetry
+	}
 	x.PreviousUnboundChecks = state.UnboundChecks()
 	x.ReferencesCheck = w.cfg.MergeWhen.ReferencesCheck
+	if cfg.ChecksRetryFailed == 1 {
+		x.RetryFailure = func(checks []forge.CheckRun, name string) bool {
+			if state.Active == nil {
+				return false
+			}
+			prs := make([]forge.PullRequest, 0, len(state.Active.PRs))
+			for _, pin := range state.Active.PRs {
+				prs = append(prs, w.prs[pin.PR])
+			}
+			return retryPolicyFailure(w.cfg.MergeWhen, prs, checks, name)
+		}
+	}
 	if dequeue, ok := claim.Action.(queue.Dequeue); ok {
 		x.ChecksTimeoutDetail = state.DequeueDetail(dequeue.PR, dequeue.Reason)
 	}
@@ -283,6 +301,9 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 			for _, pr := range state.Active.PRs {
 				if pr.PR == entry.PR {
 					status = forge.Status{State: forge.StatusState(state.Active.Phase), Summary: "Batch " + state.Active.ID}
+					if retry := state.Active.CheckRetry; retry != nil {
+						status.Summary += "; " + checkRetryStatus(retry)
+					}
 				}
 			}
 			if status.State == "building" {
@@ -304,6 +325,46 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 		}
 	}
 	return nil
+}
+
+func checkRetryStatus(retry *queue.CheckRetryState) string {
+	if retry == nil {
+		return ""
+	}
+	state := retry.RerunState
+	if state == "" {
+		state = "observed"
+	}
+	if state == "requested" && retry.Dispatched {
+		state = "running"
+	}
+	detail := "check retry " + state
+	if retry.Detail != "" {
+		detail += ": " + retry.Detail
+	}
+	if state == "passed" && len(retry.FailedRuns) > 0 {
+		detail += fmt.Sprintf(" (%d flaky original", len(retry.FailedRuns))
+		if identities := checkRunIdentities(retry.FailedRuns); identities != "" {
+			detail += ": " + identities
+		}
+		detail += ")"
+	}
+	return detail
+}
+
+func checkRunIdentities(runs []queue.CheckRun) string {
+	identities := make([]string, 0, len(runs))
+	for _, run := range runs {
+		identity := fmt.Sprintf("%s/%s#%d.%d", run.Name, run.Source, run.ID, run.Attempt)
+		if run.WorkflowRunID > 0 {
+			identity += fmt.Sprintf(" workflow=%d %s", run.WorkflowRunID, run.WorkflowRunURL)
+		}
+		if run.URL != "" {
+			identity += " job=" + run.URL
+		}
+		identities = append(identities, identity)
+	}
+	return strings.Join(identities, ", ")
 }
 
 func (w *worker) readinessReason() string {

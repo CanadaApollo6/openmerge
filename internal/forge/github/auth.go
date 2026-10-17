@@ -208,7 +208,7 @@ func (a *App) token(ctx context.Context, id int64) (result string, resultErr err
 	p := token.GetPermissions()
 	entry.permissions = map[string]string{
 		"contents": p.GetContents(), "workflows": p.GetWorkflows(), "pull_requests": p.GetPullRequests(),
-		"checks": p.GetChecks(), "statuses": p.GetStatuses(), "issues": p.GetIssues(), "metadata": p.GetMetadata(),
+		"checks": p.GetChecks(), "actions": p.GetActions(), "statuses": p.GetStatuses(), "issues": p.GetIssues(), "metadata": p.GetMetadata(),
 	}
 	return entry.token, nil
 }

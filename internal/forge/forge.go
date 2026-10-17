@@ -89,16 +89,73 @@ const (
 )
 
 // CheckRun is a named check on a particular commit. ID increases monotonically
-// for each new run of a name from one Source; updates retain their ID.
+// for each new run of a name from one Source; updates retain their ID. Attempt
+// is a one-based execution attempt when the forge supplies it; zero means
+// unknown for a legacy observation. Providers such as GitHub Actions may
+// expose the same native check ID for more than one attempt, so callers use
+// Attempt together with ID to identify a run when Attempt is known.
 // Sources identify independent producers whose IDs cannot be compared.
 type CheckRun struct {
-	ID     uint64
-	Name   string
-	Source string
-	State  CheckState
+	// RetryPermissionDenied marks an un-enriched read that cannot verify a requested rerun.
+	RetryPermissionDenied bool
+	RetryUnsupported      string
+	WorkflowRunID         uint64
+	WorkflowRunURL        string
+	URL                   string
+	ID                    uint64
+	Attempt               uint64
+	Name                  string
+	Source                string
+	State                 CheckState
 	// HeadBranch is the check suite's triggering branch, without refs/heads/.
 	// Empty means unknown; commit statuses (Source "status:...") lack provenance.
 	HeadBranch string
+}
+
+// RerunChecksRequest identifies the exact failed checks to execute again. The
+// tested SHA, queue test ref, producer source, native ID, and attempt are all
+// part of the identity; a driver must not broaden a request to another SHA,
+// ref, or producer.
+type RerunChecksRequest struct {
+	TestedSHA, TestRef string
+	Runs               []CheckRun
+	Key                string
+	// Progress must commit durably before returning nil. Intent precedes POST;
+	// accepted follows it. Only a recorded definite non-dispatch permits a new intent.
+	Progress func(RerunTarget) error
+	Targets  []RerunTarget
+}
+
+// RerunTarget is the durable state of one remote workflow dispatch.
+type RerunTarget struct {
+	WorkflowRunID uint64 `json:"workflow_run_id"`
+	Attempt       uint64 `json:"attempt"`
+	Accepted      bool   `json:"accepted"`
+	// NotDispatched proves the last intent was refused without acceptance.
+	NotDispatched bool `json:"not_dispatched,omitempty"`
+}
+
+// RetryCheckReader enriches opt-in observations with Actions job attempts.
+// Workflow IDs identify recorded failed observations or pending dispatch targets.
+type RetryCheckReader interface {
+	CheckRunsForRetry(context.Context, RepoRef, string, []uint64) ([]CheckRun, error)
+}
+
+// RerunChecksResult describes a provider that cannot rerun the requested
+// checks. A successful request does not mean that CI passed or even stopped;
+// the caller must observe CheckRuns again.
+type RerunChecksResult struct {
+	// OutcomeUnknown means Actions read permission was lost after a dispatch intent.
+	OutcomeUnknown bool
+	Unsupported    bool
+	Detail         string
+}
+
+// CheckRerunner is an optional forge capability. Drivers that do not support
+// same-commit reruns simply do not implement it; the planner then treats a
+// failed check as confirmed on its first observation.
+type CheckRerunner interface {
+	RerunFailedChecks(context.Context, RepoRef, RerunChecksRequest) (RerunChecksResult, error)
 }
 
 // LinearHistoryReader reports base policy independently of landing permission.

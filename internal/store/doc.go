@@ -25,7 +25,7 @@
 // Complete. BeginConsequential
 // renews the lease; forge calls and result persistence must finish within it.
 // Expired in-flight claims can be recovered; BeginConsequential revalidates them.
-// Emit replans under the queue lock before BatchStarted or LandingStarted and
+// Emit replans under the queue lock before BatchStarted, CheckRerunRequested, or LandingStarted and
 // requires the same key and complete payload. A stale start appends nothing,
 // cancels its action, and returns ErrStale before any forge call. Emit admits only
 // one LandingStarted per batch during a valid in-flight execution window, so a

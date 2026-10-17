@@ -97,8 +97,40 @@ and write**. Use a fine-grained token; avoid classic tokens. Approve organizatio
 access/SSO where required, then export it as `GITHUB_TOKEN` for the commands below.
 The runtime App deliberately has no
 administration or organization-members permission: its collaborator permission
-check uses metadata read. The manifest uses contents, workflows, pull requests
-and checks write, plus statuses, issues and metadata read. Workflows write lets
+check uses metadata read. The manifest uses contents, workflows, pull requests,
+checks and Actions write, plus statuses, issues and metadata read. Actions write
+permits same-commit retries of GitHub Actions checks only; foreign-App check
+runs and commit statuses are unsupported. Updating the manifest does not change
+an existing App. The App owner must add **Actions: Read and write** in the App's
+permission settings, prompting each installation to approve. Until approved, a
+retry-enabled queue behaves exactly like retry-off and logs a WARN.
+
+`actions: write` also grants cancellation, artifact/cache management and deployment
+approvals. OpenMerge calls only the rerun-failed-jobs endpoint for retries (and,
+after ADR 0009 PR 4, cancel). Enable the bounded single retry per queue:
+
+```yaml
+version: 1
+queues:
+  - name: default
+    merge_when: [check-success = ci]
+    checks:
+      retry_failed: 1 # default: 0
+```
+
+Reruns get one `check_timeout` from the recorded request. If `check_timeout: 0`
+disables the original check timer, requested reruns still have the default
+one-hour deadline. A dispatch that never receives acceptance times out with
+“rerun dispatch never confirmed”; it cannot wait indefinitely. The permanent
+record of flaky-run identities, workflow/job links and retry outcomes is `why`,
+including after the PR lands; the landed comment does not repeat that evidence.
+
+Drain older workers before upgrading. After the first retry event is written,
+rolling back to an older binary requires a database restore, per
+[ADR 0002](docs/adr/0002-storage-and-state-model.md) and
+[ADR 0009](docs/adr/0009-speculative-batching.md).
+
+Workflows write lets
 test-ref builds and landings include changes to `.github/workflows/`; PR-thread
 comments use pull requests write. Issues read permits command reads and the
 `issue_comment` subscription. See the [permission table](internal/forge/github/README.md#setup-and-ruleset-validation).

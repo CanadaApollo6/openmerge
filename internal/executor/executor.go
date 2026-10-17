@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -29,6 +30,18 @@ type Executor struct {
 	Base                  string
 	RequiredChecks        []string
 	AllowNoRequiredChecks bool
+	// ChecksRetryFailed enables the queue's one bounded same-commit failed-check
+	// retry. Zero keeps the legacy check event path byte-for-byte unchanged.
+	ChecksRetryFailed int
+	// CheckTimeout and StartedTestingAt are the durable timer inputs for retry
+	// observations. StartedTestingAt must come from the active batch, never the
+	// executor's wall clock.
+	CheckTimeout     time.Duration
+	StartedTestingAt time.Time
+	// CheckRetry is the projected retry state for the active batch. It is needed
+	// during Land preflight to reject a stale successful read of an original
+	// failed identity after a cached rerun pass.
+	CheckRetry *queue.CheckRetryState
 	// AllowSkippedNeutral explicitly permits skipped and neutral required checks.
 	AllowSkippedNeutral bool
 	// DisableDeleteHeadBranch pins retention when a landing starts. DeleteHeadBranch
@@ -39,9 +52,11 @@ type Executor struct {
 	CheckPolicy func([]forge.CheckRun) (terminal, success bool, err error)
 	// ReferencesCheck selects names relevant to CheckPolicy diagnostics. Nil uses RequiredChecks.
 	ReferencesCheck func(string) bool
+	// RetryFailure selects failed names from the effective policy failures.
+	RetryFailure func([]forge.CheckRun, string) bool
 	// PreviousUnboundChecks suppresses unchanged diagnostic observations.
 	PreviousUnboundChecks []queue.UnboundCheck
-	// ChecksTimeoutDetail supplies durable provenance context for a timeout dequeue.
+	// ChecksTimeoutDetail supplies durable check diagnostics for a failure dequeue.
 	ChecksTimeoutDetail string
 	// BeforeLand freshly revalidates PR trust after the final checks read.
 	BeforeLand func(context.Context, queue.Land) error
@@ -94,16 +109,46 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 	case queue.FailBatch:
 		return emit(queue.BatchFailed(a))
 	case queue.RefreshChecks:
-		checks, err := x.Driver.CheckRuns(ctx, x.Repo, a.TestedSHA)
+		checks, err := x.readChecks(ctx, a.TestedSHA)
 		if err != nil {
 			return err
 		}
+		if x.rerunPermissionLost(checks) {
+			if err := emit(queue.CheckRerunDispatched{BatchID: a.BatchID, TestedSHA: a.TestedSHA, Generation: x.CheckRetry.Generation, OutcomeUnknown: true}); err != nil {
+				return err
+			}
+			return nil
+		}
 		at := x.now()
+		var terminal, success bool
+		var ambiguity error
+		if x.ChecksRetryFailed == 1 {
+			// Evaluate policy before any provenance event. A generic policy/read
+			// error is transient and must leave no durable observation behind.
+			terminal, success, ambiguity = x.checkResult(checks, a.BatchID)
+			if !x.retryObservationAllowed(ambiguity) {
+				return ambiguity
+			}
+		}
 		if err := x.observeCheckProvenance(checks, a.BatchID, a.TestedSHA, emit); err != nil {
 			return err
 		}
-		terminal, success, ambiguity := x.checkResult(checks, a.BatchID)
-		if terminal {
+		if x.ChecksRetryFailed != 1 {
+			terminal, success, ambiguity = x.checkResult(checks, a.BatchID)
+		}
+		if x.retryObservationAllowed(ambiguity) {
+			if x.ChecksRetryFailed == 1 {
+				if err := emit(x.checksObserved(a.BatchID, a.TestedSHA, checks, terminal, success)); err != nil {
+					return err
+				}
+			} else if terminal {
+				if err := emit(queue.ChecksCompleted{TestedSHA: a.TestedSHA, Success: success}); err != nil {
+					return err
+				}
+			} else if err := emit(queue.ChecksReopened{TestedSHA: a.TestedSHA, At: at}); err != nil {
+				return err
+			}
+		} else if terminal {
 			if err := emit(queue.ChecksCompleted{TestedSHA: a.TestedSHA, Success: success}); err != nil {
 				return err
 			}
@@ -115,26 +160,60 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		}
 		return ambiguity
 	case queue.Land:
-		checks, err := x.Driver.CheckRuns(ctx, x.Repo, a.TestedSHA)
+		checks, err := x.readChecks(ctx, a.TestedSHA)
 		if err != nil {
 			return err
+		}
+		if x.rerunPermissionLost(checks) {
+			if err := emit(queue.CheckRerunDispatched{BatchID: a.BatchID, TestedSHA: a.TestedSHA, Generation: x.CheckRetry.Generation, OutcomeUnknown: true}); err != nil {
+				return err
+			}
+			return ErrChecksNotSuccessful
+		}
+		var terminal, success bool
+		var ambiguity error
+		if x.ChecksRetryFailed == 1 {
+			// As in RefreshChecks, do not persist provenance or check events when
+			// the configured policy itself failed to read/evaluate.
+			terminal, success, ambiguity = x.checkResult(checks, a.BatchID)
+			if !x.retryObservationAllowed(ambiguity) {
+				return ambiguity
+			}
 		}
 		if err := x.observeCheckProvenance(checks, a.BatchID, a.TestedSHA, emit); err != nil {
 			return err
 		}
-		terminal, success, ambiguity := x.checkResult(checks, a.BatchID)
+		if x.ChecksRetryFailed != 1 {
+			terminal, success, ambiguity = x.checkResult(checks, a.BatchID)
+		}
+		if terminal && success && x.ChecksRetryFailed == 1 && !x.retryIdentitySatisfied(checks, a.BatchID) {
+			// A stale provider read may report the original failed run as a
+			// success after the queue has already recorded a rerun pass. Treat
+			// that observation as pending and revoke the cached pass through the
+			// retry-aware event path; it must never authorize LandingStarted.
+			terminal, success = false, false
+		}
 		if !terminal || !success {
 			at := x.now()
-			var result queue.Event = queue.ChecksReopened{TestedSHA: a.TestedSHA, At: at}
-			if terminal {
-				result = queue.ChecksCompleted{TestedSHA: a.TestedSHA, Success: false}
-			}
-			if err := emit(result); err != nil {
-				return err
-			}
-			if !terminal {
+			if x.ChecksRetryFailed == 1 && x.retryObservationAllowed(ambiguity) {
+				if err := emit(x.checksObserved(a.BatchID, a.TestedSHA, checks, terminal, success)); err != nil {
+					return err
+				}
 				if err := emit(queue.ChecksRefreshed{BatchID: a.BatchID, TestedSHA: a.TestedSHA, At: at}); err != nil {
 					return err
+				}
+			} else {
+				var result queue.Event = queue.ChecksReopened{TestedSHA: a.TestedSHA, At: at}
+				if terminal {
+					result = queue.ChecksCompleted{TestedSHA: a.TestedSHA, Success: false}
+				}
+				if err := emit(result); err != nil {
+					return err
+				}
+				if !terminal {
+					if err := emit(queue.ChecksRefreshed{BatchID: a.BatchID, TestedSHA: a.TestedSHA, At: at}); err != nil {
+						return err
+					}
 				}
 			}
 			if ambiguity != nil {
@@ -229,13 +308,29 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		return emit(queue.ActionCompleted{Key: a.Key()})
 	case queue.Dequeue:
 		detail := dequeueSummary(a.Reason)
-		if a.Reason == queue.ChecksTimeout && x.ChecksTimeoutDetail != "" {
+		if (a.Reason == queue.ChecksTimeout || x.ChecksRetryFailed == 1 && a.Reason == queue.ChecksFailed) && x.ChecksTimeoutDetail != "" {
 			detail = x.ChecksTimeoutDetail
 		}
 		if err := x.Driver.ReportStatus(ctx, x.Repo, a.PR, a.HeadSHA, forge.Status{State: forge.Dequeued, Reason: string(a.Reason), Summary: detail}); err != nil {
 			return err
 		}
 		return emit(queue.Dequeued{PR: a.PR, AdmissionID: a.AdmissionID, Reason: a.Reason, BatchID: a.BatchID})
+	case queue.RecordCheckRerun:
+		at := x.now()
+		timeout := a.Timeout
+		if timeout == 0 {
+			timeout = queue.DefaultCheckTimeout
+		}
+		deadline := at.Add(timeout)
+		return emit(queue.CheckRerunRequested{
+			BatchID: a.BatchID, TestedSHA: a.TestedSHA, Generation: a.Generation,
+			Runs: append([]queue.CheckRun(nil), a.Runs...), OriginalDeadline: a.OriginalDeadline,
+			At: at, Deadline: deadline, Timeout: a.Timeout,
+		})
+	case queue.RerunChecks:
+		return x.rerunChecks(ctx, a, emit)
+	case queue.ConfirmCheckFailure:
+		return emit(queue.ChecksFailureConfirmed(a))
 	default:
 		return fmt.Errorf("unsupported queue action %T", action)
 	}
@@ -307,10 +402,10 @@ func (e *CheckSourceAmbiguityError) Error() string {
 func (x *Executor) checkResult(checks []forge.CheckRun, batchID string) (terminal, success bool, ambiguity error) {
 	// Batch refs are deterministic, including for persisted RefreshChecks actions.
 	// Filter before either policy compares run IDs or checks source ambiguity.
-	ref := "openmerge/queue/" + x.Base + "/" + batchID
-	checks = slices.DeleteFunc(slices.Clone(checks), func(check forge.CheckRun) bool {
-		return !strings.HasPrefix(check.Source, "status:") && check.HeadBranch != ref
-	})
+	checks = x.filteredChecks(checks, batchID)
+	if x.ChecksRetryFailed == 1 {
+		checks = x.newestRetryChecks(checks)
+	}
 	if x.CheckPolicy != nil {
 		return x.CheckPolicy(checks)
 	}
@@ -322,7 +417,7 @@ func (x *Executor) checkResult(checks []forge.CheckRun, batchID string) (termina
 		}
 		sources[check.Name][check.Source] = true
 		old, ok := latest[check.Name]
-		if !ok || check.ID >= old.ID {
+		if !ok || x.latestCheckRun(check, old) {
 			latest[check.Name] = check
 		}
 	}
@@ -360,6 +455,166 @@ func (x *Executor) checkResult(checks []forge.CheckRun, batchID string) (termina
 	return terminal, success, ambiguity
 }
 
+// filteredChecks applies the queue provenance contract once for both policy
+// evaluation and retry identity capture. Commit statuses remain accepted under
+// the legacy rules because they have no suite branch to bind.
+func (x *Executor) filteredChecks(checks []forge.CheckRun, batchID string) []forge.CheckRun {
+	ref := "openmerge/queue/" + x.Base + "/" + batchID
+	return slices.DeleteFunc(slices.Clone(checks), func(check forge.CheckRun) bool {
+		return !strings.HasPrefix(check.Source, "status:") && check.HeadBranch != ref
+	})
+}
+
+func (x *Executor) retryObservationAllowed(err error) bool {
+	if err == nil {
+		return true
+	}
+	var ambiguity *CheckSourceAmbiguityError
+	return errors.As(err, &ambiguity)
+}
+
+func (x *Executor) checksObserved(batchID, testedSHA string, checks []forge.CheckRun, terminal, success bool) queue.ChecksObserved {
+	return queue.ChecksObserved{
+		BatchID: batchID, TestedSHA: testedSHA, Runs: x.retryRuns(checks, batchID),
+		Terminal: terminal, Success: success, OriginalDeadline: x.originalCheckDeadline(), Timeout: x.CheckTimeout,
+	}
+}
+
+func (x *Executor) originalCheckDeadline() time.Time {
+	if x.CheckTimeout <= 0 {
+		return time.Time{}
+	}
+	return x.StartedTestingAt.Add(x.CheckTimeout)
+}
+
+// retryRuns returns one newest identity per relevant producer/name after queue
+// provenance filtering. Keeping only required names prevents unrelated failed
+// checks from consuming the bounded retry budget.
+func (x *Executor) retryRuns(checks []forge.CheckRun, batchID string) []queue.CheckRun {
+	observed := x.newestRetryChecks(x.filteredChecks(checks, batchID))
+	latest := make(map[string]forge.CheckRun)
+	for _, check := range observed {
+		if !x.relevantCheck(check.Name) {
+			continue
+		}
+		key := check.Name + "\x00" + check.Source
+		latest[key] = check
+	}
+	keys := make([]string, 0, len(latest))
+	for key := range latest {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	runs := make([]queue.CheckRun, 0, len(keys))
+	for _, key := range keys {
+		check := latest[key]
+		ignored := false
+		if check.State != forge.Success && check.State != forge.Pending {
+			if x.RetryFailure != nil {
+				ignored = !x.RetryFailure(observed, check.Name)
+			} else {
+				ignored = x.AllowSkippedNeutral && (check.State == forge.Skipped || check.State == forge.Neutral)
+			}
+		}
+		runs = append(runs, queue.CheckRun{RetryUnsupported: check.RetryUnsupported, WorkflowRunID: check.WorkflowRunID, WorkflowRunURL: check.WorkflowRunURL, URL: check.URL, RetryIgnored: ignored, ID: check.ID, Attempt: canonicalCheckAttempt(check.Attempt), Name: check.Name, Source: check.Source, State: string(check.State)})
+	}
+	return runs
+}
+
+func (x *Executor) newestRetryChecks(checks []forge.CheckRun) []forge.CheckRun {
+	if x.ChecksRetryFailed != 1 {
+		return checks
+	}
+	selected := make(map[string]int, len(checks))
+	for i, check := range checks {
+		key := check.Name + "\x00" + check.Source
+		oldIndex, ok := selected[key]
+		if !ok || newerCheckRun(check, checks[oldIndex]) || sameCheckAttempt(check, checks[oldIndex]) {
+			selected[key] = i
+		}
+	}
+	newest := make([]forge.CheckRun, 0, len(selected))
+	for i, check := range checks {
+		key := check.Name + "\x00" + check.Source
+		if selected[key] == i {
+			newest = append(newest, check)
+		}
+	}
+	return newest
+}
+
+func (x *Executor) latestCheckRun(check, old forge.CheckRun) bool {
+	if x.ChecksRetryFailed != 1 {
+		return check.ID >= old.ID
+	}
+	return newerCheckRun(check, old) || sameCheckAttempt(check, old)
+}
+
+func (x *Executor) retryIdentitySatisfied(checks []forge.CheckRun, batchID string) bool {
+	if x.CheckRetry == nil || len(x.CheckRetry.FailedRuns) == 0 {
+		return true
+	}
+	return x.CheckRetry.NewAttempts(x.retryRuns(checks, batchID))
+}
+
+func (x *Executor) relevantCheck(name string) bool {
+	if x.ReferencesCheck != nil {
+		return x.ReferencesCheck(name)
+	}
+	return slices.Contains(x.RequiredChecks, name)
+}
+
+func newerCheckRun(a, b forge.CheckRun) bool {
+	if a.ID != b.ID {
+		return a.ID > b.ID
+	}
+	return canonicalCheckAttempt(a.Attempt) > canonicalCheckAttempt(b.Attempt)
+}
+
+func sameCheckAttempt(a, b forge.CheckRun) bool {
+	return a.ID == b.ID && canonicalCheckAttempt(a.Attempt) == canonicalCheckAttempt(b.Attempt)
+}
+
+func canonicalCheckAttempt(attempt uint64) uint64 {
+	if attempt == 0 {
+		return 1
+	}
+	return attempt
+}
+
+func toForgeCheckRun(run queue.CheckRun) forge.CheckRun {
+	return forge.CheckRun{RetryUnsupported: run.RetryUnsupported, WorkflowRunID: run.WorkflowRunID, WorkflowRunURL: run.WorkflowRunURL, URL: run.URL, ID: run.ID, Attempt: canonicalCheckAttempt(run.Attempt), Name: run.Name, Source: run.Source, State: forge.CheckState(run.State)}
+}
+
+func (x *Executor) rerunChecks(ctx context.Context, a queue.RerunChecks, emit func(queue.Event) error) error {
+	runner, ok := x.Driver.(forge.CheckRerunner)
+	if !ok {
+		return emit(queue.CheckRerunDispatched{BatchID: a.BatchID, TestedSHA: a.TestedSHA, Generation: a.Generation, Unsupported: true, Detail: "forge does not support failed-check reruns"})
+	}
+	runs := make([]forge.CheckRun, len(a.Runs))
+	for i, run := range a.Runs {
+		runs[i] = toForgeCheckRun(run)
+		if !strings.HasPrefix(run.Source, "status:") {
+			runs[i].HeadBranch = a.TestRef
+		}
+	}
+	var targets []forge.RerunTarget
+	if x.CheckRetry != nil {
+		for _, target := range x.CheckRetry.Dispatches {
+			targets = append(targets, forge.RerunTarget{WorkflowRunID: target.WorkflowRunID, Attempt: target.Attempt, Accepted: target.Accepted, NotDispatched: target.NotDispatched})
+		}
+	}
+	result, err := runner.RerunFailedChecks(ctx, x.Repo, forge.RerunChecksRequest{TestedSHA: a.TestedSHA, TestRef: a.TestRef, Runs: runs, Key: a.Key(), Targets: targets,
+		Progress: func(target forge.RerunTarget) error {
+			return emit(queue.CheckRerunDispatchProgress{BatchID: a.BatchID, TestedSHA: a.TestedSHA, Generation: a.Generation, Target: queue.CheckRerunTarget{WorkflowRunID: target.WorkflowRunID, Attempt: target.Attempt, Accepted: target.Accepted, NotDispatched: target.NotDispatched, At: x.now()}})
+		},
+	})
+	if err != nil {
+		return err
+	}
+	return emit(queue.CheckRerunDispatched{BatchID: a.BatchID, TestedSHA: a.TestedSHA, Generation: a.Generation, Unsupported: result.Unsupported, OutcomeUnknown: result.OutcomeUnknown, Detail: result.Detail})
+}
+
 func (x *Executor) fenceRef() string { return "openmerge/fence/" + x.Base }
 
 func (x *Executor) newID() (string, error) {
@@ -385,4 +640,28 @@ func (x *Executor) now() time.Time {
 		return x.Now()
 	}
 	return time.Now()
+}
+
+func (x *Executor) readChecks(ctx context.Context, sha string) ([]forge.CheckRun, error) {
+	if x.ChecksRetryFailed == 1 {
+		if reader, ok := x.Driver.(forge.RetryCheckReader); ok {
+			var workflows []uint64
+			if x.CheckRetry != nil {
+				for _, run := range x.CheckRetry.FailedRuns {
+					workflows = append(workflows, run.WorkflowRunID)
+				}
+				for _, target := range x.CheckRetry.Dispatches {
+					workflows = append(workflows, target.WorkflowRunID)
+				}
+			}
+			return reader.CheckRunsForRetry(ctx, x.Repo, sha, workflows)
+		}
+	}
+	return x.Driver.CheckRuns(ctx, x.Repo, sha)
+}
+
+// Refused optional enrichment is safe only before the retry is requested.
+func (x *Executor) rerunPermissionLost(checks []forge.CheckRun) bool {
+	return x.ChecksRetryFailed == 1 && x.CheckRetry != nil && x.CheckRetry.Requested &&
+		slices.ContainsFunc(checks, func(check forge.CheckRun) bool { return check.RetryPermissionDenied })
 }

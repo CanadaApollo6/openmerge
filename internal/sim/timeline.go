@@ -140,18 +140,32 @@ func (s *simulation) deliver(event scheduledEvent) error {
 			s.admitCI()
 		}
 		run := s.tests[event.sha]
+		if run == nil {
+			return fmt.Errorf("CI completion for unknown tested SHA %s", event.sha)
+		}
 		run.done = true
 		state := forge.Failure
 		if run.success {
 			state = forge.Success
 		}
 		id := uint64(1)
+		attempt := uint64(1)
 		if event.job != nil {
 			id = event.job.id
+			attempt = event.job.attempt
+			if attempt == 0 {
+				attempt = 1
+			}
 		}
-		s.forge.SetCheckRuns(s.repo, event.sha, []forge.CheckRun{{ID: id, Name: "ci", State: state}})
+		s.forge.SetCheckRuns(s.repo, event.sha, []forge.CheckRun{{ID: id, Attempt: attempt, Name: "ci", State: state}})
 		if s.webhook.Float64() < s.cfg.DropWebhookRate {
 			s.result.DroppedWebhooks++
+		} else if s.retryChecksEnabled() {
+			observed, err := s.retryObservation(event.sha, run, true, run.success)
+			if err != nil {
+				return err
+			}
+			s.record(observed)
 		} else {
 			s.record(queue.ChecksCompleted{TestedSHA: event.sha, Success: run.success})
 		}

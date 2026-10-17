@@ -109,6 +109,9 @@ queue name and an example fix. There is no opt-out. Defaults are:
 - `merge_method: squash` (also accepts `merge`, `rebase`, and `fast-forward`).
 - `check_timeout: 1h`; `0`, `"0"`, or `0s` disables it. Durations must be
   nonnegative Go duration strings, with unquoted integer zero also accepted.
+- `checks.retry_failed: 0` (default) or `1` enables one same-commit rerun of
+  failed required checks before the failure is confirmed. The retry policy is
+  scoped to each queue and is disabled by default.
 - `enter_when: []`, true. `merge_when` requires a positive named success check.
 - `batch: {max_size: 1, max_wait: 0s}`. Sizes 1 through 128 are accepted.
   The queue tests up to `max_size` PRs together, with one active batch at a time.

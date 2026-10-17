@@ -42,8 +42,8 @@ func NextWake(cfg Config, s State, now time.Time) (time.Time, bool) {
 			}
 		case Testing:
 			if !batch.checksPassed {
-				if cfg.CheckTimeout > 0 {
-					consider(batch.StartedTestingAt.Add(cfg.CheckTimeout).Add(time.Nanosecond))
+				if deadline, enabled := batch.checkDeadline(cfg); enabled {
+					consider(deadline.Add(time.Nanosecond))
 				}
 				if batch.checkRefreshes > 0 {
 					interval := cfg.RefreshInterval

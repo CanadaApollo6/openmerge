@@ -23,7 +23,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func serveDatabase(t *testing.T) *store.Store {
+func serveDatabaseURL(t *testing.T) string {
 	t.Helper()
 	raw := os.Getenv("OPENMERGE_TEST_DATABASE_URL")
 	if raw == "" {
@@ -44,7 +44,12 @@ func serveDatabase(t *testing.T) *store.Store {
 	params := u.Query()
 	params.Set("search_path", schema)
 	u.RawQuery = params.Encode()
-	db, err := store.Open(t.Context(), u.String())
+	return u.String()
+}
+
+func serveDatabase(t *testing.T) *store.Store {
+	t.Helper()
+	db, err := store.Open(t.Context(), serveDatabaseURL(t))
 	must(t, err)
 	t.Cleanup(db.Close)
 	return db

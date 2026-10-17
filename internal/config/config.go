@@ -63,10 +63,18 @@ type Queue struct {
 	MergeWhen         condition.Expression `yaml:"merge_when"`
 	MergeMethod       queue.MergeMethod    `yaml:"merge_method"`
 	CheckTimeout      time.Duration        `yaml:"check_timeout"`
+	Checks            Checks               `yaml:"checks"`
 	Batch             Batch                `yaml:"batch"`
 	baseLine          int
 	basePattern       *regexp.Regexp
 	basePatternSource string
+}
+
+// Checks controls optional bounded retries for failed required checks.
+// RetryFailed is deliberately an integer policy knob so the YAML contract can
+// grow to a bounded retry count without changing the surrounding shape.
+type Checks struct {
+	RetryFailed int `yaml:"retry_failed"`
 }
 
 // Batch controls serial batch formation.
@@ -81,7 +89,8 @@ type Batch struct {
 func (q Queue) QueueConfig() queue.Config {
 	return queue.Config{
 		MergeMethod: q.MergeMethod, CheckTimeout: q.CheckTimeout,
-		BatchMaxSize: q.Batch.MaxSize, BatchMaxWait: q.Batch.MaxWait,
+		ChecksRetryFailed: q.Checks.RetryFailed,
+		BatchMaxSize:      q.Batch.MaxSize, BatchMaxWait: q.Batch.MaxWait,
 		ResolveAfter: time.Minute, RefreshInterval: time.Minute,
 		BuildRetries: 3, BuildBackoff: 5 * time.Second,
 	}
@@ -205,7 +214,7 @@ func (p *parser) error(n *yaml.Node, path, format string, args ...any) {
 
 func (p *parser) queue(n *yaml.Node, path string) Queue {
 	before := len(p.errors)
-	q := Queue{MergeMethod: queue.Squash, CheckTimeout: time.Hour, Batch: Batch{MaxSize: 1}}
+	q := Queue{MergeMethod: queue.Squash, CheckTimeout: queue.DefaultCheckTimeout, Batch: Batch{MaxSize: 1}}
 	q.baseLine = max(1, n.Line)
 	fields := p.fields(n, path, queueKeys...)
 	if name := fields["name"]; name == nil {
@@ -265,6 +274,14 @@ func (p *parser) queue(n *yaml.Node, path string) Queue {
 	}
 	if n := fields["check_timeout"]; n != nil {
 		q.CheckTimeout = p.duration(n, path+".check_timeout")
+	}
+	if n := fields["checks"]; n != nil {
+		fields := p.fields(n, path+".checks", checksKeys...)
+		if n := fields["retry_failed"]; n != nil {
+			if n.Kind != yaml.ScalarNode || n.ShortTag() != "!!int" || n.Decode(&q.Checks.RetryFailed) != nil || q.Checks.RetryFailed < 0 || q.Checks.RetryFailed > 1 {
+				p.error(n, path+".checks.retry_failed", "expected an integer 0 or 1")
+			}
+		}
 	}
 	if n := fields["batch"]; n != nil {
 		fields := p.fields(n, path+".batch", batchKeys...)

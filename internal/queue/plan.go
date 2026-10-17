@@ -145,9 +145,18 @@ func plan(cfg Config, s State, now time.Time) []Action {
 			})
 			return actions
 		}
-		deadline := batch.StartedTestingAt.Add(cfg.CheckTimeout)
-		timedOut := cfg.CheckTimeout > 0 && now.After(deadline)
+		if action, handled := planCheckRetry(cfg, s, now); handled {
+			if action != nil {
+				actions = append(actions, action)
+			}
+			return actions
+		}
+		deadline, timeoutEnabled := batch.checkDeadline(cfg)
+		timedOut := timeoutEnabled && now.After(deadline)
 		if timedOut && !batch.needsRefresh && batch.checkRefreshes > 0 && !batch.checksRefreshedAt.Before(deadline) {
+			if cfg.ChecksRetryFailed == 1 {
+				return append(actions, ConfirmCheckFailure{BatchID: batch.ID, TestedSHA: batch.TestedSHA, Generation: batch.checksGeneration, Reason: ChecksTimeout})
+			}
 			if len(batch.PRs) > 1 {
 				actions = append(actions, FailBatch{BatchID: batch.ID, Reason: ChecksTimeout})
 				return actions
@@ -360,6 +369,30 @@ func CanStart(cfg Config, s State, action Action, event Event) bool {
 			return false
 		}
 		at = e.At
+	case CheckRerunRequested:
+		a, ok := action.(RecordCheckRerun)
+		if !ok || e.Validate() != nil || a.BatchID != e.BatchID || a.TestedSHA != e.TestedSHA || a.Generation != e.Generation || !slices.Equal(a.Runs, e.Runs) || a.Timeout != e.Timeout || !a.OriginalDeadline.Equal(e.OriginalDeadline) {
+			return false
+		}
+		at = e.At
+	case CheckRerunDispatchProgress:
+		a, ok := action.(RerunChecks)
+		if !ok || e.Validate() != nil || a.BatchID != e.BatchID || a.TestedSHA != e.TestedSHA || a.Generation != e.Generation || s.Active == nil || s.Active.CheckRetry == nil {
+			return false
+		}
+		r := s.Active.CheckRetry
+		if s.Active.ID != e.BatchID || s.Active.TestedSHA != e.TestedSHA || s.Active.Phase != Testing || !r.Requested || r.Dispatched || r.Confirmed || r.Generation != e.Generation {
+			return false
+		}
+		index := slices.IndexFunc(r.Dispatches, func(old CheckRerunTarget) bool { return old.WorkflowRunID == e.Target.WorkflowRunID })
+		if index >= 0 {
+			if !validDispatchTransition(r.Dispatches[index], e.Target) {
+				return false
+			}
+		} else if e.Target.Accepted || e.Target.NotDispatched {
+			return false
+		}
+		at = e.Target.At
 	case LandingStarted:
 		a, ok := action.(Land)
 		if !ok || e.AttemptID == "" || a.BatchID != e.BatchID || a.FenceToken != e.FenceToken ||

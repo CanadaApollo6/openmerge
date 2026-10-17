@@ -342,6 +342,10 @@ func (s *Store) authorizeStart(ctx context.Context, tx pgx.Tx, execution emissio
 	switch start := event.(type) {
 	case queue.BatchStarted:
 		at = start.At
+	case queue.CheckRerunRequested:
+		at = start.At
+	case queue.CheckRerunDispatchProgress:
+		at = start.Target.At
 	case queue.LandingStarted:
 		at = start.At
 	default:
@@ -371,6 +375,16 @@ func (s *Store) authorizeStart(ctx context.Context, tx pgx.Tx, execution emissio
 	case queue.BatchStarted:
 		build, ok := stored.Action.(queue.BuildTestRef)
 		if !ok || build.BatchID != start.BatchID || build.BaseSHA != start.BaseSHA || !slices.Equal(build.PRs, start.PRs) {
+			return false, ErrStale
+		}
+	case queue.CheckRerunRequested:
+		request, ok := stored.Action.(queue.RecordCheckRerun)
+		if !ok || request.BatchID != start.BatchID || request.TestedSHA != start.TestedSHA || request.Generation != start.Generation || !slices.Equal(request.Runs, start.Runs) {
+			return false, ErrStale
+		}
+	case queue.CheckRerunDispatchProgress:
+		rerun, ok := stored.Action.(queue.RerunChecks)
+		if !ok || rerun.BatchID != start.BatchID || rerun.TestedSHA != start.TestedSHA || rerun.Generation != start.Generation {
 			return false, ErrStale
 		}
 	case queue.LandingStarted:

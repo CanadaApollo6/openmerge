@@ -131,3 +131,13 @@ func (s *Server) eligible(ctx context.Context, w *worker, pr forge.PullRequest) 
 	}
 	return met, nil
 }
+
+func retryPolicyFailure(expression condition.Expression, prs []forge.PullRequest, checks []forge.CheckRun, name string) bool {
+	for _, pr := range prs {
+		values, err := policyValues(expression, pr, checks)
+		if err == nil && expression.BlocksCheck(values, name) {
+			return true
+		}
+	}
+	return false
+}

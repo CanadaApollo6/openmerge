@@ -23,7 +23,7 @@ func (d *Driver) ValidateInstallationPermissions(ctx context.Context) (problems,
 		landing      bool
 	}{
 		{"contents", "write", true}, {"workflows", "write", true},
-		{"pull_requests", "write", false}, {"checks", "write", false},
+		{"pull_requests", "write", false}, {"checks", "write", false}, {"actions", "write", false},
 		{"statuses", "read", false}, {"issues", "read", false}, {"metadata", "read", false},
 	} {
 		granted := entry.permissions[permission.name]

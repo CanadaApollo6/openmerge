@@ -2,12 +2,14 @@ package sim
 
 import (
 	"container/heap"
+	"context"
 	"fmt"
 	"math"
 	"slices"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
+	"github.com/CanadaApollo6/openmerge/internal/queue"
 )
 
 // CIConfig describes capabilities of the simulated CI provider, independently
@@ -48,6 +50,7 @@ type MergeSample struct {
 
 type ciJob struct {
 	id                               uint64
+	attempt                          uint64
 	sha                              string
 	duration                         time.Duration
 	started, finished                time.Time
@@ -66,10 +69,12 @@ func (s *simulation) interactionFails(prs []int) bool {
 
 func (s *simulation) submitCI(sha string, duration time.Duration) {
 	id := uint64(1)
+	attempt := uint64(1)
 	if previous := s.tests[sha].job; previous != nil {
 		id = previous.id + 1
+		attempt = previous.attempt + 1
 	}
-	job := &ciJob{id: id, sha: sha, duration: duration, rerun: s.tests[sha].done || s.tests[sha].rerun}
+	job := &ciJob{id: id, attempt: attempt, sha: sha, duration: duration, rerun: s.tests[sha].done || s.tests[sha].rerun}
 	s.tests[sha].job = job
 	s.ciJobs = append(s.ciJobs, job)
 	s.ciWaiting = append(s.ciWaiting, job)
@@ -139,8 +144,42 @@ func (s *simulation) rerunFailedCI(sha string) bool {
 	s.submitCI(sha, s.ciDuration())
 	run.done = false
 	s.result.CIReruns++
-	s.forge.SetCheckRuns(s.repo, sha, []forge.CheckRun{{ID: s.tests[sha].job.id, Name: "ci", State: forge.Pending}})
+	s.forge.SetCheckRuns(s.repo, sha, []forge.CheckRun{{ID: s.tests[sha].job.id, Attempt: s.tests[sha].job.attempt, Name: "ci", State: forge.Pending}})
 	return true
+}
+
+// retryChecksEnabled controls only the additive retry-aware event path. The
+// legacy path remains untouched when the planner setting is zero.
+func (s *simulation) retryChecksEnabled() bool {
+	return s.cfg.Planner.ChecksRetryFailed == 1
+}
+
+func (s *simulation) retryObservation(sha string, run *testRun, terminal, success bool) (queue.ChecksObserved, error) {
+	checks, err := s.forge.CheckRuns(context.Background(), s.repo, sha)
+	if err != nil {
+		return queue.ChecksObserved{}, err
+	}
+	started := run.startedTestingAt
+	if active := s.state.Active; active != nil && active.TestedSHA == sha && !active.StartedTestingAt.IsZero() {
+		started = active.StartedTestingAt
+	}
+	timeout := s.cfg.Planner.CheckTimeout
+	deadline := time.Time{}
+	if timeout > 0 {
+		deadline = started.Add(timeout)
+	}
+	runs := make([]queue.CheckRun, 0, len(checks))
+	for _, check := range checks {
+		attempt := check.Attempt
+		if attempt == 0 {
+			attempt = 1
+		}
+		runs = append(runs, queue.CheckRun{ID: check.ID, Attempt: attempt, Name: check.Name, Source: check.Source, State: string(check.State)})
+	}
+	return queue.ChecksObserved{
+		BatchID: run.batchID, TestedSHA: sha, Runs: runs, Terminal: terminal, Success: success,
+		OriginalDeadline: deadline, Timeout: timeout,
+	}, nil
 }
 
 func (s *simulation) ciMetrics(merged int) *CIMetrics {
