@@ -1,6 +1,6 @@
 # 0007. Make the change the unit of work, with pull requests as one optional view
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-16
 
 ## Context
