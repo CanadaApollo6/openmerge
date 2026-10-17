@@ -749,3 +749,49 @@ unlocked projection would race a concurrent passing `Land` preflight: a delayed
 success could restore success without invalidating the old generation. The why
 view instead groups identical consecutive reopen/refresh pairs and explains
 whether the fold actually revoked recorded success. Stored evidence is retained.
+
+### Speculative testing with a fixed window
+
+A queue may set `speculation.max_depth` above 1 to test a dependent chain:
+
+```yaml
+queues:
+  - name: main
+    merge_when: [check-success = ci]
+    speculation:
+      max_depth: 4
+      min_depth: 1
+    batch:
+      max_size: 8
+      max_wait: 5m
+```
+
+Both depths default to 1; require `1 <= min_depth <= max_depth <= 32`.
+This implementation uses a fixed window equal to `max_depth`. `min_depth` is
+validated and included in the effective policy digest, reserved for the later
+adaptive-window step. The default remains 1. Changing either setting invalidates
+unstarted landings under the existing configuration protocol.
+
+Every admitted batch occupies a slot until it lands or is invalidated, including
+passed batches waiting behind predecessors. Each successor tests on the previous
+batch's landing commit. Fast-forward requires strictly descending heads and tests
+a unique marker above each landing head. Landing remains serial, leased on the
+settled predecessor and fence, with fresh checks and exact-head trust gates.
+
+At depth above 1, the oldest batch automatically gets one same-commit rerun of
+failed required checks, even when `checks.retry_failed` is omitted or set to 0.
+Depth 1 keeps its opt-in retry policy. Later failures are provisional until all
+predecessors settle; an invalidated predecessor discards those results without
+blaming their changes. Confirmed failure invalidates the suffix and bisects the
+oldest batch, with both halves ahead of fresh work.
+
+CI cancellation is not implemented in this release step. Invalidated runs finish
+and consume runners; late results cannot revive their batches. Test refs are
+cleaned, including a fresh cleanup action after a delayed builder reports.
+Status/API expose the ordered chain, parent batch, tested/landing commits,
+per-change batch position and number ahead, and recent invalidation reasons.
+
+The additive wire-v1 chain types require compatible workers. Drain old workers
+before enabling speculation. Returning to depth 1 does not make an older binary
+able to replay those records; rollback across their first use requires a database
+restore. Existing depth-1 event/action wire types and fixtures are unchanged.

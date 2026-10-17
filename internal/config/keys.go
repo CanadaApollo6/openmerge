@@ -6,10 +6,11 @@ import (
 )
 
 var (
-	configKeys = yamlKeys(reflect.TypeFor[Config]())
-	queueKeys  = yamlKeys(reflect.TypeFor[Queue]())
-	checksKeys = yamlKeys(reflect.TypeFor[Checks]())
-	batchKeys  = yamlKeys(reflect.TypeFor[Batch]())
+	configKeys      = yamlKeys(reflect.TypeFor[Config]())
+	queueKeys       = yamlKeys(reflect.TypeFor[Queue]())
+	speculationKeys = yamlKeys(reflect.TypeFor[Speculation]())
+	checksKeys      = yamlKeys(reflect.TypeFor[Checks]())
+	batchKeys       = yamlKeys(reflect.TypeFor[Batch]())
 )
 
 // The parser and schema drift guard share the config structs' key vocabulary.

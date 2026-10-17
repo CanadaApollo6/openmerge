@@ -268,14 +268,14 @@ func (e ChecksFailureConfirmed) Validate() error {
 func (a ConfirmCheckFailure) Validate() error { return ChecksFailureConfirmed(a).Validate() }
 
 func (s *State) observeChecks(e ChecksObserved) {
-	if e.Validate() != nil || !s.batchIn(e.BatchID, Testing) || s.Active.TestedSHA != e.TestedSHA {
+	b := s.Batch(e.BatchID)
+	if e.Validate() != nil || !s.batchIn(e.BatchID, Testing) || b.TestedSHA != e.TestedSHA {
 		return
 	}
 	e.Runs = slices.Clone(e.Runs)
 	for i := range e.Runs {
 		e.Runs[i].Attempt = max(e.Runs[i].Attempt, 1)
 	}
-	b := s.Active
 	if b.CheckRetry != nil && b.CheckRetry.Confirmed {
 		return
 	}
@@ -305,7 +305,7 @@ func (s *State) observeChecks(e ChecksObserved) {
 	if e.Terminal && (stale || unproven) {
 		if !slices.Equal(latest, r.ObservedRuns) {
 			r.ObservedRuns = latest
-			s.refreshChecks()
+			s.refreshChecks(b)
 			r.RerunState = ""
 			if r.Requested {
 				r.RerunState = "requested"
@@ -318,7 +318,7 @@ func (s *State) observeChecks(e ChecksObserved) {
 	}
 	r.ObservedRuns = latest
 	if !e.Terminal {
-		s.refreshChecks()
+		s.refreshChecks(b)
 		if r.Requested && r.NewAttempts(e.Runs) {
 			r.RerunState = "running"
 		}
@@ -328,7 +328,7 @@ func (s *State) observeChecks(e ChecksObserved) {
 	if wasPassed && !e.Success {
 		// A failed run can arrive without a pending observation. Revoke an
 		// already planned/preflighted Land even if the rerun later passes.
-		s.refreshChecks()
+		s.refreshChecks(b)
 	}
 	b.checksPassed = e.Success
 	if e.Success {
@@ -347,7 +347,7 @@ func (s *State) observeChecks(e ChecksObserved) {
 		if len(r.FailedRuns) > 0 && !slices.Equal(r.FailedRuns, failed) && !wasPassed {
 			// A replacement failure before the request commits is a new
 			// subject. Do not reuse an already published request payload/key.
-			s.refreshChecks()
+			s.refreshChecks(b)
 		}
 		r.FailedRuns = failed
 	}
@@ -397,48 +397,51 @@ func (r CheckRetryState) NewAttempts(runs []CheckRun) bool {
 	return len(r.FailedRuns) > 0
 }
 func (s *State) requestCheckRerun(e CheckRerunRequested) {
-	if e.Validate() != nil || !s.batchIn(e.BatchID, Testing) || s.Active.TestedSHA != e.TestedSHA || s.Active.checksGeneration != e.Generation {
+	b := s.Batch(e.BatchID)
+	if e.Validate() != nil || b != s.Active || !s.batchIn(e.BatchID, Testing) || b.TestedSHA != e.TestedSHA || b.checksGeneration != e.Generation {
 		return
 	}
 	e.Runs = slices.Clone(e.Runs)
 	for i := range e.Runs {
 		e.Runs[i].Attempt = max(e.Runs[i].Attempt, 1)
 	}
-	r := s.Active.CheckRetry
-	if r == nil || r.Requested || r.Confirmed || s.Active.checksPassed || !slices.Equal(r.FailedRuns, e.Runs) || r.Timeout != e.Timeout || !r.OriginalDeadline.Equal(e.OriginalDeadline) {
+	r := b.CheckRetry
+	if r == nil || r.Requested || r.Confirmed || b.checksPassed || !slices.Equal(r.FailedRuns, e.Runs) || r.Timeout != e.Timeout || !r.OriginalDeadline.Equal(e.OriginalDeadline) {
 		return
 	}
 	r.Requested, r.RequestedAt, r.Deadline, r.Generation = true, e.At, e.Deadline, e.Generation
 	r.RerunState = "requested"
-	s.Active.needsRefresh = true
+	b.needsRefresh = true
 }
 func (s *State) dispatchCheckRerun(e CheckRerunDispatched) {
-	if e.Validate() != nil || !s.batchIn(e.BatchID, Testing) || s.Active.TestedSHA != e.TestedSHA {
+	b := s.Batch(e.BatchID)
+	if e.Validate() != nil || !s.batchIn(e.BatchID, Testing) || b.TestedSHA != e.TestedSHA {
 		return
 	}
-	r := s.Active.CheckRetry
+	r := b.CheckRetry
 	if r == nil || !r.Requested || r.Dispatched && !e.OutcomeUnknown || r.Generation != e.Generation || r.Confirmed || r.OutcomeUnknown {
 		return
 	}
 	if e.OutcomeUnknown {
 		r.OutcomeUnknown = true
 		r.Detail = ActionsPermissionLostDetail
-		s.Active.checksPassed = false
+		b.checksPassed = false
 		r.RerunState = "unknown"
 		return
 	}
 
 	r.Dispatched, r.Unsupported, r.Detail = true, e.Unsupported, e.Detail
 	if e.Unsupported {
-		s.Active.checksPassed = false
+		b.checksPassed = false
 		r.RerunState = "unsupported"
 	}
 }
 func (s *State) progressCheckRerun(e CheckRerunDispatchProgress) {
-	if e.Validate() != nil || !s.batchIn(e.BatchID, Testing) || s.Active.TestedSHA != e.TestedSHA {
+	b := s.Batch(e.BatchID)
+	if e.Validate() != nil || !s.batchIn(e.BatchID, Testing) || b.TestedSHA != e.TestedSHA {
 		return
 	}
-	r := s.Active.CheckRetry
+	r := b.CheckRetry
 	if r == nil || !r.Requested || r.Dispatched || r.Generation != e.Generation || r.Confirmed || r.OutcomeUnknown {
 		return
 	}
@@ -454,28 +457,29 @@ func (s *State) progressCheckRerun(e CheckRerunDispatchProgress) {
 }
 
 func (s *State) confirmCheckFailure(e ChecksFailureConfirmed) {
-	if e.Validate() != nil || !s.batchIn(e.BatchID, Testing) || s.Active.TestedSHA != e.TestedSHA || s.Active.checksGeneration != e.Generation || s.Active.checksPassed {
+	b := s.Batch(e.BatchID)
+	if e.Validate() != nil || b != s.Active || !s.batchIn(e.BatchID, Testing) || b.TestedSHA != e.TestedSHA || b.checksGeneration != e.Generation || b.checksPassed {
 		return
 	}
-	if s.Active.CheckRetry == nil {
-		s.Active.CheckRetry = &CheckRetryState{}
+	if b.CheckRetry == nil {
+		b.CheckRetry = &CheckRetryState{}
 	}
-	r := s.Active.CheckRetry
+	r := b.CheckRetry
 	if r.Confirmed {
 		return
 	}
 	r.Confirmed = true
-	if detail := s.CheckRetryDetail(); detail != "" {
+	if detail := s.checkRetryDetail(b); detail != "" {
 		r.Detail = detail
 	}
 	if !r.Unsupported && !r.OutcomeUnknown {
 		r.RerunState = "failed"
 	}
-	s.failBatch(e.Reason)
+	s.failBatch(b, e.Reason)
 	if e.Reason == ChecksTimeout && s.Active != nil && s.Active.ID == e.BatchID {
 		// Legacy timer actions already carry a batch scope. A newly confirmed
 		// singleton timeout needs that same stale-result protection.
-		pr := s.Active.PRs[0].PR
+		pr := b.PRs[0].PR
 		dequeue := s.dequeues[pr]
 		dequeue.BatchID, dequeue.scope = e.BatchID, "batch/"+e.BatchID
 		s.dequeues[pr] = dequeue
@@ -492,21 +496,22 @@ func (b Batch) checkDeadline(cfg Config) (time.Time, bool) {
 	return b.StartedTestingAt.Add(cfg.CheckTimeout), cfg.CheckTimeout > 0
 }
 
-// retryOldestBatch is the PR 3 selection hook. Today's serial planner passes
-// Active as both arguments; PR 3 must supply the chain's actual oldest batch.
+// retryOldestBatch selects the sole batch whose predecessors have settled.
 // Later batches retain provisional failures without consuming retry budget.
 func retryOldestBatch(candidate, oldest *Batch) bool {
 	return candidate != nil && oldest != nil && candidate.ID == oldest.ID
 }
 
-func planCheckRetry(cfg Config, s State, now time.Time) (Action, bool) {
-	b := s.Active
+func planCheckRetry(cfg Config, s State, b *Batch, now time.Time) (Action, bool) {
 	r := b.CheckRetry
 	if r == nil {
 		return nil, false
 	}
 	confirm := func(reason DequeueReason) Action {
 		return ConfirmCheckFailure{BatchID: b.ID, TestedSHA: b.TestedSHA, Generation: b.checksGeneration, Reason: reason}
+	}
+	if !retryOldestBatch(b, s.Active) && (r.Unsupported || r.OutcomeUnknown || r.RerunState == "failed") {
+		return nil, true
 	}
 	if r.Unsupported || r.OutcomeUnknown || r.RerunState == "failed" && r.Requested {
 		return confirm(ChecksFailed), true
@@ -516,7 +521,7 @@ func planCheckRetry(cfg Config, s State, now time.Time) (Action, bool) {
 			// A later batch's failure is provisional until its predecessors settle.
 			return nil, true
 		}
-		if cfg.ChecksRetryFailed != 1 || len(r.FailedRuns) == 0 {
+		if cfg.RetryLimit() != 1 || len(r.FailedRuns) == 0 {
 			return confirm(ChecksFailed), true
 		}
 		// Terminal failure is authoritative even after the original deadline. Only
@@ -525,7 +530,7 @@ func planCheckRetry(cfg Config, s State, now time.Time) (Action, bool) {
 	}
 	deadline, enabled := b.checkDeadline(cfg)
 	timedOut := enabled && now.After(deadline)
-	if timedOut && !b.needsRefresh && b.checkRefreshes > 0 && !b.checksRefreshedAt.Before(deadline) {
+	if b == s.Active && timedOut && !b.needsRefresh && b.checkRefreshes > 0 && !b.checksRefreshedAt.Before(deadline) {
 		return confirm(ChecksTimeout), true
 	}
 	if r.Requested && !r.Dispatched && !timedOut {
@@ -547,11 +552,13 @@ func validDispatchTransition(old, next CheckRerunTarget) bool {
 const ActionsPermissionLostDetail = "Actions permission lost during rerun; rerun outcome unknown"
 
 // CheckRetryDetail explains reruns whose outcome cannot be established.
-func (s State) CheckRetryDetail() string {
-	if s.Active == nil || s.Active.CheckRetry == nil {
+func (s State) CheckRetryDetail() string { return s.checkRetryDetail(s.Active) }
+
+func (s State) checkRetryDetail(b *Batch) string {
+	if b == nil || b.CheckRetry == nil {
 		return ""
 	}
-	r := s.Active.CheckRetry
+	r := b.CheckRetry
 	if r.Unsupported || r.OutcomeUnknown {
 		return r.Detail
 	}

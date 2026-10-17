@@ -28,18 +28,18 @@ func Apply(s State, e Event) State {
 		// Entries retain admission order and age; old retry/bisection groups
 		// must not bypass the new policy's batch limits or formation delay.
 		s.pending = nil
-		if s.Active != nil && s.Active.Phase != Landing {
-			s.discardBatch()
+		if s.Active != nil && s.Active.Speculative {
+			s.invalidateFrom(s.Active, "config-changed")
+		} else if s.Active != nil && s.Active.Phase != Landing {
+			s.discardBatch(s.Active)
 		}
 	case FenceInitialized:
 		if s.Fence == "" && e.Validate() == nil {
 			s.Fence = e.Token
 		}
 	case PRMetadataObserved:
-		// Fold the invalidation here, where the active phase is serialized with
-		// the observation. A pre-append phase read could race TestRefBuilt.
-		if s.Active != nil && slices.ContainsFunc(s.Active.PRs, func(pin BatchPR) bool { return pin.PR == e.PR }) {
-			s.refreshChecks()
+		if b := s.BatchForPR(e.PR); b != nil {
+			s.refreshChecks(b)
 		}
 	case PRObserved:
 		s.observations[e.PR] = e
@@ -78,13 +78,22 @@ func Apply(s State, e Event) State {
 		if e.SHA == s.BaseSHA {
 			break
 		}
+		// An observed own push is still an unsettled attempt. Only Landed can
+		// promote its successor and supply the next fence.
+		if s.Active != nil && s.Active.Speculative && s.Active.Phase == Landing && e.SHA == s.Active.LandingCommit() {
+			break
+		}
 		s.BaseSHA = e.SHA
 		s.buildRetry = buildRetryState{}
-		if s.Active != nil && s.Active.Phase != Landing && s.Active.BaseSHA != e.SHA {
-			s.rebuildBatch()
+		if s.Active != nil && s.Active.Speculative {
+			s.invalidateFrom(s.Active, "base-moved")
+		} else if s.Active != nil && s.Active.Phase != Landing && s.Active.BaseSHA != e.SHA {
+			s.rebuildBatch(s.Active)
 		}
 	case RefreshRequested:
-		s.refreshChecks()
+		for _, b := range s.Batches() {
+			s.refreshChecks(b)
+		}
 	case PauseRequested:
 		s.blockRevisions[Operator]++
 		s.pause, s.pauseRevision = e, s.revision
@@ -128,6 +137,17 @@ func Apply(s State, e Event) State {
 	case ActionPoisoned:
 		s.blockRevisions[ActionPoison]++
 		s.actionPoison = actionPoisonState{key: e.Key, reason: e.Reason, revision: s.revision}
+	case BatchDiagnosed:
+		if s.Active != nil && s.Active.ID == e.BatchID && s.Active.InvalidationReason == "" && s.Active.ProvisionalFailure == e.Reason {
+			s.Active.ProvisionalFailure = ""
+			s.failBatch(s.Active, e.Reason)
+		}
+	case ChainedBatchStarted:
+		s.startChainedBatch(e)
+	case ChainedTestRefBuilt:
+		s.applyChainedBuilt(e)
+	case BatchesInvalidated:
+		s.applyInvalidation(e)
 	case BatchStarted:
 		if e.Validate() == nil && s.Active == nil && e.BatchID == s.nextBatchID() && e.BaseSHA == s.BaseSHA && s.runnablePRs(e.PRs) {
 			fromBisection := false
@@ -144,33 +164,44 @@ func Apply(s State, e Event) State {
 				TestRef: "openmerge/queue/" + s.BaseBranch + "/" + e.BatchID, Phase: Building}
 		}
 	case BatchFailed:
-		if e.Reason == ChecksTimeout && s.batchIn(e.BatchID, Testing) && !s.Active.checksPassed {
-			s.failBatch(e.Reason)
+		if e.Reason == ChecksTimeout && s.batchIn(e.BatchID, Testing) && !s.Batch(e.BatchID).checksPassed {
+			s.failBatch(s.Batch(e.BatchID), e.Reason)
 		}
 	case FastForwardBatchSelected:
 		s.selectFastForward(e)
 	case FastForwardBlocked:
-		if s.batchIn(e.BatchID, Building) && s.Active.Method == FastForward {
-			s.requestDequeue(s.Active.PRs[0].PR, FastForwardRequired)
-			s.rebuildBatch()
+		b := s.Batch(e.BatchID)
+		if s.batchIn(e.BatchID, Building) && b.Method == FastForward {
+			if b.Speculative && b != s.Active {
+				b.ProvisionalFailure = FastForwardRequired
+			} else {
+				s.requestDequeue(b.PRs[0].PR, FastForwardRequired)
+				s.rebuildBatch(b)
+			}
 		}
 	case FastForwardMergeCommitsBlocked:
-		if e.Validate() == nil && s.batchIn(e.BatchID, Building) && s.Active.Method == FastForward && slices.ContainsFunc(s.Active.PRs, func(pr BatchPR) bool { return pr.PR == e.PR }) {
+		b := s.Batch(e.BatchID)
+		if e.Validate() == nil && s.batchIn(e.BatchID, Building) && b.Method == FastForward && slices.ContainsFunc(b.PRs, func(pr BatchPR) bool { return pr.PR == e.PR }) {
 			s.requestDequeue(e.PR, MergeCommitsNotAllowed)
-			s.rebuildBatch()
+			s.rebuildBatch(b)
 		}
 	case FastForwardRefBuilt:
-		if e.Validate() == nil && s.batchIn(e.BatchID, Building) && s.Active.Method == FastForward && e.HeadSHA == s.Active.PRs[len(s.Active.PRs)-1].HeadSHA && e.TestedSHA != e.HeadSHA {
+		b := s.Batch(e.BatchID)
+		if e.Validate() == nil && s.batchIn(e.BatchID, Building) && b.Method == FastForward && e.HeadSHA == b.PRs[len(b.PRs)-1].HeadSHA && e.TestedSHA != e.HeadSHA {
 			s.applyBuilt(TestRefBuilt{BatchID: e.BatchID, TestedSHA: e.TestedSHA, At: e.At, Method: FastForward})
 		}
 	case TestRefBuilt:
 		s.applyBuilt(e)
 	case TestRefBuildFailed:
+		b := s.Batch(e.BatchID)
+		if b == nil && len(s.Invalidations) > 0 {
+			s.cleanupLateBuild(e.BatchID)
+		}
 		if s.batchIn(e.BatchID, Building) {
 			if e.Conflict {
-				s.failBatch(Conflict)
+				s.failBatch(b, Conflict)
 			} else {
-				s.failBuild(e.At, "")
+				s.failBuild(b, e.At, "")
 			}
 		}
 	case ChecksObserved:
@@ -184,35 +215,37 @@ func Apply(s State, e Event) State {
 	case ChecksFailureConfirmed:
 		s.confirmCheckFailure(e)
 	case ChecksCompleted:
-		if s.Active != nil && s.Active.Phase == Testing && s.Active.TestedSHA == e.TestedSHA {
-			s.completeChecks(e.Success)
+		if b := s.batchForSHA(e.TestedSHA); b != nil && b.Phase == Testing && b.InvalidationReason == "" {
+			s.completeChecks(b, e.Success)
 		} else if s.Active != nil {
 			if _, used := s.testedBatches[e.TestedSHA]; !used {
 				s.retainChecks(e.TestedSHA, retainedCheck{terminal: true, success: e.Success})
 			}
 		}
 	case ChecksReopened:
-		if s.Active != nil && s.Active.Phase == Testing && s.Active.TestedSHA == e.TestedSHA {
-			s.Active.checksGeneration++
-			s.Active.checksPassed = false
-			s.Active.needsRefresh = true
+		if b := s.batchForSHA(e.TestedSHA); b != nil && b.Phase == Testing && b.InvalidationReason == "" {
+			b.checksGeneration++
+			b.checksPassed = false
+			b.needsRefresh = true
 		} else if s.Active != nil {
 			if _, used := s.testedBatches[e.TestedSHA]; !used {
 				s.retainChecks(e.TestedSHA, retainedCheck{})
 			}
 		}
 	case CheckProvenanceObserved:
-		if e.Validate() == nil && s.batchIn(e.BatchID, Testing) && s.Active.TestedSHA == e.TestedSHA {
-			s.Active.unboundChecks = slices.Clone(e.Checks)
+		b := s.Batch(e.BatchID)
+		if e.Validate() == nil && s.batchIn(e.BatchID, Testing) && b.TestedSHA == e.TestedSHA {
+			b.unboundChecks = slices.Clone(e.Checks)
 		}
 	case ChecksRefreshed:
-		if s.batchIn(e.BatchID, Testing) && s.Active.TestedSHA == e.TestedSHA {
-			s.Active.checksRefreshedAt = e.At
-			s.Active.checkRefreshes++
-			s.Active.needsRefresh = false
+		b := s.Batch(e.BatchID)
+		if s.batchIn(e.BatchID, Testing) && b.TestedSHA == e.TestedSHA {
+			b.checksRefreshedAt = e.At
+			b.checkRefreshes++
+			b.needsRefresh = false
 		}
 	case LandingStarted:
-		if s.batchIn(e.BatchID, Testing) {
+		if s.batchIn(e.BatchID, Testing) && s.Active.ID == e.BatchID && s.Active.InvalidationReason == "" && (!s.Active.Speculative || s.Active.BaseSHA == s.BaseSHA) {
 			s.Active.Phase = Landing
 			s.Active.LandingAttempt = LandingAttempt{ID: e.AttemptID, FenceToken: e.FenceToken, StartedAt: e.At}
 			if s.Active.Method == FastForward {
@@ -235,6 +268,9 @@ func Apply(s State, e Event) State {
 		}
 	case Landed:
 		if s.batchIn(e.BatchID, Landing) {
+			if s.Active.Speculative && e.NewBaseSHA != s.Active.LandingCommit() {
+				break
+			}
 			for _, pr := range s.Active.PRs {
 				detail := "PR landed"
 				if entry := s.entry(pr.PR); entry != nil && entry.DequeueRequested {
@@ -250,23 +286,26 @@ func Apply(s State, e Event) State {
 				s.removeEntry(pr.PR)
 			}
 			s.BaseSHA, s.Fence = e.NewBaseSHA, e.NewFence
-			s.discardBatch()
+			s.discardBatch(s.Active)
 		}
 	case LandingAbandoned:
 		if s.batchIn(e.BatchID, Landing) {
 			s.Fence = e.NewFence
+			if len(s.Following) > 0 {
+				s.invalidateFrom(s.Following[0], "predecessor-abandoned")
+			}
 			if s.Active.ConfigDigest != s.ConfigDigest {
-				s.discardBatch()
+				s.discardBatch(s.Active)
 			} else {
-				s.rebuildBatch()
+				s.rebuildBatch(s.Active)
 			}
 		}
 	case Dequeued:
 		if entry := s.entry(e.PR); entry != nil && entry.AdmissionID == e.AdmissionID && !s.isLanding(e.PR) &&
 			(e.BatchID == "" || s.Active != nil && s.Active.ID == e.BatchID) {
 			detail := s.DequeueDetail(e.PR, e.Reason)
-			if s.inBatch(e.PR) {
-				s.rebuildBatch()
+			if b := s.BatchForPR(e.PR); b != nil {
+				s.rebuildBatch(b)
 			}
 			s.reportHead(e.PR, entry.HeadSHA, "dequeued", string(e.Reason), detail)
 			s.removeEntry(e.PR)
@@ -278,10 +317,10 @@ func Apply(s State, e Event) State {
 	return s
 }
 
-func (s *State) refreshChecks() {
-	if s.Active != nil && s.Active.Phase == Testing {
-		s.Active.checksPassed, s.Active.needsRefresh = false, true
-		s.Active.checksGeneration++
+func (s *State) refreshChecks(b *Batch) {
+	if b != nil && b.Phase == Testing {
+		b.checksPassed, b.needsRefresh = false, true
+		b.checksGeneration++
 	}
 }
 
@@ -308,18 +347,14 @@ func cloneState(s State) State {
 	for i := range s.pending {
 		s.pending[i].prs = slices.Clone(s.pending[i].prs)
 	}
-	if s.Active != nil {
-		batch := *s.Active
-		batch.PRs = slices.Clone(batch.PRs)
-		batch.unboundChecks = slices.Clone(batch.unboundChecks)
-		if batch.CheckRetry != nil {
-			retry := *batch.CheckRetry
-			retry.Dispatches = slices.Clone(retry.Dispatches)
-			retry.FailedRuns = slices.Clone(retry.FailedRuns)
-			retry.ObservedRuns = slices.Clone(retry.ObservedRuns)
-			batch.CheckRetry = &retry
-		}
-		s.Active = &batch
+	s.Active = cloneBatch(s.Active)
+	s.Following = slices.Clone(s.Following)
+	for i := range s.Following {
+		s.Following[i] = cloneBatch(s.Following[i])
+	}
+	s.Invalidations = slices.Clone(s.Invalidations)
+	for i := range s.Invalidations {
+		s.Invalidations[i].BatchIDs = slices.Clone(s.Invalidations[i].BatchIDs)
 	}
 	s.observations = maps.Clone(s.observations)
 	if s.observations == nil {
@@ -355,23 +390,16 @@ func (s *State) entry(pr int) *Entry {
 	return nil
 }
 
-func (s State) inBatch(pr int) bool {
-	if s.Active != nil {
-		for _, member := range s.Active.PRs {
-			if member.PR == pr {
-				return true
-			}
-		}
-	}
-	return false
-}
+func (s State) inBatch(pr int) bool { return s.BatchForPR(pr) != nil }
 
 func (s State) isLanding(pr int) bool {
-	return s.Active != nil && s.Active.Phase == Landing && s.inBatch(pr)
+	b := s.BatchForPR(pr)
+	return b != nil && b.Phase == Landing
 }
 
 func (s State) batchIn(id string, phase Phase) bool {
-	return s.Active != nil && s.Active.ID == id && s.Active.Phase == phase
+	b := s.Batch(id)
+	return b != nil && b.Phase == phase && b.InvalidationReason == ""
 }
 
 func (s *State) requestDequeue(pr int, reason DequeueReason) {
@@ -386,8 +414,12 @@ func (s *State) requestDequeue(pr int, reason DequeueReason) {
 		s.dequeues[pr] = Dequeue{PR: pr, HeadSHA: entry.HeadSHA, AdmissionID: entry.AdmissionID, Reason: reason, scope: fmt.Sprintf("event/%d", s.revision)}
 	}
 	s.removePendingPR(pr)
-	if s.inBatch(pr) && !s.isLanding(pr) {
-		s.addEffect(DeleteRef{Ref: s.Active.TestRef})
+	if b := s.BatchForPR(pr); b != nil && b.Phase != Landing {
+		if b.Speculative && reason != ChecksFailed && reason != ChecksTimeout && reason != Conflict && reason != FastForwardRequired {
+			s.invalidateFrom(b, "change-left-queue")
+		} else {
+			s.addEffect(DeleteRef{Ref: b.TestRef})
+		}
 	}
 }
 
@@ -397,19 +429,28 @@ func (s *State) removeEntry(pr int) {
 	delete(s.dequeues, pr)
 }
 
-func (s *State) discardBatch() {
-	s.addEffect(DeleteRef{Ref: s.Active.TestRef})
-	s.Active = nil
-	clear(s.checks)
+func (s *State) discardBatch(b *Batch) {
+	s.addEffect(DeleteRef{Ref: b.TestRef})
+	if s.Active == b {
+		s.Active = nil
+		if len(s.Following) > 0 {
+			s.Active, s.Following = s.Following[0], s.Following[1:]
+		}
+	} else {
+		s.Following = slices.DeleteFunc(s.Following, func(candidate *Batch) bool { return candidate.ID == b.ID })
+	}
+	if s.Active == nil {
+		clear(s.checks)
+	}
 }
 
-func (s *State) failBuild(at time.Time, detail string) {
+func (s *State) failBuild(b *Batch, at time.Time, detail string) {
 	s.blockRevisions[BuildFailed]++
 	s.buildRetry.failures++
 	s.buildRetry.failedAt = at
 	s.buildRetry.revision = s.revision
 	s.buildRetry.detail = detail
-	s.rebuildBatch()
+	s.rebuildBatch(b)
 }
 
 // maxRetainedChecks bounds unrelated or reordered CI observations per active batch.
@@ -437,14 +478,14 @@ func (s *State) retainChecks(sha string, check retainedCheck) {
 	}
 }
 
-func (s *State) completeChecks(success bool) {
-	if s.Active.CheckRetry != nil && s.Active.CheckRetry.Confirmed {
+func (s *State) completeChecks(b *Batch, success bool) {
+	if b.CheckRetry != nil && b.CheckRetry.Confirmed {
 		return
 	}
 	if success {
-		s.Active.checksPassed = true
+		b.checksPassed = true
 	} else {
-		s.failBatch(ChecksFailed)
+		s.failBatch(b, ChecksFailed)
 	}
 }
 
@@ -476,17 +517,37 @@ func (s *State) removePendingPR(pr int) {
 	s.pending = slices.DeleteFunc(s.pending, func(g pendingGroup) bool { return len(g.prs) == 0 })
 }
 
-func (s *State) rebuildBatch() {
-	group := pendingGroup{prs: slices.Clone(s.Active.PRs), bisection: s.Active.FromBisection}
+func (s *State) rebuildBatch(b *Batch) {
+	if b.Speculative && len(s.Following) > 0 {
+		for i, candidate := range s.Batches() {
+			if candidate.ID == b.ID && i+1 < len(s.Batches()) {
+				s.invalidateFrom(s.Batches()[i+1], "predecessor-invalidated")
+				break
+			}
+		}
+	}
+	group := pendingGroup{prs: slices.Clone(b.PRs), bisection: b.FromBisection}
 	group.prs = slices.DeleteFunc(group.prs, func(pr BatchPR) bool { _, pending := s.dequeues[pr.PR]; return pending })
 	if len(group.prs) > 0 {
 		s.pending = append([]pendingGroup{group}, s.pending...)
 	}
-	s.discardBatch()
+	s.discardBatch(b)
 }
 
-func (s *State) failBatch(reason DequeueReason) {
-	prs := s.Active.PRs
+func (s *State) failBatch(b *Batch, reason DequeueReason) {
+	if b.Speculative && b != s.Active {
+		b.ProvisionalFailure = reason
+		b.checksPassed = false
+		return
+	}
+	if b.Speculative && len(s.Following) > 0 {
+		s.invalidateFrom(s.Following[0], "predecessor-failed")
+	}
+	prs := b.PRs
+	if reason == FastForwardRequired {
+		s.requestDequeue(prs[0].PR, reason)
+		return
+	}
 	if len(prs) == 1 {
 		s.requestDequeue(prs[0].PR, reason)
 		return
@@ -502,7 +563,7 @@ func (s *State) failBatch(reason DequeueReason) {
 			s.removePendingPR(pr.PR)
 		}
 	}
-	s.discardBatch()
+	s.discardBatch(b)
 }
 
 type effectScope struct {
@@ -585,22 +646,29 @@ func (s *State) recordTestedSHA(sha, batchID string) {
 }
 
 func (s *State) applyBuilt(e TestRefBuilt) {
+	b := s.Batch(e.BatchID)
 	if s.batchIn(e.BatchID, Building) {
 		if earlier, used := s.testedBatches[e.TestedSHA]; used {
-			s.failBuild(e.At, fmt.Sprintf("tested SHA %s was already recorded for batch %s; the top commit must carry the batch ID", e.TestedSHA, earlier))
+			s.failBuild(b, e.At, fmt.Sprintf("tested SHA %s was already recorded for batch %s; the top commit must carry the batch ID", e.TestedSHA, earlier))
 			return
 		}
 		s.recordTestedSHA(e.TestedSHA, e.BatchID)
-		s.Active.TestedSHA = e.TestedSHA
-		s.Active.Method = e.Method
-		s.Active.StartedTestingAt = e.At
-		s.Active.Phase = Testing
+		b.TestedSHA = e.TestedSHA
+		b.Method = e.Method
+		if b.Speculative {
+			b.LandingSHA = e.TestedSHA
+			if e.Method == FastForward {
+				b.LandingSHA = b.PRs[len(b.PRs)-1].HeadSHA
+			}
+		}
+		b.StartedTestingAt = e.At
+		b.Phase = Testing
 		s.buildRetry = buildRetryState{}
 		if check, retained := s.checks[e.TestedSHA]; retained {
 			delete(s.checks, e.TestedSHA)
-			s.Active.needsRefresh = !check.terminal
+			b.needsRefresh = !check.terminal
 			if check.terminal {
-				s.completeChecks(check.success)
+				s.completeChecks(b, check.success)
 			}
 		}
 	}

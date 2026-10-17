@@ -28,21 +28,23 @@ type Response struct {
 
 // Queue describes one served installation/repository/base/lane partition.
 type Queue struct {
-	Readiness    *Readiness    `json:"readiness,omitempty"`
-	State        string        `json:"state"`
-	Installation string        `json:"installation"`
-	Repository   string        `json:"repo"`
-	Base         string        `json:"base"`
-	Lane         string        `json:"lane"`
-	Watermark    int64         `json:"watermark"`
-	BaseSHA      string        `json:"base_sha"`
-	Paused       bool          `json:"paused"`
-	PauseReason  string        `json:"pause_reason"`
-	PauseDetail  string        `json:"pause_detail"`
-	Blocks       []Block       `json:"blocks"`
-	ActiveBatch  *Batch        `json:"active_batch"`
-	Entries      []Entry       `json:"entries"`
-	RulesSources []RulesSource `json:"rules_sources,omitempty"`
+	Readiness     *Readiness                 `json:"readiness,omitempty"`
+	State         string                     `json:"state"`
+	Installation  string                     `json:"installation"`
+	Repository    string                     `json:"repo"`
+	Base          string                     `json:"base"`
+	Lane          string                     `json:"lane"`
+	Watermark     int64                      `json:"watermark"`
+	BaseSHA       string                     `json:"base_sha"`
+	Paused        bool                       `json:"paused"`
+	PauseReason   string                     `json:"pause_reason"`
+	PauseDetail   string                     `json:"pause_detail"`
+	Blocks        []Block                    `json:"blocks"`
+	Chain         []*Batch                   `json:"chain,omitempty"`
+	Invalidations []queue.BatchesInvalidated `json:"invalidations,omitempty"`
+	ActiveBatch   *Batch                     `json:"active_batch"`
+	Entries       []Entry                    `json:"entries"`
+	RulesSources  []RulesSource              `json:"rules_sources,omitempty"`
 }
 
 // RulesSource lists one source's independently revisioned policy findings.
@@ -62,14 +64,20 @@ type Block struct {
 
 // Batch pins the tested inputs and the operation currently awaiting an outcome.
 type Batch struct {
-	ID         string                 `json:"id"`
-	Phase      string                 `json:"phase"`
-	BaseSHA    string                 `json:"base_sha"`
-	TestedSHA  string                 `json:"tested_sha"`
-	TestRef    string                 `json:"test_ref"`
-	Method     string                 `json:"method"`
-	PRs        []BatchPR              `json:"prs"`
-	CheckRetry *queue.CheckRetryState `json:"check_retry,omitempty"`
+	Position           uint64                 `json:"position,omitempty"`
+	ParentBatchID      string                 `json:"parent_batch_id,omitempty"`
+	BatchesAhead       int                    `json:"batches_ahead"`
+	LandingSHA         string                 `json:"landing_sha,omitempty"`
+	InvalidationReason string                 `json:"invalidation_reason,omitempty"`
+	ProvisionalFailure string                 `json:"provisional_failure,omitempty"`
+	ID                 string                 `json:"id"`
+	Phase              string                 `json:"phase"`
+	BaseSHA            string                 `json:"base_sha"`
+	TestedSHA          string                 `json:"tested_sha"`
+	TestRef            string                 `json:"test_ref"`
+	Method             string                 `json:"method"`
+	PRs                []BatchPR              `json:"prs"`
+	CheckRetry         *queue.CheckRetryState `json:"check_retry,omitempty"`
 }
 
 // BatchPR identifies an exact head in a batch.
@@ -81,6 +89,9 @@ type BatchPR struct {
 // Entry uses position zero for PRs outside the queue; admission is the latest
 // successful admission, retained on a terminal PR detail response.
 type Entry struct {
+	BatchID           string     `json:"batch_id,omitempty"`
+	BatchPosition     uint64     `json:"batch_position,omitempty"`
+	BatchesAhead      int        `json:"batches_ahead"`
 	Position          int        `json:"position"`
 	PR                int        `json:"pr"`
 	HeadSHA           string     `json:"head_sha"`
@@ -208,23 +219,38 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 		q.RulesSources = append(q.RulesSources, RulesSource{string(source.Source), problems, source.Revision})
 	}
 	q.Paused = len(q.Blocks) > 0
-	if b := s.Active; b != nil {
-		q.ActiveBatch = &Batch{ID: b.ID, Phase: string(b.Phase), BaseSHA: b.BaseSHA, TestedSHA: b.TestedSHA, TestRef: b.TestRef, Method: string(b.Method), PRs: make([]BatchPR, 0, len(b.PRs)), CheckRetry: cloneCheckRetry(b.CheckRetry)}
-		if q.ActiveBatch.CheckRetry != nil {
-			q.ActiveBatch.CheckRetry.Detail = sanitizer.Sanitize(q.ActiveBatch.CheckRetry.Detail)
+	for i, b := range s.Batches() {
+		item := &Batch{ID: b.ID, Phase: string(b.Phase), BaseSHA: b.BaseSHA, TestedSHA: b.TestedSHA, TestRef: b.TestRef, Method: string(b.Method), PRs: make([]BatchPR, 0, len(b.PRs)), CheckRetry: cloneCheckRetry(b.CheckRetry), Position: max(1, b.ChainPosition), ParentBatchID: b.ParentBatchID, BatchesAhead: i, LandingSHA: b.LandingCommit(), InvalidationReason: b.InvalidationReason, ProvisionalFailure: string(b.ProvisionalFailure)}
+		if item.CheckRetry != nil {
+			item.CheckRetry.Detail = sanitizer.Sanitize(item.CheckRetry.Detail)
 		}
 		for _, pin := range b.PRs {
-			q.ActiveBatch.PRs = append(q.ActiveBatch.PRs, BatchPR{pin.PR, pin.HeadSHA})
+			item.PRs = append(item.PRs, BatchPR{pin.PR, pin.HeadSHA})
+		}
+		q.Chain = append(q.Chain, item)
+		if i == 0 {
+			q.ActiveBatch = item
 		}
 	}
+	q.Invalidations = s.Invalidations
 	for i, admitted := range s.Entries {
 		e := known[admitted.PR]
 		e.HeadSHA = admitted.HeadSHA
 		e.Position, e.Status, e.Reason, e.Detail = i+1, "queued", "", ""
-		if inBatch(s, e.PR) {
-			e.Status = string(s.Active.Phase)
-			if s.Active.Phase == queue.Testing {
-				e.Detail = sanitizer.Sanitize(s.CheckProvenanceDetail())
+		if b := s.BatchForPR(e.PR); b != nil {
+			e.BatchID, e.BatchPosition = b.ID, max(1, b.ChainPosition)
+			for i, candidate := range s.Batches() {
+				if candidate.ID == b.ID {
+					e.BatchesAhead = i
+					break
+				}
+			}
+			e.Status = string(b.Phase)
+			if b.InvalidationReason != "" {
+				e.Status, e.Reason = "invalidating", b.InvalidationReason
+			}
+			if b.Phase == queue.Testing {
+				e.Detail = sanitizer.Sanitize(s.BatchCheckProvenanceDetail(b.ID))
 				if e.Detail != "" {
 					e.Reason = "unbound-check-provenance"
 				}
@@ -314,7 +340,7 @@ func entryIn(s queue.State, pr int) bool {
 }
 
 func inBatch(s queue.State, pr int) bool {
-	return s.Active != nil && slices.ContainsFunc(s.Active.PRs, func(p queue.BatchPR) bool { return p.PR == pr })
+	return s.BatchForPR(pr) != nil
 }
 
 func cloneCheckRetry(retry *queue.CheckRetryState) *queue.CheckRetryState {
@@ -388,11 +414,12 @@ func retryEvidence(event queue.Event, before, after queue.State, sanitizer *diag
 }
 
 func retryState(s queue.State, batchID, testedSHA string) string {
-	if s.Active == nil || s.Active.ID != batchID || s.Active.TestedSHA != testedSHA || s.Active.CheckRetry == nil {
+	b := s.Batch(batchID)
+	if b == nil || b.ID != batchID || b.TestedSHA != testedSHA || b.CheckRetry == nil {
 		return ""
 	}
-	state := s.Active.CheckRetry.RerunState
-	if state == "requested" && s.Active.CheckRetry.Dispatched {
+	state := b.CheckRetry.RerunState
+	if state == "requested" && b.CheckRetry.Dispatched {
 		return "running"
 	}
 	return state
@@ -465,8 +492,8 @@ func explanationContext(j store.Journal, pr int) (map[string]bool, map[int64]boo
 				delete(causes, "rules/"+string(e.Source))
 			}
 		}
-		if inBatch(s, pr) && s.Active.TestedSHA != "" {
-			result[s.Active.TestedSHA] = true
+		if b := s.BatchForPR(pr); b != nil && b.TestedSHA != "" {
+			result[b.TestedSHA] = true
 		}
 	}
 	if entryIn(s, pr) {
@@ -526,6 +553,14 @@ func eventSummary(event queue.Event, before, after queue.State) string {
 		return "Action quarantined after repeated invalid execution: " + e.Reason
 	case queue.RefreshRequested:
 		return "Requested fresh CI observations"
+	case queue.ChainedBatchStarted:
+		return fmt.Sprintf("Started chain batch %s at position %d on %s", e.BatchID, e.Position, e.ParentBatchID)
+	case queue.ChainedTestRefBuilt:
+		return fmt.Sprintf("Recorded chain batch %s: tested %s, landing %s", e.BatchID, e.TestedSHA, e.LandingSHA)
+	case queue.BatchesInvalidated:
+		return fmt.Sprintf("Invalidated batches %s: %s", strings.Join(e.BatchIDs, ", "), e.Reason)
+	case queue.BatchDiagnosed:
+		return "Diagnosed oldest batch " + e.BatchID + ": " + string(e.Reason)
 	case queue.BatchStarted:
 		return "Started constructing a test batch"
 	case queue.BatchFailed:
@@ -635,6 +670,10 @@ func checkRunSummary(runs []queue.CheckRun) string {
 }
 
 func affects(event queue.Event, pr int, before, after queue.State, tested map[string]bool) bool {
+	before.Active = before.BatchForPR(pr)
+	before.Following = nil
+	after.Active = after.BatchForPR(pr)
+	after.Following = nil
 	if n := directPR(event); n > 0 {
 		return n == pr
 	}
@@ -649,6 +688,14 @@ func affects(event queue.Event, pr int, before, after queue.State, tested map[st
 		return before.RulesSourceRevision(e.Source) != after.RulesSourceRevision(e.Source) && (entryIn(before, pr) || entryIn(after, pr))
 	case queue.RulesSourceCleared:
 		return before.RulesSourceRevision(e.Source) != after.RulesSourceRevision(e.Source) && (entryIn(before, pr) || entryIn(after, pr))
+	case queue.ChainedBatchStarted:
+		return slices.ContainsFunc(e.PRs, func(p queue.BatchPR) bool { return p.PR == pr })
+	case queue.ChainedTestRefBuilt:
+		return inBatch(before, pr) && before.Active.ID == e.BatchID
+	case queue.BatchesInvalidated:
+		return inBatch(before, pr) && slices.Contains(e.BatchIDs, before.Active.ID)
+	case queue.BatchDiagnosed:
+		return inBatch(before, pr) && before.Active.ID == e.BatchID
 	case queue.BatchStarted:
 		return slices.ContainsFunc(e.PRs, func(p queue.BatchPR) bool { return p.PR == pr })
 	case queue.ChecksCompleted:

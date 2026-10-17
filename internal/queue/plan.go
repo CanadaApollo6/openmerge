@@ -11,6 +11,9 @@ import (
 // the active batch's next action. Replanning unchanged inputs preserves all keys.
 // Invalid inputs that would produce an unsafe action panic before it is emitted.
 func Plan(cfg Config, s State, now time.Time) []Action {
+	if cfg.MaxDepth() < 1 || cfg.MaxDepth() > 32 || cfg.SpeculationMinDepth < 0 || max(1, cfg.SpeculationMinDepth) > cfg.MaxDepth() {
+		panic("invalid speculation window")
+	}
 	actions := plan(cfg, s, now)
 	for _, action := range actions {
 		if err := action.Validate(); err != nil {
@@ -42,6 +45,15 @@ func plan(cfg Config, s State, now time.Time) []Action {
 	if cfg.ConfigDigest != s.ConfigDigest && (s.Active == nil || s.Active.Phase != Landing) {
 		return nil
 	}
+	if invalidation, pending := s.pendingInvalidation(); pending {
+		// Record invalidation before any new admission or diagnosis. A durable
+		// landing remains resolvable even while its suffix is being discarded.
+		actions := []Action{invalidation}
+		if s.Active != nil && s.Active.Phase == Landing {
+			actions = append(actions, planBatch(cfg, s, s.Active, now)...)
+		}
+		return actions
+	}
 	var actions []Action
 	if s.workBlocked() {
 		if len(s.Entries) > 0 {
@@ -69,6 +81,12 @@ func plan(cfg Config, s State, now time.Time) []Action {
 			actions = append(actions, effect)
 		}
 	}
+	if cfg.MaxDepth() > 1 || s.Active != nil && s.Active.Speculative {
+		for _, b := range s.Batches() {
+			actions = append(actions, planBatch(cfg, s, b, now)...)
+		}
+		return append(actions, planChainAdmission(cfg, s, now)...)
+	}
 	batch := s.Active
 	if batch == nil {
 		if s.workBlocked() {
@@ -89,6 +107,14 @@ func plan(cfg Config, s State, now time.Time) []Action {
 			}
 		}
 		return actions
+	}
+	return append(actions, planBatch(cfg, s, batch, now)...)
+}
+
+func planBatch(cfg Config, s State, batch *Batch, now time.Time) []Action {
+	var actions []Action
+	if batch.InvalidationReason != "" {
+		return nil
 	}
 	if batch.Phase == Landing {
 		if now.Sub(batch.LandingAttempt.StartedAt) > cfg.ResolveAfter {
@@ -116,6 +142,12 @@ func plan(cfg Config, s State, now time.Time) []Action {
 			return actions
 		}
 	}
+	if batch.ProvisionalFailure != "" {
+		if batch == s.Active {
+			return append(actions, DiagnoseBatch{BatchID: batch.ID, Reason: batch.ProvisionalFailure})
+		}
+		return actions
+	}
 	switch batch.Phase {
 	case Building:
 		paused := s.PauseReason(cfg) != ""
@@ -131,12 +163,17 @@ func plan(cfg Config, s State, now time.Time) []Action {
 		if s.buildRetry.failures > 0 && now.Sub(s.buildRetry.failedAt) < cfg.buildRetryDelay(s.buildRetry.failures) {
 			return actions
 		}
-		actions = append(actions, BuildTestRef{
-			BatchID: batch.ID, BaseSHA: batch.BaseSHA, PRs: slices.Clone(batch.PRs), Ref: batch.TestRef,
-			Method: cfg.MergeMethod,
-		})
+		build := BuildTestRef{BatchID: batch.ID, BaseSHA: batch.BaseSHA, PRs: slices.Clone(batch.PRs), Ref: batch.TestRef, Method: cfg.MergeMethod}
+		if batch.Speculative {
+			actions = append(actions, BuildChainedTestRef{BuildTestRef: build, ParentBatchID: batch.ParentBatchID, Position: batch.ChainPosition})
+		} else {
+			actions = append(actions, build)
+		}
 	case Testing:
 		if batch.checksPassed {
+			if batch != s.Active || batch.BaseSHA != s.BaseSHA {
+				return actions
+			}
 			actions = append(actions, Land{
 				BatchID: batch.ID, ExpectedBaseSHA: batch.BaseSHA, TestedSHA: batch.TestedSHA,
 				Ref: batch.TestRef, FenceToken: s.Fence,
@@ -145,7 +182,7 @@ func plan(cfg Config, s State, now time.Time) []Action {
 			})
 			return actions
 		}
-		if action, handled := planCheckRetry(cfg, s, now); handled {
+		if action, handled := planCheckRetry(cfg, s, batch, now); handled {
 			if action != nil {
 				actions = append(actions, action)
 			}
@@ -154,7 +191,10 @@ func plan(cfg Config, s State, now time.Time) []Action {
 		deadline, timeoutEnabled := batch.checkDeadline(cfg)
 		timedOut := timeoutEnabled && now.After(deadline)
 		if timedOut && !batch.needsRefresh && batch.checkRefreshes > 0 && !batch.checksRefreshedAt.Before(deadline) {
-			if cfg.ChecksRetryFailed == 1 {
+			if batch != s.Active {
+				return append(actions, FailBatch{BatchID: batch.ID, Reason: ChecksTimeout})
+			}
+			if cfg.RetryLimit() == 1 {
 				return append(actions, ConfirmCheckFailure{BatchID: batch.ID, TestedSHA: batch.TestedSHA, Generation: batch.checksGeneration, Reason: ChecksTimeout})
 			}
 			if len(batch.PRs) > 1 {
@@ -327,6 +367,11 @@ func (s State) batchCandidates(cfg Config, now time.Time) ([]BatchPR, time.Time)
 	if len(s.pending) > 0 {
 		return slices.Clone(s.pending[0].prs), time.Time{}
 	}
+	for _, b := range s.Batches() {
+		if b.FromBisection {
+			return nil, time.Time{}
+		}
+	}
 	size := cfg.BatchMaxSize
 	if size == 0 {
 		size = 1
@@ -338,7 +383,7 @@ func (s State) batchCandidates(cfg Config, now time.Time) ([]BatchPR, time.Time)
 	var oldest time.Time
 	for _, entry := range s.Entries {
 		pr := BatchPR{PR: entry.PR, HeadSHA: entry.HeadSHA}
-		if !s.runnablePRs([]BatchPR{pr}) {
+		if s.inBatch(pr.PR) || !s.runnablePRs([]BatchPR{pr}) {
 			continue
 		}
 		if len(prs) == 0 || entry.EnqueuedAt.Before(oldest) {
@@ -363,6 +408,12 @@ func (s State) batchCandidates(cfg Config, now time.Time) ([]BatchPR, time.Time)
 func CanStart(cfg Config, s State, action Action, event Event) bool {
 	var at time.Time
 	switch e := event.(type) {
+	case ChainedBatchStarted:
+		a, ok := action.(BuildChainedTestRef)
+		if !ok || e.Validate() != nil || a.BatchID != e.BatchID || a.BaseSHA != e.BaseSHA || !slices.Equal(a.PRs, e.PRs) || a.ParentBatchID != e.ParentBatchID || a.Position != e.Position {
+			return false
+		}
+		at = e.At
 	case BatchStarted:
 		a, ok := action.(BuildTestRef)
 		if !ok || e.Validate() != nil || a.BatchID != e.BatchID || a.BaseSHA != e.BaseSHA || !slices.Equal(a.PRs, e.PRs) {

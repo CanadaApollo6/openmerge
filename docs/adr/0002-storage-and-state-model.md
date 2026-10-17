@@ -145,3 +145,19 @@ head captured in `LandingAttempt` before the push. Recovery is independent of
 current merge-method configuration. Atomic landing retains its strict fence
 format: `tested=` identifies the marker, while the base receives the head. As
 with other additive event types, drain older workers before upgrading; rollback requires restoring the earlier log.
+
+### Post-deployment addition: fixed-window speculative chains (2026-10-17)
+
+ADR 0009 step 3 adds `chained_batch_started` for durable admission and
+`chained_test_ref_built` for its tested/landing commit pair, parent batch and
+chain position. Commits are pinned by the result because they do not exist at
+admission. `batches_invalidated` records exact discarded batch IDs and cause;
+`batch_diagnosed` promotes an oldest provisional build/legacy failure. Their
+new actions are `build_chained_test_ref`, `invalidate_batches`, `diagnose_batch`,
+and `cleanup_invalidated_ref` (a new cleanup key when a builder reports after
+an earlier deletion finished). Each has a golden fixture. All previously
+deployed wire structs and fixtures remain unchanged, and depth 1 emits only its
+existing protocol. Compact projection snapshots now have an explicit codec for
+the chain, checks/retry generations and deadlines, pending groups, effects and
+fences. Store persistence still uses journal replay; enabling database retention
+or compaction is separate work.

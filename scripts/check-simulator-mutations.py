@@ -30,10 +30,23 @@ def mutation(path, *edits):
 LAND_SHA = "Base: x.Base, ExpectedBaseSHA: a.ExpectedBaseSHA, TestedSHA: a.TestedSHA,"
 ABANDON = "return emit(queue.LandingAbandoned{BatchID: a.BatchID, NewFence: next})"
 MUTANTS = {
+    "out_of_order_landing": mutation(
+        PLAN, ("if batch != s.Active || batch.BaseSHA != s.BaseSHA {", "if false {")
+    ),
+    "blame_provisional_failure": mutation(
+        APPLY, ("if b.Speculative && b != s.Active {\n\t\tb.ProvisionalFailure", "if false {\n\t\tb.ProvisionalFailure")
+    ),
+    "ignore_fixed_window": mutation(
+        "internal/queue/chain.go", ("len(s.Batches()) >= cfg.MaxDepth()", "false")
+    ),
+    "chain_built_on_wrong_commit": mutation(
+        APPLY, ("b.LandingSHA = e.TestedSHA", "b.LandingSHA = b.BaseSHA")
+    ),
     "uncorrelated_batch_timeout": mutation(
         APPLY,
-        ("e.Reason == ChecksTimeout && s.batchIn(e.BatchID, Testing) && !s.Active.checksPassed",
+        ("e.Reason == ChecksTimeout && s.batchIn(e.BatchID, Testing) && !s.Batch(e.BatchID).checksPassed",
          "e.Reason == ChecksTimeout && s.Active != nil && s.Active.Phase == Testing && !s.Active.checksPassed"),
+        ("s.failBatch(s.Batch(e.BatchID), e.Reason)", "s.failBatch(s.Active, e.Reason)"),
     ),
     "build_key_omits_composition": mutation(
         TYPES,
@@ -46,13 +59,13 @@ MUTANTS = {
     ),
     "drop_passing_subbatch_pr": mutation(
         APPLY,
-        ("s.Active.checksPassed = true",
-         "if s.Active.FromBisection && len(s.Active.PRs) > 1 { s.Active.PRs = s.Active.PRs[1:] }\n\t\ts.Active.checksPassed = true"),
+        ("b.checksPassed = true",
+         "if b.FromBisection && len(b.PRs) > 1 { b.PRs = b.PRs[1:] }\n\t\tb.checksPassed = true"),
     ),
     "dequeue_whole_failing_batch": mutation(
         APPLY,
         ("if len(prs) == 1 {", "if true {"),
-        ("s.requestDequeue(prs[0].PR, reason)", "for _, pr := range prs { s.requestDequeue(pr.PR, reason) }"),
+        ("if true {\n\t\ts.requestDequeue(prs[0].PR, reason)", "if true {\n\t\tfor _, pr := range prs { s.requestDequeue(pr.PR, reason) }"),
     ),
     "no_ci_gate": mutation(PLAN, ("if batch.checksPassed {", "if true {")),
     "land_ignores_generation": mutation(
@@ -61,7 +74,7 @@ MUTANTS = {
     ),
     "reopen_does_not_clear_success": mutation(
         APPLY,
-        ("s.Active.checksPassed = false", "// mutant preserves success after a reopen"),
+        ("b.checksGeneration++\n\t\t\tb.checksPassed = false", "b.checksGeneration++ // mutant preserves success after a reopen"),
     ),
     "no_landing_ci_guard": mutation(
         EXECUTOR,
@@ -127,10 +140,11 @@ MUTANTS = {
 PROBE = '''package sim
 import (
     "testing"
+    "time"
     "github.com/CanadaApollo6/openmerge/internal/queue"
 )
 func TestMutationRunProbe(t *testing.T) {
-    for _, mode := range []string{"passing", "broken", "squash", "external", "batching", "ci-rerun"} {
+    for _, mode := range []string{"passing", "broken", "squash", "external", "batching", "ci-rerun", "chain", "chain-broken", "chain-timeout"} {
         t.Run(mode, func(t *testing.T) {
             cfg := smallConfig()
             cfg.PRs, cfg.MaxSteps, cfg.Faults = 2, 10000, DefaultFaults()
@@ -142,6 +156,17 @@ func TestMutationRunProbe(t *testing.T) {
                 cfg.PRs, cfg.BrokenRate, cfg.Faults = 16, 0.2, Faults{}
                 cfg.ArrivalWindow = 0
                 cfg.Planner.BatchMaxSize = 8
+            }
+            if mode == "chain" || mode == "chain-broken" || mode == "chain-timeout" {
+                cfg.PRs,cfg.ArrivalWindow,cfg.Faults = 16,0,Faults{}
+                cfg.Planner.SpeculationMaxDepth=4
+                cfg.Planner.ChecksRetryFailed=1
+                cfg.CI=&CIConfig{Runners:50,RerunsSupported:true}
+                cfg.Planner.BatchMaxSize=1
+                cfg.CIMin,cfg.CIMax=time.Minute,3*time.Minute
+                cfg.BrokenRate=0
+                if mode == "chain-broken" { cfg.BrokenRate=.5 }
+                if mode == "chain-timeout" { cfg.Planner.CheckTimeout=90*time.Second }
             }
             r, err := Run(cfg)
             if err != nil { t.Fatalf("simulator rejected mutation: %v; merged=%d", err, r.Merged) }
@@ -167,7 +192,7 @@ with tempfile.TemporaryDirectory(prefix="openmerge-mutations-") as directory:
         overlay.write_text(json.dumps({"Replace": replacements}))
         run = subprocess.run(
             ["go", "test", "-count=1", "-overlay", str(overlay), "./internal/sim", "-run",
-             "TestMutationRunProbe|TestDelayedPassCannotReviveLandingInSimulator|TestStaleBatchTimeoutInSimulator|TestChangedCompositionInSimulator|TestBatchFormationWaitInSimulator|TestAbandonmentBeforePush/captured_token|TestExit500PRDay|TestForeignBaseEqualityDoesNotResolveLanding/resolve_from_fence"],
+             "TestMutationRunProbe|TestProvisionalConflictInSimulator|TestDelayedPassCannotReviveLandingInSimulator|TestStaleBatchTimeoutInSimulator|TestChangedCompositionInSimulator|TestBatchFormationWaitInSimulator|TestAbandonmentBeforePush/captured_token|TestExit500PRDay|TestForeignBaseEqualityDoesNotResolveLanding/resolve_from_fence"],
             cwd=ROOT, capture_output=True, text=True, timeout=60,
         )
         output = run.stdout + run.stderr

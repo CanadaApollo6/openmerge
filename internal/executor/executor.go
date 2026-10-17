@@ -81,6 +81,30 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		return errors.New("required checks must be configured or AllowNoRequiredChecks explicitly enabled")
 	}
 	switch a := action.(type) {
+	case queue.CleanupInvalidatedRef:
+		if err := x.Driver.DeleteRef(ctx, x.Repo, a.Ref); err != nil {
+			return err
+		}
+		return emit(queue.ActionCompleted{Key: a.Key()})
+	case queue.InvalidateBatches:
+		return emit(queue.BatchesInvalidated(a))
+	case queue.DiagnoseBatch:
+		return emit(queue.BatchDiagnosed(a))
+	case queue.BuildChainedTestRef:
+		// Reuse construction and fast-forward verification, but persist the
+		// additive admission/result with the chain identity and both commits.
+		return x.Execute(ctx, a.BuildTestRef, func(event queue.Event) error {
+			switch e := event.(type) {
+			case queue.BatchStarted:
+				return emit(queue.ChainedBatchStarted{BatchID: e.BatchID, BaseSHA: e.BaseSHA, PRs: e.PRs, At: e.At, ParentBatchID: a.ParentBatchID, Position: a.Position})
+			case queue.TestRefBuilt:
+				return emit(queue.ChainedTestRefBuilt{BatchID: e.BatchID, TestedSHA: e.TestedSHA, LandingSHA: e.TestedSHA, ParentBatchID: a.ParentBatchID, Position: a.Position, Method: e.Method, At: e.At})
+			case queue.FastForwardRefBuilt:
+				return emit(queue.ChainedTestRefBuilt{BatchID: e.BatchID, TestedSHA: e.TestedSHA, LandingSHA: e.HeadSHA, ParentBatchID: a.ParentBatchID, Position: a.Position, Method: queue.FastForward, At: e.At})
+			default:
+				return emit(event)
+			}
+		})
 	case queue.BuildTestRef:
 		if err := emit(queue.BatchStarted{BatchID: a.BatchID, BaseSHA: a.BaseSHA, PRs: append([]queue.BatchPR(nil), a.PRs...), At: x.now()}); err != nil {
 			return err

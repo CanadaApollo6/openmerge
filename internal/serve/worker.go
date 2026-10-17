@@ -60,6 +60,10 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 			return store.ErrActionDeferred
 		}
 		actionCtx = forge.WithRequestClass(actionCtx, forge.ReportingRequest)
+	case queue.BuildChainedTestRef:
+		if err := s.trustGate(actionCtx, w, action.PRs); err != nil && !errors.Is(err, errTrustGate) {
+			return err
+		}
 	case queue.BuildTestRef:
 		if err := s.trustGate(actionCtx, w, action.PRs); err != nil && !errors.Is(err, errTrustGate) {
 			return err
@@ -71,7 +75,7 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 	}
 	if w.managed && !w.ready {
 		switch claim.Action.(type) {
-		case queue.BuildTestRef, queue.Land:
+		case queue.BuildChainedTestRef, queue.BuildTestRef, queue.Land:
 			return store.ErrActionDeferred
 		}
 	}
@@ -111,21 +115,24 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 		disableDeleteHeadBranch = false
 	}
 	x := executor.Executor{Driver: w.Driver, Git: w.Git, Repo: w.repo(), Base: w.Key.BaseBranch, DisableDeleteHeadBranch: disableDeleteHeadBranch}
-	x.ChecksRetryFailed = cfg.ChecksRetryFailed
+	batch := state.ActionBatch(claim.Action)
+	x.ChecksRetryFailed = cfg.RetryLimit()
 	x.CheckTimeout = cfg.CheckTimeout
-	if state.Active != nil {
-		x.StartedTestingAt = state.Active.StartedTestingAt
-		x.CheckRetry = state.Active.CheckRetry
+	if batch != nil {
+		x.StartedTestingAt = batch.StartedTestingAt
+		x.CheckRetry = batch.CheckRetry
 	}
-	x.PreviousUnboundChecks = state.UnboundChecks()
+	if batch != nil {
+		x.PreviousUnboundChecks = state.BatchUnboundChecks(batch.ID)
+	}
 	x.ReferencesCheck = w.cfg.MergeWhen.ReferencesCheck
-	if cfg.ChecksRetryFailed == 1 {
+	if cfg.RetryLimit() == 1 {
 		x.RetryFailure = func(checks []forge.CheckRun, name string) bool {
-			if state.Active == nil {
+			if batch == nil {
 				return false
 			}
-			prs := make([]forge.PullRequest, 0, len(state.Active.PRs))
-			for _, pin := range state.Active.PRs {
+			prs := make([]forge.PullRequest, 0, len(batch.PRs))
+			for _, pin := range batch.PRs {
 				prs = append(prs, w.prs[pin.PR])
 			}
 			return retryPolicyFailure(w.cfg.MergeWhen, prs, checks, name)
@@ -140,11 +147,11 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 		if w.configError != nil {
 			return false, false, errors.New("invalid repository configuration")
 		}
-		if state.Active == nil {
+		if batch == nil {
 			return false, false, errors.New("no active batch for check policy")
 		}
 		pending := false
-		for _, pin := range state.Active.PRs {
+		for _, pin := range batch.PRs {
 			terminal, met, err := mergeResult(w.cfg.MergeWhen, w.prs[pin.PR], checks)
 			if err != nil {
 				return false, false, err
@@ -190,7 +197,7 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 			return errors.Join(err, blockErr)
 		}
 		// The independent recovery observer re-reads producers while starts stop.
-		if reportErr := s.reportBatch(actionCtx, w, state, forge.Status{State: forge.Blocked, Reason: "ambiguous-check-sources", Summary: ambiguity.Error()}); reportErr != nil {
+		if reportErr := s.reportBatch(actionCtx, w, batch, forge.Status{State: forge.Blocked, Reason: "ambiguous-check-sources", Summary: ambiguity.Error()}); reportErr != nil {
 			return errors.Join(err, reportErr)
 		}
 		return nil // refresh events committed; the next epoch re-reads CI
@@ -245,11 +252,11 @@ func (s *Server) status(ctx context.Context, w *worker, pr int, head string, sta
 	return s.store.Record(ctx, w.id, key, data)
 }
 
-func (s *Server) reportBatch(ctx context.Context, w *worker, state queue.State, status forge.Status) error {
-	if state.Active == nil {
+func (s *Server) reportBatch(ctx context.Context, w *worker, batch *queue.Batch, status forge.Status) error {
+	if batch == nil {
 		return nil
 	}
-	for _, pr := range state.Active.PRs {
+	for _, pr := range batch.PRs {
 		if err := s.status(ctx, w, pr.PR, pr.HeadSHA, status); err != nil {
 			return err
 		}
@@ -297,26 +304,30 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 	}
 	for _, entry := range state.Entries {
 		status := forge.Status{State: forge.Queued, Summary: "Waiting for a test batch"}
-		if state.Active != nil {
-			for _, pr := range state.Active.PRs {
-				if pr.PR == entry.PR {
-					status = forge.Status{State: forge.StatusState(state.Active.Phase), Summary: "Batch " + state.Active.ID}
-					if retry := state.Active.CheckRetry; retry != nil {
-						status.Summary += "; " + checkRetryStatus(retry)
+		if batch := state.BatchForPR(entry.PR); batch != nil {
+			status = forge.Status{State: forge.StatusState(batch.Phase), Summary: "Batch " + batch.ID}
+			if batch.Speculative {
+				ahead := 0
+				for i, b := range state.Batches() {
+					if b.ID == batch.ID {
+						ahead = i
+						break
 					}
 				}
+				status.Summary += fmt.Sprintf("; chain position %d, built on %s; %d batches ahead", batch.ChainPosition, batch.ParentBatchID, ahead)
+			}
+			if retry := batch.CheckRetry; retry != nil {
+				status.Summary += "; " + checkRetryStatus(retry)
+			}
+			if batch.InvalidationReason != "" {
+				status.Summary += "; invalidated: " + batch.InvalidationReason
 			}
 			if status.State == "building" {
 				status.State = forge.Testing
 			}
-		}
-		if state.Active != nil && (status.State == forge.Testing || status.Reason == "ambiguous-check-sources") {
-			if detail := state.CheckProvenanceDetail(); detail != "" {
-				if status.Reason == "" {
+			if status.State == forge.Testing || status.Reason == "ambiguous-check-sources" {
+				if detail := state.BatchCheckProvenanceDetail(batch.ID); detail != "" {
 					status = forge.Status{State: forge.Blocked, Reason: "unbound-check-provenance", Summary: detail}
-				} else {
-					status.Reason += ", unbound-check-provenance"
-					status.Summary += "; " + detail
 				}
 			}
 		}

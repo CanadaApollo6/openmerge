@@ -10,7 +10,7 @@ func appendEvidence(rows []Event, row Event, event, previous queue.Event, before
 	refresh, ok := event.(queue.ChecksRefreshed)
 	reopen, paired := previous.(queue.ChecksReopened)
 	if !ok || !paired || len(rows) == 0 || rows[len(rows)-1].Type != "checks_reopened" || refresh.TestedSHA != reopen.TestedSHA || !refresh.At.Equal(reopen.At) ||
-		before.Active == nil || before.Active.ID != refresh.BatchID || before.Active.TestedSHA != refresh.TestedSHA {
+		before.Batch(refresh.BatchID) == nil || before.Batch(refresh.BatchID).TestedSHA != refresh.TestedSHA {
 		return append(rows, row)
 	}
 	pair := rows[len(rows)-1]

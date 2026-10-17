@@ -118,6 +118,29 @@
               "description": "Wait for a partial fresh batch to fill; singleton mode and pending retry/bisection groups start immediately."
             }
           }
+        },
+        "speculation": {
+          "type": "object",
+          "additionalProperties": false,
+          "default": {
+            "max_depth": 1,
+            "min_depth": 1
+          },
+          "description": "Fixed admission window. The loader also requires min_depth <= max_depth. Depth above one enables one failed-check rerun on the oldest batch.",
+          "properties": {
+            "max_depth": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 32,
+              "default": 1
+            },
+            "min_depth": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 32,
+              "default": 1
+            }
+          }
         }
       }
     },

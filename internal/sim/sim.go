@@ -268,7 +268,7 @@ func (s *simulation) execute(action queue.Action) error {
 	s.executor.CheckTimeout = s.cfg.Planner.CheckTimeout
 	s.executor.StartedTestingAt = time.Time{}
 	s.executor.CheckRetry = nil
-	if active := s.state.Active; active != nil {
+	if active := s.state.ActionBatch(action); active != nil {
 		s.executor.StartedTestingAt = active.StartedTestingAt
 		s.executor.CheckRetry = active.CheckRetry
 	}
@@ -325,11 +325,19 @@ func (s *simulation) execute(action queue.Action) error {
 func (s *simulation) record(event queue.Event) {
 	batch := s.state.Active
 	switch event := event.(type) {
+	case queue.ChainedTestRefBuilt:
+		if run := s.tests[event.TestedSHA]; run != nil {
+			run.startedTestingAt = event.At
+		}
 	case queue.TestRefBuilt:
 		if run := s.tests[event.TestedSHA]; run != nil {
 			run.startedTestingAt = event.At
 		}
 	case queue.LandingStarted:
+		if s.cfg.Planner.MaxDepth() > 1 && (batch == nil || batch.ID != event.BatchID) {
+			s.violation = fmt.Errorf("landing order differs from chain order: started %s ahead of oldest", event.BatchID)
+			return
+		}
 		if batch != nil && batch.ID == event.BatchID {
 			s.attempts[event.AttemptID] = batch.TestedSHA
 			s.disturbance[event.AttemptID] = s.disturbances()
@@ -376,7 +384,18 @@ func (s *simulation) record(event queue.Event) {
 	}
 	s.events = append(s.events, loggedEvent{At: s.now, Event: event})
 	s.state = queue.Apply(s.state, event)
-	if s.cfg.CI != nil && batch != nil && (s.state.Active == nil || s.state.Active.ID != batch.ID) {
+	if s.cfg.Planner.MaxDepth() > 1 {
+		for _, b := range s.state.Following {
+			for _, pr := range b.PRs {
+				reason := s.state.PendingDequeue(pr.PR)
+				if reason == queue.ChecksFailed || reason == queue.ChecksTimeout || reason == queue.Conflict {
+					s.violation = fmt.Errorf("provisional failure blamed PR %d in batch %s", pr.PR, b.ID)
+				}
+			}
+		}
+	}
+
+	if s.cfg.CI != nil && s.cfg.Planner.MaxDepth() == 1 && batch != nil && (s.state.Active == nil || s.state.Active.ID != batch.ID) {
 		if _, landed := event.(queue.Landed); !landed {
 			s.cancelCI(batch.TestedSHA)
 		}
@@ -394,7 +413,16 @@ func (s *simulation) record(event queue.Event) {
 }
 
 func (s *simulation) startCI(sha string, prs []int) {
-	batch := s.state.Active
+	var batch *queue.Batch
+	if s.cfg.Planner.MaxDepth() == 1 {
+		batch = s.state.Active
+	}
+	for _, candidate := range s.state.Batches() {
+		if candidate.Phase == queue.Building && len(prs) == len(candidate.PRs) && slices.EqualFunc(prs, candidate.PRs, func(pr int, pin queue.BatchPR) bool { return pr == pin.PR }) {
+			batch = candidate
+			break
+		}
+	}
 	if batch == nil || len(prs) != len(batch.PRs) {
 		s.violation = fmt.Errorf("CI membership %v differs from intended batch %v", prs, batch)
 		return
@@ -522,7 +550,7 @@ func (s *simulation) plan() ([]queue.Action, error) {
 
 func (s *simulation) authorizeStart(action queue.Action, event queue.Event) error {
 	switch event.(type) {
-	case queue.BatchStarted, queue.CheckRerunRequested, queue.LandingStarted:
+	case queue.ChainedBatchStarted, queue.BatchStarted, queue.CheckRerunRequested, queue.LandingStarted:
 		if !queue.CanStart(s.cfg.Planner, s.state, action, event) {
 			return errStale
 		}

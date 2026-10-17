@@ -89,6 +89,9 @@ func (s *simulation) observeAbandonments() error {
 }
 
 func (s *simulation) checkInvariants() error {
+	if s.cfg.Planner.MaxDepth() > 1 && len(s.state.Batches()) > s.cfg.Planner.MaxDepth() {
+		return fmt.Errorf("admitted chain exceeded fixed window: %d > %d", len(s.state.Batches()), s.cfg.Planner.MaxDepth())
+	}
 	if s.violation != nil {
 		return s.violation
 	}
@@ -129,6 +132,9 @@ func (s *simulation) checkInvariants() error {
 				return err
 			}
 		}
+	}
+	if s.cfg.Planner.MaxDepth() > 1 && run != nil && (s.state.Active == nil || s.state.Active.ID != run.batchID) {
+		return fmt.Errorf("landing order differs from chain order: landed %s ahead of %v", run.batchID, s.state.Active)
 	}
 	if run == nil || !run.done || !run.success {
 		return fmt.Errorf("main is not green: first-parent commit %s has no passing completed CI run covering its landing", tip)

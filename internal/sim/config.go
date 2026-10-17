@@ -66,7 +66,7 @@ func DefaultFaults() Faults {
 
 func configuredForgeMethods(cfg Config) []string {
 	methods := append([]string(nil), forgeMethods...)
-	if cfg.Planner.ChecksRetryFailed == 1 {
+	if cfg.Planner.RetryLimit() == 1 {
 		methods = append(methods, "RerunFailedChecks")
 	}
 	return methods
@@ -181,6 +181,12 @@ func (cfg Config) normalized() (Config, error) {
 		return cfg, fmt.Errorf("unsupported merge method %q", cfg.MergeMethod)
 	}
 	cfg.Planner.MergeMethod = cfg.MergeMethod
+	if cfg.Planner.MaxDepth() < 1 || cfg.Planner.MaxDepth() > 32 || cfg.Planner.SpeculationMinDepth < 0 || max(1, cfg.Planner.SpeculationMinDepth) > cfg.Planner.MaxDepth() {
+		return cfg, fmt.Errorf("invalid speculation window")
+	}
+	if cfg.Planner.MaxDepth() > 1 {
+		cfg.Planner.ChecksRetryFailed = 1
+	}
 	if cfg.Planner.ChecksRetryFailed != 0 && cfg.Planner.ChecksRetryFailed != 1 {
 		return cfg, fmt.Errorf("checks retry failed must be 0 or 1")
 	}
@@ -237,6 +243,10 @@ func (cfg Config) MarshalJSON() ([]byte, error) {
 	// for zero preserves the old JSON bytes exactly.
 	if cfg.Planner.ChecksRetryFailed != 0 {
 		planner["checks_retry_failed"] = cfg.Planner.ChecksRetryFailed
+	}
+	if cfg.Planner.MaxDepth() > 1 {
+		planner["speculation_max_depth"] = cfg.Planner.MaxDepth()
+		planner["speculation_min_depth"] = max(1, cfg.Planner.SpeculationMinDepth)
 	}
 	values := map[string]any{
 		"prs": cfg.PRs, "seed": cfg.Seed, "arrival_window_seconds": cfg.ArrivalWindow.Seconds(),
