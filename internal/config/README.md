@@ -300,3 +300,9 @@ the branch again. If the requirement is unknown, builds behave as before.
 Template substitution, importing and migration remain deferred. Multiple queue
 entries and automatic expansion into concrete base workers are supported.
 Installation discovery and webhook health/backstop scheduling are supported.
+
+`speculation.max_depth` and `speculation.min_depth` default to 1, with
+`1 <= min_depth <= max_depth <= 32`. The current fixed window is `max_depth`;
+`min_depth` reserves the adaptive lower bound. Depth above 1 enables one bounded
+same-commit failed-check retry on the oldest batch automatically. Both settings
+participate in the effective per-queue configuration digest.

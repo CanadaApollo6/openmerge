@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -542,7 +543,7 @@ func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
 		w.deferred = nil
 	}
 	if force {
-		if state.Active != nil && state.Active.Phase == queue.Testing {
+		if slices.ContainsFunc(state.Batches(), func(b *queue.Batch) bool { return b.Phase == queue.Testing }) {
 			if _, err := s.store.Append(ctx, w.id, []queue.Event{queue.RefreshRequested{}}, ""); err != nil {
 				return err
 			}

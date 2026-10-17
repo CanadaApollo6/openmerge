@@ -62,16 +62,16 @@ func (s *Server) recheckCheckSources(ctx context.Context, w *worker) error {
 	if err != nil || !state.SourceBlocked(queue.CheckSources) || w.configError != nil {
 		return err
 	}
-	read := func(sha string, batch bool) error {
+	read := func(sha string, ref string) error {
 		checks, err := w.Driver.CheckRuns(ctx, w.repo(), sha)
 		if err != nil {
 			return err
 		}
 		expression := w.cfg.EnterWhen
-		if batch {
+		if ref != "" {
 			expression = w.cfg.MergeWhen
 			checks = slices.DeleteFunc(slices.Clone(checks), func(check forge.CheckRun) bool {
-				return !strings.HasPrefix(check.Source, "status:") && check.HeadBranch != state.Active.TestRef
+				return !strings.HasPrefix(check.Source, "status:") && check.HeadBranch != ref
 			})
 		}
 		_, err = checkSnapshot(expression, checks)
@@ -80,15 +80,19 @@ func (s *Server) recheckCheckSources(ctx context.Context, w *worker) error {
 	if hasChecks(w.cfg.EnterWhen) {
 		for _, pr := range w.prs {
 			if !pr.Closed && pr.Base == w.Key.BaseBranch {
-				if err := read(pr.HeadSHA, false); err != nil {
+				if err := read(pr.HeadSHA, ""); err != nil {
 					return s.checkSourceFailure(ctx, w, err)
 				}
 			}
 		}
 	}
-	if state.Active != nil && state.Active.Phase == queue.Testing && hasChecks(w.cfg.MergeWhen) {
-		if err := read(state.Active.TestedSHA, true); err != nil {
-			return s.checkSourceFailure(ctx, w, err)
+	if hasChecks(w.cfg.MergeWhen) {
+		for _, b := range state.Batches() {
+			if b.Phase == queue.Testing && b.InvalidationReason == "" {
+				if err := read(b.TestedSHA, b.TestRef); err != nil {
+					return s.checkSourceFailure(ctx, w, err)
+				}
+			}
 		}
 	}
 	_, err = s.store.Append(ctx, w.id, []queue.Event{queue.BlockSourceCleared{Source: queue.CheckSources, Basis: state.BlockSourceRevision(queue.CheckSources)}}, "")

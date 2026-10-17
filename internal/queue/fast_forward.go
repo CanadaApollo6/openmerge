@@ -92,15 +92,16 @@ type wireFastForwardMergeCommitsBlocked struct {
 }
 
 func (s *State) selectFastForward(e FastForwardBatchSelected) {
-	if e.Validate() != nil || !s.batchIn(e.BatchID, Building) || len(e.PRs) > len(s.Active.PRs) || !slices.Equal(e.PRs, s.Active.PRs[:len(e.PRs)]) {
+	b := s.Batch(e.BatchID)
+	if e.Validate() != nil || !s.batchIn(e.BatchID, Building) || len(e.PRs) > len(b.PRs) || !slices.Equal(e.PRs, b.PRs[:len(e.PRs)]) {
 		return
 	}
-	if len(e.PRs) < len(s.Active.PRs) {
-		rest := pendingGroup{prs: slices.Clone(s.Active.PRs[len(e.PRs):]), bisection: s.Active.FromBisection}
+	if len(e.PRs) < len(b.PRs) {
+		rest := pendingGroup{prs: slices.Clone(b.PRs[len(e.PRs):]), bisection: b.FromBisection}
 		s.pending = append([]pendingGroup{rest}, s.pending...)
 	}
-	s.Active.PRs = slices.Clone(e.PRs)
-	s.Active.Method = FastForward
+	b.PRs = slices.Clone(e.PRs)
+	b.Method = FastForward
 }
 
 func dequeueDetail(reason DequeueReason) string {

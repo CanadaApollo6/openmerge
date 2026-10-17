@@ -160,7 +160,7 @@ func (s *simulation) retryObservation(sha string, run *testRun, terminal, succes
 		return queue.ChecksObserved{}, err
 	}
 	started := run.startedTestingAt
-	if active := s.state.Active; active != nil && active.TestedSHA == sha && !active.StartedTestingAt.IsZero() {
+	if active := s.state.Batch(run.batchID); active != nil && active.TestedSHA == sha && !active.StartedTestingAt.IsZero() {
 		started = active.StartedTestingAt
 	}
 	timeout := s.cfg.Planner.CheckTimeout

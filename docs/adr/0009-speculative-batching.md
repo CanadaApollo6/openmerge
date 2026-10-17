@@ -63,8 +63,14 @@ are `record_check_rerun`, `rerun_checks` and `confirm_check_failure`. Pending
 observations still require a qualifying `checks_refreshed` read to time out.
 Both timer origins and the bounded retry state belong to the batch projection;
 snapshot compaction must preserve them. Existing `checks_completed` records
-always retain their immediate pass/failure meaning, even in a queue that later
-opts in. Older binaries cannot replay these additive types: rollback after
+retain their immediate pass/failure meaning for legacy depth-1 batches. An
+aggregate failure on a chained batch is provisional; at the head it requires a
+retry-aware refresh and the same-commit rerun path before blame (unsupported
+forges excepted). A later aggregate pass cannot resolve a recorded provisional
+failure: it lacks the attempt identities required to prove a rerun passed. Only
+a qualifying identified observation resolves the marker; until then, landing is
+blocked and the recorded retry/timeout path remains active.
+Older binaries cannot replay these additive types: rollback after
 first use requires a compatible database restore.
 
 ### The window
@@ -128,6 +134,22 @@ For every change, status shows its batch and position, how many batches are ahea
 3. The planner chain with a fixed window, the blame and settlement rules, the new event types and snapshot support, at default depth 1.
 4. The cancellation capability, its permission, and the status ledger.
 5. The adaptive window and the opt-in adaptive batch size.
+
+### Fixed-window implementation notes (PR 3)
+
+Admission conservatively stops behind any provisional or failed batch, even
+with free slots. Only pending bisection halves pass the unresolved-bisection
+barrier; unrelated infrastructure retries wait. PR 5 must explicitly decide
+whether to retain the conservative admission rule when adding adaptation.
+
+Snapshot support is a codec, not yet connected to store persistence. PR 5 must
+add adaptive window state to it. Until PR 4 provides cancellation, invalidated
+CI runs finish and occupy runners; available runner capacity per repository should
+be at least `max_depth` per active base queue, since multiple bases multiply
+concurrent runs and forge-side queueing consumes `check_timeout`. The exit evidence
+validates depth 4; depths above 4 remain unvalidated. Depth-1 config
+keeps its legacy policy digest, and the default remains 1 until the dogfooding
+criteria above are met.
 
 ## Consequences
 

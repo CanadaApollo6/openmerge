@@ -6,6 +6,33 @@ import "time"
 // plan. Callers must first drain ready actions (and schedule failed-action
 // retries themselves). A paused build has no timer: it needs an external event.
 func NextWake(cfg Config, s State, now time.Time) (time.Time, bool) {
+	if s.Active == nil || (cfg.MaxDepth() == 1 && len(s.Following) == 0) {
+		return nextWakeSingle(cfg, s, now)
+	}
+	var next time.Time
+	consider := func(at time.Time) {
+		if at.After(now) && (next.IsZero() || at.Before(next)) {
+			next = at
+		}
+	}
+	for _, b := range s.Batches() {
+		if b.InvalidationReason != "" || (b.ProvisionalFailure != "" && b != s.Active) {
+			continue
+		}
+		local := s
+		local.Active = b
+		if at, ok := nextWakeSingle(cfg, local, now); ok {
+			consider(at)
+		}
+	}
+	if s.PauseReason(cfg) == "" && len(s.Batches()) < cfg.MaxDepth() {
+		_, at := s.batchCandidates(cfg, now)
+		consider(at)
+	}
+	return next, !next.IsZero()
+}
+
+func nextWakeSingle(cfg Config, s State, now time.Time) (time.Time, bool) {
 	batch := s.Active
 	if batch == nil {
 		if s.PauseReason(cfg) != "" {
@@ -41,7 +68,7 @@ func NextWake(cfg Config, s State, now time.Time) (time.Time, bool) {
 				consider(s.buildRetry.failedAt.Add(cfg.buildRetryDelay(s.buildRetry.failures)))
 			}
 		case Testing:
-			if !batch.checksPassed {
+			if !batch.checksPassed || batch.ProvisionalFailure != "" {
 				if deadline, enabled := batch.checkDeadline(cfg); enabled {
 					consider(deadline.Add(time.Nanosecond))
 				}

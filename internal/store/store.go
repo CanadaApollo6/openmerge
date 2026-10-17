@@ -340,6 +340,8 @@ func (s *Store) Emit(ctx context.Context, claim ClaimedAction, cfg queue.Config)
 func (s *Store) authorizeStart(ctx context.Context, tx pgx.Tx, execution emission, event queue.Event) (bool, error) {
 	var at time.Time
 	switch start := event.(type) {
+	case queue.ChainedBatchStarted:
+		at = start.At
 	case queue.BatchStarted:
 		at = start.At
 	case queue.CheckRerunRequested:
@@ -372,6 +374,11 @@ func (s *Store) authorizeStart(ctx context.Context, tx pgx.Tx, execution emissio
 		return false, ErrStale
 	}
 	switch start := event.(type) {
+	case queue.ChainedBatchStarted:
+		build, ok := stored.Action.(queue.BuildChainedTestRef)
+		if !ok || build.BatchID != start.BatchID || build.BaseSHA != start.BaseSHA || !slices.Equal(build.PRs, start.PRs) || build.ParentBatchID != start.ParentBatchID || build.Position != start.Position {
+			return false, ErrStale
+		}
 	case queue.BatchStarted:
 		build, ok := stored.Action.(queue.BuildTestRef)
 		if !ok || build.BatchID != start.BatchID || build.BaseSHA != start.BaseSHA || !slices.Equal(build.PRs, start.PRs) {

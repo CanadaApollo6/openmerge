@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// Config controls a queue with one active batch. ResolveAfter is the wait before fencing and
+// Config controls a queue with a bounded chain of batches. ResolveAfter is the wait before fencing and
 // reading an uncertain landing; it never makes the landing a failure.
 type Config struct {
 	// ConfigDigest must match the durable policy before starting new work.
@@ -18,9 +18,11 @@ type Config struct {
 	MergeMethod  MergeMethod
 	// ChecksRetryFailed is the effective retry limit (0 or 1). Its zero value is
 	// omitted so legacy policy digests and simulator JSON remain unchanged.
-	ChecksRetryFailed int `json:",omitempty"`
-	CheckTimeout      time.Duration
-	ResolveAfter      time.Duration
+	ChecksRetryFailed   int `json:",omitempty"`
+	SpeculationMaxDepth int `json:",omitempty"`
+	SpeculationMinDepth int `json:",omitempty"`
+	CheckTimeout        time.Duration
+	ResolveAfter        time.Duration
 	// RefreshInterval bounds the delay before reconciling checks; nonpositive defaults to 1m.
 	RefreshInterval time.Duration
 	// BuildRetries is the consecutive non-conflict failure limit; zero defaults to 3.
@@ -43,15 +45,17 @@ const (
 
 // State is a replayable projection for one base branch. Its zero value is empty.
 type State struct {
-	Lifecycle    LifecycleChanged
-	BaseBranch   string
-	BaseSHA      string
-	ConfigCommit string
-	ConfigDigest string
-	Entries      []Entry
-	Active       *Batch
-	pending      []pendingGroup
-	Fence        string
+	Lifecycle     LifecycleChanged
+	BaseBranch    string
+	BaseSHA       string
+	ConfigCommit  string
+	ConfigDigest  string
+	Entries       []Entry
+	Active        *Batch
+	Following     []*Batch             `json:",omitempty"`
+	Invalidations []BatchesInvalidated `json:",omitempty"`
+	pending       []pendingGroup
+	Fence         string
 
 	nextBatch          uint64
 	nextAdmission      uint64
@@ -86,18 +90,25 @@ type Entry struct {
 
 // Batch is the unit of testing and landing.
 type Batch struct {
-	FromBisection    bool
-	ID               string
-	PRs              []BatchPR
-	BaseSHA          string
-	ConfigDigest     string
-	TestRef          string
-	TestedSHA        string
-	Method           MergeMethod
-	Phase            Phase
-	StartedTestingAt time.Time
-	LandingAttempt   LandingAttempt
-	CheckRetry       *CheckRetryState `json:",omitempty"`
+	// Speculative selects the additive chain protocol, including for its root.
+	Speculative        bool          `json:",omitempty"`
+	ParentBatchID      string        `json:",omitempty"`
+	ChainPosition      uint64        `json:",omitempty"`
+	LandingSHA         string        `json:",omitempty"`
+	InvalidationReason string        `json:",omitempty"`
+	ProvisionalFailure DequeueReason `json:",omitempty"`
+	FromBisection      bool
+	ID                 string
+	PRs                []BatchPR
+	BaseSHA            string
+	ConfigDigest       string
+	TestRef            string
+	TestedSHA          string
+	Method             MergeMethod
+	Phase              Phase
+	StartedTestingAt   time.Time
+	LandingAttempt     LandingAttempt
+	CheckRetry         *CheckRetryState `json:",omitempty"`
 
 	checksPassed      bool
 	checksGeneration  uint64

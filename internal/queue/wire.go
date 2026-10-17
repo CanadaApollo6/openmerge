@@ -236,6 +236,24 @@ type wireDeleteHeadBranch struct {
 	LandedSHA string `json:"landed_sha"`
 }
 
+type wireChainedBatchStarted struct {
+	BatchID       string        `json:"batch_id"`
+	BaseSHA       string        `json:"base_sha"`
+	PRs           []wireBatchPR `json:"prs"`
+	At            time.Time     `json:"at"`
+	ParentBatchID string        `json:"parent_batch_id"`
+	Position      uint64        `json:"position"`
+}
+type wireBuildChainedTestRef struct {
+	BatchID       string        `json:"batch_id"`
+	BaseSHA       string        `json:"base_sha"`
+	PRs           []wireBatchPR `json:"prs"`
+	Ref           string        `json:"ref"`
+	Method        string        `json:"method"`
+	ParentBatchID string        `json:"parent_batch_id"`
+	Position      uint64        `json:"position"`
+}
+
 func encodeWire(name string, data any) (string, []byte, error) {
 	raw, err := json.Marshal(data)
 	if err != nil {
@@ -358,6 +376,26 @@ func decodeBatchPRs(prs []wireBatchPR) []BatchPR {
 // EncodeEvent returns the stable type discriminator and versioned JSON.
 func EncodeEvent(value Event) (string, []byte, error) {
 	switch v := value.(type) {
+	case ChainedTestRefBuilt:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("chained_test_ref_built", v)
+	case BatchesInvalidated:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("batches_invalidated", v)
+	case BatchDiagnosed:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("batch_diagnosed", v)
+	case ChainedBatchStarted:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("chained_batch_started", wireChainedBatchStarted{v.BatchID, v.BaseSHA, encodeBatchPRs(v.PRs), v.At, v.ParentBatchID, v.Position})
 	case ChecksObserved:
 		if err := v.Validate(); err != nil {
 			return "", nil, err
@@ -538,6 +576,31 @@ func DecodeEvent(payload []byte) (Event, error) {
 		return nil, err
 	}
 	switch envelope.Type {
+	case "chained_test_ref_built":
+		v, err := readWireData[ChainedTestRefBuilt](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		return v, v.Validate()
+	case "batches_invalidated":
+		v, err := readWireData[BatchesInvalidated](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		return v, v.Validate()
+	case "batch_diagnosed":
+		v, err := readWireData[BatchDiagnosed](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		return v, v.Validate()
+	case "chained_batch_started":
+		v, err := readWireData[wireChainedBatchStarted](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		e := ChainedBatchStarted{v.BatchID, v.BaseSHA, decodeBatchPRs(v.PRs), v.At, v.ParentBatchID, v.Position}
+		return e, e.Validate()
 	case "checks_observed":
 		v, err := readWireData[ChecksObserved](envelope.Data)
 		if err != nil {
@@ -824,6 +887,15 @@ func DecodeEvent(payload []byte) (Event, error) {
 // EncodeAction returns the stable type discriminator and versioned JSON.
 func EncodeAction(value Action) (string, []byte, error) {
 	switch v := value.(type) {
+	case CleanupInvalidatedRef:
+		return encodeWire("cleanup_invalidated_ref", v)
+	case BuildChainedTestRef:
+		return encodeWire("build_chained_test_ref", wireBuildChainedTestRef{v.BatchID, v.BaseSHA, encodeBatchPRs(v.PRs), v.Ref, string(v.Method), v.ParentBatchID, v.Position})
+	case InvalidateBatches:
+		return encodeWire("invalidate_batches", v)
+	case DiagnoseBatch:
+		return encodeWire("diagnose_batch", v)
+
 	case RecordCheckRerun:
 		if err := v.Validate(); err != nil {
 			return "", nil, err
@@ -874,6 +946,32 @@ func DecodeAction(payload []byte) (Action, error) {
 		return nil, err
 	}
 	switch envelope.Type {
+	case "cleanup_invalidated_ref":
+		v, err := readWireData[CleanupInvalidatedRef](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		return v, v.Validate()
+	case "build_chained_test_ref":
+		v, err := readWireData[wireBuildChainedTestRef](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		a := BuildChainedTestRef{BuildTestRef: BuildTestRef{BatchID: v.BatchID, BaseSHA: v.BaseSHA, PRs: decodeBatchPRs(v.PRs), Ref: v.Ref, Method: MergeMethod(v.Method)}, ParentBatchID: v.ParentBatchID, Position: v.Position}
+		return a, a.Validate()
+	case "invalidate_batches":
+		v, err := readWireData[InvalidateBatches](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		return v, v.Validate()
+	case "diagnose_batch":
+		v, err := readWireData[DiagnoseBatch](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		return v, v.Validate()
+
 	case "record_check_rerun":
 		return decodeWireAction(envelope.Data, func(v RecordCheckRerun) Action { return v })
 	case "rerun_checks":

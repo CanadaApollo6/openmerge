@@ -1,9 +1,41 @@
-// Package queue implements a merge queue with one active batch as a pure event fold and planner.
+// Package queue implements a merge queue as a pure event fold and planner. The default window has one active batch.
 // Apply copies the state it changes; Plan reads state and an explicit clock and
 // returns deterministic, keyed actions. Build actions carry the configured merge
 // method; build results pin the actual method for landing. Neither function
 // performs I/O. See docs/adr/0002-storage-and-state-model.md and
 // docs/adr/0004-forge-driver-interface.md for the persistence and fencing contracts.
+//
+// With SpeculationMaxDepth above one, Active is the oldest unlanded batch and
+// Following is its ordered suffix. The fixed window counts every admitted batch,
+// including passed and landing batches. Each successor is built on its parent's
+// LandingSHA, distinct from TestedSHA for fast-forward markers. Only Active can
+// land, on exactly its recorded BaseSHA after its predecessor settled through
+// the fence. Own in-flight base observations do not settle attempts. An outside
+// move marks all cancellable batches invalid, preserving any durable landing.
+//
+// ChainedBatchStarted admits work before build I/O; ChainedTestRefBuilt records
+// the resulting tested and landing commits and repeats the parent and position.
+// BuildChainedTestRef uses the same git build and landing path as depth one.
+// InvalidateBatches/BatchesInvalidated record exact discarded IDs and cause;
+// bounded recent invalidations support status while the log retains history.
+// The invalidation marker blocks eligibility immediately, before its action is
+// executed. Late results cannot revive it; a late build result reissues cleanup.
+// There is no CI cancellation capability in this step: invalidated CI finishes.
+// Admission stops behind any provisional or failed batch; PR 5 must explicitly
+// decide whether to retain that conservative policy. Unrelated build retries
+// wait for all bisection halves to resolve.
+//
+// Only the settled oldest batch consumes a same-commit retry or diagnoses a
+// failure. Later check results and conflicts are provisional. A confirmed oldest
+// failure invalidates the suffix, then splits or dequeues as in serial mode.
+// DiagnoseBatch/BatchDiagnosed promote provisional build failures once
+// they reach the head. Pending halves form a new chain ahead of fresh work; no
+// fresh batches are admitted while a half remains unresolved. Leaving changes
+// invalidate their batch and suffix; config changes invalidate all non-landing
+// batches and clear old groups. invalidateFrom is the future approval-gate hook.
+// EncodeSnapshot/DecodeSnapshot preserve the compact chain, per-batch evidence,
+// retry state, pending groups, fences, effects and bounded tested-SHA history.
+// The remaining description also defines the unchanged depth-one protocol.
 //
 // Plan chooses the first BatchMaxSize eligible, trusted pinned heads in queue
 // order (default size 1). Formation skips entries that are currently ineligible,
@@ -57,7 +89,7 @@
 // original deadline and rerun deadline. ConfirmCheckFailure durably diagnoses a
 // failed rerun, an unsupported capability or a qualifying timeout; confirmation
 // cannot be revoked. Passing batches waiting to land never time out. The
-// retryOldestBatch policy hook will defer provisional failures until that batch
+// retryOldestBatch policy hook defers provisional failures until that batch
 // is oldest. QueueConfig supplies the effective retry limit to planner and
 // executor, allowing the chain to enable it in one policy assignment. With retries disabled,
 // existing events, actions, keys and replay behavior are unchanged.

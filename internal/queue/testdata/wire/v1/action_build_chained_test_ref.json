@@ -1,0 +1,1 @@
+{"version":1,"type":"build_chained_test_ref","data":{"batch_id":"b2","base_sha":"tested1","prs":[{"pr":2,"head_sha":"head2"}],"ref":"openmerge/queue/main/b2","method":"merge","parent_batch_id":"b1","position":2}}

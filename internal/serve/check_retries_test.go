@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 )
 
@@ -18,4 +19,33 @@ func TestCheckRetryStatusIncludesPassedFlakyIdentity(t *testing.T) {
 			t.Fatalf("status=%q missing %q", got, want)
 		}
 	}
+}
+
+func TestChainSummaryRootAndMixedWorkerFailure(t *testing.T) {
+	s, w, f, _ := fixture(t, repositoryConfig+"    speculation:\n      max_depth: 4\n")
+	f.AddComment(repo, 1, "writer", "@openmerge queue")
+	must(t, s.cycle(t.Context(), w))
+	assertSummary := func(want string) {
+		t.Helper()
+		statuses := f.Statuses(repo, 1)
+		if len(statuses) == 0 {
+			t.Fatal("missing PR status")
+		}
+		for _, status := range statuses {
+			if status.State != forge.Testing || status.Summary != want {
+				t.Fatalf("status=%+v, want testing with summary %q", status, want)
+			}
+		}
+	}
+	assertSummary("Batch b1; chain position 1; 0 batches ahead; check retry observed")
+	state, _, err := s.store.Load(t.Context(), w.id)
+	must(t, err)
+	b := state.Active
+	_, err = s.store.Append(t.Context(), w.id, []queue.Event{
+		queue.ChecksObserved{BatchID: b.ID, TestedSHA: b.TestedSHA, Terminal: true, Timeout: b.CheckRetry.Timeout, OriginalDeadline: b.CheckRetry.OriginalDeadline, Runs: []queue.CheckRun{{ID: 1, Attempt: 1, Name: "ci", Source: "app:ci", State: "failure"}}},
+		queue.ChecksCompleted{TestedSHA: b.TestedSHA, Success: false},
+	}, "")
+	must(t, err)
+	must(t, s.report(t.Context(), w))
+	assertSummary("Batch b1; chain position 1; 0 batches ahead; check retry failed; provisional failure: checks-failed")
 }

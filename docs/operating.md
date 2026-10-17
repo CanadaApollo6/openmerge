@@ -749,3 +749,67 @@ unlocked projection would race a concurrent passing `Land` preflight: a delayed
 success could restore success without invalidating the old generation. The why
 view instead groups identical consecutive reopen/refresh pairs and explains
 whether the fold actually revoked recorded success. Stored evidence is retained.
+
+### Speculative testing with a fixed window
+
+A queue may set `speculation.max_depth` above 1 to test a dependent chain:
+
+```yaml
+queues:
+  - name: main
+    merge_when: [check-success = ci]
+    speculation:
+      max_depth: 4
+      min_depth: 1
+    batch:
+      max_size: 8
+      max_wait: 5m
+```
+
+Both depths default to 1; require `1 <= min_depth <= max_depth <= 32`.
+This implementation uses a fixed window equal to `max_depth`. `min_depth` is
+validated and included in the effective policy digest, reserved for the later
+adaptive-window step. The default stays 1 per ADR 0009 until its dogfooding
+criteria are met. Explicit depth-1 defaults retain the pre-speculation config
+digest, so upgrading unchanged YAML does not discard active work or pending
+bisection groups. Changing either setting invalidates
+unstarted landings under the existing configuration protocol.
+
+Every admitted batch occupies a slot until it lands or is invalidated, including
+passed batches waiting behind predecessors. Each successor tests on the previous
+batch's landing commit. Fast-forward requires strictly descending heads and tests
+a unique marker above each landing head. Landing remains serial, leased on the
+settled predecessor and fence, with fresh checks and exact-head trust gates.
+
+At depth above 1, the oldest batch automatically gets one same-commit rerun of
+failed required checks, even when `checks.retry_failed` is omitted or set to 0.
+Depth 1 keeps its opt-in retry policy. Later failures are provisional until all
+predecessors settle; an invalidated predecessor discards those results without
+blaming their changes. Confirmed failure invalidates the suffix and bisects the
+oldest batch, with both halves ahead of unrelated build retries and fresh work.
+Admission conservatively stops behind any provisional or failed batch, even
+while free window slots remain; PR 5 must explicitly decide whether to retain
+that rule.
+
+Keep `max_depth` at 1 unless the repository has at least `max_depth` CI runners
+available for these checks. This guidance is per repository; multiple base queues
+multiply concurrent runs and must share that runner capacity. The exit evidence
+validates depth 4; depths above 4 are unvalidated. Forge-side runner queueing counts toward
+`check_timeout`: with two runners and depth four, queued runs can time out and
+cause bisection or dequeues before they finish.
+
+CI cancellation arrives in ADR 0009 PR 4. Until then, invalidated runs finish
+and consume runners: a broken batch can cost approximately W runs plus its
+same-commit rerun, before bisection. Late results cannot revive their batches. Test refs are
+cleaned, including a fresh cleanup action after a delayed builder reports.
+Status/API expose the ordered chain, parent batch, tested/landing commits,
+per-change batch position and number ahead, and recent invalidation reasons.
+
+The additive wire-v1 chain types require compatible workers. Drain old workers
+before upgrading. Returning to depth 1 does not make an older binary
+able to replay those records; rollback across their first use requires a database
+restore. Existing depth-1 event/action wire types and fixtures are unchanged.
+
+Snapshots currently have an encode/decode codec only; the store still replays
+journals and does not write or load these snapshots. PR 5 must include the
+adaptive window state in the codec before snapshots can support that policy.

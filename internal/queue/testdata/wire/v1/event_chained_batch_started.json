@@ -1,0 +1,1 @@
+{"version":1,"type":"chained_batch_started","data":{"batch_id":"b2","base_sha":"tested1","prs":[{"pr":2,"head_sha":"head2"}],"at":"2026-10-17T00:00:00Z","parent_batch_id":"b1","position":2}}

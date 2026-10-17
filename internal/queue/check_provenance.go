@@ -43,21 +43,39 @@ func (s State) UnboundChecks() []UnboundCheck {
 	if s.Active == nil {
 		return nil
 	}
-	return slices.Clone(s.Active.unboundChecks)
+	return s.BatchUnboundChecks(s.Active.ID)
+}
+
+// BatchUnboundChecks returns isolated diagnostics for one chain member.
+func (s State) BatchUnboundChecks(id string) []UnboundCheck {
+	b := s.Batch(id)
+	if b == nil {
+		return nil
+	}
+	return slices.Clone(b.unboundChecks)
 }
 
 // CheckProvenanceDetail explains why observed check runs cannot count.
 func (s State) CheckProvenanceDetail() string {
-	if s.Active == nil || len(s.Active.unboundChecks) == 0 {
+	if s.Active == nil {
+		return ""
+	}
+	return s.BatchCheckProvenanceDetail(s.Active.ID)
+}
+
+// BatchCheckProvenanceDetail explains one chain member's unbound checks.
+func (s State) BatchCheckProvenanceDetail(id string) string {
+	b := s.Batch(id)
+	if b == nil || len(b.unboundChecks) == 0 {
 		return ""
 	}
 	var details []string
-	for _, check := range s.Active.unboundChecks {
+	for _, check := range b.unboundChecks {
 		branch := "null"
 		if check.HeadBranch != "" {
 			branch = strconv.Quote(check.HeadBranch)
 		}
-		details = append(details, fmt.Sprintf("required check %q from %q has no bound run: observed head_branch=%s; expected %q", check.Name, check.Source, branch, s.Active.TestRef))
+		details = append(details, fmt.Sprintf("required check %q from %q has no bound run: observed head_branch=%s; expected %q", check.Name, check.Source, branch, b.TestRef))
 	}
 	return "unbound-check-provenance: " + strings.Join(details, "; ")
 }

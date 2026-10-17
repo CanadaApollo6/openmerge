@@ -52,6 +52,10 @@ func (s *Server) pollDelay(installation, repository string, state queue.State, n
 }
 
 func needsActivePolling(state queue.State) bool {
-	batch := state.Active
-	return batch != nil && (batch.Phase == queue.Testing || batch.Phase == queue.Landing || batch.LandingAttempt.ID != "")
+	for _, batch := range state.Batches() {
+		if batch.Phase == queue.Testing || batch.Phase == queue.Landing || batch.LandingAttempt.ID != "" {
+			return true
+		}
+	}
+	return false
 }

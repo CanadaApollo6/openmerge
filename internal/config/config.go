@@ -64,10 +64,17 @@ type Queue struct {
 	MergeMethod       queue.MergeMethod    `yaml:"merge_method"`
 	CheckTimeout      time.Duration        `yaml:"check_timeout"`
 	Checks            Checks               `yaml:"checks"`
+	Speculation       Speculation          `yaml:"speculation"`
 	Batch             Batch                `yaml:"batch"`
 	baseLine          int
 	basePattern       *regexp.Regexp
 	basePatternSource string
+}
+
+// Speculation bounds the per-queue fixed admission window.
+type Speculation struct {
+	MaxDepth int `yaml:"max_depth"`
+	MinDepth int `yaml:"min_depth"`
 }
 
 // Checks controls optional bounded retries for failed required checks.
@@ -87,9 +94,18 @@ type Batch struct {
 // 1m uncertain-landing resolution wait, 1m check refresh, 3 consecutive build
 // failures before pausing, and a 5s initial build backoff (doubled per failure).
 func (q Queue) QueueConfig() queue.Config {
+	// Zero encodes the legacy depth-1 policy without adding JSON digest fields.
+	maxDepth, minDepth := q.Speculation.MaxDepth, q.Speculation.MinDepth
+	if maxDepth == 1 {
+		maxDepth = 0
+	}
+	if minDepth == 1 {
+		minDepth = 0
+	}
 	return queue.Config{
+		SpeculationMaxDepth: maxDepth, SpeculationMinDepth: minDepth,
 		MergeMethod: q.MergeMethod, CheckTimeout: q.CheckTimeout,
-		ChecksRetryFailed: q.Checks.RetryFailed,
+		ChecksRetryFailed: q.retryLimit(),
 		BatchMaxSize:      q.Batch.MaxSize, BatchMaxWait: q.Batch.MaxWait,
 		ResolveAfter: time.Minute, RefreshInterval: time.Minute,
 		BuildRetries: 3, BuildBackoff: 5 * time.Second,
@@ -214,7 +230,7 @@ func (p *parser) error(n *yaml.Node, path, format string, args ...any) {
 
 func (p *parser) queue(n *yaml.Node, path string) Queue {
 	before := len(p.errors)
-	q := Queue{MergeMethod: queue.Squash, CheckTimeout: queue.DefaultCheckTimeout, Batch: Batch{MaxSize: 1}}
+	q := Queue{Speculation: Speculation{MaxDepth: 1, MinDepth: 1}, MergeMethod: queue.Squash, CheckTimeout: queue.DefaultCheckTimeout, Batch: Batch{MaxSize: 1}}
 	q.baseLine = max(1, n.Line)
 	fields := p.fields(n, path, queueKeys...)
 	if name := fields["name"]; name == nil {
@@ -283,6 +299,22 @@ func (p *parser) queue(n *yaml.Node, path string) Queue {
 			}
 		}
 	}
+	if n := fields["speculation"]; n != nil {
+		fields := p.fields(n, path+".speculation", speculationKeys...)
+		for _, field := range []struct {
+			name  string
+			value *int
+		}{{"max_depth", &q.Speculation.MaxDepth}, {"min_depth", &q.Speculation.MinDepth}} {
+			if v := fields[field.name]; v != nil {
+				if v.Kind != yaml.ScalarNode || v.ShortTag() != "!!int" || v.Decode(field.value) != nil || *field.value < 1 || *field.value > 32 {
+					p.error(v, path+".speculation."+field.name, "expected an integer from 1 to 32")
+				}
+			}
+		}
+		if q.Speculation.MinDepth > q.Speculation.MaxDepth {
+			p.error(n, path+".speculation", "min_depth must not exceed max_depth")
+		}
+	}
 	if n := fields["batch"]; n != nil {
 		fields := p.fields(n, path+".batch", batchKeys...)
 		if n := fields["max_size"]; n != nil {
@@ -320,4 +352,11 @@ func (p *parser) duration(n *yaml.Node, path string) time.Duration {
 		return 0
 	}
 	return d
+}
+
+func (q Queue) retryLimit() int {
+	if q.Speculation.MaxDepth > 1 {
+		return 1
+	}
+	return q.Checks.RetryFailed
 }
