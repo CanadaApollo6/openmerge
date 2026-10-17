@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"strings"
 
@@ -24,7 +25,14 @@ func (d *Driver) ValidateClassicProtection(ctx context.Context, repo forge.RepoR
 
 func (d *Driver) classicProtection(ctx context.Context, owner, repo, base string, method forge.MergeMethod) ([]string, error) {
 	var problems []string
-	var readErrors []error
+	var readErrors, unavailable []error
+	readFailed := func(err error) {
+		if permissionDenied(err) {
+			unavailable = append(unavailable, err)
+		} else {
+			readErrors = append(readErrors, err)
+		}
+	}
 	base = strings.TrimPrefix(base, "refs/heads/")
 	for _, ref := range []string{base, "openmerge/fence/" + base} {
 		protection, response, err := d.client.Repositories.GetBranchProtection(ctx, owner, repo, ref)
@@ -34,7 +42,7 @@ func (d *Driver) classicProtection(ctx context.Context, owner, repo, base string
 		if err != nil {
 			// A generic 404 can hide a missing permission. Only GitHub's explicit
 			// "Branch not protected" response establishes absence of protection.
-			readErrors = append(readErrors, fmt.Errorf("cannot read classic protection for %s: %w", ref, safeError(err)))
+			readFailed(fmt.Errorf("cannot read classic protection for %s: %w", ref, safeError(err)))
 			continue
 		}
 		if protection == nil {
@@ -47,7 +55,7 @@ func (d *Driver) classicProtection(ctx context.Context, owner, repo, base string
 		if protection.RequiredSignatures == nil {
 			signatures, _, err := d.client.Repositories.GetSignaturesProtectedBranch(ctx, owner, repo, ref)
 			if err != nil {
-				readErrors = append(readErrors, fmt.Errorf("cannot read required signatures for %s: %w", ref, safeError(err)))
+				readFailed(fmt.Errorf("cannot read required signatures for %s: %w", ref, safeError(err)))
 			} else if signatures == nil || signatures.Enabled == nil {
 				readErrors = append(readErrors, fmt.Errorf("required signatures for %s returned no details", ref))
 			} else {
@@ -58,7 +66,20 @@ func (d *Driver) classicProtection(ctx context.Context, owner, repo, base string
 		// --force-with-lease supplies CAS; it does not require a non-FF push.
 		problems = append(problems, classicProtectionProblems(protection, ref, d.app.id, ref == base && method == forge.Merge, false)...)
 	}
-	return problems, errors.Join(readErrors...)
+	if len(readErrors) == 0 && len(unavailable) > 0 {
+		return problems, fmt.Errorf("%w: %w", forge.ErrRulesUnavailable, errors.Join(unavailable...))
+	}
+	return problems, errors.Join(append(readErrors, unavailable...)...)
+}
+
+// permissionDenied reports a plain 403 or a generic 404, which GitHub returns
+// for branch protection when the installation lacks Administration read.
+// Rate limits must never match: the transport and safeError turn primary and
+// recognized secondary limits into RateLimitError, and go-github's
+// AbuseRateLimitError into a generic failure, so all stay retryable.
+func permissionDenied(err error) bool {
+	var response *APIError
+	return errors.As(err, &response) && (response.StatusCode == http.StatusForbidden || response.StatusCode == http.StatusNotFound)
 }
 
 func classicProtectionProblems(p *gh.Protection, ref string, appID int64, hasMerges, needsForce bool) []string {

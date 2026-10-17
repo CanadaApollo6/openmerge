@@ -274,6 +274,12 @@ and an existing block for that source stays blocked. Failed reads retry after on
 then two, four, and at most five minutes, capped by `--rules-interval` if shorter.
 The worker wakes for that deadline even if its normal poll interval is longer;
 the driver's shared quota cooldown can defer the read further.
+Classic protection the installation is not permitted to read (HTTP 403 or a
+generic 404, typically because the App has no Administration permission) is
+unavailable, not failed: it logs WARN, keeps that source's previous state, does
+not hold back activation of a new or restarted queue, and is read again after the
+normal `--rules-interval`, so granting the permission takes effect at the next
+interval rather than after one minute.
 
 Rules blocks appear in the API, PR check, journal and logs. Every definite
 failure advances its source's revision, including unchanged problems, so an older

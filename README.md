@@ -210,7 +210,10 @@ Definite policy problems also block. Rulesets, classic protection, and permissio
 track independent blocks and revisions; each passing source clears only its own block.
 Read failures log WARN, retain that source’s previous state, and retry after one minute
 with exponential backoff capped at five minutes (or the configured rules interval
-if shorter). Other pauses and action poison remain independent.
+if shorter). Classic protection the installation is not permitted to read (HTTP 403 or a
+generic 404) is unavailable rather than failed: it logs WARN, retains its previous state,
+does not delay activation, and is read again after the normal rules interval.
+Other pauses and action poison remain independent.
 Hidden bypass lists produce WARN logs and require the separate admin-token setup
 audit. See [runtime rules validation](docs/operating.md#runtime-repository-rules).
 
