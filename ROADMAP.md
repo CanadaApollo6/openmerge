@@ -117,7 +117,7 @@ ADR 0006 lands in four PRs:
 - Read-only web dashboard: queue graph, batch history, why-is-my-PR-stuck explainer
 - **MCP server** exposing queue status, enqueue/dequeue, failure explanations
 
-**Exit:** the strict adopter profiles in [ADR 0009](docs/adr/0009-speculative-batching.md) pass in simulation (20 changes/day with 30-minute CI: p95 time to merge under 60 minutes; 5 changes/day with 3-hour CI: p95 under 4.5 hours; both under 1.5 CI runs per merged change), and the simulator publishes strict capacity across defect rates. The earlier 2,000 PRs/day target moves to Phase 2b, because strict capacity is bounded by failure resolution rather than depth.
+**Exit:** the strict adopter profiles in [ADR 0009](docs/adr/0009-speculative-batching.md) pass in simulation (20 changes/day with 30-minute CI: p95 time to merge under 60 minutes; 5 changes/day with 3-hour CI: p95 under 4.5 hours; both under 1.5 CI runs per merged change), and the simulator publishes strict capacity across defect rates. The earlier 2,000 PRs/day strict target is superseded: strict capacity is bounded by failure resolution rather than depth, and Phase 2b's exit covers high volume.
 
 ### Phase 2b — Post-merge verification mode
 
