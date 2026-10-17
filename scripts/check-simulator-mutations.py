@@ -30,6 +30,10 @@ def mutation(path, *edits):
 LAND_SHA = "Base: x.Base, ExpectedBaseSHA: a.ExpectedBaseSHA, TestedSHA: a.TestedSHA,"
 ABANDON = "return emit(queue.LandingAbandoned{BatchID: a.BatchID, NewFence: next})"
 MUTANTS = {
+    "cancel_landing_or_landed_batch": mutation(
+        "internal/queue/check_cancellation.go",
+        ("!b.Speculative || b.Phase == Landing || b.TestedSHA", "!b.Speculative || b.TestedSHA"),
+    ),
     "out_of_order_landing": mutation(
         PLAN, ("if batch != s.Active || batch.BaseSHA != s.BaseSHA {", "if false {")
     ),
@@ -44,8 +48,8 @@ MUTANTS = {
     ),
     "uncorrelated_batch_timeout": mutation(
         APPLY,
-        ("e.Reason == ChecksTimeout && s.batchIn(e.BatchID, Testing) && !s.Batch(e.BatchID).checksPassed",
-         "e.Reason == ChecksTimeout && s.Active != nil && s.Active.Phase == Testing && !s.Active.checksPassed"),
+        ("e.Reason == ChecksTimeout && s.batchIn(e.BatchID, Testing) && (!s.Batch(e.BatchID).checksPassed || s.Batch(e.BatchID).ProvisionalFailure != \"\")",
+         "e.Reason == ChecksTimeout && s.Active != nil && s.Active.Phase == Testing && (!s.Active.checksPassed || s.Active.ProvisionalFailure != \"\")"),
         ("s.failBatch(s.Batch(e.BatchID), e.Reason)", "s.failBatch(s.Active, e.Reason)"),
     ),
     "build_key_omits_composition": mutation(
@@ -161,7 +165,7 @@ func TestMutationRunProbe(t *testing.T) {
                 cfg.PRs,cfg.ArrivalWindow,cfg.Faults = 16,0,Faults{}
                 cfg.Planner.SpeculationMaxDepth=4
                 cfg.Planner.ChecksRetryFailed=1
-                cfg.CI=&CIConfig{Runners:50,RerunsSupported:true}
+                cfg.CI=&CIConfig{Runners:50,RerunsSupported:true,CancellationSupported:true}
                 cfg.Planner.BatchMaxSize=1
                 cfg.CIMin,cfg.CIMax=time.Minute,3*time.Minute
                 cfg.BrokenRate=0

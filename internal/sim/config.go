@@ -69,6 +69,9 @@ func configuredForgeMethods(cfg Config) []string {
 	if cfg.Planner.RetryLimit() == 1 {
 		methods = append(methods, "RerunFailedChecks")
 	}
+	if cfg.Planner.MaxDepth() > 1 {
+		methods = append(methods, "CancelChecks")
+	}
 	return methods
 }
 

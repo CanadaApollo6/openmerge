@@ -109,6 +109,7 @@ type Batch struct {
 	StartedTestingAt   time.Time
 	LandingAttempt     LandingAttempt
 	CheckRetry         *CheckRetryState `json:",omitempty"`
+	ObservedRuns       []CheckRun       `json:",omitempty"`
 
 	checksPassed      bool
 	checksGeneration  uint64

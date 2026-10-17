@@ -22,6 +22,7 @@ const setupUsage = `Usage:
   openmerge setup rulesets --repo owner/name (--app-id ID | --config-dir DIR) [--apply]
 
 App setup defaults to the signed-in personal account and polling (webhooks disabled).
+The manifest requests Actions read/write for optional CI retries and cancellation.
 The config directory must not exist; defaults to $XDG_CONFIG_HOME/openmerge/<slug>/.
 Rulesets require GITHUB_TOKEN from a repository admin, with Administration read
 for inspection or write for --apply. Without --apply, only a preview is printed.

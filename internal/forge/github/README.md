@@ -40,6 +40,14 @@ never appear in driver errors or logs.
   [queue CI provenance contract](../../../docs/operating.md#queue-ci-provenance).
   Missing producer identities and unknown outcomes are pending.
   Only the `OpenMerge` check owned by this App is excluded from CI observations.
+- Speculative CI cancellation uses the optional `CheckCanceller` capability and
+  `POST .../actions/runs/{id}/cancel`. The queue durably retires a batch and pins
+  its recorded identities before dispatch. The driver validates the exact tested
+  SHA, test ref, Actions job, workflow and current attempt; it never targets an
+  unrecorded run. Accepted POSTs remain requested until a read reports completion.
+  Missing `actions: write` degrades to unsupported; quota errors retry. The setup
+  manifest already requests this grant for retries. Existing Apps/installations
+  must approve it; cancellation never authorizes a landing.
 - Same-commit check retries are optional. For GitHub Actions, an explicit
   retry request uses the workflow run ID from a validated Actions check URL and
   `POST .../actions/runs/{id}/rerun-failed-jobs`. Foreign-App check runs and

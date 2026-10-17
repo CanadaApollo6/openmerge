@@ -179,7 +179,16 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 		return nil
 	}
 	emit := s.store.Emit(actionCtx, claim, cfg)
-	err = x.Execute(actionCtx, claim.Action, func(event queue.Event) error {
+	executionAction := claim.Action
+	if report, ok := executionAction.(queue.ReportStatus); ok {
+		summary, err := s.ledgerSummary(actionCtx, w, report.PR)
+		if err != nil {
+			return err
+		}
+		report.Detail += summary
+		executionAction = report
+	}
+	err = x.Execute(actionCtx, executionAction, func(event queue.Event) error {
 		if err := emit(event); err != nil {
 			return err
 		}
@@ -223,6 +232,11 @@ func (s *Server) status(ctx context.Context, w *worker, pr int, head string, sta
 		return nil
 	}
 	ctx = forge.WithRequestClass(ctx, forge.ReportingRequest)
+	summary, err := s.ledgerSummary(ctx, w, pr)
+	if err != nil {
+		return err
+	}
+	status.Summary += summary
 	key := fmt.Sprintf("status/%d", pr)
 	value := struct {
 		Head   string

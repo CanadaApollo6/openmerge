@@ -319,3 +319,16 @@ func TestDiscoveryPrintsWebhookHealthAndRepositoryAge(t *testing.T) {
 		}
 	}
 }
+
+func TestQueueStatusShowsRunLedgerAndFixedWindow(t *testing.T) {
+	response := status.Response{Queue: &status.Queue{Repository: "owner/repo", Base: "main", Window: 4, BatchSize: 8, Chain: []*status.Batch{{ID: "b2", Position: 2, BatchesAhead: 1, TestedSHA: "tested", Phase: "testing"}}}, PR: &status.Entry{PR: 2, HeadSHA: "head", Gate: "checks", RunLedger: []status.Run{{BatchID: "b2", TestedSHA: "tested", TestRef: "openmerge/queue/main/b2", Outcome: "cancelled", WastedReason: "dequeue", Cancellation: "confirmed"}}}}
+	var out bytes.Buffer
+	if err := printStatus(&out, response); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"window: 4; batch size: 8", "batch b2 position 2", "Gate: checks", "CI run ledger:", "b2 tested openmerge/queue/main/b2 aggregate (identity unavailable): cancelled; wasted: dequeue; cancellation: confirmed"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("missing %q in %s", want, &out)
+		}
+	}
+}

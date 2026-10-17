@@ -55,10 +55,11 @@ func (*pushTimeout) Temporary() bool { return true }
 // so an invariant cannot consume a fault intended for an executor operation.
 type faultForge struct {
 	*fake.Forge
-	sim    *simulation
-	scope  string
-	calls  map[string]int
-	reruns map[string]rerunResult
+	sim                *simulation
+	scope              string
+	calls              map[string]int
+	reruns             map[string]rerunResult
+	retiredObservation bool
 }
 
 type rerunResult struct {
@@ -107,8 +108,12 @@ func (f *faultForge) PullRequest(ctx context.Context, repo forge.RepoRef, number
 }
 
 func (f *faultForge) CheckRuns(ctx context.Context, repo forge.RepoRef, sha string) ([]forge.CheckRun, error) {
-	if err := f.before("CheckRuns"); err != nil {
-		return nil, err
+	// History-only reads are additive: without configured faults they must not
+	// consume PR 3’s operational RNG stream or alter adopter workload draws.
+	if !f.retiredObservation || f.sim.cfg.Faults.ForgeErrorRate > 0 || f.sim.cfg.Faults.Methods["CheckRuns"] > 0 || f.sim.cfg.Faults.FailFirst["CheckRuns"] > 0 {
+		if err := f.before("CheckRuns"); err != nil {
+			return nil, err
+		}
 	}
 	run := f.sim.tests[sha]
 	if run != nil && run.done && run.success && !run.rerun && f.sim.cfg.Faults.CIRerunRate > 0 &&

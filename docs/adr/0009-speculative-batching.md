@@ -143,13 +143,60 @@ barrier; unrelated infrastructure retries wait. PR 5 must explicitly decide
 whether to retain the conservative admission rule when adding adaptation.
 
 Snapshot support is a codec, not yet connected to store persistence. PR 5 must
-add adaptive window state to it. Until PR 4 provides cancellation, invalidated
-CI runs finish and occupy runners; available runner capacity per repository should
+add adaptive window state to it. Available runner capacity per repository should
 be at least `max_depth` per active base queue, since multiple bases multiply
 concurrent runs and forge-side queueing consumes `check_timeout`. The exit evidence
 validates depth 4; depths above 4 remain unvalidated. Depth-1 config
 keeps its legacy policy digest, and the default remains 1 until the dogfooding
 criteria above are met.
+
+### Cancellation and visibility implementation notes (PR 4)
+
+Cancellation is opt-in through speculative admission (`max_depth > 1`). Depth-1
+bisection and dequeues, including depth-1 queues with retries, keep their existing
+protocol and do not cancel CI. Default policy digest, existing wire fixtures and
+legacy simulator results remain unchanged.
+
+`batch_runs_observed` records all accepted CI names and attempts, including
+non-required workflows, independently of the filtered retry-policy observations.
+It cannot supply landing evidence. GitHub enriches every observed Actions job
+with its actual attempt on this opt-in path; the default plain reader is unchanged.
+The reducer first permanently discards a non-landing speculative batch. Its
+recorded latest producer/run attempts become `record_check_cancellation` effects;
+`check_cancellation_requested` pins the exact batch, tested SHA, test ref, runs and
+reason before `cancel_checks` may call the optional `CheckCanceller`. These effects
+survive projection snapshots and journal replay. Retired batch IDs cannot become
+landing heads again. A concurrent landing of another batch never broadens the
+immutable cancellation targets. `LandingStarted` and landed batches generate no
+cancellation intent. Late checks cannot restore a retired batch.
+
+`check_cancellation_reported` distinguishes unsupported capability/permission
+from confirmed run completion. POST acceptance remains requested and is retried
+idempotently after restart until a read confirms completion. Quota and transport
+errors retain intent. Unsupported cancellations schedule read-only
+`observe_retired_checks` until the recorded attempts finish; those historical
+`checks_observed` events cannot revive the batch and keep cancellation marked
+unsupported while updating its outcome. GitHub validates every target against its Actions job,
+workflow, tested SHA, queue ref and current attempt before sending any cancels.
+A newer unrecorded attempt, unsupported producer or missing identity is left
+alone; this deliberately favors attribution over maximum CI savings. This is
+best effort, not a guarantee of stopping CI and never a landing authorization.
+The manifest already requests `actions: write` since PR 2 (#43); existing Apps
+and installations still need to approve that grant.
+
+Status reconstructs a per-change ledger from committed journal history, including
+successor commits containing that change, distinct rerun attempts, outcomes,
+cancellation states and wasted-work causes. Legacy aggregate checks are labelled
+without fabricated run IDs. API/CLI show the full recorded ledger; the existing
+PR check summary includes a bounded eight-row excerpt rather than adding a new
+comment channel. Runtime policy supplies the current fixed window, batch size
+and holding gate. Adaptive inputs remain for PR 5. Snapshot state holds pending
+cancellation effects, not unbounded run history; future retention must define
+how historical ledgers are retained.
+
+Both planner-backed adopter modes pass. Unsupported totals match PR 3 exactly;
+supported cancellation reduces runner-minutes without changing run counts or
+latency with 50 runners. See [measured results](../research/phase2-chain.md).
 
 ## Consequences
 

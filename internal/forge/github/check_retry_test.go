@@ -363,7 +363,7 @@ func TestRerunDefiniteRateRefusalAllowsLaterDispatch(t *testing.T) {
 	}
 }
 
-func TestRetryJobsOnlyReadForFailedOrRecordedWorkflows(t *testing.T) {
+func TestRetryJobsReadEveryAttributedActionsWorkflow(t *testing.T) {
 	a := newRerunAPI(t, 700, 800)
 	for _, run := range a.api.runs[a.sha] {
 		run.Conclusion = new("success")
@@ -378,13 +378,41 @@ func TestRetryJobsOnlyReadForFailedOrRecordedWorkflows(t *testing.T) {
 	}
 	_, err := a.api.driver.CheckRunsForRetry(t.Context(), testRepo, a.sha, nil)
 	must(t, err)
-	if len(jobs) != 0 {
-		t.Fatalf("passing workflows read jobs: %v", jobs)
+	if len(jobs) != 2 {
+		t.Fatalf("passing workflows missing job attempts: %v", jobs)
 	}
+	jobs = nil
 	_, err = a.api.driver.CheckRunsForRetry(t.Context(), testRepo, a.sha, []uint64{700})
 	must(t, err)
-	if len(jobs) != 1 || !strings.HasSuffix(jobs[0], "/700/jobs") {
-		t.Fatalf("target reads=%v", jobs)
+	if len(jobs) != 2 {
+		t.Fatalf("explicit workflow hid other observed attempts: %v", jobs)
+	}
+}
+
+func TestRetryReaderEnrichesPassingOptionalJobAttempt(t *testing.T) {
+	a := newRerunAPI(t, 700)
+	a.api.runs[a.sha][0].ID = new(int64(702))
+	a.api.runs[a.sha][0].Name = new("optional-ci")
+	a.api.runs[a.sha][0].Conclusion = new("success")
+	a.api.runs[a.sha][0].DetailsURL = new("https://github.test/acme/project/actions/runs/700/job/702")
+	a.workflows[700].RunAttempt = new(2)
+	old := a.api.override
+	a.api.override = func(w http.ResponseWriter, r *http.Request) bool {
+		if strings.HasSuffix(r.URL.Path, "/700/jobs") {
+			a.api.json(w, &gh.Jobs{Jobs: []*gh.WorkflowJob{{CheckRunURL: new("https://github.test/api/v3/repos/acme/project/check-runs/702"), RunAttempt: new(int64(2))}}})
+			return true
+		}
+		return old(w, r)
+	}
+	plain, err := a.api.driver.CheckRuns(t.Context(), testRepo, a.sha)
+	must(t, err)
+	if len(plain) != 1 || plain[0].Attempt != 1 {
+		t.Fatalf("legacy plain observation changed: %+v", plain)
+	}
+	enriched, err := a.api.driver.CheckRunsForRetry(t.Context(), testRepo, a.sha, nil)
+	must(t, err)
+	if len(enriched) != 1 || enriched[0].Name != "optional-ci" || enriched[0].State != forge.Success || enriched[0].Attempt != 2 {
+		t.Fatalf("passing optional job lost its actual attempt: %+v", enriched)
 	}
 }
 

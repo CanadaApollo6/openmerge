@@ -110,6 +110,7 @@ type worker struct {
 	logState         queue.State
 	logWatermark     int64
 	logChecks        string
+	ledgerCache      *ledgerCache
 	rulesNextCheck   time.Time
 	rulesFailures    int
 

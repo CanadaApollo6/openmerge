@@ -81,6 +81,12 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		return errors.New("required checks must be configured or AllowNoRequiredChecks explicitly enabled")
 	}
 	switch a := action.(type) {
+	case queue.ObserveRetiredChecks:
+		return x.observeRetiredChecks(ctx, a, emit)
+	case queue.RecordCheckCancellation:
+		return emit(queue.CheckCancellationRequested(a))
+	case queue.CancelChecks:
+		return x.cancelChecks(ctx, a, emit)
 	case queue.CleanupInvalidatedRef:
 		if err := x.Driver.DeleteRef(ctx, x.Repo, a.Ref); err != nil {
 			return err
@@ -162,6 +168,9 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		}
 		if x.retryObservationAllowed(ambiguity) {
 			if x.ChecksRetryFailed == 1 {
+				if err := emit(queue.BatchRunsObserved{BatchID: a.BatchID, TestedSHA: a.TestedSHA, Runs: x.observedRuns(checks, a.BatchID, false)}); err != nil {
+					return err
+				}
 				if err := emit(x.checksObserved(a.BatchID, a.TestedSHA, checks, terminal, success)); err != nil {
 					return err
 				}
@@ -220,6 +229,9 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		if !terminal || !success {
 			at := x.now()
 			if x.ChecksRetryFailed == 1 && x.retryObservationAllowed(ambiguity) {
+				if err := emit(queue.BatchRunsObserved{BatchID: a.BatchID, TestedSHA: a.TestedSHA, Runs: x.observedRuns(checks, a.BatchID, false)}); err != nil {
+					return err
+				}
 				if err := emit(x.checksObserved(a.BatchID, a.TestedSHA, checks, terminal, success)); err != nil {
 					return err
 				}
@@ -515,10 +527,14 @@ func (x *Executor) originalCheckDeadline() time.Time {
 // provenance filtering. Keeping only required names prevents unrelated failed
 // checks from consuming the bounded retry budget.
 func (x *Executor) retryRuns(checks []forge.CheckRun, batchID string) []queue.CheckRun {
+	return x.observedRuns(checks, batchID, true)
+}
+
+func (x *Executor) observedRuns(checks []forge.CheckRun, batchID string, relevantOnly bool) []queue.CheckRun {
 	observed := x.newestRetryChecks(x.filteredChecks(checks, batchID))
 	latest := make(map[string]forge.CheckRun)
 	for _, check := range observed {
-		if !x.relevantCheck(check.Name) {
+		if relevantOnly && !x.relevantCheck(check.Name) {
 			continue
 		}
 		key := check.Name + "\x00" + check.Source

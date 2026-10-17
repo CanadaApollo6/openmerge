@@ -94,6 +94,17 @@ New installations request that permission; existing installations must approve
 it. Original and rerun observations retain the exact-SHA, queue-ref and accepted
 producer requirements used for ordinary queue CI.
 
+### Optional CI cancellation
+
+`CheckCanceller.CancelChecks` accepts only recorded run identities and their
+immutable tested SHA and queue test ref. The executor calls it only after the
+batch is permanently discarded, never while it can land or after landing. It is
+idempotent and best effort: accepted requests remain requested until the forge
+reports completion or cancellation. Missing support and permission 403 return
+unsupported; quota/transport errors remain retryable. Neither cancellation nor
+its confirmation authorizes landing. GitHub Actions uses the workflow-run cancel
+endpoint and the existing `actions: write` grant; see ADR 0009 PR 4 notes.
+
 ## Consequences
 
 - Adding a forge means implementing one interface and passing one suite, with no engine changes.

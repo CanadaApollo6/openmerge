@@ -177,6 +177,7 @@ func cloneBatch(b *Batch) *Batch {
 	}
 	c := *b
 	c.PRs = slices.Clone(b.PRs)
+	c.ObservedRuns = slices.Clone(b.ObservedRuns)
 	c.unboundChecks = slices.Clone(b.unboundChecks)
 	if b.CheckRetry != nil {
 		r := *b.CheckRetry

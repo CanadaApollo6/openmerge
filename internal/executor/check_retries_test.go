@@ -29,6 +29,11 @@ func TestRetryRefreshCapturesBoundedIdentitiesAndOriginalDeadline(t *testing.T) 
 	var events []queue.Event
 	must(t, h.x.Execute(context.Background(), queue.RefreshChecks{BatchID: "batch", TestedSHA: sha}, record(&events)))
 	want := []queue.Event{
+		queue.BatchRunsObserved{BatchID: "batch", TestedSHA: sha, Runs: []queue.CheckRun{
+			{ID: 10, Attempt: 2, Name: "ci", Source: "app:ci", State: "failure"},
+			{ID: 11, Attempt: 1, Name: "lint", Source: "app:lint", State: "success"},
+			{ID: 12, Attempt: 1, Name: "unrelated", Source: "app:other", State: "failure"},
+		}},
 		queue.ChecksObserved{
 			BatchID: "batch", TestedSHA: sha,
 			Runs: []queue.CheckRun{
@@ -55,7 +60,7 @@ func TestRetryRefreshCanonicalizesZeroAttempt(t *testing.T) {
 	})
 	var events []queue.Event
 	must(t, h.x.Execute(context.Background(), queue.RefreshChecks{BatchID: "batch", TestedSHA: sha}, record(&events)))
-	observed, ok := events[0].(queue.ChecksObserved)
+	observed, ok := events[1].(queue.ChecksObserved)
 	if !ok || !reflect.DeepEqual(observed.Runs, []queue.CheckRun{{ID: 10, Attempt: 1, Name: "ci", Source: "app:ci", State: "failure"}}) {
 		t.Fatalf("canonical retry observation=%#v", events)
 	}
@@ -133,17 +138,17 @@ func TestRetryLandRejectsStaleSuccessUntilEveryFailedRunIsNewer(t *testing.T) {
 	if !errors.Is(err, executor.ErrChecksNotSuccessful) || h.read(t, "main") != h.base {
 		t.Fatalf("stale successful read authorized landing: err=%v base=%s", err, h.read(t, "main"))
 	}
-	if len(events) != 2 {
+	if len(events) != 3 {
 		t.Fatalf("events=%#v", events)
 	}
-	observed, ok := events[0].(queue.ChecksObserved)
+	observed, ok := events[1].(queue.ChecksObserved)
 	if !ok || observed.Terminal || observed.Success || !reflect.DeepEqual(observed.Runs, []queue.CheckRun{
 		{ID: 7, Attempt: 2, Name: "ci", Source: "app:ci", State: "success"},
 		{ID: 8, Attempt: 1, Name: "lint", Source: "app:lint", State: "success"},
 	}) {
-		t.Fatalf("stale observation=%#v", events[0])
+		t.Fatalf("stale observation=%#v", events[1])
 	}
-	if _, ok := events[1].(queue.ChecksRefreshed); !ok {
+	if _, ok := events[2].(queue.ChecksRefreshed); !ok {
 		t.Fatalf("missing refresh watermark: %#v", events)
 	}
 }

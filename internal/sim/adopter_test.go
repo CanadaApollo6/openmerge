@@ -60,11 +60,8 @@ func adopterExit(t *testing.T, p capacity.Profile) {
 	}
 	for _, capability := range []bool{true, false} {
 		t.Run(map[bool]string{true: "cancellation-supported", false: "cancellation-unsupported"}[capability], func(t *testing.T) {
-			if capability {
-				t.Skip("cancellation arrives in ADR 0009 PR 4")
-			}
 			var samples, modelSamples []capacity.Sample
-			runs, modelRuns := 0, 0
+			runs, modelRuns, wasted, requested, confirmed, unsupported := 0, 0, 0, 0, 0, 0
 			minutes, modelMinutes := 0., 0.
 			for seed := 1; seed <= 8; seed++ {
 				cfg := plannerProfile(p, uint64(seed), capability, 30)
@@ -84,8 +81,13 @@ func adopterExit(t *testing.T, p capacity.Profile) {
 				samples = append(samples, seedSamples...)
 				runs += r.CIRuns
 				minutes += r.CI.RunnerMinutes
+				wasted += r.CI.WastedRuns
+				requested += r.CI.CancellationsRequested
+				confirmed += r.CI.CancellationsConfirmed
+				unsupported += r.CI.CancellationsUnsupported
 				day1 := capacity.Summarize(cold, 0, 0, p.Threshold)
-				t.Logf("%s fixed W=4 capability=%t (cancellation unsupported in PR3) seed=%d: %+v; day1 merged=%d p50=%s p95=%s tail=%.6f", p.Name, capability, seed, capacity.Summarize(seedSamples, r.CIRuns, r.CI.RunnerMinutes, p.Threshold), day1.Merged, day1.Median, day1.P95, day1.TailFraction)
+				t.Logf("%s fixed W=4 capability=%t seed=%d: %+v; day1 merged=%d p50=%s p95=%s tail=%.6f", p.Name, capability, seed, capacity.Summarize(seedSamples, r.CIRuns, r.CI.RunnerMinutes, p.Threshold), day1.Merged, day1.Median, day1.P95, day1.TailFraction)
+				t.Logf("seed=%d wasted runs=%d; cancellation requested=%d confirmed=%d unsupported=%d", seed, r.CI.WastedRuns, r.CI.CancellationsRequested, r.CI.CancellationsConfirmed, r.CI.CancellationsUnsupported)
 				model, err := capacity.Run(p.Config(uint64(seed), capability))
 				if err != nil {
 					t.Fatal(err)
@@ -97,6 +99,10 @@ func adopterExit(t *testing.T, p capacity.Profile) {
 			got := capacity.Summarize(samples, runs, minutes, p.Threshold)
 			predicted := capacity.Summarize(modelSamples, modelRuns, modelMinutes, p.Threshold)
 			t.Logf("POOLED %s fixed W=4 capability=%t: %+v; PR1 model: %+v; delta p95=%s runs/merge=%+.6f tail=%+.6f", p.Name, capability, got, predicted, got.P95-predicted.P95, got.RunsPerMerge-predicted.RunsPerMerge, got.TailFraction-predicted.TailFraction)
+			t.Logf("POOLED %s cancellation=%t wasted runs=%d; cancellation requested=%d confirmed=%d unsupported=%d", p.Name, capability, wasted, requested, confirmed, unsupported)
+			if requested == 0 || wasted == 0 || (capability && (confirmed != requested || unsupported != 0)) || (!capability && (unsupported != requested || confirmed != 0)) {
+				t.Errorf("adopter did not exercise the selected cancellation capability: requested=%d confirmed=%d unsupported=%d wasted=%d", requested, confirmed, unsupported, wasted)
+			}
 			if got.P95 >= p.Threshold || got.RunsPerMerge >= 1.5 {
 				t.Errorf("fixed-window adopter gate failed: p95=%s (want <%s), runs/merge=%.6f (want <1.5)", got.P95, p.Threshold, got.RunsPerMerge)
 			}

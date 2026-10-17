@@ -167,7 +167,7 @@ func Apply(s State, e Event) State {
 				TestRef: "openmerge/queue/" + s.BaseBranch + "/" + e.BatchID, Phase: Building}
 		}
 	case BatchFailed:
-		if e.Reason == ChecksTimeout && s.batchIn(e.BatchID, Testing) && !s.Batch(e.BatchID).checksPassed {
+		if e.Reason == ChecksTimeout && s.batchIn(e.BatchID, Testing) && (!s.Batch(e.BatchID).checksPassed || s.Batch(e.BatchID).ProvisionalFailure != "") {
 			s.failBatch(s.Batch(e.BatchID), e.Reason)
 		}
 	case FastForwardBatchSelected:
@@ -207,6 +207,12 @@ func Apply(s State, e Event) State {
 				s.failBuild(b, e.At, "")
 			}
 		}
+	case BatchRunsObserved:
+		s.observeBatchRuns(e)
+	case CheckCancellationRequested:
+		s.requestCancellation(e)
+	case CheckCancellationReported:
+		s.reportCancellation(e)
 	case ChecksObserved:
 		s.observeChecks(e)
 	case CheckRerunRequested:
@@ -433,6 +439,7 @@ func (s *State) removeEntry(pr int) {
 }
 
 func (s *State) discardBatch(b *Batch) {
+	s.retireChecks(b)
 	s.addEffect(DeleteRef{Ref: b.TestRef})
 	if s.Active == b {
 		s.Active = nil

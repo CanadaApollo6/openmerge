@@ -38,6 +38,7 @@ type testRun struct {
 	heads            []queue.BatchPR
 	success          bool
 	done             bool
+	landed           bool
 	rerun            bool
 	batchID          string
 	startedTestingAt time.Time
@@ -273,6 +274,8 @@ func (s *simulation) execute(action queue.Action) error {
 		s.executor.CheckRetry = active.CheckRetry
 	}
 	s.boundary.scope = faultScope(action)
+	_, s.boundary.retiredObservation = action.(queue.ObserveRetiredChecks)
+	defer func() { s.boundary.retiredObservation = false }()
 	if a, ok := action.(queue.Land); ok && s.faults.Float64() < s.cfg.Faults.DuplicateExecutionRate {
 		s.sequence++
 		scope := fmt.Sprintf("duplicate/%d", s.sequence)
@@ -310,7 +313,7 @@ func (s *simulation) execute(action queue.Action) error {
 		return nil
 	}
 	if err != nil {
-		if !errors.Is(err, errForge) && !errors.Is(err, errCrash) && !errors.Is(err, errDelayed) && !errors.Is(err, executor.ErrChecksNotSuccessful) {
+		if !errors.Is(err, errForge) && !errors.Is(err, errCrash) && !errors.Is(err, errDelayed) && !errors.Is(err, executor.ErrChecksNotSuccessful) && !errors.Is(err, executor.ErrCancellationPending) {
 			return fmt.Errorf("execute %s: %w", action.Key(), err)
 		}
 		s.retryAt[action.Key()] = s.now.Add(s.cfg.RetryDelay)
@@ -347,6 +350,9 @@ func (s *simulation) record(event queue.Event) {
 			if err := s.verifyLanded(batch, event); err != nil {
 				s.violation = err
 				return
+			}
+			if run := s.tests[batch.TestedSHA]; run != nil {
+				run.landed = true
 			}
 			for _, pr := range batch.PRs {
 				s.prs[pr.PR].landed = s.now

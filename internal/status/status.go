@@ -44,7 +44,11 @@ type Queue struct {
 	Invalidations []queue.BatchesInvalidated `json:"invalidations,omitempty"`
 	ActiveBatch   *Batch                     `json:"active_batch"`
 	Entries       []Entry                    `json:"entries"`
-	RulesSources  []RulesSource              `json:"rules_sources,omitempty"`
+	Window        int                        `json:"window,omitempty"`
+	BatchSize     int                        `json:"batch_size,omitempty"`
+	state         queue.State
+	runLedger     map[int][]Run
+	RulesSources  []RulesSource `json:"rules_sources,omitempty"`
 }
 
 // RulesSource lists one source's independently revisioned policy findings.
@@ -89,6 +93,8 @@ type BatchPR struct {
 // Entry uses position zero for PRs outside the queue; admission is the latest
 // successful admission, retained on a terminal PR detail response.
 type Entry struct {
+	Gate              string     `json:"gate,omitempty"`
+	RunLedger         []Run      `json:"run_ledger,omitempty"`
 	BatchID           string     `json:"batch_id,omitempty"`
 	BatchPosition     uint64     `json:"batch_position,omitempty"`
 	BatchesAhead      *int       `json:"batches_ahead"`
@@ -111,16 +117,17 @@ type Why struct {
 
 // Event exposes stable evidence metadata without the private persistence payload.
 type Event struct {
-	ID         int64            `json:"id"`
-	Type       string           `json:"type"`
-	At         time.Time        `json:"at"`
-	Summary    string           `json:"summary"`
-	Count      int              `json:"count,omitempty"`
-	EndID      int64            `json:"end_id,omitempty"`
-	Until      *time.Time       `json:"until,omitempty"`
-	Runs       []queue.CheckRun `json:"runs,omitempty"`
-	RerunState string           `json:"rerun_state,omitempty"`
-	pairKey    string
+	ID                int64            `json:"id"`
+	Type              string           `json:"type"`
+	At                time.Time        `json:"at"`
+	Summary           string           `json:"summary"`
+	Count             int              `json:"count,omitempty"`
+	EndID             int64            `json:"end_id,omitempty"`
+	Until             *time.Time       `json:"until,omitempty"`
+	Runs              []queue.CheckRun `json:"runs,omitempty"`
+	RerunState        string           `json:"rerun_state,omitempty"`
+	CancellationState string           `json:"cancellation_state,omitempty"`
+	pairKey           string
 }
 
 // Project replays committed history. A positive PR selects its explanation;
@@ -128,6 +135,7 @@ type Event struct {
 // outcomes: terminal states require an admission to actually leave the fold.
 func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Queue, *Entry, *Why) {
 	s := j.Seed
+	ledger := runLedger(j, sanitizer)
 	known := make(map[int]Entry)
 	heads := make(map[int]string)
 	tested, inheritedPause := explanationContext(j, pr)
@@ -193,6 +201,17 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 			kind, _, _ := queue.EncodeEvent(record.Event)
 			evidence := Event{ID: record.ID, Type: kind, At: record.RecordedAt.UTC(), Summary: sanitizer.Sanitize(eventSummary(record.Event, before, s))}
 			evidence.Runs, evidence.RerunState = retryEvidence(record.Event, before, s, sanitizer)
+			switch e := record.Event.(type) {
+			case queue.CheckCancellationRequested:
+				evidence.CancellationState = "requested"
+			case queue.CheckCancellationReported:
+				evidence.CancellationState = "requested"
+				if e.Unsupported {
+					evidence.CancellationState = "unsupported"
+				} else if len(e.Confirmed) > 0 {
+					evidence.CancellationState = "confirmed"
+				}
+			}
 			events = appendEvidence(events, evidence, record.Event, previous, before)
 			previous = record.Event
 			// Keep one extra row until a reopen's matching refresh arrives.
@@ -219,6 +238,8 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 		q.RulesSources = append(q.RulesSources, RulesSource{string(source.Source), problems, source.Revision})
 	}
 	q.Paused = len(q.Blocks) > 0
+	q.state = s
+	q.runLedger = ledger
 	for i, b := range s.Batches() {
 		item := &Batch{ID: b.ID, Phase: string(b.Phase), BaseSHA: b.BaseSHA, TestedSHA: b.TestedSHA, TestRef: b.TestRef, Method: string(b.Method), PRs: make([]BatchPR, 0, len(b.PRs)), CheckRetry: cloneCheckRetry(b.CheckRetry), Position: max(1, b.ChainPosition), ParentBatchID: b.ParentBatchID, BatchesAhead: i, LandingSHA: b.LandingCommit(), InvalidationReason: b.InvalidationReason, ProvisionalFailure: provisionalFailure(b)}
 		if item.CheckRetry != nil {
@@ -236,6 +257,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 	for i, admitted := range s.Entries {
 		e := known[admitted.PR]
 		e.HeadSHA = admitted.HeadSHA
+		e.RunLedger = ledger[e.PR]
 		e.Position, e.Status, e.Reason, e.Detail = i+1, "queued", "", ""
 		if b := s.BatchForPR(e.PR); b != nil {
 			e.BatchID, e.BatchPosition = b.ID, max(1, b.ChainPosition)
@@ -265,6 +287,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 		if q.Paused {
 			e.Status, e.Reason = "paused", q.PauseReason
 		}
+		e.Gate = holdingGate(&q, e, queue.Config{}, time.Time{})
 		q.Entries = append(q.Entries, e)
 		known[e.PR] = e
 	}
@@ -275,6 +298,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 	if s.LifecycleState() != "active" && e.Position == 0 && e.Status != "merged" && e.Status != "closed" {
 		e.Status, e.Reason = "paused", q.State
 	}
+	e.RunLedger = ledger[pr]
 	summary := fmt.Sprintf("PR #%d: %s", pr, e.Status)
 	if e.Reason != "" {
 		summary += " (" + e.Reason + ")"
@@ -361,6 +385,12 @@ func retryEvidence(event queue.Event, before, after queue.State, sanitizer *diag
 	var runs []queue.CheckRun
 	var state string
 	switch e := event.(type) {
+	case queue.BatchRunsObserved:
+		runs = e.Runs
+	case queue.CheckCancellationRequested:
+		runs = e.Runs
+	case queue.CheckCancellationReported:
+		runs = e.Confirmed
 	case queue.ChecksObserved:
 		runs, state = e.Runs, retryState(after, e.BatchID, e.TestedSHA)
 		if state == "" {
@@ -590,11 +620,23 @@ func eventSummary(event queue.Event, before, after queue.State) string {
 		return "Check provenance diagnostic cleared"
 	case queue.ChecksCompleted:
 		return fmt.Sprintf("Recorded terminal CI result; success=%t", e.Success)
+	case queue.BatchRunsObserved:
+		return "Observed attributed batch CI runs: " + checkRunSummary(e.Runs)
 	case queue.ChecksObserved:
 		if !e.Terminal {
 			return "Observed pending retry-aware CI; runs: " + checkRunSummary(e.Runs)
 		}
 		return fmt.Sprintf("Observed retry-aware terminal CI result; success=%t; runs: %s", e.Success, checkRunSummary(e.Runs))
+	case queue.CheckCancellationRequested:
+		return fmt.Sprintf("Requested cancellation for retired batch %s (%s); runs: %s", e.BatchID, e.Reason, checkRunSummary(e.Runs))
+	case queue.CheckCancellationReported:
+		if e.Unsupported {
+			return "Cancellation unsupported for batch " + e.BatchID + ": " + e.Detail
+		}
+		if len(e.Confirmed) > 0 {
+			return "Confirmed completed or cancelled runs for batch " + e.BatchID + ": " + checkRunSummary(e.Confirmed)
+		}
+		return "Cancellation requested for batch " + e.BatchID + "; completion unconfirmed"
 	case queue.CheckRerunRequested:
 		return fmt.Sprintf("Requested bounded retry of %d failed check(s): %s", len(e.Runs), checkRunSummary(e.Runs))
 	case queue.CheckRerunDispatchProgress:
@@ -699,6 +741,12 @@ func affects(event queue.Event, pr int, before, after queue.State, tested map[st
 	case queue.BatchStarted:
 		return slices.ContainsFunc(e.PRs, func(p queue.BatchPR) bool { return p.PR == pr })
 	case queue.ChecksCompleted:
+		return tested[e.TestedSHA]
+	case queue.CheckCancellationRequested:
+		return tested[e.TestedSHA]
+	case queue.CheckCancellationReported:
+		return tested[e.TestedSHA]
+	case queue.BatchRunsObserved:
 		return tested[e.TestedSHA]
 	case queue.ChecksObserved:
 		return inBatch(before, pr) && before.Active.ID == e.BatchID && before.Active.TestedSHA == e.TestedSHA
