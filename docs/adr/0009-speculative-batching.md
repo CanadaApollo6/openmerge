@@ -37,7 +37,7 @@ It is also honest about the limit. A change in the *k*-th speculative batch keep
 
 **In speculative queues, a batch's failure is confirmed only after one same-commit rerun.** When a required check fails on the oldest batch of a queue with `max_depth` above 1, OpenMerge reruns the failed checks once on the same tested commit before treating the batch as failed, as [ADR 0005](0005-verification-modes.md) does for post-merge verification. A provisional failure in a later batch is not rerun until that batch becomes the oldest, so one broken change does not trigger reruns across the whole window. A batch that passes on the rerun is a pass, and the flaky run is recorded. Queues at depth 1 keep today's behavior, in which a failure splits the batch immediately, unless they opt into retries.
 
-This is the Phase 2 bounded-retry work, which is implemented before the chain. It records the original run and the rerun by identity, and the rerun request once. Duplicate observations of a run neither consume the retry nor confirm a failure. Reopening checks does not restore the retry budget. A confirmation, once recorded for a batch's checks generation, is final. The original timeout deadline governs the original run, and the rerun gets its own deadline of one check timeout from its request; both are recorded, so reopening checks cannot extend either. The existing qualifying-refresh rule still applies, and a batch waiting to land after passing never times out. Forges or CI providers that cannot rerun a check are reported as such, and their failures count as confirmed on first failure. A check timeout is a confirmed failure for blame, as today.
+This is the Phase 2 bounded-retry work, which is implemented before the chain. It records the original run and the rerun by identity, and the rerun request once. Duplicate observations of a run neither consume the retry nor confirm a failure. Reopening checks does not restore the retry budget. A confirmation, once recorded for a batch's checks generation, is final. The original timeout deadline governs the original run, and the rerun gets its own deadline of one check timeout from its request; both are recorded, so reopening checks cannot extend either. When `check_timeout: 0` disables the original timer, the rerun still gets the default one-hour deadline from its request. An unconfirmed dispatch times out with “rerun dispatch never confirmed”. The existing qualifying-refresh rule still applies, and a batch waiting to land after passing never times out. Forges or CI providers that cannot rerun a check are reported as such, and their failures count as confirmed on first failure. A check timeout is a confirmed failure for blame, as today.
 
 For implementation step 2, before chains exist, `checks.retry_failed: 1` on a
 queue opts into this behavior; only `0` and `1` are valid and the default is `0`.
@@ -52,7 +52,10 @@ producer, run ID and attempt, and the original deadline. `check_rerun_requested`
 pins the failed identities, request time and rerun deadline before the optional
 forge call. `check_rerun_dispatch_progress` persists each Actions workflow's
 pre-POST intent and subsequent acceptance. Ambiguous outcomes reconcile from
-workflow status/run_attempt without repeating the POST; `check_rerun_dispatched`
+an increased workflow `run_attempt` without repeating the POST; an inconsistent
+non-completed status at the original attempt is deferred. Definite non-dispatch
+(local refusal before sending or server rate-limit rejection) is recorded
+separately and permits a later fenced intent after cooldown; `check_rerun_dispatched`
 records aggregate support or an unsupported reason. Only GitHub Actions check
 runs are supported in this implementation.
 `checks_failure_confirmed` makes blame durable. The corresponding new actions

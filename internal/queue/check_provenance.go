@@ -64,10 +64,16 @@ func (s State) CheckProvenanceDetail() string {
 
 // DequeueDetail retains the stable reason while explaining a provenance timeout.
 func (s State) DequeueDetail(pr int, reason DequeueReason) string {
-	if reason == ChecksTimeout && s.inBatch(pr) {
-		if detail := s.CheckProvenanceDetail(); detail != "" {
-			return "checks-timeout: " + detail
+	detail := dequeueDetail(reason)
+	if (reason == ChecksTimeout || reason == ChecksFailed) && s.inBatch(pr) {
+		if retry := s.CheckRetryDetail(); retry != "" {
+			detail += ": " + retry
 		}
 	}
-	return dequeueDetail(reason)
+	if reason == ChecksTimeout && s.inBatch(pr) {
+		if provenance := s.CheckProvenanceDetail(); provenance != "" {
+			detail += ": " + provenance
+		}
+	}
+	return detail
 }

@@ -96,14 +96,15 @@ const (
 // Attempt together with ID to identify a run when Attempt is known.
 // Sources identify independent producers whose IDs cannot be compared.
 type CheckRun struct {
-	WorkflowRunID  uint64
-	WorkflowRunURL string
-	URL            string
-	ID             uint64
-	Attempt        uint64
-	Name           string
-	Source         string
-	State          CheckState
+	RetryUnsupported string
+	WorkflowRunID    uint64
+	WorkflowRunURL   string
+	URL              string
+	ID               uint64
+	Attempt          uint64
+	Name             string
+	Source           string
+	State            CheckState
 	// HeadBranch is the check suite's triggering branch, without refs/heads/.
 	// Empty means unknown; commit statuses (Source "status:...") lack provenance.
 	HeadBranch string
@@ -118,7 +119,7 @@ type RerunChecksRequest struct {
 	Runs               []CheckRun
 	Key                string
 	// Progress must commit durably before returning nil. Intent precedes POST;
-	// accepted follows it. An intent is never permission to repeat a POST.
+	// accepted follows it. Only a recorded definite non-dispatch permits a new intent.
 	Progress func(RerunTarget) error
 	Targets  []RerunTarget
 }
@@ -128,11 +129,14 @@ type RerunTarget struct {
 	WorkflowRunID uint64 `json:"workflow_run_id"`
 	Attempt       uint64 `json:"attempt"`
 	Accepted      bool   `json:"accepted"`
+	// NotDispatched proves the last intent was refused without acceptance.
+	NotDispatched bool `json:"not_dispatched,omitempty"`
 }
 
 // RetryCheckReader enriches opt-in observations with Actions job attempts.
+// Workflow IDs identify recorded failed observations or pending dispatch targets.
 type RetryCheckReader interface {
-	CheckRunsForRetry(context.Context, RepoRef, string) ([]CheckRun, error)
+	CheckRunsForRetry(context.Context, RepoRef, string, []uint64) ([]CheckRun, error)
 }
 
 // RerunChecksResult describes a provider that cannot rerun the requested

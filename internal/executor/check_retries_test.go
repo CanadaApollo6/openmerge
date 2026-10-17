@@ -183,6 +183,16 @@ func TestRecordAndConfirmCheckRetryActions(t *testing.T) {
 		t.Fatalf("request event=%#v want=%#v", events, want)
 	}
 	events = nil
+	recordAction.Timeout = 0
+	recordAction.OriginalDeadline = time.Time{}
+	must(t, h.x.Execute(t.Context(), recordAction, record(&events)))
+	bounded := events[0].(queue.CheckRerunRequested)
+	if !bounded.Deadline.Equal(epoch.Add(5*time.Second+queue.DefaultCheckTimeout)) || bounded.Timeout != 0 || !bounded.OriginalDeadline.IsZero() {
+		t.Fatalf("unbounded rerun with original timer disabled: %+v", bounded)
+	}
+	must(t, bounded.Validate())
+
+	events = nil
 	confirm := queue.ConfirmCheckFailure{BatchID: "batch", TestedSHA: "sha", Generation: 4, Reason: queue.ChecksFailed}
 	must(t, h.x.Execute(context.Background(), confirm, record(&events)))
 	if !reflect.DeepEqual(events, []queue.Event{queue.ChecksFailureConfirmed{BatchID: "batch", TestedSHA: "sha", Generation: 4, Reason: queue.ChecksFailed}}) {

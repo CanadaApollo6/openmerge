@@ -385,10 +385,11 @@ func CanStart(cfg Config, s State, action Action, event Event) bool {
 			return false
 		}
 		index := slices.IndexFunc(r.Dispatches, func(old CheckRerunTarget) bool { return old.WorkflowRunID == e.Target.WorkflowRunID })
-		if e.Target.Accepted {
-			return index >= 0 && !r.Dispatches[index].Accepted && r.Dispatches[index].Attempt == e.Target.Attempt
-		}
 		if index >= 0 {
+			if !validDispatchTransition(r.Dispatches[index], e.Target) {
+				return false
+			}
+		} else if e.Target.Accepted || e.Target.NotDispatched {
 			return false
 		}
 		at = e.Target.At

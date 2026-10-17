@@ -100,3 +100,37 @@ func TestRetryDisabledBatchJSONOmitsRetryState(t *testing.T) {
 		t.Fatalf("default-off API gained retry state: %s", data)
 	}
 }
+
+func TestUnconfirmedRetryExplainedInStatusAndWhy(t *testing.T) {
+	for _, dispatched := range []bool{false, true} {
+		runs := []queue.CheckRun{{WorkflowRunID: 700, ID: 7, Attempt: 1, Name: "ci", Source: "app:15368", State: "failure"}}
+		events := append(testingEvents(),
+			queue.ChecksObserved{BatchID: "b1", TestedSHA: "tested", Runs: runs, Terminal: true, OriginalDeadline: at.Add(time.Minute), Timeout: time.Minute},
+			queue.CheckRerunRequested{BatchID: "b1", TestedSHA: "tested", Runs: runs, OriginalDeadline: at.Add(time.Minute), At: at, Deadline: at.Add(time.Minute), Timeout: time.Minute},
+			queue.CheckRerunDispatchProgress{BatchID: "b1", TestedSHA: "tested", Target: queue.CheckRerunTarget{WorkflowRunID: 700, Attempt: 1, At: at}},
+		)
+		// Even aggregate completion must not hide a target lacking acceptance.
+		if dispatched {
+			events = append(events, queue.CheckRerunDispatched{BatchID: "b1", TestedSHA: "tested"})
+		}
+		events = append(events, queue.ChecksFailureConfirmed{BatchID: "b1", TestedSHA: "tested", Reason: queue.ChecksTimeout})
+		q, entry, why := Project(journal(events...), 1, 50, nil)
+		if entry == nil || !strings.Contains(entry.Detail, "rerun dispatch never confirmed") || q.ActiveBatch == nil || !strings.Contains(q.ActiveBatch.CheckRetry.Detail, "rerun dispatch never confirmed") {
+			t.Fatalf("pending status=%+v retry=%+v", entry, q.ActiveBatch)
+		}
+		found := false
+		for _, e := range why.Events {
+			if e.Type == "checks_failure_confirmed" && strings.Contains(e.Summary, "rerun dispatch never confirmed") {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("missing why explanation: %+v", why)
+		}
+		events = append(events, queue.Dequeued{PR: 1, AdmissionID: 1, Reason: queue.ChecksTimeout, BatchID: "b1"})
+		_, entry, _ = Project(journal(events...), 1, 50, nil)
+		if entry == nil || !strings.Contains(entry.Detail, "rerun dispatch never confirmed") {
+			t.Fatalf("terminal status=%+v", entry)
+		}
+	}
+}

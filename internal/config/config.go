@@ -214,7 +214,7 @@ func (p *parser) error(n *yaml.Node, path, format string, args ...any) {
 
 func (p *parser) queue(n *yaml.Node, path string) Queue {
 	before := len(p.errors)
-	q := Queue{MergeMethod: queue.Squash, CheckTimeout: time.Hour, Batch: Batch{MaxSize: 1}}
+	q := Queue{MergeMethod: queue.Squash, CheckTimeout: queue.DefaultCheckTimeout, Batch: Batch{MaxSize: 1}}
 	q.baseLine = max(1, n.Line)
 	fields := p.fields(n, path, queueKeys...)
 	if name := fields["name"]; name == nil {

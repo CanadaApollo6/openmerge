@@ -75,6 +75,16 @@ driver may rerun only those identities on that SHA/ref/source; it must return
 `Unsupported: true` rather than wedge a queue when the producer, state, native
 ID, or permission cannot support a safe rerun. A successful request only means
 that a new pending observation may appear; callers must refresh `CheckRuns`.
+Opt-in Actions job-attempt enrichment is optional: the specific integration
+permission 403 returns the plain check observation with an unsupported Actions
+permission detail. Passing checks can land, first failures confirm unsupported,
+and pending checks still qualify for timeout. Other Actions read errors remain
+transient and emit no observation. Job attempts are fetched only for workflows
+with failed observations or recorded retry targets; retries-off add no reads.
+Dispatch acceptance requires an increased workflow attempt, never status alone.
+A durable intent prevents another POST after an ambiguous result. A definitely
+unsent request or explicit server rate-limit rejection instead records
+`not_dispatched`, allowing a later durable intent and POST after cooldown.
 Repeated keys are idempotent, including after a process-cache loss: the driver
 checks the newest same-name/source identity before dispatching and never
 replays an older failed observation over a newer pending or completed run.

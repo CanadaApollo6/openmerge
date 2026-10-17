@@ -157,7 +157,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 			case queue.Dequeued:
 				if entryIn(before, n) && !entryIn(s, n) {
 					e.Status, e.Reason, e.LastDequeueReason = "dequeued", string(v.Reason), string(v.Reason)
-					if v.Reason == queue.ChecksTimeout && before.CheckProvenanceDetail() != "" && inBatch(before, n) {
+					if (before.CheckRetryDetail() != "" || v.Reason == queue.ChecksTimeout && before.CheckProvenanceDetail() != "") && inBatch(before, n) {
 						e.Detail = sanitizer.Sanitize(before.DequeueDetail(n, v.Reason))
 					}
 				}
@@ -232,6 +232,9 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 		}
 		if reason := s.PendingDequeue(e.PR); reason != "" {
 			e.Status, e.Reason = "dequeue-pending", string(reason)
+			if s.CheckRetryDetail() != "" {
+				e.Detail = sanitizer.Sanitize(s.DequeueDetail(e.PR, reason))
+			}
 		}
 		if q.Paused {
 			e.Status, e.Reason = "paused", q.PauseReason
@@ -561,6 +564,8 @@ func eventSummary(event queue.Event, before, after queue.State) string {
 		phase := "intent"
 		if e.Target.Accepted {
 			phase = "acceptance"
+		} else if e.Target.NotDispatched {
+			phase = "definite refusal"
 		}
 		return fmt.Sprintf("Recorded Actions rerun %s for workflow %d after attempt %d", phase, e.Target.WorkflowRunID, e.Target.Attempt)
 	case queue.CheckRerunDispatched:
@@ -575,7 +580,11 @@ func eventSummary(event queue.Event, before, after queue.State) string {
 		}
 		return "Dispatched bounded check retry"
 	case queue.ChecksFailureConfirmed:
-		return "Confirmed check failure: " + string(e.Reason)
+		detail := string(e.Reason)
+		if retry := before.CheckRetryDetail(); retry != "" {
+			detail += ": " + retry
+		}
+		return "Confirmed check failure: " + detail
 	case queue.ChecksReopened:
 		if before.ChecksPassed(e.TestedSHA) && !after.ChecksPassed(e.TestedSHA) {
 			return "CI reopened; previous success revoked"

@@ -305,10 +305,11 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		return emit(queue.Dequeued{PR: a.PR, AdmissionID: a.AdmissionID, Reason: a.Reason, BatchID: a.BatchID})
 	case queue.RecordCheckRerun:
 		at := x.now()
-		deadline := time.Time{}
-		if a.Timeout > 0 {
-			deadline = at.Add(a.Timeout)
+		timeout := a.Timeout
+		if timeout == 0 {
+			timeout = queue.DefaultCheckTimeout
 		}
+		deadline := at.Add(timeout)
 		return emit(queue.CheckRerunRequested{
 			BatchID: a.BatchID, TestedSHA: a.TestedSHA, Generation: a.Generation,
 			Runs: append([]queue.CheckRun(nil), a.Runs...), OriginalDeadline: a.OriginalDeadline,
@@ -503,7 +504,7 @@ func (x *Executor) retryRuns(checks []forge.CheckRun, batchID string) []queue.Ch
 				ignored = x.AllowSkippedNeutral && (check.State == forge.Skipped || check.State == forge.Neutral)
 			}
 		}
-		runs = append(runs, queue.CheckRun{WorkflowRunID: check.WorkflowRunID, WorkflowRunURL: check.WorkflowRunURL, URL: check.URL, RetryIgnored: ignored, ID: check.ID, Attempt: canonicalCheckAttempt(check.Attempt), Name: check.Name, Source: check.Source, State: string(check.State)})
+		runs = append(runs, queue.CheckRun{RetryUnsupported: check.RetryUnsupported, WorkflowRunID: check.WorkflowRunID, WorkflowRunURL: check.WorkflowRunURL, URL: check.URL, RetryIgnored: ignored, ID: check.ID, Attempt: canonicalCheckAttempt(check.Attempt), Name: check.Name, Source: check.Source, State: string(check.State)})
 	}
 	return runs
 }
@@ -570,7 +571,7 @@ func canonicalCheckAttempt(attempt uint64) uint64 {
 }
 
 func toForgeCheckRun(run queue.CheckRun) forge.CheckRun {
-	return forge.CheckRun{WorkflowRunID: run.WorkflowRunID, WorkflowRunURL: run.WorkflowRunURL, URL: run.URL, ID: run.ID, Attempt: canonicalCheckAttempt(run.Attempt), Name: run.Name, Source: run.Source, State: forge.CheckState(run.State)}
+	return forge.CheckRun{RetryUnsupported: run.RetryUnsupported, WorkflowRunID: run.WorkflowRunID, WorkflowRunURL: run.WorkflowRunURL, URL: run.URL, ID: run.ID, Attempt: canonicalCheckAttempt(run.Attempt), Name: run.Name, Source: run.Source, State: forge.CheckState(run.State)}
 }
 
 func (x *Executor) rerunChecks(ctx context.Context, a queue.RerunChecks, emit func(queue.Event) error) error {
@@ -588,12 +589,12 @@ func (x *Executor) rerunChecks(ctx context.Context, a queue.RerunChecks, emit fu
 	var targets []forge.RerunTarget
 	if x.CheckRetry != nil {
 		for _, target := range x.CheckRetry.Dispatches {
-			targets = append(targets, forge.RerunTarget{WorkflowRunID: target.WorkflowRunID, Attempt: target.Attempt, Accepted: target.Accepted})
+			targets = append(targets, forge.RerunTarget{WorkflowRunID: target.WorkflowRunID, Attempt: target.Attempt, Accepted: target.Accepted, NotDispatched: target.NotDispatched})
 		}
 	}
 	result, err := runner.RerunFailedChecks(ctx, x.Repo, forge.RerunChecksRequest{TestedSHA: a.TestedSHA, TestRef: a.TestRef, Runs: runs, Key: a.Key(), Targets: targets,
 		Progress: func(target forge.RerunTarget) error {
-			return emit(queue.CheckRerunDispatchProgress{BatchID: a.BatchID, TestedSHA: a.TestedSHA, Generation: a.Generation, Target: queue.CheckRerunTarget{WorkflowRunID: target.WorkflowRunID, Attempt: target.Attempt, Accepted: target.Accepted, At: x.now()}})
+			return emit(queue.CheckRerunDispatchProgress{BatchID: a.BatchID, TestedSHA: a.TestedSHA, Generation: a.Generation, Target: queue.CheckRerunTarget{WorkflowRunID: target.WorkflowRunID, Attempt: target.Attempt, Accepted: target.Accepted, NotDispatched: target.NotDispatched, At: x.now()}})
 		},
 	})
 	if err != nil {
@@ -632,7 +633,16 @@ func (x *Executor) now() time.Time {
 func (x *Executor) readChecks(ctx context.Context, sha string) ([]forge.CheckRun, error) {
 	if x.ChecksRetryFailed == 1 {
 		if reader, ok := x.Driver.(forge.RetryCheckReader); ok {
-			return reader.CheckRunsForRetry(ctx, x.Repo, sha)
+			var workflows []uint64
+			if x.CheckRetry != nil {
+				for _, run := range x.CheckRetry.FailedRuns {
+					workflows = append(workflows, run.WorkflowRunID)
+				}
+				for _, target := range x.CheckRetry.Dispatches {
+					workflows = append(workflows, target.WorkflowRunID)
+				}
+			}
+			return reader.CheckRunsForRetry(ctx, x.Repo, sha, workflows)
 		}
 	}
 	return x.Driver.CheckRuns(ctx, x.Repo, sha)

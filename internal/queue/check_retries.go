@@ -9,15 +9,16 @@ import (
 // CheckRun identifies one producer's check attempt. Some forges retain the run
 // ID across reruns; Attempt distinguishes those executions. State is normalized.
 type CheckRun struct {
-	WorkflowRunID  uint64 `json:"workflow_run_id"`
-	WorkflowRunURL string `json:"workflow_run_url"`
-	URL            string `json:"url"`
-	RetryIgnored   bool   `json:"retry_ignored"`
-	ID             uint64 `json:"id"`
-	Attempt        uint64 `json:"attempt"`
-	Name           string `json:"name"`
-	Source         string `json:"source"`
-	State          string `json:"state"`
+	RetryUnsupported string `json:"retry_unsupported"`
+	WorkflowRunID    uint64 `json:"workflow_run_id"`
+	WorkflowRunURL   string `json:"workflow_run_url"`
+	URL              string `json:"url"`
+	RetryIgnored     bool   `json:"retry_ignored"`
+	ID               uint64 `json:"id"`
+	Attempt          uint64 `json:"attempt"`
+	Name             string `json:"name"`
+	Source           string `json:"source"`
+	State            string `json:"state"`
 }
 
 // CheckRetryState is bounded to the active batch and survives projection copies
@@ -69,6 +70,7 @@ type CheckRerunTarget struct {
 	WorkflowRunID uint64    `json:"workflow_run_id"`
 	Attempt       uint64    `json:"attempt"`
 	Accepted      bool      `json:"accepted"`
+	NotDispatched bool      `json:"not_dispatched"`
 	At            time.Time `json:"at"`
 }
 
@@ -215,10 +217,11 @@ func (e CheckRerunRequested) Validate() error {
 	if e.At.IsZero() {
 		return fmt.Errorf("at must not be zero")
 	}
-	if err := validateCheckTimer(e.Timeout, e.Deadline); err != nil {
-		return err
+	timeout := e.Timeout
+	if timeout == 0 {
+		timeout = DefaultCheckTimeout
 	}
-	if e.Timeout > 0 && !e.Deadline.Equal(e.At.Add(e.Timeout)) {
+	if !e.Deadline.Equal(e.At.Add(timeout)) {
 		return fmt.Errorf("rerun deadline must be one timeout from request")
 	}
 	return nil
@@ -231,6 +234,9 @@ func (e CheckRerunDispatched) Validate() error {
 
 // Validate requires a native workflow attempt and a durable progress timestamp.
 func (e CheckRerunDispatchProgress) Validate() error {
+	if e.Target.Accepted && e.Target.NotDispatched {
+		return fmt.Errorf("accepted dispatch cannot be marked not dispatched")
+	}
 	if e.Target.WorkflowRunID == 0 || e.Target.Attempt == 0 || e.Target.At.IsZero() {
 		return fmt.Errorf("invalid workflow dispatch progress")
 	}
@@ -430,10 +436,10 @@ func (s *State) progressCheckRerun(e CheckRerunDispatchProgress) {
 	target := e.Target
 	index := slices.IndexFunc(r.Dispatches, func(old CheckRerunTarget) bool { return old.WorkflowRunID == target.WorkflowRunID })
 	if index < 0 {
-		if !target.Accepted {
+		if !target.Accepted && !target.NotDispatched {
 			r.Dispatches = append(r.Dispatches, target)
 		}
-	} else if r.Dispatches[index].Attempt == target.Attempt && !r.Dispatches[index].Accepted && target.Accepted {
+	} else if validDispatchTransition(r.Dispatches[index], target) {
 		r.Dispatches[index] = target
 	}
 }
@@ -450,6 +456,9 @@ func (s *State) confirmCheckFailure(e ChecksFailureConfirmed) {
 		return
 	}
 	r.Confirmed = true
+	if detail := s.CheckRetryDetail(); detail != "" {
+		r.Detail = detail
+	}
 	if !r.Unsupported {
 		r.RerunState = "failed"
 	}
@@ -467,7 +476,7 @@ func (s *State) confirmCheckFailure(e ChecksFailureConfirmed) {
 func (b Batch) checkDeadline(cfg Config) (time.Time, bool) {
 	if r := b.CheckRetry; r != nil {
 		if r.Requested {
-			return r.Deadline, r.Timeout > 0
+			return r.Deadline, !r.Deadline.IsZero()
 		}
 		return r.OriginalDeadline, r.Timeout > 0
 	}
@@ -515,4 +524,36 @@ func planCheckRetry(cfg Config, s State, now time.Time) (Action, bool) {
 	}
 
 	return nil, false
+}
+
+// DefaultCheckTimeout also bounds reruns when the original check timer is disabled.
+const DefaultCheckTimeout = time.Hour
+
+func validDispatchTransition(old, next CheckRerunTarget) bool {
+	return old.Attempt == next.Attempt && !old.Accepted &&
+		(next.Accepted || old.NotDispatched != next.NotDispatched)
+}
+
+// CheckRetryDetail explains dispatches that never received positive acceptance.
+func (s State) CheckRetryDetail() string {
+	if s.Active == nil || s.Active.CheckRetry == nil {
+		return ""
+	}
+	r := s.Active.CheckRetry
+	if r.Unsupported {
+		return r.Detail
+	}
+	if r.Requested {
+		if slices.ContainsFunc(r.Dispatches, func(t CheckRerunTarget) bool { return !t.Accepted }) {
+			return "rerun dispatch never confirmed"
+		}
+		if !r.Dispatched {
+			for _, failed := range r.FailedRuns {
+				if !slices.ContainsFunc(r.Dispatches, func(t CheckRerunTarget) bool { return t.WorkflowRunID == failed.WorkflowRunID && t.Accepted }) {
+					return "rerun dispatch never confirmed"
+				}
+			}
+		}
+	}
+	return ""
 }

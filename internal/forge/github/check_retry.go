@@ -15,7 +15,8 @@ import (
 
 // RerunFailedChecks uses a durable intent per Actions workflow, committed
 // before POST. An uncertain intent can only be reconciled by a fresh read; an
-// unchanged failed run never authorizes a second POST, including after restart.
+// unchanged failed run never authorizes a second POST, including after restart,
+// unless a definite non-dispatch was durably recorded.
 func (d *Driver) RerunFailedChecks(ctx context.Context, repo forge.RepoRef, req forge.RerunChecksRequest) (forge.RerunChecksResult, error) {
 	owner, name, err := splitRepo(repo)
 	if err != nil {
@@ -30,6 +31,9 @@ func (d *Driver) RerunFailedChecks(ctx context.Context, repo forge.RepoRef, req 
 		return forge.RerunChecksResult{Unsupported: true, Detail: detail}, nil
 	}
 	for _, requested := range req.Runs {
+		if requested.RetryUnsupported != "" {
+			return unsupported(requested.RetryUnsupported)
+		}
 		if strings.HasPrefix(requested.Source, "status:") {
 			return unsupported("commit statuses cannot be rerun; retries support GitHub Actions checks only")
 		}
@@ -100,6 +104,9 @@ func (d *Driver) RerunFailedChecks(ctx context.Context, repo forge.RepoRef, req 
 		}
 		run, _, err := d.client.Actions.GetWorkflowRunByID(ctx, owner, name, int64(id))
 		if err != nil {
+			if isUnsupportedRerunError(err) {
+				return unsupported("Actions permission not granted; failed-check reruns unavailable")
+			}
 			return forge.RerunChecksResult{}, safeError(err)
 		}
 		if run.GetHeadSHA() != req.TestedSHA || run.GetHeadBranch() != req.TestRef || run.GetRunAttempt() < 1 {
@@ -111,8 +118,8 @@ func (d *Driver) RerunFailedChecks(ctx context.Context, repo forge.RepoRef, req 
 		if req.Progress == nil {
 			return forge.RerunChecksResult{}, errors.New("github Actions rerun requires durable dispatch progress")
 		}
-		if exists {
-			if uint64(run.GetRunAttempt()) > target.Attempt || run.GetStatus() != "completed" {
+		if exists && !target.NotDispatched {
+			if uint64(run.GetRunAttempt()) > target.Attempt {
 				target.Accepted = true
 				if err := req.Progress(target); err != nil {
 					return forge.RerunChecksResult{}, err
@@ -123,7 +130,17 @@ func (d *Driver) RerunFailedChecks(ctx context.Context, repo forge.RepoRef, req 
 			continue
 		}
 		// A prior/external rerun can be visible before any new check-run ID.
-		if run.GetStatus() != "completed" || uint64(run.GetRunAttempt()) > originalAttempts[id] {
+		if uint64(run.GetRunAttempt()) > originalAttempts[id] {
+			if exists {
+				target.Accepted, target.NotDispatched = true, false
+				if err := req.Progress(target); err != nil {
+					return forge.RerunChecksResult{}, err
+				}
+			}
+			continue
+		}
+		if run.GetStatus() != "completed" {
+			uncertain = errors.New("inconsistent Actions workflow status at the original attempt; waiting for a fresh observation")
 			continue
 		}
 		target = forge.RerunTarget{WorkflowRunID: id, Attempt: uint64(run.GetRunAttempt())}
@@ -135,6 +152,12 @@ func (d *Driver) RerunFailedChecks(ctx context.Context, repo forge.RepoRef, req 
 				var response *gh.ErrorResponse
 				errors.As(err, &response)
 				return unsupported("GitHub Actions rerun refused: " + d.app.sanitizer.Sanitize(response.Message))
+			}
+			if definitelyNotDispatched(err) {
+				target.NotDispatched = true
+				if progressErr := req.Progress(target); progressErr != nil {
+					return forge.RerunChecksResult{}, progressErr
+				}
 			}
 			// Even a 5xx may follow acceptance. Leave the committed intent and
 			// reconcile it on the next execution instead of repeating the POST.
@@ -235,7 +258,7 @@ func isUnsupportedRerunError(err error) bool {
 // CheckRunsForRetry joins each check ID to its actual Actions job attempt.
 // A workflow's current run_attempt must never be assigned to retained old jobs.
 // Legacy/default-off CheckRuns performs no additional Actions API reads.
-func (d *Driver) CheckRunsForRetry(ctx context.Context, repo forge.RepoRef, sha string) ([]forge.CheckRun, error) {
+func (d *Driver) CheckRunsForRetry(ctx context.Context, repo forge.RepoRef, sha string, workflows []uint64) ([]forge.CheckRun, error) {
 	checks, err := d.CheckRuns(ctx, repo, sha)
 	if err != nil {
 		return nil, err
@@ -244,16 +267,34 @@ func (d *Driver) CheckRunsForRetry(ctx context.Context, repo forge.RepoRef, sha 
 	if err != nil {
 		return nil, err
 	}
+	needed := make(map[uint64]bool)
+	for _, id := range workflows {
+		needed[id] = true
+	}
+	for _, check := range checks {
+		if rerunnableCheckState(check.State) {
+			needed[check.WorkflowRunID] = true
+		}
+	}
 	attempts := make(map[uint64]map[uint64]uint64)
 	for _, check := range checks {
 		id := check.WorkflowRunID
-		if id == 0 || attempts[id] != nil {
+		if id == 0 || !needed[id] || attempts[id] != nil {
 			continue
 		}
 		attempts[id] = make(map[uint64]uint64)
 		for page := 1; page != 0; {
 			jobs, res, err := d.client.Actions.ListWorkflowJobs(ctx, owner, name, int64(id), &gh.ListWorkflowJobsOptions{Filter: "all", ListOptions: gh.ListOptions{Page: page, PerPage: 100}})
 			if err != nil {
+				if isUnsupportedRerunError(err) {
+					// Return the untouched plain observation: no partial job enrichment.
+					for i := range checks {
+						if checks[i].Source == "app:15368" {
+							checks[i].RetryUnsupported = "Actions permission not granted; failed-check reruns unavailable"
+						}
+					}
+					return checks, nil
+				}
 				return nil, safeError(err)
 			}
 			for _, job := range jobs.Jobs {
@@ -291,4 +332,12 @@ func actionsCheckURL(run *gh.CheckRun, base *url.URL, owner, name string, workfl
 		}
 	}
 	return ""
+}
+
+func definitelyNotDispatched(err error) bool {
+	var notSent *requestNotSentError
+	var rate *RateLimitError
+	var primary *gh.RateLimitError
+	var secondary *gh.AbuseRateLimitError
+	return errors.As(err, &notSent) || errors.As(err, &rate) || errors.As(err, &primary) || errors.As(err, &secondary)
 }

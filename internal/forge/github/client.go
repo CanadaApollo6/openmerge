@@ -35,9 +35,18 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("github API request failed (HTTP %d)", e.StatusCode)
 }
 
+// requestNotSentError preserves proof that a write never reached the transport.
+type requestNotSentError struct{ error }
+
+func (e *requestNotSentError) Unwrap() error { return e.error }
+
 func safeError(err error) error {
 	if err == nil {
 		return nil
+	}
+	var notSent *requestNotSentError
+	if errors.As(err, &notSent) {
+		return notSent
 	}
 	for _, cause := range []error{context.Canceled, context.DeadlineExceeded} {
 		if errors.Is(err, cause) {
@@ -78,9 +87,17 @@ type transport struct {
 	appIdentity bool
 }
 
+func preSendError(req *http.Request, err error) error {
+	// Preserve the legacy error path for every request except opt-in reruns.
+	if req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/rerun-failed-jobs") {
+		return &requestNotSentError{err}
+	}
+	return err
+}
+
 func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.URL.Scheme != t.origin.Scheme || req.URL.Host != t.origin.Host || !strings.HasPrefix(req.URL.Path, t.origin.Path) {
-		return nil, errors.New("github refused credentials outside API origin")
+		return nil, preSendError(req, errors.New("github refused credentials outside API origin"))
 	}
 	ticket, err := t.reserve(req.Context())
 	if err != nil {
@@ -89,7 +106,7 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	defer func() { t.mu.Lock(); t.inflight--; t.mu.Unlock() }()
 	token, err := t.token(req.Context())
 	if err != nil {
-		return nil, safeError(err)
+		return nil, preSendError(req, safeError(err))
 	}
 	copyReq := req.Clone(req.Context())
 	copyReq.Header.Set("Authorization", "Bearer "+token)

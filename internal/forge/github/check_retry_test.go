@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	gh "github.com/google/go-github/v93/github"
@@ -108,13 +109,18 @@ func TestRerunLostResponseReconcilesWithoutAnotherPOST(t *testing.T) {
 	a := newRerunAPI(t, 700)
 	a.post = func(w http.ResponseWriter, _ *http.Request, id uint64) {
 		a.workflows[id].RunAttempt = new(2)
-		connection, _, err := w.(http.Hijacker).Hijack()
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		_ = connection.Close()
+		w.WriteHeader(http.StatusCreated)
 	}
+	tr := a.api.driver.client.Client().Transport.(*transport)
+	base := tr.base
+	tr.base = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		res, err := base.RoundTrip(r)
+		if err == nil && r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/rerun-failed-jobs") {
+			_ = res.Body.Close()
+			return nil, errors.New("lost response after acceptance")
+		}
+		return res, err
+	})
 	_, err := a.api.driver.RerunFailedChecks(t.Context(), testRepo, a.request(t))
 	if err == nil {
 		t.Fatal("lost response succeeded")
@@ -139,6 +145,7 @@ func TestRerunCrashAfterAcceptanceWaitsForPositiveEvidence(t *testing.T) {
 		t.Fatalf("unchanged original authorized POST: %+v %v %v", result, err, a.posts)
 	}
 	a.workflows[700].Status = new("queued")
+	a.workflows[700].RunAttempt = new(2)
 	result, err = a.api.driver.RerunFailedChecks(t.Context(), testRepo, a.request(t))
 	if err != nil || result.Unsupported || a.posts[700] != 1 {
 		t.Fatalf("reconcile=%+v %v %v", result, err, a.posts)
@@ -274,9 +281,129 @@ func TestRetryJobAttemptsDoNotAdvanceRetainedCheckIDs(t *testing.T) {
 		}
 		return oldOverride(w, r)
 	}
-	checks, err := a.api.driver.CheckRunsForRetry(t.Context(), testRepo, a.sha)
+	checks, err := a.api.driver.CheckRunsForRetry(t.Context(), testRepo, a.sha, nil)
 	must(t, err)
 	if len(checks) != 2 || checks[0].Attempt != 1 || checks[1].Attempt != 2 || checks[1].WorkflowRunID != 700 || checks[0].URL == "" || checks[0].WorkflowRunURL != "https://github.test/acme/project/actions/runs/700" {
 		t.Fatalf("attempts/evidence=%+v", checks)
+	}
+}
+
+func TestRerunSameAttemptRunningObservationDefersWithoutRetiringDispatch(t *testing.T) {
+	for _, intent := range []bool{false, true} {
+		t.Run(fmt.Sprint(intent), func(t *testing.T) {
+			a := newRerunAPI(t, 700)
+			if intent {
+				a.journal = []forge.RerunTarget{{WorkflowRunID: 700, Attempt: 1}}
+			}
+			a.workflows[700].Status = new("in_progress")
+			result, err := a.api.driver.RerunFailedChecks(t.Context(), testRepo, a.request(t))
+			if err == nil || result.Unsupported || a.posts[700] != 0 || (intent && len(a.journal) != 1 || !intent && len(a.journal) != 0) {
+				t.Fatalf("stale status retired dispatch: %+v %v journal=%+v", result, err, a.journal)
+			}
+			a.workflows[700].Status = new("completed")
+			result, err = a.api.driver.RerunFailedChecks(t.Context(), testRepo, a.request(t))
+			if !intent && (err != nil || result.Unsupported || a.posts[700] != 1) {
+				t.Fatalf("deferred dispatch did not start: %+v %v posts=%v", result, err, a.posts)
+			}
+			if intent && (err == nil || a.posts[700] != 0) {
+				t.Fatal("uncertain intent repeated POST")
+			}
+		})
+	}
+}
+func TestRerunDefiniteRateRefusalAllowsLaterDispatch(t *testing.T) {
+	for _, refusal := range []string{"local", "primary", "secondary"} {
+		t.Run(refusal, func(t *testing.T) {
+			a := newRerunAPI(t, 700)
+			req := a.request(t)
+			progress := req.Progress
+			req.Progress = func(target forge.RerunTarget) error {
+				if err := progress(target); err != nil {
+					return err
+				}
+				if refusal == "local" && !target.NotDispatched {
+					transport := a.api.driver.client.Client().Transport.(*transport)
+					transport.mu.Lock()
+					transport.until = a.api.clock.Add(time.Minute)
+					transport.mu.Unlock()
+				}
+				return nil
+			}
+			if refusal != "local" {
+				a.post = func(w http.ResponseWriter, _ *http.Request, _ uint64) {
+					if refusal == "primary" {
+						w.Header().Set("X-RateLimit-Remaining", "0")
+					} else {
+						w.Header().Set("Retry-After", "60")
+					}
+					a.api.apiError(w, 403, "rate limited")
+				}
+			}
+			result, err := a.api.driver.RerunFailedChecks(t.Context(), testRepo, req)
+			var rate *RateLimitError
+			if result.Unsupported || !errors.As(err, &rate) || len(a.journal) != 1 || !a.journal[0].NotDispatched {
+				t.Fatalf("definite refusal=%+v %v journal=%+v", result, err, a.journal)
+			}
+			wantPosts := 1
+			if refusal == "local" {
+				wantPosts = 0
+			}
+			if a.posts[700] != wantPosts {
+				t.Fatalf("HTTP posts=%v", a.posts)
+			}
+			// Recreate the driver as well as cooling down: retry permission is durable.
+			a.restart()
+			a.api.clock = a.api.clock.Add(2 * time.Hour)
+			a.post = nil
+			result, err = a.api.driver.RerunFailedChecks(t.Context(), testRepo, a.request(t))
+			if err != nil || result.Unsupported || a.posts[700] != wantPosts+1 || !a.journal[0].Accepted || a.journal[0].NotDispatched {
+				t.Fatalf("later dispatch=%+v %v posts=%v journal=%+v", result, err, a.posts, a.journal)
+			}
+		})
+	}
+}
+
+func TestRetryJobsOnlyReadForFailedOrRecordedWorkflows(t *testing.T) {
+	a := newRerunAPI(t, 700, 800)
+	for _, run := range a.api.runs[a.sha] {
+		run.Conclusion = new("success")
+	}
+	old := a.api.override
+	var jobs []string
+	a.api.override = func(w http.ResponseWriter, r *http.Request) bool {
+		if strings.HasSuffix(r.URL.Path, "/jobs") {
+			jobs = append(jobs, r.URL.Path)
+		}
+		return old(w, r)
+	}
+	_, err := a.api.driver.CheckRunsForRetry(t.Context(), testRepo, a.sha, nil)
+	must(t, err)
+	if len(jobs) != 0 {
+		t.Fatalf("passing workflows read jobs: %v", jobs)
+	}
+	_, err = a.api.driver.CheckRunsForRetry(t.Context(), testRepo, a.sha, []uint64{700})
+	must(t, err)
+	if len(jobs) != 1 || !strings.HasSuffix(jobs[0], "/700/jobs") {
+		t.Fatalf("target reads=%v", jobs)
+	}
+}
+
+func TestRetryJobsOtherErrorsDoNotFallBack(t *testing.T) {
+	for _, code := range []int{403, 404, 500} {
+		t.Run(fmt.Sprint(code), func(t *testing.T) {
+			a := newRerunAPI(t, 700)
+			old := a.api.override
+			a.api.override = func(w http.ResponseWriter, r *http.Request) bool {
+				if strings.HasSuffix(r.URL.Path, "/jobs") {
+					a.api.apiError(w, code, "ordinary failure")
+					return true
+				}
+				return old(w, r)
+			}
+			checks, err := a.api.driver.CheckRunsForRetry(t.Context(), testRepo, a.sha, nil)
+			if err == nil || checks != nil {
+				t.Fatalf("transient read became observation: %+v %v", checks, err)
+			}
+		})
 	}
 }

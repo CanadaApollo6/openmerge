@@ -184,3 +184,55 @@ func TestCheckRetryProgressFencesDuplicateAndExpiredClaims(t *testing.T) {
 		})
 	}
 }
+
+func TestRefusedCheckRetryRequiresFreshFencedIntent(t *testing.T) {
+	s := newStore(t)
+	q, request, cfg := readyCheckRerun(t, s)
+	a := request.Action.(queue.RecordCheckRerun)
+	must(t, s.Complete(t.Context(), request, Done))
+	appendEvents(t, s, q, queue.CheckRerunRequested{BatchID: a.BatchID, TestedSHA: a.TestedSHA, Generation: a.Generation, Runs: a.Runs, OriginalDeadline: a.OriginalDeadline, At: epoch, Deadline: epoch.Add(time.Minute), Timeout: time.Minute})
+	_, err := s.Plan(t.Context(), q, cfg, epoch)
+	must(t, err)
+	claims, err := s.ClaimQueue(t.Context(), q, 1, time.Second, epoch)
+	must(t, err)
+	if len(claims) != 1 {
+		t.Fatalf("claims=%+v", claims)
+	}
+	original := claims[0]
+	proceed, err := s.BeginConsequential(t.Context(), original, cfg, epoch)
+	must(t, err)
+	if !proceed {
+		t.Fatal("dispatch declined")
+	}
+	progress := queue.CheckRerunDispatchProgress{BatchID: a.BatchID, TestedSHA: a.TestedSHA, Generation: a.Generation, Target: queue.CheckRerunTarget{WorkflowRunID: 700, Attempt: 1, At: epoch}}
+	must(t, s.Emit(t.Context(), original, cfg)(progress))
+	progress.Target.NotDispatched = true
+	must(t, s.Emit(t.Context(), original, cfg)(progress))
+	// Restart/reclaim after the definite refusal. Only the new lease can consume
+	// that proof and authorize another POST, after recording another intent.
+	now := epoch.Add(2 * time.Second)
+	claims, err = s.ClaimQueue(t.Context(), q, 1, time.Minute, now)
+	must(t, err)
+	if len(claims) != 1 {
+		t.Fatalf("replacement=%+v", claims)
+	}
+	replacement := claims[0]
+	proceed, err = s.BeginConsequential(t.Context(), replacement, cfg, now)
+	must(t, err)
+	if !proceed {
+		t.Fatal("definite refusal could not resume")
+	}
+	progress.Target.NotDispatched = false
+	progress.Target.At = now
+	if err := s.Emit(t.Context(), original, cfg)(progress); !errors.Is(err, ErrClaimLost) {
+		t.Fatalf("expired intent=%v", err)
+	}
+	must(t, s.Emit(t.Context(), replacement, cfg)(progress))
+	progress.Target.Accepted = true
+	must(t, s.Emit(t.Context(), replacement, cfg)(progress))
+	state, _, err := s.Load(t.Context(), q)
+	must(t, err)
+	if len(state.Active.CheckRetry.Dispatches) != 1 || !state.Active.CheckRetry.Dispatches[0].Accepted || state.Active.CheckRetry.Dispatches[0].NotDispatched {
+		t.Fatalf("progress=%+v", state.Active.CheckRetry)
+	}
+}

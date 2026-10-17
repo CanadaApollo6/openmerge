@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -23,7 +24,11 @@ func retryObservation(cfg Config, s State, id uint64, state string) ChecksObserv
 func requestRetry(t *testing.T, cfg Config, s State, at time.Time) State {
 	t.Helper()
 	a := onlyAction[RecordCheckRerun](t, Plan(cfg, s, at))
-	e := CheckRerunRequested{BatchID: a.BatchID, TestedSHA: a.TestedSHA, Generation: a.Generation, Runs: a.Runs, OriginalDeadline: a.OriginalDeadline, At: at, Deadline: at.Add(a.Timeout), Timeout: a.Timeout}
+	timeout := a.Timeout
+	if timeout == 0 {
+		timeout = DefaultCheckTimeout
+	}
+	e := CheckRerunRequested{BatchID: a.BatchID, TestedSHA: a.TestedSHA, Generation: a.Generation, Runs: a.Runs, OriginalDeadline: a.OriginalDeadline, At: at, Deadline: at.Add(timeout), Timeout: a.Timeout}
 	if !CanStart(cfg, s, a, e) {
 		t.Fatal("current request declined")
 	}
@@ -218,11 +223,24 @@ func TestCheckRetryNextWakeAndNoTimeout(t *testing.T) {
 	failure.OriginalDeadline = time.Time{}
 	s = foldCheckEvents(t, s, failure)
 	a := onlyAction[RecordCheckRerun](t, Plan(cfg, s, epoch))
-	s = foldCheckEvents(t, s, CheckRerunRequested{BatchID: a.BatchID, TestedSHA: a.TestedSHA, Generation: a.Generation, Runs: a.Runs, At: epoch, Timeout: 0})
-	s = dispatchRetry(t, cfg, s, epoch, false)
-	onlyAction[RefreshChecks](t, Plan(cfg, s, epoch.Add(100*time.Hour)))
-	if !s.Active.CheckRetry.OriginalDeadline.IsZero() || !s.Active.CheckRetry.Deadline.IsZero() {
-		t.Fatal("disabled timeout gained a deadline")
+	s = foldCheckEvents(t, s, CheckRerunRequested{BatchID: a.BatchID, TestedSHA: a.TestedSHA, Generation: a.Generation, Runs: a.Runs, At: epoch, Deadline: epoch.Add(DefaultCheckTimeout), Timeout: 0})
+	if !s.Active.CheckRetry.OriginalDeadline.IsZero() || !s.Active.CheckRetry.Deadline.Equal(epoch.Add(DefaultCheckTimeout)) {
+		t.Fatal("rerun did not gain its bounded default deadline")
+	}
+	if at, ok := NextWake(cfg, s, epoch); !ok || at.After(epoch.Add(DefaultCheckTimeout+time.Nanosecond)) {
+		t.Fatalf("no bounded wake: %v %v", at, ok)
+	}
+	// An unconfirmed dispatch still requires a fresh post-deadline observation.
+	now := epoch.Add(DefaultCheckTimeout + time.Second)
+	onlyAction[RefreshChecks](t, Plan(cfg, s, now))
+	s = foldCheckEvents(t, s, ChecksRefreshed{BatchID: s.Active.ID, TestedSHA: "tested", At: now})
+	confirm := onlyAction[ConfirmCheckFailure](t, Plan(cfg, s, now))
+	if confirm.Reason != ChecksTimeout {
+		t.Fatalf("confirmation=%+v", confirm)
+	}
+	s = foldCheckEvents(t, s, ChecksFailureConfirmed(confirm))
+	if detail := s.DequeueDetail(1, ChecksTimeout); !strings.Contains(detail, "rerun dispatch never confirmed") {
+		t.Fatal(detail)
 	}
 }
 
