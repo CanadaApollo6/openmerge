@@ -209,6 +209,38 @@ func TestDiscoveryDedupeSurvivesWorkerRegistration(t *testing.T) {
 	}
 }
 
+func TestDiscoveryDedupeIsBounded(t *testing.T) {
+	s, err := newServer(nil, Options{})
+	must(t, err)
+	for i := range refreshDeliveryLimit + 1 {
+		must(t, s.NotifyDiscovery(t.Context(), "7", repo.Path, fmt.Sprint(i)))
+		if len(s.refreshDeliveries) > refreshDeliveryLimit {
+			t.Fatal("discovery delivery cache exceeded its bound")
+		}
+	}
+	<-s.refresh
+	must(t, s.NotifyDiscovery(t.Context(), "7", repo.Path, fmt.Sprint(refreshDeliveryLimit)))
+	select {
+	case <-s.refresh:
+		t.Fatal("recent redelivery lost dedupe after cache reset")
+	default:
+	}
+	// Old IDs may trigger one extra sweep after eviction; duplicate requests
+	// still coalesce and do not require retaining listener history forever.
+	must(t, s.NotifyDiscovery(t.Context(), "7", repo.Path, "0"))
+	must(t, s.NotifyDiscovery(t.Context(), "7", repo.Path, "0"))
+	select {
+	case <-s.refresh:
+	default:
+		t.Fatal("evicted redelivery did not request a sweep")
+	}
+	select {
+	case <-s.refresh:
+		t.Fatal("redelivery requests did not coalesce")
+	default:
+	}
+}
+
 func TestWebhookDeliveryAgeIsPerRepositoryAndLocal(t *testing.T) {
 	s, err := newServer(nil, Options{WebhooksConfigured: true})
 	must(t, err)
@@ -323,7 +355,12 @@ func TestHealthyIdleLoopUsesBackstopAndDeliveryInterruptsTimer(t *testing.T) {
 	must(t, err)
 	select {
 	case <-polls:
-		t.Fatal("idle journal change caused forge polling")
+	case <-time.After(time.Second):
+		t.Fatal("idle journal change did not trigger reconciliation")
+	}
+	select {
+	case <-polls:
+		t.Fatal("unchanged idle queue did not return to backstop")
 	case <-time.After(80 * time.Millisecond):
 	}
 	must(t, s.Notify(t.Context(), "7", repo.Path, "wake"))
@@ -390,16 +427,22 @@ func TestIdleActivityChecksPreserveForgeBackstopDeadline(t *testing.T) {
 	done := make(chan struct{})
 	go func() { defer close(done); s.loop(ctx, w) }()
 	defer func() { cancel(); <-done }()
-	for range 2 {
+	var previous time.Time
+	for range 3 {
 		select {
 		case <-polls:
+			now := time.Now()
+			if !previous.IsZero() && now.Sub(previous) < s.options.BackstopInterval-10*time.Millisecond {
+				t.Fatal("unchanged queue reconciled before its backstop")
+			}
+			previous = now
 		case <-time.After(time.Second):
 			t.Fatal("database activity checks postponed forge backstop")
 		}
 	}
 }
 
-func TestHealthyDeliveryDoesNotShortenErrorOrQuotaBackoff(t *testing.T) {
+func TestActivityAndHealthyDeliveryDoNotShortenErrorOrQuotaBackoff(t *testing.T) {
 	for _, name := range []string{"error", "quota"} {
 		t.Run(name, func(t *testing.T) {
 			s, w, _, _ := fixture(t, repositoryConfig)
@@ -421,6 +464,8 @@ func TestHealthyDeliveryDoesNotShortenErrorOrQuotaBackoff(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("initial cycle missing")
 			}
+			_, err = s.store.Append(t.Context(), w.id, []queue.Event{queue.PauseRequested{Reason: "operator", Detail: "peer write during backoff"}}, "")
+			must(t, err)
 			must(t, s.Notify(t.Context(), "7", repo.Path, "during-backoff"))
 			select {
 			case <-polls:

@@ -235,8 +235,9 @@ Polling requires no public URL. Optional webhooks use
 behind your HTTPS ingress. Verified deliveries record process-local health and
 wake affected queues for fresh reads; delivery IDs deduplicate refresh work.
 Testing, landing and unsettled attempts keep the fast polling interval. Idle
-queues use backstop polling only while their installation has received a verified
-delivery within the health window; restart or expiry returns to fast polling.
+queues use backstop polling only while both their installation and their own
+repository have received a verified delivery within the health window; restart
+or expiry returns to fast polling.
 Invalid signatures change neither health nor scheduling. Status shows installation
 health and each repository's delivery age. See [webhook setup and health](docs/operating.md#webhook-setup-and-health)
 for events, secrets and fallback behavior. Unchanged PR summaries skip detail and

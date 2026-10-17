@@ -231,19 +231,23 @@ func (s *Server) NotifyBranches(ctx context.Context, installation, repository, d
 	return s.notifyRefresh(ctx, installation, repository, delivery)
 }
 
+const refreshDeliveryLimit = 4096
+
 // Discovery dedupe is listener-local and independent of worker registration.
 // Startup already performs a full discovery sweep; queue hints remain durable.
 func (s *Server) notifyRefresh(ctx context.Context, installation, repository, delivery string) error {
-	s.notificationMu.Lock()
-	defer s.notificationMu.Unlock()
 	if err := s.Notify(ctx, installation, repository, delivery); err != nil {
 		return err
 	}
+	s.notificationMu.Lock()
+	defer s.notificationMu.Unlock()
 	key := installation + "/" + delivery
 	if s.refreshDeliveries[key] {
 		return nil
 	}
-	if s.refreshDeliveries == nil {
+	// Bound listener-local memory. An evicted redelivery can request another
+	// coalesced sweep; durable worker dedupe and refresh hints are unaffected.
+	if s.refreshDeliveries == nil || len(s.refreshDeliveries) >= refreshDeliveryLimit {
 		s.refreshDeliveries = make(map[string]bool)
 	}
 	s.refreshDeliveries[key] = true
@@ -378,8 +382,8 @@ func (s *Server) loop(ctx context.Context, w *worker) {
 }
 
 // While the forge backstop waits, inspect only the indexed event watermark at
-// poll_interval. Replay changed history to detect another process starting active
-// work. These reads never take an API slot or write durable state.
+// poll_interval. Any changed history requires a normal reconcile to re-plan work
+// and recompute deadlines. Unchanged checks never take an API slot or write state.
 func (s *Server) waitForCycle(ctx context.Context, w *worker, delay time.Duration, checkActivity bool, watermark int64) error {
 	deadline := time.Now().Add(delay)
 	for {
@@ -408,14 +412,7 @@ func (s *Server) waitForCycle(ctx context.Context, w *worker, delay time.Duratio
 		if latest == watermark {
 			continue
 		}
-		state, latest, err := s.store.Load(ctx, w.id)
-		if err != nil {
-			return err
-		}
-		if needsActivePolling(state) {
-			return nil
-		}
-		watermark = latest
+		return nil
 	}
 }
 

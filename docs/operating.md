@@ -114,19 +114,22 @@ unsettled attempt, always keep `poll_interval`, whatever the health. Planner,
 validation and rules deadlines can
 wake workers sooner; webhook wakes do not bypass error or quota backoff. While
 waiting on the backstop, each worker checks the database event watermark every
-`poll_interval`. Only changed histories are replayed; testing, landing or an
-unsettled attempt started by another process triggers immediate reconciliation.
-These checks consume no forge API budget and never write durable state.
+`poll_interval`. Any changed history triggers a normal reconciliation, which
+re-plans ready work and recomputes planner deadlines before an idle queue returns
+to its backstop. Unchanged checks consume no forge API budget and never write
+durable state. Activity checks and webhook wakes both respect error and quota
+backoff.
 
 Every attributable verified delivery records an installation and repository
 observation and wakes matching queues for a fresh read. Delivery IDs deduplicate
 durable refresh hints for typed payloads across restarts. Ignored or incomplete
 payloads only set an in-memory wake/refresh hint and write no delivery rows.
-Discovery and branch refreshes also deduplicate delivery IDs for the listener
-lifetime, including deliveries before matching workers exist; startup already
-runs a full discovery sweep. Health is renewed only after any required delivery
-persistence succeeds. Invalid signatures never update health, request discovery,
-wake queues or consume forge budget. They produce only a
+Discovery and branch refreshes also deduplicate delivery IDs in a bounded,
+listener-local cache, including deliveries before matching workers exist. The
+cache resets after 4096 distinct deliveries; an evicted redelivery may request
+another coalesced sweep. Startup already runs a full discovery sweep. Health is
+renewed only after any required delivery persistence succeeds. Invalid signatures
+never update health, request discovery, wake queues or consume forge budget. They produce only a
 fixed-cardinality rejection counter in logs, emitted at powers of two with no
 request data, so a flood cannot create one log entry per request.
 
