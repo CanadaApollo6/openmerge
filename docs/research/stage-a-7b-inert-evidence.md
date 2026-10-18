@@ -309,3 +309,18 @@ Validated executable commit: `d8f26ebbc4db67c4c9c918e1eb8834f48f87bda7`.
 - First replay invocation: **exit 2** before replay because this evidence note
   was uncommitted; no probe ran. Log: `om-pr74-fix3-replay-dirty.log`.
   Documentation was committed before retrying.
+- Final strict deployment-pair replay: **exit 0**, gates 2/4 and verdict **PASS**.
+  All 2,159 action/structural-state/snapshot checkpoints match, with 8,676
+  boundary probes and derived determinism PASS. Mandatory 22-test preflight
+  **exited 0**. Candidate checkout was clean at
+  `11bb6a04c9c7aa1dcf972c5c7dade02c738c01ca` (only evidence changed after the
+  executable commit); baseline was clean at `15aa699`. Effective config digest
+  remains `e58c893b8b3af7685dc07a086824b3bc1fc044456083d193f9566f8387cb58fc`.
+  Report: `~/.cache/om-pr74-fix3-deployment-pair.json`;
+  log: `om-pr74-fix3-replay.log`.
+
+The final explicit fetch of main and the PR branch only still returned main
+`15aa69929e89970fb49381493398814b8793567a`; no second rebase was necessary.
+The final follow-up commit changes only this evidence note. All PR commits were
+checked for the required Riel author and exact final sign-off/co-author trailers
+(**exit 0**). No job was interrupted and no other agent's process was killed.
