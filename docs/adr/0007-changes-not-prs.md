@@ -124,6 +124,43 @@ A change can carry several labels. **Anything uncertain is `unknown`:** binary f
 
 **Path ownership comes only from `CODEOWNERS`.** `groups` are approver pools that rules name; they own no paths. OpenMerge uses GitHub's `CODEOWNERS` file-selection precedence and last-matching-entry semantics at the governing commit. A `policy` change needs, for each policy file it touches, at least one eligible approval from that file's effective owners; one reviewer may satisfy several files. This requirement is always added, even when a `require: none` rule also matches (a `docs/CODEOWNERS` file is both). If an owner requirement cannot be resolved (no entry covers the path, an entry names only an email address, or a team cannot be read), the change cannot land and its brief says why.
 
+**Maintainer-approved clarification, 2026-10-18 (code-owner requirement).** Rules
+may also require code-owner review for every owned file, not only policy files,
+so that GitHub's "require review from Code Owners" can be expressed. The
+requirement `{code_owners: true}` expands to one obligation per covered changed
+file: that file's effective owners are the pool, with count 1. One eligible
+reviewer may satisfy several files, but owners are never unioned across files.
+Each covered side of a rename has its own obligation; a deletion uses the old
+path's owners. Both are resolved against `CODEOWNERS` at the governing commit,
+never a head edit. The same ownership source, precedence and exclusions as the
+policy-owner requirement apply: author, submitter and accountable humans never
+count. `receipt: true` propagates to every per-file obligation; `count`, `group`,
+`any_writer` and `human` may not combine with `code_owners`. Only the object form
+with `code_owners: true` is valid; `code_owners: false` and a scalar form are
+rejected.
+
+An uncovered file adds no code-owner obligation. A last-matching entry with no
+owners intentionally clears ownership and also adds none, as in
+[GitHub's ownerless-path example](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners#example-of-a-codeowners-file).
+This is distinct from an entry whose owners cannot be resolved: email owners,
+unreadable teams or unknown team membership make that file's obligation
+unresolved and blocking. A mixed entry (a resolvable user plus an email or
+unreadable team) also fails closed, even if the known user approves. This is
+intentionally stricter than GitHub's alternative-owner approval semantics:
+GitHub can resolve account emails and accepts any eligible owner on a line;
+OpenMerge cannot establish the full pool when an owner or membership is unknown.
+The requirement is vacuously met only with a complete inventory and no covered
+owned file; an incomplete inventory blocks. Here and below, a policy path with
+no owners, including an explicitly ownerless entry, still blocks under the
+independent mandatory policy-owner requirement.
+
+**Maintainer decision within this clarification:** `{code_owners: true}` is
+for rules only and is rejected as `approvals.default`. The default must be a
+real approval floor: a code-owner default would be vacuously met for uncovered
+files, allowing `default: none` by the back door. PR 5 tests that rejection.
+Like every requirement this form only adds; the mandatory policy-owner
+requirement still applies independently.
+
 **The policy digest is part of the configuration digest.** It covers approval rules, the default, groups, `CODEOWNERS` and `.gitattributes` content at the governing commit, classification settings, the classifier version, agent mappings and the resolved forge IDs. It is a component of the queue's existing configuration digest, so a change to any of it invalidates batches in flight with no second mechanism.
 
 **What intent means.** For a pull request, the intent is its title and body, with line endings normalized and surrounding whitespace trimmed. For a direct submission, it is the stated intent. The intent digest covers that text. Editing the intent is not a new revision and does not discard tests.
@@ -207,8 +244,9 @@ before enabling policy authority.
 
 #### Boundaries and compatibility
 
-The three dated maintainer-approved clarifications (Q2, Q7, and the Q3
-acceptance exclusion above) are the only changes to accepted Decision text.
+The four dated maintainer-approved clarifications (Q2, Q7, the Q3
+acceptance exclusion, and the code-owner requirement above) are the only changes
+to accepted Decision text.
 The resolved design choices in this implementation section settle the previous
 open questions before their owning PRs freeze fixtures.
 
@@ -453,6 +491,17 @@ removing the config keys alone is insufficient for rollback.
   Resolve effective owners per policy path, including both
   sides of renames. A group owns no paths. An uncovered path, email-only owner,
   or unreadable team cannot satisfy that path's mandatory owner requirement.
+  The 4b→5 contract uses `CodeOwnersKnown` plus per-file `CodeOwners` entries
+  parallel to `PolicyOwners`, not in place of them: reusing `PolicyOwners` would
+  make every owned file mandatory without a rule. Record path and rename side,
+  last-matching entry, resolved owner IDs and resolution status for every changed
+  file, distinguishing uncovered, explicitly ownerless and unresolved entries.
+  `CodeOwnersKnown` is false for incomplete inventories or unknown owners or team
+  membership; retain per-file evidence and reasons even then. Deletions use the
+  old path and renames record each side separately against the governing
+  CODEOWNERS. Ownerless entries clear ownership; a mixed entry containing any
+  unresolvable owner remains unresolved even alongside a resolvable owner.
+  PR 5 expands these facts into obligations only when a code-owner rule applies.
 - Mark `policy` for all four accepted config paths from `config.Find`, every
   forge-recognized `CODEOWNERS` location, all `.gitattributes` files, CI workflow
   definitions, and configured sensitive paths. Forged PR labels never affect
@@ -482,7 +531,12 @@ removing the config keys alone is insufficient for rollback.
   `docs/CODEOWNERS` always adding an owner requirement, and
   **classifier-version-only-refresh** for a refresh with otherwise equal inputs.
   Test an unchanged head after a rewind that reintroduces shared non-docs
-  commits. Snapshots preserve the current evidence.
+  commits. Snapshots preserve the current evidence. PR 4b owns evidence cases
+  **code-owners-governing-precedence**, **code-owners-ownerless-evidence**,
+  **code-owners-mixed-entry-evidence**, **code-owners-unknown-team-evidence**,
+  **code-owners-delete-rename-evidence**, and **code-owners-head-edits-ignored**:
+  head CODEOWNERS edits cannot change governing ownership. Keep evaluation and
+  approval satisfaction tests in PR 5.
 
 Pin this facet derivation table in PRs 4 and 5. "Safe" means the relevant
 inventory or attribute fact is complete and readable. An `unknown` label is not
@@ -494,7 +548,7 @@ absence from uncertainty.
 | `docs` / `generated` | True iff every file qualifies; false on a known failure | Unknown; observed qualifying files never prove every-file coverage |
 | `paths` (every-file) | True iff every file matches; otherwise false | Unknown |
 | `touches` (any-file) | True on a hit; otherwise false | True on an observed hit; otherwise unknown |
-| `policy` / `owned:` facts | Derive known path facts and owners | Keep observed positive facts; absence is unknown; policy owner requirement is unresolvable with incomplete inventory |
+| `policy` / `owned:` facts | Derive known path facts and owners | Keep observed positive facts; absence is unknown; policy owner and applicable `code_owners` requirements are unresolvable with incomplete inventory or unknown owners |
 
 Name the negative test **truncated-all-docs**: every observed file is docs, but
 the inventory is truncated. It lands nowhere, its owner requirement is
@@ -524,8 +578,12 @@ make an unknown rule relax policy.
   group references, and positive integer counts. Reject `default: none` and
   Stage B/C values. Settle Q1 **before PR 5's fixtures**, not before PR 11.
   The union is `none`, `any_writer`, `{any_writer: true, count: 1}`,
-  `{group: platform, count: 2}`, and `{human: true, count: 1}`. `count` defaults
-  to 1 on every object and is always a positive integer. `human: true` can
+  `{group: platform, count: 2}`, `{human: true, count: 1}`, and
+  `{code_owners: true}` (see the code-owner clarification). For `code_owners`,
+  reject combinations with `count`, `group`, `any_writer` or `human`, reject
+  `code_owners: false`, a scalar form, and use as `approvals.default`;
+  only `receipt: true` may combine with it. `count` defaults
+  to 1 on every other object and is always a positive integer. `human: true` can
   combine with `group` or `any_writer: true` as a kind filter. Group and
   `any_writer` are mutually exclusive selectors; a standalone human form
   selects human writers. All non-`none` forms require fresh identity-bound
@@ -546,7 +604,18 @@ make an unknown rule relax policy.
   unknown rule's requirements separately, and apply the default when no rule
   definitely matches. `none` helps only on a definite match and cancels nothing.
   One ID can satisfy several eligible requirements, once per requirement.
-  Always add per-file policy owners for opted-in queues. Return explainable
+  Always add per-file policy owners for opted-in queues, independently of
+  code-owner rules. A `code_owners` requirement expands to one obligation per
+  covered changed file (each covered rename side separately), whose pool is
+  that file's effective owners, count 1, with `receipt` propagated. It is never
+  a cross-file union. A deletion uses the old path's governing owners; an
+  owned-to-uncovered rename retains the old side's obligation. Uncovered and
+  explicitly ownerless files add none. It is vacuously met only when the
+  inventory is complete and no file is covered by owners; incomplete inventory,
+  unknown owners or unknown membership are unresolved (blocking), including
+  mixed entries with another resolvable owner. Use `CodeOwnersKnown` and the
+  per-file `CodeOwners` evidence from 4b, not `PolicyOwners`. Apply exclusions
+  and receipt checks separately to each pool. Return explainable
   unmet/unresolvable requirements rather than a single approval count.
   Diagnose `approvals` coexisting with review terms in either condition field,
   recommending explicit pools and moving approval terms into `approvals`.
@@ -568,13 +637,41 @@ make an unknown rule relax policy.
 - Events/actions: none; reuse unchanged `ConfigApplied` at activation. Planner
   and executor consume the same pure evaluator; no gate changes yet.
 - Tests and exit: truth tables for true/false/unknown facets and overlapping
-  rules, default fallback, receipt counts, owner unions, canonicalization,
+  rules, default fallback, receipt counts, per-file owner pools, canonicalization,
   identity reassignment, unchanged legacy digests, and invalid config cases.
   Name **two-platform-one-receipt** (two distinct approvers, at least one with a
   receipt), **bot-identity** (`"acme-coder[bot]"` parses), and **mixed-repository**:
   an opted-in queue causes no observations, digest change or trailers in its
   non-opted-in sibling. Cover known-empty versus unresolved eligibility under
   negation and diagnostic output for review terms alongside `approvals`.
+  PR 5 owns these named evaluator/parser cases over 4b's evidence contract:
+
+  - **code-owners-every-owned-file**: a non-owner cannot satisfy an owned
+    non-policy file.
+  - **code-owners-disjoint-owners**: A's owner cannot satisfy B; a shared owner
+    in both per-file pools can satisfy both.
+  - **code-owners-owned-deletion**, **code-owners-rename-disjoint-owners**, and
+    **code-owners-owned-to-uncovered-rename**: old-path owners still count;
+    each covered rename side requires its own approval, never a union.
+  - **code-owners-uncovered-file**, **code-owners-ownerless-entry**, and
+    **code-owners-incomplete-inventory**: distinguish no obligation from an
+    unresolved obligation.
+  - **code-owners-mixed-entry** and **code-owners-unknown-team-membership**:
+    another resolvable owner's approval cannot clear unknown owners/membership.
+  - **code-owners-excluded-sole-owner**: an author, submitter or accountable
+    human who is the sole owner cannot satisfy the obligation.
+  - **code-owners-per-file-receipts**: `{code_owners: true, receipt: true}`
+    requires a valid receipt from each file's eligible pool; a shared owner's
+    valid receipt may satisfy several files.
+  - **code-owners-policy-independent**: absent or met code-owner rules do not
+    remove mandatory policy owners; an ownerless policy path still blocks.
+  - **code-owners-invalid-combinations**: reject `count`, `group`, `any_writer`,
+    `human`, `code_owners: false`, and scalar forms; accept only the true object
+    with optional `receipt: true`.
+  - **code-owners-default-rejected**: reject the form as `approvals.default`.
+  - **code-owners-independent-count**: count-as-default plus independent
+    `paths: ["**"]` count and `touches: ["**"]` owner rules preserves N approvals
+    for owned, uncovered and complete empty diffs; only owned paths add owners.
 
 #### PR 6: Fold stances and record accountability
 
@@ -641,8 +738,11 @@ make an unknown rule relax policy.
 - Brief: provide one recorded-fact model with reviewer, operator, and agent
   renderers. Include pinned inputs, the author's claimed intent, complete or
   explicitly incomplete file/hunk inventory, label reasons, requirements and
-  eligible pools, and test links. Operator output explains each blocker and
-  what clears it. Agent output uses stable reason codes and structured next
+  eligible pools, and test links. PR 7a records per-file owner sets and expanded
+  obligations with per-file unmet/unresolved reasons and stable agent reason
+  codes, including unknown inventory, unknown owners and excluded owners.
+  Operator output explains each blocker and what clears it. Agent output uses
+  stable reason codes and structured next
   steps rather than prose parsing. Missing historical facts say "not recorded".
   Persist bounded hunk evidence with classification: at most 1,000 files,
   2 MiB of UTF-8 hunk text and 200 lines per file, in deterministic path order.
@@ -741,7 +841,10 @@ make an unknown rule relax policy.
   the approval/receipt source records actually relied on, accountability, and
   tested/landed commit identities. PR-only evidence explicitly marks direct
   protection observations not applicable. Include native reviews' absent brief
-  and intent bindings. Add a full golden fixture and legacy absence tests.
+  and intent bindings. Record expanded per-file owner obligations, including
+  rename sides and receipt requirements, and which approval/receipt satisfied
+  each. A shared approval is referenced by each obligation it satisfies.
+  Add a full golden fixture and legacy absence tests.
 - Store/executor: `Store.Emit` currently commits one event per call. Introduce
   a claim-bound, queue-locked landing-start operation that authorizes the
   existing action against the latest projection, validates all member decisions
@@ -922,8 +1025,13 @@ make an unknown rule relax policy.
   The fake-forge scenario drives an agent-opened PR to landed or definitively
   rejected using CLI reads and forge-authenticated commands: low-risk `none`,
   exact-head human review, receipt-required intent review, and read-back of
-  every landing decision. Run an organization sandbox acceptance for team
-  owners and permission installation. The sandbox includes a real receipt
+  every landing decision. PR 12b also covers an owned non-policy file waiting
+  for its owner and an uncovered non-policy file that does not wait for owner
+  approval, using ADR 0008's two-rule translation (a `paths: ["**"]` count rule
+  plus a `touches: ["**"]` code-owner rule) so the count requirement still applies
+  to the uncovered file.
+  Run an organization sandbox acceptance for team owners and permission
+  installation. The sandbox includes a real receipt
   posted with `gh pr comment <number> --body '@openmerge approve <brief-digest>'`,
   then reads back the accepted receipt and immutable landing decision through
   CLI/API. Save `stage-a-sandbox-evidence.md` as the reviewable acceptance
@@ -951,7 +1059,10 @@ These maintainer decisions close Q1–Q7. Their owning PRs pin the choices in
 component fixtures before integration; none waits for activation to decide.
 
 1. **Q1, requirement syntax (PR 5, before its fixtures).** Accept `none`, scalar
-   `any_writer` and the object union specified in PR 5. Count defaults to 1.
+   `any_writer` and the object union specified in PR 5. Count defaults to 1
+   except for the separate 2026-10-18 code-owner maintainer decision:
+   `{code_owners: true}` is a rule-only per-file requirement with optional
+   `receipt: true`, no `count`, and is forbidden as `approvals.default`.
    `{human: true, count: 1}` is explicit, requires write permission, and combines
    with `group` and `receipt: true`. Writer never means human. Any writer's
    receipt uses `{any_writer: true, receipt: true}`; `receipt` is valid on every

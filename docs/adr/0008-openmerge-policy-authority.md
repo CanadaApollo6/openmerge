@@ -81,6 +81,45 @@ Enforcement does not depend on observation: GitHub rejects ordinary writers whet
 - **Other writers of each base** are reported as blockers to the switch: release jobs, version-bump CI, backport bots, and any inherited bypass actor that can actually write a served base past `openmerge-base`. The report inventories every inherited bypass entry but blocks only on effective authority gaps, since bypassing one ruleset does not bypass another that still applies. A bot cannot be the break-glass actor (a team or the repository-admin role), so each writer must route through the queue or stop the switch.
 - **OpenMerge's own configuration paths** must be covered by `CODEOWNERS`. In `openmerge` mode a policy change needs owner approval (ADR 0007's `policy` label); without that, any queue-eligible writer could propose weaker policy, a separation-of-duties regression from GitHub settings that need an administrator.
 
+**Maintainer-approved consequential clarification, 2026-10-18 (ADR 0007
+code-owner requirement).** Code-owner review maps to a rule requiring
+`{code_owners: true}` for every **owned** file
+([ADR 0007's Policy approvals](0007-changes-not-prs.md#policy-approvals-stage-a)).
+Until that requirement is **activated** (PR 11b publishes the loader), the report
+classifies code-owner review as unsupported. Intentionally ownerless entries
+add no code-owner obligation. Unresolved owners, including mixed entries and
+unknown team membership, fail closed even alongside a resolvable owner; report
+this as stricter where GitHub would accept an available owner's approval.
+The existing stale-dismissal caveat for reviews applies to code-owner approvals
+too: with dismissal on, any case where GitHub invalidates an approval after a
+merge-base or diff change but OpenMerge retains it is weaker and needs acceptance;
+with dismissal off, head-bound approvals are stricter.
+
+A faithful translation of "N approvals + code-owner review" keeps the count as
+`approvals.default` and adds two independently matching rules. For N = 2:
+
+```text
+approvals:
+  default: {any_writer: true, count: 2}
+  rules:
+    - when: {paths: ["**"]}
+      require: {any_writer: true, count: 2}
+    - when: {touches: ["**"]}
+      require: {code_owners: true}
+```
+
+An empty diff still gets the count, but not because the `paths` rule matches it:
+with no changed paths, every-file facets evaluate as unknown rather than true, so
+missing evidence can never definitely match an exemption. An unknown rule is
+enforced as if it matched, and because no rule definitely matches, the count-bearing
+default applies as well. `touches` has any-file semantics and is false for an empty
+diff, so there is no owner obligation, as on GitHub. For a nonempty diff both rules match independently, so
+owner review cannot displace the imported N approvals; one eligible approval
+may contribute to both requirements. The default alone does not preserve the
+count once a rule definitely matches. `import-protection` must not propose or
+classify a `{code_owners: true}` default alone as equivalent: it is rejected by
+the loader and would permit uncovered-only changes without the imported floor.
+
 The command exits nonzero while anything is weaker, unsupported or blocking, unless the operator passes `--accept` with the list of policy relaxations they accept. Installation prerequisites (a served default branch, the bypass GitHub must accept, `CODEOWNERS` coverage, mandatory policy approval, every other writer resolved) cannot be accepted away. Accepted items are written into the proposed configuration as comments, so their durable record is the reviewed pull request that lands it.
 
 **The switch is a coordinated transition, not an atomic one.** In order:
