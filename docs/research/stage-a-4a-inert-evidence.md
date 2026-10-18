@@ -1,6 +1,7 @@
 # Stage A 4a: classification and replayable evidence
 
 Baseline: `d15bc55` (origin/main). Branch: `stage-a/4a-classification`.
+Frozen implementation: `f2f95343f94bf7fecbdf48f6db435aaa9fd8f51c`.
 Worktree: `/home/riels/openmerge-stage-a-4a`.
 Baseline checkout: `/home/riels/.cache/om-sa-4a-main`.
 The implementation commit and evidence-only validation commit identify the
@@ -69,7 +70,55 @@ Validation commands use `GOTMPDIR=~/.cache/om-sa-4a-tmp`,
 `OPENMERGE_TEST_DATABASE_URL=postgres://postgres@localhost:54329/postgres?sslmode=disable`.
 Heavy checks run sequentially. No database is initialized under /tmp.
 
-Results are recorded below after the frozen-source runs. No exported live journal
+No exported live journal
 or live effective configuration was read, so the live deployment gates remain
 operator work. Offline fixture replay and tracked config digest comparison are
 reported separately and do not claim live-journal coverage.
+
+
+### Frozen-source results
+
+- `make check > ~/.cache/om-sa-4a.log 2>&1; echo exit=$?`: **exit=0**.
+  Formatting, lint (zero issues), the complete short race suite using shared
+  test Postgres, and production build all pass.
+- Candidate `make test-sim-exits`: **exit=0** (`~/.cache/om-sa-4a-sim.log`).
+  Fresh origin/main baseline: **exit=0** (`~/.cache/om-sa-4a-main-sim.log`).
+  All **146 normalized result blocks** match: comparison **exit=0**,
+  SHA-256 `a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7`.
+  Normalization removes test-runner timing/framing and sorts unchanged logged
+  result blocks; it retains all reported simulator metrics and scenario inputs.
+  Helper/output: `~/.cache/om-sa-4a-normalize.py` and
+  `~/.cache/om-sa-4a-sim-normalized.json`.
+- `python3 scripts/check-phase2-compatibility.py /home/riels/.cache/om-sa-4a-main`:
+  **exit=0** (`~/.cache/om-sa-4a-compatibility.log`).
+  **17 legacy exit records** match, SHA-256
+  `bc7c730e66e11a6b3ec3e2253e81061d49358d592cb673e634fac89bf41b26c6`;
+  **1,055 depth-1 retry envelopes/default-digest records** match, SHA-256
+  `07ed2ecf13debd5d75c8424b222edfd740470c00f5fc2b4ae00183fdd9ce7b37`.
+- All **75 existing wire-v1 fixtures** and all **108 existing JSON testdata
+  fixtures** match origin/main byte-for-byte. The three added classification
+  fixtures do not replace any existing fixture.
+- Offline fixture replay uses the exact helper documented in
+  [2a's evidence note](stage-a-2a-inert-evidence.md#reproduce-the-fixture-replay).
+  Candidate replay **exit=0**, baseline replay **exit=0**, `cmp` **exit=0**.
+  All **66 event checkpoints**, serialized actions/keys and tracked config
+  digest match. Output has 67 lines including the digest header; SHA-256
+  `b989daef369fff9b42f0f0542329ab4d6b2854ae1d55665e637ba25e28e7cb26`.
+  Tracked config digest:
+  `e58c893b8b3af7685dc07a086824b3bc1fc044456083d193f9566f8387cb58fc`.
+  Outputs: `~/.cache/om-sa-4a-{main-replay,replay}.txt`.
+- Negative/component coverage includes `truncated-all-docs`,
+  `classifier-version-only-refresh`, unchanged-head rewinds, all file uncertainty
+  kinds, policy deletion/rename paths, default-branch provenance, generated
+  attribute uncertainty, independent hunk coverage, verbatim omission summaries,
+  stale generations, immutable Apply/reads, snapshot-plus-tail, old snapshots,
+  nested missing/null/unknown fields, value validation, and provenance refresh
+  across nil-versus-empty wire collections.
+
+The first development `make check` exited **2** because the new event initially
+allowed nullable wire collections; its log is `~/.cache/om-sa-4a-initial.log`.
+After boundary normalization the intermediate run exited **0**; final frozen
+source adds the replay-representation regression and also exits **0**. The
+remaining ownership-positive test is an explicit 4b skip, not a claimed pass.
+Final status ledger: `~/.cache/om-sa-4a-statuses.log`; sequential command runner:
+`~/.cache/om-sa-4a-validation.sh`. No live deployment gates are claimed.
