@@ -385,3 +385,33 @@ the exact revised 006 DDL plus ledger entry in a transaction on an isolated test
 schema, closes the original connection, then twice reopens, appends and loads
 legacy events with both new indexes still present. This verifies schema rollback
 compatibility, not old-worker decoding of newly activated event types.
+
+### Main advance and fuzz fixture repair
+
+After the seven pre-rebase gates all exited **0** on `b686d9e`, main advanced
+to `0f5e6cffbf35d035544ce0effb2ed6b6e536eb6f` (#74). Rebased all five feature
+commits cleanly; `git range-diff` reports all five patches identical. Initial
+rebased implementation: `00f30a83dabd660e6bfdfd380aba6e5920c2d9f7`.
+`make check` again exited **0**, and focused tests again exited **0**.
+
+The repeated fuzz campaign exited **1** (`sa9b-r2-rebased-fuzz.log`): a mutated
+non-UTF-8 contributor message caused Git to warn on stderr, and the fixture's
+CombinedOutput mixed that warning into the generated SHA. It failed the local
+fixture push before reaching the writer/reader property. The test helper now
+separates stdout from stderr, matching the production command runner, while
+retaining both streams in failure diagnostics. The discovered input is committed
+as `FuzzChangeTrailersWriterRoundTrip/a93ef41c5471496b`; its explicit regression
+run passes all four methods (**exit 0**, `sa9b-r2-rebased-fuzz-regression.log`).
+The repaired 30-second campaign also passes (**exit 0**,
+`sa9b-r2-rebased-fuzz-2.log`, 11 seed corpus entries, 12 completed executions).
+No production behavior or strict-reader rule changed in this fixture repair.
+The full check and remaining gates are rerun after this repair.
+
+Rebased focused index measurements (`sa9b-r2-rebased-focused.log`): both index
+builds together took **2.607 ms / 181.702 ms** at **2,600 / 260,000 rows**.
+Both real and forced plans again use the exact identity indexes, one returned
+row in one loop, no rows removed by filtering. Real decision/eligibility times:
+**0.019/0.018 ms** at 2,600 and **0.027/0.028 ms** at 260,000. Forced times:
+**0.008/0.007 ms** and **0.010/0.009 ms**. ShareLock/write blocking and unchanged
+heap relfilenode assertions all pass. These supersede neither prior measured
+samples nor their caveat about local synthetic data and lock waiting.
