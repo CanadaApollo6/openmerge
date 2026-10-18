@@ -167,6 +167,10 @@ func newGitEnv(t *testing.T) forgetest.Env {
 	race := &racingGit{Repo: f.g, other: f.client(t, 1)}
 	race.bootstrap = []*Repo{f.g, race.other, f.client(t, 2), f.client(t, 3)}
 	e := forgetest.Env{Git: race, Repo: testRepo, Base: "main", BaseSHA: f.base, PRs: slices.Clone(f.prs), CanRollbackBase: true}
+	e.ReadCommitMessage = func(sha string) (string, error) {
+		f.fetch(sha)
+		return gitCommand(t, f.source, "", nil, "show", "-s", "--format=%B", sha), nil
+	}
 	e.NewBase = func(t *testing.T) string {
 		t.Helper()
 		f.baseID++

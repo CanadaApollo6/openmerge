@@ -24,6 +24,9 @@ func stripMetadataLines(message string, keys ...string) string {
 		remove = false
 		for _, reserved := range keys {
 			remove = remove || ok && strings.EqualFold(strings.TrimSpace(key), reserved)
+			if reserved == "OpenMerge-*" && strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "openmerge-") {
+				remove = true
+			}
 			if reserved == "OpenMerge-Batch" && strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "openmerge-batch") {
 				remove = true
 			}
@@ -143,13 +146,17 @@ func (s *session) addTrailers(ctx context.Context, message string, trailers ...s
 	return out, nil
 }
 
-func (s *session) prMessage(ctx context.Context, repo forge.RepoRef, req forge.BuildRequest, pr forge.PullRequest, author Identity, last bool) (string, error) {
-	title := strings.TrimSpace(stripMetadataLines(pr.Title, "OpenMerge-Batch"))
+func (s *session) prMessage(ctx context.Context, repo forge.RepoRef, req forge.BuildRequest, pr forge.PullRequest, author Identity, metadata *forge.ChangeMetadata, last bool) (string, error) {
+	reserved := "OpenMerge-Batch"
+	if metadata != nil {
+		reserved = "OpenMerge-*"
+	}
+	title := strings.TrimSpace(stripMetadataLines(pr.Title, reserved))
 	if title == "" {
 		title = fmt.Sprintf("PR %d", pr.Number)
 	}
 	message := fmt.Sprintf("%s (#%d)", title, pr.Number)
-	body := strings.TrimSpace(stripMetadataLines(openmergeMarker.ReplaceAllString(pr.Body, ""), "Signed-off-by", "Co-authored-by", "OpenMerge-Batch"))
+	body := strings.TrimSpace(stripMetadataLines(openmergeMarker.ReplaceAllString(pr.Body, ""), "Signed-off-by", "Co-authored-by", reserved))
 	if req.Method == forge.Merge {
 		message = fmt.Sprintf("Merge pull request #%d from %s", pr.Number, pr.HeadBranch)
 		body = title
@@ -221,6 +228,11 @@ func (s *session) prMessage(ctx context.Context, repo forge.RepoRef, req forge.B
 			add(trailer)
 		}
 	}
+	changeTrailers, err := metadata.Trailers()
+	if err != nil {
+		return "", err
+	}
+	trailers = append(trailers, changeTrailers...)
 	if last {
 		trailers = append(trailers, "OpenMerge-Batch: "+req.BatchID)
 	}

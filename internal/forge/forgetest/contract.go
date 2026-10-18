@@ -51,7 +51,11 @@ type Env struct {
 	ConflictingPRs       []forge.BuildPR
 	Observations         []forge.PullRequest
 	ContainsPR           func(sha string, pr int) bool
-	AddForeignComment    func(pr int, body string)
+	// ReadCommitMessage returns the complete message for a commit. Git does not
+	// expose this through the core Git contract, but metadata contracts need a
+	// read-only fixture hook for both the fake and CLI-backed implementations.
+	ReadCommitMessage func(sha string) (string, error)
+	AddForeignComment func(pr int, body string)
 	// SetCanWrite changes current permission without advancing a cache clock.
 	SetCanWrite func(user string, write bool)
 	// AddCheckRun creates a new run; the forge assigns its ID, even for reruns.
@@ -72,7 +76,8 @@ func Run(t *testing.T, newEnv func(t *testing.T) Env) {
 }
 
 // RunGit checks only the Git-side contracts. Driver and API fixture hooks may
-// be nil; the remaining Env fields have the same requirements as Run.
+// be nil; metadata subtests require ReadCommitMessage, and other Env fields
+// have the same requirements as Run.
 func RunGit(t *testing.T, newEnv func(t *testing.T) Env) {
 	run(t, newEnv, false)
 }
@@ -208,6 +213,35 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 			}
 		}
 	}
+	readCommitMessages := func(t *testing.T, e Env, base, head string) []string {
+		t.Helper()
+		if e.ReadCommitMessage == nil {
+			t.Fatal("metadata contract requires Env.ReadCommitMessage")
+		}
+		history, ok := e.Git.(forge.CommitHistoryReader)
+		if !ok {
+			t.Fatal("metadata contract requires forge.CommitHistoryReader")
+		}
+		commits, truncated, err := history.CommitsBetween(ctx, e.Repo, base, head, 1000)
+		must(t, err)
+		if truncated {
+			t.Fatal("metadata contract commit history was truncated")
+		}
+		messages := make([]string, 0, len(commits))
+		for _, sha := range commits {
+			message, err := e.ReadCommitMessage(sha)
+			must(t, err)
+			messages = append(messages, message)
+		}
+		return messages
+	}
+	contractMetadata := func(revision uint64, labels ...string) *forge.ChangeMetadata {
+		return &forge.ChangeMetadata{
+			ChangeID: fmt.Sprintf("chg1_%064x", revision),
+			Revision: revision,
+			Labels:   labels,
+		}
+	}
 	t.Run("read-fence", func(t *testing.T) {
 		e := newEnv(t)
 		// Read an ordinary commit without replacing an existing fence.
@@ -316,6 +350,90 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 		})
 		if !errors.Is(err, forge.ErrLeaseRejected) || read(t, e, e.Base) != e.BaseSHA || read(t, e, e.FenceRef) != next {
 			t.Fatalf("fenced delayed landing was not refused atomically: %v", err)
+		}
+	})
+	for _, method := range []forge.MergeMethod{forge.Merge, forge.Squash, forge.Rebase} {
+		t.Run("change-metadata/"+string(method), func(t *testing.T) {
+			e := newEnv(t)
+			prs := slices.Clone(e.PRs[:2])
+			prs[0].Metadata = contractMetadata(1, "owned:user:alice", "docs")
+			prs[1].Metadata = contractMetadata(2)
+			batch := "metadata-" + string(method)
+			tested, err := e.Git.BuildTestRef(ctx, e.Repo, forge.BuildRequest{
+				Ref: testRef(e, batch), BaseSHA: e.BaseSHA, PRs: prs, Method: method, BatchID: batch,
+			})
+			must(t, err)
+			messages := readCommitMessages(t, e, e.BaseSHA, tested)
+			blocks := make([]string, len(prs))
+			for i, pr := range prs {
+				pair, err := pr.Metadata.Trailers()
+				must(t, err)
+				blocks[i] = strings.Join(pair, "\n")
+			}
+			for _, message := range messages {
+				members := 0
+				for _, block := range blocks {
+					if strings.Contains(message, block) {
+						members++
+					}
+				}
+				if members > 1 {
+					t.Fatalf("one generated commit retained metadata for %d changes", members)
+				}
+			}
+			for i, pr := range prs {
+				pair, err := pr.Metadata.Trailers()
+				must(t, err)
+				matches := 0
+				for _, message := range messages {
+					matches += strings.Count(message, blocks[i])
+				}
+				if matches != 1 {
+					t.Fatalf("PR %d metadata block count = %d, want one: %q", pr.Number, matches, blocks[i])
+				}
+				if i == 1 && !strings.HasSuffix(pair[1], " none") {
+					t.Fatalf("empty labels = %q, want none classification", pair[1])
+				}
+			}
+		})
+	}
+	t.Run("change-metadata/fast-forward", func(t *testing.T) {
+		e := newEnv(t)
+		pr := e.PRs[0]
+		pr.Metadata = contractMetadata(3, "owned:team:org/platform", "docs")
+		batch := "metadata-fast-forward"
+		req := forge.BuildRequest{Ref: testRef(e, batch), BaseSHA: e.BaseSHA,
+			PRs: []forge.BuildPR{pr}, Method: forge.FastForward, BatchID: batch}
+		first, err := e.Git.BuildTestRef(ctx, e.Repo, req)
+		must(t, err)
+		second, err := e.Git.BuildTestRef(ctx, e.Repo, req)
+		must(t, err)
+		if e.ReadCommitMessage == nil {
+			t.Fatal("metadata contract requires Env.ReadCommitMessage")
+		}
+		pair, err := pr.Metadata.Trailers()
+		must(t, err)
+		want := strings.Join(append(pair, "OpenMerge-Batch: "+batch), "\n")
+		var firstBlock string
+		for i, sha := range []string{first, second} {
+			message, err := e.ReadCommitMessage(sha)
+			must(t, err)
+			if strings.Count(message, "OpenMerge-Batch: ") != 1 || forge.ParseBatchMessage(message) != batch {
+				t.Fatalf("marker %d batch trailer is not authoritative and last: %q", i, message)
+			}
+			start := strings.Index(message, pair[0])
+			got := ""
+			if start >= 0 {
+				got = strings.TrimSpace(message[start:])
+			}
+			if start < 0 || got != want {
+				t.Fatalf("marker %d metadata trailers = %q, want %q", i, got, want)
+			}
+			if i == 0 {
+				firstBlock = got
+			} else if got != firstBlock {
+				t.Fatalf("fast-forward metadata block changed across identical builds")
+			}
 		}
 	})
 	for _, method := range []forge.MergeMethod{forge.Merge, forge.Squash, forge.Rebase} {

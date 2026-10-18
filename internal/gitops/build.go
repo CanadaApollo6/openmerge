@@ -125,6 +125,9 @@ func (r *Repo) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.B
 	if req.Method != forge.Merge && req.Method != forge.Squash && req.Method != forge.Rebase && req.Method != forge.FastForward {
 		return "", errors.New("unsupported git merge method")
 	}
+	if err := forge.ValidateBuildMetadata(req.PRs); err != nil {
+		return "", err
+	}
 	s, unlock, err := r.open(ctx, repo)
 	if err != nil {
 		return "", err
@@ -183,13 +186,24 @@ func (r *Repo) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.B
 					return "", err
 				}
 				subject, _, _ := strings.Cut(message, "\n")
-				message = stripMetadataLines(message, "OpenMerge-Batch")
-				if stripMetadataLines(subject, "OpenMerge-Batch") == "" {
+				reserved := "OpenMerge-Batch"
+				if pr.Metadata != nil {
+					reserved = "OpenMerge-*"
+				}
+				message = stripMetadataLines(message, reserved)
+				if stripMetadataLines(subject, reserved) == "" {
 					message = fmt.Sprintf("PR %d\n\n%s", pr.Number, strings.TrimSpace(message))
 				}
 				// Replaying must create a new identity even if author, clock,
 				// tree and first parent happen to match the original commit.
 				trailers := []string{"OpenMerge-Replayed-From: " + original}
+				if j == len(commits)-1 {
+					pair, err := pr.Metadata.Trailers()
+					if err != nil {
+						return "", err
+					}
+					trailers = append(trailers, pair...)
+				}
 				if i == len(req.PRs)-1 && j == len(commits)-1 {
 					trailers = append(trailers, "OpenMerge-Batch: "+req.BatchID)
 				}
@@ -208,7 +222,7 @@ func (r *Repo) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.B
 		if err != nil {
 			return "", err
 		}
-		message, err := s.prMessage(ctx, repo, req, metadata, author, i == len(req.PRs)-1)
+		message, err := s.prMessage(ctx, repo, req, metadata, author, pr.Metadata, i == len(req.PRs)-1)
 		if err != nil {
 			return "", err
 		}
@@ -231,6 +245,18 @@ func (r *Repo) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.B
 			return "", err
 		}
 		message := fmt.Sprintf("OpenMerge fast-forward test %x\n\nOpenMerge-Batch: %s", nonce, req.BatchID)
+		if req.PRs[0].Metadata != nil {
+			var trailers []string
+			for _, pr := range req.PRs {
+				pair, err := pr.Metadata.Trailers()
+				if err != nil {
+					return "", err
+				}
+				trailers = append(trailers, pair...)
+			}
+			trailers = append(trailers, "OpenMerge-Batch: "+req.BatchID)
+			message = fmt.Sprintf("OpenMerge fast-forward test %x\n\n%s", nonce, strings.Join(trailers, "\n"))
+		}
 		top, err = s.commit(ctx, tree, message, top)
 		if err != nil {
 			return "", err

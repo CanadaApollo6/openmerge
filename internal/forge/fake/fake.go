@@ -211,6 +211,9 @@ func (f *Forge) build(ctx context.Context, r *repository, req forge.BuildRequest
 	if req.Method != forge.Merge && req.Method != forge.Squash && req.Method != forge.Rebase && req.Method != forge.FastForward {
 		return "", nil, false, fmt.Errorf("unsupported merge method %q", req.Method)
 	}
+	if err := forge.ValidateBuildMetadata(req.PRs); err != nil {
+		return "", nil, false, err
+	}
 	content := slices.Clone(r.prsFor(req.BaseSHA))
 	files := maps.Clone(r.files(req.BaseSHA))
 	prs := make([]int, 0, len(req.PRs))
@@ -255,6 +258,12 @@ func (f *Forge) build(ctx context.Context, r *repository, req forge.BuildRequest
 			}
 			if req.Method == forge.Rebase {
 				message := fmt.Sprintf("rebase PR %d commit %s", pr.Number, original)
+				if j == len(r.prCommits[pr.Number])-1 {
+					pair, _ := pr.Metadata.Trailers()
+					for _, trailer := range pair {
+						message += "\n" + trailer
+					}
+				}
 				if i == len(req.PRs)-1 && j == len(r.prCommits[pr.Number])-1 {
 					message += "\nOpenMerge-Batch: " + req.BatchID
 				}
@@ -265,6 +274,10 @@ func (f *Forge) build(ctx context.Context, r *repository, req forge.BuildRequest
 		}
 		if req.Method == forge.Merge || req.Method == forge.Squash {
 			message := fmt.Sprintf("%s PR %d %s", req.Method, pr.Number, pr.HeadSHA)
+			pair, _ := pr.Metadata.Trailers()
+			for _, trailer := range pair {
+				message += "\n" + trailer
+			}
 			if i == len(req.PRs)-1 {
 				message += "\nOpenMerge-Batch: " + req.BatchID
 			}
@@ -276,7 +289,15 @@ func (f *Forge) build(ctx context.Context, r *repository, req forge.BuildRequest
 		}
 	}
 	if req.Method == forge.FastForward {
-		top = r.commit([]string{top}, r.prsFor(top), fmt.Sprintf("OpenMerge fast-forward test %s\n\nOpenMerge-Batch: %s", r.nonce(), req.BatchID), r.files(top))
+		message := fmt.Sprintf("OpenMerge fast-forward test %s\n\n", r.nonce())
+		for _, pr := range req.PRs {
+			pair, _ := pr.Metadata.Trailers()
+			for _, trailer := range pair {
+				message += trailer + "\n"
+			}
+		}
+		message += "OpenMerge-Batch: " + req.BatchID
+		top = r.commit([]string{top}, r.prsFor(top), message, r.files(top))
 	}
 	if req.Method != forge.FastForward {
 		r.materializeTip(top, files, content)

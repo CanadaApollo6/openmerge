@@ -50,6 +50,12 @@ type Executor struct {
 	// DisableDeleteHeadBranch pins retention when a landing starts. DeleteHeadBranch
 	// actions already authorized by a recorded attempt must execute with it false.
 	DisableDeleteHeadBranch bool
+	// BuildMetadata is dormant until Stage A activation. When set, it supplies
+	// immutable pre-CI classification metadata for each pinned build member.
+	BuildMetadata      BuildMetadataLoader
+	BuildMetadataState queue.State
+	BuildMetadataKey   BuildChangeKey
+	BuildPolicyDigest  string
 	// CheckPolicy evaluates repository merge conditions on the tested SHA.
 	// Nil retains the explicit RequiredChecks policy.
 	CheckPolicy func([]forge.CheckRun) (terminal, success bool, err error)
@@ -126,9 +132,12 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		if a.Method == queue.FastForward {
 			return x.buildFastForward(ctx, a, emit)
 		}
-		prs := make([]forge.BuildPR, len(a.PRs))
-		for i, pr := range a.PRs {
-			prs[i] = forge.BuildPR{Number: pr.PR, HeadSHA: pr.HeadSHA}
+		prs, err := x.buildPRs(a)
+		if err != nil {
+			if emitErr := emit(queue.TestRefBuildFailed{BatchID: a.BatchID, At: x.now()}); emitErr != nil {
+				return emitErr
+			}
+			return err
 		}
 		sha, err := x.Git.BuildTestRef(ctx, x.Repo, forge.BuildRequest{
 			Ref: a.Ref, BaseSHA: a.BaseSHA, PRs: prs, Method: forge.MergeMethod(a.Method), BatchID: a.BatchID,
