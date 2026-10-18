@@ -207,7 +207,18 @@ func (r *Repo) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.B
 				if i == len(req.PRs)-1 && j == len(commits)-1 {
 					trailers = append(trailers, "OpenMerge-Batch: "+req.BatchID)
 				}
-				message, err = s.addTrailers(ctx, message, trailers...)
+				if pr.Metadata != nil {
+					// Metadata readers require the authoritative suffix in the true
+					// final paragraph. Git inserts trailers before trailing comments.
+					credits, creditErr := s.trailers(ctx, message)
+					if creditErr != nil {
+						return "", creditErr
+					}
+					message = stripMetadataLines(message, "Signed-off-by", "Co-authored-by")
+					message = strings.TrimSpace(rewritePatchDividers(message)) + "\n\n" + strings.Join(append(credits, trailers...), "\n")
+				} else {
+					message, err = s.addTrailers(ctx, message, trailers...)
+				}
 				if err != nil {
 					return "", err
 				}

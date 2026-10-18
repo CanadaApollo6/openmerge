@@ -315,3 +315,73 @@ exception remains recorded in the original-run section.
 
 Final `make fmt` and `git diff --check`: **exit 0** each. No deployment performed;
 **Hold** remains in force. Only the feature branch is authorized for push.
+
+
+## Round 2 review fixes
+
+Trial class remains **Hold**; no deployment. Initial explicit fetch of main and
+this branch found main unchanged at `15aa699`. The strict parser is unchanged.
+
+- Metadata-enabled rebase now appends its provenance, canonical adjacent pair
+  and optional batch trailer as the true final paragraph, after all contributor
+  comments/prose. Retained DCO/coauthor trailers move into that paragraph before
+  provenance. The nil-metadata path still calls the original Git trailer writer.
+  `FuzzChangeTrailersWriterRoundTrip` drives two-member batches through each of
+  squash/merge/rebase/fast-forward and the immutable message reader plus strict
+  parser. Ten seeds cover final comments (including separated comment paragraphs),
+  trailing blanks, CRLF, trailer-like prose, folding, reserved-key attempts,
+  patch dividers and empty text. Mutated supported contributor messages exercise
+  the same property; NUL/lone-CR inputs are excluded as unsupported commit text.
+  `TestChangeTrailersBeforeCI` retains attribution, provenance, object immutability
+  and multi-commit replay coverage; adversarial parser tests remain unchanged.
+- Unreleased migration 006 replaces the queue/type index in place with partial
+  expression indexes `events_landing_decision_identity` (queue/batch/attempt/id)
+  and `events_eligibility_read_identity` (queue/change/read/revision/head/id).
+  Production SQL uses those exact JSON expressions, with EligibilityReadID
+  rather than the latest read; limits/ambiguity checks remain unchanged.
+  `TestLandingEvidenceIdentityIndexes` EXPLAINs the exact production statements
+  on 2,600 and 260,000 synthetic journal rows, half of each evidence type, after
+  ANALYZE. Both realistic and `enable_seqscan=off` plans use an Index Scan;
+  each returns one row in one loop with zero rows removed by filtering. All
+  identity predicates appear in Index Cond, with no history-sized filter scan.
+  Normal decision/eligibility execution times were 0.016/0.018 ms at 2,600 and
+  0.023/0.020 ms at 260,000; forced times were 0.007/0.007 and 0.012/0.008 ms.
+  These are local synthetic measurements, not production latency predictions.
+- **Deploy note:** 006 runs non-concurrent CREATE INDEX inside the migration
+  transaction/advisory lock. Both revised indexes together built in **2.846 ms
+  at 2,600 rows** and **171.029 ms at 260,000 rows**. The test verifies ShareLock
+  remains until commit, an independent insert fails with 100 ms lock_timeout,
+  and relfilenode stays unchanged (no heap rewrite). Lock waiting is excluded
+  from build timings. DDL and ledger are transactional; apply during the planned
+  ADR 0009 period-B drain, retaining Hold. `TestMigrationsConcurrentOpenAndReopen`
+  stays mandatory. Retention of landing_decision_recorded and exact referenced
+  approval_eligibility_observed payload/read identity remains documentation-only;
+  12a/later must enforce it before compaction is enabled. The same deployment
+  and retention notes are in docs/operating.md.
+
+All Round 2 logs are under `~/.cache/sa9b-r2-*`, and actual subprocess statuses
+are appended to `~/.cache/sa9b-statuses.tsv`. The existing runner checks host
+load before each heavy job and applies the supplied DB URL, cache Go directories,
+GOFLAGS=-p=2 and 4 GiB memory (6 GiB replay). No initdb, live DB/status/systemd
+or live OpenMerge refs were used. Only explicitly named main/branch were fetched.
+
+Initial focused run **exit 1** (`sa9b-r2-focused.log`): appending a separate
+metadata block initially left existing attribution outside Git's trailer block;
+credits now move into the final block. EXPLAIN JSON uses floating-point row
+counts, fixed in the test decoder. A failed plan assertion skipped transaction
+cleanup and stalled the following test; only our own Store test process was sent
+SIGQUIT (recorded exit 1), then its isolated schema was removed. Transaction
+cleanup is now deferred on every path. Second focused run **exit 0**
+(`sa9b-r2-focused-2.log`) includes the fuzz seeds, parser rejection cases,
+identity-index scale/lock/heap assertions, settled readback and concurrent reopen.
+
+Fuzz campaign: `go test ./internal/gitops -run '^$' -fuzz
+'^FuzzChangeTrailersWriterRoundTrip$' -fuzztime=30s -parallel=1` **exit 0**,
+`sa9b-r2-fuzz.log` (10 seeds plus mutations, 12 completed executions; no claim
+of exhaustive coverage). The compiled deployed `3f77a88` Store test
+`TestRound2DeployedReopensMigratedSchema` **exit 0**, `sa9b-r2-rollback.log`,
+uses a detached checkout and external overlay at `~/.cache/sa9b-r2-*`. It applies
+the exact revised 006 DDL plus ledger entry in a transaction on an isolated test
+schema, closes the original connection, then twice reopens, appends and loads
+legacy events with both new indexes still present. This verifies schema rollback
+compatibility, not old-worker decoding of newly activated event types.

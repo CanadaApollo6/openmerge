@@ -1264,6 +1264,24 @@ exclusively. After a downgrade from a higher depth, in-flight speculative intent
 keep emitting cancellation events until they drain.
 Pending intents survive snapshot encode/decode. Historical run
 ledgers are reconstructed from journals, not stored unboundedly in snapshots.
+Stage A 9b migration 006 is an unreleased, transactional startup migration.
+It builds two partial expression indexes for landing-decision batch/attempt and
+exact eligibility-read identity. `CREATE INDEX` is non-concurrent: its ShareLock
+blocks journal writes until the migration transaction commits. Apply it during
+the planned ADR 0009 period-B drain; trial class remains **Hold**, with no deploy
+before that drain. On an isolated synthetic journal containing equal numbers of
+decision and eligibility rows, both indexes together took 2.846 ms at 2,600 rows
+and 171.029 ms at 260,000 rows. These local measurements exclude lock waiting;
+size, payloads and contention affect deployment time. The events heap is not
+rewritten. DDL and the migration ledger roll back together on failure. The
+compiled deployed `3f77a88` Store can reopen the migrated schema and write/read
+legacy events; this does not authorize activating new event types with old workers.
+See [Stage A 9b evidence](research/stage-a-9b-evidence.md) for plans and checks.
+
+Retention of `landing_decision_recorded` and its exact referenced
+`approval_eligibility_observed` payload/read identity is **documentation-only**
+for now: 12a/later must enforce this obligation before enabling compaction.
+
 Store retention/compaction remains disabled; enabling it must preserve ledger
 history or explicitly define a retention window.
 

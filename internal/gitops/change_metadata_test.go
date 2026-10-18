@@ -164,39 +164,80 @@ func TestChangeTrailersBeforeCI(t *testing.T) {
 	}
 }
 
-// Exercise the production writer, including interpret-trailers' mixed final
-// paragraphs and the marker containing multiple authoritative member pairs.
-func TestChangeTrailersWriterParagraphShapes(t *testing.T) {
-	shapes := map[string]string{
-		"crlf-body":     "line one\r\n\r\nline two\r\n",
-		"crlf-message":  "First\r\n\r\nSecond\r\nSigned-off-by: A\r\n",
-		"mixed-prose":   "Fixes the thing\nSigned-off-by: A",
-		"trailer-like":  "See also: other\nSigned-off-by: A <a@example.test>",
-		"folded":        "Reviewed-by: Some Person\n <person@example.test>",
-		"empty-signoff": "Signed-off-by:",
+// Each input passes through all real writers and the strict reader, including
+// a non-final batch member (which has no batch trailer to normalize placement).
+func FuzzChangeTrailersWriterRoundTrip(f *testing.F) {
+	for _, shape := range []string{
+		"Body\n\n# trailing comment", "Body\n\n# comment\n\n# last\n\n",
+		"line one\r\n\r\nline two\r\n", "Fixes the thing\nSigned-off-by: A",
+		"See also: other\nSigned-off-by: A <a@example.test>",
+		"Reviewed-by: Some Person\n <person@example.test>", "Signed-off-by:",
+		"OpenMerge-Change: forged\n folded\n\nBody\n\nOpenMerge-Batch: forged",
+		"--- patch\n\n# comment", "",
+	} {
+		f.Add(shape)
 	}
-	for _, method := range []forge.MergeMethod{forge.Squash, forge.Merge, forge.Rebase, forge.FastForward} {
-		for name, shape := range shapes {
-			t.Run(string(method)+"/"+name, func(t *testing.T) {
+	f.Fuzz(func(t *testing.T, shape string) {
+		// Git commit messages cannot contain NUL; the reader supports LF and CRLF,
+		// not lone CR. Bound fixture size so fuzzing spends its time on placement.
+		if len(shape) > 4096 || strings.ContainsRune(shape, 0) || strings.Contains(strings.ReplaceAll(shape, "\r\n", ""), "\r") {
+			t.Skip()
+		}
+		for _, method := range []forge.MergeMethod{forge.Squash, forge.Merge, forge.Rebase, forge.FastForward} {
+			t.Run(string(method), func(t *testing.T) {
 				f := newFixture(t)
-				prs := slices.Clone(f.prs[:1])
-				prs[0].HeadSHA = f.commit(f.base, "Contributor subject\n\n"+shape, map[string]string{"shape": name})
-				prs[0].Metadata = &forge.ChangeMetadata{ChangeID: "chg1_" + strings.Repeat("a", 64), Revision: 1}
-				gitCommand(t, f.source, "", nil, "push", "--force", f.remote, prs[0].HeadSHA+":"+headRef(prs[0].Number))
-				f.g.cfg.PullRequest = func(context.Context, forge.RepoRef, int) (forge.PullRequest, error) {
-					return forge.PullRequest{Number: prs[0].Number, HeadSHA: prs[0].HeadSHA, Title: "Shape", Body: shape, HeadBranch: "shape", Author: "Contributor", AuthorEmail: "contributor@example.test"}, nil
+				prs := slices.Clone(f.prs[:2])
+				parent := f.base
+				for i := range prs {
+					if method != forge.FastForward {
+						parent = f.base
+					}
+					parent = f.commit(parent, "Contributor subject\n\n"+shape, map[string]string{fmt.Sprintf("shape-%d", i): "content"})
+					prs[i].HeadSHA = parent
+					prs[i].Metadata = &forge.ChangeMetadata{ChangeID: "chg1_" + strings.Repeat(fmt.Sprint(i+1), 64), Revision: uint64(i + 1)}
+					gitCommand(t, f.source, "", nil, "push", "--force", f.remote, parent+":"+headRef(prs[i].Number))
+				}
+				f.g.cfg.PullRequest = func(_ context.Context, _ forge.RepoRef, n int) (forge.PullRequest, error) {
+					return forge.PullRequest{Number: n, HeadSHA: prs[n-1].HeadSHA, Title: "Shape", Body: shape, HeadBranch: "shape", Author: "Contributor", AuthorEmail: "contributor@example.test"}, nil
 				}
 				tested := f.build(method, prs, "shapes")
-				message, err := f.g.ReadCommitMessage(t.Context(), testRepo, tested)
-				must(t, err)
-				got, err := forge.ParseChangeTrailers(message)
-				must(t, err)
-				if len(got) != 1 || got[0].ChangeID != prs[0].Metadata.ChangeID || got[0].Revision != 1 || len(got[0].Labels) != 0 {
-					t.Fatalf("writer/reader mismatch: %v\n%s", got, message)
+				f.fetch(tested)
+				generated := strings.Fields(gitCommand(t, f.source, "", nil, "rev-list", "--first-parent", "--reverse", f.base+".."+tested))
+				if method == forge.FastForward {
+					generated = []string{tested}
+				}
+				for i, sha := range generated {
+					message, err := f.g.ReadCommitMessage(t.Context(), testRepo, sha)
+					must(t, err)
+					got, err := forge.ParseChangeTrailers(message)
+					must(t, err)
+					expected := []*forge.ChangeMetadata{prs[i%2].Metadata}
+					if method == forge.FastForward {
+						expected = []*forge.ChangeMetadata{prs[0].Metadata, prs[1].Metadata}
+					}
+					if len(got) != len(expected) {
+						t.Fatalf("writer/reader count mismatch: %v\n%s", got, message)
+					}
+					for j, m := range got {
+						actual, err := m.Trailers()
+						must(t, err)
+						want, err := expected[j].Trailers()
+						must(t, err)
+						if !slices.Equal(actual, want) {
+							t.Fatalf("writer/reader mismatch: %v != %v\n%s", actual, want, message)
+						}
+					}
+					batch := ""
+					if i == len(generated)-1 {
+						batch = "shapes"
+					}
+					if forge.ParseBatchMessage(message) != batch || batch != "" && !strings.HasSuffix(strings.TrimSpace(message), "OpenMerge-Batch: "+batch) {
+						t.Fatalf("batch not final: %s", message)
+					}
 				}
 			})
 		}
-	}
+	})
 }
 
 func TestReadCommitMessageCacheOnly(t *testing.T) {

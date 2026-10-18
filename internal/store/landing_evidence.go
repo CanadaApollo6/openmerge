@@ -18,15 +18,14 @@ type LandingEvidence struct {
 
 // LandingDecisionEvidence reads at most 128 member decisions and their pinned
 // eligibility observations. These two event types must survive any compaction.
-// SQL filters by indexed event type before decoding, never replaying a journal.
+// SQL selects indexed decision/read identities before decoding, never replaying a journal.
 func (s *Store) LandingDecisionEvidence(ctx context.Context, q QueueID, batch, attempt string) ([]LandingEvidence, error) {
 	if batch == "" || attempt == "" {
 		return nil, fmt.Errorf("batch and attempt required")
 	}
 	var result []LandingEvidence
 	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT payload FROM events WHERE queue_id=$1 AND type='landing_decision_recorded'
-   AND payload->'data'->>'batch_id'=$2 AND payload->'data'->>'attempt_id'=$3 ORDER BY id LIMIT 129`, q, batch, attempt)
+		rows, err := tx.Query(ctx, landingDecisionEvidenceSQL, q, batch, attempt)
 		if err != nil {
 			return err
 		}
@@ -55,9 +54,7 @@ func (s *Store) LandingDecisionEvidence(ctx context.Context, q QueueID, batch, a
 			evidence := LandingEvidence{Decision: d}
 			if d.Approval != nil {
 				basis := d.Approval.Basis
-				rows, err := tx.Query(ctx, `SELECT payload FROM events WHERE queue_id=$1 AND type='approval_eligibility_observed'
-     AND payload->'data'->'basis'->>'change_id'=$2 AND payload->'data'->'basis'->>'read_id'=$3
-     AND payload->'data'->'basis'->>'revision'=$4 AND payload->'data'->'basis'->>'head'=$5 ORDER BY id LIMIT 2`,
+				rows, err := tx.Query(ctx, eligibilityReadEvidenceSQL,
 					q, string(basis.ChangeID), d.Approval.EligibilityReadID, fmt.Sprint(basis.Revision), basis.Head)
 				if err != nil {
 					return err
@@ -91,3 +88,11 @@ func (s *Store) LandingDecisionEvidence(ctx context.Context, q QueueID, batch, a
 	})
 	return result, err
 }
+
+// Keep these expressions identical to migration 006's partial index keys.
+const landingDecisionEvidenceSQL = `SELECT payload FROM events WHERE queue_id=$1 AND type='landing_decision_recorded'
+   AND payload->'data'->>'batch_id'=$2 AND payload->'data'->>'attempt_id'=$3 ORDER BY id LIMIT 129`
+
+const eligibilityReadEvidenceSQL = `SELECT payload FROM events WHERE queue_id=$1 AND type='approval_eligibility_observed'
+     AND payload->'data'->'basis'->>'change_id'=$2 AND payload->'data'->'basis'->>'read_id'=$3
+     AND payload->'data'->'basis'->>'revision'=$4 AND payload->'data'->'basis'->>'head'=$5 ORDER BY id LIMIT 2`
