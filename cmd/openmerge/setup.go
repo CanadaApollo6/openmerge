@@ -19,11 +19,13 @@ import (
 
 const setupUsage = `Usage:
   openmerge setup github [--owner ORG | --user] [--repo owner/name] [--name NAME] [--config-dir DIR] [--webhook-url URL]
+  openmerge setup permissions --app-id ID --installation-id ID --private-key FILE
   openmerge setup rulesets --repo owner/name (--app-id ID | --config-dir DIR) [--apply]
   openmerge setup import-protection --repo owner/name [--base BRANCH...] [--accept ID...] [--json] [--out FILE]
 
 App setup defaults to the signed-in personal account and polling (webhooks disabled).
 The manifest requests Actions read/write for optional CI retries and cancellation.
+Permissions diagnostics inspect the installed token grant without changing App settings.
 The config directory must not exist; defaults to $XDG_CONFIG_HOME/openmerge/<slug>/.
 Rulesets require GITHUB_TOKEN from a repository admin, with Administration read
 for inspection or write for --apply. Without --apply, only a preview is printed.
@@ -47,6 +49,8 @@ func runSetup(args []string, stdout, stderr io.Writer) int {
 	var rules github.RulesOptions
 	var protection github.ImportOptions
 	var user bool
+	var installation int64
+	var privateKey string
 	var configDir string
 	switch args[0] {
 	case "github":
@@ -62,6 +66,10 @@ func runSetup(args []string, stdout, stderr io.Writer) int {
 		flags.Func("accept", "policy relaxation item ID (repeatable; cannot waive installation prerequisites)", func(value string) error { protection.Accept = append(protection.Accept, value); return nil })
 		flags.BoolVar(&protection.JSON, "json", false, "print the versioned JSON report")
 		flags.StringVar(&protection.Out, "out", "", "write proposed configuration fragments to a local file")
+	case "permissions":
+		flags.Int64Var(&rules.AppID, "app-id", 0, "App ID (not installation ID)")
+		flags.Int64Var(&installation, "installation-id", 0, "installation ID to inspect")
+		flags.StringVar(&privateKey, "private-key", "", "RSA PEM key path")
 	case "rulesets":
 		flags.StringVar(&rules.Repo, "repo", "", "repository owner/name")
 		flags.Int64Var(&rules.AppID, "app-id", 0, "App ID (not installation ID)")
@@ -100,6 +108,26 @@ func runSetup(args []string, stdout, stderr io.Writer) int {
 		}
 		if err == nil && !report.Ready {
 			err = errors.New("protection import needs attention: accept every weaker/unsupported item and resolve all installation blockers")
+		}
+	case "permissions":
+		ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		defer cancel()
+		if rules.AppID <= 0 || installation <= 0 || privateKey == "" {
+			_, _ = fmt.Fprintln(stderr, "permissions requires positive --app-id, --installation-id and --private-key")
+			return 2
+		}
+		var key []byte
+		key, err = os.ReadFile(privateKey)
+		if err == nil {
+			var app *github.App
+			app, err = github.New(github.Config{AppID: rules.AppID, PrivateKey: key})
+			if err == nil {
+				var driver *github.Driver
+				driver, err = app.Installation(ctx, installation)
+				if err == nil {
+					err = driver.DiagnoseInstallationPermissions(ctx, stdout)
+				}
+			}
 		}
 	case "rulesets":
 		if configDir != "" {

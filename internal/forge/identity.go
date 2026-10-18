@@ -75,5 +75,8 @@ type IdentityReader interface {
 	// WriteGrant authenticates author.ID against the permission response's ID.
 	// On a mismatch it returns the observed identity with ErrIdentityMismatch;
 	// callers must discard any grant on error. A missing author ID is invalid.
+	// HTTP 404 (including an inaccessible repo or absent collaborator) is unknown,
+	// returning ErrIdentityUnavailable, never a successful known-empty permission.
+	// A successful non-writing permission must come from an identity-bound response.
 	WriteGrant(context.Context, RepoRef, UserIdentity) (WriteGrant, error)
 }

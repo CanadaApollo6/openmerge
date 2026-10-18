@@ -132,7 +132,11 @@ func (f *Forge) WriteGrant(ctx context.Context, repo forge.RepoRef, author forge
 		return forge.WriteGrant{}, forge.ErrIdentityUnavailable
 	}
 	user := f.identities.users[strings.ToLower(author.Login)]
-	grant := forge.WriteGrant{User: user, Permission: f.identities.grants[repo][user.ID]}
+	permission, known := f.identities.grants[repo][user.ID]
+	if !known {
+		return forge.WriteGrant{}, forge.ErrIdentityUnavailable
+	}
+	grant := forge.WriteGrant{User: user, Permission: permission}
 	if user.ID <= 0 || user.ID != author.ID {
 		return grant, forge.ErrIdentityMismatch
 	}

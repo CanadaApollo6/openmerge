@@ -22,7 +22,7 @@ func TestInstallationPermissionsUseActualGrantAndRenewWithToken(t *testing.T) {
 	}
 	problems, warnings, err := f.driver.ValidateInstallationPermissions(t.Context())
 	must(t, err)
-	if len(problems) != 2 || len(warnings) != 7 {
+	if len(problems) != 2 || len(warnings) != 6 {
 		t.Fatalf("landing vs other deficits: problems=%v warnings=%v", problems, warnings)
 	}
 	for _, name := range []string{"contents: write", "workflows: write"} {
@@ -35,7 +35,7 @@ func TestInstallationPermissionsUseActualGrantAndRenewWithToken(t *testing.T) {
 	}
 	problems, warnings, err = f.driver.ValidateInstallationPermissions(t.Context())
 	must(t, err)
-	if len(problems) != 2 || len(warnings) != 7 {
+	if len(problems) != 2 || len(warnings) != 6 {
 		t.Fatal("grant changed before token renewal")
 	}
 	f.clock = f.clock.Add(56 * time.Minute)
@@ -62,7 +62,7 @@ func TestMissingPermissionsResponseIsNotAnImplicitGrant(t *testing.T) {
 	}
 	problems, warnings, err := f.driver.ValidateInstallationPermissions(t.Context())
 	must(t, err)
-	if len(problems) != 2 || len(warnings) != 7 {
+	if len(problems) != 2 || len(warnings) != 6 {
 		t.Fatalf("missing grant response silently accepted: %v %v", problems, warnings)
 	}
 }

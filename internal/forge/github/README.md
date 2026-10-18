@@ -180,8 +180,14 @@ Required App repository permissions:
 Setup also requests organization **Members: read** (`members: read`) for the
 dormant identity/team capability. Existing Apps and installations must accept
 that addition; [the operating guide](../../../docs/operating.md#organization-membership-permission-stage-a-prerequisite)
-documents adoption and the live trial's permission freeze. Missing members read
-is a warning and does not block unrelated queues.
+documents adoption and the live trial's permission freeze. `members: read` is
+needed only for organization team owners or groups in approval policy; see the
+operating guide. `openmerge setup permissions --app-id ID --installation-id ID
+--private-key FILE` diagnoses the actual installed grant. Only setup diagnostics
+and the dormant `ValidateTeamPolicyPermissions` hook inspect this optional grant.
+PR 11a must call the hook only for effective policies referencing team owners or
+groups. The server's unconditional permission check excludes it, so unrelated
+queues receive no new warning or block.
 
 All comment posting goes through `Driver.Comment`, including `MarkLanded`.
 It uses `POST /repos/{owner}/{repo}/issues/{issue_number}/comments` for PR threads;
@@ -197,7 +203,11 @@ other missing grants are WARN diagnostics. An omitted permission is not a grant.
 
 `IdentityReader.WriteGrant` keeps the permission response's user ID and verifies
 it against the supplied review/comment author ID, failing closed on missing or
-mismatched IDs. `ResolveUser` reports user, bot, App, or unknown account kind;
+mismatched IDs. HTTP 404 returns an error wrapping `forge.ErrIdentityUnavailable`
+(and preserves `APIError`), matching the fake's unconfigured repository/user grant:
+it means unknown, never a successful known-empty permission. PR 11a can report
+an unavailable lookup; only an identity-bound successful response can establish
+a known denial. `ResolveUser` reports user, bot, App, or unknown account kind;
 GitHub App bot users remain bots, rather than being guessed from login strings.
 `ResolveTeam` pins organization and team IDs. `TeamMembers` reads all roles by
 those IDs, including [members of child teams](https://docs.github.com/en/rest/teams/members#list-team-members),

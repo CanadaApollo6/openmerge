@@ -3,6 +3,7 @@ package github
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -117,7 +118,12 @@ func (d *Driver) WriteGrant(ctx context.Context, repo forge.RepoRef, author forg
 	}
 	level, _, err := d.client.Repositories.GetPermissionLevel(identityContext(ctx), owner, name, author.Login)
 	if err != nil {
-		return forge.WriteGrant{}, safeError(err)
+		normalized := safeError(err)
+		var api *APIError
+		if errors.As(normalized, &api) && api.StatusCode == 404 {
+			return forge.WriteGrant{}, fmt.Errorf("%w: %w", forge.ErrIdentityUnavailable, normalized)
+		}
+		return forge.WriteGrant{}, normalized
 	}
 	grant := forge.WriteGrant{User: userIdentity(level.GetUser()), Permission: level.GetPermission()}
 	if grant.User.ID <= 0 || grant.User.ID != author.ID {

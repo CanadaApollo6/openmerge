@@ -44,7 +44,7 @@ func TestIdentityFailuresRemainUnknown(t *testing.T) {
 	if _, err := f.ResolveTeam(t.Context(), "acme/inaccessible"); err == nil {
 		t.Fatal("missing team resolved")
 	}
-	if grant, err := f.WriteGrant(t.Context(), forge.RepoRef{Path: "acme/other"}, user); err != nil || grant.CanWrite(user.ID) {
+	if grant, err := f.WriteGrant(t.Context(), forge.RepoRef{Path: "acme/other"}, user); !errors.Is(err, forge.ErrIdentityUnavailable) || grant.CanWrite(user.ID) {
 		t.Fatalf("grant crossed repository boundary: %+v, %v", grant, err)
 	}
 }

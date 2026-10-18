@@ -1,6 +1,7 @@
 package github
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"strings"
@@ -26,13 +27,47 @@ func TestMembersReadMissingInstalledGrantDoesNotBlockLegacyQueues(t *testing.T) 
 	}
 	problems, warnings, err := f.driver.ValidateInstallationPermissions(t.Context())
 	must(t, err)
-	if len(problems) != 0 || len(warnings) != 1 || !strings.Contains(warnings[0], "members: read") {
+	if len(problems) != 0 || len(warnings) != 0 {
 		t.Fatalf("missing organization grant blocked unrelated queues: %v %v", problems, warnings)
 	}
 	allowed, err := f.driver.CanWrite(t.Context(), testRepo, "writer")
 	must(t, err)
 	if !allowed {
 		t.Fatal("legacy permission check changed")
+	}
+}
+
+func TestSetupDiagnosticsReportMissingMembersGrant(t *testing.T) {
+	f := newAPI(t) // The installed-token fixture has every legacy grant, but no members grant.
+	var out bytes.Buffer
+	must(t, f.driver.DiagnoseInstallationPermissions(t.Context(), &out))
+	want := "WARN: installed App missing permission members: read (granted: none); needed only for organization team owners or groups in approval policy; see the operating guide\n"
+	if out.String() != want {
+		t.Fatalf("setup diagnostics = %q; want %q", out.String(), want)
+	}
+}
+
+func TestTeamPolicyPermissionHookUsesInstalledGrant(t *testing.T) {
+	for _, access := range []string{"", "read", "write", "admin"} {
+		t.Run(access, func(t *testing.T) {
+			f := newAPI(t)
+			f.override = func(w http.ResponseWriter, r *http.Request) bool {
+				if !strings.HasSuffix(r.URL.Path, "/access_tokens") {
+					return false
+				}
+				token := f.object("installation_token")
+				token["token"], token["expires_at"] = "secret-team-policy", f.clock.Add(time.Hour).Format(time.RFC3339)
+				token["permissions"].(map[string]any)["members"] = access
+				w.WriteHeader(201)
+				f.json(w, token)
+				return true
+			}
+			problems, warnings, err := f.driver.ValidateTeamPolicyPermissions(t.Context())
+			must(t, err)
+			if len(problems) != 0 || (len(warnings) != 0) != (access == "") {
+				t.Fatalf("members=%q: problems=%v warnings=%v", access, problems, warnings)
+			}
+		})
 	}
 }
 

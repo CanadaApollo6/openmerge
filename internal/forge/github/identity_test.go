@@ -49,18 +49,21 @@ func TestIdentityContract(t *testing.T) {
 				}
 				result := []map[string]any{}
 				for _, user := range members[start:end] {
-					item := userJSON(user)
-					// A child-team member and a maintainer both belong to the
-					// effective set; no extra hierarchy reads are required.
-					item["inherited"] = user.ID == 33
-					item["role"] = "maintainer"
-					result = append(result, item)
+					// GitHub documents child-team inclusion for this endpoint.
+					// This fixture pins role=all and consumes the full returned set;
+					// it does not independently test GitHub's hierarchy expansion.
+					result = append(result, userJSON(user))
 				}
 				f.json(w, result)
 			case strings.HasPrefix(path, "repos/acme/project/collaborators/") && strings.HasSuffix(path, "/permission"):
 				login := strings.TrimSuffix(strings.TrimPrefix(path, "repos/acme/project/collaborators/"), "/permission")
 				user := users[strings.ToLower(login)]
-				f.json(w, map[string]any{"user": userJSON(user), "permission": grants[user.ID]})
+				permission, known := grants[user.ID]
+				if !known {
+					f.apiError(w, 404, "Not Found")
+				} else {
+					f.json(w, map[string]any{"user": userJSON(user), "permission": permission})
+				}
 			default:
 				return false
 			}
@@ -163,6 +166,9 @@ func TestIdentityGrantRevalidationNeverUsesStalePermission(t *testing.T) {
 		grant, err = f.driver.WriteGrant(t.Context(), testRepo, author)
 		if err == nil || grant.CanWrite(author.ID) {
 			t.Fatalf("HTTP %d reused a cached grant: %+v, %v", code, grant, err)
+		}
+		if code == 404 && !errors.Is(err, forge.ErrIdentityUnavailable) {
+			t.Fatalf("HTTP 404 must be unknown: %v", err)
 		}
 	}
 	status, responseID = 200, 0

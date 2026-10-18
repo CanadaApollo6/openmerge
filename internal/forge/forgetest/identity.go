@@ -63,6 +63,13 @@ func RunIdentityReader(t *testing.T, newEnv func(*testing.T) IdentityEnv) {
 			t.Fatalf("known-empty membership: %+v, %v", members, err)
 		}
 	})
+	t.Run("missing-grant-is-unknown", func(t *testing.T) {
+		e := setup(t)
+		grant, err := e.Reader.WriteGrant(t.Context(), e.Repo, bot)
+		if !errors.Is(err, forge.ErrIdentityUnavailable) || grant.CanWrite(bot.ID) {
+			t.Fatalf("missing grant must be unknown, not known-empty: %+v, %v", grant, err)
+		}
+	})
 	t.Run("rename-or-reassignment-between-reads", func(t *testing.T) {
 		e := setup(t)
 		// This identity represents a review/comment author read before rename.
@@ -107,6 +114,7 @@ func RunIdentityReader(t *testing.T, newEnv func(*testing.T) IdentityEnv) {
 			t.Fatalf("missing author ID authorized: %+v, %v", grant, err)
 		}
 		e.SetUser(missing)
+		e.SetGrant(0, "write")
 		grant, err = e.Reader.WriteGrant(t.Context(), e.Repo, author)
 		if !errors.Is(err, forge.ErrIdentityMismatch) || grant.CanWrite(author.ID) {
 			t.Fatalf("missing response ID authorized: %+v, %v", grant, err)

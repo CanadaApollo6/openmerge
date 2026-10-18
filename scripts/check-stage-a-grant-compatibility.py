@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Export synthetic legacy journals, then compare every revision's next actions.
 
-Run under mise with a clean baseline checkout and an empty evidence directory:
-  mise exec -- python3 scripts/check-stage-a-identity-compatibility.py BASELINE OUT
+Run under mise with clean candidate and baseline checkouts and an empty evidence directory:
+  mise exec -- python3 scripts/check-stage-a-grant-compatibility.py BASELINE OUT
 No database, credentials, GitHub API, or live journal is used. Both binaries
 replay exactly the same exported journal at depths 1 and 4.
 """
@@ -17,7 +17,6 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE = Path(sys.argv[1]).resolve()
 OUT = Path(sys.argv[2]).resolve()
-OUT.mkdir(parents=True, exist_ok=False)
 PROBE = r'''package sim
 import (
  "crypto/sha256"
@@ -85,6 +84,12 @@ def run(args, cwd, env=None):
     return result.stdout
 
 
+for root in (BASELINE, ROOT):
+    if run(["git", "status", "--porcelain=v1", "--untracked-files=all"], root).strip():
+        raise SystemExit(f"refusing dirty input tree: {root}")
+if (BASELINE / "internal/queue/wire.go").read_bytes() != (ROOT / "internal/queue/wire.go").read_bytes():
+    raise SystemExit("internal/queue/wire.go differs from baseline")
+OUT.mkdir(parents=True, exist_ok=False)
 probe = OUT / "identity_probe_test.go"
 probe.write_text(PROBE)
 binaries = {}
@@ -92,7 +97,7 @@ for name, root in [("old", BASELINE), ("new", ROOT)]:
     overlay = OUT / f"{name}-overlay.json"
     overlay.write_text(json.dumps({"Replace": {str(root / "internal/sim/stage_a_identity_probe_test.go"): str(probe)}}))
     binary = OUT / f"{name}.test"
-    run(["go", "test", "-c", "-overlay", str(overlay), "-o", str(binary), "./internal/sim"], root)
+    run(["go", "test", "-trimpath", "-buildvcs=false", "-ldflags=-X main.version=stage-a-3a-evidence", "-c", "-overlay", str(overlay), "-o", str(binary), "./internal/sim"], root)
     binaries[name] = binary
     print(f"{name} source={run(['git', 'rev-parse', 'HEAD'], root).strip()} binary-sha256={hashlib.sha256(binary.read_bytes()).hexdigest()}", flush=True)
 
@@ -110,4 +115,4 @@ print(f"every-revision replay: {len(records['new'])} identical records; sha256={
 for line in records["new"]:
     if "next=" not in line:
         print(line)
-print("no new event types: both binaries decoded the exact baseline journals; exit=0")
+print("internal/queue/wire.go unchanged; both binaries decoded the exact baseline journals; exit=0")
