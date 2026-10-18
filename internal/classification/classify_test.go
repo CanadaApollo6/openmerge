@@ -99,10 +99,17 @@ func TestRepeatedInputsAndVersionGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(string(raw)) != Version {
+	if strings.TrimSpace(string(raw)) != RetainedVersion {
 		t.Fatalf("version drift: %s", Version)
 	}
 }
+func TestBudgetVersionGolden(t *testing.T) {
+	raw, err := os.ReadFile("testdata/version-v8.txt")
+	if err != nil || strings.TrimSpace(string(raw)) != Version {
+		t.Fatal("v8 version drift", err)
+	}
+}
+
 func TestTruncatedAllDocs(t *testing.T) {
 	t.Run("truncated-all-docs", func(t *testing.T) {
 		i, d, g := basis(t, "docs/a.md")

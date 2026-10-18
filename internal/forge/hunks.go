@@ -2,6 +2,7 @@ package forge
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -23,6 +24,7 @@ func CollectDiffHunks(ctx context.Context, result *RevisionDiff, blobs map[strin
 	work, cancel := context.WithTimeout(ctx, MaxDiffHunksDuration)
 	defer cancel()
 	remaining := MaxDiffHunkBytes
+	escapedRemaining, retained := MaxDiffHunkEscapedBytes, 0
 	omitted := 0
 	slices.SortStableFunc(result.Files, func(a, b DiffFile) int {
 		key := func(f DiffFile) string {
@@ -121,12 +123,20 @@ func CollectDiffHunks(ctx context.Context, result *RevisionDiff, blobs map[strin
 				omit(DiffHunkLineLimit, span)
 				continue
 			}
-			if len(h.Text) > remaining {
+			if retained >= MaxDiffHunks {
+				omit(DiffHunkCountLimit, span)
+				continue
+			}
+			encoded, _ := json.Marshal(h.Text)
+			escaped := len(encoded) - 2
+			if len(h.Text) > remaining || escaped > escapedRemaining {
 				omit(DiffHunkByteLimit, span)
 				continue
 			}
 			f.Hunks = append(f.Hunks, h)
 			remaining -= len(h.Text)
+			escapedRemaining -= escaped
+			retained++
 			lines += bodyLines
 		}
 	}

@@ -149,7 +149,7 @@ func recomputeUser(f *ApprovalFacts, user string, revision ChangeRevision) {
 		for _, blocks := range [][]string{requests, withdrawals} {
 			for _, k := range blocks {
 				barrier := f.Sources[k].Event.Stance
-				if barrier.Source.DismissedReviewID != "" && a.Source.Channel != cp.NativeReview {
+				if barrier.Source.DismissedReviewID != "" && (a.Source.Channel != cp.NativeReview || a.Source.Sequence > dismissalReviewSequence(barrier)) {
 					continue
 				}
 				if !supersedes(a, barrier) {

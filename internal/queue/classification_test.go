@@ -54,7 +54,12 @@ func TestClassificationWireAndVariants(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	golden, err := os.ReadFile("testdata/wire/v1/variants/classified_facets_v3.json")
+	if os.Getenv("UPDATE_7A") == "1" {
+		if err := os.WriteFile("testdata/wire/v1/variants/classified_v8.json", raw, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	golden, err := os.ReadFile("testdata/wire/v1/variants/classified_v8.json")
 	if err != nil || !bytes.Equal(raw, golden) {
 		t.Fatal("current golden drift", err)
 	}
@@ -184,6 +189,7 @@ func TestClassificationDecodesVersion3(t *testing.T) {
 	fields["Version"] = json.RawMessage(`3`)
 	delete(fields, "Classifications")
 	delete(fields, "ApprovalFacts")
+	delete(fields, "Receipts")
 	raw, _ = json.Marshal(fields)
 	s, err := DecodeSnapshot(raw)
 	if err != nil || s.classifications != nil {
@@ -365,10 +371,14 @@ func TestClassificationNestedWireAndSnapshotValues(t *testing.T) {
 			s := Apply(State{}, classificationEvent(t))
 			id := ChangeID(e.Evidence.Classification.Inputs.ChangeID)
 			s.classifications[id][1] = e
-			raw, err = EncodeSnapshot(s)
-			if err != nil {
-				t.Fatal(err)
+			if _, err = EncodeSnapshot(s); err == nil {
+				t.Fatal("invalid classification encoded")
 			}
+			good, _ := EncodeSnapshot(Apply(State{}, classificationEvent(t)))
+			var fields map[string]json.RawMessage
+			_ = json.Unmarshal(good, &fields)
+			fields["Classifications"], _ = json.Marshal(s.classifications)
+			raw, _ = json.Marshal(fields)
 			if _, err := DecodeSnapshot(raw); err == nil {
 				t.Fatal("invalid snapshot accepted")
 			}
@@ -377,9 +387,12 @@ func TestClassificationNestedWireAndSnapshotValues(t *testing.T) {
 }
 
 func TestClassificationHistoricalRenameAndObjectFormats(t *testing.T) {
-	for _, version := range []string{classification.HistoricalVersion, classification.PreviousVersion, classification.Version} {
+	for _, version := range []string{classification.HistoricalVersion, classification.PreviousVersion, classification.RetainedVersion, classification.Version} {
 		e := classificationEvent(t)
 		e.Evidence.Classification.Inputs.ClassifierVersion = version
+		if version != classification.Version {
+			e.Evidence.Governing.Semantics = "git-evidence-v7-bounded-omissions"
+		}
 		// facets-v1 mapped the forge unpaired single-side flag to Renamed=true.
 		e.Evidence.Classification.Files[0].Renamed = version == classification.HistoricalVersion
 		e.Evidence.Classification.Files[0].NewBlob = strings.Repeat("a", 64)

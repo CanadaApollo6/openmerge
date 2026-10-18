@@ -19,6 +19,8 @@ func Apply(s State, e Event) State {
 func apply(s State, e Event) State {
 	s.pruneWaitingGroups()
 	switch e := e.(type) {
+	case ApprovalReceiptRecorded:
+		return s.recordReceipt(e)
 	case ApprovalEligibilityObserved:
 		if !s.currentApprovalInputBasis(e.Basis) {
 			return s

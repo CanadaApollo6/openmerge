@@ -74,8 +74,8 @@ func validAttribute(token string) bool {
 	return attributeName.MatchString(name)
 }
 
-func parseAttributes(content string) attributesFile {
-	var out attributesFile
+func parseAttributes(content string) (out attributesFile) {
+	defer func() { out.diagnostics = boundedDiagnostics(out.diagnostics) }()
 	for line, text := range strings.Split(strings.TrimPrefix(content, "\ufeff"), "\n") {
 		// Git ignores overlong lines; ignoring an unset can expose an inherited
 		// generated mark. Preserve uncertainty instead, for every assignment.

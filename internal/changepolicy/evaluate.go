@@ -35,6 +35,9 @@ type Input struct {
 // changes, even for receipt-only requirements. Receipt records are copied.
 type RequirementResult struct {
 	Origin                   string
+	Path                     string
+	Side                     OwnerSide
+	PoolIDs                  []string
 	Requirement              Requirement
 	EligibleIDs, ApprovedIDs []string
 	Unresolved               bool
@@ -164,12 +167,14 @@ func Evaluate(policy Policy, in Input) Evaluation {
 		origin      string
 		requirement Requirement
 		pool        *IdentitySet
+		path        string
+		side        OwnerSide
 	}
 	var obligations []obligation
 	codeEvidenceErr, policyEvidenceErr := codeOwnerEvidence(c), policyOwnerEvidence(c)
 	if codeEvidenceErr != nil {
 		pool := IdentitySet{Reason: "owner_evidence_incoherent: " + codeEvidenceErr.Error()}
-		obligations = append(obligations, obligation{"code owners", Requirement{Selector: CodeOwners, Count: 1}, &pool})
+		obligations = append(obligations, obligation{origin: "code owners", requirement: Requirement{Selector: CodeOwners, Count: 1}, pool: &pool})
 	}
 	definite := false
 	for i, rule := range a.Rules {
@@ -200,7 +205,7 @@ func Evaluate(policy Policy, in Input) Evaluation {
 			}
 			if !c.InventoryComplete || !c.CodeOwnersKnown {
 				pool := IdentitySet{Reason: "code owners or inventory unresolved; split incomplete changes"}
-				obligations = append(obligations, obligation{origin + " code owners", r, &pool})
+				obligations = append(obligations, obligation{origin: origin + " code owners", requirement: r, pool: &pool})
 			}
 			for _, owner := range c.CodeOwners {
 				if owner.Status == OwnersUncovered || owner.Status == OwnersOwnerless {
@@ -215,7 +220,7 @@ func Evaluate(policy Policy, in Input) Evaluation {
 						pool.Reason = "code owner entry unresolved"
 					}
 				}
-				obligations = append(obligations, obligation{origin + " code owner: " + owner.Path + " (" + string(owner.Side) + ")", r, &pool})
+				obligations = append(obligations, obligation{origin: origin + " code owner: " + owner.Path + " (" + string(owner.Side) + ")", requirement: r, pool: &pool, path: owner.Path, side: owner.Side})
 			}
 		}
 	}
@@ -224,14 +229,14 @@ func Evaluate(policy Policy, in Input) Evaluation {
 	}
 	if policyEvidenceErr != nil {
 		pool := IdentitySet{Reason: "owner_evidence_incoherent: " + policyEvidenceErr.Error()}
-		obligations = append(obligations, obligation{"policy owners", Requirement{Selector: AnyWriter, Count: 1}, &pool})
+		obligations = append(obligations, obligation{origin: "policy owners", requirement: Requirement{Selector: AnyWriter, Count: 1}, pool: &pool})
 	} else if !c.InventoryComplete {
 		pool := IdentitySet{Reason: "incomplete inventory: split the change to resolve policy owners"}
-		obligations = append(obligations, obligation{"policy owners", Requirement{Selector: AnyWriter, Count: 1}, &pool})
+		obligations = append(obligations, obligation{origin: "policy owners", requirement: Requirement{Selector: AnyWriter, Count: 1}, pool: &pool})
 	} else if c.Label("policy") != False || len(c.PolicyOwners) > 0 {
 		if !c.PolicyOwnersKnown || len(c.PolicyOwners) == 0 {
 			pool := IdentitySet{Reason: "policy paths or effective owners are unresolved"}
-			obligations = append(obligations, obligation{"policy owners", Requirement{Selector: AnyWriter, Count: 1}, &pool})
+			obligations = append(obligations, obligation{origin: "policy owners", requirement: Requirement{Selector: AnyWriter, Count: 1}, pool: &pool})
 		}
 	}
 	for _, owner := range c.PolicyOwners {
@@ -245,7 +250,7 @@ func Evaluate(policy Policy, in Input) Evaluation {
 				pool.Reason = "policy path has no resolvable owners"
 			}
 		}
-		obligations = append(obligations, obligation{"owner: " + owner.Path, Requirement{Selector: AnyWriter, Count: 1}, &pool})
+		obligations = append(obligations, obligation{origin: "owner: " + owner.Path, requirement: Requirement{Selector: AnyWriter, Count: 1}, pool: &pool, path: owner.Path})
 	}
 	eligible := map[string]bool{}
 	approved := map[string]bool{}
@@ -256,7 +261,11 @@ func Evaluate(policy Policy, in Input) Evaluation {
 			value := policy.Groups[r.Group]
 			pool = &value
 		}
-		result := RequirementResult{Origin: obligation.origin, Requirement: r, EligibleIDs: []string{}, ApprovedIDs: []string{}}
+		result := RequirementResult{Path: obligation.path, Side: obligation.side, Origin: obligation.origin, Requirement: r, EligibleIDs: []string{}, ApprovedIDs: []string{}}
+		if pool != nil {
+			result.PoolIDs = slices.Clone(pool.IDs)
+			slices.Sort(result.PoolIDs)
+		}
 		if pool != nil && (!pool.Resolved || !pool.Fresh) {
 			result.Unresolved = true
 			result.Reason = pool.Reason

@@ -20,7 +20,7 @@ func classificationMode(mode uint32) bool {
 }
 func classificationReason(r forge.DiffFailureReason) bool {
 	switch r {
-	case forge.DiffInvalidObjectID, forge.DiffMissingObject, forge.DiffReadFailure, forge.DiffNoMergeBase, forge.DiffMultipleMergeBases, forge.DiffShallowHistory, forge.DiffAlteredHistory, forge.DiffAncestryLimit, forge.DiffFileLimit, forge.DiffByteLimit, forge.DiffUnpairedRename, forge.DiffHunksNotCollected, forge.DiffHunkLineLimit, forge.DiffHunkWorkLimit, forge.DiffHunkByteLimit, forge.DiffOmittedRangeLimit, forge.DiffNonText, forge.DiffSpecialMode, forge.DiffInvalidUTF8, forge.DiffInventoryIncomplete:
+	case forge.DiffInvalidObjectID, forge.DiffMissingObject, forge.DiffReadFailure, forge.DiffNoMergeBase, forge.DiffMultipleMergeBases, forge.DiffShallowHistory, forge.DiffAlteredHistory, forge.DiffAncestryLimit, forge.DiffFileLimit, forge.DiffByteLimit, forge.DiffUnpairedRename, forge.DiffHunksNotCollected, forge.DiffHunkLineLimit, forge.DiffHunkWorkLimit, forge.DiffHunkByteLimit, forge.DiffHunkCountLimit, forge.DiffOmittedRangeLimit, forge.DiffNonText, forge.DiffSpecialMode, forge.DiffInvalidUTF8, forge.DiffInventoryIncomplete:
 		return true
 	}
 	return false
@@ -61,7 +61,8 @@ var classificationVersions = map[string]struct {
 }{
 	classification.HistoricalVersion: {"git-evidence-v7-bounded-omissions", false},
 	classification.PreviousVersion:   {"git-evidence-v7-bounded-omissions", true},
-	classification.Version:           {"git-evidence-v7-bounded-omissions", true},
+	classification.RetainedVersion:   {"git-evidence-v7-bounded-omissions", true},
+	classification.Version:           {forge.DiffSemantics, true},
 }
 
 // Historical versions remain explicit: facets-v1 could record the old rename
@@ -74,6 +75,11 @@ func validateClassificationValues(e classification.Evidence) error {
 		return invalid()
 	}
 	semantics := version.diffSemantics
+	if semantics == forge.DiffSemantics {
+		if err := validateRetainedHunks(c); err != nil {
+			return err
+		}
+	}
 	if g.Semantics != semantics || !classificationCoverage(e.Inventory) || !classificationCoverage(e.Hunks) || !classificationCoverage(g.Coverage) {
 		return invalid()
 	}
@@ -167,7 +173,7 @@ func validateClassificationValues(e classification.Evidence) error {
 				if h.Count <= 0 {
 					return invalid()
 				}
-			case forge.DiffHunkLineLimit, forge.DiffHunkByteLimit:
+			case forge.DiffHunkLineLimit, forge.DiffHunkByteLimit, forge.DiffHunkCountLimit:
 				if h.Count != 0 || h.OldLines == 0 && h.NewLines == 0 || h.OldLines > 0 && h.OldStart == 0 || h.NewLines > 0 && h.NewStart == 0 {
 					return invalid()
 				}

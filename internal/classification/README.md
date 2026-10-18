@@ -187,3 +187,30 @@ Historical facets-v1 permits its original unpaired-rename flag; facets-v2/v3 che
 path-derived rename coherence. 11a must still enforce whole-record resource
 budgets and cross-check derivation against acquired evidence before activation.
 Workflow policy paths are only direct `.github/workflows/*.yml`/`*.yaml` files.
+
+### Stage A 7a persistence budgets
+
+v8 retains at most 4096 hunks and 4 MiB of JSON-escaped hunk text (plus the
+existing 2 MiB raw/200-line limits). Classification copies hunk evidence verbatim;
+v8 persistence validates those bounds and rejects excess without truncating.
+Historical versions retain their own replay meaning and fixture bytes.
+Parsers retain at most eight diagnostics per source file/owner entry, plus a
+`+N more` summary. Each retained diagnostic is capped at 1024 UTF-8 bytes, with an explicit
+truncation marker. At 256 governing probes, 8 diagnostics × 1024 bytes × 6
+JSON escaping contributes up to **12 MiB**, plus omission summaries and
+path prefixes. Path prefixes have their independent governing path budget
+and can repeat per diagnostic; the final byte admission gate covers them too. The roughly 36 MB
+owner-label maps, 4 MB raw last-entry text (up to 24 MB escaped), 5.8 MiB hunk
+subrecord, paths, memberships and resolver reasons do not all fit a snapshot.
+
+Encoding rejects classification above **16 MiB per change** and combined
+classification/approval/receipt evidence above **48 MiB per queue**, with typed
+`ClassificationSnapshotBudgetError` naming the rejected change. Final snapshots
+also enforce the decoder's **64 MiB** total limit. No evidence is silently
+re-truncated. `CheckClassificationAdmission` is the 11a pre-journal gate;
+11a must reject/roll back the affected admission, leaving the prior queue usable.
+The in-memory classification projection retains only the newest recorded revision
+per change; older revisions/generations remain in the event journal for audit.
+A late older revision cannot replace the newest projection. Compaction stays
+disconnected. The brief digest strips every Eligible.Reason and Fresh value;
+stable owner resolution/status values provide its reason binding.

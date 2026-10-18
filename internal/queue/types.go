@@ -60,6 +60,7 @@ type State struct {
 	Fence         string
 
 	// Dormant: remains nil on queues without approval classification events.
+	receipts        receiptProjection
 	classifications classifications
 	approvalFacts   approvalProjection
 	approvalWaits   map[ChangeID]ApprovalWait

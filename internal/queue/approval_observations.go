@@ -1,9 +1,6 @@
 package queue
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -101,16 +98,11 @@ type ChangeIntentObserved struct {
 }
 
 func (ChangeIntentObserved) queueEvent() {}
-func normalizeIntent(s string) string {
-	return strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\r", "\n"))
-}
 
 // Intent normalizes line endings and pins a domain-separated title/body digest.
 func Intent(b ApprovalBasis, title, body string) ChangeIntentObserved {
-	e := ChangeIntentObserved{Basis: b, Title: normalizeIntent(title), Body: normalizeIntent(body)}
-	raw, _ := json.Marshal([]string{"openmerge/intent/v1", e.Title, e.Body})
-	sum := sha256.Sum256(raw)
-	e.Digest = hex.EncodeToString(sum[:])
+	e := ChangeIntentObserved{Basis: b, Title: cp.NormalizeIntent(title), Body: cp.NormalizeIntent(body)}
+	e.Digest = cp.IntentDigest(e.Title, e.Body)
 	return e
 }
 

@@ -8,6 +8,7 @@ import (
 	"io"
 	"maps"
 	"reflect"
+	"slices"
 
 	"github.com/CanadaApollo6/openmerge/internal/classification"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
@@ -136,6 +137,14 @@ func (s State) classify(e ChangeClassified) State {
 	revisions := maps.Clone(s.classifications[id])
 	if revisions == nil {
 		revisions = make(map[ChangeRevision]ChangeClassified)
+	}
+	for r := range revisions {
+		if r > revision {
+			return s
+		}
+		if r < revision {
+			delete(revisions, r)
+		}
 	}
 	revisions[revision] = detachedClassification(e)
 	s.classifications[id] = revisions
@@ -275,4 +284,56 @@ func sameClassificationMeaning(a, b ChangeClassified) bool {
 	left.Inputs.ConfigBlob, right.Inputs.ConfigBlob = "", ""
 	left.Inputs.GoverningCommit, right.Inputs.GoverningCommit = "", ""
 	return reflect.DeepEqual(left, right) && len(classification.RefreshReasons(classification.SemanticInputs(a.Evidence), classification.SemanticInputs(b.Evidence), false, true)) == 0
+}
+
+// ClassificationSnapshotBudgetError identifies a change whose admission must
+// be rolled back by 11a. No evidence is truncated to meet a snapshot budget.
+type ClassificationSnapshotBudgetError struct {
+	ChangeID                ChangeID
+	ChangeBytes, QueueBytes int
+}
+
+func (e ClassificationSnapshotBudgetError) Error() string {
+	return fmt.Sprintf("classification snapshot admission rejected for %s: change=%d queue=%d bytes", e.ChangeID, e.ChangeBytes, e.QueueBytes)
+}
+
+// Classification and approvals share the 48 MiB reserve; legacy state keeps 16 MiB.
+func checkClassificationSnapshotBudget(p classifications, approvals approvalProjection, receipts receiptProjection) error {
+	total := 0
+	for id, records := range receipts {
+		raw, err := json.Marshal(records)
+		if err != nil {
+			return err
+		}
+		total += len(raw)
+		if len(raw) > maxApprovalChangeBytes {
+			return ClassificationSnapshotBudgetError{id, len(raw), total}
+		}
+	}
+	for _, f := range approvals {
+		raw, err := json.Marshal(f)
+		if err != nil {
+			return err
+		}
+		total += len(raw)
+	}
+	if total > maxApprovalQueueBytes {
+		return ClassificationSnapshotBudgetError{QueueBytes: total}
+	}
+	ids := make([]ChangeID, 0, len(p))
+	for id := range p {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	for _, id := range ids {
+		raw, err := json.Marshal(p[id])
+		if err != nil {
+			return err
+		}
+		total += len(raw)
+		if len(raw) > 16<<20 || total > maxApprovalQueueBytes {
+			return ClassificationSnapshotBudgetError{id, len(raw), total}
+		}
+	}
+	return nil
 }

@@ -200,7 +200,7 @@ func TestDismissalFallbackFirstObservationRecoveryAndRestart(t *testing.T) {
 	b := approvalBasis()
 	for _, source := range []forge.NativeTimeSource{forge.ReviewDismissalTime, forge.TimelineDismissalTime, forge.ObservationTimeFallback} {
 		for _, withBound := range []bool{true, false} {
-			blocker := dismissal(b, 10, source, b.At)
+			blocker := dismissal(b, 40, source, b.At)
 			if !withBound {
 				blocker.Stance.Source.TimeKnown = false
 				blocker.Stance.Source.Precision = cp.ObservationFallback
@@ -259,7 +259,9 @@ func TestSourceOrderingAndCrossChannelLatest(t *testing.T) {
 	s := Apply(Apply(approvalState(b), native(b, 20, cp.RequestChanges, b.At)), native(b, 10, cp.Approve, b.At.Add(time.Hour)))
 	assertKind(t, s, b, cp.RequestChanges)
 	// A latest native stance never acquires the receipt's intent binding.
-	s = Apply(Apply(approvalState(b), command(b, 10, cp.Approve, b.At)), native(b, 20, cp.Approve, b.At.Add(time.Minute)))
+	s, b, _, p, _ := decisionSetup(t, ownerPool(2))
+	receipt, _ := realReceipt(t, s, b, p, "10", b.At)
+	s = Apply(Apply(s, receipt), native(b, 20, cp.Approve, b.At.Add(time.Minute)))
 	v, _ := latest(s, b)
 	if v.Event.Stance.Receipt != nil {
 		t.Fatal("native copied receipt")
@@ -438,12 +440,11 @@ func TestDecisionExclusionsPermissionsUnknownAndConditionSet(t *testing.T) {
 }
 
 func TestReceiptOrderIntentEditDoesNotReviveNative(t *testing.T) {
-	// PR 7a supplies acceptance/wire records; these shared Stance values pin the
-	// fold/evaluator contract now, without adding a receipt command producer.
-	s, b, current, policy, fresh := decisionSetup(t, ownerPool(2))
+	// Actual acceptance records exercise the shared stance fold.
+	s, b, _, policy, fresh := decisionSetup(t, ownerPool(2))
 	policy.Approvals.Rules[0].Require.Receipt = true
-	receipt := command(b, 20, cp.Approve, b.At.Add(time.Minute))
-	*receipt.Stance.Receipt = current
+	receipt, binding := realReceipt(t, s, b, policy, "20", b.At.Add(time.Minute))
+	current := binding
 	s = Apply(s, receipt)
 	if e := s.evaluateApprovalsTest(policy, current, fresh, ownerPool(2)); !e.Allowed {
 		t.Fatal("current receipt failed", e)
@@ -518,6 +519,7 @@ func TestApprovalImmutableApplySnapshotReplayAndInertPlanner(t *testing.T) {
 		_ = json.Unmarshal(raw, &fields)
 		fields["Version"] = json.RawMessage(fmt.Sprint(version))
 		delete(fields, "ApprovalFacts")
+		delete(fields, "Receipts")
 		if version < 4 {
 			delete(fields, "Classifications")
 		}
@@ -673,6 +675,7 @@ func TestApprovalSnapshotRejectsCorruptBindingsAndMissingState(t *testing.T) {
 	var fields map[string]json.RawMessage
 	_ = json.Unmarshal(raw, &fields)
 	delete(fields, "ApprovalFacts")
+	delete(fields, "Receipts")
 	raw, _ = json.Marshal(fields)
 	if _, err := DecodeSnapshot(raw); err == nil {
 		t.Fatal("v5 missing projection accepted")
