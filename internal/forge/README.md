@@ -42,6 +42,16 @@ changepolicy):
   `ActingUserID` to the dismissal actor's ID when known (empty when unknown).
   Event/review IDs are independent namespaces; they are not interchangeable
   ordering counters. Keep source kind with the durable evidence.
+  Set `StanceSource.Time = Dismissal.Time.Time` (the time carried by
+  `Dismissal.Time`), never the reviewed review's submission time for withdrawal.
+  For reviews API `dismissed_at` (`ReviewDismissalTime`) or timeline
+  `review_dismissed.created_at` (`TimelineDismissalTime`), set `TimeKnown=true`,
+  `Precision=ExactTime` (the `TimePrecision` value) and
+  `UpperTimeBound=Dismissal.Time.UpperBound` (source time + one second).
+  The reviews API time takes precedence when both exist. For observation-time
+  fallback, set `TimeKnown=false`, `Precision=ObservationFallback` and
+  `UpperTimeBound=Dismissal.Time.UpperBound` (response Date + three seconds,
+  or zero when Date is missing/invalid); `Time` is response Date, not action time.
 - An authenticated issue-comment command uses channel `CommentCommand`, comment
   `ID`/`Sequence`, `Created.Time` and the comment author's stable ID. Acquisition
   itself performs no command parsing or revision attribution.
@@ -57,7 +67,11 @@ The GitHub reviews API normally omits dismissal time, so the reader joins
 `review_dismissed` timeline events by `dismissed_review.review_id`. Event ID,
 actor and creation time are distinct from the original review's ID, author and
 submission. A provider's explicit `dismissed_at`/`dismissed_by` extension is also
-accepted; timeline still supplies event identity. A readable complete timeline
+accepted; timeline still supplies event identity. Dismissal actors use the same
+positive-ID and valid-login checks as review/comment authors; invalid actors
+are unknown and cannot overwrite a valid actor. Conflicting valid actor IDs
+fail with `ErrNativeReviewsIncomplete`. A `ghost` login with a valid ID retains
+that source identity; a login alone cannot identify a deleted user. A readable complete timeline
 without an authoritative dismissal timestamp yields an explicit fallback.
 An unreadable timeline fails closed, even if the review supplied a time.
 

@@ -84,6 +84,9 @@ func nativePages[T any](ctx context.Context, d *Driver, path string, visit func(
 			return fmt.Errorf("%w: %w", forge.ErrNativeReviewsUnavailable, safeError(err))
 		}
 		if res.StatusCode != http.StatusOK || items == nil {
+			if page > 1 {
+				return fmt.Errorf("%w: %w", forge.ErrNativeReviewsIncomplete, forge.ErrNativeReviewsUnavailable)
+			}
 			return forge.ErrNativeReviewsUnavailable
 		}
 		date, _ := http.ParseTime(res.Header.Get("Date"))
@@ -172,7 +175,11 @@ func (d *Driver) NativeReviews(ctx context.Context, repo forge.RepoRef, number i
 		}
 		review := forge.NativeReview{ID: raw.ID, CommitID: raw.CommitID, Author: author, Submitted: nativeTime(raw.SubmittedAt, forge.ReviewSubmissionTime), State: state, Observation: obs}
 		if state == forge.ReviewDismissed {
-			evidence := &forge.NativeDismissal{ReviewID: raw.ID, Actor: userIdentity(raw.DismissedBy), Observation: obs, Time: nativeFallback(obs)}
+			actor, actorErr := nativeAuthor(raw.DismissedBy)
+			if actorErr != nil {
+				actor = forge.UserIdentity{Kind: forge.UnknownAccount}
+			}
+			evidence := &forge.NativeDismissal{ReviewID: raw.ID, Actor: actor, Observation: obs, Time: nativeFallback(obs)}
 			if !raw.DismissedAt.IsZero() {
 				evidence.Time = nativeTime(raw.DismissedAt, forge.ReviewDismissalTime)
 			}
@@ -206,8 +213,11 @@ func (d *Driver) NativeReviews(ctx context.Context, repo forge.RepoRef, number i
 					return forge.ErrNativeReviewsIncomplete
 				}
 				evidence.EventID = event.ID
-				if event.Actor != nil {
-					evidence.Actor = userIdentity(event.Actor)
+				if actor, err := nativeAuthor(event.Actor); err == nil {
+					if evidence.Actor.ID != 0 && evidence.Actor.ID != actor.ID {
+						return forge.ErrNativeReviewsIncomplete
+					}
+					evidence.Actor = actor
 				}
 				evidence.Observation = obs
 				if evidence.Time.Source != forge.ReviewDismissalTime {
@@ -231,6 +241,9 @@ func (d *Driver) NativeReviews(ctx context.Context, repo forge.RepoRef, number i
 			author, err := nativeAuthor(raw.User)
 			if err != nil || raw.ID <= 0 || raw.CreatedAt.IsZero() || source.kind == forge.ReviewComment && (raw.ReviewID <= 0 || raw.CommitID == "") {
 				return forge.ErrNativeReviewsUnavailable
+			}
+			if source.kind == forge.IssueComment {
+				raw.ReviewID, raw.CommitID = 0, ""
 			}
 			result.Comments = append(result.Comments, forge.NativeComment{ID: raw.ID, ReviewID: raw.ReviewID, CommitID: raw.CommitID, Author: author, Body: raw.Body, Kind: source.kind, Created: nativeTime(raw.CreatedAt, forge.CommentCreationTime), Observation: obs})
 			return nil
