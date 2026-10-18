@@ -86,7 +86,7 @@ class ComparisonTest(unittest.TestCase):
         fields = value["structural"]["value"]
         fields["approvalWaits"] = dict(type="map[queue.ChangeID]queue.ApprovalWait", kind="map", zero=True, nil=True, value={})
         self.assertIsNone(replay.compare_checkpoints([old], [json.dumps(value)], False)["first_state_divergence"])
-        for bad in (dict(type="map[queue.ChangeID]queue.ApprovalWait", kind="map", zero=False, nil=False, value={}), node(False), dict(type="map[queue.ChangeID]queue.ApprovalWait", kind="map", zero=False, nil=False, value={"change": node({})})):
+        for bad in (dict(type="map[queue.ChangeID]queue.ApprovalWait", kind="map", zero=False, nil=False, value={}), node(False), dict(type="map[queue.ChangeID]queue.ApprovalWait", kind="map", zero=False, nil=False, value={json.dumps(node("change"), sort_keys=True): node({})})):
             fields["approvalWaits"] = bad
             self.assertIsNotNone(replay.compare_checkpoints([old], [json.dumps(value)], False)["first_state_divergence"])
 
