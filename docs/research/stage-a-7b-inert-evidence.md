@@ -87,7 +87,38 @@ python3 scripts/check-live-journal-replay.py \
   --strict-state --out "$HOME/.cache/om-pr74-fix1-deployment-pair.json"
 ```
 
-Final code commit and required job results will be recorded after execution.
+Validated executable commit: `1caa10dda8f9c48b923d74373a3356a535e28db8`.
+The final follow-up commit changes only this evidence note.
+
+- `make check`: **exit 0**, zero lint issues, all race/short tests passed and
+  binary built as `1caa10d`. Queue 277.620s; serve 141.649s; status 16.366s.
+- `make test-sim-exits`: **exit 0**, 44.515s.
+- Compatibility vs origin/main: **exit 0**. All 17 legacy exits and 1,055
+  retry/default-digest records match. Stream hashes remain
+  `bc7c730e66e11a6b3ec3e2253e81061d49358d592cb673e634fac89bf41b26c6`
+  and `07ed2ecf13debd5d75c8424b222edfd740470c00f5fc2b4ae00183fdd9ce7b37`.
+- Strict deployment-pair replay: **exit 0**, gates 2/4 and verdict **PASS**.
+  All 2,159 action/structural-state/snapshot checkpoints match; 8,676 boundary
+  probes; derived determinism PASS; no non-allowlisted fields or divergence.
+  Mandatory preflight exited 0; synthetic comparison matched 7/7 checkpoints
+  and 15 probes. Baseline/candidate/repeat stream SHA-256:
+  `2f6e9bb374e85f5a18d95cde65ef187d9bc130f27ddb972a8f80f404c2576aeb`.
+  Effective config digest remains
+  `e58c893b8b3af7685dc07a086824b3bc1fc044456083d193f9566f8387cb58fc`;
+  `would_emit_config_applied` is false. Report:
+  `$HOME/.cache/om-pr74-fix1-deployment-pair.json`.
+
+Final logs: `om-pr74-fix1{,-sim,-compat,-replay}.log` under `$HOME/.cache`.
+The final main/branch-only fetch still returned main `2d68d6f`; no rebase was
+necessary. Earlier complete validation on `3c53a3f` also exited 0 for all four
+jobs (`om-pr74-fix1-pre-final*.log`), before tightening historical-check advice.
+An intermediate check was stopped after the new historical-failure regression
+failed (**exit 143**, `om-pr74-fix1-regression-interrupted.log`); the first edit
+had missed the executable condition. The next complete check exited **2**
+(`om-pr74-fix1-fixture-failure.log`) because an older terminal-check fixture
+lacked its now-required blocking context. After correcting that fixture, full
+brief/status race tests exited **0** (`om-pr74-brief-status-final.log`) before
+all four final jobs above. No other agent's process was stopped.
 Final focused integration `om-pr74-focused7.log`: **exit 0**, all five packages
 passed. `om-pr74-focused4.log` and the all-block-source/trust/rebase regression
 run `om-pr74-focused5.log` also exited **0**.
@@ -103,8 +134,8 @@ compatibility and replay **exit 0**; those results do not substitute for this ru
 All five v2 receipt vectors remain unchanged, as do v1 vectors and
 `internal/queue/testdata/brief-facts.json`. Presentation is excluded from
 canonical serialization; a rendering change cannot invalidate a receipt.
-All **88** wire fixtures match origin/main recursively. Sorted relative path +
-NUL + bytes SHA-256: `98c0d2fa8fd5aaf643e8eafafeeb6391c1b3f120984c702f2e091e6ea3c13f58`.
+All **88** wire fixtures match origin/main recursively. Sorted repo-relative path +
+NUL + bytes SHA-256: `ac1d5fa4f4bee6c65c28a52439fe868c5a8cc0635c9279f1bb73fbdb8dc8f9f9`.
 The independent receipt/wire comparisons exited **0**.
 
 ## Saved journal identity
