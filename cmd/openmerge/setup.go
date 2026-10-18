@@ -20,12 +20,17 @@ import (
 const setupUsage = `Usage:
   openmerge setup github [--owner ORG | --user] [--repo owner/name] [--name NAME] [--config-dir DIR] [--webhook-url URL]
   openmerge setup rulesets --repo owner/name (--app-id ID | --config-dir DIR) [--apply]
+  openmerge setup import-protection --repo owner/name [--base BRANCH...] [--accept ID...] [--json] [--out FILE]
 
 App setup defaults to the signed-in personal account and polling (webhooks disabled).
 The manifest requests Actions read/write for optional CI retries and cancellation.
 The config directory must not exist; defaults to $XDG_CONFIG_HOME/openmerge/<slug>/.
 Rulesets require GITHUB_TOKEN from a repository admin, with Administration read
 for inspection or write for --apply. Without --apply, only a preview is printed.
+Import-protection only makes GET requests; it also needs Contents, Checks and
+Commit statuses read. --out saves draft fragments locally. Exit 1 means a read
+failed or policy gaps/installation prerequisites remain; --accept only waives
+weaker/unsupported policy items, never installation prerequisites.
 `
 
 func runSetup(args []string, stdout, stderr io.Writer) int {
@@ -40,6 +45,7 @@ func runSetup(args []string, stdout, stderr io.Writer) int {
 	flags.Usage = func() { _, _ = io.WriteString(stderr, setupUsage) }
 	var manifest github.ManifestOptions
 	var rules github.RulesOptions
+	var protection github.ImportOptions
 	var user bool
 	var configDir string
 	switch args[0] {
@@ -50,6 +56,12 @@ func runSetup(args []string, stdout, stderr io.Writer) int {
 		flags.StringVar(&manifest.Name, "name", "", "App name (editable on GitHub)")
 		flags.StringVar(&manifest.ConfigDir, "config-dir", "", "new directory for credentials")
 		flags.StringVar(&manifest.WebhookURL, "webhook-url", "", "enable delivery to this public HTTPS URL")
+	case "import-protection":
+		flags.StringVar(&protection.Repo, "repo", "", "repository owner/name")
+		flags.Func("base", "additional concrete base branch (repeatable)", func(value string) error { protection.Bases = append(protection.Bases, value); return nil })
+		flags.Func("accept", "policy relaxation item ID (repeatable; cannot waive installation prerequisites)", func(value string) error { protection.Accept = append(protection.Accept, value); return nil })
+		flags.BoolVar(&protection.JSON, "json", false, "print the versioned JSON report")
+		flags.StringVar(&protection.Out, "out", "", "write proposed configuration fragments to a local file")
 	case "rulesets":
 		flags.StringVar(&rules.Repo, "repo", "", "repository owner/name")
 		flags.Int64Var(&rules.AppID, "app-id", 0, "App ID (not installation ID)")
@@ -72,9 +84,24 @@ func runSetup(args []string, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	var err error
-	if args[0] == "github" {
+	switch args[0] {
+	case "github":
 		err = github.SetupApp(ctx, manifest, stdout)
-	} else {
+	case "import-protection":
+		ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		defer cancel()
+		var report github.ProtectionReport
+		report, err = github.ImportProtection(ctx, protection, os.Getenv("GITHUB_TOKEN"))
+		if err == nil {
+			err = report.Write(stdout, protection.JSON)
+		}
+		if err == nil && protection.Out != "" {
+			err = os.WriteFile(protection.Out, []byte(report.ProposedConfig), 0o600)
+		}
+		if err == nil && !report.Ready {
+			err = errors.New("protection import needs attention: accept every weaker/unsupported item and resolve all installation blockers")
+		}
+	case "rulesets":
 		if configDir != "" {
 			if rules.AppID != 0 {
 				_, _ = fmt.Fprintln(stderr, "use either --app-id or --config-dir")

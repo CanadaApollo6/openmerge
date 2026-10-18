@@ -969,3 +969,161 @@ records its fixed ceiling, then clamps W under the new policy. Historical policy
 read or digest failures stop that transition. A previously serial queue carries
 W = 1 into a higher ceiling. Mixed old/new speculative workers cannot read the added bounds;
 drain old workers before upgrading.
+
+## Auditing protection before a policy-authority switch
+
+`openmerge setup import-protection` is a read-only audit usable with today's
+`github` policy authority. It makes only GET requests, uses no database, creates
+no refs and changes no GitHub settings. Use a **separate repository-admin**
+`GITHUB_TOKEN`, as for `setup rulesets`, with Administration read, Contents read,
+Checks read and Commit statuses read. Complete inherited bypass lists may require
+an organization owner. Team membership reads additionally need organization
+members visibility; unreadable memberships remain unacceptable authority blockers.
+A 403 or generic 404 on a required protection read is a permission error, never
+a clean partial report; only GitHub's explicit `Branch not protected` response establishes
+that classic protection is absent.
+
+```sh
+openmerge setup import-protection --repo OWNER/REPO
+openmerge setup import-protection --repo OWNER/REPO --json > protection-report.json
+openmerge setup import-protection --repo OWNER/REPO --base release/1.0 --out /tmp/proposed-openmerge.txt
+# After reviewing the report's exact stable IDs, repeat --accept for each gap:
+openmerge setup import-protection --repo OWNER/REPO --accept ITEM-ID --out /tmp/proposed-openmerge.txt
+```
+
+The report always includes the default branch and every existing base selected
+by the default-branch configuration, excluding `openmerge/` refs. Repeat `--base`
+to add concrete audit targets; it cannot hide configured bases or make an
+unconfigured default branch served. Configuration and governing CODEOWNERS are
+read at the default branch's pinned commit. Workflows and comparison CODEOWNERS
+are read separately from each served base's pinned tree. Concurrent branch or
+protection changes still require a fresh audit before switching.
+
+Each item has a stable ID, its base and source, a proposed configuration fragment,
+and an **equivalent**, **stricter**, **weaker** or **unsupported** classification.
+JSON format version 1 includes the same items, installation blockers, draft
+fragments and contributing-guide snippet. IDs include the base, source,
+classification and reported requirement details, including review counts and
+check App parameters. Changed details or wording invalidate prior acceptance;
+listing order does not. Re-audit after protection edits.
+`--out` saves the draft locally even when readiness is false; it does not commit
+or upload it. Merge its annotated, reconciled queue fragments into existing
+queues; they are not a replacement configuration to deploy verbatim.
+
+The report starts with readiness, blocker and unaccepted-gap counts. Unknown
+pull-request, required-status-check and classic protection fields are unsupported
+and name the unhandled key and raw value. Unknown ruleset conditions list every
+hidden rule and remain unwaivable blockers until their applicability is resolved.
+Dynamic producer names, unresolved reusable-workflow callers, path filters and missing
+queue-push evidence cannot establish equivalence. CODEOWNERS coverage remains
+"to verify at switch" even for plausible owner tokens: this audit does not
+resolve owner identities, team visibility or eligibility. Effective write
+authority expands readable team and built-in role memberships before intersecting
+restrictions; unresolved membership is a blocker that `--accept` cannot waive.
+Repository-role bypass IDs are maintain=2, write=4 and admin=5, independently of
+privilege ordering. Unknown/custom role IDs stay unresolved. Classic restrictions
+include administrators when `enforce_admins` is disabled; unreadable admin
+membership blocks authority verification.
+
+**The draft requires the release implementing ADR 0007 Stage A.** It uses that
+ADR's `approvals`, `groups` and `changes` keys; current releases reject them.
+Review counts use a snapshot of eligible repository writers in
+`groups.imported_reviewers`, with a count-bearing group requirement in
+`approvals.default` and the same requirement in a `paths: ["**"]` rule.
+Keep both: on a known-empty diff, `paths` is unknown and enforced as if matched,
+plus the count-bearing default when no rule definitely matches. A definitely
+matching `authors: [human] → none` rule suppresses the default even on an empty
+diff, but the unknown `paths` rule still enforces the count. Rules add
+requirements, so `none` cannot cancel the imported `paths` requirement.
+Overlapping classic and ruleset review counts use the maximum in one reconciled fragment per base. Maintain
+this group as writer membership changes. Eligibility and blocking requests for
+changes must be checked at landing by Stage A.
+
+General code-owner review is **unsupported**: ADR 0007's `{code_owners: true}`
+rule requirement exists but is not activated until PR 11b publishes the loader
+and enables enforcement. Until then only policy files get mandatory owner
+approval, so general code-owner review cannot be translated or enforced by this
+draft; a group does not confer path ownership. ADR 0007 defines the future
+translation as two independent rules: `paths: ["**"]` for the count, plus
+`touches: ["**"]` for `{code_owners: true}`. The owner requirement is rule-only
+and rejected as `approvals.default`; this draft does not emit it before 11b.
+For example:
+
+```yaml
+# Requires the release implementing ADR 0007 Stage A; merge into the relevant queue.
+# groups is repository-level, approvals belongs to the queue.
+groups:
+  imported_reviewers: [alice, bob]
+approvals:
+  default: {group: imported_reviewers, count: 2}
+  rules:
+    - when: {paths: ["**"]}
+      require: {group: imported_reviewers, count: 2}
+# paths is unknown on empty diffs and enforced as if matched, plus the default.
+# General code-owner review is unsupported until PR 11b enables enforcement.
+```
+
+Review dismissal on is a weaker translation where GitHub invalidates an approval
+after a merge-base or diff change without changing the head. Dismissal off makes
+head-bound approvals stricter. Last-push approval, conversation resolution and
+required deployments have no equivalent. Required checks need a unique observed
+producer; App pinning is lost by a name-only condition, and a name shared between
+statuses and check runs is ambiguous. Producer observations are bounded to each
+pinned base tip, so they cannot prove future producer exclusivity. The report
+inspects job names, job `if:` conditions and `on:` triggers in each base's pinned
+workflows. Only an absent condition or literal `true` proves unconditional job
+coverage; other job conditions remain unknown. PR-only jobs are unsupported,
+while dynamic names, reusable workflows, path filters and unproven branch filters
+are explicitly unknown. Unresolved producers affect only check names they could
+produce; reusable calls with unknown callee names can affect every check.
+External CI needs operator verification. OpenMerge treats neutral and skipped as failures, unlike GitHub.
+Strict up-to-date checks map to `verification: strict`; `post_merge` relaxes that
+guarantee and needs a separate policy review under ADR 0005.
+
+CODEOWNERS selection follows `.github/CODEOWNERS`, `CODEOWNERS`, then
+`docs/CODEOWNERS`, with last matching ownership and directory inheritance. The
+report lists every differing ordered rule between a served base and the governing
+default branch; it does not guess whether arbitrary owner changes are equivalent.
+All four accepted OpenMerge configuration paths and all three CODEOWNERS locations
+must have user/team coverage. Email-only ownership cannot satisfy Stage A's owner
+requirements; team visibility and eligibility also need verification at switch.
+
+Exit **0** means no unresolved item; exit **1** means a read failed or some item
+remains unresolved; invalid command-line syntax exits **2**. Repeat `--accept ID`
+for every weaker/unsupported policy item you consciously accept. Accepted IDs and
+explanations are comments in the draft, so a reviewed configuration PR can retain
+the decision. Unknown IDs and attempts to accept installation prerequisites fail.
+A served default branch, GitHub accepting App/break-glass bypass, CODEOWNERS
+coverage, mandatory policy owner approval and resolution of other writers cannot
+be waived. This release still reports the Stage A prerequisite and bypass
+acceptance **to verify at switch**, so accepting every policy gap alone does not
+produce a successful preflight.
+
+Every ruleset bypass is inventoried, including inherited entries and entries that
+do not apply to a served base. An actor bypassing one update restriction is not
+reported as an effective writer if another applicable restriction excludes it.
+PR-only bypass also counts when it permits merging through GitHub outside the
+queue; the App itself needs `always` for its atomic landing push.
+Resolve every effective writer as the OpenMerge App, the single declared
+break-glass team/admin role, or a writer that will use the queue. Bots cannot be
+break-glass. Ordinary writer access is a blocker until exclusive base write
+restrictions are installed. Repository administrators and organization owners
+remain trusted as described in ADR 0008.
+
+The command also prints this contributing-guide snippet:
+
+```text
+This repository merges through OpenMerge. Submit a pull request and use
+@openmerge queue; follow its queue state instead of GitHub's merge button.
+Disable GitHub auto-merge. CI must run on pushes to openmerge/queue/**.
+Creating a branch matching a queue's base selector requires the OpenMerge App
+or the declared break-glass team/repository-admin role. Break-glass merges are
+recorded as outside-queue landings. Bots cannot be the break-glass actor.
+```
+
+Do not remove protection after an audit alone. Follow the coordinated
+[ADR 0008 transition](adr/0008-openmerge-policy-authority.md#migrating-protection-into-openmerge):
+verify bypass acceptance, install and verify write rulesets under the old policy,
+land the reviewed configuration, wait for the new digest and settled attempts,
+then remove only reviewed redundant PR rules. Disable GitHub auto-merge and
+schedule re-verification of protection after the switch.
