@@ -1,0 +1,22 @@
+classification:
+  docs: ["docs/**", "**/*.md"]
+  generated: ["gen/**"]
+  sensitive: ["infra/**", "auth/**"]
+groups:
+  platform: ["acme/platform", "alice"]
+agents:
+  - identity: "acme-coder[bot]"
+    accountable: ["alice", "bob"]
+queues:
+  - name: main
+    changes: {pull_requests: required}
+    approvals:
+      default: any_writer
+      rules:
+        - when: {labels: [docs]}
+          require: none
+        - when: {touches: ["infra/**"], authors: [agent]}
+          require: {group: platform, count: 2}
+        - when: {touches: ["infra/**"]}
+          require: {group: platform, human: true, receipt: true}
+  - name: legacy
