@@ -715,3 +715,32 @@ func shadowChecks(t *testing.T, s *Server, w *worker, f *fake.Forge, sha string,
 	_, err := s.store.Append(t.Context(), w.id, []queue.Event{queue.RefreshRequested{}}, "")
 	must(t, err)
 }
+
+func TestStageAGoverningAttributesIndependentOfOpenChanges(t *testing.T) {
+	s, w, f := shadowFixture(t, 1, "main", "7", true)
+	_, err := f.PushBase(repo, "main", "nested attributes", map[string]string{"docs/.gitattributes": "*.md linguist-generated"})
+	must(t, err)
+	must(t, s.reconcile(t.Context(), w, true))
+	before := w.stageA.policy.Digest
+	receipt := shadowDigest(t, s, w)
+	state := shadowState(t, s, w)
+	r, _ := state.PRRevision(1)
+	c, _ := state.Classification(r.ChangeID, r.Revision)
+	_, err = f.OpenPRWithFiles(repo, 2, state.BaseSHA, true, map[string]string{"docs/new.md": "new docs"})
+	must(t, err)
+	f.SetNativeReviews(repo, 2, forge.NativeReviews{})
+	must(t, s.reconcile(t.Context(), w, true))
+	if w.stageA.policy.Digest != before || shadowDigest(t, s, w) != receipt {
+		t.Fatal("opening a change altered unchanged governing policy")
+	}
+	after, _ := shadowState(t, s, w).Classification(r.ChangeID, r.Revision)
+	if after.Evidence.Classification.Inputs.Generation != c.Evidence.Classification.Inputs.Generation {
+		t.Fatal("new change invalidated a sibling's classification")
+	}
+	_, err = f.PushBase(repo, "main", "attribute content", map[string]string{"docs/.gitattributes": "*.md -linguist-generated"})
+	must(t, err)
+	must(t, s.reconcile(t.Context(), w, true))
+	if w.stageA.policy.Digest == before {
+		t.Fatal("governing attribute content did not refresh semantic policy")
+	}
+}

@@ -3,6 +3,8 @@ package fake
 import (
 	"context"
 	"errors"
+	"path"
+	"slices"
 	"strings"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
@@ -28,6 +30,22 @@ func (f *Forge) GoverningFiles(ctx context.Context, repo forge.RepoRef, req forg
 		return failed(forge.DiffMissingObject, errors.New("missing governing commit"))
 	}
 	files := r.files(req.CommitSHA)
+	if req.AllAttributes {
+		req.Paths = nil
+		for name := range files {
+			// Include special directory candidates as well as regular attribute files.
+			parts := strings.Split(name, "/")
+			for i := range parts {
+				candidate := strings.Join(parts[:i+1], "/")
+				if path.Base(candidate) == ".gitattributes" {
+					req.Paths = append(req.Paths, candidate)
+				}
+			}
+		}
+		slices.Sort(req.Paths)
+		req.Paths = slices.Compact(req.Paths)
+		req.PathsComplete = true
+	}
 	return forge.CollectGoverningFiles(ctx, req, func(ctx context.Context, p string, budget int) (forge.GoverningFile, error) {
 		file := forge.GoverningFile{Path: p, Coverage: forge.DiffCoverage{Completeness: forge.DiffComplete}}
 		content, ok := files[p]

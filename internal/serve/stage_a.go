@@ -153,54 +153,13 @@ func (s *Server) refreshStageAPolicy(ctx context.Context, w *worker, tip string)
 	if err := a.repository.ValidateIdentities(resolved); err != nil {
 		return err
 	}
-	// Include governing attributes for every observed diff path, including deleted
-	// paths. This is read-only control-plane work, independent of webhook delivery.
-	diffReader, ok := w.Git.(forge.RevisionDiffReader)
-	if !ok {
-		return errors.New("missing revision diff reader")
-	}
+	// Policy identity covers the governing tree, independent of the open-change
+	// set. Per-revision classification still reads only its pinned path evidence.
 	governingReader, ok := w.Git.(forge.GoverningFilesReader)
 	if !ok {
 		return errors.New("missing governing files reader")
 	}
-	summaries, err := w.Driver.ListOpenPullRequests(ctx, w.repo(), w.Key.BaseBranch)
-	if err != nil {
-		return err
-	}
-	state, _, err := s.store.Load(ctx, w.id)
-	if err != nil {
-		return err
-	}
-	base := state.BaseSHA
-	if base == "" {
-		base, err = w.Git.ReadRef(ctx, w.repo(), w.Key.BaseBranch)
-		if err != nil {
-			return err
-		}
-	}
-	paths := []string{}
-	for _, pr := range summaries {
-		r, _ := state.PRRevision(pr.Number)
-		if recorded, ok := state.Classification(r.ChangeID, r.Revision); ok && recorded.Evidence.Classification.Inputs.Head == pr.HeadSHA {
-			paths = append(paths, recorded.Evidence.Classification.Paths...)
-			continue
-		}
-		d, err := diffReader.RevisionDiff(ctx, w.repo(), forge.RevisionDiffRequest{BaseSHA: base, HeadSHA: pr.HeadSHA})
-		if err != nil {
-			return err
-		}
-		for _, f := range d.Files {
-			if f.OldPath != "" {
-				paths = append(paths, f.OldPath)
-			}
-			if f.NewPath != "" {
-				paths = append(paths, f.NewPath)
-			}
-		}
-	}
-	slices.Sort(paths)
-	paths = slices.Compact(paths)
-	g, err := governingReader.GoverningFiles(ctx, w.repo(), forge.GoverningFilesRequest{CommitSHA: tip, Paths: paths, PathsComplete: true})
+	g, err := governingReader.GoverningFiles(ctx, w.repo(), forge.GoverningFilesRequest{CommitSHA: tip, PathsComplete: true, AllAttributes: true})
 	if err != nil {
 		return err
 	}

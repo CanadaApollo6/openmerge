@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
 	"strings"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
@@ -45,6 +46,28 @@ func (r *Repo) GoverningFiles(ctx context.Context, repo forge.RepoRef, req forge
 	history, reason, err := s.diffHistory(ctx)
 	if reason != "" {
 		return fail(reason, err)
+	}
+	if req.AllAttributes {
+		// Enumerate names in the immutable tree, never the worktree or host attrs.
+		// Include trees so a directory named .gitattributes fails its regular-file
+		// probe. Overflow is unknown, never a partial policy digest.
+		raw, overflow, err := s.diffCommand(ctx, forge.MaxDiffBytes, "ls-tree", "-r", "-t", "-z", "--name-only", "--full-tree", req.CommitSHA)
+		if err != nil {
+			return fail(forge.DiffReadFailure, err)
+		}
+		if overflow {
+			return fail(forge.DiffByteLimit, nil)
+		}
+		if raw != "" && !strings.HasSuffix(raw, "\x00") {
+			return fail(forge.DiffReadFailure, errors.New("incomplete governing tree names"))
+		}
+		req.Paths = nil
+		for _, name := range strings.Split(strings.TrimSuffix(raw, "\x00"), "\x00") {
+			if path.Base(name) == ".gitattributes" {
+				req.Paths = append(req.Paths, name)
+			}
+		}
+		req.PathsComplete = true
 	}
 	out, err = forge.CollectGoverningFiles(ctx, req, func(ctx context.Context, p string, budget int) (forge.GoverningFile, error) {
 		f := forge.GoverningFile{Path: p, Coverage: forge.DiffCoverage{Completeness: forge.DiffComplete}}
