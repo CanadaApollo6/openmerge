@@ -428,7 +428,7 @@ func Project(f Fact, audience string) (View, error) {
 			if err != nil || u.Scheme != "https" && u.Scheme != "http" || u.Host == "" || u.User != nil {
 				link = ""
 			}
-			if failedCheckStatus(t.Status) {
+			if failedCheckStatus(t.Status) && p.Progress != nil && (p.Progress.Reason == "checks-failed" || p.Progress.Reason == "checks-timeout") {
 				warnStep("check_failed", "Resolve the recorded check before relying on this brief for approval.", Step{Action: "fix_check", Name: missing(bounded(t.Name, &v.Truncated)), URL: bounded(link, &v.Truncated), Commit: missing(bounded(t.SHA, &v.Truncated))})
 			}
 			if index >= maxRows {

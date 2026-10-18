@@ -278,6 +278,7 @@ func TestViewRecoveryActionsUseRecordedBounds(t *testing.T) {
 	if !ambiguous {
 		t.Fatal("revision zero evidence lacked attribution warning")
 	}
+	f.Presentation.Progress.Reason = "checks-failed"
 	f.Presentation.Tests = []TestEvidence{{"lint", "https://ci.example/lint", "failure", "tested"}}
 	v, _ = Project(f, "agent")
 	var check Warning
@@ -310,6 +311,7 @@ func TestViewStanceWarningsSurviveRowLimit(t *testing.T) {
 func TestViewOnlyTerminalCheckFailuresGetRecoveryActions(t *testing.T) {
 	for _, status := range []string{"pending", "in_progress", "neutral", "skipped", "success"} {
 		f := viewSample()
+		f.Presentation.Progress.Reason = "checks-failed"
 		f.Presentation.Tests = []TestEvidence{{"lint", "https://ci.example/lint", status, "tested"}}
 		v, _ := Project(f, "agent")
 		for _, warning := range v.Warnings {
@@ -320,6 +322,7 @@ func TestViewOnlyTerminalCheckFailuresGetRecoveryActions(t *testing.T) {
 	}
 	for _, status := range []string{"failure", "failed", "error", "cancelled", "canceled", "timeout", "timed_out", "timed-out", "action_required", "action-required"} {
 		f := viewSample()
+		f.Presentation.Progress.Reason = "checks-failed"
 		f.Presentation.Tests = []TestEvidence{{"lint", "https://ci.example/lint", status, "tested"}}
 		v, _ := Project(f, "agent")
 		var found bool
@@ -393,6 +396,17 @@ func TestAggregateViewBudget(t *testing.T) {
 		rendered, _ := Render(v)
 		if !v.Truncated || len(raw) > MaxViewBytes || len(rendered) > MaxViewBytes {
 			t.Fatal("aggregate view not bounded")
+		}
+	}
+}
+
+func TestViewDoesNotRecommendRepairingHistoricalFailures(t *testing.T) {
+	f := viewSample()
+	f.Presentation.Tests = []TestEvidence{{"ci", "https://ci.example/old", "failure", "old"}, {"ci", "https://ci.example/new", "success", "new"}}
+	v, _ := Project(f, "agent")
+	for _, w := range v.Warnings {
+		if w.NextStep.Action == "fix_check" {
+			t.Fatal("historical failure produced a current repair action")
 		}
 	}
 }
