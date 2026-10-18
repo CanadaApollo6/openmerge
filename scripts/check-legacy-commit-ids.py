@@ -23,7 +23,7 @@ import tempfile
 
 
 CHECK_NAME = "legacy-commit-id-per-method"
-HARNESS_ID = CHECK_NAME + "/v1"
+HARNESS_ID = CHECK_NAME + "/v2"
 
 # This is deliberately a package test, not a production hook.  It has to use
 # only helpers and APIs present at c2d9b3a as well as in the candidate tree.
@@ -40,7 +40,7 @@ import (
 )
 
 const legacyCommitIDsHarnessName = "legacy-commit-id-per-method"
-const legacyCommitIDsHarness = "legacy-commit-id-per-method/v1"
+const legacyCommitIDsHarness = "legacy-commit-id-per-method/v2"
 
 // deterministicEntropy is installed only in this test process.  The probe
 // needs the same random nonce bytes for the marker and fence commits in both
@@ -75,13 +75,25 @@ func TestLegacyCommitIDs(t *testing.T) {
 			f.g.cfg.Committer = Identity{Name: "Pinned Committer", Email: "pinned-committer@example.test"}
 			f.g.cfg.Now = func() time.Time { return epoch }
 
-			prs := f.prs[:2]
-			if tc.method == forge.FastForward {
-				// The fixture's PR heads are siblings.  Replace PR 2 with a
-				// real child of PR 1 so this covers a stacked fast-forward.
-				stacked := f.commit(f.prs[0].HeadSHA, "stacked PR 2", map[string]string{"stacked.txt": "stacked\n"})
-				gitCommand(t, f.source, "", nil, "push", "--force", f.remote, stacked+":"+headRef(2))
-				prs = []forge.BuildPR{{Number: 1, HeadSHA: f.prs[0].HeadSHA}, {Number: 2, HeadSHA: stacked}}
+			// Nil metadata must preserve contributor prose, including forged keys.
+			prose := "Details with trailing spaces  \n\nOpenMerge-Change: forged\n continuation  \nOpenMerge-Classification: forged\n\tcontinued\nOpenMerge-Batch forged\noPeNmErGe-ChAnGe: forged\nOPENMERGE-CLASSIFICATION: forged\nopenmerge-batch forged\n\nSigned-off-by: Signer <signer@example.test>  \nCo-authored-by: Other <other@example.test>\n"
+			prs := make([]forge.BuildPR, 2)
+			for i := range prs {
+				parent := f.base
+				if i > 0 && tc.method == forge.FastForward {
+					parent = prs[i-1].HeadSHA
+				}
+				for j := 0; j < 2; j++ {
+					name := fmt.Sprintf("pr-%d-%d.txt", i, j)
+					parent = f.commit(parent, fmt.Sprintf("Commit %d/%d\n\n%s", i, j, prose), map[string]string{name: name+"\n"})
+				}
+				prs[i] = forge.BuildPR{Number: i+1, HeadSHA: parent}
+				gitCommand(t, f.source, "", nil, "push", "--force", f.remote, parent+":"+headRef(i+1))
+			}
+			f.g.cfg.PullRequest = func(_ context.Context, _ forge.RepoRef, n int) (forge.PullRequest, error) {
+				return forge.PullRequest{Number: n, HeadSHA: prs[n-1].HeadSHA,
+					Title: fmt.Sprintf("Adversarial PR %d  ", n), Body: prose,
+					HeadBranch: fmt.Sprintf("topic-%d", n), Author: "Contributor", AuthorEmail: "contributor@example.test"}, nil
 			}
 			batch := "legacy-commit-ids-" + tc.name
 			tested, err := f.g.BuildTestRef(context.Background(), testRepo, forge.BuildRequest{
@@ -196,7 +208,7 @@ def describe_source(role: str, path: Path) -> Source:
 
 def cache_path(value: Path) -> Path:
     value = value.expanduser().resolve()
-    temporary = Path(tempfile.gettempdir()).resolve()
+    temporary = Path("/tmp").resolve()
     try:
         value.relative_to(temporary)
     except ValueError:
@@ -290,7 +302,7 @@ def assert_source_unchanged(source: Source) -> None:
         raise ToolError(f"{source.role} source changed during check: {source.path}")
 
 
-def main() -> int:
+def main(*, run_preflight: bool = True) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--old-source", "--baseline", dest="old_source", required=True,
                         type=Path, help="local checkout of the deployed/old source")
@@ -305,7 +317,17 @@ def main() -> int:
     try:
         old = describe_source("old", args.old_source)
         new = describe_source("new", args.new_source)
+        if old.commit == new.commit:
+            print("WARNING: old and new resolve to the same SHA; comparison is vacuous", file=sys.stderr)
         cache = cache_path(args.cache_root)
+        require_clean(old)
+        require_clean(new)
+        if run_preflight:
+            preflight = command([sys.executable, str(Path(__file__).with_name("test-legacy-commit-ids.py")),
+                                 "--source", str(new.path), "--cache-root", str(cache), "--go", args.go])
+            print(preflight.stdout, end="")
+            if preflight.returncode:
+                raise ToolError("mandatory legacy self-test failed: " + preflight.stderr)
         try:
             cache.mkdir(parents=True, exist_ok=True)
             job = Path(tempfile.mkdtemp(prefix="compare-", dir=cache))

@@ -2,6 +2,7 @@ package executor_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"reflect"
 	"slices"
@@ -203,7 +204,9 @@ func TestBuildMetadataHookPinsCIInputAcrossExternalApprovalChange(t *testing.T) 
 	must(t, err)
 
 	// CI is still pending when an external approval fact changes. This branch
-	// has no receipt event yet; the cp value models the external state only.
+	// has no receipt event until PR 11; this external approval is never applied
+	// to queue state. This test asserts landing reuses the tested SHA/message
+	// without calling the loader again; it does not test approval invalidation.
 	h.f.SetCheckRuns(repo, builtEvent.TestedSHA, []forge.CheckRun{
 		{Name: "ci", State: forge.Pending}, {Name: "lint", State: forge.Pending},
 	})
@@ -294,5 +297,44 @@ func TestBuildMetadataHookUsesSelectedFastForwardPrefix(t *testing.T) {
 		return ok && len(selected.PRs) == 2
 	}) {
 		t.Fatal("selected prefix was not recorded")
+	}
+}
+
+func TestBuildMetadataLoaderErrorStopsBuild(t *testing.T) {
+	for _, method := range []queue.MergeMethod{queue.Merge, queue.FastForward} {
+		t.Run(string(method), func(t *testing.T) {
+			h := setup(t)
+			called := false
+			h.x.Git = &recordingBuildGit{Git: h.f, onBuild: func(forge.BuildRequest) { called = true }}
+			failure := errors.New("classification unavailable")
+			h.x.BuildMetadata = func(queue.State, executor.BuildChangeKey, queue.Batch, string) ([]*forge.ChangeMetadata, error) {
+				return nil, failure
+			}
+			var failures []queue.TestRefBuildFailed
+			err := h.x.Execute(t.Context(), queue.BuildTestRef{BatchID: "b1", BaseSHA: h.base, Ref: "openmerge/queue/main/b1", Method: method, PRs: []queue.BatchPR{{PR: 1, HeadSHA: h.prs[0].HeadSHA}}}, func(e queue.Event) error {
+				if f, ok := e.(queue.TestRefBuildFailed); ok {
+					failures = append(failures, f)
+				}
+				return nil
+			})
+			if !errors.Is(err, failure) || called || len(failures) != 1 || failures[0].Conflict || failures[0].BatchID != "b1" {
+				t.Fatalf("err=%v built=%v failures=%+v", err, called, failures)
+			}
+		})
+	}
+}
+
+func TestBuildMetadataMissingBatchFailsClosed(t *testing.T) {
+	h := setup(t)
+	key := store.QueueKey{Installation: "7", Repository: "Owner/Repo", BaseBranch: "main"}
+	state, _ := metadataState(t, key, []metadataPin{{pr: 1, head: h.prs[0].HeadSHA}})
+	h.x.BuildMetadataState = state
+	h.x.BuildMetadata = executor.LoadBuildMetadata
+	h.x.BuildMetadataKey = key
+	h.x.BuildPolicyDigest = metadataPolicy
+	h.x.Git = &recordingBuildGit{Git: h.f, onBuild: func(forge.BuildRequest) { t.Fatal("built absent batch") }}
+	err := h.x.Execute(t.Context(), queue.BuildTestRef{BatchID: "absent", BaseSHA: h.base, Method: queue.Merge, PRs: []queue.BatchPR{{PR: 1, HeadSHA: h.prs[0].HeadSHA}}}, func(queue.Event) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), "config digest") {
+		t.Fatalf("err=%v", err)
 	}
 }

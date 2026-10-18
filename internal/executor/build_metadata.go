@@ -88,31 +88,19 @@ func LoadBuildMetadata(state queue.State, key BuildChangeKey, batch queue.Batch,
 		metadata[i] = &forge.ChangeMetadata{
 			ChangeID: string(id),
 			Revision: uint64(bound.Revision),
-			Labels:   classificationLabels(recorded.Evidence.Classification),
+			Labels:   changepolicy.ClassificationLabels(recorded.Evidence.Classification),
 		}
 	}
 	return metadata, nil
 }
 
-func classificationLabels(c changepolicy.Classification) []string {
-	labels := make([]string, 0, len(c.Facts))
-	for label := range c.Facts {
-		if c.Label(label) == changepolicy.True {
-			labels = append(labels, label)
-		}
-	}
-	slices.Sort(labels)
-	return slices.Compact(labels)
-}
-
 func (x *Executor) buildMetadataBatch(a queue.BuildTestRef) queue.Batch {
 	batch := queue.Batch{
-		ID:           a.BatchID,
-		BaseSHA:      a.BaseSHA,
-		ConfigDigest: x.BuildMetadataState.ConfigDigest,
-		PRs:          slices.Clone(a.PRs),
-		Method:       a.Method,
-		TestRef:      a.Ref,
+		ID:      a.BatchID,
+		BaseSHA: a.BaseSHA,
+		PRs:     slices.Clone(a.PRs),
+		Method:  a.Method,
+		TestRef: a.Ref,
 	}
 	if recorded := x.BuildMetadataState.Batch(a.BatchID); recorded != nil {
 		batch.ConfigDigest = recorded.ConfigDigest

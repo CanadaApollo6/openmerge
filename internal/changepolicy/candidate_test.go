@@ -183,3 +183,14 @@ func TestReviewConditionDiagnostics(t *testing.T) {
 		}
 	}
 }
+
+func TestEmailClassificationLabelRejectsControls(t *testing.T) {
+	for r := rune(0); r <= 0x9f; r++ {
+		if r > 0x1f && r < 0x7f {
+			continue
+		}
+		if ValidClassificationLabel("owned:email:a" + string(r) + "@example.test") {
+			t.Fatalf("accepted control U+%04X", r)
+		}
+	}
+}

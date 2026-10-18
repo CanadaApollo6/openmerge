@@ -992,13 +992,24 @@ deploy alongside its SHA and replay report:
   git worktree add --detach "$HOME/openmerge-deployed-replay" "$DEPLOYED_SHA"
   cache_root="$HOME/.cache/openmerge-legacy-commit-ids"
   mkdir -p "$cache_root/go-tmp" "$cache_root/go-cache"
-  export GOFLAGS='-p=2' GOMAXPROCS=2 GOMEMLIMIT=4GiB \
-    GOTMPDIR="$cache_root/go-tmp" GOCACHE="$cache_root/go-cache"
+  GOFLAGS='-p=2' GOMAXPROCS=2 GOMEMLIMIT=4GiB \
+    GOTMPDIR="$cache_root/go-tmp" GOCACHE="$cache_root/go-cache" \
   python3 scripts/check-legacy-commit-ids.py \
     --old-source "$HOME/openmerge-deployed-replay" \
     --new-source "$PWD" \
     --cache-root "$cache_root"
+  git worktree remove "$HOME/openmerge-deployed-replay"
   ```
+
+  The minimum supported old source is `3f77a88`; the harness also supports
+  `c2d9b3a`. The v2 probe uses two commits per PR, titles and multiline bodies,
+  forged reserved keys with casing/continuations/whitespace, DCO and coauthors.
+  Every invocation first runs mandatory offline self-tests: identical source
+  trees must exit 0, a committed nil-metadata reserved-prefix mutant must exit 1
+  (squash and rebase differ), and a dirty candidate must exit 2. Its temporary
+  clone and build copies are removed. Equal source SHAs produce an explicit
+  vacuous-comparison warning; do not use that run as release evidence. Cache
+  roots resolving below literal `/tmp` are rejected regardless of `TMPDIR`.
 
   The check name is `legacy-commit-id-per-method`. It requires both source
   trees to be clean so each reported source SHA is evidence-bearing, and it
