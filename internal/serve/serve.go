@@ -456,6 +456,7 @@ func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
 		} else if !w.validationNext.After(time.Now()) {
 			w.validationNext = time.Now().Add(5 * time.Second)
 		}
+		s.auditOutsidePushes(ctx, w)
 		s.logCommitted(ctx, w)
 		s.options.Logger.Debug("reconcile cycle finished", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "error", result)
 	}()

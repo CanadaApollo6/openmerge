@@ -165,8 +165,16 @@ state before snapshots can support that policy.
 
 ### Post-deployment addition: observed outside pushes (2026-10-17)
 
-ADR 0007 Stage A adds wire-v1 `outside_push_recorded`, committed atomically
-with the unchanged `base_moved` event after outstanding landing settlement.
+ADR 0007 Stage A adds wire-v1 `outside_push_recorded` as a best-effort audit
+after ordinary base/config reconciliation and landing settlement. The existing
+claim-bound settlement and reconciliation gates remain unchanged. Audits
+revalidate only their base/phase/attempt/fence basis, never the whole journal
+watermark; stale evidence skips the audit rather than the queue work. Abandoned
+attempts recover each individually observed `BaseMoved` transition from durable
+history, including away-and-back moves. Fence-proven landings removed before
+settlement remain blocked; audit receipts track each observed previous/new tip,
+including later pushes, without supplying settlement authorization. Unreadable
+ancestry is explicitly unknown, even if the landed object was pruned.
 It records both tips, ancestry knowledge and rewrite status, a bounded history
 (or explicit unknown), truncation, observation time and no OpenMerge verification
 before landing. The pure projection retains the latest 20 observations without

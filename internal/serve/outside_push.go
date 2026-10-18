@@ -23,16 +23,58 @@ func outsidePush(ctx context.Context, git forge.Git, repo forge.RepoRef, previou
 	return event
 }
 
-// auditLandingRewrite uses fresh fence/base reads after verification failed. A
-// successful fence proves the previous tip was landed; absence from today's base
-// proves a rewrite removed it. This evidence cannot authorize settlement.
+// auditBaseMove runs after configuration publication and block-clearing. Audit
+// errors are operational diagnostics only; they never become reconcile errors.
+func (s *Server) auditBaseMove(ctx context.Context, w *worker, basis queue.State, moveID int64, tip string) {
+	if basis.Active != nil && basis.Active.Phase == queue.Landing {
+		return
+	}
+	outside := queue.OutsidePushRecorded{}
+	if basis.BaseSHA != "" && basis.BaseSHA != tip {
+		outside = outsidePush(ctx, w.Git, w.repo(), basis.BaseSHA, tip)
+	}
+	s.auditError(w, s.store.RecordBaseMove(ctx, w.id, basis, moveID, outside))
+}
+
+func (s *Server) auditError(w *worker, err error) {
+	if err != nil {
+		s.options.Logger.Warn("outside push audit", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "error", err)
+	}
+}
+
+// auditOutsidePushes is a separate, best-effort step after the cycle's queue
+// work, including settlement. Durable receipts make retries/restarts harmless.
+func (s *Server) auditOutsidePushes(ctx context.Context, w *worker) {
+	moves, err := s.store.AbandonedBaseMoves(ctx, w.id)
+	if err != nil {
+		s.auditError(w, err)
+		return
+	}
+	for _, move := range moves {
+		// Avoid repeating git reads for receipts already committed by any server.
+		seen, err := s.store.OutsidePushRecorded(ctx, w.id, move.ID)
+		if err != nil {
+			s.auditError(w, err)
+			continue
+		}
+		if seen {
+			continue
+		}
+		outside := outsidePush(ctx, w.Git, w.repo(), move.PreviousSHA, move.NewSHA)
+		s.auditError(w, s.store.RecordAbandonedBaseMove(ctx, w.id, move, outside))
+	}
+	s.auditError(w, s.auditLandingRewrite(ctx, w))
+}
+
+// A successful fence proves the landing happened even if ancestry was pruned.
+// Neither missing history nor the audit itself can authorize settlement.
 func (s *Server) auditLandingRewrite(ctx context.Context, w *worker) error {
-	state, watermark, err := s.store.Load(ctx, w.id)
+	state, _, err := s.store.Load(ctx, w.id)
 	if err != nil {
 		return err
 	}
 	b := state.Active
-	if b == nil || b.Phase != queue.Landing {
+	if b == nil || b.Phase != queue.Landing || !state.SourceBlocked(queue.LandingNotOnBase) {
 		return nil
 	}
 	_, id, tested, err := w.Git.ReadFence(ctx, w.repo(), "openmerge/fence/"+w.Key.BaseBranch)
@@ -46,29 +88,20 @@ func (s *Server) auditLandingRewrite(ctx context.Context, w *worker) error {
 	if err != nil {
 		return err
 	}
-	if tip == b.LandingCommit() {
-		return nil
-	}
-	outside := outsidePush(ctx, w.Git, w.repo(), b.LandingCommit(), tip)
-	if !outside.AncestryKnown || !outside.Rewrite {
-		return nil
-	}
-	return s.store.RecordLandingRewrite(ctx, w.id, watermark, b.LandingAttempt.ID, outside)
-}
-
-// BaseMoved remains observable during an unsettled attempt. If that attempt is
-// abandoned, its original base supplies the outside-push baseline even when the
-// observed tip has already been applied. Commit the audit with abandonment so a
-// restart cannot lose it. Successful settlement supplies its own landed baseline.
-func (s *Server) emitAbandonedBase(ctx context.Context, w *worker, abandoned queue.LandingAbandoned, emit func(queue.Event) error) error {
-	state, watermark, err := s.store.Load(ctx, w.id)
+	previous, err := s.store.LandingRewriteTip(ctx, w.id, b.LandingAttempt.ID)
 	if err != nil {
 		return err
 	}
-	b := state.Active
-	if b == nil || b.ID != abandoned.BatchID || state.BaseSHA == b.BaseSHA || state.BaseSHA == "" {
-		return emit(abandoned)
+	first := previous == ""
+	if first {
+		previous = b.LandingCommit()
 	}
-	outside := outsidePush(ctx, w.Git, w.repo(), b.BaseSHA, state.BaseSHA)
-	return s.store.RecordAbandonedBaseMove(ctx, w.id, watermark, abandoned, outside)
+	if tip == previous {
+		return nil
+	}
+	outside := outsidePush(ctx, w.Git, w.repo(), previous, tip)
+	if first && outside.AncestryKnown && !outside.Rewrite {
+		return nil
+	}
+	return s.store.RecordLandingRewrite(ctx, w.id, state, outside)
 }

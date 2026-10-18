@@ -23,7 +23,7 @@ func (s *Server) record(ctx context.Context, w *worker, key string, value any, e
 }
 
 func (s *Server) configuration(ctx context.Context, w *worker) error {
-	basis, baseWatermark, err := s.store.Load(ctx, w.id)
+	basis, _, err := s.store.Load(ctx, w.id)
 	if err != nil {
 		return err
 	}
@@ -67,17 +67,14 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 		}
 		return loadErr
 	}
-	// Bind the git observation to the journal read before it. A peer may land
-	// and settle while ReadRef or the history/configuration reads are in flight.
-	if baseErr == nil && basis.BaseSHA != tip {
-		var outside *queue.OutsidePushRecorded
-		if basis.BaseSHA != "" && (basis.Active == nil || basis.Active.Phase != queue.Landing) {
-			observed := outsidePush(ctx, w.Git, w.repo(), basis.BaseSHA, tip)
-			outside = &observed
-		}
-		if err := s.store.RecordBaseMove(ctx, w.id, baseWatermark, basis.BaseSHA, tip, outside); err != nil {
+	if baseErr == nil && state.BaseSHA != tip {
+		moveID, err := s.store.Append(ctx, w.id, []queue.Event{queue.BaseMoved{SHA: tip}}, "")
+		if err != nil {
 			return err
 		}
+		// Audit only after the ordinary configuration cycle has finished. Its
+		// failure cannot suppress base/config publication or block-clearing.
+		defer s.auditBaseMove(ctx, w, basis, moveID, tip)
 		// Conflict observations can change when this base moves even if the
 		// default branch (and therefore the policy) stays at the same commit.
 		w.summaries = make(map[int]forge.PullRequestSummary)
