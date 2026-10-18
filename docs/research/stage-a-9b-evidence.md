@@ -1,7 +1,8 @@
 # Stage A 9b: landing-decision follow-ups
 
 Trial class: **Hold**. Merge only; do not deploy until ADR 0009 period B drains.
-Base: origin/main `15aa69929e89970fb49381493398814b8793567a` (#75).
+Base: origin/main `0f5e6cffbf35d035544ce0effb2ed6b6e536eb6f` (#74), rebased
+during Round 2. Earlier rounds used `15aa699` (#75).
 Worktree: `/home/riels/openmerge-sa-9b`, branch
 `stage-a/9b-decision-followups`. Baseline checkout:
 `/home/riels/openmerge-sa-9b-main` at that exact commit.
@@ -415,3 +416,75 @@ row in one loop, no rows removed by filtering. Real decision/eligibility times:
 **0.008/0.007 ms** and **0.010/0.009 ms**. ShareLock/write blocking and unchanged
 heap relfilenode assertions all pass. These supersede neither prior measured
 samples nor their caveat about local synthetic data and lock waiting.
+
+
+### Final rebased validation
+
+Final implementation tested: `1db7fa31b2022ae870c14684160b9cf5a2e206f9`.
+Baseline checkout and explicit origin/main are both
+`0f5e6cffbf35d035544ce0effb2ed6b6e536eb6f`. The final commit updates only this
+evidence and the operating note's measured timing sample. Main was fetched
+again by explicit refspec and remained unchanged after the comparisons.
+
+Final `make check`: **exit 0**, zero lint issues, all race/short tests and build
+pass. Gitops (including all 11 fuzz seeds): 68.083s; queue: 282.940s;
+server: 260.099s; store: 25.505s. Required simulator: 38.610s, **exit 0**.
+Compatibility: **exit 0**, 17 exits, 1,055 retry/default-digest records and
+84 wire fixtures byte-identical, with the original hashes recorded above.
+SQL differential: **exit 0**, seven identical ordered statements; baseline,
+candidate and each of five negative-control tests individually exit **0**,
+and all five mutants produce detected SQL differences.
+
+Depth-1/4 differential: **exit 0**. Both subprocesses in each corpus exit **0**;
+227,662 short / 5,615,998 full / 188 fixture comparisons and their hashes remain
+exactly as recorded above. No plan/action/wake exception. Four-method commit-ID
+comparison: **exit 0**, all tested/landed IDs remain exactly the original table.
+Preflight expected statuses remain identical **0**, intentional mutant **1**,
+dirty source **2**; aggregate preflight **0**.
+
+Strict saved-journal replay versus the new main: **exit 0**, verdict/Gates 2/4
+and mandatory self-test **PASS**, self-test exit **0**. All **2,159/2,159**
+action, state, structural-state, legacy-state, snapshot and boundary checkpoints
+match; all **8,676** boundary probes agree, no cap hit, deterministic candidate
+repeat, no first difference and no non-allowlisted field. Synthetic self-test
+passes. Exports and effective policy digest remain unchanged. No live read was
+performed. The repeated compiled `3f77a88` schema reopen/write/read test also
+exits **0** (`sa9b-r2-final-rollback.log`).
+
+Every Round 2 load-gated command's actual exit is listed below. Log names are
+relative to `~/.cache/`; exact arguments and statuses are also retained in
+`sa9b-statuses.tsv`. Pre-rebase, first-rebased and final runs are kept separately;
+no failed attempt is overwritten.
+
+| Log | Actual exit |
+| --- | ---: |
+| `sa9b-r2-focused.log` | 1 |
+| `sa9b-r2-focused-2.log` | 0 |
+| `sa9b-r2-fuzz.log` | 0 |
+| `sa9b-r2-rollback.log` | 0 |
+| `sa9b-r2-check.log` | 0 |
+| `sa9b-r2-sim.log` | 0 |
+| `sa9b-r2-compat.log` | 0 |
+| `sa9b-r2-sql.log` | 0 |
+| `sa9b-r2-depths.log` | 0 |
+| `sa9b-r2-ids.log` | 0 |
+| `sa9b-r2-replay-main.log` | 0 |
+| `sa9b-r2-rebased-check.log` | 0 |
+| `sa9b-r2-rebased-focused.log` | 0 |
+| `sa9b-r2-rebased-fuzz.log` | 1 |
+| `sa9b-r2-rebased-fuzz-regression.log` | 0 |
+| `sa9b-r2-rebased-fuzz-2.log` | 0 |
+| `sa9b-r2-final-check.log` | 0 |
+| `sa9b-r2-final-rollback.log` | 0 |
+| `sa9b-r2-final-sim.log` | 0 |
+| `sa9b-r2-final-compat.log` | 0 |
+| `sa9b-r2-final-sql.log` | 0 |
+| `sa9b-r2-final-depths.log` | 0 |
+| `sa9b-r2-final-ids.log` | 0 |
+| `sa9b-r2-final-replay-main.log` | 0 |
+
+Final `make fmt` and `git diff --check`: **exit 0** each. All feature commits
+retain the required Riel authorship and exact sign-off/coauthor footer. Only
+the feature branch is authorized for force-with-lease push. Trial class remains
+**Hold**, with no deployment. Migration 006 is applied only during the planned
+period-B drain; retention enforcement is deferred to 12a/later.

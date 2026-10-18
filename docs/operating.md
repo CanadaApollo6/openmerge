@@ -1270,8 +1270,8 @@ exact eligibility-read identity. `CREATE INDEX` is non-concurrent: its ShareLock
 blocks journal writes until the migration transaction commits. Apply it during
 the planned ADR 0009 period-B drain; trial class remains **Hold**, with no deploy
 before that drain. On an isolated synthetic journal containing equal numbers of
-decision and eligibility rows, both indexes together took 2.846 ms at 2,600 rows
-and 171.029 ms at 260,000 rows. These local measurements exclude lock waiting;
+decision and eligibility rows, both indexes together took 2.607 ms at 2,600 rows
+and 181.702 ms at 260,000 rows. These local measurements exclude lock waiting;
 size, payloads and contention affect deployment time. The events heap is not
 rewritten. DDL and the migration ledger roll back together on failure. The
 compiled deployed `3f77a88` Store can reopen the migrated schema and write/read
