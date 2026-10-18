@@ -238,8 +238,17 @@ func TestApprovalWaitDelayedPermissionProbe(t *testing.T) {
 	b := bases[0]
 	now := b.At.Add(time.Hour)
 	s = waitBuild(t, s, cfg, now)
-	s = rejectWait(t, s, s.Active, b)
+	gateBasis := b
+	gateBasis.At = b.At.Add(time.Minute)
+	s = rejectWait(t, s, s.Active, gateBasis)
 	s = invalidateWait(t, s)
+	preGate := eligibilityEvent(b)
+	preGate.Basis.At = b.At.Add(30 * time.Second)
+	preGate.Known = false
+	preGate.Reasons = []string{"unknown-before-gate"}
+	if got := Apply(s, preGate); len(got.ApprovalWaits()) != 1 {
+		t.Fatal("pre-gate eligibility woke newer wait")
+	}
 	newer := eligibilityEvent(b)
 	newer.Basis.At = b.At.Add(3 * time.Minute)
 	newer.Basis.ReadID = "newer-equal"

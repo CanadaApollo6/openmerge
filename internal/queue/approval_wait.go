@@ -80,6 +80,9 @@ func (s State) currentApprovalInputBasis(b ApprovalBasis) bool {
 	if s.CheckApprovalBoundary(b) != nil {
 		return false
 	}
+	if w, ok := s.approvalWaits[b.ChangeID]; ok && b.At.Before(w.Basis.At) {
+		return false
+	}
 	r, _ := s.approvalBinding(b)
 	if b.At.Before(r.Basis.At) {
 		return false
