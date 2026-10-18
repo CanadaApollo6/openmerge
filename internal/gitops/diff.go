@@ -21,18 +21,22 @@ var errInvalidUTF8Path = errors.New("invalid UTF-8 diff path")
 // limitedDiffBuffer bounds memory even when git produces a huge inventory/blob
 // or diagnostic. exec closes the output pipe when Write refuses further bytes.
 type limitedDiffBuffer struct {
-	bytes.Buffer
+	buffer   bytes.Buffer
 	limit    int
 	overflow bool
 }
 
+// Keep the buffer named: embedding would promote ReadFrom and let io.Copy
+// bypass Write when os/exec drains a child's stdout/stderr pipe.
+func (b *limitedDiffBuffer) String() string { return b.buffer.String() }
+
 func (b *limitedDiffBuffer) Write(p []byte) (int, error) {
-	if len(p) > b.limit-b.Len() {
-		n, _ := b.Buffer.Write(p[:b.limit-b.Len()])
+	if len(p) > b.limit-b.buffer.Len() {
+		n, _ := b.buffer.Write(p[:b.limit-b.buffer.Len()])
 		b.overflow = true
 		return n, errDiffOutputLimit
 	}
-	return b.Buffer.Write(p)
+	return b.buffer.Write(p)
 }
 
 func (s *session) diffCommand(ctx context.Context, limit int, args ...string) (string, bool, error) {

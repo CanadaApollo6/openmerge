@@ -262,7 +262,9 @@ func (s *Server) eligible(ctx context.Context, w *worker, pr forge.PullRequest) 
 			return false, err
 		}
 	}
-	if w.stageA != nil {
+	// Approval evidence cannot affect an entry expression without a review term.
+	// Skip that forge read; native ingestion already refreshed source stances.
+	if w.stageA != nil && slices.Contains(w.cfg.EnterWhen.Attributes(), reviewAttribute) {
 		state, _, err := s.store.Load(ctx, w.id)
 		if err != nil {
 			return false, err

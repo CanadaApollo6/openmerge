@@ -16,6 +16,7 @@ var _ forge.GoverningFilesReader = (*Forge)(nil)
 func (f *Forge) GoverningFiles(ctx context.Context, repo forge.RepoRef, req forge.GoverningFilesRequest) (forge.GoverningFiles, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.governingFilesCalls++
 	failed := func(reason forge.DiffFailureReason, err error) (forge.GoverningFiles, error) {
 		return forge.GoverningFiles{CommitSHA: req.CommitSHA, Semantics: forge.DiffSemantics, Coverage: forge.DiffCoverage{Completeness: forge.DiffIncomplete, Reasons: []forge.DiffFailureReason{reason}}}, err
 	}
@@ -67,4 +68,18 @@ func (f *Forge) GoverningFiles(ctx context.Context, repo forge.RepoRef, req forg
 		}
 		return file, ctx.Err()
 	})
+}
+
+// GoverningFilesCalls reports bounded governing-reader use in tests.
+func (f *Forge) GoverningFilesCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.governingFilesCalls
+}
+
+// IdentityCalls reports forge identity reads by operation for bounded-call tests.
+func (f *Forge) IdentityCalls(operation string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.identityCalls[operation]
 }

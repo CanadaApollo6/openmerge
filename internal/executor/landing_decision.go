@@ -22,6 +22,9 @@ var ErrLandingApprovals = errors.New("landing approvals unmet")
 // store claim and invokes Store.StartLanding; it never emits individual events.
 // There is no forge I/O or git push inside Commit's transaction.
 type LandingDecisionGate struct {
+	// ReloadAfterInputs folds evidence journaled by ReadInputs before evaluating.
+	// Atomic start rederives the same decisions against the locked journal.
+	ReloadAfterInputs  bool
 	Reject             func(context.Context, []queue.ApprovalEligibilityObserved, []string, queue.LandingStarted, queue.ApprovalGateRejected) error
 	Policy             cp.Policy
 	Load               func(context.Context) (queue.State, error)
@@ -41,6 +44,12 @@ func (g *LandingDecisionGate) start(ctx context.Context, land queue.Land, start 
 	fresh, err := g.ReadInputs(ctx, land, state)
 	if err != nil {
 		return err
+	}
+	if g.ReloadAfterInputs {
+		state, err = g.Load(ctx)
+		if err != nil {
+			return err
+		}
 	}
 	messages, err := g.ReadTestedMessages(ctx, land)
 	if err != nil {

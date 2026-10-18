@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 
 	"github.com/CanadaApollo6/openmerge/internal/executor"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
@@ -15,6 +14,8 @@ import (
 
 // readStageABatch runs after the exact-head trust read. It never re-diffs at
 // landing: configuration/reconciliation must already have refreshed evidence.
+// It journals newly observed stances/commands; callers must reload the durable
+// state before evaluating the returned eligibility against its stance fold.
 func (s *Server) readStageABatch(ctx context.Context, w *worker, state queue.State, land queue.Land) ([]queue.ApprovalEligibilityObserved, error) {
 	result := make([]queue.ApprovalEligibilityObserved, 0, len(land.PRs))
 	for _, pin := range land.PRs {
@@ -33,7 +34,28 @@ func (s *Server) readStageABatch(ctx context.Context, w *worker, state queue.Sta
 		if !forward {
 			return nil, store.ErrLandingDecisionStale
 		}
-		fresh, err := s.readStageAInputs(ctx, w, state, approvalBasis(r))
+		_, reader, err := w.stageReaders()
+		if err != nil {
+			return nil, err
+		}
+		native, err := reader.NativeReviews(ctx, w.repo(), pin.PR)
+		if err != nil {
+			return nil, err
+		}
+		basis := approvalBasis(r)
+		// Acquire once, retain attributed sources, then evaluate their durable
+		// fold. Commands use their normal immutable dedupe and receipt bindings.
+		if err := s.observeStageANative(ctx, w, w.prs[pin.PR], basis, native); err != nil {
+			return nil, err
+		}
+		if err := s.stageACommandsFromNative(ctx, w, pin.PR, native, true); err != nil {
+			return nil, err
+		}
+		current, _, err := s.store.Load(ctx, w.id)
+		if err != nil {
+			return nil, err
+		}
+		fresh, err := s.readStageAInputsFromNative(ctx, w, current, basis, native)
 		if err != nil {
 			return nil, err
 		}
@@ -55,27 +77,22 @@ func testedMessages(ctx context.Context, w *worker, land queue.Land) ([]string, 
 		message, err := reader.ReadCommitMessage(ctx, w.repo(), land.TestedSHA)
 		return []string{message}, err
 	}
-	history, ok := w.Git.(forge.CommitHistoryReader)
+	history, ok := w.Git.(forge.FirstParentCommitReader)
 	if !ok {
 		return nil, store.LandingDecisionRequiredError{}
 	}
-	commits, truncated, err := history.CommitsBetween(ctx, w.repo(), land.ExpectedBaseSHA, land.TestedSHA, forge.MaxAncestryCommits)
+	commits, err := testedMemberCommits(ctx, w, land, history)
 	if err != nil {
 		return nil, err
 	}
-	if truncated {
-		return nil, errors.New("tested member history exceeds limit")
-	}
-	// Rebase writes each pair on the final replay commit for that member. Read
-	// immutable objects, parse with 9b's reader, and select exactly one per pin.
+	// Read and strictly parse only structurally selected, queue-generated member
+	// commits. Contributor history can contain arbitrary reserved-looking text;
+	// it must never influence parser acceptance or rejection at this boundary.
 	byID := map[string]string{}
 	for _, sha := range commits {
 		message, err := reader.ReadCommitMessage(ctx, w.repo(), sha)
 		if err != nil {
 			return nil, err
-		}
-		if !stringsContainChangeTrailer(message) {
-			continue
 		}
 		members, err := forge.ParseChangeTrailers(message)
 		if err != nil {
@@ -108,15 +125,67 @@ func testedMessages(ctx context.Context, w *worker, land queue.Land) ([]string, 
 	return messages, nil
 }
 
-func stringsContainChangeTrailer(message string) bool {
-	// Avoid treating contributor-only commits in a rebase as missing metadata.
-	// Any reserved change key still goes through the strict shared parser.
-	return strings.Contains(strings.ToLower(message), "openmerge-change") || strings.Contains(strings.ToLower(message), "openmerge-classification")
+// testedMemberCommits selects queue-generated commits through BuildTestRef's
+// first-parent structure before their messages are read. This never walks
+// contributor merge parents or performs a per-history-commit ancestry query.
+// Merge and squash create one first-parent commit per member. Rebase creates
+// one first-parent replay per source commit, so its member marker is the final
+// replay in each known first-parent source segment.
+func testedMemberCommits(ctx context.Context, w *worker, land queue.Land, history forge.FirstParentCommitReader) ([]string, error) {
+	commits, truncated, err := history.FirstParentCommits(ctx, w.repo(), land.ExpectedBaseSHA, land.TestedSHA, forge.MaxAncestryCommits)
+	if err != nil {
+		return nil, err
+	}
+	if truncated {
+		return nil, errors.New("tested member history exceeds limit")
+	}
+	switch land.Method {
+	case queue.Merge, queue.Squash:
+		if len(commits) != len(land.PRs) {
+			return nil, errors.New("unexpected tested member structure")
+		}
+		return commits, nil
+	case queue.Rebase:
+		// First-parent readers list newest first. BuildTestRef replays each
+		// pinned source history in PR order, so reverse the generated chain and
+		// select the final replay of each source segment without reading any
+		// contributor message.
+		slices.Reverse(commits)
+		members := make([]string, 0, len(land.PRs))
+		next := 0
+		sources, ok := w.Git.(forge.CommitHistoryReader)
+		if !ok {
+			return nil, store.LandingDecisionRequiredError{}
+		}
+		for _, pin := range land.PRs {
+			// BuildTestRef replays head ^ build-base. The current build base
+			// may have advanced past the contributor branch point (or be a
+			// speculative predecessor), so it need not lie on source history.
+			source, truncated, err := sources.CommitsBetween(ctx, w.repo(), land.ExpectedBaseSHA, pin.HeadSHA, forge.MaxAncestryCommits)
+			if err != nil {
+				return nil, err
+			}
+			if truncated {
+				return nil, errors.New("tested source history exceeds limit")
+			}
+			next += len(source)
+			if len(source) == 0 || next > len(commits) {
+				return nil, errors.New("unexpected rebase tested member structure")
+			}
+			members = append(members, commits[next-1])
+		}
+		if next != len(commits) {
+			return nil, errors.New("unexpected rebase tested member structure")
+		}
+		return members, nil
+	default:
+		return nil, errors.New("unsupported tested merge method")
+	}
 }
 
 func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Config) *executor.LandingDecisionGate {
 	policy := w.stageA.policy
-	return &executor.LandingDecisionGate{Policy: policy,
+	return &executor.LandingDecisionGate{Policy: policy, ReloadAfterInputs: true,
 		Load: func(ctx context.Context) (queue.State, error) {
 			state, _, err := s.store.Load(ctx, w.id)
 			return state, err
@@ -126,6 +195,13 @@ func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Conf
 				return nil, store.ErrLandingDecisionStale
 			}
 			fresh, err := s.readStageABatch(ctx, w, state, land)
+			if err != nil {
+				return nil, err
+			}
+			// Native stances and authenticated commands from the final read are
+			// durable before this evaluation. The executor reloads again before
+			// preparing decisions; StartLanding rederives under the queue lock.
+			state, _, err = s.store.Load(ctx, w.id)
 			if err != nil {
 				return nil, err
 			}
@@ -172,6 +248,13 @@ func (s *Server) stageACheckPolicy(ctx context.Context, w *worker, batch *queue.
 	}
 	land := queue.Land{BatchID: batch.ID, TestedSHA: batch.TestedSHA, PRs: slices.Clone(batch.PRs)}
 	fresh, err := s.readStageABatch(ctx, w, state, land)
+	if err != nil {
+		return false, false, err
+	}
+	// readStageABatch may journal fresh native stances and approval commands.
+	// Evaluate the approval condition, fingerprints, and wait against that
+	// committed projection rather than the pre-journal snapshot.
+	state, _, err = s.store.Load(ctx, w.id)
 	if err != nil {
 		return false, false, err
 	}

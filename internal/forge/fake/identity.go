@@ -71,6 +71,7 @@ func (f *Forge) SetTeam(team forge.TeamIdentity, members []forge.UserIdentity) {
 func (f *Forge) ResolveUser(ctx context.Context, login string) (forge.UserIdentity, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.identityCalls["ResolveUser"]++
 	if err := f.failure(ctx, "ResolveUser"); err != nil {
 		return forge.UserIdentity{}, err
 	}
@@ -85,6 +86,7 @@ func (f *Forge) ResolveUser(ctx context.Context, login string) (forge.UserIdenti
 func (f *Forge) ResolveTeam(ctx context.Context, name string) (forge.TeamIdentity, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.identityCalls["ResolveTeam"]++
 	if err := f.failure(ctx, "ResolveTeam"); err != nil {
 		return forge.TeamIdentity{}, err
 	}
@@ -99,6 +101,7 @@ func (f *Forge) ResolveTeam(ctx context.Context, name string) (forge.TeamIdentit
 func (f *Forge) TeamMembers(ctx context.Context, team forge.TeamIdentity) ([]forge.UserIdentity, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.identityCalls["TeamMembers"]++
 	if err := f.failure(ctx, "TeamMembers"); err != nil {
 		return nil, err
 	}
@@ -125,6 +128,7 @@ func (f *Forge) TeamMembers(ctx context.Context, team forge.TeamIdentity) ([]for
 func (f *Forge) WriteGrant(ctx context.Context, repo forge.RepoRef, author forge.UserIdentity) (forge.WriteGrant, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.identityCalls["WriteGrant"]++
 	if err := f.failure(ctx, "WriteGrant"); err != nil {
 		return forge.WriteGrant{}, err
 	}

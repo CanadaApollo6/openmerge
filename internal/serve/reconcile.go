@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strings"
 	"time"
 
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
@@ -55,7 +54,7 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 	// base/config observations. A parsed invalid file or proven deletion is a
 	// definite condition and can be recorded independently.
 	var invalid config.Errors
-	if loadErr != nil && !errors.Is(loadErr, config.ErrNotFound) && !errors.As(loadErr, &invalid) {
+	if loadErr != nil && !errors.Is(loadErr, config.ErrNotFound) && !errors.As(loadErr, &invalid) && (w.stageA == nil || !stageADefiniteIdentityFailure(loadErr)) {
 		w.configError = loadErr
 		w.configBranch, w.configTip = "", ""
 		if w.managed {
@@ -68,16 +67,33 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 		}
 		return loadErr
 	}
-	if loadErr == nil && w.stageA != nil {
+	stageARefresh := loadErr == nil && w.stageA != nil
+	if stageARefresh {
 		loadErr = s.refreshStageAPolicy(ctx, w, configTip)
+	}
+	// Identity absence/mismatch is a proved policy failure and must be durable.
+	// Transport, rate-limit and incomplete-membership errors abort entirely: a
+	// stale in-memory policy is never used, but neither is an uncertain result
+	// written as a durable configuration failure.
+	if loadErr != nil && stageARefresh && !stageADefiniteIdentityFailure(loadErr) {
+		w.configError = loadErr
+		w.configBranch, w.configTip = "", ""
+		if w.managed {
+			w.ready = false
+			w.waiting = "configuration could not be read; discovery will retry"
+			select {
+			case s.refresh <- struct{}{}:
+			default:
+			}
+		}
+		return loadErr
 	}
 	if baseErr == nil && state.BaseSHA != tip {
 		if w.stageA != nil {
-			if loadErr != nil {
-				return loadErr
-			}
-			if err := s.observeStageABase(ctx, w, state, tip, configTip); err != nil {
-				return err
+			if loadErr == nil {
+				if err := s.observeStageABase(ctx, w, state, tip, configTip); err != nil {
+					return err
+				}
 			}
 		} else if _, err := s.store.Append(ctx, w.id, []queue.Event{queue.BaseMoved{SHA: tip}}, ""); err != nil {
 			return err
@@ -132,6 +148,10 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 		}
 	}
 	return err
+}
+
+func stageADefiniteIdentityFailure(err error) bool {
+	return errors.Is(err, forge.ErrIdentityUnavailable) || errors.Is(err, forge.ErrIdentityMismatch)
 }
 
 func (s *Server) repositoryConfig(ctx context.Context, target Target, tip string) (config.Config, error) {
@@ -397,69 +417,12 @@ func (s *Server) commands(ctx context.Context, w *worker, number int) error {
 		return 0
 	})
 	for _, c := range comments {
-		if err := s.quota(); err != nil {
-			return err
-		}
-		receipt := fmt.Sprintf("comment/%d", c.ID)
-		seen, err := s.store.Observation(ctx, w.id, receipt)
+		stop, err := s.handleLegacyCommand(ctx, w, number, c)
 		if err != nil {
 			return err
 		}
-		if len(seen) == 0 {
-			var events []queue.Event
-			var outcome any = true
-			if cmd := command(c.Body); cmd != "" && c.Author != w.BotLogin {
-				fields := strings.Fields(cmd)
-				if fields[0] == "queue" && w.managed && !w.ready {
-					return s.ignoreWaitingCommand(ctx, w, number, c)
-				}
-				allowed, err := w.Driver.CanWrite(ctx, w.repo(), c.Author)
-				if err != nil {
-					return err
-				}
-				if !allowed {
-					if err := w.Driver.Comment(ctx, w.repo(), number, receipt+"/unauthorized", "Only repository writers can use @openmerge commands."); err != nil {
-						return err
-					}
-				} else {
-					switch fields[0] {
-					case "queue":
-						// Trust must be freshly read even if UpdatedAt did not change.
-						pr, err := s.observe(ctx, w, number)
-						if err != nil {
-							return err
-						}
-						if len(fields) == 2 && !strings.EqualFold(pr.HeadSHA, fields[1]) {
-							if err := w.Driver.Comment(ctx, w.repo(), number, receipt+"/head-changed", "The SHA does not match the current head "+pr.HeadSHA+". Please re-issue @openmerge queue with the intended SHA."); err != nil {
-								return err
-							}
-						} else {
-							events = append(events, queue.EnqueueRequested{PR: number, At: c.CreatedAt})
-							outcome = queueReceipt{QueuedSHA: pr.HeadSHA}
-						}
-					case "dequeue":
-						events = append(events, queue.DequeueRequested{PR: number})
-					case "refresh":
-						if _, err := s.observe(ctx, w, number); err != nil {
-							return err
-						}
-						clears, err := s.operatorClears(ctx, w)
-						if err != nil {
-							return err
-						}
-						events = append(events, clears...)
-						events = append(events, queue.RefreshRequested{})
-					}
-				}
-			}
-			if err := s.record(ctx, w, receipt, outcome, events...); err != nil {
-				return err
-			}
-		}
-		// A committed receipt also repairs a crash before the acceptance reply.
-		// Its immutable command outcome pins the exact SHA, even after a push.
-		if err := s.replyQueued(ctx, w, number, receipt); err != nil {
-			return err
+		if stop {
+			return nil
 		}
 		if c.CreatedAt.After(since) {
 			since = c.CreatedAt

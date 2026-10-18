@@ -5,12 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
 
 var _ forge.GoverningFilesReader = (*Repo)(nil)
+
+const emptyTreeObject = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 
 // GoverningFiles uses the same hardened diffRead session as RevisionDiff.
 // The contents API cannot provide bounded raw blobs, modes and tree-proven
@@ -48,10 +51,12 @@ func (r *Repo) GoverningFiles(ctx context.Context, repo forge.RepoRef, req forge
 		return fail(reason, err)
 	}
 	if req.AllAttributes {
-		// Enumerate names in the immutable tree, never the worktree or host attrs.
-		// Include trees so a directory named .gitattributes fails its regular-file
-		// probe. Overflow is unknown, never a partial policy digest.
-		raw, overflow, err := s.diffCommand(ctx, forge.MaxDiffBytes, "ls-tree", "-r", "-t", "-z", "--name-only", "--full-tree", req.CommitSHA)
+		// Diff the immutable tree against Git's canonical empty tree with only
+		// .gitattributes pathspecs. Unlike ls-tree, diff-tree accepts glob magic
+		// here and emits no unrelated source-tree names. The descendant pathspec
+		// also exposes a directory named .gitattributes for the regular-file
+		// probe below.
+		raw, overflow, err := s.diffCommand(ctx, forge.MaxDiffBytes, "diff-tree", "-r", "--name-only", "--no-commit-id", "-z", "--no-renames", emptyTreeObject, req.CommitSHA, "--", ".gitattributes", ":(glob)**/.gitattributes", ":(glob)**/.gitattributes/**")
 		if err != nil {
 			return fail(forge.DiffReadFailure, err)
 		}
@@ -62,11 +67,19 @@ func (r *Repo) GoverningFiles(ctx context.Context, repo forge.RepoRef, req forge
 			return fail(forge.DiffReadFailure, errors.New("incomplete governing tree names"))
 		}
 		req.Paths = nil
+		seen := map[string]bool{}
 		for _, name := range strings.Split(strings.TrimSuffix(raw, "\x00"), "\x00") {
-			if path.Base(name) == ".gitattributes" {
-				req.Paths = append(req.Paths, name)
+			for candidate := name; candidate != "." && candidate != ""; candidate = path.Dir(candidate) {
+				if path.Base(candidate) == ".gitattributes" && !seen[candidate] {
+					seen[candidate] = true
+					req.Paths = append(req.Paths, candidate)
+					if len(req.Paths) > forge.MaxGoverningFiles {
+						return fail(forge.DiffFileLimit, nil)
+					}
+				}
 			}
 		}
+		slices.Sort(req.Paths)
 		req.PathsComplete = true
 	}
 	out, err = forge.CollectGoverningFiles(ctx, req, func(ctx context.Context, p string, budget int) (forge.GoverningFile, error) {

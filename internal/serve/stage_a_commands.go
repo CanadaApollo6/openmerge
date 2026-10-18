@@ -43,7 +43,23 @@ type approvalCommandOutcome struct {
 }
 
 func (s *Server) stageACommands(ctx context.Context, w *worker, number int) error {
-	ids, reader, err := w.stageReaders()
+	_, reader, err := w.stageReaders()
+	if err != nil {
+		return err
+	}
+	native, err := reader.NativeReviews(ctx, w.repo(), number)
+	if err != nil {
+		return err
+	}
+	return s.stageACommandsFromNative(ctx, w, number, native, false)
+}
+
+// stageACommandsFromNative folds one complete native review response into the
+// command journal. approvalsOnly is used by final preflight: it may consume
+// approval commands from this response, but it must leave legacy commands for
+// the normal command pass and must not advance the shared cursor past them.
+func (s *Server) stageACommandsFromNative(ctx context.Context, w *worker, number int, native forge.NativeReviews, approvalsOnly bool) error {
+	ids, _, err := w.stageReaders()
 	if err != nil {
 		return err
 	}
@@ -56,10 +72,6 @@ func (s *Server) stageACommands(ctx context.Context, w *worker, number int) erro
 		if err := json.Unmarshal(raw, &since); err != nil {
 			return err
 		}
-	}
-	native, err := reader.NativeReviews(ctx, w.repo(), number)
-	if err != nil {
-		return err
 	}
 	slices.SortStableFunc(native.Comments, func(a, b forge.NativeComment) int {
 		if c := a.Created.Time.Compare(b.Created.Time); c != 0 {
@@ -77,19 +89,45 @@ func (s *Server) stageACommands(ctx context.Context, w *worker, number int) erro
 		if c.Kind != forge.IssueComment || c.ID <= 0 || c.Created.Time.Before(since) {
 			continue
 		}
+		verb, digest := approvalCommand(c.Body)
+		legacy := command(c.Body)
+		if approvalsOnly && verb == "" {
+			continue
+		}
+		if !approvalsOnly && legacy != "" {
+			stop, err := s.handleLegacyCommand(ctx, w, number, forge.Comment{ID: c.ID, Author: c.Author.Login, Body: c.Body, CreatedAt: c.Created.Time})
+			if err != nil {
+				return err
+			}
+			if stop {
+				return nil
+			}
+			if c.Created.Time.After(since) {
+				since = c.Created.Time
+			}
+			continue
+		}
+		if verb != "" {
+			if err := s.quota(); err != nil {
+				return err
+			}
+		}
 		key := fmt.Sprintf("comment/%d", c.ID)
 		seen, err := s.store.Observation(ctx, w.id, key)
 		if err != nil {
 			return err
 		}
 		if len(seen) == 0 {
-			verb, digest := approvalCommand(c.Body)
-			legacy := command(c.Body)
 			events := []queue.Event{}
 			var outcome any = true
 			if (verb != "" || legacy != "") && c.Author.Login != w.BotLogin {
 				grant, err := ids.WriteGrant(ctx, w.repo(), c.Author)
-				if err != nil || !grant.CanWrite(c.Author.ID) {
+				if err != nil {
+					if !errors.Is(err, forge.ErrIdentityMismatch) && !errors.Is(err, forge.ErrIdentityUnavailable) {
+						return err
+					}
+					outcome = approvalCommandOutcome{Detail: "Only an identity-bound repository writer can use @openmerge commands."}
+				} else if !grant.CanWrite(c.Author.ID) {
 					outcome = approvalCommandOutcome{Detail: "Only an identity-bound repository writer can use @openmerge commands."}
 				} else {
 					// Bind unapprove and bare digest to the authenticated processing revision,
@@ -214,6 +252,11 @@ func (s *Server) stageACommands(ctx context.Context, w *worker, number int) erro
 		if c.Created.Time.After(since) {
 			since = c.Created.Time
 		}
+	}
+	if approvalsOnly {
+		// Leave the shared cursor untouched. A final gate read may have skipped
+		// an older legacy command; the normal command pass must still see it.
+		return nil
 	}
 	return s.record(ctx, w, fmt.Sprintf("cursor/%d", number), since)
 }

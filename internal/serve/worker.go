@@ -127,7 +127,9 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 			if recorded == nil {
 				return nil, errors.New("build start was not recorded")
 			}
-			return executor.LoadBuildMetadata(current, key, *recorded, digest)
+			return executor.LoadBuildMetadataWithAncestry(current, key, *recorded, digest, func(ancestor, descendant string) (bool, error) {
+				return w.Git.IsAncestor(actionCtx, w.repo(), ancestor, descendant)
+			})
 		}
 		x.LandingDecisions = s.stageAGate(w, claim, cfg)
 	}
@@ -203,6 +205,15 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 			pending = pending || !terminal
 		}
 		return !pending, !pending, nil
+	}
+	if w.stageA != nil {
+		x.CheckPolicyOutcome = func(checks []forge.CheckRun) (executor.CheckOutcome, error) {
+			terminal, success, err := s.stageACheckPolicy(actionCtx, w, batch, checks)
+			if errors.Is(err, executor.ErrLandingApprovals) {
+				return executor.CheckOutcome{ApprovalWait: true}, err
+			}
+			return executor.CheckOutcome{Terminal: terminal, Success: success}, err
+		}
 	}
 	x.BeforeLand = func(ctx context.Context, land queue.Land) error {
 		if err := s.trustGate(ctx, w, land.PRs); err != nil {

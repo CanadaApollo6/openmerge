@@ -319,6 +319,15 @@ type CommitHistoryReader interface {
 	CommitsBetween(ctx context.Context, repo RepoRef, base, head string, limit int) (commits []string, truncated bool, err error)
 }
 
+// FirstParentCommitReader enumerates immutable commits on the exact
+// first-parent path from head back to, but excluding, base. Results are newest
+// first. It is intentionally separate from CommitHistoryReader: callers that
+// need queue-generated composition structure must not walk contributor merge
+// parents or resolve a moving ref.
+type FirstParentCommitReader interface {
+	FirstParentCommits(ctx context.Context, repo RepoRef, base, head string, limit int) (commits []string, truncated bool, err error)
+}
+
 // OutsidePushHistory enriches journal transitions without reading live refs.
 // Production instances must have separate caches and credentials from workers.
 type OutsidePushHistory interface {

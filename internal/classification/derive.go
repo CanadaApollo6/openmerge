@@ -19,13 +19,27 @@ type OwnerResolver func(Owner) cp.IdentitySet
 // Resolve is injected; nil means no user/team identity observations are known.
 type TreeDeriver struct {
 	Resolve    OwnerResolver
+	owners     map[string]ownersFile
 	attributes map[string]attributesFile
 }
 
 func (d TreeDeriver) prepared(g forge.GoverningFiles) TreeDeriver {
-	d.attributes = make(map[string]attributesFile, len(g.Attributes))
+	if d.owners == nil {
+		d.owners = make(map[string]ownersFile)
+	}
+	if source, known := selectedOwners(g); known && source.Present {
+		if _, cached := d.owners[source.Path]; !cached {
+			d.owners[source.Path] = parseOwners(source.Content)
+		}
+	}
+	if d.attributes == nil {
+		d.attributes = make(map[string]attributesFile, len(g.Attributes))
+	}
 	for _, f := range g.Attributes {
 		if f.Present {
+			if _, cached := d.attributes[f.Path]; cached {
+				continue
+			}
 			d.attributes[f.Path] = parseAttributes(f.Content)
 		}
 	}
@@ -42,7 +56,10 @@ func (d TreeDeriver) Generated(p string, g forge.GoverningFiles) cp.Truth {
 // code-owner membership requires the whole effective entry to resolve.
 func (d TreeDeriver) Owners(c *cp.Classification, g forge.GoverningFiles) {
 	source, known := selectedOwners(g)
-	parsed := parseOwners(source.Content)
+	parsed, cached := d.owners[source.Path]
+	if !cached {
+		parsed = parseOwners(source.Content)
+	}
 	known = known && parsed.valid
 	c.CodeOwners = nil
 	c.PolicyOwners = nil

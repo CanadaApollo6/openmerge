@@ -21,12 +21,33 @@ type BuildChangeKey interface {
 // until Stage A activation wires the recorded queue snapshot into it.
 type BuildMetadataLoader func(queue.State, BuildChangeKey, queue.Batch, string) ([]*forge.ChangeMetadata, error)
 
+// BuildMetadataAncestry checks whether a recorded classification base remains
+// on the current queue-base history. Stage A supplies the same immutable-SHA
+// ancestry predicate used while it ingests and gates classifications.
+type BuildMetadataAncestry func(ancestor, descendant string) (bool, error)
+
 // LoadBuildMetadata resolves the classification for the exact revisions pinned
 // by batch. It never consults the latest PR head to select a revision. The
 // policyDigest is the semantic policy digest pinned by the build configuration;
 // state.ConfigDigest and batch.ConfigDigest must both carry the exact effective
 // queue-config pin.
 func LoadBuildMetadata(state queue.State, key BuildChangeKey, batch queue.Batch, policyDigest string) ([]*forge.ChangeMetadata, error) {
+	return loadBuildMetadata(state, key, batch, policyDigest, nil)
+}
+
+// LoadBuildMetadataWithAncestry resolves a pinned build classification after
+// proving that its recorded diff base is still an ancestor of the current
+// queue base. This permits a classification refreshed at a rewrite target to
+// remain valid as that new history advances, without accepting a pin from a
+// sibling or discarded history.
+func LoadBuildMetadataWithAncestry(state queue.State, key BuildChangeKey, batch queue.Batch, policyDigest string, ancestry BuildMetadataAncestry) ([]*forge.ChangeMetadata, error) {
+	if ancestry == nil {
+		return nil, fmt.Errorf("build metadata requires queue-base ancestry")
+	}
+	return loadBuildMetadata(state, key, batch, policyDigest, ancestry)
+}
+
+func loadBuildMetadata(state queue.State, key BuildChangeKey, batch queue.Batch, policyDigest string, ancestry BuildMetadataAncestry) ([]*forge.ChangeMetadata, error) {
 	if key == nil || batch.ID == "" || batch.BaseSHA == "" || len(batch.PRs) == 0 {
 		return nil, fmt.Errorf("build metadata requires a pinned batch")
 	}
@@ -78,9 +99,19 @@ func LoadBuildMetadata(state queue.State, key BuildChangeKey, batch queue.Batch,
 			return nil, fmt.Errorf("classification head for PR %d does not match its pinned head", pin.PR)
 		}
 		// Classification is based on the recorded queue-base observation, not
-		// a speculative predecessor batch's build base.
+		// a speculative predecessor batch's build base. The legacy/pure seam
+		// retains the two exact recorded bases; activation supplies ancestry so
+		// a refreshed rewrite pin can remain valid across later forward moves.
 		revision, _ := state.PRRevision(pin.PR)
-		if inputs.Base != state.BaseSHA && inputs.Base != revision.Basis.BaseSHA {
+		baseMatches := inputs.Base == state.BaseSHA || inputs.Base == revision.Basis.BaseSHA
+		if ancestry != nil {
+			forward, err := ancestry(inputs.Base, state.BaseSHA)
+			if err != nil {
+				return nil, fmt.Errorf("verify classification base for PR %d: %w", pin.PR, err)
+			}
+			baseMatches = forward
+		}
+		if !baseMatches {
 			return nil, fmt.Errorf("classification base for PR %d does not match the recorded queue base", pin.PR)
 		}
 		if inputs.PolicyDigest != policyDigest {

@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +35,7 @@ func shadowFixture(t *testing.T, depth int, base, installation string, receipt b
 	writer := forge.UserIdentity{ID: 21, Login: "writer", Kind: forge.UserAccount}
 	f.SetIdentity(writer)
 	f.SetWriteGrant(repo, 21, "write")
+	f.SetCanWrite(repo, "writer", true)
 	f.SetIdentity(forge.UserIdentity{ID: 12, Login: "contributor", Kind: forge.UserAccount})
 	f.SetNativeReviews(repo, 1, forge.NativeReviews{})
 	s, err := New(t.Context(), database(t), []Target{{Key: store.QueueKey{Installation: installation, Repository: repo.Path, BaseBranch: base}, Driver: f, Git: f, BotLogin: fake.Identity}}, Options{PollInterval: time.Minute, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
@@ -65,6 +67,18 @@ func shadowDigest(t *testing.T, s *Server, w *worker) string {
 	identity, err := brief.Identity(fact)
 	must(t, err)
 	return identity.BriefDigest
+}
+
+type corruptTestedMessageGit struct {
+	*fake.Forge
+	sha, message string
+}
+
+func (g *corruptTestedMessageGit) ReadCommitMessage(ctx context.Context, repo forge.RepoRef, sha string) (string, error) {
+	if sha == g.sha {
+		return g.message, nil
+	}
+	return g.Forge.ReadCommitMessage(ctx, repo, sha)
 }
 
 func TestStageABareReceiptCommands(t *testing.T) {
@@ -392,6 +406,36 @@ func TestStageAPinnedBaseRefreshAndPolicyRecovery(t *testing.T) {
 	}
 }
 
+func TestStageABuildMetadataSurvivesRewriteThenForwardMove(t *testing.T) {
+	s, w, f := shadowFixture(t, 1, "main", "7", false)
+	initial := shadowState(t, s, w).BaseSHA
+	// Build sibling B and forward C from A. Rewriting C to B refreshes the
+	// classification pin at B; advancing B -> D must keep that pin usable.
+	rewriteBase, err := f.PushBase(repo, "main", "branch B", map[string]string{"b.txt": "B"})
+	must(t, err)
+	must(t, f.SetRef(repo, "main", initial))
+	_, err = f.PushBase(repo, "main", "branch C", map[string]string{"c.txt": "C"})
+	must(t, err)
+	must(t, s.reconcile(t.Context(), w, true))
+	must(t, f.SetRef(repo, "main", rewriteBase))
+	must(t, s.reconcile(t.Context(), w, true))
+	_, err = f.PushBase(repo, "main", "forward D", map[string]string{"d.txt": "D"})
+	must(t, err)
+	must(t, s.reconcile(t.Context(), w, true))
+	state := shadowState(t, s, w)
+	revision, _ := state.PRRevision(1)
+	classification, _ := state.Classification(revision.ChangeID, revision.Revision)
+	if classification.Evidence.Classification.Inputs.Base != rewriteBase {
+		t.Fatalf("refreshed base = %s, want rewrite target %s", classification.Evidence.Classification.Inputs.Base, rewriteBase)
+	}
+
+	f.SetNativeReviews(repo, 1, shadowNative(f, w, shadowComment(100, "@openmerge queue")))
+	must(t, s.cycle(t.Context(), w))
+	if batch := shadowState(t, s, w).BatchForPR(1); batch == nil || batch.TestedSHA == "" {
+		t.Fatalf("build after rewrite then advance failed: batch=%+v", batch)
+	}
+}
+
 func TestStageAUnReadableTeamAndDecisionTimeOwners(t *testing.T) {
 	s, w, f := shadowFixture(t, 1, "main", "7", false)
 	// Governing policy changes, never PR-owned CODEOWNERS content, define owners.
@@ -458,6 +502,125 @@ func TestStageAReceiptGateAllMethods(t *testing.T) {
 				t.Fatalf("receipt decision/start %d/%d", decisions, starts)
 			}
 		})
+	}
+}
+
+func TestStageAGateIgnoresContributorReservedTextForEveryMethod(t *testing.T) {
+	for _, method := range []queue.MergeMethod{queue.Squash, queue.Merge, queue.Rebase, queue.FastForward} {
+		t.Run(string(method), func(t *testing.T) {
+			s, w, f := shadowFixture(t, 1, "main", "7", true)
+			state := shadowState(t, s, w)
+			w.cfg.MergeMethod = method
+			w.cfg.Batch.MaxSize = 2
+			forgedID := "chg1_" + strings.Repeat("0", 64)
+			plainSource := "Document OpenMerge-Change trailer format"
+			forgedSource := "Contributor forged trailer pair\n\n" +
+				"OpenMerge-Change: " + forgedID + "@1\n" +
+				"OpenMerge-Classification: " + forgedID + "@1 none"
+			if _, err := forge.ParseChangeTrailers(forgedSource); err != nil {
+				t.Fatalf("forged contributor pair must be syntactically valid: %v", err)
+			}
+			appendSources := func(pr int) {
+				t.Helper()
+				// Each member has its original commit plus these two source commits.
+				// Rebase must count the segment, yet parse neither source message.
+				_, err := f.PushPR(repo, pr, plainSource)
+				must(t, err)
+				_, err = f.PushPR(repo, pr, forgedSource)
+				must(t, err)
+			}
+			assertThreeSourceCommits := func(pr int, base string) {
+				t.Helper()
+				current, err := f.PullRequest(t.Context(), repo, pr)
+				must(t, err)
+				commits, truncated, err := f.FirstParentCommits(t.Context(), repo, base, current.HeadSHA, 4)
+				must(t, err)
+				if truncated || len(commits) != 3 {
+					t.Fatalf("PR %d source commits = %d, truncated=%v, want three", pr, len(commits), truncated)
+				}
+			}
+			appendSources(1)
+			first, err := f.PullRequest(t.Context(), repo, 1)
+			must(t, err)
+			assertThreeSourceCommits(1, state.BaseSHA)
+			secondBase := state.BaseSHA
+			if method == queue.FastForward {
+				secondBase = first.HeadSHA
+			}
+			_, err = f.OpenPR(repo, 2, secondBase, true)
+			must(t, err)
+			must(t, f.SetPRMetadata(repo, 2, "main", false, "contributor"))
+			f.SetNativeReviews(repo, 2, forge.NativeReviews{})
+			appendSources(2)
+			assertThreeSourceCommits(2, secondBase)
+			must(t, s.reconcile(t.Context(), w, true))
+			digest := func(pr int) string {
+				current := shadowState(t, s, w)
+				revision, _ := current.PRRevision(pr)
+				fact, err := current.RecordedBrief(w.stageA.policy, approvalBasis(revision))
+				must(t, err)
+				identity, err := brief.Identity(fact)
+				must(t, err)
+				return identity.BriefDigest
+			}
+			f.SetNativeReviews(repo, 1, shadowNative(f, w,
+				shadowComment(100, "@openmerge queue"),
+				shadowComment(101, "@openmerge approve "+digest(1)),
+			))
+			f.SetNativeReviews(repo, 2, shadowNative(f, w,
+				shadowComment(200, "@openmerge queue"),
+				shadowComment(201, "@openmerge approve "+digest(2)),
+			))
+			builtMembers := 0
+			for range 5 {
+				must(t, s.cycle(t.Context(), w))
+				if batch := shadowState(t, s, w).BatchForPR(1); batch != nil && batch.TestedSHA != "" {
+					builtMembers = len(batch.PRs)
+					shadowChecks(t, s, w, f, batch.TestedSHA, []forge.CheckRun{{Name: "ci", State: forge.Success, HeadBranch: batch.TestRef}})
+				}
+			}
+			if builtMembers != 2 {
+				t.Fatalf("tested members = %d, want two multi-commit members", builtMembers)
+			}
+			events, err := s.store.EventsAfter(t.Context(), w.id, 0)
+			must(t, err)
+			starts := 0
+			for _, event := range events {
+				if _, ok := event.Event.(queue.LandingStarted); ok {
+					starts++
+				}
+			}
+			if starts != 1 {
+				t.Fatalf("contributor trailer text affected %s gate: starts=%d", method, starts)
+			}
+		})
+	}
+}
+
+func TestStageAGateRejectsMalformedGeneratedMemberMetadata(t *testing.T) {
+	s, w, f := shadowFixture(t, 1, "main", "7", true)
+	digest := shadowDigest(t, s, w)
+	f.SetNativeReviews(repo, 1, shadowNative(f, w,
+		shadowComment(100, "@openmerge queue"),
+		shadowComment(101, "@openmerge approve "+digest),
+	))
+	must(t, s.cycle(t.Context(), w))
+	batch := shadowState(t, s, w).BatchForPR(1)
+	if batch == nil || batch.TestedSHA == "" {
+		t.Fatal("missing tested composition")
+	}
+	shadowChecks(t, s, w, f, batch.TestedSHA, []forge.CheckRun{{Name: "ci", State: forge.Success, HeadBranch: batch.TestRef}})
+	w.Git = &corruptTestedMessageGit{Forge: f, sha: batch.TestedSHA, message: "OpenMerge generated\n\nOpenMerge-Change: malformed"}
+	err := s.cycle(t.Context(), w)
+	if err == nil || !strings.Contains(err.Error(), "invalid tested change trailers") {
+		t.Fatalf("malformed generated metadata was accepted: %v", err)
+	}
+	events, err := s.store.EventsAfter(t.Context(), w.id, 0)
+	must(t, err)
+	for _, event := range events {
+		if _, ok := event.Event.(queue.LandingStarted); ok {
+			t.Fatal("malformed generated metadata started a landing")
+		}
 	}
 }
 

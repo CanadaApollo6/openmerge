@@ -103,6 +103,54 @@ func TestLoadBuildMetadataMatchesPinnedClassification(t *testing.T) {
 	}
 }
 
+func TestLoadBuildMetadataAllowsRefreshedRewriteBaseAfterForwardMove(t *testing.T) {
+	key := store.QueueKey{Installation: "7", Repository: "Owner/Repo", BaseBranch: "main"}
+	state, batch := metadataState(t, key, []metadataPin{{pr: 1, head: strings.Repeat("b", 40)}})
+	original := state.BaseSHA
+	refreshed, current := strings.Repeat("e", 40), strings.Repeat("f", 40)
+	id, err := key.ChangeID(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	classification, ok := state.Classification(id, 1)
+	if !ok {
+		t.Fatal("missing original classification")
+	}
+	// A sibling rewrite refreshes the classification at B; a later ordinary
+	// forward move B -> D leaves the revision's original observation at A.
+	classification.Evidence.Classification.Inputs.Base = refreshed
+	classification.Evidence.Classification.Inputs.Generation++
+	state = queue.Apply(state, queue.BaseMoved{SHA: current})
+	state = queue.Apply(state, classification)
+	state = queue.Apply(state, queue.BatchStarted{BatchID: "b2", BaseSHA: current, PRs: batch.PRs, At: epoch})
+	refreshedBatch := state.Batch("b2")
+	if refreshedBatch == nil {
+		t.Fatal("rewrite sequence did not start a fresh pinned batch")
+	}
+	batch = *refreshedBatch
+	if _, err := executor.LoadBuildMetadata(state, key, batch, metadataPolicy); err == nil {
+		t.Fatal("plain loader accepted a refreshed base outside its exact legacy pins")
+	}
+
+	calls := 0
+	got, err := executor.LoadBuildMetadataWithAncestry(state, key, batch, metadataPolicy, func(ancestor, descendant string) (bool, error) {
+		calls++
+		if ancestor != refreshed || descendant != current {
+			t.Fatalf("ancestry = %s -> %s, want %s -> %s", ancestor, descendant, refreshed, current)
+		}
+		return true, nil
+	})
+	if err != nil || len(got) != 1 || calls != 1 {
+		t.Fatalf("refreshed forward pin = %+v, calls=%d, err=%v", got, calls, err)
+	}
+	if _, err := executor.LoadBuildMetadataWithAncestry(state, key, batch, metadataPolicy, func(string, string) (bool, error) { return false, nil }); err == nil {
+		t.Fatal("accepted a refreshed base from discarded history")
+	}
+	if original == refreshed || original == current {
+		t.Fatal("rewrite sequence fixture collapsed")
+	}
+}
+
 func TestLoadBuildMetadataRejectsMismatchedBindings(t *testing.T) {
 	t.Run("missing queue key", func(t *testing.T) {
 		if _, err := executor.LoadBuildMetadata(queue.State{}, nil, queue.Batch{}, metadataPolicy); err == nil {

@@ -34,12 +34,15 @@ first diff pin. Rewrites, including a rewind exactly to that original pin,
 commit refreshed classifications and the base observation together. Provenance
 and unrelated configuration formatting do not invalidate receipt identity.
 
-Authenticated whole-comment commands use stable comment author IDs and PR 3a's
-identity-bound grants. Native issue comments are sorted by creation time/ID;
+Approval commands use stable comment author IDs and PR 3a's identity-bound
+grants; legacy refresh/queue/dequeue retain their shared authorization handler. Native issue comments are sorted by creation time/ID;
 the durable cursor is inclusive. Every consumed comment has an immutable
 outcome, so edits and duplicate/concurrent processing cannot create new commands.
-App-self comments and inline review comments cannot issue commands. The legacy
-parser and its whole-comment grammar remain unchanged.
+App-self comments are excluded by BotLogin, matching the legacy path; stable
+App-ID exclusion is a later improvement. Inline review comments cannot issue
+commands. The legacy parser and its whole-comment grammar remain unchanged.
+Round 1 routes refresh, queue and dequeue through the same legacy handler; the
+parity tests below cover operator clears, waiting queues, quota and replies.
 
 Bare receipts call `PrepareBareReceipt`: Supplied copies Current from recorded
 brief evidence, replacing only its supplied digest. Fresh memberships never
@@ -107,8 +110,10 @@ reviewer brief path, digest and minimal wait reason on the candidate path.
   `TestStageAGoverningAttributesIndependentOfOpenChanges` proves that opening a
   sibling change cannot alter the governing attribute set or existing receipts;
   changing attribute content still refreshes policy. The internal all-attributes
-  read enumerates immutable tree names with the existing byte/file budgets;
-  overflow is unknown, never a partial policy digest.
+  read now uses targeted `.gitattributes` pathspecs against the immutable tree;
+  it does not emit unrelated source names. Attribute/content overflow remains
+  unknown, never a partial policy digest. Bounded commit and blob caches reuse
+  known governing content and CODEOWNERS/attribute parses.
   `TestGoverningAllAttributesPinnedAndBounded` covers real local Git, unobserved
   directories, moving refs and governing-file overflow.
 - PR 7a/7b endpoint withholding remains covered by the unchanged status policy
@@ -180,7 +185,7 @@ match; the corrected inspection checks exact structural shapes and retains the
 raw hash differences. Only processes started by this task were terminated. The final
 successful full checks and differentials below supersede those attempts.
 
-## Final gate results
+## Original pre-review gate results
 
 Verified code/test source: `7626f6ee17cbbc1008ae37809714cfb11e47fd00` (clean in both final replay reports).
 The subsequent evidence-only commit leaves this source tree unchanged.
@@ -469,3 +474,110 @@ python3 /home/riels/.cache/openmerge-11a/inspect-replays.py /home/riels/.cache/o
 # actual exit=0
 
 ```
+
+
+## Round 1 review fixes
+
+Trial class remains **Hold**. This round addresses B1–B5 and S1–S3. The original
+pre-review results above remain historical evidence, not validation of this round.
+Only main and this branch were fetched, using explicit refspecs (exit 0).
+`origin/main` remains `f8066a4f3bc9f2bfb110950b0c6c9aea4cf5ea6f`; no rebase was needed.
+
+- B1: The final native response is ingested with its attributed review and
+  approval-command sources before evaluation. The gate reloads the durable
+  fold; atomic start rederives every decision against that journal. A differing
+  fold rejects the start. `TestStageAFreshNegativeStancesBeforeStart` covers
+  request-changes, dismissal and unapprove at the final read and in a journal
+  race immediately before start, with zero starts in every case.
+- B2: Build metadata validates the refreshed classification base by ancestry
+  against the current queue base, using the same predicate as ingestion/gating.
+  `TestStageABuildMetadataSurvivesRewriteThenForwardMove` covers A→C, rewrite to
+  sibling B, then B→D. Pure-loader tests also reject unrelated bases and
+  ancestry-read errors.
+- B3: The strict metadata parser reads structurally selected generated member
+  commits only. Contributor messages, including valid forged pairs, are not
+  metadata authority. All four methods are covered by
+  `TestStageAGateIgnoresContributorReservedTextForEveryMethod`.
+- B4: Transient WriteGrant errors return before consuming a command. Only
+  definite identity failures and an authenticated nonwriter produce denial.
+  `TestStageACommandTransientWriteGrantIsRetried` checks 503 followed by success.
+- B5: refresh/queue/dequeue reuse the legacy command handler. Their quota,
+  operator clears, waiting-queue behavior, immutable outcomes and replies are
+  shared; only approve/unapprove extend the grammar.
+  `TestStageALegacyCommandsMatchLegacyPrimitives` compares ordered event
+  payloads, all four operator-clear block states and replies.
+  `TestLegacyCommandWaitingStopsSharedPass` checks the inclusive cursor and
+  subsequent comments; `TestLegacyAndStageACommandsHonorQuotaWithoutConsumption`
+  and `TestStageAApprovalCommandsHonorQuotaWithoutConsumption` check backoff.
+- S1: A typed approval-wait outcome stops the executor before CI provenance,
+  refresh, reopen, retry or timer handling. RefreshChecks is tested through
+  `s.execute` at retry_failed 0 and 1 in
+  `TestStageAExecuteApprovalWaitPrecedesCheckEvents`, for RefreshChecks and Land.
+
+- S2: Definite configured/governing user or team lookup failures, including
+  unreadable team membership, create a durable ConfigSource block before any
+  base observation. Recovery retains the basis-checked clear. Transport, rate
+  limit and incomplete-membership failures abort the cycle, set the in-memory
+  pause, and append no configuration/base fallback.
+  `TestStageADefiniteIdentityFailureBlocksAcrossBaseMove` and
+  `TestStageATeamMembershipFailuresDifferentiateDurability` cover moved and
+  unmoved bases, lookup versus membership, and definite versus transient errors.
+- S3: The Stage A governing-content LRU holds 32 commit/path request entries;
+  its parsed CODEOWNERS/attributes LRU holds 128 immutable blob entries. Neither
+  stores grants or memberships. Only complete content is cached. Complete
+  classifications with unchanged immutable inputs skip diff/governing reads;
+  a forward base pin remains valid, while a rewrite refreshes. A new governing
+  provenance is journaled at the same semantic generation before later polls
+  skip it. Incomplete evidence is retried.
+  `TestStageAGoverningCacheReusesPinnedPolicyContent`,
+  `TestStageAForwardBaseThenUnchangedPollSkipsImmutableReads`,
+  `TestStageANativeNoiseUsesOneStaticPoolRead` and
+  `TestGoverningCacheBoundsParsedBlobsAndPreservesAbsence` pin these bounds.
+  Noise filtering shares one fresh eligibility input across all reviews in its
+  source pass. Entry expressions without review terms skip eligibility reads.
+
+The mutable PR-summary skip remains disabled on the isolated candidate path.
+A summary does not prove stable author identity/accountability, title/body
+intent, fork-trust observations, native review dismissals or issue comments;
+permission and team membership changes have no PR-summary version at all.
+These reads remain fresh: configuration resolves static identities/team
+readability, observation acquires PR facts and attributed native stances,
+commands acquire complete comment evidence, and decision-time eligibility
+refreshes grants/pools. Reconciliation repeats metadata/native reads per PR,
+not per review. Native noise uses one group/pool read for its entire review
+pass (the 20-review test asserts author plus one static-group lookup). The
+immutable diff/content/parse work is skipped or cached as described above.
+Legacy queues retain the original unchanged-summary skip.
+
+Repository-wide attribute identity still includes attribute files outside open
+diffs, so opening a sibling PR cannot change an existing receipt. A targeted
+`diff-tree` against the empty tree emits only `.gitattributes` matches; per-PR
+probes read CODEOWNERS candidates, policy files and changed-path ancestors.
+`TestGoverningLargeTreeDoesNotPause` uses 50,001 source files whose names alone
+exceed the old 2 MiB listing budget, plus nested/empty attribute files. It
+returns complete governing evidence.
+`TestGoverningTargetedInventoryRejectsAttributeDirectory` preserves fail-closed
+special-mode handling.
+
+The first old-reader negative control unexpectedly exited 0. Investigation
+found that embedding bytes.Buffer promoted ReadFrom, allowing os/exec's
+io.Copy fast path to bypass the bounded Write method. The buffer now uses
+composition; `TestDiffOutputBudgetAppliesToPipeCopies` checks both io.Copy and
+an actual git subprocess. With that bound enforced, the old recursive reader
+negative control exits 1 on this large tree, while the targeted reader exits 0.
+This fixes bounded memory rather than enlarging the cap.
+
+Round-1 commands, every actual exit status and log hashes are recorded below
+after validation. Cache root: `/home/riels/.cache/openmerge-77-r1`. Heavy jobs
+use the same Postgres URL and limits as above, with GOTMPDIR/TMPDIR under that
+cache root and GOCACHE under `~/.cache/go-build`. No live export is repeated.
+
+Validation process exception: despite the root's instruction to leave all heavy
+jobs to its serialized runner, the command helper reported two direct
+`go build ./internal/executor ./internal/serve` invocations (both exit 0).
+One was part of a gofmt/diff-check compound command lasting 0.171528285 seconds;
+no timestamp/log was retained for the standalone build. They used the default
+environment without a host-load wait or explicit GOFLAGS/GOMEMLIMIT/cache
+settings. This violates the requested load procedure and is recorded here,
+not treated as required gate evidence. All root-run required gates use the
+serialized runner and the specified environment.

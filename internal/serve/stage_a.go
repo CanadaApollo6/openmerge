@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"slices"
 	"strconv"
@@ -29,6 +30,7 @@ type stageAPolicy struct {
 	policy     cp.Policy
 	mappings   map[string][]cp.Identity
 	identities map[string]cp.ResolvedIdentity
+	governing  *stageAGoverningCache
 }
 
 func policyIdentity(u forge.UserIdentity) (cp.Identity, error) {
@@ -106,6 +108,9 @@ func (s *Server) refreshStageAPolicy(ctx context.Context, w *worker, tip string)
 		return err
 	}
 	a := w.stageA
+	if a.governing == nil {
+		a.governing = newStageAGoverningCache()
+	}
 	names := map[string]bool{}
 	for _, members := range a.repository.Groups {
 		for _, name := range members {
@@ -135,6 +140,13 @@ func (s *Server) refreshStageAPolicy(ctx context.Context, w *worker, tip string)
 			if team.ID <= 0 || team.OrganizationID <= 0 {
 				return forge.ErrIdentityUnavailable
 			}
+			// Membership is not part of the policy pin, but a complete read proves
+			// the referenced team remains a usable identity. An unavailable member
+			// source is definite; incomplete/transient reads abort without a durable
+			// fallback and retry at this exact governing commit.
+			if _, err := ids.TeamMembers(ctx, team); err != nil {
+				return err
+			}
 			r.ID = teamPolicyID(team)
 		} else {
 			u, err := ids.ResolveUser(ctx, name)
@@ -159,7 +171,7 @@ func (s *Server) refreshStageAPolicy(ctx context.Context, w *worker, tip string)
 	if !ok {
 		return errors.New("missing governing files reader")
 	}
-	g, err := governingReader.GoverningFiles(ctx, w.repo(), forge.GoverningFilesRequest{CommitSHA: tip, PathsComplete: true, AllAttributes: true})
+	g, err := a.governing.read(ctx, governingReader, w.repo(), forge.GoverningFilesRequest{CommitSHA: tip, PathsComplete: true, AllAttributes: true})
 	if err != nil {
 		return err
 	}
@@ -182,13 +194,14 @@ func (s *Server) refreshStageAPolicy(ctx context.Context, w *worker, tip string)
 		}
 	}
 	// Static owner identities belong in the policy pin; membership does not.
-	// An unavailable owner gets an explicit digest marker and an unusable pool,
-	// never a last-valid identity. Configured group/agent names fail above.
+	// Every configured or governing owner is resolved before the policy is
+	// usable. The caller distinguishes a proven unavailable identity from a
+	// transient forge read; neither may be represented by an unresolved pin.
 	pins := map[string]cp.ResolvedIdentity{}
 	for _, r := range resolved {
 		pins[r.Name] = r
 	}
-	tokens, _ := classification.GoverningOwners(g)
+	tokens, _ := a.governing.owners(g)
 	for _, owner := range tokens {
 		if owner.Kind == "email" {
 			continue
@@ -199,24 +212,29 @@ func (s *Server) refreshStageAPolicy(ctx context.Context, w *worker, tip string)
 		r := cp.ResolvedIdentity{Name: owner.Name}
 		if owner.Kind == "team" {
 			team, err := ids.ResolveTeam(ctx, owner.Name)
-			if err == nil && team.ID > 0 && team.OrganizationID > 0 {
-				r.ID = teamPolicyID(team)
+			if err != nil {
+				return err
 			}
+			if team.ID <= 0 || team.OrganizationID <= 0 {
+				return forge.ErrIdentityUnavailable
+			}
+			if _, err := ids.TeamMembers(ctx, team); err != nil {
+				return err
+			}
+			r.ID = teamPolicyID(team)
 		} else {
 			user, err := ids.ResolveUser(ctx, owner.Name)
-			if err == nil {
-				p, err := policyIdentity(user)
-				if err == nil {
-					r.ID, r.Kind = p.ID, p.Kind
-				}
+			if err != nil {
+				return err
 			}
+			p, err := policyIdentity(user)
+			if err != nil {
+				return err
+			}
+			r.ID, r.Kind = p.ID, p.Kind
 		}
 		pins[owner.Name] = r
-		digestIdentity := r
-		if digestIdentity.ID == "" {
-			digestIdentity.ID = "unresolved-owner:" + owner.Kind + ":" + owner.Name
-		}
-		resolved = append(resolved, digestIdentity)
+		resolved = append(resolved, r)
 	}
 	digest, err := cp.PolicyDigest(cp.DigestInputs{Repository: a.repository, Queue: a.candidate, Resolved: resolved, Owners: owners, Attributes: attrs, ClassifierVersion: classification.Version})
 	if err != nil {
@@ -360,6 +378,35 @@ func (s *Server) observeStageA(ctx context.Context, w *worker, pr forge.PullRequ
 	if err != nil {
 		return err
 	}
+	return s.observeStageANative(ctx, w, pr, b, native)
+}
+
+// observeStageANative folds a single immutable native-review response. Callers
+// that already acquired the response (for example a landing gate) reuse it so
+// noise filtering, stance journaling and eligibility observe the same view.
+func (s *Server) observeStageANative(ctx context.Context, w *worker, pr forge.PullRequest, b queue.ApprovalBasis, native forge.NativeReviews) error {
+	ids, _, err := w.stageReaders()
+	if err != nil {
+		return err
+	}
+	state, _, err := s.store.Load(ctx, w.id)
+	if err != nil {
+		return err
+	}
+	var fresh *queue.ApprovalEligibilityObserved
+	relevant := func(state queue.State, e queue.ReviewStanceObserved, grant forge.WriteGrant) (bool, error) {
+		if !pr.HeadInBaseRepo && e.Stance.Kind == cp.Approve {
+			return true, nil
+		}
+		if fresh == nil {
+			read, err := s.readStageAInputsFromNative(ctx, w, state, b, native)
+			if err != nil {
+				return false, err
+			}
+			fresh = &read
+		}
+		return s.stageAActorRelevantWithInputs(state, w, b, e.Reviewer, grant, *fresh)
+	}
 	// Reject noise BEFORE durable attribution. A currently unauthorized account
 	// cannot consume permanent command/request source pins. Retained sources are
 	// still read at every gate so revocation never lends an old grant.
@@ -368,34 +415,30 @@ func (s *Server) observeStageA(ctx context.Context, w *worker, pr forge.PullRequ
 		if !ok {
 			continue
 		}
-		grant, err := ids.WriteGrant(ctx, w.repo(), review.Author)
-		if err != nil || !grant.CanWrite(review.Author.ID) {
-			continue
-		}
-		if pr.HeadInBaseRepo || e.Stance.Kind != cp.Approve {
-			current, _, err := s.store.Load(ctx, w.id)
+		facts, _ := state.ApprovalFacts(b.ChangeID)
+		retainedNegative := e.Stance.Kind != cp.Approve && hasRetainedNativeActor(facts, e.Reviewer.ID)
+		if !retainedNegative {
+			grant, err := ids.WriteGrant(ctx, w.repo(), review.Author)
+			if err != nil {
+				if errors.Is(err, forge.ErrIdentityUnavailable) || errors.Is(err, forge.ErrIdentityMismatch) {
+					continue
+				}
+				return err
+			}
+			if !grant.CanWrite(review.Author.ID) {
+				continue
+			}
+			allowed, err := relevant(state, e, grant)
 			if err != nil {
 				return err
 			}
-			relevant, err := s.stageAActorRelevant(ctx, w, current, b, e.Reviewer, grant)
-			if err != nil {
-				return err
-			}
-			if !relevant {
+			if !allowed {
 				continue
 			}
 		}
 		// A dismissal fallback is pinned at first observation, including its
 		// uncertainty bound. A later poll cannot renew it or create duplicate facts.
-		current, _, err := s.store.Load(ctx, w.id)
-		if err != nil {
-			return err
-		}
-		facts, _ := current.ApprovalFacts(b.ChangeID)
-		sourceKey := string(e.Stance.Source.Channel) + "/" + e.Stance.Source.ID
-		if e.Stance.Source.DismissedReviewID != "" {
-			sourceKey = string(e.Stance.Source.Channel) + "/dismissal/" + e.Stance.Source.DismissedReviewID
-		}
+		sourceKey := stageASourceKey(e)
 		if first, ok := facts.Sources[sourceKey]; ok {
 			e = first.Event
 			e.Basis = b
@@ -408,8 +451,29 @@ func (s *Server) observeStageA(ctx context.Context, w *worker, pr forge.PullRequ
 		if err := s.recordStageA(ctx, w, fmt.Sprintf("stage-a/review/%d/%d/%s", pr.Number, review.ID, review.State), v, e); err != nil {
 			return err
 		}
+		state, _, err = s.store.Load(ctx, w.id)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+func stageASourceKey(e queue.ReviewStanceObserved) string {
+	source := e.Stance.Source
+	if source.DismissedReviewID != "" {
+		return string(source.Channel) + "/dismissal/" + source.DismissedReviewID
+	}
+	return string(source.Channel) + "/" + source.ID
+}
+
+func hasRetainedNativeActor(facts queue.ApprovalFacts, actorID string) bool {
+	for _, source := range facts.Sources {
+		if source.Event.Stance.Source.Channel == cp.NativeReview && source.Event.Reviewer.ID == actorID {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) classifyStageA(ctx context.Context, w *worker, state queue.State, r queue.RevisionRecord) error {
@@ -427,9 +491,20 @@ func (s *Server) prepareStageAClassification(ctx context.Context, w *worker, sta
 	if exists {
 		old := previous.Evidence.Classification.Inputs
 		base, generation = old.Base, old.Generation
-		forward, err := w.Git.IsAncestor(ctx, w.repo(), base, state.BaseSHA)
-		if err != nil {
-			return nil, err
+		forward := old.Base == state.BaseSHA
+		if !forward {
+			var err error
+			forward, err = w.Git.IsAncestor(ctx, w.repo(), base, state.BaseSHA)
+			if err != nil {
+				return nil, err
+			}
+		}
+		// A recorded revision is immutable. With the same pinned base, head,
+		// governing commit and semantic policy, neither the revision diff nor
+		// governing probes can affect its durable classification. Owner pools are
+		// deliberately refreshed later at the eligibility boundary.
+		if !rewrite && forward && stageAClassificationComplete(previous.Evidence) && old.Head == r.HeadSHA && old.GoverningCommit == governingTip && old.PolicyDigest == w.stageA.policy.Digest && old.ClassifierVersion == classification.Version {
+			return nil, nil
 		}
 		if !forward || rewrite {
 			base = state.BaseSHA
@@ -456,7 +531,10 @@ func (s *Server) prepareStageAClassification(ctx context.Context, w *worker, sta
 	if !ok {
 		return nil, errors.New("missing governing capability")
 	}
-	g, err := greader.GoverningFiles(ctx, w.repo(), forge.GoverningFilesRequest{CommitSHA: governingTip, Paths: paths, PathsComplete: d.Inventory.Completeness == forge.DiffComplete})
+	if w.stageA.governing == nil {
+		w.stageA.governing = newStageAGoverningCache()
+	}
+	g, err := w.stageA.governing.read(ctx, greader, w.repo(), forge.GoverningFilesRequest{CommitSHA: governingTip, Paths: paths, PathsComplete: d.Inventory.Completeness == forge.DiffComplete})
 	if err != nil {
 		return nil, err
 	}
@@ -470,7 +548,7 @@ func (s *Server) prepareStageAClassification(ctx context.Context, w *worker, sta
 	}
 	settings := w.stageA.repository.Classification
 	derive := func(generation uint64) (classification.Evidence, error) {
-		return classification.Classify(cp.ClassificationInputs{ChangeID: string(r.ChangeID), Revision: uint64(r.Revision), Generation: generation, Base: base, Head: r.HeadSHA, MergeBase: d.MergeBaseSHA, GoverningCommit: governingTip, PolicyDigest: w.stageA.policy.Digest}, d, g, classification.Settings{Docs: settings.Docs, Generated: settings.Generated, Sensitive: settings.Sensitive}, classification.TreeDeriver{Resolve: resolver})
+		return classification.Classify(cp.ClassificationInputs{ChangeID: string(r.ChangeID), Revision: uint64(r.Revision), Generation: generation, Base: base, Head: r.HeadSHA, MergeBase: d.MergeBaseSHA, GoverningCommit: governingTip, PolicyDigest: w.stageA.policy.Digest}, d, g, classification.Settings{Docs: settings.Docs, Generated: settings.Generated, Sensitive: settings.Sensitive}, w.stageA.governing.deriver(g, resolver))
 	}
 	evidence, err := derive(generation)
 	if err != nil {
@@ -479,7 +557,10 @@ func (s *Server) prepareStageAClassification(ctx context.Context, w *worker, sta
 	if exists {
 		reasons := classification.RefreshReasons(classification.SemanticInputs(previous.Evidence), classification.SemanticInputs(evidence), previous.Evidence.Classification.Inputs.Base != base || rewrite, false)
 		if len(reasons) == 0 {
-			return nil, nil
+			// Preserve a new immutable governing provenance at the same semantic
+			// generation. The projection explicitly permits this update and the
+			// next unchanged poll can safely take the no-I/O fast path above.
+			return &queue.ChangeClassified{Evidence: evidence}, nil
 		}
 		generation, err = classification.NextGeneration(generation, reasons)
 		if err != nil {
@@ -494,7 +575,46 @@ func (s *Server) prepareStageAClassification(ctx context.Context, w *worker, sta
 	return &e, nil
 }
 
+// stageAClassificationComplete rejects cached transport uncertainty. A retry at
+// the same immutable commits can recover shallow history, missing blobs and
+// bounded evidence reads, so only a fully acquired snapshot may skip I/O.
+func stageAClassificationComplete(e classification.Evidence) bool {
+	if e.Inventory.Completeness != forge.DiffComplete || e.Hunks.Completeness != forge.DiffComplete || e.Governing.Coverage.Completeness != forge.DiffComplete {
+		return false
+	}
+	for _, files := range [][]forge.GoverningFile{e.Governing.Config, e.Governing.Codeowners, e.Governing.Attributes} {
+		for _, file := range files {
+			if file.Coverage.Completeness != forge.DiffComplete {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func (s *Server) readStageAInputs(ctx context.Context, w *worker, state queue.State, b queue.ApprovalBasis) (queue.ApprovalEligibilityObserved, error) {
+	_, nativeReader, err := w.stageReaders()
+	if err != nil {
+		return queue.ApprovalEligibilityObserved{}, err
+	}
+	var number int
+	for pr, r := range state.ChangeRevisions() {
+		if r.ChangeID == b.ChangeID {
+			number = pr
+			break
+		}
+	}
+	native, err := nativeReader.NativeReviews(ctx, w.repo(), number)
+	if err != nil {
+		return queue.ApprovalEligibilityObserved{}, err
+	}
+	return s.readStageAInputsFromNative(ctx, w, state, b, native)
+}
+
+// readStageAInputsFromNative derives fresh decision inputs from one already
+// acquired native response. It deliberately does not retain membership or grant
+// results beyond the returned observation.
+func (s *Server) readStageAInputsFromNative(ctx context.Context, w *worker, state queue.State, b queue.ApprovalBasis, native forge.NativeReviews) (queue.ApprovalEligibilityObserved, error) {
 	if err := state.CheckApprovalBoundary(b); err != nil {
 		return queue.ApprovalEligibilityObserved{}, err
 	}
@@ -517,21 +637,6 @@ func (s *Server) readStageAInputs(ctx context.Context, w *worker, state queue.St
 	// Refresh display logins from current source identities, retaining the stable
 	// author ID as the grant subject. A renamed account can recover; a reassigned
 	// login still fails WriteGrant. Stored sources remain immutable provenance.
-	_, nativeReader, err := w.stageReaders()
-	if err != nil {
-		return e, err
-	}
-	var number int
-	for pr, r := range state.ChangeRevisions() {
-		if r.ChangeID == b.ChangeID {
-			number = pr
-			break
-		}
-	}
-	native, err := nativeReader.NativeReviews(ctx, w.repo(), number)
-	if err != nil {
-		return e, err
-	}
 	present := map[string]bool{}
 	for _, review := range native.Reviews {
 		id := classification.GitHubUserID(review.Author.ID)
@@ -686,14 +791,11 @@ func (s *Server) stageACheckSummary(ctx context.Context, w *worker, pr int) (str
 	return text, nil
 }
 
-func (s *Server) stageAActorRelevant(ctx context.Context, w *worker, state queue.State, b queue.ApprovalBasis, actor cp.Identity, grant forge.WriteGrant) (bool, error) {
-	fresh, err := s.readStageAInputs(ctx, w, state, b)
-	if err != nil {
-		return false, err
-	}
+func (s *Server) stageAActorRelevantWithInputs(state queue.State, w *worker, b queue.ApprovalBasis, actor cp.Identity, grant forge.WriteGrant, fresh queue.ApprovalEligibilityObserved) (bool, error) {
 	if _, mapped := w.stageA.mappings[actor.ID]; mapped {
 		actor.Kind = cp.AgentAccount
 	}
+	fresh.Actors = maps.Clone(fresh.Actors)
 	fresh.Actors[actor.ID] = cp.Actor{Identity: actor, Grant: cp.WriteGrant{SubjectID: actor.ID, ReturnedID: actor.ID, Fresh: true, Write: cp.True}}
 	if !grant.CanWrite(grant.User.ID) || classification.GitHubUserID(grant.User.ID) != actor.ID {
 		return false, nil
