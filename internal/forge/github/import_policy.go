@@ -212,7 +212,7 @@ func (r *ProtectionReport) reviews(base, source string, p importReviews, writers
 		}
 	}
 	if p.Owners {
-		r.unsupported(base, source, "owner-review", "GitHub requires approval from the effective owners of every owned file. Stage A has no requirement form for approval from the effective owners of every owned file; only policy files get mandatory owner approval. General code-owner review cannot be translated or enforced by this draft.")
+		r.unsupported(base, source, "owner-review", "GitHub requires approval from the effective owners of every owned file. ADR 0007's `{code_owners: true}` rule requirement exists but is not activated until PR 11b publishes the loader and enables enforcement; until then only policy files get mandatory owner approval, so general code-owner review cannot be translated or enforced by this draft.")
 	}
 	if p.LastPush {
 		r.add(base, source, "last-push", "unsupported", false, "Last-push approval has no equivalent; excluding the submitter does not exclude a later pusher.", "# No equivalent for approval of the most recent reviewable push.")

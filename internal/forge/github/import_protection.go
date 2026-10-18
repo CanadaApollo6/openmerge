@@ -188,14 +188,14 @@ func (r *ProtectionReport) accept(ids []string) error {
 			value["approvals"] = map[string]any{
 				"default": requirement,
 				"rules": []any{map[string]any{
-					"when":    map[string]any{"touches": []string{"**"}},
+					"when":    map[string]any{"paths": []string{"**"}},
 					"require": requirement,
 				}},
 			}
 		}
 		draft.WriteString(fragment(value))
 		if p.Count > 0 {
-			draft.WriteString("# Maximum approval count across sources; groups is repository-level.\n# Keep both requirements: the default covers empty diffs; touches ** enforces the count on every non-empty diff.\n# Matching rules add requirements, so a later none rule cannot cancel this count.\n# Maintain imported_reviewers as writer membership changes; eligibility is re-read at landing.\n")
+			draft.WriteString("# Maximum approval count across sources; groups is repository-level.\n# Keep both requirements: paths ** is unknown on empty diffs and enforced as if matched, plus the count-bearing default.\n# A definitely matching rule suppresses the default; additive rules still enforce the paths count, even with none.\n# Maintain imported_reviewers as writer membership changes; eligibility is re-read at landing.\n")
 		}
 	}
 	r.ProposedConfig = draft.String()

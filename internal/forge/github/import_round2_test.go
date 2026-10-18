@@ -106,7 +106,7 @@ func TestRound2EmptyDiff(t *testing.T) {
 		matches = matches || g.MatchString(path)
 	}
 	if !matches && !strings.Contains(r.ProposedConfig, "default:\n        count: 3\n        group: imported_reviewers") {
-		t.Fatal("known empty diff must retain the count-bearing default alongside touches **")
+		t.Fatal("known empty diff must retain the count-bearing default alongside paths **")
 	}
 }
 
@@ -253,7 +253,7 @@ func TestRound2DefaultCountIncludesEmptyInventory(t *testing.T) {
 			} `yaml:"default"`
 			Rules []struct {
 				When struct {
-					Touches []string `yaml:"touches"`
+					Paths []string `yaml:"paths"`
 				} `yaml:"when"`
 				Require struct {
 					Group string `yaml:"group"`
@@ -265,13 +265,13 @@ func TestRound2DefaultCountIncludesEmptyInventory(t *testing.T) {
 	if err := yaml.Unmarshal([]byte(r.ProposedConfig[fragmentStart:]), &draft); err != nil {
 		t.Fatal(err)
 	}
-	// No touches rule matches [], so Stage A applies the count-bearing default.
+	// On an empty diff paths is unknown and enforced, alongside the default when no rule definitely matches.
 	if len(draft.Approvals.Rules) != 1 || draft.Approvals.Default.Count != 3 || draft.Approvals.Default.Group != "imported_reviewers" {
 		t.Fatalf("lossy empty-inventory requirement: %+v", draft)
 	}
 	rule := draft.Approvals.Rules[0]
-	if !slices.Equal(rule.When.Touches, []string{"**"}) || rule.Require.Count != 3 || rule.Require.Group != "imported_reviewers" {
-		t.Fatalf("non-empty diffs must enforce the same count independently of default: %+v", rule)
+	if !slices.Equal(rule.When.Paths, []string{"**"}) || rule.Require.Count != 3 || rule.Require.Group != "imported_reviewers" {
+		t.Fatalf("paths must enforce the same count independently of default: %+v", rule)
 	}
 }
 

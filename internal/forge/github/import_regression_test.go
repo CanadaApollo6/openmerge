@@ -171,7 +171,7 @@ func TestImportReconcilesApprovalDraftExactly(t *testing.T) {
             count: 3
             group: imported_reviewers
           when:
-            touches:
+            paths:
                 - '**'
 changes:
     pull_requests: required

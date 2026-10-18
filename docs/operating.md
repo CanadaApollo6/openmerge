@@ -1029,20 +1029,25 @@ membership blocks authority verification.
 ADR's `approvals`, `groups` and `changes` keys; current releases reject them.
 Review counts use a snapshot of eligible repository writers in
 `groups.imported_reviewers`, with a count-bearing group requirement in
-`approvals.default` and the same requirement in a `touches: ["**"]` rule.
-Keep both: the default covers known-empty diffs, while the rule enforces the
-count for every non-empty diff, even after adding other rules. Stage A applies
-the default only when no rule definitely matches; a matching `docs → none` rule
-would suppress a default-only count. Rules add requirements, so `none` cannot
-cancel the imported `touches` requirement. Overlapping classic and ruleset
-review counts use the maximum in one reconciled fragment per base. Maintain
+`approvals.default` and the same requirement in a `paths: ["**"]` rule.
+Keep both: on a known-empty diff, `paths` is unknown and enforced as if matched,
+plus the count-bearing default when no rule definitely matches. A definitely
+matching `authors: [human] → none` rule suppresses the default even on an empty
+diff, but the unknown `paths` rule still enforces the count. Rules add
+requirements, so `none` cannot cancel the imported `paths` requirement.
+Overlapping classic and ruleset review counts use the maximum in one reconciled fragment per base. Maintain
 this group as writer membership changes. Eligibility and blocking requests for
 changes must be checked at landing by Stage A.
 
-General code-owner review is **unsupported**: Stage A has no requirement form
-for approval from the effective owners of every owned file. Only policy files
-get mandatory owner approval. The draft does not translate GitHub's general
-code-owner requirement; a group does not confer path ownership. For example:
+General code-owner review is **unsupported**: ADR 0007's `{code_owners: true}`
+rule requirement exists but is not activated until PR 11b publishes the loader
+and enables enforcement. Until then only policy files get mandatory owner
+approval, so general code-owner review cannot be translated or enforced by this
+draft; a group does not confer path ownership. ADR 0007 defines the future
+translation as two independent rules: `paths: ["**"]` for the count, plus
+`touches: ["**"]` for `{code_owners: true}`. The owner requirement is rule-only
+and rejected as `approvals.default`; this draft does not emit it before 11b.
+For example:
 
 ```yaml
 # Requires the release implementing ADR 0007 Stage A; merge into the relevant queue.
@@ -1052,9 +1057,10 @@ groups:
 approvals:
   default: {group: imported_reviewers, count: 2}
   rules:
-    - when: {touches: ["**"]}
+    - when: {paths: ["**"]}
       require: {group: imported_reviewers, count: 2}
-# General code-owner review is unsupported; only policy files get mandatory owner approval.
+# paths is unknown on empty diffs and enforced as if matched, plus the default.
+# General code-owner review is unsupported until PR 11b enables enforcement.
 ```
 
 Review dismissal on is a weaker translation where GitHub invalidates an approval
