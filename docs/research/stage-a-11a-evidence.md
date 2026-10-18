@@ -567,8 +567,7 @@ an actual git subprocess. With that bound enforced, the old recursive reader
 negative control exits 1 on this large tree, while the targeted reader exits 0.
 This fixes bounded memory rather than enlarging the cap.
 
-Round-1 commands, every actual exit status and log hashes are recorded below
-after validation. Cache root: `/home/riels/.cache/openmerge-77-r1`. Heavy jobs
+Round-1 commands, every actual exit status and log hashes are recorded below. Cache root: `/home/riels/.cache/openmerge-77-r1`. Heavy jobs
 use the same Postgres URL and limits as above, with GOTMPDIR/TMPDIR under that
 cache root and GOCACHE under `~/.cache/go-build`. No live export is repeated.
 
@@ -581,3 +580,165 @@ environment without a host-load wait or explicit GOFLAGS/GOMEMLIMIT/cache
 settings. This violates the requested load procedure and is recorded here,
 not treated as required gate evidence. All root-run required gates use the
 serialized runner and the specified environment.
+
+## Round-1 final gate results
+
+Validated source commit: `ca1c0924e60cb46f09e77db5360d5a2dd93d8f7b`. The final evidence commit changes
+only this document. SHA-256 of `git ls-tree -r` over cmd/internal/schema/scripts/
+tools, module files, Makefile and lint configuration:
+`82a62737434b8546af4fed355269e160215642405509b30bee6968d706338769`.
+
+The final explicit fetch of main and this branch exited 0; main remains
+`f8066a4f3bc9f2bfb110950b0c6c9aea4cf5ea6f`, so no rebase was required. The
+baseline worktree remains clean. The source commit and exact author/trailer
+verification exited 0. Simulator and compatibility were reconfirmed on the
+clean source commit after all code changes.
+
+| Gate | Actual exit | Result |
+|---|---:|---|
+| make check (`check-final`) | 0 | fmt/lint, full race/short suite, build |
+| make test-sim-exits (`sim-exits-final`) | 0 | required simulator profiles pass |
+| compatibility (`compatibility-final`) | 0 | 17 exits, 1055 retry/digest records, 84 wire fixtures identical |
+| legacy SQL | 0 | seven statements identical; all five negative controls detected |
+| depth-1/4 differential | 0 | 227662 short + 5615998 full checkpoints, 188 fixture streams identical |
+| real Git commit IDs | 0 | tested/landed IDs identical for all four methods; self-tests pass |
+| strict journal replay vs main | 0 | Gate 2/4 PASS; 2159 actions/state/snapshots identical; 8676 timer probes |
+| strict journal replay vs 3f77a88 | 1 | Gate 2 FAIL / Gate 4 PASS; known absent-to-nil classifications boundary |
+| exact replay-shape inspection | 0 | 2159 real + 7 synthetic checkpoints per pair; no allowlist changes |
+
+Both replay reports identify clean source `ca1c092`. Main's mandatory synthetic
+self-tests exit 0 (22 tests); its seven synthetic checkpoints and 15 timer probes
+match exactly. The deployed-pair self-tests retain raw exit 1 for the same
+known classifications boundary. Both deployed real and synthetic action/wake
+streams match; raw snapshot hashes are 0/2159 and 0/7 because the older codec
+lacks the field. Exact-shape inspection verifies that every non-allowlisted
+structural difference is only classifications absent → strictly nil, zero and
+empty. The five existing nil-only exceptions are unchanged. No gate or self-test
+failure is relabeled as a pass. These results preserve legacy equivalence
+against main and do not authorize deployment of this Hold PR.
+
+## Round-1 complete command ledger
+
+Logs and JSON reports are under `/home/riels/.cache/openmerge-77-r1/`. The
+runner captures each child status directly. The two helper builds are reported
+separately because no raw log was retained and the required load wrapper was
+not used. Initial failures remain in this ledger: fixture/import repairs; a
+missing immutable-read skip; lint cleanup; and the deliberately failing old
+reader negative control after the output-bound fix.
+
+| Run | Actual exit | Log SHA-256 |
+|---|---:|---|
+| `focused-first` | 1 | `9d0e6062cf23dde6e7bdb2c8cff65186a52848bfce17ba3391505137991d48b4` |
+| `build-executor` | 0 | `0a9027f23b60d9884e14d874f88fca6028aa586fc3e5bd22550964d2607918d5` |
+| `focused-second` | 1 | `c085d693beef90362c2258e3d56b078638bd42245d71eee88685814564fe6270` |
+| `gate-regressions` | 1 | `703d1930191cc67e2c90018af4aaf01b656855bd8cb491f1537090aaea86cc67` |
+| `focused-third` | 1 | `0eff900ee5670f73739d42fb116c425e74fca01d0cd7b272d046c8e44cc7f034` |
+| `command-executor` | 0 | `a255fd67ec191649a23a7d1cbc15f539638b39a9229644c9753ea1db788e728e` |
+| `sim-exits` | 0 | `082deb53a7e49b1ce6c61aa13d59c11e81b0101223ad348e375d4c4e630bfa0f` |
+| `helper-build-standalone` | 0 | `helper-reported; no retained log` |
+| `helper-build-compound` | 0 | `helper-reported; no retained log` |
+| `governing-git` | 0 | `f2e2c5ab06b31e164f88037e7812450cb892acc102ff6f2b7381759675bce7a1` |
+| `compatibility` | 0 | `8609790ee807f78ae7fadd31e6503a6a932f9f874af818197be4849fe5a93749` |
+| `large-tree` | 0 | `4313acd361a910d22e4c513cd7ed1a00b01cb406cdaabef6fbe6d61e9ce672f9` |
+| `large-tree-negative` | 0 | `5054a1dbe58c13289a4fb94eeb6efd6207aa5e4a148bb5a662ccb41435a80b15` |
+| `large-tree-bounded` | 0 | `f1e387d89042fbb19efcd3e059db4c1189b18578bc6cfe595a058a5e2e83c6f3` |
+| `large-tree-negative-bounded` | 1 | `b6f44ada8a46f2843e94784f2d628a4fba27a887701dbc74f17abc2202f9564f` |
+| `focused-complete` | 1 | `f5c8a2b585040831a17568aae9345e4706b07f3a08a7aac1c02232d92fa1e887` |
+| `focused-final` | 0 | `cffb4a31f6577fb01859ac0dc305f007d948e88e85aa8a1cb2da038294ad10fd` |
+| `check` | 2 | `5f4706499f8ac769e6dcf1e3e68507eea635781a7fbd5698dd7f26025f56e4aa` |
+| `check-final` | 0 | `f986d43fe905d88621dd4d4e08c8c016d8525d025576784980da326cf66029b7` |
+| `legacy-sql` | 0 | `ab22c0b5e090c552fcb505089d132fa81b6793fa330d277ad02890069ccefd33` |
+| `legacy-depths` | 0 | `3c25309b33c985c03a3aff2a5c961878e2dd1b080a03ec27dc5894981e7b3453` |
+| `commit-ids` | 0 | `517dde6fba0319ba59f1f2a253763dd67ca88d037d8401c31273babec57ffb54` |
+| `replay-main` | 0 | `49a2002c091ec1da831ab7e5fe54a3c29c6797ad65707ef23a15614b3b5d320d` |
+| `replay-deployed` | 1 | `4867647cfbbd48b85a742288eba456246762d4ea42907259d22d1cbb01c8839f` |
+| `replay-inspection` | 0 | `0b554123b04ecef4cc41fb09ede76a5a35e559cad1507ffebe8b96a3ebb68144` |
+| `sim-exits-final` | 0 | `5c829ea42ab86fcbb0d8e5926c9626aff9d291730f5af478d31091a29be19d2b` |
+| `compatibility-final` | 0 | `8609790ee807f78ae7fadd31e6503a6a932f9f874af818197be4849fe5a93749` |
+
+Exact underlying commands follow; all root-run commands use the runner environment
+described above. The two helper builds used the default environment as disclosed.
+
+```sh
+# focused-first: actual exit=1
+go test ./internal/serve ./internal/executor -run 'TestStageA|TestLoadBuildMetadata|TestRefreshChecksApprovalWait' -count=1 -v
+
+# build-executor: actual exit=0
+go test ./internal/executor ./internal/gitops -run 'TestLoadBuildMetadata|TestFirstParentCommits|TestRefreshChecksApprovalWait' -count=1 -v
+
+# focused-second: actual exit=1
+go test ./internal/serve -run 'TestStageA|TestLegacyCommandWaiting' -count=1 -v
+
+# gate-regressions: actual exit=1
+go test ./internal/serve -run 'TestStageAFreshNegativeStancesBeforeStart|TestStageABuildMetadataSurvivesRewriteThenForwardMove|TestStageAGateIgnoresContributorReservedTextForEveryMethod|TestStageAGateRejectsMalformedGeneratedMemberMetadata' -count=1 -v
+
+# focused-third: actual exit=1
+go test ./internal/serve -run 'TestStageA|TestLegacyCommandWaiting' -count=1 -v
+
+# command-executor: actual exit=0
+go test ./internal/serve ./internal/executor -run 'TestStageACommand|TestStageALegacyCommands|TestLegacyCommandWaiting|TestLegacyAndStageACommands|TestStageAApprovalCommands|TestStageAExecuteApprovalWait|TestRefreshChecksApprovalWait' -count=1 -v
+
+# sim-exits: actual exit=0
+make test-sim-exits
+
+# helper-build-standalone: actual exit=0 (helper-reported)
+go build ./internal/executor ./internal/serve
+
+# helper-build-compound: actual exit=0 (helper-reported)
+go build ./internal/executor ./internal/serve
+
+# governing-git: actual exit=0
+go test ./internal/gitops ./internal/classification -run 'Governing|FirstParent' -count=1 -v
+
+# compatibility: actual exit=0
+python3 scripts/check-phase2-compatibility.py /home/riels/openmerge-sa-11a-main
+
+# large-tree: actual exit=0
+go test ./internal/gitops -run 'TestGoverningLargeTreeDoesNotPause|TestGoverningTargetedInventoryRejectsAttributeDirectory' -count=1 -v
+
+# large-tree-negative: actual exit=0
+go test -overlay /home/riels/.cache/openmerge-77-r1/large-tree-negative.json ./internal/gitops -run '^TestGoverningLargeTreeDoesNotPause$' -count=1 -v
+
+# large-tree-bounded: actual exit=0
+go test ./internal/gitops -run 'TestGoverningLargeTreeDoesNotPause|TestGoverningTargetedInventoryRejectsAttributeDirectory|TestDiffOutputBudgetAppliesToPipeCopies' -count=1 -v
+
+# large-tree-negative-bounded: actual exit=1
+go test -overlay /home/riels/.cache/openmerge-77-r1/large-tree-negative.json ./internal/gitops -run '^TestGoverningLargeTreeDoesNotPause$' -count=1 -v
+
+# focused-complete: actual exit=1
+go test ./internal/serve ./internal/executor ./internal/gitops ./internal/classification -run 'TestStageA|TestLoadBuildMetadata|TestApprovalWaitOutcome|TestGoverning|TestFirstParent|TestDiffOutputBudget|TestLegacyCommand|TestLegacyAndStageACommands' -count=1 -v
+
+# focused-final: actual exit=0
+go test ./internal/serve ./internal/executor ./internal/gitops ./internal/classification -run 'TestStageA|TestLoadBuildMetadata|TestApprovalWaitOutcome|TestGoverning|TestFirstParent|TestDiffOutputBudget|TestLegacyCommand|TestLegacyAndStageACommands' -count=1 -v
+
+# check: actual exit=2
+make check
+
+# check-final: actual exit=0
+make check
+
+# legacy-sql: actual exit=0
+python3 scripts/check-legacy-landing-sql.py /home/riels/openmerge-sa-11a-main
+
+# legacy-depths: actual exit=0
+python3 scripts/check-legacy-plan-action-depths-1-4.py /home/riels/openmerge-sa-11a-main
+
+# commit-ids: actual exit=0
+python3 scripts/check-legacy-commit-ids.py --baseline /home/riels/openmerge-sa-11a-main --candidate /home/riels/openmerge-sa-11a
+
+# replay-main: actual exit=0
+python3 scripts/check-live-journal-replay.py --baseline /home/riels/openmerge-sa-11a-main --candidate /home/riels/openmerge-sa-11a --events /home/riels/.local/share/openmerge/exports/events-20261018T051000Z.jsonl --queues /home/riels/.local/share/openmerge/exports/queues-20261018T051000Z.jsonl --strict-state --out /home/riels/.cache/openmerge-77-r1/replay-main.json
+
+# replay-deployed: actual exit=1
+python3 scripts/check-live-journal-replay.py --baseline /home/riels/.cache/sa9b-r2-deployed --candidate /home/riels/openmerge-sa-11a --events /home/riels/.local/share/openmerge/exports/events-20261018T051000Z.jsonl --queues /home/riels/.local/share/openmerge/exports/queues-20261018T051000Z.jsonl --strict-state --out /home/riels/.cache/openmerge-77-r1/replay-deployed.json
+
+# replay-inspection: actual exit=0
+python3 /home/riels/.cache/openmerge-11a/inspect-replays.py /home/riels/.cache/openmerge-77-r1/replay-main.json /home/riels/.cache/openmerge-77-r1/replay-deployed.json
+
+# sim-exits-final: actual exit=0
+make test-sim-exits
+
+# compatibility-final: actual exit=0
+python3 scripts/check-phase2-compatibility.py /home/riels/openmerge-sa-11a-main
+
+```
