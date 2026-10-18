@@ -315,21 +315,43 @@ func TestLandingDecisionRetentionAndReplay(t *testing.T) {
 			case "failed":
 				settle = LandingAbandoned{BatchID: start.BatchID, NewFence: "next"}
 			case "cancelled":
-				// Cancellation of a staged start before the fence protocol begins.
-				s = Apply(Apply(historyState(history), fresh), d)
-				events = []Event{fresh, d}
-				settle = ConfigApplied{Commit: "next", Digest: strings.Repeat("f", 64)}
+				// Production cancellation during Landing retains the attempt until the
+				// fence protocol settles it; it cannot return to a staged-only state.
+				cancelled := ConfigApplied{Commit: "next", Digest: strings.Repeat("f", 64)}
+				s = Apply(s, cancelled)
+				events = append(events, cancelled)
+				if len(s.LandingDecisions()) != 1 {
+					t.Fatal("cancelled in-flight evidence lost")
+				}
+				settle = LandingAbandoned{BatchID: start.BatchID, NewFence: "next"}
 			case "superseded":
-				s = Apply(Apply(historyState(history), fresh), d)
-				events = []Event{fresh, d}
-				newer := d
-				newer.AttemptID = "new-attempt"
-				s = Apply(s, newer)
-				events = append(events, newer)
-				if len(s.LandingDecisions()) != 1 || s.LandingDecisions()[0].AttemptID != newer.AttemptID {
+				// An abandoned attempt settles before a replacement is staged/started.
+				abandoned := LandingAbandoned{BatchID: start.BatchID, NewFence: "next"}
+				s = Apply(s, abandoned)
+				events = append(events, abandoned)
+				if len(s.LandingDecisions()) != 0 {
 					t.Fatal("superseded attempt retained")
 				}
-				settle = ConfigApplied{Commit: "next", Digest: strings.Repeat("f", 64)}
+				replacement := []Event{
+					BatchStarted{BatchID: "b2", BaseSHA: land.ExpectedBaseSHA, PRs: land.PRs, At: start.At.Add(time.Minute)},
+					TestRefBuilt{BatchID: "b2", TestedSHA: strings.Repeat("f", 40), Method: Squash, At: start.At.Add(2 * time.Minute)},
+					ChecksCompleted{TestedSHA: strings.Repeat("f", 40), Success: true},
+				}
+				newer := d
+				newer.BatchID, newer.AttemptID = "b2", "replacement-attempt"
+				newer.TestedSHA, newer.LandedSHA = strings.Repeat("f", 40), strings.Repeat("f", 40)
+				nextStart := start
+				nextStart.BatchID, nextStart.AttemptID, nextStart.FenceToken = newer.BatchID, newer.AttemptID, "next"
+				nextStart.At = start.At.Add(3 * time.Minute)
+				replacement = append(replacement, newer, nextStart)
+				for _, e := range replacement {
+					s = Apply(s, e)
+				}
+				events = append(events, replacement...)
+				if s.Active == nil || s.Active.Phase != Landing || len(s.LandingDecisions()) != 1 || s.LandingDecisions()[0].AttemptID != newer.AttemptID {
+					t.Fatal("replacement start did not retain its own evidence")
+				}
+				settle = LandingAbandoned{BatchID: newer.BatchID, NewFence: "settled"}
 			}
 			s = Apply(s, settle)
 			events = append(events, settle)
@@ -396,5 +418,28 @@ func TestLandingDecisionOldSnapshotPrunesHistory(t *testing.T) {
 	}
 	if len(restored.LandingDecisions()) != 0 {
 		t.Fatal("old historical projection retained")
+	}
+}
+
+func TestLandingDecisionPrunesInvalidTesting(t *testing.T) {
+	for _, reason := range []string{"invalidation", "provisional-failure"} {
+		t.Run(reason, func(t *testing.T) {
+			s, _, p, fresh, land, start, _ := landingDecisionSetup(t)
+			d := goldenLandingDecision(t, s, p, fresh, land, start)
+			s = Apply(s, d)
+			prior := s
+			// Detach the batch exactly as Apply does before changing its fields.
+			b := *s.Active
+			s.Active = &b
+			if reason == "invalidation" {
+				s.Active.InvalidationReason = "cancelled"
+			} else {
+				s.Active.ProvisionalFailure = "failed"
+			}
+			s.retainLandingDecisions()
+			if len(s.LandingDecisions()) != 0 || len(prior.LandingDecisions()) != 1 {
+				t.Fatal("prune mutated prior state or retained invalid testing")
+			}
+		})
 	}
 }

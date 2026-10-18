@@ -41,6 +41,9 @@ func (s *Store) StartLanding(ctx context.Context, claim ClaimedAction, cfg queue
 }
 
 func (s *Store) startLanding(ctx context.Context, claim ClaimedAction, cfg queue.Config, policy cp.Policy, fresh []queue.ApprovalEligibilityObserved, decisions []queue.LandingDecisionRecorded, start queue.LandingStarted, authorize func(context.Context, pgx.Tx, emission, queue.Event) (bool, error)) error {
+	if policy.Approvals == nil && (len(fresh) != 0 || len(decisions) != 0) {
+		return LandingDecisionRequiredError{}
+	}
 	// Charge lock waits and validation time to the lease in the worker clock.
 	// Legacy starts retain their original timestamp behavior.
 	entered := time.Now()
@@ -71,11 +74,7 @@ func (s *Store) startLanding(ctx context.Context, claim ClaimedAction, cfg queue
 		if !ok {
 			return ErrStale
 		}
-		if policy.Approvals == nil {
-			if len(fresh) != 0 || len(decisions) != 0 {
-				return ErrStale
-			}
-		} else {
+		if policy.Approvals != nil {
 			if err := state.ValidateLandingDecisions(policy, land, start, fresh, decisions); err != nil {
 				return fmt.Errorf("%w: %w", ErrStale, err)
 			}
@@ -121,6 +120,9 @@ func (s *Store) startLanding(ctx context.Context, claim ClaimedAction, cfg queue
 // rejects this rejection too; a stale read must never regress or wake a wait.
 func (s *Store) RejectLanding(ctx context.Context, claim ClaimedAction, cfg queue.Config, policy cp.Policy, fresh []queue.ApprovalEligibilityObserved, expected []string, start queue.LandingStarted, rejection queue.ApprovalGateRejected) (result error) {
 	defer func() { result = retryLandingDecision(result) }()
+	if policy.Approvals == nil {
+		return LandingDecisionRequiredError{}
+	}
 	entered := time.Now()
 	currentStart := func() queue.LandingStarted {
 		event := start
@@ -144,9 +146,6 @@ func (s *Store) RejectLanding(ctx context.Context, claim ClaimedAction, cfg queu
 			return err
 		}
 		land, ok := claim.Action.(queue.Land)
-		if policy.Approvals == nil {
-			return ErrStale
-		}
 		if !ok || len(expected) != len(land.PRs) || len(fresh) != len(land.PRs) {
 			return ErrStale
 		}

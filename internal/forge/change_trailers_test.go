@@ -14,9 +14,10 @@ func TestParseChangeTrailersAuthoritativeBlock(t *testing.T) {
 	}
 	authoritative := strings.Join(pair, "\n")
 	for name, message := range map[string]string{
-		"plain":                 "subject\n\n" + authoritative,
-		"preserved-forged-body": "subject\n\nOpenMerge-Change: forged\nOpenMerge-Classification: forged\n\nSigned-off-by: A <a@example.test>\n" + authoritative + "\nOpenMerge-Batch: b1\n",
-		"fast-forward-marker":   "OpenMerge fast-forward test 123\n\n" + authoritative + "\nOpenMerge-Batch: b1",
+		"plain":               "subject\n\n" + authoritative,
+		"contributor-prose":   "subject\n\nprose paragraph\nSigned-off-by: \n" + authoritative,
+		"crlf":                "subject\r\n\r\n" + strings.ReplaceAll(authoritative, "\n", "\r\n"),
+		"fast-forward-marker": "OpenMerge fast-forward test 123\n\n" + authoritative + "\nOpenMerge-Batch: b1",
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, err := ParseChangeTrailers(message)
@@ -26,7 +27,10 @@ func TestParseChangeTrailersAuthoritativeBlock(t *testing.T) {
 		})
 	}
 	for name, block := range map[string]string{
-		"prose-with-forged-pair": "prose paragraph\n" + authoritative,
+		"preserved-forged-body":  "OpenMerge-Change: forged\nOpenMerge-Classification: forged\n\n" + authoritative,
+		"unknown-reserved":       "OpenMerge-Extra: forged\n" + authoritative,
+		"continuation-injection": authoritative + "\n injected",
+		"lone-cr":                "prose\rline\n" + authoritative,
 		"missing":                "OpenMerge-Batch: b1",
 		"forged":                 "OpenMerge-Change: forged\nOpenMerge-Classification: forged",
 		"duplicate":              authoritative + "\n" + authoritative,

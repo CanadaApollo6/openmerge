@@ -356,17 +356,25 @@ func (s *State) retainLandingDecisions() {
 	if len(s.landingDecisions) == 0 {
 		return
 	}
-	var live map[string]LandingDecisionRecorded
-	for key, d := range s.landingDecisions {
+	live := func(d LandingDecisionRecorded) bool {
 		b := s.Batch(d.BatchID)
-		if b != nil && (b.Phase == Testing && b.InvalidationReason == "" && b.ProvisionalFailure == "" || b.Phase == Landing && b.LandingAttempt.ID == d.AttemptID) {
-			if live == nil {
-				live = make(map[string]LandingDecisionRecorded)
+		return b != nil && (b.Phase == Testing && b.InvalidationReason == "" && b.ProvisionalFailure == "" || b.Phase == Landing && b.LandingAttempt.ID == d.AttemptID)
+	}
+	for _, d := range s.landingDecisions {
+		if !live(d) {
+			retained := make(map[string]LandingDecisionRecorded)
+			for key, candidate := range s.landingDecisions {
+				if live(candidate) {
+					retained[key] = candidate
+				}
 			}
-			live[key] = d
+			if len(retained) == 0 {
+				retained = nil
+			}
+			s.landingDecisions = retained
+			return
 		}
 	}
-	s.landingDecisions = live
 }
 
 // LandingDecisions returns detached records for unsettled attempts only.

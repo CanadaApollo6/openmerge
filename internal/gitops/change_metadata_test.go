@@ -2,6 +2,7 @@ package gitops
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"slices"
 	"strings"
@@ -160,5 +161,67 @@ func TestChangeTrailersBeforeCI(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Exercise the production writer, including interpret-trailers' mixed final
+// paragraphs and the marker containing multiple authoritative member pairs.
+func TestChangeTrailersWriterParagraphShapes(t *testing.T) {
+	shapes := map[string]string{
+		"crlf-body":     "line one\r\n\r\nline two\r\n",
+		"crlf-message":  "First\r\n\r\nSecond\r\nSigned-off-by: A\r\n",
+		"mixed-prose":   "Fixes the thing\nSigned-off-by: A",
+		"trailer-like":  "See also: other\nSigned-off-by: A <a@example.test>",
+		"folded":        "Reviewed-by: Some Person\n <person@example.test>",
+		"empty-signoff": "Signed-off-by:",
+	}
+	for _, method := range []forge.MergeMethod{forge.Squash, forge.Merge, forge.Rebase, forge.FastForward} {
+		for name, shape := range shapes {
+			t.Run(string(method)+"/"+name, func(t *testing.T) {
+				f := newFixture(t)
+				prs := slices.Clone(f.prs[:1])
+				prs[0].HeadSHA = f.commit(f.base, "Contributor subject\n\n"+shape, map[string]string{"shape": name})
+				prs[0].Metadata = &forge.ChangeMetadata{ChangeID: "chg1_" + strings.Repeat("a", 64), Revision: 1}
+				gitCommand(t, f.source, "", nil, "push", "--force", f.remote, prs[0].HeadSHA+":"+headRef(prs[0].Number))
+				f.g.cfg.PullRequest = func(context.Context, forge.RepoRef, int) (forge.PullRequest, error) {
+					return forge.PullRequest{Number: prs[0].Number, HeadSHA: prs[0].HeadSHA, Title: "Shape", Body: shape, HeadBranch: "shape", Author: "Contributor", AuthorEmail: "contributor@example.test"}, nil
+				}
+				tested := f.build(method, prs, "shapes")
+				message, err := f.g.ReadCommitMessage(t.Context(), testRepo, tested)
+				must(t, err)
+				got, err := forge.ParseChangeTrailers(message)
+				must(t, err)
+				if len(got) != 1 || got[0].ChangeID != prs[0].Metadata.ChangeID || got[0].Revision != 1 || len(got[0].Labels) != 0 {
+					t.Fatalf("writer/reader mismatch: %v\n%s", got, message)
+				}
+			})
+		}
+	}
+}
+
+func TestReadCommitMessageCacheOnly(t *testing.T) {
+	f := newFixture(t)
+	tested := f.build(forge.Squash, f.prs[:1], "cached")
+	f.g.cfg.Remote = func(context.Context, forge.RepoRef) (string, Auth, error) {
+		t.Error("cache-only read resolved remote")
+		return "", Auth{}, fmt.Errorf("unavailable")
+	}
+	if _, err := f.g.ReadCommitMessage(t.Context(), testRepo, tested); err != nil {
+		t.Fatal(err)
+	}
+	for _, object := range []string{strings.Repeat("f", 40), "main", tested[:12]} {
+		if _, err := f.g.ReadCommitMessage(t.Context(), testRepo, object); err == nil {
+			t.Fatal("accepted missing/non-full object", object)
+		}
+	}
+	// A promisor remote would attempt this helper if lazy fetch were enabled.
+	s := &session{r: f.g, dir: fmt.Sprintf("%s/%x.git", f.g.cfg.WorkDir, sha256.Sum256([]byte(testRepo.Path)))}
+	_, err := s.command(t.Context(), "", "config", "remote.origin.url", "ext::sh -c 'echo network-attempt >&2; exit 99'")
+	must(t, err)
+	_, err = s.command(t.Context(), "", "config", "remote.origin.promisor", "true")
+	must(t, err)
+	_, err = f.g.ReadCommitMessage(t.Context(), testRepo, strings.Repeat("f", 40))
+	if err == nil || strings.Contains(err.Error(), "network-attempt") {
+		t.Fatal("missing object attempted network", err)
 	}
 }

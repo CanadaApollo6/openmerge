@@ -71,21 +71,29 @@ prior projections. The v6 snapshot format is unchanged; decoding old snapshots
 validates then removes historical decisions, and encoding omits an empty map.
 Legacy queues keep nil evidence and identical snapshot bytes.
 
-PR 12a's journal-backed read seam is `Store.EventsAfter(ctx, queueID, 0)` or
-`JournalReader.Journals` for an explicitly scoped queue. Filter the decoded
-`LandingDecisionRecorded` by BatchID, AttemptID and Approval.Basis.ChangeID
-(or Remedy.ChangeID); retain journal event IDs for links. These APIs read the
-immutable journal, not `State.LandingDecisions()`. Settled evidence remains in
-the journal. `ApprovalFacts.Eligibility` holds only the latest read: recover
-the exact fresh `ApprovalEligibilityObserved` by matching its Basis.ReadID to
-the decision's EligibilityReadID (and its change/revision/head). InputFingerprint
+PR 12a's journal-backed read seam is
+`Store.LandingDecisionEvidence(ctx, queueID, batchID, attemptID)`. It reads only
+`landing_decision_recorded` rows for that batch/attempt using the indexed event
+`type` column, with a 128-member limit (129 rows detect overflow). For approvals
+it reads the exact `approval_eligibility_observed` by EligibilityReadID and
+change/revision/head, with a two-row limit to detect ambiguous references. Both
+reads share a read-only repeatable-read snapshot. It never decodes unrelated
+history or relies on `State.LandingDecisions()` / latest eligibility projections.
+
+**Compaction retention contract:** any future journal compaction MUST retain
+`landing_decision_recorded` and every referenced `approval_eligibility_observed`
+with its original identity and payload, including settled attempts. Missing or
+ambiguous eligibility evidence fails the bounded read; it cannot silently
+substitute a newer read. `ApprovalFacts.Eligibility` remains latest-only.
+InputFingerprint
 is **pre-read**; `ApprovalWait.Fingerprint` is **post-read**, after applying the
 fresh eligibility event. They intentionally identify different states.
 
 `LandingDecisionRequiredError` is a store/executor wiring failure, distinct from
 ErrStale. The worker's generic failure path completes the action as Failed;
 it must never swallow this error and mark Land Done. The reverse mismatch
-(executor gate with nil store policy) also fails and rolls back. ErrLandingApprovals
+(executor gate with nil store policy) returns the same typed wiring error,
+without ErrStale or ErrLandingDecisionStale. ErrLandingApprovals
 likewise uses the worker's generic failure path. Its rejected batch is cancelled
 later by BeginConsequential, rather than completing Land as Done. PR 11a exit
 **approval-rejection-worker-replan** must exercise rejection, Failed completion,
@@ -94,12 +102,17 @@ then BeginConsequential cancellation of that same batch/claim. Current
 
 `ReadInputs` supplies fresh eligibility only. `ReadTestedMessages` reads pinned
 immutable tested member commits in member order (the single tested marker for
-fast-forward); `gitops.Repo.ReadCommitMessage` provides the object reader.
+fast-forward); `gitops.Repo.ReadCommitMessage` provides a cache-only object reader. Acquisition must happen separately;
+the read accepts full SHAs only, never resolves remote/auth, and disables lazy
+fetch, replacements, grafts and transport. Missing objects fail locally.
 For rebase, select each member's final replay commit, where PR 10 writes its
 pair. The gate parses messages with `forge.ParseChangeTrailers`, shared with
-PR 10 writer round-trip tests for all four methods. Only adjacent canonical
-pairs in the final trailer block are authoritative. Preserved contributor body
-text cannot supply them. Duplicate pairs, casing/whitespace variants, missing
+PR 10 writer round-trip tests for all four methods. After CRLF normalization (lone CR is rejected), only adjacent canonical
+pairs in the writer-owned suffix of the final paragraph are authoritative.
+Other contributor lines in that paragraph may be prose, folded continuations
+or empty trailer values. Reserved keys elsewhere, unknown reserved keys and
+continuation injection on reserved keys are rejected; provenance and final
+batch keys must have the writer's canonical position. Duplicate pairs, casing/whitespace variants, missing
 pairs and classification mismatches fail closed. No writer or real commit ID
 changes. The fake forge inserts the writer's blank separator only when metadata
 is present, preserving legacy simulation IDs.

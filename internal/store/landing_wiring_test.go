@@ -1,7 +1,6 @@
 package store
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"reflect"
@@ -43,13 +42,9 @@ func TestLandingGatePolicyMiswiring(t *testing.T) {
 				}
 			}
 			err := x.Execute(t.Context(), c.Land, s.EmitWithPolicy(t.Context(), claim, c.Config, c.Policy))
-			if side == "store-only" {
-				var required LandingDecisionRequiredError
-				if !errors.As(err, &required) || errors.Is(err, ErrStale) {
-					t.Fatal("wrong policy failure", err)
-				}
-			} else if !errors.Is(err, ErrLandingDecisionStale) {
-				t.Fatal("gate without store policy did not fail", err)
+			var required LandingDecisionRequiredError
+			if !errors.As(err, &required) || errors.Is(err, ErrStale) || errors.Is(err, ErrLandingDecisionStale) {
+				t.Fatal("wrong policy wiring failure", err)
 			}
 			assertNoLandingSideEffects(t, s, q, claim, before)
 		})
@@ -73,36 +68,47 @@ func TestLandingDecisionJournalReadbackAfterSettlement(t *testing.T) {
 	if !ok || facts.Eligibility == nil || facts.Eligibility.Basis.ReadID != "later-read" {
 		t.Fatal("latest eligibility not projected")
 	}
-	journals, err := s.Journals(t.Context(), []QueueKey{{Installation: "7", Repository: "Owner/Repo", BaseBranch: "release"}})
+	evidence, err := s.LandingDecisionEvidence(t.Context(), q, c.Start.BatchID, c.Start.AttemptID)
 	must(t, err)
-	if len(journals) != 1 {
-		t.Fatal("missing journal")
+	if len(evidence) != 1 || !reflect.DeepEqual(evidence[0].Decision, d) || evidence[0].Eligibility == nil || !reflect.DeepEqual(*evidence[0].Eligibility, c.Fresh) {
+		t.Fatal("exact settled evidence not recovered", evidence)
 	}
-	var decision queue.LandingDecisionRecorded
-	var fresh queue.ApprovalEligibilityObserved
-	replay := journals[0].Seed
-	for _, record := range journals[0].Events {
-		replay = queue.Apply(replay, record.Event)
-		if v, ok := record.Event.(queue.LandingDecisionRecorded); ok && v.BatchID == c.Start.BatchID && v.AttemptID == c.Start.AttemptID {
-			decision = v
+	for _, scope := range [][2]string{{"other-batch", c.Start.AttemptID}, {c.Start.BatchID, "other-attempt"}} {
+		got, err := s.LandingDecisionEvidence(t.Context(), q, scope[0], scope[1])
+		must(t, err)
+		if len(got) != 0 {
+			t.Fatal("unrelated evidence returned")
 		}
 	}
-	if !reflect.DeepEqual(decision, d) {
-		t.Fatal("decision not readable from settled journal")
-	}
-	for _, record := range journals[0].Events {
-		if v, ok := record.Event.(queue.ApprovalEligibilityObserved); ok && v.Basis.ChangeID == decision.Approval.Basis.ChangeID && v.Basis.ReadID == decision.Approval.EligibilityReadID {
-			fresh = v
-		}
-	}
-	if !reflect.DeepEqual(fresh, c.Fresh) {
-		t.Fatal("exact fresh read not recoverable")
-	}
-	want, err := queue.EncodeSnapshot(state)
+	// Unrelated or future-version payloads must never be decoded by this read.
+	_, err = s.pool.Exec(t.Context(), `INSERT INTO events(queue_id,type,payload) VALUES
+ ($1,'landing_decision_recorded','{"version":999,"type":"landing_decision_recorded","data":{"batch_id":"other","attempt_id":"other"}}'),
+ ($1,'future_event','{"version":999,"type":"future_event","data":{}}')`, q)
 	must(t, err)
-	got, err := queue.EncodeSnapshot(replay)
+	evidence, err = s.LandingDecisionEvidence(t.Context(), q, c.Start.BatchID, c.Start.AttemptID)
 	must(t, err)
-	if !bytes.Equal(want, got) {
-		t.Fatal("journal readback differs from incremental projection")
+	if len(evidence) != 1 {
+		t.Fatal("unrelated journal payload affected evidence")
 	}
+	// An attempt cannot have more than the queue's 128-member limit.
+	_, raw, err := queue.EncodeEvent(d)
+	must(t, err)
+	_, err = s.pool.Exec(t.Context(), `INSERT INTO events(queue_id,type,payload) SELECT $1,'landing_decision_recorded',$2::jsonb FROM generate_series(1,128)`, q, string(raw))
+	must(t, err)
+	if _, err := s.LandingDecisionEvidence(t.Context(), q, c.Start.BatchID, c.Start.AttemptID); err == nil {
+		t.Fatal("unbounded member set accepted")
+	}
+
+}
+
+func TestLandingRejectionPolicyMiswiring(t *testing.T) {
+	s := newStore(t)
+	q, claim, c, _ := decisionLand(t, s)
+	before := eventCount(t, s, q)
+	err := s.RejectLanding(t.Context(), claim, c.Config, cp.Policy{}, nil, nil, c.Start, queue.ApprovalGateRejected{})
+	var required LandingDecisionRequiredError
+	if !errors.As(err, &required) || errors.Is(err, ErrStale) || errors.Is(err, ErrLandingDecisionStale) {
+		t.Fatal("wrong rejection wiring error", err)
+	}
+	assertNoLandingSideEffects(t, s, q, claim, before)
 }

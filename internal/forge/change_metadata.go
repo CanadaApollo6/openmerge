@@ -71,46 +71,68 @@ func ValidateBuildMetadata(prs []BuildPR) error {
 	return nil
 }
 
-// ParseChangeTrailers reads only the final, blank-line-delimited trailer block
-// written by gitops. Contributor prose may retain forged OpenMerge lines; it
-// never supplies authoritative metadata. Pairs must have the writer's exact
-// canonical spelling, order and values. No Git trailer configuration is used.
+// ParseChangeTrailers reads the writer's canonical reserved suffix in the final
+// paragraph. Contributor lines before that suffix need not be Git trailers.
+// The writer strips every reserved line, so no other OpenMerge key is accepted.
 func ParseChangeTrailers(message string) ([]*ChangeMetadata, error) {
 	bad := func() ([]*ChangeMetadata, error) { return nil, fmt.Errorf("invalid tested change trailers") }
+	message = strings.ReplaceAll(message, "\r\n", "\n")
 	if strings.ContainsAny(message, "\x00\r") {
 		return bad()
 	}
 	message = strings.TrimSuffix(message, "\n")
-	_, block, ok := strings.Cut(message, "\n\n")
-	if !ok {
+	boundary := strings.LastIndex(message, "\n\n")
+	if boundary < 0 {
 		return bad()
 	}
-	if i := strings.LastIndex(block, "\n\n"); i >= 0 {
-		block = block[i+2:]
+	prefix, block := message[:boundary], message[boundary+2:]
+	reserved := func(line string) bool {
+		return strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "openmerge-")
+	}
+	for line := range strings.SplitSeq(prefix, "\n") {
+		if reserved(line) {
+			return bad()
+		}
 	}
 	lines := strings.Split(block, "\n")
 	var result []*ChangeMetadata
 	seen := map[string]bool{}
+	started, replayed, batch := false, false, false
 	for i := 0; i < len(lines); i++ {
 		line := lines[i]
-		key, _, _ := strings.Cut(strings.ToLower(strings.TrimSpace(line)), ":")
-		key = strings.TrimSpace(key)
-		if key != "openmerge-change" && key != "openmerge-classification" {
-			if strings.HasPrefix(key, "openmerge-change") || strings.HasPrefix(key, "openmerge-classification") {
+		if !reserved(line) {
+			// Git can leave trailing comments, but never continuation lines on an
+			// authoritative key or contributor text after the reserved suffix.
+			if started && !strings.HasPrefix(line, "#") {
 				return bad()
 			}
-			// A prose paragraph is not a trailer block, even if it ends with
-			// convincing metadata. Writer-owned attribution uses key/value lines.
-			if !strings.HasPrefix(line, "#") {
-				trailerKey, value, ok := strings.Cut(line, ": ")
-				if !ok || trailerKey == "" || value == "" || strings.ContainsAny(trailerKey, " \t") {
-					return bad()
-				}
+			continue
+		}
+		if batch {
+			return bad()
+		}
+		if sha, ok := strings.CutPrefix(line, "OpenMerge-Replayed-From: "); ok {
+			if started || !ValidDiffObjectID(sha) {
+				return bad()
 			}
+			started, replayed = true, true
+			if i+1 >= len(lines) || !strings.HasPrefix(lines[i+1], "OpenMerge-Change: ") {
+				return bad()
+			}
+			continue
+		}
+		if value, ok := strings.CutPrefix(line, "OpenMerge-Batch: "); ok {
+			if len(result) == 0 || i != len(lines)-1 || !ValidBatchID(value) {
+				return bad()
+			}
+			batch = true
 			continue
 		}
 		id, ok := strings.CutPrefix(line, "OpenMerge-Change: ")
 		if !ok || i+1 >= len(lines) {
+			return bad()
+		}
+		if len(result) > 0 && (!strings.HasPrefix(message, "OpenMerge fast-forward test ") || replayed || !strings.HasPrefix(lines[i-1], "OpenMerge-Classification: ")) {
 			return bad()
 		}
 		change, revision, ok := strings.Cut(id, "@")
@@ -133,7 +155,7 @@ func ParseChangeTrailers(message string) ([]*ChangeMetadata, error) {
 		if err != nil || canonical[0] != line || canonical[1] != lines[i+1] {
 			return bad()
 		}
-		seen[change] = true
+		seen[change], started = true, true
 		result = append(result, m)
 		i++
 	}

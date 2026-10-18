@@ -33,6 +33,26 @@ func (l *landingSQLTrace) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data
 }
 func (*landingSQLTrace) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
 
+// BatchTracer closes a blind spot in QueryTracer: SendBatch does not emit
+// TraceQueryStart. Capture each executed batch query in its actual order.
+func (*landingSQLTrace) TraceBatchStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceBatchStartData) context.Context {
+	return ctx
+}
+func (l *landingSQLTrace) TraceBatchQuery(_ context.Context, _ *pgx.Conn, data pgx.TraceBatchQueryData) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.statements = append(l.statements, strings.Join(strings.Fields(data.SQL), " "))
+}
+func (*landingSQLTrace) TraceBatchEnd(context.Context, *pgx.Conn, pgx.TraceBatchEndData) {}
+
+func (l *landingSQLTrace) TraceCopyFromStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceCopyFromStartData) context.Context {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.statements = append(l.statements, "COPY "+data.TableName.Sanitize()+" ("+strings.Join(data.ColumnNames, ",")+")")
+	return ctx
+}
+func (*landingSQLTrace) TraceCopyFromEnd(context.Context, *pgx.Conn, pgx.TraceCopyFromEndData) {}
+
 func legacyExecutorInput(t *testing.T, s *Store) (QueueID, ClaimedAction, landingCase, executor.Executor) {
 	t.Helper()
 	f := fake.New()

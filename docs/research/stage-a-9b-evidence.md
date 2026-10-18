@@ -8,7 +8,7 @@ Worktree: `/home/riels/openmerge-sa-9b`, branch
 
 No live DB, status API, systemd unit or live `openmerge/*` ref was accessed.
 Tests use the fake forge and isolated schemas in the supplied shared test DB.
-Repository fetch used only `refs/heads/main:refs/remotes/origin/main`.
+Repository fetch used only explicit main and feature-branch refspecs.
 
 ## Obligations and coverage
 
@@ -18,7 +18,7 @@ Repository fetch used only `refs/heads/main:refs/remotes/origin/main`.
   with incremental state. `TestLandingDecisionOldSnapshotPrunesHistory` reads
   the old snapshot format while dropping historical projection entries.
   `TestLandingDecisionJournalReadbackAfterSettlement` recovers settled evidence
-  and its exact EligibilityReadID through `Store.Journals`, despite a newer
+  and its exact EligibilityReadID through bounded `Store.LandingDecisionEvidence`, despite a newer
   eligibility read in State. Existing `TestLandingDecisionStaleBasisAndLegacyAbsence`
   and the legacy replay gates pin the absent legacy map/snapshot bytes.
   Store settlement/crash tests now assert removal from State, while preserving
@@ -30,10 +30,10 @@ Repository fetch used only `refs/heads/main:refs/remotes/origin/main`.
   `TestLandingDecisionErrorsFailWorkerAction` injects both that typed error and
   ErrLandingApprovals at the executor boundary and proves the real worker's
   Failed completion leaves the action retryable.
-- S3: `TestParseChangeTrailersAuthoritativeBlock` covers preserved forged body
+- S3: `TestParseChangeTrailersAuthoritativeBlock` rejects reserved forged body
   text, duplicate pairs, non-final blocks, casing/whitespace variants, missing
   metadata and the fast-forward marker. `TestChangeTrailersBeforeCI` now uses
-  the immutable object reader and shared parser against the real PR 10 writer
+  the cache-only immutable object reader and shared parser against the real PR 10 writer
   for squash, merge, rebase and fast-forward. The gate's
   `TestAtomicDecisionExecutorCrashWindows/trailers-mismatch` rejects unequal
   labels. Real writer behavior remains unchanged; metadata-enabled fake commits
@@ -205,3 +205,66 @@ No deployment was performed or authorized.
 Final documentation checks: `make fmt` **exit 0** (`sa9b-final-fmt.log`);
 `git diff --check` initially **exit 2** for an extra EOF blank line in this
 evidence file, then **exit 0** after removing it.
+
+## Round 1 review fixes
+
+Trial class remains **Hold**. The base was fetched explicitly and remains
+`15aa69929e89970fb49381493398814b8793567a`; no rebase was needed.
+
+- **Writer/parser compatibility:** normalize CRLF before rejecting lone CR.
+  Reserved keys are checked across the entire message; only canonical adjacent
+  member pairs in the final paragraph, canonical replay provenance immediately
+  before a pair, and the final batch trailer are accepted. Distinct pairs in a
+  fast-forward marker remain supported. Contributor prose, trailer-like lines,
+  folded continuations and empty values before the reserved suffix are ignored.
+  `TestChangeTrailersWriterParagraphShapes` drives the unchanged real writer for
+  squash/merge/rebase/fast-forward with six shapes (24 subtests), including both
+  CRLF body and commit messages. `TestChangeTrailersBeforeCI` additionally checks
+  two-member markers, provenance, contributor-byte preservation and immutable
+  landing IDs. `TestParseChangeTrailersAuthoritativeBlock` retains forged,
+  duplicate, non-final, case/space and continuation-injection rejection cases.
+- **Complete SQL tracing:** `TestLegacyExecutorEmitSQL` now implements pgx
+  BatchTracer and CopyFromTracer as well as QueryTracer. The differential script
+  commits five overlay negative controls: extra authorizeStart statement,
+  removed FOR UPDATE, nil-policy StartLanding in the legacy path, state load
+  before claim check, and SELECT 1 via Emit/SendBatch. Each mutant must complete
+  the real executor test successfully and differ from main's SQL trace; a
+  compilation/test failure cannot count as detection.
+- **Immutable local reads:** `Repo.ReadCommitMessage` opens the existing cache
+  directly, under its cache lock, with full-SHA validation and no remote/auth
+  resolution, fetch or maintenance. Read mode disables lazy fetch, replacements,
+  grafts and every transport. Acquisition remains separate.
+  `TestReadCommitMessageCacheOnly` proves cached success with an unavailable
+  resolver, rejection of refs/abbreviated IDs, and missing-object failure even
+  with a configured promisor remote. Writer/gate round-trips use this reader.
+- **Bounded historical evidence:** `Store.LandingDecisionEvidence` filters by
+  queue/type/batch/attempt before decoding, reads at most 129 decision rows to
+  enforce the 128-member limit, and fetches each exact eligibility reference
+  with LIMIT 2 (detecting missing/ambiguous evidence). All reads share a read-only
+  repeatable-read transaction. Migration 006 indexes `(queue_id,type,id)`;
+  `TestMigrationsConcurrentOpenAndReopen` covers migration/reopen. The settled
+  readback test checks exact old eligibility despite a newer read, unrelated
+  batch/attempt exclusion, unrelated future-version payload exclusion, and the
+  member bound. Both event types and referenced eligibility identities/payloads
+  must survive future compaction; this is documented in the API, migration and
+  `internal/queue/landing-decisions.md`.
+- **Wiring and retention nits:** reverse policy mismatch now returns
+  `LandingDecisionRequiredError` before starting a transaction, rather than a
+  stale/retry error; rejection has the same guard. Tests:
+  `TestLandingGatePolicyMiswiring`, `TestLandingRejectionPolicyMiswiring`.
+  `retainLandingDecisions` allocates only when pruning is required and preserves
+  prior maps. `TestLandingDecisionPrunesInvalidTesting` directly covers both
+  InvalidationReason and ProvisionalFailure. The cancelled/superseded branches
+  in `TestLandingDecisionRetentionAndReplay` now include LandingStarted,
+  settlement and a replacement batch with its own tested SHA/attempt/start.
+
+Round 1 logs are under `/home/riels/.cache/sa9b-r1-*`; the existing load-gated
+runner records real subprocess statuses in `sa9b-statuses.tsv`. All jobs retain
+GOFLAGS=-p=2, 4 GiB memory (6 GiB replay), shared test Postgres and cache-backed
+Go directories. No other agent's process was killed.
+
+Initial focused run: **exit 1**, `sa9b-r1-focused.log`: the replacement fixture
+reused the old tested SHA, which production correctly rejects. The fixture now
+uses a new tested SHA. Second focused run: **exit 0**,
+`sa9b-r1-focused-2.log`, covering forge/gitops/queue/store and the test families
+above, including both policy-miswiring paths.
