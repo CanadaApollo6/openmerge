@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/CanadaApollo6/openmerge/internal/changepolicy"
@@ -68,4 +69,98 @@ func ValidateBuildMetadata(prs []BuildPR) error {
 		seen[pr.Metadata.ChangeID] = true
 	}
 	return nil
+}
+
+// ParseChangeTrailers reads the writer's canonical reserved suffix in the final
+// paragraph. Contributor lines before that suffix need not be Git trailers.
+// The writer strips every reserved line, so no other OpenMerge key is accepted.
+func ParseChangeTrailers(message string) ([]*ChangeMetadata, error) {
+	bad := func() ([]*ChangeMetadata, error) { return nil, fmt.Errorf("invalid tested change trailers") }
+	message = strings.ReplaceAll(message, "\r\n", "\n")
+	if strings.ContainsAny(message, "\x00\r") {
+		return bad()
+	}
+	message = strings.TrimSuffix(message, "\n")
+	boundary := strings.LastIndex(message, "\n\n")
+	if boundary < 0 {
+		return bad()
+	}
+	prefix, block := message[:boundary], message[boundary+2:]
+	reserved := func(line string) bool {
+		return strings.HasPrefix(strings.ToLower(strings.TrimSpace(line)), "openmerge-")
+	}
+	for line := range strings.SplitSeq(prefix, "\n") {
+		if reserved(line) {
+			return bad()
+		}
+	}
+	lines := strings.Split(block, "\n")
+	var result []*ChangeMetadata
+	seen := map[string]bool{}
+	started, replayed, batch := false, false, false
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		if !reserved(line) {
+			// Git can leave trailing comments, but never continuation lines on an
+			// authoritative key or contributor text after the reserved suffix.
+			if started && !strings.HasPrefix(line, "#") {
+				return bad()
+			}
+			continue
+		}
+		if batch {
+			return bad()
+		}
+		if sha, ok := strings.CutPrefix(line, "OpenMerge-Replayed-From: "); ok {
+			if started || !ValidDiffObjectID(sha) {
+				return bad()
+			}
+			started, replayed = true, true
+			if i+1 >= len(lines) || !strings.HasPrefix(lines[i+1], "OpenMerge-Change: ") {
+				return bad()
+			}
+			continue
+		}
+		if value, ok := strings.CutPrefix(line, "OpenMerge-Batch: "); ok {
+			if len(result) == 0 || i != len(lines)-1 || !ValidBatchID(value) {
+				return bad()
+			}
+			batch = true
+			continue
+		}
+		id, ok := strings.CutPrefix(line, "OpenMerge-Change: ")
+		if !ok || i+1 >= len(lines) {
+			return bad()
+		}
+		if len(result) > 0 && (!strings.HasPrefix(message, "OpenMerge fast-forward test ") || replayed || !strings.HasPrefix(lines[i-1], "OpenMerge-Classification: ")) {
+			return bad()
+		}
+		change, revision, ok := strings.Cut(id, "@")
+		if !ok || seen[change] {
+			return bad()
+		}
+		rev, err := strconv.ParseUint(revision, 10, 64)
+		if err != nil {
+			return bad()
+		}
+		labels, ok := strings.CutPrefix(lines[i+1], "OpenMerge-Classification: "+id+" ")
+		if !ok {
+			return bad()
+		}
+		m := &ChangeMetadata{ChangeID: change, Revision: rev, Labels: []string{}}
+		if labels != "none" {
+			m.Labels = strings.Split(labels, ",")
+		}
+		canonical, err := m.Trailers()
+		if err != nil || canonical[0] != line || canonical[1] != lines[i+1] {
+			return bad()
+		}
+		seen[change], started = true, true
+		result = append(result, m)
+		i++
+	}
+	if len(result) == 0 {
+		return bad()
+	}
+	return result, nil
 }

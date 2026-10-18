@@ -1,0 +1,2 @@
+go test fuzz v1
+string("Body\n\n# trO5\x89S\xb3#\xbfTailing comment")

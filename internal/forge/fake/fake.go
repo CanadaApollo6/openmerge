@@ -260,6 +260,9 @@ func (f *Forge) build(ctx context.Context, r *repository, req forge.BuildRequest
 				message := fmt.Sprintf("rebase PR %d commit %s", pr.Number, original)
 				if j == len(r.prCommits[pr.Number])-1 {
 					pair, _ := pr.Metadata.Trailers()
+					if len(pair) > 0 {
+						message += "\n"
+					}
 					for _, trailer := range pair {
 						message += "\n" + trailer
 					}
@@ -275,6 +278,9 @@ func (f *Forge) build(ctx context.Context, r *repository, req forge.BuildRequest
 		if req.Method == forge.Merge || req.Method == forge.Squash {
 			message := fmt.Sprintf("%s PR %d %s", req.Method, pr.Number, pr.HeadSHA)
 			pair, _ := pr.Metadata.Trailers()
+			if len(pair) > 0 {
+				message += "\n"
+			}
 			for _, trailer := range pair {
 				message += "\n" + trailer
 			}

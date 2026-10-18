@@ -16,30 +16,43 @@ import (
 var ErrLandingApprovals = errors.New("landing approvals unmet")
 
 // LandingDecisionGate is the dormant Stage A activation seam. ReadInputs must
-// freshly acquire eligibility and read authoritative metadata from the immutable
+// freshly acquire eligibility. ReadTestedMessages reads messages from the immutable
 // TESTED commits (the marker for fast-forward), in pinned member order. It must
 // not synthesize metadata from the current classification. Commit binds the
 // store claim and invokes Store.StartLanding; it never emits individual events.
 // There is no forge I/O or git push inside Commit's transaction.
 type LandingDecisionGate struct {
-	Reject     func(context.Context, []queue.ApprovalEligibilityObserved, []string, queue.LandingStarted, queue.ApprovalGateRejected) error
-	Policy     cp.Policy
-	Load       func(context.Context) (queue.State, error)
-	ReadInputs func(context.Context, queue.Land, queue.State) ([]queue.ApprovalEligibilityObserved, []*forge.ChangeMetadata, error)
-	Commit     func(context.Context, []queue.ApprovalEligibilityObserved, []queue.LandingDecisionRecorded, queue.LandingStarted) error
+	Reject             func(context.Context, []queue.ApprovalEligibilityObserved, []string, queue.LandingStarted, queue.ApprovalGateRejected) error
+	Policy             cp.Policy
+	Load               func(context.Context) (queue.State, error)
+	ReadInputs         func(context.Context, queue.Land, queue.State) ([]queue.ApprovalEligibilityObserved, error)
+	ReadTestedMessages func(context.Context, queue.Land) ([]string, error)
+	Commit             func(context.Context, []queue.ApprovalEligibilityObserved, []queue.LandingDecisionRecorded, queue.LandingStarted) error
 }
 
 func (g *LandingDecisionGate) start(ctx context.Context, land queue.Land, start queue.LandingStarted, now func() time.Time) error {
-	if g.Policy.Approvals == nil || g.Load == nil || g.ReadInputs == nil || g.Commit == nil {
+	if g.Policy.Approvals == nil || g.Load == nil || g.ReadInputs == nil || g.ReadTestedMessages == nil || g.Commit == nil {
 		return fmt.Errorf("incomplete landing decision gate")
 	}
 	state, err := g.Load(ctx)
 	if err != nil {
 		return err
 	}
-	fresh, metadata, err := g.ReadInputs(ctx, land, state)
+	fresh, err := g.ReadInputs(ctx, land, state)
 	if err != nil {
 		return err
+	}
+	messages, err := g.ReadTestedMessages(ctx, land)
+	if err != nil {
+		return err
+	}
+	var metadata []*forge.ChangeMetadata
+	for _, message := range messages {
+		members, err := forge.ParseChangeTrailers(message)
+		if err != nil {
+			return err
+		}
+		metadata = append(metadata, members...)
 	}
 	// Eligibility timestamps and the lease check must use the end of preflight,
 	// not the time before a potentially slow forge request.

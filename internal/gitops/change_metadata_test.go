@@ -2,6 +2,7 @@ package gitops
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"slices"
 	"strings"
@@ -62,7 +63,8 @@ func TestChangeTrailersBeforeCI(t *testing.T) {
 				}
 			}
 			for i, sha := range generated {
-				message := gitCommand(t, f.source, "", nil, "show", "-s", "--format=%B", sha)
+				message, err := f.g.ReadCommitMessage(t.Context(), testRepo, sha)
+				must(t, err)
 				batch := ""
 				if i == len(generated)-1 {
 					batch = "metadata"
@@ -86,6 +88,21 @@ func TestChangeTrailersBeforeCI(t *testing.T) {
 					pair, err := prs[member].Metadata.Trailers()
 					must(t, err)
 					expected = pair
+				}
+				parsed, parseErr := forge.ParseChangeTrailers(message)
+				if len(expected) > 0 {
+					must(t, parseErr)
+					var actual []string
+					for _, m := range parsed {
+						pair, err := m.Trailers()
+						must(t, err)
+						actual = append(actual, pair...)
+					}
+					if !slices.Equal(actual, expected) {
+						t.Fatalf("reader mismatch: %v != %v", actual, expected)
+					}
+				} else if parseErr == nil {
+					t.Fatal("unmarked replay commit supplied metadata")
 				}
 				if len(expected) > 0 && !strings.Contains(trailers, strings.Join(expected, "\n")) {
 					t.Fatalf("pair missing from trailer block:\n%s\nwant %v", trailers, expected)
@@ -144,5 +161,108 @@ func TestChangeTrailersBeforeCI(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// Each input passes through all real writers and the strict reader, including
+// a non-final batch member (which has no batch trailer to normalize placement).
+func FuzzChangeTrailersWriterRoundTrip(f *testing.F) {
+	for _, shape := range []string{
+		"Body\n\n# trailing comment", "Body\n\n# comment\n\n# last\n\n",
+		"line one\r\n\r\nline two\r\n", "Fixes the thing\nSigned-off-by: A",
+		"See also: other\nSigned-off-by: A <a@example.test>",
+		"Reviewed-by: Some Person\n <person@example.test>", "Signed-off-by:",
+		"OpenMerge-Change: forged\n folded\n\nBody\n\nOpenMerge-Batch: forged",
+		"--- patch\n\n# comment", "",
+	} {
+		f.Add(shape)
+	}
+	f.Fuzz(func(t *testing.T, shape string) {
+		// Git commit messages cannot contain NUL; the reader supports LF and CRLF,
+		// not lone CR. Bound fixture size so fuzzing spends its time on placement.
+		if len(shape) > 4096 || strings.ContainsRune(shape, 0) || strings.Contains(strings.ReplaceAll(shape, "\r\n", ""), "\r") {
+			t.Skip()
+		}
+		for _, method := range []forge.MergeMethod{forge.Squash, forge.Merge, forge.Rebase, forge.FastForward} {
+			t.Run(string(method), func(t *testing.T) {
+				f := newFixture(t)
+				prs := slices.Clone(f.prs[:2])
+				parent := f.base
+				for i := range prs {
+					if method != forge.FastForward {
+						parent = f.base
+					}
+					parent = f.commit(parent, "Contributor subject\n\n"+shape, map[string]string{fmt.Sprintf("shape-%d", i): "content"})
+					prs[i].HeadSHA = parent
+					prs[i].Metadata = &forge.ChangeMetadata{ChangeID: "chg1_" + strings.Repeat(fmt.Sprint(i+1), 64), Revision: uint64(i + 1)}
+					gitCommand(t, f.source, "", nil, "push", "--force", f.remote, parent+":"+headRef(prs[i].Number))
+				}
+				f.g.cfg.PullRequest = func(_ context.Context, _ forge.RepoRef, n int) (forge.PullRequest, error) {
+					return forge.PullRequest{Number: n, HeadSHA: prs[n-1].HeadSHA, Title: "Shape", Body: shape, HeadBranch: "shape", Author: "Contributor", AuthorEmail: "contributor@example.test"}, nil
+				}
+				tested := f.build(method, prs, "shapes")
+				f.fetch(tested)
+				generated := strings.Fields(gitCommand(t, f.source, "", nil, "rev-list", "--first-parent", "--reverse", f.base+".."+tested))
+				if method == forge.FastForward {
+					generated = []string{tested}
+				}
+				for i, sha := range generated {
+					message, err := f.g.ReadCommitMessage(t.Context(), testRepo, sha)
+					must(t, err)
+					got, err := forge.ParseChangeTrailers(message)
+					must(t, err)
+					expected := []*forge.ChangeMetadata{prs[i%2].Metadata}
+					if method == forge.FastForward {
+						expected = []*forge.ChangeMetadata{prs[0].Metadata, prs[1].Metadata}
+					}
+					if len(got) != len(expected) {
+						t.Fatalf("writer/reader count mismatch: %v\n%s", got, message)
+					}
+					for j, m := range got {
+						actual, err := m.Trailers()
+						must(t, err)
+						want, err := expected[j].Trailers()
+						must(t, err)
+						if !slices.Equal(actual, want) {
+							t.Fatalf("writer/reader mismatch: %v != %v\n%s", actual, want, message)
+						}
+					}
+					batch := ""
+					if i == len(generated)-1 {
+						batch = "shapes"
+					}
+					if forge.ParseBatchMessage(message) != batch || batch != "" && !strings.HasSuffix(strings.TrimSpace(message), "OpenMerge-Batch: "+batch) {
+						t.Fatalf("batch not final: %s", message)
+					}
+				}
+			})
+		}
+	})
+}
+
+func TestReadCommitMessageCacheOnly(t *testing.T) {
+	f := newFixture(t)
+	tested := f.build(forge.Squash, f.prs[:1], "cached")
+	f.g.cfg.Remote = func(context.Context, forge.RepoRef) (string, Auth, error) {
+		t.Error("cache-only read resolved remote")
+		return "", Auth{}, fmt.Errorf("unavailable")
+	}
+	if _, err := f.g.ReadCommitMessage(t.Context(), testRepo, tested); err != nil {
+		t.Fatal(err)
+	}
+	for _, object := range []string{strings.Repeat("f", 40), "main", tested[:12]} {
+		if _, err := f.g.ReadCommitMessage(t.Context(), testRepo, object); err == nil {
+			t.Fatal("accepted missing/non-full object", object)
+		}
+	}
+	// A promisor remote would attempt this helper if lazy fetch were enabled.
+	s := &session{r: f.g, dir: fmt.Sprintf("%s/%x.git", f.g.cfg.WorkDir, sha256.Sum256([]byte(testRepo.Path)))}
+	_, err := s.command(t.Context(), "", "config", "remote.origin.url", "ext::sh -c 'echo network-attempt >&2; exit 99'")
+	must(t, err)
+	_, err = s.command(t.Context(), "", "config", "remote.origin.promisor", "true")
+	must(t, err)
+	_, err = f.g.ReadCommitMessage(t.Context(), testRepo, strings.Repeat("f", 40))
+	if err == nil || strings.Contains(err.Error(), "network-attempt") {
+		t.Fatal("missing object attempted network", err)
 	}
 }

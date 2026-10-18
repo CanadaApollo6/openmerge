@@ -104,6 +104,7 @@ type stateSnapshot struct {
 // including per-batch revocation generations, timer evidence and retry fences.
 // The store currently replays journals; this is its compaction boundary.
 func EncodeSnapshot(s State) ([]byte, error) {
+	s.retainLandingDecisions()
 	s = cloneState(s)
 	if err := validateApprovalWaits(s); err != nil {
 		return nil, err
@@ -439,6 +440,7 @@ func DecodeSnapshot(data []byte) (State, error) {
 	if err := validateApprovalWaits(s); err != nil {
 		return State{}, err
 	}
+	s.retainLandingDecisions()
 	return cloneState(s), nil
 }
 

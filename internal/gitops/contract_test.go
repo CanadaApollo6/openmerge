@@ -44,9 +44,11 @@ func gitCommand(t *testing.T, dir, input string, extraEnv []string, args ...stri
 		"GIT_AUTHOR_DATE="+epoch.Format(time.RFC3339), "GIT_COMMITTER_DATE="+epoch.Format(time.RFC3339))
 	cmd.Env = append(cmd.Env, extraEnv...)
 	cmd.Stdin = strings.NewReader(input)
-	out, err := cmd.CombinedOutput()
+	var diagnostic strings.Builder
+	cmd.Stderr = &diagnostic
+	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("fixture git %v: %v\n%s", args, err, out)
+		t.Fatalf("fixture git %v: %v\n%s%s", args, err, out, diagnostic.String())
 	}
 	return strings.TrimSpace(string(out))
 }

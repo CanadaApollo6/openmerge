@@ -423,7 +423,7 @@ func (s *Store) authorizeStart(ctx context.Context, tx pgx.Tx, execution emissio
 		return false, err
 	}
 	if _, landing := event.(queue.LandingStarted); landing && execution.approvalsRequired && !execution.decisionStart {
-		return false, ErrStale
+		return false, LandingDecisionRequiredError{}
 	}
 	if stored.Key == stored.Action.Key() && queue.CanStart(execution.cfg, state, stored.Action, event) {
 		return false, nil

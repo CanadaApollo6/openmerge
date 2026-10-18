@@ -276,3 +276,170 @@ func TestLandingDecisionCommitIdentitiesAndDiagnostics(t *testing.T) {
 		t.Fatal("free-text reasons entered classification digest")
 	}
 }
+
+func TestLandingDecisionRetentionAndReplay(t *testing.T) {
+	for _, outcome := range []string{"landed", "failed", "cancelled", "superseded"} {
+		t.Run(outcome, func(t *testing.T) {
+			_, _, p, fresh, land, start, history := landingDecisionSetup(t)
+			for i, e := range history {
+				_, raw, err := EncodeEvent(e)
+				if err != nil {
+					t.Fatal(err)
+				}
+				history[i], err = DecodeEvent(raw)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			s := historyState(history)
+			d := goldenLandingDecision(t, s, p, fresh, land, start)
+			events := []Event{fresh, d, start}
+			for _, e := range events {
+				s = Apply(s, e)
+			}
+			live := s
+			if !reflect.DeepEqual(restart(t, s).LandingDecisions(), []LandingDecisionRecorded{d}) {
+				t.Fatal("lost before settlement")
+			}
+			// Changes to mutable policy/input state cannot discard an in-flight attempt.
+			change := LifecycleChanged{State: "retired", Detail: "removed during landing"}
+			s = Apply(s, change)
+			events = append(events, change)
+			if len(s.LandingDecisions()) != 1 {
+				t.Fatal("lost during landing")
+			}
+			var settle Event
+			switch outcome {
+			case "landed":
+				settle = Landed{BatchID: start.BatchID, NewBaseSHA: land.TestedSHA, NewFence: "next"}
+			case "failed":
+				settle = LandingAbandoned{BatchID: start.BatchID, NewFence: "next"}
+			case "cancelled":
+				// Production cancellation during Landing retains the attempt until the
+				// fence protocol settles it; it cannot return to a staged-only state.
+				cancelled := ConfigApplied{Commit: "next", Digest: strings.Repeat("f", 64)}
+				s = Apply(s, cancelled)
+				events = append(events, cancelled)
+				if len(s.LandingDecisions()) != 1 {
+					t.Fatal("cancelled in-flight evidence lost")
+				}
+				settle = LandingAbandoned{BatchID: start.BatchID, NewFence: "next"}
+			case "superseded":
+				// An abandoned attempt settles before a replacement is staged/started.
+				abandoned := LandingAbandoned{BatchID: start.BatchID, NewFence: "next"}
+				s = Apply(s, abandoned)
+				events = append(events, abandoned)
+				if len(s.LandingDecisions()) != 0 {
+					t.Fatal("superseded attempt retained")
+				}
+				replacement := []Event{
+					BatchStarted{BatchID: "b2", BaseSHA: land.ExpectedBaseSHA, PRs: land.PRs, At: start.At.Add(time.Minute)},
+					TestRefBuilt{BatchID: "b2", TestedSHA: strings.Repeat("f", 40), Method: Squash, At: start.At.Add(2 * time.Minute)},
+					ChecksCompleted{TestedSHA: strings.Repeat("f", 40), Success: true},
+				}
+				newer := d
+				newer.BatchID, newer.AttemptID = "b2", "replacement-attempt"
+				newer.TestedSHA, newer.LandedSHA = strings.Repeat("f", 40), strings.Repeat("f", 40)
+				nextStart := start
+				nextStart.BatchID, nextStart.AttemptID, nextStart.FenceToken = newer.BatchID, newer.AttemptID, "next"
+				nextStart.At = start.At.Add(3 * time.Minute)
+				replacement = append(replacement, newer, nextStart)
+				for _, e := range replacement {
+					s = Apply(s, e)
+				}
+				events = append(events, replacement...)
+				if s.Active == nil || s.Active.Phase != Landing || len(s.LandingDecisions()) != 1 || s.LandingDecisions()[0].AttemptID != newer.AttemptID {
+					t.Fatal("replacement start did not retain its own evidence")
+				}
+				settle = LandingAbandoned{BatchID: newer.BatchID, NewFence: "settled"}
+			}
+			s = Apply(s, settle)
+			events = append(events, settle)
+			if len(s.LandingDecisions()) != 0 || len(restart(t, s).LandingDecisions()) != 0 {
+				t.Fatal("settled decision retained")
+			}
+			if len(live.LandingDecisions()) != 1 {
+				t.Fatal("prior projection mutated")
+			}
+			replay := State{BaseBranch: "release", Fence: "fence"}
+			for _, e := range append(history, events...) {
+				_, raw, err := EncodeEvent(e)
+				if err != nil {
+					t.Fatal(err)
+				}
+				decoded, err := DecodeEvent(raw)
+				if err != nil {
+					t.Fatal(err)
+				}
+				replay = Apply(replay, decoded)
+			}
+			want, _ := EncodeSnapshot(s)
+			got, _ := EncodeSnapshot(replay)
+			if !bytes.Equal(want, got) {
+				t.Fatalf("journal replay differs\nWANT=%s\nGOT=%s", want, got)
+			}
+		})
+	}
+}
+
+func historyState(events []Event) State {
+	s := State{BaseBranch: "release", Fence: "fence"}
+	for _, e := range events {
+		s = Apply(s, e)
+	}
+	return s
+}
+
+func TestLandingDecisionOldSnapshotPrunesHistory(t *testing.T) {
+	s, _, p, fresh, land, start, _ := landingDecisionSetup(t)
+	d := goldenLandingDecision(t, s, p, fresh, land, start)
+	s = Apply(Apply(Apply(s, fresh), d), start)
+	s = Apply(s, Landed{BatchID: start.BatchID, NewBaseSHA: land.TestedSHA, NewFence: "next"})
+	// Model the old codec's retained historical map; wire format stays readable.
+	raw, err := EncodeSnapshot(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var old map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &old); err != nil {
+		t.Fatal(err)
+	}
+	old["LandingDecisions"], err = json.Marshal(map[string]LandingDecisionRecorded{d.decisionKey(): d})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err = json.Marshal(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := DecodeSnapshot(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(restored.LandingDecisions()) != 0 {
+		t.Fatal("old historical projection retained")
+	}
+}
+
+func TestLandingDecisionPrunesInvalidTesting(t *testing.T) {
+	for _, reason := range []string{"invalidation", "provisional-failure"} {
+		t.Run(reason, func(t *testing.T) {
+			s, _, p, fresh, land, start, _ := landingDecisionSetup(t)
+			d := goldenLandingDecision(t, s, p, fresh, land, start)
+			s = Apply(s, d)
+			prior := s
+			// Detach the batch exactly as Apply does before changing its fields.
+			b := *s.Active
+			s.Active = &b
+			if reason == "invalidation" {
+				s.Active.InvalidationReason = "cancelled"
+			} else {
+				s.Active.ProvisionalFailure = "failed"
+			}
+			s.retainLandingDecisions()
+			if len(s.LandingDecisions()) != 0 || len(prior.LandingDecisions()) != 1 {
+				t.Fatal("prune mutated prior state or retained invalid testing")
+			}
+		})
+	}
+}
