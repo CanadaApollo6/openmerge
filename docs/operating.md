@@ -74,10 +74,10 @@ uses the same authentication as queue status.
 ### Organization membership permission (Stage A prerequisite)
 
 New `openmerge setup github` manifests request organization **Members: read**
-(`members: read`) for resolving `org/team` owners and approver pools. Existing
-Apps must add that organization permission in App settings, and each existing
-organization installation must accept the requested addition in its installed
-App settings. Updating the App's permission declaration alone does not update
+(`members: read`) for resolving `org/team` owners and approver pools. To use
+organization teams in approval policy, an existing App must add that organization
+permission in App settings, and each affected organization installation must
+accept the requested addition in its installed App settings. Updating the App's permission declaration alone does not update
 an installation's grant. OpenMerge inspects the permissions on the actual
 installation token; renewed tokens (or restarting `serve`) observe acceptance.
 

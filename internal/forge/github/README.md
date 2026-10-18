@@ -178,8 +178,8 @@ Required App repository permissions:
 | Metadata | read | Collaborator permissions, repository/default branch and ruleset reads |
 
 Setup also requests organization **Members: read** (`members: read`) for the
-dormant identity/team capability. Existing Apps and installations must accept
-that addition; [the operating guide](../../../docs/operating.md#organization-membership-permission-stage-a-prerequisite)
+dormant identity/team capability. Existing Apps and organization installations
+need to accept that addition only before using team-based approval policy; [the operating guide](../../../docs/operating.md#organization-membership-permission-stage-a-prerequisite)
 documents adoption and the live trial's permission freeze. `members: read` is
 needed only for organization team owners or groups in approval policy; see the
 operating guide. `openmerge setup permissions --app-id ID --installation-id ID
