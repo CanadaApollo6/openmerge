@@ -85,18 +85,19 @@ type Server struct {
 }
 
 type worker struct {
-	settlementOnly  bool
-	mu              sync.Mutex
-	managed         bool
-	ready           bool // Branch and policy validation is process-local, never a lifecycle event.
-	waiting         string
-	lifecycleState  string
-	lifecycleDetail string
-	accessBlocked   bool
-	rulesWaiting    string
-	validationNext  time.Time
-	reportingNext   time.Time
-	recovery        bool
+	approvalInputProbe func(context.Context, queue.ApprovalBasis) (queue.ApprovalEligibilityObserved, error)
+	settlementOnly     bool
+	mu                 sync.Mutex
+	managed            bool
+	ready              bool // Branch and policy validation is process-local, never a lifecycle event.
+	waiting            string
+	lifecycleState     string
+	lifecycleDetail    string
+	accessBlocked      bool
+	rulesWaiting       string
+	validationNext     time.Time
+	reportingNext      time.Time
+	recovery           bool
 	Target
 	id               store.QueueID
 	wake             chan struct{}

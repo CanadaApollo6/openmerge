@@ -504,6 +504,16 @@ func EncodeEvent(value Event) (string, []byte, error) {
 		return encodeWire("pr_metadata_observed", wirePRMetadataObserved(v))
 	case PRObserved:
 		return encodeWire("pr_observed", wirePRObserved(v))
+	case ApprovalGateRejected:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("approval_gate_rejected", v)
+	case ApprovalInputsChanged:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("approval_inputs_changed", v)
 	case ChangeAccountabilityObserved:
 		if err := v.Validate(); err != nil {
 			return "", nil, err
@@ -794,6 +804,12 @@ func DecodeEvent(payload []byte) (Event, error) {
 		return decodeWireData(envelope.Data, func(v wirePRObserved) Event {
 			return PRObserved(v)
 		})
+	case "approval_gate_rejected":
+		v, err := readApprovalWire[ApprovalGateRejected](envelope.Data)
+		return v, err
+	case "approval_inputs_changed":
+		v, err := readApprovalWire[ApprovalInputsChanged](envelope.Data)
+		return v, err
 	case "change_accountability_observed":
 		v, err := readApprovalWire[ChangeAccountabilityObserved](envelope.Data)
 		return v, err

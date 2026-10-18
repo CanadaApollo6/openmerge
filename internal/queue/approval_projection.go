@@ -16,7 +16,6 @@ import (
 
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
 	"github.com/CanadaApollo6/openmerge/internal/classification"
-	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
 
 // ApprovalFacts is a side projection. Sources retain first-observation revision
@@ -392,8 +391,8 @@ func (s State) ApprovalFacts(id ChangeID) (ApprovalFacts, bool) {
 	return detached(f), ok
 }
 
-// ApprovalFingerprint covers decision inputs, not polling read times. It does
-// not participate in CI keys/timers, classification or landing until PR 8/11.
+// ApprovalFingerprint hashes only current decision inputs. Acquisition IDs/times,
+// revision-zero sources and non-effective historical barriers are not inputs.
 func (s State) ApprovalFingerprint(id ChangeID) string {
 	f, ok := s.ApprovalFacts(id)
 	if !ok {
@@ -406,27 +405,19 @@ func (s State) ApprovalFingerprint(id ChangeID) string {
 			break
 		}
 	}
-	for key, v := range f.Sources {
-		if v.Revision != current.Revision || f.Latest[v.Event.Stance.UserID] != key {
-			delete(f.Sources, key)
-			continue
-		}
-		v.LastReadID = ""
-		v.Event.Basis.ReadID = ""
-		v.Event.Basis.At = time.Time{}
-		v.Event.Observation = forge.NativeObservation{}
-		f.Sources[key] = v
+	if current.Revision == 0 {
+		return ""
 	}
-	for _, index := range []map[string]string{f.Latest, f.Frontiers, f.Blockers} {
-		for user, key := range index {
-			if _, ok := f.Sources[key]; !ok {
-				delete(index, user)
-			}
+	effective := map[string]cp.Stance{}
+	for user, key := range f.Latest {
+		if v, ok := f.Sources[key]; ok && v.Revision != 0 && v.Revision == current.Revision {
+			effective[user] = v.Event.Stance
 		}
 	}
 	if f.Accountability != nil {
 		f.Accountability.Basis.ReadID = ""
 		f.Accountability.Basis.At = time.Time{}
+		f.Accountability.Reason = ""
 	}
 	if f.Intent != nil {
 		f.Intent.Basis.ReadID = ""
@@ -435,12 +426,42 @@ func (s State) ApprovalFingerprint(id ChangeID) string {
 	if f.Eligibility != nil {
 		f.Eligibility.Basis.ReadID = ""
 		f.Eligibility.Basis.At = time.Time{}
+		f.Eligibility.Reasons = nil
+	}
+	// Membership and accountability are sets; acquisition order is not a change.
+	if f.Eligibility != nil {
+		for _, pools := range []map[string]cp.IdentitySet{f.Eligibility.Groups, f.Eligibility.OwnerPools} {
+			for key, pool := range pools {
+				pool.Reason = ""
+				pool.IDs = append([]string{}, pool.IDs...)
+				slices.Sort(pool.IDs)
+				pool.IDs = slices.Compact(pool.IDs)
+				pools[key] = pool
+			}
+		}
+	}
+	if f.Accountability != nil {
+		slices.SortFunc(f.Accountability.Humans, func(a, b cp.Identity) int { return cmp.Compare(a.ID, b.ID) })
+		f.Accountability.Humans = slices.CompactFunc(f.Accountability.Humans, func(a, b cp.Identity) bool { return a == b })
+	}
+	var inputs cp.ClassificationInputs
+	if c, ok := s.classifications[id][current.Revision]; ok {
+		inputs = c.Evidence.Classification.Inputs
+		inputs.ConfigBlob = ""
+		inputs.GoverningCommit = ""
 	}
 	raw, _ := json.Marshal(struct {
-		Facts        ApprovalFacts
-		Revision     RevisionRecord
-		ConfigDigest string
-	}{f, current, s.ConfigDigest})
+		Accountability *ChangeAccountabilityObserved
+		Intent         *ChangeIntentObserved
+		Eligibility    *ApprovalEligibilityObserved
+		Stances        map[string]cp.Stance
+		Saturated      bool
+		ChangeID       ChangeID
+		Revision       ChangeRevision
+		Head           string
+		Classification cp.ClassificationInputs
+		ConfigDigest   string
+	}{f.Accountability, f.Intent, f.Eligibility, effective, f.Saturated, id, current.Revision, current.HeadSHA, inputs, s.ConfigDigest})
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
 }

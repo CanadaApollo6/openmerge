@@ -9,6 +9,25 @@ import (
 
 // Apply folds one event without mutating s or any slices or maps reachable from it.
 func Apply(s State, e Event) State {
+	next := apply(s, e)
+	if len(next.approvalWaits) > 0 {
+		next = next.refreshApprovalWaits()
+	}
+	return next
+}
+
+func apply(s State, e Event) State {
+	s.pruneWaitingGroups()
+	switch e := e.(type) {
+	case ApprovalEligibilityObserved:
+		if !s.currentApprovalInputBasis(e.Basis) {
+			return s
+		}
+	case ApprovalGateRejected:
+		return s.rejectApprovalGate(e)
+	case ApprovalInputsChanged:
+		return s.changeApprovalInputs(e)
+	}
 	if next, ok := s.observeApproval(e); ok {
 		return next
 	}
@@ -385,6 +404,7 @@ func (s *State) refreshChecks(b *Batch) {
 }
 
 func cloneState(s State) State {
+	s.approvalWaits = cloneApprovalWaits(s.approvalWaits)
 	s.blockSources = maps.Clone(s.blockSources)
 	if s.blockSources == nil {
 		s.blockSources = make(map[BlockSource]BlockSourceBlocked)
@@ -576,7 +596,7 @@ func (s State) runnablePRs(prs []BatchPR) bool {
 	for _, pr := range prs {
 		entry := s.entry(pr.PR)
 		observation, known := s.observations.get(pr.PR)
-		if entry == nil || entry.HeadSHA != pr.HeadSHA || !known || !observation.Eligible || !observation.Trusted || observation.HeadSHA != pr.HeadSHA {
+		if s.approvalWaiting(pr) || entry == nil || entry.HeadSHA != pr.HeadSHA || !known || !observation.Eligible || !observation.Trusted || observation.HeadSHA != pr.HeadSHA {
 			return false
 		}
 		if _, pending := s.dequeues[pr.PR]; pending {

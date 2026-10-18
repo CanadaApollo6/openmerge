@@ -65,6 +65,7 @@ type rulesSnapshot struct {
 	Revision uint64
 }
 type stateSnapshot struct {
+	ApprovalWaits                                                            map[ChangeID]ApprovalWait `json:",omitempty"`
 	Classifications                                                          classifications
 	ApprovalFacts                                                            approvalProjection
 	ChangeRevisions                                                          map[int]RevisionRecord
@@ -102,10 +103,14 @@ type stateSnapshot struct {
 // The store currently replays journals; this is its compaction boundary.
 func EncodeSnapshot(s State) ([]byte, error) {
 	s = cloneState(s)
+	if err := validateApprovalWaits(s); err != nil {
+		return nil, err
+	}
 	v := stateSnapshot{
 		Version:         SnapshotVersion,
 		Classifications: s.classifications,
 		ApprovalFacts:   s.approvalFacts,
+		ApprovalWaits:   s.approvalWaits,
 		ChangeRevisions: s.changeRevisions.snapshot(),
 		BatchRevisions:  s.batchRevisions,
 		OutsidePushes:   cloneOutsidePushes(s.outsidePushes),
@@ -232,6 +237,7 @@ func DecodeSnapshot(data []byte) (State, error) {
 	s := State{
 		classifications: v.Classifications,
 		approvalFacts:   v.ApprovalFacts,
+		approvalWaits:   v.ApprovalWaits,
 		outsidePushes:   cloneOutsidePushes(v.OutsidePushes),
 		window:          v.Window, outcomes: v.Outcomes,
 		Lifecycle:          v.Lifecycle,
@@ -403,6 +409,9 @@ func DecodeSnapshot(data []byte) (State, error) {
 		s.retainBatchRevisions()
 	}
 	s.cancellationConfirmed = v.CancellationConfirmed
+	if err := validateApprovalWaits(s); err != nil {
+		return State{}, err
+	}
 	return cloneState(s), nil
 }
 

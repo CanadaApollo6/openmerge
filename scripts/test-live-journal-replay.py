@@ -80,6 +80,16 @@ class ComparisonTest(unittest.TestCase):
             fields["approvalFacts"] = bad
             self.assertIsNotNone(replay.compare_checkpoints([old], [json.dumps(value)], False)["first_state_divergence"])
 
+    def test_approval_wait_exception_is_nil_only(self):
+        old = checkpoint()
+        value = json.loads(old)
+        fields = value["structural"]["value"]
+        fields["approvalWaits"] = dict(type="map[queue.ChangeID]queue.ApprovalWait", kind="map", zero=True, nil=True, value={})
+        self.assertIsNone(replay.compare_checkpoints([old], [json.dumps(value)], False)["first_state_divergence"])
+        for bad in (dict(type="map[queue.ChangeID]queue.ApprovalWait", kind="map", zero=False, nil=False, value={}), node(False), dict(type="map[queue.ChangeID]queue.ApprovalWait", kind="map", zero=False, nil=False, value={"change": node({})})):
+            fields["approvalWaits"] = bad
+            self.assertIsNotNone(replay.compare_checkpoints([old], [json.dumps(value)], False)["first_state_divergence"])
+
     def test_unreviewed_zero_field_fails(self):
         old = checkpoint()
         value = json.loads(old)

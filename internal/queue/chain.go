@@ -309,7 +309,7 @@ func (s *State) applyInvalidation(e BatchesInvalidated) {
 	// Pending infrastructure retries must not jump ahead of earlier members
 	// returned to Entries by this invalidation. Preserve those batch boundaries
 	// alongside retries, then order all recovered work by original admission.
-	preserveGroups := slices.ContainsFunc(s.pending, func(g pendingGroup) bool { return !g.bisection })
+	preserveGroups := e.Reason == "approval-wait" && len(s.pending) > 0 || slices.ContainsFunc(s.pending, func(g pendingGroup) bool { return !g.bisection })
 	var groups []pendingGroup
 	for _, id := range e.BatchIDs {
 		b := s.Batch(id)
