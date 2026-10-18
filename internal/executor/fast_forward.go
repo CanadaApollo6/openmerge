@@ -45,9 +45,11 @@ func (x *Executor) buildFastForward(ctx context.Context, a queue.BuildTestRef, e
 			}
 		}
 	}
-	heads := make([]forge.BuildPR, len(prs))
-	for i, pr := range prs {
-		heads[i] = forge.BuildPR{Number: pr.PR, HeadSHA: pr.HeadSHA}
+	selected := a
+	selected.PRs = prs
+	heads, err := x.buildPRs(selected)
+	if err != nil {
+		return x.fastForwardBuildError(a.BatchID, err, emit)
 	}
 	sha, err := x.Git.BuildTestRef(ctx, x.Repo, forge.BuildRequest{Ref: a.Ref, BaseSHA: a.BaseSHA, PRs: heads, Method: forge.FastForward, BatchID: a.BatchID})
 	if errors.Is(err, forge.ErrNotFastForward) {

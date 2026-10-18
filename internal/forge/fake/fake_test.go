@@ -25,6 +25,10 @@ func fixture(t *testing.T) (*fake.Forge, forgetest.Env) {
 	f := fake.New()
 	base, fence := f.Init(repo, "main", fenceRef)
 	e := forgetest.Env{Driver: f, Git: f, Repo: repo, Base: "main", FenceRef: fenceRef, BaseSHA: base, FenceSHA: fence}
+	e.ReadCommitMessage = func(sha string) (string, error) {
+		c, err := f.Commit(repo, sha)
+		return c.Message, err
+	}
 	for _, n := range []int{1, 2, 3} {
 		pr, err := f.OpenPR(repo, n, base, n != 1)
 		must(t, err)

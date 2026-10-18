@@ -419,3 +419,16 @@ The project is just starting, and design feedback is the most useful contributio
 ## License
 
 [Apache License 2.0](LICENSE). OpenMerge is an independent project and is not affiliated with or endorsed by Mergify SAS. See [NOTICE](NOTICE).
+
+### Stage A 10 activation obligations (PRs 11b and 9)
+
+PR 11b must fail approvals queues closed when the build metadata loader is nil.
+`ChangeMetadata` carries no classification Generation: 11b must invalidate every
+not-yet-landing batch on a generation advance, or PR 9 must compare its pinned
+labels against the current classification before allowing landing. PR 9 should
+reuse `changepolicy.ClassificationLabels` for the canonical sorted true labels.
+
+Legacy nil-metadata builds preserve forged `OpenMerge-Change` and
+`OpenMerge-Classification` text in contributor bodies for byte identity. Future
+trailer consumers must trust only commits reached via a recorded tested/landed
+SHA of an activated build, never arbitrary history scans.

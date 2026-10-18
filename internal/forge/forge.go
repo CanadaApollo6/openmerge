@@ -242,6 +242,8 @@ const (
 type BuildPR struct {
 	Number  int
 	HeadSHA string
+	// Metadata is internal build input; nil preserves legacy commit bytes.
+	Metadata *ChangeMetadata
 }
 
 // BuildRequest prepares pinned heads on BaseSHA and pushes Ref. Generated top

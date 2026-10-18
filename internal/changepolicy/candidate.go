@@ -6,6 +6,7 @@ import (
 	"io"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/CanadaApollo6/openmerge/internal/config/condition"
 	"go.yaml.in/yaml/v3"
@@ -204,7 +205,7 @@ func ValidClassificationLabel(label string) bool {
 	}
 	if name, ok := strings.CutPrefix(label, "owned:email:"); ok {
 		local, domain, found := strings.Cut(name, "@")
-		return found && local != "" && domain != "" && !strings.ContainsAny(name, " \t\r\n") && !strings.Contains(domain, "@") && domain == strings.ToLower(domain)
+		return found && local != "" && domain != "" && !strings.ContainsFunc(name, func(r rune) bool { return unicode.IsControl(r) || unicode.IsSpace(r) }) && !strings.Contains(domain, "@") && domain == strings.ToLower(domain)
 	}
 	return false
 }

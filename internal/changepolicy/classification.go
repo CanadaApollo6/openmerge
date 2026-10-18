@@ -2,6 +2,8 @@
 // It performs no forge, filesystem, database, or clock reads.
 package changepolicy
 
+import "slices"
+
 // Truth retains uncertainty; its zero value never authorizes a decision.
 type Truth uint8
 
@@ -173,4 +175,16 @@ func (c Classification) Label(name string) Truth {
 		return Unknown
 	}
 	return v
+}
+
+// ClassificationLabels returns sorted true labels with completeness applied.
+func ClassificationLabels(c Classification) []string {
+	labels := make([]string, 0, len(c.Facts))
+	for label := range c.Facts {
+		if c.Label(label) == True {
+			labels = append(labels, label)
+		}
+	}
+	slices.Sort(labels)
+	return slices.Compact(labels)
 }

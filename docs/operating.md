@@ -978,9 +978,52 @@ deploy alongside its SHA and replay report:
   compared commits and real exit statuses.
 - For audit-adjacent changes, `scripts/check-outside-push-isolation.py` results
   and evidence for audit snapshot decoding when affected.
-- For build/landing changes, the merge-method commit-ID check: show that each
-  supported merge method lands the exact tested commit, recording both commit
-  IDs and the check result.
+- For build/landing changes, run the offline merge-method commit-ID check. It
+  compiles the same injected `internal/gitops` test into both source trees and
+  uses the existing fixture's real local Git remotes, `BuildTestRef`, and
+  `Land` paths for squash, merge, rebase, and fast-forward. It pins the fixture
+  dates and identities and replaces `crypto/rand.Reader` only inside the test
+  process, so the marker and fence nonces are identical without a production
+  nonce hook. The test binary and copied source trees live below `~/.cache`,
+  not `/tmp`; module and toolchain downloads are disabled.
+
+  ```bash
+  (
+  set -e
+  export DEPLOYED_SHA="<exact deployed source SHA from the deploy record>"
+  git worktree add --detach "$HOME/openmerge-deployed-replay" "$DEPLOYED_SHA"
+  trap 'git worktree remove "$HOME/openmerge-deployed-replay"' EXIT
+  cache_root="$HOME/.cache/openmerge-legacy-commit-ids"
+  mkdir -p "$cache_root/go-tmp" "$cache_root/go-cache"
+  GOFLAGS='-p=2' GOMAXPROCS=2 GOMEMLIMIT=4GiB \
+    GOTMPDIR="$cache_root/go-tmp" GOCACHE="$cache_root/go-cache" \
+  python3 scripts/check-legacy-commit-ids.py \
+    --old-source "$HOME/openmerge-deployed-replay" \
+    --new-source "$PWD" \
+    --cache-root "$cache_root"
+  )
+  ```
+
+  The minimum supported old source is `3f77a88`; the harness also supports
+  `c2d9b3a`. The v2 probe uses two commits per PR, titles and multiline bodies,
+  forged reserved keys with casing/continuations/whitespace, DCO and coauthors.
+  Every invocation first runs mandatory offline self-tests: identical source
+  trees must exit 0, a committed nil-metadata reserved-prefix mutant must exit 1
+  (squash and rebase differ), and a dirty candidate must exit 2. Its temporary
+  clone and build copies are removed. Equal source SHAs produce an explicit
+  vacuous-comparison warning; do not use that run as release evidence. Cache
+  roots resolving below literal `/tmp` are rejected regardless of `TMPDIR`.
+
+  The check name is `legacy-commit-id-per-method`. It requires both source
+  trees to be clean so each reported source SHA is evidence-bearing, and it
+  prints the harness SHA-256, compiled test-binary SHA-256, both source SHAs,
+  and every exact old/new `tested` and `landed` SHA. The command uses only
+  local Git and temporary bare repositories created by the fixture; it does
+  not use GitHub, Postgres, systemd, or live OpenMerge refs. Exit 1 means at
+  least one method differs; exit 2 means the local input or toolchain could
+  not produce evidence. A fast-forward row intentionally reports the marker
+  as `tested` and the original head as `landed`; the other three rows must
+  have identical tested and landed IDs within each binary.
 
 Forward-only events (for example PR #53's `outside_push_recorded`) make binary
 rollback unsafe once written: an older decoder cannot read them. Before choosing
