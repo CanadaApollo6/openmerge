@@ -16,9 +16,11 @@ published schema for review. Tests pin that composition. `.candidate` fixtures
 are deliberately separate from the public loader's accepted YAML corpus. PR 11b
 must parse the proposed keys from the public loader's expanded YAML node, reuse
 these typed validators, and publish the complete schema and loader together with
-enforcement. Its integration tests must cover existing aliases/merge expansion
-and the new keys in the same document. YAML alias/merge expansion remains the existing loader's responsibility; this
-component rejects aliases and explicit tags rather than partially expanding them.
+enforcement. PR 11b will need an additive export of `validLabel`/`validLogin`
+to reuse those validators. Its integration tests must cover existing alias/merge
+expansion and the new keys in the same document. YAML alias/merge expansion
+remains the existing loader's responsibility; this component rejects aliases
+and explicit tags rather than partially expanding them.
 
 The evaluator rejects missing or stale change/revision/base/head/merge-base,
 policy digest and generation bindings before matching any exemption. Revisions
@@ -40,6 +42,10 @@ and `WriteGrant.Permits` expose the same completeness rules to consumers.
 `PolicyOwners` carries the effective union per policy path (both rename sides). Missing coverage and unreadable teams are
 unresolved, never empty approval pools. Incomplete inventory always adds an
 unresolvable owner obligation directing the author to split the change.
+With `PolicyOwnersKnown`, each file must record an explicit `policy` fact, and
+owner paths must cover exactly the policy files' paths, including both rename
+paths and the old path of a deletion. Policy rows are keyed by path and always
+require a nonempty, fresh resolved pool; they have no absence status or exemption.
 
 `CodeOwnersKnown` and `CodeOwners` independently record every changed path's
 side, last-matching governing entry, resolved IDs and status. Uncovered and
@@ -55,6 +61,21 @@ with no covered files add none. Incomplete inventories or unknown ownership
 block. This selector cannot be the default. Imported counts need their own
 `paths: ["**"]` rule as well as a count default and a separate owner `touches`
 rule: on an empty diff the paths match is unknown, enforced alongside the default.
+
+Before matching any rule or exemption, the evaluator checks owner evidence
+against both inventory projections. A complete `CodeOwnersKnown` inventory
+requires exactly one `(path, side)` row per file, both sides of a paired rename,
+and the old side of a deletion. Ordinary edits and additions use the new side.
+Missing, duplicate, extra or misbound rows, contradictory statuses and mismatched
+`Paths`/`Files` add an unresolved blocking requirement with reason
+`owner_evidence_incoherent`. Uncovered rows carry neither a matching entry nor
+IDs. Ownerless rows retain only the last-matching pattern (and optional comment),
+with no owners or IDs. Resolved rows retain owner fields and nonempty IDs;
+known evidence cannot claim unresolved membership or status. Partial unresolved
+evidence remains available when ownership is unknown. Policy-owner coverage is
+checked independently against per-file policy facts, so an approval for one
+policy path cannot hide an omitted second path. Neither owner set is inferred
+from the other, and this package never matches CODEOWNERS patterns.
 
 The ADR 0007 facet contract remains:
 
@@ -84,8 +105,11 @@ substituting current values. A stale latest receipt cannot revive a prior stance
 `RequirementResult.ReliedOn` carries all counted stances with their source records
 and receipts where used; `BlockingStances` carries eligible current requests for
 changes for that requirement. Both are ordered by stable ID, and receipt values
-are copied. PR 9 can persist this provenance without re-deriving it. Source
-records also retain acting user, dismissal target and structured time precision
+are copied. PR 9 must persist expanded `code_owners` obligations as expanded
+records, including their count-1 requirement and per-file pool/provenance;
+it must not revalidate them as static configuration, whose `code_owners`
+selector forbids an explicit count. PR 9 can persist this provenance without
+re-deriving it. Source records also retain acting user, dismissal target and structured time precision
 for PRs 3b/6; ordering and time interpretation remain the fold's responsibility.
 `ReviewAttribute` shares the applicable review set with existing conditions,
 including native reviews for receipt-only pools. A resolved empty list retains

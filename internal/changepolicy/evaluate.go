@@ -166,6 +166,11 @@ func Evaluate(policy Policy, in Input) Evaluation {
 		pool        *IdentitySet
 	}
 	var obligations []obligation
+	codeEvidenceErr, policyEvidenceErr := codeOwnerEvidence(c), policyOwnerEvidence(c)
+	if codeEvidenceErr != nil {
+		pool := IdentitySet{Reason: "owner_evidence_incoherent: " + codeEvidenceErr.Error()}
+		obligations = append(obligations, obligation{"code owners", Requirement{Selector: CodeOwners, Count: 1}, &pool})
+	}
 	definite := false
 	for i, rule := range a.Rules {
 		if err := rule.Require.Validate(); err != nil {
@@ -190,6 +195,9 @@ func Evaluate(policy Policy, in Input) Evaluation {
 			}
 			r := rule.Require
 			r.Count = 1
+			if codeEvidenceErr != nil {
+				continue
+			}
 			if !c.InventoryComplete || !c.CodeOwnersKnown {
 				pool := IdentitySet{Reason: "code owners or inventory unresolved; split incomplete changes"}
 				obligations = append(obligations, obligation{origin + " code owners", r, &pool})
@@ -214,7 +222,10 @@ func Evaluate(policy Policy, in Input) Evaluation {
 	if !definite {
 		obligations = append(obligations, obligation{origin: "default", requirement: a.Default})
 	}
-	if !c.InventoryComplete {
+	if policyEvidenceErr != nil {
+		pool := IdentitySet{Reason: "owner_evidence_incoherent: " + policyEvidenceErr.Error()}
+		obligations = append(obligations, obligation{"policy owners", Requirement{Selector: AnyWriter, Count: 1}, &pool})
+	} else if !c.InventoryComplete {
 		pool := IdentitySet{Reason: "incomplete inventory: split the change to resolve policy owners"}
 		obligations = append(obligations, obligation{"policy owners", Requirement{Selector: AnyWriter, Count: 1}, &pool})
 	} else if c.Label("policy") != False || len(c.PolicyOwners) > 0 {
@@ -224,6 +235,9 @@ func Evaluate(policy Policy, in Input) Evaluation {
 		}
 	}
 	for _, owner := range c.PolicyOwners {
+		if policyEvidenceErr != nil {
+			break
+		}
 		pool := owner.Eligible
 		if owner.Path == "" || len(pool.IDs) == 0 {
 			pool.Resolved = false

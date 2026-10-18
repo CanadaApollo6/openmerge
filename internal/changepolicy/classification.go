@@ -91,7 +91,9 @@ type IdentitySet struct {
 }
 
 // PolicyOwner is the union of effective CODEOWNERS for one policy path.
-// Renames supply an entry for each relevant side. Groups do not own paths.
+// Renames supply an entry for each relevant path. Groups do not own paths.
+// PolicyOwnersKnown requires exact coverage of Files with Facts["policy"] True;
+// every file must have an explicit policy fact. Empty pools always block.
 type PolicyOwner struct {
 	Path     string
 	Eligible IdentitySet
@@ -140,6 +142,7 @@ type CodeOwner struct {
 // if every observed file qualifies (or an observed file fails).
 // CodeOwnersKnown requires a complete inventory and known owners/membership for
 // every changed file; entries retain partial evidence even when it is false.
+// Known owner evidence is checked against Files and Paths before rule matching.
 type Classification struct {
 	Inputs                       ClassificationInputs
 	InventoryComplete, PathsSafe bool

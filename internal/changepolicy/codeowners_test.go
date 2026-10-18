@@ -22,8 +22,14 @@ func codeOwnerInput(owners ...CodeOwner) Input {
 	in.Classification.CodeOwnersKnown = true
 	in.Classification.CodeOwners = owners
 	in.Classification.Paths = nil
+	in.Classification.Files = nil
 	for _, owner := range owners {
 		in.Classification.Paths = append(in.Classification.Paths, owner.Path)
+		file := FileEvidence{NewPath: owner.Path, Facts: map[string]Truth{"policy": False}}
+		if owner.Side == OldSide {
+			file.OldPath, file.NewPath = owner.Path, ""
+		}
+		in.Classification.Files = append(in.Classification.Files, file)
 	}
 	return in
 }
@@ -102,6 +108,8 @@ func TestCodeOwners(t *testing.T) {
 			checkCodeOwners(t, codeOwnerPolicy(false), in, true, 0)
 			// Known uncovered/ownerless paths alongside an owned file cannot erase it.
 			in.Classification.CodeOwners = append(in.Classification.CodeOwners, ownedPath("src/a.go", NewSide, "a"))
+			in.Classification.Paths = append(in.Classification.Paths, "src/a.go")
+			in.Classification.Files = append(in.Classification.Files, FileEvidence{NewPath: "src/a.go"})
 			checkCodeOwners(t, codeOwnerPolicy(false), in, false, 1)
 		})
 	}
@@ -216,6 +224,7 @@ func TestCodeOwners(t *testing.T) {
 		for _, withRule := range []bool{false, true} {
 			in := codeOwnerInput(ownedPath("docs/CODEOWNERS", NewSide, "a"))
 			in.Classification.Facts["policy"] = True
+			in.Classification.Files[0].Facts["policy"] = True
 			in.Classification.PolicyOwnersKnown = true
 			in.Classification.PolicyOwners = []PolicyOwner{{Path: "docs/CODEOWNERS", Eligible: IdentitySet{IDs: []string{"b"}, Resolved: true, Fresh: true}}}
 			addReviewer(&in, "a", HumanAccount, false)

@@ -136,6 +136,7 @@ func TestPolicySafetyCases(t *testing.T) {
 	t.Run("docs-codeowners-owner-required", func(t *testing.T) {
 		in, policy := currentInput(), writerPolicy()
 		in.Classification.Paths = []string{"docs/CODEOWNERS"}
+		in.Classification.Files = []FileEvidence{{NewPath: "docs/CODEOWNERS", Facts: map[string]Truth{"policy": True}}}
 		in.Classification.Facts["policy"] = True
 		in.Classification.PolicyOwnersKnown = true
 		in.Classification.PolicyOwners = []PolicyOwner{{Path: "docs/CODEOWNERS", Eligible: IdentitySet{IDs: []string{"a", "b"}, Resolved: true, Fresh: true}}}
@@ -148,6 +149,8 @@ func TestPolicySafetyCases(t *testing.T) {
 			t.Fatal("owner union not satisfied")
 		}
 		in.Classification.PolicyOwners = append(in.Classification.PolicyOwners, PolicyOwner{Path: "old/CODEOWNERS", Eligible: IdentitySet{IDs: []string{"a"}, Resolved: true, Fresh: true}})
+		in.Classification.Paths = append(in.Classification.Paths, "old/CODEOWNERS")
+		in.Classification.Files = append(in.Classification.Files, FileEvidence{OldPath: "old/CODEOWNERS", Facts: map[string]Truth{"policy": True}})
 		if !Evaluate(policy, in).Allowed {
 			t.Fatal("one owner cannot satisfy two policy paths")
 		}

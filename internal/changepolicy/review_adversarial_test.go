@@ -134,6 +134,8 @@ func TestReviewExhaustiveComposition(t *testing.T) {
 			reviewActor(&in, id, kind, state[id])
 		}
 		in.Classification.Facts["policy"] = True
+		in.Classification.Paths = []string{"old/CODEOWNERS", "docs/CODEOWNERS"}
+		in.Classification.Files = []FileEvidence{{OldPath: "old/CODEOWNERS", NewPath: "docs/CODEOWNERS", Renamed: true, RenamePaired: true, Facts: map[string]Truth{"policy": True}}}
 		in.Classification.PolicyOwnersKnown = true
 		in.Classification.PolicyOwners = []PolicyOwner{
 			{Path: "docs/CODEOWNERS", Eligible: IdentitySet{IDs: []string{"alice", "carol"}, Resolved: true, Fresh: true}},
@@ -249,6 +251,7 @@ func TestReviewPolicyOwnerFailures(t *testing.T) {
 			in := reviewInput()
 			reviewActor(&in, "alice", HumanAccount, 2)
 			in.Classification.Paths = []string{"docs/CODEOWNERS"}
+			in.Classification.Files = []FileEvidence{{NewPath: "docs/CODEOWNERS", Facts: map[string]Truth{"policy": True}}}
 			in.Classification.Facts["policy"] = True
 			in.Classification.PolicyOwnersKnown = true
 			owner := PolicyOwner{Path: "docs/CODEOWNERS", Eligible: IdentitySet{IDs: []string{"alice"}, Resolved: true, Fresh: true}}
