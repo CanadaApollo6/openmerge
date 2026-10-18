@@ -23,6 +23,7 @@ func (s *Server) readStageABatch(ctx context.Context, w *worker, state queue.Sta
 		if r.HeadSHA != pin.HeadSHA {
 			return nil, store.ErrLandingDecisionStale
 		}
+		basis := approvalBasis(r)
 		c, ok := state.Classification(r.ChangeID, r.Revision)
 		if !ok || c.Evidence.Classification.Inputs.Head != pin.HeadSHA {
 			return nil, store.ErrLandingDecisionStale
@@ -42,13 +43,12 @@ func (s *Server) readStageABatch(ctx context.Context, w *worker, state queue.Sta
 		if err != nil {
 			return nil, err
 		}
-		basis := approvalBasis(r)
 		// Acquire once, retain attributed sources, then evaluate their durable
 		// fold. Commands use their normal immutable dedupe and receipt bindings.
 		if err := s.observeStageANative(ctx, w, w.prs[pin.PR], basis, native); err != nil {
 			return nil, err
 		}
-		if err := s.stageACommandsFromNative(ctx, w, pin.PR, native, true); err != nil {
+		if err := s.stageACommandsFromNative(ctx, w, pin.PR, native, true, basis.At); err != nil {
 			return nil, err
 		}
 		current, _, err := s.store.Load(ctx, w.id)
@@ -185,6 +185,7 @@ func testedMemberCommits(ctx context.Context, w *worker, land queue.Land, histor
 
 func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Config) *executor.LandingDecisionGate {
 	policy := w.stageA.policy
+	var acquisition *store.ApprovalRead
 	return &executor.LandingDecisionGate{Policy: policy, ReloadAfterInputs: true,
 		Load: func(ctx context.Context) (queue.State, error) {
 			state, _, err := s.store.Load(ctx, w.id)
@@ -194,6 +195,17 @@ func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Conf
 			if w.stageA.policy.Digest != policy.Digest {
 				return nil, store.ErrLandingDecisionStale
 			}
+			members := make([]queue.ChangeID, 0, len(land.PRs))
+			for _, pin := range land.PRs {
+				r, _ := state.PRRevision(pin.PR)
+				members = append(members, r.ChangeID)
+			}
+			var err error
+			acquisition, err = s.store.BeginApprovalRead(ctx, w.id, members)
+			if err != nil {
+				return nil, err
+			}
+			ctx = acquisition.Context(ctx)
 			fresh, err := s.readStageABatch(ctx, w, state, land)
 			if err != nil {
 				return nil, err
@@ -227,10 +239,16 @@ func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Conf
 		},
 		ReadTestedMessages: func(ctx context.Context, land queue.Land) ([]string, error) { return testedMessages(ctx, w, land) },
 		Commit: func(ctx context.Context, fresh []queue.ApprovalEligibilityObserved, decisions []queue.LandingDecisionRecorded, start queue.LandingStarted) error {
-			return s.store.StartLanding(ctx, claim, cfg, policy, fresh, decisions, start)
+			if acquisition == nil {
+				return store.ErrLandingDecisionStale
+			}
+			return s.store.StartLanding(acquisition.Context(ctx), claim, cfg, policy, fresh, decisions, start)
 		},
 		Reject: func(ctx context.Context, fresh []queue.ApprovalEligibilityObserved, expected []string, start queue.LandingStarted, rejection queue.ApprovalGateRejected) error {
-			return s.store.RejectLanding(ctx, claim, cfg, policy, fresh, expected, start, rejection)
+			if acquisition == nil {
+				return store.ErrLandingDecisionStale
+			}
+			return s.store.RejectLanding(acquisition.Context(ctx), claim, cfg, policy, fresh, expected, start, rejection)
 		},
 	}
 }
@@ -247,6 +265,16 @@ func (s *Server) stageACheckPolicy(ctx context.Context, w *worker, batch *queue.
 		return false, false, err
 	}
 	land := queue.Land{BatchID: batch.ID, TestedSHA: batch.TestedSHA, PRs: slices.Clone(batch.PRs)}
+	members := make([]queue.ChangeID, 0, len(batch.PRs))
+	for _, pin := range batch.PRs {
+		r, _ := state.PRRevision(pin.PR)
+		members = append(members, r.ChangeID)
+	}
+	acquisition, err := s.store.BeginApprovalRead(ctx, w.id, members)
+	if err != nil {
+		return false, false, err
+	}
+	ctx = acquisition.Context(ctx)
 	fresh, err := s.readStageABatch(ctx, w, state, land)
 	if err != nil {
 		return false, false, err

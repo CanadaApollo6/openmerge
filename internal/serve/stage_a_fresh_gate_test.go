@@ -10,6 +10,7 @@ import (
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
 	"github.com/CanadaApollo6/openmerge/internal/executor"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
+	"github.com/CanadaApollo6/openmerge/internal/forge/fake"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
@@ -17,7 +18,7 @@ import (
 // Exercise both the last forge read and a journal write racing atomic start.
 // Neither can authorize a decision against an older positive stance.
 func TestStageAFreshNegativeStancesBeforeStart(t *testing.T) {
-	for _, timing := range []string{"final-read", "before-start"} {
+	for _, timing := range []string{"final-read", "before-start", "delayed-response"} {
 		for _, kind := range []string{"request-changes", "dismissal", "unapprove", "withdrawal", "revoked-writer", "team-removal", "grant-aba"} {
 			t.Run(timing+"/"+kind, func(t *testing.T) {
 				s, w, f := shadowFixture(t, 1, "main", "7", false)
@@ -62,6 +63,8 @@ func TestStageAFreshNegativeStancesBeforeStart(t *testing.T) {
 				if !proceed {
 					t.Fatal("claim did not begin")
 				}
+				beforeNegative, err := s.store.Watermark(t.Context(), w.id)
+				must(t, err)
 				inject := func() {
 					switch kind {
 					case "withdrawal":
@@ -85,7 +88,8 @@ func TestStageAFreshNegativeStancesBeforeStart(t *testing.T) {
 					f.SetNativeReviews(repo, 1, native)
 				}
 				gate := s.stageAGate(w, claim, cfg)
-				if timing == "final-read" {
+				switch timing {
+				case "final-read":
 					load := gate.Load
 					injected := false
 					gate.Load = func(ctx context.Context) (queue.State, error) {
@@ -96,7 +100,35 @@ func TestStageAFreshNegativeStancesBeforeStart(t *testing.T) {
 						}
 						return state, err
 					}
-				} else {
+				case "delayed-response":
+					readInputs := gate.ReadInputs
+					gate.ReadInputs = func(ctx context.Context, land queue.Land, state queue.State) ([]queue.ApprovalEligibilityObserved, error) {
+						defer func() { w.Driver = f }()
+						w.Driver = &delayedStageANative{Forge: f, after: func() {
+							inject()
+							other := worker{Target: w.Target, id: w.id, stageA: w.stageA, cfg: w.cfg, configTip: w.configTip, configDigest: w.configDigest, prs: maps.Clone(w.prs), summaries: maps.Clone(w.summaries)}
+							other.Driver = f
+							done := make(chan error, 1)
+							go func() {
+								if kind == "unapprove" {
+									done <- s.commands(t.Context(), &other, 1)
+									return
+								}
+								_, err := s.observe(t.Context(), &other, 1)
+								done <- err
+							}()
+							must(t, <-done)
+							// ABA restores the forge view too: timestamps and semantic
+							// fingerprints alone cannot detect the intervening denial.
+							if kind == "grant-aba" {
+								f.SetWriteGrant(repo, 21, "write")
+								go func() { _, err := s.observe(t.Context(), &other, 1); done <- err }()
+								must(t, <-done)
+							}
+						}}
+						return readInputs(ctx, land, state)
+					}
+				default:
 					commit := gate.Commit
 					gate.Commit = func(ctx context.Context, fresh []queue.ApprovalEligibilityObserved, decisions []queue.LandingDecisionRecorded, start queue.LandingStarted) error {
 						inject()
@@ -126,7 +158,7 @@ func TestStageAFreshNegativeStancesBeforeStart(t *testing.T) {
 				if timing == "final-read" && !errors.Is(err, executor.ErrLandingApprovals) {
 					t.Fatalf("expected durable approval wait: %v", err)
 				}
-				if timing == "before-start" && !errors.Is(err, store.ErrLandingDecisionStale) {
+				if timing != "final-read" && !errors.Is(err, store.ErrLandingDecisionStale) {
 					t.Fatalf("expected atomic stale rejection: %v", err)
 				}
 				records, err := s.store.EventsAfter(t.Context(), w.id, 0)
@@ -137,8 +169,17 @@ func TestStageAFreshNegativeStancesBeforeStart(t *testing.T) {
 					case queue.LandingStarted, queue.Landed:
 						t.Fatalf("negative stance permitted %T", e)
 					case queue.ApprovalEligibilityObserved:
-						if kind == "withdrawal" || kind == "revoked-writer" || kind == "team-removal" || kind == "grant-aba" {
-							found = true
+						if record.ID <= beforeNegative {
+							continue
+						}
+						actor := e.Actors["github.com:user:21"]
+						switch kind {
+						case "withdrawal":
+							found = found || !actor.Grant.Fresh
+						case "revoked-writer", "grant-aba":
+							found = found || actor.Grant.Write == cp.False
+						case "team-removal":
+							found = found || len(e.Groups["reviewers"].IDs) == 0
 						}
 					case queue.ReviewStanceObserved:
 						if e.Stance.Kind != "approve" {
@@ -184,4 +225,20 @@ func TestStageARebaseGeneratedMembersAfterBaseAdvance(t *testing.T) {
 	if starts != 1 {
 		t.Fatalf("advanced-base rebase starts=%d, want one", starts)
 	}
+}
+
+// Capture the response first, then hold A while worker B commits to Postgres.
+type delayedStageANative struct {
+	*fake.Forge
+	after func()
+}
+
+func (d *delayedStageANative) NativeReviews(ctx context.Context, repo forge.RepoRef, number int) (forge.NativeReviews, error) {
+	value, err := d.Forge.NativeReviews(ctx, repo, number)
+	if d.after != nil {
+		run := d.after
+		d.after = nil
+		run()
+	}
+	return value, err
 }

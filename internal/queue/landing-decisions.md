@@ -120,3 +120,33 @@ is present, preserving legacy simulation IDs.
 ADR 0008 per-check evidence must be a **separate event**, keyed by batch,
 attempt and change. The strict `landing_decision_recorded` decoder is unchanged;
 new check fields must not be added to this event.
+
+## Acquisition ordering and progress (11a round 3)
+
+Before any final gate forge reads, capture the queue journal high-water mark
+(`events.id`) and each observation's acquisition-start time. Carry the same
+`Store.ApprovalRead` through ingestion, eligibility, commands and atomic start
+or rejection. Under the queue lock, reject if a later committed stance,
+receipt, eligibility, revision or classification event affects a member.
+Configuration/base changes and rejected compositions also invalidate the read.
+Checks run before dedupe as well as before start: an ABA cannot hide behind an
+identical fingerprint or a worker's newer wall clock. After a successful own
+append, advance the acquisition watermark only to that transaction's final ID;
+never refresh it from a later unlocked journal read. Nested acquisition reuses
+the guard rather than resetting its lower bound. No forge I/O runs under a lock.
+
+Projection replay follows commit order, with acquisition-start regressions
+rejected and commit order breaking equal acquisition times. Wall-clock timestamps
+alone never authorize an overlapping stale read. Eligibility poll dedupe compares
+the candidate fingerprint with the current locked journal projection, including
+another gate's writes. Diagnostic reasons, read IDs/times and set order do not
+append events. A deny → allow → deny transition retains both semantic changes.
+
+Progress requires a sufficiently quiet acquisition-to-start interval with a
+satisfied policy. Identical polls dedupe, but every real relevant input change
+must invalidate pending authorization. Continuous meaningful evidence changes
+can force unlimited replans; there is no bounded-attempt or fairness guarantee.
+Source/evidence caps fail closed rather than guaranteeing a landing. The stale
+error exposed in worker diagnostics says `waiting for stable approval evidence`;
+this is an operator-visible waiting reason for churn, distinct from the durable
+policy wait reasons attached to a rejected batch. Trial class remains **Hold**.

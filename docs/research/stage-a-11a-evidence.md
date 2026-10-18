@@ -938,3 +938,50 @@ Runner and guard SHA-256 values:
 - `astra-race-overlay.json`: `eff51f2741a418d9140f3e762dbfde17635a03c07562ffb11d26b796d5920861`
 
 The final follow-up commit contains only this evidence update. Trial class remains **Hold**.
+
+
+## Round 3: database ordering fence (resumed interrupted attempt)
+
+The first implementation attempt of this exact round stopped on model capacity
+with uncommitted changes based on `c444fc0`. This continuation reviewed and
+retained that diff, including the new acquisition fence and Postgres tests.
+Its inherited `make check` (make PID 1162370, Go PID 1163381) was allowed to finish;
+no other agent's process was stopped. Earlier round-3 attempts and their actual
+nonzero exits are retained below rather than replaced with successful reruns.
+Only explicit main and feature-branch refspecs were fetched (exit 0);
+`origin/main` remained `f8066a4`. Trial class remains **Hold**.
+
+Observation time now precedes the native review read and is retained through
+commands and eligibility. Every acquisition captures the queue's committed
+`events.id` watermark before its forge reads. Ingestion, command passes, approval
+probes and the final gate carry this acquisition through their writes. Under the
+queue lock, a competing relevant commit after the watermark rejects the read
+before dedupe or writes and again at atomic start/rejection. Own committed
+appends advance the watermark only to their own final event ID. Nested reads
+reuse it; wall-clock skew and an ABA cannot advance it past competing evidence.
+The existing projection rejects acquisition-start regressions and resolves equal
+starts in journal commit order. No external read occurs under the queue lock.
+
+Eligibility dedupe now compares the candidate's approval fingerprint against the
+current journal projection under that lock. Pool diagnostic reasons, top-level
+reasons, read IDs/times and membership ordering are non-semantic. This also fixes
+the side-key deny→allow→deny masking case when another gate journals the allow.
+
+`TestStageAFreshNegativeStancesBeforeStart` covers final-read, before-start and
+captured-but-delayed response interleavings, with real separate workers and
+Postgres commits for request changes, dismissal, unapprove, withdrawal, revoked
+write permission, team removal and grant ABA. It checks the specific post-injection
+negative eligibility event instead of accepting any eligibility observation.
+`TestStageAApprovalReadUsesDatabaseOrder` uses an artificially newer timestamp
+and verifies that the database fence still rejects competing configuration,
+revision, classification, accountability, intent and eligibility commits.
+`TestStageAEligibilityJournalDedupe` verifies diagnostic-only polling emits no
+events and a denial after a competing journaled allowance is retained. Astra's
+original `TestReview77R3DelayedNativeRace` is also rerun unmodified via Go overlay.
+
+Progress is intentionally unbounded under continuously changing meaningful
+evidence. Identical polls dedupe; real relevant changes invalidate pending reads.
+A sufficiently quiet acquisition-to-start interval is necessary. Source/evidence
+caps fail closed and do not bound retries or guarantee landing. Worker diagnostics
+expose `waiting for stable approval evidence` on stale retries. The same contract
+is recorded in `internal/queue/landing-decisions.md`.

@@ -317,7 +317,7 @@ func preflightStageA(state queue.State, events []queue.Event) error {
 	return err
 }
 
-func (s *Server) observeStageA(ctx context.Context, w *worker, pr forge.PullRequest, refreshClassification bool) error {
+func (s *Server) observeStageA(ctx context.Context, w *worker, pr forge.PullRequest, refreshClassification bool, observedAt time.Time) error {
 	ids, reviews, err := w.stageReaders()
 	if err != nil {
 		return err
@@ -339,7 +339,7 @@ func (s *Server) observeStageA(ctx context.Context, w *worker, pr forge.PullRequ
 		if revision == 0 {
 			revision = 1
 		}
-		e := queue.ChangeRevisionObserved{PR: pr.Number, ChangeID: id, Revision: revision, Predecessor: revision - 1, HeadSHA: pr.HeadSHA, Basis: queue.RevisionObservationBasis{BaseSHA: state.BaseSHA, At: time.Now().UTC()}}
+		e := queue.ChangeRevisionObserved{PR: pr.Number, ChangeID: id, Revision: revision, Predecessor: revision - 1, HeadSHA: pr.HeadSHA, Basis: queue.RevisionObservationBasis{BaseSHA: state.BaseSHA, At: observedAt}}
 		if err := s.recordStageA(ctx, w, fmt.Sprintf("stage-a/revision/%d", pr.Number), e, e); err != nil {
 			return err
 		}
@@ -349,7 +349,14 @@ func (s *Server) observeStageA(ctx context.Context, w *worker, pr forge.PullRequ
 		}
 		r, _ = state.PRRevision(pr.Number)
 	}
+	acquisition, err := s.store.BeginApprovalRead(ctx, w.id, []queue.ChangeID{r.ChangeID})
+	if err != nil {
+		return err
+	}
+	ctx = acquisition.Context(ctx)
 	b := approvalBasis(r)
+	b.At = observedAt
+	b.ReadID = strconv.FormatInt(observedAt.UnixNano(), 10)
 	author, err := ids.ResolveUser(ctx, pr.Author)
 	if err != nil {
 		return err

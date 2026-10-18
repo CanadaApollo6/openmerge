@@ -254,10 +254,33 @@ func (s *Store) append(ctx context.Context, q QueueID, events []queue.Event, ded
 		if err := s.lockQueue(ctx, tx, q); err != nil {
 			return err
 		}
+		if err := checkApprovalRead(ctx, tx, q); err != nil {
+			return err
+		}
 		if observation != nil {
+			// Eligibility dedupes against the locked journal projection, never
+			// the last value written to an observations side key.
+			eligibilityOnly := observation.preflight != nil && len(events) == 1
+			if eligibilityOnly {
+				_, eligibilityOnly = events[0].(queue.ApprovalEligibilityObserved)
+			}
+			if eligibilityOnly {
+				state, _, err := load(ctx, tx, q)
+				if err != nil {
+					return err
+				}
+				if err := observation.preflight(state); err != nil {
+					return err
+				}
+				f := events[0].(queue.ApprovalEligibilityObserved)
+				facts, _ := state.ApprovalFacts(f.Basis.ChangeID)
+				if facts.Eligibility != nil && state.ApprovalFingerprint(f.Basis.ChangeID) == queue.Apply(state, f).ApprovalFingerprint(f.Basis.ChangeID) {
+					return nil
+				}
+			}
 			var previous []byte
 			err := tx.QueryRow(ctx, `SELECT value FROM observations WHERE queue_id = $1 AND key = $2`, q, observation.key).Scan(&previous)
-			if err == nil && (observation.immutable || string(previous) == string(observation.value)) {
+			if err == nil && !eligibilityOnly && (observation.immutable || string(previous) == string(observation.value)) {
 				return nil
 			}
 			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
@@ -334,6 +357,7 @@ func (s *Store) append(ctx context.Context, q QueueID, events []queue.Event, ded
 	if stale {
 		return 0, ErrStale
 	}
+	advanceApprovalRead(ctx, watermark)
 	return watermark, nil
 }
 

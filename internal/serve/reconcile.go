@@ -297,6 +297,19 @@ func (s *Server) observeWithClassification(ctx context.Context, w *worker, numbe
 	if metadata, ok := w.Driver.(forge.PullRequestMetadataReader); ok && !needsFiles {
 		read = metadata.PullRequestMetadata
 	}
+	observedAt := time.Now().UTC()
+	if w.stageA != nil {
+		id, err := w.Key.ChangeID(number)
+		if err != nil {
+			return forge.PullRequest{}, err
+		}
+		acquisition, err := s.store.BeginApprovalRead(ctx, w.id, []queue.ChangeID{id})
+		if err != nil {
+			return forge.PullRequest{}, err
+		}
+		ctx = acquisition.Context(ctx)
+		observedAt = time.Now().UTC()
+	}
 	pr, err := read(ctx, w.repo(), number)
 	if err != nil {
 		return pr, err
@@ -314,7 +327,7 @@ func (s *Server) observeWithClassification(ctx context.Context, w *worker, numbe
 		}
 	}
 	if w.stageA != nil {
-		if err := s.observeStageA(ctx, w, pr, refreshClassification); err != nil {
+		if err := s.observeStageA(ctx, w, pr, refreshClassification, observedAt); err != nil {
 			return pr, err
 		}
 		if !pr.HeadInBaseRepo {

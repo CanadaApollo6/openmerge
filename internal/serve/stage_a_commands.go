@@ -47,18 +47,28 @@ func (s *Server) stageACommands(ctx context.Context, w *worker, number int) erro
 	if err != nil {
 		return err
 	}
+	id, err := w.Key.ChangeID(number)
+	if err != nil {
+		return err
+	}
+	acquisition, err := s.store.BeginApprovalRead(ctx, w.id, []queue.ChangeID{id})
+	if err != nil {
+		return err
+	}
+	ctx = acquisition.Context(ctx)
+	observedAt := time.Now().UTC()
 	native, err := reader.NativeReviews(ctx, w.repo(), number)
 	if err != nil {
 		return err
 	}
-	return s.stageACommandsFromNative(ctx, w, number, native, false)
+	return s.stageACommandsFromNative(ctx, w, number, native, false, observedAt)
 }
 
 // stageACommandsFromNative folds one complete native review response into the
 // command journal. approvalsOnly is used by final preflight: it may consume
 // approval commands from this response, but it must leave legacy commands for
 // the normal command pass and must not advance the shared cursor past them.
-func (s *Server) stageACommandsFromNative(ctx context.Context, w *worker, number int, native forge.NativeReviews, approvalsOnly bool) error {
+func (s *Server) stageACommandsFromNative(ctx context.Context, w *worker, number int, native forge.NativeReviews, approvalsOnly bool, observedAt time.Time) error {
 	ids, _, err := w.stageReaders()
 	if err != nil {
 		return err
@@ -142,6 +152,8 @@ func (s *Server) stageACommandsFromNative(ctx context.Context, w *worker, number
 					}
 					r, _ := state.PRRevision(number)
 					b := approvalBasis(r)
+					b.At = observedAt
+					b.ReadID = strconv.FormatInt(observedAt.UnixNano(), 10)
 					actor, err := policyIdentity(c.Author)
 					if err != nil {
 						return err

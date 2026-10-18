@@ -26,7 +26,12 @@ func (s *Server) probeApprovalInputs(ctx context.Context, w *worker, state queue
 		return nil
 	}
 	for _, wait := range state.ApprovalWaits() {
-		fresh, err := w.approvalInputProbe(ctx, wait.Basis)
+		acquisition, err := s.store.BeginApprovalRead(ctx, w.id, []queue.ChangeID{wait.Basis.ChangeID})
+		if err != nil {
+			return err
+		}
+		readCtx := acquisition.Context(ctx)
+		fresh, err := w.approvalInputProbe(readCtx, wait.Basis)
 		if err != nil {
 			return err
 		}
@@ -37,7 +42,7 @@ func (s *Server) probeApprovalInputs(ctx context.Context, w *worker, state queue
 		}
 		event, changed := current.PrepareApprovalInputChange(fresh)
 		if changed {
-			if err := s.recordStageA(ctx, w, "stage-a/probe/"+string(event.Basis.ChangeID), event.Fingerprint, event); err != nil {
+			if err := s.recordStageA(readCtx, w, "stage-a/probe/"+string(event.Basis.ChangeID), event.Fingerprint, event); err != nil {
 				return err
 			}
 		}
