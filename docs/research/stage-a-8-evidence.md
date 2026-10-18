@@ -5,6 +5,77 @@ dogfood period B drains**. Passing the legacy gates does not waive this hold.
 No public approval configuration or executor ingestion is enabled here; 11a
 consumes the dormant outcome contract and installs the read-only probe reader.
 
+## PR #73 fix round 1 (2026-10-18)
+
+Runtime/test commit: `5329161b091c1bd142848ca186b1cbb4bc3cb828`.
+Explicit-refspec fetches before editing and after `make check` both found
+`origin/main` at `3e1536093441594ec6b1abd723426e29b8465ad5`; no rebase was needed.
+The reviewed starting head was `5e9cd53b9c003604664a1f296fe64b9d7e8cc216`
+(Astra and Sonnet approved that head; these fixes are subsequent changes).
+
+`ApprovalGateRejected` now encodes/decodes composition through `wireBatchPR`
+(`pr`, `head_sha`). Regeneration changed only this PR's new registry fixture
+and multi-member variant. All pre-existing fixtures remain byte-identical.
+The event-key test covers every registered event fixture recursively, rejecting
+new keys outside lowercase snake_case. Exact legacy paths in the existing
+classification, review and accountability payloads remain allowlisted because
+changing those nested keys would violate the existing-fixture constraint;
+the golden tests continue to freeze their bytes.
+
+Intent and accountability observations now use the same stale-basis guard as
+eligibility. The guard includes recorded intent/accountability times, so delayed
+older reads cannot regress text or accountability and spuriously wake a wait.
+Tests cover no-op behavior before a wait, after snapshot recovery, and while
+waiting, plus a fresh changed read that does wake the wait.
+
+Heavy jobs waited for other agents' actual `go test`, `*.test` and replay
+processes to finish, then ran serially with `GOFLAGS=-p=2`, `GOMEMLIMIT=4GiB`,
+`GOTMPDIR=~/.cache/om-pr73-fix1-tmp`, `GOCACHE=~/.cache/om-pr73-fix1-go`, and
+the supplied shared test Postgres URL. No process belonging to another task
+was killed. No live DB, systemd unit or `openmerge/*` ref was touched; code and
+tests make no real GitHub API calls.
+
+Fix-round command results:
+
+- `UPDATE_APPROVAL_FIXTURES=1 go test ./internal/queue -run '^(TestApproval|TestWire)' -count=1`:
+  **0** (`~/.cache/om-pr73-fix1-focused.log`).
+- `make check > ~/.cache/om-pr73-fix1.log 2>&1; echo exit=$?`: **0**;
+  lint reported zero issues, all race/short packages passed, build version `5329161`.
+- `python3 scripts/check-legacy-plan-action-depths-1-4.py ~/openmerge-stage-a-8-main`:
+  **0** (`~/.cache/om-pr73-fix1-differential.log`).
+- `python3 scripts/check-phase2-compatibility.py ~/openmerge-stage-a-8-main`:
+  **0** (`~/.cache/om-pr73-fix1-compatibility.log`).
+
+The differential included the complete required full simulator corpus (Team/Slow
+profiles and both cancellation capabilities), with no plan/action/wake exceptions:
+
+- Short: 227,662 comparisons;
+  `71f1ae2108d98685b675aa5a158834bbd96595ce3c9e5f3ede6cb9c575aec96a`.
+- Full: 5,615,998 comparisons;
+  `05c71f7394b7a59e84b6e86cab4c219d39d3e60c6c82ebd336d3c3157b3dc4ed`.
+- Fixture journals: 180 comparisons;
+  `9e43aeadfec234518f232eb63373be1a5196110ac0907d21afbe12cf4a1c0e88`.
+
+Compatibility confirmed all 80 existing wire fixtures byte-identical, 17 legacy
+exit records (`bc7c730e66e11a6b3ec3e2253e81061d49358d592cb673e634fac89bf41b26c6`)
+and 1,055 retry/default-digest records
+(`07ed2ecf13debd5d75c8424b222edfd740470c00f5fc2b4ae00183fdd9ce7b37`).
+No separate `make test-sim-exits` or live-journal replay was rerun this round;
+the required full simulator corpus was exercised in the differential above.
+
+11a obligations are recorded in `internal/queue/approvals.md`: isolate failing
+probes (log and continue / avoid blocking other PRs); same-input probes journal
+nothing and do not advance persisted freshness; `not(approved-reviews-by = X)`
+with X present is classified as an approval wait; optionally narrow per-event
+refresh work to approval-input events. The probe-isolation change remains an
+11a obligation, not a production acquisition change in this round.
+
+## Original verification before this fix round
+
+The results below are historical evidence for the reviewed starting head. The
+live deployment-pair replay was not rerun for this fix round; current validation
+is listed above. Trial class remains **Hold**.
+
 Baseline: current `origin/main`, `3e1536093441594ec6b1abd723426e29b8465ad5`.
 Runtime Go code: `eeb459e6a88145eb92e72b987382ab8aaf04fab9`.
 Clean replay candidate: `75fa3223daeea383282b2797adc1b566ca9dea6a` (only a Python
