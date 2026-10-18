@@ -4,13 +4,16 @@ package changepolicy
 // hashing, receipt acceptance, validation and wire records; this is not a codec.
 // Change/revision primitives are converted at the queue boundary, avoiding a
 // dependency on queue. Generation changes on a base rewrite, even at equal heads.
+// Revisions and generations start at 1; zero means not recorded.
 type ReceiptIdentity struct {
-	ChangeID                                      string
-	Revision, Generation                          uint64
-	Head, IntentDigest, PolicyDigest, BriefDigest string
+	ChangeID                                string
+	Revision, Generation                    uint64
+	Base, Head, MergeBase                   string
+	IntentDigest, PolicyDigest, BriefDigest string
 }
 
-func (r ReceiptIdentity) recorded() bool {
-	return r.ChangeID != "" && r.Revision > 0 && r.Generation > 0 && r.Head != "" &&
+// Recorded reports whether every receipt binding component is present.
+func (r ReceiptIdentity) Recorded() bool {
+	return r.ChangeID != "" && r.Revision > 0 && r.Generation > 0 && r.Base != "" && r.Head != "" && r.MergeBase != "" &&
 		r.IntentDigest != "" && r.PolicyDigest != "" && r.BriefDigest != ""
 }

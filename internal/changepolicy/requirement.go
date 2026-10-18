@@ -1,6 +1,9 @@
 package changepolicy
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Selector names a pool; human is a filter, never a permission substitute.
 type Selector string
@@ -35,8 +38,8 @@ func (r Requirement) Validate() error {
 	}
 	switch r.Selector {
 	case Group:
-		if r.Group == "" {
-			return fmt.Errorf("group name is required")
+		if r.Group == "" || strings.TrimSpace(r.Group) != r.Group {
+			return fmt.Errorf("group name must be nonempty and have no surrounding whitespace")
 		}
 	case AnyWriter, Human:
 		if r.Group != "" {

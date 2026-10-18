@@ -43,7 +43,7 @@
       "type": "object",
       "propertyNames": {
         "type": "string",
-        "pattern": "\\S"
+        "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
       },
       "additionalProperties": {
         "type": "array",
@@ -174,7 +174,7 @@
             },
             "group": {
               "type": "string",
-              "pattern": "\\S"
+              "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
             },
             "human": {
               "const": true

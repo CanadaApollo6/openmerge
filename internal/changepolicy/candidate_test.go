@@ -68,7 +68,7 @@ func TestCandidateSchemaAgreement(t *testing.T) {
 		{"{any_writer: true, receipt: true}", true}, {"{group: platform, human: true, receipt: true, count: 2}", true},
 		{"{group: platform}", true}, {"{human: true, receipt: true}", true}, {"{any_writer: true, human: true}", true},
 		{"{any_writer: true, group: platform}", false}, {"{human: false}", false}, {"{receipt: true}", false},
-		{"{count: 1}", false}, {"{group: ''}", false}, {"{any_writer: false}", false}, {"{human: true, receipt: false}", false},
+		{"{count: 1}", false}, {"{group: ''}", false}, {"{group: ' platform'}", false}, {"{group: 'platform '}", false}, {"{any_writer: false}", false}, {"{human: true, receipt: false}", false},
 		{"{human: true, count: 0}", false}, {"{human: true, count: -1}", false}, {"{human: true, count: '1'}", false},
 		{"{human: true, count: 9223372036854775808}", false}, {"{human: true, extra: x}", false},
 		{"{none: true, receipt: true}", false}, {"[any_writer, none]", false}, {"false", false},

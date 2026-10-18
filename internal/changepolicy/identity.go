@@ -29,7 +29,8 @@ type WriteGrant struct {
 	Write                 Truth
 }
 
-func (g WriteGrant) permits(id string) Truth {
+// Permits returns fresh write permission only for the same stable identity.
+func (g WriteGrant) Permits(id string) Truth {
 	if id == "" || !g.Fresh || g.SubjectID != id || g.ReturnedID != id || (g.Write != True && g.Write != False) {
 		return Unknown
 	}

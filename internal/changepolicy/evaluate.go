@@ -2,6 +2,7 @@ package changepolicy
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 
 	"github.com/CanadaApollo6/openmerge/internal/config/condition"
@@ -29,6 +30,9 @@ type Input struct {
 // RequirementResult explains one independent obligation. EligibleIDs includes
 // native reviewers even for receipt-only requirements. Unresolved never means
 // an empty pool; ApprovedIDs contains only usable evidence for this requirement.
+// ReliedOn retains every counted stance (including sources and used receipts),
+// ordered by user ID. BlockingStances retains current eligible requests for
+// changes, even for receipt-only requirements. Receipt records are copied.
 type RequirementResult struct {
 	Origin                   string
 	Requirement              Requirement
@@ -36,6 +40,8 @@ type RequirementResult struct {
 	Unresolved               bool
 	Reason                   string
 	Met                      bool
+	ReliedOn                 []Stance
+	BlockingStances          []Stance
 }
 
 // Evaluation carries approval evidence for the gate and condition snapshot.
@@ -70,7 +76,7 @@ func MatchRule(m Match, c Classification, author AccountKind) (Truth, error) {
 		if !validLabel(label) {
 			return Unknown, fmt.Errorf("invalid classification label %q", label)
 		}
-		result = and(result, c.label(label))
+		result = and(result, c.Label(label))
 	}
 	for _, facet := range []struct {
 		globs []string
@@ -102,6 +108,9 @@ func MatchRule(m Match, c Classification, author AccountKind) (Truth, error) {
 			if !facet.every && hit {
 				value = True
 			}
+		}
+		if facet.every && len(c.Paths) == 0 {
+			value = Unknown
 		}
 		if !c.InventoryComplete || !c.PathsSafe {
 			if facet.every || value != True {
@@ -142,8 +151,14 @@ func Evaluate(policy Policy, in Input) Evaluation {
 		e.ReviewsKnown = false
 		return e
 	}
-	if in.Current.Head == "" || in.Current.Revision == 0 {
-		addFailure("current revision and head are unresolved")
+	c := in.Classification
+	if !c.Inputs.Recorded() || c.Inputs.ChangeID != in.Current.ChangeID ||
+		c.Inputs.Revision != in.Current.Revision || c.Inputs.Base != in.Current.Base ||
+		c.Inputs.Head != in.Current.Head || c.Inputs.MergeBase != in.Current.MergeBase ||
+		c.Inputs.PolicyDigest != in.Current.PolicyDigest || c.Inputs.Generation != in.Current.Generation {
+		addFailure("classification basis is unresolved or stale")
+		e.ReviewsKnown = false
+		return e
 	}
 	type obligation struct {
 		origin      string
@@ -174,16 +189,10 @@ func Evaluate(policy Policy, in Input) Evaluation {
 	if !definite {
 		obligations = append(obligations, obligation{origin: "default", requirement: a.Default})
 	}
-	c := in.Classification
-	if c.Inputs.Head != in.Current.Head || c.Inputs.PolicyDigest != in.Current.PolicyDigest ||
-		c.Inputs.Generation == 0 || c.Inputs.Generation != in.Current.Generation || c.Inputs.ClassifierVersion == "" {
-		addFailure("classification basis is unresolved or stale")
-		e.ReviewsKnown = false
-	}
 	if !c.InventoryComplete {
 		pool := IdentitySet{Reason: "incomplete inventory: split the change to resolve policy owners"}
 		obligations = append(obligations, obligation{"policy owners", Requirement{Selector: AnyWriter, Count: 1}, &pool})
-	} else if c.label("policy") != False || len(c.PolicyOwners) > 0 {
+	} else if c.Label("policy") != False || len(c.PolicyOwners) > 0 {
 		if !c.PolicyOwnersKnown || len(c.PolicyOwners) == 0 {
 			pool := IdentitySet{Reason: "policy paths or effective owners are unresolved"}
 			obligations = append(obligations, obligation{"policy owners", Requirement{Selector: AnyWriter, Count: 1}, &pool})
@@ -201,15 +210,6 @@ func Evaluate(policy Policy, in Input) Evaluation {
 	}
 	eligible := map[string]bool{}
 	approved := map[string]bool{}
-	actors := make(map[string]Actor, len(in.Actors)+len(in.Stances))
-	for id, actor := range in.Actors {
-		actors[id] = actor
-	}
-	for id := range in.Stances {
-		if _, ok := actors[id]; !ok {
-			actors[id] = Actor{}
-		}
-	}
 	for _, obligation := range obligations {
 		r := obligation.requirement
 		pool := obligation.pool
@@ -225,7 +225,24 @@ func Evaluate(policy Policy, in Input) Evaluation {
 				result.Reason = "membership unresolved or not freshly revalidated"
 			}
 		}
-		for id, actor := range actors {
+		// Only current stance holders and members of this obligation's pool
+		// can affect it. A cache entry alone is not a potential approval.
+		ids := map[string]bool{}
+		for id, stance := range in.Stances {
+			if stance.Revision == in.Current.Revision && stance.Head == in.Current.Head &&
+				(stance.Kind == Approve || stance.Kind == RequestChanges) {
+				ids[id] = true
+			}
+		}
+		if pool != nil {
+			for _, id := range pool.IDs {
+				if _, observed := in.Actors[id]; observed {
+					ids[id] = true
+				}
+			}
+		}
+		for _, id := range slices.Sorted(maps.Keys(ids)) {
+			actor := in.Actors[id]
 			v := eligibility(id, actor, r, pool, in.ExcludedIDs)
 			if v == Unknown {
 				result.Unresolved = true
@@ -241,6 +258,7 @@ func Evaluate(policy Policy, in Input) Evaluation {
 			}
 			if stance.Kind == RequestChanges {
 				e.BlockingIDs = append(e.BlockingIDs, id)
+				result.BlockingStances = append(result.BlockingStances, cloneStance(stance))
 			}
 			if stance.Kind != Approve {
 				continue
@@ -252,7 +270,7 @@ func Evaluate(policy Policy, in Input) Evaluation {
 				result.Unresolved = true
 				continue
 			}
-			validReceipt := stance.Receipt != nil && in.Current.recorded() && *stance.Receipt == in.Current
+			validReceipt := stance.Receipt != nil && in.Current.Recorded() && *stance.Receipt == in.Current
 			// An invalid latest receipt never falls back to an older native review.
 			if stance.Receipt != nil && !validReceipt {
 				continue
@@ -260,6 +278,7 @@ func Evaluate(policy Policy, in Input) Evaluation {
 			approved[id] = true
 			if !r.Receipt || validReceipt {
 				result.ApprovedIDs = append(result.ApprovedIDs, id)
+				result.ReliedOn = append(result.ReliedOn, cloneStance(stance))
 			}
 		}
 		slices.Sort(result.EligibleIDs)
@@ -300,7 +319,10 @@ func eligibility(id string, actor Actor, r Requirement, pool *IdentitySet, exclu
 	if pool != nil && pool.Resolved && pool.Fresh && !slices.Contains(pool.IDs, id) {
 		return False
 	}
-	if actor.Identity.ID != id || actor.Identity.Login == "" {
+	if actor.Grant.Permits(id) == False {
+		return False
+	}
+	if id == "" || actor.Identity.ID != id || actor.Identity.Login == "" {
 		return Unknown
 	}
 	if r.Human || r.Selector == Human {
@@ -311,11 +333,17 @@ func eligibility(id string, actor Actor, r Requirement, pool *IdentitySet, exclu
 			return Unknown
 		}
 	}
-	if actor.Grant.permits(id) == False {
-		return False
-	}
 	if pool != nil && (!pool.Resolved || !pool.Fresh) {
 		return Unknown
 	}
-	return actor.Grant.permits(id)
+	return actor.Grant.Permits(id)
+}
+
+// Copy the receipt so persisted decision evidence does not alias caller memory.
+func cloneStance(s Stance) Stance {
+	if s.Receipt != nil {
+		receipt := *s.Receipt
+		s.Receipt = &receipt
+	}
+	return s
 }

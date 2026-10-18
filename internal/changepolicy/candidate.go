@@ -276,8 +276,8 @@ func ParseCandidate(data []byte) (Repository, []Diagnostic, error) {
 			keys = append(keys, n.Content[i].Value)
 		}
 		for name, v := range p.fields(n, keys...) {
-			if strings.TrimSpace(name) == "" {
-				p.fail(n, "group name must be nonempty")
+			if name == "" || strings.TrimSpace(name) != name {
+				p.fail(n, "group name must be nonempty and have no surrounding whitespace")
 			}
 			members := p.list(v)
 			for i, member := range members {

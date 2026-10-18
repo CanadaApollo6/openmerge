@@ -11,17 +11,30 @@ const (
 	CommentCommand SourceChannel = "comment_command"
 )
 
+// TimePrecision identifies the authority and precision of a source timestamp.
+// The zero value is unknown; observation fallback is a conservative bound.
+type TimePrecision string
+
+// Source time precision values are recorded by the acquisition/fold boundary.
+const (
+	ExactTime           TimePrecision = "exact"
+	UpperBoundTime      TimePrecision = "upper_bound"
+	ObservationFallback TimePrecision = "observation_fallback"
+)
+
 // StanceSource retains the source's identity, ordering and time evidence.
 // UpperTimeBound is PR 3b/6's pinned conservative withdrawal barrier when the
 // exact action time is unavailable. The fold, not this evaluator, orders stances.
 type StanceSource struct {
-	Channel        SourceChannel
-	ID             string
-	Sequence       uint64
-	Time           time.Time
-	TimeKnown      bool
-	UpperTimeBound time.Time
-	TimeReason     string
+	Channel           SourceChannel
+	ID                string
+	Sequence          uint64
+	Time              time.Time
+	TimeKnown         bool
+	UpperTimeBound    time.Time
+	Precision         TimePrecision
+	DismissedReviewID string
+	ActingUserID      string
 }
 
 // StanceKind is the latest revision-attributed position supplied by PR 6.

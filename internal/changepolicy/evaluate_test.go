@@ -11,9 +11,9 @@ import (
 
 func currentInput() Input {
 	return Input{
-		Classification: Classification{Inputs: ClassificationInputs{Head: "head", PolicyDigest: "policy", Generation: 1, ClassifierVersion: "classifier-v1"}, InventoryComplete: true, PathsSafe: true, Paths: []string{"docs/readme.md"}, Facts: map[string]Truth{"docs": True, "generated": False, "policy": False, "unknown": False}},
+		Classification: Classification{Inputs: ClassificationInputs{ChangeID: "change-1", Revision: 1, Base: "base", MergeBase: "merge-base", Head: "head", PolicyDigest: "policy", Generation: 1, ClassifierVersion: "classifier-v1"}, InventoryComplete: true, PathsSafe: true, Paths: []string{"docs/readme.md"}, Facts: map[string]Truth{"docs": True, "generated": False, "policy": False, "unknown": False}},
 		AuthorKind:     HumanAccount,
-		Current:        ReceiptIdentity{ChangeID: "change-1", Revision: 1, Generation: 1, Head: "head", IntentDigest: "intent", PolicyDigest: "policy", BriefDigest: "brief"},
+		Current:        ReceiptIdentity{Base: "base", MergeBase: "merge-base", ChangeID: "change-1", Revision: 1, Generation: 1, Head: "head", IntentDigest: "intent", PolicyDigest: "policy", BriefDigest: "brief"},
 		ExcludedIDs:    []string{"author", "submitter", "accountable"},
 		Actors:         map[string]Actor{}, Stances: map[string]Stance{},
 	}
