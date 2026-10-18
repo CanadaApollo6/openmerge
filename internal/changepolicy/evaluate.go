@@ -73,7 +73,7 @@ func MatchRule(m Match, c Classification, author AccountKind) (Truth, error) {
 		return Unknown, fmt.Errorf("empty match")
 	}
 	for _, label := range m.Labels {
-		if !validLabel(label) {
+		if !ValidClassificationLabel(label) {
 			return Unknown, fmt.Errorf("invalid classification label %q", label)
 		}
 		result = and(result, c.Label(label))

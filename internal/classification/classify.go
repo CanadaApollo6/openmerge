@@ -10,16 +10,17 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
-	"strings"
 
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
 	"github.com/CanadaApollo6/openmerge/internal/config/condition"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
 
-// Version folds in inventory, governing selection/absence and bounded hunk
-// semantics (all versioned by forge), plus the classifier's facet/path rules.
-const Version = "classification-v1/" + forge.DiffSemantics + "/governing-v1/hunks-v1/facets-v1"
+// HistoricalVersion pins the original durable derivation, independently of future forge changes.
+const HistoricalVersion = "classification-v1/git-evidence-v7-bounded-omissions/governing-v1/hunks-v1/facets-v1"
+
+// Version includes acquisition semantics and the classifier facet/path rules.
+const Version = "classification-v1/" + forge.DiffSemantics + "/governing-v1/hunks-v1/facets-v2"
 
 // Settings is component-only; it does not extend the public config loader.
 type Settings struct{ Docs, Generated, Sensitive []string }
@@ -27,6 +28,9 @@ type Settings struct{ Docs, Generated, Sensitive []string }
 // Deriver is 4b's seam. Implementations parse only the supplied governing tree.
 // Generated returns Unknown until attributes can be resolved for that path.
 // Owners fills the shared owner evidence and owned: facts, retaining uncertainty.
+// 4b MUST bump Version when deriving owners/attributes. Owners must set unknown
+// itself when unresolved, and explicit False for every absent governing owner token.
+// Missing owned: facts remain unknown even on complete inventories.
 // It must not change inventory, inputs, paths, hunks or non-owner facts.
 type Deriver interface {
 	Generated(path string, governing forge.GoverningFiles) cp.Truth
@@ -124,7 +128,7 @@ func Classify(inputs cp.ClassificationInputs, diff forge.RevisionDiff, governing
 		if (f.OldPath != "" && oldErr != nil) || (f.NewPath != "" && newErr != nil) {
 			safe = false
 		}
-		file := cp.FileEvidence{OldPath: f.OldPath, NewPath: f.NewPath, OldBlob: f.OldObjectID, NewBlob: f.NewObjectID, OldMode: uint32(oldMode), NewMode: uint32(newMode), Renamed: f.Rename != forge.DiffNotRenamed, RenamePaired: f.Rename == forge.DiffExactRename, Binary: cp.Unknown, Submodule: truth(f.Submodule), Facts: map[string]cp.Truth{"docs": cp.True, "generated": cp.True, "policy": cp.False}, Hunks: cp.HunkEvidence{Complete: f.HunkCoverage.Completeness == forge.DiffComplete}}
+		file := cp.FileEvidence{OldPath: f.OldPath, NewPath: f.NewPath, OldBlob: f.OldObjectID, NewBlob: f.NewObjectID, OldMode: uint32(oldMode), NewMode: uint32(newMode), Renamed: f.OldPath != "" && f.NewPath != "" && f.OldPath != f.NewPath, RenamePaired: f.Rename == forge.DiffExactRename, Binary: cp.Unknown, Submodule: truth(f.Submodule), Facts: map[string]cp.Truth{"docs": cp.True, "generated": cp.True, "policy": cp.False}, Hunks: cp.HunkEvidence{Complete: f.HunkCoverage.Completeness == forge.DiffComplete}}
 		if f.BinaryKnown {
 			file.Binary = truth(f.Binary)
 		}
@@ -141,7 +145,7 @@ func Classify(inputs cp.ClassificationInputs, diff forge.RevisionDiff, governing
 				file.Facts["docs"] = cp.False
 			}
 			g := cp.Unknown
-			if derived != nil {
+			if derived != nil && safe {
 				g = derived.Generated(p, governing)
 			}
 			if matches(generated, p) {
@@ -154,7 +158,6 @@ func Classify(inputs cp.ClassificationInputs, diff forge.RevisionDiff, governing
 			}
 		}
 		if !safe {
-			file.Facts["docs"], file.Facts["generated"] = cp.Unknown, cp.Unknown
 			uncertain("unsafe file: " + firstPath(f))
 			file.Reasons = append(file.Reasons, cp.LabelReasons{Label: "unknown", Reasons: []string{"binary, unreadable, mode, submodule or unpaired rename"}})
 		}
@@ -163,7 +166,13 @@ func Classify(inputs cp.ClassificationInputs, diff forge.RevisionDiff, governing
 		}
 		if file.Facts["policy"] == cp.True {
 			c.Facts["policy"] = cp.True
-			reason("policy", firstPath(f))
+			for _, r := range file.Reasons {
+				if r.Label == "policy" {
+					for _, p := range r.Reasons {
+						reason("policy", p)
+					}
+				}
+			}
 		}
 		for _, h := range f.Hunks {
 			file.Hunks.Hunks = append(file.Hunks.Hunks, cp.Hunk{OldStart: h.OldStart, OldLines: h.OldLines, NewStart: h.NewStart, NewLines: h.NewLines, Text: h.Text})
@@ -195,7 +204,7 @@ func Classify(inputs cp.ClassificationInputs, diff forge.RevisionDiff, governing
 		uncertain("generated attributes not yet derived or unreadable (Stage A 4b)")
 	}
 	for _, label := range []string{"docs", "generated"} {
-		reason(label, fmt.Sprintf("every-file result: %d", c.Facts[label]))
+		reason(label, map[cp.Truth]string{cp.True: "every changed path qualifies", cp.False: "a changed path does not qualify", cp.Unknown: "qualification is unresolved"}[c.Facts[label]])
 	}
 	evidence := Evidence{Classification: c, Governing: governing, Inventory: diff.Inventory, Hunks: diff.Hunks}
 	// This fingerprint records provenance as well as semantic inputs. It is not a
@@ -221,11 +230,11 @@ func truth(b bool) cp.Truth {
 	return cp.False
 }
 func all(a, b cp.Truth) cp.Truth {
-	if a == cp.Unknown || b == cp.Unknown {
-		return cp.Unknown
-	}
 	if a == cp.False || b == cp.False {
 		return cp.False
+	}
+	if a == cp.Unknown || b == cp.Unknown {
+		return cp.Unknown
 	}
 	return cp.True
 }
@@ -259,5 +268,5 @@ func policyPath(p string) bool {
 	case ".openmerge.yml", ".openmerge.yaml", ".github/openmerge.yml", ".github/openmerge.yaml", ".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS":
 		return true
 	}
-	return path.Base(p) == ".gitattributes" || strings.HasPrefix(p, ".github/workflows/")
+	return path.Base(p) == ".gitattributes" || (path.Dir(p) == ".github/workflows" && (path.Ext(p) == ".yml" || path.Ext(p) == ".yaml"))
 }

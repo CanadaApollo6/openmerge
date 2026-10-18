@@ -48,12 +48,17 @@ func TestClassificationMatrix(t *testing.T) {
 		{"whole-path-not-basename", "src/docs/a.txt", nil, cp.False, cp.False},
 		{"root-double-star", "README.md", nil, cp.True, cp.False},
 		{"newline-path", "docs/a\nb.md", nil, cp.True, cp.False},
-		{"binary", "docs/a.md", func(f *forge.DiffFile) { f.Binary = true }, cp.Unknown, cp.False},
-		{"unread-blob", "docs/a.md", func(f *forge.DiffFile) { f.BinaryKnown = false }, cp.Unknown, cp.False},
-		{"executable-mode-change", "docs/a.md", func(f *forge.DiffFile) { f.NewMode = "100755" }, cp.Unknown, cp.False},
-		{"symlink", "docs/a.md", func(f *forge.DiffFile) { f.NewMode = "120000" }, cp.Unknown, cp.False},
-		{"submodule", "docs/a.md", func(f *forge.DiffFile) { f.Submodule = true; f.NewMode = "160000" }, cp.Unknown, cp.False},
-		{"unpaired", "docs/a.md", func(f *forge.DiffFile) { f.Rename = forge.DiffRenameUnpaired }, cp.Unknown, cp.False},
+		{"binary", "docs/a.md", func(f *forge.DiffFile) { f.Binary = true }, cp.True, cp.False},
+		{"unread-blob", "docs/a.md", func(f *forge.DiffFile) { f.BinaryKnown = false }, cp.True, cp.False},
+		{"executable-mode-change", "docs/a.md", func(f *forge.DiffFile) { f.NewMode = "100755" }, cp.True, cp.False},
+		{"symlink", "docs/a.md", func(f *forge.DiffFile) { f.NewMode = "120000" }, cp.True, cp.False},
+		{"submodule", "docs/a.md", func(f *forge.DiffFile) { f.Submodule = true; f.NewMode = "160000" }, cp.True, cp.False},
+		{"unpaired", "docs/a.md", func(f *forge.DiffFile) {
+			f.Rename = forge.DiffRenameUnpaired
+			f.OldPath = ""
+			f.OldMode = ""
+			f.OldObjectID = ""
+		}, cp.True, cp.False},
 		{"deleted-policy", ".openmerge.yml", func(f *forge.DiffFile) { f.NewPath = ""; f.NewMode = ""; f.NewObjectID = "" }, cp.False, cp.True},
 		{"renamed-away-policy", "CODEOWNERS", func(f *forge.DiffFile) { f.NewPath = "docs/owners.md"; f.Rename = forge.DiffExactRename }, cp.False, cp.True},
 		{"renamed-to-policy", "docs/a.md", func(f *forge.DiffFile) { f.NewPath = "docs/CODEOWNERS"; f.Rename = forge.DiffExactRename }, cp.True, cp.True},
@@ -104,7 +109,7 @@ func TestTruncatedAllDocs(t *testing.T) {
 		d.Inventory = forge.DiffCoverage{Completeness: forge.DiffIncomplete, Reasons: []forge.DiffFailureReason{forge.DiffFileLimit}}
 		e := classify(t, i, d, g, Settings{Docs: []string{"docs/**"}})
 		c := e.Classification
-		if c.Label("docs") != cp.Unknown || c.PolicyOwnersKnown || c.PathsSafe || c.HunksComplete {
+		if c.Label("docs") != cp.Unknown || c.PolicyOwnersKnown || c.PathsSafe || c.HunksComplete || c.Label("policy") != cp.Unknown {
 			t.Fatal(c)
 		}
 		for _, tc := range []struct {
@@ -271,14 +276,180 @@ func (attributeStub) Generated(p string, _ forge.GoverningFiles) cp.Truth {
 	return cp.Unknown
 }
 func (attributeStub) Owners(_ *cp.Classification, _ forge.GoverningFiles) {}
-func TestUnknownRelevantInputsNeverBecomeFalse(t *testing.T) {
+func TestKnownFailureWinsOverUnknownFile(t *testing.T) {
 	i, d, g := basis(t, "a.go", "docs/b.md")
 	d.Files[1].BinaryKnown = false
 	e, err := Classify(i, d, g, Settings{Docs: []string{"docs/**"}}, attributeStub{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if e.Classification.Label("generated") != cp.Unknown || e.Classification.Label("docs") != cp.Unknown {
+	if e.Classification.Label("generated") != cp.False || e.Classification.Label("docs") != cp.False {
 		t.Fatal(e.Classification.Facts)
+	}
+}
+
+// This seam supplies evidence only; it does not implement CODEOWNERS parsing.
+type ownerStub struct{}
+
+func (ownerStub) Generated(string, forge.GoverningFiles) cp.Truth { return cp.False }
+func (ownerStub) Owners(c *cp.Classification, _ forge.GoverningFiles) {
+	c.CodeOwnersKnown, c.PolicyOwnersKnown = true, true
+	c.Facts["owned:user:alice"], c.Facts["owned:user:bob"] = cp.True, cp.False
+	pool := cp.IdentitySet{IDs: []string{"alice"}, Resolved: true, Fresh: true}
+	for _, f := range c.Files {
+		sides := []cp.CodeOwner{{Path: f.NewPath, Side: cp.NewSide}}
+		if f.NewPath == "" {
+			sides = []cp.CodeOwner{{Path: f.OldPath, Side: cp.OldSide}}
+		} else if f.Renamed {
+			sides = append(sides, cp.CodeOwner{Path: f.OldPath, Side: cp.OldSide})
+		}
+		for _, row := range sides {
+			row.Status = cp.OwnersResolved
+			row.LastMatchingEntry = "* @alice"
+			row.Eligible = pool
+			c.CodeOwners = append(c.CodeOwners, row)
+		}
+		if f.Facts["policy"] == cp.True {
+			seen := map[string]bool{}
+			for _, p := range []string{f.OldPath, f.NewPath} {
+				if p != "" && !seen[p] {
+					seen[p] = true
+					c.PolicyOwners = append(c.PolicyOwners, cp.PolicyOwner{Path: p, Eligible: pool})
+				}
+			}
+		}
+	}
+}
+func TestClassifyEvaluateOwnerComposition(t *testing.T) {
+	for _, name := range []string{"rename", "deletion", "policy", "unpaired"} {
+		t.Run(name, func(t *testing.T) {
+			i, d, g := basis(t, "docs/a.md")
+			f := &d.Files[0]
+			switch name {
+			case "rename":
+				f.NewPath = "docs/b.md"
+				f.Rename = forge.DiffExactRename
+			case "deletion":
+				f.NewPath = ""
+				f.NewMode = ""
+				f.NewObjectID = ""
+			case "policy":
+				f.OldPath = "CODEOWNERS"
+				f.NewPath = "docs/owners.md"
+				f.Rename = forge.DiffExactRename
+			case "unpaired":
+				f.OldPath = ""
+				f.OldMode = ""
+				f.OldObjectID = ""
+				f.Rename = forge.DiffRenameUnpaired
+			}
+			e, err := Classify(i, d, g, Settings{Docs: []string{"docs/**"}}, ownerStub{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c := e.Classification
+			wantRows := 1
+			if name == "rename" || name == "policy" {
+				wantRows = 2
+			}
+			if len(c.CodeOwners) != wantRows || c.Files[0].Renamed != (wantRows == 2) {
+				t.Fatal(c)
+			}
+			if name == "deletion" && c.CodeOwners[0].Side != cp.OldSide {
+				t.Fatal(c.CodeOwners)
+			}
+			policy := cp.Policy{Approvals: &cp.Approvals{Default: cp.Requirement{Selector: cp.AnyWriter, Count: 1}, Rules: []cp.Rule{{When: cp.Match{Touches: []string{"**"}}, Require: cp.Requirement{Selector: cp.CodeOwners}}}}}
+			current := cp.ReceiptIdentity{ChangeID: i.ChangeID, Revision: i.Revision, Generation: i.Generation, Base: i.Base, Head: i.Head, MergeBase: i.MergeBase, PolicyDigest: i.PolicyDigest}
+			in := cp.Input{Classification: c, Current: current, AuthorKind: cp.HumanAccount, Actors: map[string]cp.Actor{"alice": {Identity: cp.Identity{ID: "alice", Login: "alice", Kind: cp.HumanAccount}, Grant: cp.WriteGrant{SubjectID: "alice", ReturnedID: "alice", Fresh: true, Write: cp.True}}}, Stances: map[string]cp.Stance{"alice": {UserID: "alice", Kind: cp.Approve, Revision: i.Revision, Head: i.Head, Source: cp.StanceSource{Channel: cp.NativeReview, ID: "review"}}}}
+			result := cp.Evaluate(policy, in)
+			if !result.Allowed || !result.ReviewsKnown {
+				t.Fatalf("coherent evidence rejected: %+v", result)
+			}
+			in.Stances = nil
+			result = cp.Evaluate(policy, in)
+			if result.Allowed || !result.ReviewsKnown {
+				t.Fatalf("missing approval outcome: %+v", result)
+			}
+			for _, r := range result.Requirements {
+				if strings.Contains(r.Reason, "owner_evidence_incoherent") {
+					t.Fatal(r)
+				}
+			}
+			delete(c.Facts, "owned:user:bob")
+			matched, err := cp.MatchRule(cp.Match{Labels: []string{"owned:user:bob"}}, c, cp.HumanAccount)
+			if err != nil || matched != cp.Unknown {
+				t.Fatal("missing owner token must be unknown", matched, err)
+			}
+		})
+	}
+}
+
+func TestGeneratedAndCoverageMatrix(t *testing.T) {
+	for _, tc := range []struct {
+		name                             string
+		paths                            []string
+		change                           func(*forge.RevisionDiff, *forge.GoverningFiles)
+		docs, generated, policy, unknown cp.Truth
+		hunks                            bool
+	}{
+		{"all generated", []string{"gen/a", "gen/b"}, nil, cp.False, cp.True, cp.False, cp.False, true},
+		{"one false", []string{"gen/a", "src/b"}, nil, cp.False, cp.False, cp.False, cp.False, true},
+		{"rename one side", []string{"gen/a"}, func(d *forge.RevisionDiff, _ *forge.GoverningFiles) {
+			d.Files[0].NewPath = "src/b"
+			d.Files[0].Rename = forge.DiffExactRename
+		}, cp.False, cp.False, cp.False, cp.False, true},
+		{"binary pattern", []string{"gen/a"}, func(d *forge.RevisionDiff, _ *forge.GoverningFiles) { d.Files[0].Binary = true }, cp.False, cp.True, cp.False, cp.True, true},
+		{"mode pattern", []string{"gen/a"}, func(d *forge.RevisionDiff, _ *forge.GoverningFiles) { d.Files[0].NewMode = "100755" }, cp.False, cp.True, cp.False, cp.True, true},
+		{"unpaired pattern", []string{"gen/a"}, func(d *forge.RevisionDiff, _ *forge.GoverningFiles) {
+			f := &d.Files[0]
+			f.OldPath = ""
+			f.OldMode = ""
+			f.OldObjectID = ""
+			f.Rename = forge.DiffRenameUnpaired
+		}, cp.False, cp.True, cp.False, cp.True, true},
+		{"hunk only truncation", []string{"gen/a"}, func(d *forge.RevisionDiff, _ *forge.GoverningFiles) {
+			d.Hunks = forge.DiffCoverage{Completeness: forge.DiffIncomplete, Reasons: []forge.DiffFailureReason{forge.DiffHunkLineLimit}}
+			d.Files[0].HunkCoverage = d.Hunks
+		}, cp.False, cp.True, cp.False, cp.False, false},
+		{"governing only failure", []string{"gen/a"}, func(_ *forge.RevisionDiff, g *forge.GoverningFiles) {
+			g.Coverage = forge.DiffCoverage{Completeness: forge.DiffIncomplete, Reasons: []forge.DiffFailureReason{forge.DiffReadFailure}}
+		}, cp.False, cp.True, cp.False, cp.True, true},
+		{"empty", nil, nil, cp.Unknown, cp.Unknown, cp.False, cp.True, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			i, d, g := basis(t, tc.paths...)
+			if tc.change != nil {
+				tc.change(&d, &g)
+			}
+			e, err := Classify(i, d, g, Settings{Docs: []string{"docs/**"}, Generated: []string{"gen/**"}}, ownerStub{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c := e.Classification
+			if c.Label("docs") != tc.docs || c.Label("generated") != tc.generated || c.Label("policy") != tc.policy || c.Label("unknown") != tc.unknown || c.HunksComplete != tc.hunks {
+				t.Fatal(c)
+			}
+		})
+	}
+	for _, p := range []string{".github/workflows/readme.md", ".github/workflows/sub/ci.yml"} {
+		if policyPath(p) {
+			t.Fatal("not a workflow definition", p)
+		}
+	}
+}
+func TestSemanticProbeMarkers(t *testing.T) {
+	i, d, g := basis(t, "docs/a.md")
+	before := SemanticInputs(classify(t, i, d, g, Settings{}))
+	if before.Attributes[".gitattributes"] != "absent" || before.Owners["CODEOWNERS"] != "absent" {
+		t.Fatal(before)
+	}
+	g.Attributes[0].Coverage = forge.DiffCoverage{Completeness: forge.DiffIncomplete, Reasons: []forge.DiffFailureReason{forge.DiffReadFailure}}
+	g.Codeowners[0].Coverage = g.Attributes[0].Coverage
+	after := SemanticInputs(classify(t, i, d, g, Settings{}))
+	if after.Attributes[".gitattributes"] != "unknown:" || after.Owners[".github/CODEOWNERS"] != "unknown:" {
+		t.Fatal(after)
+	}
+	if len(RefreshReasons(before, after, false, true)) != 2 {
+		t.Fatal("absence lost to unknown probe")
 	}
 }

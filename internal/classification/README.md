@@ -10,7 +10,8 @@ it is never inferred from the pinned queue base, merge base or head.
 The classifier version includes forge `DiffSemantics` (v7), which versions
 inventory limits, exact-object rename pairing, ancestry proofs, governing file
 selection and checked absences, plus bounded hunk semantics. The classifier's
-own governing/hunk mapping and facet rules have explicit v1 suffixes. The
+own governing/hunk mapping uses v1 and facet rules use v2. Historical facets-v1
+records remain replayable with their recorded meaning. The
 version golden must change when any of those rules change.
 
 Paths include both rename sides and deletions. `paths` is every-file matching:
@@ -20,7 +21,11 @@ unknown. This asymmetry is intentional and consumed by `changepolicy.MatchRule`.
 `docs` and `generated` require every file to qualify, never just the observed
 prefix of a truncated inventory. Known policy hits survive all uncertainty.
 Binary, unreadable, mode, symlink, gitlink and unpaired rename evidence adds
-`unknown`; it does not erase known policy paths. No comment-only detection exists.
+`unknown`; it does not erase known policy paths. Docs uses paths only, so a
+known non-docs path is false even for binary or special files. Generated path
+patterns also survive unsafe files; only the attribute half becomes unknown.
+On complete inventories a known failing file wins over unknown files. Empty
+diffs have docs/generated unknown, policy false, and unknown true. No comment-only detection exists.
 
 `Deriver` is 4b's seam. Its `Generated` method resolves the attribute half from
 only the supplied governing tree; a matching generated path pattern already
@@ -28,6 +33,11 @@ qualifies independently. Without 4b, the attribute half is unknown, never false.
 Its `Owners` method fills the shared `CodeOwners`/`PolicyOwners` evidence and
 `owned:` facts using the evaluator's exact side/coverage contract. Until then
 both owner completeness flags remain false, with an explicit unknown reason.
+4b **MUST bump the classifier version** (e.g. facets-v3 after this facets-v2
+fix) when it begins deriving owners/attributes. `Owners` must set `unknown`
+itself whenever ownership is unresolved, and must record explicit False for
+every governing owner token absent from the change. Missing `owned:` facts
+read as unknown even with complete inventories.
 4b owns last-match parsing, attribute precedence/unset semantics and identity
 resolution; nothing in 4a claims those parsers are ready.
 
@@ -56,7 +66,16 @@ reading the latest PR revision. Both reject revision zero; absence is unrecorded
 
 The new event is wire v1 with a strict nested presence/unknown-field decoder.
 Its shared DTO field spelling and non-null wire collections are pinned by one registry
-golden; complete/incomplete examples live under `variants/`, outside the glob.
+historical golden; complete/incomplete and current facets-v2 examples live under `variants/`, outside the glob.
 Snapshots advance to v4 and retain v2/v3 decoding. The classification projection
 is immutable and keyed by change and revision, with durable refresh generation.
 It does not advance planner revisions or create effects. Compaction stays off.
+
+Wire and snapshot validation share the version allowlist and nested enum,
+truth, label/token, object ID, path, mode, omission count/range, path projection
+and hunk completeness checks. Empty object IDs retain explicit absence or
+unavailable provenance; they never prove absence without the governing probe.
+Historical facets-v1 permits its original unpaired-rename flag; facets-v2 checks
+path-derived rename coherence. 11a must still enforce whole-record resource
+budgets and cross-check derivation against acquired evidence before activation.
+Workflow policy paths are only direct `.github/workflows/*.yml`/`*.yaml` files.

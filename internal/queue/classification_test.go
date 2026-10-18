@@ -31,7 +31,7 @@ func classificationEvent(t *testing.T) ChangeClassified {
 	return ChangeClassified{Evidence: e}
 }
 func TestClassificationWireAndVariants(t *testing.T) {
-	for _, name := range []string{"event_change_classified.json", "variants/classified_complete.json", "variants/classified_incomplete.json"} {
+	for _, name := range []string{"event_change_classified.json", "variants/classified_complete.json", "variants/classified_incomplete.json", "variants/classified_facets_v2.json"} {
 		raw, err := os.ReadFile("testdata/wire/v1/" + name)
 		if err != nil {
 			t.Fatal(err)
@@ -50,9 +50,13 @@ func TestClassificationWireAndVariants(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	golden, err := os.ReadFile("testdata/wire/v1/event_change_classified.json")
+	golden, err := os.ReadFile("testdata/wire/v1/variants/classified_facets_v2.json")
 	if err != nil || !bytes.Equal(raw, golden) {
-		t.Fatal("classification golden drift", err)
+		t.Fatal("current golden drift", err)
+	}
+	decoded, err := DecodeEvent(raw)
+	if err != nil || !reflect.DeepEqual(decoded, nonNullClassification(e)) {
+		t.Fatal("current classification wire round trip", err)
 	}
 	// Strict nested structure presence, null/unknown fields and envelope version.
 	for _, mutate := range []func(map[string]any){
@@ -159,6 +163,9 @@ func TestClassificationDormancyAndLegacyBindings(t *testing.T) {
 	if _, err := BoundBatchRevision(BatchRevision{PR: 12, HeadSHA: "old-head"}, id); err == nil {
 		t.Fatal("invented unrecorded batch revision")
 	}
+	if _, err := BoundPRRevision(RevisionRecord{ChangeID: "different", Revision: 1, HeadSHA: "h"}, id); err == nil {
+		t.Fatal("mismatched ID bound")
+	}
 	if _, err := BoundPRRevision(RevisionRecord{Revision: 1, HeadSHA: "h"}, ""); err == nil {
 		t.Fatal("empty ID bound")
 	}
@@ -187,11 +194,20 @@ func TestClassificationDecodesVersion3(t *testing.T) {
 func TestClassificationGenerationRejectsRebinding(t *testing.T) {
 	first := classificationEvent(t)
 	s := Apply(State{}, first)
+	raw, _ := EncodeSnapshot(s)
+	s, err := DecodeSnapshot(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, mutate := range []func(*ChangeClassified){
 		func(e *ChangeClassified) { e.Evidence.Classification.Facts["docs"] = cp.False },
 		func(e *ChangeClassified) { e.Evidence.Classification.Inputs.Base = strings.Repeat("9", 40) },
 		func(e *ChangeClassified) { e.Evidence.Classification.Inputs.ClassifierVersion = "new-version" },
 		func(e *ChangeClassified) { e.Evidence.Classification.Inputs.Generation = 3 },
+		func(e *ChangeClassified) { e.Evidence.Governing.Codeowners[1].ObjectID = strings.Repeat("9", 40) },
+		func(e *ChangeClassified) {
+			e.Evidence.Governing.Attributes[0].Coverage.Completeness = forge.DiffIncomplete
+		},
 		func(e *ChangeClassified) {
 			e.Evidence.Classification.Inputs.Generation = 2
 			e.Evidence.Classification.Inputs.Head = strings.Repeat("9", 40)
@@ -207,14 +223,14 @@ func TestClassificationGenerationRejectsRebinding(t *testing.T) {
 		}
 	}
 	provenance := detachedClassification(first)
-	provenance.Evidence.Classification.Inputs.ConfigBlob = "format-only"
+	provenance.Evidence.Classification.Inputs.ConfigBlob = strings.Repeat("6", 40)
 	provenance.Evidence.Classification.Inputs.GoverningCommit = strings.Repeat("8", 40)
 	provenance.Evidence.Governing.CommitSHA = strings.Repeat("8", 40)
-	provenance.Evidence.Governing.Config[0].ObjectID = "format-only"
+	provenance.Evidence.Governing.Config[0].ObjectID = strings.Repeat("6", 40)
 	provenance.Evidence.InputFingerprint = strings.Repeat("8", 64)
 	got := Apply(s, provenance)
 	record, _ := got.Classification(ChangeID(first.Evidence.Classification.Inputs.ChangeID), 1)
-	if record.Evidence.Classification.Inputs.ConfigBlob != "format-only" || record.Evidence.Classification.Inputs.Generation != 1 {
+	if record.Evidence.Classification.Inputs.ConfigBlob != strings.Repeat("6", 40) || record.Evidence.Classification.Inputs.Generation != 1 {
 		t.Fatal("provenance-only refresh invalidated generation")
 	}
 }
@@ -230,6 +246,14 @@ func TestClassificationProvenanceRefreshAfterReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := Apply(State{}, decoded)
+	snapshot, err := EncodeSnapshot(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err = DecodeSnapshot(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
 	// Fresh derivation has nil collections; wire replay normalizes them to [].
 	// This representational difference must not invalidate a provenance refresh.
 	e.Evidence.Classification.Inputs.ConfigBlob = strings.Repeat("7", 40)
@@ -260,5 +284,130 @@ func TestClassificationRejectsInvalidValues(t *testing.T) {
 		if _, err := DecodeEvent(raw); err == nil {
 			t.Fatal("decoded invalid classification")
 		}
+	}
+}
+
+func TestClassificationNestedWireAndSnapshotValues(t *testing.T) {
+	cases := map[string]func(*ChangeClassified){
+		"attribute coverage": func(e *ChangeClassified) { e.Evidence.Governing.Attributes[0].Coverage.Completeness = "invented" },
+		"config coverage":    func(e *ChangeClassified) { e.Evidence.Governing.Config[0].Coverage.Completeness = "invented" },
+		"owners coverage":    func(e *ChangeClassified) { e.Evidence.Governing.Codeowners[0].Coverage.Completeness = "invented" },
+		"limitation reason": func(e *ChangeClassified) {
+			e.Evidence.Governing.Attributes[0].Coverage.Reasons = []forge.DiffFailureReason{"invented"}
+		},
+		"owned truth":   func(e *ChangeClassified) { e.Evidence.Classification.Facts["owned:user:alice"] = 9 },
+		"file truth":    func(e *ChangeClassified) { e.Evidence.Classification.Files[0].Facts["owned:user:alice"] = 9 },
+		"fact key":      func(e *ChangeClassified) { e.Evidence.Classification.Facts["owned:user:"] = cp.True },
+		"file fact key": func(e *ChangeClassified) { e.Evidence.Classification.Files[0].Facts["invented"] = cp.True },
+		"reason label":  func(e *ChangeClassified) { e.Evidence.Classification.Reasons[0].Label = "invented" },
+		"file reason label": func(e *ChangeClassified) {
+			e.Evidence.Classification.Files[0].Reasons = []cp.LabelReasons{{Label: "invented"}}
+		},
+		"config object":          func(e *ChangeClassified) { e.Evidence.Governing.Config[0].ObjectID = "not-an-object-id" },
+		"owners object":          func(e *ChangeClassified) { e.Evidence.Governing.Codeowners[1].ObjectID = "bad" },
+		"attribute object":       func(e *ChangeClassified) { e.Evidence.Governing.Attributes[0].ObjectID = "bad" },
+		"input object":           func(e *ChangeClassified) { e.Evidence.Classification.Inputs.ConfigBlob = "bad" },
+		"input attribute object": func(e *ChangeClassified) { e.Evidence.Classification.Inputs.AttributeBlobs[".gitattributes"] = "bad" },
+		"file object":            func(e *ChangeClassified) { e.Evidence.Classification.Files[0].NewBlob = "bad" },
+		"omission reason": func(e *ChangeClassified) {
+			e.Evidence.Classification.Files[0].Hunks.Omitted = []cp.HunkRange{{Reason: "invented"}}
+		},
+		"omission count": func(e *ChangeClassified) {
+			e.Evidence.Classification.Files[0].Hunks.Complete = false
+			e.Evidence.Classification.HunksComplete = false
+			e.Evidence.Classification.Files[0].Hunks.Omitted = []cp.HunkRange{{Reason: string(forge.DiffOmittedRangeLimit), Count: 0}}
+		},
+		"omission range": func(e *ChangeClassified) {
+			e.Evidence.Classification.Files[0].Hunks.Complete = false
+			e.Evidence.Classification.HunksComplete = false
+			e.Evidence.Classification.Files[0].Hunks.Omitted = []cp.HunkRange{{Reason: string(forge.DiffHunkLineLimit), OldStart: -1, OldLines: 1}}
+		},
+		"hunk range":           func(e *ChangeClassified) { e.Evidence.Classification.Files[0].Hunks.Hunks[0].NewStart = 0 },
+		"path shape":           func(e *ChangeClassified) { e.Evidence.Classification.Files[0].NewPath = "../escape" },
+		"governing path":       func(e *ChangeClassified) { e.Evidence.Governing.Attributes[0].Path = "/.gitattributes" },
+		"attribute input path": func(e *ChangeClassified) { e.Evidence.Classification.Inputs.AttributeBlobs["../x"] = "" },
+		"mode":                 func(e *ChangeClassified) { e.Evidence.Classification.Files[0].NewMode = 42 },
+		"governing mode":       func(e *ChangeClassified) { e.Evidence.Governing.Config[0].Mode = "123456" },
+		"version":              func(e *ChangeClassified) { e.Evidence.Classification.Inputs.ClassifierVersion = "invented" },
+		"hunk completeness":    func(e *ChangeClassified) { e.Evidence.Classification.Files[0].Hunks.Complete = false },
+		"paths projection":     func(e *ChangeClassified) { e.Evidence.Classification.Paths = []string{"other"} },
+		"rename projection":    func(e *ChangeClassified) { e.Evidence.Classification.Files[0].Renamed = true },
+		"owner side": func(e *ChangeClassified) {
+			e.Evidence.Classification.CodeOwners = []cp.CodeOwner{{Path: "docs/a.md", Side: "invented"}}
+		},
+		"owner status": func(e *ChangeClassified) {
+			e.Evidence.Classification.CodeOwners = []cp.CodeOwner{{Path: "docs/a.md", Side: cp.NewSide, Status: "invented"}}
+		},
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			e := classificationEvent(t)
+			mutate(&e)
+			if len(e.Evidence.Classification.Files[0].Hunks.Omitted) > 0 {
+				e.Evidence.Classification.Files[0].Hunks.Complete = false
+				e.Evidence.Classification.HunksComplete = false
+			}
+			_, raw, err := encodeWire("change_classified", nonNullClassification(e))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := DecodeEvent(raw); err == nil {
+				t.Fatal("invalid wire accepted")
+			}
+			if got := Apply(State{}, e); got.classifications != nil {
+				t.Fatal("invalid evidence applied")
+			}
+			s := Apply(State{}, classificationEvent(t))
+			id := ChangeID(e.Evidence.Classification.Inputs.ChangeID)
+			s.classifications[id][1] = e
+			raw, err = EncodeSnapshot(s)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := DecodeSnapshot(raw); err == nil {
+				t.Fatal("invalid snapshot accepted")
+			}
+		})
+	}
+}
+
+func TestClassificationHistoricalRenameAndObjectFormats(t *testing.T) {
+	for _, version := range []string{classification.HistoricalVersion, classification.Version} {
+		e := classificationEvent(t)
+		e.Evidence.Classification.Inputs.ClassifierVersion = version
+		// facets-v1 mapped the forge unpaired single-side flag to Renamed=true.
+		e.Evidence.Classification.Files[0].Renamed = version == classification.HistoricalVersion
+		e.Evidence.Classification.Files[0].NewBlob = strings.Repeat("a", 64)
+		e.Evidence.Governing.Config[0].ObjectID = strings.Repeat("b", 64)
+		e.Evidence.Classification.Inputs.ConfigBlob = strings.Repeat("b", 64)
+		_, raw, err := EncodeEvent(e)
+		if err != nil {
+			t.Fatal(version, err)
+		}
+		decoded, err := DecodeEvent(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		snapshot, err := EncodeSnapshot(Apply(State{}, decoded))
+		if err != nil {
+			t.Fatal(err)
+		}
+		restored, err := DecodeSnapshot(snapshot)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, ok := restored.Classification(ChangeID(e.Evidence.Classification.Inputs.ChangeID), 1)
+		if !ok || got.Evidence.Classification.Files[0].Renamed != (version == classification.HistoricalVersion) {
+			t.Fatal("historical derivation changed")
+		}
+	}
+	// A counted omission summary can enclose an initial insertion (start zero)
+	// and later nonzero ranges, unlike an individual retained hunk.
+	e := classificationEvent(t)
+	e.Evidence.Classification.Files[0].Hunks.Complete = false
+	e.Evidence.Classification.HunksComplete = false
+	e.Evidence.Classification.Files[0].Hunks.Omitted = []cp.HunkRange{{OldStart: 0, OldLines: 100, NewStart: 1, NewLines: 101, Reason: string(forge.DiffOmittedRangeLimit), Count: 2}}
+	if err := e.Validate(); err != nil {
+		t.Fatal(err)
 	}
 }

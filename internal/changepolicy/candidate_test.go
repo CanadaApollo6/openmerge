@@ -37,7 +37,7 @@ func candidateSchema(t *testing.T) *jsonschema.Schema {
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()
 	for name, validate := range map[string]func(string) bool{
-		"policy-login": validLogin, "policy-member": validMember, "policy-label": validLabel,
+		"policy-login": validLogin, "policy-member": validMember, "policy-label": ValidClassificationLabel,
 		"policy-glob":         func(s string) bool { _, err := condition.CompileGlob(s); return err == nil },
 		"openmerge-condition": func(s string) bool { _, err := condition.Parse(s); return err == nil },
 	} {
