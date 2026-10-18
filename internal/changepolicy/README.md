@@ -41,6 +41,30 @@ and `WriteGrant.Permits` expose the same completeness rules to consumers.
 unresolved, never empty approval pools. Incomplete inventory always adds an
 unresolvable owner obligation directing the author to split the change.
 
+`CodeOwnersKnown` and `CodeOwners` independently record every changed path's
+side, last-matching governing entry, resolved IDs and status. Uncovered and
+explicitly ownerless entries add no code-owner obligation; unresolved entries
+(including any email in a mixed entry or unknown team membership) block even
+when a known owner approves. These statuses must not be reused for `PolicyOwners`:
+ownerless policy paths still block, while policy-owner resolution treats only
+email-only entries as unresolvable on that basis. Rule-only `{code_owners: true}`
+expands into count-1 obligations per owned file and per covered rename side,
+using old-path owners for deletions. Only `receipt: true` may combine with it;
+receipts and exclusions apply independently per file. Complete known inventories
+with no covered files add none. Incomplete inventories or unknown ownership
+block. This selector cannot be the default. Imported counts need their own
+`paths: ["**"]` rule as well as a count default and a separate owner `touches`
+rule: on an empty diff the paths match is unknown, enforced alongside the default.
+
+The ADR 0007 facet contract remains:
+
+| Facet | Complete, safe inputs | Incomplete or unknown relevant inputs |
+|---|---|---|
+| `docs` / `generated` | True iff every file qualifies; false on a known failure | Unknown |
+| `paths` | True iff every path matches; false on a failure; empty paths unknown | Unknown |
+| `touches` | True on a hit, otherwise false (including empty paths) | True on an observed hit, otherwise unknown |
+| `policy` / `owned:` | Recorded path facts and owners | Retain positive facts; absence unknown; policy-owner and applicable code-owner obligations unresolved with incomplete inventory or unknown owners |
+
 Callers supply fresh memberships and identity-bound grants, effective account
 kinds after agent mapping, and exclusions for the author, submitter and all
 accountable humans. Stances must already be folded and revision-attributed by

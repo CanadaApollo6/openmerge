@@ -1,7 +1,9 @@
 # PR 5 component evidence
 
+## Round 1
+
 Baseline: `df3af44ffede645c7fb64a37d83d6bae334a6aa7` (the PR merge base with origin/main).
-Candidate: the PR head; the PR body records its exact SHA. All implementation
+Candidate: `930973cd29470d931c1af268d7f6847f24d55b41` (before the round-2 rebase). All implementation
 changes are confined to `internal/changepolicy` and its fixtures. Go 1.27.2 is
 selected through `mise exec --` for every command below.
 
@@ -42,3 +44,32 @@ A fresh live-journal export and the full trial deployment gates remain required
 before an operator deploys. Final required check statuses are in the PR body;
 fix-round logs are `/tmp/om-pr55-fix1.log` and `/tmp/om-pr55-fix1-sim.log` on the
 implementation host.
+
+## Round 2
+
+Code-validation baseline: `b1587a7eb6347340a2ad0c03683ebe755e2eda74` (#59).
+Final rebased main: `f30dd96` (#60), which changes only the two approved ADRs;
+the production code and this component are unchanged by that rebase.
+The current PR head is recorded in the PR body. The code-owner addition remains
+confined to `internal/changepolicy`. The public schema and legacy queue fixtures
+have zero diff against this baseline. The unchanged legacy digest vectors and
+public-loader/schema rejection tests pass, together with the frozen semantic
+policy digest `6fd2a7569b7259c86a11209759ea489ade2113ea715e98ded2ca9791b6c2f4e6`.
+No field was added to `Requirement`: its preexisting JSON bytes are pinned.
+Code-owner policy vectors, using the fixture plus an all-path `touches` rule:
+
+- `{code_owners: true}`: `cc891b1319abcb4512391fc471ea6fe1389d4c0cd136f63082e8fbd823bf49a7`.
+- `{code_owners: true, receipt: true}`: `048bd4409f31d0d3f3236e68bdb94e648100492c0026103455ee7b3961600fc9`.
+
+Production builds using the reproducible command above are byte-identical to
+the rebased baseline, SHA-256
+`1425a204a6d44ab67d507556af1277c28009118552f4568437d0a8884149be9e`.
+Round-2 required-check logs are `/tmp/om-pr55-fix2.log` and
+`/tmp/om-pr55-fix2-sim.log`; their real exit statuses are in the PR body.
+
+Offline replay also matches the rebased baseline at all eight checkpoints,
+SHA-256 `244be7ab8d14b27fd5d9e3e49a61b492f928ba25d6c554eb7eefd687ce293f5d`.
+
+The required simulator suite exits **0**. All 146 normalized result records
+match the round-1 baseline byte-for-byte (SHA-256
+`418f7487f391c0dcadea5dfa135cd01862038a618ab0333cec2c0564f99dd7bd`).

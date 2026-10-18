@@ -146,7 +146,7 @@ func Evaluate(policy Policy, in Input) Evaluation {
 	e.OptedIn, e.ReviewsKnown = true, true
 	addFailure := func(reason string) { e.Allowed = false; e.Reasons = append(e.Reasons, reason) }
 	a := policy.Approvals
-	if err := a.Default.Validate(); err != nil || a.Default.Selector == None {
+	if err := a.Default.Validate(); err != nil || a.Default.Selector == None || a.Default.Selector == CodeOwners {
 		addFailure("invalid approvals.default")
 		e.ReviewsKnown = false
 		return e
@@ -183,7 +183,32 @@ func Evaluate(policy Policy, in Input) Evaluation {
 			definite = true
 		}
 		if match != False && rule.Require.Selector != None {
-			obligations = append(obligations, obligation{origin: fmt.Sprintf("rules[%d]", i), requirement: rule.Require})
+			origin := fmt.Sprintf("rules[%d]", i)
+			if rule.Require.Selector != CodeOwners {
+				obligations = append(obligations, obligation{origin: origin, requirement: rule.Require})
+				continue
+			}
+			r := rule.Require
+			r.Count = 1
+			if !c.InventoryComplete || !c.CodeOwnersKnown {
+				pool := IdentitySet{Reason: "code owners or inventory unresolved; split incomplete changes"}
+				obligations = append(obligations, obligation{origin + " code owners", r, &pool})
+			}
+			for _, owner := range c.CodeOwners {
+				if owner.Status == OwnersUncovered || owner.Status == OwnersOwnerless {
+					continue
+				}
+				pool := owner.Eligible
+				if owner.Status != OwnersResolved || owner.Path == "" ||
+					(owner.Side != OldSide && owner.Side != NewSide) ||
+					owner.LastMatchingEntry == "" || len(pool.IDs) == 0 {
+					pool.Resolved = false
+					if pool.Reason == "" {
+						pool.Reason = "code owner entry unresolved"
+					}
+				}
+				obligations = append(obligations, obligation{origin + " code owner: " + owner.Path + " (" + string(owner.Side) + ")", r, &pool})
+			}
 		}
 	}
 	if !definite {

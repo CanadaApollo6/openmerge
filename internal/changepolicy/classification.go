@@ -97,12 +97,49 @@ type PolicyOwner struct {
 	Eligible IdentitySet
 }
 
+// OwnerSide identifies the changed path side, including both sides of a rename.
+type OwnerSide string
+
+// Changed path sides are retained independently for renames.
+const (
+	OldSide OwnerSide = "old"
+	NewSide OwnerSide = "new"
+)
+
+// CodeOwnerStatus distinguishes intentional absence from unresolved ownership.
+// The zero value is unresolved. Mixed email entries are unresolved even when
+// some IDs are known; PolicyOwner resolution is independent.
+type CodeOwnerStatus string
+
+// Ownership states keep absent obligations distinct from missing evidence.
+const (
+	OwnersUnresolved CodeOwnerStatus = ""
+	OwnersUncovered  CodeOwnerStatus = "uncovered"
+	OwnersOwnerless  CodeOwnerStatus = "ownerless"
+	OwnersResolved   CodeOwnerStatus = "resolved"
+)
+
+// CodeOwner records PR 4b's effective governing entry for one changed path.
+// LastMatchingEntry is the original entry text (empty for uncovered paths).
+// Eligible retains resolved IDs, fresh membership and reasons, including
+// partial evidence when Status is unresolved. Deletions use OldSide; renames
+// provide separate old/new entries. No ownership is derived in this package.
+type CodeOwner struct {
+	Path              string
+	Side              OwnerSide
+	LastMatchingEntry string
+	Status            CodeOwnerStatus
+	Eligible          IdentitySet
+}
+
 // Classification is PR 4's output contract. Facts contains classification
 // labels only, never forge labels. Missing facts are unknown, not false.
 // Paths includes both sides of renames. PathsSafe concerns path matching;
 // unreadable attributes may leave PathsSafe true and generated unknown.
 // Every-file facets remain unknown while InventoryComplete is false, even
 // if every observed file qualifies (or an observed file fails).
+// CodeOwnersKnown requires a complete inventory and known owners/membership for
+// every changed file; entries retain partial evidence even when it is false.
 type Classification struct {
 	Inputs                       ClassificationInputs
 	InventoryComplete, PathsSafe bool
@@ -111,6 +148,8 @@ type Classification struct {
 	HunksComplete                bool
 	Facts                        map[string]Truth
 	Reasons                      []LabelReasons
+	CodeOwnersKnown              bool
+	CodeOwners                   []CodeOwner
 	PolicyOwnersKnown            bool
 	PolicyOwners                 []PolicyOwner
 }

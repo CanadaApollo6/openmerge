@@ -104,7 +104,25 @@ func (p *candidateParser) require(n *yaml.Node) Requirement {
 		p.fail(n, "expected none, any_writer or a selector object")
 		return Requirement{}
 	}
-	f := p.fields(n, "group", "any_writer", "human", "count", "receipt")
+	f := p.fields(n, "group", "any_writer", "human", "count", "receipt", "code_owners")
+	if v := f["code_owners"]; v != nil {
+		r := Requirement{Selector: CodeOwners}
+		if v.Kind != yaml.ScalarNode || v.ShortTag() != "!!bool" || v.Value != "true" {
+			p.fail(v, "code_owners must be true")
+		}
+		for key, value := range f {
+			if key != "code_owners" && key != "receipt" {
+				p.fail(value, "code_owners permits only receipt")
+			}
+		}
+		if v := f["receipt"]; v != nil {
+			if v.Kind != yaml.ScalarNode || v.ShortTag() != "!!bool" || v.Value != "true" {
+				p.fail(v, "receipt must be true")
+			}
+			r.Receipt = true
+		}
+		return r
+	}
 	r := Requirement{Count: 1}
 	if v := f["group"]; v != nil {
 		r.Selector, r.Group = Group, p.text(v)
@@ -195,8 +213,8 @@ func (p *candidateParser) approvals(n *yaml.Node) *Approvals {
 	a := &Approvals{}
 	if v := f["default"]; v != nil {
 		a.Default = p.require(v)
-		if a.Default.Selector == None {
-			p.fail(v, "approvals.default cannot be none")
+		if a.Default.Selector == None || a.Default.Selector == CodeOwners {
+			p.fail(v, "approvals.default cannot be none or code_owners")
 		}
 	} else {
 		p.fail(n, "approvals.default is required")

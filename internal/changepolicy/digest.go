@@ -56,7 +56,7 @@ func PolicyDigest(in DigestInputs) (string, error) {
 	if in.ClassifierVersion == "" {
 		return "", fmt.Errorf("classifier version is required")
 	}
-	if err := in.Queue.Approvals.Default.Validate(); err != nil || in.Queue.Approvals.Default.Selector == None {
+	if err := in.Queue.Approvals.Default.Validate(); err != nil || in.Queue.Approvals.Default.Selector == None || in.Queue.Approvals.Default.Selector == CodeOwners {
 		return "", fmt.Errorf("invalid default")
 	}
 	classification := in.Repository.Classification

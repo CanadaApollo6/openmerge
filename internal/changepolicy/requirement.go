@@ -10,13 +10,15 @@ type Selector string
 
 // Selectors identify the supported approval pools.
 const (
-	None      Selector = "none"
-	AnyWriter Selector = "any_writer"
-	Group     Selector = "group"
-	Human     Selector = "human"
+	None       Selector = "none"
+	AnyWriter  Selector = "any_writer"
+	Group      Selector = "group"
+	Human      Selector = "human"
+	CodeOwners Selector = "code_owners"
 )
 
-// Requirement is normalized: every non-none requirement has Count >= 1.
+// Requirement has Count >= 1 except none and the rule-only CodeOwners selector.
+// CodeOwners has no count until expanded into per-file obligations.
 // All non-none selectors additionally require fresh identity-bound write access.
 type Requirement struct {
 	Selector       Selector
@@ -30,6 +32,12 @@ func (r Requirement) Validate() error {
 	if r.Selector == None {
 		if r.Group != "" || r.Human || r.Receipt || r.Count != 0 {
 			return fmt.Errorf("none cannot have filters or a count")
+		}
+		return nil
+	}
+	if r.Selector == CodeOwners {
+		if r.Group != "" || r.Human || r.Count != 0 {
+			return fmt.Errorf("code_owners permits only receipt and no count")
 		}
 		return nil
 	}
@@ -64,7 +72,7 @@ type Rule struct {
 	Require Requirement
 }
 
-// Approvals is nil for legacy queues. Default cannot be none.
+// Approvals is nil for legacy queues. Default cannot be none or code_owners.
 type Approvals struct {
 	Default Requirement
 	Rules   []Rule

@@ -244,6 +244,14 @@
                   "not": {
                     "const": "none"
                   }
+                },
+                {
+                  "not": {
+                    "type": "object",
+                    "required": [
+                      "code_owners"
+                    ]
+                  }
                 }
               ]
             },
@@ -403,6 +411,21 @@
               "group"
             ]
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "code_owners": {
+              "const": true
+            },
+            "receipt": {
+              "const": true
+            }
+          },
+          "required": [
+            "code_owners"
+          ]
         }
       ]
     },
