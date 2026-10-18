@@ -831,29 +831,37 @@ These are operator commands; the replay tool never connects to Postgres or GitHu
    identical planner revision. `first_action_divergence` identifies the first
    event that differs, separately from state comparison.
 
-   State comparison defaults to **codec-neutral**: the baseline emits its exact
-   snapshot bytes as base64; the candidate decodes each with its own decoder,
-   re-encodes with its current encoder, and compares that encoding with its own
-   folded state. This tests the upgrade/restart path across snapshot v2 → v3.
-   Failure to decode the old snapshot is an explicit upgrade blocker (exit 2).
-   `state_identical: N/N` and `first_state_divergence` report the result. For
-   same-codec comparisons, `--strict-state` instead requires original snapshot
-   hashes to match. Neither mode relaxes action/revision equality.
+   State comparison defaults to **legacy fields**: compare canonical JSON from
+   each full journal fold, ignoring codec `Version` metadata and removing only
+   `ChangeRevisions` and `BatchRevisions` on both sides. This allowlist lives in
+   one place in the script and follows ADR 0007 PR 1's replayable side projection:
+   old observations establish revision sequences without a backfill or log rewrite.
+   Every other shared field must match exactly; absent new fields may only be
+   empty/zero. `legacy_state_identical: N/N` and `first_state_divergence` report
+   the result. `--strict-state` requires original snapshot hash equality for
+   same-codec comparisons. Both modes retain strict actions/revision equality.
 
-   The current adapter supports queues without `approvals`. It also asserts
-   Stage A's `ChangeRevisions` and `BatchRevisions` are empty/zero and reports
-   every non-empty checkpoint in `stage_a_nonempty`; presence fails gate 2.
-   These fields are never stripped from the state comparison. A full journal
-   replay may populate them even when upgrading a v2 snapshot cannot recover
-   them; report that divergence rather than waiving it.
+   Production restarts rebuild queue state by **full journal replay**. Queue
+   snapshots are not persisted or restored by the server. The snapshot codec is
+   used by the outside-push audit progress in `internal/store/outside_push.go`;
+   decoding/re-encoding an old queue snapshot does not model a server restart.
+   The replay gate therefore does not use that conversion as its comparison target.
+
+   The tool reports non-empty checkpoint counts for each allowlisted field,
+   folds the candidate journal twice, and requires identical derived fields at
+   every checkpoint (`derived_determinism`). A positive schema check restricts
+   derived records to revision identity/basis fields, rejecting non-empty unknown
+   fields, including accountability, classification, or approvals. Any non-empty
+   new field outside the allowlist also fails gate 2. `non_allowlisted_fields`
+   retains offending values and event IDs verbatim.
 
    Exit 0 requires gates 2 and 4 to pass. Exit 1 reports a failed gate; exit 2
    is a tooling/input error and supplies no passing evidence. The report records
-   both full stream paths beside the report, SHA-256 hashes of those canonical
+   all three full stream paths beside the report, SHA-256 hashes of those canonical
    JSONL files (including trailing newlines and final policy records), export
    hashes, old/new SHAs and live-config content hash. Streams retain original
-   snapshot bytes and exact wire action bytes as base64, plus the candidate's
-   re-encoded baseline snapshots. Keep streams private alongside the exports.
+   snapshot bytes and exact wire action bytes as base64 for the baseline and
+   both independent candidate folds. Keep streams private alongside the exports.
    With no `--out`, the report and streams are saved under
    `~/.cache/openmerge-replay/`. Use `--candidate /path/to/checkout` when running
    the tool against a separate clean candidate checkout.
@@ -1126,8 +1134,9 @@ restore. Existing depth-1 event/action wire types and fixtures are unchanged.
 Journals written by pre-merge heads of PR 4 are intentionally unreadable;
 compatibility is claimed only with `origin/main`.
 
-Snapshots currently have a version-2 encode/decode codec only; the store still
-replays journals and does not write or load these snapshots. The codec retains W,
+The snapshot codec writes version 3 and reads versions 2 and 3. Production queue
+state is rebuilt from journals; queue snapshots are not persisted or restored.
+Outside-push audit progress uses the codec separately. The codec retains W,
 its bounds and last failure, each batch's once-only failure marker, the ordered
 last-200 outcome ring and pending cancellation confirmations. The full encoding
 must be a byte fixed point across encode/decode, including retained confirmations.

@@ -56,13 +56,16 @@ class LiveReplayTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual(data["actions_identical"], "2/2")
             self.assertEqual(data["state_identical"], "2/2")
-            self.assertEqual(data["stage_a_empty"], "PASS")
+            self.assertEqual(data["derived_determinism"], "PASS")
+            self.assertEqual(data["non_allowlisted_fields"], [])
             for summary in data["streams"].values():
                 stream = Path(summary["path"])
                 self.assertTrue(stream.is_file())
                 self.assertEqual(replay.hashlib.sha256(stream.read_bytes()).hexdigest(), summary["sha256"])
-            # Simulate the old encoder through a Go source overlay, retaining
-            # the actual candidate decoder and encoder for the upgrade path.
+            result, data = run("--strict-state")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            # Simulate the old encoder through a Go source overlay. Candidate
+            # side projections are compared separately from the legacy fields.
             snapshot = replay.ROOT / "internal/queue/snapshot.go"
             legacy = root / "snapshot-v2.go"
             legacy.write_text(snapshot.read_text().replace("return json.Marshal(v)", '''
@@ -83,18 +86,28 @@ class LiveReplayTest(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertEqual(data["first_state_divergence"]["event_id"], 10)
             self.assertEqual(data["actions_identical"], "2/2")
-            legacy.write_text(legacy.read_text().replace('json.RawMessage(`2`)', 'json.RawMessage(`99`)'))
-            rejected = subprocess.run(command + list(bump), capture_output=True, text=True)
-            self.assertEqual(rejected.returncode, 2)
-            self.assertIn("event 10: candidate cannot decode baseline snapshot (upgrade blocker): unsupported snapshot version 99", rejected.stderr)
-            legacy.write_text(legacy.read_text().replace('json.RawMessage(`99`)', 'json.RawMessage(`2`)'))
             append(30, "pr_observed", dict(pr=42, head_sha="synthetic-head", trusted=True, eligible=True))
             append(40, "enqueue_requested", dict(pr=42, at="2026-01-01T00:00:00Z"))
-            result, data = run()
-            self.assertEqual(result.returncode, 1)  # Stage A must remain visible
-            self.assertEqual(data["state_identical"], "4/4")
-            self.assertEqual(data["stage_a_empty"], "FAIL")
-            self.assertEqual(data["stage_a_nonempty"][0]["event_id"], 30)
+            result, data = run(*bump)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(data["legacy_state_identical"], "4/4")
+            self.assertEqual(data["derived_determinism"], "PASS")
+            self.assertEqual(data["derived_nonempty_checkpoints"]["ChangeRevisions"], 2)
+            # A non-allowlisted candidate addition fails at its first checkpoint.
+            extra = root / "snapshot-extra.go"
+            extra.write_text(snapshot.read_text().replace("return json.Marshal(v)", '''
+ raw, err := json.Marshal(v); if err != nil { return nil, err }
+ var fields map[string]json.RawMessage
+ if err := json.Unmarshal(raw, &fields); err != nil { return nil, err }
+ fields["Approvals"] = json.RawMessage(`["invented"]`)
+ return json.Marshal(fields)
+'''))
+            candidate_overlay = root / "candidate-overlay.json"
+            candidate_overlay.write_text(json.dumps({"Replace": {str(snapshot): str(extra)}}))
+            result, data = run(*bump, "--candidate-overlay", str(candidate_overlay))
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(data["first_state_divergence"]["event_id"], 10)
+            self.assertEqual(data["non_allowlisted_fields"][0]["fields"]["Approvals"]["candidate"], ["invented"])
             for mode in ((), ("--strict-state",)):
                 result, data = run(*bump, *mode, "--inject-divergence-event", "40")
                 self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
@@ -108,9 +121,27 @@ class LiveReplayTest(unittest.TestCase):
             self.assertEqual(data["gate4"], "FAIL")
             self.assertTrue(data["streams"]["candidate"]["policies"][0]["would_emit_config_applied"])
 
+    def test_derived_safety_and_determinism(self):
+        def record(fields):
+            return json.dumps(dict(kind="checkpoint", event_id=8, queue_id=1,
+                                   revision=2, actions=[], snapshot_base64=replay.base64.b64encode(
+                                       json.dumps(fields).encode()).decode()))
+        baseline = record({"Version": 2})
+        fields = {"Version": 3, "ChangeRevisions": {"42": {"Revision": 1}}}
+        candidate = record(fields)
+        repeat = record({"Version": 3, "ChangeRevisions": {"42": {"Revision": 2}}})
+        data = replay.compare_checkpoints([baseline], [candidate], False, [repeat])
+        self.assertEqual(data["derived_determinism"], "FAIL")
+        self.assertEqual(data["first_derived_divergence"]["event_id"], 8)
+        for name in ("Accountability", "Classification", "Approvals"):
+            fields["ChangeRevisions"]["42"][name] = "invented"
+            data = replay.compare_checkpoints([baseline], [record(fields)], False)
+            self.assertIn(f"ChangeRevisions.42.{name}", data["non_allowlisted_fields"][0]["fields"])
+
     def test_checkpoint_truncation(self):
         record = json.dumps(dict(kind="checkpoint", event_id=7, queue_id=2,
-                                 revision=1, actions=[], state_sha256="hash"))
+                                 revision=1, actions=[], state_sha256="hash",
+                                 snapshot_base64=replay.base64.b64encode(b'{"Version":3}').decode()))
         for old, new in (([record], []), ([], [record])):
             result = replay.compare_checkpoints(old, new, strict=True)
             self.assertEqual(result["actions_identical"], "0/1")

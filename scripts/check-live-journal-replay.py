@@ -19,7 +19,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATHS = (".openmerge.yml", ".openmerge.yaml", ".github/openmerge.yml", ".github/openmerge.yaml")
 # Deliberately fail closed on an unknown API, rather than substitute a partial
-# state projection. Verified on a4b173f and ac7ceb0. Future adapters must preserve
+# state projection. Verified on a4b173f and e0e2824. Future adapters must preserve
 # these semantics; keep the same adapter in BOTH trees for a comparison.
 API_ADAPTERS = ["wire-v1 / queue.Apply / serve.worker.plannerConfig / queue.EncodeSnapshot"]
 PROBE = r'''package serve
@@ -31,7 +31,6 @@ import (
  "fmt"
  "os"
  "strconv"
- "io"
  "testing"
  "time"
 
@@ -69,22 +68,6 @@ func TestLiveJournalReplayProbe(t *testing.T) {
  defer output.Close()
  enc:=json.NewEncoder(output)
  emit:=func(v any) {if err:=enc.Encode(v); err!=nil {t.Fatal(err)}}
- var baseline []struct {
-  Kind string
-  EventID int64 `json:"event_id"`
-  QueueID int64 `json:"queue_id"`
-  Snapshot []byte `json:"snapshot_base64"`
- }
- if path:=os.Getenv("OM_REPLAY_BASELINE"); path!="" {
-  f,err:=os.Open(path); if err!=nil {t.Fatal(err)}; defer f.Close()
-  dec:=json.NewDecoder(f)
-  for {
-   var record struct {Kind string; EventID int64 `json:"event_id"`; QueueID int64 `json:"queue_id"`; Snapshot []byte `json:"snapshot_base64"`}
-   err:=dec.Decode(&record); if err==io.EOF {break}; if err!=nil {t.Fatal(err)}
-   if record.Kind=="checkpoint" {baseline=append(baseline,record)}
-  }
-  if len(baseline)!=len(in.Events) {t.Fatal("baseline checkpoint count mismatch")}
- }
  states:=map[int64]queue.State{}
  workers:=map[int64]*worker{}
  selectPolicy:=func(content,base string) (config.Queue,string) {
@@ -100,7 +83,7 @@ func TestLiveJournalReplayProbe(t *testing.T) {
   states[q.ID]=queue.State{BaseBranch:q.Base,Fence:q.InitialFence}
   workers[q.ID]=&worker{}
  }
- for index,e:=range in.Events {
+ for _,e:=range in.Events {
   if e.RecordedAt.IsZero() {t.Fatalf("event %d: missing recorded_at",e.ID)}
   state:=states[e.QueueID]
   w:=workers[e.QueueID]
@@ -129,15 +112,6 @@ func TestLiveJournalReplayProbe(t *testing.T) {
   revision:=fields["Revision"]
   if revision==nil {t.Fatal("snapshot adapter missing Revision")}
   record:=map[string]any{"kind":"checkpoint","event_id":e.ID,"queue_id":e.QueueID,"revision":revision,"actions":actions,"snapshot_base64":snapshot,"state_sha256":fmt.Sprintf("%x",sha256.Sum256(snapshot))}
-  if baseline!=nil {
-   old:=baseline[index]
-   if old.EventID!=e.ID || old.QueueID!=e.QueueID {t.Fatalf("event %d: baseline checkpoint identity mismatch",e.ID)}
-   restored,err:=queue.DecodeSnapshot(old.Snapshot)
-   if err!=nil {t.Fatalf("event %d: candidate cannot decode baseline snapshot (upgrade blocker): %v",e.ID,err)}
-   normalized,err:=queue.EncodeSnapshot(restored); if err!=nil {t.Fatal(err)}
-   record["baseline_reencoded_base64"]=normalized
-   record["baseline_reencoded_sha256"]=fmt.Sprintf("%x",sha256.Sum256(normalized))
-  }
   emit(record)
   states[e.QueueID]=state
  }
@@ -220,14 +194,13 @@ def probe(root, directory, name, args):
     replacements = {str(root / "internal/serve/live_journal_replay_probe_test.go"): str(directory / "probe_test.go")}
     if name == "baseline" and args.baseline_overlay:
         replacements.update(json.loads(args.baseline_overlay.read_text())["Replace"])
+    if name.startswith("candidate") and args.candidate_overlay:
+        replacements.update(json.loads(args.candidate_overlay.read_text())["Replace"])
     overlay.write_text(json.dumps({"Replace": replacements}))
     env = dict(os.environ, GOPROXY="off", GOSUMDB="off", GOTOOLCHAIN="local",
                OM_REPLAY_INPUT=str(directory / "input.json"), OM_REPLAY_OUTPUT=str(output))
     env.pop("OM_REPLAY_PERTURB_EVENT", None)
-    env.pop("OM_REPLAY_BASELINE", None)
-    if name == "candidate":
-        env["OM_REPLAY_BASELINE"] = str(args.stream_directory / "baseline.jsonl")
-    if name == "candidate" and args.inject_divergence_event:
+    if name.startswith("candidate") and args.inject_divergence_event:
         env["OM_REPLAY_PERTURB_EVENT"] = str(args.inject_divergence_event)
     result = subprocess.run(["go", "test", "-overlay", str(overlay), "./internal/serve",
                              "-run", "^TestLiveJournalReplayProbe$", "-count=1", "-timeout=5m"],
@@ -242,14 +215,92 @@ def probe(root, directory, name, args):
     return lines
 
 
-def compare_checkpoints(old, new, strict):
-    actions_identical = state_identical = total = 0
-    first_action = first_state = None
-    stage_a = []
+# ADR 0007 PR 1: old journal observations establish this replayable side
+# projection, without inventing accountability, classification, or approvals.
+# This is the only top-level exemption from legacy state equality.
+DERIVED_FIELDS = {
+    "ChangeRevisions": {"ChangeID": str, "Revision": int, "HeadSHA": str,
+                        "Basis": {"base_sha": str, "at": str}, "LogPosition": int},
+    "BatchRevisions": {"PR": int, "Revision": int, "HeadSHA": str},
+}
+
+
+def snapshot(record):
+    return json.loads(base64.b64decode(record["snapshot_base64"])) if record.get("snapshot_base64") else {}
+
+
+def nonempty(value):
+    return value not in (None, False, 0, "", [], {})
+
+
+def legacy_differences(left, right, path=""):
+    # Version is codec metadata. Shared fields, including null vs empty, remain
+    # exact. Only absent, newly added zero fields are equivalent to absence.
+    differences = {}
+    for key in sorted(left.keys() | right.keys()):
+        if not path and (key in DERIVED_FIELDS or key == "Version"):
+            continue
+        name = f"{path}.{key}" if path else key
+        l, r = left.get(key), right.get(key)
+        if key not in left or key not in right:
+            if nonempty(l) or nonempty(r):
+                differences[name] = dict(baseline=l, candidate=r, new_field=True)
+        elif isinstance(l, dict) and isinstance(r, dict):
+            differences.update(legacy_differences(l, r, name))
+        elif l != r:
+            differences[name] = dict(baseline=l, candidate=r)
+    return differences
+
+
+def derived_violations(fields):
+    # Positive schema validation prevents accountability/approval/classification
+    # data from hiding inside an exempt container (including future additions).
+    violations = {}
+
+    def check(value, schema, path):
+        if not isinstance(value, dict):
+            violations[path] = value
+            return
+        for key, item in value.items():
+            expected = schema.get(key)
+            name = f"{path}.{key}"
+            if expected is None:
+                if nonempty(item):
+                    violations[name] = item
+            elif isinstance(expected, dict):
+                check(item, expected, name)
+            elif type(item) is not expected:
+                violations[name] = item
+
+    for field, schema in DERIVED_FIELDS.items():
+        values = fields.get(field) or {}
+        if not isinstance(values, dict):
+            violations[field] = values
+            continue
+        for key, value in values.items():
+            if field == "BatchRevisions":
+                if not isinstance(value, list):
+                    violations[f"{field}.{key}"] = value
+                    continue
+                for index, item in enumerate(value):
+                    check(item, schema, f"{field}.{key}[{index}]")
+            else:
+                check(value, schema, f"{field}.{key}")
+    return violations
+
+
+def compare_checkpoints(old, new, strict, repeated=None):
+    actions_identical = state_identical = legacy_identical = total = 0
+    first_action = first_state = first_derived = None
+    counts = {field: 0 for field in DERIVED_FIELDS}
+    unexpected = []
+    repeats = iter(repeated if repeated is not None else new)
     for left, right in itertools.zip_longest(old, new):
         l, r = json.loads(left) if left else {}, json.loads(right) if right else {}
         if l.get("kind") != "checkpoint" and r.get("kind") != "checkpoint":
             continue
+        again = next(repeats, None)
+        again = json.loads(again) if again else {}
         total += 1
         identity = ("kind", "event_id", "queue_id")
         aligned = all(l.get(k) == r.get(k) for k in identity) and bool(l) and bool(r)
@@ -259,30 +310,34 @@ def compare_checkpoints(old, new, strict):
             actions_identical += 1
         elif first_action is None:
             first_action = detail
-        expected = l.get("state_sha256") if strict else r.get("baseline_reencoded_sha256")
-        if aligned and expected is not None and expected == r.get("state_sha256"):
+        baseline, candidate, rerun = snapshot(l), snapshot(r), snapshot(again)
+        differences = legacy_differences(baseline, candidate)
+        if aligned and not differences:
+            legacy_identical += 1
+        equal = l.get("state_sha256") == r.get("state_sha256") if strict else not differences
+        if aligned and equal:
             state_identical += 1
         elif first_state is None:
-            first_state = dict(detail)
-            if aligned and not strict:
-                restored = json.loads(base64.b64decode(r["baseline_reencoded_base64"]))
-                folded = json.loads(base64.b64decode(r["snapshot_base64"]))
-                first_state["differing_fields"] = {
-                    key: dict(baseline_reencoded=restored.get(key), candidate=folded.get(key))
-                    for key in sorted(restored.keys() | folded.keys())
-                    if restored.get(key) != folded.get(key)}
-        # These are the Stage A additions to stateSnapshot. Do not silently
-        # remove them from comparison, even if the queue has no approvals.
-        if r.get("snapshot_base64"):
-            snapshot = json.loads(base64.b64decode(r["snapshot_base64"]))
-            fields = {k: snapshot[k] for k in ("ChangeRevisions", "BatchRevisions")
-                      if snapshot.get(k)}
-            if fields:
-                stage_a.append(dict(event_id=r["event_id"], queue_id=r["queue_id"], fields=fields))
+            first_state = dict(detail, differing_fields=differences)
+        violations = derived_violations(candidate)
+        violations.update({k: v for k, v in differences.items() if v.get("new_field")})
+        if violations:
+            unexpected.append(dict(event_id=r.get("event_id"), queue_id=r.get("queue_id"), fields=violations))
+        for field in DERIVED_FIELDS:
+            if candidate.get(field):
+                counts[field] += 1
+        if (any(r.get(k) != again.get(k) for k in identity) or
+                any(candidate.get(k) != rerun.get(k) for k in DERIVED_FIELDS)) and first_derived is None:
+            first_derived = dict(event_id=r.get("event_id"), queue_id=r.get("queue_id"),
+                                 candidate={k: candidate.get(k) for k in DERIVED_FIELDS},
+                                 repeated={k: rerun.get(k) for k in DERIVED_FIELDS})
     return dict(actions_identical=f"{actions_identical}/{total}",
+                legacy_state_identical=f"{legacy_identical}/{total}",
                 state_identical=f"{state_identical}/{total}",
                 first_action_divergence=first_action, first_state_divergence=first_state,
-                stage_a_nonempty=stage_a)
+                derived_nonempty_checkpoints=counts,
+                derived_determinism="PASS" if first_derived is None else "FAIL",
+                first_derived_divergence=first_derived, non_allowlisted_fields=unexpected)
 
 
 def stream_summary(lines):
@@ -297,6 +352,7 @@ def main():
     parser.add_argument("--baseline", required=True, type=Path)
     parser.add_argument("--candidate", type=Path, default=ROOT, help="candidate checkout (default: script checkout)")
     parser.add_argument("--baseline-overlay", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--candidate-overlay", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--events", required=True, type=Path)
     parser.add_argument("--queues", required=True, type=Path)
     parser.add_argument("--config-file", help="path in candidate HEAD (default: discover OpenMerge config)")
@@ -324,12 +380,14 @@ def main():
             (directory / "probe_test.go").write_text(PROBE)
             old = probe(args.baseline, directory, "baseline", args)
             new = probe(ROOT, directory, "candidate", args)
-        comparisons = compare_checkpoints(old, new, args.strict_state)
-        difference = comparisons["first_action_divergence"] or comparisons["first_state_divergence"]
-        # This config adapter has no approvals setting. Stage A fields must be empty. Report all
-        # occurrences, and fail the assertion rather than masking additions.
-        stage_a_empty = not comparisons["stage_a_nonempty"]
-        summaries = dict(baseline=stream_summary(old), candidate=stream_summary(new))
+            repeated = probe(ROOT, directory, "candidate-repeat", args)
+        comparisons = compare_checkpoints(old, new, args.strict_state, repeated)
+        difference = (comparisons["first_action_divergence"] or comparisons["first_state_divergence"] or
+                      comparisons["first_derived_divergence"] or
+                      next(iter(comparisons["non_allowlisted_fields"]), None))
+        derived_ok = comparisons["derived_determinism"] == "PASS" and not comparisons["non_allowlisted_fields"]
+        summaries = dict(baseline=stream_summary(old), candidate=stream_summary(new),
+                         **{"candidate-repeat": stream_summary(repeated)})
         for name, summary in summaries.items():
             summary["path"] = str(args.stream_directory / f"{name}.jsonl")
         gate4 = all(p["journal_digest"] and not p["would_emit_config_applied"]
@@ -343,10 +401,9 @@ def main():
                       delete_head_branch_default=not args.keep_head_branch, default_branch=args.default_branch,
                       config_sha256=hashlib.sha256(inputs["Live"].encode()).hexdigest(),
                       streams=summaries, first_difference=difference,
-                      **comparisons, state_mode="strict" if args.strict_state else "codec-neutral",
-                      stage_a_empty="PASS" if stage_a_empty else "FAIL",
-                      gate2="PASS" if difference is None and stage_a_empty else "FAIL", gate4="PASS" if gate4 else "FAIL",
-                      verdict="PASS" if difference is None and stage_a_empty and gate4 else "FAIL")
+                      **comparisons, state_mode="strict" if args.strict_state else "legacy-fields",
+                      gate2="PASS" if difference is None and derived_ok else "FAIL", gate4="PASS" if gate4 else "FAIL",
+                      verdict="PASS" if difference is None and derived_ok and gate4 else "FAIL")
         rendered = json.dumps(report, indent=2, sort_keys=True)
         print(rendered)
         report_path.write_text(rendered + "\n")
