@@ -331,7 +331,7 @@ func checkClassificationSnapshotBudget(p classifications, approvals approvalProj
 			return err
 		}
 		total += len(raw)
-		if len(raw) > 16<<20 || total > maxApprovalQueueBytes {
+		if len(raw) > maxClassificationChangeBytes || total > maxApprovalQueueBytes {
 			return ClassificationSnapshotBudgetError{id, len(raw), total}
 		}
 	}

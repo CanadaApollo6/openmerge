@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"maps"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/CanadaApollo6/openmerge/internal/brief"
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
@@ -22,6 +24,7 @@ type ApprovalReceiptRecorded struct {
 	Current    cp.ReceiptIdentity `json:"current"`
 	Actor      cp.Identity        `json:"actor"`
 	CommentID  string             `json:"comment_id"`
+	BoundaryAt time.Time          `json:"boundary_at"`
 	CreatedAt  time.Time          `json:"created_at"`
 	Accepted   bool               `json:"accepted"`
 	ReasonCode string             `json:"reason_code"`
@@ -35,44 +38,135 @@ func digestHex(s string) bool {
 }
 
 // PrepareReceipt is pure acceptance validation. The caller authenticates writer
-// permission and supplies the current recorded brief; no command is wired here.
-func PrepareReceipt(b ApprovalBasis, actor cp.Identity, commentID string, created time.Time, supplied cp.ReceiptIdentity, current brief.Fact) (ApprovalReceiptRecorded, error) {
+// permission; identity is built from State. No command is wired here.
+func (s State) PrepareReceipt(policy cp.Policy, b ApprovalBasis, actor cp.Identity, commentID string, created time.Time, supplied cp.ReceiptIdentity) (ApprovalReceiptRecorded, error) {
+	current, err := s.RecordedBrief(policy, b)
+	if err != nil {
+		return ApprovalReceiptRecorded{}, err
+	}
 	identity, err := brief.Identity(current)
 	if err != nil {
 		return ApprovalReceiptRecorded{}, err
 	}
-	e := ApprovalReceiptRecorded{Basis: b, Supplied: supplied, Current: identity, Actor: actor, CommentID: commentID, CreatedAt: created}
-	e.Accepted = brief.ValidateReceipt(supplied, current) == nil
-	if !e.Accepted {
-		e.ReasonCode = "receipt_binding_mismatch"
+	return s.prepareReceiptIdentity(b, actor, commentID, created, supplied, identity)
+}
+
+func (s State) prepareReceiptIdentity(b ApprovalBasis, actor cp.Identity, commentID string, created time.Time, supplied, identity cp.ReceiptIdentity) (ApprovalReceiptRecorded, error) {
+	boundary, ok := s.approvalBinding(b)
+	if !ok {
+		return ApprovalReceiptRecorded{}, ApprovalBoundaryError{b}
 	}
+	e := ApprovalReceiptRecorded{BoundaryAt: boundary.Basis.At, Basis: b, Supplied: supplied, Current: identity, Actor: actor, CommentID: commentID, CreatedAt: created}
+	e.ReasonCode = e.rejectionReason()
+	e.Accepted = e.ReasonCode == ""
 	return e, e.Validate()
 }
 
 // Validate checks explicit bindings and the recorded acceptance outcome.
 func (e ApprovalReceiptRecorded) Validate() error {
-	if e.Basis.Validate() != nil || !validIdentity(e.Actor) || !validSourceID(e.CommentID) || e.CreatedAt.IsZero() || !e.Current.Recorded() || !digestHex(e.Current.BriefDigest) || e.Current.ChangeID != string(e.Basis.ChangeID) || e.Current.Revision != uint64(e.Basis.Revision) || e.Current.Head != e.Basis.Head {
+	if e.Basis.Validate() != nil || !validIdentity(e.Actor) || !validSourceID(e.CommentID) || e.CreatedAt.IsZero() || e.BoundaryAt.IsZero() || !boundedReceiptIdentity(e.Supplied) || !e.Current.Recorded() || !digestHex(e.Current.BriefDigest) || e.Current.ChangeID != string(e.Basis.ChangeID) || e.Current.Revision != uint64(e.Basis.Revision) || e.Current.Head != e.Basis.Head {
 		return fmt.Errorf("invalid receipt processing binding")
 	}
-	valid := e.Supplied.Recorded() && e.Supplied == e.Current
-	if e.Accepted != valid || valid && e.ReasonCode != "" || !valid && e.ReasonCode != "receipt_binding_mismatch" {
+	reason := e.rejectionReason()
+	if e.Accepted != (reason == "") || e.ReasonCode != reason {
 		return fmt.Errorf("invalid receipt outcome")
 	}
+
 	return nil
 }
+
+// ParseReceiptDigest accepts surrounding whitespace, then exactly 64 lowercase hex bytes.
+func ParseReceiptDigest(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if !digestHex(value) {
+		return "", fmt.Errorf("invalid receipt digest")
+	}
+	return value, nil
+}
+
+// Supplied strings are audit data, including rejected bindings, and are bounded
+// independently of the acceptance comparison. Empty values remain rejectable evidence.
+func boundedReceiptIdentity(r cp.ReceiptIdentity) bool {
+	for _, v := range []string{r.ChangeID, r.Base, r.Head, r.MergeBase, r.IntentDigest, r.PolicyDigest, r.BriefDigest} {
+		if len(v) > 1024 || !utf8.ValidString(v) {
+			return false
+		}
+	}
+	return true
+}
+func (e ApprovalReceiptRecorded) rejectionReason() string {
+	if e.Supplied.BriefDigest != e.Current.BriefDigest {
+		return "receipt_digest_mismatch"
+	}
+	if !e.Supplied.Recorded() || e.Supplied != e.Current {
+		return "receipt_binding_mismatch"
+	}
+	// Same 2s clock uncertainty + 1s resolution used for PR 6 returning heads.
+	if !e.CreatedAt.After(e.BoundaryAt.Add(3 * time.Second)) {
+		return "receipt_before_revision"
+	}
+	return ""
+}
+
+// PrepareBareReceipt is 11a's bare-digest contract: construct all bindings from
+// current RECORDED evidence, retaining the supplied digest verbatim after parsing.
+func (s State) PrepareBareReceipt(policy cp.Policy, b ApprovalBasis, actor cp.Identity, commentID string, created time.Time, digest string) (ApprovalReceiptRecorded, error) {
+	parsed, err := ParseReceiptDigest(digest)
+	if err != nil {
+		return ApprovalReceiptRecorded{}, err
+	}
+	current, err := s.RecordedBrief(policy, b)
+	if err != nil {
+		return ApprovalReceiptRecorded{}, err
+	}
+	supplied, err := brief.Identity(current)
+	if err != nil {
+		return ApprovalReceiptRecorded{}, err
+	}
+	identity := supplied
+	supplied.BriefDigest = parsed
+	return s.prepareReceiptIdentity(b, actor, commentID, created, supplied, identity)
+}
+
 func (e ApprovalReceiptRecorded) stance() ReviewStanceObserved {
 	seq, _ := strconv.ParseUint(e.CommentID, 10, 64)
 	return ReviewStanceObserved{Basis: e.Basis, Reviewer: e.Actor, Stance: cp.Stance{UserID: e.Actor.ID, Kind: cp.Approve, Revision: e.Supplied.Revision, Head: e.Supplied.Head, Receipt: &e.Supplied, Source: cp.StanceSource{Channel: cp.CommentCommand, ID: e.CommentID, Sequence: seq, Time: e.CreatedAt, TimeKnown: true, UpperTimeBound: e.CreatedAt.Add(time.Second), Precision: cp.ExactTime, ActingUserID: e.Actor.ID}}, SourceKind: forge.CommentCreationTime, SourceTime: forge.NativeTime{Time: e.CreatedAt, Source: forge.CommentCreationTime, Precision: time.Second, UpperBound: e.CreatedAt.Add(time.Second)}}
 }
 
+const maxRejectedReceiptsPerActor = 64
+
 type receiptProjection map[ChangeID]map[string]ApprovalReceiptRecorded
 
+func receiptSourceMatches(e ApprovalReceiptRecorded, source AttributedStance) bool {
+	v := source.Event
+	return v.Stance.Kind == cp.Approve && v.Stance.Receipt != nil && *v.Stance.Receipt == e.Supplied && v.Stance.UserID == e.Actor.ID && v.Stance.Source.Time.Equal(e.CreatedAt) && v.Basis.ChangeID == e.Basis.ChangeID && v.Basis.Revision == e.Basis.Revision && v.Basis.Head == e.Basis.Head && source.Revision == e.Basis.Revision
+}
+
 func (s State) recordReceipt(e ApprovalReceiptRecorded) State {
-	if e.Validate() != nil || s.CheckApprovalBoundary(e.Basis) != nil {
+	boundary, ok := s.approvalBinding(e.Basis)
+	if e.Validate() != nil || !ok || !e.BoundaryAt.Equal(boundary.Basis.At) {
 		return s
 	}
 	if _, exists := s.receipts[e.Basis.ChangeID][e.CommentID]; exists {
 		return s
+	}
+	if e.Accepted {
+		next, _ := s.observeApproval(e.stance())
+		source, ok := next.approvalFacts[e.Basis.ChangeID].Sources[sourceKey(e.stance())]
+		if !ok || !receiptSourceMatches(e, source) {
+			return s
+		}
+		s = next
+	} else {
+		count := 0
+		for _, old := range s.receipts[e.Basis.ChangeID] {
+			if !old.Accepted && old.Actor.ID == e.Actor.ID {
+				count++
+			}
+		}
+		if count >= maxRejectedReceiptsPerActor {
+			return s
+		}
 	}
 	s.receipts = maps.Clone(s.receipts)
 	if s.receipts == nil {
@@ -86,9 +180,6 @@ func (s State) recordReceipt(e ApprovalReceiptRecorded) State {
 	// typed snapshot budget before journaling.
 	records[e.CommentID] = e
 	s.receipts[e.Basis.ChangeID] = records
-	if e.Accepted {
-		s, _ = s.observeApproval(e.stance())
-	}
 	return s
 }
 
@@ -97,14 +188,30 @@ func (s State) ReceiptRecords(id ChangeID) map[string]ApprovalReceiptRecorded {
 	return maps.Clone(s.receipts[id])
 }
 
-func validateReceiptSnapshot(p receiptProjection, approvals approvalProjection) error {
+func validateReceiptSnapshot(p receiptProjection, approvals approvalProjection, revisions map[int]RevisionRecord) error {
 	total := 0
 	for id, records := range p {
+		var revision RevisionRecord
+		for _, r := range revisions {
+			if r.ChangeID == id {
+				revision = r
+			}
+		}
+		rejected := map[string]int{}
 		for key, e := range records {
 			total++
+			if revision.Revision == 0 || e.Basis.Revision > revision.Revision || e.Basis.Revision == revision.Revision && (e.Basis.Head != revision.HeadSHA || !e.BoundaryAt.Equal(revision.Basis.At)) {
+				return fmt.Errorf("receipt basis contradicts revision")
+			}
+			if !e.Accepted {
+				rejected[e.Actor.ID]++
+				if rejected[e.Actor.ID] > maxRejectedReceiptsPerActor {
+					return fmt.Errorf("receipt actor rejection budget exceeded")
+				}
+			}
 			if e.Accepted {
 				source, ok := approvals[id].Sources[string(cp.CommentCommand)+"/"+key]
-				if !ok || source.Event.Stance.Receipt == nil || *source.Event.Stance.Receipt != e.Supplied || source.Event.Stance.UserID != e.Actor.ID {
+				if !ok || !receiptSourceMatches(e, source) {
 					return fmt.Errorf("accepted receipt missing stance evidence")
 				}
 			}
@@ -141,11 +248,11 @@ func (s State) CheckReceiptAdmission(e ApprovalReceiptRecorded) error {
 		return err
 	}
 	next := s.recordReceipt(e)
-	if err := validateReceiptSnapshot(next.receipts, next.approvalFacts); err != nil {
+	if _, ok := next.receipts[e.Basis.ChangeID][e.CommentID]; !ok {
+		return fmt.Errorf("receipt admission capacity exceeded")
+	}
+	if err := validateReceiptSnapshot(next.receipts, next.approvalFacts, next.changeRevisions.snapshot()); err != nil {
 		return err
 	}
-	if err := checkApprovalSnapshotBudget(next.approvalFacts); err != nil {
-		return err
-	}
-	return checkClassificationSnapshotBudget(next.classifications, next.approvalFacts, next.receipts)
+	return checkSharedAdmissionBudget(next, e.Basis.ChangeID)
 }

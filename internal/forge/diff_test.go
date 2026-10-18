@@ -81,3 +81,18 @@ func TestDiffObjectIDs(t *testing.T) {
 		t.Fatal("zero value claims completeness")
 	}
 }
+
+func TestDiffPathsRequireUTF8(t *testing.T) {
+	for _, tc := range []struct {
+		path string
+		want bool
+	}{
+		{"", true},
+		{"docs/é.md", true},
+		{"docs/\xff.md", false},
+	} {
+		if got := ValidDiffPath(tc.path); got != tc.want {
+			t.Fatalf("ValidDiffPath(%q) = %v, want %v", tc.path, got, tc.want)
+		}
+	}
+}

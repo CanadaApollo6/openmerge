@@ -430,6 +430,29 @@ func TestClassificationHistoricalRenameAndObjectFormats(t *testing.T) {
 	}
 }
 
+func TestClassificationV7RejectsHunkCountLimit(t *testing.T) {
+	for _, version := range []string{classification.HistoricalVersion, classification.PreviousVersion, classification.RetainedVersion} {
+		t.Run(version, func(t *testing.T) {
+			e := classificationEvent(t)
+			e.Evidence.Classification.Inputs.ClassifierVersion = version
+			e.Evidence.Governing.Semantics = "git-evidence-v7-bounded-omissions"
+			e.Evidence.Classification.Files[0].Hunks.Complete = false
+			e.Evidence.Classification.HunksComplete = false
+			e.Evidence.Classification.Files[0].Hunks.Omitted = []cp.HunkRange{{OldStart: 1, OldLines: 1, NewStart: 1, NewLines: 1, Reason: string(forge.DiffHunkCountLimit)}}
+			if err := e.Validate(); err == nil {
+				t.Fatal("v7 accepted hunk_count_limit")
+			}
+		})
+	}
+	e := classificationEvent(t)
+	e.Evidence.Classification.Files[0].Hunks.Complete = false
+	e.Evidence.Classification.HunksComplete = false
+	e.Evidence.Classification.Files[0].Hunks.Omitted = []cp.HunkRange{{OldStart: 1, OldLines: 1, NewStart: 1, NewLines: 1, Reason: string(forge.DiffHunkCountLimit)}}
+	if err := e.Validate(); err != nil {
+		t.Fatalf("v8 rejected hunk_count_limit: %v", err)
+	}
+}
+
 // Odd owner tokens must yield durable Unknown evidence, never an invalid wire
 // label. Exercise the real TreeDeriver through both public wire entry points.
 func TestTreeDeriverOddOwnerTokensAreWireValid(t *testing.T) {

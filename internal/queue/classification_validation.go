@@ -12,7 +12,7 @@ import (
 )
 
 func classificationPath(p string) bool {
-	return p != "" && p != "." && p != ".." && !strings.HasPrefix(p, "/") && !strings.HasPrefix(p, "../") && !strings.ContainsRune(p, 0) && path.Clean(p) == p
+	return p != "" && forge.ValidDiffPath(p) && p != "." && p != ".." && !strings.HasPrefix(p, "/") && !strings.HasPrefix(p, "../") && !strings.ContainsRune(p, 0) && path.Clean(p) == p
 }
 func classificationObject(id string) bool { return id == "" || forge.ValidDiffObjectID(id) }
 func classificationMode(mode uint32) bool {
@@ -25,12 +25,12 @@ func classificationReason(r forge.DiffFailureReason) bool {
 	}
 	return false
 }
-func classificationCoverage(c forge.DiffCoverage) bool {
+func classificationCoverage(c forge.DiffCoverage, allowHunkCount bool) bool {
 	if c.Completeness != "" && c.Completeness != forge.DiffComplete && c.Completeness != forge.DiffIncomplete {
 		return false
 	}
 	for _, r := range c.Reasons {
-		if !classificationReason(r) {
+		if !classificationReason(r) || r == forge.DiffHunkCountLimit && !allowHunkCount {
 			return false
 		}
 	}
@@ -75,12 +75,13 @@ func validateClassificationValues(e classification.Evidence) error {
 		return invalid()
 	}
 	semantics := version.diffSemantics
+	allowHunkCount := semantics == forge.DiffSemantics
 	if semantics == forge.DiffSemantics {
 		if err := validateRetainedHunks(c); err != nil {
 			return err
 		}
 	}
-	if g.Semantics != semantics || !classificationCoverage(e.Inventory) || !classificationCoverage(e.Hunks) || !classificationCoverage(g.Coverage) {
+	if g.Semantics != semantics || !classificationCoverage(e.Inventory, allowHunkCount) || !classificationCoverage(e.Hunks, allowHunkCount) || !classificationCoverage(g.Coverage, allowHunkCount) {
 		return invalid()
 	}
 	if !classificationObject(c.Inputs.ConfigBlob) || !classificationObject(c.Inputs.OwnersBlob) {
@@ -99,7 +100,7 @@ func validateClassificationValues(e classification.Evidence) error {
 	}
 	for kind, files := range [][]forge.GoverningFile{g.Config, g.Codeowners, g.Attributes} {
 		for _, f := range files {
-			if !classificationPath(f.Path) || !classificationObject(f.ObjectID) || !classificationCoverage(f.Coverage) {
+			if !classificationPath(f.Path) || !classificationObject(f.ObjectID) || !classificationCoverage(f.Coverage, allowHunkCount) {
 				return invalid()
 			}
 			switch kind {
@@ -173,8 +174,12 @@ func validateClassificationValues(e classification.Evidence) error {
 				if h.Count <= 0 {
 					return invalid()
 				}
-			case forge.DiffHunkLineLimit, forge.DiffHunkByteLimit, forge.DiffHunkCountLimit:
+			case forge.DiffHunkLineLimit, forge.DiffHunkByteLimit:
 				if h.Count != 0 || h.OldLines == 0 && h.NewLines == 0 || h.OldLines > 0 && h.OldStart == 0 || h.NewLines > 0 && h.NewStart == 0 {
+					return invalid()
+				}
+			case forge.DiffHunkCountLimit:
+				if !allowHunkCount || h.Count != 0 || h.OldLines == 0 && h.NewLines == 0 || h.OldLines > 0 && h.OldStart == 0 || h.NewLines > 0 && h.NewStart == 0 {
 					return invalid()
 				}
 			case forge.DiffSpecialMode, forge.DiffNonText, forge.DiffReadFailure, forge.DiffInvalidUTF8, forge.DiffFileLimit, forge.DiffHunkWorkLimit:

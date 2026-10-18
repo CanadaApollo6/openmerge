@@ -107,10 +107,13 @@
     "Body": "body",
     "Digest": "1bafefd5657addb6043d5aa0106c275624590dd564909ac2127fe1a372c85e3d"
   },
+  "ApprovalsRequired": true,
   "Obligations": [
     {
       "Origin": "rules[0] code owner: docs/a.md (new)",
       "Path": "docs/a.md",
+      "Cause": "rule_code_owners",
+      "RuleIndex": 0,
       "Side": "new",
       "Requirement": {
         "Selector": "code_owners",
@@ -124,15 +127,10 @@
       ],
       "EligibleIDs": [],
       "ApprovedIDs": [],
-      "Unresolved": false,
+      "Unresolved": true,
       "Met": false,
-      "Code": "approval_required",
-      "Explanation": "waiting for 1 eligible approvals; have 0"
+      "Code": "unknown_eligibility",
+      "Explanation": "reviewer eligibility unresolved"
     }
-  ],
-  "TestLinks": null,
-  "QueuePosition": 0,
-  "ApprovalProgress": "",
-  "Timestamp": "",
-  "RenderedText": ""
+  ]
 }

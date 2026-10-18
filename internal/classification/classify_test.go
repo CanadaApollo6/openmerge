@@ -134,6 +134,15 @@ func TestTruncatedAllDocs(t *testing.T) {
 		}
 	})
 }
+
+func TestInvalidUTF8PathIsRejected(t *testing.T) {
+	i, d, g := basis(t, "docs/a.md")
+	d.Files[0].OldPath = "docs/\xff.md"
+	d.Files[0].NewPath = d.Files[0].OldPath
+	if _, err := Classify(i, d, g, Settings{Docs: []string{"docs/**"}}, nil); err == nil {
+		t.Fatal("invalid path was accepted")
+	}
+}
 func TestIndependentHunksAndUnreadableAttributes(t *testing.T) {
 	i, d, g := basis(t, "gen/a.go")
 	g.Coverage = forge.DiffCoverage{Completeness: forge.DiffIncomplete, Reasons: []forge.DiffFailureReason{forge.DiffReadFailure}}

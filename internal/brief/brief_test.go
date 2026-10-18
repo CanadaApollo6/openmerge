@@ -2,9 +2,12 @@ package brief
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -13,7 +16,7 @@ import (
 
 func sample() Fact {
 	c := cp.Classification{Inputs: cp.ClassificationInputs{ChangeID: "change", Revision: 1, Generation: 1, Base: "base", Head: "head", MergeBase: "merge", PolicyDigest: "policy", ClassifierVersion: "classifier"}, InventoryComplete: true, PathsSafe: true, Paths: []string{"a"}, Files: []cp.FileEvidence{{NewPath: "a", NewBlob: "blob", NewMode: 0100644, Facts: map[string]cp.Truth{"docs": cp.True}, Hunks: cp.HunkEvidence{Complete: true, Hunks: []cp.Hunk{{NewStart: 1, NewLines: 1, Text: "+hello\n"}}}}}, Facts: map[string]cp.Truth{"docs": cp.True}, Reasons: []cp.LabelReasons{{Label: "docs", Reasons: []string{"matched"}}}, HunksComplete: true, CodeOwnersKnown: true, PolicyOwnersKnown: true, CodeOwners: []cp.CodeOwner{{Path: "a", Side: cp.NewSide, Status: cp.OwnersResolved, LastMatchingEntry: "* @owner", Eligible: cp.IdentitySet{IDs: []string{"user"}, Resolved: true, Fresh: true}}}}
-	return Fact{Classification: &c, Intent: &Intent{true, "Title", "Body", cp.IntentDigest("Title", "Body")}, Obligations: []Obligation{{Origin: "default", Requirement: cp.Requirement{Selector: cp.AnyWriter, Count: 1}}}}
+	return Fact{Classification: &c, Intent: &Intent{true, "Title", "Body", cp.IntentDigest("Title", "Body")}, ApprovalsRequired: true, Obligations: []Obligation{{Origin: "default", Cause: cp.CauseDefault, Requirement: cp.Requirement{Selector: cp.AnyWriter, Count: 1}}}}
 }
 func clone(f Fact) Fact {
 	raw, _ := json.Marshal(f)
@@ -22,7 +25,7 @@ func clone(f Fact) Fact {
 	return out
 }
 func TestCanonicalVectors(t *testing.T) {
-	cases := map[string]Fact{"complete": sample(), "incomplete": sample(), "empty-intent": sample()}
+	cases := map[string]Fact{"complete": sample(), "incomplete": sample(), "empty-intent": sample(), "complex": complexVector()}
 	f := cases["incomplete"]
 	f.Classification.InventoryComplete = false
 	f.Classification.HunksComplete = false
@@ -62,11 +65,132 @@ func TestCanonicalVectors(t *testing.T) {
 		})
 	}
 }
+
+func TestV1VectorsPreserved(t *testing.T) {
+	for name, want := range map[string]string{
+		"complete":     "3afa3ae419e1691b99efedebaccf78dfcde22a4419fe122c45006f8cb627a31b",
+		"incomplete":   "41a0a7a649f620188dc1f39bc03050695d61acce1e12b95c2ee77e77b5d6b34b",
+		"empty-intent": "237afe4a534dff8ca82a0e76dd93b47f7f26d85da8924c883a8a2198616d8663",
+	} {
+		raw, err := os.ReadFile(filepath.Join("testdata", "v1-"+name+".sha256"))
+		if err != nil || strings.TrimSpace(string(raw)) != want {
+			t.Fatalf("v1 vector %s changed: %v", name, err)
+		}
+		canonical, err := os.ReadFile(filepath.Join("testdata", "v1-"+name+".json"))
+		sum := sha256.Sum256(canonical)
+		if err != nil || hex.EncodeToString(sum[:]) != want {
+			t.Fatalf("v1 canonical bytes %s changed: %v", name, err)
+		}
+	}
+}
+
+func TestCanonicalRequirementsAndFactExclusions(t *testing.T) {
+	f := sample()
+	f.Obligations = nil
+	if _, err := Canonical(f); err == nil {
+		t.Fatal("opted-in approvals accepted no requirements")
+	}
+	f.ApprovalsRequired = false
+	if _, err := Canonical(f); err != nil {
+		t.Fatalf("legacy approvals rejected empty requirements: %v", err)
+	}
+	for _, name := range []string{"TestLinks", "QueuePosition", "ApprovalProgress", "Timestamp", "RenderedText"} {
+		if _, exists := reflect.TypeFor[Fact]().FieldByName(name); exists {
+			t.Fatalf("placeholder exclusion %s remained on Fact", name)
+		}
+	}
+}
+
+func TestBuildValidatesAndUsesCanonicalReceiptBinding(t *testing.T) {
+	policy := cp.Policy{Approvals: &cp.Approvals{Default: cp.Requirement{Selector: cp.AnyWriter, Count: 1, Receipt: true}}}
+	in := cp.Input{Classification: *sample().Classification, Current: receiptBasis(sample()), AuthorKind: cp.HumanAccount, Actors: map[string]cp.Actor{}, Stances: map[string]cp.Stance{}}
+	in.Classification.Facts["policy"] = cp.False
+	in.Classification.Files[0].Facts["policy"] = cp.False
+	first, err := Build(policy, in, "Title", "Body")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := Identity(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in.Actors["reviewer"] = cp.Actor{Identity: cp.Identity{ID: "reviewer", Login: "reviewer", Kind: cp.HumanAccount}, Grant: cp.WriteGrant{SubjectID: "reviewer", ReturnedID: "reviewer", Fresh: true, Write: cp.True}}
+	in.Stances["reviewer"] = cp.Stance{UserID: "reviewer", Kind: cp.Approve, Revision: identity.Revision, Head: identity.Head, Source: cp.StanceSource{Channel: cp.CommentCommand, ID: "comment-1"}, Receipt: &identity}
+	got, err := Build(policy, in, "Title", "Body")
+	if err != nil || !metDefault(got) {
+		t.Fatalf("receipt progress did not use canonical binding: %+v, %v", got, err)
+	}
+	native := in
+	nativeStance := native.Stances["reviewer"]
+	nativeStance.Source.Channel, nativeStance.Receipt = cp.NativeReview, nil
+	native.Stances["reviewer"] = nativeStance
+	if got, err := Build(policy, native, "Title", "Body"); err != nil || metDefault(got) {
+		t.Fatalf("native approval satisfied receipt requirement: %+v, %v", got, err)
+	}
+	wrong := in
+	wrongIdentity := identity
+	wrongIdentity.BriefDigest = "wrong"
+	wrongStance := wrong.Stances["reviewer"]
+	wrongStance.Receipt = &wrongIdentity
+	wrong.Stances["reviewer"] = wrongStance
+	if got, err := Build(policy, wrong, "Title", "Body"); err != nil || metDefault(got) {
+		t.Fatalf("wrong receipt satisfied requirement: %+v, %v", got, err)
+	}
+	if _, err := Build(cp.Policy{Approvals: &cp.Approvals{Default: cp.Requirement{Selector: cp.None}}}, in, "Title", "Body"); err == nil {
+		t.Fatal("Build accepted invalid default")
+	}
+	if _, err := Build(policy, cp.Input{}, "Title", "Body"); err == nil {
+		t.Fatal("Build accepted unrecorded classification")
+	}
+	mismatched := in
+	mismatched.Current.Head = "stale"
+	if _, err := Build(policy, mismatched, "Title", "Body"); err == nil {
+		t.Fatal("Build accepted stale current basis")
+	}
+	empty := in
+	empty.Classification.Facts = map[string]cp.Truth{"docs": cp.True, "policy": cp.False}
+	empty.Classification.Files[0].Facts["policy"] = cp.False
+	emptyPolicy := cp.Policy{Approvals: &cp.Approvals{Default: cp.Requirement{Selector: cp.AnyWriter, Count: 1}, Rules: []cp.Rule{{When: cp.Match{Labels: []string{"docs"}}, Require: cp.Requirement{Selector: cp.None}}}}}
+	if _, err := Build(emptyPolicy, empty, "Title", "Body"); err == nil {
+		t.Fatal("Build accepted opted-in policy with no expanded requirements")
+	}
+}
+
+func metDefault(f Fact) bool {
+	for _, obligation := range f.Obligations {
+		if obligation.Cause == cp.CauseDefault {
+			return obligation.Met
+		}
+	}
+	return false
+}
+
+func complexVector() Fact {
+	f := sample()
+	f.Classification.Paths = []string{"src/new<&>.go", "src/old\u2028name.go", "docs/a.md", "src/new<&>.go"}
+	f.Classification.Files = []cp.FileEvidence{
+		{OldPath: "src/old\u2028name.go", NewPath: "src/new<&>.go", OldBlob: "old", NewBlob: "new", OldMode: 0100644, NewMode: 0100755, Renamed: true, RenamePaired: true, Facts: map[string]cp.Truth{"docs": cp.False, "policy": cp.True}, Hunks: cp.HunkEvidence{Complete: true, Hunks: []cp.Hunk{{OldStart: 3, OldLines: 1, NewStart: 3, NewLines: 1, Text: "-old\n+new <&>\u2028\x01\n"}}}},
+		{NewPath: "docs/a.md", NewBlob: "docs", NewMode: 0100644, Facts: map[string]cp.Truth{"docs": cp.True, "policy": cp.False}, Hunks: cp.HunkEvidence{Complete: true}},
+	}
+	f.Classification.Facts = map[string]cp.Truth{"docs": cp.False, "policy": cp.True}
+	f.Classification.CodeOwners = []cp.CodeOwner{
+		{Path: "src/new<&>.go", Side: cp.NewSide, Status: cp.OwnersResolved, LastMatchingEntry: "src/** @zoe <ops>", Eligible: cp.IdentitySet{IDs: []string{"zoe", "amy", "zoe"}, Resolved: true, Fresh: true}},
+		{Path: "src/old\u2028name.go", Side: cp.OldSide, Status: cp.OwnersResolved, LastMatchingEntry: "src/** @amy", Eligible: cp.IdentitySet{IDs: []string{"amy"}, Resolved: true, Fresh: true}},
+	}
+	f.Classification.PolicyOwners = nil
+	i := 3
+	f.Obligations = []Obligation{
+		{Origin: "rules[3] code owner: src/new<&>.go (new)", Cause: cp.CauseRuleCodeOwners, RuleIndex: &i, Path: "src/new<&>.go", Side: cp.NewSide, Requirement: cp.Requirement{Selector: cp.CodeOwners, Count: 1}},
+		{Origin: "rendered duplicate", Cause: cp.CauseRuleCodeOwners, RuleIndex: &i, Path: "src/new<&>.go", Side: cp.NewSide, Requirement: cp.Requirement{Selector: cp.CodeOwners, Count: 1}},
+		{Origin: "default", Cause: cp.CauseDefault, Requirement: cp.Requirement{Selector: cp.AnyWriter, Count: 1}},
+	}
+	return f
+}
 func TestDigestIncludedFields(t *testing.T) {
 	mutations := map[string]func(*Fact){
 		"old-path": func(f *Fact) { f.Classification.Files[0].OldPath = "old" }, "old-blob": func(f *Fact) { f.Classification.Files[0].OldBlob = "old" }, "old-mode": func(f *Fact) { f.Classification.Files[0].OldMode = 0100644 },
 		"owner-path": func(f *Fact) { f.Classification.CodeOwners[0].Path = "other" }, "owner-side": func(f *Fact) { f.Classification.CodeOwners[0].Side = cp.OldSide }, "owner-entry": func(f *Fact) { f.Classification.CodeOwners[0].LastMatchingEntry = "* @other" }, "owner-resolution": func(f *Fact) { f.Classification.CodeOwners[0].Eligible.Resolved = false },
-		"requirement-selector": func(f *Fact) { f.Obligations[0].Requirement.Selector = cp.Human }, "requirement-group": func(f *Fact) { f.Obligations[0].Requirement.Group = "group" }, "requirement-human": func(f *Fact) { f.Obligations[0].Requirement.Human = true }, "requirement-receipt": func(f *Fact) { f.Obligations[0].Requirement.Receipt = true }, "requirement-origin": func(f *Fact) { f.Obligations[0].Origin = "rule" }, "requirement-side": func(f *Fact) { f.Obligations[0].Side = cp.OldSide },
+		"requirement-selector": func(f *Fact) { f.Obligations[0].Requirement.Selector = cp.Human }, "requirement-group": func(f *Fact) { f.Obligations[0].Requirement.Group = "group" }, "requirement-human": func(f *Fact) { f.Obligations[0].Requirement.Human = true }, "requirement-receipt": func(f *Fact) { f.Obligations[0].Requirement.Receipt = true }, "requirement-cause": func(f *Fact) { f.Obligations[0].Cause = cp.CauseRule }, "requirement-rule-index": func(f *Fact) { i := 3; f.Obligations[0].RuleIndex = &i }, "requirement-side": func(f *Fact) { f.Obligations[0].Side = cp.OldSide },
 		"change": func(f *Fact) { f.Classification.Inputs.ChangeID += "2" }, "revision": func(f *Fact) { f.Classification.Inputs.Revision++ }, "generation": func(f *Fact) { f.Classification.Inputs.Generation++ }, "base": func(f *Fact) { f.Classification.Inputs.Base += "2" }, "head": func(f *Fact) { f.Classification.Inputs.Head += "2" }, "merge-base": func(f *Fact) { f.Classification.Inputs.MergeBase += "2" }, "policy": func(f *Fact) { f.Classification.Inputs.PolicyDigest += "2" }, "classifier": func(f *Fact) { f.Classification.Inputs.ClassifierVersion += "2" }, "owner-content": func(f *Fact) { f.Classification.Inputs.OwnersBlob = "new" }, "attribute-content": func(f *Fact) { f.Classification.Inputs.AttributeBlobs = map[string]string{".gitattributes": "new"} },
 		"inventory": func(f *Fact) { f.Classification.InventoryComplete = false }, "paths-safe": func(f *Fact) { f.Classification.PathsSafe = false }, "paths": func(f *Fact) { f.Classification.Paths = append(f.Classification.Paths, "b") }, "hunks-complete": func(f *Fact) { f.Classification.HunksComplete = false }, "file": func(f *Fact) { f.Classification.Files[0].NewPath = "b" }, "blob": func(f *Fact) { f.Classification.Files[0].NewBlob = "new" }, "mode": func(f *Fact) { f.Classification.Files[0].NewMode = 0100755 }, "binary": func(f *Fact) { f.Classification.Files[0].Binary = cp.True }, "submodule": func(f *Fact) { f.Classification.Files[0].Submodule = cp.True }, "rename": func(f *Fact) { f.Classification.Files[0].Renamed = true }, "paired": func(f *Fact) { f.Classification.Files[0].RenamePaired = true }, "hunk": func(f *Fact) { f.Classification.Files[0].Hunks.Hunks[0].Text += "+new\n" }, "range": func(f *Fact) { f.Classification.Files[0].Hunks.Hunks[0].NewStart++ }, "omission": func(f *Fact) {
 			f.Classification.Files[0].Hunks.Omitted = []cp.HunkRange{{Reason: "hunk_count_limit", Count: 2}}
@@ -98,8 +222,7 @@ func TestDigestExclusionsAndNormalization(t *testing.T) {
 	mutations := map[string]func(*Fact){"provenance": func(f *Fact) {
 		f.Classification.Inputs.ConfigBlob = "new"
 		f.Classification.Inputs.GoverningCommit = "new"
-	}, "tests": func(f *Fact) { f.TestLinks = []string{"new"} }, "queue": func(f *Fact) { f.QueuePosition = 123 }, "progress": func(f *Fact) {
-		f.ApprovalProgress = "approved"
+	}, "origin-prose": func(f *Fact) { f.Obligations[0].Origin = "rendered prose only" }, "progress": func(f *Fact) {
 		f.Obligations[0].Met = true
 		f.Obligations[0].ApprovedIDs = []string{"user"}
 		f.Obligations[0].EligibleIDs = []string{"user"}
@@ -107,7 +230,7 @@ func TestDigestExclusionsAndNormalization(t *testing.T) {
 		f.Obligations[0].Unresolved = true
 		f.Obligations[0].Code = "met"
 		f.Obligations[0].Explanation = "anything"
-	}, "timestamp": func(f *Fact) { f.Timestamp = "today" }, "rendering": func(f *Fact) { f.RenderedText = "new" }, "eligible-reason": func(f *Fact) {
+	}, "eligible-reason": func(f *Fact) {
 		f.Classification.CodeOwners[0].Eligible.Reason = "arbitrary diagnostic"
 		f.Classification.CodeOwners[0].Eligible.Fresh = false
 	}, "intent-normalization": func(f *Fact) { f.Intent.Title = " \r\nTitle\r\n "; f.Intent.Body = " Body\r\n" }, "nil-empty": func(f *Fact) {

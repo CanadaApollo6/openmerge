@@ -17,12 +17,11 @@ import (
 
 func receiptFact(t *testing.T, s State, b ApprovalBasis, p cp.Policy) brief.Fact {
 	t.Helper()
-	c, ok := s.Classification(b.ChangeID, b.Revision)
-	if !ok {
-		t.Fatal("missing classification")
+	f, err := s.RecordedBrief(p, b)
+	if err != nil {
+		t.Fatal(err)
 	}
-	facts, _ := s.ApprovalFacts(b.ChangeID)
-	return brief.Build(p, cp.Input{Classification: c.Evidence.Classification, AuthorKind: cp.HumanAccount, Current: cp.ReceiptIdentity{ChangeID: string(b.ChangeID), Revision: uint64(b.Revision), Generation: c.Evidence.Classification.Inputs.Generation, Base: c.Evidence.Classification.Inputs.Base, Head: b.Head, MergeBase: c.Evidence.Classification.Inputs.MergeBase, PolicyDigest: c.Evidence.Classification.Inputs.PolicyDigest}, ExcludedIDs: []string{person(1).ID}}, facts.Intent.Title, facts.Intent.Body)
+	return f
 }
 func realReceipt(t *testing.T, s State, b ApprovalBasis, p cp.Policy, id string, at time.Time) (ApprovalReceiptRecorded, cp.ReceiptIdentity) {
 	t.Helper()
@@ -31,7 +30,7 @@ func realReceipt(t *testing.T, s State, b ApprovalBasis, p cp.Policy, id string,
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, err := PrepareReceipt(b, person(2), id, at, current, f)
+	e, err := s.PrepareReceipt(p, b, person(2), id, at, current)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +74,7 @@ func TestReceiptWireFactGoldenAndRejectedBindings(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			supplied := current
 			mutate(&supplied)
-			rejected, err := PrepareReceipt(b, person(2), "21", b.At, supplied, f)
+			rejected, err := s.PrepareReceipt(p, b, person(2), "21", b.At, supplied)
 			if err != nil || rejected.Accepted || rejected.Supplied != supplied {
 				t.Fatal("bad rejection", err)
 			}
@@ -106,7 +105,7 @@ func TestReceiptWireFactGoldenAndRejectedBindings(t *testing.T) {
 			}
 		})
 	}
-	rejectedRaw, _ := json.MarshalIndent(vectors, "", "  ")
+	rejectedRaw, _ := json.Marshal(vectors)
 	if os.Getenv("UPDATE_7A") == "1" {
 		if err := os.WriteFile("testdata/receipt-rejections.json", rejectedRaw, 0644); err != nil {
 			t.Fatal(err)
@@ -222,7 +221,7 @@ func TestBriefOwnerReasonCodes(t *testing.T) {
 		name string
 		pool classification.OwnerResolver
 		code string
-	}{{"excluded", ownerPool(1), "excluded_owners"}, {"unknown", nil, "unknown_owners"}} {
+	}{{"excluded", ownerPool(1), "excluded_owner"}, {"unknown", nil, "unknown_owners"}, {"writer eligibility", ownerPool(2), "unknown_eligibility"}} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, b, _, p, _ := decisionSetup(t, tc.pool)
 			f := receiptFact(t, s, b, p)
@@ -241,7 +240,7 @@ func TestBriefOwnerReasonCodes(t *testing.T) {
 		s, b, _, p, _ := decisionSetup(t, ownerPool(1, 2))
 		f := receiptFact(t, s, b, p)
 		for _, r := range f.Obligations {
-			if r.Code == "excluded_owners" {
+			if r.Code == "excluded_owner" {
 				t.Fatal("mixed owner pool reported entirely excluded")
 			}
 		}
@@ -258,9 +257,13 @@ func TestBriefOwnerReasonCodes(t *testing.T) {
 	e.Evidence.Classification.PolicyOwnersKnown = false
 	s = Apply(s, e)
 	f := receiptFact(t, s, b, p)
+	foundInventory := false
 	for _, r := range f.Obligations {
-		if r.Code != "unknown_inventory" {
-			t.Fatalf("incomplete brief hid reason: %+v", r)
+		if r.Code == "unknown_inventory" {
+			foundInventory = true
 		}
+	}
+	if !foundInventory {
+		t.Fatal("incomplete brief hid inventory obligation")
 	}
 }

@@ -22,7 +22,9 @@ Future serve wiring owns activation and request scheduling.
 `git-evidence-v8-retained-hunk-budget` retains the inventory-v4 protections and fixes these semantics:
 
 - Raw NUL-delimited git tree comparison, without external diffs, textconv, or
-  heuristic renames. Paths retain their original bytes, including tabs/newlines.
+  heuristic renames. Valid UTF-8 paths retain their original bytes, including
+  tabs/newlines; an invalid UTF-8 path makes inventory incomplete with
+  `invalid_utf8`.
 - Pair a rename only when exactly one deletion and one addition share an object
   ID. Unmatched add/delete candidates carry `unpaired` evidence and make
   inventory incomplete with `unpaired_rename`. Consumers can rely on completeness

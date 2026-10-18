@@ -171,7 +171,7 @@ func EncodeSnapshot(s State) ([]byte, error) {
 		}
 		v.Effects = append(v.Effects, data)
 	}
-	if err := validateReceiptSnapshot(v.Receipts, v.ApprovalFacts); err != nil {
+	if err := validateReceiptSnapshot(v.Receipts, v.ApprovalFacts, v.ChangeRevisions); err != nil {
 		return nil, err
 	}
 	if err := validateApprovalSnapshot(v.ApprovalFacts, v.ChangeRevisions); err != nil {
@@ -191,7 +191,7 @@ func EncodeSnapshot(s State) ([]byte, error) {
 		return nil, err
 	}
 	if len(raw) > maxSnapshotBytes {
-		return nil, fmt.Errorf("snapshot exceeds byte bound; reject approval admission for affected changes")
+		return nil, SnapshotBudgetError{SnapshotBytes: len(raw)}
 	}
 	return raw, nil
 }
@@ -231,7 +231,7 @@ func DecodeSnapshot(data []byte) (State, error) {
 	if len(v.Chain) > 32 || len(v.Invalidations) > 32 || len(v.TestedOrder) > testedHistory || len(v.Checks) > maxRetainedChecks || len(v.Entries) > maxSnapshotEntries || len(v.Effects) > maxSnapshotEffects {
 		return State{}, fmt.Errorf("invalid snapshot bounds")
 	}
-	if err := validateReceiptSnapshot(v.Receipts, v.ApprovalFacts); err != nil {
+	if err := validateReceiptSnapshot(v.Receipts, v.ApprovalFacts, v.ChangeRevisions); err != nil {
 		return State{}, err
 	}
 	if err := validateApprovalSnapshot(v.ApprovalFacts, v.ChangeRevisions); err != nil {

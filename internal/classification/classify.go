@@ -69,6 +69,13 @@ func Classify(inputs cp.ClassificationInputs, diff forge.RevisionDiff, governing
 	if diff.Semantics != forge.DiffSemantics || governing.Semantics != forge.DiffSemantics {
 		return Evidence{}, fmt.Errorf("unsupported evidence semantics")
 	}
+	for _, f := range diff.Files {
+		for _, p := range []string{f.OldPath, f.NewPath} {
+			if p != "" && !forge.ValidDiffPath(p) {
+				return Evidence{}, fmt.Errorf("invalid UTF-8 diff path")
+			}
+		}
+	}
 	// A call-local cache avoids reparsing ancestor files for each path/side.
 	switch d := derived.(type) {
 	case TreeDeriver:

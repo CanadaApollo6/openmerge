@@ -283,3 +283,45 @@ func TestKnownEmptyVersusUnresolvedUnderNegation(t *testing.T) {
 		t.Fatal("none invented a review pool")
 	}
 }
+
+func TestRequirementTypedCauses(t *testing.T) {
+	in, policy := currentInput(), groupPolicy()
+	got := Evaluate(policy, in)
+	if len(got.Requirements) != 2 {
+		t.Fatalf("requirements: %+v", got)
+	}
+	for i, result := range got.Requirements {
+		if result.Cause != CauseRule || result.RuleIndex == nil || *result.RuleIndex != i {
+			t.Fatalf("rule %d lost typed provenance: %+v", i, result)
+		}
+	}
+	in, policy = currentInput(), writerPolicy()
+	in.Classification.InventoryComplete = false
+	got = Evaluate(policy, in)
+	if len(got.Requirements) != 2 || got.Requirements[0].Cause != CauseDefault || got.Requirements[0].InventoryAffected || got.Requirements[1].Cause != CausePolicyOwnerEvidence || got.Requirements[1].UnresolvedCause != UnresolvedInventory {
+		t.Fatalf("inventory cause was not isolated to its requirement: %+v", got)
+	}
+	in, policy = currentInput(), writerPolicy()
+	in.Classification.InventoryComplete, in.Classification.PathsSafe = false, false
+	policy.Approvals.Rules = []Rule{{When: Match{Paths: []string{"docs/**"}}, Require: Requirement{Selector: Human, Count: 1}}}
+	got = Evaluate(policy, in)
+	matched := false
+	for _, result := range got.Requirements {
+		if result.Cause == CauseRule {
+			matched = result.InventoryAffected && result.UnresolvedCause == UnresolvedInventory
+		}
+	}
+	if !matched {
+		t.Fatalf("incomplete unsafe path rule lost inventory cause: %+v", got)
+	}
+	in, policy = currentInput(), writerPolicy()
+	in.Classification.Files = []FileEvidence{{NewPath: "docs/readme.md", Facts: map[string]Truth{"policy": False}}}
+	in.Classification.CodeOwnersKnown = true
+	in.Classification.CodeOwners = []CodeOwner{{Path: "docs/readme.md", Side: NewSide, Status: OwnersResolved, LastMatchingEntry: "* @owner", Eligible: IdentitySet{IDs: []string{"owner"}, Resolved: true, Fresh: true}}}
+	in.Actors["owner"] = Actor{Identity: Identity{ID: "owner", Login: "owner", Kind: HumanAccount}, Grant: WriteGrant{SubjectID: "owner", ReturnedID: "owner", Fresh: true, Write: Unknown}}
+	policy.Approvals.Rules = []Rule{{When: Match{Labels: []string{"docs"}}, Require: Requirement{Selector: CodeOwners}}}
+	got = Evaluate(policy, in)
+	if len(got.Requirements) != 1 || got.Requirements[0].Cause != CauseRuleCodeOwners || got.Requirements[0].UnresolvedCause != UnresolvedEligibility {
+		t.Fatalf("unknown writer eligibility was inferred as owner uncertainty: %+v", got)
+	}
+}

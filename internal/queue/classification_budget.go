@@ -60,5 +60,5 @@ func (s State) CheckClassificationAdmission(e ChangeClassified) error {
 	if !ok || !reflect.DeepEqual(nonNullClassification(accepted), nonNullClassification(e)) {
 		return fmt.Errorf("classification sequence rejected")
 	}
-	return checkClassificationSnapshotBudget(next.classifications, next.approvalFacts, next.receipts)
+	return checkSharedAdmissionBudget(next, ChangeID(i.ChangeID))
 }

@@ -92,6 +92,11 @@ func (f *Forge) RevisionDiff(ctx context.Context, repo forge.RepoRef, req forge.
 		}
 	}
 	slices.Sort(paths)
+	for _, path := range paths {
+		if !forge.ValidDiffPath(path) {
+			return fail(forge.DiffInvalidUTF8, nil)
+		}
+	}
 	blobs := map[string]string{}
 	rawBytes := 0
 	for _, path := range paths {

@@ -319,9 +319,9 @@ func (s State) observeApproval(e Event) (State, bool) {
 			// Preserve a new barrier in preference to positive noise. Saturated
 			// remains a fail-closed barrier for the entire epoch.
 			evict := ""
-			if e.Stance.Kind != cp.Approve {
+			if e.Stance.Kind != cp.Approve || e.Stance.Receipt != nil {
 				for k, v := range f.Sources {
-					if v.Event.Stance.Kind == cp.Approve && (evict == "" || k < evict) {
+					if v.Event.Stance.Kind == cp.Approve && v.Event.Stance.Receipt == nil && (evict == "" || k < evict) {
 						evict = k
 					}
 				}
@@ -672,10 +672,7 @@ type ApprovalDecision struct {
 // PrepareApprovalDecision never acquires permission itself. Stage A 9 must
 // journal Fresh atomically with Snapshot; journal failure rejects the decision.
 func (s State) PrepareApprovalDecision(policy cp.Policy, current cp.ReceiptIdentity, fresh ApprovalEligibilityObserved) (ApprovalDecision, error) {
-	if err := fresh.Validate(); err != nil {
-		return ApprovalDecision{}, err
-	}
-	if err := s.CheckApprovalBoundary(fresh.Basis); err != nil {
+	if err := s.CheckApprovalAdmission(fresh); err != nil {
 		return ApprovalDecision{}, err
 	}
 	fresh = detached(fresh)

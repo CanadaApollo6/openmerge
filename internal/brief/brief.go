@@ -12,7 +12,7 @@ import (
 )
 
 // Version pins the canonical serialization domain and schema.
-const Version = "openmerge/brief/v1"
+const Version = "openmerge/brief/v2"
 
 // Intent is explicitly the submitter's claim. Recorded=false means not recorded,
 // distinct from a recorded empty title/body.
@@ -25,6 +25,8 @@ type Intent struct {
 // current progress. Paths/sides are explicit; consumers never parse Origin.
 type Obligation struct {
 	Origin, Path                      string
+	Cause                             cp.ObligationCause
+	RuleIndex                         *int
 	Side                              cp.OwnerSide
 	Requirement                       cp.Requirement
 	PoolIDs, EligibleIDs, ApprovedIDs []string
@@ -36,36 +38,82 @@ type Obligation struct {
 // original bounded file/hunk records verbatim; a brief never truncates them.
 // Nil Classification/Intent means historical evidence was not recorded.
 type Fact struct {
-	Classification          *cp.Classification
-	Intent                  *Intent
-	Obligations             []Obligation
-	TestLinks               []string
-	QueuePosition           int
-	ApprovalProgress        string
-	Timestamp, RenderedText string
+	Classification    *cp.Classification
+	Intent            *Intent
+	ApprovalsRequired bool
+	Obligations       []Obligation
 }
 
-// Build includes the same expanded obligations as the policy evaluator.
-func Build(policy cp.Policy, in cp.Input, title, body string) Fact {
+// Build expands recorded policy evidence and returns a brief with current
+// progress. It derives its local receipt binding only from the recorded
+// classification and claimed intent; callers own State-level identity assembly
+// and must not pass fresh overlay identity observations through this function.
+func Build(policy cp.Policy, in cp.Input, title, body string) (Fact, error) {
+	if err := validateBuildInputs(policy, in); err != nil {
+		return Fact{}, err
+	}
 	c := in.Classification
-	f := Fact{Classification: &c, Intent: &Intent{true, cp.NormalizeIntent(title), cp.NormalizeIntent(body), cp.IntentDigest(title, body)}}
-	for _, r := range cp.Evaluate(policy, in).Requirements {
+	f := Fact{Classification: &c, Intent: &Intent{true, cp.NormalizeIntent(title), cp.NormalizeIntent(body), cp.IntentDigest(title, body)}, ApprovalsRequired: policy.Approvals != nil}
+
+	// Requirement expansion is independent of receipt progress. Seed the
+	// recorded basis first, then bind the canonical digest before evaluating the
+	// current stances so receipt-only approvals use the exact brief identity.
+	in.Current = receiptBasis(f)
+	f.Obligations = obligations(cp.Evaluate(policy, in).Requirements)
+	identity, err := Identity(f)
+	if err != nil {
+		return Fact{}, err
+	}
+	in.Current = identity
+	f.Obligations = obligations(cp.Evaluate(policy, in).Requirements)
+	return f, nil
+}
+
+func validateBuildInputs(policy cp.Policy, in cp.Input) error {
+	if !in.Classification.Inputs.Recorded() {
+		return fmt.Errorf("brief classification evidence not recorded")
+	}
+	if policy.Approvals == nil {
+		return nil
+	}
+	a := policy.Approvals
+	if err := a.Default.Validate(); err != nil || a.Default.Selector == cp.None || a.Default.Selector == cp.CodeOwners {
+		return fmt.Errorf("invalid approvals.default")
+	}
+	for i, rule := range a.Rules {
+		if err := rule.Require.Validate(); err != nil {
+			return fmt.Errorf("invalid rule requirement at %d", i)
+		}
+		if _, err := cp.MatchRule(rule.When, in.Classification, in.AuthorKind); err != nil {
+			return fmt.Errorf("invalid rule match at %d: %w", i, err)
+		}
+	}
+	c, current := in.Classification.Inputs, in.Current
+	if current.ChangeID != c.ChangeID || current.Revision != c.Revision || current.Generation != c.Generation ||
+		current.Base != c.Base || current.Head != c.Head || current.MergeBase != c.MergeBase || current.PolicyDigest != c.PolicyDigest {
+		return fmt.Errorf("brief current basis is unresolved or stale")
+	}
+	return nil
+}
+
+func receiptBasis(f Fact) cp.ReceiptIdentity {
+	i := f.Classification.Inputs
+	return cp.ReceiptIdentity{ChangeID: i.ChangeID, Revision: i.Revision, Generation: i.Generation, Base: i.Base, Head: i.Head, MergeBase: i.MergeBase, IntentDigest: f.Intent.Digest, PolicyDigest: i.PolicyDigest}
+}
+
+func obligations(results []cp.RequirementResult) []Obligation {
+	out := make([]Obligation, 0, len(results))
+	for _, r := range results {
 		code := "approval_required"
 		switch {
-		case !c.InventoryComplete:
-			code = "unknown_inventory"
-		case r.Unresolved && (r.Path != "" || r.Requirement.Selector == cp.CodeOwners || r.Origin == "policy owners"):
-			code = "unknown_owners"
-		case r.Unresolved:
-			code = "unknown_eligibility"
-		case r.Path != "" && len(r.EligibleIDs) == 0 && len(r.PoolIDs) > 0 && !slices.ContainsFunc(r.PoolIDs, func(id string) bool { return !slices.Contains(in.ExcludedIDs, id) }):
-			code = "excluded_owners"
 		case r.Met:
 			code = "met"
+		case r.UnresolvedCause != "":
+			code = string(r.UnresolvedCause)
 		}
-		f.Obligations = append(f.Obligations, Obligation{r.Origin, r.Path, r.Side, r.Requirement, r.PoolIDs, r.EligibleIDs, r.ApprovedIDs, r.Unresolved, r.Met, code, r.Reason})
+		out = append(out, Obligation{Origin: r.Origin, Cause: r.Cause, RuleIndex: r.RuleIndex, Path: r.Path, Side: r.Side, Requirement: r.Requirement, PoolIDs: r.PoolIDs, EligibleIDs: r.EligibleIDs, ApprovedIDs: r.ApprovedIDs, Unresolved: r.Unresolved, Met: r.Met, Code: code, Explanation: r.Reason})
 	}
-	return f
+	return out
 }
 
 // sortedSet gives nil and empty the same canonical [] spelling.
@@ -100,15 +148,16 @@ func Canonical(f Fact) ([]byte, error) {
 	if f.Classification == nil || !f.Classification.Inputs.Recorded() || f.Intent == nil || !f.Intent.Recorded || f.Intent.Digest != cp.IntentDigest(f.Intent.Title, f.Intent.Body) {
 		return nil, fmt.Errorf("brief evidence not recorded or intent inconsistent")
 	}
-	// Deep-copy before normalizing: callers retain exact source evidence.
-	raw, err := json.Marshal(f.Classification)
-	if err != nil {
-		return nil, err
+	if f.ApprovalsRequired && len(f.Obligations) == 0 {
+		return nil, fmt.Errorf("brief approvals require expanded requirements")
 	}
-	var c cp.Classification
-	if err = json.Unmarshal(raw, &c); err != nil {
-		return nil, err
-	}
+	// Copy only the slices whose elements are normalized below. Maps remain
+	// read-only, so callers retain their exact source evidence without a
+	// marshal/unmarshal round trip.
+	c := *f.Classification
+	c.Files = slices.Clone(c.Files)
+	c.CodeOwners = slices.Clone(c.CodeOwners)
+	c.PolicyOwners = slices.Clone(c.PolicyOwners)
 	c.Inputs.ConfigBlob = ""
 	c.Inputs.GoverningCommit = ""
 	c.Paths = sortedSet(c.Paths)
@@ -161,25 +210,32 @@ func Canonical(f Fact) ([]byte, error) {
 	})
 	slices.SortFunc(c.PolicyOwners, func(a, b cp.PolicyOwner) int { return compare(a.Path, b.Path) })
 	type requirement struct {
-		Origin, Path string
-		Side         cp.OwnerSide
-		Requirement  cp.Requirement
+		Cause       cp.ObligationCause
+		RuleIndex   *int
+		Path        string
+		Side        cp.OwnerSide
+		Requirement cp.Requirement
 	}
 	obligations := make([]requirement, 0, len(f.Obligations))
 	for _, r := range f.Obligations {
-		obligations = append(obligations, requirement{r.Origin, r.Path, r.Side, r.Requirement})
+		obligations = append(obligations, requirement{r.Cause, r.RuleIndex, r.Path, r.Side, r.Requirement})
 	}
 	slices.SortFunc(obligations, func(a, b requirement) int {
 		x, _ := json.Marshal(a)
 		y, _ := json.Marshal(b)
 		return slices.Compare(x, y)
 	})
+	obligations = slices.CompactFunc(obligations, func(a, b requirement) bool {
+		return a.Cause == b.Cause && a.Path == b.Path && a.Side == b.Side && a.Requirement == b.Requirement &&
+			(a.RuleIndex == nil && b.RuleIndex == nil || a.RuleIndex != nil && b.RuleIndex != nil && *a.RuleIndex == *b.RuleIndex)
+	})
 	return json.Marshal(struct {
-		Version        string
-		Classification cp.Classification
-		IntentDigest   string
-		Requirements   []requirement
-	}{Version, c, f.Intent.Digest, obligations})
+		Version           string
+		Classification    cp.Classification
+		IntentDigest      string
+		ApprovalsRequired bool
+		Requirements      []requirement
+	}{Version, c, f.Intent.Digest, f.ApprovalsRequired, obligations})
 }
 func compare(a, b string) int {
 	if a < b {

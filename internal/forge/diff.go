@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"slices"
 	"time"
+	"unicode/utf8"
 )
 
 // RevisionDiffReader observes immutable git inputs, independently of PR metadata.
@@ -163,6 +164,10 @@ func ValidDiffObjectID(id string) bool {
 	_, err := hex.DecodeString(id)
 	return err == nil
 }
+
+// ValidDiffPath accepts the empty path used for an absent side and rejects
+// path bytes that cannot be represented as UTF-8 evidence.
+func ValidDiffPath(path string) bool { return utf8.ValidString(path) }
 
 // PairExactDiffRenames pairs only unique equal-object add/delete candidates.
 // Remaining add/delete pairs are explicitly uncertain; similarity is not guessed.
