@@ -9,6 +9,9 @@ import (
 
 // Apply folds one event without mutating s or any slices or maps reachable from it.
 func Apply(s State, e Event) State {
+	if classified, ok := e.(ChangeClassified); ok {
+		return s.classify(classified)
+	}
 	// Audit observations do not advance planner revisions or change action keys.
 	if outside, ok := e.(OutsidePushRecorded); ok {
 		if outside.Validate() != nil {

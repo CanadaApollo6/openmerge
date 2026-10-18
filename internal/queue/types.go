@@ -59,6 +59,9 @@ type State struct {
 	pending       []pendingGroup
 	Fence         string
 
+	// Dormant: remains nil on queues without approval classification events.
+	classifications classifications
+
 	nextBatch          uint64
 	nextAdmission      uint64
 	revision           uint64

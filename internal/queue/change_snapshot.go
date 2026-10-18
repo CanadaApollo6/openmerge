@@ -112,7 +112,7 @@ func validateChangeSnapshot(v stateSnapshot) error {
 			}
 		}
 	}
-	if v.Version == SnapshotVersion && len(v.BatchRevisions) != len(v.Chain) {
+	if v.Version >= 3 && len(v.BatchRevisions) != len(v.Chain) {
 		return fmt.Errorf("missing snapshot batch revisions")
 	}
 	return nil

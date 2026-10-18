@@ -168,7 +168,7 @@ func (p *candidateParser) match(n *yaml.Node) Match {
 	if v := f["labels"]; v != nil {
 		m.Labels = p.list(v)
 		for _, label := range m.Labels {
-			if !validLabel(label) {
+			if !ValidClassificationLabel(label) {
 				p.fail(v, "invalid classification label "+label)
 			}
 		}
@@ -190,7 +190,8 @@ func (p *candidateParser) match(n *yaml.Node) Match {
 	return m
 }
 
-func validLabel(label string) bool {
+// ValidClassificationLabel reports the supported facet and canonical owner-token grammar.
+func ValidClassificationLabel(label string) bool {
 	switch label {
 	case "docs", "generated", "policy", "unknown":
 		return true
