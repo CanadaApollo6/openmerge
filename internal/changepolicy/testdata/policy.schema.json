@@ -1,0 +1,323 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:openmerge:stage-a:policy-candidate",
+  "title": "Stage A policy additions candidate (not the public repository schema)",
+  "$comment": "Policy-only projection. PR 11b composes it with the existing repository loader/schema. Duplicate keys, strict YAML scalar types, group references, duplicate agent mappings and queue names remain parser checks. Formats assert the shared Go glob, condition and identity grammar.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "classification": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "docs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "format": "policy-glob"
+          }
+        },
+        "generated": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "format": "policy-glob"
+          }
+        },
+        "sensitive": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "format": "policy-glob"
+          }
+        }
+      }
+    },
+    "groups": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+      },
+      "additionalProperties": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "string",
+          "format": "policy-member"
+        }
+      }
+    },
+    "agents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "identity": {
+            "type": "string",
+            "format": "policy-login"
+          },
+          "accountable": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "format": "policy-login"
+            }
+          }
+        },
+        "required": [
+          "identity",
+          "accountable"
+        ]
+      }
+    },
+    "queues": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "\\S"
+          },
+          "changes": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "pull_requests": {
+                "const": "required",
+                "default": "required"
+              }
+            }
+          },
+          "approvals": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "default": {
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/requirement"
+                  },
+                  {
+                    "not": {
+                      "const": "none"
+                    }
+                  },
+                  {
+                    "not": {
+                      "type": "object",
+                      "required": [
+                        "code_owners"
+                      ]
+                    }
+                  }
+                ]
+              },
+              "rules": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "when": {
+                      "$ref": "#/$defs/match"
+                    },
+                    "require": {
+                      "$ref": "#/$defs/requirement"
+                    }
+                  },
+                  "required": [
+                    "when",
+                    "require"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "default"
+            ]
+          },
+          "enter_when": {
+            "$ref": "#/$defs/conditions"
+          },
+          "merge_when": {
+            "$ref": "#/$defs/conditions"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    }
+  },
+  "required": [
+    "queues"
+  ],
+  "$defs": {
+    "requirement": {
+      "oneOf": [
+        {
+          "enum": [
+            "none",
+            "any_writer"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "any_writer": {
+              "const": true
+            },
+            "group": {
+              "type": "string",
+              "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+            },
+            "human": {
+              "const": true
+            },
+            "receipt": {
+              "const": true
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9223372036854775807,
+              "default": 1
+            }
+          },
+          "anyOf": [
+            {
+              "required": [
+                "any_writer"
+              ]
+            },
+            {
+              "required": [
+                "group"
+              ]
+            },
+            {
+              "required": [
+                "human"
+              ]
+            }
+          ],
+          "not": {
+            "required": [
+              "any_writer",
+              "group"
+            ]
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "code_owners": {
+              "const": true
+            },
+            "receipt": {
+              "const": true
+            }
+          },
+          "required": [
+            "code_owners"
+          ]
+        }
+      ]
+    },
+    "match": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "labels": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "format": "policy-label"
+          }
+        },
+        "paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "format": "policy-glob"
+          }
+        },
+        "touches": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "format": "policy-glob"
+          }
+        },
+        "authors": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": [
+              "human",
+              "agent"
+            ]
+          }
+        }
+      },
+      "minProperties": 1
+    },
+    "conditions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/condition"
+      },
+      "description": "Implicit AND of condition strings and logical groups. Quote strings beginning with # in YAML."
+    },
+    "condition": {
+      "description": "Atom [-][#]attribute [operator value], or exactly one and/or/not group. Missing or mistyped observations stay unknown, including under negation.",
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*-?(?:(?:draft|conflict)(?:[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*(?:=|!=)[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*(?:true|false))?|#(?:label|approved-reviews-by|files|check-success|check-failure|check-pending)[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*(?:=|!=|<=|>=|<|>)[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*[+-]?[0-9]+|(?:base|head|author|title|label|approved-reviews-by|files|check-success|check-failure|check-pending)[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*(?:=|!=|~=|glob[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+)[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*[\\s\\S]*[^\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000][\\s\\S]*)[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*$",
+          "format": "openmerge-condition",
+          "description": "Strings/lists: =, !=, ~= (Go RE2), glob. List lengths (#): =, !=, <, <=, >, >= and a Go integer. Booleans draft/conflict: bare or =/!= true/false. Prefix - negates. Value is the trimmed remainder, with no inner quoting syntax."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "maxProperties": 1,
+          "properties": {
+            "and": {
+              "$ref": "#/$defs/conditions",
+              "description": "All children must hold. Empty AND is true."
+            },
+            "or": {
+              "$ref": "#/$defs/conditions",
+              "description": "Any child must hold. Empty OR is false."
+            },
+            "not": {
+              "$ref": "#/$defs/condition",
+              "description": "Negates one string or logical group; unknown remains unknown."
+            }
+          }
+        }
+      ]
+    }
+  }
+}
