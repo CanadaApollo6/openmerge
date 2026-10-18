@@ -216,3 +216,29 @@ func TestOutsidePushRound2UnreadableLandingAncestry(t *testing.T) {
 		t.Fatalf("unknown ancestry omitted or settlement changed: %+v", pushes)
 	}
 }
+
+func TestOutsidePushRound2PeerAuditAfterRefRead(t *testing.T) {
+	s, w, f, before, req := outsidePushRound2Attempt(t, "merge", true)
+	_, err := f.Land(t.Context(), repo, req)
+	must(t, err)
+	must(t, f.SetRef(repo, "main", before.BaseSHA))
+	must(t, s.block(t.Context(), w, queue.LandingNotOnBase, "landing removed", before.Active.TestedSHA))
+	peer, err := New(t.Context(), s.store, []Target{w.Target}, s.options)
+	must(t, err)
+	var tip string
+	w.Git = &outsidePushRefHook{Forge: f, afterRead: func() {
+		tip, err = f.PushBase(repo, "main", "peer observes newer outside tip", nil)
+		must(t, err)
+		must(t, peer.auditLandingRewrite(t.Context(), peer.queues[0]))
+	}}
+	must(t, s.auditLandingRewrite(t.Context(), w))
+	after, _, err := s.store.Load(t.Context(), w.id)
+	must(t, err)
+	pushes := after.RecentOutsidePushes()
+	if len(pushes) != 1 || pushes[0].NewSHA != tip {
+		t.Fatalf("old git read invented a peer-audit rollback: %+v", pushes)
+	}
+	if after.Active == nil || after.Active.Phase != queue.Landing || !after.SourceBlocked(queue.LandingNotOnBase) {
+		t.Fatal("audit affected settlement safety")
+	}
+}

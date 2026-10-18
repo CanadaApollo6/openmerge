@@ -99,11 +99,10 @@ func (s *Store) RecordBaseMove(ctx context.Context, q QueueID, basis queue.State
 	})
 }
 
-// LandingRewriteTip returns the last audited tip of this attempt, so another
-// outside push while settlement is blocked starts at that tip, not the landing.
-func (s *Store) LandingRewriteTip(ctx context.Context, q QueueID, attemptID string) (string, error) {
-	tip, _, err := landingRewriteTip(ctx, s.pool, q, attemptID)
-	return tip, err
+// LandingRewriteTip returns the last audited tip and its receipt ID. Read both
+// before git so a peer audit cannot supply a newer basis for an older ref read.
+func (s *Store) LandingRewriteTip(ctx context.Context, q QueueID, attemptID string) (string, int64, error) {
+	return landingRewriteTip(ctx, s.pool, q, attemptID)
 }
 
 func landingRewriteTip(ctx context.Context, db interface {
@@ -122,7 +121,7 @@ func landingRewriteTip(ctx context.Context, db interface {
 // observation basis is revalidated; unrelated journal traffic is irrelevant.
 // A receipt per previous/new tip and preceding receipt deduplicates repeated
 // polls and peers, while retaining repeated transitions after an away/back cycle.
-func (s *Store) RecordLandingRewrite(ctx context.Context, q QueueID, basis queue.State, outside queue.OutsidePushRecorded) error {
+func (s *Store) RecordLandingRewrite(ctx context.Context, q QueueID, basis queue.State, previousReceipt int64, outside queue.OutsidePushRecorded) error {
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		if err := s.lockQueue(ctx, tx, q); err != nil {
 			return err
@@ -142,7 +141,7 @@ func (s *Store) RecordLandingRewrite(ctx context.Context, q QueueID, basis queue
 		if previous == "" {
 			previous = b.LandingCommit()
 		}
-		if outside.PreviousSHA != previous {
+		if outside.PreviousSHA != previous || receiptID != previousReceipt {
 			return nil
 		}
 		return insertOutsidePush(ctx, tx, q, "outside-landing-rewrite/"+b.LandingAttempt.ID+"/"+outside.PreviousSHA+"/"+outside.NewSHA+fmt.Sprintf("/%d", receiptID), outside)

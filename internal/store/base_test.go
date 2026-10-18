@@ -71,20 +71,30 @@ func TestRecordLandingRewriteTransitionsAndUnknownAncestry(t *testing.T) {
 	basis := seedOutsideLanding(t, s, q)
 	appendEvents(t, s, q, queue.RefreshRequested{})
 	for _, pair := range [][2]string{{"tested", "back"}, {"tested", "back"}, {"back", "next"}, {"back", "next"}, {"next", "back"}, {"back", "next"}} {
-		must(t, s.RecordLandingRewrite(t.Context(), q, basis, outsideEvidence(pair[0], pair[1])))
+		_, receiptID, err := s.LandingRewriteTip(t.Context(), q, "a")
+		must(t, err)
+		must(t, s.RecordLandingRewrite(t.Context(), q, basis, receiptID, outsideEvidence(pair[0], pair[1])))
 	}
 	state, _, err := s.Load(t.Context(), q)
 	must(t, err)
 	if state.Active == nil || state.Active.Phase != queue.Landing || state.Fence != basis.Fence || state.BaseSHA != basis.BaseSHA || len(state.RecentOutsidePushes()) != 4 {
 		t.Fatalf("audit affected settlement or lost transition: %+v", state)
 	}
-	tip, err := s.LandingRewriteTip(t.Context(), q, "a")
+	tip, receiptID, err := s.LandingRewriteTip(t.Context(), q, "a")
 	must(t, err)
 	if tip != "next" {
 		t.Fatalf("latest tip %s", tip)
 	}
+	// A delayed observation from an earlier occurrence of the same tip cannot
+	// invent a transition after peers have already observed away and back.
+	must(t, s.RecordLandingRewrite(t.Context(), q, basis, 0, outsideEvidence("next", "old-observation")))
+	state, _, err = s.Load(t.Context(), q)
+	must(t, err)
+	if len(state.RecentOutsidePushes()) != 4 {
+		t.Fatal("accepted an outdated audit receipt")
+	}
 	appendEvents(t, s, q, queue.BaseMoved{SHA: "peer"})
-	must(t, s.RecordLandingRewrite(t.Context(), q, basis, outsideEvidence("next", "stale")))
+	must(t, s.RecordLandingRewrite(t.Context(), q, basis, receiptID, outsideEvidence("next", "stale")))
 	state, _, err = s.Load(t.Context(), q)
 	must(t, err)
 	if len(state.RecentOutsidePushes()) != 4 {

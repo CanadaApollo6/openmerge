@@ -77,6 +77,10 @@ func (s *Server) auditLandingRewrite(ctx context.Context, w *worker) error {
 	if b == nil || b.Phase != queue.Landing || !state.SourceBlocked(queue.LandingNotOnBase) {
 		return nil
 	}
+	previous, receiptID, err := s.store.LandingRewriteTip(ctx, w.id, b.LandingAttempt.ID)
+	if err != nil {
+		return err
+	}
 	_, id, tested, err := w.Git.ReadFence(ctx, w.repo(), "openmerge/fence/"+w.Key.BaseBranch)
 	if err != nil {
 		return err
@@ -85,10 +89,6 @@ func (s *Server) auditLandingRewrite(ctx context.Context, w *worker) error {
 		return nil
 	}
 	tip, err := w.Git.ReadRef(ctx, w.repo(), w.Key.BaseBranch)
-	if err != nil {
-		return err
-	}
-	previous, err := s.store.LandingRewriteTip(ctx, w.id, b.LandingAttempt.ID)
 	if err != nil {
 		return err
 	}
@@ -103,5 +103,5 @@ func (s *Server) auditLandingRewrite(ctx context.Context, w *worker) error {
 	if first && outside.AncestryKnown && !outside.Rewrite {
 		return nil
 	}
-	return s.store.RecordLandingRewrite(ctx, w.id, state, outside)
+	return s.store.RecordLandingRewrite(ctx, w.id, state, receiptID, outside)
 }
