@@ -8,6 +8,7 @@ import (
 	"slices"
 	"time"
 
+	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -328,8 +329,10 @@ func (s *Store) append(ctx context.Context, q QueueID, events []queue.Event, ded
 }
 
 type emission struct {
-	claim ClaimedAction
-	cfg   queue.Config
+	claim             ClaimedAction
+	cfg               queue.Config
+	decisionStart     bool
+	approvalsRequired bool
 }
 
 // Emit returns the executor callback bound to this claim and planner config.
@@ -337,8 +340,16 @@ type emission struct {
 // and its action cancelled; the executor must return before any forge call.
 // Use a worker context whose lifetime covers execution and result persistence.
 func (s *Store) Emit(ctx context.Context, claim ClaimedAction, cfg queue.Config) func(queue.Event) error {
+	return s.EmitWithPolicy(ctx, claim, cfg, cp.Policy{})
+}
+
+// EmitWithPolicy binds the current approval policy as well as the action claim.
+// Approval-enabled callers must use StartLanding for starts; result/settlement
+// emissions remain available. A nil approval policy is legacy-start-only,
+// irrespective of any historical approval facts in the journal.
+func (s *Store) EmitWithPolicy(ctx context.Context, claim ClaimedAction, cfg queue.Config, policy cp.Policy) func(queue.Event) error {
 	return func(e queue.Event) error {
-		_, err := s.append(ctx, claim.QueueID, []queue.Event{e}, "", &emission{claim, cfg}, nil)
+		_, err := s.append(ctx, claim.QueueID, []queue.Event{e}, "", &emission{claim: claim, cfg: cfg, approvalsRequired: policy.Approvals != nil}, nil)
 		return err
 	}
 }
@@ -410,6 +421,9 @@ func (s *Store) authorizeStart(ctx context.Context, tx pgx.Tx, execution emissio
 	state, _, err := load(ctx, tx, claim.QueueID)
 	if err != nil {
 		return false, err
+	}
+	if _, landing := event.(queue.LandingStarted); landing && execution.approvalsRequired && !execution.decisionStart {
+		return false, ErrStale
 	}
 	if stored.Key == stored.Action.Key() && queue.CanStart(execution.cfg, state, stored.Action, event) {
 		return false, nil

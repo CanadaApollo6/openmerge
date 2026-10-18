@@ -100,6 +100,17 @@ class ComparisonTest(unittest.TestCase):
             fields["receipts"] = bad
             self.assertIsNotNone(replay.compare_checkpoints([old], [json.dumps(value)], False)["first_state_divergence"])
 
+    def test_landing_decision_exception_is_nil_only(self):
+        old = checkpoint()
+        value = json.loads(old)
+        fields = value["structural"]["value"]
+        typename = "map[string]queue.LandingDecisionRecorded"
+        fields["landingDecisions"] = dict(type=typename, kind="map", zero=True, nil=True, value={})
+        self.assertIsNone(replay.compare_checkpoints([old], [json.dumps(value)], False)["first_state_divergence"])
+        for bad in (dict(type=typename, kind="map", zero=False, nil=False, value={}), node(False), dict(type=typename, kind="map", zero=False, nil=False, value={json.dumps(node("decision"), sort_keys=True): node({})})):
+            fields["landingDecisions"] = bad
+            self.assertIsNotNone(replay.compare_checkpoints([old], [json.dumps(value)], False)["first_state_divergence"])
+
     def test_unreviewed_zero_field_fails(self):
         old = checkpoint()
         value = json.loads(old)

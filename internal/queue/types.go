@@ -46,18 +46,19 @@ const (
 
 // State is a replayable projection for one base branch. Its zero value is empty.
 type State struct {
-	outsidePushes []OutsidePushRecorded
-	Lifecycle     LifecycleChanged
-	BaseBranch    string
-	BaseSHA       string
-	ConfigCommit  string
-	ConfigDigest  string
-	Entries       []Entry
-	Active        *Batch
-	Following     []*Batch             `json:",omitempty"`
-	Invalidations []BatchesInvalidated `json:",omitempty"`
-	pending       []pendingGroup
-	Fence         string
+	landingDecisions map[string]LandingDecisionRecorded
+	outsidePushes    []OutsidePushRecorded
+	Lifecycle        LifecycleChanged
+	BaseBranch       string
+	BaseSHA          string
+	ConfigCommit     string
+	ConfigDigest     string
+	Entries          []Entry
+	Active           *Batch
+	Following        []*Batch             `json:",omitempty"`
+	Invalidations    []BatchesInvalidated `json:",omitempty"`
+	pending          []pendingGroup
+	Fence            string
 
 	// Dormant: remains nil on queues without approval classification events.
 	receipts        receiptProjection

@@ -65,7 +65,8 @@ type rulesSnapshot struct {
 	Revision uint64
 }
 type stateSnapshot struct {
-	ApprovalWaits                                                            map[ChangeID]ApprovalWait `json:",omitempty"`
+	LandingDecisions                                                         map[string]LandingDecisionRecorded `json:",omitempty"`
+	ApprovalWaits                                                            map[ChangeID]ApprovalWait          `json:",omitempty"`
 	Receipts                                                                 receiptProjection
 	Classifications                                                          classifications
 	ApprovalFacts                                                            approvalProjection
@@ -108,15 +109,16 @@ func EncodeSnapshot(s State) ([]byte, error) {
 		return nil, err
 	}
 	v := stateSnapshot{
-		Version:         SnapshotVersion,
-		Receipts:        s.receipts,
-		Classifications: s.classifications,
-		ApprovalFacts:   s.approvalFacts,
-		ApprovalWaits:   s.approvalWaits,
-		ChangeRevisions: s.changeRevisions.snapshot(),
-		BatchRevisions:  s.batchRevisions,
-		OutsidePushes:   cloneOutsidePushes(s.outsidePushes),
-		Window:          s.window, Outcomes: s.outcomes,
+		Version:          SnapshotVersion,
+		LandingDecisions: s.landingDecisions,
+		Receipts:         s.receipts,
+		Classifications:  s.classifications,
+		ApprovalFacts:    s.approvalFacts,
+		ApprovalWaits:    s.approvalWaits,
+		ChangeRevisions:  s.changeRevisions.snapshot(),
+		BatchRevisions:   s.batchRevisions,
+		OutsidePushes:    cloneOutsidePushes(s.outsidePushes),
+		Window:           s.window, Outcomes: s.outcomes,
 		Lifecycle:          s.Lifecycle,
 		BaseBranch:         s.BaseBranch,
 		BaseSHA:            s.BaseSHA,
@@ -170,6 +172,9 @@ func EncodeSnapshot(s State) ([]byte, error) {
 			return nil, err
 		}
 		v.Effects = append(v.Effects, data)
+	}
+	if err := validateLandingDecisionSnapshot(v.LandingDecisions); err != nil {
+		return nil, err
 	}
 	if err := validateReceiptSnapshot(v.Receipts, v.ApprovalFacts, v.ChangeRevisions); err != nil {
 		return nil, err
@@ -231,6 +236,9 @@ func DecodeSnapshot(data []byte) (State, error) {
 	if len(v.Chain) > 32 || len(v.Invalidations) > 32 || len(v.TestedOrder) > testedHistory || len(v.Checks) > maxRetainedChecks || len(v.Entries) > maxSnapshotEntries || len(v.Effects) > maxSnapshotEffects {
 		return State{}, fmt.Errorf("invalid snapshot bounds")
 	}
+	if err := validateLandingDecisionSnapshot(v.LandingDecisions); err != nil {
+		return State{}, err
+	}
 	if err := validateReceiptSnapshot(v.Receipts, v.ApprovalFacts, v.ChangeRevisions); err != nil {
 		return State{}, err
 	}
@@ -252,12 +260,13 @@ func DecodeSnapshot(data []byte) (State, error) {
 		}
 	}
 	s := State{
-		receipts:        v.Receipts,
-		classifications: v.Classifications,
-		approvalFacts:   v.ApprovalFacts,
-		approvalWaits:   v.ApprovalWaits,
-		outsidePushes:   cloneOutsidePushes(v.OutsidePushes),
-		window:          v.Window, outcomes: v.Outcomes,
+		receipts:         v.Receipts,
+		landingDecisions: v.LandingDecisions,
+		classifications:  v.Classifications,
+		approvalFacts:    v.ApprovalFacts,
+		approvalWaits:    v.ApprovalWaits,
+		outsidePushes:    cloneOutsidePushes(v.OutsidePushes),
+		window:           v.Window, outcomes: v.Outcomes,
 		Lifecycle:          v.Lifecycle,
 		BaseBranch:         v.BaseBranch,
 		BaseSHA:            v.BaseSHA,

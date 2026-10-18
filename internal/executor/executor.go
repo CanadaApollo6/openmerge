@@ -69,8 +69,10 @@ type Executor struct {
 	ChecksTimeoutDetail string
 	// BeforeLand freshly revalidates PR trust after the final checks read.
 	BeforeLand func(context.Context, queue.Land) error
-	NewID      func() (string, error)
-	Now        func() time.Time
+	// LandingDecisions replaces the single-event start for approval policies.
+	LandingDecisions *LandingDecisionGate
+	NewID            func() (string, error)
+	Now              func() time.Time
 }
 
 // Execute stops at the first failed emit. emit must durably record its event
@@ -298,7 +300,12 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		if err != nil {
 			return err
 		}
-		if err := emit(queue.LandingStarted{BatchID: a.BatchID, AttemptID: attemptID, FenceToken: a.FenceToken, At: x.now()}); err != nil {
+		start := queue.LandingStarted{BatchID: a.BatchID, AttemptID: attemptID, FenceToken: a.FenceToken, At: x.now()}
+		if x.LandingDecisions != nil {
+			if err := x.LandingDecisions.start(ctx, a, start, x.now); err != nil {
+				return err
+			}
+		} else if err := emit(start); err != nil {
 			return err
 		}
 		if err := emit(queue.LandingCleanupPolicyRecorded{BatchID: a.BatchID, AttemptID: attemptID, DeleteHeadBranch: !x.DisableDeleteHeadBranch}); err != nil {

@@ -511,6 +511,11 @@ func EncodeEvent(value Event) (string, []byte, error) {
 		return encodeWire("pr_metadata_observed", wirePRMetadataObserved(v))
 	case PRObserved:
 		return encodeWire("pr_observed", wirePRObserved(v))
+	case LandingDecisionRecorded:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("landing_decision_recorded", v)
 	case ApprovalGateRejected:
 		if err := v.Validate(); err != nil {
 			return "", nil, err
@@ -816,6 +821,9 @@ func DecodeEvent(payload []byte) (Event, error) {
 		return decodeWireData(envelope.Data, func(v wirePRObserved) Event {
 			return PRObserved(v)
 		})
+	case "landing_decision_recorded":
+		v, err := readLandingDecisionWire(envelope.Data)
+		return v, err
 	case "approval_gate_rejected":
 		if err := requireSnapshotFields(envelope.Data, reflect.TypeFor[wireApprovalGateRejected](), "approval"); err != nil {
 			return nil, err
