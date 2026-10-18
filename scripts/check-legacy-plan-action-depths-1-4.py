@@ -4,8 +4,8 @@
 Usage: python3 scripts/check-legacy-plan-action-depths-1-4.py /path/to/main
 
 A test-only Go overlay observes every simulation.plan call in the baseline's
-short simulator corpus and its pinned 500/2000-PR exits. At each checkpoint it
-calls the planner at BOTH depths 1 and 4. It hashes the ordered wire payload
+short simulator corpus and the complete required full simulator corpus. At each
+checkpoint it calls the planner at BOTH depths 1 and 4. It hashes the ordered wire payload
 bytes, action types, keys, first next action, nil-plan distinction and NextWake;
 no summary metrics substitute for those bytes. Per-simulation streams are
 sorted only after hashing, so parallel test completion cannot reorder actions.
@@ -15,8 +15,10 @@ Fixture coverage includes the coherent legacy-block replay journal and every
 baseline wire event fixture as an independent one-event journal. Registry
 fixtures are NOT presented as a coherent chronological stream. Approval-enabled
 activation is outside this no-approvals compatibility gate. Optional multi-day
-adopter exits are outside this bounded corpus (make test-sim-exits owns them).
-No database, forge, git fetch, module or toolchain downloads are used.
+adaptive sizing exits requiring -sim-adaptive-full-exit are outside this corpus;
+required Team/Slow 8x30-day profiles are included.
+No database or external forge calls, git fetch, module or toolchain downloads
+are used.
 """
 
 import argparse
@@ -207,9 +209,8 @@ def main():
             if not tests:
                 raise RuntimeError("baseline simulator tests missing")
             corpus = "^(?:" + "|".join(tests) + ")$"
-            exits = "^TestExit(500PRDay|2000PRDayBatch8)$"
             for label, selection, short in (("simulator-short-corpus", corpus, True),
-                                             ("simulator-pinned-day-exits", exits, False)):
+                                             ("simulator-required-full-corpus", corpus, False)):
                 streams = []
                 for name, root in (("baseline", baseline), ("candidate", candidate)):
                     source = (root / "internal/sim/sim.go").read_text()
