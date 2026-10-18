@@ -33,6 +33,7 @@ func TestOutsidePushPeerSettlementAfterRefRead(t *testing.T) {
 			s, w, f, _ := fixture(t, repositoryConfig+"    merge_method: "+method+"\n")
 			f.AddComment(repo, 1, "writer", "@openmerge queue")
 			must(t, s.cycle(t.Context(), w))
+			runOutsidePushAudit(t, s, w)
 			before, _, err := s.store.Load(t.Context(), w.id)
 			must(t, err)
 			if before.Active == nil || before.Active.Phase != queue.Testing {
@@ -53,13 +54,15 @@ func TestOutsidePushPeerSettlementAfterRefRead(t *testing.T) {
 				landed = state.BaseSHA
 			}}
 			must(t, s.cycle(t.Context(), w))
+			runOutsidePushAudit(t, s, w)
 			must(t, s.cycle(t.Context(), w))
+			runOutsidePushAudit(t, s, w)
 			state, _, err := s.store.Load(t.Context(), w.id)
 			must(t, err)
 			actual, err := f.ReadRef(t.Context(), repo, "main")
 			must(t, err)
-			if pushes := state.RecentOutsidePushes(); len(pushes) != 0 {
-				t.Fatalf("no outside push occurred: initial=%s landed=%s actual=%s records=%+v", before.BaseSHA, landed, actual, pushes)
+			if pushes := state.RecentOutsidePushes(); len(pushes) != 1 || !pushes[0].PossibleStaleObservation || pushes[0].PreviousSHA != landed || pushes[0].NewSHA != before.BaseSHA {
+				t.Fatalf("stale peer observation must be flagged, with repair suppressed: initial=%s landed=%s actual=%s records=%+v", before.BaseSHA, landed, actual, pushes)
 			}
 		})
 	}
@@ -71,15 +74,15 @@ func TestOutsidePushLandingThenRollback(t *testing.T) {
 			s, w, f, _ := fixture(t, repositoryConfig+"    merge_method: "+method+"\n")
 			f.AddComment(repo, 1, "writer", "@openmerge queue")
 			must(t, s.cycle(t.Context(), w))
+			runOutsidePushAudit(t, s, w)
 			state, _, err := s.store.Load(t.Context(), w.id)
 			must(t, err)
 			b := state.Active
 			_, err = s.store.Append(t.Context(), w.id, []queue.Event{queue.LandingStarted{BatchID: b.ID, AttemptID: "rollback", FenceToken: state.Fence, At: time.Now().Add(-time.Hour)}}, "")
 			must(t, err)
-			head, landed := "", b.TestedSHA
+			head := ""
 			if method == "fast-forward" {
 				head = b.PRs[len(b.PRs)-1].HeadSHA
-				landed = head
 			}
 			_, err = f.Land(t.Context(), repo, forge.LandRequest{Base: "main", ExpectedBaseSHA: state.BaseSHA, TestedSHA: b.TestedSHA, FastForwardHeadSHA: head, Fence: "openmerge/fence/main", ExpectedFence: state.Fence, NextFenceID: "land/rollback", PRs: []forge.BuildPR{{Number: 1, HeadSHA: b.PRs[0].HeadSHA}}})
 			must(t, err)
@@ -94,10 +97,13 @@ func TestOutsidePushLandingThenRollback(t *testing.T) {
 				if err := s.cycle(t.Context(), w); !errors.As(err, &absent) {
 					t.Fatalf("poll %d lost settlement safety error: %v", i, err)
 				}
+				// Even a separately scheduled audit must not infer a rollback from
+				// a successful live fence while the attempt is unsettled in the log.
+				runOutsidePushAudit(t, s, w)
 				after, _, err := s.store.Load(t.Context(), w.id)
 				must(t, err)
 				pushes := after.RecentOutsidePushes()
-				if len(pushes) != 1 || pushes[0].PreviousSHA != landed || pushes[0].NewSHA != state.BaseSHA || !pushes[0].AncestryKnown || !pushes[0].Rewrite || !pushes[0].HistoryKnown || len(pushes[0].Commits) != 0 || pushes[0].VerificationBeforeLanding != "none" {
+				if len(pushes) != 0 {
 					t.Fatalf("poll %d rewrite evidence: %+v", i, pushes)
 				}
 				if after.BaseSHA != state.BaseSHA || after.Fence != state.Fence || after.Active == nil || after.Active.Phase != queue.Landing || !after.SourceBlocked(queue.LandingNotOnBase) {
@@ -115,6 +121,7 @@ func TestOutsidePushRestartAndLandingThenOutside(t *testing.T) {
 				s, w, f, _ := fixture(t, repositoryConfig+"    merge_method: "+method+"\n")
 				f.AddComment(repo, 1, "writer", "@openmerge queue")
 				must(t, s.cycle(t.Context(), w))
+				runOutsidePushAudit(t, s, w)
 				state, _, err := s.store.Load(t.Context(), w.id)
 				must(t, err)
 				b := state.Active
@@ -134,6 +141,7 @@ func TestOutsidePushRestartAndLandingThenOutside(t *testing.T) {
 				s, err = New(t.Context(), s.store, []Target{w.Target}, s.options)
 				must(t, err)
 				must(t, s.cycle(t.Context(), s.queues[0]))
+				runOutsidePushAudit(t, s, s.queues[0])
 				after, _, err := s.store.Load(t.Context(), w.id)
 				must(t, err)
 				pushes := after.RecentOutsidePushes()
@@ -148,6 +156,7 @@ func TestOutsidePushRestartAndLandingThenOutside(t *testing.T) {
 func TestOutsidePushTwoMovesBetweenPolls(t *testing.T) {
 	s, w, f, _ := fixture(t, repositoryConfig)
 	must(t, s.cycle(t.Context(), w))
+	runOutsidePushAudit(t, s, w)
 	before, _, err := s.store.Load(t.Context(), w.id)
 	must(t, err)
 	b, err := f.PushBase(repo, "main", "outside one", nil)
@@ -155,6 +164,7 @@ func TestOutsidePushTwoMovesBetweenPolls(t *testing.T) {
 	c, err := f.PushBase(repo, "main", "outside two", nil)
 	must(t, err)
 	must(t, s.cycle(t.Context(), w))
+	runOutsidePushAudit(t, s, w)
 	after, _, err := s.store.Load(t.Context(), w.id)
 	must(t, err)
 	pushes := after.RecentOutsidePushes()
@@ -169,6 +179,7 @@ func TestOutsidePushBaseObservationDuringLanding(t *testing.T) {
 			s, w, f, _ := fixture(t, repositoryConfig)
 			f.AddComment(repo, 1, "writer", "@openmerge queue")
 			must(t, s.cycle(t.Context(), w))
+			runOutsidePushAudit(t, s, w)
 			state, _, err := s.store.Load(t.Context(), w.id)
 			must(t, err)
 			b := state.Active
@@ -192,6 +203,7 @@ func TestOutsidePushBaseObservationDuringLanding(t *testing.T) {
 			must(t, err)
 			w = s.queues[0]
 			must(t, s.cycle(t.Context(), w))
+			runOutsidePushAudit(t, s, w)
 			after, _, err := s.store.Load(t.Context(), w.id)
 			must(t, err)
 			pushes := after.RecentOutsidePushes()

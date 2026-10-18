@@ -226,6 +226,9 @@ func printStatus(out io.Writer, response status.Response) error {
 			} else if push.Rewrite {
 				movement = "rewrite"
 			}
+			if push.PossibleStaleObservation {
+				movement += "; possible stale base observation: may reflect a stale read rather than a real rollback; verify before acknowledgement"
+			}
 			history := "unknown"
 			if push.HistoryKnown {
 				history = "[" + strings.Join(push.Commits, ", ") + "]"

@@ -102,6 +102,14 @@ func (f *installationTargets) target(ctx context.Context, key store.QueueKey) (s
 	return bundle.target(key), nil
 }
 
+func (f *installationTargets) outsidePushHistory(ctx context.Context, key store.QueueKey) (forge.OutsidePushHistory, error) {
+	bundle, err := f.bundle(ctx, key.Installation)
+	if err != nil {
+		return nil, err
+	}
+	return bundle.git, nil
+}
+
 func (b *installationBundle) target(key store.QueueKey) serve.Target {
 	ref := forge.RepoRef{Path: key.Repository}
 	return serve.Target{Key: key, Driver: b.driver, Git: b.git, BotLogin: b.driver.BotLogin(), CheckRules: func(ctx context.Context) ([]string, []string, error) {

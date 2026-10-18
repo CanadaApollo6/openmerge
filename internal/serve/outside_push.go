@@ -6,102 +6,70 @@ import (
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
+	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
-func outsidePush(ctx context.Context, git forge.Git, repo forge.RepoRef, previous, tip string) queue.OutsidePushRecorded {
+func outsidePush(ctx context.Context, history forge.OutsidePushHistory, repo forge.RepoRef, previous, tip string) queue.OutsidePushRecorded {
 	event := queue.OutsidePushRecorded{PreviousSHA: previous, NewSHA: tip, VerificationBeforeLanding: "none", At: time.Now().UTC()}
-	ancestor, err := git.IsAncestor(ctx, repo, previous, tip)
+	if history == nil {
+		return event
+	}
+	ancestor, err := history.IsAncestor(ctx, repo, previous, tip)
 	if err == nil {
 		event.AncestryKnown, event.Rewrite = true, !ancestor
 	}
-	if reader, ok := git.(forge.CommitHistoryReader); ok {
-		commits, truncated, err := reader.CommitsBetween(ctx, repo, previous, tip, queue.OutsidePushCommitLimit)
-		if err == nil {
-			event.HistoryKnown, event.Commits, event.Truncated = true, commits, truncated
-		}
+	commits, truncated, err := history.CommitsBetween(ctx, repo, previous, tip, queue.OutsidePushCommitLimit)
+	if err == nil {
+		event.HistoryKnown, event.Commits, event.Truncated = true, commits, truncated
 	}
 	return event
 }
 
-// auditBaseMove runs after configuration publication and block-clearing. Audit
-// errors are operational diagnostics only; they never become reconcile errors.
-func (s *Server) auditBaseMove(ctx context.Context, w *worker, basis queue.State, moveID int64, tip string) {
-	if basis.Active != nil && basis.Active.Phase == queue.Landing {
-		return
+// outsidePushLoop owns all audit I/O. It never takes a worker mutex or execution
+// slot, and holds no DB connection while enriching immutable journal candidates.
+func (s *Server) outsidePushLoop(ctx context.Context) {
+	for {
+		for _, w := range s.workers() {
+			auditCtx, cancel := context.WithTimeout(ctx, s.options.ActionTimeout)
+			err := s.auditOutsidePushes(auditCtx, w.id, w.Key)
+			cancel()
+			if err != nil && ctx.Err() == nil {
+				s.options.Logger.Warn("outside push audit", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "error", err)
+			}
+		}
+		timer := time.NewTimer(s.options.PollInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
 	}
-	outside := queue.OutsidePushRecorded{}
-	if basis.BaseSHA != "" && basis.BaseSHA != tip {
-		outside = outsidePush(ctx, w.Git, w.repo(), basis.BaseSHA, tip)
-	}
-	s.auditError(w, s.store.RecordBaseMove(ctx, w.id, basis, moveID, outside))
 }
 
-func (s *Server) auditError(w *worker, err error) {
+func (s *Server) auditOutsidePushes(ctx context.Context, id store.QueueID, key store.QueueKey) error {
+	audit, err := s.store.ReadOutsidePushAudit(ctx, id)
 	if err != nil {
-		s.options.Logger.Warn("outside push audit", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "error", err)
+		return err
 	}
-}
-
-// auditOutsidePushes is a separate, best-effort step after the cycle's queue
-// work, including settlement. Durable receipts make retries/restarts harmless.
-func (s *Server) auditOutsidePushes(ctx context.Context, w *worker) {
-	moves, err := s.store.AbandonedBaseMoves(ctx, w.id)
-	if err != nil {
-		s.auditError(w, err)
-		return
-	}
-	for _, move := range moves {
-		// Avoid repeating git reads for receipts already committed by any server.
-		seen, err := s.store.OutsidePushRecorded(ctx, w.id, move.ID)
+	var history forge.OutsidePushHistory
+	if len(audit.Moves) > 0 && s.options.OutsidePushHistory != nil {
+		history, err = s.options.OutsidePushHistory(ctx, key)
 		if err != nil {
-			s.auditError(w, err)
-			continue
+			s.options.Logger.Warn("outside push history unavailable", "repository", key.Repository, "error", err)
+			history = nil
 		}
-		if seen {
-			continue
-		}
-		outside := outsidePush(ctx, w.Git, w.repo(), move.PreviousSHA, move.NewSHA)
-		s.auditError(w, s.store.RecordAbandonedBaseMove(ctx, w.id, move, outside))
 	}
-	s.auditError(w, s.auditLandingRewrite(ctx, w))
-}
-
-// A successful fence proves the landing happened even if ancestry was pruned.
-// Neither missing history nor the audit itself can authorize settlement.
-func (s *Server) auditLandingRewrite(ctx context.Context, w *worker) error {
-	state, _, err := s.store.Load(ctx, w.id)
-	if err != nil {
-		return err
+	events := make([]queue.OutsidePushRecorded, len(audit.Moves))
+	for i, move := range audit.Moves {
+		events[i] = outsidePush(ctx, history, forge.RepoRef{Path: key.Repository}, move.PreviousSHA, move.NewSHA)
+		events[i].At = move.At
+		events[i].PossibleStaleObservation = move.PossibleStaleObservation
 	}
-	b := state.Active
-	if b == nil || b.Phase != queue.Landing || !state.SourceBlocked(queue.LandingNotOnBase) {
-		return nil
-	}
-	previous, receiptID, err := s.store.LandingRewriteTip(ctx, w.id, b.LandingAttempt.ID)
-	if err != nil {
-		return err
-	}
-	_, id, tested, err := w.Git.ReadFence(ctx, w.repo(), "openmerge/fence/"+w.Key.BaseBranch)
-	if err != nil {
-		return err
-	}
-	if id != "land/"+b.LandingAttempt.ID || tested != b.TestedSHA {
-		return nil
-	}
-	tip, err := w.Git.ReadRef(ctx, w.repo(), w.Key.BaseBranch)
-	if err != nil {
-		return err
-	}
-	first := previous == ""
-	if first {
-		previous = b.LandingCommit()
-	}
-	if tip == previous {
-		return nil
-	}
-	outside := outsidePush(ctx, w.Git, w.repo(), previous, tip)
-	if first && outside.AncestryKnown && !outside.Rewrite {
-		return nil
-	}
-	return s.store.RecordLandingRewrite(ctx, w.id, state, receiptID, outside)
+	// Enrichment timing out means unknown evidence, not a skipped transition.
+	// Persistence has its own short deadline, with no git work under the lock.
+	commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	_, err = s.store.CommitOutsidePushAudit(commitCtx, id, audit, events)
+	return err
 }

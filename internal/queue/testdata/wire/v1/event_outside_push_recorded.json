@@ -1,1 +1,1 @@
-{"version":1,"type":"outside_push_recorded","data":{"previous_sha":"base","new_sha":"outside","ancestry_known":true,"rewrite":false,"history_known":true,"commits":["outside"],"truncated":false,"verification_before_landing":"none","at":"2026-10-16T12:00:00Z"}}
+{"version":1,"type":"outside_push_recorded","data":{"previous_sha":"base","new_sha":"outside","ancestry_known":true,"rewrite":false,"history_known":true,"commits":["outside"],"truncated":false,"verification_before_landing":"none","possible_stale_observation":false,"at":"2026-10-16T12:00:00Z"}}

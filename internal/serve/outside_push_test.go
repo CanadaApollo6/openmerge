@@ -40,7 +40,7 @@ func TestOutsidePushObservationHistory(t *testing.T) {
 		t.Fatal("unknown ancestry presented as known")
 	}
 	// An adapter without the optional reader is explicitly unknown too.
-	unknown = outsidePush(t.Context(), struct{ forge.Git }{f}, repo, base, head)
+	unknown = outsidePush(t.Context(), nil, repo, base, head)
 	if unknown.HistoryKnown {
 		t.Fatal("unsupported history claimed known")
 	}
@@ -49,6 +49,7 @@ func TestOutsidePushObservationHistory(t *testing.T) {
 func TestOutsidePushReconciliationAdminAndForcePush(t *testing.T) {
 	s, w, f, _ := fixture(t, repositoryConfig)
 	must(t, s.cycle(t.Context(), w))
+	runOutsidePushAudit(t, s, w)
 	original, _, err := s.store.Load(t.Context(), w.id)
 	must(t, err)
 	if len(original.RecentOutsidePushes()) != 0 {
@@ -57,8 +58,10 @@ func TestOutsidePushReconciliationAdminAndForcePush(t *testing.T) {
 	tip, err := f.PushBase(repo, "main", "admin push", nil)
 	must(t, err)
 	must(t, s.cycle(t.Context(), w))
+	runOutsidePushAudit(t, s, w)
 	must(t, f.SetRef(repo, "main", original.BaseSHA))
 	must(t, s.cycle(t.Context(), w))
+	runOutsidePushAudit(t, s, w)
 	state, _, err := s.store.Load(t.Context(), w.id)
 	must(t, err)
 	pushes := state.RecentOutsidePushes()
@@ -71,6 +74,7 @@ func TestOutsidePushReconciliationAdminAndForcePush(t *testing.T) {
 	_, before, err := s.store.Load(t.Context(), w.id)
 	must(t, err)
 	must(t, s.cycle(t.Context(), w))
+	runOutsidePushAudit(t, s, w)
 	_, after, err := s.store.Load(t.Context(), w.id)
 	must(t, err)
 	if before != after {
@@ -91,6 +95,7 @@ func TestOutsidePushSettlesOutstandingLandingFirst(t *testing.T) {
 			s, w, f, _ := fixture(t, repositoryConfig)
 			f.AddComment(repo, 1, "writer", "@openmerge queue")
 			must(t, s.cycle(t.Context(), w))
+			runOutsidePushAudit(t, s, w)
 			state, _, err := s.store.Load(t.Context(), w.id)
 			must(t, err)
 			b := state.Active
@@ -121,6 +126,7 @@ func TestOutsidePushSettlesOutstandingLandingFirst(t *testing.T) {
 				}
 			}
 			must(t, s.cycle(t.Context(), w))
+			runOutsidePushAudit(t, s, w)
 			state, _, err = s.store.Load(t.Context(), w.id)
 			must(t, err)
 			pushes := state.RecentOutsidePushes()
@@ -153,10 +159,12 @@ func TestOutsidePushSettlesOutstandingLandingFirst(t *testing.T) {
 func TestOutsidePushUnreadableHistoryIsDurable(t *testing.T) {
 	s, w, f, _ := fixture(t, repositoryConfig)
 	must(t, s.cycle(t.Context(), w))
+	runOutsidePushAudit(t, s, w)
 	_, err := f.PushBase(repo, "main", "admin with unreadable history", nil)
 	must(t, err)
 	f.FailNext("CommitsBetween", errors.New("history unavailable"))
 	must(t, s.cycle(t.Context(), w))
+	runOutsidePushAudit(t, s, w)
 	state, _, err := s.store.Load(t.Context(), w.id)
 	must(t, err)
 	pushes := state.RecentOutsidePushes()
@@ -168,15 +176,18 @@ func TestOutsidePushUnreadableHistoryIsDurable(t *testing.T) {
 func TestOutsidePushDivergedRewrite(t *testing.T) {
 	s, w, f, _ := fixture(t, repositoryConfig)
 	must(t, s.cycle(t.Context(), w))
+	runOutsidePushAudit(t, s, w)
 	base, _, err := s.store.Load(t.Context(), w.id)
 	must(t, err)
 	previous, err := f.PushBase(repo, "main", "old line", nil)
 	must(t, err)
 	must(t, s.cycle(t.Context(), w))
+	runOutsidePushAudit(t, s, w)
 	must(t, f.SetRef(repo, "main", base.BaseSHA))
 	tip, err := f.PushBase(repo, "main", "divergent line", nil)
 	must(t, err)
 	must(t, s.cycle(t.Context(), w))
+	runOutsidePushAudit(t, s, w)
 	state, _, err := s.store.Load(t.Context(), w.id)
 	must(t, err)
 	pushes := state.RecentOutsidePushes()

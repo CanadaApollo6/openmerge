@@ -13,7 +13,7 @@ import (
 func TestOutsidePushStatusAPIBoundedEvidence(t *testing.T) {
 	var events []queue.Event
 	for i := range queue.OutsidePushLimit + 2 {
-		events = append(events, queue.OutsidePushRecorded{PreviousSHA: fmt.Sprintf("old%d", i), NewSHA: fmt.Sprintf("new%d", i), AncestryKnown: true, Rewrite: i%2 == 1, VerificationBeforeLanding: "none", At: at})
+		events = append(events, queue.OutsidePushRecorded{PreviousSHA: fmt.Sprintf("old%d", i), NewSHA: fmt.Sprintf("new%d", i), AncestryKnown: true, Rewrite: i%2 == 1, PossibleStaleObservation: i == 3, VerificationBeforeLanding: "none", At: at})
 	}
 	s := &source{journals: []store.Journal{journal(events...)}}
 	handler := Handler(s, []store.QueueKey{key}, "", nil)
@@ -32,6 +32,9 @@ func TestOutsidePushStatusAPIBoundedEvidence(t *testing.T) {
 			q = &result.Queues[0]
 		}
 		pushes := q.OutsidePushes
+		if !pushes[1].PossibleStaleObservation {
+			t.Fatal("status lost the lower-confidence evidence flag")
+		}
 		if len(pushes) != queue.OutsidePushLimit || pushes[0].EventID != 3 || pushes[0].PreviousSHA != "old2" || !pushes[len(pushes)-1].Rewrite {
 			t.Fatalf("lost bounded evidence: %+v", pushes)
 		}

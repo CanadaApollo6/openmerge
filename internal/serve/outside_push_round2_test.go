@@ -21,6 +21,7 @@ func outsidePushRound2Attempt(t *testing.T, method string, depth bool) (*Server,
 	s, w, f, _ := fixture(t, config)
 	f.AddComment(repo, 1, "writer", "@openmerge queue")
 	must(t, s.cycle(t.Context(), w))
+	runOutsidePushAudit(t, s, w)
 	before, _, err := s.store.Load(t.Context(), w.id)
 	must(t, err)
 	b := before.Active
@@ -48,24 +49,30 @@ func TestOutsidePushRound2FurtherOutsidePushWhileLandingHeld(t *testing.T) {
 	}
 	second, err := f.PushBase(repo, "main", "another outside push while held", nil)
 	must(t, err)
-	s, err = New(t.Context(), s.store, []Target{w.Target}, s.options)
-	must(t, err)
-	w = s.queues[0]
-	if err := s.cycle(t.Context(), w); !errors.As(err, &absent) {
-		t.Fatalf("second poll: %v", err)
-	}
+	// Ordinary reconciliation may observe the tip independently, but audit must
+	// wait for journal settlement rather than interpreting fence/ref reads itself.
+	must(t, s.configuration(t.Context(), w))
+	runOutsidePushAudit(t, s, w)
 	after, _, err := s.store.Load(t.Context(), w.id)
 	must(t, err)
-	t.Logf("first tip=%s second observed tip=%s records=%+v", before.BaseSHA, second, after.RecentOutsidePushes())
-	if after.Active == nil || after.Active.Phase != queue.Landing || !after.SourceBlocked(queue.LandingNotOnBase) {
-		t.Fatal("settlement safety changed")
+	if len(after.RecentOutsidePushes()) != 0 || after.Active == nil || after.Active.Phase != queue.Landing || !after.SourceBlocked(queue.LandingNotOnBase) {
+		t.Fatal("audit guessed or altered settlement")
 	}
-	for _, e := range after.RecentOutsidePushes() {
-		if e.NewSHA == second {
-			return
-		}
+	// Restore the proven landing, then settle normally. Both durable observations
+	// remain recoverable, including the intermediate second tip.
+	must(t, f.SetRef(repo, "main", before.Active.LandingCommit()))
+	held, err := s.settle(t.Context(), w)
+	must(t, err)
+	if held {
+		t.Fatal("restored landing did not settle")
 	}
-	t.Fatal("second observed outside push lost durably")
+	runOutsidePushAudit(t, s, w)
+	after, _, err = s.store.Load(t.Context(), w.id)
+	must(t, err)
+	pushes := after.RecentOutsidePushes()
+	if len(pushes) != 1 || pushes[0].NewSHA != second {
+		t.Fatalf("lost pending intermediate move: %+v", pushes)
+	}
 }
 
 func TestOutsidePushRound2AwayAndBackBeforeAbandonment(t *testing.T) {
@@ -84,7 +91,7 @@ func TestOutsidePushRound2AwayAndBackBeforeAbandonment(t *testing.T) {
 		t.Fatal("abandonment did not settle")
 	}
 	// Auditing is deliberately separate from settlement.
-	s.auditOutsidePushes(t.Context(), w)
+	runOutsidePushAudit(t, s, w)
 	after, _, err := s.store.Load(t.Context(), w.id)
 	must(t, err)
 	records, err := s.store.EventsAfter(t.Context(), w.id, 0)
@@ -142,7 +149,7 @@ func TestOutsidePushRound2AbandonmentWatermarkChangesSettlement(t *testing.T) {
 	if w.Git.(*outsidePushRound2HistoryHook).hook == nil {
 		t.Fatal("settlement read audit history")
 	}
-	s.auditOutsidePushes(t.Context(), w)
+	runOutsidePushAudit(t, s, w)
 	if w.Git.(*outsidePushRound2HistoryHook).hook != nil {
 		t.Fatal("separate audit did not read history")
 	}
@@ -184,6 +191,7 @@ func TestOutsidePushRound2PushWinsAbandonmentThenRollback(t *testing.T) {
 			if err := s.cycle(t.Context(), w); !errors.As(err, &absent) {
 				t.Fatalf("lost push winner: %v", err)
 			}
+			runOutsidePushAudit(t, s, w)
 			after, _, err := s.store.Load(t.Context(), w.id)
 			must(t, err)
 			if after.Active == nil || after.Active.Phase != queue.Landing || !after.SourceBlocked(queue.LandingNotOnBase) {
@@ -205,40 +213,45 @@ func TestOutsidePushRound2UnreadableLandingAncestry(t *testing.T) {
 	s, w, f, before, req := outsidePushRound2Attempt(t, "merge", true)
 	_, err := f.Land(t.Context(), repo, req)
 	must(t, err)
+	held, err := s.settle(t.Context(), w)
+	must(t, err)
+	if held {
+		t.Fatal("landing did not settle")
+	}
 	must(t, f.SetRef(repo, "main", before.BaseSHA))
-	must(t, s.block(t.Context(), w, queue.LandingNotOnBase, "landing removed", before.Active.TestedSHA))
+	must(t, s.configuration(t.Context(), w))
 	f.FailNext("IsAncestor", errors.New("landed object was garbage collected"))
-	must(t, s.auditLandingRewrite(t.Context(), w))
+	runOutsidePushAudit(t, s, w)
 	after, _, err := s.store.Load(t.Context(), w.id)
 	must(t, err)
 	pushes := after.RecentOutsidePushes()
-	if len(pushes) != 1 || pushes[0].AncestryKnown || pushes[0].Rewrite || after.Active == nil || after.Active.Phase != queue.Landing {
+	if len(pushes) != 1 || pushes[0].AncestryKnown || pushes[0].Rewrite || !pushes[0].PossibleStaleObservation || after.Active != nil {
 		t.Fatalf("unknown ancestry omitted or settlement changed: %+v", pushes)
 	}
 }
 
 func TestOutsidePushRound2PeerAuditAfterRefRead(t *testing.T) {
-	s, w, f, before, req := outsidePushRound2Attempt(t, "merge", true)
-	_, err := f.Land(t.Context(), repo, req)
+	// Auditors no longer read refs. A newer durable observation cannot make an
+	// older auditor invent a rollback; both replay the same ordered transitions.
+	s, w, f, _ := fixture(t, repositoryConfig)
+	must(t, s.cycle(t.Context(), w))
+	first, err := f.PushBase(repo, "main", "first outside", nil)
 	must(t, err)
-	must(t, f.SetRef(repo, "main", before.BaseSHA))
-	must(t, s.block(t.Context(), w, queue.LandingNotOnBase, "landing removed", before.Active.TestedSHA))
+	must(t, s.configuration(t.Context(), w))
 	peer, err := New(t.Context(), s.store, []Target{w.Target}, s.options)
 	must(t, err)
-	var tip string
-	w.Git = &outsidePushRefHook{Forge: f, afterRead: func() {
-		tip, err = f.PushBase(repo, "main", "peer observes newer outside tip", nil)
+	w.Git = &outsidePushRound2HistoryHook{Forge: f, hook: func() {
+		_, err := f.PushBase(repo, "main", "newer outside", nil)
 		must(t, err)
-		must(t, peer.auditLandingRewrite(t.Context(), peer.queues[0]))
+		must(t, peer.configuration(t.Context(), peer.queues[0]))
+		runOutsidePushAudit(t, peer, peer.queues[0])
 	}}
-	must(t, s.auditLandingRewrite(t.Context(), w))
+	runOutsidePushAudit(t, s, w)
+	runOutsidePushAudit(t, s, w)
 	after, _, err := s.store.Load(t.Context(), w.id)
 	must(t, err)
 	pushes := after.RecentOutsidePushes()
-	if len(pushes) != 1 || pushes[0].NewSHA != tip {
-		t.Fatalf("old git read invented a peer-audit rollback: %+v", pushes)
-	}
-	if after.Active == nil || after.Active.Phase != queue.Landing || !after.SourceBlocked(queue.LandingNotOnBase) {
-		t.Fatal("audit affected settlement safety")
+	if len(pushes) != 2 || pushes[0].NewSHA != first || pushes[1].PreviousSHA != first {
+		t.Fatalf("older audit invented rollback: %+v", pushes)
 	}
 }

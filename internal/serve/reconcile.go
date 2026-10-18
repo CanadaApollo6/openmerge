@@ -68,13 +68,9 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 		return loadErr
 	}
 	if baseErr == nil && state.BaseSHA != tip {
-		moveID, err := s.store.Append(ctx, w.id, []queue.Event{queue.BaseMoved{SHA: tip}}, "")
-		if err != nil {
+		if _, err := s.store.Append(ctx, w.id, []queue.Event{queue.BaseMoved{SHA: tip}}, ""); err != nil {
 			return err
 		}
-		// Audit only after the ordinary configuration cycle has finished. Its
-		// failure cannot suppress base/config publication or block-clearing.
-		defer s.auditBaseMove(ctx, w, basis, moveID, tip)
 		// Conflict observations can change when this base moves even if the
 		// default branch (and therefore the policy) stays at the same commit.
 		w.summaries = make(map[int]forge.PullRequestSummary)

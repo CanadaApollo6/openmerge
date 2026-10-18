@@ -221,6 +221,31 @@ The setting is part of the queue's configuration digest. Older binaries reject t
 
 **OpenMerge records the base moves it observes but did not make.** Unsettled OpenMerge attempts are settled first, so a landing of its own is never mistaken for an outside push. Each remaining observed advance is recorded as landed outside the queue, with no OpenMerge verification before landing. A move that is not a fast-forward is recorded as a rewrite of the base. Commits between two observations are listed from history when it can be read, and are shown as unknown when it cannot; provenance is never inferred from commit authorship. Verification that happens later is recorded separately, so the record stays true afterwards: once post-merge verification exists (ADR 0005, Phase 2b), outside commits enter its verification frontier like any other landed commit.
 
+**Implementation note, 2026-10-17 — journal-only outside-push audit.** A separate
+audit loop classifies durable `BaseMoved` transitions only after every overlapping
+attempt has settled in the shared journal. It uses the recorded landed SHA,
+including the verified contributor head for fast-forward. Git supplies ancestry
+and commit-list enrichment only; missing history is unknown. The audit has its
+own cache and credentials, takes no worker mutex or execution slot, and never
+adds work to reconciliation, configuration, planning or settlement. Its durable
+cursor resumes an incremental scan after restart; each `BaseMoved` event ID is
+an insert-if-absent deduplication key. Away-and-back observations remain distinct.
+
+Main has a pre-existing multi-server stale-read ambiguity: after `Landed(L)`, a
+configuration read begun before that landing can append `BaseMoved(B)`, where B
+is the attempt's pre-landing build base. A real rollback produces identical
+journal evidence. Only this exact `L → B` shape sets
+`possible_stale_observation: true`: it records an observed possible rewrite,
+which **may reflect a stale base read rather than a real rollback**, rather than
+a confident outside rewrite. A subsequent `B → L` is suppressed as OpenMerge's
+own landing. If observations continue to C instead, the flagged rewind remains
+and subsequent transitions are classified normally. Other rewrites do not get
+this flag. Reconciliation remains unchanged; fixing its stale-read behavior is
+material and deferred until after the ADR 0009 trial. ADR 0008's later warnings
+must treat flagged records as lower-confidence evidence and require verification
+before acknowledgement. This PR adds no acknowledgement command.
+
+
 If fence evidence proves an OpenMerge landing succeeded but a rewrite has removed that commit before settlement, record the rewrite without settling the landing or clearing its safety block. The status/snapshot tail is bounded and is not an acknowledgement ledger. ADR 0008 warnings and acknowledgements must read the durable journal and its event IDs, not this tail.
 
 ### Briefs (Stage A, prose in Stage C)

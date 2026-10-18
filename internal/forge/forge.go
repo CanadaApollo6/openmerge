@@ -316,3 +316,10 @@ type Git interface {
 type CommitHistoryReader interface {
 	CommitsBetween(ctx context.Context, repo RepoRef, base, head string, limit int) (commits []string, truncated bool, err error)
 }
+
+// OutsidePushHistory enriches journal transitions without reading live refs.
+// Production instances must have separate caches and credentials from workers.
+type OutsidePushHistory interface {
+	CommitHistoryReader
+	IsAncestor(ctx context.Context, repo RepoRef, ancestor, descendant string) (bool, error)
+}

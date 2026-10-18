@@ -117,10 +117,19 @@ Queues add `outside_pushes` after observing a base move that OpenMerge did not
 land. It contains the latest 20 observations, oldest first, independent of the
 PR explanation's event limit. Each includes `event_id`, `previous_sha`,
 `new_sha`, `at`, `ancestry_known`, `rewrite`, `history_known`, `commits`,
-`truncated`, and `verification_before_landing: "none"`. The initial base read
+`truncated`, `possible_stale_observation`, and
+`verification_before_landing: "none"`. The initial base read
 establishes a baseline and is not an outside push. Outstanding landings settle
-through the existing fence before classification; an OpenMerge landing followed
+through the existing fence before the independent journal audit classifies their
+observations; an OpenMerge landing followed
 by an admin push records only the move from the landed commit to the admin tip.
+
+`possible_stale_observation: true` applies only to a rewind from a settled
+landing L to the base B that its attempt was built on. This is lower-confidence
+evidence: the observed rewrite may reflect a stale base read rather than a real
+rollback. A return from B to L is suppressed as OpenMerge's own landing. The flag
+remains if the next observation is C instead. Verify such records before any
+future ADR 0008 acknowledgement; other transition shapes never set this flag.
 
 `rewrite: true` means the previous tip is not an ancestor of the new tip. When
 `ancestry_known` is false, `rewrite: false` is not proof of a fast-forward.

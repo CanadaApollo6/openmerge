@@ -186,6 +186,7 @@ func TestOperationalLogsOutsidePush(t *testing.T) {
 	tip, err := f.PushBase(repo, "main", "outside", nil)
 	must(t, err)
 	must(t, s.cycle(t.Context(), w))
+	runOutsidePushAudit(t, s, w)
 	must(t, s.cycle(t.Context(), w))
 	rows := logRows(t, &output)
 	if len(rows) != 1 || rows[0]["msg"] != "outside push recorded" || rows[0]["previous_sha"] != before.BaseSHA || rows[0]["sha"] != tip || rows[0]["verification_before_landing"] != "none" || rows[0]["rewrite"] != false || rows[0]["history_known"] != true {

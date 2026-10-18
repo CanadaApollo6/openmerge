@@ -379,7 +379,6 @@ func (s *State) refreshChecks(b *Batch) {
 }
 
 func cloneState(s State) State {
-	s.outsidePushes = cloneOutsidePushes(s.outsidePushes)
 	s.blockSources = maps.Clone(s.blockSources)
 	if s.blockSources == nil {
 		s.blockSources = make(map[BlockSource]BlockSourceBlocked)

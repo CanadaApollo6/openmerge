@@ -565,6 +565,9 @@ func eventSummary(event queue.Event, before, after queue.State) string {
 	case queue.LifecycleChanged:
 		return "Queue lifecycle: " + e.State + ": " + e.Detail
 	case queue.OutsidePushRecorded:
+		if e.PossibleStaleObservation {
+			return fmt.Sprintf("Observed possible rewrite %s → %s; possible stale base observation: may reflect a stale read rather than a real rollback; verify before acknowledgement; no prior OpenMerge verification", e.PreviousSHA, e.NewSHA)
+		}
 		return fmt.Sprintf("Observed outside push %s → %s; rewrite=%t, ancestry_known=%t, history_known=%t; no prior OpenMerge verification", e.PreviousSHA, e.NewSHA, e.Rewrite, e.AncestryKnown, e.HistoryKnown)
 	case queue.BaseMoved:
 		return "Observed base branch movement"

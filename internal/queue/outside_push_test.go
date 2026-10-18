@@ -16,7 +16,7 @@ func TestOutsidePushReplaySnapshotAndPlannerIndependence(t *testing.T) {
 		s, replay := initial, initial
 		var events []Event
 		for i := range OutsidePushLimit + 3 {
-			event := OutsidePushRecorded{PreviousSHA: fmt.Sprintf("old%d", i), NewSHA: fmt.Sprintf("new%d", i), AncestryKnown: true, Rewrite: i%2 == 1, HistoryKnown: true, Commits: []string{fmt.Sprintf("new%d", i)}, VerificationBeforeLanding: "none", At: epoch}
+			event := OutsidePushRecorded{PreviousSHA: fmt.Sprintf("old%d", i), NewSHA: fmt.Sprintf("new%d", i), AncestryKnown: true, Rewrite: i%2 == 1, PossibleStaleObservation: i == 3, HistoryKnown: true, Commits: []string{fmt.Sprintf("new%d", i)}, VerificationBeforeLanding: "none", At: epoch}
 			_, data, err := EncodeEvent(event)
 			if err != nil {
 				t.Fatal(err)

@@ -12,8 +12,11 @@ const OutsidePushCommitLimit = 100
 // OutsidePushLimit bounds the status/snapshot projection; the journal keeps every event.
 const OutsidePushLimit = 20
 
-// OutsidePushRecorded is an observation supported by fence evidence, never an inference
-// from commit authorship. Commits are newly reachable from NewSHA but not PreviousSHA,
+// OutsidePushRecorded is derived from a durable BaseMoved after overlapping
+// attempts settle in the journal, never from commit authorship or live ref reads.
+// PossibleStaleObservation marks only a rewind from a settled landing to that
+// attempt's build base; it may be a stale read rather than a real rollback.
+// Commits are newly reachable from NewSHA but not PreviousSHA,
 // newest first in topological order, including side histories. A rollback can have
 // a known empty list. Unknown ancestry must not be represented as a proven fast-forward.
 // Later verification is separate evidence and must never replace this record.
@@ -26,6 +29,7 @@ type OutsidePushRecorded struct {
 	Commits                   []string  `json:"commits"`
 	Truncated                 bool      `json:"truncated"`
 	VerificationBeforeLanding string    `json:"verification_before_landing"`
+	PossibleStaleObservation  bool      `json:"possible_stale_observation"`
 	At                        time.Time `json:"at"`
 }
 
