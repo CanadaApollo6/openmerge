@@ -5,16 +5,68 @@ approval. No live database, App permissions, service units, git cache or remote
 `openmerge/*` refs were used or changed. Tests use the explicitly supplied test
 Postgres, httptest, and temporary git repositories.
 
-## Inputs
+## Current inputs (round 3)
 
 - Approved plan: `f55a31bdc2946e1380ab0f8226b3a8bb6718e079`.
-- Final baseline main: `f30dd96910d6a8832e794be96104b5666c13616d`
+- Baseline main: `277c85dbcffdcfbab4aebe2dd7b45eb375b11828`.
+- Reviewed round-2 head: `c12874e1a1e6926d355c3d5a339d77876226c7d0`.
+- Round-3 implementation and regression tests:
+  `9d0a4d5467b008de0ea188829c8d5faa87485713`. The subsequent evidence
+  commit changes only this note; the PR body records the pushed head.
+- Semantics: `git-inventory-v4-bounded-ancestry`. The golden pins bounds only:
+  1,000 files, 2 MiB, zero hunks, 100,000 ancestry commits and a 30-second
+  shared discovery/verification deadline. Hunks remain independently incomplete.
+
+## Round-3 design and validation
+
+Verification now walks `rev-list --parents <base> <head> --not <all merge bases>`.
+A missing K capable of hiding a better common ancestor S cannot be reachable
+from a found base C: otherwise S would be an ancestor of C and not better.
+Thus the divergence walk hits K. Raw-parent traversal still disables shallow
+boundaries, replacement objects, grafts, commit-graphs and lazy fetching; all
+shallow-state rechecks remain. The streaming counter kills Git beyond 100,000
+commits. Merge-base discovery and verification share a 30-second deadline,
+including with Background callers. Budget exhaustion returns incomplete
+`ancestry_limit` with nil error; caller cancellation and missing divergence
+commits return incomplete `read_failure` with diagnostic errors.
+
+The fast-import regression builds 2,048 commits, covers exhaustion and the exact
+budget boundary, and proves equal endpoints and short divergences do not require
+a roots walk. The C→S→K false-base fixture still rejects missing K with/without
+a commit-graph and an available promisor remote. On a long shared prefix, removing
+an old commit below the valid base still permits the correct S merge base and
+code-revert inventory. Deadline/error-contract cases cover both merge-base and
+rev-list, internal limits (nil error), and caller deadlines (non-nil error).
+
+Validation from `/tmp/om-pr56-fix3`, Go 1.27.2:
+
+- Focused gitops/forge/fake/GitHub race suite: **exit 0**;
+  `/tmp/om-pr56-fix3-focused.log`.
+- Final ancestry/promisor regressions with race detection: **exit 0**;
+  `/tmp/om-pr56-fix3-history.log`.
+- `OPENMERGE_TEST_DATABASE_URL='postgres://postgres@localhost:54329/postgres?sslmode=disable' make check > /tmp/om-pr56-fix3.log 2>&1; echo exit=$?`:
+  **exit 0**. Formatting, lint (zero issues), all short race tests, and build
+  passed, including `internal/serve` (292.142 seconds). The full check exercised
+  the final production code; final ancestry test refinements were additionally
+  verified by the focused history race run above.
+- Final lint after those test refinements: **exit 0**;
+  `/tmp/om-pr56-fix3-final-lint.log`.
+
+Read-only comparison with baseline `277c85d` confirms no changes to the Forge
+interface, queue/config/store/simulator sources, legacy fixtures or tracked config.
+The only call sites outside `_test.go` remain the test-only `forgetest` harness;
+there is no runtime consumer. Earlier replay/simulator/digest measurements below
+are historical evidence, not claims of newly repeated runs.
+
+## Historical round-1 inputs
+
+- Approved plan: `f55a31bdc2946e1380ab0f8226b3a8bb6718e079`.
+- Round-1 baseline main: `f30dd96910d6a8832e794be96104b5666c13616d`
   (includes Stage A 1 and the code-owner ADR clarification).
 - Earlier review baseline: `1383c297453ca04b8ac424babc6659d998634c29`;
   pre-fix branch base: `df3af44ffede645c7fb64a37d83d6bae334a6aa7`.
 - Rebased/tested implementation: `15ab80e84620b82db009067269d1dd8cac229f1f`.
-  Its code and test tree equals the rebased PR head; the subsequent evidence
-  commit changes only this Markdown note.
+  This identifies the historical round-1 validation, not the current PR head.
 - Toolchain: `mise exec -- go version` → `go1.27.2 linux/amd64`.
 - Baseline binary SHA-256 (`mise exec -- go build -o /tmp/om-pr56-fix1-main-binary ./cmd/openmerge`):
   `d597a3e7b9b3b86083b742e482658df6203816499fbd604fb2a2dd618bd4eaa8`.
@@ -58,10 +110,11 @@ Postgres, httptest, and temporary git repositories.
 There are **no new event types**, actions, runtime reads, records or decisions.
 The capability has no runtime caller. Shared `forge.go`, driver/fake structs,
 queue state/wire, config loader/schema and `internal/changepolicy` are untouched.
-The sole existing implementation edit factors the unchanged git command
-setup into a writer-based helper so the new reader can bound its output.
+Existing git command setup uses a writer-based helper and an isolated diff-read
+session mode for bounded output and raw-history settings. Existing build
+sessions retain their behavior.
 
-## Final rebased validation
+## Round-1 rebased validation (historical)
 
 Tested commit: `15ab80e84620b82db009067269d1dd8cac229f1f`, based on `f30dd96`.
 From `/tmp/om-sa-2a`, inside mise's Go 1.27.2 environment:
@@ -89,7 +142,7 @@ Queue, config, simulator, store and tracked config sources are unchanged by 2a
 relative to the final baseline.
 
 
-## Fix-round validation before the final rebase
+## Round-1 fix validation before its rebase (historical)
 
 On `ee39f74a45c649609d2433258709b2dcde815151` (based on `df3af44`), the required
 `make check` exited **2**. The complete log is retained at
@@ -126,7 +179,9 @@ overflow, late NUL detection, host rename-limit/submodule settings, and the fake
 raw-byte failure cap. Additional fake tests cover no/multiple merge bases and
 exact byte boundaries. Unpaired renames now make inventory incomplete;
 `forgetest` pins non-nil errors for invalid IDs and missing objects.
-`git-inventory-v2-exact-renames` and its bounds golden pin the revised semantics.
+Round 1 used `git-inventory-v2-exact-renames`. Current round-3 semantics are
+`git-inventory-v4-bounded-ancestry`; its golden pins bounds only, including the
+ancestry commit and duration budgets.
 
 ## Initial validation (retained from the original review)
 
