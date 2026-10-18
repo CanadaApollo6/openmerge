@@ -1,11 +1,23 @@
 package forge
 
 import (
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
 )
+
+func TestDiffSemanticsBoundsGolden(t *testing.T) {
+	goldens := map[string]string{
+		"git-inventory-v2-exact-renames": "files=1000 bytes=2097152 hunks=0",
+	}
+	want, ok := goldens[DiffSemantics]
+	got := fmt.Sprintf("files=%d bytes=%d hunks=%d", MaxDiffFiles, MaxDiffBytes, MaxDiffHunks)
+	if !ok || got != want {
+		t.Fatalf("bounds changed: %s: %s; bump DiffSemantics and add its golden", DiffSemantics, got)
+	}
+}
 
 func TestPairExactDiffRenames(t *testing.T) {
 	add := func(path, id string) DiffFile {

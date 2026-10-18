@@ -74,6 +74,19 @@ func (r *Repo) RevisionDiff(ctx context.Context, repo forge.RepoRef, req forge.R
 			return fail(forge.DiffInvalidObjectID, errors.New("revision diff endpoint is not a commit"))
 		}
 	}
+	// Endpoint presence does not prove ancestry: ordinary fetches can leave an
+	// existing shallow boundary in place. Check after fetching, under the cache
+	// lock, on every read (including reads following cache maintenance).
+	shallow, err := s.command(ctx, "", "rev-parse", "--is-shallow-repository")
+	if err != nil {
+		return fail(forge.DiffReadFailure, err)
+	}
+	if shallow == "true" {
+		return fail(forge.DiffShallowHistory, nil)
+	}
+	if shallow != "false" {
+		return fail(forge.DiffReadFailure, errors.New("invalid git shallow-repository response"))
+	}
 	bases, overflow, err := s.diffCommand(ctx, forge.MaxDiffBytes, "merge-base", "--all", req.BaseSHA, req.HeadSHA)
 	if overflow {
 		return fail(forge.DiffByteLimit, nil)
@@ -163,7 +176,9 @@ func (r *Repo) RevisionDiff(ctx context.Context, repo forge.RepoRef, req forge.R
 			f.Binary = f.Binary || binary
 		}
 	}
-	result.Inventory.Completeness = forge.DiffComplete
+	if len(result.Inventory.Reasons) == 0 {
+		result.Inventory.Completeness = forge.DiffComplete
+	}
 	return result, nil
 }
 

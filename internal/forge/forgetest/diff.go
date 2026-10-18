@@ -2,6 +2,7 @@ package forgetest
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
@@ -15,7 +16,7 @@ func RunRevisionDiff(t *testing.T, reader forge.RevisionDiffReader, repo forge.R
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.BaseSHA != req.BaseSHA || result.HeadSHA != req.HeadSHA || result.MergeBaseSHA != mergeBase || result.Semantics != forge.DiffSemantics || result.Inventory.Completeness != forge.DiffComplete {
+	if result.BaseSHA != req.BaseSHA || result.HeadSHA != req.HeadSHA || result.MergeBaseSHA != mergeBase || result.Semantics != forge.DiffSemantics || result.Inventory.Completeness != forge.DiffComplete || len(result.Inventory.Reasons) != 0 {
 		t.Fatalf("unpinned or incomplete diff: %+v", result)
 	}
 	if len(result.Files) != 1 || result.Files[0].NewPath != path || result.Files[0].OldPath != "" || result.Files[0].NewMode != "100644" || !forge.ValidDiffObjectID(result.Files[0].NewObjectID) || !result.Files[0].BinaryKnown {
@@ -39,8 +40,18 @@ func RunRevisionDiff(t *testing.T, reader forge.RevisionDiffReader, repo forge.R
 	if err != nil || empty.Inventory.Completeness != forge.DiffComplete || len(empty.Files) != 0 || empty.MergeBaseSHA != req.HeadSHA {
 		t.Fatalf("empty diff: %+v %v", empty, err)
 	}
-	invalid, _ := reader.RevisionDiff(t.Context(), repo, forge.RevisionDiffRequest{BaseSHA: "main", HeadSHA: req.HeadSHA})
-	if invalid.Inventory.Completeness != forge.DiffIncomplete || len(invalid.Inventory.Reasons) != 1 || invalid.Inventory.Reasons[0] != forge.DiffInvalidObjectID {
-		t.Fatalf("mutable ref accepted: %+v", invalid)
+	for _, tc := range []struct {
+		name, base string
+		reason     forge.DiffFailureReason
+	}{
+		{"mutable ref", "main", forge.DiffInvalidObjectID},
+		{"missing commit", strings.Repeat("a", len(req.BaseSHA)), forge.DiffMissingObject},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := reader.RevisionDiff(t.Context(), repo, forge.RevisionDiffRequest{BaseSHA: tc.base, HeadSHA: req.HeadSHA})
+			if err == nil || result.Inventory.Completeness != forge.DiffIncomplete || len(result.Inventory.Reasons) != 1 || result.Inventory.Reasons[0] != tc.reason {
+				t.Fatalf("failure contract: %+v err=%v", result, err)
+			}
+		})
 	}
 }

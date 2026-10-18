@@ -3,6 +3,7 @@ package fake
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -22,18 +23,21 @@ func (f *Forge) RevisionDiff(ctx context.Context, repo forge.RepoRef, req forge.
 	fail := func(reason forge.DiffFailureReason, err error) (forge.RevisionDiff, error) {
 		result.Inventory.Completeness = forge.DiffIncomplete
 		result.Inventory.Reasons = append(result.Inventory.Reasons, reason)
+		if len(result.Files) > forge.MaxDiffFiles {
+			result.Files = result.Files[:forge.MaxDiffFiles]
+		}
 		return result, err
 	}
 	if err := f.failure(ctx, "RevisionDiff"); err != nil {
 		return fail(forge.DiffReadFailure, err)
 	}
 	if !forge.ValidDiffObjectID(req.BaseSHA) || !forge.ValidDiffObjectID(req.HeadSHA) {
-		return fail(forge.DiffInvalidObjectID, nil)
+		return fail(forge.DiffInvalidObjectID, errors.New("revision diff requires full commit object IDs"))
 	}
 	r := f.repo(repo)
 	for _, id := range []string{req.BaseSHA, req.HeadSHA} {
 		if _, ok := r.commits[id]; !ok {
-			return fail(forge.DiffMissingObject, nil)
+			return fail(forge.DiffMissingObject, fmt.Errorf("revision diff commit %s is missing", id))
 		}
 	}
 	ancestors := func(start string) map[string]bool {
@@ -143,7 +147,9 @@ func (f *Forge) RevisionDiff(ctx context.Context, repo forge.RepoRef, req forge.
 			file.Binary = file.Binary || strings.ContainsRune(blobs[id], '\x00')
 		}
 	}
-	result.Inventory.Completeness = forge.DiffComplete
+	if len(result.Inventory.Reasons) == 0 {
+		result.Inventory.Completeness = forge.DiffComplete
+	}
 	return result, nil
 }
 

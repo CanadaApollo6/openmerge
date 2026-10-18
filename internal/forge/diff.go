@@ -10,7 +10,9 @@ import (
 // BaseSHA is the pinned queue-base tip, not a speculative build base. Callers
 // retain it across forward landings and supply a new pin after a base rewrite.
 // A nil error never implies completeness: inspect Inventory and BinaryKnown.
-// Errors carry transport diagnostics; typed Reasons remain suitable for evidence.
+// Invalid IDs, missing objects and read failures return a non-nil diagnostic
+// error. Other limitations return nil errors with incomplete coverage. Typed
+// Reasons remain suitable for evidence; complete inventory has no Reasons.
 type RevisionDiffReader interface {
 	RevisionDiff(context.Context, RepoRef, RevisionDiffRequest) (RevisionDiff, error)
 }
@@ -21,7 +23,7 @@ type RevisionDiffRequest struct{ BaseSHA, HeadSHA string }
 // DiffSemantics fixes exact-object rename pairing and binary detection (NUL in
 // either blob). No heuristic similarity, external diff, textconv or attributes
 // participate. Consumers include this version in their classifier version.
-const DiffSemantics = "git-inventory-v1-exact-renames"
+const DiffSemantics = "git-inventory-v2-exact-renames"
 
 // Inventory resource limits are part of DiffSemantics.
 const (
@@ -51,6 +53,7 @@ const (
 	DiffReadFailure        DiffFailureReason = "read_failure"
 	DiffNoMergeBase        DiffFailureReason = "no_merge_base"
 	DiffMultipleMergeBases DiffFailureReason = "multiple_merge_bases"
+	DiffShallowHistory     DiffFailureReason = "shallow_history"
 	DiffFileLimit          DiffFailureReason = "file_limit"
 	DiffByteLimit          DiffFailureReason = "byte_limit"
 	DiffUnpairedRename     DiffFailureReason = "unpaired_rename"

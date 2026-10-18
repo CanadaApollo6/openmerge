@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/forge/forgetest"
@@ -86,7 +87,7 @@ func TestRevisionDiffInventory(t *testing.T) {
 	req := forge.RevisionDiffRequest{BaseSHA: old, HeadSHA: head}
 	result, err := f.g.RevisionDiff(t.Context(), testRepo, req)
 	must(t, err)
-	if result.Inventory.Completeness != forge.DiffComplete || len(result.Files) != 8 {
+	if result.Inventory.Completeness != forge.DiffIncomplete || !slices.Contains(result.Inventory.Reasons, forge.DiffUnpairedRename) || len(result.Files) != 8 {
 		t.Fatalf("%+v", result)
 	}
 	byPath := map[string]forge.DiffFile{}
@@ -243,5 +244,164 @@ func TestRevisionDiffRejectsTagAndBrokenBlob(t *testing.T) {
 	broken, err := f.g.RevisionDiff(t.Context(), testRepo, req)
 	if err == nil || broken.Inventory.Completeness != forge.DiffIncomplete || !slices.Contains(broken.Inventory.Reasons, forge.DiffReadFailure) {
 		t.Fatalf("broken=%+v %v", broken, err)
+	}
+}
+
+// Astra's C -> S -> K, C -> D, B = merge(K,D), S -> H graph.
+// H reverts code.go and adds docs.md: truncating at K falsely makes C the base
+// and hides code.go, even though both endpoints and S exist in the cache.
+func TestRevisionDiffShallowHistory(t *testing.T) {
+	f := newFixture(t)
+	c := f.diffCommit(f.base, "C", map[string]diffEntry{"code.go": {mode: "100644", content: "original\n"}})
+	s := f.diffCommit(c, "S", map[string]diffEntry{"code.go": {mode: "100644", content: "changed\n"}})
+	k := f.diffCommit(s, "K", nil)
+	d := f.diffCommit(c, "D", nil)
+	b := f.diffCommit(k, "B", nil, d)
+	h := f.diffCommit(s, "H", map[string]diffEntry{"code.go": {mode: "100644", content: "original\n"}, "docs.md": {mode: "100644", content: "docs\n"}})
+	req := forge.RevisionDiffRequest{BaseSHA: b, HeadSHA: h}
+	full, err := f.g.RevisionDiff(t.Context(), testRepo, req)
+	must(t, err)
+	if full.Inventory.Completeness != forge.DiffComplete || full.MergeBaseSHA != s || len(full.Files) != 2 || full.Files[0].NewPath != "code.go" || full.Files[1].NewPath != "docs.md" {
+		t.Fatalf("full history: %+v", full)
+	}
+	for _, mode := range []string{"existing-objects", "ordinary-fetch", "cache-maintenance"} {
+		t.Run(mode, func(t *testing.T) {
+			r := f.client(t, 0)
+			r.cfg.GCInterval, r.cfg.GCThresholdBytes = -1, -1
+			session, unlock, err := r.open(t.Context(), testRepo)
+			must(t, err)
+			dir := session.dir
+			if mode == "existing-objects" {
+				must(t, session.commits(t.Context(), b, h))
+				must(t, os.WriteFile(filepath.Join(dir, "shallow"), []byte(k+"\n"), 0600))
+			} else {
+				gitCommand(t, dir, "", nil, "fetch", "--no-write-fetch-head", "--depth=1", "file://"+f.remote, k)
+			}
+			if mode == "cache-maintenance" {
+				// Retain the endpoints across real GC. A normal fetch does not unshallow
+				// K, and GC must not make the next read trust the truncated graph.
+				must(t, session.commits(t.Context(), b, h))
+				gitCommand(t, dir, "", nil, "update-ref", "refs/heads/pinned-base", b)
+				gitCommand(t, dir, "", nil, "update-ref", "refs/heads/pinned-head", h)
+				must(t, os.WriteFile(filepath.Join(dir, "openmerge-gc"), nil, 0600))
+				r.cfg.GCInterval = time.Nanosecond
+			}
+			unlock()
+			for i := 0; i < 2; i++ {
+				got, err := r.RevisionDiff(t.Context(), testRepo, req)
+				if err != nil || got.MergeBaseSHA != "" || len(got.Files) != 0 || got.Inventory.Completeness != forge.DiffIncomplete || !reflect.DeepEqual(got.Inventory.Reasons, []forge.DiffFailureReason{forge.DiffShallowHistory}) {
+					t.Fatalf("read %d: %+v err=%v", i, got, err)
+				}
+				if got := gitCommand(t, dir, "", nil, "rev-parse", "--is-shallow-repository"); got != "true" {
+					t.Fatalf("fixture lost shallow boundary: %q", got)
+				}
+			}
+			if got := gitCommand(t, dir, "", nil, "merge-base", b, h); got != c {
+				t.Fatalf("fixture must reproduce the falsely docs-only base C: %q", got)
+			}
+			if mode == "cache-maintenance" {
+				packs, err := filepath.Glob(filepath.Join(dir, "objects", "pack", "*.pack"))
+				must(t, err)
+				if len(packs) == 0 {
+					t.Fatal("cache maintenance did not pack retained history")
+				}
+			}
+		})
+	}
+}
+
+func TestRevisionDiffReviewBoundaries(t *testing.T) {
+	f := newFixture(t)
+	for _, tc := range []struct {
+		name     string
+		entries  map[string]diffEntry
+		complete forge.DiffCompleteness
+		binary   bool
+	}{
+		{"exact-1000-files", func() map[string]diffEntry {
+			entries := map[string]diffEntry{}
+			for i := 0; i < 1000; i++ {
+				entries[fmt.Sprintf("doc-%04d.md", i)] = diffEntry{mode: "100644", content: "x"}
+			}
+			return entries
+		}(), forge.DiffComplete, false},
+		// A SHA-1 raw record costs 100 bytes plus the 8-byte path.
+		{"exact-2MiB", map[string]diffEntry{"limit.md": {mode: "100644", content: strings.Repeat("x", forge.MaxDiffBytes-108)}}, forge.DiffComplete, false},
+		{"over-2MiB-by-one", map[string]diffEntry{"limit.md": {mode: "100644", content: strings.Repeat("x", forge.MaxDiffBytes-107)}}, forge.DiffIncomplete, false},
+		{"late-nul", map[string]diffEntry{"late.md": {mode: "100644", content: strings.Repeat("x", 9000) + "\x00"}}, forge.DiffComplete, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			head := f.diffCommit(f.base, tc.name, tc.entries)
+			got, err := f.g.RevisionDiff(t.Context(), testRepo, forge.RevisionDiffRequest{BaseSHA: f.base, HeadSHA: head})
+			if err != nil || got.Inventory.Completeness != tc.complete || len(got.Files) != len(tc.entries) {
+				t.Fatalf("coverage=%+v files=%d err=%v", got.Inventory, len(got.Files), err)
+			}
+			if tc.complete == forge.DiffIncomplete {
+				if !slices.Contains(got.Inventory.Reasons, forge.DiffByteLimit) || got.Files[0].BinaryKnown {
+					t.Fatalf("byte limit: %+v", got)
+				}
+			} else {
+				for _, file := range got.Files {
+					if !file.BinaryKnown || file.Binary != tc.binary {
+						t.Fatalf("binary evidence: %+v", file)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestRevisionDiffIgnoresHostRenameAndSubmoduleSettings(t *testing.T) {
+	f := newFixture(t)
+	before, after := map[string]diffEntry{}, map[string]diffEntry{}
+	for i := 0; i < 3; i++ {
+		before[fmt.Sprintf("old-%d.md", i)] = diffEntry{mode: "100644", content: fmt.Sprint(i)}
+		after[fmt.Sprintf("old-%d.md", i)] = diffEntry{}
+		after[fmt.Sprintf("new-%d.md", i)] = diffEntry{mode: "100644", content: fmt.Sprint(i)}
+	}
+	before["module"] = diffEntry{mode: "160000", object: f.base}
+	after["module"] = diffEntry{mode: "160000", object: f.prs[0].HeadSHA}
+	base := f.diffCommit(f.base, "rename-base", before)
+	head := f.diffCommit(base, "rename-head", after)
+	req := forge.RevisionDiffRequest{BaseSHA: base, HeadSHA: head}
+	want, err := f.g.RevisionDiff(t.Context(), testRepo, req)
+	must(t, err)
+	if want.Inventory.Completeness != forge.DiffComplete || len(want.Files) != 4 || !want.Files[0].Submodule {
+		t.Fatalf("%+v", want)
+	}
+	for _, file := range want.Files[1:] {
+		if file.Rename != forge.DiffExactRename {
+			t.Fatalf("%+v", file)
+		}
+	}
+	session, unlock, err := f.g.open(t.Context(), testRepo)
+	must(t, err)
+	_, err = session.command(t.Context(), "", "config", "diff.renameLimit", "1")
+	must(t, err)
+	_, err = session.command(t.Context(), "", "config", "diff.ignoreSubmodules", "all")
+	must(t, err)
+	unlock()
+	got, err := f.g.RevisionDiff(t.Context(), testRepo, req)
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("host settings changed evidence: %+v err=%v", got, err)
+	}
+}
+
+func TestRevisionDiffUnpairedRenamesIncomplete(t *testing.T) {
+	f := newFixture(t)
+	old := f.diffCommit(f.base, "old", map[string]diffEntry{"old.md": {mode: "100644", content: "same"}})
+	for _, ambiguous := range []bool{false, true} {
+		t.Run(fmt.Sprint(ambiguous), func(t *testing.T) {
+			entries := map[string]diffEntry{"old.md": {}, "new.md": {mode: "100644", content: "different"}}
+			if ambiguous {
+				entries["new.md"] = diffEntry{mode: "100644", content: "same"}
+				entries["copy.md"] = diffEntry{mode: "100644", content: "same"}
+			}
+			head := f.diffCommit(old, "uncertain rename", entries)
+			got, err := f.g.RevisionDiff(t.Context(), testRepo, forge.RevisionDiffRequest{BaseSHA: old, HeadSHA: head})
+			if err != nil || got.Inventory.Completeness != forge.DiffIncomplete || !reflect.DeepEqual(got.Inventory.Reasons, []forge.DiffFailureReason{forge.DiffUnpairedRename}) || len(got.Files) != len(entries) {
+				t.Fatalf("%+v err=%v", got, err)
+			}
+		})
 	}
 }
