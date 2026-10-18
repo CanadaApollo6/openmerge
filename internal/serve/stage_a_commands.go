@@ -132,7 +132,7 @@ func (s *Server) stageACommandsFromNative(ctx context.Context, w *worker, number
 				} else {
 					// Bind unapprove and bare digest to the authenticated processing revision,
 					// after a fresh PR read. A positive digest is never rebound to old evidence.
-					pr, err := s.observe(ctx, w, number)
+					_, err := s.observe(ctx, w, number)
 					if err != nil {
 						return err
 					}
@@ -176,21 +176,6 @@ func (s *Server) stageACommandsFromNative(ctx context.Context, w *worker, number
 						e := queue.ReviewStanceObserved{Basis: b, Reviewer: actor, Stance: cp.Stance{UserID: actor.ID, Kind: cp.Withdraw, Revision: uint64(b.Revision), Head: b.Head, Source: cp.StanceSource{Channel: cp.CommentCommand, ID: strconv.FormatInt(c.ID, 10), Sequence: uint64(c.ID), ActingUserID: actor.ID, Time: c.Created.Time, TimeKnown: true, Precision: cp.ExactTime, UpperTimeBound: c.Created.Time.Add(time.Second)}}, SourceKind: forge.CommentCreationTime, SourceTime: forge.NativeTime{Source: forge.CommentCreationTime, Time: c.Created.Time, Precision: time.Second, UpperBound: c.Created.Time.Add(time.Second)}}
 						events = append(events, e)
 						outcome = approvalCommandOutcome{Detail: fmt.Sprintf("Approval withdrawn for revision %d, head %s.", b.Revision, b.Head)}
-					default:
-						fields := strings.Fields(legacy)
-						switch fields[0] {
-						case "queue":
-							if len(fields) == 2 && !strings.EqualFold(fields[1], pr.HeadSHA) {
-								outcome = approvalCommandOutcome{Detail: "The SHA does not match the current head " + pr.HeadSHA}
-							} else {
-								events = append(events, queue.EnqueueRequested{PR: number, At: c.Created.Time})
-								outcome = queueReceipt{QueuedSHA: pr.HeadSHA}
-							}
-						case "dequeue":
-							events = append(events, queue.DequeueRequested{PR: number})
-						case "refresh":
-							events = append(events, queue.RefreshRequested{})
-						}
 					}
 				}
 			}

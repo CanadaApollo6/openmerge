@@ -3,9 +3,11 @@ package serve
 import (
 	"context"
 	"errors"
+	"maps"
 	"testing"
 	"time"
 
+	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
 	"github.com/CanadaApollo6/openmerge/internal/executor"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -16,9 +18,16 @@ import (
 // Neither can authorize a decision against an older positive stance.
 func TestStageAFreshNegativeStancesBeforeStart(t *testing.T) {
 	for _, timing := range []string{"final-read", "before-start"} {
-		for _, kind := range []string{"request-changes", "dismissal", "unapprove"} {
+		for _, kind := range []string{"request-changes", "dismissal", "unapprove", "withdrawal", "revoked-writer", "team-removal", "grant-aba"} {
 			t.Run(timing+"/"+kind, func(t *testing.T) {
 				s, w, f := shadowFixture(t, 1, "main", "7", false)
+				team := forge.TeamIdentity{ID: 50, OrganizationID: 5, Organization: "org", Slug: "reviewers"}
+				if kind == "team-removal" {
+					f.SetTeam(team, []forge.UserIdentity{{ID: 21, Login: "writer", Kind: forge.UserAccount}})
+					w.stageA.repository.Groups = map[string][]string{"reviewers": {"org/reviewers"}}
+					w.stageA.candidate.Approvals.Default = cp.Requirement{Selector: cp.Group, Group: "reviewers", Count: 1}
+					must(t, s.reconcile(t.Context(), w, true))
+				}
 				pr, err := f.PullRequest(t.Context(), repo, 1)
 				must(t, err)
 				review := forge.NativeReview{ID: 100, CommitID: pr.HeadSHA, Author: forge.UserIdentity{ID: 21, Login: "writer", Kind: forge.UserAccount}, State: forge.ReviewApproved, Submitted: forge.NativeTime{Time: time.Now().UTC().Add(time.Minute), Source: forge.ReviewSubmissionTime, Precision: time.Second}}
@@ -55,6 +64,12 @@ func TestStageAFreshNegativeStancesBeforeStart(t *testing.T) {
 				}
 				inject := func() {
 					switch kind {
+					case "withdrawal":
+						native.Reviews = nil
+					case "revoked-writer", "grant-aba":
+						f.SetWriteGrant(repo, 21, "read")
+					case "team-removal":
+						f.SetTeam(team, nil)
 					case "request-changes":
 						negative := review
 						negative.ID = 101
@@ -88,8 +103,17 @@ func TestStageAFreshNegativeStancesBeforeStart(t *testing.T) {
 						if kind == "unapprove" {
 							must(t, s.commands(ctx, w, 1))
 						} else {
-							_, err := s.observe(ctx, w, 1)
-							must(t, err)
+							// A second worker's poll commits after the gate read, while
+							// the first worker is paused immediately before atomic start.
+							other := worker{Target: w.Target, id: w.id, stageA: w.stageA, cfg: w.cfg, configTip: w.configTip, configDigest: w.configDigest, prs: maps.Clone(w.prs), summaries: maps.Clone(w.summaries)}
+							done := make(chan error, 1)
+							go func() { _, err := s.observe(ctx, &other, 1); done <- err }()
+							must(t, <-done)
+							if kind == "grant-aba" {
+								f.SetWriteGrant(repo, 21, "write")
+								go func() { _, err := s.observe(ctx, &other, 1); done <- err }()
+								must(t, <-done)
+							}
 						}
 						return commit(ctx, fresh, decisions, start)
 					}
@@ -112,6 +136,10 @@ func TestStageAFreshNegativeStancesBeforeStart(t *testing.T) {
 					switch e := record.Event.(type) {
 					case queue.LandingStarted, queue.Landed:
 						t.Fatalf("negative stance permitted %T", e)
+					case queue.ApprovalEligibilityObserved:
+						if kind == "withdrawal" || kind == "revoked-writer" || kind == "team-removal" || kind == "grant-aba" {
+							found = true
+						}
 					case queue.ReviewStanceObserved:
 						if e.Stance.Kind != "approve" {
 							found = true

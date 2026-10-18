@@ -47,7 +47,7 @@ func (d *Driver) ResolveUser(ctx context.Context, login string) (forge.UserIdent
 	}
 	user, _, err := d.client.Users.Get(identityContext(ctx), login)
 	if err != nil {
-		return forge.UserIdentity{}, safeError(err)
+		return forge.UserIdentity{}, identityError(err, false)
 	}
 	identity := userIdentity(user)
 	if identity.ID <= 0 || !validIdentityLogin(identity.Login) {
@@ -64,7 +64,7 @@ func (d *Driver) ResolveTeam(ctx context.Context, name string) (forge.TeamIdenti
 	}
 	team, _, err := d.client.Teams.GetTeamBySlug(identityContext(ctx), org, slug)
 	if err != nil {
-		return forge.TeamIdentity{}, safeError(err)
+		return forge.TeamIdentity{}, identityError(err, true)
 	}
 	identity := forge.TeamIdentity{ID: team.GetID(), OrganizationID: team.GetOrganization().GetID(), Organization: team.GetOrganization().GetLogin(), Slug: team.GetSlug()}
 	if identity.ID <= 0 || identity.OrganizationID <= 0 || !strings.EqualFold(identity.Organization, org) || !strings.EqualFold(identity.Slug, slug) {
@@ -85,7 +85,7 @@ func (d *Driver) TeamMembers(ctx context.Context, team forge.TeamIdentity) ([]fo
 	for page := 1; page != 0; {
 		users, res, err := d.client.Teams.ListTeamMembersByID(ctx, team.OrganizationID, team.ID, &gh.TeamListTeamMembersOptions{Role: "all", ListOptions: gh.ListOptions{Page: page, PerPage: 100}})
 		if err != nil {
-			return nil, safeError(err)
+			return nil, identityError(err, true)
 		}
 		for _, user := range users {
 			identity := userIdentity(user)
@@ -130,4 +130,15 @@ func (d *Driver) WriteGrant(ctx context.Context, repo forge.RepoRef, author forg
 		return grant, fmt.Errorf("%w: expected user %d, observed %d", forge.ErrIdentityMismatch, author.ID, grant.User.ID)
 	}
 	return grant, nil
+}
+
+// Ordinary inaccessible policy identities block configuration until readable.
+// Normalize rate limits first so permission-looking rate responses remain retryable.
+func identityError(err error, team bool) error {
+	normalized := safeError(err)
+	var api *APIError
+	if errors.As(normalized, &api) && (api.StatusCode == 404 || team && api.StatusCode == 403) {
+		return fmt.Errorf("%w: %w", forge.ErrIdentityUnavailable, normalized)
+	}
+	return normalized
 }

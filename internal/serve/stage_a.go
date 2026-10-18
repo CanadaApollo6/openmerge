@@ -19,6 +19,7 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/config/condition"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
+	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
 // stageAPolicy has no production constructor or public configuration path in
@@ -291,6 +292,12 @@ func preflightStageA(state queue.State, events []queue.Event) error {
 			if err == nil {
 				err = state.CheckClassificationAdmission(e)
 			}
+		case queue.ApprovalEligibilityObserved:
+			facts, _ := state.ApprovalFacts(e.Basis.ChangeID)
+			if facts.Eligibility != nil && facts.Eligibility.Basis.At.After(e.Basis.At) {
+				return store.ErrLandingDecisionStale
+			}
+			err = state.CheckApprovalAdmission(e)
 		case queue.ApprovalInputsChanged:
 			err = state.CheckApprovalAdmission(e.Eligibility)
 		case queue.ApprovalGateRejected:
@@ -393,13 +400,14 @@ func (s *Server) observeStageANative(ctx context.Context, w *worker, pr forge.Pu
 	if err != nil {
 		return err
 	}
+	grantFor := stageAGrantPass(ctx, ids, w.repo())
 	var fresh *queue.ApprovalEligibilityObserved
 	relevant := func(state queue.State, e queue.ReviewStanceObserved, grant forge.WriteGrant) (bool, error) {
 		if !pr.HeadInBaseRepo && e.Stance.Kind == cp.Approve {
 			return true, nil
 		}
 		if fresh == nil {
-			read, err := s.readStageAInputsFromNative(ctx, w, state, b, native)
+			read, err := s.readStageAInputsWithGrants(ctx, w, state, b, native, grantFor, nil)
 			if err != nil {
 				return false, err
 			}
@@ -412,13 +420,13 @@ func (s *Server) observeStageANative(ctx context.Context, w *worker, pr forge.Pu
 	// still read at every gate so revocation never lends an old grant.
 	for _, review := range native.Reviews {
 		e, ok := queue.NativeStance(b, review)
-		if !ok {
+		if !ok || e.Stance.Kind == cp.Approve && review.CommitID != b.Head {
 			continue
 		}
 		facts, _ := state.ApprovalFacts(b.ChangeID)
 		retainedNegative := e.Stance.Kind != cp.Approve && hasRetainedNativeActor(facts, e.Reviewer.ID)
 		if !retainedNegative {
-			grant, err := ids.WriteGrant(ctx, w.repo(), review.Author)
+			grant, err := grantFor(review.Author)
 			if err != nil {
 				if errors.Is(err, forge.ErrIdentityUnavailable) || errors.Is(err, forge.ErrIdentityMismatch) {
 					continue
@@ -456,7 +464,34 @@ func (s *Server) observeStageANative(ctx context.Context, w *worker, pr forge.Pu
 			return err
 		}
 	}
-	return nil
+	// Persist the complete eligibility view even when no new stance survived
+	// admission: absence, revoked grants and membership changes are decision inputs.
+	freshInputs, err := s.readStageAInputsWithGrants(ctx, w, state, b, native, grantFor, fresh)
+	if err != nil {
+		return err
+	}
+	value := freshInputs
+	value.Basis.ReadID = ""
+	value.Basis.At = time.Time{}
+	return s.recordStageA(ctx, w, "stage-a/eligibility/"+string(b.ChangeID), value, freshInputs)
+}
+
+// stageAGrantPass memoizes by immutable user ID for one acquisition only. A new
+// poll always creates a new pass, including after denied or failed reads.
+func stageAGrantPass(ctx context.Context, ids forge.IdentityReader, repo forge.RepoRef) func(forge.UserIdentity) (forge.WriteGrant, error) {
+	type result struct {
+		grant forge.WriteGrant
+		err   error
+	}
+	results := map[int64]result{}
+	return func(user forge.UserIdentity) (forge.WriteGrant, error) {
+		if r, ok := results[user.ID]; ok {
+			return r.grant, r.err
+		}
+		grant, err := ids.WriteGrant(ctx, repo, user)
+		results[user.ID] = result{grant, err}
+		return grant, err
+	}
 }
 
 func stageASourceKey(e queue.ReviewStanceObserved) string {
@@ -622,6 +657,14 @@ func (s *Server) readStageAInputsFromNative(ctx context.Context, w *worker, stat
 	if err != nil {
 		return queue.ApprovalEligibilityObserved{}, err
 	}
+	return s.readStageAInputsWithGrants(ctx, w, state, b, native, stageAGrantPass(ctx, ids, w.repo()), nil)
+}
+
+func (s *Server) readStageAInputsWithGrants(ctx context.Context, w *worker, state queue.State, b queue.ApprovalBasis, native forge.NativeReviews, grantFor func(forge.UserIdentity) (forge.WriteGrant, error), pools *queue.ApprovalEligibilityObserved) (queue.ApprovalEligibilityObserved, error) {
+	ids, _, err := w.stageReaders()
+	if err != nil {
+		return queue.ApprovalEligibilityObserved{}, err
+	}
 	e := queue.ApprovalEligibilityObserved{Basis: b, Actors: map[string]cp.Actor{}, Groups: map[string]cp.IdentitySet{}, OwnerPools: map[string]cp.IdentitySet{}, Known: true, Reasons: []string{}}
 	users := map[string]forge.UserIdentity{}
 	f, _ := state.ApprovalFacts(b.ChangeID)
@@ -668,6 +711,10 @@ func (s *Server) readStageAInputsFromNative(ctx context.Context, w *worker, stat
 		return pool
 	}
 	for group, names := range w.stageA.repository.Groups {
+		if pools != nil {
+			e.Groups[group] = pools.Groups[group]
+			continue
+		}
 		pool := cp.IdentitySet{IDs: []string{}, Resolved: true, Fresh: true}
 		for _, name := range names {
 			p := addPool(name)
@@ -688,10 +735,28 @@ func (s *Server) readStageAInputsFromNative(ctx context.Context, w *worker, stat
 		if pool, ok := e.OwnerPools[o.Label()]; ok {
 			return pool
 		}
+		if pools != nil {
+			pool := pools.OwnerPools[o.Label()]
+			e.OwnerPools[o.Label()] = pool
+			return pool
+		}
 		pool := addPool(o.Name)
 		e.OwnerPools[o.Label()] = pool
 		return pool
 	})
+	if pools != nil {
+		for id, actor := range pools.Actors {
+			if _, exists := users[id]; exists {
+				continue
+			}
+			n, _ := strconv.ParseInt(strings.TrimPrefix(id, "github.com:user:"), 10, 64)
+			kind := forge.BotAccount
+			if actor.Identity.Kind == cp.HumanAccount {
+				kind = forge.UserAccount
+			}
+			users[id] = forge.UserIdentity{ID: n, Login: actor.Identity.Login, Kind: kind}
+		}
+	}
 	for id, u := range users {
 		p, err := policyIdentity(u)
 		if err != nil {
@@ -701,7 +766,7 @@ func (s *Server) readStageAInputsFromNative(ctx context.Context, w *worker, stat
 			p.Kind = cp.AgentAccount
 		}
 		g := cp.WriteGrant{SubjectID: id, Write: cp.Unknown}
-		grant, err := ids.WriteGrant(ctx, w.repo(), u)
+		grant, err := grantFor(u)
 		if err == nil && grant.User.ID == u.ID && !missing[id] {
 			g.ReturnedID, g.Fresh, g.Write = id, true, cp.False
 			if grant.CanWrite(u.ID) {

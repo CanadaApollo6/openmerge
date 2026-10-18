@@ -67,12 +67,12 @@ func (c *GoverningCache) get(key string, parse func(*governingCacheEntry)) gover
 func (c *GoverningCache) TreeDeriver(g forge.GoverningFiles, resolve OwnerResolver) TreeDeriver {
 	d := TreeDeriver{Resolve: resolve, owners: map[string]ownersFile{}, attributes: map[string]attributesFile{}}
 	for _, f := range g.Codeowners {
-		if f.Present && forge.ValidDiffObjectID(f.ObjectID) {
+		if f.Present && definite(f) {
 			d.owners[f.Path] = c.owner(f.ObjectID, f.Content)
 		}
 	}
 	for _, f := range g.Attributes {
-		if f.Present && forge.ValidDiffObjectID(f.ObjectID) {
+		if f.Present && definite(f) {
 			d.attributes[f.Path] = c.attributes(f.ObjectID, f.Content)
 		}
 	}

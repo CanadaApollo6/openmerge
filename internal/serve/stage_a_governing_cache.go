@@ -38,7 +38,7 @@ func newStageAGoverningCache() *stageAGoverningCache {
 }
 
 func (c *stageAGoverningCache) read(ctx context.Context, reader forge.GoverningFilesReader, repo forge.RepoRef, req forge.GoverningFilesRequest) (forge.GoverningFiles, error) {
-	key := stageAGoverningKey(req)
+	key := repo.Path + "\x00" + stageAGoverningKey(req)
 	c.mu.Lock()
 	if existing := c.entries[key]; existing != nil {
 		c.lru.MoveToFront(existing)

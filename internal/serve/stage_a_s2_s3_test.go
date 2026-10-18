@@ -2,6 +2,8 @@ package serve
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -160,5 +162,41 @@ func TestStageANativeNoiseUsesOneStaticPoolRead(t *testing.T) {
 	}
 	if got := f.IdentityCalls("ResolveUser") - before; got != 2 { // PR author + one static group member
 		t.Fatalf("20 native stances caused %d ResolveUser calls, want 2", got)
+	}
+}
+
+func TestStageANativeGrantCallsPerDistinctReviewer(t *testing.T) {
+	for _, reviewers := range []int{1, 3} {
+		for _, count := range []int{1, 30} {
+			t.Run(fmt.Sprintf("reviewers=%d/approvals=%d", reviewers, count), func(t *testing.T) {
+				s, w, f := shadowFixture(t, 1, "main", "7", false)
+				pr, err := f.PullRequest(t.Context(), repo, 1)
+				must(t, err)
+				native := forge.NativeReviews{}
+				for actor := range reviewers {
+					user := forge.UserIdentity{ID: int64(21 + actor), Login: fmt.Sprintf("writer%d", actor), Kind: forge.UserAccount}
+					f.SetIdentity(user)
+					f.SetWriteGrant(repo, user.ID, "write")
+					for i := range count {
+						native.Reviews = append(native.Reviews, forge.NativeReview{ID: int64(actor*100 + i + 1), Author: user, CommitID: pr.HeadSHA, State: forge.ReviewApproved, Submitted: forge.NativeTime{Time: time.Now().Add(time.Minute), Source: forge.ReviewSubmissionTime}})
+					}
+				}
+				for i := range count {
+					native.Reviews = append(native.Reviews, forge.NativeReview{ID: int64(1000 + i), Author: forge.UserIdentity{ID: 999, Login: "stale", Kind: forge.UserAccount}, CommitID: strings.Repeat("a", 40), State: forge.ReviewApproved})
+				}
+				f.SetNativeReviews(repo, 1, native)
+				for pass := range 2 {
+					before := f.IdentityCalls("WriteGrant")
+					_, err := s.observe(t.Context(), w, 1)
+					must(t, err)
+					if got := f.IdentityCalls("WriteGrant") - before; got != reviewers {
+						t.Fatalf("pass %d: %d grants for %d current reviewers (%d approvals each)", pass, got, reviewers, count)
+					}
+					for actor := range reviewers {
+						f.SetWriteGrant(repo, int64(21+actor), "read")
+					}
+				}
+			})
+		}
 	}
 }
