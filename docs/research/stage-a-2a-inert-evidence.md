@@ -1,4 +1,4 @@
-# Stage A 2a: inert-component evidence
+# Stage A 2a: merge evidence for the dormant component
 
 This is merge evidence for the dormant pinned diff capability, not a deployment
 approval. No live database, App permissions, service units, git cache or remote
@@ -8,24 +8,29 @@ Postgres, httptest, and temporary git repositories.
 ## Inputs
 
 - Approved plan: `f55a31bdc2946e1380ab0f8226b3a8bb6718e079`.
-- Baseline main: `1383c297453ca04b8ac424babc6659d998634c29`.
-- Current main: `df3af44ffede645c7fb64a37d83d6bae334a6aa7` (approved-plan
-  documentation only; production/test inputs unchanged from the baseline).
-- Rebased implementation: `bcc22acaf0266760eba001df80fa97fcf4694331`.
-- Tested implementation: `0185ea41a7d4d254210eb119f10b005b592c33a5`.
-  The following evidence-only commit changes documentation, not implementation.
+- Final baseline main: `f30dd96910d6a8832e794be96104b5666c13616d`
+  (includes Stage A 1 and the code-owner ADR clarification).
+- Earlier review baseline: `1383c297453ca04b8ac424babc6659d998634c29`;
+  pre-fix branch base: `df3af44ffede645c7fb64a37d83d6bae334a6aa7`.
+- Rebased/tested implementation: `15ab80e84620b82db009067269d1dd8cac229f1f`.
+  Its code and test tree equals the rebased PR head; the subsequent evidence
+  commit changes only this Markdown note.
 - Toolchain: `mise exec -- go version` → `go1.27.2 linux/amd64`.
-- Baseline binary SHA-256 (`mise exec -- go build -o /tmp/om-sa-2a-old ./cmd/openmerge`):
-  `d8943447c0b12948dd314bc8266082e1647bb829704e7bbcb862e72b5d960b77`.
-- New binary SHA-256 (same command, output `/tmp/om-sa-2a-new`):
-  `4d9f4fcfeebf54185fb8dbb6aad4193464b9a8fdc7834c734448a44aa0884a69`.
+- Baseline binary SHA-256 (`mise exec -- go build -o /tmp/om-pr56-fix1-main-binary ./cmd/openmerge`):
+  `d597a3e7b9b3b86083b742e482658df6203816499fbd604fb2a2dd618bd4eaa8`.
+- Rebased binary SHA-256 (same command, output `/tmp/om-pr56-fix1-rebased-binary`):
+  `631380f571158d92fa4ac11750c158e5299973053ed5c209e7bae5bd03ad4e4d`.
 
-## Differential results
+## Differential results (plan gate numbering)
 
 1. All **73** legacy wire fixtures are byte-identical. Hash the sorted
-   `internal/queue/testdata/wire/v1/*.json` files as concatenated relative path,
-   NUL, then file bytes: both trees yield
+   `internal/queue/testdata/wire/v1/*.json` files, excluding Stage A 1's
+   `event_change_revision_observed.json`, as concatenated relative path, NUL,
+   then file bytes: both trees yield
    `c99ff4e8c5450148ca60c378521a4e3bf03c69ee34707b69e0f910583d5a1c5c`.
+   Including Stage A 1's new fixture, all **74** fixtures are byte-identical
+   between final baseline and rebased implementation (combined hash
+   `1c52cf31d0a2239756b7b179f16d6736ddc5177d7bb146ff5e61034180914fe3`).
 2. Offline fixture-journal replay is identical at all **66** event checkpoints
    (33 events at each of depths 1 and 4), including serialized next actions and
    idempotency keys. The complete output SHA-256 is
@@ -33,6 +38,7 @@ Postgres, httptest, and temporary git repositories.
    The reproducible helper below uses the legacy block-replay sequence and
    records the injected `BatchStarted` checkpoint too. This is explicitly
    fixture evidence, not a claim about an exported deployment journal.
+   **Deployment gate 2 remains an operator step at deploy time.**
 3. `make test-sim-exits` exited **0** on both trees with the same unchanged test
    sources/seeds/inputs. All **146** logged result blocks are identical after
    sorting blocks to remove parallel test interleaving and excluding harness
@@ -43,14 +49,88 @@ Postgres, httptest, and temporary git repositories.
    unchanged: `e58c893b8b3af7685dc07a086824b3bc1fc044456083d193f9566f8387cb58fc`.
    Queue/config source trees are byte-identical. Existing legacy digest-vector,
    wire registry, wire golden, and block-replay golden tests also pass.
-5. There are **no new event types**, actions, runtime reads, records or decisions.
-   The capability has no runtime caller. Shared `forge.go`, driver/fake structs,
-   queue state/wire, config loader/schema and `internal/changepolicy` are untouched.
-   The sole existing implementation edit factors the unchanged git command
-   setup into a writer-based helper so the new reader can bound its output.
+   **Deployment gate 4 remains an operator step at deploy time:** verify the live
+   effective config digest and no new event types or `ConfigApplied` on offline
+   shadow replay of the actual exported journal.
+5. Identical composition commit IDs per merge method applies to PR 10; it is
+   **not applicable** to this PR 2a.
 
-## Validation
+There are **no new event types**, actions, runtime reads, records or decisions.
+The capability has no runtime caller. Shared `forge.go`, driver/fake structs,
+queue state/wire, config loader/schema and `internal/changepolicy` are untouched.
+The sole existing implementation edit factors the unchanged git command
+setup into a writer-based helper so the new reader can bound its output.
 
+## Final rebased validation
+
+Tested commit: `15ab80e84620b82db009067269d1dd8cac229f1f`, based on `f30dd96`.
+From `/tmp/om-sa-2a`, inside mise's Go 1.27.2 environment:
+
+```sh
+OPENMERGE_TEST_DATABASE_URL='postgres://postgres@localhost:54329/postgres?sslmode=disable' make check > /tmp/om-pr56-fix1.log 2>&1; echo exit=$?
+```
+
+**Exit 0.** Formatting, lint (zero issues), all packages with race detection,
+and the final build passed. This includes the full `internal/serve` package
+(486.466 seconds) and all diff regressions. The only working-tree edits during
+validation were to this evidence note; its subsequent commit changes no code
+or tests. No additional isolated serve rerun was needed after this passing run.
+
+`mise exec -- make test-sim-exits` exited **0** on both final baseline and rebased
+implementation (`/tmp/om-pr56-fix1-main-sim.log` and
+`/tmp/om-pr56-fix1-rebased-sim.log`). All 146 normalized blocks match each other
+and the original baseline, with the hash above. The offline replay outputs
+(`/tmp/om-pr56-fix1-main-replay.txt` and
+`/tmp/om-pr56-fix1-rebased-replay.txt`) also match each other and the original
+baseline byte-for-byte at all 66 checkpoints. Both standalone binary builds
+listed under Inputs exited **0**. All 74 current fixtures are byte-identical
+between final baseline and rebased head; the original 73 retain their hash.
+Queue, config, simulator, store and tracked config sources are unchanged by 2a
+relative to the final baseline.
+
+
+## Fix-round validation before the final rebase
+
+On `ee39f74a45c649609d2433258709b2dcde815151` (based on `df3af44`), the required
+`make check` exited **2**. The complete log is retained at
+`/tmp/om-pr56-fix1-before-rebase.log`. Lint reported zero issues and every package
+except `internal/serve` passed with race detection. Its three unchanged deadline
+failures were `TestBackstopReplansInterruptedPeerEnqueue`,
+`TestBackstopRecomputesPeerPartialBatchDeadline`, and
+`TestHealthyIdleLoopUsesBackstopAndDeliveryInterruptsTimer`. There was no race
+failure or package timeout; the serve package took 804.614 seconds.
+
+A read-only check of the supplied test Postgres during that run observed five
+sessions waiting on advisory locks in OpenMerge's queue-lock namespace,
+consistent with [issue #42](https://github.com/CanadaApollo6/openmerge/issues/42).
+The full serve-only rerun with a 15-minute timeout exited **1** after 612.230
+seconds with the two backstop deadline failures (no timeout or race failure):
+`/tmp/om-pr56-fix1-serve-15m.log`. An earlier shortened three-minute serve-only
+run exited **1** at its package timeout while progressing through
+`TestServeFastForwardExactHeadAndDivergence/land`:
+`/tmp/om-pr56-fix1-serve.log`. All runs used the supplied test database URL,
+`mise exec -- go test -race -short -count=1`, and only `./internal/serve` for
+isolated reruns. These results are retained, not reported green.
+
+Focused gitops/forge/fake/GitHub tests exited **0**
+(`/tmp/om-pr56-fix1-focused.log`). New regression tests against the original
+readers exited **1 as expected** (`/tmp/om-pr56-fix1-regression-before.log`),
+reproducing the false complete docs-only shallow diff, 1,248-file fake result,
+nil fake errors for invalid/missing objects, and complete-but-unpaired inventory.
+The pre-rebase simulator run exited **0**, with all 146 normalized result blocks
+matching the original baseline (`/tmp/om-pr56-fix1-sim.log`).
+
+The reproductions are now regression tests, including both shallow setup paths
+and real GC followed by repeated reads, exact file/byte boundaries, one-byte
+overflow, late NUL detection, host rename-limit/submodule settings, and the fake's
+raw-byte failure cap. Additional fake tests cover no/multiple merge bases and
+exact byte boundaries. Unpaired renames now make inventory incomplete;
+`forgetest` pins non-nil errors for invalid IDs and missing objects.
+`git-inventory-v2-exact-renames` and its bounds golden pin the revised semantics.
+
+## Initial validation (retained from the original review)
+
+Original tested implementation: `0185ea41a7d4d254210eb119f10b005b592c33a5`.
 From `/tmp/om-sa-2a`, using mise:
 
 ```sh
@@ -82,7 +162,8 @@ Focused diff, GitHub localhost HTTP git, fake contract, mode/symlink/gitlink,
 rewrite, rename uncertainty, missing/corrupt objects and resource-limit tests
 pass. Lint reports zero issues. No GitHub credentials are needed by these tests.
 
-Deployment remains governed by ADR 0007: compare an actual exported journal at
+Deployment gates 2 and 4 are operator steps at deploy time, governed by ADR 0007.
+Compare an actual exported journal at
 every revision against the intended deployment binaries, verify the actual live
 configuration/digest and no new `ConfigApplied` or event types on offline shadow
 replay, and record the deployment evidence and maintainer classification in the
