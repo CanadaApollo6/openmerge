@@ -5,8 +5,11 @@ import importlib.util
 import json
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
+
+sys.dont_write_bytecode = True
 
 SCRIPT = Path(__file__).with_name("check-live-journal-replay.py")
 spec = importlib.util.spec_from_file_location("replay", SCRIPT)
@@ -49,16 +52,54 @@ class LiveReplayTest(unittest.TestCase):
             # Explicit window bounds match this repo's live speculative config.
             append(20, "config_applied", dict(commit=head, digest=digest,
                                               window=dict(max_depth=4, min_depth=1)))
+            result, data = run()
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(data["actions_identical"], "2/2")
+            self.assertEqual(data["state_identical"], "2/2")
+            self.assertEqual(data["stage_a_empty"], "PASS")
+            for summary in data["streams"].values():
+                stream = Path(summary["path"])
+                self.assertTrue(stream.is_file())
+                self.assertEqual(replay.hashlib.sha256(stream.read_bytes()).hexdigest(), summary["sha256"])
+            # Simulate the old encoder through a Go source overlay, retaining
+            # the actual candidate decoder and encoder for the upgrade path.
+            snapshot = replay.ROOT / "internal/queue/snapshot.go"
+            legacy = root / "snapshot-v2.go"
+            legacy.write_text(snapshot.read_text().replace("return json.Marshal(v)", '''
+ raw, err := json.Marshal(v); if err != nil { return nil, err }
+ var fields map[string]json.RawMessage
+ if err := json.Unmarshal(raw, &fields); err != nil { return nil, err }
+ fields["Version"] = json.RawMessage(`2`)
+ delete(fields, "ChangeRevisions"); delete(fields, "BatchRevisions")
+ return json.Marshal(fields)
+'''))
+            overlay = root / "v2-overlay.json"
+            overlay.write_text(json.dumps({"Replace": {str(snapshot): str(legacy)}}))
+            bump = ("--baseline-overlay", str(overlay))
+            result, data = run(*bump)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(data["state_identical"], "2/2")
+            result, data = run(*bump, "--strict-state")
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(data["first_state_divergence"]["event_id"], 10)
+            self.assertEqual(data["actions_identical"], "2/2")
+            legacy.write_text(legacy.read_text().replace('json.RawMessage(`2`)', 'json.RawMessage(`99`)'))
+            rejected = subprocess.run(command + list(bump), capture_output=True, text=True)
+            self.assertEqual(rejected.returncode, 2)
+            self.assertIn("event 10: candidate cannot decode baseline snapshot (upgrade blocker): unsupported snapshot version 99", rejected.stderr)
+            legacy.write_text(legacy.read_text().replace('json.RawMessage(`99`)', 'json.RawMessage(`2`)'))
             append(30, "pr_observed", dict(pr=42, head_sha="synthetic-head", trusted=True, eligible=True))
             append(40, "enqueue_requested", dict(pr=42, at="2026-01-01T00:00:00Z"))
             result, data = run()
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual(data["verdict"], "PASS")
-            self.assertEqual(data["streams"]["candidate"]["checkpoints"], 4)
-            result, data = run("--inject-divergence-event", "40")
-            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-            self.assertEqual(data["first_difference"]["event_id"], 40)
-            self.assertIn("injected-divergence", data["first_difference"]["candidate"])
+            self.assertEqual(result.returncode, 1)  # Stage A must remain visible
+            self.assertEqual(data["state_identical"], "4/4")
+            self.assertEqual(data["stage_a_empty"], "FAIL")
+            self.assertEqual(data["stage_a_nonempty"][0]["event_id"], 30)
+            for mode in ((), ("--strict-state",)):
+                result, data = run(*bump, *mode, "--inject-divergence-event", "40")
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertEqual(data["first_action_divergence"]["event_id"], 40)
+                self.assertIn("injected-divergence", data["first_action_divergence"]["candidate"])
             # The shadow reconciler must also reject same-digest missing bounds.
             journal[1]["payload"]["data"].pop("window")
             events.write_text("".join(json.dumps(e) + "\n" for e in journal))
@@ -67,11 +108,14 @@ class LiveReplayTest(unittest.TestCase):
             self.assertEqual(data["gate4"], "FAIL")
             self.assertTrue(data["streams"]["candidate"]["policies"][0]["would_emit_config_applied"])
 
-    def test_first_difference_and_truncation(self):
-        left = '{"event_id":7,"queue_id":2}'
-        right = '{"event_id":8,"queue_id":2}'
-        self.assertEqual(replay.compare([left], [right])["event_id"], 7)
-        self.assertEqual(replay.compare([], [right])["event_id"], 8)
+    def test_checkpoint_truncation(self):
+        record = json.dumps(dict(kind="checkpoint", event_id=7, queue_id=2,
+                                 revision=1, actions=[], state_sha256="hash"))
+        for old, new in (([record], []), ([], [record])):
+            result = replay.compare_checkpoints(old, new, strict=True)
+            self.assertEqual(result["actions_identical"], "0/1")
+            self.assertEqual(result["first_action_divergence"]["event_id"], 7)
+            self.assertEqual(result["first_state_divergence"]["event_id"], 7)
 
 
 if __name__ == "__main__":

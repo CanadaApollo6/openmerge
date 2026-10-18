@@ -826,14 +826,37 @@ These are operator commands; the replay tool never connects to Postgres or GitHu
      --config-file .openmerge.yml --out "$exports/replay-$stamp.json"
    ```
 
-   Exit 0 requires identical checkpoints after **every event**, including wire
-   action keys/payloads, planner revision and snapshot state digest. Exit 1 is a
-   failed gate and reports the first differing event with both lines; exit 2 is
-   a tooling/input error and supplies no passing evidence. Snapshot schema/version
-   changes also fail this strict comparison; do not discard a mismatch to make
-   a release pass. The report records counts, SHA-256 of canonical JSONL streams
-   (including their trailing newlines and final policy records), export hashes,
-   old/new SHAs and live-config content hash.
+   Gate 2 checks each checkpoint after **every event**. `actions_identical: N/N`
+   requires byte-identical wire-v1 action payloads, action keys and order, and
+   identical planner revision. `first_action_divergence` identifies the first
+   event that differs, separately from state comparison.
+
+   State comparison defaults to **codec-neutral**: the baseline emits its exact
+   snapshot bytes as base64; the candidate decodes each with its own decoder,
+   re-encodes with its current encoder, and compares that encoding with its own
+   folded state. This tests the upgrade/restart path across snapshot v2 → v3.
+   Failure to decode the old snapshot is an explicit upgrade blocker (exit 2).
+   `state_identical: N/N` and `first_state_divergence` report the result. For
+   same-codec comparisons, `--strict-state` instead requires original snapshot
+   hashes to match. Neither mode relaxes action/revision equality.
+
+   The current adapter supports queues without `approvals`. It also asserts
+   Stage A's `ChangeRevisions` and `BatchRevisions` are empty/zero and reports
+   every non-empty checkpoint in `stage_a_nonempty`; presence fails gate 2.
+   These fields are never stripped from the state comparison. A full journal
+   replay may populate them even when upgrading a v2 snapshot cannot recover
+   them; report that divergence rather than waiving it.
+
+   Exit 0 requires gates 2 and 4 to pass. Exit 1 reports a failed gate; exit 2
+   is a tooling/input error and supplies no passing evidence. The report records
+   both full stream paths beside the report, SHA-256 hashes of those canonical
+   JSONL files (including trailing newlines and final policy records), export
+   hashes, old/new SHAs and live-config content hash. Streams retain original
+   snapshot bytes and exact wire action bytes as base64, plus the candidate's
+   re-encoded baseline snapshots. Keep streams private alongside the exports.
+   With no `--out`, the report and streams are saved under
+   `~/.cache/openmerge-replay/`. Use `--candidate /path/to/checkout` when running
+   the tool against a separate clean candidate checkout.
 
 4. Require gate 4 `PASS` too. It is always enabled: `--config-file` selects the
    live config blob from **candidate HEAD**, supplied unchanged to both loaders;
