@@ -25,7 +25,7 @@ type RevisionDiffRequest struct{ BaseSHA, HeadSHA string }
 // either blob). No heuristic similarity, external diff, textconv or attributes
 // participate. Complete inventories require unaltered, verified divergence ancestry.
 // Consumers include this version in their classifier version.
-const DiffSemantics = "git-evidence-v5-single-span"
+const DiffSemantics = "git-evidence-v6-unified-hunks"
 
 // Inventory resource limits are part of DiffSemantics.
 const (
@@ -39,9 +39,13 @@ const (
 	// MaxDiffBytes bounds raw inventory plus all inspected blob bytes per read.
 	MaxDiffBytes = 2 << 20
 	// Hunk text has a separate budget from inspected inventory blobs.
-	MaxDiffHunks        = 512
-	MaxDiffHunksPerFile = 1
-	MaxDiffHunkBytes    = 256 << 10
+	MaxDiffHunkBytes        = 2 << 20
+	MaxDiffHunkLinesPerFile = 200
+	DiffHunkContext         = 3
+	MaxDiffHunkInputBytes   = 2 << 20
+	MaxDiffHunkOutputBytes  = 8*MaxDiffHunkInputBytes + 4096
+	MaxDiffHunkDuration     = 2 * time.Second
+	MaxDiffHunksDuration    = 30 * time.Second
 )
 
 // DiffCompleteness distinguishes full evidence from partial or unknown reads.
@@ -70,7 +74,8 @@ const (
 	DiffByteLimit           DiffFailureReason = "byte_limit"
 	DiffUnpairedRename      DiffFailureReason = "unpaired_rename"
 	DiffHunksNotCollected   DiffFailureReason = "hunks_not_collected"
-	DiffHunkLimit           DiffFailureReason = "hunk_limit"
+	DiffHunkLineLimit       DiffFailureReason = "hunk_line_limit"
+	DiffHunkWorkLimit       DiffFailureReason = "hunk_work_limit"
 	DiffHunkByteLimit       DiffFailureReason = "hunk_byte_limit"
 	DiffNonText             DiffFailureReason = "non_text"
 	DiffSpecialMode         DiffFailureReason = "special_mode"

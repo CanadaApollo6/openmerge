@@ -68,29 +68,40 @@ Future serve wiring owns activation and request scheduling.
 
 ## Bounded hunks
 
-After inventory blob inspection, the reader derives UTF-8 hunk bodies from those
-same immutable blobs. There is no second content fetch, external diff, textconv,
-attribute lookup or host diff configuration. Each ordinary text file has at most
-one replacement span: equal prefix and suffix **lines** are excluded; intervening
-unchanged lines are shown as deletion/addition too. This deliberately coarse
-unified body is complete evidence of the content change, not a minimal edit
-script. It bounds line matching to linear work and avoids a quadratic edit
-matrix. Ranges use unified-diff zero-length conventions. Bodies omit file/hunk
-headers and retain line endings and explicit missing-final-newline markers.
+After inventory blob inspection, the reader computes unified patches from the
+same immutable raw blobs, without another fetch. Both fake and gitops use the
+same isolated Git process so their matching semantics cannot drift. Git runs
+outside the repository in a private directory under the user cache, with neutral
+`old`/`new` filenames and a discovery ceiling. No repository `.gitattributes`,
+info attributes, local config, or diff drivers are reachable. Its fresh environment
+retains only PATH and explicitly sets `LC_ALL=C`, `GIT_CONFIG_NOSYSTEM=1`,
+`GIT_CONFIG_GLOBAL=/dev/null`, `GIT_ATTR_NOSYSTEM=1`, and the discovery ceiling;
+inherited Git environment/config injection is discarded.
 
-At most **512 hunks total**, **one per file**, and **256 KiB of body bytes** are
-retained. These bounds keep briefs small even within the 1,000-file inventory;
-the inventory's separate 2 MiB budget still bounds all inspected blobs. A hunk
-that does not fit is omitted whole, with its exact old/new span and typed
-`hunk_limit` or `hunk_byte_limit`. Later small files can still fit. Omitted span
-metadata is bounded by the 1,000-file inventory. No unbounded patch text is
-returned. Invalid UTF-8 is `invalid_utf8`; binary/unknown-binary content is
-`non_text`. Symlinks, gitlinks and mode changes are `special_mode`, with unknown
-zero omission ranges rather than invented textual content. These limitations
-return nil errors. Adds/deletes have an empty absent side. Exact renames with
-unchanged modes have complete empty content hunks; both paths remain in the
-inventory. Unpaired renames retain content evidence per observed file but keep
-the inventory and aggregate hunks incomplete.
+The invocation is `git -c diff.algorithm=myers -c diff.indentHeuristic=false
+-c core.attributesFile=/dev/null diff --no-index --no-ext-diff --no-textconv
+--no-color --no-renames --diff-algorithm=myers --no-indent-heuristic --minimal
+--inter-hunk-context=0 --unified=3 -- old new`. Three context lines match the
+usual review UI. Minimal Myers disables shortcuts that can discard repeated
+unchanged interior blocks. Separated changes produce separate hunks; unchanged
+lines are context, never artificial deletion/addition pairs. Ranges use unified
+zero-length conventions; body text preserves CRLF and missing-newline markers.
+
+Retention matches PR 7a: **1,000 files**, **2 MiB UTF-8 body text total**, and
+**200 emitted body lines per file**, counting context and missing-newline annotation lines. Files are in deterministic path order. There is no
+separate hunk-count cap. A hunk that cannot fit is omitted whole with its exact
+old/new ranges and typed `hunk_line_limit` or `hunk_byte_limit`; later smaller
+hunks/files may still fit. Nothing is silently truncated.
+
+Computation is independently bounded: at most **2 MiB combined input per file**,
+**2 seconds per Git process**, **30 seconds shared per collection**, and bounded
+patch output (8 times the input cap plus 4,096 bytes). Work exhaustion is incomplete
+`hunk_work_limit` with unknown zero ranges, never complete. Existing inventory
+limits still independently cap inspected blobs. Invalid UTF-8 is `invalid_utf8`;
+binary/unknown content is `non_text`. Symlinks, gitlinks and mode changes are
+`special_mode`, with unknown omission ranges. Adds/deletes have empty absent
+sides; exact same-mode renames have complete empty hunks. Unpaired renames keep
+observed content but incomplete inventory and aggregate coverage.
 
 `DiffFile.HunkCoverage`, `Hunks` and `Omitted` are per-file evidence. Aggregate
 `RevisionDiff.Hunks` also requires complete inventory. Unvisited files have
@@ -104,7 +115,9 @@ history check runs again after hunk construction, before reporting completeness.
 with `Driver.GoverningFilesReader(ctx, cacheRoot)`, using the same installation
 cache and credentials as the diff reader. Its request pins a **commit** ID and
 supplies changed paths from both rename sides, deletions included, together with
-explicit path-set completeness. It does not resolve a default branch. The
+explicit path-set completeness. The commit must be the governing default-branch commit per ADR Classification,
+including release queues. 4a/serve selects it; it is not automatically the diff
+base or merge base. This reader does not resolve a default branch. The
 existing `Driver.ReadFile` accepts a commit pin but returns only bytes, and its
 contents API cannot provide bounded raw content, modes and tree-proven absence
 together. The git-backed fallback uses hardened diffRead sessions for all
@@ -134,6 +147,9 @@ probe paths have their own 2 MiB bound (reusing `MaxDiffBytes`), so long shared
 prefixes cannot amplify metadata without a limit. Directory enumeration also
 stops at the probe bound. Exhaustion is incomplete `file_limit`/`byte_limit` with
 nil error. An oversized present blob retains object ID and mode but no content.
+Non-UTF-8 blobs have no usable content and are incomplete `invalid_utf8`.
+Incomplete probes do not stop later config/attribute diagnostics within budget;
+CODEOWNERS still stops at the first present location.
 Only a complete absent probe proves absence; tree entries such as directories,
 symlinks and gitlinks are present but incomplete `special_mode`. Invalid IDs,
 missing commits and read failures follow the diff's non-nil error contract.

@@ -29,3 +29,14 @@ func TestGoverningFilesContract(t *testing.T) {
 		t.Fatal("branch movement changed governing evidence", err)
 	}
 }
+
+func TestGoverningLimitationsContract(t *testing.T) {
+	f := New()
+	repo := forge.RepoRef{Path: "acme/repo"}
+	_, _ = f.Init(repo, "main", "fence")
+	sha, err := f.PushBase(repo, "main", "limitations", map[string]string{".openmerge.yml": "\xff", ".github/CODEOWNERS/child": "* @nested", "CODEOWNERS": "* @fallback", ".gitattributes": "* text\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	forgetest.RunGoverningLimitations(t, f, repo, sha)
+}

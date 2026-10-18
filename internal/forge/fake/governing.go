@@ -3,6 +3,7 @@ package fake
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
@@ -31,6 +32,13 @@ func (f *Forge) GoverningFiles(ctx context.Context, repo forge.RepoRef, req forg
 		file := forge.GoverningFile{Path: p, Coverage: forge.DiffCoverage{Completeness: forge.DiffComplete}}
 		content, ok := files[p]
 		if !ok {
+			for name := range files {
+				if strings.HasPrefix(name, p+"/") {
+					file.Present, file.Mode = true, "040000"
+					file.Coverage = forge.DiffCoverage{Completeness: forge.DiffIncomplete, Reasons: []forge.DiffFailureReason{forge.DiffSpecialMode}}
+					break
+				}
+			}
 			return file, nil
 		}
 		file.Present, file.Mode, file.ObjectID = true, "100644", diffBlobID(content)

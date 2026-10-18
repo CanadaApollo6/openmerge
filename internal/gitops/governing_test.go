@@ -110,3 +110,14 @@ func TestGoverningLiteralPathsAndHistoryRechecks(t *testing.T) {
 		t.Fatal(failed.Coverage, err)
 	}
 }
+
+func TestGoverningLimitationsContract(t *testing.T) {
+	f := newFixture(t)
+	sha := f.diffCommit(f.base, "limitations", map[string]diffEntry{
+		".openmerge.yml":           {mode: "100644", content: "\xff"},
+		".github/CODEOWNERS/child": {mode: "100644", content: "* @nested"},
+		"CODEOWNERS":               {mode: "100644", content: "* @fallback"},
+		".gitattributes":           {mode: "100644", content: "* text\n"},
+	})
+	forgetest.RunGoverningLimitations(t, f.g, testRepo, sha)
+}

@@ -6,6 +6,7 @@ import (
 	"path"
 	"slices"
 	"strings"
+	"unicode/utf8"
 )
 
 // GoverningFilesReader is dormant and independent of configuration parsing.
@@ -14,7 +15,9 @@ type GoverningFilesReader interface {
 	GoverningFiles(context.Context, RepoRef, GoverningFilesRequest) (GoverningFiles, error)
 }
 
-// GoverningFilesRequest pins policy provenance separately from diff endpoints.
+// GoverningFilesRequest pins the governing default-branch commit per ADR 0007,
+// including release queues. Selection belongs to 4a/serve; it is not
+// automatically the diff base or merge base.
 type GoverningFilesRequest struct {
 	CommitSHA     string
 	Paths         []string
@@ -97,6 +100,7 @@ func CollectGoverningFiles(ctx context.Context, req GoverningFilesRequest, read 
 	}
 	slices.Sort(paths)
 	count, remaining := 0, MaxGoverningBytes
+	var diagnostics error
 	probe := func(p string, target *[]GoverningFile) (bool, DiffFailureReason, error) {
 		if err := ctx.Err(); err != nil {
 			return false, DiffReadFailure, err
@@ -109,9 +113,13 @@ func CollectGoverningFiles(ctx context.Context, req GoverningFilesRequest, read 
 		if err != nil {
 			return false, DiffReadFailure, err
 		}
+		remaining -= len(f.Content)
+		if !utf8.ValidString(f.Content) {
+			f.Content = ""
+			f.Coverage = DiffCoverage{Completeness: DiffIncomplete, Reasons: []DiffFailureReason{DiffInvalidUTF8}}
+		}
 		f.Path = p
 		*target = append(*target, f)
-		remaining -= len(f.Content)
 		if f.Coverage.Completeness != DiffComplete {
 			reason := DiffReadFailure
 			if len(f.Coverage.Reasons) != 0 {
@@ -126,7 +134,8 @@ func CollectGoverningFiles(ctx context.Context, req GoverningFilesRequest, read 
 	}
 	for _, p := range []string{".openmerge.yml", ".openmerge.yaml", ".github/openmerge.yml", ".github/openmerge.yaml"} {
 		if _, reason, err := probe(p, &out.Config); reason != "" {
-			return fail(reason, err)
+			_, _ = fail(reason, nil)
+			diagnostics = errors.Join(diagnostics, err)
 		}
 	}
 	for _, p := range []string{".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"} {
@@ -135,22 +144,24 @@ func CollectGoverningFiles(ctx context.Context, req GoverningFilesRequest, read 
 			out.SelectedCodeowners = p
 		}
 		if reason != "" {
-			return fail(reason, err)
+			_, _ = fail(reason, nil)
+			diagnostics = errors.Join(diagnostics, err)
 		}
-		if present {
+		if present || reason != "" {
 			break
 		}
 	}
 	for _, p := range paths {
 		if _, reason, err := probe(p, &out.Attributes); reason != "" {
-			return fail(reason, err)
+			_, _ = fail(reason, nil)
+			diagnostics = errors.Join(diagnostics, err)
 		}
 	}
 	if err := ctx.Err(); err != nil {
 		return fail(DiffReadFailure, err)
 	}
 	if !req.PathsComplete {
-		return fail(DiffInventoryIncomplete, nil)
+		_, _ = fail(DiffInventoryIncomplete, nil)
 	}
-	return out, nil
+	return out, diagnostics
 }

@@ -86,3 +86,22 @@ func RunGoverningFiles(t *testing.T, reader forge.GoverningFilesReader, repo for
 		t.Fatalf("cancellation: %+v %v", failed, err)
 	}
 }
+
+// RunGoverningLimitations expects an invalid UTF-8 config, an implicit
+// .github/CODEOWNERS directory, a root fallback, and root attributes.
+func RunGoverningLimitations(t *testing.T, reader forge.GoverningFilesReader, repo forge.RepoRef, sha string) {
+	t.Helper()
+	got, err := reader.GoverningFiles(t.Context(), repo, forge.GoverningFilesRequest{CommitSHA: sha, PathsComplete: true})
+	if err != nil || got.Coverage.Completeness != forge.DiffIncomplete || !slices.Contains(got.Coverage.Reasons, forge.DiffInvalidUTF8) || !slices.Contains(got.Coverage.Reasons, forge.DiffSpecialMode) {
+		t.Fatalf("%+v %v", got, err)
+	}
+	if len(got.Config) != 4 || got.Config[0].Content != "" || !slices.Contains(got.Config[0].Coverage.Reasons, forge.DiffInvalidUTF8) {
+		t.Fatal(got)
+	}
+	if got.SelectedCodeowners != ".github/CODEOWNERS" || len(got.Codeowners) != 1 || !got.Codeowners[0].Present || got.Codeowners[0].Mode != "040000" || got.Codeowners[0].Content != "" {
+		t.Fatal(got)
+	}
+	if len(got.Attributes) != 1 || !got.Attributes[0].Present || got.Attributes[0].Content != "* text\n" {
+		t.Fatal(got)
+	}
+}
