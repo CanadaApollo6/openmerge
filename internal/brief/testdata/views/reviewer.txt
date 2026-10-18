@@ -1,0 +1,39 @@
+Change "change" (reviewer)
+Digest: "3cd9032798f30e2ed7fc6268fbbfe13efd9273b9f3edb482e7370e2a044f8ee6"
+
+Claimed intent (submitter's claim):
+  Title: "\u003cscript\u003euntrusted \u0026 title\u003c/script\u003e"
+  Body: "Body"
+
+Classification and retained diff:
+  Revision 1; generation 1; classifier "classifier"
+  Head "head"; base "base"; merge base "merge"
+  Policy "policy"
+  Inventory complete: true; hunks complete: true
+  Label "docs": truth=2 (unknown=0, false=1, true=2)
+    Reason: "matched"
+  File "" -> "a"; hunks complete: true
+    Hunk: "+hello\n"
+  Owner "a" ("new"): "resolved"; resolved: true; entry "* @owner"
+    Eligible ID: "user"
+
+Approval obligations:
+  "approval_required": "" (""); selector "any_writer"; group ""; count 1; receipt: false; met: false
+    ""
+    What clears it: "Obtain the required eligible approvals; receipt requirements need the exact current brief digest."
+    Human required: false
+
+Stance and provenance:
+  "reviewer": "request_changes" via "native_review" source "12"; revision 1; head "head"
+    Source time "not recorded"; precision "observation_fallback"; upper bound "2026-10-18T12:00:00Z"
+    Intent binding: "not recorded"; brief binding: "not recorded"
+    Next step: "reobserve_then_fresh_approval"; source time strictly after: "2026-10-18T12:00:00Z"
+
+Recorded tests:
+  "ci": "success"; tested SHA "tested"; "https://ci.example/run/1"
+
+Warnings and what clears them:
+  "approval_required": ""
+    What clears it: "Obtain the required eligible approvals; receipt requirements need the exact current brief digest."
+  "stance_barrier": ""
+    What clears it: "Re-observe the blocker; accept a fresh review or receipt strictly after its source-time bound with no newer blocker. Without a comparable bound, use a new revision and fresh approval."

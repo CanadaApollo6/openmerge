@@ -32,10 +32,12 @@ within the limit are ignored.
 | `/v1/queues/{owner}/{repo}` | List every served queue for this repository |
 | `/v1/queues/{owner}/{repo}/{base}` | `{"version":1,"queue":QUEUE}` |
 | `/v1/queues/{owner}/{repo}/{base}/prs/{n}` | `{"version":1,"queue":QUEUE,"pr":ENTRY,"why":WHY}` |
+| `/v1/queues/{owner}/{repo}/{base}/changes/{id}/brief?audience=reviewer` | Public recorded brief v1 DTO; also operator/agent |
 
 URL-encode each path component, including slashes in base branch names:
 `/v1/queues/acme/project/release%2Fv1`. PR numbers are positive integers.
-PR detail accepts `?events=N`: default 20, range 1–100. Other query parameters
+PR detail accepts `?events=N`: default 20, range 1–100. Brief detail requires
+`?audience=reviewer|operator|agent`. Other query parameters
 are rejected. A queue is identified internally by installation/repo/base/lane;
 lists include all four fields. A detail path matching multiple served partitions
 returns 409 rather than choosing one. Discovery serves every installation of one
@@ -307,3 +309,68 @@ Reopen summaries say `CI still pending` when the fold has no success to revoke.
 cleared recorded success, including success retained before test-ref creation.
 A pending read after `LandingStarted` does not revoke a landing; its summary
 explains that landing already started. The underlying journal is unchanged.
+
+## Recorded change briefs (Stage A 7b)
+
+`GET /v1/queues/{owner}/{repo}/{base}/changes/{id}/brief?audience=reviewer|operator|agent`
+reads a coherent committed journal snapshot through the existing status listener.
+The audience query is required and accepts exactly one value. Escape each path
+component independently, including `/` in branch names (`release%2Fv1`). IDs
+are resolved only in the selected queue. Unknown IDs, IDs belonging to another
+queue, and unserved queues return 404. Multiple matching installations or lanes
+return the existing 409 `ambiguous-queue` diagnostic. Read-token authentication,
+GET-only behavior, request-body limits, `Cache-Control: no-store`, and error
+DTOs match the other status routes. This adds no write authentication.
+
+The response is the public brief v1 DTO, independent of queue wire encodings:
+`version`, `audience`, `change_id`, `digest`, `progress`, `intent`,
+`classification`, `obligations`, `stances`, `tests`, `warnings`, `truncated`.
+Classification includes revision/generation, pinned head/base/merge base, semantic
+policy digest, classifier, labels with reasons, retained file/hunk inventory,
+and governing owner evidence. Truth values are unknown=0, false=1, true=2.
+Intent is explicitly the submitter's claim. Stances distinguish native reviews
+from receipt evidence, retaining source ordering/time provenance and Q4 recovery
+steps. Native intent/brief bindings say `not recorded`; they are never inferred.
+Tests retain check name, safe HTTP(S) URL, status, and tested SHA when recorded.
+
+A null section means **not recorded**; an empty array means recorded and empty.
+Legacy queues can return a known change with null evidence and `not recorded`
+digest. The current journal does not persist a complete expanded brief or its
+requirements. The route therefore leaves obligations/digest unrecorded rather
+than reconstructing them from current configuration. 11a/12a will extend the
+recorded-evidence integration; the pure renderer already supports complete 7a
+Facts and its separate progress overlay. No forge reads, ref reads, policy
+re-evaluation, or eligibility refresh occur on HTTP/CLI reads. Recorded progress
+is informational, never a fresh landing authorization.
+
+Display bounds are 32 rows per collection, eight hunks per displayed file, and
+a 2,048-byte JSON-escaped budget per text field, with a shared 512 KiB text
+budget; truncation is explicit. The underlying persisted
+evidence and receipt digest are untouched. Safety warnings are collected before
+row limits, including incomplete inventory, unresolved owners, stance barriers,
+and saturation. `display_truncated` directs readers to retained journal evidence.
+Responses are capped at 2 MiB. Text rendering JSON-quotes untrusted text and
+escapes HTML/control characters; links accept only HTTP(S) without userinfo.
+Agent output uses stable reason codes and structured `next_step` objects, with
+no prose recovery instructions. Actions include `split_change`, `resolve_owners`,
+`record_eligibility`, `obtain_approval`, `new_revision`, and
+`reobserve_then_fresh_approval` with `source_time_after`. A time bound is strict;
+without a comparable source bound, a new revision and fresh approval are needed.
+
+### CLI brief view
+
+```sh
+openmerge change brief chg1_<64-lowercase-hex> --repo owner/repo --base main --audience reviewer
+openmerge change brief chg1_<64-lowercase-hex> --repo owner/repo --audience operator
+openmerge change brief chg1_<64-lowercase-hex> --repo owner/repo --audience agent --json
+```
+
+`--repo` is required; `--base` defaults to `main`; `--audience` defaults to
+`reviewer`. Put the ID before flags. `--api`, `OPENMERGE_API_URL`,
+`--api-token-file`, `OPENMERGE_API_TOKEN_FILE`, and `OPENMERGE_API_TOKEN` behave
+as for `queue status`. The client refuses redirects and caps responses at 2 MiB.
+`--json` emits response bytes unchanged; the agent view also renders as JSON.
+Reviewer text leads with intent and evidence; operator text leads with queue
+progress and blockers, including what clears them. Exit codes match status:
+0 success, 1 transport/unsupported response, 2 usage/invalid request,
+3 not found, 4 authentication/authorization, 5 ambiguous queue.

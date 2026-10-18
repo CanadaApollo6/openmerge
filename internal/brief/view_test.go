@@ -1,0 +1,241 @@
+package brief
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+func viewSample() Fact {
+	f := sample()
+	f.Intent.Title = "<script>untrusted & title</script>"
+	f.Intent.Digest = "" // Keep claimed intent consistent with its recorded binding.
+	f.Intent.Digest = cp.IntentDigest(f.Intent.Title, f.Intent.Body)
+	f.Obligations[0].Code = "approval_required"
+	f.Presentation = &Presentation{Stances: []StanceEvidence{{UserID: "reviewer", Kind: "request_changes", Channel: "native_review", SourceID: "12", Head: "head", Revision: 1, UpperBound: time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC), Precision: "observation_fallback"}}, Tests: []TestEvidence{{"ci", "https://ci.example/run/1", "success", "tested"}}, Progress: &ProgressView{1, "waiting", "approval_required"}}
+	return f
+}
+func TestViewGoldensAndJSONAgreement(t *testing.T) {
+	for _, a := range []string{"reviewer", "operator", "agent"} {
+		t.Run(a, func(t *testing.T) {
+			f := viewSample()
+			before, _ := json.Marshal(f)
+			v, err := Project(f, a)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, err := json.MarshalIndent(v, "", "  ")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decoded View
+			if err = json.Unmarshal(raw, &decoded); err != nil {
+				t.Fatal(err)
+			}
+			rendered, err := Render(v)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fromJSON, _ := Render(decoded)
+			if !bytes.Equal(rendered, fromJSON) {
+				t.Fatal("rendered and public JSON disagree")
+			}
+			after, _ := json.Marshal(f)
+			if !bytes.Equal(before, after) {
+				t.Fatal("projection mutated recorded evidence")
+			}
+			goldenView(t, a+".json", append(raw, '\n'))
+			if !bytes.HasSuffix(rendered, []byte("\n")) {
+				rendered = append(rendered, '\n')
+			}
+			goldenView(t, a+".txt", rendered)
+			if bytes.Contains(rendered, []byte("<script>")) {
+				t.Fatal("unsafe HTML")
+			}
+		})
+	}
+}
+func goldenView(t *testing.T, name string, raw []byte) {
+	t.Helper()
+	path := filepath.Join("testdata", "views", name)
+	if os.Getenv("UPDATE_7B") == "1" {
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, raw, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(want, raw) {
+		t.Fatalf("golden %s mismatch: %v", name, err)
+	}
+}
+func TestPresentationPreservesAllFiveV2Vectors(t *testing.T) {
+	for _, name := range []string{"complete", "incomplete", "empty-intent", "complex", "no-requirements"} {
+		raw, err := os.ReadFile(filepath.Join("testdata", name+".json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var canonical struct {
+			Classification    json.RawMessage
+			IntentDigest      string
+			ApprovalsRequired bool
+			Requirements      []Obligation
+		}
+		if err = json.Unmarshal(raw, &canonical); err != nil {
+			t.Fatal(err)
+		}
+		f := sample()
+		if err = json.Unmarshal(canonical.Classification, f.Classification); err != nil {
+			t.Fatal(err)
+		}
+		f.Obligations = canonical.Requirements
+		f.ApprovalsRequired = canonical.ApprovalsRequired
+		if name == "empty-intent" {
+			f.Intent.Title = ""
+			f.Intent.Body = ""
+			f.Intent.Digest = cp.IntentDigest("", "")
+		}
+		if name == "complex" {
+			f = complexVector()
+		}
+		baseline, err := Canonical(f)
+		if err != nil || !bytes.Equal(raw, baseline) {
+			t.Fatalf("%s reconstruction: %v", name, err)
+		}
+		f.Presentation = viewSample().Presentation
+		for _, a := range []string{"reviewer", "operator", "agent"} {
+			v, err := Project(f, a)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = Render(v); err != nil {
+				t.Fatal(err)
+			}
+		}
+		got, err := Canonical(f)
+		hash, _ := Digest(f)
+		wantHash, _ := os.ReadFile(filepath.Join("testdata", name+".sha256"))
+		sum := sha256.Sum256(got)
+		if err != nil || !bytes.Equal(raw, got) || hash != strings.TrimSpace(string(wantHash)) || hash != hex.EncodeToString(sum[:]) {
+			t.Fatalf("%s changed canonical bytes/hash", name)
+		}
+	}
+}
+func TestBoundedViewsRetainSafetyWarnings(t *testing.T) {
+	f := viewSample()
+	f.Intent.Body = strings.Repeat("界", 10000) + "\x1b[31m"
+	f.Classification.InventoryComplete = false
+	f.Classification.CodeOwnersKnown = false
+	f.Presentation.Saturated = true
+	f.Presentation.Stances = append(make([]StanceEvidence, 100), f.Presentation.Stances...)
+	for i := 0; i < 100; i++ {
+		f.Classification.Files = append(f.Classification.Files, f.Classification.Files[0])
+		f.Obligations = append(f.Obligations, f.Obligations[0])
+	}
+	v, err := Project(f, "operator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := Render(v)
+	if len(raw) > MaxViewBytes || !v.Truncated || bytes.Contains(raw, []byte{27}) {
+		t.Fatal("unbounded or unsafe view")
+	}
+	for _, code := range []string{"unknown_inventory", "unknown_owners", "approval_saturated", "stance_barrier", "display_truncated"} {
+		if !bytes.Contains(raw, []byte(code)) {
+			t.Fatalf("lost safety warning %s", code)
+		}
+	}
+	f.Presentation.Tests[0].URL = "javascript:alert(1)"
+	v, _ = Project(f, "reviewer")
+	if v.Tests[0].URL != NotRecorded {
+		t.Fatal("unsafe link")
+	}
+}
+func TestMissingAndKnownEmptyViews(t *testing.T) {
+	v, _ := Project(Fact{}, "reviewer")
+	raw, _ := Render(v)
+	if !bytes.Contains(raw, []byte(NotRecorded)) || v.Digest != NotRecorded || v.Tests != nil {
+		t.Fatal("invented historical evidence")
+	}
+	f := sample()
+	f.Obligations = []Obligation{}
+	f.Presentation = &Presentation{Stances: []StanceEvidence{}, Tests: []TestEvidence{}}
+	v, _ = Project(f, "agent")
+	if v.Obligations == nil || v.Tests == nil || v.Stances == nil {
+		t.Fatal("known empty lost")
+	}
+	if _, err := Project(f, "unknown"); err == nil {
+		t.Fatal("invalid audience accepted")
+	}
+}
+
+func TestEscapedTextBudgetAndRecordedFactFixture(t *testing.T) {
+	truncated := false
+	text := bounded(strings.Repeat("<&\n", maxText), &truncated)
+	raw, _ := json.Marshal(text)
+	if !truncated || len(raw) > maxText+2 {
+		t.Fatal("escaped text exceeded budget")
+	}
+	raw, err := os.ReadFile("../queue/testdata/brief-facts.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f Fact
+	if err = json.Unmarshal(raw, &f); err != nil {
+		t.Fatal(err)
+	}
+	digest, err := Digest(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, audience := range []string{"reviewer", "operator", "agent"} {
+		v, err := Project(f, audience)
+		if err != nil || v.Digest != digest {
+			t.Fatal("recorded 7a fixture changed binding")
+		}
+		raw, _ := json.Marshal(v)
+		var decoded View
+		if err = json.Unmarshal(raw, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		a, _ := Render(v)
+		b, _ := Render(decoded)
+		if !bytes.Equal(a, b) {
+			t.Fatal("recorded fixture JSON/render disagreement")
+		}
+	}
+}
+
+func TestAggregateViewBudget(t *testing.T) {
+	f := sample()
+	many := strings.Repeat("<", maxText)
+	for i := 0; i < maxRows; i++ {
+		file := f.Classification.Files[0]
+		file.NewPath = many
+		file.Hunks.Hunks = nil
+		for j := 0; j < 8; j++ {
+			file.Hunks.Hunks = append(file.Hunks.Hunks, cp.Hunk{Text: many})
+		}
+		f.Classification.Files = append(f.Classification.Files, file)
+	}
+	for _, audience := range []string{"reviewer", "operator", "agent"} {
+		v, err := Project(f, audience)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := json.Marshal(v)
+		rendered, _ := Render(v)
+		if !v.Truncated || len(raw) > MaxViewBytes || len(rendered) > MaxViewBytes {
+			t.Fatal("aggregate view not bounded")
+		}
+	}
+}

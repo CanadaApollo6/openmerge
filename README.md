@@ -248,6 +248,12 @@ Bearer authentication uses `OPENMERGE_API_TOKEN` or
 `OPENMERGE_API_TOKEN_FILE` and is required for any non-loopback bind. See
 [API v1 and CLI](docs/api.md) for the JSON contract, PR event explanations, token handling and stable exit codes.
 
+Read a recorded change brief with
+`bin/openmerge change brief <change-id> --repo owner/repo --base main --audience reviewer`.
+Use `--audience operator` for blockers and recovery, `--audience agent` for
+structured next steps, or `--json` for the public DTO. Historical missing
+evidence says "not recorded". See [brief API and CLI](docs/api.md#recorded-change-briefs-stage-a-7b).
+
 Startup and every ten minutes (`--rules-interval`) validate repository/inherited
 rulesets, classic protection on the base and its fence, and the installation
 token's actual permission grants. Missing `contents: write` or `workflows: write`

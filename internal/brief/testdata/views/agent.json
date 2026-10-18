@@ -1,0 +1,125 @@
+{
+  "progress": {
+    "position": 1,
+    "status": "waiting",
+    "reason": "approval_required"
+  },
+  "version": 1,
+  "audience": "agent",
+  "change_id": "change",
+  "digest": "3cd9032798f30e2ed7fc6268fbbfe13efd9273b9f3edb482e7370e2a044f8ee6",
+  "intent": {
+    "title": "\u003cscript\u003euntrusted \u0026 title\u003c/script\u003e",
+    "body": "Body"
+  },
+  "classification": {
+    "generation": 1,
+    "classifier_version": "classifier",
+    "owners": [
+      {
+        "path": "a",
+        "side": "new",
+        "status": "resolved",
+        "entry": "* @owner",
+        "eligible_ids": [
+          "user"
+        ],
+        "resolved": true
+      }
+    ],
+    "revision": 1,
+    "head": "head",
+    "base": "base",
+    "merge_base": "merge",
+    "policy_digest": "policy",
+    "inventory_complete": true,
+    "hunks_complete": true,
+    "labels": [
+      {
+        "name": "docs",
+        "truth": 2,
+        "reasons": [
+          "matched"
+        ]
+      }
+    ],
+    "files": [
+      {
+        "omitted_ranges": [],
+        "old_path": "",
+        "new_path": "a",
+        "hunks": [
+          {
+            "old_start": 0,
+            "old_lines": 0,
+            "new_start": 1,
+            "new_lines": 1,
+            "text": "+hello\n"
+          }
+        ],
+        "complete": true
+      }
+    ]
+  },
+  "obligations": [
+    {
+      "human": false,
+      "eligible_ids": [],
+      "code": "approval_required",
+      "path": "",
+      "side": "",
+      "selector": "any_writer",
+      "group": "",
+      "count": 1,
+      "receipt": false,
+      "met": false,
+      "approved_ids": [],
+      "next_step": {
+        "action": "obtain_approval"
+      }
+    }
+  ],
+  "stances": [
+    {
+      "user_id": "reviewer",
+      "kind": "request_changes",
+      "channel": "native_review",
+      "source_id": "12",
+      "head": "head",
+      "revision": 1,
+      "source_time": "not recorded",
+      "precision": "observation_fallback",
+      "upper_bound": "2026-10-18T12:00:00Z",
+      "intent_digest": "not recorded",
+      "brief_digest": "not recorded",
+      "next_step": {
+        "action": "reobserve_then_fresh_approval",
+        "user_id": "reviewer",
+        "source_time_after": "2026-10-18T12:00:00Z"
+      }
+    }
+  ],
+  "tests": [
+    {
+      "name": "ci",
+      "url": "https://ci.example/run/1",
+      "status": "success",
+      "sha": "tested"
+    }
+  ],
+  "warnings": [
+    {
+      "code": "approval_required",
+      "next_step": {
+        "action": "obtain_approval"
+      }
+    },
+    {
+      "code": "stance_barrier",
+      "next_step": {
+        "action": "resolve_stance_barrier"
+      }
+    }
+  ],
+  "truncated": false
+}

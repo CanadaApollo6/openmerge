@@ -38,6 +38,7 @@ type Obligation struct {
 // original bounded file/hunk records verbatim; a brief never truncates them.
 // Nil Classification/Intent means historical evidence was not recorded.
 type Fact struct {
+	Presentation      *Presentation `json:",omitempty"`
 	Classification    *cp.Classification
 	Intent            *Intent
 	ApprovalsRequired bool
