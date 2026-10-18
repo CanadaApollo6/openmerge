@@ -68,6 +68,9 @@ func (r *ProtectionReport) actorPrincipals(a BypassActor) ([]string, bool) {
 	if a.ActorID != nil && (a.ActorType == "User" || a.ActorType == "Integration") {
 		return []string{key}, true
 	}
+	if a.ActorType == "RepositoryRole" && (a.ActorID == nil || importRepositoryRoles[*a.ActorID] == "") {
+		return nil, false
+	}
 	members, ok := r.principals[key]
 	return members, ok && members != nil
 }
@@ -106,6 +109,10 @@ func (r *ProtectionReport) principalIntersection(base string, gates []Ruleset, p
 			for _, entry := range group.entries {
 				actors = append(actors, BypassActor{ActorType: group.kind, ActorID: new(entry.ID)})
 			}
+		}
+		if !p.Admins.Enabled {
+			// Classic restrictions do not constrain administrators unless enforced.
+			actors = append(actors, BypassActor{ActorType: "RepositoryRole", ActorID: new(int64(5))})
 		}
 		appendGate(actors)
 	}

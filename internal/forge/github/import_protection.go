@@ -187,13 +187,13 @@ func (r *ProtectionReport) accept(ids []string) error {
 			approvals := map[string]any{"default": "any_writer"}
 			if p.Count > 0 {
 				value["groups"] = map[string]any{"imported_reviewers": p.Writers}
-				approvals["rules"] = []any{map[string]any{"when": map[string]any{"touches": []string{"**"}}, "require": map[string]any{"group": "imported_reviewers", "count": p.Count}}}
+				approvals["default"] = map[string]any{"group": "imported_reviewers", "count": p.Count}
 			}
 			value["approvals"] = approvals
 		}
 		draft.WriteString(fragment(value))
 		if p.Count > 0 {
-			draft.WriteString("# Maximum approval count across sources; groups is repository-level.\n# Assumption: touches ** applies the count to every change with a file inventory; unknown matches enforce it.\n# Maintain imported_reviewers as writer membership changes; eligibility is re-read at landing.\n")
+			draft.WriteString("# Maximum approval count across sources; groups is repository-level.\n# The count-bearing default applies even to known-empty diffs; retain it when adding approval rules.\n# Maintain imported_reviewers as writer membership changes; eligibility is re-read at landing.\n")
 		}
 		if p.Owners {
 			draft.WriteString("# Stage A owner requirement: one eligible owner per changed owned file.\n# Use governing CODEOWNERS, last matching entry; full owner-requirement schema lands with Stage A.\n")

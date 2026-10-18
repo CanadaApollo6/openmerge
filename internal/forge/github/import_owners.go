@@ -107,7 +107,7 @@ func (r *ProtectionReport) coverage(o importOwners) {
 		if !syntactic {
 			owners = nil
 		}
-		r.add("", "governing-CODEOWNERS", "coverage-"+path, "equivalent", true, fmt.Sprintf("%s at %s: effective owners for %s = %v. OpenMerge config paths and CODEOWNERS must have resolvable owners; emails alone do not resolve Stage A owner requirements. To verify at switch: owner identity, team visibility, write eligibility and effective coverage remain unresolved by this syntactic inspection.", o.Path, r.GoverningCommit, path, owners), "# CODEOWNERS must cover "+path+" with eligible user/team owners.")
+		r.add("", "governing-CODEOWNERS", "coverage-"+path, "unsupported", true, fmt.Sprintf("%s at %s: effective owners for %s = %v. OpenMerge config paths and CODEOWNERS must have resolvable owners; emails alone do not resolve Stage A owner requirements. To verify at switch: owner identity, team visibility, write eligibility and effective coverage remain unresolved by this syntactic inspection.", o.Path, r.GoverningCommit, path, owners), "# CODEOWNERS must cover "+path+" with eligible user/team owners.")
 	}
 	if len(o.Invalid) > 0 {
 		r.add("", "governing-CODEOWNERS", "owners-syntax", "unsupported", true, strings.Join(o.Invalid, "; "), "# Repair CODEOWNERS syntax; incomplete ownership cannot satisfy installation coverage.")

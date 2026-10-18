@@ -210,15 +210,23 @@ func (c *setupAPI) readProtection(ctx context.Context, opts ImportOptions) (Prot
 				continue
 			}
 			var cond refConditions
-			if rs.Target != "push" {
-				var raw map[string]json.RawMessage
-				if rs.Target != "branch" || json.Unmarshal(rs.Conditions, &cond) != nil || json.Unmarshal(rs.Conditions, &raw) != nil || len(raw) != 1 || len(cond.RefName.Include) == 0 || !validPatterns(cond) {
-					r.add(base, fmt.Sprintf("ruleset:%d", rs.ID), "conditions", "unsupported", false, "Cannot determine the applicability of these ruleset conditions.", "# Inspect unknown ruleset conditions manually.")
-					continue
+			var raw map[string]json.RawMessage
+			known := json.Unmarshal(rs.Conditions, &raw) == nil
+			if rs.Target == "push" {
+				known = len(rs.Conditions) == 0 || known && len(raw) == 0
+			} else {
+				known = known && rs.Target == "branch" && json.Unmarshal(rs.Conditions, &cond) == nil && importRefConditionsKnown(raw) && len(cond.RefName.Include) > 0 && validPatterns(cond)
+			}
+			if !known {
+				rules, err := json.Marshal(rs.Rules)
+				if err != nil {
+					return r, err
 				}
-				if !applies(cond, "refs/heads/"+base, "refs/heads/"+r.DefaultBranch) {
-					continue
-				}
+				r.add(base, fmt.Sprintf("ruleset:%d", rs.ID), "conditions", "unsupported", true, fmt.Sprintf("Cannot determine ruleset applicability; untranslated requirements cannot be waived. Target=%s; raw conditions=%s; rules=%s.", rs.Target, rs.Conditions, rules), "# Resolve unknown ruleset conditions and translate every applicable rule before switching.")
+				continue
+			}
+			if rs.Target == "branch" && !applies(cond, "refs/heads/"+base, "refs/heads/"+r.DefaultBranch) {
+				continue
 			}
 			applicable = append(applicable, rs)
 			for _, rule := range rs.Rules {
@@ -240,6 +248,12 @@ func (c *setupAPI) readProtection(ctx context.Context, opts ImportOptions) (Prot
 	return r, nil
 }
 
+// GitHub bypass actor IDs are identifiers, not privilege ranks.
+// https://registry.terraform.io/providers/integrations/github/latest/docs/resources/repository_ruleset#bypass_actors
+var importRepositoryRoles = map[int64]string{2: "maintain", 4: "write", 5: "admin"}
+
+var importRoleRank = map[string]int{"read": 1, "triage": 2, "write": 3, "maintain": 4, "admin": 5}
+
 type importWriter struct {
 	ID          int64                                `json:"id"`
 	RoleName    string                               `json:"role_name"`
@@ -249,7 +263,10 @@ type importWriter struct {
 
 func (c *setupAPI) importWriters(ctx context.Context, repo string, r *ProtectionReport) ([]string, error) {
 	var writers []string
-	roles := map[string][]string{"RepositoryRole:1": {}, "RepositoryRole:2": {}, "RepositoryRole:3": {}, "RepositoryRole:4": {}, "RepositoryRole:5": {}}
+	roles := map[string][]string{}
+	for id := range importRepositoryRoles {
+		roles[fmt.Sprintf("RepositoryRole:%d", id)] = []string{}
+	}
 	completeRoles := true
 	for page := 1; ; page++ {
 		var entries []importWriter
@@ -261,14 +278,16 @@ func (c *setupAPI) importWriters(ctx context.Context, repo string, r *Protection
 			return nil, errors.New("incomplete collaborator listing")
 		}
 		for _, entry := range entries {
-			level := map[string]int{"read": 1, "triage": 2, "write": 3, "maintain": 4, "admin": 5}[entry.RoleName]
+			level := importRoleRank[entry.RoleName]
 			if entry.ID <= 0 || level == 0 {
 				completeRoles = false
 			}
 			// Built-in role bypasses cover that role and higher roles.
-			for n := 1; n <= level; n++ {
-				key := fmt.Sprintf("RepositoryRole:%d", n)
-				roles[key] = append(roles[key], fmt.Sprintf("User:%d", entry.ID))
+			for id, role := range importRepositoryRoles {
+				if level >= importRoleRank[role] {
+					key := fmt.Sprintf("RepositoryRole:%d", id)
+					roles[key] = append(roles[key], fmt.Sprintf("User:%d", entry.ID))
+				}
 			}
 			if entry.Permissions.Admin || entry.Permissions.Maintain || entry.Permissions.Push {
 				writers = append(writers, entry.Login)
@@ -288,4 +307,16 @@ func (c *setupAPI) importWriters(ctx context.Context, repo string, r *Protection
 	}
 	slices.Sort(writers)
 	return slices.Compact(writers), nil
+}
+
+// Unknown nested ref conditions must not disappear through typed decoding either.
+func importRefConditionsKnown(raw map[string]json.RawMessage) bool {
+	if len(raw) != 1 || raw["ref_name"] == nil {
+		return false
+	}
+	fields, err := importUnknownFields(raw["ref_name"], struct {
+		Include []string `json:"include"`
+		Exclude []string `json:"exclude"`
+	}{})
+	return err == nil && len(fields) == 0
 }

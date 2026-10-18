@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -69,6 +70,8 @@ type importWorkflow struct {
 	Path, Job, Name, Queue string
 	PRonly                 bool
 	Unresolved             bool
+	NamePattern            string
+	AnyName                bool
 }
 
 func (c *setupAPI) importWorkflows(ctx context.Context, repo string, tree importTree) ([]importWorkflow, error) {
@@ -89,6 +92,7 @@ func (c *setupAPI) importWorkflows(ctx context.Context, repo string, tree import
 			On   yaml.Node `yaml:"on"`
 			Jobs map[string]struct {
 				Name     string    `yaml:"name"`
+				If       yaml.Node `yaml:"if"`
 				Strategy yaml.Node `yaml:"strategy"`
 				Uses     string    `yaml:"uses"`
 			} `yaml:"jobs"`
@@ -109,14 +113,55 @@ func (c *setupAPI) importWorkflows(ctx context.Context, repo string, tree import
 				name = key
 			}
 			if strings.Contains(name, "${{") || job.Strategy.Kind != 0 || job.Uses != "" {
-				result = append(result, importWorkflow{Path: path, Job: key, Name: name, Queue: "unknown", Unresolved: true})
+				pattern := workflowNamePattern(name)
+				if job.Strategy.Kind != 0 {
+					pattern = strings.TrimSuffix(pattern, "$") + `(?: \(.*\))?$` // Matrix instances may add a parenthesized suffix.
+				}
+				result = append(result, importWorkflow{Path: path, Job: key, Name: name, Queue: "unknown", Unresolved: true, NamePattern: pattern, AnyName: job.Uses != ""})
 				continue
 			}
-			result = append(result, importWorkflow{Path: path, Job: key, Name: name, Queue: queue, PRonly: prOnly})
+			jobQueue := queue
+			if job.If.Kind != 0 && !workflowJobAlwaysRuns(job.If) {
+				jobQueue = "unknown (job if: " + job.If.Value + ")"
+			}
+			result = append(result, importWorkflow{Path: path, Job: key, Name: name, Queue: jobQueue, PRonly: prOnly})
 		}
 	}
 	return result, nil
 }
+
+// Only literal true is proven independent of event, ref and job dependencies.
+func workflowJobAlwaysRuns(node yaml.Node) bool {
+	if node.Kind != yaml.ScalarNode {
+		return false
+	}
+	value := strings.TrimSpace(node.Value)
+	if strings.HasPrefix(value, "${{") && strings.HasSuffix(value, "}}") {
+		value = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(value, "${{"), "}}"))
+	}
+	return value == "true"
+}
+
+// A dynamic expression can produce arbitrary text. Only its literal prefix is
+// safe to use for excluding unrelated check names without evaluating Actions.
+func workflowNamePattern(name string) string {
+	if start := strings.Index(name, "${{"); start >= 0 {
+		return "^" + regexp.QuoteMeta(name[:start]) + ".*$"
+	}
+	return "^" + regexp.QuoteMeta(name) + "$"
+}
+
+func (w importWorkflow) couldProduce(name string) bool {
+	if w.AnyName {
+		return true
+	}
+	if w.NamePattern != "" {
+		matched, err := regexp.MatchString(w.NamePattern, name)
+		return err != nil || matched
+	}
+	return w.Name == name
+}
+
 func workflowQueue(on yaml.Node) (string, bool) {
 	events := map[string]*yaml.Node{}
 	switch on.Kind {
@@ -214,6 +259,7 @@ func queuePatternCovers(pattern string) bool {
 }
 
 func (r *ProtectionReport) requiredChecks(base, source string, p importStatusChecks, evidence checkEvidence, workflows []importWorkflow) {
+	r.unhandledFields(base, source, "required-status-checks-parameter-", p.Unhandled)
 	checks := append(slices.Clone(p.Checks), p.Required...)
 	for _, context := range p.Contexts {
 		if !slices.ContainsFunc(checks, func(c importRequiredCheck) bool { return c.Context == context }) {
@@ -247,7 +293,7 @@ func (r *ProtectionReport) requiredChecks(base, source string, p importStatusChe
 		}
 		var found []importWorkflow
 		for _, w := range workflows {
-			if w.Unresolved {
+			if w.Unresolved && w.couldProduce(check.Context) {
 				class = "unsupported"
 				message += fmt.Sprintf(" Unresolved producer candidate %s job %s name %q (dynamic name, matrix or reusable workflow); name collisions cannot be excluded.", w.Path, w.Job, w.Name)
 			}

@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"reflect"
 	"slices"
+	"strings"
 )
 
 type importReviews struct {
@@ -35,27 +37,136 @@ type importRequiredCheck struct {
 	IntegrationID *int64 `json:"integration_id"`
 }
 type importStatusChecks struct {
-	Strict       bool                  `json:"strict"`
-	StrictPolicy bool                  `json:"strict_required_status_checks_policy"`
-	Contexts     []string              `json:"contexts"`
-	Checks       []importRequiredCheck `json:"checks"`
-	Required     []importRequiredCheck `json:"required_status_checks"`
+	Unhandled    map[string]json.RawMessage `json:"-"`
+	Strict       bool                       `json:"strict"`
+	StrictPolicy bool                       `json:"strict_required_status_checks_policy"`
+	Contexts     []string                   `json:"contexts"`
+	Checks       []importRequiredCheck      `json:"checks"`
+	Required     []importRequiredCheck      `json:"required_status_checks"`
 }
 type importToggle struct {
 	Enabled bool `json:"enabled"`
 }
 type importClassicProtection struct {
-	Reviews      *importReviews      `json:"required_pull_request_reviews"`
-	Checks       *importStatusChecks `json:"required_status_checks"`
-	Threads      importToggle        `json:"required_conversation_resolution"`
-	Signatures   *importToggle       `json:"required_signatures"`
-	Linear       importToggle        `json:"required_linear_history"`
-	Lock         importToggle        `json:"lock_branch"`
-	ForcePushes  importToggle        `json:"allow_force_pushes"`
-	Deletions    importToggle        `json:"allow_deletions"`
-	Creations    importToggle        `json:"block_creations"`
-	Admins       importToggle        `json:"enforce_admins"`
-	Restrictions *classicActors      `json:"restrictions"`
+	Unhandled    map[string]json.RawMessage `json:"-"`
+	Reviews      *importReviews             `json:"required_pull_request_reviews"`
+	Checks       *importStatusChecks        `json:"required_status_checks"`
+	Threads      importToggle               `json:"required_conversation_resolution"`
+	Signatures   *importToggle              `json:"required_signatures"`
+	Linear       importToggle               `json:"required_linear_history"`
+	Lock         importToggle               `json:"lock_branch"`
+	ForcePushes  importToggle               `json:"allow_force_pushes"`
+	Deletions    importToggle               `json:"allow_deletions"`
+	Creations    importToggle               `json:"block_creations"`
+	Admins       importToggle               `json:"enforce_admins"`
+	Restrictions *classicActors             `json:"restrictions"`
+}
+
+// Preserve unknown API fields before typed decoding can discard them. URL fields
+// are response metadata; every other unhandled field remains a named policy gap.
+func importUnknownFields(data []byte, value any, metadata ...string) (map[string]json.RawMessage, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil, err
+	}
+	typ := reflect.TypeOf(value)
+	for i := 0; i < typ.NumField(); i++ {
+		delete(fields, strings.Split(typ.Field(i).Tag.Get("json"), ",")[0])
+	}
+	for _, key := range metadata {
+		delete(fields, key)
+	}
+	return fields, nil
+}
+
+func (p *importStatusChecks) UnmarshalJSON(data []byte) error {
+	type plain importStatusChecks
+	var decoded plain
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	unknown, err := importUnknownFields(data, decoded, "url", "contexts_url")
+	if err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if unknown == nil {
+		unknown = map[string]json.RawMessage{}
+	}
+	for _, key := range []string{"checks", "required_status_checks"} {
+		var checks []json.RawMessage
+		if raw := fields[key]; raw != nil {
+			if err := json.Unmarshal(raw, &checks); err != nil {
+				return err
+			}
+		}
+		for i, raw := range checks {
+			fields, err := importUnknownFields(raw, importRequiredCheck{})
+			if err != nil {
+				return err
+			}
+			for field, value := range fields {
+				unknown[fmt.Sprintf("%s[%d].%s", key, i, field)] = value
+			}
+		}
+	}
+	decoded.Unhandled = unknown
+	*p = importStatusChecks(decoded)
+	return nil
+}
+
+func (p *importClassicProtection) UnmarshalJSON(data []byte) error {
+	type plain importClassicProtection
+	var decoded plain
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	unknown, err := importUnknownFields(data, decoded, "url")
+	if err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	if unknown == nil {
+		unknown = map[string]json.RawMessage{}
+	}
+	for key, raw := range fields {
+		var shape any
+		switch key {
+		case "required_pull_request_reviews":
+			shape = importReviews{}
+		case "required_conversation_resolution", "required_signatures", "required_linear_history", "lock_branch", "allow_force_pushes", "allow_deletions", "block_creations", "enforce_admins":
+			shape = importToggle{}
+		default:
+			continue
+		}
+		fields, err := importUnknownFields(raw, shape, "url")
+		if err != nil {
+			return err
+		}
+		for field, value := range fields {
+			unknown[key+"."+field] = value
+		}
+	}
+	decoded.Unhandled = unknown
+	*p = importClassicProtection(decoded)
+	return nil
+}
+
+func (r *ProtectionReport) unhandledFields(base, source, prefix string, fields map[string]json.RawMessage) {
+	keys := make([]string, 0, len(fields))
+	for key := range fields {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	for _, key := range keys {
+		r.unsupported(base, source, prefix+key, "Unhandled "+prefix+key+"="+string(fields[key])+"; no faithful translation.")
+	}
 }
 
 func (c *setupAPI) importClassic(ctx context.Context, repo, base string) (*importClassicProtection, error) {
@@ -181,7 +292,22 @@ func (r *ProtectionReport) translateRule(base, source string, rule RepositoryRul
 		r.unsupported(base, source, "deployments", "Required deployments have no OpenMerge equivalent. Parameters: "+string(rule.Parameters))
 	case "required_conversation_resolution":
 		r.unsupported(base, source, "conversation-resolution", "Conversation resolution has no OpenMerge equivalent.")
-	case "creation", "update", "deletion", "non_fast_forward":
+	case "update":
+		if !strictFenceUpdate(rule) {
+			r.unsupported(base, source, "update_allows_fetch_and_merge", "update_allows_fetch_and_merge is enabled or unreadable; this update rule does not prove exclusive base write authority. Parameters: "+string(rule.Parameters))
+		} else {
+			r.add(base, source, "update", "equivalent", false, "Keep the GitHub update restriction with update_allows_fetch_and_merge=false; bypass inventory is separate from policy translation.", "# Keep GitHub update restrictions; update_allows_fetch_and_merge=false.")
+		}
+		if len(rule.Parameters) > 0 {
+			fields, err := importUnknownFields(rule.Parameters, struct {
+				Allow bool `json:"update_allows_fetch_and_merge"`
+			}{})
+			if err != nil {
+				return err
+			}
+			r.unhandledFields(base, source, "update-parameter-", fields)
+		}
+	case "creation", "deletion", "non_fast_forward":
 		r.add(base, source, rule.Type, "equivalent", false, "Keep write restrictions on GitHub; bypass inventory is separate from policy translation.", "# Keep GitHub "+rule.Type+" restrictions; do not translate into merge_when.")
 	default:
 		r.unsupported(base, source, rule.Type, "Content/unknown rule "+rule.Type+" parameters="+string(rule.Parameters)+" stays on GitHub and requires rule-aware validation for every generated ref and merge method before switch.")
@@ -192,6 +318,7 @@ func (r *ProtectionReport) translateClassic(base string, p *importClassicProtect
 	if p == nil {
 		return nil
 	}
+	r.unhandledFields(base, "classic", "classic-field-", p.Unhandled)
 	if p.Reviews != nil {
 		r.reviews(base, "classic", *p.Reviews, writers)
 		r.classicInventory(base, "classic-review-bypass", p.Reviews.Bypass)

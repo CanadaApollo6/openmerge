@@ -163,14 +163,9 @@ func TestImportReconcilesApprovalDraftExactly(t *testing.T) {
 			t.Fatal(err)
 		}
 		want := `approvals:
-    default: any_writer
-    rules:
-        - require:
-            count: 3
-            group: imported_reviewers
-          when:
-            touches:
-                - '**'
+    default:
+        count: 3
+        group: imported_reviewers
 changes:
     pull_requests: required
 groups:

@@ -1011,21 +1011,28 @@ or upload it. Merge its annotated, reconciled queue fragments into existing
 queues; they are not a replacement configuration to deploy verbatim.
 
 The report starts with readiness, blocker and unaccepted-gap counts. Unknown
-pull-request parameters are unsupported and name the unhandled key. Dynamic
-producer names, unresolved reusable-workflow callers, path filters and missing
+pull-request, required-status-check and classic protection fields are unsupported
+and name the unhandled key and raw value. Unknown ruleset conditions list every
+hidden rule and remain unwaivable blockers until their applicability is resolved.
+Dynamic producer names, unresolved reusable-workflow callers, path filters and missing
 queue-push evidence cannot establish equivalence. CODEOWNERS coverage remains
 "to verify at switch" even for plausible owner tokens: this audit does not
 resolve owner identities, team visibility or eligibility. Effective write
 authority expands readable team and built-in role memberships before intersecting
 restrictions; unresolved membership is a blocker that `--accept` cannot waive.
+Repository-role bypass IDs are maintain=2, write=4 and admin=5, independently of
+privilege ordering. Unknown/custom role IDs stay unresolved. Classic restrictions
+include administrators when `enforce_admins` is disabled; unreadable admin
+membership blocks authority verification.
 
 **The draft requires the release implementing ADR 0007 Stage A.** It uses that
 ADR's `approvals`, `groups` and `changes` keys; current releases reject them.
 Review counts use a snapshot of eligible repository writers in
-`groups.imported_reviewers`, with a `touches: ["**"]` approval rule requiring
-distinct members. The draft states the assumption that every change with a file
-inventory matches; unknown matches enforce the requirement. Overlapping classic
-and ruleset review counts use the maximum in one reconciled fragment per base,
+`groups.imported_reviewers`, with a count-bearing group requirement in
+`approvals.default`. With no approval rules in the fragment, this default also
+applies to a known-empty diff; an existential `touches` rule would lose the count.
+Retain the imported requirement when adding other approval rules. Overlapping
+classic and ruleset review counts use the maximum in one reconciled fragment per base,
 with all owner requirements retained. Maintain this group as writer membership
 changes. Eligibility and blocking requests for changes must be checked at landing
 by Stage A. Owner requirements are annotated semantically because ADR 0007 leaves their full schema
@@ -1037,10 +1044,7 @@ to Stage A; a group is never presented as path ownership. For example:
 groups:
   imported_reviewers: [alice, bob]
 approvals:
-  default: any_writer
-  rules:
-    - when: {touches: ["**"]}
-      require: {group: imported_reviewers, count: 2}
+  default: {group: imported_reviewers, count: 2}
 # Owner requirement: one eligible owner for each changed owned file,
 # resolved from CODEOWNERS at the governing default-branch commit.
 ```
@@ -1052,10 +1056,13 @@ required deployments have no equivalent. Required checks need a unique observed
 producer; App pinning is lost by a name-only condition, and a name shared between
 statuses and check runs is ambiguous. Producer observations are bounded to each
 pinned base tip, so they cannot prove future producer exclusivity. The report
-inspects job names and `on:` triggers in each base's pinned workflows: PR-only jobs
-are unsupported, while dynamic names, reusable workflows, path filters and
-unproven branch filters are explicitly unknown. External CI needs operator
-verification. OpenMerge treats neutral and skipped as failures, unlike GitHub.
+inspects job names, job `if:` conditions and `on:` triggers in each base's pinned
+workflows. Only an absent condition or literal `true` proves unconditional job
+coverage; other job conditions remain unknown. PR-only jobs are unsupported,
+while dynamic names, reusable workflows, path filters and unproven branch filters
+are explicitly unknown. Unresolved producers affect only check names they could
+produce; reusable calls with unknown callee names can affect every check.
+External CI needs operator verification. OpenMerge treats neutral and skipped as failures, unlike GitHub.
 Strict up-to-date checks map to `verification: strict`; `post_merge` relaxes that
 guarantee and needs a separate policy review under ADR 0005.
 
