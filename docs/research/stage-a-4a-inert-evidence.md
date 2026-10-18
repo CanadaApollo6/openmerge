@@ -1,7 +1,7 @@
 # Stage A 4a: classification and replayable evidence
 
-Baseline: `d15bc55` (origin/main). Branch: `stage-a/4a-classification`.
-Frozen implementation: `f2f95343f94bf7fecbdf48f6db435aaa9fd8f51c`.
+Baseline: `3f77a88daf1cb99961c22b4daebaeb58f9087bb0` (origin/main). Branch: `stage-a/4a-classification`.
+Frozen round-1 implementation: `9fe04db` (after clean rebase from `7ed45fd`).
 Worktree: `/home/riels/openmerge-stage-a-4a`.
 Baseline checkout: `/home/riels/.cache/om-sa-4a-main`.
 The implementation commit and evidence-only validation commit identify the
@@ -14,7 +14,7 @@ integration waits for 11b. No config keys, actions, planner/executor/landing-gat
 behavior, workflows or queue configuration change. Public loaders still reject
 classification/approval keys. The optional owner/attribute interface remains
 unimplemented until 4b, with unknown generated attributes and unresolved owners.
-No live DB, systemd unit or `openmerge/*` ref was accessed. Only main was fetched;
+No live DB, systemd unit or `openmerge/*` ref was accessed. Only main and this PR branch were fetched;
 only this PR branch is pushed. Tests use the supplied shared test Postgres.
 
 **Reviewed replay exception for PR #65:** the only new `queue.State` field is
@@ -28,7 +28,7 @@ changed; v2 and v3 decoding remain supported. Existing wire-v1 bytes stay fixed.
 ## Evidence and follow-on contract
 
 Classifier version:
-`classification-v1/git-evidence-v7-bounded-omissions/governing-v1/hunks-v1/facets-v1`.
+`classification-v1/git-evidence-v7-bounded-omissions/governing-v1/hunks-v1/facets-v2`.
 It folds in forge v7 inventory/rename/ancestry limits, governing selection and
 absence proofs, bounded hunk semantics, and the classifier's mapping/facet rules.
 A golden pins the version. Every-file docs/generated and paths remain unknown
@@ -43,7 +43,8 @@ file inventory, facts, label-bound reasons and durable generation. The bounded
 hunk evidence lives **in `ChangeClassified.Evidence.Classification.Files[].Hunks`**.
 Omitted-range coordinates and summary counts are copied, never expanded. Inventory
 completeness and hunk completeness stay independent. PR 7a owns the full record
-size budget. There is one registry fixture and two non-registry variants.
+size budget. The historical registry fixture and its two variants remain byte-identical;
+a new facets-v2 variant pins current output.
 
 The projection is keyed by change/revision. Apply and reads detach mutable
 contents. Generation advances on semantic refresh and equal-diff base rewrites;
@@ -76,7 +77,7 @@ operator work. Offline fixture replay and tracked config digest comparison are
 reported separately and do not claim live-journal coverage.
 
 
-### Frozen-source results
+### Original pre-review results (d15bc55 baseline; superseded below)
 
 - `make check > ~/.cache/om-sa-4a.log 2>&1; echo exit=$?`: **exit=0**.
   Formatting, lint (zero issues), the complete short race suite using shared
@@ -122,3 +123,74 @@ source adds the replay-representation regression and also exits **0**. The
 remaining ownership-positive test is an explicit 4b skip, not a claimed pass.
 Final status ledger: `~/.cache/om-sa-4a-statuses.log`; sequential command runner:
 `~/.cache/om-sa-4a-validation.sh`. No live deployment gates are claimed.
+
+## Fix round 1
+
+Both round-1 blockers and all should-fixes/nits are addressed. The rebase onto
+`3f77a88` was clean; main changed tooling/docs only since `d15bc55`.
+
+- Wire decode, Apply and snapshot restore share recursive value checks for every
+  coverage/completeness enum, recorded Truth (including owned: tokens), label and
+  fact grammar, SHA-1/SHA-256 IDs or explicit unavailable/absent values, paths,
+  Git modes, omission reason/count/range combinations and range overflow.
+  Negative tests exercise wire AND snapshot rejection, plus inert Apply.
+- Explicit version dispatch retains historical facets-v1 derivations, including
+  its old single-sided rename flag. Current facets-v2 checks path-derived rename
+  flags, Paths/Files agreement and aggregate/per-file hunk completeness. Existing
+  fixtures remain byte-identical, with a separate current-version variant.
+- Renamed now means unequal nonempty old/new paths; RenamePaired stays exact-only.
+  Single-sided unpaired evidence adds unknown. A stub Deriver composition test
+  supplies side-complete CodeOwners/PolicyOwners for renames, deletions, policy
+  changes and unpaired additions; Evaluate accepts coherent approved evidence
+  and blocks missing approval without owner_evidence_incoherent.
+- Docs remains path-based on unsafe files; generated-pattern matches survive,
+  while unsafe attribute evidence stays unknown. Definite every-file failures
+  win over uncertainty only on complete inventories. Empty diffs have docs and
+  generated unknown, policy false and unknown true. Workflow policy matching
+  covers only direct *.yml/*.yaml definitions. Policy rename reasons retain the
+  policy-side path; docs/generated explanations use readable prose.
+- The matrix now covers generated all/false/rename/unsafe cases, truncated
+  inventory without policy hits, separate hunk-only and governing-only failures,
+  empty diffs, mismatched revision IDs, real governing probe absence/unknown
+  markers, provenance refresh after snapshot restore, and rejected same-generation
+  owner/attribute changes after replay. The named 4b parsing test remains a skip.
+- 4b MUST bump the classifier version again when deriving owners/attributes,
+  set unknown itself for unresolved owners, and record explicit False for every
+  governing owner token absent from the change; missing owned: facts are unknown.
+
+No State/wire shape changed in this round. The private projection remains nil
+without classification events. No production emitter or parser was added.
+11a still owns whole-record resource budgets and acquired-evidence derivation
+cross-checks. Live DB, systemd units and openmerge/* refs remain untouched.
+
+Round-1 validation uses the environment above plus GOMAXPROCS=2 and GOFLAGS=-p=1.
+Heavy jobs run sequentially. Logs and actual final statuses are recorded below.
+
+- Final `make check > ~/.cache/om-pr66-fix1.log 2>&1; echo exit=$?`:
+  **exit=0** (fmt, zero lint issues, full short race suite with shared test
+  Postgres, production build). The first round-1 attempt exited **2** on two
+  exported-version comments; corrected before this final run. Initial log:
+  `~/.cache/om-pr66-fix1-initial.log`.
+- `make test-sim-exits`: **exit=0**, `~/.cache/om-pr66-fix1-sim.log`.
+  Comparison to the archived d15bc55 baseline: **exit=0**, all 146 normalized
+  blocks match, SHA-256
+  `a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7`.
+  Simulator source is byte-identical between d15bc55 and current origin/main;
+  the baseline full simulator was not rerun. Helper and output:
+  `~/.cache/om-pr66-fix1-normalize.py` and `om-pr66-fix1-sim-normalized.json`.
+- `python3 scripts/check-phase2-compatibility.py /home/riels/.cache/om-sa-4a-main`:
+  **exit=0**, `~/.cache/om-pr66-fix1-compat.log`. The baseline checkout is detached
+  at origin/main **3f77a88**. All 17 exit records, 1,055 retry/default-digest records
+  and 75 existing main wire fixtures match; hashes remain those above.
+- Final focused classification/queue/changepolicy suites: **exit=0**,
+  `~/.cache/om-pr66-focused-final.log`. Early focused builds exited **1** while
+  migrating the shared label validator and removing an unused import.
+- Byte comparison against origin/main: **exit=0**, all **108** existing JSON
+  testdata fixtures match. Comparison against reviewed 7ed45fd: **exit=0**, all
+  **78** existing PR wire fixtures match. This round adds one facets-v2 variant.
+- Earlier offline fixture replay results above are pre-review evidence; no
+  live-journal or deployment coverage is claimed or rerun in this fix round.
+
+The final diff is approximately 2,000 changed lines against origin/main, below
+3,000. Status ledger: `~/.cache/om-pr66-fix1-statuses.log`. All checks ran
+sequentially with cache-backed Go temporary/build directories and GOMEMLIMIT=6GiB.
