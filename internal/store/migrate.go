@@ -14,9 +14,7 @@ var migrations embed.FS
 
 func (s *Store) migrate(ctx context.Context) error {
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
-		// This negative ID is reserved for migrations; queue locks use a
-		// separate two-int namespace. Both are released by commit/rollback.
-		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(-7046029254386353131::bigint)`); err != nil {
+		if err := s.lockMigration(ctx, tx); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (

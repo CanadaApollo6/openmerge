@@ -52,9 +52,16 @@ func databaseURL(t *testing.T) string {
 	return u.String()
 }
 
+func testLockScope(t *testing.T, raw string) string {
+	t.Helper()
+	u, err := url.Parse(raw)
+	must(t, err)
+	return u.Query().Get("search_path")
+}
+
 func openTestStore(t *testing.T, url string) *Store {
 	t.Helper()
-	s, err := Open(t.Context(), url)
+	s, err := Open(t.Context(), url, WithTestLockScope(testLockScope(t, url)))
 	must(t, err)
 	t.Cleanup(s.Close)
 	return s
@@ -88,12 +95,13 @@ func count(t *testing.T, s *Store, sql string, args ...any) int {
 
 func TestMigrationsConcurrentOpenAndReopen(t *testing.T) {
 	url := databaseURL(t)
+	scope := testLockScope(t, url)
 	const workers = 8
 	errs := make(chan error, workers)
 	var wg sync.WaitGroup
 	for range workers {
 		wg.Go(func() {
-			s, err := Open(t.Context(), url)
+			s, err := Open(t.Context(), url, WithTestLockScope(scope))
 			if err == nil {
 				s.Close()
 			}
@@ -278,7 +286,7 @@ func TestPlanSerializesAndIsIdempotent(t *testing.T) {
 	tx, err := s.pool.Begin(t.Context())
 	must(t, err)
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	must(t, lockQueue(t.Context(), tx, q))
+	must(t, s.lockQueue(t.Context(), tx, q))
 	type result struct {
 		actions []PlannedAction
 		err     error
@@ -321,7 +329,7 @@ func TestAppendCannotCommitBehindAPlannedWatermark(t *testing.T) {
 	tx, err := s.pool.Begin(t.Context())
 	must(t, err)
 	defer func() { _ = tx.Rollback(context.Background()) }()
-	must(t, lockQueue(t.Context(), tx, q))
+	must(t, s.lockQueue(t.Context(), tx, q))
 	name, payload, err := queue.EncodeEvent(queue.ResumeRequested{})
 	must(t, err)
 	var earlier int64

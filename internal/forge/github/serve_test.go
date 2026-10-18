@@ -47,10 +47,18 @@ func serveDatabaseURL(t *testing.T) string {
 	return u.String()
 }
 
+func openServeStore(t *testing.T, raw string) *store.Store {
+	t.Helper()
+	u, err := url.Parse(raw)
+	must(t, err)
+	db, err := store.Open(t.Context(), raw, store.WithTestLockScope(u.Query().Get("search_path")))
+	must(t, err)
+	return db
+}
+
 func serveDatabase(t *testing.T) *store.Store {
 	t.Helper()
-	db, err := store.Open(t.Context(), serveDatabaseURL(t))
-	must(t, err)
+	db := openServeStore(t, serveDatabaseURL(t))
 	t.Cleanup(db.Close)
 	return db
 }

@@ -13,8 +13,7 @@ import (
 
 func TestActionsRerunRestartReplaysDurableIntent(t *testing.T) {
 	url := serveDatabaseURL(t)
-	db, err := store.Open(t.Context(), url)
-	must(t, err)
+	db := openServeStore(t, url)
 	a := newRerunAPI(t, 700)
 	a.ref = "openmerge/queue/main/b1"
 	q, err := db.EnsureQueue(t.Context(), store.QueueKey{Installation: "7", Repository: testRepo.Path, BaseBranch: "main"})
@@ -74,8 +73,7 @@ func TestActionsRerunRestartReplaysDurableIntent(t *testing.T) {
 	a.restart()
 	a.journal = nil
 	x.Driver = a.api.driver
-	db, err = store.Open(t.Context(), url)
-	must(t, err)
+	db = openServeStore(t, url)
 	defer db.Close()
 	// Lease expires while this process is absent; the replacement reloads events.
 	now = epoch.Add(11 * time.Second)

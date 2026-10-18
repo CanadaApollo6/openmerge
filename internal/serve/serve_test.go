@@ -83,7 +83,7 @@ func databaseConnection(t *testing.T) (*store.Store, *pgx.Conn) {
 	query := u.Query()
 	query.Set("search_path", schema)
 	u.RawQuery = query.Encode()
-	db, err := store.Open(t.Context(), u.String())
+	db, err := store.Open(t.Context(), u.String(), store.WithTestLockScope(schema))
 	must(t, err)
 	t.Cleanup(db.Close)
 	_, err = conn.Exec(t.Context(), "SET search_path TO "+pgx.Identifier{schema}.Sanitize())
