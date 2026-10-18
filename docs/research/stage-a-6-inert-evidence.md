@@ -1,149 +1,160 @@
-# Stage A 6 inert component evidence
+# Stage A 6 inert component evidence — fix round 1
 
-Baseline: `c2d9b3aa17113b7e208ceac1be53aa42fe86dce8` (`origin/main` at branch creation).
-Implementation: `afd14dc449c2aff38c89602a17cc7b2af2d436f6`.
-Dedicated worktree: `$HOME/openmerge-stage-a-6`, branch `stage-a/6-stances`.
-Detached baseline: `$HOME/.cache/om-sa-6-baseline`. Go: `go1.27.2 linux/amd64`.
-The subsequent evidence commit changes only this note.
+Base: `dd03aa3e1eccbd2a7a2f81f60f45c155f7ea43df` (`origin/main`, PR #70).
+Implementation: `7e6e117c8c43a1d12b87f806ec2bbe4af0b8481e`.
+Worktree: `$HOME/openmerge-stage-a-6`, branch `stage-a/6-stances`.
+Baseline checkout: `$HOME/.cache/om-sa-6-baseline`, detached at the base above.
+Go: `go1.27.2 linux/amd64`; host CPU: Intel i7-13620H.
+The following evidence commit changes only this note.
 
-This is merge/component evidence, not authorization to deploy. No live database,
-journal, service unit, App permission, configuration or `openmerge/*` ref was
-read or changed. Git fetched only main. Tests use the shared test Postgres at
-`localhost:54329`, with per-test isolation, and no real GitHub API calls.
-A deployment still requires the operator's exported live-journal shadow replay
-and live effective-config comparison under ADR 0007's trial gates.
+This is component/merge evidence, not deployment authorization. The live DB,
+service units and live branch refs were not operated on. Tests use only the
+shared test Postgres at localhost:54329 and local fake forge servers. No real
+GitHub API calls occur in code/tests. An initial default-refspec fetch created
+`origin/openmerge/queue/main/b44`, a remote-tracking ref; it did not write a
+local or remote `openmerge/*` branch. Subsequent fetches explicitly selected
+`refs/heads/main:refs/remotes/origin/main`. This records the fetch-scope exception
+rather than claiming all fetches were main-only.
 
-## Scope and inert boundary
+## Design and review findings
 
-Four additive wire-v1 event types record accountability, canonical intent,
-review stances and eligibility. There are exactly four new registry fixtures;
-eight extra variants live outside the event/action glob. Snapshot v5 retains
-first-observation barriers and source-to-revision attribution and decodes old
-versions 2–4. Compaction is not enabled. No actions, loader/schema keys, planner,
-executor, landing gate or existing condition wiring change.
+The effective stance and blocker indices are recomputed for the changed user
+from the attributed source set and pinned first-observation barriers. Positives
+are reconsidered when new evidence arrives. ReadID and arrival order no longer
+control recovery. Requests win equal/unknown/ambiguous ordering; fallback
+withdrawals cannot hide later requests. Approvals must clear all relevant
+barriers with strict time and applicable namespace sequence proof. Requests
+cleared by withdrawals are resolved with sorted prefix maxima, avoiding a
+pairwise scan. The all-source pins remain bounded to 4096 per change; copies
+clone only the changed maps/payload instead of JSON-round-tripping the entire
+change twice per Apply. Capacity exhaustion clears the partial decision and
+fails closed for that change. Another change's budget/stance stays independent.
+The 11a eligibility ingestion filter and explicit oversized-change rejection
+are required activation gates, documented in `internal/queue/approvals.md`;
+arbitrary pin eviction would permit historical source rebinding.
 
-`Apply` folds these observations into a copy-on-write side projection without
-advancing planner revisions. New facts and revision boundaries change the
-per-change approval fingerprint without changing CI keys, timers or
-classification. Tests compare next plans, immutable prior state, snapshot-plus-tail
-and journal replay. The new private `queue.State.approvalFacts` field remains
-**nil** for queues without these observations. At the next deployment,
-`scripts/check-live-journal-replay.py` needs a reviewed nil-only state exception
-for `approvalFacts` (alongside any still-pending exceptions for earlier Stage A fields).
-This PR does not relax that script's live replay checks.
+Dismissal submission time/commit now remain independent attribution evidence;
+dismissal action time still comes exclusively from PR 3b's dismissal DTO.
+An unseen old review on a reused head cannot acquire a fresh dismissal's epoch.
+Known original attribution joins in either discovery order. Novel heads do not
+need time proof against local first-poll time. Reused heads require submission
+after the boundary plus Q4's three-second precision/clock allowance. Prior-head
+sets survive snapshots and legacy-first boundary enrichment. Old snapshots
+without history stay conservative through future revisions until full replay.
+Any revision change clears current request/withdrawal indices.
+
+Accountability records and evaluation compare policy digests, including agent
+mapping changes. Current intent must match recorded revision/head/digest.
+Fingerprints exclude historical/non-effective sources and include recorded
+policy and ConfigApplied digests. `PrepareApprovalDecision` carries exact fresh
+eligibility, accountability, intent, relied-on stances, receipt identity,
+evaluation and snapshot; Stage A 9 must atomically journal that exact eligibility.
+Typed boundary preflight and 7a/8/9/11a receipt/ordering gates are documented.
+Fresh owner pools, both owner known flags, PR 3b time mapping and Q4 first bounds
+remain covered by the existing component tests.
+
+## Inertness and coverage
+
+No production emitter, action, config/schema key, condition, planner/executor
+or landing gate is added. Legacy `approvalFacts` remains nil. Snapshot v5 reads
+v2–v4 without enabling compaction. Production call-site search:
 
 ```sh
-rg -n 'ApprovalFacts|approvalFacts|ReviewStanceObserved|ChangeIntentObserved|ChangeAccountabilityObserved|ApprovalEligibilityObserved|EvaluateApprovals|NativeStance' \
+rg -n 'approvalFacts|ReviewStanceObserved|EvaluateApprovals|NativeStance|PrepareApprovalDecision' \
   internal/serve internal/executor cmd
 ```
 
-The search returns no matches (rg exit 1). All new observation creation,
-conversion and evaluation calls are component functions or tests; none is a
-production caller. Public activation and fresh external reads remain 11a/11b.
+Result: no matches (exit 1). No live journal is read. Deployment still needs the
+operator's exported-live-journal shadow replay and effective-config comparison.
+The deploy-time script's future nil-only approvalFacts exception is documented,
+not enabled by this PR.
 
-All **80** baseline wire files, including pre-existing variants, are byte-identical.
-SHA-256 over sorted baseline paths followed by NUL and file bytes:
-`f32728989e704e31cae160f82d12113cc3007988a73b628ab5dd1d598fb8eb54`.
-No existing fixture/digest golden changes. The implementation and contract notes
-add 1,703 lines and remove 6; the final PR count also includes this evidence note
-and remains below the ADR's 3,000-line ceiling.
+All **80** baseline wire files are byte-identical. Sorted path + NUL + bytes
+SHA-256: `f32728989e704e31cae160f82d12113cc3007988a73b628ab5dd1d598fb8eb54`.
+New inert observation goldens additionally pin the new original-submission and
+policy-digest fields and the shared exported-name JSON fields. The null-field
+mutation test skips only the explicit absent Receipt/null, not every unchanged
+mutation. The complete PR remains below the 3000 changed-line review ceiling.
 
-## Fold and fresh eligibility evidence
+`TestStanceSetPermutationsAndEverySnapshotSplit` covers **19 sets**, sizes
+**3, 4 and 5**: seven semantic regression sets and twelve seeded generated sets.
+All permutations, every snapshot split (including both ends), three read groups
+and duplicate polls produce **11,688** identical effective stance/blocker/frontier
+and fingerprint results: **0 divergences**. Sets include both channels, exact
+and fallback dismissals, approvals, requests, unapprove, equal and missing times.
+Additional tests pin the reported two-eligible-approver safety repro, unseen old
+review dismissals on H1→H2→H1, original-known/unknown cases, novel-head polling,
+clock allowance, incomplete historical snapshots, per-change capacity isolation,
+policy/intent binding and exact evaluated eligibility in the decision bundle.
 
-`internal/queue/approvals.md` specifies source namespaces, conservative
-head-epoch attribution, pinned first-observation bounds and recovery. Native
-reviews never acquire intent/brief bindings. A read ID witnesses blocker
-re-observation before clearing; equality or unavailable comparable bounds fail
-closed. Polls/restart never renew the fallback barrier. Old sources retain their
-attribution through H1 → H2 → H1; ambiguous first discoveries are historical.
-Receipt ordering tests model shared stance types; receipt command authentication
-and wire acceptance belong to 7a.
+## Verification
 
-`EvaluateApprovals` immediately replaces both owner projections and known flags
-using `classification.ResolveOwnerEligibility` over stored governing evidence
-with a fresh resolver built from the current observation's recorded owner-token
-pools. Owner membership changes therefore also change the approval fingerprint.
-Stored classification-time `Fresh=true` pools and stored
-eligibility never authorize a decision. Tests cover removed owners, revoked
-writers, canonical `GitHubUserID` spellings, unavailable membership, exclusions,
-alias deduplication and eligible change-request blockers. A classification-time
-membership-only unknown resolves successfully at decision time without changing
-the durable classification. The contract note explains why a rule explicitly
-matching the historical `unknown` facet remains conservative until a normal new
-classification generation refreshes that semantic evidence.
-
-## Verification commands and results
-
-Checks run serially, with Go temporary/cache files under `$HOME/.cache`:
+All workloads run serially with the live server left running. Environment:
 
 ```sh
 export GOFLAGS=-p=2 GOMAXPROCS=2 GOMEMLIMIT=4GiB
 export GOTMPDIR=$HOME/.cache GOCACHE=$HOME/.cache/go-build TMPDIR=$HOME/.cache
 export OPENMERGE_TEST_DATABASE_URL='postgres://postgres@localhost:54329/postgres?sslmode=disable'
-make check > ~/.cache/om-sa-6.log 2>&1; echo exit=$?
-make test-sim-exits > ~/.cache/om-sa-6-sim.log 2>&1; echo exit=$?
+make check > ~/.cache/om-pr71-fix1.log 2>&1; echo exit=$?
+make test-sim-exits > ~/.cache/om-pr71-fix1-sim.log 2>&1; echo exit=$?
 python3 scripts/check-phase2-compatibility.py "$HOME/.cache/om-sa-6-baseline" \
-  > ~/.cache/om-sa-6-compat.log 2>&1; echo exit=$?
+  > ~/.cache/om-pr71-fix1-compat.log 2>&1; echo exit=$?
 python3 scripts/check-stage-a-identity-compatibility.py "$HOME/.cache/om-sa-6-baseline" \
-  > ~/.cache/om-sa-6-replay.log 2>&1; echo exit=$?
+  > ~/.cache/om-pr71-fix1-replay.log 2>&1; echo exit=$?
 ```
 
-The initial `make check` exited **2** on eight lint findings (export comments and
-one test variable shadowing `copy`). They were corrected before the implementation
-commit. Its preserved log is `~/.cache/om-sa-6-initial-lint.log`.
-The focused `go test ./internal/queue` run exited **0**.
+Final results against `dd03aa3`: **make check 0; test-sim-exits 0;
+compatibility 0; differential replay 0**. Simulator exits took 44.035 s.
+Compatibility preserves 17 legacy exit records and 1055 retry/default-digest
+records; its registry comparison preserves all 76 pre-existing registry fixtures.
+The independent all-files comparison above includes four additional variants.
+Replay preserves depth-1's 682 events and depth-4's 1071 events and all **1753**
+event/action checkpoints. Combined checkpoint SHA-256:
+`59e8f223916c504b10a20ead4d300f861f776f9f39dd91248f3294981dc2a6de`.
+No change_* events are emitted by the synthetic legacy workloads.
 
-The final `make check` exits **0** (format, lint, race-enabled short suite, build).
-The first successful full check preceded the source-clock regression test;
-`~/.cache/om-sa-6-first-pass.log` preserves it. The final log above validates the
-amended implementation, including recorded owner pools, source-clock ordering
-and the late lower-ID blocker regression tests. Intermediate successful checks
-are also preserved as `om-sa-6-before-owner-pools.log` and
-`om-sa-6-before-late-blocker.log`; those are not the final validation log.
+The first two check attempts exited **2**, on a slice-comparison type error and
+then a builtin-shadowing lint error. Preserved logs:
+`om-pr71-fix1-initial.log`, `om-pr71-fix1-lint.log`. Both were fixed.
+The complete pre-rebase check exited **0** (`om-pr71-fix1-pre-rebase.log`).
+A post-rebase run was intentionally stopped (exit **2**) to close the missing
+snapshot-history edge (`om-pr71-fix1-history-interrupted.log`). Only test
+processes started by this task were terminated. The final results above apply
+to the implementation named at the top.
 
-`check-phase2-compatibility.py` exits **0** against the detached `origin/main`
-baseline. Its unchanged harness reports:
-
-- **17** legacy exit records byte-identical, SHA-256
-  `bc7c730e66e11a6b3ec3e2253e81061d49358d592cb673e634fac89bf41b26c6`.
-- **1,055** depth-1 retry envelope/default-digest records byte-identical, SHA-256
-  `07ed2ecf13debd5d75c8424b222edfd740470c00f5fc2b4ae00183fdd9ce7b37`.
-- **76** existing registry wire fixtures byte-identical. The independent
-  all-files comparison above also includes the four old variants (80 total).
-
-The final `make test-sim-exits` exits **0** (47.465 s in the retained log).
-`check-stage-a-identity-compatibility.py` exits **0**, comparing deterministic
-synthetic journals and next actions at **every** revision:
-
-- Depth 1: **682** events; journal SHA-256
-  `75b4bcfbcf8ef89be731a6109b0b6051639c1476b530a3f346a0ff82716f577e`.
-- Depth 4: **1,071** events; journal SHA-256
-  `ab5384c42a8038d3223aad2c84832b372b8de7f3bd51de21671756d5cec69875`.
-- **1,753** byte-identical event/action checkpoints; combined SHA-256
-  `59e8f223916c504b10a20ead4d300f861f776f9f39dd91248f3294981dc2a6de`.
-
-The unchanged harness confirms no `change_*` emission. Its full journal-byte and
-checkpoint comparison also detects any other added event. This is synthetic
-merge evidence; it is not a replay of the operator's live exported journal.
-
-## Reproducible binary identities
-
-In each checkout, with the corresponding output path:
+## Replay cost
 
 ```sh
-CGO_ENABLED=0 go build -trimpath -buildvcs=false \
-  -ldflags '-X main.version=stage-a-6-evidence' \
-  -o "$HOME/.cache/om-sa-6-new" ./cmd/openmerge
-# Baseline output: $HOME/.cache/om-sa-6-old
-sha256sum "$HOME/.cache/om-sa-6-old" "$HOME/.cache/om-sa-6-new"
+go test ./internal/queue -run '^$' -bench '^BenchmarkApprovalReplay$' \
+  -benchtime=1x -count=5 > ~/.cache/om-pr71-fix1-benchmark.log 2>&1
 ```
 
-Both builds exit **0**. The fixed version/path-independent builds hash to:
+Exit **0**, five complete replays at each size, non-race, GOMAXPROCS=2:
 
-- Baseline: `0568ce802761b5c577d1dd4303c543f1113f6e3f68a8ec0859bf11e404f2bd1e`.
-- Candidate: `a9df64c7ab3fbd046da4e4f3d8055f1d5b36a9424d3c93b612ffcecc3738d7d7`.
+- **1500** mixed sources: median **0.475976 s**, range **0.473035–0.482726 s**.
+- **4095** mixed sources: median **3.407444 s**, range **3.384777–3.466484 s**.
 
-The binaries differ because the new codec/projection code is linked. Inertness
-is supported by call-site isolation, nil legacy state, unchanged configuration
-and wire evidence, simulator exits and differential next-action replay, rather
-than binary identity. Live deployment gates remain outstanding as stated above.
+Each timed region starts with an empty projection and actually applies every
+source, checks the exact retained count, absence of saturation and the final
+request-for-changes blocker. It measures full component replay for one user,
+including validation, immutable map copies and recomputation, not a no-op or
+cached lookup. No I/O/gate acquisition latency is measured; the component is
+inert and has no production ingestion path. The published results exclude
+profiling and the earlier single-run exploratory measurements.
+
+Cumulative allocation medians are 1.073 GB and 8.065 GB **per entire replay**,
+not resident heap sizes. The full replay still has quadratic map-copy volume;
+it no longer serializes the entire growing change twice per event. Allocation
+counters establish the remaining copy cost, but the CPU limiter is unconfirmed:
+the separate 4095-source CPU-profile attempt was killed before execution
+(`go test` exit **1**, empty profile; pprof exit **2**). A smaller diagnostic
+retry at 512 MiB was also killed at startup (exit **137**; pprof exit **2**).
+Those failed diagnostics are not timing samples and no CPU-profile conclusion
+or before/after speedup is claimed. Logs: `om-pr71-fix1-profile-run.log`,
+`om-pr71-fix1-small-profile-run.log`. The live server and unrelated processes
+were left alone.
+
+The host was shared, with 16 logical CPUs and pre-run load averages
+0.97/1.56/1.72 (`om-pr71-fix1-benchmark-host.log`). These are local candidate
+measurements, not a comparison to a matched baseline. Both benchmark sizes
+assert successful work and valid final output; all ten measured replays passed.
