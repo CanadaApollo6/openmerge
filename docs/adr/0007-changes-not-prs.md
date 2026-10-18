@@ -1027,7 +1027,9 @@ make an unknown rule relax policy.
   exact-head human review, receipt-required intent review, and read-back of
   every landing decision. PR 12b also covers an owned non-policy file waiting
   for its owner and an uncovered non-policy file that does not wait for owner
-  approval (its independent count requirement still applies).
+  approval, using ADR 0008's two-rule translation (a `paths: ["**"]` count rule
+  plus a `touches: ["**"]` code-owner rule) so the count requirement still applies
+  to the uncovered file.
   Run an organization sandbox acceptance for team owners and permission
   installation. The sandbox includes a real receipt
   posted with `gh pr comment <number> --body '@openmerge approve <brief-digest>'`,

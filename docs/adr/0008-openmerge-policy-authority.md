@@ -108,9 +108,12 @@ approvals:
       require: {code_owners: true}
 ```
 
-`paths` has every-file semantics, so the count rule also matches a complete empty
-diff. `touches` has any-file semantics: an empty diff gets the count but no owner
-obligation, as on GitHub. For a nonempty diff both rules match independently, so
+An empty diff still gets the count, but not because the `paths` rule matches it:
+with no changed paths, every-file facets evaluate as unknown rather than true, so
+missing evidence can never definitely match an exemption. An unknown rule is
+enforced as if it matched, and because no rule definitely matches, the count-bearing
+default applies as well. `touches` has any-file semantics and is false for an empty
+diff, so there is no owner obligation, as on GitHub. For a nonempty diff both rules match independently, so
 owner review cannot displace the imported N approvals; one eligible approval
 may contribute to both requirements. The default alone does not preserve the
 count once a rule definitely matches. `import-protection` must not propose or
