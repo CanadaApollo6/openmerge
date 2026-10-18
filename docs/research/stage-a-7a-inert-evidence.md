@@ -140,3 +140,42 @@ Event SHA-256:
 Queue SHA-256:
 `418f025a0e3c8792321b6d71d297f17fff1adf48cb616c8f4fcb774163696886`.
 This historical evidence is not a new deployment; no deployment was performed.
+
+## Rebase onto cc57085
+
+Rebased reviewed head `4fd7344` onto `cc57085a24510858980795cc2df7529f53f90dee` (PR #73 / Stage A 8). Both earlier approvals apply to `4fd7344`; this integration has the validation below, without claiming renewed reviewer approval.
+
+Conflict resolutions and integration changes:
+
+- Keep PR 8's outer `Apply` wait refresh and stale-basis guards for eligibility, intent and accountability; fold 7a receipts inside the inner dispatcher so accepted receipt inputs can wake waits. Keep both state maps and clone/snapshot validation paths.
+- Main's actual snapshot version is **v5**, including its optional `ApprovalWaits`; 7a's coherent next version remains **v6**, with `Receipts`. Decode v2–v5 through existing upgrades, including main's populated v5 waits. Optional waits also leave prior 7a v6 snapshots decodable. No v7 is needed and no main format is skipped.
+- Keep PR 8's fingerprint unchanged: it hashes effective `cp.Stance` values, including the full receipt identity. Regression coverage proves an accepted receipt wakes a wait, while a rejected audit receipt does not. Polling/history exclusions, semantic classification and ConfigApplied digest inputs remain intact.
+- Encode only the new `approval_receipt_recorded` event through explicit snake_case receipt/actor DTOs in both codec directions; update its new fixture. Runtime brief/snapshot DTOs and all existing wire fixtures retain their bytes. PR 8's wire-key guard and frozen legacy exception list are byte-identical to main.
+- Preflight approval, receipt and classification admissions through the same full `Apply` transition used after journaling. This respects PR 8's stale-input guard and removes changed waits before full snapshot validation; calling inner projection helpers left stale fingerprints that falsely rejected valid admissions. Checks remain pure and retain 7a's byte budgets and source pins.
+- Keep 7a's dismissal-barrier sequence fix; PR 8's stale-input guards apply to intent/accountability/eligibility and do not suppress dismissal observations. Retain classification history pruning, receipt saturation pins, old revision boundaries and brief semantics. Restore the `forge` import required by retained-boundary validation after automatic import merging removed it.
+- Merge both replay exception entries and their tests: `approvalWaits` and `receipts` permit **only absent-to-nil maps**, with exact type/kind/nil/value checks; non-nil empty or populated maps fail. No plan/action/wake exceptions.
+
+Validation of clean code commit `9662d1cfb40b0e72608f3a66f009444e1e1fabb8` against clean baseline `cc57085a24510858980795cc2df7529f53f90dee` (the final commit only records this evidence):
+
+- `make check > ~/.cache/om-pr72-rebase.log 2>&1; echo exit=$?`: **exit 0**; zero lint issues, all race/short tests and build passed (queue 275.152 seconds).
+- `make test-sim-exits`: **exit 0**, 44.173 seconds; log `~/.cache/om-pr72-rebase-sim.log`.
+- `python3 scripts/check-phase2-compatibility.py "$HOME/openmerge-stage-a-7a-main"`: **exit 0**; 17 legacy exits and 1,055 retry/default-digest records byte-identical. Their SHA-256 values remain `bc7c730e66e11a6b3ec3e2253e81061d49358d592cb673e634fac89bf41b26c6` and `07ed2ecf13debd5d75c8424b222edfd740470c00f5fc2b4ae00183fdd9ce7b37`. Script compares 82 top-level main fixtures; recursive byte check covers all 86. Log `~/.cache/om-pr72-rebase-compat.log`.
+- `python3 scripts/check-legacy-plan-action-depths-1-4.py "$HOME/openmerge-stage-a-7a-main"`: **exit 0**; short 227,662 + required full 5,615,998 + fixture 184 = **5,843,844** exact plan/action/next-action/wake comparisons at depths 1 and 4. No exceptions. Short/full/fixture stream hashes: `71f1ae2108d98685b675aa5a158834bbd96595ce3c9e5f3ede6cb9c575aec96a`, `05c71f7394b7a59e84b6e86cab4c219d39d3e60c6c82ebd336d3c3157b3dc4ed`, `e8ae76a0200509bdafdc85a09404585fd29098cb231b469dfa97395fbff71aa2`. Log `~/.cache/om-pr72-rebase-depths.log`.
+- Deployment-pair replay: **exit 0**, gates 2/4 PASS, 2,159/2,159 actions, structural states and boundary checkpoints identical; 8,676 timer probes; derived determinism PASS; no first difference or non-allowlisted fields. Mandatory preflight **21/21 PASS**, synthetic pair 7/7 checkpoints and 15 probes. Snapshot hashes differ as expected for v5 → v6/null receipts, while structural state/actions agree. Report `~/.cache/om-pr72-rebase-deployment-pair.json`; log `~/.cache/om-pr72-rebase-replay.log`.
+- Focused receipt/wait/preflight/v5-upgrade/wire tests: final **exit 0**. Initial targeted compile **exit 1** exposed the automatically removed `forge` import; restored before the passing run. No `make check` failures this round. Standalone replay unit suite: **exit 0**, 21 tests with the mandatory-preflight-only case skipped; replay above ran all 21.
+- Independent byte/hash check: **exit 0**. All five v2 and three v1 canonical pairs match `4fd7344` byte for byte and match their SHA-256 files; hashes are listed above. Brief-facts and receipt-rejections fixtures unchanged. All 86 main wire JSON files unchanged; sorted path + NUL + bytes SHA-256 `999e1752b155d0f73d99d43ce26d6a05d0b2937773c9dcd44e3676d1269a1c01`. PR 8's wire test, including the frozen exceptions, is byte-identical to main. Log `~/.cache/om-pr72-rebase-bytes.log`.
+
+Commands used the environment below, checking processes for another agent's heavy Go/replay job before each heavy command and running jobs serially:
+
+```sh
+export GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOMAXPROCS=2
+export GOTMPDIR=$HOME/.cache/om-pr72-rebase-tmp GOCACHE=$HOME/.cache/go-build TMPDIR=$HOME/.cache
+export OPENMERGE_TEST_DATABASE_URL='postgres://postgres@localhost:54329/postgres?sslmode=disable'
+python3 scripts/check-live-journal-replay.py \
+  --baseline "$HOME/openmerge-stage-a-7a-main" --candidate "$HOME/openmerge-stage-a-7a" \
+  --events "$HOME/.cache/om-pr72-fix1-input/events.jsonl" \
+  --queues "$HOME/.cache/om-pr72-fix1-input/queues.jsonl" \
+  --out "$HOME/.cache/om-pr72-rebase-deployment-pair.json"
+```
+
+The saved 2,158-event/one-queue export hashes remain the retained round-1 hashes above. This replay reads saved exports; no live DB, systemd units, deployment or `openmerge/*` refs were touched. Fetch used only explicit main and 7a branch refspecs. No real GitHub API calls were added to code/tests. PR 8's deployment Hold remains in force.
