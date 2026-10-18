@@ -55,6 +55,16 @@ server plans batches, lands, or observes checks. Other upgrades are logged and d
 not restart anything. The maintainer classifies each change when it is logged,
 before looking at either period's metrics.
 
+ADR 0007 Stage A upgrades follow its
+[trial deployment policy](../adr/0007-changes-not-prs.md#trial-deployment).
+During this pair, only PRs 1–7, 10 and 12 (including their inert splits) are
+eligible, each with the named differential evidence and a log entry. PRs 8, 9
+and 11 and their splits stay off the live server until period B drains. Do not
+add `approvals` to this queue until the pair closes or change the live App's
+permissions mid-trial, including `members: read`. Merging behind an opt-in does
+not itself make an upgrade inert; a change to batching, landing or check
+observation restarts both periods.
+
 The live GitHub App has not been granted `actions: write`, so same-commit check
 retries and CI cancellation report as unsupported during period A: confirmed
 failures are not rerun, and invalidated runs complete. That is the documented

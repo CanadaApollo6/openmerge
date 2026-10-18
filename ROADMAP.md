@@ -143,7 +143,15 @@ Built after Phase 1 closes, in parallel with Phase 2 where they don't overlap ([
 
 Phase 3 treats the change, not the pull request, as the unit of work, in three stages ([ADR 0007](docs/adr/0007-changes-not-prs.md)). Stage A works entirely on pull requests; Stages B and C follow once their prerequisites exist.
 
-- **Change identity (A):** a server-assigned change with one revision per head; a new head leaves the queue as today (conflict grace aside) and its stale runs are cancelled, and a started landing always settles first
+Stage A's [implementation plan](docs/adr/0007-changes-not-prs.md#implementation)
+uses 18 PRs across 12 workstreams, starting with four independent steps: 1, 2a,
+3a and 5. It records dependencies, resolved maintainer decisions, rollout and
+rollback boundaries, and [trial deployment holds](docs/adr/0007-changes-not-prs.md#trial-deployment).
+Stage A acceptance also requires the separate outside-pushes work in
+[PR #53](https://github.com/CanadaApollo6/openmerge/pull/53), branch
+`adr-0007/outside-pushes`. Conflict grace is excluded from Stage A acceptance.
+
+- **Change identity (A):** a server-assigned change with a durable revision sequence, including H1→H2→H1; a new head leaves the queue as today, and a started landing always settles first. Conflicts remove work without grace; cancellation remains speculative-only
 - **Classification (A):** conservative labels (`docs`, `generated`, `owned:<owner>`, `policy`, `unknown`) pinned to base and head; anything uncertain is `unknown`; comment-only detection deferred
 - **Policy approvals (A):** opt-in, agent-aware rules (policy-bot style) that only add requirements on top of `enter_when`/`merge_when`, e.g. agent-authored changes touching `infra/**` need two approvals from a group; unknown matches never lower requirements; head-bound native reviews, `@openmerge approve <brief-digest>` receipts that also bind intent, no self-approval, and a decision snapshot in the landing-start gate; changes waiting for approval are skipped by batching instead of holding a batch
 - **Accountability (A):** separate actor, accountable human and reviewer identities; agents map to accountable humans in default-branch config
