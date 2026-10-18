@@ -177,6 +177,12 @@ Required App repository permissions:
 | Issues | read | Issue-thread command reads and `issue_comment` webhook subscription |
 | Metadata | read | Collaborator permissions, repository/default branch and ruleset reads |
 
+Setup also requests organization **Members: read** (`members: read`) for the
+dormant identity/team capability. Existing Apps and installations must accept
+that addition; [the operating guide](../../../docs/operating.md#organization-membership-permission-stage-a-prerequisite)
+documents adoption and the live trial's permission freeze. Missing members read
+is a warning and does not block unrelated queues.
+
 All comment posting goes through `Driver.Comment`, including `MarkLanded`.
 It uses `POST /repos/{owner}/{repo}/issues/{issue_number}/comments` for PR threads;
 GitHub accepts [Pull requests: write for this endpoint](https://docs.github.com/en/rest/issues/comments#create-an-issue-comment).
@@ -188,6 +194,18 @@ See GitHub's [collaborator permission requirements](https://docs.github.com/en/r
 granted `permissions` against this table, including on token renewal. Missing
 Contents/Workflows write becomes an ERROR and a durable rules block in serve;
 other missing grants are WARN diagnostics. An omitted permission is not a grant.
+
+`IdentityReader.WriteGrant` keeps the permission response's user ID and verifies
+it against the supplied review/comment author ID, failing closed on missing or
+mismatched IDs. `ResolveUser` reports user, bot, App, or unknown account kind;
+GitHub App bot users remain bots, rather than being guessed from login strings.
+`ResolveTeam` pins organization and team IDs. `TeamMembers` reads all roles by
+those IDs, including [members of child teams](https://docs.github.com/en/rest/teams/members#list-team-members),
+and deduplicates by user ID. It rejects failed pages, invalid member identities,
+and pagination beyond 100 pages of 100 members rather than returning partial
+membership. These optional reads use the shared installation transport, always
+revalidate, and cannot consume settlement's reserved budget. Legacy `CanWrite`
+and `Approval` behavior is unchanged; no runtime path calls the new capability.
 
 `SetupRules` uses a separate admin `GITHUB_TOKEN`, with Administration read for
 inspection and write for apply. It reads all pages and detailed rulesets,

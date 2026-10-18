@@ -25,6 +25,7 @@ func (d *Driver) ValidateInstallationPermissions(ctx context.Context) (problems,
 		{"contents", "write", true}, {"workflows", "write", true},
 		{"pull_requests", "write", false}, {"checks", "write", false}, {"actions", "write", false},
 		{"statuses", "read", false}, {"issues", "read", false}, {"metadata", "read", false},
+		{"members", "read", false},
 	} {
 		granted := entry.permissions[permission.name]
 		if granted == "write" || granted == "admin" || permission.access == "read" && granted == "read" {

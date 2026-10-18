@@ -115,7 +115,7 @@ func setupApp(ctx context.Context, opts ManifestOptions, out io.Writer, api stri
 	}
 	manifest, err := json.Marshal(appManifest{
 		Name: name, URL: "https://github.com/CanadaApollo6/openmerge", RedirectURL: address + "/callback",
-		Permissions: map[string]string{"contents": "write", "workflows": "write", "pull_requests": "write", "checks": "write", "actions": "write", "statuses": "read", "issues": "read", "metadata": "read"},
+		Permissions: map[string]string{"contents": "write", "workflows": "write", "pull_requests": "write", "checks": "write", "actions": "write", "statuses": "read", "issues": "read", "metadata": "read", "members": "read"},
 		Events:      events, Hook: hook,
 	})
 	if err != nil {

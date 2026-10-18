@@ -95,10 +95,12 @@ tokens**: choose the repository's **Resource owner**, **Only select repositories
 with just the target repo, and **Repository permissions → Administration: Read
 and write**. Use a fine-grained token; avoid classic tokens. Approve organization
 access/SSO where required, then export it as `GITHUB_TOKEN` for the commands below.
-The runtime App deliberately has no
-administration or organization-members permission: its collaborator permission
-check uses metadata read. The manifest uses contents, workflows, pull requests,
-checks and Actions write, plus statuses, issues and metadata read. Actions write
+The runtime App deliberately has no administration permission: its collaborator
+permission check uses metadata read. The manifest uses contents, workflows, pull
+requests, checks and Actions write, plus statuses, issues, metadata and organization
+members read. Members read is a dormant Stage A prerequisite for team resolution;
+see [permission adoption and the trial freeze](docs/operating.md#organization-membership-permission-stage-a-prerequisite)
+before changing an existing App or installation. Actions write
 permits same-commit retries of GitHub Actions checks only; foreign-App check
 runs and commit statuses are unsupported. Updating the manifest does not change
 an existing App. The App owner must add **Actions: Read and write** in the App's

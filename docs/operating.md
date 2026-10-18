@@ -71,6 +71,40 @@ and last-delivery age per repository. Repositories
 without config get no workers or comments. The read-only `/v1/discovery` endpoint
 uses the same authentication as queue status.
 
+### Organization membership permission (Stage A prerequisite)
+
+New `openmerge setup github` manifests request organization **Members: read**
+(`members: read`) for resolving `org/team` owners and approver pools. Existing
+Apps must add that organization permission in App settings, and each existing
+organization installation must accept the requested addition in its installed
+App settings. Updating the App's permission declaration alone does not update
+an installation's grant. OpenMerge inspects the permissions on the actual
+installation token; renewed tokens (or restarting `serve`) observe acceptance.
+
+**During the ADR 0009 dogfood trial, leave the live App's permissions unchanged,
+including `members: read` and its current `actions: write` status.** Exercise
+permission adoption only on an isolated sandbox App and installation until
+both trial periods drain. Merging these dormant capabilities does not authorize
+a deployment; the ADR 0007 differential deployment gates still apply.
+
+A missing `members: read` grant produces a warning rather than stopping queues
+that do not need team reads, including personal and user-only queues. The new
+identity and membership readers have no runtime callers yet; public approval
+configuration remains disabled. At Stage A activation, unresolved named
+identities will pause only affected queues, and an unreadable effective owner
+requirement will block its change rather than imply empty membership.
+
+Identity-bound grants compare the permission response's stable user ID with the
+review or comment author ID. A renamed or reassigned login cannot lend another
+account's write permission. Team membership is read by stable organization and
+team IDs, includes child-team members exposed by GitHub, and is unknown if any
+page fails or the observation exceeds its bound. These reads share installation
+budgets and cannot spend settlement's reserve.
+
+A token authenticates an account; it cannot prove that a person rather than an
+agent holding that token acted. Use separate bot or App identities for agents
+so they do not consume their human owner's approval.
+
 ## Webhook setup and health
 
 Polling works without a public endpoint: leave `--webhook-listen` /
