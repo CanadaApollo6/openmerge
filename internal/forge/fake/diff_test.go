@@ -3,6 +3,8 @@ package fake
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -157,5 +159,24 @@ func TestRevisionDiffFakeUnpairedRenamesIncomplete(t *testing.T) {
 		if err != nil || got.Inventory.Completeness != forge.DiffIncomplete || len(got.Inventory.Reasons) != 1 || got.Inventory.Reasons[0] != forge.DiffUnpairedRename || len(got.Files) != len(files)+1 {
 			t.Fatalf("%+v err=%v", got, err)
 		}
+	}
+}
+
+func TestHunkFailurePreservesInventory(t *testing.T) {
+	f := New()
+	repo := forge.RepoRef{Path: "acme/repo"}
+	base, _ := f.Init(repo, "main", "fixture-fence")
+	head, err := f.OpenPRWithFiles(repo, 1, base, true, map[string]string{"head.md": "head"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(t.TempDir(), "cache-file")
+	if err := os.WriteFile(cache, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CACHE_HOME", cache)
+	got, err := f.RevisionDiff(t.Context(), repo, forge.RevisionDiffRequest{BaseSHA: base, HeadSHA: head.HeadSHA})
+	if err == nil || got.Inventory.Completeness != forge.DiffComplete || len(got.Inventory.Reasons) != 0 || got.Hunks.Completeness != forge.DiffIncomplete || !slices.Contains(got.Hunks.Reasons, forge.DiffReadFailure) {
+		t.Fatalf("inventory=%+v hunks=%+v err=%v", got.Inventory, got.Hunks, err)
 	}
 }

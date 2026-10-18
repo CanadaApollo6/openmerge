@@ -25,7 +25,7 @@ type RevisionDiffRequest struct{ BaseSHA, HeadSHA string }
 // either blob). No heuristic similarity, external diff, textconv or attributes
 // participate. Complete inventories require unaltered, verified divergence ancestry.
 // Consumers include this version in their classifier version.
-const DiffSemantics = "git-inventory-v4-bounded-ancestry"
+const DiffSemantics = "git-evidence-v7-bounded-omissions"
 
 // Inventory resource limits are part of DiffSemantics.
 const (
@@ -38,8 +38,19 @@ const (
 	MaxAncestryDuration = 30 * time.Second
 	// MaxDiffBytes bounds raw inventory plus all inspected blob bytes per read.
 	MaxDiffBytes = 2 << 20
-	// MaxDiffHunks is zero until Stage 2b adds bounded hunk acquisition.
-	MaxDiffHunks = 0
+	// Hunk text has a separate budget from inspected inventory blobs.
+	// Detailed omissions have separate per-file and collection budgets.
+	// Each file may additionally carry one summary, including after exhaustion.
+	MaxDiffOmittedRangesPerFile = 32
+	MaxDiffOmittedRanges        = 256
+	MaxDiffHunkBytes            = 2 << 20
+	MaxDiffHunkLinesPerFile     = 200
+	DiffHunkContext             = 3
+	MaxDiffHunkInputBytes       = 2 << 20
+	MaxDiffHunkOutputBytes      = 8*MaxDiffHunkInputBytes + 4096
+	MaxDiffHunkStderrBytes      = 8192
+	MaxDiffHunkDuration         = 2 * time.Second
+	MaxDiffHunksDuration        = 30 * time.Second
 )
 
 // DiffCompleteness distinguishes full evidence from partial or unknown reads.
@@ -56,18 +67,26 @@ type DiffFailureReason string
 
 // Observation failure and uncertainty reasons.
 const (
-	DiffInvalidObjectID    DiffFailureReason = "invalid_object_id"
-	DiffMissingObject      DiffFailureReason = "missing_object"
-	DiffReadFailure        DiffFailureReason = "read_failure"
-	DiffNoMergeBase        DiffFailureReason = "no_merge_base"
-	DiffMultipleMergeBases DiffFailureReason = "multiple_merge_bases"
-	DiffShallowHistory     DiffFailureReason = "shallow_history"
-	DiffAlteredHistory     DiffFailureReason = "altered_history"
-	DiffAncestryLimit      DiffFailureReason = "ancestry_limit"
-	DiffFileLimit          DiffFailureReason = "file_limit"
-	DiffByteLimit          DiffFailureReason = "byte_limit"
-	DiffUnpairedRename     DiffFailureReason = "unpaired_rename"
-	DiffHunksNotCollected  DiffFailureReason = "hunks_not_collected"
+	DiffInvalidObjectID     DiffFailureReason = "invalid_object_id"
+	DiffMissingObject       DiffFailureReason = "missing_object"
+	DiffReadFailure         DiffFailureReason = "read_failure"
+	DiffNoMergeBase         DiffFailureReason = "no_merge_base"
+	DiffMultipleMergeBases  DiffFailureReason = "multiple_merge_bases"
+	DiffShallowHistory      DiffFailureReason = "shallow_history"
+	DiffAlteredHistory      DiffFailureReason = "altered_history"
+	DiffAncestryLimit       DiffFailureReason = "ancestry_limit"
+	DiffFileLimit           DiffFailureReason = "file_limit"
+	DiffByteLimit           DiffFailureReason = "byte_limit"
+	DiffUnpairedRename      DiffFailureReason = "unpaired_rename"
+	DiffHunksNotCollected   DiffFailureReason = "hunks_not_collected"
+	DiffHunkLineLimit       DiffFailureReason = "hunk_line_limit"
+	DiffHunkWorkLimit       DiffFailureReason = "hunk_work_limit"
+	DiffHunkByteLimit       DiffFailureReason = "hunk_byte_limit"
+	DiffOmittedRangeLimit   DiffFailureReason = "omitted_range_limit"
+	DiffNonText             DiffFailureReason = "non_text"
+	DiffSpecialMode         DiffFailureReason = "special_mode"
+	DiffInvalidUTF8         DiffFailureReason = "invalid_utf8"
+	DiffInventoryIncomplete DiffFailureReason = "inventory_incomplete"
 )
 
 // DiffCoverage is deliberately not a bool: its zero value is unknown.
@@ -107,12 +126,23 @@ type DiffFile struct {
 	Binary, BinaryKnown, Submodule bool
 	Rename                         DiffRename
 	Hunks                          []DiffHunk
+	HunkCoverage                   DiffCoverage
+	Omitted                        []DiffHunkRange
 }
 
-// DiffHunk reserves the independent hunk-evidence contract for Stage 2b.
+// DiffHunk contains UTF-8 unified body text (no file headers) and blob ranges.
 type DiffHunk struct {
 	OldStart, OldLines, NewStart, NewLines int
 	Text                                   string
+}
+
+// DiffHunkRange explains an omitted span. Zero ranges mean unavailable, not empty.
+type DiffHunkRange struct {
+	OldStart, OldLines, NewStart, NewLines int
+	Reason                                 DiffFailureReason
+	// Count is nonzero only for a summary: number of collapsed omissions.
+	// Its ranges enclose those omissions, including intervening retained spans.
+	Count int
 }
 
 // NewRevisionDiff starts with unknown inventory and explicitly absent hunks.

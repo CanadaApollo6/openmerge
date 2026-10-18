@@ -150,6 +150,9 @@ func (f *Forge) RevisionDiff(ctx context.Context, repo forge.RepoRef, req forge.
 	if len(result.Inventory.Reasons) == 0 {
 		result.Inventory.Completeness = forge.DiffComplete
 	}
+	if err := forge.CollectDiffHunks(ctx, &result, blobs); err != nil {
+		return result, err
+	}
 	return result, nil
 }
 

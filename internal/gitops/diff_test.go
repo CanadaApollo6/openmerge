@@ -119,6 +119,18 @@ func TestRevisionDiffInventory(t *testing.T) {
 	if file := byPath["weird\tname\n"]; file.NewPath != "weird\tname\n" {
 		t.Fatalf("path: %+v", file)
 	}
+	for _, p := range []string{"binary", "exec", "link", "module"} {
+		file := byPath[p]
+		if file.HunkCoverage.Completeness != forge.DiffIncomplete || len(file.Omitted) != 1 || len(file.Hunks) != 0 {
+			t.Fatalf("special file hunk coverage: %+v", file)
+		}
+	}
+	if file := byPath["new.md"]; file.HunkCoverage.Completeness != forge.DiffComplete || len(file.Hunks) != 0 {
+		t.Fatalf("exact rename content: %+v", file)
+	}
+	if file := byPath["deleted"]; file.HunkCoverage.Completeness != forge.DiffComplete || len(file.Hunks) != 1 || file.Hunks[0].OldLines != 1 || file.Hunks[0].NewLines != 0 || !strings.Contains(file.Hunks[0].Text, "-gone") {
+		t.Fatalf("deleted content: %+v", file)
+	}
 	// Mutable default/base refs never replace an endpoint supplied by the caller.
 	tip := f.diffCommit(old, "base moves", map[string]diffEntry{"new-base.go": {mode: "100644", content: "base"}})
 	f.push("main", tip, true)
@@ -403,5 +415,18 @@ func TestRevisionDiffUnpairedRenamesIncomplete(t *testing.T) {
 				t.Fatalf("%+v err=%v", got, err)
 			}
 		})
+	}
+}
+
+func TestHunkFailurePreservesInventory(t *testing.T) {
+	f := newFixture(t)
+	cache := filepath.Join(t.TempDir(), "cache-file")
+	if err := os.WriteFile(cache, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CACHE_HOME", cache)
+	got, err := f.g.RevisionDiff(t.Context(), testRepo, forge.RevisionDiffRequest{BaseSHA: f.base, HeadSHA: f.prs[0].HeadSHA})
+	if err == nil || got.Inventory.Completeness != forge.DiffComplete || len(got.Inventory.Reasons) != 0 || got.Hunks.Completeness != forge.DiffIncomplete || !slices.Contains(got.Hunks.Reasons, forge.DiffReadFailure) {
+		t.Fatalf("inventory=%+v hunks=%+v err=%v", got.Inventory, got.Hunks, err)
 	}
 }
