@@ -988,8 +988,11 @@ deploy alongside its SHA and replay report:
   not `/tmp`; module and toolchain downloads are disabled.
 
   ```bash
+  (
+  set -e
   export DEPLOYED_SHA="<exact deployed source SHA from the deploy record>"
   git worktree add --detach "$HOME/openmerge-deployed-replay" "$DEPLOYED_SHA"
+  trap 'git worktree remove "$HOME/openmerge-deployed-replay"' EXIT
   cache_root="$HOME/.cache/openmerge-legacy-commit-ids"
   mkdir -p "$cache_root/go-tmp" "$cache_root/go-cache"
   GOFLAGS='-p=2' GOMAXPROCS=2 GOMEMLIMIT=4GiB \
@@ -998,7 +1001,7 @@ deploy alongside its SHA and replay report:
     --old-source "$HOME/openmerge-deployed-replay" \
     --new-source "$PWD" \
     --cache-root "$cache_root"
-  git worktree remove "$HOME/openmerge-deployed-replay"
+  )
   ```
 
   The minimum supported old source is `3f77a88`; the harness also supports

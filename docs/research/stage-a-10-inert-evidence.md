@@ -198,3 +198,46 @@ Legacy nil-metadata builds preserve forged `OpenMerge-Change` and
 `OpenMerge-Classification` text in contributor bodies for byte identity. Future
 trailer consumers must trust only commits reached via a recorded tested/landed
 SHA of an activated build, never arbitrary history scans.
+
+## Fix round 1 (2026-10-18)
+
+Implementation tested at `3b32dfbe1b52e4c2314afd01749ec9183b8faf11`.
+The follow-up evidence commit changes documentation only. Main was fetched
+before and after verification and remained `c2d9b3a`; no rebase was needed.
+Production still never installs BuildMetadata. This round adds executor tests
+for loader errors on merge and fast-forward (one non-conflict build failure,
+no BuildTestRef call), rejects missing recorded batch config, shares label
+derivation, and rejects all Unicode control characters in email owner labels.
+
+Real command results, run sequentially with the bounded environment above:
+
+- `make check > ~/.cache/om-pr70-fix1.log 2>&1; echo exit=$?`:
+  **exit=0**, zero lint issues; race/short tests and build passed.
+- `make test-sim-exits`: **exit=0**, `~/.cache/om-pr70-fix1-sim.log`.
+- `check-legacy-commit-ids.py --old-source /home/riels/openmerge-stage-a-10-main`:
+  **exit=0**, `~/.cache/om-pr70-fix1-legacy-main.log`, old `c2d9b3a`.
+- `check-legacy-commit-ids.py --old-source /home/riels/.cache/om-sa-4a-main`:
+  **exit=0**, `~/.cache/om-pr70-fix1-legacy-deployed.log`, deployed old `3f77a88`.
+
+Both gate invocations ran the mandatory self-test and observed actual child
+statuses: identical clean trees **exit=0 / PASS**; committed nil-metadata
+`reserved = "OpenMerge-*"` mutant **exit=1 / FAIL mismatch=squash,rebase**;
+dirty source **exit=2**. The self-test's isolated clone and copied build trees
+were removed. The gate retains its comparison copies/binary hashes below
+`~/.cache`; no new worktrees were needed and GOFLAGS was command-scoped.
+
+The v2 harness uses two multi-commit PRs with explicit titles/multiline bodies,
+forged change/classification/batch lines in bodies and original messages,
+case variants, indented continuations, DCO/coauthors and trailing whitespace.
+It uses only shared `cfg.PullRequest` / `f.commit` fixture APIs. Harness SHA-256:
+`6480d8da0dadc62e5cea983986971af4e1b18fd780cf65193d906967667c6f30`.
+
+All four exact tested/landed pairs below match between both baselines and the
+candidate (the separate logs contain full source/tree/binary hashes):
+
+| Method | Tested SHA | Landed SHA |
+| --- | --- | --- |
+| squash | `ff69dbec39d51f58388ecb40939b116639245145` | `ff69dbec39d51f58388ecb40939b116639245145` |
+| merge | `bcc5548afcfa623368902566ffc0baa8b9cdc752` | `bcc5548afcfa623368902566ffc0baa8b9cdc752` |
+| rebase | `fb81d35ef3ab6f59feb8cd76b09047d01637c9fb` | `fb81d35ef3ab6f59feb8cd76b09047d01637c9fb` |
+| fast-forward | `fc5c1bf85c90345690a94321d2afe65d7007018c` | `ccfc498745b4ed1f770d8e20c0c37e585564669a` |
