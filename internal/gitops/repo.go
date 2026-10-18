@@ -145,6 +145,10 @@ func (r *Repo) identityEnv() []string {
 }
 
 func (r *Repo) open(ctx context.Context, repo forge.RepoRef) (*session, func(), error) {
+	return r.openSession(ctx, repo, false)
+}
+
+func (r *Repo) openSession(ctx context.Context, repo forge.RepoRef, diffRead bool) (*session, func(), error) {
 	key := fmt.Sprintf("%x.git", sha256.Sum256([]byte(repo.Path)))
 	dir := filepath.Join(r.cfg.WorkDir, key)
 	lock, _ := cacheLocks.LoadOrStore(dir, &sync.Mutex{})
@@ -154,7 +158,7 @@ func (r *Repo) open(ctx context.Context, repo forge.RepoRef) (*session, func(), 
 	if err := ctx.Err(); err != nil {
 		return fail(err)
 	}
-	s := &session{r: r}
+	s := &session{r: r, diffRead: diffRead}
 	if err := s.resolveRemote(ctx, repo); err != nil {
 		return fail(err)
 	}
