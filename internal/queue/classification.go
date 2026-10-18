@@ -10,6 +10,7 @@ import (
 	"reflect"
 
 	"github.com/CanadaApollo6/openmerge/internal/classification"
+	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
 
 // ChangeClassified is additive wire-v1 evidence. No production emitter exists
@@ -27,6 +28,16 @@ func (ChangeClassified) queueEvent() {}
 // Validate checks durable bindings; derivation is performed before recording.
 func (e ChangeClassified) Validate() error {
 	c := e.Evidence.Classification
+	for _, commit := range []string{c.Inputs.Base, c.Inputs.Head, c.Inputs.MergeBase, c.Inputs.GoverningCommit} {
+		if !forge.ValidDiffObjectID(commit) {
+			return fmt.Errorf("classification requires full commit IDs")
+		}
+	}
+	for _, coverage := range []forge.DiffCoverage{e.Evidence.Inventory, e.Evidence.Hunks, e.Evidence.Governing.Coverage} {
+		if coverage.Completeness != "" && coverage.Completeness != forge.DiffComplete && coverage.Completeness != forge.DiffIncomplete {
+			return fmt.Errorf("invalid classification coverage")
+		}
+	}
 	if ChangeID(c.Inputs.ChangeID).Validate() != nil || !c.Inputs.Recorded() || c.Inputs.GoverningCommit == "" || c.Inputs.GoverningCommit != e.Evidence.Governing.CommitSHA || len(e.Evidence.InputFingerprint) != 64 {
 		return fmt.Errorf("invalid classification bindings")
 	}
@@ -34,6 +45,20 @@ func (e ChangeClassified) Validate() error {
 		return fmt.Errorf("invalid classification fingerprint")
 	}
 	for _, file := range c.Files {
+		if file.Binary > 2 || file.Submodule > 2 {
+			return fmt.Errorf("invalid file observation truth")
+		}
+		for _, h := range file.Hunks.Hunks {
+			if h.OldStart < 0 || h.OldLines < 0 || h.NewStart < 0 || h.NewLines < 0 {
+				return fmt.Errorf("negative hunk range")
+			}
+		}
+		for _, h := range file.Hunks.Omitted {
+			if h.OldStart < 0 || h.OldLines < 0 || h.NewStart < 0 || h.NewLines < 0 || h.Count < 0 {
+				return fmt.Errorf("negative omitted hunk range")
+			}
+		}
+
 		for _, name := range []string{"docs", "generated", "policy"} {
 			value, ok := file.Facts[name]
 			if !ok || value > 2 {
@@ -234,7 +259,7 @@ func hasNull(v any) bool {
 // Provenance may be refreshed at the same semantic generation. Changed facts,
 // endpoints or explanations require a new generation as well as changed inputs.
 func sameClassificationMeaning(a, b ChangeClassified) bool {
-	left, right := a.Evidence.Classification, b.Evidence.Classification
+	left, right := nonNullClassification(a).Evidence.Classification, nonNullClassification(b).Evidence.Classification
 	left.Inputs.ConfigBlob, right.Inputs.ConfigBlob = "", ""
 	left.Inputs.GoverningCommit, right.Inputs.GoverningCommit = "", ""
 	return reflect.DeepEqual(left, right) && len(classification.RefreshReasons(classification.SemanticInputs(a.Evidence), classification.SemanticInputs(b.Evidence), false, true)) == 0

@@ -218,3 +218,47 @@ func TestClassificationGenerationRejectsRebinding(t *testing.T) {
 		t.Fatal("provenance-only refresh invalidated generation")
 	}
 }
+
+func TestClassificationProvenanceRefreshAfterReplay(t *testing.T) {
+	e := classificationEvent(t)
+	_, raw, err := EncodeEvent(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeEvent(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := Apply(State{}, decoded)
+	// Fresh derivation has nil collections; wire replay normalizes them to [].
+	// This representational difference must not invalidate a provenance refresh.
+	e.Evidence.Classification.Inputs.ConfigBlob = strings.Repeat("7", 40)
+	e.Evidence.Governing.Config[0].ObjectID = strings.Repeat("7", 40)
+	s = Apply(s, e)
+	got, _ := s.Classification(ChangeID(e.Evidence.Classification.Inputs.ChangeID), 1)
+	if got.Evidence.Classification.Inputs.ConfigBlob != strings.Repeat("7", 40) {
+		t.Fatal("replay rejected equivalent collection representation")
+	}
+}
+func TestClassificationRejectsInvalidValues(t *testing.T) {
+	for _, mutate := range []func(*ChangeClassified){
+		func(e *ChangeClassified) { e.Evidence.Classification.Inputs.Generation = 0 },
+		func(e *ChangeClassified) { e.Evidence.Classification.Inputs.Base = "branch-name" },
+		func(e *ChangeClassified) { e.Evidence.Inventory.Completeness = "invented" },
+		func(e *ChangeClassified) { e.Evidence.Classification.Files[0].Binary = 9 },
+		func(e *ChangeClassified) { e.Evidence.Classification.Files[0].Hunks.Hunks[0].NewStart = -1 },
+	} {
+		e := classificationEvent(t)
+		mutate(&e)
+		if _, _, err := EncodeEvent(e); err == nil {
+			t.Fatal("encoded invalid classification")
+		}
+		_, raw, err := encodeWire("change_classified", nonNullClassification(e))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := DecodeEvent(raw); err == nil {
+			t.Fatal("decoded invalid classification")
+		}
+	}
+}
