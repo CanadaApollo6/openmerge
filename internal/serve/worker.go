@@ -191,7 +191,11 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 		executionAction = report
 	}
 	err = x.Execute(actionCtx, executionAction, func(event queue.Event) error {
-		if err := emit(event); err != nil {
+		if abandoned, ok := event.(queue.LandingAbandoned); ok {
+			if err := s.emitAbandonedBase(actionCtx, w, abandoned, emit); err != nil {
+				return err
+			}
+		} else if err := emit(event); err != nil {
 			return err
 		}
 		s.logCommitted(actionCtx, w)
@@ -207,6 +211,7 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 	var absent *executor.ErrLandingNotOnBase
 	var ambiguity *executor.CheckSourceAmbiguityError
 	if errors.As(err, &absent) {
+		err = errors.Join(err, s.auditLandingRewrite(actionCtx, w))
 		if pauseErr := s.block(actionCtx, w, queue.LandingNotOnBase, absent.Error(), absent.TestedSHA); pauseErr != nil {
 			return errors.Join(err, pauseErr)
 		}

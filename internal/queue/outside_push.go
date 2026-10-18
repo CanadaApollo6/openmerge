@@ -12,7 +12,7 @@ const OutsidePushCommitLimit = 100
 // OutsidePushLimit bounds the status/snapshot projection; the journal keeps every event.
 const OutsidePushLimit = 20
 
-// OutsidePushRecorded is an observation after fence settlement, never an inference
+// OutsidePushRecorded is an observation supported by fence evidence, never an inference
 // from commit authorship. Commits are newly reachable from NewSHA but not PreviousSHA,
 // newest first in topological order, including side histories. A rollback can have
 // a known empty list. Unknown ancestry must not be represented as a proven fast-forward.
@@ -39,6 +39,9 @@ func (e OutsidePushRecorded) Validate() error {
 	if !e.AncestryKnown && e.Rewrite || !e.HistoryKnown && (len(e.Commits) != 0 || e.Truncated) || len(e.Commits) > OutsidePushCommitLimit || e.Truncated && len(e.Commits) != OutsidePushCommitLimit {
 		return fmt.Errorf("invalid outside push history")
 	}
+	if e.HistoryKnown && ((e.AncestryKnown && !e.Rewrite && len(e.Commits) == 0) || (len(e.Commits) > 0 && !slices.Contains(e.Commits, e.NewSHA))) {
+		return fmt.Errorf("outside push history must include the new tip")
+	}
 	seen := make(map[string]bool)
 	for _, sha := range e.Commits {
 		if sha == "" || sha == e.PreviousSHA || seen[sha] {
@@ -52,7 +55,7 @@ func (e OutsidePushRecorded) Validate() error {
 func cloneOutsidePushes(pushes []OutsidePushRecorded) []OutsidePushRecorded {
 	result := slices.Clone(pushes)
 	for i := range result {
-		result[i].Commits = slices.Clone(result[i].Commits)
+		result[i].Commits = append([]string{}, result[i].Commits...)
 	}
 	return result
 }

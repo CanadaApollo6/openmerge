@@ -23,7 +23,7 @@ func (s *Server) record(ctx context.Context, w *worker, key string, value any, e
 }
 
 func (s *Server) configuration(ctx context.Context, w *worker) error {
-	basis, _, err := s.store.Load(ctx, w.id)
+	basis, baseWatermark, err := s.store.Load(ctx, w.id)
 	if err != nil {
 		return err
 	}
@@ -67,15 +67,15 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 		}
 		return loadErr
 	}
-	// cycle settles first. Configuration also runs inside start gates and in
-	// recovery helpers: defer base classification there until settlement completes.
-	if baseErr == nil && state.BaseSHA != tip && (state.Active == nil || state.Active.Phase != queue.Landing) {
+	// Bind the git observation to the journal read before it. A peer may land
+	// and settle while ReadRef or the history/configuration reads are in flight.
+	if baseErr == nil && basis.BaseSHA != tip {
 		var outside *queue.OutsidePushRecorded
-		if state.BaseSHA != "" {
-			observed := outsidePush(ctx, w.Git, w.repo(), state.BaseSHA, tip)
+		if basis.BaseSHA != "" && (basis.Active == nil || basis.Active.Phase != queue.Landing) {
+			observed := outsidePush(ctx, w.Git, w.repo(), basis.BaseSHA, tip)
 			outside = &observed
 		}
-		if err := s.store.RecordBaseMove(ctx, w.id, state.BaseSHA, tip, outside); err != nil {
+		if err := s.store.RecordBaseMove(ctx, w.id, baseWatermark, basis.BaseSHA, tip, outside); err != nil {
 			return err
 		}
 		// Conflict observations can change when this base moves even if the

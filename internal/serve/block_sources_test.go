@@ -17,6 +17,7 @@ import (
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
+	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
 type defaultBranchFailure struct {
@@ -94,7 +95,11 @@ func TestConfigPassCannotClearAnOverlappingFailure(t *testing.T) {
 	w.Driver = &defaultBranchFailure{Driver: w.Driver, hook: func() {
 		must(t, s.block(t.Context(), w, queue.ConfigSource, "newer failure", ""))
 	}}
-	must(t, s.configuration(t.Context(), w))
+	// The pre-git queue snapshot is stale after the overlapping failure. A
+	// fresh reconciliation must observe it before publishing the base/config.
+	if err := s.configuration(t.Context(), w); !errors.Is(err, store.ErrBaseObservationStale) {
+		t.Fatalf("overlapping config observation was not rejected: %v", err)
+	}
 	state, _, err := s.store.Load(t.Context(), w.id)
 	must(t, err)
 	if state.BlockSourceDetail(queue.ConfigSource) != "newer failure" {

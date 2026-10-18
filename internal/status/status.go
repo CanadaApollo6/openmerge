@@ -150,9 +150,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 	tested, inheritedPause := explanationContext(j, pr)
 	events := make([]Event, 0)
 	var outsidePushes []OutsidePush
-	for _, e := range s.RecentOutsidePushes() {
-		outsidePushes = append(outsidePushes, OutsidePush{OutsidePushRecorded: e})
-	}
+	// Audit evidence comes only from journal rows, which retain stable IDs.
 	var previous queue.Event
 	var watermark int64
 	ledger := runLedger(j, sanitizer, func(record store.JournalEvent, before, after queue.State) {
@@ -566,6 +564,8 @@ func eventSummary(event queue.Event, before, after queue.State) string {
 		return fmt.Sprintf("Observed PR #%d; eligible=%t, trusted=%t", e.PR, e.Eligible, e.Trusted)
 	case queue.LifecycleChanged:
 		return "Queue lifecycle: " + e.State + ": " + e.Detail
+	case queue.OutsidePushRecorded:
+		return fmt.Sprintf("Observed outside push %s → %s; rewrite=%t, ancestry_known=%t, history_known=%t; no prior OpenMerge verification", e.PreviousSHA, e.NewSHA, e.Rewrite, e.AncestryKnown, e.HistoryKnown)
 	case queue.BaseMoved:
 		return "Observed base branch movement"
 	case queue.ConfigApplied:

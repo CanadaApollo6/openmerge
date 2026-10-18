@@ -67,6 +67,8 @@ func TestOutsidePushValidationAndUnknownRoundTrip(t *testing.T) {
 		func(e *OutsidePushRecorded) { e.Truncated = true },
 		func(e *OutsidePushRecorded) { e.VerificationBeforeLanding = "passed" },
 		func(e *OutsidePushRecorded) { e.HistoryKnown = true; e.Commits = []string{"new", "new"} },
+		func(e *OutsidePushRecorded) { e.HistoryKnown = true; e.AncestryKnown = true },
+		func(e *OutsidePushRecorded) { e.HistoryKnown = true; e.Commits = []string{"other"} },
 		func(e *OutsidePushRecorded) {
 			e.HistoryKnown = true
 			e.Commits = make([]string, OutsidePushCommitLimit+1)

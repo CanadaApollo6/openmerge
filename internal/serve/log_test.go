@@ -175,3 +175,20 @@ func (h cancelOnQuota) Handle(ctx context.Context, record slog.Record) error {
 	}
 	return err
 }
+
+func TestOperationalLogsOutsidePush(t *testing.T) {
+	s, w, f, _ := fixture(t, repositoryConfig)
+	var output bytes.Buffer
+	s.options.Logger = slog.New(slog.NewJSONHandler(&output, nil))
+	must(t, s.cycle(t.Context(), w))
+	before, _, err := s.store.Load(t.Context(), w.id)
+	must(t, err)
+	tip, err := f.PushBase(repo, "main", "outside", nil)
+	must(t, err)
+	must(t, s.cycle(t.Context(), w))
+	must(t, s.cycle(t.Context(), w))
+	rows := logRows(t, &output)
+	if len(rows) != 1 || rows[0]["msg"] != "outside push recorded" || rows[0]["previous_sha"] != before.BaseSHA || rows[0]["sha"] != tip || rows[0]["verification_before_landing"] != "none" || rows[0]["rewrite"] != false || rows[0]["history_known"] != true {
+		t.Fatalf("outside push operational log: %+v", rows)
+	}
+}

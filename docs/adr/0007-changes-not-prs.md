@@ -221,6 +221,8 @@ The setting is part of the queue's configuration digest. Older binaries reject t
 
 **OpenMerge records the base moves it observes but did not make.** Unsettled OpenMerge attempts are settled first, so a landing of its own is never mistaken for an outside push. Each remaining observed advance is recorded as landed outside the queue, with no OpenMerge verification before landing. A move that is not a fast-forward is recorded as a rewrite of the base. Commits between two observations are listed from history when it can be read, and are shown as unknown when it cannot; provenance is never inferred from commit authorship. Verification that happens later is recorded separately, so the record stays true afterwards: once post-merge verification exists (ADR 0005, Phase 2b), outside commits enter its verification frontier like any other landed commit.
 
+If fence evidence proves an OpenMerge landing succeeded but a rewrite has removed that commit before settlement, record the rewrite without settling the landing or clearing its safety block. The status/snapshot tail is bounded and is not an acknowledgement ledger. ADR 0008 warnings and acknowledgements must read the durable journal and its event IDs, not this tail.
+
 ### Briefs (Stage A, prose in Stage C)
 
 **A brief is a template over recorded facts, with an optional labelled summary.** For each audience:

@@ -164,3 +164,27 @@ func TestOutsidePushUnreadableHistoryIsDurable(t *testing.T) {
 		t.Fatalf("unknown evidence not durable: %+v", pushes)
 	}
 }
+
+func TestOutsidePushDivergedRewrite(t *testing.T) {
+	s, w, f, _ := fixture(t, repositoryConfig)
+	must(t, s.cycle(t.Context(), w))
+	base, _, err := s.store.Load(t.Context(), w.id)
+	must(t, err)
+	previous, err := f.PushBase(repo, "main", "old line", nil)
+	must(t, err)
+	must(t, s.cycle(t.Context(), w))
+	must(t, f.SetRef(repo, "main", base.BaseSHA))
+	tip, err := f.PushBase(repo, "main", "divergent line", nil)
+	must(t, err)
+	must(t, s.cycle(t.Context(), w))
+	state, _, err := s.store.Load(t.Context(), w.id)
+	must(t, err)
+	pushes := state.RecentOutsidePushes()
+	if len(pushes) != 2 {
+		t.Fatalf("pushes: %+v", pushes)
+	}
+	e := pushes[1]
+	if e.PreviousSHA != previous || e.NewSHA != tip || !e.AncestryKnown || !e.Rewrite || !e.HistoryKnown || e.Truncated || !reflect.DeepEqual(e.Commits, []string{tip}) {
+		t.Fatalf("diverged rewrite evidence: %+v", e)
+	}
+}

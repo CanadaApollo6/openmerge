@@ -14,7 +14,7 @@ func Apply(s State, e Event) State {
 		if outside.Validate() != nil {
 			return s
 		}
-		outside.Commits = slices.Clone(outside.Commits)
+		outside.Commits = append([]string{}, outside.Commits...)
 		s.outsidePushes = append(cloneOutsidePushes(s.outsidePushes), outside)
 		if len(s.outsidePushes) > OutsidePushLimit {
 			s.outsidePushes = slices.Clone(s.outsidePushes[len(s.outsidePushes)-OutsidePushLimit:])

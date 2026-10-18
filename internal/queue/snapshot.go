@@ -104,7 +104,7 @@ func EncodeSnapshot(s State) ([]byte, error) {
 		Version:         SnapshotVersion,
 		ChangeRevisions: s.changeRevisions.snapshot(),
 		BatchRevisions:  s.batchRevisions,
-		OutsidePushes:   s.outsidePushes,
+		OutsidePushes:   cloneOutsidePushes(s.outsidePushes),
 		Window:          s.window, Outcomes: s.outcomes,
 		Lifecycle:          s.Lifecycle,
 		BaseBranch:         s.BaseBranch,
@@ -207,7 +207,7 @@ func DecodeSnapshot(data []byte) (State, error) {
 		}
 	}
 	s := State{
-		outsidePushes: v.OutsidePushes,
+		outsidePushes: cloneOutsidePushes(v.OutsidePushes),
 		window:        v.Window, outcomes: v.Outcomes,
 		Lifecycle:          v.Lifecycle,
 		BaseBranch:         v.BaseBranch,
