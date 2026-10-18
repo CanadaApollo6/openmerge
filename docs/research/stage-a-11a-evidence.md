@@ -985,3 +985,126 @@ A sufficiently quiet acquisition-to-start interval is necessary. Source/evidence
 caps fail closed and do not bound retries or guarantee landing. Worker diagnostics
 expose `waiting for stable approval evidence` on stale retries. The same contract
 is recorded in `internal/queue/landing-decisions.md`.
+
+### Round-3 gate results and reproduction
+
+Implementation commit: `8845437a4ab7b99516f892fd9761e025036e2a7a`.
+All implementation code was unchanged between the inherited successful check,
+subsequent gates and this commit. The final follow-up commit adds evidence only.
+The final explicit-refspec fetch exited **0**; `origin/main` is still
+`f8066a4f3bc9f2bfb110950b0c6c9aea4cf5ea6f`, so no rebase was necessary.
+
+The first ordering run exited 1 on test-only `IdentitySet.Known` field names;
+those were corrected to `Resolved`. The first check exited 2 on the tagged-switch
+lint suggestion; the corrected inherited check exited 0. The continuation's first
+commit-ID run exited 2 because the candidate was uncommitted; after the
+implementation commit its rerun exited 0. These failures are retained below.
+
+Final results: complete fmt/lint/race-short/build check 0; focused race regressions
+0; Astra's original delayed-response probe 0; simulator exits 0; compatibility 0
+(17 exits, 1055 retry/digest records, 84 wire fixtures); legacy SQL 0 (seven exact
+statements, all five negative controls detected); depth-1/4 differential 0
+(227662 short, 5615998 full-corpus checkpoints and 188 fixture streams; no nil-only
+exceptions); all four commit methods 0. Commit-ID self-tests retain identical=0,
+mutant=1 and dirty=2, all expected.
+
+Strict replay vs main exited **0**: all 2159 real and seven synthetic checkpoints
+match actions, boundaries, derived state and snapshot hashes. Strict replay vs
+`3f77a88daf1cb99961c22b4daebaeb58f9087bb0` exited **1** for the existing
+absent-to-strictly-nil `classifications` field. Exact-shape inspection exited
+**0**: every checkpoint's only non-allowlisted difference has that exact shape;
+actions/boundaries match and Gate 4 passes. Existing exceptions remain
+`outsidePushes`, `approvalFacts`, `approvalWaits`, `receipts`, `landingDecisions`.
+No exception allowlist was changed.
+
+All jobs, including helper builds/test executables, used the existing host-load
+guards; only one heavy job ran at a time. Environment: `GOFLAGS=-p=2`,
+`GOMEMLIMIT=4GiB` (`6GiB` for replay), shared test Postgres URL from the brief,
+GOTMPDIR/GOCACHE/TMPDIR beneath `~/.cache`. No initdb, live database/status,
+systemd, live refs or real GitHub API call in code/tests/simulator. Saved immutable
+journal exports were replay inputs. The inherited check was allowed to finish;
+no test process was killed. PR metadata/push operations are the authorized GitHub
+operations. Trial deployment class remains **Hold**.
+
+The inherited results/logs are in `~/.cache/openmerge-77-r2`; continuation results,
+runner, overlay and logs are in `~/.cache/openmerge-77-r3`. Exact root commands,
+actual statuses, memory limits and log SHA-256 values follow. Each log retains
+helper exit statuses and negative-control details.
+
+- `r3-focused`: exit **0**, `4GiB`; log `/home/riels/.cache/openmerge-77-r2/logs/r3-focused.log`; SHA-256 `cede673cb471989720173f5530dd6762ec7817f2d3c13a9f1afe29b8b442c258`.
+- `r3-ordering`: exit **1**, `4GiB`; log `/home/riels/.cache/openmerge-77-r2/logs/r3-ordering.log`; SHA-256 `42d6d0b0212a43a5dc1e92c0933a6d7c30bcdafd029c1c06f0975d3058432ef4`.
+- `r3-ordering-2`: exit **0**, `4GiB`; log `/home/riels/.cache/openmerge-77-r2/logs/r3-ordering-2.log`; SHA-256 `bd6c816a58d21ae8cd9d6de48534d0c828425d24b33b50c6cbd3ee2bcb9905e7`.
+- `r3-check`: exit **2**, `4GiB`; log `/home/riels/.cache/openmerge-77-r2/logs/r3-check.log`; SHA-256 `9838c78a7cd5ef0d50fbf7701a120dbb9d0388ab84ceb17e8d7db2b5e1f05107`.
+- `r3-check-2`: exit **0**, `4GiB`; log `/home/riels/.cache/openmerge-77-r2/logs/r3-check-2.log`; SHA-256 `8fd9e1c2adae08d5a3766daabf60b4a5c587c0fa7deb26fbfb1890003acc3c13`.
+- `ordering`: exit **0**, `4GiB`; log `/home/riels/.cache/openmerge-77-r3/logs/ordering.log`; SHA-256 `e5546fdd3309d1fde661b2d68fd7c943a022540cd22a3fcfa6a9d88969ae9531`.
+- `astra-delayed`: exit **0**, `4GiB`; log `/home/riels/.cache/openmerge-77-r3/logs/astra-delayed.log`; SHA-256 `94a1e3c6f12712c6a383b97e9f179eb2eeac821c85956f69704b89b0db20fefb`.
+- `sim-exits`: exit **0**, `4GiB`; log `/home/riels/.cache/openmerge-77-r3/logs/sim-exits.log`; SHA-256 `c9d5d419398e3a29ca4e4fa43a74f7cb968b3bef4ca83978d7f4f435b56aa7a1`.
+- `compatibility`: exit **0**, `4GiB`; log `/home/riels/.cache/openmerge-77-r3/logs/compatibility.log`; SHA-256 `8609790ee807f78ae7fadd31e6503a6a932f9f874af818197be4849fe5a93749`.
+- `legacy-sql`: exit **0**, `4GiB`; log `/home/riels/.cache/openmerge-77-r3/logs/legacy-sql.log`; SHA-256 `ab22c0b5e090c552fcb505089d132fa81b6793fa330d277ad02890069ccefd33`.
+- `legacy-depths`: exit **0**, `4GiB`; log `/home/riels/.cache/openmerge-77-r3/logs/legacy-depths.log`; SHA-256 `3c25309b33c985c03a3aff2a5c961878e2dd1b080a03ec27dc5894981e7b3453`.
+- `commit-ids`: exit **2**, `4GiB`; log `/home/riels/.cache/openmerge-77-r3/logs/commit-ids.log`; SHA-256 `e24a7137b1e0eaf4e2abd51b56574988452a0beeea77be8b15b12f3fed21dc00`.
+- `commit-ids-2`: exit **0**, `4GiB`; log `/home/riels/.cache/openmerge-77-r3/logs/commit-ids-2.log`; SHA-256 `01799bca7999baf38d7c52eeaf7c6e44b7bd203c29facc457f18635d0599e68b`.
+- `replay-main`: exit **0**, `6GiB`; log `/home/riels/.cache/openmerge-77-r3/logs/replay-main.log`; SHA-256 `7757488e4f994dd0705782d46e7986479e0de988a448f6c7e512435cddfe97cf`.
+- `replay-deployed`: exit **1**, `6GiB`; log `/home/riels/.cache/openmerge-77-r3/logs/replay-deployed.log`; SHA-256 `1efd2facde58ae7bf93830e911f918eb75dc523a8de87dca048eedfe2b85f028`.
+- `replay-inspection`: exit **0**, `4GiB`; log `/home/riels/.cache/openmerge-77-r3/logs/replay-inspection.log`; SHA-256 `0b554123b04ecef4cc41fb09ede76a5a35e559cad1507ffebe8b96a3ebb68144`.
+
+```sh
+# r3-focused: actual exit=0, GOMEMLIMIT=4GiB
+go test ./internal/serve ./internal/store -run 'TestStageAFreshNegativeStancesBeforeStart|TestStageA|TestAtomicLanding|TestLandingDecision' -count=1 -timeout=10m
+
+# r3-ordering: actual exit=1, GOMEMLIMIT=4GiB
+go test ./internal/serve -run 'TestStageAFreshNegativeStancesBeforeStart|TestStageAEligibilityJournalDedupe|TestStageAApprovalReadUsesDatabaseOrder' -race -count=1 -v
+
+# r3-ordering-2: actual exit=0, GOMEMLIMIT=4GiB
+go test ./internal/serve -run 'TestStageAFreshNegativeStancesBeforeStart|TestStageAEligibilityJournalDedupe|TestStageAApprovalReadUsesDatabaseOrder' -race -count=1 -v
+
+# r3-check: actual exit=2, GOMEMLIMIT=4GiB
+make check
+
+# r3-check-2: actual exit=0, GOMEMLIMIT=4GiB
+make check
+
+# ordering: actual exit=0, GOMEMLIMIT=4GiB
+go test ./internal/serve -run 'TestStageAFreshNegativeStancesBeforeStart|TestStageAEligibilityJournalDedupe|TestStageAApprovalReadUsesDatabaseOrder' -race -count=1 -v
+
+# astra-delayed: actual exit=0, GOMEMLIMIT=4GiB
+go test -overlay /home/riels/.cache/openmerge-77-r3/astra-overlay.json ./internal/serve -run '^TestReview77R3DelayedNativeRace$' -count=1 -v
+
+# sim-exits: actual exit=0, GOMEMLIMIT=4GiB
+make test-sim-exits
+
+# compatibility: actual exit=0, GOMEMLIMIT=4GiB
+python3 scripts/check-phase2-compatibility.py /home/riels/openmerge-sa-11a-main
+
+# legacy-sql: actual exit=0, GOMEMLIMIT=4GiB
+python3 scripts/check-legacy-landing-sql.py /home/riels/openmerge-sa-11a-main
+
+# legacy-depths: actual exit=0, GOMEMLIMIT=4GiB
+python3 scripts/check-legacy-plan-action-depths-1-4.py /home/riels/openmerge-sa-11a-main
+
+# commit-ids: actual exit=2, GOMEMLIMIT=4GiB
+python3 scripts/check-legacy-commit-ids.py --baseline /home/riels/openmerge-sa-11a-main --candidate /home/riels/openmerge-sa-11a
+
+# commit-ids-2: actual exit=0, GOMEMLIMIT=4GiB
+python3 scripts/check-legacy-commit-ids.py --baseline /home/riels/openmerge-sa-11a-main --candidate /home/riels/openmerge-sa-11a
+
+# replay-main: actual exit=0, GOMEMLIMIT=6GiB
+python3 scripts/check-live-journal-replay.py --baseline /home/riels/openmerge-sa-11a-main --candidate /home/riels/openmerge-sa-11a --events /home/riels/.local/share/openmerge/exports/events-20261018T051000Z.jsonl --queues /home/riels/.local/share/openmerge/exports/queues-20261018T051000Z.jsonl --strict-state --out /home/riels/.cache/openmerge-77-r3/replay-main.json
+
+# replay-deployed: actual exit=1, GOMEMLIMIT=6GiB
+python3 scripts/check-live-journal-replay.py --baseline /home/riels/.cache/sa9b-r2-deployed --candidate /home/riels/openmerge-sa-11a --events /home/riels/.local/share/openmerge/exports/events-20261018T051000Z.jsonl --queues /home/riels/.local/share/openmerge/exports/queues-20261018T051000Z.jsonl --strict-state --out /home/riels/.cache/openmerge-77-r3/replay-deployed.json
+
+# replay-inspection: actual exit=0, GOMEMLIMIT=4GiB
+python3 /home/riels/.cache/openmerge-11a/inspect-replays.py /home/riels/.cache/openmerge-77-r3/replay-main.json /home/riels/.cache/openmerge-77-r3/replay-deployed.json
+
+```
+
+Runner/artifact hashes:
+
+- `/home/riels/.cache/openmerge-77-r3/heavy.py`: `4e74df6ac816eec6cc70395d60e057c2003d437bc1feb00dd7aed61827a1e42f`.
+- `/home/riels/.cache/openmerge-77-r3/gates.py`: `ffc687f7bdd9d0f01057a72be54a5f42d1847c5f383f42bbec5fcdc339e90cd2`.
+- `/home/riels/.cache/openmerge-77-r3/remaining-gates.py`: `b60205e313240fa840ba5a1e21a5b15435a288fdd75ed6198c5c6023ab2909dd`.
+- `/home/riels/.cache/openmerge-77-r3/astra-overlay.json`: `dde3da064f68951df2c622edbaad6d7d6b35e8b93698108225bd1f842475e650`.
+- `/home/riels/.cache/openmerge-77-r2/guard-bin/go`: `0f6b059f29b4109d98bd3d3bd11ae17174cc9756cd70d5edabd84a92d5779281`.
+- `/home/riels/.cache/openmerge-77-r2/guard-python/hostguard.py`: `62e64ec5161f28318a0d58c61ef9ebba0b1c0ab2284970195ce4c4909539217b`.
+- `/home/riels/.cache/openmerge-77-r2/guard-python/sitecustomize.py`: `aa907bb032d0ca3dae2bcc79a13aa1439c40663bad044578260de363c409492f`.
