@@ -133,6 +133,14 @@ class ComparisonTest(unittest.TestCase):
         self.assertEqual(result["derived_determinism"], "FAIL")
         self.assertEqual(result["first_derived_divergence"]["event_id"], 8)
 
+    def test_boundary_cap_report_uses_both_probe_counts(self):
+        for field in ("deadlines", "boundary_probes"):
+            capped = checkpoint(**{field: [None] * 128})
+            for old, new in ((capped, checkpoint()), (checkpoint(), capped)):
+                result = replay.compare_checkpoints([old], [new], False)
+                self.assertTrue(result["boundary_cap_hit"])
+        self.assertFalse(replay.compare_checkpoints([checkpoint()], [checkpoint()], False)["boundary_cap_hit"])
+
     def test_checkpoint_truncation_and_identity(self):
         record = checkpoint(event_id=7)
         for old, new in (([record], []), ([], [record]), ([record], [checkpoint(event_id=True)])):
@@ -195,6 +203,7 @@ class SyntheticProbeTest(unittest.TestCase):
 
     def tearDown(self):
         self.args.candidate_overlay = None
+        self.args.baseline_overlay = None
         self.inputs.pop("Boundaries", None)
         self.write_input()
 
@@ -270,6 +279,54 @@ class SyntheticProbeTest(unittest.TestCase):
         self.assertEqual(result["actions_identical"], "7/7")
         self.assertEqual(result["first_state_divergence"]["event_id"], 1)
         self.assertIn("ReviewApprovals", result["first_state_divergence"]["differing_fields"])
+
+    def test_distinct_pointer_keys_with_equal_pointees_fail_closed(self):
+        # Astra's repro: baseline has two distinct pointers to 7; candidate one.
+        changes = [
+            ("internal/queue/types.go", "type State struct {", "type State struct {\n ReviewIndex map[*int]bool"),
+            ("internal/queue/apply.go", "func Apply(s State, e Event) State {",
+             "func Apply(s State, e Event) State {\n a,b:=7,7; s.ReviewIndex=map[*int]bool{&a:true,&b:true}"),
+        ]
+        self.overlay(changes)
+        self.args.baseline_overlay = self.args.candidate_overlay
+        self.args.candidate_overlay = None
+        with self.assertRaisesRegex(RuntimeError, "canonical map-key collision at State.ReviewIndex"):
+            replay.probe(replay.ROOT, self.directory, "baseline", self.args)
+        self.args.baseline_overlay = None
+        changes[1] = (changes[1][0], changes[1][1],
+                      "func Apply(s State, e Event) State {\n a:=7; s.ReviewIndex=map[*int]bool{&a:true}")
+        self.overlay(changes)
+        candidate = replay.probe(replay.ROOT, self.directory, "candidate-one-key", self.args)
+        index = json.loads(candidate[0])["structural"]["value"]["ReviewIndex"]
+        self.assertEqual(len(index["value"]), 1)
+        key = json.loads(next(iter(index["value"])))
+        self.assertEqual(key["value"]["value"], 7)
+
+    def test_cycles_fail_closed_with_field_path(self):
+        for field_type, setup in (
+            ("*any", "var x any; x=&x; s.ReviewCycle=&x"),
+            ("map[string]any", 's.ReviewCycle=map[string]any{}; s.ReviewCycle["self"]=s.ReviewCycle'),
+            ("[]any", "s.ReviewCycle=make([]any,1); s.ReviewCycle[0]=s.ReviewCycle"),
+        ):
+            with self.subTest(field_type=field_type):
+                self.overlay([
+                    ("internal/queue/types.go", "type State struct {",
+                     "type State struct {\n ReviewCycle " + field_type),
+                    ("internal/queue/apply.go", "func Apply(s State, e Event) State {",
+                     "func Apply(s State, e Event) State {\n " + setup),
+                ])
+                with self.assertRaisesRegex(RuntimeError, r"structural cycle at State.ReviewCycle.*ancestor State.ReviewCycle"):
+                    replay.probe(replay.ROOT, self.directory, "candidate-cycle", self.args)
+
+    def test_shared_acyclic_pointers_pass(self):
+        self.overlay([
+            ("internal/queue/types.go", "type State struct {", "type State struct {\n ReviewShared [2]*int"),
+            ("internal/queue/apply.go", "func Apply(s State, e Event) State {",
+             "func Apply(s State, e Event) State {\n x:=7; s.ReviewShared=[2]*int{&x,&x}"),
+        ])
+        candidate = replay.probe(replay.ROOT, self.directory, "candidate-shared", self.args)
+        shared = json.loads(candidate[0])["structural"]["value"]["ReviewShared"]["value"]
+        self.assertEqual(shared[0], shared[1])
 
     def test_timeout_shift_fails_at_union_boundary(self):
         self.overlay([("internal/queue/plan.go", "timedOut := timeoutEnabled && now.After(deadline)",

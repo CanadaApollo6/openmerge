@@ -66,24 +66,42 @@ type replayInput struct {
 }
 // Reflection deliberately bypasses the snapshot codec and visibility boundary.
 // This read-only test overlay never enters a production binary.
-func deep(v reflect.Value) any {
+type replayVisit struct {
+ Type reflect.Type
+ Pointer unsafe.Pointer
+ Length int
+}
+func deep(v reflect.Value, path string, active map[replayVisit]string) any {
  if !v.IsValid() { return nil }
  if v.CanAddr() { v=reflect.NewAt(v.Type(),unsafe.Pointer(v.UnsafeAddr())).Elem() }
+ // Track only the current ancestry: shared acyclic pointees are valid.
+ // Maps and slices can also form cycles through interface values.
+ if (v.Kind()==reflect.Pointer || v.Kind()==reflect.Map || v.Kind()==reflect.Slice) && !v.IsNil() {
+  visit:=replayVisit{Type:v.Type(),Pointer:v.UnsafePointer()}
+  if v.Kind()==reflect.Slice {visit.Length=v.Len()}
+  if ancestor,ok:=active[visit]; ok {panic(fmt.Sprintf("structural cycle at %s (ancestor %s)",path,ancestor))}
+  active[visit]=path
+  defer delete(active,visit)
+ }
  n:=map[string]any{"type":v.Type().String(),"kind":v.Kind().String(),"zero":v.IsZero()}
  if v.Type()==reflect.TypeOf(time.Time{}) {
   n["value"]=v.Interface().(time.Time).UTC().Format(time.RFC3339Nano); return n
  }
  switch v.Kind() {
  case reflect.Struct:
-  fields:=map[string]any{}; for i:=0;i<v.NumField();i++ {fields[v.Type().Field(i).Name]=deep(v.Field(i))}; n["value"]=fields
+  fields:=map[string]any{}; for i:=0;i<v.NumField();i++ {fields[v.Type().Field(i).Name]=deep(v.Field(i),path+"."+v.Type().Field(i).Name,active)}; n["value"]=fields
  case reflect.Map:
   n["nil"]=v.IsNil(); fields:=map[string]any{}
-  keys:=v.MapKeys(); sort.Slice(keys,func(i,j int) bool {a,_:=json.Marshal(deep(keys[i])); b,_:=json.Marshal(deep(keys[j])); return string(a)<string(b)})
-  for _,k:=range keys {raw,err:=json.Marshal(deep(k)); if err!=nil {panic(err)}; fields[string(raw)]=deep(v.MapIndex(k))}; n["value"]=fields
+  for _,k:=range v.MapKeys() {
+   raw,err:=json.Marshal(deep(k,path+"[key]",active)); if err!=nil {panic(err)}
+   key:=string(raw)
+   if _,exists:=fields[key]; exists {panic(fmt.Sprintf("canonical map-key collision at %s; refusing to lose an entry",path))}
+   fields[key]=deep(v.MapIndex(k),path+"["+key+"]",active)
+  }; n["value"]=fields
  case reflect.Slice,reflect.Array:
-  if v.Kind()==reflect.Slice {n["nil"]=v.IsNil()}; values:=[]any{}; for i:=0;i<v.Len();i++ {values=append(values,deep(v.Index(i)))}; n["value"]=values
+  if v.Kind()==reflect.Slice {n["nil"]=v.IsNil()}; values:=[]any{}; for i:=0;i<v.Len();i++ {values=append(values,deep(v.Index(i),fmt.Sprintf("%s[%d]",path,i),active))}; n["value"]=values
  case reflect.Pointer,reflect.Interface:
-  n["nil"]=v.IsNil(); if !v.IsNil() {n["value"]=deep(v.Elem())}
+  n["nil"]=v.IsNil(); if !v.IsNil() {n["value"]=deep(v.Elem(),path+".*",active)}
  case reflect.Bool: n["value"]=v.Bool()
  case reflect.String: n["value"]=v.String()
  case reflect.Int,reflect.Int8,reflect.Int16,reflect.Int32,reflect.Int64: n["value"]=v.Int()
@@ -139,7 +157,7 @@ func TestLiveJournalReplayProbe(t *testing.T) {
   record["final"]=final
   boundaryKey:=strconv.FormatInt(e.ID,10); if final {boundaryKey=fmt.Sprintf("final:%d",e.QueueID)}
   record["boundary_key"]=boundaryKey
-  record["structural"]=deep(reflect.ValueOf(&state).Elem())
+  record["structural"]=deep(reflect.ValueOf(&state).Elem(),"State",map[replayVisit]string{})
   at,ok:=queue.NextWake(cfg,state,e.RecordedAt)
   record["next_wake"]=map[string]any{"at":at.UTC(),"present":ok}
   // NextWake intentionally omits elapsed timers. Enumerate the same worker
@@ -451,6 +469,7 @@ def compare_checkpoints(old, new, strict, repeated=None):
     first_action = first_state = first_derived = first_boundary = None
     unexpected = []
     probe_counts = []
+    boundary_cap_hit = False
     for left, right, repeat in itertools.zip_longest(old, new, repeated if repeated is not None else new):
         l, r, again = [json.loads(v) if v else {} for v in (left, right, repeat)]
         if l.get("kind") != "checkpoint" and r.get("kind") != "checkpoint":
@@ -495,6 +514,9 @@ def compare_checkpoints(old, new, strict, repeated=None):
         projection_nodes = lambda rec: {k: rec.get("structural", {}).get("value", {}).get(k) for k in STRUCTURAL_DERIVED}
         if (not exact(candidate, rerun) or not exact(projection_nodes(r), projection_nodes(again))) and first_derived is None:
             first_derived = dict(detail, candidate=candidate, repeated=rerun)
+        boundary_cap_hit |= any(len(rec.get(field, [])) >= 128
+                                for rec in (l, r, again)
+                                for field in ("deadlines", "boundary_probes"))
         count = len(r.get("boundary_probes", []))
         probes += count
         probe_counts.append(dict(detail, final=r.get("final", False), count=count))
@@ -507,7 +529,7 @@ def compare_checkpoints(old, new, strict, repeated=None):
                 legacy_state_identical=f"{states}/{total}", state_identical=f"{states}/{total}",
                 snapshot_hashes_identical=f"{snapshots}/{total}", boundary_checkpoints_identical=f"{boundaries}/{total}",
                 boundary_probe_count=probes, boundary_probe_counts=probe_counts,
-                boundary_probe_max=max((p["count"] for p in probe_counts), default=0), boundary_cap_per_checkpoint=128, boundary_cap_hit=False,
+                boundary_probe_max=max((p["count"] for p in probe_counts), default=0), boundary_cap_per_checkpoint=128, boundary_cap_hit=boundary_cap_hit,
                 first_boundary_divergence=first_boundary, first_action_divergence=first_action,
                 first_state_divergence=first_state, derived_nonempty_checkpoints=counts,
                 derived_determinism="PASS" if first_derived is None else "FAIL",
@@ -601,7 +623,8 @@ def main():
         comparisons = compare_checkpoints(old, new, args.strict_state, repeated)
         difference = (comparisons["first_action_divergence"] or comparisons["first_state_divergence"] or
                       comparisons["first_derived_divergence"] or comparisons["first_boundary_divergence"] or
-                      next(iter(comparisons["non_allowlisted_fields"]), None) or synthetic_difference)
+                      next(iter(comparisons["non_allowlisted_fields"]), None) or synthetic_difference or
+                      (dict(source="boundary cap hit") if comparisons["boundary_cap_hit"] else None))
         derived_ok = comparisons["derived_determinism"] == "PASS" and not comparisons["non_allowlisted_fields"]
         summaries = dict(baseline=stream_summary(old), candidate=stream_summary(new),
                          **{"candidate-repeat": stream_summary(repeated)})

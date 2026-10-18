@@ -845,6 +845,8 @@ These are operator commands; the replay tool never connects to Postgres or GitHu
    State comparison walks the full `queue.State` structurally through reflection,
    including unexported and nested fields, ordered slices, sorted map keys,
    dereferenced pointers with nil distinguished, normalised times and type names.
+   Duplicate canonical map-key dumps (including distinct pointers to equal
+   pointees) and pointer/map/slice cycles fail closed with the field path.
    Baseline and candidate paths and JSON types must match. Any candidate-only
    field, including a zero-valued field, fails unless its exact path is in the
    script's reviewed exceptions list with a reason and ADR/PR reference; listed
@@ -962,7 +964,9 @@ boundary probes. It does not exercise executor/landing mechanics; forge
 observation (check-run selection, PR reads or rules); the store layer; PR #53's
 outside-push audit loop or audit snapshot decoding; inter-event timing beyond
 the boundary probe; CI workflows/runners; or states/policies absent from the
-export. Equal wire actions do not establish equal execution or external reads.
+export. Timer paths exercised by neither the export's enumerated deadlines nor
+the synthetic journal are not covered by this gate; the synthetic journal
+currently covers the checks-timeout family. Equal wire actions do not establish equal execution or external reads.
 
 Require named complementary evidence **for each deployed PR**, recorded before
 deploy alongside its SHA and replay report:
