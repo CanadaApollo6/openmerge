@@ -18,13 +18,16 @@ var jwtPattern = regexp.MustCompile(`[A-Za-z0-9_-]+={0,2}(?:\.[A-Za-z0-9_-]*={0,
 
 // Sanitize redacts credentials and bounds diagnostic text for logs, APIs and terminals.
 func Sanitize(value string, knownSecrets ...string) string {
-	value = normalize(value)
+	return boundDiagnostic(redact(normalize(value), knownSecrets))
+}
+
+func redact(value string, knownSecrets []string) string {
 	secrets := slices.Clone(knownSecrets)
 	// Replace longer credentials first so overlapping values cannot leave a suffix.
 	slices.SortFunc(secrets, func(a, b string) int { return len(b) - len(a) })
 	for _, secret := range secrets {
 		if secret != "" {
-			for _, encoded := range []string{normalize(secret), url.QueryEscape(secret), url.PathEscape(secret)} {
+			for _, encoded := range []string{secret, normalize(secret), url.QueryEscape(secret), url.PathEscape(secret)} {
 				if encoded == "" {
 					continue
 				}
@@ -46,6 +49,10 @@ func Sanitize(value string, knownSecrets ...string) string {
 		}
 		return candidate
 	})
+	return value
+}
+
+func boundDiagnostic(value string) string {
 	runes := []rune(value)
 	if len(runes) > 1024 {
 		return string(runes[:1024]) + "…"
@@ -107,31 +114,35 @@ func (s *Sanitizer) Sanitize(value string) string {
 	return Sanitize(value, s.secrets...)
 }
 
-var pemBlock = regexp.MustCompile(`(?s)-----BEGIN [^-]+-----.*?(?:-----END [^-]+-----|$)`)
-
-// SanitizeText redacts multi-line text bound for a public forge surface while
-// keeping its line breaks. Secrets that can span lines (PEM blocks and
-// registered multi-line credentials) are removed from the whole text first,
-// then each line is sanitized. A nil receiver still redacts patterns.
+// SanitizeText preserves diff whitespace and line breaks. Each line is bounded
+// to 1,024 runes only after redacting the complete input.
 func (s *Sanitizer) SanitizeText(value string) string {
-	value = strings.ReplaceAll(value, "\r\n", "\n")
-	value = pemBlock.ReplaceAllString(value, "[REDACTED]")
-	if s != nil {
-		s.mu.RLock()
-		secrets := slices.Clone(s.secrets)
-		s.mu.RUnlock()
-		slices.SortFunc(secrets, func(a, b string) int { return len(b) - len(a) })
-		for _, secret := range secrets {
-			if strings.Contains(secret, "\n") {
-				value = strings.ReplaceAll(value, strings.ReplaceAll(secret, "\r\n", "\n"), "[REDACTED]")
-			}
+	text, _ := s.SanitizeTextRedacted(value)
+	text = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) && r != '\n' && r != '\t' && r != '\r' || unicode.Is(unicode.Cf, r) {
+			return ' '
 		}
-	}
-	lines := strings.Split(value, "\n")
+		return r
+	}, text)
+	lines := strings.Split(text, "\n")
 	for i, line := range lines {
-		lines[i] = s.Sanitize(line)
+		lines[i] = boundDiagnostic(line)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// SanitizeTextRedacted is the unbounded multi-line redaction path for callers
+// that supply their own display budgets. It reports only credential redaction.
+func (s *Sanitizer) SanitizeTextRedacted(value string) (string, bool) {
+	var secrets []string
+	if s != nil {
+		s.mu.RLock()
+		secrets = slices.Clone(s.secrets)
+		s.mu.RUnlock()
+	}
+	clean := redact(value, secrets)
+	redacted := clean != value
+	return clean, redacted
 }
 
 // LogAttr redacts messages, string attributes and error values in slog handlers.

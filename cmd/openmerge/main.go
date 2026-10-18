@@ -19,6 +19,7 @@ Commands:
   version                 Print version and build information
   config validate [path]  Validate repository configuration
   config schema           Print the version 1 JSON Schema
+  change brief <id>       Read a recorded change brief
   queue status [options]  Read queue status and PR explanations
   serve [options]         Run the GitHub merge queue server
   setup <github|rulesets>  Set up the GitHub App and repository rules
@@ -55,6 +56,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return validateConfig(args[2:], stdout, stderr)
 	case len(args) > 0 && args[0] == "serve":
 		return runServe(args[1:], stdout, stderr)
+	case len(args) > 0 && args[0] == "change":
+		return runChange(args[1:], stdout, stderr)
 	case len(args) > 0 && args[0] == "queue":
 		return runQueue(args[1:], stdout, stderr)
 	case len(args) > 0 && args[0] == "setup":

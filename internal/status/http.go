@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/brief"
 	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/store"
@@ -152,7 +153,11 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 			writeJSON(w, Response{Version: Version, Discovery: &snapshot})
 			return
 		}
+		briefKeys, changeID, audience, isBrief, briefErr := briefRoute(r, keys)
 		selected, pr, limit, err := route(r, keys)
+		if isBrief {
+			selected, err = briefKeys, briefErr
+		}
 		if err != nil {
 			fail(w, http.StatusBadRequest, "invalid-request", err.Error())
 			return
@@ -196,6 +201,24 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 		}
 		if len(journals) == 0 {
 			fail(w, http.StatusNotFound, "not-found", "queue not found")
+			return
+		}
+		if isBrief {
+			view, found, err := projectBrief(journals[0], changeID, audience, briefOptions{sanitizer: sanitizer, policy: briefPolicyProjection(r.Context(), source, journals[0])})
+			if err != nil {
+				fail(w, http.StatusServiceUnavailable, "unavailable", "brief could not be projected")
+				return
+			}
+			if !found {
+				fail(w, http.StatusNotFound, "not-found", "change has no recorded history in this queue")
+				return
+			}
+			raw, err := json.Marshal(view)
+			if err != nil || len(raw) > brief.MaxViewBytes {
+				fail(w, http.StatusServiceUnavailable, "unavailable", "brief exceeds response limit")
+				return
+			}
+			_, _ = w.Write(append(raw, '\n'))
 			return
 		}
 		q, entry, why := Project(journals[0], pr, limit, sanitizer)

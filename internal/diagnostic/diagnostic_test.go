@@ -115,3 +115,21 @@ func TestSanitizerConcurrentRegistration(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestSanitizeTextPreservesDiffAndReportsOnlyRedaction(t *testing.T) {
+	const text = "@@ -1 +1 @@\n-old line\n+\tnew  line\n+  indented\n"
+	s := NewSanitizer("opaque-secret")
+	if got := s.SanitizeText(text); got != text {
+		t.Fatalf("diff changed: %q", got)
+	}
+	if got, redacted := s.SanitizeTextRedacted(text); got != text || redacted {
+		t.Fatalf("false redaction: %q %v", got, redacted)
+	}
+	input := strings.Repeat("x", 2048) + "opaque-secret"
+	if got, redacted := s.SanitizeTextRedacted(input); !redacted || strings.Contains(got, "opaque-secret") || !strings.HasSuffix(got, "[REDACTED]") {
+		t.Fatal("bounded before redaction")
+	}
+	if got := s.SanitizeText("+\tindent\x1b"); strings.Contains(got, "\x1b") || !strings.Contains(got, "\t") {
+		t.Fatalf("unsafe text: %q", got)
+	}
+}

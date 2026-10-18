@@ -241,7 +241,7 @@ func (p *candidateParser) approvals(n *yaml.Node) *Approvals {
 // is testdata/policy.schema.json, deliberately separate from the public
 // schema. It accepts no legacy queue settings: PR 11b composes these additions
 // with the existing loader. Conditions here are used only for Q5 diagnostics.
-// No production loader calls this function. YAML aliases, merges and custom
+// The public config loader does not call this function. YAML aliases, merges and custom
 // tags are rejected in this isolated component, rather than partially expanded.
 func ParseCandidate(data []byte) (Repository, []Diagnostic, error) {
 	decoder := yaml.NewDecoder(bytes.NewReader(data))

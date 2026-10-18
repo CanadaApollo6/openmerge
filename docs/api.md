@@ -32,10 +32,12 @@ within the limit are ignored.
 | `/v1/queues/{owner}/{repo}` | List every served queue for this repository |
 | `/v1/queues/{owner}/{repo}/{base}` | `{"version":1,"queue":QUEUE}` |
 | `/v1/queues/{owner}/{repo}/{base}/prs/{n}` | `{"version":1,"queue":QUEUE,"pr":ENTRY,"why":WHY}` |
+| `/v1/queues/{owner}/{repo}/{base}/changes/{id}/brief?audience=reviewer` | Public recorded brief v1 DTO; also operator/agent |
 
 URL-encode each path component, including slashes in base branch names:
 `/v1/queues/acme/project/release%2Fv1`. PR numbers are positive integers.
-PR detail accepts `?events=N`: default 20, range 1–100. Other query parameters
+PR detail accepts `?events=N`: default 20, range 1–100. Brief detail requires
+`?audience=reviewer|operator|agent`. Other query parameters
 are rejected. A queue is identified internally by installation/repo/base/lane;
 lists include all four fields. A detail path matching multiple served partitions
 returns 409 rather than choosing one. Discovery serves every installation of one
@@ -307,3 +309,108 @@ Reopen summaries say `CI still pending` when the fold has no success to revoke.
 cleared recorded success, including success retained before test-ref creation.
 A pending read after `LandingStarted` does not revoke a landing; its summary
 explains that landing already started. The underlying journal is unchanged.
+
+## Recorded change briefs (Stage A 7b)
+
+`GET /v1/queues/{owner}/{repo}/{base}/changes/{id}/brief?audience=reviewer|operator|agent`
+reads a coherent committed journal snapshot through the existing status listener.
+The audience query is required and accepts exactly one value. Escape each path
+component independently, including `/` in branch names (`release%2Fv1`). IDs
+are resolved only in the selected queue. Unknown IDs, IDs belonging to another
+queue, and unserved queues return 404. Multiple matching installations or lanes
+return the existing 409 `ambiguous-queue` diagnostic. Read-token authentication,
+GET-only behavior, request-body limits, `Cache-Control: no-store`, and error
+DTOs match the other status routes. This adds no write authentication.
+
+The response is the public brief v1 DTO, independent of queue wire encodings:
+`version`, `audience`, `change_id`, `digest`, `progress`, `claimed_intent`,
+`classification`, `obligations`, `stances`, `tests`, `warnings`, `truncated`.
+Classification includes revision/generation, pinned head/base/merge base, semantic
+policy digest, classifier, labels with reasons, retained file/hunk inventory,
+and governing owner evidence. Truth values are the strings `unknown`, `false`, and `true`.
+Intent is explicitly the submitter's claim. Stances distinguish native reviews
+from receipt evidence, retaining source ordering/time provenance and Q4 recovery
+steps. Native intent/brief bindings say `not recorded`; they are never inferred.
+Tests retain check name, safe HTTP(S) URL, status, and tested SHA when recorded.
+
+A null section means **not recorded**; an empty array means recorded and empty.
+Known-empty stances render as "none recorded" in text.
+The historical policy loader uses the ConfigApplied commit and digest recorded
+at classification time, reading only immutable objects already in the local Git
+cache. It never fetches, hydrates missing objects, resolves mutable refs, queries
+the forge, or refreshes eligibility. Busy cache, worker or registry locks return
+transient `policy_busy` with `retry` advice, without waiting past the request
+context. Legacy configuration is loaded at the pinned commit, resolved for the
+queue base branch with `config.ResolveBranch`, and checked against
+`ConfigApplied.Digest` using `config.Queue.Digest(deleteHeadBranch)`. An explicit
+`delete_head_branch` is respected; when omitted, either deletion setting may
+match because deletion does not affect approval requirements. A match exposes
+`approvals_required: false`, known-empty obligations `[]`, a brief digest and the
+`approvals_not_required` marker (“approvals not required by the recorded policy”).
+A digest mismatch, including older planner JSON composition, withholds requirements
+and digest with `policy_digest_mismatch`. Load/resolve failures report
+`policy_unavailable`. Resolution uses the worker’s known repository default
+branch; an unknown default branch also withholds policy. To restore missing local
+objects, an operator must fetch or import from backup the pinned `ConfigApplied`
+commit and its tree/blob objects into the repository Git cache, including the
+default-branch configuration commit for release queues. The reader never fetches.
+
+Approval-bearing configs, including normal `version: 1` configs, always withhold
+requirements and digest with
+`policy_unavailable` and `implement_11b_policy_composition`: recorded-policy digest
+composition is defined in **11b**. 11b must define, reconstruct and verify the
+full effective queue plus approval-policy composition (`WithPolicyDigest`) against
+the recorded pin before these requirements become available. Restoring local
+objects cannot complete that missing implementation. Policy reconstruction alone
+does not trigger `not_recorded` / `record_evidence` advice. A later config cannot
+substitute for the historical pin. Recorded progress is informational and never
+a fresh landing authorization.
+
+Display bounds are 32 rows per collection and eight hunks per displayed file.
+Each text field has a 2,048-byte JSON-escaped bound. Separate text budgets reserve
+64 KiB for metadata, 96 KiB for obligations, 96 KiB for provenance, 64 KiB for
+tests, and 192 KiB for hunks (512 KiB total). Machine fields have per-field
+bounds without consuming the content budgets. Safety warnings survive row
+limits. `display_truncated` directs readers to retained journal evidence;
+responses are capped at 2 MiB. The multi-line sanitizer redacts complete display
+inputs before any field or section bounds apply, including title/body, paths and
+hunks. It preserves hunk line breaks, tabs and indentation; brief text has the
+2,048-byte JSON-escaped field cap above, without the diagnostic sanitizer's
+1,024-rune cap. `display_redacted` signals credential redaction, independently of
+truncation or control-character escaping. Machine fields (digests, identifiers,
+SHAs, codes and enums) are excluded from display redaction. Recorded facts and
+their canonical digest remain untouched. Text rendering JSON-quotes untrusted
+text and escapes HTML/control characters; links accept only HTTP(S) without
+userinfo. Obsolete batch/producer attempts remain in test history but never
+produce current repair advice.
+
+Agent output uses stable reason codes and structured `next_step` objects without
+prose recovery instructions. Actions include `split_change`, `resolve_owners`,
+`record_eligibility`, `wait_for_approval`, `new_revision`,
+`reobserve_then_fresh_approval` with `source_time_after`, `trust_exact_head`,
+`fix_eligibility`, `rebase_onto` with the recorded base branch/commit, and
+`fix_check` with name, safe URL and tested commit. Historical superseded failures
+remain visible but do not produce current `fix_check` advice. Queue blocks use
+`refresh` with their source for operator-clearable blocks (`@openmerge refresh`),
+or `wait_for_recovery` for automatic recovery. Policy recovery uses
+`restore_recorded_policy`; display warnings use `read_recorded_evidence`.
+A source-time bound is strict; without a comparable bound, a new revision and
+fresh approval are needed.
+
+### CLI brief view
+
+```sh
+openmerge change brief chg1_<64-lowercase-hex> --repo owner/repo --base main --audience reviewer
+openmerge change brief chg1_<64-lowercase-hex> --repo owner/repo --audience operator
+openmerge change brief chg1_<64-lowercase-hex> --repo owner/repo --audience agent --json
+```
+
+`--repo` is required; `--base` defaults to `main`; `--audience` defaults to
+`reviewer`. Put the ID before flags. `--api`, `OPENMERGE_API_URL`,
+`--api-token-file`, `OPENMERGE_API_TOKEN_FILE`, and `OPENMERGE_API_TOKEN` behave
+as for `queue status`. The client refuses redirects and caps responses at 2 MiB.
+`--json` emits response bytes unchanged; the agent view also renders as JSON.
+Reviewer text leads with intent and evidence; operator text leads with queue
+progress and blockers, including what clears them. Exit codes match status:
+0 success, 1 transport/unsupported response, 2 usage/invalid request,
+3 not found, 4 authentication/authorization, 5 ambiguous queue.

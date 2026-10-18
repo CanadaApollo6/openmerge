@@ -1,4 +1,4 @@
-// Package brief defines factual Stage A briefs. It performs no reads or rendering.
+// Package brief defines factual Stage A briefs and views without external reads.
 package brief
 
 import (
@@ -38,6 +38,7 @@ type Obligation struct {
 // original bounded file/hunk records verbatim; a brief never truncates them.
 // Nil Classification/Intent means historical evidence was not recorded.
 type Fact struct {
+	Presentation      *Presentation `json:",omitempty"`
 	Classification    *cp.Classification
 	Intent            *Intent
 	ApprovalsRequired bool
