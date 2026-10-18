@@ -97,51 +97,53 @@ func testDocsCodeownersOwnerRequired(t *testing.T) {
 }
 
 func TestOwnerPrecedenceAndCoverage(t *testing.T) {
-	for _, selected := range []string{".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS", ""} {
+	t.Run("code-owners-governing-precedence", func(t *testing.T) {
+		for _, selected := range []string{".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS", ""} {
+			i, d, g := basis(t, "src/a.go")
+			if selected != "" {
+				ownersSource(&g, selected, "* @Alice")
+			}
+			c := derive(t, i, d, g, Settings{}).Classification
+			if !c.CodeOwnersKnown || len(c.CodeOwners) != 1 {
+				t.Fatal(c)
+			}
+			want := cp.OwnersResolved
+			if selected == "" {
+				want = cp.OwnersUncovered
+			}
+			if c.CodeOwners[0].Status != want {
+				t.Fatal(c.CodeOwners)
+			}
+		}
 		i, d, g := basis(t, "src/a.go")
-		if selected != "" {
-			ownersSource(&g, selected, "* @Alice")
-		}
+		ownersSource(&g, "docs/CODEOWNERS", "* @Bob")
+		put(&g.Codeowners, "CODEOWNERS", "* @Alice")
+		g.SelectedCodeowners = "CODEOWNERS"
+		put(&g.Codeowners, ".github/CODEOWNERS", "* @ACME/Platform")
+		g.SelectedCodeowners = ".github/CODEOWNERS"
 		c := derive(t, i, d, g, Settings{}).Classification
-		if !c.CodeOwnersKnown || len(c.CodeOwners) != 1 {
+		if !slices.Equal(c.CodeOwners[0].Eligible.IDs, []string{"1", "2"}) {
 			t.Fatal(c)
 		}
-		want := cp.OwnersResolved
-		if selected == "" {
-			want = cp.OwnersUncovered
+		for _, mutate := range []func(*forge.GoverningFiles){
+			func(g *forge.GoverningFiles) { g.Codeowners = g.Codeowners[1:] },
+			func(g *forge.GoverningFiles) { g.Codeowners[0].Coverage = forge.DiffCoverage{} },
+			func(g *forge.GoverningFiles) { g.SelectedCodeowners = "docs/CODEOWNERS" },
+			func(g *forge.GoverningFiles) { g.Codeowners = append(g.Codeowners, g.Codeowners[0]) },
+		} {
+			bad := cloneGoverning(g)
+			mutate(&bad)
+			c := derive(t, i, d, bad, Settings{}).Classification
+			if c.CodeOwnersKnown || c.Label("unknown") != cp.True || c.CodeOwners[0].Status != cp.OwnersUnresolved {
+				t.Fatal(c)
+			}
+			e := evaluation(c, cp.Requirement{Selector: cp.CodeOwners}, "1", "2")
+			coherent(t, e)
+			if e.Allowed {
+				t.Fatal("missing ownership coverage allowed")
+			}
 		}
-		if c.CodeOwners[0].Status != want {
-			t.Fatal(c.CodeOwners)
-		}
-	}
-	i, d, g := basis(t, "src/a.go")
-	ownersSource(&g, "docs/CODEOWNERS", "* @Bob")
-	put(&g.Codeowners, "CODEOWNERS", "* @Alice")
-	g.SelectedCodeowners = "CODEOWNERS"
-	put(&g.Codeowners, ".github/CODEOWNERS", "* @ACME/Platform")
-	g.SelectedCodeowners = ".github/CODEOWNERS"
-	c := derive(t, i, d, g, Settings{}).Classification
-	if !slices.Equal(c.CodeOwners[0].Eligible.IDs, []string{"1", "2"}) {
-		t.Fatal(c)
-	}
-	for _, mutate := range []func(*forge.GoverningFiles){
-		func(g *forge.GoverningFiles) { g.Codeowners = g.Codeowners[1:] },
-		func(g *forge.GoverningFiles) { g.Codeowners[0].Coverage = forge.DiffCoverage{} },
-		func(g *forge.GoverningFiles) { g.SelectedCodeowners = "docs/CODEOWNERS" },
-		func(g *forge.GoverningFiles) { g.Codeowners = append(g.Codeowners, g.Codeowners[0]) },
-	} {
-		bad := cloneGoverning(g)
-		mutate(&bad)
-		c := derive(t, i, d, bad, Settings{}).Classification
-		if c.CodeOwnersKnown || c.Label("unknown") != cp.True || c.CodeOwners[0].Status != cp.OwnersUnresolved {
-			t.Fatal(c)
-		}
-		e := evaluation(c, cp.Requirement{Selector: cp.CodeOwners}, "1", "2")
-		coherent(t, e)
-		if e.Allowed {
-			t.Fatal("missing ownership coverage allowed")
-		}
-	}
+	})
 }
 
 func TestAttributeStatesAndPrecedence(t *testing.T) {
@@ -207,11 +209,11 @@ func TestRealDeriverEvaluateComposition(t *testing.T) {
 	}{
 		{"resolved", "src/a.go", "* @Alice", cp.OwnersResolved, true, true, true},
 		{"uncovered", "src/a.go", "other @Alice", cp.OwnersUncovered, true, true, true},
-		{"ownerless", "src/a.go", "* @Alice\nsrc/a.go", cp.OwnersOwnerless, true, true, true},
+		{"code-owners-ownerless-evidence", "src/a.go", "* @Alice\nsrc/a.go", cp.OwnersOwnerless, true, true, true},
 		{"email-only", "src/a.go", "* Ops@EXAMPLE.COM", cp.OwnersUnresolved, false, false, true},
-		{"unreadable-team", "src/a.go", "* @acme/unreadable", cp.OwnersUnresolved, false, false, true},
+		{"code-owners-unknown-team-evidence", "src/a.go", "* @acme/unreadable", cp.OwnersUnresolved, false, false, true},
 		{"readable-team", "src/a.go", "* @ACME/Platform", cp.OwnersResolved, true, true, true},
-		{"mixed-email-user", "src/a.go", "* @Alice Ops@EXAMPLE.COM", cp.OwnersUnresolved, false, false, true},
+		{"code-owners-mixed-entry-evidence", "src/a.go", "* @Alice Ops@EXAMPLE.COM", cp.OwnersUnresolved, false, false, true},
 		{"mixed-team-user", "src/a.go", "* @Alice @acme/unreadable", cp.OwnersUnresolved, false, false, true},
 		{"invalid-owner", "src/a.go", "* @Alice @@@", cp.OwnersUnresolved, false, false, true},
 		{"policy-resolved", "docs/CODEOWNERS", "* @Alice", cp.OwnersResolved, true, true, true},
@@ -245,51 +247,53 @@ func TestRealDeriverEvaluateComposition(t *testing.T) {
 			}
 		})
 	}
-	for _, name := range []string{"rename", "deletion", "renamed-policy", "deleted-policy"} {
-		t.Run(name, func(t *testing.T) {
-			oldPath, newPath := "src/a.go", "src/b.go"
-			if strings.Contains(name, "policy") {
-				oldPath = "docs/CODEOWNERS"
-			}
-			if strings.Contains(name, "delet") {
-				newPath = ""
-			}
-			i, d, g := basis(t, oldPath, newPathForProbe(newPath, oldPath))
-			d.Files = d.Files[:1]
-			d.Files[0].NewPath = newPath
-			if newPath == "" {
-				d.Files[0].NewMode = ""
-				d.Files[0].NewObjectID = ""
-			} else {
-				d.Files[0].Rename = forge.DiffExactRename
-			}
-			ownersSource(&g, "CODEOWNERS", oldPath+" @Alice\n"+"src/b.go @Bob")
-			c := derive(t, i, d, g, Settings{}).Classification
-			want := 1
-			if newPath != "" {
-				want = 2
-			}
-			if len(c.CodeOwners) != want {
-				t.Fatal(c.CodeOwners)
-			}
-			e := evaluation(c, cp.Requirement{Selector: cp.CodeOwners}, "1")
-			coherent(t, e)
-			if e.Allowed != (newPath == "") {
-				t.Fatalf("per-file owners unioned: %+v", e)
-			}
-			e = evaluation(c, cp.Requirement{Selector: cp.CodeOwners}, "1", "2")
-			coherent(t, e)
-			if !e.Allowed {
-				t.Fatalf("both owners rejected: %+v", e)
-			}
-			if newPath == "" && c.CodeOwners[0].Side != cp.OldSide {
-				t.Fatal("deletion owner used newPath side")
-			}
-			if strings.Contains(name, "policy") && len(c.PolicyOwners) != want {
-				t.Fatal(c.PolicyOwners)
-			}
-		})
-	}
+	t.Run("code-owners-delete-rename-evidence", func(t *testing.T) {
+		for _, name := range []string{"rename", "deletion", "renamed-policy", "deleted-policy"} {
+			t.Run(name, func(t *testing.T) {
+				oldPath, newPath := "src/a.go", "src/b.go"
+				if strings.Contains(name, "policy") {
+					oldPath = "docs/CODEOWNERS"
+				}
+				if strings.Contains(name, "delet") {
+					newPath = ""
+				}
+				i, d, g := basis(t, oldPath, newPathForProbe(newPath, oldPath))
+				d.Files = d.Files[:1]
+				d.Files[0].NewPath = newPath
+				if newPath == "" {
+					d.Files[0].NewMode = ""
+					d.Files[0].NewObjectID = ""
+				} else {
+					d.Files[0].Rename = forge.DiffExactRename
+				}
+				ownersSource(&g, "CODEOWNERS", oldPath+" @Alice\n"+"src/b.go @Bob")
+				c := derive(t, i, d, g, Settings{}).Classification
+				want := 1
+				if newPath != "" {
+					want = 2
+				}
+				if len(c.CodeOwners) != want {
+					t.Fatal(c.CodeOwners)
+				}
+				e := evaluation(c, cp.Requirement{Selector: cp.CodeOwners}, "1")
+				coherent(t, e)
+				if e.Allowed != (newPath == "") {
+					t.Fatalf("per-file owners unioned: %+v", e)
+				}
+				e = evaluation(c, cp.Requirement{Selector: cp.CodeOwners}, "1", "2")
+				coherent(t, e)
+				if !e.Allowed {
+					t.Fatalf("both owners rejected: %+v", e)
+				}
+				if newPath == "" && c.CodeOwners[0].Side != cp.OldSide {
+					t.Fatal("deletion owner used newPath side")
+				}
+				if strings.Contains(name, "policy") && len(c.PolicyOwners) != want {
+					t.Fatal(c.PolicyOwners)
+				}
+			})
+		}
+	})
 }
 func newPathForProbe(newPath, oldPath string) string {
 	if newPath != "" {
@@ -352,24 +356,26 @@ func TestOwnerFactsAndRepeatability(t *testing.T) {
 	if a.Classification.Files[0].Facts["owned:team:acme/platform"] != cp.False || a.Classification.Files[1].Facts["owned:user:alice"] != cp.False {
 		t.Fatal("per-file owner absences missing")
 	}
-	// The head diff may replace CODEOWNERS/attributes, but has no policy content
-	// input. Their governing blobs and ownership survive a self-weakening edit.
-	i, d, g = basis(t, "CODEOWNERS", ".gitattributes")
-	ownersSource(&g, "CODEOWNERS", "* @Alice")
-	put(&g.Attributes, ".gitattributes", "* -linguist-generated")
-	for j := range d.Files {
-		d.Files[j].NewObjectID = strings.Repeat("2", 40)
-		d.Files[j].Hunks = []forge.DiffHunk{{Text: "-* @Alice\n+*\n-* -linguist-generated\n+* linguist-generated\n"}}
-	}
-	c := derive(t, i, d, g, Settings{}).Classification
-	if c.Label("generated") != cp.False || c.Inputs.OwnersBlob != strings.Repeat("1", 40) {
-		t.Fatal(c)
-	}
-	e := evaluation(c, cp.Requirement{Selector: cp.None})
-	coherent(t, e)
-	if e.Allowed {
-		t.Fatal("head weakened governing ownership")
-	}
+	t.Run("code-owners-head-edits-ignored", func(t *testing.T) {
+		// The head diff may replace CODEOWNERS/attributes, but has no policy content
+		// input. Their governing blobs and ownership survive a self-weakening edit.
+		i, d, g := basis(t, "CODEOWNERS", ".gitattributes")
+		ownersSource(&g, "CODEOWNERS", "* @Alice")
+		put(&g.Attributes, ".gitattributes", "* -linguist-generated")
+		for j := range d.Files {
+			d.Files[j].NewObjectID = strings.Repeat("2", 40)
+			d.Files[j].Hunks = []forge.DiffHunk{{Text: "-* @Alice\n+*\n-* -linguist-generated\n+* linguist-generated\n"}}
+		}
+		c := derive(t, i, d, g, Settings{}).Classification
+		if c.Label("generated") != cp.False || c.Inputs.OwnersBlob != strings.Repeat("1", 40) {
+			t.Fatal(c)
+		}
+		e := evaluation(c, cp.Requirement{Selector: cp.None})
+		coherent(t, e)
+		if e.Allowed {
+			t.Fatal("head weakened governing ownership")
+		}
+	})
 }
 
 type mutatingDeriver struct{ mutate func(*cp.Classification) }
@@ -451,5 +457,31 @@ func TestIncompleteInventoryAndStaleResolution(t *testing.T) {
 			t.Fatal("stale resolution authorized")
 		}
 		coherent(t, evaluation(e.Classification, cp.Requirement{Selector: cp.CodeOwners}, "1"))
+	}
+}
+
+type eagerAttributeDeriver struct{ ownerStub }
+
+func (eagerAttributeDeriver) Generated(string, forge.GoverningFiles) cp.Truth { return cp.True }
+func TestClassifyCoverageGuardsInjectedDeriver(t *testing.T) {
+	i, d, g := basis(t, "nested/a.go")
+	put(&g.Attributes, ".gitattributes", "* linguist-generated")
+	g.Attributes = g.Attributes[:1]
+	e, err := Classify(i, d, g, Settings{}, eagerAttributeDeriver{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Classification.Label("generated") != cp.Unknown {
+		t.Fatal("Classify trusted an eager Deriver across a missing probe")
+	}
+	i, d, g = basis(t, "a.go")
+	d.Files[0].Binary = true
+	_, err = Classify(i, d, g, Settings{}, mutatingDeriver{func(c *cp.Classification) {
+		c.Facts["unknown"] = cp.False
+		c.CodeOwnersKnown = true
+		c.PolicyOwnersKnown = true
+	}})
+	if err == nil {
+		t.Fatal("Deriver erased a preexisting unknown fact")
 	}
 }
