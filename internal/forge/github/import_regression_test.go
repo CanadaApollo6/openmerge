@@ -166,6 +166,13 @@ func TestImportReconcilesApprovalDraftExactly(t *testing.T) {
     default:
         count: 3
         group: imported_reviewers
+    rules:
+        - require:
+            count: 3
+            group: imported_reviewers
+          when:
+            touches:
+                - '**'
 changes:
     pull_requests: required
 groups:
@@ -173,7 +180,7 @@ groups:
         - alice
         - bob
 `
-		if !strings.Contains(r.ProposedConfig, want) || strings.Count(r.ProposedConfig, "approvals:\n") != 1 || !strings.Contains(r.ProposedConfig, "one eligible owner per changed owned file") || strings.Contains(r.ProposedConfig, "when: {}") {
+		if !strings.Contains(r.ProposedConfig, want) || strings.Count(r.ProposedConfig, "approvals:\n") != 1 || !strings.Contains(r.ProposedConfig, "owner-review; no equivalent configuration") || strings.Contains(r.ProposedConfig, "when: {}") {
 			t.Fatalf("wrong reconciled draft:\n%s", r.ProposedConfig)
 		}
 	}

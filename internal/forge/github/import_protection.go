@@ -56,7 +56,6 @@ type ProtectionReport struct {
 
 type importQueueDraft struct {
 	Count        int
-	Owners       bool
 	Writers      []string
 	PullRequests bool
 	Strict       bool
@@ -183,20 +182,20 @@ func (r *ProtectionReport) accept(ids []string) error {
 			slices.Sort(checks)
 			value["merge_when"] = slices.Compact(checks)
 		}
-		if p.Count > 0 || p.Owners {
-			approvals := map[string]any{"default": "any_writer"}
-			if p.Count > 0 {
-				value["groups"] = map[string]any{"imported_reviewers": p.Writers}
-				approvals["default"] = map[string]any{"group": "imported_reviewers", "count": p.Count}
+		if p.Count > 0 {
+			value["groups"] = map[string]any{"imported_reviewers": p.Writers}
+			requirement := map[string]any{"group": "imported_reviewers", "count": p.Count}
+			value["approvals"] = map[string]any{
+				"default": requirement,
+				"rules": []any{map[string]any{
+					"when":    map[string]any{"touches": []string{"**"}},
+					"require": requirement,
+				}},
 			}
-			value["approvals"] = approvals
 		}
 		draft.WriteString(fragment(value))
 		if p.Count > 0 {
-			draft.WriteString("# Maximum approval count across sources; groups is repository-level.\n# The count-bearing default applies even to known-empty diffs; retain it when adding approval rules.\n# Maintain imported_reviewers as writer membership changes; eligibility is re-read at landing.\n")
-		}
-		if p.Owners {
-			draft.WriteString("# Stage A owner requirement: one eligible owner per changed owned file.\n# Use governing CODEOWNERS, last matching entry; full owner-requirement schema lands with Stage A.\n")
+			draft.WriteString("# Maximum approval count across sources; groups is repository-level.\n# Keep both requirements: the default covers empty diffs; touches ** enforces the count on every non-empty diff.\n# Matching rules add requirements, so a later none rule cannot cancel this count.\n# Maintain imported_reviewers as writer membership changes; eligibility is re-read at landing.\n")
 		}
 	}
 	r.ProposedConfig = draft.String()

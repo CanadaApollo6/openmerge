@@ -166,7 +166,7 @@ func TestImportProtectionReport(t *testing.T) {
 	}{
 		{"main", "ruleset:11", "reviews", "weaker", "merge-base", false},
 		{"main", "classic", "reviews", "stricter", "Head-bound", false},
-		{"main", "ruleset:11", "owner-review", "weaker", "governing", false},
+		{"main", "ruleset:11", "owner-review", "unsupported", "only policy files", false},
 		{"main", "ruleset:11", "last-push", "unsupported", "later pusher", false},
 		{"main", "ruleset:11", "check-ci", "weaker", "App-pinned", false},
 		{"main", "ruleset:11", "check-pr-only", "unsupported", "only on pull requests", false},

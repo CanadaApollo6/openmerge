@@ -197,7 +197,6 @@ func (r *ProtectionReport) reviews(base, source string, p importReviews, writers
 	draft := r.queueDrafts[base]
 	draft.Count = max(draft.Count, p.Count)
 	draft.PullRequests = true
-	draft.Owners = draft.Owners || p.Owners
 	draft.Writers = writers
 	r.queueDrafts[base] = draft
 	r.add(base, source, "pull-requests", "equivalent", false, "Keep pull-request submission required. Approval policy uses eligible, distinct reviewers, excludes author/submitter/accountable humans and blocks eligible requests for changes; plain approved-reviews-by is not equivalent.", "# changes.pull_requests: required belongs in this base's reconciled queue fragment.\n")
@@ -213,11 +212,7 @@ func (r *ProtectionReport) reviews(base, source string, p importReviews, writers
 		}
 	}
 	if p.Owners {
-		class := "equivalent"
-		if p.Stale {
-			class = "weaker"
-		}
-		r.add(base, source, "owner-review", class, false, fmt.Sprintf("Stale dismissal enabled=%t: stale owner approvals may survive merge-base/diff changes without a new head; acceptance is required when enabled. Require at least one eligible owner for every changed owned file, using CODEOWNERS at the governing default-branch commit. See the base comparison. Stage A must supply owner requirements; groups alone confer no path ownership.", p.Stale), "# Owner requirement is retained in the reconciled draft for this base.\n")
+		r.unsupported(base, source, "owner-review", "GitHub requires approval from the effective owners of every owned file. Stage A has no requirement form for approval from the effective owners of every owned file; only policy files get mandatory owner approval. General code-owner review cannot be translated or enforced by this draft.")
 	}
 	if p.LastPush {
 		r.add(base, source, "last-push", "unsupported", false, "Last-push approval has no equivalent; excluding the submitter does not exclude a later pusher.", "# No equivalent for approval of the most recent reviewable push.")

@@ -1029,24 +1029,32 @@ membership blocks authority verification.
 ADR's `approvals`, `groups` and `changes` keys; current releases reject them.
 Review counts use a snapshot of eligible repository writers in
 `groups.imported_reviewers`, with a count-bearing group requirement in
-`approvals.default`. With no approval rules in the fragment, this default also
-applies to a known-empty diff; an existential `touches` rule would lose the count.
-Retain the imported requirement when adding other approval rules. Overlapping
-classic and ruleset review counts use the maximum in one reconciled fragment per base,
-with all owner requirements retained. Maintain this group as writer membership
-changes. Eligibility and blocking requests for changes must be checked at landing
-by Stage A. Owner requirements are annotated semantically because ADR 0007 leaves their full schema
-to Stage A; a group is never presented as path ownership. For example:
+`approvals.default` and the same requirement in a `touches: ["**"]` rule.
+Keep both: the default covers known-empty diffs, while the rule enforces the
+count for every non-empty diff, even after adding other rules. Stage A applies
+the default only when no rule definitely matches; a matching `docs → none` rule
+would suppress a default-only count. Rules add requirements, so `none` cannot
+cancel the imported `touches` requirement. Overlapping classic and ruleset
+review counts use the maximum in one reconciled fragment per base. Maintain
+this group as writer membership changes. Eligibility and blocking requests for
+changes must be checked at landing by Stage A.
 
-```text
+General code-owner review is **unsupported**: Stage A has no requirement form
+for approval from the effective owners of every owned file. Only policy files
+get mandatory owner approval. The draft does not translate GitHub's general
+code-owner requirement; a group does not confer path ownership. For example:
+
+```yaml
 # Requires the release implementing ADR 0007 Stage A; merge into the relevant queue.
 # groups is repository-level, approvals belongs to the queue.
 groups:
   imported_reviewers: [alice, bob]
 approvals:
   default: {group: imported_reviewers, count: 2}
-# Owner requirement: one eligible owner for each changed owned file,
-# resolved from CODEOWNERS at the governing default-branch commit.
+  rules:
+    - when: {touches: ["**"]}
+      require: {group: imported_reviewers, count: 2}
+# General code-owner review is unsupported; only policy files get mandatory owner approval.
 ```
 
 Review dismissal on is a weaker translation where GitHub invalidates an approval
