@@ -118,6 +118,12 @@ func (s *Sanitizer) Sanitize(value string) string {
 // to 1,024 runes only after redacting the complete input.
 func (s *Sanitizer) SanitizeText(value string) string {
 	text, _ := s.SanitizeTextRedacted(value)
+	text = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) && r != '\n' && r != '\t' && r != '\r' || unicode.Is(unicode.Cf, r) {
+			return ' '
+		}
+		return r
+	}, text)
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
 		lines[i] = boundDiagnostic(line)

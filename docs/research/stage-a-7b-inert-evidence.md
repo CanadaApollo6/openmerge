@@ -221,3 +221,58 @@ hunk ranges/path inventory, so classification was rejected),
 intent text without updating its intent digest), and
 `om-pr74-fix2-focused-verified.log` **exit 0** after correcting the fixture.
 No job was interrupted or any other agent's process killed.
+
+## Fix round 3
+
+This round supersedes round 2's blanket policy unavailability and final reflective
+sanitizer. Main advanced through PR #75 to
+`15aa69929e89970fb49381493398814b8793567a`; the complete PR was rebased onto it.
+The baseline checkout is detached at that commit.
+
+- Legacy pinned local config is loaded with the public loader, resolved for the
+  queue base branch using `ResolveBranch`, and compared using the current
+  `Queue.Digest`. Explicit DeleteHeadBranch is respected; absent overrides accept
+  either deletion setting. Matching legacy requirements are known-empty `[]`,
+  approvals_required is false, the full brief digest is emitted, and the response
+  says “approvals not required by the recorded policy”. Old-binary planner JSON
+  differences and zero/forged pins fail with policy_digest_mismatch. Missing
+  objects or load/resolve failures remain policy_unavailable.
+  Tests: `TestR3LegacyEffectiveDigest`,
+  `TestBriefHTTPHistoricalPolicyRequiresEffectiveDigest`,
+  `TestLocalConfigNeverHydratesMissingObjects` (now moves the remote main ref),
+  and `TestBriefPolicyUsesOnlyPinnedLocalReader`.
+- Explicit 11b obligation: define, reconstruct and verify the full recorded-policy
+  digest composition, including effective legacy queue settings and
+  WithPolicyDigest, before candidate approval requirements or a digest may be
+  returned. Candidates remain policy_unavailable with a distinct 11b reason and
+  implement_11b_policy_composition action, never restore_recorded_policy advice.
+  `TestR3PolicyRecovery` covers candidate, missing-object and transient recovery;
+  policy-only unavailability never recommends record_evidence.
+- Complete display inputs are redacted before bounding. Both 336 ampersands and
+  334 less-than characters followed by the registered opaque secret, plus the
+  hunk variant, are covered by `TestR3TruncatedSecret` and
+  `TestR3SanitizeBeforeBoundsAndPreserveHunks`. The shared multiline sanitizer
+  preserves tabs, indentation and newlines. Its unbounded redaction path allows
+  briefs to apply their own 2,048-byte escaped cap; the forge diagnostic wrapper
+  retains its 1,024-rune-per-line cap. display_redacted reports redaction only,
+  independently of bounds or whitespace. Tests:
+  `TestSanitizeTextPreservesDiffAndReportsOnlyRedaction` and
+  `TestBriefDisplaySanitizationPreservesRecordedDigest`.
+- Explicit display sanitation excludes digests, IDs, SHAs, action/reason codes and
+  enums. Tests: `TestR3MachineDigest` and
+  `TestR3MachineFieldsPreservedDuringProjection`.
+- Worker selection reads its immutable key before acquiring a worker mutex.
+  Registry and selected-worker acquisition use TryRLock/TryLock with context
+  checks; no unrelated worker lock is acquired. Cache/worker/registry contention
+  returns policy_busy with retry advice. Tests:
+  `TestR3BriefPolicyBusyUnrelatedWorker`,
+  `TestR3BriefPolicyBusyTargetAndRegistry`,
+  `TestLocalConfigBusyCacheReturnsWithoutWaiting`, `TestR3PolicyRecovery`.
+- Only the current batch and non-superseded producer attempt yield fix_check
+  actions. Historic runs remain visible, and current timeout evidence is retained.
+  Tests: `TestR3InvalidatedBatch`, `TestR3ManualReruns`,
+  `TestAstraR2SupersededCheckHTTP`.
+
+The changes remain inert. No live DB, status API, systemd, openmerge/* refs,
+GitHub calls in code/tests, public candidate-key activation, or deployment.
+The Stage A 8 deployment Hold remains in force.
