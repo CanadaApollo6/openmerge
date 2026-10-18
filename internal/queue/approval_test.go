@@ -16,6 +16,9 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
 
+func accountability(b ApprovalBasis, actor, author cp.Identity, mappings map[string][]cp.Identity) ChangeAccountabilityObserved {
+	return Accountability(b, actor, author, mappings, "semantic-policy")
+}
 func approvalBasis() ApprovalBasis {
 	id, _ := PRChangeID("7", "Owner/Repo", "release", "", 12)
 	return ApprovalBasis{id, 1, strings.Repeat("b", 40), "read-1", time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)}
@@ -88,15 +91,15 @@ func eligibilityEvent(b ApprovalBasis) ApprovalEligibilityObserved {
 
 func TestApprovalWireFixturesAndValidation(t *testing.T) {
 	b := approvalBasis()
-	account := Accountability(b, person(7), person(1), nil)
+	account := accountability(b, person(7), person(1), nil)
 	approval := native(b, 10, cp.Approve, b.At.Add(-time.Minute))
 	unknown := eligibilityEvent(b)
 	unknown.Known = false
 	unknown.Reasons = []string{"membership unavailable"}
-	mapped := Accountability(b, person(7), person(1), map[string][]cp.Identity{person(1).ID: {person(3)}})
+	mapped := accountability(b, person(7), person(1), map[string][]cp.Identity{person(1).ID: {person(3)}})
 	bot := person(4)
 	bot.Kind = cp.AgentAccount
-	vectors := map[string]Event{"person": account, "mapped-agent": mapped, "unmapped-bot": Accountability(b, person(7), bot, nil), "approval": approval, "changes-requested": native(b, 11, cp.RequestChanges, b.At), "dismissal": dismissal(b, 10, forge.ObservationTimeFallback, b.At), "withdrawal": command(b, 12, cp.Withdraw, b.At), "unknown-eligibility": unknown}
+	vectors := map[string]Event{"person": account, "mapped-agent": mapped, "unmapped-bot": accountability(b, person(7), bot, nil), "approval": approval, "changes-requested": native(b, 11, cp.RequestChanges, b.At), "dismissal": dismissal(b, 10, forge.ObservationTimeFallback, b.At), "withdrawal": command(b, 12, cp.Withdraw, b.At), "unknown-eligibility": unknown}
 	emptyEligibility := eligibilityEvent(b)
 	emptyEligibility.Actors = map[string]cp.Actor{}
 	registry := map[string]Event{"change_accountability_observed": account, "change_intent_observed": Intent(b, " Title\r\n", "Body\r\ntext "), "review_stance_observed": approval, "approval_eligibility_observed": emptyEligibility}
@@ -310,10 +313,13 @@ func decisionSetup(t *testing.T, resolve classification.OwnerResolver) (State, A
 		t.Fatal(e.Validate())
 	}
 	s := Apply(approvalState(b), e)
-	s = Apply(s, Accountability(b, person(7), person(1), nil))
+	s = Apply(s, accountability(b, person(7), person(1), nil))
 	s = Apply(s, native(b, 10, cp.Approve, b.At))
 	i := evidence.Classification.Inputs
-	current := cp.ReceiptIdentity{ChangeID: i.ChangeID, Revision: i.Revision, Generation: i.Generation, Base: i.Base, Head: i.Head, MergeBase: i.MergeBase, PolicyDigest: i.PolicyDigest, IntentDigest: "intent", BriefDigest: "brief"}
+	current := cp.ReceiptIdentity{ChangeID: i.ChangeID, Revision: i.Revision, Generation: i.Generation, Base: i.Base, Head: i.Head, MergeBase: i.MergeBase, PolicyDigest: i.PolicyDigest, IntentDigest: Intent(b, "title", "body").Digest, BriefDigest: "brief"}
+	account := accountability(b, person(7), person(1), nil)
+	account.PolicyDigest = current.PolicyDigest
+	s = Apply(Apply(s, account), Intent(b, "title", "body"))
 	p := cp.Policy{Approvals: &cp.Approvals{Default: cp.Requirement{Selector: cp.AnyWriter, Count: 1}, Rules: []cp.Rule{{When: cp.Match{Touches: []string{"docs/**"}}, Require: cp.Requirement{Selector: cp.CodeOwners}}}}}
 	return s, b, current, p, eligibilityEvent(b)
 }
@@ -380,14 +386,14 @@ func TestDecisionExclusionsPermissionsUnknownAndConditionSet(t *testing.T) {
 	}
 	for _, who := range []string{"author", "submitter", "accountable"} {
 		test := s
-		account := Accountability(b, person(7), person(1), nil)
+		account := accountability(b, person(7), person(1), nil)
 		switch who {
 		case "author":
-			account = Accountability(b, person(7), person(2), nil)
+			account = accountability(b, person(7), person(2), nil)
 		case "submitter":
 			account.SubmitterID = person(2).ID
 		case "accountable":
-			account = Accountability(b, person(7), person(1), map[string][]cp.Identity{person(1).ID: {person(2)}})
+			account = accountability(b, person(7), person(1), map[string][]cp.Identity{person(1).ID: {person(2)}})
 		}
 		test = Apply(test, account)
 		if e := test.evaluateApprovalsTest(policy, current, fresh, ownerPool(2)); e.Allowed || len(e.ReviewLogins) > 0 {
@@ -461,7 +467,7 @@ func TestApprovalImmutableApplySnapshotReplayAndInertPlanner(t *testing.T) {
 	}
 	b := approvalBasis()
 	s := approvalState(b)
-	events := []Event{Accountability(b, person(7), person(1), nil), Intent(b, "title", "body"), native(b, 10, cp.Approve, b.At), eligibilityEvent(b), command(b, 20, cp.Withdraw, b.At.Add(time.Minute))}
+	events := []Event{accountability(b, person(7), person(1), nil), Intent(b, "title", "body"), native(b, 10, cp.Approve, b.At), eligibilityEvent(b), command(b, 20, cp.Withdraw, b.At.Add(time.Minute))}
 	for i, event := range events {
 		prior := detached(s.approvalFacts)
 		old := s
@@ -524,14 +530,14 @@ func TestAccountabilityMappingIntentNormalizationAndForkIsolation(t *testing.T) 
 	for _, forgeKind := range []cp.AccountKind{cp.HumanAccount, cp.AgentAccount} {
 		author := person(1)
 		author.Kind = forgeKind
-		e := Accountability(b, person(7), author, map[string][]cp.Identity{author.ID: {person(3), person(4)}})
+		e := accountability(b, person(7), author, map[string][]cp.Identity{author.ID: {person(3), person(4)}})
 		if e.Validate() != nil || e.Author.Kind != cp.AgentAccount || !e.Recorded || len(e.Humans) != 2 || e.Actor.ID == e.Author.ID {
 			t.Fatal("mapping precedence or identity conflation", e)
 		}
 	}
 	bot := person(9)
 	bot.Kind = cp.AgentAccount
-	e := Accountability(b, person(7), bot, nil)
+	e := accountability(b, person(7), bot, nil)
 	if e.Recorded || len(e.Humans) > 0 || e.Reason != "accountable human not recorded" {
 		t.Fatal("inferred human for unmapped bot")
 	}
@@ -546,13 +552,13 @@ func TestAccountabilityMappingIntentNormalizationAndForkIsolation(t *testing.T) 
 	}
 	s := approvalState(b)
 	prior := s.observations
-	s = Apply(s, Accountability(b, person(7), person(1), nil))
+	s = Apply(s, accountability(b, person(7), person(1), nil))
 	if !reflect.DeepEqual(prior, s.observations) || len(s.Entries) > 0 {
 		t.Fatal("fork accountability granted trust/admission")
 	}
 }
 
-func TestRecoveryRequiresReobservationAndNeverRelaxesBarrier(t *testing.T) {
+func TestRecoveryReconsidersSourcesAcrossReadsAndNeverRelaxesBarrier(t *testing.T) {
 	b := approvalBasis()
 	block := dismissal(b, 10, forge.ObservationTimeFallback, b.At)
 	s := Apply(approvalState(b), block)
@@ -560,7 +566,7 @@ func TestRecoveryRequiresReobservationAndNeverRelaxesBarrier(t *testing.T) {
 	newRead.ReadID = "second-read"
 	positive := native(newRead, 20, cp.Approve, b.At.Add(time.Minute))
 	s = Apply(s, positive)
-	assertKind(t, s, b, cp.Withdraw)
+	assertKind(t, s, b, cp.Approve)
 	// A distinct older/missing blocker cannot lower an established barrier.
 	unbounded := command(newRead, 30, cp.Withdraw, b.At)
 	unbounded.Stance.Source.TimeKnown = false

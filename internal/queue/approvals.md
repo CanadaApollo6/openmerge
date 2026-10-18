@@ -1,99 +1,130 @@
 # Dormant approval evidence (Stage A 6)
 
 The four additive wire-v1 observations have no production producer. `serve`,
-executor, planner, existing conditions, configuration and landing are unchanged.
-`State.approvalFacts` is nil until an accepted observation. The projection never
-advances planner revisions or CI timers. Its fingerprint is available for PR 8;
-revision changes affect it without reclassifying. Snapshot v5 retains attribution,
-first-observation barriers and channel frontiers; v2/v3/v4 decode with absent
-approval facts. Store compaction remains disconnected.
+executor, planner, conditions, configuration and landing are unchanged.
+`approvalFacts` stays nil for legacy queues. Snapshot v5 retains sources,
+first-observation attribution and bounds; v2–v4 decode with absent facts.
+Compaction remains disconnected.
 
-## Recording and ordering
+## Acquisition and attribution
 
-`ApprovalBasis` identifies the change, observed revision/head, and the read that
-supplied the evidence. Record a revision boundary before its observations.
-`Accountability` takes resolved stable-ID agent mappings from governing config,
-before forge kind. Actor, PR author, optional submitter and accountable people
-remain separate. An unmapped bot records no accountable human; accountability
-never grants fork trust. Reviewer Actors must already carry effective account
-kinds after the same configured mappings. No git name/email is an identity input.
-GitHub user keys are constructed with `classification.GitHubUserID`; the wire
-validator and decision resolver reject other spellings, including leading zeros.
+`ApprovalBasis` identifies the change, revision/head and acquisition read.
+11a must journal a revision boundary before its observations. Producers call
+`CheckApprovalBoundary` to get a typed `ApprovalBoundaryError` before writing;
+`Apply` retains its existing no-error signature and rejects unbound observations.
 
-Intent is the normalized title and body (CRLF/CR to LF, surrounding whitespace
-trimmed). Its digest is SHA-256 of the JSON string array
-`["openmerge/intent/v1", title, body]`, encoded by Go's JSON encoder. PR 7a must
-reuse this binding; it owns brief hashing, receipt acceptance and command wiring.
-A native stance always has a null receipt: intent and brief are **not recorded**.
+Accountability receives resolved stable-ID agent mappings and their governing
+**policy digest**. Mapping precedes forge account kind. Actor, author, submitter
+and all accountable humans remain separate. Accountability grants no permission
+or fork trust; git names/emails are not identities. Evaluation rejects a policy
+digest mismatch, including after an agent-mapping edit. Eligibility Actors must
+carry effective account kinds after the same mapping. GitHub IDs use canonical
+`classification.GitHubUserID` spellings.
 
-Source keys separate native review IDs, dismissal-of-review IDs and command IDs.
-A dismissal discovered later with a timeline event ID joins the original
-review's dismissal key. Its first time bound remains pinned, including across
-polls and snapshot/restart. Acquisition provenance (clock source, precision,
-uncertainty and observation) remains in the first observation. Dismissals use
-**dismissal** time, never submission time. Event IDs are not ordered against
-review IDs. Normal sources use ID sequence within a channel; independent
-namespaces need comparable source times. Across channels, new log observations
-win unless proven older or barred by an outstanding blocker. Re-observation of
-an existing source never moves it to the end of the log.
+Intent normalizes CRLF/CR to LF and trims surrounding whitespace. Its digest is
+SHA-256 over Go JSON `["openmerge/intent/v1", title, body]`. Evaluation requires
+current revision/head intent evidence matching `Current.IntentDigest`. Native
+stances always have null receipts; intent/brief bindings cannot be inferred.
 
-A withdrawal/request for changes sets a conservative barrier. Positive evidence
-requires a known source time strictly after its upper bound. Equal/unknown times
-cannot clear it; a distinct blocker cannot lower the bound. An unbounded barrier
-cannot be cleared on that revision. To clear a bounded barrier, acquire the
-blocker again and record it with the **same ReadID** as the clearing review or
-receipt. The fold checks this re-observation; local wall time never substitutes
-for forge time. Keep ingestion serialized through this fold. A rejected positive
-source is not later promoted by duplicate polling; use a fresh action after
-re-observing the blocker. Without a comparable bound, create a new revision and
-get a fresh attributed review/receipt. There is no operator override.
+Source keys separate native reviews, dismissals of a review, and commands.
+Timeline enrichment joins the dismissal key, retaining the **first** observed
+bound, original submission evidence and provenance. Re-observation cannot renew
+attribution, time evidence or bounds. ReadID is audit metadata only.
 
-First discovery pins native attribution permanently. Previously observed sources
-keep their revision across H1 → H2 → H1. First discovery on revision >1 requires
-a source timestamp strictly after that revision's recorded boundary, on its
-exact head; otherwise revision zero marks historical/ambiguous evidence. This
-is deliberately conservative when source/observation precision cannot prove
-which head epoch was reviewed. Fresh review after the boundary recovers. A
-newly discovered dismissal joins its original review's recorded attribution when
-available. Commands pin the current revision at authenticated processing;
-`unapprove` cannot rebind a late positive source. The journal retains all original
-observations; snapshots retain source attribution and current indices, bounded
-at 4096 sources per change. Capacity exhaustion fails closed without dropping
-attribution; activation-time record/membership budgets remain PR 7a's gate.
+Native first discoveries on a novel head do not need to postdate local polling.
+The revision record retains the set of prior heads. On H1 → H2 → H1, first
+observation requires a submission time strictly after `boundary.At + 3s`
+(second timestamp precision plus the Q4 two-second clock allowance). Missing or
+ambiguous proof attributes revision zero, never authorization. A pre-history
+snapshot with revision >1 and no prior-head set also requires proof; this
+unknown history stays unknown through subsequent boundaries until full replay. Previously
+observed sources keep their attributed revision through head reuse.
 
-## Decision boundary and the PR 4b carry-over
+A dismissal retains `OriginalSubmission` and the reviewed commit separately.
+Those prove attribution of the **original review**, never the dismissal action's
+time. A known original's pinned revision is authoritative, regardless of source
+arrival order; an unseen original uses the same head/epoch proof as a review.
+Dismissal time always comes from PR 3b's dismissal DTO, including fallback on
+revision 1 and later revisions. An old review dismissed today cannot erase a
+current head-epoch request. The additive wire fixtures pin shared forge/policy
+field names (including their existing exported-name JSON spelling).
 
-`EvaluateApprovals` takes an explicitly fresh eligibility observation, including
-`OwnerPools` keyed by governing owner tokens (`owned:user:login` or
-`owned:team:org/team`). It constructs the fresh resolver from that same read. It never consumes stored eligibility or classification-time
-pools, even when they say `Fresh=true`. It calls
-`classification.ResolveOwnerEligibility(stored.Evidence, freshResolver)` and
-replaces **both** owner projections and **both** known flags in the detached
-input immediately before `changepolicy.Evaluate`. No governing-tree re-read,
-union of memberships, generation change or classification rewrite occurs.
-Owner membership is recorded in the observation, so a membership-only change
-also changes the approval fingerprint and survives replay. `Current` is PR 7a's
-validated current brief binding; this component does not accept receipt commands
-or validate brief digests. The caller must acquire new identity/membership/grant observations at each
-future gate invocation; the pure function cannot prove external acquisition.
+## Pure set fold and recovery
 
-Unresolved membership at classification time does not strand owner obligations:
-fresh resolution replaces their unresolved status/pools/known flags, as pinned
-by `TestDecisionNeverConsumesStoredFreshOwnerPools`. Durable `unknown` facets
-and diagnostic reasons remain classification evidence. A rule explicitly matching
-`unknown` therefore continues to apply conservatively, even if the historical
-reason was membership. Removing such a classification facet requires a normal
-new classification generation with refreshed derivation (PR 11a), invalidating
-old receipts; eligibility reads alone do not silently rewrite semantic bindings.
-Other incomplete tree/inventory evidence still blocks as before.
+Every new source recomputes the changed user's effective stance from its
+attributed source **set**, not incremental Latest/frontier state. Derived indices
+are caches only. Arrival order, read grouping, duplicate polls and snapshot/tail
+splits cannot select different stances. Two positive candidates exist: the
+highest-sequence approval in each channel. Each must clear **every** relevant
+withdrawal/request barrier using a known time strictly after its pinned upper
+bound and, within one sequence namespace, a strictly higher sequence. A lower-ID
+blocker with ambiguous time still blocks. Valid positive candidates across
+channels use source time, with a stable source-key tie-break.
 
-The PR 5 evaluator deduplicates stable IDs, excludes author/submitter/all
-accountable people, applies fresh writer and applicable-pool eligibility, and
-blocks on eligible requests for changes. Its `ReviewAttribute` shares the same
-native-inclusive review set even for receipt-only rules. There is no implicit
-extra reviewer pool. Missing membership/eligibility yields unknown, preserving
-nested condition negation semantics. Production condition wiring waits for 11a.
+Normal review IDs and command IDs have independent sequence namespaces.
+Dismissal timeline IDs never compare numerically to review IDs. Requests win
+against withdrawals with equal, unknown or ambiguous times. A withdrawal can
+replace a request only with strict time proof (and sequence proof in a shared
+namespace). Fallback-time dismissals cannot mask later requests. Outstanding
+requests take precedence over withdrawals; same-kind presentation ties use
+source time and source key. Withdrawal queries use sorted prefix maxima rather
+than pairwise scans. Local observation time is never action-order evidence.
 
-Receipt ordering tests use the shared stance/receipt types now; 7a owns the
-receipt wire records and authentication. They pin native-after-receipt and
-receipt-after-native-then-intent-edit without creating commands in this PR.
+Q4 barriers remain pinned: an exact second-resolution timestamp has a **+1s**
+upper bound; clearing requires strictly after that bound, not merely after its
+reported second. Fallback includes precision and clock allowance. Missing bounds
+cannot be cleared on that revision. Any revision change clears current requests
+and withdrawals; a fresh attributed action can recover on the new revision.
+No override exists. Recovery on the same revision requires no further reviewer
+action, same-ReadID refresh or blockers-first emission. 11a emits each newly
+acquired source once; duplicates are safe and optional for audit, not clearance.
+
+`Apply` copies only the changed projection maps and changed event payload;
+it never JSON-round-trips the growing source set. Snapshot evidence retains all
+first-observation source pins needed to prevent old sources rebinding. This is
+bounded at 4096 sources **per change**, not per queue. Arbitrary eviction would
+lose those pins and is unsafe. Exhaustion fails closed for that change; it does
+not affect another PR's evaluation. No production ingestion exists yet. Before
+11a activation, acquisition must filter non-writer/ineligible reviewers using
+fresh identity/grant evidence **before** allocating stance pins, including their
+dismissals; unknown eligibility blocks the gate instead of being silently
+filtered. If a reviewer becomes eligible, 11a must acquire their complete review
+history then. Source-budget admission must reject an oversized change explicitly;
+it must not discard blockers or let public-repository noise consume other
+changes' budgets. Activation must retain this resource gate. Benchmarks exercise
+1500 and 4095 mixed approve/request/unapprove sources for one user.
+
+## Decision and downstream gates
+
+`EvaluateApprovals` takes explicitly fresh eligibility with owner-token pools
+(`owned:user:login`, `owned:team:org/team`). It re-runs
+`classification.ResolveOwnerEligibility` on stored governing evidence and
+replaces **both** owner projections and **both** known flags. Stored eligibility,
+classification-time pools and their `Fresh=true` flags never authorize. Fresh
+membership resolves classification-time membership-only unknowns without
+rewriting semantic evidence. A rule matching a historical `unknown` facet
+remains conservative until normal reclassification (11a). Other incomplete
+inventory evidence still blocks.
+
+The PR 5 evaluator deduplicates IDs, excludes author/submitter/all accountable
+humans, requires fresh writer and applicable-pool eligibility, and blocks eligible
+requests for changes. `ReviewAttribute` uses that same native-inclusive set even
+for receipt-only requirements. No implicit reviewer pool is added.
+
+7a must record acceptance/rejection keyed by **comment ID**; a late rejected
+receipt is never a stance. Re-run native-after-receipt and
+receipt-after-native-then-intent-edit using actual receipt records then. Current
+component tests use shared receipt types only. Brief authentication is 7a's gate.
+
+8's fingerprint includes current effective stances, relevant metadata, recorded
+policy digest and ConfigApplied digest; revision-zero and non-effective historical
+sources and polling ReadIDs/times are excluded. It remains disconnected from
+planner timers and CI keys.
+
+`PrepareApprovalDecision` returns the exact fresh eligibility, accountability,
+intent, relied-on attributed stances, current receipt identity, evaluation and
+snapshot containing that eligibility. 9 must journal **that exact event**
+atomically with its snapshot and reject the decision if the transaction fails;
+it must not acquire/reconstruct a different eligibility event after evaluation.
+The helper performs no external I/O and cannot prove acquisition freshness.
+11a must preserve channel sequence namespaces and cross-channel ordering above.

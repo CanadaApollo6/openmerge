@@ -2,6 +2,7 @@ package store
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -70,7 +71,7 @@ func TestChangeRevisionAppendRollsBackStaleDelivery(t *testing.T) {
 	must(t, err)
 	beforeRevision, _ := state.PRRevision(12)
 	afterRevision, _ := after.PRRevision(12)
-	if gotWatermark != watermark || beforeRevision != afterRevision || count(t, db, `SELECT count(*) FROM events WHERE queue_id=$1`, q) != 1 {
+	if gotWatermark != watermark || !reflect.DeepEqual(beforeRevision, afterRevision) || count(t, db, `SELECT count(*) FROM events WHERE queue_id=$1`, q) != 1 {
 		t.Fatal("partial stale delivery committed")
 	}
 	wrong := observed

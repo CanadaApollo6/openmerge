@@ -2,6 +2,7 @@ package queue
 
 import (
 	"bytes"
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -9,6 +10,7 @@ import (
 	"io"
 	"maps"
 	"reflect"
+	"slices"
 	"time"
 
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
@@ -37,7 +39,7 @@ type AttributedStance struct {
 	LastReadID string
 }
 
-// At capacity, fail closed without dropping attribution or reviving old sources.
+// At capacity, fail closed for this change without dropping first-source pins.
 const maxApprovalSources = 4096
 
 type approvalProjection map[ChangeID]ApprovalFacts
@@ -73,37 +75,175 @@ func sourceBound(s cp.StanceSource) time.Time {
 	return time.Time{}
 }
 
-// newerInChannel never compares review IDs with timeline IDs. Comparable
-// timestamps decide between those namespaces; blockers win ambiguity.
+// orderedSourceChannel compares only sources in the same sequence namespace.
 func orderedSourceChannel(a, b cp.Stance) bool {
 	return a.Source.Channel == b.Source.Channel && a.Source.DismissedReviewID == "" && b.Source.DismissedReviewID == ""
 }
 
-func newerInChannel(next, old ReviewStanceObserved) bool {
-	a, b := next.Stance, old.Stance
-	if a.Source.DismissedReviewID == "" && b.Source.DismissedReviewID == "" {
-		if a.Source.Sequence != b.Source.Sequence {
-			return a.Source.Sequence > b.Source.Sequence
-		}
-		return a.Kind != cp.Approve && b.Kind == cp.Approve
-	}
-	if a.Kind == cp.Approve && b.Kind != cp.Approve {
-		bound := sourceBound(b.Source)
-		return a.Source.TimeKnown && !bound.IsZero() && a.Source.Time.After(bound)
-	}
-	if a.Source.TimeKnown && b.Source.TimeKnown && !a.Source.Time.Equal(b.Source.Time) {
-		return a.Source.Time.After(b.Source.Time)
-	}
-	return a.Kind != cp.Approve && b.Kind == cp.Approve
+// supersedes requires source ordering AND time proof for barriers. Read grouping
+// is acquisition metadata, never ordering evidence. Unknown/equal times lose.
+func supersedes(a, b cp.Stance) bool {
+	bound := sourceBound(b.Source)
+	return (!orderedSourceChannel(a, b) || a.Source.Sequence > b.Source.Sequence) &&
+		a.Source.TimeKnown && !bound.IsZero() && a.Source.Time.After(bound)
 }
+
+// preferred is a total, deterministic presentation order, not barrier clearance.
+func preferred(a, b ReviewStanceObserved) bool {
+	x, y := a.Stance, b.Stance
+	if !x.Source.Time.Equal(y.Source.Time) {
+		return x.Source.Time.After(y.Source.Time)
+	}
+	return sourceKey(a) > sourceKey(b)
+}
+
+// recomputeUser folds the SET for one user on the current revision. Every
+// positive is reconsidered when a source arrives; no rejected-positive cache or
+// incremental frontier can hide a request for changes.
+func recomputeUser(f *ApprovalFacts, user string, revision ChangeRevision) {
+	delete(f.Latest, user)
+	delete(f.Blockers, user)
+	for _, channel := range []cp.SourceChannel{cp.NativeReview, cp.CommentCommand} {
+		delete(f.Frontiers, user+"/"+string(channel))
+	}
+	positives := map[cp.SourceChannel]string{}
+	var requests, withdrawals []string
+	for key, v := range f.Sources {
+		e := v.Event
+		if v.Revision != revision || e.Stance.UserID != user {
+			continue
+		}
+		channel := frontierKey(e)
+		if old, ok := f.Frontiers[channel]; !ok || preferred(e, f.Sources[old].Event) {
+			f.Frontiers[channel] = key
+		}
+		switch e.Stance.Kind {
+		case cp.Approve:
+			ch := e.Stance.Source.Channel
+			if old, ok := positives[ch]; !ok || e.Stance.Source.Sequence > f.Sources[old].Event.Stance.Source.Sequence {
+				positives[ch] = key
+			}
+		case cp.RequestChanges:
+			requests = append(requests, key)
+		case cp.Withdraw:
+			withdrawals = append(withdrawals, key)
+		}
+	}
+	choose := func(keys []string) string {
+		best := ""
+		for _, key := range keys {
+			if best == "" || preferred(f.Sources[key].Event, f.Sources[best].Event) {
+				best = key
+			}
+		}
+		return best
+	}
+	// At most two positive candidates: latest in each channel. Both must clear
+	// every pinned barrier, including older lower-ID blockers.
+	var valid []string
+	for _, key := range positives {
+		a := f.Sources[key].Event.Stance
+		barriersCleared := true
+		for _, blocks := range [][]string{requests, withdrawals} {
+			for _, k := range blocks {
+				if !supersedes(a, f.Sources[k].Event.Stance) {
+					barriersCleared = false
+				}
+			}
+		}
+		if barriersCleared {
+			valid = append(valid, key)
+		}
+	}
+	if best := choose(valid); best != "" {
+		f.Latest[user] = best
+		return
+	}
+	// A withdrawal can clear a request only with strict time proof. In
+	// particular a fallback dismissal cannot mask an ambiguous/newer request.
+	// Prefix maxima over descending command IDs answer every same-namespace
+	// query in O(n log n), even for thousands of alternating blockers.
+	var commands []cp.Stance
+	var dismissalTime time.Time
+	for _, key := range withdrawals {
+		w := f.Sources[key].Event.Stance
+		if !w.Source.TimeKnown {
+			continue
+		}
+		if w.Source.DismissedReviewID != "" {
+			if w.Source.Time.After(dismissalTime) {
+				dismissalTime = w.Source.Time
+			}
+		} else {
+			commands = append(commands, w)
+		}
+	}
+	slices.SortFunc(commands, func(a, b cp.Stance) int { return cmp.Compare(b.Source.Sequence, a.Source.Sequence) })
+	times := make([]time.Time, len(commands))
+	for i, w := range commands {
+		times[i] = w.Source.Time
+		if i > 0 && times[i-1].After(times[i]) {
+			times[i] = times[i-1]
+		}
+	}
+	var outstanding []string
+	for _, key := range requests {
+		r := f.Sources[key].Event.Stance
+		bound := sourceBound(r.Source)
+		proof := dismissalTime
+		n := len(commands)
+		if r.Source.Channel == cp.CommentCommand {
+			n, _ = slices.BinarySearchFunc(commands, r.Source.Sequence, func(w cp.Stance, seq uint64) int { return cmp.Compare(seq, w.Source.Sequence) })
+		}
+		if n > 0 && times[n-1].After(proof) {
+			proof = times[n-1]
+		}
+		if bound.IsZero() || !proof.After(bound) {
+			outstanding = append(outstanding, key)
+		}
+	}
+	best := choose(outstanding)
+	if best == "" {
+		best = choose(withdrawals)
+	}
+	if best != "" {
+		f.Latest[user] = best
+		f.Blockers[user] = best
+	}
+}
+
+func cloneApprovalFacts(f ApprovalFacts) ApprovalFacts {
+	f.Sources = maps.Clone(f.Sources)
+	f.Latest = maps.Clone(f.Latest)
+	f.Frontiers = maps.Clone(f.Frontiers)
+	f.Blockers = maps.Clone(f.Blockers)
+	return f
+}
+
 func (s State) approvalBinding(b ApprovalBasis) (RevisionRecord, bool) {
 	for _, r := range s.changeRevisions.snapshot() {
-		if r.ChangeID == b.ChangeID && r.Revision == b.Revision && r.HeadSHA == b.Head {
+		if r.ChangeID == b.ChangeID && r.Revision == b.Revision && r.HeadSHA == b.Head && !r.Basis.At.IsZero() {
 			return r, true
 		}
 	}
 	return RevisionRecord{}, false
 }
+
+// ApprovalBoundaryError rejects acquisition before its durable revision boundary.
+type ApprovalBoundaryError struct{ Basis ApprovalBasis }
+
+func (e ApprovalBoundaryError) Error() string {
+	return "approval observation has no current revision boundary"
+}
+
+// CheckApprovalBoundary is the typed preflight for the 11a journal producer.
+func (s State) CheckApprovalBoundary(b ApprovalBasis) error {
+	if _, ok := s.approvalBinding(b); !ok {
+		return ApprovalBoundaryError{b}
+	}
+	return b.Validate()
+}
+
 func (s State) observeApproval(e Event) (State, bool) {
 	var b ApprovalBasis
 	switch e := e.(type) {
@@ -138,14 +278,16 @@ func (s State) observeApproval(e Event) (State, bool) {
 	if !exists {
 		f = newApprovalFacts()
 	} else {
-		f = detached(f)
+		f = cloneApprovalFacts(f)
 	}
 	switch e := e.(type) {
 	case ChangeAccountabilityObserved:
+		e = detached(e)
 		f.Accountability = &e
 	case ChangeIntentObserved:
 		f.Intent = &e
 	case ApprovalEligibilityObserved:
+		e = detached(e)
 		f.Eligibility = &e
 	case ReviewStanceObserved:
 		key := sourceKey(e)
@@ -160,90 +302,56 @@ func (s State) observeApproval(e Event) (State, bool) {
 		}
 		if len(f.Sources) >= maxApprovalSources {
 			f.Saturated = true
+			clear(f.Latest)
+			clear(f.Blockers)
+			clear(f.Frontiers)
 			break
 		}
 		revision := b.Revision
 		if e.Stance.Source.Channel == cp.NativeReview {
-			// On reused heads a review must prove it happened after the current
-			// boundary. Unknown/older discoveries remain historical, even at equal SHA.
-			if e.Stance.Head != b.Head || b.Revision > 1 && (boundary.Basis.At.IsZero() || !e.Stance.Source.TimeKnown || !e.Stance.Source.Time.After(boundary.Basis.At)) {
+			submitted := e.SourceTime
+			submissionKnown := e.Stance.Source.TimeKnown
+			if e.Stance.Source.DismissedReviewID != "" {
+				submitted = e.OriginalSubmission
+				submissionKnown = !submitted.Time.IsZero()
+			}
+			// Only reused heads need epoch proof. Allow for the same 2s clock
+			// uncertainty and 1s timestamp resolution used by the Q4 fallback bound.
+			reused := b.Revision > 1 && len(boundary.PriorHeads) == 0
+			for _, head := range boundary.PriorHeads {
+				if head == b.Head {
+					reused = true
+				}
+			}
+			if e.Stance.Head != b.Head || reused && (!submissionKnown || submitted.Time.IsZero() || !submitted.Time.After(boundary.Basis.At.Add(3*time.Second))) {
 				revision = 0
 			}
 		}
-		if e.Stance.Source.DismissedReviewID != "" {
-			if original, known := f.Sources[string(cp.NativeReview)+"/"+e.Stance.Source.DismissedReviewID]; known {
-				revision = original.Revision
-			}
+		if e.Stance.Receipt != nil {
+			receipt := *e.Stance.Receipt
+			e.Stance.Receipt = &receipt
 		}
 		f.Sources[key] = AttributedStance{e, revision, b.ReadID}
-		if revision == 0 || revision != b.Revision {
-			break
-		}
-		user := e.Stance.UserID
-		channel := frontierKey(e)
-		if e.Stance.Kind != cp.Approve {
-			retainBlocker(&f, user, key, revision)
-		}
-		if oldKey, ok := f.Frontiers[channel]; ok {
-			old := f.Sources[oldKey]
-			if old.Revision == revision && !newerInChannel(e, old.Event) {
-				// Source order alone cannot prove that an approval cleared a
-				// blocking action discovered late with equal/unknown times.
-				if e.Stance.Kind != cp.Approve {
-					latest := f.Sources[f.Latest[user]]
-					bound := sourceBound(e.Stance.Source)
-					if latest.Revision == revision && latest.Event.Stance.Kind == cp.Approve && (bound.IsZero() || !latest.Event.Stance.Source.TimeKnown || !latest.Event.Stance.Source.Time.After(bound)) {
-						f.Latest[user] = key
-					}
-				}
-				break
+		// Dismissals always derive attribution from their original, irrespective
+		// of which of the two sources was discovered first.
+		for k, v := range f.Sources {
+			if v.Event.Stance.UserID != e.Stance.UserID || v.Event.Stance.Source.DismissedReviewID == "" {
+				continue
+			}
+			if original, known := f.Sources[string(cp.NativeReview)+"/"+v.Event.Stance.Source.DismissedReviewID]; known {
+				v.Revision = original.Revision
+				f.Sources[k] = v
 			}
 		}
-		f.Frontiers[channel] = key
-		if e.Stance.Kind == cp.Approve {
-			if latestKey, ok := f.Latest[user]; ok {
-				latest := f.Sources[latestKey]
-				if latest.Revision == revision && !orderedSourceChannel(e.Stance, latest.Event.Stance) && latest.Event.Stance.Source.TimeKnown && e.Stance.Source.TimeKnown && latest.Event.Stance.Source.Time.After(e.Stance.Source.Time) {
-					break
-				}
-			}
-			if blockerKey, ok := f.Blockers[user]; ok {
-				blocker := f.Sources[blockerKey]
-				bound := sourceBound(blocker.Event.Stance.Source)
-				if blocker.Revision == revision && (bound.IsZero() || !e.Stance.Source.TimeKnown || !e.Stance.Source.Time.After(bound) || blocker.LastReadID != b.ReadID) {
-					break
-				}
-			}
-		} else {
-			// An older blocker cannot displace a provably newer current stance.
-			if latestKey, ok := f.Latest[user]; ok {
-				latest := f.Sources[latestKey]
-				bound := sourceBound(e.Stance.Source)
-				if latest.Revision == revision && !orderedSourceChannel(e.Stance, latest.Event.Stance) && latest.Event.Stance.Source.TimeKnown && !bound.IsZero() && latest.Event.Stance.Source.Time.After(bound) {
-					break
-				}
-			}
-
-		}
-		f.Latest[user] = key
+		recomputeUser(&f, e.Stance.UserID, b.Revision)
 	}
+
 	s.approvalFacts = maps.Clone(s.approvalFacts)
 	if s.approvalFacts == nil {
 		s.approvalFacts = approvalProjection{}
 	}
-	s.approvalFacts[b.ChangeID] = detached(f)
+	s.approvalFacts[b.ChangeID] = f
 	return s, true
-}
-
-// Source frontiers and time barriers are independent: even a lower-ID blocker
-// needs positive time proof before an approval can clear it.
-func retainBlocker(f *ApprovalFacts, user, key string, revision ChangeRevision) {
-	oldKey, blocked := f.Blockers[user]
-	old, next := f.Sources[oldKey], f.Sources[key]
-	oldBound, newBound := sourceBound(old.Event.Stance.Source), sourceBound(next.Event.Stance.Source)
-	if !blocked || old.Revision != revision || !oldBound.IsZero() && (newBound.IsZero() || newBound.After(oldBound)) {
-		f.Blockers[user] = key
-	}
 }
 
 // ApprovalFacts returns detached evidence. Absence remains nil for legacy queues.
@@ -259,12 +367,30 @@ func (s State) ApprovalFingerprint(id ChangeID) string {
 	if !ok {
 		return ""
 	}
+	var current RevisionRecord
+	for _, r := range s.changeRevisions.snapshot() {
+		if r.ChangeID == id {
+			current = r
+			break
+		}
+	}
 	for key, v := range f.Sources {
+		if v.Revision != current.Revision || f.Latest[v.Event.Stance.UserID] != key {
+			delete(f.Sources, key)
+			continue
+		}
 		v.LastReadID = ""
 		v.Event.Basis.ReadID = ""
 		v.Event.Basis.At = time.Time{}
 		v.Event.Observation = forge.NativeObservation{}
 		f.Sources[key] = v
+	}
+	for _, index := range []map[string]string{f.Latest, f.Frontiers, f.Blockers} {
+		for user, key := range index {
+			if _, ok := f.Sources[key]; !ok {
+				delete(index, user)
+			}
+		}
 	}
 	if f.Accountability != nil {
 		f.Accountability.Basis.ReadID = ""
@@ -278,17 +404,11 @@ func (s State) ApprovalFingerprint(id ChangeID) string {
 		f.Eligibility.Basis.ReadID = ""
 		f.Eligibility.Basis.At = time.Time{}
 	}
-	var current RevisionRecord
-	for _, r := range s.changeRevisions.snapshot() {
-		if r.ChangeID == id {
-			current = r
-			break
-		}
-	}
 	raw, _ := json.Marshal(struct {
-		Facts    ApprovalFacts
-		Revision RevisionRecord
-	}{f, current})
+		Facts        ApprovalFacts
+		Revision     RevisionRecord
+		ConfigDigest string
+	}{f, current, s.ConfigDigest})
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
 }
@@ -314,10 +434,13 @@ func (s State) EvaluateApprovals(policy cp.Policy, current cp.ReceiptIdentity, f
 	if f.Saturated || !currentBinding || fresh.Validate() != nil || !fresh.Known || fresh.Basis.ChangeID != id || uint64(fresh.Basis.Revision) != current.Revision || fresh.Basis.Head != current.Head {
 		return cp.Evaluation{OptedIn: policy.Approvals != nil, ReviewsKnown: false, Reasons: []string{"fresh eligibility unresolved"}}
 	}
+	if f.Intent == nil || f.Intent.Basis.Revision != fresh.Basis.Revision || f.Intent.Basis.Head != current.Head || f.Intent.Digest != current.IntentDigest {
+		return cp.Evaluation{OptedIn: true, Reasons: []string{"current intent not recorded"}}
+	}
 	// Stored group snapshots and Grants.Fresh never flow into this decision.
 	policy.Groups = detached(fresh.Groups)
 	in.Actors = detached(fresh.Actors)
-	if ok && f.Accountability != nil && uint64(f.Accountability.Basis.Revision) == current.Revision && f.Accountability.Basis.Head == current.Head {
+	if ok && f.Accountability != nil && uint64(f.Accountability.Basis.Revision) == current.Revision && f.Accountability.Basis.Head == current.Head && f.Accountability.PolicyDigest == current.PolicyDigest {
 		a := f.Accountability
 		in.AuthorKind = a.Author.Kind
 		in.ExcludedIDs = append(in.ExcludedIDs, a.Author.ID, a.SubmitterID)
@@ -440,4 +563,39 @@ func readApprovalWire[T interface{ Validate() error }](data json.RawMessage) (T,
 		return v, fmt.Errorf("trailing approval data")
 	}
 	return v, v.Validate()
+}
+
+// ApprovalDecision keeps the evaluated inputs together for Stage A 9's atomic
+// eligibility-journal/snapshot transaction. Snapshot includes precisely Fresh.
+type ApprovalDecision struct {
+	Snapshot       State
+	Fresh          ApprovalEligibilityObserved
+	Accountability *ChangeAccountabilityObserved
+	Intent         *ChangeIntentObserved
+	ReliedOn       []AttributedStance
+	Current        cp.ReceiptIdentity
+	Evaluation     cp.Evaluation
+}
+
+// PrepareApprovalDecision never acquires permission itself. Stage A 9 must
+// journal Fresh atomically with Snapshot; journal failure rejects the decision.
+func (s State) PrepareApprovalDecision(policy cp.Policy, current cp.ReceiptIdentity, fresh ApprovalEligibilityObserved) (ApprovalDecision, error) {
+	if err := fresh.Validate(); err != nil {
+		return ApprovalDecision{}, err
+	}
+	if err := s.CheckApprovalBoundary(fresh.Basis); err != nil {
+		return ApprovalDecision{}, err
+	}
+	fresh = detached(fresh)
+	next := Apply(s, fresh)
+	f, _ := next.ApprovalFacts(ChangeID(current.ChangeID))
+	d := ApprovalDecision{Snapshot: next, Fresh: fresh, Accountability: f.Accountability, Intent: f.Intent, Current: current, Evaluation: next.EvaluateApprovals(policy, current, fresh)}
+	for _, key := range f.Latest {
+		v := f.Sources[key]
+		if uint64(v.Revision) == current.Revision {
+			d.ReliedOn = append(d.ReliedOn, v)
+		}
+	}
+	slices.SortFunc(d.ReliedOn, func(a, b AttributedStance) int { return cmp.Compare(a.Event.Stance.UserID, b.Event.Stance.UserID) })
+	return d, nil
 }

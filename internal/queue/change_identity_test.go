@@ -157,7 +157,7 @@ func TestLegacyChangeRevisionsReplayAndReenqueue(t *testing.T) {
 	}
 	closed := Apply(first, PRClosed{12})
 	retained, _ := closed.PRRevision(12)
-	if retained != current {
+	if !reflect.DeepEqual(retained, current) {
 		t.Fatal("closure erased durable revision boundary")
 	}
 }

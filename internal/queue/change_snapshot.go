@@ -91,6 +91,16 @@ func validateChangeSnapshot(v stateSnapshot) error {
 		if !record.Basis.At.IsZero() && (record.ChangeID == "" || record.Basis.BaseSHA == "") {
 			return fmt.Errorf("invalid snapshot observation basis")
 		}
+		if len(record.PriorHeads) > maxSnapshotEntries || uint64(len(record.PriorHeads)) >= uint64(record.Revision) {
+			return fmt.Errorf("invalid prior head bounds")
+		}
+		seen := map[string]bool{}
+		for _, head := range record.PriorHeads {
+			if head == "" || seen[head] {
+				return fmt.Errorf("invalid prior head set")
+			}
+			seen[head] = true
+		}
 		if record.ChangeID != "" && record.ChangeID.Validate() != nil {
 			return fmt.Errorf("invalid snapshot change ID")
 		}

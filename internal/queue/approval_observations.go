@@ -46,20 +46,21 @@ func validIdentity(i cp.Identity) bool {
 // ChangeAccountabilityObserved keeps authentication, PR authorship and
 // accountability separate. An absent human list is explicitly not recorded.
 type ChangeAccountabilityObserved struct {
-	Basis       ApprovalBasis `json:"basis"`
-	Actor       cp.Identity   `json:"actor"`
-	Author      cp.Identity   `json:"author"`
-	SubmitterID string        `json:"submitter_id"`
-	Humans      []cp.Identity `json:"humans"`
-	Recorded    bool          `json:"recorded"`
-	Reason      string        `json:"reason"`
+	Basis        ApprovalBasis `json:"basis"`
+	PolicyDigest string        `json:"policy_digest"`
+	Actor        cp.Identity   `json:"actor"`
+	Author       cp.Identity   `json:"author"`
+	SubmitterID  string        `json:"submitter_id"`
+	Humans       []cp.Identity `json:"humans"`
+	Recorded     bool          `json:"recorded"`
+	Reason       string        `json:"reason"`
 }
 
 func (ChangeAccountabilityObserved) queueEvent() {}
 
 // Validate rejects conflated or unrecorded identities disguised as humans.
 func (e ChangeAccountabilityObserved) Validate() error {
-	if e.Basis.Validate() != nil || !validIdentity(e.Actor) || !validIdentity(e.Author) || (e.SubmitterID != "" && !validActorID(e.SubmitterID)) || e.Humans == nil || e.Recorded != (len(e.Humans) > 0) || (!e.Recorded && e.Reason == "") {
+	if e.PolicyDigest == "" || e.Basis.Validate() != nil || !validIdentity(e.Actor) || !validIdentity(e.Author) || (e.SubmitterID != "" && !validActorID(e.SubmitterID)) || e.Humans == nil || e.Recorded != (len(e.Humans) > 0) || (!e.Recorded && e.Reason == "") {
 		return fmt.Errorf("invalid accountability")
 	}
 	for _, h := range e.Humans {
@@ -72,11 +73,11 @@ func (e ChangeAccountabilityObserved) Validate() error {
 
 // Accountability applies configured stable-ID mappings before account kind.
 // It grants no permissions or fork trust. No git identity is an input.
-func Accountability(b ApprovalBasis, actor, author cp.Identity, mappings map[string][]cp.Identity) ChangeAccountabilityObserved {
+func Accountability(b ApprovalBasis, actor, author cp.Identity, mappings map[string][]cp.Identity, policyDigest string) ChangeAccountabilityObserved {
 	if _, mapped := mappings[actor.ID]; mapped {
 		actor.Kind = cp.AgentAccount
 	}
-	e := ChangeAccountabilityObserved{Basis: b, Actor: actor, Author: author, Humans: []cp.Identity{}}
+	e := ChangeAccountabilityObserved{PolicyDigest: policyDigest, Basis: b, Actor: actor, Author: author, Humans: []cp.Identity{}}
 	if humans, ok := mappings[author.ID]; ok {
 		e.Author.Kind = cp.AgentAccount
 		e.Humans = append(e.Humans, humans...)
@@ -125,12 +126,13 @@ func (e ChangeIntentObserved) Validate() error {
 // Basis is the read revision; the fold independently pins native attribution.
 // Receipt commands and their acceptance records belong to PR 7a.
 type ReviewStanceObserved struct {
-	Basis       ApprovalBasis           `json:"basis"`
-	Reviewer    cp.Identity             `json:"reviewer"`
-	Stance      cp.Stance               `json:"stance"`
-	SourceKind  forge.NativeTimeSource  `json:"source_kind"`
-	SourceTime  forge.NativeTime        `json:"source_time"`
-	Observation forge.NativeObservation `json:"observation"`
+	Basis              ApprovalBasis           `json:"basis"`
+	Reviewer           cp.Identity             `json:"reviewer"`
+	Stance             cp.Stance               `json:"stance"`
+	SourceKind         forge.NativeTimeSource  `json:"source_kind"`
+	SourceTime         forge.NativeTime        `json:"source_time"`
+	Observation        forge.NativeObservation `json:"observation"`
+	OriginalSubmission forge.NativeTime        `json:"original_submission"`
 }
 
 func (ReviewStanceObserved) queueEvent() {}
@@ -171,6 +173,9 @@ func (e ReviewStanceObserved) Validate() error {
 	default:
 		return fmt.Errorf("invalid source kind")
 	}
+	if src.DismissedReviewID == "" && e.OriginalSubmission != (forge.NativeTime{}) || src.DismissedReviewID != "" && (e.OriginalSubmission.Source != forge.ReviewSubmissionTime || e.OriginalSubmission.Precision < 0 || e.OriginalSubmission.Uncertainty < 0 || !e.OriginalSubmission.UpperBound.IsZero() && e.OriginalSubmission.UpperBound.Before(e.OriginalSubmission.Time)) {
+		return fmt.Errorf("invalid original review attribution evidence")
+	}
 	if src.DismissedReviewID != "" && (!validSourceID(src.DismissedReviewID) || src.Channel != cp.NativeReview || s.Kind != cp.Withdraw || e.SourceKind == forge.ReviewSubmissionTime || e.SourceKind == forge.CommentCreationTime) {
 		return fmt.Errorf("invalid dismissal source")
 	}
@@ -200,6 +205,7 @@ func NativeStance(b ApprovalBasis, r forge.NativeReview) (ReviewStanceObserved, 
 		}
 		d := r.Dismissal
 		e.Stance.Kind = cp.Withdraw
+		e.OriginalSubmission = r.Submitted
 		e.SourceTime = d.Time
 		e.Observation = d.Observation
 		e.Stance.Source.DismissedReviewID = strconv.FormatInt(r.ID, 10)
