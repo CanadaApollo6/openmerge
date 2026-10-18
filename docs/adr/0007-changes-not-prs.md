@@ -124,6 +124,21 @@ A change can carry several labels. **Anything uncertain is `unknown`:** binary f
 
 **Path ownership comes only from `CODEOWNERS`.** `groups` are approver pools that rules name; they own no paths. OpenMerge uses GitHub's `CODEOWNERS` file-selection precedence and last-matching-entry semantics at the governing commit. A `policy` change needs, for each policy file it touches, at least one eligible approval from that file's effective owners; one reviewer may satisfy several files. This requirement is always added, even when a `require: none` rule also matches (a `docs/CODEOWNERS` file is both). If an owner requirement cannot be resolved (no entry covers the path, an entry names only an email address, or a team cannot be read), the change cannot land and its brief says why.
 
+**Maintainer-approved clarification, 2026-10-18 (code-owner requirement).** Rules
+may also require code-owner review for every owned file, not only policy files,
+so that GitHub's "require review from Code Owners" can be expressed. The
+requirement `{code_owners: true}` means: for each changed file that an effective
+`CODEOWNERS` entry covers, at least one eligible approval from that file's
+effective owners; one reviewer may satisfy several files. It uses the same
+ownership source, precedence and governing commit as the policy-owner
+requirement, and the same exclusions (author, submitter and accountable human
+never count). A changed file that no entry covers adds no owner obligation, as on
+GitHub. An entry that cannot be resolved (email-only owners, an unreadable team)
+or an incomplete inventory makes the requirement unresolvable, so the change
+cannot land. `receipt: true` may be combined with it; `count`, `group`,
+`any_writer` and `human` may not. Like every requirement it only adds: the
+mandatory policy-owner requirement above still applies on its own.
+
 **The policy digest is part of the configuration digest.** It covers approval rules, the default, groups, `CODEOWNERS` and `.gitattributes` content at the governing commit, classification settings, the classifier version, agent mappings and the resolved forge IDs. It is a component of the queue's existing configuration digest, so a change to any of it invalidates batches in flight with no second mechanism.
 
 **What intent means.** For a pull request, the intent is its title and body, with line endings normalized and surrounding whitespace trimmed. For a direct submission, it is the stated intent. The intent digest covers that text. Editing the intent is not a new revision and does not discard tests.
@@ -453,6 +468,13 @@ removing the config keys alone is insufficient for rollback.
   Resolve effective owners per policy path, including both
   sides of renames. A group owns no paths. An uncovered path, email-only owner,
   or unreadable team cannot satisfy that path's mandatory owner requirement.
+  Also record effective owners for every covered changed file (both rename
+  sides), so PR 5 can evaluate `{code_owners: true}`; for that requirement an
+  uncovered file adds no obligation, while email-only or unreadable owners and an
+  incomplete inventory make it unresolvable. Named tests:
+  **code-owners-every-owned-file** (a non-owner approval cannot satisfy an owned
+  non-policy file), **code-owners-uncovered-file** and
+  **code-owners-incomplete-inventory**.
 - Mark `policy` for all four accepted config paths from `config.Find`, every
   forge-recognized `CODEOWNERS` location, all `.gitattributes` files, CI workflow
   definitions, and configured sensitive paths. Forged PR labels never affect
@@ -524,7 +546,9 @@ make an unknown rule relax policy.
   group references, and positive integer counts. Reject `default: none` and
   Stage B/C values. Settle Q1 **before PR 5's fixtures**, not before PR 11.
   The union is `none`, `any_writer`, `{any_writer: true, count: 1}`,
-  `{group: platform, count: 2}`, and `{human: true, count: 1}`. `count` defaults
+  `{group: platform, count: 2}`, `{human: true, count: 1}`, and
+  `{code_owners: true}` (see the code-owner clarification; it takes no `count`
+  and combines only with `receipt: true`). `count` defaults
   to 1 on every object and is always a positive integer. `human: true` can
   combine with `group` or `any_writer: true` as a kind filter. Group and
   `any_writer` are mutually exclusive selectors; a standalone human form
