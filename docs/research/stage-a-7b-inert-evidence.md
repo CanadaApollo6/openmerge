@@ -185,4 +185,39 @@ remains 11b work. The loader never fetches or substitutes current policy.
 Only brief/status display, immutable local reads, documentation and tests change;
 no queue/store/planner/executor behavior or persisted fixtures change.
 
-Round-2 gate results and final baseline are recorded below after execution.
+Validated executable commit: `31ce6ec52d21925353e921a459e49afe54b51493`.
+The final commit adds only these validation results. Final explicit main/PR-branch
+fetch left main at `2d68d6ffad209ac60e63b40f7ed022f78d8e6851`; no rebase
+was necessary. The clean baseline checkout remains `$HOME/openmerge-sa-7b-main`.
+
+All heavy jobs ran serially after the process load gate, with GOFLAGS=-p=2,
+GOMEMLIMIT=4GiB (6GiB for replay), GOMAXPROCS=2, shared test Postgres only,
+and Go/temp/cache directories under `$HOME/.cache`.
+
+- `make check`: **exit 0**, zero lint issues, all race/short tests passed;
+  queue 276.564s, serve 147.108s, status 16.533s. Binary built as `31ce6ec`.
+- `make test-sim-exits`: **exit 0**, 44.306s.
+- Compatibility vs origin/main: **exit 0**; 17 legacy exits and 1,055
+  retry/default-digest records match. Stream hashes remain
+  `bc7c730e66e11a6b3ec3e2253e81061d49358d592cb673e634fac89bf41b26c6`
+  and `07ed2ecf13debd5d75c8424b222edfd740470c00f5fc2b4ae00183fdd9ce7b37`.
+  Its 83 wire-v1 fixtures match; the separate recursive comparison of all 88
+  wire fixtures and existing canonical brief vectors also **exited 0**.
+- Strict deployment-pair replay: **exit 0**, gates 2/4 and verdict **PASS**.
+  All 2,159 action/structural-state/snapshot checkpoints match, with 8,676
+  boundary probes and derived determinism PASS. Mandatory 21-test preflight
+  **exited 0**. Effective config digest remains
+  `e58c893b8b3af7685dc07a086824b3bc1fc044456083d193f9566f8387cb58fc`.
+  Saved input event/queue identity is unchanged from the section above.
+  Report: `$HOME/.cache/om-pr74-fix2-deployment-pair.json`.
+
+Final gate logs: `om-pr74-fix2-{check,sim,compat,replay}.log` under
+`$HOME/.cache`; orchestration log `om-pr74-fix2-gates.log` **exited 0**.
+Focused logs, in execution order:
+`om-pr74-fix2-focused.log` **exit 1** (new redaction fixtures had invalid
+hunk ranges/path inventory, so classification was rejected),
+`om-pr74-fix2-focused-final.log` **exit 0**,
+`om-pr74-fix2-focused-complete.log` **exit 1** (new full-digest test changed
+intent text without updating its intent digest), and
+`om-pr74-fix2-focused-verified.log` **exit 0** after correcting the fixture.
+No job was interrupted or any other agent's process killed.
