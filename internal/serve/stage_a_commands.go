@@ -111,18 +111,10 @@ func (s *Server) stageACommands(ctx context.Context, w *worker, number int) erro
 					if _, mapped := w.stageA.mappings[actor.ID]; mapped {
 						actor.Kind = cp.AgentAccount
 					}
-					relevant, err := s.stageAActorRelevant(ctx, w, state, b, actor, grant)
-					if err != nil {
-						return err
-					}
-					if !relevant && (verb == "unapprove" || verb == "approve") {
-						if _, err := queue.ParseReceiptDigest(digest); err == nil || verb == "unapprove" {
-							outcome = approvalCommandOutcome{Detail: "This actor cannot meet any current approval requirement."}
-							verb = "ineligible"
-						}
-					}
+					// Authentication and binding acceptance are independent of current
+					// membership. In particular, retaining an unapprove prevents an older
+					// native approval from reviving if this writer rejoins a team later.
 					switch verb {
-					case "ineligible":
 					case "approve":
 						receipt, err := state.PrepareBareReceipt(w.stageA.policy, b, actor, strconv.FormatInt(c.ID, 10), c.Created.Time, digest)
 						if err != nil {

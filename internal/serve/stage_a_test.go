@@ -576,7 +576,7 @@ func TestStageAStaleReceiptAfterIntentEdit(t *testing.T) {
 	}
 }
 
-func TestStageANoiseFromExcludedWriterDoesNotPinSources(t *testing.T) {
+func TestStageANativeNoiseFilteringRetainsAuthenticatedCommands(t *testing.T) {
 	s, w, f := shadowFixture(t, 1, "main", "7", false)
 	f.SetWriteGrant(repo, 12, "write")
 	pr, err := f.PullRequest(t.Context(), repo, 1)
@@ -595,9 +595,15 @@ func TestStageANoiseFromExcludedWriterDoesNotPinSources(t *testing.T) {
 	state := shadowState(t, s, w)
 	r, _ := state.PRRevision(1)
 	facts, _ := state.ApprovalFacts(r.ChangeID)
-	if len(facts.Sources) != 0 {
-		t.Fatal("excluded writer's noise consumed permanent attribution capacity")
+	if len(facts.Sources) != 1 {
+		t.Fatal("native noise was retained, or the authenticated withdrawal was lost")
 	}
+	for _, source := range facts.Sources {
+		if source.Event.Stance.Source.Channel != cp.CommentCommand || source.Event.Stance.Kind != cp.Withdraw {
+			t.Fatal("expected only the authenticated withdrawal")
+		}
+	}
+
 }
 
 func TestStageARenamedReviewerFreshGrantAndMissingSource(t *testing.T) {
@@ -742,5 +748,64 @@ func TestStageAGoverningAttributesIndependentOfOpenChanges(t *testing.T) {
 	must(t, s.reconcile(t.Context(), w, true))
 	if w.stageA.policy.Digest == before {
 		t.Fatal("governing attribute content did not refresh semantic policy")
+	}
+}
+
+func TestStageACommandsRetainBindingsAcrossMembershipChanges(t *testing.T) {
+	for _, verb := range []string{"unapprove", "approve"} {
+		t.Run(verb, func(t *testing.T) {
+			s, w, f := shadowFixture(t, 1, "main", "7", false)
+			team := forge.TeamIdentity{ID: 50, OrganizationID: 5, Organization: "org", Slug: "reviewers"}
+			writer := forge.UserIdentity{ID: 21, Login: "writer", Kind: forge.UserAccount}
+			f.SetTeam(team, []forge.UserIdentity{writer})
+			w.stageA.repository.Groups = map[string][]string{"reviewers": {"org/reviewers"}}
+			w.stageA.candidate.Approvals.Default = cp.Requirement{Selector: cp.Group, Group: "reviewers", Count: 1}
+			must(t, s.reconcile(t.Context(), w, true))
+			pr, err := f.PullRequest(t.Context(), repo, 1)
+			must(t, err)
+			native := forge.NativeReviews{Reviews: []forge.NativeReview{{ID: 200, CommitID: pr.HeadSHA, Author: writer, State: forge.ReviewApproved, Submitted: forge.NativeTime{Time: time.Now().Add(time.Minute), Source: forge.ReviewSubmissionTime}}}}
+			f.SetNativeReviews(repo, 1, native)
+			must(t, s.reconcile(t.Context(), w, true))
+			digest := shadowDigest(t, s, w)
+			f.SetTeam(team, []forge.UserIdentity{})
+			body := "@openmerge unapprove"
+			if verb == "approve" {
+				body = "@openmerge approve " + digest
+			}
+			native.Comments = []forge.NativeComment{shadowComment(300, body)}
+			f.SetNativeReviews(repo, 1, native)
+			must(t, s.commands(t.Context(), w, 1))
+			state := shadowState(t, s, w)
+			r, _ := state.PRRevision(1)
+			facts, _ := state.ApprovalFacts(r.ChangeID)
+			found := false
+			for _, source := range facts.Sources {
+				if source.Event.Stance.Source.ID == "300" {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatal("authenticated command lost its current-revision binding while actor was outside the pool")
+			}
+			if verb == "approve" && !state.ReceiptRecords(r.ChangeID)["300"].Accepted {
+				t.Fatal("membership entered bare-digest acceptance")
+			}
+			f.SetTeam(team, []forge.UserIdentity{writer})
+			must(t, s.reconcile(t.Context(), w, true))
+			state = shadowState(t, s, w)
+			fresh, err := s.readStageAInputs(t.Context(), w, state, approvalBasis(r))
+			must(t, err)
+			fact, err := state.RecordedBrief(w.stageA.policy, fresh.Basis)
+			must(t, err)
+			identity, err := brief.Identity(fact)
+			must(t, err)
+			evaluation := state.EvaluateApprovals(w.stageA.policy, identity, fresh)
+			if evaluation.Allowed != (verb == "approve") {
+				t.Fatal("membership change revived the withdrawn older native approval, or discarded a valid receipt", evaluation)
+			}
+			if identity.BriefDigest != digest {
+				t.Fatal("membership changed recorded brief identity")
+			}
+		})
 	}
 }
