@@ -68,6 +68,9 @@ streams to each named log, records the actual subprocess return code and prints
 
 ## Commands and exit statuses
 
+This section records the original implementation run. The Round 1 section below
+records the current fixes and their complete gate rerun.
+
 Early focused attempts (logs `/home/riels/.cache/sa9b-focused-{1,2,3}.log`):
 
 1. `go test -count=1 ./internal/queue ./internal/forge ./internal/gitops ./internal/store ./internal/executor`
@@ -268,3 +271,47 @@ reused the old tested SHA, which production correctly rejects. The fixture now
 uses a new tested SHA. Second focused run: **exit 0**,
 `sa9b-r1-focused-2.log`, covering forge/gitops/queue/store and the test families
 above, including both policy-miswiring paths.
+
+Round 1 implementation tested: `5503ada89d07f578abeaab903dccbe52c0d19d82`.
+The final evidence commit changes this document only. An explicit final fetch
+of `refs/heads/main:refs/remotes/origin/main` still returned `15aa699`; no rebase
+or gate repetition was needed. The code and comparison source were clean.
+
+| Round 1 command | Actual exit | Log (under `~/.cache/`) |
+| --- | ---: | --- |
+| `make check` | 0 | `sa9b-r1-check.log` |
+| `make test-sim-exits` | 0 | `sa9b-r1-sim.log` |
+| `python3 scripts/check-phase2-compatibility.py "$BASE"` | 0 | `sa9b-r1-compat.log` |
+| `python3 scripts/check-legacy-landing-sql.py "$BASE"` | 0 | `sa9b-r1-sql.log` |
+| `python3 scripts/check-legacy-plan-action-depths-1-4.py "$BASE"` | 0 | `sa9b-r1-depths.log` |
+| `python3 scripts/check-legacy-commit-ids.py --old-source "$BASE" --new-source /home/riels/openmerge-sa-9b` | 0 | `sa9b-r1-ids.log` |
+| Strict saved-journal replay versus main, same exports/command as above, output `sa9b-r1-replay-main.json` | 0 | `sa9b-r1-replay-main.log` |
+
+`BASE=/home/riels/openmerge-sa-9b-main`. `make check` reports zero lint issues,
+all race/short packages pass, and build exits 0. Queue: 282.712s; server:
+223.345s; store: 22.645s. Required full simulator: 38.431s, exit 0.
+
+Compatibility preserves 17 legacy exit records, 1,055 retry/digest records and
+84 wire fixtures, with exactly the original hashes above. SQL baseline and
+candidate tests both exit 0 and produce seven identical ordered statements.
+Each of the **five** SQL-mutant tests also exits **0**, and each is rejected by
+an actual SQL trace difference; the negative-control suite exits **0**.
+
+Depth-1/4 baseline and candidate subprocesses all exit **0** (214 short, 446
+full, 188 fixture streams each). Short/full/fixture comparisons remain
+227,662 / 5,615,998 / 188, with exactly the original three hashes above. No
+plans/actions/wakes exception. All four methods' tested/landed IDs match the
+original table exactly. Commit-ID preflight statuses: identical **0**, mutant
+**1**, dirty source **2**, all expected; preflight/comparison aggregate **0**.
+
+Strict main replay: verdict/Gates 2 and 4/self-test **PASS**, actual exit **0**;
+22/22 preflight tests pass with self-test exit **0**. All **2,159/2,159** action,
+state, structural-state, legacy-state, snapshot and boundary checkpoints match.
+All **8,676** probes match, no cap is hit, repeat determinism passes, no first
+difference and no non-allowlisted field. The synthetic self-test also passes.
+Exports and policy digest remain exactly as documented above. Round 1 does not
+rerun the historical deployment-pair comparison; its earlier classifications
+exception remains recorded in the original-run section.
+
+Final `make fmt` and `git diff --check`: **exit 0** each. No deployment performed;
+**Hold** remains in force. Only the feature branch is authorized for push.
