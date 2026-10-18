@@ -10,7 +10,8 @@ Classification or Intent is `null` (not recorded); a recorded empty intent is
 an object with empty strings and its valid digest. Unknown owners are distinct
 from uncovered/explicitly ownerless paths. Obligations carry explicit path/side,
 a stable reason code and diagnostic explanation; consumers never parse prose.
-No endpoint, CLI, rendering, config, production emission or landing wiring exists.
+Stage A 7b adds read-only rendering, an endpoint and a CLI. No config, production
+evidence emission or landing wiring is added by 7b.
 
 ## Canonical digest v2
 
@@ -40,8 +41,9 @@ attribute content changes remain included through the policy/object bindings.
 
 Excluded: config blob and governing commit (serialized as fixed empty strings),
 InputFingerprint (never supplied to this model), queue position, progress,
-timestamps, test links and rendered text. These presentation placeholders are
-not fields on `Fact`; their exclusions are enforced by the model boundary.
+timestamps, test links and rendered text. The optional `Fact.Presentation`
+added by 7b carries these recorded display projections outside the explicit
+canonical field selection; adding it cannot change receipt bytes.
 Obligation eligibility/progress,
 explanations and transient reason codes are excluded. `IdentitySet.Reason` is
 always erased, and freshness is fixed false: owner resolution is bound by stable
@@ -134,3 +136,13 @@ approval facts in the shared 48 MiB evidence reserve plus 16 MiB legacy reserve.
 No source pins are evicted to make receipts authorize again. Journal history
 remains the audit record; classification projections retain only the latest
 recorded revision per change (and latest generation within that revision).
+
+## Stage A 7b views
+
+`Project` maps a recorded Fact to public DTOs; `Render` uses those DTOs for
+reviewer/operator text and agent JSON. JSON/render goldens live in
+`testdata/views`. Display bounds and safety warnings never mutate source
+evidence. `Presentation` retains stance provenance, Q4 clearing barriers,
+saturation, structured test links and journal progress, all outside Canonical.
+See [API and CLI](../../docs/api.md#recorded-change-briefs-stage-a-7b) for
+missing-evidence semantics and the scoped read route.

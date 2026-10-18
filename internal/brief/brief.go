@@ -1,4 +1,4 @@
-// Package brief defines factual Stage A briefs. It performs no reads or rendering.
+// Package brief defines factual Stage A briefs and views without external reads.
 package brief
 
 import (
