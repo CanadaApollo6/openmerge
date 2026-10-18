@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
@@ -373,44 +374,23 @@ func TestHealthyIdleLoopUsesBackstopAndDeliveryInterruptsTimer(t *testing.T) {
 
 func TestBackstopDetectsAnotherServerStartingTesting(t *testing.T) {
 	s, w, f, _ := fixture(t, repositoryConfig)
-	s.options.PollInterval = 200 * time.Millisecond
-	s.options.BackstopInterval = time.Hour
-	s.options.WebhooksConfigured = true
-	s.webhooks.observe("7", repo.Path, time.Now())
-	target := w.Target
-	target.Driver = f
-	other, err := New(t.Context(), s.store, []Target{target}, s.options)
-	must(t, err)
-	polls := make(chan struct{}, 8)
-	w.Driver = pollSignalDriver{Driver: f, polls: polls}
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan struct{})
-	go func() { defer close(done); s.loop(ctx, w) }()
-	defer func() { cancel(); <-done }()
-	select {
-	case <-polls:
-	case <-time.After(5 * time.Second):
-		t.Fatal("initial poll missing")
-	}
-	select {
-	case <-polls:
-		t.Fatal("idle server did not enter backstop")
-	case <-time.After(3 * s.options.PollInterval):
-	}
-	f.AddComment(repo, 1, "writer", "@openmerge queue")
-	must(t, other.cycle(t.Context(), other.workers()[0]))
-	// Either worker may hold the action claim when the peer cycle returns.
-	// Await the shared durable result rather than assuming the peer owned it.
-	awaitTesting(t, s, w, time.Now().Add(3*s.options.PollInterval))
-	// Allow one poll_interval plus DB/CI scheduling overhead, far below the
-	// hour-long forge backstop. No webhook is sent to the waiting server.
-	for range 2 {
-		select {
-		case <-polls:
-		case <-time.After(s.options.PollInterval + 200*time.Millisecond):
-			t.Fatal("server failed to resume poll_interval polling for shared active work")
+	synctest.Test(t, func(t *testing.T) {
+		target := w.Target
+		target.Driver = f
+		other, err := New(t.Context(), s.store, []Target{target}, s.options)
+		must(t, err)
+		polls := startIdleBackstop(t, s, w)
+		f.AddComment(repo, 1, "writer", "@openmerge queue")
+		must(t, other.cycle(t.Context(), other.workers()[0]))
+		// Fake time is frozen during the peer cycle, so the waiting worker
+		// cannot claim the build before the peer records its testing batch.
+		requireBackstopTesting(t, s, w)
+		for range 2 {
+			time.Sleep(s.options.PollInterval)
+			synctest.Wait()
+			requireBackstopPoll(t, polls)
 		}
-	}
+	})
 }
 
 func TestIdleActivityChecksPreserveForgeBackstopDeadline(t *testing.T) {
