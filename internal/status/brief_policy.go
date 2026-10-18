@@ -10,7 +10,6 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/brief"
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
 	"github.com/CanadaApollo6/openmerge/internal/classification"
-	"github.com/CanadaApollo6/openmerge/internal/config"
 	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -97,33 +96,13 @@ func briefPolicyProjection(ctx context.Context, source Source, j store.Journal) 
 	}
 }
 
-// ReconstructBriefPolicy accepts the internal candidate format or an existing
-// public legacy config. It does not extend the public loader with approval keys.
+// ReconstructBriefPolicy checks the recorded semantic component, but withholds
+// policy until the full effective ConfigApplied digest can also be reconstructed.
+// It does not extend the public loader with approval keys.
 func ReconstructBriefPolicy(data []byte, key store.QueueKey, req BriefPolicyRequest) (cp.Policy, error) {
 	r, _, err := cp.ParseCandidate(data)
 	if err != nil {
-		legacy, _, loadErr := config.Load(data)
-		if loadErr != nil {
-			return cp.Policy{}, fmt.Errorf("pinned policy unavailable")
-		}
-		for _, q := range legacy.Queues {
-			if key.Lane != "" && q.Name != key.Lane {
-				continue
-			}
-			cleanup := legacy.DeleteHeadBranch == nil || *legacy.DeleteHeadBranch
-			if legacy.DeleteHeadBranch == nil && q.Digest(false) == req.Config.Digest {
-				cleanup = false
-			}
-			digest := q.Digest(cleanup)
-			if key.Lane == "" && digest != req.Config.Digest {
-				continue
-			}
-			if digest != req.Config.Digest || digest != req.Evidence.Classification.Inputs.PolicyDigest {
-				return cp.Policy{}, queue.BriefPolicyMismatchError{Supplied: digest, Recorded: req.Evidence.Classification.Inputs.PolicyDigest}
-			}
-			return cp.Policy{Digest: digest}, nil
-		}
-		return cp.Policy{}, fmt.Errorf("pinned queue unavailable")
+		return cp.Policy{}, fmt.Errorf("legacy config has no recorded semantic approval policy")
 	}
 	var selected *cp.CandidateQueue
 	for i := range r.Queues {
@@ -200,5 +179,9 @@ func ReconstructBriefPolicy(data []byte, key store.QueueKey, req BriefPolicyRequ
 	if digest != req.Evidence.Classification.Inputs.PolicyDigest {
 		return cp.Policy{}, queue.BriefPolicyMismatchError{Supplied: digest, Recorded: req.Evidence.Classification.Inputs.PolicyDigest}
 	}
-	return cp.Policy{Digest: digest, Approvals: selected.Approvals}, nil
+	// The candidate schema is a policy-only projection. It omits effective
+	// legacy queue settings, so WithPolicyDigest cannot be reconstructed and
+	// compared with req.Config.Digest. Never treat the semantic component as
+	// proof of that separate pin. 11b owns full configuration composition.
+	return cp.Policy{}, fmt.Errorf("effective config digest cannot be reconstructed from candidate policy")
 }

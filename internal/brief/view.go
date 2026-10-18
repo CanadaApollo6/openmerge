@@ -16,6 +16,7 @@ import (
 type Presentation struct {
 	Stances             []StanceEvidence
 	Tests               []TestEvidence
+	SupersededTests     map[int]bool
 	Saturated           bool
 	RequirementsMissing bool
 	Progress            *ProgressView
@@ -428,7 +429,7 @@ func Project(f Fact, audience string) (View, error) {
 			if err != nil || u.Scheme != "https" && u.Scheme != "http" || u.Host == "" || u.User != nil {
 				link = ""
 			}
-			if failedCheckStatus(t.Status) && p.Progress != nil && (p.Progress.Reason == "checks-failed" || p.Progress.Reason == "checks-timeout") {
+			if !p.SupersededTests[index] && failedCheckStatus(t.Status) && p.Progress != nil && (p.Progress.Reason == "checks-failed" || p.Progress.Reason == "checks-timeout") {
 				warnStep("check_failed", "Resolve the recorded check before relying on this brief for approval.", Step{Action: "fix_check", Name: missing(bounded(t.Name, &v.Truncated)), URL: bounded(link, &v.Truncated), Commit: missing(bounded(t.SHA, &v.Truncated))})
 			}
 			if index >= maxRows {
@@ -656,6 +657,8 @@ func Render(v View) ([]byte, error) {
 	fmt.Fprintln(&b, "\nStance and provenance:")
 	if v.Stances == nil {
 		fmt.Fprintln(&b, NotRecorded)
+	} else if len(v.Stances) == 0 {
+		fmt.Fprintln(&b, "  none recorded")
 	}
 	for _, s := range v.Stances {
 		if s.Attribution != "" {

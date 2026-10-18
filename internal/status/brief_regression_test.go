@@ -259,3 +259,97 @@ func TestBriefHTTPExactHeadTrustAndRebaseRecovery(t *testing.T) {
 		}
 	}
 }
+
+func TestBriefHTTPFinalDisplaySanitizesIntentHunksAndPaths(t *testing.T) {
+	const secret = "opaque-installation-secret-987654"
+	for _, field := range []string{"intent", "hunk", "path"} {
+		t.Run(field, func(t *testing.T) {
+			j, data, _, b := policyJournal(t, true)
+			if field == "intent" {
+				briefAppend(&j, queue.Intent(b, secret, secret))
+			}
+			for i, row := range j.Events {
+				e, ok := row.Event.(queue.ChangeClassified)
+				if !ok {
+					continue
+				}
+				c := &e.Evidence.Classification
+				if field == "hunk" {
+					c.Files[0].Hunks.Hunks[0].Text = "+" + secret + "\n"
+				}
+				if field == "path" {
+					c.Files[0].NewPath = secret
+					c.Paths = []string{secret}
+				}
+				if err := e.Validate(); err != nil {
+					t.Fatal(err)
+				}
+				j.Events[i].Event = e
+			}
+			before, _ := json.Marshal(j)
+			s := &historicalPolicySource{source: source{journals: []store.Journal{j}}, data: data}
+			for _, audience := range []string{"agent", "operator", "reviewer"} {
+				request := func(sanitizer *diagnostic.Sanitizer) brief.View {
+					w := httptest.NewRecorder()
+					Handler(s, []store.QueueKey{j.Key}, "", sanitizer).ServeHTTP(w, httptest.NewRequest("GET", "/v1/queues/Owner/Repo/release/changes/"+string(b.ChangeID)+"/brief?audience="+audience, nil))
+					var v brief.View
+					if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &v) != nil {
+						t.Fatalf("HTTP %d %s", w.Code, w.Body)
+					}
+					return v
+				}
+				original := request(nil)
+				v := request(diagnostic.NewSanitizer(secret))
+				raw, _ := json.Marshal(v)
+				if strings.Contains(string(raw), secret) || !strings.Contains(string(raw), "[REDACTED]") || !strings.Contains(string(raw), "display_redacted") {
+					t.Fatalf("bad redaction: %s", raw)
+				}
+				if v.Digest != original.Digest {
+					t.Fatal("display redaction changed digest")
+				}
+			}
+			after, _ := json.Marshal(j)
+			if string(before) != string(after) {
+				t.Fatal("display mutated recorded facts")
+			}
+		})
+	}
+}
+
+func TestBriefDisplaySanitizationPreservesRecordedDigest(t *testing.T) {
+	raw, err := os.ReadFile("../queue/testdata/brief-facts.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f brief.Fact
+	if err := json.Unmarshal(raw, &f); err != nil {
+		t.Fatal(err)
+	}
+	const secret = "opaque-installation-secret-987654"
+	f.Intent.Title, f.Intent.Body = secret, secret
+	f.Intent.Digest = cp.IntentDigest(secret, secret)
+	f.Classification.Files[0].Hunks.Hunks[0].Text = secret
+	f.Classification.Files[0].NewPath = secret
+	before, err := brief.Digest(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := brief.Project(f, "agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Digest != before || !sanitizeBriefView(&v, diagnostic.NewSanitizer(secret)) {
+		t.Fatal("missing original digest or sanitization")
+	}
+	after, err := brief.Digest(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before != after || v.Digest != before {
+		t.Fatal("display changed recorded digest")
+	}
+	display, _ := json.Marshal(v)
+	if strings.Contains(string(display), secret) {
+		t.Fatal("secret leaked")
+	}
+}

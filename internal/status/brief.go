@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -141,6 +142,7 @@ func projectBrief(j store.Journal, id, audience string, options ...briefOptions)
 	if entry != nil {
 		runs = entry.RunLedger
 		f.Presentation.Tests = []brief.TestEvidence{}
+		f.Presentation.SupersededTests = map[int]bool{}
 	}
 	for _, run := range runs {
 		t := brief.TestEvidence{Status: run.Outcome, SHA: run.TestedSHA}
@@ -151,16 +153,13 @@ func projectBrief(j store.Journal, id, audience string, options ...briefOptions)
 				t.Status = run.Identity.State
 			}
 		}
+		f.Presentation.SupersededTests[len(f.Presentation.Tests)] = run.WastedReason == "rerun"
 		f.Presentation.Tests = append(f.Presentation.Tests, t)
 	}
 	v, err := brief.Project(f, audience)
 	v.ChangeID = id
 	if policyCode != "" {
-		action := "restore_recorded_policy"
-		if policyCode == "policy_unavailable" {
-			action = "record_evidence"
-		}
-		appendBriefWarning(&v, audience, policyCode, "The recorded approval policy could not be reconstructed for this brief.", "Restore the recorded policy inputs or record the missing evidence before relying on this brief.", brief.Step{Action: action})
+		appendBriefWarning(&v, audience, policyCode, "The recorded approval policy could not be reconstructed for this brief.", "Make the pinned local policy objects and recorded identity inputs available; a full effective config loader is required to verify the config digest.", brief.Step{Action: "restore_recorded_policy"})
 	}
 	appendBriefChangeWarnings(&v, audience, j.Key, s, id, rev, entry, runs, f)
 	recovery := queue.BlockRecovery(s.Blocks(queue.Config{}))
@@ -171,6 +170,9 @@ func projectBrief(j store.Journal, id, audience string, options ...briefOptions)
 			action = "refresh"
 		}
 		appendBriefWarning(&v, audience, "queue_blocked", block.Reason+": "+block.Detail, recovery, brief.Step{Action: action, Source: block.Source})
+	}
+	if sanitizeBriefView(&v, sanitizer) {
+		appendBriefWarning(&v, audience, "display_redacted", "Display text was redacted; the digest covers the original recorded facts.", "Use authorized access to the recorded evidence to inspect the original content.", brief.Step{Action: "read_recorded_evidence"})
 	}
 	return v, true, err
 }
@@ -225,7 +227,7 @@ func appendBriefChangeWarnings(v *brief.View, audience string, key store.QueueKe
 
 func failedBriefRun(runs []Run) *Run {
 	for i := len(runs) - 1; i >= 0; i-- {
-		if runs[i].Identity != nil && terminalBriefFailure(runs[i].Outcome) {
+		if runs[i].WastedReason != "rerun" && runs[i].Identity != nil && terminalBriefFailure(runs[i].Outcome) {
 			return &runs[i]
 		}
 	}
@@ -250,3 +252,35 @@ func safeBriefURL(raw string) string {
 }
 
 var errBriefQuery = errors.New("brief requires a canonical change ID and ?audience=reviewer|operator|agent")
+
+// Sanitize the completed display, after hashing the untouched recorded Fact.
+// Walking DTO strings also covers future display fields and nested slices.
+func sanitizeBriefView(v *brief.View, sanitizer *diagnostic.Sanitizer) bool {
+	changed := false
+	var walk func(reflect.Value)
+	walk = func(value reflect.Value) {
+		switch value.Kind() {
+		case reflect.Pointer:
+			if !value.IsNil() {
+				walk(value.Elem())
+			}
+		case reflect.Struct:
+			for i := 0; i < value.NumField(); i++ {
+				walk(value.Field(i))
+			}
+		case reflect.Slice:
+			for i := 0; i < value.Len(); i++ {
+				walk(value.Index(i))
+			}
+		case reflect.String:
+			original := value.String()
+			clean := sanitizer.Sanitize(original)
+			if clean != original {
+				value.SetString(clean)
+				changed = true
+			}
+		}
+	}
+	walk(reflect.ValueOf(v))
+	return changed
+}

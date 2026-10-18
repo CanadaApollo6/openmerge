@@ -252,7 +252,16 @@ Read a recorded change brief with
 `bin/openmerge change brief <change-id> --repo owner/repo --base main --audience reviewer`.
 Use `--audience operator` for blockers and recovery, `--audience agent` for
 structured next steps, or `--json` for the public DTO. Historical missing
-evidence says "not recorded". See [brief API and CLI](docs/api.md#recorded-change-briefs-stage-a-7b).
+evidence says "not recorded". Policy reads use only pinned local objects and
+require both recorded config and semantic policy digests; missing inputs or
+unverifiable effective config yield `policy_unavailable`, while reconstructed
+semantic disagreement yields `policy_digest_mismatch`. The current candidate
+schema and legacy journals withhold requirements and the brief digest. JSON
+uses `claimed_intent` and string Truth values. Structured recovery includes
+`wait_for_approval`, `fix_check`, `refresh`, and `wait_for_recovery`. Final display
+strings are sanitized with `display_redacted` when changed; recorded facts and
+their digest remain untouched. Separate display budgets protect requirements,
+provenance and tests from large hunks. See [brief API and CLI](docs/api.md#recorded-change-briefs-stage-a-7b).
 
 Startup and every ten minutes (`--rules-interval`) validate repository/inherited
 rulesets, classic protection on the base and its fence, and the installation

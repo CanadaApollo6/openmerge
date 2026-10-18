@@ -323,39 +323,59 @@ GET-only behavior, request-body limits, `Cache-Control: no-store`, and error
 DTOs match the other status routes. This adds no write authentication.
 
 The response is the public brief v1 DTO, independent of queue wire encodings:
-`version`, `audience`, `change_id`, `digest`, `progress`, `intent`,
+`version`, `audience`, `change_id`, `digest`, `progress`, `claimed_intent`,
 `classification`, `obligations`, `stances`, `tests`, `warnings`, `truncated`.
 Classification includes revision/generation, pinned head/base/merge base, semantic
 policy digest, classifier, labels with reasons, retained file/hunk inventory,
-and governing owner evidence. Truth values are unknown=0, false=1, true=2.
+and governing owner evidence. Truth values are the strings `unknown`, `false`, and `true`.
 Intent is explicitly the submitter's claim. Stances distinguish native reviews
 from receipt evidence, retaining source ordering/time provenance and Q4 recovery
 steps. Native intent/brief bindings say `not recorded`; they are never inferred.
 Tests retain check name, safe HTTP(S) URL, status, and tested SHA when recorded.
 
 A null section means **not recorded**; an empty array means recorded and empty.
-Legacy queues can return a known change with null evidence and `not recorded`
-digest. The current journal does not persist a complete expanded brief or its
-requirements. The route therefore leaves obligations/digest unrecorded rather
-than reconstructing them from current configuration. 11a/12a will extend the
-recorded-evidence integration; the pure renderer already supports complete 7a
-Facts and its separate progress overlay. No forge reads, ref reads, policy
-re-evaluation, or eligibility refresh occur on HTTP/CLI reads. Recorded progress
-is informational, never a fresh landing authorization.
+Known-empty stances render as "none recorded" in text.
+The historical policy loader uses the ConfigApplied commit and digest recorded
+at classification time, reading only immutable objects already in the local Git
+cache. It never fetches, hydrates missing objects, resolves mutable refs, queries
+the forge, or refreshes eligibility. A busy cache immediately returns unavailable.
+Requirements and a brief digest require verification of both the effective config
+digest and the classification's semantic policy digest. `policy_digest_mismatch`
+means reconstructed semantic inputs disagree. `policy_unavailable` means the
+pinned objects or recorded identities are missing, or the effective configuration
+cannot be reconstructed. Legacy journals have no semantic approval policy;
+the candidate-only schema omits effective legacy settings, so both currently
+withhold requirements and the brief digest with `policy_unavailable`. A later
+config cannot substitute for the historical pin. Restore pinned local objects
+and recorded identity inputs; full config composition belongs to 11b. Recorded
+progress is informational and never a fresh landing authorization.
 
-Display bounds are 32 rows per collection, eight hunks per displayed file, and
-a 2,048-byte JSON-escaped budget per text field, with a shared 512 KiB text
-budget; truncation is explicit. The underlying persisted
-evidence and receipt digest are untouched. Safety warnings are collected before
-row limits, including incomplete inventory, unresolved owners, stance barriers,
-and saturation. `display_truncated` directs readers to retained journal evidence.
-Responses are capped at 2 MiB. Text rendering JSON-quotes untrusted text and
-escapes HTML/control characters; links accept only HTTP(S) without userinfo.
-Agent output uses stable reason codes and structured `next_step` objects, with
-no prose recovery instructions. Actions include `split_change`, `resolve_owners`,
-`record_eligibility`, `obtain_approval`, `new_revision`, and
-`reobserve_then_fresh_approval` with `source_time_after`. A time bound is strict;
-without a comparable source bound, a new revision and fresh approval are needed.
+Display bounds are 32 rows per collection and eight hunks per displayed file.
+Each text field has a 2,048-byte JSON-escaped bound. Separate text budgets reserve
+64 KiB for metadata, 96 KiB for obligations, 96 KiB for provenance, 64 KiB for
+tests, and 192 KiB for hunks (512 KiB total). Machine fields have per-field
+bounds without consuming the content budgets. Safety warnings survive row
+limits. `display_truncated` directs readers to retained journal evidence;
+responses are capped at 2 MiB. The handler sanitizer covers every final display
+string, including submitter title/body, paths and hunks. `display_redacted`
+indicates that shown text differs from the recorded facts covered by the digest;
+display sanitization never changes those facts or their digest. The sanitizer
+also normalizes whitespace and bounds strings to 1,024 runes. Text rendering
+JSON-quotes untrusted text and escapes HTML/control characters; links accept
+only HTTP(S) without userinfo.
+
+Agent output uses stable reason codes and structured `next_step` objects without
+prose recovery instructions. Actions include `split_change`, `resolve_owners`,
+`record_eligibility`, `wait_for_approval`, `new_revision`,
+`reobserve_then_fresh_approval` with `source_time_after`, `trust_exact_head`,
+`fix_eligibility`, `rebase_onto` with the recorded base branch/commit, and
+`fix_check` with name, safe URL and tested commit. Historical superseded failures
+remain visible but do not produce current `fix_check` advice. Queue blocks use
+`refresh` with their source for operator-clearable blocks (`@openmerge refresh`),
+or `wait_for_recovery` for automatic recovery. Policy recovery uses
+`restore_recorded_policy`; display warnings use `read_recorded_evidence`.
+A source-time bound is strict; without a comparable bound, a new revision and
+fresh approval are needed.
 
 ### CLI brief view
 

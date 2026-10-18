@@ -146,3 +146,43 @@ Queue SHA-256:
 `418f025a0e3c8792321b6d71d297f17fff1adf48cb616c8f4fcb774163696886`.
 Strict replay compares each revision, timer boundary and next action with no
 new State fields expected and snapshot-byte equality required.
+
+## Fix round 2
+
+Round 2 supersedes the policy availability claims above. The policy-only
+candidate schema cannot reconstruct the full effective queue digest. Matching
+its semantic component is insufficient proof of ConfigApplied.Digest, so it now
+withholds requirements and the brief digest with `policy_unavailable`. Semantic
+mismatches still produce `policy_digest_mismatch`. Legacy journals have no
+semantic approval component and also report unavailable; unresolved group
+identities do not masquerade as mismatches. Full effective config composition
+remains 11b work. The loader never fetches or substitutes current policy.
+
+- `TestAstraR2EffectiveDigestMismatch` preserves Astra's exact zero-digest
+  HTTP reproduction for candidate and legacy journals.
+  `TestBriefHTTPHistoricalPolicyRequiresEffectiveDigest`,
+  `TestBriefHTTPPolicyUnavailableAndMismatch`, and
+  `TestBriefUnresolvableGroupIsUnavailable` cover availability, semantic mismatch,
+  historical commit selection, and missing identity recovery.
+- `TestAstraR2SupersededCheckHTTP` retains failed lint attempt 1, successful
+  attempt 2, and failing unit tests; only the current unit failure gets repair
+  advice. Both display warnings and operator check recovery exclude rerun rows.
+- `TestLocalConfigBusyCacheReturnsWithoutWaiting` holds the shared cache lock
+  and verifies immediate unavailability within a 200 ms context deadline.
+  Local reads use TryLock and check cancellation before acquisition.
+- `TestBriefHTTPFinalDisplaySanitizesIntentHunksAndPaths` covers registered
+  opaque secrets in title/body, hunks and paths for all three audiences.
+  Every final DTO string passes through the handler sanitizer after projection;
+  `display_redacted` identifies display changes. The sanitizer also normalizes
+  whitespace and applies its diagnostic length bound.
+  `TestBriefDisplaySanitizationPreservesRecordedDigest` checks a full digest
+  before/after display sanitization; `TestAstraR2HandlerDoesNotMutateJournal`
+  checks journal immutability for all audiences.
+- `TestViewKnownEmptyStancesRenderNoneRecorded` covers known-empty text.
+  README/API now describe pinned loading, fail-closed policy identity, Truth
+  strings, claimed_intent, structured recovery, and separate display budgets.
+
+Only brief/status display, immutable local reads, documentation and tests change;
+no queue/store/planner/executor behavior or persisted fixtures change.
+
+Round-2 gate results and final baseline are recorded below after execution.

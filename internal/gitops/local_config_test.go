@@ -2,8 +2,13 @@ package gitops
 
 import (
 	"context"
+	"crypto/sha256"
+	"fmt"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
@@ -35,5 +40,26 @@ func TestLocalConfigNeverHydratesMissingObjects(t *testing.T) {
 	}
 	if _, err := f.g.LocalConfig(ctx, testRepo, "main"); err == nil {
 		t.Fatal("mutable ref accepted")
+	}
+}
+
+func TestLocalConfigBusyCacheReturnsWithoutWaiting(t *testing.T) {
+	f := newFixture(t)
+	dir := filepath.Join(f.g.cfg.WorkDir, fmt.Sprintf("%x.git", sha256.Sum256([]byte(testRepo.Path))))
+	lock, _ := cacheLocks.LoadOrStore(dir, &sync.Mutex{})
+	mu := lock.(*sync.Mutex)
+	mu.Lock()
+	defer mu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := f.g.LocalConfig(ctx, testRepo, strings.Repeat("a", 40)); done <- err }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("busy cache accepted")
+		}
+	case <-ctx.Done():
+		t.Fatal("local read waited for shared cache lock")
 	}
 }

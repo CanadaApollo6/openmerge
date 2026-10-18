@@ -410,3 +410,18 @@ func TestViewDoesNotRecommendRepairingHistoricalFailures(t *testing.T) {
 		}
 	}
 }
+
+func TestViewKnownEmptyStancesRenderNoneRecorded(t *testing.T) {
+	v, err := Project(viewSample(), "reviewer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Stances = []StanceView{}
+	raw, err := Render(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "Stance and provenance:\n  none recorded") {
+		t.Fatal(string(raw))
+	}
+}

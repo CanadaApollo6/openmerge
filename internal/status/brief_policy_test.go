@@ -97,37 +97,23 @@ func policyJournal(t *testing.T, approvals bool) (store.Journal, []byte, cp.Poli
 	return j, data, p, b
 }
 
-func TestBriefHTTPHistoricalPolicyAndDigest(t *testing.T) {
+func TestBriefHTTPHistoricalPolicyRequiresEffectiveDigest(t *testing.T) {
 	for _, approvals := range []bool{true, false} {
-		j, data, p, b := policyJournal(t, approvals)
+		j, data, _, b := policyJournal(t, approvals)
 		s := &historicalPolicySource{source: source{journals: []store.Journal{j}}, data: data}
 		w := httptest.NewRecorder()
-		path := "/v1/queues/Owner/Repo/release/changes/" + string(b.ChangeID) + "/brief?audience=agent"
-		Handler(s, []store.QueueKey{j.Key}, "", nil).ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		Handler(s, []store.QueueKey{j.Key}, "", nil).ServeHTTP(w, httptest.NewRequest("GET", "/v1/queues/Owner/Repo/release/changes/"+string(b.ChangeID)+"/brief?audience=agent", nil))
 		var v brief.View
-		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &v) != nil {
-			t.Fatalf("HTTP %d %s", w.Code, w.Body)
-		}
-		state := j.Seed
-		for _, r := range j.Events {
-			state = queue.Apply(state, r.Event)
-		}
-		f, err := state.RecordedBrief(p, b)
-		if err != nil {
-			t.Fatal(err)
-		}
-		digest, err := brief.Digest(f)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if v.Digest != digest || v.Obligations == nil || f.ApprovalsRequired != approvals || v.ApprovalsRequired == nil || *v.ApprovalsRequired != approvals {
-			t.Fatalf("incomplete policy brief: %+v", v)
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &v) != nil || v.Digest != brief.NotRecorded || v.Obligations != nil || !strings.Contains(w.Body.String(), "policy_unavailable") {
+			t.Fatalf("unverifiable effective config accepted: %d %s", w.Code, w.Body)
 		}
 		if len(s.requests) != 1 || s.requests[0].Config.Commit == strings.Repeat("9", 40) {
 			t.Fatal("used current config")
 		}
-		if !approvals && len(v.Obligations) != 0 {
-			t.Fatal("legacy approvals invented")
+		for _, warning := range v.Warnings {
+			if warning.Code == "policy_unavailable" && warning.NextStep.Action == "record_evidence" {
+				t.Fatal("incorrect local policy recovery")
+			}
 		}
 	}
 }
@@ -155,5 +141,16 @@ func TestBriefPublicLoaderStillRejectsCandidateKeys(t *testing.T) {
 	_, data, _, _ := policyJournal(t, true)
 	if _, _, err := config.Load(append([]byte("version: 1\n"), data...)); err == nil {
 		t.Fatal("public approval keys activated")
+	}
+}
+
+func TestBriefUnresolvableGroupIsUnavailable(t *testing.T) {
+	j, _, _, _ := policyJournal(t, true)
+	data := []byte("groups:\n  maintainers: [missing-user]\nqueues:\n  - name: release\n    approvals:\n      default: {group: maintainers}\n")
+	req := BriefPolicyRequest{Config: j.Events[0].Event.(queue.ConfigApplied), Evidence: j.Events[2].Event.(queue.ChangeClassified).Evidence}
+	_, err := ReconstructBriefPolicy(data, j.Key, req)
+	var mismatch queue.BriefPolicyMismatchError
+	if err == nil || errors.As(err, &mismatch) {
+		t.Fatalf("unresolved identity reported as mismatch: %v", err)
 	}
 }

@@ -23,7 +23,12 @@ func (r *Repo) LocalConfig(ctx context.Context, repo forge.RepoRef, commit strin
 	dir := filepath.Join(r.cfg.WorkDir, fmt.Sprintf("%x.git", sha256.Sum256([]byte(repo.Path))))
 	lock, _ := cacheLocks.LoadOrStore(dir, &sync.Mutex{})
 	mu := lock.(*sync.Mutex)
-	mu.Lock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if !mu.TryLock() {
+		return nil, fmt.Errorf("local config cache busy")
+	}
 	defer mu.Unlock()
 	if _, err := os.Stat(filepath.Join(dir, "HEAD")); err != nil {
 		return nil, err
