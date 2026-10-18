@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
@@ -63,6 +64,12 @@ func gitEnv() []string {
 }
 
 func (s *session) run(ctx context.Context, input string, args ...string) (stdout, stderr string, err error) {
+	var out, diagnostic bytes.Buffer
+	err = s.runTo(ctx, input, &out, &diagnostic, args...)
+	return out.String(), diagnostic.String(), err
+}
+
+func (s *session) runTo(ctx context.Context, input string, out, diagnostic io.Writer, args ...string) error {
 	argv := []string{"-c", "core.hooksPath=" + os.DevNull, "-c", "credential.helper=", "-c", "commit.gpgSign=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false"}
 	if s.dir != "" {
 		argv = append(argv, "--git-dir="+s.dir)
@@ -79,13 +86,12 @@ func (s *session) run(ctx context.Context, input string, args ...string) (stdout
 		cmd.Env = append(cmd.Env, "GIT_AUTHOR_DATE="+s.authorDate)
 	}
 	cmd.Stdin = strings.NewReader(input)
-	var out, diagnostic bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &diagnostic
-	err = cmd.Run()
+	cmd.Stdout, cmd.Stderr = out, diagnostic
+	err := cmd.Run()
 	if ctx.Err() != nil {
 		err = ctx.Err()
 	}
-	return out.String(), diagnostic.String(), err
+	return err
 }
 
 func (s *session) command(ctx context.Context, input string, args ...string) (string, error) {
