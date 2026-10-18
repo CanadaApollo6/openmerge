@@ -70,6 +70,16 @@ class ComparisonTest(unittest.TestCase):
         new = checkpoint(boundary_probes=[{"at": "t", "actions": [1]}])
         self.assertIsNotNone(replay.compare_checkpoints([old], [new], False)["first_boundary_divergence"])
 
+    def test_approval_exception_is_nil_only(self):
+        old = checkpoint()
+        value = json.loads(old)
+        fields = value["structural"]["value"]
+        fields["approvalFacts"] = dict(type="queue.approvalProjection", kind="map", zero=True, nil=True, value={})
+        self.assertIsNone(replay.compare_checkpoints([old], [json.dumps(value)], False)["first_state_divergence"])
+        for bad in (dict(type="queue.approvalProjection", kind="map", zero=False, nil=False, value={}), node(False), dict(type="queue.approvalProjection", kind="map", zero=False, nil=False, value={json.dumps(node("change"), sort_keys=True): node({})})):
+            fields["approvalFacts"] = bad
+            self.assertIsNotNone(replay.compare_checkpoints([old], [json.dumps(value)], False)["first_state_divergence"])
+
     def test_unreviewed_zero_field_fails(self):
         old = checkpoint()
         value = json.loads(old)

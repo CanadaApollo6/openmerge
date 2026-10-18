@@ -13,7 +13,7 @@ import (
 
 // SnapshotVersion is separate from the additive event wire version. Snapshots
 // contain bounded projection state, never a copy of the event history.
-const SnapshotVersion = 4
+const SnapshotVersion = 5
 
 // Decoder resource limits are deliberately above ordinary queue sizes. This
 // codec is not wired into store persistence.
@@ -66,6 +66,7 @@ type rulesSnapshot struct {
 }
 type stateSnapshot struct {
 	Classifications                                                          classifications
+	ApprovalFacts                                                            approvalProjection
 	ChangeRevisions                                                          map[int]RevisionRecord
 	BatchRevisions                                                           map[string][]BatchRevision
 	OutsidePushes                                                            []OutsidePushRecorded `json:",omitempty"`
@@ -104,6 +105,7 @@ func EncodeSnapshot(s State) ([]byte, error) {
 	v := stateSnapshot{
 		Version:         SnapshotVersion,
 		Classifications: s.classifications,
+		ApprovalFacts:   s.approvalFacts,
 		ChangeRevisions: s.changeRevisions.snapshot(),
 		BatchRevisions:  s.batchRevisions,
 		OutsidePushes:   cloneOutsidePushes(s.outsidePushes),
@@ -162,7 +164,20 @@ func EncodeSnapshot(s State) ([]byte, error) {
 		}
 		v.Effects = append(v.Effects, data)
 	}
-	return json.Marshal(v)
+	if err := validateApprovalSnapshot(v.ApprovalFacts, v.ChangeRevisions); err != nil {
+		return nil, err
+	}
+	if err := checkApprovalSnapshotBudget(v.ApprovalFacts); err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > maxSnapshotBytes {
+		return nil, fmt.Errorf("snapshot exceeds byte bound; reject approval admission for affected changes")
+	}
+	return raw, nil
 }
 
 // DecodeSnapshot rejects incomplete/unknown schemas rather than manufacturing
@@ -175,10 +190,10 @@ func DecodeSnapshot(data []byte) (State, error) {
 	if err := json.Unmarshal(data, &header); err != nil {
 		return State{}, err
 	}
-	if header.Version != SnapshotVersion && header.Version != 3 && header.Version != 2 {
+	if header.Version != SnapshotVersion && header.Version != 4 && header.Version != 3 && header.Version != 2 {
 		return State{}, fmt.Errorf("unsupported snapshot version %d", header.Version)
 	}
-	data, err := upgradeClassificationSnapshot(data, header.Version)
+	data, err := upgradeApprovalSnapshot(data, header.Version)
 	if err != nil {
 		return State{}, err
 	}
@@ -200,6 +215,9 @@ func DecodeSnapshot(data []byte) (State, error) {
 	if len(v.Chain) > 32 || len(v.Invalidations) > 32 || len(v.TestedOrder) > testedHistory || len(v.Checks) > maxRetainedChecks || len(v.Entries) > maxSnapshotEntries || len(v.Effects) > maxSnapshotEffects {
 		return State{}, fmt.Errorf("invalid snapshot bounds")
 	}
+	if err := validateApprovalSnapshot(v.ApprovalFacts, v.ChangeRevisions); err != nil {
+		return State{}, err
+	}
 	if err := validateClassifications(v.Classifications); err != nil {
 		return State{}, err
 	}
@@ -213,6 +231,7 @@ func DecodeSnapshot(data []byte) (State, error) {
 	}
 	s := State{
 		classifications: v.Classifications,
+		approvalFacts:   v.ApprovalFacts,
 		outsidePushes:   cloneOutsidePushes(v.OutsidePushes),
 		window:          v.Window, outcomes: v.Outcomes,
 		Lifecycle:          v.Lifecycle,

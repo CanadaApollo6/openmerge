@@ -1,6 +1,8 @@
 package queue
 
-import "maps"
+import (
+	"maps"
+)
 
 type revisionShards [observationShardCount]map[int]RevisionRecord
 type changeRevisions struct{ shards *revisionShards }
@@ -62,6 +64,7 @@ func (s *State) observeLegacyRevision(e PRObserved) {
 	if current.HeadSHA == e.HeadSHA {
 		return
 	}
+	s.advanceApprovalRevision(current, current.Revision+1)
 	s.changeRevisions.put(e.PR, RevisionRecord{ChangeID: current.ChangeID, Revision: current.Revision + 1, HeadSHA: e.HeadSHA,
 		Basis: RevisionObservationBasis{BaseSHA: s.BaseSHA}, LogPosition: s.revision})
 }
@@ -72,6 +75,7 @@ func (s *State) observeChangeRevision(e ChangeRevisionObserved) {
 	if current.Revision == e.Revision {
 		position = current.LogPosition
 	}
+	s.advanceApprovalRevision(current, e.Revision)
 	s.changeRevisions.put(e.PR, RevisionRecord{ChangeID: e.ChangeID, Revision: e.Revision, HeadSHA: e.HeadSHA, Basis: e.Basis, LogPosition: position})
 	// Conflict grace is a later integration: Stage A retains HeadChanged
 	// removal, with no grace deadline, retry budget, or position retention.

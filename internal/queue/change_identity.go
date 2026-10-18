@@ -93,7 +93,10 @@ type RevisionRecord struct {
 
 // PRRevision returns recorded evidence by queue-local PR alias. It cannot
 // manufacture accountability, classification, approvals, or source timestamps.
-func (s State) PRRevision(pr int) (RevisionRecord, bool) { return s.changeRevisions.get(pr) }
+func (s State) PRRevision(pr int) (RevisionRecord, bool) {
+	r, ok := s.changeRevisions.get(pr)
+	return r, ok
+}
 
 // CanObserveChangeRevision rejects stale updates. A matching legacy boundary
 // can be enriched once, so PRObserved and the new event can coexist in either

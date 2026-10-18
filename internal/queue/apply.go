@@ -9,6 +9,9 @@ import (
 
 // Apply folds one event without mutating s or any slices or maps reachable from it.
 func Apply(s State, e Event) State {
+	if next, ok := s.observeApproval(e); ok {
+		return next
+	}
 	if classified, ok := e.(ChangeClassified); ok {
 		return s.classify(classified)
 	}
