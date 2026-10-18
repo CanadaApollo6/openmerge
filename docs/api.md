@@ -121,13 +121,16 @@ PR explanation's event limit. Each includes `event_id`, `previous_sha`,
 `verification_before_landing: "none"`. The initial base read
 establishes a baseline and is not an outside push. Outstanding landings settle
 through the existing fence before the independent journal audit classifies their
-observations; an OpenMerge landing followed
+observations (possibly indefinitely for an unresolved attempt); an OpenMerge landing followed
 by an admin push records only the move from the landed commit to the admin tip.
 
 `possible_stale_observation: true` applies only to a rewind from a settled
 landing L to the base B that its attempt was built on. This is lower-confidence
 evidence: the observed rewrite may reflect a stale base read rather than a real
-rollback. A return from B to L is suppressed as OpenMerge's own landing. The flag
+rollback. A return from B to L is suppressed only once per settled attempt, provided
+no other nontrivial move has consumed or invalidated that attempt's allowance.
+Thus L→C→L records both outside moves, and L→B→L→B→L records the second
+return to L; both rewinds to B remain flagged. The flag
 remains if the next observation is C instead. Verify such records before any
 future ADR 0008 acknowledgement; other transition shapes never set this flag.
 

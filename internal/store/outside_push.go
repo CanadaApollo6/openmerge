@@ -11,7 +11,9 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const outsidePushCursorKey = "outside-push-audit/v1"
+// Rebuild earlier audit-only cursors with attempt-scoped suppression. Existing
+// receipts retain their BaseMoved dedupe keys; missing real moves can be added.
+const outsidePushCursorKey = "outside-push-audit/v2"
 const outsidePushScanLimit = 256
 
 // OutsidePushMove identifies a transition by its immutable BaseMoved row.
@@ -25,10 +27,13 @@ type OutsidePushMove struct {
 type pendingOutsideMove struct {
 	OutsidePushMove
 	AttemptID string
-	OwnSHA    string
+	Own       bool
 }
 
-type outsideLanding struct{ SHA, BaseSHA string }
+type outsideLanding struct {
+	AttemptID, SHA, BaseSHA string
+	Consumed                bool
+}
 
 // The scanned position and fold survive restart even when a landing holds the
 // audited position back. Pending transitions never require replaying a prefix.
@@ -93,23 +98,21 @@ func (s *Store) ReadOutsidePushAudit(ctx context.Context, q QueueID) (*OutsidePu
 		case queue.BaseMoved:
 			move := pendingOutsideMove{OutsidePushMove: OutsidePushMove{
 				ID: r.ID, PreviousSHA: a.progress.ObservedBase, NewSHA: e.SHA, At: r.RecordedAt,
-			}, OwnSHA: a.progress.LastLanding.SHA}
+			}}
 			if before != nil && before.Phase == queue.Landing {
 				move.AttemptID = before.LandingAttempt.ID
 			}
-			last := a.progress.LastLanding
-			move.PossibleStaleObservation = last.SHA != "" && move.PreviousSHA == last.SHA && move.NewSHA == last.BaseSHA
+			if move.AttemptID == "" {
+				classifyOutsideMove(&move, &a.progress.LastLanding)
+			}
 			a.progress.Pending = append(a.progress.Pending, move)
 			a.progress.ObservedBase = e.SHA
 		case queue.Landed:
 			if before != nil && before.Phase == queue.Landing && before.ID == e.BatchID && next.Fence == e.NewFence && next.BaseSHA == e.NewBaseSHA && (next.Active == nil || next.Active.ID != before.ID) && (before.Method != queue.FastForward || e.NewBaseSHA == before.LandingAttempt.FastForwardHeadSHA) {
 				// The successful journal settlement supplies the produced SHA. For
 				// fast-forward this is the verified contributor head, not its marker.
-				landing := outsideLanding{SHA: e.NewBaseSHA, BaseSHA: before.BaseSHA}
-				a.settled(before.LandingAttempt.ID, landing)
-				if a.progress.ObservedBase == before.BaseSHA || a.progress.ObservedBase == landing.SHA {
-					a.progress.ObservedBase = landing.SHA
-				}
+				landing := outsideLanding{AttemptID: before.LandingAttempt.ID, SHA: e.NewBaseSHA, BaseSHA: before.BaseSHA}
+				landing = a.settled(before.LandingAttempt.ID, landing)
 				a.progress.LastLanding = landing
 			}
 		case queue.LandingAbandoned:
@@ -125,8 +128,7 @@ func (s *Store) ReadOutsidePushAudit(ctx context.Context, q QueueID) (*OutsidePu
 		if move.AttemptID != "" {
 			break
 		}
-		own := move.NewSHA == move.OwnSHA && !move.PossibleStaleObservation
-		if !own && move.PreviousSHA != "" && move.PreviousSHA != move.NewSHA {
+		if !move.Own && move.PreviousSHA != "" && move.PreviousSHA != move.NewSHA {
 			a.Moves = append(a.Moves, move.OutsidePushMove)
 		}
 		a.progress.AuditedBaseMove = move.ID
@@ -136,7 +138,7 @@ func (s *Store) ReadOutsidePushAudit(ctx context.Context, q QueueID) (*OutsidePu
 	return a, err
 }
 
-func (a *OutsidePushAudit) settled(attempt string, landing outsideLanding) {
+func (a *OutsidePushAudit) settled(attempt string, landing outsideLanding) outsideLanding {
 	first := true
 	for i := range a.progress.Pending {
 		m := &a.progress.Pending[i]
@@ -149,12 +151,36 @@ func (a *OutsidePushAudit) settled(attempt string, landing outsideLanding) {
 		if first && landing.SHA != "" && m.NewSHA != landing.SHA {
 			m.PreviousSHA = landing.SHA
 		}
-		if landing.SHA != "" {
-			m.OwnSHA = landing.SHA
-			m.PossibleStaleObservation = m.PreviousSHA == landing.SHA && m.NewSHA == landing.BaseSHA
+		if landing.SHA == "" {
+			classifyOutsideMove(m, &a.progress.LastLanding)
+		} else {
+			classifyOutsideMove(m, &landing)
 		}
 		first = false
 	}
+	// Only synthesize the landing baseline when no BaseMoved observed the
+	// attempt. An explicit final build-base observation must survive settlement
+	// so the next return cannot become an invisible landed-to-landed no-op.
+	if first && landing.SHA != "" && a.progress.ObservedBase == landing.BaseSHA {
+		a.progress.ObservedBase = landing.SHA
+	}
+	return landing
+}
+
+// Each settled attempt explains at most one base-to-landing observation. A
+// flagged landing-to-build-base rewind preserves that allowance for the #62
+// stale-read repair. Any other movement invalidates it, including an outside
+// advance: returning from that outside tip to the landed SHA is a real move.
+func classifyOutsideMove(m *pendingOutsideMove, landing *outsideLanding) {
+	if landing.AttemptID == "" {
+		return
+	}
+	m.PossibleStaleObservation = m.PreviousSHA == landing.SHA && m.NewSHA == landing.BaseSHA
+	if m.PreviousSHA == m.NewSHA || m.PossibleStaleObservation {
+		return
+	}
+	m.Own = !landing.Consumed && m.PreviousSHA == landing.BaseSHA && m.NewSHA == landing.SHA
+	landing.Consumed = true
 }
 
 // CommitOutsidePushAudit atomically appends inert events and advances audit-only

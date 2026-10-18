@@ -171,11 +171,17 @@ its Git cache, token refresh locks and credentials are separate from the workers
 Settlement, configuration, reconciliation and planning retain main's code paths.
 Each `BaseMoved` row identifies a candidate transition. Attempts overlapping that
 observation must settle as `Landed` or `LandingAbandoned` in the shared journal
-before it is classified. A settled landing's recorded SHA (the verified head for
-fast-forward) identifies OpenMerge's own move. Other transitions are enriched
+before it is classified. A settled attempt can suppress at most one exact
+build-base-to-landed-SHA move (the verified head for fast-forward). Its allowance
+survives the flagged build-base rewind but is consumed or invalidated by any
+other nontrivial move. Later returns to a historical landed SHA are recorded. Other transitions are enriched
 with ancestry and commit history; unreadable history is explicitly unknown.
 There are no live ref/fence reads in the audit and no audit watermark authorizes
-or delays queue work. An unresolved landing can defer audits indefinitely.
+or delays queue work. An unresolved landing can defer audits indefinitely and grow the durable pending
+list without a bound. Failed enrichment is permanently unknown, without retry.
+The history constructor uses only App-JWT token minting and Git protocol reads;
+initialization and enrichment make zero installation-authenticated REST/GraphQL
+requests and spend none of the worker's installation API quota.
 
 Audit-only observations persist a scanned event position, the last audited
 `BaseMoved` ID, an incremental fold and pending transitions. Restart resumes from
@@ -184,6 +190,8 @@ the audit cursor, appends inert events with unique `outside-base/<BaseMoved ID>`
 keys, and advances audit progress atomically. Competing auditors retry from the
 durable cursor, preserving every transition, including away-and-back moves.
 Git I/O runs before that transaction and never holds a database connection.
+The v2 audit cursor rebuilds older audit-only progress with attempt-scoped
+suppression; unchanged BaseMoved dedupe keys preserve existing receipts.
 
 The payload records both tips, ancestry knowledge and rewrite status, a bounded
 history (or explicit unknown), truncation, the source observation's time and no

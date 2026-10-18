@@ -257,3 +257,86 @@ func TestOutsidePushRewindToPreviousOwnLandingStillFlagged(t *testing.T) {
 		t.Fatalf("earlier own SHA hid a later rewind: %+v", a.Moves)
 	}
 }
+
+func TestOutsidePushLandingAllowanceConsumedOnce(t *testing.T) {
+	for _, method := range []queue.MergeMethod{queue.Merge, queue.FastForward} {
+		for _, next := range []string{"repair", "outside"} {
+			t.Run(string(method)+"/"+next, func(t *testing.T) {
+				s := newStore(t)
+				q := ensureQueue(t, s, "")
+				appendEvents(t, s, q, queue.BaseMoved{SHA: "base"}, queue.PRObserved{PR: 1, HeadSHA: "head", Eligible: true, Trusted: true}, queue.EnqueueRequested{PR: 1, At: epoch}, queue.BatchStarted{BatchID: "b1", BaseSHA: "base", PRs: []queue.BatchPR{{PR: 1, HeadSHA: "head"}}, At: epoch}, queue.TestRefBuilt{BatchID: "b1", TestedSHA: "tested", Method: method, At: epoch}, queue.LandingStarted{BatchID: "b1", AttemptID: "a", FenceToken: "fence", At: epoch})
+				landed := "tested"
+				if method == queue.FastForward {
+					landed = "head"
+				}
+				appendEvents(t, s, q, queue.Landed{BatchID: "b1", NewBaseSHA: landed, NewFence: "landed"})
+				auditPass(t, s, q)
+				appendEvents(t, s, q, queue.BaseMoved{SHA: "base"})
+				a := auditPass(t, s, q)
+				if len(a.Moves) != 1 || !a.Moves[0].PossibleStaleObservation {
+					t.Fatalf("rewind not flagged: %+v", a.Moves)
+				}
+				if next == "outside" {
+					appendEvents(t, s, q, queue.BaseMoved{SHA: "outside"})
+					a = auditPass(t, s, q)
+					if len(a.Moves) != 1 {
+						t.Fatalf("outside move lost: %+v", a.Moves)
+					}
+				}
+				appendEvents(t, s, q, queue.BaseMoved{SHA: landed})
+				a = auditPass(t, s, q)
+				want := 0
+				if next == "outside" {
+					want = 1
+				}
+				if len(a.Moves) != want {
+					t.Fatalf("repair/return classification: %+v", a.Moves)
+				}
+				// The allowance must remain consumed across separate durable cursor passes.
+				appendEvents(t, s, q, queue.BaseMoved{SHA: "base"})
+				a = auditPass(t, s, q)
+				if len(a.Moves) != 1 || !a.Moves[0].PossibleStaleObservation {
+					t.Fatalf("second rewind not flagged: %+v", a.Moves)
+				}
+				appendEvents(t, s, q, queue.BaseMoved{SHA: landed})
+				a = auditPass(t, s, q)
+				if len(a.Moves) != 1 || a.Moves[0].PreviousSHA != "base" || a.Moves[0].NewSHA != landed {
+					t.Fatalf("attempt reused to hide second return: %+v", a.Moves)
+				}
+			})
+		}
+	}
+}
+
+func TestOutsidePushConsumedAllowanceSurvivesSettlementAtBuildBase(t *testing.T) {
+	s := newStore(t)
+	q := ensureQueue(t, s, "")
+	seedOutsideLanding(t, s, q)
+	appendEvents(t, s, q, queue.BaseMoved{SHA: "tested"}, queue.BaseMoved{SHA: "base"})
+	auditPass(t, s, q)
+	appendEvents(t, s, q, queue.Landed{BatchID: "b1", NewBaseSHA: "tested", NewFence: "landed"})
+	a := auditPass(t, s, q)
+	if len(a.Moves) != 1 || !a.Moves[0].PossibleStaleObservation {
+		t.Fatalf("rewind lost: %+v", a.Moves)
+	}
+	appendEvents(t, s, q, queue.BaseMoved{SHA: "tested"})
+	a = auditPass(t, s, q)
+	if len(a.Moves) != 1 || a.Moves[0].PreviousSHA != "base" {
+		t.Fatalf("settlement hid explicit baseline/consumed allowance: %+v", a.Moves)
+	}
+}
+
+func TestOutsidePushAbandonedAttemptInvalidatesPreviousAllowance(t *testing.T) {
+	s := newStore(t)
+	q := ensureQueue(t, s, "")
+	seedOutsideLanding(t, s, q)
+	appendEvents(t, s, q, queue.Landed{BatchID: "b1", NewBaseSHA: "tested", NewFence: "landed"})
+	auditPass(t, s, q)
+	appendEvents(t, s, q, queue.PRObserved{PR: 2, HeadSHA: "head2", Eligible: true, Trusted: true}, queue.EnqueueRequested{PR: 2, At: epoch}, queue.BatchStarted{BatchID: "b2", BaseSHA: "tested", PRs: []queue.BatchPR{{PR: 2, HeadSHA: "head2"}}, At: epoch}, queue.TestRefBuilt{BatchID: "b2", TestedSHA: "tested2", Method: queue.Merge, At: epoch}, queue.LandingStarted{BatchID: "b2", AttemptID: "a2", FenceToken: "landed", At: epoch}, queue.BaseMoved{SHA: "outside"}, queue.BaseMoved{SHA: "base"}, queue.LandingAbandoned{BatchID: "b2", NewFence: "abandoned"})
+	auditPass(t, s, q)
+	appendEvents(t, s, q, queue.BaseMoved{SHA: "tested"})
+	a := auditPass(t, s, q)
+	if len(a.Moves) != 1 {
+		t.Fatalf("abandonment retained obsolete allowance: %+v", a.Moves)
+	}
+}

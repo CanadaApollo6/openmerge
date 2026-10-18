@@ -237,16 +237,33 @@ is the attempt's pre-landing build base. A real rollback produces identical
 journal evidence. Only this exact `L → B` shape sets
 `possible_stale_observation: true`: it records an observed possible rewrite,
 which **may reflect a stale base read rather than a real rollback**, rather than
-a confident outside rewrite. A subsequent `B → L` is suppressed as OpenMerge's
-own landing. If observations continue to C instead, the flagged rewind remains
-and subsequent transitions are classified normally. Other rewrites do not get
+a confident outside rewrite. A subsequent `B → L` is suppressed only if that
+settled attempt has not already suppressed a transition and no other move has
+invalidated its allowance.
+Each attempt can suppress at most one exact build-base-to-landed-SHA move.
+An outside `L → C` invalidates the allowance, so `C → L` is recorded.
+For `L → B → L → B → L`, the second rewind is flagged and the second return
+to L is recorded, not suppressed. If observations continue to C instead, the
+flagged rewind remains and subsequent transitions are classified normally. Other rewrites do not get
 this flag. Reconciliation remains unchanged; fixing its stale-read behavior is
 material and deferred until after the ADR 0009 trial. ADR 0008's later warnings
 must treat flagged records as lower-confidence evidence and require verification
 before acknowledgement. This PR adds no acknowledgement command.
 
 
-If fence evidence proves an OpenMerge landing succeeded but a rewrite has removed that commit before settlement, record the rewrite without settling the landing or clearing its safety block. The status/snapshot tail is bounded and is not an acknowledgement ledger. ADR 0008 warnings and acknowledgements must read the durable journal and its event IDs, not this tail.
+Classification uses only durable journal settlement, never live fence evidence.
+If a rewrite removes a landed commit before settlement, the audit waits for
+`Landed` or `LandingAbandoned`; it does not settle or clear the safety block.
+An attempt that never settles can defer audits indefinitely. Pending observations
+remain durable and can grow without a bound while waiting; this release does not
+emit speculative overflow records. History-provider or Git failures produce
+permanently unknown evidence for that observation, without enrichment retry.
+The read-only history constructor makes zero installation-authenticated REST or
+GraphQL calls: token minting uses the App JWT and app-scoped authentication,
+not the installation REST quota, and ancestry/history use only Git smart HTTP
+in a separate cache. The status/snapshot tail is bounded and is not an
+acknowledgement ledger. ADR 0008 warnings and acknowledgements must read the
+durable journal and its event IDs, not this tail.
 
 ### Briefs (Stage A, prose in Stage C)
 

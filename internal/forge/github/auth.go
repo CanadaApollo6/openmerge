@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
+	"github.com/CanadaApollo6/openmerge/internal/gitops"
 	gh "github.com/google/go-github/v93/github"
 )
 
@@ -251,4 +252,12 @@ func (a *App) newClient(token func(context.Context) (string, error)) (*gh.Client
 	client.Transport = &transport{base: a.http.Transport, token: token, origin: a.api, now: func() time.Time { return a.now() }, cache: newResponseCache(1024, 16<<20)}
 	base := a.api.String()
 	return gh.NewClient(gh.WithHTTPClient(&client), gh.WithURLs(&base, nil))
+}
+
+// HistoryRemote obtains Git credentials without constructing an API driver.
+// Token minting uses the App JWT (app-scoped), never an installation-authenticated
+// REST/GraphQL request or its installation rate-limit budget. All subsequent
+// history reads use the Git protocol, through an independent audit cache.
+func (a *App) HistoryRemote(id int64) gitops.Remote {
+	return (&Driver{app: a, installation: id}).Remote
 }
