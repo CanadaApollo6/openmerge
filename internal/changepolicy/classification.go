@@ -58,10 +58,16 @@ type Hunk struct {
 type HunkRange struct {
 	OldStart, OldLines, NewStart, NewLines int
 	Reason                                 string
+	// Count copies the number of collapsed omissions for omitted_range_limit.
+	Count int
 }
 
 // HunkEvidence is populated by PRs 2b/7a. Complete is independent of inventory
 // completeness; a missing or truncated diff never implies a complete brief.
+// Producers must apply the versioned forge budgets before persisting: at most
+// 32 detailed omissions per file, 256 across files, plus one summary per file.
+// Summary ranges enclose the collapsed spans; Count preserves their number.
+// This DTO does not validate arbitrary caller-supplied evidence.
 type HunkEvidence struct {
 	Hunks    []Hunk
 	Omitted  []HunkRange

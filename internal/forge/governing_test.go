@@ -97,3 +97,24 @@ func TestGoverningExactProbeBudget(t *testing.T) {
 		})
 	}
 }
+
+func TestCodeownersUnknownPresenceStopsFallback(t *testing.T) {
+	for _, transportError := range []bool{false, true} {
+		t.Run(fmt.Sprint(transportError), func(t *testing.T) {
+			var checked []string
+			got, err := CollectGoverningFiles(t.Context(), GoverningFilesRequest{CommitSHA: strings.Repeat("a", 40), PathsComplete: true}, func(_ context.Context, path string, _ int) (GoverningFile, error) {
+				checked = append(checked, path)
+				if path == ".github/CODEOWNERS" {
+					if transportError {
+						return GoverningFile{}, errors.New("unknown presence")
+					}
+					return GoverningFile{}, nil
+				}
+				return GoverningFile{Coverage: DiffCoverage{Completeness: DiffComplete}}, nil
+			})
+			if err == nil || got.SelectedCodeowners != "" || got.Coverage.Completeness != DiffIncomplete || slices.Contains(checked, "CODEOWNERS") || slices.Contains(checked, "docs/CODEOWNERS") || !slices.Contains(checked, ".gitattributes") {
+				t.Fatalf("got=%+v checked=%v err=%v", got, checked, err)
+			}
+		})
+	}
+}

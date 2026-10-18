@@ -25,7 +25,7 @@ type RevisionDiffRequest struct{ BaseSHA, HeadSHA string }
 // either blob). No heuristic similarity, external diff, textconv or attributes
 // participate. Complete inventories require unaltered, verified divergence ancestry.
 // Consumers include this version in their classifier version.
-const DiffSemantics = "git-evidence-v6-unified-hunks"
+const DiffSemantics = "git-evidence-v7-bounded-omissions"
 
 // Inventory resource limits are part of DiffSemantics.
 const (
@@ -39,13 +39,18 @@ const (
 	// MaxDiffBytes bounds raw inventory plus all inspected blob bytes per read.
 	MaxDiffBytes = 2 << 20
 	// Hunk text has a separate budget from inspected inventory blobs.
-	MaxDiffHunkBytes        = 2 << 20
-	MaxDiffHunkLinesPerFile = 200
-	DiffHunkContext         = 3
-	MaxDiffHunkInputBytes   = 2 << 20
-	MaxDiffHunkOutputBytes  = 8*MaxDiffHunkInputBytes + 4096
-	MaxDiffHunkDuration     = 2 * time.Second
-	MaxDiffHunksDuration    = 30 * time.Second
+	// Detailed omissions have separate per-file and collection budgets.
+	// Each file may additionally carry one summary, including after exhaustion.
+	MaxDiffOmittedRangesPerFile = 32
+	MaxDiffOmittedRanges        = 256
+	MaxDiffHunkBytes            = 2 << 20
+	MaxDiffHunkLinesPerFile     = 200
+	DiffHunkContext             = 3
+	MaxDiffHunkInputBytes       = 2 << 20
+	MaxDiffHunkOutputBytes      = 8*MaxDiffHunkInputBytes + 4096
+	MaxDiffHunkStderrBytes      = 8192
+	MaxDiffHunkDuration         = 2 * time.Second
+	MaxDiffHunksDuration        = 30 * time.Second
 )
 
 // DiffCompleteness distinguishes full evidence from partial or unknown reads.
@@ -77,6 +82,7 @@ const (
 	DiffHunkLineLimit       DiffFailureReason = "hunk_line_limit"
 	DiffHunkWorkLimit       DiffFailureReason = "hunk_work_limit"
 	DiffHunkByteLimit       DiffFailureReason = "hunk_byte_limit"
+	DiffOmittedRangeLimit   DiffFailureReason = "omitted_range_limit"
 	DiffNonText             DiffFailureReason = "non_text"
 	DiffSpecialMode         DiffFailureReason = "special_mode"
 	DiffInvalidUTF8         DiffFailureReason = "invalid_utf8"
@@ -134,6 +140,9 @@ type DiffHunk struct {
 type DiffHunkRange struct {
 	OldStart, OldLines, NewStart, NewLines int
 	Reason                                 DiffFailureReason
+	// Count is nonzero only for a summary: number of collapsed omissions.
+	// Its ranges enclose those omissions, including intervening retained spans.
+	Count int
 }
 
 // NewRevisionDiff starts with unknown inventory and explicitly absent hunks.

@@ -262,7 +262,7 @@ func (r *Repo) revisionDiff(ctx context.Context, repo forge.RepoRef, req forge.R
 		result.Inventory.Completeness = forge.DiffComplete
 	}
 	if err := forge.CollectDiffHunks(ctx, &result, blobs); err != nil {
-		return fail(forge.DiffReadFailure, err)
+		return result, err
 	}
 	if reason, err := checkHistory(); reason != "" {
 		result.Hunks = forge.DiffCoverage{Completeness: forge.DiffIncomplete, Reasons: []forge.DiffFailureReason{reason}}

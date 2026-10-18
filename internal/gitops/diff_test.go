@@ -417,3 +417,16 @@ func TestRevisionDiffUnpairedRenamesIncomplete(t *testing.T) {
 		})
 	}
 }
+
+func TestHunkFailurePreservesInventory(t *testing.T) {
+	f := newFixture(t)
+	cache := filepath.Join(t.TempDir(), "cache-file")
+	if err := os.WriteFile(cache, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CACHE_HOME", cache)
+	got, err := f.g.RevisionDiff(t.Context(), testRepo, forge.RevisionDiffRequest{BaseSHA: f.base, HeadSHA: f.prs[0].HeadSHA})
+	if err == nil || got.Inventory.Completeness != forge.DiffComplete || len(got.Inventory.Reasons) != 0 || got.Hunks.Completeness != forge.DiffIncomplete || !slices.Contains(got.Hunks.Reasons, forge.DiffReadFailure) {
+		t.Fatalf("inventory=%+v hunks=%+v err=%v", got.Inventory, got.Hunks, err)
+	}
+}

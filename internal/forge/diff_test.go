@@ -16,9 +16,11 @@ func TestDiffSemanticsBoundsGolden(t *testing.T) {
 	}
 	goldens["git-evidence-v5-single-span"] = "files=1000 bytes=2097152 hunks=512 ancestry=100000 ancestry_duration=30s per_file=1 hunk_bytes=262144 governing_files=256 governing_bytes=1048576"
 	goldens["git-evidence-v6-unified-hunks"] = "files=1000 bytes=2097152 ancestry=100000 ancestry_duration=30s lines=200 hunk_bytes=2097152 context=3 input=2097152 output=16781312 file_duration=2s duration=30s governing_files=256 governing_bytes=1048576"
+	goldens["git-evidence-v7-bounded-omissions"] = "files=1000 bytes=2097152 ancestry=100000 ancestry_duration=30s lines=200 hunk_bytes=2097152 context=3 input=2097152 output=16781312 file_duration=2s duration=30s governing_files=256 governing_bytes=1048576 omitted_per_file=32 omitted_total=256 summary_per_file=1 stderr=8192 flags=--diff-algorithm=myers --minimal --no-indent-heuristic --inter-hunk-context=0 --unified=3"
 	want, ok := goldens[DiffSemantics]
 	got := fmt.Sprintf("files=%d bytes=%d ancestry=%d ancestry_duration=%s", MaxDiffFiles, MaxDiffBytes, MaxAncestryCommits, MaxAncestryDuration)
 	got += fmt.Sprintf(" lines=%d hunk_bytes=%d context=%d input=%d output=%d file_duration=%s duration=%s governing_files=%d governing_bytes=%d", MaxDiffHunkLinesPerFile, MaxDiffHunkBytes, DiffHunkContext, MaxDiffHunkInputBytes, MaxDiffHunkOutputBytes, MaxDiffHunkDuration, MaxDiffHunksDuration, MaxGoverningFiles, MaxGoverningBytes)
+	got += fmt.Sprintf(" omitted_per_file=%d omitted_total=%d summary_per_file=1 stderr=%d flags=%s", MaxDiffOmittedRangesPerFile, MaxDiffOmittedRanges, MaxDiffHunkStderrBytes, DiffHunkAlgorithmFlags)
 	if !ok || got != want {
 		t.Fatalf("bounds changed: %s: %s; bump DiffSemantics and add its golden", DiffSemantics, got)
 	}

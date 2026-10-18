@@ -19,7 +19,7 @@ no network; writes only the askpass helper inside the cache root. Bare-cache
 initialization happens lazily at first open.
 Future serve wiring owns activation and request scheduling.
 
-`git-evidence-v5-single-span` retains the inventory-v4 protections and fixes these semantics:
+`git-evidence-v7-bounded-omissions` retains the inventory-v4 protections and fixes these semantics:
 
 - Raw NUL-delimited git tree comparison, without external diffs, textconv, or
   heuristic renames. Paths retain their original bytes, including tabs/newlines.
@@ -71,15 +71,14 @@ Future serve wiring owns activation and request scheduling.
 After inventory blob inspection, the reader computes unified patches from the
 same immutable raw blobs, without another fetch. Both fake and gitops use the
 same isolated Git process so their matching semantics cannot drift. Git runs
-outside the repository in a private directory under the user cache, with neutral
+outside the repository in a private directory under the user cache (creating the parent with mode 0700 if missing), with neutral
 `old`/`new` filenames and a discovery ceiling. No repository `.gitattributes`,
 info attributes, local config, or diff drivers are reachable. Its fresh environment
 retains only PATH and explicitly sets `LC_ALL=C`, `GIT_CONFIG_NOSYSTEM=1`,
 `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_ATTR_NOSYSTEM=1`, and the discovery ceiling;
 inherited Git environment/config injection is discarded.
 
-The invocation is `git -c diff.algorithm=myers -c diff.indentHeuristic=false
--c core.attributesFile=/dev/null diff --no-index --no-ext-diff --no-textconv
+The invocation is `git -c core.attributesFile=/dev/null diff --no-index --no-ext-diff --no-textconv
 --no-color --no-renames --diff-algorithm=myers --no-indent-heuristic --minimal
 --inter-hunk-context=0 --unified=3 -- old new`. Three context lines match the
 usual review UI. Minimal Myers disables shortcuts that can discard repeated
@@ -92,6 +91,42 @@ Retention matches PR 7a: **1,000 files**, **2 MiB UTF-8 body text total**, and
 separate hunk-count cap. A hunk that cannot fit is omitted whole with its exact
 old/new ranges and typed `hunk_line_limit` or `hunk_byte_limit`; later smaller
 hunks/files may still fit. Nothing is silently truncated.
+
+Detailed omitted-range metadata is capped at **32 entries per file** and
+**256 across the collection**. Once either budget is exhausted, each affected
+file has at most **one additional `omitted_range_limit` summary**. Thus the
+absolute caps are **33 entries per file** and **1,256 across 1,000 files**.
+`Count` is the number of collapsed omissions (zero on detailed entries).
+Summary old/new ranges are enclosing spans from the first collapsed omission
+through the last, including any intervening retained/unchanged lines; they do
+not claim each enclosed line was omitted. Unknown ranges remain zero. Coverage
+is incomplete and retains both the underlying reasons and `omitted_range_limit`.
+Detailed entries consume the global budget; summaries have a separately reserved
+slot per file, so exhaustion cannot hide a later file's missing evidence.
+
+The entire **hunk-evidence subrecord is below 40 MiB in compact JSON**, including
+retained text, retained ranges, omitted ranges, counts and coverage. Conservative
+accounting: 6 × 2,097,152 bytes for worst-case JSON string escaping, at most
+200,000 retained hunks × 128 bytes of fixed JSON metadata, 1,256 omission entries
+× 256 bytes, and 1,000 per-file coverage/container records × 1,024 bytes:
+**39,528,448 bytes**, below 41,943,040. Every retained hunk consumes at least
+one of the 200 emitted lines per file. Blob coordinates/counts fit in seven
+decimal digits under the 2 MiB input bound; the metadata allowances include
+keys, punctuation and array separators. This is the hunk component of PR 7a's
+classification envelope, whose existing text/file/line limits are preserved;
+inventory paths, owner/classification facts and their independent bounds are
+separate envelope components. PR 7a must copy these bounded records verbatim,
+including summary counts, rather than expanding them. Pretty printing or
+embedding JSON as a quoted string requires its own transport allowance.
+
+`DiffHunkAlgorithmFlags` is the single command flag constant pinned by the
+bounds golden. Supported hosts use Git **2.39 <= version < 3** and must pass
+the behavioral golden vectors; this revision was verified with **Git 2.56.0**.
+Warnings go to a separate bounded 8 KiB stderr buffer and never enter patch text.
+Temporary blobs are plaintext mode **0600**, inside a private **0700** directory
+for the computation's lifetime. Normal returns remove it. SIGKILL can leave
+bounded input files behind inside the cache root; operators may remove stale
+`openmerge-hunks-*` directories when no computation is using them.
 
 Computation is independently bounded: at most **2 MiB combined input per file**,
 **2 seconds per Git process**, **30 seconds shared per collection**, and bounded
@@ -108,6 +143,8 @@ observed content but incomplete inventory and aggregate coverage.
 unknown coverage; neither unknown nor incomplete means an empty change. Read
 errors and caller cancellation remain diagnostic `read_failure` errors. The
 history check runs again after hunk construction, before reporting completeness.
+Hunk read errors do not demote a completed inventory. A detected history mutation
+still invalidates inventory as well as hunks, because its ancestry proof changed.
 
 ## Governing files
 
@@ -132,7 +169,7 @@ presence, content and coverage of each checked location:
 - All four accepted config locations, in `config.Find` order. Parsing and
   rejecting ambiguous configurations remain the consumer's responsibility.
 - `.github/CODEOWNERS`, `CODEOWNERS`, then `docs/CODEOWNERS`, stopping at the
-  first present entry. `SelectedCodeowners` records the selection. Checked
+  first present entry or the first probe whose absence is not proven complete. `SelectedCodeowners` records the selection. Checked
   earlier absences are retained; unprobed later locations prove nothing. An
   unreadable or special first entry never falls back to a weaker owner file.
 - Root `.gitattributes` and one for each ancestor directory of every supplied
@@ -149,7 +186,8 @@ stops at the probe bound. Exhaustion is incomplete `file_limit`/`byte_limit` wit
 nil error. An oversized present blob retains object ID and mode but no content.
 Non-UTF-8 blobs have no usable content and are incomplete `invalid_utf8`.
 Incomplete probes do not stop later config/attribute diagnostics within budget;
-CODEOWNERS still stops at the first present location.
+CODEOWNERS stops at the first present or uncertain location, including an
+unknown-presence `read_failure`; it advances only past a complete absent probe.
 Only a complete absent probe proves absence; tree entries such as directories,
 symlinks and gitlinks are present but incomplete `special_mode`. Invalid IDs,
 missing commits and read failures follow the diff's non-nil error contract.
@@ -160,7 +198,8 @@ PR 4a combines diff endpoints/merge base with the separate governing commit,
 config/owner blob IDs and attribute path-to-object map in
 `changepolicy.ClassificationInputs`. It converts octal modes into
 `FileEvidence` modes, copies paths/blobs/rename/binary/gitlink observations, maps
-`DiffHunk` to `Hunk`, `DiffHunkRange` to `HunkRange` (typed reason to string), and
+`DiffHunk` to `Hunk`, `DiffHunkRange` to `HunkRange` (typed reason to string,
+copying summary `Count` and enclosing ranges without expansion), and
 maps per-file coverage to `HunkEvidence.Complete`. Aggregate hunk coverage feeds
 `Classification.HunksComplete`. Governing content and checked absences go to
 4a/4b's parsers; missing probes must never become absence. Forge imports no

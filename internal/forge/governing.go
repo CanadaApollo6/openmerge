@@ -54,7 +54,8 @@ type GoverningFileRead func(context.Context, string, int) (GoverningFile, error)
 
 // CollectGoverningFiles bounds probes and content, preserving checked absences.
 // Config candidates mirror config.Find; selection/ambiguity belongs to 4a.
-// CODEOWNERS stops at the first present location, even if it is unreadable.
+// CODEOWNERS advances only past a complete absent probe; present or unknown
+// presence stops selection, even when the entry is unreadable.
 func CollectGoverningFiles(ctx context.Context, req GoverningFilesRequest, read GoverningFileRead) (GoverningFiles, error) {
 	out := GoverningFiles{CommitSHA: req.CommitSHA, Semantics: DiffSemantics, Coverage: DiffCoverage{Completeness: DiffComplete}}
 	fail := func(reason DiffFailureReason, err error) (GoverningFiles, error) {

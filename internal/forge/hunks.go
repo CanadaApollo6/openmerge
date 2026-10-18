@@ -14,12 +14,16 @@ import (
 	"unicode/utf8"
 )
 
+// DiffHunkAlgorithmFlags is pinned by the semantics golden and used verbatim.
+const DiffHunkAlgorithmFlags = "--diff-algorithm=myers --minimal --no-indent-heuristic --inter-hunk-context=0 --unified=3"
+
 // CollectDiffHunks computes isolated, bounded Git unified patches from inspected blobs.
 func CollectDiffHunks(ctx context.Context, result *RevisionDiff, blobs map[string]string) error {
 	result.Hunks = DiffCoverage{Completeness: DiffComplete}
 	work, cancel := context.WithTimeout(ctx, MaxDiffHunksDuration)
 	defer cancel()
 	remaining := MaxDiffHunkBytes
+	omitted := 0
 	slices.SortStableFunc(result.Files, func(a, b DiffFile) int {
 		key := func(f DiffFile) string {
 			if f.NewPath != "" {
@@ -39,7 +43,25 @@ func CollectDiffHunks(ctx context.Context, result *RevisionDiff, blobs map[strin
 		f.HunkCoverage = DiffCoverage{Completeness: DiffComplete}
 		omit := func(reason DiffFailureReason, span DiffHunkRange) {
 			span.Reason = reason
-			f.Omitted = append(f.Omitted, span)
+			if len(f.Omitted) < MaxDiffOmittedRangesPerFile && omitted < MaxDiffOmittedRanges {
+				f.Omitted = append(f.Omitted, span)
+				omitted++
+			} else {
+				if len(f.Omitted) == 0 || f.Omitted[len(f.Omitted)-1].Reason != DiffOmittedRangeLimit {
+					f.Omitted = append(f.Omitted, DiffHunkRange{Reason: DiffOmittedRangeLimit})
+				}
+				summary := &f.Omitted[len(f.Omitted)-1]
+				if summary.Count == 0 {
+					summary.OldStart, summary.OldLines = span.OldStart, span.OldLines
+					summary.NewStart, summary.NewLines = span.NewStart, span.NewLines
+				} else {
+					summary.OldLines = max(summary.OldStart+summary.OldLines, span.OldStart+span.OldLines) - summary.OldStart
+					summary.NewLines = max(summary.NewStart+summary.NewLines, span.NewStart+span.NewLines) - summary.NewStart
+				}
+				summary.Count++
+				f.HunkCoverage.Reasons = appendUniqueReason(f.HunkCoverage.Reasons, DiffOmittedRangeLimit)
+				result.Hunks.Reasons = appendUniqueReason(result.Hunks.Reasons, DiffOmittedRangeLimit)
+			}
 			f.HunkCoverage.Completeness = DiffIncomplete
 			if !containsReason(f.HunkCoverage.Reasons, reason) {
 				f.HunkCoverage.Reasons = append(f.HunkCoverage.Reasons, reason)
@@ -49,7 +71,7 @@ func CollectDiffHunks(ctx context.Context, result *RevisionDiff, blobs map[strin
 				result.Hunks.Reasons = append(result.Hunks.Reasons, reason)
 			}
 		}
-		if f.Submodule || f.OldMode == "120000" || f.NewMode == "120000" || f.OldMode != "" && f.NewMode != "" && f.OldMode != f.NewMode {
+		if f.Submodule || f.OldMode == "160000" || f.NewMode == "160000" || f.OldMode == "120000" || f.NewMode == "120000" || f.OldMode != "" && f.NewMode != "" && f.OldMode != f.NewMode {
 			omit(DiffSpecialMode, DiffHunkRange{})
 			continue
 		}
@@ -130,6 +152,13 @@ func hunkLines(s string) []string {
 	return lines
 }
 
+func appendUniqueReason(reasons []DiffFailureReason, reason DiffFailureReason) []DiffFailureReason {
+	if !containsReason(reasons, reason) {
+		return append(reasons, reason)
+	}
+	return reasons
+}
+
 func containsReason(reasons []DiffFailureReason, reason DiffFailureReason) bool {
 	for _, r := range reasons {
 		if r == reason {
@@ -148,6 +177,9 @@ func unifiedHunks(ctx context.Context, old, next string) ([]DiffHunk, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := os.MkdirAll(cache, 0700); err != nil {
+		return nil, err
+	}
 	dir, err := os.MkdirTemp(cache, "openmerge-hunks-")
 	if err != nil {
 		return nil, err
@@ -158,18 +190,25 @@ func unifiedHunks(ctx context.Context, old, next string) ([]DiffHunk, error) {
 			return nil, err
 		}
 	}
-	cmd := exec.CommandContext(ctx, "git", "-c", "diff.algorithm=myers", "-c", "diff.indentHeuristic=false", "-c", "core.attributesFile=/dev/null", "diff", "--no-index", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames", "--diff-algorithm=myers", "--no-indent-heuristic", "--minimal", "--inter-hunk-context=0", fmt.Sprintf("--unified=%d", DiffHunkContext), "--", "old", "new")
+	args := []string{"-c", "core.attributesFile=/dev/null", "diff", "--no-index", "--no-ext-diff", "--no-textconv", "--no-color", "--no-renames"}
+	args = append(args, strings.Fields(DiffHunkAlgorithmFlags)...)
+	args = append(args, "--", "old", "new")
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = dir
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "LC_ALL=C", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_ATTR_NOSYSTEM=1", "GIT_CEILING_DIRECTORIES=" + filepath.Dir(dir)}
 	// Each input byte can add a prefix, plus newline markers and headers.
 	output := &hunkOutput{remaining: MaxDiffHunkOutputBytes}
-	cmd.Stdout, cmd.Stderr = output, output
+	diagnostic := &hunkOutput{remaining: MaxDiffHunkStderrBytes}
+	cmd.Stdout, cmd.Stderr = output, diagnostic
 	err = cmd.Run()
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
 	if output.overflow {
 		return nil, context.DeadlineExceeded
+	}
+	if diagnostic.overflow {
+		return nil, errors.New("unified diff diagnostic limit")
 	}
 	var exit *exec.ExitError
 	if err != nil && (!errors.As(err, &exit) || exit.ExitCode() != 1) {
