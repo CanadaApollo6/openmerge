@@ -227,6 +227,11 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 			return store.ErrActionDeferred
 		}
 	}
+	if errors.Is(err, store.ErrLandingDecisionStale) {
+		// The atomic start rolled back without cancelling the claim. Release it
+		// for a fresh gate read rather than recording this Land action as done.
+		return err
+	}
 	if errors.Is(err, store.ErrStale) {
 		return nil
 	}
