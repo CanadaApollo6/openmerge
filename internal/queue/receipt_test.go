@@ -237,6 +237,16 @@ func TestBriefOwnerReasonCodes(t *testing.T) {
 			}
 		})
 	}
+	t.Run("mixed pool", func(t *testing.T) {
+		s, b, _, p, _ := decisionSetup(t, ownerPool(1, 2))
+		f := receiptFact(t, s, b, p)
+		for _, r := range f.Obligations {
+			if r.Code == "excluded_owners" {
+				t.Fatal("mixed owner pool reported entirely excluded")
+			}
+		}
+	})
+
 	s, b, _, p, _ := decisionSetup(t, ownerPool(2))
 	e, _ := s.Classification(b.ChangeID, b.Revision)
 	e.Evidence.Classification.Inputs.Generation++

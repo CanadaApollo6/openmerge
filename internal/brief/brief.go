@@ -58,7 +58,7 @@ func Build(policy cp.Policy, in cp.Input, title, body string) Fact {
 			code = "unknown_owners"
 		case r.Unresolved:
 			code = "unknown_eligibility"
-		case r.Path != "" && len(r.EligibleIDs) == 0 && slices.ContainsFunc(r.PoolIDs, func(id string) bool { return slices.Contains(in.ExcludedIDs, id) }):
+		case r.Path != "" && len(r.EligibleIDs) == 0 && len(r.PoolIDs) > 0 && !slices.ContainsFunc(r.PoolIDs, func(id string) bool { return !slices.Contains(in.ExcludedIDs, id) }):
 			code = "excluded_owners"
 		case r.Met:
 			code = "met"
