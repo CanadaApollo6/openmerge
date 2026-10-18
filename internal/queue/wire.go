@@ -383,6 +383,11 @@ func decodeBatchPRs(prs []wireBatchPR) []BatchPR {
 // EncodeEvent returns the stable type discriminator and versioned JSON.
 func EncodeEvent(value Event) (string, []byte, error) {
 	switch v := value.(type) {
+	case ChangeRevisionObserved:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("change_revision_observed", v)
 	case BatchRunsObserved:
 		if err := v.Validate(); err != nil {
 			return "", nil, err
@@ -607,6 +612,12 @@ func DecodeEvent(payload []byte) (Event, error) {
 		return nil, err
 	}
 	switch envelope.Type {
+	case "change_revision_observed":
+		v, err := readWireData[ChangeRevisionObserved](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		return v, v.Validate()
 	case "batch_runs_observed":
 		v, err := readWireData[BatchRunsObserved](envelope.Data)
 		if err != nil {

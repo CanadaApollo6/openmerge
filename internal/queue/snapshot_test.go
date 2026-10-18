@@ -84,7 +84,7 @@ func TestSnapshotRejectsMissingAndUnknownState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, invalid := range [][]byte{[]byte(`{}`), bytes.Replace(data, []byte(`"Version":2`), []byte(`"Version":3`), 1), append(data, []byte(`{}`)...)} {
+	for _, invalid := range [][]byte{[]byte(`{}`), bytes.Replace(data, []byte(`"Version":3`), []byte(`"Version":4`), 1), append(data, []byte(`{}`)...)} {
 		if _, err := DecodeSnapshot(invalid); err == nil {
 			t.Fatal("accepted malformed snapshot")
 		}
