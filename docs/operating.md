@@ -977,8 +977,10 @@ drain old workers before upgrading.
 no refs and changes no GitHub settings. Use a **separate repository-admin**
 `GITHUB_TOKEN`, as for `setup rulesets`, with Administration read, Contents read,
 Checks read and Commit statuses read. Complete inherited bypass lists may require
-an organization owner. A 403 or generic 404 is a permission error, never a clean
-partial report; only GitHub's explicit `Branch not protected` response establishes
+an organization owner. Team membership reads additionally need organization
+members visibility; unreadable memberships remain unacceptable authority blockers.
+A 403 or generic 404 on a required protection read is a permission error, never
+a clean partial report; only GitHub's explicit `Branch not protected` response establishes
 that classic protection is absent.
 
 ```sh
@@ -992,27 +994,41 @@ openmerge setup import-protection --repo OWNER/REPO --accept ITEM-ID --out /tmp/
 The report always includes the default branch and every existing base selected
 by the default-branch configuration, excluding `openmerge/` refs. Repeat `--base`
 to add concrete audit targets; it cannot hide configured bases or make an
-unconfigured default branch served. Configuration, CODEOWNERS and workflows are
-read at the reported commit SHAs. Concurrent branch/protection changes still
-require a fresh audit before switching.
+unconfigured default branch served. Configuration and governing CODEOWNERS are
+read at the default branch's pinned commit. Workflows and comparison CODEOWNERS
+are read separately from each served base's pinned tree. Concurrent branch or
+protection changes still require a fresh audit before switching.
 
 Each item has a stable ID, its base and source, a proposed configuration fragment,
 and an **equivalent**, **stricter**, **weaker** or **unsupported** classification.
 JSON format version 1 includes the same items, installation blockers, draft
-fragments and contributing-guide snippet. IDs depend on the base, source and
-requirement, not report wording or listing order. Re-audit after protection edits:
-an ID names a requirement, not an immutable acceptance of its parameters.
+fragments and contributing-guide snippet. IDs include the base, source,
+classification and reported requirement details, including review counts and
+check App parameters. Changed details or wording invalidate prior acceptance;
+listing order does not. Re-audit after protection edits.
 `--out` saves the draft locally even when readiness is false; it does not commit
-or upload it. The draft is a collection of annotated fragments to merge into
-existing queues, not a replacement configuration to deploy verbatim.
+or upload it. Merge its annotated, reconciled queue fragments into existing
+queues; they are not a replacement configuration to deploy verbatim.
+
+The report starts with readiness, blocker and unaccepted-gap counts. Unknown
+pull-request parameters are unsupported and name the unhandled key. Dynamic
+producer names, unresolved reusable-workflow callers, path filters and missing
+queue-push evidence cannot establish equivalence. CODEOWNERS coverage remains
+"to verify at switch" even for plausible owner tokens: this audit does not
+resolve owner identities, team visibility or eligibility. Effective write
+authority expands readable team and built-in role memberships before intersecting
+restrictions; unresolved membership is a blocker that `--accept` cannot waive.
 
 **The draft requires the release implementing ADR 0007 Stage A.** It uses that
 ADR's `approvals`, `groups` and `changes` keys; current releases reject them.
 Review counts use a snapshot of eligible repository writers in
-`groups.imported_reviewers`, with an unconditional approval rule requiring distinct
-members. Maintain this group as writer membership changes. Eligibility and
-blocking requests for changes must be checked at landing by Stage A. Owner
-requirements are annotated semantically because ADR 0007 leaves their full schema
+`groups.imported_reviewers`, with a `touches: ["**"]` approval rule requiring
+distinct members. The draft states the assumption that every change with a file
+inventory matches; unknown matches enforce the requirement. Overlapping classic
+and ruleset review counts use the maximum in one reconciled fragment per base,
+with all owner requirements retained. Maintain this group as writer membership
+changes. Eligibility and blocking requests for changes must be checked at landing
+by Stage A. Owner requirements are annotated semantically because ADR 0007 leaves their full schema
 to Stage A; a group is never presented as path ownership. For example:
 
 ```text
@@ -1023,7 +1039,7 @@ groups:
 approvals:
   default: any_writer
   rules:
-    - when: {}
+    - when: {touches: ["**"]}
       require: {group: imported_reviewers, count: 2}
 # Owner requirement: one eligible owner for each changed owned file,
 # resolved from CODEOWNERS at the governing default-branch commit.
@@ -1036,7 +1052,7 @@ required deployments have no equivalent. Required checks need a unique observed
 producer; App pinning is lost by a name-only condition, and a name shared between
 statuses and check runs is ambiguous. Producer observations are bounded to each
 pinned base tip, so they cannot prove future producer exclusivity. The report
-inspects job names and `on:` triggers in default-branch workflows: PR-only jobs
+inspects job names and `on:` triggers in each base's pinned workflows: PR-only jobs
 are unsupported, while dynamic names, reusable workflows, path filters and
 unproven branch filters are explicitly unknown. External CI needs operator
 verification. OpenMerge treats neutral and skipped as failures, unlike GitHub.

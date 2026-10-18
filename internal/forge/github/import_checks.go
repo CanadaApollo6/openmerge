@@ -2,6 +2,7 @@ package github
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -67,6 +68,7 @@ func (c *setupAPI) importChecks(ctx context.Context, repo, sha string) (checkEvi
 type importWorkflow struct {
 	Path, Job, Name, Queue string
 	PRonly                 bool
+	Unresolved             bool
 }
 
 func (c *setupAPI) importWorkflows(ctx context.Context, repo string, tree importTree) ([]importWorkflow, error) {
@@ -107,10 +109,10 @@ func (c *setupAPI) importWorkflows(ctx context.Context, repo string, tree import
 				name = key
 			}
 			if strings.Contains(name, "${{") || job.Strategy.Kind != 0 || job.Uses != "" {
-				result = append(result, importWorkflow{path, key, "", "unknown", false})
+				result = append(result, importWorkflow{Path: path, Job: key, Name: name, Queue: "unknown", Unresolved: true})
 				continue
 			}
-			result = append(result, importWorkflow{path, key, name, queue, prOnly})
+			result = append(result, importWorkflow{Path: path, Job: key, Name: name, Queue: queue, PRonly: prOnly})
 		}
 	}
 	return result, nil
@@ -130,6 +132,9 @@ func workflowQueue(on yaml.Node) (string, bool) {
 		}
 	default:
 		return "unknown", false
+	}
+	if _, reusable := events["workflow_call"]; reusable {
+		return "unknown (reusable workflow caller chain unresolved)", false
 	}
 	push, hasPush := events["push"]
 	if !hasPush {
@@ -242,6 +247,12 @@ func (r *ProtectionReport) requiredChecks(base, source string, p importStatusChe
 		}
 		var found []importWorkflow
 		for _, w := range workflows {
+			if w.Unresolved {
+				class = "unsupported"
+				message += fmt.Sprintf(" Unresolved producer candidate %s job %s name %q (dynamic name, matrix or reusable workflow); name collisions cannot be excluded.", w.Path, w.Job, w.Name)
+			}
+		}
+		for _, w := range workflows {
 			if w.Name == check.Context {
 				found = append(found, w)
 			}
@@ -276,11 +287,24 @@ func (r *ProtectionReport) requiredChecks(base, source string, p importStatusChe
 				message += " Multiple workflow jobs produce this name."
 			}
 		}
+		if queue != "yes" {
+			class = "unsupported"
+			message += " Queue-ref push coverage is not proven; resolve coverage or change CI before migration."
+		}
 		names := make([]string, 0, len(producers))
 		for name := range producers {
 			names = append(names, name)
 		}
 		slices.Sort(names)
+		parameters := []string{}
+		for _, requirement := range checks {
+			if requirement.Context == check.Context {
+				encoded, _ := json.Marshal(requirement)
+				parameters = append(parameters, string(encoded))
+			}
+		}
+		slices.Sort(parameters)
+		message += " Required check parameters: [" + strings.Join(parameters, ",") + "]."
 		message += fmt.Sprintf(" Producers observed: %s. Workflow push coverage for openmerge/queue/**: %s.", strings.Join(names, ", "), queue)
 		for _, w := range found {
 			message += fmt.Sprintf(" %s job %s: queue pushes=%s.", w.Path, w.Job, w.Queue)
@@ -289,7 +313,13 @@ func (r *ProtectionReport) requiredChecks(base, source string, p importStatusChe
 		frag := "# Cannot generate a safe literal check condition for this name.\n"
 		if _, err := condition.Parse(term); err == nil && strings.TrimSpace(check.Context) == check.Context && !strings.ContainsAny(check.Context, "\r\n") && check.Context != "" {
 			if class != "unsupported" {
-				frag = fragment(map[string]any{"merge_when": []string{term}})
+				if r.queueDrafts == nil {
+					r.queueDrafts = map[string]importQueueDraft{}
+				}
+				draft := r.queueDrafts[base]
+				draft.Checks = append(draft.Checks, term)
+				r.queueDrafts[base] = draft
+				frag = "# merge_when term " + strconv.Quote(term) + " belongs in this base's reconciled queue fragment.\n"
 			} else {
 				frag = "# No equivalent merge_when term until this check requirement is resolved.\n"
 			}
@@ -298,9 +328,15 @@ func (r *ProtectionReport) requiredChecks(base, source string, p importStatusChe
 			message += " The check name cannot be represented literally in the condition grammar."
 		}
 		r.add(base, source, "check-"+check.Context, class, false, message, frag)
-		r.add(base, source, "check-results-"+check.Context, "stricter", false, "OpenMerge counts neutral and skipped results as failures; GitHub accepts them. This may stall changes GitHub would merge.", "# check "+strconv.Quote(check.Context)+": only success counts, never neutral/skipped.")
+		r.add(base, source, "result-semantics:"+check.Context, "stricter", false, "OpenMerge counts neutral and skipped results as failures; GitHub accepts them. This may stall changes GitHub would merge.", "# check "+strconv.Quote(check.Context)+": only success counts, never neutral/skipped.")
 	}
 	if p.Strict || p.StrictPolicy {
-		r.add(base, source, "up-to-date", "equivalent", false, "GitHub strict up-to-date checks map to strict verification: the landed commit is the tested commit. verification: post_merge would be a weaker relaxation and requires a separately reviewed policy change under ADR 0005.", "verification: strict\n# verification: post_merge relaxes strict up-to-date protection.\n")
+		if r.queueDrafts == nil {
+			r.queueDrafts = map[string]importQueueDraft{}
+		}
+		draft := r.queueDrafts[base]
+		draft.Strict = true
+		r.queueDrafts[base] = draft
+		r.add(base, source, "up-to-date", "equivalent", false, "GitHub strict up-to-date checks map to strict verification: the landed commit is the tested commit. verification: post_merge would be a weaker relaxation and requires a separately reviewed policy change under ADR 0005.", "# verification: strict belongs in this base's reconciled queue fragment.\n# verification: post_merge relaxes strict up-to-date protection.\n")
 	}
 }

@@ -174,25 +174,30 @@ func (c *setupAPI) readProtection(ctx context.Context, opts ImportOptions) (Prot
 		return r, err
 	}
 	r.coverage(owners)
-	workflows, err := c.importWorkflows(ctx, opts.Repo, tree)
+	writers, err := c.importWriters(ctx, opts.Repo, &r)
 	if err != nil {
 		return r, err
 	}
-	writers, err := c.importWriters(ctx, opts.Repo)
-	if err != nil {
-		return r, err
+	for _, rs := range snap.Rulesets {
+		r.inventoryBypass("", rs)
 	}
 	for _, base := range r.Bases {
 		baseOwners := owners
+		baseTree := tree
 		if base != r.DefaultBranch {
 			bt, e := c.importTree(ctx, opts.Repo, tips[base])
 			if e != nil {
 				return r, e
 			}
+			baseTree = bt
 			baseOwners, e = c.importOwners(ctx, opts.Repo, bt)
 			if e != nil {
 				return r, e
 			}
+		}
+		workflows, err := c.importWorkflows(ctx, opts.Repo, baseTree)
+		if err != nil {
+			return r, err
 		}
 		r.compareOwners(base, owners, baseOwners)
 		evidence, err := c.importChecks(ctx, opts.Repo, tips[base])
@@ -201,7 +206,6 @@ func (c *setupAPI) readProtection(ctx context.Context, opts ImportOptions) (Prot
 		}
 		var applicable []Ruleset
 		for _, rs := range snap.Rulesets {
-			r.inventoryBypass(base, rs)
 			if rs.Enforcement != "active" || rs.Target == "tag" {
 				continue
 			}
@@ -230,31 +234,56 @@ func (c *setupAPI) readProtection(ctx context.Context, opts ImportOptions) (Prot
 		if err := r.translateClassic(base, protection, writers, evidence, workflows); err != nil {
 			return r, err
 		}
+		c.importPrincipals(ctx, &r, applicable, protection)
 		r.effectiveWriters(base, applicable, protection)
 	}
 	return r, nil
 }
 
 type importWriter struct {
+	ID          int64                                `json:"id"`
+	RoleName    string                               `json:"role_name"`
 	Login       string                               `json:"login"`
 	Permissions struct{ Admin, Maintain, Push bool } `json:"permissions"`
 }
 
-func (c *setupAPI) importWriters(ctx context.Context, repo string) ([]string, error) {
+func (c *setupAPI) importWriters(ctx context.Context, repo string, r *ProtectionReport) ([]string, error) {
 	var writers []string
+	roles := map[string][]string{"RepositoryRole:1": {}, "RepositoryRole:2": {}, "RepositoryRole:3": {}, "RepositoryRole:4": {}, "RepositoryRole:5": {}}
+	completeRoles := true
 	for page := 1; ; page++ {
 		var entries []importWriter
 		next, err := c.page(ctx, http.MethodGet, fmt.Sprintf("repos/%s/collaborators?affiliation=all&per_page=100&page=%d", repo, page), nil, &entries)
 		if err != nil {
 			return nil, c.importError(err, "repository admin access to collaborators")
 		}
+		if entries == nil {
+			return nil, errors.New("incomplete collaborator listing")
+		}
 		for _, entry := range entries {
+			level := map[string]int{"read": 1, "triage": 2, "write": 3, "maintain": 4, "admin": 5}[entry.RoleName]
+			if entry.ID <= 0 || level == 0 {
+				completeRoles = false
+			}
+			// Built-in role bypasses cover that role and higher roles.
+			for n := 1; n <= level; n++ {
+				key := fmt.Sprintf("RepositoryRole:%d", n)
+				roles[key] = append(roles[key], fmt.Sprintf("User:%d", entry.ID))
+			}
 			if entry.Permissions.Admin || entry.Permissions.Maintain || entry.Permissions.Push {
 				writers = append(writers, entry.Login)
 			}
 		}
 		if !next {
 			break
+		}
+	}
+	if r.principals == nil {
+		r.principals = map[string][]string{}
+	}
+	if completeRoles {
+		for key, members := range roles {
+			r.principals[key] = members
 		}
 	}
 	slices.Sort(writers)

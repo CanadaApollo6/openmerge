@@ -51,6 +51,9 @@ type importClassicProtection struct {
 	Signatures   *importToggle       `json:"required_signatures"`
 	Linear       importToggle        `json:"required_linear_history"`
 	Lock         importToggle        `json:"lock_branch"`
+	ForcePushes  importToggle        `json:"allow_force_pushes"`
+	Deletions    importToggle        `json:"allow_deletions"`
+	Creations    importToggle        `json:"block_creations"`
 	Admins       importToggle        `json:"enforce_admins"`
 	Restrictions *classicActors      `json:"restrictions"`
 }
@@ -76,27 +79,34 @@ func (c *setupAPI) importClassic(ctx context.Context, repo, base string) (*impor
 	return &p, nil
 }
 
-func approvalFragment(count int, writers []string) string {
-	return fragment(map[string]any{
-		"groups":    map[string]any{"imported_reviewers": writers},
-		"approvals": map[string]any{"default": "any_writer", "rules": []any{map[string]any{"when": map[string]any{}, "require": map[string]any{"group": "imported_reviewers", "count": count}}}},
-	}) + "# groups is repository-level; approvals belongs to this base's queue.\n# Maintain imported_reviewers as writer membership changes; eligibility is re-read at landing.\n"
-}
 func (r *ProtectionReport) reviews(base, source string, p importReviews, writers []string) {
-	r.add(base, source, "pull-requests", "equivalent", false, "Keep pull-request submission required. Approval policy uses eligible, distinct reviewers, excludes author/submitter/accountable humans and blocks eligible requests for changes; plain approved-reviews-by is not equivalent.", "changes:\n  pull_requests: required\n")
+	if r.queueDrafts == nil {
+		r.queueDrafts = map[string]importQueueDraft{}
+	}
+	draft := r.queueDrafts[base]
+	draft.Count = max(draft.Count, p.Count)
+	draft.PullRequests = true
+	draft.Owners = draft.Owners || p.Owners
+	draft.Writers = writers
+	r.queueDrafts[base] = draft
+	r.add(base, source, "pull-requests", "equivalent", false, "Keep pull-request submission required. Approval policy uses eligible, distinct reviewers, excludes author/submitter/accountable humans and blocks eligible requests for changes; plain approved-reviews-by is not equivalent.", "# changes.pull_requests: required belongs in this base's reconciled queue fragment.\n")
 	if p.Count > 0 {
 		class, message := "stricter", "Head-bound approvals are stricter with stale-review dismissal off. The imported group snapshots current writers; future writers must be added."
 		if p.Stale {
 			class = "weaker"
 			message = "GitHub stale-review dismissal can invalidate approval after a merge-base or diff change without a new head. OpenMerge can retain it; explicit acceptance is required. The imported group snapshots current writers."
 		}
-		r.add(base, source, "reviews", class, false, message, approvalFragment(p.Count, writers))
+		r.add(base, source, "reviews", class, false, fmt.Sprintf("Require %d approvals. %s", p.Count, message), "# Approval count is included in the reconciled draft for this base.\n")
 		if len(writers) == 0 {
 			r.add(base, source, "reviewer-pool", "unsupported", false, "No eligible repository writers were returned; approval counts cannot be satisfied.", "# Resolve the eligible reviewer pool before using the approval draft.")
 		}
 	}
 	if p.Owners {
-		r.add(base, source, "owner-review", "equivalent", false, "Require at least one eligible owner for every changed owned file, using CODEOWNERS at the governing default-branch commit. See the base comparison. Stage A must supply owner requirements; groups alone confer no path ownership.", "approvals:\n  default: any_writer\n# Stage A owner requirement: one eligible owner per changed owned file.\n# Use governing CODEOWNERS, last matching entry; full owner-requirement schema lands with Stage A.\n")
+		class := "equivalent"
+		if p.Stale {
+			class = "weaker"
+		}
+		r.add(base, source, "owner-review", class, false, fmt.Sprintf("Stale dismissal enabled=%t: stale owner approvals may survive merge-base/diff changes without a new head; acceptance is required when enabled. Require at least one eligible owner for every changed owned file, using CODEOWNERS at the governing default-branch commit. See the base comparison. Stage A must supply owner requirements; groups alone confer no path ownership.", p.Stale), "# Owner requirement is retained in the reconciled draft for this base.\n")
 	}
 	if p.LastPush {
 		r.add(base, source, "last-push", "unsupported", false, "Last-push approval has no equivalent; excluding the submitter does not exclude a later pusher.", "# No equivalent for approval of the most recent reviewable push.")
@@ -105,7 +115,7 @@ func (r *ProtectionReport) reviews(base, source string, p importReviews, writers
 		r.unsupported(base, source, "conversation-resolution", "Conversation resolution has no OpenMerge equivalent.")
 	}
 	if len(p.Dismissal) > 0 && string(p.Dismissal) != "null" && string(p.Dismissal) != "{}" {
-		r.unsupported(base, source, "dismissal-restrictions", "Review dismissal actor restrictions have no equivalent in OpenMerge approval policy.")
+		r.unsupported(base, source, "dismissal-restrictions", "Review dismissal actor restrictions have no equivalent in OpenMerge approval policy: "+string(p.Dismissal))
 	}
 }
 func (r *ProtectionReport) unsupported(base, source, key, message string) {
@@ -115,20 +125,51 @@ func (r *ProtectionReport) unsupported(base, source, key, message string) {
 func (r *ProtectionReport) translateRule(base, source string, rule RepositoryRule, writers []string, evidence checkEvidence, workflows []importWorkflow) error {
 	switch rule.Type {
 	case "pull_request":
-		var reviews importReviews
-		if err := json.Unmarshal(rule.Parameters, &reviews); err != nil {
-			return fmt.Errorf("invalid pull_request parameters: %w", err)
-		}
-		// Rulesets use a different spelling from classic protection.
-		var stale struct {
-			Enabled bool `json:"dismiss_stale_reviews_on_push"`
-			Owners  bool `json:"require_code_owner_review"`
-		}
-		if err := json.Unmarshal(rule.Parameters, &stale); err != nil {
+		var params map[string]json.RawMessage
+		if err := json.Unmarshal(rule.Parameters, &params); err != nil {
 			return err
 		}
-		reviews.Stale = stale.Enabled
-		reviews.Owners = stale.Owners
+		if params == nil {
+			return fmt.Errorf("missing pull_request parameters")
+		}
+		var reviews importReviews
+		handled := map[string]any{
+			"required_approving_review_count":   &reviews.Count,
+			"dismiss_stale_reviews_on_push":     &reviews.Stale,
+			"require_code_owner_review":         &reviews.Owners,
+			"require_last_push_approval":        &reviews.LastPush,
+			"required_review_thread_resolution": &reviews.Threads,
+		}
+		keys := make([]string, 0, len(params))
+		for key := range params {
+			keys = append(keys, key)
+		}
+		slices.Sort(keys)
+		for _, key := range keys {
+			raw := params[key]
+			if target, ok := handled[key]; ok {
+				if string(raw) == "null" {
+					return fmt.Errorf("null pull_request parameter %s", key)
+				}
+				if err := json.Unmarshal(raw, target); err != nil {
+					return err
+				}
+				continue
+			}
+			if key == "dismissal_restriction" {
+				// Preserve the complete value, including future nested keys.
+				r.unsupported(base, source, "dismissal-restrictions", "Review dismissal_restriction has no OpenMerge equivalent: "+string(raw))
+				continue
+			}
+			reason := "Unhandled pull_request parameter " + key + "=" + string(raw) + "; no faithful translation."
+			if key == "required_reviewers" {
+				reason += " Per-file required teams use GitHub pattern/identity semantics; ADR 0007 groups do not confer ownership and the importer cannot prove a faithful mapping."
+			}
+			r.unsupported(base, source, "pull-request-parameter-"+key, reason)
+		}
+		if reviews.Count < 0 {
+			return fmt.Errorf("negative approval count")
+		}
 		r.reviews(base, source, reviews, writers)
 	case "required_status_checks":
 		var checks importStatusChecks
@@ -137,13 +178,13 @@ func (r *ProtectionReport) translateRule(base, source string, rule RepositoryRul
 		}
 		r.requiredChecks(base, source, checks, evidence, workflows)
 	case "required_deployments":
-		r.unsupported(base, source, "deployments", "Required deployments have no OpenMerge equivalent.")
+		r.unsupported(base, source, "deployments", "Required deployments have no OpenMerge equivalent. Parameters: "+string(rule.Parameters))
 	case "required_conversation_resolution":
 		r.unsupported(base, source, "conversation-resolution", "Conversation resolution has no OpenMerge equivalent.")
 	case "creation", "update", "deletion", "non_fast_forward":
 		r.add(base, source, rule.Type, "equivalent", false, "Keep write restrictions on GitHub; bypass inventory is separate from policy translation.", "# Keep GitHub "+rule.Type+" restrictions; do not translate into merge_when.")
 	default:
-		r.unsupported(base, source, rule.Type, "Content/unknown rule "+rule.Type+" stays on GitHub and requires rule-aware validation for every generated ref and merge method before switch.")
+		r.unsupported(base, source, rule.Type, "Content/unknown rule "+rule.Type+" parameters="+string(rule.Parameters)+" stays on GitHub and requires rule-aware validation for every generated ref and merge method before switch.")
 	}
 	return nil
 }
@@ -167,6 +208,16 @@ func (r *ProtectionReport) translateClassic(base string, p *importClassicProtect
 	if p.Linear.Enabled {
 		r.unsupported(base, "classic", "linear-history", "Linear history needs merge-method validation, including contributor merges under fast-forward.")
 	}
+	for _, toggle := range []struct {
+		key   string
+		value bool
+	}{
+		{"allow_force_pushes", p.ForcePushes.Enabled}, {"allow_deletions", p.Deletions.Enabled},
+		{"block_creations", p.Creations.Enabled}, {"enforce_admins", p.Admins.Enabled},
+	} {
+		r.unsupported(base, "classic", toggle.key, fmt.Sprintf("Classic %s enabled=%t must be retained and verified on GitHub for the installed App; no translated policy guarantee.", toggle.key, toggle.value))
+	}
+	r.add(base, "classic", "lock_branch", "equivalent", p.Lock.Enabled, fmt.Sprintf("Classic lock_branch enabled=%t. A locked branch prevents the App from landing; unlock and verify at switch.", p.Lock.Enabled), "# Verify classic branch locking before switching.\n")
 	r.classicInventory(base, "classic-push-restrictions", p.Restrictions)
 	return nil
 }
@@ -220,6 +271,7 @@ func (r *ProtectionReport) effectiveWriters(base string, rules []Ruleset, p *imp
 		return
 	}
 	if len(gates) == 0 {
+		r.principalIntersection(base, gates, p)
 		if p != nil && p.Restrictions != nil {
 			for _, group := range []struct {
 				kind    string
@@ -235,6 +287,7 @@ func (r *ProtectionReport) effectiveWriters(base string, rules []Ruleset, p *imp
 		}
 		return
 	}
+	r.principalIntersection(base, gates, p)
 	keys := make([]string, 0, len(candidates))
 	for key := range candidates {
 		keys = append(keys, key)

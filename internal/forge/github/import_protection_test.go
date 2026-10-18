@@ -112,6 +112,8 @@ func (f *protectionFixture) server(t *testing.T) *httptest.Server {
 			}
 			parts := strings.SplitN(string(decoded), ":", 2)
 			send(map[string]string{"encoding": "base64", "content": base64.StdEncoding.EncodeToString([]byte(f.files[parts[0]][parts[1]]))})
+		case r.URL.Path == "/teams/7/members":
+			send([]classicIdentity{{ID: 1, Login: "alice"}})
 		case path == "/collaborators":
 			send([]any{map[string]any{"login": "alice", "permissions": map[string]bool{"push": true}}, map[string]any{"login": "bob", "permissions": map[string]bool{"admin": true}}, map[string]any{"login": "reader", "permissions": map[string]bool{"pull": true}}})
 		case strings.HasSuffix(path, "/protection"):
@@ -164,13 +166,13 @@ func TestImportProtectionReport(t *testing.T) {
 	}{
 		{"main", "ruleset:11", "reviews", "weaker", "merge-base", false},
 		{"main", "classic", "reviews", "stricter", "Head-bound", false},
-		{"main", "ruleset:11", "owner-review", "equivalent", "governing", false},
+		{"main", "ruleset:11", "owner-review", "weaker", "governing", false},
 		{"main", "ruleset:11", "last-push", "unsupported", "later pusher", false},
 		{"main", "ruleset:11", "check-ci", "weaker", "App-pinned", false},
 		{"main", "ruleset:11", "check-pr-only", "unsupported", "only on pull requests", false},
 		{"main", "ruleset:11", "check-shared", "unsupported", "ambiguous", false},
 		{"main", "ruleset:11", "check-missing", "unsupported", "missing", false},
-		{"main", "ruleset:11", "check-results-ci", "stricter", "neutral and skipped", false},
+		{"main", "ruleset:11", "result-semantics:ci", "stricter", "neutral and skipped", false},
 		{"main", "ruleset:11", "up-to-date", "equivalent", "post_merge", false},
 		{"main", "ruleset:11", "conversation-resolution", "unsupported", "no OpenMerge equivalent", false},
 		{"main", "ruleset:11", "deployments", "unsupported", "no OpenMerge equivalent", false},

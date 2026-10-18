@@ -68,13 +68,18 @@ func parseImportOwners(path, data string) importOwners {
 // whole-path queue globs. A later empty owner list explicitly removes ownership.
 func ownerPatternMatches(pattern, path string) bool {
 	anchored := strings.HasPrefix(pattern, "/") || strings.Contains(strings.TrimSuffix(pattern, "/"), "/")
+	directoryOnly := strings.HasSuffix(pattern, "/")
 	pattern = strings.Trim(pattern, "/")
 	glob, err := condition.CompileGlob(pattern)
 	if err != nil {
 		return false
 	}
 	parts := strings.Split(path, "/")
-	for n := len(parts); n > 0; n-- {
+	end := len(parts)
+	if directoryOnly {
+		end-- // The final component is a file, never a directory.
+	}
+	for n := end; n > 0; n-- {
 		candidate := strings.Join(parts[:n], "/")
 		if !anchored {
 			candidate = parts[n-1]
@@ -98,8 +103,11 @@ func (r *ProtectionReport) coverage(o importOwners) {
 	paths := []string{".openmerge.yml", ".openmerge.yaml", ".github/openmerge.yml", ".github/openmerge.yaml", ".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"}
 	for _, path := range paths {
 		owners := o.effective(path)
-		resolvable := len(o.Invalid) == 0 && slices.ContainsFunc(owners, func(owner string) bool { return strings.HasPrefix(owner, "@") && len(owner) > 1 })
-		r.add("", "governing-CODEOWNERS", "coverage-"+path, "equivalent", !resolvable, fmt.Sprintf("%s at %s: effective owners for %s = %v. OpenMerge config paths and CODEOWNERS must have resolvable owners; emails alone do not resolve Stage A owner requirements. Team visibility and eligibility must be verified at switch.", o.Path, r.GoverningCommit, path, owners), "# CODEOWNERS must cover "+path+" with eligible user/team owners.")
+		syntactic := len(o.Invalid) == 0 && slices.ContainsFunc(owners, func(owner string) bool { return strings.HasPrefix(owner, "@") && len(owner) > 1 })
+		if !syntactic {
+			owners = nil
+		}
+		r.add("", "governing-CODEOWNERS", "coverage-"+path, "equivalent", true, fmt.Sprintf("%s at %s: effective owners for %s = %v. OpenMerge config paths and CODEOWNERS must have resolvable owners; emails alone do not resolve Stage A owner requirements. To verify at switch: owner identity, team visibility, write eligibility and effective coverage remain unresolved by this syntactic inspection.", o.Path, r.GoverningCommit, path, owners), "# CODEOWNERS must cover "+path+" with eligible user/team owners.")
 	}
 	if len(o.Invalid) > 0 {
 		r.add("", "governing-CODEOWNERS", "owners-syntax", "unsupported", true, strings.Join(o.Invalid, "; "), "# Repair CODEOWNERS syntax; incomplete ownership cannot satisfy installation coverage.")

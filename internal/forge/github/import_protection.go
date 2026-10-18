@@ -24,8 +24,9 @@ type ImportOptions struct {
 	Out    string
 }
 
-// ProtectionItem IDs depend only on the base, source and requirement, not wording
-// or list ordering. Blocking installation prerequisites cannot be accepted.
+// ProtectionItem IDs include the base, source, classification and requirement
+// details, so acceptance cannot silently carry over to a changed requirement.
+// Blocking installation prerequisites cannot be accepted.
 type ProtectionItem struct {
 	ID             string `json:"id"`
 	Base           string `json:"base,omitempty"`
@@ -49,6 +50,17 @@ type ProtectionReport struct {
 	ProposedConfig    string           `json:"proposed_config"`
 	ContributingGuide string           `json:"contributing_guide"`
 	Ready             bool             `json:"ready"`
+	queueDrafts       map[string]importQueueDraft
+	principals        map[string][]string
+}
+
+type importQueueDraft struct {
+	Count        int
+	Owners       bool
+	Writers      []string
+	PullRequests bool
+	Strict       bool
+	Checks       []string
 }
 
 const importGuide = `This repository merges through OpenMerge. Submit a pull request and use
@@ -100,7 +112,7 @@ func importProtection(ctx context.Context, opts ImportOptions, token, api string
 }
 
 func (r *ProtectionReport) add(base, source, key, class string, blocking bool, message, fragment string) {
-	sum := sha256.Sum256([]byte(base + "\x00" + source + "\x00" + key))
+	sum := sha256.Sum256([]byte(base + "\x00" + source + "\x00" + key + "\x00" + class + "\x00" + message + "\x00" + fragment))
 	r.Items = append(r.Items, ProtectionItem{ID: fmt.Sprintf("%s-%x", importIDPrefix(key), sum[:8]), Base: base, Source: source, Classification: class, Blocking: blocking, Message: message, Fragment: fragment})
 }
 
@@ -151,6 +163,42 @@ func (r *ProtectionReport) accept(ids []string) error {
 		draft.WriteString(item.Fragment)
 		draft.WriteByte('\n')
 	}
+	bases := make([]string, 0, len(r.queueDrafts))
+	for base := range r.queueDrafts {
+		bases = append(bases, base)
+	}
+	slices.Sort(bases)
+	for _, base := range bases {
+		p := r.queueDrafts[base]
+		fmt.Fprintf(&draft, "\n# Reconciled queue fragment for base=%q: combine classic protection and all applicable rulesets.\n# changes, approvals, verification and merge_when belong in this base's queue.\n", base)
+		value := map[string]any{}
+		if p.PullRequests {
+			value["changes"] = map[string]any{"pull_requests": "required"}
+		}
+		if p.Strict {
+			value["verification"] = "strict"
+		}
+		if len(p.Checks) > 0 {
+			checks := slices.Clone(p.Checks)
+			slices.Sort(checks)
+			value["merge_when"] = slices.Compact(checks)
+		}
+		if p.Count > 0 || p.Owners {
+			approvals := map[string]any{"default": "any_writer"}
+			if p.Count > 0 {
+				value["groups"] = map[string]any{"imported_reviewers": p.Writers}
+				approvals["rules"] = []any{map[string]any{"when": map[string]any{"touches": []string{"**"}}, "require": map[string]any{"group": "imported_reviewers", "count": p.Count}}}
+			}
+			value["approvals"] = approvals
+		}
+		draft.WriteString(fragment(value))
+		if p.Count > 0 {
+			draft.WriteString("# Maximum approval count across sources; groups is repository-level.\n# Assumption: touches ** applies the count to every change with a file inventory; unknown matches enforce it.\n# Maintain imported_reviewers as writer membership changes; eligibility is re-read at landing.\n")
+		}
+		if p.Owners {
+			draft.WriteString("# Stage A owner requirement: one eligible owner per changed owned file.\n# Use governing CODEOWNERS, last matching entry; full owner-requirement schema lands with Stage A.\n")
+		}
+	}
 	r.ProposedConfig = draft.String()
 	return nil
 }
@@ -164,6 +212,15 @@ func (r ProtectionReport) Write(out io.Writer, asJSON bool) error {
 		return encoder.Encode(r)
 	}
 	var b strings.Builder
+	blockers, gaps := 0, 0
+	for _, item := range r.Items {
+		if item.Blocking {
+			blockers++
+		} else if !item.Accepted && (item.Classification == "unsupported" || item.Classification == "weaker") {
+			gaps++
+		}
+	}
+	fmt.Fprintf(&b, "Ready: %t; installation/authority blockers: %d; unaccepted policy gaps: %d\n", r.Ready, blockers, gaps)
 	fmt.Fprintf(&b, "Repository %s; default %s at %s; bases: %s\n%s\n", r.Repository, r.DefaultBranch, r.GoverningCommit, strings.Join(r.Bases, ", "), stageA)
 	for _, item := range r.Items {
 		flag := ""

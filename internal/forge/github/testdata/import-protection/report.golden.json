@@ -1,0 +1,770 @@
+{
+  "version": 1,
+  "repository": "acme/project",
+  "default_branch": "main",
+  "governing_commit": "main-tip",
+  "bases": [
+    "main",
+    "release/1"
+  ],
+  "items": [
+    {
+      "id": "served-default-87a8d321cc0d60ce",
+      "source": "installation",
+      "classification": "equivalent",
+      "blocking": false,
+      "accepted": false,
+      "message": "The default branch must be served by a configured queue; --base only adds audit targets.",
+      "fragment": "# Serve the default branch in queues before switching policy authority."
+    },
+    {
+      "id": "bypass-verification-fce755c8a55fd2a2",
+      "source": "installation",
+      "classification": "equivalent",
+      "blocking": true,
+      "accepted": false,
+      "message": "To verify at switch: GitHub must accept the installed OpenMerge App and exactly one team or repository-admin break-glass actor. Read-only inspection cannot prove a future ruleset write will be accepted; bots cannot be break-glass.",
+      "fragment": "# Install and verify the App and break-glass bypass before switching."
+    },
+    {
+      "id": "policy-approval-481a8fa9189953a7",
+      "source": "installation",
+      "classification": "equivalent",
+      "blocking": true,
+      "accepted": false,
+      "message": "Mandatory owner approval for policy-class changes cannot be waived. Install the release implementing ADR 0007 Stage A and verify this gate at switch.",
+      "fragment": "# policy_authority: openmerge (only after Stage A and all installation prerequisites)\n# Mandatory policy owner approval applies even without approvals rules."
+    },
+    {
+      "id": "coverage-.openmerge.yml-df8f603b4826bc56",
+      "source": "governing-CODEOWNERS",
+      "classification": "equivalent",
+      "blocking": true,
+      "accepted": false,
+      "message": ".github/CODEOWNERS at main-tip: effective owners for .openmerge.yml = [@acme/maintainers]. OpenMerge config paths and CODEOWNERS must have resolvable owners; emails alone do not resolve Stage A owner requirements. To verify at switch: owner identity, team visibility, write eligibility and effective coverage remain unresolved by this syntactic inspection.",
+      "fragment": "# CODEOWNERS must cover .openmerge.yml with eligible user/team owners."
+    },
+    {
+      "id": "coverage-.openmerge.yaml-400a810ef1fa4ae9",
+      "source": "governing-CODEOWNERS",
+      "classification": "equivalent",
+      "blocking": true,
+      "accepted": false,
+      "message": ".github/CODEOWNERS at main-tip: effective owners for .openmerge.yaml = [@acme/maintainers]. OpenMerge config paths and CODEOWNERS must have resolvable owners; emails alone do not resolve Stage A owner requirements. To verify at switch: owner identity, team visibility, write eligibility and effective coverage remain unresolved by this syntactic inspection.",
+      "fragment": "# CODEOWNERS must cover .openmerge.yaml with eligible user/team owners."
+    },
+    {
+      "id": "coverage-.github/openmerge.yml-06877f66b4f77d86",
+      "source": "governing-CODEOWNERS",
+      "classification": "equivalent",
+      "blocking": true,
+      "accepted": false,
+      "message": ".github/CODEOWNERS at main-tip: effective owners for .github/openmerge.yml = [@acme/maintainers]. OpenMerge config paths and CODEOWNERS must have resolvable owners; emails alone do not resolve Stage A owner requirements. To verify at switch: owner identity, team visibility, write eligibility and effective coverage remain unresolved by this syntactic inspection.",
+      "fragment": "# CODEOWNERS must cover .github/openmerge.yml with eligible user/team owners."
+    },
+    {
+      "id": "coverage-.github/openmerge.yaml-d6bf0ff34966abf4",
+      "source": "governing-CODEOWNERS",
+      "classification": "equivalent",
+      "blocking": true,
+      "accepted": false,
+      "message": ".github/CODEOWNERS at main-tip: effective owners for .github/openmerge.yaml = [@acme/maintainers]. OpenMerge config paths and CODEOWNERS must have resolvable owners; emails alone do not resolve Stage A owner requirements. To verify at switch: owner identity, team visibility, write eligibility and effective coverage remain unresolved by this syntactic inspection.",
+      "fragment": "# CODEOWNERS must cover .github/openmerge.yaml with eligible user/team owners."
+    },
+    {
+      "id": "coverage-.github/CODEOWNERS-0a9f09715cab047e",
+      "source": "governing-CODEOWNERS",
+      "classification": "equivalent",
+      "blocking": true,
+      "accepted": false,
+      "message": ".github/CODEOWNERS at main-tip: effective owners for .github/CODEOWNERS = [@acme/maintainers]. OpenMerge config paths and CODEOWNERS must have resolvable owners; emails alone do not resolve Stage A owner requirements. To verify at switch: owner identity, team visibility, write eligibility and effective coverage remain unresolved by this syntactic inspection.",
+      "fragment": "# CODEOWNERS must cover .github/CODEOWNERS with eligible user/team owners."
+    },
+    {
+      "id": "coverage-CODEOWNERS-73a8ef58fdf6c030",
+      "source": "governing-CODEOWNERS",
+      "classification": "equivalent",
+      "blocking": true,
+      "accepted": false,
+      "message": ".github/CODEOWNERS at main-tip: effective owners for CODEOWNERS = [@acme/maintainers]. OpenMerge config paths and CODEOWNERS must have resolvable owners; emails alone do not resolve Stage A owner requirements. To verify at switch: owner identity, team visibility, write eligibility and effective coverage remain unresolved by this syntactic inspection.",
+      "fragment": "# CODEOWNERS must cover CODEOWNERS with eligible user/team owners."
+    },
+    {
+      "id": "coverage-docs/CODEOWNERS-aaa58fb70a3f5c9f",
+      "source": "governing-CODEOWNERS",
+      "classification": "equivalent",
+      "blocking": true,
+      "accepted": false,
+      "message": ".github/CODEOWNERS at main-tip: effective owners for docs/CODEOWNERS = [@alice]. OpenMerge config paths and CODEOWNERS must have resolvable owners; emails alone do not resolve Stage A owner requirements. To verify at switch: owner identity, team visibility, write eligibility and effective coverage remain unresolved by this syntactic inspection.",
+      "fragment": "# CODEOWNERS must cover docs/CODEOWNERS with eligible user/team owners."
+    },
+    {
+      "id": "bypass-Integration:42-always-4b4dbc1a1fcda316",
+      "source": "ruleset:11",
+      "classification": "equivalent",
+      "blocking": false,
+      "accepted": false,
+      "message": "Bypass inventory: Integration:42 mode=always; source=Repository acme/project; enforcement=active; applicability is evaluated separately. Bypassing this ruleset alone grants no authority over other applicable rules.",
+      "fragment": "# Retain/review bypass actor Integration:42; an Integration/bot cannot be break-glass."
+    },
+    {
+      "id": "bypass-Team:7-always-6f7aa74aedea5654",
+      "source": "ruleset:11",
+      "classification": "equivalent",
+      "blocking": false,
+      "accepted": false,
+      "message": "Bypass inventory: Team:7 mode=always; source=Repository acme/project; enforcement=active; applicability is evaluated separately. Bypassing this ruleset alone grants no authority over other applicable rules.",
+      "fragment": "# Retain/review bypass actor Team:7; an Integration/bot cannot be break-glass."
+    },
+    {
+      "id": "bypass-Integration:42-always-059927ffe051110d",
+      "source": "ruleset:12",
+      "classification": "equivalent",
+      "blocking": false,
+      "accepted": false,
+      "message": "Bypass inventory: Integration:42 mode=always; source=Organization acme; enforcement=active; applicability is evaluated separately. Bypassing this ruleset alone grants no authority over other applicable rules.",
+      "fragment": "# Retain/review bypass actor Integration:42; an Integration/bot cannot be break-glass."
+    },
+    {
+      "id": "bypass-Team:7-always-a142a064393b329d",
+      "source": "ruleset:12",
+      "classification": "equivalent",
+      "blocking": false,
+      "accepted": false,
+      "message": "Bypass inventory: Team:7 mode=always; source=Organization acme; enforcement=active; applicability is evaluated separately. Bypassing this ruleset alone grants no authority over other applicable rules.",
+      "fragment": "# Retain/review bypass actor Team:7; an Integration/bot cannot be break-glass."
+    },
+    {
+      "id": "bypass-Integration:99-pull_request-363ce4a3586766bd",
+      "source": "ruleset:12",
+      "classification": "equivalent",
+      "blocking": false,
+      "accepted": false,
+      "message": "Bypass inventory: Integration:99 mode=pull_request; source=Organization acme; enforcement=active; applicability is evaluated separately. Bypassing this ruleset alone grants no authority over other applicable rules.",
+      "fragment": "# Retain/review bypass actor Integration:99; an Integration/bot cannot be break-glass."
+    },
+    {
+      "id": "owners-comparison-71d2e54295fe371b",
+      "base": "main",
+      "source": "CODEOWNERS",
+      "classification": "equivalent",
+      "blocking": false,
+      "accepted": false,
+      "message": "Effective CODEOWNERS rules on main (.github/CODEOWNERS) match the governing default branch (.github/CODEOWNERS).",
+      "fragment": "# Owner requirements use governing CODEOWNERS."
+    },
+    {
+      "id": "pull-requests-bacde6c1d55612e2",
+      "base": "main",
+      "source": "ruleset:11",
+      "classification": "equivalent",
+      "blocking": false,
+      "accepted": false,
+      "message": "Keep pull-request submission required. Approval policy uses eligible, distinct reviewers, excludes author/submitter/accountable humans and blocks eligible requests for changes; plain approved-reviews-by is not equivalent.",
+      "fragment": "# changes.pull_requests: required belongs in this base's reconciled queue fragment.\n"
+    },
+    {
+      "id": "reviews-7a1f811d35e65961",
+      "base": "main",
+      "source": "ruleset:11",
+      "classification": "weaker",
+      "blocking": false,
+      "accepted": false,
+      "message": "Require 2 approvals. GitHub stale-review dismissal can invalidate approval after a merge-base or diff change without a new head. OpenMerge can retain it; explicit acceptance is required. The imported group snapshots current writers.",
+      "fragment": "# Approval count is included in the reconciled draft for this base.\n"
+    },
+    {
+      "id": "owner-review-a5e527ba314854e6",
+      "base": "main",
+      "source": "ruleset:11",
+      "classification": "weaker",
+      "blocking": false,
+      "accepted": false,
+      "message": "Stale dismissal enabled=true: stale owner approvals may survive merge-base/diff changes without a new head; acceptance is required when enabled. Require at least one eligible owner for every changed owned file, using CODEOWNERS at the governing default-branch commit. See the base comparison. Stage A must supply owner requirements; groups alone confer no path ownership.",
+      "fragment": "# Owner requirement is retained in the reconciled draft for this base.\n"
+    },
+    {
+      "id": "last-push-27d2de666bc4700f",
+      "base": "main",
+      "source": "ruleset:11",
+      "classification": "unsupported",
+      "blocking": false,
+      "accepted": false,
+      "message": "Last-push approval has no equivalent; excluding the submitter does not exclude a later pusher.",
+      "fragment": "# No equivalent for approval of the most recent reviewable push."
+    },
+    {
+      "id": "conversation-resolution-b015d332f7270511",
+      "base": "main",
+      "source": "ruleset:11",
+      "classification": "unsupported",
+      "blocking": false,
+      "accepted": false,
+      "message": "Conversation resolution has no OpenMerge equivalent.",
+      "fragment": "# Retain for manual review: conversation-resolution; no equivalent configuration.\n"
+    },
+    {
+      "id": "check-ci-8df4d50f9f745257",
+      "base": "main",
+      "source": "ruleset:11",
+      "classification": "weaker",
+      "blocking": false,
+      "accepted": false,
+      "message": "The GitHub requirement is App-pinned; check-success does not bind an App identity. Explicit acceptance loses that guarantee. Required check parameters: [{\"context\":\"ci\",\"app_id\":null,\"integration_id\":15368}]. Producers observed: check:15368. Workflow push coverage for openmerge/queue/**: yes. .github/workflows/queue.yml job ci: queue pushes=yes.",
+      "fragment": "# merge_when term \"check-success = ci\" belongs in this base's reconciled queue fragment.\n"
+    },
+    {
+      "id": "result-semantics:ci-3401b688c9d88c62",
+      "base": "main",
+      "source": "ruleset:11",
+      "classification": "stricter",
+      "blocking": false,
+      "accepted": false,
+      "message": "OpenMerge counts neutral and skipped results as failures; GitHub accepts them. This may stall changes GitHub would merge.",
+      "fragment": "# check \"ci\": only success counts, never neutral/skipped."
+    },
+    {
+      "id": "check-missing-70b9673799c848a5",
+      "base": "main",
+      "source": "ruleset:11",
+      "classification": "unsupported",
+      "blocking": false,
+      "accepted": false,
+      "message": "The required name does not identify exactly one observed producer (missing or ambiguous evidence, including duplicate requirements). Queue-ref push coverage is not proven; resolve coverage or change CI before migration. Required check parameters: [{\"context\":\"missing\",\"app_id\":null,\"integration_id\":null}]. Producers observed: . Workflow push coverage for openmerge/queue/**: unknown: no statically identified workflow; external CI, matrix names and reusable workflows need operator verification.",
+      "fragment": "# No equivalent merge_when term until this check requirement is resolved.\n"
+    },
+    {
+      "id": "result-semantics:missing-c497e3185b307ef7",
+      "base": "main",
+      "source": "ruleset:11",
+      "classification": "stricter",
+      "blocking": false,
+      "accepted": false,
+      "message": "OpenMerge counts neutral and skipped results as failures; GitHub accepts them. This may stall changes GitHub would merge.",
+      "fragment": "# check \"missing\": only success counts, never neutral/skipped."
+    },
+    {
+      "id": "check-pr-only-9ad99cf400c6ac72",
+      "base": "main",
+      "source": "ruleset:11",
+      "classification": "unsupported",
+      "blocking": false,
+      "accepted": false,
+      "message": "The observed name identifies one producer; merge_when uses the literal check name. Producer evidence is limited to the pinned base commit; re-audit after CI changes. Producing workflows run only on pull requests; add queue-ref push CI before migration. Queue-ref push coverage is not proven; resolve coverage or change CI before migration. Required check parameters: [{\"context\":\"pr-only\",\"app_id\":null,\"integration_id\":null}]. Producers observed: check:15368. Workflow push coverage for openmerge/queue/**: no. .github/workflows/pr.yml job pr-only: queue pushes=no.",
+      "fragment": "# No equivalent merge_when term until this check requirement is resolved.\n"
+    },
+    {
+      "id": "result-semantics:pr-only-bb4a57c05bc00dc4",
+      "base": "main",
+      "source": "ruleset:11",
+      "classification": "stricter",
+      "blocking": false,
+      "accepted": false,
+      "message": "OpenMerge counts neutral and skipped results as failures; GitHub accepts them. This may stall changes GitHub would merge.",
+      "fragment": "# check \"pr-only\": only success counts, never neutral/skipped."
+    },
+    {
+      "id": "check-shared-850d762765371dad",
+      "base": "main",
+      "source": "ruleset:11",
+      "classification": "unsupported",
+      "blocking": false,
+      "accepted": false,
+      "message": "The required name does not identify exactly one observed producer (missing or ambiguous evidence, including duplicate requirements). Queue-ref push coverage is not proven; resolve coverage or change CI before migration. Required check parameters: [{\"context\":\"shared\",\"app_id\":null,\"integration_id\":null}]. Producers observed: check:15368, status:2. Workflow push coverage for openmerge/queue/**: unknown: no statically identified workflow; external CI, matrix names and reusable workflows need operator verification.",
+      "fragment": "# No equivalent merge_when term until this check requirement is resolved.\n"
+    },
+    {
+      "id": "result-semantics:shared-b4d760c259571bcc",
+      "base": "main",
+      "source": "ruleset:11",
+      "classification": "stricter",
+      "blocking": false,
+      "accepted": false,
+      "message": "OpenMerge counts neutral and skipped results as failures; GitHub accepts them. This may stall changes GitHub would merge.",
+      "fragment": "# check \"shared\": only success counts, never neutral/skipped."
+    },
+    {
+      "id": "up-to-date-d3b812fe264e3ffc",
+      "base": "main",
+      "source": "ruleset:11",
+      "classification": "equivalent",
+      "blocking": false,
+      "accepted": false,
+      "message": "GitHub strict up-to-date checks map to strict verification: the landed commit is the tested commit. verification: post_merge would be a weaker relaxation and requires a separately reviewed policy change under ADR 0005.",
+      "fragment": "# verification: strict belongs in this base's reconciled queue fragment.\n# verification: post_merge relaxes strict up-to-date protection.\n"
+    },
+    {
+      "id": "deployments-a04d6adaa84c82e9",
+      "base": "main",
+      "source": "ruleset:11",
+      "classification": "unsupported",
+      "blocking": false,
+      "accepted": false,
+      "message": "Required deployments have no OpenMerge equivalent. Parameters: {\"required_deployment_environments\":[\"production\"]}",
+      "fragment": "# Retain for manual review: deployments; no equivalent configuration.\n"
+    },
+    {
+      "id": "update-703c4d7cc62b4899",
+      "base": "main",
+      "source": "ruleset:12",
+      "classification": "equivalent",
+      "blocking": false,
+      "accepted": false,
+      "message": "Keep write restrictions on GitHub; bypass inventory is separate from policy translation.",
+      "fragment": "# Keep GitHub update restrictions; do not translate into merge_when."
+    },
+    {
+      "id": "pull-requests-14c19871cce3c70d",
+      "base": "main",
+      "source": "classic",
+      "classification": "equivalent",
+      "blocking": false,
+      "accepted": false,
+      "message": "Keep pull-request submission required. Approval policy uses eligible, distinct reviewers, excludes author/submitter/accountable humans and blocks eligible requests for changes; plain approved-reviews-by is not equivalent.",
+      "fragment": "# changes.pull_requests: required belongs in this base's reconciled queue fragment.\n"
+    },
+    {
+      "id": "reviews-a908904d2570eca3",
+      "base": "main",
+      "source": "classic",
+      "classification": "stricter",
+      "blocking": false,
+      "accepted": false,
+      "message": "Require 1 approvals. Head-bound approvals are stricter with stale-review dismissal off. The imported group snapshots current writers; future writers must be added.",
+      "fragment": "# Approval count is included in the reconciled draft for this base.\n"
+    },
+    {
+      "id": "owner-review-4d0b88bd604bfd75",
+      "base": "main",
+      "source": "classic",
+      "classification": "equivalent",
+      "blocking": false,
+      "accepted": false,
+      "message": "Stale dismissal enabled=false: stale owner approvals may survive merge-base/diff changes without a new head; acceptance is required when enabled. Require at least one eligible owner for every changed owned file, using CODEOWNERS at the governing default-branch commit. See the base comparison. Stage A must supply owner requirements; groups alone confer no path ownership.",
+      "fragment": "# Owner requirement is retained in the reconciled draft for this base.\n"
+    },
+    {
+      "id": "last-push-3422c894180cd3d6",
+      "base": "main",
+      "source": "classic",
+      "classification": "unsupported",
+      "blocking": false,
+      "accepted": false,
+      "message": "Last-push approval has no equivalent; excluding the submitter does not exclude a later pusher.",
+      "fragment": "# No equivalent for approval of the most recent reviewable push."
+    },
+    {
+      "id": "dismissal-restrictions-e280b273ad2f3daf",
+      "base": "main",
+      "source": "classic",
+      "classification": "unsupported",
+      "blocking": false,
+      "accepted": false,
+      "message": "Review dismissal actor restrictions have no equivalent in OpenMerge approval policy: {\"teams\":[],\"users\":[{\"id\":1,\"login\":\"alice\"}]}",
+      "fragment": "# Retain for manual review: dismissal-restrictions; no equivalent configuration.\n"
+    },
+    {
+      "id": "actor-User-5-78914cc9c7adb3e6",
+      "base": "main",
+      "source": "classic-review-bypass",
+      "classification": "equivalent",
+      "blocking": false,
+      "accepted": false,
+      "message": "Classic actor inventory: User:5 release-bot[bot] . Review bypass is not unrestricted push authority.",
+      "fragment": "# Review this classic allowance when installing write restrictions."
+    },
+    {
+      "id": "actor-Team-7-41f72fbfbbe23e93",
+      "base": "main",
+      "source": "classic-review-bypass",
+      "classification": "equivalent",
+      "blocking": false,
+      "accepted": false,
+      "message": "Classic actor inventory: Team:7  maintainers. Review bypass is not unrestricted push authority.",
+      "fragment": "# Review this classic allowance when installing write restrictions."
+    },
+    {
+      "id": "actor-Integration-42-1fd8832d0f418702",
+      "base": "main",
+      "source": "classic-review-bypass",
+      "classification": "equivalent",
+      "blocking": false,
+      "accepted": false,
+      "message": "Classic actor inventory: Integration:42  openmerge. Review bypass is not unrestricted push authority.",
+      "fragment": "# Review this classic allowance when installing write restrictions."
+    },
+    {
+      "id": "check-ci-bb4d16391b79644b",
+      "base": "main",
+      "source": "classic",
+      "classification": "weaker",
+      "blocking": false,
+      "accepted": false,
+      "message": "The GitHub requirement is App-pinned; check-success does not bind an App identity. Explicit acceptance loses that guarantee. Required check parameters: [{\"context\":\"ci\",\"app_id\":15368,\"integration_id\":null}]. Producers observed: check:15368. Workflow push coverage for openmerge/queue/**: yes. .github/workflows/queue.yml job ci: queue pushes=yes.",
+      "fragment": "# merge_when term \"check-success = ci\" belongs in this base's reconciled queue fragment.\n"
+    },
+    {
+      "id": "result-semantics:ci-c1e49509a54e8efa",
+      "base": "main",
+      "source": "classic",
+      "classification": "stricter",
+      "blocking": false,
+      "accepted": false,
+      "message": "OpenMerge counts neutral and skipped results as failures; GitHub accepts them. This may stall changes GitHub would merge.",
+      "fragment": "# check \"ci\": only success counts, never neutral/skipped."
+    },
+    {
+      "id": "up-to-date-fe0d644be2ff21dc",
+      "base": "main",
+      "source": "classic",
+      "classification": "equivalent",
+      "blocking": false,
+      "accepted": false,
+      "message": "GitHub strict up-to-date checks map to strict verification: the landed commit is the tested commit. verification: post_merge would be a weaker relaxation and requires a separately reviewed policy change under ADR 0005.",
+      "fragment": "# verification: strict belongs in this base's reconciled queue fragment.\n# verification: post_merge relaxes strict up-to-date protection.\n"
+    },
+    {
+      "id": "conversation-resolution-dfa313a5f40f1622",
+      "base": "main",
+      "source": "classic",
+      "classification": "unsupported",
+      "blocking": false,
+      "accepted": false,
+      "message": "Conversation resolution has no OpenMerge equivalent.",
+      "fragment": "# Retain for manual review: conversation-resolution; no equivalent configuration.\n"
+    },
+    {
+      "id": "signatures-b210aa6d73c8709b",
+      "base": "main",
+      "source": "classic",
+      "classification": "unsupported",
+      "blocking": false,
+      "accepted": false,
+      "message": "Required signatures need rule-aware validation; generated commits and fence markers are unsigned.",
+      "fragment": "# Retain for manual review: signatures; no equivalent configuration.\n"
+    },
+    {
+      "id": "linear-history-a999d6cd2265a1a7",
+      "base": "main",
+      "source": "classic",
+      "classification": "unsupported",
+      "blocking": false,
+      "accepted": false,
+      "message": "Linear history needs merge-method validation, including contributor merges under fast-forward.",
+      "fragment": "# Retain for manual review: linear-history; no equivalent configuration.\n"
+    },
+    {
+      "id": "allow_force_pushes-fa53a6dbc6b38196",
+      "base": "main",
+      "source": "classic",
+      "classification": "unsupported",
+      "blocking": false,
+      "accepted": false,
+      "message": "Classic allow_force_pushes enabled=false must be retained and verified on GitHub for the installed App; no translated policy guarantee.",
+      "fragment": "# Retain for manual review: allow_force_pushes; no equivalent configuration.\n"
+    },
+    {
+      "id": "allow_deletions-3481aa2a74c7fc69",
+      "base": "main",
+      "source": "classic",
+      "classification": "unsupported",
+      "blocking": false,
+      "accepted": false,
+      "message": "Classic allow_deletions enabled=false must be retained and verified on GitHub for the installed App; no translated policy guarantee.",
+      "fragment": "# Retain for manual review: allow_deletions; no equivalent configuration.\n"
+    },
+    {
+      "id": "block_creations-0a882a9d083b9156",
+      "base": "main",
+      "source": "classic",
+      "classification": "unsupported",
+      "blocking": false,
+      "accepted": false,
+      "message": "Classic block_creations enabled=false must be retained and verified on GitHub for the installed App; no translated policy guarantee.",
+      "fragment": "# Retain for manual review: block_creations; no equivalent configuration.\n"
+    },
+    {
+      "id": "enforce_admins-dfda736054f19105",
+      "base": "main",
+      "source": "classic",
+      "classification": "unsupported",
+      "blocking": false,
+      "accepted": false,
+      "message": "Classic enforce_admins enabled=true must be retained and verified on GitHub for the installed App; no translated policy guarantee.",
+      "fragment": "# Retain for manual review: enforce_admins; no equivalent configuration.\n"
+    },
+    {
+      "id": "lock_branch-88681d48e86348c9",
+      "base": "main",
+      "source": "classic",
+      "classification": "equivalent",
+      "blocking": false,
+      "accepted": false,
+      "message": "Classic lock_branch enabled=false. A locked branch prevents the App from landing; unlock and verify at switch.",
+      "fragment": "# Verify classic branch locking before switching.\n"
+    },
+    {
+      "id": "actor-Team-7-3c7f342fbd7eebfb",
+      "base": "main",
+      "source": "classic-push-restrictions",
+      "classification": "equivalent",
+      "blocking": false,
+      "accepted": false,
+      "message": "Classic actor inventory: Team:7  maintainers. Review bypass is not unrestricted push authority.",
+      "fragment": "# Review this classic allowance when installing write restrictions."
+    },
+    {
+      "id": "actor-Integration-42-a29dfefab72b6fa3",
+      "base": "main",
+      "source": "classic-push-restrictions",
+      "classification": "equivalent",
+      "blocking": false,
+      "accepted": false,
+      "message": "Classic actor inventory: Integration:42  openmerge. Review bypass is not unrestricted push authority.",
+      "fragment": "# Review this classic allowance when installing write restrictions."
+    },
+    {
+      "id": "principal-User:1-d59a440718b22c88",
+      "base": "main",
+      "source": "authority",
+      "classification": "equivalent",
+      "blocking": true,
+      "accepted": false,
+      "message": "Effective principal User:1 can pass every applicable ruleset and classic push restriction through resolved memberships. Verify App/break-glass authority and route other writers through the queue.",
+      "fragment": "# Resolve effective principal User:1 before switch; acceptance cannot waive this.\n"
+    },
+    {
+      "id": "writer-Integration:42-28a4196f245fb701",
+      "base": "main",
+      "source": "authority",
+      "classification": "equivalent",
+      "blocking": true,
+      "accepted": false,
+      "message": "Effective write authority: Integration:42 can merge past every applicable update restriction (including PR-only bypass routes). Verify it is the OpenMerge App, or declare exactly one team/repository-admin role as break-glass; route every other writer through the queue. Bots cannot be break-glass.",
+      "fragment": "# Resolve effective writer Integration:42 before switching; acceptance cannot waive this."
+    },
+    {
+      "id": "writer-Team:7-15445c098a5e77aa",
+      "base": "main",
+      "source": "authority",
+      "classification": "equivalent",
+      "blocking": true,
+      "accepted": false,
+      "message": "Effective write authority: Team:7 can merge past every applicable update restriction (including PR-only bypass routes). Verify it is the OpenMerge App, or declare exactly one team/repository-admin role as break-glass; route every other writer through the queue. Bots cannot be break-glass.",
+      "fragment": "# Resolve effective writer Team:7 before switching; acceptance cannot waive this."
+    },
+    {
+      "id": "owners-comparison-23e014ae75465d89",
+      "base": "release/1",
+      "source": "CODEOWNERS",
+      "classification": "unsupported",
+      "blocking": false,
+      "accepted": false,
+      "message": "CODEOWNERS differs: governing .github/CODEOWNERS vs CODEOWNERS on release/1. Every differing ordered entry follows; equivalence cannot be established.\nentry 1: default=\"* @acme/maintainers\"; base=\"* @acme/release-team\"\nentry 2: default=\"/docs/ @alice\"; base=\"/docs/ @bob\"\n",
+      "fragment": "# Reconcile base CODEOWNERS with governing owners, or explicitly accept the owner-policy difference."
+    },
+    {
+      "id": "pull-requests-b6ec29c5654cf9ac",
+      "base": "release/1",
+      "source": "ruleset:11",
+      "classification": "equivalent",
+      "blocking": false,
+      "accepted": false,
+      "message": "Keep pull-request submission required. Approval policy uses eligible, distinct reviewers, excludes author/submitter/accountable humans and blocks eligible requests for changes; plain approved-reviews-by is not equivalent.",
+      "fragment": "# changes.pull_requests: required belongs in this base's reconciled queue fragment.\n"
+    },
+    {
+      "id": "reviews-5921971825824848",
+      "base": "release/1",
+      "source": "ruleset:11",
+      "classification": "weaker",
+      "blocking": false,
+      "accepted": false,
+      "message": "Require 2 approvals. GitHub stale-review dismissal can invalidate approval after a merge-base or diff change without a new head. OpenMerge can retain it; explicit acceptance is required. The imported group snapshots current writers.",
+      "fragment": "# Approval count is included in the reconciled draft for this base.\n"
+    },
+    {
+      "id": "owner-review-955b0e66dfda0a41",
+      "base": "release/1",
+      "source": "ruleset:11",
+      "classification": "weaker",
+      "blocking": false,
+      "accepted": false,
+      "message": "Stale dismissal enabled=true: stale owner approvals may survive merge-base/diff changes without a new head; acceptance is required when enabled. Require at least one eligible owner for every changed owned file, using CODEOWNERS at the governing default-branch commit. See the base comparison. Stage A must supply owner requirements; groups alone confer no path ownership.",
+      "fragment": "# Owner requirement is retained in the reconciled draft for this base.\n"
+    },
+    {
+      "id": "last-push-3c37090059de1b0a",
+      "base": "release/1",
+      "source": "ruleset:11",
+      "classification": "unsupported",
+      "blocking": false,
+      "accepted": false,
+      "message": "Last-push approval has no equivalent; excluding the submitter does not exclude a later pusher.",
+      "fragment": "# No equivalent for approval of the most recent reviewable push."
+    },
+    {
+      "id": "conversation-resolution-6ca998645e7990a9",
+      "base": "release/1",
+      "source": "ruleset:11",
+      "classification": "unsupported",
+      "blocking": false,
+      "accepted": false,
+      "message": "Conversation resolution has no OpenMerge equivalent.",
+      "fragment": "# Retain for manual review: conversation-resolution; no equivalent configuration.\n"
+    },
+    {
+      "id": "check-ci-d916dc892a168e2a",
+      "base": "release/1",
+      "source": "ruleset:11",
+      "classification": "unsupported",
+      "blocking": false,
+      "accepted": false,
+      "message": "The GitHub requirement is App-pinned; check-success does not bind an App identity. Explicit acceptance loses that guarantee. Queue-ref push coverage is not proven; resolve coverage or change CI before migration. Required check parameters: [{\"context\":\"ci\",\"app_id\":null,\"integration_id\":15368}]. Producers observed: check:15368. Workflow push coverage for openmerge/queue/**: unknown: no statically identified workflow; external CI, matrix names and reusable workflows need operator verification.",
+      "fragment": "# No equivalent merge_when term until this check requirement is resolved.\n"
+    },
+    {
+      "id": "result-semantics:ci-f663bf5516bd9c38",
+      "base": "release/1",
+      "source": "ruleset:11",
+      "classification": "stricter",
+      "blocking": false,
+      "accepted": false,
+      "message": "OpenMerge counts neutral and skipped results as failures; GitHub accepts them. This may stall changes GitHub would merge.",
+      "fragment": "# check \"ci\": only success counts, never neutral/skipped."
+    },
+    {
+      "id": "check-missing-6a26f0b689098884",
+      "base": "release/1",
+      "source": "ruleset:11",
+      "classification": "unsupported",
+      "blocking": false,
+      "accepted": false,
+      "message": "The required name does not identify exactly one observed producer (missing or ambiguous evidence, including duplicate requirements). Queue-ref push coverage is not proven; resolve coverage or change CI before migration. Required check parameters: [{\"context\":\"missing\",\"app_id\":null,\"integration_id\":null}]. Producers observed: . Workflow push coverage for openmerge/queue/**: unknown: no statically identified workflow; external CI, matrix names and reusable workflows need operator verification.",
+      "fragment": "# No equivalent merge_when term until this check requirement is resolved.\n"
+    },
+    {
+      "id": "result-semantics:missing-4364e634aabfb4a1",
+      "base": "release/1",
+      "source": "ruleset:11",
+      "classification": "stricter",
+      "blocking": false,
+      "accepted": false,
+      "message": "OpenMerge counts neutral and skipped results as failures; GitHub accepts them. This may stall changes GitHub would merge.",
+      "fragment": "# check \"missing\": only success counts, never neutral/skipped."
+    },
+    {
+      "id": "check-pr-only-cab5c05bfe72fd5d",
+      "base": "release/1",
+      "source": "ruleset:11",
+      "classification": "unsupported",
+      "blocking": false,
+      "accepted": false,
+      "message": "The observed name identifies one producer; merge_when uses the literal check name. Producer evidence is limited to the pinned base commit; re-audit after CI changes. Queue-ref push coverage is not proven; resolve coverage or change CI before migration. Required check parameters: [{\"context\":\"pr-only\",\"app_id\":null,\"integration_id\":null}]. Producers observed: check:15368. Workflow push coverage for openmerge/queue/**: unknown: no statically identified workflow; external CI, matrix names and reusable workflows need operator verification.",
+      "fragment": "# No equivalent merge_when term until this check requirement is resolved.\n"
+    },
+    {
+      "id": "result-semantics:pr-only-5d645dc9760bff8b",
+      "base": "release/1",
+      "source": "ruleset:11",
+      "classification": "stricter",
+      "blocking": false,
+      "accepted": false,
+      "message": "OpenMerge counts neutral and skipped results as failures; GitHub accepts them. This may stall changes GitHub would merge.",
+      "fragment": "# check \"pr-only\": only success counts, never neutral/skipped."
+    },
+    {
+      "id": "check-shared-27323c0c02f370ed",
+      "base": "release/1",
+      "source": "ruleset:11",
+      "classification": "unsupported",
+      "blocking": false,
+      "accepted": false,
+      "message": "The required name does not identify exactly one observed producer (missing or ambiguous evidence, including duplicate requirements). Queue-ref push coverage is not proven; resolve coverage or change CI before migration. Required check parameters: [{\"context\":\"shared\",\"app_id\":null,\"integration_id\":null}]. Producers observed: check:15368, status:2. Workflow push coverage for openmerge/queue/**: unknown: no statically identified workflow; external CI, matrix names and reusable workflows need operator verification.",
+      "fragment": "# No equivalent merge_when term until this check requirement is resolved.\n"
+    },
+    {
+      "id": "result-semantics:shared-29f1aec65962c027",
+      "base": "release/1",
+      "source": "ruleset:11",
+      "classification": "stricter",
+      "blocking": false,
+      "accepted": false,
+      "message": "OpenMerge counts neutral and skipped results as failures; GitHub accepts them. This may stall changes GitHub would merge.",
+      "fragment": "# check \"shared\": only success counts, never neutral/skipped."
+    },
+    {
+      "id": "up-to-date-887e6b9447b39356",
+      "base": "release/1",
+      "source": "ruleset:11",
+      "classification": "equivalent",
+      "blocking": false,
+      "accepted": false,
+      "message": "GitHub strict up-to-date checks map to strict verification: the landed commit is the tested commit. verification: post_merge would be a weaker relaxation and requires a separately reviewed policy change under ADR 0005.",
+      "fragment": "# verification: strict belongs in this base's reconciled queue fragment.\n# verification: post_merge relaxes strict up-to-date protection.\n"
+    },
+    {
+      "id": "deployments-71836c4dc1302125",
+      "base": "release/1",
+      "source": "ruleset:11",
+      "classification": "unsupported",
+      "blocking": false,
+      "accepted": false,
+      "message": "Required deployments have no OpenMerge equivalent. Parameters: {\"required_deployment_environments\":[\"production\"]}",
+      "fragment": "# Retain for manual review: deployments; no equivalent configuration.\n"
+    },
+    {
+      "id": "update-de0a4c2012bcc011",
+      "base": "release/1",
+      "source": "ruleset:12",
+      "classification": "equivalent",
+      "blocking": false,
+      "accepted": false,
+      "message": "Keep write restrictions on GitHub; bypass inventory is separate from policy translation.",
+      "fragment": "# Keep GitHub update restrictions; do not translate into merge_when."
+    },
+    {
+      "id": "principal-User:1-b72d214993ba8141",
+      "base": "release/1",
+      "source": "authority",
+      "classification": "equivalent",
+      "blocking": true,
+      "accepted": false,
+      "message": "Effective principal User:1 can pass every applicable ruleset and classic push restriction through resolved memberships. Verify App/break-glass authority and route other writers through the queue.",
+      "fragment": "# Resolve effective principal User:1 before switch; acceptance cannot waive this.\n"
+    },
+    {
+      "id": "writer-Integration:42-90bbffe77e69c483",
+      "base": "release/1",
+      "source": "authority",
+      "classification": "equivalent",
+      "blocking": true,
+      "accepted": false,
+      "message": "Effective write authority: Integration:42 can merge past every applicable update restriction (including PR-only bypass routes). Verify it is the OpenMerge App, or declare exactly one team/repository-admin role as break-glass; route every other writer through the queue. Bots cannot be break-glass.",
+      "fragment": "# Resolve effective writer Integration:42 before switching; acceptance cannot waive this."
+    },
+    {
+      "id": "writer-Integration:99-50971bfeb53105bf",
+      "base": "release/1",
+      "source": "authority",
+      "classification": "equivalent",
+      "blocking": true,
+      "accepted": false,
+      "message": "Effective write authority: Integration:99 can merge past every applicable update restriction (including PR-only bypass routes). Verify it is the OpenMerge App, or declare exactly one team/repository-admin role as break-glass; route every other writer through the queue. Bots cannot be break-glass.",
+      "fragment": "# Resolve effective writer Integration:99 before switching; acceptance cannot waive this."
+    },
+    {
+      "id": "writer-Team:7-4fa91e70cc8869fb",
+      "base": "release/1",
+      "source": "authority",
+      "classification": "equivalent",
+      "blocking": true,
+      "accepted": false,
+      "message": "Effective write authority: Team:7 can merge past every applicable update restriction (including PR-only bypass routes). Verify it is the OpenMerge App, or declare exactly one team/repository-admin role as break-glass; route every other writer through the queue. Bots cannot be break-glass.",
+      "fragment": "# Resolve effective writer Team:7 before switching; acceptance cannot waive this."
+    }
+  ],
+  "proposed_config": "# Requires the release implementing ADR 0007 Stage A; this is a proposed fragment, not configuration current releases can load.\n# Merge these fragments into the default-branch configuration; retain existing queue settings.\n\n# served-default-87a8d321cc0d60ce [equivalent] base=\"\" source=\"installation\"\n# Serve the default branch in queues before switching policy authority.\n\n# bypass-verification-fce755c8a55fd2a2 [equivalent] base=\"\" source=\"installation\"\n# Install and verify the App and break-glass bypass before switching.\n\n# policy-approval-481a8fa9189953a7 [equivalent] base=\"\" source=\"installation\"\n# policy_authority: openmerge (only after Stage A and all installation prerequisites)\n# Mandatory policy owner approval applies even without approvals rules.\n\n# coverage-.openmerge.yml-df8f603b4826bc56 [equivalent] base=\"\" source=\"governing-CODEOWNERS\"\n# CODEOWNERS must cover .openmerge.yml with eligible user/team owners.\n\n# coverage-.openmerge.yaml-400a810ef1fa4ae9 [equivalent] base=\"\" source=\"governing-CODEOWNERS\"\n# CODEOWNERS must cover .openmerge.yaml with eligible user/team owners.\n\n# coverage-.github/openmerge.yml-06877f66b4f77d86 [equivalent] base=\"\" source=\"governing-CODEOWNERS\"\n# CODEOWNERS must cover .github/openmerge.yml with eligible user/team owners.\n\n# coverage-.github/openmerge.yaml-d6bf0ff34966abf4 [equivalent] base=\"\" source=\"governing-CODEOWNERS\"\n# CODEOWNERS must cover .github/openmerge.yaml with eligible user/team owners.\n\n# coverage-.github/CODEOWNERS-0a9f09715cab047e [equivalent] base=\"\" source=\"governing-CODEOWNERS\"\n# CODEOWNERS must cover .github/CODEOWNERS with eligible user/team owners.\n\n# coverage-CODEOWNERS-73a8ef58fdf6c030 [equivalent] base=\"\" source=\"governing-CODEOWNERS\"\n# CODEOWNERS must cover CODEOWNERS with eligible user/team owners.\n\n# coverage-docs/CODEOWNERS-aaa58fb70a3f5c9f [equivalent] base=\"\" source=\"governing-CODEOWNERS\"\n# CODEOWNERS must cover docs/CODEOWNERS with eligible user/team owners.\n\n# bypass-Integration:42-always-4b4dbc1a1fcda316 [equivalent] base=\"\" source=\"ruleset:11\"\n# Retain/review bypass actor Integration:42; an Integration/bot cannot be break-glass.\n\n# bypass-Team:7-always-6f7aa74aedea5654 [equivalent] base=\"\" source=\"ruleset:11\"\n# Retain/review bypass actor Team:7; an Integration/bot cannot be break-glass.\n\n# bypass-Integration:42-always-059927ffe051110d [equivalent] base=\"\" source=\"ruleset:12\"\n# Retain/review bypass actor Integration:42; an Integration/bot cannot be break-glass.\n\n# bypass-Team:7-always-a142a064393b329d [equivalent] base=\"\" source=\"ruleset:12\"\n# Retain/review bypass actor Team:7; an Integration/bot cannot be break-glass.\n\n# bypass-Integration:99-pull_request-363ce4a3586766bd [equivalent] base=\"\" source=\"ruleset:12\"\n# Retain/review bypass actor Integration:99; an Integration/bot cannot be break-glass.\n\n# owners-comparison-71d2e54295fe371b [equivalent] base=\"main\" source=\"CODEOWNERS\"\n# Owner requirements use governing CODEOWNERS.\n\n# pull-requests-bacde6c1d55612e2 [equivalent] base=\"main\" source=\"ruleset:11\"\n# changes.pull_requests: required belongs in this base's reconciled queue fragment.\n\n\n# reviews-7a1f811d35e65961 [weaker] base=\"main\" source=\"ruleset:11\"\n# Approval count is included in the reconciled draft for this base.\n\n\n# owner-review-a5e527ba314854e6 [weaker] base=\"main\" source=\"ruleset:11\"\n# Owner requirement is retained in the reconciled draft for this base.\n\n\n# last-push-27d2de666bc4700f [unsupported] base=\"main\" source=\"ruleset:11\"\n# No equivalent for approval of the most recent reviewable push.\n\n# conversation-resolution-b015d332f7270511 [unsupported] base=\"main\" source=\"ruleset:11\"\n# Retain for manual review: conversation-resolution; no equivalent configuration.\n\n\n# check-ci-8df4d50f9f745257 [weaker] base=\"main\" source=\"ruleset:11\"\n# merge_when term \"check-success = ci\" belongs in this base's reconciled queue fragment.\n\n\n# result-semantics:ci-3401b688c9d88c62 [stricter] base=\"main\" source=\"ruleset:11\"\n# check \"ci\": only success counts, never neutral/skipped.\n\n# check-missing-70b9673799c848a5 [unsupported] base=\"main\" source=\"ruleset:11\"\n# No equivalent merge_when term until this check requirement is resolved.\n\n\n# result-semantics:missing-c497e3185b307ef7 [stricter] base=\"main\" source=\"ruleset:11\"\n# check \"missing\": only success counts, never neutral/skipped.\n\n# check-pr-only-9ad99cf400c6ac72 [unsupported] base=\"main\" source=\"ruleset:11\"\n# No equivalent merge_when term until this check requirement is resolved.\n\n\n# result-semantics:pr-only-bb4a57c05bc00dc4 [stricter] base=\"main\" source=\"ruleset:11\"\n# check \"pr-only\": only success counts, never neutral/skipped.\n\n# check-shared-850d762765371dad [unsupported] base=\"main\" source=\"ruleset:11\"\n# No equivalent merge_when term until this check requirement is resolved.\n\n\n# result-semantics:shared-b4d760c259571bcc [stricter] base=\"main\" source=\"ruleset:11\"\n# check \"shared\": only success counts, never neutral/skipped.\n\n# up-to-date-d3b812fe264e3ffc [equivalent] base=\"main\" source=\"ruleset:11\"\n# verification: strict belongs in this base's reconciled queue fragment.\n# verification: post_merge relaxes strict up-to-date protection.\n\n\n# deployments-a04d6adaa84c82e9 [unsupported] base=\"main\" source=\"ruleset:11\"\n# Retain for manual review: deployments; no equivalent configuration.\n\n\n# update-703c4d7cc62b4899 [equivalent] base=\"main\" source=\"ruleset:12\"\n# Keep GitHub update restrictions; do not translate into merge_when.\n\n# pull-requests-14c19871cce3c70d [equivalent] base=\"main\" source=\"classic\"\n# changes.pull_requests: required belongs in this base's reconciled queue fragment.\n\n\n# reviews-a908904d2570eca3 [stricter] base=\"main\" source=\"classic\"\n# Approval count is included in the reconciled draft for this base.\n\n\n# owner-review-4d0b88bd604bfd75 [equivalent] base=\"main\" source=\"classic\"\n# Owner requirement is retained in the reconciled draft for this base.\n\n\n# last-push-3422c894180cd3d6 [unsupported] base=\"main\" source=\"classic\"\n# No equivalent for approval of the most recent reviewable push.\n\n# dismissal-restrictions-e280b273ad2f3daf [unsupported] base=\"main\" source=\"classic\"\n# Retain for manual review: dismissal-restrictions; no equivalent configuration.\n\n\n# actor-User-5-78914cc9c7adb3e6 [equivalent] base=\"main\" source=\"classic-review-bypass\"\n# Review this classic allowance when installing write restrictions.\n\n# actor-Team-7-41f72fbfbbe23e93 [equivalent] base=\"main\" source=\"classic-review-bypass\"\n# Review this classic allowance when installing write restrictions.\n\n# actor-Integration-42-1fd8832d0f418702 [equivalent] base=\"main\" source=\"classic-review-bypass\"\n# Review this classic allowance when installing write restrictions.\n\n# check-ci-bb4d16391b79644b [weaker] base=\"main\" source=\"classic\"\n# merge_when term \"check-success = ci\" belongs in this base's reconciled queue fragment.\n\n\n# result-semantics:ci-c1e49509a54e8efa [stricter] base=\"main\" source=\"classic\"\n# check \"ci\": only success counts, never neutral/skipped.\n\n# up-to-date-fe0d644be2ff21dc [equivalent] base=\"main\" source=\"classic\"\n# verification: strict belongs in this base's reconciled queue fragment.\n# verification: post_merge relaxes strict up-to-date protection.\n\n\n# conversation-resolution-dfa313a5f40f1622 [unsupported] base=\"main\" source=\"classic\"\n# Retain for manual review: conversation-resolution; no equivalent configuration.\n\n\n# signatures-b210aa6d73c8709b [unsupported] base=\"main\" source=\"classic\"\n# Retain for manual review: signatures; no equivalent configuration.\n\n\n# linear-history-a999d6cd2265a1a7 [unsupported] base=\"main\" source=\"classic\"\n# Retain for manual review: linear-history; no equivalent configuration.\n\n\n# allow_force_pushes-fa53a6dbc6b38196 [unsupported] base=\"main\" source=\"classic\"\n# Retain for manual review: allow_force_pushes; no equivalent configuration.\n\n\n# allow_deletions-3481aa2a74c7fc69 [unsupported] base=\"main\" source=\"classic\"\n# Retain for manual review: allow_deletions; no equivalent configuration.\n\n\n# block_creations-0a882a9d083b9156 [unsupported] base=\"main\" source=\"classic\"\n# Retain for manual review: block_creations; no equivalent configuration.\n\n\n# enforce_admins-dfda736054f19105 [unsupported] base=\"main\" source=\"classic\"\n# Retain for manual review: enforce_admins; no equivalent configuration.\n\n\n# lock_branch-88681d48e86348c9 [equivalent] base=\"main\" source=\"classic\"\n# Verify classic branch locking before switching.\n\n\n# actor-Team-7-3c7f342fbd7eebfb [equivalent] base=\"main\" source=\"classic-push-restrictions\"\n# Review this classic allowance when installing write restrictions.\n\n# actor-Integration-42-a29dfefab72b6fa3 [equivalent] base=\"main\" source=\"classic-push-restrictions\"\n# Review this classic allowance when installing write restrictions.\n\n# principal-User:1-d59a440718b22c88 [equivalent] base=\"main\" source=\"authority\"\n# Resolve effective principal User:1 before switch; acceptance cannot waive this.\n\n\n# writer-Integration:42-28a4196f245fb701 [equivalent] base=\"main\" source=\"authority\"\n# Resolve effective writer Integration:42 before switching; acceptance cannot waive this.\n\n# writer-Team:7-15445c098a5e77aa [equivalent] base=\"main\" source=\"authority\"\n# Resolve effective writer Team:7 before switching; acceptance cannot waive this.\n\n# owners-comparison-23e014ae75465d89 [unsupported] base=\"release/1\" source=\"CODEOWNERS\"\n# Reconcile base CODEOWNERS with governing owners, or explicitly accept the owner-policy difference.\n\n# pull-requests-b6ec29c5654cf9ac [equivalent] base=\"release/1\" source=\"ruleset:11\"\n# changes.pull_requests: required belongs in this base's reconciled queue fragment.\n\n\n# reviews-5921971825824848 [weaker] base=\"release/1\" source=\"ruleset:11\"\n# Approval count is included in the reconciled draft for this base.\n\n\n# owner-review-955b0e66dfda0a41 [weaker] base=\"release/1\" source=\"ruleset:11\"\n# Owner requirement is retained in the reconciled draft for this base.\n\n\n# last-push-3c37090059de1b0a [unsupported] base=\"release/1\" source=\"ruleset:11\"\n# No equivalent for approval of the most recent reviewable push.\n\n# conversation-resolution-6ca998645e7990a9 [unsupported] base=\"release/1\" source=\"ruleset:11\"\n# Retain for manual review: conversation-resolution; no equivalent configuration.\n\n\n# check-ci-d916dc892a168e2a [unsupported] base=\"release/1\" source=\"ruleset:11\"\n# No equivalent merge_when term until this check requirement is resolved.\n\n\n# result-semantics:ci-f663bf5516bd9c38 [stricter] base=\"release/1\" source=\"ruleset:11\"\n# check \"ci\": only success counts, never neutral/skipped.\n\n# check-missing-6a26f0b689098884 [unsupported] base=\"release/1\" source=\"ruleset:11\"\n# No equivalent merge_when term until this check requirement is resolved.\n\n\n# result-semantics:missing-4364e634aabfb4a1 [stricter] base=\"release/1\" source=\"ruleset:11\"\n# check \"missing\": only success counts, never neutral/skipped.\n\n# check-pr-only-cab5c05bfe72fd5d [unsupported] base=\"release/1\" source=\"ruleset:11\"\n# No equivalent merge_when term until this check requirement is resolved.\n\n\n# result-semantics:pr-only-5d645dc9760bff8b [stricter] base=\"release/1\" source=\"ruleset:11\"\n# check \"pr-only\": only success counts, never neutral/skipped.\n\n# check-shared-27323c0c02f370ed [unsupported] base=\"release/1\" source=\"ruleset:11\"\n# No equivalent merge_when term until this check requirement is resolved.\n\n\n# result-semantics:shared-29f1aec65962c027 [stricter] base=\"release/1\" source=\"ruleset:11\"\n# check \"shared\": only success counts, never neutral/skipped.\n\n# up-to-date-887e6b9447b39356 [equivalent] base=\"release/1\" source=\"ruleset:11\"\n# verification: strict belongs in this base's reconciled queue fragment.\n# verification: post_merge relaxes strict up-to-date protection.\n\n\n# deployments-71836c4dc1302125 [unsupported] base=\"release/1\" source=\"ruleset:11\"\n# Retain for manual review: deployments; no equivalent configuration.\n\n\n# update-de0a4c2012bcc011 [equivalent] base=\"release/1\" source=\"ruleset:12\"\n# Keep GitHub update restrictions; do not translate into merge_when.\n\n# principal-User:1-b72d214993ba8141 [equivalent] base=\"release/1\" source=\"authority\"\n# Resolve effective principal User:1 before switch; acceptance cannot waive this.\n\n\n# writer-Integration:42-90bbffe77e69c483 [equivalent] base=\"release/1\" source=\"authority\"\n# Resolve effective writer Integration:42 before switching; acceptance cannot waive this.\n\n# writer-Integration:99-50971bfeb53105bf [equivalent] base=\"release/1\" source=\"authority\"\n# Resolve effective writer Integration:99 before switching; acceptance cannot waive this.\n\n# writer-Team:7-4fa91e70cc8869fb [equivalent] base=\"release/1\" source=\"authority\"\n# Resolve effective writer Team:7 before switching; acceptance cannot waive this.\n\n# Reconciled queue fragment for base=\"main\": combine classic protection and all applicable rulesets.\n# changes, approvals, verification and merge_when belong in this base's queue.\napprovals:\n    default: any_writer\n    rules:\n        - require:\n            count: 2\n            group: imported_reviewers\n          when:\n            touches:\n                - '**'\nchanges:\n    pull_requests: required\ngroups:\n    imported_reviewers:\n        - alice\n        - bob\nmerge_when:\n    - check-success = ci\nverification: strict\n# Maximum approval count across sources; groups is repository-level.\n# Assumption: touches ** applies the count to every change with a file inventory; unknown matches enforce it.\n# Maintain imported_reviewers as writer membership changes; eligibility is re-read at landing.\n# Stage A owner requirement: one eligible owner per changed owned file.\n# Use governing CODEOWNERS, last matching entry; full owner-requirement schema lands with Stage A.\n\n# Reconciled queue fragment for base=\"release/1\": combine classic protection and all applicable rulesets.\n# changes, approvals, verification and merge_when belong in this base's queue.\napprovals:\n    default: any_writer\n    rules:\n        - require:\n            count: 2\n            group: imported_reviewers\n          when:\n            touches:\n                - '**'\nchanges:\n    pull_requests: required\ngroups:\n    imported_reviewers:\n        - alice\n        - bob\nverification: strict\n# Maximum approval count across sources; groups is repository-level.\n# Assumption: touches ** applies the count to every change with a file inventory; unknown matches enforce it.\n# Maintain imported_reviewers as writer membership changes; eligibility is re-read at landing.\n# Stage A owner requirement: one eligible owner per changed owned file.\n# Use governing CODEOWNERS, last matching entry; full owner-requirement schema lands with Stage A.\n",
+  "contributing_guide": "This repository merges through OpenMerge. Submit a pull request and use\n@openmerge queue; follow its queue state instead of GitHub's merge button.\nDisable GitHub auto-merge. CI must run on pushes to openmerge/queue/**.\nCreating a branch matching a queue's base selector requires the OpenMerge App\nor the declared break-glass team/repository-admin role. Break-glass merges are\nrecorded as outside-queue landings. Bots cannot be the break-glass actor.",
+  "ready": false
+}
