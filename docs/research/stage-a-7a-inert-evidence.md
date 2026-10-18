@@ -1,138 +1,121 @@
-# Stage A 7a inert evidence
+# Stage A 7a inert evidence — fix round 1
 
-Baseline/current main: `3e1536093441594ec6b1abd723426e29b8465ad5`.
-Verified implementation: `ce7999630ae4478dbf7b6f9300b21ee8223bd815`.
-The following commit adds only this evidence note. Candidate worktree:
-`$HOME/openmerge-stage-a-7a`, branch `stage-a/7a-receipts`; baseline:
-`$HOME/openmerge-stage-a-7a-main`, detached at origin/main. Both replay inputs
-were clean. Fetches used only the explicit main refspec; pushes name only the
-7a branch. No live DB, service units, App permissions or `openmerge/*` refs were
-operated on. Tests use the shared test Postgres; no real GitHub API calls were
-added to code/tests. Heavy checks ran serially.
+Validated code: `bab40308b82ffe98d1cd45bda70b452e9d138ac0`, branch
+`stage-a/7a-receipts`, against origin/main
+`3e1536093441594ec6b1abd723426e29b8465ad5`. Main did not move, so no rebase
+was needed. Fetches named only main and the 7a branch by explicit refspec.
+The following commit changes only this note. Worktree: `$HOME/openmerge-stage-a-7a`.
 
-This is an **Inert component change**: no producer/command, config key,
-planner/executor/landing change, endpoint or CLI. 7b owns rendering and reads;
-9/11a own atomic decision storage and current-evidence landing wiring. Only one
-new State field exists: **`receipts`**, a `queue.receiptProjection` map, **nil**
-for every legacy queue. Snapshot v6's corresponding `Receipts` is null; v2–v5
-upgrade with nil receipts. Existing classifications/approvalFacts remain nil
-on legacy inputs. The deployment comparator permits only the exact new nil-map
-shape, and rejects empty/populated/wrong-type receipts in its self-test.
+This remains **inert**: no production producer/command, endpoint, config key,
+planner/executor/landing change or permission change. No live DB, service unit
+or `openmerge/*` ref was touched. Replay read a pre-existing exported journal;
+tests used shared test Postgres. No real GitHub API calls were added to code/tests.
+Legacy State.receipts remains nil; snapshot v6 adds its null field and upgrades
+v2–v5. Only that exact nil-map structural difference is allowlisted.
 
-## Facts, canonical digest and receipt records
+## Review fixes
 
-The protocol and absent/empty rules are specified in
-`internal/brief/README.md`. Canonical v1 uses domain `openmerge/brief/v1`,
-compact Go JSON with deterministic map/set ordering and SHA-256. It binds
-change/revision/head, pinned diff endpoints/merge-base, durable classification
-generation, inventory/hunks/completeness, labels/reasons, intent digest,
-semantic policy/content inputs, recorded ownership and expanded requirements.
-It excludes queue position, progress, timestamps, tests, rendering and
-provenance-only config blob/governing commit. Eligible.Reason and freshness
-are erased; owner status/resolution remain stable bindings. Intent uses the
-exact shared PR 6 normalization/digest code. InputFingerprint is never used as
-a brief digest. Hunk evidence is retained verbatim, with no second truncation.
+- Receipt-backed sources are pinned at 4,096-source saturation. Acceptance
+  requires a matching approval-kind stance source; failed admission preserves
+  the prior state. Reachability property seeds and fuzz exercise saturation,
+  new receipts, native noise, barriers, duplicates and rejected receipts, with
+  encode/decode/byte-identical re-encoding after each generated transition.
+- Receipt creation must be strictly after the durable revision boundary plus
+  PR 6's 2-second uncertainty and 1-second resolution allowance. Rejections use
+  `receipt_before_revision`; BoundaryAt/Basis are checked against revision data.
+- Build errors on stale Current, invalid approval configuration or missing
+  opted-in requirements. It computes identity before receipt-required progress.
+- `State.RecordedBrief` and receipt preparation read recorded classification,
+  accountability and intent themselves. Fresh owner membership affects gate
+  progress separately; recorded owner changes alter the digest. Tests pin both.
+- Evaluator expansion origins/rule indexes and unresolved causes are typed.
+  Unknown owners differ from unknown writer eligibility; inventory codes apply
+  only to affected obligations, and met/group rows retain their own status.
+- Classification, receipt, approval and stance admission share the 48 MiB
+  reserve and check the full 64 MiB snapshot bound. Errors name the admitted
+  change, including the three-large-plus-smaller admission cases.
+- Bare receipts construct explicit Supplied from recorded Current plus the
+  supplied digest. Mismatch is `receipt_digest_mismatch`, with no issued ledger.
+  Parsing trims surrounding whitespace and requires exactly 64 lowercase hex
+  characters. Supplied strings are UTF-8 and at most 1,024 bytes each. Missing
+  evidence returns an error: 11a defers rather than recording a rejection.
+  Rejections are capped at 64 per actor/change. First outcomes remain pinned.
+- Canonical v2 replaces prose Origin with typed cause/rule index, deduplicates
+  requirements and uses slice cloning instead of JSON cloning. Fact placeholders
+  are removed; Truth's numeric/string interpretation is documented for 7b.
+  Stance/provenance presentation and structured TestLinks remain for 7b.
+- ADR 0007 now has a dated hunk-cap clarification; v7 rejects `hunk_count_limit`.
+  Forge/classification boundaries fail closed on invalid UTF-8 paths.
 
-Pinned canonical bytes and SHA-256 vectors:
+Protocol details: `internal/brief/README.md` and `internal/queue/receipts.md`.
+V1 byte/hash fixtures are preserved exactly as `testdata/v1-*`.
+V2 vectors (independently reproduced with Python canonical serialization,
+reversed input object order and intent hashing):
 
-- Complete: `3afa3ae419e1691b99efedebaccf78dfcde22a4419fe122c45006f8cb627a31b`.
-- Incomplete: `41a0a7a649f620188dc1f39bc03050695d61acce1e12b95c2ee77e77b5d6b34b`.
-- Recorded empty intent: `237afe4a534dff8ca82a0e76dd93b47f7f26d85da8924c883a8a2198616d8663`.
+- Complete: `a2c579bfd5aa5a9911e0d69bfed2a0ca9dd6036e504db184ab1a811240ec1227`.
+- Incomplete: `7eacfa5f593d2db45045a4f07ff5befc39646dbc4195905d2897e3860ea36fca`.
+- Empty intent: `af362a32e2cfb3a5d0f7e8d065e28d4ed0ef2f702c5955776fb4d6232eeb2f0f`.
+- Complex: `64c05eff2a713bc8261aeb148c1f0a488ce5a024fd699df4643653ecd5767e50`.
+  This pins unsorted multi-file renames, owners/requirements, deduplication,
+  nil/empty equivalence and `<`, `&`, U+2028 and control-character escaping.
 
-`approval_receipt_recorded` retains supplied/current explicit bindings, actor
-ID/login, comment ID, creation time and accepted/rejected outcome. One registry
-fixture is added; ten rejected-binding vectors live outside its glob. Late
-rejections are keyed by comment ID and never become stances. First outcomes
-survive duplicate polls, revision changes and snapshots; unapprove remains
-`review_stance_observed`. Pure validation recomputes current evidence at
-acceptance and is provided for reuse at landing; it never replaces the supplied
-digest. Tests cover intent edits, equal-path generation refreshes, excluded and
-unknown owners/inventory, mixed owner pools, native-after-receipt and
-receipt-after-native-then-intent-edit using actual receipt records. Intent edits
-leave tested compositions and planner actions unchanged. Rendered/JSON agreement
-is deferred to 7b; the full JSON fact golden is included here.
+## Carry-overs and checks
 
-## Mandatory carry-overs
+#64's v8 4,096-hunk/4 MiB JSON-escaped text caps and omission summaries remain;
+retained evidence is validated without truncating it again. #69's eight bounded
+owner diagnostics plus omitted count and hashing exclusions remain. #71's older
+dismissal/later-native ordering fix and intent binding remain. #66 retains only
+the latest classified revision/generation and enforces admission byte budgets.
 
-- #64: v8 adds 4096 total retained hunks, `hunk_count_limit` through the existing
-  omitted-summary machinery, and a 4 MiB JSON-escaped text budget alongside the
-  existing raw/line caps. Persistence validates v8 caps without truncating.
-  The hunk subrecord is conservatively ~5.8 MiB. diff.md corrects the unattainable
-  39.5 MB v7 estimate to approximately 17.6 MB before the new caps. Historical
-  v7 codecs/fixtures remain unchanged; v7 was never emitted in production.
-- #69: source diagnostics retain eight entries plus `+N more`, each diagnostic
-  capped at 1024 UTF-8 bytes with a truncation marker. README worst-case accounting
-  includes diagnostics (up to 12 MiB escaped across 256 probes, plus summaries
-  and independently budgeted path prefixes). Brief hashing strips free-text
-  Eligible.Reason for both code and policy owner rows; stable status/resolution
-  fields remain. Positive and exclusion mutation tests pin the contract.
-- #71: a dismissal of review D cannot time-barrier a native approval whose review
-  sequence is greater than D. Both original review kinds, three dismissal time
-  sources and all six permutations round-trip after each event. Requests and
-  command withdrawals retain their conservative barriers. PR 6's existing
-  Current.IntentDigest assertion is exercised explicitly. Receipt interaction
-  tests now use acceptance records rather than synthetic command approvals.
-- #66: classification projection retains only the newest recorded revision per
-  change/latest generation; late older revisions cannot resurrect evidence.
-  Original evidence remains in the journal; compaction stays disconnected.
-  EncodeSnapshot validates evidence and rejects classification above 16 MiB per
-  change, combined receipt/classification/approval evidence above 48 MiB per
-  queue, and total snapshots above the decoder's 64 MiB cap. Typed per-change
-  admission preflights let 11a roll back a failed admission without truncating
-  evidence or damaging the previous recoverable queue.
-
-## Commands and actual results
-
-Environment for the required checks:
+All heavy jobs ran serially, after checking
+`pgrep -af 'go test|\.test |check-live-journal'` for other agents' running jobs.
+Environment:
 
 ```sh
 export GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOMAXPROCS=2
-export GOTMPDIR=$HOME/.cache/om-sa-7a-tmp GOCACHE=$HOME/.cache/go-build TMPDIR=$HOME/.cache
+export GOTMPDIR=$HOME/.cache/om-pr72-tmp GOCACHE=$HOME/.cache/go-build TMPDIR=$HOME/.cache
 export OPENMERGE_TEST_DATABASE_URL='postgres://postgres@localhost:54329/postgres?sslmode=disable'
-make check > ~/.cache/om-sa-7a.log 2>&1; echo exit=$?
-make test-sim-exits > ~/.cache/om-sa-7a-sim.log 2>&1; echo exit=$?
+make check > ~/.cache/om-pr72-fix1.log 2>&1; echo exit=$?
+make test-sim-exits > ~/.cache/om-pr72-fix1-sim.log 2>&1; echo exit=$?
 python3 scripts/check-phase2-compatibility.py "$HOME/openmerge-stage-a-7a-main"
 python3 scripts/check-live-journal-replay.py \
   --baseline "$HOME/openmerge-stage-a-7a-main" --candidate "$HOME/openmerge-stage-a-7a" \
-  --events "$HOME/.cache/om-pr71-fix2-journal/events.jsonl" \
-  --queues "$HOME/.cache/om-pr71-fix2-journal/queues.jsonl" \
-  --out "$HOME/.cache/om-sa-7a-deployment-pair.json"
+  --events "$HOME/.cache/om-pr72-fix1-input/events.jsonl" \
+  --queues "$HOME/.cache/om-pr72-fix1-input/queues.jsonl" \
+  --out "$HOME/.cache/om-pr72-fix1-deployment-pair.json"
 ```
 
-Actual final exits: **check 0; sim-exits 0; compatibility 0; deployment-pair
-replay 0**. Check includes lint (0 issues), race/short tests and build. Required
-simulator exits completed in 48.860 s. The final code-head check followed an
-initial passing full run and the final mixed-owner reason correction.
-Logs are `~/.cache/om-sa-7a{,-sim,-compat,-replay}.log`.
+Actual exits: **make check 0; sim-exits 0; compatibility 0; deployment replay 0**.
+The first check attempt exited 2 on three revive lint issues, all corrected.
+Final check had zero lint issues and passing race/short tests/build; sim-exits
+completed in 43.795 seconds. Additional final targeted tests: 0.
+Independent leaf/encoding checks, original receipt repros and both dismissal
+oracles: final exit 0, 7,500 sets/45,000 runs per oracle (seeds 100 and 710300),
+zero divergences. Saturation fuzz result: exit 0 (90-second budget;
+4 completed executions, including the 3 baseline seeds).
+Logs: `~/.cache/om-pr72-{fix1,fix1-sim,fix1-compat,fix1-replay,final-oracles,fuzz}.log`.
 
-Compatibility: 17 legacy exit records byte-identical, SHA-256
-`bc7c730e66e11a6b3ec3e2253e81061d49358d592cb673e634fac89bf41b26c6`;
-1055 retry/default-digest records byte-identical, SHA-256
+Compatibility: 17 legacy exit records and 1,055 retry/default-digest records
+remain byte-identical, with SHA-256 respectively
+`bc7c730e66e11a6b3ec3e2253e81061d49358d592cb673e634fac89bf41b26c6` and
 `07ed2ecf13debd5d75c8424b222edfd740470c00f5fc2b4ae00183fdd9ce7b37`.
-The compatibility tool checked 80 wire fixtures. Independently, all **84 tracked
-baseline wire files**, including variants, are byte-identical; sorted
-path + NUL + bytes SHA-256:
+All **84** tracked baseline wire files (including variants) are byte-identical;
+sorted path + NUL + bytes SHA-256:
 `73371fde38dce0aa7325ae4177c346c2bd8fc1b64972efd7963624cfc029d878`.
-All pre-existing fixture files are untouched. The code diff was 1960 changed
-lines before this evidence note, below the ADR's 3000-line ceiling.
+Final PR: **2,806 changed lines**, below the 3,000-line review ceiling.
 
-Deployment-pair structural mode: **gates 2/4 PASS**, actions/state/boundaries
-**10/10** identical, **27** timer probes, derived determinism PASS, no first
-difference or unreviewed fields. Mandatory preflight: **20 tests PASS**, synthetic
-pair **7/7** checkpoints and **15** boundary probes. Snapshot hashes are **0/10**
-identical, expected for v5 → v6 and the added null snapshot field; typed structural
-state and next actions remain equal with only the nil-only exception above.
+## Deployment pair
 
+The pre-existing `20261018T051000Z` export contains **2,158 events, one queue**.
+Read-only copies live under `~/.cache/om-pr72-fix1-input/`. Event SHA-256:
+`9c8f78f3e967c7cb030948cfc9871cc67a45da06f80b12f27d1c55d09ba8accf`;
+queue SHA-256: `418f025a0e3c8792321b6d71d297f17fff1adf48cb616c8f4fcb774163696886`.
 Config SHA-256: `3efb43bbc05f5f0b03c005331f79064829fa018e9f6446224682e00dd357fead`.
-The recorded/recomputed effective digest is unchanged in all three streams:
-`e58c893b8b3af7685dc07a086824b3bc1fc044456083d193f9566f8387cb58fc`.
-No shadow ConfigApplied would be emitted and no new event producer exists.
-Export hashes: events
-`838a9655db51af90e0e63b93ad7c68be8b868d6c5dc1dbc13004638f0c3305ae`;
-queues `b34e493c77be1a9ba76d78b27a40db4a767a4027254279f4327d97756b454617`.
 
-**Deployment limitation:** the available cached export is the previous PR 6
-synthetic nine-event/one-queue journal, not an exported live journal. This proves
-the deployment-pair comparator against current main, but does **not** authorize
-live deployment. An operator still needs the ADR's exported-live-journal shadow
-replay/effective-config gate and dogfood log entry. No deployment was performed.
+**Gates 2/4 PASS**: actions, typed structural state and boundary checkpoints
+**2,159/2,159** identical; **8,676** timer probes; derived determinism PASS;
+no first difference or non-allowlisted fields. Mandatory preflight: **20 tests
+PASS**, synthetic **7/7** checkpoints and **15** boundary probes. Snapshot bytes
+are **0/2,159** identical, expected for v5 → v6/null receipts; structural state
+and next actions agree. The effective-config gate passed. This supersedes the
+previous synthetic-only deployment-pair evidence; no deployment was performed.
