@@ -201,6 +201,9 @@ func (s *Server) reconcile(ctx context.Context, w *worker, force bool) error {
 	if err != nil {
 		return err
 	}
+	if err := s.probeApprovalInputs(ctx, w, state); err != nil {
+		return err
+	}
 	force = force || state.SourceBlocked(queue.CheckSources)
 	summaries, err := w.Driver.ListOpenPullRequests(ctx, w.repo(), w.Key.BaseBranch)
 	if err != nil {

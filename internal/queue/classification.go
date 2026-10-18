@@ -105,6 +105,30 @@ func (s State) classify(e ChangeClassified) State {
 	if !exists && inputs.Generation != 1 {
 		return s
 	}
+	// Build metadata pins labels but not generation. A semantic refresh must
+	// therefore revoke every affected not-yet-landing composition explicitly.
+	if !exists || inputs.Generation > previous.Evidence.Classification.Inputs.Generation {
+		affected := ""
+		for _, b := range s.Batches() {
+			if b.Phase == Landing {
+				continue
+			}
+			for _, p := range b.PRs {
+				r, _ := s.PRRevision(p.PR)
+				if r.ChangeID == id && r.Revision == revision && p.HeadSHA == inputs.Head {
+					affected = b.ID
+					break
+				}
+			}
+			if affected != "" {
+				break
+			}
+		}
+		if affected != "" {
+			s = cloneState(s)
+			s.invalidateFrom(s.Batch(affected), "classification-changed")
+		}
+	}
 	s.classifications = maps.Clone(s.classifications)
 	if s.classifications == nil {
 		s.classifications = make(classifications)

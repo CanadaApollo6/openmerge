@@ -161,3 +161,65 @@ it must not acquire/reconstruct a different eligibility event after evaluation.
 The counted subset is `Evaluation.Requirements[].ReliedOn`.
 The helper performs no external I/O and cannot prove acquisition freshness.
 11a must preserve channel sequence namespaces and cross-channel ordering above.
+
+## Wait projection (Stage A 8, trial Hold)
+
+`ApprovalGateRejected` pins the tested batch ID/SHA and ordered composition, and
+records a nonempty set of failed members with current read bases, fingerprints
+and sorted distinct waiting reason codes. It marks that batch and its suffix
+for the existing invalidation effect. A started landing cannot be rejected.
+The ensuing retirement keeps admission order, IDs and ages, and uses the existing
+speculative cancellation ledger. No failure/timeout event, AIMD reduction or
+defect sample is manufactured. Real unresolved bisection groups remain barriers;
+empty waiting groups are retired. Fresh selection (including its max-wait age),
+retained groups, bisection, fast-forward remainder/prefix recovery and speculative
+admission all use the same wait exclusion. Returned members get fresh batch IDs.
+
+Waits are absent until a gate rejection: unapproved changes may initially test.
+Only changed decision inputs wake a wait. Current effective stances (including
+receipts), intent, eligibility, revision, semantic classification generation and
+policy digest, and ConfigApplied digest contribute to the fingerprint. Historical
+sources at revision zero, ineffective sources, polling read IDs/times and
+provenance-only classification refreshes do not. A classification generation
+advance explicitly invalidates affected not-yet-landing batches because build
+metadata has no generation field (PR 10 carry-over); started attempts settle.
+
+Reconciliation calls the dormant `worker.approvalInputProbe` seam each cycle,
+including with no active batch and unchanged PR summaries. PR 11a supplies fresh
+read-only permission/membership acquisition. `PrepareApprovalInputChange` emits
+nothing for equal inputs. `ApprovalInputsChanged` carries the fresh eligibility,
+current revision/head/read basis and old/new fingerprints; replay rechecks all
+bindings, rejects stale read times and cannot wake a subsequently replaced wait.
+No test-ref construction or check refresh occurs during probing. Errors preserve
+the wait. Public config and production acquisition remain disabled until 11a/11b.
+
+Snapshots retain waits in an optional field (absent for legacy queues), validate
+current fingerprints and revision bindings, and resume the same plan after replay.
+Once either new event is recorded, rollback needs a compatible database restore.
+
+The dormant `serve.mergeResultWithApprovals` contract evaluates the complete
+condition expression with the evaluator's eligible native-inclusive review set
+(`ApprovalEvidence`; unknown eligibility is a missing value, never an empty
+list). Its nil opt-in calls the original `mergeResult` unchanged, including for
+legacy queues whose conditions use reviews. For non-passing opt-in conditions,
+review-neutralized evaluation distinguishes genuine CI failure from a review
+wait; only causally unresolved branches contribute unknown-input reasons.
+11a must consume `WaitingForApproval` as `ApprovalGateRejected` before entering
+check observation/timer/retry paths. Merely treating it as pending CI would still
+time out. Independent approval-policy requirements remain `EvaluateApprovals`'s
+landing gate, even when the condition expression itself passes. The contract
+tests inject that rejection now; no executor integration is enabled here.
+
+
+### 11a follow-up obligations from Stage A 8 review
+
+- A failing `approvalInputProbe` must not prevent reconciliation of other PRs:
+  log and continue, or isolate each probe. The dormant seam currently returns
+  the error; 11a must supply isolation before enabling production acquisition.
+- Same-input probes journal nothing and therefore do not advance persisted
+  acquisition freshness. Only journaled observations advance that freshness.
+- `not(approved-reviews-by = X)` with X present is classified as an approval
+  wait. Removing that review input can make the negation pass; 11a must preserve
+  the complete-expression outcome when consuming `WaitingForApproval`.
+- Optionally narrow per-event wait refresh to events that affect approval
+  inputs; the current unconditional refresh is correct but does extra work.
