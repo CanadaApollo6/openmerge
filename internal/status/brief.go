@@ -37,10 +37,17 @@ func briefRoute(r *http.Request, keys []store.QueueKey) ([]store.QueueKey, strin
 	return selected, id, values.Get("audience"), true, err
 }
 
-// projectBrief uses only committed journal evidence. Requirements are not yet
-// persisted as a complete brief by Stage A ingestion, so it never manufactures
-// them from today's config, nor offers a partial digest as a receipt target.
-func projectBrief(j store.Journal, id, audience string) (brief.View, bool, error) {
+// projectBrief joins committed journal evidence with the policy pinned at
+// classification time. Unavailable requirements never offer a receipt digest.
+func projectBrief(j store.Journal, id, audience string, options ...briefOptions) (brief.View, bool, error) {
+	opt := briefOptions{}
+	if len(options) > 0 {
+		opt = options[0]
+	}
+	sanitizer := opt.sanitizer
+	if sanitizer == nil {
+		sanitizer = diagnostic.NewSanitizer()
+	}
 	s := j.Seed
 	candidates := map[int]bool{}
 	for _, e := range s.Entries {
@@ -76,8 +83,23 @@ func projectBrief(j store.Journal, id, audience string) (brief.View, bool, error
 	}
 	if a, ok := s.ApprovalFacts(queue.ChangeID(id)); ok {
 		f.Presentation.Saturated = a.Saturated
+		f.Presentation.Stances = []brief.StanceEvidence{}
 		if a.Intent != nil && a.Intent.Basis.Revision == rev.Revision && a.Intent.Basis.Head == rev.HeadSHA {
 			f.Intent = &brief.Intent{Recorded: true, Title: a.Intent.Title, Body: a.Intent.Body, Digest: a.Intent.Digest}
+		}
+		seenSources := map[string]bool{}
+		appendStance := func(sourceID string, row queue.AttributedStance) {
+			if seenSources[sourceID] {
+				return
+			}
+			seenSources[sourceID] = true
+			stance := row.Event.Stance
+			evidence := brief.StanceEvidence{UserID: stance.UserID, Kind: string(stance.Kind), Channel: string(stance.Source.Channel), SourceID: stance.Source.ID, Head: stance.Head, Revision: uint64(row.Revision), Time: stance.Source.Time, TimeKnown: stance.Source.TimeKnown, UpperBound: stance.Source.UpperTimeBound, Precision: string(stance.Source.Precision)}
+			if stance.Receipt != nil {
+				evidence.IntentDigest = stance.Receipt.IntentDigest
+				evidence.BriefDigest = stance.Receipt.BriefDigest
+			}
+			f.Presentation.Stances = append(f.Presentation.Stances, evidence)
 		}
 		users := make([]string, 0, len(a.Latest))
 		for user := range a.Latest {
@@ -85,26 +107,40 @@ func projectBrief(j store.Journal, id, audience string) (brief.View, bool, error
 		}
 		slices.Sort(users)
 		for _, user := range users {
-			row := a.Sources[a.Latest[user]]
-			stance := row.Event.Stance
-			if row.Revision != rev.Revision {
+			sourceID := a.Latest[user]
+			row, ok := a.Sources[sourceID]
+			if !ok || row.Revision != rev.Revision && row.Revision != 0 {
 				continue
 			}
-			evidence := brief.StanceEvidence{UserID: user, Kind: string(stance.Kind), Channel: string(stance.Source.Channel), SourceID: stance.Source.ID, Head: stance.Head, Revision: uint64(row.Revision), Time: stance.Source.Time, TimeKnown: stance.Source.TimeKnown, UpperBound: stance.Source.UpperTimeBound, Precision: string(stance.Source.Precision)}
-			if stance.Receipt != nil {
-				evidence.IntentDigest = stance.Receipt.IntentDigest
-				evidence.BriefDigest = stance.Receipt.BriefDigest
+			appendStance(sourceID, row)
+		}
+		// Revision zero is an explicit historical/ambiguous attribution. It is
+		// useful evidence, but never becomes authorization, so retain it even
+		// when it is no longer the latest source for a reviewer.
+		ambiguousSources := make([]string, 0)
+		for sourceID, row := range a.Sources {
+			if row.Revision == 0 && !seenSources[sourceID] {
+				ambiguousSources = append(ambiguousSources, sourceID)
 			}
-			f.Presentation.Stances = append(f.Presentation.Stances, evidence)
+		}
+		slices.Sort(ambiguousSources)
+		for _, sourceID := range ambiguousSources {
+			appendStance(sourceID, a.Sources[sourceID])
 		}
 	}
-	q, entry, _ := Project(j, selected, 0, diagnostic.NewSanitizer())
+	basis := queue.ApprovalBasis{ChangeID: queue.ChangeID(id), Revision: rev.Revision, Head: rev.HeadSHA}
+	policyCode := ""
+	if opt.policy != nil {
+		policyCode = applyBriefPolicy(&f, s, basis, opt)
+	}
+	q, entry, _ := Project(j, selected, 0, sanitizer)
 	if entry != nil {
 		f.Presentation.Progress = &brief.ProgressView{Position: entry.Position, Status: entry.Status, Reason: entry.Reason}
 	}
 	var runs []Run
 	if entry != nil {
 		runs = entry.RunLedger
+		f.Presentation.Tests = []brief.TestEvidence{}
 	}
 	for _, run := range runs {
 		t := brief.TestEvidence{Status: run.Outcome, SHA: run.TestedSHA}
@@ -119,37 +155,98 @@ func projectBrief(j store.Journal, id, audience string) (brief.View, bool, error
 	}
 	v, err := brief.Project(f, audience)
 	v.ChangeID = id
-	for _, block := range q.Blocks {
-		clears, action := clearQueueBlock(block.Source)
-		warning := brief.Warning{Code: "queue_blocked", NextStep: brief.Step{Action: action, Source: block.Source}}
-		if audience != "agent" {
-			warning.Detail = block.Reason + ": " + block.Detail
-			warning.Clears = clears
+	if policyCode != "" {
+		action := "restore_recorded_policy"
+		if policyCode == "policy_unavailable" {
+			action = "record_evidence"
 		}
-		v.Warnings = append(v.Warnings, warning)
+		appendBriefWarning(&v, audience, policyCode, "The recorded approval policy could not be reconstructed for this brief.", "Restore the recorded policy inputs or record the missing evidence before relying on this brief.", brief.Step{Action: action})
+	}
+	appendBriefChangeWarnings(&v, audience, j.Key, s, id, rev, entry, runs, f)
+	recovery := queue.BlockRecovery(s.Blocks(queue.Config{}))
+	for _, block := range q.Blocks {
+		source := queue.BlockSource(block.Source)
+		action := "wait_for_recovery"
+		if source.OperatorClearable() {
+			action = "refresh"
+		}
+		appendBriefWarning(&v, audience, "queue_blocked", block.Reason+": "+block.Detail, recovery, brief.Step{Action: action, Source: block.Source})
 	}
 	return v, true, err
 }
 
-var errBriefQuery = errors.New("brief requires a canonical change ID and ?audience=reviewer|operator|agent")
+func appendBriefWarning(v *brief.View, audience, code, detail, clears string, step brief.Step) {
+	for _, warning := range v.Warnings {
+		if warning.Code == code && warning.NextStep.Source == step.Source {
+			return
+		}
+	}
+	warning := brief.Warning{Code: code, NextStep: step}
+	if audience != "agent" {
+		warning.Detail = detail
+		warning.Clears = clears
+	}
+	v.Warnings = append(v.Warnings, warning)
+}
 
-func clearQueueBlock(source string) (string, string) {
-	switch source {
-	case "config":
-		return "Fix the governing configuration and let reconciliation record a valid configuration.", "fix_governing_config"
-	case "repository-removed":
-		return "Restore installation access and let discovery record repository recovery.", "restore_repository_access"
-	case "check-sources":
-		return "Resolve ambiguous or untrusted required check producers and let reconciliation record the corrected sources.", "resolve_check_sources"
-	case "landing-not-on-base":
-		return "Verify the recorded landing against base history before an authorized operator clears this source.", "verify_landing_history"
-	case "action-poisoned":
-		return "Investigate the quarantined action before an authorized operator clears this source.", "investigate_quarantined_action"
-	case "operator":
-		return "An authorized operator must resume the queue or clear the operator block.", "operator_resume"
-	case "build-failed":
-		return "Resolve the recorded build failure and use the existing authenticated refresh path to reset its retry backoff.", "resolve_build_failure"
-	default:
-		return "Resolve the recorded governing rules or lifecycle condition and let its owning observer record recovery.", "resolve_queue_block"
+func appendBriefChangeWarnings(v *brief.View, audience string, key store.QueueKey, s queue.State, id string, rev queue.RevisionRecord, entry *Entry, runs []Run, f brief.Fact) {
+	if entry != nil {
+		switch entry.Reason {
+		case string(queue.Untrusted):
+			appendBriefWarning(v, audience, "untrusted_head", "The current head has not passed the exact-head trust gate.", "Record a fresh observation that trusts this exact head before queueing it.", brief.Step{Action: "trust_exact_head", Source: "exact-head", Commit: entry.HeadSHA})
+		case string(queue.NotEligible):
+			appendBriefWarning(v, audience, "not_eligible", "The current recorded eligibility conditions do not admit this change.", "Record corrected eligibility evidence before requesting queue admission.", brief.Step{Action: "fix_eligibility"})
+		case string(queue.HeadChanged):
+			appendBriefWarning(v, audience, "head_changed", "The admission is pinned to an older head.", "Let reconciliation retire the stale admission and observe the new exact head before re-admission.", brief.Step{Action: "wait_for_recovery", Source: "head-observation", Commit: rev.HeadSHA})
+		case string(queue.Conflict), string(queue.FastForwardRequired), string(queue.MergeCommitsNotAllowed):
+			target := s.BaseSHA
+			if target == "" && f.Classification != nil && f.Classification.Inputs.Base != "" {
+				target = f.Classification.Inputs.Base
+			}
+			if target == "" {
+				target = rev.Basis.BaseSHA
+			}
+			appendBriefWarning(v, audience, "rebase_required", "The recorded head no longer matches the queue admission or base-history requirement.", "Rebase the change onto the recorded queue base, then record the new exact head.", brief.Step{Action: "rebase_onto", Path: key.BaseBranch, Commit: target})
+		case string(queue.ChecksFailed), string(queue.ChecksTimeout):
+			step := brief.Step{Action: "wait_for_recovery"}
+			if check := failedBriefRun(runs); check != nil && check.Identity != nil {
+				step = brief.Step{Action: "fix_check", Name: check.Identity.Name, URL: safeBriefURL(check.Identity.URL), Commit: check.TestedSHA}
+			}
+			appendBriefWarning(v, audience, "checks_blocked", "The recorded check evidence does not permit this change to proceed.", "Resolve the recorded check outcome and record a fresh result for the exact tested head.", step)
+		}
+	}
+	for _, wait := range s.ApprovalWaits() {
+		if wait.Basis.ChangeID == queue.ChangeID(id) && wait.Basis.Revision == rev.Revision && wait.Basis.Head == rev.HeadSHA {
+			appendBriefWarning(v, audience, "approval_wait", "The recorded approval gate is waiting for the missing evidence listed in the journal.", "Record the required approvals or corrected approval inputs for this exact head.", brief.Step{Action: "wait_for_approval"})
+			break
+		}
 	}
 }
+
+func failedBriefRun(runs []Run) *Run {
+	for i := len(runs) - 1; i >= 0; i-- {
+		if runs[i].Identity != nil && terminalBriefFailure(runs[i].Outcome) {
+			return &runs[i]
+		}
+	}
+	return nil
+}
+
+func terminalBriefFailure(outcome string) bool {
+	switch strings.ToLower(outcome) {
+	case "failure", "failed", "error", "cancelled", "canceled", "timeout", "timed_out", "timed-out", "action_required", "action-required":
+		return true
+	default:
+		return false
+	}
+}
+
+func safeBriefURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || u.User != nil || u.Scheme != "http" && u.Scheme != "https" {
+		return ""
+	}
+	return raw
+}
+
+var errBriefQuery = errors.New("brief requires a canonical change ID and ?audience=reviewer|operator|agent")

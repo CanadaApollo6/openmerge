@@ -5,9 +5,9 @@ Queue progress:
   position 1; status "waiting"; reason "approval_required"
 
 Warnings and what clears them:
-  "approval_required": ""
+  "approval_required"
     What clears it: "Obtain the required eligible approvals; receipt requirements need the exact current brief digest."
-  "stance_barrier": ""
+  "stance_barrier"
     What clears it: "Re-observe the blocker; accept a fresh review or receipt strictly after its source-time bound with no newer blocker. Without a comparable bound, use a new revision and fresh approval."
 
 Claimed intent (submitter's claim):
@@ -19,10 +19,11 @@ Classification and retained diff:
   Head "head"; base "base"; merge base "merge"
   Policy "policy"
   Inventory complete: true; hunks complete: true
-  Label "docs": truth=2 (unknown=0, false=1, true=2)
+  Label "docs": truth="true"
     Reason: "matched"
   File "" -> "a"; hunks complete: true
-    Hunk: "+hello\n"
+    Hunk 0+0 -> 1+1:
+      "+hello"
   Owner "a" ("new"): "resolved"; resolved: true; entry "* @owner"
     Eligible ID: "user"
 

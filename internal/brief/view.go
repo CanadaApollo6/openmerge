@@ -36,18 +36,19 @@ type TestEvidence struct{ Name, URL, Status, SHA string }
 // View is the public v1 DTO. No queue or persisted wire struct is embedded.
 // Null sections mean not recorded; [] means recorded and empty.
 type View struct {
-	Progress       *ProgressView       `json:"progress"`
-	Version        int                 `json:"version"`
-	Audience       string              `json:"audience"`
-	ChangeID       string              `json:"change_id"`
-	Digest         string              `json:"digest"`
-	Intent         *IntentView         `json:"intent"`
-	Classification *ClassificationView `json:"classification"`
-	Obligations    []ObligationView    `json:"obligations"`
-	Stances        []StanceView        `json:"stances"`
-	Tests          []TestView          `json:"tests"`
-	Warnings       []Warning           `json:"warnings"`
-	Truncated      bool                `json:"truncated"`
+	Progress          *ProgressView       `json:"progress"`
+	Version           int                 `json:"version"`
+	Audience          string              `json:"audience"`
+	ChangeID          string              `json:"change_id"`
+	Digest            string              `json:"digest"`
+	Intent            *IntentView         `json:"claimed_intent"`
+	Classification    *ClassificationView `json:"classification"`
+	Obligations       []ObligationView    `json:"obligations"`
+	ApprovalsRequired *bool               `json:"approvals_required"`
+	Stances           []StanceView        `json:"stances"`
+	Tests             []TestView          `json:"tests"`
+	Warnings          []Warning           `json:"warnings"`
+	Truncated         bool                `json:"truncated"`
 }
 
 // ProgressView describes queue position at the journal snapshot.
@@ -92,7 +93,7 @@ type ClassificationView struct {
 // LabelView pairs a three-valued label with recorded reasons.
 type LabelView struct {
 	Name    string   `json:"name"`
-	Truth   uint8    `json:"truth"`
+	Truth   string   `json:"truth"`
 	Reasons []string `json:"reasons"`
 }
 
@@ -149,6 +150,9 @@ type Step struct {
 	Path   string `json:"path,omitempty"`
 	UserID string `json:"user_id,omitempty"`
 	After  string `json:"source_time_after,omitempty"`
+	Name   string `json:"name,omitempty"`
+	URL    string `json:"url,omitempty"`
+	Commit string `json:"commit,omitempty"`
 }
 
 // Warning preserves a safety-relevant condition independently of row limits.
@@ -173,6 +177,7 @@ type StanceView struct {
 	IntentDigest string `json:"intent_digest"`
 	BriefDigest  string `json:"brief_digest"`
 	NextStep     Step   `json:"next_step"`
+	Attribution  string `json:"attribution,omitempty"`
 }
 
 // TestView exposes a recorded check name, safe URL, status and SHA.
@@ -188,11 +193,33 @@ const NotRecorded = "not recorded"
 const maxRows = 32
 const maxText = 2048
 
+const (
+	displayBudget           = 512 << 10
+	displayMetadataBudget   = 64 << 10
+	displayObligationBudget = 96 << 10
+	displayProvenanceBudget = 96 << 10
+	displayTestBudget       = 64 << 10
+	displayHunkBudget       = displayBudget - displayMetadataBudget - displayObligationBudget - displayProvenanceBudget - displayTestBudget
+)
+
 // MaxViewBytes caps public HTTP and CLI brief responses.
 const MaxViewBytes = 2 << 20
 
 // ValidAudience recognizes the three public brief audiences.
 func ValidAudience(a string) bool { return a == "reviewer" || a == "operator" || a == "agent" }
+
+type textBudget struct{ remaining int }
+
+func (b *textBudget) clean(s string, truncated *bool) string {
+	text := bounded(s, truncated)
+	escaped, _ := json.Marshal(text)
+	if len(escaped) > b.remaining {
+		*truncated = true
+		return "[truncated]"
+	}
+	b.remaining -= len(escaped)
+	return text
+}
 
 // Project bounds only the public display. The source Fact and its digest remain
 // untouched. Safety warnings are collected before any display row is omitted.
@@ -201,17 +228,10 @@ func Project(f Fact, audience string) (View, error) {
 		return View{}, fmt.Errorf("invalid audience")
 	}
 	v := View{Version: 1, Audience: audience, ChangeID: NotRecorded, Digest: NotRecorded, Warnings: []Warning{}}
-	remaining := 512 << 10
-	clean := func(s string) string {
-		text := bounded(s, &v.Truncated)
-		escaped, _ := json.Marshal(text)
-		if len(escaped) > remaining {
-			v.Truncated = true
-			return "[truncated]"
-		}
-		remaining -= len(escaped)
-		return text
-	}
+	metadata := textBudget{displayMetadataBudget}
+	obligations := textBudget{displayObligationBudget}
+	tests := textBudget{displayTestBudget}
+	hunks := textBudget{displayHunkBudget}
 	warn := func(code, clears, action string) {
 		for _, w := range v.Warnings {
 			if w.Code == code {
@@ -220,16 +240,33 @@ func Project(f Fact, audience string) (View, error) {
 		}
 		v.Warnings = append(v.Warnings, Warning{Code: code, Clears: clears, NextStep: Step{Action: action}})
 	}
+	warnStep := func(code, clears string, step Step) {
+		count := 0
+		for _, w := range v.Warnings {
+			if w.Code != code {
+				continue
+			}
+			count++
+			if w.NextStep.Name == step.Name {
+				return
+			}
+		}
+		if count >= maxRows {
+			v.Truncated = true
+			return
+		}
+		v.Warnings = append(v.Warnings, Warning{Code: code, Clears: clears, NextStep: step})
+	}
 	if f.Intent != nil && f.Intent.Recorded {
-		v.Intent = &IntentView{clean(f.Intent.Title), clean(f.Intent.Body)}
+		v.Intent = &IntentView{metadata.clean(f.Intent.Title, &v.Truncated), metadata.clean(f.Intent.Body, &v.Truncated)}
 	}
 	if c := f.Classification; c != nil {
 		i := c.Inputs
-		v.ChangeID = clean(i.ChangeID)
-		cv := &ClassificationView{Revision: i.Revision, Head: clean(i.Head), Base: clean(i.Base), MergeBase: clean(i.MergeBase), PolicyDigest: clean(i.PolicyDigest), InventoryComplete: c.InventoryComplete, HunksComplete: c.HunksComplete, Labels: []LabelView{}, Files: []FileView{}}
+		v.ChangeID = bounded(i.ChangeID, &v.Truncated)
+		cv := &ClassificationView{Revision: i.Revision, Head: bounded(i.Head, &v.Truncated), Base: bounded(i.Base, &v.Truncated), MergeBase: bounded(i.MergeBase, &v.Truncated), PolicyDigest: bounded(i.PolicyDigest, &v.Truncated), InventoryComplete: c.InventoryComplete, HunksComplete: c.HunksComplete, Labels: []LabelView{}, Files: []FileView{}}
 		v.Classification = cv
 		cv.Generation = i.Generation
-		cv.ClassifierVersion = clean(i.ClassifierVersion)
+		cv.ClassifierVersion = bounded(i.ClassifierVersion, &v.Truncated)
 		cv.Owners = []OwnerView{}
 		for index, o := range c.CodeOwners {
 			if index >= maxRows {
@@ -243,9 +280,9 @@ func Project(f Fact, audience string) (View, error) {
 				v.Truncated = true
 			}
 			for j := range ids {
-				ids[j] = clean(ids[j])
+				ids[j] = bounded(ids[j], &v.Truncated)
 			}
-			cv.Owners = append(cv.Owners, OwnerView{clean(o.Path), string(o.Side), string(o.Status), clean(o.LastMatchingEntry), ids, o.Eligible.Resolved})
+			cv.Owners = append(cv.Owners, OwnerView{metadata.clean(o.Path, &v.Truncated), bounded(string(o.Side), &v.Truncated), bounded(string(o.Status), &v.Truncated), metadata.clean(o.LastMatchingEntry, &v.Truncated), ids, o.Eligible.Resolved})
 		}
 
 		if !c.InventoryComplete {
@@ -263,11 +300,11 @@ func Project(f Fact, audience string) (View, error) {
 		}
 		slices.Sort(names)
 		for _, n := range names[:min(len(names), maxRows)] {
-			l := LabelView{Name: clean(n), Truth: uint8(c.Facts[n]), Reasons: []string{}}
+			l := LabelView{Name: bounded(n, &v.Truncated), Truth: truthText(uint8(c.Facts[n])), Reasons: []string{}}
 			for _, r := range c.Reasons {
 				if r.Label == n {
 					for _, reason := range r.Reasons[:min(len(r.Reasons), maxRows)] {
-						l.Reasons = append(l.Reasons, clean(reason))
+						l.Reasons = append(l.Reasons, metadata.clean(reason, &v.Truncated))
 					}
 					if len(r.Reasons) > maxRows {
 						v.Truncated = true
@@ -280,15 +317,15 @@ func Project(f Fact, audience string) (View, error) {
 			v.Truncated = true
 		}
 		for _, file := range c.Files[:min(len(c.Files), maxRows)] {
-			row := FileView{OldPath: clean(file.OldPath), NewPath: clean(file.NewPath), Hunks: []HunkView{}, Complete: file.Hunks.Complete, Omissions: []OmissionView{}}
+			row := FileView{OldPath: metadata.clean(file.OldPath, &v.Truncated), NewPath: metadata.clean(file.NewPath, &v.Truncated), Hunks: []HunkView{}, Complete: file.Hunks.Complete, Omissions: []OmissionView{}}
 			for _, h := range file.Hunks.Hunks[:min(len(file.Hunks.Hunks), 8)] {
-				row.Hunks = append(row.Hunks, HunkView{h.OldStart, h.OldLines, h.NewStart, h.NewLines, clean(h.Text)})
+				row.Hunks = append(row.Hunks, HunkView{h.OldStart, h.OldLines, h.NewStart, h.NewLines, hunks.clean(h.Text, &v.Truncated)})
 			}
 			if len(file.Hunks.Hunks) > 8 {
 				v.Truncated = true
 			}
 			for _, o := range file.Hunks.Omitted[:min(len(file.Hunks.Omitted), maxRows)] {
-				row.Omissions = append(row.Omissions, OmissionView{o.OldStart, o.OldLines, o.NewStart, o.NewLines, clean(o.Reason), o.Count})
+				row.Omissions = append(row.Omissions, OmissionView{o.OldStart, o.OldLines, o.NewStart, o.NewLines, metadata.clean(o.Reason, &v.Truncated), o.Count})
 			}
 			if len(file.Hunks.Omitted) > maxRows {
 				v.Truncated = true
@@ -324,7 +361,7 @@ func Project(f Fact, audience string) (View, error) {
 			v.Truncated = true
 		}
 		for j := range ids {
-			ids[j] = clean(ids[j])
+			ids[j] = bounded(ids[j], &v.Truncated)
 		}
 		eligible := append([]string{}, o.EligibleIDs...)
 		slices.Sort(eligible)
@@ -333,9 +370,10 @@ func Project(f Fact, audience string) (View, error) {
 			v.Truncated = true
 		}
 		for j := range eligible {
-			eligible[j] = clean(eligible[j])
+			eligible[j] = bounded(eligible[j], &v.Truncated)
 		}
-		v.Obligations = append(v.Obligations, ObligationView{o.Requirement.Human, eligible, clean(code), clean(o.Path), string(o.Side), string(o.Requirement.Selector), clean(o.Requirement.Group), o.Requirement.Count, o.Requirement.Receipt, o.Met, clean(o.Explanation), clears, ids, Step{Action: action, Path: clean(o.Path)}})
+		path := bounded(o.Path, &v.Truncated)
+		v.Obligations = append(v.Obligations, ObligationView{o.Requirement.Human, eligible, bounded(code, &v.Truncated), path, bounded(string(o.Side), &v.Truncated), bounded(string(o.Requirement.Selector), &v.Truncated), bounded(o.Requirement.Group, &v.Truncated), o.Requirement.Count, o.Requirement.Receipt, o.Met, obligations.clean(o.Explanation, &v.Truncated), clears, ids, Step{Action: action, Path: path}})
 	}
 	if p := f.Presentation; p != nil {
 		if p.Stances != nil {
@@ -345,48 +383,70 @@ func Project(f Fact, audience string) (View, error) {
 			v.Tests = []TestView{}
 		}
 		if p.Progress != nil {
-			v.Progress = &ProgressView{p.Progress.Position, clean(p.Progress.Status), clean(p.Progress.Reason)}
+			v.Progress = &ProgressView{p.Progress.Position, bounded(p.Progress.Status, &v.Truncated), bounded(p.Progress.Reason, &v.Truncated)}
 		}
 		if p.Saturated {
-			warn("approval_saturated", "Record a new revision and fresh reviews or receipts to recover source capacity.", "new_revision")
+			warn("approval_saturated", "Record a new revision and fresh reviews or receipts to recover source capacity; retained barriers and command pins remain pinned, so the change may remain saturated because capacity cannot recover.", "new_revision")
 		}
 		if p.RequirementsMissing {
 			v.Obligations = nil
 		}
-		for index, s := range p.Stances {
+		knownStances, ambiguousStances := 0, 0
+		for _, s := range p.Stances {
 			step := Step{Action: "none"}
-			if s.Kind == "withdraw" || s.Kind == "request_changes" {
-				bound := s.Time
-				if s.UpperBound.After(bound) {
-					bound = s.UpperBound
-				}
-				step = Step{Action: "new_revision", UserID: clean(s.UserID)}
-				if !bound.IsZero() && (s.TimeKnown || !s.UpperBound.IsZero()) {
+			userID := bounded(s.UserID, &v.Truncated)
+			if s.Revision != 0 && (s.Kind == "withdraw" || s.Kind == "request_changes") {
+				step = Step{Action: "new_revision", UserID: userID}
+				if bound, ok := sourceBound(s); ok {
 					step.Action = "reobserve_then_fresh_approval"
 					step.After = bound.UTC().Format(time.RFC3339Nano)
 				}
 				warn("stance_barrier", "Re-observe the blocker; accept a fresh review or receipt strictly after its source-time bound with no newer blocker. Without a comparable bound, use a new revision and fresh approval.", "resolve_stance_barrier")
 			}
-			if index >= maxRows {
-				v.Truncated = true
-				continue
+			if s.Revision == 0 {
+				warn("ambiguous_attribution", "Record unambiguous source attribution before relying on this evidence for approval.", "new_revision")
+				ambiguousStances++
+				if ambiguousStances > maxRows {
+					v.Truncated = true
+					continue
+				}
+			} else {
+				knownStances++
+				if knownStances > maxRows {
+					v.Truncated = true
+					continue
+				}
 			}
-			v.Stances = append(v.Stances, StanceView{clean(s.UserID), clean(s.Kind), clean(s.Channel), clean(s.SourceID), clean(s.Head), s.Revision, recordedTime(s.Time, s.TimeKnown), missing(clean(s.Precision)), recordedTime(s.UpperBound, !s.UpperBound.IsZero()), missing(clean(s.IntentDigest)), missing(clean(s.BriefDigest)), step})
+			v.Stances = append(v.Stances, StanceView{userID, bounded(s.Kind, &v.Truncated), bounded(s.Channel, &v.Truncated), bounded(s.SourceID, &v.Truncated), bounded(s.Head, &v.Truncated), s.Revision, recordedTime(s.Time, s.TimeKnown), missing(bounded(s.Precision, &v.Truncated)), recordedTime(s.UpperBound, !s.UpperBound.IsZero()), missing(bounded(s.IntentDigest, &v.Truncated)), missing(bounded(s.BriefDigest, &v.Truncated)), step, ""})
+			if s.Revision == 0 {
+				v.Stances[len(v.Stances)-1].Attribution = "not counted: ambiguous attribution"
+			}
 		}
 		for index, t := range p.Tests {
-			if index >= maxRows {
-				v.Truncated = true
-				continue
-			}
 			link := t.URL
 			u, err := url.Parse(link)
 			if err != nil || u.Scheme != "https" && u.Scheme != "http" || u.Host == "" || u.User != nil {
 				link = ""
 			}
-			v.Tests = append(v.Tests, TestView{missing(clean(t.Name)), missing(clean(link)), missing(clean(t.Status)), missing(clean(t.SHA))})
+			if failedCheckStatus(t.Status) {
+				warnStep("check_failed", "Resolve the recorded check before relying on this brief for approval.", Step{Action: "fix_check", Name: missing(bounded(t.Name, &v.Truncated)), URL: bounded(link, &v.Truncated), Commit: missing(bounded(t.SHA, &v.Truncated))})
+			}
+			if index >= maxRows {
+				v.Truncated = true
+				continue
+			}
+			name := tests.clean(t.Name, &v.Truncated)
+			status := bounded(t.Status, &v.Truncated)
+			sha := bounded(t.SHA, &v.Truncated)
+			cleanLink := tests.clean(link, &v.Truncated)
+			v.Tests = append(v.Tests, TestView{missing(name), missing(cleanLink), missing(status), missing(sha)})
 		}
 	}
-	if f.Presentation == nil || !f.Presentation.RequirementsMissing {
+	if v.Obligations != nil {
+		approvalsRequired := f.ApprovalsRequired
+		v.ApprovalsRequired = &approvalsRequired
+	}
+	if v.Obligations != nil && (f.Presentation == nil || !f.Presentation.RequirementsMissing) {
 		if digest, err := Digest(f); err == nil {
 			v.Digest = digest
 		}
@@ -415,12 +475,44 @@ func missing(s string) string {
 	}
 	return s
 }
+
+func truthText(truth uint8) string {
+	switch truth {
+	case 1:
+		return "false"
+	case 2:
+		return "true"
+	default:
+		return "unknown"
+	}
+}
+
 func recordedTime(t time.Time, known bool) string {
 	if !known || t.IsZero() {
 		return NotRecorded
 	}
 	return t.UTC().Format(time.RFC3339Nano)
 }
+
+func sourceBound(s StanceEvidence) (time.Time, bool) {
+	if !s.UpperBound.IsZero() {
+		return s.UpperBound, true
+	}
+	if s.TimeKnown && !s.Time.IsZero() {
+		return s.Time, true
+	}
+	return time.Time{}, false
+}
+
+func failedCheckStatus(status string) bool {
+	switch strings.ToLower(status) {
+	case "failure", "failed", "error", "cancelled", "canceled", "timeout", "timed_out", "timed-out", "action_required", "action-required":
+		return true
+	default:
+		return false
+	}
+}
+
 func clearing(code string) (string, string) {
 	switch code {
 	case "met":
@@ -433,8 +525,10 @@ func clearing(code string) (string, string) {
 		return "Obtain an eligible independent owner's approval.", "independent_owner_approval"
 	case "unknown_eligibility":
 		return "Record resolved identity, membership and writer eligibility.", "record_eligibility"
+	case "approval_required":
+		return "Obtain the required eligible approvals; receipt requirements need the exact current brief digest.", "wait_for_approval"
 	default:
-		return "Obtain the required eligible approvals; receipt requirements need the exact current brief digest.", "obtain_approval"
+		return "Obtain the required eligible approvals; receipt requirements need the exact current brief digest.", "wait_for_approval"
 	}
 }
 func bounded(s string, truncated *bool) string {
@@ -485,16 +579,26 @@ func Render(v View) ([]byte, error) {
 			fmt.Fprintln(&b, "  none recorded")
 		}
 		for _, w := range v.Warnings {
-			fmt.Fprintf(&b, "  %s: %s\n    What clears it: %s\n", quote(w.Code), quote(w.Detail), quote(w.Clears))
+			if w.Detail == "" {
+				fmt.Fprintf(&b, "  %s\n", quote(w.Code))
+			} else {
+				fmt.Fprintf(&b, "  %s: %s\n", quote(w.Code), quote(w.Detail))
+			}
+			if w.Clears != "" {
+				fmt.Fprintf(&b, "    What clears it: %s\n", quote(w.Clears))
+			}
 		}
 	}
+	if v.Audience == "reviewer" {
+		warnings()
+	}
+	fmt.Fprintln(&b, "\nQueue progress:")
+	if v.Progress == nil {
+		fmt.Fprintln(&b, NotRecorded)
+	} else {
+		fmt.Fprintf(&b, "  position %d; status %s; reason %s\n", v.Progress.Position, quote(v.Progress.Status), quote(v.Progress.Reason))
+	}
 	if v.Audience == "operator" {
-		fmt.Fprintln(&b, "\nQueue progress:")
-		if v.Progress == nil {
-			fmt.Fprintln(&b, NotRecorded)
-		} else {
-			fmt.Fprintf(&b, "  position %d; status %s; reason %s\n", v.Progress.Position, quote(v.Progress.Status), quote(v.Progress.Reason))
-		}
 		warnings()
 	}
 	fmt.Fprintln(&b, "\nClaimed intent (submitter's claim):")
@@ -509,7 +613,7 @@ func Render(v View) ([]byte, error) {
 	} else {
 		fmt.Fprintf(&b, "  Revision %d; generation %d; classifier %s\n  Head %s; base %s; merge base %s\n  Policy %s\n  Inventory complete: %t; hunks complete: %t\n", c.Revision, c.Generation, quote(c.ClassifierVersion), quote(c.Head), quote(c.Base), quote(c.MergeBase), quote(c.PolicyDigest), c.InventoryComplete, c.HunksComplete)
 		for _, l := range c.Labels {
-			fmt.Fprintf(&b, "  Label %s: truth=%d (unknown=0, false=1, true=2)\n", quote(l.Name), l.Truth)
+			fmt.Fprintf(&b, "  Label %s: truth=%s\n", quote(l.Name), quote(l.Truth))
 			for _, r := range l.Reasons {
 				fmt.Fprintf(&b, "    Reason: %s\n", quote(r))
 			}
@@ -517,7 +621,10 @@ func Render(v View) ([]byte, error) {
 		for _, f := range c.Files {
 			fmt.Fprintf(&b, "  File %s -> %s; hunks complete: %t\n", quote(f.OldPath), quote(f.NewPath), f.Complete)
 			for _, h := range f.Hunks {
-				fmt.Fprintf(&b, "    Hunk: %s\n", quote(h.Text))
+				fmt.Fprintf(&b, "    Hunk %d+%d -> %d+%d:\n", h.OldStart, h.OldLines, h.NewStart, h.NewLines)
+				for _, line := range strings.Split(strings.TrimSuffix(h.Text, "\n"), "\n") {
+					fmt.Fprintf(&b, "      %s\n", quote(line))
+				}
 			}
 		}
 		for _, f := range c.Files {
@@ -551,6 +658,9 @@ func Render(v View) ([]byte, error) {
 		fmt.Fprintln(&b, NotRecorded)
 	}
 	for _, s := range v.Stances {
+		if s.Attribution != "" {
+			fmt.Fprintf(&b, "  %s\n", quote(s.Attribution))
+		}
 		fmt.Fprintf(&b, "  %s: %s via %s source %s; revision %d; head %s\n    Source time %s; precision %s; upper bound %s\n    Intent binding: %s; brief binding: %s\n    Next step: %s; source time strictly after: %s\n", quote(s.UserID), quote(s.Kind), quote(s.Channel), quote(s.SourceID), s.Revision, quote(s.Head), quote(s.SourceTime), quote(s.Precision), quote(s.UpperBound), quote(s.IntentDigest), quote(s.BriefDigest), quote(s.NextStep.Action), quote(missing(s.NextStep.After)))
 	}
 	fmt.Fprintln(&b, "\nRecorded tests:")
@@ -559,9 +669,6 @@ func Render(v View) ([]byte, error) {
 	}
 	for _, t := range v.Tests {
 		fmt.Fprintf(&b, "  %s: %s; tested SHA %s; %s\n", quote(t.Name), quote(t.Status), quote(t.SHA), quote(t.URL))
-	}
-	if v.Audience == "reviewer" {
-		warnings()
 	}
 	return []byte(b.String()), nil
 }

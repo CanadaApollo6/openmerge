@@ -8,7 +8,7 @@
   "audience": "agent",
   "change_id": "change",
   "digest": "3cd9032798f30e2ed7fc6268fbbfe13efd9273b9f3edb482e7370e2a044f8ee6",
-  "intent": {
+  "claimed_intent": {
     "title": "\u003cscript\u003euntrusted \u0026 title\u003c/script\u003e",
     "body": "Body"
   },
@@ -37,7 +37,7 @@
     "labels": [
       {
         "name": "docs",
-        "truth": 2,
+        "truth": "true",
         "reasons": [
           "matched"
         ]
@@ -75,10 +75,11 @@
       "met": false,
       "approved_ids": [],
       "next_step": {
-        "action": "obtain_approval"
+        "action": "wait_for_approval"
       }
     }
   ],
+  "approvals_required": true,
   "stances": [
     {
       "user_id": "reviewer",
@@ -111,7 +112,7 @@
     {
       "code": "approval_required",
       "next_step": {
-        "action": "obtain_approval"
+        "action": "wait_for_approval"
       }
     },
     {

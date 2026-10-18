@@ -97,3 +97,12 @@ func TestChangeBriefRejectsRedirectAndUnsupportedBodies(t *testing.T) {
 		}
 	}
 }
+
+func TestChangeBriefHelpBeforeID(t *testing.T) {
+	for _, args := range [][]string{{"brief", "--help"}, {"brief", "-h"}} {
+		var out, errout bytes.Buffer
+		if code := runChange(args, &out, &errout); code != 0 {
+			t.Fatalf("help exit=%d: %s", code, errout.String())
+		}
+	}
+}

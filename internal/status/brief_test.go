@@ -115,7 +115,7 @@ func TestOperatorBriefExplainsQueueBlockRecovery(t *testing.T) {
 	}
 	for _, warning := range v.Warnings {
 		if warning.Code == "queue_blocked" {
-			if warning.NextStep.Action != "fix_governing_config" || warning.NextStep.Source != "config" || !strings.Contains(warning.Clears, "governing configuration") {
+			if warning.NextStep.Action != "wait_for_recovery" || warning.NextStep.Source != "config" || !strings.Contains(warning.Clears, "config") {
 				t.Fatal("operator lacks actionable recovery")
 			}
 			return

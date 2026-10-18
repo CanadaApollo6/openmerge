@@ -204,7 +204,7 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 			return
 		}
 		if isBrief {
-			view, found, err := projectBrief(journals[0], changeID, audience)
+			view, found, err := projectBrief(journals[0], changeID, audience, briefOptions{sanitizer: sanitizer, policy: briefPolicyProjection(r.Context(), source, journals[0])})
 			if err != nil {
 				fail(w, http.StatusServiceUnavailable, "unavailable", "brief could not be projected")
 				return

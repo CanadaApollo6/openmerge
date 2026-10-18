@@ -23,6 +23,10 @@ func runChange(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	id := args[1]
+	parseArgs := args[2:]
+	if id == "--help" || id == "-h" {
+		parseArgs = args[1:]
+	}
 	flags := flag.NewFlagSet("change brief", flag.ContinueOnError)
 	flags.SetOutput(stderr)
 	api := flags.String("api", envDefault("OPENMERGE_API_URL", "http://127.0.0.1:8081"), "status API origin")
@@ -31,7 +35,7 @@ func runChange(args []string, stdout, stderr io.Writer) int {
 	audience := flags.String("audience", "reviewer", "reviewer, operator or agent")
 	asJSON := flags.Bool("json", false, "write public JSON response unchanged")
 	tokenFile := flags.String("api-token-file", os.Getenv("OPENMERGE_API_TOKEN_FILE"), "read bearer token file")
-	if err := flags.Parse(args[2:]); errors.Is(err, flag.ErrHelp) {
+	if err := flags.Parse(parseArgs); errors.Is(err, flag.ErrHelp) {
 		return 0
 	} else if err != nil {
 		return 2
