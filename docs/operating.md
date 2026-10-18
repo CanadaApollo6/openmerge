@@ -775,6 +775,112 @@ For an environment-only change or a routine restart, use
 `systemctl --user restart openmerge.service`; systemd rereads the EnvironmentFile.
 Do not run another process against the same git cache during replacement.
 
+## Deploying mid-trial
+
+Follow [ADR 0007's trial deployment gates](adr/0007-changes-not-prs.md#trial-deployment)
+and the [dogfood materiality rule](research/phase2-dogfood.md). Check release
+eligibility first: passing replay does not waive the hold on PRs 8, 9 or 11.
+These are operator commands; the replay tool never connects to Postgres or GitHub.
+
+1. Save a full backup before installing anything. Keep the deployed binary and
+   its exact source SHA (for example `a4b173f`), credentials and environment.
+
+   ```bash
+   export PGHOST="$HOME/.local/share/openmerge/run" PGDATABASE=openmerge PGUSER=postgres
+   stamp=$(date -u +%Y%m%dT%H%M%SZ)
+   backups="$HOME/.local/share/openmerge/backups"
+   exports="$HOME/.local/share/openmerge/exports"
+   mkdir -p "$backups" "$exports"
+   pg_dump -Fc --file="$backups/openmerge-$stamp.dump"
+   ```
+
+2. Export both inputs in one read-only, repeatable-read snapshot. The unusual
+   CSV delimiter/quote bytes preserve JSON text literally: ordinary text COPY
+   escapes backslashes, and ordinary CSV adds quoting. JSON encodes control
+   characters, so these bytes cannot occur literally inside a JSON row.
+
+   ```bash
+   PGOPTIONS='-c default_transaction_read_only=on' psql -X -v ON_ERROR_STOP=1 <<SQL
+   BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
+   \copy (SELECT json_build_object('id', id, 'queue_id', queue_id, 'type', type, 'payload', payload, 'dedupe_key', dedupe_key, 'recorded_at', recorded_at)::text FROM events ORDER BY id) TO '$exports/events-$stamp.jsonl' WITH (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02', ESCAPE E'\x02')
+   \copy (SELECT row_to_json(q)::text FROM queues q ORDER BY id) TO '$exports/queues-$stamp.jsonl' WITH (FORMAT csv, DELIMITER E'\x01', QUOTE E'\x02', ESCAPE E'\x02')
+   COMMIT;
+   SQL
+   ```
+
+   Keep exports private; they contain repository data. Never commit them.
+
+3. In the candidate checkout, compare against a dedicated checkout of the exact
+   deployed commit. All historical `ConfigApplied.commit` and legacy `BaseMoved`
+   config blobs must already exist in local Git history. No fetch or Go module
+   download happens inside the script; provision the Go toolchain/dependencies
+   beforehand. The candidate's code comes from its working tree; use a clean
+   checkout at the intended release SHA so the reported HEAD identifies it.
+
+   ```bash
+   git worktree add --detach "$HOME/openmerge-deployed-replay" a4b173f
+   python3 scripts/check-live-journal-replay.py \
+     --baseline "$HOME/openmerge-deployed-replay" \
+     --events "$exports/events-$stamp.jsonl" \
+     --queues "$exports/queues-$stamp.jsonl" \
+     --config-file .openmerge.yml --out "$exports/replay-$stamp.json"
+   ```
+
+   Exit 0 requires identical checkpoints after **every event**, including wire
+   action keys/payloads, planner revision and snapshot state digest. Exit 1 is a
+   failed gate and reports the first differing event with both lines; exit 2 is
+   a tooling/input error and supplies no passing evidence. Snapshot schema/version
+   changes also fail this strict comparison; do not discard a mismatch to make
+   a release pass. The report records counts, SHA-256 of canonical JSONL streams
+   (including their trailing newlines and final policy records), export hashes,
+   old/new SHAs and live-config content hash.
+
+4. Require gate 4 `PASS` too. It is always enabled: `--config-file` selects the
+   live config blob from **candidate HEAD**, supplied unchanged to both loaders;
+   omission discovers the standard config paths. Both recomputed policy digests
+   must match the latest recorded `ConfigApplied` digest and the offline
+   reconciler comparison must emit no `ConfigApplied`, including same-digest
+   window initialization. Missing policy history fails closed. No events are
+   appended, and no new event types are synthesized during shadow replay.
+
+   Replay uses each event's `recorded_at` as a deterministic planning clock,
+   `serve.worker.plannerConfig`, and the historical policy at each transition.
+   Before `ConfigApplied`, it uses the config at the observed base tip with an
+   empty planner digest. The export cannot recover wall-clock idle cycles or
+   historical CLI overrides. Confirm the defaults match the deployment:
+   `--poll-interval-seconds 60`, `--default-branch main`, and head cleanup enabled
+   (use `--keep-head-branch` for `serve --delete-head-branch=false`). A config
+   file's explicit cleanup setting overrides that flag, as on the server.
+   Unsupported APIs fail closed; the adapter list in the script names the
+   verified wire decoder, Apply, worker planner mapping and snapshot codec.
+
+   Attach this report, exact commands, config identity and the other required
+   gate evidence (legacy wire fixtures, simulator results, and merge-method
+   commit IDs when applicable) to the deploy record. This tool alone is not
+   release authorization. Run its synthetic checks with
+   `python3 scripts/test-live-journal-replay.py`.
+
+5. Only after all gates pass, build with `make build`, stop the service with
+   `systemctl --user stop openmerge.service`, install with
+   `install -m 0755 bin/openmerge "$HOME/.local/bin/openmerge"`, and start with
+   `systemctl --user start openmerge.service`. Do not alter the live configuration
+   or permissions as part of an inert deployment.
+6. Inspect `journalctl --user -u openmerge.service --since '10 minutes ago'` and
+   queue status. Confirm real processing continues: look for `enqueued` and
+   `test ref built`, not just successful startup. Check for config/replay errors.
+7. Add a [dogfood log entry](research/phase2-dogfood.md#log) with the deployed SHA,
+   report location, commands/results and maintainer classification **before
+   inspecting period metrics**. Tooling/docs-only changes are non-material when
+   they do not change workflows/runners, batch planning, landing or check
+   observation; log that classification without restarting the periods.
+
+Forward-only events (for example PR #53's `outside_push_recorded`) make binary
+rollback unsafe once written: an older decoder cannot read them. Recovery then
+requires stopping the service and restoring the pre-deploy `pg_dump` backup into
+an appropriate empty database before starting the old binary. A restore loses
+post-backup journal writes and requires deliberate operator reconciliation; keep
+both the backup and evidence rather than assuming replacing the binary suffices.
+
 ## How landed PRs appear on GitHub
 
 OpenMerge pushes exactly the tested commit to the base branch. Merge commits
