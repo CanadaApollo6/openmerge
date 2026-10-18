@@ -54,7 +54,7 @@ func Build(policy cp.Policy, in cp.Input, title, body string) Fact {
 		switch {
 		case !c.InventoryComplete:
 			code = "unknown_inventory"
-		case r.Unresolved && (r.Path != "" || r.Requirement.Selector == cp.CodeOwners):
+		case r.Unresolved && (r.Path != "" || r.Requirement.Selector == cp.CodeOwners || r.Origin == "policy owners"):
 			code = "unknown_owners"
 		case r.Unresolved:
 			code = "unknown_eligibility"

@@ -64,6 +64,9 @@ func TestCanonicalVectors(t *testing.T) {
 }
 func TestDigestIncludedFields(t *testing.T) {
 	mutations := map[string]func(*Fact){
+		"old-path": func(f *Fact) { f.Classification.Files[0].OldPath = "old" }, "old-blob": func(f *Fact) { f.Classification.Files[0].OldBlob = "old" }, "old-mode": func(f *Fact) { f.Classification.Files[0].OldMode = 0100644 },
+		"owner-path": func(f *Fact) { f.Classification.CodeOwners[0].Path = "other" }, "owner-side": func(f *Fact) { f.Classification.CodeOwners[0].Side = cp.OldSide }, "owner-entry": func(f *Fact) { f.Classification.CodeOwners[0].LastMatchingEntry = "* @other" }, "owner-resolution": func(f *Fact) { f.Classification.CodeOwners[0].Eligible.Resolved = false },
+		"requirement-selector": func(f *Fact) { f.Obligations[0].Requirement.Selector = cp.Human }, "requirement-group": func(f *Fact) { f.Obligations[0].Requirement.Group = "group" }, "requirement-human": func(f *Fact) { f.Obligations[0].Requirement.Human = true }, "requirement-receipt": func(f *Fact) { f.Obligations[0].Requirement.Receipt = true }, "requirement-origin": func(f *Fact) { f.Obligations[0].Origin = "rule" }, "requirement-side": func(f *Fact) { f.Obligations[0].Side = cp.OldSide },
 		"change": func(f *Fact) { f.Classification.Inputs.ChangeID += "2" }, "revision": func(f *Fact) { f.Classification.Inputs.Revision++ }, "generation": func(f *Fact) { f.Classification.Inputs.Generation++ }, "base": func(f *Fact) { f.Classification.Inputs.Base += "2" }, "head": func(f *Fact) { f.Classification.Inputs.Head += "2" }, "merge-base": func(f *Fact) { f.Classification.Inputs.MergeBase += "2" }, "policy": func(f *Fact) { f.Classification.Inputs.PolicyDigest += "2" }, "classifier": func(f *Fact) { f.Classification.Inputs.ClassifierVersion += "2" }, "owner-content": func(f *Fact) { f.Classification.Inputs.OwnersBlob = "new" }, "attribute-content": func(f *Fact) { f.Classification.Inputs.AttributeBlobs = map[string]string{".gitattributes": "new"} },
 		"inventory": func(f *Fact) { f.Classification.InventoryComplete = false }, "paths-safe": func(f *Fact) { f.Classification.PathsSafe = false }, "paths": func(f *Fact) { f.Classification.Paths = append(f.Classification.Paths, "b") }, "hunks-complete": func(f *Fact) { f.Classification.HunksComplete = false }, "file": func(f *Fact) { f.Classification.Files[0].NewPath = "b" }, "blob": func(f *Fact) { f.Classification.Files[0].NewBlob = "new" }, "mode": func(f *Fact) { f.Classification.Files[0].NewMode = 0100755 }, "binary": func(f *Fact) { f.Classification.Files[0].Binary = cp.True }, "submodule": func(f *Fact) { f.Classification.Files[0].Submodule = cp.True }, "rename": func(f *Fact) { f.Classification.Files[0].Renamed = true }, "paired": func(f *Fact) { f.Classification.Files[0].RenamePaired = true }, "hunk": func(f *Fact) { f.Classification.Files[0].Hunks.Hunks[0].Text += "+new\n" }, "range": func(f *Fact) { f.Classification.Files[0].Hunks.Hunks[0].NewStart++ }, "omission": func(f *Fact) {
 			f.Classification.Files[0].Hunks.Omitted = []cp.HunkRange{{Reason: "hunk_count_limit", Count: 2}}
@@ -159,5 +162,22 @@ func TestReceiptValidationAtBothBoundaries(t *testing.T) {
 	}
 	if identity.BriefDigest == "" {
 		t.Fatal("missing supplied digest")
+	}
+}
+
+func TestPolicyOwnerDiagnosticsExcluded(t *testing.T) {
+	f := sample()
+	f.Classification.PolicyOwners = []cp.PolicyOwner{{Path: "a", Eligible: cp.IdentitySet{Resolved: true, Fresh: true, IDs: []string{"owner"}, Reason: "diagnostic one"}}}
+	one, _ := Digest(f)
+	f.Classification.PolicyOwners[0].Eligible.Reason = "diagnostic two"
+	f.Classification.PolicyOwners[0].Eligible.Fresh = false
+	two, _ := Digest(f)
+	if one != two {
+		t.Fatal("policy Eligible.Reason entered digest")
+	}
+	f.Classification.PolicyOwners[0].Eligible.Resolved = false
+	three, _ := Digest(f)
+	if two == three {
+		t.Fatal("stable resolution value omitted")
 	}
 }
