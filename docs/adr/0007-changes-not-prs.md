@@ -593,6 +593,8 @@ absence from uncertainty.
 | `paths` (every-file) | True iff every file matches; otherwise false | Unknown |
 | `touches` (any-file) | True on a hit; otherwise false | True on an observed hit; otherwise unknown |
 | `policy` / `owned:` facts | Derive known path facts and owners | Keep observed positive facts; absence is unknown; policy owner and applicable `code_owners` requirements are unresolvable with incomplete inventory or unknown owners |
+| `labels` | All listed classification labels must be true; forge labels are excluded | Three-valued conjunction of recorded labels; missing labels are unknown |
+| `authors` | Match the supplied effective forge account kind (`human` or `agent`), after agent mapping | Unknown account kind remains unknown, independently of inventory |
 
 Name the negative test **truncated-all-docs**: every observed file is docs, but
 the inventory is truncated. It lands nowhere, its owner requirement is

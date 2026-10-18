@@ -504,6 +504,11 @@ func EncodeEvent(value Event) (string, []byte, error) {
 		return encodeWire("pr_metadata_observed", wirePRMetadataObserved(v))
 	case PRObserved:
 		return encodeWire("pr_observed", wirePRObserved(v))
+	case ChangeClassified:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("change_classified", nonNullClassification(v))
 	case OutsidePushRecorded:
 		if err := v.Validate(); err != nil {
 			return "", nil, err
@@ -769,6 +774,12 @@ func DecodeEvent(payload []byte) (Event, error) {
 		return decodeWireData(envelope.Data, func(v wirePRObserved) Event {
 			return PRObserved(v)
 		})
+	case "change_classified":
+		v, err := readClassificationWire(envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		return v, v.Validate()
 	case "outside_push_recorded":
 		v, err := readWireData[OutsidePushRecorded](envelope.Data)
 		if err != nil {

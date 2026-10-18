@@ -13,7 +13,7 @@ import (
 
 // SnapshotVersion is separate from the additive event wire version. Snapshots
 // contain bounded projection state, never a copy of the event history.
-const SnapshotVersion = 3
+const SnapshotVersion = 4
 
 // Decoder resource limits are deliberately above ordinary queue sizes. This
 // codec is not wired into store persistence.
@@ -65,6 +65,7 @@ type rulesSnapshot struct {
 	Revision uint64
 }
 type stateSnapshot struct {
+	Classifications                                                          classifications
 	ChangeRevisions                                                          map[int]RevisionRecord
 	BatchRevisions                                                           map[string][]BatchRevision
 	OutsidePushes                                                            []OutsidePushRecorded `json:",omitempty"`
@@ -102,6 +103,7 @@ func EncodeSnapshot(s State) ([]byte, error) {
 	s = cloneState(s)
 	v := stateSnapshot{
 		Version:         SnapshotVersion,
+		Classifications: s.classifications,
 		ChangeRevisions: s.changeRevisions.snapshot(),
 		BatchRevisions:  s.batchRevisions,
 		OutsidePushes:   cloneOutsidePushes(s.outsidePushes),
@@ -173,10 +175,10 @@ func DecodeSnapshot(data []byte) (State, error) {
 	if err := json.Unmarshal(data, &header); err != nil {
 		return State{}, err
 	}
-	if header.Version != SnapshotVersion && header.Version != 2 {
+	if header.Version != SnapshotVersion && header.Version != 3 && header.Version != 2 {
 		return State{}, fmt.Errorf("unsupported snapshot version %d", header.Version)
 	}
-	data, err := upgradeChangeSnapshot(data, header.Version)
+	data, err := upgradeClassificationSnapshot(data, header.Version)
 	if err != nil {
 		return State{}, err
 	}
@@ -198,6 +200,9 @@ func DecodeSnapshot(data []byte) (State, error) {
 	if len(v.Chain) > 32 || len(v.Invalidations) > 32 || len(v.TestedOrder) > testedHistory || len(v.Checks) > maxRetainedChecks || len(v.Entries) > maxSnapshotEntries || len(v.Effects) > maxSnapshotEffects {
 		return State{}, fmt.Errorf("invalid snapshot bounds")
 	}
+	if err := validateClassifications(v.Classifications); err != nil {
+		return State{}, err
+	}
 	if len(v.OutsidePushes) > OutsidePushLimit {
 		return State{}, fmt.Errorf("snapshot outside pushes exceed bound")
 	}
@@ -207,8 +212,9 @@ func DecodeSnapshot(data []byte) (State, error) {
 		}
 	}
 	s := State{
-		outsidePushes: cloneOutsidePushes(v.OutsidePushes),
-		window:        v.Window, outcomes: v.Outcomes,
+		classifications: v.Classifications,
+		outsidePushes:   cloneOutsidePushes(v.OutsidePushes),
+		window:          v.Window, outcomes: v.Outcomes,
 		Lifecycle:          v.Lifecycle,
 		BaseBranch:         v.BaseBranch,
 		BaseSHA:            v.BaseSHA,

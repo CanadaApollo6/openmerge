@@ -1,6 +1,7 @@
 # Stage A approval policy component
 
-This package is dormant. Production packages do not import it. It imports the
+This package is dormant. Queue evidence envelopes import its shared values;
+no production path derives or emits classification or evaluates approvals yet. It imports the
 standalone `config/condition` grammar/glob package, never `config` or `queue`.
 No function reads a forge, filesystem, database, clock or environment.
 
@@ -85,6 +86,8 @@ The ADR 0007 facet contract remains:
 | `paths` | True iff every path matches; false on a failure; empty paths unknown | Unknown |
 | `touches` | True on a hit, otherwise false (including empty paths) | True on an observed hit, otherwise unknown |
 | `policy` / `owned:` | Recorded path facts and owners | Retain positive facts; absence unknown; policy-owner and applicable code-owner obligations unresolved with incomplete inventory or unknown owners |
+| `labels` | All listed classification labels must be true; forge labels excluded | Three-valued conjunction; missing labels unknown |
+| `authors` | Match the supplied effective account kind after agent mapping | Unknown kind remains unknown, independently of inventory |
 
 Callers supply fresh memberships and identity-bound grants, effective account
 kinds after agent mapping, and exclusions for the author, submitter and all
