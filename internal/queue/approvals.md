@@ -209,3 +209,17 @@ check observation/timer/retry paths. Merely treating it as pending CI would stil
 time out. Independent approval-policy requirements remain `EvaluateApprovals`'s
 landing gate, even when the condition expression itself passes. The contract
 tests inject that rejection now; no executor integration is enabled here.
+
+
+### 11a follow-up obligations from Stage A 8 review
+
+- A failing `approvalInputProbe` must not prevent reconciliation of other PRs:
+  log and continue, or isolate each probe. The dormant seam currently returns
+  the error; 11a must supply isolation before enabling production acquisition.
+- Same-input probes journal nothing and therefore do not advance persisted
+  acquisition freshness. Only journaled observations advance that freshness.
+- `not(approved-reviews-by = X)` with X present is classified as an approval
+  wait. Removing that review input can make the negation pass; 11a must preserve
+  the complete-expression outcome when consuming `WaitingForApproval`.
+- Optionally narrow per-event wait refresh to events that affect approval
+  inputs; the current unconditional refresh is correct but does extra work.

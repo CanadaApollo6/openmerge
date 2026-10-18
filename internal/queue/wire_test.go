@@ -2,6 +2,7 @@ package queue
 
 import (
 	"bytes"
+	"encoding/json"
 	"go/ast"
 	"go/importer"
 	"go/parser"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -190,5 +192,176 @@ func TestWireRegistryCoversQueueVariants(t *testing.T) {
 				t.Errorf("registry mismatch: queue %v, wire %v", found, tc.registered)
 			}
 		})
+	}
+}
+
+func TestWireEventKeysLowercaseSnakeCase(t *testing.T) {
+	// These exact pre-existing v1 paths are frozen by TestWireV1Golden. They
+	// cannot be renamed without changing existing journal bytes.
+	legacy := map[string]bool{
+		"event_change_accountability_observed.json.data.actor.ID":                                  true,
+		"event_change_accountability_observed.json.data.actor.Kind":                                true,
+		"event_change_accountability_observed.json.data.actor.Login":                               true,
+		"event_change_accountability_observed.json.data.author.ID":                                 true,
+		"event_change_accountability_observed.json.data.author.Kind":                               true,
+		"event_change_accountability_observed.json.data.author.Login":                              true,
+		"event_change_accountability_observed.json.data.humans[].ID":                               true,
+		"event_change_accountability_observed.json.data.humans[].Kind":                             true,
+		"event_change_accountability_observed.json.data.humans[].Login":                            true,
+		"event_change_classified.json.data.evidence.Classification":                                true,
+		"event_change_classified.json.data.evidence.Classification.CodeOwners":                     true,
+		"event_change_classified.json.data.evidence.Classification.CodeOwnersKnown":                true,
+		"event_change_classified.json.data.evidence.Classification.Facts":                          true,
+		"event_change_classified.json.data.evidence.Classification.Files":                          true,
+		"event_change_classified.json.data.evidence.Classification.Files[].Binary":                 true,
+		"event_change_classified.json.data.evidence.Classification.Files[].Facts":                  true,
+		"event_change_classified.json.data.evidence.Classification.Files[].Hunks":                  true,
+		"event_change_classified.json.data.evidence.Classification.Files[].Hunks.Complete":         true,
+		"event_change_classified.json.data.evidence.Classification.Files[].Hunks.Hunks":            true,
+		"event_change_classified.json.data.evidence.Classification.Files[].Hunks.Hunks[].NewLines": true,
+		"event_change_classified.json.data.evidence.Classification.Files[].Hunks.Hunks[].NewStart": true,
+		"event_change_classified.json.data.evidence.Classification.Files[].Hunks.Hunks[].OldLines": true,
+		"event_change_classified.json.data.evidence.Classification.Files[].Hunks.Hunks[].OldStart": true,
+		"event_change_classified.json.data.evidence.Classification.Files[].Hunks.Hunks[].Text":     true,
+		"event_change_classified.json.data.evidence.Classification.Files[].Hunks.Omitted":          true,
+		"event_change_classified.json.data.evidence.Classification.Files[].NewBlob":                true,
+		"event_change_classified.json.data.evidence.Classification.Files[].NewMode":                true,
+		"event_change_classified.json.data.evidence.Classification.Files[].NewPath":                true,
+		"event_change_classified.json.data.evidence.Classification.Files[].OldBlob":                true,
+		"event_change_classified.json.data.evidence.Classification.Files[].OldMode":                true,
+		"event_change_classified.json.data.evidence.Classification.Files[].OldPath":                true,
+		"event_change_classified.json.data.evidence.Classification.Files[].Reasons":                true,
+		"event_change_classified.json.data.evidence.Classification.Files[].RenamePaired":           true,
+		"event_change_classified.json.data.evidence.Classification.Files[].Renamed":                true,
+		"event_change_classified.json.data.evidence.Classification.Files[].Submodule":              true,
+		"event_change_classified.json.data.evidence.Classification.HunksComplete":                  true,
+		"event_change_classified.json.data.evidence.Classification.Inputs":                         true,
+		"event_change_classified.json.data.evidence.Classification.Inputs.AttributeBlobs":          true,
+		"event_change_classified.json.data.evidence.Classification.Inputs.Base":                    true,
+		"event_change_classified.json.data.evidence.Classification.Inputs.ChangeID":                true,
+		"event_change_classified.json.data.evidence.Classification.Inputs.ClassifierVersion":       true,
+		"event_change_classified.json.data.evidence.Classification.Inputs.ConfigBlob":              true,
+		"event_change_classified.json.data.evidence.Classification.Inputs.Generation":              true,
+		"event_change_classified.json.data.evidence.Classification.Inputs.GoverningCommit":         true,
+		"event_change_classified.json.data.evidence.Classification.Inputs.Head":                    true,
+		"event_change_classified.json.data.evidence.Classification.Inputs.MergeBase":               true,
+		"event_change_classified.json.data.evidence.Classification.Inputs.OwnersBlob":              true,
+		"event_change_classified.json.data.evidence.Classification.Inputs.PolicyDigest":            true,
+		"event_change_classified.json.data.evidence.Classification.Inputs.Revision":                true,
+		"event_change_classified.json.data.evidence.Classification.InventoryComplete":              true,
+		"event_change_classified.json.data.evidence.Classification.Paths":                          true,
+		"event_change_classified.json.data.evidence.Classification.PathsSafe":                      true,
+		"event_change_classified.json.data.evidence.Classification.PolicyOwners":                   true,
+		"event_change_classified.json.data.evidence.Classification.PolicyOwnersKnown":              true,
+		"event_change_classified.json.data.evidence.Classification.Reasons":                        true,
+		"event_change_classified.json.data.evidence.Classification.Reasons[].Label":                true,
+		"event_change_classified.json.data.evidence.Classification.Reasons[].Reasons":              true,
+		"event_change_classified.json.data.evidence.Governing":                                     true,
+		"event_change_classified.json.data.evidence.Governing.Attributes":                          true,
+		"event_change_classified.json.data.evidence.Governing.Attributes[].Content":                true,
+		"event_change_classified.json.data.evidence.Governing.Attributes[].Coverage":               true,
+		"event_change_classified.json.data.evidence.Governing.Attributes[].Coverage.Completeness":  true,
+		"event_change_classified.json.data.evidence.Governing.Attributes[].Coverage.Reasons":       true,
+		"event_change_classified.json.data.evidence.Governing.Attributes[].Mode":                   true,
+		"event_change_classified.json.data.evidence.Governing.Attributes[].ObjectID":               true,
+		"event_change_classified.json.data.evidence.Governing.Attributes[].Path":                   true,
+		"event_change_classified.json.data.evidence.Governing.Attributes[].Present":                true,
+		"event_change_classified.json.data.evidence.Governing.Codeowners":                          true,
+		"event_change_classified.json.data.evidence.Governing.Codeowners[].Content":                true,
+		"event_change_classified.json.data.evidence.Governing.Codeowners[].Coverage":               true,
+		"event_change_classified.json.data.evidence.Governing.Codeowners[].Coverage.Completeness":  true,
+		"event_change_classified.json.data.evidence.Governing.Codeowners[].Coverage.Reasons":       true,
+		"event_change_classified.json.data.evidence.Governing.Codeowners[].Mode":                   true,
+		"event_change_classified.json.data.evidence.Governing.Codeowners[].ObjectID":               true,
+		"event_change_classified.json.data.evidence.Governing.Codeowners[].Path":                   true,
+		"event_change_classified.json.data.evidence.Governing.Codeowners[].Present":                true,
+		"event_change_classified.json.data.evidence.Governing.CommitSHA":                           true,
+		"event_change_classified.json.data.evidence.Governing.Config":                              true,
+		"event_change_classified.json.data.evidence.Governing.Config[].Content":                    true,
+		"event_change_classified.json.data.evidence.Governing.Config[].Coverage":                   true,
+		"event_change_classified.json.data.evidence.Governing.Config[].Coverage.Completeness":      true,
+		"event_change_classified.json.data.evidence.Governing.Config[].Coverage.Reasons":           true,
+		"event_change_classified.json.data.evidence.Governing.Config[].Mode":                       true,
+		"event_change_classified.json.data.evidence.Governing.Config[].ObjectID":                   true,
+		"event_change_classified.json.data.evidence.Governing.Config[].Path":                       true,
+		"event_change_classified.json.data.evidence.Governing.Config[].Present":                    true,
+		"event_change_classified.json.data.evidence.Governing.Coverage":                            true,
+		"event_change_classified.json.data.evidence.Governing.Coverage.Completeness":               true,
+		"event_change_classified.json.data.evidence.Governing.Coverage.Reasons":                    true,
+		"event_change_classified.json.data.evidence.Governing.SelectedCodeowners":                  true,
+		"event_change_classified.json.data.evidence.Governing.Semantics":                           true,
+		"event_change_classified.json.data.evidence.Hunks":                                         true,
+		"event_change_classified.json.data.evidence.Hunks.Completeness":                            true,
+		"event_change_classified.json.data.evidence.Hunks.Reasons":                                 true,
+		"event_change_classified.json.data.evidence.InputFingerprint":                              true,
+		"event_change_classified.json.data.evidence.Inventory":                                     true,
+		"event_change_classified.json.data.evidence.Inventory.Completeness":                        true,
+		"event_change_classified.json.data.evidence.Inventory.Reasons":                             true,
+		"event_review_stance_observed.json.data.observation.ObservedAt":                            true,
+		"event_review_stance_observed.json.data.observation.ResponseDate":                          true,
+		"event_review_stance_observed.json.data.original_submission.Precision":                     true,
+		"event_review_stance_observed.json.data.original_submission.Source":                        true,
+		"event_review_stance_observed.json.data.original_submission.Time":                          true,
+		"event_review_stance_observed.json.data.original_submission.Uncertainty":                   true,
+		"event_review_stance_observed.json.data.original_submission.UpperBound":                    true,
+		"event_review_stance_observed.json.data.reviewer.ID":                                       true,
+		"event_review_stance_observed.json.data.reviewer.Kind":                                     true,
+		"event_review_stance_observed.json.data.reviewer.Login":                                    true,
+		"event_review_stance_observed.json.data.source_time.Precision":                             true,
+		"event_review_stance_observed.json.data.source_time.Source":                                true,
+		"event_review_stance_observed.json.data.source_time.Time":                                  true,
+		"event_review_stance_observed.json.data.source_time.Uncertainty":                           true,
+		"event_review_stance_observed.json.data.source_time.UpperBound":                            true,
+		"event_review_stance_observed.json.data.stance.Head":                                       true,
+		"event_review_stance_observed.json.data.stance.Kind":                                       true,
+		"event_review_stance_observed.json.data.stance.Receipt":                                    true,
+		"event_review_stance_observed.json.data.stance.Revision":                                   true,
+		"event_review_stance_observed.json.data.stance.Source":                                     true,
+		"event_review_stance_observed.json.data.stance.Source.ActingUserID":                        true,
+		"event_review_stance_observed.json.data.stance.Source.Channel":                             true,
+		"event_review_stance_observed.json.data.stance.Source.DismissedReviewID":                   true,
+		"event_review_stance_observed.json.data.stance.Source.ID":                                  true,
+		"event_review_stance_observed.json.data.stance.Source.Precision":                           true,
+		"event_review_stance_observed.json.data.stance.Source.Sequence":                            true,
+		"event_review_stance_observed.json.data.stance.Source.Time":                                true,
+		"event_review_stance_observed.json.data.stance.Source.TimeKnown":                           true,
+		"event_review_stance_observed.json.data.stance.Source.UpperTimeBound":                      true,
+		"event_review_stance_observed.json.data.stance.UserID":                                     true,
+	}
+	keyPattern := regexp.MustCompile(`^[a-z][a-z0-9]*(_[a-z0-9]+)*$`)
+	var check func(any, string)
+	check = func(value any, path string) {
+		switch value := value.(type) {
+		case map[string]any:
+			for key, child := range value {
+				if !keyPattern.MatchString(key) && !legacy[path+"."+key] {
+					t.Errorf("%s: non-snake-case key %q", path, key)
+				}
+				check(child, path+"."+key)
+			}
+		case []any:
+			for _, child := range value {
+				check(child, path+"[]")
+			}
+		}
+	}
+	for _, path := range wireFixtures(t, false) {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		event, err := DecodeEvent(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, raw, err = EncodeEvent(event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var value any
+		if err := json.Unmarshal(raw, &value); err != nil {
+			t.Fatal(err)
+		}
+		check(value, filepath.Base(path))
 	}
 }

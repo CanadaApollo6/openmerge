@@ -74,8 +74,8 @@ func (e ApprovalInputsChanged) Validate() error {
 	return nil
 }
 
-// A same-input poll still advances acquisition freshness. A delayed changed
-// read must not overwrite that newer evidence and wake a wait spuriously.
+// Journaled observations advance acquisition freshness. Same-input probes journal
+// nothing. Delayed reads must not overwrite newer evidence or wake a wait.
 func (s State) currentApprovalInputBasis(b ApprovalBasis) bool {
 	if s.CheckApprovalBoundary(b) != nil {
 		return false
@@ -89,6 +89,14 @@ func (s State) currentApprovalInputBasis(b ApprovalBasis) bool {
 	}
 	if f, ok := s.approvalFacts[b.ChangeID]; ok && f.Eligibility != nil && f.Eligibility.Basis.Revision == b.Revision && b.At.Before(f.Eligibility.Basis.At) {
 		return false
+	}
+	if f, ok := s.approvalFacts[b.ChangeID]; ok {
+		if f.Intent != nil && f.Intent.Basis.Revision == b.Revision && b.At.Before(f.Intent.Basis.At) {
+			return false
+		}
+		if f.Accountability != nil && f.Accountability.Basis.Revision == b.Revision && b.At.Before(f.Accountability.Basis.At) {
+			return false
+		}
 	}
 	return true
 }

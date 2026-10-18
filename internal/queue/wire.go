@@ -27,6 +27,13 @@ type wireBatchPR struct {
 	HeadSHA string `json:"head_sha"`
 }
 
+type wireApprovalGateRejected struct {
+	BatchID   string         `json:"batch_id"`
+	TestedSHA string         `json:"tested_sha"`
+	PRs       []wireBatchPR  `json:"prs"`
+	Waiting   []ApprovalWait `json:"waiting"`
+}
+
 type wirePRObserved struct {
 	PR       int    `json:"pr"`
 	HeadSHA  string `json:"head_sha"`
@@ -508,7 +515,7 @@ func EncodeEvent(value Event) (string, []byte, error) {
 		if err := v.Validate(); err != nil {
 			return "", nil, err
 		}
-		return encodeWire("approval_gate_rejected", v)
+		return encodeWire("approval_gate_rejected", wireApprovalGateRejected{v.BatchID, v.TestedSHA, encodeBatchPRs(v.PRs), v.Waiting})
 	case ApprovalInputsChanged:
 		if err := v.Validate(); err != nil {
 			return "", nil, err
@@ -805,8 +812,15 @@ func DecodeEvent(payload []byte) (Event, error) {
 			return PRObserved(v)
 		})
 	case "approval_gate_rejected":
-		v, err := readApprovalWire[ApprovalGateRejected](envelope.Data)
-		return v, err
+		if err := requireSnapshotFields(envelope.Data, reflect.TypeFor[wireApprovalGateRejected](), "approval"); err != nil {
+			return nil, err
+		}
+		v, err := readWireData[wireApprovalGateRejected](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := ApprovalGateRejected{v.BatchID, v.TestedSHA, decodeBatchPRs(v.PRs), v.Waiting}
+		return event, event.Validate()
 	case "approval_inputs_changed":
 		v, err := readApprovalWire[ApprovalInputsChanged](envelope.Data)
 		return v, err

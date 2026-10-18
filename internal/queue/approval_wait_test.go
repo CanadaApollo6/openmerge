@@ -517,3 +517,48 @@ func TestApprovalWaitCannotRebindTestedRevisionAfterHeadReuse(t *testing.T) {
 		t.Fatal("old tested composition rebound to reused-head revision")
 	}
 }
+
+func TestApprovalWaitRejectsDelayedIntentAndAccountability(t *testing.T) {
+	for _, kind := range []string{"intent", "accountability"} {
+		t.Run(kind, func(t *testing.T) {
+			s, cfg, bases := waitQueue(t, 1, 1, 1)
+			b := bases[0]
+			observation := func(b ApprovalBasis, changed bool) Event {
+				if kind == "intent" {
+					title := "current"
+					if changed {
+						title = "older"
+					}
+					return Intent(b, title, "body")
+				}
+				actor := person(7)
+				if changed {
+					actor = person(8)
+				}
+				return accountability(b, actor, person(1), nil)
+			}
+			newer := b
+			newer.At = b.At.Add(time.Minute)
+			newer.ReadID = "newer"
+			s = Apply(s, observation(newer, false))
+			// Freshness must survive both replay and snapshot recovery, even before a wait.
+			s = restart(t, s)
+			if got := Apply(s, observation(b, true)); !reflect.DeepEqual(got, s) {
+				t.Fatal("delayed observation regressed recorded inputs")
+			}
+			now := newer.At.Add(time.Hour)
+			s = waitBuild(t, s, cfg, now)
+			s = rejectWait(t, s, s.Active, newer)
+			s = invalidateWait(t, s)
+			s = restart(t, s)
+			if got := Apply(s, observation(b, true)); !reflect.DeepEqual(got, s) {
+				t.Fatal("delayed observation changed a wait")
+			}
+			newer.At = newer.At.Add(time.Minute)
+			newer.ReadID = "fresh-change"
+			if got := Apply(s, observation(newer, true)); len(got.ApprovalWaits()) != 0 {
+				t.Fatal("fresh changed observation failed to wake wait")
+			}
+		})
+	}
+}

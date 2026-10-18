@@ -23,6 +23,14 @@ func apply(s State, e Event) State {
 		if !s.currentApprovalInputBasis(e.Basis) {
 			return s
 		}
+	case ChangeIntentObserved:
+		if !s.currentApprovalInputBasis(e.Basis) {
+			return s
+		}
+	case ChangeAccountabilityObserved:
+		if !s.currentApprovalInputBasis(e.Basis) {
+			return s
+		}
 	case ApprovalGateRejected:
 		return s.rejectApprovalGate(e)
 	case ApprovalInputsChanged:
