@@ -27,7 +27,7 @@ func (s *Server) trustGate(ctx context.Context, w *worker, prs []queue.BatchPR) 
 		return errTrustGate
 	}
 	for _, pin := range prs {
-		pr, err := s.observe(ctx, w, pin.PR)
+		pr, err := s.observeWithClassification(ctx, w, pin.PR, false)
 		if err != nil {
 			return err
 		}
@@ -116,6 +116,21 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 	}
 	x := executor.Executor{Driver: w.Driver, Git: w.Git, Repo: w.repo(), Base: w.Key.BaseBranch, DisableDeleteHeadBranch: disableDeleteHeadBranch}
 	batch := state.ActionBatch(claim.Action)
+	if w.stageA != nil {
+		x.BuildMetadataState, x.BuildMetadataKey, x.BuildPolicyDigest = state, w.Key, w.stageA.policy.Digest
+		x.BuildMetadata = func(_ queue.State, key executor.BuildChangeKey, b queue.Batch, digest string) ([]*forge.ChangeMetadata, error) {
+			current, _, err := s.store.Load(actionCtx, w.id)
+			if err != nil {
+				return nil, err
+			}
+			recorded := current.Batch(b.ID)
+			if recorded == nil {
+				return nil, errors.New("build start was not recorded")
+			}
+			return executor.LoadBuildMetadata(current, key, *recorded, digest)
+		}
+		x.LandingDecisions = s.stageAGate(w, claim, cfg)
+	}
 	x.Speculative = cfg.MaxDepth() > 1
 	x.ChecksRetryFailed = cfg.RetryLimit()
 	x.CheckTimeout = cfg.CheckTimeout
@@ -137,6 +152,27 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 			for _, pin := range batch.PRs {
 				prs = append(prs, w.prs[pin.PR])
 			}
+			if w.stageA != nil {
+				for _, pr := range prs {
+					current, _, err := s.store.Load(actionCtx, w.id)
+					if err != nil {
+						return false
+					}
+					r, _ := current.PRRevision(pr.Number)
+					fresh, err := s.readStageAInputs(actionCtx, w, current, approvalBasis(r))
+					if err != nil {
+						return false
+					}
+					evidence, err := stageAReviewEvidence(current, w.stageA.policy, fresh)
+					if err != nil {
+						return false
+					}
+					if retryPolicyFailureWithApprovals(w.cfg.MergeWhen, []forge.PullRequest{pr}, checks, name, evidence) {
+						return true
+					}
+				}
+				return false
+			}
 			return retryPolicyFailure(w.cfg.MergeWhen, prs, checks, name)
 		}
 	}
@@ -151,6 +187,9 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 		}
 		if batch == nil {
 			return false, false, errors.New("no active batch for check policy")
+		}
+		if w.stageA != nil {
+			return s.stageACheckPolicy(actionCtx, w, batch, checks)
 		}
 		pending := false
 		for _, pin := range batch.PRs {
@@ -169,6 +208,9 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 		if err := s.trustGate(ctx, w, land.PRs); err != nil {
 			return err
 		}
+		if w.stageA != nil {
+			return nil
+		} // full condition revalidated by stageAGate
 		for _, pin := range land.PRs {
 			met, err := evaluate(w.cfg.MergeWhen, w.prs[pin.PR], finalChecks)
 			if err != nil {
@@ -181,6 +223,9 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 		return nil
 	}
 	emit := s.store.Emit(actionCtx, claim, cfg)
+	if w.stageA != nil {
+		emit = s.store.EmitWithPolicy(actionCtx, claim, cfg, w.stageA.policy)
+	}
 	executionAction := claim.Action
 	if report, ok := executionAction.(queue.ReportStatus); ok {
 		summary, err := s.ledgerSummary(actionCtx, w, report.PR)
@@ -188,6 +233,13 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 			return err
 		}
 		report.Detail += summary
+		if w.stageA != nil {
+			detail, err := s.stageACheckSummary(actionCtx, w, report.PR)
+			if err != nil {
+				return err
+			}
+			report.Detail += detail
+		}
 		executionAction = report
 	}
 	err = x.Execute(actionCtx, executionAction, func(event queue.Event) error {
@@ -251,6 +303,13 @@ func (s *Server) status(ctx context.Context, w *worker, pr int, head string, sta
 		return err
 	}
 	status.Summary += summary
+	if w.stageA != nil {
+		detail, err := s.stageACheckSummary(ctx, w, pr)
+		if err != nil {
+			return err
+		}
+		status.Summary += detail
+	}
 	key := fmt.Sprintf("status/%d", pr)
 	value := struct {
 		Head   string

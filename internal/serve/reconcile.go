@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
 	"github.com/CanadaApollo6/openmerge/internal/config"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -67,8 +68,18 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 		}
 		return loadErr
 	}
+	if loadErr == nil && w.stageA != nil {
+		loadErr = s.refreshStageAPolicy(ctx, w, configTip)
+	}
 	if baseErr == nil && state.BaseSHA != tip {
-		if _, err := s.store.Append(ctx, w.id, []queue.Event{queue.BaseMoved{SHA: tip}}, ""); err != nil {
+		if w.stageA != nil {
+			if loadErr != nil {
+				return loadErr
+			}
+			if err := s.observeStageABase(ctx, w, state, tip, configTip); err != nil {
+				return err
+			}
+		} else if _, err := s.store.Append(ctx, w.id, []queue.Event{queue.BaseMoved{SHA: tip}}, ""); err != nil {
 			return err
 		}
 		// Conflict observations can change when this base moves even if the
@@ -217,7 +228,7 @@ func (s *Server) reconcile(ctx context.Context, w *worker, force bool) error {
 		open[summary.Number] = true
 		old, known := w.summaries[summary.Number]
 		needsConflict := slices.Contains(w.cfg.EnterWhen.Attributes(), "conflict") || slices.Contains(w.cfg.MergeWhen.Attributes(), "conflict")
-		if !force && known && old.HeadSHA == summary.HeadSHA && old.UpdatedAt.Equal(summary.UpdatedAt) && (!needsConflict || w.prs[summary.Number].ConflictKnown) {
+		if w.stageA == nil && !force && known && old.HeadSHA == summary.HeadSHA && old.UpdatedAt.Equal(summary.UpdatedAt) && (!needsConflict || w.prs[summary.Number].ConflictKnown) {
 			continue
 		}
 		if _, err := s.observe(ctx, w, summary.Number); err != nil {
@@ -257,6 +268,10 @@ func (s *Server) reconcile(ctx context.Context, w *worker, force bool) error {
 }
 
 func (s *Server) observe(ctx context.Context, w *worker, number int) (forge.PullRequest, error) {
+	return s.observeWithClassification(ctx, w, number, true)
+}
+
+func (s *Server) observeWithClassification(ctx context.Context, w *worker, number int, refreshClassification bool) (forge.PullRequest, error) {
 	read := w.Driver.PullRequest
 	needsFiles := slices.Contains(w.cfg.EnterWhen.Attributes(), "files") || slices.Contains(w.cfg.MergeWhen.Attributes(), "files")
 	if metadata, ok := w.Driver.(forge.PullRequestMetadataReader); ok && !needsFiles {
@@ -266,7 +281,7 @@ func (s *Server) observe(ctx context.Context, w *worker, number int) (forge.Pull
 	if err != nil {
 		return pr, err
 	}
-	if !pr.HeadInBaseRepo {
+	if w.stageA == nil && !pr.HeadInBaseRepo {
 		for i, approval := range pr.Approvals {
 			if approval.SHA != pr.HeadSHA {
 				continue
@@ -276,6 +291,30 @@ func (s *Server) observe(ctx context.Context, w *worker, number int) (forge.Pull
 				return pr, err
 			}
 			pr.Approvals[i].CanWrite = allowed
+		}
+	}
+	if w.stageA != nil {
+		if err := s.observeStageA(ctx, w, pr, refreshClassification); err != nil {
+			return pr, err
+		}
+		if !pr.HeadInBaseRepo {
+			pr.Approvals = nil
+			state, _, err := s.store.Load(ctx, w.id)
+			if err != nil {
+				return pr, err
+			}
+			r, _ := state.PRRevision(number)
+			fresh, err := s.readStageAInputs(ctx, w, state, approvalBasis(r))
+			if err != nil {
+				return pr, err
+			}
+			facts, _ := state.ApprovalFacts(r.ChangeID)
+			for id, key := range facts.Latest {
+				source := facts.Sources[key]
+				if source.Revision == r.Revision && source.Event.Stance.Head == pr.HeadSHA && source.Event.Stance.Kind == cp.Approve && source.Event.Stance.Source.Channel == cp.NativeReview && fresh.Actors[id].Grant.Permits(id) == cp.True {
+					pr.Approvals = append(pr.Approvals, forge.Approval{User: source.Event.Reviewer.Login, SHA: pr.HeadSHA, CanWrite: true})
+				}
+			}
 		}
 	}
 	w.prs[number] = pr
@@ -327,6 +366,9 @@ func trusted(pr forge.PullRequest) bool {
 }
 
 func (s *Server) commands(ctx context.Context, w *worker, number int) error {
+	if w.stageA != nil {
+		return s.stageACommands(ctx, w, number)
+	}
 	key := fmt.Sprintf("cursor/%d", number)
 	raw, err := s.store.Observation(ctx, w.id, key)
 	if err != nil {

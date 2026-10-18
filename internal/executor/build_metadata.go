@@ -79,7 +79,8 @@ func LoadBuildMetadata(state queue.State, key BuildChangeKey, batch queue.Batch,
 		}
 		// Classification is based on the recorded queue-base observation, not
 		// a speculative predecessor batch's build base.
-		if inputs.Base != state.BaseSHA {
+		revision, _ := state.PRRevision(pin.PR)
+		if inputs.Base != state.BaseSHA && inputs.Base != revision.Basis.BaseSHA {
 			return nil, fmt.Errorf("classification base for PR %d does not match the recorded queue base", pin.PR)
 		}
 		if inputs.PolicyDigest != policyDigest {

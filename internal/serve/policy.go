@@ -262,6 +262,27 @@ func (s *Server) eligible(ctx context.Context, w *worker, pr forge.PullRequest) 
 			return false, err
 		}
 	}
+	if w.stageA != nil {
+		state, _, err := s.store.Load(ctx, w.id)
+		if err != nil {
+			return false, err
+		}
+		r, _ := state.PRRevision(pr.Number)
+		fresh, err := s.readStageAInputs(ctx, w, state, approvalBasis(r))
+		if err != nil {
+			return false, err
+		}
+		approvals, err := stageAReviewEvidence(state, w.stageA.policy, fresh)
+		if err != nil {
+			return false, err
+		}
+		values, err := policyValuesWithApprovals(w.cfg.EnterWhen, pr, checks, approvals)
+		if err != nil {
+			return false, err
+		}
+		met, _ := w.cfg.EnterWhen.Evaluate(values)
+		return met, nil
+	}
 	met, err := evaluate(w.cfg.EnterWhen, pr, checks)
 	if err != nil {
 		return false, s.block(ctx, w, queue.CheckSources, err.Error(), "")

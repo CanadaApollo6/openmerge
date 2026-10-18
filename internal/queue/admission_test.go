@@ -19,6 +19,7 @@ func admissionClassification(t *testing.T, pr, reasonBytes int) ChangeClassified
 	e.Evidence.Classification.Inputs.ChangeID = string(id)
 	e.Evidence.Classification.CodeOwners = []cp.CodeOwner{{
 		Path:     "docs/a.md",
+		Status:   cp.OwnersUnresolved,
 		Side:     cp.NewSide,
 		Eligible: cp.IdentitySet{Reason: strings.Repeat("x", reasonBytes)},
 	}}
@@ -162,5 +163,30 @@ func TestAdmissionChecksFullSnapshotBound(t *testing.T) {
 	var budget SnapshotBudgetError
 	if err = s.CheckReceiptAdmission(receipt); !errors.As(err, &budget) || budget.ChangeID != b.ChangeID {
 		t.Fatal("full snapshot limit not preflighted", err)
+	}
+}
+
+func TestClassificationEmitterRejectsContradictoryEvidence(t *testing.T) {
+	for name, mutate := range map[string]func(*ChangeClassified){
+		"aggregate-versus-file": func(e *ChangeClassified) { e.Evidence.Classification.Facts["docs"] = cp.False },
+		"known-owners-without-rows": func(e *ChangeClassified) {
+			e.Evidence.Classification.CodeOwnersKnown = true
+			e.Evidence.Classification.CodeOwners = nil
+		},
+		"owners-blob-versus-selection": func(e *ChangeClassified) { e.Evidence.Classification.Inputs.OwnersBlob = strings.Repeat("9", 40) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := classificationEvent(t)
+			mutate(&e)
+			if err := (State{}).CheckClassificationAdmission(e); err == nil {
+				t.Fatal("contradictory classification admitted")
+			}
+		})
+	}
+	e := classificationEvent(t)
+	s := Apply(State{}, e)
+	e.Evidence.Classification.Inputs.Generation = 3
+	if err := s.CheckClassificationAdmission(e); err == nil {
+		t.Fatal("out-of-sequence generation silently admitted")
 	}
 }

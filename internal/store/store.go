@@ -257,11 +257,20 @@ func (s *Store) append(ctx context.Context, q QueueID, events []queue.Event, ded
 		if observation != nil {
 			var previous []byte
 			err := tx.QueryRow(ctx, `SELECT value FROM observations WHERE queue_id = $1 AND key = $2`, q, observation.key).Scan(&previous)
-			if err == nil && string(previous) == string(observation.value) {
+			if err == nil && (observation.immutable || string(previous) == string(observation.value)) {
 				return nil
 			}
 			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return err
+			}
+			if observation.preflight != nil {
+				state, _, err := load(ctx, tx, q)
+				if err != nil {
+					return err
+				}
+				if err := observation.preflight(state); err != nil {
+					return err
+				}
 			}
 			if _, err := tx.Exec(ctx, `INSERT INTO observations(queue_id, key, value) VALUES ($1, $2, $3)
 				ON CONFLICT (queue_id, key) DO UPDATE SET value = EXCLUDED.value`, q, observation.key, observation.value); err != nil {

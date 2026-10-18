@@ -43,3 +43,19 @@ func (f *Forge) CommitsBetween(ctx context.Context, repo forge.RepoRef, base, he
 	slices.Reverse(commits)
 	return commits[:min(limit, len(commits))], len(commits) > limit, nil
 }
+
+// ReadCommitMessage implements the immutable tested-object reader used by the
+// shadow gate. It performs no remote reads or synthetic metadata generation.
+func (f *Forge) ReadCommitMessage(ctx context.Context, repo forge.RepoRef, sha string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if !forge.ValidDiffObjectID(sha) {
+		return "", fmt.Errorf("invalid commit ID")
+	}
+	commit, err := f.Commit(repo, sha)
+	if err != nil {
+		return "", err
+	}
+	return commit.Message, nil
+}

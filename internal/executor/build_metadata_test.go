@@ -123,7 +123,13 @@ func TestLoadBuildMetadataRejectsMismatchedBindings(t *testing.T) {
 			b.PRs = []queue.BatchPR{{PR: 1, HeadSHA: strings.Repeat("9", 40)}}
 			return b
 		}(), key: key, policy: metadataPolicy},
-		{name: "base", state: func() queue.State { s := state; s.BaseSHA = strings.Repeat("9", 40); return s }(), batch: batch, key: key, policy: metadataPolicy},
+		{name: "base", state: func() queue.State {
+			id, _ := key.ChangeID(1)
+			e, _ := state.Classification(id, 1)
+			e.Evidence.Classification.Inputs.Base = strings.Repeat("9", 40)
+			e.Evidence.Classification.Inputs.Generation++
+			return queue.Apply(state, e)
+		}(), batch: batch, key: key, policy: metadataPolicy},
 		{name: "policy", state: state, batch: batch, key: key, policy: "other-policy"},
 		{name: "config", state: state, batch: func() queue.Batch { b := batch; b.ConfigDigest = strings.Repeat("9", 64); return b }(), key: key, policy: metadataPolicy},
 		{name: "missing state config", state: func() queue.State { s := state; s.ConfigDigest = ""; return s }(), batch: batch, key: key, policy: metadataPolicy},

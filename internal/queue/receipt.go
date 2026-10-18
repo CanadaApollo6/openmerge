@@ -146,6 +146,12 @@ func (e ApprovalReceiptRecorded) stance() ReviewStanceObserved {
 
 const maxRejectedReceiptsPerActor = 64
 
+// ReceiptRejectionLimitError stops one actor's bounded rejection evidence from
+// blocking the inclusive command cursor. The command outcome remains durable.
+type ReceiptRejectionLimitError struct{}
+
+func (ReceiptRejectionLimitError) Error() string { return "receipt rejection limit reached for actor" }
+
 type receiptProjection map[ChangeID]map[string]ApprovalReceiptRecorded
 
 func receiptSourceMatches(e ApprovalReceiptRecorded, source AttributedStance) bool {
@@ -266,6 +272,9 @@ func (s State) CheckReceiptAdmission(e ApprovalReceiptRecorded) error {
 	}
 	next := Apply(s, e)
 	if _, ok := next.receipts[e.Basis.ChangeID][e.CommentID]; !ok {
+		if !e.Accepted {
+			return ReceiptRejectionLimitError{}
+		}
 		return fmt.Errorf("receipt admission capacity exceeded")
 	}
 	if err := validateReceiptSnapshot(next.receipts, next.approvalFacts, next.changeRevisions.snapshot()); err != nil {

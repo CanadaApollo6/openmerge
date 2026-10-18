@@ -32,6 +32,9 @@ type CandidateQueue struct {
 	Approvals    *Approvals
 }
 
+// ReviewTermsDiagnostic is shared by candidate parsing and serve assembly.
+const ReviewTermsDiagnostic = "approvals changes review eligibility; use explicit pools and move review terms into approvals rules"
+
 // Diagnostic is a candidate-only warning; activation maps it to config's DTO.
 type Diagnostic struct {
 	Line          int
@@ -372,7 +375,7 @@ func ParseCandidate(data []byte) (Repository, []Diagnostic, error) {
 			if v := qf[field]; v != nil {
 				expr := p.conditions(v)
 				if q.Approvals != nil && slices.Contains(expr.Attributes(), "approved-reviews-by") {
-					diagnostics = append(diagnostics, Diagnostic{Line: v.Line, Path: fmt.Sprintf("queues[%d].%s", i, field), Message: "approvals changes review eligibility; use explicit pools and move review terms into approvals rules"})
+					diagnostics = append(diagnostics, Diagnostic{Line: v.Line, Path: fmt.Sprintf("queues[%d].%s", i, field), Message: ReviewTermsDiagnostic})
 				}
 			}
 		}
