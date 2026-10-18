@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"slices"
+	"time"
 )
 
 // RevisionDiffReader observes immutable git inputs, independently of PR metadata.
@@ -22,13 +23,19 @@ type RevisionDiffRequest struct{ BaseSHA, HeadSHA string }
 
 // DiffSemantics fixes exact-object rename pairing and binary detection (NUL in
 // either blob). No heuristic similarity, external diff, textconv or attributes
-// participate. Complete inventories require unaltered, fully present ancestry.
+// participate. Complete inventories require unaltered, verified divergence ancestry.
 // Consumers include this version in their classifier version.
-const DiffSemantics = "git-inventory-v3-verified-history"
+const DiffSemantics = "git-inventory-v4-bounded-ancestry"
 
 // Inventory resource limits are part of DiffSemantics.
 const (
 	MaxDiffFiles = 1000
+	// MaxAncestryCommits allows unusually large PR divergences while bounding
+	// verification work independently of repository age.
+	MaxAncestryCommits = 100_000
+	// MaxAncestryDuration bounds merge-base discovery and verification together,
+	// including traversal work that emits no commits.
+	MaxAncestryDuration = 30 * time.Second
 	// MaxDiffBytes bounds raw inventory plus all inspected blob bytes per read.
 	MaxDiffBytes = 2 << 20
 	// MaxDiffHunks is zero until Stage 2b adds bounded hunk acquisition.
@@ -56,6 +63,7 @@ const (
 	DiffMultipleMergeBases DiffFailureReason = "multiple_merge_bases"
 	DiffShallowHistory     DiffFailureReason = "shallow_history"
 	DiffAlteredHistory     DiffFailureReason = "altered_history"
+	DiffAncestryLimit      DiffFailureReason = "ancestry_limit"
 	DiffFileLimit          DiffFailureReason = "file_limit"
 	DiffByteLimit          DiffFailureReason = "byte_limit"
 	DiffUnpairedRename     DiffFailureReason = "unpaired_rename"

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
@@ -43,9 +44,36 @@ func (s *session) diffCommand(ctx context.Context, limit int, args ...string) (s
 	return out.String(), out.overflow, err
 }
 
+// ancestryCounter retains no commit data. Cancel the command on the first
+// line beyond the budget: a truncated walk can never establish completeness.
+type ancestryCounter struct {
+	limit, lines int
+	exhausted    bool
+	cancel       context.CancelFunc
+}
+
+func (w *ancestryCounter) Write(p []byte) (int, error) {
+	for i, b := range p {
+		if b == '\n' {
+			w.lines++
+			if w.lines > w.limit {
+				w.exhausted = true
+				w.cancel()
+				return i, errDiffOutputLimit
+			}
+		}
+	}
+	return len(p), nil
+}
+
 // RevisionDiff uses the same cache lock, credential resolution, fetch and
 // maintenance lifecycle as builds. It never writes a remote ref or cache ref.
 func (r *Repo) RevisionDiff(ctx context.Context, repo forge.RepoRef, req forge.RevisionDiffRequest) (forge.RevisionDiff, error) {
+	return r.revisionDiff(ctx, repo, req, forge.MaxAncestryCommits, forge.MaxAncestryDuration)
+}
+
+// Explicit limits let tests exercise exhaustion without global mutable hooks.
+func (r *Repo) revisionDiff(ctx context.Context, repo forge.RepoRef, req forge.RevisionDiffRequest, commitLimit int, ancestryDuration time.Duration) (forge.RevisionDiff, error) {
 	result := forge.NewRevisionDiff(req)
 	fail := func(reason forge.DiffFailureReason, err error) (forge.RevisionDiff, error) {
 		result.Inventory.Completeness = forge.DiffIncomplete
@@ -91,9 +119,25 @@ func (r *Repo) RevisionDiff(ctx context.Context, repo forge.RepoRef, req forge.R
 		}
 		return reason, err
 	}
-	bases, overflow, err := s.diffCommand(ctx, forge.MaxDiffBytes, "merge-base", "--all", req.BaseSHA, req.HeadSHA)
+	// Discovery can itself explore old history before emitting any output, so
+	// share an internal deadline with verification, even for Background callers.
+	ancestryCtx, cancelAncestry := context.WithTimeout(ctx, ancestryDuration)
+	defer cancelAncestry()
+	ancestryFailure := func() (forge.DiffFailureReason, error) {
+		if ctx.Err() != nil {
+			return forge.DiffReadFailure, ctx.Err()
+		}
+		if ancestryCtx.Err() != nil {
+			return forge.DiffAncestryLimit, nil
+		}
+		return "", nil
+	}
+	bases, overflow, err := s.diffCommand(ancestryCtx, forge.MaxDiffBytes, "merge-base", "--all", req.BaseSHA, req.HeadSHA)
 	if reason, historyErr := checkHistory(); reason != "" {
 		return fail(reason, historyErr)
+	}
+	if reason, limitErr := ancestryFailure(); reason != "" {
+		return fail(reason, limitErr)
 	}
 	if overflow {
 		return fail(forge.DiffByteLimit, nil)
@@ -111,18 +155,29 @@ func (r *Repo) RevisionDiff(ctx context.Context, repo forge.RepoRef, req forge.R
 	if len(ids) != 1 {
 		return fail(forge.DiffMultipleMergeBases, nil)
 	}
-	// Walk both endpoints all the way to their roots, rather than excluding the
-	// merge base: exclusions or generation numbers can hide missing commits,
-	// including parents older than the base. Discard output without buffering
-	// it; Git must parse every reachable commit with its commit-graph disabled.
+	// Verify only the divergence, excluding all discovered merge bases. If a
+	// missing K could hide a better common ancestor S, K cannot be reachable
+	// from a found base C: otherwise S is an ancestor of C and cannot be better.
+	// Thus K lies in this walk and must be parsed. Do not use generation numbers,
+	// shallow boundaries, replacements, grafts or lazy fetching to skip raw parents.
+	args := append([]string{"rev-list", "--parents", req.BaseSHA, req.HeadSHA, "--not"}, ids...)
+	args = append(args, "--")
+	counter := &ancestryCounter{limit: commitLimit, cancel: cancelAncestry}
 	diagnostic := &limitedDiffBuffer{limit: 8192}
-	err = s.runTo(ctx, "", io.Discard, diagnostic, "rev-list", "--parents", req.BaseSHA, req.HeadSHA, "--")
+	err = s.runTo(ancestryCtx, "", counter, diagnostic, args...)
 	if reason, historyErr := checkHistory(); reason != "" {
 		return fail(reason, historyErr)
+	}
+	if reason, limitErr := ancestryFailure(); reason != "" {
+		return fail(reason, limitErr)
+	}
+	if counter.exhausted {
+		return fail(forge.DiffAncestryLimit, nil)
 	}
 	if err != nil {
 		return fail(forge.DiffReadFailure, s.failure("rev-list", diagnostic.String(), err))
 	}
+	cancelAncestry()
 	result.MergeBaseSHA = ids[0]
 	// Raw, NUL-delimited output preserves tabs/newlines and arbitrary path bytes.
 	// Disable rename heuristics and all attribute-dependent content transforms.

@@ -1,6 +1,7 @@
 package gitops
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,8 +25,15 @@ type diffHistoryFixture struct {
 // conceals H's code.go revert behind a docs-only inventory.
 func newDiffHistoryFixture(t *testing.T) diffHistoryFixture {
 	t.Helper()
-	f := newFixture(t)
-	c := f.diffCommit(f.base, "C", map[string]diffEntry{"code.go": {mode: "100644", content: "original\n"}})
+	return newDiffHistoryFixtureFrom(t, newFixture(t), "")
+}
+
+func newDiffHistoryFixtureFrom(t *testing.T, f *fixture, parent string) diffHistoryFixture {
+	t.Helper()
+	if parent == "" {
+		parent = f.base
+	}
+	c := f.diffCommit(parent, "C", map[string]diffEntry{"code.go": {mode: "100644", content: "original\n"}})
 	s := f.diffCommit(c, "S", map[string]diffEntry{"code.go": {mode: "100644", content: "changed\n"}})
 	k := f.diffCommit(s, "K", nil)
 	d := f.diffCommit(c, "D", nil)
@@ -233,5 +241,106 @@ func TestRevisionDiffShallowSinceAndDeepen(t *testing.T) {
 			got, err := r.RevisionDiff(t.Context(), testRepo, req)
 			assertDiffHistoryIncomplete(t, got, err, forge.DiffShallowHistory)
 		})
+	}
+}
+
+// Fast-import keeps the long-history regression cheap enough for normal checks.
+func TestRevisionDiffAncestryBudget(t *testing.T) {
+	f := newFixture(t)
+	const commits = 2048
+	var input strings.Builder
+	for i := 1; i <= commits; i++ {
+		fmt.Fprintf(&input, "commit refs/heads/long\nmark :%d\ncommitter Test <test@example.com> %d +0000\ndata 1\nx\n", i, 1700000000+i)
+		if i == 1 {
+			fmt.Fprintf(&input, "from %s\n", f.base)
+		}
+		input.WriteByte('\n')
+	}
+	gitCommand(t, f.source, input.String(), nil, "fast-import", "--quiet")
+	head := gitCommand(t, f.source, "", nil, "rev-parse", "refs/heads/long")
+	f.push("long", head, false)
+	for _, tc := range []struct {
+		name, base string
+		budget     int
+		reason     forge.DiffFailureReason
+	}{
+		{"exhausted", f.base, 8, forge.DiffAncestryLimit},
+		{"exact boundary", f.base, commits, ""},
+		{"equal endpoints skip long history", head, 1, ""},
+		{"small divergence skips long history", gitCommand(t, f.source, "", nil, "rev-parse", head+"~2"), 2, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := f.g.revisionDiff(t.Context(), testRepo, forge.RevisionDiffRequest{BaseSHA: tc.base, HeadSHA: head}, tc.budget, forge.MaxAncestryDuration)
+			if tc.reason != "" {
+				assertDiffHistoryIncomplete(t, got, err, tc.reason)
+				if got.MergeBaseSHA != "" || len(got.Files) != 0 {
+					t.Fatalf("accepted truncated traversal: %+v", got)
+				}
+			} else if err != nil || got.Inventory.Completeness != forge.DiffComplete || got.MergeBaseSHA != tc.base || len(got.Files) != 0 {
+				t.Fatalf("empty inventory: %+v err=%v", got, err)
+			}
+		})
+	}
+	// Use the same C→S→K topology as the false-base regression above, now
+	// on a long shared prefix. Losing its oldest ancestor must not force a
+	// roots walk; losing K in TestRevisionDiffMissingPromisorAncestry still fails.
+	history := newDiffHistoryFixtureFrom(t, f, head)
+	// Removing a commit well below the merge base cannot hide a better base.
+	// A roots walk fails here; bounded verification still proves the empty diff.
+	sess, unlock, err := f.g.open(t.Context(), testRepo)
+	must(t, err)
+	dir := sess.dir
+	unlock()
+	ids := strings.Fields(gitCommand(t, dir, "", nil, "rev-list", head))
+	missing := ids[len(ids)-1]
+	// Repack only the explicitly listed objects so no packed duplicate repairs it.
+	objects := strings.Fields(gitCommand(t, dir, "", nil, "cat-file", "--batch-all-objects", "--batch-check=%(objectname)"))
+	objects = slices.DeleteFunc(objects, func(id string) bool { return id == missing })
+	prefix := filepath.Join(t.TempDir(), "pack")
+	pack := gitCommand(t, dir, strings.Join(objects, "\n")+"\n", nil, "pack-objects", prefix)
+	must(t, os.RemoveAll(filepath.Join(dir, "objects")))
+	must(t, os.MkdirAll(filepath.Join(dir, "objects", "pack"), 0700))
+	for _, ext := range []string{"pack", "idx"} {
+		data, err := os.ReadFile(prefix + "-" + pack + "." + ext)
+		must(t, err)
+		must(t, os.WriteFile(filepath.Join(dir, "objects", "pack", "pack-"+pack+"."+ext), data, 0600))
+	}
+	got, err := f.g.revisionDiff(t.Context(), testRepo, history.req, 4, forge.MaxAncestryDuration)
+	assertDiffHistoryComplete(t, got, err, history.s)
+	for _, base := range []string{head, gitCommand(t, f.source, "", nil, "rev-parse", head+"~2")} {
+		got, err := f.g.revisionDiff(t.Context(), testRepo, forge.RevisionDiffRequest{BaseSHA: base, HeadSHA: head}, 2, forge.MaxAncestryDuration)
+		if err != nil || got.Inventory.Completeness != forge.DiffComplete || got.MergeBaseSHA != base {
+			t.Fatalf("irrelevant missing ancestor: %+v err=%v", got, err)
+		}
+	}
+}
+
+func TestRevisionDiffAncestryDeadlineContract(t *testing.T) {
+	for _, operation := range []string{"merge-base", "rev-list"} {
+		for _, tc := range []struct {
+			name                           string
+			callerTimeout, internalTimeout time.Duration
+			reason                         forge.DiffFailureReason
+		}{
+			{"internal limit returns nil error", 30 * time.Second, time.Second, forge.DiffAncestryLimit},
+			{"caller deadline returns diagnostic error", time.Second, 30 * time.Second, forge.DiffReadFailure},
+		} {
+			t.Run(operation+"/"+tc.name, func(t *testing.T) {
+				f := newDiffHistoryFixture(t)
+				wrapper := filepath.Join(t.TempDir(), "git")
+				marker := filepath.Join(t.TempDir(), "blocked")
+				// exec replaces the wrapper with our own blocked process, which CommandContext
+				// kills. No unrelated process or shell child is left behind.
+				writeExecutable(t, wrapper, "for arg do\nif [ \"$arg\" = "+shellQuote(operation)+" ]; then\n: > "+shellQuote(marker)+"\nexec sleep 30\nfi\ndone\nexec "+shellQuote(f.g.git)+" \"$@\"\n")
+				f.g.git = wrapper
+				ctx, cancel := context.WithTimeout(t.Context(), tc.callerTimeout)
+				defer cancel()
+				got, err := f.g.revisionDiff(ctx, testRepo, f.req, 100, tc.internalTimeout)
+				assertDiffHistoryIncomplete(t, got, err, tc.reason)
+				if _, err := os.Stat(marker); err != nil {
+					t.Fatalf("did not reach %s: %v", operation, err)
+				}
+			})
+		}
 	}
 }

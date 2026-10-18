@@ -19,7 +19,7 @@ no network; writes only the askpass helper inside the cache root. Bare-cache
 initialization happens lazily at first open.
 Future serve wiring owns activation and request scheduling.
 
-`git-inventory-v3-verified-history` fixes these semantics:
+`git-inventory-v4-bounded-ancestry` fixes these semantics:
 
 - Raw NUL-delimited git tree comparison, without external diffs, textconv, or
   heuristic renames. Paths retain their original bytes, including tabs/newlines.
@@ -43,9 +43,22 @@ Future serve wiring owns activation and request scheduling.
   commands ignore the mutable shallow file and follow raw commit parents.
 - Replace refs (loose or packed) and any `info/grafts` file fail closed with
   `altered_history`. Every Git command in a diff session disables replacement
-  objects, grafts, lazy fetching and the commit-graph. A full `rev-list` walk
-  from both endpoints verifies all reachable commits, including ancestry older
-  than the merge base; missing promisor commits are read failures, never fetched.
+  objects, grafts, lazy fetching and the commit-graph. Verification runs
+  `rev-list --parents <base> <head> --not <all merge bases>` against raw parents.
+  Missing commits in this divergence are read failures, never fetched.
+- Verification permits at most 100,000 emitted commits (`MaxAncestryCommits`),
+  comfortably above ordinary PR divergence while independent of repository age.
+  A streaming line counter cancels and kills Git on the first excess commit,
+  without retaining output. Exactly the budget is allowed only if Git finishes
+  successfully. Exhaustion returns incomplete `ancestry_limit` with nil error;
+  truncated traversal never establishes completeness. Equal endpoints have an
+  empty verification walk; ancestor endpoints require only their divergence.
+- Merge-base discovery can explore history before producing output, so discovery
+  and verification share a 30-second internal deadline (`MaxAncestryDuration`),
+  including when the caller uses `context.Background()`. Deadline exhaustion
+  also returns incomplete `ancestry_limit` with nil error. Caller cancellation
+  remains `read_failure` with non-nil error. Shallow-state rechecks still surround
+  both commands, and observed history mutations take precedence.
 - Multiple merge bases, unrelated histories, missing objects and read failures
   fail closed with typed reasons. Invalid IDs, missing objects and read failures
   return non-nil diagnostic errors (transport diagnostics are sanitized). Other
@@ -64,4 +77,15 @@ SHA-256 object IDs. Gitops charges actual Git output: SHA-1 records cost 100
 bytes plus the path length; SHA-256 records cost 148. Both then charge each
 distinct inspected blob once. Thus identical file contents near 2 MiB can hit
 the bound earlier in the fake than in a SHA-1 repository; coverage remains
-fail-closed in both. The semantics bounds golden pins all three limits.
+fail-closed in both. The semantics bounds golden pins the file, byte, hunk, ancestry-commit and
+ancestry-duration bounds only; it does not fingerprint the implementation.
+
+The divergence exclusion is sound even with missing objects: suppose a missing
+commit K could hide a better common ancestor S than a found merge base C. K
+cannot be reachable from C, since then S would be an ancestor of C and could not
+be better. Therefore K lies inside the verification walk and is hit. The
+C→S→K / C→D / merge(K,D)→B / S→H regression still rejects a missing K
+that could make C look like the merge base and conceal H's code revert. Git may
+also need to parse commits immediately below an exclusion boundary; those read
+failures remain failures. Missing ancestry far below a valid merge base need not
+be walked and cannot yield a better common ancestor.
