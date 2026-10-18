@@ -35,6 +35,17 @@ func TestCodeOwnerEvidenceBeforeExemptions(t *testing.T) {
 		{"unrecorded-rename", func(c *Classification) { c.Files[0].OldPath = "old/a.go"; c.Paths = append(c.Paths, "old/a.go") }},
 		{"unknown-status", func(c *Classification) { c.CodeOwners[1].Status = "future-status" }},
 		{"known-unresolved-status", func(c *Classification) { c.CodeOwners[1].Status = OwnersUnresolved }},
+		{"ownerless-mid-token-hash", func(c *Classification) {
+			c.CodeOwners[1].Status = OwnersOwnerless
+			c.CodeOwners[1].Eligible = IdentitySet{}
+			c.CodeOwners[1].LastMatchingEntry = "src/b.go#fragment @alice"
+		}},
+		{"resolved-mid-token-hash", func(c *Classification) { c.CodeOwners[1].LastMatchingEntry = "src/b.go @alice#fragment" }},
+		{"ownerless-bom", func(c *Classification) {
+			c.CodeOwners[1].Status = OwnersOwnerless
+			c.CodeOwners[1].Eligible = IdentitySet{}
+			c.CodeOwners[1].LastMatchingEntry = "\ufeffsrc/b.go"
+		}},
 		{"resolved-without-owners", func(c *Classification) { c.CodeOwners[1].LastMatchingEntry = "src/b.go # comment" }},
 		{"resolved-without-ids", func(c *Classification) { c.CodeOwners[1].Eligible.IDs = nil }},
 		{"resolved-with-empty-id", func(c *Classification) { c.CodeOwners[1].Eligible.IDs = []string{""} }},

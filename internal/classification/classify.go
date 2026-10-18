@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
 	"github.com/CanadaApollo6/openmerge/internal/config/condition"
@@ -20,16 +21,19 @@ import (
 const HistoricalVersion = "classification-v1/git-evidence-v7-bounded-omissions/governing-v1/hunks-v1/facets-v1"
 
 // Version includes acquisition semantics and the classifier facet/path rules.
-const Version = "classification-v1/" + forge.DiffSemantics + "/governing-v1/hunks-v1/facets-v2"
+const Version = "classification-v1/git-evidence-v7-bounded-omissions/governing-v1/hunks-v1/facets-v3"
+
+// PreviousVersion retains the 4a facet/path semantics for replay.
+const PreviousVersion = "classification-v1/git-evidence-v7-bounded-omissions/governing-v1/hunks-v1/facets-v2"
 
 // Settings is component-only; it does not extend the public config loader.
 type Settings struct{ Docs, Generated, Sensitive []string }
 
 // Deriver is 4b's seam. Implementations parse only the supplied governing tree.
-// Generated returns Unknown until attributes can be resolved for that path.
+// Generated resolves the attribute half only after Classify checks ancestor coverage.
 // Owners fills the shared owner evidence and owned: facts, retaining uncertainty.
-// 4b MUST bump Version when deriving owners/attributes. Owners must set unknown
-// itself when unresolved, and explicit False for every absent governing owner token.
+// Owners must record explicit False for every absent governing owner token.
+// Classify enforces unknown ownership and rejects protected evidence mutations.
 // Missing owned: facts remain unknown even on complete inventories.
 // It must not change inventory, inputs, paths, hunks or non-owner facts.
 type Deriver interface {
@@ -62,6 +66,18 @@ func Classify(inputs cp.ClassificationInputs, diff forge.RevisionDiff, governing
 	if diff.Semantics != forge.DiffSemantics || governing.Semantics != forge.DiffSemantics {
 		return Evidence{}, fmt.Errorf("unsupported evidence semantics")
 	}
+	// A call-local cache avoids reparsing ancestor files for each path/side.
+	switch d := derived.(type) {
+	case TreeDeriver:
+		derived = d.prepared(governing)
+	case *TreeDeriver:
+		if d != nil {
+			derived = d.prepared(governing)
+		}
+	}
+	// Detach all mutable governing collections before calling an injected Deriver.
+	derivedGoverning := cloneGoverning(governing)
+	governingFingerprint := fingerprint(derivedGoverning)
 	docs, err := compile(settings.Docs)
 	if err != nil {
 		return Evidence{}, err
@@ -78,12 +94,8 @@ func Classify(inputs cp.ClassificationInputs, diff forge.RevisionDiff, governing
 	// alone do not prove absence; that proof remains in Evidence.Governing.
 	inputs.ConfigBlob, inputs.OwnersBlob = "", ""
 	inputs.AttributeBlobs = make(map[string]string)
-	for _, f := range governing.Config {
-		if f.Present {
-			inputs.ConfigBlob = f.ObjectID
-			break
-		}
-	}
+	configID, configKnown := configBlob(governing)
+	inputs.ConfigBlob = configID
 	for _, f := range governing.Codeowners {
 		if f.Path == governing.SelectedCodeowners && f.Present {
 			inputs.OwnersBlob = f.ObjectID
@@ -99,6 +111,9 @@ func Classify(inputs cp.ClassificationInputs, diff forge.RevisionDiff, governing
 		c.Reasons = append(c.Reasons, cp.LabelReasons{Label: label, Reasons: []string{why}})
 	}
 	uncertain := func(why string) { c.Facts["unknown"] = cp.True; reason("unknown", why) }
+	if !configKnown {
+		uncertain("config probes incomplete or multiple configuration files present")
+	}
 	if !c.InventoryComplete {
 		uncertain("inventory incomplete: split the change")
 	}
@@ -145,8 +160,11 @@ func Classify(inputs cp.ClassificationInputs, diff forge.RevisionDiff, governing
 				file.Facts["docs"] = cp.False
 			}
 			g := cp.Unknown
-			if derived != nil && safe {
-				g = derived.Generated(p, governing)
+			if derived != nil && safe && attributesCovered(p, governing) {
+				g = derived.Generated(p, derivedGoverning)
+			}
+			if !attributesCovered(p, governing) {
+				uncertain("attribute probe coverage incomplete: " + p)
 			}
 			if matches(generated, p) {
 				g = cp.True
@@ -196,12 +214,48 @@ func Classify(inputs cp.ClassificationInputs, diff forge.RevisionDiff, governing
 		c.Facts["docs"], c.Facts["generated"] = cp.Unknown, cp.Unknown
 	}
 	if derived != nil {
-		derived.Owners(&c, governing)
+		before := protectedClassification(c)
+		beforeUnknown := c.Facts["unknown"]
+		beforeReasons := protectedReasons(c)
+		derived.Owners(&c, derivedGoverning)
+		if !reasonsPreserved(beforeReasons, c) || before != protectedClassification(c) || beforeUnknown != c.Facts["unknown"] && c.Facts["unknown"] != cp.True || fingerprint(derivedGoverning) != governingFingerprint {
+			return Evidence{}, fmt.Errorf("Deriver changed protected classification or governing evidence")
+		}
 	} else {
 		uncertain("owners not yet derived (Stage A 4b)")
 	}
+	if _, ok := selectedOwners(governing); !ok {
+		c.CodeOwnersKnown, c.PolicyOwnersKnown = false, false
+		for label := range c.Facts {
+			if strings.HasPrefix(label, "owned:") {
+				c.Facts[label] = cp.Unknown
+			}
+		}
+
+		for i := range c.Files {
+			for label := range c.Files[i].Facts {
+				if strings.HasPrefix(label, "owned:") {
+					c.Files[i].Facts[label] = cp.Unknown
+				}
+			}
+		}
+		for i := range c.CodeOwners {
+			c.CodeOwners[i].Status = cp.OwnersUnresolved
+			c.CodeOwners[i].Eligible.Resolved = false
+		}
+		for i := range c.PolicyOwners {
+			c.PolicyOwners[i].Eligible.Resolved = false
+		}
+		uncertain("CODEOWNERS probe sequence incomplete")
+	}
+	if !c.InventoryComplete {
+		c.CodeOwnersKnown, c.PolicyOwnersKnown = false, false
+	}
+	if !c.CodeOwnersKnown || c.Facts["policy"] != cp.False && !c.PolicyOwnersKnown {
+		uncertain("effective owners unresolved")
+	}
 	if c.Facts["generated"] == cp.Unknown {
-		uncertain("generated attributes not yet derived or unreadable (Stage A 4b)")
+		uncertain("generated attributes unavailable, unsupported or unreadable")
 	}
 	for _, label := range []string{"docs", "generated"} {
 		reason(label, map[cp.Truth]string{cp.True: "every changed path qualifies", cp.False: "a changed path does not qualify", cp.Unknown: "qualification is unresolved"}[c.Facts[label]])

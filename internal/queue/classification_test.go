@@ -31,7 +31,7 @@ func classificationEvent(t *testing.T) ChangeClassified {
 	return ChangeClassified{Evidence: e}
 }
 func TestClassificationWireAndVariants(t *testing.T) {
-	for _, name := range []string{"event_change_classified.json", "variants/classified_complete.json", "variants/classified_incomplete.json", "variants/classified_facets_v2.json"} {
+	for _, name := range []string{"event_change_classified.json", "variants/classified_complete.json", "variants/classified_incomplete.json", "variants/classified_facets_v2.json", "variants/classified_facets_v3.json"} {
 		raw, err := os.ReadFile("testdata/wire/v1/" + name)
 		if err != nil {
 			t.Fatal(err)
@@ -50,7 +50,7 @@ func TestClassificationWireAndVariants(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	golden, err := os.ReadFile("testdata/wire/v1/variants/classified_facets_v2.json")
+	golden, err := os.ReadFile("testdata/wire/v1/variants/classified_facets_v3.json")
 	if err != nil || !bytes.Equal(raw, golden) {
 		t.Fatal("current golden drift", err)
 	}
@@ -372,7 +372,7 @@ func TestClassificationNestedWireAndSnapshotValues(t *testing.T) {
 }
 
 func TestClassificationHistoricalRenameAndObjectFormats(t *testing.T) {
-	for _, version := range []string{classification.HistoricalVersion, classification.Version} {
+	for _, version := range []string{classification.HistoricalVersion, classification.PreviousVersion, classification.Version} {
 		e := classificationEvent(t)
 		e.Evidence.Classification.Inputs.ClassifierVersion = version
 		// facets-v1 mapped the forge unpaired single-side flag to Renamed=true.
@@ -409,5 +409,35 @@ func TestClassificationHistoricalRenameAndObjectFormats(t *testing.T) {
 	e.Evidence.Classification.Files[0].Hunks.Omitted = []cp.HunkRange{{OldStart: 0, OldLines: 100, NewStart: 1, NewLines: 101, Reason: string(forge.DiffOmittedRangeLimit), Count: 2}}
 	if err := e.Validate(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// Odd owner tokens must yield durable Unknown evidence, never an invalid wire
+// label. Exercise the real TreeDeriver through both public wire entry points.
+func TestTreeDeriverOddOwnerTokensAreWireValid(t *testing.T) {
+	for _, token := range []string{"@a[bot]/team", "@robot[bot]", "@Org/team", "@org/team_", "@a/b/c", "@/team", "@@alice", "@a_b", "bad@.", "Ops@EXAMPLE.COM", "@a#frag", strings.Repeat("x", 129), "@a!", "@é"} {
+		t.Run(token, func(t *testing.T) {
+			initial := classificationEvent(t).Evidence
+			g := initial.Governing
+			for i := range g.Codeowners {
+				if g.Codeowners[i].Present {
+					g.Codeowners[i].Content = "* " + token
+				}
+			}
+			full := forge.DiffCoverage{Completeness: forge.DiffComplete}
+			in := initial.Classification.Inputs
+			diff := forge.RevisionDiff{BaseSHA: in.Base, HeadSHA: in.Head, MergeBaseSHA: in.MergeBase, Semantics: forge.DiffSemantics, Inventory: full, Hunks: full, Files: []forge.DiffFile{{NewPath: "docs/a.md", NewMode: "100644", NewObjectID: strings.Repeat("e", 40), BinaryKnown: true, Rename: forge.DiffNotRenamed, HunkCoverage: full}}}
+			e, err := classification.Classify(in, diff, g, classification.Settings{}, classification.TreeDeriver{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			event := ChangeClassified{Evidence: e}
+			if err := event.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := EncodeEvent(event); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
