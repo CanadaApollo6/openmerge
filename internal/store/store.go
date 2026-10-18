@@ -24,14 +24,26 @@ type QueueKey struct {
 
 // Store is safe for concurrent workers. Close it when all workers have stopped.
 type Store struct {
-	pool *pgxpool.Pool
+	pool          *pgxpool.Pool
+	testLockScope string
 	// Tests synchronize contenders immediately before the blocking lock call.
 	beforeQueueLock func()
 }
 
+// Option configures a store before migrations run.
+type Option func(*Store)
+
+// WithTestLockScope isolates advisory locks for tests using separate schemas in
+// one database. Every store sharing a schema must use the same scope. Never use
+// this in production: mixed-version servers must retain the default lock keys.
+// An empty scope preserves the production locks exactly.
+func WithTestLockScope(scope string) Option {
+	return func(s *Store) { s.testLockScope = scope }
+}
+
 // Open connects to PostgreSQL and applies embedded forward-only migrations.
 // Exec mode avoids session-local prepared statements behind transaction poolers.
-func Open(ctx context.Context, url string) (*Store, error) {
+func Open(ctx context.Context, url string, options ...Option) (*Store, error) {
 	cfg, err := pgxpool.ParseConfig(url)
 	if err != nil {
 		return nil, fmt.Errorf("parse database URL: %w", err)
@@ -46,6 +58,9 @@ func Open(ctx context.Context, url string) (*Store, error) {
 		return nil, fmt.Errorf("connect database: %w", err)
 	}
 	s := &Store{pool: pool}
+	for _, option := range options {
+		option(s)
+	}
 	if err := s.migrate(ctx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("migrate database: %w", err)
@@ -88,7 +103,7 @@ func (s *Store) canonicalQueue(ctx context.Context, key QueueKey, actualFence st
 	var id QueueID
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		// Registration uses its own namespace, separate from queue event locks.
-		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(1330464082, hashtext($1 || '/' || lower($2) || '/' || $3 || '/' || $4))`, key.Installation, key.Repository, key.BaseBranch, key.Lane); err != nil {
+		if err := s.lockRegistration(ctx, tx, key); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, `SELECT id, repository FROM queues WHERE installation=$1 AND lower(repository)=lower($2) AND base=$3 AND lane=$4 ORDER BY id`, key.Installation, key.Repository, key.BaseBranch, key.Lane)
@@ -216,19 +231,6 @@ func (s *Store) InitializeFence(ctx context.Context, q QueueID, token string) er
 		}
 		return nil
 	})
-}
-
-func (s *Store) lockQueue(ctx context.Context, tx pgx.Tx, q QueueID) error {
-	if s.beforeQueueLock != nil {
-		s.beforeQueueLock()
-	}
-	return lockQueue(ctx, tx, q)
-}
-
-func lockQueue(ctx context.Context, tx pgx.Tx, q QueueID) error {
-	// A dedicated two-int namespace keeps queue hashes separate from migrations.
-	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(1330464081, hashtext($1))`, fmt.Sprint(q))
-	return err
 }
 
 // Append commits a delivery's events together, in order. Only the final event
