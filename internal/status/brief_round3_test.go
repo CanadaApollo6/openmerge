@@ -177,3 +177,13 @@ func TestR3MachineFieldsPreservedDuringProjection(t *testing.T) {
 		t.Fatalf("machine fields corrupted: %+v", v)
 	}
 }
+
+func TestNextStepMachineValuesRemainVerbatim(t *testing.T) {
+	path := strings.Repeat("branch/", 1000)
+	link := "https://example.test/" + strings.Repeat("segment/", 1000)
+	v := brief.View{Warnings: []brief.Warning{{NextStep: brief.Step{Path: path, URL: link}}}}
+	sanitizeBriefView(&v, diagnostic.NewSanitizer())
+	if v.Warnings[0].NextStep.Path != path || v.Warnings[0].NextStep.URL != link {
+		t.Fatal("machine value display-truncated")
+	}
+}
