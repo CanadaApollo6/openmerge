@@ -75,11 +75,47 @@ Enforcement does not depend on observation: GitHub rejects ordinary writers whet
 **`openmerge setup import-protection --repo owner/name` reports how existing protection would translate.** It reads rulesets, inherited rulesets and classic protection with a repository-admin token, and is useful in `github` mode as an audit. It never edits the repository. For each requirement it prints a proposed `.openmerge.yml` change and a classification: **equivalent**, **stricter**, **weaker** or **unsupported**.
 
 - **Reviews** map only to ADR 0007 approval policy, with eligible, distinct reviewers and blocking requests for changes. Plain `#approved-reviews-by` conditions are not equivalent, because they don't filter for eligibility. Head-bound approvals are stricter than GitHub with stale-review dismissal off. With it on, any case where GitHub would invalidate an approval after a merge-base or diff change but OpenMerge would keep it is classified weaker and needs acceptance. Last-push approval is unsupported: excluding the submitter does not exclude a later pusher.
-- **Code owner review** maps to owner requirements over `CODEOWNERS` at the governing commit: a rule requiring `{code_owners: true}` for every changed file ([ADR 0007's code-owner clarification](0007-changes-not-prs.md)). Until that requirement is implemented, the report classifies code-owner review as unsupported. The report compares the effective `CODEOWNERS` for every served base with the default branch's and lists every difference, since ADR 0007 deliberately reads only the default branch's.
+- **Code owner review** maps to owner requirements over `CODEOWNERS` at the governing commit. The report compares the effective `CODEOWNERS` for every served base with the default branch's and lists every difference, since ADR 0007 deliberately reads only the default branch's.
 - **Required status checks** map to `merge_when` `check-success` terms only where the name identifies one producer. A check pinned to a specific App and a name shared by a commit status and a check run are reported as weaker or unsupported. OpenMerge treats neutral and skipped results as failures where GitHub accepts them, which is stricter, and the report says so because it can stall changes GitHub would have merged. For each check, the report says whether any workflow producing it runs on pushes to `openmerge/queue/**`; a check that runs only on pull requests is unsupported until CI changes. GitHub's strict up-to-date requirement maps to strict verification ([ADR 0005](0005-verification-modes.md)); a post-merge queue is reported as a relaxation.
 - **Conversation resolution and required deployments** are unsupported.
 - **Other writers of each base** are reported as blockers to the switch: release jobs, version-bump CI, backport bots, and any inherited bypass actor that can actually write a served base past `openmerge-base`. The report inventories every inherited bypass entry but blocks only on effective authority gaps, since bypassing one ruleset does not bypass another that still applies. A bot cannot be the break-glass actor (a team or the repository-admin role), so each writer must route through the queue or stop the switch.
 - **OpenMerge's own configuration paths** must be covered by `CODEOWNERS`. In `openmerge` mode a policy change needs owner approval (ADR 0007's `policy` label); without that, any queue-eligible writer could propose weaker policy, a separation-of-duties regression from GitHub settings that need an administrator.
+
+**Maintainer-approved consequential clarification, 2026-10-18 (ADR 0007
+code-owner requirement).** Code-owner review maps to a rule requiring
+`{code_owners: true}` for every **owned** file
+([ADR 0007's Policy approvals](0007-changes-not-prs.md#policy-approvals-stage-a)).
+Until that requirement is **activated** (PR 11b publishes the loader), the report
+classifies code-owner review as unsupported. Intentionally ownerless entries
+add no code-owner obligation. Unresolved owners, including mixed entries and
+unknown team membership, fail closed even alongside a resolvable owner; report
+this as stricter where GitHub would accept an available owner's approval.
+The existing stale-dismissal caveat for reviews applies to code-owner approvals
+too: with dismissal on, any case where GitHub invalidates an approval after a
+merge-base or diff change but OpenMerge retains it is weaker and needs acceptance;
+with dismissal off, head-bound approvals are stricter.
+
+A faithful translation of "N approvals + code-owner review" keeps the count as
+`approvals.default` and adds two independently matching rules. For N = 2:
+
+```text
+approvals:
+  default: {any_writer: true, count: 2}
+  rules:
+    - when: {paths: ["**"]}
+      require: {any_writer: true, count: 2}
+    - when: {touches: ["**"]}
+      require: {code_owners: true}
+```
+
+`paths` has every-file semantics, so the count rule also matches a complete empty
+diff. `touches` has any-file semantics: an empty diff gets the count but no owner
+obligation, as on GitHub. For a nonempty diff both rules match independently, so
+owner review cannot displace the imported N approvals; one eligible approval
+may contribute to both requirements. The default alone does not preserve the
+count once a rule definitely matches. `import-protection` must not propose or
+classify a `{code_owners: true}` default alone as equivalent: it is rejected by
+the loader and would permit uncovered-only changes without the imported floor.
 
 The command exits nonzero while anything is weaker, unsupported or blocking, unless the operator passes `--accept` with the list of policy relaxations they accept. Installation prerequisites (a served default branch, the bypass GitHub must accept, `CODEOWNERS` coverage, mandatory policy approval, every other writer resolved) cannot be accepted away. Accepted items are written into the proposed configuration as comments, so their durable record is the reviewed pull request that lands it.
 
