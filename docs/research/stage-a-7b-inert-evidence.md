@@ -324,3 +324,82 @@ The final explicit fetch of main and the PR branch only still returned main
 The final follow-up commit changes only this evidence note. All PR commits were
 checked for the required Riel author and exact final sign-off/co-author trailers
 (**exit 0**). No job was interrupted and no other agent's process was killed.
+
+## Fix round 4
+
+Executable commit: `28ca9836f816466f30bfa9ba3cb23a2d32aeeeeb`, on main
+`15aa69929e89970fb49381493398814b8793567a`. The final follow-up commit changes
+only this evidence note.
+
+- Default-branch resolution: the provider reads `worker.configBranch` under its
+  existing nonblocking worker lock and supplies it to reconstruction. Omitted
+  base selectors retain reconciliation's repository-default semantics instead
+  of falsely overlapping release selectors. Unknown defaults fail closed with
+  `policy_unavailable`. Tests: `TestR4BriefPolicyDefaultBranch` (implicit main
+  plus `base: release/*`, both deletion defaults, and unknown default),
+  `TestR4UnknownDefaultBranchHTTP` (withheld requirements/digest).
+- Current check advice: compare producer identity and attempt independently of
+  `WastedReason`, within the change's current batch. An old timeout failure
+  remains history after a later successful rerun, with neither `check_failed`
+  nor `checks_blocked` recommending its repair. A current timeout failure still
+  produces both repair steps. Tests: `TestR4TimeoutRerun`,
+  `TestR4SupersessionIndependentOfWaste` (all ledger waste reasons, higher run
+  IDs and higher attempts, either observation order). Existing round-three
+  late-observation/manual-rerun/invalidated-batch regressions also pass.
+- Approval-bearing YAML, including `version: 1`, yields the explicit 11b
+  composition reason/action instead of a restore-policy loop. The public loader
+  remains unchanged. Test: `TestR4VersionedApprovalRecovery`.
+- Missing-object recovery now instructs an operator-managed fetch or backup
+  import of the pinned ConfigApplied commit and its tree/blob objects into the
+  local Git cache, including the default-tip config commit for release queues.
+  Unknown defaults advise allowing reconciliation to establish the branch.
+  The stale claim that every legacy config needs a future effective loader is
+  removed. API docs explain both cases. Test: `TestR3PolicyRecovery` now asserts
+  actionable default-branch object recovery.
+- Supplemental warning fields, including the `checks_blocked` fix_check name,
+  use the same per-field JSON-escaped bound as Project, after full-input
+  redaction. Test: `TestR4CheckStepNameBound` (long ampersand-heavy name plus a
+  registered opaque secret); the round-three sanitizer tests also pass.
+
+All heavy jobs run serially after a `/proc`-based gate waits for other agents'
+Go tests, test binaries, compatibility/replay jobs and lint to finish. Limits:
+GOFLAGS=-p=2, GOMEMLIMIT=4GiB (6GiB for replay), GOMAXPROCS=2; GOTMPDIR, GOCACHE
+and TMPDIR under ~/.cache; shared test Postgres only. The gate waited for
+PR #76's review suite and other active jobs; no process was killed. Runner:
+`~/.cache/om-pr74-fix4-run.py`; statuses:
+`~/.cache/om-pr74-fix4-status.txt`.
+
+- Focused regressions: **exit 0**, status and serve passed (brief had no matching
+  focused tests; its full tests passed under make check). No failed focused
+  attempts in this round. Log: `~/.cache/om-pr74-fix4-focused.log`.
+- `make check`: **exit 0**, formatting, zero lint issues, complete race/short
+  tests and build passed on 28ca983. Queue 280.994s; serve 156.092s; status
+  16.716s. Log: `~/.cache/om-pr74-fix4-check.log`.
+- `make test-sim-exits`: **exit 0**, 44.249s.
+  Log: `~/.cache/om-pr74-fix4-sim.log`.
+- Compatibility vs origin/main: **exit 0**, all 17 legacy exits and 1,055 retry/
+  default-digest records byte-identical, retaining the same hashes as above;
+  its 84 wire-v1 fixtures also match. Log: `~/.cache/om-pr74-fix4-compat.log`.
+- Independent byte comparisons: **exit 0**, all 90 wire fixtures and 16 canonical
+  vector files match main. Saved event and queue SHA-256 values remain those
+  recorded in Saved journal identity above.
+- Strict deployment-pair replay: **exit 0**, gates 2/4 and verdict **PASS**;
+  all 2,159 action/structural-state/snapshot checkpoints and 8,676 boundary
+  probes match; derived determinism PASS, no non-allowlisted fields/divergence.
+  Mandatory 22-test preflight **exit 0**; synthetic comparison 7/7 checkpoints
+  and 15 probes. Effective config digest remains
+  `e58c893b8b3af7685dc07a086824b3bc1fc044456083d193f9566f8387cb58fc`, with
+  `would_emit_config_applied: false`. Baseline/candidate/repeat stream SHA-256:
+  `dfa24a0365a448d8e999b407cfe5b19a9fbcca4d735b3a9287917ff122d9281d`.
+  Both checkouts were clean; replay candidate 28ca983, baseline 15aa699.
+  Report: `~/.cache/om-pr74-fix4-deployment-pair.json`;
+  log: `~/.cache/om-pr74-fix4-replay.log`.
+
+Final main/PR-branch-only fetch still returned main `15aa699` and PR head
+`f7b5e94`; no rebase was needed. Commit-author/trailer validation and final
+whitespace check **exit 0**. All validation attempts in this round exited 0;
+none was interrupted. The implementation stays inert: no queue/store/planner/
+executor changes, wire/canonical changes, public config activation or deployment.
+No live OpenMerge database/status API, systemd units or live `openmerge/*` refs
+were accessed. Code/tests make no real GitHub API calls. The Stage A 8 deployment
+Hold remains in force.
