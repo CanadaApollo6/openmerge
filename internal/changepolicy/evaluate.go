@@ -11,6 +11,8 @@ import (
 // Policy contains one queue's policy and fresh membership observations.
 // Static resolved names/IDs belong in the digest; memberships and grants do not.
 type Policy struct {
+	// Digest is the semantic PolicyDigest computed by the configuration boundary.
+	Digest    string
 	Approvals *Approvals
 	Groups    map[string]IdentitySet
 }
@@ -27,6 +29,32 @@ type Input struct {
 	Stances        map[string]Stance
 }
 
+// ObligationCause records why an independent requirement exists. Consumers use
+// it and RuleIndex rather than parsing the human-readable Origin.
+type ObligationCause string
+
+// Typed origins of independently expanded requirements.
+const (
+	CauseDefault             ObligationCause = "default"
+	CauseRule                ObligationCause = "rule"
+	CauseRuleCodeOwners      ObligationCause = "rule_code_owners"
+	CauseCodeOwnerEvidence   ObligationCause = "code_owner_evidence"
+	CausePolicyOwnerEvidence ObligationCause = "policy_owner_evidence"
+	CausePolicyOwner         ObligationCause = "policy_owner"
+)
+
+// UnresolvedCause classifies a non-final requirement result without relying on
+// Origin prose. ExcludedOwner is known failure rather than uncertainty.
+type UnresolvedCause string
+
+// Stable reasons a requirement has not been met.
+const (
+	UnresolvedInventory   UnresolvedCause = "unknown_inventory"
+	UnresolvedOwners      UnresolvedCause = "unknown_owners"
+	UnresolvedEligibility UnresolvedCause = "unknown_eligibility"
+	ExcludedOwner         UnresolvedCause = "excluded_owner"
+)
+
 // RequirementResult explains one independent obligation. EligibleIDs includes
 // native reviewers even for receipt-only requirements. Unresolved never means
 // an empty pool; ApprovedIDs contains only usable evidence for this requirement.
@@ -35,9 +63,16 @@ type Input struct {
 // changes, even for receipt-only requirements. Receipt records are copied.
 type RequirementResult struct {
 	Origin                   string
+	Cause                    ObligationCause
+	RuleIndex                *int
+	Path                     string
+	Side                     OwnerSide
+	PoolIDs                  []string
 	Requirement              Requirement
 	EligibleIDs, ApprovedIDs []string
 	Unresolved               bool
+	UnresolvedCause          UnresolvedCause
+	InventoryAffected        bool
 	Reason                   string
 	Met                      bool
 	ReliedOn                 []Stance
@@ -136,6 +171,18 @@ func MatchRule(m Match, c Classification, author AccountKind) (Truth, error) {
 	return result, nil
 }
 
+// inventoryAffected reports whether an otherwise possible rule exists only
+// because an incomplete inventory prevented a definite result.
+func inventoryAffected(m Match, c Classification, author AccountKind, match Truth) bool {
+	if c.InventoryComplete || match != Unknown {
+		return false
+	}
+	complete := c
+	complete.InventoryComplete = true
+	withoutInventoryGap, err := MatchRule(m, complete, author)
+	return err == nil && withoutInventoryGap != Unknown
+}
+
 // Evaluate only consumes its arguments and never mutates them. Legacy queues
 // return immediately without inspecting classification, grants or stances.
 func Evaluate(policy Policy, in Input) Evaluation {
@@ -161,15 +208,20 @@ func Evaluate(policy Policy, in Input) Evaluation {
 		return e
 	}
 	type obligation struct {
-		origin      string
-		requirement Requirement
-		pool        *IdentitySet
+		origin            string
+		cause             ObligationCause
+		ruleIndex         *int
+		requirement       Requirement
+		pool              *IdentitySet
+		path              string
+		side              OwnerSide
+		inventoryAffected bool
 	}
 	var obligations []obligation
 	codeEvidenceErr, policyEvidenceErr := codeOwnerEvidence(c), policyOwnerEvidence(c)
 	if codeEvidenceErr != nil {
 		pool := IdentitySet{Reason: "owner_evidence_incoherent: " + codeEvidenceErr.Error()}
-		obligations = append(obligations, obligation{"code owners", Requirement{Selector: CodeOwners, Count: 1}, &pool})
+		obligations = append(obligations, obligation{origin: "code owners", cause: CauseCodeOwnerEvidence, requirement: Requirement{Selector: CodeOwners, Count: 1}, pool: &pool})
 	}
 	definite := false
 	for i, rule := range a.Rules {
@@ -189,8 +241,9 @@ func Evaluate(policy Policy, in Input) Evaluation {
 		}
 		if match != False && rule.Require.Selector != None {
 			origin := fmt.Sprintf("rules[%d]", i)
+			ruleIndex := i
 			if rule.Require.Selector != CodeOwners {
-				obligations = append(obligations, obligation{origin: origin, requirement: rule.Require})
+				obligations = append(obligations, obligation{origin: origin, cause: CauseRule, ruleIndex: &ruleIndex, requirement: rule.Require, inventoryAffected: inventoryAffected(rule.When, c, in.AuthorKind, match)})
 				continue
 			}
 			r := rule.Require
@@ -200,7 +253,7 @@ func Evaluate(policy Policy, in Input) Evaluation {
 			}
 			if !c.InventoryComplete || !c.CodeOwnersKnown {
 				pool := IdentitySet{Reason: "code owners or inventory unresolved; split incomplete changes"}
-				obligations = append(obligations, obligation{origin + " code owners", r, &pool})
+				obligations = append(obligations, obligation{origin: origin + " code owners", cause: CauseRuleCodeOwners, ruleIndex: &ruleIndex, requirement: r, pool: &pool, inventoryAffected: !c.InventoryComplete})
 			}
 			for _, owner := range c.CodeOwners {
 				if owner.Status == OwnersUncovered || owner.Status == OwnersOwnerless {
@@ -215,23 +268,23 @@ func Evaluate(policy Policy, in Input) Evaluation {
 						pool.Reason = "code owner entry unresolved"
 					}
 				}
-				obligations = append(obligations, obligation{origin + " code owner: " + owner.Path + " (" + string(owner.Side) + ")", r, &pool})
+				obligations = append(obligations, obligation{origin: origin + " code owner: " + owner.Path + " (" + string(owner.Side) + ")", cause: CauseRuleCodeOwners, ruleIndex: &ruleIndex, requirement: r, pool: &pool, path: owner.Path, side: owner.Side})
 			}
 		}
 	}
 	if !definite {
-		obligations = append(obligations, obligation{origin: "default", requirement: a.Default})
+		obligations = append(obligations, obligation{origin: "default", cause: CauseDefault, requirement: a.Default})
 	}
 	if policyEvidenceErr != nil {
 		pool := IdentitySet{Reason: "owner_evidence_incoherent: " + policyEvidenceErr.Error()}
-		obligations = append(obligations, obligation{"policy owners", Requirement{Selector: AnyWriter, Count: 1}, &pool})
+		obligations = append(obligations, obligation{origin: "policy owners", cause: CausePolicyOwnerEvidence, requirement: Requirement{Selector: AnyWriter, Count: 1}, pool: &pool})
 	} else if !c.InventoryComplete {
 		pool := IdentitySet{Reason: "incomplete inventory: split the change to resolve policy owners"}
-		obligations = append(obligations, obligation{"policy owners", Requirement{Selector: AnyWriter, Count: 1}, &pool})
+		obligations = append(obligations, obligation{origin: "policy owners", cause: CausePolicyOwnerEvidence, requirement: Requirement{Selector: AnyWriter, Count: 1}, pool: &pool, inventoryAffected: true})
 	} else if c.Label("policy") != False || len(c.PolicyOwners) > 0 {
 		if !c.PolicyOwnersKnown || len(c.PolicyOwners) == 0 {
 			pool := IdentitySet{Reason: "policy paths or effective owners are unresolved"}
-			obligations = append(obligations, obligation{"policy owners", Requirement{Selector: AnyWriter, Count: 1}, &pool})
+			obligations = append(obligations, obligation{origin: "policy owners", cause: CausePolicyOwnerEvidence, requirement: Requirement{Selector: AnyWriter, Count: 1}, pool: &pool})
 		}
 	}
 	for _, owner := range c.PolicyOwners {
@@ -245,7 +298,7 @@ func Evaluate(policy Policy, in Input) Evaluation {
 				pool.Reason = "policy path has no resolvable owners"
 			}
 		}
-		obligations = append(obligations, obligation{"owner: " + owner.Path, Requirement{Selector: AnyWriter, Count: 1}, &pool})
+		obligations = append(obligations, obligation{origin: "owner: " + owner.Path, cause: CausePolicyOwner, requirement: Requirement{Selector: AnyWriter, Count: 1}, pool: &pool, path: owner.Path})
 	}
 	eligible := map[string]bool{}
 	approved := map[string]bool{}
@@ -256,9 +309,26 @@ func Evaluate(policy Policy, in Input) Evaluation {
 			value := policy.Groups[r.Group]
 			pool = &value
 		}
-		result := RequirementResult{Origin: obligation.origin, Requirement: r, EligibleIDs: []string{}, ApprovedIDs: []string{}}
+		result := RequirementResult{Path: obligation.path, Side: obligation.side, Origin: obligation.origin, Cause: obligation.cause, RuleIndex: obligation.ruleIndex, Requirement: r, InventoryAffected: obligation.inventoryAffected, EligibleIDs: []string{}, ApprovedIDs: []string{}}
+		setUnresolvedCause := func(cause UnresolvedCause) {
+			if result.UnresolvedCause == "" {
+				result.UnresolvedCause = cause
+			}
+		}
+		if pool != nil {
+			result.PoolIDs = slices.Clone(pool.IDs)
+			slices.Sort(result.PoolIDs)
+		}
 		if pool != nil && (!pool.Resolved || !pool.Fresh) {
 			result.Unresolved = true
+			switch {
+			case obligation.inventoryAffected:
+				setUnresolvedCause(UnresolvedInventory)
+			case !pool.Resolved && ownerRelated(obligation.cause):
+				setUnresolvedCause(UnresolvedOwners)
+			default:
+				setUnresolvedCause(UnresolvedEligibility)
+			}
 			result.Reason = pool.Reason
 			if result.Reason == "" {
 				result.Reason = "membership unresolved or not freshly revalidated"
@@ -285,6 +355,7 @@ func Evaluate(policy Policy, in Input) Evaluation {
 			v := eligibility(id, actor, r, pool, in.ExcludedIDs)
 			if v == Unknown {
 				result.Unresolved = true
+				setUnresolvedCause(UnresolvedEligibility)
 			}
 			if v != True {
 				continue
@@ -307,6 +378,7 @@ func Evaluate(policy Policy, in Input) Evaluation {
 				(stance.Source.Channel == CommentCommand && stance.Receipt == nil) ||
 				(stance.Source.Channel == NativeReview && stance.Receipt != nil) {
 				result.Unresolved = true
+				setUnresolvedCause(UnresolvedEligibility)
 				continue
 			}
 			validReceipt := stance.Receipt != nil && in.Current.Recorded() && *stance.Receipt == in.Current
@@ -323,6 +395,14 @@ func Evaluate(policy Policy, in Input) Evaluation {
 		slices.Sort(result.EligibleIDs)
 		slices.Sort(result.ApprovedIDs)
 		result.Met = !result.Unresolved && len(result.ApprovedIDs) >= r.Count
+		if !result.Met && !result.Unresolved {
+			switch {
+			case obligation.inventoryAffected:
+				result.UnresolvedCause = UnresolvedInventory
+			case result.Path != "" && len(result.EligibleIDs) == 0 && len(result.PoolIDs) > 0 && allExcluded(result.PoolIDs, in.ExcludedIDs):
+				result.UnresolvedCause = ExcludedOwner
+			}
+		}
 		if !result.Met {
 			if result.Reason == "" {
 				if result.Unresolved {
@@ -376,6 +456,19 @@ func eligibility(id string, actor Actor, r Requirement, pool *IdentitySet, exclu
 		return Unknown
 	}
 	return actor.Grant.Permits(id)
+}
+
+func ownerRelated(cause ObligationCause) bool {
+	switch cause {
+	case CauseRuleCodeOwners, CauseCodeOwnerEvidence, CausePolicyOwnerEvidence, CausePolicyOwner:
+		return true
+	default:
+		return false
+	}
+}
+
+func allExcluded(ids, excluded []string) bool {
+	return len(ids) > 0 && !slices.ContainsFunc(ids, func(id string) bool { return !slices.Contains(excluded, id) })
 }
 
 // Copy the receipt so persisted decision evidence does not alias caller memory.

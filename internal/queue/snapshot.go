@@ -13,7 +13,7 @@ import (
 
 // SnapshotVersion is separate from the additive event wire version. Snapshots
 // contain bounded projection state, never a copy of the event history.
-const SnapshotVersion = 5
+const SnapshotVersion = 6
 
 // Decoder resource limits are deliberately above ordinary queue sizes. This
 // codec is not wired into store persistence.
@@ -66,6 +66,7 @@ type rulesSnapshot struct {
 }
 type stateSnapshot struct {
 	ApprovalWaits                                                            map[ChangeID]ApprovalWait `json:",omitempty"`
+	Receipts                                                                 receiptProjection
 	Classifications                                                          classifications
 	ApprovalFacts                                                            approvalProjection
 	ChangeRevisions                                                          map[int]RevisionRecord
@@ -108,6 +109,7 @@ func EncodeSnapshot(s State) ([]byte, error) {
 	}
 	v := stateSnapshot{
 		Version:         SnapshotVersion,
+		Receipts:        s.receipts,
 		Classifications: s.classifications,
 		ApprovalFacts:   s.approvalFacts,
 		ApprovalWaits:   s.approvalWaits,
@@ -169,10 +171,19 @@ func EncodeSnapshot(s State) ([]byte, error) {
 		}
 		v.Effects = append(v.Effects, data)
 	}
+	if err := validateReceiptSnapshot(v.Receipts, v.ApprovalFacts, v.ChangeRevisions); err != nil {
+		return nil, err
+	}
 	if err := validateApprovalSnapshot(v.ApprovalFacts, v.ChangeRevisions); err != nil {
 		return nil, err
 	}
 	if err := checkApprovalSnapshotBudget(v.ApprovalFacts); err != nil {
+		return nil, err
+	}
+	if err := validateClassifications(v.Classifications); err != nil {
+		return nil, err
+	}
+	if err := checkClassificationSnapshotBudget(v.Classifications, v.ApprovalFacts, v.Receipts); err != nil {
 		return nil, err
 	}
 	raw, err := json.Marshal(v)
@@ -180,7 +191,7 @@ func EncodeSnapshot(s State) ([]byte, error) {
 		return nil, err
 	}
 	if len(raw) > maxSnapshotBytes {
-		return nil, fmt.Errorf("snapshot exceeds byte bound; reject approval admission for affected changes")
+		return nil, SnapshotBudgetError{SnapshotBytes: len(raw)}
 	}
 	return raw, nil
 }
@@ -195,10 +206,10 @@ func DecodeSnapshot(data []byte) (State, error) {
 	if err := json.Unmarshal(data, &header); err != nil {
 		return State{}, err
 	}
-	if header.Version != SnapshotVersion && header.Version != 4 && header.Version != 3 && header.Version != 2 {
+	if header.Version != SnapshotVersion && header.Version != 5 && header.Version != 4 && header.Version != 3 && header.Version != 2 {
 		return State{}, fmt.Errorf("unsupported snapshot version %d", header.Version)
 	}
-	data, err := upgradeApprovalSnapshot(data, header.Version)
+	data, err := upgradeReceiptSnapshot(data, header.Version)
 	if err != nil {
 		return State{}, err
 	}
@@ -220,10 +231,16 @@ func DecodeSnapshot(data []byte) (State, error) {
 	if len(v.Chain) > 32 || len(v.Invalidations) > 32 || len(v.TestedOrder) > testedHistory || len(v.Checks) > maxRetainedChecks || len(v.Entries) > maxSnapshotEntries || len(v.Effects) > maxSnapshotEffects {
 		return State{}, fmt.Errorf("invalid snapshot bounds")
 	}
+	if err := validateReceiptSnapshot(v.Receipts, v.ApprovalFacts, v.ChangeRevisions); err != nil {
+		return State{}, err
+	}
 	if err := validateApprovalSnapshot(v.ApprovalFacts, v.ChangeRevisions); err != nil {
 		return State{}, err
 	}
 	if err := validateClassifications(v.Classifications); err != nil {
+		return State{}, err
+	}
+	if err := checkClassificationSnapshotBudget(v.Classifications, v.ApprovalFacts, v.Receipts); err != nil {
 		return State{}, err
 	}
 	if len(v.OutsidePushes) > OutsidePushLimit {
@@ -235,6 +252,7 @@ func DecodeSnapshot(data []byte) (State, error) {
 		}
 	}
 	s := State{
+		receipts:        v.Receipts,
 		classifications: v.Classifications,
 		approvalFacts:   v.ApprovalFacts,
 		approvalWaits:   v.ApprovalWaits,

@@ -74,6 +74,9 @@ func CollectGoverningFiles(ctx context.Context, req GoverningFilesRequest, read 
 	bytes, directoryBytes := 0, len(".gitattributes")
 	dirs := map[string]bool{".gitattributes": true}
 	for _, p := range req.Paths {
+		if !ValidDiffPath(p) {
+			return fail(DiffInvalidUTF8, nil)
+		}
 		bytes += len(p)
 		if bytes > MaxDiffBytes {
 			return fail(DiffByteLimit, nil)

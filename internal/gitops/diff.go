@@ -16,6 +16,7 @@ import (
 
 var _ forge.RevisionDiffReader = (*Repo)(nil)
 var errDiffOutputLimit = errors.New("diff output limit")
+var errInvalidUTF8Path = errors.New("invalid UTF-8 diff path")
 
 // limitedDiffBuffer bounds memory even when git produces a huge inventory/blob
 // or diagnostic. exec closes the output pipe when Write refuses further bytes.
@@ -193,6 +194,9 @@ func (r *Repo) revisionDiff(ctx context.Context, repo forge.RepoRef, req forge.R
 	}
 	files, err := parseDiffRaw(raw)
 	if err != nil {
+		if errors.Is(err, errInvalidUTF8Path) {
+			return fail(forge.DiffInvalidUTF8, nil)
+		}
 		return fail(forge.DiffReadFailure, err)
 	}
 	// A rename consumes at most two raw entries. Refuse pairing on an oversized
@@ -364,6 +368,9 @@ func parseDiffRaw(raw string) ([]forge.DiffFile, error) {
 		fields := strings.Fields(strings.TrimPrefix(header, ":"))
 		if !ok || path == "" || !strings.HasPrefix(header, ":") || len(fields) != 5 {
 			return nil, errors.New("invalid git raw diff")
+		}
+		if !forge.ValidDiffPath(path) {
+			return nil, errInvalidUTF8Path
 		}
 		f := forge.DiffFile{OldPath: path, NewPath: path, OldMode: fields[0], NewMode: fields[1], OldObjectID: fields[2], NewObjectID: fields[3], Rename: forge.DiffNotRenamed}
 		switch fields[4] {

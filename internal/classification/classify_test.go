@@ -99,10 +99,17 @@ func TestRepeatedInputsAndVersionGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(string(raw)) != Version {
+	if strings.TrimSpace(string(raw)) != RetainedVersion {
 		t.Fatalf("version drift: %s", Version)
 	}
 }
+func TestBudgetVersionGolden(t *testing.T) {
+	raw, err := os.ReadFile("testdata/version-v8.txt")
+	if err != nil || strings.TrimSpace(string(raw)) != Version {
+		t.Fatal("v8 version drift", err)
+	}
+}
+
 func TestTruncatedAllDocs(t *testing.T) {
 	t.Run("truncated-all-docs", func(t *testing.T) {
 		i, d, g := basis(t, "docs/a.md")
@@ -126,6 +133,15 @@ func TestTruncatedAllDocs(t *testing.T) {
 			t.Fatalf("%+v", result)
 		}
 	})
+}
+
+func TestInvalidUTF8PathIsRejected(t *testing.T) {
+	i, d, g := basis(t, "docs/a.md")
+	d.Files[0].OldPath = "docs/\xff.md"
+	d.Files[0].NewPath = d.Files[0].OldPath
+	if _, err := Classify(i, d, g, Settings{Docs: []string{"docs/**"}}, nil); err == nil {
+		t.Fatal("invalid path was accepted")
+	}
 }
 func TestIndependentHunksAndUnreadableAttributes(t *testing.T) {
 	i, d, g := basis(t, "gen/a.go")

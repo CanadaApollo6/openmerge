@@ -54,7 +54,12 @@ func TestClassificationWireAndVariants(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	golden, err := os.ReadFile("testdata/wire/v1/variants/classified_facets_v3.json")
+	if os.Getenv("UPDATE_7A") == "1" {
+		if err := os.WriteFile("testdata/wire/v1/variants/classified_v8.json", raw, 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	golden, err := os.ReadFile("testdata/wire/v1/variants/classified_v8.json")
 	if err != nil || !bytes.Equal(raw, golden) {
 		t.Fatal("current golden drift", err)
 	}
@@ -184,6 +189,7 @@ func TestClassificationDecodesVersion3(t *testing.T) {
 	fields["Version"] = json.RawMessage(`3`)
 	delete(fields, "Classifications")
 	delete(fields, "ApprovalFacts")
+	delete(fields, "Receipts")
 	raw, _ = json.Marshal(fields)
 	s, err := DecodeSnapshot(raw)
 	if err != nil || s.classifications != nil {
@@ -365,10 +371,14 @@ func TestClassificationNestedWireAndSnapshotValues(t *testing.T) {
 			s := Apply(State{}, classificationEvent(t))
 			id := ChangeID(e.Evidence.Classification.Inputs.ChangeID)
 			s.classifications[id][1] = e
-			raw, err = EncodeSnapshot(s)
-			if err != nil {
-				t.Fatal(err)
+			if _, err = EncodeSnapshot(s); err == nil {
+				t.Fatal("invalid classification encoded")
 			}
+			good, _ := EncodeSnapshot(Apply(State{}, classificationEvent(t)))
+			var fields map[string]json.RawMessage
+			_ = json.Unmarshal(good, &fields)
+			fields["Classifications"], _ = json.Marshal(s.classifications)
+			raw, _ = json.Marshal(fields)
 			if _, err := DecodeSnapshot(raw); err == nil {
 				t.Fatal("invalid snapshot accepted")
 			}
@@ -377,9 +387,12 @@ func TestClassificationNestedWireAndSnapshotValues(t *testing.T) {
 }
 
 func TestClassificationHistoricalRenameAndObjectFormats(t *testing.T) {
-	for _, version := range []string{classification.HistoricalVersion, classification.PreviousVersion, classification.Version} {
+	for _, version := range []string{classification.HistoricalVersion, classification.PreviousVersion, classification.RetainedVersion, classification.Version} {
 		e := classificationEvent(t)
 		e.Evidence.Classification.Inputs.ClassifierVersion = version
+		if version != classification.Version {
+			e.Evidence.Governing.Semantics = "git-evidence-v7-bounded-omissions"
+		}
 		// facets-v1 mapped the forge unpaired single-side flag to Renamed=true.
 		e.Evidence.Classification.Files[0].Renamed = version == classification.HistoricalVersion
 		e.Evidence.Classification.Files[0].NewBlob = strings.Repeat("a", 64)
@@ -414,6 +427,29 @@ func TestClassificationHistoricalRenameAndObjectFormats(t *testing.T) {
 	e.Evidence.Classification.Files[0].Hunks.Omitted = []cp.HunkRange{{OldStart: 0, OldLines: 100, NewStart: 1, NewLines: 101, Reason: string(forge.DiffOmittedRangeLimit), Count: 2}}
 	if err := e.Validate(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestClassificationV7RejectsHunkCountLimit(t *testing.T) {
+	for _, version := range []string{classification.HistoricalVersion, classification.PreviousVersion, classification.RetainedVersion} {
+		t.Run(version, func(t *testing.T) {
+			e := classificationEvent(t)
+			e.Evidence.Classification.Inputs.ClassifierVersion = version
+			e.Evidence.Governing.Semantics = "git-evidence-v7-bounded-omissions"
+			e.Evidence.Classification.Files[0].Hunks.Complete = false
+			e.Evidence.Classification.HunksComplete = false
+			e.Evidence.Classification.Files[0].Hunks.Omitted = []cp.HunkRange{{OldStart: 1, OldLines: 1, NewStart: 1, NewLines: 1, Reason: string(forge.DiffHunkCountLimit)}}
+			if err := e.Validate(); err == nil {
+				t.Fatal("v7 accepted hunk_count_limit")
+			}
+		})
+	}
+	e := classificationEvent(t)
+	e.Evidence.Classification.Files[0].Hunks.Complete = false
+	e.Evidence.Classification.HunksComplete = false
+	e.Evidence.Classification.Files[0].Hunks.Omitted = []cp.HunkRange{{OldStart: 1, OldLines: 1, NewStart: 1, NewLines: 1, Reason: string(forge.DiffHunkCountLimit)}}
+	if err := e.Validate(); err != nil {
+		t.Fatalf("v8 rejected hunk_count_limit: %v", err)
 	}
 }
 

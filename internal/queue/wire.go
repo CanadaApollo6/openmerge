@@ -531,6 +531,11 @@ func EncodeEvent(value Event) (string, []byte, error) {
 			return "", nil, err
 		}
 		return encodeWire("change_intent_observed", v)
+	case ApprovalReceiptRecorded:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("approval_receipt_recorded", receiptToWire(v))
 	case ReviewStanceObserved:
 		if err := v.Validate(); err != nil {
 			return "", nil, err
@@ -830,6 +835,13 @@ func DecodeEvent(payload []byte) (Event, error) {
 	case "change_intent_observed":
 		v, err := readApprovalWire[ChangeIntentObserved](envelope.Data)
 		return v, err
+	case "approval_receipt_recorded":
+		w, err := readWireData[wireApprovalReceiptRecorded](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		v := w.event()
+		return v, v.Validate()
 	case "review_stance_observed":
 		v, err := readApprovalWire[ReviewStanceObserved](envelope.Data)
 		return v, err

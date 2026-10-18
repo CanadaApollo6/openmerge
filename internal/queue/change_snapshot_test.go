@@ -98,6 +98,7 @@ func TestChangeSnapshotDecodesVersion2WithoutInventingHistory(t *testing.T) {
 	fields["Version"] = json.RawMessage(`2`)
 	delete(fields, "Classifications")
 	delete(fields, "ApprovalFacts")
+	delete(fields, "Receipts")
 	delete(fields, "ChangeRevisions")
 	delete(fields, "BatchRevisions")
 	legacy, err := json.Marshal(fields)

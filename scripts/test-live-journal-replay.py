@@ -90,6 +90,16 @@ class ComparisonTest(unittest.TestCase):
             fields["approvalWaits"] = bad
             self.assertIsNotNone(replay.compare_checkpoints([old], [json.dumps(value)], False)["first_state_divergence"])
 
+    def test_receipt_exception_is_nil_only(self):
+        old = checkpoint()
+        value = json.loads(old)
+        fields = value["structural"]["value"]
+        fields["receipts"] = dict(type="queue.receiptProjection", kind="map", zero=True, nil=True, value={})
+        self.assertIsNone(replay.compare_checkpoints([old], [json.dumps(value)], False)["first_state_divergence"])
+        for bad in (dict(type="queue.receiptProjection", kind="map", zero=False, nil=False, value={}), node(False), dict(type="queue.receiptProjection", kind="map", zero=False, nil=False, value={json.dumps(node("change"), sort_keys=True): node({})})):
+            fields["receipts"] = bad
+            self.assertIsNotNone(replay.compare_checkpoints([old], [json.dumps(value)], False)["first_state_divergence"])
+
     def test_unreviewed_zero_field_fails(self):
         old = checkpoint()
         value = json.loads(old)

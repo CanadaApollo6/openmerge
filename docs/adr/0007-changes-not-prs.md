@@ -796,6 +796,11 @@ make an unknown rule relax policy.
   part of the classifier version. Missing hunk text never masquerades as a
   complete brief; inventory completeness is recorded separately. Renderers read
   this persisted evidence and never recompute from mutable refs or forge reads.
+- **Maintainer-approved clarification, 2026-10-18 (Q7a, retained hunk budget).**
+  The v8 classifier additionally retains at most 4,096 hunks across a diff and
+  4 MiB of JSON-escaped hunk text (excluding string quotes), alongside the
+  2 MiB raw UTF-8 and 200-lines-per-file caps. `hunk_count_limit` is v8-only;
+  historical v7 records retain their original omission semantics.
 - Digest: define a versioned canonical serialization and SHA-256 vectors over
   change/revision/head, diff endpoints/merge-base, inventory and completeness,
   labels/reasons, intent digest, policy digest, and requirements. Sort unordered

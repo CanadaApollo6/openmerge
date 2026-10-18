@@ -44,6 +44,7 @@ func TestGoverningSelectionAndBounds(t *testing.T) {
 		}(), "", DiffFileLimit},
 		{"expanded-path-bytes", []string{strings.Repeat("p", MaxDiffBytes/2) + "/a/b/c/file"}, "", DiffByteLimit},
 		{"input-bytes", []string{strings.Repeat("p", MaxDiffBytes+1)}, "", DiffByteLimit},
+		{"invalid-utf8-path", []string{"\xff"}, "", DiffInvalidUTF8},
 		{"invalid-path", []string{"../f"}, "", DiffReadFailure},
 		{"bytes", nil, strings.Repeat("x", MaxGoverningBytes+1), DiffByteLimit},
 	} {

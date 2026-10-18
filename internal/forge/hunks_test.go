@@ -240,22 +240,68 @@ func TestHunkEvidenceJSONEnvelope(t *testing.T) {
 		Coverage DiffCoverage
 	}
 	files := make([]evidence, MaxDiffFiles)
-	textBytes := 0
+	escapedBytes, retained := 0, 0
 	for i := range files {
 		files[i].Coverage = DiffCoverage{Completeness: DiffIncomplete, Reasons: []DiffFailureReason{DiffHunkLineLimit, DiffHunkByteLimit, DiffOmittedRangeLimit}}
-		for j := 0; j < MaxDiffHunkLinesPerFile; j++ {
+		for j := 0; j < MaxDiffHunkLinesPerFile && retained < MaxDiffHunks; j++ {
 			files[i].Hunks = append(files[i].Hunks, DiffHunk{MaxDiffHunkInputBytes, MaxDiffHunkInputBytes, MaxDiffHunkInputBytes, MaxDiffHunkInputBytes, "\x01\n"})
-			textBytes += 2
+			escapedBytes += 8
+			retained++
 		}
 		for j := 0; j < min(MaxDiffOmittedRangesPerFile, max(0, MaxDiffOmittedRanges-i*MaxDiffOmittedRangesPerFile)); j++ {
 			files[i].Omitted = append(files[i].Omitted, DiffHunkRange{MaxDiffHunkInputBytes, MaxDiffHunkInputBytes, MaxDiffHunkInputBytes, MaxDiffHunkInputBytes, DiffHunkByteLimit, 0})
 		}
 		files[i].Omitted = append(files[i].Omitted, DiffHunkRange{MaxDiffHunkInputBytes, MaxDiffHunkInputBytes, MaxDiffHunkInputBytes, MaxDiffHunkInputBytes, DiffOmittedRangeLimit, MaxDiffHunkInputBytes})
 	}
-	files[0].Hunks[0].Text = strings.Repeat("\x01", MaxDiffHunkBytes-textBytes) + files[0].Hunks[0].Text
+	files[0].Hunks[0].Text = strings.Repeat("x", MaxDiffHunkEscapedBytes-escapedBytes) + files[0].Hunks[0].Text
 	wire, err := json.Marshal(files)
-	if err != nil || len(wire) >= 40<<20 {
+	if err != nil || len(wire) >= 5_865_000 {
 		t.Fatalf("hunk evidence JSON bytes=%d err=%v", len(wire), err)
 	}
-	t.Logf("over-approximated compact hunk evidence: %d bytes (<40 MiB)", len(wire))
+	t.Logf("over-approximated compact hunk evidence: %d bytes (<5.865 MB)", len(wire))
+}
+
+func TestRetainedHunkCountBudgetAndSummary(t *testing.T) {
+	dir := t.TempDir()
+	var patch strings.Builder
+	for i := 1; i <= 200; i++ {
+		fmt.Fprintf(&patch, "@@ -%d,0 +%d @@\n+x\n", i, i)
+	}
+	// Exercise retention deterministically; unified algorithm has separate real-Git goldens.
+	script := "#!/bin/sh\ncat <<'PATCH'\n" + patch.String() + "PATCH\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(dir, "git"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	result := RevisionDiff{Inventory: DiffCoverage{Completeness: DiffComplete}}
+	for i := 0; i < 24; i++ {
+		result.Files = append(result.Files, DiffFile{NewPath: fmt.Sprintf("%03d", i), NewMode: "100644", NewObjectID: "new", BinaryKnown: true})
+	}
+	if err := CollectDiffHunks(t.Context(), &result, map[string]string{"new": strings.Repeat("x\n", 200)}); err != nil {
+		t.Fatal(err)
+	}
+	total, collapsed := 0, 0
+	for _, f := range result.Files {
+		total += len(f.Hunks)
+		for _, r := range f.Omitted {
+			collapsed += r.Count
+		}
+	}
+	if total != MaxDiffHunks || collapsed == 0 || !containsReason(result.Hunks.Reasons, DiffHunkCountLimit) || !containsReason(result.Hunks.Reasons, DiffOmittedRangeLimit) {
+		t.Fatalf("hunks=%d collapsed=%d coverage=%+v", total, collapsed, result.Hunks)
+	}
+}
+func TestEscapedTextBudget(t *testing.T) {
+	for _, n := range []int{699050, 699051} {
+		result := RevisionDiff{Inventory: DiffCoverage{Completeness: DiffComplete}, Files: []DiffFile{{NewPath: "a", NewMode: "100644", NewObjectID: "new", BinaryKnown: true}}}
+		if err := CollectDiffHunks(t.Context(), &result, map[string]string{"new": strings.Repeat("\x01", n) + "\n"}); err != nil {
+			t.Fatal(err)
+		}
+		if n == 699050 && len(result.Files[0].Hunks) != 1 {
+			t.Fatal("within escaped budget omitted")
+		}
+		if n == 699051 && (len(result.Files[0].Hunks) != 0 || !containsReason(result.Hunks.Reasons, DiffHunkByteLimit)) {
+			t.Fatal("escaped byte budget exceeded")
+		}
+	}
 }

@@ -388,6 +388,10 @@ STATE_EXCEPTIONS = {
         "reason": "Stage A 8 adds dormant approval waits. Only an absent-to-nil map is allowed; populated waits fail legacy comparison.",
         "reference": "ADR 0007 PR 8 (Hold)",
     },
+    "receipts": {
+        "reason": "Stage A 7a adds dormant receipt acceptance/rejection evidence; only a nil map is allowed for a legacy deployment pair.",
+        "reference": "ADR 0007 PR 7a",
+    },
     "approvalFacts": {
         "reason": "PR #71 adds dormant approval evidence. Permit only the absent-to-nil field; populated evidence requires a separate activation review.",
         "reference": "PR #71; Stage A 6 inertness",
@@ -433,7 +437,8 @@ def structural_differences(left, right, path=""):
             continue
         if key not in left or key not in right:
             if key not in left and name in STATE_EXCEPTIONS and r.get("zero") is True:
-                if name not in ("approvalFacts", "approvalWaits") or (r.get("type") == {"approvalFacts": "queue.approvalProjection", "approvalWaits": "map[queue.ChangeID]queue.ApprovalWait"}[name] and r.get("kind") == "map" and r.get("nil") is True and r.get("value") == {}):
+                nil_map_types = {"approvalFacts": "queue.approvalProjection", "approvalWaits": "map[queue.ChangeID]queue.ApprovalWait", "receipts": "queue.receiptProjection"}
+                if name not in nil_map_types or (r.get("type") == nil_map_types[name] and r.get("kind") == "map" and r.get("nil") is True and r.get("value") == {}):
                     continue
             differences[name] = dict(baseline=l, candidate=r, new_field=True)
         else:

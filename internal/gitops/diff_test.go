@@ -23,6 +23,13 @@ func TestRevisionDiffContract(t *testing.T) {
 	forgetest.RunRevisionDiff(t, f.g, testRepo, forge.RevisionDiffRequest{BaseSHA: tip, HeadSHA: f.prs[0].HeadSHA}, f.base, "pr-1.txt")
 }
 
+func TestParseDiffRawRejectsInvalidUTF8Path(t *testing.T) {
+	raw := ":100644 100644 " + strings.Repeat("a", 40) + " " + strings.Repeat("b", 40) + " M\x00\xff\x00"
+	if _, err := parseDiffRaw(raw); !errors.Is(err, errInvalidUTF8Path) {
+		t.Fatalf("parseDiffRaw error = %v, want invalid UTF-8 path", err)
+	}
+}
+
 type diffEntry struct{ mode, content, object string }
 
 func (f *fixture) diffCommit(parent, message string, entries map[string]diffEntry, moreParents ...string) string {

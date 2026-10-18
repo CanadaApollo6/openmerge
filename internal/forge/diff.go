@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"slices"
 	"time"
+	"unicode/utf8"
 )
 
 // RevisionDiffReader observes immutable git inputs, independently of PR metadata.
@@ -25,7 +26,7 @@ type RevisionDiffRequest struct{ BaseSHA, HeadSHA string }
 // either blob). No heuristic similarity, external diff, textconv or attributes
 // participate. Complete inventories require unaltered, verified divergence ancestry.
 // Consumers include this version in their classifier version.
-const DiffSemantics = "git-evidence-v7-bounded-omissions"
+const DiffSemantics = "git-evidence-v8-retained-hunk-budget"
 
 // Inventory resource limits are part of DiffSemantics.
 const (
@@ -44,6 +45,8 @@ const (
 	MaxDiffOmittedRangesPerFile = 32
 	MaxDiffOmittedRanges        = 256
 	MaxDiffHunkBytes            = 2 << 20
+	MaxDiffHunks                = 4096
+	MaxDiffHunkEscapedBytes     = 4 << 20
 	MaxDiffHunkLinesPerFile     = 200
 	DiffHunkContext             = 3
 	MaxDiffHunkInputBytes       = 2 << 20
@@ -81,6 +84,7 @@ const (
 	DiffHunksNotCollected   DiffFailureReason = "hunks_not_collected"
 	DiffHunkLineLimit       DiffFailureReason = "hunk_line_limit"
 	DiffHunkWorkLimit       DiffFailureReason = "hunk_work_limit"
+	DiffHunkCountLimit      DiffFailureReason = "hunk_count_limit"
 	DiffHunkByteLimit       DiffFailureReason = "hunk_byte_limit"
 	DiffOmittedRangeLimit   DiffFailureReason = "omitted_range_limit"
 	DiffNonText             DiffFailureReason = "non_text"
@@ -160,6 +164,10 @@ func ValidDiffObjectID(id string) bool {
 	_, err := hex.DecodeString(id)
 	return err == nil
 }
+
+// ValidDiffPath accepts the empty path used for an absent side and rejects
+// path bytes that cannot be represented as UTF-8 evidence.
+func ValidDiffPath(path string) bool { return utf8.ValidString(path) }
 
 // PairExactDiffRenames pairs only unique equal-object add/delete candidates.
 // Remaining add/delete pairs are explicitly uncertain; similarity is not guessed.

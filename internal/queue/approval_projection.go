@@ -16,6 +16,7 @@ import (
 
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
 	"github.com/CanadaApollo6/openmerge/internal/classification"
+	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
 
 // ApprovalFacts is a side projection. Sources retain first-observation revision
@@ -32,6 +33,8 @@ type ApprovalFacts struct {
 	PriorHeads     []string
 	HistoryKnown   bool
 	Saturated      bool
+	// ReceiptBoundaries retains old durable revisions only when receipts need them.
+	ReceiptBoundaries map[ChangeRevision]RevisionRecord `json:",omitempty"`
 }
 
 // AttributedStance pins the first source observation; LastReadID alone may refresh.
@@ -149,7 +152,7 @@ func recomputeUser(f *ApprovalFacts, user string, revision ChangeRevision) {
 		for _, blocks := range [][]string{requests, withdrawals} {
 			for _, k := range blocks {
 				barrier := f.Sources[k].Event.Stance
-				if barrier.Source.DismissedReviewID != "" && a.Source.Channel != cp.NativeReview {
+				if barrier.Source.DismissedReviewID != "" && (a.Source.Channel != cp.NativeReview || a.Source.Sequence > dismissalReviewSequence(barrier)) {
 					continue
 				}
 				if !supersedes(a, barrier) {
@@ -222,6 +225,7 @@ func recomputeUser(f *ApprovalFacts, user string, revision ChangeRevision) {
 }
 
 func cloneApprovalFacts(f ApprovalFacts) ApprovalFacts {
+	f.ReceiptBoundaries = maps.Clone(f.ReceiptBoundaries)
 	f.PriorHeads = slices.Clone(f.PriorHeads)
 	f.Sources = maps.Clone(f.Sources)
 	f.Latest = maps.Clone(f.Latest)
@@ -319,9 +323,9 @@ func (s State) observeApproval(e Event) (State, bool) {
 			// Preserve a new barrier in preference to positive noise. Saturated
 			// remains a fail-closed barrier for the entire epoch.
 			evict := ""
-			if e.Stance.Kind != cp.Approve {
+			if e.Stance.Kind != cp.Approve || e.Stance.Receipt != nil {
 				for k, v := range f.Sources {
-					if v.Event.Stance.Kind == cp.Approve && (evict == "" || k < evict) {
+					if v.Event.Stance.Kind == cp.Approve && v.Event.Stance.Receipt == nil && (evict == "" || k < evict) {
 						evict = k
 					}
 				}
@@ -584,6 +588,11 @@ func validateApprovalSnapshot(p approvalProjection, revisions map[int]RevisionRe
 				revision = r.Revision
 			}
 		}
+		for key, boundary := range f.ReceiptBoundaries {
+			if len(f.ReceiptBoundaries) > maxSnapshotEntries || key == 0 || key >= revision || key != boundary.Revision || boundary.ChangeID != id || !forge.ValidDiffObjectID(boundary.HeadSHA) || boundary.Basis.At.IsZero() {
+				return fmt.Errorf("invalid receipt revision history")
+			}
+		}
 		if revision == 0 || len(f.PriorHeads) > maxSnapshotEntries || uint64(len(f.PriorHeads)) >= uint64(revision) {
 			return fmt.Errorf("invalid approval history")
 		}
@@ -672,10 +681,7 @@ type ApprovalDecision struct {
 // PrepareApprovalDecision never acquires permission itself. Stage A 9 must
 // journal Fresh atomically with Snapshot; journal failure rejects the decision.
 func (s State) PrepareApprovalDecision(policy cp.Policy, current cp.ReceiptIdentity, fresh ApprovalEligibilityObserved) (ApprovalDecision, error) {
-	if err := fresh.Validate(); err != nil {
-		return ApprovalDecision{}, err
-	}
-	if err := s.CheckApprovalBoundary(fresh.Basis); err != nil {
+	if err := s.CheckApprovalAdmission(fresh); err != nil {
 		return ApprovalDecision{}, err
 	}
 	fresh = detached(fresh)
@@ -706,6 +712,15 @@ func (s *State) advanceApprovalRevision(current RevisionRecord, revision ChangeR
 		return
 	}
 	f = cloneApprovalFacts(f)
+	for _, receipt := range s.receipts[current.ChangeID] {
+		if receipt.Basis.Revision == current.Revision {
+			if f.ReceiptBoundaries == nil {
+				f.ReceiptBoundaries = map[ChangeRevision]RevisionRecord{}
+			}
+			f.ReceiptBoundaries[current.Revision] = current
+			break
+		}
+	}
 	if f.HistoryKnown && !slices.Contains(f.PriorHeads, current.HeadSHA) {
 		f.PriorHeads = append(f.PriorHeads, current.HeadSHA)
 	}

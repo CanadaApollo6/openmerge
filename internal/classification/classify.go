@@ -21,7 +21,10 @@ import (
 const HistoricalVersion = "classification-v1/git-evidence-v7-bounded-omissions/governing-v1/hunks-v1/facets-v1"
 
 // Version includes acquisition semantics and the classifier facet/path rules.
-const Version = "classification-v1/git-evidence-v7-bounded-omissions/governing-v1/hunks-v1/facets-v3"
+const Version = "classification-v1/git-evidence-v8-retained-hunk-budget/governing-v1/hunks-v1/facets-v3"
+
+// RetainedVersion preserves the pre-budget evidence codec for replay.
+const RetainedVersion = "classification-v1/git-evidence-v7-bounded-omissions/governing-v1/hunks-v1/facets-v3"
 
 // PreviousVersion retains the 4a facet/path semantics for replay.
 const PreviousVersion = "classification-v1/git-evidence-v7-bounded-omissions/governing-v1/hunks-v1/facets-v2"
@@ -65,6 +68,13 @@ func Classify(inputs cp.ClassificationInputs, diff forge.RevisionDiff, governing
 	}
 	if diff.Semantics != forge.DiffSemantics || governing.Semantics != forge.DiffSemantics {
 		return Evidence{}, fmt.Errorf("unsupported evidence semantics")
+	}
+	for _, f := range diff.Files {
+		for _, p := range []string{f.OldPath, f.NewPath} {
+			if p != "" && !forge.ValidDiffPath(p) {
+				return Evidence{}, fmt.Errorf("invalid UTF-8 diff path")
+			}
+		}
 	}
 	// A call-local cache avoids reparsing ancestor files for each path/side.
 	switch d := derived.(type) {

@@ -70,8 +70,9 @@ type ownersFile struct {
 	valid       bool
 }
 
-func parseOwners(content string) ownersFile {
-	out := ownersFile{valid: true}
+func parseOwners(content string) (out ownersFile) {
+	out = ownersFile{valid: true}
+	defer func() { out.diagnostics = boundedDiagnostics(out.diagnostics) }()
 	if len(content) >= MaxCodeownersBytes || !utf8.ValidString(content) || strings.ContainsRune(content, 0) || strings.ContainsRune(content, '\ufeff') {
 		out.valid = false
 		out.diagnostics = []string{"CODEOWNERS invalid or at/over 3 MB"}
@@ -125,6 +126,7 @@ func parseOwners(content string) ownersFile {
 		for _, diagnostic := range entry.diagnostics {
 			out.diagnostics = append(out.diagnostics, fmt.Sprintf("CODEOWNERS line %d: %s", line+1, diagnostic))
 		}
+		entry.diagnostics = boundedDiagnostics(entry.diagnostics)
 		out.entries = append(out.entries, entry)
 	}
 	return out

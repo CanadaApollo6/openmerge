@@ -19,10 +19,12 @@ no network; writes only the askpass helper inside the cache root. Bare-cache
 initialization happens lazily at first open.
 Future serve wiring owns activation and request scheduling.
 
-`git-evidence-v7-bounded-omissions` retains the inventory-v4 protections and fixes these semantics:
+`git-evidence-v8-retained-hunk-budget` retains the inventory-v4 protections and fixes these semantics:
 
 - Raw NUL-delimited git tree comparison, without external diffs, textconv, or
-  heuristic renames. Paths retain their original bytes, including tabs/newlines.
+  heuristic renames. Valid UTF-8 paths retain their original bytes, including
+  tabs/newlines; an invalid UTF-8 path makes inventory incomplete with
+  `invalid_utf8`.
 - Pair a rename only when exactly one deletion and one addition share an object
   ID. Unmatched add/delete candidates carry `unpaired` evidence and make
   inventory incomplete with `unpaired_rename`. Consumers can rely on completeness
@@ -87,9 +89,9 @@ lines are context, never artificial deletion/addition pairs. Ranges use unified
 zero-length conventions; body text preserves CRLF and missing-newline markers.
 
 Retention matches PR 7a: **1,000 files**, **2 MiB UTF-8 body text total**, and
-**200 emitted body lines per file**, counting context and missing-newline annotation lines. Files are in deterministic path order. There is no
-separate hunk-count cap. A hunk that cannot fit is omitted whole with its exact
-old/new ranges and typed `hunk_line_limit` or `hunk_byte_limit`; later smaller
+**200 emitted body lines per file**, counting context and missing-newline annotation lines. Files are in deterministic path order. There is also a **4,096 retained-hunk collection cap** and a **4 MiB
+JSON-escaped body-text budget** (Go encoding/json, excluding string quotes). A hunk that cannot fit is omitted whole with its exact
+old/new ranges and typed `hunk_line_limit`, `hunk_count_limit` or `hunk_byte_limit`; later smaller
 hunks/files may still fit. Nothing is silently truncated.
 
 Detailed omitted-range metadata is capped at **32 entries per file** and
@@ -104,20 +106,24 @@ is incomplete and retains both the underlying reasons and `omitted_range_limit`.
 Detailed entries consume the global budget; summaries have a separately reserved
 slot per file, so exhaustion cannot hide a later file's missing evidence.
 
-The entire **hunk-evidence subrecord is below 40 MiB in compact JSON**, including
-retained text, retained ranges, omitted ranges, counts and coverage. Conservative
-accounting: 6 × 2,097,152 bytes for worst-case JSON string escaping, at most
-200,000 retained hunks × 128 bytes of fixed JSON metadata, 1,256 omission entries
-× 256 bytes, and 1,000 per-file coverage/container records × 1,024 bytes:
-**39,528,448 bytes**, below 41,943,040. Every retained hunk consumes at least
-one of the 200 emitted lines per file. Blob coordinates/counts fit in seven
-decimal digits under the 2 MiB input bound; the metadata allowances include
-keys, punctuation and array separators. This is the hunk component of PR 7a's
-classification envelope, whose existing text/file/line limits are preserved;
-inventory paths, owner/classification facts and their independent bounds are
-separate envelope components. PR 7a must copy these bounded records verbatim,
-including summary counts, rather than expanding them. Pretty printing or
-embedding JSON as a quoted string requires its own transport allowance.
+The v8 **hunk-evidence subrecord is at most ~5.8 MiB** in compact JSON.
+Conservative accounting: 4,194,304 escaped text bytes + 4,096 × 128 bytes retained
+metadata + 1,256 × 256 omission bytes + 1,000 × 1,024 coverage/container bytes
+= **6,064,128 bytes (~5.8 MiB)**. The executable envelope test uses actual
+keys/ranges and verifies the tighter 5,865,000-byte ceiling. Raw UTF-8 text is
+still independently capped at 2 MiB. Escaping includes controls, HTML characters
+and U+2028/U+2029. Coordinates fit seven decimal digits under the input bound.
+
+The old 39,528,448-byte v7 estimate combined mutually unattainable maxima:
+200,000 minimum-size hunk bodies consume text budget that cannot also be
+sixfold escaped. An attainable v7 envelope was approximately **17.6 MB**.
+v7 acquisition was never emitted in production; historical v7 wire fixtures
+remain byte-identical and keep their original decoder semantics.
+
+PR 7a copies these bounded records verbatim, including summary counts, with no
+second truncation. Inventory paths, ownership and classification facts have
+separate envelope budgets. Pretty printing or quoting JSON requires its own
+transport allowance.
 
 `DiffHunkAlgorithmFlags` is the single command flag constant pinned by the
 bounds golden. Supported hosts use Git **2.39 <= version < 3** and must pass
