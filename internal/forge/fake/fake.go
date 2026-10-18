@@ -55,6 +55,7 @@ type repository struct {
 // configuration is required.
 type Forge struct {
 	mu                          sync.Mutex
+	identities                  identityState
 	repos                       map[forge.RepoRef]*repository
 	failures                    map[string][]error
 	onTestRef                   func(string, []int)

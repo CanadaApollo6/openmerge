@@ -16,6 +16,8 @@ func TestSetupCLI(t *testing.T) {
 		{[]string{"setup"}, 0, "openmerge setup github"},
 		{[]string{"setup", "--help"}, 0, "GITHUB_TOKEN"},
 		{[]string{"setup", "github", "--help"}, 0, "--webhook-url"},
+		{[]string{"setup", "permissions", "--help"}, 0, "--installation-id"},
+		{[]string{"setup", "permissions"}, 2, "permissions requires"},
 		{[]string{"setup", "rulesets", "--help"}, 0, "--apply"},
 		{[]string{"setup", "import-protection", "--help"}, 0, "--accept"},
 		{[]string{"setup", "import-protection", "--repo", "acme/project", "--base", "main", "--base", "release/1", "--accept", "x", "--json"}, 1, "GITHUB_TOKEN is required"},

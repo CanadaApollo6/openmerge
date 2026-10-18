@@ -9,7 +9,7 @@ import (
 
 func TestInstallationPermissionsUseActualGrantAndRenewWithToken(t *testing.T) {
 	f := newAPI(t)
-	grants := map[string]string{"contents": "read", "workflows": "read", "pull_requests": "read", "checks": "read", "actions": "read", "statuses": "", "issues": "", "metadata": ""}
+	grants := map[string]string{"contents": "read", "workflows": "read", "pull_requests": "read", "checks": "read", "actions": "read", "statuses": "", "issues": "", "metadata": "", "members": ""}
 	f.override = func(w http.ResponseWriter, r *http.Request) bool {
 		if !strings.HasSuffix(r.URL.Path, "/access_tokens") {
 			return false

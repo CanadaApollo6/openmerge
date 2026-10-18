@@ -71,6 +71,54 @@ and last-delivery age per repository. Repositories
 without config get no workers or comments. The read-only `/v1/discovery` endpoint
 uses the same authentication as queue status.
 
+### Organization membership permission (Stage A prerequisite)
+
+New `openmerge setup github` manifests request organization **Members: read**
+(`members: read`) for resolving `org/team` owners and approver pools. To use
+organization teams in approval policy, an existing App must add that organization
+permission in App settings, and each affected organization installation must
+accept the requested addition in its installed App settings. Updating the App's permission declaration alone does not update
+an installation's grant. OpenMerge inspects the permissions on the actual
+installation token; renewed tokens (or restarting `serve`) observe acceptance.
+
+**During the ADR 0009 dogfood trial, leave the live App's permissions unchanged,
+including `members: read` and its current `actions: write` status.** Exercise
+permission adoption only on an isolated sandbox App and installation until
+both trial periods drain. Merging these dormant capabilities does not authorize
+a deployment; the ADR 0007 differential deployment gates still apply.
+
+`members: read` is needed only for organization team owners or groups in
+approval policy; see this operating guide before adopting it. Its absence adds
+no server warning or block for queues without such a policy, including personal
+and user-only queues. Inspect an installation explicitly with read-only setup
+diagnostics (use sandbox credentials during the trial):
+
+```sh
+openmerge setup permissions --app-id APP_ID --installation-id INSTALLATION_ID --private-key /path/to/private-key.pem
+```
+
+Setup reports the actual missing grant as an optional warning. The dormant
+`ValidateTeamPolicyPermissions` hook is reserved for PR 11a to call only when a
+queue's effective approval policy references team owners or groups. There is no
+runtime caller yet; public approval configuration remains disabled. At Stage A
+activation, unresolved named identities will pause only affected queues, and an
+unreadable effective owner requirement will block its change rather than imply
+empty membership.
+
+Identity-bound grants compare the permission response's stable user ID with the
+review or comment author ID. A renamed or reassigned login cannot lend another
+account's write permission. A `WriteGrant` HTTP 404 is an unknown observation
+(`ErrIdentityUnavailable`), not known-empty permission; PR 11a must report the
+lookup as unavailable and discard the grant. A successful identity-bound response
+with a non-writing permission is a known denial. Team membership is read by stable organization and
+team IDs, includes child-team members exposed by GitHub, and is unknown if any
+page fails or the observation exceeds its bound. These reads share installation
+budgets and cannot spend settlement's reserve.
+
+A token authenticates an account; it cannot prove that a person rather than an
+agent holding that token acted. Use separate bot or App identities for agents
+so they do not consume their human owner's approval.
+
 ## Webhook setup and health
 
 Polling works without a public endpoint: leave `--webhook-listen` /
