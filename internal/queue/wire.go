@@ -504,6 +504,26 @@ func EncodeEvent(value Event) (string, []byte, error) {
 		return encodeWire("pr_metadata_observed", wirePRMetadataObserved(v))
 	case PRObserved:
 		return encodeWire("pr_observed", wirePRObserved(v))
+	case ChangeAccountabilityObserved:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("change_accountability_observed", v)
+	case ChangeIntentObserved:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("change_intent_observed", v)
+	case ReviewStanceObserved:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("review_stance_observed", v)
+	case ApprovalEligibilityObserved:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("approval_eligibility_observed", v)
 	case ChangeClassified:
 		if err := v.Validate(); err != nil {
 			return "", nil, err
@@ -774,6 +794,18 @@ func DecodeEvent(payload []byte) (Event, error) {
 		return decodeWireData(envelope.Data, func(v wirePRObserved) Event {
 			return PRObserved(v)
 		})
+	case "change_accountability_observed":
+		v, err := readApprovalWire[ChangeAccountabilityObserved](envelope.Data)
+		return v, err
+	case "change_intent_observed":
+		v, err := readApprovalWire[ChangeIntentObserved](envelope.Data)
+		return v, err
+	case "review_stance_observed":
+		v, err := readApprovalWire[ReviewStanceObserved](envelope.Data)
+		return v, err
+	case "approval_eligibility_observed":
+		v, err := readApprovalWire[ApprovalEligibilityObserved](envelope.Data)
+		return v, err
 	case "change_classified":
 		v, err := readClassificationWire(envelope.Data)
 		if err != nil {

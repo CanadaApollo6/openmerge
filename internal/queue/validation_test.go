@@ -61,6 +61,10 @@ func TestWireV1RequiresEveryField(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, mutation := range missingOrNullFields(value) {
+				// A null receipt is an explicit absent binding, not a missing field.
+				if reflect.DeepEqual(mutation.value, value) {
+					continue
+				}
 				t.Run(filepath.Base(path)+"/"+mutation.path, func(t *testing.T) {
 					payload, err := json.Marshal(mutation.value)
 					if err != nil {

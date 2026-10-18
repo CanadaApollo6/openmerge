@@ -61,6 +61,7 @@ type State struct {
 
 	// Dormant: remains nil on queues without approval classification events.
 	classifications classifications
+	approvalFacts   approvalProjection
 
 	nextBatch          uint64
 	nextAdmission      uint64

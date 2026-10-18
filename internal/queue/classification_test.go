@@ -14,7 +14,7 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
 
-func classificationEvent(t *testing.T) ChangeClassified {
+func classificationEvent(t *testing.T, derivers ...classification.Deriver) ChangeClassified {
 	t.Helper()
 	id, err := PRChangeID("7", "Owner/Repo", "release", "", 12)
 	if err != nil {
@@ -24,7 +24,11 @@ func classificationEvent(t *testing.T) ChangeClassified {
 	i := cp.ClassificationInputs{ChangeID: string(id), Revision: 1, Generation: 1, Base: strings.Repeat("a", 40), Head: strings.Repeat("b", 40), MergeBase: strings.Repeat("c", 40), GoverningCommit: strings.Repeat("d", 40), PolicyDigest: "semantic-policy"}
 	d := forge.RevisionDiff{BaseSHA: i.Base, HeadSHA: i.Head, MergeBaseSHA: i.MergeBase, Semantics: forge.DiffSemantics, Inventory: full, Hunks: full, Files: []forge.DiffFile{{NewPath: "docs/a.md", NewMode: "100644", NewObjectID: strings.Repeat("e", 40), BinaryKnown: true, Rename: forge.DiffNotRenamed, HunkCoverage: full, Hunks: []forge.DiffHunk{{NewStart: 1, NewLines: 1, Text: "+hello\n"}}}}}
 	g := forge.GoverningFiles{CommitSHA: i.GoverningCommit, Semantics: forge.DiffSemantics, Coverage: full, Config: []forge.GoverningFile{{Path: ".openmerge.yml", Present: true, Mode: "100644", ObjectID: strings.Repeat("f", 40), Content: "version: 1", Coverage: full}}, Codeowners: []forge.GoverningFile{{Path: ".github/CODEOWNERS", Coverage: full}, {Path: "CODEOWNERS", Present: true, Mode: "100644", ObjectID: strings.Repeat("1", 40), Content: "* @owner", Coverage: full}}, SelectedCodeowners: "CODEOWNERS", Attributes: []forge.GoverningFile{{Path: ".gitattributes", Coverage: full}, {Path: "docs/.gitattributes", Coverage: full}}}
-	e, err := classification.Classify(i, d, g, classification.Settings{Docs: []string{"docs/**"}}, nil)
+	var deriver classification.Deriver
+	if len(derivers) > 0 {
+		deriver = derivers[0]
+	}
+	e, err := classification.Classify(i, d, g, classification.Settings{Docs: []string{"docs/**"}}, deriver)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,6 +183,7 @@ func TestClassificationDecodesVersion3(t *testing.T) {
 	_ = json.Unmarshal(raw, &fields)
 	fields["Version"] = json.RawMessage(`3`)
 	delete(fields, "Classifications")
+	delete(fields, "ApprovalFacts")
 	raw, _ = json.Marshal(fields)
 	s, err := DecodeSnapshot(raw)
 	if err != nil || s.classifications != nil {
