@@ -1,159 +1,117 @@
-# Stage A 2b: merge evidence for the dormant readers
+# Stage A 2b: fix-round 1 inert evidence
 
-This is merge evidence for ADR 0007's Inert-class governing-file and hunk
-capabilities, not a deployment approval. No live database, service units, App
-permissions, production git cache or remote `openmerge/*` refs were accessed or
-changed. Database tests use only the supplied shared test Postgres. Transport
-tests use temporary local repositories and authenticated localhost HTTP git.
+Baseline: `e0e2824` (latest origin/main, including #53 and #63).
+Implementation: `d56a37f0a06c20ad517a0099578826aeb38c1d31`.
+The subsequent evidence-only commit records validation of this frozen source;
+the PR fix-round section identifies the final pushed head.
+Worktree: `/tmp/om-sa-2b`; branch: `stage-a/2b-governing-hunks`.
+Baseline comparison checkout: `/home/riels/.cache/om-pr64-main`.
 
-## Inputs and scope
+This remains an ADR 0007 Inert-class reader change. There are no production
+consumers, configuration/workflow changes, event/action additions or changes to
+queue, planner, executor, store, serve or simulator sources. The source diff
+against the baseline in those directories and `.openmerge.yml` is empty.
+A call-site search finds only shared test contracts and the dormant GitHub
+reader factory constructing another optional reader. No live OpenMerge DB,
+service units or remote `openmerge/*` refs were accessed. Transport tests use
+local repositories and localhost HTTP; application tests make no real GitHub
+API calls. GitHub operations are limited to Git fetch/push and the requested
+PR metadata maintenance.
 
-- Baseline main: `18d585526d1a77f180a2ccb471d12b7631ef515d` (2a, #56).
-- Implementation: `b1595ee2f7cbd15b8bbb9914489284fd699c0299`. The later evidence
-  commit changes only this note; the PR records the final pushed head.
-- Worktree: `/tmp/om-sa-2b`; branch: `stage-a/2b-governing-hunks`.
-- Baseline comparison checkout: `/home/riels/.cache/om-sa-2b-baseline`.
-- Toolchain: Go 1.27.2, linux/amd64.
-- Semantics: `git-evidence-v5-single-span`; the bounds golden pins inventory,
-  ancestry, hunk and governing budgets. `internal/forge/diff.md` documents the
-  required version bump for behavior changes even when bounds remain constant.
+## Evidence design
 
-The implementation diff is confined to new/extended forge and gitops reader,
-contract, test and documentation files: 1,060 added / 30 removed lines before
-this evidence note. No changes to Forge's existing interface, changepolicy,
-queue, planner, executor, config, store, serve, simulator, workflows or tracked
-queue configuration. Existing fixtures and digest vectors are unchanged.
-There are no new config keys, wire/event/action types, runtime records or
-production consumers. The GitHub governing factory constructs another dormant
-capability over the existing authenticated installation cache.
+Semantics: `git-evidence-v6-unified-hunks`. After bounded inventory inspection,
+both readers compute patches from those same immutable raw blobs. A private
+cache directory with neutral filenames and a repository-discovery ceiling
+isolates Git from repository attributes and local config. A fresh environment
+sets `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=/dev/null`,
+`GIT_ATTR_NOSYSTEM=1` and `LC_ALL=C`; inherited Git overrides are discarded.
 
-## Evidence contract
+The command is:
 
-`RevisionDiff` retains base/head/merge-base and immutable file objects/modes.
-`DiffFile` now carries hunk coverage and omitted spans independently of the
-inventory and aggregate hunks. One UTF-8 replacement hunk per ordinary text file
-excludes common prefix/suffix lines; internal unchanged lines are replaced too.
-This is linear work over the already inspected blobs, not a minimal edit script
-or another git patch fetch. Both rename sides and deletion content remain
-identified. Binary, invalid UTF-8, symlink, gitlink and mode-change omissions are
-explicit. Limit omissions retain known old/new ranges and typed reasons.
+```sh
+git -c diff.algorithm=myers -c diff.indentHeuristic=false \
+  -c core.attributesFile=/dev/null diff --no-index --no-ext-diff \
+  --no-textconv --no-color --no-renames --diff-algorithm=myers \
+  --no-indent-heuristic --minimal --inter-hunk-context=0 --unified=3 \
+  -- old new
+```
 
-`GoverningFiles` separately pins the governing commit, records every checked
-config candidate, CODEOWNERS precedence/selection and earlier absences, and
-sorted/deduplicated ancestor attributes for both rename sides and deletions.
-Every present readable file supplies mode, object ID and content; only complete
-absent probes prove absence. Git-backed reads provide modes, bounded raw bytes
-and tree-proven absence that `Driver.ReadFile`'s bytes-only contents API cannot
-provide together. All new commands use the existing hardened diffRead session;
-history is rechecked before completeness. No transport leaves forge/gitops.
+Three context lines match ordinary review presentation. Minimal Myers avoids
+shortcuts that can discard repeated equal interior blocks. Unified headers
+become ranges; bodies retain raw CRLF and missing-newline annotations.
 
-PR 4a converts these independent forge DTOs into changepolicy types: endpoints,
-governing commit and blob provenance into `ClassificationInputs`; octal modes,
-paths, objects and uncertainty flags into `FileEvidence`; hunk bodies/ranges and
-omissions into `Hunk`/`HunkRange`; per-file coverage into `HunkEvidence.Complete`;
-and aggregate coverage into `Classification.HunksComplete`. 4a/4b own parsing
-and classification. Forge does not import changepolicy.
+Retention matches PR 7a: at most 1,000 files, 2 MiB UTF-8 hunk text total,
+200 emitted body lines per file (including context and newline annotations),
+and deterministic path order. No separate hunk-count limit remains. Hunks that
+do not fit are omitted whole; every omitted hunk retains exact old/new ranges
+and a typed `hunk_line_limit` or `hunk_byte_limit`. Later small hunks can fit.
+Special/binary/invalid-UTF-8 omissions retain their existing typed reasons.
 
-Bounds and rationale:
+Computation has independent bounds: 2 MiB combined input per file, a 2-second
+process deadline, a 30-second collection deadline, and 16,781,312 bytes of
+patch output. Exhaustion is incomplete `hunk_work_limit`, with unknown zero
+ranges where computation did not produce an inventory. Caller cancellation and
+read errors remain diagnostic `read_failure`. Hardened diffRead still performs
+all object acquisition and rechecks history after hunk construction.
 
-- Preserve 2a's 1,000 files, 2 MiB inventory/inspected blobs, 100,000 divergence
-  commits and 30-second shared ancestry deadline.
-- 512 hunks total, one per file, 256 KiB body text. This keeps brief content
-  bounded even for a complete 1,000-file inventory and avoids quadratic line
-  matching. A hunk that will not fit is omitted whole, never silently cut.
-- 256 governing probes, counting absence, and 1 MiB content. This bounds tree
-  operations as well as retained policy text, allowing ordinary nested repos
-  and failing closed on deep/large ones. Changed-path input is at most 2,000
-  paths / 2 MiB; ancestor probe paths separately fit in 2 MiB, preventing long
-  shared prefixes from amplifying metadata without a limit.
+The bounds golden pins every limit. Exact behavioral golden vectors cover
+replacement, insertion, deletion, interior context, missing final newlines,
+CRLF changes in both directions, and the reviewers' 300/70,000 equal-line
+repros. Retention tests cover all 1,000 files, a 300,001-byte line, exact byte
+and line boundaries, shared byte exhaustion, and retaining a later hunk after
+an oversized earlier one. An injected busy Git process proves deadline failure
+is typed incomplete; inherited configuration injection cannot alter output.
 
-Limits return nil-error incomplete observations. Only invalid object IDs,
-missing objects and read failures have diagnostic non-nil errors; caller
-cancellation remains read_failure. Complete inventory is not complete hunk or
-governing evidence.
+Governing reads continue later probes after incomplete results within budget.
+Non-UTF-8 governing content is incomplete `invalid_utf8` without usable content.
+A shared fake/gitops contract covers invalid config, an implicit directory at
+`.github/CODEOWNERS` (present `040000`, `special_mode`, no fallback), and later
+attribute evidence. The governing commit is the default-branch policy commit
+per ADR Classification, including release queues; 4a/serve selects it separately
+from the diff endpoints and merge base. Policy parsing remains future work.
 
-## Differential inertness results
+## Differential results on the frozen implementation
 
-1. All **74** tracked wire-v1 fixtures are byte-identical. Hash sorted relative
-   paths, NUL, then bytes: both trees yield
-   `1c52cf31d0a2239756b7b179f16d6736ddc5177d7bb146ff5e61034180914fe3`.
-2. The offline fixture replay helper in
-   [2a's evidence note](stage-a-2a-inert-evidence.md#reproduce-the-fixture-replay)
-   produces identical serialized next actions and keys at **66** checkpoints
-   (depths 1 and 4). Both runs exit **0**; `cmp` exits **0**. Output SHA-256:
-   `b989daef369fff9b42f0f0542329ab4d6b2854ae1d55665e637ba25e28e7cb26`.
-   This is fixture evidence, not an exported deployment journal.
-3. `make test-sim-exits` exits **0** in both trees with unchanged seeds and
-   sources. All **146** normalized logged result blocks match. Normalization
-   groups each indented `file.go:line:` message with its continuation lines,
-   removes Go harness status/timing lines, sorts blocks, and serializes with
-   Python `json.dumps(blocks, indent=2) + "\n"`. SHA-256:
-   `a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7`.
-4. The tracked config and queue/config source trees are byte-identical; fixture
-   replay reports the same effective tracked config digest:
-   `e58c893b8b3af7685dc07a086824b3bc1fc044456083d193f9566f8387cb58fc`.
-5. `go list -deps ./cmd/openmerge` output is identical (`cmp`: **0**).
-   Reproducible command below builds both trees successfully (**0**):
+- All **75** wire-v1 JSON fixtures match. Hash sorted relative paths, NUL,
+  then bytes: `5170dd1b062194217547096bc0fb2e760b6f0723659e89723d14c5aa76619f3d`.
+- Offline fixture replay uses the helper in
+  [2a's evidence note](stage-a-2a-inert-evidence.md#reproduce-the-fixture-replay).
+  Baseline and implementation both exit **0**; `cmp` exits **0**. All **66**
+  serialized checkpoints and the tracked config digest match. Output SHA-256:
+  `b989daef369fff9b42f0f0542329ab4d6b2854ae1d55665e637ba25e28e7cb26`.
+- Baseline and implementation `make test-sim-exits` both exit **0**. All **146**
+  normalized result blocks match, SHA-256:
+  `a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7`.
+  Normalization groups indented `file.go:line:` messages and continuations,
+  removes harness timing/status lines, sorts blocks, and writes indented JSON.
+- `go list -deps ./cmd/openmerge` exits **0** in both checkouts. Raw-order `cmp`
+  exits **1**; the sorted dependency sets are identical (no additions/removals).
+  Reader methods link into the binary; binary identity is not claimed.
 
-   ```sh
-   CGO_ENABLED=0 go build -trimpath -buildvcs=false \
-     -ldflags '-X main.version=stage-a-inert-comparison' \
-     -o <output> ./cmd/openmerge
-   ```
-
-   Baseline binary SHA-256:
-   `98d6c45d7cbda45b646e12547308324be3a143c2e9bc249878ee32eb83cef2e5`.
-   Implementation binary SHA-256:
-   `dbab9d4c8c4d2bc7145bce996235da503aa85c83a2283ef6e52bf64c0335fdc0`.
-   The binaries differ. `go tool nm` confirms the new governing/hunk methods
-   link into the binary (including fake/simulator embedding wrappers). A source
-   call-site search below finds only forgetest and the dormant GitHub factory's
-   construction call; no production consumer calls these capabilities.
-
-   ```sh
-   rg -n '\.(RevisionDiff|GoverningFiles|RevisionDiffReader|GoverningFilesReader)\(' \
-     --glob '*.go' --glob '!**/*_test.go'
-   git diff 18d5855 -- internal/queue internal/config internal/serve \
-     internal/executor internal/store internal/sim .github .openmerge.yml
-   ```
-
-   The protected-source diff is empty. No planner/executor/gate or check
-   observation behavior changes. PR 10's composition-ID gate is not applicable.
-
-ADR 0007 deployment gates 2 and 4 still require the operator's actual exported
-journal and live config comparison at deploy time. Neither was accessed here;
-this PR does not claim those deployment gates passed or update the dogfood log.
+Logs and replay outputs are under `~/.cache/om-pr64-{main,fix1}-*`;
+normalized simulator blocks are `~/.cache/om-pr64-fix1-sim-normalized.json`.
+No live deployment journal/config comparison is claimed. ADR deployment gates
+remain operator work.
 
 ## Validation
 
-The initial full `make check` exits **0** (`~/.cache/om-sa-2b-initial-check.log`),
-including serve (319.760 seconds). This run began before the final ancestor-path
-budget refinement and contract assertions; it is retained as initial evidence.
-
-On frozen implementation `b1595ee`, the focused race suite exits **0**:
+Final frozen-source `make check` exits **0** (`~/.cache/om-pr64-fix1.log`):
+formatting, lint (zero issues), all short race tests, and build pass.
 
 ```sh
-go test -race ./internal/forge/... ./internal/gitops \
-  > ~/.cache/om-sa-2b-race-final.log 2>&1; echo exit=$?
+export OPENMERGE_TEST_DATABASE_URL='postgres://postgres@localhost:54329/postgres?sslmode=disable'
+export GOTMPDIR=/home/riels/.cache/om-sa-2b-tmp
+export GOCACHE=/home/riels/.cache/go-build
+make check > ~/.cache/om-pr64-fix1.log 2>&1; echo exit=$?
 ```
 
-The final frozen-tree full check exits **0** (`~/.cache/om-sa-2b.log`):
-formatting, lint (zero issues), all short race tests and build pass.
-The command uses only the supplied shared test database and puts compiler
-scratch space under the home cache rather than initializing Postgres in /tmp:
-
-```sh
-OPENMERGE_TEST_DATABASE_URL='postgres://postgres@localhost:54329/postgres?sslmode=disable' \
-GOTMPDIR=/home/riels/.cache/om-sa-2b-tmp \
-make check > ~/.cache/om-sa-2b.log 2>&1; echo exit=$?
-```
-
-The new simulator run was repeated on frozen `b1595ee` and again exits **0**,
-with all 146 blocks identical to baseline. Fixture replay was also repeated on
-the frozen commit with the same output/hash and exit **0**.
-
-Both baseline/new simulator runs exit **0**; logs:
-`~/.cache/om-sa-2b-baseline-sim.log` and `~/.cache/om-sa-2b-sim.log`.
-Replay outputs are `~/.cache/om-sa-2b-baseline-replay.txt` and
-`~/.cache/om-sa-2b-replay.txt`; normalized simulator blocks are
-`~/.cache/om-sa-2b-sim-normalized.json`.
+The initial check exited **2** at lint (unchecked temporary-directory cleanup),
+fixed before the final implementation commit. Two superseded checks were
+stopped with exit **143** after the final frozen-source check started; their
+logs are `~/.cache/om-pr64-fix1-{intermediate,final}.log`. Its log is
+`~/.cache/om-pr64-fix1-initial.log`. Focused reader tests exit **0**
+(`~/.cache/om64-focused3.log`); the final forge/fake race tests exit **0**
+(`~/.cache/om64-boundary-final.log`). The full check includes the complete short
+race suite, lint, formatting and build. All database tests use only the supplied
+shared Postgres; no database was initialized under `/tmp`.
