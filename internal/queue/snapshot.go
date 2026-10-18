@@ -67,6 +67,7 @@ type rulesSnapshot struct {
 type stateSnapshot struct {
 	ChangeRevisions                                                          map[int]RevisionRecord
 	BatchRevisions                                                           map[string][]BatchRevision
+	OutsidePushes                                                            []OutsidePushRecorded `json:",omitempty"`
 	Window                                                                   *adaptiveWindow
 	Outcomes                                                                 []changeOutcome
 	Version                                                                  int
@@ -103,6 +104,7 @@ func EncodeSnapshot(s State) ([]byte, error) {
 		Version:         SnapshotVersion,
 		ChangeRevisions: s.changeRevisions.snapshot(),
 		BatchRevisions:  s.batchRevisions,
+		OutsidePushes:   cloneOutsidePushes(s.outsidePushes),
 		Window:          s.window, Outcomes: s.outcomes,
 		Lifecycle:          s.Lifecycle,
 		BaseBranch:         s.BaseBranch,
@@ -196,8 +198,17 @@ func DecodeSnapshot(data []byte) (State, error) {
 	if len(v.Chain) > 32 || len(v.Invalidations) > 32 || len(v.TestedOrder) > testedHistory || len(v.Checks) > maxRetainedChecks || len(v.Entries) > maxSnapshotEntries || len(v.Effects) > maxSnapshotEffects {
 		return State{}, fmt.Errorf("invalid snapshot bounds")
 	}
+	if len(v.OutsidePushes) > OutsidePushLimit {
+		return State{}, fmt.Errorf("snapshot outside pushes exceed bound")
+	}
+	for _, e := range v.OutsidePushes {
+		if err := e.Validate(); err != nil {
+			return State{}, err
+		}
+	}
 	s := State{
-		window: v.Window, outcomes: v.Outcomes,
+		outsidePushes: cloneOutsidePushes(v.OutsidePushes),
+		window:        v.Window, outcomes: v.Outcomes,
 		Lifecycle:          v.Lifecycle,
 		BaseBranch:         v.BaseBranch,
 		BaseSHA:            v.BaseSHA,

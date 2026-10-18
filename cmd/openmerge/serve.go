@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -178,6 +179,16 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger, saniti
 		}
 	}
 	factory := &installationTargets{app: app, options: o, logger: logger, bundles: make(map[string]*installationBundle)}
+	// Audits have their own token refresh locks and Git caches. They spend no
+	// installation REST/GraphQL quota; credentials are minted with the App JWT.
+	// A history fetch must not hold resources needed by landing settlement.
+	auditApp, err := github.New(github.Config{AppID: o.app, PrivateKey: key, Sanitizer: sanitizer})
+	if err != nil {
+		return err
+	}
+	auditOptions := o
+	auditOptions.cache = filepath.Join(o.cache, "outside-push-audit")
+	auditFactory := &installationTargets{app: auditApp, options: auditOptions, logger: logger, bundles: make(map[string]*installationBundle)}
 	discovery := serve.Discovery{
 		App: strconv.FormatInt(o.app, 10),
 		InstallationAllowlist: func() string {
@@ -225,7 +236,7 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger, saniti
 			return result, nil
 		},
 	}
-	service, err := serve.NewDiscovery(ctx, db, discovery, serve.Options{PollInterval: o.poll, BackstopInterval: o.backstop, WebhookHealthWindow: o.webhookHealthWindow, WebhooksConfigured: o.listen != "", RulesInterval: o.rulesInterval, DiscoveryInterval: o.discoveryInterval, BaseAllowlist: splitAllowlist(o.base), Concurrency: o.concurrency, Logger: logger, DisableDeleteHeadBranch: !o.deleteHeadBranch})
+	service, err := serve.NewDiscovery(ctx, db, discovery, serve.Options{PollInterval: o.poll, BackstopInterval: o.backstop, WebhookHealthWindow: o.webhookHealthWindow, WebhooksConfigured: o.listen != "", RulesInterval: o.rulesInterval, DiscoveryInterval: o.discoveryInterval, BaseAllowlist: splitAllowlist(o.base), Concurrency: o.concurrency, Logger: logger, DisableDeleteHeadBranch: !o.deleteHeadBranch, OutsidePushHistory: auditFactory.outsidePushHistory})
 	if err != nil {
 		return err
 	}

@@ -53,6 +53,9 @@ type Options struct {
 	Logger                  *slog.Logger
 	// BackoffUntil exposes the driver's shared quota/cooldown deadline.
 	BackoffUntil func() time.Time
+	// OutsidePushHistory must use independent credentials, caches and locks;
+	// audit enrichment must never contend with settlement's Git operations.
+	OutsidePushHistory func(context.Context, store.QueueKey) (forge.OutsidePushHistory, error)
 }
 
 // Server owns one serial reconciler/worker per target, with bounded concurrency.
@@ -264,6 +267,7 @@ func (s *Server) notifyRefresh(ctx context.Context, installation, repository, de
 // be released. Durable landing attempts remain resolvable after restart.
 func (s *Server) Run(ctx context.Context) error {
 	var wg sync.WaitGroup
+	wg.Go(func() { s.outsidePushLoop(ctx) })
 	started := make(map[store.QueueID]bool)
 	start := func() {
 		for _, w := range s.workers() {

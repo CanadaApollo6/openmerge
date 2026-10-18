@@ -333,3 +333,21 @@ func TestQueueStatusShowsRunLedgerAndAdaptiveInputs(t *testing.T) {
 		}
 	}
 }
+
+func TestQueueStatusOutsidePushes(t *testing.T) {
+	q := status.Queue{Repository: "owner/repo", Base: "main", State: "active", OutsidePushes: []status.OutsidePush{
+		{EventID: 7, OutsidePushRecorded: queue.OutsidePushRecorded{PreviousSHA: "base", NewSHA: "admin", AncestryKnown: true, HistoryKnown: true, Commits: []string{"admin"}, Truncated: true, VerificationBeforeLanding: "none"}},
+		{EventID: 9, OutsidePushRecorded: queue.OutsidePushRecorded{PreviousSHA: "admin", NewSHA: "base", AncestryKnown: true, Rewrite: true, HistoryKnown: true, VerificationBeforeLanding: "none"}},
+		{EventID: 10, OutsidePushRecorded: queue.OutsidePushRecorded{PreviousSHA: "base", NewSHA: "missing", VerificationBeforeLanding: "none"}},
+		{EventID: 11, OutsidePushRecorded: queue.OutsidePushRecorded{PreviousSHA: "landed", NewSHA: "base", AncestryKnown: true, Rewrite: true, PossibleStaleObservation: true, VerificationBeforeLanding: "none"}},
+	}}
+	var output bytes.Buffer
+	if err := printStatus(&output, status.Response{Version: status.Version, Queue: &q}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"outside push (event 7): base -> admin; fast-forward; commits [admin] (truncated)", "outside push (event 9): admin -> base; rewrite; commits []", "ancestry unknown; commits unknown", "OpenMerge verification before landing: none", "possible stale base observation: may reflect a stale read rather than a real rollback; verify before acknowledgement"} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("missing %q in %s", want, output.String())
+		}
+	}
+}

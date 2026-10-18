@@ -102,6 +102,19 @@ func (f *installationTargets) target(ctx context.Context, key store.QueueKey) (s
 	return bundle.target(key), nil
 }
 
+func (f *installationTargets) outsidePushHistory(ctx context.Context, key store.QueueKey) (forge.OutsidePushHistory, error) {
+	number, err := strconv.ParseInt(key.Installation, 10, 64)
+	if err != nil || number <= 0 {
+		return nil, errors.New("invalid stored installation ID")
+	}
+	// This provider exposes only Git history. No committer discovery, PR
+	// metadata, or other installation-authenticated API callbacks are wired.
+	return gitops.New(ctx, gitops.Config{
+		WorkDir: filepath.Join(f.options.cache, key.Installation),
+		Remote:  f.app.HistoryRemote(number), HeadRef: github.HeadRef,
+	})
+}
+
 func (b *installationBundle) target(key store.QueueKey) serve.Target {
 	ref := forge.RepoRef{Path: key.Repository}
 	return serve.Target{Key: key, Driver: b.driver, Git: b.git, BotLogin: b.driver.BotLogin(), CheckRules: func(ctx context.Context) ([]string, []string, error) {

@@ -1175,3 +1175,38 @@ verify bypass acceptance, install and verify write rulesets under the old policy
 land the reviewed configuration, wait for the new digest and settled attempts,
 then remove only reviewed redundant PR rules. Disable GitHub auto-merge and
 schedule re-verification of protection after the switch.
+
+## Outside-push observations
+
+`openmerge queue status` and its JSON output expose the last 20 journal-derived
+outside-push observations, including their real event IDs. The journal retains
+all rows. Auditing runs independently with its own Git cache and credentials;
+a stuck history read delays only audits. Outstanding landing attempts must settle
+in the shared journal before their observations can be classified. The durable
+audit cursor and pending transitions survive restart; no operator action is needed
+to retry a delayed audit. Unreadable ancestry or history appears as permanently unknown, without retry.
+An attempt that never settles can defer audits indefinitely and grow the persisted
+pending list without a bound. History initialization and enrichment make zero
+installation-authenticated REST/GraphQL requests. App-JWT token minting is
+app-scoped; all history reads use Git smart HTTP, outside installation API quota.
+
+`possible_stale_observation: true` marks only a rewind from a settled landing L
+to its attempt's pre-landing build base B. Main's existing multi-server
+reconciliation can append a stale base read in precisely this shape, and a real
+rollback produces the same journal evidence. The record therefore says that it
+may reflect a stale read rather than a real rollback. A subsequent B→L return
+is suppressed at most once for that settled attempt,
+provided no other nontrivial move has consumed or invalidated its allowance.
+L→C→L records both moves; L→B→L→B→L records the second return to L and flags
+both rewinds to B; continuing to C retains the flagged rewind and records
+subsequent transitions normally. Other rewrites are unflagged.
+Use repository history and independent push evidence to verify a flagged record;
+ADR 0008's later warnings must treat it as lower-confidence evidence requiring
+verification before acknowledgement. This release has no acknowledgement command.
+The separate reconciliation fix is deferred until after the ADR 0009 trial.
+
+`outside_push_recorded` is a forward-only additive wire-v1 event. Drain older
+workers before upgrading. Once it has been written, rolling back to an older
+binary requires restoring a database backup from before its first event.
+Clearing the last-20 projection or removing configuration does not remove the
+new type from the journal; never edit journal rows to make rollback work.

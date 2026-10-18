@@ -162,3 +162,52 @@ the chain, checks/retry generations and deadlines, pending groups, effects and
 fences. Store persistence still uses journal replay; enabling database retention
 or compaction is separate work. PR 5 must extend the codec with adaptive window
 state before snapshots can support that policy.
+
+### Post-deployment addition: observed outside pushes (2026-10-17)
+
+ADR 0007 Stage A adds wire-v1 `outside_push_recorded` as a journal-derived audit
+in an independent loop. The loop never holds a worker mutex or execution slot;
+its Git cache, token refresh locks and credentials are separate from the workers.
+Settlement, configuration, reconciliation and planning retain main's code paths.
+Each `BaseMoved` row identifies a candidate transition. Attempts overlapping that
+observation must settle as `Landed` or `LandingAbandoned` in the shared journal
+before it is classified. A settled attempt can suppress at most one exact
+build-base-to-landed-SHA move (the verified head for fast-forward). Its allowance
+survives the flagged build-base rewind but is consumed or invalidated by any
+other nontrivial move. Later returns to a historical landed SHA are recorded. Other transitions are enriched
+with ancestry and commit history; unreadable history is explicitly unknown.
+There are no live ref/fence reads in the audit and no audit watermark authorizes
+or delays queue work. An unresolved landing can defer audits indefinitely and grow the durable pending
+list without a bound. Failed enrichment is permanently unknown, without retry.
+The history constructor uses only App-JWT token minting and Git protocol reads;
+initialization and enrichment make zero installation-authenticated REST/GraphQL
+requests and spend none of the worker's installation API quota.
+
+Audit-only observations persist a scanned event position, the last audited
+`BaseMoved` ID, an incremental fold and pending transitions. Restart resumes from
+that position; each pass reads at most 256 new events. A short transaction checks
+the audit cursor, appends inert events with unique `outside-base/<BaseMoved ID>`
+keys, and advances audit progress atomically. Competing auditors retry from the
+durable cursor, preserving every transition, including away-and-back moves.
+Git I/O runs before that transaction and never holds a database connection.
+The v2 audit cursor rebuilds older audit-only progress with attempt-scoped
+suppression; unchanged BaseMoved dedupe keys preserve existing receipts.
+
+The payload records both tips, ancestry knowledge and rewrite status, a bounded
+history (or explicit unknown), truncation, the source observation's time and no
+OpenMerge verification before landing. `possible_stale_observation` identifies
+the exact settled-landing-to-build-base rewind described in ADR 0007; it may be
+a stale read rather than a real rollback. It is lower-confidence evidence.
+The pure projection retains the latest 20 observations without advancing planner
+revisions; snapshot v3's optional `OutsidePushes` field is omitted for legacy
+states. Status reads original journal rows with real event IDs, not snapshot-only
+observations. Batch planning, landing and check observation keep their existing
+algorithms and encodings.
+
+Every queue starts writing this type when it observes an outside push, with no
+configuration opt-in. Older workers must be drained before upgrading. Once the
+new type has been recorded, rolling back to an older binary requires restoring
+a database backup from before that event; removing configuration or clearing the
+status tail does not make the journal readable by the old binary. Do not edit
+the event log. The new type has a golden fixture; all existing fixtures remain
+byte-identical.

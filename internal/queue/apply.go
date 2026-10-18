@@ -9,6 +9,18 @@ import (
 
 // Apply folds one event without mutating s or any slices or maps reachable from it.
 func Apply(s State, e Event) State {
+	// Audit observations do not advance planner revisions or change action keys.
+	if outside, ok := e.(OutsidePushRecorded); ok {
+		if outside.Validate() != nil {
+			return s
+		}
+		outside.Commits = append([]string{}, outside.Commits...)
+		s.outsidePushes = append(cloneOutsidePushes(s.outsidePushes), outside)
+		if len(s.outsidePushes) > OutsidePushLimit {
+			s.outsidePushes = slices.Clone(s.outsidePushes[len(s.outsidePushes)-OutsidePushLimit:])
+		}
+		return s
+	}
 	if _, poisoned := e.(ActionPoisoned); poisoned && s.actionPoison.key != "" {
 		return s
 	}

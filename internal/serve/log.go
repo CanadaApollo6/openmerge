@@ -123,6 +123,8 @@ func (s *Server) logEvent(ctx context.Context, w *worker, before, after queue.St
 		}
 	case queue.BatchStarted:
 		w.logChecks = ""
+	case queue.OutsidePushRecorded:
+		log("outside push recorded", 0, "", e.NewSHA, "outside-queue", "previous_sha", e.PreviousSHA, "rewrite", e.Rewrite, "ancestry_known", e.AncestryKnown, "history_known", e.HistoryKnown, "truncated", e.Truncated, "possible_stale_observation", e.PossibleStaleObservation, "verification_before_landing", e.VerificationBeforeLanding)
 	case queue.BaseMoved:
 		if before.Active != nil && after.Active == nil {
 			batchLog("abandoned", "base-moved", before.Active)

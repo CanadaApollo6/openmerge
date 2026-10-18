@@ -28,6 +28,7 @@ type Response struct {
 
 // Queue describes one served installation/repository/base/lane partition.
 type Queue struct {
+	OutsidePushes     []OutsidePush              `json:"outside_pushes,omitempty"`
 	Readiness         *Readiness                 `json:"readiness,omitempty"`
 	State             string                     `json:"state"`
 	Installation      string                     `json:"installation"`
@@ -51,6 +52,13 @@ type Queue struct {
 	state             queue.State
 	runLedger         map[int][]Run
 	RulesSources      []RulesSource `json:"rules_sources,omitempty"`
+}
+
+// OutsidePush identifies durable evidence for a base move after fence settlement.
+// EventID is the journal ID for future operator acknowledgement, not an actor ID.
+type OutsidePush struct {
+	EventID int64 `json:"event_id"`
+	queue.OutsidePushRecorded
 }
 
 // RulesSource lists one source's independently revisioned policy findings.
@@ -141,10 +149,18 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 	heads := make(map[int]string)
 	tested, inheritedPause := explanationContext(j, pr)
 	events := make([]Event, 0)
+	var outsidePushes []OutsidePush
+	// Audit evidence comes only from journal rows, which retain stable IDs.
 	var previous queue.Event
 	var watermark int64
 	ledger := runLedger(j, sanitizer, func(record store.JournalEvent, before, after queue.State) {
 		s = after
+		if e, ok := record.Event.(queue.OutsidePushRecorded); ok {
+			outsidePushes = append(outsidePushes, OutsidePush{EventID: record.ID, OutsidePushRecorded: e})
+			if len(outsidePushes) > queue.OutsidePushLimit {
+				outsidePushes = outsidePushes[len(outsidePushes)-queue.OutsidePushLimit:]
+			}
+		}
 		watermark = record.ID
 		n := directPR(record.Event)
 		if n > 0 {
@@ -230,7 +246,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 		e.HeadSHA = head
 		known[n] = e
 	}
-	q := Queue{State: s.LifecycleState(), Installation: j.Key.Installation, Repository: j.Key.Repository, Base: j.Key.BaseBranch, Lane: j.Key.Lane,
+	q := Queue{OutsidePushes: outsidePushes, State: s.LifecycleState(), Installation: j.Key.Installation, Repository: j.Key.Repository, Base: j.Key.BaseBranch, Lane: j.Key.Lane,
 		Watermark: watermark, BaseSHA: s.BaseSHA, PauseReason: sanitizer.Sanitize(s.PauseReason(queue.Config{})), PauseDetail: sanitizer.Sanitize(s.PauseDetail(queue.Config{})), Blocks: make([]Block, 0), Entries: make([]Entry, 0, len(s.Entries))}
 	for _, block := range s.Blocks(queue.Config{}) {
 		q.Blocks = append(q.Blocks, Block{Source: string(block.Source), Revision: block.Revision, Reason: sanitizer.Sanitize(block.Reason), Detail: sanitizer.Sanitize(block.Detail)})
@@ -548,6 +564,11 @@ func eventSummary(event queue.Event, before, after queue.State) string {
 		return fmt.Sprintf("Observed PR #%d; eligible=%t, trusted=%t", e.PR, e.Eligible, e.Trusted)
 	case queue.LifecycleChanged:
 		return "Queue lifecycle: " + e.State + ": " + e.Detail
+	case queue.OutsidePushRecorded:
+		if e.PossibleStaleObservation {
+			return fmt.Sprintf("Observed possible rewrite %s → %s; possible stale base observation: may reflect a stale read rather than a real rollback; verify before acknowledgement; no prior OpenMerge verification", e.PreviousSHA, e.NewSHA)
+		}
+		return fmt.Sprintf("Observed outside push %s → %s; rewrite=%t, ancestry_known=%t, history_known=%t; no prior OpenMerge verification", e.PreviousSHA, e.NewSHA, e.Rewrite, e.AncestryKnown, e.HistoryKnown)
 	case queue.BaseMoved:
 		return "Observed base branch movement"
 	case queue.ConfigApplied:
