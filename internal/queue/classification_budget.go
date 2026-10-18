@@ -54,7 +54,7 @@ func (s State) CheckClassificationAdmission(e ChangeClassified) error {
 	if err := e.Validate(); err != nil {
 		return err
 	}
-	next := s.classify(e)
+	next := Apply(s, e)
 	i := e.Evidence.Classification.Inputs
 	accepted, ok := next.Classification(ChangeID(i.ChangeID), ChangeRevision(i.Revision))
 	if !ok || !reflect.DeepEqual(nonNullClassification(accepted), nonNullClassification(e)) {

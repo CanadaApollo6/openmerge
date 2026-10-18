@@ -264,7 +264,7 @@ func (s State) CheckReceiptAdmission(e ApprovalReceiptRecorded) error {
 	if err := s.CheckApprovalBoundary(e.Basis); err != nil {
 		return err
 	}
-	next := s.recordReceipt(e)
+	next := Apply(s, e)
 	if _, ok := next.receipts[e.Basis.ChangeID][e.CommentID]; !ok {
 		return fmt.Errorf("receipt admission capacity exceeded")
 	}

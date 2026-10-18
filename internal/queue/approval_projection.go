@@ -16,6 +16,7 @@ import (
 
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
 	"github.com/CanadaApollo6/openmerge/internal/classification"
+	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
 
 // ApprovalFacts is a side projection. Sources retain first-observation revision

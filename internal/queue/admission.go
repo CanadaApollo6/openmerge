@@ -66,10 +66,7 @@ func (s State) CheckApprovalAdmission(e Event) error {
 	if receipt, ok := e.(ApprovalReceiptRecorded); ok {
 		return s.CheckReceiptAdmission(receipt)
 	}
-	next, ok := s.observeApproval(e)
-	if !ok {
-		return fmt.Errorf("unsupported approval admission event %T", e)
-	}
+	next := Apply(s, e)
 	return checkSharedAdmissionBudget(next, basis.ChangeID)
 }
 
