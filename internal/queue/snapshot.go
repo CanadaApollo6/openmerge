@@ -13,7 +13,7 @@ import (
 
 // SnapshotVersion is separate from the additive event wire version. Snapshots
 // contain bounded projection state, never a copy of the event history.
-const SnapshotVersion = 2
+const SnapshotVersion = 3
 
 // Decoder resource limits are deliberately above ordinary queue sizes. This
 // codec is not wired into store persistence.
@@ -65,6 +65,8 @@ type rulesSnapshot struct {
 	Revision uint64
 }
 type stateSnapshot struct {
+	ChangeRevisions                                                          map[int]RevisionRecord
+	BatchRevisions                                                           map[string][]BatchRevision
 	Window                                                                   *adaptiveWindow
 	Outcomes                                                                 []changeOutcome
 	Version                                                                  int
@@ -98,8 +100,10 @@ type stateSnapshot struct {
 func EncodeSnapshot(s State) ([]byte, error) {
 	s = cloneState(s)
 	v := stateSnapshot{
-		Version: SnapshotVersion,
-		Window:  s.window, Outcomes: s.outcomes,
+		Version:         SnapshotVersion,
+		ChangeRevisions: s.changeRevisions.snapshot(),
+		BatchRevisions:  s.batchRevisions,
+		Window:          s.window, Outcomes: s.outcomes,
 		Lifecycle:          s.Lifecycle,
 		BaseBranch:         s.BaseBranch,
 		BaseSHA:            s.BaseSHA,
@@ -167,8 +171,12 @@ func DecodeSnapshot(data []byte) (State, error) {
 	if err := json.Unmarshal(data, &header); err != nil {
 		return State{}, err
 	}
-	if header.Version != SnapshotVersion {
+	if header.Version != SnapshotVersion && header.Version != 2 {
 		return State{}, fmt.Errorf("unsupported snapshot version %d", header.Version)
+	}
+	data, err := upgradeChangeSnapshot(data, header.Version)
+	if err != nil {
+		return State{}, err
 	}
 	if err := requireSnapshotFields(data, reflect.TypeFor[stateSnapshot](), "snapshot"); err != nil {
 		return State{}, err
@@ -181,6 +189,9 @@ func DecodeSnapshot(data []byte) (State, error) {
 	}
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		return State{}, fmt.Errorf("trailing snapshot data")
+	}
+	if err := validateChangeSnapshot(v); err != nil {
+		return State{}, err
 	}
 	if len(v.Chain) > 32 || len(v.Invalidations) > 32 || len(v.TestedOrder) > testedHistory || len(v.Checks) > maxRetainedChecks || len(v.Entries) > maxSnapshotEntries || len(v.Effects) > maxSnapshotEffects {
 		return State{}, fmt.Errorf("invalid snapshot bounds")
@@ -199,6 +210,8 @@ func DecodeSnapshot(data []byte) (State, error) {
 		nextAdmission:      v.NextAdmission,
 		revision:           v.Revision,
 		observations:       restoreObservations(v.Observations),
+		changeRevisions:    restoreChangeRevisions(v.ChangeRevisions),
+		batchRevisions:     v.BatchRevisions,
 		dequeues:           make(map[int]Dequeue),
 		acknowledged:       make(map[string]effectScope),
 		checks:             make(map[string]retainedCheck),
@@ -349,6 +362,9 @@ func DecodeSnapshot(data []byte) (State, error) {
 		if !found {
 			return State{}, fmt.Errorf("snapshot confirmation has no pending cancellation")
 		}
+	}
+	if header.Version == 2 {
+		s.retainBatchRevisions()
 	}
 	s.cancellationConfirmed = v.CancellationConfirmed
 	return cloneState(s), nil

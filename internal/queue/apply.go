@@ -12,6 +12,9 @@ func Apply(s State, e Event) State {
 	if _, poisoned := e.(ActionPoisoned); poisoned && s.actionPoison.key != "" {
 		return s
 	}
+	if observation, ok := e.(ChangeRevisionObserved); ok && !s.CanObserveChangeRevision(observation) {
+		return s
+	}
 	s = cloneState(s)
 	s.revision++
 	switch e := e.(type) {
@@ -55,7 +58,10 @@ func Apply(s State, e Event) State {
 		if b := s.BatchForPR(e.PR); b != nil {
 			s.refreshChecks(b)
 		}
+	case ChangeRevisionObserved:
+		s.observeChangeRevision(e)
 	case PRObserved:
+		s.observeLegacyRevision(e)
 		s.observations.put(e.PR, e)
 		if entry := s.entry(e.PR); entry != nil {
 			switch {
@@ -347,6 +353,7 @@ func Apply(s State, e Event) State {
 	case ActionCompleted:
 		s.completeEffect(e.Key)
 	}
+	s.retainBatchRevisions()
 	s.pruneAcknowledgements()
 	s.pruneCancellationConfirmations()
 	return s

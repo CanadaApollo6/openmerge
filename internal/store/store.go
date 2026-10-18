@@ -275,6 +275,11 @@ func (s *Store) append(ctx context.Context, q QueueID, events []queue.Event, ded
 			}
 		}
 		for i, event := range events {
+			if revision, ok := event.(queue.ChangeRevisionObserved); ok {
+				if err := validateChangeRevision(ctx, tx, q, revision); err != nil {
+					return err
+				}
+			}
 			_, resetPoison := event.(queue.ResumeRequested)
 			if cleared, ok := event.(queue.BlockSourceCleared); ok && cleared.Source == queue.ActionPoison && cleared.Validate() == nil {
 				state, _, err := load(ctx, tx, q)

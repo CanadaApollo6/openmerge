@@ -62,6 +62,8 @@ type State struct {
 	nextAdmission      uint64
 	revision           uint64
 	observations       observations
+	changeRevisions    changeRevisions
+	batchRevisions     map[string][]BatchRevision
 	dequeues           map[int]Dequeue
 	effects            []Action
 	acknowledged       map[string]effectScope
