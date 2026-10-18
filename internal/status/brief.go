@@ -162,7 +162,7 @@ func projectBrief(j store.Journal, id, audience string, options ...briefOptions)
 	} else if policyCode == "policy_busy" {
 		appendBriefWarning(&v, audience, "policy_busy", "Local policy reconstruction is temporarily busy.", "Retry the brief after local lock contention clears.", brief.Step{Action: "retry"})
 	} else if policyCode != "" {
-		appendBriefWarning(&v, audience, policyCode, "The recorded approval policy could not be reconstructed for this brief.", "Make the pinned local policy objects and recorded identity inputs available; a full effective config loader is required to verify the config digest.", brief.Step{Action: "restore_recorded_policy"})
+		appendBriefWarning(&v, audience, policyCode, "The recorded approval policy could not be reconstructed for this brief.", "Restore the pinned ConfigApplied commit and its tree/blob objects to the repository local Git cache through an operator-managed fetch or backup import (including the default-branch config commit for non-default-base queues); restore recorded identity inputs. If the repository default branch is unknown, let worker reconciliation establish it. The brief reader never fetches.", brief.Step{Action: "restore_recorded_policy"})
 	}
 	if v.Obligations != nil && v.ApprovalsRequired != nil && !*v.ApprovalsRequired {
 		appendBriefWarning(&v, audience, "approvals_not_required", "approvals not required by the recorded policy", "", brief.Step{Action: "none"})
@@ -265,7 +265,7 @@ func sanitizeBriefView(v *brief.View, sanitizer *diagnostic.Sanitizer) bool {
 	changed := false
 	clean := func(text *string) {
 		value, redacted := sanitizer.SanitizeTextRedacted(*text)
-		*text = value
+		*text = brief.BoundDisplayText(value, &v.Truncated)
 		changed = changed || redacted
 	}
 	for i := range v.Warnings {
@@ -280,13 +280,22 @@ func sanitizeBriefView(v *brief.View, sanitizer *diagnostic.Sanitizer) bool {
 }
 
 func currentBriefRun(run Run, runs []Run) bool {
-	if run.WastedReason == "rerun" {
-		return false
-	}
-	// Ledger order is batch creation order, not observation arrival order. Late
-	// observations from obsolete batches cannot become the current attempt.
+	// Ledger order is batch creation order, not observation arrival order.
 	if len(runs) == 0 || run.BatchID != runs[len(runs)-1].BatchID {
 		return false
+	}
+	// Supersession is independent of why an attempt became wasted. Compare
+	// recorded producer identities before allowing a historical failure to advise.
+	if run.Identity != nil {
+		for _, other := range runs {
+			if other.BatchID != run.BatchID || other.Identity == nil || other.producerKey != run.producerKey {
+				continue
+			}
+			old, newer := run.Identity, other.Identity
+			if newer.ID > old.ID || newer.ID == old.ID && max(newer.Attempt, 1) > max(old.Attempt, 1) {
+				return false
+			}
+		}
 	}
 	switch run.WastedReason {
 	case "", "timeout", "checks-failed", "checks-timeout", "confirmed failure (bisection)":

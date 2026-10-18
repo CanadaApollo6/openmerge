@@ -550,6 +550,13 @@ func clearing(code string) (string, string) {
 		return "Obtain the required eligible approvals; receipt requirements need the exact current brief digest.", "wait_for_approval"
 	}
 }
+
+// BoundDisplayText applies the per-field display bound to supplemental text.
+// Callers must redact the complete input before bounding it.
+func BoundDisplayText(s string, truncated *bool) string {
+	return bounded(s, truncated)
+}
+
 func bounded(s string, truncated *bool) string {
 	s = strings.ToValidUTF8(s, "�")
 	s = strings.Map(func(r rune) rune {

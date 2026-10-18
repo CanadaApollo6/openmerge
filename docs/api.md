@@ -349,9 +349,14 @@ match because deletion does not affect approval requirements. A match exposes
 `approvals_not_required` marker (“approvals not required by the recorded policy”).
 A digest mismatch, including older planner JSON composition, withholds requirements
 and digest with `policy_digest_mismatch`. Load/resolve failures report
-`policy_unavailable`.
+`policy_unavailable`. Resolution uses the worker’s known repository default
+branch; an unknown default branch also withholds policy. To restore missing local
+objects, an operator must fetch or import from backup the pinned `ConfigApplied`
+commit and its tree/blob objects into the repository Git cache, including the
+default-branch configuration commit for release queues. The reader never fetches.
 
-Candidate approval policies always withhold requirements and digest with
+Approval-bearing configs, including normal `version: 1` configs, always withhold
+requirements and digest with
 `policy_unavailable` and `implement_11b_policy_composition`: recorded-policy digest
 composition is defined in **11b**. 11b must define, reconstruct and verify the
 full effective queue plus approval-policy composition (`WithPolicyDigest`) against

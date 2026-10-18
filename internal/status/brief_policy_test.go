@@ -20,9 +20,10 @@ import (
 
 type historicalPolicySource struct {
 	source
-	data     []byte
-	err      error
-	requests []BriefPolicyRequest
+	data          []byte
+	err           error
+	requests      []BriefPolicyRequest
+	defaultBranch *string
 }
 
 func (s *historicalPolicySource) BriefPolicy(_ context.Context, k store.QueueKey, r BriefPolicyRequest) (cp.Policy, error) {
@@ -30,7 +31,11 @@ func (s *historicalPolicySource) BriefPolicy(_ context.Context, k store.QueueKey
 	if s.err != nil {
 		return cp.Policy{}, s.err
 	}
-	return ReconstructBriefPolicy(s.data, k, r)
+	defaultBranch := k.BaseBranch
+	if s.defaultBranch != nil {
+		defaultBranch = *s.defaultBranch
+	}
+	return ReconstructBriefPolicy(s.data, k, defaultBranch, r)
 }
 
 func policyJournal(t *testing.T, approvals bool) (store.Journal, []byte, cp.Policy, queue.ApprovalBasis) {
@@ -149,7 +154,7 @@ func TestBriefUnresolvableGroupIsUnavailable(t *testing.T) {
 	j, _, _, _ := policyJournal(t, true)
 	data := []byte("groups:\n  maintainers: [missing-user]\nqueues:\n  - name: release\n    approvals:\n      default: {group: maintainers}\n")
 	req := BriefPolicyRequest{Config: j.Events[0].Event.(queue.ConfigApplied), Evidence: j.Events[2].Event.(queue.ChangeClassified).Evidence}
-	_, err := ReconstructBriefPolicy(data, j.Key, req)
+	_, err := ReconstructBriefPolicy(data, j.Key, j.Key.BaseBranch, req)
 	var mismatch queue.BriefPolicyMismatchError
 	if err == nil || errors.As(err, &mismatch) {
 		t.Fatalf("unresolved identity reported as mismatch: %v", err)
@@ -224,6 +229,9 @@ func TestR3PolicyRecovery(t *testing.T) {
 			}
 			if warning.Code == tc.code && warning.NextStep.Action == tc.action {
 				found = true
+				if tc.action == "restore_recorded_policy" && (!strings.Contains(warning.Clears, "operator-managed fetch or backup import") || !strings.Contains(warning.Clears, "default-branch config commit")) {
+					t.Fatal("missing object recovery is not actionable")
+				}
 				if tc.err == nil && !strings.Contains(warning.Detail, "defined in 11b") {
 					t.Fatal("missing 11b reason")
 				}

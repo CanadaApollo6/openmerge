@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"reflect"
 
+	"go.yaml.in/yaml/v3"
+
 	"github.com/CanadaApollo6/openmerge/internal/brief"
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
 	"github.com/CanadaApollo6/openmerge/internal/classification"
@@ -107,15 +109,30 @@ var ErrCandidatePolicyUnavailable = errors.New("recorded-policy digest compositi
 
 // ReconstructBriefPolicy verifies legacy effective configuration. Candidate
 // policy composition remains unavailable until 11b defines its recorded digest.
-func ReconstructBriefPolicy(data []byte, key store.QueueKey, req BriefPolicyRequest) (cp.Policy, error) {
+func ReconstructBriefPolicy(data []byte, key store.QueueKey, defaultBranch string, req BriefPolicyRequest) (cp.Policy, error) {
 	cfg, _, err := config.Load(data)
 	if err != nil {
+		var candidate struct {
+			Queues []struct {
+				Approvals yaml.Node `yaml:"approvals"`
+			} `yaml:"queues"`
+		}
+		if yaml.Unmarshal(data, &candidate) == nil {
+			for _, q := range candidate.Queues {
+				if q.Approvals.Kind != 0 {
+					return cp.Policy{}, ErrCandidatePolicyUnavailable
+				}
+			}
+		}
 		if _, _, candidateErr := cp.ParseCandidate(data); candidateErr == nil {
 			return cp.Policy{}, ErrCandidatePolicyUnavailable
 		}
 		return cp.Policy{}, fmt.Errorf("pinned config unavailable: %w", err)
 	}
-	selected, diagnostics := cfg.ResolveBranch(key.BaseBranch, key.BaseBranch)
+	if defaultBranch == "" {
+		return cp.Policy{}, fmt.Errorf("repository default branch unavailable")
+	}
+	selected, diagnostics := cfg.ResolveBranch(key.BaseBranch, defaultBranch)
 	if len(diagnostics) != 0 {
 		return cp.Policy{}, fmt.Errorf("pinned branch policy unavailable: %v", diagnostics)
 	}

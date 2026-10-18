@@ -31,7 +31,7 @@ func (s *Server) BriefPolicy(ctx context.Context, key store.QueueKey, req status
 		if !w.mu.TryLock() {
 			return cp.Policy{}, diagnostic.BusyError("policy worker busy")
 		}
-		target := w.Target
+		target, defaultBranch := w.Target, w.configBranch
 		w.mu.Unlock()
 		reader, ok := target.Git.(interface {
 			LocalConfig(context.Context, forge.RepoRef, string) ([]byte, error)
@@ -43,7 +43,7 @@ func (s *Server) BriefPolicy(ctx context.Context, key store.QueueKey, req status
 		if err != nil {
 			return cp.Policy{}, err
 		}
-		return status.ReconstructBriefPolicy(data, key, req)
+		return status.ReconstructBriefPolicy(data, key, defaultBranch, req)
 	}
 	return cp.Policy{}, fmt.Errorf("local policy object reader unavailable")
 }
