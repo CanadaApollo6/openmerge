@@ -12,6 +12,14 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// LandingDecisionRequiredError means store policy requires the atomic gate.
+// It is a wiring failure, never stale work: workers must fail the Land action.
+type LandingDecisionRequiredError struct{}
+
+func (LandingDecisionRequiredError) Error() string {
+	return "approval policy requires landing decision gate"
+}
+
 // ErrLandingDecisionStale asks the worker to re-plan after an atomic rollback.
 // It also wraps ErrStale, but must not use legacy starts' done/cancelled path.
 var ErrLandingDecisionStale = errors.New("landing decision inputs changed; re-plan")

@@ -10,6 +10,7 @@ import (
 // Apply folds one event without mutating s or any slices or maps reachable from it.
 func Apply(s State, e Event) State {
 	next := apply(s, e)
+	next.retainLandingDecisions()
 	if len(next.approvalWaits) > 0 {
 		next = next.refreshApprovalWaits()
 	}

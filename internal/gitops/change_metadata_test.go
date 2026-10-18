@@ -62,7 +62,8 @@ func TestChangeTrailersBeforeCI(t *testing.T) {
 				}
 			}
 			for i, sha := range generated {
-				message := gitCommand(t, f.source, "", nil, "show", "-s", "--format=%B", sha)
+				message, err := f.g.ReadCommitMessage(t.Context(), testRepo, sha)
+				must(t, err)
 				batch := ""
 				if i == len(generated)-1 {
 					batch = "metadata"
@@ -86,6 +87,21 @@ func TestChangeTrailersBeforeCI(t *testing.T) {
 					pair, err := prs[member].Metadata.Trailers()
 					must(t, err)
 					expected = pair
+				}
+				parsed, parseErr := forge.ParseChangeTrailers(message)
+				if len(expected) > 0 {
+					must(t, parseErr)
+					var actual []string
+					for _, m := range parsed {
+						pair, err := m.Trailers()
+						must(t, err)
+						actual = append(actual, pair...)
+					}
+					if !slices.Equal(actual, expected) {
+						t.Fatalf("reader mismatch: %v != %v", actual, expected)
+					}
+				} else if parseErr == nil {
+					t.Fatal("unmarked replay commit supplied metadata")
 				}
 				if len(expected) > 0 && !strings.Contains(trailers, strings.Join(expected, "\n")) {
 					t.Fatalf("pair missing from trailer block:\n%s\nwant %v", trailers, expected)

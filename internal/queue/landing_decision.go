@@ -329,12 +329,19 @@ func (s State) recordLandingDecision(e LandingDecisionRecorded) State {
 	if e.Validate() != nil {
 		return s
 	}
+	b := s.Batch(e.BatchID)
+	if b == nil || b.Phase != Testing && b.Phase != Landing || b.Phase == Landing && b.LandingAttempt.ID != e.AttemptID {
+		return s
+	}
 	key := e.decisionKey()
 	if _, exists := s.landingDecisions[key]; exists {
 		return s
 	}
 	next := make(map[string]LandingDecisionRecorded, len(s.landingDecisions)+1)
 	for k, v := range s.landingDecisions {
+		if v.BatchID == e.BatchID && v.AttemptID != e.AttemptID {
+			continue
+		}
 		next[k] = v
 	}
 	next[key] = detached(e)
@@ -342,7 +349,28 @@ func (s State) recordLandingDecision(e LandingDecisionRecorded) State {
 	return s
 }
 
-// LandingDecisions returns detached immutable records, including settled attempts.
+// retainLandingDecisions drops settled evidence without mutating prior states.
+// Testing decisions are staged immediately before LandingStarted in one store
+// transaction; settlement discards the batch, and a new start pins its attempt.
+func (s *State) retainLandingDecisions() {
+	if len(s.landingDecisions) == 0 {
+		return
+	}
+	var live map[string]LandingDecisionRecorded
+	for key, d := range s.landingDecisions {
+		b := s.Batch(d.BatchID)
+		if b != nil && (b.Phase == Testing && b.InvalidationReason == "" && b.ProvisionalFailure == "" || b.Phase == Landing && b.LandingAttempt.ID == d.AttemptID) {
+			if live == nil {
+				live = make(map[string]LandingDecisionRecorded)
+			}
+			live[key] = d
+		}
+	}
+	s.landingDecisions = live
+}
+
+// LandingDecisions returns detached records for unsettled attempts only.
+// Historical evidence is available through store.Journal.Events.
 func (s State) LandingDecisions() []LandingDecisionRecorded {
 	keys := make([]string, 0, len(s.landingDecisions))
 	for key := range s.landingDecisions {

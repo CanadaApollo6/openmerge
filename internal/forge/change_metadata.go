@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/CanadaApollo6/openmerge/internal/changepolicy"
@@ -68,4 +69,76 @@ func ValidateBuildMetadata(prs []BuildPR) error {
 		seen[pr.Metadata.ChangeID] = true
 	}
 	return nil
+}
+
+// ParseChangeTrailers reads only the final, blank-line-delimited trailer block
+// written by gitops. Contributor prose may retain forged OpenMerge lines; it
+// never supplies authoritative metadata. Pairs must have the writer's exact
+// canonical spelling, order and values. No Git trailer configuration is used.
+func ParseChangeTrailers(message string) ([]*ChangeMetadata, error) {
+	bad := func() ([]*ChangeMetadata, error) { return nil, fmt.Errorf("invalid tested change trailers") }
+	if strings.ContainsAny(message, "\x00\r") {
+		return bad()
+	}
+	message = strings.TrimSuffix(message, "\n")
+	_, block, ok := strings.Cut(message, "\n\n")
+	if !ok {
+		return bad()
+	}
+	if i := strings.LastIndex(block, "\n\n"); i >= 0 {
+		block = block[i+2:]
+	}
+	lines := strings.Split(block, "\n")
+	var result []*ChangeMetadata
+	seen := map[string]bool{}
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
+		key, _, _ := strings.Cut(strings.ToLower(strings.TrimSpace(line)), ":")
+		key = strings.TrimSpace(key)
+		if key != "openmerge-change" && key != "openmerge-classification" {
+			if strings.HasPrefix(key, "openmerge-change") || strings.HasPrefix(key, "openmerge-classification") {
+				return bad()
+			}
+			// A prose paragraph is not a trailer block, even if it ends with
+			// convincing metadata. Writer-owned attribution uses key/value lines.
+			if !strings.HasPrefix(line, "#") {
+				trailerKey, value, ok := strings.Cut(line, ": ")
+				if !ok || trailerKey == "" || value == "" || strings.ContainsAny(trailerKey, " \t") {
+					return bad()
+				}
+			}
+			continue
+		}
+		id, ok := strings.CutPrefix(line, "OpenMerge-Change: ")
+		if !ok || i+1 >= len(lines) {
+			return bad()
+		}
+		change, revision, ok := strings.Cut(id, "@")
+		if !ok || seen[change] {
+			return bad()
+		}
+		rev, err := strconv.ParseUint(revision, 10, 64)
+		if err != nil {
+			return bad()
+		}
+		labels, ok := strings.CutPrefix(lines[i+1], "OpenMerge-Classification: "+id+" ")
+		if !ok {
+			return bad()
+		}
+		m := &ChangeMetadata{ChangeID: change, Revision: rev, Labels: []string{}}
+		if labels != "none" {
+			m.Labels = strings.Split(labels, ",")
+		}
+		canonical, err := m.Trailers()
+		if err != nil || canonical[0] != line || canonical[1] != lines[i+1] {
+			return bad()
+		}
+		seen[change] = true
+		result = append(result, m)
+		i++
+	}
+	if len(result) == 0 {
+		return bad()
+	}
+	return result, nil
 }

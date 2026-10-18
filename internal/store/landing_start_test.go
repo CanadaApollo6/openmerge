@@ -196,6 +196,12 @@ func TestAtomicLandingRejectsWholeMemberSet(t *testing.T) {
 			if err == nil {
 				t.Fatal("invalid start accepted")
 			}
+			if kind == "legacy-bypass" {
+				var required LandingDecisionRequiredError
+				if !errors.As(err, &required) || errors.Is(err, ErrStale) {
+					t.Fatal("wrong bypass error", err)
+				}
+			}
 			if kind == "policy" && !errors.Is(err, ErrLandingDecisionStale) {
 				t.Fatal("stale decision did not request re-plan", err)
 			}
@@ -344,8 +350,19 @@ func TestDecisionSnapshotSettlesAfterPauseRemovalAndHeadChange(t *testing.T) {
 			appendEvents(t, s, q, queue.Landed{BatchID: c.Start.BatchID, NewBaseSHA: c.Land.TestedSHA, NewFence: "settled-fence"})
 			state, _, err = s.Load(t.Context(), q)
 			must(t, err)
-			if !reflect.DeepEqual(state.LandingDecisions(), []queue.LandingDecisionRecorded{d}) {
-				t.Fatal("settlement changed frozen snapshot")
+			if len(state.LandingDecisions()) != 0 {
+				t.Fatal("settled decision retained")
+			}
+			records, err := s.EventsAfter(t.Context(), q, 0)
+			must(t, err)
+			var historical []queue.LandingDecisionRecorded
+			for _, r := range records {
+				if d, ok := r.Event.(queue.LandingDecisionRecorded); ok {
+					historical = append(historical, d)
+				}
+			}
+			if !reflect.DeepEqual(historical, []queue.LandingDecisionRecorded{d}) {
+				t.Fatal("settlement lost journal evidence")
 			}
 			if kind == "head" {
 				r, _ := state.PRRevision(12)
@@ -376,7 +393,7 @@ func TestAtomicDecisionExecutorCrashWindows(t *testing.T) {
 			for old, next := range map[string]string{strings.Repeat("a", 40): base, strings.Repeat("b", 40): pr.HeadSHA, strings.Repeat("e", 40): tested, `"fence"`: `"` + fence + `"`} {
 				raw = bytes.ReplaceAll(raw, []byte(old), []byte(next))
 			}
-			q, claim, c, d := decisionLandInput(t, s, raw)
+			q, claim, c, _ := decisionLandInput(t, s, raw)
 			before := eventCount(t, s, q)
 			pushes := &startGit{Git: f}
 			f.SetCheckRuns(repo, tested, []forge.CheckRun{{Name: "ci", State: forge.Success}})
@@ -384,16 +401,18 @@ func TestAtomicDecisionExecutorCrashWindows(t *testing.T) {
 			clock := c.Start.At
 			gate := &executor.LandingDecisionGate{Policy: c.Policy,
 				Load: func(ctx context.Context) (queue.State, error) { state, _, err := s.Load(ctx, q); return state, err },
-				ReadInputs: func(_ context.Context, _ queue.Land, _ queue.State) ([]queue.ApprovalEligibilityObserved, []*forge.ChangeMetadata, error) {
-					// Read the authoritative pair from the immutable tested commit.
+				ReadTestedMessages: func(_ context.Context, _ queue.Land) ([]string, error) {
 					commit, err := f.Commit(repo, tested)
 					if err != nil {
-						return nil, nil, err
+						return nil, err
 					}
-					trailers, err := meta.Trailers()
-					if err != nil || !strings.Contains(commit.Message, strings.Join(trailers, "\n")) {
-						return nil, nil, fmt.Errorf("tested trailer read failed")
+					message := commit.Message
+					if window == "trailers-mismatch" {
+						message = strings.ReplaceAll(message, "docs,owned:user:owner,unknown", "unknown")
 					}
+					return []string{message}, nil
+				},
+				ReadInputs: func(_ context.Context, _ queue.Land, _ queue.State) ([]queue.ApprovalEligibilityObserved, error) {
 					if window == "lease-expires-during-forge" {
 						clock = clock.Add(2 * time.Minute)
 						c.Fresh.Basis.At = clock
@@ -402,11 +421,7 @@ func TestAtomicDecisionExecutorCrashWindows(t *testing.T) {
 						clock = clock.Add(time.Millisecond)
 						c.Fresh.Basis.At = clock
 					}
-					observed := *meta
-					if window == "trailers-mismatch" {
-						observed.Labels = []string{"unknown"}
-					}
-					return []queue.ApprovalEligibilityObserved{c.Fresh}, []*forge.ChangeMetadata{&observed}, nil
+					return []queue.ApprovalEligibilityObserved{c.Fresh}, nil
 				},
 				Commit: func(ctx context.Context, fresh []queue.ApprovalEligibilityObserved, ds []queue.LandingDecisionRecorded, start queue.LandingStarted) error {
 					if window == "last-start-stale" {
@@ -443,9 +458,15 @@ func TestAtomicDecisionExecutorCrashWindows(t *testing.T) {
 				if err != nil || pushes.calls != 1 {
 					t.Fatal("fresh observation after initial preflight clock was rejected", err, pushes.calls)
 				}
-				state, _, err := s.Load(t.Context(), q)
+				records, err := s.EventsAfter(t.Context(), q, 0)
 				must(t, err)
-				if !state.LandingDecisions()[0].Approval.Basis.At.Equal(clock) {
+				var frozen queue.LandingDecisionRecorded
+				for _, record := range records {
+					if v, ok := record.Event.(queue.LandingDecisionRecorded); ok {
+						frozen = v
+					}
+				}
+				if !frozen.Approval.Basis.At.Equal(clock) {
 					t.Fatal("fresh basis not frozen")
 				}
 				return
@@ -473,8 +494,8 @@ func TestAtomicDecisionExecutorCrashWindows(t *testing.T) {
 			must(t, x.Execute(t.Context(), resolve, func(e queue.Event) error { appendEvents(t, s, q, e); return nil }))
 			state, _, err = s.Load(t.Context(), q)
 			must(t, err)
-			if !reflect.DeepEqual(state.LandingDecisions(), []queue.LandingDecisionRecorded{d}) {
-				t.Fatal("crash recovery changed decisions")
+			if len(state.LandingDecisions()) != 0 {
+				t.Fatal("crash recovery retained settled decisions")
 			}
 			if state.Active != nil && state.Active.Phase == queue.Landing {
 				t.Fatal("fence did not settle crash")
