@@ -77,7 +77,7 @@ func TestLegacyExecutorEmitSQL(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Capture before inspection adds SQL; this includes BEGIN, advisory lock,
-	// claim lock, journal load, insert, notification and COMMIT in order.
+	// claim lock, journal load, event insert and COMMIT in order.
 	raw, err := json.Marshal(trace.statements)
 	must(t, err)
 	t.Logf("LEGACY-LANDING-SQL %s", raw)
