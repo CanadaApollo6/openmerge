@@ -742,3 +742,199 @@ make test-sim-exits
 python3 scripts/check-phase2-compatibility.py /home/riels/openmerge-sa-11a-main
 
 ```
+
+## Round 2 review fixes
+
+Trial class remains **Hold**; activation is still fixture-only. Round 2 starts
+from `da37919fdcaab92b68b3955219d35b4cdd34f073`. An explicit fetch of only main
+and `stage-a/11a-shadow-gate` exited 0; main remains
+`f8066a4f3bc9f2bfb110950b0c6c9aea4cf5ea6f`.
+
+- **B1:** Every native-source pass now records its complete eligibility view
+  through the semantic observation dedupe transaction, including missing native
+  approvals, denied/unknown grants, and changed team/owner pools. New stances
+  (request-changes/dismissal/unapprove) retain their attributed journal path.
+  The durable fingerprint and eligibility acquisition basis fence the locked
+  atomic start; a later changed observation makes an older gate stale, including
+  permission revoke-then-restore. Unchanged polls append nothing. Delayed input
+  ingestion cannot overwrite newer durable eligibility. No forge call runs under
+  the queue lock. `TestStageAFreshNegativeStancesBeforeStart` now exercises
+  withdrawal, revoked-writer, team-removal and grant-ABA as well as the original
+  request-changes/dismissal/unapprove cases. The before-start cases pause the
+  first worker's gate while a second worker polls in a goroutine and commits to
+  the real isolated Postgres schema; neither LandingStarted nor Landed is allowed.
+- **B2:** `GoverningCache.TreeDeriver` admits only definite, complete governing
+  files into the immutable blob parse cache. The regression
+  `TestGoverningCacheIncompleteThenCompleteSameBlob` first reads present,
+  object-ID-bearing but incomplete empty CODEOWNERS/attributes, then reads both
+  complete at the same object IDs and verifies the real parse products.
+- **B3:** A pass-local grant lookup memoizes results by immutable reviewer ID,
+  shared by stance admission and eligibility. It is discarded after the pass;
+  the next pass re-reads permissions even after denial. Stale-head positive
+  reviews are excluded before any permission lookup. The call-count regression
+  `TestStageANativeGrantCallsPerDistinctReviewer` checks 1 and 30 approvals each
+  for 1 and 3 reviewers, plus stale-head noise: exactly one grant call per current
+  reviewer on each of two polls, with revocation between polls.
+- **S1:** The real GitHub adapter normalizes user 404 and ordinary team/member
+  403/404 to ErrIdentityUnavailable after rate-limit normalization. Rate-limited
+  403/429, 5xx and timeouts remain transient. The 48-case real-driver loopback
+  matrix `TestStageAHTTPIdentityFailuresBlockOrRetry` covers user/team/member
+  reads, 404, ordinary 403, Retry-After, exhausted quota, secondary-rate-limit
+  message, 429, 503 and timeout; each runs with and without base movement and
+  verifies durable block versus retry plus readable recovery.
+- **Nits:** Removed the unreachable command default arm. Governing content cache
+  keys now include repository path. Existing 32-content/128-parse-entry LRUs
+  retain at most 32 MiB/128 MiB of governing source input respectively under
+  MaxGoverningBytes (1 MiB per acquisition/blob); parsed matchers, tokens and Go
+  object overhead are additional, bounded by parser limits and entry count.
+  These are source-byte bounds, not a claim of a measured heap ceiling.
+  Native responses are reused within source attribution and the final gate.
+  The ordinary command pass and authenticated command refresh can still read
+  NativeReviews separately: the latter deliberately rechecks the current PR
+  before binding a command. Final landing also takes its own fresh read.
+
+Round-2 runs, exact commands, resource environment and log hashes follow below.
+Historical round-1 results above do not substitute for this round's gates.
+
+Implementation commit: `eae7fd6753a4d5161f7a5490b494180aa04d0440`.
+All remaining source validation runs target that implementation; the final
+follow-up commit changes only this evidence file.
+
+### Round-2 run discipline
+
+Logs and machine-readable exits are retained under
+`/home/riels/.cache/openmerge-77-r2/` (`results.jsonl`, `logs/`). The runner waits
+for other Go test/build executables and journal/differential jobs before every
+heavy job. A Go launcher additionally checks before each helper `go test` or
+`go build`; a Python subprocess guard checks before direct helper `.test`
+executables. The guard excludes descendants of the current heavy-job owner so
+normal `GOFLAGS=-p=2` package execution is one job rather than a deadlock. There
+were no delegated helper builds or direct builds outside the runner this round.
+
+Every job inherits `GOFLAGS=-p=2`, `GOMEMLIMIT=4GiB` (`6GiB` for both replays),
+`GOTMPDIR=/home/riels/.cache/openmerge-77-r2/gotmp`,
+`GOCACHE=/home/riels/.cache/go-build`, and the supplied shared-test-Postgres URL.
+`TMPDIR` also points under that cache. No initdb was run, no process was killed,
+and no live DB/status/units/remote OpenMerge refs were touched. The replay reads
+only the existing saved JSONL export; it does not query the live service.
+
+The first focused run exited 1 for an omitted store import, corrected before
+`focused-2` (exit 0). The first `make check` exited 2 on test lint findings
+(unchecked HTTP response writes and copying a worker mutex), corrected before
+`check-2` (exit 0). The race-enabled HTTP/atomic-start matrix exited 0. After
+strengthening the cache test from parse-product inspection to its Generated
+behavior, the full final check was rerun. These failed attempts remain in the
+ledger rather than being replaced by successful runs.
+
+### Round-2 final results
+
+Legacy equivalence: **PASS** against unchanged `origin/main` `f8066a4`.
+Final explicit-refspec, no-tags fetch exited 0; main and the remote PR branch
+were still `f8066a4` and `da37919`. No rebase was needed. The clean implementation
+source digest reported by the commit-ID harness is
+`ec5c5db479d3632e151f28d2c47142abf217c59e1d238585a963b56247485d88`.
+
+- Final `make check`: exit 0 (fmt, lint, complete race/short suite, build).
+- Astra's unchanged original withdrawal/revoked-writer overlay probes: exit 0;
+  all four final-read/before-start cases reject, including both original races.
+- `make test-sim-exits`: exit 0.
+- Compatibility: exit 0; 17 legacy exits, 1055 retry/digest records and all
+  84 wire fixtures are byte-identical.
+- Legacy SQL: exit 0; seven statements identical, with all five negative
+  controls detected (each control's probe exits 0 and the comparison rejects
+  its deliberately different trace).
+- Depth-1/4: exit 0; 227662 short-corpus checkpoints, 5615998 required-full
+  checkpoints and 188 fixture streams identical. No nil-only exceptions.
+- Four-method commit-ID differential: exit 0; tested and landed SHAs identical
+  for squash, merge, rebase and fast-forward. Mandatory self-tests return
+  0 for identical, 1 for mutant and 2 for dirty, exactly their expected statuses.
+- Strict journal replay vs main: exit 0; 2159/2159 actions, boundaries and
+  snapshot hashes identical, plus all seven synthetic checkpoints.
+- Strict replay vs `3f77a88`: raw exit 1, retained rather than normalized.
+  Exact-shape inspection exits 0: actions/boundaries match at all 2159 real
+  and seven synthetic checkpoints; the only non-allowlisted difference remains
+  classifications absent -> strictly nil. Gate 4 passes. No exception allowlist
+  was changed. The existing five known exceptions remain unchanged.
+
+### Round-2 complete command/exit ledger
+
+Every entry below is the actual root job status, including failed attempts.
+The replay memory limit is 6GiB; all other jobs use 4GiB. All jobs inherit the
+runner environment and guards described above. Logs use the entry name plus
+`.log` in the round-2 cache's `logs/` directory.
+
+- `focused`: exit **1**, GOMEMLIMIT `4GiB`; log SHA-256 `09ef058d910e19da4cc35f2246bba4e910dcf51614445d9b0ba881e754546b9e`.
+- `focused-2`: exit **0**, GOMEMLIMIT `4GiB`; log SHA-256 `ce819181ebde403aa5032d22520e7b3a9946e4a788d878b57f223f87faf2f8c6`.
+- `check`: exit **2**, GOMEMLIMIT `4GiB`; log SHA-256 `4c685ca969c820e07c6b6b3dfe0aba2678ed61184a260e05a351a1947b4c1b93`.
+- `http-races`: exit **0**, GOMEMLIMIT `4GiB`; log SHA-256 `c87c433d2169e8b2e329a357a93973add9d581d031982527f96d70de09972f9a`.
+- `check-2`: exit **0**, GOMEMLIMIT `4GiB`; log SHA-256 `ad78204e2de09acc70d2c5e3c9880baec98d425f435a6f9ce682ed2b25bad916`.
+- `check-final`: exit **0**, GOMEMLIMIT `4GiB`; log SHA-256 `0e51f831a9e42aa974d525d39cad8de4b2a83b377d4f6b08f2444497fc6530f8`.
+- `astra-races`: exit **0**, GOMEMLIMIT `4GiB`; log SHA-256 `8ed4b587e0b1c9c5cbc754bceb24c20ea2d88cc8d102cc6a80c1fa635cfc0f66`.
+- `sim-exits`: exit **0**, GOMEMLIMIT `4GiB`; log SHA-256 `fa326e54b83fca0da733360279844be5b29a02490b5827494bd370ed8f461083`.
+- `compatibility`: exit **0**, GOMEMLIMIT `4GiB`; log SHA-256 `8609790ee807f78ae7fadd31e6503a6a932f9f874af818197be4849fe5a93749`.
+- `legacy-sql`: exit **0**, GOMEMLIMIT `4GiB`; log SHA-256 `ab22c0b5e090c552fcb505089d132fa81b6793fa330d277ad02890069ccefd33`.
+- `legacy-depths`: exit **0**, GOMEMLIMIT `4GiB`; log SHA-256 `3c25309b33c985c03a3aff2a5c961878e2dd1b080a03ec27dc5894981e7b3453`.
+- `commit-ids`: exit **0**, GOMEMLIMIT `4GiB`; log SHA-256 `c940efadee4a771d9b9848ed8edeed910b4be073c408cae7655a904547bfd6a3`.
+- `replay-main`: exit **0**, GOMEMLIMIT `6GiB`; log SHA-256 `3f070e644fe208ea05d322c825b87add42a43258093208965cdfad470a96d55e`.
+- `replay-deployed`: exit **1**, GOMEMLIMIT `6GiB`; log SHA-256 `2af215135ca9939ca198d96443bc2300cf6ab7f81c60826d4823b7e2d5f4dfea`.
+- `replay-inspection`: exit **0**, GOMEMLIMIT `4GiB`; log SHA-256 `0b554123b04ecef4cc41fb09ede76a5a35e559cad1507ffebe8b96a3ebb68144`.
+
+Exact commands (executed through the host-load runner):
+
+```sh
+# focused: actual exit=1, GOMEMLIMIT=4GiB
+go test ./internal/serve ./internal/classification ./internal/forge/github -run 'TestStageA|TestGoverningCache|TestIdentity|TestTeamMembership' -count=1 -v
+
+# focused-2: actual exit=0, GOMEMLIMIT=4GiB
+go test ./internal/serve ./internal/classification ./internal/forge/github -run 'TestStageA|TestGoverningCache|TestIdentity|TestTeamMembership' -count=1 -v
+
+# check: actual exit=2, GOMEMLIMIT=4GiB
+make check
+
+# http-races: actual exit=0, GOMEMLIMIT=4GiB
+go test ./internal/serve -run 'TestStageAHTTPIdentityFailuresBlockOrRetry|TestStageAFreshNegativeStancesBeforeStart' -race -count=1 -v
+
+# check-2: actual exit=0, GOMEMLIMIT=4GiB
+make check
+
+# check-final: actual exit=0, GOMEMLIMIT=4GiB
+make check
+
+# astra-races: actual exit=0, GOMEMLIMIT=4GiB
+go test -overlay /home/riels/.cache/openmerge-77-r2/astra-race-overlay.json ./internal/serve -run '^TestReview77R2NegativeRace$' -count=1 -v
+
+# sim-exits: actual exit=0, GOMEMLIMIT=4GiB
+make test-sim-exits
+
+# compatibility: actual exit=0, GOMEMLIMIT=4GiB
+python3 scripts/check-phase2-compatibility.py /home/riels/openmerge-sa-11a-main
+
+# legacy-sql: actual exit=0, GOMEMLIMIT=4GiB
+python3 scripts/check-legacy-landing-sql.py /home/riels/openmerge-sa-11a-main
+
+# legacy-depths: actual exit=0, GOMEMLIMIT=4GiB
+python3 scripts/check-legacy-plan-action-depths-1-4.py /home/riels/openmerge-sa-11a-main
+
+# commit-ids: actual exit=0, GOMEMLIMIT=4GiB
+python3 scripts/check-legacy-commit-ids.py --baseline /home/riels/openmerge-sa-11a-main --candidate /home/riels/openmerge-sa-11a
+
+# replay-main: actual exit=0, GOMEMLIMIT=6GiB
+python3 scripts/check-live-journal-replay.py --baseline /home/riels/openmerge-sa-11a-main --candidate /home/riels/openmerge-sa-11a --events /home/riels/.local/share/openmerge/exports/events-20261018T051000Z.jsonl --queues /home/riels/.local/share/openmerge/exports/queues-20261018T051000Z.jsonl --strict-state --out /home/riels/.cache/openmerge-77-r2/replay-main.json
+
+# replay-deployed: actual exit=1, GOMEMLIMIT=6GiB
+python3 scripts/check-live-journal-replay.py --baseline /home/riels/.cache/sa9b-r2-deployed --candidate /home/riels/openmerge-sa-11a --events /home/riels/.local/share/openmerge/exports/events-20261018T051000Z.jsonl --queues /home/riels/.local/share/openmerge/exports/queues-20261018T051000Z.jsonl --strict-state --out /home/riels/.cache/openmerge-77-r2/replay-deployed.json
+
+# replay-inspection: actual exit=0, GOMEMLIMIT=4GiB
+python3 /home/riels/.cache/openmerge-11a/inspect-replays.py /home/riels/.cache/openmerge-77-r2/replay-main.json /home/riels/.cache/openmerge-77-r2/replay-deployed.json
+
+```
+
+Runner and guard SHA-256 values:
+
+- `heavy.py`: `afd16f0e86fbc5330a68fb3fd8d6106f9f679ffccd5489b273ab66c55ee40b9a`
+- `guard-bin/go`: `0f6b059f29b4109d98bd3d3bd11ae17174cc9756cd70d5edabd84a92d5779281`
+- `guard-python/hostguard.py`: `62e64ec5161f28318a0d58c61ef9ebba0b1c0ab2284970195ce4c4909539217b`
+- `guard-python/sitecustomize.py`: `aa907bb032d0ca3dae2bcc79a13aa1439c40663bad044578260de363c409492f`
+- `astra-race-overlay.json`: `eff51f2741a418d9140f3e762dbfde17635a03c07562ffb11d26b796d5920861`
+
+The final follow-up commit contains only this evidence update. Trial class remains **Hold**.
