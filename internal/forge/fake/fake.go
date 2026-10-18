@@ -56,6 +56,7 @@ type repository struct {
 type Forge struct {
 	mu                          sync.Mutex
 	identities                  identityState
+	nativeReviews               map[nativeReviewKey]forge.NativeReviews
 	repos                       map[forge.RepoRef]*repository
 	failures                    map[string][]error
 	onTestRef                   func(string, []int)
