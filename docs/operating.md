@@ -791,6 +791,10 @@ These are operator commands; the replay tool never connects to Postgres or GitHu
    backups="$HOME/.local/share/openmerge/backups"
    exports="$HOME/.local/share/openmerge/exports"
    mkdir -p "$backups" "$exports"
+   # Capture before pg_dump: a conservative lower bound for rollback checks.
+   backup_max_event_id=$(PGOPTIONS='-c default_transaction_read_only=on' \
+     psql -XAt -v ON_ERROR_STOP=1 -c 'SELECT COALESCE(max(id), 0) FROM events')
+   printf '%s\n' "$backup_max_event_id" > "$backups/openmerge-$stamp.max-event-id"
    pg_dump -Fc --file="$backups/openmerge-$stamp.dump"
    ```
 
@@ -816,6 +820,13 @@ These are operator commands; the replay tool never connects to Postgres or GitHu
    download happens inside the script; provision the Go toolchain/dependencies
    beforehand. The candidate's code comes from its working tree; use a clean
    checkout at the intended release SHA so the reported HEAD identifies it.
+   Both checkouts must have empty `git status --porcelain` output, including
+   untracked files; the tool refuses dirty trees and records both commits and
+   clean flags. Its mandatory startup self-tests must pass before replay can
+   produce a PASS report; their result is recorded in that report. The synthetic
+   journal also runs through both actual checkouts and any test overlays. Its
+   compatibility result is reported separately from the real export: a planner
+   branch unvisited in the export can still fail the mandatory synthetic gate.
 
    ```bash
    git worktree add --detach "$HOME/openmerge-deployed-replay" a4b173f
@@ -831,15 +842,23 @@ These are operator commands; the replay tool never connects to Postgres or GitHu
    identical planner revision. `first_action_divergence` identifies the first
    event that differs, separately from state comparison.
 
-   State comparison defaults to **legacy fields**: compare canonical JSON from
-   each full journal fold, ignoring codec `Version` metadata and removing only
-   `ChangeRevisions` and `BatchRevisions` on both sides. This allowlist lives in
-   one place in the script and follows ADR 0007 PR 1's replayable side projection:
-   old observations establish revision sequences without a backfill or log rewrite.
-   Every other shared field must match exactly; absent new fields may only be
-   empty/zero. `legacy_state_identical: N/N` and `first_state_divergence` report
-   the result. `--strict-state` requires original snapshot hash equality for
-   same-codec comparisons. Both modes retain strict actions/revision equality.
+   State comparison walks the full `queue.State` structurally through reflection,
+   including unexported and nested fields, ordered slices, sorted map keys,
+   dereferenced pointers with nil distinguished, normalised times and type names.
+   Baseline and candidate paths and JSON types must match. Any candidate-only
+   field, including a zero-valued field, fails unless its exact path is in the
+   script's reviewed exceptions list with a reason and ADR/PR reference; listed
+   fields must still be zero-valued. Record the exceptions used in the deploy
+   evidence. Snapshot comparison remains an additional diagnostic;
+   `--strict-state` also requires original snapshot hash equality.
+
+   At every checkpoint and the final state, the tool strictly compares planner
+   current next wake, deadline sets and actions at each union deadline minus 1ns, exactly at
+   the deadline, and plus 1ns. It also enumerates `NextWake` from the zero clock
+   to include elapsed deadlines still represented by the state: asking only for
+   future wakes at a late observation would miss timeout boundaries.
+   Boundary instants are deduplicated, and the report
+   records their counts. Hitting the per-checkpoint cap fails closed.
 
    Production restarts rebuild queue state by **full journal replay**. Queue
    snapshots are not persisted or restored by the server. The snapshot codec is
@@ -847,13 +866,16 @@ These are operator commands; the replay tool never connects to Postgres or GitHu
    decoding/re-encoding an old queue snapshot does not model a server restart.
    The replay gate therefore does not use that conversion as its comparison target.
 
-   The tool reports non-empty checkpoint counts for each allowlisted field,
-   folds the candidate journal twice, and requires identical derived fields at
-   every checkpoint (`derived_determinism`). A positive schema check restricts
-   derived records to revision identity/basis fields, rejecting non-empty unknown
-   fields, including accountability, classification, or approvals. Any non-empty
-   new field outside the allowlist also fails gate 2. `non_allowlisted_fields`
-   retains offending values and event IDs verbatim.
+   `ChangeRevisions` and `BatchRevisions` are the conditional PR 1 derived
+   projection allowance. Where a baseline projection is non-empty, the candidate
+   must match it exactly. Only an empty baseline allows a new candidate
+   projection. The tool reports non-empty checkpoint counts, folds the candidate
+   twice, and requires identical derived fields at every checkpoint
+   (`derived_determinism`). Every present record must contain its applicable
+   ChangeID/Revision/HeadSHA/Basis/LogPosition fields, with Revision > 0 and a
+   non-empty HeadSHA. The schema check rejects accountability, classification,
+   approvals and unknown fields. Offending paths, values and event IDs are
+   retained in the report.
 
    Exit 0 requires gates 2 and 4 to pass. Exit 1 reports a failed gate; exit 2
    is a tooling/input error and supplies no passing evidence. The report records
@@ -871,8 +893,9 @@ These are operator commands; the replay tool never connects to Postgres or GitHu
    omission discovers the standard config paths. Both recomputed policy digests
    must match the latest recorded `ConfigApplied` digest and the offline
    reconciler comparison must emit no `ConfigApplied`, including same-digest
-   window initialization. Missing policy history fails closed. No events are
-   appended, and no new event types are synthesized during shadow replay.
+   window initialization. Missing policy history fails closed. Gate 4 here means
+   **config digest + would-emit-ConfigApplied only**. The ADR's broader “no new
+   event types on shadow replay” clause is not proven by this tool.
 
    Replay uses each event's `recorded_at` as a deterministic planning clock,
    `serve.worker.plannerConfig`, and the historical policy at each transition.
@@ -882,19 +905,46 @@ These are operator commands; the replay tool never connects to Postgres or GitHu
    `--poll-interval-seconds 60`, `--default-branch main`, and head cleanup enabled
    (use `--keep-head-branch` for `serve --delete-head-branch=false`). A config
    file's explicit cleanup setting overrides that flag, as on the server.
-   Unsupported APIs fail closed; the adapter list in the script names the
-   verified wire decoder, Apply, worker planner mapping and snapshot codec.
+   Compilation or unsupported input errors fail closed. `API_ADAPTERS` is a
+   descriptive label for the probe's API surface, not an enforced compatibility
+   registry or proof that all worker behaviour is exercised.
 
-   Attach this report, exact commands, config identity and the other required
-   gate evidence (legacy wire fixtures, simulator results, and merge-method
-   commit IDs when applicable) to the deploy record. This tool alone is not
-   release authorization. Run its synthetic checks with
-   `python3 scripts/test-live-journal-replay.py`.
+   Attach this report, exact commands, config identity, export watermark and
+   the complementary evidence below to the deploy record. The watermark includes
+   max event ID, max `recorded_at`, latest `ConfigApplied` digest (per queue),
+   event count and queue count. This tool alone is not release authorization.
 
-5. Only after all gates pass, build with `make build`, stop the service with
-   `systemctl --user stop openmerge.service`, install with
-   `install -m 0755 bin/openmerge "$HOME/.local/bin/openmerge"`, and start with
-   `systemctl --user start openmerge.service`. Do not alter the live configuration
+5. Only after all gates and complementary checks pass, build with `make build`
+   and stop the service with `systemctl --user stop openmerge.service`. Before
+   installing, re-check the export watermark with this exact read-only query:
+
+   ```bash
+   PGOPTIONS='-c default_transaction_read_only=on' psql -X -v ON_ERROR_STOP=1 <<'SQL'
+   BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
+   SELECT json_build_object(
+     'max_event_id', (SELECT max(id) FROM events),
+     'max_recorded_at', (SELECT max(recorded_at) FROM events),
+     'event_rows', (SELECT count(*) FROM events),
+     'queue_rows', (SELECT count(*) FROM queues),
+     'latest_config_applied', (
+       SELECT COALESCE(json_agg(row_to_json(c) ORDER BY c.queue_id), '[]'::json)
+       FROM (
+         SELECT DISTINCT ON (queue_id) queue_id, id AS event_id,
+           payload->'data'->>'digest' AS digest
+         FROM events WHERE type = 'config_applied'
+         ORDER BY queue_id, id DESC
+       ) c
+     )
+   );
+   COMMIT;
+   SQL
+   ```
+
+   Compare every watermark value to the replay report. If any moved, re-export
+   both inputs using step 2 and rerun the checks before installing; keep the
+   service stopped through this final export, verification and install. Once
+   fresh evidence passes, run `install -m 0755 bin/openmerge "$HOME/.local/bin/openmerge"`
+   and `systemctl --user start openmerge.service`. Do not alter live configuration
    or permissions as part of an inert deployment.
 6. Inspect `journalctl --user -u openmerge.service --since '10 minutes ago'` and
    queue status. Confirm real processing continues: look for `enqueued` and
@@ -905,12 +955,55 @@ These are operator commands; the replay tool never connects to Postgres or GitHu
    they do not change workflows/runners, batch planning, landing or check
    observation; log that classification without restarting the periods.
 
+### What a PASS does not show
+
+Replay covers the exported states and policies, event-time plans and bounded
+boundary probes. It does not exercise executor/landing mechanics; forge
+observation (check-run selection, PR reads or rules); the store layer; PR #53's
+outside-push audit loop or audit snapshot decoding; inter-event timing beyond
+the boundary probe; CI workflows/runners; or states/policies absent from the
+export. Equal wire actions do not establish equal execution or external reads.
+
+Require named complementary evidence **for each deployed PR**, recorded before
+deploy alongside its SHA and replay report:
+
+- A reviewer/maintainer materiality verdict naming the reviewer, covering
+  workflow/runner and executor/forge diffs as well as planning changes.
+- `scripts/check-phase2-compatibility.py` results against the deployed baseline,
+  and the required `sim-exits` result (`make test-sim-exits`), with commands,
+  compared commits and real exit statuses.
+- For audit-adjacent changes, `scripts/check-outside-push-isolation.py` results
+  and evidence for audit snapshot decoding when affected.
+- For build/landing changes, the merge-method commit-ID check: show that each
+  supported merge method lands the exact tested commit, recording both commit
+  IDs and the check result.
+
 Forward-only events (for example PR #53's `outside_push_recorded`) make binary
-rollback unsafe once written: an older decoder cannot read them. Recovery then
-requires stopping the service and restoring the pre-deploy `pg_dump` backup into
-an appropriate empty database before starting the old binary. A restore loses
-post-backup journal writes and requires deliberate operator reconciliation; keep
-both the backup and evidence rather than assuming replacing the binary suffices.
+rollback unsafe once written: an older decoder cannot read them. Before choosing
+binary-only rollback, stop the service and run this read-only query using the
+saved backup watermark (add every event type unsupported by the old binary):
+
+```bash
+backup_max_event_id=$(cat "$backups/openmerge-$stamp.max-event-id")
+PGOPTIONS='-c default_transaction_read_only=on' psql -X -v ON_ERROR_STOP=1 \
+  -v backup_max_event_id="$backup_max_event_id" <<'SQL'
+BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
+SELECT id, queue_id, type, recorded_at
+FROM events
+WHERE id > :'backup_max_event_id'::bigint
+  AND type IN ('outside_push_recorded')
+ORDER BY id;
+COMMIT;
+SQL
+```
+
+The saved watermark precedes `pg_dump`, so this check is conservative if events
+arrived during the backup. Any returned unsupported event rules out binary-only
+rollback; zero rows permit it only after checking all other decoder/schema
+compatibility constraints. Otherwise restore the pre-deploy `pg_dump` backup
+into an appropriate empty database before starting the old binary. A restore
+loses post-backup journal writes and requires deliberate operator reconciliation;
+keep both the backup and evidence.
 
 ## How landed PRs appear on GitHub
 
