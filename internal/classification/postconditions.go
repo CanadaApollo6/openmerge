@@ -48,3 +48,35 @@ func protectedClassification(c cp.Classification) string {
 	raw, _ := json.Marshal(c)
 	return string(raw)
 }
+
+// Preserve existing diagnostic entries, including unknown/generated, while
+// permitting Owners to append explanations. Count duplicates independently.
+func protectedReasons(c cp.Classification) map[string]int {
+	out := map[string]int{}
+	add := func(scope int, rs []cp.LabelReasons) {
+		for _, r := range rs {
+			if strings.HasPrefix(r.Label, "owned:") {
+				continue
+			}
+			raw, _ := json.Marshal(struct {
+				Scope  int
+				Reason cp.LabelReasons
+			}{scope, r})
+			out[string(raw)]++
+		}
+	}
+	add(-1, c.Reasons)
+	for i, f := range c.Files {
+		add(i, f.Reasons)
+	}
+	return out
+}
+func reasonsPreserved(before map[string]int, after cp.Classification) bool {
+	remaining := protectedReasons(after)
+	for key, count := range before {
+		if remaining[key] < count {
+			return false
+		}
+	}
+	return true
+}

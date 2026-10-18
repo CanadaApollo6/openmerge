@@ -7,7 +7,8 @@ The caller supplies the governing **default-branch** commit explicitly,
 including for release queues. It must match the governing reader's commit;
 it is never inferred from the pinned queue base, merge base or head.
 
-The classifier version includes forge `DiffSemantics` (v7), which versions
+The facets-v3 version pins the literal forge semantics string (v7), independently
+of future `forge.DiffSemantics` changes. That string versions
 inventory limits, exact-object rename pairing, ancestry proofs, governing file
 selection and checked absences, plus bounded hunk semantics. The classifier's
 own governing/hunk mapping uses v1 and facet rules use v3. Historical facets-v1/v2
@@ -53,9 +54,16 @@ invalid-owner diagnostics are retained. User/team names lose `@` and lowercase;
 email local parts preserve case, domains lowercase. Patterns are case sensitive:
 leading slash anchors, basename patterns search all depths, trailing slash
 covers directory contents, `*`/`?` exclude slash, and component `**` crosses
-zero or more directories. `docs/*` excludes deeper files; literal leaves such
-as `/apps/github` and `**/logs` cover descendant paths. Escaped whitespace and
-interior hashes are supported. Leading `\#`, negation and ranges are diagnosed
+zero or more directories, including runs of three or more stars. Literal leaves
+such as `/apps/github` and `**/logs` cover descendants. GitHub explicitly makes
+`docs/*` narrower than gitignore; wildcard basename directory propagation (for
+example `*.md` on `x.md/b`) is undocumented. If a match depends solely on
+propagating a wildcard directory match, that path's ownership and owner labels
+are Unknown with a diagnostic. This protects both inherited obligations and
+ownerless overrides; direct file matches remain supported. Escaped whitespace
+and escaped interior hashes are supported. An unescaped hash inside a token is ambiguous and makes
+the file unknown; only a hash at a token boundary begins a comment. Leading
+`\#`, negation and ranges are diagnosed
 as unsupported, following [GitHub's documented exclusions](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners#codeowners-syntax).
 `condition.CompileGlob` is never used for these patterns.
 
@@ -63,7 +71,9 @@ Conservative differences: GitHub skips invalid syntax lines, whereas an invalid
 pattern/file makes this derivation unknown, retaining other observations for
 explanation. Invalid owner tokens make the affected effective entry unresolved;
 they do not silently clear ownership. Files at/over 3 MiB, invalid UTF-8, NULs,
-unreadable or non-regular blobs are unknown. PR 2b's aggregate 1 MiB acquisition
+unreadable or non-regular blobs are unknown. A BOM anywhere in CODEOWNERS is
+invalid/unknown because GitHub's BOM handling is undocumented. PR 2b's aggregate
+1 MiB acquisition
 budget can make evidence unknown sooner. Email resolution is intentionally
 unsupported and mixed entries fail closed for code-owner rules (ADR 0007).
 All sources use the default-branch governing tree, including release queues.
@@ -79,7 +89,57 @@ and unknown. The built-in `binary` macro affects text/diff/merge only and cannot
 mark a file generated. Custom macro definitions (including overrides of binary)
 and unsupported pattern/range syntax are diagnosed and make affected attribute
 ancestry unknown. Host/global/info attributes and head contents are never read.
-Parser vectors are pinned in `parsers_test.go` and `derive_test.go`.
+A file-initial UTF-8 BOM is stripped, matching Git; later BOMs are literal.
+Lines of 2048 bytes or more become unknown rather than Git's silent ignore,
+because ignoring an unset could expose an inherited generated exemption.
+C-quoted patterns containing an escaped NUL are diagnosed/unknown: Git
+truncates at that byte, so treating it as a literal could miss an override.
+Attribute files are parsed/compiled once per `Classify` call (including both
+rename sides and diagnostics); caches are never retained across calls. At 4096
+derived assignments, remaining input is diagnosed/unknown. Byte classes always
+exclude slash, including ranges crossing slash such as `[,-0]`.
+
+`oracle_test.go` uses isolated local Git with an empty HOME, cleared inherited
+Git environment, no system/global config/attributes, and no attributesFile or
+excludesFile. Its deterministic seed-69 corpus compares 243 attribute inputs
+(6,318 path comparisons) and 116 CODEOWNERS patterns (3,016 comparisons),
+including both assignment and inherited-override directions. Unsupported
+syntax may produce Unknown; every other disagreement fails the test. These
+run in the ordinary CI suite and skip only when Git is absent. No forge API
+is involved. Parser and Evaluate regressions also live in `parsers_test.go`
+and `derive_test.go`.
+
+Parser resource limits are conservative Unknown boundaries: CODEOWNERS has at
+most 1024 nonempty entries, 2048 source bytes per entry, 32 owner tokens per
+entry, 256 distinct canonical owner tokens, and 128 bytes per owner token.
+Oversized tokens leave their entry unresolved; other budget excesses invalidate
+the file. At the forge's 1000-file inventory limit and two rename sides per
+file, LastMatchingEntry contributes at most 4,096,000 raw bytes. Owner label
+keys contribute at most about 36 MB raw across aggregate/per-file maps
+(256 × at most 140 bytes × 1001); JSON framing adds overhead. Source diagnostics,
+paths, membership IDs and resolver reasons are additional. These are component
+bounds, **not** a whole-record wire budget; PR 7a must enforce that budget and
+bound memberships before activation.
+
+GitHub.com actor keys are exactly `github.com:user:<positive decimal ID>`,
+without leading zeros, constructed only by `GitHubUserID`. Resolver pools,
+PR 6's Actors map, grants and stances must all use this helper. Team members
+produce user keys; logins, team IDs and email addresses are never actor IDs.
+Other forge hosts require an explicit separate namespace before support.
+`IdentitySet.Reason` is free-text diagnostic evidence: `SemanticInputs` already
+excludes it, and PR 7a must exclude it (including fresh eligibility reasons)
+from every semantic policy/brief/receipt digest. Do not hash whole Evidence.
+
+**Hard gate for PR 6/9:** classification-time owner pools are snapshots, not
+fresh eligibility at evaluation/landing. Acquire fresh user/team membership,
+then call pure `ResolveOwnerEligibility(storedEvidence, freshResolver)` using
+the stored default-branch governing files, and replace both owner projections
+and both known flags in a detached decision input. Never union old and new
+pools or let cached Fresh=true authorize a later decision. Missing/incomplete/
+stale membership must block. Do this immediately before both Evaluate and
+landing, without re-reading the governing forge tree or changing generation,
+facets or receipt bindings. The helper leaves durable evidence untouched.
+Started attempts keep their frozen decision evidence as required by ADR 0007.
 
 Config provenance mirrors `config.Find`: it accepts exactly one of the four
 config candidates. There is **no precedence winner when two exist**: ConfigBlob

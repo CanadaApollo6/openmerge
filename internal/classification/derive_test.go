@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -35,14 +34,14 @@ func observedResolver(owner Owner) cp.IdentitySet {
 	team := forge.TeamIdentity{ID: 10, OrganizationID: 20, Organization: "acme", Slug: "platform"}
 	if owner.Kind == "user" {
 		if user, ok := users[owner.Name]; ok {
-			return cp.IdentitySet{IDs: []string{strconv.FormatInt(user.ID, 10)}, Resolved: true, Fresh: true}
+			return cp.IdentitySet{IDs: []string{GitHubUserID(user.ID)}, Resolved: true, Fresh: true}
 		}
 	}
 	if owner.Kind == "team" && owner.Name == strings.ToLower(team.Organization+"/"+team.Slug) {
 		members := []forge.UserIdentity{users["alice"], users["bob"]}
 		pool := cp.IdentitySet{Resolved: true, Fresh: true}
 		for _, user := range members {
-			pool.IDs = append(pool.IDs, strconv.FormatInt(user.ID, 10))
+			pool.IDs = append(pool.IDs, GitHubUserID(user.ID))
 		}
 		return pool
 	}
@@ -89,7 +88,7 @@ func testDocsCodeownersOwnerRequired(t *testing.T) {
 	if e.Allowed {
 		t.Fatal("docs none removed mandatory owner requirement")
 	}
-	e = evaluation(c, cp.Requirement{Selector: cp.None}, "1")
+	e = evaluation(c, cp.Requirement{Selector: cp.None}, "github.com:user:1")
 	coherent(t, e)
 	if !e.Allowed {
 		t.Fatalf("owner approval rejected %+v", e)
@@ -122,7 +121,7 @@ func TestOwnerPrecedenceAndCoverage(t *testing.T) {
 		put(&g.Codeowners, ".github/CODEOWNERS", "* @ACME/Platform")
 		g.SelectedCodeowners = ".github/CODEOWNERS"
 		c := derive(t, i, d, g, Settings{}).Classification
-		if !slices.Equal(c.CodeOwners[0].Eligible.IDs, []string{"1", "2"}) {
+		if !slices.Equal(c.CodeOwners[0].Eligible.IDs, []string{"github.com:user:1", "github.com:user:2"}) {
 			t.Fatal(c)
 		}
 		for _, mutate := range []func(*forge.GoverningFiles){
@@ -137,7 +136,7 @@ func TestOwnerPrecedenceAndCoverage(t *testing.T) {
 			if c.CodeOwnersKnown || c.Label("unknown") != cp.True || c.CodeOwners[0].Status != cp.OwnersUnresolved {
 				t.Fatal(c)
 			}
-			e := evaluation(c, cp.Requirement{Selector: cp.CodeOwners}, "1", "2")
+			e := evaluation(c, cp.Requirement{Selector: cp.CodeOwners}, "github.com:user:1", "github.com:user:2")
 			coherent(t, e)
 			if e.Allowed {
 				t.Fatal("missing ownership coverage allowed")
@@ -236,7 +235,7 @@ func TestRealDeriverEvaluateComposition(t *testing.T) {
 				r       cp.Requirement
 				allowed bool
 			}{{cp.Requirement{Selector: cp.CodeOwners}, tc.codeAllowed}, {cp.Requirement{Selector: cp.None}, tc.policyAllowed}} {
-				e := evaluation(c, check.r, "1")
+				e := evaluation(c, check.r, "github.com:user:1")
 				coherent(t, e)
 				if e.Allowed != check.allowed {
 					t.Fatalf("allowed=%v want %v: %+v", e.Allowed, check.allowed, e)
@@ -275,12 +274,12 @@ func TestRealDeriverEvaluateComposition(t *testing.T) {
 				if len(c.CodeOwners) != want {
 					t.Fatal(c.CodeOwners)
 				}
-				e := evaluation(c, cp.Requirement{Selector: cp.CodeOwners}, "1")
+				e := evaluation(c, cp.Requirement{Selector: cp.CodeOwners}, "github.com:user:1")
 				coherent(t, e)
 				if e.Allowed != (newPath == "") {
 					t.Fatalf("per-file owners unioned: %+v", e)
 				}
-				e = evaluation(c, cp.Requirement{Selector: cp.CodeOwners}, "1", "2")
+				e = evaluation(c, cp.Requirement{Selector: cp.CodeOwners}, "github.com:user:1", "github.com:user:2")
 				coherent(t, e)
 				if !e.Allowed {
 					t.Fatalf("both owners rejected: %+v", e)
@@ -441,13 +440,13 @@ func TestIncompleteInventoryAndStaleResolution(t *testing.T) {
 	if c.CodeOwnersKnown || c.PolicyOwnersKnown || c.Label("owned:user:alice") != cp.True || c.Label("owned:user:bob") != cp.Unknown {
 		t.Fatal(c)
 	}
-	e := evaluation(c, cp.Requirement{Selector: cp.CodeOwners}, "1")
+	e := evaluation(c, cp.Requirement{Selector: cp.CodeOwners}, "github.com:user:1")
 	coherent(t, e)
 	if e.Allowed {
 		t.Fatal("incomplete inventory authorized")
 	}
 	d.Inventory = complete
-	for _, pool := range []cp.IdentitySet{{IDs: []string{"1"}, Resolved: true}, {IDs: []string{""}, Resolved: true, Fresh: true}, {IDs: []string{" "}, Resolved: true, Fresh: true}} {
+	for _, pool := range []cp.IdentitySet{{IDs: []string{"github.com:user:1"}, Resolved: true}, {IDs: []string{""}, Resolved: true, Fresh: true}, {IDs: []string{" "}, Resolved: true, Fresh: true}} {
 		derived := TreeDeriver{Resolve: func(Owner) cp.IdentitySet { return pool }}
 		e, err := Classify(i, d, g, Settings{}, derived)
 		if err != nil {
@@ -456,7 +455,7 @@ func TestIncompleteInventoryAndStaleResolution(t *testing.T) {
 		if e.Classification.CodeOwnersKnown || e.Classification.Label("unknown") != cp.True {
 			t.Fatal("stale resolution authorized")
 		}
-		coherent(t, evaluation(e.Classification, cp.Requirement{Selector: cp.CodeOwners}, "1"))
+		coherent(t, evaluation(e.Classification, cp.Requirement{Selector: cp.CodeOwners}, "github.com:user:1"))
 	}
 }
 
@@ -483,5 +482,121 @@ func TestClassifyCoverageGuardsInjectedDeriver(t *testing.T) {
 	}})
 	if err == nil {
 		t.Fatal("Deriver erased a preexisting unknown fact")
+	}
+}
+
+func TestReviewGeneratedOverridesCannotExemptApproval(t *testing.T) {
+	for name, setup := range map[string]func(*forge.GoverningFiles){
+		"three-stars": func(g *forge.GoverningFiles) {
+			put(&g.Attributes, ".gitattributes", "* linguist-generated\na/***/b.go -linguist-generated\n")
+		},
+		"nested-bom": func(g *forge.GoverningFiles) {
+			put(&g.Attributes, ".gitattributes", "* linguist-generated\n")
+			put(&g.Attributes, "a/.gitattributes", "\ufeff* -linguist-generated\n")
+		},
+		"overlong-set": func(g *forge.GoverningFiles) {
+			put(&g.Attributes, ".gitattributes", "*.go linguist-generated"+strings.Repeat(" a", 1100)+"\n")
+		},
+		"overlong-unset": func(g *forge.GoverningFiles) {
+			put(&g.Attributes, ".gitattributes", "* linguist-generated\n*.go -linguist-generated"+strings.Repeat(" a", 1100)+"\n")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			i, d, g := basis(t, "a/x/y/b.go")
+			setup(&g)
+			c := derive(t, i, d, g, Settings{}).Classification
+			if c.Label("generated") == cp.True {
+				t.Fatal("override became generated exemption")
+			}
+			in := cp.Input{Classification: c, AuthorKind: cp.HumanAccount, Current: cp.ReceiptIdentity{ChangeID: i.ChangeID, Revision: i.Revision, Generation: i.Generation, Base: i.Base, Head: i.Head, MergeBase: i.MergeBase, PolicyDigest: i.PolicyDigest}}
+			policy := cp.Policy{Approvals: &cp.Approvals{Default: cp.Requirement{Selector: cp.AnyWriter, Count: 1}, Rules: []cp.Rule{{When: cp.Match{Labels: []string{"generated"}}, Require: cp.Requirement{Selector: cp.None}}}}}
+			if cp.Evaluate(policy, in).Allowed {
+				t.Fatal("missing approval allowed")
+			}
+		})
+	}
+}
+
+func TestReviewAmbiguousOwnersCannotDropObligation(t *testing.T) {
+	for _, content := range []string{"\ufeff* @alice", "a#b @alice", "*.go @alice#frag", "* @a[bot]/team"} {
+		i, d, g := basis(t, "a.go")
+		ownersSource(&g, "CODEOWNERS", content)
+		c := derive(t, i, d, g, Settings{}).Classification
+		if c.CodeOwnersKnown || c.Label("unknown") != cp.True || c.CodeOwners[0].Status != cp.OwnersUnresolved {
+			t.Fatalf("%q: %+v", content, c.CodeOwners)
+		}
+		e := evaluation(c, cp.Requirement{Selector: cp.CodeOwners})
+		coherent(t, e)
+		if e.Allowed {
+			t.Fatal("ambiguous source cleared owners")
+		}
+	}
+}
+
+func TestResolveOwnerEligibilityUsesFreshObservation(t *testing.T) {
+	i, d, g := basis(t, "CODEOWNERS")
+	ownersSource(&g, "CODEOWNERS", "* @acme/platform")
+	e := derive(t, i, d, g, Settings{})
+	before := fingerprint(e)
+	fresh := ResolveOwnerEligibility(e, func(Owner) cp.IdentitySet {
+		return cp.IdentitySet{IDs: []string{GitHubUserID(9)}, Resolved: true, Fresh: true}
+	})
+	if !fresh.CodeOwnersKnown || !fresh.PolicyOwnersKnown || !slices.Equal(fresh.CodeOwners[0].Eligible.IDs, []string{"github.com:user:9"}) || !slices.Equal(fresh.PolicyOwners[0].Eligible.IDs, []string{"github.com:user:9"}) {
+		t.Fatal(fresh)
+	}
+	stale := ResolveOwnerEligibility(e, func(Owner) cp.IdentitySet {
+		return cp.IdentitySet{IDs: []string{GitHubUserID(1)}, Resolved: true, Reason: "stale"}
+	})
+	if stale.CodeOwnersKnown || stale.PolicyOwnersKnown {
+		t.Fatal("stale membership authorized")
+	}
+	if before != fingerprint(e) {
+		t.Fatal("re-resolution mutated stored evidence")
+	}
+	if GitHubUserID(0) != "" || GitHubUserID(-1) != "" {
+		t.Fatal("invalid stable ID accepted")
+	}
+}
+
+func TestDeriverCannotEraseDiagnosticReasons(t *testing.T) {
+	for _, mutate := range []func(*cp.Classification){
+		func(c *cp.Classification) { c.Reasons = nil },
+		func(c *cp.Classification) { c.Reasons[0].Reasons[0] = "erased" },
+		func(c *cp.Classification) { c.Files[0].Reasons = nil },
+	} {
+		i, d, g := basis(t, "a.go")
+		d.Files[0].Binary = true
+		g.Coverage = forge.DiffCoverage{Completeness: forge.DiffIncomplete}
+		if _, err := Classify(i, d, g, Settings{}, mutatingDeriver{mutate}); err == nil {
+			t.Fatal("diagnostic mutation accepted")
+		}
+	}
+}
+
+func TestWildcardDirectoryAmbiguityCannotOverrideOwners(t *testing.T) {
+	for _, pattern := range []string{"docs/*", "*.md"} {
+		for _, owners := range []string{"", " @bob"} {
+			p := "docs/sub/a"
+			if pattern == "*.md" {
+				p = "x.md/b"
+			}
+			i, d, g := basis(t, p)
+			ownersSource(&g, "CODEOWNERS", "* @alice\n"+pattern+owners)
+			c := derive(t, i, d, g, Settings{}).Classification
+			if c.CodeOwnersKnown || c.Label("unknown") != cp.True || c.CodeOwners[0].Status != cp.OwnersUnresolved {
+				t.Fatal("ambiguous override became definite", c)
+			}
+			if c.Label("owned:user:alice") != cp.Unknown {
+				t.Fatal("inherited obligation lost")
+			}
+			if owners != "" && c.Label("owned:user:bob") != cp.Unknown {
+				t.Fatal("ambiguous match published positive label")
+			}
+			result := evaluation(c, cp.Requirement{Selector: cp.CodeOwners}, GitHubUserID(2))
+			coherent(t, result)
+			if result.Allowed {
+				t.Fatal("ambiguous override exempted inherited owner")
+			}
+		}
 	}
 }

@@ -14,6 +14,16 @@ import (
 // smaller aggregate governing budget can conservatively return unknown sooner.
 const MaxCodeownersBytes = 3 * 1024 * 1024
 
+// Bound compiled matchers and durable per-path owner evidence independently of
+// the forge's acquisition budget. Exceeding any bound invalidates the file.
+const (
+	MaxOwnerEntries    = 1024
+	MaxOwnerLineBytes  = 2048
+	MaxOwnersPerEntry  = 32
+	MaxOwnerTokens     = 256
+	MaxOwnerTokenBytes = 128
+)
+
 // Owner is a canonical CODEOWNERS token, not a resolved approver or group.
 type Owner struct{ Kind, Name string }
 
@@ -24,13 +34,16 @@ var ownerName = regexp.MustCompile(`^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:
 var teamSlug = regexp.MustCompile(`^[a-zA-Z0-9](?:[a-zA-Z0-9_-]*[a-zA-Z0-9])?$`)
 
 func canonicalOwner(token string) (Owner, error) {
+	if len(token) > MaxOwnerTokenBytes {
+		return Owner{}, fmt.Errorf("invalid owner: token byte budget exceeded")
+	}
 	if strings.HasPrefix(token, "@") {
 		name := strings.TrimPrefix(token, "@")
 		parts := strings.Split(name, "/")
-		if len(parts) == 1 && ownerName.MatchString(name) {
+		if len(parts) == 1 && ownerName.MatchString(name) && cp.ValidClassificationLabel((Owner{"user", strings.ToLower(name)}).Label()) {
 			return Owner{"user", strings.ToLower(name)}, nil
 		}
-		if len(parts) == 2 && ownerName.MatchString(parts[0]) && teamSlug.MatchString(parts[1]) {
+		if len(parts) == 2 && ownerName.MatchString(parts[0]) && teamSlug.MatchString(parts[1]) && cp.ValidClassificationLabel((Owner{"team", strings.ToLower(name)}).Label()) {
 			return Owner{"team", strings.ToLower(name)}, nil
 		}
 	} else if strings.Count(token, "@") == 1 {
@@ -59,16 +72,32 @@ type ownersFile struct {
 
 func parseOwners(content string) ownersFile {
 	out := ownersFile{valid: true}
-	if len(content) >= MaxCodeownersBytes || !utf8.ValidString(content) || strings.ContainsRune(content, 0) {
+	if len(content) >= MaxCodeownersBytes || !utf8.ValidString(content) || strings.ContainsRune(content, 0) || strings.ContainsRune(content, '\ufeff') {
 		out.valid = false
 		out.diagnostics = []string{"CODEOWNERS invalid or at/over 3 MB"}
 		return out
 	}
 	seen := map[Owner]bool{}
+	nonempty := 0
 	for line, text := range strings.Split(content, "\n") {
 		fields := ownerFields(text)
 		if len(fields) == 0 {
 			continue
+		}
+		nonempty++
+		if nonempty > MaxOwnerEntries || len(text) > MaxOwnerLineBytes || len(fields)-1 > MaxOwnersPerEntry || len(out.entries) >= MaxOwnerEntries {
+			return ownersFile{diagnostics: []string{"CODEOWNERS entry/line/owner budget exceeded"}}
+		}
+		for _, field := range fields {
+			for i := 0; i < len(field); i++ {
+				if field[i] == '\\' {
+					i++
+					continue
+				}
+				if field[i] == '#' {
+					return ownersFile{diagnostics: []string{"CODEOWNERS unescaped hash inside token"}}
+				}
+			}
 		}
 		entry := ownerEntry{text: text}
 		for _, token := range fields[1:] {
@@ -82,6 +111,9 @@ func parseOwners(content string) ownersFile {
 				seen[owner] = true
 				out.tokens = append(out.tokens, owner)
 			}
+		}
+		if len(out.tokens) > MaxOwnerTokens {
+			return ownersFile{diagnostics: []string{"CODEOWNERS distinct owner budget exceeded"}}
 		}
 		pattern, err := treePattern(fields[0], true)
 		if err != nil {

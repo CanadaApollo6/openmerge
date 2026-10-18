@@ -411,3 +411,33 @@ func TestClassificationHistoricalRenameAndObjectFormats(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// Odd owner tokens must yield durable Unknown evidence, never an invalid wire
+// label. Exercise the real TreeDeriver through both public wire entry points.
+func TestTreeDeriverOddOwnerTokensAreWireValid(t *testing.T) {
+	for _, token := range []string{"@a[bot]/team", "@robot[bot]", "@Org/team", "@org/team_", "@a/b/c", "@/team", "@@alice", "@a_b", "bad@.", "Ops@EXAMPLE.COM", "@a#frag", strings.Repeat("x", 129), "@a!", "@é"} {
+		t.Run(token, func(t *testing.T) {
+			initial := classificationEvent(t).Evidence
+			g := initial.Governing
+			for i := range g.Codeowners {
+				if g.Codeowners[i].Present {
+					g.Codeowners[i].Content = "* " + token
+				}
+			}
+			full := forge.DiffCoverage{Completeness: forge.DiffComplete}
+			in := initial.Classification.Inputs
+			diff := forge.RevisionDiff{BaseSHA: in.Base, HeadSHA: in.Head, MergeBaseSHA: in.MergeBase, Semantics: forge.DiffSemantics, Inventory: full, Hunks: full, Files: []forge.DiffFile{{NewPath: "docs/a.md", NewMode: "100644", NewObjectID: strings.Repeat("e", 40), BinaryKnown: true, Rename: forge.DiffNotRenamed, HunkCoverage: full}}}
+			e, err := classification.Classify(in, diff, g, classification.Settings{}, classification.TreeDeriver{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			event := ChangeClassified{Evidence: e}
+			if err := event.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := EncodeEvent(event); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}

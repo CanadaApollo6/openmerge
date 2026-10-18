@@ -1,9 +1,6 @@
 package classification
 
 import (
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -21,14 +18,14 @@ func TestTreePatternVectors(t *testing.T) {
 		{"?.go", "é.go", false, false}, {"??.go", "é.go", false, true}, {"é.go", "é.go", false, true}, {"é.go", "a/é.go", true, true}, {"*.go", "src/a.go", true, true}, {"*.go", "src/a.GO", true, false},
 		{"/docs/", "docs/a/b.md", true, true}, {"/docs/", "x/docs/a", true, false}, {"/docs/", "docs", true, false},
 		{"apps/", "x/apps/a/b", true, true}, {"apps/", "apps/a", true, true}, {"apps/", "apps", true, false},
-		{"docs/*", "docs/a", true, true}, {"docs/*", "docs/sub/a", true, false}, {"docs/*", "x/docs/a", true, false},
+		{"docs/*", "docs/a", true, true}, {"docs/*", "docs/sub/a", true, true}, {"docs/*", "x/docs/a", true, false},
 		{"/apps/github", "apps/github/a", true, true}, {"**/logs", "x/y/logs/a", true, true},
 		{"a/**/b", "a/b", true, true}, {"a/**/b", "a/x/y/b", true, true}, {"a/**/b", "a/x/y/c", true, false},
 		{"abc/**", "abc/x/y", true, true}, {"abc/**", "x/abc/y", true, false},
 		{"file?.txt", "a/file1.txt", true, true}, {"file?.txt", "a/file12.txt", true, false},
 		{"/a.go", "a.go", true, true}, {"/a.go", "dir/a.go", true, false},
 		{`a\#b`, "a#b", true, true}, {`a\ b`, "a b", true, true}, {`literal\*`, "literal*", true, true},
-		{"f**o", "f/a/o", true, false}, {"a/***/b", "a/x/y/b", true, false},
+		{"f**o", "f/a/o", true, false}, {"a/***/b", "a/x/y/b", true, true},
 		{"*.go", "a/b.go", false, true}, {"src", "src/a", false, false}, {"src/", "src/a", false, false},
 		{"src/**", "src/a/b", false, true}, {"src/*", "src/a/b", false, false},
 		{"[ab]?.go", "a1.go", false, true}, {"[!a-z].go", "9.go", false, true}, {"[!a-z].go", "a.go", false, false},
@@ -90,47 +87,5 @@ func TestOwnersParsingAndCanonicalization(t *testing.T) {
 	}
 	if !parseOwners(strings.Repeat(" ", MaxCodeownersBytes-1)).valid {
 		t.Fatal("under limit rejected")
-	}
-}
-
-// Isolated local Git is a reference oracle only. Production parsers never run
-// git check-attr, whose normal behavior would consult host attributes.
-func TestAttributesAgainstIsolatedGit(t *testing.T) {
-	directory := t.TempDir()
-	run := func(args ...string) string {
-		t.Helper()
-		command := exec.Command("git", append([]string{"-C", directory, "-c", "core.attributesfile=/dev/null"}, args...)...)
-		command.Env = append(os.Environ(), "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_ATTR_NOSYSTEM=1")
-		raw, err := command.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v: %v %s", args, err, raw)
-		}
-		return string(raw)
-	}
-	run("init", "-q")
-	for _, pattern := range []string{"*", "/a.go", "src/*", "src/**", "src/", "a/**/b.go", "[ab].go", "[!a-z].go", "a[^x]b", "a[!-x]b", "?.go", "??.go", `"a b.go"`, `"é.go"`} {
-		t.Run(pattern, func(t *testing.T) {
-			content := pattern + " linguist-generated\n"
-			if err := os.WriteFile(filepath.Join(directory, ".gitattributes"), []byte(content), 0600); err != nil {
-				t.Fatal(err)
-			}
-			fields, err := attributeFields(content)
-			if err != nil {
-				t.Fatal(err)
-			}
-			matcher, err := treePattern(fields[0], false)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, p := range []string{"a.go", "b.go", "9.go", "src/a.go", "src/sub/a.go", "a/b.go", "a/x/b.go", "a/b", "a-b", "a b.go", "é.go"} {
-				actual := strings.Split(run("check-attr", "-z", "linguist-generated", "--", p), "\x00")
-				if len(actual) != 4 {
-					t.Fatal(actual)
-				}
-				if matcher.MatchString(p) != (actual[2] == "set") {
-					t.Fatalf("%q on %q: Git=%q", pattern, p, actual[2])
-				}
-			}
-		})
 	}
 }

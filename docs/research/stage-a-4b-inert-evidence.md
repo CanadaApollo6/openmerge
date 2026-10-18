@@ -170,3 +170,84 @@ The final aggregate diff is below 2,000 changed lines against origin/main,
 within the ADR's approximately 3,000-line ceiling. No live deployment gates
 are claimed: a real exported-journal comparison and live effective-config
 verification remain required before deployment.
+
+## Fix round 1 (review of 00e7fff)
+
+Latest fetched `origin/main` remains `aeefc769dbe66679f7937e2538ca735371a3b64e`;
+no rebase was necessary. The seven carry-over requirements above remain covered.
+The following changes remain entirely behind the dormant classification seam:
+
+1. Star runs of two or more recurse at Git wildmatch component boundaries;
+   escaped slash after recursive stars is also covered by the oracle. C-quoted
+   NULs diagnose Unknown because Git truncates the pattern at that byte. Byte
+   character classes cannot consume slash even when a range spans it.
+2. Attributes strip exactly one file-initial UTF-8 BOM before parsing, so nested
+   overrides cannot disappear. Overlong lines (>=2048 bytes) diagnose Unknown,
+   protecting both generated assignments and inherited unsets.
+3. Every canonical owner kind must pass the wire label validator. Odd owner
+   corpus tests run real TreeDeriver output through Validate and EncodeEvent.
+4. Both CODEOWNERS tokenizers reject mid-token unescaped hashes; CODEOWNERS
+   BOMs are invalid/Unknown. Evaluate tests retain the approval obligation.
+5. Seeded differential tests compare isolated Git: 243 attribute inputs / 6318
+   path comparisons; 116 CODEOWNERS patterns / 3016 comparisons. Supported
+   results agree; 450 attribute and 750 owner comparisons conservatively
+   return Unknown. **Zero non-fail-closed disagreements**. The expanded escape
+   corpus caught and fixed `**\/`, which the earlier small oracle missed.
+6. Ancestor attribute files compile once per Classify call. CODEOWNERS caps
+   nonempty entries (1024), line bytes (2048), owners/entry (32), distinct tokens
+   (256), token bytes (128); attributes cap derived assignments (4096).
+   Budget failures diagnose Unknown; README records worst-case source/fact
+   evidence size and PR 7a's remaining whole-record budget obligation.
+7. `ResolveOwnerEligibility` re-derives both independent pools from stored
+   governing evidence and a fresh resolver without forge I/O or mutations.
+   Tests replace team membership and reject stale observations. README makes
+   this a hard PR 6/9 evaluation/landing gate, pins `GitHubUserID` actor keys,
+   and excludes diagnostic Reason text from PR 7a semantic digests.
+8. Diagnostics no longer begin with "; ". Deriver postconditions preserve
+   preexisting unknown/generated reasons. Facets-v3 and its replay semantics
+   use literal version strings independent of future forge version bumps.
+   Literal CODEOWNERS directory matches propagate as gitignore does. Matches
+   depending solely on wildcard directory propagation (e.g. `docs/*` on
+   `docs/sub/a`, `*.md` on `x.md/b`) diagnose Unknown: GitHub documents narrower
+   behavior for the former and leaves the latter undocumented. This protects
+   both ownerless overrides and ownership-label exemptions.
+
+Round-1 verification uses cache-backed TMPDIR/GOTMPDIR/GOCACHE, GOMAXPROCS=2,
+GOFLAGS=-p=1, GOMEMLIMIT=3GiB, disabled module/toolchain downloads and the supplied
+shared test Postgres. Heavy checks run sequentially. No live DB, systemd units,
+`openmerge/*` refs or real forge API calls in code/tests are involved.
+
+Round-1 results (real subprocess exit statuses):
+
+- `make check > ~/.cache/om-pr69-fix1.log 2>&1; echo exit=$?`:
+  **exit=0**, zero lint issues, full short race suite and production build.
+  The earlier intermediate full run also exited 0; retained separately in
+  `~/.cache/om-pr69-fix1-intermediate.log`.
+- After the final quoted-NUL audit guard, `make fmt lint`: **exit=0**, and
+  `go test -race -short -count=1 ./internal/classification
+  ./internal/changepolicy ./internal/queue`: **exit=0** on the final source,
+  `~/.cache/om-pr69-final-focused.log`. The expanded race oracle also exits 0
+  (`~/.cache/om-pr69-oracle.log`). Development oracle runs exited 1 while
+  discovering/correcting escaped recursive slash semantics; no disagreement
+  was suppressed or deleted to obtain the passing result.
+- Candidate `make test-sim-exits`: **exit=0**, `~/.cache/om-pr69-sim.log`.
+  All **146** normalized result blocks match the recorded full baseline log
+  `~/.cache/om-sa-4b-main-sim.log` at unchanged origin/main `aeefc76`;
+  SHA-256 remains `a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7`.
+- `python3 scripts/check-phase2-compatibility.py
+  /home/riels/openmerge-sa-4b-main`: **exit=0**,
+  `~/.cache/om-pr69-compatibility.log`. Fresh baseline/candidate selected
+  simulations preserve all **17** legacy exits, **1055** retry/default-digest
+  records and **76** existing wire fixtures, with the hashes recorded above.
+- `python3 scripts/check-stage-a-4b-inert.py
+  /home/riels/openmerge-sa-4b-main ~/.cache/om-sa-4b-main-sim.log
+  ~/.cache/om-pr69-sim.log`: **exit=0**, `~/.cache/om-pr69-inert.log`.
+  All **112** baseline JSON fixtures and **67** replay/digest records remain
+  identical; legacy classifications stay nil and actions/keys are unchanged.
+  Replay SHA-256 remains
+  `94e97da35ba05d72dcc0c5c1b326b49783b7f994f6060bf1b98dc402d60c2d6f`.
+
+The status ledger and serial validation driver are `~/.cache/om-pr69-statuses.log`
+and `~/.cache/om-pr69-final-validate.sh`. The final aggregate diff remains under
+2500 changed lines against origin/main, below the ~3000-line review ceiling;
+no split is required. No deployment or live exported-journal coverage is claimed.

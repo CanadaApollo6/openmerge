@@ -21,7 +21,7 @@ import (
 const HistoricalVersion = "classification-v1/git-evidence-v7-bounded-omissions/governing-v1/hunks-v1/facets-v1"
 
 // Version includes acquisition semantics and the classifier facet/path rules.
-const Version = "classification-v1/" + forge.DiffSemantics + "/governing-v1/hunks-v1/facets-v3"
+const Version = "classification-v1/git-evidence-v7-bounded-omissions/governing-v1/hunks-v1/facets-v3"
 
 // PreviousVersion retains the 4a facet/path semantics for replay.
 const PreviousVersion = "classification-v1/git-evidence-v7-bounded-omissions/governing-v1/hunks-v1/facets-v2"
@@ -65,6 +65,15 @@ func Classify(inputs cp.ClassificationInputs, diff forge.RevisionDiff, governing
 	}
 	if diff.Semantics != forge.DiffSemantics || governing.Semantics != forge.DiffSemantics {
 		return Evidence{}, fmt.Errorf("unsupported evidence semantics")
+	}
+	// A call-local cache avoids reparsing ancestor files for each path/side.
+	switch d := derived.(type) {
+	case TreeDeriver:
+		derived = d.prepared(governing)
+	case *TreeDeriver:
+		if d != nil {
+			derived = d.prepared(governing)
+		}
 	}
 	// Detach all mutable governing collections before calling an injected Deriver.
 	derivedGoverning := cloneGoverning(governing)
@@ -207,8 +216,9 @@ func Classify(inputs cp.ClassificationInputs, diff forge.RevisionDiff, governing
 	if derived != nil {
 		before := protectedClassification(c)
 		beforeUnknown := c.Facts["unknown"]
+		beforeReasons := protectedReasons(c)
 		derived.Owners(&c, derivedGoverning)
-		if before != protectedClassification(c) || beforeUnknown != c.Facts["unknown"] && c.Facts["unknown"] != cp.True || fingerprint(derivedGoverning) != governingFingerprint {
+		if !reasonsPreserved(beforeReasons, c) || before != protectedClassification(c) || beforeUnknown != c.Facts["unknown"] && c.Facts["unknown"] != cp.True || fingerprint(derivedGoverning) != governingFingerprint {
 			return Evidence{}, fmt.Errorf("Deriver changed protected classification or governing evidence")
 		}
 	} else {

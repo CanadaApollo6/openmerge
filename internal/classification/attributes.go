@@ -76,7 +76,13 @@ func validAttribute(token string) bool {
 
 func parseAttributes(content string) attributesFile {
 	var out attributesFile
-	for line, text := range strings.Split(content, "\n") {
+	for line, text := range strings.Split(strings.TrimPrefix(content, "\ufeff"), "\n") {
+		// Git ignores overlong lines; ignoring an unset can expose an inherited
+		// generated mark. Preserve uncertainty instead, for every assignment.
+		if len(text) >= 2048 || len(out.entries) >= 4096 {
+			out.diagnostics = append(out.diagnostics, fmt.Sprintf("line %d: attribute line/entry budget exceeded", line+1))
+			return out
+		}
 		fields, err := attributeFields(text)
 		if err == nil && len(fields) == 0 {
 			continue
@@ -109,6 +115,10 @@ func parseAttributes(content string) attributesFile {
 				// binary expands to -diff -merge -text, never linguist-generated.
 				continue
 			}
+			if len(out.entries) >= 4096 {
+				out.diagnostics = append(out.diagnostics, fmt.Sprintf("line %d: attribute entry budget exceeded", line+1))
+				return out
+			}
 			out.entries = append(out.entries, attributeEntry{pattern, value})
 		}
 	}
@@ -116,6 +126,10 @@ func parseAttributes(content string) attributesFile {
 }
 
 func generatedAttribute(p string, g forge.GoverningFiles) cp.Truth {
+	return generatedFromParsed(p, g, nil)
+}
+
+func generatedFromParsed(p string, g forge.GoverningFiles, files map[string]attributesFile) cp.Truth {
 	if !attributesCovered(p, g) {
 		return cp.Unknown
 	}
@@ -125,7 +139,10 @@ func generatedAttribute(p string, g forge.GoverningFiles) cp.Truth {
 		if !f.Present {
 			continue
 		}
-		parsed := parseAttributes(f.Content)
+		parsed, cached := files[name]
+		if !cached {
+			parsed = parseAttributes(f.Content)
+		}
 		if len(parsed.diagnostics) > 0 {
 			return cp.Unknown
 		}

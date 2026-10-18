@@ -2,6 +2,7 @@ package classification
 
 import (
 	"slices"
+	"strconv"
 	"strings"
 
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
@@ -16,11 +17,24 @@ type OwnerResolver func(Owner) cp.IdentitySet
 
 // TreeDeriver derives only from supplied default-branch governing probes.
 // Resolve is injected; nil means no user/team identity observations are known.
-type TreeDeriver struct{ Resolve OwnerResolver }
+type TreeDeriver struct {
+	Resolve    OwnerResolver
+	attributes map[string]attributesFile
+}
+
+func (d TreeDeriver) prepared(g forge.GoverningFiles) TreeDeriver {
+	d.attributes = make(map[string]attributesFile, len(g.Attributes))
+	for _, f := range g.Attributes {
+		if f.Present {
+			d.attributes[f.Path] = parseAttributes(f.Content)
+		}
+	}
+	return d
+}
 
 // Generated computes the attribute half, without host or head attribute reads.
-func (TreeDeriver) Generated(p string, g forge.GoverningFiles) cp.Truth {
-	return generatedAttribute(p, g)
+func (d TreeDeriver) Generated(p string, g forge.GoverningFiles) cp.Truth {
+	return generatedFromParsed(p, g, d.attributes)
 }
 
 // Owners emits exactly one code row per changed path/side and a separate row
@@ -47,7 +61,11 @@ func (d TreeDeriver) Owners(c *cp.Classification, g forge.GoverningFiles) {
 			continue
 		}
 		if f.Present {
-			for _, why := range parseAttributes(f.Content).diagnostics {
+			parsed, cached := d.attributes[f.Path]
+			if !cached {
+				parsed = parseAttributes(f.Content)
+			}
+			for _, why := range parsed.diagnostics {
 				c.Facts["unknown"] = cp.True
 				diagnostic("generated", f.Path+": "+why)
 			}
@@ -110,6 +128,18 @@ func (d TreeDeriver) Owners(c *cp.Classification, g forge.GoverningFiles) {
 				pool.Reason = "CODEOWNERS entry intentionally has no owners"
 			}
 			hasEmail := false
+			if entry != nil && entry.pattern.ambiguousDirectory(row.Path) {
+				// Gitignore's propagated match can be broader than GitHub's.
+				// Do not publish either positive labels or definite non-matches.
+				for _, token := range parsed.tokens {
+					if c.Facts[token.Label()] != cp.True {
+						c.Facts[token.Label()] = cp.Unknown
+					}
+					f.Facts[token.Label()] = cp.Unknown
+				}
+				row.LastMatchingEntry = entry.text
+				entry = &ownerEntry{text: entry.text, diagnostics: []string{"wildcard directory propagation unsupported: CODEOWNERS/gitignore ambiguity"}}
+			}
 			if entry != nil {
 				row.LastMatchingEntry = entry.text
 				if len(entry.owners) > 0 || len(entry.diagnostics) > 0 {
@@ -132,14 +162,14 @@ func (d TreeDeriver) Owners(c *cp.Classification, g forge.GoverningFiles) {
 						if !observed.Resolved || !observed.Fresh {
 							pool.Resolved = false
 							pool.Fresh = false
-							pool.Reason += "; unresolved owner " + owner.Name + ": " + observed.Reason
+							pool.Reason = appendReason(pool.Reason, "unresolved owner "+owner.Name+": "+observed.Reason)
 						}
 					}
 					slices.Sort(pool.IDs)
 					pool.IDs = slices.Compact(pool.IDs)
 					if len(pool.IDs) == 0 {
 						pool.Resolved = false
-						pool.Reason += "; no resolvable owners"
+						pool.Reason = appendReason(pool.Reason, "no resolvable owners")
 					}
 					row.Status = cp.OwnersResolved
 					if !pool.Resolved || !pool.Fresh || hasEmail {
@@ -155,7 +185,7 @@ func (d TreeDeriver) Owners(c *cp.Classification, g forge.GoverningFiles) {
 			row.Eligible = pool
 			if hasEmail {
 				row.Eligible.Resolved = false
-				row.Eligible.Reason += "; email owners cannot resolve to approvers"
+				row.Eligible.Reason = appendReason(row.Eligible.Reason, "email owners cannot resolve to approvers")
 			}
 			if row.Status == cp.OwnersUnresolved {
 				c.CodeOwnersKnown = false
@@ -173,4 +203,49 @@ func (d TreeDeriver) Owners(c *cp.Classification, g forge.GoverningFiles) {
 			}
 		}
 	}
+}
+
+func appendReason(before, reason string) string {
+	if before == "" {
+		return reason
+	}
+	return before + "; " + reason
+}
+
+// GitHubUserID pins the actor key for GitHub.com's stable numeric user ID.
+// Teams resolve to user keys; logins and team IDs are never actor keys.
+func GitHubUserID(id int64) string {
+	if id <= 0 {
+		return ""
+	}
+	return "github.com:user:" + strconv.FormatInt(id, 10)
+}
+
+// OwnerEligibility is a fresh decision-time observation, not durable facets.
+type OwnerEligibility struct {
+	CodeOwners                         []cp.CodeOwner
+	PolicyOwners                       []cp.PolicyOwner
+	CodeOwnersKnown, PolicyOwnersKnown bool
+}
+
+// ResolveOwnerEligibility reuses stored governing evidence without forge I/O.
+// Decision callers must supply freshly acquired identities/membership. The
+// classification, source tree, generation and recorded snapshot stay untouched.
+func ResolveOwnerEligibility(e Evidence, resolve OwnerResolver) OwnerEligibility {
+	c := cp.Classification{
+		InventoryComplete: e.Classification.InventoryComplete,
+		Facts:             map[string]cp.Truth{},
+	}
+	for label, value := range e.Classification.Facts {
+		c.Facts[label] = value
+	}
+	for _, file := range e.Classification.Files {
+		f := cp.FileEvidence{OldPath: file.OldPath, NewPath: file.NewPath, Renamed: file.Renamed, Facts: map[string]cp.Truth{}}
+		for label, value := range file.Facts {
+			f.Facts[label] = value
+		}
+		c.Files = append(c.Files, f)
+	}
+	TreeDeriver{Resolve: resolve}.Owners(&c, e.Governing)
+	return OwnerEligibility{c.CodeOwners, c.PolicyOwners, c.CodeOwnersKnown, c.PolicyOwnersKnown}
 }

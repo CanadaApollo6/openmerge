@@ -58,6 +58,9 @@ func ownerInventory(c Classification) (map[ownerPath]struct{}, error) {
 // entryFields inspects only the recorded pattern/owner fields, never matching
 // CODEOWNERS patterns or deriving memberships. A trailing comment is not an owner.
 func entryFields(entry string) []string {
+	if strings.ContainsRune(entry, '\ufeff') {
+		return nil
+	}
 	var fields []string
 	var word strings.Builder
 	for i := 0; i < len(entry); i++ {
@@ -69,6 +72,9 @@ func entryFields(entry string) []string {
 			continue
 		}
 		if ch == '#' {
+			if word.Len() != 0 {
+				return nil
+			} // Ambiguous mid-token hash cannot clear an obligation.
 			break
 		}
 		if ch == ' ' || ch == '\t' || ch == '\r' {
