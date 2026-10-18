@@ -73,8 +73,9 @@ Legacy queues keep nil evidence and identical snapshot bytes.
 
 PR 12a's journal-backed read seam is
 `Store.LandingDecisionEvidence(ctx, queueID, batchID, attemptID)`. It reads only
-`landing_decision_recorded` rows for that batch/attempt using the indexed event
-`type` column, with a 128-member limit (129 rows detect overflow). For approvals
+`landing_decision_recorded` rows for that batch/attempt using partial identity
+indexes for the decision and eligibility event types, with a 128-member limit
+(129 rows detect overflow). For approvals
 it reads the exact `approval_eligibility_observed` by EligibilityReadID and
 change/revision/head, with a two-row limit to detect ambiguous references. Both
 reads share a read-only repeatable-read snapshot. It never decodes unrelated
@@ -113,8 +114,7 @@ Other contributor lines in that paragraph may be prose, folded continuations
 or empty trailer values. Reserved keys elsewhere, unknown reserved keys and
 continuation injection on reserved keys are rejected; provenance and final
 batch keys must have the writer's canonical position. Duplicate pairs, casing/whitespace variants, missing
-pairs and classification mismatches fail closed. No writer or real commit ID
-changes. The fake forge inserts the writer's blank separator only when metadata
+pairs and classification mismatches fail closed. No legacy writer or commit-ID changes. The fake forge inserts the writer's blank separator only when metadata
 is present, preserving legacy simulation IDs.
 
 ADR 0008 per-check evidence must be a **separate event**, keyed by batch,
