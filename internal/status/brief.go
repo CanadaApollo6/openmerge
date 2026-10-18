@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
-	"reflect"
 	"slices"
 	"strings"
 
@@ -153,13 +152,20 @@ func projectBrief(j store.Journal, id, audience string, options ...briefOptions)
 				t.Status = run.Identity.State
 			}
 		}
-		f.Presentation.SupersededTests[len(f.Presentation.Tests)] = run.WastedReason == "rerun"
+		f.Presentation.SupersededTests[len(f.Presentation.Tests)] = !currentBriefRun(run, runs)
 		f.Presentation.Tests = append(f.Presentation.Tests, t)
 	}
-	v, err := brief.Project(f, audience)
+	v, err := brief.Project(f, audience, sanitizer)
 	v.ChangeID = id
-	if policyCode != "" {
+	if policyCode == "policy_composition_11b" {
+		appendBriefWarning(&v, audience, "policy_unavailable", "Candidate approval requirements are unavailable: recorded-policy digest composition is defined in 11b.", "11b must define and verify the full recorded-policy digest composition before candidate requirements can be shown.", brief.Step{Action: "implement_11b_policy_composition"})
+	} else if policyCode == "policy_busy" {
+		appendBriefWarning(&v, audience, "policy_busy", "Local policy reconstruction is temporarily busy.", "Retry the brief after local lock contention clears.", brief.Step{Action: "retry"})
+	} else if policyCode != "" {
 		appendBriefWarning(&v, audience, policyCode, "The recorded approval policy could not be reconstructed for this brief.", "Make the pinned local policy objects and recorded identity inputs available; a full effective config loader is required to verify the config digest.", brief.Step{Action: "restore_recorded_policy"})
+	}
+	if v.Obligations != nil && v.ApprovalsRequired != nil && !*v.ApprovalsRequired {
+		appendBriefWarning(&v, audience, "approvals_not_required", "approvals not required by the recorded policy", "", brief.Step{Action: "none"})
 	}
 	appendBriefChangeWarnings(&v, audience, j.Key, s, id, rev, entry, runs, f)
 	recovery := queue.BlockRecovery(s.Blocks(queue.Config{}))
@@ -227,7 +233,7 @@ func appendBriefChangeWarnings(v *brief.View, audience string, key store.QueueKe
 
 func failedBriefRun(runs []Run) *Run {
 	for i := len(runs) - 1; i >= 0; i-- {
-		if runs[i].WastedReason != "rerun" && runs[i].Identity != nil && terminalBriefFailure(runs[i].Outcome) {
+		if currentBriefRun(runs[i], runs) && runs[i].Identity != nil && terminalBriefFailure(runs[i].Outcome) {
 			return &runs[i]
 		}
 	}
@@ -253,34 +259,39 @@ func safeBriefURL(raw string) string {
 
 var errBriefQuery = errors.New("brief requires a canonical change ID and ?audience=reviewer|operator|agent")
 
-// Sanitize the completed display, after hashing the untouched recorded Fact.
-// Walking DTO strings also covers future display fields and nested slices.
+// Only human display fields cross this boundary. Identity and machine fields
+// remain verbatim; primary evidence is sanitized before Project bounds it.
 func sanitizeBriefView(v *brief.View, sanitizer *diagnostic.Sanitizer) bool {
 	changed := false
-	var walk func(reflect.Value)
-	walk = func(value reflect.Value) {
-		switch value.Kind() {
-		case reflect.Pointer:
-			if !value.IsNil() {
-				walk(value.Elem())
-			}
-		case reflect.Struct:
-			for i := 0; i < value.NumField(); i++ {
-				walk(value.Field(i))
-			}
-		case reflect.Slice:
-			for i := 0; i < value.Len(); i++ {
-				walk(value.Index(i))
-			}
-		case reflect.String:
-			original := value.String()
-			clean := sanitizer.Sanitize(original)
-			if clean != original {
-				value.SetString(clean)
-				changed = true
-			}
-		}
+	clean := func(text *string) {
+		value, redacted := sanitizer.SanitizeTextRedacted(*text)
+		*text = value
+		changed = changed || redacted
 	}
-	walk(reflect.ValueOf(v))
+	for i := range v.Warnings {
+		w := &v.Warnings[i]
+		clean(&w.Detail)
+		clean(&w.Clears)
+		clean(&w.NextStep.Name)
+		clean(&w.NextStep.Path)
+		clean(&w.NextStep.URL)
+	}
 	return changed
+}
+
+func currentBriefRun(run Run, runs []Run) bool {
+	if run.WastedReason == "rerun" {
+		return false
+	}
+	// Ledger order is batch creation order, not observation arrival order. Late
+	// observations from obsolete batches cannot become the current attempt.
+	if len(runs) == 0 || run.BatchID != runs[len(runs)-1].BatchID {
+		return false
+	}
+	switch run.WastedReason {
+	case "", "timeout", "checks-failed", "checks-timeout", "confirmed failure (bisection)":
+		return true
+	default:
+		return false
+	}
 }

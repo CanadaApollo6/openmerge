@@ -338,17 +338,28 @@ Known-empty stances render as "none recorded" in text.
 The historical policy loader uses the ConfigApplied commit and digest recorded
 at classification time, reading only immutable objects already in the local Git
 cache. It never fetches, hydrates missing objects, resolves mutable refs, queries
-the forge, or refreshes eligibility. A busy cache immediately returns unavailable.
-Requirements and a brief digest require verification of both the effective config
-digest and the classification's semantic policy digest. `policy_digest_mismatch`
-means reconstructed semantic inputs disagree. `policy_unavailable` means the
-pinned objects or recorded identities are missing, or the effective configuration
-cannot be reconstructed. Legacy journals have no semantic approval policy;
-the candidate-only schema omits effective legacy settings, so both currently
-withhold requirements and the brief digest with `policy_unavailable`. A later
-config cannot substitute for the historical pin. Restore pinned local objects
-and recorded identity inputs; full config composition belongs to 11b. Recorded
-progress is informational and never a fresh landing authorization.
+the forge, or refreshes eligibility. Busy cache, worker or registry locks return
+transient `policy_busy` with `retry` advice, without waiting past the request
+context. Legacy configuration is loaded at the pinned commit, resolved for the
+queue base branch with `config.ResolveBranch`, and checked against
+`ConfigApplied.Digest` using `config.Queue.Digest(deleteHeadBranch)`. An explicit
+`delete_head_branch` is respected; when omitted, either deletion setting may
+match because deletion does not affect approval requirements. A match exposes
+`approvals_required: false`, known-empty obligations `[]`, a brief digest and the
+`approvals_not_required` marker (“approvals not required by the recorded policy”).
+A digest mismatch, including older planner JSON composition, withholds requirements
+and digest with `policy_digest_mismatch`. Load/resolve failures report
+`policy_unavailable`.
+
+Candidate approval policies always withhold requirements and digest with
+`policy_unavailable` and `implement_11b_policy_composition`: recorded-policy digest
+composition is defined in **11b**. 11b must define, reconstruct and verify the
+full effective queue plus approval-policy composition (`WithPolicyDigest`) against
+the recorded pin before these requirements become available. Restoring local
+objects cannot complete that missing implementation. Policy reconstruction alone
+does not trigger `not_recorded` / `record_evidence` advice. A later config cannot
+substitute for the historical pin. Recorded progress is informational and never
+a fresh landing authorization.
 
 Display bounds are 32 rows per collection and eight hunks per displayed file.
 Each text field has a 2,048-byte JSON-escaped bound. Separate text budgets reserve
@@ -356,13 +367,17 @@ Each text field has a 2,048-byte JSON-escaped bound. Separate text budgets reser
 tests, and 192 KiB for hunks (512 KiB total). Machine fields have per-field
 bounds without consuming the content budgets. Safety warnings survive row
 limits. `display_truncated` directs readers to retained journal evidence;
-responses are capped at 2 MiB. The handler sanitizer covers every final display
-string, including submitter title/body, paths and hunks. `display_redacted`
-indicates that shown text differs from the recorded facts covered by the digest;
-display sanitization never changes those facts or their digest. The sanitizer
-also normalizes whitespace and bounds strings to 1,024 runes. Text rendering
-JSON-quotes untrusted text and escapes HTML/control characters; links accept
-only HTTP(S) without userinfo.
+responses are capped at 2 MiB. The multi-line sanitizer redacts complete display
+inputs before any field or section bounds apply, including title/body, paths and
+hunks. It preserves hunk line breaks, tabs and indentation; brief text has the
+2,048-byte JSON-escaped field cap above, without the diagnostic sanitizer's
+1,024-rune cap. `display_redacted` signals credential redaction, independently of
+truncation or control-character escaping. Machine fields (digests, identifiers,
+SHAs, codes and enums) are excluded from display redaction. Recorded facts and
+their canonical digest remain untouched. Text rendering JSON-quotes untrusted
+text and escapes HTML/control characters; links accept only HTTP(S) without
+userinfo. Obsolete batch/producer attempts remain in test history but never
+produce current repair advice.
 
 Agent output uses stable reason codes and structured `next_step` objects without
 prose recovery instructions. Actions include `split_change`, `resolve_owners`,

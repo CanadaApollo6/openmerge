@@ -253,14 +253,20 @@ Read a recorded change brief with
 Use `--audience operator` for blockers and recovery, `--audience agent` for
 structured next steps, or `--json` for the public DTO. Historical missing
 evidence says "not recorded". Policy reads use only pinned local objects and
-require both recorded config and semantic policy digests; missing inputs or
-unverifiable effective config yield `policy_unavailable`, while reconstructed
-semantic disagreement yields `policy_digest_mismatch`. The current candidate
-schema and legacy journals withhold requirements and the brief digest. JSON
-uses `claimed_intent` and string Truth values. Structured recovery includes
-`wait_for_approval`, `fix_check`, `refresh`, and `wait_for_recovery`. Final display
-strings are sanitized with `display_redacted` when changed; recorded facts and
-their digest remain untouched. Separate display budgets protect requirements,
+verify the effective config digest for legacy queues. A matching legacy pin
+shows empty obligations, a brief digest, and “approvals not required by the
+recorded policy”. Reconstructed disagreement (including older planner JSON)
+yields `policy_digest_mismatch`; missing pinned objects yield `policy_unavailable`.
+Candidate approval policies remain unavailable: **11b must define and verify the
+full recorded-policy digest composition**, including effective queue settings and
+`WithPolicyDigest`, before displaying their requirements or digest. Busy local
+locks yield transient `policy_busy` with retry advice. A later config never
+substitutes for the recorded pin. JSON uses `claimed_intent` and string Truth
+values. Structured recovery includes `wait_for_approval`, `fix_check`, `refresh`,
+and `wait_for_recovery`. Complete display inputs are redacted before bounding;
+`display_redacted` signals credential redaction. Hunks preserve line breaks,
+tabs and indentation. Machine digests, IDs, SHAs and enums remain verbatim.
+Recorded facts and their digest remain untouched. Separate display budgets protect requirements,
 provenance and tests from large hunks. See [brief API and CLI](docs/api.md#recorded-change-briefs-stage-a-7b).
 
 Startup and every ten minutes (`--rules-interval`) validate repository/inherited

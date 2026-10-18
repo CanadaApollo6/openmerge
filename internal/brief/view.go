@@ -9,6 +9,8 @@ import (
 	"time"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
 )
 
 // Presentation contains recorded evidence excluded from Canonical. It is never
@@ -209,10 +211,18 @@ const MaxViewBytes = 2 << 20
 // ValidAudience recognizes the three public brief audiences.
 func ValidAudience(a string) bool { return a == "reviewer" || a == "operator" || a == "agent" }
 
-type textBudget struct{ remaining int }
+type textBudget struct {
+	remaining int
+	sanitizer *diagnostic.Sanitizer
+	redacted  *bool
+}
 
 func (b *textBudget) clean(s string, truncated *bool) string {
-	text := bounded(s, truncated)
+	clean, redacted := b.sanitizer.SanitizeTextRedacted(s)
+	if redacted {
+		*b.redacted = true
+	}
+	text := bounded(clean, truncated)
 	escaped, _ := json.Marshal(text)
 	if len(escaped) > b.remaining {
 		*truncated = true
@@ -224,15 +234,20 @@ func (b *textBudget) clean(s string, truncated *bool) string {
 
 // Project bounds only the public display. The source Fact and its digest remain
 // untouched. Safety warnings are collected before any display row is omitted.
-func Project(f Fact, audience string) (View, error) {
+func Project(f Fact, audience string, sanitizers ...*diagnostic.Sanitizer) (View, error) {
 	if !ValidAudience(audience) {
 		return View{}, fmt.Errorf("invalid audience")
 	}
 	v := View{Version: 1, Audience: audience, ChangeID: NotRecorded, Digest: NotRecorded, Warnings: []Warning{}}
-	metadata := textBudget{displayMetadataBudget}
-	obligations := textBudget{displayObligationBudget}
-	tests := textBudget{displayTestBudget}
-	hunks := textBudget{displayHunkBudget}
+	var sanitizer *diagnostic.Sanitizer
+	if len(sanitizers) > 0 {
+		sanitizer = sanitizers[0]
+	}
+	redacted := false
+	metadata := textBudget{displayMetadataBudget, sanitizer, &redacted}
+	obligations := textBudget{displayObligationBudget, sanitizer, &redacted}
+	tests := textBudget{displayTestBudget, sanitizer, &redacted}
+	hunks := textBudget{displayHunkBudget, sanitizer, &redacted}
 	warn := func(code, clears, action string) {
 		for _, w := range v.Warnings {
 			if w.Code == code {
@@ -373,7 +388,7 @@ func Project(f Fact, audience string) (View, error) {
 		for j := range eligible {
 			eligible[j] = bounded(eligible[j], &v.Truncated)
 		}
-		path := bounded(o.Path, &v.Truncated)
+		path := metadata.clean(o.Path, &v.Truncated)
 		v.Obligations = append(v.Obligations, ObligationView{o.Requirement.Human, eligible, bounded(code, &v.Truncated), path, bounded(string(o.Side), &v.Truncated), bounded(string(o.Requirement.Selector), &v.Truncated), bounded(o.Requirement.Group, &v.Truncated), o.Requirement.Count, o.Requirement.Receipt, o.Met, obligations.clean(o.Explanation, &v.Truncated), clears, ids, Step{Action: action, Path: path}})
 	}
 	if p := f.Presentation; p != nil {
@@ -430,7 +445,7 @@ func Project(f Fact, audience string) (View, error) {
 				link = ""
 			}
 			if !p.SupersededTests[index] && failedCheckStatus(t.Status) && p.Progress != nil && (p.Progress.Reason == "checks-failed" || p.Progress.Reason == "checks-timeout") {
-				warnStep("check_failed", "Resolve the recorded check before relying on this brief for approval.", Step{Action: "fix_check", Name: missing(bounded(t.Name, &v.Truncated)), URL: bounded(link, &v.Truncated), Commit: missing(bounded(t.SHA, &v.Truncated))})
+				warnStep("check_failed", "Resolve the recorded check before relying on this brief for approval.", Step{Action: "fix_check", Name: missing(tests.clean(t.Name, &v.Truncated)), URL: tests.clean(link, &v.Truncated), Commit: missing(bounded(t.SHA, &v.Truncated))})
 			}
 			if index >= maxRows {
 				v.Truncated = true
@@ -452,8 +467,11 @@ func Project(f Fact, audience string) (View, error) {
 			v.Digest = digest
 		}
 	}
-	if v.Intent == nil || v.Classification == nil || v.Obligations == nil {
+	if v.Intent == nil || v.Classification == nil {
 		warn("not_recorded", "Record missing evidence before relying on this brief for approval.", "record_evidence")
+	}
+	if redacted {
+		warn("display_redacted", "Use authorized access to the recorded evidence to inspect the original content.", "read_recorded_evidence")
 	}
 	if v.Truncated {
 		warn("display_truncated", "Read the retained journal evidence for omitted display content; do not treat this view as a complete diff.", "read_recorded_evidence")

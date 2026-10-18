@@ -334,11 +334,11 @@ func TestBriefDisplaySanitizationPreservesRecordedDigest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	v, err := brief.Project(f, "agent")
+	v, err := brief.Project(f, "agent", diagnostic.NewSanitizer(secret))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.Digest != before || !sanitizeBriefView(&v, diagnostic.NewSanitizer(secret)) {
+	if v.Digest != before || !strings.Contains(mustBriefJSON(t, v), "display_redacted") {
 		t.Fatal("missing original digest or sanitization")
 	}
 	after, err := brief.Digest(f)
@@ -352,4 +352,13 @@ func TestBriefDisplaySanitizationPreservesRecordedDigest(t *testing.T) {
 	if strings.Contains(string(display), secret) {
 		t.Fatal("secret leaked")
 	}
+}
+
+func mustBriefJSON(t *testing.T, v brief.View) string {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
 }

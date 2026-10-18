@@ -38,7 +38,7 @@ func TestBriefPolicyUsesOnlyPinnedLocalReader(t *testing.T) {
 	s := &Server{queues: []*worker{{Target: Target{Key: key, Git: g}}}}
 	req := status.BriefPolicyRequest{Config: queue.ConfigApplied{Commit: "recorded-commit", Digest: digest}, Evidence: classification.Evidence{Classification: cp.Classification{Inputs: cp.ClassificationInputs{PolicyDigest: digest}}}}
 	policy, err := s.BriefPolicy(context.Background(), key, req)
-	if err == nil || policy.Approvals != nil || policy.Digest != "" || g.calls != 1 || g.commit != "recorded-commit" {
+	if err != nil || policy.Approvals != nil || policy.Digest != digest || g.calls != 1 || g.commit != "recorded-commit" {
 		t.Fatalf("local provider: %+v %v %+v", policy, err, g)
 	}
 }

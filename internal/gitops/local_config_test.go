@@ -31,6 +31,9 @@ func TestLocalConfigNeverHydratesMissingObjects(t *testing.T) {
 		t.Fatal("read resolved remote")
 		return "", Auth{}, nil
 	}
+	// Move the mutable remote ref; the local immutable pin must still win.
+	moved := f.commit(commit, "moved config", map[string]string{".openmerge.yml": "unrelated moved policy"})
+	f.push("main", moved, false)
 	got, err := f.g.LocalConfig(ctx, testRepo, commit)
 	if err != nil || string(got) != data {
 		t.Fatalf("local read: %q %v", got, err)

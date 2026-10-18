@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/CanadaApollo6/openmerge/internal/config"
+	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
 
@@ -27,7 +28,7 @@ func (r *Repo) LocalConfig(ctx context.Context, repo forge.RepoRef, commit strin
 		return nil, err
 	}
 	if !mu.TryLock() {
-		return nil, fmt.Errorf("local config cache busy")
+		return nil, diagnostic.BusyError("local config cache busy")
 	}
 	defer mu.Unlock()
 	if _, err := os.Stat(filepath.Join(dir, "HEAD")); err != nil {

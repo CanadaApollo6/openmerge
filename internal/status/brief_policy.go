@@ -5,13 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"strings"
 
 	"github.com/CanadaApollo6/openmerge/internal/brief"
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
 	"github.com/CanadaApollo6/openmerge/internal/classification"
+	"github.com/CanadaApollo6/openmerge/internal/config"
 	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
-	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
@@ -82,6 +81,13 @@ func briefPolicyProjection(ctx context.Context, source Source, j store.Journal) 
 		if errors.As(err, &mismatch) {
 			return brief.Fact{}, "policy_digest_mismatch"
 		}
+		if errors.Is(err, ErrCandidatePolicyUnavailable) {
+			return brief.Fact{}, "policy_composition_11b"
+		}
+		var transient interface{ Temporary() bool }
+		if errors.As(err, &transient) && transient.Temporary() {
+			return brief.Fact{}, "policy_busy"
+		}
 		if err != nil {
 			return unavailable()
 		}
@@ -96,92 +102,34 @@ func briefPolicyProjection(ctx context.Context, source Source, j store.Journal) 
 	}
 }
 
-// ReconstructBriefPolicy checks the recorded semantic component, but withholds
-// policy until the full effective ConfigApplied digest can also be reconstructed.
-// It does not extend the public loader with approval keys.
+// ErrCandidatePolicyUnavailable identifies the 11b composition obligation.
+var ErrCandidatePolicyUnavailable = errors.New("recorded-policy digest composition is defined in 11b")
+
+// ReconstructBriefPolicy verifies legacy effective configuration. Candidate
+// policy composition remains unavailable until 11b defines its recorded digest.
 func ReconstructBriefPolicy(data []byte, key store.QueueKey, req BriefPolicyRequest) (cp.Policy, error) {
-	r, _, err := cp.ParseCandidate(data)
+	cfg, _, err := config.Load(data)
 	if err != nil {
-		return cp.Policy{}, fmt.Errorf("legacy config has no recorded semantic approval policy")
+		if _, _, candidateErr := cp.ParseCandidate(data); candidateErr == nil {
+			return cp.Policy{}, ErrCandidatePolicyUnavailable
+		}
+		return cp.Policy{}, fmt.Errorf("pinned config unavailable: %w", err)
 	}
-	var selected *cp.CandidateQueue
-	for i := range r.Queues {
-		if r.Queues[i].Name == key.Lane || key.Lane == "" && (len(r.Queues) == 1 || r.Queues[i].Name == key.BaseBranch) {
-			selected = &r.Queues[i]
-			break
+	selected, diagnostics := cfg.ResolveBranch(key.BaseBranch, key.BaseBranch)
+	if len(diagnostics) != 0 {
+		return cp.Policy{}, fmt.Errorf("pinned branch policy unavailable: %v", diagnostics)
+	}
+	matches := false
+	for _, deleteHead := range []bool{true, false} {
+		if cfg.DeleteHeadBranch != nil && deleteHead != *cfg.DeleteHeadBranch {
+			continue
+		}
+		if selected.Digest(deleteHead) == req.Config.Digest {
+			matches = true
 		}
 	}
-	if selected == nil {
-		return cp.Policy{}, fmt.Errorf("pinned queue unavailable")
+	if !matches {
+		return cp.Policy{}, queue.BriefPolicyMismatchError{Recorded: req.Config.Digest}
 	}
-	// Names can only be resolved from recorded identities. Team IDs and other
-	// unrecorded static resolutions remain unavailable until 11a records them.
-	resolved := []cp.ResolvedIdentity{}
-	names := map[string]bool{}
-	add := func(i cp.Identity) {
-		n := strings.ToLower(i.Login)
-		if n != "" && !names[n] {
-			names[n] = true
-			resolved = append(resolved, cp.ResolvedIdentity{Name: n, ID: i.ID, Kind: i.Kind})
-		}
-	}
-	if a := req.Facts.Accountability; a != nil {
-		add(a.Actor)
-		add(a.Author)
-		for _, h := range a.Humans {
-			add(h)
-		}
-	}
-	// Hash only configured names, as unrelated authors do not enter policy identity.
-	needed := map[string]bool{}
-	for _, members := range r.Groups {
-		for _, n := range members {
-			needed[n] = true
-		}
-	}
-	for _, a := range r.Agents {
-		needed[a.Identity] = true
-		for _, n := range a.Accountable {
-			needed[n] = true
-		}
-	}
-	filtered := []cp.ResolvedIdentity{}
-	for _, i := range resolved {
-		if needed[i.Name] {
-			filtered = append(filtered, i)
-		}
-	}
-	governing := req.Evidence.Governing
-	owners := cp.GoverningContent{Path: ".github/CODEOWNERS", Known: true}
-	for _, file := range governing.Codeowners {
-		if file.Coverage.Completeness != forge.DiffComplete {
-			return cp.Policy{}, fmt.Errorf("governing owners unavailable")
-		}
-		if file.Present {
-			owners = cp.GoverningContent{Path: file.Path, Known: true, Present: true, Content: file.Content}
-			break
-		}
-	}
-	if len(governing.Codeowners) == 0 {
-		return cp.Policy{}, fmt.Errorf("governing owners unavailable")
-	}
-	attributes := []cp.GoverningContent{}
-	for _, file := range governing.Attributes {
-		attributes = append(attributes, cp.GoverningContent{Path: file.Path, Known: file.Coverage.Completeness == forge.DiffComplete, Present: file.Present, Content: file.Content})
-	}
-	digest, err := cp.PolicyDigest(cp.DigestInputs{Repository: r, Queue: *selected, Resolved: filtered, Owners: owners, Attributes: attributes, ClassifierVersion: req.Evidence.Classification.Inputs.ClassifierVersion})
-	if err != nil {
-		return cp.Policy{}, err
-	}
-	if selected.Approvals == nil {
-		return cp.Policy{}, fmt.Errorf("candidate omits effective legacy queue settings")
-	}
-	if digest != req.Evidence.Classification.Inputs.PolicyDigest {
-		return cp.Policy{}, queue.BriefPolicyMismatchError{Supplied: digest, Recorded: req.Evidence.Classification.Inputs.PolicyDigest}
-	}
-	// The candidate schema is a policy-only projection. It omits effective
-	// legacy queue settings, so WithPolicyDigest cannot be reconstructed and
-	// compared with req.Config.Digest. Never treat the semantic component as
-	// proof of that separate pin. 11b owns full configuration composition.
-	return cp.Policy{}, fmt.Errorf("effective config digest cannot be reconstructed from candidate policy")
+	return cp.Policy{Digest: req.Config.Digest}, nil
 }
