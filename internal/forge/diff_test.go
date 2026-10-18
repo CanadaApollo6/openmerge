@@ -10,7 +10,8 @@ import (
 
 func TestDiffSemanticsBoundsGolden(t *testing.T) {
 	goldens := map[string]string{
-		"git-inventory-v2-exact-renames": "files=1000 bytes=2097152 hunks=0",
+		"git-inventory-v2-exact-renames":    "files=1000 bytes=2097152 hunks=0",
+		"git-inventory-v3-verified-history": "files=1000 bytes=2097152 hunks=0",
 	}
 	want, ok := goldens[DiffSemantics]
 	got := fmt.Sprintf("files=%d bytes=%d hunks=%d", MaxDiffFiles, MaxDiffBytes, MaxDiffHunks)

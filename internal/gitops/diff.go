@@ -5,6 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
@@ -52,7 +55,7 @@ func (r *Repo) RevisionDiff(ctx context.Context, repo forge.RepoRef, req forge.R
 	if !forge.ValidDiffObjectID(req.BaseSHA) || !forge.ValidDiffObjectID(req.HeadSHA) {
 		return fail(forge.DiffInvalidObjectID, errors.New("revision diff requires full commit object IDs"))
 	}
-	s, unlock, err := r.open(ctx, repo)
+	s, unlock, err := r.openSession(ctx, repo, true)
 	if err != nil {
 		return fail(forge.DiffReadFailure, err)
 	}
@@ -74,20 +77,24 @@ func (r *Repo) RevisionDiff(ctx context.Context, repo forge.RepoRef, req forge.R
 			return fail(forge.DiffInvalidObjectID, errors.New("revision diff endpoint is not a commit"))
 		}
 	}
-	// Endpoint presence does not prove ancestry: ordinary fetches can leave an
-	// existing shallow boundary in place. Check after fetching, under the cache
-	// lock, on every read (including reads following cache maintenance).
-	shallow, err := s.command(ctx, "", "rev-parse", "--is-shallow-repository")
-	if err != nil {
-		return fail(forge.DiffReadFailure, err)
+	// Compare both Git's shallow status and the file's identity/content around
+	// every ancestry read. The process-local cache lock cannot protect files
+	// from external writers.
+	history, reason, err := s.diffHistory(ctx)
+	if reason != "" {
+		return fail(reason, err)
 	}
-	if shallow == "true" {
-		return fail(forge.DiffShallowHistory, nil)
-	}
-	if shallow != "false" {
-		return fail(forge.DiffReadFailure, errors.New("invalid git shallow-repository response"))
+	checkHistory := func() (forge.DiffFailureReason, error) {
+		current, reason, err := s.diffHistory(ctx)
+		if reason == "" && !history.same(current) {
+			return forge.DiffShallowHistory, nil
+		}
+		return reason, err
 	}
 	bases, overflow, err := s.diffCommand(ctx, forge.MaxDiffBytes, "merge-base", "--all", req.BaseSHA, req.HeadSHA)
+	if reason, historyErr := checkHistory(); reason != "" {
+		return fail(reason, historyErr)
+	}
 	if overflow {
 		return fail(forge.DiffByteLimit, nil)
 	}
@@ -104,10 +111,25 @@ func (r *Repo) RevisionDiff(ctx context.Context, repo forge.RepoRef, req forge.R
 	if len(ids) != 1 {
 		return fail(forge.DiffMultipleMergeBases, nil)
 	}
+	// Walk both endpoints all the way to their roots, rather than excluding the
+	// merge base: exclusions or generation numbers can hide missing commits,
+	// including parents older than the base. Discard output without buffering
+	// it; Git must parse every reachable commit with its commit-graph disabled.
+	diagnostic := &limitedDiffBuffer{limit: 8192}
+	err = s.runTo(ctx, "", io.Discard, diagnostic, "rev-list", "--parents", req.BaseSHA, req.HeadSHA, "--")
+	if reason, historyErr := checkHistory(); reason != "" {
+		return fail(reason, historyErr)
+	}
+	if err != nil {
+		return fail(forge.DiffReadFailure, s.failure("rev-list", diagnostic.String(), err))
+	}
 	result.MergeBaseSHA = ids[0]
 	// Raw, NUL-delimited output preserves tabs/newlines and arbitrary path bytes.
 	// Disable rename heuristics and all attribute-dependent content transforms.
 	raw, overflow, err := s.diffCommand(ctx, forge.MaxDiffBytes, "diff-tree", "-r", "--raw", "-z", "--no-abbrev", "--no-commit-id", "--no-renames", "--no-ext-diff", "--no-textconv", result.MergeBaseSHA, req.HeadSHA, "--")
+	if reason, historyErr := checkHistory(); reason != "" {
+		return fail(reason, historyErr)
+	}
 	if overflow {
 		return fail(forge.DiffByteLimit, nil)
 	}
@@ -176,10 +198,86 @@ func (r *Repo) RevisionDiff(ctx context.Context, repo forge.RepoRef, req forge.R
 			f.Binary = f.Binary || binary
 		}
 	}
+	if reason, err := checkHistory(); reason != "" {
+		return fail(reason, err)
+	}
 	if len(result.Inventory.Reasons) == 0 {
 		result.Inventory.Completeness = forge.DiffComplete
 	}
 	return result, nil
+}
+
+// A successful history observation has no shallow file. Retain file identity
+// and contents as well as Git's answer so a boundary mutation cannot be accepted
+// merely because two rev-parse processes reported the same status.
+type diffShallowState struct {
+	info    os.FileInfo
+	content []byte
+}
+
+func (state diffShallowState) same(other diffShallowState) bool {
+	if state.info == nil || other.info == nil {
+		return state.info == nil && other.info == nil
+	}
+	return os.SameFile(state.info, other.info) && state.info.ModTime().Equal(other.info.ModTime()) &&
+		state.info.Mode() == other.info.Mode() && bytes.Equal(state.content, other.content)
+}
+
+func (s *session) diffShallowFile() (diffShallowState, error) {
+	path := filepath.Join(s.dir, "shallow")
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return diffShallowState{}, nil
+	}
+	if err != nil {
+		return diffShallowState{}, err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return diffShallowState{}, err
+	}
+	defer func() { _ = file.Close() }()
+	content, err := io.ReadAll(io.LimitReader(file, forge.MaxDiffBytes+1))
+	if err == nil && len(content) > forge.MaxDiffBytes {
+		err = errors.New("git shallow file exceeds read limit")
+	}
+	return diffShallowState{info: info, content: content}, err
+}
+
+func (s *session) diffHistory(ctx context.Context) (diffShallowState, forge.DiffFailureReason, error) {
+	before, err := s.diffShallowFile()
+	if err != nil {
+		return before, forge.DiffReadFailure, err
+	}
+	// Detect both loose and packed replace refs. Grafts are rejected even when
+	// empty; neither mechanism is allowed to contribute classification evidence.
+	if _, err := os.Lstat(filepath.Join(s.dir, "info", "grafts")); err == nil {
+		return before, forge.DiffAlteredHistory, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return before, forge.DiffReadFailure, err
+	}
+	replacements, _, err := s.diffCommand(ctx, forge.MaxDiffBytes, "for-each-ref", "--count=1", "--format=%(refname)", "refs/replace/")
+	if err != nil {
+		return before, forge.DiffReadFailure, err
+	}
+	if replacements != "" {
+		return before, forge.DiffAlteredHistory, nil
+	}
+	shallow, err := s.command(ctx, "", "rev-parse", "--is-shallow-repository")
+	if err != nil {
+		return before, forge.DiffReadFailure, err
+	}
+	after, err := s.diffShallowFile()
+	if err != nil {
+		return after, forge.DiffReadFailure, err
+	}
+	if !before.same(after) || before.info != nil || shallow == "true" {
+		return after, forge.DiffShallowHistory, nil
+	}
+	if shallow != "false" {
+		return after, forge.DiffReadFailure, errors.New("invalid git shallow-repository response")
+	}
+	return after, "", nil
 }
 
 func appendReason(reasons []forge.DiffFailureReason, reason forge.DiffFailureReason) []forge.DiffFailureReason {

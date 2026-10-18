@@ -36,6 +36,7 @@ type session struct {
 	auth        Auth
 	author      Identity
 	authorDate  string
+	diffRead    bool
 }
 
 func (s *session) scrub(message string) string {
@@ -71,6 +72,9 @@ func (s *session) run(ctx context.Context, input string, args ...string) (stdout
 
 func (s *session) runTo(ctx context.Context, input string, out, diagnostic io.Writer, args ...string) error {
 	argv := []string{"-c", "core.hooksPath=" + os.DevNull, "-c", "credential.helper=", "-c", "commit.gpgSign=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false"}
+	if s.diffRead {
+		argv = append(argv, "-c", "core.commitGraph=false")
+	}
 	if s.dir != "" {
 		argv = append(argv, "--git-dir="+s.dir)
 	}
@@ -78,6 +82,19 @@ func (s *session) runTo(ctx context.Context, input string, out, diagnostic io.Wr
 	cmd := exec.CommandContext(ctx, s.r.git, argv...)
 	cmd.Env = append(gitEnv(), "GIT_ASKPASS="+s.r.askpass,
 		"OPENMERGE_GIT_USERNAME="+s.auth.Username, "OPENMERGE_GIT_PASSWORD="+s.auth.Password)
+	if s.diffRead {
+		cmd.Env = append(cmd.Env, "GIT_NO_REPLACE_OBJECTS=1", "GIT_GRAFT_FILE="+os.DevNull, "GIT_NO_LAZY_FETCH=1")
+		// Git 2.38 predates GIT_NO_LAZY_FETCH. Permit transport only for our
+		// explicit fetch, so older supported Git cannot hydrate during a read.
+		if len(args) > 0 && args[0] != "fetch" {
+			cmd.Env = append(cmd.Env, "GIT_ALLOW_PROTOCOL=")
+		}
+		// Inspect the real shallow file separately. Ancestry must always follow
+		// raw parents, even if a boundary appears and disappears during Git.
+		if len(args) > 0 && (args[0] == "merge-base" || args[0] == "rev-list") {
+			cmd.Env = append(cmd.Env, "GIT_SHALLOW_FILE="+os.DevNull)
+		}
+	}
 	cmd.Env = append(cmd.Env, s.r.identityEnv()...)
 	if s.author != (Identity{}) {
 		cmd.Env = append(cmd.Env, "GIT_AUTHOR_NAME="+s.author.Name, "GIT_AUTHOR_EMAIL="+s.author.Email)

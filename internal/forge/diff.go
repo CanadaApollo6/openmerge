@@ -22,8 +22,9 @@ type RevisionDiffRequest struct{ BaseSHA, HeadSHA string }
 
 // DiffSemantics fixes exact-object rename pairing and binary detection (NUL in
 // either blob). No heuristic similarity, external diff, textconv or attributes
-// participate. Consumers include this version in their classifier version.
-const DiffSemantics = "git-inventory-v2-exact-renames"
+// participate. Complete inventories require unaltered, fully present ancestry.
+// Consumers include this version in their classifier version.
+const DiffSemantics = "git-inventory-v3-verified-history"
 
 // Inventory resource limits are part of DiffSemantics.
 const (
@@ -54,6 +55,7 @@ const (
 	DiffNoMergeBase        DiffFailureReason = "no_merge_base"
 	DiffMultipleMergeBases DiffFailureReason = "multiple_merge_bases"
 	DiffShallowHistory     DiffFailureReason = "shallow_history"
+	DiffAlteredHistory     DiffFailureReason = "altered_history"
 	DiffFileLimit          DiffFailureReason = "file_limit"
 	DiffByteLimit          DiffFailureReason = "byte_limit"
 	DiffUnpairedRename     DiffFailureReason = "unpaired_rename"

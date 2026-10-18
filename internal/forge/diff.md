@@ -15,10 +15,11 @@ root. It uses the existing gitops cache at
 repository lock, credential sanitization, fetch lifecycle, and maintenance.
 Do not initialize or fetch into that cache separately. As with existing gitops,
 one cache root must not be shared across OpenMerge processes. Construction:
-no network; writes only inside the cache root (askpass helper, bare-cache init).
+no network; writes only the askpass helper inside the cache root. Bare-cache
+initialization happens lazily at first open.
 Future serve wiring owns activation and request scheduling.
 
-`git-inventory-v2-exact-renames` fixes these semantics:
+`git-inventory-v3-verified-history` fixes these semantics:
 
 - Raw NUL-delimited git tree comparison, without external diffs, textconv, or
   heuristic renames. Paths retain their original bytes, including tabs/newlines.
@@ -36,8 +37,15 @@ Future serve wiring owns activation and request scheduling.
   stopped with bounded memory. Limits and failures explicitly mark inventory
   incomplete; observed paths cannot prove absence of unobserved changes.
 - Shallow repositories fail closed with `shallow_history` before accepting a
-  merge base, even when both endpoint objects exist. This check runs after
-  fetching on every read under the shared cache lock, including after maintenance.
+  merge base, even when both endpoint objects exist. Git's shallow status and
+  the shallow file's identity/content are checked after fetching, after each
+  ancestry-dependent read, and before returning complete evidence. Ancestry
+  commands ignore the mutable shallow file and follow raw commit parents.
+- Replace refs (loose or packed) and any `info/grafts` file fail closed with
+  `altered_history`. Every Git command in a diff session disables replacement
+  objects, grafts, lazy fetching and the commit-graph. A full `rev-list` walk
+  from both endpoints verifies all reachable commits, including ancestry older
+  than the merge base; missing promisor commits are read failures, never fetched.
 - Multiple merge bases, unrelated histories, missing objects and read failures
   fail closed with typed reasons. Invalid IDs, missing objects and read failures
   return non-nil diagnostic errors (transport diagnostics are sanitized). Other
