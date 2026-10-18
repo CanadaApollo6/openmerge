@@ -24,3 +24,14 @@ func (d *Driver) RevisionDiffReader(ctx context.Context, cacheRoot string) (forg
 		Remote:  d.Remote, HeadRef: HeadRef,
 	})
 }
+
+// GoverningFilesReader constructs the pinned, bounded provenance capability.
+// It reuses the existing installation cache rather than the unbounded contents
+// API, which does not expose modes or distinguish all tree entry kinds.
+func (d *Driver) GoverningFilesReader(ctx context.Context, cacheRoot string) (forge.GoverningFilesReader, error) {
+	reader, err := d.RevisionDiffReader(ctx, cacheRoot)
+	if err != nil {
+		return nil, err
+	}
+	return reader.(*gitops.Repo), nil
+}

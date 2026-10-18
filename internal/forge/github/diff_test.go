@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -32,6 +33,11 @@ func TestRevisionDiffHTTPGitAndInstallationCache(t *testing.T) {
 	tip := localGit(t, remote, "base moves", "commit-tree", emptyTree, "-p", base)
 	localGit(t, remote, "", "update-ref", "refs/heads/main", tip)
 	localGit(t, remote, "", "update-ref", "refs/heads/feature", head)
+	content := localGit(t, remote, "* @root\n", "hash-object", "-w", "--stdin")
+	srcTree := localGit(t, remote, "100644 blob "+content+"\t.gitattributes\n", "mktree")
+	governingTree := localGit(t, remote, "100644 blob "+content+"\t.gitattributes\n100644 blob "+content+"\t.openmerge.yml\n100644 blob "+content+"\tCODEOWNERS\n040000 tree "+srcTree+"\tsrc\n", "mktree")
+	governing := localGit(t, remote, "governing", "commit-tree", governingTree, "-p", tip)
+	localGit(t, remote, "", "update-ref", "refs/heads/governing", governing)
 	gitPath, err := exec.LookPath("git")
 	must(t, err)
 	var requests atomic.Int64
@@ -68,6 +74,26 @@ func TestRevisionDiffHTTPGitAndInstallationCache(t *testing.T) {
 	refs := localGit(t, path, "", "for-each-ref", "--format=%(refname)")
 	if refs != "" {
 		t.Fatalf("read created cache refs: %q", refs)
+	}
+	governingReader, err := api.driver.GoverningFilesReader(t.Context(), cache)
+	must(t, err)
+	forgetest.RunGoverningFiles(t, governingReader, testRepo, governing)
+	governingReq := forge.GoverningFilesRequest{CommitSHA: governing, PathsComplete: true}
+	pinned, err := governingReader.GoverningFiles(t.Context(), testRepo, governingReq)
+	must(t, err)
+	localGit(t, remote, "", "update-ref", "refs/heads/main", head)
+	repeated, err := governingReader.GoverningFiles(t.Context(), testRepo, governingReq)
+	must(t, err)
+	if !reflect.DeepEqual(pinned, repeated) {
+		t.Fatal("HTTP git read followed moving default branch")
+	}
+	// Transport errors from a fresh cache remain diagnostic failures.
+	server.Close()
+	offline, err := api.driver.GoverningFilesReader(t.Context(), t.TempDir())
+	must(t, err)
+	failed, err := offline.GoverningFiles(t.Context(), testRepo, governingReq)
+	if err == nil || failed.Coverage.Completeness != forge.DiffIncomplete || len(failed.Coverage.Reasons) != 1 || failed.Coverage.Reasons[0] != forge.DiffReadFailure {
+		t.Fatalf("transport: %+v %v", failed, err)
 	}
 	// Another installation gets a separate cache, even for the same repository.
 	other := &Driver{app: api.app, installation: 8}

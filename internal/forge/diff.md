@@ -1,4 +1,4 @@
-# Pinned revision inventory (ADR 0007 Stage A 2a)
+# Pinned revision evidence (ADR 0007 Stage A 2a–2b)
 
 `RevisionDiffReader` is an optional, independent forge capability. It has no
 runtime caller, config keys, journal events, decisions, or approval integration.
@@ -19,7 +19,7 @@ no network; writes only the askpass helper inside the cache root. Bare-cache
 initialization happens lazily at first open.
 Future serve wiring owns activation and request scheduling.
 
-`git-inventory-v4-bounded-ancestry` fixes these semantics:
+`git-evidence-v5-single-span` retains the inventory-v4 protections and fixes these semantics:
 
 - Raw NUL-delimited git tree comparison, without external diffs, textconv, or
   heuristic renames. Paths retain their original bytes, including tabs/newlines.
@@ -44,7 +44,8 @@ Future serve wiring owns activation and request scheduling.
 - Replace refs (loose or packed) and any `info/grafts` file fail closed with
   `altered_history`. Every Git command in a diff session disables replacement
   objects, grafts, lazy fetching and the commit-graph. Verification runs
-  `rev-list --parents <base> <head> --not <all merge bases>` against raw parents.
+  `rev-list --parents <base> <head> --not <unique merge base>` against raw
+  parents. Multiple merge bases return `multiple_merge_bases` before this walk.
   Missing commits in this divergence are read failures, never fetched.
 - Verification permits at most 100,000 emitted commits (`MaxAncestryCommits`),
   comfortably above ordinary PR divergence while independent of repository age.
@@ -65,20 +66,109 @@ Future serve wiring owns activation and request scheduling.
   limitations return nil errors and incomplete coverage. Complete inventory never
   has failure reasons. Callers must inspect coverage even when the error is nil.
 
-Stage 2a emits zero hunks (`MaxDiffHunks = 0`), always with independent incomplete
-hunk coverage and `hunks_not_collected`. Stage 2b adds governing-file provenance
-and bounded hunk acquisition; a complete inventory is not a complete brief.
-The fake reads existing immutable regular-file snapshots without changing its
-commit identity or legacy simulator behavior. Mode/gitlink and transport cases
-are exercised with local git and an authenticated localhost HTTP git server.
+## Bounded hunks
+
+After inventory blob inspection, the reader derives UTF-8 hunk bodies from those
+same immutable blobs. There is no second content fetch, external diff, textconv,
+attribute lookup or host diff configuration. Each ordinary text file has at most
+one replacement span: equal prefix and suffix **lines** are excluded; intervening
+unchanged lines are shown as deletion/addition too. This deliberately coarse
+unified body is complete evidence of the content change, not a minimal edit
+script. It bounds line matching to linear work and avoids a quadratic edit
+matrix. Ranges use unified-diff zero-length conventions. Bodies omit file/hunk
+headers and retain line endings and explicit missing-final-newline markers.
+
+At most **512 hunks total**, **one per file**, and **256 KiB of body bytes** are
+retained. These bounds keep briefs small even within the 1,000-file inventory;
+the inventory's separate 2 MiB budget still bounds all inspected blobs. A hunk
+that does not fit is omitted whole, with its exact old/new span and typed
+`hunk_limit` or `hunk_byte_limit`. Later small files can still fit. Omitted span
+metadata is bounded by the 1,000-file inventory. No unbounded patch text is
+returned. Invalid UTF-8 is `invalid_utf8`; binary/unknown-binary content is
+`non_text`. Symlinks, gitlinks and mode changes are `special_mode`, with unknown
+zero omission ranges rather than invented textual content. These limitations
+return nil errors. Adds/deletes have an empty absent side. Exact renames with
+unchanged modes have complete empty content hunks; both paths remain in the
+inventory. Unpaired renames retain content evidence per observed file but keep
+the inventory and aggregate hunks incomplete.
+
+`DiffFile.HunkCoverage`, `Hunks` and `Omitted` are per-file evidence. Aggregate
+`RevisionDiff.Hunks` also requires complete inventory. Unvisited files have
+unknown coverage; neither unknown nor incomplete means an empty change. Read
+errors and caller cancellation remain diagnostic `read_failure` errors. The
+history check runs again after hunk construction, before reporting completeness.
+
+## Governing files
+
+`GoverningFilesReader` is a separate optional capability; GitHub constructs it
+with `Driver.GoverningFilesReader(ctx, cacheRoot)`, using the same installation
+cache and credentials as the diff reader. Its request pins a **commit** ID and
+supplies changed paths from both rename sides, deletions included, together with
+explicit path-set completeness. It does not resolve a default branch. The
+existing `Driver.ReadFile` accepts a commit pin but returns only bytes, and its
+contents API cannot provide bounded raw content, modes and tree-proven absence
+together. The git-backed fallback uses hardened diffRead sessions for all
+`ls-tree`/`cat-file` operations, with literal pathspecs, bounded output, preflight
+blob sizes, no replacement/graft/commit-graph/lazy-fetch effects, and history
+rechecks before complete results. It fetches only the explicit governing commit
+through the existing cache lifecycle. No API pagination is involved.
+
+Results retain the governing commit, semantics and the path/mode/object ID,
+presence, content and coverage of each checked location:
+
+- All four accepted config locations, in `config.Find` order. Parsing and
+  rejecting ambiguous configurations remain the consumer's responsibility.
+- `.github/CODEOWNERS`, `CODEOWNERS`, then `docs/CODEOWNERS`, stopping at the
+  first present entry. `SelectedCodeowners` records the selection. Checked
+  earlier absences are retained; unprobed later locations prove nothing. An
+  unreadable or special first entry never falls back to a weaker owner file.
+- Root `.gitattributes` and one for each ancestor directory of every supplied
+  path, deduplicated and sorted. This includes old rename directories and deleted
+  paths. The request's incomplete path set makes the result incomplete too.
+
+At most **256 probes**, including absent files, and **1 MiB content** per request
+bound tree work and retained policy content independently of diff size. They
+allow ordinary nested repositories while failing closed on large/deep layouts.
+Path inputs are also capped at 2,000 entries and 2 MiB. Deduplicated ancestor
+probe paths have their own 2 MiB bound (reusing `MaxDiffBytes`), so long shared
+prefixes cannot amplify metadata without a limit. Directory enumeration also
+stops at the probe bound. Exhaustion is incomplete `file_limit`/`byte_limit` with
+nil error. An oversized present blob retains object ID and mode but no content.
+Only a complete absent probe proves absence; tree entries such as directories,
+symlinks and gitlinks are present but incomplete `special_mode`. Invalid IDs,
+missing commits and read failures follow the diff's non-nil error contract.
+
+## Consumer mapping and version discipline
+
+PR 4a combines diff endpoints/merge base with the separate governing commit,
+config/owner blob IDs and attribute path-to-object map in
+`changepolicy.ClassificationInputs`. It converts octal modes into
+`FileEvidence` modes, copies paths/blobs/rename/binary/gitlink observations, maps
+`DiffHunk` to `Hunk`, `DiffHunkRange` to `HunkRange` (typed reason to string), and
+maps per-file coverage to `HunkEvidence.Complete`. Aggregate hunk coverage feeds
+`Classification.HunksComplete`. Governing content and checked absences go to
+4a/4b's parsers; missing probes must never become absence. Forge imports no
+changepolicy types and performs no classification or policy selection.
+
+The fake observes existing immutable regular-file snapshots, including compact
+snapshots, without changing commit identities or legacy simulation behavior.
+The shared `forgetest` contracts run against fake, local git, and GitHub's
+localhost authenticated HTTP git transport. Mode/gitlink and history mutation
+cases use local git.
 
 The fake charges 148 bytes plus the path length per raw record, matching its
 SHA-256 object IDs. Gitops charges actual Git output: SHA-1 records cost 100
 bytes plus the path length; SHA-256 records cost 148. Both then charge each
 distinct inspected blob once. Thus identical file contents near 2 MiB can hit
 the bound earlier in the fake than in a SHA-1 repository; coverage remains
-fail-closed in both. The semantics bounds golden pins the file, byte, hunk, ancestry-commit and
-ancestry-duration bounds only; it does not fingerprint the implementation.
+fail-closed in both. The semantics bounds golden pins every inventory, ancestry, governing and hunk
+bound; it does **not** fingerprint behavior. Any change to rename pairing,
+binary detection, ancestry trust, file selection/absence, ordering, hunk shape,
+encoding or completeness must bump `DiffSemantics` and add/update behavioral
+vectors, even when bounds stay constant. A bounds change also requires a bump
+and a new golden entry; never edit an existing version's golden to accept drift.
+Consumers include this version in their classifier version. Reviewers must
+check semantic changes explicitly; a passing bounds golden alone is insufficient.
 
 The divergence exclusion is sound even with missing objects: suppose a missing
 commit K could hide a better common ancestor S than a found merge base C. K

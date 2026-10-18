@@ -22,16 +22,17 @@ func RunRevisionDiff(t *testing.T, reader forge.RevisionDiffReader, repo forge.R
 	if len(result.Files) != 1 || result.Files[0].NewPath != path || result.Files[0].OldPath != "" || result.Files[0].NewMode != "100644" || !forge.ValidDiffObjectID(result.Files[0].NewObjectID) || !result.Files[0].BinaryKnown {
 		t.Fatalf("inventory = %+v", result.Files)
 	}
-	if result.Hunks.Completeness != forge.DiffIncomplete || len(result.Hunks.Reasons) != 1 || result.Hunks.Reasons[0] != forge.DiffHunksNotCollected || len(result.Files[0].Hunks) != forge.MaxDiffHunks {
-		t.Fatalf("2a must not claim hunk coverage: %+v", result)
+	if result.Hunks.Completeness != forge.DiffComplete || len(result.Hunks.Reasons) != 0 || len(result.Files[0].Hunks) != 1 || result.Files[0].HunkCoverage.Completeness != forge.DiffComplete || result.Files[0].Hunks[0].NewLines != 1 {
+		t.Fatalf("missing bounded hunk evidence: %+v", result)
 	}
+
 	// Evidence returned to a consumer must not alias an internal cache/fixture.
 	original, err := reader.RevisionDiff(t.Context(), repo, req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	result.Files[0].NewPath = "mutated"
-	result.Hunks.Reasons[0] = forge.DiffReadFailure
+	result.Files[0].Hunks[0].Text = "mutated"
 	repeated, err := reader.RevisionDiff(t.Context(), repo, req)
 	if err != nil || !reflect.DeepEqual(original, repeated) {
 		t.Fatalf("read was mutable: %+v %v", repeated, err)

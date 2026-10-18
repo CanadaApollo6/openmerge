@@ -210,6 +210,7 @@ func (r *Repo) revisionDiff(ctx context.Context, repo forge.RepoRef, req forge.R
 	remaining := forge.MaxDiffBytes - len(raw)
 	type binaryObservation struct{ binary bool }
 	observed := map[string]binaryObservation{}
+	blobs := map[string]string{}
 	for i := range result.Files {
 		f := &result.Files[i]
 		f.BinaryKnown = true
@@ -248,6 +249,7 @@ func (r *Repo) revisionDiff(ctx context.Context, repo forge.RepoRef, req forge.R
 				return fail(forge.DiffReadFailure, err)
 			}
 			remaining -= len(blob)
+			blobs[object.id] = blob
 			binary := strings.ContainsRune(blob, '\x00')
 			observed[object.id] = binaryObservation{binary: binary}
 			f.Binary = f.Binary || binary
@@ -258,6 +260,13 @@ func (r *Repo) revisionDiff(ctx context.Context, repo forge.RepoRef, req forge.R
 	}
 	if len(result.Inventory.Reasons) == 0 {
 		result.Inventory.Completeness = forge.DiffComplete
+	}
+	if err := forge.CollectDiffHunks(ctx, &result, blobs); err != nil {
+		return fail(forge.DiffReadFailure, err)
+	}
+	if reason, err := checkHistory(); reason != "" {
+		result.Hunks = forge.DiffCoverage{Completeness: forge.DiffIncomplete, Reasons: []forge.DiffFailureReason{reason}}
+		return fail(reason, err)
 	}
 	return result, nil
 }
