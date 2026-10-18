@@ -11,6 +11,7 @@ import (
 	"maps"
 	"reflect"
 	"slices"
+	"strconv"
 	"time"
 
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
@@ -29,6 +30,8 @@ type ApprovalFacts struct {
 	Latest         map[string]string
 	Frontiers      map[string]string
 	Blockers       map[string]string
+	PriorHeads     []string
+	HistoryKnown   bool
 	Saturated      bool
 }
 
@@ -146,7 +149,11 @@ func recomputeUser(f *ApprovalFacts, user string, revision ChangeRevision) {
 		barriersCleared := true
 		for _, blocks := range [][]string{requests, withdrawals} {
 			for _, k := range blocks {
-				if !supersedes(a, f.Sources[k].Event.Stance) {
+				barrier := f.Sources[k].Event.Stance
+				if barrier.Source.DismissedReviewID != "" && a.Source.Channel != cp.NativeReview {
+					continue
+				}
+				if !supersedes(a, barrier) {
 					barriersCleared = false
 				}
 			}
@@ -164,16 +171,14 @@ func recomputeUser(f *ApprovalFacts, user string, revision ChangeRevision) {
 	// Prefix maxima over descending command IDs answer every same-namespace
 	// query in O(n log n), even for thousands of alternating blockers.
 	var commands []cp.Stance
-	var dismissalTime time.Time
+	var dismissals []cp.Stance
 	for _, key := range withdrawals {
 		w := f.Sources[key].Event.Stance
 		if !w.Source.TimeKnown {
 			continue
 		}
 		if w.Source.DismissedReviewID != "" {
-			if w.Source.Time.After(dismissalTime) {
-				dismissalTime = w.Source.Time
-			}
+			dismissals = append(dismissals, w)
 		} else {
 			commands = append(commands, w)
 		}
@@ -190,7 +195,12 @@ func recomputeUser(f *ApprovalFacts, user string, revision ChangeRevision) {
 	for _, key := range requests {
 		r := f.Sources[key].Event.Stance
 		bound := sourceBound(r.Source)
-		proof := dismissalTime
+		var proof time.Time
+		for _, w := range dismissals {
+			if r.Source.Channel == cp.NativeReview && r.Source.Sequence <= dismissalReviewSequence(w) && w.Source.Time.After(proof) {
+				proof = w.Source.Time
+			}
+		}
 		n := len(commands)
 		if r.Source.Channel == cp.CommentCommand {
 			n, _ = slices.BinarySearchFunc(commands, r.Source.Sequence, func(w cp.Stance, seq uint64) int { return cmp.Compare(seq, w.Source.Sequence) })
@@ -213,6 +223,7 @@ func recomputeUser(f *ApprovalFacts, user string, revision ChangeRevision) {
 }
 
 func cloneApprovalFacts(f ApprovalFacts) ApprovalFacts {
+	f.PriorHeads = slices.Clone(f.PriorHeads)
 	f.Sources = maps.Clone(f.Sources)
 	f.Latest = maps.Clone(f.Latest)
 	f.Frontiers = maps.Clone(f.Frontiers)
@@ -277,6 +288,7 @@ func (s State) observeApproval(e Event) (State, bool) {
 	f, exists := s.approvalFacts[b.ChangeID]
 	if !exists {
 		f = newApprovalFacts()
+		f.HistoryKnown = b.Revision == 1
 	} else {
 		f = cloneApprovalFacts(f)
 	}
@@ -305,7 +317,20 @@ func (s State) observeApproval(e Event) (State, bool) {
 			clear(f.Latest)
 			clear(f.Blockers)
 			clear(f.Frontiers)
-			break
+			// Preserve a new barrier in preference to positive noise. Saturated
+			// remains a fail-closed barrier for the entire epoch.
+			evict := ""
+			if e.Stance.Kind != cp.Approve {
+				for k, v := range f.Sources {
+					if v.Event.Stance.Kind == cp.Approve && (evict == "" || k < evict) {
+						evict = k
+					}
+				}
+			}
+			if evict == "" {
+				break
+			}
+			delete(f.Sources, evict)
 		}
 		revision := b.Revision
 		if e.Stance.Source.Channel == cp.NativeReview {
@@ -317,13 +342,13 @@ func (s State) observeApproval(e Event) (State, bool) {
 			}
 			// Only reused heads need epoch proof. Allow for the same 2s clock
 			// uncertainty and 1s timestamp resolution used by the Q4 fallback bound.
-			reused := b.Revision > 1 && len(boundary.PriorHeads) == 0
-			for _, head := range boundary.PriorHeads {
+			reused := b.Revision > 1 && !f.HistoryKnown
+			for _, head := range f.PriorHeads {
 				if head == b.Head {
 					reused = true
 				}
 			}
-			if e.Stance.Head != b.Head || reused && (!submissionKnown || submitted.Time.IsZero() || !submitted.Time.After(boundary.Basis.At.Add(3*time.Second))) {
+			if e.Stance.Head != b.Head || e.Stance.Kind != cp.RequestChanges && reused && (!submissionKnown || submitted.Time.IsZero() || !submitted.Time.After(boundary.Basis.At.Add(3*time.Second))) {
 				revision = 0
 			}
 		}
@@ -340,10 +365,17 @@ func (s State) observeApproval(e Event) (State, bool) {
 			}
 			if original, known := f.Sources[string(cp.NativeReview)+"/"+v.Event.Stance.Source.DismissedReviewID]; known {
 				v.Revision = original.Revision
+				// A join changes attribution evidence, not the pinned action time.
+				if v.Revision > v.Event.Basis.Revision {
+					v.Event.Basis = original.Event.Basis
+					v.Event.Stance.Revision = uint64(original.Event.Basis.Revision)
+				}
 				f.Sources[k] = v
 			}
 		}
-		recomputeUser(&f, e.Stance.UserID, b.Revision)
+		if !f.Saturated {
+			recomputeUser(&f, e.Stance.UserID, b.Revision)
+		}
 	}
 
 	s.approvalFacts = maps.Clone(s.approvalFacts)
@@ -488,7 +520,7 @@ func upgradeApprovalSnapshot(data []byte, version int) ([]byte, error) {
 	fields["ApprovalFacts"] = json.RawMessage(`null`)
 	return json.Marshal(fields)
 }
-func validateApprovalSnapshot(p approvalProjection) error {
+func validateApprovalSnapshot(p approvalProjection, revisions map[int]RevisionRecord) error {
 	count := 0
 	for id, f := range p {
 		if id.Validate() != nil || len(f.Sources) > maxApprovalSources || f.Sources == nil || f.Frontiers == nil || f.Latest == nil || f.Blockers == nil {
@@ -524,6 +556,43 @@ func validateApprovalSnapshot(p approvalProjection) error {
 			if count > maxSnapshotEntries || v.Event.Validate() != nil || key != sourceKey(v.Event) || v.Event.Basis.ChangeID != id || v.Revision > v.Event.Basis.Revision || v.Revision != 0 && v.Event.Stance.Source.Channel == cp.CommentCommand && v.Revision != v.Event.Basis.Revision || v.LastReadID == "" {
 				return fmt.Errorf("invalid attributed source")
 			}
+		}
+		var revision ChangeRevision
+		for _, r := range revisions {
+			if r.ChangeID == id {
+				revision = r.Revision
+			}
+		}
+		if revision == 0 || len(f.PriorHeads) > maxSnapshotEntries || uint64(len(f.PriorHeads)) >= uint64(revision) {
+			return fmt.Errorf("invalid approval history")
+		}
+		for _, v := range f.Sources {
+			if v.Revision > revision || v.Event.Basis.Revision > revision {
+				return fmt.Errorf("approval source exceeds current revision")
+			}
+		}
+		seen := map[string]bool{}
+		for _, head := range f.PriorHeads {
+			if head == "" || seen[head] {
+				return fmt.Errorf("invalid approval prior heads")
+			}
+			seen[head] = true
+		}
+		derived := cloneApprovalFacts(f)
+		clear(derived.Latest)
+		clear(derived.Blockers)
+		clear(derived.Frontiers)
+		if !f.Saturated {
+			users := map[string]bool{}
+			for _, v := range f.Sources {
+				users[v.Event.Stance.UserID] = true
+			}
+			for user := range users {
+				recomputeUser(&derived, user, revision)
+			}
+		}
+		if !maps.Equal(f.Latest, derived.Latest) || !maps.Equal(f.Blockers, derived.Blockers) || !maps.Equal(f.Frontiers, derived.Frontiers) {
+			return fmt.Errorf("approval cache contradicts retained sources")
 		}
 		for name, index := range map[string]map[string]string{"latest": f.Latest, "blockers": f.Blockers, "frontiers": f.Frontiers} {
 			for user, key := range index {
@@ -572,9 +641,11 @@ type ApprovalDecision struct {
 	Fresh          ApprovalEligibilityObserved
 	Accountability *ChangeAccountabilityObserved
 	Intent         *ChangeIntentObserved
-	ReliedOn       []AttributedStance
-	Current        cp.ReceiptIdentity
-	Evaluation     cp.Evaluation
+	// ReliedOn contains all effective current-revision stances. The counted
+	// subset is Evaluation.Requirements[].ReliedOn.
+	ReliedOn   []AttributedStance
+	Current    cp.ReceiptIdentity
+	Evaluation cp.Evaluation
 }
 
 // PrepareApprovalDecision never acquires permission itself. Stage A 9 must
@@ -598,4 +669,70 @@ func (s State) PrepareApprovalDecision(policy cp.Policy, current cp.ReceiptIdent
 	}
 	slices.SortFunc(d.ReliedOn, func(a, b AttributedStance) int { return cmp.Compare(a.Event.Stance.UserID, b.Event.Stance.UserID) })
 	return d, nil
+}
+
+// DismissedReviewID is the native sequence, never the timeline event ID.
+func dismissalReviewSequence(w cp.Stance) uint64 {
+	n, _ := strconv.ParseUint(w.Source.DismissedReviewID, 10, 64)
+	return n
+}
+
+// History lives exclusively beside approval evidence. Legacy-only changes do
+// not allocate it. Missing early history remains unknown until full replay.
+func (s *State) advanceApprovalRevision(current RevisionRecord, revision ChangeRevision) {
+	f, ok := s.approvalFacts[current.ChangeID]
+	if !ok || current.Revision == revision {
+		return
+	}
+	f = cloneApprovalFacts(f)
+	if f.HistoryKnown && !slices.Contains(f.PriorHeads, current.HeadSHA) {
+		f.PriorHeads = append(f.PriorHeads, current.HeadSHA)
+	}
+	// Native positive pins on older epochs cannot authorize again without head
+	// and time proof. Retain command pins and every request/withdrawal barrier.
+	for key, v := range f.Sources {
+		if v.Revision > 0 && v.Revision < revision && v.Event.Stance.Source.Channel == cp.NativeReview && v.Event.Stance.Kind == cp.Approve {
+			delete(f.Sources, key)
+		}
+	}
+	f.Saturated = len(f.Sources) >= maxApprovalSources
+	clear(f.Latest)
+	clear(f.Blockers)
+	clear(f.Frontiers)
+	s.approvalFacts = maps.Clone(s.approvalFacts)
+	s.approvalFacts[current.ChangeID] = f
+}
+
+// ApprovalSnapshotBudgetError rejects admission for ChangeID before producing
+// an unrestorable queue snapshot. 11a must roll back that change's admission.
+type ApprovalSnapshotBudgetError struct {
+	ChangeID                ChangeID
+	ChangeBytes, QueueBytes int
+}
+
+func (e ApprovalSnapshotBudgetError) Error() string {
+	return fmt.Sprintf("approval snapshot admission rejected for %s: change=%d queue=%d bytes", e.ChangeID, e.ChangeBytes, e.QueueBytes)
+}
+
+const maxApprovalChangeBytes = 8 << 20
+const maxApprovalQueueBytes = 48 << 20
+
+func checkApprovalSnapshotBudget(p approvalProjection) error {
+	ids := make([]ChangeID, 0, len(p))
+	for id := range p {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	total := 0
+	for _, id := range ids {
+		raw, err := json.Marshal(p[id])
+		if err != nil {
+			return err
+		}
+		total += len(raw)
+		if len(raw) > maxApprovalChangeBytes || total > maxApprovalQueueBytes {
+			return ApprovalSnapshotBudgetError{id, len(raw), total}
+		}
+	}
+	return nil
 }

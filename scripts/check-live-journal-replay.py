@@ -384,6 +384,10 @@ def derived_violations(fields):
 # Only these additions may be absent in the baseline, and only at zero.
 # Populated after inspecting the real baseline -> main structural comparison.
 STATE_EXCEPTIONS = {
+    "approvalFacts": {
+        "reason": "PR #71 adds dormant approval evidence. Permit only the absent-to-nil field; populated evidence requires a separate activation review.",
+        "reference": "PR #71; Stage A 6 inertness",
+    },
     "outsidePushes": {
         "reason": "PR #53 adds the audit-only outside-push projection; the pre-Stage-A export has none. Permit only its nil/zero state; any recorded outside push fails.",
         "reference": "PR #53; ADR 0007 outside-push isolation",
@@ -425,7 +429,8 @@ def structural_differences(left, right, path=""):
             continue
         if key not in left or key not in right:
             if key not in left and name in STATE_EXCEPTIONS and r.get("zero") is True:
-                continue
+                if name != "approvalFacts" or (r.get("type") == "queue.approvalProjection" and r.get("kind") == "map" and r.get("nil") is True and r.get("value") == {}):
+                    continue
             differences[name] = dict(baseline=l, candidate=r, new_field=True)
         else:
             differences.update(structural_differences(l, r, name))

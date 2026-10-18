@@ -89,14 +89,12 @@ type RevisionRecord struct {
 	HeadSHA     string
 	Basis       RevisionObservationBasis
 	LogPosition uint64
-	PriorHeads  []string `json:",omitempty"`
 }
 
 // PRRevision returns recorded evidence by queue-local PR alias. It cannot
 // manufacture accountability, classification, approvals, or source timestamps.
 func (s State) PRRevision(pr int) (RevisionRecord, bool) {
 	r, ok := s.changeRevisions.get(pr)
-	r.PriorHeads = append([]string(nil), r.PriorHeads...)
 	return r, ok
 }
 

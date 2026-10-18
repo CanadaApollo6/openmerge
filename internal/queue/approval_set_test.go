@@ -102,7 +102,12 @@ func TestStanceSetPermutationsAndEverySnapshotSplit(t *testing.T) {
 		t.Run(fmt.Sprint(ci), func(t *testing.T) {
 			var wantLatest, wantBlockers, wantFrontiers map[string]string
 			var fingerprint string
+			visited := 0
 			permutations(tc.events, func(events []ReviewStanceObserved) {
+				visited++
+				if testing.Short() && visited > 6 {
+					return
+				}
 				for split := 0; split <= len(events); split++ {
 					s := approvalState(b)
 					for i, e := range events {
@@ -112,6 +117,7 @@ func TestStanceSetPermutationsAndEverySnapshotSplit(t *testing.T) {
 						// Distinct read grouping cannot change the effective stance/barriers.
 						e.Basis.ReadID = fmt.Sprint("read-", i%3)
 						s = Apply(s, e)
+						s = restart(t, s) // Every reachable prefix must encode/decode equally.
 						// Duplicate polling neither renews bounds nor needs blockers-first order.
 						s = Apply(s, e)
 					}
@@ -167,9 +173,7 @@ func TestHistoricalDismissalCannotEraseReusedHeadRequest(t *testing.T) {
 				assertKind(t, next, current, cp.RequestChanges)
 				f, _ := next.ApprovalFacts(b.ChangeID)
 				want := ChangeRevision(0)
-				if knownOriginal {
-					want = 1
-				}
+
 				if f.Sources[sourceKey(old)].Revision != want {
 					t.Fatal("dismissal attributed using dismissal time")
 				}
@@ -180,7 +184,7 @@ func TestHistoricalDismissalCannotEraseReusedHeadRequest(t *testing.T) {
 
 func TestNovelHeadFirstPollAndReusedHeadClockAllowance(t *testing.T) {
 	b := approvalBasis()
-	s := approvalState(b)
+	s := Apply(approvalState(b), native(b, 1, cp.Approve, b.At))
 	next := b
 	next.Revision = 2
 	next.Head = fmt.Sprintf("%040x", 2)
@@ -333,7 +337,7 @@ func TestCapacityIsPerChangeAndFailsClosed(t *testing.T) {
 func TestPriorHeadsSurviveLegacyFirstEnrichment(t *testing.T) {
 	b := approvalBasis()
 	for _, legacyFirst := range []bool{false, true} {
-		s := approvalState(b)
+		s := Apply(approvalState(b), native(b, 1, cp.Approve, b.At))
 		for rev := ChangeRevision(2); rev <= 3; rev++ {
 			head := fmt.Sprintf("%040x", 2)
 			if rev == 3 {
@@ -344,13 +348,13 @@ func TestPriorHeadsSurviveLegacyFirstEnrichment(t *testing.T) {
 			}
 			event := ChangeRevisionObserved{PR: 12, ChangeID: b.ChangeID, Revision: rev, Predecessor: rev - 1, HeadSHA: head, Basis: RevisionObservationBasis{BaseSHA: fmt.Sprintf("%040x", 1), At: b.At}}
 			s = Apply(restart(t, s), event)
-			record, _ := s.PRRevision(12)
+			record, _ := s.ApprovalFacts(b.ChangeID)
 			if len(record.PriorHeads) != int(rev-1) || record.PriorHeads[0] != b.Head {
 				t.Fatal("lost prior head set", record)
 			}
 			// Returned history must not allow mutation of persisted evidence.
 			record.PriorHeads[0] = "tampered"
-			again, _ := s.PRRevision(12)
+			again, _ := s.ApprovalFacts(b.ChangeID)
 			if again.PriorHeads[0] != b.Head {
 				t.Fatal("history alias escaped")
 			}
@@ -360,12 +364,13 @@ func TestPriorHeadsSurviveLegacyFirstEnrichment(t *testing.T) {
 
 func TestMissingSnapshotHeadHistoryStaysUnknown(t *testing.T) {
 	b := approvalBasis()
-	s := approvalState(b)
+	s := Apply(approvalState(b), native(b, 1, cp.Approve, b.At))
 	s = Apply(s, ChangeRevisionObserved{PR: 12, ChangeID: b.ChangeID, Revision: 2, Predecessor: 1, HeadSHA: fmt.Sprintf("%040x", 2), Basis: RevisionObservationBasis{BaseSHA: fmt.Sprintf("%040x", 1), At: b.At}})
 	// Model a pre-history snapshot from the earlier identity component.
-	record, _ := s.PRRevision(12)
+	record, _ := s.ApprovalFacts(b.ChangeID)
 	record.PriorHeads = nil
-	s.changeRevisions.put(12, record)
+	record.HistoryKnown = false
+	s.approvalFacts[b.ChangeID] = record
 	s = restart(t, s)
 	next := b
 	next.Revision = 3

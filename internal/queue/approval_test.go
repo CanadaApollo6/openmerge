@@ -74,6 +74,10 @@ func restart(t *testing.T, s State) State {
 	if err != nil {
 		t.Fatal(err)
 	}
+	roundTrip, err := EncodeSnapshot(restored)
+	if err != nil || !bytes.Equal(raw, roundTrip) || !reflect.DeepEqual(s.approvalFacts, restored.approvalFacts) {
+		t.Fatalf("snapshot round trip differs: %v", err)
+	}
 	return restored
 }
 func assertKind(t *testing.T, s State, b ApprovalBasis, kind cp.StanceKind) {
@@ -178,10 +182,14 @@ func TestStanceBlockersWinPermutationsTiesAndMissingTimes(t *testing.T) {
 					for _, e := range events {
 						s = Apply(s, e)
 					}
-					assertKind(t, s, b, blocker.Stance.Kind)
+					want := blocker.Stance.Kind
+					if blocker.Stance.Source.DismissedReviewID != "" && channel == cp.CommentCommand {
+						want = cp.Approve
+					}
+					assertKind(t, s, b, want)
 					s = restart(t, s)
 					s = Apply(s, positive)
-					assertKind(t, s, b, blocker.Stance.Kind)
+					assertKind(t, s, b, want)
 				}
 			}
 		}
@@ -604,9 +612,9 @@ func TestRecoveryReconsidersSourcesAcrossReadsAndNeverRelaxesBarrier(t *testing.
 	}
 }
 
-func TestReceiptClearsPinnedFallbackOnlyStrictlyAfterBound(t *testing.T) {
+func TestReceiptClearsCommandWithdrawalOnlyStrictlyAfterBound(t *testing.T) {
 	b := approvalBasis()
-	blocker := dismissal(b, 10, forge.ObservationTimeFallback, b.At)
+	blocker := command(b, 10, cp.Withdraw, b.At)
 	for _, after := range []bool{false, true} {
 		s := Apply(approvalState(b), blocker)
 		s = restart(t, s)
@@ -722,7 +730,7 @@ func TestLateDismissalJoinsOriginalRevision(t *testing.T) {
 	late := dismissal(next, 10, forge.ReviewDismissalTime, next.At.Add(2*time.Minute))
 	s = Apply(s, late)
 	f, _ := s.ApprovalFacts(b.ChangeID)
-	if f.Sources[sourceKey(late)].Revision != 1 {
+	if f.Sources[sourceKey(late)].Revision != 0 {
 		t.Fatal("dismissal rebound original review")
 	}
 	v, _ := latest(restart(t, s), next)

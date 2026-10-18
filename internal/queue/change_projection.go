@@ -2,7 +2,6 @@ package queue
 
 import (
 	"maps"
-	"slices"
 )
 
 type revisionShards [observationShardCount]map[int]RevisionRecord
@@ -65,14 +64,8 @@ func (s *State) observeLegacyRevision(e PRObserved) {
 	if current.HeadSHA == e.HeadSHA {
 		return
 	}
-	var prior []string
-	if current.ChangeID != "" && (current.Revision <= 1 || len(current.PriorHeads) > 0) {
-		prior = slices.Clone(current.PriorHeads)
-		if !slices.Contains(prior, current.HeadSHA) {
-			prior = append(prior, current.HeadSHA)
-		}
-	}
-	s.changeRevisions.put(e.PR, RevisionRecord{PriorHeads: prior, ChangeID: current.ChangeID, Revision: current.Revision + 1, HeadSHA: e.HeadSHA,
+	s.advanceApprovalRevision(current, current.Revision+1)
+	s.changeRevisions.put(e.PR, RevisionRecord{ChangeID: current.ChangeID, Revision: current.Revision + 1, HeadSHA: e.HeadSHA,
 		Basis: RevisionObservationBasis{BaseSHA: s.BaseSHA}, LogPosition: s.revision})
 }
 
@@ -82,19 +75,8 @@ func (s *State) observeChangeRevision(e ChangeRevisionObserved) {
 	if current.Revision == e.Revision {
 		position = current.LogPosition
 	}
-	prior := slices.Clone(current.PriorHeads)
-	if current.Revision != e.Revision && current.HeadSHA != "" && (current.Revision <= 1 || len(prior) > 0) && !slices.Contains(prior, current.HeadSHA) {
-		prior = append(prior, current.HeadSHA)
-	}
-	s.changeRevisions.put(e.PR, RevisionRecord{PriorHeads: prior, ChangeID: e.ChangeID, Revision: e.Revision, HeadSHA: e.HeadSHA, Basis: e.Basis, LogPosition: position})
-	if f, ok := s.approvalFacts[e.ChangeID]; ok {
-		f = cloneApprovalFacts(f)
-		clear(f.Latest)
-		clear(f.Frontiers)
-		clear(f.Blockers)
-		s.approvalFacts = maps.Clone(s.approvalFacts)
-		s.approvalFacts[e.ChangeID] = f
-	}
+	s.advanceApprovalRevision(current, e.Revision)
+	s.changeRevisions.put(e.PR, RevisionRecord{ChangeID: e.ChangeID, Revision: e.Revision, HeadSHA: e.HeadSHA, Basis: e.Basis, LogPosition: position})
 	// Conflict grace is a later integration: Stage A retains HeadChanged
 	// removal, with no grace deadline, retry budget, or position retention.
 	if entry := s.entry(e.PR); entry != nil && entry.HeadSHA != e.HeadSHA {

@@ -11,7 +11,8 @@ Compaction remains disconnected.
 `ApprovalBasis` identifies the change, revision/head and acquisition read.
 11a must journal a revision boundary before its observations. Producers call
 `CheckApprovalBoundary` to get a typed `ApprovalBoundaryError` before writing;
-`Apply` retains its existing no-error signature and rejects unbound observations.
+`Apply` retains its existing no-error signature and silently drops unbound
+observations. 11a must call the typed preflight before journaling.
 
 Accountability receives resolved stable-ID agent mappings and their governing
 **policy digest**. Mapping precedes forge account kind. Actor, author, submitter
@@ -32,18 +33,24 @@ bound, original submission evidence and provenance. Re-observation cannot renew
 attribution, time evidence or bounds. ReadID is audit metadata only.
 
 Native first discoveries on a novel head do not need to postdate local polling.
-The revision record retains the set of prior heads. On H1 → H2 → H1, first
+The approval projection retains the set of prior heads, starting with its first
+approval observation; revision records stay byte-identical for legacy journals. On H1 → H2 → H1, first
 observation requires a submission time strictly after `boundary.At + 3s`
 (second timestamp precision plus the Q4 two-second clock allowance). Missing or
-ambiguous proof attributes revision zero, never authorization. A pre-history
+ambiguous proof attributes APPROVALS and dismissals to revision zero, never
+authorization. A matching-head REQUEST is conservatively attributed to the
+current revision even within the three-second/pre-boundary ambiguity window. A pre-history
 snapshot with revision >1 and no prior-head set also requires proof; this
 unknown history stays unknown through subsequent boundaries until full replay. Previously
-observed sources keep their attributed revision through head reuse.
+observed barriers and command sources keep their attributed revision through
+head reuse. Older native approvals may be pruned at revision advancement.
 
 A dismissal retains `OriginalSubmission` and the reviewed commit separately.
 Those prove attribution of the **original review**, never the dismissal action's
 time. A known original's pinned revision is authoritative, regardless of source
-arrival order; an unseen original uses the same head/epoch proof as a review.
+arrival order; a cross-boundary promotion also adopts the original attribution
+basis/revision, retaining the dismissal action time and bounds. An unseen original
+uses the same head/epoch proof as a review.
 Dismissal time always comes from PR 3b's dismissal DTO, including fallback on
 revision 1 and later revisions. An old review dismissed today cannot erase a
 current head-epoch request. The additive wire fixtures pin shared forge/policy
@@ -53,7 +60,9 @@ field names (including their existing exported-name JSON spelling).
 
 Every new source recomputes the changed user's effective stance from its
 attributed source **set**, not incremental Latest/frontier state. Derived indices
-are caches only. Arrival order, read grouping, duplicate polls and snapshot/tail
+are caches only. Both encoding and decoding recompute them from Sources and the
+current revision and reject any mismatch; a forged Latest cannot hide a retained
+request. Encoding also validates attribution before returning persistable bytes. Arrival order, read grouping, duplicate polls and snapshot/tail
 splits cannot select different stances. Two positive candidates exist: the
 highest-sequence approval in each channel. Each must clear **every** relevant
 withdrawal/request barrier using a known time strictly after its pinned upper
@@ -65,7 +74,11 @@ Normal review IDs and command IDs have independent sequence namespaces.
 Dismissal timeline IDs never compare numerically to review IDs. Requests win
 against withdrawals with equal, unknown or ambiguous times. A withdrawal can
 replace a request only with strict time proof (and sequence proof in a shared
-namespace). Fallback-time dismissals cannot mask later requests. Outstanding
+namespace). A dismissal can clear only native requests whose review sequence is at most the
+dismissed review ID, with strict time proof. It cannot clear a later native
+request or any command request. Native dismissals do not revoke command
+approvals. Native approvals still clear pinned dismissal time barriers with Q4
+proof. Fallback-time dismissals cannot mask later requests. Outstanding
 requests take precedence over withdrawals; same-kind presentation ties use
 source time and source key. Withdrawal queries use sorted prefix maxima rather
 than pairwise scans. Local observation time is never action-order evidence.
@@ -73,8 +86,9 @@ than pairwise scans. Local observation time is never action-order evidence.
 Q4 barriers remain pinned: an exact second-resolution timestamp has a **+1s**
 upper bound; clearing requires strictly after that bound, not merely after its
 reported second. Fallback includes precision and clock allowance. Missing bounds
-cannot be cleared on that revision. Any revision change clears current requests
-and withdrawals; a fresh attributed action can recover on the new revision.
+cannot be cleared on that revision. Any revision change clears current request
+and withdrawal indices; retained historical barriers remain pinned. A fresh
+attributed action can recover on the new revision.
 No override exists. Recovery on the same revision requires no further reviewer
 action, same-ReadID refresh or blockers-first emission. 11a emits each newly
 acquired source once; duplicates are safe and optional for audit, not clearance.
@@ -83,7 +97,14 @@ acquired source once; duplicates are safe and optional for audit, not clearance.
 it never JSON-round-trips the growing source set. Snapshot evidence retains all
 first-observation source pins needed to prevent old sources rebinding. This is
 bounded at 4096 sources **per change**, not per queue. Arbitrary eviction would
-lose those pins and is unsafe. Exhaustion fails closed for that change; it does
+lose those pins and is unsafe. On revision advancement, native APPROVAL sources
+with a positive attribution older than the new revision are pruned: head/time
+proof prevents them authorizing again. Requests, withdrawals, ambiguous sources
+and all command pins remain. Saturated clears when this recovers capacity.
+Exhaustion clears every decision cache and stays fail-closed for the epoch,
+including after subsequent observations and restart. Incoming barriers replace
+positive noise first; an all-barrier overflow is represented by Saturated and
+must be rejected at 11a admission. No existing barrier is evicted. This does
 not affect another PR's evaluation. No production ingestion exists yet. Before
 11a activation, acquisition must filter non-writer/ineligible reviewers using
 fresh identity/grant evidence **before** allocating stance pins, including their
@@ -93,6 +114,16 @@ history then. Source-budget admission must reject an oversized change explicitly
 it must not discard blockers or let public-repository noise consume other
 changes' budgets. Activation must retain this resource gate. Benchmarks exercise
 1500 and 4095 mixed approve/request/unapprove sources for one user.
+
+11a also owns a **queue-level admission budget**: the 64 MiB decoder limit is
+shared by the whole queue, not available to each change. Encoding rejects facts
+over 8 MiB for one change or 48 MiB collectively with a typed
+`ApprovalSnapshotBudgetError` naming the change whose admission exceeds the
+budget. 11a must reject/roll back that change, leaving the previous recoverable
+queue intact, and reserve the remaining 16 MiB for legacy projections. The final
+encoder also checks the actual whole-snapshot 64 MiB bound. It never emits an
+oversized snapshot. At roughly 4.6 MiB per saturated change, only about ten fit
+the approval reserve; a source-count-only admission rule is insufficient.
 
 ## Decision and downstream gates
 
@@ -122,9 +153,11 @@ sources and polling ReadIDs/times are excluded. It remains disconnected from
 planner timers and CI keys.
 
 `PrepareApprovalDecision` returns the exact fresh eligibility, accountability,
-intent, relied-on attributed stances, current receipt identity, evaluation and
+intent, all effective current-revision stances in `ReliedOn`, current receipt
+identity, evaluation and
 snapshot containing that eligibility. 9 must journal **that exact event**
 atomically with its snapshot and reject the decision if the transaction fails;
 it must not acquire/reconstruct a different eligibility event after evaluation.
+The counted subset is `Evaluation.Requirements[].ReliedOn`.
 The helper performs no external I/O and cannot prove acquisition freshness.
 11a must preserve channel sequence namespaces and cross-channel ordering above.

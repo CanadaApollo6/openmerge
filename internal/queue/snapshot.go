@@ -164,7 +164,20 @@ func EncodeSnapshot(s State) ([]byte, error) {
 		}
 		v.Effects = append(v.Effects, data)
 	}
-	return json.Marshal(v)
+	if err := validateApprovalSnapshot(v.ApprovalFacts, v.ChangeRevisions); err != nil {
+		return nil, err
+	}
+	if err := checkApprovalSnapshotBudget(v.ApprovalFacts); err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > maxSnapshotBytes {
+		return nil, fmt.Errorf("snapshot exceeds byte bound; reject approval admission for affected changes")
+	}
+	return raw, nil
 }
 
 // DecodeSnapshot rejects incomplete/unknown schemas rather than manufacturing
@@ -202,7 +215,7 @@ func DecodeSnapshot(data []byte) (State, error) {
 	if len(v.Chain) > 32 || len(v.Invalidations) > 32 || len(v.TestedOrder) > testedHistory || len(v.Checks) > maxRetainedChecks || len(v.Entries) > maxSnapshotEntries || len(v.Effects) > maxSnapshotEffects {
 		return State{}, fmt.Errorf("invalid snapshot bounds")
 	}
-	if err := validateApprovalSnapshot(v.ApprovalFacts); err != nil {
+	if err := validateApprovalSnapshot(v.ApprovalFacts, v.ChangeRevisions); err != nil {
 		return State{}, err
 	}
 	if err := validateClassifications(v.Classifications); err != nil {
