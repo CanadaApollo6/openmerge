@@ -276,3 +276,36 @@ The baseline checkout is detached at that commit.
 The changes remain inert. No live DB, status API, systemd, openmerge/* refs,
 GitHub calls in code/tests, public candidate-key activation, or deployment.
 The Stage A 8 deployment Hold remains in force.
+
+Round-3 validation uses the same saved journal export and shared test Postgres
+as above. Every heavy job waits for other agents' Go tests/test binaries/replay,
+then runs serially with GOFLAGS=-p=2, GOMEMLIMIT=4GiB (6GiB for replay),
+GOMAXPROCS=2, and Go/temp/cache paths under ~/.cache. The load-gated runner is
+`~/.cache/om74-heavy.py`.
+
+Validated executable commit: `d8f26ebbc4db67c4c9c918e1eb8834f48f87bda7`.
+
+- Focused runs: **exit 0**, then **exit 1** for two newly added fixture mistakes
+  (changed intent without updating its digest; assuming a fixture SHA had at
+  least 16 characters), then **exit 0** after correction on the rebased code.
+  Failed log: `om-pr74-fix3-focused-fixtures.log`; final:
+  `om-pr74-fix3-focused.log`. All five selected packages passed.
+- Initial `make check`: **exit 2** at lint only, for missing exported-method
+  documentation on BusyError.Temporary; corrected with a comment.
+  Log: `om-pr74-fix3-check-lint.log`. An earlier gofmt attempt **exited 2** for
+  an extra parenthesis in the new test assertion, corrected before running Go.
+- Final `make check`: **exit 0**, zero lint issues, all race/short tests passed,
+  binary built at d8f26eb. Queue 279.102s; serve 146.982s; status 16.844s.
+  Log: `om-pr74-fix3-check.log`.
+- `make test-sim-exits`: **exit 0**, 44.230s.
+  Log: `om-pr74-fix3-sim.log`.
+- Independent comparison against rebased main: **exit 0** for all 90 wire
+  fixtures and all 16 canonical vector files (five v2 and three v1 pairs).
+  Saved event/queue hashes remain exactly those in Saved journal identity above.
+- Compatibility vs rebased origin/main: **exit 0**; 17 legacy exits and 1,055
+  retry/default-digest records match with the same hashes as earlier rounds.
+  Its 84 wire-v1 fixture comparison also passed. Log:
+  `om-pr74-fix3-compat.log`.
+- First replay invocation: **exit 2** before replay because this evidence note
+  was uncommitted; no probe ran. Log: `om-pr74-fix3-replay-dirty.log`.
+  Documentation was committed before retrying.
