@@ -1,10 +1,14 @@
 # Stage A 3b inert component evidence
 
-Baseline: `230ca7e2819fa106178b97c8bc1104f09223e17e` (`origin/main`).
-Implementation checked by the replay harness: `3791c4c0db9e326d3d23905dcfd14f589a670e2d`.
-The final commit adds only this evidence note; its SHA is in the PR body.
+Baseline: `18d585526d1a77f180a2ccb471d12b7631ef515d` (`origin/main`).
+Implementation checked by the replay harness: `2cdc9a13e8bfa28194a42a3faa78981cd0e6700b`.
+The fix-round evidence commit updates only this note; its SHA is in the PR body.
+Round 1 retains the inert boundary and fixes dismissal actor validation/conflicts,
+issue-comment namespace isolation and later-page failure classification.
 Go: `go1.27.2 linux/amd64`. Dedicated worktrees: `/tmp/om-sa-3b` and
-`/tmp/om-sa-3b-baseline` (detached baseline).
+`$HOME/.cache/om-pr63-baseline` (detached baseline).
+PR #56 landed during verification; the three implementation/evidence commits
+were rebased cleanly onto it, retaining the new gitops/forge diff capability.
 
 This is merge/component evidence. No live journal, live database, App permissions,
 service units, workflows, queue configuration or `openmerge/*` refs were changed.
@@ -25,10 +29,10 @@ existing fixtures are unchanged. The implementation is below the 3,000-line
 review ceiling (final count in the PR body).
 
 ```sh
-go list -deps ./cmd/openmerge > /tmp/om-sa-3b-deps.txt
+go list -deps ./cmd/openmerge > $HOME/.cache/om-pr63-fix1-rebased-builds/new-deps.txt
 rg -n 'NativeReviews|NativeReviewReader|nativePages|nativeFallback' \
   --glob '*.go' --glob '!native_reviews*' .
-go tool nm /tmp/om-sa-3b-new > /tmp/om-sa-3b-nm.txt
+go tool nm "$HOME/.cache/om-pr63-fix1-rebased-builds/new" > "$HOME/.cache/om-pr63-fix1-rebased-builds/new-nm.txt"
 ```
 
 The call-site search has exactly one result: the new private storage field in
@@ -49,16 +53,16 @@ In each checkout, with the corresponding output path:
 ```sh
 CGO_ENABLED=0 go build -trimpath -buildvcs=false \
   -ldflags '-X main.version=stage-a-3b-evidence' \
-  -o /tmp/om-sa-3b-new ./cmd/openmerge
-# Baseline output: /tmp/om-sa-3b-old
-sha256sum /tmp/om-sa-3b-old /tmp/om-sa-3b-new
-cmp /tmp/om-sa-3b-old /tmp/om-sa-3b-new
+  -o "$HOME/.cache/om-pr63-fix1-rebased-builds/new" ./cmd/openmerge
+# Baseline output: $HOME/.cache/om-pr63-fix1-rebased-builds/old
+sha256sum "$HOME/.cache/om-pr63-fix1-rebased-builds/"{old,new}
+cmp "$HOME/.cache/om-pr63-fix1-rebased-builds/"{old,new}
 ```
 
 Both builds exit **0**. Binary hashes:
 
-- Baseline: `3cde552382a1b7635121c328d9f6d3f57c59c1423c4ac808ced6c56eb79f4763`.
-- Candidate: `e14745294adc7717a90dfa2202754093348676a0689e55c8bab498862c9480bf`.
+- Baseline: `ad285f2023fe617072585f2a9e57cba0db9142ec6cc73e3d0b3d924fa6e8b0e8`.
+- Candidate: `3f4d3faece52834de4f25b3965ba19c8ed369058e7fa4835673a07760f9f4571`.
 
 `cmp` exits **1**: the binaries are not byte-identical because the reader and DTOs
 compile into the existing forge packages, with new exported driver/fake methods
@@ -71,10 +75,10 @@ linked code remains. Behavioral evidence therefore uses the comparisons below.
 Commands (both comparison tools are unchanged from main):
 
 ```sh
-python3 scripts/check-phase2-compatibility.py /tmp/om-sa-3b-baseline \
-  > /tmp/om-sa-3b-compat.log 2>&1; echo exit=$?
-python3 scripts/check-stage-a-grant-compatibility.py /tmp/om-sa-3b-baseline \
-  /tmp/om-sa-3b-replay > /tmp/om-sa-3b-replay.log 2>&1; echo exit=$?
+python3 scripts/check-phase2-compatibility.py "$HOME/.cache/om-pr63-baseline" \
+  > ~/.cache/om-pr63-compat-rebased.log 2>&1; echo exit=$?
+python3 scripts/check-stage-a-grant-compatibility.py "$HOME/.cache/om-pr63-baseline" \
+  "$HOME/.cache/om-pr63-fix1-rebased-replay" > ~/.cache/om-pr63-replay-rebased.log 2>&1; echo exit=$?
 ```
 
 Both exit **0**. The latter requires clean input checkouts and retains its Go
@@ -112,6 +116,14 @@ fallback provenance. Driver tests cover all paginated collections, 304 response
 Date revalidation, missing/invalid Date, missing dismissal events/times, ambiguous
 multiple dismissal events, malformed/cyclic/over-limit/truncated pagination,
 403/404 and malformed/partial responses, plus settlement's reserved capacity.
+Round 1 adds valid-vs-ID-less dismissal
+actor joins in both directions, valid-ID conflicts (including duplicate event
+IDs), invalid logins, missing actors and explicit `ghost` actors/authors with
+and without IDs. Valid ghost IDs remain source identities; ID-less authors fail
+acquisition and ID-less actors remain unknown without erasing valid evidence.
+Issue comments discard payload review/commit references while inline comments
+retain them. Later-page 404, 206 and null responses wrap both failure sentinels
+on every collection and discard the whole observation.
 
 PR 6's durable persistence, restart and recovery are deliberately not implemented
 here. The README and capability comments specify pinning the first fallback
@@ -121,12 +133,16 @@ that acquisition supplies the stable identity and independently revalidated
 clock inputs that durable pinning needs.
 
 ```sh
-go test -race -count=1 ./internal/forge/... > /tmp/om-sa-3b-race.log 2>&1; echo exit=$?
+go test -race -count=1 ./internal/forge/... > ~/.cache/om-pr63-race.log 2>&1; echo exit=$?
 OPENMERGE_TEST_DATABASE_URL='postgres://postgres@localhost:54329/postgres?sslmode=disable' \
-  make check > /tmp/om-sa-3b.log 2>&1; echo exit=$?
+  make check > ~/.cache/om-pr63-fix1.log 2>&1; echo exit=$?
 ```
 
-Focused race suite exits **0**. The initial `make check` attempt exited **2** at
-lint; the issues were fixed and its log retained as `/tmp/om-sa-3b-first.log`.
-The final test-Postgres `make check` exits **0**, including formatting, lint,
-the full short race suite, database integration tests and the production build.
+The focused race suite exits **0**. An initial focused test run exited **1**
+(unknown-account representation and a fixture intercepting local token requests);
+both were corrected and the focused rerun exits **0**. The earlier full
+`make check` exits **0**, retained as
+`~/.cache/om-pr63-fix1-before-rebase.log`. The final rebased `make check` exits **0**, including formatting, lint,
+the full short race suite, shared-test-Postgres integration and production build.
+All scratch builds use `GOTMPDIR="$HOME/.cache/om-pr63-tmp"`; no Postgres instance
+was initialized.
