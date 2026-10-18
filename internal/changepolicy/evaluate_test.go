@@ -308,11 +308,11 @@ func TestRequirementTypedCauses(t *testing.T) {
 	matched := false
 	for _, result := range got.Requirements {
 		if result.Cause == CauseRule {
-			matched = result.InventoryAffected && result.UnresolvedCause == UnresolvedInventory
+			matched = !result.InventoryAffected && result.UnresolvedCause != UnresolvedInventory
 		}
 	}
 	if !matched {
-		t.Fatalf("incomplete unsafe path rule lost inventory cause: %+v", got)
+		t.Fatalf("unsafe path uncertainty mislabeled inventory: %+v", got)
 	}
 	in, policy = currentInput(), writerPolicy()
 	in.Classification.Files = []FileEvidence{{NewPath: "docs/readme.md", Facts: map[string]Truth{"policy": False}}}
@@ -323,5 +323,21 @@ func TestRequirementTypedCauses(t *testing.T) {
 	got = Evaluate(policy, in)
 	if len(got.Requirements) != 1 || got.Requirements[0].Cause != CauseRuleCodeOwners || got.Requirements[0].UnresolvedCause != UnresolvedEligibility {
 		t.Fatalf("unknown writer eligibility was inferred as owner uncertainty: %+v", got)
+	}
+}
+
+func TestUnsafePathsDoNotBecomeInventoryCause(t *testing.T) {
+	c := Classification{InventoryComplete: false, PathsSafe: false, Paths: []string{"docs/a.md"}}
+	m := Match{Paths: []string{"docs/**"}}
+	result, err := MatchRule(m, c, HumanAccount)
+	if err != nil || result != Unknown {
+		t.Fatal(result, err)
+	}
+	if inventoryAffected(m, c, HumanAccount, result) {
+		t.Fatal("unsafe-path uncertainty mislabeled inventory")
+	}
+	c.PathsSafe = true
+	if !inventoryAffected(m, c, HumanAccount, result) {
+		t.Fatal("inventory-only uncertainty not detected")
 	}
 }

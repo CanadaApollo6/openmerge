@@ -11,6 +11,8 @@ import (
 // Policy contains one queue's policy and fresh membership observations.
 // Static resolved names/IDs belong in the digest; memberships and grants do not.
 type Policy struct {
+	// Digest is the semantic PolicyDigest computed by the configuration boundary.
+	Digest    string
 	Approvals *Approvals
 	Groups    map[string]IdentitySet
 }
@@ -176,7 +178,7 @@ func inventoryAffected(m Match, c Classification, author AccountKind, match Trut
 		return false
 	}
 	complete := c
-	complete.InventoryComplete, complete.PathsSafe = true, true
+	complete.InventoryComplete = true
 	withoutInventoryGap, err := MatchRule(m, complete, author)
 	return err == nil && withoutInventoryGap != Unknown
 }

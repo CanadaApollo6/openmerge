@@ -95,6 +95,9 @@ func boundedReceiptIdentity(r cp.ReceiptIdentity) bool {
 	return true
 }
 func (e ApprovalReceiptRecorded) rejectionReason() string {
+	if !digestHex(e.Supplied.BriefDigest) {
+		return "receipt_digest_malformed"
+	}
 	if e.Supplied.BriefDigest != e.Current.BriefDigest {
 		return "receipt_digest_mismatch"
 	}
@@ -111,9 +114,17 @@ func (e ApprovalReceiptRecorded) rejectionReason() string {
 // PrepareBareReceipt is 11a's bare-digest contract: construct all bindings from
 // current RECORDED evidence, retaining the supplied digest verbatim after parsing.
 func (s State) PrepareBareReceipt(policy cp.Policy, b ApprovalBasis, actor cp.Identity, commentID string, created time.Time, digest string) (ApprovalReceiptRecorded, error) {
-	parsed, err := ParseReceiptDigest(digest)
-	if err != nil {
-		return ApprovalReceiptRecorded{}, err
+	parsed, parseErr := ParseReceiptDigest(digest)
+	if parseErr != nil {
+		// Preserve bounded raw audit data, including invalid UTF-8 as replacement
+		// characters. Truncate by rune so every rejected event remains encodable.
+		parsed = strings.ToValidUTF8(digest, "�")
+		if len(parsed) > 1024 {
+			parsed = parsed[:1024]
+			for !utf8.ValidString(parsed) {
+				parsed = parsed[:len(parsed)-1]
+			}
+		}
 	}
 	current, err := s.RecordedBrief(policy, b)
 	if err != nil {
@@ -202,6 +213,12 @@ func validateReceiptSnapshot(p receiptProjection, approvals approvalProjection, 
 			total++
 			if revision.Revision == 0 || e.Basis.Revision > revision.Revision || e.Basis.Revision == revision.Revision && (e.Basis.Head != revision.HeadSHA || !e.BoundaryAt.Equal(revision.Basis.At)) {
 				return fmt.Errorf("receipt basis contradicts revision")
+			}
+			if e.Basis.Revision < revision.Revision {
+				old, ok := approvals[id].ReceiptBoundaries[e.Basis.Revision]
+				if !ok || old.HeadSHA != e.Basis.Head || !old.Basis.At.Equal(e.BoundaryAt) {
+					return fmt.Errorf("receipt basis contradicts old revision")
+				}
 			}
 			if !e.Accepted {
 				rejected[e.Actor.ID]++

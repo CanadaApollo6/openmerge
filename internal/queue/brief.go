@@ -7,6 +7,11 @@ import (
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
 )
 
+// BriefPolicyMismatchError asks 9/11a to defer or reject an explicit policy mismatch.
+type BriefPolicyMismatchError struct{ Supplied, Recorded string }
+
+func (e BriefPolicyMismatchError) Error() string { return "brief policy digest mismatch" }
+
 // RecordedBrief builds receipt identity exclusively from the journal projection.
 // Fresh owner membership belongs to EvaluateApprovals and cannot enter this API.
 func (s State) RecordedBrief(policy cp.Policy, b ApprovalBasis) (brief.Fact, error) {
@@ -20,6 +25,9 @@ func (s State) RecordedBrief(policy cp.Policy, b ApprovalBasis) (brief.Fact, err
 	}
 	c := stored.Evidence.Classification
 	i := c.Inputs
+	if policy.Digest != i.PolicyDigest {
+		return brief.Fact{}, BriefPolicyMismatchError{Supplied: policy.Digest, Recorded: i.PolicyDigest}
+	}
 	if f.Accountability.PolicyDigest != i.PolicyDigest {
 		return brief.Fact{}, fmt.Errorf("brief accountability policy mismatch")
 	}
@@ -34,5 +42,5 @@ func (s State) RecordedBrief(policy cp.Policy, b ApprovalBasis) (brief.Fact, err
 			in.Stances[user] = v.Event.Stance
 		}
 	}
-	return brief.Build(policy, in, f.Intent.Title, f.Intent.Body)
+	return brief.BuildRecorded(policy, in, f.Intent.Title, f.Intent.Body)
 }

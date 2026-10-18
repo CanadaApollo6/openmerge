@@ -49,22 +49,28 @@ type Fact struct {
 // classification and claimed intent; callers own State-level identity assembly
 // and must not pass fresh overlay identity observations through this function.
 func Build(policy cp.Policy, in cp.Input, title, body string) (Fact, error) {
-	if err := validateBuildInputs(policy, in); err != nil {
+	f, err := BuildRecorded(policy, in, title, body)
+	if err != nil {
 		return Fact{}, err
 	}
-	c := in.Classification
-	f := Fact{Classification: &c, Intent: &Intent{true, cp.NormalizeIntent(title), cp.NormalizeIntent(body), cp.IntentDigest(title, body)}, ApprovalsRequired: policy.Approvals != nil}
-
-	// Requirement expansion is independent of receipt progress. Seed the
-	// recorded basis first, then bind the canonical digest before evaluating the
-	// current stances so receipt-only approvals use the exact brief identity.
-	in.Current = receiptBasis(f)
-	f.Obligations = obligations(cp.Evaluate(policy, in).Requirements)
 	identity, err := Identity(f)
 	if err != nil {
 		return Fact{}, err
 	}
 	in.Current = identity
+	f.Obligations = obligations(cp.Evaluate(policy, in).Requirements)
+	return f, nil
+}
+
+// BuildRecorded expands only recorded evidence. Fresh progress belongs in
+// OverlayProgress; receipt preparation can hash this fact once.
+func BuildRecorded(policy cp.Policy, in cp.Input, title, body string) (Fact, error) {
+	if err := validateBuildInputs(policy, in); err != nil {
+		return Fact{}, err
+	}
+	c := in.Classification
+	f := Fact{Classification: &c, Intent: &Intent{true, cp.NormalizeIntent(title), cp.NormalizeIntent(body), cp.IntentDigest(title, body)}, ApprovalsRequired: policy.Approvals != nil}
+	in.Current = receiptBasis(f)
 	f.Obligations = obligations(cp.Evaluate(policy, in).Requirements)
 	return f, nil
 }
@@ -116,6 +122,36 @@ func obligations(results []cp.RequirementResult) []Obligation {
 	return out
 }
 
+// OverlayProgress joins fresh evaluation progress onto recorded requirements.
+// It never replaces classification, intent or requirement identity. Unmatched
+// rows become unresolved, so missing fresh evidence cannot preserve old success.
+func OverlayProgress(recorded Fact, fresh cp.Evaluation) Fact {
+	out := recorded
+	out.Obligations = slices.Clone(recorded.Obligations)
+	progressRows := obligations(fresh.Requirements)
+	for i, row := range out.Obligations {
+		progress := Obligation{Unresolved: true, Code: "unknown_eligibility", Explanation: "fresh progress unavailable"}
+		for _, candidate := range progressRows {
+			if sameRequirement(row, candidate) {
+				progress = candidate
+				break
+			}
+		}
+		row.PoolIDs = slices.Clone(progress.PoolIDs)
+		row.EligibleIDs = slices.Clone(progress.EligibleIDs)
+		row.ApprovedIDs = slices.Clone(progress.ApprovedIDs)
+		row.Unresolved, row.Met = progress.Unresolved, progress.Met
+		row.Code, row.Explanation = progress.Code, progress.Explanation
+		out.Obligations[i] = row
+	}
+	return out
+}
+
+func sameRequirement(a, b Obligation) bool {
+	return a.Cause == b.Cause && a.Path == b.Path && a.Side == b.Side && a.Requirement == b.Requirement &&
+		(a.RuleIndex == nil && b.RuleIndex == nil || a.RuleIndex != nil && b.RuleIndex != nil && *a.RuleIndex == *b.RuleIndex)
+}
+
 // sortedSet gives nil and empty the same canonical [] spelling.
 func sortedSet[T ~string](v []T) []T {
 	out := append([]T{}, v...)
@@ -147,9 +183,6 @@ func canonicalPool(p cp.IdentitySet) cp.IdentitySet {
 func Canonical(f Fact) ([]byte, error) {
 	if f.Classification == nil || !f.Classification.Inputs.Recorded() || f.Intent == nil || !f.Intent.Recorded || f.Intent.Digest != cp.IntentDigest(f.Intent.Title, f.Intent.Body) {
 		return nil, fmt.Errorf("brief evidence not recorded or intent inconsistent")
-	}
-	if f.ApprovalsRequired && len(f.Obligations) == 0 {
-		return nil, fmt.Errorf("brief approvals require expanded requirements")
 	}
 	// Copy only the slices whose elements are normalized below. Maps remain
 	// read-only, so callers retain their exact source evidence without a

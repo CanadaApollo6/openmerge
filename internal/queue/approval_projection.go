@@ -32,6 +32,8 @@ type ApprovalFacts struct {
 	PriorHeads     []string
 	HistoryKnown   bool
 	Saturated      bool
+	// ReceiptBoundaries retains old durable revisions only when receipts need them.
+	ReceiptBoundaries map[ChangeRevision]RevisionRecord `json:",omitempty"`
 }
 
 // AttributedStance pins the first source observation; LastReadID alone may refresh.
@@ -222,6 +224,7 @@ func recomputeUser(f *ApprovalFacts, user string, revision ChangeRevision) {
 }
 
 func cloneApprovalFacts(f ApprovalFacts) ApprovalFacts {
+	f.ReceiptBoundaries = maps.Clone(f.ReceiptBoundaries)
 	f.PriorHeads = slices.Clone(f.PriorHeads)
 	f.Sources = maps.Clone(f.Sources)
 	f.Latest = maps.Clone(f.Latest)
@@ -584,6 +587,11 @@ func validateApprovalSnapshot(p approvalProjection, revisions map[int]RevisionRe
 				revision = r.Revision
 			}
 		}
+		for key, boundary := range f.ReceiptBoundaries {
+			if len(f.ReceiptBoundaries) > maxSnapshotEntries || key == 0 || key >= revision || key != boundary.Revision || boundary.ChangeID != id || !forge.ValidDiffObjectID(boundary.HeadSHA) || boundary.Basis.At.IsZero() {
+				return fmt.Errorf("invalid receipt revision history")
+			}
+		}
 		if revision == 0 || len(f.PriorHeads) > maxSnapshotEntries || uint64(len(f.PriorHeads)) >= uint64(revision) {
 			return fmt.Errorf("invalid approval history")
 		}
@@ -703,6 +711,15 @@ func (s *State) advanceApprovalRevision(current RevisionRecord, revision ChangeR
 		return
 	}
 	f = cloneApprovalFacts(f)
+	for _, receipt := range s.receipts[current.ChangeID] {
+		if receipt.Basis.Revision == current.Revision {
+			if f.ReceiptBoundaries == nil {
+				f.ReceiptBoundaries = map[ChangeRevision]RevisionRecord{}
+			}
+			f.ReceiptBoundaries[current.Revision] = current
+			break
+		}
+	}
 	if f.HistoryKnown && !slices.Contains(f.PriorHeads, current.HeadSHA) {
 		f.PriorHeads = append(f.PriorHeads, current.HeadSHA)
 	}

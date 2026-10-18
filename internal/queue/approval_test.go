@@ -330,7 +330,7 @@ func decisionSetup(t *testing.T, resolve classification.OwnerResolver) (State, A
 	account := accountability(b, person(7), person(1), nil)
 	account.PolicyDigest = current.PolicyDigest
 	s = Apply(Apply(s, account), Intent(b, "title", "body"))
-	p := cp.Policy{Approvals: &cp.Approvals{Default: cp.Requirement{Selector: cp.AnyWriter, Count: 1}, Rules: []cp.Rule{{When: cp.Match{Touches: []string{"docs/**"}}, Require: cp.Requirement{Selector: cp.CodeOwners}}}}}
+	p := cp.Policy{Digest: current.PolicyDigest, Approvals: &cp.Approvals{Default: cp.Requirement{Selector: cp.AnyWriter, Count: 1}, Rules: []cp.Rule{{When: cp.Match{Touches: []string{"docs/**"}}, Require: cp.Requirement{Selector: cp.CodeOwners}}}}}
 	return s, b, current, p, eligibilityEvent(b)
 }
 func ownerPool(ids ...int64) classification.OwnerResolver {

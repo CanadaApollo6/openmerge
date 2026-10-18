@@ -18,8 +18,9 @@ No endpoint, CLI, rendering, config, production emission or landing wiring exist
 SHA-256 is lowercase hex. The outer ordered fields are `Version` (exactly
 `openmerge/brief/v2`), `Classification`, `IntentDigest`,
 `ApprovalsRequired`, `Requirements`. `ApprovalsRequired` distinguishes a legacy
-queue with no approvals component from an invalid opted-in brief with no
-expanded requirements; the latter is rejected. The v1 byte vectors remain
+queue with no approvals component from an opted-in brief whose definite
+`require: none` rules legitimately expand to zero requirements. Both use
+`"Requirements":[]`; Build validates defaults, rules and the recorded basis. The v1 byte vectors remain
 preserved as `testdata/v1-*.{json,sha256}` and are never replaced.
 The nested classification uses the shared PR 5 DTO's declaration order and JSON
 field spellings. Map keys use encoding/json lexical order; HTML-sensitive text,
@@ -62,7 +63,7 @@ LF and surrounding Unicode whitespace is trimmed by the exact shared PR 6
 `changepolicy.NormalizeIntent` / `IntentDigest` implementation. Only its digest
 enters canonical bytes.
 
-`testdata/{complete,incomplete,empty-intent,complex}.{json,sha256}` pins v2
+`testdata/{complete,incomplete,empty-intent,complex,no-requirements}.{json,sha256}` pins v2
 canonical bytes and SHA-256 vectors. The complex vector covers unsorted
 multi-file rename rows, owner/set and requirement deduplication, nil/empty
 normalization, and JSON escapes for `<`, `&`, U+2028 and a control byte.
@@ -87,6 +88,15 @@ read or merge fresh identity overlays; State-level identity construction remains
 `State.RecordedBrief`'s responsibility: it reads the recorded classification,
 accountability and intent, with no fresh-overlay input. Fresh membership is
 used separately by `State.EvaluateApprovals` for progress and eligibility.
+`brief.OverlayProgress` joins that result onto recorded obligations by
+(Cause, RuleIndex, Path, Side, Requirement), preserving every identity field.
+Unmatched rows show unresolved progress. Consumers must overlay the Fact after
+construction; passing fresh classification pools to Build changes identity.
+`RecordedBrief` uses `BuildRecorded` to expand without hashing; receipt
+preparation then computes the identity once. `Build` also provides leaf-level
+progress evaluation for callers with recorded inputs. The live Policy.Digest
+must match Inputs.PolicyDigest; a mismatch returns BriefPolicyMismatchError.
+See the producer contract for policy binding and unsupported v1 receipts.
 
 Every evaluator requirement carries a typed expansion `Cause` and optional
 `RuleIndex`; renderers must not parse `Origin`. Its typed `UnresolvedCause`

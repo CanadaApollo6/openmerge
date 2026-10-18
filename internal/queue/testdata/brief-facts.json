@@ -125,12 +125,16 @@
       "PoolIDs": [
         "github.com:user:2"
       ],
-      "EligibleIDs": [],
-      "ApprovedIDs": [],
-      "Unresolved": true,
-      "Met": false,
-      "Code": "unknown_eligibility",
-      "Explanation": "reviewer eligibility unresolved"
+      "EligibleIDs": [
+        "github.com:user:2"
+      ],
+      "ApprovedIDs": [
+        "github.com:user:2"
+      ],
+      "Unresolved": false,
+      "Met": true,
+      "Code": "met",
+      "Explanation": ""
     }
   ]
 }

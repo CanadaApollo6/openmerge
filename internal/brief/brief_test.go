@@ -26,6 +26,9 @@ func clone(f Fact) Fact {
 }
 func TestCanonicalVectors(t *testing.T) {
 	cases := map[string]Fact{"complete": sample(), "incomplete": sample(), "empty-intent": sample(), "complex": complexVector()}
+	none := sample()
+	none.Obligations = nil
+	cases["no-requirements"] = none
 	f := cases["incomplete"]
 	f.Classification.InventoryComplete = false
 	f.Classification.HunksComplete = false
@@ -72,6 +75,14 @@ func TestV1VectorsPreserved(t *testing.T) {
 		"incomplete":   "41a0a7a649f620188dc1f39bc03050695d61acce1e12b95c2ee77e77b5d6b34b",
 		"empty-intent": "237afe4a534dff8ca82a0e76dd93b47f7f26d85da8924c883a8a2198616d8663",
 	} {
+		supplied, err := Identity(sample())
+		if err != nil {
+			t.Fatal(err)
+		}
+		supplied.BriefDigest = want
+		if err = ValidateReceipt(supplied, sample()); err == nil || err.Error() != "receipt_binding_mismatch" {
+			t.Fatal("v1 receipt accepted", err)
+		}
 		raw, err := os.ReadFile(filepath.Join("testdata", "v1-"+name+".sha256"))
 		if err != nil || strings.TrimSpace(string(raw)) != want {
 			t.Fatalf("v1 vector %s changed: %v", name, err)
@@ -87,8 +98,8 @@ func TestV1VectorsPreserved(t *testing.T) {
 func TestCanonicalRequirementsAndFactExclusions(t *testing.T) {
 	f := sample()
 	f.Obligations = nil
-	if _, err := Canonical(f); err == nil {
-		t.Fatal("opted-in approvals accepted no requirements")
+	if _, err := Canonical(f); err != nil {
+		t.Fatal("require:none rejected", err)
 	}
 	f.ApprovalsRequired = false
 	if _, err := Canonical(f); err != nil {
@@ -151,8 +162,8 @@ func TestBuildValidatesAndUsesCanonicalReceiptBinding(t *testing.T) {
 	empty.Classification.Facts = map[string]cp.Truth{"docs": cp.True, "policy": cp.False}
 	empty.Classification.Files[0].Facts["policy"] = cp.False
 	emptyPolicy := cp.Policy{Approvals: &cp.Approvals{Default: cp.Requirement{Selector: cp.AnyWriter, Count: 1}, Rules: []cp.Rule{{When: cp.Match{Labels: []string{"docs"}}, Require: cp.Requirement{Selector: cp.None}}}}}
-	if _, err := Build(emptyPolicy, empty, "Title", "Body"); err == nil {
-		t.Fatal("Build accepted opted-in policy with no expanded requirements")
+	if got, err := Build(emptyPolicy, empty, "Title", "Body"); err != nil || len(got.Obligations) != 0 || !got.ApprovalsRequired {
+		t.Fatal("Build rejected require:none", got, err)
 	}
 }
 
@@ -302,5 +313,29 @@ func TestPolicyOwnerDiagnosticsExcluded(t *testing.T) {
 	three, _ := Digest(f)
 	if two == three {
 		t.Fatal("stable resolution value omitted")
+	}
+}
+
+func TestOverlayJoinsOnlyExactRecordedRequirements(t *testing.T) {
+	recorded := complexVector()
+	before, _ := Digest(recorded)
+	for _, mutate := range []func(*cp.RequirementResult){
+		func(r *cp.RequirementResult) { r.Cause = cp.CauseDefault },
+		func(r *cp.RequirementResult) { i := 4; r.RuleIndex = &i },
+		func(r *cp.RequirementResult) { r.Path = "other" },
+		func(r *cp.RequirementResult) { r.Side = cp.OldSide },
+		func(r *cp.RequirementResult) { r.Requirement.Count++ },
+	} {
+		row := recorded.Obligations[0]
+		result := cp.RequirementResult{Cause: row.Cause, RuleIndex: row.RuleIndex, Path: row.Path, Side: row.Side, Requirement: row.Requirement, Met: true}
+		mutate(&result)
+		overlaid := OverlayProgress(recorded, cp.Evaluation{Requirements: []cp.RequirementResult{result}})
+		if overlaid.Obligations[0].Met {
+			t.Fatal("nonmatching row joined")
+		}
+		after, err := Digest(overlaid)
+		if err != nil || before != after {
+			t.Fatal("overlay changed digest", err)
+		}
 	}
 }

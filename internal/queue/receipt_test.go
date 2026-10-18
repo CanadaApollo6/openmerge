@@ -37,9 +37,10 @@ func realReceipt(t *testing.T, s State, b ApprovalBasis, p cp.Policy, id string,
 	return e, current
 }
 func TestReceiptWireFactGoldenAndRejectedBindings(t *testing.T) {
-	s, b, _, p, _ := decisionSetup(t, ownerPool(2))
+	s, b, _, p, fresh := decisionSetup(t, ownerPool(2))
 	f := receiptFact(t, s, b, p)
 	e, current := realReceipt(t, s, b, p, "20", b.At.Add(time.Minute))
+	f = brief.OverlayProgress(f, s.evaluateApprovalsTest(p, current, fresh, ownerPool(2)))
 	_, raw, err := EncodeEvent(e)
 	if err != nil {
 		t.Fatal(err)

@@ -129,56 +129,54 @@ func TestRecordedBriefIgnoresFreshMembership(t *testing.T) {
 // Each generated transition begins at a reachable near-capacity state, then
 // must encode, decode, and re-encode byte-identically. Seeds cross capacity with
 // receipt positives, native noise, barriers, duplicate receipts and rejections.
-func FuzzReceiptSnapshotReachability(f *testing.F) {
-	f.Add([]byte{0, 1, 2, 3, 4, 5, 0})
-	f.Add([]byte{1, 1, 1, 0, 2, 4})
-	f.Add([]byte{2, 3, 0, 5})
-	f.Fuzz(func(t *testing.T, actions []byte) {
-		if len(actions) > 16 {
-			actions = actions[:16]
-		}
-		s, b, _, p, _ := decisionSetup(t, ownerPool(2))
-		receipt, _ := realReceipt(t, s, b, p, "99", b.At)
-		s = Apply(s, receipt)
-		for i := 0; i < maxApprovalSources-3; i++ {
-			s = Apply(s, native(b, int64(10000+i), cp.Approve, b.At.Add(time.Minute)))
-		}
-		s = restart(t, s)
-		for i, action := range actions {
-			id := int64(20000 + i)
-			switch action % 6 {
-			case 0:
-				e, _ := realReceipt(t, s, b, p, fmt.Sprint(id), b.At.Add(2*time.Minute))
-				s = Apply(s, e)
-			case 1:
-				s = Apply(s, native(b, id, cp.Approve, b.At.Add(3*time.Minute)))
-			case 2:
-				s = Apply(s, command(b, id, cp.Withdraw, b.At.Add(4*time.Minute)))
-			case 3:
-				s = Apply(s, native(b, id, cp.RequestChanges, b.At.Add(5*time.Minute)))
-			case 4:
-				s = Apply(s, receipt)
-			case 5:
-				e := receipt
-				e.CommentID = fmt.Sprint(id)
-				e.Supplied.BriefDigest = strings.Repeat("f", 64)
-				e.Accepted = false
-				e.ReasonCode = "receipt_digest_mismatch"
-				s = Apply(s, e)
+func TestReceiptSnapshotReachability(t *testing.T) {
+	s, b, _, p, _ := decisionSetup(t, ownerPool(2))
+	receipt, _ := realReceipt(t, s, b, p, "99", b.At)
+	s = Apply(s, receipt)
+	for i := 0; i < maxApprovalSources-3; i++ {
+		s = Apply(s, native(b, int64(10000+i), cp.Approve, b.At.Add(time.Minute)))
+	}
+	s = restart(t, s)
+	initial := s
+	for caseIndex, actions := range [][]byte{{0, 1, 2, 3, 4, 5, 0}, {1, 1, 1, 0, 2, 4}, {2, 3, 0, 5}, {5, 4, 3, 2, 1, 0}} {
+		t.Run(fmt.Sprint(caseIndex), func(t *testing.T) {
+			s := initial
+			for i, action := range actions {
+				id := int64(20000 + i)
+				switch action % 6 {
+				case 0:
+					e, _ := realReceipt(t, s, b, p, fmt.Sprint(id), b.At.Add(2*time.Minute))
+					s = Apply(s, e)
+				case 1:
+					s = Apply(s, native(b, id, cp.Approve, b.At.Add(3*time.Minute)))
+				case 2:
+					s = Apply(s, command(b, id, cp.Withdraw, b.At.Add(4*time.Minute)))
+				case 3:
+					s = Apply(s, native(b, id, cp.RequestChanges, b.At.Add(5*time.Minute)))
+				case 4:
+					s = Apply(s, receipt)
+				case 5:
+					e := receipt
+					e.CommentID = fmt.Sprint(id)
+					e.Supplied.BriefDigest = strings.Repeat("f", 64)
+					e.Accepted = false
+					e.ReasonCode = "receipt_digest_mismatch"
+					s = Apply(s, e)
+				}
+				s = restart(t, s)
+				got := s.ReceiptRecords(b.ChangeID)[receipt.CommentID]
+				if !got.Accepted || got.Supplied != receipt.Supplied {
+					t.Fatal("accepted pin lost")
+				}
+				raw, _ := EncodeSnapshot(s)
+				decoded, err := DecodeSnapshot(raw)
+				again, _ := EncodeSnapshot(decoded)
+				if err != nil || !bytes.Equal(raw, again) {
+					t.Fatal("reachable state not round-trippable", err)
+				}
 			}
-			s = restart(t, s)
-			got := s.ReceiptRecords(b.ChangeID)[receipt.CommentID]
-			if !got.Accepted || got.Supplied != receipt.Supplied {
-				t.Fatal("accepted pin lost")
-			}
-			raw, _ := EncodeSnapshot(s)
-			decoded, err := DecodeSnapshot(raw)
-			again, _ := EncodeSnapshot(decoded)
-			if err != nil || !bytes.Equal(raw, again) {
-				t.Fatal("reachable state not round-trippable", err)
-			}
-		}
-	})
+		})
+	}
 }
 
 func TestReceiptCannotBindBarrierSource(t *testing.T) {
