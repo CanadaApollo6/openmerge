@@ -58,11 +58,30 @@ func ownerInventory(c Classification) (map[ownerPath]struct{}, error) {
 // entryFields inspects only the recorded pattern/owner fields, never matching
 // CODEOWNERS patterns or deriving memberships. A trailing comment is not an owner.
 func entryFields(entry string) []string {
-	fields := strings.Fields(entry)
-	for i, field := range fields {
-		if strings.HasPrefix(field, "#") {
-			return fields[:i]
+	var fields []string
+	var word strings.Builder
+	for i := 0; i < len(entry); i++ {
+		ch := entry[i]
+		if ch == '\\' && i+1 < len(entry) {
+			word.WriteByte(ch)
+			i++
+			word.WriteByte(entry[i])
+			continue
 		}
+		if ch == '#' {
+			break
+		}
+		if ch == ' ' || ch == '\t' || ch == '\r' {
+			if word.Len() > 0 {
+				fields = append(fields, word.String())
+				word.Reset()
+			}
+		} else {
+			word.WriteByte(ch)
+		}
+	}
+	if word.Len() > 0 {
+		fields = append(fields, word.String())
 	}
 	return fields
 }

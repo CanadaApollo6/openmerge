@@ -54,20 +54,26 @@ func classificationRange(a, b, c, d int) bool {
 	return a >= 0 && b >= 0 && c >= 0 && d >= 0 && a <= int(^uint(0)>>1)-b && c <= int(^uint(0)>>1)-d
 }
 
+// Version-keyed replay rules pin recorded meaning independently of current derivation.
+var classificationVersions = map[string]struct {
+	diffSemantics     string
+	pathDerivedRename bool
+}{
+	classification.HistoricalVersion: {"git-evidence-v7-bounded-omissions", false},
+	classification.PreviousVersion:   {"git-evidence-v7-bounded-omissions", true},
+	classification.Version:           {forge.DiffSemantics, true},
+}
+
 // Historical versions remain explicit: facets-v1 could record the old rename
 // flag for a single-sided unpaired rename. Never reinterpret stored derivation.
 func validateClassificationValues(e classification.Evidence) error {
 	c, g := e.Classification, e.Governing
 	invalid := func() error { return fmt.Errorf("invalid nested classification evidence") }
-	var semantics string
-	switch c.Inputs.ClassifierVersion {
-	case classification.HistoricalVersion:
-		semantics = "git-evidence-v7-bounded-omissions"
-	case classification.Version:
-		semantics = forge.DiffSemantics
-	default:
+	version, ok := classificationVersions[c.Inputs.ClassifierVersion]
+	if !ok {
 		return invalid()
 	}
+	semantics := version.diffSemantics
 	if g.Semantics != semantics || !classificationCoverage(e.Inventory) || !classificationCoverage(e.Hunks) || !classificationCoverage(g.Coverage) {
 		return invalid()
 	}
@@ -140,7 +146,7 @@ func validateClassificationValues(e classification.Evidence) error {
 			paths[side.p] = true
 		}
 		renamed := f.OldPath != "" && f.NewPath != "" && f.OldPath != f.NewPath
-		if c.Inputs.ClassifierVersion == classification.Version && (f.Renamed != renamed || f.RenamePaired && !renamed) {
+		if version.pathDerivedRename && (f.Renamed != renamed || f.RenamePaired && !renamed) {
 			return invalid()
 		}
 		hunksComplete = hunksComplete && f.Hunks.Complete

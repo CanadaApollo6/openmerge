@@ -149,10 +149,11 @@ func TestIndependentHunksAndUnreadableAttributes(t *testing.T) {
 func TestGoverningDefaultBranchAndPolicyWeakening(t *testing.T) {
 	i, d, g := basis(t, ".openmerge.yml", "docs/CODEOWNERS")
 	g.Config[0].Present = true
-	g.Config[0].ObjectID = "governing-config"
+	g.Config[0].ObjectID = strings.Repeat("9", 40)
+	g.Config[0].Mode = "100644"
 	g.Config[0].Content = "default branch policy"
 	e := classify(t, i, d, g, Settings{Docs: []string{"docs/**"}})
-	if e.Classification.Inputs.ConfigBlob != "governing-config" || e.Classification.Inputs.GoverningCommit == i.Base || e.Classification.Label("policy") != cp.True {
+	if e.Classification.Inputs.ConfigBlob != strings.Repeat("9", 40) || e.Classification.Inputs.GoverningCommit == i.Base || e.Classification.Label("policy") != cp.True {
 		t.Fatal(e)
 	}
 	i.GoverningCommit = i.Head
@@ -163,7 +164,7 @@ func TestGoverningDefaultBranchAndPolicyWeakening(t *testing.T) {
 		if e.Classification.Files[1].Facts["policy"] != cp.True {
 			t.Fatal("owners path not policy")
 		}
-		t.Skip("effective owners and positive owner-required acceptance belong to Stage A 4b")
+		testDocsCodeownersOwnerRequired(t)
 	})
 }
 func TestInvalidationAndRewind(t *testing.T) {
@@ -397,7 +398,7 @@ func TestGeneratedAndCoverageMatrix(t *testing.T) {
 		{"rename one side", []string{"gen/a"}, func(d *forge.RevisionDiff, _ *forge.GoverningFiles) {
 			d.Files[0].NewPath = "src/b"
 			d.Files[0].Rename = forge.DiffExactRename
-		}, cp.False, cp.False, cp.False, cp.False, true},
+		}, cp.False, cp.Unknown, cp.False, cp.True, true},
 		{"binary pattern", []string{"gen/a"}, func(d *forge.RevisionDiff, _ *forge.GoverningFiles) { d.Files[0].Binary = true }, cp.False, cp.True, cp.False, cp.True, true},
 		{"mode pattern", []string{"gen/a"}, func(d *forge.RevisionDiff, _ *forge.GoverningFiles) { d.Files[0].NewMode = "100755" }, cp.False, cp.True, cp.False, cp.True, true},
 		{"unpaired pattern", []string{"gen/a"}, func(d *forge.RevisionDiff, _ *forge.GoverningFiles) {

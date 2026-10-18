@@ -1,4 +1,4 @@
-# Dormant classification component (Stage A 4a)
+# Dormant classification component (Stage A 4a–4b)
 
 `Classify` performs no I/O and accepts PR 2a/2b's pinned forge DTOs. Typed
 `Settings` are component inputs only: the public loader still rejects
@@ -10,7 +10,7 @@ it is never inferred from the pinned queue base, merge base or head.
 The classifier version includes forge `DiffSemantics` (v7), which versions
 inventory limits, exact-object rename pairing, ancestry proofs, governing file
 selection and checked absences, plus bounded hunk semantics. The classifier's
-own governing/hunk mapping uses v1 and facet rules use v2. Historical facets-v1
+own governing/hunk mapping uses v1 and facet rules use v3. Historical facets-v1/v2
 records remain replayable with their recorded meaning. The
 version golden must change when any of those rules change.
 
@@ -27,19 +27,67 @@ patterns also survive unsafe files; only the attribute half becomes unknown.
 On complete inventories a known failing file wins over unknown files. Empty
 diffs have docs/generated unknown, policy false, and unknown true. No comment-only detection exists.
 
-`Deriver` is 4b's seam. Its `Generated` method resolves the attribute half from
-only the supplied governing tree; a matching generated path pattern already
-qualifies independently. Without 4b, the attribute half is unknown, never false.
-Its `Owners` method fills the shared `CodeOwners`/`PolicyOwners` evidence and
-`owned:` facts using the evaluator's exact side/coverage contract. Until then
-both owner completeness flags remain false, with an explicit unknown reason.
-4b **MUST bump the classifier version** (e.g. facets-v3 after this facets-v2
-fix) when it begins deriving owners/attributes. `Owners` must set `unknown`
-itself whenever ownership is unresolved, and must record explicit False for
-every governing owner token absent from the change. Missing `owned:` facts
-read as unknown even with complete inventories.
-4b owns last-match parsing, attribute precedence/unset semantics and identity
-resolution; nothing in 4a claims those parsers are ready.
+`TreeDeriver` implements the `Deriver` seam without I/O. `Generated` resolves
+only the attribute half; typed generated path patterns qualify independently.
+`Owners` fills both independent owner projections and aggregate/per-file
+`owned:` facts. Every governing owner token has explicit false non-matches;
+missing tokens remain unknown. `Classify` verifies the CODEOWNERS probe chain
+and every ancestor attributes probe (both rename sides and deletion old paths),
+regardless of the supplied Deriver. Missing/incomplete coverage is never absence.
+It rejects Derivers that mutate inputs, inventory, paths, hunks or other facets,
+and forces `unknown` on unresolved code owners or required policy ownership.
+
+`OwnerResolver` closes over supplied PR 3a `UserIdentity`/`TeamIdentity` and
+complete, freshly observed membership, using the same stable ID spelling as
+policy actors. No network calls occur here. The future acquisition caller must
+resolve identities/membership first; a missing/stale resolution blocks the
+entry. Emails are never passed to the resolver. Groups have no input here.
+The full code-owner pool must resolve, including mixed email/user entries.
+Mandatory policy ownership may use the real users in a mixed email/user entry;
+email-only, unreadable-team, uncovered and ownerless policy paths block.
+
+CODEOWNERS uses `.github/CODEOWNERS`, `CODEOWNERS`, then `docs/CODEOWNERS`,
+advancing only past a definite absent probe. The last matching line wins;
+a pattern without owners intentionally clears ownership. Source lines and
+invalid-owner diagnostics are retained. User/team names lose `@` and lowercase;
+email local parts preserve case, domains lowercase. Patterns are case sensitive:
+leading slash anchors, basename patterns search all depths, trailing slash
+covers directory contents, `*`/`?` exclude slash, and component `**` crosses
+zero or more directories. `docs/*` excludes deeper files; literal leaves such
+as `/apps/github` and `**/logs` cover descendant paths. Escaped whitespace and
+interior hashes are supported. Leading `\#`, negation and ranges are diagnosed
+as unsupported, following [GitHub's documented exclusions](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners#codeowners-syntax).
+`condition.CompileGlob` is never used for these patterns.
+
+Conservative differences: GitHub skips invalid syntax lines, whereas an invalid
+pattern/file makes this derivation unknown, retaining other observations for
+explanation. Invalid owner tokens make the affected effective entry unresolved;
+they do not silently clear ownership. Files at/over 3 MiB, invalid UTF-8, NULs,
+unreadable or non-regular blobs are unknown. PR 2b's aggregate 1 MiB acquisition
+budget can make evidence unknown sooner. Email resolution is intentionally
+unsupported and mixed entries fail closed for code-owner rules (ADR 0007).
+All sources use the default-branch governing tree, including release queues.
+
+Attributes follow [gitattributes(5)](https://git-scm.com/docs/gitattributes):
+deeper governing files override shallower ones; later assignments win per
+attribute. Basename/slash/`**` rules, character ranges and C-quoted paths are
+supported. Wildmatch operates on bytes (so `?` consumes one UTF-8 byte). Directory patterns do not recurse: use `dir/**`. Negative patterns
+are diagnosed. Set and `=true` mean generated; unset (`-`), unspecified (`!`)
+and `=false` mean no explicit generated mark. Unspecified resets inherited
+marks; no Linguist content heuristic is inferred. Other values are diagnosed
+and unknown. The built-in `binary` macro affects text/diff/merge only and cannot
+mark a file generated. Custom macro definitions (including overrides of binary)
+and unsupported pattern/range syntax are diagnosed and make affected attribute
+ancestry unknown. Host/global/info attributes and head contents are never read.
+Parser vectors are pinned in `parsers_test.go` and `derive_test.go`.
+
+Config provenance mirrors `config.Find`: it accepts exactly one of the four
+config candidates. There is **no precedence winner when two exist**: ConfigBlob
+is empty and `unknown` explains ambiguity; missing/incomplete config probes do
+the same. All four paths remain policy-sensitive. Composite actions under
+`.github/actions/**` are **not** automatically policy; users must list that path
+in future `classification.sensitive` settings when those actions need protection.
+Typed `Settings.Sensitive` exercises this behavior before public activation.
 
 `Evidence` carries the shared classification and bounded governing DTO.
 `ChangeClassified.Evidence.Classification.Files[].Hunks` is the durable hunk
@@ -66,7 +114,7 @@ reading the latest PR revision. Both reject revision zero; absence is unrecorded
 
 The new event is wire v1 with a strict nested presence/unknown-field decoder.
 Its shared DTO field spelling and non-null wire collections are pinned by one registry
-historical golden; complete/incomplete and current facets-v2 examples live under `variants/`, outside the glob.
+historical golden; complete/incomplete and current facets-v3 examples (alongside historical facets-v2) live under `variants/`, outside the glob.
 Snapshots advance to v4 and retain v2/v3 decoding. The classification projection
 is immutable and keyed by change and revision, with durable refresh generation.
 It does not advance planner revisions or create effects. Compaction stays off.
@@ -75,7 +123,7 @@ Wire and snapshot validation share the version allowlist and nested enum,
 truth, label/token, object ID, path, mode, omission count/range, path projection
 and hunk completeness checks. Empty object IDs retain explicit absence or
 unavailable provenance; they never prove absence without the governing probe.
-Historical facets-v1 permits its original unpaired-rename flag; facets-v2 checks
+Historical facets-v1 permits its original unpaired-rename flag; facets-v2/v3 check
 path-derived rename coherence. 11a must still enforce whole-record resource
 budgets and cross-check derivation against acquired evidence before activation.
 Workflow policy paths are only direct `.github/workflows/*.yml`/`*.yaml` files.
