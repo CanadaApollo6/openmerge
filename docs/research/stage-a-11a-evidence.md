@@ -1275,3 +1275,147 @@ Runner/artifact SHA-256 values:
 - `/home/riels/.cache/openmerge-77-r2/guard-python/hostguard.py`: `62e64ec5161f28318a0d58c61ef9ebba0b1c0ab2284970195ce4c4909539217b`.
 
 - `/home/riels/.cache/openmerge-77-r2/guard-python/sitecustomize.py`: `aa907bb032d0ca3dae2bcc79a13aa1439c40663bad044578260de363c409492f`.
+
+
+## Round 5: race-short CI budget (resumed after capacity interruption)
+
+Trial class remains **Hold**; this is test workload/scheduling work, not approval activation or deployment. The failed CI head was `84311ba62a2d7146b895905bf8e0137749ce365a` (run 39179954945, internal/serve exceeded 900 seconds). The base remains `f8066a4f3bc9f2bfb110950b0c6c9aea4cf5ea6f`. Only explicit main and stage-a/11a-shadow-gate refspecs were fetched.
+
+The interrupted attempt left signed commit `5ada57a`, two modified test files, JSON timing logs, and a focused-job wrapper. Its shell load guard matched its own parent command, so no focused go test had started. On resume the waiting wrappers (1869753 and its retry 1896010) were stopped with SIGTERM; no test exit status exists for those waits, and no foreign process was killed. Saved logs without a recorded exit status are not counted as passing gates. The saved commit's author and final two trailers were verified unchanged. Resumed implementation commits are `8f6fa8a` and `3b7f7d2`.
+
+Production slowdown was investigated before accepting a test-only fix. In the original JSON pair, all 178 common legacy top-level tests passed; their elapsed totals were 195.950s on main and 176.580s on the branch. New tests contributed 177.140s in that original serial run. In the first resumed pair, the common legacy totals were 200.200s versus 197.660s, while the branch's added parallel phase occupied about 30s. The per-test data retain individual positive and negative deltas; there is no aggregate legacy slowdown in either diagnostic pair. The required legacy SQL, wire/action/checkpoint, commit-ID and replay differentials below independently check the production path. No production file changed in round 5.
+
+The initial saved diagnostic pair used `-timeout=30m` and both completed successfully; this is historical evidence, not the acceptance gate. The saved second pair and every resumed timing pair use the required `go test -race -short -count=1 -timeout=15m -json ./internal/serve`. No Makefile, workflow, runner, race/short flags or CI timeout was changed.
+
+Changes keep every review assertion in short mode:
+
+- Isolated Stage A tests and subtests run in parallel behind a 16-fixture semaphore. Loopback HTTP identity cases share their schema, fake forge, server and policy across the unmoved/moved-base positions; both failure and recovery assertions still execute for every status and operation. Only the timeout cases use the small HTTP deadline; status-classification cases have a normal five-second request deadline.
+- Short-mode receipt stress seeds the first 63 real rejected receipt events in one transaction, then runs the real command path across the unchanged 64-record cap, oversized raw input, and inclusive cursor outcomes. Full mode ingests the whole original comment workload.
+- Dedupe polls shrink from 20 to 3; native negative noise from 20 to 3; per-reviewer approval counts from 30 to 3. Both one/many cases, all reviewer counts, stale-head filtering, second-pass revocation and exact call-count assertions remain. Full mode retains the original sizes. The real Git governing-tree fixture uses 64 source files under short and all 50,001 otherwise; governing semantics stay asserted in both.
+- Gate tests use the real reconciliation, planner, store claims, worker executor, consequential start, atomic rejection/invalidation, rebuild, landing and settlement phases directly. Short idle polls still perform ordinary acquisition and assert the real planner never schedules a retest; repeated settlement must leave the journal watermark unchanged. The mixed composition must rebuild exactly the approved member after rejection. Full mode retains the repeated cycle workloads.
+- The legacy cancellation test's parent is parallel because each case owns its schema, server and fake forge. Its nine cancellation modes remain sequential, unchanged in size and assertions, and can overlap the new isolated tests. No new real sleeps were introduced.
+
+Coverage retained under `-short`: B1's seven negative stances at final-read/before-start/delayed-response (21 cases); B2 rewrite/forward-move metadata and ancestry failures; B3 all four methods and contributor forged/reserved text; B4 transient-grant retry without consumption; B5 legacy command primitive/event/reply parity, quota and inclusive waiting cursor. Database acquisition ordering/watermark invalidation, eligibility and receipt dedupe, definite/transient identity classification, complete/incomplete immutable caches, static-pool reuse, and per-distinct-reviewer call counts all remain live assertions. The full-size Stage A/cancellation race run also passed on the final code (77.557s, exit 0); the saved full 50,001-file Git fixture run exited 0.
+
+### Timing results (seconds, Go JSON elapsed)
+
+Measurements ran serially on the same 16-logical-CPU host, Go 1.27.2, with no foreign go test/test binary/replay job, `GOFLAGS=-p=2`, `GOMEMLIMIT=4GiB`, the supplied Postgres on port 54329, and caches/temp directories under `~/.cache`. The host guard also covers nested gate helper builds/executables. Each pair runs main first, branch immediately after.
+
+| Pair | Main | Branch | Branch vs main | Test exits |
+|---|---:|---:|---:|---|
+| Saved original diagnostic (30m timeout) | 196.980 | 354.792 | +80.116% | 0 / 0 |
+| Saved first optimization (15m timeout) | 180.574 | 223.772 | +23.923% | 0 / 0 |
+| First resumed optimization (15m timeout) | 201.191 | 228.157 | +13.403% | 0 / 0 |
+| Final acceptance (15m timeout) | 175.059 | 192.079 | +9.722% | 0 / 0 |
+| Final legacy-only control, 178 tests (15m timeout) | 196.468 | 189.295 | -3.651% | 0 / 0 |
+
+The final acceptance pair validates implementation `3b7f7d26d41971202dfa424f469711906ca5333f`. The +10% limit is 192.5649s, leaving **0.4859s** margin; this is a narrow observed pass, not a statistical guarantee. Earlier over-budget measurements remain in the table. Standalone original-branch elapsed decreased from 354.792s to 192.079s. In the required all-package `make check`, serve passed in 247.938s while sharing the job with queue (291.917s).
+
+The final common-legacy elapsed sum rose during overlap (173.970s main, 191.030s branch); cancellation alone was 49.110s versus 64.300s. The identical legacy-only control excludes the new fixtures and passed faster on the branch overall (196.468s / 189.295s), with cancellation 49.210s / 48.720s. That control supports test contention, not a production regression. Individual legacy tests have substantial cadence-related variation across pairs (for example the main provenance test spans 10.380–30.700s); the CSV keeps every delta rather than hiding slower rows. Exact legacy SQL/differential/replay results also remain mandatory.
+
+[Complete sorted per-test and subtest table](stage-a-11a-r5-timings.csv), parsed from `-json`, includes every successful timing row from all pairs and the two legacy-only controls. Rows are sorted by final-branch elapsed descending, then name. Blank means the row is absent from that run. Go's parallel parent elapsed excludes paused children (often 0); child elapsed includes waiting for a fixture slot. Do not sum parents and children or treat summed parallel elapsed as package wall time. Raw logs and SHA-256 values are in the [run manifest](stage-a-11a-r5-runs.json).
+
+Largest top-level rows, sorted by final branch elapsed:
+
+| Test | Original main | Original branch | Final main | Final branch |
+|---|---:|---:|---:|---:|
+| `TestReviewCancellationCannotStarveNewHead` | 49.130 | 48.290 | 49.110 | 64.300 |
+| `TestStageACompositionRejectsOnlyUnapprovedMember` | — | 12.150 | — | 19.920 |
+| `TestQueueCommandPinsHead` | 15.090 | 11.830 | 13.910 | 16.750 |
+| `TestMergeWhenRequiresQueueCheckProvenance` | 30.700 | 14.500 | 10.380 | 15.650 |
+| `TestStageAMalformedReceiptCapAndOversizedRaw` | — | 18.310 | — | 14.820 |
+| `TestUnboundCheckProvenanceStatusAndTimeout` | 10.770 | 15.290 | 12.350 | 10.980 |
+| `TestStageABuildMetadataSurvivesRewriteThenForwardMove` | — | 1.690 | — | 6.990 |
+| `TestStageARebaseGeneratedMembersAfterBaseAdvance` | — | 3.490 | — | 6.840 |
+| `TestUnboundCheckProvenanceRecovers` | 2.680 | 2.120 | 5.890 | 6.230 |
+| `TestStageAFreshRevokedGrantBlocksAcceptedReceipt` | — | 1.270 | — | 5.080 |
+| `TestORCheckFailureWaitsForAlternative` | 5.160 | 5.050 | 5.290 | 5.070 |
+| `TestDeferredBacklogDoesNotStarvePausedWork` | 4.970 | 4.970 | 5.060 | 4.870 |
+| `TestOutsidePushSettlesOutstandingLandingFirst` | 3.290 | 1.800 | 1.920 | 4.830 |
+| `TestStageAGoverningAttributesIndependentOfOpenChanges` | — | 1.200 | — | 4.750 |
+| `TestStageAGateRejectsMalformedGeneratedMemberMetadata` | — | 1.160 | — | 4.510 |
+| `TestLandingCleanupPolicySurvivesConfigurationChange` | 4.430 | 2.550 | 2.630 | 4.490 |
+| `TestServeFastForwardExactHeadAndDivergence` | 2.170 | 2.150 | 3.910 | 3.890 |
+| `TestOutsidePushRound2PushWinsAbandonmentThenRollback` | 3.530 | 3.480 | 3.570 | 3.490 |
+| `TestDeniedWaitingBoundaryCommentChecksPermissionOnce` | 0.280 | 1.300 | 1.310 | 2.390 |
+| `TestStageAPinnedBaseRefreshAndPolicyRecovery` | — | 0.590 | — | 2.350 |
+
+### Gates and actual statuses
+
+All gates below ran against the clean final implementation and `f8066a4` at 4GiB. The following evidence-only commit changes no tested source. A final explicit-refspec fetch confirmed main and the remote PR branch had not moved; no rebase was required.
+
+| Gate | Exit | Evidence |
+|---|---:|---|
+| `make check` | 0 | fmt, lint (0 issues), all-package race-short suite, build |
+| `make test-sim-exits` | 0 | Full required deterministic simulator exits |
+| Compatibility vs main | 0 | 17 exits, 1055 retry/digest records, 84 wire fixtures byte-identical |
+| Legacy SQL + negative controls | 0 | Seven exact statements; all five mutants detected (each trace test exited 0) |
+| Depth 1/4 differential | 0 | 227662 short + 5615998 full checkpoints + 188 fixture streams, no nil-only exceptions |
+| Commit IDs, four methods | 0 | Tested/landed IDs match; self-tests identical=0, mutant=1, dirty=2, all expected |
+| Strict journal replay vs main | 0 | Actions, boundaries, strict state/snapshot hashes 2159/2159; synthetic 7/7, self-test=0, Gates 2/4 PASS |
+
+No replay exception allowlist changed. Replay reads the existing immutable `events-20261018T051000Z.jsonl` / `queues-20261018T051000Z.jsonl` exports; it never reads the live database or status API.
+
+Exact gate commands (all under the recorded heavy-job environment):
+
+```sh
+# resume-check: actual exit=0
+make check
+
+# resume-sim-exits: actual exit=0
+make test-sim-exits
+
+# resume-compatibility: actual exit=0
+python3 scripts/check-phase2-compatibility.py /home/riels/openmerge-sa-11a-main
+
+# resume-legacy-sql: actual exit=0
+python3 scripts/check-legacy-landing-sql.py /home/riels/openmerge-sa-11a-main
+
+# resume-legacy-depths: actual exit=0
+python3 scripts/check-legacy-plan-action-depths-1-4.py /home/riels/openmerge-sa-11a-main
+
+# resume-commit-ids: actual exit=0
+python3 scripts/check-legacy-commit-ids.py --baseline /home/riels/openmerge-sa-11a-main --candidate /home/riels/openmerge-sa-11a
+
+# resume-replay-main: actual exit=0
+python3 scripts/check-live-journal-replay.py --baseline /home/riels/openmerge-sa-11a-main --candidate /home/riels/openmerge-sa-11a --events /home/riels/.local/share/openmerge/exports/events-20261018T051000Z.jsonl --queues /home/riels/.local/share/openmerge/exports/queues-20261018T051000Z.jsonl --strict-state --out /home/riels/.cache/openmerge-77-r5-codex/resume-replay-main.json
+
+```
+
+Every recorded validation status, including the interrupted attempt's runs, follows. The manifest preserves exact argument arrays, memory setting, raw log path and SHA-256. Failed exploratory tests are not passing gates: the missing landing wait was corrected by executing Land; the missing rebuild was corrected by executing durable invalidation. Later focused/full/check runs exercise those assertions successfully. Width experiments kept 16 slots (23.373s); four slots were slower (31.509s). No failure was waived.
+
+| Run | Actual exit |
+|---|---:|
+| `main-before` | 0 |
+| `branch-before` | 0 |
+| `stage-a-short` | 0 |
+| `stage-a-short-2` | 0 |
+| `stage-a-full` | 0 |
+| `large-tree-full` | 0 |
+| `main-after` | 0 |
+| `branch-after` | 0 |
+| `stage-a-short-3` | 1 |
+| `resume-focused` | 1 |
+| `resume-focused-2` | 1 |
+| `resume-focused-3` | 0 |
+| `resume-stage-a-full` | 0 |
+| `resume-main` | 0 |
+| `resume-branch` | 0 |
+| `resume-focused-4` | 1 |
+| `resume-focused-5` | 0 |
+| `resume-focused-width4` | 0 |
+| `resume-focused-width16` | 0 |
+| `final-stage-a-full` | 0 |
+| `final-main` | 0 |
+| `final-branch` | 0 |
+| `resume-check` | 0 |
+| `resume-sim-exits` | 0 |
+| `resume-compatibility` | 0 |
+| `resume-legacy-sql` | 0 |
+| `resume-legacy-depths` | 0 |
+| `resume-commit-ids` | 0 |
+| `resume-replay-main` | 0 |
+| `legacy-control-main` | 0 |
+| `legacy-control-branch` | 0 |
+
+Trial class stays **Hold**. No real GitHub API calls were added to code/tests. No live OpenMerge database, systemd units, production `openmerge/*` refs, or live status API were touched. Only the two owned, waiting wrappers were terminated. CI configuration, flags, runner and timeout are unchanged.
