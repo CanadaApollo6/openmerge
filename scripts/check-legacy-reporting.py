@@ -26,7 +26,7 @@ import (
 func TestLegacyReportingProbe(t *testing.T) {
  legacyGolden := append(ledgerChain(), identified("b1",1,1,"success"))
  multiEntry := append(ledgerChain(), identified("b1",1,1,"success"), identified("b2",2,1,"pending"))
- landed := append(admission(), queue.BatchStarted{BatchID:"landed",BaseSHA:"base",PRs:[]queue.BatchPR{{PR:1,HeadSHA:"head"}},At:at}, queue.TestRefBuilt{BatchID:"landed",TestedSHA:"tested-landed",At:at,Method:queue.Merge}, queue.ChecksCompleted{TestedSHA:"tested-landed",Success:true}, queue.LandingStarted{BatchID:"landed",AttemptID:"attempt",FenceToken:"fence",At:at}, queue.Landed{BatchID:"landed",NewBaseSHA:"tested-landed",NewFence:"next"})
+ landed := append(admission(), queue.BatchStarted{BatchID:"b1",BaseSHA:"base",PRs:[]queue.BatchPR{{PR:1,HeadSHA:"head"}},At:at}, queue.TestRefBuilt{BatchID:"b1",TestedSHA:"tested-landed",At:at,Method:queue.Merge}, queue.ChecksCompleted{TestedSHA:"tested-landed",Success:true}, queue.LandingStarted{BatchID:"b1",AttemptID:"attempt",FenceToken:"fence",At:at}, queue.Landed{BatchID:"b1",NewBaseSHA:"tested-landed",NewFence:"next"})
  dequeued := append(admission(), queue.DequeueRequested{PR:1}, queue.Dequeued{PR:1,AdmissionID:1,Reason:queue.Requested})
  blocked := []queue.Event{queue.PRObserved{PR:7,HeadSHA:"fork",Eligible:true},queue.EnqueueRequested{PR:7,At:at}}
  depth4 := []queue.Event{queue.BaseMoved{SHA:"base"}}
