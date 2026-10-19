@@ -12,8 +12,10 @@ import (
 )
 
 func TestStageADefiniteIdentityFailureBlocksAcrossBaseMove(t *testing.T) {
+	t.Parallel()
 	for _, moved := range []bool{false, true} {
 		t.Run(map[bool]string{false: "unmoved_base", true: "moved_base"}[moved], func(t *testing.T) {
+			t.Parallel()
 			s, w, f := shadowFixture(t, 1, "main", "7", false)
 			if _, err := f.PushBase(repo, "main", "governing user", map[string]string{"CODEOWNERS": "* @writer"}); err != nil {
 				t.Fatal(err)
@@ -46,6 +48,7 @@ func TestStageADefiniteIdentityFailureBlocksAcrossBaseMove(t *testing.T) {
 }
 
 func TestStageATeamMembershipFailuresDifferentiateDurability(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name      string
 		operation string
@@ -60,6 +63,7 @@ func TestStageATeamMembershipFailuresDifferentiateDurability(t *testing.T) {
 	} {
 		for _, moved := range []bool{false, true} {
 			t.Run(tc.name+map[bool]string{false: "/unmoved_base", true: "/moved_base"}[moved], func(t *testing.T) {
+				t.Parallel()
 				s, w, f := shadowFixture(t, 1, "main", "7", false)
 				team := forge.TeamIdentity{ID: 50, OrganizationID: 5, Organization: "org", Slug: "reviewers"}
 				f.SetTeam(team, []forge.UserIdentity{{ID: 21, Login: "writer", Kind: forge.UserAccount}})
@@ -102,6 +106,7 @@ func TestStageATeamMembershipFailuresDifferentiateDurability(t *testing.T) {
 }
 
 func TestStageAGoverningCacheReusesPinnedPolicyContent(t *testing.T) {
+	t.Parallel()
 	s, w, f := shadowFixture(t, 1, "main", "7", false)
 	before := f.GoverningFilesCalls()
 	for range 4 {
@@ -115,6 +120,7 @@ func TestStageAGoverningCacheReusesPinnedPolicyContent(t *testing.T) {
 }
 
 func TestStageAForwardBaseThenUnchangedPollSkipsImmutableReads(t *testing.T) {
+	t.Parallel()
 	s, w, f := shadowFixture(t, 1, "main", "7", false)
 	if _, err := f.PushBase(repo, "main", "forward base", nil); err != nil {
 		t.Fatal(err)
@@ -142,6 +148,7 @@ func TestStageAForwardBaseThenUnchangedPollSkipsImmutableReads(t *testing.T) {
 }
 
 func TestStageANativeNoiseUsesOneStaticPoolRead(t *testing.T) {
+	t.Parallel()
 	s, w, f := shadowFixture(t, 1, "main", "7", false)
 	w.stageA.repository.Groups = map[string][]string{"reviewers": {"writer"}}
 	if err := s.configuration(t.Context(), w); err != nil {
@@ -152,7 +159,11 @@ func TestStageANativeNoiseUsesOneStaticPoolRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	native := forge.NativeReviews{}
-	for id := int64(1); id <= 20; id++ {
+	noise := int64(20)
+	if testing.Short() {
+		noise = 3
+	}
+	for id := int64(1); id <= noise; id++ {
 		native.Reviews = append(native.Reviews, forge.NativeReview{ID: id, CommitID: pr.HeadSHA, Author: forge.UserIdentity{ID: 21, Login: "writer", Kind: forge.UserAccount}, State: forge.ReviewChangesRequested, Submitted: forge.NativeTime{Time: time.Now().UTC(), Source: forge.ReviewSubmissionTime}})
 	}
 	f.SetNativeReviews(repo, 1, native)
@@ -166,9 +177,15 @@ func TestStageANativeNoiseUsesOneStaticPoolRead(t *testing.T) {
 }
 
 func TestStageANativeGrantCallsPerDistinctReviewer(t *testing.T) {
+	t.Parallel()
 	for _, reviewers := range []int{1, 3} {
-		for _, count := range []int{1, 30} {
+		counts := []int{1, 30}
+		if testing.Short() {
+			counts = []int{1, 3}
+		}
+		for _, count := range counts {
 			t.Run(fmt.Sprintf("reviewers=%d/approvals=%d", reviewers, count), func(t *testing.T) {
+				t.Parallel()
 				s, w, f := shadowFixture(t, 1, "main", "7", false)
 				pr, err := f.PullRequest(t.Context(), repo, 1)
 				must(t, err)

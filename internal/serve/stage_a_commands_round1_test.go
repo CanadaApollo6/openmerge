@@ -14,6 +14,7 @@ import (
 )
 
 func TestStageACommandTransientWriteGrantIsRetried(t *testing.T) {
+	t.Parallel()
 	s, w, f := shadowFixture(t, 1, "main", "7", true)
 	digest := shadowDigest(t, s, w)
 	native := shadowNative(f, w, shadowComment(100, "@openmerge approve "+digest))
@@ -40,6 +41,7 @@ func TestStageACommandTransientWriteGrantIsRetried(t *testing.T) {
 }
 
 func TestStageAApprovalCommandsHonorQuotaWithoutConsumption(t *testing.T) {
+	t.Parallel()
 	for _, tt := range []struct {
 		name string
 		body func(string) string
@@ -48,6 +50,7 @@ func TestStageAApprovalCommandsHonorQuotaWithoutConsumption(t *testing.T) {
 		{name: "unapprove", body: func(string) string { return "@openmerge unapprove" }},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			s, w, f := shadowFixture(t, 1, "main", "7", true)
 			body := tt.body(shadowDigest(t, s, w))
 			f.SetNativeReviews(repo, 1, shadowNative(f, w, shadowComment(100, body)))
@@ -82,6 +85,7 @@ func TestStageAApprovalCommandsHonorQuotaWithoutConsumption(t *testing.T) {
 }
 
 func TestLegacyAndStageACommandsHonorQuotaWithoutConsumption(t *testing.T) {
+	t.Parallel()
 	legacy, legacyWorker, legacyForge, _ := fixture(t, repositoryConfig)
 	stage, stageWorker, stageForge := shadowFixture(t, 1, "main", "7", false)
 	legacyForge.AddComment(repo, 1, "writer", "@openmerge queue")
@@ -137,6 +141,7 @@ func TestLegacyAndStageACommandsHonorQuotaWithoutConsumption(t *testing.T) {
 }
 
 func TestStageALegacyCommandsMatchLegacyPrimitives(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name       string
 		body       string
@@ -155,6 +160,7 @@ func TestStageALegacyCommandsMatchLegacyPrimitives(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			legacy, legacyWorker, legacyForge, _ := fixture(t, repositoryConfig)
 			stage, stageWorker, stageForge := shadowFixture(t, 1, "main", "7", false)
 			_, err := legacy.observe(t.Context(), legacyWorker, 1)
@@ -208,6 +214,7 @@ func TestStageALegacyCommandsMatchLegacyPrimitives(t *testing.T) {
 }
 
 func TestLegacyCommandWaitingStopsSharedPass(t *testing.T) {
+	t.Parallel()
 	legacy, legacyWorker, legacyForge, _ := fixture(t, repositoryConfig)
 	stage, stageWorker, stageForge := shadowFixture(t, 1, "main", "7", false)
 	legacyWorker.managed, legacyWorker.ready = true, false

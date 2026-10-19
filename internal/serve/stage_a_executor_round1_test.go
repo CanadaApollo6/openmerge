@@ -13,9 +13,11 @@ import (
 )
 
 func TestStageAExecuteApprovalWaitPrecedesCheckEvents(t *testing.T) {
+	t.Parallel()
 	for _, retry := range []int{0, 1} {
 		for _, actionName := range []string{"refresh", "land"} {
 			t.Run(actionName+"/retry-"+string(rune('0'+retry)), func(t *testing.T) {
+				t.Parallel()
 				s, w, f := shadowFixture(t, 1, "main", "7", false)
 				f.SetNativeReviews(repo, 1, shadowNative(f, w, shadowComment(100, "@openmerge queue")))
 				must(t, s.reconcile(t.Context(), w, true))

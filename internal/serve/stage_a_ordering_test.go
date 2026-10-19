@@ -14,6 +14,7 @@ import (
 )
 
 func TestStageAEligibilityJournalDedupe(t *testing.T) {
+	t.Parallel()
 	s, w, _ := shadowFixture(t, 1, "main", "7", false)
 	state := shadowState(t, s, w)
 	r, _ := state.PRRevision(1)
@@ -28,7 +29,11 @@ func TestStageAEligibilityJournalDedupe(t *testing.T) {
 	record(deny)
 	before, err := s.store.Watermark(t.Context(), w.id)
 	must(t, err)
-	for i := range 20 {
+	polls := 20
+	if testing.Short() {
+		polls = 3
+	}
+	for i := range polls {
 		deny.Basis = approvalBasis(r)
 		deny.Reasons = []string{fmt.Sprintf("diagnostic %d", i)}
 		deny.Groups["reviewers"] = cp.IdentitySet{Resolved: false, IDs: []string{}, Reason: fmt.Sprintf("transport error %d", i)}
@@ -59,6 +64,7 @@ func TestStageAEligibilityJournalDedupe(t *testing.T) {
 }
 
 func TestStageAApprovalReadUsesDatabaseOrder(t *testing.T) {
+	t.Parallel()
 	s, w, _ := shadowFixture(t, 1, "main", "7", false)
 	state := shadowState(t, s, w)
 	r, _ := state.PRRevision(1)

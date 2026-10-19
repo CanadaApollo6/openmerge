@@ -9,6 +9,7 @@ import (
 )
 
 func TestStageASequentialClockSkewRecordsDenial(t *testing.T) {
+	t.Parallel()
 	s, w, _ := shadowFixture(t, 1, "main", "7", false)
 	state := shadowState(t, s, w)
 	r, _ := state.PRRevision(1)

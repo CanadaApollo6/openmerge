@@ -18,9 +18,11 @@ import (
 // Exercise both the last forge read and a journal write racing atomic start.
 // Neither can authorize a decision against an older positive stance.
 func TestStageAFreshNegativeStancesBeforeStart(t *testing.T) {
+	t.Parallel()
 	for _, timing := range []string{"final-read", "before-start", "delayed-response"} {
 		for _, kind := range []string{"request-changes", "dismissal", "unapprove", "withdrawal", "revoked-writer", "team-removal", "grant-aba"} {
 			t.Run(timing+"/"+kind, func(t *testing.T) {
+				t.Parallel()
 				s, w, f := shadowFixture(t, 1, "main", "7", false)
 				team := forge.TeamIdentity{ID: 50, OrganizationID: 5, Organization: "org", Slug: "reviewers"}
 				if kind == "team-removal" {
@@ -202,6 +204,7 @@ func TestStageAFreshNegativeStancesBeforeStart(t *testing.T) {
 }
 
 func TestStageARebaseGeneratedMembersAfterBaseAdvance(t *testing.T) {
+	t.Parallel()
 	s, w, f := shadowFixture(t, 1, "main", "7", true)
 	_, err := f.PushPR(repo, 1, "Document OpenMerge-Change trailer format")
 	must(t, err)
@@ -212,6 +215,10 @@ func TestStageARebaseGeneratedMembersAfterBaseAdvance(t *testing.T) {
 	must(t, s.configuration(t.Context(), w))
 	f.SetNativeReviews(repo, 1, shadowNative(f, w, shadowComment(100, "@openmerge queue"), shadowComment(101, "@openmerge approve "+shadowDigest(t, s, w))))
 	for range 5 {
+		if testing.Short() && shadowLanded(t, w, f, 1) {
+			must(t, s.cycle(t.Context(), w))
+			break
+		}
 		must(t, s.cycle(t.Context(), w))
 		if batch := shadowState(t, s, w).BatchForPR(1); batch != nil && batch.TestedSHA != "" {
 			shadowChecks(t, s, w, f, batch.TestedSHA, []forge.CheckRun{{Name: "ci", State: forge.Success, HeadBranch: batch.TestRef}})

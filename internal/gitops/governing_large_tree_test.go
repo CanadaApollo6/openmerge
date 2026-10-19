@@ -15,12 +15,16 @@ func TestGoverningLargeTreeDoesNotPause(t *testing.T) {
 		"empty/.gitattributes":           {mode: "100644", content: ""},
 	}
 	sourceNamesBytes := 0
-	for i := range 50_001 {
+	sourceFiles := 50_001
+	if testing.Short() {
+		sourceFiles = 64
+	}
+	for i := range sourceFiles {
 		name := fmt.Sprintf("monorepo/large-source-directory-with-padding/source-file-%06d.go", i)
 		sourceNamesBytes += len(name) + 1
 		files[name] = diffEntry{mode: "100644", content: "package fixture\n"}
 	}
-	if sourceNamesBytes <= forge.MaxDiffBytes {
+	if !testing.Short() && sourceNamesBytes <= forge.MaxDiffBytes {
 		t.Fatal("fixture does not exceed the old recursive-tree output budget")
 	}
 	sha := f.diffCommit(f.base, "large monorepo governing tree", files)

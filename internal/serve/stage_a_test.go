@@ -21,10 +21,15 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
+// Bound concurrently open schemas/pools independently of the host CPU count.
+var shadowFixtureSlots = make(chan struct{}, 8)
+
 // This is the ONLY installer for candidate configuration. No option, target,
 // public loader or production constructor can reach the shadow policy in 11a.
 func shadowFixture(t *testing.T, depth int, base, installation string, receipt bool) (*Server, *worker, *fake.Forge) {
 	t.Helper()
+	shadowFixtureSlots <- struct{}{}
+	t.Cleanup(func() { <-shadowFixtureSlots })
 	f := fake.New()
 	f.Init(repo, base, "openmerge/fence/"+base)
 	cfg := fmt.Sprintf("version: 1\nqueues:\n  - name: default\n    base: %s\n    speculation: {min_depth: %d, max_depth: %d}\n    merge_when: [check-success = ci]\n", base, depth, depth)
@@ -82,6 +87,7 @@ func (g *corruptTestedMessageGit) ReadCommitMessage(ctx context.Context, repo fo
 }
 
 func TestStageABareReceiptCommands(t *testing.T) {
+	t.Parallel()
 	s, w, f := shadowFixture(t, 1, "main", "7", true)
 	digest := shadowDigest(t, s, w)
 	comments := []forge.NativeComment{shadowComment(100, "@openmerge approve "+digest), shadowComment(101, "@openmerge approve "+strings.Repeat("0", 64)), shadowComment(102, "@openmerge approve BAD"), shadowComment(103, "please @openmerge approve "+digest)}
@@ -127,6 +133,7 @@ func TestStageABareReceiptCommands(t *testing.T) {
 }
 
 func TestStageACommandWholeCommentGrammar(t *testing.T) {
+	t.Parallel()
 	for _, body := range []string{"prefix @openmerge approve abc", "@openmerge approve abc\nplease", "@openmerge approve abc extra", "@openmerge unapprove now", "\u00a0@openmerge approve abc"} {
 		if verb, _ := approvalCommand(body); verb != "" {
 			t.Fatalf("accepted prose %q", body)
@@ -143,10 +150,12 @@ func TestStageACommandWholeCommentGrammar(t *testing.T) {
 }
 
 func TestStageAShadowGateDepthsAndIdentityIsolation(t *testing.T) {
+	t.Parallel()
 	for _, depth := range []int{1, 4} {
 		for _, base := range []string{"main", "release/v1"} {
 			for _, installation := range []string{"7", "8"} {
 				t.Run(fmt.Sprintf("depth-%d/%s/install-%s", depth, base, installation), func(t *testing.T) {
+					t.Parallel()
 					s, w, f := shadowFixture(t, depth, base, installation, false)
 					native := shadowNative(f, w, shadowComment(100, "@openmerge queue"))
 					f.SetNativeReviews(repo, 1, native)
@@ -167,7 +176,11 @@ func TestStageAShadowGateDepthsAndIdentityIsolation(t *testing.T) {
 					if len(state.ApprovalWaits()) != 1 || len(state.LandingDecisions()) != 0 {
 						t.Fatalf("missing wait %+v", state.ApprovalWaits())
 					}
-					for i := 0; i < 3; i++ {
+					idlePolls := 3
+					if testing.Short() {
+						idlePolls = 2
+					}
+					for i := 0; i < idlePolls; i++ {
 						must(t, s.cycle(t.Context(), w))
 					}
 					state = shadowState(t, s, w)
@@ -180,6 +193,10 @@ func TestStageAShadowGateDepthsAndIdentityIsolation(t *testing.T) {
 					native.Reviews = []forge.NativeReview{{ID: 200, CommitID: pr.HeadSHA, Author: forge.UserIdentity{ID: 21, Login: "writer", Kind: forge.UserAccount}, State: forge.ReviewApproved, Submitted: forge.NativeTime{Time: time.Now().UTC().Add(time.Minute), Source: forge.ReviewSubmissionTime, Precision: time.Second}}}
 					f.SetNativeReviews(repo, 1, native)
 					for i := 0; i < 6; i++ {
+						if testing.Short() && shadowLanded(t, w, f, 1) {
+							must(t, s.cycle(t.Context(), w))
+							break
+						}
 						err := s.cycle(t.Context(), w)
 						if err != nil {
 							t.Fatal(err)
@@ -214,8 +231,10 @@ func TestStageAShadowGateDepthsAndIdentityIsolation(t *testing.T) {
 // Swapping a login between review acquisition and grant read cannot authorize
 // its old author ID. Missing IDs and revoked grants follow the same boundary.
 func TestStageAIdentitySwapRevocationAndNoiseAdmission(t *testing.T) {
+	t.Parallel()
 	for _, permission := range []string{"read", "reassigned", "missing"} {
 		t.Run(permission, func(t *testing.T) {
+			t.Parallel()
 			s, w, f := shadowFixture(t, 1, "main", "7", false)
 			pr, err := f.PullRequest(t.Context(), repo, 1)
 			must(t, err)
@@ -250,6 +269,7 @@ func TestStageAIdentitySwapRevocationAndNoiseAdmission(t *testing.T) {
 }
 
 func TestStageAReceiptAcceptanceAtomicBoundary(t *testing.T) {
+	t.Parallel()
 	s, w, _ := shadowFixture(t, 1, "main", "7", true)
 	state := shadowState(t, s, w)
 	r, _ := state.PRRevision(1)
@@ -283,6 +303,7 @@ func TestStageAReceiptAcceptanceAtomicBoundary(t *testing.T) {
 }
 
 func TestStageAReviewConditionWaitDoesNotTimeout(t *testing.T) {
+	t.Parallel()
 	s, w, f := shadowFixture(t, 1, "main", "7", false)
 	review, err := condition.Parse("approved-reviews-by = writer")
 	must(t, err)
@@ -306,7 +327,9 @@ func TestStageAReviewConditionWaitDoesNotTimeout(t *testing.T) {
 }
 
 func TestStageAApprovalRejectionWorkerReplan(t *testing.T) {
+	t.Parallel()
 	t.Run("approval-rejection-worker-replan", func(t *testing.T) {
+		t.Parallel()
 		s, w, f := shadowFixture(t, 1, "main", "7", false)
 		f.SetNativeReviews(repo, 1, shadowNative(f, w, shadowComment(100, "@openmerge queue")))
 		must(t, s.cycle(t.Context(), w))
@@ -367,6 +390,7 @@ func TestStageAApprovalRejectionWorkerReplan(t *testing.T) {
 }
 
 func TestStageAPinnedBaseRefreshAndPolicyRecovery(t *testing.T) {
+	t.Parallel()
 	s, w, f := shadowFixture(t, 1, "main", "7", true)
 	before := shadowDigest(t, s, w)
 	state := shadowState(t, s, w)
@@ -407,6 +431,7 @@ func TestStageAPinnedBaseRefreshAndPolicyRecovery(t *testing.T) {
 }
 
 func TestStageABuildMetadataSurvivesRewriteThenForwardMove(t *testing.T) {
+	t.Parallel()
 	s, w, f := shadowFixture(t, 1, "main", "7", false)
 	initial := shadowState(t, s, w).BaseSHA
 	// Build sibling B and forward C from A. Rewriting C to B refreshes the
@@ -437,6 +462,7 @@ func TestStageABuildMetadataSurvivesRewriteThenForwardMove(t *testing.T) {
 }
 
 func TestStageAUnReadableTeamAndDecisionTimeOwners(t *testing.T) {
+	t.Parallel()
 	s, w, f := shadowFixture(t, 1, "main", "7", false)
 	// Governing policy changes, never PR-owned CODEOWNERS content, define owners.
 	_, err := f.PushBase(repo, "main", "owners", map[string]string{"CODEOWNERS": "* @org/reviewers"})
@@ -469,8 +495,10 @@ func TestStageAUnReadableTeamAndDecisionTimeOwners(t *testing.T) {
 }
 
 func TestStageAReceiptGateAllMethods(t *testing.T) {
+	t.Parallel()
 	for _, method := range []queue.MergeMethod{queue.Squash, queue.Merge, queue.Rebase, queue.FastForward} {
 		t.Run(string(method), func(t *testing.T) {
+			t.Parallel()
 			s, w, f := shadowFixture(t, 1, "main", "7", true)
 			w.cfg.MergeMethod = method
 			must(t, s.configuration(t.Context(), w))
@@ -478,6 +506,10 @@ func TestStageAReceiptGateAllMethods(t *testing.T) {
 			digest := shadowDigest(t, s, w)
 			f.SetNativeReviews(repo, 1, shadowNative(f, w, shadowComment(100, "@openmerge queue"), shadowComment(101, "@openmerge approve "+digest)))
 			for i := 0; i < 5; i++ {
+				if testing.Short() && shadowLanded(t, w, f, 1) {
+					must(t, s.cycle(t.Context(), w))
+					break
+				}
 				must(t, s.cycle(t.Context(), w))
 				state := shadowState(t, s, w)
 				if b := state.BatchForPR(1); b != nil && b.TestedSHA != "" {
@@ -506,8 +538,10 @@ func TestStageAReceiptGateAllMethods(t *testing.T) {
 }
 
 func TestStageAGateIgnoresContributorReservedTextForEveryMethod(t *testing.T) {
+	t.Parallel()
 	for _, method := range []queue.MergeMethod{queue.Squash, queue.Merge, queue.Rebase, queue.FastForward} {
 		t.Run(string(method), func(t *testing.T) {
+			t.Parallel()
 			s, w, f := shadowFixture(t, 1, "main", "7", true)
 			state := shadowState(t, s, w)
 			w.cfg.MergeMethod = method
@@ -573,6 +607,10 @@ func TestStageAGateIgnoresContributorReservedTextForEveryMethod(t *testing.T) {
 			))
 			builtMembers := 0
 			for range 5 {
+				if testing.Short() && shadowLanded(t, w, f, 1, 2) {
+					must(t, s.cycle(t.Context(), w))
+					break
+				}
 				must(t, s.cycle(t.Context(), w))
 				if batch := shadowState(t, s, w).BatchForPR(1); batch != nil && batch.TestedSHA != "" {
 					builtMembers = len(batch.PRs)
@@ -598,6 +636,7 @@ func TestStageAGateIgnoresContributorReservedTextForEveryMethod(t *testing.T) {
 }
 
 func TestStageAGateRejectsMalformedGeneratedMemberMetadata(t *testing.T) {
+	t.Parallel()
 	s, w, f := shadowFixture(t, 1, "main", "7", true)
 	digest := shadowDigest(t, s, w)
 	f.SetNativeReviews(repo, 1, shadowNative(f, w,
@@ -625,9 +664,31 @@ func TestStageAGateRejectsMalformedGeneratedMemberMetadata(t *testing.T) {
 }
 
 func TestStageAMalformedReceiptCapAndOversizedRaw(t *testing.T) {
+	t.Parallel()
 	s, w, f := shadowFixture(t, 1, "main", "7", true)
 	comments := []forge.NativeComment{}
-	for i := int64(100); i < 170; i++ {
+	first := int64(100)
+	if testing.Short() {
+		// Seed the ordinary rejected receipts in one transaction. The commands
+		// below still cross the real 64-receipt boundary, truncate oversized
+		// input, and consume all capacity outcomes through the inclusive cursor.
+		state := shadowState(t, s, w)
+		r, _ := state.PRRevision(1)
+		actor, err := policyIdentity(forge.UserIdentity{ID: 21, Login: "writer", Kind: forge.UserAccount})
+		must(t, err)
+		var seed []queue.Event
+		for id := int64(100); id < 163; id++ {
+			event, err := state.PrepareBareReceipt(w.stageA.policy, approvalBasis(r), actor, fmt.Sprint(id), shadowComment(id, "").Created.Time, "BAD")
+			must(t, err)
+			must(t, state.CheckReceiptAdmission(event))
+			seed = append(seed, event)
+			state = queue.Apply(state, event)
+		}
+		_, err = s.store.Append(t.Context(), w.id, seed, "")
+		must(t, err)
+		first = 163
+	}
+	for i := first; i < 170; i++ {
 		comments = append(comments, shadowComment(i, "@openmerge approve "+strings.Repeat("x", 2048)))
 	}
 	f.SetNativeReviews(repo, 1, shadowNative(f, w, comments...))
@@ -651,6 +712,7 @@ func TestStageAMalformedReceiptCapAndOversizedRaw(t *testing.T) {
 }
 
 func TestStageAReceiptConcurrentDedupe(t *testing.T) {
+	t.Parallel()
 	s, w, _ := shadowFixture(t, 1, "main", "7", true)
 	state := shadowState(t, s, w)
 	r, _ := state.PRRevision(1)
@@ -681,6 +743,7 @@ func TestStageAReceiptConcurrentDedupe(t *testing.T) {
 }
 
 func TestStageAFreshRevokedGrantBlocksAcceptedReceipt(t *testing.T) {
+	t.Parallel()
 	s, w, f := shadowFixture(t, 1, "main", "7", true)
 	digest := shadowDigest(t, s, w)
 	f.SetNativeReviews(repo, 1, shadowNative(f, w, shadowComment(100, "@openmerge queue"), shadowComment(101, "@openmerge approve "+digest)))
@@ -710,6 +773,7 @@ func TestStageAFreshRevokedGrantBlocksAcceptedReceipt(t *testing.T) {
 }
 
 func TestStageANoneStillRequiresExactHeadForkTrust(t *testing.T) {
+	t.Parallel()
 	s, w, f := shadowFixture(t, 1, "main", "7", false)
 	w.stageA.candidate.Approvals.Rules = []cp.Rule{{When: cp.Match{Paths: []string{"**"}}, Require: cp.Requirement{Selector: cp.None}}}
 	state := shadowState(t, s, w)
@@ -724,6 +788,7 @@ func TestStageANoneStillRequiresExactHeadForkTrust(t *testing.T) {
 }
 
 func TestStageAStaleReceiptAfterIntentEdit(t *testing.T) {
+	t.Parallel()
 	s, w, _ := shadowFixture(t, 1, "main", "7", true)
 	digest := shadowDigest(t, s, w)
 	state := shadowState(t, s, w)
@@ -740,6 +805,7 @@ func TestStageAStaleReceiptAfterIntentEdit(t *testing.T) {
 }
 
 func TestStageANativeNoiseFilteringRetainsAuthenticatedCommands(t *testing.T) {
+	t.Parallel()
 	s, w, f := shadowFixture(t, 1, "main", "7", false)
 	f.SetWriteGrant(repo, 12, "write")
 	pr, err := f.PullRequest(t.Context(), repo, 1)
@@ -770,6 +836,7 @@ func TestStageANativeNoiseFilteringRetainsAuthenticatedCommands(t *testing.T) {
 }
 
 func TestStageARenamedReviewerFreshGrantAndMissingSource(t *testing.T) {
+	t.Parallel()
 	s, w, f := shadowFixture(t, 1, "main", "7", false)
 	pr, err := f.PullRequest(t.Context(), repo, 1)
 	must(t, err)
@@ -796,8 +863,10 @@ func TestStageARenamedReviewerFreshGrantAndMissingSource(t *testing.T) {
 }
 
 func TestStageAStaticMappingSwapCannotBorrowPool(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"group", "owner"} {
 		t.Run(kind, func(t *testing.T) {
+			t.Parallel()
 			s, w, f := shadowFixture(t, 1, "main", "7", false)
 			if kind == "group" {
 				w.stageA.repository.Groups = map[string][]string{"reviewers": {"writer"}}
@@ -833,6 +902,7 @@ func TestStageAStaticMappingSwapCannotBorrowPool(t *testing.T) {
 }
 
 func TestStageACompositionRejectsOnlyUnapprovedMember(t *testing.T) {
+	t.Parallel()
 	s, w, f := shadowFixture(t, 4, "main", "7", false)
 	state := shadowState(t, s, w)
 	data, err := f.ReadFile(t.Context(), repo, state.ConfigCommit, ".openmerge.yml")
@@ -862,12 +932,17 @@ func TestStageACompositionRejectsOnlyUnapprovedMember(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 6; i++ {
+		if testing.Short() && shadowLanded(t, w, f, 1) {
+			must(t, s.cycle(t.Context(), w))
+			break
+		}
 		must(t, s.cycle(t.Context(), w))
 		state = shadowState(t, s, w)
 		if b := state.BatchForPR(1); b != nil && b.TestedSHA != "" {
 			shadowChecks(t, s, w, f, b.TestedSHA, []forge.CheckRun{{Name: "ci", State: forge.Success, HeadBranch: b.TestRef}})
 		}
 	}
+	state = shadowState(t, s, w)
 	tip, err := f.ReadRef(t.Context(), repo, "main")
 	must(t, err)
 	if !f.ContainsPR(repo, tip, 1) || f.ContainsPR(repo, tip, 2) {
@@ -878,6 +953,20 @@ func TestStageACompositionRejectsOnlyUnapprovedMember(t *testing.T) {
 	}
 }
 
+// Short runs stop after settlement plus one idempotence cycle. Full runs
+// retain the longer post-landing polling workload.
+func shadowLanded(t *testing.T, w *worker, f *fake.Forge, prs ...int) bool {
+	t.Helper()
+	tip, err := f.ReadRef(t.Context(), repo, w.Key.BaseBranch)
+	must(t, err)
+	for _, pr := range prs {
+		if !f.ContainsPR(repo, tip, pr) {
+			return false
+		}
+	}
+	return true
+}
+
 func shadowChecks(t *testing.T, s *Server, w *worker, f *fake.Forge, sha string, checks []forge.CheckRun) {
 	t.Helper()
 	f.SetCheckRuns(repo, sha, checks)
@@ -886,6 +975,7 @@ func shadowChecks(t *testing.T, s *Server, w *worker, f *fake.Forge, sha string,
 }
 
 func TestStageAGoverningAttributesIndependentOfOpenChanges(t *testing.T) {
+	t.Parallel()
 	s, w, f := shadowFixture(t, 1, "main", "7", true)
 	_, err := f.PushBase(repo, "main", "nested attributes", map[string]string{"docs/.gitattributes": "*.md linguist-generated"})
 	must(t, err)
@@ -915,8 +1005,10 @@ func TestStageAGoverningAttributesIndependentOfOpenChanges(t *testing.T) {
 }
 
 func TestStageACommandsRetainBindingsAcrossMembershipChanges(t *testing.T) {
+	t.Parallel()
 	for _, verb := range []string{"unapprove", "approve"} {
 		t.Run(verb, func(t *testing.T) {
+			t.Parallel()
 			s, w, f := shadowFixture(t, 1, "main", "7", false)
 			team := forge.TeamIdentity{ID: 50, OrganizationID: 5, Organization: "org", Slug: "reviewers"}
 			writer := forge.UserIdentity{ID: 21, Login: "writer", Kind: forge.UserAccount}

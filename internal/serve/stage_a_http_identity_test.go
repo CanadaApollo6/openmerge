@@ -46,6 +46,7 @@ func (d stageAHTTPIdentityDriver) TeamMembers(ctx context.Context, team forge.Te
 }
 
 func TestStageAHTTPIdentityFailuresBlockOrRetry(t *testing.T) {
+	t.Parallel()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	must(t, err)
 	private := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
@@ -65,64 +66,76 @@ func TestStageAHTTPIdentityFailuresBlockOrRetry(t *testing.T) {
 			{name: "server", status: 503},
 			{name: "timeout", status: 200},
 		} {
-			for _, moved := range []bool{false, true} {
-				t.Run(fmt.Sprintf("%s/%s/moved=%t", operation, tc.name, moved), func(t *testing.T) {
-					s, w, f := shadowFixture(t, 1, "main", "7", false)
-					owner := "writer"
-					if operation != "user" {
-						owner = "org/reviewers"
-						f.SetTeam(forge.TeamIdentity{ID: 50, OrganizationID: 5, Organization: "org", Slug: "reviewers"}, []forge.UserIdentity{{ID: 21, Login: "writer", Kind: forge.UserAccount}})
-					}
-					_, err := f.PushBase(repo, "main", "owner", map[string]string{"CODEOWNERS": "* @" + owner})
-					must(t, err)
-					must(t, s.configuration(t.Context(), w))
-					if moved {
-						_, err = f.PushBase(repo, "main", "move", nil)
-						must(t, err)
-					}
-					server := httptest.NewServer(http.HandlerFunc(func(out http.ResponseWriter, r *http.Request) {
-						out.Header().Set("Content-Type", "application/json")
-						switch r.URL.Path {
-						case "/app":
-							_, _ = fmt.Fprint(out, `{"id":42,"slug":"test"}`)
-						case "/app/installations/7/access_tokens":
-							_, _ = fmt.Fprintf(out, `{"token":"fixture-only","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
-						default:
-							if tc.name == "timeout" {
-								<-r.Context().Done()
-								return
-							}
-							if tc.header != "" {
-								out.Header().Set(tc.header, tc.value)
-							}
-							out.WriteHeader(tc.status)
-							_, _ = fmt.Fprintf(out, `{"message":%q}`, tc.message)
+			t.Run(fmt.Sprintf("%s/%s", operation, tc.name), func(t *testing.T) {
+				t.Parallel()
+				// Both base positions share the schema, HTTP server and initialized
+				// policy. Each failure is followed by a fully asserted recovery.
+				s, w, f := shadowFixture(t, 1, "main", "7", false)
+				owner := "writer"
+				if operation != "user" {
+					owner = "org/reviewers"
+					f.SetTeam(forge.TeamIdentity{ID: 50, OrganizationID: 5, Organization: "org", Slug: "reviewers"}, []forge.UserIdentity{{ID: 21, Login: "writer", Kind: forge.UserAccount}})
+				}
+				_, err := f.PushBase(repo, "main", "owner", map[string]string{"CODEOWNERS": "* @" + owner})
+				must(t, err)
+				must(t, s.configuration(t.Context(), w))
+				server := httptest.NewServer(http.HandlerFunc(func(out http.ResponseWriter, r *http.Request) {
+					out.Header().Set("Content-Type", "application/json")
+					switch r.URL.Path {
+					case "/app":
+						_, _ = fmt.Fprint(out, `{"id":42,"slug":"test"}`)
+					case "/app/installations/7/access_tokens":
+						_, _ = fmt.Fprintf(out, `{"token":"fixture-only","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
+					default:
+						if tc.name == "timeout" {
+							<-r.Context().Done()
+							return
 						}
-					}))
-					defer server.Close()
-					app, err := github.New(github.Config{AppID: 42, PrivateKey: private, APIBaseURL: server.URL + "/", HTTPClient: &http.Client{Timeout: 50 * time.Millisecond}})
-					must(t, err)
-					driver, err := app.Installation(t.Context(), 7)
-					must(t, err)
-					w.Driver = stageAHTTPIdentityDriver{Forge: f, ids: driver, operation: operation}
-					err = s.configuration(t.Context(), w)
-					if tc.definite && err != nil || !tc.definite && err == nil {
-						t.Fatalf("configuration error=%v definite=%t", err, tc.definite)
+						if tc.header != "" {
+							out.Header().Set(tc.header, tc.value)
+						}
+						out.WriteHeader(tc.status)
+						_, _ = fmt.Fprintf(out, `{"message":%q}`, tc.message)
 					}
-					if got := shadowState(t, s, w).SourceBlocked(queue.ConfigSource); got != tc.definite {
-						t.Fatalf("block=%t definite=%t error=%v", got, tc.definite, w.configError)
-					}
-					if w.configError == nil {
-						t.Fatal("missing config diagnostic")
-					}
-					// A fresh readable resolution clears a durable block at either base.
-					w.Driver = f
-					must(t, s.configuration(t.Context(), w))
-					if shadowState(t, s, w).SourceBlocked(queue.ConfigSource) || w.configError != nil {
-						t.Fatal("readable identity failed to recover")
-					}
-				})
-			}
+				}))
+				defer server.Close()
+
+				for _, moved := range []bool{false, true} {
+					t.Run(fmt.Sprintf("moved=%t", moved), func(t *testing.T) {
+						if moved {
+							_, err := f.PushBase(repo, "main", "move", nil)
+							must(t, err)
+						}
+						// Only the timeout case needs a small deadline; other statuses
+						// must not turn into incidental timeouts on small race runners.
+						timeout := 5 * time.Second
+						if tc.name == "timeout" {
+							timeout = 50 * time.Millisecond
+						}
+						app, err := github.New(github.Config{AppID: 42, PrivateKey: private, APIBaseURL: server.URL + "/", HTTPClient: &http.Client{Timeout: timeout}})
+						must(t, err)
+						driver, err := app.Installation(t.Context(), 7)
+						must(t, err)
+						w.Driver = stageAHTTPIdentityDriver{Forge: f, ids: driver, operation: operation}
+						err = s.configuration(t.Context(), w)
+						if tc.definite && err != nil || !tc.definite && err == nil {
+							t.Fatalf("configuration error=%v definite=%t", err, tc.definite)
+						}
+						if got := shadowState(t, s, w).SourceBlocked(queue.ConfigSource); got != tc.definite {
+							t.Fatalf("block=%t definite=%t error=%v", got, tc.definite, w.configError)
+						}
+						if w.configError == nil {
+							t.Fatal("missing config diagnostic")
+						}
+						// A fresh readable resolution clears a durable block at either base.
+						w.Driver = f
+						must(t, s.configuration(t.Context(), w))
+						if shadowState(t, s, w).SourceBlocked(queue.ConfigSource) || w.configError != nil {
+							t.Fatal("readable identity failed to recover")
+						}
+					})
+				}
+			})
 		}
 	}
 }
