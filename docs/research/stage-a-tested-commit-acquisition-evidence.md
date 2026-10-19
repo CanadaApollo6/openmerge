@@ -28,8 +28,9 @@ SHAs (never mutable refs), and bounds acquisition to one minute and at most the
 shared member limit plus two IDs. Failure blocks landing; there is no ref-tip
 fallback. Temporary private local refs retain each acquired graph across other
 operations' GC until all tested-message reads complete. Releases are independent
-and idempotent and require no credentials. Normal releases delete the refs;
-a process interrupted before release can leave conservative retention refs.
+and idempotent and require no credentials. Normal releases delete the refs. Startup sweeps prior-process acquisition refs;
+maintenance retries failed cleanup without sweeping live in-process leases
+(see the round-1 evidence below).
 A subsequent process reacquires by durable SHA regardless of whether its cache
 is warm, collected, or entirely empty. Remote refusal to serve the recorded SHA
 fails closed. Reader functions themselves remain unchanged and cache-only.
@@ -179,3 +180,97 @@ rebase       tested=fb81d35ef3ab6f59feb8cd76b09047d01637c9fb
 fast-forward tested=fc5c1bf85c90345690a94321d2afe65d7007018c
              landed=ccfc498745b4ed1f770d8e20c0c37e585564669a
 ```
+
+
+## PR #84 round 1: interrupted acquisition recovery
+
+Validated executable/test head: `7b8c06a306b6fd705ad336c0a06ffc6571cf1747`.
+Baseline and final explicit-refspec fetch of `origin/main` both resolve to
+`8197a2ec33cc5bea62e7ae7fa07aedd1b92ae4a9`; no rebase was necessary.
+The following evidence-only commit does not change executable source or tests.
+
+The operator confirmed that `serve --git-cache-dir` is process-exclusive.
+The first acquiring cache session in this process therefore sweeps every
+`refs/openmerge-cache/acquired/*` ref before permitting any new lease. A failed
+startup sweep fails the session and is retried on the next open. Initialization
+and live nonce sets are shared across Repo handles and protected by the existing
+per-directory cache mutex. A new Repo handle in the same process cannot clear
+another handle's live leases. Maintenance sweeps only non-live nonces, including
+when GC is disabled or not due. Release marks the nonce dead before attempting
+ref deletion; repeated release calls and subsequent maintenance both retry a
+failed deletion. There is no error-consuming `sync.Once`.
+
+Astra's original `/home/riels/.cache/review-84-astra/orphan.log` shows the old
+retention bug. Its simulated restart creates another Repo in the same process
+while retaining an unreleased lease, which must now be protected by the operator's
+live-lease rule. `TestAcquireCommitsCrashRestartSweep` uses an actual child process
+that acquires and exits without releasing, then opens the same cache in the
+parent process. It verifies the inherited ref exists before restart, startup
+removes it before any new lease, and a later acquire/release leaves no refs.
+The concurrent test separately proves new Repo handles do not mimic a restart.
+
+Muse's nits are addressed: release uses `cacheLocks.LoadOrStore`; Stage A requests
+the tested SHA before its base ancestor, so strict servers can supply the base
+through the tested graph; and the gitops README documents acquisition refs and
+startup/maintenance cleanup. Cache-lock acquisition now observes context
+cancellation through `TryLock` and a cancellable timer, without a stranded waiter
+goroutine. The one-minute acquisition context covers waiting and Git acquisition
+commands. Deferred best-effort maintenance retains its separate 30-second bound,
+which the README documents; total call wall time can include that maintenance.
+
+New race-enabled, short-compatible regressions (all exit **0**):
+
+- `TestAcquireCommitsCrashRestartSweep`
+- `TestAcquireCommitsFailedCleanupRetried/release`
+- `TestAcquireCommitsFailedCleanupRetried/maintenance`
+- `TestAcquireCommitsLiveLeasesSurviveConcurrentMaintenance`
+- `TestAcquireCommitsCacheLockCancellation`
+- `TestAcquireCommitsStartupSweepFailureRetried`
+
+Existing `TestAcquireCommitsRetainsExactObjectsAcrossMaintenance` (all four
+methods), `TestAcquireCommitsValidatesPinsAndPolicyObjects`, all twelve
+`TestStageAGateRealGitAcquisition` cases, and the four-method
+`TestStageAReceiptGateAllMethods` also pass (exit **0**).
+
+All workloads ran serially, after checking for other agent Go test/replay jobs,
+with `GOFLAGS=-p=2`, `GOMEMLIMIT=4GiB`,
+`GOTMPDIR=TMPDIR=/home/riels/.cache/openmerge-acquisition-round1/tmp`,
+`GOCACHE=/home/riels/.cache/go-build`, and the provided isolated shared test DB:
+`OPENMERGE_TEST_DATABASE_URL=postgres://postgres@localhost:54329/postgres?sslmode=disable`.
+Raw logs are in `/home/riels/.cache/openmerge-acquisition-round1/logs`.
+No Makefile/CI, live database, service, sandbox, live API, or remote queue refs
+were changed. Fetches used only explicit main and this PR branch refspecs.
+
+Commands and exit statuses (`<baseline>` and `<candidate>` are the same absolute
+checkouts listed above):
+
+```text
+go test -race -short ./internal/gitops ./internal/serve
+  -run '^(TestAcquireCommits|TestStageAGateRealGitAcquisition|TestStageAReceiptGateAllMethods)'
+  -count=1 -v                                                       0
+go test -race -short ./internal/gitops
+  -run '^TestAcquireCommitsStartupSweepFailureRetried$' -count=1 -v  0
+make check                                                         0
+make test-sim-exits                                                 0
+python3 scripts/check-phase2-compatibility.py <baseline>             0
+python3 scripts/check-legacy-landing-sql.py <baseline>               0
+python3 scripts/check-legacy-plan-action-depths-1-4.py <baseline>     0
+python3 scripts/check-legacy-commit-ids.py
+  --old-source <baseline> --new-source <candidate>                   0
+```
+
+`make check` passed formatting, lint (zero issues), the full race-enabled short
+suite, and the production build. Gitops: 91.794s; queue: 303.784s; serve: 344.260s.
+The required simulator exits passed in 39.868s. The commit-ID command includes
+mandatory preflight controls: identical-source exit **0**, metadata-mutant exit
+**1**, dirty-source refusal exit **2**, all expected; the preflight suite itself
+and final four-method comparison exit **0**.
+
+Compatibility reproduced the exact prior digests: 17 exit records, 1,055 retry
+records, and 85 fixtures identical. SQL baseline/candidate and each of the five
+mutant executions all exit **0**; all seven real SQL statements and lock ordering
+match, and all five mutants are detected (expected rejection). Depths 1/4:
+short corpus 214 records per checkout / 227,662 checkpoints; full corpus 446
+records per checkout / 5,615,998 checkpoints; fixture journals 190 checkpoints.
+All six underlying Go invocations exit **0**, with the same three stream hashes
+reported above. All four tested/landed commit-ID pairs match the values above.
