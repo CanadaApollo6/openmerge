@@ -262,7 +262,7 @@ func TestIdentityReadsPreserveSettlementBudget(t *testing.T) {
 }
 
 func TestIdentityRejectsUnicodeAliases(t *testing.T) {
-	for _, name := range []string{"ſam", "Kam", "Ａam", "ıam", "İam"} {
+	for _, name := range []string{"ſam", "Kam", "Kontributor", "Élodie", "élodie", "Ａam", "ıam", "İam"} {
 		t.Run(name, func(t *testing.T) {
 			f := newAPI(t)
 			calls := 0

@@ -587,41 +587,22 @@ patterns already required ASCII and remain unchanged. Invalid identity diagnosti
 retain the original YAML scalar path/line; member, agent and accountable errors
 now describe the ASCII grammar.
 
-Case-fold audit (production, excluding tests):
+Case-fold audit (production, excluding tests), corrected by round 3:
 
-- `internal/config`: `keys.go` lowercases reflected Go field names, not identities;
-  retained. Condition string equality/globs do not use Unicode case folding.
-  Approver selectors are `none`, `any_writer`, human, code owners, or exact group
-  references; there is no direct login selector. Named pools reach the member
-  validation above; group names are arbitrary exact keys and are not logins.
-- `internal/changepolicy/identity.go`: both case-insensitive regexes became
-  explicit ASCII classes (including ASCII case variants of `[bot]`); resolved-name
-  normalization now uses ASCII folding and rejects invalid resolved names.
-- `internal/changepolicy/candidate.go`: user/team owner canonical checks, group
-  members, agent identity and accountable normalization now use ASCII folding.
-  The remaining `strings.ToLower(domain)` belongs to email-domain grammar and
-  is retained; email owners are not GitHub account identities.
-- `internal/changepolicy/digest.go`: resolved-name normalization now folds ASCII.
-  `strings.Compare` sorts literal strings and does not fold.
-- `internal/classification/codeowners.go`: all four login/team normalization sites
-  now fold ASCII. Its existing explicit ASCII owner/token regexes still reject
-  Unicode before canonicalization. Email-domain lowercasing is retained.
-- `internal/forge/github/identity.go`: organization and team slug `EqualFold`
-  comparisons now use ASCII folding. Request/user/member validators already
-  used explicit ASCII checks. Grant response logins now receive that check too.
-- `internal/forge/fake/identity.go`: five user/team map insertion/lookup and grant
-  lookup lowercasing sites now fold ASCII, matching the production boundary.
-- `internal/forge/github/driver.go`: status-creator login normalization now folds
-  ASCII. Other folds in this file concern API error messages.
-- `internal/serve/stage_a.go`: identity resolution uses literal canonical keys and
-  stable IDs, without folding; returned user logins now pass `ValidLogin` rather
-  than only a nonempty check. Policy pins pass `ValidateIdentities`.
-- `internal/gitops/metadata.go`: the commit-author/PR-author login fallback now
-  compares with ASCII folding; stable-ID comparison remains authoritative.
-  Remaining folds concern trailer keys, email attribution and whole trailer
-  deduplication, not GitHub login/team/org matching. Forge HTTP hosts/headers,
-  API error messages, repository routing/discovery, hex IDs, and brief statuses
-  elsewhere are separate from account identity resolution.
+| Site | Reachability | Final semantics |
+|---|---|---|
+| `internal/config/keys.go`, native conditions | Legacy-reachable | Existing reflected-key lowercase and literal condition equality/globs unchanged; no login folding. |
+| `internal/changepolicy/identity.go` | Approval-only identity decisions | Explicit ASCII login/org/team validation and ASCII resolved-name folding; stable IDs remain authoritative. |
+| `internal/changepolicy/candidate.go`, public schema | Approval policy parsing (shared document may include legacy siblings) | ASCII account identities in policy groups, agents, accountable users and owner selectors. Group keys remain exact arbitrary names; email-domain Unicode lowercase unchanged. Legacy-only config bypasses policy parsing. |
+| `internal/changepolicy/digest.go` | Approval-only digest computation | ASCII resolved-name normalization; literal sort. Legacy queue digest unchanged. |
+| `internal/classification/codeowners.go` | Approval owner decisions; historical classifier can be reached by legacy journals | Explicit ASCII owner/token regexes reject Unicode before canonicalization, exactly as main; ASCII lowercase is byte-equivalent for all accepted names. Email-domain Unicode lowercase unchanged. |
+| `internal/forge/github/identity.go` | Approval-only production consumers (`stage_a.go`, `stage_a_commands.go`) | ASCII request/response validation, ASCII org/team comparison; grant identities validated. Native legacy `CanWrite` is a separate unchanged path. |
+| `internal/forge/fake/identity.go` | Approval identity test double only | Five user/team map insertion/lookup and grant sites use ASCII lowercase. Legacy fake CI/permissions APIs are separate and unchanged. |
+| `internal/forge/github/driver.go` status creator | Legacy-reachable and shared by approval queues | Restored main's exact `strings.ToLower`, including Kelvin/accent folds. CI producer provenance is not approval identity authority; no queue mode changes this API. Other folds concern API errors. |
+| `internal/serve/stage_a.go` | Approval-only (`w.stageA != nil`) | Literal canonical keys and stable IDs; `policyIdentity` requires ASCII `ValidLogin`, pins use `ValidateIdentities`. |
+| `internal/gitops/metadata.go` linked commit-author fallback | Legacy-reachable; explicit mode is pinned `ChangeMetadata` presence | Nil metadata uses main's exact `strings.EqualFold`; approval metadata uses `ascii.EqualFold`. Positive IDs on both sides override the fallback in both modes. Trailer keys, email attribution and whole-trailer deduplication retain main's Unicode semantics. |
+| `internal/serve/reconcile.go` historical folded-policy diagnostic | Legacy recovery can encounter a prior approval config | Diagnostic only, guarded by `selected.Approvals != nil`; no identity normalization. |
+| Forge HTTP hosts/headers, discovery/routing, API errors, hex IDs, brief statuses | Legacy-reachable | Existing semantics unchanged; these are not approval account identities. |
 
 `TestIdentityASCIIAgreement` rejects long-s, Kelvin-sign, fullwidth A, dotless i
 and dotted I in eight identity positions (40 cases), checking loader/schema and
@@ -749,3 +730,31 @@ commit-ID collection, and `git diff --check` exited **0**. The following evidenc
 commit changes only this Markdown file; implementation/gates remain those of
 `3ec4fdb`. No live DB, service, production refs or status API was accessed.
 No approvals were added to dogfood. Trial class remains **Hold**.
+
+## Round 3 legacy Unicode equivalence repair
+
+Round 2's shared ASCII changes caused the two blocking regressions. Status
+creators now use main's Unicode normalization on every queue. Commit-author
+fallback explicitly selects main's Unicode comparison without approval metadata
+and ASCII comparison with approval metadata. Stable IDs and all email/trailer
+folding retain their prior behavior. No other audited round 2 fold changes a
+legacy-reachable accepted identity.
+
+`TestStatusUnicodeLegacyEquivalence` asserts executor success and source strings
+for `Kam`/`kam`, `Élodie`/`élodie`, the ASCII control, and the historically
+ambiguous `ſam`/`sam` control. `TestLinkedCommitAuthorsExcludePrimaryAliases`
+runs both nil-metadata and approval-metadata builds: Kelvin, long-s and accented
+fallbacks suppress primary coauthor trailers only in legacy mode; ID and ASCII
+controls agree. `TestIdentityRejectsUnicodeAliases` includes the repro logins.
+`TestStageAUnicodeApprovalIdentityRejected` uses a publicly configured approval
+queue and proves the same Unicode actors cannot acquire receipts even with a
+stable ID and affirmative write grant. CI source normalization remains shared;
+approval authority follows the separate ASCII identity boundary.
+
+`scripts/check-legacy-unicode-logins.py --baseline /home/riels/openmerge-sa-11b-main`
+adds a dedicated clean-source differential: exact fake-HTTP status/executor
+observations versus main, plus tested and landed IDs for all four methods with
+five fixtures (ASCII login control, Kelvin missing-ID fallback, accented
+missing-ID fallback, non-ASCII primary author, and authoritative stable-ID
+control). Every commit fixture includes Unicode author names/emails and a
+`Zoë <zoë@éxample.test>` coauthor. No real forge requests are used.

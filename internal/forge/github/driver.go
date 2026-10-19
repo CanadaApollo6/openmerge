@@ -12,7 +12,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/CanadaApollo6/openmerge/internal/ascii"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/gitops"
 	gh "github.com/google/go-github/v93/github"
@@ -346,7 +345,7 @@ func (d *Driver) CheckRuns(ctx context.Context, repo forge.RepoRef, sha string) 
 			if status.GetCreator().GetLogin() == "" {
 				state = forge.Pending
 			}
-			result = append(result, forge.CheckRun{ID: uint64(max(status.GetID(), 0)), Name: status.GetContext(), Source: "status:" + ascii.Lower(status.GetCreator().GetLogin()), State: state})
+			result = append(result, forge.CheckRun{ID: uint64(max(status.GetID(), 0)), Name: status.GetContext(), Source: "status:" + strings.ToLower(status.GetCreator().GetLogin()), State: state})
 		}
 		page = res.NextPage
 	}
