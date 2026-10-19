@@ -20,11 +20,11 @@ func ReviewerCheckSummary(j store.Journal, pr int, policy cp.Policy) (string, er
 		return "", nil
 	}
 	q, _, _ := Project(j, 0, 0, nil)
-	return ReviewerCheckSummaryFromProjection(j, &q, pr, policy)
+	return ReviewerCheckSummaryFromProjection(j, &q, pr, policy, nil)
 }
 
 // ReviewerCheckSummaryFromProjection reuses the ledger snapshot for a check write.
-func ReviewerCheckSummaryFromProjection(j store.Journal, q *Queue, pr int, policy cp.Policy) (string, error) {
+func ReviewerCheckSummaryFromProjection(j store.Journal, q *Queue, pr int, policy cp.Policy, warn func(error)) (string, error) {
 	if policy.Approvals == nil {
 		return "", nil
 	}
@@ -35,6 +35,9 @@ func ReviewerCheckSummaryFromProjection(j store.Journal, q *Queue, pr int, polic
 	view, found, err := projectBriefFromProjection(j, q, q.LedgerEntry(pr), string(id), "reviewer", briefOptions{policy: func(s queue.State, b queue.ApprovalBasis) (brief.Fact, string) {
 		f, e := s.RecordedBrief(policy, b)
 		if e != nil {
+			if warn != nil {
+				warn(e)
+			}
 			return brief.Fact{}, "policy_unavailable"
 		}
 		return f, ""
@@ -47,7 +50,7 @@ func ReviewerCheckSummaryFromProjection(j store.Journal, q *Queue, pr int, polic
 }
 
 func reviewerCheckText(key store.QueueKey, id string, view brief.View, q *Queue, entry *Entry) string {
-	text := "\n\nReviewer brief: " + changePath(key, id) + "/brief?audience=reviewer\nDigest: " + checkText(view.Digest, 128)
+	text := ""
 	// Safety warnings are emitted first and individually bounded, independent of
 	// the row budget. Never truncate the final summary across a warning boundary.
 	if entry != nil && entry.Change != nil && entry.Change.Accountability.Truncated {
@@ -78,6 +81,8 @@ func reviewerCheckText(key store.QueueKey, id string, view brief.View, q *Queue,
 	if view.Truncated {
 		text += "\nWARNING: brief display truncated; read retained evidence."
 	}
+	// A very long queue path must never consume the safety-warning budget.
+	text += "\n\nReviewer brief: " + changePath(key, id) + "/brief?audience=reviewer\nDigest: " + checkText(view.Digest, 128)
 	if view.Classification != nil {
 		for i, l := range view.Classification.Labels {
 			if i == 8 {

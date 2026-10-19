@@ -165,3 +165,19 @@ func TestChangeShowWithoutRevisionEvidenceIsNotFound(t *testing.T) {
 		t.Fatal(w.Code, w.Body)
 	}
 }
+
+func TestReviewerCheckWarningsSurviveOversizedBriefURL(t *testing.T) {
+	hugeKey := key
+	hugeKey.BaseBranch = strings.Repeat("branch/", 12000)
+	q := Queue{}
+	v := brief.View{Digest: brief.NotRecorded, Warnings: []brief.Warning{{Code: "policy_unavailable", Detail: "policy reconstruction failed"}}}
+	text := reviewerCheckText(hugeKey, "change", v, &q, nil)
+	for _, want := range []string{"WARNING: classification/inventory not recorded", "WARNING: policy\\_unavailable", "+more evidence in full brief"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("lost warning %q in bounded output: %s", want, text)
+		}
+	}
+	if len(text) > 12050 {
+		t.Fatal("check exceeds bound", len(text))
+	}
+}

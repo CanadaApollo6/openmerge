@@ -382,6 +382,8 @@ accessed. No Makefile, CI or test-flag changes are made.
   bound, leaving room below GitHub's 65,535-character limit.
   `TestReviewerCheckReceiptsWaitingAndWarningGolden` and
   `TestReviewerCheckWarningsEscapingAndBounds` cover that output.
+  `TestReviewerCheckWarningsSurviveOversizedBriefURL` proves a large queue path
+  cannot crowd safety warnings out of the bounded output.
 - CLI decision reads support queue selectors, JSON, revision and bounded
   pagination with existing exit conventions. Tests:
   `TestChangeDecisionsCLIJSONPaginationAndRevision`,
@@ -417,7 +419,9 @@ accessed. No Makefile, CI or test-flag changes are made.
 
 Round-1 execution uses the same shared test Postgres and ~/.cache Go paths
 listed above. The serial runner waits for other Go/test/replay jobs and sets
-`GOFLAGS=-p=2`, `GOMEMLIMIT=4GiB`. No processes were killed in this round.
+`GOFLAGS=-p=2`, `GOMEMLIMIT=4GiB`. Only this thread's own waiting final-gate driver was stopped before any test
+child started, to sequence an added long-URL warning regression and its gates.
+No foreign process was stopped.
 Detailed exits, log hashes, final performance samples and source identity follow
 once validation completes.
 <!-- round-1-results -->

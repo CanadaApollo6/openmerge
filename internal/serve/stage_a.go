@@ -840,11 +840,9 @@ func (s *Server) stageACheckSummary(ctx context.Context, w *worker, pr int) (str
 	if w.ledgerCache == nil {
 		return "", nil
 	}
-	text, err := status.ReviewerCheckSummaryFromProjection(w.ledgerCache.journal, &w.ledgerCache.projection, pr, w.stageA.policy)
-	if strings.Contains(text, "policy\\_unavailable") {
-		s.options.Logger.Warn("check approval policy unavailable", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "pr", pr)
-	}
-	return text, err
+	return status.ReviewerCheckSummaryFromProjection(w.ledgerCache.journal, &w.ledgerCache.projection, pr, w.stageA.policy, func(err error) {
+		s.options.Logger.Warn("check approval policy unavailable", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "pr", pr, "error", err)
+	})
 }
 
 func (s *Server) stageAActorRelevantWithInputs(state queue.State, w *worker, b queue.ApprovalBasis, actor cp.Identity, grant forge.WriteGrant, fresh queue.ApprovalEligibilityObserved) (bool, error) {

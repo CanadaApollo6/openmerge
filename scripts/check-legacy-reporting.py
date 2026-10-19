@@ -47,6 +47,13 @@ func TestLegacyReportingProbe(t *testing.T) {
  for _,tc:=range fixtures {
   j:=journal(tc.events...)
   q,e,why:=Project(j,tc.pr,100,nil)
+  switch tc.name {
+  case "landed": if e==nil || e.Status!="merged" { t.Fatalf("landed fixture did not land: %+v",e) }
+  case "dequeued": if e==nil || e.Status!="dequeued" { t.Fatalf("dequeued fixture remained admitted: %+v",e) }
+  case "blocked": if e==nil || e.Status!="blocked" { t.Fatalf("blocked fixture was admitted: %+v",e) }
+  case "depth4": if len(q.Chain)!=4 { t.Fatalf("depth4 fixture has %d batches",len(q.Chain)) }
+  case "multi-entry": if len(q.Entries)<2 { t.Fatal("multi-entry fixture is not populated") }
+  }
   ApplyPolicy(&q,e,queue.Config{SpeculationMaxDepth:4,BatchMaxSize:8},at)
   suffix:=""
   // CANDIDATE_SUFFIX

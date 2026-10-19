@@ -1,7 +1,4 @@
 
-
-Reviewer brief: /v1/queues/owner/repo/main/changes/change/brief?audience=reviewer
-Digest: not recorded
 WARNING: classification/inventory not recorded; do not treat this as a complete diff.
 WARNING: policy\_unavailable; &lt;warning&gt;\*&lt;warning&gt;\*&lt;warning&gt;\*&lt;warning&gt;\*&lt;warning&gt;\*&lt;warning&gt;\*&lt;warning&gt;\*&lt;warning&gt;\*…; ; next: 
 WARNING: policy\_unavailable; &lt;warning&gt;\*&lt;warning&gt;\*&lt;warning&gt;\*&lt;warning&gt;\*&lt;warning&gt;\*&lt;warning&gt;\*&lt;warning&gt;\*&lt;warning&gt;\*…; ; next: 
@@ -12,6 +9,9 @@ WARNING: policy\_unavailable; &lt;warning&gt;\*&lt;warning&gt;\*&lt;warning&gt;\
 WARNING: policy\_unavailable; &lt;warning&gt;\*&lt;warning&gt;\*&lt;warning&gt;\*&lt;warning&gt;\*&lt;warning&gt;\*&lt;warning&gt;\*&lt;warning&gt;\*&lt;warning&gt;\*…; ; next: 
 WARNING: policy\_unavailable; &lt;warning&gt;\*&lt;warning&gt;\*&lt;warning&gt;\*&lt;warning&gt;\*&lt;warning&gt;\*&lt;warning&gt;\*&lt;warning&gt;\*&lt;warning&gt;\*…; ; next: 
 WARNING: +42 more warnings; read full brief.
+
+Reviewer brief: /v1/queues/owner/repo/main/changes/change/brief?audience=reviewer
+Digest: not recorded
 Accountability: 
 Waiting at approval gate: &lt;tag&gt;\*\[bad\] &lt;tag&gt;\*\[bad\] &lt;tag&gt;\*\[bad\] &lt;tag&gt;\*\[bad\] &lt;tag&gt;\*\[bad\] &lt;tag&gt;\*\[bad\] &lt;tag&gt;\*\[bad\] &lt;tag&gt;\*\[bad\] &lt;tag&gt;\*\[bad\] &lt;tag&gt;\*\[bad\] &lt;tag&gt;\*\[bad\] &lt;tag&gt;\*\[bad\] &lt;tag&gt;\*\[bad\] &lt;tag…, approval-required, approval-required, approval-required, approval-required, approval-required, approval-required, approval-required, +13 more; record required evidence for this exact head.
 Recorded queue state: ; gate: 
