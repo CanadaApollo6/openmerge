@@ -1,6 +1,7 @@
 package store
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -70,7 +71,7 @@ func TestReportingIndexesExcludeUnrelatedHistory(t *testing.T) {
 		args       []any
 	}{
 		{"events_reporting_change_decision", changeDecisionPageSQL, []any{q, string(c.Fresh.Basis.ChangeID), "0", int64(0), 21}},
-		{"events_reporting_pr_alias", `SELECT DISTINCT (payload->'data'->>'pr')::int FROM events WHERE queue_id=$1 AND type IN ('pr_observed','change_revision_observed') ORDER BY 1 LIMIT 100001`, []any{q}},
+		{"events_reporting_pr_alias", `SELECT DISTINCT (payload->'data'->>'pr')::bigint FROM events WHERE queue_id=$1 AND type IN ('pr_observed','change_revision_observed') ORDER BY 1 LIMIT 100001`, []any{q}},
 		{"events_reporting_settlement", `SELECT id FROM events WHERE queue_id=$1 AND type IN ('landed','landing_abandoned','landing_started') AND payload->'data'->>'batch_id'=$2 ORDER BY id LIMIT 1`, []any{q, c.Start.BatchID}},
 	}
 	for _, query := range queries {
@@ -116,5 +117,24 @@ func TestChangeDecisionsPaginationDoesNotConfirmPriorAttempt(t *testing.T) {
 	must(t, err)
 	if !found || len(second) != 1 || next != 0 || second[0].Outcome != "landed" || second[0].Evidence.Decision.AttemptID != "second-attempt" || second[0].LandedSHA != d.LandedSHA || second[0].Evidence.EligibilityEventID == 0 || second[0].EventID != second[0].Evidence.DecisionEventID {
 		t.Fatalf("second attempt lost: %+v", second)
+	}
+}
+
+func TestChangeDecisionsLargeLegacyPRAlias(t *testing.T) {
+	if strconv.IntSize < 64 {
+		t.Skip("PR exceeds the platform int domain")
+	}
+	s := newStore(t)
+	q := ensureQueue(t, s, "")
+	number := int64(1) << 32
+	pr := int(number + 1)
+	appendEvents(t, s, q, queue.PRObserved{PR: pr, HeadSHA: "legacy-head", Eligible: true, Trusted: true})
+	key := QueueKey{Installation: "installation/1", Repository: "owner/repo", BaseBranch: "main"}
+	id, err := key.ChangeID(pr)
+	must(t, err)
+	records, next, found, err := s.ChangeDecisions(t.Context(), key, id, 0, 0, 20)
+	must(t, err)
+	if !found || len(records) != 0 || next != 0 {
+		t.Fatalf("large legacy PR alias lost: found=%t records=%+v next=%d", found, records, next)
 	}
 }

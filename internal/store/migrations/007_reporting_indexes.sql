@@ -2,7 +2,7 @@
 -- PR aliases, page immutable decisions, or locate an attempt's settlement.
 -- These are reporting indexes only; event and action wire formats are unchanged.
 CREATE INDEX events_reporting_pr_alias ON events
-    (queue_id, ((payload->'data'->>'pr')::int))
+    (queue_id, ((payload->'data'->>'pr')::bigint))
     WHERE type IN ('pr_observed','change_revision_observed');
 CREATE INDEX events_reporting_change_decision ON events
     (queue_id, (COALESCE(payload->'data'->'approval'->'basis'->>'change_id', payload->'data'->'remedy'->>'change_id')), id)

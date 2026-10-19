@@ -35,7 +35,7 @@ func (s *Store) ChangeDecisions(ctx context.Context, key QueueKey, id queue.Chan
 	}
 	// Legacy IDs are derived from queue-local PR aliases. Only this narrow column
 	// is read: unrelated events are never transferred or decoded.
-	rows, err := s.pool.Query(ctx, `SELECT DISTINCT (payload->'data'->>'pr')::int FROM events WHERE queue_id=$1 AND type IN ('pr_observed','change_revision_observed') ORDER BY 1 LIMIT 100001`, q)
+	rows, err := s.pool.Query(ctx, `SELECT DISTINCT (payload->'data'->>'pr')::bigint FROM events WHERE queue_id=$1 AND type IN ('pr_observed','change_revision_observed') ORDER BY 1 LIMIT 100001`, q)
 	if err != nil {
 		return nil, 0, false, err
 	}
