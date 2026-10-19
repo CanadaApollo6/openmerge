@@ -159,19 +159,16 @@ func TestStageAShadowGateDepthsAndIdentityIsolation(t *testing.T) {
 					s, w, f := shadowFixture(t, depth, base, installation, false)
 					native := shadowNative(f, w, shadowComment(100, "@openmerge queue"))
 					f.SetNativeReviews(repo, 1, native)
-					must(t, s.cycle(t.Context(), w))
+					batch := shadowBuildBatch(t, s, w, 1)
 					state := shadowState(t, s, w)
-					batch := state.BatchForPR(1)
 					if batch == nil || batch.TestedSHA == "" {
 						t.Fatalf("no tested composition %+v", state)
 					}
 					tested, ref := batch.TestedSHA, batch.TestRef
 					shadowChecks(t, s, w, f, tested, []forge.CheckRun{{ID: 1, Name: "ci", Source: "github-actions", State: forge.Success, HeadBranch: ref}})
 					// First landing has no approval. It must record a durable wait and no start.
-					err := s.cycle(t.Context(), w)
-					if err != nil && !errors.Is(err, executor.ErrLandingApprovals) {
-						t.Fatal(err)
-					}
+					shadowRefreshChecks(t, s, w)
+					shadowRejectLanding(t, s, w)
 					state = shadowState(t, s, w)
 					if len(state.ApprovalWaits()) != 1 || len(state.LandingDecisions()) != 0 {
 						t.Fatalf("missing wait %+v", state.ApprovalWaits())
@@ -192,20 +189,10 @@ func TestStageAShadowGateDepthsAndIdentityIsolation(t *testing.T) {
 					must(t, err)
 					native.Reviews = []forge.NativeReview{{ID: 200, CommitID: pr.HeadSHA, Author: forge.UserIdentity{ID: 21, Login: "writer", Kind: forge.UserAccount}, State: forge.ReviewApproved, Submitted: forge.NativeTime{Time: time.Now().UTC().Add(time.Minute), Source: forge.ReviewSubmissionTime, Precision: time.Second}}}
 					f.SetNativeReviews(repo, 1, native)
-					for i := 0; i < 6; i++ {
-						if testing.Short() && shadowLanded(t, w, f, 1) {
-							must(t, s.cycle(t.Context(), w))
-							break
-						}
-						err := s.cycle(t.Context(), w)
-						if err != nil {
-							t.Fatal(err)
-						}
-						state = shadowState(t, s, w)
-						if b := state.BatchForPR(1); b != nil && b.TestedSHA != "" {
-							shadowChecks(t, s, w, f, b.TestedSHA, []forge.CheckRun{{ID: 2, Name: "ci", Source: "github-actions", State: forge.Success, HeadBranch: b.TestRef}})
-						}
-					}
+					batch = shadowBuildBatch(t, s, w, 1)
+					shadowChecks(t, s, w, f, batch.TestedSHA, []forge.CheckRun{{ID: 2, Name: "ci", Source: "github-actions", State: forge.Success, HeadBranch: batch.TestRef}})
+					shadowRefreshChecks(t, s, w)
+					shadowLandBatch(t, s, w)
 					events, err := s.store.EventsAfter(t.Context(), w.id, 0)
 					must(t, err)
 					decisions, starts, landed := 0, 0, 0
@@ -505,17 +492,10 @@ func TestStageAReceiptGateAllMethods(t *testing.T) {
 			must(t, s.reconcile(t.Context(), w, true))
 			digest := shadowDigest(t, s, w)
 			f.SetNativeReviews(repo, 1, shadowNative(f, w, shadowComment(100, "@openmerge queue"), shadowComment(101, "@openmerge approve "+digest)))
-			for i := 0; i < 5; i++ {
-				if testing.Short() && shadowLanded(t, w, f, 1) {
-					must(t, s.cycle(t.Context(), w))
-					break
-				}
-				must(t, s.cycle(t.Context(), w))
-				state := shadowState(t, s, w)
-				if b := state.BatchForPR(1); b != nil && b.TestedSHA != "" {
-					shadowChecks(t, s, w, f, b.TestedSHA, []forge.CheckRun{{Name: "ci", State: forge.Success, HeadBranch: b.TestRef}})
-				}
-			}
+			batch := shadowBuildBatch(t, s, w, 1)
+			shadowChecks(t, s, w, f, batch.TestedSHA, []forge.CheckRun{{Name: "ci", State: forge.Success, HeadBranch: batch.TestRef}})
+			shadowRefreshChecks(t, s, w)
+			shadowLandBatch(t, s, w)
 			events, err := s.store.EventsAfter(t.Context(), w.id, 0)
 			must(t, err)
 			decisions, starts := 0, 0
@@ -605,18 +585,11 @@ func TestStageAGateIgnoresContributorReservedTextForEveryMethod(t *testing.T) {
 				shadowComment(200, "@openmerge queue"),
 				shadowComment(201, "@openmerge approve "+digest(2)),
 			))
-			builtMembers := 0
-			for range 5 {
-				if testing.Short() && shadowLanded(t, w, f, 1, 2) {
-					must(t, s.cycle(t.Context(), w))
-					break
-				}
-				must(t, s.cycle(t.Context(), w))
-				if batch := shadowState(t, s, w).BatchForPR(1); batch != nil && batch.TestedSHA != "" {
-					builtMembers = len(batch.PRs)
-					shadowChecks(t, s, w, f, batch.TestedSHA, []forge.CheckRun{{Name: "ci", State: forge.Success, HeadBranch: batch.TestRef}})
-				}
-			}
+			batch := shadowBuildBatch(t, s, w, 1)
+			builtMembers := len(batch.PRs)
+			shadowChecks(t, s, w, f, batch.TestedSHA, []forge.CheckRun{{Name: "ci", State: forge.Success, HeadBranch: batch.TestRef}})
+			shadowRefreshChecks(t, s, w)
+			shadowLandBatch(t, s, w)
 			if builtMembers != 2 {
 				t.Fatalf("tested members = %d, want two multi-commit members", builtMembers)
 			}
@@ -953,8 +926,66 @@ func TestStageACompositionRejectsOnlyUnapprovedMember(t *testing.T) {
 	}
 }
 
-// Short runs stop after settlement plus one idempotence cycle. Full runs
-// retain the longer post-landing polling workload.
+// Drive the actual planner, claims, consequential start and worker, without
+// repeatedly polling or executing unrelated reporting actions to reach a phase.
+func shadowBuildBatch(t *testing.T, s *Server, w *worker, pr int) *queue.Batch {
+	t.Helper()
+	must(t, s.reconcile(t.Context(), w, false))
+	cfg := w.plannerConfig(s.options.PollInterval)
+	claim := claimStageAAction(t, s, w, cfg, func(action queue.Action) bool {
+		switch action.(type) {
+		case queue.BuildTestRef, queue.BuildChainedTestRef:
+			return true
+		}
+		return false
+	})
+	must(t, s.execute(t.Context(), w, claim))
+	batch := shadowState(t, s, w).BatchForPR(pr)
+	if batch == nil || batch.TestedSHA == "" {
+		t.Fatal("missing tested composition")
+	}
+	return batch
+}
+
+func shadowRefreshChecks(t *testing.T, s *Server, w *worker) {
+	t.Helper()
+	cfg := w.plannerConfig(s.options.PollInterval)
+	claim := claimStageAAction(t, s, w, cfg, func(action queue.Action) bool {
+		_, ok := action.(queue.RefreshChecks)
+		return ok
+	})
+	must(t, s.execute(t.Context(), w, claim))
+}
+
+func shadowRejectLanding(t *testing.T, s *Server, w *worker) {
+	t.Helper()
+	cfg := w.plannerConfig(s.options.PollInterval)
+	claim := claimStageAAction(t, s, w, cfg, func(action queue.Action) bool {
+		_, ok := action.(queue.Land)
+		return ok
+	})
+	if err := s.execute(t.Context(), w, claim); !errors.Is(err, executor.ErrLandingApprovals) {
+		t.Fatalf("landing error = %v, want approval wait", err)
+	}
+}
+
+func shadowLandBatch(t *testing.T, s *Server, w *worker) {
+	t.Helper()
+	cfg := w.plannerConfig(s.options.PollInterval)
+	claim := claimStageAAction(t, s, w, cfg, func(action queue.Action) bool {
+		_, ok := action.(queue.Land)
+		return ok
+	})
+	must(t, s.execute(t.Context(), w, claim))
+	unsettled, err := s.settle(t.Context(), w)
+	must(t, err)
+	if unsettled {
+		t.Fatal("fake landing did not settle")
+	}
+	// Exercise a repeated production cycle after settlement as an idempotence check.
+	must(t, s.cycle(t.Context(), w))
+}
+
 func shadowLanded(t *testing.T, w *worker, f *fake.Forge, prs ...int) bool {
 	t.Helper()
 	tip, err := f.ReadRef(t.Context(), repo, w.Key.BaseBranch)

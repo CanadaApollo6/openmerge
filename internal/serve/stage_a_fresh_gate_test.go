@@ -36,8 +36,7 @@ func TestStageAFreshNegativeStancesBeforeStart(t *testing.T) {
 				review := forge.NativeReview{ID: 100, CommitID: pr.HeadSHA, Author: forge.UserIdentity{ID: 21, Login: "writer", Kind: forge.UserAccount}, State: forge.ReviewApproved, Submitted: forge.NativeTime{Time: time.Now().UTC().Add(time.Minute), Source: forge.ReviewSubmissionTime, Precision: time.Second}}
 				native := forge.NativeReviews{Reviews: []forge.NativeReview{review}, Comments: []forge.NativeComment{shadowComment(1000, "@openmerge queue")}}
 				f.SetNativeReviews(repo, 1, native)
-				must(t, s.cycle(t.Context(), w))
-				batch := shadowState(t, s, w).BatchForPR(1)
+				batch := shadowBuildBatch(t, s, w, 1)
 				if batch == nil || batch.TestedSHA == "" {
 					t.Fatal("missing tested batch")
 				}
@@ -214,16 +213,10 @@ func TestStageARebaseGeneratedMembersAfterBaseAdvance(t *testing.T) {
 	w.cfg.MergeMethod = queue.Rebase
 	must(t, s.configuration(t.Context(), w))
 	f.SetNativeReviews(repo, 1, shadowNative(f, w, shadowComment(100, "@openmerge queue"), shadowComment(101, "@openmerge approve "+shadowDigest(t, s, w))))
-	for range 5 {
-		if testing.Short() && shadowLanded(t, w, f, 1) {
-			must(t, s.cycle(t.Context(), w))
-			break
-		}
-		must(t, s.cycle(t.Context(), w))
-		if batch := shadowState(t, s, w).BatchForPR(1); batch != nil && batch.TestedSHA != "" {
-			shadowChecks(t, s, w, f, batch.TestedSHA, []forge.CheckRun{{Name: "ci", State: forge.Success, HeadBranch: batch.TestRef}})
-		}
-	}
+	batch := shadowBuildBatch(t, s, w, 1)
+	shadowChecks(t, s, w, f, batch.TestedSHA, []forge.CheckRun{{Name: "ci", State: forge.Success, HeadBranch: batch.TestRef}})
+	shadowRefreshChecks(t, s, w)
+	shadowLandBatch(t, s, w)
 	records, err := s.store.EventsAfter(t.Context(), w.id, 0)
 	must(t, err)
 	starts := 0
