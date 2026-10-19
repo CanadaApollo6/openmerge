@@ -118,7 +118,7 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 				return diagnostics
 			}
 			if selected.Approvals != nil {
-				w.configError = fmt.Errorf("historical approval policy has a folded digest without recorded window bounds; drain this queue and restore a verified pre-activation backup before changing speculation depth")
+				w.configError = fmt.Errorf("historical approval policy has a folded digest without recorded window bounds; drain this queue and restore a verified pre-activation backup, or recover at verified legacy depth 1 before changing speculation depth")
 				return s.block(ctx, w, queue.ConfigSource, "Default-branch configuration: "+w.configError.Error(), "")
 			}
 			// The serve cleanup default may have changed since the old policy.

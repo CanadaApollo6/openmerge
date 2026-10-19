@@ -39,7 +39,7 @@ func policyIdentity(u forge.UserIdentity) (cp.Identity, error) {
 	if u.Kind == forge.UserAccount {
 		kind = cp.HumanAccount
 	}
-	if u.ID <= 0 || u.Login == "" || u.Kind == "" || u.Kind == forge.UnknownAccount {
+	if u.ID <= 0 || !cp.ValidLogin(u.Login) || u.Kind == "" || u.Kind == forge.UnknownAccount {
 		return cp.Identity{}, forge.ErrIdentityUnavailable
 	}
 	return cp.Identity{ID: classification.GitHubUserID(u.ID), Login: u.Login, Kind: kind}, nil

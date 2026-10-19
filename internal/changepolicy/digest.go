@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/CanadaApollo6/openmerge/internal/ascii"
 )
 
 // GoverningContent records content or proven absence, not blob/commit IDs.
@@ -74,7 +76,7 @@ func PolicyDigest(in DigestInputs) (string, error) {
 	slices.SortFunc(agents, func(a, b Agent) int { return strings.Compare(a.Identity, b.Identity) })
 	resolved := append([]ResolvedIdentity{}, in.Resolved...)
 	for i := range resolved {
-		resolved[i].Name = strings.ToLower(resolved[i].Name)
+		resolved[i].Name = ascii.Lower(resolved[i].Name)
 	}
 	slices.SortFunc(resolved, func(a, b ResolvedIdentity) int { return strings.Compare(a.Name, b.Name) })
 	rules := make([]string, 0, len(in.Queue.Approvals.Rules))

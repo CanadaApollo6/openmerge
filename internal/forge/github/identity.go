@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/CanadaApollo6/openmerge/internal/ascii"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	gh "github.com/google/go-github/v93/github"
 )
@@ -67,7 +68,7 @@ func (d *Driver) ResolveTeam(ctx context.Context, name string) (forge.TeamIdenti
 		return forge.TeamIdentity{}, identityError(err, true)
 	}
 	identity := forge.TeamIdentity{ID: team.GetID(), OrganizationID: team.GetOrganization().GetID(), Organization: team.GetOrganization().GetLogin(), Slug: team.GetSlug()}
-	if identity.ID <= 0 || identity.OrganizationID <= 0 || !strings.EqualFold(identity.Organization, org) || !strings.EqualFold(identity.Slug, slug) {
+	if identity.ID <= 0 || identity.OrganizationID <= 0 || !ascii.EqualFold(identity.Organization, org) || !ascii.EqualFold(identity.Slug, slug) {
 		return forge.TeamIdentity{}, forge.ErrIdentityUnavailable
 	}
 	return identity, nil
@@ -126,7 +127,7 @@ func (d *Driver) WriteGrant(ctx context.Context, repo forge.RepoRef, author forg
 		return forge.WriteGrant{}, normalized
 	}
 	grant := forge.WriteGrant{User: userIdentity(level.GetUser()), Permission: level.GetPermission()}
-	if grant.User.ID <= 0 || grant.User.ID != author.ID {
+	if grant.User.ID <= 0 || grant.User.ID != author.ID || !validIdentityLogin(grant.User.Login) {
 		return grant, fmt.Errorf("%w: expected user %d, observed %d", forge.ErrIdentityMismatch, author.ID, grant.User.ID)
 	}
 	return grant, nil

@@ -3,7 +3,8 @@ package changepolicy
 import (
 	"fmt"
 	"regexp"
-	"strings"
+
+	"github.com/CanadaApollo6/openmerge/internal/ascii"
 )
 
 // AccountKind is the effective kind after configured agent mappings.
@@ -60,8 +61,8 @@ type ResolvedIdentity struct {
 // MaxPolicyIdentities bounds the resolved static identities in a journal policy pin.
 const MaxPolicyIdentities = 1024
 
-var loginPattern = regexp.MustCompile(`(?i)^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\[bot\])?$`)
-var teamPattern = regexp.MustCompile(`(?i)^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?/[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?$`)
+var loginPattern = regexp.MustCompile(`^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\[[bB][oO][tT]\])?$`)
+var teamPattern = regexp.MustCompile(`^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?/[a-zA-Z0-9](?:[a-zA-Z0-9_-]*[a-zA-Z0-9])?$`)
 
 // ValidLogin reports whether a name is a bare account login.
 func ValidLogin(s string) bool { return loginPattern.MatchString(s) }
@@ -78,7 +79,10 @@ func (r Repository) ValidateIdentities(resolved []ResolvedIdentity) error {
 	}
 	byName := map[string]ResolvedIdentity{}
 	for _, identity := range resolved {
-		name := strings.ToLower(identity.Name)
+		if !ValidMember(identity.Name) {
+			return fmt.Errorf("invalid resolved identity %q: expected ASCII login or org/team", identity.Name)
+		}
+		name := ascii.Lower(identity.Name)
 		if identity.ID == "" {
 			return fmt.Errorf("unresolved identity %q", name)
 		}

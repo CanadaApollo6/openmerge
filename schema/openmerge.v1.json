@@ -91,7 +91,7 @@
         "items": {
           "type": "string",
           "format": "policy-member",
-          "pattern": "^(?:[a-zA-Z\u017f\u212a0-9](?:[a-zA-Z\u017f\u212a0-9-]*[a-zA-Z\u017f\u212a0-9])?(?:\\[[bB][oO][tT]\\])?|[a-zA-Z\u017f\u212a0-9](?:[a-zA-Z\u017f\u212a0-9-]*[a-zA-Z\u017f\u212a0-9])?/[a-zA-Z\u017f\u212a0-9](?:[a-zA-Z\u017f\u212a0-9_-]*[a-zA-Z\u017f\u212a0-9])?)$"
+          "pattern": "^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\\[[bB][oO][tT]\\])?|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?/[a-zA-Z0-9](?:[a-zA-Z0-9_-]*[a-zA-Z0-9])?)$"
         }
       }
     },
@@ -104,7 +104,7 @@
           "identity": {
             "type": "string",
             "format": "policy-login",
-            "pattern": "^[a-zA-Z\u017f\u212a0-9](?:[a-zA-Z\u017f\u212a0-9-]*[a-zA-Z\u017f\u212a0-9])?(?:\\[[bB][oO][tT]\\])?$"
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\\[[bB][oO][tT]\\])?$"
           },
           "accountable": {
             "type": "array",
@@ -112,7 +112,7 @@
             "items": {
               "type": "string",
               "format": "policy-login",
-              "pattern": "^[a-zA-Z\u017f\u212a0-9](?:[a-zA-Z\u017f\u212a0-9-]*[a-zA-Z\u017f\u212a0-9])?(?:\\[[bB][oO][tT]\\])?$"
+              "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\\[[bB][oO][tT]\\])?$"
             }
           }
         },

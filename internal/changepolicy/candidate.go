@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/CanadaApollo6/openmerge/internal/ascii"
 	"github.com/CanadaApollo6/openmerge/internal/config/condition"
 	"go.yaml.in/yaml/v3"
 )
@@ -188,7 +189,11 @@ func (p *candidateParser) match(n *yaml.Node) Match {
 		m.Labels = p.list(v)
 		for i, label := range m.Labels {
 			if !ValidClassificationLabel(label) {
-				p.fail(v.Content[i], "invalid classification label "+label)
+				message := "invalid classification label " + label
+				if strings.HasPrefix(label, "owned:user:") || strings.HasPrefix(label, "owned:team:") {
+					message += "; expected canonical ASCII login or org/team"
+				}
+				p.fail(v.Content[i], message)
 			}
 		}
 	}
@@ -216,10 +221,10 @@ func ValidClassificationLabel(label string) bool {
 		return true
 	}
 	if name, ok := strings.CutPrefix(label, "owned:user:"); ok {
-		return name == strings.ToLower(name) && ValidLogin(name)
+		return name == ascii.Lower(name) && ValidLogin(name)
 	}
 	if name, ok := strings.CutPrefix(label, "owned:team:"); ok {
-		return name == strings.ToLower(name) && teamPattern.MatchString(name)
+		return name == ascii.Lower(name) && teamPattern.MatchString(name)
 	}
 	if name, ok := strings.CutPrefix(label, "owned:email:"); ok {
 		local, domain, found := strings.Cut(name, "@")
@@ -335,9 +340,9 @@ func ParseCandidateNode(root *yaml.Node) (Repository, []Diagnostic, error) {
 			members := p.list(v)
 			for i, member := range members {
 				if !ValidMember(member) {
-					p.fail(v.Content[i], "invalid member "+member)
+					p.fail(v.Content[i], "invalid member (expected ASCII login or org/team) "+member)
 				}
-				members[i] = strings.ToLower(member)
+				members[i] = ascii.Lower(member)
 			}
 			r.Groups[name] = members
 		}
@@ -353,17 +358,17 @@ func ParseCandidateNode(root *yaml.Node) (Repository, []Diagnostic, error) {
 				p.fail(item, "agent requires identity and accountable")
 				continue
 			}
-			identity := strings.ToLower(p.text(a["identity"]))
+			identity := ascii.Lower(p.text(a["identity"]))
 			if !ValidLogin(identity) || seen[identity] {
-				p.fail(a["identity"], "invalid or duplicate agent identity "+identity)
+				p.fail(a["identity"], "invalid or duplicate agent identity (expected ASCII login) "+identity)
 			}
 			seen[identity] = true
 			accountable := p.list(a["accountable"])
 			for i, name := range accountable {
 				if !ValidLogin(name) {
-					p.fail(a["accountable"].Content[i], "invalid accountable login "+name)
+					p.fail(a["accountable"].Content[i], "invalid accountable login (expected ASCII login) "+name)
 				}
-				accountable[i] = strings.ToLower(name)
+				accountable[i] = ascii.Lower(name)
 			}
 			r.Agents = append(r.Agents, Agent{Identity: identity, Accountable: accountable})
 		}

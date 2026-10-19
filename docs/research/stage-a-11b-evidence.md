@@ -575,3 +575,70 @@ depth-corpus Go tests **0** for both revisions in each corpus. Mandatory replay
 synthetic self-tests: main **0**, deployed **1** (the same known classifications
 boundary). The outer gate sequencer exited **0** after explicitly checking every
 child status, including the deployed replay **1**.
+
+## Round 2 ASCII identity boundary
+
+Operator decision: reject non-ASCII login, organization and team identities. The
+loader's `(?i)` regular expressions accepted U+017F/U+212A; agent pre-validation
+Unicode lowercasing also converted U+212A into ASCII `k`. Explicit ASCII classes
+and `internal/ascii` folding remove both aliases. The public member/login schema
+patterns previously spelled out U+017F/U+212A and now omit them. Owner-label
+patterns already required ASCII and remain unchanged. Invalid identity diagnostics
+retain the original YAML scalar path/line; member, agent and accountable errors
+now describe the ASCII grammar.
+
+Case-fold audit (production, excluding tests):
+
+- `internal/config`: `keys.go` lowercases reflected Go field names, not identities;
+  retained. Condition string equality/globs do not use Unicode case folding.
+  Approver selectors are `none`, `any_writer`, human, code owners, or exact group
+  references; there is no direct login selector. Named pools reach the member
+  validation above; group names are arbitrary exact keys and are not logins.
+- `internal/changepolicy/identity.go`: both case-insensitive regexes became
+  explicit ASCII classes (including ASCII case variants of `[bot]`); resolved-name
+  normalization now uses ASCII folding and rejects invalid resolved names.
+- `internal/changepolicy/candidate.go`: user/team owner canonical checks, group
+  members, agent identity and accountable normalization now use ASCII folding.
+  The remaining `strings.ToLower(domain)` belongs to email-domain grammar and
+  is retained; email owners are not GitHub account identities.
+- `internal/changepolicy/digest.go`: resolved-name normalization now folds ASCII.
+  `strings.Compare` sorts literal strings and does not fold.
+- `internal/classification/codeowners.go`: all four login/team normalization sites
+  now fold ASCII. Its existing explicit ASCII owner/token regexes still reject
+  Unicode before canonicalization. Email-domain lowercasing is retained.
+- `internal/forge/github/identity.go`: organization and team slug `EqualFold`
+  comparisons now use ASCII folding. Request/user/member validators already
+  used explicit ASCII checks. Grant response logins now receive that check too.
+- `internal/forge/fake/identity.go`: five user/team map insertion/lookup and grant
+  lookup lowercasing sites now fold ASCII, matching the production boundary.
+- `internal/forge/github/driver.go`: status-creator login normalization now folds
+  ASCII. Other folds in this file concern API error messages.
+- `internal/serve/stage_a.go`: identity resolution uses literal canonical keys and
+  stable IDs, without folding; returned user logins now pass `ValidLogin` rather
+  than only a nonempty check. Policy pins pass `ValidateIdentities`.
+- `internal/gitops/metadata.go`: the commit-author/PR-author login fallback now
+  compares with ASCII folding; stable-ID comparison remains authoritative.
+  Remaining folds concern trailer keys, email attribution and whole trailer
+  deduplication, not GitHub login/team/org matching. Forge HTTP hosts/headers,
+  API error messages, repository routing/discovery, hex IDs, and brief statuses
+  elsewhere are separate from account identity resolution.
+
+`TestIdentityASCIIAgreement` rejects long-s, Kelvin-sign, fullwidth A, dotless i
+and dotted I in eight identity positions (40 cases), checking loader/schema and
+portable schema-pattern agreement plus original scalar path/line. Requirements
+select the same named pool in defaults and rules. `TestIdentityASCIILegacySpellings`
+retains mixed ASCII case, bot suffixes and underscore team slugs.
+`TestCodeownersRejectsUnicodeIdentities` covers user/org/team owner tokens;
+`TestIdentityRejectsUnicodeAliases` checks requests never reach even the fake HTTP
+API and rejects Unicode user/team responses. `TestIdentityFold` proves ASCII case
+compatibility while preserving Unicode bytes. Existing identity, policy, schema,
+classification, attribution and transition suites supply regression coverage.
+
+The folded-digest diagnostic now mentions verified legacy depth-1 recovery as
+well as drain-and-restore. No transition/recovery behavior changed.
+
+`TestLinkedCommitAuthorsExcludePrimaryAliases` now includes long-s and Kelvin-sign
+fallback cases: neither suppresses another contributor's attribution, while
+ASCII mixed case and authoritative stable IDs retain their existing behavior.
+The former Unicode-positive `TestPublicPolicySchemaValidFormats` vector now uses
+`Kate` and `sam`; the operator intentionally withdrew Unicode identity support.

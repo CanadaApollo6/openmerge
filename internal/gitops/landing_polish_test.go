@@ -10,7 +10,7 @@ import (
 )
 
 func TestLinkedCommitAuthorsExcludePrimaryAliases(t *testing.T) {
-	for _, scenario := range []string{"id", "login", "unlinked", "different-id", "read-error"} {
+	for _, scenario := range []string{"id", "login", "unlinked", "different-id", "unicode-long-s", "unicode-kelvin", "read-error"} {
 		t.Run(scenario, func(t *testing.T) {
 			f := newFixture(t)
 			authored := func(parent, name, email, file, trailers string) string {
@@ -23,7 +23,14 @@ func TestLinkedCommitAuthorsExcludePrimaryAliases(t *testing.T) {
 			gitCommand(t, f.source, "", nil, "push", "--force", f.remote, three+":"+headRef(1))
 			f.prs[0].HeadSHA = three
 			f.g.cfg.PullRequest = func(context.Context, forge.RepoRef, int) (forge.PullRequest, error) {
-				return forge.PullRequest{Number: 1, HeadSHA: three, Author: "login", AuthorID: 12, AuthorEmail: "12+login@users.noreply.github.com", Title: "Polish", HeadBranch: "topic"}, nil
+				author := "login"
+				if scenario == "unicode-long-s" {
+					author = "sam"
+				}
+				if scenario == "unicode-kelvin" {
+					author = "kam"
+				}
+				return forge.PullRequest{Number: 1, HeadSHA: three, Author: author, AuthorID: 12, AuthorEmail: "12+login@users.noreply.github.com", Title: "Polish", HeadBranch: "topic"}, nil
 			}
 			calls := 0
 			f.g.cfg.CommitAuthors = func(context.Context, forge.RepoRef, int) ([]forge.CommitAuthor, error) {
@@ -32,6 +39,10 @@ func TestLinkedCommitAuthorsExcludePrimaryAliases(t *testing.T) {
 				switch scenario {
 				case "login":
 					id, login = 0, "LOGIN"
+				case "unicode-long-s":
+					id, login = 0, "ſam"
+				case "unicode-kelvin":
+					id, login = 0, "Kam"
 				case "unlinked":
 					id, login = 0, ""
 				case "different-id":

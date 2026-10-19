@@ -260,3 +260,38 @@ func TestIdentityReadsPreserveSettlementBudget(t *testing.T) {
 		t.Fatal("settlement could not use reserved capacity")
 	}
 }
+
+func TestIdentityRejectsUnicodeAliases(t *testing.T) {
+	for _, name := range []string{"ſam", "Kam", "Ａam", "ıam", "İam"} {
+		t.Run(name, func(t *testing.T) {
+			f := newAPI(t)
+			calls := 0
+			f.override = func(w http.ResponseWriter, r *http.Request) bool {
+				calls++
+				if strings.Contains(r.URL.Path, "/teams/") {
+					f.json(w, map[string]any{"id": 44, "slug": name, "organization": map[string]any{"id": 55, "login": "org"}})
+				} else {
+					f.json(w, map[string]any{"id": 11, "login": name, "type": "User"})
+				}
+				return true
+			}
+			if _, err := f.driver.ResolveUser(t.Context(), name); err == nil {
+				t.Fatal("Unicode request accepted")
+			}
+			for _, team := range []string{name + "/team", "org/" + name} {
+				if _, err := f.driver.ResolveTeam(t.Context(), team); err == nil {
+					t.Fatal("Unicode team request accepted")
+				}
+			}
+			if calls != 0 {
+				t.Fatal("invalid identity reached API")
+			}
+			if _, err := f.driver.ResolveUser(t.Context(), "sam"); err == nil {
+				t.Fatal("Unicode response accepted")
+			}
+			if _, err := f.driver.ResolveTeam(t.Context(), "org/sam"); err == nil {
+				t.Fatal("Unicode team response accepted")
+			}
+		})
+	}
+}

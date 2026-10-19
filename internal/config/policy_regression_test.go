@@ -77,7 +77,7 @@ func TestEmptyPolicyKeysPreserveLegacyConfig(t *testing.T) {
 func TestPublicPolicySchemaValidFormats(t *testing.T) {
 	for _, extra := range []string{
 		"agents: [{identity: 'Helper[BOT]', accountable: [ALICE]}]\n",
-		"groups: {g: [Alice, Org/Team_name, 'Helper[BOT]', 'Kate', 'ſam']}\n",
+		"groups: {g: [Alice, Org/Team_name, 'Helper[BOT]', 'Kate', 'sam']}\n",
 		"classification: {docs: ['docs/**', 'literal\\\\', 'escaped\\?']}\n",
 	} {
 		data := []byte("version: 1\n" + extra + "queues: [{name: main, merge_when: [check-success = ci]}]\n")

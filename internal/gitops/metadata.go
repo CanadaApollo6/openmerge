@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/CanadaApollo6/openmerge/internal/ascii"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
 
@@ -179,7 +180,7 @@ func (s *session) prMessage(ctx context.Context, repo forge.RepoRef, req forge.B
 		}
 		own := make(map[string]bool)
 		for _, commit := range linked {
-			matches := commit.Login != "" && strings.EqualFold(commit.Login, pr.Author)
+			matches := commit.Login != "" && ascii.EqualFold(commit.Login, pr.Author)
 			if commit.ID > 0 && pr.AuthorID > 0 {
 				matches = commit.ID == pr.AuthorID
 			}
