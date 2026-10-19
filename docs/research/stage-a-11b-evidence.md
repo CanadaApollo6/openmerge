@@ -758,3 +758,138 @@ five fixtures (ASCII login control, Kelvin missing-ID fallback, accented
 missing-ID fallback, non-ASCII primary author, and authoritative stable-ID
 control). Every commit fixture includes Unicode author names/emails and a
 `Zoë <zoë@éxample.test>` coauthor. No real forge requests are used.
+
+### Round 3 gate results
+
+Production and Go regression tests were frozen at
+`f6649427b4817171b9cdde1113487433a67082c0`. The only subsequent source change,
+`baf237474551c1fba49ac6f0167b11fb743cc2c1`, fixes the new Python differential
+fixture generator: each fixture must start from the immutable original harness,
+rather than reapplying substitutions to the previous fixture. No production or
+Go test code changed after the full check. This evidence update changes only
+Markdown.
+
+All commands below ran serially through the host-idle runner with the documented
+GOFLAGS, memory, cache and shared-test-Postgres settings. The Unicode retry
+waited for a foreign full-corpus differential before starting. No process was
+killed in round 3. Logs are under `/home/riels/.cache/openmerge-11b/`.
+
+| Run | Actual exit | Wall seconds after idle wait | Log SHA-256 |
+|---|---:|---:|---|
+| `r3-focused` | 0 | 3.755 | `35c3b8f430229a8fd333a5d3fcc2e4c457d86d82df9435f8bfeb3492ebe38c91` |
+| `r3-approval-focused` | 0 | 1.653 | `743f9c3a803143dabeaeaa4cc54b63cb68d6850d815d85d8f19464f304d80831` |
+| `r3-check` | 0 | 375.726 | `311b7fa438b87759ba10325904dd404042ff249506dc5c4dc0fd763ace5494ed` |
+| `r3-sim-exits` | 0 | 38.782 | `4a16be201ce21adef37c0b01242596d8f127269fc1a42e0b35d7b7584080e25b` |
+| `r3-compatibility` | 0 | 11.365 | `8609790ee807f78ae7fadd31e6503a6a932f9f874af818197be4849fe5a93749` |
+| `r3-legacy-sql` | 0 | 2.121 | `fe2faa0a68410d87ceef36bb932bf7203279378467e8af399b607abf15999e31` |
+| `r3-depths` | 0 | 142.754 | `3c25309b33c985c03a3aff2a5c961878e2dd1b080a03ec27dc5894981e7b3453` |
+| `r3-commit-ids` | 0 | 11.057 | `99ff8d2ce75f33a9c1abcd1a72c0020490a744d06b9658ef7c60f3e8e32d8b79` |
+| `r3-unicode` | 2 | 12.305 | `07e723152a0edf6d7e44f40207841270e9b68bbe3f1c49aac4d6a616926a88ce` |
+| `r3-unicode-retry` | 0 | 26.799 | `f617b581d60775fe7a8e0481bcd54020c8d31f36cddc973f735303a07f22c3ce` |
+| `r3-replay-main` | 0 | 62.85 | `58ecd77cd519c6ab8f5307ecd5c07114f6b9c90d67401c8b797e8e802085df77` |
+
+The first Unicode differential exited **2**: its status comparison and ASCII
+commit fixture passed, then the second fixture's generated Go failed compilation
+with duplicate `:=` declarations. The template fix above resolved it; the full
+retry exited **0**, with all five fixtures and four methods passing. The outer
+`r3-gates.sh` exited **2** on that first failure; the corrected retry and strict
+replay were then run separately, both exiting **0**. No failure is waived.
+
+Results:
+
+- `make check`: **0**, formatting, lint (zero issues), complete race/short suite
+  and binary build.
+- `make test-sim-exits`: **0**, complete required simulator exits.
+- Compatibility: **0**, 17 legacy exit records, 1,055 retry/default digest records,
+  and 84 wire fixtures byte-identical.
+- SQL: **0**, seven exact statements and lock/transaction order. Baseline,
+  candidate, and each of the five negative-control Go trace tests exited **0**;
+  all five SQL mutations were detected by the differential.
+- Depth 1/4: **0**, 227,662 short checkpoints, 5,615,998 full checkpoints, and
+  188 fixture records matched exactly. All six underlying Go test invocations
+  exited **0**; no plan/action/wake exceptions.
+- Stock commit IDs: **0**, tested and landed IDs identical independently for
+  squash, merge, rebase and fast-forward. Mandatory self-test statuses:
+  identical **0**, intentional mutant **1**, dirty source **2** (all expected).
+- Unicode differential final: **0**, both fake-HTTP status/executor tests exited
+  **0**, four producer pairs matched, all five fixtures matched tested/landed
+  IDs across all four methods. Every fixture binary build and execution exited
+  **0**. No forge network calls outside loopback.
+- Strict journal replay vs main: **0**, all 2,159 real structural state checkpoints
+  and seven synthetic checkpoints matched; candidate-repeat determinism passed.
+  No new replay exceptions were added.
+
+Exact commands (runner environment above; `python3 -B` disables bytecode):
+
+`r3-focused` — actual exit **0**:
+
+```sh
+go test -short -count=1 ./internal/gitops ./internal/forge/github -run 'TestLinkedCommitAuthorsExcludePrimaryAliases|TestStatusUnicodeLegacyEquivalence|TestIdentityRejectsUnicodeAliases'
+```
+
+`r3-approval-focused` — actual exit **0**:
+
+```sh
+go test -short -count=1 ./internal/serve -run '^TestStageAUnicodeApprovalIdentityRejected$'
+```
+
+`r3-check` — actual exit **0**:
+
+```sh
+make check
+```
+
+`r3-sim-exits` — actual exit **0**:
+
+```sh
+make test-sim-exits
+```
+
+`r3-compatibility` — actual exit **0**:
+
+```sh
+python3 -B scripts/check-phase2-compatibility.py /home/riels/openmerge-sa-11b-main
+```
+
+`r3-legacy-sql` — actual exit **0**:
+
+```sh
+python3 -B scripts/check-legacy-landing-sql.py /home/riels/openmerge-sa-11b-main
+```
+
+`r3-depths` — actual exit **0**:
+
+```sh
+python3 -B scripts/check-legacy-plan-action-depths-1-4.py /home/riels/openmerge-sa-11b-main
+```
+
+`r3-commit-ids` — actual exit **0**:
+
+```sh
+python3 -B scripts/check-legacy-commit-ids.py --baseline /home/riels/openmerge-sa-11b-main
+```
+
+`r3-unicode` — actual exit **2**:
+
+```sh
+python3 -B scripts/check-legacy-unicode-logins.py --baseline /home/riels/openmerge-sa-11b-main
+```
+
+`r3-unicode-retry` — actual exit **0**:
+
+```sh
+python3 -B scripts/check-legacy-unicode-logins.py --baseline /home/riels/openmerge-sa-11b-main
+```
+
+`r3-replay-main` — actual exit **0**:
+
+```sh
+python3 -B scripts/check-live-journal-replay.py --baseline /home/riels/openmerge-sa-11b-main --candidate /home/riels/openmerge-sa-11b --events /home/riels/.local/share/openmerge/exports/events-20261018T051000Z.jsonl --queues /home/riels/.local/share/openmerge/exports/queues-20261018T051000Z.jsonl --strict-state --out /home/riels/.cache/openmerge-11b/r3-replay-main.json
+```
+
+Initial setup fetch used an incorrect branch spelling (`stage-a-11b`) and
+exited **128** before fetching it; the corrected explicit refspec for
+`stage-a/11b-activation` and main exited **0**. A read-only inspection used a
+misspelled test filename and exited **2**; reading the correct file succeeded.
+Neither launched tests or mutated source. Subsequent explicit-refspec fetch
+confirmed main remains `6e2b50b9da5c098ebfd76e0b1b20a5990c2663bb`.
