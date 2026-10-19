@@ -3,6 +3,7 @@ package serve
 import (
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -74,15 +75,46 @@ func TestStageAApprovalReadUsesDatabaseOrder(t *testing.T) {
 			relevant[name] = record.Event
 		}
 	}
-	if len(relevant) != 6 {
+	// Use actual wire fixtures to pin the basis.change_id JSON path for these
+	// additive event kinds, even when the projection ignores their semantics.
+	for _, name := range []string{"review_stance_observed", "approval_receipt_recorded", "approval_inputs_changed"} {
+		raw, err := os.ReadFile("../queue/testdata/wire/v1/event_" + name + ".json")
+		must(t, err)
+		event, err := queue.DecodeEvent(raw)
+		must(t, err)
+		basis := facts.Eligibility.Basis
+		switch e := event.(type) {
+		case queue.ReviewStanceObserved:
+			e.Basis = basis
+			event = e
+		case queue.ApprovalReceiptRecorded:
+			e.Basis = basis
+			e.Current.ChangeID = string(basis.ChangeID)
+			e.Current.Revision = uint64(basis.Revision)
+			e.Current.Head = basis.Head
+			e.Supplied = e.Current
+			event = e
+		case queue.ApprovalInputsChanged:
+			e.Basis = basis
+			e.Eligibility.Basis = basis
+			event = e
+		}
+		relevant[name] = event
+	}
+
+	if len(relevant) != 9 {
 		t.Fatalf("missing event coverage: %v", relevant)
 	}
 	for name, event := range relevant {
 		t.Run(name, func(t *testing.T) {
 			read, err := s.store.BeginApprovalRead(t.Context(), w.id, []queue.ChangeID{r.ChangeID})
 			must(t, err)
-			// A competing worker commits identical semantics. Even ABA or skewed
+			// A competing worker commits relevant evidence. Even ABA or skewed
 			// clocks cannot make this acquisition skip the committed evidence.
+			if config, ok := event.(queue.ConfigApplied); ok {
+				config.Digest = strings.Repeat("f", 64)
+				event = config
+			}
 			if revision, ok := event.(queue.ChangeRevisionObserved); ok {
 				revision.Predecessor = r.Revision
 				revision.Revision = r.Revision + 1

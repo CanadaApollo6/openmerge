@@ -19,7 +19,6 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/config/condition"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
-	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
 // stageAPolicy has no production constructor or public configuration path in
@@ -293,10 +292,6 @@ func preflightStageA(state queue.State, events []queue.Event) error {
 				err = state.CheckClassificationAdmission(e)
 			}
 		case queue.ApprovalEligibilityObserved:
-			facts, _ := state.ApprovalFacts(e.Basis.ChangeID)
-			if facts.Eligibility != nil && facts.Eligibility.Basis.At.After(e.Basis.At) {
-				return store.ErrLandingDecisionStale
-			}
 			err = state.CheckApprovalAdmission(e)
 		case queue.ApprovalInputsChanged:
 			err = state.CheckApprovalAdmission(e.Eligibility)

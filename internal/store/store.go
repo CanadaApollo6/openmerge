@@ -286,7 +286,7 @@ func (s *Store) append(ctx context.Context, q QueueID, events []queue.Event, ded
 			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 				return err
 			}
-			if observation.preflight != nil {
+			if observation.preflight != nil && !eligibilityOnly {
 				state, _, err := load(ctx, tx, q)
 				if err != nil {
 					return err
@@ -357,7 +357,7 @@ func (s *Store) append(ctx context.Context, q QueueID, events []queue.Event, ded
 	if stale {
 		return 0, ErrStale
 	}
-	advanceApprovalRead(ctx, watermark)
+	advanceApprovalRead(ctx, watermark, events)
 	return watermark, nil
 }
 

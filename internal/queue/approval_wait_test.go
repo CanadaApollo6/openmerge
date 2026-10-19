@@ -214,8 +214,8 @@ func TestApprovalWaitProbeAndWakeBasis(t *testing.T) {
 	stale := event
 	stale.Eligibility.Basis.At = b.At.Add(-time.Second)
 	stale.Basis = stale.Eligibility.Basis
-	if next := Apply(s, stale); len(next.ApprovalWaits()) != 1 {
-		t.Fatal("stale probe woke wait")
+	if next := Apply(s, stale); len(next.ApprovalWaits()) != 0 {
+		t.Fatal("committed probe from slower clock did not wake wait")
 	}
 	next := Apply(s, event)
 	if len(next.ApprovalWaits()) != 0 || len(plannedWaitBuilds(cfg, next, now)) != 1 {
@@ -233,7 +233,7 @@ func TestApprovalWaitProbeAndWakeBasis(t *testing.T) {
 		}
 	}
 }
-func TestApprovalWaitDelayedPermissionProbe(t *testing.T) {
+func TestApprovalWaitPermissionProbeUsesCommitOrder(t *testing.T) {
 	s, cfg, bases := waitQueue(t, 1, 1, 1)
 	b := bases[0]
 	now := b.At.Add(time.Hour)
@@ -242,27 +242,21 @@ func TestApprovalWaitDelayedPermissionProbe(t *testing.T) {
 	gateBasis.At = b.At.Add(time.Minute)
 	s = rejectWait(t, s, s.Active, gateBasis)
 	s = invalidateWait(t, s)
-	preGate := eligibilityEvent(b)
-	preGate.Basis.At = b.At.Add(30 * time.Second)
-	preGate.Known = false
-	preGate.Reasons = []string{"unknown-before-gate"}
-	if got := Apply(s, preGate); len(got.ApprovalWaits()) != 1 {
-		t.Fatal("pre-gate eligibility woke newer wait")
+	// A later committed observation may come from a slower worker clock.
+	// Overlapping stale reads are rejected by the store before journaling.
+	later := eligibilityEvent(b)
+	later.Basis.At = b.At.Add(30 * time.Second)
+	later.Known = false
+	later.Reasons = []string{"unknown-from-slower-clock"}
+	if got := Apply(s, later); len(got.ApprovalWaits()) != 0 {
+		t.Fatal("later committed eligibility did not wake wait")
 	}
-	newer := eligibilityEvent(b)
-	newer.Basis.At = b.At.Add(3 * time.Minute)
-	newer.Basis.ReadID = "newer-equal"
-	s = Apply(s, newer)
-	older := eligibilityEvent(b)
-	older.Basis.At = b.At.Add(2 * time.Minute)
-	older.Basis.ReadID = "delayed-different"
-	older.Known = false
-	older.Reasons = []string{"eligibility-unknown"}
-	if _, changed := s.PrepareApprovalInputChange(older); changed {
-		t.Fatal("delayed probe overwrote newer unchanged observation")
+	probe, changed := s.PrepareApprovalInputChange(later)
+	if !changed {
+		t.Fatal("slower clock suppressed permission probe")
 	}
-	if got := Apply(s, older); len(got.ApprovalWaits()) != 1 {
-		t.Fatal("direct stale eligibility woke wait")
+	if got := Apply(s, probe); len(got.ApprovalWaits()) != 0 {
+		t.Fatal("later committed permission probe did not wake wait")
 	}
 }
 
@@ -518,7 +512,7 @@ func TestApprovalWaitCannotRebindTestedRevisionAfterHeadReuse(t *testing.T) {
 	}
 }
 
-func TestApprovalWaitRejectsDelayedIntentAndAccountability(t *testing.T) {
+func TestApprovalWaitIntentAndAccountabilityUseCommitOrder(t *testing.T) {
 	for _, kind := range []string{"intent", "accountability"} {
 		t.Run(kind, func(t *testing.T) {
 			s, cfg, bases := waitQueue(t, 1, 1, 1)
@@ -527,7 +521,7 @@ func TestApprovalWaitRejectsDelayedIntentAndAccountability(t *testing.T) {
 				if kind == "intent" {
 					title := "current"
 					if changed {
-						title = "older"
+						title = "committed-from-slower-clock"
 					}
 					return Intent(b, title, "body")
 				}
@@ -541,18 +535,18 @@ func TestApprovalWaitRejectsDelayedIntentAndAccountability(t *testing.T) {
 			newer.At = b.At.Add(time.Minute)
 			newer.ReadID = "newer"
 			s = Apply(s, observation(newer, false))
-			// Freshness must survive both replay and snapshot recovery, even before a wait.
+			// Commit ordering must survive snapshot recovery, even before a wait.
 			s = restart(t, s)
-			if got := Apply(s, observation(b, true)); !reflect.DeepEqual(got, s) {
-				t.Fatal("delayed observation regressed recorded inputs")
+			if got := Apply(s, observation(b, true)); reflect.DeepEqual(got, s) {
+				t.Fatal("later committed observation ignored due to clock skew")
 			}
 			now := newer.At.Add(time.Hour)
 			s = waitBuild(t, s, cfg, now)
 			s = rejectWait(t, s, s.Active, newer)
 			s = invalidateWait(t, s)
 			s = restart(t, s)
-			if got := Apply(s, observation(b, true)); !reflect.DeepEqual(got, s) {
-				t.Fatal("delayed observation changed a wait")
+			if got := Apply(s, observation(b, true)); len(got.ApprovalWaits()) != 0 {
+				t.Fatal("later committed observation failed to wake wait")
 			}
 			newer.At = newer.At.Add(time.Minute)
 			newer.ReadID = "fresh-change"

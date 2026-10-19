@@ -302,9 +302,8 @@ func (s State) observeApproval(e Event) (State, bool) {
 	case ChangeIntentObserved:
 		f.Intent = &e
 	case ApprovalEligibilityObserved:
-		// Apply replays journal commit order. The acquisition-start check in
-		// apply rejects time regressions; equal starts use this commit order.
-		// Producers additionally fence overlapping reads by database watermark.
+		// Apply replays database commit order, regardless of worker clocks.
+		// Producers fence overlapping reads by database watermark.
 		e = detached(e)
 		f.Eligibility = &e
 	case ReviewStanceObserved:

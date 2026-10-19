@@ -128,16 +128,17 @@ Before any final gate forge reads, capture the queue journal high-water mark
 `Store.ApprovalRead` through ingestion, eligibility, commands and atomic start
 or rejection. Under the queue lock, reject if a later committed stance,
 receipt, eligibility, revision or classification event affects a member.
-Configuration/base changes and rejected compositions also invalidate the read.
+The table below defines configuration, base and rejection scope.
 Checks run before dedupe as well as before start: an ABA cannot hide behind an
 identical fingerprint or a worker's newer wall clock. After a successful own
 append, advance the acquisition watermark only to that transaction's final ID;
 never refresh it from a later unlocked journal read. Nested acquisition reuses
 the guard rather than resetting its lower bound. No forge I/O runs under a lock.
 
-Projection replay follows commit order, with acquisition-start regressions
-rejected and commit order breaking equal acquisition times. Wall-clock timestamps
-alone never authorize an overlapping stale read. Eligibility poll dedupe compares
+Projection replay follows database commit order. Worker timestamps are
+informational and never reject a later non-overlapping acquisition, including
+one from a slower clock. The database watermark rejects overlapping stale reads
+before they enter the journal. Eligibility poll dedupe compares
 the candidate fingerprint with the current locked journal projection, including
 another gate's writes. Diagnostic reasons, read IDs/times and set order do not
 append events. A deny → allow → deny transition retains both semantic changes.
@@ -150,3 +151,35 @@ Source/evidence caps fail closed rather than guaranteeing a landing. The stale
 error exposed in worker diagnostics says `waiting for stable approval evidence`;
 this is an operator-visible waiting reason for churn, distinct from the durable
 policy wait reasons attached to a rejected batch. Trial class remains **Hold**.
+
+## Acquisition invalidation scope (11a round 4)
+
+The guard captures projection and watermark in one repeatable-read snapshot.
+Its own successful appends advance both together; it never skips a competing
+commit. Scope is local to one queue (one base branch): a different queue's base
+or policy cannot invalidate this acquisition.
+
+| Event type | Scope after the captured watermark | Reason / payload path |
+| --- | --- | --- |
+| `change_revision_observed` | Acquisition members | `data.change_id`; revision/head boundary |
+| `change_classified` | Acquisition members | `data.evidence.Classification.Inputs.ChangeID`; classification inputs |
+| `change_accountability_observed` | Acquisition members | `data.basis.change_id`; accountable actor |
+| `change_intent_observed` | Acquisition members | `data.basis.change_id`; intent binding |
+| `review_stance_observed` | Acquisition members | `data.basis.change_id`; native/command stance |
+| `approval_receipt_recorded` | Acquisition members | `data.basis.change_id`; receipt evidence |
+| `approval_eligibility_observed` | Acquisition members | `data.basis.change_id`; fresh eligibility |
+| `approval_inputs_changed` | Acquisition members | `data.basis.change_id`; permission/membership probe |
+| `approval_gate_rejected` | Waiting members, or the member's composition and its ancestors | `data.waiting[].basis.change_id` or `data.batch_id`; rejection invalidates that composition and its speculative suffix. An unrelated later batch/rejected change does not stale this read. |
+| `base_moved` | All acquisition members on this queue's base, when SHA differs | `data.sha`; changes ancestry/diff inputs. Re-observing the captured SHA does not invalidate. |
+| `config_applied` | All acquisition members when effective digest differs | `data.digest`; changes evaluated policy. A new authority commit with the same digest does not invalidate. |
+| Other events | No approval-read invalidation | Ordinary checks, metadata, resume and dormant evidence do not change these approval inputs. Atomic start still checks the current plan. |
+
+`TestApprovalReadFilterScopes` pins this table, including no-op base/config,
+member/unrelated event pairs and ancestor/suffix dependencies. Legitimate
+unrelated rejections are covered by `TestApprovalReadUnrelatedRejection`.
+`TestStageAApprovalReadUsesDatabaseOrder` additionally pins real event encodings.
+
+`ChangeRevisionObserved.Basis.At` is now captured before PR metadata/file reads.
+The revision boundary therefore moves earlier by the read latency. Existing
+three-second source-time slack still applies; this does not turn worker time
+into an acquisition-order fence.

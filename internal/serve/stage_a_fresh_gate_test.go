@@ -182,6 +182,9 @@ func TestStageAFreshNegativeStancesBeforeStart(t *testing.T) {
 							found = found || len(e.Groups["reviewers"].IDs) == 0
 						}
 					case queue.ReviewStanceObserved:
+						if record.ID <= beforeNegative {
+							continue
+						}
 						if e.Stance.Kind != "approve" {
 							found = true
 						}
