@@ -2,6 +2,7 @@ package gitops
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
@@ -16,17 +17,22 @@ func TestGoverningLargeTreeDoesNotPause(t *testing.T) {
 	}
 	sourceNamesBytes := 0
 	sourceFiles := 50_001
+	sourceDir := "monorepo/large-source-directory-with-padding/"
 	if testing.Short() {
-		sourceFiles = 64
+		// Long shared directory names cross the same byte boundary with
+		// fewer index entries; no source files need to exist on disk.
+		sourceFiles = 1_024
+		sourceDir += strings.Repeat(strings.Repeat("p", 240)+"/", 9)
 	}
 	for i := range sourceFiles {
-		name := fmt.Sprintf("monorepo/large-source-directory-with-padding/source-file-%06d.go", i)
+		name := fmt.Sprintf("%ssource-file-%06d.go", sourceDir, i)
 		sourceNamesBytes += len(name) + 1
 		files[name] = diffEntry{mode: "100644", content: "package fixture\n"}
 	}
-	if !testing.Short() && sourceNamesBytes <= forge.MaxDiffBytes {
+	if sourceNamesBytes <= forge.MaxDiffBytes {
 		t.Fatal("fixture does not exceed the old recursive-tree output budget")
 	}
+	t.Logf("%d source files contribute %d listing bytes (budget %d)", sourceFiles, sourceNamesBytes, forge.MaxDiffBytes)
 	sha := f.diffCommit(f.base, "large monorepo governing tree", files)
 	all, err := f.g.GoverningFiles(t.Context(), testRepo, forge.GoverningFilesRequest{CommitSHA: sha, AllAttributes: true})
 	must(t, err)
@@ -47,7 +53,7 @@ func TestGoverningLargeTreeDoesNotPause(t *testing.T) {
 	if len(present) != 3 {
 		t.Fatalf("unrelated files entered governing inventory: %v", present)
 	}
-	targeted, err := f.g.GoverningFiles(t.Context(), testRepo, forge.GoverningFilesRequest{CommitSHA: sha, Paths: []string{"monorepo/large-source-directory-with-padding/source-file-000000.go"}, PathsComplete: true})
+	targeted, err := f.g.GoverningFiles(t.Context(), testRepo, forge.GoverningFilesRequest{CommitSHA: sha, Paths: []string{sourceDir + "source-file-000000.go"}, PathsComplete: true})
 	must(t, err)
 	if targeted.Coverage.Completeness != forge.DiffComplete {
 		t.Fatalf("changed-path probes paused on large tree: %+v", targeted.Coverage)

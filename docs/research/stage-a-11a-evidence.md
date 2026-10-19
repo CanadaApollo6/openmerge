@@ -1287,11 +1287,11 @@ Production slowdown was investigated before accepting a test-only fix. In the or
 
 The initial saved diagnostic pair used `-timeout=30m` and both completed successfully; this is historical evidence, not the acceptance gate. The saved second pair and every resumed timing pair use the required `go test -race -short -count=1 -timeout=15m -json ./internal/serve`. No Makefile, workflow, runner, race/short flags or CI timeout was changed.
 
-Changes keep every review assertion in short mode:
+Round-5 changes retained the assertions below, except the large-tree byte boundary later identified and restored in round 6:
 
 - Isolated Stage A tests and subtests run in parallel behind a 16-fixture semaphore. Loopback HTTP identity cases share their schema, fake forge, server and policy across the unmoved/moved-base positions; both failure and recovery assertions still execute for every status and operation. Only the timeout cases use the small HTTP deadline; status-classification cases have a normal five-second request deadline.
 - Short-mode receipt stress seeds the first 63 real rejected receipt events in one transaction, then runs the real command path across the unchanged 64-record cap, oversized raw input, and inclusive cursor outcomes. Full mode ingests the whole original comment workload.
-- Dedupe polls shrink from 20 to 3; native negative noise from 20 to 3; per-reviewer approval counts from 30 to 3. Both one/many cases, all reviewer counts, stale-head filtering, second-pass revocation and exact call-count assertions remain. Full mode retains the original sizes. The real Git governing-tree fixture uses 64 source files under short and all 50,001 otherwise; governing semantics stay asserted in both.
+- Dedupe polls shrink from 20 to 3; native negative noise from 20 to 3; per-reviewer approval counts from 30 to 3. Both one/many cases, all reviewer counts, stale-head filtering, second-pass revocation and exact call-count assertions remain. Full mode retains the original sizes. The round-5 real Git governing-tree fixture used 64 source files under short and all 50,001 otherwise. Its semantic assertions remained, but the short fixture lost the listing-byte boundary; round 6 below restores that guard.
 - Gate tests use the real reconciliation, planner, store claims, worker executor, consequential start, atomic rejection/invalidation, rebuild, landing and settlement phases directly. Short idle polls still perform ordinary acquisition and assert the real planner never schedules a retest; repeated settlement must leave the journal watermark unchanged. The mixed composition must rebuild exactly the approved member after rejection. Full mode retains the repeated cycle workloads.
 - The legacy cancellation test's parent is parallel because each case owns its schema, server and fake forge. Its nine cancellation modes remain sequential, unchanged in size and assertions, and can overlap the new isolated tests. No new real sleeps were introduced.
 
@@ -1419,3 +1419,147 @@ Every recorded validation status, including the interrupted attempt's runs, foll
 | `legacy-control-branch` | 0 |
 
 Trial class stays **Hold**. No real GitHub API calls were added to code/tests. No live OpenMerge database, systemd units, production `openmerge/*` refs, or live status API were touched. Only the two owned, waiting wrappers were terminated. CI configuration, flags, runner and timeout are unchanged.
+
+
+## Round 6: restore the short-mode large-tree boundary
+
+GPT-6 Astra found that round 5's 64-file short fixture could not detect removal
+of the governing inventory's `.gitattributes` pathspecs. This test-only repair
+uses 1,024 source entries under nine shared 240-character directory components
+in short mode. Their NUL-terminated names total **2,289,664 bytes**, exceeding
+production `forge.MaxDiffBytes` (**2,097,152 bytes**). Git index entries construct
+the tree without materializing those source files. Full mode retains the original
+**50,001** source files and ordinary directory prefix. The fixture-size assertion
+now runs in both modes. The existing assertions still require complete inventory,
+exactly the three governing files (including empty/unobserved attributes), and
+complete changed-path probes using a source path that actually exists in the tree.
+No production budget or source, serve test, CI workflow, or Makefile changed.
+
+The missing-path-filter negative control is an external Go overlay, never a
+production edit. On the repaired short test it fails at the inventory call with
+`git diff-tree` / `signal: broken pipe`, exit **1**. This demonstrates that the
+short fixture detects unrelated-name enumeration above the byte budget.
+
+Reproduce the negative control from this worktree (the command is expected to
+exit 1; omit `-overlay` for the passing control):
+
+```sh
+mkdir -p "$HOME/.cache/openmerge-77-r6/gotmp"
+python3 - <<'PYCONTROL'
+import json
+from pathlib import Path
+root = Path.home() / '.cache/openmerge-77-r6'
+source = Path('internal/gitops/governing.go').resolve()
+filtered = ', "--", ".gitattributes", ":(glob)**/.gitattributes", ":(glob)**/.gitattributes/**"'
+original = source.read_text()
+assert original.count(filtered) == 1
+mutant = root / 'governing-unfiltered.go'
+mutant.write_text(original.replace(filtered, ''))
+(root / 'mutation.json').write_text(json.dumps({'Replace': {str(source): str(mutant)}}))
+PYCONTROL
+# First wait for all foreign go test/*.test/replay jobs to finish.
+GOFLAGS=-p=2 GOMEMLIMIT=4GiB \
+GOTMPDIR="$HOME/.cache/openmerge-77-r6/gotmp" GOCACHE="$HOME/.cache/go-build" \
+OPENMERGE_TEST_DATABASE_URL='postgres://postgres@localhost:54329/postgres?sslmode=disable' \
+go test -race -short -count=1 -timeout=15m -v \
+  -overlay "$HOME/.cache/openmerge-77-r6/mutation.json" ./internal/gitops \
+  -run '^TestGoverningLargeTreeDoesNotPause$'
+```
+
+Validation runs wait for foreign `go test`, `*.test`, replay, `make check` and
+build jobs before starting; one heavy job runs at a time with `GOFLAGS=-p=2`,
+`GOMEMLIMIT=4GiB`, `GOTMPDIR=~/.cache/openmerge-77-r6/gotmp`,
+`GOCACHE=~/.cache/go-build`, and the supplied test PostgreSQL URL. The baseline
+binary was built at 22:17:58 EDT, before the test edit at 22:18:15, so its timing
+uses the original 64-file fixture. The after run uses the repaired fixture.
+These are single package measurements, not a statistical performance claim.
+
+| Run | Actual exit | Package time | Wall time |
+| --- | ---: | ---: | ---: |
+| Before: gitops `-race -short -count=1 -timeout=15m` | 0 | 67.697s | 68.071s |
+| After: identical package command | 0 | 73.485s | 73.777s |
+| All eight `TestGoverning*` top-level tests, race/short | 0 | 2.821s | 3.855s |
+| Full `TestGoverningLargeTreeDoesNotPause`, race | 0 | 1.549s | 1.849s |
+| Missing-filter mutant + original short fixture | 0 (missed regression) | 1.208s | 2.295s |
+| Missing-filter mutant + repaired short fixture | 1 (expected detection) | 0.219s | 1.294s |
+
+The package timing increased **5.788s (+8.550%)** in this pair. The repaired
+short large-tree test itself passed in **0.24s**; full-size passed in **0.54s**.
+This delta is in gitops; no serve timing-budget change is involved.
+The eight focused top-level tests are `TestGoverningLargeTreeDoesNotPause`,
+`TestGoverningTargetedInventoryRejectsAttributeDirectory`,
+`TestGoverningFilesContract`, `TestGoverningFilesModesAndBytes` (symlink/size/exact),
+`TestGoverningFilesMissingBlobAndHistory`,
+`TestGoverningLiteralPathsAndHistoryRechecks`, `TestGoverningLimitationsContract`,
+and `TestGoverningAllAttributesPinnedAndBounded`.
+
+Final `make check`: **exit 0**, **381.441s wall**. Formatting, lint (**0
+issues**), all-package race/short tests and build passed. Package durations:
+gitops **71.206s**, queue **292.997s**, serve **237.904s**. These local gates
+validate the test-only delta; earlier production/legacy-equivalence gates remain
+historical evidence and were not rerun for this round.
+
+All seven test/gate commands and actual exits follow. Raw logs and the runner
+remain in `/home/riels/.cache/openmerge-77-r6/`; each log hash is SHA-256.
+`mutation-before.json` combines the same missing-filter overlay with the original
+`3e64e5b` large-tree test obtained via `git show`.
+
+- `before`: exit **0**, wall **68.071s**.
+
+  ```sh
+  go test -race -short -count=1 -timeout=15m ./internal/gitops
+  ```
+
+  `before.log`: `97ea5c0d58d69f93562cdb8cbd3dc2cebd8ab6ee959743914d78e77f71f98fb4`.
+
+- `focused-short`: exit **0**, wall **3.855s**.
+
+  ```sh
+  go test -race -short -count=1 -timeout=15m -v ./internal/gitops -run '^TestGoverning'
+  ```
+
+  `focused-short.log`: `e5a95415dbac2ca3e16339b10adc98534bd10287094a64597cdc38e849f5d652`.
+
+- `mutation-short`: exit **1**, wall **1.294s**.
+
+  ```sh
+  go test -race -short -count=1 -timeout=15m -v -overlay /home/riels/.cache/openmerge-77-r6/mutation.json ./internal/gitops -run '^TestGoverningLargeTreeDoesNotPause$'
+  ```
+
+  `mutation-short.log`: `addeaccd43279035c69d9d9d32db27ddb805d73534e988dfedda843d99376c96`.
+
+- `mutation-before`: exit **0**, wall **2.295s**.
+
+  ```sh
+  go test -race -short -count=1 -timeout=15m -v -overlay /home/riels/.cache/openmerge-77-r6/mutation-before.json ./internal/gitops -run '^TestGoverningLargeTreeDoesNotPause$'
+  ```
+
+  `mutation-before.log`: `1dd553de7b62a2957bc5f68da740f8967886464f4afbfa98ea72569a8209a20e`.
+
+- `focused-full`: exit **0**, wall **1.849s**.
+
+  ```sh
+  go test -race -count=1 -timeout=15m -v ./internal/gitops -run '^TestGoverningLargeTreeDoesNotPause$'
+  ```
+
+  `focused-full.log`: `22e12c44d288e30303215bfecdb1b1318eae7b0c1d840fc5d3d1ae3b21b91ffc`.
+
+- `after`: exit **0**, wall **73.777s**.
+
+  ```sh
+  go test -race -short -count=1 -timeout=15m ./internal/gitops
+  ```
+
+  `after.log`: `b2fce80cf437054c1c8be03809500332fd630e8073185f9ceecdf069d852396a`.
+
+- `check`: exit **0**, wall **381.441s**.
+
+  ```sh
+  make check
+  ```
+
+  `check.log`: `48cc7f33f513f8c506b65940f729da1bac94530589232a81300b6bdee3b554b9`.
+
+No foreign process was killed. No live OpenMerge database or status API,
+systemd unit, or production `openmerge/*` ref was touched. No fetch was needed.
+Only the shared test PostgreSQL instance was used. Trial class remains **Hold**.
