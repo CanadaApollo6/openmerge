@@ -19,9 +19,10 @@ func (d *Driver) ValidateInstallationPermissions(ctx context.Context) (problems,
 	})
 }
 
-// ValidateTeamPolicyPermissions is a dormant hook for PR 11a. Runtime callers
-// must invoke it only when a queue's effective approval policy references team
-// owners or groups. It is deliberately separate from legacy queue validation.
+// ValidateTeamPolicyPermissions checks optional team grants for the explicit
+// openmerge setup permissions diagnostic via DiagnoseInstallationPermissions.
+// Runtime team policy resolution uses ResolveTeam and TeamMembers: definite
+// unavailability creates a durable ConfigSource block; transient failures retry.
 func (d *Driver) ValidateTeamPolicyPermissions(ctx context.Context) (problems, warnings []string, err error) {
 	return d.validatePermissions(ctx, []installationPermission{{"members", "read", false}})
 }

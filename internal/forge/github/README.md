@@ -177,17 +177,20 @@ Required App repository permissions:
 | Issues | read | Issue-thread command reads and `issue_comment` webhook subscription |
 | Metadata | read | Collaborator permissions, repository/default branch and ruleset reads |
 
-Setup also requests organization **Members: read** (`members: read`) for the
-dormant identity/team capability. Existing Apps and organization installations
-need to accept that addition only before using team-based approval policy; [the operating guide](../../../docs/operating.md#organization-membership-permission-stage-a-prerequisite)
-documents adoption and the live trial's permission freeze. `members: read` is
-needed only for organization team owners or groups in approval policy; see the
-operating guide. `openmerge setup permissions --app-id ID --installation-id ID
+Setup also requests organization **Members: read** (`members: read`) for
+team owners or groups in approval policy. Existing Apps and organization
+installations need to accept that addition only before using team-based approval
+policy; [the operating guide](../../../docs/operating.md#organization-membership-permission-stage-a-prerequisite)
+documents adoption and the live trial's permission freeze. `openmerge setup permissions --app-id ID --installation-id ID
 --private-key FILE` diagnoses the actual installed grant. Only setup diagnostics
-and the dormant `ValidateTeamPolicyPermissions` hook inspect this optional grant.
-PR 11a must call the hook only for effective policies referencing team owners or
-groups. The server's unconditional permission check excludes it, so unrelated
-queues receive no new warning or block.
+call `DiagnoseInstallationPermissions`, which invokes
+`ValidateTeamPolicyPermissions` to inspect this optional grant. This is an
+explicit diagnostic, not an automatic runtime check. Runtime team policy
+resolution uses `ResolveTeam` and `TeamMembers`; definite unavailability creates
+a durable `ConfigSource` block for the affected queue, while transient or
+incomplete reads retry without a durable configuration block. The server's
+unconditional permission check excludes the optional grant, so unrelated queues
+receive no new warning or block.
 
 All comment posting goes through `Driver.Comment`, including `MarkLanded`.
 It uses `POST /repos/{owner}/{repo}/issues/{issue_number}/comments` for PR threads;
@@ -205,17 +208,19 @@ other missing grants are WARN diagnostics. An omitted permission is not a grant.
 it against the supplied review/comment author ID, failing closed on missing or
 mismatched IDs. HTTP 404 returns an error wrapping `forge.ErrIdentityUnavailable`
 (and preserves `APIError`), matching the fake's unconfigured repository/user grant:
-it means unknown, never a successful known-empty permission. PR 11a can report
-an unavailable lookup; only an identity-bound successful response can establish
-a known denial. `ResolveUser` reports user, bot, App, or unknown account kind;
-GitHub App bot users remain bots, rather than being guessed from login strings.
+it means unknown, never a successful known-empty permission. Runtime policy
+resolution can report an unavailable lookup; only an identity-bound successful
+response can establish a known denial. `ResolveUser` reports user, bot, App, or
+unknown account kind; GitHub App bot users remain bots, rather than being guessed
+from login strings.
 `ResolveTeam` pins organization and team IDs. `TeamMembers` reads all roles by
 those IDs, including [members of child teams](https://docs.github.com/en/rest/teams/members#list-team-members),
 and deduplicates by user ID. It rejects failed pages, invalid member identities,
 and pagination beyond 100 pages of 100 members rather than returning partial
 membership. These optional reads use the shared installation transport, always
 revalidate, and cannot consume settlement's reserved budget. Legacy `CanWrite`
-and `Approval` behavior is unchanged; no runtime path calls the new capability.
+and `Approval` behavior is unchanged; runtime team policy resolution uses these
+identity reads separately from the explicit installation-grant diagnostic.
 
 `SetupRules` uses a separate admin `GITHUB_TOKEN`, with Administration read for
 inspection and write for apply. It reads all pages and detailed rulesets,

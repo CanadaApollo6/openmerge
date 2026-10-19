@@ -1,16 +1,21 @@
 # Stage A organization sandbox acceptance — PENDING
 
-**PENDING maintainer-provided sandbox resources. Nothing in this runbook has
+**PENDING sandbox setup and execution. Nothing in this runbook has
 been executed.** No organization, repository, App, installation, review, comment,
 or permission change was created for PR 12b. These commands are for a maintainer
-using an isolated organization sandbox after supplying its resources. Never run
-against the dogfood repository or live OpenMerge database/status endpoint.
+using the isolated organization sandbox below after completing its setup. Never
+run against the dogfood repository or live OpenMerge database/status endpoint.
 CI uses a fake forge and needs no GitHub credentials.
 
 ## Resources and setup
 
-1. Supply a sandbox organization/repository, separate sandbox OpenMerge App,
-   installation, database, cache, webhook/API endpoints and service process.
+1. Use organization `Smart-Data-Ohio` and repository
+   `Smart-Data-Ohio/openmerge-sandbox`, a public throwaway repository to archive
+   after the run. The organization uses GitHub Free, where repository rulesets
+   are available only for public repositories. Seed the repository with a `ci`
+   GitHub Actions workflow triggered by `pull_request` and by `push` to
+   `openmerge/queue/**`. Supply a separate sandbox OpenMerge App, installation,
+   database, cache, webhook/API endpoints and service process.
    Record the App/installation IDs, binary commit and configuration commit.
    Follow [App/ruleset setup](../../README.md#running-openmerge-serve) in those
    resources only. CI must run on `openmerge/queue/**`. Drain old sandbox workers,
@@ -22,19 +27,21 @@ CI uses a fake forge and needs no GitHub credentials.
    declaration and actual accepted installation permissions. Record existing
    repository grants (contents write, pull requests write, checks write, metadata
    read, and any setup/ruleset grants); the command below reports missing grants.
-3. Supply separate agent/bot, human reviewer and owner-team identities. Add the
-   owner to `SANDBOX_ORG/owners`, verify team visibility with the installation,
-   and give eligible humans repository write permission. The PR author,
-   submitter and accountable humans cannot satisfy their own approvals. Use a
-   reviewer outside those exclusions; use a different non-owner count reviewer
-   for the owned/uncovered comparison. Keep credentials outside the artifact.
+3. Use `RielStAmandSD` as the agent/PR author and `CanadaApollo6` as the
+   independent count reviewer. The `Smart-Data-Ohio/owners` team member is a
+   colleague (TBD), needed only for the owned-file owner approval. Add that
+   colleague to `Smart-Data-Ohio/owners`, verify team visibility with the
+   installation, and give eligible humans repository write permission. The PR
+   author, submitter and accountable humans cannot satisfy their own approvals.
+   Keep `CanadaApollo6` outside those exclusions and outside the owners team for
+   the owned/uncovered comparison. Keep credentials outside the artifact.
 4. Use a read-only sandbox status token for CLI/API reads and the selected
    human's forge credentials for review/comment commands. A token authenticates
    an account, not proof that a person acted. Use separate bot/App identities.
 
 ```sh
-# Fill these with maintainer-provided sandbox values; no production defaults.
-export REPO='SANDBOX_ORG/SANDBOX_REPO'
+# Repository selected; fill in the remaining sandbox values before execution.
+export REPO='Smart-Data-Ohio/openmerge-sandbox'
 export OPENMERGE_API_URL='https://SANDBOX_STATUS_ORIGIN'
 export OPENMERGE_API_TOKEN_FILE='/secure/sandbox-status-token'
 openmerge setup permissions --app-id APP_ID --installation-id INSTALLATION_ID --private-key /secure/sandbox-app.pem
@@ -46,8 +53,8 @@ Stage A pipeline does not run it automatically. Runtime `ResolveTeam` and
 unavailability creates a durable `ConfigSource` block for the affected queue;
 transient or incomplete reads retry without a durable configuration block.
 
-Commit this configuration to the sandbox default branch, replacing team and CI
-names with verified values. Preserve policy-file ownership before activation.
+Commit this configuration to the sandbox default branch, verifying the selected
+team and CI names first. Preserve policy-file ownership before activation.
 The rules are additive: `paths` retains the human count for uncovered files;
 `touches` adds ownership only where CODEOWNERS coverage exists.
 
@@ -70,14 +77,14 @@ queues:
 
 ```text
 # .github/CODEOWNERS — deliberately no catch-all owner
-/.openmerge.yml @SANDBOX_ORG/owners
-/.openmerge.yaml @SANDBOX_ORG/owners
-/openmerge.yml @SANDBOX_ORG/owners
-/openmerge.yaml @SANDBOX_ORG/owners
-/.github/CODEOWNERS @SANDBOX_ORG/owners
-/CODEOWNERS @SANDBOX_ORG/owners
-/docs/CODEOWNERS @SANDBOX_ORG/owners
-/owned/ @SANDBOX_ORG/owners
+/.openmerge.yml @Smart-Data-Ohio/owners
+/.openmerge.yaml @Smart-Data-Ohio/owners
+/openmerge.yml @Smart-Data-Ohio/owners
+/openmerge.yaml @Smart-Data-Ohio/owners
+/.github/CODEOWNERS @Smart-Data-Ohio/owners
+/CODEOWNERS @Smart-Data-Ohio/owners
+/docs/CODEOWNERS @Smart-Data-Ohio/owners
+/owned/ @Smart-Data-Ohio/owners
 ```
 
 ## Execute and retain read-back
@@ -92,14 +99,25 @@ account, enqueue through the authenticated comment path:
 gh pr comment <number> --repo "$REPO" --body '@openmerge queue'
 ```
 
-Derive the canonical change ID from the PR alias lookup once (the CLI has no
-submit/write command); then follow the journey using only change reads and
-forge-authenticated commands. Escape the base as one API path component if it
+Derive the canonical change ID from the PR alias lookup (the CLI has no
+submit/write command). The ID is null until the first revision is observed;
+retry the lookup for at most 30 attempts, then fail clearly. Once recorded,
+follow the journey using only change reads and forge-authenticated commands. Escape the base as one API path component if it
 contains `/`.
 
 ```sh
-openmerge queue status --repo "$REPO" --base main --pr <number> --json > alias.json
-CHANGE=$(jq -r '.pr.change.id' alias.json)
+attempt=0
+CHANGE=''
+while [ "$attempt" -lt 30 ]; do
+  openmerge queue status --repo "$REPO" --base main --pr <number> --json > alias.json || exit 1
+  CHANGE=$(jq -er '.pr.change.id // empty' alias.json) && break
+  attempt=$((attempt + 1))
+  sleep 2
+done
+if [ -z "$CHANGE" ]; then
+  echo 'ERROR: no canonical change ID after 30 alias lookups; first revision not observed.' >&2
+  exit 1
+fi
 openmerge change show "$CHANGE" --repo "$REPO" --base main --json > before-show.json
 openmerge change brief "$CHANGE" --repo "$REPO" --base main --audience reviewer --json > before-brief.json
 openmerge change decisions "$CHANGE" --repo "$REPO" --base main --json > before-decisions.json
@@ -121,18 +139,30 @@ approval for the exact `head_sha` recorded in the brief/show (GitHub review UI
 or `gh pr review <number> --repo "$REPO" --approve`). Record the native review
 ID and its actual `commit_id`; do not assume the branch remained unchanged.
 
-For receipt intent review, inspect the brief first, copy its exact digest, then
-post this command as the independent human reviewer (substitute the digest):
+For receipt intent review, re-read the reviewer brief until its digest is a
+recorded lowercase 64-hex value. A `policy_busy` warning can leave the digest
+as `not recorded`; never post that placeholder. Retry for at most 30 attempts,
+then fail clearly. Inspect the saved brief before posting its exact digest as
+the independent human reviewer:
 
 ```sh
-gh pr comment <number> --repo "$REPO" --body '@openmerge approve <brief-digest>'
-# Equivalent after reviewing before-brief.json:
-DIGEST=$(jq -r '.digest' before-brief.json)
+attempt=0
+DIGEST=''
+while [ "$attempt" -lt 30 ]; do
+  openmerge change brief "$CHANGE" --repo "$REPO" --base main --audience reviewer --json > before-brief.json || exit 1
+  DIGEST=$(jq -er '.digest | select(type == "string") | select(test("^[0-9a-f]{64}$"))' before-brief.json) && break
+  attempt=$((attempt + 1))
+  sleep 2
+done
+if [ -z "$DIGEST" ]; then
+  echo 'ERROR: no recorded 64-hex brief digest after 30 reads; do not post approval.' >&2
+  exit 1
+fi
+# Review before-brief.json before running the posting command below.
 gh pr comment <number> --repo "$REPO" --body "@openmerge approve $DIGEST"
 ```
 
-Run only one of the two equivalent posting commands. Save its comment URL and
-numeric ID. Read back the receipt and immutable landing decision, including all
+Save the posted comment's URL and numeric ID. Read back the receipt and immutable landing decision, including all
 pages (`next_cursor` is an exclusive event cursor; repeat with `--after N` until
 zero). Repeat reads until the receipt is recorded and the attempt settles; a
 worker-busy or still-waiting response is not a successful landing. Keep
