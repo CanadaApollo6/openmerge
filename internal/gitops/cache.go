@@ -25,6 +25,13 @@ func (s *session) deleteRefs(ctx context.Context, refs []string) error {
 // maintainCache runs under the cache lock after the operation has completed.
 // Failures are opportunistic: leave the old timestamp so a later operation retries.
 func (s *session) maintainCache(ctx context.Context) error {
+	// Retry release failures independently of the GC schedule or disabled GC.
+	if state, ok := acquisitionStates.Load(s.dir); ok {
+		if err := s.sweepAcquisitions(ctx, state.(map[string]bool)); err != nil {
+			return err
+		}
+	}
+
 	if s.r.cfg.GCInterval < 0 && s.r.cfg.GCThresholdBytes < 0 {
 		return nil
 	}

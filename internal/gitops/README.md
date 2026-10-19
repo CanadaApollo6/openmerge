@@ -48,6 +48,16 @@ No working tree is created. PR heads already present at their expected SHA are
 checked against the remote ref without fetching their objects again. Temporary
 `refs/openmerge-cache/pr/<N>` refs are deleted after pin checks, including failed
 fetches and mismatches, so old PRs do not permanently retain their histories.
+`AcquireCommits` retains exact acquired graphs under private local
+`refs/openmerge-cache/acquired/<nonce>/<index>` refs until release. On the first
+acquiring session for a cache directory in this process, startup removes all
+inherited acquisition refs before allowing a new lease. Process-exclusive cache
+ownership guarantees those prior-process leases are dead. All Repo handles share
+one live nonce set per cache; maintenance only removes acquisition refs whose
+nonces are no longer live, retrying failed releases even when GC is disabled.
+Release is idempotent and retryable. Acquisition's one-minute context covers
+cache-lock waiting and Git acquisition commands; deferred best-effort maintenance
+has its separate 30-second deadline.
 
 After an operation completes, under the same cache lock, maintenance runs
 `git gc --prune=now --quiet` when either `Config.GCThresholdBytes` is reached
