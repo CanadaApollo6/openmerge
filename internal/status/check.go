@@ -32,6 +32,9 @@ func ReviewerCheckSummaryFromProjection(j store.Journal, q *Queue, pr int, polic
 		return "", err
 	}
 	view, found, err := projectBriefFromProjection(j, q, q.LedgerEntry(pr), string(id), "reviewer", briefOptions{policy: func(s queue.State, b queue.ApprovalBasis) (brief.Fact, string) {
+		if facts, ok := s.ApprovalFacts(b.ChangeID); ok && facts.Intent != nil {
+			b = facts.Intent.Basis
+		}
 		f, e := s.RecordedBrief(policy, b)
 		if e != nil {
 			if warn != nil {

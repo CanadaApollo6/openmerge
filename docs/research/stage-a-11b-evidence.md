@@ -893,3 +893,85 @@ exited **128** before fetching it; the corrected explicit refspec for
 misspelled test filename and exited **2**; reading the correct file succeeded.
 Neither launched tests or mutated source. Subsequent explicit-refspec fetch
 confirmed main remains `6e2b50b9da5c098ebfd76e0b1b20a5990c2663bb`.
+
+
+## Rebase onto Stage A 12a reporting (2026-10-19)
+
+Requested old range: `6e2b50b..e90bc7e`. Fetched with exactly
+`git fetch origin refs/heads/main:refs/remotes/origin/main` (exit **0**).
+New baseline: `428f24f20a41c723ae441d97a6cef36025fa6735` (#79), checked out
+clean and detached at `/home/riels/openmerge-sa-11b-rebase-main` for every
+cross-revision gate below. The original baseline checkout is untouched.
+
+The first rebase stopped for conflicts (exit **1**); resolution and
+`git rebase --continue` exited **0**, replaying all ten commits. Every rebased
+commit retains Riel St. Amand's author and the required sign-off/coauthor ending.
+
+### Conflict list and resolutions
+
+1. `internal/status/brief.go`: retain 12a's single projection, accountability,
+   receipt history/binding, ledger test evidence and bounded warning rendering.
+   Remove only the `policy_composition_11b`/`implement_11b_policy_composition`
+   placeholder branch; reconstructed approval facts now expose requirements and
+   the verified brief digest. Busy, unavailable and mismatch recovery remain.
+2. `internal/status/brief_policy.go`: retain 12a's `projection.policyPins`
+   lookup rather than restoring 11b's second journal replay. Retain 11b's local
+   immutable-object reconstruction, recorded identity/classifier/default-branch
+   pin, static component and effective digest checks, and error distinctions.
+
+Semantic integration in `internal/status/status.go`: the shared fold must retain
+complete accepted `ConfigApplied` events, including `Policy` and `Window`, in its
+classification-time policy pins. Main's commit/digest-only projection discarded
+those fields. Capture the full pin during the existing fold, associate it only
+with matching committed state, and use that historical pin even after a newer
+configuration arrives. No second projection or replay is introduced.
+
+Check rendering in `internal/status/check.go` also reuses the genuine recorded
+intent basis, as the reconstruction path already does. Its synthesized display
+basis lacks a read ID/time and therefore cannot pass `RecordedBrief` validation.
+The new successful-composition check regression caught this integration gap.
+Missing/mismatched evidence still invokes the original warning callback and
+visible unavailable rendering; current operational gate rendering is retained.
+
+`internal/serve/stage_a.go` auto-merged: 11b's production approval-only activation
+and `WithPolicyDigest` composition coexist with 12a's
+`ReviewerCheckSummaryFromProjection`, shared cached journal/ledger snapshot and
+logged, visible `policy_unavailable` degradation. Operational gate precedence
+is unchanged. Explicit serial window bounds on pinned approval `ConfigApplied`
+records, approval-path ASCII identity rules, and main's Unicode legacy status
+and commit-author semantics survive unchanged. No migration is added: 006 and
+007 are byte-identical to main. Makefile, CI and `.openmerge.yml` are unchanged.
+
+### Deliberate golden coverage
+
+The existing 12a reporting goldens describe missing policy evidence and retain
+honest `policy_unavailable` recovery. They are not replaced with fabricated
+requirements. Two new goldens extend the real pinned-composition regression:
+
+- `internal/status/testdata/approval-brief.json`: records the successful local
+  reconstruction, concrete digest, approval requirements and 12a accountability
+  fields. It proves the placeholder/unavailable branch is gone when the complete
+  historical pin and local objects exist.
+- `internal/status/testdata/approval-check.json`: records the reviewer check from
+  the same projected journal and reconstructed policy, with the same brief
+  digest and concrete requirement. A JSON string preserves exact check bytes,
+  including trailing spaces, without adding source-file whitespace. It proves
+  successful composition does not
+  lose 12a's check rendering or degrade to unavailable.
+
+The same test compares the change endpoint and PR alias evidence with the brief,
+asserts preservation of the historical window bounds, and retains existing
+missing-pin/tree and component/effective-digest mismatch coverage.
+
+### Rebase verification
+
+All heavy commands run serially through the documented host-idle runner, with
+`GOFLAGS=-p=2`, `GOMEMLIMIT=4GiB` (6GiB for replay), the authorized shared test
+Postgres URL, and caches/GOTMPDIR under `~/.cache`. The initial focused run waited
+for the foreign review suite; subsequent commands independently wait for foreign
+Go/test/replay jobs. No process is killed. Only existing offline journal exports
+are read; there is no live DB, status API, service-unit or production-ref access.
+Tests use local/fake forges; Git transport and the authorized PR body edit are
+the only remote operations.
+
+Results and frozen implementation revision are recorded below after the gates.

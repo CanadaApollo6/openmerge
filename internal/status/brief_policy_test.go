@@ -268,7 +268,7 @@ func TestApprovalBriefPinnedComposition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	applied := queue.ConfigApplied{Commit: g.CommitSHA, Digest: effective, Policy: pin}
+	applied := queue.ConfigApplied{Commit: g.CommitSHA, Digest: effective, Window: &queue.WindowBounds{MinDepth: 1, MaxDepth: 1}, Policy: pin}
 	classified.Evidence.Classification.Inputs.PolicyDigest = component
 	for i, row := range j.Events {
 		switch e := row.Event.(type) {
@@ -324,6 +324,35 @@ func TestApprovalBriefPinnedComposition(t *testing.T) {
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &view) != nil || view.Digest == brief.NotRecorded || view.Obligations == nil || view.ApprovalsRequired == nil || !*view.ApprovalsRequired || strings.Contains(w.Body.String(), "policy_unavailable") {
 		t.Fatalf("HTTP reconstruction: %d %s", w.Code, w.Body)
 	}
+	if len(src.requests) != 1 || src.requests[0].Config.Window == nil || *src.requests[0].Config.Window != *applied.Window {
+		t.Fatal("historical ConfigApplied window bounds lost")
+	}
+	reportingGolden(t, "approval-brief.json", w.Body.Bytes())
+	for _, path := range []string{
+		changePath(j.Key, string(b.ChangeID)),
+		"/v1/queues/Owner/Repo/release/prs/12",
+	} {
+		response := httptest.NewRecorder()
+		Handler(src, []store.QueueKey{j.Key}, "", nil).ServeHTTP(response, httptest.NewRequest("GET", path, nil))
+		var result struct {
+			PR Entry `json:"pr"`
+		}
+		if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &result) != nil || result.PR.Change == nil || result.PR.Change.Evidence == nil || result.PR.Change.Evidence.Digest != view.Digest || result.PR.Change.Evidence.Obligations == nil {
+			t.Fatalf("status reconstruction: %d %s", response.Code, response.Body)
+		}
+	}
+	projection, _, _ := Project(j, 0, 0, nil)
+	text, err := ReviewerCheckSummaryFromProjection(j, &projection, 12, policy, func(err error) {
+		t.Errorf("reconstructed check policy unavailable: %v", err)
+	})
+	if err != nil || !strings.Contains(text, "Digest: "+view.Digest) || strings.Contains(text, "policy\\_unavailable") || strings.Contains(text, "Requirements: not recorded") {
+		t.Fatalf("check reconstruction: %v %s", err, text)
+	}
+	checkJSON, err := json.Marshal(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reportingGolden(t, "approval-check.json", append(checkJSON, '\n'))
 	src.data = []byte(strings.ReplaceAll(string(data), "default: any_writer", "default: {any_writer: true, count: 2}"))
 	mismatchResponse := httptest.NewRecorder()
 	Handler(src, []store.QueueKey{j.Key}, "", nil).ServeHTTP(mismatchResponse, httptest.NewRequest("GET", "/v1/queues/Owner/Repo/release/changes/"+string(b.ChangeID)+"/brief?audience=operator", nil))
