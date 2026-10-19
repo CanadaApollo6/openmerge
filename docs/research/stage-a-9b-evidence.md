@@ -245,7 +245,7 @@ Trial class remains **Hold**. The base was fetched explicitly and remains
   queue/type/batch/attempt before decoding, reads at most 129 decision rows to
   enforce the 128-member limit, and fetches each exact eligibility reference
   with LIMIT 2 (detecting missing/ambiguous evidence). All reads share a read-only
-  repeatable-read transaction. Migration 006 indexes `(queue_id,type,id)`;
+  repeatable-read transaction. Migration 006 adds partial decision and eligibility identity indexes;
   `TestMigrationsConcurrentOpenAndReopen` covers migration/reopen. The settled
   readback test checks exact old eligibility despite a newer read, unrelated
   batch/attempt exclusion, unrelated future-version payload exclusion, and the

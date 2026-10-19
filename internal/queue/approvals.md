@@ -223,3 +223,7 @@ tests inject that rejection now; no executor integration is enabled here.
   the complete-expression outcome when consuming `WaitingForApproval`.
 - Optionally narrow per-event wait refresh to events that affect approval
   inputs; the current unconditional refresh is correct but does extra work.
+
+Receipt observations (`approval_receipt_recorded`) also invalidate approval
+waits, via `approval_inputs_changed` and the shared approval fingerprint. A
+repeated identical receipt or eligibility probe creates no new build.

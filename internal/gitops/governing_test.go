@@ -1,6 +1,7 @@
 package gitops
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -120,4 +121,44 @@ func TestGoverningLimitationsContract(t *testing.T) {
 		".gitattributes":           {mode: "100644", content: "* text\n"},
 	})
 	forgetest.RunGoverningLimitations(t, f.g, testRepo, sha)
+}
+
+func TestGoverningAllAttributesPinnedAndBounded(t *testing.T) {
+	f := newFixture(t)
+	sha := f.diffCommit(f.base, "all attributes", map[string]diffEntry{
+		".gitattributes":                 {mode: "100644", content: "* text"},
+		"unobserved/deep/.gitattributes": {mode: "100644", content: "*.go linguist-generated"},
+	})
+	request := forge.GoverningFilesRequest{CommitSHA: sha, AllAttributes: true}
+	got, err := f.g.GoverningFiles(t.Context(), testRepo, request)
+	must(t, err)
+	if got.Coverage.Completeness != forge.DiffComplete {
+		t.Fatal(got.Coverage)
+	}
+	found := false
+	for _, file := range got.Attributes {
+		if file.Path == "unobserved/deep/.gitattributes" && file.Present {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("unobserved governing attributes omitted")
+	}
+	moved := f.diffCommit(sha, "new content", map[string]diffEntry{"unobserved/deep/.gitattributes": {mode: "100644", content: "* -linguist-generated"}})
+	f.push("main", moved, false)
+	again, err := f.g.GoverningFiles(t.Context(), testRepo, request)
+	must(t, err)
+	if !reflect.DeepEqual(got, again) {
+		t.Fatal("all-attributes read followed moving default branch")
+	}
+	files := map[string]diffEntry{}
+	for i := 0; i < forge.MaxGoverningFiles; i++ {
+		files[fmt.Sprintf("dir-%03d/.gitattributes", i)] = diffEntry{mode: "100644", content: "* text"}
+	}
+	overflow := f.diffCommit(sha, "too many attributes", files)
+	bounded, err := f.g.GoverningFiles(t.Context(), testRepo, forge.GoverningFilesRequest{CommitSHA: overflow, AllAttributes: true})
+	must(t, err)
+	if bounded.Coverage.Completeness == forge.DiffComplete {
+		t.Fatal("partial governing tree accepted as a complete policy")
+	}
 }

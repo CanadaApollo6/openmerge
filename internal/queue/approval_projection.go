@@ -302,6 +302,8 @@ func (s State) observeApproval(e Event) (State, bool) {
 	case ChangeIntentObserved:
 		f.Intent = &e
 	case ApprovalEligibilityObserved:
+		// Apply replays database commit order, regardless of worker clocks.
+		// Producers fence overlapping reads by database watermark.
 		e = detached(e)
 		f.Eligibility = &e
 	case ReviewStanceObserved:
@@ -474,6 +476,28 @@ func (s State) ApprovalFingerprint(id ChangeID) string {
 // freshly read eligibility event for THIS read, never cached
 // classification pools or stored eligibility. No forge I/O occurs here.
 func (s State) EvaluateApprovals(policy cp.Policy, current cp.ReceiptIdentity, fresh ApprovalEligibilityObserved) cp.Evaluation {
+	return s.evaluateApprovals(policy, current, fresh, "")
+}
+
+// ApprovalActorRelevant is an admission filter, never landing authority. A
+// hypothetical native stance asks the same evaluator which pools the actor can
+// affect. Unknown pools retain evidence conservatively; definite exclusions do
+// not consume permanent source pins. Receipt requirements still expose native
+// eligibility without counting the hypothetical approval as a receipt.
+func (s State) ApprovalActorRelevant(policy cp.Policy, current cp.ReceiptIdentity, fresh ApprovalEligibilityObserved, actor string) bool {
+	result := s.evaluateApprovals(policy, current, fresh, actor)
+	if !result.ReviewsKnown {
+		return true
+	}
+	for _, r := range result.Requirements {
+		if slices.Contains(r.EligibleIDs, actor) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s State) evaluateApprovals(policy cp.Policy, current cp.ReceiptIdentity, fresh ApprovalEligibilityObserved, probeActor string) cp.Evaluation {
 	if policy.Approvals == nil {
 		return cp.Evaluate(policy, cp.Input{})
 	}
@@ -514,6 +538,9 @@ func (s State) EvaluateApprovals(policy cp.Policy, current cp.ReceiptIdentity, f
 			stance.Revision = uint64(attributed.Revision)
 			in.Stances[user] = stance
 		}
+	}
+	if probeActor != "" {
+		in.Stances = map[string]cp.Stance{probeActor: {UserID: probeActor, Kind: cp.Approve, Revision: current.Revision, Head: current.Head}}
 	}
 	return cp.Evaluate(policy, in)
 }
@@ -613,12 +640,23 @@ func validateApprovalSnapshot(p approvalProjection, revisions map[int]RevisionRe
 		clear(derived.Blockers)
 		clear(derived.Frontiers)
 		if !f.Saturated {
-			users := map[string]bool{}
-			for _, v := range f.Sources {
-				users[v.Event.Stance.UserID] = true
+			users := map[string]map[string]AttributedStance{}
+			for key, v := range f.Sources {
+				user := v.Event.Stance.UserID
+				if users[user] == nil {
+					users[user] = map[string]AttributedStance{}
+				}
+				users[user][key] = v
 			}
-			for user := range users {
-				recomputeUser(&derived, user, revision)
+			// Fold each user's sources once; scanning the full set once per user made
+			// snapshot admission quadratic in the number of distinct noise accounts.
+			for user, sources := range users {
+				part := newApprovalFacts()
+				part.Sources = sources
+				recomputeUser(&part, user, revision)
+				maps.Copy(derived.Latest, part.Latest)
+				maps.Copy(derived.Blockers, part.Blockers)
+				maps.Copy(derived.Frontiers, part.Frontiers)
 			}
 		}
 		if !maps.Equal(f.Latest, derived.Latest) || !maps.Equal(f.Blockers, derived.Blockers) || !maps.Equal(f.Frontiers, derived.Frontiers) {

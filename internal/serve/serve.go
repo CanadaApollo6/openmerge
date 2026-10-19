@@ -85,6 +85,7 @@ type Server struct {
 }
 
 type worker struct {
+	stageA             *stageAPolicy
 	approvalInputProbe func(context.Context, queue.ApprovalBasis) (queue.ApprovalEligibilityObserved, error)
 	settlementOnly     bool
 	mu                 sync.Mutex

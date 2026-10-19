@@ -59,6 +59,9 @@ type Forge struct {
 	nativeReviews               map[nativeReviewKey]forge.NativeReviews
 	repos                       map[forge.RepoRef]*repository
 	failures                    map[string][]error
+	governingFilesCalls         int
+	revisionDiffCalls           int
+	identityCalls               map[string]int
 	onTestRef                   func(string, []int)
 	disableFenceLeaseForTesting bool
 	nonce                       func() string
@@ -93,9 +96,10 @@ func NewDeterministic() *Forge {
 
 func newForge(nonce func() string) *Forge {
 	return &Forge{
-		repos:    make(map[forge.RepoRef]*repository),
-		failures: make(map[string][]error),
-		nonce:    nonce,
+		repos:         make(map[forge.RepoRef]*repository),
+		failures:      make(map[string][]error),
+		identityCalls: make(map[string]int),
+		nonce:         nonce,
 	}
 }
 

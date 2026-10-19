@@ -59,6 +59,11 @@ type Executor struct {
 	// CheckPolicy evaluates repository merge conditions on the tested SHA.
 	// Nil retains the explicit RequiredChecks policy.
 	CheckPolicy func([]forge.CheckRun) (terminal, success bool, err error)
+	// CheckPolicyOutcome is an optional typed policy seam for actions that need
+	// to distinguish an approval-only wait from an ordinary pending result. It
+	// is consulted by RefreshChecks and Land before provenance, retry, or timer
+	// events; CheckPolicy remains the explicit legacy path when this is nil.
+	CheckPolicyOutcome func([]forge.CheckRun) (CheckOutcome, error)
 	// ReferencesCheck selects names relevant to CheckPolicy diagnostics. Nil uses RequiredChecks.
 	ReferencesCheck func(string) bool
 	// RetryFailure selects failed names from the effective policy failures.
@@ -75,6 +80,15 @@ type Executor struct {
 	Now              func() time.Time
 }
 
+// CheckOutcome keeps an approval-only wait distinct from a pending or failed
+// CI result. ApprovalWait is consumed before RefreshChecks or Land records
+// CI/timer observations; Terminal and Success retain the legacy pair.
+type CheckOutcome struct {
+	Terminal     bool
+	Success      bool
+	ApprovalWait bool
+}
+
 // Execute stops at the first failed emit. emit must durably record its event
 // before returning nil. BatchStarted precedes test-ref construction, and
 // Land freshly requires terminal-success checks before recording LandingStarted,
@@ -88,7 +102,7 @@ type Executor struct {
 // retries while the commit remains absent. A failed MarkLanded stays unacknowledged.
 // Infrastructure build errors emit TestRefBuildFailed and also return the error.
 func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(queue.Event) error) error {
-	if len(x.RequiredChecks) == 0 && !x.AllowNoRequiredChecks && x.CheckPolicy == nil {
+	if len(x.RequiredChecks) == 0 && !x.AllowNoRequiredChecks && x.CheckPolicy == nil && x.CheckPolicyOutcome == nil {
 		return errors.New("required checks must be configured or AllowNoRequiredChecks explicitly enabled")
 	}
 	switch a := action.(type) {
@@ -171,10 +185,28 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		at := x.now()
 		var terminal, success bool
 		var ambiguity error
+		var policyOutcome CheckOutcome
+		policyEvaluated := false
+		if x.CheckPolicyOutcome != nil {
+			policyOutcome, ambiguity = x.checkResultOutcome(checks, a.BatchID)
+			if policyOutcome.ApprovalWait {
+				// The policy callback has durably consumed the approval wait. Do
+				// not append provenance, retry, reopen, refresh, or timeout input
+				// for the same read.
+				return nil
+			}
+			if !x.retryObservationAllowed(ambiguity) {
+				return ambiguity
+			}
+			terminal, success = policyOutcome.Terminal, policyOutcome.Success
+			policyEvaluated = true
+		}
 		if x.ChecksRetryFailed == 1 {
 			// Evaluate policy before any provenance event. A generic policy/read
 			// error is transient and must leave no durable observation behind.
-			terminal, success, ambiguity = x.checkResult(checks, a.BatchID)
+			if !policyEvaluated {
+				terminal, success, ambiguity = x.checkResult(checks, a.BatchID)
+			}
 			if !x.retryObservationAllowed(ambiguity) {
 				return ambiguity
 			}
@@ -182,7 +214,7 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		if err := x.observeCheckProvenance(checks, a.BatchID, a.TestedSHA, emit); err != nil {
 			return err
 		}
-		if x.ChecksRetryFailed != 1 {
+		if x.ChecksRetryFailed != 1 && !policyEvaluated {
 			terminal, success, ambiguity = x.checkResult(checks, a.BatchID)
 		}
 		if x.retryObservationAllowed(ambiguity) {
@@ -226,7 +258,23 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		}
 		var terminal, success bool
 		var ambiguity error
-		if x.ChecksRetryFailed == 1 {
+		policyEvaluated := false
+		if x.CheckPolicyOutcome != nil {
+			policyOutcome, err := x.checkResultOutcome(checks, a.BatchID)
+			if policyOutcome.ApprovalWait {
+				// Land keeps its existing failed completion semantics so the worker
+				// releases the claim for a fresh plan. The typed wait is still
+				// consumed before provenance or check/timer events are emitted.
+				return err
+			}
+			if !x.retryObservationAllowed(err) {
+				return err
+			}
+			terminal, success = policyOutcome.Terminal, policyOutcome.Success
+			ambiguity = err
+			policyEvaluated = true
+		}
+		if x.ChecksRetryFailed == 1 && !policyEvaluated {
 			// As in RefreshChecks, do not persist provenance or check events when
 			// the configured policy itself failed to read/evaluate.
 			terminal, success, ambiguity = x.checkResult(checks, a.BatchID)
@@ -237,7 +285,7 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		if err := x.observeCheckProvenance(checks, a.BatchID, a.TestedSHA, emit); err != nil {
 			return err
 		}
-		if x.ChecksRetryFailed != 1 {
+		if x.ChecksRetryFailed != 1 && !policyEvaluated {
 			terminal, success, ambiguity = x.checkResult(checks, a.BatchID)
 		}
 		if x.retryObservationAllowed(ambiguity) {
@@ -464,14 +512,27 @@ func (e *CheckSourceAmbiguityError) Error() string {
 // Missing, unknown, or ambiguous required checks keep the batch pending. Only
 // the newest run within one source participates; cancelled counts as failure.
 func (x *Executor) checkResult(checks []forge.CheckRun, batchID string) (terminal, success bool, ambiguity error) {
+	outcome, err := x.checkResultOutcomeWith(checks, batchID, false)
+	return outcome.Terminal, outcome.Success, err
+}
+
+func (x *Executor) checkResultOutcome(checks []forge.CheckRun, batchID string) (CheckOutcome, error) {
+	return x.checkResultOutcomeWith(checks, batchID, true)
+}
+
+func (x *Executor) checkResultOutcomeWith(checks []forge.CheckRun, batchID string, typed bool) (CheckOutcome, error) {
 	// Batch refs are deterministic, including for persisted RefreshChecks actions.
 	// Filter before either policy compares run IDs or checks source ambiguity.
 	checks = x.filteredChecks(checks, batchID)
 	if x.ChecksRetryFailed == 1 {
 		checks = x.newestRetryChecks(checks)
 	}
+	if typed && x.CheckPolicyOutcome != nil {
+		return x.CheckPolicyOutcome(checks)
+	}
 	if x.CheckPolicy != nil {
-		return x.CheckPolicy(checks)
+		terminal, success, err := x.CheckPolicy(checks)
+		return CheckOutcome{Terminal: terminal, Success: success}, err
 	}
 	latest := make(map[string]forge.CheckRun)
 	sources := make(map[string]map[string]bool)
@@ -485,7 +546,8 @@ func (x *Executor) checkResult(checks []forge.CheckRun, batchID string) (termina
 			latest[check.Name] = check
 		}
 	}
-	terminal, success = true, true
+	terminal, success := true, true
+	var ambiguity error
 	for _, name := range x.RequiredChecks {
 		if len(sources[name]) > 1 || sources[name][""] {
 			terminal = false
@@ -516,7 +578,7 @@ func (x *Executor) checkResult(checks []forge.CheckRun, batchID string) (termina
 			terminal = false
 		}
 	}
-	return terminal, success, ambiguity
+	return CheckOutcome{Terminal: terminal, Success: success}, ambiguity
 }
 
 // filteredChecks applies the queue provenance contract once for both policy

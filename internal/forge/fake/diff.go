@@ -19,6 +19,7 @@ var _ forge.RevisionDiffReader = (*Forge)(nil)
 func (f *Forge) RevisionDiff(ctx context.Context, repo forge.RepoRef, req forge.RevisionDiffRequest) (forge.RevisionDiff, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.revisionDiffCalls++
 	result := forge.NewRevisionDiff(req)
 	fail := func(reason forge.DiffFailureReason, err error) (forge.RevisionDiff, error) {
 		result.Inventory.Completeness = forge.DiffIncomplete
@@ -159,6 +160,13 @@ func (f *Forge) RevisionDiff(ctx context.Context, repo forge.RepoRef, req forge.
 		return result, err
 	}
 	return result, nil
+}
+
+// RevisionDiffCalls reports bounded revision-diff reader use in tests.
+func (f *Forge) RevisionDiffCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.revisionDiffCalls
 }
 
 func diffBlobID(content string) string {

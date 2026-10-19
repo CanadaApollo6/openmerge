@@ -205,3 +205,12 @@ func policyOwnerEvidence(c Classification) error {
 	}
 	return nil
 }
+
+// ValidateOwnerEvidence checks recorded per-file coverage without resolving
+// mutable membership. Decision callers still use fresh owner resolution.
+func ValidateOwnerEvidence(c Classification) error {
+	if err := codeOwnerEvidence(c); err != nil {
+		return err
+	}
+	return policyOwnerEvidence(c)
+}

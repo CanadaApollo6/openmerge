@@ -74,31 +74,10 @@ func (e ApprovalInputsChanged) Validate() error {
 	return nil
 }
 
-// Journaled observations advance acquisition freshness. Same-input probes journal
-// nothing. Delayed reads must not overwrite newer evidence or wake a wait.
+// Journal order determines freshness; timestamps are informational. Producers
+// fence overlapping acquisitions with Store.ApprovalRead before appending.
 func (s State) currentApprovalInputBasis(b ApprovalBasis) bool {
-	if s.CheckApprovalBoundary(b) != nil {
-		return false
-	}
-	if w, ok := s.approvalWaits[b.ChangeID]; ok && b.At.Before(w.Basis.At) {
-		return false
-	}
-	r, _ := s.approvalBinding(b)
-	if b.At.Before(r.Basis.At) {
-		return false
-	}
-	if f, ok := s.approvalFacts[b.ChangeID]; ok && f.Eligibility != nil && f.Eligibility.Basis.Revision == b.Revision && b.At.Before(f.Eligibility.Basis.At) {
-		return false
-	}
-	if f, ok := s.approvalFacts[b.ChangeID]; ok {
-		if f.Intent != nil && f.Intent.Basis.Revision == b.Revision && b.At.Before(f.Intent.Basis.At) {
-			return false
-		}
-		if f.Accountability != nil && f.Accountability.Basis.Revision == b.Revision && b.At.Before(f.Accountability.Basis.At) {
-			return false
-		}
-	}
-	return true
+	return s.CheckApprovalBoundary(b) == nil
 }
 
 func stableApprovalReason(reason string) bool {
@@ -215,7 +194,7 @@ func (s State) rejectApprovalGate(e ApprovalGateRejected) State {
 // gate reader; no production approval acquisition is enabled here.
 func (s State) PrepareApprovalInputChange(fresh ApprovalEligibilityObserved) (ApprovalInputsChanged, bool) {
 	w, ok := s.approvalWaits[fresh.Basis.ChangeID]
-	if !ok || fresh.Validate() != nil || !s.currentApprovalInputBasis(fresh.Basis) || fresh.Basis.At.Before(w.Basis.At) {
+	if !ok || fresh.Validate() != nil || !s.currentApprovalInputBasis(fresh.Basis) {
 		return ApprovalInputsChanged{}, false
 	}
 	next, _ := s.observeApproval(fresh)

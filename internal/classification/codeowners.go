@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
+	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
 
 // MaxCodeownersBytes pins GitHub's 3 MB rejection boundary. Acquisition's
@@ -139,4 +140,16 @@ func (f ownersFile) effective(p string) *ownerEntry {
 		}
 	}
 	return nil
+}
+
+// GoverningOwners exposes canonical user/team tokens for static policy identity
+// pinning. Matching, precedence and syntax remain owned by this parser; serve
+// must not invent a second CODEOWNERS tokenizer. Email tokens stay unresolved.
+func GoverningOwners(g forge.GoverningFiles) ([]Owner, bool) {
+	source, known := selectedOwners(g)
+	parsed := parseOwners(source.Content)
+	if !known || !parsed.valid {
+		return nil, false
+	}
+	return append([]Owner(nil), parsed.tokens...), true
 }

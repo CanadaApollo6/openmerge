@@ -22,7 +22,7 @@ func (LandingDecisionRequiredError) Error() string {
 
 // ErrLandingDecisionStale asks the worker to re-plan after an atomic rollback.
 // It also wraps ErrStale, but must not use legacy starts' done/cancelled path.
-var ErrLandingDecisionStale = errors.New("landing decision inputs changed; re-plan")
+var ErrLandingDecisionStale = errors.New("landing decision inputs changed; waiting for stable approval evidence; re-plan")
 
 func retryLandingDecision(err error) error {
 	if errors.Is(err, ErrStale) {
@@ -56,6 +56,9 @@ func (s *Store) startLanding(ctx context.Context, claim ClaimedAction, cfg queue
 	}
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		if err := s.lockQueue(ctx, tx, claim.QueueID); err != nil {
+			return err
+		}
+		if err := checkApprovalRead(ctx, tx, claim.QueueID); err != nil {
 			return err
 		}
 		execution := emission{claim: claim, cfg: cfg, decisionStart: true, approvalsRequired: policy.Approvals != nil}
@@ -131,6 +134,9 @@ func (s *Store) RejectLanding(ctx context.Context, claim ClaimedAction, cfg queu
 	}
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		if err := s.lockQueue(ctx, tx, claim.QueueID); err != nil {
+			return err
+		}
+		if err := checkApprovalRead(ctx, tx, claim.QueueID); err != nil {
 			return err
 		}
 		execution := emission{claim: claim, cfg: cfg, decisionStart: true, approvalsRequired: policy.Approvals != nil}

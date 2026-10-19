@@ -67,6 +67,12 @@ func (s State) CheckApprovalAdmission(e Event) error {
 		return s.CheckReceiptAdmission(receipt)
 	}
 	next := Apply(s, e)
+	if _, ok := e.(ReviewStanceObserved); ok {
+		facts, _ := next.ApprovalFacts(basis.ChangeID)
+		if facts.Saturated {
+			return fmt.Errorf("approval source admission capacity exceeded for %s", basis.ChangeID)
+		}
+	}
 	return checkSharedAdmissionBudget(next, basis.ChangeID)
 }
 

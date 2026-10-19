@@ -273,8 +273,13 @@ func sanitizeBriefView(v *brief.View, sanitizer *diagnostic.Sanitizer) bool {
 		clean(&w.Detail)
 		clean(&w.Clears)
 		clean(&w.NextStep.Name)
-		clean(&w.NextStep.Path)
-		clean(&w.NextStep.URL)
+		// Machine values must remain usable. Redact full values, but do not
+		// append a display truncation suffix to a path or URL.
+		for _, machine := range []*string{&w.NextStep.Path, &w.NextStep.URL} {
+			value, redacted := sanitizer.SanitizeTextRedacted(*machine)
+			*machine = value
+			changed = changed || redacted
+		}
 	}
 	return changed
 }

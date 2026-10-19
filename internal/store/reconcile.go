@@ -9,15 +9,29 @@ import (
 )
 
 type record struct {
-	key   string
-	value []byte
+	key       string
+	value     []byte
+	preflight func(queue.State) error
+	immutable bool
 }
 
 // Record atomically updates an observation and appends its changed-state events.
 // Equal bytes append nothing. Transitions A -> B -> A retain all three events.
 // Command receipts use immutable comment IDs; cursors can commit without events.
 func (s *Store) Record(ctx context.Context, q QueueID, key string, value []byte, events ...queue.Event) error {
-	_, err := s.append(ctx, q, events, "", nil, &record{key, value})
+	_, err := s.append(ctx, q, events, "", nil, &record{key: key, value: value})
+	return err
+}
+
+// RecordEvidence validates the complete candidate against the locked projection
+// before committing either evidence or its observation key. Command keys are
+// immutable: an edited comment or concurrent processing cannot bind it again.
+// Legacy Record deliberately retains its original transaction and SQL trace.
+func (s *Store) RecordEvidence(ctx context.Context, q QueueID, key string, value []byte, command bool, preflight func(queue.State) error, events ...queue.Event) error {
+	if preflight == nil {
+		return errors.New("evidence requires preflight")
+	}
+	_, err := s.append(ctx, q, events, "", nil, &record{key: key, value: value, preflight: preflight, immutable: command})
 	return err
 }
 

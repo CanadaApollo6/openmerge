@@ -235,3 +235,20 @@ func TestHeadHistoryDoesNotChangeLegacyRevisionRecords(t *testing.T) {
 		t.Fatal("revision-only queue allocated approvals")
 	}
 }
+
+func TestR3ApprovalThenOlderReviewDismissedLater(t *testing.T) {
+	b := approvalBasis()
+	original := native(b, 100, cp.Approve, b.At)
+	later := native(b, 120, cp.Approve, b.At.Add(10*time.Second))
+	oldDismissal := dismissal(b, 100, forge.TimelineDismissalTime, b.At.Add(time.Minute))
+	permutations([]ReviewStanceObserved{original, later, oldDismissal}, func(events []ReviewStanceObserved) {
+		state := approvalState(b)
+		for _, event := range events {
+			state = restart(t, Apply(state, event))
+		}
+		facts, _ := state.ApprovalFacts(b.ChangeID)
+		if facts.Sources[facts.Latest[later.Stance.UserID]].Event.Stance.Source.ID != "120" {
+			t.Fatal("older review dismissal revoked later review", facts.Latest)
+		}
+	})
+}

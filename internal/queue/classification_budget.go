@@ -54,6 +54,9 @@ func (s State) CheckClassificationAdmission(e ChangeClassified) error {
 	if err := e.Validate(); err != nil {
 		return err
 	}
+	if err := validateClassificationAdmission(e); err != nil {
+		return err
+	}
 	next := Apply(s, e)
 	i := e.Evidence.Classification.Inputs
 	accepted, ok := next.Classification(ChangeID(i.ChangeID), ChangeRevision(i.Revision))
@@ -61,4 +64,55 @@ func (s State) CheckClassificationAdmission(e ChangeClassified) error {
 		return fmt.Errorf("classification sequence rejected")
 	}
 	return checkSharedAdmissionBudget(next, ChangeID(i.ChangeID))
+}
+
+// Emission validation is stricter than historical decoding: existing snapshots
+// retain their recorded versions, while new producers cannot assert aggregates
+// or owner provenance that contradict the retained per-file evidence.
+func validateClassificationAdmission(e ChangeClassified) error {
+	c, g := e.Evidence.Classification, e.Evidence.Governing
+	if err := cp.ValidateOwnerEvidence(c); err != nil {
+		return err
+	}
+	for _, name := range []string{"docs", "generated", "policy"} {
+		value := cp.Unknown
+		if name == "policy" {
+			if c.InventoryComplete {
+				value = cp.False
+			}
+			for _, f := range c.Files {
+				if f.Facts[name] == cp.True {
+					value = cp.True
+					break
+				}
+				if f.Facts[name] == cp.Unknown {
+					value = cp.Unknown
+				}
+			}
+		} else if c.InventoryComplete {
+			value = cp.True
+			for _, f := range c.Files {
+				if f.Facts[name] == cp.False {
+					value = cp.False
+					break
+				}
+				if f.Facts[name] == cp.Unknown {
+					value = cp.Unknown
+				}
+			}
+		}
+		if c.Facts[name] != value {
+			return fmt.Errorf("classification aggregate %s contradicts files", name)
+		}
+	}
+	selected := ""
+	for _, f := range g.Codeowners {
+		if f.Path == g.SelectedCodeowners && f.Present {
+			selected = f.ObjectID
+		}
+	}
+	if selected != c.Inputs.OwnersBlob {
+		return fmt.Errorf("governing owners blob mismatch")
+	}
+	return nil
 }

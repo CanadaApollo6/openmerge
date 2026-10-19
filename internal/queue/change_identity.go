@@ -114,3 +114,7 @@ func (s State) CanObserveChangeRevision(e ChangeRevisionObserved) bool {
 	}
 	return current.Revision == e.Predecessor && current.HeadSHA != e.HeadSHA
 }
+
+// ChangeRevisions returns detached current boundaries for ingestion recovery.
+// It allocates nothing on the legacy planner path.
+func (s State) ChangeRevisions() map[int]RevisionRecord { return s.changeRevisions.snapshot() }

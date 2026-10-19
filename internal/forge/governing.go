@@ -22,6 +22,10 @@ type GoverningFilesRequest struct {
 	CommitSHA     string
 	Paths         []string
 	PathsComplete bool
+	// AllAttributes requests a bounded inventory of every governing attribute
+	// file, independently of open changes. Policy identity must not depend on
+	// which diff directories happened to be observed first. No public setting.
+	AllAttributes bool
 }
 
 // Governing probe and content limits are part of DiffSemantics.

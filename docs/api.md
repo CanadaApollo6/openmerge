@@ -414,3 +414,9 @@ Reviewer text leads with intent and evidence; operator text leads with queue
 progress and blockers, including what clears them. Exit codes match status:
 0 success, 1 transport/unsupported response, 2 usage/invalid request,
 3 not found, 4 authentication/authorization, 5 ambiguous queue.
+
+Renaming the repository default branch after an approval policy has been pinned
+makes that pinned policy unavailable to the brief read boundary. The response
+reports `policy_digest_mismatch`; read the governing policy again before giving
+a receipt. Candidate approval policies continue to withhold requirements as
+`policy_unavailable` until PR 11b defines the applied-config digest composition.

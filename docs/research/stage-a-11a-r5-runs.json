@@ -1,0 +1,583 @@
+{
+  "validated_implementation_head": "3b7f7d26d41971202dfa424f469711906ca5333f",
+  "baseline_head": "f8066a4f3bc9f2bfb110950b0c6c9aea4cf5ea6f",
+  "environment": {
+    "time": "2026-10-19T01:09:39.883088+00:00",
+    "platform": "Linux-7.2.8-5-omarchy-bore-x86_64-with-glibc2.44",
+    "go": "go version go1.27.2 linux/amd64",
+    "cpu": "Architecture:                            x86_64\nCPU op-mode(s):                          32-bit, 64-bit\nAddress sizes:                           39 bits physical, 48 bits virtual\nByte Order:                              Little Endian\nCPU(s):                                  16\nOn-line CPU(s) list:                     0-15\nVendor ID:                               GenuineIntel\nModel name:                              13th Gen Intel(R) Core(TM) i7-13620H\nCPU family:                              6\nModel:                                   186\nThread(s) per core:                      2\nCore(s) per socket:                      10\nSocket(s):                               1\nStepping:                                2\nMicrocode version:                       0x6134\nCPU(s) scaling MHz:                      76%\nCPU max MHz:                             4900.0000\nCPU min MHz:                             400.0000\nBogoMIPS:                                5836.80\nFlags:                                   fpu vme de pse tsc msr pae mce cx8 apic sep mtrr pge mca cmov pat pse36 clflush dts acpi mmx fxsr sse sse2 ss ht tm pbe syscall nx pdpe1gb rdtscp lm constant_tsc art arch_perfmon pebs bts rep_good nopl xtopology nonstop_tsc cpuid aperfmperf tsc_known_freq pni pclmulqdq dtes64 monitor ds_cpl vmx smx est tm2 ssse3 sdbg fma cx16 xtpr pdcm pcid sse4_1 sse4_2 x2apic movbe popcnt tsc_deadline_timer aes xsave avx f16c rdrand lahf_lm abm 3dnowprefetch cpuid_fault epb ssbd ibrs ibpb stibp ibrs_enhanced tpr_shadow flexpriority ept vpid ept_ad fsgsbase tsc_adjust bmi1 avx2 smep bmi2 erms invpcid rdseed adx smap clflushopt clwb intel_pt sha_ni xsaveopt xsavec xgetbv1 xsaves split_lock_detect user_shstk avx_vnni dtherm ida arat pln pts hwp hwp_notify hwp_act_window hwp_epp hwp_pkg_req hfi vnmi umip pku ospke waitpkg gfni vaes vpclmulqdq rdpid movdiri movdir64b fsrm md_clear serialize arch_lbr ibt flush_l1d arch_capabilities\nVirtualization:                          VT-x\nL1d cache:                               416 KiB (10 instances)\nL1i cache:                               448 KiB (10 instances)\nL2 cache:                                9.5 MiB (7 instances)\nL3 cache:                                24 MiB (1 instance)\nNUMA node(s):                            1\nNUMA node0 CPU(s):                       0-15\nVulnerability Gather data sampling:      Not affected\nVulnerability Ghostwrite:                Not affected\nVulnerability Indirect target selection: Not affected\nVulnerability Itlb multihit:             Not affected\nVulnerability L1tf:                      Not affected\nVulnerability Mds:                       Not affected\nVulnerability Meltdown:                  Not affected\nVulnerability Mmio stale data:           Not affected\nVulnerability Old microcode:             Not affected\nVulnerability Reg file data sampling:    Mitigation; Clear Register File\nVulnerability Retbleed:                  Not affected\nVulnerability Spec rstack overflow:      Not affected\nVulnerability Spec store bypass:         Mitigation; Speculative Store Bypass disabled via prctl\nVulnerability Spectre v1:                Mitigation; usercopy/swapgs barriers and __user pointer sanitization\nVulnerability Spectre v2:                Mitigation; Enhanced / Automatic IBRS; IBPB conditional; PBRSB-eIBRS SW sequence; BHI BHI_DIS_S\nVulnerability Srbds:                     Not affected\nVulnerability Tsa:                       Not affected\nVulnerability Tsx async abort:           Not affected\nVulnerability Vmscape:                   Mitigation; IBPB before exit to userspace\n",
+    "env": {
+      "GOFLAGS": "-p=2",
+      "GOMEMLIMIT": "4GiB"
+    },
+    "main": "f8066a4f3bc9f2bfb110950b0c6c9aea4cf5ea6f"
+  },
+  "runs": [
+    {
+      "name": "main-before",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-short",
+        "-count=1",
+        "-timeout=30m",
+        "-json",
+        "./internal/serve"
+      ],
+      "exit": 0,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/main-before.log",
+      "log_sha256": "aac239d1b2a58ec002df96bb3c7d40123734fe1348af89d56dd13fb1b0e1df20"
+    },
+    {
+      "name": "branch-before",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-short",
+        "-count=1",
+        "-timeout=30m",
+        "-json",
+        "./internal/serve"
+      ],
+      "exit": 0,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/branch-before.log",
+      "log_sha256": "12b10db009ce6997bac400b5958ce846fbf61722604731fdd7c99e3f9c1e331e"
+    },
+    {
+      "name": "stage-a-short",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-short",
+        "-count=1",
+        "-timeout=15m",
+        "-json",
+        "./internal/serve",
+        "-run",
+        "TestStageA|TestLegacyAndStageA|TestLegacyCommandWaitingStopsSharedPass"
+      ],
+      "exit": 0,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/stage-a-short.log",
+      "log_sha256": "5bbe50417e2357c731b4945ac2c855729cfb418e1d168d968cd54760651ec29f"
+    },
+    {
+      "name": "stage-a-short-2",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-short",
+        "-count=1",
+        "-timeout=15m",
+        "-json",
+        "./internal/serve",
+        "-run",
+        "TestStageA|TestLegacyAndStageA|TestLegacyCommandWaitingStopsSharedPass"
+      ],
+      "exit": 0,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/stage-a-short-2.log",
+      "log_sha256": "ad5d620d0fd08fda9391c12674c6de71bf9ebf309c0d117ecd645ec1c3d33afc"
+    },
+    {
+      "name": "stage-a-full",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-count=1",
+        "-timeout=15m",
+        "-json",
+        "./internal/serve",
+        "-run",
+        "TestStageA|TestLegacyAndStageA|TestLegacyCommandWaitingStopsSharedPass"
+      ],
+      "exit": 0,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/stage-a-full.log",
+      "log_sha256": "9808884a4fe88e810737ef99c361839c726372a15d7b8562b0493439b6d42ace"
+    },
+    {
+      "name": "large-tree-full",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-count=1",
+        "-timeout=15m",
+        "-v",
+        "./internal/gitops",
+        "-run",
+        "TestGoverningLargeTreeDoesNotPause"
+      ],
+      "exit": 0,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/large-tree-full.log",
+      "log_sha256": "0757883dc87bd04405cf64753f30da74785887e76fd8d6a239d323653bd00a23"
+    },
+    {
+      "name": "main-after",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-short",
+        "-count=1",
+        "-timeout=15m",
+        "-json",
+        "./internal/serve"
+      ],
+      "exit": 0,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/main-after.log",
+      "log_sha256": "f9aeaf690761d19ea5c486591e83888da3385c896ba35c14c6342427e0575422"
+    },
+    {
+      "name": "branch-after",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-short",
+        "-count=1",
+        "-timeout=15m",
+        "-json",
+        "./internal/serve"
+      ],
+      "exit": 0,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/branch-after.log",
+      "log_sha256": "8958958d68beb510f5d8396a5f39f5493a7730a22faad80f057a48756b185ce7"
+    },
+    {
+      "name": "stage-a-short-3",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-short",
+        "-count=1",
+        "-timeout=15m",
+        "-json",
+        "./internal/serve",
+        "-run",
+        "TestStageA|TestLegacyAndStageA|TestLegacyCommandWaitingStopsSharedPass"
+      ],
+      "exit": 1,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/stage-a-short-3.log",
+      "log_sha256": "40d042064aec2b1b3f2c188cc9af1ff63d940b8c9b23aaccda864c8d16d2a7bb"
+    },
+    {
+      "name": "resume-focused",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-short",
+        "-count=1",
+        "-timeout=15m",
+        "-json",
+        "./internal/serve",
+        "-run",
+        "TestStageA|TestLegacyAndStageA|TestLegacyCommandWaitingStopsSharedPass"
+      ],
+      "exit": 1,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/resume-focused.log",
+      "log_sha256": "946980354e8fc40da0363b29ac57978a3bf12072b0d3ddf19f1b2e3fa4d80f92"
+    },
+    {
+      "name": "resume-focused-2",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-short",
+        "-count=1",
+        "-timeout=15m",
+        "-json",
+        "./internal/serve",
+        "-run",
+        "TestStageA|TestLegacyAndStageA|TestLegacyCommandWaitingStopsSharedPass"
+      ],
+      "exit": 1,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/resume-focused-2.log",
+      "log_sha256": "b4ce3b8b5b76c4af2501faf436380fd34e2fac7c4f21fb5b170ec4a32b77970d"
+    },
+    {
+      "name": "resume-focused-3",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-short",
+        "-count=1",
+        "-timeout=15m",
+        "-json",
+        "./internal/serve",
+        "-run",
+        "TestStageA|TestLegacyAndStageA|TestLegacyCommandWaitingStopsSharedPass"
+      ],
+      "exit": 0,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/resume-focused-3.log",
+      "log_sha256": "7077534ff6f143eab1d83463a4691812c6eee3281a37760b9128868ff9fa810d"
+    },
+    {
+      "name": "resume-stage-a-full",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-count=1",
+        "-timeout=15m",
+        "-json",
+        "./internal/serve",
+        "-run",
+        "TestStageA|TestLegacyAndStageA|TestLegacyCommandWaitingStopsSharedPass"
+      ],
+      "exit": 0,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/resume-stage-a-full.log",
+      "log_sha256": "4b7af98abc572a6b71a380dd7f6f06493aec16dbd0d744a9756c37621d062298"
+    },
+    {
+      "name": "resume-main",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-short",
+        "-count=1",
+        "-timeout=15m",
+        "-json",
+        "./internal/serve"
+      ],
+      "exit": 0,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/resume-main.log",
+      "log_sha256": "98247810d214f5b5569c7801a3bb79146753c1312c422ae87c65a6adb53b2f52"
+    },
+    {
+      "name": "resume-branch",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-short",
+        "-count=1",
+        "-timeout=15m",
+        "-json",
+        "./internal/serve"
+      ],
+      "exit": 0,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/resume-branch.log",
+      "log_sha256": "62aa25b0ed1a88a0486af6962a987f3331a4dca843db673b60287577bac490e3"
+    },
+    {
+      "name": "resume-focused-4",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-short",
+        "-count=1",
+        "-timeout=15m",
+        "-json",
+        "./internal/serve",
+        "-run",
+        "TestStageA|TestLegacyAndStageA|TestLegacyCommandWaitingStopsSharedPass"
+      ],
+      "exit": 1,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/resume-focused-4.log",
+      "log_sha256": "3182cd2494abbd5a23267a2a5189905640ed0868db2bf28d74a6fa1306ea0ef9"
+    },
+    {
+      "name": "resume-focused-5",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-short",
+        "-count=1",
+        "-timeout=15m",
+        "-json",
+        "./internal/serve",
+        "-run",
+        "TestStageA|TestLegacyAndStageA|TestLegacyCommandWaitingStopsSharedPass"
+      ],
+      "exit": 0,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/resume-focused-5.log",
+      "log_sha256": "4176726181807d3e55c891ea29d8c701c4a86b402f9ec7482bfca9fa0ed3fdc9"
+    },
+    {
+      "name": "resume-focused-width4",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-short",
+        "-count=1",
+        "-timeout=15m",
+        "-json",
+        "./internal/serve",
+        "-run",
+        "TestStageA|TestLegacyAndStageA|TestLegacyCommandWaitingStopsSharedPass"
+      ],
+      "exit": 0,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/resume-focused-width4.log",
+      "log_sha256": "956c28a2de749a5dd7d7701d465bba2550459e6e22b0069b74355cbde847e3f3"
+    },
+    {
+      "name": "resume-focused-width16",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-short",
+        "-count=1",
+        "-timeout=15m",
+        "-json",
+        "./internal/serve",
+        "-run",
+        "TestStageA|TestLegacyAndStageA|TestLegacyCommandWaitingStopsSharedPass"
+      ],
+      "exit": 0,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/resume-focused-width16.log",
+      "log_sha256": "f626234e58d3c28143d6d15cc2980e326b347cacf9ef460eb9df07cf8e9afa9f"
+    },
+    {
+      "name": "final-stage-a-full",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-count=1",
+        "-timeout=15m",
+        "-json",
+        "./internal/serve",
+        "-run",
+        "TestStageA|TestLegacyAndStageA|TestLegacyCommandWaitingStopsSharedPass|TestReviewCancellationCannotStarveNewHead"
+      ],
+      "exit": 0,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/final-stage-a-full.log",
+      "log_sha256": "3551fb7aac89883834a3aa167893d366757e1fc7c25bf6695d5398d602002115"
+    },
+    {
+      "name": "final-main",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-short",
+        "-count=1",
+        "-timeout=15m",
+        "-json",
+        "./internal/serve"
+      ],
+      "exit": 0,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/final-main.log",
+      "log_sha256": "712f5c56da1be4eb8310cf2003792364d43e03cf428a61943edbd571689621eb"
+    },
+    {
+      "name": "final-branch",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-short",
+        "-count=1",
+        "-timeout=15m",
+        "-json",
+        "./internal/serve"
+      ],
+      "exit": 0,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/final-branch.log",
+      "log_sha256": "20250865ab0ac72c3b97a3d54ada9ceea079a354039e0169cf91edcf330e98b8"
+    },
+    {
+      "name": "resume-check",
+      "command": [
+        "make",
+        "check"
+      ],
+      "exit": 0,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/resume-check.log",
+      "log_sha256": "048ff9ac2ed99ba10cea15b29442ee09892826655d4ac43f8e3909f340658c31"
+    },
+    {
+      "name": "resume-sim-exits",
+      "command": [
+        "make",
+        "test-sim-exits"
+      ],
+      "exit": 0,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/resume-sim-exits.log",
+      "log_sha256": "e02cab9898facd27e7e1d9d6d77974bc6bf7fc98ab67191bd0afe87c12c0ecc2"
+    },
+    {
+      "name": "resume-compatibility",
+      "command": [
+        "python3",
+        "scripts/check-phase2-compatibility.py",
+        "/home/riels/openmerge-sa-11a-main"
+      ],
+      "exit": 0,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/resume-compatibility.log",
+      "log_sha256": "8609790ee807f78ae7fadd31e6503a6a932f9f874af818197be4849fe5a93749"
+    },
+    {
+      "name": "resume-legacy-sql",
+      "command": [
+        "python3",
+        "scripts/check-legacy-landing-sql.py",
+        "/home/riels/openmerge-sa-11a-main"
+      ],
+      "exit": 0,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/resume-legacy-sql.log",
+      "log_sha256": "ab22c0b5e090c552fcb505089d132fa81b6793fa330d277ad02890069ccefd33"
+    },
+    {
+      "name": "resume-legacy-depths",
+      "command": [
+        "python3",
+        "scripts/check-legacy-plan-action-depths-1-4.py",
+        "/home/riels/openmerge-sa-11a-main"
+      ],
+      "exit": 0,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/resume-legacy-depths.log",
+      "log_sha256": "3c25309b33c985c03a3aff2a5c961878e2dd1b080a03ec27dc5894981e7b3453"
+    },
+    {
+      "name": "resume-commit-ids",
+      "command": [
+        "python3",
+        "scripts/check-legacy-commit-ids.py",
+        "--baseline",
+        "/home/riels/openmerge-sa-11a-main",
+        "--candidate",
+        "/home/riels/openmerge-sa-11a"
+      ],
+      "exit": 0,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/resume-commit-ids.log",
+      "log_sha256": "6d9a0357c39d4aa0af74971d7032db2a5e2ea499bbc98191eb3ee8263fd8abd1"
+    },
+    {
+      "name": "resume-replay-main",
+      "command": [
+        "python3",
+        "scripts/check-live-journal-replay.py",
+        "--baseline",
+        "/home/riels/openmerge-sa-11a-main",
+        "--candidate",
+        "/home/riels/openmerge-sa-11a",
+        "--events",
+        "/home/riels/.local/share/openmerge/exports/events-20261018T051000Z.jsonl",
+        "--queues",
+        "/home/riels/.local/share/openmerge/exports/queues-20261018T051000Z.jsonl",
+        "--strict-state",
+        "--out",
+        "/home/riels/.cache/openmerge-77-r5-codex/resume-replay-main.json"
+      ],
+      "exit": 0,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/resume-replay-main.log",
+      "log_sha256": "c88a51bb683d81aa4fa48fe6ee6c81081b1f781f8b2a081783c8e4ab1ad9fa48"
+    },
+    {
+      "name": "legacy-control-main",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-short",
+        "-count=1",
+        "-timeout=15m",
+        "-json",
+        "./internal/serve",
+        "-run",
+        "^(TestActivityAndHealthyDeliveryDoNotShortenErrorOrQuotaBackoff|TestAdaptiveSummarySurvivesLongDiagnosticHeader|TestApprovalAwarePolicyApprovalWaitReducerDoesNotReenterCIPlan|TestApprovalAwarePolicyDoesNotHideOtherUnknownInputs|TestApprovalAwarePolicyFailedCIUsesIdentifiedBoundedRetry|TestApprovalAwarePolicyLeavesPendingOrMissingCIUnknownWithMissingReview|TestApprovalAwarePolicyNilOptInPreservesReviewAndMetadata|TestApprovalAwarePolicyPreservesLegacyNoReviewExpressions|TestApprovalAwarePolicyPreservesNestedReviewSemantics|TestApprovalAwarePolicyRetriesRealCIFailureWithMissingReview|TestApprovalAwarePolicyWaitsAfterCIWithoutReview|TestApprovalIdleReconciliationProbesChangesOnly|TestBackstopDetectsAnotherServerStartingTesting|TestBackstopRecomputesPeerPartialBatchDeadline|TestBackstopReplansInterruptedPeerEnqueue|TestBackstopResumesPeerBuildingBatch|TestBaseRegistrationFailureDoesNotGateOtherBases|TestBranchExpansionLifecycleAndDynamicStatus|TestBranchRefreshFailureAndRecoveryPreserveSafetyBlocks|TestBranchRefreshFailuresNeverRetireAndAllowlistOnlyNarrows|TestBranchRefreshHonorsRulesCacheAndReadFailuresKeepActive|TestBranchRefreshIntervalAndWebhookWakeStartOneWorkerPerBase|TestBriefPolicyUsesOnlyPinnedLocalReader|TestBroadSelectorExcludesInternalRefsAndRepositoryStatusListsBases|TestCanonicalAdmissionCannotBypassIndependentHistoricalBlock|TestCaseVariantHistoriesSettleByPersistedID|TestChainSummaryRootAndMixedWorkerFailure|TestCheckPolicyKeepsPendingRerunsAndAmbiguity|TestCheckRetryStatusIncludesPassedFlakyIdentity|TestCheckSourcesRecoverIndependentlyAcrossPRsAndRestart|TestChecksRefreshDespiteUnchangedPRAndAmbiguityRecovers|TestCommandGrammar|TestConfigPassCannotClearAnOverlappingFailure|TestConfigRecoveryPreservesSafetySources|TestConfigurationReadsStayPinnedWhileDefaultBranchMoves|TestCoreConditionsHaveDurableInputsAndReconcileMergeability|TestDefaultBranchFailuresPauseAndRetryAtSameTip|TestDefaultBranchRenameReevaluatesOmittedBase|TestDefaultPolicyMoveReobservesUnchangedReleasePR|TestDeferredBacklogDoesNotStarvePausedWork|TestDeniedWaitingBoundaryCommentChecksPermissionOnce|TestDiscoveryAndBranchRedeliveriesDoNotRepeatSweeps|TestDiscoveryCanonicalRegistrationRaces|TestDiscoveryClassicProtectionPermanentlyUnavailableIsReady|TestDiscoveryColdCanonicalFenceObservation|TestDiscoveryDedupeIsBounded|TestDiscoveryDedupeSurvivesWorkerRegistration|TestDiscoveryInventoryIncludesUnconfiguredInvalidAndDormant|TestDiscoveryMixedBasesStatusDoesNotDependOnWorkerOrder|TestDiscoveryQuotaBackoffIsScopedToInstallation|TestDiscoveryRemovalSuspensionAndReinstatement|TestDiscoveryRestoresLandingBeforeCredentialsAndFailedListing|TestDiscoveryReusesExactLiveDeploymentKey|TestDiscoverySharedDatabaseKeepsAppOwnership|TestExcludedInstallationAndRemovedWorkerAvoidCredentials|TestExplicitRefreshResetsBuildRetriesAndBackoff|TestFailedDiscoveryReadsPreserveDurableState|TestFailedNotificationDoesNotRenewHealth|TestFailedWaitingPermissionReadLeavesNoInspectionMarker|TestHealthyIdleLoopUsesBackstopAndDeliveryInterruptsTimer|TestIdleActivityChecksPreserveForgeBackstopDeadline|TestIgnoredNotificationWakesAndRefreshesWithoutDurableWrites|TestInactiveLifecyclesDoNotRefreshDiscovery|TestIndependentBaseWorkersLandUnderDefaultBranchPolicy|TestLandingCleanupPolicySurvivesConfigurationChange|TestLandingDecisionErrorsFailWorkerAction|TestLandingNotOnBasePausesAndStillResolves|TestLedgerSummaryCacheTracksWatermarkAndCurrentPolicy|TestLegacyWindowUpgradeRejectsUnrecoverableHistoricalPolicy|TestLegacyWindowUpgradeUsesHistoricalPolicyBeforeClamp|TestMainDeploymentReusesExactStoredKeyAndHistory|TestManagedPolicyChangeReobservesUnchangedPRs|TestManagedStartupClassicProtectionUnavailable|TestMergeMetadataRevalidatedBeforeLanding|TestMergeWhenRequiresQueueCheckProvenance|TestMetadataConditionsKeepUnknownUnderNegationAndCounts|TestMissingInvalidAndReloadedConfig|TestNonCommandsAreSilentlyIgnored|TestORCheckFailureWaitsForAlternative|TestObserveRequestsFilesOnlyForConditionsThatUseThem|TestOperationalLogsAbandonmentAndQuota|TestOperationalLogsCommittedLanding|TestOperationalLogsDequeueAndPause|TestOperationalLogsIgnoreStaleRulesEvents|TestOperationalLogsIgnoreStaleSourceClears|TestOperationalLogsOutsidePush|TestOutsidePushBaseObservationDuringLanding|TestOutsidePushDivergedRewrite|TestOutsidePushLandingThenRollback|TestOutsidePushObservationHistory|TestOutsidePushOnlyExactPreLandingRewindIsFlagged|TestOutsidePushPeerSettlementAfterRefRead|TestOutsidePushRealRollbackAndRestoreHasSameFlag|TestOutsidePushReconciliationAdminAndForcePush|TestOutsidePushRestartAndLandingThenOutside|TestOutsidePushRound2AbandonmentWatermarkChangesSettlement|TestOutsidePushRound2AwayAndBackBeforeAbandonment|TestOutsidePushRound2FurtherOutsidePushWhileLandingHeld|TestOutsidePushRound2PeerAuditAfterRefRead|TestOutsidePushRound2PushWinsAbandonmentThenRollback|TestOutsidePushRound2UnreadableLandingAncestry|TestOutsidePushSettlesOutstandingLandingFirst|TestOutsidePushTwoMovesBetweenPolls|TestOutsidePushTwoServersNoLiveRefReadAndNoLostNewerTip|TestOutsidePushUnreadableHistoryIsDurable|TestOverlappingFailureAfterClearStillBlocks|TestOverlappingQueuePausesOnlyItsBase|TestOverlappingRulesReadsCannotClearNewerBlock|TestOverlapsBlockOnlyInvolvedQueuesAndProtectionIsPerBase|TestOversizedFakePRKeepsAllFilePredicatesUnknown|TestQueueCommandPinsHead|TestQuotaBackoffStopsReconciliation|TestQuotaErrorsPreserveResetDeadline|TestR3BriefPolicyBusyTargetAndRegistry|TestR3BriefPolicyBusyUnrelatedWorker|TestR4BriefPolicyDefaultBranch|TestRecreatedBranchSettlesBeforeReactivation|TestRefreshClearsOnlyOperatorClearableSources|TestRefreshNotificationsHaveMinimumSweepInterval|TestRefreshVerifiesLandingBeforeClearingAndRejectsStalePass|TestReleaseBaseUsesDefaultBranchAuthorityAndReloads|TestReleaseBatchNeverLandsUnderChangedDefaultPolicy|TestRemovalBlocksStartsBeforeBusyWorkerReturns|TestRemovalReportsHeadsSeenOnlyWhileWaiting|TestRepeatedInvalidConfigDoesNotAppendDuplicateBlocks|TestReportingQuotaDoesNotStopActiveLanding|TestRepositoryDeleteHeadBranchOverridesServeDefault|TestRetirementAndRestartOutsideAllowlistsSettleRealOutcome|TestRetryTargetsUseLoadedEffectiveMergePolicy|TestReview4RealRollbackToLandedTip|TestReviewCancellationCannotStarveNewHead|TestReviewRound3AuditHoldsWorkerAgainstNextSettlement|TestReviewRound3PeerSettlesAlreadyLandingAfterRefRead|TestRevocationAtLandingCancelsStaleWork|TestRollbackBeforeMarkLandedRemainsVisible|TestRulesDoNotClearUnrelatedPauseAndResolveLandingStillExecutes|TestRulesPartialFailuresRetainAndRecordDefiniteFindings|TestRulesQuotaHonorsResetDeadline|TestRulesReadFailurePreservesStateAndRetriesSooner|TestRulesRecoveryNeverResumesPoisonOrLandingPause|TestRulesStartupPauseSlowRecheckAndAutomaticRecovery|TestRulesStartupReadFailureDoesNotStopHealthyWork|TestRulesStartupRetryAndReadinessVisibility|TestRunAppQuotaRetainsGlobalDeadline|TestRunInstallationQuotaAllowsLaterValidationWake|TestRunInstallationQuotaDoesNotDelayPendingValidation|TestServeFastForwardBatchSelection|TestServeFastForwardExactHeadAndDivergence|TestServeFastForwardMergeHeadDequeuedBeforeCI|TestServeFastForwardPRChecksCannotReplaceQueueCI|TestServeNeverEmitsSharedPauseEvents|TestSettlementPrecedesFailedConfigurationAndStaleActions|TestShutdownReleasesClaim|TestSingleQueueMainDeploymentConfigResolutionUnchanged|TestSingleVariantRegistrationDoesNotReadForgeFence|TestSlowFenceReconciliationDoesNotLockOtherRegistrations|TestSourceLogsIncludeSecondaryBlocksAndIgnoreStaleClears|TestStartupMissingLandingGrantBlocksBeforeFenceAndRecovers|TestStartupSettlementIgnoresInvalidConfigurationAndMissingCredentials|TestStartupValidationIsInMemoryUntilSuccessful|TestStoredLegacyRulesLogRecoversEachSourceIndependently|TestUnboundCheckProvenanceCoexistsWithAmbiguity|TestUnboundCheckProvenanceRecovers|TestUnboundCheckProvenanceStatusAndTimeout|TestUnchangedEffectiveReleasePolicyPreservesActiveBatchAcrossRestart|TestUnchangedPollAndRestartDedupe|TestUnpinnedCommandCannotApproveNewForkHead|TestUnreadableDefaultBaseTipPausesAndRecovers|TestUnsafeMergeConditionsCannotLand|TestValidationLoopHonorsIdleAndBackoffDeadlines|TestValidationPendingDoesNotIncreaseFailureBackoff|TestVerifiedDeliveryWakesOnlyAffectedQueueAndDedupeSurvivesRestart|TestWaitingBoundaryCommentChecksPermissionOnce|TestWaitingPreservesPolicyAndDefersCommandsOnce|TestWebhookBackstopRequiresRecentRepositoryDelivery|TestWebhookDeliveryAgeIsPerRepositoryAndLocal|TestWebhookHealthSchedulingExpiryAndRestart|TestWebhookTriggersEarlyCIReadAndIsDurable)$"
+      ],
+      "exit": 0,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/legacy-control-main.log",
+      "log_sha256": "3bd6d144d92f680644ebd3535a041bbd16469c4983ca6af6d4dfd544afcc3353"
+    },
+    {
+      "name": "legacy-control-branch",
+      "command": [
+        "go",
+        "test",
+        "-race",
+        "-short",
+        "-count=1",
+        "-timeout=15m",
+        "-json",
+        "./internal/serve",
+        "-run",
+        "^(TestActivityAndHealthyDeliveryDoNotShortenErrorOrQuotaBackoff|TestAdaptiveSummarySurvivesLongDiagnosticHeader|TestApprovalAwarePolicyApprovalWaitReducerDoesNotReenterCIPlan|TestApprovalAwarePolicyDoesNotHideOtherUnknownInputs|TestApprovalAwarePolicyFailedCIUsesIdentifiedBoundedRetry|TestApprovalAwarePolicyLeavesPendingOrMissingCIUnknownWithMissingReview|TestApprovalAwarePolicyNilOptInPreservesReviewAndMetadata|TestApprovalAwarePolicyPreservesLegacyNoReviewExpressions|TestApprovalAwarePolicyPreservesNestedReviewSemantics|TestApprovalAwarePolicyRetriesRealCIFailureWithMissingReview|TestApprovalAwarePolicyWaitsAfterCIWithoutReview|TestApprovalIdleReconciliationProbesChangesOnly|TestBackstopDetectsAnotherServerStartingTesting|TestBackstopRecomputesPeerPartialBatchDeadline|TestBackstopReplansInterruptedPeerEnqueue|TestBackstopResumesPeerBuildingBatch|TestBaseRegistrationFailureDoesNotGateOtherBases|TestBranchExpansionLifecycleAndDynamicStatus|TestBranchRefreshFailureAndRecoveryPreserveSafetyBlocks|TestBranchRefreshFailuresNeverRetireAndAllowlistOnlyNarrows|TestBranchRefreshHonorsRulesCacheAndReadFailuresKeepActive|TestBranchRefreshIntervalAndWebhookWakeStartOneWorkerPerBase|TestBriefPolicyUsesOnlyPinnedLocalReader|TestBroadSelectorExcludesInternalRefsAndRepositoryStatusListsBases|TestCanonicalAdmissionCannotBypassIndependentHistoricalBlock|TestCaseVariantHistoriesSettleByPersistedID|TestChainSummaryRootAndMixedWorkerFailure|TestCheckPolicyKeepsPendingRerunsAndAmbiguity|TestCheckRetryStatusIncludesPassedFlakyIdentity|TestCheckSourcesRecoverIndependentlyAcrossPRsAndRestart|TestChecksRefreshDespiteUnchangedPRAndAmbiguityRecovers|TestCommandGrammar|TestConfigPassCannotClearAnOverlappingFailure|TestConfigRecoveryPreservesSafetySources|TestConfigurationReadsStayPinnedWhileDefaultBranchMoves|TestCoreConditionsHaveDurableInputsAndReconcileMergeability|TestDefaultBranchFailuresPauseAndRetryAtSameTip|TestDefaultBranchRenameReevaluatesOmittedBase|TestDefaultPolicyMoveReobservesUnchangedReleasePR|TestDeferredBacklogDoesNotStarvePausedWork|TestDeniedWaitingBoundaryCommentChecksPermissionOnce|TestDiscoveryAndBranchRedeliveriesDoNotRepeatSweeps|TestDiscoveryCanonicalRegistrationRaces|TestDiscoveryClassicProtectionPermanentlyUnavailableIsReady|TestDiscoveryColdCanonicalFenceObservation|TestDiscoveryDedupeIsBounded|TestDiscoveryDedupeSurvivesWorkerRegistration|TestDiscoveryInventoryIncludesUnconfiguredInvalidAndDormant|TestDiscoveryMixedBasesStatusDoesNotDependOnWorkerOrder|TestDiscoveryQuotaBackoffIsScopedToInstallation|TestDiscoveryRemovalSuspensionAndReinstatement|TestDiscoveryRestoresLandingBeforeCredentialsAndFailedListing|TestDiscoveryReusesExactLiveDeploymentKey|TestDiscoverySharedDatabaseKeepsAppOwnership|TestExcludedInstallationAndRemovedWorkerAvoidCredentials|TestExplicitRefreshResetsBuildRetriesAndBackoff|TestFailedDiscoveryReadsPreserveDurableState|TestFailedNotificationDoesNotRenewHealth|TestFailedWaitingPermissionReadLeavesNoInspectionMarker|TestHealthyIdleLoopUsesBackstopAndDeliveryInterruptsTimer|TestIdleActivityChecksPreserveForgeBackstopDeadline|TestIgnoredNotificationWakesAndRefreshesWithoutDurableWrites|TestInactiveLifecyclesDoNotRefreshDiscovery|TestIndependentBaseWorkersLandUnderDefaultBranchPolicy|TestLandingCleanupPolicySurvivesConfigurationChange|TestLandingDecisionErrorsFailWorkerAction|TestLandingNotOnBasePausesAndStillResolves|TestLedgerSummaryCacheTracksWatermarkAndCurrentPolicy|TestLegacyWindowUpgradeRejectsUnrecoverableHistoricalPolicy|TestLegacyWindowUpgradeUsesHistoricalPolicyBeforeClamp|TestMainDeploymentReusesExactStoredKeyAndHistory|TestManagedPolicyChangeReobservesUnchangedPRs|TestManagedStartupClassicProtectionUnavailable|TestMergeMetadataRevalidatedBeforeLanding|TestMergeWhenRequiresQueueCheckProvenance|TestMetadataConditionsKeepUnknownUnderNegationAndCounts|TestMissingInvalidAndReloadedConfig|TestNonCommandsAreSilentlyIgnored|TestORCheckFailureWaitsForAlternative|TestObserveRequestsFilesOnlyForConditionsThatUseThem|TestOperationalLogsAbandonmentAndQuota|TestOperationalLogsCommittedLanding|TestOperationalLogsDequeueAndPause|TestOperationalLogsIgnoreStaleRulesEvents|TestOperationalLogsIgnoreStaleSourceClears|TestOperationalLogsOutsidePush|TestOutsidePushBaseObservationDuringLanding|TestOutsidePushDivergedRewrite|TestOutsidePushLandingThenRollback|TestOutsidePushObservationHistory|TestOutsidePushOnlyExactPreLandingRewindIsFlagged|TestOutsidePushPeerSettlementAfterRefRead|TestOutsidePushRealRollbackAndRestoreHasSameFlag|TestOutsidePushReconciliationAdminAndForcePush|TestOutsidePushRestartAndLandingThenOutside|TestOutsidePushRound2AbandonmentWatermarkChangesSettlement|TestOutsidePushRound2AwayAndBackBeforeAbandonment|TestOutsidePushRound2FurtherOutsidePushWhileLandingHeld|TestOutsidePushRound2PeerAuditAfterRefRead|TestOutsidePushRound2PushWinsAbandonmentThenRollback|TestOutsidePushRound2UnreadableLandingAncestry|TestOutsidePushSettlesOutstandingLandingFirst|TestOutsidePushTwoMovesBetweenPolls|TestOutsidePushTwoServersNoLiveRefReadAndNoLostNewerTip|TestOutsidePushUnreadableHistoryIsDurable|TestOverlappingFailureAfterClearStillBlocks|TestOverlappingQueuePausesOnlyItsBase|TestOverlappingRulesReadsCannotClearNewerBlock|TestOverlapsBlockOnlyInvolvedQueuesAndProtectionIsPerBase|TestOversizedFakePRKeepsAllFilePredicatesUnknown|TestQueueCommandPinsHead|TestQuotaBackoffStopsReconciliation|TestQuotaErrorsPreserveResetDeadline|TestR3BriefPolicyBusyTargetAndRegistry|TestR3BriefPolicyBusyUnrelatedWorker|TestR4BriefPolicyDefaultBranch|TestRecreatedBranchSettlesBeforeReactivation|TestRefreshClearsOnlyOperatorClearableSources|TestRefreshNotificationsHaveMinimumSweepInterval|TestRefreshVerifiesLandingBeforeClearingAndRejectsStalePass|TestReleaseBaseUsesDefaultBranchAuthorityAndReloads|TestReleaseBatchNeverLandsUnderChangedDefaultPolicy|TestRemovalBlocksStartsBeforeBusyWorkerReturns|TestRemovalReportsHeadsSeenOnlyWhileWaiting|TestRepeatedInvalidConfigDoesNotAppendDuplicateBlocks|TestReportingQuotaDoesNotStopActiveLanding|TestRepositoryDeleteHeadBranchOverridesServeDefault|TestRetirementAndRestartOutsideAllowlistsSettleRealOutcome|TestRetryTargetsUseLoadedEffectiveMergePolicy|TestReview4RealRollbackToLandedTip|TestReviewCancellationCannotStarveNewHead|TestReviewRound3AuditHoldsWorkerAgainstNextSettlement|TestReviewRound3PeerSettlesAlreadyLandingAfterRefRead|TestRevocationAtLandingCancelsStaleWork|TestRollbackBeforeMarkLandedRemainsVisible|TestRulesDoNotClearUnrelatedPauseAndResolveLandingStillExecutes|TestRulesPartialFailuresRetainAndRecordDefiniteFindings|TestRulesQuotaHonorsResetDeadline|TestRulesReadFailurePreservesStateAndRetriesSooner|TestRulesRecoveryNeverResumesPoisonOrLandingPause|TestRulesStartupPauseSlowRecheckAndAutomaticRecovery|TestRulesStartupReadFailureDoesNotStopHealthyWork|TestRulesStartupRetryAndReadinessVisibility|TestRunAppQuotaRetainsGlobalDeadline|TestRunInstallationQuotaAllowsLaterValidationWake|TestRunInstallationQuotaDoesNotDelayPendingValidation|TestServeFastForwardBatchSelection|TestServeFastForwardExactHeadAndDivergence|TestServeFastForwardMergeHeadDequeuedBeforeCI|TestServeFastForwardPRChecksCannotReplaceQueueCI|TestServeNeverEmitsSharedPauseEvents|TestSettlementPrecedesFailedConfigurationAndStaleActions|TestShutdownReleasesClaim|TestSingleQueueMainDeploymentConfigResolutionUnchanged|TestSingleVariantRegistrationDoesNotReadForgeFence|TestSlowFenceReconciliationDoesNotLockOtherRegistrations|TestSourceLogsIncludeSecondaryBlocksAndIgnoreStaleClears|TestStartupMissingLandingGrantBlocksBeforeFenceAndRecovers|TestStartupSettlementIgnoresInvalidConfigurationAndMissingCredentials|TestStartupValidationIsInMemoryUntilSuccessful|TestStoredLegacyRulesLogRecoversEachSourceIndependently|TestUnboundCheckProvenanceCoexistsWithAmbiguity|TestUnboundCheckProvenanceRecovers|TestUnboundCheckProvenanceStatusAndTimeout|TestUnchangedEffectiveReleasePolicyPreservesActiveBatchAcrossRestart|TestUnchangedPollAndRestartDedupe|TestUnpinnedCommandCannotApproveNewForkHead|TestUnreadableDefaultBaseTipPausesAndRecovers|TestUnsafeMergeConditionsCannotLand|TestValidationLoopHonorsIdleAndBackoffDeadlines|TestValidationPendingDoesNotIncreaseFailureBackoff|TestVerifiedDeliveryWakesOnlyAffectedQueueAndDedupeSurvivesRestart|TestWaitingBoundaryCommentChecksPermissionOnce|TestWaitingPreservesPolicyAndDefersCommandsOnce|TestWebhookBackstopRequiresRecentRepositoryDelivery|TestWebhookDeliveryAgeIsPerRepositoryAndLocal|TestWebhookHealthSchedulingExpiryAndRestart|TestWebhookTriggersEarlyCIReadAndIsDurable)$"
+      ],
+      "exit": 0,
+      "memory": "4GiB",
+      "log": "/home/riels/.cache/openmerge-77-r5-codex/logs/legacy-control-branch.log",
+      "log_sha256": "26e6e729dc4173bf1a075a12bb13707539a42d6dd4e41375847d0badaa86bd82"
+    }
+  ],
+  "interrupted_waits": {
+    "pids": [
+      1869753,
+      1896010
+    ],
+    "signal": "SIGTERM",
+    "go_test_started": false,
+    "go_test_exit": null
+  },
+  "replay": {
+    "verdict": "PASS",
+    "baseline_commit": "f8066a4f3bc9f2bfb110950b0c6c9aea4cf5ea6f",
+    "candidate_commit": "3b7f7d26d41971202dfa424f469711906ca5333f",
+    "state_mode": "strict",
+    "self_test": "PASS",
+    "self_test_exit_status": 0,
+    "gate2": "PASS",
+    "gate4": "PASS",
+    "actions_identical": "2159/2159",
+    "boundary_checkpoints_identical": "2159/2159",
+    "state_identical": "2159/2159",
+    "snapshot_hashes_identical": "2159/2159",
+    "exports": {
+      "/home/riels/.local/share/openmerge/exports/events-20261018T051000Z.jsonl": "9c8f78f3e967c7cb030948cfc9871cc67a45da06f80b12f27d1c55d09ba8accf",
+      "/home/riels/.local/share/openmerge/exports/queues-20261018T051000Z.jsonl": "418f025a0e3c8792321b6d71d297f17fff1adf48cb616c8f4fcb774163696886"
+    }
+  },
+  "replay_report_sha256": "c88a51bb683d81aa4fa48fe6ee6c81081b1f781f8b2a081783c8e4ab1ad9fa48",
+  "runner_sha256": {
+    "heavy.py": "f07401aff892d89221a260a301934ecf9a30fcd660bf10e9f6f1b97b096679c9",
+    "final-timing-gates.py": "5dec6a63bc77d8bfee82f699f48e6e851b2fb7bf86b9a01dcdb3c333c3e76fed",
+    "resume-gates.py": "24e4725816f9030122f4686e3c50884175b1769325af97c7153e627eac30649a",
+    "legacy-timing-control.py": "2a2f98a38d7444bc44c6c80df08255207013533556480978a6cd411db0356072",
+    "write-final-timings.py": "93420a7804b4c8b0a1d976be0b1877726335a49862a4c53e052593b84cd88c33"
+  }
+}

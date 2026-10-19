@@ -25,6 +25,9 @@ func (s State) RecordedBrief(policy cp.Policy, b ApprovalBasis) (brief.Fact, err
 	}
 	c := stored.Evidence.Classification
 	i := c.Inputs
+	if i.Head != b.Head {
+		return brief.Fact{}, fmt.Errorf("brief head does not match live revision")
+	}
 	if policy.Digest != i.PolicyDigest {
 		return brief.Fact{}, BriefPolicyMismatchError{Supplied: policy.Digest, Recorded: i.PolicyDigest}
 	}
