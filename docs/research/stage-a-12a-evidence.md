@@ -85,13 +85,21 @@ fixtures; production exit mapping remained the existing queue mapping.
 `check` failed lint (unchecked writes, exported DTO documentation, unused test
 embedding). `check-2` failed the existing CLI help golden and also observed a
 mixed build because reporting types/index fixtures were edited while Go was
-compiling later packages. Source edits stopped before the final validation
-sequence; these failures are retained rather than presented as passing gates.
+compiling later packages. These failures are retained rather than presented as passing gates. Later
+review removed repeated ID hashing in revision lookup and added human-readable
+landed-commit/decision details, then reran reporting race tests and make check.
+A final compatibility review widened the alias index/query from int to bigint
+and added TestChangeDecisionsLargeLegacyPRAlias; the width-focused and final
+make-check runs cover that final code commit.
 
 Three **own waiting drivers** were stopped with SIGTERM to put fixture generation
 and dependent CLI validation in one serial sequence. No test subprocess had
 started under them and no foreign process or running heavy job was killed.
 Waiting time is excluded from each command's measured run duration.
+
+The first commit-ID attempt returned 2 because its clean-source guard rejected
+the uncommitted candidate (both HEADs still named main); no SHA comparison was
+claimed from that attempt. Committed-candidate comparisons are separate runs.
 
 The strict replay uses this existing exported deployment pair, without connecting
 to the live DB or status API:
@@ -229,3 +237,114 @@ python3 scripts/check-legacy-commit-ids.py --baseline /home/riels/openmerge-sa-1
 
 Wall execution: 0.131s. Log SHA-256: `007a743ec1b54614d477dbc8ce611e4210f1ecea0324c3aa94483c13c3af71e8`.
 
+### focused-reviewed: actual exit 0
+
+```sh
+go test -race -short -count=1 ./internal/status ./cmd/openmerge -run 'Test(Change|ReviewerCheck|Decision|Brief|Run$)'
+```
+
+Wall execution: 18.36s. Log SHA-256: `66371c1a20c3c63e3a4b37ceb0ac5a2821d575cc34d683abe5c54f2c9090d23e`.
+
+### check-reviewed: actual exit 0
+
+```sh
+make check
+```
+
+Wall execution: 412.468s. Log SHA-256: `12d8135729d878142744f280bd9f8ff37fbb66d0691aebe78d27d72b800a94da`.
+
+### commit-ids-committed: actual exit 0
+
+```sh
+python3 scripts/check-legacy-commit-ids.py --baseline /home/riels/openmerge-sa-12a-main --candidate /home/riels/openmerge-sa-12a
+```
+
+Wall execution: 14.161s. Log SHA-256: `01559664285996c28e1534f30bdc1920dbaf32a3a4752ceeadbcc981886536d8`.
+
+### replay-main: actual exit 0
+
+```sh
+python3 scripts/check-live-journal-replay.py --baseline /home/riels/openmerge-sa-12a-main --candidate /home/riels/openmerge-sa-12a --events /home/riels/.local/share/openmerge/exports/events-20261018T051000Z.jsonl --queues /home/riels/.local/share/openmerge/exports/queues-20261018T051000Z.jsonl --strict-state --out /home/riels/.cache/openmerge-12a/replay-main.json
+```
+
+Wall execution: 65.207s. Log SHA-256: `1566b20bec40c5dc8187c4e6ecf6802ad1d02c51578674f1e2460f16dc2a7121`.
+
+### legacy-reporting: actual exit 0
+
+```sh
+python3 scripts/check-legacy-reporting.py /home/riels/openmerge-sa-12a-main
+```
+
+Wall execution: 0.822s. Log SHA-256: `a5862563372cc6cea72b13045f3c9bf491607652274c329ada1ad5f3b1dd135c`.
+
+### width-focused: actual exit 0
+
+```sh
+go test -race -short -count=1 ./internal/store -run 'TestChangeDecisions|TestReportingIndexes|TestDecisionEvidenceRetention'
+```
+
+Wall execution: 3.534s. Log SHA-256: `24b437af64c06358986b25bee1315e95d4d1e39e4c9f9ab22a8287c71e09ed31`.
+
+### check-width-final: actual exit 0
+
+```sh
+make check
+```
+
+Wall execution: 391.312s. Log SHA-256: `5031b858053500a6c72e47d6b27c1f156629047278029152c0e626e20566dbac`.
+
+### legacy-sql-width: actual exit 0
+
+```sh
+python3 scripts/check-legacy-landing-sql.py /home/riels/openmerge-sa-12a-main
+```
+
+Wall execution: 4.24s. Log SHA-256: `a6c504dd82f62eb30db665dae4b257854ceb1715577d438a58982454a9993bbf`.
+
+### commit-ids-width: actual exit 0
+
+```sh
+python3 scripts/check-legacy-commit-ids.py --baseline /home/riels/openmerge-sa-12a-main --candidate /home/riels/openmerge-sa-12a
+```
+
+Wall execution: 9.628s. Log SHA-256: `b34b225a8be7fd5d91ec1614fc002274a3a050ab814352bf4a6b6ddb59abcf85`.
+
+### legacy-reporting-width: actual exit 0
+
+```sh
+python3 scripts/check-legacy-reporting.py /home/riels/openmerge-sa-12a-main
+```
+
+Wall execution: 0.477s. Log SHA-256: `a5862563372cc6cea72b13045f3c9bf491607652274c329ada1ad5f3b1dd135c`.
+
+
+## Final result and source identity
+
+All required final gates exited **0**. The last `make check` passed in
+**391.312s**, with **0 lint issues**; serve passed in **251.447s**. These are
+single-run wall/package durations, not a performance or trial-deployment claim.
+The SQL differential detected all five negative controls. Depth 1/4 matched
+227,662 short-corpus, 5,615,998 full-corpus and 188 fixture checkpoints, with
+no nil-only exceptions. Squash, merge, rebase and fast-forward tested/landed
+commit IDs match main. Strict exported-journal replay reports Gate 2 PASS and
+Gate 4 PASS; no live DB, status API or mutable forge lookup is involved.
+
+`TestChangeDecisionsLargeLegacyPRAlias` additionally proves PR `4294967297`
+remains readable through the reporting alias index. `TestChangeShowLandedCLI`
+proves the human CLI displays the recorded commit, attempt, settlement event
+and decision-read URL. `TestBriefHTTPPolicyUnavailableAndMismatch`,
+`TestBriefPublicLoaderStillRejectsCandidateKeys`, `TestR4VersionedApprovalRecovery`
+and `TestR4UnknownDefaultBranchHTTP` remain green in the full suite.
+
+Final validated code commit: `29dbac7fb6a515d056f75fbc08c8f21e5fb57122`. The subsequent evidence-only commit
+changes this document alone; production/test sources remain identical.
+
+Replay baseline: `6e2b50b9da5c098ebfd76e0b1b20a5990c2663bb`; candidate clean: `True`; state mode: `strict`.
+
+Replay artifact: `/home/riels/.cache/openmerge-12a/replay-main.json`, SHA-256 `1566b20bec40c5dc8187c4e6ecf6802ad1d02c51578674f1e2460f16dc2a7121`.
+
+Any future pruning must also preserve the PR alias and attempt settlement
+boundaries needed by these reporting reads. The current guard rejects pruning
+until integration tests establish the complete retention contract.
+
+Trial deployment class remains **Hold**. No deployment was performed.
