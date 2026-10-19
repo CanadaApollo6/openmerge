@@ -153,7 +153,9 @@ func (r *Repo) openSession(ctx context.Context, repo forge.RepoRef, diffRead boo
 	dir := filepath.Join(r.cfg.WorkDir, key)
 	lock, _ := cacheLocks.LoadOrStore(dir, &sync.Mutex{})
 	mu := lock.(*sync.Mutex)
-	mu.Lock()
+	if err := lockCache(ctx, mu); err != nil {
+		return nil, nil, err
+	}
 	fail := func(err error) (*session, func(), error) { mu.Unlock(); return nil, nil, err }
 	if err := ctx.Err(); err != nil {
 		return fail(err)
@@ -170,6 +172,9 @@ func (r *Repo) openSession(ctx context.Context, repo forge.RepoRef, diffRead boo
 		return fail(err)
 	}
 	s.dir = dir
+	if err := s.startAcquisitions(ctx); err != nil {
+		return fail(err)
+	}
 	return s, func() {
 		defer mu.Unlock()
 		// All commands, including push, have completed before maintenance runs.

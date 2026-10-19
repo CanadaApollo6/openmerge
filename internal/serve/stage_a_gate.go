@@ -76,7 +76,9 @@ func testedMessages(ctx context.Context, w *worker, land queue.Land) ([]string, 
 	if len(land.PRs) < 1 || len(land.PRs) > forge.MaxFirstParentCommits {
 		return nil, errors.New("invalid tested acquisition member count")
 	}
-	shas := []string{land.ExpectedBaseSHA, land.TestedSHA}
+	// Fetch the tested tip first: strict servers may refuse a separate want
+	// for its unadvertised base ancestor. Its graph includes that base.
+	shas := []string{land.TestedSHA, land.ExpectedBaseSHA}
 	for _, pin := range land.PRs {
 		shas = append(shas, pin.HeadSHA)
 	}

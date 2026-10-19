@@ -3,10 +3,15 @@ package gitops
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
@@ -90,5 +95,153 @@ func TestAcquireCommitsValidatesPinsAndPolicyObjects(t *testing.T) {
 	must(t, err)
 	if governing.CommitSHA != pin || governing.SelectedCodeowners != ".github/CODEOWNERS" {
 		t.Fatalf("governing=%+v", governing)
+	}
+}
+
+// A separate test process abandons a real lease, so the parent has no live
+// nonce state for that cache. A second Repo in the same process is not a restart.
+func TestAcquireCommitsCrashRestartSweep(t *testing.T) {
+	if dir := os.Getenv("OPENMERGE_ACQUISITION_CRASH_CACHE"); dir != "" {
+		r, err := New(t.Context(), Config{WorkDir: dir, Remote: func(context.Context, forge.RepoRef) (string, Auth, error) {
+			return os.Getenv("OPENMERGE_ACQUISITION_CRASH_REMOTE"), Auth{}, nil
+		}, HeadRef: headRef, GCInterval: -1, GCThresholdBytes: -1})
+		must(t, err)
+		_, err = r.AcquireCommits(t.Context(), testRepo, []string{os.Getenv("OPENMERGE_ACQUISITION_CRASH_SHA")})
+		must(t, err) // Intentionally abandon release at process exit.
+		return
+	}
+	f := newFixture(t)
+	cfg := f.g.cfg
+	cfg.WorkDir = t.TempDir()
+	cfg.GCInterval, cfg.GCThresholdBytes = -1, -1
+	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestAcquireCommitsCrashRestartSweep$")
+	cmd.Env = append(os.Environ(), "OPENMERGE_ACQUISITION_CRASH_CACHE="+cfg.WorkDir,
+		"OPENMERGE_ACQUISITION_CRASH_REMOTE="+f.remote, "OPENMERGE_ACQUISITION_CRASH_SHA="+f.base)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("crash helper: %v\n%s", err, out)
+	}
+	dir := filepath.Join(cfg.WorkDir, fmt.Sprintf("%x.git", sha256.Sum256([]byte(testRepo.Path))))
+	orphan := gitCommand(t, dir, "", nil, "for-each-ref", "--format=%(refname)", acquiredRefPrefix)
+	if orphan == "" {
+		t.Fatal("helper did not leave an acquisition ref")
+	}
+	r, err := New(t.Context(), cfg)
+	must(t, err)
+	s, unlock, err := r.open(t.Context(), testRepo)
+	must(t, err)
+	if refs := gitCommand(t, dir, "", nil, "for-each-ref", "--format=%(refname)", acquiredRefPrefix); refs != "" {
+		unlock()
+		t.Fatalf("startup retained prior-process lease: %s", refs)
+	}
+	must(t, s.maintainCache(t.Context()))
+	unlock()
+	release, err := r.AcquireCommits(t.Context(), testRepo, []string{f.base})
+	must(t, err)
+	release()
+	if refs := gitCommand(t, dir, "", nil, "for-each-ref", "--format=%(refname)", acquiredRefPrefix); refs != "" {
+		t.Fatalf("leaked refs: %s", refs)
+	}
+}
+
+func TestAcquireCommitsFailedCleanupRetried(t *testing.T) {
+	for _, retry := range []string{"release", "maintenance"} {
+		t.Run(retry, func(t *testing.T) {
+			f := newFixture(t)
+			f.g.cfg.GCInterval, f.g.cfg.GCThresholdBytes = -1, -1
+			release, err := f.g.AcquireCommits(t.Context(), testRepo, []string{f.base})
+			must(t, err)
+			dir := filepath.Join(f.g.cfg.WorkDir, fmt.Sprintf("%x.git", sha256.Sum256([]byte(testRepo.Path))))
+			ref := gitCommand(t, dir, "", nil, "for-each-ref", "--format=%(refname)", acquiredRefPrefix)
+			lockfile := filepath.Join(dir, ref+".lock")
+			must(t, os.WriteFile(lockfile, nil, 0o600))
+			release()
+			if got := gitCommand(t, dir, "", nil, "for-each-ref", "--format=%(refname)", acquiredRefPrefix); got != ref {
+				t.Fatalf("cleanup failure not reproduced: %q", got)
+			}
+			must(t, os.Remove(lockfile))
+			if retry == "release" {
+				release()
+			} else {
+				_, unlock, err := f.g.open(t.Context(), testRepo)
+				must(t, err)
+				unlock() // Deferred maintenance retries even with GC disabled.
+			}
+			if got := gitCommand(t, dir, "", nil, "for-each-ref", "--format=%(refname)", acquiredRefPrefix); got != "" {
+				t.Fatalf("retry left %s", got)
+			}
+		})
+	}
+}
+
+func TestAcquireCommitsLiveLeasesSurviveConcurrentMaintenance(t *testing.T) {
+	f := newFixture(t)
+	f.g.cfg.GCThresholdBytes = 1
+	tested, err := f.g.BuildTestRef(t.Context(), testRepo, forge.BuildRequest{Ref: "test-live-acquisition", BaseSHA: f.base, PRs: f.prs[:1], Method: forge.Squash, BatchID: "live"})
+	must(t, err)
+	release, err := f.g.AcquireCommits(t.Context(), testRepo, []string{tested, f.base})
+	must(t, err)
+	defer release()
+	other, err := New(t.Context(), f.g.cfg)
+	must(t, err)
+	var wg sync.WaitGroup
+	for range 3 {
+		wg.Go(func() {
+			for range 5 {
+				done, err := other.AcquireCommits(t.Context(), testRepo, []string{f.base})
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				done()
+				if _, err := f.g.ReadCommitMessage(t.Context(), testRepo, tested); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		})
+	}
+	wg.Wait()
+	if _, err := f.g.ReadCommitMessage(t.Context(), testRepo, tested); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAcquireCommitsCacheLockCancellation(t *testing.T) {
+	f := newFixture(t)
+	dir := filepath.Join(f.g.cfg.WorkDir, fmt.Sprintf("%x.git", sha256.Sum256([]byte(testRepo.Path))))
+	lock, _ := cacheLocks.LoadOrStore(dir, &sync.Mutex{})
+	mu := lock.(*sync.Mutex)
+	mu.Lock()
+	defer mu.Unlock()
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
+	defer cancel()
+	// Returning while the lock is still held proves waiting honors the context.
+	if _, err := f.g.AcquireCommits(ctx, testRepo, []string{f.base}); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("lock wait: %v", err)
+	}
+}
+
+func TestAcquireCommitsStartupSweepFailureRetried(t *testing.T) {
+	f := newFixture(t)
+	cfg := f.g.cfg
+	cfg.WorkDir = t.TempDir()
+	dir := filepath.Join(cfg.WorkDir, fmt.Sprintf("%x.git", sha256.Sum256([]byte(testRepo.Path))))
+	gitCommand(t, "", "", nil, "clone", "--bare", "--", f.remote, dir)
+	ref := acquiredRefPrefix + "prior-process/0"
+	gitCommand(t, dir, "", nil, "update-ref", ref, f.base)
+	lockfile := filepath.Join(dir, ref+".lock")
+	must(t, os.WriteFile(lockfile, nil, 0o600))
+	r, err := New(t.Context(), cfg)
+	must(t, err)
+	if release, err := r.AcquireCommits(t.Context(), testRepo, []string{f.base}); err == nil {
+		release()
+		t.Fatal("created lease before startup sweep succeeded")
+	}
+	must(t, os.Remove(lockfile))
+	release, err := r.AcquireCommits(t.Context(), testRepo, []string{f.base})
+	must(t, err)
+	release()
+	if got := gitCommand(t, dir, "", nil, "for-each-ref", "--format=%(refname)", acquiredRefPrefix); got != "" {
+		t.Fatalf("startup retry left %s", got)
 	}
 }
