@@ -361,8 +361,13 @@ func (q *Queue) LedgerEntry(pr int) *Entry {
 			return &entry
 		}
 	}
-	if runs := q.runLedger[pr]; len(runs) > 0 {
-		return &Entry{PR: pr, RunLedger: runs}
+	if entry, ok := q.known[pr]; ok {
+		if q.state.LifecycleState() != "active" && entry.Position == 0 && entry.Status != "merged" && entry.Status != "closed" {
+			entry.Status, entry.Reason = "paused", q.State
+		}
+		entry.RunLedger = q.runLedger[pr]
+		entry.Change = reportChange(store.QueueKey{Installation: q.Installation, Repository: q.Repository, BaseBranch: q.Base, Lane: q.Lane}, q.state, pr, diagnostic.NewSanitizer())
+		return &entry
 	}
 	return nil
 }

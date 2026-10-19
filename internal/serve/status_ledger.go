@@ -26,6 +26,7 @@ func (s *Server) QueuePolicy(key store.QueueKey) (queue.Config, bool) {
 type ledgerCache struct {
 	watermark  int64
 	projection status.Queue
+	journal    store.Journal
 }
 
 func (s *Server) ledgerSummary(ctx context.Context, w *worker, pr int) (string, error) {
@@ -42,7 +43,7 @@ func (s *Server) ledgerSummary(ctx context.Context, w *worker, pr int) (string, 
 			return "", nil
 		}
 		projection, _, _ := status.Project(journals[0], 0, 0, nil)
-		w.ledgerCache = &ledgerCache{watermark: projection.Watermark, projection: projection}
+		w.ledgerCache = &ledgerCache{watermark: projection.Watermark, projection: projection, journal: journals[0]}
 	}
 	q := &w.ledgerCache.projection
 	q.Readiness = &status.Readiness{Ready: !w.managed || w.ready}

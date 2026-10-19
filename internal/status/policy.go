@@ -39,6 +39,9 @@ func holdingGate(q *Queue, e Entry, cfg queue.Config, now time.Time) string {
 	if e.Status == "dequeue-pending" {
 		return "dequeue"
 	}
+	if e.Status == "invalidating" {
+		return "invalidation"
+	}
 	if b := q.state.BatchForPR(e.PR); b != nil {
 		if b.InvalidationReason != "" {
 			return "invalidation"
@@ -56,6 +59,9 @@ func holdingGate(q *Queue, e Entry, cfg queue.Config, now time.Time) string {
 			return "predecessor-settlement"
 		}
 		return "landing-preflight"
+	}
+	if e.Change != nil && len(e.Change.WaitingReasons) > 0 {
+		return "approvals"
 	}
 	if q.Window == 0 {
 		return ""

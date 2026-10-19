@@ -420,3 +420,125 @@ makes that pinned policy unavailable to the brief read boundary. The response
 reports `policy_digest_mismatch`; read the governing policy again before giving
 a receipt. Candidate approval policies continue to withhold requirements as
 `policy_unavailable` until PR 11b defines the applied-config digest composition.
+
+### Change reporting and immutable decisions (Stage A 12a)
+
+`GET /v1/queues/{owner}/{repo}/{base}/changes/{id}` returns public v1
+`{version, pr, brief}`. The PR is the existing PR lookup projection, extended
+with `change`: canonical ID, revision, accountability, recorded waiting reason
+codes, reviewer brief and decision paths. Queue entries and
+`GET .../prs/{number}` (the `queue status --pr N` alias) receive the same additive
+`change` metadata. Queue lists use the shared journal projection without
+rendering per-entry briefs. The selected PR includes an `evidence` reviewer
+brief only when Stage A evidence is recorded; legacy observations alone do
+not trigger brief rendering. Change show and the PR alias return the same
+Entry DTO. Existing fields retain their legacy meanings. An approval wait
+reports separate `waiting_reasons`; operational dequeue and invalidation
+gates retain precedence. An otherwise waiting entry reports gate `approvals`;
+this does not add a second approval evaluator.
+
+Change show and `.../brief?audience=reviewer|operator|agent` accept
+`revision=N` (positive uint64). Omission selects the latest revision. Historical
+views stop at the last committed event in that revision; later stances and
+accountability cannot be attached to an old head. An unrecorded revision is 404.
+The existing audience parameter remains required for brief reads.
+
+`GET .../changes/{id}/decisions?limit=20&after=0&revision=N` returns
+`{version, change_id, decisions, next_cursor}`. `limit` is 1–100, `after` is an
+exclusive nonnegative journal event ID, and `revision` is optional; omission
+selects all recorded revisions. `next_cursor=0` means the end of this page's
+snapshot, not that future attempts cannot appear. Repeat nonzero cursors as
+`after`. Repeated, unknown, malformed, or out-of-range query parameters are 400.
+A known change without decisions returns `decisions: []`. The reader selects
+only typed decision identities using migration 006's partial identity index,
+then uses `LandingDecisionEvidence` to read the exact eligibility observation
+named by the decision. It does not replay the journal or read mutable forge facts.
+
+Each decision includes its journal `event_id`, batch and attempt IDs, revision,
+variant, eligibility read ID, immutable brief/intent/policy digests, source
+references and expanded requirements with eligible and relied-on IDs. A source
+reference's `source_id` identifies the native review or authenticated comment;
+`read_id` identifies its recorded acquisition event. `receipt_id` is only present
+as evidence for a receipt command. Native reviews have intent and brief bindings
+`"not recorded"`. `tested_sha` and `intended_landing_sha` identify recorded
+inputs, while `landed_sha` is populated only by a confirmed `landed` event.
+`outcome` is `unresolved`, `abandoned`, or `landed`; the settlement's journal
+ID is separate. A later attempt cannot confirm an earlier attempt. Commit
+trailers are never used to invent a decision or landing.
+
+All IDs resolve only within the selected queue, including installation and lane.
+A syntactically valid cross-queue or unknown ID returns 404; malformed IDs are
+400. Ambiguous installations/lanes retain 409 `ambiguous-queue`. Escape a branch
+containing `/` as one URL path component, such as `release%2Fv1`. These routes
+share the existing GET-only bearer authentication, response errors and no-store
+headers. A status bearer token grants no command or write authority. Responses
+are capped at 2 MiB; an oversized page returns 503 and advises a smaller page.
+
+Accountability distinguishes authenticated account, PR author, submitter and
+accountable humans. Historical absence is `status: "not recorded"` with null
+identities; a known empty list is `[]`, and null means unknown. A token
+authenticates an account and cannot prove that a person rather than an agent
+holding the token acted. Use separate bot or App identities so an agent does not
+consume its human owner's approval.
+
+Reviewer evidence includes classification reasons, requirements, native/receipt
+stance provenance, and bounded receipt command processing history. A receipt's
+historical `accepted` flag does not establish current eligibility. Its `binding`
+is `rejected`, `stale`, `current` (matches the reconstructed brief), or
+`"not recorded"` when current policy/brief reconstruction is unavailable. It is
+not a second approval authorization result. Candidate-policy requirements and
+receipt digests remain unavailable until 11b supplies recorded digest composition;
+`policy_unavailable` and `"not recorded"` are explicit, never guessed.
+
+CLI equivalents:
+
+```sh
+openmerge change show <id> --repo owner/repo --base release/v1 --json
+openmerge change show <id> --repo owner/repo --revision 1
+openmerge change brief <id> --repo owner/repo --audience reviewer --revision 1
+openmerge change decisions <id> --repo owner/repo --base release/v1 --revision 1 --limit 20 --after 0 --json
+```
+
+`change show` always prints its decisions URL in human output and accepts
+only the reviewer audience. Decisions supports revision selection and exclusive
+`--after`/bounded `--limit` pagination.
+
+They share queue status's API/token options and exit conventions: 0 success,
+1 transport/unsupported response, 2 invalid invocation/request, 3 not found,
+4 authentication/authorization, 5 ambiguous queue. JSON preserves server bytes.
+There is no `change submit` or `change approve` command.
+
+The single OpenMerge check adds a bounded reviewer summary only for approval
+queues: digest and full-brief path, incomplete-inventory and other safety
+warnings, accountability, native-versus-receipt evidence, and actionable waiting
+reasons. Existing CI ledger and tested/landed wording remain in place. Legacy
+queues append no new check text. Display strings are escaped; complete recorded
+evidence remains available through the read projections and retained journal.
+
+No event compaction or persisted snapshot pruning exists today.
+`TestDecisionEvidenceRetentionNoPruning` rejects newly introduced destructive
+SQL in production `internal/` and `cmd/` Go strings and SQL migrations,
+including index drops and updates of event payloads. This is a source tripwire
+for straightforward SQL literals, not a SQL parser or retention proof: quoted
+identifiers, dynamic SQL and external database clients can bypass it. Any future pruning
+implementation must replace that guard with integration tests proving retention
+of `landing_decision_recorded` **and** its referenced
+`approval_eligibility_observed`, preserving original read IDs after settlement.
+
+Migration 007 adds partial indexes for queue-local legacy PR aliases, decision
+pagination, and attempt settlement. It changes no config schema, event, action,
+or landing behavior. Alias resolution transfers at most 100,001 integer PR
+aliases (100,000 distinct aliases supported); exhaustion fails closed with 503.
+Neither alias lookup nor decision settlement requires scanning unrelated event
+types. Full decision/eligibility read-back continues through migration 006's
+identity indexes. Decision responses include the exact `eligibility_event_id`;
+status `landing` is omitted until an applied `Landed` event records a confirmed SHA,
+batch, attempt and settlement event ID.
+
+For opted-in queues, the existing GitHub check shares the ledger's journal
+snapshot and projection. If recorded approval policy reconstruction fails, the
+check is still updated with an explicit `policy_unavailable` warning and the
+server logs `check approval policy unavailable`. Requirements and receipt
+binding remain unavailable; this warning does not authorize landing. Publishing
+honest unavailable evidence is intentional: retaining a stale check would hide
+the loss of policy evidence.

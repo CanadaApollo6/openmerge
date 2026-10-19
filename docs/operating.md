@@ -1278,12 +1278,38 @@ compiled deployed `3f77a88` Store can reopen the migrated schema and write/read
 legacy events; this does not authorize activating new event types with old workers.
 See [Stage A 9b evidence](research/stage-a-9b-evidence.md) for plans and checks.
 
-Retention of `landing_decision_recorded` and its exact referenced
-`approval_eligibility_observed` payload/read identity is **documentation-only**
-for now: 12a/later must enforce this obligation before enabling compaction.
+Migration 007 adds three partial reporting indexes to the same journal table.
+It also uses regular, non-concurrent `CREATE INDEX` inside the startup migration
+transaction. The table's `ShareLock` blocks journal writes until all three
+indexes and the migration record commit; reads remain available. Apply it only
+after the ADR 0009 period-B queues have drained. The trial class remains
+**Hold**, with no deployment before that drain. `TestReportingIndexesBuildTiming`
+measures all three builds against mixed 2,600-row and 260,000-row synthetic
+journals and confirms that writes wait for commit. The recorded local builds
+took 1.80 ms at 2,600 rows and 65.76 ms at 260,000 rows. These synthetic rows
+and local storage do not predict a production duration; the measurement excludes
+time waiting to acquire the lock, and production payload size, storage, and
+contention will affect duration. Repeat the isolated measurement with
+`go test ./internal/store -run '^TestReportingIndexesBuildTiming$' -count=1 -v`
+when evaluating a representative deployment database. The **Hold** gate remains
+in effect until the period-B drain.
+
+The current source tripwire does not establish a database retention contract.
+Before enabling compaction, integration tests must prove retention of
+`landing_decision_recorded` and its exact referenced
+`approval_eligibility_observed` payload and original read identity.
 
 Store retention/compaction remains disabled; enabling it must preserve ledger
-history or explicitly define a retention window.
+history or explicitly define a retention window. The source-level
+`TestDecisionEvidenceRetentionNoPruning` scans SQL literals in production Go
+under `internal/` and `cmd/`, plus checked-in SQL in those trees. It rejects
+delete/truncate statements, table or index drops, and updates that replace an
+event payload. Dynamically assembled SQL, external SQL clients, and direct
+database changes can bypass the guard; it recognizes common SQL statement
+shapes rather than parsing SQL, so it does not enforce retention at the
+database boundary. Any pruning implementation needs integration coverage that
+proves `landing_decision_recorded` and its referenced
+`approval_eligibility_observed` survive with the original read IDs.
 
 The additive wire-v1 chain types require compatible workers. Drain old workers
 before upgrading. Returning to depth 1 does not make an older binary

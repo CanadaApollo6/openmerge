@@ -19,7 +19,9 @@ Commands:
   version                 Print version and build information
   config validate [path]  Validate repository configuration
   config schema           Print the version 1 JSON Schema
+  change show <id>        Read recorded change status
   change brief <id>       Read a recorded change brief
+  change decisions <id>   Read recorded landing decisions
   queue status [options]  Read queue status and PR explanations
   serve [options]         Run the GitHub merge queue server
   setup <github|rulesets>  Set up the GitHub App and repository rules

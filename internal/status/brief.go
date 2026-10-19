@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/CanadaApollo6/openmerge/internal/brief"
@@ -20,8 +21,19 @@ func briefRoute(r *http.Request, keys []store.QueueKey) ([]store.QueueKey, strin
 		return nil, "", "", false, nil
 	}
 	values, err := url.ParseQuery(r.URL.RawQuery)
-	if err != nil || len(values) != 1 || len(values["audience"]) != 1 || !brief.ValidAudience(values.Get("audience")) {
+	if err != nil || (len(values) != 1 && len(values) != 2) || len(values["audience"]) != 1 || !brief.ValidAudience(values.Get("audience")) {
 		return nil, "", "", true, errBriefQuery
+	}
+	for name, v := range values {
+		if name != "audience" && name != "revision" || len(v) != 1 {
+			return nil, "", "", true, errBriefQuery
+		}
+	}
+	if values.Has("revision") {
+		n, e := strconv.ParseUint(values.Get("revision"), 10, 64)
+		if e != nil || n == 0 {
+			return nil, "", "", true, errBriefQuery
+		}
 	}
 	id, err := url.PathUnescape(parts[6])
 	if err != nil || queue.ChangeID(id).Validate() != nil {
@@ -48,31 +60,30 @@ func projectBrief(j store.Journal, id, audience string, options ...briefOptions)
 	if sanitizer == nil {
 		sanitizer = diagnostic.NewSanitizer()
 	}
-	s := j.Seed
-	candidates := map[int]bool{}
-	for _, e := range s.Entries {
-		candidates[e.PR] = true
-	}
-	for _, r := range j.Events {
-		switch e := r.Event.(type) {
-		case queue.PRObserved:
-			candidates[e.PR] = true
-		case queue.ChangeRevisionObserved:
-			candidates[e.PR] = true
-		}
-		s = queue.Apply(s, r.Event)
-	}
-	selected := 0
-	for pr := range candidates {
-		canonical, err := j.Key.ChangeID(pr)
+	q, _, _ := Project(j, 0, 0, sanitizer)
+	return projectBriefFromProjection(j, &q, q.changeEntry(j.Key, id), id, audience, opt)
+}
+
+func (q *Queue) changeEntry(key store.QueueKey, id string) *Entry {
+	for pr := range q.known {
+		canonical, err := key.ChangeID(pr)
 		if err == nil && string(canonical) == id {
-			if _, ok := s.PRRevision(pr); ok {
-				selected = pr
-				break
-			}
+			return q.LedgerEntry(pr)
 		}
 	}
-	if selected == 0 {
+	return nil
+}
+
+func projectBriefFromProjection(j store.Journal, q *Queue, entry *Entry, id, audience string, opt briefOptions) (brief.View, bool, error) {
+	if entry == nil {
+		return brief.View{}, false, nil
+	}
+	sanitizer := opt.sanitizer
+	if sanitizer == nil {
+		sanitizer = diagnostic.NewSanitizer()
+	}
+	s, selected := q.state, entry.PR
+	if _, ok := s.PRRevision(selected); !ok {
 		return brief.View{}, false, nil
 	}
 	rev, _ := s.PRRevision(selected)
@@ -133,7 +144,6 @@ func projectBrief(j store.Journal, id, audience string, options ...briefOptions)
 	if opt.policy != nil {
 		policyCode = applyBriefPolicy(&f, s, basis, opt)
 	}
-	q, entry, _ := Project(j, selected, 0, sanitizer)
 	if entry != nil {
 		f.Presentation.Progress = &brief.ProgressView{Position: entry.Position, Status: entry.Status, Reason: entry.Reason}
 	}
@@ -157,6 +167,55 @@ func projectBrief(j store.Journal, id, audience string, options ...briefOptions)
 	}
 	v, err := brief.Project(f, audience, sanitizer)
 	v.ChangeID = id
+	if c := reportChange(j.Key, s, selected, sanitizer); c != nil {
+		a := c.Accountability
+		if a.Truncated {
+			v.Truncated = true
+			appendBriefWarning(&v, audience, "display_truncated", "Accountability display is incomplete.", "Read retained evidence.", brief.Step{Action: "read_recorded_evidence"})
+		}
+		identity := func(i *IdentityView) *brief.IdentityView {
+			if i == nil {
+				return nil
+			}
+			return &brief.IdentityView{ID: i.ID, Login: i.Login, Kind: i.Kind}
+		}
+		v.Accountability = &brief.AccountabilityView{Status: a.Status, Actor: identity(a.Actor), Author: identity(a.Author), SubmitterID: a.SubmitterID}
+		if a.Humans != nil {
+			v.Accountability.Humans = []brief.IdentityView{}
+			for i, h := range a.Humans {
+				if i == 32 {
+					v.Truncated = true
+					break
+				}
+				v.Accountability.Humans = append(v.Accountability.Humans, brief.IdentityView{ID: h.ID, Login: h.Login, Kind: h.Kind})
+			}
+		}
+	}
+	for _, row := range j.Events {
+		receipt, ok := row.Event.(queue.ApprovalReceiptRecorded)
+		if !ok || string(receipt.Basis.ChangeID) != id {
+			continue
+		}
+		binding := brief.NotRecorded
+		if !receipt.Accepted {
+			binding = "rejected"
+		} else if receipt.Supplied.Revision != uint64(rev.Revision) || receipt.Supplied.Head != rev.HeadSHA {
+			binding = "stale"
+		} else if v.Digest != brief.NotRecorded && v.Digest != "" {
+			if receipt.Supplied.BriefDigest == v.Digest {
+				binding = "current"
+			} else {
+				binding = "stale"
+			}
+		}
+		v.Receipts = append(v.Receipts, brief.ReceiptView{SourceID: receipt.CommentID, UserID: receipt.Actor.ID, Revision: uint64(receipt.Basis.Revision), Accepted: receipt.Accepted, Reason: receipt.ReasonCode, BriefDigest: recorded(sanitizer.Sanitize(receipt.Supplied.BriefDigest)), Binding: binding})
+	}
+	if len(v.Receipts) > 32 {
+		v.Receipts = v.Receipts[len(v.Receipts)-32:]
+		v.Truncated = true
+		appendBriefWarning(&v, audience, "display_truncated", "Older receipt attempts omitted from this display.", "Read retained evidence.", brief.Step{Action: "read_recorded_evidence"})
+	}
+
 	if policyCode == "policy_composition_11b" {
 		appendBriefWarning(&v, audience, "policy_unavailable", "Candidate approval requirements are unavailable: recorded-policy digest composition is defined in 11b.", "11b must define and verify the full recorded-policy digest composition before candidate requirements can be shown.", brief.Step{Action: "implement_11b_policy_composition"})
 	} else if policyCode == "policy_busy" {
