@@ -10,15 +10,15 @@ import (
 
 // CommitsBetween enumerates a deterministic reverse topological graph difference.
 func (f *Forge) CommitsBetween(ctx context.Context, repo forge.RepoRef, base, head string, limit int) ([]string, bool, error) {
+	if limit < 1 || limit > forge.MaxCommitHistoryCommits {
+		return nil, false, fmt.Errorf("invalid commit history limit")
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.failure(ctx, "CommitsBetween"); err != nil {
 		return nil, false, err
 	}
 	r := f.repo(repo)
-	if limit < 1 {
-		return nil, false, fmt.Errorf("invalid history limit")
-	}
 	for _, sha := range []string{base, head} {
 		if _, ok := r.commits[sha]; !ok {
 			return nil, false, fmt.Errorf("unknown commit %q", sha)
@@ -48,15 +48,15 @@ func (f *Forge) CommitsBetween(ctx context.Context, repo forge.RepoRef, base, he
 // traversing contributor merge parents. It mirrors the immutable, bounded
 // cache reader used by the CLI-backed forge.
 func (f *Forge) FirstParentCommits(ctx context.Context, repo forge.RepoRef, base, head string, limit int) ([]string, bool, error) {
+	if limit < 1 || limit > forge.MaxFirstParentCommits {
+		return nil, false, fmt.Errorf("invalid first-parent history limit")
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.failure(ctx, "FirstParentCommits"); err != nil {
 		return nil, false, err
 	}
 	r := f.repo(repo)
-	if limit < 1 {
-		return nil, false, fmt.Errorf("invalid history limit")
-	}
 	for _, sha := range []string{base, head} {
 		if _, ok := r.commits[sha]; !ok {
 			return nil, false, fmt.Errorf("unknown commit %q", sha)

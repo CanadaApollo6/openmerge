@@ -21,7 +21,7 @@ var _ forge.FirstParentCommitReader = (*Repo)(nil)
 // objects. Results are newest first and a missing first-parent base fails
 // closed rather than falling back to another graph edge.
 func (r *Repo) FirstParentCommits(ctx context.Context, repo forge.RepoRef, base, head string, limit int) ([]string, bool, error) {
-	if limit < 1 || limit > 10000 {
+	if limit < 1 || limit > forge.MaxFirstParentCommits {
 		return nil, false, errors.New("invalid first-parent history limit")
 	}
 	for _, sha := range []string{base, head} {

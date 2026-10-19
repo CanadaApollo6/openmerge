@@ -311,10 +311,19 @@ type Git interface {
 	DeleteBranch(ctx context.Context, repo RepoRef, branch, expectedSHA string) error
 }
 
+// MaxCommitHistoryCommits bounds general graph enumeration independently of
+// the larger streaming ancestry-verification budget used by RevisionDiff.
+const MaxCommitHistoryCommits = 10_000
+
+// MaxFirstParentCommits bounds immutable queue composition reads. Merge/squash
+// need one entry per member; rebase needs one per replayed source commit.
+const MaxFirstParentCommits = 10_000
+
 // CommitHistoryReader optionally enumerates commits reachable from head but not
 // base, newest first in topological order. The result contains at most limit
 // entries; truncated means more exist. An unreadable/incomplete graph is an error.
 // This read-only capability does not attribute commits to a pusher.
+// Limit must be in [1, MaxCommitHistoryCommits].
 type CommitHistoryReader interface {
 	CommitsBetween(ctx context.Context, repo RepoRef, base, head string, limit int) (commits []string, truncated bool, err error)
 }
@@ -323,7 +332,7 @@ type CommitHistoryReader interface {
 // first-parent path from head back to, but excluding, base. Results are newest
 // first. It is intentionally separate from CommitHistoryReader: callers that
 // need queue-generated composition structure must not walk contributor merge
-// parents or resolve a moving ref.
+// parents or resolve a moving ref. Limit must be in [1, MaxFirstParentCommits].
 type FirstParentCommitReader interface {
 	FirstParentCommits(ctx context.Context, repo RepoRef, base, head string, limit int) (commits []string, truncated bool, err error)
 }

@@ -132,12 +132,51 @@ func testedMessages(ctx context.Context, w *worker, land queue.Land) ([]string, 
 // one first-parent replay per source commit, so its member marker is the final
 // replay in each known first-parent source segment.
 func testedMemberCommits(ctx context.Context, w *worker, land queue.Land, history forge.FirstParentCommitReader) ([]string, error) {
-	commits, truncated, err := history.FirstParentCommits(ctx, w.repo(), land.ExpectedBaseSHA, land.TestedSHA, forge.MaxAncestryCommits)
+	// BuildTestRef adds no fixed first-parent commits for these methods.
+	// Rebase is the exception to one commit per member: count its exact source
+	// segments first, under the composition reader's aggregate budget.
+	limit := len(land.PRs)
+	if limit < 1 || limit > forge.MaxFirstParentCommits {
+		return nil, fmt.Errorf("tested member count %d exceeds first-parent limit [1, %d]", limit, forge.MaxFirstParentCommits)
+	}
+	var sourceLengths []int
+	switch land.Method {
+	case queue.Merge, queue.Squash:
+	case queue.Rebase:
+		sources, ok := w.Git.(forge.CommitHistoryReader)
+		if !ok {
+			return nil, store.LandingDecisionRequiredError{}
+		}
+		limit = 0
+		for _, pin := range land.PRs {
+			remaining := min(forge.MaxCommitHistoryCommits, forge.MaxFirstParentCommits-limit)
+			if remaining < 1 {
+				return nil, fmt.Errorf("tested source history exceeds first-parent limit %d", forge.MaxFirstParentCommits)
+			}
+			// BuildTestRef replays head ^ build-base. The build base may
+			// have advanced beyond the contributor branch point.
+			source, truncated, err := sources.CommitsBetween(ctx, w.repo(), land.ExpectedBaseSHA, pin.HeadSHA, remaining)
+			if err != nil {
+				return nil, err
+			}
+			if truncated {
+				return nil, fmt.Errorf("tested source history for PR #%d exceeds remaining composition limit %d", pin.PR, remaining)
+			}
+			if len(source) == 0 {
+				return nil, errors.New("unexpected rebase tested member structure")
+			}
+			sourceLengths = append(sourceLengths, len(source))
+			limit += len(source)
+		}
+	default:
+		return nil, errors.New("unsupported tested merge method")
+	}
+	commits, truncated, err := history.FirstParentCommits(ctx, w.repo(), land.ExpectedBaseSHA, land.TestedSHA, limit)
 	if err != nil {
 		return nil, err
 	}
 	if truncated {
-		return nil, errors.New("tested member history exceeds limit")
+		return nil, fmt.Errorf("tested member history exceeds composition limit %d for %d members", limit, len(land.PRs))
 	}
 	switch land.Method {
 	case queue.Merge, queue.Squash:
@@ -153,23 +192,9 @@ func testedMemberCommits(ctx context.Context, w *worker, land queue.Land, histor
 		slices.Reverse(commits)
 		members := make([]string, 0, len(land.PRs))
 		next := 0
-		sources, ok := w.Git.(forge.CommitHistoryReader)
-		if !ok {
-			return nil, store.LandingDecisionRequiredError{}
-		}
-		for _, pin := range land.PRs {
-			// BuildTestRef replays head ^ build-base. The current build base
-			// may have advanced past the contributor branch point (or be a
-			// speculative predecessor), so it need not lie on source history.
-			source, truncated, err := sources.CommitsBetween(ctx, w.repo(), land.ExpectedBaseSHA, pin.HeadSHA, forge.MaxAncestryCommits)
-			if err != nil {
-				return nil, err
-			}
-			if truncated {
-				return nil, errors.New("tested source history exceeds limit")
-			}
-			next += len(source)
-			if len(source) == 0 || next > len(commits) {
+		for _, length := range sourceLengths {
+			next += length
+			if next > len(commits) {
 				return nil, errors.New("unexpected rebase tested member structure")
 			}
 			members = append(members, commits[next-1])
