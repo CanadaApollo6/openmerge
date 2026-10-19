@@ -1108,3 +1108,170 @@ Runner/artifact hashes:
 - `/home/riels/.cache/openmerge-77-r2/guard-bin/go`: `0f6b059f29b4109d98bd3d3bd11ae17174cc9756cd70d5edabd84a92d5779281`.
 - `/home/riels/.cache/openmerge-77-r2/guard-python/hostguard.py`: `62e64ec5161f28318a0d58c61ef9ebba0b1c0ab2284970195ce4c4909539217b`.
 - `/home/riels/.cache/openmerge-77-r2/guard-python/sitecustomize.py`: `aa907bb032d0ca3dae2bcc79a13aa1439c40663bad044578260de363c409492f`.
+
+## Round 4: scoped acquisition invalidation and commit ordering
+
+Reviewed starting head `da172a1043386f53427e6a96a4049f8472069ff1`;
+implementation `28c754c3eb240d1b056df353951b4cbe899e8a53`. Trial class remains
+**Hold**. Public activation remains withheld; no deployment was performed.
+
+- **Should-fix 1 / Sonnet nit 1:** `ApprovalRead` captures projection and
+  watermark in one repeatable-read snapshot. Rejections invalidate their waiting
+  members, the member's own composition, and ancestors whose rejection discards
+  that member's speculative suffix. Unrelated changes/later batches do not
+  invalidate the acquisition. Base movement is scoped to this queue's base and
+  changed SHA; configuration to a changed effective digest. Own appends advance
+  the captured projection with their own watermark, including the comparison
+  baseline, without sampling later commits. The full scope/JSON-path table is in
+  `internal/queue/landing-decisions.md`.
+  Tests: `TestApprovalReadUnrelatedRejection`, `TestApprovalReadFilterScopes`,
+  `TestApprovalReadOwnAppendAdvancesScope`, `TestApprovalReadFenceControls`, and
+  `TestApprovalReadInFlightAppend`.
+- **Should-fix 2:** Remove acquisition timestamp-regression rejection from
+  preflight, eligibility/intent/accountability projection, rejection and input
+  probes. Database commit order determines observation freshness; revision/head
+  bindings and semantic fingerprint guards remain. Tests:
+  `TestStageASequentialClockSkewRecordsDenial`,
+  `TestApprovalWaitPermissionProbeUsesCommitOrder`,
+  `TestApprovalWaitIntentAndAccountabilityUseCommitOrder`, and
+  `TestApprovalWaitProbeAndWakeBasis`. The later denial from the slower clock is
+  durable. Astra's unmodified `TestReview77R4SequentialClockSkew`,
+  `TestReview77R4UnrelatedRejection`, `TestReview77R4InFlightAppend`, fence
+  controls and round-3 `TestReview77R3DelayedNativeRace` all pass under race.
+  The interleaved native response still cannot record LandingStarted or Landed.
+- **Remaining nits:** Eligibility dedupe performs its admission preflight against
+  the same single queue-locked load; it skips the second generic preflight/load.
+  `TestStageAApprovalReadUsesDatabaseOrder` now covers stance, receipt and
+  input-change wire encodings as well as the existing kinds.
+  `TestStageAFreshNegativeStancesBeforeStart` requires stance observations after
+  `beforeNegative`; withdrawal/grant eligibility checks use that cutoff too.
+  The documentation records that revision `Basis.At` is pre-read, moving the
+  source boundary earlier by read latency with the existing three-second slack.
+
+All builds/tests/helpers ran serially through the retained host-load guards,
+waiting for other heavy jobs. Environment: `GOFLAGS=-p=2`, `GOMEMLIMIT=4GiB`
+(`6GiB` for replay), shared test PostgreSQL URL from the brief, with
+GOTMPDIR/GOCACHE/TMPDIR under `~/.cache`. No initdb, live DB/status API, systemd,
+production `openmerge/*` refs, or real GitHub API calls in code/tests/simulator.
+No processes were killed. Replay inputs are the existing immutable exports
+`events-20261018T051000Z.jsonl` and `queues-20261018T051000Z.jsonl`.
+
+Initial attempts are retained: focused exit **1** (unused import, scope-fixture
+binding and old timestamp-order expectations), focused-2 exit **1** (test type
+conversion and receipt binding), focused-3 exit **0**; first `make check` exit
+**2** (adopted probe's unchecked deferred Rollback), corrected `make check` exit
+**0**. These were implementation/test corrections, not waived failures.
+
+Final validation: fmt/lint/full short race suite/build **0**; original Astra
+repros and delayed-native interleaving **0**; simulator exits **0**;
+compatibility **0** (17 exits, 1055 retry/digest records, 84 wire fixtures);
+legacy SQL **0** (seven exact statements, all five negative controls detected);
+depth-1/4 differential **0** (227662 short + 5615998 full checkpoints and 188
+fixture streams, no nil-only exceptions); four-method commit IDs **0**.
+Commit-ID self-tests: identical **0**, mutant **1**, dirty **2**, all expected.
+Every baseline/candidate helper test in SQL/depth gates exited **0**.
+
+Strict replay vs main exited **0**: all 2159 real and seven synthetic checkpoints
+match actions, boundaries, derived state and snapshot hashes. Strict replay vs
+`3f77a88daf1cb99961c22b4daebaeb58f9087bb0` exited **1**, solely for the known
+absent-to-strictly-nil classifications field outside the existing allowlist.
+Exact-shape inspection exited **0** at every checkpoint; actions/boundaries match
+and Gate 4 passes. Existing exceptions remain outsidePushes, approvalFacts,
+approvalWaits, receipts and landingDecisions; no allowlist changed.
+
+Start/final explicit-refspec fetches exited **0**. Main is unchanged at
+`f8066a4f3bc9f2bfb110950b0c6c9aea4cf5ea6f`; remote branch still held reviewed
+head `da172a1043386f53427e6a96a4049f8472069ff1` before the scoped lease push.
+No rebase was needed. Functional gates used the clean implementation commit;
+this evidence-only follow-up changes no executable code.
+
+Exact root commands, actual statuses, memory limits and log SHA-256 values:
+
+- `focused`: exit **1**, `4GiB`; log `/home/riels/.cache/openmerge-77-r4/logs/focused.log`; SHA-256 `6fc23f90094e6330c6ef9b20a0c9af0ce9dad09eb0c502114ec4c68d08ab91d2`.
+
+- `focused-2`: exit **1**, `4GiB`; log `/home/riels/.cache/openmerge-77-r4/logs/focused-2.log`; SHA-256 `8294c976db13ca40a73daece1f900453ad3e2c4c600e788466f357f3ce467bbb`.
+
+- `focused-3`: exit **0**, `4GiB`; log `/home/riels/.cache/openmerge-77-r4/logs/focused-3.log`; SHA-256 `629bdbc7b3b1e02057d58b5533225c5d058af112d5ece8fd5dd5b10b5bc65670`.
+
+- `check`: exit **2**, `4GiB`; log `/home/riels/.cache/openmerge-77-r4/logs/check.log`; SHA-256 `7848b5f8590a87f73ec9d179ee327d668eec13a03c1e37b15cc7330ff33f8761`.
+
+- `check-2`: exit **0**, `4GiB`; log `/home/riels/.cache/openmerge-77-r4/logs/check-2.log`; SHA-256 `ef851881d38de697379a142fcf1b6cc6c7c39479aebe24e0865ea7f8a86d403b`.
+
+- `astra-repros`: exit **0**, `4GiB`; log `/home/riels/.cache/openmerge-77-r4/logs/astra-repros.log`; SHA-256 `57c294734d4940d2d53ac70469b9feada639d733c1a659d97574cf8e942bea4d`.
+
+- `sim-exits`: exit **0**, `4GiB`; log `/home/riels/.cache/openmerge-77-r4/logs/sim-exits.log`; SHA-256 `b54c8b6c0e6bcd3547341e60704be9098496012cd2b3feb8a01bf681dade321b`.
+
+- `compatibility`: exit **0**, `4GiB`; log `/home/riels/.cache/openmerge-77-r4/logs/compatibility.log`; SHA-256 `8609790ee807f78ae7fadd31e6503a6a932f9f874af818197be4849fe5a93749`.
+
+- `legacy-sql`: exit **0**, `4GiB`; log `/home/riels/.cache/openmerge-77-r4/logs/legacy-sql.log`; SHA-256 `ab22c0b5e090c552fcb505089d132fa81b6793fa330d277ad02890069ccefd33`.
+
+- `legacy-depths`: exit **0**, `4GiB`; log `/home/riels/.cache/openmerge-77-r4/logs/legacy-depths.log`; SHA-256 `3c25309b33c985c03a3aff2a5c961878e2dd1b080a03ec27dc5894981e7b3453`.
+
+- `commit-ids`: exit **0**, `4GiB`; log `/home/riels/.cache/openmerge-77-r4/logs/commit-ids.log`; SHA-256 `4487584d6bb44bb961c28140dab7501a6f927c4a1892abe6a4ce144adb6c89a7`.
+
+- `replay-main`: exit **0**, `6GiB`; log `/home/riels/.cache/openmerge-77-r4/logs/replay-main.log`; SHA-256 `372b366fafa4207a476fd80b3e91d12bd7adc50ad5c35a015ac1e48619ad88df`.
+
+- `replay-deployed`: exit **1**, `6GiB`; log `/home/riels/.cache/openmerge-77-r4/logs/replay-deployed.log`; SHA-256 `0a94de97b6b0a070a5e402ecb485f08811405b41f6e338d233ae4c075d3ca089`.
+
+- `replay-inspection`: exit **0**, `4GiB`; log `/home/riels/.cache/openmerge-77-r4/logs/replay-inspection.log`; SHA-256 `0b554123b04ecef4cc41fb09ede76a5a35e559cad1507ffebe8b96a3ebb68144`.
+
+```sh
+# focused: actual exit=1, GOMEMLIMIT=4GiB
+go test ./internal/store ./internal/serve ./internal/queue -run 'TestApprovalRead|TestStageA|TestApprovalWait|TestAppendCannotCommitBehindAPlannedWatermark|TestAtomicLandingPreflightRaces' -count=1 -timeout=10m
+
+# focused-2: actual exit=1, GOMEMLIMIT=4GiB
+go test ./internal/store ./internal/serve ./internal/queue -run 'TestApprovalRead|TestStageA|TestApprovalWait|TestAppendCannotCommitBehindAPlannedWatermark|TestAtomicLandingPreflightRaces' -count=1 -timeout=10m
+
+# focused-3: actual exit=0, GOMEMLIMIT=4GiB
+go test ./internal/store ./internal/serve ./internal/queue -run 'TestApprovalRead|TestStageA|TestApprovalWait|TestAppendCannotCommitBehindAPlannedWatermark|TestAtomicLandingPreflightRaces' -count=1 -timeout=10m
+
+# check: actual exit=2, GOMEMLIMIT=4GiB
+make check
+
+# check-2: actual exit=0, GOMEMLIMIT=4GiB
+make check
+
+# astra-repros: actual exit=0, GOMEMLIMIT=4GiB
+go test -overlay /home/riels/.cache/openmerge-77-r4/astra-overlay.json ./internal/store ./internal/serve -run 'TestReview77R4|TestReview77R3DelayedNativeRace' -race -count=1 -v
+
+# sim-exits: actual exit=0, GOMEMLIMIT=4GiB
+make test-sim-exits
+
+# compatibility: actual exit=0, GOMEMLIMIT=4GiB
+python3 scripts/check-phase2-compatibility.py /home/riels/openmerge-sa-11a-main
+
+# legacy-sql: actual exit=0, GOMEMLIMIT=4GiB
+python3 scripts/check-legacy-landing-sql.py /home/riels/openmerge-sa-11a-main
+
+# legacy-depths: actual exit=0, GOMEMLIMIT=4GiB
+python3 scripts/check-legacy-plan-action-depths-1-4.py /home/riels/openmerge-sa-11a-main
+
+# commit-ids: actual exit=0, GOMEMLIMIT=4GiB
+python3 scripts/check-legacy-commit-ids.py --baseline /home/riels/openmerge-sa-11a-main --candidate /home/riels/openmerge-sa-11a
+
+# replay-main: actual exit=0, GOMEMLIMIT=6GiB
+python3 scripts/check-live-journal-replay.py --baseline /home/riels/openmerge-sa-11a-main --candidate /home/riels/openmerge-sa-11a --events /home/riels/.local/share/openmerge/exports/events-20261018T051000Z.jsonl --queues /home/riels/.local/share/openmerge/exports/queues-20261018T051000Z.jsonl --strict-state --out /home/riels/.cache/openmerge-77-r4/replay-main.json
+
+# replay-deployed: actual exit=1, GOMEMLIMIT=6GiB
+python3 scripts/check-live-journal-replay.py --baseline /home/riels/.cache/sa9b-r2-deployed --candidate /home/riels/openmerge-sa-11a --events /home/riels/.local/share/openmerge/exports/events-20261018T051000Z.jsonl --queues /home/riels/.local/share/openmerge/exports/queues-20261018T051000Z.jsonl --strict-state --out /home/riels/.cache/openmerge-77-r4/replay-deployed.json
+
+# replay-inspection: actual exit=0, GOMEMLIMIT=4GiB
+python3 /home/riels/.cache/openmerge-11a/inspect-replays.py /home/riels/.cache/openmerge-77-r4/replay-main.json /home/riels/.cache/openmerge-77-r4/replay-deployed.json
+
+```
+
+Runner/artifact SHA-256 values:
+
+- `/home/riels/.cache/openmerge-77-r4/heavy.py`: `ccdfe60b506f0b6087d39836687d9bd03b28408b3b9655e600410d320d7b5c9f`.
+
+- `/home/riels/.cache/openmerge-77-r4/gates.py`: `07dbfbe4395b28d0b2bfc712b18c9fd9c6b27e7d2eeeb552ff72bdd3d4c92f97`.
+
+- `/home/riels/.cache/openmerge-77-r4/astra-overlay.json`: `5e4e05807719f531530f64c012c6e6bf121a487b8f74b7c165f2282a2ccecfaf`.
+
+- `/home/riels/.cache/openmerge-77-r4/results.jsonl`: `0e848a4e3da7533d91cde2a002085954ee764c09e6b0844f994e50c97a55782d`.
+
+- `/home/riels/.cache/openmerge-77-r2/guard-bin/go`: `0f6b059f29b4109d98bd3d3bd11ae17174cc9756cd70d5edabd84a92d5779281`.
+
+- `/home/riels/.cache/openmerge-77-r2/guard-python/hostguard.py`: `62e64ec5161f28318a0d58c61ef9ebba0b1c0ab2284970195ce4c4909539217b`.
+
+- `/home/riels/.cache/openmerge-77-r2/guard-python/sitecustomize.py`: `aa907bb032d0ca3dae2bcc79a13aa1439c40663bad044578260de363c409492f`.
