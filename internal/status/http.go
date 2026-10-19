@@ -153,10 +153,14 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 			writeJSON(w, Response{Version: Version, Discovery: &snapshot})
 			return
 		}
+		change, isChange, changeErr := changeRoute(r, keys)
 		briefKeys, changeID, audience, isBrief, briefErr := briefRoute(r, keys)
 		selected, pr, limit, err := route(r, keys)
 		if isBrief {
 			selected, err = briefKeys, briefErr
+		}
+		if isChange {
+			selected, err = change.keys, changeErr
 		}
 		if err != nil {
 			fail(w, http.StatusBadRequest, "invalid-request", err.Error())
@@ -173,6 +177,10 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 		defer cancel()
+		if isChange && change.kind == "decisions" {
+			serveDecisions(ctx, w, source, selected[0], change, sanitizer)
+			return
+		}
 		journals, err := source.Journals(ctx, selected)
 		if err != nil {
 			fail(w, http.StatusServiceUnavailable, "unavailable", "queue history could not be read")
@@ -184,6 +192,7 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 				q, _, _ := Project(journal, 0, 0, sanitizer)
 				applyReadiness(source, &q, sanitizer)
 				applyPolicy(source, &q, nil)
+				enrichChanges(ctx, source, journal, &q, nil, sanitizer)
 				queues = append(queues, q)
 			}
 			// Preserve [] for an empty queue list; discovery is additive in v1.
@@ -203,7 +212,34 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 			fail(w, http.StatusNotFound, "not-found", "queue not found")
 			return
 		}
+		if isChange {
+			j, pr, found := selectChangeRevision(journals[0], change.id, change.revision)
+			if !found {
+				fail(w, 404, "not-found", "change revision has no recorded history in this queue")
+				return
+			}
+			_, entry, _ := Project(j, pr, 0, sanitizer)
+			view, _, err := projectBrief(j, change.id, "reviewer", briefOptions{sanitizer: sanitizer, policy: briefPolicyProjection(ctx, source, j)})
+			if err != nil {
+				fail(w, 503, "unavailable", "change could not be projected")
+				return
+			}
+			q, _, _ := Project(j, 0, 0, sanitizer)
+			applyReadiness(source, &q, sanitizer)
+			applyPolicy(source, &q, entry)
+			writeBoundedChange(w, ChangeResponse{Version: Version, PR: entry, Brief: view})
+			return
+		}
 		if isBrief {
+			if value := r.URL.Query().Get("revision"); value != "" {
+				revision, _ := strconv.ParseUint(value, 10, 64)
+				j, _, found := selectChangeRevision(journals[0], changeID, revision)
+				if !found {
+					fail(w, 404, "not-found", "change revision has no recorded history in this queue")
+					return
+				}
+				journals[0] = j
+			}
 			view, found, err := projectBrief(journals[0], changeID, audience, briefOptions{sanitizer: sanitizer, policy: briefPolicyProjection(r.Context(), source, journals[0])})
 			if err != nil {
 				fail(w, http.StatusServiceUnavailable, "unavailable", "brief could not be projected")
@@ -224,6 +260,7 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 		q, entry, why := Project(journals[0], pr, limit, sanitizer)
 		applyReadiness(source, &q, sanitizer)
 		applyPolicy(source, &q, entry)
+		enrichChanges(ctx, source, journals[0], &q, entry, sanitizer)
 		if why != nil && q.Readiness != nil && !q.Readiness.Ready {
 			why.Summary += "; waiting: " + q.Readiness.Reason
 		}

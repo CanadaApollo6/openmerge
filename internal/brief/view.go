@@ -39,6 +39,8 @@ type TestEvidence struct{ Name, URL, Status, SHA string }
 // View is the public v1 DTO. No queue or persisted wire struct is embedded.
 // Null sections mean not recorded; [] means recorded and empty.
 type View struct {
+	Accountability    *AccountabilityView `json:"accountability,omitempty"`
+	Receipts          []ReceiptView       `json:"receipts,omitempty"`
 	Progress          *ProgressView       `json:"progress"`
 	Version           int                 `json:"version"`
 	Audience          string              `json:"audience"`
@@ -52,6 +54,35 @@ type View struct {
 	Tests             []TestView          `json:"tests"`
 	Warnings          []Warning           `json:"warnings"`
 	Truncated         bool                `json:"truncated"`
+}
+
+// AccountabilityView keeps account authentication separate from authorship and
+// accountable humans. Tokens cannot establish whether a person or agent acted.
+type AccountabilityView struct {
+	Status      string         `json:"status"`
+	Actor       *IdentityView  `json:"actor"`
+	Author      *IdentityView  `json:"author"`
+	SubmitterID string         `json:"submitter_id"`
+	Humans      []IdentityView `json:"humans"`
+}
+
+// IdentityView describes a recorded stable account identity.
+type IdentityView struct {
+	ID    string `json:"id"`
+	Login string `json:"login"`
+	Kind  string `json:"kind"`
+}
+
+// ReceiptView distinguishes command acceptance from its current binding. It
+// does not claim that matching digests satisfy every approval requirement.
+type ReceiptView struct {
+	SourceID    string `json:"source_id"`
+	UserID      string `json:"user_id"`
+	Revision    uint64 `json:"revision"`
+	Accepted    bool   `json:"accepted"`
+	Reason      string `json:"reason"`
+	BriefDigest string `json:"brief_digest"`
+	Binding     string `json:"binding"`
 }
 
 // ProgressView describes queue position at the journal snapshot.
@@ -697,6 +728,22 @@ func Render(v View) ([]byte, error) {
 	}
 	for _, t := range v.Tests {
 		fmt.Fprintf(&b, "  %s: %s; tested SHA %s; %s\n", quote(t.Name), quote(t.Status), quote(t.SHA), quote(t.URL))
+	}
+	if a := v.Accountability; a != nil {
+		fmt.Fprintf(&b, "\nAccountability: %s\n", quote(a.Status))
+		if a.Actor != nil {
+			fmt.Fprintf(&b, "  Authenticated account: %s (%s)\n", quote(a.Actor.ID), quote(a.Actor.Login))
+		}
+		if a.Author != nil {
+			fmt.Fprintf(&b, "  PR author: %s (%s)\n", quote(a.Author.ID), quote(a.Author.Login))
+		}
+		fmt.Fprintf(&b, "  Submitter: %s\n", quote(a.SubmitterID))
+		for _, h := range a.Humans {
+			fmt.Fprintf(&b, "  Accountable human: %s (%s)\n", quote(h.ID), quote(h.Login))
+		}
+	}
+	for _, r := range v.Receipts {
+		fmt.Fprintf(&b, "\nReceipt source %s by %s: accepted=%t; binding=%s; reason=%s; digest=%s\n", quote(r.SourceID), quote(r.UserID), r.Accepted, quote(r.Binding), quote(r.Reason), quote(r.BriefDigest))
 	}
 	return []byte(b.String()), nil
 }

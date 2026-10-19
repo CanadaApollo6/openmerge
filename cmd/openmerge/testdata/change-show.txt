@@ -1,0 +1,32 @@
+Change chg1_d85355527abc5f6f63fbd8e90338354eb7bc7636bf46f0a6959da1c7c08273e5 @1: PR #1 "not-queued"
+Accountability: not recorded; gate: ""
+Change "chg1_d85355527abc5f6f63fbd8e90338354eb7bc7636bf46f0a6959da1c7c08273e5" (reviewer)
+Digest: "not recorded"
+
+Warnings and what clears them:
+  "not_recorded"
+    What clears it: "Record missing evidence before relying on this brief for approval."
+  "policy_unavailable": "The recorded approval policy could not be reconstructed for this brief."
+    What clears it: "Restore the pinned ConfigApplied commit and its tree/blob objects to the repository local Git cache through an operator-managed fetch or backup import (including the default-branch config commit for non-default-base queues); restore recorded identity inputs. If the repository default branch is unknown, let worker reconciliation establish it. The brief reader never fetches."
+
+Queue progress:
+  position 0; status "not-queued"; reason ""
+
+Claimed intent (submitter's claim):
+  Title: "recorded title"
+  Body: "recorded body"
+
+Classification and retained diff:
+not recorded
+
+Approval obligations:
+not recorded
+
+Stance and provenance:
+  none recorded
+
+Recorded tests:
+
+Accountability: "not recorded"
+  Submitter: "not recorded"
+

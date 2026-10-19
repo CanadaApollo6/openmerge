@@ -36,6 +36,9 @@ func holdingGate(q *Queue, e Entry, cfg queue.Config, now time.Time) string {
 	if q.Paused {
 		return q.PauseReason
 	}
+	if e.Change != nil && len(e.Change.WaitingReasons) > 0 {
+		return "approvals"
+	}
 	if e.Status == "dequeue-pending" {
 		return "dequeue"
 	}

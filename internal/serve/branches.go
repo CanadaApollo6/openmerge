@@ -409,3 +409,8 @@ type repositoryReadError struct {
 
 func (e *repositoryReadError) Error() string { return e.phase + " could not be read: " + e.err.Error() }
 func (e *repositoryReadError) Unwrap() error { return e.err }
+
+// ChangeDecisions exposes only retained, queue-scoped historical evidence.
+func (s *Server) ChangeDecisions(ctx context.Context, key store.QueueKey, id queue.ChangeID, revision uint64, after int64, limit int) ([]store.DecisionRecord, int64, bool, error) {
+	return s.store.ChangeDecisions(ctx, key, id, revision, after, limit)
+}

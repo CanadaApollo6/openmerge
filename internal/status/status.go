@@ -103,19 +103,21 @@ type BatchPR struct {
 // Entry uses position zero for PRs outside the queue; admission is the latest
 // successful admission, retained on a terminal PR detail response.
 type Entry struct {
-	Gate              string     `json:"gate,omitempty"`
-	RunLedger         []Run      `json:"run_ledger,omitempty"`
-	BatchID           string     `json:"batch_id,omitempty"`
-	BatchPosition     uint64     `json:"batch_position,omitempty"`
-	BatchesAhead      *int       `json:"batches_ahead"`
-	Position          int        `json:"position"`
-	PR                int        `json:"pr"`
-	HeadSHA           string     `json:"head_sha"`
-	AdmittedAt        *time.Time `json:"admitted_at"`
-	Status            string     `json:"status"`
-	Reason            string     `json:"reason"`
-	LastDequeueReason string     `json:"last_dequeue_reason"`
-	Detail            string     `json:"detail,omitempty"`
+	Landing           *LandingView  `json:"landing"`
+	Change            *ChangeReport `json:"change,omitempty"`
+	Gate              string        `json:"gate,omitempty"`
+	RunLedger         []Run         `json:"run_ledger,omitempty"`
+	BatchID           string        `json:"batch_id,omitempty"`
+	BatchPosition     uint64        `json:"batch_position,omitempty"`
+	BatchesAhead      *int          `json:"batches_ahead"`
+	Position          int           `json:"position"`
+	PR                int           `json:"pr"`
+	HeadSHA           string        `json:"head_sha"`
+	AdmittedAt        *time.Time    `json:"admitted_at"`
+	Status            string        `json:"status"`
+	Reason            string        `json:"reason"`
+	LastDequeueReason string        `json:"last_dequeue_reason"`
+	Detail            string        `json:"detail,omitempty"`
 }
 
 // Why links a current-state explanation to recent committed evidence.
@@ -199,11 +201,12 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 			}
 			known[n] = e
 		}
-		if _, landed := record.Event.(queue.Landed); landed && before.Active != nil {
+		if landed, ok := record.Event.(queue.Landed); ok && before.Active != nil {
 			for _, pin := range before.Active.PRs {
 				if entryIn(before, pin.PR) && !entryIn(s, pin.PR) {
 					e := known[pin.PR]
 					e.Status, e.Reason, e.HeadSHA = "merged", "", pin.HeadSHA
+					e.Landing = &LandingView{Outcome: "landed", SHA: landed.NewBaseSHA, EventID: record.ID, BatchID: before.Active.ID, AttemptID: before.Active.LandingAttempt.ID}
 					known[pin.PR] = e
 				}
 			}
@@ -308,6 +311,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 		if q.Paused {
 			e.Status, e.Reason = "paused", q.PauseReason
 		}
+		e.Change = reportChange(j.Key, s, e.PR, sanitizer)
 		e.Gate = holdingGate(&q, e, queue.Config{}, time.Time{})
 		q.Entries = append(q.Entries, e)
 		known[e.PR] = e
@@ -319,6 +323,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 	if s.LifecycleState() != "active" && e.Position == 0 && e.Status != "merged" && e.Status != "closed" {
 		e.Status, e.Reason = "paused", q.State
 	}
+	e.Change = reportChange(j.Key, s, pr, sanitizer)
 	e.RunLedger = ledger[pr]
 	summary := fmt.Sprintf("PR #%d: %s", pr, e.Status)
 	if e.Reason != "" {
@@ -366,6 +371,8 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 
 func directPR(event queue.Event) int {
 	switch e := event.(type) {
+	case queue.ChangeRevisionObserved:
+		return e.PR
 	case queue.PRObserved:
 		return e.PR
 	case queue.PRClosed:

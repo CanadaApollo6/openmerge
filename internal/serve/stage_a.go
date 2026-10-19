@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -19,6 +18,8 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/config/condition"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
+	"github.com/CanadaApollo6/openmerge/internal/status"
+	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
 // stageAPolicy has no production constructor or public configuration path in
@@ -832,30 +833,11 @@ func (s *Server) observeStageABase(ctx context.Context, w *worker, state queue.S
 }
 
 func (s *Server) stageACheckSummary(ctx context.Context, w *worker, pr int) (string, error) {
-	state, _, err := s.store.Load(ctx, w.id)
-	if err != nil {
+	journals, err := s.store.Journals(ctx, []store.QueueKey{w.Key})
+	if err != nil || len(journals) == 0 {
 		return "", err
 	}
-	r, ok := state.PRRevision(pr)
-	if !ok {
-		return "", nil
-	}
-	fact, err := state.RecordedBrief(w.stageA.policy, approvalBasis(r))
-	if err != nil {
-		return "", err
-	}
-	identity, err := brief.Identity(fact)
-	if err != nil {
-		return "", err
-	}
-	link := "/v1/queues/" + w.Key.Repository + "/" + url.PathEscape(w.Key.BaseBranch) + "/changes/" + string(r.ChangeID) + "/brief?audience=reviewer"
-	text := "; reviewer brief: " + link + "; digest: " + identity.BriefDigest
-	for _, wait := range state.ApprovalWaits() {
-		if wait.Basis.ChangeID == r.ChangeID {
-			text += "; waiting: " + strings.Join(wait.Reasons, ", ")
-		}
-	}
-	return text, nil
+	return status.ReviewerCheckSummary(journals[0], pr, w.stageA.policy)
 }
 
 func (s *Server) stageAActorRelevantWithInputs(state queue.State, w *worker, b queue.ApprovalBasis, actor cp.Identity, grant forge.WriteGrant, fresh queue.ApprovalEligibilityObserved) (bool, error) {

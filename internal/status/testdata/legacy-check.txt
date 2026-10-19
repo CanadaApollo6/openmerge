@@ -1,0 +1,6 @@
+
+
+Queue: window: 4; batch size: 8; p̂: n/a (0 samples); chain: b1(testing) → b2(testing); gate: landing-preflight
+
+CI run ledger:
+b1 tested-b1 ci/app:1#1.1=success
