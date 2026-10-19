@@ -242,6 +242,52 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 			Labels:   labels,
 		}
 	}
+	t.Run("history-limits", func(t *testing.T) {
+		e := newEnv(t)
+		// Two two-member compositions produce a four-entry first-parent
+		// chain, the same limit requested by a depth-four merge/squash gate.
+		first := build(t, e, e.BaseSHA, "history-first", e.PRs[:2]...)
+		head := build(t, e, first, "history-second", e.PRs[:2]...)
+		firstParent, ok := e.Git.(forge.FirstParentCommitReader)
+		if !ok {
+			t.Fatal("missing FirstParentCommitReader")
+		}
+		history, ok := e.Git.(forge.CommitHistoryReader)
+		if !ok {
+			t.Fatal("missing CommitHistoryReader")
+		}
+		for _, reader := range []struct {
+			name    string
+			max     int
+			read    func(context.Context, forge.RepoRef, string, string, int) ([]string, bool, error)
+			invalid string
+		}{
+			{"first-parent", forge.MaxFirstParentCommits, firstParent.FirstParentCommits, "invalid first-parent history limit"},
+			{"commit", forge.MaxCommitHistoryCommits, history.CommitsBetween, "invalid commit history limit"},
+		} {
+			for _, limit := range []int{-1, 0, 1, 4, reader.max, reader.max + 1} {
+				t.Run(fmt.Sprintf("%s/%d", reader.name, limit), func(t *testing.T) {
+					commits, truncated, err := reader.read(ctx, e.Repo, e.BaseSHA, head, limit)
+					if limit < 1 || limit > reader.max {
+						if err == nil || err.Error() != reader.invalid || len(commits) != 0 || truncated {
+							t.Fatalf("invalid limit: commits=%v truncated=%v err=%v", commits, truncated, err)
+						}
+						return
+					}
+					must(t, err)
+					if len(commits) == 0 || len(commits) > limit || commits[0] != head {
+						t.Fatalf("bounded newest-first history: %v", commits)
+					}
+					if reader.name == "first-parent" && (len(commits) != min(limit, 4) || truncated != (limit < 4)) {
+						t.Fatalf("four-member composition: %v truncated=%v", commits, truncated)
+					}
+					if limit == reader.max && truncated {
+						t.Fatal("small graph exhausted maximum limit")
+					}
+				})
+			}
+		}
+	})
 	t.Run("read-fence", func(t *testing.T) {
 		e := newEnv(t)
 		// Read an ordinary commit without replacing an existing fence.

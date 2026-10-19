@@ -11,7 +11,7 @@ import (
 
 // CommitsBetween reads the complete graph, bounding output with one lookahead.
 func (r *Repo) CommitsBetween(ctx context.Context, repo forge.RepoRef, base, head string, limit int) ([]string, bool, error) {
-	if limit < 1 || limit > 10000 {
+	if limit < 1 || limit > forge.MaxCommitHistoryCommits {
 		return nil, false, errors.New("invalid commit history limit")
 	}
 	s, unlock, err := r.open(ctx, repo)

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"slices"
 	"time"
+
+	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
 
 // FastForwardBatchSelected narrows a building batch to a consecutive linear
@@ -105,6 +107,9 @@ func (s *State) selectFastForward(e FastForwardBatchSelected) {
 }
 
 func dequeueDetail(reason DequeueReason) string {
+	if reason == RebaseCompositionExceeded {
+		return fmt.Sprintf("rebase composition exceeds %d commits; use squash or merge, or split the change", forge.MaxFirstParentCommits)
+	}
 	if reason == MergeCommitsNotAllowed {
 		return "Base requires linear history; remove merge commits from the branch and queue it again"
 	}

@@ -236,6 +236,8 @@ func apply(s State, e Event) State {
 			s.Active = &Batch{ID: e.BatchID, BaseSHA: e.BaseSHA, ConfigDigest: s.ConfigDigest, PRs: slices.Clone(e.PRs), FromBisection: fromBisection,
 				TestRef: "openmerge/queue/" + s.BaseBranch + "/" + e.BatchID, Phase: Building}
 		}
+	case RebaseCompositionObserved:
+		s.applyRebaseComposition(e)
 	case BatchFailed:
 		if e.Reason == ChecksTimeout && s.batchIn(e.BatchID, Testing) && (!s.Batch(e.BatchID).checksPassed || s.Batch(e.BatchID).ProvisionalFailure != "") {
 			s.failBatch(s.Batch(e.BatchID), e.Reason)

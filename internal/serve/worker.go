@@ -117,6 +117,9 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 	x := executor.Executor{Driver: w.Driver, Git: w.Git, Repo: w.repo(), Base: w.Key.BaseBranch, DisableDeleteHeadBranch: disableDeleteHeadBranch}
 	batch := state.ActionBatch(claim.Action)
 	if w.stageA != nil {
+		x.RebaseComposition = func(ctx context.Context, build queue.BuildTestRef) (queue.RebaseCompositionObserved, error) {
+			return readRebaseComposition(ctx, w, build, forge.MaxFirstParentCommits)
+		}
 		x.BuildMetadataState, x.BuildMetadataKey, x.BuildPolicyDigest = state, w.Key, w.stageA.policy.Digest
 		x.BuildMetadata = func(_ queue.State, key executor.BuildChangeKey, b queue.Batch, digest string) ([]*forge.ChangeMetadata, error) {
 			current, _, err := s.store.Load(actionCtx, w.id)
