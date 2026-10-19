@@ -366,7 +366,7 @@ func (q *Queue) LedgerEntry(pr int) *Entry {
 			entry.Status, entry.Reason = "paused", q.State
 		}
 		entry.RunLedger = q.runLedger[pr]
-		entry.Change = reportChange(store.QueueKey{Installation: q.Installation, Repository: q.Repository, BaseBranch: q.Base, Lane: q.Lane}, q.state, pr, diagnostic.NewSanitizer())
+		entry.Change = reportChange(store.QueueKey{Installation: q.Installation, Repository: q.Repository, BaseBranch: q.Base, Lane: q.Lane}, q.state, pr, q.sanitizer)
 		return &entry
 	}
 	return nil

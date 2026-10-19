@@ -263,7 +263,7 @@ func TestChangeDecisionsExitCodesAndValidation(t *testing.T) {
 	}
 }
 
-func TestChangeShowRejectsNonReviewerAudience(t *testing.T) {
+func TestChangeShowAndDecisionsRejectNonReviewerAudience(t *testing.T) {
 	t.Setenv("OPENMERGE_API_TOKEN", "")
 	t.Setenv("OPENMERGE_API_TOKEN_FILE", "")
 	id, _ := queue.PRChangeID("7", "owner/repo", "main", "", 1)
@@ -273,9 +273,13 @@ func TestChangeShowRejectsNonReviewerAudience(t *testing.T) {
 		_, _ = w.Write([]byte(`{}`))
 	}))
 	defer server.Close()
-	var out, errout bytes.Buffer
-	if code := runChange([]string{"show", string(id), "--repo", "owner/repo", "--audience", "operator", "--api", server.URL}, &out, &errout); code != 2 || called {
-		t.Fatalf("non-reviewer show accepted or made a request: code=%d called=%t stderr=%s", code, called, errout.String())
+	for _, command := range []string{"show", "decisions"} {
+		for _, audience := range []string{"operator", "agent"} {
+			var out, errout bytes.Buffer
+			if code := runChange([]string{command, string(id), "--repo", "owner/repo", "--audience", audience, "--api", server.URL}, &out, &errout); code != 2 || called {
+				t.Fatalf("non-reviewer %s accepted or made a request: code=%d called=%t stderr=%s", command, code, called, errout.String())
+			}
+		}
 	}
 }
 

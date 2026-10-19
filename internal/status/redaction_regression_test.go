@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
+	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
@@ -45,5 +46,23 @@ func TestChangeTerminalEntryRetainsRequestSanitizer(t *testing.T) {
 	}
 	if entries[0] != entries[1] {
 		t.Error("selected Entry DTO redaction differs between change and alias")
+	}
+}
+
+func TestLedgerEntryRetainsRequestSanitizer(t *testing.T) {
+	j, _, b, _ := briefRegressionBase(t)
+	who := cp.Identity{ID: "github.com:user:1", Login: "opaque-secret", Kind: cp.HumanAccount}
+	briefAppend(&j, queue.Accountability(b, who, who, nil, "digest"))
+	q, _, _ := Project(j, 0, 0, diagnostic.NewSanitizer("opaque-secret"))
+	entry := q.LedgerEntry(1)
+	if entry == nil || entry.Change == nil || entry.Change.Accountability.Actor == nil {
+		t.Fatal("missing accountability")
+	}
+	raw, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "opaque-secret") {
+		t.Fatal("ledger exposed request secret", string(raw))
 	}
 }

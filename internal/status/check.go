@@ -78,13 +78,17 @@ func reviewerCheckText(key store.QueueKey, id string, view brief.View, entry *En
 			text += fmt.Sprintf("\nWARNING: +%d more warnings; read full brief.", len(view.Warnings)-i)
 			break
 		}
-		text += "\nWARNING: " + checkText(w.Code, 40) + "; " + checkText(w.Detail, 80) + "; " + checkText(w.Clears, 60) + "; next: " + checkText(w.NextStep.Action, 40)
+		text += checkWarning(w)
 	}
 	if view.Truncated {
 		text += "\nWARNING: brief display truncated; read retained evidence."
 	}
 	// A very long queue path must never consume the safety-warning budget.
-	text += "\n\nReviewer brief: " + changePath(key, id) + "/brief?audience=reviewer\nDigest: " + checkText(view.Digest, 128)
+	briefURL := changePath(key, id) + "/brief?audience=reviewer"
+	if len(briefURL) > 4096 {
+		briefURL = "URL exceeds check display bound; use openmerge change brief with this queue's selectors."
+	}
+	text += "\n\nReviewer brief: " + briefURL + "\nDigest: " + checkText(view.Digest, 128)
 	if view.Classification != nil {
 		for i, l := range view.Classification.Labels {
 			if i == 8 {
@@ -151,6 +155,19 @@ func reviewerCheckText(key store.QueueKey, id string, view brief.View, entry *En
 	if len(text) > maxCheckBytes {
 		end := strings.LastIndex(text[:maxCheckBytes], "\n")
 		text = text[:end] + "\n+more evidence in full brief."
+	}
+	return text
+}
+
+// Bound escaped bytes as well as runes so eight warnings leave space for the
+// complete brief locator and digest before optional rows meet the 12 KB bound.
+func checkWarning(w brief.Warning) string {
+	line := func(code, detail, clears, action int) string {
+		return "\nWARNING: " + checkText(w.Code, code) + "; " + checkText(w.Detail, detail) + "; " + checkText(w.Clears, clears) + "; next: " + checkText(w.NextStep.Action, action)
+	}
+	text := line(40, 80, 60, 40)
+	if len(text) > 768 {
+		text = line(32, 32, 24, 16)
 	}
 	return text
 }

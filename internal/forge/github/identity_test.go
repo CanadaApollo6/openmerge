@@ -295,3 +295,18 @@ func TestIdentityRejectsUnicodeAliases(t *testing.T) {
 		})
 	}
 }
+
+func TestWriteGrantInvalidLoginDiagnostic(t *testing.T) {
+	f := newAPI(t)
+	f.override = func(w http.ResponseWriter, r *http.Request) bool {
+		if !strings.HasSuffix(r.URL.Path, "/collaborators/alice/permission") {
+			return false
+		}
+		_, _ = fmt.Fprint(w, `{"permission":"write","user":{"id":11,"login":"bad/login","type":"User"}}`)
+		return true
+	}
+	_, err := f.driver.WriteGrant(t.Context(), testRepo, forge.UserIdentity{ID: 11, Login: "alice"})
+	if !errors.Is(err, forge.ErrIdentityMismatch) || !strings.Contains(err.Error(), "invalid user login") || strings.Contains(err.Error(), "expected user 11, observed 11") {
+		t.Fatal(err)
+	}
+}

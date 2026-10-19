@@ -127,8 +127,11 @@ func (d *Driver) WriteGrant(ctx context.Context, repo forge.RepoRef, author forg
 		return forge.WriteGrant{}, normalized
 	}
 	grant := forge.WriteGrant{User: userIdentity(level.GetUser()), Permission: level.GetPermission()}
-	if grant.User.ID <= 0 || grant.User.ID != author.ID || !validIdentityLogin(grant.User.Login) {
+	if grant.User.ID <= 0 || grant.User.ID != author.ID {
 		return grant, fmt.Errorf("%w: expected user %d, observed %d", forge.ErrIdentityMismatch, author.ID, grant.User.ID)
+	}
+	if !validIdentityLogin(grant.User.Login) {
+		return grant, fmt.Errorf("%w: permission response has an invalid user login", forge.ErrIdentityMismatch)
 	}
 	return grant, nil
 }

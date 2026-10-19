@@ -77,9 +77,10 @@ New `openmerge setup github` manifests request organization **Members: read**
 (`members: read`) for resolving `org/team` owners and approver pools. To use
 organization teams in approval policy, an existing App must add that organization
 permission in App settings, and each affected organization installation must
-accept the requested addition in its installed App settings. Updating the App's permission declaration alone does not update
-an installation's grant. OpenMerge inspects the permissions on the actual
-installation token; renewed tokens (or restarting `serve`) observe acceptance.
+accept the requested addition in its installed App settings. Updating the App's
+permission declaration alone does not update an installation's grant. The explicit
+setup diagnostic inspects the actual installation-token permissions; renewed
+tokens (or restarting `serve`) observe acceptance.
 
 **During the ADR 0009 dogfood trial, leave the live App's permissions unchanged,
 including `members: read` and its current `actions: write` status.** Exercise
@@ -97,20 +98,25 @@ diagnostics (use sandbox credentials during the trial):
 openmerge setup permissions --app-id APP_ID --installation-id INSTALLATION_ID --private-key /path/to/private-key.pem
 ```
 
-Setup reports the actual missing grant as an optional warning. The dormant
-`ValidateTeamPolicyPermissions` hook is reserved for PR 11a to call only when a
-queue's effective approval policy references team owners or groups. There is no
-runtime caller yet; public approval configuration remains disabled. At Stage A
-activation, unresolved named identities will pause only affected queues, and an
-unreadable effective owner requirement will block its change rather than imply
-empty membership.
+The explicit `openmerge setup permissions` diagnostic calls
+`DiagnoseInstallationPermissions`, which calls `ValidateTeamPolicyPermissions`
+and reports a missing organization Members grant as an optional warning.
+The runtime Stage A pipeline does not call this grant diagnostic automatically.
+Instead, runtime policy resolution reads referenced team identities and membership
+through `ResolveTeam` and `TeamMembers`. Definite identity or membership
+unavailability creates a durable `ConfigSource` block for the affected queue;
+transient or incomplete reads retry without recording a durable configuration
+block. An unreadable effective owner requirement blocks its change rather than
+implying empty membership. Queues without team references do not acquire a
+Members-grant warning or block merely because that grant is absent.
 
 Identity-bound grants compare the permission response's stable user ID with the
 review or comment author ID. A renamed or reassigned login cannot lend another
 account's write permission. A `WriteGrant` HTTP 404 is an unknown observation
-(`ErrIdentityUnavailable`), not known-empty permission; PR 11a must report the
-lookup as unavailable and discard the grant. A successful identity-bound response
-with a non-writing permission is a known denial. Team membership is read by stable organization and
+(`ErrIdentityUnavailable`), not known-empty permission; the approval pipeline
+reports the lookup as unavailable and discards the grant. A successful
+identity-bound response with a non-writing permission is a known denial. Team
+membership is read by stable organization and
 team IDs, includes child-team members exposed by GitHub, and is unknown if any
 page fails or the observation exceeds its bound. These reads share installation
 budgets and cannot spend settlement's reserve.
@@ -1530,7 +1536,7 @@ binary requires restoring a database backup from before its first event.
 Clearing the last-20 projection or removing configuration does not remove the
 new type from the journal; never edit journal rows to make rollback work.
 
-## Stage A approval activation (PR 11b)
+## Stage A approval activation
 
 Trial class: **Hold**. Merge behind the opt-in; deploy only after ADR 0009
 period B drains. Do not add `approvals` to this repository's dogfood queue
@@ -1549,8 +1555,14 @@ even when repository-level policy keys or an opted-in sibling are present.
 
 Before the first use:
 
-1. Drain admissions and in-flight work using the existing operating procedure.
-   Stop **all** old workers, including other hosts and installations serving the
+1. Coordinate an admission freeze with repository maintainers: stop automation
+   posting queue commands and ask contributors not to enqueue new work. Let
+   admitted work finish; resolve or explicitly dequeue blocked PRs through the
+   existing authenticated `@openmerge dequeue` comment command. Read
+   `openmerge queue status --json` for every served partition and require empty
+   entries, no active/chain batches and no outstanding landing attempt. Do not
+   assume that a paused or blocked queue is drained. Then stop **all** old
+   workers, including other hosts and installations serving the
    repository, and verify that none can resume or renew a queue lease. Wait for
    outstanding leases/actions to expire or settle. A binary upgrade on one host
    is insufficient. Existing leases do not advertise binary capabilities, so
@@ -1562,7 +1574,17 @@ Before the first use:
    commit, repository object cache, binary, and operational settings with it.
    Follow the backup/restore procedure above; do not use a journal edit as a
    substitute for restoration.
-3. Start only compatible workers, then apply a reviewed approvals opt-in to the
+3. With admissions and all writers still stopped, run the compatible binary's
+   startup migrations against the backed-up database. Migrations **006 and 007**
+   build partial expression indexes with ordinary, **non-concurrent**
+   `CREATE INDEX` in startup transactions. Their `ShareLock` blocks journal
+   writes until commit; reads can continue. Reserve this drained window for
+   both migrations and verify startup completes before admitting work. Do not
+   change the migration SQL to run concurrent index builds. A failed migration
+   rolls back its DDL and migration record; repair the cause before retrying.
+   See [006 evidence](research/stage-a-9b-evidence.md) and
+   [007 evidence](research/stage-a-12a-evidence.md); synthetic timings exclude lock waits.
+4. Start only compatible workers, then apply a reviewed approvals opt-in to the
    intended queue. Verify the resolved queue and its identity diagnostics before
    reopening admissions. Unresolved policy identities pause the affected queue;
    transient identity or tree reads stop reconciliation without using stale
@@ -1604,3 +1626,39 @@ summary. CODEOWNERS/attributes patterns are limited to 512 bytes and compiled
 lazily; unsupported or oversized patterns produce conservative uncertainty.
 Decision-time code owners always pass through `ResolveOwnerEligibility` with
 fresh identity-bound observations, never a saved membership pool.
+
+
+### Activation acceptance and handback
+
+Adopt `members: read` on the sandbox App **and its organization installation**
+before using team owners. Record the actual installation grant, not just the
+App declaration. Recheck after token renewal using `setup permissions`, then
+verify team identities are readable and team members have repository write
+permission. Apply the same reviewed permission-adoption sequence to production
+only after the trial closes and the drain/backup steps above are complete.
+
+Use the [sandbox runbook](research/stage-a-sandbox-evidence.md) to record the
+accepted receipt and immutable decision with original event IDs. Sandbox
+acceptance is pending maintainer-provided resources; automated fake-forge
+acceptance is not evidence of a GitHub installation's grants. The
+[Stage A exit report](research/stage-a-acceptance.md) separates those results.
+
+If activation needs rollback, stop admissions, allow outstanding atomic attempts
+to settle through their recorded fences, then stop every compatible worker.
+Preserve the post-upgrade journal for investigation. Restore the verified
+pre-use database backup and matching binary, configuration and Git objects;
+reconcile external landed SHAs and fence state since the backup before reopening
+admissions. Do not restart an old worker against a journal containing Stage A
+or outside-push events. Removing `approvals`, reverting YAML, or downgrading the
+binary alone is insufficient. Never reset fences or edit journal rows.
+
+Review exact heads; use
+`@openmerge approve <brief-digest>` when intent review requires a receipt.
+An accepted receipt is historical evidence; the landing gate rechecks current
+eligibility and the receipt's binding. Read `change decisions --json` for the
+immutable decision and settlement rather than inferring either from trailers.
+
+Conflict grace is excluded: delivered conflicts remove work as today, without
+a grace deadline or retry budget. Stage A does not claim cancellation at depth 1.
+Old-worker detection is manual: leases lack binary capability IDs. Keep the
+all-host drain checklist and pre-use backup as operational requirements.
