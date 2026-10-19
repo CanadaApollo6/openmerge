@@ -22,7 +22,7 @@ import (
 )
 
 // Bound concurrently open schemas/pools independently of the host CPU count.
-var shadowFixtureSlots = make(chan struct{}, 8)
+var shadowFixtureSlots = make(chan struct{}, 16)
 
 // This is the ONLY installer for candidate configuration. No option, target,
 // public loader or production constructor can reach the shadow policy in 11a.
@@ -178,7 +178,19 @@ func TestStageAShadowGateDepthsAndIdentityIsolation(t *testing.T) {
 						idlePolls = 2
 					}
 					for i := 0; i < idlePolls; i++ {
-						must(t, s.cycle(t.Context(), w))
+						if !testing.Short() {
+							must(t, s.cycle(t.Context(), w))
+							continue
+						}
+						// An ordinary acquisition and the real planner must keep an
+						// unchanged approval wait idle; reporting is covered separately.
+						must(t, s.reconcile(t.Context(), w, false))
+						for _, action := range queue.Plan(w.plannerConfig(s.options.PollInterval), shadowState(t, s, w), time.Now()) {
+							switch action.(type) {
+							case queue.BuildTestRef, queue.BuildChainedTestRef:
+								t.Fatal("unchanged wait planned a retest")
+							}
+						}
 					}
 					state = shadowState(t, s, w)
 					if b := state.BatchForPR(1); b != nil && b.InvalidationReason == "" {
@@ -893,26 +905,39 @@ func TestStageACompositionRejectsOnlyUnapprovedMember(t *testing.T) {
 	approved.Reviews = []forge.NativeReview{{ID: 200, CommitID: pr.HeadSHA, Author: forge.UserIdentity{ID: 21, Login: "writer", Kind: forge.UserAccount}, State: forge.ReviewApproved, Submitted: forge.NativeTime{Time: time.Now().Add(time.Minute), Source: forge.ReviewSubmissionTime}}}
 	f.SetNativeReviews(repo, 1, approved)
 	f.SetNativeReviews(repo, 2, shadowNative(f, w, shadowComment(101, "@openmerge queue")))
-	must(t, s.cycle(t.Context(), w))
-	state = shadowState(t, s, w)
-	b := state.BatchForPR(1)
-	if b == nil || len(b.PRs) != 2 {
-		t.Fatal("expected two-member composition")
-	}
-	shadowChecks(t, s, w, f, b.TestedSHA, []forge.CheckRun{{Name: "ci", State: forge.Success, HeadBranch: b.TestRef}})
-	err = s.cycle(t.Context(), w)
-	if err != nil && !errors.Is(err, executor.ErrLandingApprovals) {
-		t.Fatal(err)
-	}
-	for i := 0; i < 6; i++ {
-		if testing.Short() && shadowLanded(t, w, f, 1) {
-			must(t, s.cycle(t.Context(), w))
-			break
+	if testing.Short() {
+		b := shadowBuildBatch(t, s, w, 1)
+		if len(b.PRs) != 2 {
+			t.Fatal("expected two-member composition")
 		}
+		shadowChecks(t, s, w, f, b.TestedSHA, []forge.CheckRun{{Name: "ci", State: forge.Success, HeadBranch: b.TestRef}})
+		shadowRefreshChecks(t, s, w)
+		shadowRejectLanding(t, s, w)
+		b = shadowBuildBatch(t, s, w, 1)
+		if len(b.PRs) != 1 || b.PRs[0].PR != 1 {
+			t.Fatal("rebuild did not isolate the approved member")
+		}
+		shadowChecks(t, s, w, f, b.TestedSHA, []forge.CheckRun{{Name: "ci", State: forge.Success, HeadBranch: b.TestRef}})
+		shadowRefreshChecks(t, s, w)
+		shadowLandBatch(t, s, w)
+	} else {
 		must(t, s.cycle(t.Context(), w))
 		state = shadowState(t, s, w)
-		if b := state.BatchForPR(1); b != nil && b.TestedSHA != "" {
-			shadowChecks(t, s, w, f, b.TestedSHA, []forge.CheckRun{{Name: "ci", State: forge.Success, HeadBranch: b.TestRef}})
+		b := state.BatchForPR(1)
+		if b == nil || len(b.PRs) != 2 {
+			t.Fatal("expected two-member composition")
+		}
+		shadowChecks(t, s, w, f, b.TestedSHA, []forge.CheckRun{{Name: "ci", State: forge.Success, HeadBranch: b.TestRef}})
+		err = s.cycle(t.Context(), w)
+		if err != nil && !errors.Is(err, executor.ErrLandingApprovals) {
+			t.Fatal(err)
+		}
+		for i := 0; i < 6; i++ {
+			must(t, s.cycle(t.Context(), w))
+			state = shadowState(t, s, w)
+			if b := state.BatchForPR(1); b != nil && b.TestedSHA != "" {
+				shadowChecks(t, s, w, f, b.TestedSHA, []forge.CheckRun{{Name: "ci", State: forge.Success, HeadBranch: b.TestRef}})
+			}
 		}
 	}
 	state = shadowState(t, s, w)
@@ -932,6 +957,20 @@ func shadowBuildBatch(t *testing.T, s *Server, w *worker, pr int) *queue.Batch {
 	t.Helper()
 	must(t, s.reconcile(t.Context(), w, false))
 	cfg := w.plannerConfig(s.options.PollInterval)
+	// Rejected compositions must be discarded through the executor before a
+	// replacement can be built. Do not bypass the durable invalidation step.
+	planned, err := s.store.Plan(t.Context(), w.id, cfg, time.Now())
+	must(t, err)
+	for _, action := range planned {
+		if _, ok := action.Action.(queue.InvalidateBatches); ok {
+			claim := claimStageAAction(t, s, w, cfg, func(a queue.Action) bool {
+				_, ok := a.(queue.InvalidateBatches)
+				return ok
+			})
+			must(t, s.execute(t.Context(), w, claim))
+			break
+		}
+	}
 	claim := claimStageAAction(t, s, w, cfg, func(action queue.Action) bool {
 		switch action.(type) {
 		case queue.BuildTestRef, queue.BuildChainedTestRef:
@@ -982,20 +1021,20 @@ func shadowLandBatch(t *testing.T, s *Server, w *worker) {
 	if unsettled {
 		t.Fatal("fake landing did not settle")
 	}
-	// Exercise a repeated production cycle after settlement as an idempotence check.
-	must(t, s.cycle(t.Context(), w))
-}
-
-func shadowLanded(t *testing.T, w *worker, f *fake.Forge, prs ...int) bool {
-	t.Helper()
-	tip, err := f.ReadRef(t.Context(), repo, w.Key.BaseBranch)
-	must(t, err)
-	for _, pr := range prs {
-		if !f.ContainsPR(repo, tip, pr) {
-			return false
-		}
+	if !testing.Short() {
+		must(t, s.cycle(t.Context(), w))
+		return
 	}
-	return true
+	// Repeated settlement must be a journal no-op, including in short runs.
+	before, err := s.store.Watermark(t.Context(), w.id)
+	must(t, err)
+	unsettled, err = s.settle(t.Context(), w)
+	must(t, err)
+	after, err := s.store.Watermark(t.Context(), w.id)
+	must(t, err)
+	if unsettled || before != after {
+		t.Fatal("repeated settlement changed the journal")
+	}
 }
 
 func shadowChecks(t *testing.T, s *Server, w *worker, f *fake.Forge, sha string, checks []forge.CheckRun) {

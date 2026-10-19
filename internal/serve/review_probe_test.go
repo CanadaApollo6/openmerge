@@ -43,6 +43,7 @@ func (d reviewCancelDriver) CancelChecks(ctx context.Context, _ forge.RepoRef, r
 }
 
 func TestReviewCancellationCannotStarveNewHead(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"confirmed", "pending", "unsupported", "permission-fallback", "missing", "pending-partial", "unsupported-partial", "404", "timeout"} {
 		t.Run(mode, func(t *testing.T) {
 			s, w, f, d := fixture(t, repositoryConfig+"    speculation:\n      max_depth: 4\n")
