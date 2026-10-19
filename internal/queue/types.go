@@ -171,16 +171,17 @@ type DequeueReason string
 
 // Stable dequeue reasons are suitable for machine-readable outcomes.
 const (
-	NotEligible            DequeueReason = "not-eligible"
-	Untrusted              DequeueReason = "untrusted"
-	HeadChanged            DequeueReason = "head-changed"
-	ChecksFailed           DequeueReason = "checks-failed"
-	ChecksTimeout          DequeueReason = "checks-timeout"
-	Conflict               DequeueReason = "conflict"
-	FastForwardRequired    DequeueReason = "fast-forward-required"
-	MergeCommitsNotAllowed DequeueReason = "merge-commits-not-allowed"
-	Closed                 DequeueReason = "closed"
-	Requested              DequeueReason = "requested"
+	NotEligible               DequeueReason = "not-eligible"
+	Untrusted                 DequeueReason = "untrusted"
+	HeadChanged               DequeueReason = "head-changed"
+	ChecksFailed              DequeueReason = "checks-failed"
+	ChecksTimeout             DequeueReason = "checks-timeout"
+	Conflict                  DequeueReason = "conflict"
+	FastForwardRequired       DequeueReason = "fast-forward-required"
+	MergeCommitsNotAllowed    DequeueReason = "merge-commits-not-allowed"
+	RebaseCompositionExceeded DequeueReason = "rebase-composition-limit"
+	Closed                    DequeueReason = "closed"
+	Requested                 DequeueReason = "requested"
 )
 
 // Event is a normalized observation, command, or action result.

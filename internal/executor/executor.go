@@ -50,8 +50,10 @@ type Executor struct {
 	// DisableDeleteHeadBranch pins retention when a landing starts. DeleteHeadBranch
 	// actions already authorized by a recorded attempt must execute with it false.
 	DisableDeleteHeadBranch bool
-	// BuildMetadata is dormant until Stage A activation. When set, it supplies
-	// immutable pre-CI classification metadata for each pinned build member.
+	// RebaseComposition is enabled only by approval queues. It reads the pinned
+	// source counts before construction; nil preserves legacy build I/O.
+	RebaseComposition func(context.Context, queue.BuildTestRef) (queue.RebaseCompositionObserved, error)
+	// BuildMetadata supplies immutable pre-CI classification metadata.
 	BuildMetadata      BuildMetadataLoader
 	BuildMetadataState queue.State
 	BuildMetadataKey   BuildChangeKey
@@ -142,8 +144,25 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 			}
 		})
 	case queue.BuildTestRef:
+		var composition *queue.RebaseCompositionObserved
+		if a.Method == queue.Rebase && x.RebaseComposition != nil {
+			observed, err := x.RebaseComposition(ctx, a)
+			if err != nil {
+				return err
+			}
+			composition = &observed
+		}
 		if err := emit(queue.BatchStarted{BatchID: a.BatchID, BaseSHA: a.BaseSHA, PRs: append([]queue.BatchPR(nil), a.PRs...), At: x.now()}); err != nil {
 			return err
+		}
+		if composition != nil {
+			if err := emit(*composition); err != nil {
+				return err
+			}
+			a.PRs, _, _ = composition.Select()
+			if len(a.PRs) == 0 {
+				return nil
+			}
 		}
 		if a.Method == queue.FastForward {
 			return x.buildFastForward(ctx, a, emit)

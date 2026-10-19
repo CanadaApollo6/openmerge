@@ -120,6 +120,13 @@ type wireBatchStarted struct {
 	PRs     []wireBatchPR `json:"prs"`
 	At      time.Time     `json:"at"`
 }
+type wireRebaseCompositionObserved struct {
+	BatchID string        `json:"batch_id"`
+	PRs     []wireBatchPR `json:"prs"`
+	Counts  []int         `json:"counts"`
+	Limit   int           `json:"limit"`
+}
+
 type wireBatchFailed struct {
 	BatchID string `json:"batch_id"`
 	Reason  string `json:"reason"`
@@ -632,6 +639,11 @@ func EncodeEvent(value Event) (string, []byte, error) {
 			return "", nil, err
 		}
 		return encodeWire("batch_started", wireBatchStarted{BatchID: v.BatchID, BaseSHA: v.BaseSHA, PRs: encodeBatchPRs(v.PRs), At: v.At})
+	case RebaseCompositionObserved:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("rebase_composition_observed", wireRebaseCompositionObserved{v.BatchID, encodeBatchPRs(v.PRs), v.Counts, v.Limit})
 	case BatchFailed:
 		if err := (FailBatch(v)).Validate(); err != nil {
 			return "", nil, err
@@ -1000,6 +1012,13 @@ func DecodeEvent(payload []byte) (Event, error) {
 			return nil, err
 		}
 		return event, nil
+	case "rebase_composition_observed":
+		v, err := readWireData[wireRebaseCompositionObserved](envelope.Data)
+		if err != nil {
+			return nil, err
+		}
+		event := RebaseCompositionObserved{v.BatchID, decodeBatchPRs(v.PRs), v.Counts, v.Limit}
+		return event, event.Validate()
 	case "batch_failed":
 		v, err := readWireData[wireBatchFailed](envelope.Data)
 		if err != nil {
