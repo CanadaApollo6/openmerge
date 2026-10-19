@@ -149,3 +149,139 @@ go test -race -v -short -count=1 ./cmd/openmerge ./internal/status ./internal/fo
 ```
 
 Wall execution: **65.954s**. Log SHA-256: `4a36d7e476d003b2eda866e5bbfd68cd926e1f580a6898e8a9b9aeba863a63ac`.
+
+### check-final: actual exit 0
+
+```sh
+make check
+```
+
+Wall execution: **445.448s**. Log SHA-256: `03f7ace4f33abd51e878e26e14d4fb610862a5e1c5e5f2c555d2521988113ded`.
+
+### sim-exits: actual exit 0
+
+```sh
+make test-sim-exits
+```
+
+Wall execution: **38.718s**. Log SHA-256: `9162227f2311a8c97d3ff82a59c3492cbb5a4e47377af8bae46e67597c3a09b0`.
+
+### compatibility: actual exit 0
+
+```sh
+python3 scripts/check-phase2-compatibility.py /home/riels/openmerge-sa-12b-main
+```
+
+Wall execution: **12.518s**. Log SHA-256: `8609790ee807f78ae7fadd31e6503a6a932f9f874af818197be4849fe5a93749`.
+
+### legacy-sql: actual exit 0
+
+```sh
+python3 scripts/check-legacy-landing-sql.py /home/riels/openmerge-sa-12b-main
+```
+
+Wall execution: **4.659s**. Log SHA-256: `2e28b07110e99f19df96151da21d0a7479da030169e5e6b0b66c9d5961221646`.
+
+### legacy-depths: actual exit 0
+
+```sh
+python3 scripts/check-legacy-plan-action-depths-1-4.py /home/riels/openmerge-sa-12b-main
+```
+
+Wall execution: **143.396s**. Log SHA-256: `3c25309b33c985c03a3aff2a5c961878e2dd1b080a03ec27dc5894981e7b3453`.
+
+### legacy-reporting: actual exit 0
+
+```sh
+python3 scripts/check-legacy-reporting.py /home/riels/openmerge-sa-12b-main
+```
+
+Wall execution: **1.184s**. Log SHA-256: `f7ea0120d2797f0849daf8651b225136ca8d252b6ffd39758c2b5a908222b28a`.
+
+### acceptance-full: actual exit 0
+
+```sh
+go test -v -count=1 ./cmd/openmerge -run "^TestStageAAcceptanceCLI$"
+```
+
+Wall execution: **87.379s**. Log SHA-256: `279b4ee060ecf43e4c4dc6c1e07c1dd2208a57e8b69f0d5d98c79fe182c086ee`.
+
+### commit-ids: actual exit 0
+
+```sh
+python3 scripts/check-legacy-commit-ids.py --baseline /home/riels/openmerge-sa-12b-main --candidate /home/riels/openmerge-sa-12b
+```
+
+Wall execution: **10.123s**. Log SHA-256: `654c5b79f64434a16d132455fa9245ac8bd7c6576b508b529c5d27c3fd002260`.
+
+### replay-main: actual exit 0
+
+```sh
+python3 scripts/check-live-journal-replay.py --baseline /home/riels/openmerge-sa-12b-main --candidate /home/riels/openmerge-sa-12b --events /home/riels/.local/share/openmerge/exports/events-20261018T051000Z.jsonl --queues /home/riels/.local/share/openmerge/exports/queues-20261018T051000Z.jsonl --strict-state --out /home/riels/.cache/openmerge-12b/replay-main.json
+```
+
+Wall execution: **65.016s**. Log SHA-256: `01c692f2729f3332d554ec46c4c684e6ffd65aad34980ad22da935072c07f799`.
+
+## Final result and source identity
+
+Every required final automated gate exited **0**. `make check` passed in
+**445.448s**, with **0 lint issues** and serve package time **309.311s** under
+`-race -short -count=1 -timeout=15m`. The CLI package passed in **63.017s**;
+the acceptance scenarios add no serve-package tests. The earlier failed check
+exited **2**, solely on the owned-file fixture's invalid expectation that a
+recorded brief supplies fresh count eligibility; serve passed that attempt in
+**286.683s**. The corrected test observes the exact-head count-review source
+and the unmet owner obligation, then verifies independent count/owner sources
+in the final decision. These are single-run durations, not performance claims.
+
+Full acceptance exited **0** in **87.379s** (test package **86.958s**), with all
+five scenarios passing at each of depths 1 and 4. Short-mode focused race
+acceptance and all carry-over/check regressions exited **0**. Warnings remain
+first even with adversarial HTML expansion; the complete bounded brief URL
+and digest survive row truncation. An overlong URL gets an explicit CLI locator
+fallback instead of a silently discarded or broken URL line.
+
+Compatibility retained 17 legacy exits, 1,055 depth-1 retry/default-digest
+records and all 84 wire fixtures byte-for-byte. The SQL differential matched
+all seven statements including transaction/lock order and detected all five
+negative controls. Depth 1/4 matched **227,662** short-corpus, **5,615,998**
+full-corpus and **188** fixture checkpoints with no nil-only exceptions.
+All six legacy check texts and preexisting serialized status fields/order
+remain identical to main. Squash, merge, rebase and fast-forward tested/landed
+commit IDs match main.
+
+The commit-ID harness also proved its own controls: identical-source self-test
+exit **0** (expected 0), mutant self-test exit **1** (expected 1; squash/rebase
+mismatch detected), and dirty-source self-test exit **2** (expected 2). Those
+expected nonzero child exits are controls, not waived failures of the final
+main-versus-candidate comparison, which exited **0**. Temporary fixture commits
+stay in the harness cache, outside this branch.
+
+Strict journal replay exited **0** with **Gate 2 PASS**, **Gate 4 PASS** and
+**2,159/2,159** identical action, strict state and snapshot checkpoints; repeated
+candidate streams are deterministic. The replay's 22-test preflight exited 0.
+It used only this existing immutable exported pair, never the live DB or API:
+
+- `events-20261018T051000Z.jsonl`, SHA-256
+  `9c8f78f3e967c7cb030948cfc9871cc67a45da06f80b12f27d1c55d09ba8accf`.
+- `queues-20261018T051000Z.jsonl`, SHA-256
+  `418f025a0e3c8792321b6d71d297f17fff1adf48cb616c8f4fcb774163696886`.
+
+Executable code was committed as
+**e6da552fb63c1aa8ad7967d46997da90c501f68a**. Commit-ID and replay comparisons
+used that clean commit against main
+**d45e709afaf57b4df2ecebebe5ce9ec75c27dfac**. The final evidence-only commit
+updates this record; executable source is unchanged. All branch commits use
+the requested Riel author and exact Signed-off-by/Claude co-author trailers.
+
+Final integrity commands both exited **0**:
+
+```sh
+git diff --check origin/main...HEAD
+git diff --exit-code origin/main -- Makefile .github/workflows .openmerge.yml .openmerge.yaml openmerge.yml openmerge.yaml
+```
+
+No real sandbox acceptance is claimed. The sandbox artifact remains PENDING;
+conflict grace is excluded, depth-1 cancellation is not claimed, and automatic
+old-worker detection remains unimplemented because leases lack capability IDs.
+Outside pushes #53 are included. Trial class remains **Hold**.
