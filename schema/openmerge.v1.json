@@ -3,7 +3,7 @@
   "$id": "https://raw.githubusercontent.com/CanadaApollo6/openmerge/main/schema/openmerge.v1.json",
   "title": "OpenMerge repository configuration, version 1",
   "description": "Repository policy read from the default branch for every queue. See internal/config/README.md for YAML, grammar, and semantic validation details.",
-  "$comment": "Stage A approval enforcement is enabled only for queues with approvals. Identity references and semantic validation are checked by the loader.",
+  "$comment": "Stage A enforcement is enabled only for queues with approvals. Loader-only checks include YAML documents, duplicate keys, aliases/tags/expansion budgets, duplicate queue names and agent identities, group references, branch overlap, integer and duration ranges, and identity resolution/pin budgets. Consumers must implement policy-member, policy-login, policy-glob, policy-label and openmerge-* formats for full grammar validation; regex patterns express only the portable subset.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -38,7 +38,13 @@
           "items": {
             "type": "string",
             "minLength": 1,
-            "format": "policy-glob"
+            "format": "policy-glob",
+            "pattern": "^(?:[^\\\\]|\\\\[\\s\\S])*$",
+            "allOf": [
+              {
+                "pattern": "\\S"
+              }
+            ]
           }
         },
         "generated": {
@@ -47,7 +53,13 @@
           "items": {
             "type": "string",
             "minLength": 1,
-            "format": "policy-glob"
+            "format": "policy-glob",
+            "pattern": "^(?:[^\\\\]|\\\\[\\s\\S])*$",
+            "allOf": [
+              {
+                "pattern": "\\S"
+              }
+            ]
           }
         },
         "sensitive": {
@@ -56,7 +68,13 @@
           "items": {
             "type": "string",
             "minLength": 1,
-            "format": "policy-glob"
+            "format": "policy-glob",
+            "pattern": "^(?:[^\\\\]|\\\\[\\s\\S])*$",
+            "allOf": [
+              {
+                "pattern": "\\S"
+              }
+            ]
           }
         }
       }
@@ -72,7 +90,8 @@
         "minItems": 1,
         "items": {
           "type": "string",
-          "format": "policy-member"
+          "format": "policy-member",
+          "pattern": "^(?:[a-zA-Z\u017f\u212a0-9](?:[a-zA-Z\u017f\u212a0-9-]*[a-zA-Z\u017f\u212a0-9])?(?:\\[[bB][oO][tT]\\])?|[a-zA-Z\u017f\u212a0-9](?:[a-zA-Z\u017f\u212a0-9-]*[a-zA-Z\u017f\u212a0-9])?/[a-zA-Z\u017f\u212a0-9](?:[a-zA-Z\u017f\u212a0-9_-]*[a-zA-Z\u017f\u212a0-9])?)$"
         }
       }
     },
@@ -84,14 +103,16 @@
         "properties": {
           "identity": {
             "type": "string",
-            "format": "policy-login"
+            "format": "policy-login",
+            "pattern": "^[a-zA-Z\u017f\u212a0-9](?:[a-zA-Z\u017f\u212a0-9-]*[a-zA-Z\u017f\u212a0-9])?(?:\\[[bB][oO][tT]\\])?$"
           },
           "accountable": {
             "type": "array",
             "minItems": 1,
             "items": {
               "type": "string",
-              "format": "policy-login"
+              "format": "policy-login",
+              "pattern": "^[a-zA-Z\u017f\u212a0-9](?:[a-zA-Z\u017f\u212a0-9-]*[a-zA-Z\u017f\u212a0-9])?(?:\\[[bB][oO][tT]\\])?$"
             }
           }
         },
@@ -438,7 +459,8 @@
           "minItems": 1,
           "items": {
             "type": "string",
-            "format": "policy-label"
+            "format": "policy-label",
+            "pattern": "^(?:docs|generated|policy|unknown|owned:user:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\[bot\\])?|owned:team:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?/[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?|owned:email:[^\\s@]+@[^\\s@A-Z]+)$"
           }
         },
         "paths": {
@@ -447,7 +469,13 @@
           "items": {
             "type": "string",
             "minLength": 1,
-            "format": "policy-glob"
+            "format": "policy-glob",
+            "pattern": "^(?:[^\\\\]|\\\\[\\s\\S])*$",
+            "allOf": [
+              {
+                "pattern": "\\S"
+              }
+            ]
           }
         },
         "touches": {
@@ -456,7 +484,13 @@
           "items": {
             "type": "string",
             "minLength": 1,
-            "format": "policy-glob"
+            "format": "policy-glob",
+            "pattern": "^(?:[^\\\\]|\\\\[\\s\\S])*$",
+            "allOf": [
+              {
+                "pattern": "\\S"
+              }
+            ]
           }
         },
         "authors": {

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 
@@ -30,16 +31,16 @@ func loadPolicy(root *yaml.Node, cfg *Config, p *parser) {
 	if !hasPolicy {
 		return
 	}
-	policy := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	policy := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Line: root.Line, Column: root.Column}
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		k, v := root.Content[i], root.Content[i+1]
 		switch k.Value {
 		case "classification", "groups", "agents":
 			policy.Content = append(policy.Content, k, v)
 		case "queues":
-			qs := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+			qs := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq", Line: v.Line, Column: v.Column}
 			for _, q := range v.Content {
-				out := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+				out := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map", Line: q.Line, Column: q.Column}
 				for j := 0; j+1 < len(q.Content); j += 2 {
 					switch q.Content[j].Value {
 					case "name", "changes", "approvals":
@@ -61,14 +62,14 @@ func loadPolicy(root *yaml.Node, cfg *Config, p *parser) {
 		}
 		return &out
 	}
-	data, err := yaml.Marshal(copyNode(policy))
+	parsed, _, err := cp.ParseCandidateNode(copyNode(policy))
 	if err != nil {
-		p.error(root, "", "%v", err)
-		return
-	}
-	parsed, _, err := cp.ParseCandidate(data)
-	if err != nil {
-		p.error(root, "", "%v", err)
+		var diagnostic *cp.ParseError
+		if errors.As(err, &diagnostic) {
+			p.errors = append(p.errors, Diagnostic{Line: diagnostic.Line, Path: diagnostic.Path, Message: diagnostic.Message})
+		} else {
+			p.error(root, "", "%v", err)
+		}
 		return
 	}
 	cfg.Policy = parsed

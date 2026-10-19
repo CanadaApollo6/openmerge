@@ -37,7 +37,7 @@ func candidateSchema(t *testing.T) *jsonschema.Schema {
 	compiler := jsonschema.NewCompiler()
 	compiler.AssertFormat()
 	for name, validate := range map[string]func(string) bool{
-		"policy-login": validLogin, "policy-member": validMember, "policy-label": ValidClassificationLabel,
+		"policy-login": ValidLogin, "policy-member": ValidMember, "policy-label": ValidClassificationLabel,
 		"policy-glob":         func(s string) bool { _, err := condition.CompileGlob(s); return err == nil },
 		"openmerge-condition": func(s string) bool { _, err := condition.Parse(s); return err == nil },
 	} {
@@ -192,5 +192,19 @@ func TestEmailClassificationLabelRejectsControls(t *testing.T) {
 		if ValidClassificationLabel("owned:email:a" + string(r) + "@example.test") {
 			t.Fatalf("accepted control U+%04X", r)
 		}
+	}
+}
+
+func TestResolvedIdentityPinBudget(t *testing.T) {
+	r := Repository{}
+	identities := make([]ResolvedIdentity, MaxPolicyIdentities+1)
+	for i := range identities {
+		identities[i] = ResolvedIdentity{Name: fmt.Sprintf("member%d", i), ID: fmt.Sprint(i + 1), Kind: HumanAccount}
+	}
+	if err := r.ValidateIdentities(identities[:MaxPolicyIdentities]); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ValidateIdentities(identities); err == nil || !strings.Contains(err.Error(), "1025 identities; maximum is 1024") {
+		t.Fatalf("budget error: %v", err)
 	}
 }

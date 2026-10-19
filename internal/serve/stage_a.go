@@ -14,6 +14,7 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/brief"
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
 	"github.com/CanadaApollo6/openmerge/internal/classification"
+	"github.com/CanadaApollo6/openmerge/internal/config"
 	"github.com/CanadaApollo6/openmerge/internal/config/condition"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -163,7 +164,7 @@ func (s *Server) refreshStageAPolicy(ctx context.Context, w *worker, tip string)
 		resolved = append(resolved, r)
 	}
 	if err := a.repository.ValidateIdentities(resolved); err != nil {
-		return err
+		return config.Errors{{Path: "approvals", Message: err.Error()}}
 	}
 	// Policy identity covers the governing tree, independent of the open-change
 	// set. Per-revision classification still reads only its pinned path evidence.
@@ -235,6 +236,9 @@ func (s *Server) refreshStageAPolicy(ctx context.Context, w *worker, tip string)
 		}
 		pins[owner.Name] = r
 		resolved = append(resolved, r)
+	}
+	if err := a.repository.ValidateIdentities(resolved); err != nil {
+		return config.Errors{{Path: "approvals", Message: err.Error()}}
 	}
 	digest, err := cp.PolicyDigest(cp.DigestInputs{Repository: a.repository, Queue: a.candidate, Resolved: resolved, Owners: owners, Attributes: attrs, ClassifierVersion: classification.Version})
 	if err != nil {

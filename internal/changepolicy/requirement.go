@@ -27,6 +27,11 @@ type Requirement struct {
 	Count          int
 }
 
+// RequirementKeys is the selector object's YAML vocabulary, shared with schema checks.
+func RequirementKeys() []string {
+	return []string{"group", "any_writer", "human", "count", "receipt", "code_owners"}
+}
+
 // Validate checks the shared value contract independently of YAML parsing.
 func (r Requirement) Validate() error {
 	if r.Selector == None {

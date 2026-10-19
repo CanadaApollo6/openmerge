@@ -17,7 +17,7 @@ type ClassificationSettings struct {
 	Docs, Generated, Sensitive []string
 }
 
-// Repository contains only the proposed additions, separate from loaded config.
+// Repository contains the approval-policy component of a loaded configuration.
 type Repository struct {
 	Classification ClassificationSettings
 	Groups         map[string][]string
@@ -41,11 +41,22 @@ type Diagnostic struct {
 	Path, Message string
 }
 
-type candidateParser struct{ err error }
+// ParseError identifies the original policy node and its YAML path.
+type ParseError struct {
+	Line          int
+	Path, Message string
+}
+
+func (e *ParseError) Error() string { return fmt.Sprintf("line %d: %s: %s", e.Line, e.Path, e.Message) }
+
+type candidateParser struct {
+	err   error
+	paths map[*yaml.Node]string
+}
 
 func (p *candidateParser) fail(n *yaml.Node, message string) {
 	if p.err == nil {
-		p.err = fmt.Errorf("line %d: %s", max(1, n.Line), message)
+		p.err = &ParseError{Line: max(1, n.Line), Path: p.paths[n], Message: message}
 	}
 }
 
@@ -89,9 +100,9 @@ func (p *candidateParser) list(n *yaml.Node) []string {
 
 func (p *candidateParser) globs(n *yaml.Node) []string {
 	out := p.list(n)
-	for _, glob := range out {
+	for i, glob := range out {
 		if _, err := condition.CompileGlob(glob); err != nil {
-			p.fail(n, "invalid glob: "+err.Error())
+			p.fail(n.Content[i], "invalid glob: "+err.Error())
 		}
 	}
 	return out
@@ -108,7 +119,7 @@ func (p *candidateParser) require(n *yaml.Node) Requirement {
 		p.fail(n, "expected none, any_writer or a selector object")
 		return Requirement{}
 	}
-	f := p.fields(n, "group", "any_writer", "human", "count", "receipt", "code_owners")
+	f := p.fields(n, RequirementKeys()...)
 	if v := f["code_owners"]; v != nil {
 		r := Requirement{Selector: CodeOwners}
 		if v.Kind != yaml.ScalarNode || v.ShortTag() != "!!bool" || v.Value != "true" {
@@ -158,7 +169,11 @@ func (p *candidateParser) require(n *yaml.Node) Requirement {
 		}
 	}
 	if err := r.Validate(); err != nil {
-		p.fail(n, err.Error())
+		where := n
+		if r.Count < 1 && f["count"] != nil {
+			where = f["count"]
+		}
+		p.fail(where, err.Error())
 	}
 	return r
 }
@@ -171,9 +186,9 @@ func (p *candidateParser) match(n *yaml.Node) Match {
 	m := Match{}
 	if v := f["labels"]; v != nil {
 		m.Labels = p.list(v)
-		for _, label := range m.Labels {
+		for i, label := range m.Labels {
 			if !ValidClassificationLabel(label) {
-				p.fail(v, "invalid classification label "+label)
+				p.fail(v.Content[i], "invalid classification label "+label)
 			}
 		}
 	}
@@ -201,7 +216,7 @@ func ValidClassificationLabel(label string) bool {
 		return true
 	}
 	if name, ok := strings.CutPrefix(label, "owned:user:"); ok {
-		return name == strings.ToLower(name) && validLogin(name)
+		return name == strings.ToLower(name) && ValidLogin(name)
 	}
 	if name, ok := strings.CutPrefix(label, "owned:team:"); ok {
 		return name == strings.ToLower(name) && teamPattern.MatchString(name)
@@ -240,12 +255,9 @@ func (p *candidateParser) approvals(n *yaml.Node) *Approvals {
 	return a
 }
 
-// ParseCandidate parses a policy-only projection for component tests. Its schema
-// is testdata/policy.schema.json, deliberately separate from the public
-// schema. It accepts no legacy queue settings: PR 11b composes these additions
-// with the existing loader. Conditions here are used only for Q5 diagnostics.
-// The public config loader does not call this function. YAML aliases, merges and custom
-// tags are rejected in this isolated component, rather than partially expanded.
+// ParseCandidate parses the policy-only grammar used by component tests and the
+// public loader's projection. It accepts no legacy planner settings. Raw inputs
+// reject aliases and explicit tags; the public loader expands YAML first.
 func ParseCandidate(data []byte) (Repository, []Diagnostic, error) {
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	var doc, extra yaml.Node
@@ -255,10 +267,21 @@ func ParseCandidate(data []byte) (Repository, []Diagnostic, error) {
 	if err := decoder.Decode(&extra); err != io.EOF {
 		return Repository{}, nil, fmt.Errorf("expected exactly one document")
 	}
-	p := &candidateParser{}
-	budget := 10000
-	var inspect func(*yaml.Node, int)
-	inspect = func(n *yaml.Node, depth int) {
+	if len(doc.Content) == 0 {
+		return Repository{}, nil, fmt.Errorf("candidate mapping is required")
+	}
+	return ParseCandidateNode(doc.Content[0])
+}
+
+// ParseCandidateNode parses a policy projection while retaining original source
+// coordinates. Callers must expand aliases and remove explicit tag styles first.
+func ParseCandidateNode(root *yaml.Node) (Repository, []Diagnostic, error) {
+	p := &candidateParser{paths: map[*yaml.Node]string{}}
+	// Reserve the document node counted by the original byte parser.
+	budget := 9999
+	var inspect func(*yaml.Node, int, string)
+	inspect = func(n *yaml.Node, depth int, path string) {
+		p.paths[n] = path
 		budget--
 		if budget < 0 || depth > 64 {
 			p.fail(n, "candidate exceeds YAML limits")
@@ -267,18 +290,25 @@ func ParseCandidate(data []byte) (Repository, []Diagnostic, error) {
 		if n.Kind == yaml.AliasNode || n.Style&yaml.TaggedStyle != 0 {
 			p.fail(n, "aliases and explicit tags are not candidate inputs")
 		}
-		for _, child := range n.Content {
-			inspect(child, depth+1)
+		for i, child := range n.Content {
+			childPath := path
+			switch n.Kind {
+			case yaml.MappingNode:
+				if path != "" {
+					childPath += "."
+				}
+				childPath += n.Content[i-i%2].Value
+			case yaml.SequenceNode:
+				childPath += fmt.Sprintf("[%d]", i)
+			}
+			inspect(child, depth+1, childPath)
 		}
 	}
-	inspect(&doc, 0)
+	inspect(root, 1, "")
 	if p.err != nil {
 		return Repository{}, nil, p.err
 	}
-	if len(doc.Content) == 0 {
-		return Repository{}, nil, fmt.Errorf("candidate mapping is required")
-	}
-	f := p.fields(doc.Content[0], "classification", "groups", "agents", "queues")
+	f := p.fields(root, "classification", "groups", "agents", "queues")
 	r := Repository{Groups: map[string][]string{}}
 	if n := f["classification"]; n != nil {
 		for key, v := range p.fields(n, "docs", "generated", "sensitive") {
@@ -304,8 +334,8 @@ func ParseCandidate(data []byte) (Repository, []Diagnostic, error) {
 			}
 			members := p.list(v)
 			for i, member := range members {
-				if !validMember(member) {
-					p.fail(v, "invalid member "+member)
+				if !ValidMember(member) {
+					p.fail(v.Content[i], "invalid member "+member)
 				}
 				members[i] = strings.ToLower(member)
 			}
@@ -324,14 +354,14 @@ func ParseCandidate(data []byte) (Repository, []Diagnostic, error) {
 				continue
 			}
 			identity := strings.ToLower(p.text(a["identity"]))
-			if !validLogin(identity) || seen[identity] {
-				p.fail(item, "invalid or duplicate agent identity "+identity)
+			if !ValidLogin(identity) || seen[identity] {
+				p.fail(a["identity"], "invalid or duplicate agent identity "+identity)
 			}
 			seen[identity] = true
 			accountable := p.list(a["accountable"])
 			for i, name := range accountable {
-				if !validLogin(name) {
-					p.fail(item, "invalid accountable login "+name)
+				if !ValidLogin(name) {
+					p.fail(a["accountable"].Content[i], "invalid accountable login "+name)
 				}
 				accountable[i] = strings.ToLower(name)
 			}

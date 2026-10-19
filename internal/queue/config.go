@@ -24,7 +24,7 @@ func (e ConfigApplied) Validate() error {
 		return err
 	}
 	if e.Policy != nil {
-		if e.Policy.DefaultBranch == "" || len(e.Policy.DefaultBranch) > 1024 || e.Policy.ClassifierVersion == "" || len(e.Policy.ClassifierVersion) > 128 || e.Policy.Resolved == nil || len(e.Policy.Resolved) > 1024 {
+		if e.Policy.DefaultBranch == "" || len(e.Policy.DefaultBranch) > 1024 || e.Policy.ClassifierVersion == "" || len(e.Policy.ClassifierVersion) > 128 || e.Policy.Resolved == nil || len(e.Policy.Resolved) > cp.MaxPolicyIdentities {
 			return fmt.Errorf("invalid approval policy pin")
 		}
 		seen := map[string]bool{}

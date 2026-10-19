@@ -136,7 +136,7 @@ func TestConfigAppliedReducedBatchLimitReformsGroups(t *testing.T) {
 }
 
 func TestApprovalConfigAppliedPinRoundTrip(t *testing.T) {
-	e := ConfigApplied{Commit: "pinned", Digest: strings.Repeat("a", 64), Policy: &cp.PolicyPin{DefaultBranch: "main", ClassifierVersion: "classifier", Resolved: []cp.ResolvedIdentity{{Name: "alice", ID: "github.com:user:1", Kind: cp.HumanAccount}, {Name: "org/team", ID: "github.com:team:1", Kind: ""}}}}
+	e := ConfigApplied{Window: &WindowBounds{MinDepth: 1, MaxDepth: 1}, Commit: "pinned", Digest: strings.Repeat("a", 64), Policy: &cp.PolicyPin{DefaultBranch: "main", ClassifierVersion: "classifier", Resolved: []cp.ResolvedIdentity{{Name: "alice", ID: "github.com:user:1", Kind: cp.HumanAccount}, {Name: "org/team", ID: "github.com:team:1", Kind: ""}}}}
 	_, raw, err := EncodeEvent(e)
 	if err != nil {
 		t.Fatal(err)

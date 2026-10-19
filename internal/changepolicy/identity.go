@@ -57,16 +57,25 @@ type ResolvedIdentity struct {
 	Kind AccountKind `json:"kind"`
 }
 
+// MaxPolicyIdentities bounds the resolved static identities in a journal policy pin.
+const MaxPolicyIdentities = 1024
+
 var loginPattern = regexp.MustCompile(`(?i)^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\[bot\])?$`)
 var teamPattern = regexp.MustCompile(`(?i)^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?/[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?$`)
 
-func validLogin(s string) bool  { return loginPattern.MatchString(s) }
-func validMember(s string) bool { return validLogin(s) || teamPattern.MatchString(s) }
+// ValidLogin reports whether a name is a bare account login.
+func ValidLogin(s string) bool { return loginPattern.MatchString(s) }
+
+// ValidMember accepts a bare account login or organization/team.
+func ValidMember(s string) bool { return ValidLogin(s) || teamPattern.MatchString(s) }
 
 // ValidateIdentities is called after resolution, before constructing a policy.
 // Accountable humans need not have write permission. Mapped agents are agents
 // even if their forge kind is human (including aliases sharing a stable ID).
 func (r Repository) ValidateIdentities(resolved []ResolvedIdentity) error {
+	if len(resolved) > MaxPolicyIdentities {
+		return fmt.Errorf("approval policy resolves %d identities; maximum is %d; reduce configured groups, agents or governing owners", len(resolved), MaxPolicyIdentities)
+	}
 	byName := map[string]ResolvedIdentity{}
 	for _, identity := range resolved {
 		name := strings.ToLower(identity.Name)

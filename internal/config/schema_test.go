@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
 	"github.com/CanadaApollo6/openmerge/internal/config/condition"
 	"github.com/CanadaApollo6/openmerge/schema"
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -55,6 +56,22 @@ var compiledSchema = sync.OnceValues(func() (*jsonschema.Schema, error) {
 		}
 		return nil
 	}})
+	for name, validate := range map[string]func(string) bool{
+		"policy-member": cp.ValidMember,
+		"policy-login":  cp.ValidLogin,
+		"policy-label":  cp.ValidClassificationLabel,
+		"policy-glob": func(s string) bool {
+			_, err := condition.CompileGlob(s)
+			return strings.TrimSpace(s) != "" && err == nil
+		},
+	} {
+		compiler.RegisterFormat(&jsonschema.Format{Name: name, Validate: func(value any) error {
+			if s, ok := value.(string); ok && !validate(s) {
+				return fmt.Errorf("invalid %s", name)
+			}
+			return nil
+		}})
+	}
 	if err := compiler.AddResource("openmerge.v1.json", doc); err != nil {
 		return nil, err
 	}
@@ -62,16 +79,38 @@ var compiledSchema = sync.OnceValues(func() (*jsonschema.Schema, error) {
 })
 
 type keySchema struct {
-	Ref        string                `json:"$ref"`
-	Properties map[string]*keySchema `json:"properties"`
-	Items      *keySchema            `json:"items"`
-	Defs       map[string]*keySchema `json:"$defs"`
+	Ref                  string                `json:"$ref"`
+	Properties           map[string]*keySchema `json:"properties"`
+	Items                *keySchema            `json:"items"`
+	Defs                 map[string]*keySchema `json:"$defs"`
+	AdditionalProperties json.RawMessage       `json:"additionalProperties"`
+	AllOf                []*keySchema          `json:"allOf"`
+	OneOf                []*keySchema          `json:"oneOf"`
 }
 
 func TestSchemaKeysMatchLoader(t *testing.T) {
 	var published keySchema
 	if err := json.Unmarshal([]byte(schema.V1), &published); err != nil {
 		t.Fatal(err)
+	}
+	var properties func(*keySchema) map[string]*keySchema
+	properties = func(node *keySchema) map[string]*keySchema {
+		out := map[string]*keySchema{}
+		if node == nil {
+			return out
+		}
+		if node.Ref != "" {
+			return properties(published.Defs[strings.TrimPrefix(node.Ref, "#/$defs/")])
+		}
+		for k, v := range node.Properties {
+			out[k] = v
+		}
+		for _, part := range append(append([]*keySchema{}, node.AllOf...), node.OneOf...) {
+			for k, v := range properties(part) {
+				out[k] = v
+			}
+		}
+		return out
 	}
 	var walk func(reflect.Type, *keySchema, string)
 	walk = func(typ reflect.Type, node *keySchema, path string) {
@@ -94,13 +133,34 @@ func TestSchemaKeysMatchLoader(t *testing.T) {
 			walk(typ.Elem(), node.Items, path+"[]")
 			return
 		}
-		// Compiled expressions have their own grammar/schema agreement corpus;
-		// they are not config mapping structs decoded through YAML field tags.
-		if typ.Kind() != reflect.Struct || typ.PkgPath() != reflect.TypeFor[Config]().PkgPath() {
+		if typ.Kind() == reflect.Map {
+			var values keySchema
+			if err := json.Unmarshal(node.AdditionalProperties, &values); err == nil {
+				walk(typ.Elem(), &values, path+".*")
+			}
+			return
+		}
+		// Compiled condition expressions have their own grammar agreement corpus.
+		if typ.Kind() != reflect.Struct || (typ.PkgPath() != reflect.TypeFor[Config]().PkgPath() && typ.PkgPath() != reflect.TypeFor[cp.Approvals]().PkgPath()) {
+			return
+		}
+		props := properties(node)
+		if typ == reflect.TypeFor[cp.Requirement]() {
+			keys := cp.RequirementKeys()
+			for name := range props {
+				if !slices.Contains(keys, name) {
+					t.Errorf("%s.%s: unknown selector key", path, name)
+				}
+			}
+			for _, name := range keys {
+				if props[name] == nil {
+					t.Errorf("%s.%s: missing selector key", path, name)
+				}
+			}
 			return
 		}
 		keys := yamlKeys(typ)
-		for name := range node.Properties {
+		for name := range props {
 			if !slices.Contains(keys, name) {
 				t.Errorf("%s.%s: schema key is not accepted by loader", path, name)
 			}
@@ -113,7 +173,7 @@ func TestSchemaKeysMatchLoader(t *testing.T) {
 			}
 			name := keys[keyIndex]
 			keyIndex++
-			walk(field.Type, node.Properties[name], path+"."+name)
+			walk(field.Type, props[name], path+"."+name)
 		}
 	}
 	walk(reflect.TypeFor[Config](), &published, "config")

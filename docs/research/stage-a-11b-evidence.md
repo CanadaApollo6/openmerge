@@ -402,3 +402,57 @@ for row in synthetic['non_allowlisted_fields']:
 counts['synthetic']=7
 print(json.dumps({'exit':0,'exact_shape':'classifications absent -> strictly nil, zero, empty map only','checkpoints':counts,'gate4':report['gate4']},sort_keys=True))
 ```
+
+## Review round 1 fixes
+
+The trial remains **Hold**. The dogfood configuration, Makefile, CI and test flags
+are unchanged. These corrections do not authorize deployment or approval opt-in.
+
+- Pinned approval ConfigApplied records now always carry explicit window bounds,
+  including `{min_depth: 1, max_depth: 1}`. Unpinned legacy depth-1 records retain
+  their original bytes. `TestStageAApprovalWindowTransitions` exercises approval
+  depth 1 → 4, removal of approvals with depth 1 → 4, and approval depth 4 → 1,
+  including restart deduplication. `TestLegacySerialWindowWireUnchanged` checks
+  serial wire bytes and legacy 1 → 4 behavior; the existing
+  `TestLegacyWindowUpgradeUsesHistoricalPolicyBeforeClamp` retains its legacy
+  migration corpus. A historical folded digest lacking bounds becomes a durable,
+  actionable config block directing the operator to drain and restore a verified
+  pre-activation backup, rather than an endlessly retried digest mismatch
+  (`TestStageAHistoricalFoldedWindowBlocksActionably`). Old decoders already
+  reject the `policy` field; adding `window` to an already pinned record does not
+  change rollback compatibility. `TestApprovalConfigAppliedPinRoundTrip` now
+  round-trips the pinned serial window and retains the exact legacy wire vector.
+- The public schema harness registers `policy-member`, `policy-login`,
+  `policy-glob` and `policy-label`. Portable regex constraints cover account/team
+  names, label forms, nonblank globs and dangling escapes; the schema `$comment`
+  explicitly identifies loader-only YAML, cross-reference and resolution checks.
+  `TestPublicPolicySchemaNegativeFormats` covers `@alice`, agent `a/b`, invalid
+  accountable logins, blank/trailing-backslash globs, rule globs and `banana`.
+  `TestSchemaKeysMatchLoader` now walks nested policy types, composed schemas and
+  selector-object keys using the parser's shared vocabulary.
+- Policy projections are parsed directly as YAML nodes, retaining original lines
+  and paths instead of remarshal coordinates. `TestPolicyDiagnosticsOriginalLocation`
+  asserts exact original lines and paths for invalid counts and nested rule labels.
+  `ParseCandidate`'s documentation describes its use by the public loader's shared
+  node parser. Candidate selection resets Stage A before lookup and fails closed
+  if an approval queue has no candidate.
+- `MaxPolicyIdentities` shares the journal's 1,024-identity budget with resolution.
+  Exceeding it produces an actionable durable configuration error before append,
+  including when governing CODEOWNERS introduces the extra identity.
+  `TestResolvedIdentityPinBudget` checks the exact boundary;
+  `TestStageAIdentityPinBudgetConfigError` covers configured and governing identities.
+- Two deliberate legacy invalid-input diagnostic changes are retained: the unknown
+  root key `group: {}` now suggests `groups`; `agents: []` is accepted as empty
+  policy data. `groups: {}`, `classification: {}` and `changes: {}` are also empty
+  policy data. On a queue without approvals they install no Stage A wiring, fold
+  no approval digest and add no warnings. `TestEmptyPolicyKeysPreserveLegacyConfig`
+  compares warnings and legacy digests and asserts the new typo suggestion;
+  `TestStageAEmptyPolicyKeysDoNotActivate` verifies production wiring/digest behavior.
+
+Round 1 commands use the same host-idle runner and constrained environment as
+above, with `r1-*` logs under `/home/riels/.cache/openmerge-11b/`. The initial
+focused run exited **1** solely because the new legacy transition assertion
+incorrectly expected immediate growth from 1 to 4. Existing adaptive behavior
+retains window 1 while increasing its ceiling; that assertion was corrected.
+The supplied Astra reproduction had already shown the approval transition failure
+before this fix (`depth-increase.log`, exit 1).
