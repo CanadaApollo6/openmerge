@@ -37,8 +37,16 @@ mise exec -- go run ./tools/dogfood audit \
   --database-url "$OM_DOGFOOD_DB" \
   --installation "$OM_DOGFOOD_INSTALLATION" --repository "$OM_DOGFOOD_REPO" \
   --since '2026-10-17T12:00:00Z' --until '2026-11-14T12:00:00Z' \
-  --git-cache "$HOME/.local/share/openmerge/git-cache" --json > audit.json
+  --git-repo /path/to/openmerge/.git --json > audit.json
 ```
+
+Use a complete clone whose `main` has been fetched up to the audit's upper
+bound. The server's own cache (`--git-cache`) usually cannot serve an audit:
+the server prunes unreferenced objects after each cycle, so the cache often holds
+no landed commits, and every landing fails closed as a `tested_commit` and
+`main_forward` violation on a missing object. Those are missing-evidence
+failures, not incorrect landings; rerun with `--git-repo` before treating them
+as an abort condition.
 
 The dates above illustrate the syntax; replace them with the actual completed
 period. `--until` defaults to the invocation time. Run the audit **daily from
