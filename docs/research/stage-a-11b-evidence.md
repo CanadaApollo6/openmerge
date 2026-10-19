@@ -974,4 +974,164 @@ are read; there is no live DB, status API, service-unit or production-ref access
 Tests use local/fake forges; Git transport and the authorized PR body edit are
 the only remote operations.
 
-Results and frozen implementation revision are recorded below after the gates.
+Frozen tested implementation: `e2535e140c38ecb26593c78347883fe2661708ce`.
+All required gates below ran on that clean revision against clean main
+`428f24f20a41c723ae441d97a6cef36025fa6735`. The final evidence-only commit
+changes this Markdown file; production, tests and goldens are unchanged.
+
+The first focused run exited **1** solely because the newly added approval
+brief golden had not yet been generated; serve passed. The first golden
+invocation exited **1** after writing the brief vector: the new success-path
+check assertion exposed the invalid synthesized read basis. Reusing the
+recorded intent basis fixed that integration issue. Golden retry and the focused
+suite both exited **0**. The successful check vector was then encoded as a JSON
+string to preserve its exact bytes (including spaces) without source-file
+trailing whitespace; regeneration exited **0**. The final full check uses the
+committed JSON vector. No failure is waived.
+
+Logs are under `/home/riels/.cache/openmerge-11b/`. Wall seconds exclude host-idle
+waiting and are execution records, not performance measurements.
+
+
+| Run | Actual exit | Wall seconds | Log SHA-256 |
+|---|---:|---:|---|
+| `rebase-focused` | 1 | 27.27 | `3df38b3efeda63cc154be2be5dbabf7ef035d39fa95c1a7a2cba7a6da7e9a072` |
+| `rebase-goldens` | 1 | 0.23 | `dca69a84880cd85eba1bbcbb48a6ecab13b12ddac93bc49f5cd8c52d6221b252` |
+| `rebase-goldens-retry` | 0 | 0.515 | `6026e649823835c2320ab35f7b9f31ba4e918284b098b00af0961f039cad731c` |
+| `rebase-focused-retry` | 0 | 26.025 | `49ce3e118855b79be90cdf3104b4dfa362e9ce8dbd64a9b5648e1e6e67c6b588` |
+| `rebase-golden-json` | 0 | 0.509 | `6026e649823835c2320ab35f7b9f31ba4e918284b098b00af0961f039cad731c` |
+| `rebase-check` | 0 | 420.923 | `861cef3a80f4a73867b3abc2001f72c98b09db9fdd3b82b850924eb1c4595127` |
+| `rebase-sim-exits` | 0 | 38.736 | `d8fb0e4a6fcab915f15a14452102ac13f8dde9f979832858ad7857c9265996b7` |
+| `rebase-compatibility` | 0 | 12.852 | `8609790ee807f78ae7fadd31e6503a6a932f9f874af818197be4849fe5a93749` |
+| `rebase-legacy-sql` | 0 | 4.813 | `ff172879dc9a455db1191ae93ba01122c064a1610555a1043bcad467b14f6661` |
+| `rebase-depths` | 0 | 142.791 | `3c25309b33c985c03a3aff2a5c961878e2dd1b080a03ec27dc5894981e7b3453` |
+| `rebase-commit-ids` | 0 | 11.874 | `c683712fed3bbf3c5692b1f1c130ffc7a40d070f75d7b58d7cb6ce09d96c2fd4` |
+| `rebase-unicode` | 0 | 27.862 | `d57b2a4d360b41b8800e533791a69b1ed5bda35df73ddec51b9f0e1d60e0bf2d` |
+| `rebase-reporting` | 0 | 1.169 | `b04978d72e5e5a60f72a573fee8ff5cd8d973099c5a8a749f48cc61bfbd7084c` |
+| `rebase-replay-main` | 0 | 65.863 | `482f7c08b94c5dc83734f5e66dd1916fca8d0be098f9e1f7a6c7f7334126768d` |
+
+Results and child statuses:
+
+- `make check`: **0**; formatting, zero lint issues, complete race/short suite,
+  binary build. `make test-sim-exits`: **0**.
+- Compatibility: **0**, all 17 exit records, 1,055 retry/default digest records
+  and 84 historical wire fixtures byte-identical.
+- Legacy SQL: **0**, all seven statements and transaction/lock ordering match.
+  Baseline, candidate and all five mutant Go traces individually exited **0**;
+  every negative control produced the required detectable SQL difference.
+- Depth 1/4: **0**, 227,662 short and 5,615,998 full checkpoints plus 188 journal
+  fixture records matched exactly. All six underlying Go test invocations
+  exited **0**, with no plan/action/wake exceptions.
+- Stock commit IDs: **0**, independently identical tested/landed IDs for squash,
+  merge, rebase and fast-forward. Sensitivity controls: identical **0**,
+  intentional mutant **1**, dirty source **2**, all expected.
+- Unicode: **0**, both fake-HTTP status/executor probes exited **0**, all four
+  producer pairs match. All five fixtures match tested/landed IDs independently
+  across all four methods; each fixture binary build and execution exited **0**.
+- Legacy reporting: **0**, baseline and candidate probes each exited **0**.
+  Six legacy checks are byte-identical; preexisting serialized status fields
+  and their order match after stripping only the permitted change/landing
+  metadata. Comparator negative controls passed.
+- Strict replay vs main: **0**, all 2,159 real structural checkpoints and seven
+  synthetic checkpoints match; repeat determinism passed. No replay exception
+  was added. Replay report: `~/.cache/openmerge-11b/rebase-replay-main.json`.
+- The outer serialized gate sequencer exited **0**. Author/trailer validation,
+  clean-source checks, migration/Makefile/CI/dogfood equality, and
+  `git diff --check` also exited **0**.
+
+Exact commands, each launched through the host-idle runner with the environment
+above (golden update applies only to its explicitly named invocations):
+
+`rebase-focused` — actual exit **1**:
+
+```sh
+go test -short -count=1 ./internal/status ./internal/serve
+```
+
+`rebase-goldens` — actual exit **1**:
+
+```sh
+env OPENMERGE_UPDATE_REPORTING_GOLDENS=1 go test -short -count=1 ./internal/status -run '^TestApprovalBriefPinnedComposition$'
+```
+
+`rebase-goldens-retry` — actual exit **0**:
+
+```sh
+env OPENMERGE_UPDATE_REPORTING_GOLDENS=1 go test -short -count=1 ./internal/status -run '^TestApprovalBriefPinnedComposition$'
+```
+
+`rebase-focused-retry` — actual exit **0**:
+
+```sh
+go test -short -count=1 ./internal/status ./internal/serve
+```
+
+`rebase-golden-json` — actual exit **0**:
+
+```sh
+env OPENMERGE_UPDATE_REPORTING_GOLDENS=1 go test -short -count=1 ./internal/status -run '^TestApprovalBriefPinnedComposition$'
+```
+
+`rebase-check` — actual exit **0**:
+
+```sh
+make check
+```
+
+`rebase-sim-exits` — actual exit **0**:
+
+```sh
+make test-sim-exits
+```
+
+`rebase-compatibility` — actual exit **0**:
+
+```sh
+python3 -B scripts/check-phase2-compatibility.py /home/riels/openmerge-sa-11b-rebase-main
+```
+
+`rebase-legacy-sql` — actual exit **0**:
+
+```sh
+python3 -B scripts/check-legacy-landing-sql.py /home/riels/openmerge-sa-11b-rebase-main
+```
+
+`rebase-depths` — actual exit **0**:
+
+```sh
+python3 -B scripts/check-legacy-plan-action-depths-1-4.py /home/riels/openmerge-sa-11b-rebase-main
+```
+
+`rebase-commit-ids` — actual exit **0**:
+
+```sh
+python3 -B scripts/check-legacy-commit-ids.py --baseline /home/riels/openmerge-sa-11b-rebase-main
+```
+
+`rebase-unicode` — actual exit **0**:
+
+```sh
+python3 -B scripts/check-legacy-unicode-logins.py --baseline /home/riels/openmerge-sa-11b-rebase-main
+```
+
+`rebase-reporting` — actual exit **0**:
+
+```sh
+python3 -B scripts/check-legacy-reporting.py /home/riels/openmerge-sa-11b-rebase-main
+```
+
+`rebase-replay-main` — actual exit **0**:
+
+```sh
+python3 -B scripts/check-live-journal-replay.py --baseline /home/riels/openmerge-sa-11b-rebase-main --candidate /home/riels/openmerge-sa-11b --events /home/riels/.local/share/openmerge/exports/events-20261018T051000Z.jsonl --queues /home/riels/.local/share/openmerge/exports/queues-20261018T051000Z.jsonl --strict-state --out /home/riels/.cache/openmerge-11b/rebase-replay-main.json
+```
+
+### Range-diff summary
+
+`git range-diff 6e2b50b..e90bc7e 428f24f..stage-a/11b-activation` retains all ten
+original commits: nine are patch-identical, and the first activation commit is
+adapted to the shared 12a projection and full classification-time pins. One
+follow-up adds the recorded-basis check fix, approval reporting regression
+coverage/goldens and rebase explanation; the final follow-up records verification
+only. The complete command output is retained at
+`~/.cache/openmerge-11b/rebase-range-diff.txt`.
