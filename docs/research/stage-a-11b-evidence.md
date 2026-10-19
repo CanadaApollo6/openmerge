@@ -642,3 +642,110 @@ fallback cases: neither suppresses another contributor's attribution, while
 ASCII mixed case and authoritative stable IDs retain their existing behavior.
 The former Unicode-positive `TestPublicPolicySchemaValidFormats` vector now uses
 `Kate` and `sam`; the operator intentionally withdrew Unicode identity support.
+
+### Round 2 execution results
+
+Tested implementation: `3ec4fdb106f83b1c8cdc75b53351acda1ca4f74e`.
+Baseline: clean `/home/riels/openmerge-sa-11b-main` at
+`6e2b50b9da5c098ebfd76e0b1b20a5990c2663bb`, matching final `origin/main`.
+All heavy jobs waited for foreign Go tests/test binaries/replays to clear and
+ran serially with `GOFLAGS=-p=2`, `GOMEMLIMIT=4GiB`,
+`GOTMPDIR=/home/riels/.cache/openmerge-11b/gotmp`,
+`GOCACHE=/home/riels/.cache/go-build`, and the authorized shared test PostgreSQL
+URL. No process was killed. No real GitHub API calls were used for testing.
+
+The first focused run exited **1** because the new positive YAML flow-list
+fixture needed quotes around bot suffixes. After correction, the expanded
+focused retry exited **0**. The first full `make check` exited **2** solely
+because the old `TestPublicPolicySchemaValidFormats` positive fixture explicitly
+accepted `Kate`/`ſam`. All other packages passed. That fixture now uses ASCII
+spellings under the operator's new contract; schema-focused retry and complete
+`make check` both exited **0**. No production code changed after that failure.
+The first gate sequencer returned **2**, and its corrected rerun returned **0**;
+each child/wrapper status agrees with the table below.
+
+Logs below live in `/home/riels/.cache/openmerge-11b/`. Wall times exclude host
+waiting and are execution records, not performance claims.
+
+| Gate/attempt | Actual exit | Wall seconds | Log SHA-256 |
+|---|---:|---:|---|
+| `r2-focused` | 1 | 5.15 | `9f3c0db1ba0bcf6a4281e18b714266afb4c8065f1c77738458696334cbe5ab7a` |
+| `r2-focused-retry` | 0 | 2.248 | `8d596c94598e78c187c86b9212df19e9819f0eba2b133741a4d66b351623eb59` |
+| `r2-check` | 2 | 414.513 | `29ba1d20569cbae24d812824373f728f8fc38b858761ac2bfcb66c6150988c75` |
+| `r2-schema-retry` | 0 | 0.363 | `e1d6aefdbe835da0ee513518400077503b6d394b2b31f4e4869ef794be8b7d81` |
+| `r2-check-retry` | 0 | 393.558 | `4f39a292c2c24b2b2f8724c98528db8089cffb631db18c5b2af388bf2f78d4b6` |
+| `r2-compatibility` | 0 | 11.392 | `8609790ee807f78ae7fadd31e6503a6a932f9f874af818197be4849fe5a93749` |
+| `r2-legacy-sql` | 0 | 4.127 | `fe2faa0a68410d87ceef36bb932bf7203279378467e8af399b607abf15999e31` |
+| `r2-commit-ids` | 0 | 12.752 | `f43adddf778ad0f8f0fcaebbdc47a6b4d26fc160ae2f17741b631b976ea429aa` |
+
+Exact commands (each invoked through the serialized host-idle runner):
+
+`r2-focused` — actual exit **1**:
+
+```sh
+go test -short ./internal/ascii ./internal/config ./internal/changepolicy ./internal/classification ./internal/forge/github ./internal/forge/fake ./internal/gitops ./internal/serve -run 'TestIdentity|TestCodeownersRejectsUnicodeIdentities|TestPolicy|TestCandidate|TestStageAConfig|TestApprovalDepth' -count=1
+```
+
+`r2-focused-retry` — actual exit **0**:
+
+```sh
+go test -short ./internal/ascii ./internal/config ./internal/changepolicy ./internal/classification ./internal/forge/github ./internal/forge/fake ./internal/gitops ./internal/serve -run 'TestIdentity|TestCodeownersRejectsUnicodeIdentities|TestPolicy|TestCandidate|TestLinkedCommitAuthorsExcludePrimaryAliases|TestApproval|TestHistorical|TestLegacyConfig' -count=1
+```
+
+`r2-check` — actual exit **2**:
+
+```sh
+make check
+```
+
+`r2-schema-retry` — actual exit **0**:
+
+```sh
+go test -short ./internal/config -run 'TestIdentityASCII|TestPublicPolicySchemaValidFormats' -count=1
+```
+
+`r2-check-retry` — actual exit **0**:
+
+```sh
+make check
+```
+
+`r2-compatibility` — actual exit **0**:
+
+```sh
+python3 scripts/check-phase2-compatibility.py /home/riels/openmerge-sa-11b-main
+```
+
+`r2-legacy-sql` — actual exit **0**:
+
+```sh
+python3 scripts/check-legacy-landing-sql.py /home/riels/openmerge-sa-11b-main
+```
+
+`r2-commit-ids` — actual exit **0**:
+
+```sh
+python3 scripts/check-legacy-commit-ids.py --baseline /home/riels/openmerge-sa-11b-main
+```
+
+Compatibility vs main: **0**; 17 legacy exit records, 1,055 retry/default-digest
+records and 84 existing top-level wire fixtures are byte-identical. Legacy SQL:
+**0**, seven statements identical including transaction/lock order; both source
+Go tests and all five mutant Go tests exited **0**, with each negative control
+successfully detecting the SQL difference (authorize-extra-statement,
+claim-without-for-update, legacy-via-nil-policy-start, load-before-claim-check,
+emit-send-batch).
+
+Four-method tested/landed ID comparison: **0**; both revisions agree separately
+on tested IDs and landed IDs for squash, merge, rebase and fast-forward.
+Self-test exits: identical **0**, deliberate mutant **1**, dirty source **2**,
+all expected. These sensitivity checks are not failures of the candidate.
+The full log retains all source hashes, binary hashes and per-method IDs.
+
+Final explicit-refspec fetch of only main and this branch exited **0**;
+main remained `6e2b50b9da5c098ebfd76e0b1b20a5990c2663bb`, so no rebase was needed.
+Protected-file comparison (Makefile, CI, dogfood config), clean-tree check before
+commit-ID collection, and `git diff --check` exited **0**. The following evidence
+commit changes only this Markdown file; implementation/gates remain those of
+`3ec4fdb`. No live DB, service, production refs or status API was accessed.
+No approvals were added to dogfood. Trial class remains **Hold**.
