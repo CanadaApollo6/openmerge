@@ -17,6 +17,8 @@ type RebaseCompositionObserved struct {
 }
 
 func (RebaseCompositionObserved) queueEvent() {}
+
+// Validate requires pinned members and positive counts within one lookahead.
 func (e RebaseCompositionObserved) Validate() error {
 	if e.BatchID == "" || len(e.PRs) == 0 || len(e.PRs) != len(e.Counts) || e.Limit < 1 || e.Limit > forge.MaxFirstParentCommits || len(e.PRs) > 128 {
 		return fmt.Errorf("invalid rebase composition")
