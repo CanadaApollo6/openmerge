@@ -16,10 +16,11 @@ spec = importlib.util.spec_from_file_location("ids", Path(__file__).with_name("c
 ids = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = ids
 spec.loader.exec_module(ids)
+BASE_HARNESS = ids.HARNESS
 
 
 def commit_harness(login, primary, stable):
-    h = ids.HARNESS.replace("Other <other@example.test>", "Zoë <zoë@éxample.test>")
+    h = BASE_HARNESS.replace("Other <other@example.test>", "Zoë <zoë@éxample.test>")
     h = h.replace("prs := make([]forge.BuildPR, 2)", "prs := make([]forge.BuildPR, 2)\n linked := map[int][]forge.CommitAuthor{}")
     old = 'parent = f.commit(parent, fmt.Sprintf("Commit %d/%d\\n\\n%s", i, j, prose), map[string]string{name: name+"\\n"})'
     new = '''previous := parent
