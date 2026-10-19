@@ -90,7 +90,7 @@ func TestLandingDecisionGolden(t *testing.T) {
 		t.Fatal(err)
 	}
 	if os.Getenv("UPDATE_9") == "1" {
-		if err := os.WriteFile("testdata/wire/v1/event_landing_decision_recorded.json", raw, 0644); err != nil {
+		if err := os.WriteFile("testdata/wire/v1/variants/landing_decision_activation.json", raw, 0644); err != nil {
 			t.Fatal(err)
 		}
 		input := struct {
@@ -109,11 +109,11 @@ func TestLandingDecisionGolden(t *testing.T) {
 			input.Events = append(input.Events, v)
 		}
 		data, _ := json.MarshalIndent(input, "", "  ")
-		if err := os.WriteFile("testdata/landing-start.json", data, 0644); err != nil {
+		if err := os.WriteFile("testdata/landing-start-activation.json", data, 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	want, err := os.ReadFile("testdata/wire/v1/event_landing_decision_recorded.json")
+	want, err := os.ReadFile("testdata/wire/v1/variants/landing_decision_activation.json")
 	if err != nil || !bytes.Equal(want, raw) {
 		t.Fatal("decision golden drift", err)
 	}
