@@ -5,7 +5,6 @@ import (
 	"html"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/brief"
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
@@ -46,10 +45,10 @@ func ReviewerCheckSummaryFromProjection(j store.Journal, q *Queue, pr int, polic
 		return "", err
 	}
 	entry := q.LedgerEntry(pr)
-	return reviewerCheckText(j.Key, string(id), view, q, entry), nil
+	return reviewerCheckText(j.Key, string(id), view, entry), nil
 }
 
-func reviewerCheckText(key store.QueueKey, id string, view brief.View, q *Queue, entry *Entry) string {
+func reviewerCheckText(key store.QueueKey, id string, view brief.View, entry *Entry) string {
 	text := ""
 	// Safety warnings are emitted first and individually bounded, independent of
 	// the row budget. Never truncate the final summary across a warning boundary.
@@ -111,7 +110,7 @@ func reviewerCheckText(key store.QueueKey, id string, view brief.View, q *Queue,
 		}
 	}
 	if entry != nil {
-		text += "\nRecorded queue state: " + checkText(entry.Status, 80) + "; gate: " + checkText(holdingGate(q, *entry, queue.Config{}, time.Time{}), 100)
+		text += "\nRecorded queue state: " + checkText(entry.Status, 80) + "; gate: " + checkText(entry.Gate, 100)
 	}
 	if view.Obligations == nil {
 		text += "\nRequirements: not recorded (policy unavailable)."

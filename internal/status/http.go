@@ -224,6 +224,9 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 			}
 			q, _, _ := Project(j, 0, 0, sanitizer)
 			entry := q.changeEntry(j.Key, change.id)
+			if entry != nil {
+				entry.Change = reportChange(j.Key, q.state, entry.PR, sanitizer)
+			}
 			view, found, err := projectBriefFromProjection(j, &q, entry, change.id, "reviewer", briefOptions{sanitizer: sanitizer, policy: briefPolicyProjection(ctx, source, j, &q)})
 			if err != nil {
 				fail(w, 503, "unavailable", "change could not be projected")

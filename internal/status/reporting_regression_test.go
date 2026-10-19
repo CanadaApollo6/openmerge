@@ -136,7 +136,6 @@ func TestChangeShowAndPRAliasEntryMatch(t *testing.T) {
 }
 
 func TestReviewerCheckReceiptsWaitingAndWarningGolden(t *testing.T) {
-	q := Queue{}
 	e := &Entry{Change: &ChangeReport{WaitingReasons: []string{strings.Repeat("<tag>*[bad]\n", 100)}}}
 	for i := 0; i < 20; i++ {
 		e.Change.WaitingReasons = append(e.Change.WaitingReasons, "approval-required")
@@ -145,7 +144,7 @@ func TestReviewerCheckReceiptsWaitingAndWarningGolden(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		v.Warnings = append(v.Warnings, brief.Warning{Code: "policy_unavailable", Detail: strings.Repeat("<warning>*", 1000)})
 	}
-	text := reviewerCheckText(key, "change", v, &q, e)
+	text := reviewerCheckText(key, "change", v, e)
 	if len(text) > 12050 || strings.Contains(text, "<tag>") || strings.Contains(text, "receipt: not recorded") || !strings.Contains(text, "+42 more warnings") || !strings.Contains(text, "+13 more") {
 		t.Fatal("unsafe check", text)
 	}
@@ -169,9 +168,8 @@ func TestChangeShowWithoutRevisionEvidenceIsNotFound(t *testing.T) {
 func TestReviewerCheckWarningsSurviveOversizedBriefURL(t *testing.T) {
 	hugeKey := key
 	hugeKey.BaseBranch = strings.Repeat("branch/", 12000)
-	q := Queue{}
 	v := brief.View{Digest: brief.NotRecorded, Warnings: []brief.Warning{{Code: "policy_unavailable", Detail: "policy reconstruction failed"}}}
-	text := reviewerCheckText(hugeKey, "change", v, &q, nil)
+	text := reviewerCheckText(hugeKey, "change", v, nil)
 	for _, want := range []string{"WARNING: classification/inventory not recorded", "WARNING: policy\\_unavailable", "+more evidence in full brief"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("lost warning %q in bounded output: %s", want, text)
@@ -179,5 +177,17 @@ func TestReviewerCheckWarningsSurviveOversizedBriefURL(t *testing.T) {
 	}
 	if len(text) > 12050 {
 		t.Fatal("check exceeds bound", len(text))
+	}
+}
+
+func TestReviewerCheckUsesCurrentOperationalGate(t *testing.T) {
+	q, entry, _ := Project(journal(admission()...), 1, 0, nil)
+	ApplyPolicy(&q, entry, queue.Config{SpeculationMaxDepth: 4, BatchMaxSize: 8, BatchMaxWait: time.Hour}, at.Add(time.Minute))
+	if entry.Gate != "max_wait" {
+		t.Fatalf("gate=%s", entry.Gate)
+	}
+	text := reviewerCheckText(key, "change", brief.View{}, entry)
+	if !strings.Contains(text, "gate: max\\_wait") {
+		t.Fatalf("check lost applied gate: %s", text)
 	}
 }
