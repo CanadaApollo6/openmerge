@@ -52,8 +52,9 @@ type Agent struct {
 // ResolvedIdentity is static policy identity resolution, not current membership.
 // Names are bare logins or org/team; IDs include both users and teams.
 type ResolvedIdentity struct {
-	Name, ID string
-	Kind     AccountKind
+	Name string      `json:"name"`
+	ID   string      `json:"id"`
+	Kind AccountKind `json:"kind"`
 }
 
 var loginPattern = regexp.MustCompile(`(?i)^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\[bot\])?$`)

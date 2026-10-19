@@ -35,7 +35,7 @@ func classificationEvent(t *testing.T, derivers ...classification.Deriver) Chang
 	return ChangeClassified{Evidence: e}
 }
 func TestClassificationWireAndVariants(t *testing.T) {
-	for _, name := range []string{"event_change_classified.json", "variants/classified_complete.json", "variants/classified_incomplete.json", "variants/classified_facets_v2.json", "variants/classified_facets_v3.json"} {
+	for _, name := range []string{"event_change_classified.json", "variants/classified_complete.json", "variants/classified_incomplete.json", "variants/classified_facets_v2.json", "variants/classified_facets_v3.json", "variants/classified_v8.json"} {
 		raw, err := os.ReadFile("testdata/wire/v1/" + name)
 		if err != nil {
 			t.Fatal(err)
@@ -55,11 +55,11 @@ func TestClassificationWireAndVariants(t *testing.T) {
 		t.Fatal(err)
 	}
 	if os.Getenv("UPDATE_7A") == "1" {
-		if err := os.WriteFile("testdata/wire/v1/variants/classified_v8.json", raw, 0644); err != nil {
+		if err := os.WriteFile("testdata/wire/v1/variants/classified_activation.json", raw, 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	golden, err := os.ReadFile("testdata/wire/v1/variants/classified_v8.json")
+	golden, err := os.ReadFile("testdata/wire/v1/variants/classified_activation.json")
 	if err != nil || !bytes.Equal(raw, golden) {
 		t.Fatal("current golden drift", err)
 	}
@@ -387,10 +387,10 @@ func TestClassificationNestedWireAndSnapshotValues(t *testing.T) {
 }
 
 func TestClassificationHistoricalRenameAndObjectFormats(t *testing.T) {
-	for _, version := range []string{classification.HistoricalVersion, classification.PreviousVersion, classification.RetainedVersion, classification.Version} {
+	for _, version := range []string{classification.HistoricalVersion, classification.PreviousVersion, classification.RetainedVersion, classification.UnboundedPatternVersion, classification.Version} {
 		e := classificationEvent(t)
 		e.Evidence.Classification.Inputs.ClassifierVersion = version
-		if version != classification.Version {
+		if version != classification.Version && version != classification.UnboundedPatternVersion {
 			e.Evidence.Governing.Semantics = "git-evidence-v7-bounded-omissions"
 		}
 		// facets-v1 mapped the forge unpaired single-side flag to Renamed=true.

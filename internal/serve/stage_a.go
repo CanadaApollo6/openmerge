@@ -2,7 +2,6 @@ package serve
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,16 +20,17 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/status"
 )
 
-// stageAPolicy has no production constructor or public configuration path in
-// 11a. Isolated tests install a candidate; 11b owns activation and config digest
-// composition. A nil policy preserves every legacy read and write path.
+// stageAPolicy is installed only for a resolved queue with approvals. A nil
+// policy preserves every legacy read and write path.
 type stageAPolicy struct {
-	repository cp.Repository
-	candidate  cp.CandidateQueue
-	policy     cp.Policy
-	mappings   map[string][]cp.Identity
-	identities map[string]cp.ResolvedIdentity
-	governing  *stageAGoverningCache
+	repository    cp.Repository
+	defaultBranch string
+	candidate     cp.CandidateQueue
+	policy        cp.Policy
+	pin           *cp.PolicyPin
+	mappings      map[string][]cp.Identity
+	identities    map[string]cp.ResolvedIdentity
+	governing     *stageAGoverningCache
 }
 
 func policyIdentity(u forge.UserIdentity) (cp.Identity, error) {
@@ -101,7 +101,7 @@ func resolvePool(ctx context.Context, ids forge.IdentityReader, name string, pin
 }
 
 // refreshStageAPolicy re-resolves names even at an unchanged governing commit.
-// The public configuration loader remains the first boundary and rejects keys.
+// Policy identity is refreshed even when the governing Git commit is unchanged.
 func (s *Server) refreshStageAPolicy(ctx context.Context, w *worker, tip string) error {
 	ids, _, err := w.stageReaders()
 	if err != nil {
@@ -249,13 +249,20 @@ func (s *Server) refreshStageAPolicy(ctx context.Context, w *worker, tip string)
 	if digest != a.policy.Digest {
 		for name, expression := range map[string]condition.Expression{"enter_when": w.cfg.EnterWhen, "merge_when": w.cfg.MergeWhen} {
 			if slices.Contains(expression.Attributes(), reviewAttribute) {
-				s.options.Logger.Warn("candidate approval configuration", "path", name, "diagnostic", cp.ReviewTermsDiagnostic)
+				s.options.Logger.Warn("approval configuration", "path", name, "diagnostic", cp.ReviewTermsDiagnostic)
 			}
 		}
 	}
 	a.policy, a.mappings, a.identities = cp.Policy{Digest: digest, Approvals: a.candidate.Approvals}, mappings, pins
-	// Test-only effective pin. 11b defines the public ConfigApplied composition.
-	w.configDigest = fmt.Sprintf("%x", sha256.Sum256([]byte("openmerge-11a-shadow\x00"+w.cfg.Digest(!s.options.DisableDeleteHeadBranch)+"\x00"+digest)))
+	deleteHead := !s.options.DisableDeleteHeadBranch
+	if w.deleteHeadBranch != nil {
+		deleteHead = *w.deleteHeadBranch
+	}
+	w.configDigest, err = cp.WithPolicyDigest(w.cfg.Digest(deleteHead), digest)
+	if err != nil {
+		return err
+	}
+	a.pin = &cp.PolicyPin{DefaultBranch: a.defaultBranch, Resolved: resolved, ClassifierVersion: classification.Version}
 	return nil
 }
 

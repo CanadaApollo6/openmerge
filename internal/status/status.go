@@ -150,6 +150,7 @@ type Event struct {
 func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Queue, *Entry, *Why) {
 	s := j.Seed
 	policyPins := []briefPolicyPin{}
+	configPin := queue.ConfigApplied{Commit: j.Seed.ConfigCommit, Digest: j.Seed.ConfigDigest}
 	known := make(map[int]Entry)
 	heads := make(map[int]string)
 	var tested map[string]bool
@@ -161,8 +162,11 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 	var watermark int64
 	visit := func(record store.JournalEvent, before, after queue.State) {
 		s = after
-		if e, ok := record.Event.(queue.ChangeClassified); ok {
-			policyPins = append(policyPins, briefPolicyPin{e.Evidence, queue.ConfigApplied{Commit: after.ConfigCommit, Digest: after.ConfigDigest}})
+		if e, ok := record.Event.(queue.ConfigApplied); ok && e.Commit == after.ConfigCommit && e.Digest == after.ConfigDigest {
+			configPin = e
+		}
+		if e, ok := record.Event.(queue.ChangeClassified); ok && configPin.Commit == after.ConfigCommit && configPin.Digest == after.ConfigDigest {
+			policyPins = append(policyPins, briefPolicyPin{e.Evidence, configPin})
 		}
 		if e, ok := record.Event.(queue.OutsidePushRecorded); ok {
 			outsidePushes = append(outsidePushes, OutsidePush{EventID: record.ID, OutsidePushRecorded: e})

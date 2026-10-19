@@ -312,3 +312,13 @@ participate in the effective per-queue configuration digest.
 be strictly between 0 and 1. It estimates checks/timeout failure frequency from
 the last 200 departures (minimum 20 samples), uses exact rational comparisons,
 and restarts the history at a policy digest change. Unset keeps fixed sizing.
+
+Stage A policy keys are public as of PR 11b. `classification`, `groups`, and
+`agents` apply at repository scope; each queue opts into the complete approval
+pipeline by declaring `approvals`. `changes.pull_requests` accepts only
+`required`. A legacy sibling without `approvals` keeps its existing condition
+semantics and effective digest. See `docs/operating.md` for the Hold deployment
+class, mandatory old-worker drain, pre-use backup, and database-restore boundary.
+The `config schema` command prints the same embedded `schema/openmerge.v1.json`
+validated by the docs-fence agreement tests. Future Stage B/C examples remain in
+`text` fences until their loader support is published.

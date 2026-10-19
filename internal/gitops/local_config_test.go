@@ -66,3 +66,39 @@ func TestLocalConfigBusyCacheReturnsWithoutWaiting(t *testing.T) {
 		t.Fatal("local read waited for shared cache lock")
 	}
 }
+
+func TestLocalGoverningNeverHydratesMissingObjects(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	commit := f.commit(f.base, "policy", map[string]string{".github/CODEOWNERS": "* @alice\n", "nested/.gitattributes": "*.go linguist-generated\n"})
+	f.push("main", commit, false)
+	if _, err := f.g.LocalGoverningFiles(ctx, testRepo, commit); err == nil {
+		t.Fatal("local reader fetched missing objects")
+	}
+	_, err := f.g.GoverningFiles(ctx, testRepo, forge.GoverningFilesRequest{CommitSHA: commit, AllAttributes: true})
+	must(t, err)
+	f.g.cfg.Remote = func(context.Context, forge.RepoRef) (string, Auth, error) {
+		t.Fatal("local read consulted remote")
+		return "", Auth{}, nil
+	}
+	g, err := f.g.LocalGoverningFiles(ctx, testRepo, commit)
+	must(t, err)
+	if g.CommitSHA != commit || g.Coverage.Completeness != forge.DiffComplete || g.SelectedCodeowners != ".github/CODEOWNERS" {
+		t.Fatalf("local tree: %+v", g)
+	}
+	found := false
+	for _, file := range g.Attributes {
+		if file.Path == "nested/.gitattributes" && file.Content == "*.go linguist-generated\n" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("local policy read omitted nested attributes")
+	}
+	if _, err := f.g.LocalGoverningFiles(ctx, testRepo, "main"); err == nil {
+		t.Fatal("mutable ref accepted")
+	}
+	if _, err := f.g.LocalGoverningFiles(ctx, testRepo, strings.Repeat("9", 40)); err == nil {
+		t.Fatal("missing commit accepted")
+	}
+}

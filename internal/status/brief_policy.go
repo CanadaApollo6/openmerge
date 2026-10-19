@@ -6,13 +6,12 @@ import (
 	"fmt"
 	"reflect"
 
-	"go.yaml.in/yaml/v3"
-
 	"github.com/CanadaApollo6/openmerge/internal/brief"
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
 	"github.com/CanadaApollo6/openmerge/internal/classification"
 	"github.com/CanadaApollo6/openmerge/internal/config"
 	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
+	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
@@ -20,9 +19,10 @@ import (
 // BriefPolicyRequest pins configuration to the journal at classification time.
 // All supplemental inputs are recorded evidence, never fresh membership.
 type BriefPolicyRequest struct {
-	Config   queue.ConfigApplied
-	Evidence classification.Evidence
-	Facts    queue.ApprovalFacts
+	Config    queue.ConfigApplied
+	Evidence  classification.Evidence
+	Facts     queue.ApprovalFacts
+	Governing *forge.GoverningFiles
 }
 
 type briefPolicySource interface {
@@ -76,13 +76,10 @@ func briefPolicyProjection(ctx context.Context, source Source, j store.Journal, 
 		if !pinKnown || pin.Commit == "" || pin.Digest == "" {
 			return unavailable()
 		}
-		policy, err := provider.BriefPolicy(ctx, j.Key, BriefPolicyRequest{pin, stored.Evidence, facts})
+		policy, err := provider.BriefPolicy(ctx, j.Key, BriefPolicyRequest{Config: pin, Evidence: stored.Evidence, Facts: facts})
 		var mismatch queue.BriefPolicyMismatchError
 		if errors.As(err, &mismatch) {
 			return brief.Fact{}, "policy_digest_mismatch"
-		}
-		if errors.Is(err, ErrCandidatePolicyUnavailable) {
-			return brief.Fact{}, "policy_composition_11b"
 		}
 		var transient interface{ Temporary() bool }
 		if errors.As(err, &transient) && transient.Temporary() {
@@ -102,30 +99,15 @@ func briefPolicyProjection(ctx context.Context, source Source, j store.Journal, 
 	}
 }
 
-// ErrCandidatePolicyUnavailable identifies the 11b composition obligation.
-var ErrCandidatePolicyUnavailable = errors.New("recorded-policy digest composition is defined in 11b")
-
-// ReconstructBriefPolicy verifies legacy effective configuration. Candidate
-// policy composition remains unavailable until 11b defines its recorded digest.
+// ReconstructBriefPolicy asserts the effective digest before exposing requirements.
+// Approval queues require the recorded static identity pin and local policy tree.
 func ReconstructBriefPolicy(data []byte, key store.QueueKey, defaultBranch string, req BriefPolicyRequest) (cp.Policy, error) {
 	cfg, _, err := config.Load(data)
 	if err != nil {
-		var candidate struct {
-			Queues []struct {
-				Approvals yaml.Node `yaml:"approvals"`
-			} `yaml:"queues"`
-		}
-		if yaml.Unmarshal(data, &candidate) == nil {
-			for _, q := range candidate.Queues {
-				if q.Approvals.Kind != 0 {
-					return cp.Policy{}, ErrCandidatePolicyUnavailable
-				}
-			}
-		}
-		if _, _, candidateErr := cp.ParseCandidate(data); candidateErr == nil {
-			return cp.Policy{}, ErrCandidatePolicyUnavailable
-		}
 		return cp.Policy{}, fmt.Errorf("pinned config unavailable: %w", err)
+	}
+	if req.Config.Policy != nil {
+		defaultBranch = req.Config.Policy.DefaultBranch
 	}
 	if defaultBranch == "" {
 		return cp.Policy{}, fmt.Errorf("repository default branch unavailable")
@@ -134,17 +116,64 @@ func ReconstructBriefPolicy(data []byte, key store.QueueKey, defaultBranch strin
 	if len(diagnostics) != 0 {
 		return cp.Policy{}, fmt.Errorf("pinned branch policy unavailable: %v", diagnostics)
 	}
+	component := ""
+	if selected.Approvals != nil {
+		if req.Config.Policy == nil || req.Governing == nil {
+			return cp.Policy{}, fmt.Errorf("recorded identity pin or local governing objects unavailable")
+		}
+		g := req.Governing
+		if g.CommitSHA != req.Config.Commit || g.Coverage.Completeness != forge.DiffComplete {
+			return cp.Policy{}, fmt.Errorf("local governing tree unavailable")
+		}
+		owners, attrs := policyContents(*g)
+		var candidate cp.CandidateQueue
+		for _, q := range cfg.Policy.Queues {
+			if q.Name == selected.Name {
+				candidate = q
+			}
+		}
+		component, err = cp.PolicyDigest(cp.DigestInputs{Repository: cfg.Policy, Queue: candidate, Resolved: req.Config.Policy.Resolved, Owners: owners, Attributes: attrs, ClassifierVersion: req.Config.Policy.ClassifierVersion})
+		if err != nil {
+			return cp.Policy{}, err
+		}
+		if component != req.Evidence.Classification.Inputs.PolicyDigest {
+			return cp.Policy{}, queue.BriefPolicyMismatchError{Recorded: req.Evidence.Classification.Inputs.PolicyDigest}
+		}
+	}
 	matches := false
 	for _, deleteHead := range []bool{true, false} {
 		if cfg.DeleteHeadBranch != nil && deleteHead != *cfg.DeleteHeadBranch {
 			continue
 		}
-		if selected.Digest(deleteHead) == req.Config.Digest {
+		effective, err := cp.WithPolicyDigest(selected.Digest(deleteHead), component)
+		if err == nil && effective == req.Config.Digest {
 			matches = true
 		}
 	}
 	if !matches {
 		return cp.Policy{}, queue.BriefPolicyMismatchError{Recorded: req.Config.Digest}
 	}
+	if component != "" {
+		return cp.Policy{Digest: component, Approvals: selected.Approvals}, nil
+	}
 	return cp.Policy{Digest: req.Config.Digest}, nil
+}
+
+func policyContents(g forge.GoverningFiles) (cp.GoverningContent, []cp.GoverningContent) {
+	content := func(f forge.GoverningFile) cp.GoverningContent {
+		return cp.GoverningContent{Path: f.Path, Known: f.Coverage.Completeness == forge.DiffComplete, Present: f.Present, Content: f.Content}
+	}
+	owners := cp.GoverningContent{Path: ".github/CODEOWNERS", Known: true}
+	for _, f := range g.Codeowners {
+		if f.Path == g.SelectedCodeowners {
+			owners = content(f)
+		}
+	}
+	attrs := []cp.GoverningContent{}
+	for _, f := range g.Attributes {
+		if f.Present || f.Path == ".gitattributes" {
+			attrs = append(attrs, content(f))
+		}
+	}
+	return owners, attrs
 }

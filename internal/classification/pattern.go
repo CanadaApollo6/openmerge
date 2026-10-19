@@ -3,14 +3,36 @@ package classification
 import (
 	"fmt"
 	"regexp"
+	"regexp/syntax"
 	"strings"
+	"sync"
 )
+
+// MaxTreePatternBytes bounds parser and lazy matcher memory per governing pattern.
+const MaxTreePatternBytes = 512
 
 // Git wildmatch operates on bytes. Encode each UTF-8 byte as one rune before
 // using Go's regexp engine, so ? and ranges do not consume a whole code point.
-type treeMatcher struct{ expression, direct *regexp.Regexp }
 
-func (m *treeMatcher) MatchString(p string) bool { return m.expression.MatchString(byteRunes(p)) }
+type treeMatcher struct {
+	expression, direct         *regexp.Regexp
+	expressionText, directText string
+	once                       sync.Once
+}
+
+func (m *treeMatcher) compile() {
+	m.once.Do(func() {
+		m.expression = regexp.MustCompile(m.expressionText)
+		if m.directText != "" {
+			m.direct = regexp.MustCompile(m.directText)
+		}
+	})
+}
+
+func (m *treeMatcher) MatchString(p string) bool {
+	m.compile()
+	return m.expression.MatchString(byteRunes(p))
+}
 func byteRunes(s string) string {
 	if strings.IndexFunc(s, func(r rune) bool { return r > 127 }) < 0 {
 		return s
@@ -25,6 +47,9 @@ func byteRunes(s string) string {
 // treePattern is deliberately independent of OpenMerge's whole-path dialect.
 // CODEOWNERS propagates directory matches; attributes never do so.
 func treePattern(pattern string, owners bool) (*treeMatcher, error) {
+	if len(pattern) > MaxTreePatternBytes {
+		return nil, fmt.Errorf("pattern byte budget exceeded")
+	}
 	if pattern == "" || strings.ContainsRune(pattern, 0) || strings.HasPrefix(pattern, "!") || owners && (strings.HasPrefix(pattern, `\#`) || strings.ContainsAny(pattern, "[]")) {
 		return nil, fmt.Errorf("unsupported pattern %q", pattern)
 	}
@@ -122,13 +147,9 @@ func treePattern(pattern string, owners bool) (*treeMatcher, error) {
 			out.WriteString(regexp.QuoteMeta(byteRunes(pattern[i : i+1])))
 		}
 	}
-	var direct *regexp.Regexp
+	directText := ""
 	if owners && !directory && wildcardTail(pattern) {
-		var err error
-		direct, err = regexp.Compile(out.String() + "$")
-		if err != nil {
-			return nil, err
-		}
+		directText = out.String() + "$"
 	}
 	if directory {
 		if owners {
@@ -141,11 +162,11 @@ func treePattern(pattern string, owners bool) (*treeMatcher, error) {
 	} else {
 		out.WriteString("$")
 	}
-	expression, err := regexp.Compile(out.String())
+	_, err := syntax.Parse(out.String(), syntax.Perl)
 	if err != nil {
 		return nil, err
 	}
-	return &treeMatcher{expression: expression, direct: direct}, nil
+	return &treeMatcher{expressionText: out.String(), directText: directText}, nil
 }
 
 // ownerFields retains escaped whitespace in the pattern and strips comments.
@@ -183,6 +204,7 @@ func ownerFields(line string) []string {
 // wildcard basenames naming directories. Treat propagation alone as uncertain
 // for wildcard leaves; neither extra ownership nor an ownerless override is safe.
 func (m *treeMatcher) ambiguousDirectory(p string) bool {
+	m.compile()
 	return m.direct != nil && !m.direct.MatchString(byteRunes(p))
 }
 

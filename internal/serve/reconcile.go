@@ -125,7 +125,11 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 				events = append(events, selected.QueueConfig().Applied(state.ConfigCommit, state.ConfigDigest))
 			}
 		}
-		events = append(events, w.cfg.QueueConfig().Applied(configTip, w.configDigest))
+		applied := w.cfg.QueueConfig().Applied(configTip, w.configDigest)
+		if w.stageA != nil {
+			applied.Policy = w.stageA.pin
+		}
+		events = append(events, applied)
 		_, err = s.store.Append(ctx, w.id, events, "")
 		if err != nil {
 			return err
@@ -191,6 +195,16 @@ func (s *Server) loadConfiguration(ctx context.Context, w *worker, branch, tip s
 	}
 	if w.CheckProtection != nil && w.cfg.MergeMethod != selected.MergeMethod {
 		w.rulesNextCheck = time.Time{}
+	}
+	if selected.Approvals != nil {
+		for _, candidate := range cfg.Policy.Queues {
+			if candidate.Name == selected.Name {
+				w.stageA = &stageAPolicy{repository: cfg.Policy, candidate: candidate, defaultBranch: branch}
+				break
+			}
+		}
+	} else {
+		w.stageA = nil
 	}
 	w.cfg = selected
 	w.deleteHeadBranch = cfg.DeleteHeadBranch

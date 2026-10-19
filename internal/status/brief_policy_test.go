@@ -14,6 +14,7 @@ import (
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
 	"github.com/CanadaApollo6/openmerge/internal/config"
 	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
+	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
@@ -24,6 +25,7 @@ type historicalPolicySource struct {
 	err           error
 	requests      []BriefPolicyRequest
 	defaultBranch *string
+	governing     *forge.GoverningFiles
 }
 
 func (s *historicalPolicySource) BriefPolicy(_ context.Context, k store.QueueKey, r BriefPolicyRequest) (cp.Policy, error) {
@@ -35,6 +37,7 @@ func (s *historicalPolicySource) BriefPolicy(_ context.Context, k store.QueueKey
 	if s.defaultBranch != nil {
 		defaultBranch = *s.defaultBranch
 	}
+	r.Governing = s.governing
 	return ReconstructBriefPolicy(s.data, k, defaultBranch, r)
 }
 
@@ -110,7 +113,7 @@ func TestBriefHTTPHistoricalPolicyRequiresEffectiveDigest(t *testing.T) {
 		w := httptest.NewRecorder()
 		Handler(s, []store.QueueKey{j.Key}, "", nil).ServeHTTP(w, httptest.NewRequest("GET", "/v1/queues/Owner/Repo/release/changes/"+string(b.ChangeID)+"/brief?audience=agent", nil))
 		var v brief.View
-		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &v) != nil || (approvals && (v.Digest != brief.NotRecorded || v.Obligations != nil || !strings.Contains(w.Body.String(), "implement_11b_policy_composition"))) || (!approvals && (v.Digest == brief.NotRecorded || v.Obligations == nil || v.ApprovalsRequired == nil || *v.ApprovalsRequired || !strings.Contains(w.Body.String(), "approvals_not_required"))) {
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &v) != nil || (approvals && (v.Digest != brief.NotRecorded || v.Obligations != nil || !strings.Contains(w.Body.String(), "restore_recorded_policy"))) || (!approvals && (v.Digest == brief.NotRecorded || v.Obligations == nil || v.ApprovalsRequired == nil || *v.ApprovalsRequired || !strings.Contains(w.Body.String(), "approvals_not_required"))) {
 			t.Fatalf("unverifiable effective config accepted: %d %s", w.Code, w.Body)
 		}
 		if len(s.requests) != 1 || s.requests[0].Config.Commit == strings.Repeat("9", 40) {
@@ -143,10 +146,10 @@ func TestBriefHTTPPolicyUnavailableAndMismatch(t *testing.T) {
 	}
 }
 
-func TestBriefPublicLoaderStillRejectsCandidateKeys(t *testing.T) {
+func TestBriefPublicLoaderRejectsIncompleteCandidate(t *testing.T) {
 	_, data, _, _ := policyJournal(t, true)
 	if _, _, err := config.Load(append([]byte("version: 1\n"), data...)); err == nil {
-		t.Fatal("public approval keys activated")
+		t.Fatal("incomplete config accepted")
 	}
 }
 
@@ -212,7 +215,7 @@ func TestR3PolicyRecovery(t *testing.T) {
 	}{
 		{errors.New("object missing"), "policy_unavailable", "restore_recorded_policy"},
 		{diagnostic.BusyError("cache busy"), "policy_busy", "retry"},
-		{nil, "policy_unavailable", "implement_11b_policy_composition"},
+		{nil, "policy_unavailable", "restore_recorded_policy"},
 	} {
 		j, data, _, b := policyJournal(t, true)
 		src := &historicalPolicySource{source: source{journals: []store.Journal{j}}, data: data, err: tc.err}
@@ -232,13 +235,99 @@ func TestR3PolicyRecovery(t *testing.T) {
 				if tc.action == "restore_recorded_policy" && (!strings.Contains(warning.Clears, "operator-managed fetch or backup import") || !strings.Contains(warning.Clears, "default-branch config commit")) {
 					t.Fatal("missing object recovery is not actionable")
 				}
-				if tc.err == nil && !strings.Contains(warning.Detail, "defined in 11b") {
-					t.Fatal("missing 11b reason")
-				}
+
 			}
 		}
 		if !found || v.Obligations != nil || v.Digest != brief.NotRecorded {
 			t.Fatalf("bad recovery: %s", w.Body)
 		}
+	}
+}
+
+func TestApprovalBriefPinnedComposition(t *testing.T) {
+	j, _, _, b := policyJournal(t, true)
+	data := []byte("version: 1\nqueues:\n- name: release\n  merge_when: [check-success = ci]\n  approvals: {default: any_writer}\n")
+	cfg, _, err := config.Load(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var classified queue.ChangeClassified
+	for _, row := range j.Events {
+		if e, ok := row.Event.(queue.ChangeClassified); ok {
+			classified = e
+		}
+	}
+	g := classified.Evidence.Governing
+	owners, attrs := policyContents(g)
+	pin := &cp.PolicyPin{DefaultBranch: "release", Resolved: []cp.ResolvedIdentity{}, ClassifierVersion: classified.Evidence.Classification.Inputs.ClassifierVersion}
+	component, err := cp.PolicyDigest(cp.DigestInputs{Repository: cfg.Policy, Queue: cfg.Policy.Queues[0], Resolved: pin.Resolved, Owners: owners, Attributes: attrs, ClassifierVersion: pin.ClassifierVersion})
+	if err != nil {
+		t.Fatal(err)
+	}
+	effective, err := cp.WithPolicyDigest(cfg.Queues[0].Digest(true), component)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applied := queue.ConfigApplied{Commit: g.CommitSHA, Digest: effective, Policy: pin}
+	classified.Evidence.Classification.Inputs.PolicyDigest = component
+	for i, row := range j.Events {
+		switch e := row.Event.(type) {
+		case queue.ConfigApplied:
+			if i == 0 {
+				j.Events[i].Event = applied
+			}
+		case queue.ChangeClassified:
+			j.Events[i].Event = classified
+		case queue.ChangeAccountabilityObserved:
+			e.PolicyDigest = component
+			j.Events[i].Event = e
+		}
+	}
+	req := BriefPolicyRequest{Config: applied, Evidence: classified.Evidence, Governing: &g}
+	policy, err := ReconstructBriefPolicy(data, j.Key, "changed-default-branch", req)
+	if err != nil || policy.Digest != component || policy.Approvals == nil {
+		t.Fatalf("reconstruction: %+v %v", policy, err)
+	}
+	for _, mutation := range []string{"config", "component", "tree", "missing-pin", "missing-tree"} {
+		t.Run(mutation, func(t *testing.T) {
+			request := req
+			request.Config = req.Config
+			changed := append([]byte(nil), data...)
+			switch mutation {
+			case "config":
+				request.Config.Digest = strings.Repeat("f", 64)
+			case "component":
+				request.Evidence.Classification.Inputs.PolicyDigest = strings.Repeat("e", 64)
+			case "tree":
+				changed = []byte(strings.ReplaceAll(string(data), "default: any_writer", "default: {any_writer: true, count: 2}"))
+			case "missing-pin":
+				request.Config.Policy = nil
+			case "missing-tree":
+				request.Governing = nil
+			}
+			_, err := ReconstructBriefPolicy(changed, j.Key, "release", request)
+			var mismatch queue.BriefPolicyMismatchError
+			if err == nil {
+				t.Fatal("unverifiable composition accepted")
+			}
+			if !strings.HasPrefix(mutation, "missing") && !errors.As(err, &mismatch) {
+				t.Fatalf("mismatch type: %v", err)
+			}
+		})
+	}
+	// The HTTP projection must carry the historical ConfigApplied pin, rather
+	// than the newer policy at the end of this journal.
+	src := &historicalPolicySource{source: source{journals: []store.Journal{j}}, data: data, governing: &g}
+	w := httptest.NewRecorder()
+	Handler(src, []store.QueueKey{j.Key}, "", nil).ServeHTTP(w, httptest.NewRequest("GET", "/v1/queues/Owner/Repo/release/changes/"+string(b.ChangeID)+"/brief?audience=reviewer", nil))
+	var view brief.View
+	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &view) != nil || view.Digest == brief.NotRecorded || view.Obligations == nil || view.ApprovalsRequired == nil || !*view.ApprovalsRequired || strings.Contains(w.Body.String(), "policy_unavailable") {
+		t.Fatalf("HTTP reconstruction: %d %s", w.Code, w.Body)
+	}
+	src.data = []byte(strings.ReplaceAll(string(data), "default: any_writer", "default: {any_writer: true, count: 2}"))
+	mismatchResponse := httptest.NewRecorder()
+	Handler(src, []store.QueueKey{j.Key}, "", nil).ServeHTTP(mismatchResponse, httptest.NewRequest("GET", "/v1/queues/Owner/Repo/release/changes/"+string(b.ChangeID)+"/brief?audience=operator", nil))
+	if !strings.Contains(mismatchResponse.Body.String(), "policy_digest_mismatch") || strings.Contains(mismatchResponse.Body.String(), "implement_11b") {
+		t.Fatalf("HTTP mismatch: %s", mismatchResponse.Body)
 	}
 }

@@ -112,6 +112,15 @@ func PolicyDigest(in DigestInputs) (string, error) {
 		seen[content.Path] = true
 	}
 	slices.SortFunc(contents, func(a, b GoverningContent) int { return strings.Compare(a.Path, b.Path) })
+	// Retain the published digest spelling independently of journal wire tags.
+	type digestIdentity struct {
+		Name, ID string
+		Kind     AccountKind
+	}
+	canonicalResolved := make([]digestIdentity, len(resolved))
+	for i, r := range resolved {
+		canonicalResolved[i] = digestIdentity(r)
+	}
 	canonical := struct {
 		Version           string
 		Classification    ClassificationSettings
@@ -119,10 +128,10 @@ func PolicyDigest(in DigestInputs) (string, error) {
 		Rules             []string
 		Groups            map[string][]string
 		Agents            []Agent
-		Resolved          []ResolvedIdentity
+		Resolved          []digestIdentity
 		Contents          []GoverningContent
 		ClassifierVersion string
-	}{"openmerge-policy-v1", classification, canonicalRequirement(in.Queue.Approvals.Default), sortedSet(rules), groups, agents, resolved, contents, in.ClassifierVersion}
+	}{"openmerge-policy-v1", classification, canonicalRequirement(in.Queue.Approvals.Default), sortedSet(rules), groups, agents, canonicalResolved, contents, in.ClassifierVersion}
 	data, err := json.Marshal(canonical)
 	if err != nil {
 		return "", err

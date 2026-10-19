@@ -66,7 +66,7 @@ func TestR4VersionedApprovalRecovery(t *testing.T) {
 	src := &historicalPolicySource{source: source{journals: []store.Journal{j}}, data: data}
 	w := httptest.NewRecorder()
 	Handler(src, []store.QueueKey{j.Key}, "", nil).ServeHTTP(w, httptest.NewRequest("GET", "/v1/queues/Owner/Repo/release/changes/"+string(b.ChangeID)+"/brief?audience=operator", nil))
-	if !strings.Contains(w.Body.String(), "implement_11b_policy_composition") || strings.Contains(w.Body.String(), "restore_recorded_policy") {
+	if !strings.Contains(w.Body.String(), "restore_recorded_policy") {
 		t.Fatal(w.Body.String())
 	}
 }

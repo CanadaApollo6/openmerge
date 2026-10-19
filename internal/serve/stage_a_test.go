@@ -24,8 +24,7 @@ import (
 // Bound concurrently open schemas/pools independently of the host CPU count.
 var shadowFixtureSlots = make(chan struct{}, 16)
 
-// This is the ONLY installer for candidate configuration. No option, target,
-// public loader or production constructor can reach the shadow policy in 11a.
+// Shared approval fixture enters through the production configuration loader.
 func shadowFixture(t *testing.T, depth int, base, installation string, receipt bool) (*Server, *worker, *fake.Forge) {
 	t.Helper()
 	shadowFixtureSlots <- struct{}{}
@@ -33,6 +32,11 @@ func shadowFixture(t *testing.T, depth int, base, installation string, receipt b
 	f := fake.New()
 	f.Init(repo, base, "openmerge/fence/"+base)
 	cfg := fmt.Sprintf("version: 1\nqueues:\n  - name: default\n    base: %s\n    speculation: {min_depth: %d, max_depth: %d}\n    merge_when: [check-success = ci]\n", base, depth, depth)
+	if receipt {
+		cfg += "    approvals: {default: {any_writer: true, count: 1, receipt: true}}\n"
+	} else {
+		cfg += "    approvals: {default: any_writer}\n"
+	}
 	tip, err := f.PushBase(repo, base, "config", map[string]string{".openmerge.yml": cfg})
 	must(t, err)
 	_, err = f.OpenPR(repo, 1, tip, true)
@@ -46,8 +50,6 @@ func shadowFixture(t *testing.T, depth int, base, installation string, receipt b
 	s, err := New(t.Context(), database(t), []Target{{Key: store.QueueKey{Installation: installation, Repository: repo.Path, BaseBranch: base}, Driver: f, Git: f, BotLogin: fake.Identity}}, Options{PollInterval: time.Minute, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	must(t, err)
 	w := s.queues[0]
-	a := &cp.Approvals{Default: cp.Requirement{Selector: cp.AnyWriter, Count: 1, Receipt: receipt}}
-	w.stageA = &stageAPolicy{repository: cp.Repository{Groups: map[string][]string{}}, candidate: cp.CandidateQueue{Name: "default", PullRequests: "required", Approvals: a}}
 	must(t, s.reconcile(t.Context(), w, true))
 	return s, w, f
 }

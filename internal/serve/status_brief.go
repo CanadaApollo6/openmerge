@@ -43,6 +43,19 @@ func (s *Server) BriefPolicy(ctx context.Context, key store.QueueKey, req status
 		if err != nil {
 			return cp.Policy{}, err
 		}
+		if req.Config.Policy != nil {
+			governing, ok := target.Git.(interface {
+				LocalGoverningFiles(context.Context, forge.RepoRef, string) (forge.GoverningFiles, error)
+			})
+			if !ok {
+				return cp.Policy{}, fmt.Errorf("local governing object reader unavailable")
+			}
+			g, err := governing.LocalGoverningFiles(ctx, forge.RepoRef{Path: key.Repository}, req.Config.Commit)
+			if err != nil {
+				return cp.Policy{}, err
+			}
+			req.Governing = &g
+		}
 		return status.ReconstructBriefPolicy(data, key, defaultBranch, req)
 	}
 	return cp.Policy{}, fmt.Errorf("local policy object reader unavailable")

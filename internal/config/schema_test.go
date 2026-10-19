@@ -339,3 +339,85 @@ func TestSchemaDefaultsMatchLoader(t *testing.T) {
 		t.Fatal("published defaults differ from loader defaults")
 	}
 }
+
+func TestPublishedPolicyLoaderRoundTrip(t *testing.T) {
+	const source = `version: 1
+classification: {docs: ['docs/**']}
+groups: {maintainers: [alice]}
+agents: [{identity: 'helper[bot]', accountable: [alice]}]
+queues:
+- name: main
+  changes: {pull_requests: required}
+  approvals:
+    default: {group: maintainers, count: 1}
+    rules:
+    - when: {touches: ['src/**']}
+      require: {code_owners: true, receipt: true}
+  merge_when: [check-success = ci]
+- name: release
+  base: release/*
+  merge_when: [check-success = ci]
+`
+	cfg, _, err := Load([]byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSchemaAgreement(t, []byte(source), nil)
+	var node yaml.Node
+	if err := yaml.Unmarshal([]byte(source), &node); err != nil {
+		t.Fatal(err)
+	}
+	roundtrip, err := yaml.Marshal(&node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, _, err := Load(roundtrip)
+	if err != nil || !reflect.DeepEqual(cfg.Policy, restored.Policy) || cfg.Queues[0].Digest(true) != restored.Queues[0].Digest(true) {
+		t.Fatalf("policy roundtrip: %v", err)
+	}
+	for _, mode := range []string{"optional", "none", "disabled"} {
+		data := []byte(strings.ReplaceAll(source, "pull_requests: required", "pull_requests: "+mode))
+		_, _, err := Load(data)
+		if err == nil {
+			t.Fatalf("accepted pull_requests: %s", mode)
+		}
+		assertSchemaAgreement(t, data, err)
+	}
+}
+
+func TestLegacyConditionsWithApprovalSibling(t *testing.T) {
+	const legacy = `- name: legacy
+  base: release
+  enter_when:
+  - or: [approved-reviews-by = alice, label = ready]
+  merge_when:
+  - check-success = ci
+  - not: approved-reviews-by = blocked
+`
+	plain, _, err := Load([]byte("version: 1\nqueues:\n" + legacy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mixed, _, err := Load([]byte("version: 1\ngroups: {maintainers: [alice]}\nqueues:\n- name: opted\n  base: main\n  approvals: {default: {group: maintainers}}\n  merge_when: [check-success = ci]\n" + legacy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, b := plain.Queues[0], mixed.Queues[1]
+	if b.Approvals != nil || a.Digest(true) != b.Digest(true) || a.EnterWhen.String() != b.EnterWhen.String() || a.MergeWhen.String() != b.MergeWhen.String() {
+		t.Fatal("legacy condition policy changed")
+	}
+	for _, reviewers := range [][]string{{}, {"alice"}, {"blocked"}, {"alice", "blocked"}} {
+		for _, labels := range [][]string{{}, {"ready"}} {
+			for _, checks := range [][]string{{}, {"ci"}} {
+				snapshot := condition.Snapshot{"approved-reviews-by": condition.Strings(reviewers...), "label": condition.Strings(labels...), "check-success": condition.Strings(checks...)}
+				for _, pair := range [][2]condition.Expression{{a.EnterWhen, b.EnterWhen}, {a.MergeWhen, b.MergeWhen}} {
+					before, err1 := pair[0].Evaluate(snapshot)
+					after, err2 := pair[1].Evaluate(snapshot)
+					if before != after || fmt.Sprint(err1) != fmt.Sprint(err2) {
+						t.Fatal("legacy condition outcome changed")
+					}
+				}
+			}
+		}
+	}
+}

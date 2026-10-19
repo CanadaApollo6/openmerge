@@ -1,7 +1,10 @@
 package queue
 
 import (
+	"bytes"
 	"fmt"
+	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -129,5 +132,33 @@ func TestConfigAppliedReducedBatchLimitReformsGroups(t *testing.T) {
 				t.Fatal("configuration change lost progress")
 			}
 		})
+	}
+}
+
+func TestApprovalConfigAppliedPinRoundTrip(t *testing.T) {
+	e := ConfigApplied{Commit: "pinned", Digest: strings.Repeat("a", 64), Policy: &cp.PolicyPin{DefaultBranch: "main", ClassifierVersion: "classifier", Resolved: []cp.ResolvedIdentity{{Name: "alice", ID: "github.com:user:1", Kind: cp.HumanAccount}, {Name: "org/team", ID: "github.com:team:1", Kind: ""}}}}
+	_, raw, err := EncodeEvent(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeEvent(raw)
+	if err != nil || !reflect.DeepEqual(e, decoded) {
+		t.Fatalf("pin roundtrip: %+v %v", decoded, err)
+	}
+	// The public legacy wire vector stays byte-for-byte unchanged.
+	legacy, err := os.ReadFile("testdata/wire/v1/event_config_applied.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, err := DecodeEvent(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, encoded, err := EncodeEvent(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(bytes.TrimSpace(legacy), encoded) {
+		t.Fatalf("legacy wire changed: %s", encoded)
 	}
 }
