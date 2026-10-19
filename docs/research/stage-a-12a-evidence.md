@@ -422,6 +422,450 @@ listed above. The serial runner waits for other Go/test/replay jobs and sets
 `GOFLAGS=-p=2`, `GOMEMLIMIT=4GiB`. Only this thread's own waiting final-gate driver was stopped before any test
 child started, to sequence an added long-URL warning regression and its gates.
 No foreign process was stopped.
-Detailed exits, log hashes, final performance samples and source identity follow
-once validation completes.
+Detailed exits, log hashes, final performance samples and source identity follow.
 <!-- round-1-results -->
+
+Early failures are retained: `r1-focused` (1) caught an unused import and
+expected golden drift; `r1-goldens` (1) and `r1-regressions` (1) caught a test
+that expected pending invalidation after the retiring BatchesInvalidated event.
+`r1-store` (1) caught untyped fixture parameters and prose false positives in
+the source tripwire. `r1-check` (2) stopped on CLI test formatting;
+`r1-check2` (2) stopped on an unused callback parameter. Those were corrected;
+no test-flag, timeout or CI relaxation was introduced. The first full make check passed at e4d6182. While waiting for the shared host,
+an additional oversized-URL regression exposed that the check header could
+crowd out warnings; warnings now precede the header, and reconstruction errors
+are logged through a callback at the error boundary. Commit a006829 includes
+that follow-up and explicit fixture-state assertions in the legacy comparator.
+The final full make check passed after those Go edits were frozen. The legacy
+comparator's new state assertion then caught an invalid batch ID in the landed
+fixture (`r1-legacy-reporting-final`, exit 1); eaeec96 corrects it to the
+canonical first batch ID. The six actual states now pass comparison
+(`r1-legacy-reporting-final2`, exit 0). This fixture-only follow-up changes no
+Go source from a006829; remaining gates initially ran against committed eaeec96. A subsequent terminal-entry
+parity probe (`r1-redaction-probe`, exit 1) exposed a fresh sanitizer without the
+request secret registry. Change show now refreshes metadata with the request
+sanitizer; `TestChangeTerminalEntryRetainsRequestSanitizer` proves both routes
+redact identically. The final read-only audit also found check gate recomputation
+used zero timing configuration. `TestReviewerCheckUsesCurrentOperationalGate`
+proves the check retains the applied max_wait gate. Both fixes are included in
+the final verified gate series.
+
+A preferred delegate model was at capacity for the store and legacy-tooling
+assignments; fallback agents completed those edits. Delegates did not run heavy
+jobs. One waiting serial driver waited on this thread's make check; only this thread's waiting final-gate driver was stopped with SIGTERM before
+any test child started, to add the long-URL warning regression (actual exit 143).
+No foreign job or process was stopped. Source syntax/diff checks and code commits exited 0.
+
+### r1-focused: actual exit 1
+
+```sh
+go test -short -count=1 ./internal/status ./internal/serve -run 'Test(Change|ReviewerCheck|Brief|Ledger)'
+```
+
+Wall execution (excluding wait): 2.539s. Log SHA-256: `817861d693e07d78df501f0bda7609d2326e4767dc6a4d3289ca15d1398ba37e`.
+
+### r1-focused2: actual exit 0
+
+```sh
+go test -short -count=1 ./internal/status ./internal/serve -run 'Test(ReviewerCheck|Brief|Ledger)'
+```
+
+Wall execution (excluding wait): 22.23s. Log SHA-256: `2b4ee73baec6f18c0b457c9644d7c3d88029dfde162d5bef948d804113389ceb`.
+
+### r1-goldens: actual exit 1
+
+```sh
+env OPENMERGE_UPDATE_REPORTING_GOLDENS=1 go test -short -count=1 -v ./internal/status -run 'Test(ChangeReportingGoldens|LegacyReporting128|ApprovalWaitOperational|ChangeShowAndPRAlias|ReviewerCheckReceipts)'
+```
+
+Wall execution (excluding wait): 0.954s. Log SHA-256: `1e3c63cede834482cff96393924250d37018ea66f37347b4ff2551d0d42ec8f0`.
+
+### r1-regressions: actual exit 1
+
+```sh
+go test -short -count=1 -v ./internal/status -run 'Test(ChangeReportingGoldens|LegacyReporting128|ApprovalWaitOperational|ChangeShowAndPRAlias|ReviewerCheckReceipts)' -bench BenchmarkLegacyReporting128 -benchtime=5x
+```
+
+Wall execution (excluding wait): 0.512s. Log SHA-256: `c6e5a58314a363d207b6432d5dbf6ee84265adef18c00c13dacbcbf85a297761`.
+
+### r1-goldens2: actual exit 0
+
+```sh
+env OPENMERGE_UPDATE_REPORTING_GOLDENS=1 go test -short -count=1 -v ./internal/status ./internal/serve -run 'Test(ChangeReportingGoldens|LegacyReporting128|ApprovalWaitOperational|ChangeShowAndPRAlias|ReviewerCheckReceipts|StageACheckShares)' -bench BenchmarkLegacyReporting128 -benchtime=5x
+```
+
+Wall execution (excluding wait): 1.6s. Log SHA-256: `097ffdf9cb33d0404620fead2cef2d5206ac87c5eb3c38ef93265ea38d411746`.
+
+### r1-store: actual exit 1
+
+```sh
+go test -short -count=1 -v ./internal/store -run 'Test(Reporting|ChangeDecisions|DecisionEvidenceRetention)'
+```
+
+Wall execution (excluding wait): 3.032s. Log SHA-256: `219241e5c9e13b9c108a34ba948bff81405234f675259acdd6c2cd3f2ca82873`.
+
+### r1-status-final: actual exit 0
+
+```sh
+go test -short -count=1 ./internal/status ./internal/serve -run 'Test(Change|ReviewerCheck|Brief|Ledger|LegacyReporting|ApprovalWaitOperational|StageACheckShares)'
+```
+
+Wall execution (excluding wait): 21.934s. Log SHA-256: `765a55901df8864af10543e166bca4137a46ac1d40e7bf229850bc9371e5a768`.
+
+### r1-store2: actual exit 0
+
+```sh
+go test -short -count=1 -v ./internal/store -run 'Test(Reporting|ChangeDecisions|DecisionEvidenceRetention)'
+```
+
+Wall execution (excluding wait): 3.359s. Log SHA-256: `bffa9282e037d9aa7587d4e0818bace5e41d1c5e4c05f95bab9c51b3d60e4579`.
+
+### r1-cli: actual exit 0
+
+```sh
+env OPENMERGE_UPDATE_REPORTING_GOLDENS=1 go test -short -count=1 ./cmd/openmerge -run 'Test(Change|Run$)'
+```
+
+Wall execution (excluding wait): 1.097s. Log SHA-256: `fc81f7075d80a05ac0395c9ac8a927951c19c55c5b825ce9c9a4003bdc54664c`.
+
+### r1-goldens3: actual exit 0
+
+```sh
+env OPENMERGE_UPDATE_REPORTING_GOLDENS=1 go test -short -count=1 ./internal/status -run 'Test(ChangeReportingGoldens|ReviewerCheckReceiptsWaitingAndWarningGolden)'
+```
+
+Wall execution (excluding wait): 0.506s. Log SHA-256: `6026e649823835c2320ab35f7b9f31ba4e918284b098b00af0961f039cad731c`.
+
+### r1-check: actual exit 2
+
+```sh
+make check
+```
+
+Wall execution (excluding wait): 0.076s. Log SHA-256: `d38a4587a58d08ece5f4c75bca90916524e50b488af4bd7d362b84fe0821125b`.
+
+### r1-check2: actual exit 2
+
+```sh
+make check
+```
+
+Wall execution (excluding wait): 2.737s. Log SHA-256: `d006bb4f3cdc873fcca29e27ce1ac3cf2d2580127db0c3191e53e121220a085e`.
+
+### r1-check3: actual exit 0
+
+```sh
+make check
+```
+
+Wall execution (excluding wait): 413.134s. Log SHA-256: `99e1abb1c5aa14b8ad984b8608cf740e8ab5cacb80e54372fad8f2af89f29e78`.
+
+### r1-perf: actual exit 0
+
+```sh
+python3 /home/riels/.cache/openmerge-12a/r1-perf.py
+```
+
+Wall execution (excluding wait): 1.217s. Log SHA-256: `57077e212c3c304120657f2c9fc4e6e7b482c19ff57a6dfb572f86a41b4c7f73`.
+
+### r1-legacy-reporting: actual exit 0
+
+```sh
+python3 scripts/check-legacy-reporting.py /home/riels/openmerge-sa-12a-main
+```
+
+Wall execution (excluding wait): 1.012s. Log SHA-256: `0b093c0fcd293596f31414c9b4c395f787edd8b553ce3df6ff5f5c65d914433d`.
+
+### r1-sim-exits: actual exit 0
+
+```sh
+make test-sim-exits
+```
+
+Wall execution (excluding wait): 38.598s. Log SHA-256: `10525772002a6c4fac6087fa8effad15b55f3f26112a52ec28078b77a5f45b9a`.
+
+### r1-compatibility: actual exit 0
+
+```sh
+python3 scripts/check-phase2-compatibility.py /home/riels/openmerge-sa-12a-main
+```
+
+Wall execution (excluding wait): 11.1s. Log SHA-256: `8609790ee807f78ae7fadd31e6503a6a932f9f874af818197be4849fe5a93749`.
+
+### r1-legacy-sql: actual exit 0
+
+```sh
+python3 scripts/check-legacy-landing-sql.py /home/riels/openmerge-sa-12a-main
+```
+
+Wall execution (excluding wait): 4.177s. Log SHA-256: `a6c504dd82f62eb30db665dae4b257854ceb1715577d438a58982454a9993bbf`.
+
+### r1-depths: actual exit 0
+
+```sh
+python3 scripts/check-legacy-plan-action-depths-1-4.py /home/riels/openmerge-sa-12a-main
+```
+
+Wall execution (excluding wait): 140.719s. Log SHA-256: `3c25309b33c985c03a3aff2a5c961878e2dd1b080a03ec27dc5894981e7b3453`.
+
+### r1-final-driver-stopped: actual exit 143
+
+```sh
+python3 /home/riels/.cache/openmerge-12a/r1-last.py
+```
+
+Wall execution (excluding wait): 0s. Log SHA-256: `3d86466d6ba034eee011cbb0965f662534e17a58c5aa428c77eb0d8452f0f219`.
+
+### r1-warning-goldens: actual exit 0
+
+```sh
+env OPENMERGE_UPDATE_REPORTING_GOLDENS=1 go test -short -count=1 ./internal/status -run '^Test(ChangeReportingGoldens|ReviewerCheckReceiptsWaitingAndWarningGolden|ReviewerCheckWarningsSurviveOversizedBriefURL)$'
+```
+
+Wall execution (excluding wait): 0.535s. Log SHA-256: `c4a8e96a9829a321f815ecdbc3d829022c1cf86c0292ae857008e0a986306282`.
+
+### r1-check4: actual exit 0
+
+```sh
+make check
+```
+
+Wall execution (excluding wait): 421.174s. Log SHA-256: `29bffb44e725f085db948802ff34230f4df27d1b5872cb5bbeefbc77ab826ab7`.
+
+### r1-perf-final: actual exit 0
+
+```sh
+python3 scripts/check-reporting-performance.py /home/riels/openmerge-sa-12a-main
+```
+
+Wall execution (excluding wait): 0.946s. Log SHA-256: `d12480bd29e32eba8c5d55e9fb54b992cb5d1b2330ae5ed9401daab14ea1cbb0`.
+
+### r1-legacy-reporting-final: actual exit 1
+
+```sh
+python3 scripts/check-legacy-reporting.py /home/riels/openmerge-sa-12a-main
+```
+
+Wall execution (excluding wait): 0.491s. Log SHA-256: `be46ee389414a9ceed4fdb46ef8cbeabbbc05db7fcf712640dfc3c37394bf049`.
+
+### r1-legacy-reporting-final2: actual exit 0
+
+```sh
+python3 scripts/check-legacy-reporting.py /home/riels/openmerge-sa-12a-main
+```
+
+Wall execution (excluding wait): 1.004s. Log SHA-256: `0b093c0fcd293596f31414c9b4c395f787edd8b553ce3df6ff5f5c65d914433d`.
+
+### r1-sim-exits-final: actual exit 0
+
+```sh
+make test-sim-exits
+```
+
+Wall execution (excluding wait): 38.487s. Log SHA-256: `eb3f504b0bd6826ea3e7833fbd232fe98f77e85bdc64949f78d1308ed47ddc7b`.
+
+### r1-compatibility-final: actual exit 0
+
+```sh
+python3 scripts/check-phase2-compatibility.py /home/riels/openmerge-sa-12a-main
+```
+
+Wall execution (excluding wait): 11.17s. Log SHA-256: `8609790ee807f78ae7fadd31e6503a6a932f9f874af818197be4849fe5a93749`.
+
+### r1-legacy-sql-final: actual exit 0
+
+```sh
+python3 scripts/check-legacy-landing-sql.py /home/riels/openmerge-sa-12a-main
+```
+
+Wall execution (excluding wait): 2.113s. Log SHA-256: `a6c504dd82f62eb30db665dae4b257854ceb1715577d438a58982454a9993bbf`.
+
+### r1-depths-final: actual exit 0
+
+```sh
+python3 scripts/check-legacy-plan-action-depths-1-4.py /home/riels/openmerge-sa-12a-main
+```
+
+Wall execution (excluding wait): 141.486s. Log SHA-256: `3c25309b33c985c03a3aff2a5c961878e2dd1b080a03ec27dc5894981e7b3453`.
+
+### r1-commit-ids: actual exit 0
+
+```sh
+python3 scripts/check-legacy-commit-ids.py --baseline /home/riels/openmerge-sa-12a-main --candidate /home/riels/openmerge-sa-12a
+```
+
+Wall execution (excluding wait): 9.404s. Log SHA-256: `4f6700b69aa1e9563669035d7fdb0953dbcb9d6cdf807b3c69623164d9bbcb5d`.
+
+### r1-replay: actual exit 0
+
+```sh
+python3 scripts/check-live-journal-replay.py --baseline /home/riels/openmerge-sa-12a-main --candidate /home/riels/openmerge-sa-12a --events /home/riels/.local/share/openmerge/exports/events-20261018T051000Z.jsonl --queues /home/riels/.local/share/openmerge/exports/queues-20261018T051000Z.jsonl --strict-state --out /home/riels/.cache/openmerge-12a/r1-replay.json
+```
+
+Wall execution (excluding wait): 59.134s. Log SHA-256: `b2cf3a0c508c20049587ed7eed06b190cdaf7f6271ad1e248065025e8337c69a`.
+
+### r1-benchmark-final: actual exit 0
+
+```sh
+go test -short -count=1 -v ./internal/status -run '^TestLegacyReporting128EntriesAllocationBudget$' -bench '^BenchmarkLegacyReporting128$' -benchtime=7x
+```
+
+Wall execution (excluding wait): 0.392s. Log SHA-256: `bfdd35dc742443cae8cda0c82d1270750cd33adfd3f9d2631291585198d27d21`.
+
+### r1-redaction-probe: actual exit 1
+
+```sh
+go test -overlay /home/riels/.cache/openmerge-12a/redaction-overlay.json -short -count=1 -v ./internal/status -run '^TestChangeTerminalEntryRetainsRequestSanitizer$'
+```
+
+Wall execution (excluding wait): 0.609s. Log SHA-256: `8d532f881e5681869cfa39f67e604bd7ecbed3b1d35a1bba71651785567674b5`.
+
+### r1-redaction-fixed: actual exit 0
+
+```sh
+go test -race -short -count=1 ./internal/status ./internal/serve -run 'Test(ChangeTerminalEntryRetainsRequestSanitizer|ChangeShowAndPRAliasEntryMatch|StageACheckSharesLedgerSnapshotAndLogsUnavailablePolicy)'
+```
+
+Wall execution (excluding wait): 4.545s. Log SHA-256: `c5b21cb05dc53450879d5c4402932d938b56a7ec1714456910550d5f0c58d725`.
+
+### r1-gate-fixed: actual exit 0
+
+```sh
+go test -race -short -count=1 ./internal/status -run 'Test(ReviewerCheck|ChangeTerminalEntryRetainsRequestSanitizer)'
+```
+
+Wall execution (excluding wait): 2.253s. Log SHA-256: `b0e48e622b41a84bdead86cd1f48d0ba91dbfb63e163ddeebc13dfc668d946aa`.
+
+### r1-check4-verified: actual exit 0
+
+```sh
+make check
+```
+
+Wall execution (excluding wait): 408.856s. Log SHA-256: `6fa7634ed162f5ee53ac431d595d5678e320be4cedeaf1e901be0984c9559cce`.
+
+### r1-perf-final-verified: actual exit 0
+
+```sh
+python3 scripts/check-reporting-performance.py /home/riels/openmerge-sa-12a-main
+```
+
+Wall execution (excluding wait): 0.956s. Log SHA-256: `09d2e6d862e25ef0d830e9b80cd077a572f7d81e260b2e26c671064ad9ded29f`.
+
+### r1-legacy-reporting-final-verified: actual exit 0
+
+```sh
+python3 scripts/check-legacy-reporting.py /home/riels/openmerge-sa-12a-main
+```
+
+Wall execution (excluding wait): 0.747s. Log SHA-256: `0b093c0fcd293596f31414c9b4c395f787edd8b553ce3df6ff5f5c65d914433d`.
+
+### r1-sim-exits-final-verified: actual exit 0
+
+```sh
+make test-sim-exits
+```
+
+Wall execution (excluding wait): 38.652s. Log SHA-256: `608c23e44e201d85dab8ef8b4c820e163772b1f39c084d5939bb883b6eede20b`.
+
+### r1-compatibility-final-verified: actual exit 0
+
+```sh
+python3 scripts/check-phase2-compatibility.py /home/riels/openmerge-sa-12a-main
+```
+
+Wall execution (excluding wait): 11.169s. Log SHA-256: `8609790ee807f78ae7fadd31e6503a6a932f9f874af818197be4849fe5a93749`.
+
+### r1-legacy-sql-final-verified: actual exit 0
+
+```sh
+python3 scripts/check-legacy-landing-sql.py /home/riels/openmerge-sa-12a-main
+```
+
+Wall execution (excluding wait): 2.071s. Log SHA-256: `a6c504dd82f62eb30db665dae4b257854ceb1715577d438a58982454a9993bbf`.
+
+### r1-depths-final-verified: actual exit 0
+
+```sh
+python3 scripts/check-legacy-plan-action-depths-1-4.py /home/riels/openmerge-sa-12a-main
+```
+
+Wall execution (excluding wait): 140.82s. Log SHA-256: `3c25309b33c985c03a3aff2a5c961878e2dd1b080a03ec27dc5894981e7b3453`.
+
+### r1-commit-ids-verified: actual exit 0
+
+```sh
+python3 scripts/check-legacy-commit-ids.py --baseline /home/riels/openmerge-sa-12a-main --candidate /home/riels/openmerge-sa-12a
+```
+
+Wall execution (excluding wait): 10.967s. Log SHA-256: `a38a11ee86a4aac613d5f94ed3277e3a7124d9f0aa79e7f6b9e74497ebc56b63`.
+
+### r1-replay-verified: actual exit 0
+
+```sh
+python3 scripts/check-live-journal-replay.py --baseline /home/riels/openmerge-sa-12a-main --candidate /home/riels/openmerge-sa-12a --events /home/riels/.local/share/openmerge/exports/events-20261018T051000Z.jsonl --queues /home/riels/.local/share/openmerge/exports/queues-20261018T051000Z.jsonl --strict-state --out /home/riels/.cache/openmerge-12a/r1-replay-verified.json
+```
+
+Wall execution (excluding wait): 56.815s. Log SHA-256: `e12d86f6ade5e36a857da228da0df1d59927d400478e6cc89f6d7298a2a54222`.
+
+### r1-benchmark-final-verified: actual exit 0
+
+```sh
+go test -short -count=1 -v ./internal/status -run '^TestLegacyReporting128EntriesAllocationBudget$' -bench '^BenchmarkLegacyReporting128$' -benchtime=7x
+```
+
+Wall execution (excluding wait): 0.386s. Log SHA-256: `f7095f9d72ed37539a63b41c6fb28e49ee95fa6c9bca106b3749d447428a3674`.
+
+### Round-1 measurements and final source identity
+
+Astra's original 128-PR/512-refresh sample: main **9.97 ms / 20.4 MB**;
+pre-fix PR **1.724456795 s / 3,604,015,040 allocated bytes**. The initial
+seven-read differential after the projection fix reports median main **9.482 ms /
+20,399,880 bytes** and candidate **10.720 ms / 14,587,784 bytes**: **1.131x**
+latency and **0.715x** allocated bytes versus main. Both enforced 2x budgets
+pass. The pre-fix review sample and the new medians are different measurement
+runs; no controlled speedup claim is inferred from comparing them. These are
+local fake-source HTTP reads, excluding database latency, not deployment SLOs.
+The final benchmark below reports queue list and PR lookup separately.
+
+Final-source seven-read performance rerun:
+
+```text
+median main: 8.277 ms / 20473176 bytes; candidate: 8.943 ms / 14613912 bytes
+candidate/main latency=1.080, allocations=0.714
+PASS: legacy status latency and allocated bytes are within 2x main
+```
+
+```text
+    reporting_regression_test.go:43: /v1/queues/owner/repo/main/prs/1: 10.969698ms allocated=14621608 response=90690
+    reporting_regression_test.go:43: /v1/queues: 7.09005ms allocated=13133720 response=87700
+BenchmarkLegacyReporting128//v1/queues/owner/repo/main/prs/1-16         	       7	   9328484 ns/op	14585518 B/op	   98084 allocs/op
+BenchmarkLegacyReporting128//v1/queues-16                               	       7	   6051628 ns/op	13131225 B/op	   90800 allocs/op
+```
+
+The three migration-007 indexes took **1.80 ms / 65.76 ms** at 2,600 /
+260,000 mixed synthetic rows in the initial timing subtest, which passed even
+though unrelated fixture tests failed in that run. The successful `r1-store2`
+run measured **1.58 ms / 64.69 ms**. Both confirmed ShareLock remains held and
+writers block until commit. Timings exclude lock acquisition waiting and do not
+predict production storage, payload or contention costs. Drained/Hold deploy
+only, as documented in operating.md.
+
+All required final gates exited **0**: full make check (see final execution duration above, zero lint
+issues), simulator exits, compatibility, SQL plus five negative controls,
+depth-1/4 differential, four-method commit IDs, strict exported-journal replay,
+extended legacy reporting, and the performance regression. Reporting comparison
+covers six check/status fixtures, preserving serialized field order and bytes;
+five comparator negative controls also pass. The depth differential covers
+227,662 short-corpus, 5,615,998 full-corpus and 188 fixture checkpoints.
+
+Validated code commit: `68bbc55474b4151cbaaa1cd19c2b9c04af890088`.
+Baseline: `6e2b50b9da5c098ebfd76e0b1b20a5990c2663bb` (`origin/main`).
+The subsequent evidence-only commit changes this document alone. Strict replay
+uses the exported file pair and hashes listed above, with a clean candidate and
+strict state comparison; Gates 2 and 4 pass. All four tested/landed commit-ID
+methods (squash, merge, rebase, fast-forward) match main.
+
+Replay artifact: `/home/riels/.cache/openmerge-12a/r1-replay-verified.json`, SHA-256 `e12d86f6ade5e36a857da228da0df1d59927d400478e6cc89f6d7298a2a54222`.
+
+Trial deployment class remains **Hold**. No deployment was performed.
