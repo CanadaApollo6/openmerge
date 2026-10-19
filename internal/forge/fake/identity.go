@@ -4,8 +4,8 @@ import (
 	"cmp"
 	"context"
 	"slices"
-	"strings"
 
+	"github.com/CanadaApollo6/openmerge/internal/ascii"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
 
@@ -33,7 +33,7 @@ func (f *Forge) SetIdentity(user forge.UserIdentity) {
 			delete(f.identities.users, login)
 		}
 	}
-	f.identities.users[strings.ToLower(user.Login)] = user
+	f.identities.users[ascii.Lower(user.Login)] = user
 }
 
 // SetWriteGrant replaces the repository permission for one stable user ID.
@@ -63,7 +63,7 @@ func (f *Forge) SetTeam(team forge.TeamIdentity, members []forge.UserIdentity) {
 			delete(f.identities.teams, name)
 		}
 	}
-	f.identities.teams[strings.ToLower(team.Organization+"/"+team.Slug)] = team
+	f.identities.teams[ascii.Lower(team.Organization+"/"+team.Slug)] = team
 	f.identities.members[key] = slices.Clone(members)
 }
 
@@ -75,7 +75,7 @@ func (f *Forge) ResolveUser(ctx context.Context, login string) (forge.UserIdenti
 	if err := f.failure(ctx, "ResolveUser"); err != nil {
 		return forge.UserIdentity{}, err
 	}
-	user := f.identities.users[strings.ToLower(login)]
+	user := f.identities.users[ascii.Lower(login)]
 	if user.ID <= 0 || user.Login == "" {
 		return forge.UserIdentity{}, forge.ErrIdentityUnavailable
 	}
@@ -90,7 +90,7 @@ func (f *Forge) ResolveTeam(ctx context.Context, name string) (forge.TeamIdentit
 	if err := f.failure(ctx, "ResolveTeam"); err != nil {
 		return forge.TeamIdentity{}, err
 	}
-	team := f.identities.teams[strings.ToLower(name)]
+	team := f.identities.teams[ascii.Lower(name)]
 	if team.ID <= 0 || team.OrganizationID <= 0 {
 		return forge.TeamIdentity{}, forge.ErrIdentityUnavailable
 	}
@@ -135,7 +135,7 @@ func (f *Forge) WriteGrant(ctx context.Context, repo forge.RepoRef, author forge
 	if author.ID <= 0 || author.Login == "" {
 		return forge.WriteGrant{}, forge.ErrIdentityUnavailable
 	}
-	user := f.identities.users[strings.ToLower(author.Login)]
+	user := f.identities.users[ascii.Lower(author.Login)]
 	permission, known := f.identities.grants[repo][user.ID]
 	if !known {
 		return forge.WriteGrant{}, forge.ErrIdentityUnavailable

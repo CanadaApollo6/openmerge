@@ -1,0 +1,1137 @@
+# Stage A PR 11b activation evidence
+
+Base: `origin/main` / `6e2b50b9da5c098ebfd76e0b1b20a5990c2663bb` (#77).
+Worktree: `/home/riels/openmerge-sa-11b`; branch: `stage-a/11b-activation`.
+Trial class: **Hold**. The dogfood configuration is unchanged. No deployment or
+approval opt-in is authorized before the ADR 0009 trial pair closes.
+
+## Implementation and obligations
+
+- Public schema, reflected loader key registry, and `config schema` now expose
+  the PR 5 candidate additions together. `changes.pull_requests` only accepts
+  `required`. The shared candidate parser validates the projected policy after
+  the existing YAML/condition/planner parser. Legacy-only input never enters the
+  policy parser. Expanded aliases and legacy conditions retain their parser;
+  sibling policy parsing does not reinterpret those conditions.
+  `TestPublishedPolicyLoaderRoundTrip`, `TestPublicLoaderAndSchemaAcceptPolicyKeys`,
+  `TestFullCandidateSchemaComposition`, `TestSchemaKeysMatchLoader`,
+  `TestSchemaRepositoryFixturesAndExamples`, and CLI `TestConfigSchemaPrintsEmbeddedDocument` cover
+  publication and agreement. Future unaccepted examples remain `text` fences.
+- `loadConfiguration` installs `w.stageA` only when the resolved queue has
+  `approvals`. There is no partial-enforcement option. The shared Stage A fixture
+  now enters via the production public configuration rather than assigning a
+  candidate policy. Existing integrated no-bypass coverage therefore exercises
+  production installation: `TestStageAShadowGateDepthsAndIdentityIsolation`,
+  `TestStageAFreshNegativeStancesBeforeStart`,
+  `TestStageAReceiptGateAllMethods`,
+  `TestStageAFreshRevokedGrantBlocksAcceptedReceipt`,
+  `TestStageAGateRejectsMalformedGeneratedMemberMetadata`, and
+  `TestStageAHTTPIdentityFailuresBlockOrRetry`.
+- `TestStageAMixedRepositoryActivation` covers depths 1 and 4 with both queues
+  on one fake repository and one test database. An unapproved opted-in landing
+  is rejected; the legacy sibling lands. Changing the opted-in policy also leaves the legacy journal watermark unchanged. Its worker has nil Stage A wiring,
+  retains the old digest, writes no Stage A observations or policy pins, and
+  gains no Stage A commit trailers. `TestLegacyConditionsWithApprovalSibling`
+  checks native review/list/nested-condition outcomes and digest equality.
+  Legacy SQL, depth/action, commit-ID, and replay differentials supply the
+  cross-revision proof. `TestApprovalConfigAppliedPinRoundTrip` retains the
+  exact old ConfigApplied wire vector while round-tripping the new optional pin.
+- The effective approval digest uses PR 5's existing `WithPolicyDigest`:
+  SHA-256 of the canonical `{Version, Queue, Policy}` JSON, with version
+  `openmerge-effective-policy-v1`, unchanged legacy queue digest, and static
+  semantic policy digest. Without approvals, no component is folded in.
+  The policy digest's original identity-field spelling is preserved independently
+  of new journal JSON tags; existing semantic digest vectors remain unchanged.
+- Approval ConfigApplied records add an optional `policy` pin containing static
+  resolved identity IDs, classifier version, and governing default-branch name.
+  No state/snapshot field or new event type is added. Production journals retain
+  the complete ConfigApplied history. The brief projection selects the pin in
+  force at classification, reads config plus the entire governing tree from local
+  immutable objects, asserts component and effective digests, and only then
+  exposes requirements/digest. It makes no forge, fetch, current membership or
+  name-resolution calls. The 11b placeholder is removed. Missing inputs produce
+  `policy_unavailable`; mismatches produce `policy_digest_mismatch`.
+  `TestApprovalBriefPinnedComposition` covers reconstruction, HTTP success and
+  mismatch, altered effective/component digests, altered policy, missing pins,
+  and missing trees. `TestStageAProductionBriefReconstruction` checks the actual
+  production record through the server's local-reader path with a nil forge
+  driver. `TestLocalGoverningNeverHydratesMissingObjects` and
+  `TestLocalConfigNeverHydratesMissingObjects` prove local immutable reads do
+  not hydrate objects or resolve remote credentials.
+- PR 4b gate audit: main already satisfies eight diagnostics/file plus `+N more`
+  (`TestSourceDiagnosticsBounded`), owner entry/line/token budgets
+  (`TestOwnerBudgets`), and fresh decision-time `ResolveOwnerEligibility`
+  (`TestResolveOwnerEligibilityUsesFreshObservation`,
+  `TestStageAUnReadableTeamAndDecisionTimeOwners`). Main still compiled patterns
+  eagerly. This PR adds a 512-byte governing pattern limit and lazy compilation,
+  tested on near-limit CODEOWNERS and attributes files by
+  `TestGoverningPatternCapsAndLazyCompile`. The classifier version changes to
+  `governing-v2-pattern-budget`; previous versions and golden wire fixtures remain
+  decodable. `TestActivationClassifierVersion` and
+  `TestClassificationHistoricalRenameAndObjectFormats` cover version retention.
+- `docs/operating.md` documents the mandatory drain of **all** old workers and
+  outstanding actions/leases, verified pre-use backup, first-evidence restore
+  boundary, and rollback procedure. Existing action leases
+  (`internal/store/migrations/001_initial.sql`) have no worker binary/capability
+  identity; reliable detection of a legacy-only holder is not possible without
+  a separate lease protocol migration. No heuristic is presented as detection.
+  Old binaries reject the published approval config and cannot decode the new
+  policy pin, but this does not replace draining already claimed actions.
+
+## Execution constraints
+
+Go build/test and journal replay commands wait until no foreign `go test`, `*.test`, or journal replay
+is running. One heavy gate runs at a time. Environment:
+
+```sh
+GOFLAGS=-p=2
+GOMEMLIMIT=4GiB # 6GiB for journal replay
+GOTMPDIR=/home/riels/.cache/openmerge-11b/gotmp
+GOCACHE=/home/riels/.cache/go-build
+OPENMERGE_TEST_DATABASE_URL='postgres://postgres@localhost:54329/postgres?sslmode=disable'
+```
+
+The only terminated process was this task's own waiting helper (exit 143), before
+it started `make check`, to queue the new classifier golden generation ahead of
+verification. No foreign process was killed. No live OpenMerge database, systemd unit,
+production `openmerge/*` ref or live status API was accessed. Tests and simulator
+use fake forges/local git only. The existing immutable journal exports are used
+offline, never re-exported from the live database. Makefile, CI workflows and
+their test flags are unchanged.
+
+Fetch: `git fetch origin refs/heads/main:refs/remotes/origin/main` exited 0 and
+confirmed the requested base. Both worktrees were created under `/home/riels`,
+not `/tmp`; no `initdb` or database cluster initialization was performed.
+
+## Initial submission attempts and results
+
+All durations below are wall time **after** the host-idle wait. Logs are in
+`/home/riels/.cache/openmerge-11b/`; hashes are SHA-256. At the initial submission, production code was unchanged from
+`f12cba23a92667b3584a0b85911e000fb52171a6`. The subsequent `fb771ed` commit adds
+only separate activation vectors and their test paths; `git diff --exit-code
+f12cba2..fb771ed -- . ':!**/*_test.go' ':!**/testdata/**'` exited 0. The final
+full check, compatibility, commit-ID, and strict-main replay gates use `fb771ed`.
+Earlier successful simulator/SQL/depth/deployed-replay gates retain the exact same
+production source and unchanged baseline-pinned legacy fixture corpus. The final
+follow-up commit updates only this evidence document.
+
+Initial failures were corrected rather than waived: `focused-1` found missing
+wire JSON tags; `all-short-1` caught digest-vector changes from those tags (fixed
+by preserving the digest's original field spelling); `focused-3` and
+`activation-1` caught incomplete fake-native-review/command fixture setup.
+`check-2` found a staticcheck conversion diagnostic; its actual make exit was 2.
+`check-3` passed lint and serve but exited 2 on two embedded-classifier golden
+mismatches in queue. The activation receipt/decision/fact/rejection vectors were
+added separately; existing pre-activation goldens remain unchanged.
+The first commit-ID invocation used the wrong argument form (exit 2); the next
+corrected invocation refused untracked Python bytecode generated by the shape
+inspector (exit 2). Only that generated cache was removed, and bytecode generation
+was disabled before the final retry.
+
+Three helper-only attempts are not in the runner JSONL:
+
+- `python /home/riels/.cache/openmerge-11b/run.py focused-2 go test -short ./internal/config ./internal/changepolicy ./internal/status ./internal/serve -run 'TestSchemaKeysMatchLoader|TestPublicLoaderAndSchema|TestLegacyDigestAndMixedRepository|TestR4VersionedApprovalRecovery|TestShadow|TestStageA' -count=1`: **exit 1**
+  before launching Go because the process-list header was parsed as a PID.
+  The runner was fixed to skip the header, then `focused-2-retry` ran normally.
+- The waiting `check-1` runner was terminated by this task: **exit 143**.
+  `make check` had not started; the queue was replaced to generate the new
+  classifier golden before verification.
+- Early standalone `python3 /home/riels/.cache/openmerge-11b/inspect-replay-shape.py
+  /home/riels/.cache/openmerge-11b/replay-deployed.json`: **exit 0**. This read-only
+  Python assertion ran while foreign testing was active; it launched no Go or
+  service access. That early scheduling mistake is retained here. The same
+  assertion was repeated through the serialized runner as `replay-shape` below.
+
+| Attempt | Actual exit | Wall seconds | Log SHA-256 |
+|---|---:|---:|---|
+| `focused-1` | 1 | 6.53 | `6a600fbca382af175e7d2eeb37e9f748098cf740eaaf2a03298586ce434e2ab7` |
+| `focused-2-retry` | 0 | 5.953 | `07ce676ced09c66eb6dd409026f94d80c96008c07e67422992666490243d7b1e` |
+| `all-short-1` | 1 | 86.988 | `d5230975c6f4c5a6c074ca47e37a93175ba005658493e2bc1cd71763322f42c3` |
+| `focused-3` | 1 | 9.952 | `a802d14e3ea48b3e9667aa93d403cd5d398d02a2d0a6862f57d5d5fe8f5dd1cd` |
+| `activation-1` | 1 | 2.014 | `a6383072760f337edf9c73e4e227a77481b8cf542d190c66a8ad7bf733f38345` |
+| `mixed-debug` | 0 | 1.454 | `889d1d907d436cf9b2ae83d8a69272f42123f9fdff5962400adc493fe675a1b0` |
+| `activation-2` | 0 | 5.781 | `d64090e996cc194a29652a0630f281d491339cddd1865bf8a934c9c389c1c3d0` |
+| `activation-golden` | 0 | 1.277 | `2be096e6ac10930c9b6ef946f2975c6d1548e00734c3eac77df0f73e380dada9` |
+| `check-2` | 2 | 5.762 | `6ff57064c3bc458d7bdd66f55dc4f5af868279aa35b61b6de92cd478915aff39` |
+| `sim-exits` | 0 | 38.739 | `31fe793e863c268cf8b8335ee805cc43669ad1cd03cbd22ed916ff1740e3d546` |
+| `compatibility` | 0 | 13.378 | `8609790ee807f78ae7fadd31e6503a6a932f9f874af818197be4849fe5a93749` |
+| `legacy-sql` | 0 | 4.914 | `fe2faa0a68410d87ceef36bb932bf7203279378467e8af399b607abf15999e31` |
+| `legacy-depths` | 0 | 143.095 | `3c25309b33c985c03a3aff2a5c961878e2dd1b080a03ec27dc5894981e7b3453` |
+| `commit-ids` | 2 | 0.035 | `0cd8123425f07340d03b5632b1bf0f66cc87f2675036d6b9ad87f9d7216e363d` |
+| `replay-main` | 0 | 64.063 | `50fdc8938328f6f24684aa42bc635653b1f614c54667810fa9f0fdd583abbf99` |
+| `replay-deployed` | 1 | 47.731 | `6348497927981ad3cc7c0b75fc0a3af8e347c1c52ee6ddf3e6e27fd223515cd4` |
+| `commit-ids-retry` | 2 | 0.089 | `f147dc40adb584a4267a575c3e1672f532469b799ea7a05d61297f26c8f0fcdd` |
+| `check-3` | 2 | 403.504 | `ffb20a06744659ca5bfb2e757e4b5734cc11fe21743e4c0f360ffe679fd82de4` |
+| `replay-shape` | 0 | 6.298 | `c86c474f8c3cecc6cd556ee0c0fb64b25cdc32280b48089554baacaed467deae` |
+| `receipt-decision-goldens` | 0 | 1.053 | `7c65596fd418cbf43c9025250245efbb2f2aca18590e281a64dfdbd72242662d` |
+| `golden-race` | 0 | 4.055 | `a9980b03fde5e93bae284c07d53e9f45b6e34b9c42f6291650c612ee4e769498` |
+| `activation-timings` | 0 | 3.394 | `f262d43b654aeafcf0bb14b2b32f19222d804fbc0d54f06c063496882c61f35a` |
+| `check-4` | 0 | 381.004 | `bc408cabbc1a0eeee3265eeca7738a0d445c29e1263327b95223ce0a50731c6f` |
+| `compatibility-final` | 0 | 11.098 | `8609790ee807f78ae7fadd31e6503a6a932f9f874af818197be4849fe5a93749` |
+| `commit-ids-final` | 0 | 12.812 | `b53f54e8cd0f048a96a1696fc34eb77cf65b33514ba50981b5be218c17c3c22a` |
+| `replay-main-final` | 0 | 49.039 | `0b9a7e7581e806bd64af73edf5ba84567fb7ad66b4145c6d5aaa02f3dab042b2` |
+
+Exact runner commands (with the environment above):
+
+`focused-1` — actual exit **1**:
+
+```sh
+go test -short ./internal/config ./internal/changepolicy ./internal/status ./internal/serve ./internal/queue -run 'TestSchemaKeysMatchLoader|TestLegacyDigestAndMixedRepository|TestR4VersionedApprovalRecovery|TestShadow|TestStageA' -count=1
+```
+
+`focused-2-retry` — actual exit **0**:
+
+```sh
+go test -short ./internal/config ./internal/changepolicy ./internal/status ./internal/serve -run 'TestSchemaKeysMatchLoader|TestPublicLoaderAndSchema|TestLegacyDigestAndMixedRepository|TestR4VersionedApprovalRecovery|TestShadow|TestStageA' -count=1
+```
+
+`all-short-1` — actual exit **1**:
+
+```sh
+go test -short -count=1 -timeout=15m ./...
+```
+
+`focused-3` — actual exit **1**:
+
+```sh
+go test -short -count=1 ./internal/serve ./internal/changepolicy ./internal/classification ./internal/status ./internal/config -run 'TestStageA|TestGoverningPattern|TestSemanticPolicyDigest|TestCodeOwnersDigestVectors|TestBrief|TestR3PolicyRecovery|TestR4VersionedApprovalRecovery|TestSchema'
+```
+
+`activation-1` — actual exit **1**:
+
+```sh
+go test -short -count=1 ./internal/serve ./internal/status ./internal/gitops -run 'TestStageAMixedRepositoryActivation|TestApprovalBriefPinnedComposition|TestLocal.*(MissingObjects|Busy)'
+```
+
+`mixed-debug` — actual exit **0**:
+
+```sh
+go test -short -count=1 -v ./internal/serve -run '^TestStageAMixedRepositoryActivation$'
+```
+
+`activation-2` — actual exit **0**:
+
+```sh
+go test -short -count=1 ./internal/serve ./internal/status ./internal/gitops ./internal/config ./internal/queue ./internal/classification ./internal/changepolicy -run 'TestStageA|TestApprovalBrief|TestLocal.*(MissingObjects|Busy)|TestPublished|TestApprovalConfig|TestGoverningPattern|TestSemanticPolicyDigest|TestCodeOwnersDigestVectors|TestClassification.*Version|TestBudgetVersion'
+```
+
+`activation-golden` — actual exit **0**:
+
+```sh
+env UPDATE_7A=1 go test -short -count=1 ./internal/queue -run '^TestClassificationWireAndVariants$'
+```
+
+`check-2` — actual exit **2**:
+
+```sh
+make check
+```
+
+`sim-exits` — actual exit **0**:
+
+```sh
+make test-sim-exits
+```
+
+`compatibility` — actual exit **0**:
+
+```sh
+python3 scripts/check-phase2-compatibility.py /home/riels/openmerge-sa-11b-main
+```
+
+`legacy-sql` — actual exit **0**:
+
+```sh
+python3 scripts/check-legacy-landing-sql.py /home/riels/openmerge-sa-11b-main
+```
+
+`legacy-depths` — actual exit **0**:
+
+```sh
+python3 scripts/check-legacy-plan-action-depths-1-4.py /home/riels/openmerge-sa-11b-main
+```
+
+`commit-ids` — actual exit **2**:
+
+```sh
+python3 scripts/check-legacy-commit-ids.py /home/riels/openmerge-sa-11b-main
+```
+
+`replay-main` — actual exit **0**:
+
+```sh
+python3 scripts/check-live-journal-replay.py --baseline /home/riels/openmerge-sa-11b-main --candidate /home/riels/openmerge-sa-11b --events /home/riels/.local/share/openmerge/exports/events-20261018T051000Z.jsonl --queues /home/riels/.local/share/openmerge/exports/queues-20261018T051000Z.jsonl --strict-state --out /home/riels/.cache/openmerge-11b/replay-main.json
+```
+
+`replay-deployed` — actual exit **1**:
+
+```sh
+python3 scripts/check-live-journal-replay.py --baseline /home/riels/.cache/sa9b-r2-deployed --candidate /home/riels/openmerge-sa-11b --events /home/riels/.local/share/openmerge/exports/events-20261018T051000Z.jsonl --queues /home/riels/.local/share/openmerge/exports/queues-20261018T051000Z.jsonl --strict-state --out /home/riels/.cache/openmerge-11b/replay-deployed.json
+```
+
+`commit-ids-retry` — actual exit **2**:
+
+```sh
+python3 scripts/check-legacy-commit-ids.py --baseline /home/riels/openmerge-sa-11b-main
+```
+
+`check-3` — actual exit **2**:
+
+```sh
+make check
+```
+
+`replay-shape` — actual exit **0**:
+
+```sh
+python3 /home/riels/.cache/openmerge-11b/inspect-replay-shape.py /home/riels/.cache/openmerge-11b/replay-deployed.json
+```
+
+`receipt-decision-goldens` — actual exit **0**:
+
+```sh
+env UPDATE_7A=1 UPDATE_9=1 go test -short -count=1 ./internal/queue -run '^Test(ReceiptWireFactGoldenAndRejectedBindings|LandingDecisionGolden)$'
+```
+
+`golden-race` — actual exit **0**:
+
+```sh
+go test -race -short -count=1 ./internal/queue -run '^Test(ReceiptWireFactGoldenAndRejectedBindings|LandingDecisionGolden|ClassificationWireAndVariants)$'
+```
+
+`activation-timings` — actual exit **0**:
+
+```sh
+go test -race -short -count=1 -v ./internal/serve -run '^Test(StageAMixedRepositoryActivation|StageAProductionBriefReconstruction)$'
+```
+
+`check-4` — actual exit **0**:
+
+```sh
+make check
+```
+
+`compatibility-final` — actual exit **0**:
+
+```sh
+python3 scripts/check-phase2-compatibility.py /home/riels/openmerge-sa-11b-main
+```
+
+`commit-ids-final` — actual exit **0**:
+
+```sh
+python3 scripts/check-legacy-commit-ids.py --baseline /home/riels/openmerge-sa-11b-main
+```
+
+`replay-main-final` — actual exit **0**:
+
+```sh
+python3 scripts/check-live-journal-replay.py --baseline /home/riels/openmerge-sa-11b-main --candidate /home/riels/openmerge-sa-11b --events /home/riels/.local/share/openmerge/exports/events-20261018T051000Z.jsonl --queues /home/riels/.local/share/openmerge/exports/queues-20261018T051000Z.jsonl --strict-state --out /home/riels/.cache/openmerge-11b/replay-main-final.json
+```
+
+The final `bash finish-verification.sh` exited **0**. The outer first `bash gates.sh` exited **1**, because its last command was the
+strict deployed replay with the known exception. Each child status is retained
+individually above; a later successful command is never used to mask a failure.
+
+## Initial submission gate disposition
+
+| Gate | Actual exit | Result |
+|---|---:|---|
+| `make check` (final) | 0 | fmt, lint, complete race/short suite and binary build |
+| `make test-sim-exits` | 0 | Full required simulator exits |
+| Compatibility vs main (final) | 0 | 17 exits, 1,055 retry/digest records, 84 existing wire fixtures byte-identical |
+| Legacy SQL + negative controls | 0 | Seven exact statements; all five mutants detected; every trace Go test exited 0 |
+| Depth 1/4 | 0 | 227,662 short + 5,615,998 full checkpoints + 188 fixture streams; every helper Go test exited 0; no exceptions |
+| Four-method commit IDs (final) | 0 | Tested/landed IDs identical; mandatory controls: identical=0, mutant=1, dirty=2 (all expected) |
+| Strict journal replay vs main (final) | 0 | All 2,159 real and seven synthetic checkpoints match; actions, state/snapshot hashes and timer boundaries exact |
+| Strict replay vs deployed `3f77a88` | 1 | Known reviewed absent-to-nil `classifications` boundary only; Gate 2 FAIL, Gate 4 PASS; mandatory synthetic self-test exit 1 for this same boundary |
+| Exact deployed replay shape assertion (serialized) | 0 | All 2,159 real + seven synthetic checkpoints; only absent → strictly nil/zero/empty `queue.classifications` map |
+
+The main replay's mandatory synthetic self-test exited 0. The deployed pair's
+synthetic self-test exited 1 for precisely the same `classifications` boundary;
+it is not represented as a passing strict comparison. No replay exception
+allowlist or harness code changed. The source and baseline-pinned corpus of the
+successful SQL, depth and simulator gates are unchanged by the final test-vector
+commit; `git diff --exit-code f12cba2..fb771ed -- . ':!**/*_test.go'
+':!**/testdata/**'` exited 0.
+
+The two added serve tests ran with `-race -short`: mixed repository depths 1/4
+1.80s total (0.90s / 0.91s), production brief reconstruction 0.10s; focused package
+2.914s, command wall 3.394s, exit 0. These are local single-run measurements,
+not a prediction for CI. Full `make check` runs retained the existing 900s race/short timeout.
+
+Start and final explicit-refspec main fetches both exited 0; main remained
+`6e2b50b9da5c098ebfd76e0b1b20a5990c2663bb`. Final legacy fixture/protected-file
+`git diff --exit-code` checks and `git diff --check` exited 0. No Makefile,
+CI workflow, test flags or dogfood configuration changed.
+
+The exact standalone shape inspector, also rerun through the host-idle runner:
+
+```python
+import importlib.util,itertools,json,sys
+from pathlib import Path
+sys.dont_write_bytecode=True
+spec=importlib.util.spec_from_file_location('replay','/home/riels/openmerge-sa-11b/scripts/check-live-journal-replay.py')
+module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+report=json.loads(Path(sys.argv[1]).read_text())
+counts={}
+streams=report['streams']
+for label,pair in [('real',(streams['baseline']['path'],streams['candidate']['path']))]:
+ count=0
+ for left,right in itertools.zip_longest(Path(pair[0]).read_text().splitlines(),Path(pair[1]).read_text().splitlines()):
+  assert left and right,'unaligned streams'
+  a,b=json.loads(left),json.loads(right)
+  assert a['kind']==b['kind']
+  if a['kind']!='checkpoint':continue
+  count+=1
+  for key in ('actions','revision','event_id','queue_id','final','next_wake','deadlines','boundary_probes'):
+   assert module.exact(a.get(key),b.get(key)),(label,count,key)
+  differences=module.structural_differences(a['structural'],b['structural'])
+  assert set(differences)=={'classifications'},(label,count,differences)
+  field=differences['classifications']
+  assert field['baseline'] is None and field['new_field'] is True,field
+  assert field['candidate']=={'type':'queue.classifications','kind':'map','zero':True,'nil':True,'value':{}},field
+ counts[label]=count
+synthetic=report['synthetic_compatibility']
+assert synthetic['actions_identical']=='7/7'
+assert synthetic['boundary_checkpoints_identical']=='7/7'
+assert synthetic['derived_determinism']=='PASS'
+assert len(synthetic['non_allowlisted_fields'])==7
+for row in synthetic['non_allowlisted_fields']:
+ assert row['fields']=={'classifications':{'baseline':None,'candidate':{'type':'queue.classifications','kind':'map','zero':True,'nil':True,'value':{}},'new_field':True}},row
+counts['synthetic']=7
+print(json.dumps({'exit':0,'exact_shape':'classifications absent -> strictly nil, zero, empty map only','checkpoints':counts,'gate4':report['gate4']},sort_keys=True))
+```
+
+## Review round 1 fixes
+
+The trial remains **Hold**. The dogfood configuration, Makefile, CI and test flags
+are unchanged. These corrections do not authorize deployment or approval opt-in.
+
+- Pinned approval ConfigApplied records now always carry explicit window bounds,
+  including `{min_depth: 1, max_depth: 1}`. Unpinned legacy depth-1 records retain
+  their original bytes. `TestStageAApprovalWindowTransitions` exercises approval
+  depth 1 → 4, removal of approvals with depth 1 → 4, and approval depth 4 → 1,
+  including restart deduplication. `TestLegacySerialWindowWireUnchanged` checks
+  serial wire bytes and legacy 1 → 4 behavior; the existing
+  `TestLegacyWindowUpgradeUsesHistoricalPolicyBeforeClamp` retains its legacy
+  migration corpus. A historical folded digest lacking bounds becomes a durable,
+  actionable config block directing the operator to drain and restore a verified
+  pre-activation backup, rather than an endlessly retried digest mismatch
+  (`TestStageAHistoricalFoldedWindowBlocksActionably`). Old decoders already
+  reject the `policy` field; adding `window` to an already pinned record does not
+  change rollback compatibility. `TestApprovalConfigAppliedPinRoundTrip` now
+  round-trips the pinned serial window and retains the exact legacy wire vector.
+- The public schema harness registers `policy-member`, `policy-login`,
+  `policy-glob` and `policy-label`. Portable regex constraints cover account/team
+  names, label forms, nonblank globs and dangling escapes; the schema `$comment`
+  explicitly identifies loader-only YAML, cross-reference and resolution checks.
+  `TestPublicPolicySchemaNegativeFormats` covers `@alice`, agent `a/b`, invalid
+  accountable logins, blank/trailing-backslash globs, rule globs and `banana`.
+  `TestSchemaKeysMatchLoader` now walks nested policy types, composed schemas and
+  selector-object keys using the parser's shared vocabulary.
+- Policy projections are parsed directly as YAML nodes, retaining original lines
+  and paths instead of remarshal coordinates. `TestPolicyDiagnosticsOriginalLocation`
+  asserts exact original lines and paths for invalid counts and nested rule labels.
+  `ParseCandidate`'s documentation describes its use by the public loader's shared
+  node parser. Candidate selection resets Stage A before lookup and fails closed
+  if an approval queue has no candidate.
+- `MaxPolicyIdentities` shares the journal's 1,024-identity budget with resolution.
+  Exceeding it produces an actionable durable configuration error before append,
+  including when governing CODEOWNERS introduces the extra identity.
+  `TestResolvedIdentityPinBudget` checks the exact boundary;
+  `TestStageAIdentityPinBudgetConfigError` covers configured and governing identities.
+- Two deliberate legacy invalid-input diagnostic changes are retained: the unknown
+  root key `group: {}` now suggests `groups`; `agents: []` is accepted as empty
+  policy data. `groups: {}`, `classification: {}` and `changes: {}` are also empty
+  policy data. On a queue without approvals they install no Stage A wiring, fold
+  no approval digest and add no warnings. `TestEmptyPolicyKeysPreserveLegacyConfig`
+  compares warnings and legacy digests and asserts the new typo suggestion;
+  `TestStageAEmptyPolicyKeysDoNotActivate` verifies production wiring/digest behavior.
+
+Round 1 commands use the same host-idle runner and constrained environment as
+above, with `r1-*` logs under `/home/riels/.cache/openmerge-11b/`. The initial
+focused run exited **1** solely because the new legacy transition assertion
+incorrectly expected immediate growth from 1 to 4. Existing adaptive behavior
+retains window 1 while increasing its ceiling; that assertion was corrected.
+The supplied Astra reproduction had already shown the approval transition failure
+before this fix (`depth-increase.log`, exit 1).
+
+### Round 1 gate results
+
+Implementation verified: `e7dfbb0b102b475781b2cf675de9962571ed02cc`. Baseline: `origin/main` /
+`6e2b50b9da5c098ebfd76e0b1b20a5990c2663bb`. The final evidence commit changes
+only this document.
+
+| Attempt | Actual exit | Wall seconds after host-idle wait | Log SHA-256 |
+|---|---:|---:|---|
+| `r1-focused` | 1 | 4.121 | `e3fd814da547b45917de9a4dff3cdb910a13160604a72f003cda7f843ceb0124` |
+| `r1-focused-retry` | 0 | 4.302 | `a79f5a98391493ee925394218cdc148c5de560096b34112015bd3f8cb884f913` |
+| `r1-old-decoder` | 0 | 1.049 | `8c351685cf9ec7b25ef2747c1eef8ec86837be540666ea77b00e53be733da804` |
+| `r1-check` | 0 | 407.263 | `c41a381043576047fc47a3d79ce168355a9dc4b27655a0cd61f2e32cde2e5adf` |
+| `r1-sim-exits` | 0 | 38.725 | `379d93d9d2a3e2ce39fa5ef44ed41405ceb587a929e034f88c41040f0365ad7a` |
+| `r1-compatibility` | 0 | 11.27 | `8609790ee807f78ae7fadd31e6503a6a932f9f874af818197be4849fe5a93749` |
+| `r1-legacy-sql` | 0 | 4.189 | `fe2faa0a68410d87ceef36bb932bf7203279378467e8af399b607abf15999e31` |
+| `r1-legacy-depths` | 0 | 142.158 | `3c25309b33c985c03a3aff2a5c961878e2dd1b080a03ec27dc5894981e7b3453` |
+| `r1-commit-ids` | 0 | 12.15 | `e035b0b425420b54ca99fcc3b5015a6efe27f7d6d9839cb69a4e187516bbc861` |
+| `r1-replay-main` | 0 | 63.222 | `3ce2d7660ae76064139152283647674796eecab6fc1748ec8bc413600ea9144b` |
+| `r1-replay-deployed` | 1 | 49.754 | `dde7f4c2ed9c7f0a817b36a0848ca946ac477d2a353c00f90a2d879653461d26` |
+| `r1-replay-shape` | 0 | 6.372 | `c86c474f8c3cecc6cd556ee0c0fb64b25cdc32280b48089554baacaed467deae` |
+
+Exact commands (all use the previously documented environment):
+
+`r1-focused` — actual exit **1**:
+
+```sh
+go test -short -count=1 ./internal/config ./internal/changepolicy ./internal/queue ./internal/serve -run 'TestSchemaKeysMatchLoader|TestPublicPolicySchema|TestPolicyDiagnostics|TestEmptyPolicy|TestStageAApprovalWindow|TestStageAHistoricalFolded|TestLegacySerialWindow|TestStageAIdentityPinBudget|TestStageAEmptyPolicy|TestApprovalConfigAppliedPinRoundTrip'
+```
+
+`r1-focused-retry` — actual exit **0**:
+
+```sh
+go test -short -count=1 ./internal/config ./internal/changepolicy ./internal/queue ./internal/serve -run 'TestSchema|TestPublished|TestPublicPolicySchema|TestPolicyDiagnostics|TestEmptyPolicy|TestStageAApprovalWindow|TestStageAHistoricalFolded|TestLegacySerialWindow|TestLegacyWindowUpgrade|TestStageAIdentityPinBudget|TestStageAEmptyPolicy|TestApprovalConfigAppliedPinRoundTrip|TestResolvedIdentityPinBudget'
+```
+
+`r1-old-decoder` — actual exit **0**:
+
+```sh
+python3 /home/riels/.cache/openmerge-11b/r1-old-decoder.py
+```
+
+`r1-check` — actual exit **0**:
+
+```sh
+make check
+```
+
+`r1-sim-exits` — actual exit **0**:
+
+```sh
+make test-sim-exits
+```
+
+`r1-compatibility` — actual exit **0**:
+
+```sh
+python3 scripts/check-phase2-compatibility.py /home/riels/openmerge-sa-11b-main
+```
+
+`r1-legacy-sql` — actual exit **0**:
+
+```sh
+python3 scripts/check-legacy-landing-sql.py /home/riels/openmerge-sa-11b-main
+```
+
+`r1-legacy-depths` — actual exit **0**:
+
+```sh
+python3 scripts/check-legacy-plan-action-depths-1-4.py /home/riels/openmerge-sa-11b-main
+```
+
+`r1-commit-ids` — actual exit **0**:
+
+```sh
+python3 scripts/check-legacy-commit-ids.py --baseline /home/riels/openmerge-sa-11b-main
+```
+
+`r1-replay-main` — actual exit **0**:
+
+```sh
+python3 scripts/check-live-journal-replay.py --baseline /home/riels/openmerge-sa-11b-main --candidate /home/riels/openmerge-sa-11b --events /home/riels/.local/share/openmerge/exports/events-20261018T051000Z.jsonl --queues /home/riels/.local/share/openmerge/exports/queues-20261018T051000Z.jsonl --strict-state --out /home/riels/.cache/openmerge-11b/r1-replay-main.json
+```
+
+`r1-replay-deployed` — actual exit **1**:
+
+```sh
+python3 scripts/check-live-journal-replay.py --baseline /home/riels/.cache/sa9b-r2-deployed --candidate /home/riels/openmerge-sa-11b --events /home/riels/.local/share/openmerge/exports/events-20261018T051000Z.jsonl --queues /home/riels/.local/share/openmerge/exports/queues-20261018T051000Z.jsonl --strict-state --out /home/riels/.cache/openmerge-11b/r1-replay-deployed.json
+```
+
+`r1-replay-shape` — actual exit **0**:
+
+```sh
+python3 /home/riels/.cache/openmerge-11b/inspect-replay-shape.py /home/riels/.cache/openmerge-11b/r1-replay-deployed.json
+```
+
+The external old-decoder probe ran `TestR1OldDecoderRejectsPolicyPin` against
+unchanged main: pinned serial records both with and without `window` were rejected
+for the unknown `policy` field. Its temporary test file was removed; the baseline
+worktree remains clean. The first focused failure and successful retry are both
+retained above. No foreign process was killed and no requested gate was skipped.
+
+Round 1 `make check`, simulator exits, main compatibility, legacy SQL with negative
+controls, depth 1/4 and four-method commit-ID differentials, and strict main replay
+all exited **0**. Strict deployed-`3f77a88` replay exited **1**, retaining the known
+absent-to-nil `classifications` difference only; its Gate 4 remains PASS. The exact
+shape assertion exited **0**, covering 2,159 real and seven synthetic checkpoints.
+No replay allowance or comparison harness changed.
+
+Final explicit-refspec main fetch, protected-file comparison (Makefile, CI and
+dogfood config), and `git diff --check` exited **0**. Main remained at the baseline
+above, so no rebase was needed. Trial class remains **Hold**.
+
+Round 1 control exits: commit-ID identical **0**, mutant **1**, dirty **2**
+(all expected); SQL trace Go tests **0** for both revisions and every mutant;
+depth-corpus Go tests **0** for both revisions in each corpus. Mandatory replay
+synthetic self-tests: main **0**, deployed **1** (the same known classifications
+boundary). The outer gate sequencer exited **0** after explicitly checking every
+child status, including the deployed replay **1**.
+
+## Round 2 ASCII identity boundary
+
+Operator decision: reject non-ASCII login, organization and team identities. The
+loader's `(?i)` regular expressions accepted U+017F/U+212A; agent pre-validation
+Unicode lowercasing also converted U+212A into ASCII `k`. Explicit ASCII classes
+and `internal/ascii` folding remove both aliases. The public member/login schema
+patterns previously spelled out U+017F/U+212A and now omit them. Owner-label
+patterns already required ASCII and remain unchanged. Invalid identity diagnostics
+retain the original YAML scalar path/line; member, agent and accountable errors
+now describe the ASCII grammar.
+
+Case-fold audit (production, excluding tests), corrected by round 3:
+
+| Site | Reachability | Final semantics |
+|---|---|---|
+| `internal/config/keys.go`, native conditions | Legacy-reachable | Existing reflected-key lowercase and literal condition equality/globs unchanged; no login folding. |
+| `internal/changepolicy/identity.go` | Approval-only identity decisions | Explicit ASCII login/org/team validation and ASCII resolved-name folding; stable IDs remain authoritative. |
+| `internal/changepolicy/candidate.go`, public schema | Approval policy parsing (shared document may include legacy siblings) | ASCII account identities in policy groups, agents, accountable users and owner selectors. Group keys remain exact arbitrary names; email-domain Unicode lowercase unchanged. Legacy-only config bypasses policy parsing. |
+| `internal/changepolicy/digest.go` | Approval-only digest computation | ASCII resolved-name normalization; literal sort. Legacy queue digest unchanged. |
+| `internal/classification/codeowners.go` | Approval owner decisions; historical classifier can be reached by legacy journals | Explicit ASCII owner/token regexes reject Unicode before canonicalization, exactly as main; ASCII lowercase is byte-equivalent for all accepted names. Email-domain Unicode lowercase unchanged. |
+| `internal/forge/github/identity.go` | Approval-only production consumers (`stage_a.go`, `stage_a_commands.go`) | ASCII request/response validation, ASCII org/team comparison; grant identities validated. Native legacy `CanWrite` is a separate unchanged path. |
+| `internal/forge/fake/identity.go` | Approval identity test double only | Five user/team map insertion/lookup and grant sites use ASCII lowercase. Legacy fake CI/permissions APIs are separate and unchanged. |
+| `internal/forge/github/driver.go` status creator | Legacy-reachable and shared by approval queues | Restored main's exact `strings.ToLower`, including Kelvin/accent folds. CI producer provenance is not approval identity authority; no queue mode changes this API. Other folds concern API errors. |
+| `internal/serve/stage_a.go` | Approval-only (`w.stageA != nil`) | Literal canonical keys and stable IDs; `policyIdentity` requires ASCII `ValidLogin`, pins use `ValidateIdentities`. |
+| `internal/gitops/metadata.go` linked commit-author fallback | Legacy-reachable; explicit mode is pinned `ChangeMetadata` presence | Nil metadata uses main's exact `strings.EqualFold`; approval metadata uses `ascii.EqualFold`. Positive IDs on both sides override the fallback in both modes. Trailer keys, email attribution and whole-trailer deduplication retain main's Unicode semantics. |
+| `internal/serve/reconcile.go` historical folded-policy diagnostic | Legacy recovery can encounter a prior approval config | Diagnostic only, guarded by `selected.Approvals != nil`; no identity normalization. |
+| Forge HTTP hosts/headers, discovery/routing, API errors, hex IDs, brief statuses | Legacy-reachable | Existing semantics unchanged; these are not approval account identities. |
+
+`TestIdentityASCIIAgreement` rejects long-s, Kelvin-sign, fullwidth A, dotless i
+and dotted I in eight identity positions (40 cases), checking loader/schema and
+portable schema-pattern agreement plus original scalar path/line. Requirements
+select the same named pool in defaults and rules. `TestIdentityASCIILegacySpellings`
+retains mixed ASCII case, bot suffixes and underscore team slugs.
+`TestCodeownersRejectsUnicodeIdentities` covers user/org/team owner tokens;
+`TestIdentityRejectsUnicodeAliases` checks requests never reach even the fake HTTP
+API and rejects Unicode user/team responses. `TestIdentityFold` proves ASCII case
+compatibility while preserving Unicode bytes. Existing identity, policy, schema,
+classification, attribution and transition suites supply regression coverage.
+
+The folded-digest diagnostic now mentions verified legacy depth-1 recovery as
+well as drain-and-restore. No transition/recovery behavior changed.
+
+`TestLinkedCommitAuthorsExcludePrimaryAliases` now includes long-s and Kelvin-sign
+fallback cases: neither suppresses another contributor's attribution, while
+ASCII mixed case and authoritative stable IDs retain their existing behavior.
+The former Unicode-positive `TestPublicPolicySchemaValidFormats` vector now uses
+`Kate` and `sam`; the operator intentionally withdrew Unicode identity support.
+
+### Round 2 execution results
+
+Tested implementation: `3ec4fdb106f83b1c8cdc75b53351acda1ca4f74e`.
+Baseline: clean `/home/riels/openmerge-sa-11b-main` at
+`6e2b50b9da5c098ebfd76e0b1b20a5990c2663bb`, matching final `origin/main`.
+All heavy jobs waited for foreign Go tests/test binaries/replays to clear and
+ran serially with `GOFLAGS=-p=2`, `GOMEMLIMIT=4GiB`,
+`GOTMPDIR=/home/riels/.cache/openmerge-11b/gotmp`,
+`GOCACHE=/home/riels/.cache/go-build`, and the authorized shared test PostgreSQL
+URL. No process was killed. No real GitHub API calls were used for testing.
+
+The first focused run exited **1** because the new positive YAML flow-list
+fixture needed quotes around bot suffixes. After correction, the expanded
+focused retry exited **0**. The first full `make check` exited **2** solely
+because the old `TestPublicPolicySchemaValidFormats` positive fixture explicitly
+accepted `Kate`/`ſam`. All other packages passed. That fixture now uses ASCII
+spellings under the operator's new contract; schema-focused retry and complete
+`make check` both exited **0**. No production code changed after that failure.
+The first gate sequencer returned **2**, and its corrected rerun returned **0**;
+each child/wrapper status agrees with the table below.
+
+Logs below live in `/home/riels/.cache/openmerge-11b/`. Wall times exclude host
+waiting and are execution records, not performance claims.
+
+| Gate/attempt | Actual exit | Wall seconds | Log SHA-256 |
+|---|---:|---:|---|
+| `r2-focused` | 1 | 5.15 | `9f3c0db1ba0bcf6a4281e18b714266afb4c8065f1c77738458696334cbe5ab7a` |
+| `r2-focused-retry` | 0 | 2.248 | `8d596c94598e78c187c86b9212df19e9819f0eba2b133741a4d66b351623eb59` |
+| `r2-check` | 2 | 414.513 | `29ba1d20569cbae24d812824373f728f8fc38b858761ac2bfcb66c6150988c75` |
+| `r2-schema-retry` | 0 | 0.363 | `e1d6aefdbe835da0ee513518400077503b6d394b2b31f4e4869ef794be8b7d81` |
+| `r2-check-retry` | 0 | 393.558 | `4f39a292c2c24b2b2f8724c98528db8089cffb631db18c5b2af388bf2f78d4b6` |
+| `r2-compatibility` | 0 | 11.392 | `8609790ee807f78ae7fadd31e6503a6a932f9f874af818197be4849fe5a93749` |
+| `r2-legacy-sql` | 0 | 4.127 | `fe2faa0a68410d87ceef36bb932bf7203279378467e8af399b607abf15999e31` |
+| `r2-commit-ids` | 0 | 12.752 | `f43adddf778ad0f8f0fcaebbdc47a6b4d26fc160ae2f17741b631b976ea429aa` |
+
+Exact commands (each invoked through the serialized host-idle runner):
+
+`r2-focused` — actual exit **1**:
+
+```sh
+go test -short ./internal/ascii ./internal/config ./internal/changepolicy ./internal/classification ./internal/forge/github ./internal/forge/fake ./internal/gitops ./internal/serve -run 'TestIdentity|TestCodeownersRejectsUnicodeIdentities|TestPolicy|TestCandidate|TestStageAConfig|TestApprovalDepth' -count=1
+```
+
+`r2-focused-retry` — actual exit **0**:
+
+```sh
+go test -short ./internal/ascii ./internal/config ./internal/changepolicy ./internal/classification ./internal/forge/github ./internal/forge/fake ./internal/gitops ./internal/serve -run 'TestIdentity|TestCodeownersRejectsUnicodeIdentities|TestPolicy|TestCandidate|TestLinkedCommitAuthorsExcludePrimaryAliases|TestApproval|TestHistorical|TestLegacyConfig' -count=1
+```
+
+`r2-check` — actual exit **2**:
+
+```sh
+make check
+```
+
+`r2-schema-retry` — actual exit **0**:
+
+```sh
+go test -short ./internal/config -run 'TestIdentityASCII|TestPublicPolicySchemaValidFormats' -count=1
+```
+
+`r2-check-retry` — actual exit **0**:
+
+```sh
+make check
+```
+
+`r2-compatibility` — actual exit **0**:
+
+```sh
+python3 scripts/check-phase2-compatibility.py /home/riels/openmerge-sa-11b-main
+```
+
+`r2-legacy-sql` — actual exit **0**:
+
+```sh
+python3 scripts/check-legacy-landing-sql.py /home/riels/openmerge-sa-11b-main
+```
+
+`r2-commit-ids` — actual exit **0**:
+
+```sh
+python3 scripts/check-legacy-commit-ids.py --baseline /home/riels/openmerge-sa-11b-main
+```
+
+Compatibility vs main: **0**; 17 legacy exit records, 1,055 retry/default-digest
+records and 84 existing top-level wire fixtures are byte-identical. Legacy SQL:
+**0**, seven statements identical including transaction/lock order; both source
+Go tests and all five mutant Go tests exited **0**, with each negative control
+successfully detecting the SQL difference (authorize-extra-statement,
+claim-without-for-update, legacy-via-nil-policy-start, load-before-claim-check,
+emit-send-batch).
+
+Four-method tested/landed ID comparison: **0**; both revisions agree separately
+on tested IDs and landed IDs for squash, merge, rebase and fast-forward.
+Self-test exits: identical **0**, deliberate mutant **1**, dirty source **2**,
+all expected. These sensitivity checks are not failures of the candidate.
+The full log retains all source hashes, binary hashes and per-method IDs.
+
+Final explicit-refspec fetch of only main and this branch exited **0**;
+main remained `6e2b50b9da5c098ebfd76e0b1b20a5990c2663bb`, so no rebase was needed.
+Protected-file comparison (Makefile, CI, dogfood config), clean-tree check before
+commit-ID collection, and `git diff --check` exited **0**. The following evidence
+commit changes only this Markdown file; implementation/gates remain those of
+`3ec4fdb`. No live DB, service, production refs or status API was accessed.
+No approvals were added to dogfood. Trial class remains **Hold**.
+
+## Round 3 legacy Unicode equivalence repair
+
+Round 2's shared ASCII changes caused the two blocking regressions. Status
+creators now use main's Unicode normalization on every queue. Commit-author
+fallback explicitly selects main's Unicode comparison without approval metadata
+and ASCII comparison with approval metadata. Stable IDs and all email/trailer
+folding retain their prior behavior. No other audited round 2 fold changes a
+legacy-reachable accepted identity.
+
+`TestStatusUnicodeLegacyEquivalence` asserts executor success and source strings
+for `Kam`/`kam`, `Élodie`/`élodie`, the ASCII control, and the historically
+ambiguous `ſam`/`sam` control. `TestLinkedCommitAuthorsExcludePrimaryAliases`
+runs both nil-metadata and approval-metadata builds: Kelvin, long-s and accented
+fallbacks suppress primary coauthor trailers only in legacy mode; ID and ASCII
+controls agree. `TestIdentityRejectsUnicodeAliases` includes the repro logins.
+`TestStageAUnicodeApprovalIdentityRejected` uses a publicly configured approval
+queue and proves the same Unicode actors cannot acquire receipts even with a
+stable ID and affirmative write grant. CI source normalization remains shared;
+approval authority follows the separate ASCII identity boundary.
+
+`scripts/check-legacy-unicode-logins.py --baseline /home/riels/openmerge-sa-11b-main`
+adds a dedicated clean-source differential: exact fake-HTTP status/executor
+observations versus main, plus tested and landed IDs for all four methods with
+five fixtures (ASCII login control, Kelvin missing-ID fallback, accented
+missing-ID fallback, non-ASCII primary author, and authoritative stable-ID
+control). Every commit fixture includes Unicode author names/emails and a
+`Zoë <zoë@éxample.test>` coauthor. No real forge requests are used.
+
+### Round 3 gate results
+
+Production and Go regression tests were frozen at
+`f6649427b4817171b9cdde1113487433a67082c0`. The only subsequent source change,
+`baf237474551c1fba49ac6f0167b11fb743cc2c1`, fixes the new Python differential
+fixture generator: each fixture must start from the immutable original harness,
+rather than reapplying substitutions to the previous fixture. No production or
+Go test code changed after the full check. This evidence update changes only
+Markdown.
+
+All commands below ran serially through the host-idle runner with the documented
+GOFLAGS, memory, cache and shared-test-Postgres settings. The Unicode retry
+waited for a foreign full-corpus differential before starting. No process was
+killed in round 3. Logs are under `/home/riels/.cache/openmerge-11b/`.
+
+| Run | Actual exit | Wall seconds after idle wait | Log SHA-256 |
+|---|---:|---:|---|
+| `r3-focused` | 0 | 3.755 | `35c3b8f430229a8fd333a5d3fcc2e4c457d86d82df9435f8bfeb3492ebe38c91` |
+| `r3-approval-focused` | 0 | 1.653 | `743f9c3a803143dabeaeaa4cc54b63cb68d6850d815d85d8f19464f304d80831` |
+| `r3-check` | 0 | 375.726 | `311b7fa438b87759ba10325904dd404042ff249506dc5c4dc0fd763ace5494ed` |
+| `r3-sim-exits` | 0 | 38.782 | `4a16be201ce21adef37c0b01242596d8f127269fc1a42e0b35d7b7584080e25b` |
+| `r3-compatibility` | 0 | 11.365 | `8609790ee807f78ae7fadd31e6503a6a932f9f874af818197be4849fe5a93749` |
+| `r3-legacy-sql` | 0 | 2.121 | `fe2faa0a68410d87ceef36bb932bf7203279378467e8af399b607abf15999e31` |
+| `r3-depths` | 0 | 142.754 | `3c25309b33c985c03a3aff2a5c961878e2dd1b080a03ec27dc5894981e7b3453` |
+| `r3-commit-ids` | 0 | 11.057 | `99ff8d2ce75f33a9c1abcd1a72c0020490a744d06b9658ef7c60f3e8e32d8b79` |
+| `r3-unicode` | 2 | 12.305 | `07e723152a0edf6d7e44f40207841270e9b68bbe3f1c49aac4d6a616926a88ce` |
+| `r3-unicode-retry` | 0 | 26.799 | `f617b581d60775fe7a8e0481bcd54020c8d31f36cddc973f735303a07f22c3ce` |
+| `r3-replay-main` | 0 | 62.85 | `58ecd77cd519c6ab8f5307ecd5c07114f6b9c90d67401c8b797e8e802085df77` |
+
+The first Unicode differential exited **2**: its status comparison and ASCII
+commit fixture passed, then the second fixture's generated Go failed compilation
+with duplicate `:=` declarations. The template fix above resolved it; the full
+retry exited **0**, with all five fixtures and four methods passing. The outer
+`r3-gates.sh` exited **2** on that first failure; the corrected retry and strict
+replay were then run separately, both exiting **0**. No failure is waived.
+
+Results:
+
+- `make check`: **0**, formatting, lint (zero issues), complete race/short suite
+  and binary build.
+- `make test-sim-exits`: **0**, complete required simulator exits.
+- Compatibility: **0**, 17 legacy exit records, 1,055 retry/default digest records,
+  and 84 wire fixtures byte-identical.
+- SQL: **0**, seven exact statements and lock/transaction order. Baseline,
+  candidate, and each of the five negative-control Go trace tests exited **0**;
+  all five SQL mutations were detected by the differential.
+- Depth 1/4: **0**, 227,662 short checkpoints, 5,615,998 full checkpoints, and
+  188 fixture records matched exactly. All six underlying Go test invocations
+  exited **0**; no plan/action/wake exceptions.
+- Stock commit IDs: **0**, tested and landed IDs identical independently for
+  squash, merge, rebase and fast-forward. Mandatory self-test statuses:
+  identical **0**, intentional mutant **1**, dirty source **2** (all expected).
+- Unicode differential final: **0**, both fake-HTTP status/executor tests exited
+  **0**, four producer pairs matched, all five fixtures matched tested/landed
+  IDs across all four methods. Every fixture binary build and execution exited
+  **0**. No forge network calls outside loopback.
+- Strict journal replay vs main: **0**, all 2,159 real structural state checkpoints
+  and seven synthetic checkpoints matched; candidate-repeat determinism passed.
+  No new replay exceptions were added.
+
+Exact commands (runner environment above; `python3 -B` disables bytecode):
+
+`r3-focused` — actual exit **0**:
+
+```sh
+go test -short -count=1 ./internal/gitops ./internal/forge/github -run 'TestLinkedCommitAuthorsExcludePrimaryAliases|TestStatusUnicodeLegacyEquivalence|TestIdentityRejectsUnicodeAliases'
+```
+
+`r3-approval-focused` — actual exit **0**:
+
+```sh
+go test -short -count=1 ./internal/serve -run '^TestStageAUnicodeApprovalIdentityRejected$'
+```
+
+`r3-check` — actual exit **0**:
+
+```sh
+make check
+```
+
+`r3-sim-exits` — actual exit **0**:
+
+```sh
+make test-sim-exits
+```
+
+`r3-compatibility` — actual exit **0**:
+
+```sh
+python3 -B scripts/check-phase2-compatibility.py /home/riels/openmerge-sa-11b-main
+```
+
+`r3-legacy-sql` — actual exit **0**:
+
+```sh
+python3 -B scripts/check-legacy-landing-sql.py /home/riels/openmerge-sa-11b-main
+```
+
+`r3-depths` — actual exit **0**:
+
+```sh
+python3 -B scripts/check-legacy-plan-action-depths-1-4.py /home/riels/openmerge-sa-11b-main
+```
+
+`r3-commit-ids` — actual exit **0**:
+
+```sh
+python3 -B scripts/check-legacy-commit-ids.py --baseline /home/riels/openmerge-sa-11b-main
+```
+
+`r3-unicode` — actual exit **2**:
+
+```sh
+python3 -B scripts/check-legacy-unicode-logins.py --baseline /home/riels/openmerge-sa-11b-main
+```
+
+`r3-unicode-retry` — actual exit **0**:
+
+```sh
+python3 -B scripts/check-legacy-unicode-logins.py --baseline /home/riels/openmerge-sa-11b-main
+```
+
+`r3-replay-main` — actual exit **0**:
+
+```sh
+python3 -B scripts/check-live-journal-replay.py --baseline /home/riels/openmerge-sa-11b-main --candidate /home/riels/openmerge-sa-11b --events /home/riels/.local/share/openmerge/exports/events-20261018T051000Z.jsonl --queues /home/riels/.local/share/openmerge/exports/queues-20261018T051000Z.jsonl --strict-state --out /home/riels/.cache/openmerge-11b/r3-replay-main.json
+```
+
+Initial setup fetch used an incorrect branch spelling (`stage-a-11b`) and
+exited **128** before fetching it; the corrected explicit refspec for
+`stage-a/11b-activation` and main exited **0**. A read-only inspection used a
+misspelled test filename and exited **2**; reading the correct file succeeded.
+Neither launched tests or mutated source. Subsequent explicit-refspec fetch
+confirmed main remains `6e2b50b9da5c098ebfd76e0b1b20a5990c2663bb`.
+
+
+## Rebase onto Stage A 12a reporting (2026-10-19)
+
+Requested old range: `6e2b50b..e90bc7e`. Fetched with exactly
+`git fetch origin refs/heads/main:refs/remotes/origin/main` (exit **0**).
+New baseline: `428f24f20a41c723ae441d97a6cef36025fa6735` (#79), checked out
+clean and detached at `/home/riels/openmerge-sa-11b-rebase-main` for every
+cross-revision gate below. The original baseline checkout is untouched.
+
+The first rebase stopped for conflicts (exit **1**); resolution and
+`git rebase --continue` exited **0**, replaying all ten commits. Every rebased
+commit retains Riel St. Amand's author and the required sign-off/coauthor ending.
+
+### Conflict list and resolutions
+
+1. `internal/status/brief.go`: retain 12a's single projection, accountability,
+   receipt history/binding, ledger test evidence and bounded warning rendering.
+   Remove only the `policy_composition_11b`/`implement_11b_policy_composition`
+   placeholder branch; reconstructed approval facts now expose requirements and
+   the verified brief digest. Busy, unavailable and mismatch recovery remain.
+2. `internal/status/brief_policy.go`: retain 12a's `projection.policyPins`
+   lookup rather than restoring 11b's second journal replay. Retain 11b's local
+   immutable-object reconstruction, recorded identity/classifier/default-branch
+   pin, static component and effective digest checks, and error distinctions.
+
+Semantic integration in `internal/status/status.go`: the shared fold must retain
+complete accepted `ConfigApplied` events, including `Policy` and `Window`, in its
+classification-time policy pins. Main's commit/digest-only projection discarded
+those fields. Capture the full pin during the existing fold, associate it only
+with matching committed state, and use that historical pin even after a newer
+configuration arrives. No second projection or replay is introduced.
+
+Check rendering in `internal/status/check.go` also reuses the genuine recorded
+intent basis, as the reconstruction path already does. Its synthesized display
+basis lacks a read ID/time and therefore cannot pass `RecordedBrief` validation.
+The new successful-composition check regression caught this integration gap.
+Missing/mismatched evidence still invokes the original warning callback and
+visible unavailable rendering; current operational gate rendering is retained.
+
+`internal/serve/stage_a.go` auto-merged: 11b's production approval-only activation
+and `WithPolicyDigest` composition coexist with 12a's
+`ReviewerCheckSummaryFromProjection`, shared cached journal/ledger snapshot and
+logged, visible `policy_unavailable` degradation. Operational gate precedence
+is unchanged. Explicit serial window bounds on pinned approval `ConfigApplied`
+records, approval-path ASCII identity rules, and main's Unicode legacy status
+and commit-author semantics survive unchanged. No migration is added: 006 and
+007 are byte-identical to main. Makefile, CI and `.openmerge.yml` are unchanged.
+
+### Deliberate golden coverage
+
+The existing 12a reporting goldens describe missing policy evidence and retain
+honest `policy_unavailable` recovery. They are not replaced with fabricated
+requirements. Two new goldens extend the real pinned-composition regression:
+
+- `internal/status/testdata/approval-brief.json`: records the successful local
+  reconstruction, concrete digest, approval requirements and 12a accountability
+  fields. It proves the placeholder/unavailable branch is gone when the complete
+  historical pin and local objects exist.
+- `internal/status/testdata/approval-check.json`: records the reviewer check from
+  the same projected journal and reconstructed policy, with the same brief
+  digest and concrete requirement. A JSON string preserves exact check bytes,
+  including trailing spaces, without adding source-file whitespace. It proves
+  successful composition does not
+  lose 12a's check rendering or degrade to unavailable.
+
+The same test compares the change endpoint and PR alias evidence with the brief,
+asserts preservation of the historical window bounds, and retains existing
+missing-pin/tree and component/effective-digest mismatch coverage.
+
+### Rebase verification
+
+All heavy commands run serially through the documented host-idle runner, with
+`GOFLAGS=-p=2`, `GOMEMLIMIT=4GiB` (6GiB for replay), the authorized shared test
+Postgres URL, and caches/GOTMPDIR under `~/.cache`. The initial focused run waited
+for the foreign review suite; subsequent commands independently wait for foreign
+Go/test/replay jobs. No process is killed. Only existing offline journal exports
+are read; there is no live DB, status API, service-unit or production-ref access.
+Tests use local/fake forges; Git transport and the authorized PR body edit are
+the only remote operations.
+
+Frozen tested implementation: `e2535e140c38ecb26593c78347883fe2661708ce`.
+All required gates below ran on that clean revision against clean main
+`428f24f20a41c723ae441d97a6cef36025fa6735`. The final evidence-only commit
+changes this Markdown file; production, tests and goldens are unchanged.
+
+The first focused run exited **1** solely because the newly added approval
+brief golden had not yet been generated; serve passed. The first golden
+invocation exited **1** after writing the brief vector: the new success-path
+check assertion exposed the invalid synthesized read basis. Reusing the
+recorded intent basis fixed that integration issue. Golden retry and the focused
+suite both exited **0**. The successful check vector was then encoded as a JSON
+string to preserve its exact bytes (including spaces) without source-file
+trailing whitespace; regeneration exited **0**. The final full check uses the
+committed JSON vector. No failure is waived.
+
+Logs are under `/home/riels/.cache/openmerge-11b/`. Wall seconds exclude host-idle
+waiting and are execution records, not performance measurements.
+
+
+| Run | Actual exit | Wall seconds | Log SHA-256 |
+|---|---:|---:|---|
+| `rebase-focused` | 1 | 27.27 | `3df38b3efeda63cc154be2be5dbabf7ef035d39fa95c1a7a2cba7a6da7e9a072` |
+| `rebase-goldens` | 1 | 0.23 | `dca69a84880cd85eba1bbcbb48a6ecab13b12ddac93bc49f5cd8c52d6221b252` |
+| `rebase-goldens-retry` | 0 | 0.515 | `6026e649823835c2320ab35f7b9f31ba4e918284b098b00af0961f039cad731c` |
+| `rebase-focused-retry` | 0 | 26.025 | `49ce3e118855b79be90cdf3104b4dfa362e9ce8dbd64a9b5648e1e6e67c6b588` |
+| `rebase-golden-json` | 0 | 0.509 | `6026e649823835c2320ab35f7b9f31ba4e918284b098b00af0961f039cad731c` |
+| `rebase-check` | 0 | 420.923 | `861cef3a80f4a73867b3abc2001f72c98b09db9fdd3b82b850924eb1c4595127` |
+| `rebase-sim-exits` | 0 | 38.736 | `d8fb0e4a6fcab915f15a14452102ac13f8dde9f979832858ad7857c9265996b7` |
+| `rebase-compatibility` | 0 | 12.852 | `8609790ee807f78ae7fadd31e6503a6a932f9f874af818197be4849fe5a93749` |
+| `rebase-legacy-sql` | 0 | 4.813 | `ff172879dc9a455db1191ae93ba01122c064a1610555a1043bcad467b14f6661` |
+| `rebase-depths` | 0 | 142.791 | `3c25309b33c985c03a3aff2a5c961878e2dd1b080a03ec27dc5894981e7b3453` |
+| `rebase-commit-ids` | 0 | 11.874 | `c683712fed3bbf3c5692b1f1c130ffc7a40d070f75d7b58d7cb6ce09d96c2fd4` |
+| `rebase-unicode` | 0 | 27.862 | `d57b2a4d360b41b8800e533791a69b1ed5bda35df73ddec51b9f0e1d60e0bf2d` |
+| `rebase-reporting` | 0 | 1.169 | `b04978d72e5e5a60f72a573fee8ff5cd8d973099c5a8a749f48cc61bfbd7084c` |
+| `rebase-replay-main` | 0 | 65.863 | `482f7c08b94c5dc83734f5e66dd1916fca8d0be098f9e1f7a6c7f7334126768d` |
+
+Results and child statuses:
+
+- `make check`: **0**; formatting, zero lint issues, complete race/short suite,
+  binary build. `make test-sim-exits`: **0**.
+- Compatibility: **0**, all 17 exit records, 1,055 retry/default digest records
+  and 84 historical wire fixtures byte-identical.
+- Legacy SQL: **0**, all seven statements and transaction/lock ordering match.
+  Baseline, candidate and all five mutant Go traces individually exited **0**;
+  every negative control produced the required detectable SQL difference.
+- Depth 1/4: **0**, 227,662 short and 5,615,998 full checkpoints plus 188 journal
+  fixture records matched exactly. All six underlying Go test invocations
+  exited **0**, with no plan/action/wake exceptions.
+- Stock commit IDs: **0**, independently identical tested/landed IDs for squash,
+  merge, rebase and fast-forward. Sensitivity controls: identical **0**,
+  intentional mutant **1**, dirty source **2**, all expected.
+- Unicode: **0**, both fake-HTTP status/executor probes exited **0**, all four
+  producer pairs match. All five fixtures match tested/landed IDs independently
+  across all four methods; each fixture binary build and execution exited **0**.
+- Legacy reporting: **0**, baseline and candidate probes each exited **0**.
+  Six legacy checks are byte-identical; preexisting serialized status fields
+  and their order match after stripping only the permitted change/landing
+  metadata. Comparator negative controls passed.
+- Strict replay vs main: **0**, all 2,159 real structural checkpoints and seven
+  synthetic checkpoints match; repeat determinism passed. No replay exception
+  was added. Replay report: `~/.cache/openmerge-11b/rebase-replay-main.json`.
+- The outer serialized gate sequencer exited **0**. Author/trailer validation,
+  clean-source checks, migration/Makefile/CI/dogfood equality, and
+  `git diff --check` also exited **0**.
+
+Exact commands, each launched through the host-idle runner with the environment
+above (golden update applies only to its explicitly named invocations):
+
+`rebase-focused` — actual exit **1**:
+
+```sh
+go test -short -count=1 ./internal/status ./internal/serve
+```
+
+`rebase-goldens` — actual exit **1**:
+
+```sh
+env OPENMERGE_UPDATE_REPORTING_GOLDENS=1 go test -short -count=1 ./internal/status -run '^TestApprovalBriefPinnedComposition$'
+```
+
+`rebase-goldens-retry` — actual exit **0**:
+
+```sh
+env OPENMERGE_UPDATE_REPORTING_GOLDENS=1 go test -short -count=1 ./internal/status -run '^TestApprovalBriefPinnedComposition$'
+```
+
+`rebase-focused-retry` — actual exit **0**:
+
+```sh
+go test -short -count=1 ./internal/status ./internal/serve
+```
+
+`rebase-golden-json` — actual exit **0**:
+
+```sh
+env OPENMERGE_UPDATE_REPORTING_GOLDENS=1 go test -short -count=1 ./internal/status -run '^TestApprovalBriefPinnedComposition$'
+```
+
+`rebase-check` — actual exit **0**:
+
+```sh
+make check
+```
+
+`rebase-sim-exits` — actual exit **0**:
+
+```sh
+make test-sim-exits
+```
+
+`rebase-compatibility` — actual exit **0**:
+
+```sh
+python3 -B scripts/check-phase2-compatibility.py /home/riels/openmerge-sa-11b-rebase-main
+```
+
+`rebase-legacy-sql` — actual exit **0**:
+
+```sh
+python3 -B scripts/check-legacy-landing-sql.py /home/riels/openmerge-sa-11b-rebase-main
+```
+
+`rebase-depths` — actual exit **0**:
+
+```sh
+python3 -B scripts/check-legacy-plan-action-depths-1-4.py /home/riels/openmerge-sa-11b-rebase-main
+```
+
+`rebase-commit-ids` — actual exit **0**:
+
+```sh
+python3 -B scripts/check-legacy-commit-ids.py --baseline /home/riels/openmerge-sa-11b-rebase-main
+```
+
+`rebase-unicode` — actual exit **0**:
+
+```sh
+python3 -B scripts/check-legacy-unicode-logins.py --baseline /home/riels/openmerge-sa-11b-rebase-main
+```
+
+`rebase-reporting` — actual exit **0**:
+
+```sh
+python3 -B scripts/check-legacy-reporting.py /home/riels/openmerge-sa-11b-rebase-main
+```
+
+`rebase-replay-main` — actual exit **0**:
+
+```sh
+python3 -B scripts/check-live-journal-replay.py --baseline /home/riels/openmerge-sa-11b-rebase-main --candidate /home/riels/openmerge-sa-11b --events /home/riels/.local/share/openmerge/exports/events-20261018T051000Z.jsonl --queues /home/riels/.local/share/openmerge/exports/queues-20261018T051000Z.jsonl --strict-state --out /home/riels/.cache/openmerge-11b/rebase-replay-main.json
+```
+
+### Range-diff summary
+
+`git range-diff 6e2b50b..e90bc7e 428f24f..stage-a/11b-activation` retains all ten
+original commits: nine are patch-identical, and the first activation commit is
+adapted to the shared 12a projection and full classification-time pins. One
+follow-up adds the recorded-basis check fix, approval reporting regression
+coverage/goldens and rebase explanation; the final follow-up records verification
+only. The complete command output is retained at
+`~/.cache/openmerge-11b/rebase-range-diff.txt`.

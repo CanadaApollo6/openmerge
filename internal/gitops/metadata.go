@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/CanadaApollo6/openmerge/internal/ascii"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
 
@@ -178,8 +179,14 @@ func (s *session) prMessage(ctx context.Context, repo forge.RepoRef, req forge.B
 			return "", err
 		}
 		own := make(map[string]bool)
+		// Nil metadata is the legacy queue path: preserve main's Unicode
+		// fallback exactly. Approval builds use ASCII identity comparison.
+		equal := strings.EqualFold
+		if metadata != nil {
+			equal = ascii.EqualFold
+		}
 		for _, commit := range linked {
-			matches := commit.Login != "" && strings.EqualFold(commit.Login, pr.Author)
+			matches := commit.Login != "" && equal(commit.Login, pr.Author)
 			if commit.ID > 0 && pr.AuthorID > 0 {
 				matches = commit.ID == pr.AuthorID
 			}

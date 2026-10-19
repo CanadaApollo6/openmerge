@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/CanadaApollo6/openmerge/internal/ascii"
 )
 
 // GoverningContent records content or proven absence, not blob/commit IDs.
@@ -74,7 +76,7 @@ func PolicyDigest(in DigestInputs) (string, error) {
 	slices.SortFunc(agents, func(a, b Agent) int { return strings.Compare(a.Identity, b.Identity) })
 	resolved := append([]ResolvedIdentity{}, in.Resolved...)
 	for i := range resolved {
-		resolved[i].Name = strings.ToLower(resolved[i].Name)
+		resolved[i].Name = ascii.Lower(resolved[i].Name)
 	}
 	slices.SortFunc(resolved, func(a, b ResolvedIdentity) int { return strings.Compare(a.Name, b.Name) })
 	rules := make([]string, 0, len(in.Queue.Approvals.Rules))
@@ -112,6 +114,15 @@ func PolicyDigest(in DigestInputs) (string, error) {
 		seen[content.Path] = true
 	}
 	slices.SortFunc(contents, func(a, b GoverningContent) int { return strings.Compare(a.Path, b.Path) })
+	// Retain the published digest spelling independently of journal wire tags.
+	type digestIdentity struct {
+		Name, ID string
+		Kind     AccountKind
+	}
+	canonicalResolved := make([]digestIdentity, len(resolved))
+	for i, r := range resolved {
+		canonicalResolved[i] = digestIdentity(r)
+	}
 	canonical := struct {
 		Version           string
 		Classification    ClassificationSettings
@@ -119,10 +130,10 @@ func PolicyDigest(in DigestInputs) (string, error) {
 		Rules             []string
 		Groups            map[string][]string
 		Agents            []Agent
-		Resolved          []ResolvedIdentity
+		Resolved          []digestIdentity
 		Contents          []GoverningContent
 		ClassifierVersion string
-	}{"openmerge-policy-v1", classification, canonicalRequirement(in.Queue.Approvals.Default), sortedSet(rules), groups, agents, resolved, contents, in.ClassifierVersion}
+	}{"openmerge-policy-v1", classification, canonicalRequirement(in.Queue.Approvals.Default), sortedSet(rules), groups, agents, canonicalResolved, contents, in.ClassifierVersion}
 	data, err := json.Marshal(canonical)
 	if err != nil {
 		return "", err

@@ -21,7 +21,10 @@ import (
 const HistoricalVersion = "classification-v1/git-evidence-v7-bounded-omissions/governing-v1/hunks-v1/facets-v1"
 
 // Version includes acquisition semantics and the classifier facet/path rules.
-const Version = "classification-v1/git-evidence-v8-retained-hunk-budget/governing-v1/hunks-v1/facets-v3"
+const Version = "classification-v1/git-evidence-v8-retained-hunk-budget/governing-v2-pattern-budget/hunks-v1/facets-v3"
+
+// UnboundedPatternVersion retains the pre-activation governing-pattern semantics.
+const UnboundedPatternVersion = "classification-v1/git-evidence-v8-retained-hunk-budget/governing-v1/hunks-v1/facets-v3"
 
 // RetainedVersion preserves the pre-budget evidence codec for replay.
 const RetainedVersion = "classification-v1/git-evidence-v7-bounded-omissions/governing-v1/hunks-v1/facets-v3"

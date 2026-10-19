@@ -216,9 +216,7 @@ func projectBriefFromProjection(j store.Journal, q *Queue, entry *Entry, id, aud
 		appendBriefWarning(&v, audience, "display_truncated", "Older receipt attempts omitted from this display.", "Read retained evidence.", brief.Step{Action: "read_recorded_evidence"})
 	}
 
-	if policyCode == "policy_composition_11b" {
-		appendBriefWarning(&v, audience, "policy_unavailable", "Candidate approval requirements are unavailable: recorded-policy digest composition is defined in 11b.", "11b must define and verify the full recorded-policy digest composition before candidate requirements can be shown.", brief.Step{Action: "implement_11b_policy_composition"})
-	} else if policyCode == "policy_busy" {
+	if policyCode == "policy_busy" {
 		appendBriefWarning(&v, audience, "policy_busy", "Local policy reconstruction is temporarily busy.", "Retry the brief after local lock contention clears.", brief.Step{Action: "retry"})
 	} else if policyCode != "" {
 		appendBriefWarning(&v, audience, policyCode, "The recorded approval policy could not be reconstructed for this brief.", "Restore the pinned ConfigApplied commit and its tree/blob objects to the repository local Git cache through an operator-managed fetch or backup import (including the default-branch config commit for non-default-base queues); restore recorded identity inputs. If the repository default branch is unknown, let worker reconciliation establish it. The brief reader never fetches.", brief.Step{Action: "restore_recorded_policy"})

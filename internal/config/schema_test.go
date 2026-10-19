@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
 	"github.com/CanadaApollo6/openmerge/internal/config/condition"
 	"github.com/CanadaApollo6/openmerge/schema"
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -55,6 +56,22 @@ var compiledSchema = sync.OnceValues(func() (*jsonschema.Schema, error) {
 		}
 		return nil
 	}})
+	for name, validate := range map[string]func(string) bool{
+		"policy-member": cp.ValidMember,
+		"policy-login":  cp.ValidLogin,
+		"policy-label":  cp.ValidClassificationLabel,
+		"policy-glob": func(s string) bool {
+			_, err := condition.CompileGlob(s)
+			return strings.TrimSpace(s) != "" && err == nil
+		},
+	} {
+		compiler.RegisterFormat(&jsonschema.Format{Name: name, Validate: func(value any) error {
+			if s, ok := value.(string); ok && !validate(s) {
+				return fmt.Errorf("invalid %s", name)
+			}
+			return nil
+		}})
+	}
 	if err := compiler.AddResource("openmerge.v1.json", doc); err != nil {
 		return nil, err
 	}
@@ -62,16 +79,38 @@ var compiledSchema = sync.OnceValues(func() (*jsonschema.Schema, error) {
 })
 
 type keySchema struct {
-	Ref        string                `json:"$ref"`
-	Properties map[string]*keySchema `json:"properties"`
-	Items      *keySchema            `json:"items"`
-	Defs       map[string]*keySchema `json:"$defs"`
+	Ref                  string                `json:"$ref"`
+	Properties           map[string]*keySchema `json:"properties"`
+	Items                *keySchema            `json:"items"`
+	Defs                 map[string]*keySchema `json:"$defs"`
+	AdditionalProperties json.RawMessage       `json:"additionalProperties"`
+	AllOf                []*keySchema          `json:"allOf"`
+	OneOf                []*keySchema          `json:"oneOf"`
 }
 
 func TestSchemaKeysMatchLoader(t *testing.T) {
 	var published keySchema
 	if err := json.Unmarshal([]byte(schema.V1), &published); err != nil {
 		t.Fatal(err)
+	}
+	var properties func(*keySchema) map[string]*keySchema
+	properties = func(node *keySchema) map[string]*keySchema {
+		out := map[string]*keySchema{}
+		if node == nil {
+			return out
+		}
+		if node.Ref != "" {
+			return properties(published.Defs[strings.TrimPrefix(node.Ref, "#/$defs/")])
+		}
+		for k, v := range node.Properties {
+			out[k] = v
+		}
+		for _, part := range append(append([]*keySchema{}, node.AllOf...), node.OneOf...) {
+			for k, v := range properties(part) {
+				out[k] = v
+			}
+		}
+		return out
 	}
 	var walk func(reflect.Type, *keySchema, string)
 	walk = func(typ reflect.Type, node *keySchema, path string) {
@@ -94,13 +133,34 @@ func TestSchemaKeysMatchLoader(t *testing.T) {
 			walk(typ.Elem(), node.Items, path+"[]")
 			return
 		}
-		// Compiled expressions have their own grammar/schema agreement corpus;
-		// they are not config mapping structs decoded through YAML field tags.
-		if typ.Kind() != reflect.Struct || typ.PkgPath() != reflect.TypeFor[Config]().PkgPath() {
+		if typ.Kind() == reflect.Map {
+			var values keySchema
+			if err := json.Unmarshal(node.AdditionalProperties, &values); err == nil {
+				walk(typ.Elem(), &values, path+".*")
+			}
+			return
+		}
+		// Compiled condition expressions have their own grammar agreement corpus.
+		if typ.Kind() != reflect.Struct || (typ.PkgPath() != reflect.TypeFor[Config]().PkgPath() && typ.PkgPath() != reflect.TypeFor[cp.Approvals]().PkgPath()) {
+			return
+		}
+		props := properties(node)
+		if typ == reflect.TypeFor[cp.Requirement]() {
+			keys := cp.RequirementKeys()
+			for name := range props {
+				if !slices.Contains(keys, name) {
+					t.Errorf("%s.%s: unknown selector key", path, name)
+				}
+			}
+			for _, name := range keys {
+				if props[name] == nil {
+					t.Errorf("%s.%s: missing selector key", path, name)
+				}
+			}
 			return
 		}
 		keys := yamlKeys(typ)
-		for name := range node.Properties {
+		for name := range props {
 			if !slices.Contains(keys, name) {
 				t.Errorf("%s.%s: schema key is not accepted by loader", path, name)
 			}
@@ -113,7 +173,7 @@ func TestSchemaKeysMatchLoader(t *testing.T) {
 			}
 			name := keys[keyIndex]
 			keyIndex++
-			walk(field.Type, node.Properties[name], path+"."+name)
+			walk(field.Type, props[name], path+"."+name)
 		}
 	}
 	walk(reflect.TypeFor[Config](), &published, "config")
@@ -337,5 +397,87 @@ func TestSchemaDefaultsMatchLoader(t *testing.T) {
 	q := cfg.Queues[0]
 	if string(q.MergeMethod) != p.Method.Default || q.CheckTimeout != timeout || q.Checks.RetryFailed != p.Checks.Default.RetryFailed || q.Batch.MaxSize != p.Batch.Default.Size || q.Batch.MaxWait != wait || p.Batch.Properties.Size.Default != p.Batch.Default.Size || p.Batch.Properties.Wait.Default != p.Batch.Default.Wait || p.Checks.Properties.RetryFailed.Default != p.Checks.Default.RetryFailed {
 		t.Fatal("published defaults differ from loader defaults")
+	}
+}
+
+func TestPublishedPolicyLoaderRoundTrip(t *testing.T) {
+	const source = `version: 1
+classification: {docs: ['docs/**']}
+groups: {maintainers: [alice]}
+agents: [{identity: 'helper[bot]', accountable: [alice]}]
+queues:
+- name: main
+  changes: {pull_requests: required}
+  approvals:
+    default: {group: maintainers, count: 1}
+    rules:
+    - when: {touches: ['src/**']}
+      require: {code_owners: true, receipt: true}
+  merge_when: [check-success = ci]
+- name: release
+  base: release/*
+  merge_when: [check-success = ci]
+`
+	cfg, _, err := Load([]byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertSchemaAgreement(t, []byte(source), nil)
+	var node yaml.Node
+	if err := yaml.Unmarshal([]byte(source), &node); err != nil {
+		t.Fatal(err)
+	}
+	roundtrip, err := yaml.Marshal(&node)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, _, err := Load(roundtrip)
+	if err != nil || !reflect.DeepEqual(cfg.Policy, restored.Policy) || cfg.Queues[0].Digest(true) != restored.Queues[0].Digest(true) {
+		t.Fatalf("policy roundtrip: %v", err)
+	}
+	for _, mode := range []string{"optional", "none", "disabled"} {
+		data := []byte(strings.ReplaceAll(source, "pull_requests: required", "pull_requests: "+mode))
+		_, _, err := Load(data)
+		if err == nil {
+			t.Fatalf("accepted pull_requests: %s", mode)
+		}
+		assertSchemaAgreement(t, data, err)
+	}
+}
+
+func TestLegacyConditionsWithApprovalSibling(t *testing.T) {
+	const legacy = `- name: legacy
+  base: release
+  enter_when:
+  - or: [approved-reviews-by = alice, label = ready]
+  merge_when:
+  - check-success = ci
+  - not: approved-reviews-by = blocked
+`
+	plain, _, err := Load([]byte("version: 1\nqueues:\n" + legacy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mixed, _, err := Load([]byte("version: 1\ngroups: {maintainers: [alice]}\nqueues:\n- name: opted\n  base: main\n  approvals: {default: {group: maintainers}}\n  merge_when: [check-success = ci]\n" + legacy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, b := plain.Queues[0], mixed.Queues[1]
+	if b.Approvals != nil || a.Digest(true) != b.Digest(true) || a.EnterWhen.String() != b.EnterWhen.String() || a.MergeWhen.String() != b.MergeWhen.String() {
+		t.Fatal("legacy condition policy changed")
+	}
+	for _, reviewers := range [][]string{{}, {"alice"}, {"blocked"}, {"alice", "blocked"}} {
+		for _, labels := range [][]string{{}, {"ready"}} {
+			for _, checks := range [][]string{{}, {"ci"}} {
+				snapshot := condition.Snapshot{"approved-reviews-by": condition.Strings(reviewers...), "label": condition.Strings(labels...), "check-success": condition.Strings(checks...)}
+				for _, pair := range [][2]condition.Expression{{a.EnterWhen, b.EnterWhen}, {a.MergeWhen, b.MergeWhen}} {
+					before, err1 := pair[0].Evaluate(snapshot)
+					after, err2 := pair[1].Evaluate(snapshot)
+					if before != after || fmt.Sprint(err1) != fmt.Sprint(err2) {
+						t.Fatal("legacy condition outcome changed")
+					}
+				}
+			}
+		}
 	}
 }

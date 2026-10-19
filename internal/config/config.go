@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
 	"github.com/CanadaApollo6/openmerge/internal/config/condition"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"go.yaml.in/yaml/v3"
@@ -50,14 +51,20 @@ func Find(read func(path string) ([]byte, bool, error)) (path string, data []byt
 
 // Config is a validated version 1 repository configuration.
 type Config struct {
-	Version          int     `yaml:"version"`
-	Queues           []Queue `yaml:"queues"`
-	DeleteHeadBranch *bool   `yaml:"delete_head_branch,omitempty"`
+	Version          int                       `yaml:"version"`
+	Classification   cp.ClassificationSettings `yaml:"classification,omitempty"`
+	Groups           map[string][]string       `yaml:"groups,omitempty"`
+	Agents           []cp.Agent                `yaml:"agents,omitempty"`
+	Policy           cp.Repository             `yaml:"-"`
+	Queues           []Queue                   `yaml:"queues"`
+	DeleteHeadBranch *bool                     `yaml:"delete_head_branch,omitempty"`
 }
 
 // Queue contains admission/merge conditions and serial planner settings.
 type Queue struct {
 	Name              string               `yaml:"name"`
+	Changes           Changes              `yaml:"changes,omitempty"`
+	Approvals         *cp.Approvals        `yaml:"approvals,omitempty"`
 	Base              string               `yaml:"base,omitempty"`
 	EnterWhen         condition.Expression `yaml:"enter_when"`
 	MergeWhen         condition.Expression `yaml:"merge_when"`
@@ -69,6 +76,11 @@ type Queue struct {
 	baseLine          int
 	basePattern       *regexp.Regexp
 	basePatternSource string
+}
+
+// Changes fixes the Stage A pull-request transport requirement.
+type Changes struct {
+	PullRequests string `yaml:"pull_requests,omitempty"`
 }
 
 // Speculation bounds the per-queue adaptive admission window.
@@ -198,6 +210,9 @@ func Load(data []byte) (Config, []Diagnostic, error) {
 		} else {
 			cfg.DeleteHeadBranch = &enabled
 		}
+	}
+	if len(p.errors) == 0 {
+		loadPolicy(root, &cfg, &p)
 	}
 	sortDiagnostics(p.errors)
 	sortDiagnostics(p.warnings)

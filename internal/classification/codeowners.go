@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/CanadaApollo6/openmerge/internal/ascii"
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
@@ -41,11 +42,11 @@ func canonicalOwner(token string) (Owner, error) {
 	if strings.HasPrefix(token, "@") {
 		name := strings.TrimPrefix(token, "@")
 		parts := strings.Split(name, "/")
-		if len(parts) == 1 && ownerName.MatchString(name) && cp.ValidClassificationLabel((Owner{"user", strings.ToLower(name)}).Label()) {
-			return Owner{"user", strings.ToLower(name)}, nil
+		if len(parts) == 1 && ownerName.MatchString(name) && cp.ValidClassificationLabel((Owner{"user", ascii.Lower(name)}).Label()) {
+			return Owner{"user", ascii.Lower(name)}, nil
 		}
-		if len(parts) == 2 && ownerName.MatchString(parts[0]) && teamSlug.MatchString(parts[1]) && cp.ValidClassificationLabel((Owner{"team", strings.ToLower(name)}).Label()) {
-			return Owner{"team", strings.ToLower(name)}, nil
+		if len(parts) == 2 && ownerName.MatchString(parts[0]) && teamSlug.MatchString(parts[1]) && cp.ValidClassificationLabel((Owner{"team", ascii.Lower(name)}).Label()) {
+			return Owner{"team", ascii.Lower(name)}, nil
 		}
 	} else if strings.Count(token, "@") == 1 {
 		local, domain, _ := strings.Cut(token, "@")

@@ -3,7 +3,7 @@
   "$id": "https://raw.githubusercontent.com/CanadaApollo6/openmerge/main/schema/openmerge.v1.json",
   "title": "OpenMerge repository configuration, version 1",
   "description": "Repository policy read from the default branch for every queue. See internal/config/README.md for YAML, grammar, and semantic validation details.",
-  "$comment": "Apply after YAML alias/merge expansion and strict YAML validation. Formats openmerge-condition, openmerge-duration and openmerge-base are loader assertions: editors may ignore them. Patterns describe syntax; Go RE2/glob compilation, unique queue names, integer/duration overflow, and YAML limits remain loader checks. Branch overlaps are per-queue diagnostics when resolving concrete branches, not file errors. Run openmerge config validate before committing.",
+  "$comment": "Stage A enforcement is enabled only for queues with approvals. Loader-only checks include YAML documents, duplicate keys, aliases/tags/expansion budgets, duplicate queue names and agent identities, group references, branch overlap, integer and duration ranges, and identity resolution/pin budgets. Consumers must implement policy-member, policy-login, policy-glob, policy-label and openmerge-* formats for full grammar validation; regex patterns express only the portable subset.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -27,6 +27,100 @@
     "delete_head_branch": {
       "type": "boolean",
       "description": "Delete eligible same-repository landed heads. When omitted, inherit the serve --delete-head-branch setting (true by default)."
+    },
+    "classification": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "docs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "format": "policy-glob",
+            "pattern": "^(?:[^\\\\]|\\\\[\\s\\S])*$",
+            "allOf": [
+              {
+                "pattern": "\\S"
+              }
+            ]
+          }
+        },
+        "generated": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "format": "policy-glob",
+            "pattern": "^(?:[^\\\\]|\\\\[\\s\\S])*$",
+            "allOf": [
+              {
+                "pattern": "\\S"
+              }
+            ]
+          }
+        },
+        "sensitive": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "format": "policy-glob",
+            "pattern": "^(?:[^\\\\]|\\\\[\\s\\S])*$",
+            "allOf": [
+              {
+                "pattern": "\\S"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "groups": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+      },
+      "additionalProperties": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "string",
+          "format": "policy-member",
+          "pattern": "^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\\[[bB][oO][tT]\\])?|[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?/[a-zA-Z0-9](?:[a-zA-Z0-9_-]*[a-zA-Z0-9])?)$"
+        }
+      }
+    },
+    "agents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "identity": {
+            "type": "string",
+            "format": "policy-login",
+            "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\\[[bB][oO][tT]\\])?$"
+          },
+          "accountable": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "format": "policy-login",
+              "pattern": "^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\\[[bB][oO][tT]\\])?$"
+            }
+          }
+        },
+        "required": [
+          "identity",
+          "accountable"
+        ]
+      }
     }
   },
   "$defs": {
@@ -105,7 +199,12 @@
           },
           "description": "Serial batch formation. Failing batches are bisected in queue order.",
           "properties": {
-            "target_pass_rate": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1, "description": "Opt in to exact adaptive fresh-batch sizing from the last 200 check outcomes; cold start below 20."},
+            "target_pass_rate": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1,
+              "description": "Opt in to exact adaptive fresh-batch sizing from the last 200 check outcomes; cold start below 20."
+            },
             "max_size": {
               "type": "integer",
               "minimum": 1,
@@ -142,6 +241,64 @@
               "default": 1
             }
           }
+        },
+        "changes": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "pull_requests": {
+              "const": "required",
+              "default": "required"
+            }
+          }
+        },
+        "approvals": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "default": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/requirement"
+                },
+                {
+                  "not": {
+                    "const": "none"
+                  }
+                },
+                {
+                  "not": {
+                    "type": "object",
+                    "required": [
+                      "code_owners"
+                    ]
+                  }
+                }
+              ]
+            },
+            "rules": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "when": {
+                    "$ref": "#/$defs/match"
+                  },
+                  "require": {
+                    "$ref": "#/$defs/requirement"
+                  }
+                },
+                "required": [
+                  "when",
+                  "require"
+                ]
+              }
+            }
+          },
+          "required": [
+            "default"
+          ]
         }
       }
     },
@@ -219,6 +376,135 @@
           }
         }
       ]
+    },
+    "requirement": {
+      "oneOf": [
+        {
+          "enum": [
+            "none",
+            "any_writer"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "any_writer": {
+              "const": true
+            },
+            "group": {
+              "type": "string",
+              "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+            },
+            "human": {
+              "const": true
+            },
+            "receipt": {
+              "const": true
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9223372036854775807,
+              "default": 1
+            }
+          },
+          "anyOf": [
+            {
+              "required": [
+                "any_writer"
+              ]
+            },
+            {
+              "required": [
+                "group"
+              ]
+            },
+            {
+              "required": [
+                "human"
+              ]
+            }
+          ],
+          "not": {
+            "required": [
+              "any_writer",
+              "group"
+            ]
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "code_owners": {
+              "const": true
+            },
+            "receipt": {
+              "const": true
+            }
+          },
+          "required": [
+            "code_owners"
+          ]
+        }
+      ]
+    },
+    "match": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "labels": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "format": "policy-label",
+            "pattern": "^(?:docs|generated|policy|unknown|owned:user:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\[bot\\])?|owned:team:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?/[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?|owned:email:[^\\s@]+@[^\\s@A-Z]+)$"
+          }
+        },
+        "paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "format": "policy-glob",
+            "pattern": "^(?:[^\\\\]|\\\\[\\s\\S])*$",
+            "allOf": [
+              {
+                "pattern": "\\S"
+              }
+            ]
+          }
+        },
+        "touches": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "format": "policy-glob",
+            "pattern": "^(?:[^\\\\]|\\\\[\\s\\S])*$",
+            "allOf": [
+              {
+                "pattern": "\\S"
+              }
+            ]
+          }
+        },
+        "authors": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": [
+              "human",
+              "agent"
+            ]
+          }
+        }
+      },
+      "minProperties": 1
     }
   }
 }

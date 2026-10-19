@@ -46,20 +46,20 @@ func TestReceiptWireFactGoldenAndRejectedBindings(t *testing.T) {
 		t.Fatal(err)
 	}
 	if os.Getenv("UPDATE_7A") == "1" {
-		if err = os.WriteFile("testdata/wire/v1/event_approval_receipt_recorded.json", raw, 0644); err != nil {
+		if err = os.WriteFile("testdata/wire/v1/variants/approval_receipt_activation.json", raw, 0644); err != nil {
 			t.Fatal(err)
 		}
 		facts, _ := json.MarshalIndent(f, "", "  ")
-		if err = os.WriteFile("testdata/brief-facts.json", facts, 0644); err != nil {
+		if err = os.WriteFile("testdata/brief-facts-activation.json", facts, 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	want, err := os.ReadFile("testdata/wire/v1/event_approval_receipt_recorded.json")
+	want, err := os.ReadFile("testdata/wire/v1/variants/approval_receipt_activation.json")
 	if err != nil || !bytes.Equal(want, raw) {
 		t.Fatal("receipt golden", err)
 	}
 	facts, _ := json.MarshalIndent(f, "", "  ")
-	want, err = os.ReadFile("testdata/brief-facts.json")
+	want, err = os.ReadFile("testdata/brief-facts-activation.json")
 	if err != nil || !bytes.Equal(want, facts) {
 		t.Fatal("fact golden", err)
 	}
@@ -108,11 +108,11 @@ func TestReceiptWireFactGoldenAndRejectedBindings(t *testing.T) {
 	}
 	rejectedRaw, _ := json.Marshal(vectors)
 	if os.Getenv("UPDATE_7A") == "1" {
-		if err := os.WriteFile("testdata/receipt-rejections.json", rejectedRaw, 0644); err != nil {
+		if err := os.WriteFile("testdata/receipt-rejections-activation.json", rejectedRaw, 0644); err != nil {
 			t.Fatal(err)
 		}
 	}
-	rejectedGolden, err := os.ReadFile("testdata/receipt-rejections.json")
+	rejectedGolden, err := os.ReadFile("testdata/receipt-rejections-activation.json")
 	if err != nil || !bytes.Equal(rejectedRaw, rejectedGolden) {
 		t.Fatal("rejected-binding vectors drift", err)
 	}

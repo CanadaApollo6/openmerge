@@ -1396,7 +1396,7 @@ include administrators when `enforce_admins` is disabled; unreadable admin
 membership blocks authority verification.
 
 **The draft requires the release implementing ADR 0007 Stage A.** It uses that
-ADR's `approvals`, `groups` and `changes` keys; current releases reject them.
+ADR's `approvals`, `groups` and `changes` keys, published by PR 11b.
 Review counts use a snapshot of eligible repository writers in
 `groups.imported_reviewers`, with a count-bearing group requirement in
 `approvals.default` and the same requirement in a `paths: ["**"]` rule.
@@ -1409,14 +1409,11 @@ Overlapping classic and ruleset review counts use the maximum in one reconciled 
 this group as writer membership changes. Eligibility and blocking requests for
 changes must be checked at landing by Stage A.
 
-General code-owner review is **unsupported**: ADR 0007's `{code_owners: true}`
-rule requirement exists but is not activated until PR 11b publishes the loader
-and enables enforcement. Until then only policy files get mandatory owner
-approval, so general code-owner review cannot be translated or enforced by this
-draft; a group does not confer path ownership. ADR 0007 defines the future
-translation as two independent rules: `paths: ["**"]` for the count, plus
+The protection-import draft still does not emit general code-owner review.
+Stage A enforcement accepts ADR 0007's rule-only `{code_owners: true}`; a group
+does not confer path ownership. A reviewed translation uses two independent rules: `paths: ["**"]` for the count, plus
 `touches: ["**"]` for `{code_owners: true}`. The owner requirement is rule-only
-and rejected as `approvals.default`; this draft does not emit it before 11b.
+and rejected as `approvals.default`; this draft does not emit it.
 For example:
 
 ```yaml
@@ -1430,7 +1427,7 @@ approvals:
     - when: {paths: ["**"]}
       require: {group: imported_reviewers, count: 2}
 # paths is unknown on empty diffs and enforced as if matched, plus the default.
-# General code-owner review is unsupported until PR 11b enables enforcement.
+# Add a separate touches rule for code-owner review when required.
 ```
 
 Review dismissal on is a weaker translation where GitHub invalidates an approval
@@ -1532,3 +1529,78 @@ workers before upgrading. Once it has been written, rolling back to an older
 binary requires restoring a database backup from before its first event.
 Clearing the last-20 projection or removing configuration does not remove the
 new type from the journal; never edit journal rows to make rollback work.
+
+## Stage A approval activation (PR 11b)
+
+Trial class: **Hold**. Merge behind the opt-in; deploy only after ADR 0009
+period B drains. Do not add `approvals` to this repository's dogfood queue
+until the trial pair closes. Publishing the schema does not authorize that
+opt-in. The public loader accepts the Stage A repository keys `classification`,
+`groups`, `agents`, and queue keys `changes` and `approvals`.
+`changes.pull_requests` accepts only `required`.
+
+A resolved queue with `approvals` installs the complete Stage A pipeline:
+identity-bound grants, revision and classification observations, accountability,
+native stances and bare receipts, additive approval requirements, fresh owner
+eligibility, generated commit metadata, and the atomic landing-decision gate.
+There is no production switch for a subset of these checks. A sibling queue
+without `approvals` retains the legacy pipeline, digest and commit messages,
+even when repository-level policy keys or an opted-in sibling are present.
+
+Before the first use:
+
+1. Drain admissions and in-flight work using the existing operating procedure.
+   Stop **all** old workers, including other hosts and installations serving the
+   repository, and verify that none can resume or renew a queue lease. Wait for
+   outstanding leases/actions to expire or settle. A binary upgrade on one host
+   is insufficient. Existing leases do not advertise binary capabilities, so
+   this release cannot reliably detect a legacy worker on another host. Config
+   parsing by old binaries fails closed, but an already claimed action is why
+   the drain is mandatory.
+2. Take and verify a restorable database backup **before** running the new
+   binary against an approvals config. Preserve the matching configuration
+   commit, repository object cache, binary, and operational settings with it.
+   Follow the backup/restore procedure above; do not use a journal edit as a
+   substitute for restoration.
+3. Start only compatible workers, then apply a reviewed approvals opt-in to the
+   intended queue. Verify the resolved queue and its identity diagnostics before
+   reopening admissions. Unresolved policy identities pause the affected queue;
+   transient identity or tree reads stop reconciliation without using stale
+   policy. Legacy siblings remain operational under their own policy.
+
+The first approval-policy `config_applied` (with its optional `policy` pin), or
+other Stage A evidence, is a **database-restore rollback boundary**. Removing
+`approvals` stops future Stage A work; it does not erase these records or make
+an old decoder compatible. To return across this boundary, drain/stop the new
+workers and restore the pre-use backup together with its compatible binary and
+configuration. Account for external landings since the backup before restarting.
+Never delete or rewrite journal rows to make an older binary replay them.
+
+Approval-policy digest composition is versioned and deterministic. The unchanged
+legacy `Queue.Digest(delete_head_branch)` supplies the queue component. The
+policy component is `changepolicy.PolicyDigest`: canonical selected approvals,
+repository classification/groups/agent mappings, static resolved user/team IDs,
+selected governing CODEOWNERS content or proven absence, every governing
+`.gitattributes` file (including root absence), and classifier version. Current
+membership and grants are excluded. `WithPolicyDigest` hashes the JSON object
+`{Version, Queue, Policy}` with version `openmerge-effective-policy-v1`. Without
+an approval component it returns the legacy digest unchanged.
+
+Approval `ConfigApplied` records retain static identity resolutions, classifier
+version and the governing default-branch name in their optional `policy` pin.
+These are immutable journal inputs, not reusable eligibility pools. The brief
+reader chooses the ConfigApplied record in force for the recorded classification,
+loads its configuration and complete governing tree from **local immutable git
+objects**, recomputes both component and effective digests, and asserts both.
+It never fetches, resolves current names, reads current memberships, or expands
+requirements from the worker's current policy. A mismatch reports
+`policy_digest_mismatch`; missing objects or identity pins report
+`policy_unavailable`. Restore the recorded objects/pins through an operator
+managed fetch or backup import. Production journals retain these events in full;
+compaction remains disabled and must preserve these pins before it is enabled.
+
+Governing-file diagnostics retain at most eight details per file plus a `+N more`
+summary. CODEOWNERS/attributes patterns are limited to 512 bytes and compiled
+lazily; unsupported or oversized patterns produce conservative uncertainty.
+Decision-time code owners always pass through `ResolveOwnerEligibility` with
+fresh identity-bound observations, never a saved membership pool.

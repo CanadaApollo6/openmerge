@@ -1,0 +1,626 @@
+{
+  "Events": [
+    {
+      "version": 1,
+      "type": "base_moved",
+      "data": {
+        "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "version": 1,
+      "type": "change_revision_observed",
+      "data": {
+        "pr": 12,
+        "change_id": "chg1_5ac3cffe973697d6aacbfc64066dba1a800dfedf2087b36a3acb845bf627a403",
+        "revision": 1,
+        "predecessor": 0,
+        "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "basis": {
+          "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "at": "2026-10-18T11:00:00Z"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "type": "change_classified",
+      "data": {
+        "evidence": {
+          "Inventory": {
+            "Completeness": "complete",
+            "Reasons": []
+          },
+          "Hunks": {
+            "Completeness": "complete",
+            "Reasons": []
+          },
+          "InputFingerprint": "0d9041afaf19bc0782daaef725edc0f25ad3735bf480ef40dbd0cc3d7021534d",
+          "Classification": {
+            "Inputs": {
+              "ChangeID": "chg1_5ac3cffe973697d6aacbfc64066dba1a800dfedf2087b36a3acb845bf627a403",
+              "Revision": 1,
+              "Base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "Head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "MergeBase": "cccccccccccccccccccccccccccccccccccccccc",
+              "GoverningCommit": "dddddddddddddddddddddddddddddddddddddddd",
+              "ConfigBlob": "",
+              "OwnersBlob": "1111111111111111111111111111111111111111",
+              "AttributeBlobs": {},
+              "ClassifierVersion": "classification-v1/git-evidence-v8-retained-hunk-budget/governing-v2-pattern-budget/hunks-v1/facets-v3",
+              "PolicyDigest": "6666666666666666666666666666666666666666666666666666666666666666",
+              "Generation": 1
+            },
+            "InventoryComplete": true,
+            "PathsSafe": true,
+            "Paths": [
+              "docs/a.md",
+              "docs/old.md"
+            ],
+            "Files": [
+              {
+                "OldPath": "docs/old.md",
+                "NewPath": "docs/a.md",
+                "OldBlob": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "NewBlob": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "OldMode": 33188,
+                "NewMode": 33188,
+                "Renamed": true,
+                "RenamePaired": true,
+                "Binary": 1,
+                "Submodule": 1,
+                "Facts": {
+                  "docs": 2,
+                  "generated": 1,
+                  "owned:user:owner": 2,
+                  "policy": 1
+                },
+                "Reasons": [],
+                "Hunks": {
+                  "Hunks": [],
+                  "Omitted": [],
+                  "Complete": true
+                }
+              }
+            ],
+            "HunksComplete": true,
+            "Facts": {
+              "docs": 2,
+              "generated": 1,
+              "owned:user:owner": 2,
+              "policy": 1,
+              "unknown": 2
+            },
+            "Reasons": [
+              {
+                "Label": "unknown",
+                "Reasons": [
+                  "config probes incomplete or multiple configuration files present"
+                ]
+              },
+              {
+                "Label": "docs",
+                "Reasons": [
+                  "every changed path qualifies"
+                ]
+              },
+              {
+                "Label": "generated",
+                "Reasons": [
+                  "a changed path does not qualify"
+                ]
+              }
+            ],
+            "CodeOwnersKnown": true,
+            "CodeOwners": [
+              {
+                "Path": "docs/a.md",
+                "Side": "new",
+                "LastMatchingEntry": "* @owner",
+                "Status": "resolved",
+                "Eligible": {
+                  "IDs": [
+                    "github.com:user:2"
+                  ],
+                  "Resolved": true,
+                  "Fresh": true,
+                  "Reason": ""
+                }
+              },
+              {
+                "Path": "docs/old.md",
+                "Side": "old",
+                "LastMatchingEntry": "* @owner",
+                "Status": "resolved",
+                "Eligible": {
+                  "IDs": [
+                    "github.com:user:2"
+                  ],
+                  "Resolved": true,
+                  "Fresh": true,
+                  "Reason": ""
+                }
+              }
+            ],
+            "PolicyOwnersKnown": true,
+            "PolicyOwners": []
+          },
+          "Governing": {
+            "CommitSHA": "dddddddddddddddddddddddddddddddddddddddd",
+            "Semantics": "git-evidence-v8-retained-hunk-budget",
+            "Config": [
+              {
+                "Path": ".openmerge.yml",
+                "ObjectID": "ffffffffffffffffffffffffffffffffffffffff",
+                "Mode": "100644",
+                "Present": true,
+                "Content": "version: 1",
+                "Coverage": {
+                  "Completeness": "complete",
+                  "Reasons": []
+                }
+              }
+            ],
+            "Codeowners": [
+              {
+                "Path": ".github/CODEOWNERS",
+                "ObjectID": "",
+                "Mode": "",
+                "Present": false,
+                "Content": "",
+                "Coverage": {
+                  "Completeness": "complete",
+                  "Reasons": []
+                }
+              },
+              {
+                "Path": "CODEOWNERS",
+                "ObjectID": "1111111111111111111111111111111111111111",
+                "Mode": "100644",
+                "Present": true,
+                "Content": "* @owner",
+                "Coverage": {
+                  "Completeness": "complete",
+                  "Reasons": []
+                }
+              }
+            ],
+            "Attributes": [
+              {
+                "Path": ".gitattributes",
+                "ObjectID": "",
+                "Mode": "",
+                "Present": false,
+                "Content": "",
+                "Coverage": {
+                  "Completeness": "complete",
+                  "Reasons": []
+                }
+              },
+              {
+                "Path": "docs/.gitattributes",
+                "ObjectID": "",
+                "Mode": "",
+                "Present": false,
+                "Content": "",
+                "Coverage": {
+                  "Completeness": "complete",
+                  "Reasons": []
+                }
+              }
+            ],
+            "SelectedCodeowners": "CODEOWNERS",
+            "Coverage": {
+              "Completeness": "complete",
+              "Reasons": []
+            }
+          }
+        }
+      }
+    },
+    {
+      "version": 1,
+      "type": "change_accountability_observed",
+      "data": {
+        "basis": {
+          "change_id": "chg1_5ac3cffe973697d6aacbfc64066dba1a800dfedf2087b36a3acb845bf627a403",
+          "revision": 1,
+          "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "read_id": "read-1",
+          "at": "2026-10-18T12:00:00Z"
+        },
+        "policy_digest": "6666666666666666666666666666666666666666666666666666666666666666",
+        "actor": {
+          "ID": "github.com:user:7",
+          "Login": "user7",
+          "Kind": "human"
+        },
+        "author": {
+          "ID": "github.com:user:1",
+          "Login": "user1",
+          "Kind": "human"
+        },
+        "submitter_id": "",
+        "humans": [
+          {
+            "ID": "github.com:user:1",
+            "Login": "user1",
+            "Kind": "human"
+          }
+        ],
+        "recorded": true,
+        "reason": ""
+      }
+    },
+    {
+      "version": 1,
+      "type": "change_intent_observed",
+      "data": {
+        "basis": {
+          "change_id": "chg1_5ac3cffe973697d6aacbfc64066dba1a800dfedf2087b36a3acb845bf627a403",
+          "revision": 1,
+          "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "read_id": "read-1",
+          "at": "2026-10-18T12:00:00Z"
+        },
+        "title": "title",
+        "body": "body",
+        "digest": "1bafefd5657addb6043d5aa0106c275624590dd564909ac2127fe1a372c85e3d"
+      }
+    },
+    {
+      "version": 1,
+      "type": "review_stance_observed",
+      "data": {
+        "basis": {
+          "change_id": "chg1_5ac3cffe973697d6aacbfc64066dba1a800dfedf2087b36a3acb845bf627a403",
+          "revision": 1,
+          "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "read_id": "read-1",
+          "at": "2026-10-18T12:00:00Z"
+        },
+        "reviewer": {
+          "ID": "github.com:user:2",
+          "Login": "reviewer",
+          "Kind": "human"
+        },
+        "stance": {
+          "UserID": "github.com:user:2",
+          "Kind": "approve",
+          "Revision": 1,
+          "Head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "Source": {
+            "Channel": "native_review",
+            "ID": "10",
+            "Sequence": 10,
+            "Time": "2026-10-18T12:00:00Z",
+            "TimeKnown": true,
+            "UpperTimeBound": "2026-10-18T12:00:01Z",
+            "Precision": "exact",
+            "DismissedReviewID": "",
+            "ActingUserID": "github.com:user:2"
+          },
+          "Receipt": null
+        },
+        "source_kind": "review_submission",
+        "source_time": {
+          "Time": "2026-10-18T12:00:00Z",
+          "Source": "review_submission",
+          "Precision": 1000000000,
+          "Uncertainty": 0,
+          "UpperBound": "2026-10-18T12:00:01Z"
+        },
+        "observation": {
+          "ObservedAt": "2026-10-18T12:00:00Z",
+          "ResponseDate": "2026-10-18T12:00:00Z"
+        },
+        "original_submission": {
+          "Time": "0001-01-01T00:00:00Z",
+          "Source": "",
+          "Precision": 0,
+          "Uncertainty": 0,
+          "UpperBound": "0001-01-01T00:00:00Z"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "type": "pr_observed",
+      "data": {
+        "pr": 12,
+        "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "eligible": true,
+        "trusted": true
+      }
+    },
+    {
+      "version": 1,
+      "type": "enqueue_requested",
+      "data": {
+        "pr": 12,
+        "at": "2026-10-18T12:00:00Z"
+      }
+    },
+    {
+      "version": 1,
+      "type": "batch_started",
+      "data": {
+        "batch_id": "b1",
+        "base_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "prs": [
+          {
+            "pr": 12,
+            "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        ],
+        "at": "2026-10-18T12:01:00Z"
+      }
+    },
+    {
+      "version": 1,
+      "type": "test_ref_built",
+      "data": {
+        "batch_id": "b1",
+        "tested_sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "at": "2026-10-18T12:02:00Z",
+        "method": "squash"
+      }
+    },
+    {
+      "version": 1,
+      "type": "checks_completed",
+      "data": {
+        "tested_sha": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "success": true
+      }
+    },
+    {
+      "version": 1,
+      "type": "review_stance_observed",
+      "data": {
+        "basis": {
+          "change_id": "chg1_5ac3cffe973697d6aacbfc64066dba1a800dfedf2087b36a3acb845bf627a403",
+          "revision": 1,
+          "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "read_id": "landing-read",
+          "at": "2026-10-18T12:03:00Z"
+        },
+        "reviewer": {
+          "ID": "github.com:user:3",
+          "Login": "user3",
+          "Kind": "human"
+        },
+        "stance": {
+          "UserID": "github.com:user:3",
+          "Kind": "approve",
+          "Revision": 1,
+          "Head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "Source": {
+            "Channel": "native_review",
+            "ID": "11",
+            "Sequence": 11,
+            "Time": "2026-10-18T12:02:00Z",
+            "TimeKnown": true,
+            "UpperTimeBound": "2026-10-18T12:02:01Z",
+            "Precision": "exact",
+            "DismissedReviewID": "",
+            "ActingUserID": "github.com:user:3"
+          },
+          "Receipt": null
+        },
+        "source_kind": "review_submission",
+        "source_time": {
+          "Time": "2026-10-18T12:02:00Z",
+          "Source": "review_submission",
+          "Precision": 1000000000,
+          "Uncertainty": 0,
+          "UpperBound": "2026-10-18T12:02:01Z"
+        },
+        "observation": {
+          "ObservedAt": "2026-10-18T12:03:00Z",
+          "ResponseDate": "2026-10-18T12:03:00Z"
+        },
+        "original_submission": {
+          "Time": "0001-01-01T00:00:00Z",
+          "Source": "",
+          "Precision": 0,
+          "Uncertainty": 0,
+          "UpperBound": "0001-01-01T00:00:00Z"
+        }
+      }
+    },
+    {
+      "version": 1,
+      "type": "approval_receipt_recorded",
+      "data": {
+        "basis": {
+          "change_id": "chg1_5ac3cffe973697d6aacbfc64066dba1a800dfedf2087b36a3acb845bf627a403",
+          "revision": 1,
+          "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "read_id": "landing-read",
+          "at": "2026-10-18T12:03:00Z"
+        },
+        "supplied": {
+          "change_id": "chg1_5ac3cffe973697d6aacbfc64066dba1a800dfedf2087b36a3acb845bf627a403",
+          "revision": 1,
+          "generation": 1,
+          "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "merge_base": "cccccccccccccccccccccccccccccccccccccccc",
+          "intent_digest": "1bafefd5657addb6043d5aa0106c275624590dd564909ac2127fe1a372c85e3d",
+          "policy_digest": "6666666666666666666666666666666666666666666666666666666666666666",
+          "brief_digest": "8ae7ec9f9942f9f90085a1062da83c685cd4fe3d762b33aee6b812a5015a17c8"
+        },
+        "current": {
+          "change_id": "chg1_5ac3cffe973697d6aacbfc64066dba1a800dfedf2087b36a3acb845bf627a403",
+          "revision": 1,
+          "generation": 1,
+          "base": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "merge_base": "cccccccccccccccccccccccccccccccccccccccc",
+          "intent_digest": "1bafefd5657addb6043d5aa0106c275624590dd564909ac2127fe1a372c85e3d",
+          "policy_digest": "6666666666666666666666666666666666666666666666666666666666666666",
+          "brief_digest": "8ae7ec9f9942f9f90085a1062da83c685cd4fe3d762b33aee6b812a5015a17c8"
+        },
+        "actor": {
+          "id": "github.com:user:2",
+          "login": "user2",
+          "kind": "human"
+        },
+        "comment_id": "20",
+        "boundary_at": "2026-10-18T11:00:00Z",
+        "created_at": "2026-10-18T12:02:59Z",
+        "accepted": true,
+        "reason_code": ""
+      }
+    }
+  ],
+  "Policy": {
+    "Digest": "6666666666666666666666666666666666666666666666666666666666666666",
+    "Approvals": {
+      "Default": {
+        "Selector": "any_writer",
+        "Group": "",
+        "Human": false,
+        "Receipt": false,
+        "Count": 1
+      },
+      "Rules": [
+        {
+          "When": {
+            "Labels": null,
+            "Paths": null,
+            "Touches": [
+              "docs/**"
+            ],
+            "Authors": null
+          },
+          "Require": {
+            "Selector": "code_owners",
+            "Group": "",
+            "Human": false,
+            "Receipt": false,
+            "Count": 0
+          }
+        },
+        {
+          "When": {
+            "Labels": null,
+            "Paths": null,
+            "Touches": [
+              "docs/**"
+            ],
+            "Authors": null
+          },
+          "Require": {
+            "Selector": "any_writer",
+            "Group": "",
+            "Human": false,
+            "Receipt": true,
+            "Count": 1
+          }
+        },
+        {
+          "When": {
+            "Labels": null,
+            "Paths": null,
+            "Touches": [
+              "docs/**"
+            ],
+            "Authors": null
+          },
+          "Require": {
+            "Selector": "any_writer",
+            "Group": "",
+            "Human": false,
+            "Receipt": false,
+            "Count": 2
+          }
+        }
+      ]
+    },
+    "Groups": null
+  },
+  "Fresh": {
+    "basis": {
+      "change_id": "chg1_5ac3cffe973697d6aacbfc64066dba1a800dfedf2087b36a3acb845bf627a403",
+      "revision": 1,
+      "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "read_id": "landing-read",
+      "at": "2026-10-18T12:03:00Z"
+    },
+    "actors": {
+      "github.com:user:2": {
+        "Identity": {
+          "ID": "github.com:user:2",
+          "Login": "reviewer",
+          "Kind": "human"
+        },
+        "Grant": {
+          "SubjectID": "github.com:user:2",
+          "ReturnedID": "github.com:user:2",
+          "Fresh": true,
+          "Write": 2
+        }
+      },
+      "github.com:user:3": {
+        "Identity": {
+          "ID": "github.com:user:3",
+          "Login": "user3",
+          "Kind": "human"
+        },
+        "Grant": {
+          "SubjectID": "github.com:user:3",
+          "ReturnedID": "github.com:user:3",
+          "Fresh": true,
+          "Write": 2
+        }
+      }
+    },
+    "groups": {},
+    "owner_pools": {
+      "owned:user:owner": {
+        "IDs": [
+          "github.com:user:2"
+        ],
+        "Resolved": true,
+        "Fresh": true,
+        "Reason": ""
+      }
+    },
+    "known": true,
+    "reasons": []
+  },
+  "Land": {
+    "BatchID": "b1",
+    "ExpectedBaseSHA": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "TestedSHA": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "Ref": "openmerge/queue/release/b1",
+    "FenceToken": "fence",
+    "PRs": [
+      {
+        "PR": 12,
+        "HeadSHA": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ],
+    "Method": "squash",
+    "ChecksGeneration": 0
+  },
+  "Start": {
+    "BatchID": "b1",
+    "AttemptID": "random-attempt",
+    "FenceToken": "fence",
+    "At": "2026-10-18T12:03:00Z"
+  },
+  "Config": {
+    "ConfigDigest": "",
+    "BatchMaxSize": 0,
+    "BatchMaxWait": 0,
+    "MergeMethod": "squash",
+    "CheckTimeout": 3600000000000,
+    "ResolveAfter": 0,
+    "RefreshInterval": 3600000000000,
+    "BuildRetries": 0,
+    "BuildBackoff": 0
+  }
+}

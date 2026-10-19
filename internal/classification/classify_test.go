@@ -105,7 +105,7 @@ func TestRepeatedInputsAndVersionGolden(t *testing.T) {
 }
 func TestBudgetVersionGolden(t *testing.T) {
 	raw, err := os.ReadFile("testdata/version-v8.txt")
-	if err != nil || strings.TrimSpace(string(raw)) != Version {
+	if err != nil || strings.TrimSpace(string(raw)) != UnboundedPatternVersion {
 		t.Fatal("v8 version drift", err)
 	}
 }

@@ -59,10 +59,11 @@ var classificationVersions = map[string]struct {
 	diffSemantics     string
 	pathDerivedRename bool
 }{
-	classification.HistoricalVersion: {"git-evidence-v7-bounded-omissions", false},
-	classification.PreviousVersion:   {"git-evidence-v7-bounded-omissions", true},
-	classification.RetainedVersion:   {"git-evidence-v7-bounded-omissions", true},
-	classification.Version:           {forge.DiffSemantics, true},
+	classification.HistoricalVersion:       {"git-evidence-v7-bounded-omissions", false},
+	classification.PreviousVersion:         {"git-evidence-v7-bounded-omissions", true},
+	classification.RetainedVersion:         {"git-evidence-v7-bounded-omissions", true},
+	classification.Version:                 {forge.DiffSemantics, true},
+	classification.UnboundedPatternVersion: {forge.DiffSemantics, true},
 }
 
 // Historical versions remain explicit: facets-v1 could record the old rename

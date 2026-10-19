@@ -59,7 +59,7 @@ func TestLegacyDigestAndMixedRepository(t *testing.T) {
 	})
 }
 
-func TestPublicLoaderAndSchemaStillRejectCandidateKeys(t *testing.T) {
+func TestPublicLoaderAndSchemaAcceptPolicyKeys(t *testing.T) {
 	doc, err := jsonschema.UnmarshalJSON(strings.NewReader(schema.V1))
 	if err != nil {
 		t.Fatal(err)
@@ -77,15 +77,15 @@ func TestPublicLoaderAndSchemaStillRejectCandidateKeys(t *testing.T) {
 		"  changes: {pull_requests: required}\n", "  approvals: {default: any_writer}\n",
 	} {
 		source := "version: 1\nqueues:\n- name: main\n  merge_when: [check-success = ci]\n" + addition
-		if _, _, err := config.Load([]byte(source)); err == nil {
-			t.Fatalf("public loader accepted %s", addition)
+		if _, _, err := config.Load([]byte(source)); err != nil {
+			t.Fatalf("public loader rejected %s", addition)
 		}
 		var value any
 		if err := yaml.Unmarshal([]byte(source), &value); err != nil {
 			t.Fatal(err)
 		}
-		if err := published.Validate(value); err == nil {
-			t.Fatalf("public schema accepted %s", addition)
+		if err := published.Validate(value); err != nil {
+			t.Fatalf("public schema rejected %s", addition)
 		}
 	}
 }

@@ -14,31 +14,41 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
 
-// LocalConfig reads immutable objects already in this repository's cache.
-// It never opens a transport session, resolves credentials, fetches, creates a
-// cache, updates refs, or runs maintenance. Missing objects fail closed.
-func (r *Repo) LocalConfig(ctx context.Context, repo forge.RepoRef, commit string) ([]byte, error) {
+// localPolicySession opens only an existing local cache and immutable commit.
+// It never resolves credentials, fetches, updates refs, or runs maintenance.
+func (r *Repo) localPolicySession(ctx context.Context, repo forge.RepoRef, commit string) (*session, func(), error) {
 	if !forge.ValidDiffObjectID(commit) {
-		return nil, fmt.Errorf("local config requires full commit ID")
+		return nil, nil, fmt.Errorf("local config requires full commit ID")
 	}
 	dir := filepath.Join(r.cfg.WorkDir, fmt.Sprintf("%x.git", sha256.Sum256([]byte(repo.Path))))
 	lock, _ := cacheLocks.LoadOrStore(dir, &sync.Mutex{})
 	mu := lock.(*sync.Mutex)
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if !mu.TryLock() {
-		return nil, diagnostic.BusyError("local config cache busy")
+		return nil, nil, diagnostic.BusyError("local config cache busy")
 	}
-	defer mu.Unlock()
 	if _, err := os.Stat(filepath.Join(dir, "HEAD")); err != nil {
-		return nil, err
+		mu.Unlock()
+		return nil, nil, err
 	}
 	s := &session{r: r, dir: dir, diffRead: true}
 	kind, err := s.command(ctx, "", "cat-file", "-t", commit)
 	if err != nil || kind != "commit" {
-		return nil, fmt.Errorf("local config commit unavailable")
+		mu.Unlock()
+		return nil, nil, fmt.Errorf("local config commit unavailable")
 	}
+	return s, mu.Unlock, nil
+}
+
+// LocalConfig reads configuration only from existing immutable local objects.
+func (r *Repo) LocalConfig(ctx context.Context, repo forge.RepoRef, commit string) ([]byte, error) {
+	s, unlock, err := r.localPolicySession(ctx, repo, commit)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	_, data, err := config.Find(func(path string) ([]byte, bool, error) {
 		raw, overflow, err := s.diffCommand(ctx, 4096, "ls-tree", "-z", "--full-tree", commit, "--", ":(literal)"+path)
 		if err != nil || overflow {
@@ -59,4 +69,14 @@ func (r *Repo) LocalConfig(ctx context.Context, repo forge.RepoRef, commit strin
 		return []byte(content), true, nil
 	})
 	return data, err
+}
+
+// LocalGoverningFiles reads the complete policy tree without fetching or refs.
+func (r *Repo) LocalGoverningFiles(ctx context.Context, repo forge.RepoRef, commit string) (forge.GoverningFiles, error) {
+	s, unlock, err := r.localPolicySession(ctx, repo, commit)
+	if err != nil {
+		return forge.GoverningFiles{}, err
+	}
+	defer unlock()
+	return s.governingFiles(ctx, forge.GoverningFilesRequest{CommitSHA: commit, AllAttributes: true, PathsComplete: true})
 }

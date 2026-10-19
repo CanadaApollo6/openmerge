@@ -18,6 +18,7 @@ type localPolicyGit struct {
 	data      []byte
 	commit    string
 	calls     int
+	governing forge.GoverningFiles
 }
 
 func (g *localPolicyGit) LocalConfig(_ context.Context, _ forge.RepoRef, commit string) ([]byte, error) {
@@ -72,5 +73,40 @@ func TestR4BriefPolicyDefaultBranch(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func (g *localPolicyGit) LocalGoverningFiles(_ context.Context, _ forge.RepoRef, commit string) (forge.GoverningFiles, error) {
+	g.commit = commit
+	return g.governing, nil
+}
+
+func TestStageAProductionBriefReconstruction(t *testing.T) {
+	s, w, f := shadowFixture(t, 1, "main", "7", true)
+	rows, err := s.store.EventsAfter(t.Context(), w.id, 0)
+	must(t, err)
+	var req status.BriefPolicyRequest
+	for _, row := range rows {
+		switch e := row.Event.(type) {
+		case queue.ConfigApplied:
+			req.Config = e
+		case queue.ChangeClassified:
+			req.Evidence = e.Evidence
+		}
+	}
+	if req.Config.Policy == nil {
+		t.Fatal("production activation did not record policy pins")
+	}
+	data, err := f.ReadFile(t.Context(), repo, req.Config.Commit, ".openmerge.yml")
+	must(t, err)
+	governing, err := f.GoverningFiles(t.Context(), repo, forge.GoverningFilesRequest{CommitSHA: req.Config.Commit, AllAttributes: true, PathsComplete: true})
+	must(t, err)
+	local := &localPolicyGit{data: data, governing: governing}
+	w.Git = local
+	w.Driver = nil // Historical reconstruction cannot reach the forge.
+	policy, err := s.BriefPolicy(t.Context(), w.Key, req)
+	must(t, err)
+	if policy.Digest != w.stageA.policy.Digest || policy.Approvals == nil || local.calls != 1 || local.commit != req.Config.Commit {
+		t.Fatalf("production reconstruction: %+v", policy)
 	}
 }

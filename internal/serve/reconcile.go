@@ -75,7 +75,7 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 	// Transport, rate-limit and incomplete-membership errors abort entirely: a
 	// stale in-memory policy is never used, but neither is an uncertain result
 	// written as a durable configuration failure.
-	if loadErr != nil && stageARefresh && !stageADefiniteIdentityFailure(loadErr) {
+	if loadErr != nil && stageARefresh && !errors.As(loadErr, &invalid) && !stageADefiniteIdentityFailure(loadErr) {
 		w.configError = loadErr
 		w.configBranch, w.configTip = "", ""
 		if w.managed {
@@ -117,6 +117,10 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 			if len(diagnostics) != 0 {
 				return diagnostics
 			}
+			if selected.Approvals != nil {
+				w.configError = fmt.Errorf("historical approval policy has a folded digest without recorded window bounds; drain this queue and restore a verified pre-activation backup, or recover at verified legacy depth 1 before changing speculation depth")
+				return s.block(ctx, w, queue.ConfigSource, "Default-branch configuration: "+w.configError.Error(), "")
+			}
 			// The serve cleanup default may have changed since the old policy.
 			if selected.Digest(true) != state.ConfigDigest && selected.Digest(false) != state.ConfigDigest {
 				return fmt.Errorf("historical window policy does not match recorded digest")
@@ -125,7 +129,14 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 				events = append(events, selected.QueueConfig().Applied(state.ConfigCommit, state.ConfigDigest))
 			}
 		}
-		events = append(events, w.cfg.QueueConfig().Applied(configTip, w.configDigest))
+		applied := w.cfg.QueueConfig().Applied(configTip, w.configDigest)
+		if w.stageA != nil {
+			applied.Policy = w.stageA.pin
+			if applied.Policy != nil && applied.Window == nil {
+				applied.Window = &queue.WindowBounds{MinDepth: 1, MaxDepth: 1}
+			}
+		}
+		events = append(events, applied)
 		_, err = s.store.Append(ctx, w.id, events, "")
 		if err != nil {
 			return err
@@ -191,6 +202,18 @@ func (s *Server) loadConfiguration(ctx context.Context, w *worker, branch, tip s
 	}
 	if w.CheckProtection != nil && w.cfg.MergeMethod != selected.MergeMethod {
 		w.rulesNextCheck = time.Time{}
+	}
+	w.stageA = nil
+	if selected.Approvals != nil {
+		for _, candidate := range cfg.Policy.Queues {
+			if candidate.Name == selected.Name {
+				w.stageA = &stageAPolicy{repository: cfg.Policy, candidate: candidate, defaultBranch: branch}
+				break
+			}
+		}
+		if w.stageA == nil {
+			return config.Errors{{Path: "queues", Message: "approval queue has no parsed policy candidate"}}
+		}
 	}
 	w.cfg = selected
 	w.deleteHeadBranch = cfg.DeleteHeadBranch

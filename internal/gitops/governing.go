@@ -39,6 +39,15 @@ func (r *Repo) GoverningFiles(ctx context.Context, repo forge.RepoRef, req forge
 		}
 		return fail(reason, err)
 	}
+	return s.governingFiles(ctx, req)
+}
+
+func (s *session) governingFiles(ctx context.Context, req forge.GoverningFilesRequest) (forge.GoverningFiles, error) {
+	out := forge.GoverningFiles{CommitSHA: req.CommitSHA, Semantics: forge.DiffSemantics}
+	fail := func(reason forge.DiffFailureReason, err error) (forge.GoverningFiles, error) {
+		out.Coverage = forge.DiffCoverage{Completeness: forge.DiffIncomplete, Reasons: []forge.DiffFailureReason{reason}}
+		return out, err
+	}
 	kind, err := s.command(ctx, "", "cat-file", "-t", req.CommitSHA)
 	if err != nil {
 		return fail(forge.DiffReadFailure, err)
