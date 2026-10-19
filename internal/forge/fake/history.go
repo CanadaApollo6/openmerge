@@ -45,8 +45,9 @@ func (f *Forge) CommitsBetween(ctx context.Context, repo forge.RepoRef, base, he
 }
 
 // FirstParentCommits reads the queue-generated composition chain without
-// traversing contributor merge parents. It mirrors the immutable, bounded
-// cache reader used by the CLI-backed forge.
+// traversing contributor merge parents. It mirrors structural selection, but
+// its single object map cannot model cache eviction; real-git gate tests cover
+// acquisition and object lifetime.
 func (f *Forge) FirstParentCommits(ctx context.Context, repo forge.RepoRef, base, head string, limit int) ([]string, bool, error) {
 	if limit < 1 || limit > forge.MaxFirstParentCommits {
 		return nil, false, fmt.Errorf("invalid first-parent history limit")
@@ -96,6 +97,9 @@ func (f *Forge) ReadCommitMessage(ctx context.Context, repo forge.RepoRef, sha s
 // AcquireCommits validates immutable IDs. The fake's single durable object map
 // has no separate cache or GC; real-git gate integration covers that boundary.
 func (f *Forge) AcquireCommits(ctx context.Context, repo forge.RepoRef, shas []string) (func(), error) {
+	if len(shas) == 0 || len(shas) > forge.MaxFirstParentCommits+2 {
+		return nil, fmt.Errorf("invalid acquisition commit count")
+	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}

@@ -242,6 +242,31 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 			Labels:   labels,
 		}
 	}
+	t.Run("commit-acquisition", func(t *testing.T) {
+		e := newEnv(t)
+		acquirer, ok := e.Git.(forge.CommitAcquirer)
+		if !ok {
+			t.Fatal("missing CommitAcquirer")
+		}
+		for _, pins := range [][]string{nil, {"main"}, {strings.Repeat("f", 40)}, make([]string, forge.MaxFirstParentCommits+3)} {
+			release, err := acquirer.AcquireCommits(ctx, e.Repo, pins)
+			if err == nil {
+				release()
+				t.Fatalf("accepted invalid acquisition: count=%d", len(pins))
+			}
+			if release != nil {
+				t.Fatal("failed acquisition returned a lease")
+			}
+		}
+		head := build(t, e, e.BaseSHA, "acquire", e.PRs[:1]...)
+		release, err := acquirer.AcquireCommits(ctx, e.Repo, []string{e.BaseSHA, head})
+		must(t, err)
+		defer release()
+		if message, err := e.ReadCommitMessage(head); err != nil || message == "" {
+			t.Fatalf("acquired message: %q %v", message, err)
+		}
+		release()
+	})
 	t.Run("history-limits", func(t *testing.T) {
 		e := newEnv(t)
 		// Two two-member compositions produce a four-entry first-parent
