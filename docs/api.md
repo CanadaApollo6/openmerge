@@ -480,6 +480,9 @@ identities; a known empty list is `[]`, and null means unknown. A token
 authenticates an account and cannot prove that a person rather than an agent
 holding the token acted. Use separate bot or App identities so an agent does not
 consume its human owner's approval.
+The [organization sandbox runbook](research/stage-a-sandbox-evidence.md) records
+installation grants, the authenticated receipt comment and both CLI/API
+read-backs; its real sandbox execution remains pending maintainer resources.
 
 Reviewer evidence includes classification reasons, requirements, native/receipt
 stance provenance, and bounded receipt command processing history. A receipt's

@@ -170,7 +170,7 @@ func TestReviewerCheckWarningsSurviveOversizedBriefURL(t *testing.T) {
 	hugeKey.BaseBranch = strings.Repeat("branch/", 12000)
 	v := brief.View{Digest: brief.NotRecorded, Warnings: []brief.Warning{{Code: "policy_unavailable", Detail: "policy reconstruction failed"}}}
 	text := reviewerCheckText(hugeKey, "change", v, nil)
-	for _, want := range []string{"WARNING: classification/inventory not recorded", "WARNING: policy\\_unavailable", "+more evidence in full brief"} {
+	for _, want := range []string{"WARNING: classification/inventory not recorded", "WARNING: policy\\_unavailable", "Reviewer brief: URL exceeds check display bound", "Digest: not recorded"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("lost warning %q in bounded output: %s", want, text)
 		}
@@ -189,5 +189,26 @@ func TestReviewerCheckUsesCurrentOperationalGate(t *testing.T) {
 	text := reviewerCheckText(key, "change", brief.View{}, entry)
 	if !strings.Contains(text, "gate: max\\_wait") {
 		t.Fatalf("check lost applied gate: %s", text)
+	}
+}
+
+func TestReviewerCheckBriefURLSurvivesRowTruncation(t *testing.T) {
+	v := brief.View{Digest: strings.Repeat("a", 64), Classification: &brief.ClassificationView{}}
+	for range 8 {
+		v.Classification.Labels = append(v.Classification.Labels, brief.LabelView{Name: strings.Repeat("&", 80), Reasons: []string{strings.Repeat("&", 180)}})
+		v.Obligations = append(v.Obligations, brief.ObligationView{Path: strings.Repeat("&", 180), Selector: strings.Repeat("&", 80)})
+	}
+	longKey := key
+	longKey.BaseBranch = strings.Repeat("b", 3500)
+	for range 8 {
+		v.Warnings = append(v.Warnings, brief.Warning{Code: strings.Repeat("\"", 80), Detail: strings.Repeat("\"", 100), Clears: strings.Repeat("\"", 100), NextStep: brief.Step{Action: strings.Repeat("\"", 80)}})
+	}
+	text := reviewerCheckText(longKey, "change", v, nil)
+	url := changePath(longKey, "change") + "/brief?audience=reviewer"
+	if !strings.Contains(text, "+more evidence in full brief") || !strings.Contains(text, "Reviewer brief: "+url+"\nDigest: "+v.Digest) || len(text) > 12050 {
+		t.Fatal("lost brief URL/digest or failed to bound rows", text)
+	}
+	if strings.Index(text, "WARNING:") > strings.Index(text, "Reviewer brief:") {
+		t.Fatal("warnings must come first")
 	}
 }

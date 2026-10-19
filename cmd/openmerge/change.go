@@ -62,8 +62,8 @@ func runChange(args []string, stdout, stderr io.Writer) int {
 	if args[0] != "decisions" && (afterSet || limitSet) {
 		valid = false
 	}
-	if args[0] == "show" && *audience != "reviewer" {
-		_, _ = fmt.Fprintln(stderr, "show accepts only --audience reviewer")
+	if args[0] != "brief" && *audience != "reviewer" {
+		_, _ = fmt.Fprintln(stderr, args[0]+" accepts only --audience reviewer")
 		return 2
 	}
 	if !valid {

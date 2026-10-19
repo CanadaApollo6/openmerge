@@ -49,6 +49,7 @@ type Queue struct {
 	LastWindowFailure *queue.WindowFailure       `json:"last_window_failure,omitempty"`
 	Window            int                        `json:"window,omitempty"`
 	BatchSize         int                        `json:"batch_size,omitempty"`
+	sanitizer         *diagnostic.Sanitizer
 	state             queue.State
 	policyPins        []briefPolicyPin
 	known             map[int]Entry
@@ -290,6 +291,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 	q.Paused = len(q.Blocks) > 0
 	q.state = s
 	q.runLedger = ledger
+	q.sanitizer = sanitizer
 	q.known = known
 	q.policyPins = policyPins
 	for i, b := range s.Batches() {
