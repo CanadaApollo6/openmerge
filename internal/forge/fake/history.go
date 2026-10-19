@@ -92,3 +92,20 @@ func (f *Forge) ReadCommitMessage(ctx context.Context, repo forge.RepoRef, sha s
 	}
 	return commit.Message, nil
 }
+
+// AcquireCommits validates immutable IDs. The fake's single durable object map
+// has no separate cache or GC; real-git gate integration covers that boundary.
+func (f *Forge) AcquireCommits(ctx context.Context, repo forge.RepoRef, shas []string) (func(), error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	for _, sha := range shas {
+		if !forge.ValidDiffObjectID(sha) {
+			return nil, fmt.Errorf("acquisition requires full commit IDs")
+		}
+		if _, err := f.Commit(repo, sha); err != nil {
+			return nil, err
+		}
+	}
+	return func() {}, nil
+}

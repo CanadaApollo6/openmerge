@@ -69,6 +69,22 @@ type testedMessageReader interface {
 }
 
 func testedMessages(ctx context.Context, w *worker, land queue.Land) ([]string, error) {
+	acquirer, ok := w.Git.(forge.CommitAcquirer)
+	if !ok {
+		return nil, store.LandingDecisionRequiredError{}
+	}
+	if len(land.PRs) < 1 || len(land.PRs) > forge.MaxFirstParentCommits {
+		return nil, errors.New("invalid tested acquisition member count")
+	}
+	shas := []string{land.ExpectedBaseSHA, land.TestedSHA}
+	for _, pin := range land.PRs {
+		shas = append(shas, pin.HeadSHA)
+	}
+	release, err := acquirer.AcquireCommits(ctx, w.repo(), shas)
+	if err != nil {
+		return nil, fmt.Errorf("acquire tested commits: %w", err)
+	}
+	defer release()
 	reader, ok := w.Git.(testedMessageReader)
 	if !ok {
 		return nil, store.LandingDecisionRequiredError{}
