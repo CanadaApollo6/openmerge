@@ -1,0 +1,21 @@
+Change "chg1_test" decisions
+
+Decision event 42: batch "batch-1"; attempt "attempt-1"; revision 2
+  Change: "chg1_test"; variant: "generated_remedy"; outcome: "abandoned"
+  Eligibility event: 40; settlement event: 44; read: "read-1"
+  Tested SHA: "tested-sha"; intended landing SHA: "intended-sha"; landed SHA: "not recorded"
+  Digests: brief "brief-digest"; intent "intent-digest"; policy "policy-digest"
+  Accountability: "recorded"
+    Actor: "acct-1" ("queue-app[bot]")
+    Author: "author-1" ("alice")
+    Submitter: "alice"
+    Accountable human: "human-1" ("reviewer")
+  Sources:
+    "reviewer" via "native_review"; source "review-1"; read "read-1"; receipt "not recorded"; intent "not recorded"; brief "not recorded"
+  Requirements:
+    "code-owner" at "/cmd/openmerge"; side "head"; selector "human"; group "owners"; count 1; human true; receipt false
+      Pool IDs: ["human-1"]; eligible IDs: ["human-1"]
+      Relied on:
+        "reviewer" via "native_review"; source "review-1"; read "read-1"; receipt ""; intent ""; brief ""
+
+Next cursor: 44

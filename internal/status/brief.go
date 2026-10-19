@@ -60,31 +60,30 @@ func projectBrief(j store.Journal, id, audience string, options ...briefOptions)
 	if sanitizer == nil {
 		sanitizer = diagnostic.NewSanitizer()
 	}
-	s := j.Seed
-	candidates := map[int]bool{}
-	for _, e := range s.Entries {
-		candidates[e.PR] = true
-	}
-	for _, r := range j.Events {
-		switch e := r.Event.(type) {
-		case queue.PRObserved:
-			candidates[e.PR] = true
-		case queue.ChangeRevisionObserved:
-			candidates[e.PR] = true
-		}
-		s = queue.Apply(s, r.Event)
-	}
-	selected := 0
-	for pr := range candidates {
-		canonical, err := j.Key.ChangeID(pr)
+	q, _, _ := Project(j, 0, 0, sanitizer)
+	return projectBriefFromProjection(j, &q, q.changeEntry(j.Key, id), id, audience, opt)
+}
+
+func (q *Queue) changeEntry(key store.QueueKey, id string) *Entry {
+	for pr := range q.known {
+		canonical, err := key.ChangeID(pr)
 		if err == nil && string(canonical) == id {
-			if _, ok := s.PRRevision(pr); ok {
-				selected = pr
-				break
-			}
+			return q.LedgerEntry(pr)
 		}
 	}
-	if selected == 0 {
+	return nil
+}
+
+func projectBriefFromProjection(j store.Journal, q *Queue, entry *Entry, id, audience string, opt briefOptions) (brief.View, bool, error) {
+	if entry == nil {
+		return brief.View{}, false, nil
+	}
+	sanitizer := opt.sanitizer
+	if sanitizer == nil {
+		sanitizer = diagnostic.NewSanitizer()
+	}
+	s, selected := q.state, entry.PR
+	if _, ok := s.PRRevision(selected); !ok {
 		return brief.View{}, false, nil
 	}
 	rev, _ := s.PRRevision(selected)
@@ -145,7 +144,6 @@ func projectBrief(j store.Journal, id, audience string, options ...briefOptions)
 	if opt.policy != nil {
 		policyCode = applyBriefPolicy(&f, s, basis, opt)
 	}
-	q, entry, _ := Project(j, selected, 0, sanitizer)
 	if entry != nil {
 		f.Presentation.Progress = &brief.ProgressView{Position: entry.Position, Status: entry.Status, Reason: entry.Reason}
 	}

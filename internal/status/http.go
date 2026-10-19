@@ -213,18 +213,29 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 			return
 		}
 		if isChange {
-			j, pr, found := selectChangeRevision(journals[0], change.id, change.revision)
-			if !found {
-				fail(w, 404, "not-found", "change revision has no recorded history in this queue")
-				return
+			j := journals[0]
+			if change.revision > 0 {
+				var found bool
+				j, _, found = selectChangeRevision(j, change.id, change.revision)
+				if !found {
+					fail(w, 404, "not-found", "change revision has no recorded history in this queue")
+					return
+				}
 			}
-			_, entry, _ := Project(j, pr, 0, sanitizer)
-			view, _, err := projectBrief(j, change.id, "reviewer", briefOptions{sanitizer: sanitizer, policy: briefPolicyProjection(ctx, source, j)})
+			q, _, _ := Project(j, 0, 0, sanitizer)
+			entry := q.changeEntry(j.Key, change.id)
+			view, found, err := projectBriefFromProjection(j, &q, entry, change.id, "reviewer", briefOptions{sanitizer: sanitizer, policy: briefPolicyProjection(ctx, source, j, &q)})
 			if err != nil {
 				fail(w, 503, "unavailable", "change could not be projected")
 				return
 			}
-			q, _, _ := Project(j, 0, 0, sanitizer)
+			if !found {
+				fail(w, 404, "not-found", "change has no recorded history in this queue")
+				return
+			}
+			if hasStageAEvidence(q.state, entry) {
+				attachEntryBrief(entry, view)
+			}
 			applyReadiness(source, &q, sanitizer)
 			applyPolicy(source, &q, entry)
 			writeBoundedChange(w, ChangeResponse{Version: Version, PR: entry, Brief: view})
@@ -240,7 +251,8 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 				}
 				journals[0] = j
 			}
-			view, found, err := projectBrief(journals[0], changeID, audience, briefOptions{sanitizer: sanitizer, policy: briefPolicyProjection(r.Context(), source, journals[0])})
+			q, _, _ := Project(journals[0], 0, 0, sanitizer)
+			view, found, err := projectBriefFromProjection(journals[0], &q, q.changeEntry(journals[0].Key, changeID), changeID, audience, briefOptions{sanitizer: sanitizer, policy: briefPolicyProjection(ctx, source, journals[0], &q)})
 			if err != nil {
 				fail(w, http.StatusServiceUnavailable, "unavailable", "brief could not be projected")
 				return

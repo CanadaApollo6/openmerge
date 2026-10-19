@@ -3,8 +3,8 @@
 Reviewer brief: /v1/queues/owner/repo/main/changes/chg1_d85355527abc5f6f63fbd8e90338354eb7bc7636bf46f0a6959da1c7c08273e5/brief?audience=reviewer
 Digest: not recorded
 WARNING: classification/inventory not recorded; do not treat this as a complete diff.
-WARNING: not\_recorded; Record missing evidence before relying on this brief for approval.; next: record\_evidence
-WARNING: policy\_unavailable; Restore the pinned ConfigApplied commit and its tree/blob objects to the repository local Git cache through an operator-managed fetch or backup import (including the default-branch config comm…; next: restore\_recorded\_policy
+WARNING: policy\_unavailable; The recorded approval policy could not be reconstructed for this brief.; Restore the pinned ConfigApplied commit and its tree/blob ob…; next: restore\_recorded\_policy
+WARNING: not\_recorded; ; Record missing evidence before relying on this brief for app…; next: record\_evidence
 Claimed intent: recorded title
 Accountability: not recorded
 Recorded queue state: not-queued; gate: 

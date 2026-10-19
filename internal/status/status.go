@@ -50,6 +50,8 @@ type Queue struct {
 	Window            int                        `json:"window,omitempty"`
 	BatchSize         int                        `json:"batch_size,omitempty"`
 	state             queue.State
+	policyPins        []briefPolicyPin
+	known             map[int]Entry
 	runLedger         map[int][]Run
 	RulesSources      []RulesSource `json:"rules_sources,omitempty"`
 }
@@ -103,7 +105,7 @@ type BatchPR struct {
 // Entry uses position zero for PRs outside the queue; admission is the latest
 // successful admission, retained on a terminal PR detail response.
 type Entry struct {
-	Landing           *LandingView  `json:"landing"`
+	Landing           *LandingView  `json:"landing,omitempty"`
 	Change            *ChangeReport `json:"change,omitempty"`
 	Gate              string        `json:"gate,omitempty"`
 	RunLedger         []Run         `json:"run_ledger,omitempty"`
@@ -147,16 +149,21 @@ type Event struct {
 // outcomes: terminal states require an admission to actually leave the fold.
 func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Queue, *Entry, *Why) {
 	s := j.Seed
+	policyPins := []briefPolicyPin{}
 	known := make(map[int]Entry)
 	heads := make(map[int]string)
-	tested, inheritedPause := explanationContext(j, pr)
+	var tested map[string]bool
+	var inheritedPause map[int64]bool
 	events := make([]Event, 0)
 	var outsidePushes []OutsidePush
 	// Audit evidence comes only from journal rows, which retain stable IDs.
 	var previous queue.Event
 	var watermark int64
-	ledger := runLedger(j, sanitizer, func(record store.JournalEvent, before, after queue.State) {
+	visit := func(record store.JournalEvent, before, after queue.State) {
 		s = after
+		if e, ok := record.Event.(queue.ChangeClassified); ok {
+			policyPins = append(policyPins, briefPolicyPin{e.Evidence, queue.ConfigApplied{Commit: after.ConfigCommit, Digest: after.ConfigDigest}})
+		}
 		if e, ok := record.Event.(queue.OutsidePushRecorded); ok {
 			outsidePushes = append(outsidePushes, OutsidePush{EventID: record.ID, OutsidePushRecorded: e})
 			if len(outsidePushes) > queue.OutsidePushLimit {
@@ -243,7 +250,22 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 				events = slices.Delete(events, 0, len(events)-limit-1)
 			}
 		}
-	})
+	}
+	var ledger map[int][]Run
+	if pr == 0 {
+		ledger = runLedger(j, sanitizer, visit)
+	} else {
+		// Explanations can reference CI observed before its tested SHA was
+		// committed. Retain replay frames only for that selected-PR read.
+		frames := make([]projectionFrame, 0, len(j.Events))
+		ledger = runLedger(j, sanitizer, func(_ store.JournalEvent, before, after queue.State) {
+			frames = append(frames, projectionFrame{before, after})
+		})
+		tested, inheritedPause = explanationContext(j, pr, frames)
+		for i, record := range j.Events {
+			visit(record, frames[i].before, frames[i].after)
+		}
+	}
 	for n, head := range heads {
 		e := known[n]
 		e.HeadSHA = head
@@ -264,6 +286,8 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 	q.Paused = len(q.Blocks) > 0
 	q.state = s
 	q.runLedger = ledger
+	q.known = known
+	q.policyPins = policyPins
 	for i, b := range s.Batches() {
 		item := &Batch{ID: b.ID, Phase: string(b.Phase), BaseSHA: b.BaseSHA, TestedSHA: b.TestedSHA, TestRef: b.TestRef, Method: string(b.Method), PRs: make([]BatchPR, 0, len(b.PRs)), CheckRetry: cloneCheckRetry(b.CheckRetry), Position: max(1, b.ChainPosition), ParentBatchID: b.ParentBatchID, BatchesAhead: i, LandingSHA: b.LandingCommit(), InvalidationReason: b.InvalidationReason, ProvisionalFailure: provisionalFailure(b)}
 		if item.CheckRetry != nil {
@@ -485,7 +509,9 @@ func retryState(s queue.State, batchID, testedSHA string) string {
 
 // Correlate CI that arrived before TestRefBuilt with the batch that ultimately
 // consumed it. Looking only at the state at arrival would lose retained evidence.
-func explanationContext(j store.Journal, pr int) (map[string]bool, map[int64]bool) {
+type projectionFrame struct{ before, after queue.State }
+
+func explanationContext(j store.Journal, pr int, frames []projectionFrame) (map[string]bool, map[int64]bool) {
 	result := make(map[string]bool)
 	causes := make(map[string]int64)
 	inherited := make(map[int64]bool)
@@ -493,9 +519,9 @@ func explanationContext(j store.Journal, pr int) (map[string]bool, map[int64]boo
 		return result, inherited
 	}
 	s := j.Seed
-	for _, record := range j.Events {
-		before := s
-		s = queue.Apply(s, record.Event)
+	for i, record := range j.Events {
+		before := frames[i].before
+		s = frames[i].after
 		switch e := record.Event.(type) {
 		case queue.LifecycleChanged:
 			if s.LifecycleState() == "active" {

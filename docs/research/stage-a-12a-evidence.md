@@ -348,3 +348,76 @@ boundaries needed by these reporting reads. The current guard rejects pruning
 until integration tests establish the complete retention contract.
 
 Trial deployment class remains **Hold**. No deployment was performed.
+
+## Review round 1 fixes
+
+This section supersedes the original implementation result above for the round-1
+candidate. Trial class remains **Hold**. The round starts at `fb0b95c` against
+main `6e2b50b`; only explicit main and `stage-a/12a-reporting` refspecs are
+fetched. No deployment, live DB/status API, systemd unit or `openmerge/*` ref is
+accessed. No Makefile, CI or test-flag changes are made.
+
+- Status requests share one journal read and one queue replay. The ledger and
+  explanation use that projection; queue lists do not render briefs. Only a
+  selected PR with Stage A evidence gets a reviewer evidence view. Legacy
+  `PRObserved` revisions still receive cheap ID/revision metadata.
+  `TestLegacyReporting128EntriesAllocationBudget` covers Astra's 128 PRs plus
+  512 refreshes for both PR lookup and queue list, with a 40.8 MB budget (twice
+  the review's 20.4 MB main allocation). `BenchmarkLegacyReporting128` reports
+  latency/bytes/allocations. `scripts/check-reporting-performance.py` repeats
+  the same PR lookup seven times on main and candidate and asserts both median
+  latency and allocated bytes are within 2x main.
+- `TestApprovalWaitOperationalGatePrecedence` covers invalidation after an
+  approval rejection and dequeue after invalidation retirement. Operational
+  gates win; recorded approval reasons remain in `change.waiting_reasons`.
+- Check reporting shares the ledger journal/projection cache. Recorded policy
+  reconstruction failure intentionally degrades to a visible unavailable
+  warning instead of retaining a stale check. Policy warnings are prioritized
+  ahead of optional evidence, and the server logs the degradation.
+  `TestStageACheckSharesLedgerSnapshotAndLogsUnavailablePolicy` detaches the
+  store after ledger loading and proves both check text and logging still work.
+- Receipt text derives from recorded receipts, including acceptance/binding.
+  Waiting reasons and warnings are escaped and count-capped with `+N more`;
+  warnings precede optional evidence and the suffix has an overall ~12 KB
+  bound, leaving room below GitHub's 65,535-character limit.
+  `TestReviewerCheckReceiptsWaitingAndWarningGolden` and
+  `TestReviewerCheckWarningsEscapingAndBounds` cover that output.
+- CLI decision reads support queue selectors, JSON, revision and bounded
+  pagination with existing exit conventions. Tests:
+  `TestChangeDecisionsCLIJSONPaginationAndRevision`,
+  `TestChangeDecisionsCLIGolden`, `TestChangeDecisionsExitCodesAndValidation`,
+  `TestChangeShowRejectsNonReviewerAudience`, `TestChangeShowCLI` and its golden.
+  Show always prints the decisions link and rejects non-reviewer audiences.
+- Change show checks the brief's found flag, returns 404 for absent revision
+  evidence and 503 for projection errors, and attaches the same selected Entry
+  evidence as the PR alias. Tests: `TestChangeShowAndPRAliasEntryMatch`,
+  `TestChangeShowWithoutRevisionEvidenceIsNotFound` and
+  `TestChangeShowHTTPRevisionScopeAndAuth`.
+- Migration 007 guards numeric aliases (including bigint overflow) with a CASE
+  expression shared by its indexed query. Tests:
+  `TestReportingPRAliasIndexBuildIgnoresMalformedHistoricalValues`,
+  `TestChangeDecisionsIgnoresMalformedLegacyPRAliases`,
+  `TestChangeDecisionsLargeLegacyPRAlias`,
+  `TestReportingIndexesExcludeUnrelatedHistory`. The page comment now names
+  migration 007. `TestReportingIndexesBuildTiming` measures 2,600/260,000 mixed
+  rows and verifies ShareLock blocks a writer until commit. Operating docs
+  require the drained ADR 0009 period-B/Hold window, including lock-wait and
+  production-size caveats.
+- Absent landing metadata is omitted; remedy decision sources/requirements
+  render as empty arrays. The extended legacy differential compares six
+  fixtures: original golden, multi-entry, landed, dequeued, blocked and depth 4.
+  It compares preexisting serialized bytes and field order after stripping
+  only Entry `change`/`landing`, and rejects drift via negative controls.
+- `TestDecisionEvidenceRetentionNoPruning` now scans `cmd/` as well as
+  `internal/`, including index drops and payload replacement. Its pattern test
+  covers destructive SQL and prose false positives. This is an unquoted SQL
+  literal tripwire, not a parser or a database retention guarantee; dynamic or
+  quoted SQL and external clients can bypass it. Future pruning still needs
+  integration proof retaining decisions, referenced eligibility and read IDs.
+
+Round-1 execution uses the same shared test Postgres and ~/.cache Go paths
+listed above. The serial runner waits for other Go/test/replay jobs and sets
+`GOFLAGS=-p=2`, `GOMEMLIMIT=4GiB`. No processes were killed in this round.
+Detailed exits, log hashes, final performance samples and source identity follow
+once validation completes.
+<!-- round-1-results -->

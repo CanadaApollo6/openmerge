@@ -428,9 +428,14 @@ a receipt. Candidate approval policies continue to withhold requirements as
 with `change`: canonical ID, revision, accountability, recorded waiting reason
 codes, reviewer brief and decision paths. Queue entries and
 `GET .../prs/{number}` (the `queue status --pr N` alias) receive the same additive
-`change` metadata and `evidence` reviewer brief. Existing fields retain their
-legacy meanings. An approval wait reports gate `approvals` with the recorded
-reason codes; this does not add a second approval evaluator.
+`change` metadata. Queue lists use the shared journal projection without
+rendering per-entry briefs. The selected PR includes an `evidence` reviewer
+brief only when Stage A evidence is recorded; legacy observations alone do
+not trigger brief rendering. Change show and the PR alias return the same
+Entry DTO. Existing fields retain their legacy meanings. An approval wait
+reports separate `waiting_reasons`; operational dequeue and invalidation
+gates retain precedence. An otherwise waiting entry reports gate `approvals`;
+this does not add a second approval evaluator.
 
 Change show and `.../brief?audience=reviewer|operator|agent` accept
 `revision=N` (positive uint64). Omission selects the latest revision. Historical
@@ -491,7 +496,12 @@ CLI equivalents:
 openmerge change show <id> --repo owner/repo --base release/v1 --json
 openmerge change show <id> --repo owner/repo --revision 1
 openmerge change brief <id> --repo owner/repo --audience reviewer --revision 1
+openmerge change decisions <id> --repo owner/repo --base release/v1 --revision 1 --limit 20 --after 0 --json
 ```
+
+`change show` always prints its decisions URL in human output and accepts
+only the reviewer audience. Decisions supports revision selection and exclusive
+`--after`/bounded `--limit` pagination.
 
 They share queue status's API/token options and exit conventions: 0 success,
 1 transport/unsupported response, 2 invalid invocation/request, 3 not found,
@@ -507,7 +517,10 @@ evidence remains available through the read projections and retained journal.
 
 No event compaction or persisted snapshot pruning exists today.
 `TestDecisionEvidenceRetentionNoPruning` rejects newly introduced destructive
-SQL in production internal Go strings or SQL migrations. Any future pruning
+SQL in production `internal/` and `cmd/` Go strings and SQL migrations,
+including index drops and updates of event payloads. This is a source tripwire
+for straightforward SQL literals, not a SQL parser or retention proof: quoted
+identifiers, dynamic SQL and external database clients can bypass it. Any future pruning
 implementation must replace that guard with integration tests proving retention
 of `landing_decision_recorded` **and** its referenced
 `approval_eligibility_observed`, preserving original read IDs after settlement.
@@ -519,5 +532,13 @@ aliases (100,000 distinct aliases supported); exhaustion fails closed with 503.
 Neither alias lookup nor decision settlement requires scanning unrelated event
 types. Full decision/eligibility read-back continues through migration 006's
 identity indexes. Decision responses include the exact `eligibility_event_id`;
-status `landing` is null until an applied `Landed` event records a confirmed SHA,
+status `landing` is omitted until an applied `Landed` event records a confirmed SHA,
 batch, attempt and settlement event ID.
+
+For opted-in queues, the existing GitHub check shares the ledger's journal
+snapshot and projection. If recorded approval policy reconstruction fails, the
+check is still updated with an explicit `policy_unavailable` warning and the
+server logs `check approval policy unavailable`. Requirements and receipt
+binding remain unavailable; this warning does not authorize landing. Publishing
+honest unavailable evidence is intentional: retaining a stale check would hide
+the loss of policy evidence.

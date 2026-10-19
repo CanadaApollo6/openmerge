@@ -48,7 +48,12 @@ func applyBriefPolicy(f *brief.Fact, s queue.State, b queue.ApprovalBasis, opt b
 	return ""
 }
 
-func briefPolicyProjection(ctx context.Context, source Source, j store.Journal) func(queue.State, queue.ApprovalBasis) (brief.Fact, string) {
+type briefPolicyPin struct {
+	evidence classification.Evidence
+	config   queue.ConfigApplied
+}
+
+func briefPolicyProjection(ctx context.Context, source Source, j store.Journal, projection *Queue) func(queue.State, queue.ApprovalBasis) (brief.Fact, string) {
 	return func(s queue.State, b queue.ApprovalBasis) (brief.Fact, string) {
 		unavailable := func() (brief.Fact, string) { return brief.Fact{}, "policy_unavailable" }
 		provider, ok := source.(briefPolicySource)
@@ -62,17 +67,10 @@ func briefPolicyProjection(ctx context.Context, source Source, j store.Journal) 
 		b = facts.Intent.Basis
 		pin := queue.ConfigApplied{Commit: j.Seed.ConfigCommit, Digest: j.Seed.ConfigDigest}
 		pinKnown := pin.Commit == stored.Evidence.Classification.Inputs.GoverningCommit
-		state := j.Seed
-		for _, row := range j.Events {
-			state = queue.Apply(state, row.Event)
-			if e, ok := row.Event.(queue.ChangeClassified); ok {
-				i := e.Evidence.Classification.Inputs
-				wanted := stored.Evidence.Classification.Inputs
-				if reflect.DeepEqual(i, wanted) && e.Evidence.InputFingerprint == stored.Evidence.InputFingerprint {
-					pin = queue.ConfigApplied{Commit: state.ConfigCommit, Digest: state.ConfigDigest}
-					pinKnown = true
-					break
-				}
+		for _, recorded := range projection.policyPins {
+			if recorded.evidence.InputFingerprint == stored.Evidence.InputFingerprint && reflect.DeepEqual(recorded.evidence.Classification.Inputs, stored.Evidence.Classification.Inputs) {
+				pin, pinKnown = recorded.config, true
+				break
 			}
 		}
 		if !pinKnown || pin.Commit == "" || pin.Digest == "" {

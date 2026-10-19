@@ -96,7 +96,7 @@ func serveDecisions(ctx context.Context, w http.ResponseWriter, source Source, k
 
 func decisionView(r store.DecisionRecord, sanitizer *diagnostic.Sanitizer) DecisionView {
 	d := r.Evidence.Decision
-	v := DecisionView{EligibilityEventID: r.Evidence.EligibilityEventID, EventID: r.EventID, SettlementEventID: r.SettlementEventID, BatchID: d.BatchID, AttemptID: d.AttemptID, Variant: d.Variant, Outcome: r.Outcome, TestedSHA: d.TestedSHA, IntendedLandingSHA: d.LandedSHA, LandedSHA: brief.NotRecorded, EligibilityReadID: brief.NotRecorded, BriefDigest: brief.NotRecorded, IntentDigest: brief.NotRecorded, PolicyDigest: brief.NotRecorded}
+	v := DecisionView{Sources: []DecisionSourceView{}, Requirements: []DecisionRequirementView{}, EligibilityEventID: r.Evidence.EligibilityEventID, EventID: r.EventID, SettlementEventID: r.SettlementEventID, BatchID: d.BatchID, AttemptID: d.AttemptID, Variant: d.Variant, Outcome: r.Outcome, TestedSHA: d.TestedSHA, IntendedLandingSHA: d.LandedSHA, LandedSHA: brief.NotRecorded, EligibilityReadID: brief.NotRecorded, BriefDigest: brief.NotRecorded, IntentDigest: brief.NotRecorded, PolicyDigest: brief.NotRecorded}
 	if r.Outcome == "landed" {
 		v.LandedSHA = r.LandedSHA
 	}

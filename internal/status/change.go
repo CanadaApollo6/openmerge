@@ -228,25 +228,35 @@ func selectChangeRevision(j store.Journal, id string, revision uint64) (store.Jo
 }
 
 func enrichChanges(ctx context.Context, source Source, j store.Journal, q *Queue, entry *Entry, sanitizer *diagnostic.Sanitizer) {
-	enrich := func(e *Entry) {
-		if e.Change == nil {
-			return
-		}
-		view, found, err := projectBrief(j, e.Change.ID, "reviewer", briefOptions{sanitizer: sanitizer, policy: briefPolicyProjection(ctx, source, j)})
-		if err == nil && found {
-			// Queue status carries bounded evidence pointers and progress. The
-			// dedicated brief route retains its full bounded inventory and hunks.
-			if view.Classification != nil && len(view.Classification.Files) > 0 {
-				view.Classification.Files = nil
-				view.Truncated = true
-			}
-			e.Change.Evidence = &view
-		}
+	// Entry metadata is derived by Project's single shared projection. Full
+	// evidence is useful only for the selected Stage A change, never every row.
+	if entry == nil || entry.Change == nil || !hasStageAEvidence(q.state, entry) {
+		return
 	}
-	for i := range q.Entries {
-		enrich(&q.Entries[i])
+	view, found, err := projectBriefFromProjection(j, q, entry, entry.Change.ID, "reviewer", briefOptions{sanitizer: sanitizer, policy: briefPolicyProjection(ctx, source, j, q)})
+	if err != nil || !found {
+		return
 	}
-	if entry != nil {
-		enrich(entry)
+	attachEntryBrief(entry, view)
+}
+
+func attachEntryBrief(entry *Entry, view brief.View) {
+	if view.Classification != nil && len(view.Classification.Files) > 0 {
+		c := *view.Classification
+		c.Files = nil
+		view.Classification = &c
+		view.Truncated = true
 	}
+	entry.Change.Evidence = &view
+}
+
+func hasStageAEvidence(s queue.State, entry *Entry) bool {
+	if entry == nil || entry.Change == nil {
+		return false
+	}
+	id := queue.ChangeID(entry.Change.ID)
+	rev, _ := s.PRRevision(entry.PR)
+	_, classified := s.Classification(id, queue.ChangeRevision(entry.Change.Revision))
+	_, approvals := s.ApprovalFacts(id)
+	return rev.ChangeID != "" || classified || approvals
 }

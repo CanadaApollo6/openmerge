@@ -19,7 +19,6 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/status"
-	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
 // stageAPolicy has no production constructor or public configuration path in
@@ -833,11 +832,19 @@ func (s *Server) observeStageABase(ctx context.Context, w *worker, state queue.S
 }
 
 func (s *Server) stageACheckSummary(ctx context.Context, w *worker, pr int) (string, error) {
-	journals, err := s.store.Journals(ctx, []store.QueueKey{w.Key})
-	if err != nil || len(journals) == 0 {
-		return "", err
+	if w.ledgerCache == nil {
+		if _, err := s.ledgerSummary(ctx, w, pr); err != nil {
+			return "", err
+		}
 	}
-	return status.ReviewerCheckSummary(journals[0], pr, w.stageA.policy)
+	if w.ledgerCache == nil {
+		return "", nil
+	}
+	text, err := status.ReviewerCheckSummaryFromProjection(w.ledgerCache.journal, &w.ledgerCache.projection, pr, w.stageA.policy)
+	if strings.Contains(text, "policy\\_unavailable") {
+		s.options.Logger.Warn("check approval policy unavailable", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "pr", pr)
+	}
+	return text, err
 }
 
 func (s *Server) stageAActorRelevantWithInputs(state queue.State, w *worker, b queue.ApprovalBasis, actor cp.Identity, grant forge.WriteGrant, fresh queue.ApprovalEligibilityObserved) (bool, error) {

@@ -19,7 +19,7 @@ type DecisionRecord struct {
 	LandedSHA         string
 }
 
-// ChangeDecisions selects only typed decision identities from migration 006's
+// ChangeDecisions selects only typed decision identities from migration 007's
 // partial index. It never loads or decodes the full journal. Cursor is exclusive.
 func (s *Store) ChangeDecisions(ctx context.Context, key QueueKey, id queue.ChangeID, revision uint64, after int64, limit int) ([]DecisionRecord, int64, bool, error) {
 	if id.Validate() != nil || after < 0 || limit < 1 || limit > 100 {
@@ -35,7 +35,7 @@ func (s *Store) ChangeDecisions(ctx context.Context, key QueueKey, id queue.Chan
 	}
 	// Legacy IDs are derived from queue-local PR aliases. Only this narrow column
 	// is read: unrelated events are never transferred or decoded.
-	rows, err := s.pool.Query(ctx, `SELECT DISTINCT (payload->'data'->>'pr')::bigint FROM events WHERE queue_id=$1 AND type IN ('pr_observed','change_revision_observed') ORDER BY 1 LIMIT 100001`, q)
+	rows, err := s.pool.Query(ctx, legacyPRAliasNumbersSQL, q)
 	if err != nil {
 		return nil, 0, false, err
 	}
@@ -127,3 +127,24 @@ const changeDecisionPageSQL = `SELECT id,payload->'data'->>'batch_id',payload->'
  AND COALESCE(payload->'data'->'approval'->'basis'->>'change_id',payload->'data'->'remedy'->>'change_id')=$2
  AND ($3='0' OR payload->'data'->'approval'->'basis'->>'revision'=$3 OR payload->'data'->'remedy'->>'revision'=$3)
  ORDER BY id LIMIT $5`
+
+// Keep the guarded expression identical to events_reporting_pr_alias in
+// migration 007. Old or manually edited journals may contain nonnumeric PR
+// strings or values outside bigint's range; ignore those aliases safely.
+const legacyPRAliasNumbersSQL = `SELECT DISTINCT (CASE
+    WHEN payload->'data'->>'pr' ~ '^[+-]?[0-9]{1,19}$' THEN
+        CASE
+            WHEN (payload->'data'->>'pr')::numeric BETWEEN -9223372036854775808 AND 9223372036854775807
+            THEN (payload->'data'->>'pr')::bigint
+        END
+    END)
+ FROM events
+ WHERE queue_id=$1 AND type IN ('pr_observed','change_revision_observed')
+   AND (CASE
+        WHEN payload->'data'->>'pr' ~ '^[+-]?[0-9]{1,19}$' THEN
+            CASE
+                WHEN (payload->'data'->>'pr')::numeric BETWEEN -9223372036854775808 AND 9223372036854775807
+                THEN (payload->'data'->>'pr')::bigint
+            END
+   END) IS NOT NULL
+ ORDER BY 1 LIMIT 100001`

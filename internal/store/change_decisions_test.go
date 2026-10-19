@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/CanadaApollo6/openmerge/internal/queue"
+	"github.com/jackc/pgx/v5"
 )
 
 func TestChangeDecisionsIndexedReadbackAndSettlement(t *testing.T) {
@@ -62,6 +63,10 @@ func TestReportingIndexesExcludeUnrelatedHistory(t *testing.T) {
 	s := newStore(t)
 	q, claim, c, d := decisionLand(t, s)
 	must(t, commitDecision(t, s, claim, c, d))
+	for _, pr := range []string{"not-a-number", "9223372036854775808", "-9223372036854775809"} {
+		_, err := s.pool.Exec(t.Context(), `INSERT INTO events(queue_id,type,payload) VALUES ($1,'pr_observed',jsonb_build_object('type','pr_observed','version',1,'data',jsonb_build_object('pr',$2::text)))`, q, pr)
+		must(t, err)
+	}
 	_, err := s.pool.Exec(t.Context(), `INSERT INTO events(queue_id,type,payload) SELECT $1,'future_event','{"version":999,"type":"future_event"}'::jsonb FROM generate_series(1,2000)`, q)
 	must(t, err)
 	_, err = s.pool.Exec(t.Context(), `ANALYZE events`)
@@ -71,7 +76,7 @@ func TestReportingIndexesExcludeUnrelatedHistory(t *testing.T) {
 		args       []any
 	}{
 		{"events_reporting_change_decision", changeDecisionPageSQL, []any{q, string(c.Fresh.Basis.ChangeID), "0", int64(0), 21}},
-		{"events_reporting_pr_alias", `SELECT DISTINCT (payload->'data'->>'pr')::bigint FROM events WHERE queue_id=$1 AND type IN ('pr_observed','change_revision_observed') ORDER BY 1 LIMIT 100001`, []any{q}},
+		{"events_reporting_pr_alias", legacyPRAliasNumbersSQL, []any{q}},
 		{"events_reporting_settlement", `SELECT id FROM events WHERE queue_id=$1 AND type IN ('landed','landing_abandoned','landing_started') AND payload->'data'->>'batch_id'=$2 ORDER BY id LIMIT 1`, []any{q, c.Start.BatchID}},
 	}
 	for _, query := range queries {
@@ -80,6 +85,52 @@ func TestReportingIndexesExcludeUnrelatedHistory(t *testing.T) {
 		if !strings.Contains(string(raw), query.index) || strings.Contains(string(raw), `"Node Type": "Seq Scan"`) {
 			t.Fatalf("reporting read walks unrelated history: %s", raw)
 		}
+	}
+}
+
+func TestChangeDecisionsIgnoresMalformedLegacyPRAliases(t *testing.T) {
+	s := newStore(t)
+	q := ensureQueue(t, s, "")
+	for _, pr := range []string{"not-a-number", "9223372036854775808", "-9223372036854775809"} {
+		_, err := s.pool.Exec(t.Context(), `INSERT INTO events(queue_id,type,payload) VALUES ($1,'pr_observed',jsonb_build_object('type','pr_observed','version',1,'data',jsonb_build_object('pr',$2::text)))`, q, pr)
+		must(t, err)
+	}
+	key := QueueKey{Installation: "installation/1", Repository: "owner/repo", BaseBranch: "main"}
+	id, err := key.ChangeID(17)
+	must(t, err)
+	records, next, found, err := s.ChangeDecisions(t.Context(), key, id, 0, 0, 20)
+	must(t, err)
+	if found || len(records) != 0 || next != 0 {
+		t.Fatalf("malformed historical PR aliases resolved: found=%t records=%+v next=%d", found, records, next)
+	}
+}
+
+func TestReportingPRAliasIndexBuildIgnoresMalformedHistoricalValues(t *testing.T) {
+	s := newStore(t)
+	q := ensureQueue(t, s, "")
+	_, err := s.pool.Exec(t.Context(), `DROP INDEX events_reporting_pr_alias;
+DROP INDEX events_reporting_change_decision;
+DROP INDEX events_reporting_settlement`)
+	must(t, err)
+	for _, pr := range []string{"41", "not-a-number", "9223372036854775808", "-9223372036854775809", "18446744073709551616"} {
+		_, err := s.pool.Exec(t.Context(), `INSERT INTO events(queue_id,type,payload) VALUES ($1,'pr_observed',jsonb_build_object('type','pr_observed','version',1,'data',jsonb_build_object('pr',$2::text)))`, q, pr)
+		must(t, err)
+	}
+	ddl, err := migrations.ReadFile("migrations/007_reporting_indexes.sql")
+	must(t, err)
+	tx, err := s.pool.Begin(t.Context())
+	must(t, err)
+	defer func() { _ = tx.Rollback(t.Context()) }()
+	_, err = tx.Exec(t.Context(), string(ddl))
+	must(t, err)
+	must(t, tx.Commit(t.Context()))
+
+	rows, err := s.pool.Query(t.Context(), legacyPRAliasNumbersSQL, q)
+	must(t, err)
+	aliases, err := pgx.CollectRows(rows, pgx.RowTo[int64])
+	must(t, err)
+	if len(aliases) != 1 || aliases[0] != 41 {
+		t.Fatalf("valid aliases after malformed history = %v, want [41]", aliases)
 	}
 }
 
