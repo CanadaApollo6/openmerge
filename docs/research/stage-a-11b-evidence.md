@@ -103,10 +103,10 @@ Fetch: `git fetch origin refs/heads/main:refs/remotes/origin/main` exited 0 and
 confirmed the requested base. Both worktrees were created under `/home/riels`,
 not `/tmp`; no `initdb` or database cluster initialization was performed.
 
-## Attempts and results
+## Initial submission attempts and results
 
 All durations below are wall time **after** the host-idle wait. Logs are in
-`/home/riels/.cache/openmerge-11b/`; hashes are SHA-256. Production code is unchanged from
+`/home/riels/.cache/openmerge-11b/`; hashes are SHA-256. At the initial submission, production code was unchanged from
 `f12cba23a92667b3584a0b85911e000fb52171a6`. The subsequent `fb771ed` commit adds
 only separate activation vectors and their test paths; `git diff --exit-code
 f12cba2..fb771ed -- . ':!**/*_test.go' ':!**/testdata/**'` exited 0. The final
@@ -333,7 +333,7 @@ The final `bash finish-verification.sh` exited **0**. The outer first `bash gate
 strict deployed replay with the known exception. Each child status is retained
 individually above; a later successful command is never used to mask a failure.
 
-## Required gate disposition
+## Initial submission gate disposition
 
 | Gate | Actual exit | Result |
 |---|---:|---|
@@ -456,3 +456,122 @@ incorrectly expected immediate growth from 1 to 4. Existing adaptive behavior
 retains window 1 while increasing its ceiling; that assertion was corrected.
 The supplied Astra reproduction had already shown the approval transition failure
 before this fix (`depth-increase.log`, exit 1).
+
+### Round 1 gate results
+
+Implementation verified: `e7dfbb0b102b475781b2cf675de9962571ed02cc`. Baseline: `origin/main` /
+`6e2b50b9da5c098ebfd76e0b1b20a5990c2663bb`. The final evidence commit changes
+only this document.
+
+| Attempt | Actual exit | Wall seconds after host-idle wait | Log SHA-256 |
+|---|---:|---:|---|
+| `r1-focused` | 1 | 4.121 | `e3fd814da547b45917de9a4dff3cdb910a13160604a72f003cda7f843ceb0124` |
+| `r1-focused-retry` | 0 | 4.302 | `a79f5a98391493ee925394218cdc148c5de560096b34112015bd3f8cb884f913` |
+| `r1-old-decoder` | 0 | 1.049 | `8c351685cf9ec7b25ef2747c1eef8ec86837be540666ea77b00e53be733da804` |
+| `r1-check` | 0 | 407.263 | `c41a381043576047fc47a3d79ce168355a9dc4b27655a0cd61f2e32cde2e5adf` |
+| `r1-sim-exits` | 0 | 38.725 | `379d93d9d2a3e2ce39fa5ef44ed41405ceb587a929e034f88c41040f0365ad7a` |
+| `r1-compatibility` | 0 | 11.27 | `8609790ee807f78ae7fadd31e6503a6a932f9f874af818197be4849fe5a93749` |
+| `r1-legacy-sql` | 0 | 4.189 | `fe2faa0a68410d87ceef36bb932bf7203279378467e8af399b607abf15999e31` |
+| `r1-legacy-depths` | 0 | 142.158 | `3c25309b33c985c03a3aff2a5c961878e2dd1b080a03ec27dc5894981e7b3453` |
+| `r1-commit-ids` | 0 | 12.15 | `e035b0b425420b54ca99fcc3b5015a6efe27f7d6d9839cb69a4e187516bbc861` |
+| `r1-replay-main` | 0 | 63.222 | `3ce2d7660ae76064139152283647674796eecab6fc1748ec8bc413600ea9144b` |
+| `r1-replay-deployed` | 1 | 49.754 | `dde7f4c2ed9c7f0a817b36a0848ca946ac477d2a353c00f90a2d879653461d26` |
+| `r1-replay-shape` | 0 | 6.372 | `c86c474f8c3cecc6cd556ee0c0fb64b25cdc32280b48089554baacaed467deae` |
+
+Exact commands (all use the previously documented environment):
+
+`r1-focused` — actual exit **1**:
+
+```sh
+go test -short -count=1 ./internal/config ./internal/changepolicy ./internal/queue ./internal/serve -run 'TestSchemaKeysMatchLoader|TestPublicPolicySchema|TestPolicyDiagnostics|TestEmptyPolicy|TestStageAApprovalWindow|TestStageAHistoricalFolded|TestLegacySerialWindow|TestStageAIdentityPinBudget|TestStageAEmptyPolicy|TestApprovalConfigAppliedPinRoundTrip'
+```
+
+`r1-focused-retry` — actual exit **0**:
+
+```sh
+go test -short -count=1 ./internal/config ./internal/changepolicy ./internal/queue ./internal/serve -run 'TestSchema|TestPublished|TestPublicPolicySchema|TestPolicyDiagnostics|TestEmptyPolicy|TestStageAApprovalWindow|TestStageAHistoricalFolded|TestLegacySerialWindow|TestLegacyWindowUpgrade|TestStageAIdentityPinBudget|TestStageAEmptyPolicy|TestApprovalConfigAppliedPinRoundTrip|TestResolvedIdentityPinBudget'
+```
+
+`r1-old-decoder` — actual exit **0**:
+
+```sh
+python3 /home/riels/.cache/openmerge-11b/r1-old-decoder.py
+```
+
+`r1-check` — actual exit **0**:
+
+```sh
+make check
+```
+
+`r1-sim-exits` — actual exit **0**:
+
+```sh
+make test-sim-exits
+```
+
+`r1-compatibility` — actual exit **0**:
+
+```sh
+python3 scripts/check-phase2-compatibility.py /home/riels/openmerge-sa-11b-main
+```
+
+`r1-legacy-sql` — actual exit **0**:
+
+```sh
+python3 scripts/check-legacy-landing-sql.py /home/riels/openmerge-sa-11b-main
+```
+
+`r1-legacy-depths` — actual exit **0**:
+
+```sh
+python3 scripts/check-legacy-plan-action-depths-1-4.py /home/riels/openmerge-sa-11b-main
+```
+
+`r1-commit-ids` — actual exit **0**:
+
+```sh
+python3 scripts/check-legacy-commit-ids.py --baseline /home/riels/openmerge-sa-11b-main
+```
+
+`r1-replay-main` — actual exit **0**:
+
+```sh
+python3 scripts/check-live-journal-replay.py --baseline /home/riels/openmerge-sa-11b-main --candidate /home/riels/openmerge-sa-11b --events /home/riels/.local/share/openmerge/exports/events-20261018T051000Z.jsonl --queues /home/riels/.local/share/openmerge/exports/queues-20261018T051000Z.jsonl --strict-state --out /home/riels/.cache/openmerge-11b/r1-replay-main.json
+```
+
+`r1-replay-deployed` — actual exit **1**:
+
+```sh
+python3 scripts/check-live-journal-replay.py --baseline /home/riels/.cache/sa9b-r2-deployed --candidate /home/riels/openmerge-sa-11b --events /home/riels/.local/share/openmerge/exports/events-20261018T051000Z.jsonl --queues /home/riels/.local/share/openmerge/exports/queues-20261018T051000Z.jsonl --strict-state --out /home/riels/.cache/openmerge-11b/r1-replay-deployed.json
+```
+
+`r1-replay-shape` — actual exit **0**:
+
+```sh
+python3 /home/riels/.cache/openmerge-11b/inspect-replay-shape.py /home/riels/.cache/openmerge-11b/r1-replay-deployed.json
+```
+
+The external old-decoder probe ran `TestR1OldDecoderRejectsPolicyPin` against
+unchanged main: pinned serial records both with and without `window` were rejected
+for the unknown `policy` field. Its temporary test file was removed; the baseline
+worktree remains clean. The first focused failure and successful retry are both
+retained above. No foreign process was killed and no requested gate was skipped.
+
+Round 1 `make check`, simulator exits, main compatibility, legacy SQL with negative
+controls, depth 1/4 and four-method commit-ID differentials, and strict main replay
+all exited **0**. Strict deployed-`3f77a88` replay exited **1**, retaining the known
+absent-to-nil `classifications` difference only; its Gate 4 remains PASS. The exact
+shape assertion exited **0**, covering 2,159 real and seven synthetic checkpoints.
+No replay allowance or comparison harness changed.
+
+Final explicit-refspec main fetch, protected-file comparison (Makefile, CI and
+dogfood config), and `git diff --check` exited **0**. Main remained at the baseline
+above, so no rebase was needed. Trial class remains **Hold**.
+
+Round 1 control exits: commit-ID identical **0**, mutant **1**, dirty **2**
+(all expected); SQL trace Go tests **0** for both revisions and every mutant;
+depth-corpus Go tests **0** for both revisions in each corpus. Mandatory replay
+synthetic self-tests: main **0**, deployed **1** (the same known classifications
+boundary). The outer gate sequencer exited **0** after explicitly checking every
+child status, including the deployed replay **1**.
