@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -148,7 +149,15 @@ func TestStageAAcceptanceCLI(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				done := make(chan error, 1)
 				go func() { done <- s.Run(ctx) }()
-				defer func() { cancel(); must(<-done) }()
+				stopped := false
+				stop := func() {
+					if !stopped {
+						cancel()
+						must(<-done)
+						stopped = true
+					}
+				}
+				defer stop()
 				id, err := keys[0].ChangeID(1)
 				must(err)
 				// All journey observations go through the same read-only CLI users invoke.
@@ -158,21 +167,29 @@ func TestStageAAcceptanceCLI(t *testing.T) {
 					if code != 0 {
 						return false
 					} // startup/worker-busy responses are retried below
+					// Omitted JSON fields must not retain values from an earlier poll.
+					reflect.ValueOf(target).Elem().SetZero()
 					must(json.Unmarshal(out.Bytes(), target))
 					return true
 				}
 				wait := func(label string, predicate func() bool) {
 					t.Helper()
-					deadline := time.Now().Add(30 * time.Second)
-					for time.Now().Before(deadline) {
+					ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+					defer cancel()
+					tick := time.NewTicker(20 * time.Millisecond)
+					defer tick.Stop()
+					for {
 						if predicate() {
 							return
 						}
-						time.Sleep(20 * time.Millisecond)
+						select {
+						case <-tick.C:
+						case <-ctx.Done():
+							var show status.ChangeResponse
+							_ = read("show", &show)
+							t.Fatalf("timed out waiting for %s: entry=%+v digest=%s receipts=%+v obligations=%+v", label, show.PR, show.Brief.Digest, show.Brief.Receipts, show.Brief.Obligations)
+						}
 					}
-					var show status.ChangeResponse
-					_ = read("show", &show)
-					t.Fatalf("timed out waiting for %s: entry=%+v digest=%s receipts=%+v obligations=%+v", label, show.PR, show.Brief.Digest, show.Brief.Receipts, show.Brief.Obligations)
 				}
 				var show status.ChangeResponse
 				wait("agent revision", func() bool {
@@ -183,7 +200,11 @@ func TestStageAAcceptanceCLI(t *testing.T) {
 				}
 				var view brief.View
 				postedDigest := ""
-				wait("recorded brief", func() bool { return read("brief", &view) && len(view.Digest) == 64 })
+				// Approval cases remain blocked until this test supplies the missing
+				// evidence. The none case can already be settled on its first read.
+				if tc.name != "low-risk-none" {
+					wait("recorded brief", func() bool { return read("brief", &view) && len(view.Digest) == 64 })
+				}
 				if strings.Contains(tc.name, "non-policy") {
 					nonPolicy := false
 					for _, label := range view.Classification.Labels {
@@ -226,17 +247,6 @@ func TestStageAAcceptanceCLI(t *testing.T) {
 						postedDigest = digest
 						comment(reviewer, "@openmerge approve "+digest)
 						must(s.Notify(t.Context(), "7", r.Path, "receipt-101"))
-						wait("accepted receipt", func() bool {
-							if !read("brief", &view) {
-								return false
-							}
-							for _, receipt := range view.Receipts {
-								if receipt.Accepted && receipt.BriefDigest == digest && receipt.SourceID == "101" && receipt.Binding == "current" && view.Digest == postedDigest {
-									return true
-								}
-							}
-							return false
-						})
 					}
 					if tc.name == "owned-non-policy" {
 						wait("owner still required", func() bool {
@@ -267,15 +277,30 @@ func TestStageAAcceptanceCLI(t *testing.T) {
 				wait("confirmed landing", func() bool {
 					return read("show", &show) && show.PR.Landing != nil && show.PR.Landing.Outcome == "landed"
 				})
-				var decisions status.DecisionsResponse
-				wait("immutable decision", func() bool {
-					return read("decisions", &decisions) && len(decisions.Decisions) == 1 && decisions.Decisions[0].Outcome == "landed"
+				wait("legacy sibling landing", func() bool {
+					sha, e := f.ReadRef(t.Context(), r, "release")
+					return e == nil && f.ContainsPR(r, sha, 2)
 				})
+				// Quiesce workers before historical reads: deliberately observe every
+				// successful approval only after settlement, without policy-lock contention.
+				stop()
+				if !read("brief", &view) {
+					t.Fatal("settled brief unavailable")
+				}
+				if len(view.Digest) != 64 {
+					t.Fatalf("settled brief lost its reconstructible digest: %+v", view)
+				}
+				var decisions status.DecisionsResponse
+				if !read("decisions", &decisions) || len(decisions.Decisions) != 1 || decisions.Decisions[0].Outcome != "landed" {
+					t.Fatalf("settled decision unavailable: %+v", decisions)
+				}
 				d := decisions.Decisions[0]
 				retained, err := json.Marshal(d)
 				must(err)
 				var again status.DecisionsResponse
-				wait("repeated decision read", func() bool { return read("decisions", &again) && len(again.Decisions) == 1 })
+				if !read("decisions", &again) || len(again.Decisions) != 1 {
+					t.Fatalf("repeated settled decision unavailable: %+v", again)
+				}
 				repeated, err := json.Marshal(again.Decisions[0])
 				must(err)
 				if !bytes.Equal(retained, repeated) {
@@ -288,9 +313,21 @@ func TestStageAAcceptanceCLI(t *testing.T) {
 					t.Fatalf("incomplete decision: %+v", d)
 				}
 				if tc.name == "receipt-intent" {
+					var receipt *brief.ReceiptView
+					for i := range view.Receipts {
+						if view.Receipts[i].SourceID == "101" {
+							receipt = &view.Receipts[i]
+						}
+					}
+					if receipt == nil || !receipt.Accepted || receipt.BriefDigest != postedDigest || receipt.Revision != d.Revision || receipt.UserID != "github.com:user:21" || receipt.Binding != "current" || view.Digest != postedDigest {
+						t.Fatalf("accepted receipt not retained: %+v", receipt)
+					}
+					if d.BriefDigest != postedDigest {
+						t.Fatal("decision lost posted digest", d)
+					}
 					found := false
 					for _, source := range d.Sources {
-						if source.SourceID == "101" && source.BriefDigest == postedDigest && source.ReceiptID != "" {
+						if source.SourceID == "101" && source.BriefDigest == postedDigest && source.ReceiptID == receipt.SourceID && source.UserID == receipt.UserID {
 							found = true
 						}
 					}
@@ -334,10 +371,6 @@ func TestStageAAcceptanceCLI(t *testing.T) {
 					}
 				}
 				// Fixture audit only: the agent journey above never reads private queue state.
-				wait("legacy sibling landing", func() bool {
-					sha, e := f.ReadRef(t.Context(), r, "release")
-					return e == nil && f.ContainsPR(r, sha, 2)
-				})
 				journals, err := s.Journals(t.Context(), keys)
 				must(err)
 				for _, j := range journals {

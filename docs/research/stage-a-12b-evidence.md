@@ -285,3 +285,118 @@ No real sandbox acceptance is claimed. The sandbox artifact remains PENDING;
 conflict grace is excluded, depth-1 cancellation is not claimed, and automatic
 old-worker detection remains unimplemented because leases lack capability IDs.
 Outside pushes #53 are included. Trial class remains **Hold**.
+
+## CI ordering regression follow-up (2026-10-19)
+
+CI run 39224861756 failed at head 470cab5: receipt-intent had already
+landed with accepted receipt 101, but the test required a current brief
+digest/binding in its polling predicate. The dump omitted brief warnings.
+
+The acceptance test now observes accepted receipts and immutable decisions
+after both main and legacy fixture landings, with workers quiesced to remove
+policy-reader mutex contention. It compares the posted digest with the receipt
+and decision, and checks source/receipt ID, actor and revision binding. The
+low-risk-none case no longer waits for a pre-landing brief. Exact-head-human
+and uncovered-non-policy proceed directly to durable settlement after review;
+receipt and owned preconditions remain blocked by evidence the test withholds.
+All five scenarios share these assertions at both depths. Short mode remains
+five depth-1 cases. No Makefile/CI changes.
+
+There is no exposed fake clock or step entry point for this production
+serve.Run + HTTP + CLI fixture. Existing deterministic queue/simulator steps
+do not drive that server. Necessary asynchronous startup/blocked/landing waits
+remain bounded and context-aware, using a ticker instead of fixed sleeps;
+settled evidence reads are immediate assertions.
+
+### Settled reporting investigation
+
+This follow-up changes **no product code**. A landed change does not inherently
+lose its brief digest: `RecordedBrief` reconstructs historical facts from the
+journal, and a settled `change decisions` response retains the decision's
+brief digest and receipt source. `BriefPolicy` intentionally uses `TryLock`;
+when a worker holds the policy mutex, reporting emits `policy_busy` and the
+current brief digest/binding is `not recorded`. That is unavailable current
+reconstruction, not lost receipt/decision evidence. The original failure dump
+did not include warnings, so it cannot identify which policy-unavailability
+response occurred on that specific read.
+
+The initial focused race probe passed all five depth-1 scenarios (exit **0**,
+**62.405s**). After stopping workers, every landed brief had a 64-character
+digest, including the receipt brief's original posted digest
+`0229b683b80765e144d1baa4940b3fbba7e9a19ca4f6c036748c816ca9777e96`.
+The final assertions require historical digest reconstruction and the accepted
+receipt's `current` binding after quiescence, plus matching decision/receipt
+digest, receipt ID, reviewer ID and revision. Reused JSON destinations are
+zeroed before each read so omitted fields cannot survive from an earlier poll.
+
+The regression is the test's reliance on an unblocked live brief projection
+while workers continue running, rather than the recorded acceptance and
+settlement facts. Landing and policy-read contention change scheduling under
+CI load. Both depths now deliberately read successful approval evidence after
+settlement; blocked preconditions are only observed while the test still
+withholds required evidence. No production reporting fallback was added.
+
+### Follow-up gates: actual process exits
+
+#### ci-race-fix-probe: exit 0
+
+```sh
+GOMAXPROCS=2 go test -race -v -short -count=1 ./cmd/openmerge -run "^TestStageAAcceptanceCLI$"
+```
+
+Wall execution: **62.405s**. Log SHA-256: `15a4d8c1c0fbf05864b997088c625acda400b26db031d7ce45e9818746313b9e`.
+
+#### ci-race-fix-repeat: exit 0
+
+```sh
+GOMAXPROCS=2 go test -race -v -count=20 -timeout=60m ./cmd/openmerge -run "^TestStageAAcceptanceCLI$"
+```
+
+Wall execution: **2447.384s**. Log SHA-256: `8a3ec89dee828377783230ae29c8cc74accada463ad6725295fa832756c8fdb5`.
+
+The full repeated race gate passed **20/20 iterations**, **200/200 scenario executions**: each of the five scenarios passed **20/20 at depth 1** and **20/20 at depth 4**. There were **zero failures**. No `-short` flag was used for this stress gate; short coverage is also exercised by `make check`.
+
+#### ci-race-fix-check: exit 0
+
+```sh
+GOMAXPROCS=2 make check
+```
+
+Wall execution: **408.913s**. Log SHA-256: `7747cd7a93f056c9235613f6565ca445819dd0154dfedfce0fea6052fe26e617`.
+
+#### ci-race-fix-legacy-reporting: exit 0
+
+```sh
+GOMAXPROCS=2 python3 scripts/check-legacy-reporting.py /home/riels/openmerge-sa-12b-main
+```
+
+Wall execution: **0.584s**. Log SHA-256: `f7ea0120d2797f0849daf8651b225136ca8d252b6ffd39758c2b5a908222b28a`.
+
+`make check` reported **0 lint issues**; the CLI package (including short
+acceptance) passed in **62.300s**, queue in **282.939s**, and serve in
+**236.322s**. These are local observations with `GOMAXPROCS=2`, not predictions
+for CI's runner or a performance claim. No queue/serve tests were added.
+The reporting differential again matched all six legacy check texts and
+preexisting serialized status fields/order against main
+`d45e709afaf57b4df2ecebebe5ce9ec75c27dfac`; both child probes exited **0**.
+
+All follow-up validation processes exited **0**, with no failed or terminated
+validation attempts. The initial inspection's overbroad home-directory search
+reported a permission error; it completed with exit 0 and changed no files.
+Some subsequent exploratory `rg`/`sed` reads named nonexistent source paths
+and returned exit 2; these were inspections, not gates. No foreign process
+was stopped. All heavy jobs waited for the other reviewers' jobs to drain;
+one validation job ran at a time with the constrained environment above.
+
+Final follow-up integrity checks exited **0**:
+
+```sh
+git diff --check
+git diff --exit-code 470cab5 -- Makefile .github/workflows .openmerge.yml .openmerge.yaml openmerge.yml openmerge.yaml
+```
+
+The follow-up diff contains only `cmd/openmerge/stage_a_acceptance_test.go`
+and this evidence record. The PR's four preexisting product carry-overs are
+unchanged. No live OpenMerge database/API, systemd unit, production ref, real
+forge test/simulator call or sandbox action was used. Trial class remains
+**Hold** and organization-sandbox acceptance remains **PENDING**.
