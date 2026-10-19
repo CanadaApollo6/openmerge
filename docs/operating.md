@@ -77,9 +77,10 @@ New `openmerge setup github` manifests request organization **Members: read**
 (`members: read`) for resolving `org/team` owners and approver pools. To use
 organization teams in approval policy, an existing App must add that organization
 permission in App settings, and each affected organization installation must
-accept the requested addition in its installed App settings. Updating the App's permission declaration alone does not update
-an installation's grant. OpenMerge inspects the permissions on the actual
-installation token; renewed tokens (or restarting `serve`) observe acceptance.
+accept the requested addition in its installed App settings. Updating the App's
+permission declaration alone does not update an installation's grant. The explicit
+setup diagnostic inspects the actual installation-token permissions; renewed
+tokens (or restarting `serve`) observe acceptance.
 
 **During the ADR 0009 dogfood trial, leave the live App's permissions unchanged,
 including `members: read` and its current `actions: write` status.** Exercise
@@ -97,11 +98,17 @@ diagnostics (use sandbox credentials during the trial):
 openmerge setup permissions --app-id APP_ID --installation-id INSTALLATION_ID --private-key /path/to/private-key.pem
 ```
 
-Setup reports the actual missing grant as an optional warning. The complete
-Stage A pipeline calls `ValidateTeamPolicyPermissions` only when a
-queue's effective approval policy references team owners or groups. Unresolved
-named identities pause only affected queues. An unreadable effective owner
-requirement blocks its change rather than implying empty membership.
+The explicit `openmerge setup permissions` diagnostic calls
+`DiagnoseInstallationPermissions`, which calls `ValidateTeamPolicyPermissions`
+and reports a missing organization Members grant as an optional warning.
+The runtime Stage A pipeline does not call this grant diagnostic automatically.
+Instead, runtime policy resolution reads referenced team identities and membership
+through `ResolveTeam` and `TeamMembers`. Definite identity or membership
+unavailability creates a durable `ConfigSource` block for the affected queue;
+transient or incomplete reads retry without recording a durable configuration
+block. An unreadable effective owner requirement blocks its change rather than
+implying empty membership. Queues without team references do not acquire a
+Members-grant warning or block merely because that grant is absent.
 
 Identity-bound grants compare the permission response's stable user ID with the
 review or comment author ID. A renamed or reassigned login cannot lend another

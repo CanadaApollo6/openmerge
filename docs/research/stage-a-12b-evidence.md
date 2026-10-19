@@ -400,3 +400,97 @@ and this evidence record. The PR's four preexisting product carry-overs are
 unchanged. No live OpenMerge database/API, systemd unit, production ref, real
 forge test/simulator call or sandbox action was used. Trial class remains
 **Hold** and organization-sandbox acceptance remains **PENDING**.
+
+## Resumed CI-fix validation and permissions documentation (2026-10-19)
+
+This round validates committed acceptance fix
+`626e90ec42f0757c2cf2a7021ea46450c8c3585f` and corrects the round-1
+permission-documentation finding. `ValidateTeamPolicyPermissions` has one
+non-test caller, `DiagnoseInstallationPermissions`, reached through the explicit
+`openmerge setup permissions` command. Runtime team policy resolution calls
+`ResolveTeam` and `TeamMembers`; definite identity/membership unavailability
+creates a durable affected-queue `ConfigSource` block, while transient or
+incomplete reads retry without a durable configuration block. The operating
+guide now says so. The sandbox and acceptance reports did not repeat the false
+caller claim; both now explicitly distinguish the setup diagnostic from runtime
+reads. No automatic installation-grant check is promised.
+
+The transient-wait audit covers all five cases at both depths through their
+shared fixture. `low-risk-none` may settle on its first read and waits only for
+agent identity and durable landings. `exact-head-human` and
+`uncovered-non-policy` withhold exact-head review while observing their initial
+blocked brief, then wait for durable landings. `owned-non-policy` additionally
+withholds the owner review until the exact-head count review is recorded and
+the independent owner obligation remains unmet. `receipt-intent` withholds its
+receipt until native review ingestion is visible. All successful receipt,
+digest and decision assertions run after both fixture landings and worker stop.
+There are no fixed sleeps in `stage_a_acceptance_test.go`; the wait helper uses
+a context deadline and 20ms ticker. The 10ms server poll interval and 1s/2s
+fixture review timestamps are not sleeps.
+
+**Reporting answer: by design, not a reporting bug.** `BriefPolicy` deliberately
+uses nonblocking registry/worker locks. A busy local reconstruction yields a
+`policy_busy` warning and an unavailable current digest/binding (`not recorded`),
+including on a landed change. Landing does not erase historical evidence.
+`RecordedBrief` reconstructs that evidence once the pinned local policy can be
+read; immutable decisions retain their original digest and receipt sources.
+The original CI dump omitted warnings, so its particular unavailability cause
+cannot be established from that dump alone. No product reporting change was
+made; the stress test requires a reconstructed digest after worker quiescence
+in every case and matching posted receipt/decision digests in receipt-intent.
+
+Fresh raw validation logs for this resumed round are under
+`/home/riels/.cache/openmerge-80-resume/`. Heavy jobs run serially after host
+process checks, with `GOMAXPROCS=2 GOFLAGS=-p=2 GOMEMLIMIT=4GiB`, `GOTMPDIR`
+and `GOCACHE` under `~/.cache`, and the supplied isolated-schema test Postgres.
+
+### Fresh validation of 626e90e
+
+```sh
+GOMAXPROCS=2 go test -race -json -count=20 -timeout=60m ./cmd/openmerge -run '^TestStageAAcceptanceCLI$'
+```
+
+Actual process exit: **0**. Go package duration: **2450.227s**.
+`repeat.jsonl` SHA-256:
+`acd163b2ffd6cae7de296eb931acaf594bdcd7810ffb4a7fd45a8b70dee2cb4f`.
+The committed test source was unchanged throughout this run. No `-short` flag
+was used. There were **20/20 full iterations, 200/200 scenario passes, zero
+failures**:
+
+| Case | Depth 1 | Depth 4 |
+| --- | --- | --- |
+| low-risk-none | 20/20 | 20/20 |
+| exact-head-human | 20/20 | 20/20 |
+| receipt-intent | 20/20 | 20/20 |
+| owned-non-policy | 20/20 | 20/20 |
+| uncovered-non-policy | 20/20 | 20/20 |
+
+The small progress-summary helper initially failed to sort the final package's
+null test name alongside string subtest names (Python `TypeError`); filtering
+that package-only key fixed the helper. This was log summarization after the
+successful test exit, not a test failure. An early optional log inspection also
+returned exit 2 because `make check` had not yet created its log. Neither altered
+source or validation outcomes; all actual gate exit statuses are reported here.
+
+### Resumed final gates
+
+`make check` exited **0** in **388.138s**.
+Log SHA-256: `b674773262456f66c1093f920b56416eac8b274f5d4a3e29bb0b15de241331ca`.
+
+`python3 scripts/check-legacy-reporting.py /home/riels/openmerge-sa-12b-main` exited **0** in **0.59s**.
+Log SHA-256: `f7ea0120d2797f0849daf8651b225136ca8d252b6ffd39758c2b5a908222b28a`.
+
+`make check` reported **0 lint issues**. Package durations were
+`cmd/openmerge` **61.717s**, `internal/serve` **217.717s**, and
+`internal/queue` **283.217s**. These are local gate durations, not CI timings.
+The legacy differential against main `d45e709afaf57b4df2ecebebe5ce9ec75c27dfac`
+passed all six check texts and preexisting serialized status fields/order; both
+child probes exited **0**. The enclosing gate runner also exited **0**.
+
+Final whitespace and protected-path integrity checks exited **0**. This resumed
+round changes only the operating guide and three research docs. No test or
+product code, Makefile, workflow, or configuration was changed. No foreign
+process was stopped; no live database/status API, systemd unit, production ref,
+real forge call from code/tests, PR comment, or sandbox action was used.
+New-head CI will be tracked separately on PR #80. Trial class remains **Hold**;
+real organization-sandbox acceptance remains **PENDING**.

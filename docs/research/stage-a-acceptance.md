@@ -33,6 +33,13 @@ covered by its own tests and differential evidence, not a new Stage A guarantee.
 Automatic old-worker detection is **not implemented**: leases lack binary
 capability IDs. Operators must verify the all-host drain manually.
 
+Installation grants are checked explicitly with `openmerge setup permissions`;
+runtime policy resolution uses `ResolveTeam` and `TeamMembers`, without an
+automatic grant diagnostic. Definite identity/membership unavailability creates
+a durable `ConfigSource` block for the affected queue; transient or incomplete
+reads retry without that durable block. See the [operating guide](../operating.md#organization-membership-permission-stage-a-prerequisite)
+for the diagnostic and adoption procedure.
+
 Stage A's real organization-sandbox exit remains pending until a maintainer
 fills and reviews the sandbox artifact. Passing fake-forge and differential
 gates does not close that outstanding acceptance criterion.

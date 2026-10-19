@@ -40,6 +40,12 @@ export OPENMERGE_API_TOKEN_FILE='/secure/sandbox-status-token'
 openmerge setup permissions --app-id APP_ID --installation-id INSTALLATION_ID --private-key /secure/sandbox-app.pem
 ```
 
+The command above is the explicit installation-grant diagnostic; the runtime
+Stage A pipeline does not run it automatically. Runtime `ResolveTeam` and
+`TeamMembers` reads validate referenced identities and membership. Definite
+unavailability creates a durable `ConfigSource` block for the affected queue;
+transient or incomplete reads retry without a durable configuration block.
+
 Commit this configuration to the sandbox default branch, replacing team and CI
 names with verified values. Preserve policy-file ownership before activation.
 The rules are additive: `paths` retains the human count for uncovered files;
