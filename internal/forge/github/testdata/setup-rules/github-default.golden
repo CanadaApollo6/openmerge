@@ -1,0 +1,3 @@
+Repository acme/project; base main; App 42
+No ruleset changes needed.
+Rulesets allow base landing and queue pushes; fence ownership is exclusive to the App.

@@ -12,7 +12,7 @@ import (
 // responses deliberately omit policy details and use short pages.
 func (f *apiFixture) handleSetup(w http.ResponseWriter, r *http.Request, path string) bool {
 	conversion := strings.HasPrefix(path, "app-manifests/")
-	rules := f.setupRules != nil && (path == "repos/acme/project" || strings.HasPrefix(path, "repos/acme/project/rulesets"))
+	rules := f.setupRules != nil && (path == "repos/acme/project" || strings.HasPrefix(path, "repos/acme/project/rulesets") || r.Header.Get("Authorization") == "Bearer setup-admin-secret" && (strings.HasPrefix(path, "repos/acme/project/branches") || strings.HasPrefix(path, "orgs/")))
 	if !conversion && !rules {
 		return false
 	}
@@ -106,6 +106,12 @@ func (f *apiFixture) handleSetup(w http.ResponseWriter, r *http.Request, path st
 		return true
 	}
 	id, _ := strconv.ParseInt(strings.TrimPrefix(path, "repos/acme/project/rulesets/"), 10, 64)
+	if r.Method == "DELETE" && f.setupRules[id] != nil {
+		delete(f.setupRules, id)
+		f.setupWrites++
+		w.WriteHeader(http.StatusNoContent)
+		return true
+	}
 	if r.Method != "GET" || f.setupRules[id] == nil {
 		f.apiError(w, 404, "Not Found")
 	} else {

@@ -13,17 +13,27 @@ import (
 	"strings"
 )
 
-// RulesOptions uses the repository's default branch as the landing base. The
-// separate admin token never becomes an App credential or gets written to disk.
+// RulesOptions keeps default-branch legacy setup separate from candidate-only
+// authority plans. The admin token never becomes an App credential or gets
+// written to disk.
 type RulesOptions struct {
-	Repo  string
-	AppID int64
-	Apply bool
+	Repo              string
+	AppID             int64
+	Apply             bool
+	Authority         string
+	Config            string
+	BreakGlass        string
+	Backup            string
+	Restore           string
+	RotateBreakGlass  bool
+	RollbackPreflight bool
+	RuntimeDriver     *Driver
 }
 
 type ruleSnapshot struct {
 	DefaultBranch string
 	Rulesets      []Ruleset
+	Raw           map[int64]map[string]json.RawMessage
 }
 
 type ruleChange struct {
@@ -53,6 +63,9 @@ func setupRules(ctx context.Context, opts RulesOptions, token string, out io.Wri
 	client, err := setupClient(api, token)
 	if err != nil {
 		return err
+	}
+	if opts.Authority != "" && opts.Authority != "github" || opts.Config != "" || opts.Restore != "" || opts.RollbackPreflight || opts.Backup != "" || opts.BreakGlass != "" || opts.RotateBreakGlass {
+		return setupAuthorityRules(ctx, client, opts, out)
 	}
 	snapshot, err := client.rules(ctx, opts.Repo)
 	if err != nil {
@@ -161,7 +174,7 @@ func (c *setupAPI) rules(ctx context.Context, repo string) (ruleSnapshot, error)
 	if !info.Permissions.Admin || info.DefaultBranch == "" {
 		return ruleSnapshot{}, errors.New("GITHUB_TOKEN must have repository admin access to inspect complete ruleset bypass lists")
 	}
-	snapshot := ruleSnapshot{DefaultBranch: info.DefaultBranch}
+	snapshot := ruleSnapshot{DefaultBranch: info.DefaultBranch, Raw: map[int64]map[string]json.RawMessage{}}
 	seen := make(map[int64]bool)
 	for page := 1; ; page++ {
 		var list []Ruleset
@@ -174,10 +187,19 @@ func (c *setupAPI) rules(ctx context.Context, repo string) (ruleSnapshot, error)
 				return ruleSnapshot{}, errors.New("invalid or repeated ruleset in GitHub pagination")
 			}
 			seen[entry.ID] = true
-			var detail Ruleset
-			if err := c.request(ctx, http.MethodGet, fmt.Sprintf("repos/%s/rulesets/%d?includes_parents=true", repo, entry.ID), nil, &detail); err != nil {
+			var raw json.RawMessage
+			if err := c.request(ctx, http.MethodGet, fmt.Sprintf("repos/%s/rulesets/%d?includes_parents=true", repo, entry.ID), nil, &raw); err != nil {
 				return ruleSnapshot{}, err
 			}
+			var detail Ruleset
+			if err := json.Unmarshal(raw, &detail); err != nil {
+				return ruleSnapshot{}, err
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &fields); err != nil {
+				return ruleSnapshot{}, err
+			}
+			snapshot.Raw[entry.ID] = fields
 			if detail.ID != entry.ID || detail.BypassActors == nil {
 				return ruleSnapshot{}, errors.New("incomplete ruleset details; use an admin token that can see bypass actors, including inherited policies")
 			}
@@ -205,9 +227,14 @@ func planRules(snapshot ruleSnapshot, repo string, appID int64) ([]ruleChange, e
 	for i := range snapshot.Rulesets {
 		r := snapshot.Rulesets[i]
 		local := r.SourceType == "Repository" && strings.EqualFold(r.Source, repo)
-		if r.Name == "openmerge-fence" && local {
+		if r.Name == "openmerge-refs" {
+			if !local || !managedRefsShape(r, appID, snapshot.DefaultBranch) {
+				return nil, errors.New("openmerge-refs name collision or incompatible successor shape")
+			}
+		}
+		if (r.Name == "openmerge-fence" || r.Name == "openmerge-refs") && local {
 			if fence != nil {
-				return nil, errors.New("multiple repository rulesets named openmerge-fence; resolve the duplicate manually")
+				return nil, errors.New("ambiguous openmerge-fence/openmerge-refs managed rulesets; resolve the duplicate manually")
 			}
 			fence = &snapshot.Rulesets[i]
 			continue
@@ -246,7 +273,7 @@ func planRules(snapshot ruleSnapshot, repo string, appID int64) ([]ruleChange, e
 		return nil, errors.New("openmerge-fence has incompatible target/conditions; correct it manually before applying")
 	}
 	for _, pattern := range conditions.RefName.Include {
-		if !strings.HasPrefix(pattern, fencePrefix) {
+		if !strings.HasPrefix(pattern, fencePrefix) && fence.Name != "openmerge-refs" {
 			return nil, errors.New("openmerge-fence also targets branches outside the fence namespace; split that policy manually before applying")
 		}
 	}

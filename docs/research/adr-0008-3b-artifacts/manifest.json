@@ -1,0 +1,86 @@
+{
+  "implementation_revision": "4d4441956291e5e07d945e046e8dac9dfd4c65ac",
+  "focused_exit_status": 0,
+  "apply_fault_boundaries": 32,
+  "restore_fault_boundaries": 30,
+  "crash_helper_expected_exit_status": 73,
+  "legacy_main_goldens": {
+    "github-default.golden": "554afa6cafa4042100250d591e89d6ada88eb21cd78fdbed844dcc58f17cbbab",
+    "github-repair-preview.golden": "a2a8d23421a277ef4056839d014329c15ff662cb70800a96e15a0a125ccd0af6",
+    "github-repair-apply.golden": "2c1af34556ce8d3ab6c8ecc6171ca2ee9d5fb381b6ab1275bf21ff875b2fd0e0"
+  },
+  "real_git_scenarios": [
+    "scenario=base before_base=b95c40f9f48be9e03c766128d31d08469b55b741 before_fence=9026a8889fd3e752e6554bd94c4a28b2412d789c generated_test=d58f3e3d295bfdf7f9a725f5c2bd831a3783d14f generated_fence=669d4ed8b5ff29aac38d81b20265fcf26127c4cf rejection=git push: remote: managed write restriction rejected generated object        ",
+    "scenario=fence before_base=b95c40f9f48be9e03c766128d31d08469b55b741 before_fence=3766a70aa18195f06edaec238fb46eeb223bd441 generated_test=d58f3e3d295bfdf7f9a725f5c2bd831a3783d14f generated_fence=49681899fedcc905ebf76ca3ee9404a3a48fdc41 rejection=git push: remote: managed write restriction rejected generated object        ",
+    "scenario=stale lease before_base=b95c40f9f48be9e03c766128d31d08469b55b741 before_fence=e499818fdb616e00d540fce5c43f8c84d3d51f38 generated_test=d58f3e3d295bfdf7f9a725f5c2bd831a3783d14f generated_fence=42113da5a5d3c8573df5fe81cf4dda512c37a9dc rejection=git lease rejected"
+  ],
+  "offline_replay": {
+    "verdict": "PASS",
+    "baseline_commit": "77b703ec8176d6b1659e7372e14cdbd4258f7ecb",
+    "candidate_commit": "4d4441956291e5e07d945e046e8dac9dfd4c65ac",
+    "gate2": "PASS",
+    "gate4": "PASS",
+    "actions_identical": "2159/2159",
+    "state_identical": "2159/2159",
+    "structural_state_identical": "2159/2159",
+    "snapshot_hashes_identical": "2159/2159",
+    "boundary_checkpoints_identical": "2159/2159",
+    "boundary_probe_count": 8676,
+    "boundary_probe_max": 12,
+    "boundary_cap_hit": false,
+    "derived_determinism": "PASS",
+    "self_test": "PASS",
+    "self_test_exit_status": 0,
+    "config_sha256": "3efb43bbc05f5f0b03c005331f79064829fa018e9f6446224682e00dd357fead",
+    "synthetic_checkpoints": "7/7",
+    "stream_sha256": {
+      "baseline": "1fe079295539183b7008e70b940c7f71d45bd4aa4e443c8c1e581fa10d31051a",
+      "candidate": "1fe079295539183b7008e70b940c7f71d45bd4aa4e443c8c1e581fa10d31051a",
+      "candidate-repeat": "1fe079295539183b7008e70b940c7f71d45bd4aa4e443c8c1e581fa10d31051a"
+    }
+  },
+  "version": 1,
+  "recorded_at_utc": "2026-10-20T20:48:19.318863+00:00",
+  "make_check_exit_status": 0,
+  "baseline_capture_exit_status": 0,
+  "offline_replay_exit_status": 0,
+  "test_database": "localhost:54329",
+  "host_limits": {
+    "lock": "/home/riels/.cache/openmerge-heavy.lock",
+    "GOFLAGS": "-p=2",
+    "GOMEMLIMIT": "4GiB"
+  },
+  "governing_config_commit": "6fa7d082a9888f86fdec9f4f80473070c7fb4be6",
+  "governing_config_event": 1287,
+  "sandbox_acceptance": "planned; not executed",
+  "binary": {
+    "path": "bin/openmerge",
+    "sha256": "7874114517112e8af621afa161a983e37d398904400efc16913cbe2b88b54bde",
+    "version": "openmerge 4d44419\ncommit: 4d4441956291e5e07d945e046e8dac9dfd4c65ac\ngo: go1.27.2"
+  },
+  "artifacts": {
+    "/home/riels/.cache/openmerge-3b-final-check.log": "277ac6d932c62d92e65bc1420a422e313c7167398629583412bc176d9c9ad1b1",
+    "/home/riels/.cache/openmerge-3b-focused.log": "e2d0471655d53747a4b89ec3a4289c6b8fa8a947e43f48e8e97319d445b70a0c",
+    "/home/riels/.cache/openmerge-3b-baseline.log": "71b0bc1d5c0c670bb6ac1039d7d943062e31c355839aa7a09c36f834ed7f89e1",
+    "/home/riels/.cache/openmerge-3b-replay.log": "e2a77397d5a5a0fa07ac85290bfe3859f15fac993a37451f48303129147414f9",
+    "/home/riels/.cache/openmerge-3b-replay/report.json": "e2a77397d5a5a0fa07ac85290bfe3859f15fac993a37451f48303129147414f9",
+    "/home/riels/.cache/om-pr72-fix1-input/events.jsonl": "9c8f78f3e967c7cb030948cfc9871cc67a45da06f80b12f27d1c55d09ba8accf",
+    "/home/riels/.cache/om-pr72-fix1-input/queues.jsonl": "418f025a0e3c8792321b6d71d297f17fff1adf48cb616c8f4fcb774163696886"
+  },
+  "source_sha256": {
+    "cmd/openmerge/setup.go": "d1a11e675a3756a3061b93060154f4642bbd7cc3048258386d079a4d3d6a2520",
+    "internal/authority/coverage.go": "b61cecd75011f85223a7d5727d6a96f11c9f6371d8ecbb76656da411df6ff9cc",
+    "internal/forge/github/setup_api_test.go": "c644191906793464647da253c71a182b2329a5e08d0a591b9a38bcabf6ed9784",
+    "internal/forge/github/setup_authority.go": "b45a76f04c7ea980d3a81676b012c11d68b0c533bdd15184cf1e91fd5a680900",
+    "internal/forge/github/setup_authority_test.go": "7bb6431b494e6996f54920a25567c417113de3586407a11507c115f0170e69fb",
+    "internal/forge/github/setup_permissions.go": "a637a6056acca9d5842df4e8c2d7d728759452b90ede2200573c8845fba129b7",
+    "internal/forge/github/setup_recovery.go": "452e34effe4675f5336a934d6e195baa1c2039b220f7e7eacc8ec52d9d64d605",
+    "internal/forge/github/setup_rollback.go": "debe647b5e153c12689645f93a1c513550351f5cbc82316f36270c2ecc5d17cd",
+    "internal/forge/github/setup_rollback_test.go": "58478515bfc888a035f1c864e3b8b33a7383cc172cb3a70353e84f094b128e00",
+    "internal/forge/github/setup_rules.go": "ef6136b5668181121ecd6be5b69dcc4cde5870b45534fb49b688123a009bf417",
+    "internal/forge/github/testdata/setup-rules/github-default.golden": "554afa6cafa4042100250d591e89d6ada88eb21cd78fdbed844dcc58f17cbbab",
+    "internal/forge/github/testdata/setup-rules/github-repair-apply.golden": "2c1af34556ce8d3ab6c8ecc6171ca2ee9d5fb381b6ab1275bf21ff875b2fd0e0",
+    "internal/forge/github/testdata/setup-rules/github-repair-preview.golden": "a2a8d23421a277ef4056839d014329c15ff662cb70800a96e15a0a125ccd0af6",
+    "internal/gitops/setup_restrictions_test.go": "5171a5c61afbb125e2d945d78f57e0ad5ca41bbfc32882fc7a11097b70866483"
+  }
+}

@@ -59,6 +59,22 @@ func selectorPattern(pattern string) (string, error) {
 	return strings.Join(parts, "/"), nil
 }
 
+// CompileProtectedRefCoverage uses the same selector compiler for the managed
+// namespaces. Keep paired segment/recursive patterns even where they overlap.
+func CompileProtectedRefCoverage() RefCoverage {
+	result := RefCoverage{Includes: []string{}, Excludes: []string{}}
+	for _, family := range []string{"fence", "queue", "green", "verify"} {
+		for _, suffix := range []string{"*", "**"} {
+			pattern, err := selectorPattern("openmerge/" + family + "/" + suffix)
+			if err != nil {
+				panic(err)
+			}
+			result.Includes = append(result.Includes, "refs/heads/"+pattern)
+		}
+	}
+	return result
+}
+
 // MatchRefPattern implements only the fnmatch subset used by the compiler and
 // understood by the local validator. Unsupported external patterns fail closed.
 // **/ spans zero or more directories; a terminal ** is segment-local.
@@ -130,6 +146,82 @@ func (c RefCoverage) ContainsRef(ref, defaultRef string) (bool, error) {
 		}
 	}
 	return included, nil
+}
+
+// MayContainRefUnder conservatively intersects include-minus-exclude coverage
+// with every nonempty descendant of a literal ref prefix. It uses the same
+// segment matcher as ContainsRef. Unknown grammar returns an error, never a
+// disjointness proof. Exclusions prove absence only when they cover the entire
+// prefix, or exactly cancel an include; partial exclusions retain the overlap.
+func (c RefCoverage) MayContainRefUnder(prefix, defaultRef string) (bool, error) {
+	for _, patterns := range [][]string{c.Includes, c.Excludes} {
+		for _, pattern := range patterns {
+			if _, err := MatchRefPattern(pattern, "", defaultRef); err != nil {
+				return false, err
+			}
+		}
+	}
+	for _, exclude := range c.Excludes {
+		if exclude == "~ALL" {
+			return false, nil
+		}
+		parts, states := refPrefixStates(exclude, prefix, defaultRef)
+		for state := range states {
+			if strings.Join(parts[state:], "/") == "**/*" {
+				return false, nil
+			}
+		}
+	}
+	for _, include := range c.Includes {
+		if slices.Contains(c.Excludes, include) {
+			continue
+		}
+		parts, states := refPrefixStates(include, prefix, defaultRef)
+		for state := range states {
+			if state < len(parts) {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+// States are offsets in a pathname glob after consuming the fixed prefix.
+// Nonterminal ** has an epsilon transition to the next segment and a loop
+// consuming any segment. A terminal ** behaves like *, as in MatchPathPattern.
+func refPrefixStates(pattern, prefix, defaultRef string) ([]string, map[int]bool) {
+	switch pattern {
+	case "~ALL":
+		pattern = "**/*"
+	case "~DEFAULT_BRANCH":
+		pattern = defaultRef
+	}
+	parts := strings.Split(pattern, "/")
+	closure := func(states map[int]bool) {
+		for i, part := range parts {
+			if states[i] && part == "**" && i < len(parts)-1 {
+				states[i+1] = true
+			}
+		}
+	}
+	states := map[int]bool{0: true}
+	closure(states)
+	for _, segment := range strings.Split(strings.TrimSuffix(prefix, "/"), "/") {
+		next := map[int]bool{}
+		for state := range states {
+			if state == len(parts) {
+				continue
+			}
+			if parts[state] == "**" && state < len(parts)-1 {
+				next[state] = true
+			} else if matches, _ := MatchPathPattern(parts[state], segment); matches {
+				next[state+1] = true
+			}
+		}
+		closure(next)
+		states = next
+	}
+	return parts, states
 }
 
 // ValidateCoverageTransition proves containment constructively for setup's

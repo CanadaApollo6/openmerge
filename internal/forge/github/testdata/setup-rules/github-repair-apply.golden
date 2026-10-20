@@ -1,0 +1,7 @@
+Repository acme/project; base main; App 42
+! [base_bypass_missing] ruleset "main-protection" (10): add Integration App 42 with bypass_mode=always so the atomic base push can land
+! [fence_unprotected] protect all openmerge/fence/* branches with active creation, update, deletion and non_fast_forward rules; only this App may bypass (always)
++ ruleset "main-protection" (10): Integration App 42 bypass_mode=always (retain other actors, conditions and rules)
++ ruleset openmerge-fence: active, refs/heads/openmerge/fence/*, refs/heads/openmerge/fence/**/*; restrict creation/update/deletion/non_fast_forward; only Integration App 42 bypass_mode=always
+Applied changes; re-read repository rules.
+Rulesets allow base landing and queue pushes; fence ownership is exclusive to the App.
