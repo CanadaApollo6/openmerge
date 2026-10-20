@@ -452,6 +452,33 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 			return err
 		}
 	}
+	// Authors need the command before admission. Ordinary GitHub queues never
+	// have a mode pin; a rollback pin refreshes these checks without instructions.
+	if state.AuthorityPin() != nil {
+		if _, err := s.ledgerSummary(ctx, w, 0); err != nil {
+			return err
+		}
+		for n, pr := range w.prs {
+			if pr.Closed {
+				continue
+			}
+			entry := w.ledgerCache.projection.LedgerEntry(n)
+			// Never overwrite an admitted or terminal outcome with a queue invitation.
+			if entry == nil || entry.Position > 0 || entry.HeadSHA != pr.HeadSHA || entry.Status != "not-queued" && entry.Status != "blocked" {
+				continue
+			}
+			status := forge.Status{State: forge.Queued, Summary: "Not queued; waiting for a queue request"}
+			if entry.Status == "blocked" {
+				status = forge.Status{State: forge.Blocked, Reason: entry.Reason, Summary: "Not queued; PR does not satisfy queue entry conditions"}
+				if entry.Reason == string(queue.Untrusted) {
+					status.Summary = "Not queued; PR head has not passed the trust gate"
+				}
+			}
+			if err := s.status(ctx, w, n, pr.HeadSHA, status); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
