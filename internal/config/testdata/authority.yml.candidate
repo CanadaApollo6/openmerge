@@ -1,0 +1,10 @@
+version: 1
+policy_authority: openmerge
+break_glass:
+  team: Smart-Data-Ohio/break-glass
+queues:
+  - name: main
+    merge_when: [check-success = ci]
+  - name: release
+    base: release/**
+    merge_when: [check-success = ci]

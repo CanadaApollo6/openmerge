@@ -397,6 +397,21 @@ func decodeBatchPRs(prs []wireBatchPR) []BatchPR {
 // EncodeEvent returns the stable type discriminator and versioned JSON.
 func EncodeEvent(value Event) (string, []byte, error) {
 	switch v := value.(type) {
+	case PolicyAuthorityApplied:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("policy_authority_applied", v)
+	case WriteRestrictionObserved:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("write_restriction_observed", v)
+	case WriteRestrictionVerified:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("write_restriction_verified", v)
 	case ChangeRevisionObserved:
 		if err := v.Validate(); err != nil {
 			return "", nil, err
@@ -682,6 +697,12 @@ func DecodeEvent(payload []byte) (Event, error) {
 		return nil, err
 	}
 	switch envelope.Type {
+	case "policy_authority_applied":
+		return decodeAuthorityEvent[PolicyAuthorityApplied](envelope.Data)
+	case "write_restriction_observed":
+		return decodeAuthorityEvent[WriteRestrictionObserved](envelope.Data)
+	case "write_restriction_verified":
+		return decodeAuthorityEvent[WriteRestrictionVerified](envelope.Data)
 	case "change_revision_observed":
 		v, err := readWireData[ChangeRevisionObserved](envelope.Data)
 		if err != nil {

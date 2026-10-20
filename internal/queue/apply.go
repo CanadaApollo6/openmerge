@@ -18,6 +18,9 @@ func Apply(s State, e Event) State {
 }
 
 func apply(s State, e Event) State {
+	if next, ok := s.observeAuthority(e); ok {
+		return next
+	}
 	s.pruneWaitingGroups()
 	switch e := e.(type) {
 	case LandingDecisionRecorded:
