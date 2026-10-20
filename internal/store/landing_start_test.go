@@ -625,3 +625,14 @@ func TestLandingLeaseExpiresWhileWaitingForQueueLock(t *testing.T) {
 	}
 	assertNoLandingSideEffects(t, s, q, claim, before)
 }
+
+func TestAtomicLandingRequiresCurrentPolicyBeforeEligibility(t *testing.T) {
+	s := newStore(t)
+	q, claim, c, d := decisionLand(t, s)
+	before := eventCount(t, s, q)
+	c.Policy.Digest = strings.Repeat("e", 64)
+	if err := commitDecision(t, s, claim, c, d); err == nil {
+		t.Fatal("old classification accepted under changed approvals")
+	}
+	assertNoLandingSideEffects(t, s, q, claim, before)
+}

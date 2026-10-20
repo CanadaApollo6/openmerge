@@ -155,7 +155,7 @@ func TestBriefEligibilityBaseRewriteWindow(t *testing.T) {
 	newBase := strings.Repeat("e", 40)
 	appendEligibilityEvents(&j, queue.BaseMoved{SHA: newBase})
 	window := projectedEligibility(t, j, p)
-	if window.Classification.Base != before.Classification.Base || window.Classification.Generation != before.Classification.Generation || window.Digest != before.Digest {
+	if !window.Obligations[0].Met || window.Classification.Base != before.Classification.Base || window.Classification.Generation != before.Classification.Generation || window.Digest != before.Digest {
 		t.Fatalf("base move relabeled old approval evidence: %+v", window)
 	}
 	classified := j.Events[2].Event.(queue.ChangeClassified)

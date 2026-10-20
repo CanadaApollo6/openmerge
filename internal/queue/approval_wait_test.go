@@ -556,3 +556,17 @@ func TestApprovalWaitIntentAndAccountabilityUseCommitOrder(t *testing.T) {
 		})
 	}
 }
+
+func TestApprovalConfigChangeClearsWaitAndDiscardsBatch(t *testing.T) {
+	s, cfg, bases := waitQueue(t, 1, 1, 1)
+	now := bases[0].At.Add(time.Hour)
+	s = waitBuild(t, s, cfg, now)
+	s = rejectWait(t, s, s.Active, bases[0])
+	if len(s.ApprovalWaits()) != 1 || s.Active == nil {
+		t.Fatal("fixture missing wait or batch")
+	}
+	s = Apply(s, ConfigApplied{Commit: "new-config", Digest: strings.Repeat("e", 64)})
+	if len(s.ApprovalWaits()) != 0 || s.Active != nil {
+		t.Fatal("config change retained old-policy wait or non-landing batch")
+	}
+}

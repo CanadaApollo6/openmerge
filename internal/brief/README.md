@@ -104,8 +104,9 @@ Every evaluator requirement carries a typed expansion `Cause` and optional
 `RuleIndex`; renderers must not parse `Origin`. Its typed `UnresolvedCause`
 maps directly to brief codes: `unknown_inventory`, `unknown_owners`,
 `unknown_eligibility`, or `excluded_owner`. Progress also reports
-`eligibility_pending`, `eligibility_stale`, and `receipt_required`. A fulfilled obligation remains
-`met`, even when a separate conservatively expanded rule is inventory-affected.
+`eligibility_pending`, `eligibility_stale`, and `receipt_required`. A fulfilled
+obligation remains `met`, even when a separate conservatively expanded rule is
+inventory-affected.
 
 ## Acceptance and landing
 

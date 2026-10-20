@@ -54,6 +54,12 @@ type briefPolicyPin struct {
 }
 
 func briefPolicyProjection(ctx context.Context, source Source, j store.Journal, projection *Queue) func(queue.State, queue.ApprovalBasis) (brief.Fact, string) {
+	current := queue.ConfigApplied{Commit: j.Seed.ConfigCommit, Digest: j.Seed.ConfigDigest}
+	for _, row := range j.Events {
+		if applied, ok := row.Event.(queue.ConfigApplied); ok && applied.Commit == projection.state.ConfigCommit && applied.Digest == projection.state.ConfigDigest {
+			current = applied
+		}
+	}
 	return func(s queue.State, b queue.ApprovalBasis) (brief.Fact, string) {
 		unavailable := func() (brief.Fact, string) { return brief.Fact{}, "policy_unavailable" }
 		provider, ok := source.(briefPolicySource)
@@ -96,7 +102,15 @@ func briefPolicyProjection(ctx context.Context, source Source, j store.Journal, 
 			return unavailable()
 		}
 		if policy.Approvals != nil {
-			f = recordedBriefProgress(f, policy, s, facts, projection.eligibilityPins[b.ChangeID])
+			eligibility := projection.eligibilityPins[b.ChangeID]
+			if !eligibility.stale && facts.Eligibility != nil && current.Digest != pin.Digest {
+				// A new eligibility event cannot bless an old classification under a
+				// changed approvals component. Reconstruct current policy using only
+				// local recorded inputs; unavailable evidence fails closed for display.
+				live, err := provider.BriefPolicy(ctx, j.Key, BriefPolicyRequest{Config: current, Evidence: stored.Evidence, Facts: facts})
+				eligibility.stale = eligibility.stale || err != nil || live.Digest != policy.Digest
+			}
+			f = recordedBriefProgress(f, policy, s, facts, eligibility)
 		}
 		return f, ""
 	}
