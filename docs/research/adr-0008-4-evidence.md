@@ -178,7 +178,7 @@ credentials or change this project's production refs.
    source event IDs/revisions, command exits and UTC times, then produce a SHA-256
    artifact manifest. Keep executed/failed/unavailable cases distinct.
 
-## Offline evidence
+## Original offline evidence
 
 Executed on 2026-10-20 UTC. Final production source/binary revision:
 `916d8a0fe1548fad9446b5deb0e71db60f904de4`; baseline:
@@ -276,7 +276,7 @@ schema, SQL migrations/indexes and all deployed wire fixtures are unchanged.
   `~/.cache/adr0008-4-retry-daily.log` (exit 0).
 
 [Artifact manifest and summary](adr-0008-4-artifacts.json) retain numeric outcomes,
-source revisions, raw-log locations and SHA-256 hashes. The local manifest hash
+source revisions, raw-log locations and SHA-256 hashes. The original local manifest hash
 is `52f1349e5fd5c7ddef70e853d2f25800d91cd01e2790ce9bb56e40240709e43f`.
 The implementation is below the ADR's split threshold, so this is one PR.
 
@@ -309,3 +309,44 @@ PR 112 is rebased onto `d4e15c8` (PR 111). Reconciled overlaps:
   explicit verification mode. CLI regressions exercise flag registration,
   a GET-only mocked install preview, verification dispatch/gating, authority
   requirements, incompatible flags, restore routing and preflight credentials.
+
+Rebase verification executed on 2026-10-20 at production source revision
+`4ec0c8e98ad9b9f5664e597db94558048dae22aa`. The final evidence-only commit
+changes no Go source.
+Every Go invocation used the required host lock and `GOFLAGS=-p=2`, with 4GiB
+memory (6GiB for replay). Final tests/replay disabled module/toolchain downloads;
+PostgreSQL used disposable test schemas at `localhost:54329`.
+
+- `make check`: **exit 0**; formatting, zero lint issues, all short race tests
+  including PostgreSQL, real Git and simulator, plus binary build. Log:
+  `~/.cache/adr0008-4-rebase-check.log`.
+- Focused PR 4 race suites: **exit 0**, no skips, across `cmd/openmerge`,
+  `internal/authority`, `internal/forge`, `internal/forge/github`, `internal/queue`,
+  `internal/store` and `internal/serve`, with run filter
+  `Authority|WriteRestriction|Verification|Verify|Proposed|DailyApplied|StartedRealGit|RulesetsFlag|Emission|Classic`.
+  Log: `~/.cache/adr0008-4-rebase-focused.log`.
+- PR 3b goldens/fault boundaries: **exit 0**; exactly **32 apply / 30 restore**
+  HTTP boundaries passed, all **three** main setup goldens remain byte-identical,
+  and permission guidance/runtime HTTP traces passed unchanged. Log:
+  `~/.cache/adr0008-4-rebase-fault-golden.log`. The golden files themselves
+  also match `d4e15c8` byte-for-byte.
+- Strict offline replay: **exit 0**, **2,159/2,159** matching state, structural
+  state, actions, snapshot hashes and boundary checkpoints; gates 2/4 **PASS**.
+  All **8,676** probes agree, maximum **12**, cap **128** not hit. Repeat
+  determinism, all **22** self-tests and **7/7** synthetic checkpoints pass.
+  Original `046de34` baseline, comparator, frozen exports and config are unchanged.
+  Baseline/candidate/repeat stream SHA-256 remains
+  `1fe079295539183b7008e70b940c7f71d45bd4aa4e443c8c1e581fa10d31051a`.
+  Report: `~/.cache/adr0008-4-rebase-replay/report.json`.
+- Accepted real-Git concurrency fixture: governing commit `e10c9662f7918fddb21ab5a188fd6a0e93314c75`,
+  landed/remote SHA `1b6c917b1f694aa96d9d4c1f83e6288926713d79`, event **11**, source revision **1**,
+  team ID **200**; effective and coverage digests match the original evidence.
+  Generated local commit OIDs differ from the original run and are retained
+  with this run's log; no production ref was involved.
+
+The first focused attempt failed the new test fixture's credential expectation;
+correcting its mock installation token/API prefix made the complete focused run
+pass without changing production behavior. All final log, binary and replay
+stream hashes are recorded in `adr-0008-4-artifacts.json` under
+`rebase_onto_pr_111`; the original summary remains historical. Updated manifest
+SHA-256: `6d0a6464e9a74fcac96694374623f577bbaf3726a4ada31569928197e8aedcb7`.
