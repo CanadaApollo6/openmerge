@@ -372,3 +372,68 @@ Keep the capture, rejection responses, before/after API bodies, config and objec
 SHAs and hash manifest. Do not publish credentials or the private key. If old
 protection blocks an App push, preserve its rejection and defer acceptance;
 never silently add bypasses or remove content protections to make it pass.
+
+## Final executed results
+
+The executable source revision is
+`4d4441956291e5e07d945e046e8dac9dfd4c65ac`; the follow-up evidence commit changes
+only documentation/artifacts. Verification was executed on 2026-10-20 with the
+required host lock, `GOFLAGS=-p=2`, and `GOMEMLIMIT=4GiB`. Earlier development
+failures were corrected and superseded checks are not final acceptance evidence.
+
+- Final `make check`: **exit 0**, formatting, zero lint issues, all race tests,
+  PostgreSQL integration at `localhost:54329`, simulator, real Git and build.
+  Log: `/home/riels/.cache/openmerge-3b-final-check.log`.
+- Final focused suite: **exit 0**. Fault injection passed at all **32 apply** and
+  **30 restore** HTTP boundaries; lost-response retries, API actor rejection,
+  subprocess crash (expected exit **73**), exact restore, numeric/unknown fields,
+  collision/concurrency/inherited policy and single-update rotation passed.
+  Log: `/home/riels/.cache/openmerge-3b-focused.log`.
+- Three original `github` setup goldens (default, repair preview, repair apply)
+  were captured by running the unmodified setup on **77b703e**, then compared
+  byte-for-byte against this implementation. All pass. The baseline capture log
+  is `/home/riels/.cache/openmerge-3b-baseline.log`; captured files are under
+  `internal/forge/github/testdata/setup-rules/`. Runtime permission results and
+  request traces are unchanged with and without Administration read.
+- Strict offline replay: **exit 0**, gates 2/4 **PASS**. State, structural state,
+  actions, snapshot hashes and boundary checkpoints match **2,159/2,159**;
+  **8,676** boundary probes agree, maximum **12**, cap **128** not hit. Repeat
+  determinism, all **22** self-tests and **7/7** synthetic checkpoints pass.
+  Report: `/home/riels/.cache/openmerge-3b-replay/report.json`.
+- The baseline/candidate/repeat replay stream SHA-256 is identically
+  `1fe079295539183b7008e70b940c7f71d45bd4aa4e443c8c1e581fa10d31051a`.
+  Governing config commit `6fa7d082a9888f86fdec9f4f80473070c7fb4be6`, config SHA-256
+  `3efb43bbc05f5f0b03c005331f79064829fa018e9f6446224682e00dd357fead`, durable digest
+  `e58c893b8b3af7685dc07a086824b3bc1fc044456083d193f9566f8387cb58fc` at source
+  event **1287** remain unchanged; no replacement config event would be emitted.
+  The cached export contains 2,158 events through event 2158; its latest recorded
+  timestamp is `2026-10-18T01:08:55.427607-04:00`. No live journal was read.
+- Real-Git rejection/lease cases pass with the fixed fixture clock
+  `2026-10-15T12:00:00Z`. A per-ref `update` hook rejects either base or fence;
+  both remote refs stay unchanged under the atomic push. A non-atomic control
+  advances only the allowed base, proving the atomic assertion is meaningful.
+  Stale leases reject before the hook. Removing the hook lets the same generated
+  test/fence objects and original leases land together. The focused log and
+  manifest retain actual OIDs and rejection text; fence nonces are intentionally
+  random per fixture.
+- Runbook Bash syntax: **exit 0**, all five shell blocks, without executing them.
+  Real-GitHub enforcement remains **planned/unexecuted**, as requested.
+
+The checked-in [artifact manifest](adr-0008-3b-artifacts/manifest.json) records
+revision/timestamp, log and binary hashes, fixture hashes, replay metrics and
+actual generated-object evidence. No implementation-plan deviations; activation,
+applied admin verification and coordinated operational attestations remain with
+their owning later PRs. The sandbox run above is pending maintainer execution.
+
+Reproduce the offline comparison without contacting GitHub or a database:
+
+```sh
+flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB \
+  GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local \
+  python3 scripts/check-live-journal-replay.py \
+  --baseline /home/riels/.cache/openmerge-3b-baseline-77b703e \
+  --events /home/riels/.cache/om-pr72-fix1-input/events.jsonl \
+  --queues /home/riels/.cache/om-pr72-fix1-input/queues.jsonl \
+  --config-file .openmerge.yml --strict-state \
+  --out /home/riels/.cache/openmerge-3b-replay/report.json
+```
