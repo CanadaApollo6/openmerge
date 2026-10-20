@@ -127,16 +127,54 @@ def compare_contracts(base, candidate):
             "baseline_checkpoints": len(left), "candidate_checkpoints": len(right), "first_difference_index": first,
             "numeric_by_case_depth": groups, "first_difference": ({"baseline": left[first], "candidate": right[first]} if first is not None else None)}
 
+def compare_fixtures(baseline, candidate):
+    relative = Path("internal/queue/testdata/wire/v1")
+    paths = sorted(p.relative_to(baseline / relative) for p in (baseline / relative).rglob("*.json"))
+    h = hashlib.sha256()
+    for path in paths:
+        raw = (baseline / relative / path).read_bytes()
+        if raw != (candidate / relative / path).read_bytes(): raise VerifyError(f"legacy wire fixture changed: {path}")
+        h.update(str(relative / path).encode() + b"\0" + raw)
+    return {"identical": True, "legacy_fixtures": len(paths), "legacy_registry_fixtures": sum(len(p.parts) == 1 for p in paths),
+            "legacy_sha256": h.hexdigest(), "new_fixtures": sorted(str(p.relative_to(candidate / relative)) for p in (candidate / relative).rglob("*.json") if p.relative_to(candidate / relative) not in paths)}
+
+def simulator_blocks(output):
+    # Same whole-t.Log-block normalization as Stage A 2b; harness timing and
+    # interleaving are excluded, but every logged workload result is retained.
+    result, current = [], []
+    for line in output.splitlines():
+        if re.match(r'^\s+\w+\.go:\d+:', line):
+            if current: result.append('\n'.join(current))
+            current = [line]
+        elif line.startswith(('===', '---', '    ---', 'PASS', 'FAIL', 'ok ', 'go test', '? ')):
+            if current: result.append('\n'.join(current)); current = []
+        elif current and line.strip(): current.append(line)
+    if current: result.append('\n'.join(current))
+    return sorted(result)
+
+def compare_simulator(baseline, candidate, work):
+    base = invoke(["make", "test-sim-exits"], baseline, work, "baseline-simulator")
+    cand = invoke(["make", "test-sim-exits"], candidate, work, "candidate-simulator")
+    left, right = simulator_blocks(base.stdout), simulator_blocks(cand.stdout)
+    if not left or left != right: raise VerifyError("simulator result blocks differ or are empty")
+    raw = (json.dumps(right, indent=2) + "\n").encode()
+    (work / "sim-normalized.json").write_bytes(raw)
+    return {"baseline_exit": base.returncode, "candidate_exit": cand.returncode, "identical": True,
+            "blocks": len(right), "normalized_sha256": hashlib.sha256(raw).hexdigest()}
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--baseline", type=Path, default=BASELINE); ap.add_argument("--candidate", type=Path, default=ROOT)
+    ap.add_argument("--baseline-commit", default=BASELINE_COMMIT)
+    ap.add_argument("--simulator", action="store_true", help="also run the unchanged required simulator target in both trees")
     ap.add_argument("--events", type=Path, default=EVENTS); ap.add_argument("--queues", type=Path, default=QUEUES); ap.add_argument("--out", type=Path, default=CACHE / "report.json")
     args = ap.parse_args(); args.out.parent.mkdir(parents=True, exist_ok=True); run = CACHE / "runs"; run.mkdir(parents=True, exist_ok=True)
     evidence = {"script": str(Path(__file__).resolve()), "script_lines": sum(1 for _ in Path(__file__).open()), "commands": COMMANDS, "offline_only": True}
     try:
         evidence["exports"] = exports(args.events, args.queues)
-        evidence["baseline_commit"] = check_tree("baseline", args.baseline, BASELINE_COMMIT)
+        evidence["baseline_commit"] = check_tree("baseline", args.baseline, args.baseline_commit)
         evidence["candidate_commit"] = check_tree("candidate", args.candidate)
+        evidence["wire_fixtures"] = compare_fixtures(args.baseline, args.candidate)
         work = run / args.out.stem; work.mkdir(parents=True, exist_ok=True)
         cand_test = work / "candidate_test.go"; base_test = work / "baseline_test.go"
         cand_test.write_text(CANDIDATE_GO); base_test.write_text(BASELINE_GO)
@@ -146,19 +184,20 @@ def main():
         base_overlay = work / "baseline-overlay.json"; base_overlay.write_text(json.dumps({"Replace": {str(args.baseline / TARGET): str(base_test), str(args.baseline / "internal/queue/types.go"): str(work / "baseline-types.go")}}, indent=2) + "\n")
         old_overlay = work / "old-decoder-overlay.json"; old_overlay.write_text(json.dumps({"Replace": {str(args.baseline / TARGET): str(base_test)}}) + "\n")
         v6, v7 = work / "legacy-v6.json", work / "authority-v7.json"; cand_diff, base_diff = work / "candidate-differential.json", work / "baseline-differential.json"
-        invoke(["go", "test", "-overlay", str(cand_overlay), "./internal/queue", "-run", "^TestADR00081$|^TestADR00081Differential$", "-count=1", "-timeout=10m", "-v"], args.candidate, run, "candidate-boundary", env_extra={"ADR_V6": v6, "ADR_V7": v7, "ADR_DIFF": cand_diff})
-        invoke(["go", "test", "-overlay", str(old_overlay), "./internal/queue", "-run", "^TestADR00081$|^TestADR00081Differential$", "-count=1", "-timeout=10m", "-v"], args.baseline, run, "baseline-old-decoder", env_extra={"ADR_V6": v6, "ADR_V7": v7, "ADR_DIFF": base_diff})
+        invoke(["go", "test", "-overlay", str(cand_overlay), "./internal/queue", "-run", "^TestADR00081$|^TestADR00081Differential$", "-count=1", "-timeout=10m", "-v"], args.candidate, work, "candidate-boundary", env_extra={"ADR_V6": v6, "ADR_V7": v7, "ADR_DIFF": cand_diff})
+        invoke(["go", "test", "-overlay", str(old_overlay), "./internal/queue", "-run", "^TestADR00081$|^TestADR00081Differential$", "-count=1", "-timeout=10m", "-v"], args.baseline, work, "baseline-old-decoder", env_extra={"ADR_V6": v6, "ADR_V7": v7, "ADR_DIFF": base_diff})
         evidence["contract_differential"] = compare_contracts(base_diff, cand_diff)
         if not evidence["contract_differential"]["identical"]: raise VerifyError("approval/legacy depth differential diverged")
         evidence["boundary"] = {"legacy_v6_sha256": sha(v6), "authority_v7_sha256": sha(v7), "legacy_version": 6, "authority_version": 7, "authority_fixture": "internal/queue/testdata/wire/v1/variants/policy_authority_applied_activation.json", "baseline_old_decoder": "rejected v7; preserved v6 bytes and outside-push cursor fields", "outside_push_cursor_shape": "ScannedThrough, AuditedBaseMove, State, ObservedBase, LastLanding, Pending", "field": field, "field_declaration": decl}
         replay_out = work / "replay.json"
         replay_cmd = [sys.executable, str(REPLAY), "--baseline", str(args.baseline), "--candidate", str(args.candidate), "--baseline-overlay", str(base_overlay), "--events", str(args.events), "--queues", str(args.queues), "--config-file", ".openmerge.yml", "--strict-state", "--out", str(replay_out)]
-        replay = invoke(replay_cmd, ROOT, run, "differential-replay", mem="6GiB", check=False)
+        replay = invoke(replay_cmd, ROOT, work, "differential-replay", mem="6GiB", check=False)
         if not replay_out.exists(): raise VerifyError(f"replay exit {replay.returncode} produced no report; see {run / 'differential-replay'}")
         inner = json.loads(replay_out.read_text()); streams = inner.get("streams", {})
         evidence["replay"] = {"exit": replay.returncode, "verdict": inner.get("verdict"), "gate2": inner.get("gate2"), "gate4": inner.get("gate4"), "state_mode": inner.get("state_mode"), "actions_identical": inner.get("actions_identical"), "structural_state_identical": inner.get("structural_state_identical"), "snapshot_hashes_identical": inner.get("snapshot_hashes_identical"), "boundary_checkpoints_identical": inner.get("boundary_checkpoints_identical"), "non_allowlisted_fields": inner.get("non_allowlisted_fields"), "first_difference": inner.get("first_difference"), "streams": {k: {"path": v.get("path"), "authority_projection": projection_counts(Path(v["path"]), field)} for k, v in streams.items() if v.get("path")}}
         evidence["comparator_note"] = "Existing comparator source unchanged. Baseline overlay adds the same nil *authorityProjection field, so additive dormancy is visible and exact; no comparator allowance was added. strict-state remains enabled for legacy snapshot bytes."
         evidence["verdict"] = "PASS" if replay.returncode == 0 and inner.get("verdict") == "PASS" else "FAIL"
+        if args.simulator: evidence["simulator"] = compare_simulator(args.baseline, args.candidate, work)
     except (VerifyError, OSError, json.JSONDecodeError, subprocess.CalledProcessError) as e:
         evidence["verdict"] = "FAIL"; evidence["error"] = str(e)
     args.out.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n"); print(json.dumps(evidence, indent=2, sort_keys=True))

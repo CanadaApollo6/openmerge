@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -27,6 +28,86 @@ func authorityFixture[T Event](t *testing.T, name string) T {
 		t.Fatal(err)
 	}
 	return e.(T)
+}
+
+func TestAuthorityObservationVariants(t *testing.T) {
+	paths, err := filepath.Glob("testdata/wire/v1/variants/write_restriction_*.json")
+	if err != nil || len(paths) != 4 {
+		t.Fatal("missing evidence variants", paths, err)
+	}
+	for _, path := range paths {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			event, err := DecodeEvent(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, encoded, err := EncodeEvent(event)
+			if err != nil || !bytes.Equal(raw, encoded) {
+				t.Fatal("evidence variant changed", err)
+			}
+			observed, ok := event.(WriteRestrictionObserved)
+			if !ok {
+				return
+			}
+			declared, err := observed.Binding.ResolvedActor.BypassIdentity()
+			if err != nil {
+				t.Fatal(err)
+			}
+			kinds := map[string]bool{}
+			for _, finding := range observed.Evidence.Findings {
+				if finding.Kind != "unexpected_bypass" || finding.Actor == nil || *finding.Actor == declared {
+					t.Fatal("unauthorized actor lost its finding", finding)
+				}
+				kinds[finding.Actor.Kind] = true
+			}
+			for _, kind := range []string{"app", "team", "repository_role", "user", "organization_admin", "deploy_key", "enterprise_owner", "enterprise_role", "unknown"} {
+				if !kinds[kind] {
+					t.Fatal("missing unexpected_bypass finding for", kind)
+				}
+			}
+			// Findings require the actor to be present in the visible inventory.
+			observed.Evidence.Protections[0].BypassActors = []authority.BypassActor{}
+			if observed.Validate() == nil {
+				t.Fatal("finding accepted without observed actor")
+			}
+		})
+	}
+}
+
+func TestCloneStateOwnsAuthorityEvidence(t *testing.T) {
+	pin := authorityFixture[PolicyAuthorityApplied](t, "policy_authority_applied")
+	observed := authorityFixture[WriteRestrictionObserved](t, "write_restriction_observed")
+	verified := authorityFixture[WriteRestrictionVerified](t, "write_restriction_verified")
+	applied := verified
+	applied.Scope = "applied"
+	state := State{}
+	for _, event := range []Event{ConfigApplied{Commit: pin.GoverningCommit, Digest: pin.EffectiveDigest}, pin, observed, applied, verified} {
+		state = Apply(state, event)
+	}
+	before, err := EncodeSnapshot(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cloned := cloneState(state)
+	cloned.authority.Pin.OpenMerge.Binding.ResolvedActor.Team.TeamID = "changed"
+	cloned.authority.Pin.OpenMerge.Activation.Evidence.Protections[0].Includes[0] = "changed"
+	cloned.authority.Observed.Evidence.Protections[0].Rules[1].Parameters[0].Values[0] = "changed"
+	cloned.authority.Observed.Evidence.Coverage[0].ProtectionIDs[0] = "changed"
+	cloned.authority.Observed.Evidence.Findings[0].Element = "changed"
+	cloned.authority.Verified.Evidence.Protections[0].BypassActors[0].ID = "changed"
+	cloned.authority.Proposed.Evidence.Protections[0].Includes[0] = "changed"
+	cloned.authority.Pin = nil
+	after, err := EncodeSnapshot(state)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatal("clone aliases authority evidence", err)
+	}
+	if cloneState(State{}).authority != nil {
+		t.Fatal("clone populated legacy authority")
+	}
 }
 
 func TestAuthoritySnapshotTailAndIsolation(t *testing.T) {

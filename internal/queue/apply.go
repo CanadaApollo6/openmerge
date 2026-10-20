@@ -422,6 +422,7 @@ func (s *State) refreshChecks(b *Batch) {
 }
 
 func cloneState(s State) State {
+	s.authority = cloneAuthority(s.authority)
 	s.approvalWaits = cloneApprovalWaits(s.approvalWaits)
 	s.blockSources = maps.Clone(s.blockSources)
 	if s.blockSources == nil {

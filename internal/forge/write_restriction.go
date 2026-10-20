@@ -3,6 +3,7 @@ package forge
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/CanadaApollo6/openmerge/internal/authority"
 )
@@ -21,29 +22,33 @@ type WriteRestrictionInput struct {
 // Validate checks repository and coverage bindings before an optional read.
 func (in WriteRestrictionInput) Validate() error {
 	if err := in.Binding.Validate(); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", err, ErrInvalidInput)
 	}
 	if len(in.BaseSelectors) == 0 || len(in.ExpectedRefs) == 0 || in.AppID == "" {
-		return fmt.Errorf("missing write restriction expectations")
+		return invalid("missing write restriction expectations")
 	}
 	if in.Repo.Path != in.Binding.Repository {
-		return fmt.Errorf("repository binding mismatch")
+		return invalid("repository binding mismatch")
+	}
+	if _, err := BranchRef(in.Binding.DefaultBranch); err != nil {
+		return err
 	}
 	coverage, err := authority.CoverageDigest(in.Binding.DefaultBranch, in.BaseSelectors)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", err, ErrInvalidInput)
 	}
 	if coverage != in.Binding.CoverageDigest {
-		return fmt.Errorf("coverage binding mismatch")
+		return invalid("coverage binding mismatch")
 	}
-	for _, set := range [][]string{in.ExpectedRefs} {
-		seen := map[string]bool{}
-		for _, value := range set {
-			if value == "" || seen[value] {
-				return fmt.Errorf("invalid write restriction expectations")
-			}
-			seen[value] = true
+	seen := map[string]bool{}
+	for _, ref := range in.ExpectedRefs {
+		if err := ValidateRefName(ref); err != nil {
+			return err
 		}
+		if !strings.HasPrefix(ref, "refs/heads/") || seen[ref] {
+			return invalid("expected unique full branch refs")
+		}
+		seen[ref] = true
 	}
 	return nil
 }

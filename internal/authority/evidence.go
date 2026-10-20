@@ -1,6 +1,7 @@
 package authority
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -64,7 +65,10 @@ func (b PolicyBinding) Validate() error {
 }
 
 // Parameter is a normalized rule/condition parameter, never a raw API body.
-// Values retain order where the forge assigns it meaning.
+// Name is a relative JSON pointer into parameters/conditions (escaped segments,
+// numeric array indices); scalar arrays use Values in source order. Scalars use
+// their schema-defined string/decimal/boolean spelling. Thus nested objects keep
+// their associations without storing a raw API body. Empty arrays remain explicit.
 type Parameter struct {
 	Name   string   `json:"name"`
 	Values []string `json:"values"`
@@ -76,25 +80,36 @@ type Rule struct {
 	Parameters []Parameter `json:"parameters"`
 }
 
-// BypassActor uses the adapter's stable identity. A repository role's ID is
-// supplied by that adapter, never derived from its name or an installation ID.
+// BypassActor records observed inventory, independently of the declared Actor
+// union. ID is absent for class-wide actors such as DeployKey. Unknown forge
+// types use Kind "unknown" and retain their exact type in RawKind; they must be
+// interpreted as unauthorized, never discarded. Role IDs come from the adapter.
 type BypassActor struct {
-	Kind string `json:"kind"`
-	ID   string `json:"id"`
-	Mode string `json:"mode"`
+	Kind    string `json:"kind"`
+	ID      string `json:"id,omitempty"`
+	Mode    string `json:"mode"`
+	RawKind string `json:"raw_kind,omitempty"`
 }
 
 // Validate checks the principal kind, stable identity and bypass mode.
 func (a BypassActor) Validate() error {
-	if a.ID == "" {
-		return fmt.Errorf("missing bypass actor identity")
-	}
 	switch a.Kind {
-	case "app", "team", "repository_role":
+	case "app", "team", "repository_role", "user", "enterprise_role":
+		if a.ID == "" {
+			return fmt.Errorf("missing bypass actor identity")
+		}
+	case "organization_admin", "deploy_key", "enterprise_owner":
+	case "unknown":
+		if a.RawKind == "" {
+			return fmt.Errorf("missing unknown bypass actor kind")
+		}
 	default:
 		return fmt.Errorf("invalid bypass actor kind")
 	}
-	if a.Mode != "always" && a.Mode != "pull_request" {
+	if a.Kind != "unknown" && a.RawKind != "" {
+		return fmt.Errorf("raw kind on known bypass actor")
+	}
+	if a.Mode != "always" && a.Mode != "pull_request" && a.Mode != "exempt" {
 		return fmt.Errorf("invalid bypass mode")
 	}
 	return nil
@@ -102,11 +117,16 @@ func (a BypassActor) Validate() error {
 
 // Protection retains each independently visible part of an applicable ruleset
 // or classic protection. A hidden list is never a visible empty list.
+// Includes/Excludes are ref_name conditions; Conditions keeps every other
+// condition leaf, including repository_name, repository_id and
+// repository_property selectors. Target is empty only when targets are unseen;
+// classic branch protection uses "branch".
 type Protection struct {
 	Source            string        `json:"source"`
 	ID                string        `json:"id"`
 	Revision          string        `json:"revision"`
 	Enforcement       string        `json:"enforcement"`
+	Target            string        `json:"target"`
 	TargetsVisibility Visibility    `json:"targets_visibility"`
 	Includes          []string      `json:"includes"`
 	Excludes          []string      `json:"excludes"`
@@ -144,6 +164,8 @@ type Observation struct {
 	Findings    []Finding    `json:"findings"`
 }
 
+const maxEvidenceItems = 1000
+
 // Validate rejects ambiguous visibility and disconnected evidence.
 func (o Observation) Validate() error {
 	if err := o.Inventory.Validate(); err != nil {
@@ -152,7 +174,7 @@ func (o Observation) Validate() error {
 	if o.Inventory == Absent || o.Inventory == Hidden {
 		return fmt.Errorf("inventory must be visible or read_failure")
 	}
-	if o.Protections == nil || o.Coverage == nil || o.Findings == nil || len(o.Protections) > 1000 || len(o.Coverage) > 1000 || len(o.Findings) > 1000 {
+	if o.Protections == nil || o.Coverage == nil || o.Findings == nil || len(o.Protections) > maxEvidenceItems || len(o.Coverage) > maxEvidenceItems || len(o.Findings) > maxEvidenceItems {
 		return fmt.Errorf("invalid authority evidence bounds")
 	}
 	ids := map[string]bool{}
@@ -174,6 +196,15 @@ func (o Observation) Validate() error {
 		default:
 			return fmt.Errorf("invalid enforcement")
 		}
+		switch p.Target {
+		case "branch", "tag", "push", "repository":
+		case "":
+			if p.TargetsVisibility == Visible {
+				return fmt.Errorf("missing visible protection target")
+			}
+		default:
+			return fmt.Errorf("invalid protection target")
+		}
 		for _, v := range []Visibility{p.TargetsVisibility, p.RulesVisibility, p.BypassVisibility} {
 			if err := v.Validate(); err != nil {
 				return err
@@ -184,6 +215,9 @@ func (o Observation) Validate() error {
 		}
 		if p.Includes == nil || p.Excludes == nil || p.Conditions == nil || p.Rules == nil || p.BypassActors == nil {
 			return fmt.Errorf("missing protection collections")
+		}
+		if len(p.Includes) > maxEvidenceItems || len(p.Excludes) > maxEvidenceItems || len(p.Rules) > maxEvidenceItems || len(p.BypassActors) > maxEvidenceItems {
+			return fmt.Errorf("invalid protection bounds")
 		}
 		if p.TargetsVisibility != Visible && (len(p.Includes)+len(p.Excludes)+len(p.Conditions) > 0) || p.RulesVisibility != Visible && len(p.Rules) > 0 || p.BypassVisibility != Visible && len(p.BypassActors) > 0 {
 			return fmt.Errorf("unseen protection data")
@@ -212,7 +246,7 @@ func (o Observation) Validate() error {
 	}
 	refs := map[string]bool{}
 	for _, c := range o.Coverage {
-		if c.Ref == "" || refs[c.Ref] || c.ProtectionIDs == nil {
+		if c.Ref == "" || refs[c.Ref] || c.ProtectionIDs == nil || len(c.ProtectionIDs) > maxEvidenceItems {
 			return fmt.Errorf("invalid coverage")
 		}
 		refs[c.Ref] = true
@@ -291,12 +325,12 @@ func (o Observation) Validate() error {
 }
 
 func parametersValid(ps []Parameter) error {
-	if ps == nil || len(ps) > 1000 {
+	if ps == nil || len(ps) > maxEvidenceItems {
 		return fmt.Errorf("invalid parameters")
 	}
 	seen := map[string]bool{}
 	for _, p := range ps {
-		if p.Name == "" || seen[p.Name] || p.Values == nil {
+		if p.Name == "" || seen[p.Name] || p.Values == nil || len(p.Values) > maxEvidenceItems {
 			return fmt.Errorf("invalid parameter")
 		}
 		seen[p.Name] = true
@@ -346,7 +380,7 @@ func (o Observation) Fingerprint() (string, error) {
 			return strings.Compare(string(x), string(y))
 		})
 		slices.SortFunc(p.BypassActors, func(a, b BypassActor) int {
-			return strings.Compare(a.Kind+"/"+a.ID+"/"+a.Mode, b.Kind+"/"+b.ID+"/"+b.Mode)
+			return cmp.Or(strings.Compare(a.Kind, b.Kind), strings.Compare(a.ID, b.ID), strings.Compare(a.Mode, b.Mode), strings.Compare(a.RawKind, b.RawKind))
 		})
 	}
 	slices.SortFunc(o.Coverage, func(a, b Coverage) int { return strings.Compare(a.Ref, b.Ref) })

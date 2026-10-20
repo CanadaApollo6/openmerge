@@ -2,6 +2,7 @@ package forge
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"testing"
 
@@ -35,11 +36,21 @@ func TestWriteRestrictionInputBinding(t *testing.T) {
 		func(in *WriteRestrictionInput) { in.AppID = "" },
 		func(in *WriteRestrictionInput) { in.BaseSelectors = []authority.BaseSelector{{Pattern: "other/**"}} },
 		func(in *WriteRestrictionInput) { in.ExpectedRefs = []string{"main", "main"} },
+		func(in *WriteRestrictionInput) { in.ExpectedRefs = []string{"refs/heads/main", "refs/heads/main"} },
+		func(in *WriteRestrictionInput) { in.ExpectedRefs = []string{"main"} },
+		func(in *WriteRestrictionInput) { in.ExpectedRefs = []string{"heads/main"} },
+		func(in *WriteRestrictionInput) { in.ExpectedRefs = []string{"refs/tags/v1"} },
+		func(in *WriteRestrictionInput) { in.ExpectedRefs = []string{"refs/heads/release/*"} },
+		func(in *WriteRestrictionInput) { in.ExpectedRefs = []string{"refs/heads/main..next"} },
+		func(in *WriteRestrictionInput) { in.ExpectedRefs = []string{"refs/heads/main\n"} },
+		func(in *WriteRestrictionInput) { in.ExpectedRefs = []string{"refs/heads/main.lock"} },
+		func(in *WriteRestrictionInput) { in.Binding.DefaultBranch = "bad..branch" },
+		func(in *WriteRestrictionInput) { in.BaseSelectors = []authority.BaseSelector{{}} },
 	} {
 		bad := in
 		change(&bad)
-		if err := bad.Validate(); err == nil {
-			t.Fatal("invalid observation input accepted")
+		if err := bad.Validate(); !errors.Is(err, ErrInvalidInput) {
+			t.Fatal("invalid observation input did not wrap ErrInvalidInput", err)
 		}
 	}
 }
