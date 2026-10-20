@@ -18,6 +18,9 @@ func Apply(s State, e Event) State {
 }
 
 func apply(s State, e Event) State {
+	if next, ok := s.observeAuthority(e); ok {
+		return next
+	}
 	s.pruneWaitingGroups()
 	switch e := e.(type) {
 	case LandingDecisionRecorded:
@@ -419,6 +422,7 @@ func (s *State) refreshChecks(b *Batch) {
 }
 
 func cloneState(s State) State {
+	s.authority = cloneAuthority(s.authority)
 	s.approvalWaits = cloneApprovalWaits(s.approvalWaits)
 	s.blockSources = maps.Clone(s.blockSources)
 	if s.blockSources == nil {

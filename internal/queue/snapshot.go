@@ -13,10 +13,12 @@ import (
 
 // SnapshotVersion is separate from the additive event wire version. Snapshots
 // contain bounded projection state, never a copy of the event history.
-const SnapshotVersion = 6
+const SnapshotVersion = 7
+
+const legacySnapshotVersion = 6
 
 // Decoder resource limits are deliberately above ordinary queue sizes. This
-// codec is not wired into store persistence.
+// codec persists the outside-push cursor; general store compaction is disabled.
 const maxSnapshotEntries = 100000
 const maxSnapshotEffects = 100000
 const maxSnapshotBytes = 64 << 20
@@ -65,6 +67,7 @@ type rulesSnapshot struct {
 	Revision uint64
 }
 type stateSnapshot struct {
+	Authority                                                                *authorityProjection               `json:",omitempty"`
 	LandingDecisions                                                         map[string]LandingDecisionRecorded `json:",omitempty"`
 	ApprovalWaits                                                            map[ChangeID]ApprovalWait          `json:",omitempty"`
 	Receipts                                                                 receiptProjection
@@ -102,15 +105,36 @@ type stateSnapshot struct {
 
 // EncodeSnapshot captures every input required to resume a pure fold and plan,
 // including per-batch revocation generations, timer evidence and retry fences.
-// The store currently replays journals; this is its compaction boundary.
+// General store loads replay journals; the outside-push audit persists this codec.
 func EncodeSnapshot(s State) ([]byte, error) {
+	return encodeSnapshot(s, false)
+}
+
+// EncodeSnapshotV6 preserves the exact deployed shape and refuses authority
+// evidence. Legacy cursors always use it through EncodeSnapshot's automatic gate.
+func EncodeSnapshotV6(s State) ([]byte, error) {
+	return encodeSnapshot(s, true)
+}
+
+func encodeSnapshot(s State, requireLegacy bool) ([]byte, error) {
+	if requireLegacy && s.authority != nil {
+		return nil, fmt.Errorf("authority evidence requires snapshot v7")
+	}
+	if err := validateAuthoritySnapshot(s.authority); err != nil {
+		return nil, err
+	}
+	version := legacySnapshotVersion
+	if s.authority != nil {
+		version = SnapshotVersion
+	}
 	s.retainLandingDecisions()
 	s = cloneState(s)
 	if err := validateApprovalWaits(s); err != nil {
 		return nil, err
 	}
 	v := stateSnapshot{
-		Version:          SnapshotVersion,
+		Version:          version,
+		Authority:        cloneAuthority(s.authority),
 		LandingDecisions: s.landingDecisions,
 		Receipts:         s.receipts,
 		Classifications:  s.classifications,
@@ -212,8 +236,26 @@ func DecodeSnapshot(data []byte) (State, error) {
 	if err := json.Unmarshal(data, &header); err != nil {
 		return State{}, err
 	}
-	if header.Version != SnapshotVersion && header.Version != 5 && header.Version != 4 && header.Version != 3 && header.Version != 2 {
+	if header.Version != SnapshotVersion && header.Version != 6 && header.Version != 5 && header.Version != 4 && header.Version != 3 && header.Version != 2 {
 		return State{}, fmt.Errorf("unsupported snapshot version %d", header.Version)
+	}
+	var authorityFields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &authorityFields); err != nil {
+		return State{}, err
+	}
+	for key := range authorityFields {
+		if strings.EqualFold(key, "Authority") && key != "Authority" {
+			return State{}, fmt.Errorf("invalid authority snapshot field %q", key)
+		}
+	}
+	_, hasAuthority := authorityFields["Authority"]
+	if hasAuthority {
+		if err := strictAuthorityFields(authorityFields["Authority"], reflect.TypeFor[authorityProjection]()); err != nil {
+			return State{}, err
+		}
+	}
+	if header.Version < 7 && hasAuthority || header.Version == 7 && !hasAuthority {
+		return State{}, fmt.Errorf("authority snapshot version mismatch")
 	}
 	data, err := upgradeReceiptSnapshot(data, header.Version)
 	if err != nil {
@@ -230,6 +272,12 @@ func DecodeSnapshot(data []byte) (State, error) {
 	}
 	if err := decoder.Decode(new(any)); err != io.EOF {
 		return State{}, fmt.Errorf("trailing snapshot data")
+	}
+	if header.Version == 7 && v.Authority == nil {
+		return State{}, fmt.Errorf("missing v7 authority evidence")
+	}
+	if err := validateAuthoritySnapshot(v.Authority); err != nil {
+		return State{}, err
 	}
 	if err := validateChangeSnapshot(v); err != nil {
 		return State{}, err
@@ -261,6 +309,7 @@ func DecodeSnapshot(data []byte) (State, error) {
 		}
 	}
 	s := State{
+		authority:        cloneAuthority(v.Authority),
 		receipts:         v.Receipts,
 		landingDecisions: v.LandingDecisions,
 		classifications:  v.Classifications,
