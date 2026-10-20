@@ -103,9 +103,16 @@ func (s *Server) authorityPushOptions(ctx context.Context, w *worker, operation 
 	if err != nil {
 		return unavailablePush(err)
 	}
-	currentFingerprint, err := currentEvidence.Fingerprint()
-	if err != nil || currentFingerprint != fingerprint || fingerprint != pin.OpenMerge.Activation.ProtectionFingerprint {
-		return unavailablePush(errors.New("protection differs from pinned seeing activation"))
+	if fingerprint != pin.OpenMerge.Activation.ProtectionFingerprint {
+		return unavailablePush(errors.New("invalid pinned seeing activation fingerprint"))
+	}
+	// Ordinary runtime reads may hide bypass lists. They never replace the
+	// pinned seeing inventory. A later complete seeing read must still agree.
+	if currentEvidence.SeeingComplete() {
+		currentFingerprint, err := currentEvidence.Fingerprint()
+		if err != nil || currentFingerprint != fingerprint {
+			return unavailablePush(errors.New("protection differs from pinned seeing activation"))
+		}
 	}
 	if operation == forge.PushBuild {
 		reader, ok := w.Git.(forge.PreparedRefReader)
@@ -140,11 +147,9 @@ func (s *Server) authorityPushOptions(ctx context.Context, w *worker, operation 
 		if !ok || revision != b.ProtectionBasis {
 			return errors.New("stale push protection basis")
 		}
-		fingerprint, err := evidence.Fingerprint()
-		if err != nil {
-			return err
-		}
-		if fingerprint != b.ProtectionFingerprint {
+		// Bind even an unseeing observation exactly: a new source revision or
+		// changed evidence requires replanning. Evaluation remains pinned.
+		if !reflect.DeepEqual(evidence, currentEvidence) {
 			return errors.New("stale push protection evidence")
 		}
 		return nil

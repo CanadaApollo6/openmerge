@@ -47,8 +47,8 @@ func (g *bootstrapGit) EnsureFence(ctx context.Context, r forge.RepoRef, ref str
 
 func TestAuthorityBootstrapPinsBeforeFirstRealFence(t *testing.T) {
 	for _, path := range []string{"registration", "refreshWorker", "cycle"} {
-		for _, mode := range []string{"none", "basis", "policy", "reload", "missing-seeing", "seeing-drift"} {
-			change := mode != "none"
+		for _, mode := range []string{"none", "basis", "policy", "reload", "missing-seeing", "seeing-drift", "runtime-hidden"} {
+			change := mode != "none" && mode != "runtime-hidden"
 			t.Run(fmt.Sprintf("%s/change-%s", path, mode), func(t *testing.T) {
 				db := database(t)
 				f := newCompositionFixture(t, []int{1})
@@ -88,6 +88,9 @@ func TestAuthorityBootstrapPinsBeforeFirstRealFence(t *testing.T) {
 				pin.OpenMerge.Binding.DefaultBranch = "main"
 				must(t, pin.Validate())
 				evidence := authority.Observation{Inventory: authority.Visible, Protections: []authority.Protection{}, Coverage: []authority.Coverage{{Ref: "refs/heads/main", Visibility: authority.Absent, ProtectionIDs: []string{}}}, Findings: []authority.Finding{}}
+				if mode == "runtime-hidden" {
+					evidence.Protections = []authority.Protection{{ID: "pinned", Source: "repository_ruleset", Target: "push", Enforcement: "active", TargetsVisibility: authority.Visible, RulesVisibility: authority.Visible, BypassVisibility: authority.Visible, Includes: []string{}, Excludes: []string{}, Conditions: []authority.Parameter{}, Rules: []authority.Rule{}, BypassActors: []authority.BypassActor{}}}
+				}
 				fp, err := evidence.Fingerprint()
 				must(t, err)
 				seeing := time.Now().UTC()
@@ -100,6 +103,9 @@ func TestAuthorityBootstrapPinsBeforeFirstRealFence(t *testing.T) {
 				order := []string{}
 				observed := func(basis uint64) error {
 					readEvidence := authority.CloneObservation(evidence)
+					if mode == "runtime-hidden" {
+						readEvidence.Protections[0].BypassVisibility = authority.Hidden
+					}
 					if mode == "seeing-drift" {
 						readEvidence.Protections = []authority.Protection{{ID: "new", Source: "repository_ruleset", Target: "push", Enforcement: "active", TargetsVisibility: authority.Visible, RulesVisibility: authority.Visible, BypassVisibility: authority.Visible, Includes: []string{}, Excludes: []string{}, Conditions: []authority.Parameter{}, Rules: []authority.Rule{}, BypassActors: []authority.BypassActor{}}}
 					}

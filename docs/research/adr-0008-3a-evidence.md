@@ -135,7 +135,7 @@ order before constructing options, reloads the durable pin/evidence, and never
 uses zero options for an unresolved authority policy. PR 9 supplies the adapters;
 none is installed by this PR, and public authority config stays rejected.
 The source accessor supplies only the latest applied observation's basis and
-fingerprint for drift rejection (highest basis first). Evaluation consumes the
+exact observation for drift rejection (highest basis first). Evaluation consumes the
 activation's pinned seeing evidence; PR 4 owns source revision interpretation.
 Proposed verification never supplies runtime content evidence.
 
@@ -305,7 +305,9 @@ compile-time `forge.Git` assertions in addition to both concrete implementations
 Runtime evaluation consumes **the pinned seeing observation in the authority
 activation**, with its recorded protection fingerprint, never fresh runtime
 protection evidence. The latest retained observation is used solely to reject
-source/fingerprint drift. Missing activation evidence rejects; constructors
+source/evidence drift; ordinary unseeing reads do not replace the pinned
+inventory or require a fresh seeing fingerprint. Later complete seeing reads
+must agree with the pinned fingerprint. Missing activation evidence rejects; constructors
 require `SeeingComplete()`. PR 9 activates these hooks/context construction.
 
 Round-2 3a-i verification at `0de94f725b37cbde7fc495e4fe3eb7cc6913590b`:
@@ -318,9 +320,9 @@ Round-2 3a-i verification at `0de94f725b37cbde7fc495e4fe3eb7cc6913590b`:
   boundary probes agree; maximum 12, cap not hit. Repeat determinism, all 22
   script self-tests and 7/7 synthetic checkpoints pass. Report:
   `/home/riels/.cache/openmerge-3a-i-round2-replay/report.json`.
-- 3a-ii focused tests: exit 0 for forge/fake/GitHub/gitops/serve, plus the 18-case
+- 3a-ii focused tests: exit 0 for forge/fake/GitHub/gitops/serve, plus the 21-case
   real-Git bootstrap matrix (registration/refresh/cycle × success, basis drift,
-  config drift, reload failure, missing seeing activation, fingerprint drift).
+  config drift, reload failure, missing seeing activation, fingerprint drift, unseeing runtime evidence).
   Logs: `/home/riels/.cache/openmerge-3a-ii-round2-focused.log` and
   `/home/riels/.cache/openmerge-3a-ii-round2-seeing.log`.
 
