@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -127,7 +128,8 @@ func observeClassicInventory(ctx context.Context, api *setupAPI, in forge.WriteR
 		if err != nil {
 			return empty, err
 		}
-		p := authority.Protection{Source: "classic_protection", ID: branch, Enforcement: "active", Target: "branch", TargetsVisibility: authority.Visible, Includes: []string{ref}, Excludes: []string{}, Conditions: []authority.Parameter{}, RulesVisibility: authority.Visible, Rules: []authority.Rule{{Kind: "classic_inventory", Parameters: raw}}, BypassVisibility: authority.Visible, BypassActors: []authority.BypassActor{}}
+		actors, visibility := classicBypassActors(body)
+		p := authority.Protection{Source: "classic_protection", ID: branch, Enforcement: "active", Target: "branch", TargetsVisibility: authority.Visible, Includes: []string{ref}, Excludes: []string{}, Conditions: []authority.Parameter{}, RulesVisibility: authority.Visible, Rules: []authority.Rule{{Kind: "classic_inventory", Parameters: raw}}, BypassVisibility: visibility, BypassActors: actors}
 		o.Protections = append(o.Protections, p)
 	}
 	return o, nil
@@ -137,7 +139,7 @@ func removeProtectionURLs(v any) {
 	switch x := v.(type) {
 	case map[string]any:
 		for k, v := range x {
-			if k == "url" || strings.HasSuffix(k, "_url") {
+			if k == "url" || k == "contexts_url" {
 				delete(x, k)
 			} else {
 				removeProtectionURLs(v)
@@ -158,4 +160,53 @@ func marshalClassicParameters(body map[string]any) ([]authority.Parameter, error
 		return nil, fmt.Errorf("invalid classic inventory")
 	}
 	return authorityParameters(raw)
+}
+
+// A successful classic GET does not turn a missing/null configured bypass list
+// into a visible empty list. The normalized policy remains retained separately.
+func classicBypassActors(body map[string]any) ([]authority.BypassActor, authority.Visibility) {
+	actors := []authority.BypassActor{}
+	for _, field := range []string{"restrictions", "required_pull_request_reviews"} {
+		value := body[field]
+		if value == nil {
+			continue
+		}
+		object, ok := value.(map[string]any)
+		if !ok {
+			return []authority.BypassActor{}, authority.Hidden
+		}
+		mode := "always"
+		if field == "required_pull_request_reviews" {
+			mode = "pull_request"
+			object, ok = object["bypass_pull_request_allowances"].(map[string]any)
+			if !ok {
+				return []authority.BypassActor{}, authority.Hidden
+			}
+		}
+		for _, group := range []struct{ field, kind string }{{"users", "user"}, {"teams", "team"}, {"apps", "app"}} {
+			entries, ok := object[group.field].([]any)
+			if !ok {
+				return []authority.BypassActor{}, authority.Hidden
+			}
+			for _, entry := range entries {
+				actor, ok := entry.(map[string]any)
+				if !ok {
+					return []authority.BypassActor{}, authority.Hidden
+				}
+				id, ok := actor["id"].(json.Number)
+				if !ok {
+					return []authority.BypassActor{}, authority.Hidden
+				}
+				number, err := strconv.ParseInt(id.String(), 10, 64)
+				if err != nil || number <= 0 {
+					return []authority.BypassActor{}, authority.Hidden
+				}
+				a := authority.BypassActor{Kind: group.kind, ID: id.String(), Mode: mode}
+				if !slices.Contains(actors, a) {
+					actors = append(actors, a)
+				}
+			}
+		}
+	}
+	return actors, authority.Visible
 }

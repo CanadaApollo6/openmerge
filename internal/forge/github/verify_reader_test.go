@@ -1,11 +1,13 @@
 package github
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/forge/forgetest"
 )
@@ -62,5 +64,20 @@ func TestAdminVerificationReadOnlyAndClassicFingerprint(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPut, f.server.URL, nil)
 	if _, err := transport.RoundTrip(req); err == nil {
 		t.Fatal("admin reader accepted writes")
+	}
+}
+
+func TestClassicHiddenBypassCannotBindDraft(t *testing.T) {
+	for _, raw := range []string{
+		`{"required_pull_request_reviews":{}}`,
+		`{"required_pull_request_reviews":{"bypass_pull_request_allowances":null}}`,
+		`{"restrictions":{"users":[],"teams":[],"apps":null}}`,
+	} {
+		var body map[string]any
+		must(t, json.Unmarshal([]byte(raw), &body))
+		actors, visibility := classicBypassActors(body)
+		if visibility != authority.Hidden || len(actors) != 0 {
+			t.Fatal("hidden classic bypass claimed complete visibility")
+		}
 	}
 }
