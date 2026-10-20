@@ -43,7 +43,7 @@ func ReviewerCheckSummaryFromProjection(j store.Journal, q *Queue, pr int, polic
 			return brief.Fact{}, "policy_unavailable"
 		}
 		facts, _ := s.ApprovalFacts(b.ChangeID)
-		f = recordedBriefProgress(f, policy, s, facts, s.ConfigDigest, q.eligibilityPins[b.ChangeID])
+		f = recordedBriefProgress(f, policy, s, facts, q.eligibilityPins[b.ChangeID])
 		return f, ""
 	}})
 	if err != nil || !found {

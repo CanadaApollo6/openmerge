@@ -45,12 +45,12 @@ func pinBriefEligibility(pins map[queue.ChangeID]briefEligibilityPin, event queu
 	pins[e.Basis.ChangeID] = briefEligibilityPin{basis: e.Basis, inputs: stored.Evidence.Classification.Inputs, configDigest: s.ConfigDigest}
 }
 
-func recordedBriefProgress(f brief.Fact, policy cp.Policy, s queue.State, facts queue.ApprovalFacts, configDigest string, pin briefEligibilityPin) brief.Fact {
+func recordedBriefProgress(f brief.Fact, policy cp.Policy, s queue.State, facts queue.ApprovalFacts, pin briefEligibilityPin) brief.Fact {
 	code, explanation := "", ""
 	switch {
 	case facts.Eligibility == nil || pin.basis != facts.Eligibility.Basis:
 		code, explanation = "eligibility_pending", "eligibility pending gate read"
-	case pin.stale || !reflect.DeepEqual(pin.inputs, f.Classification.Inputs) || pin.configDigest != configDigest || pin.configDigest != s.ConfigDigest:
+	case pin.stale || !reflect.DeepEqual(pin.inputs, f.Classification.Inputs) || pin.configDigest != s.ConfigDigest:
 		code, explanation = "eligibility_stale", "recorded eligibility predates the current revision, head or policy; pending gate read"
 	}
 	if code == "" {
