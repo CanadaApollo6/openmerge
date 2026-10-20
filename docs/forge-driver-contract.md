@@ -368,3 +368,46 @@ fixtures are keyed by their supplied login spelling; canonicalization and HTTP
 permission observations are covered by the GitHub and stable-identity tests.
 Fake git commits, identities, check sources and provider capabilities model the
 forge-neutral behavior, not GitHub object bytes or all GitHub API constraints.
+
+## Dormant authority observations (ADR 0008 PR 2)
+
+`forge.WriteRestrictionReader` is an optional acquisition capability implemented
+by the fake and GitHub drivers. No runtime consumer selects it until PR 9.
+`forgetest.RunWriteRestrictionReader` checks the same visibility contract against
+configured fake evidence and an installation-authenticated `httptest` server.
+Input refs use #83's shared `ValidateRefName`; actor reads use `ResolveTeam` and
+compare both stable organization and team IDs with the reviewed binding.
+
+The reader inventories repository and inherited rulesets with
+`includes_parents=true`, requests each detail, and retains successful pages and
+independent detail fields on later failures. Inventory visibility is `visible`
+only after the list completes with valid identities; it is `read_failure` after
+an incomplete list or failed actor binding. A completed empty ruleset inventory
+has zero protections. It does not establish the absence of classic protection.
+Each protection separately records target/condition, rule and bypass visibility.
+Omitted/null bypass JSON is `hidden`; `[]` is a visible empty set. Unsupported or
+malformed values are `read_failure`, never silently omitted from a visible set.
+An inaccessible detail retains the listed identity/enforcement with hidden
+fields on plain 403/404, or failed fields on transport/quota/inconsistent reads.
+Returned errors retain the shared quota deadline/type and successful evidence.
+
+Rule and condition parameters use sorted names and canonical JSON values in
+`Parameter.Values` (one value per named parameter, with array order retained).
+`Protection.Conditions` also retains `$target`, `$source_type` and `$source`.
+Ref includes/excludes remain explicit. Revisions normalize `updated_at` to UTC.
+This preserves unknown rule parameters without storing complete API responses.
+User/organization-admin/deploy-key bypass variants cannot be represented by PR
+1's actor union: their bypass field is `read_failure` with an error; other
+independently visible fields remain available. The reader never invents an App
+bypass, produces a finding or matches a selector. `Coverage` and `Findings` are
+explicit empty slices for PR 3a's separate interpretation step.
+
+All HTTP reads use the existing installation client, conditional revalidation,
+pagination checks and request classes; settlement contexts are downgraded to
+ordinary active reads. The inventory is bounded to 1,000 rulesets/10 pages.
+Classic protection (`ValidateClassicProtection`) and installed permission grants
+(`ValidateInstallationPermissions`) remain independent sources. Administration
+read may improve visibility and is diagnostic/adoption guidance only. There is
+no new grant requirement for legacy queues and no automatic permission change.
+`ValidateRepositoryRules`, including its existing hidden-list substitution and
+warnings, is unchanged. See the [sandbox evidence](research/adr-0008-2-reader-evidence.md).
