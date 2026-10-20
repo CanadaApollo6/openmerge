@@ -37,6 +37,10 @@ func DeferredByPause(cfg Config, s State, action Action, now time.Time) bool {
 		unblocked = Apply(unblocked, BlockSourceCleared{Source: source, Basis: unblocked.BlockSourceRevision(source)})
 	}
 	for _, source := range s.RulesSources() {
+		if source.Source == WriteRestriction {
+			unblocked = unblocked.withoutAuthorityBlock()
+			continue
+		}
 		unblocked = Apply(unblocked, RulesSourceCleared{Source: source.Source, Basis: source.Revision})
 	}
 	return slices.ContainsFunc(Plan(cfg, unblocked, now), func(planned Action) bool {

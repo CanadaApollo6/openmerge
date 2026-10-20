@@ -29,6 +29,7 @@ func (f *Forge) SetWriteRestrictionObservation(repo forge.RepoRef, o authority.O
 			}
 		}
 	}
+	o = forge.UnknownBypassFindings(o)
 	if e := o.Validate(); e != nil {
 		return e
 	}

@@ -7,7 +7,7 @@ import (
 )
 
 func TestRulesSourcesKeepIndependentRevisionsAndBlocks(t *testing.T) {
-	for _, source := range rulesSourceOrder {
+	for _, source := range legacyRulesSourceOrder {
 		t.Run(string(source), func(t *testing.T) {
 			original := State{}
 			problems := []string{"original"}
@@ -20,7 +20,7 @@ func TestRulesSourcesKeepIndependentRevisionsAndBlocks(t *testing.T) {
 			}
 			basis := state.RulesSourceRevision(source)
 			// Concurrent observations of every other source do not stale this pass.
-			for _, other := range rulesSourceOrder {
+			for _, other := range legacyRulesSourceOrder {
 				if other != source {
 					state = Apply(state, RulesSourceBlocked{Source: other, Problems: []string{string(other)}})
 				}
@@ -53,10 +53,10 @@ func TestEveryRulesSourceDefersPlannedWork(t *testing.T) {
 		state = Apply(state, event)
 	}
 	build := onlyAction[BuildTestRef](t, Plan(testConfig, state, epoch))
-	for _, source := range rulesSourceOrder {
+	for _, source := range legacyRulesSourceOrder {
 		state = Apply(state, RulesSourceBlocked{Source: source, Problems: []string{"blocked"}})
 	}
-	for _, source := range rulesSourceOrder {
+	for _, source := range legacyRulesSourceOrder {
 		if len(actionsOf[BuildTestRef](Plan(testConfig, state, epoch))) != 0 || !DeferredByPause(testConfig, state, build, epoch) {
 			t.Fatal("a source block did not defer work")
 		}

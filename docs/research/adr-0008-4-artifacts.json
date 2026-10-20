@@ -1,0 +1,236 @@
+{
+  "summary": {
+    "base": "046de34aa7433d47782eab68da062ff3adc977ce",
+    "production_revision": "916d8a0fe1548fad9446b5deb0e71db60f904de4",
+    "collected_at": "2026-10-20T21:48:39.678417+00:00",
+    "trial": "Inert",
+    "strict_replay": {
+      "candidate_commit": "916d8a0fe1548fad9446b5deb0e71db60f904de4",
+      "actions_identical": "2159/2159",
+      "structural_state_identical": "2159/2159",
+      "snapshot_hashes_identical": "2159/2159",
+      "boundary_checkpoints_identical": "2159/2159",
+      "gate2": "PASS",
+      "gate4": "PASS",
+      "verdict": "PASS"
+    },
+    "simulator": {
+      "blocks": 146,
+      "identical": true,
+      "normalized_sha256": "a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7",
+      "verdict": "PASS"
+    },
+    "old_decoder": {
+      "old_binary_commit": "e7000f8cc1df54372f5220617361f21aaca58b0a",
+      "legacy_v6_sha256": "94a9dea394ab17bb0921e76c413d40c2a3a8dfa73733e53728460de01d59d096",
+      "authority_v7_sha256": "47ca0a200d37f4883432ecd9f3c6a48941f78d4fb0a2dd3bc59e4e54f98445cd",
+      "verdict": "PASS"
+    },
+    "backup": {
+      "backup_sha256": "bca5ce2a8d3428eaeaa2f2d5bd9f870cc47c1b8b93a8efba95e6c946879957fe",
+      "restored_state_sha256": "6537b57be21b4275197807f56d3b384b14f0b3d0cd14279f90271a5936c57dce",
+      "backup_bytes": 21692,
+      "verdict": "PASS"
+    },
+    "deployed_go_files_changed_after_depth_comparison": [],
+    "manifest_sha256": "52f1349e5fd5c7ddef70e853d2f25800d91cd01e2790ce9bb56e40240709e43f",
+    "no_github_writes_or_live_db": true
+  },
+  "artifacts": {
+    "/home/riels/.cache/adr0008-4-make-check-verified.log": {
+      "sha256": "fb0f8a227c67a7708b1ba9bd79ef4a9da69fc43dda0ea4fb5cbe90431409481c",
+      "bytes": 1897
+    },
+    "/home/riels/.cache/adr0008-4-replay-receipt.json": {
+      "sha256": "909bfdb9be634c325995ce7f25243df4f8b757eda1690da8352ff4bae9b273b4",
+      "bytes": 215066
+    },
+    "/home/riels/.cache/adr0008-4-depths.log": {
+      "sha256": "a933fe69a49588ee66ae8ecbe5f3900cd98e578d7c20d75fe28e56f4485271ef",
+      "bytes": 932
+    },
+    "/home/riels/.cache/adr0008-4-reporting.log": {
+      "sha256": "fefff2134d77ab547e2867401e51be8a03d5e2ab0a4d2769f2f178d15f592d4b",
+      "bytes": 231
+    },
+    "/home/riels/.cache/adr0008-4-simulator/report.json": {
+      "sha256": "db9005a9115a6aee86970d5bb4de3ad13cdbd9f2f0a7e7287edeaab9a91964d1",
+      "bytes": 1233
+    },
+    "/home/riels/.cache/adr0008-4-boundary/report.json": {
+      "sha256": "0df13393cd83500b16b75e6787f37eb04805afa785ab1731093da33f288dfecb",
+      "bytes": 1992
+    },
+    "/home/riels/.cache/adr0008-4-backup/report.json": {
+      "sha256": "b87d66395f3c72548f29129b1dedeef7e240227b878de2392e070459353a252f",
+      "bytes": 3595
+    },
+    "/home/riels/.cache/adr0008-4-retry-daily.log": {
+      "sha256": "745173dd2d344b1c4abaaead478b4d4cda909b90fb53957926ad1ecd642795df",
+      "bytes": 62
+    },
+    "/home/riels/.cache/adr0008-4-final-focused.log": {
+      "sha256": "d7fa1e2c26f7d637aa1483f86c2132ee8b5be468a8d2b2dbeb36526db297a3c6",
+      "bytes": 32883
+    },
+    "/home/riels/.cache/adr0008-4-query-plans/small.log": {
+      "sha256": "d8e32e4651e6f22804d7527a96034c633d09afd742be6c25b17c993c87e6927b",
+      "bytes": 1078
+    },
+    "/home/riels/.cache/adr0008-4-query-plans/large.log": {
+      "sha256": "cd438bf232fdef6817343f409f1041d1bc2953144bdef0abc8c54aab533a7ee9",
+      "bytes": 1082
+    },
+    "/home/riels/.cache/adr0008-4-real-git-verified.log": {
+      "sha256": "b73191d9105f070b14319ffa6d2396e6649052634eabb88f6c83c8add661573e",
+      "bytes": 615
+    }
+  },
+  "note": "Raw logs/large replay streams stay in the local cache. Simulator/boundary runners initially labelled the candidate b1f8aee; subsequent changes touched only new authority endpoints or tests/comments, with no further changes to previously deployed Go source files. Final full check/replay use production revision 916d8a0.",
+  "rebase_onto_pr_111": {
+    "base": "d4e15c89fa9a1e68d8cf9afe55d0f3a25318ae91",
+    "original_head": "50be908126c06b28cddf019a7313c0375ba0175d",
+    "production_revision": "4ec0c8e98ad9b9f5664e597db94558048dae22aa",
+    "collected_at": "2026-10-20T22:28:41.556846+00:00",
+    "trial": "Inert",
+    "host_lock": "/home/riels/.cache/openmerge-heavy.lock",
+    "GOFLAGS": "-p=2",
+    "GOMEMLIMIT": "4GiB; 6GiB for replay",
+    "test_database": "localhost:54329, disposable test schemas",
+    "make_check_exit": 0,
+    "focused_exit": 0,
+    "fault_golden_exit": 0,
+    "strict_replay_exit": 0,
+    "focused_packages": [
+      "cmd/openmerge",
+      "internal/authority",
+      "internal/forge",
+      "internal/forge/github",
+      "internal/queue",
+      "internal/store",
+      "internal/serve"
+    ],
+    "focused_run": "Authority|WriteRestriction|Verification|Verify|Proposed|DailyApplied|StartedRealGit|RulesetsFlag|Emission|Classic",
+    "setup_3b": {
+      "apply_boundaries": 32,
+      "restore_boundaries": 30,
+      "main_goldens_byte_identical": 3,
+      "permission_trace": "PASS"
+    },
+    "strict_replay": {
+      "candidate_commit": "4ec0c8e98ad9b9f5664e597db94558048dae22aa",
+      "baseline_commit": "046de34aa7433d47782eab68da062ff3adc977ce",
+      "state_mode": "strict",
+      "actions_identical": "2159/2159",
+      "structural_state_identical": "2159/2159",
+      "snapshot_hashes_identical": "2159/2159",
+      "boundary_checkpoints_identical": "2159/2159",
+      "boundary_probe_count": 8676,
+      "boundary_probe_max": 12,
+      "boundary_cap_hit": false,
+      "gate2": "PASS",
+      "gate4": "PASS",
+      "derived_determinism": "PASS",
+      "self_test": "PASS",
+      "self_test_exit_status": 0,
+      "config_sha256": "3efb43bbc05f5f0b03c005331f79064829fa018e9f6446224682e00dd357fead",
+      "streams": {
+        "baseline": {
+          "checkpoints": 2159,
+          "path": "/home/riels/.cache/adr0008-4-rebase-replay/report-streams-z11nwta5/baseline.jsonl",
+          "policies": [
+            {
+              "journal_digest": "e58c893b8b3af7685dc07a086824b3bc1fc044456083d193f9566f8387cb58fc",
+              "kind": "policy",
+              "queue_id": 1,
+              "recomputed_digest": "e58c893b8b3af7685dc07a086824b3bc1fc044456083d193f9566f8387cb58fc",
+              "would_emit_config_applied": false
+            }
+          ],
+          "records": 2160,
+          "sha256": "1fe079295539183b7008e70b940c7f71d45bd4aa4e443c8c1e581fa10d31051a"
+        },
+        "candidate": {
+          "checkpoints": 2159,
+          "path": "/home/riels/.cache/adr0008-4-rebase-replay/report-streams-z11nwta5/candidate.jsonl",
+          "policies": [
+            {
+              "journal_digest": "e58c893b8b3af7685dc07a086824b3bc1fc044456083d193f9566f8387cb58fc",
+              "kind": "policy",
+              "queue_id": 1,
+              "recomputed_digest": "e58c893b8b3af7685dc07a086824b3bc1fc044456083d193f9566f8387cb58fc",
+              "would_emit_config_applied": false
+            }
+          ],
+          "records": 2160,
+          "sha256": "1fe079295539183b7008e70b940c7f71d45bd4aa4e443c8c1e581fa10d31051a"
+        },
+        "candidate-repeat": {
+          "checkpoints": 2159,
+          "path": "/home/riels/.cache/adr0008-4-rebase-replay/report-streams-z11nwta5/candidate-repeat.jsonl",
+          "policies": [
+            {
+              "journal_digest": "e58c893b8b3af7685dc07a086824b3bc1fc044456083d193f9566f8387cb58fc",
+              "kind": "policy",
+              "queue_id": 1,
+              "recomputed_digest": "e58c893b8b3af7685dc07a086824b3bc1fc044456083d193f9566f8387cb58fc",
+              "would_emit_config_applied": false
+            }
+          ],
+          "records": 2160,
+          "sha256": "1fe079295539183b7008e70b940c7f71d45bd4aa4e443c8c1e581fa10d31051a"
+        }
+      },
+      "verdict": "PASS"
+    },
+    "real_git_fixture": {
+      "governing_commit": "e10c9662f7918fddb21ab5a188fd6a0e93314c75",
+      "effective_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "coverage_digest": "05d268603d3ab908c77d154c74f63388f85742115e7a81513773c7c574ac87f9",
+      "actor_team_id": "200",
+      "observer_event": "11",
+      "source_revision": "1",
+      "landed": "1b6c917b1f694aa96d9d4c1f83e6288926713d79",
+      "remote": "1b6c917b1f694aa96d9d4c1f83e6288926713d79"
+    },
+    "artifacts": {
+      "/home/riels/.cache/adr0008-4-rebase-check.log": {
+        "sha256": "3f2a742c1eee5c51e2f90aa28750204730e4a7a9cecd415537ce1c9e2c3b4b34",
+        "bytes": 1897
+      },
+      "/home/riels/.cache/adr0008-4-rebase-focused.log": {
+        "sha256": "ef5cdfaf849f392152d59417e53bffa0a161ed482f9e6720a19968038c97eb66",
+        "bytes": 72154
+      },
+      "/home/riels/.cache/adr0008-4-rebase-fault-golden.log": {
+        "sha256": "446aab0ab1ecbf6a613664f3c4cbe7a63fb7169a4fbe17fbe1cb7db4d326e3e3",
+        "bytes": 15952
+      },
+      "/home/riels/.cache/adr0008-4-rebase-replay/report.json": {
+        "sha256": "a9bc45dba34428fceba15152facc45189d35035c778cdf449bc4312161638900",
+        "bytes": 215084
+      },
+      "/home/riels/.cache/adr0008-4-rebase-replay.log": {
+        "sha256": "a9bc45dba34428fceba15152facc45189d35035c778cdf449bc4312161638900",
+        "bytes": 215084
+      },
+      "/home/riels/.cache/adr0008-4-rebase-openmerge": {
+        "sha256": "ef25b91dc513e42142779bef7842cdf92554ca2eaf2ba65860a1f9553686dab4",
+        "bytes": 35456531
+      },
+      "/home/riels/.cache/adr0008-4-rebase-replay/report-streams-z11nwta5/baseline.jsonl": {
+        "sha256": "1fe079295539183b7008e70b940c7f71d45bd4aa4e443c8c1e581fa10d31051a",
+        "bytes": 214167188
+      },
+      "/home/riels/.cache/adr0008-4-rebase-replay/report-streams-z11nwta5/candidate.jsonl": {
+        "sha256": "1fe079295539183b7008e70b940c7f71d45bd4aa4e443c8c1e581fa10d31051a",
+        "bytes": 214167188
+      },
+      "/home/riels/.cache/adr0008-4-rebase-replay/report-streams-z11nwta5/candidate-repeat.jsonl": {
+        "sha256": "1fe079295539183b7008e70b940c7f71d45bd4aa4e443c8c1e581fa10d31051a",
+        "bytes": 214167188
+      }
+    },
+    "note": "Original summary/artifacts remain historical. The first focused attempt exposed a mock-credential mismatch in the new classic-read test; corrected without production changes. Final runs above supersede that attempt. No live DB, service, status, production refs or GitHub API writes were used."
+  }
+}

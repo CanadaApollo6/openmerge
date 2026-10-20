@@ -38,7 +38,7 @@ func (s *Server) repositoryRules(ctx context.Context, w *worker) error {
 	var quotaUntil time.Time
 	w.rulesWaiting = ""
 	for _, check := range checks {
-		if check.read == nil {
+		if check.source == queue.WriteRestriction || check.read == nil {
 			continue
 		}
 		readCtx, cancel := context.WithTimeout(ctx, s.options.ActionTimeout)

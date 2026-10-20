@@ -171,7 +171,7 @@ func TestAuthorityBootstrapPinsBeforeFirstRealFence(t *testing.T) {
 						if state.AuthorityPin() == nil {
 							t.Fatal("observation before pin")
 						}
-						return observed(1)
+						return observed(state.RulesSourceRevision(queue.WriteRestriction))
 					},
 				}
 				var s *Server

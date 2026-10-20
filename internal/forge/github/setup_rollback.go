@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"slices"
 	"strings"
 
@@ -161,34 +160,14 @@ func rollbackRuleMessage(p RuleProblem) string {
 }
 
 func (c *setupAPI) setupClassicProtection(ctx context.Context, repo, ref string) (*gh.Protection, error) {
-	endpoint := "repos/" + repo + "/branches/" + url.PathEscape(ref) + "/protection"
-	var raw json.RawMessage
-	if err := c.request(ctx, http.MethodGet, endpoint, nil, &raw); err != nil {
-		var api *setupAPIError
-		if errors.As(err, &api) && api.status.StatusCode == 404 && api.message == "Branch not protected" {
-			return nil, nil
-		}
+	fields, err := c.readClassicProtection(ctx, repo, ref)
+	if err != nil || fields == nil {
 		return nil, err
 	}
+	raw, _ := json.Marshal(fields)
 	var protection *gh.Protection
-	if err := completeClassicProtection(raw); err != nil {
-		return nil, fmt.Errorf("incomplete classic protection response: %w", err)
-	}
 	if err := json.Unmarshal(raw, &protection); err != nil || protection == nil {
 		return nil, errors.New("incomplete classic protection response")
-	}
-	if protection.RequiredSignatures == nil {
-		var signatures *gh.SignaturesProtectedBranch
-		if err := c.request(ctx, http.MethodGet, endpoint+"/required_signatures", nil, &signatures); err != nil {
-			return nil, err
-		}
-		if signatures == nil || signatures.Enabled == nil {
-			return nil, errors.New("incomplete required-signatures response")
-		}
-		protection.RequiredSignatures = signatures
-	}
-	if protection.RequiredSignatures.Enabled == nil {
-		return nil, errors.New("incomplete required-signatures response")
 	}
 	return protection, nil
 }
