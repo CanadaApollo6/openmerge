@@ -84,8 +84,8 @@ func TestAdminAcknowledgeCLI(t *testing.T) {
 	dir := t.TempDir()
 	drain := filepath.Join(dir, "drain")
 	backup := filepath.Join(dir, "backup")
-	for _, path := range []string{drain, backup} {
-		if err = os.WriteFile(path, []byte("fixture operator attestation"), 0600); err != nil {
+	for kind, path := range map[string]string{"drain": drain, "backup": backup} {
+		if err = os.WriteFile(path, []byte(fmt.Sprintf(`{"kind":%q,"evidence":"fixture operator attestation"}`, kind)), 0600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -116,5 +116,36 @@ func TestAdminAcknowledgeCLI(t *testing.T) {
 	var out, stderr bytes.Buffer
 	if code := run(args, &out, &stderr); code != 0 {
 		t.Fatalf("admin ran migrations: %d %s", code, stderr.String())
+	}
+}
+
+func TestAdminReceiptsDistinctPathsContentsAndKinds(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, data string) string {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	drain := write("drain.json", `{"kind":"drain","workers":["sandbox"]}`)
+	backup := write("backup.json", `{"kind":"backup","restore_test":"passed"}`)
+	duplicate := write("copy.json", `{"kind":"drain","workers":["sandbox"]}`)
+	symlink := filepath.Join(dir, "alias.json")
+	if err := os.Symlink(drain, symlink); err != nil {
+		t.Fatal(err)
+	}
+	hardlink := filepath.Join(dir, "hardlink.json")
+	if err := os.Link(drain, hardlink); err != nil {
+		t.Fatal(err)
+	}
+	if err := adminReceiptFiles(drain, backup); err != nil {
+		t.Fatal(err)
+	}
+	for i, pair := range [][2]string{{drain, drain}, {drain, filepath.Join(dir, ".", "drain.json")}, {drain, symlink}, {drain, hardlink}, {drain, duplicate}, {backup, drain}, {drain, write("untyped.json", `{"evidence":"backup"}`)}, {drain, write("text", "restore passed")}} {
+		if err := adminReceiptFiles(pair[0], pair[1]); err == nil || i < 5 && !strings.Contains(err.Error(), "distinct resolved paths and content hashes") {
+			t.Fatalf("accepted invalid pair %v", pair)
+		}
 	}
 }

@@ -5,8 +5,38 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/debug"
 	"time"
 )
+
+const DefaultEmissionReceiptMaxAge = 24 * time.Hour
+
+// BuildRevision may be set by release tooling with -ldflags -X. VCS metadata
+// takes precedence; a dirty build cannot attest to a committed revision.
+var BuildRevision string
+
+func RunningBinaryRevision() string {
+	info, _ := debug.ReadBuildInfo()
+	return binaryRevision(info, BuildRevision)
+}
+
+func binaryRevision(info *debug.BuildInfo, fallback string) string {
+	if info != nil {
+		revision := ""
+		for _, setting := range info.Settings {
+			if setting.Key == "vcs.modified" && setting.Value == "true" {
+				return ""
+			}
+			if setting.Key == "vcs.revision" {
+				revision = setting.Value
+			}
+		}
+		if revision != "" {
+			return revision
+		}
+	}
+	return fallback
+}
 
 // EmissionReceipt is retained by the operator with the pre-emission backup.
 // This is an explicit operator attestation, not automatic worker discovery.
@@ -27,6 +57,24 @@ type EmissionReceipt struct {
 // hosts, stop old workers, capture a backup, restore-test it, then attest that
 // only compatible readers may restart. Period B permits isolated sandboxes only.
 func (r EmissionReceipt) Validate(identity string, now time.Time) error {
+	return r.ValidateForBinary(identity, now, DefaultEmissionReceiptMaxAge, RunningBinaryRevision())
+}
+
+// ValidateForBinary checks the operator attestation against local build metadata.
+// It cannot prove remote workers are stopped or authenticate the binary itself.
+func (r EmissionReceipt) ValidateForBinary(identity string, now time.Time, maxAge time.Duration, revision string) error {
+	if maxAge <= 0 {
+		return fmt.Errorf("emission receipt maximum age must be positive")
+	}
+	if revision == "" {
+		return fmt.Errorf("cannot attest BinaryRevision offline: running binary has no clean embedded build revision; rebuild with VCS metadata or authority.BuildRevision ldflags; see docs/research/adr-0008-4-evidence.md")
+	}
+	if r.BinaryRevision != revision {
+		return fmt.Errorf("emission receipt BinaryRevision does not match running binary revision %s", revision)
+	}
+	if r.DrainedAt.Before(now.Add(-maxAge)) || r.RestoreTestedAt.Before(now.Add(-maxAge)) {
+		return fmt.Errorf("stale emission receipt: drain and restore test must be within %s; repeat drain, backup and restore test", maxAge)
+	}
 	if r.DatabaseIdentity != identity || r.BinaryRevision == "" || len(r.DrainedWorkers) == 0 || !r.CompatibleReadersOnly || r.DrainedAt.IsZero() || r.RestoreTestedAt.Before(r.DrainedAt) || r.RestoreTestedAt.After(now) || !IsDigest(r.BackupSHA256) {
 		return fmt.Errorf("first-emission gate requires a database-bound drain inventory and restore-tested backup receipt; see docs/research/adr-0008-4-evidence.md")
 	}

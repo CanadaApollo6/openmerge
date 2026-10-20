@@ -78,9 +78,9 @@ func (s *Store) TakeNotification(ctx context.Context, q QueueID) (bool, error) {
 type EventRecord struct {
 	ID    int64
 	Event queue.Event
-	// DedupeKey is empty for rows without a dedupe association. EventsAfter
-	// retains its original logging query; bounded ledger pages populate this.
-	DedupeKey string
+	// DedupeKey is nil when not loaded (EventsAfter), or points to an empty
+	// string when loaded without an association. Ledger pages always load it.
+	DedupeKey *string
 }
 
 // EventsAfter reads committed transitions for operational logging. It does not

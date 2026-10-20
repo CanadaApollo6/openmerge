@@ -33,6 +33,7 @@ type verificationPlan struct {
 }
 type verifyOptions struct {
 	Verify                               bool
+	ReceiptMaxAge                        time.Duration
 	DatabaseURL, Plan, Receipt, Operator string
 }
 
@@ -78,7 +79,7 @@ func runRulesVerification(ctx context.Context, opts verifyOptions, rules github.
 	if err := readVerificationJSON(opts.Receipt, &receipt); err != nil {
 		return err
 	}
-	if err := receipt.Validate(identity, time.Now()); err != nil {
+	if err := receipt.ValidateForBinary(identity, time.Now(), opts.ReceiptMaxAge, authority.RunningBinaryRevision()); err != nil {
 		return err
 	}
 	var plan verificationPlan
@@ -173,18 +174,25 @@ func verifyTargets(ctx context.Context, db *store.Store, reader forge.WriteRestr
 		return err
 	}
 	violated := false
+	stale := false
 	for _, r := range receipts {
 		state, _, err := db.Load(ctx, r.QueueID)
 		if err != nil {
 			return err
 		}
 		status := state.WriteRestrictionStatus()
+		if r.Event.Scope == "applied" && len(r.Event.Evidence.Findings) == 0 && !status.LastVerifiedAt.Equal(r.Event.VerifiedAt) {
+			stale = true
+		}
 		if len(r.Event.Evidence.Findings) > 0 {
 			violated = true
 		}
 		if _, err := fmt.Fprintf(out, "queue %s: write_restriction_verified event %d scope=%s findings=%d seeing_read_at=%s last_observed_at=%s last_verified_at=%s state=%s\n", r.Event.Binding.QueueKey, r.EventID, r.Event.Scope, len(r.Event.Evidence.Findings), r.Event.VerifiedAt.Format(time.RFC3339Nano), status.LastObservedAt.Format(time.RFC3339Nano), status.LastVerifiedAt.Format(time.RFC3339Nano), status.State); err != nil {
 			return err
 		}
+	}
+	if stale {
+		return errors.New("verification evidence recorded but basis became stale; verification time did not advance for this read; retry --verify with a fresh seeing read")
 	}
 	if violated {
 		return errors.New("visible write-restriction violation recorded")

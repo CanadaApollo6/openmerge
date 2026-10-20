@@ -350,3 +350,33 @@ pass without changing production behavior. All final log, binary and replay
 stream hashes are recorded in `adr-0008-4-artifacts.json` under
 `rebase_onto_pr_111`; the original summary remains historical. Updated manifest
 SHA-256: `6d0a6464e9a74fcac96694374623f577bbaf3726a4ada31569928197e8aedcb7`.
+
+## Operator implementation refinement (#114)
+
+`openmerge admin acknowledge --queue <queue-id>` uses the numeric durable
+`queues.id`, including for retired queues. Read the queue identity with
+`openmerge queue status --json` or `GET /v1/queues`
+on the operator API, then resolve its numeric ID using the operator SQL lookup in
+[the operating guide](../operating.md#acknowledging-outside-pushes). Current status
+responses expose identity fields, not `queues.id`.
+This refines the implementation notation; the accepted ADR Decision is unchanged.
+
+Verification emission receipts expire after **24 hours** by default. Both
+`drained_at` and `restore_tested_at` must be within the bound; future timestamps
+are rejected. Set a positive duration with `--emission-receipt-max-age 24h`.
+A stale receipt requires a fresh drain inventory, backup and restore test.
+
+`binary_revision` must exactly match the running binary's clean embedded
+`vcs.revision` from Go build information (`openmerge version` prints the commit).
+Release tooling without VCS metadata may embed the reviewed commit with
+`-ldflags '-X github.com/CanadaApollo6/openmerge/internal/authority.BuildRevision=COMMIT'`.
+VCS metadata takes precedence. Dirty builds, or binaries with neither source of
+revision metadata, fail with `cannot attest BinaryRevision offline`; rebuild from
+a clean reviewed commit. Offline matching checks consistency with local build
+metadata, not binary provenance, signatures, remote worker versions, worker drain,
+or restore success; these remain operator attestations. The gate uses one combined
+receipt, so the two-file distinctness rule for `admin acknowledge` does not apply.
+
+If an applied verification basis changes during its seeing read, the command
+retains the appended evidence, exits nonzero, and asks the operator to retry
+`--verify`. That stale read does not advance the active verification time.

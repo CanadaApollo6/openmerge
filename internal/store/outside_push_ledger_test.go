@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -340,7 +341,7 @@ func TestOutsidePushWarningPagePlansAndGrowth(t *testing.T) {
 			must(t, err)
 			page, err := eventPage(t.Context(), tx, q, got[0].EventID-1)
 			must(t, err)
-			if page[0].DedupeKey != fmt.Sprintf("outside-base/%d", got[0].BaseMovedEventID) {
+			if page[0].DedupeKey == nil || *page[0].DedupeKey != fmt.Sprintf("outside-base/%d", got[0].BaseMovedEventID) {
 				t.Fatal("page lost origin association")
 			}
 			must(t, tx.Rollback(t.Context()))
@@ -406,5 +407,53 @@ func TestOutsidePushWarningsSnapshotAndStalePin(t *testing.T) {
 	push := records[0].Event.(queue.OutsidePushRecorded)
 	if push.Commits[0] != "authority-move" {
 		t.Fatal("caller mutation reached journal")
+	}
+}
+
+func TestOutsidePushLedgerOrphansRemainAnomaliesAfterAcknowledgement(t *testing.T) {
+	for _, key := range []string{"", "outside-base/999999999", "outside-base/1", "garbage"} {
+		t.Run(key, func(t *testing.T) {
+			s := newStore(t)
+			q := ensureQueue(t, s, "")
+			// Deliberately inject an audit without a valid originating BaseMoved.
+			push := queue.OutsidePushRecorded{PreviousSHA: "base", NewSHA: "orphan", VerificationBeforeLanding: "none", At: time.Now().UTC()}
+			name, raw, err := queue.EncodeEvent(push)
+			must(t, err)
+			var id int64
+			var dedupe any
+			if key != "" {
+				dedupe = key
+			}
+			must(t, s.pool.QueryRow(t.Context(), `INSERT INTO events(queue_id,type,payload,dedupe_key) VALUES($1,$2,$3::jsonb,$4) RETURNING id`, q, name, string(raw), dedupe).Scan(&id))
+			for i := 0; i < 2; i++ {
+				err = s.VisitOutsidePushWarnings(t.Context(), q, func(OutsidePushWarning) error { t.Fatal("orphan presented as valid warning"); return nil })
+				if err == nil || !strings.Contains(err.Error(), "ledger anomaly: orphan") {
+					t.Fatalf("silently dropped orphan: %v", err)
+				}
+				if i == 0 {
+					_, err = s.AcknowledgeOutsidePush(t.Context(), q, id, push.NewSHA, "operator")
+					must(t, err)
+				}
+			}
+		})
+	}
+}
+
+func TestEventRecordDedupeLoadingIsExplicit(t *testing.T) {
+	s := newStore(t)
+	q := ensureQueue(t, s, "")
+	appendEvents(t, s, q, queue.BaseMoved{SHA: "base"})
+	records, err := s.EventsAfter(t.Context(), q, 0)
+	must(t, err)
+	if len(records) != 1 || records[0].DedupeKey != nil {
+		t.Fatal("EventsAfter pretended to load dedupe association")
+	}
+	tx, err := s.pool.Begin(t.Context())
+	must(t, err)
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	page, err := eventPage(t.Context(), tx, q, 0)
+	must(t, err)
+	if len(page) != 1 || page[0].DedupeKey == nil || *page[0].DedupeKey != "" {
+		t.Fatal("loaded empty association is ambiguous")
 	}
 }

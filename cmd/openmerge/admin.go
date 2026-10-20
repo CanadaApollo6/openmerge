@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -39,11 +41,9 @@ func runAdmin(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stderr, "acknowledge requires --queue, --event, matching --sha, --operator, operator database access and a timeout of 1ms..2m")
 		return 2
 	}
-	for _, path := range []string{*drain, *backup} {
-		if err := adminReceiptFile(path); err != nil {
-			_, _ = fmt.Fprintln(stderr, "first-emission gate: provide --drain-receipt and --backup-receipt as nonempty regular files; retain all-host worker inventory and a verified pre-emission backup restore test (docs/operating.md#acknowledging-outside-pushes)")
-			return 2
-		}
+	if err := adminReceiptFiles(*drain, *backup); err != nil {
+		_, _ = fmt.Fprintln(stderr, "first-emission gate:", err, "(docs/operating.md#acknowledging-outside-pushes)")
+		return 2
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
@@ -65,27 +65,60 @@ func runAdmin(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func adminReceiptFile(path string) error {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return err
+// Each receipt is an operator JSON document with its own kind and evidence.
+func adminReceiptFiles(drain, backup string) error {
+	var paths [2]string
+	var hashes [2][32]byte
+	var kinds [2]string
+	for i, path := range []string{drain, backup} {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil {
+			return err
+		}
+		paths[i], err = filepath.Abs(resolved)
+		if err != nil {
+			return err
+		}
+		info, err := os.Stat(paths[i])
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return errors.New("receipt must be a regular file")
+		}
+		f, err := os.Open(paths[i])
+		if err != nil {
+			return err
+		}
+		info, statErr := f.Stat()
+		if statErr != nil || !info.Mode().IsRegular() || info.Size() == 0 || info.Size() > 64*1024 {
+			_ = f.Close()
+			return errors.New("receipts must be nonempty regular JSON files up to 64KiB")
+		}
+		data, err := io.ReadAll(io.LimitReader(f, 64*1024+1))
+		_ = f.Close()
+		if err != nil {
+			return err
+		}
+		if len(data) > 64*1024 {
+			return errors.New("receipt exceeds 64KiB")
+		}
+		hashes[i] = sha256.Sum256(data)
+		var receipt struct {
+			Kind string `json:"kind"`
+		}
+		if err := json.Unmarshal(data, &receipt); err != nil {
+			return fmt.Errorf("receipt must be a JSON document: %w", err)
+		}
+		kinds[i] = receipt.Kind
 	}
-	if !info.Mode().IsRegular() || info.Size() == 0 || info.Size() > 64*1024 {
-		return errors.New("receipt must be a nonempty regular file up to 64KiB")
+	if paths[0] == paths[1] || hashes[0] == hashes[1] {
+		return errors.New("drain and backup receipts must have distinct resolved paths and content hashes")
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		return err
+	for i, kind := range []string{"drain", "backup"} {
+		if kinds[i] != kind {
+			return fmt.Errorf("%s receipt requires kind %q", kind, kind)
+		}
 	}
-	defer func() { _ = f.Close() }()
-	info, err = f.Stat()
-	if err != nil {
-		return err
-	}
-	if !info.Mode().IsRegular() || info.Size() == 0 || info.Size() > 64*1024 {
-		return errors.New("receipt must be a nonempty regular file up to 64KiB")
-	}
-	var first [1]byte
-	_, err = f.Read(first[:])
-	return err
+	return nil
 }

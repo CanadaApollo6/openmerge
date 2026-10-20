@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/authority"
@@ -26,9 +28,11 @@ func eventPage(ctx context.Context, tx pgx.Tx, q QueueID, after int64) ([]EventR
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (EventRecord, error) {
 		var r EventRecord
 		var raw []byte
-		if err := row.Scan(&r.ID, &raw, &r.DedupeKey); err != nil {
+		var key string
+		if err := row.Scan(&r.ID, &raw, &key); err != nil {
 			return r, err
 		}
+		r.DedupeKey = &key
 		r.Event, err = queue.DecodeEvent(raw)
 		return r, err
 	})
@@ -37,8 +41,9 @@ func eventPage(ctx context.Context, tx pgx.Tx, q QueueID, after int64) ([]EventR
 func dedupeEvent(ctx context.Context, tx pgx.Tx, q QueueID, key string) (EventRecord, error) {
 	var r EventRecord
 	var raw []byte
-	err := tx.QueryRow(ctx, `SELECT id, payload, dedupe_key FROM events WHERE queue_id=$1 AND dedupe_key=$2`, q, key).Scan(&r.ID, &raw, &r.DedupeKey)
+	err := tx.QueryRow(ctx, `SELECT id, payload, dedupe_key FROM events WHERE queue_id=$1 AND dedupe_key=$2`, q, key).Scan(&r.ID, &raw, &key)
 	if err == nil {
+		r.DedupeKey = &key
 		r.Event, err = queue.DecodeEvent(raw)
 	}
 	return r, err
@@ -85,6 +90,12 @@ func (s *Store) VisitOutsidePushWarnings(ctx context.Context, q QueueID, visit f
 					// Use the same pin acceptance rules as replay, without building unrelated
 					// queue projections or retaining all pending BaseMoved associations.
 					policy = queue.Apply(policy, e)
+				case queue.OutsidePushRecorded:
+					// Validate every audit independently of origin-mode warnings, before
+					// consulting acknowledgements. Orphans remain anomalies even if acked.
+					if err := validateOutsidePushOrigin(ctx, tx, q, r, e); err != nil {
+						return err
+					}
 				case queue.BaseMoved:
 					pin := policy.AuthorityPin()
 					if pin == nil || pin.Authority != authority.OpenMerge {
@@ -99,7 +110,7 @@ func (s *Store) VisitOutsidePushWarnings(ctx context.Context, q QueueID, visit f
 					}
 					push, ok := audit.Event.(queue.OutsidePushRecorded)
 					if !ok || audit.ID <= r.ID || push.NewSHA != e.SHA {
-						return fmt.Errorf("invalid outside push association for base event %d", r.ID)
+						return fmt.Errorf("outside push ledger anomaly: invalid outside push association for base event %d", r.ID)
 					}
 					receipt, err := acknowledgement(ctx, tx, q, audit.ID, push.NewSHA)
 					if err != nil {
@@ -191,4 +202,34 @@ func (s *Store) AcknowledgeOutsidePush(ctx context.Context, q QueueID, source in
 		return nil, err
 	}
 	return receipt, nil
+}
+
+// validateOutsidePushOrigin uses the primary key, retaining bounded scan memory.
+func validateOutsidePushOrigin(ctx context.Context, tx pgx.Tx, q QueueID, r EventRecord, push queue.OutsidePushRecorded) error {
+	key := ""
+	if r.DedupeKey != nil {
+		key = *r.DedupeKey
+	}
+	source, err := strconv.ParseInt(strings.TrimPrefix(key, "outside-base/"), 10, 64)
+	anomaly := fmt.Errorf("outside push ledger anomaly: orphan outside_push_recorded event %d (dedupe key %q)", r.ID, key)
+	if err != nil || source <= 0 || source >= r.ID || key != fmt.Sprintf("outside-base/%d", source) {
+		return anomaly
+	}
+	var raw []byte
+	err = tx.QueryRow(ctx, `SELECT payload FROM events WHERE queue_id=$1 AND id=$2`, q, source).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return anomaly
+	}
+	if err != nil {
+		return err
+	}
+	event, err := queue.DecodeEvent(raw)
+	if err != nil {
+		return err
+	}
+	base, ok := event.(queue.BaseMoved)
+	if !ok || base.SHA != push.NewSHA {
+		return anomaly
+	}
+	return nil
 }
