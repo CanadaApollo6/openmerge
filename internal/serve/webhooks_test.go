@@ -332,44 +332,27 @@ func (d pollSignalDriver) ListOpenPullRequests(ctx context.Context, repo forge.R
 
 func TestHealthyIdleLoopUsesBackstopAndDeliveryInterruptsTimer(t *testing.T) {
 	s, w, _, _ := fixture(t, repositoryConfig)
-	s.options.PollInterval = 10 * time.Millisecond
-	s.options.BackstopInterval = time.Hour
-	s.options.WebhooksConfigured = true
-	s.webhooks.observe("7", repo.Path, time.Now())
-	polls := make(chan struct{}, 8)
-	w.Driver = pollSignalDriver{Driver: w.Driver, polls: polls}
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan struct{})
-	go func() { defer close(done); s.loop(ctx, w) }()
-	defer func() { cancel(); <-done }()
-	select {
-	case <-polls:
-	case <-time.After(5 * time.Second):
-		t.Fatal("initial poll missing")
-	}
-	select {
-	case <-polls:
-		t.Fatal("healthy idle queue polled at fast interval")
-	case <-time.After(80 * time.Millisecond):
-	}
-	_, err := s.store.Append(t.Context(), w.id, []queue.Event{queue.PauseRequested{Reason: "operator", Detail: "idle change"}}, "")
-	must(t, err)
-	select {
-	case <-polls:
-	case <-time.After(time.Second):
-		t.Fatal("idle journal change did not trigger reconciliation")
-	}
-	select {
-	case <-polls:
-		t.Fatal("unchanged idle queue did not return to backstop")
-	case <-time.After(80 * time.Millisecond):
-	}
-	must(t, s.Notify(t.Context(), "7", repo.Path, "wake"))
-	select {
-	case <-polls:
-	case <-time.After(5 * time.Second):
-		t.Fatal("delivery did not interrupt backstop timer")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		polls := startIdleBackstop(t, s, w)
+		_, err := s.store.Append(t.Context(), w.id, []queue.Event{queue.PauseRequested{Reason: "operator", Detail: "idle change"}}, "")
+		must(t, err)
+		// Journal activity must reconcile at the next activity check, long
+		// before the forge backstop expires.
+		time.Sleep(s.options.PollInterval)
+		synctest.Wait()
+		requireBackstopPoll(t, polls)
+		time.Sleep(3 * s.options.PollInterval)
+		synctest.Wait()
+		select {
+		case <-polls:
+			t.Fatal("unchanged idle queue did not return to backstop")
+		default:
+		}
+		must(t, s.Notify(t.Context(), "7", repo.Path, "wake"))
+		// A delivery interrupts the timer without advancing fake time.
+		synctest.Wait()
+		requireBackstopPoll(t, polls)
+	})
 }
 
 func TestBackstopDetectsAnotherServerStartingTesting(t *testing.T) {
@@ -395,61 +378,60 @@ func TestBackstopDetectsAnotherServerStartingTesting(t *testing.T) {
 
 func TestIdleActivityChecksPreserveForgeBackstopDeadline(t *testing.T) {
 	s, w, _, _ := fixture(t, repositoryConfig)
-	s.options.PollInterval = 10 * time.Millisecond
-	s.options.BackstopInterval = 100 * time.Millisecond
-	s.options.WebhooksConfigured = true
-	s.webhooks.observe("7", repo.Path, time.Now())
-	polls := make(chan struct{}, 8)
-	w.Driver = pollSignalDriver{Driver: w.Driver, polls: polls}
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan struct{})
-	go func() { defer close(done); s.loop(ctx, w) }()
-	defer func() { cancel(); <-done }()
-	var previous time.Time
-	for range 3 {
-		select {
-		case <-polls:
-			now := time.Now()
-			if !previous.IsZero() && now.Sub(previous) < s.options.BackstopInterval-10*time.Millisecond {
+	synctest.Test(t, func(t *testing.T) {
+		polls := startIdleBackstop(t, s, w)
+		// startIdleBackstop has already advanced three activity checks.
+		remaining := s.options.BackstopInterval - 3*s.options.PollInterval
+		for range 3 {
+			time.Sleep(remaining - time.Nanosecond)
+			synctest.Wait()
+			select {
+			case <-polls:
 				t.Fatal("unchanged queue reconciled before its backstop")
+			default:
 			}
-			previous = now
-		case <-time.After(time.Second):
-			t.Fatal("database activity checks postponed forge backstop")
+			time.Sleep(time.Nanosecond)
+			synctest.Wait()
+			requireBackstopPoll(t, polls)
+			remaining = s.options.BackstopInterval
 		}
-	}
+	})
 }
 
 func TestActivityAndHealthyDeliveryDoNotShortenErrorOrQuotaBackoff(t *testing.T) {
 	for _, name := range []string{"error", "quota"} {
 		t.Run(name, func(t *testing.T) {
 			s, w, _, _ := fixture(t, repositoryConfig)
-			s.options.WebhooksConfigured = true
-			s.options.PollInterval = time.Millisecond
-			s.webhooks.observe("7", repo.Path, time.Now())
-			polls := make(chan struct{}, 8)
-			err := errors.New("temporary read failure")
-			if name == "quota" {
-				err = &quotaBackoff{until: time.Now().Add(time.Hour)}
-			}
-			w.Driver = pollSignalDriver{Driver: w.Driver, polls: polls, err: err}
-			ctx, cancel := context.WithCancel(t.Context())
-			done := make(chan struct{})
-			go func() { defer close(done); s.loop(ctx, w) }()
-			defer func() { cancel(); <-done }()
-			select {
-			case <-polls:
-			case <-time.After(5 * time.Second):
-				t.Fatal("initial cycle missing")
-			}
-			_, err = s.store.Append(t.Context(), w.id, []queue.Event{queue.PauseRequested{Reason: "operator", Detail: "peer write during backoff"}}, "")
-			must(t, err)
-			must(t, s.Notify(t.Context(), "7", repo.Path, "during-backoff"))
-			select {
-			case <-polls:
-				t.Fatal("delivery bypassed backoff")
-			case <-time.After(80 * time.Millisecond):
-			}
+			synctest.Test(t, func(t *testing.T) {
+				s.options.WebhooksConfigured = true
+				s.options.PollInterval = time.Millisecond
+				s.webhooks.observe("7", repo.Path, time.Now())
+				polls := make(chan struct{}, 8)
+				err := errors.New("temporary read failure")
+				if name == "quota" {
+					err = &quotaBackoff{until: time.Now().Add(time.Hour)}
+				}
+				w.Driver = pollSignalDriver{Driver: w.Driver, polls: polls, err: err}
+				// Bubble-owned channels let Wait observe the loop's idle state.
+				w.wake = make(chan struct{}, 1)
+				s.slots = make(chan struct{}, s.options.Concurrency)
+				ctx, cancel := context.WithCancel(t.Context())
+				done := make(chan struct{})
+				go func() { defer close(done); s.loop(ctx, w) }()
+				defer func() { cancel(); <-done }()
+				synctest.Wait()
+				requireBackstopPoll(t, polls)
+				_, err = s.store.Append(t.Context(), w.id, []queue.Event{queue.PauseRequested{Reason: "operator", Detail: "peer write during backoff"}}, "")
+				must(t, err)
+				must(t, s.Notify(t.Context(), "7", repo.Path, "during-backoff"))
+				time.Sleep(time.Second)
+				synctest.Wait()
+				select {
+				case <-polls:
+					t.Fatal("delivery bypassed backoff")
+				default:
+				}
+			})
 		})
 	}
 }
