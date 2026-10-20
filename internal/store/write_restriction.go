@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
@@ -94,7 +95,11 @@ func (s *Store) CommitWriteRestrictionVerification(ctx context.Context, records 
 				if err != nil {
 					return err
 				}
-				if !reflect.DeepEqual(e, r.Event) {
+				_, canonicalPrevious, err := queue.EncodeEvent(e)
+				if err != nil {
+					return err
+				}
+				if !bytes.Equal(canonicalPrevious, raw) {
 					return errors.New("verification nonce reused for a different read")
 				}
 			} else {

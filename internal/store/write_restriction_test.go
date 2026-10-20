@@ -33,6 +33,9 @@ func verificationFixture(t *testing.T) (QueueKey, queue.WriteRestrictionVerified
 func TestVerificationAtomicRetryDailyAndRestart(t *testing.T) {
 	s := newStore(t)
 	k, v, _ := verificationFixture(t)
+	// Wire-identical retries must survive JSON dropping monotonic clock data
+	// and normalizing the time location. Both are valid event representations.
+	v.VerifiedAt = time.Now()
 	q, err := s.EnsureQueue(t.Context(), k)
 	must(t, err)
 	records := []VerificationRecord{{q, v}}
@@ -217,4 +220,34 @@ func TestProposedLookupBoundedPages(t *testing.T) {
 		t.Log(line)
 	}
 	must(t, rows.Err())
+}
+
+func TestDailyAppliedVerificationAdvancesTimeWithIdenticalFingerprint(t *testing.T) {
+	s := newStore(t)
+	k, v, pin := verificationFixture(t)
+	q, err := s.EnsureQueue(t.Context(), k)
+	must(t, err)
+	appendEvents(t, s, q, queue.ConfigApplied{Commit: pin.GoverningCommit, Digest: pin.EffectiveDigest}, pin)
+	var previous int64
+	for day := 0; day < 2; day++ {
+		state, _, err := s.Load(t.Context(), q)
+		must(t, err)
+		read := v
+		read.Scope = "applied"
+		read.Basis = state.RulesSourceRevision(queue.WriteRestriction)
+		read.Nonce = fmt.Sprint("daily-applied/", day)
+		read.VerifiedAt = v.VerifiedAt.Add(time.Duration(day) * 24 * time.Hour)
+		receipts, err := s.CommitWriteRestrictionVerification(t.Context(), []VerificationRecord{{q, read}})
+		must(t, err)
+		if receipts[0].EventID == previous || receipts[0].Event.ProtectionFingerprint != v.ProtectionFingerprint {
+			t.Fatal("daily identical evidence did not get a distinct source event")
+		}
+		previous = receipts[0].EventID
+		state, _, err = s.Load(t.Context(), q)
+		must(t, err)
+		status := state.WriteRestrictionStatus()
+		if status.State != "verified" || !status.LastVerifiedAt.Equal(read.VerifiedAt) || !status.LastObservedAt.Equal(read.VerifiedAt) {
+			t.Fatal("daily applied evidence did not advance the active verification time", status)
+		}
+	}
 }
