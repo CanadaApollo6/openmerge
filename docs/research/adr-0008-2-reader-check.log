@@ -79,3 +79,42 @@ ok  	github.com/CanadaApollo6/openmerge/internal/forge/fake	0.003s
 ?   	github.com/CanadaApollo6/openmerge/internal/forge/forgetest	[no test files]
 ok  	github.com/CanadaApollo6/openmerge/internal/forge/github	3.107s
 focused suite exit 0
+
+Round 3 verification
+Code revision: d9fb6ba61db3e5b7cdea7bc4b33b4331886c1860 (clean implementation checkout)
+Started: 2026-10-20T16:21:16.679575+00:00
+Command: flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB OPENMERGE_TEST_DATABASE_URL=postgres://postgres:openmerge@localhost:54329/postgres?sslmode=disable make check
+
+golangci-lint run
+0 issues.
+go test -race -short -count=1 -timeout=15m ./...
+?   	github.com/CanadaApollo6/openmerge/cmd/capacity-report	[no test files]
+ok  	github.com/CanadaApollo6/openmerge/cmd/openmerge	61.384s
+ok  	github.com/CanadaApollo6/openmerge/internal/ascii	1.005s
+ok  	github.com/CanadaApollo6/openmerge/internal/authority	1.086s
+ok  	github.com/CanadaApollo6/openmerge/internal/brief	3.410s
+ok  	github.com/CanadaApollo6/openmerge/internal/changepolicy	1.841s
+?   	github.com/CanadaApollo6/openmerge/internal/changepolicy/replay	[no test files]
+ok  	github.com/CanadaApollo6/openmerge/internal/classification	2.340s
+ok  	github.com/CanadaApollo6/openmerge/internal/config	1.577s
+ok  	github.com/CanadaApollo6/openmerge/internal/config/condition	1.020s
+ok  	github.com/CanadaApollo6/openmerge/internal/diagnostic	1.019s
+ok  	github.com/CanadaApollo6/openmerge/internal/executor	1.164s
+ok  	github.com/CanadaApollo6/openmerge/internal/forge	7.592s
+ok  	github.com/CanadaApollo6/openmerge/internal/forge/fake	1.482s
+?   	github.com/CanadaApollo6/openmerge/internal/forge/forgetest	[no test files]
+ok  	github.com/CanadaApollo6/openmerge/internal/forge/github	44.646s
+ok  	github.com/CanadaApollo6/openmerge/internal/gitops	74.867s
+ok  	github.com/CanadaApollo6/openmerge/internal/queue	312.945s
+ok  	github.com/CanadaApollo6/openmerge/internal/serve	353.019s
+ok  	github.com/CanadaApollo6/openmerge/internal/sim	41.082s
+ok  	github.com/CanadaApollo6/openmerge/internal/sim/capacity	1.018s
+ok  	github.com/CanadaApollo6/openmerge/internal/status	14.498s
+ok  	github.com/CanadaApollo6/openmerge/internal/store	31.194s
+?   	github.com/CanadaApollo6/openmerge/schema	[no test files]
+ok  	github.com/CanadaApollo6/openmerge/scripts	1.072s
+ok  	github.com/CanadaApollo6/openmerge/tools/dogfood	1.620s
+CGO_ENABLED=0  go build -ldflags "-X main.version=d9fb6ba" -o bin/openmerge ./cmd/openmerge
+
+Completed: 2026-10-20T16:29:43.247994+00:00
+Exit: 0

@@ -206,8 +206,8 @@ original check log was superseded by the rebased validation log below.
 
 Only tests invoke `ObserveWriteRestriction`. No serve/config/queue/executor
 consumer selects it. This PR adds no events or wire fixtures and changes no schema,
-migration, Makefile, CI file or test flag. Round 2 updates three existing authority
-fixture values/fingerprints, listed below. `forge.PushOptions` remains PR 3a work.
+migration, Makefile, CI file or test flag. Rounds 2 and 3 update three existing authority
+fixture encodings/fingerprints, listed below. `forge.PushOptions` remains PR 3a work.
 Classic and installation-permission sources remain independent.
 
 `runtime_rules.go`, `rules.go`, `classic_protection.go`, `permissions.go`,
@@ -374,3 +374,120 @@ retains exact commands, exits, hashes and local artifact paths.
 
 The final evidence commit changes documentation/artifacts only. No sandbox
 request was repeated, no production consumer was selected, and the PR stays Inert.
+
+## Round 3 review corrections
+
+Round 3 starts at `bba30d0` on main `addec7d`; implementation commit
+`d9fb6ba61db3e5b7cdea7bc4b33b4331886c1860` adds the two remaining corrections.
+The PR branch is checked out in another worktree, so this checkout started
+at the exact remote commit in detached HEAD and pushes its descendant HEAD to
+`adr0008/2-authority-reader` without rebasing or force-pushing.
+
+The previous scalar-array flattening was reproduced by both explicit regressions
+and the generated-input test: `null` and `[null]` shared the same encoding.
+Array elements now always have indexed paths. The reserved segment `~2` plus a
+zero-based decimal index (without leading zeros) identifies an array element;
+object keys escape `~` and `/` per RFC 6901, and reserved `~3` represents an empty
+object key. These typed extensions keep numeric object keys, empty keys and
+literal marker-looking keys distinct from array indices. Scalar JSON spelling
+and empty array/object markers remain unchanged. The encoding is documented on
+`Parameter` in `internal/authority/evidence.go` and in
+`docs/forge-driver-contract.md`. The input parameters/conditions object remains
+the schema boundary; all JSON value shapes beneath it retain their identity
+within the existing evidence bounds.
+
+`TestAuthorityParameterLeafTypesHaveDistinctFingerprints` now covers 28 distinct
+observations: all five scalar/single-element-array pairs (string, number, null,
+boolean and empty string), empty array/absence/null, numeric object keys versus
+single/nested arrays, nested arrays of objects versus objects of arrays, strings
+containing JSON versus actual containers, empty object keys at both depths,
+literal reserved markers, and nested empty containers. It checks exact encodings
+and distinct observation fingerprints. Existing nested HTTP expectations and
+1,000-item boundary assertions now count indexed scalar-array leaves.
+
+`TestAuthorityParameterEncodingInjective` generates 2,000 random JSON values
+(depth up to four), testing eight container/string variants of each. It compares
+`json.Marshal` of decoded values with their normalized encodings, using PCG seeds
+98 and 3, including slash/tilde, empty, numeric, Unicode and NUL keys/strings.
+Result: **16,000 generated inputs, 5,159 distinct canonical JSON values, zero
+encoding collisions**. The test failed on the original implementation and passes
+with the correction.
+
+Shared `BypassActor.Validate` now rejects any ID on `organization_admin`,
+`deploy_key` and `enterprise_owner`. Three negative cases augment the existing
+positive kind/mode matrix; both adapters still canonicalize upstream class-wide
+IDs. All wire fixtures, including the three selector variants, pass validation.
+
+Exactly three existing frozen fixtures change, under
+`internal/queue/testdata/wire/v1/variants/`:
+
+- `write_restriction_verified_repository_id.json`:
+  `7f63aee9c080cae8e8963eb91a6c2867a4610f4bfe39c975fabc4f9cb2341cb5` →
+  `43f1bf0e8a6b5c5367f5fd561ed52ed1b00575c19c8feaace92529e8895dc02a`.
+
+- `write_restriction_verified_repository_name.json`:
+  `f586a6d529f172c19ef2bd122931330f4190ea5bec98247e84349f50764c4530` →
+  `ac4717198411f06282efaea030781f57e8b7601c9bde77e2527fd24d1b145a5e`.
+
+- `write_restriction_verified_repository_property.json`:
+  `fa88a49f372ea2942a040002e0afd4d43cf67773d3a4168b770b43fd9333bf08` →
+  `6d636d16101c4de8b11dcad5af6cf5b524761acb92fb2f09906adf798e8f1dd0`.
+
+A structural comparison against `bba30d0` confirms that only parameter paths,
+scalar-array grouping and the associated fingerprints changed in these three
+files. Every other wire fixture is byte-identical. No fixture identities,
+visibility states, actors, rules or other payload fields changed, and the
+fingerprint algorithm is unchanged.
+
+### Round 3 verification results
+
+The focused shared actor, authority, queue wire/fixture, fake/HTTP and real-git
+contract suites passed (exit 0):
+
+```sh
+flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB \
+  go test ./internal/authority ./internal/queue ./internal/forge/... \
+  -run 'Test(BypassActor|WriteRestriction|UnconfiguredAuthority|Authority|ProtectionFingerprint|InheritedConditionAndNestedRuleFingerprints|Wire)' -count=1
+```
+
+The clean implementation commit `d9fb6ba` passed `make check` from
+`2026-10-20T16:21:16.679575Z` through `2026-10-20T16:29:43.247994Z`:
+formatting, lint (zero issues), the full short race suite, PostgreSQL integration
+tests exclusively on localhost:54329, and the production build. The
+[retained check log](adr-0008-2-reader-check.log) includes the exact invocation,
+output and exit 0. The binary is version `d9fb6ba`; it was never deployed or
+invoked against GitHub.
+
+The unchanged `scripts/adr-0008-1-verify.py` passed offline against the same
+pre-authority baseline `e9b24e8` and clean candidate `d9fb6ba`, with the retained
+export hashes checked first. An external Python runner overrides only `invoke`
+to force `GOMEMLIMIT=4GiB`, including replay, and uses a separate round 3 cache.
+All heavy commands retain the shared `flock`, `GOFLAGS=-p=2` and disabled module/
+toolchain downloads. The unchanged comparator uses strict state comparison.
+An initial preflight rejected runner-created `scripts/__pycache__` before any
+heavy command ran; that generated file was removed and the runner was rerun with
+`python3 -B` against the clean implementation tree.
+
+The [round 3 inert report](adr-0008-2-reader-round3-inert.json) retains commands,
+exits, hashes and local artifact paths:
+
+- Wrapper exit 0; strict replay gates 2 and 4 PASS. All 2,159 actions, structural
+  states, snapshot hashes and deadline-boundary checkpoints match, including
+  the repeated candidate stream; no non-allowlisted differences exist.
+- Authority remains nil at all 2,159 checkpoints in all three streams.
+- All 90 approval/legacy checkpoints at depths 1 and 4 match exactly, with zero
+  deltas in checkpoint counts, action counts, action bytes or snapshot bytes.
+- The original decoder preserves v6 snapshot/outside-push cursor bytes and
+  rejects authority v7; the candidate accepts both versions as intended.
+- All 94 pre-authority wire fixtures remain byte-identical. The eight authority
+  fixtures listed as new against that old baseline were already on main from
+  PR 1; only the three variants enumerated above change in round 3.
+
+The legacy runtime/permission source files are byte-identical to main `addec7d`,
+including runtime reader SHA-256
+`972447dbe976f95a9ae9904b1f384af660331555ae8362ca71a042ee2b01f2e8`.
+`ObserveWriteRestriction` still has no production consumer. No product/test/
+simulator GitHub call, live DB access, systemd change, live status API call,
+`openmerge/*` ref write, Makefile/CI/test-flag change, schema/migration change or
+sandbox request occurred. The final evidence commit changes documentation and
+artifacts only; the PR remains Inert.
