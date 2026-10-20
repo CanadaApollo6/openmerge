@@ -54,17 +54,20 @@ after step 6's activation and settlement requirements, outside this setup plan.
 
 Legacy `planRules` recognizes the successor by managed name, active branch
 coverage of the entire fence family, strict four-rule shape, and exactly the
-App bypass. It preserves additional coverage, creates no second fence, and
-rejects ambiguous pairs/incompatible successor names. Its original `github`
+App bypass. It preserves additional coverage within fence/queue/green/verify
+only, creates no second fence, and rejects ambiguous pairs/incompatible successor names. Its original `github`
 setup preview/apply golden remains byte-identical.
 
 Rollback preflight uses the complete paginated prospective branch inventory and
 the actual `ValidateRules`, including inherited/push rulesets and protected ref
-families. Green/verify conditions are projected to the legacy validator's queue
-family for its conservative future-namespace overlap check. Classic reads use
+families. All four future families use the 3a coverage matcher's direct prefix
+intersection, including wildcards within family names; no namespace substitution
+is used. Partial exclusions cannot certify disjointness. Classic reads use
 the admin client for every base and corresponding fence, including separate
-signature reads when omitted. The pure `classicProtectionProblems` receives the
-actual App ID, `hasMerges` only on merge-method bases, and `needsForce=false`.
+signature reads when omitted. Every compatibility-relevant field and nested
+value is checked for presence and type before SDK zero values can hide missing
+settings (the required-field list is recorded in the round-2 results). The pure
+`classicProtectionProblems` receives the actual App ID, `hasMerges` only on merge-method bases, and `needsForce=false`.
 `Driver.ValidateClassicProtection` is never called. Explicit `Branch not
 protected` establishes absence; generic 404, null/incomplete details and failed
 reads block. Installation permission checks use the actual installation driver.
@@ -92,7 +95,8 @@ traces remain unchanged with and without Administration read.
 
 The UTF-8 JSON file is exclusively created mode 0600 and synced, including its
 parent directory, before the first write. Existing different/invalid captures
-are never overwritten. Version 1 shape:
+are never overwritten. Reusing an identical capture repairs its mode to 0600
+and syncs it again before any mutation. Version 1 shape:
 
 ```json
 {
@@ -292,7 +296,11 @@ esac
 SH
 chmod 700 "$EVIDENCE/askpass.sh"
 export GIT_ASKPASS="$EVIDENCE/askpass.sh" GIT_TERMINAL_PROMPT=0
-PUSH_TOKEN="$APP_TOKEN" git clone --bare "https://github.com/$REPO.git" "$EVIDENCE/probe.git" \
+mkdir -m 700 "$EVIDENCE/git-home"
+export HOME="$EVIDENCE/git-home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+# Clear helper chains on every authenticated invocation, including clone.
+git_probe() { git -c credential.helper= -c credential.useHttpPath=true "$@"; }
+PUSH_TOKEN="$APP_TOKEN" git_probe clone --bare "https://github.com/$REPO.git" "$EVIDENCE/probe.git" \
   > "$EVIDENCE/clone.txt" 2>&1
 export GIT_AUTHOR_NAME='3b sandbox acceptance' GIT_AUTHOR_EMAIL='sandbox@example.invalid'
 export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
@@ -302,7 +310,8 @@ TREE=$(git rev-parse "$TIP^{tree}")
 S0=$(printf '3b probe root\n' | git commit-tree "$TREE" -p "$TIP")
 S1=$(printf '3b probe child\n' | git commit-tree "$TREE" -p "$S0")
 DIVERGED=$(printf '3b probe sibling\n' | git commit-tree "$TREE" -p "$TIP")
-printf '%s\n' "default=$TIP" "S0=$S0" "S1=$S1" "DIVERGED=$DIVERGED" > "$EVIDENCE/objects.txt"
+DEFAULT_DIVERGED=$(printf '3b default non-FF probe\n' | git commit-tree "$TREE")
+printf '%s\n' "default=$TIP" "S0=$S0" "S1=$S1" "DIVERGED=$DIVERGED" "DEFAULT_DIVERGED=$DEFAULT_DIVERGED" > "$EVIDENCE/objects.txt"
 REFS=(sandbox-3b/base)
 for family in fence queue green verify; do
   REFS+=("openmerge/$family/3b-single" "openmerge/$family/3b/nested")
@@ -316,9 +325,14 @@ expect_reject() {
 }
 # App creation works for a selector base and both depths in each ref family.
 for ref in "${REFS[@]}"; do
-  PUSH_TOKEN="$APP_TOKEN" git push --porcelain origin "$S0:refs/heads/$ref" \
+  PUSH_TOKEN="$APP_TOKEN" git_probe push --porcelain origin "$S0:refs/heads/$ref" \
     > "$EVIDENCE/app-create-${ref//\//_}.response" 2>&1
 done
+# The actual default rejects both writer FF update and non-FF replacement.
+PUSH_TOKEN="$WRITER_TOKEN" expect_reject writer-default-update git_probe push --porcelain \
+  origin "$S0:refs/heads/$DEFAULT"
+PUSH_TOKEN="$WRITER_TOKEN" expect_reject writer-default-force git_probe push --porcelain \
+  "--force-with-lease=refs/heads/$DEFAULT:$TIP" origin "$DEFAULT_DIVERGED:refs/heads/$DEFAULT"
 # Ordinary writer: create/update/delete/non-FF are all rejected on bases+refs.
 # Team break-glass: those same operations are rejected on refs only.
 for actor in writer glass; do
@@ -326,31 +340,33 @@ for actor in writer glass; do
   for ref in "${REFS[@]}"; do
     [ "$actor" != glass ] || [ "$ref" != sandbox-3b/base ] || continue
     label="$actor-${ref//\//_}"
-    PUSH_TOKEN="$token" expect_reject "$label-create" git push --porcelain origin "$S0:refs/heads/$ref-create"
-    PUSH_TOKEN="$token" expect_reject "$label-update" git push --porcelain origin "$S1:refs/heads/$ref"
-    PUSH_TOKEN="$token" expect_reject "$label-delete" git push --porcelain origin ":refs/heads/$ref"
-    PUSH_TOKEN="$token" expect_reject "$label-force" git push --porcelain \
+    PUSH_TOKEN="$token" expect_reject "$label-create" git_probe push --porcelain origin "$S0:refs/heads/$ref-create"
+    PUSH_TOKEN="$token" expect_reject "$label-update" git_probe push --porcelain origin "$S1:refs/heads/$ref"
+    PUSH_TOKEN="$token" expect_reject "$label-delete" git_probe push --porcelain origin ":refs/heads/$ref"
+    PUSH_TOKEN="$token" expect_reject "$label-force" git_probe push --porcelain \
       "--force-with-lease=refs/heads/$ref:$S0" origin "$DIVERGED:refs/heads/$ref"
   done
 done
-PUSH_TOKEN="$APP_TOKEN" git ls-remote origin > "$EVIDENCE/remote-after-rejections.txt"
-# Expected: every initialized probe remains S0. No *-create probe exists.
+PUSH_TOKEN="$APP_TOKEN" git_probe ls-remote origin > "$EVIDENCE/remote-after-rejections.txt"
+# Expected: default remains TIP; every initialized probe remains S0.
+# No *-create probe exists.
+[ "$(awk -v ref="refs/heads/$DEFAULT" '$2 == ref {print $1}' "$EVIDENCE/remote-after-rejections.txt")" = "$TIP" ]
 # The declared team can create/update/force/delete a covered disposable base.
 for spec in "$S0:refs/heads/sandbox-3b/glass" "$S1:refs/heads/sandbox-3b/glass" \
             "+$DIVERGED:refs/heads/sandbox-3b/glass" ':refs/heads/sandbox-3b/glass'; do
-  PUSH_TOKEN="$GLASS_TOKEN" git push --porcelain origin "$spec" >> "$EVIDENCE/glass-base.response" 2>&1
+  PUSH_TOKEN="$GLASS_TOKEN" git_probe push --porcelain origin "$spec" >> "$EVIDENCE/glass-base.response" 2>&1
 done
 # App update/non-FF/delete work on every covered probe; lease the known tip.
 for ref in "${REFS[@]}"; do
   label="app-${ref//\//_}"
-  PUSH_TOKEN="$APP_TOKEN" git push --porcelain "--force-with-lease=refs/heads/$ref:$S0" \
+  PUSH_TOKEN="$APP_TOKEN" git_probe push --porcelain "--force-with-lease=refs/heads/$ref:$S0" \
     origin "$S1:refs/heads/$ref" > "$EVIDENCE/$label-update.response" 2>&1
-  PUSH_TOKEN="$APP_TOKEN" git push --porcelain "--force-with-lease=refs/heads/$ref:$S1" \
+  PUSH_TOKEN="$APP_TOKEN" git_probe push --porcelain "--force-with-lease=refs/heads/$ref:$S1" \
     origin "$DIVERGED:refs/heads/$ref" > "$EVIDENCE/$label-force.response" 2>&1
-  PUSH_TOKEN="$APP_TOKEN" git push --porcelain "--force-with-lease=refs/heads/$ref:$DIVERGED" \
+  PUSH_TOKEN="$APP_TOKEN" git_probe push --porcelain "--force-with-lease=refs/heads/$ref:$DIVERGED" \
     origin ":refs/heads/$ref" > "$EVIDENCE/$label-delete.response" 2>&1
 done
-PUSH_TOKEN="$APP_TOKEN" git ls-remote origin > "$EVIDENCE/remote-after.txt"
+PUSH_TOKEN="$APP_TOKEN" git_probe ls-remote origin > "$EVIDENCE/remote-after.txt"
 unset GIT_DIR
 # Guarded ruleset restore is optional and separately reviewed; preview first.
 "$OM" setup rulesets --repo "$REPO" --app-id "$APP_ID" --authority openmerge \
@@ -373,7 +389,7 @@ SHAs and hash manifest. Do not publish credentials or the private key. If old
 protection blocks an App push, preserve its rejection and defer acceptance;
 never silently add bypasses or remove content protections to make it pass.
 
-## Final executed results
+## Round-1 executed results
 
 The executable source revision is
 `4d4441956291e5e07d945e046e8dac9dfd4c65ac`; the follow-up evidence commit changes
@@ -437,3 +453,82 @@ flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB \
   --config-file .openmerge.yml --strict-state \
   --out /home/riels/.cache/openmerge-3b-replay/report.json
 ```
+
+
+## Round-2 review fixes
+
+The rollback overlap proof now consumes each literal family prefix through the
+3a matcher's pathname-glob states. `*` and `?` match within one segment;
+nonterminal `**` has a zero-directory transition and an any-directory loop;
+terminal `**` remains segment-local. After consuming the prefix, any reachable
+state with a remaining segment conservatively means a future descendant can be
+matched. This checks fence, queue, green and verify at both depths and beyond,
+without requiring an existing ref. Existing bases retain `ValidateRules`' exact
+include-minus-exclude matching. A whole-family recursive exclusion (including
+wildcards in its fixed prefix), `~ALL`, or exact include/exclude cancellation
+can prove absence; other partial exclusions retain the potential overlap.
+Unsupported include or exclude grammar fails closed before exclusion proofs.
+
+Classic protection reads require these wire fields before the pure validator:
+
+- `required_status_checks`: explicit null, or an object containing boolean
+  `strict`, a string array `contexts`, and an object array `checks` whose entries
+  have string `context` values.
+- `required_pull_request_reviews`: explicit null, or an object with
+  `bypass_pull_request_allowances.apps`, an array of objects with positive
+  integer App `id` values.
+- `restrictions`: explicit null, or an object with the same complete `apps`
+  array representation.
+- `required_linear_history.enabled`, `allow_force_pushes.enabled`, and
+  `lock_branch.enabled`: present booleans.
+- `required_signatures.enabled`: present boolean when embedded; omission of
+  `required_signatures` alone triggers the separate signatures endpoint, which
+  must return a non-null object with boolean `enabled`. Embedded null or partial
+  signatures are incomplete reads.
+
+Only the exact GitHub 404 message `Branch not protected` establishes unprotected
+status. Generic 404s, missing fields, wrong types, and unknown nested structures
+block rollback. Regression coverage includes Astra's URL-only response and a
+54-case missing/null/wrong-type field matrix, plus malformed array members.
+
+Legacy successor recognition now uses `managedRefsShape`, bounding all extra
+coverage to fence/queue/green/verify. Base branches, `~ALL`, unrelated namespaces
+and wildcard family prefixes are refused without writes. Reused identical
+recovery files are chmodded to 0600 and synced again; the regression checks
+0644, 0666, 0700 and already-safe 0600 modes without changing capture bytes.
+
+The planned sandbox runbook uses an isolated Git HOME, no global/system Git
+configuration, and clears credential helpers with `credential.useHttpPath=true`
+for clone and every authenticated probe. The ordinary writer rejection matrix
+now also attempts a fast-forward update and a truly non-fast-forward replacement
+of `$DEFAULT`, leases its original tip, and verifies that tip remains unchanged.
+These GitHub probes remain planned and unexecuted. This round fetched Git refs
+but performed no GitHub writes or live-system operations.
+
+Round-2 verification on 2026-10-20 used the required host lock,
+`GOFLAGS=-p=2`, and `GOMEMLIMIT=4GiB` for every Go command:
+
+- `make check`: **exit 0**, formatting, zero lint issues, all race tests,
+  PostgreSQL integration at `localhost:54329`, simulator and build.
+  Log: `/home/riels/.cache/openmerge-3b-round2-check.log`.
+- Explicit `TestAuthorityFaultEveryHTTPBoundary` and
+  `TestAuthorityRestoreFaultEveryHTTPBoundary`: **exit 0**, all **32 apply**
+  and **30 restore** boundaries, including retry and exact restoration.
+- `TestLegacySetupMainGoldenByteIdentical`: **exit 0**, all three original
+  `github` outputs still match byte-for-byte. Their checked-in bytes also match
+  the round-1 head `fb79c302a4cd0d4f447a77daae5ac424f4fff5ec` exactly.
+- `TestAuthoritySetupPermissionGuidanceAndUnchangedRuntimeTrace`: **exit 0**,
+  unchanged runtime permission results and HTTP request traces with and without
+  Administration read. The fault/golden/trace log is
+  `/home/riels/.cache/openmerge-3b-round2-fault-golden.log`.
+- Corrected targeted coverage/rollback/classic/successor/backup/trace/golden
+  regression run: **exit 0** for `internal/authority` and `internal/forge/github`.
+  Log: `/home/riels/.cache/openmerge-3b-round2-targeted.log`.
+- All five Bash/sh runbook blocks pass `bash -n`; none was executed.
+
+The first targeted run exposed a test-data error (a valid string context was
+listed as invalid). Replacing that value with a numeric context corrected the
+fixture; the full race suite above includes the corrected test. No production
+change was needed for that development failure. Round-1 replay evidence and its
+artifact manifest remain historical records; no new replay or live deployment
+was required for these setup-only review fixes.

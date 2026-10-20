@@ -186,7 +186,15 @@ func writeRulesBackup(path string, backup rulesBackup) error {
 		if !sameJSON(previous, backup) {
 			return errors.New("backup file exists with a different plan; refusing overwrite")
 		}
-		return nil
+		file, err = os.OpenFile(path, os.O_RDWR, 0)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = file.Close() }()
+		if err := file.Chmod(0600); err != nil {
+			return err
+		}
+		return file.Sync()
 	}
 	if err != nil {
 		return err

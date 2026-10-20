@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/config"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	gh "github.com/google/go-github/v93/github"
@@ -127,25 +128,11 @@ func (c *setupAPI) rollbackPreflight(ctx context.Context, opts RulesOptions, can
 				}
 			}
 		}
-		// Run the legacy validator on every current protected ref, plus the complete
-		// future families via its conservative namespace-overlap check. Remapping a
-		// family to queue keeps the actual validator as the compatibility authority.
+		// Current refs and all future family descendants are checked directly;
+		// textual namespace substitution cannot preserve wildcard semantics.
 		for _, ref := range refs {
 			for _, p := range rollbackRules(rulesComplete, snapshot.Rulesets, ref, snapshot.DefaultBranch, opts.AppID) {
 				if p.Code == BaseBypassMissing {
-					block("rulesets", p.Ref, string(p.Code), rollbackRuleMessage(p))
-				}
-			}
-		}
-		for _, family := range []string{"green", "verify"} {
-			projected := slices.Clone(snapshot.Rulesets)
-			for i := range projected {
-				projected[i].Conditions = rollbackFamilyConditions(projected[i].Conditions, family)
-			}
-			for _, p := range rollbackRules(rulesComplete, projected, snapshot.DefaultBranch, snapshot.DefaultBranch, opts.AppID) {
-				if p.Code == RefBlocked && strings.HasPrefix(p.Ref, queuePrefix) {
-					p.Ref = strings.Replace(p.Ref, queuePrefix, "refs/heads/openmerge/"+family+"/", 1)
-					p.Message = strings.ReplaceAll(p.Message, queuePrefix, "refs/heads/openmerge/"+family+"/")
 					block("rulesets", p.Ref, string(p.Code), rollbackRuleMessage(p))
 				}
 			}
@@ -184,9 +171,10 @@ func (c *setupAPI) setupClassicProtection(ctx context.Context, repo, ref string)
 		return nil, err
 	}
 	var protection *gh.Protection
-	var fields map[string]json.RawMessage
-	_ = json.Unmarshal(raw, &fields)
-	if err := json.Unmarshal(raw, &protection); err != nil || protection == nil || len(fields) == 0 {
+	if err := completeClassicProtection(raw); err != nil {
+		return nil, fmt.Errorf("incomplete classic protection response: %w", err)
+	}
+	if err := json.Unmarshal(raw, &protection); err != nil || protection == nil {
 		return nil, errors.New("incomplete classic protection response")
 	}
 	if protection.RequiredSignatures == nil {
@@ -210,32 +198,24 @@ func rollbackRules(complete bool, rules []Ruleset, base, defaultBranch string, a
 	if !complete {
 		return nil
 	}
-	return ValidateRules(rules, base, defaultBranch, appID)
-}
-
-// Swap namespaces rather than collapsing two families. In particular a queue
-// exclusion must not accidentally waive a broad rule on green/verify. Decode
-// strings first so escaped JSON slashes have exactly the same semantics.
-func rollbackFamilyConditions(raw json.RawMessage, family string) json.RawMessage {
-	var conditions, ref map[string]json.RawMessage
-	if json.Unmarshal(raw, &conditions) != nil || json.Unmarshal(conditions["ref_name"], &ref) != nil {
-		return raw
-	}
-	swap := strings.NewReplacer(queuePrefix, "refs/heads/openmerge/"+family+"/", "refs/heads/openmerge/"+family+"/", queuePrefix)
-	for _, key := range []string{"include", "exclude"} {
-		var patterns []string
-		if json.Unmarshal(ref[key], &patterns) != nil {
-			return raw
+	problems := slices.DeleteFunc(ValidateRules(rules, base, defaultBranch, appID), func(p RuleProblem) bool { return p.Code == RefBlocked })
+	defaultRef := "refs/heads/" + strings.TrimPrefix(defaultBranch, "refs/heads/")
+	for _, r := range rules {
+		if r.Enforcement != "active" || r.Target != "branch" && r.Target != "push" || len(r.Rules) == 0 || appBypass(r, appID) {
+			continue
 		}
-		for i := range patterns {
-			patterns[i] = swap.Replace(patterns[i])
+		var conditions refConditions
+		if r.Target == "branch" && json.Unmarshal(r.Conditions, &conditions) != nil {
+			continue // ValidateRules already reports the malformed conditions.
 		}
-		setJSON(ref, key, patterns)
+		coverage := authority.RefCoverage{Includes: conditions.RefName.Include, Excludes: conditions.RefName.Exclude}
+		for _, family := range []string{"fence", "queue", "green", "verify"} {
+			prefix := "refs/heads/openmerge/" + family + "/"
+			overlap, err := coverage.MayContainRefUnder(prefix, defaultRef)
+			if r.Target == "push" || overlap || err != nil {
+				problems = append(problems, RuleProblem{Code: RefBlocked, RulesetID: r.ID, Ruleset: r.Name, Ref: prefix + "*", Message: fmt.Sprintf("ruleset %q (%d): cannot prove App pushes in %s* are unblocked; add the App bypass or exclude this namespace", r.Name, r.ID, prefix)})
+			}
+		}
 	}
-	setJSON(conditions, "ref_name", ref)
-	result, err := json.Marshal(conditions)
-	if err != nil {
-		return raw
-	}
-	return result
+	return problems
 }

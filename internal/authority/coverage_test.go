@@ -62,3 +62,55 @@ func TestTransitionExclusionsAreSets(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestCoverageFutureFamilyOverlap(t *testing.T) {
+	for _, tt := range []struct {
+		name, include string
+		excludes      []string
+		want          bool
+	}{
+		{"star family", "refs/heads/openmerge/*/*", nil, true},
+		{"recursive family", "refs/heads/openmerge/**/*", nil, true},
+		{"recursive middle", "refs/heads/**/gr*/*", nil, true},
+		{"question", "refs/heads/openmerge/gr?en/*", nil, true},
+		{"middle star", "refs/heads/openmerge/g*en/*", nil, true},
+		{"prefix star", "refs/heads/openmerge/gr*/*", nil, true},
+		{"suffix star", "refs/heads/openmerge/*een/*", nil, true},
+		{"terminal globstar", "refs/heads/openmerge/gr*/**", nil, true},
+		{"nested only", "refs/heads/openmerge/gr*/*/*", nil, true},
+		{"all", "~ALL", nil, true},
+		{"default", "~DEFAULT_BRANCH", nil, false},
+		{"different family", "refs/heads/openmerge/qu*/*", nil, false},
+		{"wrong depth", "refs/heads/openmerge/*", nil, false},
+		{"terminal globstar wrong depth", "refs/heads/openmerge/**", nil, false},
+		{"root only", "refs/heads/openmerge/green", nil, false},
+		{"other namespace", "refs/heads/other/**/*", nil, false},
+		{"other exclusion", "refs/heads/openmerge/gr*/*", []string{"refs/heads/openmerge/queue/**/*"}, true},
+		{"partial exclusion", "~ALL", []string{"refs/heads/openmerge/green/*"}, true},
+		{"recursive exclusion", "~ALL", []string{"refs/heads/openmerge/green/**/*"}, false},
+		{"wildcard exclusion", "~ALL", []string{"refs/heads/openmerge/gr?en/**/*"}, false},
+		{"middle exclusion", "~ALL", []string{"refs/heads/openmerge/g*en/**/*"}, false},
+		{"ancestor exclusion", "~ALL", []string{"refs/heads/openmerge/**/*"}, false},
+		{"all exclusion", "~ALL", []string{"~ALL"}, false},
+		{"identical cancellation", "refs/heads/openmerge/gr*/*", []string{"refs/heads/openmerge/gr*/*"}, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			coverage := authority.RefCoverage{Includes: []string{tt.include}, Excludes: tt.excludes}
+			got, err := coverage.MayContainRefUnder("refs/heads/openmerge/green/", "refs/heads/main")
+			if err != nil || got != tt.want {
+				t.Fatalf("overlap = %v, %v; want %v", got, err, tt.want)
+			}
+		})
+	}
+	for _, pattern := range []string{"refs/heads/openmerge/[fg]*/*", "refs/heads/openmerge/gr**/*", `refs/heads/openmerge/g\*/*`, "refs/heads/{green,queue}/*"} {
+		for _, coverage := range []authority.RefCoverage{
+			{Includes: []string{pattern}},
+			{Includes: []string{"~ALL"}, Excludes: []string{pattern}},
+			{Includes: []string{pattern}, Excludes: []string{"~ALL"}},
+		} {
+			if _, err := coverage.MayContainRefUnder("refs/heads/openmerge/green/", "refs/heads/main"); err == nil {
+				t.Errorf("accepted undecidable pattern: %+v", coverage)
+			}
+		}
+	}
+}

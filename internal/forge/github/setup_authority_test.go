@@ -643,7 +643,7 @@ func TestLegacySuccessorKeepsExtraCoverageAndRejectsAmbiguity(t *testing.T) {
 	must(t, err)
 	refs := managedObject(t, f, "openmerge-refs")
 	conditions := refs["conditions"].(map[string]any)["ref_name"].(map[string]any)
-	conditions["include"] = append(conditions["include"].([]any), "refs/heads/retained-obligation/**/*")
+	conditions["include"] = append(conditions["include"].([]any), "refs/heads/openmerge/green/retained-obligation/**/*")
 	before, _ := json.Marshal(refs)
 	for _, apply := range []bool{false, true} {
 		_, err := runRules(t, f, apply)
@@ -745,5 +745,52 @@ func TestAuthorityRestoreRefusesUnknownLargeNumericEdit(t *testing.T) {
 	_, err = runAuthority(t, f, RulesOptions{Repo: opts.Repo, AppID: 42, Restore: opts.Backup, Apply: true})
 	if err == nil || f.setupWrites != writes {
 		t.Fatal("restore overwrote an exact unknown numeric edit", err)
+	}
+}
+
+func TestLegacySuccessorRejectsCoverageOutsideProtectedFamilies(t *testing.T) {
+	for _, extra := range []string{"~ALL", "~DEFAULT_BRANCH", "refs/heads/main", "refs/heads/retained-obligation/**/*", "refs/heads/openmerge/*/*", "refs/heads/openmerge/gr*/*", "refs/heads/openmerge/submission/**/*"} {
+		t.Run(extra, func(t *testing.T) {
+			f := rulesAPI(t)
+			opts := authorityOptions(t)
+			_, err := runAuthority(t, f, opts)
+			must(t, err)
+			refs := managedObject(t, f, "openmerge-refs")
+			conditions := refs["conditions"].(map[string]any)["ref_name"].(map[string]any)
+			conditions["include"] = append(conditions["include"].([]any), extra)
+			before, _ := json.Marshal(f.setupRules)
+			for _, apply := range []bool{false, true} {
+				_, err := runRules(t, f, apply)
+				if err == nil || !strings.Contains(err.Error(), "incompatible successor shape") || f.setupWrites != 2 {
+					t.Fatal("accepted unbounded successor", err)
+				}
+			}
+			after, _ := json.Marshal(f.setupRules)
+			if !bytes.Equal(before, after) {
+				t.Fatal("rejected successor mutated")
+			}
+		})
+	}
+}
+
+func TestRulesBackupReuseRepairsPermissions(t *testing.T) {
+	f := rulesAPI(t)
+	opts := authorityOptions(t)
+	_, err := runAuthority(t, f, opts)
+	must(t, err)
+	backup, err := readRulesBackup(opts.Backup)
+	must(t, err)
+	before, err := os.ReadFile(opts.Backup)
+	must(t, err)
+	for _, mode := range []os.FileMode{0644, 0666, 0700, 0600} {
+		must(t, os.Chmod(opts.Backup, mode))
+		must(t, writeRulesBackup(opts.Backup, backup))
+		info, err := os.Stat(opts.Backup)
+		must(t, err)
+		after, err := os.ReadFile(opts.Backup)
+		must(t, err)
+		if info.Mode().Perm() != 0600 || !bytes.Equal(before, after) {
+			t.Fatal("reuse changed capture or retained unsafe mode", info.Mode())
+		}
 	}
 }

@@ -54,11 +54,9 @@ func rollbackReads(t *testing.T, f *apiFixture, classic map[string]any, signatur
 func TestRollbackPreflightPureLegacyValidatorsAndAdminClassic(t *testing.T) {
 	f := rulesAPI(t)
 	opts := rollbackOptions(t, f)
-	classic := map[string]any{
-		"required_pull_request_reviews": map[string]any{"bypass_pull_request_allowances": map[string]any{"apps": []map[string]any{{"id": 42}}}},
-		"required_linear_history":       map[string]any{"enabled": true},
-		"allow_force_pushes":            map[string]any{"enabled": false},
-	}
+	classic := completeClassicFixture()
+	classic["required_pull_request_reviews"] = map[string]any{"bypass_pull_request_allowances": map[string]any{"apps": []map[string]any{{"id": 42}}}}
+	classic["required_linear_history"] = map[string]any{"enabled": true}
 	f.override = rollbackReads(t, f, classic, map[string]any{"enabled": false})
 	out, err := runAuthority(t, f, opts)
 	// Squash main and all fences are compatible with linear history, while the
@@ -94,7 +92,9 @@ func TestRollbackReportsAllBlockersAndOperatorChoices(t *testing.T) {
 	f.setupRules[10]["rules"] = []map[string]any{{"type": "required_linear_history"}} // compatible content still needs legacy bypass
 	inherited := map[string]any{"id": 12, "name": "org-green", "source_type": "Organization", "source": "acme", "enforcement": "active", "target": "branch", "bypass_actors": []any{}, "conditions": map[string]any{"ref_name": map[string]any{"include": []string{"refs/heads/openmerge/green/**/*"}, "exclude": []string{}}}, "rules": []map[string]any{{"type": "required_signatures"}}}
 	f.setupRules[12] = inherited
-	reads := rollbackReads(t, f, map[string]any{"required_signatures": map[string]any{"enabled": true}}, nil)
+	classic := completeClassicFixture()
+	classic["required_signatures"] = map[string]any{"enabled": true}
+	reads := rollbackReads(t, f, classic, nil)
 	f.override = func(w http.ResponseWriter, r *http.Request) bool {
 		if strings.HasSuffix(r.URL.Path, "/access_tokens") {
 			token := f.object("installation_token")
@@ -120,7 +120,7 @@ func TestRollbackFailsIncompleteReadsAndMissingInstallation(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			f := rulesAPI(t)
 			opts := rollbackOptions(t, f)
-			classic := map[string]any{"required_linear_history": map[string]any{"enabled": false}}
+			classic := completeClassicFixture()
 			if kind == "rules500" {
 				classic["required_signatures"] = map[string]any{"enabled": true}
 			}
@@ -258,5 +258,75 @@ func TestRollbackProtectedFamilyExclusionsStayIndependent(t *testing.T) {
 				t.Fatal("excluded queue produced a false blocker", out)
 			}
 		})
+	}
+}
+
+func completeClassicFixture() map[string]any {
+	return map[string]any{
+		"required_status_checks":        nil,
+		"required_pull_request_reviews": nil,
+		"restrictions":                  nil,
+		"required_linear_history":       map[string]any{"enabled": false},
+		"allow_force_pushes":            map[string]any{"enabled": false},
+		"lock_branch":                   map[string]any{"enabled": false},
+	}
+}
+
+func TestRollbackWildcardFamilyWithoutExistingGreenRef(t *testing.T) {
+	f := rulesAPI(t)
+	opts := rollbackOptions(t, f)
+	f.setupRules[12] = map[string]any{"id": 12, "name": "wildcard content", "source_type": "Organization", "source": "acme", "target": "branch", "enforcement": "active", "bypass_actors": []any{}, "rules": []map[string]any{{"type": "required_signatures"}}, "conditions": map[string]any{"ref_name": map[string]any{"include": []string{"refs/heads/openmerge/gr*/*"}, "exclude": []string{}}}}
+	f.override = rollbackReads(t, f, nil, nil)
+	out, err := runAuthority(t, f, opts)
+	if err == nil || !strings.Contains(out, `ref="refs/heads/openmerge/green/*"`) || f.setupWrites != 2 {
+		t.Fatalf("wildcard future green certified: %s %v", out, err)
+	}
+}
+
+func TestRollbackClassicPartialReproduction(t *testing.T) {
+	f := rulesAPI(t)
+	opts := rollbackOptions(t, f)
+	f.override = rollbackReads(t, f, map[string]any{"url": "https://api.github.com/protection"}, map[string]any{"enabled": false})
+	out, err := runAuthority(t, f, opts)
+	if err == nil || !strings.Contains(out, "incomplete classic protection response") || strings.Contains(out, "Rollback preflight passed") || f.setupWrites != 2 {
+		t.Fatalf("partial classic certified: %s %v", out, err)
+	}
+}
+
+func TestRollbackFamilyWildcardMatrix(t *testing.T) {
+	for _, family := range []string{"fence", "queue", "green", "verify"} {
+		prefix := "refs/heads/openmerge/" + family + "/"
+		for _, tt := range []struct {
+			include string
+			exclude []string
+			blocked bool
+		}{
+			{"refs/heads/openmerge/*/*", nil, true},
+			{"refs/heads/openmerge/**/*", nil, true},
+			{"refs/heads/openmerge/" + family[:1] + "*/*", nil, true},
+			{"refs/heads/openmerge/" + family[:1] + "?" + family[2:] + "/*", nil, true},
+			{"refs/heads/openmerge/" + family[:1] + "*" + family[len(family)-1:] + "/*/*", nil, true},
+			{"~ALL", nil, true},
+			{"~ALL", []string{prefix + "*"}, true}, // Nested descendants remain covered.
+			{"~ALL", []string{prefix + "**/*"}, false},
+			{prefix + "*", []string{prefix + "*"}, false},
+			{prefix + "*/*", []string{prefix + "*"}, true},
+			{"refs/heads/openmerge/other/**/*", nil, false},
+		} {
+			t.Run(family+"/"+tt.include+"/"+strings.Join(tt.exclude, ","), func(t *testing.T) {
+				conditions := refConditions{}
+				conditions.RefName.Include, conditions.RefName.Exclude = []string{tt.include}, tt.exclude
+				raw, err := json.Marshal(conditions)
+				must(t, err)
+				rule := Ruleset{ID: 12, Name: "wildcard content", Target: "branch", Enforcement: "active", Conditions: raw, BypassActors: []BypassActor{}, Rules: []RepositoryRule{{Type: "required_signatures"}}}
+				blocked := false
+				for _, p := range rollbackRules(true, []Ruleset{rule}, "main", "main", 42) {
+					blocked = blocked || p.Code == RefBlocked && p.Ref == prefix+"*"
+				}
+				if blocked != tt.blocked {
+					t.Fatalf("blocked = %v, want %v", blocked, tt.blocked)
+				}
+			})
+		}
 	}
 }

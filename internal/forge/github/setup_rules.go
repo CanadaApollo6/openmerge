@@ -228,7 +228,7 @@ func planRules(snapshot ruleSnapshot, repo string, appID int64) ([]ruleChange, e
 		r := snapshot.Rulesets[i]
 		local := r.SourceType == "Repository" && strings.EqualFold(r.Source, repo)
 		if r.Name == "openmerge-refs" {
-			if !local || !managedFenceShape(r, appID, snapshot.DefaultBranch) {
+			if !local || !managedRefsShape(r, appID, snapshot.DefaultBranch) {
 				return nil, errors.New("openmerge-refs name collision or incompatible successor shape")
 			}
 		}
