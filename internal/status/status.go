@@ -52,6 +52,7 @@ type Queue struct {
 	sanitizer         *diagnostic.Sanitizer
 	state             queue.State
 	policyPins        []briefPolicyPin
+	eligibilityPins   map[queue.ChangeID]briefEligibilityPin
 	known             map[int]Entry
 	runLedger         map[int][]Run
 	RulesSources      []RulesSource `json:"rules_sources,omitempty"`
@@ -151,6 +152,7 @@ type Event struct {
 func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Queue, *Entry, *Why) {
 	s := j.Seed
 	policyPins := []briefPolicyPin{}
+	eligibilityPins := map[queue.ChangeID]briefEligibilityPin{}
 	configPin := queue.ConfigApplied{Commit: j.Seed.ConfigCommit, Digest: j.Seed.ConfigDigest}
 	known := make(map[int]Entry)
 	heads := make(map[int]string)
@@ -169,6 +171,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 		if e, ok := record.Event.(queue.ChangeClassified); ok && configPin.Commit == after.ConfigCommit && configPin.Digest == after.ConfigDigest {
 			policyPins = append(policyPins, briefPolicyPin{e.Evidence, configPin})
 		}
+		pinBriefEligibility(eligibilityPins, record.Event, before, after)
 		if e, ok := record.Event.(queue.OutsidePushRecorded); ok {
 			outsidePushes = append(outsidePushes, OutsidePush{EventID: record.ID, OutsidePushRecorded: e})
 			if len(outsidePushes) > queue.OutsidePushLimit {
@@ -294,6 +297,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 	q.sanitizer = sanitizer
 	q.known = known
 	q.policyPins = policyPins
+	q.eligibilityPins = eligibilityPins
 	for i, b := range s.Batches() {
 		item := &Batch{ID: b.ID, Phase: string(b.Phase), BaseSHA: b.BaseSHA, TestedSHA: b.TestedSHA, TestRef: b.TestRef, Method: string(b.Method), PRs: make([]BatchPR, 0, len(b.PRs)), CheckRetry: cloneCheckRetry(b.CheckRetry), Position: max(1, b.ChainPosition), ParentBatchID: b.ParentBatchID, BatchesAhead: i, LandingSHA: b.LandingCommit(), InvalidationReason: b.InvalidationReason, ProvisionalFailure: provisionalFailure(b)}
 		if item.CheckRetry != nil {
