@@ -1,15 +1,15 @@
 {
-  "recorded_at": "2026-10-20T22:58:56.445446+00:00",
-  "implementation_commit": "d4e99eac559d2bd865a8a4f72cccab7272c89a68",
-  "baseline_commit": "d4e15c89fa9a1e68d8cf9afe55d0f3a25318ae91",
+  "recorded_at": "2026-10-20T23:12:02.364915+00:00",
+  "implementation_commit": "5ecebebf9301f39df2ed14dae25e40ce9c8dc0d0",
+  "baseline_commit": "158afe96c43a6122edca8566b09ba0ebf2a1e4bd",
   "trial_class": "HOLD",
   "deployment": "not performed; wait until ADR 0009 period B drains",
   "stacked_on_112_or_113": false,
   "test_database": "localhost:54329, isolated test schemas and lock scopes; no initdb run",
   "binary": {
-    "sha256": "d6ca598f2525f7d651a0a2a513a8eecf0a83f05f19ee9feb98d7d5247e09f9d6",
-    "build_version": "d4e15c8-dirty",
-    "source_commit": "d4e99eac559d2bd865a8a4f72cccab7272c89a68"
+    "sha256": "0625a7ff9465807a419f5a359556d63532965c270ce19b9d504051c7f39b8e79",
+    "build_version": "5ecebeb-dirty",
+    "source_commit": "5ecebebf9301f39df2ed14dae25e40ce9c8dc0d0"
   },
   "checks": [
     {
@@ -46,8 +46,9 @@
     }
   ],
   "deferred": [
-    "PR 4 durable per-element/sticky findings projection integration",
     "PR 5 outstanding-warning ledger integration",
     "PR 11 organization-sandbox healthy/unverified/violation/drift/outside-warning HTTP acceptance"
-  ]
+  ],
+  "initial_baseline_commit": "d4e15c89fa9a1e68d8cf9afe55d0f3a25318ae91",
+  "authority_projection": "PR 4 WriteRestrictionStatus on main; no second finding fold"
 }

@@ -4,6 +4,7 @@
 === RUN   TestAuthorityRenderingAndRestart/verified
 === RUN   TestAuthorityRenderingAndRestart/hidden
 === RUN   TestAuthorityRenderingAndRestart/violated
+=== RUN   TestAuthorityRenderingAndRestart/hidden_retains_violation
 === RUN   TestAuthorityRenderingAndRestart/repaired
 === RUN   TestAuthorityRenderingAndRestart/stale_observation
 --- PASS: TestAuthorityRenderingAndRestart (0.01s)
@@ -12,6 +13,7 @@
     --- PASS: TestAuthorityRenderingAndRestart/verified (0.00s)
     --- PASS: TestAuthorityRenderingAndRestart/hidden (0.00s)
     --- PASS: TestAuthorityRenderingAndRestart/violated (0.00s)
+    --- PASS: TestAuthorityRenderingAndRestart/hidden_retains_violation (0.00s)
     --- PASS: TestAuthorityRenderingAndRestart/repaired (0.00s)
     --- PASS: TestAuthorityRenderingAndRestart/stale_observation (0.00s)
 === RUN   TestHealthAndLiveRouting
@@ -51,15 +53,15 @@
 === RUN   TestHealthVisibilityBoundDoesNotMutateSnapshot
 --- PASS: TestHealthVisibilityBoundDoesNotMutateSnapshot (0.00s)
 PASS
-ok  	github.com/CanadaApollo6/openmerge/internal/status	0.058s
+ok  	github.com/CanadaApollo6/openmerge/internal/status	0.057s
 === RUN   TestHealthRealGitUnavailableRemote
 === RUN   TestHealthRealGitUnavailableRemote/settled
-    health_real_git_test.go:65: settled pending attempt: base=8c7d767702e8022895fcabaa4fb16cfd02af3668 head=2f0554806a0c19e9ba3fc93f29a5cfafbe2b28f8 fence=c3121e082a0d0a31cfa3c96adaa512af2bd495d7 watermark=13
-    health_real_git_test.go:96: pending=false base=8c7d767702e8022895fcabaa4fb16cfd02af3668 head=2f0554806a0c19e9ba3fc93f29a5cfafbe2b28f8 fence=c3121e082a0d0a31cfa3c96adaa512af2bd495d7 watermark=13 last_success=2026-10-20T22:48:39.944246358Z next_deadline=2026-10-20T22:48:44.951330387Z failures=1
+    health_real_git_test.go:65: settled pending attempt: base=bf0d720a4d85a7a0ef841f22d60093a5b1f77c97 head=5590e8f9cce39abaef99cdd43102656dc02e9198 fence=08a4d0795c8a1d434786df0dc012ab61c4cfd013 watermark=13
+    health_real_git_test.go:96: pending=false base=bf0d720a4d85a7a0ef841f22d60093a5b1f77c97 head=5590e8f9cce39abaef99cdd43102656dc02e9198 fence=08a4d0795c8a1d434786df0dc012ab61c4cfd013 watermark=13 last_success=2026-10-20T23:01:10.739618753Z next_deadline=2026-10-20T23:01:15.746788522Z failures=1
 === RUN   TestHealthRealGitUnavailableRemote/pending
-    health_real_git_test.go:96: pending=true base=8c7d767702e8022895fcabaa4fb16cfd02af3668 head=2f0554806a0c19e9ba3fc93f29a5cfafbe2b28f8 fence=0c8ac1549607078d65225983586bf0e040bb96cb watermark=8 last_success=2026-10-20T22:48:40.016089565Z next_deadline=2026-10-20T22:48:45.025747273Z failures=1
---- PASS: TestHealthRealGitUnavailableRemote (0.19s)
-    --- PASS: TestHealthRealGitUnavailableRemote/settled (0.12s)
+    health_real_git_test.go:96: pending=true base=bf0d720a4d85a7a0ef841f22d60093a5b1f77c97 head=5590e8f9cce39abaef99cdd43102656dc02e9198 fence=369fd89c79ed8aec5a7f8c040437c95b2160154c watermark=8 last_success=2026-10-20T23:01:10.810635683Z next_deadline=2026-10-20T23:01:15.820091796Z failures=1
+--- PASS: TestHealthRealGitUnavailableRemote (0.20s)
+    --- PASS: TestHealthRealGitUnavailableRemote/settled (0.13s)
     --- PASS: TestHealthRealGitUnavailableRemote/pending (0.07s)
 === RUN   TestAuthorityStatusAndHealthDoNotWaitForWorker
 --- PASS: TestAuthorityStatusAndHealthDoNotWaitForWorker (0.02s)
@@ -68,7 +70,7 @@ ok  	github.com/CanadaApollo6/openmerge/internal/status	0.058s
 === RUN   TestHealthPublicationLifecycleAndFailures
 --- PASS: TestHealthPublicationLifecycleAndFailures (0.00s)
 === RUN   TestHealthActualBackstopDeadlineAndWebhookSilence
---- PASS: TestHealthActualBackstopDeadlineAndWebhookSilence (0.04s)
+--- PASS: TestHealthActualBackstopDeadlineAndWebhookSilence (0.03s)
 === RUN   TestHealthActualErrorAndQuotaDeadline
 --- PASS: TestHealthActualErrorAndQuotaDeadline (0.05s)
 === RUN   TestHealthHTTPWatchedConditionsAndIsolation
@@ -90,14 +92,14 @@ ok  	github.com/CanadaApollo6/openmerge/internal/status	0.058s
     --- PASS: TestHealthHTTPWatchedConditionsAndIsolation/degraded_failures (0.00s)
     --- PASS: TestHealthHTTPWatchedConditionsAndIsolation/retired_without_obligations (0.00s)
 === RUN   TestHealthActualValidationAndRulesRetryDeadlines
---- PASS: TestHealthActualValidationAndRulesRetryDeadlines (0.05s)
+--- PASS: TestHealthActualValidationAndRulesRetryDeadlines (0.06s)
 === RUN   TestHealthyIdleLoopUsesBackstopAndDeliveryInterruptsTimer
---- PASS: TestHealthyIdleLoopUsesBackstopAndDeliveryInterruptsTimer (0.04s)
+--- PASS: TestHealthyIdleLoopUsesBackstopAndDeliveryInterruptsTimer (0.03s)
 PASS
-ok  	github.com/CanadaApollo6/openmerge/internal/serve	0.448s
+ok  	github.com/CanadaApollo6/openmerge/internal/serve	0.446s
 === RUN   TestQueueAuthorityAndOutstandingWarnings
 --- PASS: TestQueueAuthorityAndOutstandingWarnings (0.00s)
 === RUN   TestServeHealthThresholdBounds
 --- PASS: TestServeHealthThresholdBounds (0.00s)
 PASS
-ok  	github.com/CanadaApollo6/openmerge/cmd/openmerge	0.004s
+ok  	github.com/CanadaApollo6/openmerge/cmd/openmerge	0.005s

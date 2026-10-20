@@ -7,17 +7,18 @@ YAML/schema change, or Makefile/CI/test-flag change is part of this work.
 
 ## Revision and dependency scope
 
-Baseline: `d4e15c89fa9a1e68d8cf9afe55d0f3a25318ae91` (`origin/main`, fetched
-2026-10-20). Implementation commit: `d4e99eac559d2bd865a8a4f72cccab7272c89a68`.
-The separate evidence commit changes only receipts/documentation. Branch:
-`adr0008/6-authority-status`, based directly on that baseline. PRs #112 and #113
-were OPEN, not merged, when implementation started. This PR does not stack on
-either one.
+Initial baseline: `d4e15c89fa9a1e68d8cf9afe55d0f3a25318ae91` (fetched
+2026-10-20). Both #112 and #113 were OPEN at start. PR 4 reached main during
+final verification, so the final implementation was rebased and integrated.
+Final tested main baseline: `158afe96c43a6122edca8566b09ba0ebf2a1e4bd`.
+Implementation commit: `5ecebebf9301f39df2ed14dae25e40ce9c8dc0d0`. The final evidence commit changes
+only receipts/documentation. Branch: `adr0008/6-authority-status`.
+This PR does not stack on #112 or #113.
 
-The permitted main-only scope renders PR 1's retained applied authority inputs.
-`internal/status/authority.go: ProjectAuthority` marks the PR 4 durable-findings
-integration seam. In particular, PR 4 must supply sticky violation semantics
-through partial/hidden reads; this PR does not duplicate its projection fold.
+`internal/status/authority.go: ProjectAuthority` directly consumes PR 4's
+`WriteRestrictionStatus` durable state, last-observed and last-verified times.
+It renders sticky violations through hidden reads without duplicating the
+source's finding fold. Visibility uses retained applied evidence. Proposed verification remains excluded from applied rendering.
 `QueueOutsideWarnings` and the worker's `publishHealth` mark PR 5 ledger seams.
 The `outside_warnings` DTO and CLI/HTTP rendering are tested, but production
 leaves the field absent until the actual ledger is available. No warning count
@@ -35,7 +36,8 @@ schemas and test lock scopes. No initdb was run.
 **Final results:** `make check` exit 0 (format, zero lint issues, full race-enabled
 short suite, build); focused tests exit 0; six legacy reporting fixtures, six
 complete CLI outputs and 56 complete HTTP responses match. The build embeds
-`d4e15c8-dirty` because it was run before committing the implementation;
+`5ecebeb-dirty` from the committed implementation (only evidence files were
+dirty while the build completed);
 `execution.json` retains the binary SHA-256 and exact source commit.
 
 The tests cover exact live routing before auth/key discovery; health auth and
@@ -43,7 +45,8 @@ method/query/body validation; closed test-DB health 503 with live 200; worker
 mutex contention on authority status and health; zero queues; per-queue
 isolation; pending retirement/recovery obligations; successful versus failed
 and report-only turns; independent observed/verified ages and missing evidence;
-hidden, violated, repaired and stale applied inputs; snapshot restart; warning
+hidden, violated, repaired and stale applied inputs, including sticky violations
+through hidden reads; snapshot restart; warning
 visibility without failure; cancellation; queue/output/detail bounds; actual
 webhook backstop, rules/validation retry, quota and error deadlines; repeated
 on-time failures becoming degraded; and restart losing process success times.
