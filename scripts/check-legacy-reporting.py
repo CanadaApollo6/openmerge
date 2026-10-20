@@ -159,7 +159,7 @@ with tempfile.TemporaryDirectory(prefix='sa12a-reporting-', dir=Path.home()/'.ca
         source = PROBE
         if candidate:
             source = source.replace('// CANDIDATE_IMPORT', 'cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"')
-            source = source.replace('// CANDIDATE_SUFFIX', 'var err error; suffix,err=ReviewerCheckSummary(j,tc.pr,cp.Policy{});if err!=nil { t.Fatal(err) }')
+            source = source.replace('// CANDIDATE_SUFFIX', 'var err error; suffix,err=ReviewerCheckSummary(j,tc.pr,cp.Policy{});if err!=nil { t.Fatal(err) };suffix=QueueInstructions(&q)+suffix')
         else:
             source = source.replace('// CANDIDATE_IMPORT', '')
             source = source.replace('// CANDIDATE_SUFFIX', '')

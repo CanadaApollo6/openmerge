@@ -6,11 +6,23 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/brief"
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
+
+// QueueInstructions belongs to the existing check, after queue state and before
+// the reviewer brief. Only the durable mode pin enables it; draft verification
+// and write-restriction visibility are not author-facing authority decisions.
+func QueueInstructions(q *Queue) string {
+	pin := q.state.AuthorityPin()
+	if pin == nil || pin.Authority != authority.OpenMerge {
+		return ""
+	}
+	return "\n\nThis repository merges through OpenMerge. To request a merge, post a comment whose entire body is `@openmerge queue` (no additional text)."
+}
 
 // ReviewerCheckSummary is appended to the single existing check only for an
 // opted-in queue. Legacy output is byte-for-byte unchanged. No forge reads occur.
