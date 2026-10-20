@@ -28,11 +28,13 @@ func validateAuthorityQueue(k QueueKey, b authority.PolicyBinding) error {
 	return b.Validate()
 }
 
+// VerificationRecord binds one pre-read queue basis to an invocation record.
 type VerificationRecord struct {
 	QueueID QueueID
 	Event   queue.WriteRestrictionVerified
 }
 
+// VerificationReceipt identifies the committed source event for one queue.
 type VerificationReceipt struct {
 	QueueID QueueID
 	EventID int64

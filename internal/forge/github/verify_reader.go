@@ -21,6 +21,7 @@ import (
 // App JWTs or installation credentials and its transport rejects all writes.
 type AdminWriteRestrictionReader struct{ token, api string }
 
+// NewAdminWriteRestrictionReader creates a GET-only operator-token reader.
 func NewAdminWriteRestrictionReader(token string) (*AdminWriteRestrictionReader, error) {
 	return newAdminWriteRestrictionReader(token, "https://api.github.com/")
 }
@@ -43,6 +44,7 @@ func (t readOnlyTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return t.base.RoundTrip(r)
 }
 
+// ObserveWriteRestriction acquires the complete admin-visible policy inventory.
 func (r *AdminWriteRestrictionReader) ObserveWriteRestriction(ctx context.Context, in forge.WriteRestrictionInput) (authority.Observation, error) {
 	empty := forge.EmptyWriteRestrictionObservation()
 	if err := forge.ValidateWriteRestrictionInput(in); err != nil {

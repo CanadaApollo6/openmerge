@@ -74,18 +74,18 @@ func TestWriteRestrictionElementRepairStalenessAndIsolation(t *testing.T) {
 	if negative.RulesSourceRevision(WriteRestriction) <= repaired.RulesSourceRevision(WriteRestriction) || len(negative.WriteRestrictionStatus().Findings) != 2 {
 		t.Fatal("negative lost")
 	}
-	clear := restrictionRead(negative, v, at.Add(3*time.Minute), v.Evidence)
-	if len(clear.RulesSourceProblems(WriteRestriction)) != 0 || len(clear.RulesProblems()) != 3 {
-		t.Fatal(clear.RulesSources())
+	cleared := restrictionRead(negative, v, at.Add(3*time.Minute), v.Evidence)
+	if len(cleared.RulesSourceProblems(WriteRestriction)) != 0 || len(cleared.RulesProblems()) != 3 {
+		t.Fatal(cleared.RulesSources())
 	}
 	for _, source := range []RulesSource{Rulesets, ClassicProtection, Permissions} {
-		if clear.RulesSourceRevision(source) != 1 {
+		if cleared.RulesSourceRevision(source) != 1 {
 			t.Fatal("source crossed", source)
 		}
 	}
 	// Unknown/failed reads leave both ages, findings and source revisions intact.
 	failed := authority.Observation{Inventory: authority.ReadFailure, Protections: []authority.Protection{}, Coverage: []authority.Coverage{}, Findings: []authority.Finding{}}
-	if got := restrictionRead(clear, v, at.Add(4*time.Minute), failed); !bytes.Equal(snapshotBytes(t, clear), snapshotBytes(t, got)) {
+	if got := restrictionRead(cleared, v, at.Add(4*time.Minute), failed); !bytes.Equal(snapshotBytes(t, cleared), snapshotBytes(t, got)) {
 		t.Fatal("failure refreshed state")
 	}
 	for _, mutate := range []func(*authority.PolicyBinding){func(b *authority.PolicyBinding) { b.EffectiveDigest = strings.Repeat("c", 64) }, func(b *authority.PolicyBinding) { b.CoverageDigest = strings.Repeat("c", 64) }, func(b *authority.PolicyBinding) { b.ResolvedActor.Team.TeamID = "different" }} {
@@ -142,8 +142,8 @@ func TestAuthorityHypotheticalClearAndRestart(t *testing.T) {
 			t.Fatal("legacy source event accepted authority")
 		}
 	}
-	clear := restrictionRead(restored, v, v.VerifiedAt.Add(time.Minute), v.Evidence)
-	if len(clear.RulesSourceProblems(WriteRestriction)) != 0 {
+	cleared := restrictionRead(restored, v, v.VerifiedAt.Add(time.Minute), v.Evidence)
+	if len(cleared.RulesSourceProblems(WriteRestriction)) != 0 {
 		t.Fatal("restored source did not clear")
 	}
 }

@@ -17,6 +17,7 @@ type WriteRestrictionStatus struct {
 	Revision                       uint64
 }
 
+// WriteRestrictionStatus returns findings and ages without sharing evidence.
 func (s State) WriteRestrictionStatus() WriteRestrictionStatus {
 	result := WriteRestrictionStatus{State: "unverified", Revision: s.RulesSourceRevision(WriteRestriction)}
 	if s.authority == nil || s.authority.Pin == nil || s.authority.Pin.OpenMerge == nil {
