@@ -9,6 +9,7 @@ import (
 	"time"
 
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
+	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
@@ -138,5 +139,57 @@ func TestStageAApprovalReadUsesDatabaseOrder(t *testing.T) {
 				t.Fatalf("later timestamp bypassed %s commit: %v", name, err)
 			}
 		})
+	}
+}
+
+func TestStageAConfigReclassifiesBeforeEligibility(t *testing.T) {
+	s, w, f := shadowFixture(t, 1, "main", "7", false)
+	before, err := s.store.Watermark(t.Context(), w.id)
+	must(t, err)
+	_, err = f.PushBase(repo, "main", "change approvals", map[string]string{".openmerge.yml": "version: 1\nqueues:\n- name: default\n  merge_when: [check-success = ci]\n  approvals: {default: {any_writer: true, count: 2}}\n"})
+	must(t, err)
+	pr := w.prs[1]
+	f.SetNativeReviews(repo, 1, forge.NativeReviews{Reviews: []forge.NativeReview{{ID: 200, CommitID: pr.HeadSHA, Author: forge.UserIdentity{ID: 21, Login: "writer", Kind: forge.UserAccount}, State: forge.ReviewApproved, Submitted: forge.NativeTime{Time: time.Now().UTC().Add(time.Minute), Source: forge.ReviewSubmissionTime, Precision: time.Second}}}})
+	must(t, s.reconcile(t.Context(), w, true))
+	records, err := s.store.EventsAfter(t.Context(), w.id, before)
+	must(t, err)
+	configSeen, classified, observed := false, false, false
+	for _, record := range records {
+		switch e := record.Event.(type) {
+		case queue.ConfigApplied:
+			configSeen, classified = true, false
+		case queue.ChangeClassified:
+			if configSeen && e.Evidence.Classification.Inputs.PolicyDigest == w.stageA.policy.Digest {
+				classified = true
+			}
+		case queue.ApprovalEligibilityObserved:
+			if !configSeen || !classified {
+				t.Fatal("eligibility preceded current-policy classification")
+			}
+			observed = true
+		}
+	}
+	if !configSeen || !classified || !observed {
+		t.Fatalf("missing config/classification/eligibility: %t/%t/%t", configSeen, classified, observed)
+	}
+}
+
+func TestStageACheckGateRequiresCurrentPolicyBeforeJournaling(t *testing.T) {
+	s, w, f := shadowFixture(t, 1, "main", "7", false)
+	f.SetNativeReviews(repo, 1, shadowNative(f, w, shadowComment(100, "@openmerge queue")))
+	batch := shadowBuildBatch(t, s, w, 1)
+	before, err := s.store.Watermark(t.Context(), w.id)
+	must(t, err)
+	w.stageA.policy.Digest = strings.Repeat("e", 64)
+	if _, _, err := s.stageACheckPolicy(t.Context(), w, batch, nil); err == nil {
+		t.Fatal("old classification accepted under changed approvals")
+	}
+	records, err := s.store.EventsAfter(t.Context(), w.id, before)
+	must(t, err)
+	for _, record := range records {
+		switch record.Event.(type) {
+		case queue.ApprovalEligibilityObserved, queue.ApprovalGateRejected:
+			t.Fatalf("gate journaled %T before current-policy evidence", record.Event)
+		}
 	}
 }

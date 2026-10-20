@@ -27,7 +27,9 @@ import (
 
 type journalBriefSource struct {
 	*Server
-	journal store.Journal
+	journal       store.Journal
+	changedConfig queue.ConfigApplied
+	changedPolicy cp.Policy
 }
 
 func (s *journalBriefSource) Journals(context.Context, []store.QueueKey) ([]store.Journal, error) {
@@ -122,8 +124,20 @@ func briefEligibilityFixture(t *testing.T, receipt bool) (*journalBriefSource, c
 	if !ok {
 		t.Fatal("invalid review fixture")
 	}
-	src := &journalBriefSource{Server: &Server{queues: []*worker{{Target: Target{Key: key, Git: g}, configBranch: "main"}}}, journal: store.Journal{Key: key}}
+	src := &journalBriefSource{Server: &Server{queues: []*worker{{Target: Target{Key: key, Git: g}, configBranch: "main", cfg: cfg.Queues[0]}}}, journal: store.Journal{Key: key}}
 	appendBriefEvents(&src.journal, queue.ConfigApplied{Commit: base, Digest: effective, Policy: &cp.PolicyPin{DefaultBranch: "main", Resolved: resolved, ClassifierVersion: classification.Version}}, queue.BaseMoved{SHA: base}, queue.ChangeRevisionObserved{PR: 5, ChangeID: id, Revision: 1, HeadSHA: head, Basis: queue.RevisionObservationBasis{BaseSHA: base, At: b.At.Add(-time.Hour)}}, queue.PRObserved{PR: 5, HeadSHA: head, Eligible: true, Trusted: true}, queue.EnqueueRequested{PR: 5, At: b.At}, classified, queue.Accountability(b, author, author, nil, component), queue.Intent(b, "claimed intent", "body"), review)
+	// Retain a second immutable config with a changed approvals component.
+	changedData := strings.Replace(data, "count: 1", "count: 2", 1)
+	changedCfg, _, err := config.Load([]byte(changedData))
+	must(t, err)
+	configBlob = object(changedData, "hash-object", "-w", "--stdin")
+	changedCommit := object("changed approvals\n", "commit-tree", tree("before\n"), "-p", base)
+	changedComponent, err := cp.PolicyDigest(cp.DigestInputs{Repository: changedCfg.Policy, Queue: changedCfg.Policy.Queues[0], Resolved: resolved, Owners: owners, Attributes: attrs, ClassifierVersion: classification.Version})
+	must(t, err)
+	changedDigest, err := cp.WithPolicyDigest(changedCfg.Queues[0].Digest(true), changedComponent)
+	must(t, err)
+	src.changedPolicy = cp.Policy{Digest: changedComponent, Approvals: changedCfg.Policy.Queues[0].Approvals}
+	src.changedConfig = queue.ConfigApplied{Commit: changedCommit, Digest: changedDigest, Policy: src.journal.Events[0].Event.(queue.ConfigApplied).Policy}
 	reading = true
 	return src, cp.Policy{Digest: component, Approvals: cfg.Queues[0].Approvals}, fresh, classified
 }
@@ -240,8 +254,8 @@ func TestBriefEligibilitySandboxCasesRealGit(t *testing.T) {
 							appendBriefEvents(&branch.journal, mismatch)
 						}
 						view := readEligibilityBrief(t, &branch, "reviewer")
-						if change == "generation" && (view.Obligations[1].Code == "eligibility_stale" || view.Obligations[1].Code == "eligibility_pending") {
-							t.Fatal("eligibility was not renewed for the new generation")
+						if view.Obligations[1].Code == "eligibility_stale" || view.Obligations[1].Code == "eligibility_pending" {
+							t.Fatalf("%s lost credit through missing eligibility: %+v", change, view.Obligations[1])
 						}
 						if view.Obligations[1].Met || len(view.Obligations[1].ApprovedIDs) != 0 {
 							t.Fatalf("stale or mismatched receipt credited: %+v", view.Obligations)
@@ -268,7 +282,10 @@ func TestBriefEligibilitySurfacesAfterConfigChange(t *testing.T) {
 	// A non-approval setting changes the effective config digest while the
 	// classification's semantic policy and receipt identity remain unchanged.
 	config := src.journal.Events[0].Event.(queue.ConfigApplied)
-	config.Digest = strings.Repeat("e", 64)
+	cfg := src.queues[0].cfg
+	var err error
+	config.Digest, err = cp.WithPolicyDigest(cfg.Digest(false), policy.Digest)
+	must(t, err)
 	appendBriefEvents(&src.journal, config)
 	stale := readEligibilityBrief(t, src, "reviewer")
 	if stale.Obligations[0].Code != "eligibility_stale" {
@@ -279,6 +296,17 @@ func TestBriefEligibilitySurfacesAfterConfigChange(t *testing.T) {
 	view := readEligibilityBrief(t, src, "reviewer")
 	summary, err := status.ReviewerCheckSummary(src.journal, 5, policy)
 	must(t, err)
+	state := replayBriefJournal(src.journal)
+	fact, err := state.RecordedBrief(policy, fresh.Basis)
+	must(t, err)
+	identity, err := brief.Identity(fact)
+	must(t, err)
+	gate := state.EvaluateApprovals(policy, identity, fresh)
+	for i, requirement := range gate.Requirements {
+		if view.Obligations[i].Met != requirement.Met || !strings.Contains(summary, fmt.Sprintf("%s count=%d receipt=%t met=%t", strings.ReplaceAll(view.Obligations[i].Selector, "_", `\_`), view.Obligations[i].Count, view.Obligations[i].Receipt, requirement.Met)) {
+			t.Fatalf("HTTP/check disagree with gate: %+v\n%s\n%+v", view.Obligations, summary, gate)
+		}
+	}
 	if !view.Obligations[0].Met || !strings.Contains(summary, "human count=1 receipt=false met=true") || strings.Contains(summary, "eligibility\\_stale") {
 		t.Fatalf("HTTP/check disagree: %+v\n%s", view.Obligations, summary)
 	}
@@ -297,7 +325,10 @@ func TestBriefEligibilityAcceptedInputChangeRenewsPin(t *testing.T) {
 	}
 	appendBriefEvents(&src.journal, denied)
 	config := src.journal.Events[0].Event.(queue.ConfigApplied)
-	config.Digest = strings.Repeat("e", 64)
+	cfg := src.queues[0].cfg
+	var err error
+	config.Digest, err = cp.WithPolicyDigest(cfg.Digest(false), policy.Digest)
+	must(t, err)
 	appendBriefEvents(&src.journal, config)
 	before := readEligibilityBrief(t, src, "reviewer")
 	if before.Obligations[0].Code != "eligibility_stale" {
@@ -332,5 +363,32 @@ func TestBriefEligibilityAcceptedInputChangeRenewsPin(t *testing.T) {
 	must(t, err)
 	if !strings.Contains(check, "human count=1 receipt=false met=true") {
 		t.Fatal(check)
+	}
+}
+
+func TestBriefEligibilityBareObservationCannotRenewChangedApprovals(t *testing.T) {
+	src, _, fresh, _ := briefEligibilityFixture(t, false)
+	appendBriefEvents(&src.journal, fresh)
+	before := readEligibilityBrief(t, src, "reviewer")
+	if !before.Obligations[0].Met {
+		t.Fatal("fixture not approved")
+	}
+	appendBriefEvents(&src.journal, src.changedConfig)
+	fresh.Basis.ReadID = "bare-read-after-approval-config"
+	appendBriefEvents(&src.journal, fresh) // Deliberately violate producer ordering.
+	view := readEligibilityBrief(t, src, "reviewer")
+	if view.Obligations[0].Met || view.Obligations[0].Code != "eligibility_stale" || len(view.Obligations[0].ApprovedIDs) != 0 {
+		t.Fatalf("old-policy eligibility revived: %+v", view.Obligations)
+	}
+	if view.Digest != before.Digest {
+		t.Fatal("display guard changed receipt identity")
+	}
+	state := replayBriefJournal(src.journal)
+	facts, _ := state.ApprovalFacts(fresh.Basis.ChangeID)
+	if facts.Eligibility == nil || facts.Eligibility.Basis != fresh.Basis {
+		t.Fatal("bare observation was not accepted; guard not exercised")
+	}
+	if _, err := state.RecordedBrief(src.changedPolicy, fresh.Basis); err == nil {
+		t.Fatal("gate accepted old classification under changed approvals")
 	}
 }
