@@ -151,8 +151,9 @@ Focused real-git tests executed with exit 0 on 2026-10-20 cover rejected
 merge/squash/rebase/fast-forward builds, intermediate commits, unsigned markers,
 fence creation/advance, atomic base+fence landing and branch cleanup. Push spies
 prove no push invocation and compare complete bare-remote `show-ref` output.
-Accepted-build tests inspect the returned OID before push and count exactly one
-commit construction. Actual blob-size/path and merge-parent rules are exercised.
+Accepted-build tests inspect the returned OID before push and check the expected
+construction count, including the legacy unreferenced replay-base fallback,
+without rebuilding a preview. Actual blob-size/path and merge-parent rules are exercised.
 Shared fake/real contracts reject unsigned objects and preserve read-first
 no-ops. PostgreSQL bootstrap tests use isolated schemas on localhost:54329 and
 real bare remotes: resolve/pin/observe precedes the first fence, and a basis

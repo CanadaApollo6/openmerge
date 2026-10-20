@@ -213,8 +213,12 @@ func TestAuthorityAcceptedBuildInspectsOnceBeforePublishing(t *testing.T) {
 			if inspected < 0 || pushed < inspected || !strings.Contains(log, top+":"+ref) {
 				t.Fatalf("prepared OID not inspected before publication: %s", log)
 			}
-			if count := strings.Count(log, "\ncommit-tree\n"); count != 1 {
-				t.Fatalf("built commit %d times", count)
+			expected := 1
+			if method == forge.Rebase && !f.g.explicitBase {
+				expected++
+			} // existing unreferenced replay-base object
+			if count := strings.Count(log, "\ncommit-tree\n"); count != expected {
+				t.Fatalf("commit constructions %d, expected %d without preview rebuild", count, expected)
 			}
 			got := gitCommand(t, f.remote, "", nil, "rev-parse", ref)
 			if got != top {
