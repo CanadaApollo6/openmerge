@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -348,6 +349,44 @@ func TestQueueStatusOutsidePushes(t *testing.T) {
 	for _, want := range []string{"outside push (event 7): base -> admin; fast-forward; commits [admin] (truncated)", "outside push (event 9): admin -> base; rewrite; commits []", "ancestry unknown; commits unknown", "OpenMerge verification before landing: none", "possible stale base observation: may reflect a stale read rather than a real rollback; verify before acknowledgement"} {
 		if !strings.Contains(output.String(), want) {
 			t.Fatalf("missing %q in %s", want, output.String())
+		}
+	}
+}
+
+type statusTimeoutTransport struct{ body bool }
+
+func (transport statusTimeoutTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	if !transport.body {
+		return nil, context.DeadlineExceeded
+	}
+	return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: statusTimeoutBody{}, Request: request}, nil
+}
+
+type statusTimeoutBody struct{}
+
+func (statusTimeoutBody) Read([]byte) (int, error) { return 0, context.DeadlineExceeded }
+func (statusTimeoutBody) Close() error             { return nil }
+
+func TestStatusTimeoutDiagnostic(t *testing.T) {
+	t.Setenv("OPENMERGE_API_TOKEN", "")
+	t.Setenv("OPENMERGE_API_TOKEN_FILE", "")
+	previous := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = previous })
+	for _, body := range []bool{false, true} {
+		http.DefaultTransport = statusTimeoutTransport{body: body}
+		for _, args := range [][]string{
+			{"queue", "status", "--api", "http://status.invalid", "--json"},
+			{"change", "show", "chg1_" + strings.Repeat("a", 64), "--repo", "owner/repo", "--api", "http://status.invalid", "--json"},
+		} {
+			var out, errOut bytes.Buffer
+			if code := run(args, &out, &errOut); code != 1 || out.Len() != 0 {
+				t.Fatalf("%v body=%t: code=%d stdout=%s stderr=%s", args, body, code, &out, &errOut)
+			}
+			for _, want := range []string{"status API request timed out", "client limit 20s", "retry the read", "queue processing may still be running"} {
+				if !strings.Contains(errOut.String(), want) {
+					t.Fatalf("missing %q: %s", want, &errOut)
+				}
+			}
 		}
 	}
 }

@@ -385,7 +385,9 @@ func (s *Server) Journals(ctx context.Context, keys []store.QueueKey) ([]store.J
 func (s *Server) QueueReadiness(key store.QueueKey) *status.Readiness {
 	for _, w := range s.workers() {
 		if w.Key == key {
-			w.mu.Lock()
+			if !w.lockStatus() {
+				return &status.Readiness{Ready: false, Reason: "policy_busy"}
+			}
 			defer w.mu.Unlock()
 			r := &status.Readiness{Ready: !w.managed || w.ready}
 			if !r.Ready {

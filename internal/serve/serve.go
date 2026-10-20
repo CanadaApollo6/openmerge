@@ -85,6 +85,9 @@ type Server struct {
 }
 
 type worker struct {
+	// Approval status uses an immutable policy snapshot while the worker is busy.
+	// Nil retains legacy reporting's locking behavior during the trial.
+	approvalStatus     atomic.Pointer[queue.Config]
 	stageA             *stageAPolicy
 	approvalInputProbe func(context.Context, queue.ApprovalBasis) (queue.ApprovalEligibilityObserved, error)
 	settlementOnly     bool

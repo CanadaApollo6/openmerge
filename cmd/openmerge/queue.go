@@ -19,6 +19,15 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/status"
 )
 
+const statusClientTimeout = 20 * time.Second
+
+func statusReadError(err error) error {
+	if os.IsTimeout(err) {
+		return fmt.Errorf("status API request timed out (client limit %s); retry the read; queue processing may still be running: %w", statusClientTimeout, err)
+	}
+	return err
+}
+
 func runQueue(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 || args[0] != "status" {
 		_, _ = fmt.Fprintln(stderr, "Usage: openmerge queue status [--json] [--api URL] [--repo owner/name] [--base main] [--pr N]")
@@ -89,10 +98,10 @@ func runQueue(args []string, stdout, stderr io.Writer) int {
 	if token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
 	}
-	client := &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := &http.Client{Timeout: statusClientTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	response, err := client.Do(request)
 	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "read status API:", err)
+		_, _ = fmt.Fprintln(stderr, "read status API:", statusReadError(err))
 		return 1
 	}
 	defer func() { _ = response.Body.Close() }()
@@ -101,6 +110,10 @@ func runQueue(args []string, stdout, stderr io.Writer) int {
 	}
 	const maxResponse = 32 << 20
 	body, err := io.ReadAll(io.LimitReader(response.Body, maxResponse+1))
+	if os.IsTimeout(err) {
+		_, _ = fmt.Fprintln(stderr, "read status API:", statusReadError(err))
+		return 1
+	}
 	var result status.Response
 	if err != nil || len(body) > maxResponse || json.Unmarshal(body, &result) != nil || result.Version != status.Version || list && !*discovery && result.Queues == nil || *discovery && result.Discovery == nil || !list && result.Queue == nil || *pr > 0 && (result.PR == nil || result.Why == nil) {
 		_, _ = fmt.Fprintln(stderr, "invalid, oversized or unsupported status API response")
