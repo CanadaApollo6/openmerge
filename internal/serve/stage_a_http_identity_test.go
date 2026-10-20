@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -19,7 +20,12 @@ import (
 )
 
 // Keep non-identity operations on the fake; identity failures come through the
-// actual installation transport, SDK and adapter using a loopback HTTP server.
+// actual installation transport, SDK and adapter. HTTP statuses use a loopback
+// server; timeouts are injected only for the identity request under test.
+type stageAIdentityRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f stageAIdentityRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
 type stageAHTTPIdentityDriver struct {
 	*fake.Forge
 	ids       forge.IdentityReader
@@ -87,10 +93,6 @@ func TestStageAHTTPIdentityFailuresBlockOrRetry(t *testing.T) {
 					case "/app/installations/7/access_tokens":
 						_, _ = fmt.Fprintf(out, `{"token":"fixture-only","expires_at":%q}`, time.Now().Add(time.Hour).Format(time.RFC3339))
 					default:
-						if tc.name == "timeout" {
-							<-r.Context().Done()
-							return
-						}
 						if tc.header != "" {
 							out.Header().Set(tc.header, tc.value)
 						}
@@ -106,18 +108,30 @@ func TestStageAHTTPIdentityFailuresBlockOrRetry(t *testing.T) {
 							_, err := f.PushBase(repo, "main", "move", nil)
 							must(t, err)
 						}
-						// Only the timeout case needs a small deadline; other statuses
-						// must not turn into incidental timeouts on small race runners.
-						timeout := 5 * time.Second
-						if tc.name == "timeout" {
-							timeout = 50 * time.Millisecond
-						}
-						app, err := github.New(github.Config{AppID: 42, PrivateKey: private, APIBaseURL: server.URL + "/", HTTPClient: &http.Client{Timeout: timeout}})
+						transport := http.DefaultTransport.(*http.Transport).Clone()
+						t.Cleanup(transport.CloseIdleConnections)
+						var timeouts atomic.Uint32
+						timeoutPath := map[string]string{
+							"user":    "/users/writer",
+							"team":    "/orgs/org/teams/reviewers",
+							"members": "/organizations/5/team/50/members",
+						}[operation]
+						client := &http.Client{Timeout: time.Minute, Transport: stageAIdentityRoundTripper(func(r *http.Request) (*http.Response, error) {
+							if tc.name == "timeout" && r.URL.Path == timeoutPath {
+								timeouts.Add(1)
+								return nil, context.DeadlineExceeded
+							}
+							return transport.RoundTrip(r)
+						})}
+						app, err := github.New(github.Config{AppID: 42, PrivateKey: private, APIBaseURL: server.URL + "/", HTTPClient: client})
 						must(t, err)
 						driver, err := app.Installation(t.Context(), 7)
 						must(t, err)
 						w.Driver = stageAHTTPIdentityDriver{Forge: f, ids: driver, operation: operation}
 						err = s.configuration(t.Context(), w)
+						if tc.name == "timeout" && timeouts.Load() != 1 {
+							t.Fatalf("identity timeout injections=%d, want 1", timeouts.Load())
+						}
 						if tc.definite && err != nil || !tc.definite && err == nil {
 							t.Fatalf("configuration error=%v definite=%t", err, tc.definite)
 						}
