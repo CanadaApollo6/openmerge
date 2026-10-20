@@ -1,5 +1,112 @@
 # ADR 0008 PR 1: inert contract evidence
 
+## Round 2 revision and schema audit
+
+Rebased onto `e9b24e84a7c6a2ec93be501f4730cefdbf99c0fa` (including #92 shared
+forge validators). Production implementation and verification helper:
+`ea2ce6c79818c4f04eeec44ab849a658cb57a22a`. The final evidence commit changes
+only this note. All public type names remain unchanged.
+
+Observed bypass inventory now includes `user`, `organization_admin`, `deploy_key`,
+`enterprise_owner`, and `enterprise_role`, alongside the original app/team/role
+kinds. `exempt` is retained alongside `always` and `pull_request`. Class-wide actors
+can omit `ID`; unknown forge types retain their exact name with `Kind: unknown`
+and `RawKind`. The unauthorized-inventory fixture round-trips all nine normalized
+kinds with corresponding `unexpected_bypass` findings, including ID-less and
+unknown actors. The strict declared team/repository-admin union is unchanged.
+
+The audit used GitHub's [repository ruleset schema](https://docs.github.com/en/rest/repos/rules#get-a-repository-ruleset)
+and [organization ruleset schema](https://docs.github.com/en/rest/orgs/rules#get-an-organization-repository-ruleset),
+plus the [Enterprise Cloud actor schema](https://docs.github.com/en/enterprise-cloud%40latest/rest/orgs/rules).
+`Protection.Target` now retains branch/tag/push/repository distinctions. A missing
+unseen target can be stored, but cannot receive a complete-seeing fingerprint.
+The frozen inventory includes enforcement, target, ref-name include/exclude,
+all other conditions, rules with every parameter, and bypass kind/identity/mode.
+`Parameter.Name` specifies relative JSON-pointer paths with escaped segments and
+array indices; ordered scalar values preserve nested object associations without
+raw API bodies. Organization variants exercise repository-name include/exclude
+and protected, repository IDs, and repository-property include/exclude names,
+values and sources. Nested status-check context/integration-ID parameters are
+covered too. Sensitivity tests cover each leaf, all target variants, rule kinds,
+and unknown actor types. Ruleset names, links, node IDs and timestamps are display
+metadata rather than enforcement inputs; an adapter may retain a reliable revision
+in the existing `Revision` field.
+
+Every evidence collection, including nested rules, selectors, conditions, rule
+parameters, parameter values, bypass lists and coverage protection IDs, is bounded
+at 1,000 entries. Boundary tests accept 1,000 and reject 1,001. `cloneState` now
+copies the full authority projection; mutation tests cover its pin, activation,
+observation, proposed verification and applied verification. The optional forge
+input wraps every validation failure with `ErrInvalidInput`, reuses `BranchRef`
+for the default branch and `ValidateRefName` for unique full expected branch refs.
+
+The trial remains **Inert**: public authority config remains rejected, no runtime
+reader/emitter or SQL migration was added, and the shared-validator changes affect
+only the dormant input contract. Every Go/build/make invocation was serialized
+with the shared heavy-work lock, `GOFLAGS=-p=2`, and 4 GiB (6 GiB for replay).
+Only localhost:54329 was used for DB tests. No live DB, service, status API, or
+remote `openmerge/*` ref was accessed; no real GitHub API call was added or made
+by code or tests.
+
+### Round 2 executed evidence
+
+Completed 2026-10-20 at 15:01:26 UTC, Go 1.27.2. The focused authority/wire/digest/
+forge/snapshot suite and full wrapped `make check` both exit **0**. The full check
+includes zero lint issues, the short race suite, localhost:54329 integrations and
+the production build. Candidate loader/schema and existing digest golden vectors
+pass unchanged. Exact manual command logs:
+`/home/riels/.cache/adr0008-1-round2-focused.log` and
+`/home/riels/.cache/adr0008-1-round2-check.log`.
+
+The wrapper exits **0**, verdict **PASS**, with these results against e9b24e8:
+
+- **94/94** existing wire fixtures, including **85** registry fixtures, are byte
+  identical. Sorted repository-relative path/NUL/file-byte SHA-256 remains
+  `328d1264cf4242cf381c1f596f0393064395a31b5e5994cb07ef291ac9e474c1`.
+  There are **8** additive authority fixtures (**102** total): three registry,
+  activation, unauthorized inventory, and three inherited-condition variants.
+  Registry golden/strictness, activation golden and all four observation/verification
+  variant round-trips pass. Required-field, duplicate and case-folded key tests pass.
+- Snapshot gate and snapshot-tail tests pass. The untouched e9b24e8 State/decoder
+  preserves the populated v6 cursor bytes and rejects v7. The legacy snapshot hash
+  remains `94a9dea394ab17bb0921e76c413d40c2a3a8dfa73733e53728460de01d59d096`;
+  the updated authority v7 hash is
+  `c5d7a3d5e56f25bbf3175741f24df40e54dbf3501882d137311172f7ffdb01cd`.
+- **90/90** approval/legacy contract checkpoints at depths 1 and 4 match;
+  action counts, snapshot bytes and plan bytes all have delta **0**. Both streams
+  hash to `88e727ebe7ea5b570f352c5c661c2cd1642c1b5120f3d3ed086993f4dd00362a`.
+- Offline replay gates **2/4 PASS**, tool self-tests **PASS**, and synthetic
+  compatibility **7/7**. All **2,159/2,159** action, structural-state, snapshot-hash
+  and deadline-boundary checkpoints match across the unchanged 2,158-event export,
+  including **8,676** boundary probes. Candidate repeats match. Authority remains
+  nil at every checkpoint; non-allowlisted differences are empty.
+- Both unchanged `make test-sim-exits` runs exit **0**. All **146** normalized
+  result blocks match, with SHA-256
+  `a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7`.
+
+Commands, numeric exits and input hashes are retained in
+`/home/riels/.cache/adr0008-1/round2.json`; detailed replay and per-step logs are
+under `runs/round2/` there. Hashes for reports, streams, logs, exports, snapshots
+and the production binary are in `round2-artifact-manifest.json`. All paths belong
+to this round; round-1 evidence below remains historical. An initial wrapper
+preflight exited **1** before any Go command because the supplied baseline SHA
+was mistyped. The corrected run uses the git-resolved full SHA above; the rejected
+preflight is retained in `round2-preflight-failure.json`.
+
+Reproduce from clean checkouts and the retained offline export:
+
+```sh
+python3 scripts/adr-0008-1-verify.py \
+  --baseline /home/riels/.cache/adr0008-1-round2-main \
+  --baseline-commit e9b24e84a7c6a2ec93be501f4730cefdbf99c0fa \
+  --simulator --out /home/riels/.cache/adr0008-1/round2-repeat.json
+flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB \
+  OPENMERGE_TEST_DATABASE_URL='postgres://postgres:openmerge@localhost:54329/postgres?sslmode=disable' \
+  make check
+```
+
+## Round 1 evidence (historical)
+
 Validated on 2026-10-20, completed at 14:28:40 UTC, with Go 1.27.2.
 Baseline: `e7000f8cc1df54372f5220617361f21aaca58b0a`.
 Implementation: `92f695f40a5b64a710ad21c7e0f64fdd82002f9f`.
@@ -15,7 +122,7 @@ remote `openmerge/*` ref was accessed. No new GitHub HTTP call exists. The repla
 uses an already exported local journal copy; it does not refresh that export.
 This evidence does not authorize deploying held Stage A prerequisites.
 
-## Contracts and boundaries
+### Contracts and boundaries
 
 `internal/authority` defines candidate modes, exclusive declared/resolved
 break-glass actors, owner semantics, coverage/effective digests, typed visibility,
@@ -45,7 +152,7 @@ immutable evidence requirements. It invents no ordinary reviewer floor and does
 not synthesize `approvals.default: none`. Legacy approval/evaluator/gate sources
 are unchanged. PR 9 owns enforcement and public configuration activation.
 
-## Wire and digest stability
+### Wire and digest stability
 
 All **94** pre-existing wire fixtures, including **85** registry fixtures, match
 main byte-for-byte. SHA-256 over sorted relative path, NUL and file bytes:
@@ -70,7 +177,7 @@ changing coverage, actor, default branch or method changes it. Membership is not
 part of identity. Team and repository-admin vectors are in
 `internal/authority/digest_test.go`.
 
-## Snapshot and downgrade gates
+### Snapshot and downgrade gates
 
 The v7 decoder retains v2–v6 decoding, including the existing historical upgrade
 tests. `EncodeSnapshot` still selects the exact v6 shape when authority evidence
@@ -85,11 +192,17 @@ actor variants and activation mismatch rejection. The store test
 `TestLegacyOutsidePushCursorRemainsV6` writes, reloads and advances a persisted
 outside-push cursor through the real test database path.
 
-The offline probe compiles main's **unchanged State and decoder sources**, reads
+The round-1 offline probe compiles e7000f8's **unchanged State and decoder sources**, reads
 a populated newly encoded v6 snapshot containing outside-push evidence inside the
 full cursor wrapper, and preserves its bytes. It rejects a fixture-backed v7
 snapshot. Both probe exits are **0**. The main decoder also reads every original
 journal event during differential replay. General compaction/pruning is disabled.
+
+This proof is not binary rollback compatibility with the live revision
+`3f77a88`. That binary only decodes snapshot versions 2–3 and already rejects
+the version-6 outside-push cursors written by main; this mismatch predates PR 1.
+Binary-only rollback to `3f77a88` is out of scope. Rolling back to that revision
+requires restoring the pre-deploy database backup, not reusing the newer DB.
 
 The contract differential compares approval-enabled and no-approvals legacy
 journals at depths 1 and 4: **90/90** serialized snapshot/action checkpoints match.
@@ -99,7 +212,7 @@ The focused sibling test additionally keeps an authority queue beside both legac
 forms at depths 1 and 4, applies valid and invalid dormant authority inputs, and
 proves the siblings' snapshots/actions remain unchanged. Its race run exits **0**.
 
-## Offline replay and simulator results
+### Offline replay and simulator results
 
 Inputs are `/home/riels/.cache/om-pr72-fix1-input/{events,queues}.jsonl`, the
 previously retained 2026-10-18 export. It has **2,158 events**, IDs **1–2158**, and
@@ -125,7 +238,7 @@ All **146** normalized result blocks match. Normalization sorts complete `t.Log`
 blocks and excludes Go harness timing/interleaving, as in Stage A 2b. Normalized
 SHA-256: `a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7`.
 
-## Commands, artifacts and validation
+### Commands, artifacts and validation
 
 Baseline checkout: `/home/riels/.cache/adr0008-1-main`.
 Artifacts and exact probe commands/exits: `/home/riels/.cache/adr0008-1/final-r3.json`.
