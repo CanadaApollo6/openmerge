@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 
 	"github.com/CanadaApollo6/openmerge/internal/authority"
@@ -78,7 +79,7 @@ func (s *Server) authorityPushOptions(ctx context.Context, w *worker, operation 
 	if resolved.Mode == authority.GitHub {
 		return forge.PushOptions{}
 	}
-	if pin.OpenMerge == nil || !strings.EqualFold(pin.OpenMerge.Binding.Repository, w.Key.Repository) {
+	if pin.OpenMerge == nil || !strings.EqualFold(pin.OpenMerge.Binding.Repository, w.Key.Repository) || strconv.FormatInt(pin.OpenMerge.Binding.InstallationID, 10) != w.Key.Installation || pin.OpenMerge.Binding.QueueKey != w.Key.Installation+"/"+pin.OpenMerge.Binding.Repository+"/"+w.Key.BaseBranch || w.Key.Lane != "" {
 		return unavailablePush(errors.New("authority repository binding missing"))
 	}
 	basis, evidence, ok := state.AuthorityProtection()

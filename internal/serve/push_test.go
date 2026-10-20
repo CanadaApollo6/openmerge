@@ -82,7 +82,8 @@ func TestAuthorityBootstrapPinsBeforeFirstRealFence(t *testing.T) {
 				pin.EffectiveDigest = digest
 				pin.DefaultBranch = "main"
 				pin.OpenMerge.Binding.Repository = key.Repository
-				pin.OpenMerge.Binding.QueueKey = "fixture/main"
+				pin.OpenMerge.Binding.QueueKey = key.Installation + "/" + key.Repository + "/" + key.BaseBranch
+				pin.OpenMerge.Binding.InstallationID = 7
 				pin.OpenMerge.Binding.EffectiveDigest = digest
 				pin.OpenMerge.Binding.DefaultBranch = "main"
 				must(t, pin.Validate())
