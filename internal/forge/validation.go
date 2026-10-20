@@ -147,7 +147,10 @@ func ValidateBuildRequest(req BuildRequest) error {
 	if err := ValidateBuildPRs(req.PRs); err != nil {
 		return err
 	}
-	return ValidateBuildMetadata(req.PRs)
+	if err := ValidateBuildMetadata(req.PRs); err != nil {
+		return fmt.Errorf("%w: %w", err, ErrInvalidInput)
+	}
+	return nil
 }
 
 // ValidateLandRequest checks syntax before an invalid request can look like a
@@ -171,6 +174,9 @@ func ValidateLandRequest(req LandRequest) error {
 		if err := ValidateCommitIDs(req.FastForwardHeadSHA); err != nil {
 			return err
 		}
+	}
+	if err := ValidateFenceID(req.NextFenceID); err != nil {
+		return err
 	}
 	return ValidateBuildPRs(req.PRs)
 }

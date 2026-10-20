@@ -275,6 +275,14 @@ The ref validator is also compared with the installed `git check-ref-format`
 over a corpus including every non-NUL byte. NUL is rejected separately because
 it cannot be passed in an executable argument.
 
+The core contract entry points run against these implementations:
+
+| Suite | Fake | gitops (local bare repos) | GitHub (`httptest`) |
+| --- | --- | --- | --- |
+| `Run` (combined Git/Driver scenarios, including `runGitValidation`) | `TestContract`, `TestContractWithoutRollbacks` | — | — |
+| `RunGit` (Git scenarios, including `runGitValidation`) | Covered by `Run` | `TestGitContract` | — |
+| `RunDriver` (Driver scenarios, including `runDriverValidation`) | `TestDriverContract` | — | `TestDriverContract` |
+
 The #83 audit covers every method of `Driver` and `Git`:
 
 | Methods | Validation and parity result |
@@ -291,10 +299,10 @@ The #83 audit covers every method of `Driver` and `Git`:
 | `MarkLanded` | Positive PR number and validation of the derived `landed/<sha>` comment key on both sides. Fake additionally requires a known landed object; see limitations below. |
 | `Comment` | Positive PR number and shared hidden-marker key validation; fake now uses the real `<!-- openmerge:key=... -->` marker and shares keyed storage with `MarkLanded`. |
 | `BuildTestRef` | Shared method, batch ID, PR count/pins, base object ID, branch ref, and metadata validation. Fake now normalizes qualified branch aliases. Existing head-change/conflict/fast-forward contracts remain. |
-| `Land` | Shared branch syntax, distinct normalized refs, full base/tested/fence IDs, positive pinned PR numbers and full head IDs. Fake checks syntax and PR pins before refusing a lease. Valid leases and fence-token rules remain unchanged. |
+| `Land` | Shared branch syntax, distinct normalized refs, full base/tested/fence IDs, next fence token, positive pinned PR numbers and full head IDs. Both check syntax before refusing a lease, including an invalid next token combined with an old fence SHA. Fake also checks PR pins before refusing a lease. Valid leases and fence-token rules remain unchanged. |
 | `VerifyFastForward` | Fake now validates all three full IDs and requires a known base before ancestry checks, preserving infrastructure/input errors rather than returning an ancestry refusal for an unknown base. |
 | `EnsureFence`, `ReadFence`, `ReadRef` | Shared branch grammar, including empty, reserved namespace, component, punctuation and control-byte cases; fake normalizes qualified branch aliases. |
-| `AdvanceFence` | Same branch/expected-ID/token validation. Fake validates the expected object and next token before refusing a stale lease, matching gitops. |
+| `AdvanceFence` | Same branch/expected-ID/token syntax validation before refusing a stale lease. Fake checks the lease before minting a fence commit; gitops may create an unreachable local object before the remote lease refusal. Unknown objects remain model/transport errors. |
 | `IsAncestor`, `HasMergeCommits` | Shared full-object-ID syntax; missing graph objects remain errors rather than negative ancestry observations. |
 | `DeleteBranch` | Shared plain/non-OpenMerge branch, ref grammar, and pinned full SHA validation. Missing or moved valid branches remain no-ops; a matched protected fixture reports a deletion error. |
 
@@ -345,6 +353,13 @@ identity, or unknown branch-protection state. Use `FailNext` and the real
 adapter's loopback/local-git tests for those failures. Unknown remote resources
 can therefore yield a generic fake fixture error or an empty configured
 observation instead of a GitHub `APIError`; they are not local syntax failures.
+The fake's direct protected-`DeleteBranch` error models configured fixture
+protection, not a shared Git transport contract: bare-repository fixtures have
+no hosting protection API. Normal cleanup first calls `HeadBranchForDeletion`,
+which filters protected branches in both the fake and GitHub implementations,
+so this fake-only guard is unreachable through that path for unchanged
+protection. Remote protection changes or deletion failures remain transport
+errors on the real adapter.
 `MarkLanded` is deliberately stricter in the fake about object existence, to
 catch tests trying to close a PR without a landed commit. The real App also redacts credential-bearing status/comment text with its
 credential-aware sanitizer; the fake stores fixture text without credentials.

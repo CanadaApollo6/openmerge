@@ -346,9 +346,6 @@ func (f *Forge) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequ
 	if r.refs[req.Base] == landed || r.refs[req.Base] != req.ExpectedBaseSHA || !f.disableFenceLeaseForTesting && r.refs[req.Fence] != req.ExpectedFence {
 		return "", forge.ErrLeaseRejected
 	}
-	if req.Base == req.Fence {
-		return "", errors.New("base and fence must be distinct refs")
-	}
 	if _, ok := r.commits[req.TestedSHA]; !ok {
 		return "", fmt.Errorf("unknown tested commit %q", req.TestedSHA)
 	}
@@ -405,12 +402,12 @@ func (f *Forge) AdvanceFence(ctx context.Context, repo forge.RepoRef, fenceRef, 
 		return "", err
 	}
 	r := f.repo(repo)
+	if r.refs[fenceRef] != expectedSHA {
+		return "", forge.ErrLeaseRejected
+	}
 	next, err := r.fence(expectedSHA, nextID, "")
 	if err != nil {
 		return "", err
-	}
-	if r.refs[fenceRef] != expectedSHA {
-		return "", forge.ErrLeaseRejected
 	}
 	r.refs[fenceRef] = next
 	return next, nil

@@ -1,10 +1,32 @@
 package fake
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
+
+func TestStaleAdvanceFenceDoesNotMintCommit(t *testing.T) {
+	f := New()
+	repo := forge.RepoRef{Path: "owner/repo"}
+	_, initial := f.Init(repo, "main", "openmerge/fence/main")
+	next, err := f.AdvanceFence(t.Context(), repo, "openmerge/fence/main", initial, "abandon/first")
+	mustCleanup(t, err)
+	before := len(f.repo(repo).commits)
+	_, err = f.AdvanceFence(t.Context(), repo, "openmerge/fence/main", initial, "abandon/stale")
+	if !errors.Is(err, forge.ErrLeaseRejected) {
+		t.Fatalf("stale advance = %v, want ErrLeaseRejected", err)
+	}
+	if after := len(f.repo(repo).commits); after != before {
+		t.Fatalf("stale advance minted commits: %d -> %d", before, after)
+	}
+	got, err := f.ReadRef(t.Context(), repo, "openmerge/fence/main")
+	mustCleanup(t, err)
+	if got != next {
+		t.Fatal("stale advance moved the fence")
+	}
+}
 
 func mustCleanup(t *testing.T, err error) {
 	t.Helper()

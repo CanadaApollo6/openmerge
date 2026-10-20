@@ -58,11 +58,21 @@ The concrete construction evidence is:
 - Configuration reads in `internal/serve/reconcile.go` use a resolved commit
   tip and enumerated nonempty config paths. Both real and fake now reject an
   empty ref/path before lookup; valid reads have unchanged content semantics.
-- `ReportStatus` receives the planner's finite lifecycle states or explicit
-  `forge.Dequeued`; workers also construct normalized status constants. The
-  real mapping is unchanged. PR-number-bearing operations consume positive
-  PR observations/admissions and parsed positive command targets, not zero or
-  negative identifiers.
+- `ReportStatus` receives the planner's validated lifecycle states
+  (`internal/queue/validate.go:ReportStatus.Validate`) or explicit
+  `forge.Dequeued`. `internal/serve/worker.go:report` initially casts
+  `batch.Phase`, including `queue.Building` (`"building"`), but explicitly maps
+  `"building"` to `forge.Testing` before calling `s.status` and then the driver.
+  The other batch phases are `testing` and `landing`, both accepted by
+  `ValidateStatus`; paused, queued and blocked reports use explicit constants.
+  The shared driver rejection cases include `"building"` to guard that boundary.
+  `internal/serve/forge_status_test.go:TestReportBuildingBatchAsTesting` exercises
+  a persisted building batch through the server and verifies the emitted
+  `testing` status against the validating fake.
+  Investigation found no invalid-state production call on this path and no
+  status-reporting bug to file; the real mapping is unchanged. PR-number-bearing
+  operations consume positive PR observations/admissions and parsed positive
+  command targets, not zero or negative identifiers.
 - History readers retain the preexisting 10,000 limits, now via one validator.
   Full-ID, history-limit, build metadata and identity semantics have no changed
   valid-input bounds.

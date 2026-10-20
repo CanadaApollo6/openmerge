@@ -115,6 +115,25 @@ func runGitValidation(t *testing.T, factory func(*testing.T) Env) {
 			_, err = e.Git.Land(ctx, e.Repo, lr)
 			invalidInput(t, err)
 		}
+		for _, tc := range []struct {
+			name     string
+			metadata []*forge.ChangeMetadata
+		}{
+			{name: "empty", metadata: []*forge.ChangeMetadata{{}}},
+			{name: "invalid-label", metadata: []*forge.ChangeMetadata{{ChangeID: "chg1_" + strings.Repeat("a", 64), Revision: 1, Labels: []string{"docs\nforged"}}}},
+			{name: "missing", metadata: []*forge.ChangeMetadata{{ChangeID: "chg1_" + strings.Repeat("a", 64), Revision: 1}, nil}},
+			{name: "duplicate", metadata: []*forge.ChangeMetadata{{ChangeID: "chg1_" + strings.Repeat("a", 64), Revision: 1}, {ChangeID: "chg1_" + strings.Repeat("a", 64), Revision: 2}}},
+		} {
+			t.Run("build-metadata/"+tc.name, func(t *testing.T) {
+				req := build
+				req.PRs = append([]forge.BuildPR(nil), e.PRs[:len(tc.metadata)]...)
+				for i, metadata := range tc.metadata {
+					req.PRs[i].Metadata = metadata
+				}
+				_, err := e.Git.BuildTestRef(ctx, e.Repo, req)
+				invalidInput(t, err)
+			})
+		}
 		for _, number := range []int{-1, 0} {
 			req := build
 			req.PRs = []forge.BuildPR{{Number: number, HeadSHA: e.PRs[0].HeadSHA}}
@@ -152,6 +171,21 @@ func runGitValidation(t *testing.T, factory func(*testing.T) Env) {
 		}
 		if _, err := e.Git.ReadRef(ctx, e.Repo, build.Ref); err == nil {
 			t.Fatal("rejected build created a ref")
+		}
+	})
+	t.Run("fence-token-before-stale-lease", func(t *testing.T) {
+		e := factory(t)
+		ctx := t.Context()
+		next, err := e.Git.AdvanceFence(ctx, e.Repo, e.FenceRef, e.FenceSHA, "abandon/validation")
+		must(t, err)
+		_, err = e.Git.Land(ctx, e.Repo, forge.LandRequest{Base: e.Base, ExpectedBaseSHA: e.BaseSHA, TestedSHA: e.PRs[0].HeadSHA, Fence: e.FenceRef, ExpectedFence: e.FenceSHA, NextFenceID: "two tokens", PRs: e.PRs})
+		invalidInput(t, err)
+		for _, pair := range [][2]string{{e.Base, e.BaseSHA}, {e.FenceRef, next}} {
+			got, err := e.Git.ReadRef(ctx, e.Repo, pair[0])
+			must(t, err)
+			if got != pair[1] {
+				t.Fatalf("rejected landing mutated %s: %s", pair[0], got)
+			}
 		}
 	})
 	t.Run("qualified-branch-aliases", func(t *testing.T) {
@@ -205,7 +239,7 @@ func runDriverValidation(t *testing.T, factory func(*testing.T) Env) {
 				t.Fatal("invalid login authorized")
 			}
 		}
-		for _, state := range []forge.StatusState{"", "unknown", "success"} {
+		for _, state := range []forge.StatusState{"", "unknown", "success", "building"} {
 			invalidInput(t, e.Driver.ReportStatus(ctx, e.Repo, pr, head, forge.Status{State: state}))
 		}
 		for _, pair := range [][2]string{{"", "file"}, {e.Base, ""}, {"", ""}} {
