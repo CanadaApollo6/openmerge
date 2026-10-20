@@ -363,7 +363,7 @@ func writeJSON(w http.ResponseWriter, value any) {
 }
 
 func applyReadiness(source Source, q *Queue, sanitizer *diagnostic.Sanitizer) {
-	if q.Authority != nil {
+	if q.Authority != nil || q.OutsideWarnings != nil {
 		if runtime, ok := source.(interface {
 			QueueReadinessSnapshot(store.QueueKey) *Readiness
 		}); ok {
@@ -385,7 +385,7 @@ func applyReadiness(source Source, q *Queue, sanitizer *diagnostic.Sanitizer) {
 }
 
 func applyPolicy(source Source, q *Queue, selected *Entry) {
-	if q.Authority != nil {
+	if q.Authority != nil || q.OutsideWarnings != nil {
 		if runtime, ok := source.(interface {
 			QueuePolicySnapshot(store.QueueKey) (queue.Config, bool)
 		}); ok {

@@ -10,6 +10,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/status"
 	"github.com/CanadaApollo6/openmerge/internal/store"
@@ -34,28 +35,34 @@ func TestAuthorityStatusAndHealthDoNotWaitForWorker(t *testing.T) {
 	handler := status.DynamicHandler(s, func() []store.QueueKey { return s.Keys() }, "secret", nil)
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	for _, path := range []string{"/v1/live", "/v1/health", "/v1/queues/owner/repo/main", "/v1/queues"} {
-		done := make(chan *httptest.ResponseRecorder, 1)
-		go func() {
-			r := httptest.NewRequest("GET", path, nil)
-			r.Header.Set("Authorization", "Bearer secret")
-			rr := httptest.NewRecorder()
-			handler.ServeHTTP(rr, r)
-			done <- rr
-		}()
-		select {
-		case rr := <-done:
-			if rr.Code != 200 {
-				t.Fatalf("%s: %d %s", path, rr.Code, rr.Body)
+	for _, mode := range []authority.Mode{authority.OpenMerge, authority.GitHub} {
+		if mode == authority.GitHub {
+			// Historical authority warnings must also use snapshots after rollback.
+			reportingPin(t, s, w, mode)
+		}
+		for _, path := range []string{"/v1/live", "/v1/health", "/v1/queues/owner/repo/main", "/v1/queues"} {
+			done := make(chan *httptest.ResponseRecorder, 1)
+			go func() {
+				r := httptest.NewRequest("GET", path, nil)
+				r.Header.Set("Authorization", "Bearer secret")
+				rr := httptest.NewRecorder()
+				handler.ServeHTTP(rr, r)
+				done <- rr
+			}()
+			select {
+			case rr := <-done:
+				if rr.Code != 200 {
+					t.Fatalf("%s: %d %s", path, rr.Code, rr.Body)
+				}
+				if path != "/v1/live" && !json.Valid(rr.Body.Bytes()) {
+					t.Fatal(rr.Body)
+				}
+				if path != "/v1/live" && !strings.Contains(rr.Body.String(), `"outside_warnings":{"outstanding":1,`) {
+					t.Fatalf("%s lost warnings while worker held: %s", path, rr.Body)
+				}
+			case <-time.After(200 * time.Millisecond):
+				t.Fatalf("%s blocked on worker lock", path)
 			}
-			if path != "/v1/live" && !json.Valid(rr.Body.Bytes()) {
-				t.Fatal(rr.Body)
-			}
-			if path != "/v1/live" && !strings.Contains(rr.Body.String(), `"outside_warnings":{"outstanding":1,`) {
-				t.Fatalf("%s lost warnings while worker held: %s", path, rr.Body)
-			}
-		case <-time.After(200 * time.Millisecond):
-			t.Fatalf("%s blocked on worker lock", path)
 		}
 	}
 }
