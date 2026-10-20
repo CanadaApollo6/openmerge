@@ -2,6 +2,7 @@ package forgetest
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -35,6 +36,59 @@ func RunIdentityReader(t *testing.T, newEnv func(*testing.T) IdentityEnv) {
 		e.SetTeam(team, []forge.UserIdentity{bot, author, other, author})
 		return e
 	}
+
+	t.Run("invalid-identities", func(t *testing.T) {
+		e := setup(t)
+		for _, login := range []string{"", "bad/login", "bad login", "bad.name", "bad\nlogin", "[bot]"} {
+			// A malformed fixture must not bypass the same validation as the API.
+			user := author
+			user.Login = login
+			e.SetUser(user)
+			e.SetGrant(user.ID, "write")
+			if _, err := e.Reader.ResolveUser(t.Context(), login); !errors.Is(err, forge.ErrIdentityUnavailable) {
+				t.Fatalf("ResolveUser(%q)=%v", login, err)
+			}
+			if _, err := e.Reader.WriteGrant(t.Context(), e.Repo, user); !errors.Is(err, forge.ErrIdentityUnavailable) {
+				t.Fatalf("WriteGrant(%q)=%v", login, err)
+			}
+		}
+		for _, name := range []string{"", "org", "org/", "/team", "org/team/more", "org/bad.team"} {
+			if _, err := e.Reader.ResolveTeam(t.Context(), name); !errors.Is(err, forge.ErrIdentityUnavailable) {
+				t.Fatalf("ResolveTeam(%q)=%v", name, err)
+			}
+		}
+		for _, ids := range []forge.TeamIdentity{{}, {ID: 1}, {OrganizationID: 1}, {ID: -1, OrganizationID: 1}} {
+			if _, err := e.Reader.TeamMembers(t.Context(), ids); !errors.Is(err, forge.ErrIdentityUnavailable) {
+				t.Fatalf("TeamMembers(%+v)=%v", ids, err)
+			}
+		}
+	})
+	t.Run("invalid-member-login", func(t *testing.T) {
+		e := setup(t)
+		member := author
+		member.Login = "bad login"
+		e.SetTeam(team, []forge.UserIdentity{member})
+		if members, err := e.Reader.TeamMembers(t.Context(), team); !errors.Is(err, forge.ErrIdentityUnavailable) || members != nil {
+			t.Fatalf("invalid membership=%v, %v", members, err)
+		}
+	})
+
+	t.Run("membership-bound", func(t *testing.T) {
+		e := setup(t)
+		members := make([]forge.UserIdentity, forge.MaxTeamMembers+1)
+		for i := range members {
+			members[i] = forge.UserIdentity{ID: int64(i + 1), Login: fmt.Sprintf("member-%d", i+1), Kind: forge.UserAccount}
+		}
+		e.SetTeam(team, members[:forge.MaxTeamMembers])
+		got, err := e.Reader.TeamMembers(t.Context(), team)
+		if err != nil || len(got) != forge.MaxTeamMembers {
+			t.Fatalf("maximum membership: len=%d err=%v", len(got), err)
+		}
+		e.SetTeam(team, members)
+		if got, err := e.Reader.TeamMembers(t.Context(), team); !errors.Is(err, forge.ErrMembershipIncomplete) || got != nil {
+			t.Fatalf("oversized membership: len=%d err=%v", len(got), err)
+		}
+	})
 	t.Run("stable-identities-and-effective-membership", func(t *testing.T) {
 		e := setup(t)
 		for _, want := range []forge.UserIdentity{author, other, bot} {

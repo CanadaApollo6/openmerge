@@ -11,8 +11,8 @@ import (
 )
 
 func (s *session) fence(ctx context.Context, parent, id, tested string) (string, error) {
-	if id == "" || strings.ContainsAny(id, " \t\r\n\x00") {
-		return "", errors.New("single-token fence ID is required")
+	if err := forge.ValidateFenceID(id); err != nil {
+		return "", err
 	}
 	if parent != "" {
 		if err := s.commits(ctx, parent); err != nil {
@@ -71,6 +71,9 @@ func (s *session) pushLease(ctx context.Context, args ...string) error {
 // fence token atomically with old-SHA leases on both refs. Fast-forward lands
 // the verified marker parent; the fence still identifies the tested marker.
 func (r *Repo) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequest) (string, error) {
+	if err := forge.ValidateLandRequest(req); err != nil {
+		return "", err
+	}
 	s, unlock, err := r.open(ctx, repo)
 	if err != nil {
 		return "", err
@@ -83,9 +86,6 @@ func (r *Repo) Land(ctx context.Context, repo forge.RepoRef, req forge.LandReque
 	fence, err := s.branch(ctx, req.Fence)
 	if err != nil {
 		return "", err
-	}
-	if base == fence || !validSHA(req.ExpectedBaseSHA) || !validSHA(req.ExpectedFence) || !validSHA(req.TestedSHA) {
-		return "", errors.New("distinct refs and full base, tested, and fence SHAs are required")
 	}
 	if err := s.heads(ctx, req.PRs); err != nil {
 		return "", err
@@ -131,8 +131,8 @@ func (r *Repo) Land(ctx context.Context, repo forge.RepoRef, req forge.LandReque
 
 // AdvanceFence mints a child token and leases the single remote fence ref.
 func (r *Repo) AdvanceFence(ctx context.Context, repo forge.RepoRef, ref, expected, nextID string) (string, error) {
-	if !validSHA(expected) {
-		return "", errors.New("full expected fence SHA is required")
+	if err := forge.ValidateCommitIDs(expected); err != nil {
+		return "", err
 	}
 	s, unlock, err := r.open(ctx, repo)
 	if err != nil {

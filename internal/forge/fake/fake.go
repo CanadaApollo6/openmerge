@@ -205,18 +205,13 @@ func (f *Forge) build(ctx context.Context, r *repository, req forge.BuildRequest
 	if err := f.failure(ctx, "BuildTestRef"); err != nil {
 		return "", nil, false, err
 	}
-	_, ok := r.commits[req.BaseSHA]
-	if !ok {
-		return "", nil, false, fmt.Errorf("unknown base commit %q", req.BaseSHA)
-	}
-	if req.Ref == "" || !forge.ValidBatchID(req.BatchID) || len(req.PRs) == 0 {
-		return "", nil, false, errors.New("test ref, valid batch ID, and PRs are required")
-	}
-	if req.Method != forge.Merge && req.Method != forge.Squash && req.Method != forge.Rebase && req.Method != forge.FastForward {
-		return "", nil, false, fmt.Errorf("unsupported merge method %q", req.Method)
-	}
-	if err := forge.ValidateBuildMetadata(req.PRs); err != nil {
+	if err := forge.ValidateBuildRequest(req); err != nil {
 		return "", nil, false, err
+	}
+	full, _ := forge.BranchRef(req.Ref)
+	req.Ref = strings.TrimPrefix(full, "refs/heads/")
+	if _, ok := r.commits[req.BaseSHA]; !ok {
+		return "", nil, false, fmt.Errorf("unknown base commit %q", req.BaseSHA)
 	}
 	content := slices.Clone(r.prsFor(req.BaseSHA))
 	files := maps.Clone(r.files(req.BaseSHA))
@@ -324,7 +319,20 @@ func (f *Forge) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequ
 	if err := f.failure(ctx, "Land"); err != nil {
 		return "", err
 	}
+	if err := forge.ValidateLandRequest(req); err != nil {
+		return "", err
+	}
+	base, _ := forge.BranchRef(req.Base)
+	fence, _ := forge.BranchRef(req.Fence)
+	req.Base, req.Fence = strings.TrimPrefix(base, "refs/heads/"), strings.TrimPrefix(fence, "refs/heads/")
 	r := f.repo(repo)
+	for _, pinned := range req.PRs {
+		pr, ok := r.prs[pinned.Number]
+		if !ok || pr.HeadSHA != pinned.HeadSHA {
+			return "", fmt.Errorf("PR %d head %q does not match actual head %q", pinned.Number, pinned.HeadSHA, pr.HeadSHA)
+		}
+	}
+
 	landed := req.TestedSHA
 	if req.FastForwardHeadSHA != "" {
 		if len(req.PRs) == 0 || req.PRs[len(req.PRs)-1].HeadSHA != req.FastForwardHeadSHA {
@@ -338,17 +346,8 @@ func (f *Forge) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequ
 	if r.refs[req.Base] == landed || r.refs[req.Base] != req.ExpectedBaseSHA || !f.disableFenceLeaseForTesting && r.refs[req.Fence] != req.ExpectedFence {
 		return "", forge.ErrLeaseRejected
 	}
-	if req.Base == req.Fence {
-		return "", errors.New("base and fence must be distinct refs")
-	}
 	if _, ok := r.commits[req.TestedSHA]; !ok {
 		return "", fmt.Errorf("unknown tested commit %q", req.TestedSHA)
-	}
-	for _, pinned := range req.PRs {
-		pr, ok := r.prs[pinned.Number]
-		if !ok || pr.HeadSHA != pinned.HeadSHA {
-			return "", fmt.Errorf("PR %d head %q does not match actual head %q", pinned.Number, pinned.HeadSHA, pr.HeadSHA)
-		}
 	}
 	next, err := r.fence(req.ExpectedFence, req.NextFenceID, req.TestedSHA)
 	if err != nil {
@@ -365,8 +364,8 @@ func (f *Forge) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequ
 }
 
 func (r *repository) fence(expected, id, tested string) (string, error) {
-	if id == "" || strings.ContainsAny(id, " \t\r\n\x00") {
-		return "", errors.New("single-token fence ID is required")
+	if err := forge.ValidateFenceID(id); err != nil {
+		return "", err
 	}
 	if _, ok := r.commits[expected]; !ok {
 		return "", fmt.Errorf("unknown fence commit %q", expected)
@@ -390,6 +389,18 @@ func (f *Forge) AdvanceFence(ctx context.Context, repo forge.RepoRef, fenceRef, 
 	if err := f.failure(ctx, "AdvanceFence"); err != nil {
 		return "", err
 	}
+
+	full, err := forge.BranchRef(fenceRef)
+	if err != nil {
+		return "", err
+	}
+	fenceRef = strings.TrimPrefix(full, "refs/heads/")
+	if err := forge.ValidateCommitIDs(expectedSHA); err != nil {
+		return "", err
+	}
+	if err := forge.ValidateFenceID(nextID); err != nil {
+		return "", err
+	}
 	r := f.repo(repo)
 	if r.refs[fenceRef] != expectedSHA {
 		return "", forge.ErrLeaseRejected
@@ -409,6 +420,12 @@ func (f *Forge) ReadFence(ctx context.Context, repo forge.RepoRef, fenceRef stri
 	if err := f.failure(ctx, "ReadFence"); err != nil {
 		return "", "", "", err
 	}
+
+	full, err := forge.BranchRef(fenceRef)
+	if err != nil {
+		return "", "", "", err
+	}
+	fenceRef = strings.TrimPrefix(full, "refs/heads/")
 	r := f.repo(repo)
 	sha, ok := r.refs[fenceRef]
 	if !ok {
@@ -425,6 +442,12 @@ func (f *Forge) ReadRef(ctx context.Context, repo forge.RepoRef, ref string) (st
 	if err := f.failure(ctx, "ReadRef"); err != nil {
 		return "", err
 	}
+
+	full, err := forge.BranchRef(ref)
+	if err != nil {
+		return "", err
+	}
+	ref = strings.TrimPrefix(full, "refs/heads/")
 	sha, ok := f.repo(repo).refs[ref]
 	if !ok {
 		return "", fmt.Errorf("unknown ref %q", ref)
@@ -439,6 +462,15 @@ func (f *Forge) DeleteRef(ctx context.Context, repo forge.RepoRef, ref string) e
 	if err := f.failure(ctx, "DeleteRef"); err != nil {
 		return err
 	}
+
+	full, err := forge.DeletionRef(ref)
+	if err != nil {
+		return err
+	}
+	ref = strings.TrimPrefix(full, "heads/")
+	if strings.HasPrefix(full, "tags/") {
+		ref = "refs/" + full
+	}
 	delete(f.repo(repo).refs, ref)
 	return nil
 }
@@ -448,6 +480,10 @@ func (f *Forge) PullRequest(ctx context.Context, repo forge.RepoRef, number int)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.failure(ctx, "PullRequest"); err != nil {
+		return forge.PullRequest{}, err
+	}
+
+	if err := forge.ValidatePRNumber(number); err != nil {
 		return forge.PullRequest{}, err
 	}
 	pr, ok := f.repo(repo).prs[number]
@@ -510,6 +546,10 @@ func (f *Forge) ListComments(ctx context.Context, repo forge.RepoRef, pr int, si
 	if err := f.failure(ctx, "ListComments"); err != nil {
 		return nil, err
 	}
+
+	if err := forge.ValidatePRNumber(pr); err != nil {
+		return nil, err
+	}
 	result := []forge.Comment{}
 	for _, c := range f.repo(repo).comments[pr] {
 		if since.IsZero() || !c.CreatedAt.Before(since) {
@@ -524,6 +564,10 @@ func (f *Forge) CanWrite(ctx context.Context, repo forge.RepoRef, user string) (
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.failure(ctx, "CanWrite"); err != nil {
+		return false, err
+	}
+
+	if err := forge.ValidateCanWriteLogin(user); err != nil {
 		return false, err
 	}
 	return f.repo(repo).permissions[user], nil
@@ -553,6 +597,14 @@ func (f *Forge) ReportStatus(ctx context.Context, repo forge.RepoRef, pr int, he
 	if err := f.failure(ctx, "ReportStatus"); err != nil {
 		return err
 	}
+
+	if err := forge.ValidatePRNumber(pr); err != nil {
+		return err
+	}
+
+	if err := forge.ValidateStatus(status); err != nil {
+		return err
+	}
 	r := f.repo(repo)
 	if r.statuses[pr] == nil {
 		r.statuses[pr] = make(map[string]forge.Status)
@@ -568,15 +620,27 @@ func (f *Forge) Comment(ctx context.Context, repo forge.RepoRef, pr int, key, bo
 	if err := f.failure(ctx, "Comment"); err != nil {
 		return err
 	}
-	r := f.repo(repo)
-	marker := "<!-- openmerge:" + key + " -->"
+
+	if err := forge.ValidatePRNumber(pr); err != nil {
+		return err
+	}
+
+	if err := forge.ValidateCommentKey(key); err != nil {
+		return err
+	}
+	f.repo(repo).keyedComment(pr, key, body)
+	return nil
+}
+
+func (r *repository) keyedComment(pr int, key, body string) bool {
+	marker := "<!-- openmerge:key=" + key + " -->"
 	for _, comment := range r.comments[pr] {
 		if comment.Author == Identity && strings.Contains(comment.Body, marker) {
-			return nil
+			return false
 		}
 	}
-	r.addComment(pr, Comment{Author: Identity, Key: key, Body: body + "\n" + marker})
-	return nil
+	r.addComment(pr, Comment{Author: Identity, Key: key, Body: body + "\n\n" + marker})
+	return true
 }
 
 // Identity is the authenticated bot identity used by this fake driver.
@@ -596,6 +660,13 @@ func (f *Forge) MarkLanded(ctx context.Context, repo forge.RepoRef, number int, 
 	if err := f.failure(ctx, "MarkLanded"); err != nil {
 		return err
 	}
+
+	if err := forge.ValidatePRNumber(number); err != nil {
+		return err
+	}
+	if err := forge.ValidateCommentKey("landed/" + landedSHA); err != nil {
+		return err
+	}
 	r := f.repo(repo)
 	pr, ok := r.prs[number]
 	if !ok {
@@ -605,16 +676,11 @@ func (f *Forge) MarkLanded(ctx context.Context, repo forge.RepoRef, number int, 
 		return fmt.Errorf("unknown landed commit %q", landedSHA)
 	}
 	key := "landed/" + landedSHA
-	for _, c := range r.comments[number] {
-		if c.Author == Identity && c.Key == key {
-			pr.Closed = true
-			r.prs[number] = pr
-			return nil
-		}
+	created := r.keyedComment(number, key, "Landed in ["+landedSHA+"](/"+repo.Path+"/commit/"+landedSHA+")")
+	if created || !pr.Closed {
+		r.updated[number] = time.Now().UTC()
 	}
-	r.addComment(number, Comment{Author: Identity, Key: key, Body: "Landed in [" + landedSHA + "](/" + repo.Path + "/commit/" + landedSHA + ")"})
 	pr.Closed = true
-	r.updated[number] = time.Now().UTC()
 	r.prs[number] = pr
 	return nil
 }
@@ -626,6 +692,12 @@ func (f *Forge) EnsureFence(ctx context.Context, repo forge.RepoRef, fenceRef st
 	if err := f.failure(ctx, "EnsureFence"); err != nil {
 		return "", err
 	}
+
+	full, err := forge.BranchRef(fenceRef)
+	if err != nil {
+		return "", err
+	}
+	fenceRef = strings.TrimPrefix(full, "refs/heads/")
 	r := f.repo(repo)
 	if r.refs[fenceRef] == "" {
 		r.refs[fenceRef] = r.mintFence(nil, "initial", "")
@@ -638,6 +710,10 @@ func (f *Forge) IsAncestor(ctx context.Context, repo forge.RepoRef, ancestor, de
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.failure(ctx, "IsAncestor"); err != nil {
+		return false, err
+	}
+
+	if err := forge.ValidateCommitIDs(ancestor, descendant); err != nil {
 		return false, err
 	}
 	r := f.repo(repo)
@@ -671,6 +747,10 @@ func (f *Forge) ReadFile(ctx context.Context, repo forge.RepoRef, ref, path stri
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.failure(ctx, "ReadFile"); err != nil {
+		return nil, err
+	}
+
+	if err := forge.ValidateReadFile(ref, path); err != nil {
 		return nil, err
 	}
 	r := f.repo(repo)

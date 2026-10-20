@@ -3,6 +3,7 @@ package forge
 import (
 	"context"
 	"errors"
+	"strings"
 )
 
 // AccountKind describes the forge account, independently of configured agent
@@ -79,4 +80,27 @@ type IdentityReader interface {
 	// returning ErrIdentityUnavailable, never a successful known-empty permission.
 	// A successful non-writing permission must come from an identity-bound response.
 	WriteGrant(context.Context, RepoRef, UserIdentity) (WriteGrant, error)
+}
+
+// MaxTeamMembers bounds a complete effective-membership observation.
+const MaxTeamMembers = 10_000
+
+// ValidIdentityName accepts the account/team alphabet used by identity reads.
+func ValidIdentityName(value string) bool {
+	if value == "" || value == "." || value == ".." {
+		return false
+	}
+	for _, c := range value {
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-', c == '_':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// ValidIdentityLogin also permits the forge's bot account suffix.
+func ValidIdentityLogin(login string) bool {
+	return ValidIdentityName(strings.TrimSuffix(login, "[bot]"))
 }

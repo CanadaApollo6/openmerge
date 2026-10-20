@@ -3,6 +3,7 @@ package fake
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
@@ -25,7 +26,7 @@ func (f *Forge) LinearHistoryRequired(ctx context.Context, repo forge.RepoRef, b
 	if err := f.failure(ctx, "LinearHistoryRequired"); err != nil {
 		return false, err
 	}
-	return f.repo(repo).linearHistory[base], nil
+	return f.repo(repo).linearHistory[strings.TrimPrefix(base, "refs/heads/")], nil
 }
 
 // HasMergeCommits walks every parent edge, excluding history already on base.
@@ -33,6 +34,10 @@ func (f *Forge) HasMergeCommits(ctx context.Context, repo forge.RepoRef, base, h
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.failure(ctx, "HasMergeCommits"); err != nil {
+		return false, err
+	}
+
+	if err := forge.ValidateCommitIDs(base, head); err != nil {
 		return false, err
 	}
 	r := f.repo(repo)

@@ -1,11 +1,21 @@
 package serve
 
 import (
+	"context"
 	"errors"
 	"testing"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
+	"github.com/CanadaApollo6/openmerge/internal/forge/fake"
 )
+
+// The ordinary fake, like the real driver, rejects malformed identity logins.
+// Bypass that boundary explicitly to exercise the policy guard independently.
+type stageAUnicodeGrantDriver struct{ *fake.Forge }
+
+func (stageAUnicodeGrantDriver) WriteGrant(_ context.Context, _ forge.RepoRef, author forge.UserIdentity) (forge.WriteGrant, error) {
+	return forge.WriteGrant{User: author, Permission: "write"}, nil
+}
 
 func TestStageAUnicodeApprovalIdentityRejected(t *testing.T) {
 	for _, login := range []string{"Kam", "Kontributor", "Élodie", "élodie"} {
@@ -14,7 +24,7 @@ func TestStageAUnicodeApprovalIdentityRejected(t *testing.T) {
 			actor := forge.UserIdentity{ID: 21, Login: login, Kind: forge.UserAccount}
 			// Even a stable ID and an affirmative forge grant cannot admit a
 			// non-ASCII login into approval receipts or stances.
-			f.SetIdentity(actor)
+			w.Driver = stageAUnicodeGrantDriver{Forge: f}
 			c := shadowComment(100, "@openmerge approve "+shadowDigest(t, s, w))
 			c.Author = actor
 			f.SetNativeReviews(repo, 1, shadowNative(f, w, c))

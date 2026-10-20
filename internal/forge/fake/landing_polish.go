@@ -2,6 +2,7 @@ package fake
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -13,6 +14,10 @@ func (f *Forge) CommitAuthors(ctx context.Context, repo forge.RepoRef, number in
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.failure(ctx, "CommitAuthors"); err != nil {
+		return nil, err
+	}
+
+	if err := forge.ValidatePRNumber(number); err != nil {
 		return nil, err
 	}
 	r := f.repo(repo)
@@ -49,17 +54,24 @@ func (f *Forge) HeadBranchForDeletion(ctx context.Context, repo forge.RepoRef, n
 	if err := f.failure(ctx, "HeadBranchForDeletion"); err != nil {
 		return "", err
 	}
+
+	if err := forge.ValidatePRNumber(number); err != nil {
+		return "", err
+	}
 	r := f.repo(repo)
 	pr, ok := r.prs[number]
 	if !ok {
 		return "", fmt.Errorf("unknown PR %d", number)
 	}
 	branch := pr.HeadBranch
-	if !pr.HeadInBaseRepo || pr.Base != base || pr.HeadSHA != headSHA || branch == "" || branch == base || branch == pr.Base || strings.HasPrefix(branch, "openmerge/") || r.protected[branch] {
+	if !pr.HeadInBaseRepo || pr.Base != base || pr.HeadSHA != headSHA || branch == "" || branch == base || branch == pr.Base || strings.HasPrefix(branch, "openmerge/") || strings.HasPrefix(branch, "refs/") || r.protected[branch] {
 		return "", nil
 	}
 	if !pr.Closed {
 		return "", fmt.Errorf("head cleanup is waiting for PR closure")
+	}
+	if r.defaultBranch == "" || branch == r.defaultBranch || r.refs[branch] != headSHA {
+		return "", nil
 	}
 	for _, other := range r.prs {
 		if !other.Closed && (other.Base == branch || other.HeadInBaseRepo && other.HeadBranch == branch) {
@@ -76,8 +88,15 @@ func (f *Forge) DeleteBranch(ctx context.Context, repo forge.RepoRef, branch, ex
 	if err := f.failure(ctx, "DeleteBranch"); err != nil {
 		return err
 	}
+
+	if err := forge.ValidateDeleteBranch(branch, expectedSHA); err != nil {
+		return err
+	}
 	r := f.repo(repo)
-	if !strings.HasPrefix(branch, "openmerge/") && r.refs[branch] == expectedSHA && !r.protected[branch] {
+	if r.refs[branch] == expectedSHA {
+		if r.protected[branch] {
+			return errors.New("protected branch cannot be deleted")
+		}
 		delete(r.refs, branch)
 	}
 	return nil

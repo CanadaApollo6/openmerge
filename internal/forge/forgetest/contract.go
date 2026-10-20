@@ -184,6 +184,7 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 		}
 		return withFence(t, e)
 	}
+	runGitValidation(t, newEnv)
 	testRef := func(e Env, name string) string { return "openmerge/queue/" + e.Base + "/" + name }
 	build := func(t *testing.T, e Env, base, batch string, prs ...forge.BuildPR) string {
 		t.Helper()
@@ -282,19 +283,18 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 			t.Fatal("missing CommitHistoryReader")
 		}
 		for _, reader := range []struct {
-			name    string
-			max     int
-			read    func(context.Context, forge.RepoRef, string, string, int) ([]string, bool, error)
-			invalid string
+			name string
+			max  int
+			read func(context.Context, forge.RepoRef, string, string, int) ([]string, bool, error)
 		}{
-			{"first-parent", forge.MaxFirstParentCommits, firstParent.FirstParentCommits, "invalid first-parent history limit"},
-			{"commit", forge.MaxCommitHistoryCommits, history.CommitsBetween, "invalid commit history limit"},
+			{"first-parent", forge.MaxFirstParentCommits, firstParent.FirstParentCommits},
+			{"commit", forge.MaxCommitHistoryCommits, history.CommitsBetween},
 		} {
 			for _, limit := range []int{-1, 0, 1, 4, reader.max, reader.max + 1} {
 				t.Run(fmt.Sprintf("%s/%d", reader.name, limit), func(t *testing.T) {
 					commits, truncated, err := reader.read(ctx, e.Repo, e.BaseSHA, head, limit)
 					if limit < 1 || limit > reader.max {
-						if err == nil || err.Error() != reader.invalid || len(commits) != 0 || truncated {
+						if !errors.Is(err, forge.ErrInvalidInput) || len(commits) != 0 || truncated {
 							t.Fatalf("invalid limit: commits=%v truncated=%v err=%v", commits, truncated, err)
 						}
 						return
@@ -863,6 +863,7 @@ func RunDriver(t *testing.T, factory func(t *testing.T) Env) {
 		validateObservations(t, e)
 		return e
 	}
+	runDriverValidation(t, newEnv)
 	t.Run("reconciliation", func(t *testing.T) {
 		e := newEnv(t)
 		all, err := e.Driver.ListOpenPullRequests(ctx, e.Repo, "")

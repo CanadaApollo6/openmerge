@@ -106,6 +106,13 @@ func TestContract(t *testing.T) {
 	})
 }
 
+func TestDriverContract(t *testing.T) {
+	forgetest.RunDriver(t, func(t *testing.T) forgetest.Env {
+		_, e := fixture(t)
+		return e
+	})
+}
+
 func TestContractWithoutRollbacks(t *testing.T) {
 	forgetest.Run(t, func(t *testing.T) forgetest.Env {
 		_, e := fixture(t)

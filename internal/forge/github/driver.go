@@ -66,6 +66,10 @@ func (d *Driver) PullRequestMetadata(ctx context.Context, repo forge.RepoRef, nu
 }
 
 func (d *Driver) pullRequest(ctx context.Context, repo forge.RepoRef, number int, files bool) (forge.PullRequest, error) {
+
+	if err := forge.ValidatePRNumber(number); err != nil {
+		return forge.PullRequest{}, err
+	}
 	owner, name, err := splitRepo(repo)
 	if err != nil {
 		return forge.PullRequest{}, err
@@ -203,8 +207,8 @@ func (d *Driver) CanWrite(ctx context.Context, repo forge.RepoRef, user string) 
 	if err != nil {
 		return false, err
 	}
-	if user == "" || strings.ContainsAny(user, "/\\?#%\r\n") {
-		return false, errors.New("invalid github login")
+	if err := forge.ValidateCanWriteLogin(user); err != nil {
+		return false, err
 	}
 	level, res, err := d.client.Repositories.GetPermissionLevel(ctx, owner, name, user)
 	write := false
@@ -243,6 +247,10 @@ func (d *Driver) ListOpenPullRequests(ctx context.Context, repo forge.RepoRef, b
 
 // ListComments includes human and bot comments, retaining IDs for durable dedupe.
 func (d *Driver) ListComments(ctx context.Context, repo forge.RepoRef, pr int, since time.Time) ([]forge.Comment, error) {
+
+	if err := forge.ValidatePRNumber(pr); err != nil {
+		return nil, err
+	}
 	owner, name, err := splitRepo(repo)
 	if err != nil {
 		return nil, err
@@ -374,8 +382,15 @@ func checkState(status, conclusion string) forge.CheckState {
 // ReportStatus rediscovers the App-owned external ID on every retry, so a
 // successful create followed by a lost response does not require a local cache.
 func (d *Driver) ReportStatus(ctx context.Context, repo forge.RepoRef, pr int, headSHA string, s forge.Status) error {
+
+	if err := forge.ValidatePRNumber(pr); err != nil {
+		return err
+	}
 	owner, name, err := splitRepo(repo)
 	if err != nil {
+		return err
+	}
+	if err := forge.ValidateStatus(s); err != nil {
 		return err
 	}
 	status, conclusion := "completed", ""
@@ -432,12 +447,16 @@ func (d *Driver) ReportStatus(ctx context.Context, repo forge.RepoRef, pr int, h
 
 // Comment trusts hidden markers only in comments by this App's bot identity.
 func (d *Driver) Comment(ctx context.Context, repo forge.RepoRef, pr int, key, body string) error {
+
+	if err := forge.ValidatePRNumber(pr); err != nil {
+		return err
+	}
 	owner, name, err := splitRepo(repo)
 	if err != nil {
 		return err
 	}
-	if key == "" || strings.ContainsAny(key, "<>\r\n") || strings.Contains(key, "--") {
-		return errors.New("invalid OpenMerge comment key")
+	if err := forge.ValidateCommentKey(key); err != nil {
+		return err
 	}
 	marker := "<!-- openmerge:key=" + key + " -->"
 	d.writes.Lock()
@@ -463,6 +482,10 @@ func (d *Driver) Comment(ctx context.Context, repo forge.RepoRef, pr int, key, b
 // two writes is repaired by the next call; GitHub cannot mark a squash/rebase as
 // natively merged after an external push, and no merge endpoint is used.
 func (d *Driver) MarkLanded(ctx context.Context, repo forge.RepoRef, pr int, sha string) error {
+
+	if err := forge.ValidatePRNumber(pr); err != nil {
+		return err
+	}
 	owner, name, err := splitRepo(repo)
 	if err != nil {
 		return err
@@ -487,9 +510,9 @@ func (d *Driver) DeleteRef(ctx context.Context, repo forge.RepoRef, ref string) 
 	if err != nil {
 		return err
 	}
-	ref = strings.TrimPrefix(ref, "refs/")
-	if !strings.HasPrefix(ref, "heads/") && !strings.HasPrefix(ref, "tags/") {
-		ref = "heads/" + ref
+	ref, err = forge.DeletionRef(ref)
+	if err != nil {
+		return err
 	}
 	res, err := d.client.Git.DeleteRef(ctx, owner, name, ref)
 	if err != nil && res != nil {
@@ -511,8 +534,8 @@ func (d *Driver) ReadFile(ctx context.Context, repo forge.RepoRef, ref, path str
 	if err != nil {
 		return nil, err
 	}
-	if ref == "" || path == "" {
-		return nil, errors.New("github ReadFile requires ref and path")
+	if err := forge.ValidateReadFile(ref, path); err != nil {
+		return nil, err
 	}
 	file, _, _, err := d.client.Repositories.GetContents(ctx, owner, name, path, &gh.RepositoryContentGetOptions{Ref: ref})
 	if err != nil {
