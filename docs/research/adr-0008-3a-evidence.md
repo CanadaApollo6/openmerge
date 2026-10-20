@@ -171,3 +171,99 @@ Final full-check, object-equivalence, replay exits and artifact hashes follow
 below after execution. Earlier check iterations caught a missing lint comment
 and incomplete plumbing during implementation; those failed iterations are not
 acceptance evidence.
+
+## Final executed results (2026-10-20 UTC)
+
+The code/evidence-probe revision is `1378213a9f00e68c17073cad6edc858ce3714342`.
+The final binary built by `make check` reports `1378213`. The evidence-only
+commit following it changes documentation/artifact metadata, not executable Go.
+The clean pure-layer revision is `7e34fe2`; the baseline is
+`ec09672f85c94540c2bf8287b9fa03f48a08e59c`.
+
+- Pure-layer `make check`: **exit 0**, including race tests and PostgreSQL,
+  from its isolated clean checkout. Log: `/home/riels/.cache/openmerge-3a-i-clean-check.log`.
+- Integration `make check`: **exit 0**, including all real-git, simulator,
+  PostgreSQL and race tests, lint, formatting and binary build. Completed around
+  18:02 UTC. Log: `/home/riels/.cache/openmerge-3a-ii-final-check.log`.
+- Final focused registration/refresh/cycle bootstrap matrix: **exit 0**.
+  It covers basis change, digest change and actual store-pool closure before the
+  final guard. The guard reloads rather than reusing a cached state. Canonical
+  installation/repository/queue binding is checked before options are created.
+- Final real-git rejection/evidence run: **exit 0**. Sixteen retained scenario
+  directories include 36 raw inspected commit records, tree/path/size inventories,
+  identical before/after refs and zero-push counts. These include builds for all
+  four methods, intermediate messages, markers, fences, atomic landing, deletion,
+  path/size/linear rules, validity drift and read-first no-ops. They are retained
+  at `/home/riels/.cache/openmerge-3a-rejected`, with individual hashes in the
+  results manifest. No test fixture's temporary-directory cleanup removes these.
+- Final binary object/ref/command comparison: **exit 0**, 24/24 real-git
+  checkpoints and 24/24 fake checkpoints identical. Each raw object dump is
+  base64 encoded without trimming or UTF-8 replacement; the manifest collector
+  independently recomputes each object's Git OID. Normalized argv traces are
+  identical, with cumulative push counts 1–6 for create/build/update/advance/
+  land/delete in each merge-method workload. Thus zero options add no Git read
+  or push and preserve push order as well as object bytes and refs.
+- Final strict offline differential replay: **exit 0; gates 2/4 PASS**.
+  State, structural state, snapshot hashes, planned actions and wake-boundary
+  checkpoints match **2,159/2,159** over **2,158** events (source IDs 1–2158).
+  All **8,676** boundary probes agree; the maximum is 12, below the 128 cap.
+  Repeat determinism, 22 tool self-tests and 7/7 synthetic checkpoints pass.
+  This is offline reuse of previously exported input, not a live DB/API read.
+
+The [machine-readable results](adr-0008-3a-results.json) retain exact source
+revisions, before/after remote SHAs, exported-input watermarks, fixture seeds,
+commands/exits and a 134-artifact SHA-256 manifest. Raw object/ref/argv snapshots
+are under `/home/riels/.cache/openmerge-3a-legacy-final`; raw replay streams and
+the complete replay report are under `/home/riels/.cache/openmerge-3a-replay-final`.
+
+Key artifact hashes:
+
+- Real-git snapshot/command stream, baseline **and** candidate:
+  `c4540c89e3f93b997c6132bb976532d7701b0a07e434a70868123cb80b626d0e`.
+- Fake object/ref stream, baseline **and** candidate:
+  `041deff2b2f2fd0985c4c1d185267ad9e759d6af1404ee9ef6eda6eee2f342fd`.
+- Each strict replay stream (baseline/candidate/repeat):
+  `1fe079295539183b7008e70b940c7f71d45bd4aa4e443c8c1e581fa10d31051a`.
+- Replay configuration SHA-256:
+  `3efb43bbc05f5f0b03c005331f79064829fa018e9f6446224682e00dd357fead`.
+  Its durable digest is
+  `e58c893b8b3af7685dc07a086824b3bc1fc044456083d193f9566f8387cb58fc`
+  at source event 1287. No replacement `config_applied` would be emitted.
+
+Reproduction uses the existing check/replay flags unchanged:
+
+```sh
+flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB \
+  OPENMERGE_TEST_DATABASE_URL='postgres://postgres@localhost:54329/postgres?sslmode=disable' \
+  make check
+python3 scripts/check-adr0008-3a-legacy.py \
+  --baseline /home/riels/.cache/openmerge-3a-baseline \
+  --out /home/riels/.cache/openmerge-3a-legacy-final
+flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=6GiB \
+  GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local \
+  python3 scripts/check-live-journal-replay.py \
+  --baseline /home/riels/.cache/openmerge-3a-baseline \
+  --events /home/riels/.cache/om-pr72-fix1-input/events.jsonl \
+  --queues /home/riels/.cache/om-pr72-fix1-input/queues.jsonl \
+  --config-file .openmerge.yml --strict-state \
+  --out /home/riels/.cache/openmerge-3a-replay-final/report.json
+```
+
+The object-comparison script acquires the required lock for every Go invocation
+itself; do not wrap that Python process in a second copy of the same lock.
+Real-git fixtures use the fixed `2026-10-15T12:00:00Z` clock and repeated `5a`
+entropy bytes; fake fixtures use counter nonces. Bootstrap uses fixture App ID
+42 and installation 7, with isolated PostgreSQL schemas and local bare remotes;
+these are test identities, not evidence of a live App grant.
+
+Failed development iterations are excluded from acceptance: incomplete API
+plumbing/formatting/lint were corrected; an initial new test wrongly counted
+rebase's existing synthetic replay-base object as duplicate generation and was
+corrected without changing the builder. An earlier replay refused a checkout
+changed during execution; the final clean-commit replay above supersedes it.
+
+No implementation scope was deferred to another 3a PR. Unsupported patterns,
+rule families, and trusted-signature verification remain explicit fail-closed
+cases rather than compatibility claims. Organization-sandbox enforcement is the
+unavailable acceptance item, still pending the dependent sandbox run. This is
+**Hold**, not deployment approval, and does not activate authority before PR 9.
