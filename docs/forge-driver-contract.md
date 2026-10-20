@@ -385,26 +385,35 @@ only after the list completes with valid identities; it is `read_failure` after
 an incomplete list or failed actor binding. A completed empty ruleset inventory
 has zero protections. It does not establish the absence of classic protection.
 Each protection separately records target/condition, rule and bypass visibility.
-Omitted/null bypass JSON is `hidden`; `[]` is a visible empty set. Unsupported or
-malformed values are `read_failure`, never silently omitted from a visible set.
+Omitted/null bypass JSON is `hidden`; `[]` is a visible empty set. Malformed
+values are `read_failure`, never silently omitted from a visible set.
 An inaccessible detail retains the listed identity/enforcement with hidden
 fields on plain 403/404, or failed fields on transport/quota/inconsistent reads.
 Returned errors retain the shared quota deadline/type and successful evidence.
 
-Rule and condition parameters use sorted names and canonical JSON values in
-`Parameter.Values` (one value per named parameter, with array order retained).
-`Protection.Conditions` also retains `$target`, `$source_type` and `$source`.
-Ref includes/excludes remain explicit. Revisions normalize `updated_at` to UTC.
-This preserves unknown rule parameters without storing complete API responses.
-User/organization-admin/deploy-key bypass variants cannot be represented by PR
-1's actor union: their bypass field is `read_failure` with an error; other
-independently visible fields remain available. The reader never invents an App
-bypass, produces a finding or matches a selector. `Coverage` and `Findings` are
-explicit empty slices for PR 3a's separate interpretation step.
+`Protection.Target` records the ruleset target directly. Ref includes/excludes
+remain explicit; other conditions retain every leaf under its relative JSON
+pointer path, including repository-name, repository-ID and repository-property
+selectors. Rule parameters use the same paths, with escaped segments and numeric
+indices for object arrays. Scalar arrays retain source order in `Parameter.Values`;
+strings, numbers and booleans use their scalar spelling, and empty arrays remain
+explicit. Revisions normalize `updated_at` to UTC.
+
+The observed bypass inventory is independent of the declared break-glass union.
+It records Apps, organization admins, repository roles, teams, users, deploy keys,
+enterprise roles/owners and unknown types, with optional IDs for class-wide or
+unknown actors. Unknown types retain their exact `RawKind`; modes include
+`always`, `pull_request` and `exempt`. Unauthorized actors remain visible evidence
+without a reader error. The reader never invents an App bypass, produces a
+finding or matches a selector. `Coverage` and `Findings` remain explicit empty
+slices for PR 3a's separate interpretation step.
 
 All HTTP reads use the existing installation client, conditional revalidation,
 pagination checks and request classes; settlement contexts are downgraded to
 ordinary active reads. The inventory is bounded to 1,000 rulesets/10 pages.
+Every inner evidence collection is bounded to 1,000 items, including ref conditions, normalized
+parameter leaves/values, rules and bypass actors. Overflow marks only the
+affected element `read_failure` and retains the independently visible evidence.
 Classic protection (`ValidateClassicProtection`) and installed permission grants
 (`ValidateInstallationPermissions`) remain independent sources. Administration
 read may improve visibility and is diagnostic/adoption guidance only. There is
