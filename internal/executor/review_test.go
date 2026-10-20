@@ -18,9 +18,9 @@ type reviewBeforeLand struct {
 	before func(forge.LandRequest)
 }
 
-func (g *reviewBeforeLand) Land(ctx context.Context, r forge.RepoRef, a forge.LandRequest) (string, error) {
+func (g *reviewBeforeLand) Land(ctx context.Context, r forge.RepoRef, a forge.LandRequest, opts forge.PushOptions) (string, error) {
 	g.before(a)
-	return g.Git.Land(ctx, r, a)
+	return g.Git.Land(ctx, r, a, opts)
 }
 
 func reviewReady(t *testing.T, h *harness, base, fence string, pr forge.BuildPR) (queue.State, queue.Land) {
@@ -61,7 +61,7 @@ func TestReviewConcurrentLandingRejection(t *testing.T) {
 	s, a := reviewReady(t, h, h.base, h.fence, h.prs[0])
 	h.x.Git = &reviewBeforeLand{Git: h.f, before: func(req forge.LandRequest) {
 		// Another copy of this recorded attempt wins, then loses its result event.
-		_, err := h.f.Land(ctx, repo, req)
+		_, err := h.f.Land(ctx, repo, req, forge.PushOptions{})
 		must(t, err)
 	}}
 	var result queue.Event
@@ -122,7 +122,7 @@ func TestReviewRebuiltStateFalseAbandoned(t *testing.T) {
 		t.Fatal("attempt ID repeated across queue generations")
 	}
 	must(t, h.x.Execute(ctx, resolution, func(e queue.Event) error { s = queue.Apply(s, e); return nil }))
-	_, err := h.f.Land(ctx, repo, forge.LandRequest{Base: "main", ExpectedBaseSHA: a.ExpectedBaseSHA, TestedSHA: a.TestedSHA, Fence: fenceRef, ExpectedFence: a.FenceToken, NextFenceID: "land/" + resolution.AttemptID, PRs: []forge.BuildPR{h.prs[1]}})
+	_, err := h.f.Land(ctx, repo, forge.LandRequest{Base: "main", ExpectedBaseSHA: a.ExpectedBaseSHA, TestedSHA: a.TestedSHA, Fence: fenceRef, ExpectedFence: a.FenceToken, NextFenceID: "land/" + resolution.AttemptID, PRs: []forge.BuildPR{h.prs[1]}}, forge.PushOptions{})
 	if !errors.Is(err, forge.ErrLeaseRejected) {
 		t.Fatalf("acknowledged abandonment did not fence delayed landing: %v", err)
 	}
@@ -151,8 +151,10 @@ func TestReviewRejectedAttemptCanStillLand(t *testing.T) {
 		t.Fatal("dequeue did not complete")
 	}
 	must(t, h.f.SetRef(repo, "main", a.ExpectedBaseSHA))
-	_, err := h.f.Land(ctx, repo, paused)
+	_, err := h.f.Land(ctx, repo, paused, forge.PushOptions{})
 	if !errors.Is(err, forge.ErrLeaseRejected) {
 		t.Fatalf("paused worker landed after settled rejection and acknowledged dequeue: %v", err)
 	}
 }
+
+var _ forge.Git = (*reviewBeforeLand)(nil)

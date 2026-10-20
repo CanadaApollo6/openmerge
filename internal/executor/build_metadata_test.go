@@ -223,11 +223,11 @@ type recordingBuildGit struct {
 	onBuild func(forge.BuildRequest)
 }
 
-func (g *recordingBuildGit) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.BuildRequest) (string, error) {
+func (g *recordingBuildGit) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.BuildRequest, opts forge.PushOptions) (string, error) {
 	if g.onBuild != nil {
 		g.onBuild(req)
 	}
-	return g.Git.BuildTestRef(ctx, repo, req)
+	return g.Git.BuildTestRef(ctx, repo, req, opts)
 }
 
 func TestBuildMetadataHookPinsCIInputAcrossExternalApprovalChange(t *testing.T) {
@@ -392,3 +392,5 @@ func TestBuildMetadataMissingBatchFailsClosed(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+var _ forge.Git = (*recordingBuildGit)(nil)

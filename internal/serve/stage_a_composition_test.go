@@ -127,7 +127,7 @@ func TestStageARebaseCompositionBeforeCI(t *testing.T) {
 				return nil
 			}
 			must(t, emit(queue.BaseMoved{SHA: f.base}))
-			fence, err := f.g.EnsureFence(t.Context(), f.w.repo(), "test-fence")
+			fence, err := f.g.EnsureFence(t.Context(), f.w.repo(), "test-fence", forge.PushOptions{})
 			must(t, err)
 			must(t, emit(queue.FenceInitialized{Token: fence}))
 			for _, p := range f.pins {
@@ -191,7 +191,7 @@ func TestStageARebaseCompositionBeforeCI(t *testing.T) {
 				must(t, emit(queue.ChecksCompleted{TestedSHA: b.TestedSHA, Success: true}))
 				must(t, emit(queue.LandingStarted{BatchID: b.ID, AttemptID: fmt.Sprint(turn), FenceToken: fence, At: at}))
 				next := fmt.Sprintf("land/%d", turn)
-				result, err := f.g.Land(t.Context(), f.w.repo(), forge.LandRequest{Base: "main", ExpectedBaseSHA: b.BaseSHA, TestedSHA: b.TestedSHA, Fence: "test-fence", ExpectedFence: fence, NextFenceID: next})
+				result, err := f.g.Land(t.Context(), f.w.repo(), forge.LandRequest{Base: "main", ExpectedBaseSHA: b.BaseSHA, TestedSHA: b.TestedSHA, Fence: "test-fence", ExpectedFence: fence, NextFenceID: next}, forge.PushOptions{})
 				must(t, err)
 				must(t, emit(queue.Landed{BatchID: b.ID, NewBaseSHA: b.TestedSHA, NewFence: result}))
 				fence = result
@@ -227,18 +227,18 @@ func TestStageARealGitSpeculativeDepthFour(t *testing.T) {
 			// Build all four batches before landing any; each pins its predecessor's
 			// speculative tested SHA rather than the current remote main.
 			for i := 0; i < 4; i++ {
-				tested, err := f.g.BuildTestRef(t.Context(), f.w.repo(), forge.BuildRequest{Ref: fmt.Sprintf("speculative-%d", i), BaseSHA: base, PRs: f.prs[i : i+1], Method: forge.MergeMethod(method), BatchID: fmt.Sprint(i)})
+				tested, err := f.g.BuildTestRef(t.Context(), f.w.repo(), forge.BuildRequest{Ref: fmt.Sprintf("speculative-%d", i), BaseSHA: base, PRs: f.prs[i : i+1], Method: forge.MergeMethod(method), BatchID: fmt.Sprint(i)}, forge.PushOptions{})
 				must(t, err)
 				lands = append(lands, queue.Land{ExpectedBaseSHA: base, TestedSHA: tested, PRs: f.pins[i : i+1], Method: method})
 				base = tested
 			}
-			fence, err := f.g.EnsureFence(t.Context(), f.w.repo(), "test-fence")
+			fence, err := f.g.EnsureFence(t.Context(), f.w.repo(), "test-fence", forge.PushOptions{})
 			must(t, err)
 			for i, land := range lands {
 				_, err := testedMessages(t.Context(), f.w, land)
 				must(t, err)
 				next := fmt.Sprintf("speculative-land/%d", i)
-				result, err := f.g.Land(t.Context(), f.w.repo(), forge.LandRequest{Base: "main", ExpectedBaseSHA: land.ExpectedBaseSHA, TestedSHA: land.TestedSHA, Fence: "test-fence", ExpectedFence: fence, NextFenceID: next})
+				result, err := f.g.Land(t.Context(), f.w.repo(), forge.LandRequest{Base: "main", ExpectedBaseSHA: land.ExpectedBaseSHA, TestedSHA: land.TestedSHA, Fence: "test-fence", ExpectedFence: fence, NextFenceID: next}, forge.PushOptions{})
 				must(t, err)
 				fence = result
 				if got := f.git("", "--git-dir="+f.remote, "rev-parse", "refs/heads/main"); got != land.TestedSHA {

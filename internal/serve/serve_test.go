@@ -226,7 +226,7 @@ func TestRevocationAtLandingCancelsStaleWork(t *testing.T) {
 
 type missingLanding struct{ forge.Git }
 
-func (g missingLanding) Land(context.Context, forge.RepoRef, forge.LandRequest) (string, error) {
+func (g missingLanding) Land(context.Context, forge.RepoRef, forge.LandRequest, forge.PushOptions) (string, error) {
 	return "", &executor.ErrLandingNotOnBase{TestedSHA: "tested", BaseTip: "rolled-back", AttemptID: "attempt"}
 }
 
@@ -337,8 +337,8 @@ type rollbackBeforeClosure struct {
 	reads  int
 }
 
-func (g *rollbackBeforeClosure) Land(ctx context.Context, r forge.RepoRef, request forge.LandRequest) (string, error) {
-	next, err := g.Forge.Land(ctx, r, request)
+func (g *rollbackBeforeClosure) Land(ctx context.Context, r forge.RepoRef, request forge.LandRequest, opts forge.PushOptions) (string, error) {
+	next, err := g.Forge.Land(ctx, r, request, opts)
 	if err == nil {
 		g.landed = true
 	}
@@ -411,3 +411,7 @@ func TestRollbackBeforeMarkLandedRemainsVisible(t *testing.T) {
 		t.Fatal("restored landing omitted landed marker")
 	}
 }
+
+var _ forge.Git = (*missingLanding)(nil)
+
+var _ forge.Git = (*rollbackBeforeClosure)(nil)

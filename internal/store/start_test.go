@@ -17,14 +17,14 @@ type startGit struct {
 	calls int
 }
 
-func (g *startGit) BuildTestRef(ctx context.Context, repo forge.RepoRef, request forge.BuildRequest) (string, error) {
+func (g *startGit) BuildTestRef(ctx context.Context, repo forge.RepoRef, request forge.BuildRequest, opts forge.PushOptions) (string, error) {
 	g.calls++
-	return g.Git.BuildTestRef(ctx, repo, request)
+	return g.Git.BuildTestRef(ctx, repo, request, opts)
 }
 
-func (g *startGit) Land(ctx context.Context, repo forge.RepoRef, request forge.LandRequest) (string, error) {
+func (g *startGit) Land(ctx context.Context, repo forge.RepoRef, request forge.LandRequest, opts forge.PushOptions) (string, error) {
 	g.calls++
-	return g.Git.Land(ctx, repo, request)
+	return g.Git.Land(ctx, repo, request, opts)
 }
 
 // Port of the reviewer's crash-after-BatchStarted/pre-build reproducer, with
@@ -161,3 +161,5 @@ func assertStaleStart(t *testing.T, s *Store, q QueueID, claim ClaimedAction, wa
 		t.Fatal("stale action was not cancelled")
 	}
 }
+
+var _ forge.Git = (*startGit)(nil)

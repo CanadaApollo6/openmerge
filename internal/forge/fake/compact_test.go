@@ -104,7 +104,7 @@ func TestCompactBatchCommitsMatchReconstructedDeltas(t *testing.T) {
 			base := root
 			var tips []string
 			for i := 0; i < len(prs); i += 4 {
-				sha, err := f.BuildTestRef(t.Context(), repo, forge.BuildRequest{BatchID: fmt.Sprintf("b%d", i+1), BaseSHA: base, PRs: prs[i : i+4], Ref: fmt.Sprintf("openmerge/queue/main/b%d", i+1), Method: method})
+				sha, err := f.BuildTestRef(t.Context(), repo, forge.BuildRequest{BatchID: fmt.Sprintf("b%d", i+1), BaseSHA: base, PRs: prs[i : i+4], Ref: fmt.Sprintf("openmerge/queue/main/b%d", i+1), Method: method}, forge.PushOptions{})
 				if err != nil {
 					t.Fatal(err)
 				}

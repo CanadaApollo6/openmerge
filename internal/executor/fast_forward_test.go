@@ -66,7 +66,7 @@ func TestFastForwardLinearHistoryBuildValidation(t *testing.T) {
 	for _, scenario := range []string{"required", "required linear", "second head", "not required", "unknown", "graph read fails", "emit fails"} {
 		t.Run(scenario, func(t *testing.T) {
 			h := setup(t)
-			merged, err := h.f.BuildTestRef(t.Context(), repo, forge.BuildRequest{Ref: "test-merge", BaseSHA: h.base, PRs: h.prs[:1], Method: forge.Merge, BatchID: "merge"})
+			merged, err := h.f.BuildTestRef(t.Context(), repo, forge.BuildRequest{Ref: "test-merge", BaseSHA: h.base, PRs: h.prs[:1], Method: forge.Merge, BatchID: "merge"}, forge.PushOptions{})
 			must(t, err)
 			pr, err := h.f.OpenPR(repo, 4, merged, true)
 			must(t, err)

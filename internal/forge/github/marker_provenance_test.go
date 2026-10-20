@@ -23,7 +23,7 @@ func TestReviewR3HistoricalMarkerAndOtherBranch(t *testing.T) {
 	state = queue.Apply(state, queue.PRObserved{PR: 1, HeadSHA: pr.HeadSHA, Eligible: true, Trusted: true})
 	state = queue.Apply(state, queue.EnqueueRequested{PR: 1, At: epoch})
 	build := queue.Plan(cfg, state, epoch)[0].(queue.BuildTestRef)
-	older, err := git.BuildTestRef(t.Context(), testRepo, forge.BuildRequest{Ref: build.Ref, BaseSHA: base, PRs: []forge.BuildPR{{Number: 1, HeadSHA: pr.HeadSHA}}, BatchID: build.BatchID, Method: forge.FastForward})
+	older, err := git.BuildTestRef(t.Context(), testRepo, forge.BuildRequest{Ref: build.Ref, BaseSHA: base, PRs: []forge.BuildPR{{Number: 1, HeadSHA: pr.HeadSHA}}, BatchID: build.BatchID, Method: forge.FastForward}, forge.PushOptions{})
 	must(t, err)
 	attach := func(sha, branch string) {
 		api.runs[sha] = []*gh.CheckRun{{ID: new(int64(999)), Name: new("ci"), App: &gh.App{ID: new(int64(15368))}, Status: new("completed"), Conclusion: new("success"), HeadSHA: &sha, CheckSuite: &gh.CheckSuite{ID: new(int64(9))}}}

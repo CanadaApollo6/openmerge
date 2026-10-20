@@ -70,7 +70,7 @@ func (s *session) pushLease(ctx context.Context, args ...string) error {
 // Land verifies pinned PR heads and pushes the landing commit and a child
 // fence token atomically with old-SHA leases on both refs. Fast-forward lands
 // the verified marker parent; the fence still identifies the tested marker.
-func (r *Repo) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequest) (string, error) {
+func (r *Repo) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequest, opts forge.PushOptions) (string, error) {
 	if err := forge.ValidateLandRequest(req); err != nil {
 		return "", err
 	}
@@ -85,6 +85,13 @@ func (r *Repo) Land(ctx context.Context, repo forge.RepoRef, req forge.LandReque
 	}
 	fence, err := s.branch(ctx, req.Fence)
 	if err != nil {
+		return "", err
+	}
+	landIntent := req.TestedSHA
+	if req.FastForwardHeadSHA != "" {
+		landIntent = req.FastForwardHeadSHA
+	}
+	if err := opts.CheckDispatch(ctx, repo, forge.PushLand, []forge.PushRefIntent{{Ref: base, OldSHA: req.ExpectedBaseSHA, NewSHA: landIntent}, {Ref: fence, OldSHA: req.ExpectedFence}}); err != nil {
 		return "", err
 	}
 	if err := s.heads(ctx, req.PRs); err != nil {
@@ -120,6 +127,9 @@ func (r *Repo) Land(ctx context.Context, repo forge.RepoRef, req forge.LandReque
 	if err := s.resolveRemote(ctx, repo); err != nil {
 		return "", err
 	}
+	if err := s.validatePush(ctx, repo, opts, forge.PushLand, forge.PushRef{Ref: base, OldSHA: req.ExpectedBaseSHA, NewSHA: landed}, forge.PushRef{Ref: fence, OldSHA: req.ExpectedFence, NewSHA: next}); err != nil {
+		return "", err
+	}
 	err = s.pushLease(ctx, "--force-with-lease="+base+":"+req.ExpectedBaseSHA,
 		"--force-with-lease="+fence+":"+req.ExpectedFence, "--", s.remote,
 		landed+":"+base, next+":"+fence)
@@ -130,7 +140,7 @@ func (r *Repo) Land(ctx context.Context, repo forge.RepoRef, req forge.LandReque
 }
 
 // AdvanceFence mints a child token and leases the single remote fence ref.
-func (r *Repo) AdvanceFence(ctx context.Context, repo forge.RepoRef, ref, expected, nextID string) (string, error) {
+func (r *Repo) AdvanceFence(ctx context.Context, repo forge.RepoRef, ref, expected, nextID string, opts forge.PushOptions) (string, error) {
 	if err := forge.ValidateCommitIDs(expected); err != nil {
 		return "", err
 	}
@@ -143,11 +153,17 @@ func (r *Repo) AdvanceFence(ctx context.Context, repo forge.RepoRef, ref, expect
 	if err != nil {
 		return "", err
 	}
+	if err := opts.CheckDispatch(ctx, repo, forge.PushAdvanceFence, []forge.PushRefIntent{{Ref: full, OldSHA: expected}}); err != nil {
+		return "", err
+	}
 	next, err := s.fence(ctx, expected, nextID, "")
 	if err != nil {
 		return "", err
 	}
 	if err := s.resolveRemote(ctx, repo); err != nil {
+		return "", err
+	}
+	if err := s.validatePush(ctx, repo, opts, forge.PushAdvanceFence, forge.PushRef{Ref: full, OldSHA: expected, NewSHA: next}); err != nil {
 		return "", err
 	}
 	if err := s.pushLease(ctx, "--force-with-lease="+full+":"+expected, "--", s.remote, next+":"+full); err != nil {
@@ -158,7 +174,7 @@ func (r *Repo) AdvanceFence(ctx context.Context, repo forge.RepoRef, ref, expect
 
 // EnsureFence creates a root token with a create-only lease. A concurrent
 // winner is read back; an existing ref is returned without modifying it.
-func (r *Repo) EnsureFence(ctx context.Context, repo forge.RepoRef, ref string) (string, error) {
+func (r *Repo) EnsureFence(ctx context.Context, repo forge.RepoRef, ref string, opts forge.PushOptions) (string, error) {
 	s, unlock, err := r.open(ctx, repo)
 	if err != nil {
 		return "", err
@@ -175,8 +191,14 @@ func (r *Repo) EnsureFence(ctx context.Context, repo forge.RepoRef, ref string) 
 	if values[full] != "" {
 		return values[full], nil
 	}
+	if err := opts.CheckDispatch(ctx, repo, forge.PushEnsureFence, []forge.PushRefIntent{{Ref: full}}); err != nil {
+		return "", err
+	}
 	next, err := s.fence(ctx, "", "initial", "")
 	if err != nil {
+		return "", err
+	}
+	if err := s.validatePush(ctx, repo, opts, forge.PushEnsureFence, forge.PushRef{Ref: full, NewSHA: next}); err != nil {
 		return "", err
 	}
 	err = s.pushLease(ctx, "--force-with-lease="+full+":", "--", s.remote, next+":"+full)

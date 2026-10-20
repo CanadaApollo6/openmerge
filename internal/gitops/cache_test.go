@@ -20,12 +20,12 @@ func TestPRCacheRefsAreTemporary(t *testing.T) {
 			prs := f.prs[:1]
 			var err error
 			if operation == "land" {
-				initial, fenceErr := f.g.EnsureFence(ctx, testRepo, testFence)
+				initial, fenceErr := f.g.EnsureFence(ctx, testRepo, testFence, forge.PushOptions{})
 				must(t, fenceErr)
 				tested := f.build(forge.Merge, prs, "cache-land")
 				f.g = f.client(t, 0)
 				_, err = f.g.Land(ctx, testRepo, forge.LandRequest{Base: "main", ExpectedBaseSHA: f.base, TestedSHA: tested,
-					Fence: testFence, ExpectedFence: initial, NextFenceID: "land/cache", PRs: prs})
+					Fence: testFence, ExpectedFence: initial, NextFenceID: "land/cache", PRs: prs}, forge.PushOptions{})
 			} else {
 				switch operation {
 				case "conflict":
@@ -40,7 +40,7 @@ func TestPRCacheRefsAreTemporary(t *testing.T) {
 					f.g.git = wrapper
 				}
 				_, err = f.g.BuildTestRef(ctx, testRepo, forge.BuildRequest{Ref: "openmerge/queue/cache", BaseSHA: f.base,
-					PRs: prs, Method: forge.Merge, BatchID: "cache"})
+					PRs: prs, Method: forge.Merge, BatchID: "cache"}, forge.PushOptions{})
 			}
 			if operation == "build" || operation == "land" {
 				must(t, err)
@@ -74,7 +74,7 @@ func TestCachedHeadSkipsFetchButStillChecksRemotePin(t *testing.T) {
 	head := f.commit(f.heads[1], "new PR head", map[string]string{"new.txt": "new"})
 	gitCommand(t, f.source, "", nil, "push", f.remote, head+":"+headRef(1))
 	_, err = f.g.BuildTestRef(context.Background(), testRepo, forge.BuildRequest{Ref: "openmerge/queue/main/cached", BaseSHA: f.base,
-		PRs: f.prs[:1], Method: forge.Merge, BatchID: "cached"})
+		PRs: f.prs[:1], Method: forge.Merge, BatchID: "cached"}, forge.PushOptions{})
 	if err == nil || f.read("openmerge/queue/main/cached") != before {
 		t.Fatal("cached object bypassed the remote PR pin check")
 	}

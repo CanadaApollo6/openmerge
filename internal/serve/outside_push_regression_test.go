@@ -84,7 +84,7 @@ func TestOutsidePushLandingThenRollback(t *testing.T) {
 			if method == "fast-forward" {
 				head = b.PRs[len(b.PRs)-1].HeadSHA
 			}
-			_, err = f.Land(t.Context(), repo, forge.LandRequest{Base: "main", ExpectedBaseSHA: state.BaseSHA, TestedSHA: b.TestedSHA, FastForwardHeadSHA: head, Fence: "openmerge/fence/main", ExpectedFence: state.Fence, NextFenceID: "land/rollback", PRs: []forge.BuildPR{{Number: 1, HeadSHA: b.PRs[0].HeadSHA}}})
+			_, err = f.Land(t.Context(), repo, forge.LandRequest{Base: "main", ExpectedBaseSHA: state.BaseSHA, TestedSHA: b.TestedSHA, FastForwardHeadSHA: head, Fence: "openmerge/fence/main", ExpectedFence: state.Fence, NextFenceID: "land/rollback", PRs: []forge.BuildPR{{Number: 1, HeadSHA: b.PRs[0].HeadSHA}}}, forge.PushOptions{})
 			must(t, err)
 			must(t, f.SetRef(repo, "main", state.BaseSHA))
 			for i := range 3 {
@@ -132,7 +132,7 @@ func TestOutsidePushRestartAndLandingThenOutside(t *testing.T) {
 					head = b.PRs[len(b.PRs)-1].HeadSHA
 					landed = head
 				}
-				_, err = f.Land(t.Context(), repo, forge.LandRequest{Base: "main", ExpectedBaseSHA: state.BaseSHA, TestedSHA: b.TestedSHA, FastForwardHeadSHA: head, Fence: "openmerge/fence/main", ExpectedFence: state.Fence, NextFenceID: "land/review-restart", PRs: []forge.BuildPR{{Number: 1, HeadSHA: b.PRs[0].HeadSHA}}})
+				_, err = f.Land(t.Context(), repo, forge.LandRequest{Base: "main", ExpectedBaseSHA: state.BaseSHA, TestedSHA: b.TestedSHA, FastForwardHeadSHA: head, Fence: "openmerge/fence/main", ExpectedFence: state.Fence, NextFenceID: "land/review-restart", PRs: []forge.BuildPR{{Number: 1, HeadSHA: b.PRs[0].HeadSHA}}}, forge.PushOptions{})
 				must(t, err)
 				if outside {
 					_, err = f.PushBase(repo, "main", "outside", nil)
@@ -187,7 +187,7 @@ func TestOutsidePushBaseObservationDuringLanding(t *testing.T) {
 			must(t, err)
 			previous := state.BaseSHA
 			if land {
-				_, err = f.Land(t.Context(), repo, forge.LandRequest{Base: "main", ExpectedBaseSHA: state.BaseSHA, TestedSHA: b.TestedSHA, Fence: "openmerge/fence/main", ExpectedFence: state.Fence, NextFenceID: "land/observe-in-flight", PRs: []forge.BuildPR{{Number: 1, HeadSHA: b.PRs[0].HeadSHA}}})
+				_, err = f.Land(t.Context(), repo, forge.LandRequest{Base: "main", ExpectedBaseSHA: state.BaseSHA, TestedSHA: b.TestedSHA, Fence: "openmerge/fence/main", ExpectedFence: state.Fence, NextFenceID: "land/observe-in-flight", PRs: []forge.BuildPR{{Number: 1, HeadSHA: b.PRs[0].HeadSHA}}}, forge.PushOptions{})
 				must(t, err)
 				previous = b.TestedSHA
 			}

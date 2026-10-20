@@ -62,7 +62,7 @@ func TestLinkedCommitAuthorsExcludePrimaryAliases(t *testing.T) {
 				if approval {
 					f.prs[0].Metadata = &forge.ChangeMetadata{ChangeID: "chg1_" + strings.Repeat("a", 64), Revision: 1}
 				}
-				tested, err := f.g.BuildTestRef(t.Context(), testRepo, forge.BuildRequest{Ref: "test", BaseSHA: f.base, PRs: f.prs[:1], Method: forge.Squash, BatchID: "linked"})
+				tested, err := f.g.BuildTestRef(t.Context(), testRepo, forge.BuildRequest{Ref: "test", BaseSHA: f.base, PRs: f.prs[:1], Method: forge.Squash, BatchID: "linked"}, forge.PushOptions{})
 				if calls != 1 {
 					t.Fatalf("commit author reads=%d, want one per PR build", calls)
 				}
@@ -97,17 +97,17 @@ func TestLinkedCommitAuthorsExcludePrimaryAliases(t *testing.T) {
 func TestDeleteBranchLeasesExactHead(t *testing.T) {
 	f := newFixture(t)
 	f.push("topic/nested", f.heads[1], false)
-	must(t, f.g.DeleteBranch(t.Context(), testRepo, "topic/nested", f.heads[2]))
+	must(t, f.g.DeleteBranch(t.Context(), testRepo, "topic/nested", f.heads[2], forge.PushOptions{}))
 	if f.read("topic/nested") != f.heads[1] {
 		t.Fatal("cleanup deleted a different head")
 	}
-	must(t, f.g.DeleteBranch(t.Context(), testRepo, "topic/nested", f.heads[1]))
-	must(t, f.g.DeleteBranch(t.Context(), testRepo, "topic/nested", f.heads[1]))
+	must(t, f.g.DeleteBranch(t.Context(), testRepo, "topic/nested", f.heads[1], forge.PushOptions{}))
+	must(t, f.g.DeleteBranch(t.Context(), testRepo, "topic/nested", f.heads[1], forge.PushOptions{}))
 	if _, err := f.g.ReadRef(t.Context(), testRepo, "topic/nested"); err == nil {
 		t.Fatal("cleanup retained head")
 	}
 	for _, branch := range []string{"", "refs/heads/topic", "openmerge/fence/main", "openmerge/queue/main/b1", "../main"} {
-		if err := f.g.DeleteBranch(t.Context(), testRepo, branch, f.base); err == nil {
+		if err := f.g.DeleteBranch(t.Context(), testRepo, branch, f.base, forge.PushOptions{}); err == nil {
 			t.Fatalf("accepted unsafe branch %q", branch)
 		}
 	}
@@ -126,7 +126,7 @@ func TestDeleteBranchPreservesConcurrentPush(t *testing.T) {
 		}
 		return resolve(ctx, repo)
 	}
-	must(t, f.g.DeleteBranch(t.Context(), testRepo, "topic", f.heads[1]))
+	must(t, f.g.DeleteBranch(t.Context(), testRepo, "topic", f.heads[1], forge.PushOptions{}))
 	if f.read("topic") != f.heads[2] {
 		t.Fatal("cleanup removed concurrent work")
 	}

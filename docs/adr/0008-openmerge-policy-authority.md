@@ -424,7 +424,9 @@ All PRs follow these storage and acceptance rules:
   relaxing actor lists, exclusions, or App-only refs. Extra base coverage is
   reported, not treated as a loss of current protection that would prevent the
   config edit from landing. The compiler still translates each selector exactly;
-  this is a deliberate setup transition, not a glob approximation.
+  this is a deliberate setup transition, not a glob approximation. PR 3b must
+  separately assert the proposed coverage was installed and keep its actor and
+  App-only checks; containment alone is not installation.
 - **Contract:** evaluate all applicable repository, inherited, push, and classic
   rules for today's operations: queue builds/updates, strict landing's atomic
   base and fence update, fast-forward's contributor head and marker, fence
@@ -479,7 +481,9 @@ All PRs follow these storage and acceptance rules:
   and current protection source revision, propagating reload errors. The executor
   forwards these options for its operations; serve's `initializeFence` supplies
   them directly to `EnsureFence`, which has no executor caller.
-  Missing required context or guard aborts a write. Context is **stale** when
+  Runtime context is built from the pinned seeing observation in the activation,
+  bound to its protection fingerprint, never from fresh runtime protection reads.
+  PR 9 activates this source. Missing required context or guard aborts a write. Context is **stale** when
   its policy/basis binding differs from the queue's current pin/revision or its
   intended operation/expected old SHAs differ from the prepared push. Check at
   dispatch for write-intending operations and recheck via the guard immediately

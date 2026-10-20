@@ -90,9 +90,9 @@ func TestLandingAttribution(t *testing.T) {
 			pr := metadata[1]
 			pr.Title, pr.Body = "Edited after testing", "new body"
 			metadata[1] = pr
-			fence, err := f.g.EnsureFence(t.Context(), testRepo, testFence)
+			fence, err := f.g.EnsureFence(t.Context(), testRepo, testFence, forge.PushOptions{})
 			must(t, err)
-			_, err = f.g.Land(t.Context(), testRepo, forge.LandRequest{Base: "main", ExpectedBaseSHA: f.base, TestedSHA: tested, Fence: testFence, ExpectedFence: fence, NextFenceID: "land/attribution", PRs: f.prs[:2]})
+			_, err = f.g.Land(t.Context(), testRepo, forge.LandRequest{Base: "main", ExpectedBaseSHA: f.base, TestedSHA: tested, Fence: testFence, ExpectedFence: fence, NextFenceID: "land/attribution", PRs: f.prs[:2]}, forge.PushOptions{})
 			must(t, err)
 			if tip := f.read("main"); tip != tested || gitCommand(t, f.remote, "", nil, "cat-file", "commit", tip) != before {
 				t.Fatal("landing changed tested commit bytes")
@@ -119,7 +119,7 @@ func TestBuildRefusesStaleOrInvalidMetadata(t *testing.T) {
 				}
 				return pr, nil
 			}
-			_, err := f.g.BuildTestRef(t.Context(), testRepo, forge.BuildRequest{Ref: "openmerge/queue/main/invalid", BaseSHA: f.base, PRs: f.prs[:1], Method: forge.Squash, BatchID: "invalid"})
+			_, err := f.g.BuildTestRef(t.Context(), testRepo, forge.BuildRequest{Ref: "openmerge/queue/main/invalid", BaseSHA: f.base, PRs: f.prs[:1], Method: forge.Squash, BatchID: "invalid"}, forge.PushOptions{})
 			if err == nil {
 				t.Fatal("invalid metadata accepted")
 			}

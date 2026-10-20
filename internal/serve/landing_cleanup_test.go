@@ -14,8 +14,8 @@ import (
 
 type lostLandingResult struct{ forge.Git }
 
-func (g lostLandingResult) Land(ctx context.Context, repo forge.RepoRef, request forge.LandRequest) (string, error) {
-	_, err := g.Git.Land(ctx, repo, request)
+func (g lostLandingResult) Land(ctx context.Context, repo forge.RepoRef, request forge.LandRequest, opts forge.PushOptions) (string, error) {
+	_, err := g.Git.Land(ctx, repo, request, opts)
 	if err != nil {
 		return "", err
 	}
@@ -52,7 +52,7 @@ func TestLandingCleanupPolicySurvivesConfigurationChange(t *testing.T) {
 				state, _, err := s.store.Load(t.Context(), w.id)
 				must(t, err)
 				pins := []queue.BatchPR{{PR: 1, HeadSHA: pr.HeadSHA}}
-				tested, err = f.BuildTestRef(t.Context(), repo, forge.BuildRequest{Ref: "openmerge/queue/main/b1", BaseSHA: base, PRs: []forge.BuildPR{{Number: 1, HeadSHA: pr.HeadSHA}}, Method: forge.Merge, BatchID: "b1"})
+				tested, err = f.BuildTestRef(t.Context(), repo, forge.BuildRequest{Ref: "openmerge/queue/main/b1", BaseSHA: base, PRs: []forge.BuildPR{{Number: 1, HeadSHA: pr.HeadSHA}}, Method: forge.Merge, BatchID: "b1"}, forge.PushOptions{})
 				must(t, err)
 				_, err = s.store.Append(t.Context(), w.id, []queue.Event{
 					queue.BaseMoved{SHA: base}, queue.PRObserved{PR: 1, HeadSHA: pr.HeadSHA, Eligible: true, Trusted: true},
@@ -61,7 +61,7 @@ func TestLandingCleanupPolicySurvivesConfigurationChange(t *testing.T) {
 					queue.LandingStarted{BatchID: "b1", AttemptID: "old-attempt", FenceToken: state.Fence, At: time.Now().Add(-time.Hour)},
 				}, "")
 				must(t, err)
-				_, err = f.Land(t.Context(), repo, forge.LandRequest{Base: "main", ExpectedBaseSHA: base, TestedSHA: tested, Fence: "openmerge/fence/main", ExpectedFence: state.Fence, NextFenceID: "land/old-attempt", PRs: []forge.BuildPR{{Number: 1, HeadSHA: pr.HeadSHA}}})
+				_, err = f.Land(t.Context(), repo, forge.LandRequest{Base: "main", ExpectedBaseSHA: base, TestedSHA: tested, Fence: "openmerge/fence/main", ExpectedFence: state.Fence, NextFenceID: "land/old-attempt", PRs: []forge.BuildPR{{Number: 1, HeadSHA: pr.HeadSHA}}}, forge.PushOptions{})
 				must(t, err)
 			} else {
 				f.AddComment(repo, 1, "writer", "@openmerge queue")
@@ -120,3 +120,5 @@ func TestLandingCleanupPolicySurvivesConfigurationChange(t *testing.T) {
 		})
 	}
 }
+
+var _ forge.Git = (*lostLandingResult)(nil)

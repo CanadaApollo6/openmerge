@@ -17,7 +17,7 @@ import (
 func TestReviewDuplicateLandAfterRollback(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	initial, err := f.g.EnsureFence(ctx, testRepo, testFence)
+	initial, err := f.g.EnsureFence(ctx, testRepo, testFence, forge.PushOptions{})
 	must(t, err)
 	tested := f.build(forge.Merge, f.prs[:1], "duplicate")
 	req := forge.LandRequest{Base: "main", ExpectedBaseSHA: f.base, TestedSHA: tested, Fence: testFence, ExpectedFence: initial, NextFenceID: "land/same-attempt", PRs: f.prs[:1]}
@@ -38,7 +38,7 @@ func TestReviewDuplicateLandAfterRollback(t *testing.T) {
 		shellQuote(gitPath) + " --git-dir=" + shellQuote(f.remote) + " update-ref refs/heads/main " + f.base + " " + tested + " || exit 91\nbreak\nfi\ndone\nexec " + shellQuote(gitPath) + " \"$@\"\n"
 	writeExecutable(t, wrapper, script)
 	f.g.git = wrapper
-	result, err := f.g.Land(ctx, testRepo, req)
+	result, err := f.g.Land(ctx, testRepo, req, forge.PushOptions{})
 	base := gitCommand(t, f.remote, "", nil, "rev-parse", "refs/heads/main")
 	fence := gitCommand(t, f.remote, "", nil, "rev-parse", "refs/heads/"+testFence)
 	t.Logf("duplicate returned fence=%s err=%v; main restored to tested=%v; fence unchanged from original landing=%v", result, err, base == tested, fence == next)
@@ -60,7 +60,7 @@ func TestReviewRebaseMergeResolution(t *testing.T) {
 	for _, fallback := range []bool{false, true} {
 		t.Run(fmt.Sprintf("fallback=%v", fallback), func(t *testing.T) {
 			f.g.explicitBase = !fallback
-			tested, err := f.g.BuildTestRef(ctx, testRepo, forge.BuildRequest{Ref: "openmerge/queue/review", BaseSHA: f.base, PRs: []forge.BuildPR{{Number: 42, HeadSHA: head}}, Method: forge.Rebase, BatchID: "review"})
+			tested, err := f.g.BuildTestRef(ctx, testRepo, forge.BuildRequest{Ref: "openmerge/queue/review", BaseSHA: f.base, PRs: []forge.BuildPR{{Number: 42, HeadSHA: head}}, Method: forge.Rebase, BatchID: "review"}, forge.PushOptions{})
 			if !errors.Is(err, forge.ErrConflict) || tested != "" || !strings.Contains(err.Error(), "rebase cannot replay merge commits in PR #42; use the merge or squash method") {
 				t.Fatalf("merge resolution was not refused as a conflict: sha=%q err=%v", tested, err)
 			}
@@ -91,7 +91,7 @@ func TestReviewHostileRefsAndHooks(t *testing.T) {
 	before := f.g.cfg.HeadRef
 	for _, ref := range []string{"--upload-pack=touch /tmp/pwned", "refs/pull/1/../head", "refs/pull/1 head", "refs/pull/1:refs/heads/main"} {
 		f.g.cfg.HeadRef = func(int) string { return ref }
-		_, err := f.g.BuildTestRef(ctx, testRepo, forge.BuildRequest{Ref: "openmerge/queue/hostile", BaseSHA: f.base, PRs: f.prs[:1], Method: forge.Merge, BatchID: "hostile"})
+		_, err := f.g.BuildTestRef(ctx, testRepo, forge.BuildRequest{Ref: "openmerge/queue/hostile", BaseSHA: f.base, PRs: f.prs[:1], Method: forge.Merge, BatchID: "hostile"}, forge.PushOptions{})
 		if err == nil {
 			t.Errorf("accepted invalid head ref %q", ref)
 		}
@@ -139,7 +139,7 @@ func TestReviewSameCacheInstances(t *testing.T) {
 			if i%2 == 1 {
 				r = other
 			}
-			_, err := r.BuildTestRef(ctx, testRepo, forge.BuildRequest{Ref: fmt.Sprintf("openmerge/queue/concurrent-%d", i), BaseSHA: f.base, PRs: f.prs[:1], Method: forge.Merge, BatchID: fmt.Sprintf("c%d", i)})
+			_, err := r.BuildTestRef(ctx, testRepo, forge.BuildRequest{Ref: fmt.Sprintf("openmerge/queue/concurrent-%d", i), BaseSHA: f.base, PRs: f.prs[:1], Method: forge.Merge, BatchID: fmt.Sprintf("c%d", i)}, forge.PushOptions{})
 			errs <- err
 		}()
 	}
@@ -157,7 +157,7 @@ func TestReviewEmptyAndAlreadyMerged(t *testing.T) {
 		gitCommand(t, f.source, "", nil, "push", f.remote, empty+":"+headRef(42))
 		f.build(method, []forge.BuildPR{{Number: 42, HeadSHA: empty}}, "empty")
 		gitCommand(t, f.source, "", nil, "push", f.remote, f.base+":"+headRef(43))
-		sha, err := f.g.BuildTestRef(context.Background(), testRepo, forge.BuildRequest{Ref: "openmerge/queue/already", BaseSHA: f.base, PRs: []forge.BuildPR{{Number: 43, HeadSHA: f.base}}, Method: method, BatchID: "already"})
+		sha, err := f.g.BuildTestRef(context.Background(), testRepo, forge.BuildRequest{Ref: "openmerge/queue/already", BaseSHA: f.base, PRs: []forge.BuildPR{{Number: 43, HeadSHA: f.base}}, Method: method, BatchID: "already"}, forge.PushOptions{})
 		if method == forge.Rebase {
 			if err == nil || sha != "" {
 				t.Fatalf("rebase accepted a PR with no commits to replay: sha=%q err=%v", sha, err)
@@ -198,7 +198,7 @@ func TestReviewBinaryAndRenameConflict(t *testing.T) {
 		}
 		gitCommand(t, f.source, "", nil, "push", f.remote, left+":"+headRef(42), right+":"+headRef(43))
 		for _, method := range []forge.MergeMethod{forge.Merge, forge.Squash, forge.Rebase} {
-			_, err := f.g.BuildTestRef(context.Background(), testRepo, forge.BuildRequest{Ref: "openmerge/queue/conflicts", BaseSHA: base, PRs: []forge.BuildPR{{Number: 42, HeadSHA: left}, {Number: 43, HeadSHA: right}}, Method: method, BatchID: "conflict"})
+			_, err := f.g.BuildTestRef(context.Background(), testRepo, forge.BuildRequest{Ref: "openmerge/queue/conflicts", BaseSHA: base, PRs: []forge.BuildPR{{Number: 42, HeadSHA: left}, {Number: 43, HeadSHA: right}}, Method: method, BatchID: "conflict"}, forge.PushOptions{})
 			if !errors.Is(err, forge.ErrConflict) {
 				t.Errorf("%s %s returned %v", kind, method, err)
 			}
@@ -212,7 +212,7 @@ func TestReviewBinaryAndRenameConflict(t *testing.T) {
 func TestReviewExternalTestedThenRollbackLimit(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	initial, err := f.g.EnsureFence(ctx, testRepo, testFence)
+	initial, err := f.g.EnsureFence(ctx, testRepo, testFence, forge.PushOptions{})
 	must(t, err)
 	tested := f.build(forge.Merge, f.prs[:1], "external")
 	gitPath, err := exec.LookPath("git")
@@ -223,7 +223,7 @@ func TestReviewExternalTestedThenRollbackLimit(t *testing.T) {
 	wrapper := filepath.Join(t.TempDir(), "git")
 	writeExecutable(t, wrapper, "for a in \"$@\"; do\nif [ \"$a\" = push ]; then\n"+shellQuote(gitPath)+" --git-dir="+shellQuote(f.remote)+" update-ref refs/heads/main "+tested+" "+f.base+" || exit 90\nbreak\nfi\ndone\nexec "+shellQuote(gitPath)+" \"$@\"\n")
 	f.g.git = wrapper
-	next, err := f.g.Land(ctx, testRepo, forge.LandRequest{Base: "main", ExpectedBaseSHA: f.base, TestedSHA: tested, Fence: testFence, ExpectedFence: initial, NextFenceID: "land/external", PRs: f.prs[:1]})
+	next, err := f.g.Land(ctx, testRepo, forge.LandRequest{Base: "main", ExpectedBaseSHA: f.base, TestedSHA: tested, Fence: testFence, ExpectedFence: initial, NextFenceID: "land/external", PRs: f.prs[:1]}, forge.PushOptions{})
 	must(t, err)
 	data, err := os.ReadFile(marker)
 	must(t, err)

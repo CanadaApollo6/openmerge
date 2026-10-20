@@ -23,7 +23,7 @@ func TestExecutorSerialQueueOverRealGit(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := newFixture(t)
 			ctx := context.Background()
-			fence, err := f.g.EnsureFence(ctx, testRepo, testFence)
+			fence, err := f.g.EnsureFence(ctx, testRepo, testFence, forge.PushOptions{})
 			must(t, err)
 			// Forge API effects (checks/statuses/ref cleanup requests) remain
 			// in memory; every Git interface operation uses the bare remote.

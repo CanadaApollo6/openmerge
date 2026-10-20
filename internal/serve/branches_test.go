@@ -151,7 +151,7 @@ func recordLanding(t *testing.T, s *Server, w *worker, f *fake.Forge, landed boo
 	must(t, err)
 	pr, err := f.OpenPR(w.repo(), 41, base, true)
 	must(t, err)
-	tested, err := f.BuildTestRef(t.Context(), w.repo(), forge.BuildRequest{Ref: "openmerge/queue/" + w.Key.BaseBranch + "/b1", BaseSHA: base, PRs: []forge.BuildPR{{Number: pr.Number, HeadSHA: pr.HeadSHA}}, Method: forge.Merge, BatchID: "b1"})
+	tested, err := f.BuildTestRef(t.Context(), w.repo(), forge.BuildRequest{Ref: "openmerge/queue/" + w.Key.BaseBranch + "/b1", BaseSHA: base, PRs: []forge.BuildPR{{Number: pr.Number, HeadSHA: pr.HeadSHA}}, Method: forge.Merge, BatchID: "b1"}, forge.PushOptions{})
 	must(t, err)
 	_, err = s.store.Append(t.Context(), w.id, []queue.Event{
 		queue.BaseMoved{SHA: base}, queue.PRObserved{PR: pr.Number, HeadSHA: pr.HeadSHA, Eligible: true, Trusted: true},
@@ -161,7 +161,7 @@ func recordLanding(t *testing.T, s *Server, w *worker, f *fake.Forge, landed boo
 	}, "")
 	must(t, err)
 	if landed {
-		_, err = f.Land(t.Context(), w.repo(), forge.LandRequest{Base: w.Key.BaseBranch, ExpectedBaseSHA: base, TestedSHA: tested, Fence: "openmerge/fence/" + w.Key.BaseBranch, ExpectedFence: state.Fence, NextFenceID: "land/crashed", PRs: []forge.BuildPR{{Number: pr.Number, HeadSHA: pr.HeadSHA}}})
+		_, err = f.Land(t.Context(), w.repo(), forge.LandRequest{Base: w.Key.BaseBranch, ExpectedBaseSHA: base, TestedSHA: tested, Fence: "openmerge/fence/" + w.Key.BaseBranch, ExpectedFence: state.Fence, NextFenceID: "land/crashed", PRs: []forge.BuildPR{{Number: pr.Number, HeadSHA: pr.HeadSHA}}}, forge.PushOptions{})
 		must(t, err)
 	}
 	return tested

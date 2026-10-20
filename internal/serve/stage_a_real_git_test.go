@@ -69,7 +69,7 @@ func TestStageAGateRealGitAcquisition(t *testing.T) {
 					cache := filepath.Join(cfg.WorkDir, fmt.Sprintf("%x.git", sha256.Sum256([]byte(key.Repository))))
 					git("", "--git-dir="+cache, "fetch", "--no-tags", remote, base+":refs/heads/fixture-base")
 					w := &worker{Target: Target{Key: key, Git: g}, stageA: &stageAPolicy{}}
-					tested, err := g.BuildTestRef(t.Context(), w.repo(), forge.BuildRequest{Ref: "test-composition", BaseSHA: base, PRs: prs, Method: forge.MergeMethod(method), BatchID: "real-gate"})
+					tested, err := g.BuildTestRef(t.Context(), w.repo(), forge.BuildRequest{Ref: "test-composition", BaseSHA: base, PRs: prs, Method: forge.MergeMethod(method), BatchID: "real-gate"}, forge.PushOptions{})
 					must(t, err)
 					if restart {
 						// Restart with no local objects: only the pushed remote survives.
@@ -94,16 +94,16 @@ func TestStageAGateRealGitAcquisition(t *testing.T) {
 					}
 					// An extra queue-generated segment must fail closed at the
 					// batch-derived limit, even though all objects are readable.
-					extra, err := g.BuildTestRef(t.Context(), w.repo(), forge.BuildRequest{Ref: "extra-composition", BaseSHA: tested, PRs: prs[:1], Method: forge.MergeMethod(method), BatchID: "extra-gate"})
+					extra, err := g.BuildTestRef(t.Context(), w.repo(), forge.BuildRequest{Ref: "extra-composition", BaseSHA: tested, PRs: prs[:1], Method: forge.MergeMethod(method), BatchID: "extra-gate"}, forge.PushOptions{})
 					must(t, err)
 					overlong := land
 					overlong.TestedSHA = extra
 					if _, err := gate.ReadTestedMessages(t.Context(), overlong); err == nil || !strings.Contains(err.Error(), "tested member history exceeds composition limit") {
 						t.Fatalf("overlong composition accepted: %v", err)
 					}
-					fence, err := g.EnsureFence(t.Context(), w.repo(), "test-fence")
+					fence, err := g.EnsureFence(t.Context(), w.repo(), "test-fence", forge.PushOptions{})
 					must(t, err)
-					_, err = g.Land(t.Context(), w.repo(), forge.LandRequest{Base: "main", ExpectedBaseSHA: base, TestedSHA: tested, Fence: "test-fence", ExpectedFence: fence, NextFenceID: "land/real-gate", PRs: prs})
+					_, err = g.Land(t.Context(), w.repo(), forge.LandRequest{Base: "main", ExpectedBaseSHA: base, TestedSHA: tested, Fence: "test-fence", ExpectedFence: fence, NextFenceID: "land/real-gate", PRs: prs}, forge.PushOptions{})
 					must(t, err)
 					if got := git("", "--git-dir="+remote, "rev-parse", "refs/heads/main"); got != tested {
 						t.Fatalf("landed %s, want %s", got, tested)

@@ -23,7 +23,7 @@ func TestFastForwardMemberMetadataBeforeCI(t *testing.T) {
 		must(t, err)
 		pairs = append(pairs, pair...)
 	}
-	tested, err := f.BuildTestRef(t.Context(), repo, forge.BuildRequest{Ref: "metadata", BaseSHA: e.BaseSHA, PRs: prs, Method: forge.FastForward, BatchID: "metadata"})
+	tested, err := f.BuildTestRef(t.Context(), repo, forge.BuildRequest{Ref: "metadata", BaseSHA: e.BaseSHA, PRs: prs, Method: forge.FastForward, BatchID: "metadata"}, forge.PushOptions{})
 	must(t, err)
 	marker, err := f.Commit(repo, tested)
 	must(t, err)
@@ -34,7 +34,7 @@ func TestFastForwardMemberMetadataBeforeCI(t *testing.T) {
 	must(t, f.VerifyFastForward(t.Context(), repo, e.BaseSHA, tested, second.HeadSHA))
 	// Metadata changes while CI runs do not change the marker or landing input.
 	prs[0].Metadata.Labels = []string{"unknown"}
-	_, err = f.Land(t.Context(), repo, forge.LandRequest{Base: e.Base, ExpectedBaseSHA: e.BaseSHA, TestedSHA: tested, Fence: e.FenceRef, ExpectedFence: e.FenceSHA, NextFenceID: "land/metadata", PRs: prs, FastForwardHeadSHA: second.HeadSHA})
+	_, err = f.Land(t.Context(), repo, forge.LandRequest{Base: e.Base, ExpectedBaseSHA: e.BaseSHA, TestedSHA: tested, Fence: e.FenceRef, ExpectedFence: e.FenceSHA, NextFenceID: "land/metadata", PRs: prs, FastForwardHeadSHA: second.HeadSHA}, forge.PushOptions{})
 	must(t, err)
 	after, err := f.Commit(repo, tested)
 	must(t, err)

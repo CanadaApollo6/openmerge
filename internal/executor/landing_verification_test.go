@@ -15,8 +15,8 @@ type afterLandGit struct {
 	after func()
 }
 
-func (g *afterLandGit) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequest) (string, error) {
-	fence, err := g.Git.Land(ctx, repo, req)
+func (g *afterLandGit) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequest, opts forge.PushOptions) (string, error) {
+	fence, err := g.Git.Land(ctx, repo, req, opts)
 	if err == nil {
 		g.after()
 	}
@@ -39,7 +39,7 @@ func TestLandingVerification(t *testing.T) {
 			t.Run(stage+"/"+outcome, func(t *testing.T) {
 				h := setup(t)
 				ctx := context.Background()
-				tested, err := h.f.BuildTestRef(ctx, repo, forge.BuildRequest{Ref: h.buildAction().Ref, BaseSHA: h.base, PRs: h.prs[:1], Method: forge.Squash, BatchID: "batch"})
+				tested, err := h.f.BuildTestRef(ctx, repo, forge.BuildRequest{Ref: h.buildAction().Ref, BaseSHA: h.base, PRs: h.prs[:1], Method: forge.Squash, BatchID: "batch"}, forge.PushOptions{})
 				must(t, err)
 				h.f.SetCheckRuns(repo, tested, []forge.CheckRun{{Name: "ci", State: forge.Success}, {Name: "lint", State: forge.Success}})
 				driver := &closingDriver{Driver: h.f}
@@ -66,7 +66,7 @@ func TestLandingVerification(t *testing.T) {
 					h.x.Git = &afterLandGit{Git: h.f, after: mutate}
 					action = queue.Land{BatchID: "batch", ExpectedBaseSHA: h.base, TestedSHA: tested, FenceToken: h.fence, PRs: []queue.BatchPR{{PR: 1, HeadSHA: h.prs[0].HeadSHA}}}
 				} else {
-					_, err := h.f.Land(ctx, repo, forge.LandRequest{Base: "main", ExpectedBaseSHA: h.base, TestedSHA: tested, Fence: fenceRef, ExpectedFence: h.fence, NextFenceID: "land/attempt", PRs: h.prs[:1]})
+					_, err := h.f.Land(ctx, repo, forge.LandRequest{Base: "main", ExpectedBaseSHA: h.base, TestedSHA: tested, Fence: fenceRef, ExpectedFence: h.fence, NextFenceID: "land/attempt", PRs: h.prs[:1]}, forge.PushOptions{})
 					must(t, err)
 					mutate()
 					action = queue.ResolveLanding{BatchID: "batch", AttemptID: "attempt", TestedSHA: tested, FenceToken: h.fence}
@@ -128,3 +128,5 @@ func TestLandingVerification(t *testing.T) {
 		}
 	}
 }
+
+var _ forge.Git = (*afterLandGit)(nil)

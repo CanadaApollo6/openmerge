@@ -142,7 +142,7 @@ func TestChangeTrailersBeforeCI(t *testing.T) {
 				t.Fatal("landing reread build metadata")
 				return forge.PullRequest{}, nil
 			}
-			fence, err := f.g.EnsureFence(t.Context(), testRepo, testFence)
+			fence, err := f.g.EnsureFence(t.Context(), testRepo, testFence, forge.PushOptions{})
 			must(t, err)
 			land := forge.LandRequest{Base: "main", ExpectedBaseSHA: f.base, TestedSHA: tested, Fence: testFence, ExpectedFence: fence, NextFenceID: "land/metadata", PRs: prs}
 			want := tested
@@ -150,7 +150,7 @@ func TestChangeTrailersBeforeCI(t *testing.T) {
 				land.FastForwardHeadSHA = prs[1].HeadSHA
 				want = prs[1].HeadSHA
 			}
-			_, err = f.g.Land(t.Context(), testRepo, land)
+			_, err = f.g.Land(t.Context(), testRepo, land, forge.PushOptions{})
 			must(t, err)
 			if f.read("main") != want || gitCommand(t, f.remote, "", nil, "cat-file", "commit", tested) != before {
 				t.Fatal("landing changed tested identity")

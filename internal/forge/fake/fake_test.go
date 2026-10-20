@@ -184,19 +184,19 @@ func TestCommitGraph(t *testing.T) {
 	ctx := context.Background()
 	base, err := f.BuildTestRef(ctx, repo, forge.BuildRequest{
 		Ref: "prior", BaseSHA: e.BaseSHA, PRs: e.PRs[:1], Method: forge.Merge, BatchID: "prior",
-	})
+	}, forge.PushOptions{})
 	must(t, err)
 	shas := make(map[string]bool)
 	for _, method := range []forge.MergeMethod{forge.Merge, forge.Squash, forge.Rebase} {
 		t.Run(string(method), func(t *testing.T) {
 			req := forge.BuildRequest{Ref: string(method), BaseSHA: base, PRs: e.PRs[1:], Method: method, BatchID: "batch"}
-			sha, err := f.BuildTestRef(ctx, repo, req)
+			sha, err := f.BuildTestRef(ctx, repo, req, forge.PushOptions{})
 			must(t, err)
 			if shas[sha] {
 				t.Fatal("different merge methods produced the same SHA")
 			}
 			shas[sha] = true
-			again, err := f.BuildTestRef(ctx, repo, req)
+			again, err := f.BuildTestRef(ctx, repo, req, forge.PushOptions{})
 			must(t, err)
 			if sha != again {
 				t.Fatal("identical build inputs were not deterministic")
@@ -217,9 +217,9 @@ func TestCommitGraph(t *testing.T) {
 			}
 		})
 	}
-	conflictBase, err := f.BuildTestRef(ctx, repo, forge.BuildRequest{Ref: "conflict-base", BaseSHA: e.BaseSHA, PRs: e.ConflictingPRs[:1], Method: forge.Merge, BatchID: "conflict-base"})
+	conflictBase, err := f.BuildTestRef(ctx, repo, forge.BuildRequest{Ref: "conflict-base", BaseSHA: e.BaseSHA, PRs: e.ConflictingPRs[:1], Method: forge.Merge, BatchID: "conflict-base"}, forge.PushOptions{})
 	must(t, err)
-	_, err = f.BuildTestRef(ctx, repo, forge.BuildRequest{Ref: "blocked", BaseSHA: conflictBase, PRs: e.ConflictingPRs[1:], Method: forge.Merge, BatchID: "conflict"})
+	_, err = f.BuildTestRef(ctx, repo, forge.BuildRequest{Ref: "blocked", BaseSHA: conflictBase, PRs: e.ConflictingPRs[1:], Method: forge.Merge, BatchID: "conflict"}, forge.PushOptions{})
 	if !errors.Is(err, forge.ErrConflict) {
 		t.Fatalf("base-content conflict = %v", err)
 	}
@@ -256,11 +256,11 @@ func TestPRLifecycleAndSnapshots(t *testing.T) {
 		t.Fatal("fork head reported as in base repository")
 	}
 	// Stale and mismatched PR heads must never build a test ref.
-	_, err = f.BuildTestRef(ctx, repo, forge.BuildRequest{Ref: "old", BaseSHA: e.BaseSHA, PRs: e.PRs[:1], Method: forge.Merge, BatchID: "old"})
+	_, err = f.BuildTestRef(ctx, repo, forge.BuildRequest{Ref: "old", BaseSHA: e.BaseSHA, PRs: e.PRs[:1], Method: forge.Merge, BatchID: "old"}, forge.PushOptions{})
 	if err == nil {
 		t.Fatal("build accepted stale PR head")
 	}
-	sha, err := f.BuildTestRef(ctx, repo, forge.BuildRequest{Ref: "old", BaseSHA: e.BaseSHA, PRs: []forge.BuildPR{{Number: 1, HeadSHA: pushed.HeadSHA}}, Method: forge.Merge, BatchID: "current"})
+	sha, err := f.BuildTestRef(ctx, repo, forge.BuildRequest{Ref: "old", BaseSHA: e.BaseSHA, PRs: []forge.BuildPR{{Number: 1, HeadSHA: pushed.HeadSHA}}, Method: forge.Merge, BatchID: "current"}, forge.PushOptions{})
 	must(t, err)
 	c, err := f.Commit(repo, sha)
 	must(t, err)
@@ -295,9 +295,9 @@ func TestHookAndFenceCommits(t *testing.T) {
 		f.SetCheckRuns(repo, sha, []forge.CheckRun{{Name: "ci", State: forge.Success}})
 	})
 	req := forge.BuildRequest{Ref: "tested", BaseSHA: e.BaseSHA, PRs: e.PRs, Method: forge.Merge, BatchID: "batch"}
-	sha, err := f.BuildTestRef(ctx, repo, req)
+	sha, err := f.BuildTestRef(ctx, repo, req, forge.PushOptions{})
 	must(t, err)
-	_, err = f.BuildTestRef(ctx, repo, req)
+	_, err = f.BuildTestRef(ctx, repo, req, forge.PushOptions{})
 	must(t, err)
 	if calls != 1 {
 		t.Fatalf("idempotent build scheduled CI %d times", calls)
@@ -310,14 +310,14 @@ func TestHookAndFenceCommits(t *testing.T) {
 	if again[0].State != forge.Success {
 		t.Fatal("CheckRuns exposed mutable check state")
 	}
-	next, err := f.Land(ctx, repo, forge.LandRequest{Base: "main", ExpectedBaseSHA: e.BaseSHA, TestedSHA: sha, Fence: fenceRef, ExpectedFence: e.FenceSHA, NextFenceID: "land"})
+	next, err := f.Land(ctx, repo, forge.LandRequest{Base: "main", ExpectedBaseSHA: e.BaseSHA, TestedSHA: sha, Fence: fenceRef, ExpectedFence: e.FenceSHA, NextFenceID: "land"}, forge.PushOptions{})
 	must(t, err)
 	c, err := f.Commit(repo, next)
 	must(t, err)
 	if !slices.Equal(c.Parents, []string{e.FenceSHA}) || !strings.HasPrefix(c.Message, "openmerge fence land tested="+sha+" nonce=") {
 		t.Fatalf("fence token is not the expected child commit: %+v", c)
 	}
-	next2, err := f.AdvanceFence(ctx, repo, fenceRef, next, "resolve")
+	next2, err := f.AdvanceFence(ctx, repo, fenceRef, next, "resolve", forge.PushOptions{})
 	must(t, err)
 	c, err = f.Commit(repo, next2)
 	must(t, err)
@@ -345,15 +345,15 @@ func TestConcurrentWritesAndLeaseRace(t *testing.T) {
 	if len(f.Comments(repo, 1)) != 1 || len(f.Statuses(repo, 1)) != 16 {
 		t.Fatal("concurrent API writes lost or duplicated effects")
 	}
-	sha, err := f.BuildTestRef(ctx, repo, forge.BuildRequest{Ref: "race", BaseSHA: e.BaseSHA, PRs: e.PRs[:1], Method: forge.Merge, BatchID: "race"})
+	sha, err := f.BuildTestRef(ctx, repo, forge.BuildRequest{Ref: "race", BaseSHA: e.BaseSHA, PRs: e.PRs[:1], Method: forge.Merge, BatchID: "race"}, forge.PushOptions{})
 	must(t, err)
 	results := make(chan error, 2)
 	wg.Go(func() {
-		_, err := f.Land(ctx, repo, forge.LandRequest{Base: "main", ExpectedBaseSHA: e.BaseSHA, TestedSHA: sha, Fence: fenceRef, ExpectedFence: e.FenceSHA, NextFenceID: "land"})
+		_, err := f.Land(ctx, repo, forge.LandRequest{Base: "main", ExpectedBaseSHA: e.BaseSHA, TestedSHA: sha, Fence: fenceRef, ExpectedFence: e.FenceSHA, NextFenceID: "land"}, forge.PushOptions{})
 		results <- err
 	})
 	wg.Go(func() {
-		_, err := f.AdvanceFence(ctx, repo, fenceRef, e.FenceSHA, "resolve")
+		_, err := f.AdvanceFence(ctx, repo, fenceRef, e.FenceSHA, "resolve", forge.PushOptions{})
 		results <- err
 	})
 	wg.Wait()

@@ -14,13 +14,13 @@ func TestPushLeasesAgainstRealGit(t *testing.T) {
 		t.Run(moved, func(t *testing.T) {
 			f := newFixture(t)
 			ctx := context.Background()
-			initial, err := f.g.EnsureFence(ctx, testRepo, testFence)
+			initial, err := f.g.EnsureFence(ctx, testRepo, testFence, forge.PushOptions{})
 			must(t, err)
 			current := f.build(forge.Merge, f.prs[:1], "current")
 			f.fetch(current)
 			f.push("main", current, false)
 			tested, err := f.g.BuildTestRef(ctx, testRepo, forge.BuildRequest{Ref: "openmerge/queue/main/tested", BaseSHA: current,
-				PRs: f.prs[1:2], Method: forge.Merge, BatchID: "tested"})
+				PRs: f.prs[1:2], Method: forge.Merge, BatchID: "tested"}, forge.PushOptions{})
 			must(t, err)
 			switch moved {
 			case "forward":
@@ -29,7 +29,7 @@ func TestPushLeasesAgainstRealGit(t *testing.T) {
 			case "rollback":
 				f.push("main", f.base, true)
 			case "fence":
-				_, err := f.g.AdvanceFence(ctx, testRepo, testFence, initial, "abandon/other")
+				_, err := f.g.AdvanceFence(ctx, testRepo, testFence, initial, "abandon/other", forge.PushOptions{})
 				must(t, err)
 			}
 			beforeBase, beforeFence := f.read("main"), f.read(testFence)
@@ -59,7 +59,7 @@ func TestPushLeasesAgainstRealGit(t *testing.T) {
 func TestGitSkipsLeaseForUpToDateRef(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	initial, err := f.g.EnsureFence(ctx, testRepo, testFence)
+	initial, err := f.g.EnsureFence(ctx, testRepo, testFence, forge.PushOptions{})
 	must(t, err)
 	tested := f.build(forge.Merge, f.prs[:1], "noop")
 	f.fetch(tested)
@@ -86,13 +86,13 @@ func TestGitSkipsLeaseForUpToDateRef(t *testing.T) {
 func TestLandRefusesStaleUpToDateBase(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	initial, err := f.g.EnsureFence(ctx, testRepo, testFence)
+	initial, err := f.g.EnsureFence(ctx, testRepo, testFence, forge.PushOptions{})
 	must(t, err)
 	tested := f.build(forge.Merge, f.prs[:1], "noop")
 	f.fetch(tested)
 	f.push("main", tested, false)
 	_, err = f.g.Land(ctx, testRepo, forge.LandRequest{Base: "main", ExpectedBaseSHA: f.base, TestedSHA: tested,
-		Fence: testFence, ExpectedFence: initial, NextFenceID: "land/noop", PRs: f.prs[:1]})
+		Fence: testFence, ExpectedFence: initial, NextFenceID: "land/noop", PRs: f.prs[:1]}, forge.PushOptions{})
 	if err != forge.ErrLeaseRejected || f.read("main") != tested || f.read(testFence) != initial {
 		t.Fatalf("stale up-to-date base was not refused without effects: %v", err)
 	}
@@ -101,12 +101,12 @@ func TestLandRefusesStaleUpToDateBase(t *testing.T) {
 func TestAtomicUnsupportedIsInfrastructureFailure(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	initial, err := f.g.EnsureFence(ctx, testRepo, testFence)
+	initial, err := f.g.EnsureFence(ctx, testRepo, testFence, forge.PushOptions{})
 	must(t, err)
 	tested := f.build(forge.Merge, f.prs[:1], "atomic")
 	gitCommand(t, f.remote, "", nil, "config", "receive.advertiseAtomic", "false")
 	_, err = f.g.Land(ctx, testRepo, forge.LandRequest{Base: "main", ExpectedBaseSHA: f.base, TestedSHA: tested,
-		Fence: testFence, ExpectedFence: initial, NextFenceID: "land/atomic", PRs: f.prs[:1]})
+		Fence: testFence, ExpectedFence: initial, NextFenceID: "land/atomic", PRs: f.prs[:1]}, forge.PushOptions{})
 	if err == nil || err == forge.ErrLeaseRejected || !strings.Contains(err.Error(), "does not support --atomic") {
 		t.Fatalf("unsupported atomic transport error = %v", err)
 	}
@@ -118,13 +118,13 @@ func TestAtomicUnsupportedIsInfrastructureFailure(t *testing.T) {
 func TestFenceCommitShape(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	initial, err := f.g.EnsureFence(ctx, testRepo, testFence)
+	initial, err := f.g.EnsureFence(ctx, testRepo, testFence, forge.PushOptions{})
 	must(t, err)
-	next, err := f.g.AdvanceFence(ctx, testRepo, testFence, initial, "abandon/shape")
+	next, err := f.g.AdvanceFence(ctx, testRepo, testFence, initial, "abandon/shape", forge.PushOptions{})
 	must(t, err)
 	tested := f.build(forge.Merge, f.prs[:1], "fence")
 	landed, err := f.g.Land(ctx, testRepo, forge.LandRequest{Base: "main", ExpectedBaseSHA: f.base, TestedSHA: tested,
-		Fence: testFence, ExpectedFence: next, NextFenceID: "land/shape", PRs: f.prs[:1]})
+		Fence: testFence, ExpectedFence: next, NextFenceID: "land/shape", PRs: f.prs[:1]}, forge.PushOptions{})
 	must(t, err)
 	for _, tc := range []struct{ sha, parent, message string }{
 		{initial, "", "openmerge fence initial"},
@@ -150,7 +150,7 @@ func TestFenceCommitShape(t *testing.T) {
 func TestFenceCommitsDifferForIdenticalCopies(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	initial, err := f.g.EnsureFence(ctx, testRepo, testFence)
+	initial, err := f.g.EnsureFence(ctx, testRepo, testFence, forge.PushOptions{})
 	must(t, err)
 	tested := f.build(forge.Merge, f.prs[:1], "copies")
 	s, unlock, err := f.g.open(ctx, testRepo)

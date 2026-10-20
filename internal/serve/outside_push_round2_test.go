@@ -40,7 +40,7 @@ func outsidePushRound2Attempt(t *testing.T, method string, depth bool) (*Server,
 
 func TestOutsidePushRound2FurtherOutsidePushWhileLandingHeld(t *testing.T) {
 	s, w, f, before, req := outsidePushRound2Attempt(t, "merge", true)
-	_, err := f.Land(t.Context(), repo, req)
+	_, err := f.Land(t.Context(), repo, req, forge.PushOptions{})
 	must(t, err)
 	must(t, f.SetRef(repo, "main", before.BaseSHA))
 	var absent *executor.ErrLandingNotOnBase
@@ -154,7 +154,7 @@ func TestOutsidePushRound2AbandonmentWatermarkChangesSettlement(t *testing.T) {
 		t.Fatal("separate audit did not read history")
 	}
 	must(t, f.SetRef(repo, "main", before.BaseSHA))
-	_, err = f.Land(t.Context(), repo, req)
+	_, err = f.Land(t.Context(), repo, req, forge.PushOptions{})
 	if !errors.Is(err, forge.ErrLeaseRejected) {
 		t.Fatalf("delayed push was not fenced: %v", err)
 	}
@@ -170,20 +170,20 @@ type outsidePushRound2FenceHook struct {
 	hook func()
 }
 
-func (g *outsidePushRound2FenceHook) AdvanceFence(ctx context.Context, r forge.RepoRef, ref, expected, next string) (string, error) {
+func (g *outsidePushRound2FenceHook) AdvanceFence(ctx context.Context, r forge.RepoRef, ref, expected, next string, opts forge.PushOptions) (string, error) {
 	if g.hook != nil {
 		hook := g.hook
 		g.hook = nil
 		hook()
 	}
-	return g.Forge.AdvanceFence(ctx, r, ref, expected, next)
+	return g.Forge.AdvanceFence(ctx, r, ref, expected, next, opts)
 }
 func TestOutsidePushRound2PushWinsAbandonmentThenRollback(t *testing.T) {
 	for _, method := range []string{"merge", "fast-forward"} {
 		t.Run(method, func(t *testing.T) {
 			s, w, f, before, req := outsidePushRound2Attempt(t, method, true)
 			w.Git = &outsidePushRound2FenceHook{Forge: f, hook: func() {
-				_, err := f.Land(t.Context(), repo, req)
+				_, err := f.Land(t.Context(), repo, req, forge.PushOptions{})
 				must(t, err)
 				must(t, f.SetRef(repo, "main", before.BaseSHA))
 			}}
@@ -211,7 +211,7 @@ func TestOutsidePushRound2PushWinsAbandonmentThenRollback(t *testing.T) {
 
 func TestOutsidePushRound2UnreadableLandingAncestry(t *testing.T) {
 	s, w, f, before, req := outsidePushRound2Attempt(t, "merge", true)
-	_, err := f.Land(t.Context(), repo, req)
+	_, err := f.Land(t.Context(), repo, req, forge.PushOptions{})
 	must(t, err)
 	held, err := s.settle(t.Context(), w)
 	must(t, err)
@@ -255,3 +255,5 @@ func TestOutsidePushRound2PeerAuditAfterRefRead(t *testing.T) {
 		t.Fatalf("older audit invented rollback: %+v", pushes)
 	}
 }
+
+var _ forge.Git = (*outsidePushRound2FenceHook)(nil)

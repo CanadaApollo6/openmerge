@@ -220,7 +220,7 @@ func TestInvariantRejectsUnsafeHistory(t *testing.T) {
 				sha, err := s.forge.BuildTestRef(context.Background(), s.repo, forge.BuildRequest{
 					Ref: "openmerge/queue/main/" + batch, BaseSHA: s.mainSHA, BatchID: batch, Method: forge.Merge,
 					PRs: []forge.BuildPR{{Number: number, HeadSHA: s.prs[number].head}},
-				})
+				}, forge.PushOptions{})
 				if err != nil {
 					t.Fatal(err)
 				}

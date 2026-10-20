@@ -21,7 +21,7 @@ func TestAcquireCommitsRetainsExactObjectsAcrossMaintenance(t *testing.T) {
 		t.Run(string(method), func(t *testing.T) {
 			f := newFixture(t)
 			f.g.cfg.GCThresholdBytes = 1
-			tested, err := f.g.BuildTestRef(t.Context(), testRepo, forge.BuildRequest{Ref: "test-acquisition", BaseSHA: f.base, PRs: f.prs[:1], Method: method, BatchID: "acquire"})
+			tested, err := f.g.BuildTestRef(t.Context(), testRepo, forge.BuildRequest{Ref: "test-acquisition", BaseSHA: f.base, PRs: f.prs[:1], Method: method, BatchID: "acquire"}, forge.PushOptions{})
 			must(t, err)
 			if _, err := f.g.ReadCommitMessage(t.Context(), testRepo, tested); err == nil {
 				t.Fatal("forced GC retained unreferenced tested object")
@@ -176,7 +176,7 @@ func TestAcquireCommitsFailedCleanupRetried(t *testing.T) {
 func TestAcquireCommitsLiveLeasesSurviveConcurrentMaintenance(t *testing.T) {
 	f := newFixture(t)
 	f.g.cfg.GCThresholdBytes = 1
-	tested, err := f.g.BuildTestRef(t.Context(), testRepo, forge.BuildRequest{Ref: "test-live-acquisition", BaseSHA: f.base, PRs: f.prs[:1], Method: forge.Squash, BatchID: "live"})
+	tested, err := f.g.BuildTestRef(t.Context(), testRepo, forge.BuildRequest{Ref: "test-live-acquisition", BaseSHA: f.base, PRs: f.prs[:1], Method: forge.Squash, BatchID: "live"}, forge.PushOptions{})
 	must(t, err)
 	release, err := f.g.AcquireCommits(t.Context(), testRepo, []string{tested, f.base})
 	must(t, err)

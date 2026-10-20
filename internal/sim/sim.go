@@ -227,7 +227,7 @@ func (s *simulation) step() (bool, error) {
 		if retry := s.retryAt["setup"]; retry.After(s.now) {
 			s.advance(retry)
 		}
-		_, err := s.boundary.EnsureFence(context.Background(), s.repo, "openmerge/fence/main")
+		_, err := s.boundary.EnsureFence(context.Background(), s.repo, "openmerge/fence/main", forge.PushOptions{})
 		if errors.Is(err, errForge) {
 			s.retryAt["setup"] = s.now.Add(s.cfg.RetryDelay)
 			return false, nil

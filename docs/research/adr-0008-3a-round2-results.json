@@ -1,0 +1,172 @@
+{
+  "classification": "Hold",
+  "main_base": "cfa7bf6",
+  "baseline": "ec09672f85c94540c2bf8287b9fa03f48a08e59c",
+  "runtime_activation": "PR 9",
+  "merge_comparison": "all parents separately; union; GitHub merge parity remains unverified",
+  "creation_boundary": "observed existing target base; local ancestry proof per frontier entry",
+  "layers": {
+    "3a-i": {
+      "tested_source": "0de94f725b37cbde7fc495e4fe3eb7cc6913590b",
+      "make_check_exit": 0,
+      "legacy_exit": 0,
+      "legacy": {
+        "gitops": {
+          "identical": true,
+          "snapshots": 24,
+          "baseline_sha256": "c4540c89e3f93b997c6132bb976532d7701b0a07e434a70868123cb80b626d0e",
+          "candidate_sha256": "c4540c89e3f93b997c6132bb976532d7701b0a07e434a70868123cb80b626d0e"
+        },
+        "fake": {
+          "identical": true,
+          "snapshots": 24,
+          "baseline_sha256": "041deff2b2f2fd0985c4c1d185267ad9e759d6af1404ee9ef6eda6eee2f342fd",
+          "candidate_sha256": "041deff2b2f2fd0985c4c1d185267ad9e759d6af1404ee9ef6eda6eee2f342fd"
+        }
+      },
+      "replay_exit": 0,
+      "replay": {
+        "gate2": "PASS",
+        "gate4": "PASS",
+        "state_identical": "2159/2159",
+        "actions_identical": "2159/2159",
+        "snapshot_hashes_identical": "2159/2159",
+        "structural_state_identical": "2159/2159",
+        "boundary_checkpoints_identical": "2159/2159",
+        "boundary_probe_count": 8676,
+        "boundary_probe_max": 12,
+        "derived_determinism": "PASS",
+        "self_test": "PASS"
+      },
+      "replay_stream_sha256": "1fe079295539183b7008e70b940c7f71d45bd4aa4e443c8c1e581fa10d31051a",
+      "synthetic_checkpoints": "7/7"
+    },
+    "3a-ii": {
+      "tested_source": "e8f77f9487552832fc5cc143f23b67bb6c87df34",
+      "make_check_exit": 0,
+      "legacy_exit": 0,
+      "legacy": {
+        "gitops": {
+          "identical": true,
+          "snapshots": 24,
+          "baseline_sha256": "c4540c89e3f93b997c6132bb976532d7701b0a07e434a70868123cb80b626d0e",
+          "candidate_sha256": "c4540c89e3f93b997c6132bb976532d7701b0a07e434a70868123cb80b626d0e"
+        },
+        "fake": {
+          "identical": true,
+          "snapshots": 24,
+          "baseline_sha256": "041deff2b2f2fd0985c4c1d185267ad9e759d6af1404ee9ef6eda6eee2f342fd",
+          "candidate_sha256": "041deff2b2f2fd0985c4c1d185267ad9e759d6af1404ee9ef6eda6eee2f342fd"
+        }
+      },
+      "replay_exit": 0,
+      "replay": {
+        "gate2": "PASS",
+        "gate4": "PASS",
+        "state_identical": "2159/2159",
+        "actions_identical": "2159/2159",
+        "snapshot_hashes_identical": "2159/2159",
+        "structural_state_identical": "2159/2159",
+        "boundary_checkpoints_identical": "2159/2159",
+        "boundary_probe_count": 8676,
+        "boundary_probe_max": 12,
+        "derived_determinism": "PASS",
+        "self_test": "PASS"
+      },
+      "replay_stream_sha256": "1fe079295539183b7008e70b940c7f71d45bd4aa4e443c8c1e581fa10d31051a",
+      "synthetic_checkpoints": "7/7"
+    }
+  },
+  "artifacts": [
+    {
+      "path": "/home/riels/.cache/om-pr72-fix1-input/events.jsonl",
+      "bytes": 938474,
+      "sha256": "9c8f78f3e967c7cb030948cfc9871cc67a45da06f80b12f27d1c55d09ba8accf"
+    },
+    {
+      "path": "/home/riels/.cache/om-pr72-fix1-input/queues.jsonl",
+      "bytes": 234,
+      "sha256": "418f025a0e3c8792321b6d71d297f17fff1adf48cb616c8f4fcb774163696886"
+    },
+    {
+      "path": "/home/riels/.cache/openmerge-3a-i-round2-final-check.log",
+      "bytes": 1898,
+      "sha256": "c40dde104256285d62437a4bb40c59a593e40180e94b10894f8b10fe1aa1feaf"
+    },
+    {
+      "path": "/home/riels/.cache/openmerge-3a-i-round2-legacy/report.json",
+      "bytes": 3365,
+      "sha256": "e0ad0d5990bfeab5833e42944470197af16005615d5b2038468204f5a8b66ccf"
+    },
+    {
+      "path": "/home/riels/.cache/openmerge-3a-i-round2-replay/report-streams-r_z_qntp/baseline.jsonl",
+      "bytes": 214167188,
+      "sha256": "1fe079295539183b7008e70b940c7f71d45bd4aa4e443c8c1e581fa10d31051a"
+    },
+    {
+      "path": "/home/riels/.cache/openmerge-3a-i-round2-replay/report-streams-r_z_qntp/candidate-repeat.jsonl",
+      "bytes": 214167188,
+      "sha256": "1fe079295539183b7008e70b940c7f71d45bd4aa4e443c8c1e581fa10d31051a"
+    },
+    {
+      "path": "/home/riels/.cache/openmerge-3a-i-round2-replay/report-streams-r_z_qntp/candidate.jsonl",
+      "bytes": 214167188,
+      "sha256": "1fe079295539183b7008e70b940c7f71d45bd4aa4e443c8c1e581fa10d31051a"
+    },
+    {
+      "path": "/home/riels/.cache/openmerge-3a-i-round2-replay/report.json",
+      "bytes": 215099,
+      "sha256": "0045cc4185baa5f95448cebe1e83e3d1639a5b036fca42d95ee09e6671c29173"
+    },
+    {
+      "path": "/home/riels/.cache/openmerge-3a-ii-round2-final-check.log",
+      "bytes": 1898,
+      "sha256": "f6aa8e735d8f342d8629560785904b39cd0a6a33b520c798412305eb4bf3988d"
+    },
+    {
+      "path": "/home/riels/.cache/openmerge-3a-ii-round2-final-legacy/report.json",
+      "bytes": 3423,
+      "sha256": "185083bd4801b719fa801287b38022461da3383996597ef3b7e94c8b82c66314"
+    },
+    {
+      "path": "/home/riels/.cache/openmerge-3a-ii-round2-final-replay/report-streams-rabg9bsx/baseline.jsonl",
+      "bytes": 214167188,
+      "sha256": "1fe079295539183b7008e70b940c7f71d45bd4aa4e443c8c1e581fa10d31051a"
+    },
+    {
+      "path": "/home/riels/.cache/openmerge-3a-ii-round2-final-replay/report-streams-rabg9bsx/candidate-repeat.jsonl",
+      "bytes": 214167188,
+      "sha256": "1fe079295539183b7008e70b940c7f71d45bd4aa4e443c8c1e581fa10d31051a"
+    },
+    {
+      "path": "/home/riels/.cache/openmerge-3a-ii-round2-final-replay/report-streams-rabg9bsx/candidate.jsonl",
+      "bytes": 214167188,
+      "sha256": "1fe079295539183b7008e70b940c7f71d45bd4aa4e443c8c1e581fa10d31051a"
+    },
+    {
+      "path": "/home/riels/.cache/openmerge-3a-ii-round2-final-replay/report.json",
+      "bytes": 215120,
+      "sha256": "b44dc3d05c751eb1fd2d0c907ea7cde9fc07817c2c9009f717c9959f0ea931be"
+    },
+    {
+      "path": "/home/riels/.cache/openmerge-3a-ii-round2-focused.log",
+      "bytes": 404,
+      "sha256": "0ce421fa3c0779e9d62722209885e599c69dd3bbf2ff964fc00b771361179d1d"
+    },
+    {
+      "path": "/home/riels/.cache/openmerge-3a-ii-round2-seeing-final.log",
+      "bytes": 62,
+      "sha256": "8eadf4b65c67a16db582cb0dbd94177464db7974f076ea935117c28f5c3042c2"
+    },
+    {
+      "path": "/home/riels/.cache/openmerge-3a-round2-object-evidence/manifest.json",
+      "bytes": 97774,
+      "sha256": "87c659773ba25bde2777c430210a6773c26898c8742c7a7607bd44bc306ae794"
+    },
+    {
+      "path": "/home/riels/.cache/openmerge-3a-round2-object-evidence/test.log",
+      "bytes": 3316,
+      "sha256": "d9e217498446d54e66d25b269e7a4f7c6636bdda0eda1084acd41493c19c997f"
+    }
+  ]
+}

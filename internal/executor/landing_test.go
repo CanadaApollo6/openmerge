@@ -39,7 +39,7 @@ func TestLand(t *testing.T) {
 				must(t, h.f.SetRef(repo, "main", h.prs[1].HeadSHA))
 			}
 			if tc.moveFence {
-				_, err := h.f.AdvanceFence(ctx, repo, fenceRef, h.fence, "other-worker")
+				_, err := h.f.AdvanceFence(ctx, repo, fenceRef, h.fence, "other-worker", forge.PushOptions{})
 				must(t, err)
 			}
 			if tc.forgeError {
@@ -219,10 +219,10 @@ func TestResolveLanding(t *testing.T) {
 				_, err := h.f.Land(ctx, repo, forge.LandRequest{
 					Base: "main", ExpectedBaseSHA: h.base, TestedSHA: a.TestedSHA,
 					Fence: fenceRef, ExpectedFence: h.fence, NextFenceID: tc.fenceID,
-				})
+				}, forge.PushOptions{})
 				must(t, err)
 			case "abandon/attempt":
-				_, err := h.f.AdvanceFence(ctx, repo, fenceRef, h.fence, tc.fenceID)
+				_, err := h.f.AdvanceFence(ctx, repo, fenceRef, h.fence, tc.fenceID, forge.PushOptions{})
 				must(t, err)
 			}
 			if tc.baseAtTested {
@@ -314,7 +314,7 @@ func TestResolveFenceTampered(t *testing.T) {
 				must(t, h.f.SetRef(repo, fenceRef, next))
 			} else {
 				var err error
-				next, err = h.f.AdvanceFence(ctx, repo, fenceRef, h.fence, id)
+				next, err = h.f.AdvanceFence(ctx, repo, fenceRef, h.fence, id, forge.PushOptions{})
 				must(t, err)
 			}
 			// A matching base cannot turn a foreign fence into our success.
@@ -356,12 +356,12 @@ func (g *raceGit) ReadFence(ctx context.Context, repo forge.RepoRef, ref string)
 	return g.Git.ReadFence(ctx, repo, ref)
 }
 
-func (g *raceGit) AdvanceFence(ctx context.Context, repo forge.RepoRef, ref, expected, id string) (string, error) {
+func (g *raceGit) AdvanceFence(ctx context.Context, repo forge.RepoRef, ref, expected, id string, opts forge.PushOptions) (string, error) {
 	g.advances++
 	if g.beforeAdvance != nil {
 		g.beforeAdvance()
 	}
-	return g.Git.AdvanceFence(ctx, repo, ref, expected, id)
+	return g.Git.AdvanceFence(ctx, repo, ref, expected, id, opts)
 }
 
 func TestResolveLostRaceRedecides(t *testing.T) {
@@ -379,13 +379,13 @@ func TestResolveLostRaceRedecides(t *testing.T) {
 					next, err = h.f.Land(ctx, repo, forge.LandRequest{
 						Base: "main", ExpectedBaseSHA: h.base, TestedSHA: a.TestedSHA,
 						Fence: fenceRef, ExpectedFence: h.fence, NextFenceID: "land/attempt",
-					})
+					}, forge.PushOptions{})
 				} else {
 					id := "abandon/attempt"
 					if winner == "other" {
 						id = "abandon/other-attempt"
 					}
-					next, err = h.f.AdvanceFence(ctx, repo, fenceRef, h.fence, id)
+					next, err = h.f.AdvanceFence(ctx, repo, fenceRef, h.fence, id, forge.PushOptions{})
 				}
 				must(t, err)
 				if winner == "read failure" {
@@ -438,3 +438,5 @@ func TestResolveRepeatedLeaseRejectionIsBounded(t *testing.T) {
 		t.Fatalf("repeated rejection did not stop after one re-decision: %v, reads %d, advances %d", err, git.reads, git.advances)
 	}
 }
+
+var _ forge.Git = (*raceGit)(nil)

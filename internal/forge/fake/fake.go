@@ -191,9 +191,9 @@ func (f *Forge) OnTestRef(fn func(sha string, prs []int)) {
 
 // BuildTestRef composes merge/squash/rebase commits with a batch ID, or verifies
 // and publishes an empty marker over a fast-forward chain. Failed builds never move the ref.
-func (f *Forge) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.BuildRequest) (string, error) {
+func (f *Forge) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.BuildRequest, opts forge.PushOptions) (string, error) {
 	f.mu.Lock()
-	sha, prs, changed, err := f.build(ctx, f.repo(repo), req)
+	sha, prs, changed, err := f.build(ctx, repo, f.repo(repo), req, opts)
 	hook := f.onTestRef
 	f.mu.Unlock()
 	if err == nil && changed && hook != nil {
@@ -202,7 +202,7 @@ func (f *Forge) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.
 	return sha, err
 }
 
-func (f *Forge) build(ctx context.Context, r *repository, req forge.BuildRequest) (string, []int, bool, error) {
+func (f *Forge) build(ctx context.Context, repo forge.RepoRef, r *repository, req forge.BuildRequest, opts forge.PushOptions) (string, []int, bool, error) {
 	if err := f.failure(ctx, "BuildTestRef"); err != nil {
 		return "", nil, false, err
 	}
@@ -211,6 +211,10 @@ func (f *Forge) build(ctx context.Context, r *repository, req forge.BuildRequest
 	}
 	full, _ := forge.BranchRef(req.Ref)
 	req.Ref = strings.TrimPrefix(full, "refs/heads/")
+	old := r.refs[req.Ref]
+	if err := opts.CheckDispatch(ctx, repo, forge.PushBuild, []forge.PushRefIntent{{Ref: full, OldSHA: old}}); err != nil {
+		return "", nil, false, err
+	}
 	if _, ok := r.commits[req.BaseSHA]; !ok {
 		return "", nil, false, fmt.Errorf("unknown base commit %q", req.BaseSHA)
 	}
@@ -308,13 +312,16 @@ func (f *Forge) build(ctx context.Context, r *repository, req forge.BuildRequest
 	if req.Method != forge.FastForward {
 		r.materializeTip(top, files, content)
 	}
+	if err := r.validatePush(ctx, repo, opts, forge.PushBuild, forge.PushRef{Ref: full, OldSHA: old, NewSHA: top}); err != nil {
+		return "", nil, false, err
+	}
 	changed := r.refs[req.Ref] != top
 	r.refs[req.Ref] = top
 	return top, prs, changed, nil
 }
 
 // Land checks both leases and updates both refs under one lock.
-func (f *Forge) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequest) (string, error) {
+func (f *Forge) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequest, opts forge.PushOptions) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.failure(ctx, "Land"); err != nil {
@@ -327,6 +334,13 @@ func (f *Forge) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequ
 	fence, _ := forge.BranchRef(req.Fence)
 	req.Base, req.Fence = strings.TrimPrefix(base, "refs/heads/"), strings.TrimPrefix(fence, "refs/heads/")
 	r := f.repo(repo)
+	landIntent := req.TestedSHA
+	if req.FastForwardHeadSHA != "" {
+		landIntent = req.FastForwardHeadSHA
+	}
+	if err := opts.CheckDispatch(ctx, repo, forge.PushLand, []forge.PushRefIntent{{Ref: base, OldSHA: req.ExpectedBaseSHA, NewSHA: landIntent}, {Ref: fence, OldSHA: req.ExpectedFence}}); err != nil {
+		return "", err
+	}
 	for _, pinned := range req.PRs {
 		pr, ok := r.prs[pinned.Number]
 		if !ok || pr.HeadSHA != pinned.HeadSHA {
@@ -352,6 +366,9 @@ func (f *Forge) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequ
 	}
 	next, err := r.fence(req.ExpectedFence, req.NextFenceID, req.TestedSHA)
 	if err != nil {
+		return "", err
+	}
+	if err := r.validatePush(ctx, repo, opts, forge.PushLand, forge.PushRef{Ref: base, OldSHA: req.ExpectedBaseSHA, NewSHA: landed}, forge.PushRef{Ref: fence, OldSHA: req.ExpectedFence, NewSHA: next}); err != nil {
 		return "", err
 	}
 	r.refs[req.Base], r.refs[req.Fence] = landed, next
@@ -384,7 +401,7 @@ func (r *repository) mintFence(parents []string, id, tested string) string {
 }
 
 // AdvanceFence advances only when the current fence matches expectedSHA.
-func (f *Forge) AdvanceFence(ctx context.Context, repo forge.RepoRef, fenceRef, expectedSHA, nextID string) (string, error) {
+func (f *Forge) AdvanceFence(ctx context.Context, repo forge.RepoRef, fenceRef, expectedSHA, nextID string, opts forge.PushOptions) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.failure(ctx, "AdvanceFence"); err != nil {
@@ -403,11 +420,17 @@ func (f *Forge) AdvanceFence(ctx context.Context, repo forge.RepoRef, fenceRef, 
 		return "", err
 	}
 	r := f.repo(repo)
+	if err := opts.CheckDispatch(ctx, repo, forge.PushAdvanceFence, []forge.PushRefIntent{{Ref: full, OldSHA: expectedSHA}}); err != nil {
+		return "", err
+	}
 	if r.refs[fenceRef] != expectedSHA {
 		return "", forge.ErrLeaseRejected
 	}
 	next, err := r.fence(expectedSHA, nextID, "")
 	if err != nil {
+		return "", err
+	}
+	if err := r.validatePush(ctx, repo, opts, forge.PushAdvanceFence, forge.PushRef{Ref: full, OldSHA: expectedSHA, NewSHA: next}); err != nil {
 		return "", err
 	}
 	r.refs[fenceRef] = next
@@ -687,7 +710,7 @@ func (f *Forge) MarkLanded(ctx context.Context, repo forge.RepoRef, number int, 
 }
 
 // EnsureFence initializes a missing fence without replacing an existing token.
-func (f *Forge) EnsureFence(ctx context.Context, repo forge.RepoRef, fenceRef string) (string, error) {
+func (f *Forge) EnsureFence(ctx context.Context, repo forge.RepoRef, fenceRef string, opts forge.PushOptions) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.failure(ctx, "EnsureFence"); err != nil {
@@ -701,7 +724,14 @@ func (f *Forge) EnsureFence(ctx context.Context, repo forge.RepoRef, fenceRef st
 	fenceRef = strings.TrimPrefix(full, "refs/heads/")
 	r := f.repo(repo)
 	if r.refs[fenceRef] == "" {
-		r.refs[fenceRef] = r.mintFence(nil, "initial", "")
+		if err := opts.CheckDispatch(ctx, repo, forge.PushEnsureFence, []forge.PushRefIntent{{Ref: full}}); err != nil {
+			return "", err
+		}
+		next := r.mintFence(nil, "initial", "")
+		if err := r.validatePush(ctx, repo, opts, forge.PushEnsureFence, forge.PushRef{Ref: full, NewSHA: next}); err != nil {
+			return "", err
+		}
+		r.refs[fenceRef] = next
 	}
 	return r.refs[fenceRef], nil
 }

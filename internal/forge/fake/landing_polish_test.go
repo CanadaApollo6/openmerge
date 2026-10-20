@@ -11,10 +11,10 @@ func TestStaleAdvanceFenceDoesNotMintCommit(t *testing.T) {
 	f := New()
 	repo := forge.RepoRef{Path: "owner/repo"}
 	_, initial := f.Init(repo, "main", "openmerge/fence/main")
-	next, err := f.AdvanceFence(t.Context(), repo, "openmerge/fence/main", initial, "abandon/first")
+	next, err := f.AdvanceFence(t.Context(), repo, "openmerge/fence/main", initial, "abandon/first", forge.PushOptions{})
 	mustCleanup(t, err)
 	before := len(f.repo(repo).commits)
-	_, err = f.AdvanceFence(t.Context(), repo, "openmerge/fence/main", initial, "abandon/stale")
+	_, err = f.AdvanceFence(t.Context(), repo, "openmerge/fence/main", initial, "abandon/stale", forge.PushOptions{})
 	if !errors.Is(err, forge.ErrLeaseRejected) {
 		t.Fatalf("stale advance = %v, want ErrLeaseRejected", err)
 	}
@@ -49,7 +49,7 @@ func TestCleanupKeepsDefaultMissingMovedAndQualifiedHeads(t *testing.T) {
 			case "default":
 				f.SetDefaultBranch(repo, observed.HeadBranch)
 			case "missing":
-				mustCleanup(t, f.DeleteBranch(t.Context(), repo, observed.HeadBranch, pr.HeadSHA))
+				mustCleanup(t, f.DeleteBranch(t.Context(), repo, observed.HeadBranch, pr.HeadSHA, forge.PushOptions{}))
 			case "moved":
 				_, err = f.PushBase(repo, observed.HeadBranch, "move", nil)
 				mustCleanup(t, err)
@@ -69,7 +69,7 @@ func TestCleanupKeepsDefaultMissingMovedAndQualifiedHeads(t *testing.T) {
 				t.Fatalf("unsafe cleanup returned %q", branch)
 			}
 			if scenario == "protected" {
-				if err := f.DeleteBranch(t.Context(), repo, observed.HeadBranch, pr.HeadSHA); err == nil {
+				if err := f.DeleteBranch(t.Context(), repo, observed.HeadBranch, pr.HeadSHA, forge.PushOptions{}); err == nil {
 					t.Fatal("protected deletion reported success")
 				}
 				tip, err := f.ReadRef(t.Context(), repo, observed.HeadBranch)

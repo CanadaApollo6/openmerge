@@ -9,7 +9,7 @@ import (
 
 // DeleteBranch leases the exact landed head so cleanup cannot remove newer work.
 // Missing or changed branches converge without deleting their replacements.
-func (r *Repo) DeleteBranch(ctx context.Context, repo forge.RepoRef, branch, expectedSHA string) error {
+func (r *Repo) DeleteBranch(ctx context.Context, repo forge.RepoRef, branch, expectedSHA string, opts forge.PushOptions) error {
 	if err := forge.ValidateDeleteBranch(branch, expectedSHA); err != nil {
 		return err
 	}
@@ -29,7 +29,13 @@ func (r *Repo) DeleteBranch(ctx context.Context, repo forge.RepoRef, branch, exp
 	if values[ref] != expectedSHA {
 		return nil
 	}
+	if err := opts.CheckDispatch(ctx, repo, forge.PushDeleteBranch, []forge.PushRefIntent{{Ref: ref, OldSHA: expectedSHA, Delete: true}}); err != nil {
+		return err
+	}
 	if err := s.resolveRemote(ctx, repo); err != nil {
+		return err
+	}
+	if err := s.validatePush(ctx, repo, opts, forge.PushDeleteBranch, forge.PushRef{Ref: ref, OldSHA: expectedSHA}); err != nil {
 		return err
 	}
 	err = s.pushLease(ctx, "--force-with-lease="+ref+":"+expectedSHA, "--", s.remote, ":"+ref)

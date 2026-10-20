@@ -323,3 +323,23 @@ func strictAuthorityFields(raw []byte, schema reflect.Type) error {
 	}
 	return nil
 }
+
+// AuthorityProtection returns the latest retained applied observation and its
+// source basis, without sharing mutable evidence. Proposed verification is never
+// runtime evidence. Push guards use this accessor for source drift detection;
+// evaluation uses the pin activation's seeing observation. PR 4 owns revisions;
+// this accessor activates
+// no planning behavior and emits nothing.
+func (s State) AuthorityProtection() (uint64, authority.Observation, bool) {
+	if s.authority == nil {
+		return 0, authority.Observation{}, false
+	}
+	observed, verified := s.authority.Observed, s.authority.Verified
+	if verified != nil && (observed == nil || (verified.Basis > observed.Basis || verified.Basis == observed.Basis && verified.VerifiedAt.After(observed.ObservedAt))) {
+		return verified.Basis, authority.CloneObservation(verified.Evidence), true
+	}
+	if observed != nil {
+		return observed.Basis, authority.CloneObservation(observed.Evidence), true
+	}
+	return 0, authority.Observation{}, false
+}

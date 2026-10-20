@@ -72,6 +72,7 @@ type Env struct {
 // Run checks observable contracts. Every subtest receives a fresh environment.
 // Repeated API writes model a crash after the effect but before its recording.
 func Run(t *testing.T, newEnv func(t *testing.T) Env) {
+	runPushOptions(t, newEnv)
 	run(t, newEnv, true)
 }
 
@@ -79,6 +80,7 @@ func Run(t *testing.T, newEnv func(t *testing.T) Env) {
 // be nil; metadata subtests require ReadCommitMessage, and other Env fields
 // have the same requirements as Run.
 func RunGit(t *testing.T, newEnv func(t *testing.T) Env) {
+	runPushOptions(t, newEnv)
 	run(t, newEnv, false)
 }
 
@@ -161,7 +163,7 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 		t.Helper()
 		e.FenceRef = "openmerge/fence/" + e.Base
 		var err error
-		e.FenceSHA, err = e.Git.EnsureFence(ctx, e.Repo, e.FenceRef)
+		e.FenceSHA, err = e.Git.EnsureFence(ctx, e.Repo, e.FenceRef, forge.PushOptions{})
 		must(t, err)
 		return e
 	}
@@ -191,7 +193,7 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 		sha, err := e.Git.BuildTestRef(ctx, e.Repo, forge.BuildRequest{
 			Ref: testRef(e, batch), BaseSHA: base,
 			PRs: prs, Method: forge.Merge, BatchID: batch,
-		})
+		}, forge.PushOptions{})
 		must(t, err)
 		if sha == "" {
 			t.Fatal("BuildTestRef returned an empty SHA")
@@ -337,7 +339,7 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 			case "rollback":
 				must(t, e.RollbackBase(e.Base, e.BaseSHA))
 			case "fence":
-				_, err := e.Git.AdvanceFence(ctx, e.Repo, e.FenceRef, e.FenceSHA, "other-worker")
+				_, err := e.Git.AdvanceFence(ctx, e.Repo, e.FenceRef, e.FenceSHA, "other-worker", forge.PushOptions{})
 				must(t, err)
 			}
 			beforeBase, beforeFence := read(t, e, e.Base), read(t, e, e.FenceRef)
@@ -345,7 +347,7 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 				Base: e.Base, ExpectedBaseSHA: current, TestedSHA: tested,
 				Fence: e.FenceRef, ExpectedFence: e.FenceSHA, NextFenceID: "land/contract",
 			}
-			next, err := e.Git.Land(ctx, e.Repo, req)
+			next, err := e.Git.Land(ctx, e.Repo, req, forge.PushOptions{})
 			if moved == "matching" {
 				must(t, err)
 				if next == "" || next == e.FenceSHA || read(t, e, e.Base) != tested || read(t, e, e.FenceRef) != next {
@@ -354,7 +356,7 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 				readFence(t, e, next, req.NextFenceID)
 				// An unrecorded successful push must refuse its old leases on retry.
 				beforeBase, beforeFence = tested, next
-				_, err = e.Git.Land(ctx, e.Repo, req)
+				_, err = e.Git.Land(ctx, e.Repo, req, forge.PushOptions{})
 			}
 			if !errors.Is(err, forge.ErrLeaseRejected) {
 				t.Fatalf("Land error = %v, want lease rejection", err)
@@ -369,14 +371,14 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 		tested := build(t, e, e.BaseSHA, "unique-fence", e.PRs[0])
 		req := forge.LandRequest{Base: e.Base, ExpectedBaseSHA: e.BaseSHA, TestedSHA: tested,
 			Fence: e.FenceRef, ExpectedFence: e.FenceSHA, NextFenceID: "land/same-attempt", PRs: e.PRs[:1]}
-		next, err := e.Git.Land(ctx, e.Repo, req)
+		next, err := e.Git.Land(ctx, e.Repo, req, forge.PushOptions{})
 		must(t, err)
 		if next == e.FenceSHA || read(t, e, e.FenceRef) != next {
 			t.Fatal("a landing push must never leave the fence unchanged")
 		}
 		if e.CanRollbackBase {
 			must(t, e.RollbackBase(e.Base, e.BaseSHA))
-			_, err = e.Git.Land(ctx, e.Repo, req)
+			_, err = e.Git.Land(ctx, e.Repo, req, forge.PushOptions{})
 			if !errors.Is(err, forge.ErrLeaseRejected) || read(t, e, e.Base) != e.BaseSHA || read(t, e, e.FenceRef) != next {
 				t.Fatalf("duplicate landing after rollback was not refused without effects: %v", err)
 			}
@@ -392,7 +394,7 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 				expected = tested
 			}
 			_, err := e.Git.Land(ctx, e.Repo, forge.LandRequest{Base: e.Base, ExpectedBaseSHA: expected, TestedSHA: tested,
-				Fence: e.FenceRef, ExpectedFence: e.FenceSHA, NextFenceID: "land/already-tested", PRs: e.PRs[:1]})
+				Fence: e.FenceRef, ExpectedFence: e.FenceSHA, NextFenceID: "land/already-tested", PRs: e.PRs[:1]}, forge.PushOptions{})
 			if !errors.Is(err, forge.ErrLeaseRejected) || read(t, e, e.Base) != tested || read(t, e, e.FenceRef) != e.FenceSHA {
 				t.Fatalf("already-tested base was not refused without a push: %v", err)
 			}
@@ -400,13 +402,13 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 	}
 	t.Run("advance-fence", func(t *testing.T) {
 		e := newEnv(t)
-		next, err := e.Git.AdvanceFence(ctx, e.Repo, e.FenceRef, e.FenceSHA, "abandon/contract")
+		next, err := e.Git.AdvanceFence(ctx, e.Repo, e.FenceRef, e.FenceSHA, "abandon/contract", forge.PushOptions{})
 		must(t, err)
 		if next == "" || next == e.FenceSHA || read(t, e, e.FenceRef) != next || read(t, e, e.Base) != e.BaseSHA {
 			t.Fatal("AdvanceFence did not return the new fence SHA while preserving base")
 		}
 		readFence(t, e, next, "abandon/contract")
-		_, err = e.Git.AdvanceFence(ctx, e.Repo, e.FenceRef, e.FenceSHA, "stale")
+		_, err = e.Git.AdvanceFence(ctx, e.Repo, e.FenceRef, e.FenceSHA, "stale", forge.PushOptions{})
 		if !errors.Is(err, forge.ErrLeaseRejected) {
 			t.Fatalf("stale fence error = %v, want current fence %s", err, next)
 		}
@@ -418,7 +420,7 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 		_, err = e.Git.Land(ctx, e.Repo, forge.LandRequest{
 			Base: e.Base, ExpectedBaseSHA: e.BaseSHA, TestedSHA: tested,
 			Fence: e.FenceRef, ExpectedFence: e.FenceSHA, NextFenceID: "late",
-		})
+		}, forge.PushOptions{})
 		if !errors.Is(err, forge.ErrLeaseRejected) || read(t, e, e.Base) != e.BaseSHA || read(t, e, e.FenceRef) != next {
 			t.Fatalf("fenced delayed landing was not refused atomically: %v", err)
 		}
@@ -432,7 +434,7 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 			batch := "metadata-" + string(method)
 			tested, err := e.Git.BuildTestRef(ctx, e.Repo, forge.BuildRequest{
 				Ref: testRef(e, batch), BaseSHA: e.BaseSHA, PRs: prs, Method: method, BatchID: batch,
-			})
+			}, forge.PushOptions{})
 			must(t, err)
 			messages := readCommitMessages(t, e, e.BaseSHA, tested)
 			blocks := make([]string, len(prs))
@@ -475,9 +477,9 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 		batch := "metadata-fast-forward"
 		req := forge.BuildRequest{Ref: testRef(e, batch), BaseSHA: e.BaseSHA,
 			PRs: []forge.BuildPR{pr}, Method: forge.FastForward, BatchID: batch}
-		first, err := e.Git.BuildTestRef(ctx, e.Repo, req)
+		first, err := e.Git.BuildTestRef(ctx, e.Repo, req, forge.PushOptions{})
 		must(t, err)
-		second, err := e.Git.BuildTestRef(ctx, e.Repo, req)
+		second, err := e.Git.BuildTestRef(ctx, e.Repo, req, forge.PushOptions{})
 		must(t, err)
 		if e.ReadCommitMessage == nil {
 			t.Fatal("metadata contract requires Env.ReadCommitMessage")
@@ -511,11 +513,11 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 		t.Run("build-rejects-batch-id/"+string(method), func(t *testing.T) {
 			e := newEnv(t)
 			req := forge.BuildRequest{Ref: testRef(e, "batch-validation"), BaseSHA: e.BaseSHA, PRs: e.PRs[:1], Method: method, BatchID: "valid"}
-			before, err := e.Git.BuildTestRef(ctx, e.Repo, req)
+			before, err := e.Git.BuildTestRef(ctx, e.Repo, req, forge.PushOptions{})
 			must(t, err)
 			for _, id := range []string{"", "two words", "b/1", "b\n1", "b\r1", "b\x001", "b\u0431"} {
 				req.BatchID = id
-				if _, err := e.Git.BuildTestRef(ctx, e.Repo, req); err == nil {
+				if _, err := e.Git.BuildTestRef(ctx, e.Repo, req, forge.PushOptions{}); err == nil {
 					t.Fatalf("invalid batch ID %q accepted", id)
 				}
 				if got := read(t, e, req.Ref); got != before {
@@ -526,7 +528,7 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 		t.Run("unique-test-commit/"+string(method), func(t *testing.T) {
 			e := newEnv(t)
 			req := forge.BuildRequest{Ref: testRef(e, "unique"), BaseSHA: e.BaseSHA, PRs: e.PRs, Method: method, BatchID: "first"}
-			first, err := e.Git.BuildTestRef(ctx, e.Repo, req)
+			first, err := e.Git.BuildTestRef(ctx, e.Repo, req, forge.PushOptions{})
 			must(t, err)
 			ancestor, err := e.Git.IsAncestor(ctx, e.Repo, e.BaseSHA, first)
 			must(t, err)
@@ -547,7 +549,7 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 				}
 			}
 			req.BatchID = "second"
-			second, err := e.Git.BuildTestRef(ctx, e.Repo, req)
+			second, err := e.Git.BuildTestRef(ctx, e.Repo, req, forge.PushOptions{})
 			must(t, err)
 			if first == second || read(t, e, req.Ref) != second {
 				t.Fatal("different batch IDs reused a top commit, or ref was not pushed")
@@ -559,7 +561,7 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 			t.Run("build-rejects-head/"+string(method)+"/"+mismatch, func(t *testing.T) {
 				e := newEnv(t)
 				req := forge.BuildRequest{Ref: testRef(e, "head-validation"), BaseSHA: e.BaseSHA, PRs: slices.Clone(e.PRs), Method: method, BatchID: "valid"}
-				before, err := e.Git.BuildTestRef(ctx, e.Repo, req)
+				before, err := e.Git.BuildTestRef(ctx, e.Repo, req, forge.PushOptions{})
 				must(t, err)
 				if mismatch == "stale-head" {
 					e.PushPR(req.PRs[1].Number)
@@ -567,7 +569,7 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 					req.PRs[1].HeadSHA = req.PRs[0].HeadSHA
 				}
 				req.BatchID = "invalid"
-				if _, err := e.Git.BuildTestRef(ctx, e.Repo, req); err == nil {
+				if _, err := e.Git.BuildTestRef(ctx, e.Repo, req, forge.PushOptions{}); err == nil {
 					t.Fatal("BuildTestRef accepted a head that is not the PR's actual head")
 				}
 				if read(t, e, req.Ref) != before {
@@ -576,7 +578,7 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 			})
 			t.Run("land-rejects-head/"+string(method)+"/"+mismatch, func(t *testing.T) {
 				e := newEnv(t)
-				tested, err := e.Git.BuildTestRef(ctx, e.Repo, forge.BuildRequest{Ref: testRef(e, "head-validation"), BaseSHA: e.BaseSHA, PRs: e.PRs, Method: method, BatchID: "valid"})
+				tested, err := e.Git.BuildTestRef(ctx, e.Repo, forge.BuildRequest{Ref: testRef(e, "head-validation"), BaseSHA: e.BaseSHA, PRs: e.PRs, Method: method, BatchID: "valid"}, forge.PushOptions{})
 				must(t, err)
 				prs := slices.Clone(e.PRs)
 				if mismatch == "stale-head" {
@@ -584,7 +586,7 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 				} else {
 					prs[1].HeadSHA = prs[0].HeadSHA
 				}
-				_, err = e.Git.Land(ctx, e.Repo, forge.LandRequest{Base: e.Base, ExpectedBaseSHA: e.BaseSHA, TestedSHA: tested, Fence: e.FenceRef, ExpectedFence: e.FenceSHA, NextFenceID: "land/invalid-head", PRs: prs})
+				_, err = e.Git.Land(ctx, e.Repo, forge.LandRequest{Base: e.Base, ExpectedBaseSHA: e.BaseSHA, TestedSHA: tested, Fence: e.FenceRef, ExpectedFence: e.FenceSHA, NextFenceID: "land/invalid-head", PRs: prs}, forge.PushOptions{})
 				if err == nil {
 					t.Fatal("Land accepted a head that is not the PR's actual head")
 				}
@@ -619,7 +621,7 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 			}
 			want += count
 		}
-		tested, err := e.Git.BuildTestRef(ctx, e.Repo, forge.BuildRequest{Ref: testRef(e, "replay"), BaseSHA: e.BaseSHA, PRs: prs, Method: forge.Rebase, BatchID: "replay"})
+		tested, err := e.Git.BuildTestRef(ctx, e.Repo, forge.BuildRequest{Ref: testRef(e, "replay"), BaseSHA: e.BaseSHA, PRs: prs, Method: forge.Rebase, BatchID: "replay"}, forge.PushOptions{})
 		must(t, err)
 		ancestor, err := e.Git.IsAncestor(ctx, e.Repo, e.BaseSHA, tested)
 		must(t, err)
@@ -641,7 +643,7 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 		e := newEnv(t)
 		_, err := e.Git.BuildTestRef(ctx, e.Repo, forge.BuildRequest{
 			Ref: testRef(e, "conflict"), BaseSHA: e.BaseSHA, PRs: e.ConflictingPRs, Method: forge.Merge, BatchID: "conflict",
-		})
+		}, forge.PushOptions{})
 		if !errors.Is(err, forge.ErrConflict) {
 			t.Fatalf("BuildTestRef error = %v, want ErrConflict", err)
 		}
@@ -672,7 +674,11 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 		var wg sync.WaitGroup
 		for range 32 {
 			wg.Add(1)
-			go func() { defer wg.Done(); sha, err := e.Git.EnsureFence(ctx, e.Repo, ref); results <- result{sha, err} }()
+			go func() {
+				defer wg.Done()
+				sha, err := e.Git.EnsureFence(ctx, e.Repo, ref, forge.PushOptions{})
+				results <- result{sha, err}
+			}()
 		}
 		wg.Wait()
 		close(results)
@@ -685,7 +691,7 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 		}
 		// Start with a separate existing ordinary ref; do not reset a fence.
 		ref = e.NewBase(t)
-		sha, err := e.Git.EnsureFence(ctx, e.Repo, ref)
+		sha, err := e.Git.EnsureFence(ctx, e.Repo, ref, forge.PushOptions{})
 		must(t, err)
 		if sha != e.BaseSHA {
 			t.Fatal("EnsureFence overwrote existing fence")
@@ -713,12 +719,12 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 			start := make(chan struct{})
 			go func() {
 				<-start
-				sha, err := e.Git.Land(ctx, e.Repo, forge.LandRequest{Base: e.Base, ExpectedBaseSHA: base, TestedSHA: tested, Fence: e.FenceRef, ExpectedFence: fence, NextFenceID: "land/" + id, PRs: e.PRs[:1]})
+				sha, err := e.Git.Land(ctx, e.Repo, forge.LandRequest{Base: e.Base, ExpectedBaseSHA: base, TestedSHA: tested, Fence: e.FenceRef, ExpectedFence: fence, NextFenceID: "land/" + id, PRs: e.PRs[:1]}, forge.PushOptions{})
 				results <- result{true, sha, err}
 			}()
 			go func() {
 				<-start
-				sha, err := e.Git.AdvanceFence(ctx, e.Repo, e.FenceRef, fence, "abandon/"+id)
+				sha, err := e.Git.AdvanceFence(ctx, e.Repo, e.FenceRef, fence, "abandon/"+id, forge.PushOptions{})
 				results <- result{false, sha, err}
 			}()
 			close(start)
@@ -764,9 +770,9 @@ func run(t *testing.T, newEnv func(t *testing.T) Env, driver bool) {
 		for _, method := range []forge.MergeMethod{forge.Squash, forge.Rebase} {
 			t.Run("mark-landed/"+string(method), func(t *testing.T) {
 				e := newEnv(t)
-				sha, err := e.Git.BuildTestRef(ctx, e.Repo, forge.BuildRequest{Ref: testRef(e, "close"), BaseSHA: e.BaseSHA, PRs: e.PRs, Method: method, BatchID: "close"})
+				sha, err := e.Git.BuildTestRef(ctx, e.Repo, forge.BuildRequest{Ref: testRef(e, "close"), BaseSHA: e.BaseSHA, PRs: e.PRs, Method: method, BatchID: "close"}, forge.PushOptions{})
 				must(t, err)
-				_, err = e.Git.Land(ctx, e.Repo, forge.LandRequest{Base: e.Base, ExpectedBaseSHA: e.BaseSHA, TestedSHA: sha, Fence: e.FenceRef, ExpectedFence: e.FenceSHA, NextFenceID: "land/close", PRs: e.PRs})
+				_, err = e.Git.Land(ctx, e.Repo, forge.LandRequest{Base: e.Base, ExpectedBaseSHA: e.BaseSHA, TestedSHA: sha, Fence: e.FenceRef, ExpectedFence: e.FenceSHA, NextFenceID: "land/close", PRs: e.PRs}, forge.PushOptions{})
 				must(t, err)
 				for _, pr := range e.PRs {
 					for range 2 {

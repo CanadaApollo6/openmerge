@@ -19,9 +19,9 @@ type countingFence struct {
 	writes int
 }
 
-func (g *countingFence) EnsureFence(ctx context.Context, repo forge.RepoRef, ref string) (string, error) {
+func (g *countingFence) EnsureFence(ctx context.Context, repo forge.RepoRef, ref string, opts forge.PushOptions) (string, error) {
 	g.writes++
-	return g.Git.EnsureFence(ctx, repo, ref)
+	return g.Git.EnsureFence(ctx, repo, ref, opts)
 }
 
 func TestStartupMissingLandingGrantBlocksBeforeFenceAndRecovers(t *testing.T) {
@@ -383,3 +383,5 @@ func TestOverlappingFailureAfterClearStillBlocks(t *testing.T) {
 		t.Fatalf("failure that overlapped a clear was discarded: revision=%d blocks=%+v", state.RulesRevision(), state.Blocks(queue.Config{}))
 	}
 }
+
+var _ forge.Git = (*countingFence)(nil)

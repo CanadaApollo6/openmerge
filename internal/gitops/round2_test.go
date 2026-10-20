@@ -40,8 +40,8 @@ type r2LostLandResponse struct {
 	lost error
 }
 
-func (g *r2LostLandResponse) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequest) (string, error) {
-	if _, err := g.Git.Land(ctx, repo, req); err != nil {
+func (g *r2LostLandResponse) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequest, opts forge.PushOptions) (string, error) {
+	if _, err := g.Git.Land(ctx, repo, req, opts); err != nil {
 		return "", err
 	}
 	return "", g.lost
@@ -52,7 +52,7 @@ func TestR2ExternalRollbackFailsSafe(t *testing.T) {
 		t.Run(fmt.Sprintf("lost-response=%v", recoverLost), func(t *testing.T) {
 			f := newFixture(t)
 			ctx := context.Background()
-			initial, err := f.g.EnsureFence(ctx, testRepo, testFence)
+			initial, err := f.g.EnsureFence(ctx, testRepo, testFence, forge.PushOptions{})
 			must(t, err)
 			tested := f.build(forge.Squash, f.prs[:1], "r2-external")
 			gitPath, err := exec.LookPath("git")
@@ -132,7 +132,7 @@ func TestR2ExternalRollbackFailsSafe(t *testing.T) {
 func TestR2NonceAndCraftedMessages(t *testing.T) {
 	f := newFixture(t)
 	ctx := context.Background()
-	initial, err := f.g.EnsureFence(ctx, testRepo, testFence)
+	initial, err := f.g.EnsureFence(ctx, testRepo, testFence, forge.PushOptions{})
 	must(t, err)
 	s, unlock, err := f.g.open(ctx, testRepo)
 	must(t, err)
@@ -189,7 +189,7 @@ func TestR2AlreadyTestedNeverPushes(t *testing.T) {
 		t.Run(fmt.Sprint(matching), func(t *testing.T) {
 			f := newFixture(t)
 			ctx := context.Background()
-			initial, err := f.g.EnsureFence(ctx, testRepo, testFence)
+			initial, err := f.g.EnsureFence(ctx, testRepo, testFence, forge.PushOptions{})
 			must(t, err)
 			tested := f.build(forge.Merge, f.prs[:1], "already")
 			gitCommand(t, f.remote, "", nil, "update-ref", "refs/heads/main", tested, f.base)
@@ -203,7 +203,7 @@ func TestR2AlreadyTestedNeverPushes(t *testing.T) {
 			if matching {
 				expected = tested
 			}
-			_, err = f.g.Land(ctx, testRepo, forge.LandRequest{Base: "main", ExpectedBaseSHA: expected, TestedSHA: tested, Fence: testFence, ExpectedFence: initial, NextFenceID: "land/already", PRs: f.prs[:1]})
+			_, err = f.g.Land(ctx, testRepo, forge.LandRequest{Base: "main", ExpectedBaseSHA: expected, TestedSHA: tested, Fence: testFence, ExpectedFence: initial, NextFenceID: "land/already", PRs: f.prs[:1]}, forge.PushOptions{})
 			if !errors.Is(err, forge.ErrLeaseRejected) {
 				t.Fatal(err)
 			}
@@ -236,7 +236,7 @@ func TestR2GCConcurrentSameCache(t *testing.T) {
 	other.git = wrapper
 	first := make(chan error, 1)
 	go func() {
-		_, err := f.g.BuildTestRef(ctx, testRepo, forge.BuildRequest{Ref: "openmerge/queue/gc-concurrent", BaseSHA: f.base, PRs: f.prs[:1], Method: forge.Merge, BatchID: "gc-concurrent"})
+		_, err := f.g.BuildTestRef(ctx, testRepo, forge.BuildRequest{Ref: "openmerge/queue/gc-concurrent", BaseSHA: f.base, PRs: f.prs[:1], Method: forge.Merge, BatchID: "gc-concurrent"}, forge.PushOptions{})
 		first <- err
 	}()
 	deadline := time.Now().Add(5 * time.Second)
@@ -272,7 +272,7 @@ func TestR2RefreshFailureScrubsBothTokens(t *testing.T) {
 		t.Run(operation, func(t *testing.T) {
 			f := newFixture(t)
 			ctx := context.Background()
-			initial, err := f.g.EnsureFence(ctx, testRepo, testFence)
+			initial, err := f.g.EnsureFence(ctx, testRepo, testFence, forge.PushOptions{})
 			must(t, err)
 			tested := f.build(forge.Merge, f.prs[:1], "refresh-redact")
 			calls := 0
@@ -284,9 +284,9 @@ func TestR2RefreshFailureScrubsBothTokens(t *testing.T) {
 				return "", Auth{Password: "fresh-secret"}, fmt.Errorf("old-secret fresh-secret: %w", ErrAuth)
 			}
 			if operation == "land" {
-				_, err = f.g.Land(ctx, testRepo, forge.LandRequest{Base: "main", ExpectedBaseSHA: f.base, TestedSHA: tested, Fence: testFence, ExpectedFence: initial, NextFenceID: "land/refresh-redact", PRs: f.prs[:1]})
+				_, err = f.g.Land(ctx, testRepo, forge.LandRequest{Base: "main", ExpectedBaseSHA: f.base, TestedSHA: tested, Fence: testFence, ExpectedFence: initial, NextFenceID: "land/refresh-redact", PRs: f.prs[:1]}, forge.PushOptions{})
 			} else {
-				_, err = f.g.AdvanceFence(ctx, testRepo, testFence, initial, "abandon/refresh-redact")
+				_, err = f.g.AdvanceFence(ctx, testRepo, testFence, initial, "abandon/refresh-redact", forge.PushOptions{})
 			}
 			if calls != 2 || !errors.Is(err, ErrAuth) {
 				t.Fatalf("calls=%d err=%v", calls, err)
@@ -302,3 +302,5 @@ func TestR2RefreshFailureScrubsBothTokens(t *testing.T) {
 		})
 	}
 }
+
+var _ forge.Git = (*r2LostLandResponse)(nil)
