@@ -9,11 +9,14 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
+
+const maxAuthorityItems = 1000
 
 var _ forge.WriteRestrictionReader = (*Driver)(nil)
 
@@ -63,7 +66,7 @@ func (d *Driver) ObserveWriteRestriction(ctx context.Context, in forge.WriteRest
 		}
 		invalid := false
 		for _, entry := range list {
-			if entry.ID <= 0 || seen[entry.ID] || len(seen) >= 1000 {
+			if entry.ID <= 0 || seen[entry.ID] || len(seen) >= maxAuthorityItems {
 				failures = append(failures, errors.New("invalid, repeated or excessive authority ruleset inventory"))
 				invalid = true
 				break
@@ -173,18 +176,37 @@ func (r authorityRuleset) protection(repo string) (authority.Protection, error) 
 		}
 		p.Revision = revision.UTC().Format(time.RFC3339Nano)
 	}
+	switch r.Target {
+	case "branch", "tag", "push", "repository":
+		p.Target = r.Target
+	default:
+		p.TargetsVisibility = authority.ReadFailure
+		failures = append(failures, errors.New("missing or unknown authority target"))
+	}
 	if jsonPresent(r.Conditions) {
-		conditions, err := authorityParameters(r.Conditions)
+		var fields map[string]json.RawMessage
+		err := json.Unmarshal(r.Conditions, &fields)
+		conditions := []authority.Parameter{}
+		if err == nil {
+			// Ref selectors have dedicated fields; all other condition leaves
+			// retain their relative JSON pointer paths.
+			delete(fields, "ref_name")
+			raw, e := json.Marshal(fields)
+			if e == nil {
+				conditions, e = authorityParameters(raw)
+			}
+			err = e
+		}
 		var refs struct {
 			RefName *struct{ Include, Exclude []string } `json:"ref_name"`
 		}
 		if e := json.Unmarshal(r.Conditions, &refs); err == nil {
 			err = e
 		}
-		if r.Target == "" || r.Target == "branch" && refs.RefName == nil || r.Target == "tag" && refs.RefName == nil || len(conditions) > 997 {
+		if p.Target == "" || (r.Target == "branch" || r.Target == "tag") && refs.RefName == nil {
 			err = errors.New("missing authority target")
 		}
-		if refs.RefName != nil && (refs.RefName.Include == nil || refs.RefName.Exclude == nil) {
+		if refs.RefName != nil && (refs.RefName.Include == nil || refs.RefName.Exclude == nil || len(refs.RefName.Include) > maxAuthorityItems || len(refs.RefName.Exclude) > maxAuthorityItems) {
 			err = errors.New("incomplete authority ref conditions")
 		}
 		if err != nil {
@@ -192,7 +214,7 @@ func (r authorityRuleset) protection(repo string) (authority.Protection, error) 
 			failures = append(failures, err)
 		} else {
 			p.TargetsVisibility = authority.Visible
-			p.Conditions = append(conditions, authority.Parameter{Name: "$target", Values: []string{r.Target}}, authority.Parameter{Name: "$source_type", Values: []string{r.SourceType}}, authority.Parameter{Name: "$source", Values: []string{r.Source}})
+			p.Conditions = conditions
 			if refs.RefName != nil {
 				p.Includes, p.Excludes = refs.RefName.Include, refs.RefName.Exclude
 			}
@@ -201,6 +223,10 @@ func (r authorityRuleset) protection(repo string) (authority.Protection, error) 
 	if jsonPresent(r.Rules) {
 		var rules []RepositoryRule
 		err := json.Unmarshal(r.Rules, &rules)
+		if len(rules) > maxAuthorityItems {
+			err = errors.New("too many authority rules")
+			rules = nil
+		}
 		normalized := []authority.Rule{}
 		for _, rule := range rules {
 			params, e := authorityParameters(rule.Parameters)
@@ -222,11 +248,18 @@ func (r authorityRuleset) protection(repo string) (authority.Protection, error) 
 	if jsonPresent(r.Bypass) {
 		var actors []BypassActor
 		err := json.Unmarshal(r.Bypass, &actors)
+		if len(actors) > maxAuthorityItems {
+			err = errors.New("too many authority bypass actors")
+			actors = nil
+		}
 		normalized := []authority.BypassActor{}
 		seen := map[authority.BypassActor]bool{}
 		for _, actor := range actors {
-			kind := map[string]string{"Integration": "app", "Team": "team", "RepositoryRole": "repository_role"}[actor.ActorType]
+			kind := map[string]string{"Integration": "app", "OrganizationAdmin": "organization_admin", "RepositoryRole": "repository_role", "Team": "team", "User": "user", "DeployKey": "deploy_key", "EnterpriseRole": "enterprise_role", "EnterpriseOwner": "enterprise_owner"}[actor.ActorType]
 			a := authority.BypassActor{Kind: kind, Mode: actor.BypassMode}
+			if kind == "" {
+				a.Kind, a.RawKind = "unknown", actor.ActorType
+			}
 			if actor.ActorID != nil && *actor.ActorID > 0 {
 				a.ID = strconv.FormatInt(*actor.ActorID, 10)
 			}
@@ -253,41 +286,92 @@ func jsonPresent(raw json.RawMessage) bool {
 	return len(raw) > 0 && !bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
 }
 
-// Parameters keep each named JSON value in canonical JSON form. Arrays retain
-// order and nested objects retain structure; unknown rule parameters survive
-// without placing a credential-bearing response body in authority evidence.
+// Parameters retain scalar leaves at relative JSON pointer paths. Scalar arrays
+// keep source order; object arrays use indices so nested associations survive.
 func authorityParameters(raw json.RawMessage) ([]authority.Parameter, error) {
 	result := []authority.Parameter{}
 	if !jsonPresent(raw) {
 		return result, nil
 	}
-	var values map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &values); err != nil || values == nil {
+	var values map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&values); err != nil || values == nil {
 		return nil, errors.New("invalid authority parameter object")
 	}
-	if len(values) > 1000 {
-		return nil, errors.New("too many authority parameters")
+	scalar := func(value any) (string, bool) {
+		switch v := value.(type) {
+		case string:
+			return v, true
+		case json.Number:
+			return v.String(), true
+		case bool:
+			return strconv.FormatBool(v), true
+		case nil:
+			return "null", true
+		}
+		return "", false
 	}
-	names := make([]string, 0, len(values))
-	for name := range values {
-		names = append(names, name)
+	appendParameter := func(path string, values []string) error {
+		if len(result) >= maxAuthorityItems {
+			return errors.New("too many authority parameters")
+		}
+		result = append(result, authority.Parameter{Name: path, Values: values})
+		return nil
 	}
-	slices.Sort(names)
-	for _, name := range names {
-		if name == "" || name[0] == '$' {
-			return nil, errors.New("invalid authority parameter name")
+	var walk func(string, any) error
+	walk = func(path string, value any) error {
+		if text, ok := scalar(value); ok {
+			return appendParameter(path, []string{text})
 		}
-		var value any
-		decoder := json.NewDecoder(bytes.NewReader(values[name]))
-		decoder.UseNumber()
-		if err := decoder.Decode(&value); err != nil {
-			return nil, errors.New("invalid authority parameter value")
+		switch v := value.(type) {
+		case map[string]any:
+			if len(v) > maxAuthorityItems {
+				return errors.New("too many authority parameter fields")
+			}
+			if len(v) == 0 && path != "" {
+				return appendParameter(path, []string{"{}"})
+			}
+			names := make([]string, 0, len(v))
+			for name := range v {
+				names = append(names, name)
+			}
+			slices.Sort(names)
+			for _, name := range names {
+				if name == "" {
+					return errors.New("invalid authority parameter name")
+				}
+				segment := strings.ReplaceAll(strings.ReplaceAll(name, "~", "~0"), "/", "~1")
+				if path != "" {
+					segment = path + "/" + segment
+				}
+				if err := walk(segment, v[name]); err != nil {
+					return err
+				}
+			}
+		case []any:
+			if len(v) > maxAuthorityItems {
+				return errors.New("too many authority parameter values")
+			}
+			texts := make([]string, 0, len(v))
+			for _, item := range v {
+				if text, ok := scalar(item); ok {
+					texts = append(texts, text)
+				}
+			}
+			if len(texts) == len(v) {
+				return appendParameter(path, texts)
+			}
+			for i, item := range v {
+				if err := walk(path+"/"+strconv.Itoa(i), item); err != nil {
+					return err
+				}
+			}
 		}
-		canonical, err := json.Marshal(value)
-		if err != nil {
-			return nil, errors.New("invalid authority parameter value")
-		}
-		result = append(result, authority.Parameter{Name: name, Values: []string{string(canonical)}})
+		return nil
+	}
+	if err := walk("", values); err != nil {
+		return nil, err
 	}
 	return result, nil
 }

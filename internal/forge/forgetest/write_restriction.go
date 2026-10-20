@@ -3,6 +3,7 @@ package forgetest
 import (
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -85,7 +86,7 @@ func RunWriteRestrictionReader(t *testing.T, factory func(*testing.T) WriteRestr
 				}
 				return
 			}
-			if p.ID != "10" || p.Enforcement != "active" || p.TargetsVisibility != authority.Visible || p.RulesVisibility != authority.Visible || !reflect.DeepEqual(p.Includes, []string{"refs/heads/main", "refs/heads/release/**/*"}) || len(p.Excludes) != 0 {
+			if p.ID != "10" || p.Target != "branch" || p.Enforcement != "active" || p.TargetsVisibility != authority.Visible || p.RulesVisibility != authority.Visible || !reflect.DeepEqual(p.Includes, []string{"refs/heads/main", "refs/heads/release/**/*"}) || len(p.Excludes) != 0 {
 				t.Fatalf("lost ruleset detail: %+v", p)
 			}
 			want := []authority.Rule{{Kind: "update", Parameters: []authority.Parameter{{Name: "update_allows_fetch_and_merge", Values: []string{"false"}}}}}
@@ -107,6 +108,63 @@ func RunWriteRestrictionReader(t *testing.T, factory func(*testing.T) WriteRestr
 			}
 			if again.Protections[0].Rules[0].Parameters[0].Values[0] != "false" {
 				t.Fatal("observation aliases earlier result")
+			}
+		})
+	}
+	for _, target := range []string{"branch", "tag", "push", "repository"} {
+		t.Run("target-"+target, func(t *testing.T) {
+			e := factory(t)
+			e.SetTeam(team)
+			e.Configure("target-" + target)
+			o, err := e.Reader.ObserveWriteRestriction(t.Context(), WriteRestrictionInput())
+			must(t, err)
+			must(t, o.Validate())
+			if len(o.Protections) != 1 || o.Protections[0].Target != target || o.Protections[0].TargetsVisibility != authority.Visible {
+				t.Fatalf("lost target: %+v", o)
+			}
+		})
+	}
+	for scenario, want := range map[string][]authority.BypassActor{
+		"unauthorized-actors": {{Kind: "user", ID: "91", Mode: "always"}, {Kind: "deploy_key", Mode: "always"}, {Kind: "organization_admin", Mode: "exempt"}, {Kind: "team", ID: "92", Mode: "exempt"}},
+		"unknown-actor":       {{Kind: "unknown", RawKind: "FutureActor", Mode: "pull_request"}, {Kind: "unknown", RawKind: "FutureActor", ID: "93", Mode: "exempt"}},
+	} {
+		t.Run(scenario, func(t *testing.T) {
+			e := factory(t)
+			e.SetTeam(team)
+			e.Configure(scenario)
+			o, err := e.Reader.ObserveWriteRestriction(t.Context(), WriteRestrictionInput())
+			must(t, err)
+			must(t, o.Validate())
+			if len(o.Protections) != 1 || o.Protections[0].BypassVisibility != authority.Visible || !reflect.DeepEqual(o.Protections[0].BypassActors, want) || len(o.Findings) != 0 {
+				t.Fatalf("reader rejected or interpreted observed actors: %+v", o)
+			}
+		})
+	}
+	for _, field := range []string{"includes", "excludes", "conditions", "condition-values", "rules", "rule-parameters", "rule-values", "bypass"} {
+		t.Run("overflow-"+field, func(t *testing.T) {
+			e := factory(t)
+			e.SetTeam(team)
+			e.Configure("overflow-" + field)
+			o, err := e.Reader.ObserveWriteRestriction(t.Context(), WriteRestrictionInput())
+			if err == nil {
+				t.Fatal("overflow accepted")
+			}
+			must(t, o.Validate())
+			if o.Inventory != authority.Visible || len(o.Protections) != 1 {
+				t.Fatalf("lost inventory: %+v", o)
+			}
+			p := o.Protections[0]
+			targets, rules, bypass := authority.Visible, authority.Visible, authority.Visible
+			switch field {
+			case "includes", "excludes", "conditions", "condition-values":
+				targets = authority.ReadFailure
+			case "rules", "rule-parameters", "rule-values":
+				rules = authority.ReadFailure
+			case "bypass":
+				bypass = authority.ReadFailure
+			}
+			if p.TargetsVisibility != targets || p.RulesVisibility != rules || p.BypassVisibility != bypass {
+				t.Fatalf("overflow erased independent evidence: %+v", p)
 			}
 		})
 	}
@@ -153,6 +211,14 @@ func RunWriteRestrictionReader(t *testing.T, factory func(*testing.T) WriteRestr
 			func(in *forge.WriteRestrictionInput) { in.ExpectedRefs = []string{"refs/tags/main"} },
 			func(in *forge.WriteRestrictionInput) { in.ExpectedRefs = []string{"main"} },
 			func(in *forge.WriteRestrictionInput) { in.Binding.CoverageDigest = strings.Repeat("b", 64) },
+			func(in *forge.WriteRestrictionInput) { in.Binding.InstallationID = 0 },
+			func(in *forge.WriteRestrictionInput) { in.Binding.DefaultBranch = "bad..branch" },
+			func(in *forge.WriteRestrictionInput) {
+				in.ExpectedRefs = make([]string, 1001)
+				for i := range in.ExpectedRefs {
+					in.ExpectedRefs[i] = "refs/heads/branch-" + strconv.Itoa(i)
+				}
+			},
 		} {
 			in := WriteRestrictionInput()
 			edit(&in)

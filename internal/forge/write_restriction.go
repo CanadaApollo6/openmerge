@@ -74,21 +74,10 @@ func EmptyWriteRestrictionObservation() authority.Observation {
 // ValidateWriteRestrictionInput reuses the shared forge ref validator at this
 // capability's boundary, before either adapter reads any remote state.
 func ValidateWriteRestrictionInput(in WriteRestrictionInput) error {
-	if err := in.Validate(); err != nil {
-		return fmt.Errorf("%w: %w", ErrInvalidInput, err)
-	}
 	if len(in.ExpectedRefs) > 1000 {
-		return fmt.Errorf("too many expected refs: %w", ErrInvalidInput)
+		return invalid("too many expected refs")
 	}
-	for _, ref := range in.ExpectedRefs {
-		if err := ValidateRefName(ref); err != nil {
-			return err
-		}
-		if !strings.HasPrefix(ref, "refs/heads/") {
-			return fmt.Errorf("expected fully qualified branch: %w", ErrInvalidInput)
-		}
-	}
-	return nil
+	return in.Validate()
 }
 
 // CheckWriteRestrictionActor refreshes a declared team through IdentityReader.

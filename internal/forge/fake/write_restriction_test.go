@@ -16,7 +16,7 @@ func TestWriteRestrictionContract(t *testing.T) {
 		return forgetest.WriteRestrictionEnv{Reader: f, SetTeam: func(team forge.TeamIdentity) { f.SetTeam(team, nil) }, Configure: func(scenario string) {
 			o := forge.EmptyWriteRestrictionObservation()
 			o.Inventory = authority.Visible
-			p := authority.Protection{Source: "repository_ruleset", ID: "10", Enforcement: "active", TargetsVisibility: authority.Visible, RulesVisibility: authority.Visible, BypassVisibility: authority.Visible,
+			p := authority.Protection{Source: "repository_ruleset", ID: "10", Target: "branch", Enforcement: "active", TargetsVisibility: authority.Visible, RulesVisibility: authority.Visible, BypassVisibility: authority.Visible,
 				Includes: []string{"refs/heads/main", "refs/heads/release/**/*"}, Excludes: []string{}, Conditions: []authority.Parameter{},
 				Rules:        []authority.Rule{{Kind: "update", Parameters: []authority.Parameter{{Name: "update_allows_fetch_and_merge", Values: []string{"false"}}}}},
 				BypassActors: []authority.BypassActor{{Kind: "app", ID: "42", Mode: "always"}, {Kind: "team", ID: "44", Mode: "always"}, {Kind: "repository_role", ID: "5", Mode: "pull_request"}}}
@@ -45,6 +45,26 @@ func TestWriteRestrictionContract(t *testing.T) {
 				o.Inventory = authority.ReadFailure
 				err = forge.ErrRulesUnavailable
 			}
+			if strings.HasPrefix(scenario, "target-") {
+				p.Target = strings.TrimPrefix(scenario, "target-")
+			}
+			switch scenario {
+			case "unauthorized-actors":
+				p.BypassActors = []authority.BypassActor{{Kind: "user", ID: "91", Mode: "always"}, {Kind: "deploy_key", Mode: "always"}, {Kind: "organization_admin", Mode: "exempt"}, {Kind: "team", ID: "92", Mode: "exempt"}}
+			case "unknown-actor":
+				p.BypassActors = []authority.BypassActor{{Kind: "unknown", RawKind: "FutureActor", Mode: "pull_request"}, {Kind: "unknown", RawKind: "FutureActor", ID: "93", Mode: "exempt"}}
+			case "overflow-includes", "overflow-excludes", "overflow-conditions", "overflow-condition-values":
+				p.TargetsVisibility = authority.ReadFailure
+				p.Includes, p.Excludes, p.Conditions = []string{}, []string{}, []authority.Parameter{}
+				err = errors.New("target collection exceeds bound")
+			case "overflow-rules", "overflow-rule-parameters", "overflow-rule-values":
+				p.RulesVisibility, p.Rules = authority.ReadFailure, []authority.Rule{}
+				err = errors.New("rule collection exceeds bound")
+			case "overflow-bypass":
+				p.BypassVisibility, p.BypassActors = authority.ReadFailure, []authority.BypassActor{}
+				err = errors.New("bypass collection exceeds bound")
+			}
+
 			switch scenario {
 			case "empty", "inventory-denied", "inventory-not-found", "quota":
 			default:

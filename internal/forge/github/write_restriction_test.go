@@ -3,7 +3,6 @@ package github
 import (
 	"errors"
 	"fmt"
-	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -11,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/forge/forgetest"
 )
@@ -51,7 +51,10 @@ func authorityHTTPEnv(t *testing.T) (*apiFixture, forgetest.WriteRestrictionEnv)
 		if strings.HasPrefix(scenario, "inherited") {
 			sourceType, source = "Organization", "acme"
 		}
-		summary := map[string]any{"id": 10, "source_type": sourceType, "source": source, "enforcement": "active"}
+		summary := map[string]any{"id": 10, "source_type": sourceType, "source": source, "target": "branch", "enforcement": "active"}
+		if strings.HasPrefix(scenario, "target-") {
+			summary["target"] = strings.TrimPrefix(scenario, "target-")
+		}
 		if path == "repos/acme/project/rulesets" {
 			if r.URL.Query().Get("per_page") != "100" {
 				t.Error("wrong page size")
@@ -87,14 +90,31 @@ func authorityHTTPEnv(t *testing.T) (*apiFixture, forgetest.WriteRestrictionEnv)
 			f.apiError(w, 403, "inherited detail inaccessible")
 			return true
 		}
-		summary["target"] = "branch"
 		summary["updated_at"] = "2026-10-20T00:00:00Z"
 		summary["conditions"] = map[string]any{"ref_name": map[string]any{"include": []string{"refs/heads/main", "refs/heads/release/**/*"}, "exclude": []string{}}}
+		if scenario == "target-tag" {
+			summary["conditions"] = map[string]any{"ref_name": map[string]any{"include": []string{"refs/tags/v*"}, "exclude": []string{}}}
+		}
+		if scenario == "target-push" || scenario == "target-repository" {
+			summary["conditions"] = map[string]any{}
+		}
 		summary["rules"] = []any{map[string]any{"type": "update", "parameters": map[string]any{"update_allows_fetch_and_merge": false}}}
 		switch scenario {
 		case "hidden-bypass", "inherited-hidden-bypass":
 		case "null-bypass":
 			summary["bypass_actors"] = nil
+		case "unauthorized-actors":
+			summary["bypass_actors"] = []any{
+				map[string]any{"actor_type": "User", "actor_id": 91, "bypass_mode": "always"},
+				map[string]any{"actor_type": "DeployKey", "actor_id": nil, "bypass_mode": "always"},
+				map[string]any{"actor_type": "OrganizationAdmin", "bypass_mode": "exempt"},
+				map[string]any{"actor_type": "Team", "actor_id": 92, "bypass_mode": "exempt"},
+			}
+		case "unknown-actor":
+			summary["bypass_actors"] = []any{
+				map[string]any{"actor_type": "FutureActor", "bypass_mode": "pull_request"},
+				map[string]any{"actor_type": "FutureActor", "actor_id": 93, "bypass_mode": "exempt"},
+			}
 		case "visible-empty-bypass":
 			summary["bypass_actors"] = []any{}
 		default:
@@ -103,6 +123,9 @@ func authorityHTTPEnv(t *testing.T) (*apiFixture, forgetest.WriteRestrictionEnv)
 				map[string]any{"actor_type": "Team", "actor_id": 44, "bypass_mode": "always"},
 				map[string]any{"actor_type": "RepositoryRole", "actor_id": 5, "bypass_mode": "pull_request"},
 			}
+		}
+		if strings.HasPrefix(scenario, "overflow-") {
+			fillAuthorityCollection(summary, strings.TrimPrefix(scenario, "overflow-"), 1001)
 		}
 		f.json(w, summary)
 		return true
@@ -188,7 +211,7 @@ func TestAuthorityRejectsBindingMismatchBeforeReading(t *testing.T) {
 }
 
 func TestAuthorityPartialAndMalformedHTTPResponses(t *testing.T) {
-	for _, mode := range []string{"duplicate-id", "nonadvancing-page", "page-bound", "null-list", "wrong-detail-id", "changed-source", "unknown-enforcement", "missing-rules", "empty-rules", "invalid-conditions", "missing-conditions", "invalid-rules", "unknown-actor", "empty-actor-id", "unknown-parameters", "failed-second-detail", "primary-quota-page-two"} {
+	for _, mode := range []string{"duplicate-id", "nonadvancing-page", "page-bound", "null-list", "wrong-detail-id", "changed-source", "unknown-enforcement", "missing-rules", "empty-rules", "invalid-conditions", "missing-conditions", "invalid-rules", "missing-actor-kind", "empty-actor-id", "unknown-parameters", "failed-second-detail", "primary-quota-page-two"} {
 		t.Run(mode, func(t *testing.T) {
 			f, e := authorityHTTPEnv(t)
 			e.SetTeam(forge.TeamIdentity{ID: 44, OrganizationID: 55, Organization: "acme", Slug: "platform"})
@@ -251,8 +274,8 @@ func TestAuthorityPartialAndMalformedHTTPResponses(t *testing.T) {
 						delete(raw, "conditions")
 					case "invalid-conditions":
 						raw["conditions"] = map[string]any{"ref_name": map[string]any{"include": []string{"refs/heads/main"}}}
-					case "unknown-actor":
-						raw["bypass_actors"] = []any{map[string]any{"actor_type": "User", "actor_id": 1, "bypass_mode": "always"}}
+					case "missing-actor-kind":
+						raw["bypass_actors"] = []any{map[string]any{"actor_id": 1, "bypass_mode": "always"}}
 					case "empty-actor-id":
 						raw["bypass_actors"] = []any{map[string]any{"actor_type": "Team", "bypass_mode": "always"}}
 					case "unknown-parameters":
@@ -314,12 +337,12 @@ func TestAuthorityPartialAndMalformedHTTPResponses(t *testing.T) {
 				if p.RulesVisibility != authority.ReadFailure || p.TargetsVisibility != authority.Visible {
 					t.Fatal(p)
 				}
-			case "unknown-actor", "empty-actor-id":
+			case "missing-actor-kind", "empty-actor-id":
 				if p.BypassVisibility != authority.ReadFailure || p.RulesVisibility != authority.Visible {
 					t.Fatal(p)
 				}
 			case "unknown-parameters":
-				if p.Rules[0].Parameters[0].Values[0] != `{"a":null,"z":[1,"two",false]}` {
+				if !reflect.DeepEqual(p.Rules[0].Parameters, []authority.Parameter{{Name: "new_param/a", Values: []string{"null"}}, {Name: "new_param/z", Values: []string{"1", "two", "false"}}}) {
 					t.Fatal(p.Rules)
 				}
 			case "failed-second-detail":
@@ -331,5 +354,145 @@ func TestAuthorityPartialAndMalformedHTTPResponses(t *testing.T) {
 				t.Fatalf("revision not normalized: %s", p.Revision)
 			}
 		})
+	}
+}
+
+// Each fixture fills one independently bounded evidence collection.
+func fillAuthorityCollection(raw map[string]any, field string, n int) {
+	values := make([]string, n)
+	params := make(map[string]any, n)
+	rules := make([]any, n)
+	actors := make([]any, n)
+	for i := range n {
+		values[i] = "refs/heads/branch-" + strconv.Itoa(i)
+		params["param-"+strconv.Itoa(i)] = true
+		rules[i] = map[string]any{"type": "creation"}
+		actors[i] = map[string]any{"actor_type": "User", "actor_id": i + 1, "bypass_mode": "always"}
+	}
+	conditions := raw["conditions"].(map[string]any)
+	switch field {
+	case "includes":
+		conditions["ref_name"].(map[string]any)["include"] = values
+	case "excludes":
+		conditions["ref_name"].(map[string]any)["exclude"] = values
+	case "conditions":
+		conditions["repository_property"] = params
+	case "condition-values":
+		conditions["repository_id"] = map[string]any{"repository_ids": values}
+	case "rules":
+		raw["rules"] = rules
+	case "rule-parameters":
+		raw["rules"] = []any{map[string]any{"type": "new_rule", "parameters": params}}
+	case "rule-values":
+		raw["rules"] = []any{map[string]any{"type": "required_status_checks", "parameters": map[string]any{"contexts": values}}}
+	case "bypass":
+		raw["bypass_actors"] = actors
+	}
+}
+
+func TestAuthorityCollectionBoundary(t *testing.T) {
+	for _, field := range []string{"includes", "excludes", "conditions", "condition-values", "rules", "rule-parameters", "rule-values", "bypass"} {
+		t.Run(field, func(t *testing.T) {
+			f, e := authorityHTTPEnv(t)
+			e.SetTeam(forge.TeamIdentity{ID: 44, OrganizationID: 55, Organization: "acme", Slug: "platform"})
+			original := f.override
+			f.override = func(w http.ResponseWriter, r *http.Request) bool {
+				if strings.HasSuffix(r.URL.Path, "/rulesets/10") {
+					raw := map[string]any{"id": 10, "source_type": "Repository", "source": "acme/project", "target": "branch", "enforcement": "active", "conditions": map[string]any{"ref_name": map[string]any{"include": []string{"refs/heads/main"}, "exclude": []string{}}}, "rules": []any{}, "bypass_actors": []any{}}
+					fillAuthorityCollection(raw, field, 1000)
+					f.json(w, raw)
+					return true
+				}
+				return original(w, r)
+			}
+			o, err := e.Reader.ObserveWriteRestriction(t.Context(), forgetest.WriteRestrictionInput())
+			must(t, err)
+			must(t, o.Validate())
+			p := o.Protections[0]
+			if p.TargetsVisibility != authority.Visible || p.RulesVisibility != authority.Visible || p.BypassVisibility != authority.Visible {
+				t.Fatalf("valid boundary hidden: %+v", p)
+			}
+			n := 0
+			switch field {
+			case "includes":
+				n = len(p.Includes)
+			case "excludes":
+				n = len(p.Excludes)
+			case "conditions":
+				n = len(p.Conditions)
+			case "condition-values":
+				n = len(p.Conditions[0].Values)
+			case "rules":
+				n = len(p.Rules)
+			case "rule-parameters":
+				n = len(p.Rules[0].Parameters)
+			case "rule-values":
+				n = len(p.Rules[0].Parameters[0].Values)
+			case "bypass":
+				n = len(p.BypassActors)
+			}
+			if n != 1000 {
+				t.Fatalf("collection truncated: %d", n)
+			}
+		})
+	}
+}
+
+func TestAuthorityInheritedConditionAndNestedRulePaths(t *testing.T) {
+	f, e := authorityHTTPEnv(t)
+	e.Configure("inherited")
+	e.SetTeam(forge.TeamIdentity{ID: 44, OrganizationID: 55, Organization: "acme", Slug: "platform"})
+	original := f.override
+	f.override = func(w http.ResponseWriter, r *http.Request) bool {
+		if strings.HasSuffix(r.URL.Path, "/rulesets/10") {
+			f.json(w, map[string]any{
+				"id": 10, "source_type": "Organization", "source": "acme", "target": "branch", "enforcement": "active",
+				"conditions": map[string]any{
+					"ref_name":            map[string]any{"include": []string{"~DEFAULT_BRANCH"}, "exclude": []string{}},
+					"repository_name":     map[string]any{"include": []string{"project"}, "exclude": []string{}, "protected": true},
+					"repository_id":       map[string]any{"repository_ids": []int{99, 100}},
+					"repository_property": map[string]any{"include": []any{map[string]any{"name": "tier", "source": "custom", "property_values": []string{"critical", "high"}}}, "exclude": []any{}},
+				},
+				"rules": []any{map[string]any{"type": "required_status_checks", "parameters": map[string]any{
+					"required_status_checks":               []any{map[string]any{"context": "ci/a", "integration_id": 42}, map[string]any{"context": "ci/b", "integration_id": nil}},
+					"strict_required_status_checks_policy": false,
+					"future/key~":                          map[string]any{"values": []any{1, "two", false}},
+				}}},
+				"bypass_actors": []any{
+					map[string]any{"actor_type": "DeployKey", "actor_id": 94, "bypass_mode": "pull_request"},
+					map[string]any{"actor_type": "OrganizationAdmin", "actor_id": 95, "bypass_mode": "always"},
+					map[string]any{"actor_type": "EnterpriseRole", "actor_id": 96, "bypass_mode": "exempt"},
+					map[string]any{"actor_type": "EnterpriseOwner", "bypass_mode": "always"},
+				},
+			})
+			return true
+		}
+		return original(w, r)
+	}
+	o, err := e.Reader.ObserveWriteRestriction(t.Context(), forgetest.WriteRestrictionInput())
+	must(t, err)
+	must(t, o.Validate())
+	p := o.Protections[0]
+	wantConditions := []authority.Parameter{
+		{Name: "repository_id/repository_ids", Values: []string{"99", "100"}},
+		{Name: "repository_name/exclude", Values: []string{}},
+		{Name: "repository_name/include", Values: []string{"project"}},
+		{Name: "repository_name/protected", Values: []string{"true"}},
+		{Name: "repository_property/exclude", Values: []string{}},
+		{Name: "repository_property/include/0/name", Values: []string{"tier"}},
+		{Name: "repository_property/include/0/property_values", Values: []string{"critical", "high"}},
+		{Name: "repository_property/include/0/source", Values: []string{"custom"}},
+	}
+	wantRules := []authority.Rule{{Kind: "required_status_checks", Parameters: []authority.Parameter{
+		{Name: "future~1key~0/values", Values: []string{"1", "two", "false"}},
+		{Name: "required_status_checks/0/context", Values: []string{"ci/a"}},
+		{Name: "required_status_checks/0/integration_id", Values: []string{"42"}},
+		{Name: "required_status_checks/1/context", Values: []string{"ci/b"}},
+		{Name: "required_status_checks/1/integration_id", Values: []string{"null"}},
+		{Name: "strict_required_status_checks_policy", Values: []string{"false"}},
+	}}}
+	wantActors := []authority.BypassActor{{Kind: "deploy_key", ID: "94", Mode: "pull_request"}, {Kind: "organization_admin", ID: "95", Mode: "always"}, {Kind: "enterprise_role", ID: "96", Mode: "exempt"}, {Kind: "enterprise_owner", Mode: "always"}}
+	if !reflect.DeepEqual(p.Conditions, wantConditions) || !reflect.DeepEqual(p.Rules, wantRules) || !reflect.DeepEqual(p.BypassActors, wantActors) || !reflect.DeepEqual(p.Includes, []string{"~DEFAULT_BRANCH"}) || p.Target != "branch" {
+		t.Fatalf("lost inherited or nested evidence: %+v", p)
 	}
 }
