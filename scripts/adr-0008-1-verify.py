@@ -89,7 +89,7 @@ def invoke(cmd, cwd, run, name, mem="4GiB", check=True, env_extra=None):
     d = run / name; d.mkdir(parents=True, exist_ok=True)
     env = {"GOFLAGS": "-p=2", "GOMEMLIMIT": mem, "GOPROXY": "off", "GOSUMDB": "off", "GOTOOLCHAIN": "local",
            "GOTMPDIR": str(d / "go-tmp"), "GOCACHE": "/home/riels/.cache/go-build", "TMPDIR": str(d / "tmp")}
-    for v in ("GOTMPDIR", "TMPDIR"): Path(env[v]).mkdir()
+    for v in ("GOTMPDIR", "TMPDIR"): Path(env[v]).mkdir(exist_ok=True)
     if env_extra: env.update({k: str(v) for k, v in env_extra.items()})
     wrapped = ["flock", str(LOCK), "env"] + [f"{k}={v}" for k, v in env.items()] + cmd
     p = subprocess.run(wrapped, cwd=cwd, capture_output=True, text=True)
@@ -144,9 +144,10 @@ def main():
         cand_test.write_text(CANDIDATE_GO.replace("__FIELD__", field))
         cand_overlay = work / "candidate-overlay.json"; cand_overlay.write_text(json.dumps({"Replace": {str(args.candidate / TARGET): str(cand_test)}}, indent=2) + "\n")
         base_overlay = work / "baseline-overlay.json"; base_overlay.write_text(json.dumps({"Replace": {str(args.baseline / TARGET): str(base_test), str(args.baseline / "internal/queue/types.go"): str(work / "baseline-types.go")}}, indent=2) + "\n")
+        old_overlay = work / "old-decoder-overlay.json"; old_overlay.write_text(json.dumps({"Replace": {str(args.baseline / TARGET): str(base_test)}}) + "\n")
         v6, v7 = work / "legacy-v6.json", work / "authority-v7.json"; cand_diff, base_diff = work / "candidate-differential.json", work / "baseline-differential.json"
         invoke(["go", "test", "-overlay", str(cand_overlay), "./internal/queue", "-run", "^TestADR00081$|^TestADR00081Differential$", "-count=1", "-timeout=10m", "-v"], args.candidate, run, "candidate-boundary", env_extra={"ADR_V6": v6, "ADR_V7": v7, "ADR_DIFF": cand_diff})
-        invoke(["go", "test", "-overlay", str(base_overlay), "./internal/queue", "-run", "^TestADR00081$|^TestADR00081Differential$", "-count=1", "-timeout=10m", "-v"], args.baseline, run, "baseline-old-decoder", env_extra={"ADR_V6": v6, "ADR_V7": v7, "ADR_DIFF": base_diff})
+        invoke(["go", "test", "-overlay", str(old_overlay), "./internal/queue", "-run", "^TestADR00081$|^TestADR00081Differential$", "-count=1", "-timeout=10m", "-v"], args.baseline, run, "baseline-old-decoder", env_extra={"ADR_V6": v6, "ADR_V7": v7, "ADR_DIFF": base_diff})
         evidence["contract_differential"] = compare_contracts(base_diff, cand_diff)
         if not evidence["contract_differential"]["identical"]: raise VerifyError("approval/legacy depth differential diverged")
         evidence["boundary"] = {"legacy_v6_sha256": sha(v6), "authority_v7_sha256": sha(v7), "legacy_version": 6, "authority_version": 7, "authority_fixture": "internal/queue/testdata/wire/v1/variants/policy_authority_applied_activation.json", "baseline_old_decoder": "rejected v7; preserved v6 bytes and outside-push cursor fields", "outside_push_cursor_shape": "ScannedThrough, AuditedBaseMove, State, ObservedBase, LastLanding, Pending", "field": field, "field_declaration": decl}
