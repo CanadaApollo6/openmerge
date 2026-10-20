@@ -1,15 +1,15 @@
 {
-  "recorded_at": "2026-10-20T23:12:02.364915+00:00",
-  "implementation_commit": "5ecebebf9301f39df2ed14dae25e40ce9c8dc0d0",
-  "baseline_commit": "158afe96c43a6122edca8566b09ba0ebf2a1e4bd",
+  "recorded_at": "2026-10-20T23:35:00.394029+00:00",
+  "implementation_commit": "e16a98c35da0e94e3efb68342c9fb33507bc6806",
+  "baseline_commit": "975b1b7762f58c128b1703f11fd5c4b6ff552c55",
   "trial_class": "HOLD",
   "deployment": "not performed; wait until ADR 0009 period B drains",
   "stacked_on_112_or_113": false,
   "test_database": "localhost:54329, isolated test schemas and lock scopes; no initdb run",
   "binary": {
-    "sha256": "0625a7ff9465807a419f5a359556d63532965c270ce19b9d504051c7f39b8e79",
-    "build_version": "5ecebeb-dirty",
-    "source_commit": "5ecebebf9301f39df2ed14dae25e40ce9c8dc0d0"
+    "sha256": "a70b1cbdea2e47248066a58d2e9d20088dbeb40400a051a310878fe65c1cef0a",
+    "build_version": "e16a98c-dirty",
+    "source_commit": "e16a98c35da0e94e3efb68342c9fb33507bc6806"
   },
   "checks": [
     {
@@ -18,9 +18,11 @@
       "receipt": "make-check.log"
     },
     {
-      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB OPENMERGE_TEST_DATABASE_URL='postgres://postgres@localhost:54329/postgres?sslmode=disable' go test -count=1 -v ./internal/status ./internal/serve ./cmd/openmerge -run 'TestAuthorityRenderingAndRestart|TestHealth|TestEvaluateHealth|TestAuthorityStatusAndHealth|TestServeHealth|TestQueueAuthority'",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB OPENMERGE_TEST_DATABASE_URL='postgres://postgres@localhost:54329/postgres?sslmode=disable' go test -count=1 -v ./internal/serve ./internal/status ./internal/store ./cmd/openmerge -run 'TestOutsideWarnings|TestGitHubOutsidePush|TestAuthorityStatusAndHealth|TestOutsidePushWarning|TestQueueAuthority|TestOutsidePushAcknowledgement|TestOutsidePushWarnings|TestHealth|TestAuthorityRendering|TestEvaluateHealth|TestServeHealth'",
       "exit": 0,
-      "receipt": "focused-tests.log"
+      "receipt": "focused-tests.log",
+      "source_commit": "c1d69905354f8cf8425eaab95ad118450cf7c889",
+      "source_note": "Before formatting-only amend; final make check verifies e16a98c."
     },
     {
       "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB python3 scripts/check-legacy-reporting.py /home/riels/.cache/adr0008-6-main",
@@ -46,9 +48,29 @@
     }
   ],
   "deferred": [
-    "PR 5 outstanding-warning ledger integration",
     "PR 11 organization-sandbox healthy/unverified/violation/drift/outside-warning HTTP acceptance"
   ],
   "initial_baseline_commit": "d4e15c89fa9a1e68d8cf9afe55d0f3a25318ae91",
-  "authority_projection": "PR 4 WriteRestrictionStatus on main; no second finding fold"
+  "authority_projection": "PR 4 WriteRestrictionStatus on main; no second finding fold",
+  "legacy_baseline_commit": "158afe96c43a6122edca8566b09ba0ebf2a1e4bd",
+  "outside_warning_projection": {
+    "source": "PR 5 paged ledger; same journal snapshot for status, independent atomic audit-loop summary for health",
+    "retained_id_limit": 20,
+    "journal_page_size": 256,
+    "count": "exact outstanding count",
+    "health_acknowledgement_visibility": "next independent audit pass",
+    "errors": "discard partial summary; retain last successful health snapshot"
+  },
+  "superseded_checks": [
+    {
+      "receipt": "superseded-make-check.log",
+      "exit": 2,
+      "reason": "Started before rollback fix; new regression linked earlier status implementation. Not final verification."
+    },
+    {
+      "receipt": "superseded-format-check.log",
+      "exit": 2,
+      "reason": "Import indentation corrected by gofmt before final make check."
+    }
+  ]
 }

@@ -1,4 +1,4 @@
 /home/riels/.cache/adr0008-6-main: exit=0
-/home/riels/.t3/worktrees/openmerge/t3-6b9938ed: exit=0
+/home/riels/.t3/worktrees/openmerge/t3-8873a7f2: exit=0
 PASS: all 56 complete HTTP responses (status line, headers, body) are byte-identical; no fields stripped
 Complete response receipt: /home/riels/.cache/adr0008-6-legacy-http-responses.json

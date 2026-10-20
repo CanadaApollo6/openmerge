@@ -1,24 +1,28 @@
 {
-  "implementation_commit": "5ecebebf9301f39df2ed14dae25e40ce9c8dc0d0",
-  "baseline_commit": "158afe96c43a6122edca8566b09ba0ebf2a1e4bd",
+  "implementation_commit": "e16a98c35da0e94e3efb68342c9fb33507bc6806",
+  "baseline_commit": "975b1b7762f58c128b1703f11fd5c4b6ff552c55",
   "files": {
     "cmd/openmerge/queue.go": "2de3a201338971953df96504893d4c59cc2fec62f31683b864df0994af583787",
     "cmd/openmerge/queue_test.go": "3dacc8be3b6de927e6700dcd724d8e1e3700a77c9e9f551c60745a7d45ff35aa",
     "cmd/openmerge/serve.go": "9439942adca1bc2ed363984ddfbf17d27830fc5076df48ebe8a0cbf6fe2bc2c1",
     "cmd/openmerge/serve_test.go": "b5ef52612d897999c41a3f65102d1f912047f4861eda3152883d09ac103abbac",
-    "docs/api.md": "aed657c9b4002e60e9b880573e7a1e0fea849b1792ac9fa5a140c9a4daaff582",
-    "internal/serve/branches.go": "7f247dbdbc9d5c517e07b8ef32ba9623b290917eb7895d526b0bad06facc3808",
-    "internal/serve/health.go": "bef75166f175ba79d65dd06be505f23893cfb7be2b4fe60468e5d0c13a3a836e",
+    "docs/api.md": "b07a0f93cf07043eb348784ed70b92fe1d7d7e5f345c967239e60a9fa00bb40c",
+    "internal/serve/branches.go": "5d5a763cb915a353dbf31527acecd56621cad91410eb6b40c61799f78d3c733a",
+    "internal/serve/health.go": "e323cadfbe9c71b4f5681a26c1257ec1a3c803a445f031065eb58d534ad5ca15",
     "internal/serve/health_real_git_test.go": "3fdb4562b8108d446c276a4a2be83ef8d0a49373e10861d29759b10e24372941",
-    "internal/serve/health_test.go": "1e7b97ac79c979be1e01016a14deb17cf6d06a5c962fee0d3483554c57ed2699",
-    "internal/serve/serve.go": "347ffaf53169c3bf6ec1f1947e18cd065bdd40554799b130aef0e22d118407ad",
-    "internal/status/authority.go": "0c0d613dd61960ba0a9a5ffac6dd88321d8378d5f2e2fe767a0ca958a7c83501",
+    "internal/serve/health_test.go": "47e4ba24574e2edd4c2427c3ebb45016670ca9fdeb6c4d5b7bec203c5eca09c5",
+    "internal/serve/outside_push.go": "6a25ce0d02824ea2e4cce8db34522bfe123b471f3357ffaa08824d7756e8825b",
+    "internal/serve/outside_warnings_test.go": "57005684246ea54f657f1bfc25cbd280edca3e1b4e3dbd3120c6733e00f7f64e",
+    "internal/serve/serve.go": "3dd9c0548c2cc6a049a42a5274a6f02493a4d75f1fefd25b7fb153e55c6a2886",
+    "internal/status/authority.go": "b0099f2f8161f16e6f555d916aec483c95a88b9f40b7690d3cbd91e6b712b456",
     "internal/status/authority_test.go": "cc38e329c1aa2cf17e7bcf0acb7fc13d3f5f51db51784cae227b18525b07599b",
-    "internal/status/health.go": "1c3b11b9cf202d9c5c9bd66cf40112b0fd7ef349ece7943bbdec5c8950ec0b28",
+    "internal/status/health.go": "d19f82b0dc63632f1f8a91ecf8515ead7b91e748ec03c4c698695542a5f6cb8f",
     "internal/status/health_test.go": "8889e9455114d6062e3e520c3b24c00b2d22994a0abe885a8a58a60438ac4396",
-    "internal/status/http.go": "047a12ea30ec42d24af20c87baed787d25a454bb7636d611d6f14bbeb2ad6f38",
-    "internal/status/status.go": "0e7b41202853ec9409321e1f62b9a77ed55fbe2073a28ae2a0f6fad879a8d57b",
+    "internal/status/http.go": "21ce968dbce90ed79a4f8b9da60a4106ddf703c38511cf224cdfc9ffc77aae06",
+    "internal/status/status.go": "d8fe332e480b86988a003f7034c69ed77120e17d818af0ddce5d2af409b7ed2e",
     "internal/store/health.go": "c8d24ddcac3b8dbd890637495d6a0f9cdeadcdc4f7a339129f66e1d3f0ca691b",
+    "internal/store/journal.go": "eba5472fadabb5770a567ef456c5a0206210531994989bfa6dbf63b19b48b439",
+    "internal/store/outside_push_ledger.go": "f13477e4a44789666c1849a5cc40b455b1c509a5ada9553dac79e292adeb7993",
     "scripts/check-legacy-authority-cli.py": "2e7a4ed483e42e452bbb42a30fe84e508495d459d2defb87ac8eaa30540a4d00",
     "scripts/check-legacy-authority-http.py": "409c87a51d56085dc10a493834746e3c00fe6ce1111befd9a55330f4164d8a6e"
   },
@@ -26,5 +30,6 @@
     "internal/queue/testdata/wire/v1/event_policy_authority_applied.json": "7e6964d31510cc4a8f007363f81f8b8a0cdcabc0865ef1ad52274a7eb635cbf7",
     "internal/queue/testdata/wire/v1/event_write_restriction_observed.json": "ded60181213f88d602803fb14121227df1be4ee01467e76b5a22f91ff2d4206d",
     "internal/queue/testdata/wire/v1/event_write_restriction_verified.json": "8d84afaa170729c2bf72bf77b201b440f19e4109e6198efe5f8c9867f4958b48"
-  }
+  },
+  "legacy_baseline_commit": "158afe96c43a6122edca8566b09ba0ebf2a1e4bd"
 }

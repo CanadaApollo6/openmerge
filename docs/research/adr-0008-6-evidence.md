@@ -9,21 +9,43 @@ YAML/schema change, or Makefile/CI/test-flag change is part of this work.
 
 Initial baseline: `d4e15c89fa9a1e68d8cf9afe55d0f3a25318ae91` (fetched
 2026-10-20). Both #112 and #113 were OPEN at start. PR 4 reached main during
-final verification, so the final implementation was rebased and integrated.
-Final tested main baseline: `158afe96c43a6122edca8566b09ba0ebf2a1e4bd`.
-Implementation commit: `5ecebebf9301f39df2ed14dae25e40ce9c8dc0d0`. The final evidence commit changes
-only receipts/documentation. Branch: `adr0008/6-authority-status`.
-This PR does not stack on #112 or #113.
+initial verification. PR 5 then landed as
+`975b1b7762f58c128b1703f11fd5c4b6ff552c55`; this revision rebases PR 6 onto that
+main commit and wires its production ledger. Implementation commit:
+`e16a98c35da0e94e3efb68342c9fb33507bc6806`. The final evidence commit changes
+only receipts/documentation. Remote branch: `adr0008/6-authority-status`.
+The branch is checked out in another worktree, so implementation uses fresh local
+branch `t3/wire-authority-warnings-pr115` and pushes directly to the remote PR
+branch with a lease on old head `992d4351d0348071ddb488ed8820ea602bfecf4b`.
+This PR does not stack on #112 or #113. Legacy byte comparisons retain the
+original pre-PR-6 baseline `158afe96c43a6122edca8566b09ba0ebf2a1e4bd`.
 
 `internal/status/authority.go: ProjectAuthority` directly consumes PR 4's
 `WriteRestrictionStatus` durable state, last-observed and last-verified times.
 It renders sticky violations through hidden reads without duplicating the
 source's finding fold. Visibility uses retained applied evidence. Proposed verification remains excluded from applied rendering.
-`QueueOutsideWarnings` and the worker's `publishHealth` mark PR 5 ledger seams.
-The `outside_warnings` DTO and CLI/HTTP rendering are tested, but production
-leaves the field absent until the actual ledger is available. No warning count
-is inferred from the existing recent `outside_pushes` list. Runtime authority
-activation remains PR 9 work. Real organization HTTP acceptance is PR 11 work.
+`internal/store/journal.go` reads PR 5's paged outstanding-warning ledger in
+the same read-only repeatable-read transaction as queue history. It counts all
+outstanding warnings and retains at most 20 IDs in originating BaseMoved order,
+setting truncation independently of the exact count. Ledger pages retain at most
+256 events. No warning eligibility or dedupe association is inferred from
+`EventsAfter` or the recent `outside_pushes` projection. The summary's zero value
+means no outstanding warnings; a failed read returns an error and discards any
+partial summary. Empty ledgers omit `outside_warnings`, including unchanged
+GitHub-mode queues. Authority-era warnings survive rollback until acknowledged.
+
+Health restores warning summaries at worker registration and refreshes them in
+the independent outside-push audit loop, without worker locks. Requests read
+immutable atomic summaries and still perform exactly one `SELECT 1`. Acknowledged
+warnings disappear from status immediately and from health on the next audit
+pass; read failures preserve the last successful health summary. Ledger scanning
+is O(N) in journal length, bounded in memory and by the read deadline, and never
+runs on a health request. Warning presence does not affect health status.
+The PR 6 ADR section requires outstanding warnings, not a new receipt-history
+view; the existing bounded recent `outside_pushes` history remains byte-identical
+when a warning is acknowledged.
+
+Runtime authority activation remains PR 9 work. Real organization HTTP acceptance is PR 11 work.
 
 ## Automated acceptance
 
@@ -36,7 +58,7 @@ schemas and test lock scopes. No initdb was run.
 **Final results:** `make check` exit 0 (format, zero lint issues, full race-enabled
 short suite, build); focused tests exit 0; six legacy reporting fixtures, six
 complete CLI outputs and 56 complete HTTP responses match. The build embeds
-`5ecebeb-dirty` from the committed implementation (only evidence files were
+`e16a98c-dirty` from the committed implementation (only evidence files were
 dirty while the build completed);
 `execution.json` retains the binary SHA-256 and exact source commit.
 
@@ -50,6 +72,32 @@ through hidden reads; snapshot restart; warning
 visibility without failure; cancellation; queue/output/detail bounds; actual
 webhook backstop, rules/validation retry, quota and error deadlines; repeated
 on-time failures becoming degraded; and restart losing process success times.
+
+The first in-flight full check started before the rollback fix; its newly
+extended regression ran against the earlier status build and blocked after
+rollback. A subsequent formatting check caught one import indentation. Both
+were superseded by the final full check on the committed implementation;
+`superseded-make-check.log` and `superseded-format-check.log` retain those results.
+Focused tests passed with the rollback fix before its formatting-only amend.
+
+The ledger integration adds:
+
+- `TestOutsideWarningsLedgerStatusHealthAndAcknowledgement`: status/list/health
+  warning IDs and count, HTTP 200, restart, acknowledgement, unchanged history,
+  and failed refresh preserving the previous snapshot.
+- `TestOutsideWarningsBoundedAcrossPagesAndAuthorityRollback`: 300 outstanding
+  warnings across ledger pages with exactly 20 retained IDs; acknowledge an entry
+  older than recent history, retain 299 warnings across rollback, and match health.
+- `TestGitHubOutsidePushHasNoAuthorityWarnings`: default and explicitly pinned
+  GitHub queues retain outside-push history without authority warnings.
+- `TestOutsideWarningsAuditLoopPublishesWhileWorkerBusy`: the actual independent
+  audit loop publishes acknowledgement while the worker mutex stays held.
+- Extended `TestAuthorityStatusAndHealthDoNotWaitForWorker`: nonempty ledger
+  warnings remain visible in status/list/health with the worker mutex held,
+  including after rollback to GitHub mode.
+
+PR 5's existing acknowledgement, delayed-audit eligibility, snapshot and 5,000 /
+50,000-row bounded-page tests also pass after the shared reader extraction.
 
 `TestHealthRealGitUnavailableRemote` uses a fresh bare remote and cache from
 `newCompositionFixture`, with deterministic source commit inputs (Fixture author,
@@ -98,8 +146,9 @@ CLI outputs (empty, idle, waiting, paused, active and outside-push warning) agai
 the same baseline, without stripping fields or whitespace. It retains both sides
 as base64 and their hashes in the artifact directory.
 
-For queues without applied OpenMerge authority, `authority` is omitted. Until
-PR 5's real ledger is wired, `outside_warnings` is omitted too. Existing
+For queues without applied OpenMerge authority, `authority` is omitted. For
+queues without outstanding authority-era warnings, `outside_warnings` is omitted.
+Existing
 `outside_pushes`, deployed check text and preexisting JSON ordering are retained.
 The two new routes have their own response contracts and do not change existing
 routes.
