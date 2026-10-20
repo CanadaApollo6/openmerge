@@ -424,7 +424,9 @@ All PRs follow these storage and acceptance rules:
   relaxing actor lists, exclusions, or App-only refs. Extra base coverage is
   reported, not treated as a loss of current protection that would prevent the
   config edit from landing. The compiler still translates each selector exactly;
-  this is a deliberate setup transition, not a glob approximation.
+  this is a deliberate setup transition, not a glob approximation. PR 3b must
+  separately assert the proposed coverage was installed and keep its actor and
+  App-only checks; containment alone is not installation.
 - **Contract:** evaluate all applicable repository, inherited, push, and classic
   rules for today's operations: queue builds/updates, strict landing's atomic
   base and fence update, fast-forward's contributor head and marker, fence

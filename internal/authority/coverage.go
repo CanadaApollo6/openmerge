@@ -69,6 +69,11 @@ func MatchRefPattern(pattern, ref, defaultRef string) (bool, error) {
 	case "~DEFAULT_BRANCH":
 		return ref == defaultRef, nil
 	}
+	return MatchPathPattern(pattern, ref)
+}
+
+// MatchPathPattern matches pathname-aware fnmatch without ref-only sentinels.
+func MatchPathPattern(pattern, path string) (bool, error) {
 	if strings.ContainsAny(pattern, "[]\\{}\x00\r\n") {
 		return false, fmt.Errorf("unsupported GitHub pattern %q", pattern)
 	}
@@ -102,7 +107,7 @@ func MatchRefPattern(pattern, ref, defaultRef string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return re.MatchString(ref), nil
+	return re.MatchString(path), nil
 }
 
 // ContainsRef tests include-minus-exclude coverage without dropping exclusions.
@@ -130,10 +135,11 @@ func (c RefCoverage) ContainsRef(ref, defaultRef string) (bool, error) {
 // ValidateCoverageTransition proves containment constructively for setup's
 // reviewed old/proposed union. Installed must retain every current selector,
 // and may add only exactly compiled proposed selectors. Exclusions cannot
-// change. It does not authorize changes to actors or App-only ref rulesets.
+// change. PR 3b must separately assert proposed coverage is installed and retain
+// its actor and App-only ref checks; containment alone is not installation.
 // Extra returns proposed patterns added during this transition for reporting.
 func ValidateCoverageTransition(current, proposed, installed RefCoverage) (extra []string, err error) {
-	if !slices.Equal(current.Excludes, proposed.Excludes) || !slices.Equal(current.Excludes, installed.Excludes) {
+	if !samePatterns(current.Excludes, proposed.Excludes) || !samePatterns(current.Excludes, installed.Excludes) {
 		return nil, fmt.Errorf("coverage exclusions changed")
 	}
 	for _, p := range current.Includes {
@@ -152,4 +158,11 @@ func ValidateCoverageTransition(current, proposed, installed RefCoverage) (extra
 	}
 	slices.Sort(extra)
 	return slices.Compact(extra), nil
+}
+
+func samePatterns(a, b []string) bool {
+	a, b = slices.Clone(a), slices.Clone(b)
+	slices.Sort(a)
+	slices.Sort(b)
+	return slices.Equal(slices.Compact(a), slices.Compact(b))
 }

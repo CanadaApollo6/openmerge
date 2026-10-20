@@ -28,11 +28,12 @@ namespace changes, which remain setup's separate obligations.
 
 A prepared push lists exact affected refs, old/new SHAs (empty means absent),
 every introduced reachable commit, raw messages/signature data, parents, complete
-trees with paths/blob OIDs/sizes, and the frontier proven reachable from the old
-SHA. Producers must inspect the actual local objects before publication while
+parent comparisons with changed paths (including deletions and rename sources),
+introduced post-image blobs with OIDs/sizes, and a proven reachable frontier. Producers must inspect the actual local objects before publication while
 holding the existing session/cache lock. Limits are two refs, 10,000 introduced
-commit records, 100,000 path records and 16 MiB of message/signature/path metadata.
-Missing graphs, trees, parents, duplicate or unreachable records, and over-budget
+commit records, 100,000 path records, 100,000 parent edges, 100,000 frontier entries and 16 MiB
+of retained metadata including every OID.
+Missing graphs, parent comparisons, parents, duplicate or unreachable records, and over-budget
 evidence fail closed. Signature presence does not assert cryptographic validity.
 
 The evaluator consumes PR 2's complete visibility-preserving observations. It
@@ -64,3 +65,38 @@ Organization-sandbox rule enforcement is **unavailable/not executed** here.
 No sandbox writes, live refs, database, status API, or service configuration were
 touched. Fixture success does not claim GitHub enforcement or complete ADR
 acceptance; PR 11 must supply the named sandbox results before acceptance.
+
+## Round 2: pure layer
+
+Both PRs remain **Hold**. Path/extension/length rules inspect changed paths;
+size inspects introduced post-images, so an unchanged restricted file does not
+reject unrelated work and deletion cannot evade a path restriction. A rename
+is delete/add (both names retained). Roots compare against the empty tree.
+Merges compare separately against **every parent**, taking the union of paths
+and post-images; combined diff would omit one-sided changes. The
+[GitHub available-rules documentation](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets#restrict-file-paths)
+specifies changes, but does not specify merge-parent selection. All-parent union
+is the explicit conservative local choice, covered by regression tests; exact
+GitHub merge parity remains unverified pending sandbox acceptance.
+
+Creation inventories may declare `CreationBaseSHA`, an existing target base or
+ref tip observed under the producer's session lock. The producer must prove
+`merge-base --is-ancestor boundary base` for every frontier entry, and exclude
+only ancestry of that observed tip. The shared validator rejects boundaries on
+creations without this source and validates graph closure and source shape.
+Like old-ref reachability, ancestry and existing-ref provenance are producer
+obligations, never assertions inferred from arbitrary caller-selected OIDs.
+
+The [REST rules schema](https://docs.github.com/en/rest/repos/rules) was audited:
+`max_file_size` (1–100 MiB), `workflows`, `file_path_restriction`,
+`file_extension_restriction`, `max_file_path_length` (1–32767 characters),
+creation/update/deletion/non-fast-forward, signatures/linear history, commit
+message, PR/status/deployment/code-scanning parameters. Other families and
+unrecognized parameters remain unsupported. Only workflows/status checks have
+`do_not_enforce_on_create`; it is evaluated after parameter validation and before
+requiring bypass. Transport tests use the real PR 2 decoder/normalizer.
+Unknown actors cannot satisfy App bypass; `unexpected_bypass` remains PR 4.
+
+PR 3b must separately assert **proposed coverage was installed**, even though
+containment permits retaining current coverage during transition. Its actor and
+App-only checks must remain. Exclusion comparison is order-insensitive.

@@ -53,3 +53,12 @@ func TestCoverageTransitionPreservesCurrentAndReportsUnion(t *testing.T) {
 		t.Fatal("accepted namespace relaxation")
 	}
 }
+
+func TestTransitionExclusionsAreSets(t *testing.T) {
+	current := authority.RefCoverage{Includes: []string{"a"}, Excludes: []string{"x", "y"}}
+	proposed := authority.RefCoverage{Includes: []string{"a", "b"}, Excludes: []string{"y", "x"}}
+	installed := authority.RefCoverage{Includes: []string{"a", "b"}, Excludes: []string{"y", "x"}}
+	if _, err := authority.ValidateCoverageTransition(current, proposed, installed); err != nil {
+		t.Fatal(err)
+	}
+}

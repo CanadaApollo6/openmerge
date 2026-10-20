@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/CanadaApollo6/openmerge/internal/authority"
 )
@@ -77,24 +78,26 @@ func EvaluatePushRules(p PreparedPush, ctx PushRuleContext) ([]PushWarning, erro
 }
 
 func evaluatePushRule(rule authority.Rule, ref PushRef, bypass bool) (bool, error) {
-	// These rules concern admission/reviews/check counting, which stays with
-	// GitHub unless this exact policy permits the App's direct push bypass.
-	switch rule.Kind {
-	case "pull_request", "required_status_checks", "required_deployments", "required_workflows", "code_scanning":
-		if ref.NewSHA == "" {
-			return false, nil
-		}
-		if !bypass {
-			return false, pushRejected("PR policy is not bypassed by this App")
-		}
-		return true, nil
-	}
 	params := map[string][]string{}
 	for _, p := range rule.Parameters {
 		if _, ok := params[p.Name]; ok {
 			return false, pushRejected("duplicate rule parameter")
 		}
 		params[p.Name] = p.Values
+	}
+	// Validate parameters before any applicability/bypass early return.
+	switch rule.Kind {
+	case "pull_request", "required_status_checks", "required_deployments", "workflows", "code_scanning":
+		if err := admissionParameters(rule.Kind, params); err != nil {
+			return false, err
+		}
+		if ref.NewSHA == "" || ref.OldSHA == "" && len(params["do_not_enforce_on_create"]) == 1 && params["do_not_enforce_on_create"][0] == "true" {
+			return false, nil
+		}
+		if !bypass {
+			return false, pushRejected("PR policy is not bypassed by this App")
+		}
+		return true, nil
 	}
 	switch rule.Kind {
 	case "creation", "deletion", "non_fast_forward", "required_linear_history", "required_signatures":
@@ -155,14 +158,14 @@ func evaluatePushRule(rule authority.Rule, ref PushRef, bypass bool) (bool, erro
 		if err := messageParameters(params); err != nil {
 			return false, err
 		}
-	case "file_size_restriction":
+	case "max_file_size":
 		raw, ok := singleParameter(params, "max_file_size")
 		if !ok || len(params) != 1 {
 			return false, pushRejected("unsupported size parameters")
 		}
 		limit, err := strconv.ParseInt(raw, 10, 64)
-		if err != nil || limit < 1 || limit > 1<<40 {
-			return false, pushRejected("invalid size limit")
+		if err != nil || limit < 1 || limit > 100 {
+			return false, pushRejected("unsupported size limit parameter")
 		}
 		for _, c := range ref.Commits {
 			for _, f := range c.Files {
@@ -177,15 +180,42 @@ func evaluatePushRule(rule authority.Rule, ref PushRef, bypass bool) (bool, erro
 			return false, err
 		}
 		for _, pattern := range patterns {
-			if _, err := authority.MatchRefPattern(pattern, "", ""); err != nil {
+			if _, err := authority.MatchPathPattern(pattern, ""); err != nil {
 				return false, pushRejected("unsupported path pattern")
 			}
 			for _, c := range ref.Commits {
-				for _, f := range c.Files {
-					match, err := authority.MatchRefPattern(pattern, f.Path, "")
+				for _, path := range changedPaths(c) {
+					match, err := authority.MatchPathPattern(pattern, path)
 					if err != nil || match {
 						return false, pushRejected("restricted file path")
 					}
+				}
+			}
+		}
+	case "file_extension_restriction":
+		extensions, err := arrayParameters(params, "restricted_file_extensions")
+		if err != nil {
+			return false, err
+		}
+		for _, c := range ref.Commits {
+			for _, path := range changedPaths(c) {
+				for _, ext := range extensions {
+					if strings.HasSuffix(path, ext) {
+						return false, pushRejected("restricted file extension")
+					}
+				}
+			}
+		}
+	case "max_file_path_length":
+		raw, ok := singleParameter(params, "max_file_path_length")
+		limit, err := strconv.Atoi(raw)
+		if !ok || len(params) != 1 || err != nil || limit < 1 || limit > 32767 {
+			return false, pushRejected("unsupported path length parameters")
+		}
+		for _, c := range ref.Commits {
+			for _, path := range changedPaths(c) {
+				if !utf8.ValidString(path) || utf8.RuneCountInString(path) > limit {
+					return false, pushRejected("file path exceeds length limit")
 				}
 			}
 		}
@@ -285,4 +315,94 @@ func arrayParameters(params map[string][]string, key string) ([]string, error) {
 		return nil, pushRejected("missing array parameters")
 	}
 	return result, nil
+}
+
+func changedPaths(c PushCommit) []string {
+	var paths []string
+	for _, d := range c.Diffs {
+		paths = append(paths, d.Paths...)
+	}
+	return paths
+}
+
+// Admission parameters follow GitHub REST repository-rule schemas. Nested review
+// configurations not understood here remain unsupported even with an App bypass.
+// Only status checks and workflows expose do_not_enforce_on_create.
+func admissionParameters(kind string, params map[string][]string) error {
+	scalar := map[string]string{}
+	arrays := map[string]map[string]string{}
+	switch kind {
+	case "pull_request":
+		for _, key := range []string{"dismiss_stale_reviews_on_push", "require_code_owner_review", "require_last_push_approval", "required_review_thread_resolution"} {
+			scalar[key] = "bool"
+		}
+		scalar["required_approving_review_count"] = "reviews"
+		arrays["allowed_merge_methods"] = map[string]string{"": "merge"}
+	case "required_status_checks":
+		scalar["do_not_enforce_on_create"], scalar["strict_required_status_checks_policy"] = "bool", "bool"
+		arrays["required_status_checks"] = map[string]string{"context": "string", "integration_id": "int"}
+	case "workflows":
+		scalar["do_not_enforce_on_create"] = "bool"
+		arrays["workflows"] = map[string]string{"path": "string", "ref": "string", "sha": "string", "repository_id": "int"}
+	case "required_deployments":
+		arrays["required_deployment_environments"] = map[string]string{"": "string"}
+	case "code_scanning":
+		arrays["code_scanning_tools"] = map[string]string{"tool": "string", "alerts_threshold": "alerts", "security_alerts_threshold": "security"}
+	}
+	for key, values := range params {
+		typ := scalar[key]
+		if typ == "" {
+			parts := strings.Split(key, "/")
+			fields, ok := arrays[parts[0]]
+			if !ok {
+				return pushRejected("unsupported admission parameter")
+			}
+			if len(parts) == 1 && len(values) == 0 {
+				continue
+			}
+			if len(parts) < 2 || !strings.HasPrefix(parts[1], "~2") {
+				return pushRejected("unsupported admission array")
+			}
+			index, err := strconv.Atoi(strings.TrimPrefix(parts[1], "~2"))
+			if err != nil || index < 0 {
+				return pushRejected("invalid admission array index")
+			}
+			field := ""
+			if len(parts) == 3 {
+				field = parts[2]
+			} else if len(parts) != 2 {
+				return pushRejected("unsupported admission field")
+			}
+			typ = fields[field]
+		}
+		if len(values) != 1 || !admissionValue(typ, values[0]) {
+			return pushRejected("unsupported admission parameter value")
+		}
+	}
+	return nil
+}
+
+func admissionValue(typ, raw string) bool {
+	switch typ {
+	case "bool":
+		return raw == "true" || raw == "false"
+	case "int", "reviews":
+		n, err := strconv.ParseInt(raw, 10, 64)
+		return err == nil && (typ != "reviews" || n >= 0 && n <= 10)
+	case "string", "merge", "alerts", "security":
+		var value string
+		if json.Unmarshal([]byte(raw), &value) != nil {
+			return false
+		}
+		switch typ {
+		case "merge":
+			return value == "merge" || value == "squash" || value == "rebase"
+		case "alerts":
+			return value == "none" || value == "errors" || value == "errors_and_warnings" || value == "all"
+		case "security":
+			return value == "none" || value == "critical" || value == "high_or_higher" || value == "medium_or_higher" || value == "all"
+		}
+		return true
+	}
+	return false
 }
