@@ -33,6 +33,12 @@ func (s *Server) outsidePushLoop(ctx context.Context) {
 			auditCtx, cancel := context.WithTimeout(ctx, s.options.ActionTimeout)
 			err := s.auditOutsidePushes(auditCtx, w.id, w.Key)
 			cancel()
+			// Warning rendering has its own read deadline and never waits for worker
+			// ownership. Acknowledgements are reflected on the next audit pass.
+			warningErr := s.refreshOutsideWarnings(ctx, w)
+			if warningErr != nil && ctx.Err() == nil {
+				s.options.Logger.Warn("outside push warnings", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "error", warningErr)
+			}
 			if err != nil && ctx.Err() == nil {
 				s.options.Logger.Warn("outside push audit", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "error", err)
 			}
@@ -45,6 +51,18 @@ func (s *Server) outsidePushLoop(ctx context.Context) {
 		case <-timer.C:
 		}
 	}
+}
+
+// refreshOutsideWarnings publishes only complete ledger snapshots. A failed
+// read preserves the last successful snapshot without turning warnings into a
+// health failure. Health's own DB probe still reports database outages.
+func (s *Server) refreshOutsideWarnings(ctx context.Context, w *worker) error {
+	summary, err := s.store.ReadOutsidePushWarnings(ctx, w.id)
+	if err != nil {
+		return err
+	}
+	w.outsideWarnings.Store(&summary)
+	return nil
 }
 
 func (s *Server) auditOutsidePushes(ctx context.Context, id store.QueueID, key store.QueueKey) error {

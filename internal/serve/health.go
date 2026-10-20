@@ -31,7 +31,11 @@ func (s *Server) Health(ctx context.Context) (status.Health, error) {
 		if q == nil {
 			q = &status.HealthQueue{Installation: w.Key.Installation, Repository: w.Key.Repository, Base: w.Key.BaseBranch, Lane: w.Key.Lane, Lifecycle: "unknown", Watched: true, StartedAt: s.startedAt, Readiness: status.Readiness{Reason: "not-yet-reconciled"}}
 		}
-		view := status.EvaluateHealth(*q, s.options.Health, h.CheckedAt)
+		snapshot := *q
+		if warnings := w.outsideWarnings.Load(); warnings != nil {
+			snapshot.OutsideWarnings = status.ProjectOutsideWarnings(*warnings)
+		}
+		view := status.EvaluateHealth(snapshot, s.options.Health, h.CheckedAt)
 		if view.Failing() {
 			h.Healthy = false
 		}
@@ -85,8 +89,7 @@ func (s *Server) publishHealth(w *worker, state queue.State, success bool, err e
 		q.Reasons = []string{"rules-validation-pending"}
 	}
 	q.Authority = status.ProjectAuthority(state, now)
-	// PR 5: publish its outstanding-warning ledger here when it is on main.
-	// Recent OutsidePushes cannot establish whether a warning was acknowledged.
+	// The independent outside-push loop publishes ledger warnings without worker locks.
 	w.health.Store(&q)
 }
 

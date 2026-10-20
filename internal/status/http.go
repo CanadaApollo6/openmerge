@@ -363,13 +363,6 @@ func writeJSON(w http.ResponseWriter, value any) {
 }
 
 func applyReadiness(source Source, q *Queue, sanitizer *diagnostic.Sanitizer) {
-	// PR 5 integration seam: this provider must return its outstanding ledger,
-	// never the bounded recent outside_pushes projection.
-	if ledger, ok := source.(interface {
-		QueueOutsideWarnings(store.QueueKey) *OutsideWarnings
-	}); ok {
-		q.OutsideWarnings = ledger.QueueOutsideWarnings(store.QueueKey{Installation: q.Installation, Repository: q.Repository, BaseBranch: q.Base, Lane: q.Lane})
-	}
 	if q.Authority != nil {
 		if runtime, ok := source.(interface {
 			QueueReadinessSnapshot(store.QueueKey) *Readiness

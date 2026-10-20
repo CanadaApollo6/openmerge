@@ -612,11 +612,19 @@ when truncated. Ordinary status retains every per-element visibility.
 This rendering consumes PR 4's durable `WriteRestrictionStatus` projection,
 including sticky violations through hidden reads. Visibility comes from the
 retained applied evidence. Proposed verification is never presented as applied
-verification. `outside_warnings` is reserved for
-PR 5's ledger, with `outstanding`, bounded `event_ids`, and `truncated`. Its marked
-status provider / worker-snapshot seams deliberately leave it absent until that
-ledger exists. The deployed `outside_pushes` recent list is unchanged and is not
-substituted for outstanding warnings.
+verification. `outside_warnings` consumes PR 5's outstanding ledger, with an
+exact `outstanding` count, at most 20 `event_ids` in originating base-move order,
+and `truncated` when IDs are omitted. Empty ledgers omit the field. Status reads
+share the journal's read-only snapshot and use 256-row ledger pages, with no
+worker locks or `EventsAfter` dedupe assumptions. Health reads an atomic summary,
+restored at worker registration and refreshed by the independent outside-push
+audit loop; acknowledgement appears there on its next pass. Ledger read failures
+retain the last successful health warning snapshot. The warning scan is O(N) in
+journal length, bounded in memory and by the read deadline; health requests never
+perform that scan. Acknowledgement removes the outstanding warning while keeping
+the deployed recent `outside_pushes` history unchanged. Pushes originating in
+GitHub mode gain no authority warning; warnings from before a rollback remain
+until acknowledged.
 
 This reporting change may merge but **must not deploy until ADR 0009 period B
 has drained**. PR 9 still owns authority activation; PR 11 owns real sandbox HTTP

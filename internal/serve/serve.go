@@ -95,7 +95,8 @@ type Server struct {
 }
 
 type worker struct {
-	health atomic.Pointer[status.HealthQueue]
+	health          atomic.Pointer[status.HealthQueue]
+	outsideWarnings atomic.Pointer[store.OutsideWarningSummary]
 	// Approval status uses an immutable policy snapshot while the worker is busy.
 	// Nil retains legacy reporting's locking behavior during the trial.
 	approvalStatus     atomic.Pointer[queue.Config]
@@ -171,6 +172,9 @@ func New(ctx context.Context, db *store.Store, targets []Target, options Options
 			return nil, err
 		}
 		s.publishHealth(w, state, false, nil, time.Now())
+		if err := s.refreshOutsideWarnings(ctx, w); err != nil {
+			return nil, err
+		}
 		s.queues = append(s.queues, w)
 	}
 	return s, nil

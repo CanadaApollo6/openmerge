@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
+	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
 // Probe limits bound health work independently of journal size.
@@ -165,7 +166,7 @@ func serveHealth(w http.ResponseWriter, r *http.Request, source Source, sanitize
 		}
 		if q.OutsideWarnings != nil {
 			warnings := *q.OutsideWarnings
-			const warningIDLimit = 20
+			const warningIDLimit = store.OutsideWarningIDLimit
 			if len(warnings.EventIDs) > warningIDLimit {
 				warnings.EventIDs = warnings.EventIDs[:warningIDLimit]
 				warnings.Truncated = true

@@ -12,9 +12,10 @@ import (
 
 // Journal is a queue's immutable seed and committed events at one DB snapshot.
 type Journal struct {
-	Key    QueueKey
-	Seed   queue.State
-	Events []JournalEvent
+	Key             QueueKey
+	Seed            queue.State
+	Events          []JournalEvent
+	OutsideWarnings OutsideWarningSummary
 }
 
 // JournalEvent retains the persisted wire envelope for explainability clients.
@@ -56,6 +57,11 @@ func (s *Store) Journals(ctx context.Context, keys []QueueKey) ([]Journal, error
 				return e, err
 			})
 			if err != nil {
+				return err
+			}
+			// Share the journal snapshot with the paged outstanding-warning ledger.
+			// Its dedupe associations, rather than EventsAfter, establish eligibility.
+			if err := visitOutsidePushWarnings(ctx, tx, id, journal.OutsideWarnings.add); err != nil {
 				return err
 			}
 			result = append(result, journal)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -29,6 +30,7 @@ func TestAuthorityStatusAndHealthDoNotWaitForWorker(t *testing.T) {
 	state, _, err := s.store.Load(t.Context(), w.id)
 	must(t, err)
 	s.publishHealth(w, state, false, nil, time.Now())
+	reportingMoves(t, s, w, 1)
 	handler := status.DynamicHandler(s, func() []store.QueueKey { return s.Keys() }, "secret", nil)
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -48,6 +50,9 @@ func TestAuthorityStatusAndHealthDoNotWaitForWorker(t *testing.T) {
 			}
 			if path != "/v1/live" && !json.Valid(rr.Body.Bytes()) {
 				t.Fatal(rr.Body)
+			}
+			if path != "/v1/live" && !strings.Contains(rr.Body.String(), `"outside_warnings":{"outstanding":1,`) {
+				t.Fatalf("%s lost warnings while worker held: %s", path, rr.Body)
 			}
 		case <-time.After(200 * time.Millisecond):
 			t.Fatalf("%s blocked on worker lock", path)
@@ -225,6 +230,11 @@ func TestHealthHTTPWatchedConditionsAndIsolation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			q := healthy
 			tc.change(&q)
+			summary := store.OutsideWarningSummary{}
+			if q.OutsideWarnings != nil {
+				summary = store.OutsideWarningSummary{Outstanding: q.OutsideWarnings.Outstanding, EventIDs: q.OutsideWarnings.EventIDs, Truncated: q.OutsideWarnings.Truncated}
+			}
+			w.outsideWarnings.Store(&summary)
 			w.health.Store(&q)
 			r := httptest.NewRequest("GET", "/v1/health", nil)
 			r.Header.Set("Authorization", "Bearer secret")

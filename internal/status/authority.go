@@ -7,6 +7,7 @@ import (
 
 	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
+	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
 // Authority is a read-only rendering of durable applied evidence. Ages are
@@ -28,13 +29,21 @@ type AuthorityElement struct {
 	Visibility string `json:"visibility"`
 }
 
-// OutsideWarnings is the PR 5 ledger rendering seam. Recent OutsidePushes are
-// NOT an outstanding-warning ledger. Until PR 5 supplies its durable projection,
-// this field is absent rather than claiming zero outstanding warnings.
+// OutsideWarnings renders outstanding ledger entries, independently of the
+// bounded recent OutsidePushes history. Acknowledgements remove only warnings.
 type OutsideWarnings struct {
 	Outstanding int     `json:"outstanding"`
 	EventIDs    []int64 `json:"event_ids"`
 	Truncated   bool    `json:"truncated"`
+}
+
+// ProjectOutsideWarnings omits empty ledgers to preserve legacy output. The
+// ledger read must have succeeded; callers must discard summaries on error.
+func ProjectOutsideWarnings(summary store.OutsideWarningSummary) *OutsideWarnings {
+	if summary.Outstanding == 0 {
+		return nil
+	}
+	return &OutsideWarnings{Outstanding: summary.Outstanding, EventIDs: append([]int64{}, summary.EventIDs...), Truncated: summary.Truncated}
 }
 
 // ProjectAuthority renders PR 4's durable projection. It neither interprets
