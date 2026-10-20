@@ -47,8 +47,9 @@ func (g *bootstrapGit) EnsureFence(ctx context.Context, r forge.RepoRef, ref str
 
 func TestAuthorityBootstrapPinsBeforeFirstRealFence(t *testing.T) {
 	for _, path := range []string{"registration", "refreshWorker", "cycle"} {
-		for _, change := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s/change-%t", path, change), func(t *testing.T) {
+		for _, mode := range []string{"none", "basis", "policy", "reload"} {
+			change := mode != "none"
+			t.Run(fmt.Sprintf("%s/change-%s", path, mode), func(t *testing.T) {
 				db := database(t)
 				f := newCompositionFixture(t, []int{1})
 				ctx := t.Context()
@@ -108,8 +109,16 @@ func TestAuthorityBootstrapPinsBeforeFirstRealFence(t *testing.T) {
 					calls := 0
 					opts.Guard = func(ctx context.Context, c forge.PushValidationContext) error {
 						calls++
-						if change && calls == 2 {
-							must(t, observed(2))
+						if calls == 2 {
+							switch mode {
+							case "basis":
+								must(t, observed(2))
+							case "policy":
+								_, err := db.Append(ctx, id, []queue.Event{queue.ConfigApplied{Commit: tip, Digest: strings.Repeat("d", 64)}}, "")
+								must(t, err)
+							case "reload":
+								db.Close()
+							}
 						}
 						return original(ctx, c)
 					}
@@ -182,7 +191,13 @@ func TestAuthorityBootstrapPinsBeforeFirstRealFence(t *testing.T) {
 					t.Fatalf("ordering %v", order)
 				}
 				state, _, loadErr := db.Load(ctx, id)
-				must(t, loadErr)
+				if mode == "reload" {
+					if loadErr == nil {
+						t.Fatal("closed store unexpectedly loaded")
+					}
+				} else {
+					must(t, loadErr)
+				}
 				cmd := exec.Command(realGit, "--git-dir="+f.remote, "show-ref", "--verify", "--hash", "refs/heads/openmerge/fence/main")
 				out, readErr := cmd.Output()
 				if change {
