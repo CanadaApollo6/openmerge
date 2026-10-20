@@ -324,10 +324,62 @@ Round-2 3a-i verification at `0de94f725b37cbde7fc495e4fe3eb7cc6913590b`:
   real-Git bootstrap matrix (registration/refresh/cycle × success, basis drift,
   config drift, reload failure, missing seeing activation, fingerprint drift, unseeing runtime evidence).
   Logs: `/home/riels/.cache/openmerge-3a-ii-round2-focused.log` and
-  `/home/riels/.cache/openmerge-3a-ii-round2-seeing.log`.
+  `/home/riels/.cache/openmerge-3a-ii-round2-seeing-final.log`.
 
 All commands used the required host lock, `GOFLAGS=-p=2`, and 4 GiB memory limit
 (6 GiB for replay). The initial external-package test compile typo was corrected;
 a superseded full run was canceled after the final cap vectors were added. Only
 the final successful run above is acceptance evidence. No flags, Makefile, CI,
 live database/status API, service units, or live refs were changed.
+
+## Final round-2 executed results
+
+The tested 3a-ii executable revision is
+`e8f77f9487552832fc5cc143f23b67bb6c87df34`, stacked on 3a-i
+`0de94f725b37cbde7fc495e4fe3eb7cc6913590b`. The following evidence-only commit
+changes documentation/results, not Go source. Both PRs remain **Hold**.
+
+- Final 3a-ii `make check`: **exit 0**, formatting/lint (zero issues), all race
+  tests including PostgreSQL at localhost:54329, real Git, simulator, and build.
+  Log: `/home/riels/.cache/openmerge-3a-ii-round2-final-check.log`.
+- Final 3a-ii legacy comparison: **exit 0**, 24/24 real Git and 24/24 fake
+  checkpoints identical in object bytes, OIDs, refs, and normalized command/push
+  traces. Report: `/home/riels/.cache/openmerge-3a-ii-round2-final-legacy/report.json`.
+- Final strict offline replay: **exit 0**, gates 2/4 **PASS**. State, structural
+  state, actions, snapshot hashes and boundary checkpoints match **2,159/2,159**;
+  **8,676** boundary probes agree, maximum 12 (cap 128 not hit). Repeat determinism,
+  all 22 self-tests, and 7/7 synthetic checkpoints pass. Report:
+  `/home/riels/.cache/openmerge-3a-ii-round2-final-replay/report.json`.
+- Retained real-Git rerun: **exit 0**, 15 rejection scenarios independently have
+  zero pushes and byte-identical before/after refs. Capture includes 40 raw
+  parent/root diff commands and 146 cat-file reads, plus deletion/rename and
+  second-parent merge cases and creation excluding existing oversized content.
+  The 447-artifact index is
+  `/home/riels/.cache/openmerge-3a-round2-object-evidence/manifest.json`; its raw
+  commit OIDs were independently recomputed from Git's object framing. The run's
+  log is adjacent at `test.log`. Actual deletion inventories accept an absent
+  old object, proving that inspection does not fetch it.
+
+The [round-2 machine results](adr-0008-3a-round2-results.json) record both tested
+source revisions, metrics, exact artifact paths and SHA-256 hashes (including
+exported input). Legacy stream hashes remain
+`c4540c89e3f93b997c6132bb976532d7701b0a07e434a70868123cb80b626d0e`
+(real Git) and
+`041deff2b2f2fd0985c4c1d185267ad9e759d6af1404ee9ef6eda6eee2f342fd`
+(fake). All strict replay streams hash to
+`1fe079295539183b7008e70b940c7f71d45bd4aa4e443c8c1e581fa10d31051a`.
+
+These results supersede round-1 size/fast-forward rejection claims: the old size
+rule spelling was unsupported, and sibling fast-forward heads failed before
+validation. The final tests use the REST `max_file_size` type and a valid chain
+with a specific signature-validation error assertion. A superseded 3a-ii check
+was canceled while correcting the seeing-source guard; the final successful
+check/replays above include the hidden-bypass steady-state case. Context evaluation
+always uses activation evidence, while the guard binds the exact latest durable
+observation/revision without requiring that ordinary runtime read to be seeing.
+
+The earlier reproduction commands apply unchanged, substituting the final
+round-2 candidate/output paths above. No GitHub enforcement sandbox was used;
+merge-parent parity remains explicitly unverified because the cited documentation
+does not prescribe parent selection. This is test/evidence completion, with
+activation still owned by PR 9 and no deployment authorization before period B drains.
