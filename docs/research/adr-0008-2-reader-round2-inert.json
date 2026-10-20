@@ -1,0 +1,194 @@
+{
+  "baseline_commit": "e9b24e84a7c6a2ec93be501f4730cefdbf99c0fa",
+  "boundary": {
+    "authority_fixture": "internal/queue/testdata/wire/v1/variants/policy_authority_applied_activation.json",
+    "authority_v7_sha256": "c5d7a3d5e56f25bbf3175741f24df40e54dbf3501882d137311172f7ffdb01cd",
+    "authority_version": 7,
+    "baseline_old_decoder": "rejected v7; preserved v6 bytes and outside-push cursor fields",
+    "field": "authority",
+    "field_declaration": "authority        *authorityProjection",
+    "legacy_v6_sha256": "94a9dea394ab17bb0921e76c413d40c2a3a8dfa73733e53728460de01d59d096",
+    "legacy_version": 6,
+    "outside_push_cursor_shape": "ScannedThrough, AuditedBaseMove, State, ObservedBase, LastLanding, Pending"
+  },
+  "candidate_commit": "d4be624a5a6dd5b376f62f7864216b1c93d9a42e",
+  "commands": [
+    {
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/adr0008-2-round2/runs/report/candidate-boundary/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/adr0008-2-round2/runs/report/candidate-boundary/tmp ADR_V6=/home/riels/.cache/adr0008-2-round2/runs/report/legacy-v6.json ADR_V7=/home/riels/.cache/adr0008-2-round2/runs/report/authority-v7.json ADR_DIFF=/home/riels/.cache/adr0008-2-round2/runs/report/candidate-differential.json go test -overlay /home/riels/.cache/adr0008-2-round2/runs/report/candidate-overlay.json ./internal/queue -run '^TestADR00081$|^TestADR00081Differential$' -count=1 -timeout=10m -v",
+      "exit": 0,
+      "logs": "/home/riels/.cache/adr0008-2-round2/runs/report/candidate-boundary",
+      "name": "candidate-boundary"
+    },
+    {
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/adr0008-2-round2/runs/report/baseline-old-decoder/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/adr0008-2-round2/runs/report/baseline-old-decoder/tmp ADR_V6=/home/riels/.cache/adr0008-2-round2/runs/report/legacy-v6.json ADR_V7=/home/riels/.cache/adr0008-2-round2/runs/report/authority-v7.json ADR_DIFF=/home/riels/.cache/adr0008-2-round2/runs/report/baseline-differential.json go test -overlay /home/riels/.cache/adr0008-2-round2/runs/report/old-decoder-overlay.json ./internal/queue -run '^TestADR00081$|^TestADR00081Differential$' -count=1 -timeout=10m -v",
+      "exit": 0,
+      "logs": "/home/riels/.cache/adr0008-2-round2/runs/report/baseline-old-decoder",
+      "name": "baseline-old-decoder"
+    },
+    {
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/adr0008-2-round2/runs/report/differential-replay/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/adr0008-2-round2/runs/report/differential-replay/tmp /home/riels/.local/share/mise/installs/python/latest/bin/python3 /home/riels/.t3/worktrees/openmerge/t3-b10e8240/scripts/check-live-journal-replay.py --baseline /home/riels/.cache/adr0008-1-round2-main --candidate /home/riels/.t3/worktrees/openmerge/t3-b10e8240 --baseline-overlay /home/riels/.cache/adr0008-2-round2/runs/report/baseline-overlay.json --events /home/riels/.cache/om-pr72-fix1-input/events.jsonl --queues /home/riels/.cache/om-pr72-fix1-input/queues.jsonl --config-file .openmerge.yml --strict-state --out /home/riels/.cache/adr0008-2-round2/runs/report/replay.json",
+      "exit": 0,
+      "logs": "/home/riels/.cache/adr0008-2-round2/runs/report/differential-replay",
+      "name": "differential-replay"
+    }
+  ],
+  "comparator_note": "Existing comparator source unchanged. Baseline overlay adds the same nil *authorityProjection field, so additive dormancy is visible and exact; no comparator allowance was added. strict-state remains enabled for legacy snapshot bytes.",
+  "contract_differential": {
+    "baseline_checkpoints": 90,
+    "baseline_sha256": "88e727ebe7ea5b570f352c5c661c2cd1642c1b5120f3d3ed086993f4dd00362a",
+    "candidate_checkpoints": 90,
+    "candidate_sha256": "88e727ebe7ea5b570f352c5c661c2cd1642c1b5120f3d3ed086993f4dd00362a",
+    "first_difference": null,
+    "first_difference_index": null,
+    "identical": true,
+    "numeric_by_case_depth": {
+      "approval/depth1": {
+        "baseline": {
+          "checkpoints": 13,
+          "plan_bytes": 2123,
+          "plan_count": 6,
+          "snapshot_bytes": 80375
+        },
+        "candidate": {
+          "checkpoints": 13,
+          "plan_bytes": 2123,
+          "plan_count": 6,
+          "snapshot_bytes": 80375
+        },
+        "delta_checkpoints": 0,
+        "delta_plan_bytes": 0,
+        "delta_plan_count": 0,
+        "delta_snapshot_bytes": 0
+      },
+      "approval/depth4": {
+        "baseline": {
+          "checkpoints": 13,
+          "plan_bytes": 2182,
+          "plan_count": 6,
+          "snapshot_bytes": 80375
+        },
+        "candidate": {
+          "checkpoints": 13,
+          "plan_bytes": 2182,
+          "plan_count": 6,
+          "snapshot_bytes": 80375
+        },
+        "delta_checkpoints": 0,
+        "delta_plan_bytes": 0,
+        "delta_plan_count": 0,
+        "delta_snapshot_bytes": 0
+      },
+      "legacy-block/depth1": {
+        "baseline": {
+          "checkpoints": 32,
+          "plan_bytes": 9634,
+          "plan_count": 37,
+          "snapshot_bytes": 51904
+        },
+        "candidate": {
+          "checkpoints": 32,
+          "plan_bytes": 9634,
+          "plan_count": 37,
+          "snapshot_bytes": 51904
+        },
+        "delta_checkpoints": 0,
+        "delta_plan_bytes": 0,
+        "delta_plan_count": 0,
+        "delta_snapshot_bytes": 0
+      },
+      "legacy-block/depth4": {
+        "baseline": {
+          "checkpoints": 32,
+          "plan_bytes": 9693,
+          "plan_count": 37,
+          "snapshot_bytes": 51904
+        },
+        "candidate": {
+          "checkpoints": 32,
+          "plan_bytes": 9693,
+          "plan_count": 37,
+          "snapshot_bytes": 51904
+        },
+        "delta_checkpoints": 0,
+        "delta_plan_bytes": 0,
+        "delta_plan_count": 0,
+        "delta_snapshot_bytes": 0
+      }
+    }
+  },
+  "exports": {
+    "events": {
+      "max_event_id": 2158,
+      "path": "/home/riels/.cache/om-pr72-fix1-input/events.jsonl",
+      "rows": 2158,
+      "sha256": "9c8f78f3e967c7cb030948cfc9871cc67a45da06f80b12f27d1c55d09ba8accf"
+    },
+    "queues": {
+      "path": "/home/riels/.cache/om-pr72-fix1-input/queues.jsonl",
+      "rows": 1,
+      "sha256": "418f025a0e3c8792321b6d71d297f17fff1adf48cb616c8f4fcb774163696886"
+    }
+  },
+  "offline_only": true,
+  "replay": {
+    "actions_identical": "2159/2159",
+    "boundary_checkpoints_identical": "2159/2159",
+    "exit": 0,
+    "first_difference": null,
+    "gate2": "PASS",
+    "gate4": "PASS",
+    "non_allowlisted_fields": [],
+    "snapshot_hashes_identical": "2159/2159",
+    "state_mode": "strict",
+    "streams": {
+      "baseline": {
+        "authority_projection": {
+          "checkpoints": 2159,
+          "field_present": 2159,
+          "nil": 2159,
+          "non_nil": 0
+        },
+        "path": "/home/riels/.cache/adr0008-2-round2/runs/report/replay-streams-m8ll2b25/baseline.jsonl"
+      },
+      "candidate": {
+        "authority_projection": {
+          "checkpoints": 2159,
+          "field_present": 2159,
+          "nil": 2159,
+          "non_nil": 0
+        },
+        "path": "/home/riels/.cache/adr0008-2-round2/runs/report/replay-streams-m8ll2b25/candidate.jsonl"
+      },
+      "candidate-repeat": {
+        "authority_projection": {
+          "checkpoints": 2159,
+          "field_present": 2159,
+          "nil": 2159,
+          "non_nil": 0
+        },
+        "path": "/home/riels/.cache/adr0008-2-round2/runs/report/replay-streams-m8ll2b25/candidate-repeat.jsonl"
+      }
+    },
+    "structural_state_identical": "2159/2159",
+    "verdict": "PASS"
+  },
+  "script": "/home/riels/.t3/worktrees/openmerge/t3-b10e8240/scripts/adr-0008-1-verify.py",
+  "script_lines": 206,
+  "verdict": "PASS",
+  "wire_fixtures": {
+    "identical": true,
+    "legacy_fixtures": 94,
+    "legacy_registry_fixtures": 85,
+    "legacy_sha256": "328d1264cf4242cf381c1f596f0393064395a31b5e5994cb07ef291ac9e474c1",
+    "new_fixtures": [
+      "event_policy_authority_applied.json",
+      "event_write_restriction_observed.json",
+      "event_write_restriction_verified.json",
+      "variants/policy_authority_applied_activation.json",
+      "variants/write_restriction_observed_unauthorized_bypass.json",
+      "variants/write_restriction_verified_repository_id.json",
+      "variants/write_restriction_verified_repository_name.json",
+      "variants/write_restriction_verified_repository_property.json"
+    ]
+  }
+}

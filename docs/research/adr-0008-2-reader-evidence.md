@@ -275,7 +275,7 @@ removed and bytecode generation disabled before the passing run. No failed run
 was treated as acceptance evidence. No sandbox request was repeated.
 
 The [artifact SHA-256 manifest](adr-0008-2-reader-evidence.sha256) covers this
-report, the sanitized transcript, the check log and the inert report. No raw
+report, the sanitized transcript, the check log and both inert reports. No raw
 credential-bearing artifact is included.
 
 ## Round 2 review corrections
@@ -325,3 +325,52 @@ The real-git test and evidence now state its actual assertions: refs remain
 unchanged and coverage/findings stay empty. It does not validate selector
 interpretation or compare protection coverage with refs. The sandbox transcript
 is retained unchanged; no sandbox GET was repeated in this round.
+
+## Round 2 verification results
+
+The clean implementation commit `d4be624a5a6dd5b376f62f7864216b1c93d9a42e`
+passed `make check` from `2026-10-20T15:48:51Z` through
+`2026-10-20T15:57:05Z`: formatting, lint (zero issues), the full short race suite,
+PostgreSQL integration tests on localhost:54329, and the production build.
+The built binary is version `d4be624`; it was never deployed or invoked against
+GitHub. The [retained check log](adr-0008-2-reader-check.log) appends the exact
+wrapped invocation and exit 0 to the earlier check record.
+
+The committed candidate also passed the focused authority, queue wire/fixture,
+shared fake/HTTP, and real-git suites (exit 0):
+
+```sh
+flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB \
+  go test ./internal/authority ./internal/queue ./internal/forge/... \
+  -run 'Test(WriteRestriction|UnconfiguredAuthority|Authority|ProtectionFingerprint|InheritedConditionAndNestedRuleFingerprints|Wire)' -count=1
+```
+
+The initial focused run detected trailing newlines introduced while rewriting
+three compact frozen fixtures. They were removed before the passing focused and
+full checks; no failed run is acceptance evidence.
+
+The unchanged `scripts/adr-0008-1-verify.py` was rerun offline against the retained
+pre-authority baseline `e9b24e84a7c6a2ec93be501f4730cefdbf99c0fa` and candidate
+`d4be624`, using the same exported event/queue files and hash preflight. This
+baseline retains the old decoder needed for the v7 rejection check. As before,
+an external Python runner overrides `invoke` in process to force `GOMEMLIMIT=4GiB`
+for every command, including replay. The script, comparator and test flags are
+unchanged; all heavy invocations retain `flock`, `GOFLAGS=-p=2`, and disabled
+module/toolchain downloads. The shared lock serialized this work with another
+checkout's tests. The [round 2 inert report](adr-0008-2-reader-round2-inert.json)
+retains exact commands, exits, hashes and local artifact paths.
+
+- Wrapper exit 0; strict replay gates 2 and 4 PASS. All 2,159/2,159 actions,
+  structural states, snapshot hashes and deadline-boundary checkpoints match,
+  including the repeated candidate stream, with no non-allowlisted differences.
+- Authority remains nil at all 2,159 checkpoints in all three streams.
+- All 90 approval/legacy checkpoints at depths 1 and 4 match exactly; checkpoint
+  counts, action counts, action bytes and snapshot bytes have zero deltas.
+- The untouched baseline decoder preserves v6 snapshot/outside-push cursor bytes
+  and rejects authority v7.
+- All 94 pre-authority wire fixtures remain byte-identical. The eight fixtures
+  listed as new relative to that older baseline are PR 1 fixtures already on
+  main, not additions by PR 2. Only the three PR 1 variants listed above changed.
+
+The final evidence commit changes documentation/artifacts only. No sandbox
+request was repeated, no production consumer was selected, and the PR stays Inert.
