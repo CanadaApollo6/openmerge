@@ -15,10 +15,10 @@ func preparedFixture() PreparedPush {
 }
 
 func ruleContext(rules ...authority.Rule) PushRuleContext {
-	return PushRuleContext{AppID: "42", DefaultBranch: "main", Observation: authority.Observation{
+	return PushRuleContext{AppID: "42", DefaultBranch: "main", BaseRef: "refs/heads/main", Observation: authority.Observation{
 		Inventory: authority.Visible, Findings: []authority.Finding{}, Coverage: []authority.Coverage{{Ref: "refs/heads/main", Visibility: authority.Visible, ProtectionIDs: []string{"repository_ruleset/one"}}},
 		Protections: []authority.Protection{{ID: "one", Source: "repository_ruleset", Target: "push", Enforcement: "active", TargetsVisibility: authority.Visible, RulesVisibility: authority.Visible, BypassVisibility: authority.Visible,
-			Includes: []string{}, Excludes: []string{}, Conditions: []authority.Parameter{}, Rules: rules, BypassActors: []authority.BypassActor{{Kind: "app", ID: "42", Mode: "always"}}}},
+			Includes: []string{}, Excludes: []string{}, Conditions: []authority.Parameter{}, Rules: append([]authority.Rule{}, rules...), BypassActors: []authority.BypassActor{{Kind: "app", ID: "42", Mode: "always"}}}},
 	}}
 }
 
@@ -281,5 +281,15 @@ func TestPreparedGraphAtAggregateCaps(t *testing.T) {
 	r.Boundary = append(r.Boundary, r.OldSHA)
 	if err := ValidatePreparedPush(p); err == nil {
 		t.Fatal("cap+1 frontier entries accepted")
+	}
+}
+
+func TestBuildChecksRetainedBaseContentPolicy(t *testing.T) {
+	p := preparedFixture()
+	ctx := ruleContext(authority.Rule{Kind: "required_signatures", Parameters: []authority.Parameter{}})
+	ctx.Observation.Protections[0].Target = "branch"
+	ctx.Observation.Protections[0].Includes = []string{"refs/heads/main"}
+	if _, err := EvaluatePushRules(p, ctx); err == nil {
+		t.Fatal("base-only content policy did not reject generated marker")
 	}
 }

@@ -39,7 +39,7 @@ func TestReviewRound3PeerSettlesAlreadyLandingAfterRefRead(t *testing.T) {
 			peer, err := New(t.Context(), s.store, []Target{w.Target}, s.options)
 			must(t, err)
 			w.Git = &outsidePushRefHook{Forge: f, afterRead: func() {
-				_, err := f.Land(t.Context(), repo, req)
+				_, err := f.Land(t.Context(), repo, req, forge.PushOptions{})
 				must(t, err)
 				held, err := peer.settle(t.Context(), peer.queues[0])
 				must(t, err)
@@ -60,7 +60,7 @@ func TestOutsidePushRealRollbackAndRestoreHasSameFlag(t *testing.T) {
 	for _, method := range []string{"merge", "fast-forward"} {
 		t.Run(method, func(t *testing.T) {
 			s, w, f, before, req := outsidePushRound2Attempt(t, method, false)
-			_, err := f.Land(t.Context(), repo, req)
+			_, err := f.Land(t.Context(), repo, req, forge.PushOptions{})
 			must(t, err)
 			held, err := s.settle(t.Context(), w)
 			must(t, err)
@@ -81,7 +81,7 @@ func TestOutsidePushRealRollbackAndRestoreHasSameFlag(t *testing.T) {
 
 func TestOutsidePushOnlyExactPreLandingRewindIsFlagged(t *testing.T) {
 	s, w, f, before, req := outsidePushRound2Attempt(t, "merge", false)
-	_, err := f.Land(t.Context(), repo, req)
+	_, err := f.Land(t.Context(), repo, req, forge.PushOptions{})
 	must(t, err)
 	held, err := s.settle(t.Context(), w)
 	must(t, err)
@@ -142,7 +142,7 @@ func TestReviewRound3AuditHoldsWorkerAgainstNextSettlement(t *testing.T) {
 	}
 	_, err = s.store.Append(t.Context(), w.id, []queue.Event{queue.LandingStarted{BatchID: b.ID, AttemptID: "round3", FenceToken: before.Fence, At: time.Now().Add(-time.Hour)}}, "")
 	must(t, err)
-	_, err = f.Land(t.Context(), repo, forge.LandRequest{Base: "main", ExpectedBaseSHA: before.BaseSHA, TestedSHA: b.TestedSHA, Fence: "openmerge/fence/main", ExpectedFence: before.Fence, NextFenceID: "land/round3", PRs: []forge.BuildPR{{Number: 1, HeadSHA: b.PRs[0].HeadSHA}}})
+	_, err = f.Land(t.Context(), repo, forge.LandRequest{Base: "main", ExpectedBaseSHA: before.BaseSHA, TestedSHA: b.TestedSHA, Fence: "openmerge/fence/main", ExpectedFence: before.Fence, NextFenceID: "land/round3", PRs: []forge.BuildPR{{Number: 1, HeadSHA: b.PRs[0].HeadSHA}}}, forge.PushOptions{})
 	must(t, err)
 	must(t, f.SetRef(repo, "main", before.BaseSHA))
 	var absent *executor.ErrLandingNotOnBase

@@ -118,7 +118,7 @@ func (s *session) mergeTree(ctx context.Context, base, ours, theirs string) (str
 
 // BuildTestRef composes commits without an index or worktree, then force-pushes
 // the OpenMerge-owned test ref. All pinned heads are verified before composing.
-func (r *Repo) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.BuildRequest) (string, error) {
+func (r *Repo) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.BuildRequest, opts forge.PushOptions) (string, error) {
 	if err := forge.ValidateBuildRequest(req); err != nil {
 		return "", err
 	}
@@ -129,6 +129,17 @@ func (r *Repo) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.B
 	defer unlock()
 	ref, err := s.branch(ctx, req.Ref)
 	if err != nil {
+		return "", err
+	}
+	var old string
+	if opts.AuthorityRequired {
+		values, err := s.read(ctx, ref)
+		if err != nil {
+			return "", err
+		}
+		old = values[ref]
+	}
+	if err := opts.CheckDispatch(ctx, repo, forge.PushBuild, []forge.PushRefIntent{{Ref: ref, OldSHA: old}}); err != nil {
 		return "", err
 	}
 	if err := s.heads(ctx, req.PRs); err != nil {
@@ -270,7 +281,14 @@ func (r *Repo) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.B
 	if err := s.resolveRemote(ctx, repo); err != nil {
 		return "", err
 	}
-	if _, err := s.command(ctx, "", "push", "--porcelain", "--force", "--", s.remote, top+":"+ref); err != nil {
+	if err := s.validatePush(ctx, repo, opts, forge.PushBuild, forge.PushRef{Ref: ref, OldSHA: old, NewSHA: top}); err != nil {
+		return "", err
+	}
+	force := "--force"
+	if opts.AuthorityRequired {
+		force = "--force-with-lease=" + ref + ":" + old
+	}
+	if _, err := s.command(ctx, "", "push", "--porcelain", force, "--", s.remote, top+":"+ref); err != nil {
 		return "", err
 	}
 	return top, nil

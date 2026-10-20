@@ -51,7 +51,7 @@ func (x *Executor) buildFastForward(ctx context.Context, a queue.BuildTestRef, e
 	if err != nil {
 		return x.fastForwardBuildError(a.BatchID, err, emit)
 	}
-	sha, err := x.Git.BuildTestRef(ctx, x.Repo, forge.BuildRequest{Ref: a.Ref, BaseSHA: a.BaseSHA, PRs: heads, Method: forge.FastForward, BatchID: a.BatchID})
+	sha, err := x.buildWithValidation(ctx, forge.BuildRequest{Ref: a.Ref, BaseSHA: a.BaseSHA, PRs: heads, Method: forge.FastForward, BatchID: a.BatchID})
 	if errors.Is(err, forge.ErrNotFastForward) {
 		return emit(queue.FastForwardBlocked{BatchID: a.BatchID})
 	}

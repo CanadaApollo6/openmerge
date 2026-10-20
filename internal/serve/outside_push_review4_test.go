@@ -1,12 +1,15 @@
 package serve
 
-import "testing"
+import (
+	"github.com/CanadaApollo6/openmerge/internal/forge"
+	"testing"
+)
 
 func TestReview4RealRollbackToLandedTip(t *testing.T) {
 	for _, method := range []string{"merge", "fast-forward"} {
 		t.Run(method, func(t *testing.T) {
 			s, w, f, before, req := outsidePushRound2Attempt(t, method, false)
-			_, err := f.Land(t.Context(), repo, req)
+			_, err := f.Land(t.Context(), repo, req, forge.PushOptions{})
 			must(t, err)
 			held, err := s.settle(t.Context(), w)
 			must(t, err)

@@ -89,7 +89,7 @@ func (f *faultForge) before(method string) error {
 	return nil
 }
 
-func (f *faultForge) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequest) (string, error) {
+func (f *faultForge) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequest, opts forge.PushOptions) (string, error) {
 	defer f.sim.observeWrite()
 	if err := f.before("Land"); err != nil {
 		return "", err
@@ -97,12 +97,12 @@ func (f *faultForge) Land(ctx context.Context, repo forge.RepoRef, req forge.Lan
 	if f.sim.faults.Float64() < f.sim.cfg.Faults.DelayedPushRate {
 		req.PRs = append([]forge.BuildPR(nil), req.PRs...)
 		f.sim.sequence++
-		heap.Push(&f.sim.scheduled, scheduledEvent{at: f.sim.now.Add(f.sim.cfg.Faults.ReplayDelay), sequence: f.sim.sequence, kind: delayedPush, request: req})
+		heap.Push(&f.sim.scheduled, scheduledEvent{at: f.sim.now.Add(f.sim.cfg.Faults.ReplayDelay), sequence: f.sim.sequence, kind: delayedPush, request: req, pushOptions: opts})
 		f.sim.result.DelayedPushes++
 		f.sim.injectFault(f.scope)
 		return "", errDelayed
 	}
-	return f.Forge.Land(ctx, repo, req)
+	return f.Forge.Land(ctx, repo, req, opts)
 }
 
 func (f *faultForge) PullRequest(ctx context.Context, repo forge.RepoRef, number int) (forge.PullRequest, error) {
@@ -217,28 +217,28 @@ func (f *faultForge) Comment(ctx context.Context, repo forge.RepoRef, pr int, ke
 	return f.Forge.Comment(ctx, repo, pr, key, body)
 }
 
-func (f *faultForge) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.BuildRequest) (string, error) {
+func (f *faultForge) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.BuildRequest, opts forge.PushOptions) (string, error) {
 	defer f.sim.observeWrite()
 	if err := f.before("BuildTestRef"); err != nil {
 		return "", err
 	}
-	return f.Forge.BuildTestRef(ctx, repo, req)
+	return f.Forge.BuildTestRef(ctx, repo, req, opts)
 }
 
-func (f *faultForge) EnsureFence(ctx context.Context, repo forge.RepoRef, ref string) (string, error) {
+func (f *faultForge) EnsureFence(ctx context.Context, repo forge.RepoRef, ref string, opts forge.PushOptions) (string, error) {
 	defer f.sim.observeWrite()
 	if err := f.before("EnsureFence"); err != nil {
 		return "", err
 	}
-	return f.Forge.EnsureFence(ctx, repo, ref)
+	return f.Forge.EnsureFence(ctx, repo, ref, opts)
 }
 
-func (f *faultForge) AdvanceFence(ctx context.Context, repo forge.RepoRef, ref, expected, next string) (string, error) {
+func (f *faultForge) AdvanceFence(ctx context.Context, repo forge.RepoRef, ref, expected, next string, opts forge.PushOptions) (string, error) {
 	defer f.sim.observeWrite()
 	if err := f.before("AdvanceFence"); err != nil {
 		return "", err
 	}
-	return f.Forge.AdvanceFence(ctx, repo, ref, expected, next)
+	return f.Forge.AdvanceFence(ctx, repo, ref, expected, next, opts)
 }
 
 func (f *faultForge) ReadFence(ctx context.Context, repo forge.RepoRef, ref string) (string, string, string, error) {
@@ -274,10 +274,10 @@ func (f *faultForge) HeadBranchForDeletion(ctx context.Context, repo forge.RepoR
 	}
 	return f.Forge.HeadBranchForDeletion(ctx, repo, number, headSHA, base)
 }
-func (f *faultForge) DeleteBranch(ctx context.Context, repo forge.RepoRef, branch, expectedSHA string) error {
+func (f *faultForge) DeleteBranch(ctx context.Context, repo forge.RepoRef, branch, expectedSHA string, opts forge.PushOptions) error {
 	defer f.sim.observeWrite()
 	if err := f.before("DeleteBranch"); err != nil {
 		return err
 	}
-	return f.Forge.DeleteBranch(ctx, repo, branch, expectedSHA)
+	return f.Forge.DeleteBranch(ctx, repo, branch, expectedSHA, opts)
 }

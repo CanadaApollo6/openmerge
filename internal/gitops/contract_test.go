@@ -141,7 +141,7 @@ func (f *fixture) read(ref string) string {
 func (f *fixture) build(method forge.MergeMethod, prs []forge.BuildPR, batch string) string {
 	f.t.Helper()
 	sha, err := f.g.BuildTestRef(context.Background(), testRepo, forge.BuildRequest{Ref: "openmerge/queue/main/" + batch,
-		BaseSHA: f.base, PRs: prs, Method: method, BatchID: batch})
+		BaseSHA: f.base, PRs: prs, Method: method, BatchID: batch}, forge.PushOptions{})
 	must(f.t, err)
 	return sha
 }
@@ -155,12 +155,12 @@ type racingGit struct {
 	next      atomic.Uint64
 }
 
-func (r *racingGit) AdvanceFence(ctx context.Context, repo forge.RepoRef, ref, expected, id string) (string, error) {
-	return r.other.AdvanceFence(ctx, repo, ref, expected, id)
+func (r *racingGit) AdvanceFence(ctx context.Context, repo forge.RepoRef, ref, expected, id string, opts forge.PushOptions) (string, error) {
+	return r.other.AdvanceFence(ctx, repo, ref, expected, id, opts)
 }
 
-func (r *racingGit) EnsureFence(ctx context.Context, repo forge.RepoRef, ref string) (string, error) {
-	return r.bootstrap[r.next.Add(1)%uint64(len(r.bootstrap))].EnsureFence(ctx, repo, ref)
+func (r *racingGit) EnsureFence(ctx context.Context, repo forge.RepoRef, ref string, opts forge.PushOptions) (string, error) {
+	return r.bootstrap[r.next.Add(1)%uint64(len(r.bootstrap))].EnsureFence(ctx, repo, ref, opts)
 }
 
 func newGitEnv(t *testing.T) forgetest.Env {
@@ -300,7 +300,7 @@ func TestRebaseRefusesIntermediateConflict(t *testing.T) {
 	prs := []forge.BuildPR{{Number: 10, HeadSHA: f.heads[10]}, {Number: 11, HeadSHA: fixed}}
 	f.build(forge.Squash, prs, "final-head")
 	_, err := f.g.BuildTestRef(context.Background(), testRepo, forge.BuildRequest{Ref: "openmerge/queue/main/intermediate",
-		BaseSHA: f.base, PRs: prs, Method: forge.Rebase, BatchID: "intermediate"})
+		BaseSHA: f.base, PRs: prs, Method: forge.Rebase, BatchID: "intermediate"}, forge.PushOptions{})
 	if err != forge.ErrConflict {
 		t.Fatalf("intermediate replay conflict = %v", err)
 	}
@@ -317,7 +317,7 @@ func TestConflictsPreserveRefsForEveryMethod(t *testing.T) {
 			_, err := f.g.BuildTestRef(context.Background(), testRepo, forge.BuildRequest{
 				Ref: "openmerge/queue/main/conflict", BaseSHA: f.base, Method: method, BatchID: "conflict",
 				PRs: []forge.BuildPR{{Number: 10, HeadSHA: f.heads[10]}, {Number: 11, HeadSHA: f.heads[11]}},
-			})
+			}, forge.PushOptions{})
 			if err != forge.ErrConflict || f.read("main") != f.base || f.read("openmerge/queue/main/conflict") != before {
 				t.Fatalf("conflict changed a ref or returned the wrong error: %v", err)
 			}

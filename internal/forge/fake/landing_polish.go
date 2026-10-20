@@ -82,7 +82,7 @@ func (f *Forge) HeadBranchForDeletion(ctx context.Context, repo forge.RepoRef, n
 }
 
 // DeleteBranch applies the same old-SHA lease as the real git transport.
-func (f *Forge) DeleteBranch(ctx context.Context, repo forge.RepoRef, branch, expectedSHA string) error {
+func (f *Forge) DeleteBranch(ctx context.Context, repo forge.RepoRef, branch, expectedSHA string, opts forge.PushOptions) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.failure(ctx, "DeleteBranch"); err != nil {
@@ -94,8 +94,15 @@ func (f *Forge) DeleteBranch(ctx context.Context, repo forge.RepoRef, branch, ex
 	}
 	r := f.repo(repo)
 	if r.refs[branch] == expectedSHA {
+		ref := "refs/heads/" + branch
+		if err := opts.CheckDispatch(ctx, repo, forge.PushDeleteBranch, []forge.PushRefIntent{{Ref: ref, OldSHA: expectedSHA, Delete: true}}); err != nil {
+			return err
+		}
 		if r.protected[branch] {
 			return errors.New("protected branch cannot be deleted")
+		}
+		if err := r.validatePush(ctx, repo, opts, forge.PushDeleteBranch, forge.PushRef{Ref: ref, OldSHA: expectedSHA}); err != nil {
+			return err
 		}
 		delete(r.refs, branch)
 	}

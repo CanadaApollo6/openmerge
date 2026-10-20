@@ -57,7 +57,7 @@ func TestLandedRequiresMatchingForgeLanding(t *testing.T) {
 				if mutant == "PR head instead of tested SHA" {
 					target = land.PRs[0].HeadSHA
 				}
-				_, err := s.forge.Land(context.Background(), s.repo, forge.LandRequest{Base: "main", ExpectedBaseSHA: land.ExpectedBaseSHA, TestedSHA: target, Fence: "openmerge/fence/main", ExpectedFence: land.FenceToken, NextFenceID: "land/mutant", PRs: []forge.BuildPR{{Number: 1, HeadSHA: land.PRs[0].HeadSHA}}})
+				_, err := s.forge.Land(context.Background(), s.repo, forge.LandRequest{Base: "main", ExpectedBaseSHA: land.ExpectedBaseSHA, TestedSHA: target, Fence: "openmerge/fence/main", ExpectedFence: land.FenceToken, NextFenceID: "land/mutant", PRs: []forge.BuildPR{{Number: 1, HeadSHA: land.PRs[0].HeadSHA}}}, forge.PushOptions{})
 				if mutant == "no-op push" {
 					if !errors.Is(err, forge.ErrLeaseRejected) {
 						t.Fatalf("no-op landing was not refused: %v", err)
@@ -187,7 +187,7 @@ func TestAdvanceFenceErrorCannotCertifyAbandonment(t *testing.T) {
 				t.Fatal(err)
 			}
 			if mutant {
-				next, err := s.boundary.AdvanceFence(context.Background(), s.repo, "openmerge/fence/main", land.FenceToken, "abandon/"+s.state.Active.LandingAttempt.ID)
+				next, err := s.boundary.AdvanceFence(context.Background(), s.repo, "openmerge/fence/main", land.FenceToken, "abandon/"+s.state.Active.LandingAttempt.ID, forge.PushOptions{})
 				if !errors.Is(err, errForge) {
 					t.Fatalf("fault not injected: %v", err)
 				}
@@ -214,7 +214,7 @@ func TestEveryForgeCallBoundary(t *testing.T) {
 			_, e := s.boundary.HeadBranchForDeletion(context.Background(), s.repo, 1, "", "main")
 			return e
 		},
-		"DeleteBranch": func() error { return s.boundary.DeleteBranch(context.Background(), s.repo, "", "") },
+		"DeleteBranch": func() error { return s.boundary.DeleteBranch(context.Background(), s.repo, "", "", forge.PushOptions{}) },
 		"PullRequest":  func() error { _, e := s.boundary.PullRequest(context.Background(), s.repo, 1); return e },
 		"CheckRuns":    func() error { _, e := s.boundary.CheckRuns(context.Background(), s.repo, ""); return e },
 		"DeleteRef":    func() error { return s.boundary.DeleteRef(context.Background(), s.repo, "") },
@@ -222,12 +222,12 @@ func TestEveryForgeCallBoundary(t *testing.T) {
 		"MarkLanded":   func() error { return s.boundary.MarkLanded(context.Background(), s.repo, 1, "") },
 		"Comment":      func() error { return s.boundary.Comment(context.Background(), s.repo, 1, "", "") },
 		"BuildTestRef": func() error {
-			_, e := s.boundary.BuildTestRef(context.Background(), s.repo, forge.BuildRequest{})
+			_, e := s.boundary.BuildTestRef(context.Background(), s.repo, forge.BuildRequest{}, forge.PushOptions{})
 			return e
 		},
-		"Land":         func() error { _, e := s.boundary.Land(context.Background(), s.repo, forge.LandRequest{}); return e },
-		"EnsureFence":  func() error { _, e := s.boundary.EnsureFence(context.Background(), s.repo, ""); return e },
-		"AdvanceFence": func() error { _, e := s.boundary.AdvanceFence(context.Background(), s.repo, "", "", ""); return e },
+		"Land":         func() error { _, e := s.boundary.Land(context.Background(), s.repo, forge.LandRequest{}, forge.PushOptions{}); return e },
+		"EnsureFence":  func() error { _, e := s.boundary.EnsureFence(context.Background(), s.repo, "", forge.PushOptions{}); return e },
+		"AdvanceFence": func() error { _, e := s.boundary.AdvanceFence(context.Background(), s.repo, "", "", "", forge.PushOptions{}); return e },
 		"ReadFence":    func() error { _, _, _, e := s.boundary.ReadFence(context.Background(), s.repo, ""); return e },
 		"ReadRef":      func() error { _, e := s.boundary.ReadRef(context.Background(), s.repo, ""); return e },
 		"IsAncestor":   func() error { _, e := s.boundary.IsAncestor(context.Background(), s.repo, "", ""); return e },
@@ -526,13 +526,13 @@ func TestTimeFromFirstEnqueueSurvivesRepush(t *testing.T) {
 // freshBaseGit models a push that discards the captured base lease.
 type freshBaseGit struct{ forge.Git }
 
-func (g freshBaseGit) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequest) (string, error) {
+func (g freshBaseGit) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequest, opts forge.PushOptions) (string, error) {
 	sha, err := g.ReadRef(ctx, repo, req.Base)
 	if err != nil {
 		return "", err
 	}
 	req.ExpectedBaseSHA = sha
-	return g.Git.Land(ctx, repo, req)
+	return g.Git.Land(ctx, repo, req, opts)
 }
 
 // missingPRGit builds a new commit without replaying the PR. It can report
@@ -544,7 +544,7 @@ type missingPRGit struct {
 	reportMembership, keepContent bool
 }
 
-func (g missingPRGit) BuildTestRef(_ context.Context, repo forge.RepoRef, req forge.BuildRequest) (string, error) {
+func (g missingPRGit) BuildTestRef(_ context.Context, repo forge.RepoRef, req forge.BuildRequest, opts forge.PushOptions) (string, error) {
 	if err := g.sim.forge.SetRef(repo, req.Ref, req.BaseSHA); err != nil {
 		return "", err
 	}
@@ -575,11 +575,11 @@ func (g missingPRGit) BuildTestRef(_ context.Context, repo forge.RepoRef, req fo
 // A correct executor must never behave this way, and the simulator must catch it.
 type freshFenceGit struct{ forge.Git }
 
-func (g freshFenceGit) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequest) (string, error) {
+func (g freshFenceGit) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequest, opts forge.PushOptions) (string, error) {
 	sha, _, _, err := g.ReadFence(ctx, repo, req.Fence)
 	if err != nil {
 		return "", err
 	}
 	req.ExpectedFence = sha
-	return g.Git.Land(ctx, repo, req)
+	return g.Git.Land(ctx, repo, req, opts)
 }

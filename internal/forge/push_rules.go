@@ -14,8 +14,10 @@ import (
 // determined separately for each applicable policy, never inferred globally.
 type PushRuleContext struct {
 	DefaultBranch string
-	AppID         string
-	Observation   authority.Observation
+	// BaseRef also applies retained landing-content policy to queue builds.
+	BaseRef     string
+	AppID       string
+	Observation authority.Observation
 }
 
 // PushWarning identifies a PR policy actually bypassed by this App. Content
@@ -60,10 +62,27 @@ func EvaluatePushRules(p PreparedPush, ctx PushRuleContext) ([]PushWarning, erro
 					return nil, pushRejected("unsupported or missing ref conditions")
 				}
 			}
-			if !applies {
+			baseContentOnly := false
+			if !applies && p.Operation == PushBuild && policy.Target == "branch" {
+				if ctx.BaseRef == "" {
+					return nil, pushRejected("build requires intended landing base")
+				}
+				baseApplies, err := (authority.RefCoverage{Includes: policy.Includes, Excludes: policy.Excludes}).ContainsRef(ctx.BaseRef, "refs/heads/"+ctx.DefaultBranch)
+				if err != nil {
+					return nil, pushRejected("unsupported base content conditions")
+				}
+				baseContentOnly = baseApplies
+			}
+			if !applies && !baseContentOnly {
 				continue
 			}
 			for _, rule := range policy.Rules {
+				if baseContentOnly {
+					switch rule.Kind {
+					case "creation", "update", "deletion", "non_fast_forward", "pull_request", "required_status_checks", "required_deployments", "required_workflows", "code_scanning":
+						continue
+					}
+				}
 				warn, err := evaluatePushRule(rule, ref, bypass)
 				if err != nil {
 					return nil, fmt.Errorf("protection %s ref %s rule %s: %w", policy.ID, ref.Ref, rule.Kind, err)

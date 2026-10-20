@@ -119,6 +119,22 @@ func ValidatePreparedPush(p PreparedPush) error {
 			return invalid("invalid creation base")
 		}
 		refs[r.Ref] = true
+		if p.Operation == PushDeleteBranch {
+			if r.NewSHA != "" || ValidateDeleteBranch(strings.TrimPrefix(r.Ref, "refs/heads/"), r.OldSHA) != nil {
+				return invalid("invalid prepared cleanup deletion")
+			}
+		} else if r.NewSHA == "" {
+			return invalid("non-cleanup operation deletes a ref")
+		}
+		if p.Operation == PushEnsureFence && r.OldSHA != "" {
+			return invalid("fence creation requires absent-ref lease")
+		}
+		if (p.Operation == PushLand || p.Operation == PushAdvanceFence) && r.OldSHA == "" {
+			return invalid("missing existing-ref lease")
+		}
+		if len(r.Boundary) > MaxPushCommits {
+			return invalid("prepared graph frontier exceeds budget")
+		}
 		for _, oid := range []string{r.OldSHA, r.NewSHA} {
 			if oid != "" && ValidateCommitIDs(oid) != nil {
 				return invalid("invalid prepared ref OID")
@@ -141,6 +157,9 @@ func ValidatePreparedPush(p PreparedPush) error {
 		for _, c := range r.Commits {
 			if ValidateCommitIDs(c.OID) != nil || graph[c.OID].OID != "" || boundary[c.OID] || c.Parents == nil || c.Files == nil || c.Diffs == nil {
 				return invalid("incomplete or duplicate prepared commit")
+			}
+			if len(c.Parents) > MaxPushCommits {
+				return invalid("prepared parent budget exceeded")
 			}
 			for _, parent := range c.Parents {
 				if ValidateCommitIDs(parent) != nil {

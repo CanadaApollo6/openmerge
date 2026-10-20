@@ -150,7 +150,7 @@ func TestServeCommentToLanding(t *testing.T) {
 	must(t, err)
 	git, err := gitops.New(t.Context(), gitops.Config{WorkDir: t.TempDir(), Remote: func(context.Context, forge.RepoRef) (string, gitops.Auth, error) { return remote, gitops.Auth{}, nil }, HeadRef: HeadRef, PullRequest: f.driver.PullRequestMetadata, CommitAuthors: f.driver.CommitAuthors, Committer: committer})
 	must(t, err)
-	initial, err := git.EnsureFence(t.Context(), testRepo, "openmerge/fence/main")
+	initial, err := git.EnsureFence(t.Context(), testRepo, "openmerge/fence/main", forge.PushOptions{})
 	must(t, err)
 	key := store.QueueKey{Installation: "7", Repository: testRepo.Path, BaseBranch: "main"}
 	server, err := serve.New(t.Context(), db, []serve.Target{{Key: key, Driver: f.driver, Git: git, BotLogin: f.driver.BotLogin()}}, serve.Options{PollInterval: 20 * time.Millisecond, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
@@ -198,7 +198,7 @@ func TestServeCommentToLanding(t *testing.T) {
 	if _, _, tested, err := git.ReadFence(t.Context(), testRepo, "openmerge/fence/main"); err != nil || tested != tip {
 		t.Fatalf("fence tested=%s, tip=%s, error=%v", tested, tip, err)
 	}
-	current, err := git.EnsureFence(t.Context(), testRepo, "openmerge/fence/main")
+	current, err := git.EnsureFence(t.Context(), testRepo, "openmerge/fence/main", forge.PushOptions{})
 	must(t, err)
 	if current == initial {
 		t.Fatal("landing did not advance fence")

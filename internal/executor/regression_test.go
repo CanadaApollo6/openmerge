@@ -53,7 +53,7 @@ func TestFenceDerivedFromBase(t *testing.T) {
 	const base = "release/stable"
 	const fence = "openmerge/fence/" + base
 	must(t, h.f.SetRef(repo, base, h.base))
-	token, err := h.f.EnsureFence(ctx, repo, fence)
+	token, err := h.f.EnsureFence(ctx, repo, fence, forge.PushOptions{})
 	must(t, err)
 	h.x.Base = base
 	a := queue.Land{BatchID: "batch", ExpectedBaseSHA: h.base, TestedSHA: h.tested(t), FenceToken: token, PRs: []queue.BatchPR{{PR: 1, HeadSHA: h.prs[0].HeadSHA}}}

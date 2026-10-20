@@ -24,6 +24,9 @@ import (
 // and record its token before executing queue actions. Execute never bootstraps
 // a missing fence during landing.
 type Executor struct {
+	// PreparePush binds fresh authority options to each actual Git operation.
+	// Nil preserves the legacy path without additional reads.
+	PreparePush           PushOptionsLoader
 	Driver                forge.Driver
 	Git                   forge.Git
 	Repo                  forge.RepoRef
@@ -174,7 +177,7 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 			}
 			return err
 		}
-		sha, err := x.Git.BuildTestRef(ctx, x.Repo, forge.BuildRequest{
+		sha, err := x.buildWithValidation(ctx, forge.BuildRequest{
 			Ref: a.Ref, BaseSHA: a.BaseSHA, PRs: prs, Method: forge.MergeMethod(a.Method), BatchID: a.BatchID,
 		})
 		if err != nil {
@@ -382,7 +385,7 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		for i, pr := range a.PRs {
 			prs[i] = forge.BuildPR{Number: pr.PR, HeadSHA: pr.HeadSHA}
 		}
-		next, err := x.Git.Land(ctx, x.Repo, forge.LandRequest{
+		next, err := x.landWithValidation(ctx, forge.LandRequest{
 			Base: x.Base, ExpectedBaseSHA: a.ExpectedBaseSHA, TestedSHA: a.TestedSHA,
 			Fence: x.fenceRef(), ExpectedFence: a.FenceToken, NextFenceID: "land/" + attemptID, PRs: prs, FastForwardHeadSHA: fastForwardHead,
 		})
@@ -418,7 +421,7 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 				return err
 			}
 			if branch != "" {
-				if err := x.Git.DeleteBranch(ctx, x.Repo, branch, a.HeadSHA); err != nil {
+				if err := x.deleteWithValidation(ctx, branch, a.HeadSHA); err != nil {
 					return err
 				}
 			}
@@ -507,7 +510,7 @@ func (x *Executor) resolveLanding(ctx context.Context, a queue.ResolveLanding, l
 		case sha != a.FenceToken || id == "land/"+a.AttemptID:
 			return &ErrFenceTampered{AttemptID: a.AttemptID, ExpectedFence: a.FenceToken, ActualFence: sha, ActualFenceID: id, ExpectedTestedSHA: a.TestedSHA, ActualTestedSHA: tested}
 		}
-		next, err := x.Git.AdvanceFence(ctx, x.Repo, x.fenceRef(), a.FenceToken, "abandon/"+a.AttemptID)
+		next, err := x.advanceWithValidation(ctx, x.fenceRef(), a.FenceToken, "abandon/"+a.AttemptID)
 		if err == nil {
 			return emit(queue.LandingAbandoned{BatchID: a.BatchID, NewFence: next})
 		}

@@ -27,15 +27,16 @@ const (
 )
 
 type scheduledEvent struct {
-	job      *ciJob
-	at       time.Time
-	sequence uint64
-	kind     eventKind
-	pr       int
-	sha      string
-	request  forge.LandRequest
-	action   queue.Land
-	scope    string
+	job         *ciJob
+	at          time.Time
+	sequence    uint64
+	kind        eventKind
+	pr          int
+	sha         string
+	request     forge.LandRequest
+	pushOptions forge.PushOptions
+	action      queue.Land
+	scope       string
 }
 
 // Equal-time deliveries retain insertion order; neither maps nor scheduler
@@ -108,7 +109,7 @@ func (s *simulation) deliver(event scheduledEvent) error {
 	case externalPush:
 		return s.pushExternalBase()
 	case delayedPush:
-		_, err := s.forge.Land(context.Background(), s.repo, event.request)
+		_, err := s.forge.Land(context.Background(), s.repo, event.request, event.pushOptions)
 		if errors.Is(err, forge.ErrLeaseRejected) {
 			s.result.RejectedReplays++
 			return nil

@@ -19,7 +19,7 @@ func TestRerunFailedChecksIsExactAndIdempotent(t *testing.T) {
 	ref := "openmerge/queue/main/retry"
 	tested, err := f.BuildTestRef(t.Context(), repo, forge.BuildRequest{
 		Ref: ref, BaseSHA: base, PRs: []forge.BuildPR{{Number: 1, HeadSHA: pr.HeadSHA}}, Method: forge.Merge, BatchID: "retry",
-	})
+	}, forge.PushOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func retrySetup(t *testing.T, check forge.CheckRun) (*fake.Forge, forge.RepoRef,
 		t.Fatal(err)
 	}
 	ref := "openmerge/queue/main/retry"
-	tested, err := f.BuildTestRef(t.Context(), repo, forge.BuildRequest{Ref: ref, BaseSHA: base, PRs: []forge.BuildPR{{Number: 1, HeadSHA: pr.HeadSHA}}, Method: forge.Merge, BatchID: "retry"})
+	tested, err := f.BuildTestRef(t.Context(), repo, forge.BuildRequest{Ref: ref, BaseSHA: base, PRs: []forge.BuildPR{{Number: 1, HeadSHA: pr.HeadSHA}}, Method: forge.Merge, BatchID: "retry"}, forge.PushOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

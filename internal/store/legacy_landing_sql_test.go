@@ -60,7 +60,7 @@ func legacyExecutorInput(t *testing.T, s *Store) (QueueID, ClaimedAction, landin
 	base, fence := f.Init(repo, "release", "openmerge/fence/release")
 	pr, err := f.OpenPR(repo, 12, base, true)
 	must(t, err)
-	tested, err := f.BuildTestRef(t.Context(), repo, forge.BuildRequest{Ref: "openmerge/queue/release/b1", BaseSHA: base, PRs: []forge.BuildPR{{Number: 12, HeadSHA: pr.HeadSHA}}, Method: forge.Squash, BatchID: "b1"})
+	tested, err := f.BuildTestRef(t.Context(), repo, forge.BuildRequest{Ref: "openmerge/queue/release/b1", BaseSHA: base, PRs: []forge.BuildPR{{Number: 12, HeadSHA: pr.HeadSHA}}, Method: forge.Squash, BatchID: "b1"}, forge.PushOptions{})
 	must(t, err)
 	raw, err := os.ReadFile("../queue/testdata/landing-start.json")
 	must(t, err)

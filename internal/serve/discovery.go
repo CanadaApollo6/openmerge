@@ -513,6 +513,7 @@ func (w *worker) bind(target Target) {
 	w.Driver, w.Git, w.BotLogin = target.Driver, target.Git, target.BotLogin
 	w.CheckRules, w.CheckPermissions, w.CheckProtection = target.CheckRules, target.CheckPermissions, target.CheckProtection
 	w.Resolve = target.Resolve
+	w.PrepareAuthorityPush, w.PinAuthorityPush, w.ObserveAuthorityPush = target.PrepareAuthorityPush, target.PinAuthorityPush, target.ObserveAuthorityPush
 }
 
 func (s *Server) recordDiscoveryBackoff(installation string, err error) {

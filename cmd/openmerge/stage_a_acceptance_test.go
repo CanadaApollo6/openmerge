@@ -31,8 +31,8 @@ import (
 type acceptanceGit struct{ *fake.Forge }
 
 // A synthetic CI producer succeeds on each newly built queue ref.
-func (g acceptanceGit) BuildTestRef(ctx context.Context, r forge.RepoRef, req forge.BuildRequest) (string, error) {
-	sha, err := g.Forge.BuildTestRef(ctx, r, req)
+func (g acceptanceGit) BuildTestRef(ctx context.Context, r forge.RepoRef, req forge.BuildRequest, opts forge.PushOptions) (string, error) {
+	sha, err := g.Forge.BuildTestRef(ctx, r, req, opts)
 	if err == nil {
 		g.SetCheckRuns(r, sha, []forge.CheckRun{{ID: 1, Name: "ci", State: forge.Success, HeadBranch: req.Ref}})
 	}

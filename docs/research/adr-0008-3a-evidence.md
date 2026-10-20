@@ -100,3 +100,73 @@ Unknown actors cannot satisfy App bypass; `unexpected_bypass` remains PR 4.
 PR 3b must separately assert **proposed coverage was installed**, even though
 containment permits retaining current coverage during transition. Its actor and
 App-only checks must remain. Exclusion comparison is order-insensitive.
+## 3a-ii integration
+
+`forge.PushOptions` is a new trailing argument on BuildTestRef, Land,
+EnsureFence, AdvanceFence and DeleteBranch. The sweep updates 35 existing
+method implementations/overrides: ten fake/gitops implementations and 25
+wrapper overrides across 19 existing wrapper types (including the simulator's
+fault wrapper). All production callers and test callers supply options. The
+simulator retains the exact options on its scheduled delayed-push event and
+replays them; a dedicated test proves the retained guard executes.
+
+The immutable validation context owns cloned policy/ref inputs and binds the
+repository/queue, governing commit, effective digest, protection basis and
+fingerprint, operation, exact refs/old leases, and known landing OIDs. The guard
+reloads `Store.Load` at dispatch and immediately before push. Missing context,
+missing guard, ref/lease mismatches, incomplete graphs and changed durable
+policy/evidence fail before publication. Warnings identify the particular
+bypassed PR policy and are logged through the transient options callback.
+
+Gitops prepares once, inspects those actual local OIDs under the existing
+cache/session lock, validates every affected ref, then pushes. Inspection
+rejects shallow/altered history, disables replacements/grafts/lazy fetching,
+bounds graph/tree output and proves every old-history frontier edge. The
+required-authority build path leases the observed old test-ref SHA in its push;
+the zero-options build retains its original force-push command exactly.
+Atomic landing validates the base and newly minted fence together. Base-only
+retained content rules also validate queue builds, including fast-forward
+markers. The current producers do not assert trusted signature verification;
+required signatures remain incompatible until such proof exists.
+
+Serve's dormant preparation hooks separate governing-policy resolution,
+durable config/mode pinning and protection observation. Serve enforces that
+order before constructing options, reloads the durable pin/evidence, and never
+uses zero options for an unresolved authority policy. PR 9 supplies the adapters;
+none is installed by this PR, and public authority config stays rejected.
+The source accessor uses the latest retained applied observation's basis
+(highest basis first); PR 4 retains ownership of source revision interpretation.
+Proposed verification never supplies runtime content evidence.
+
+The registration, actual `refreshWorker` bootstrap, and reconciliation-cycle
+paths all reach the same `initializeFence` preparation and guard. The existing
+legacy calls remain at their original locations for byte-identical legacy I/O;
+a required-authority call cannot create a fence until resolve/pin/observe has
+completed. This conditional ordering preserves existing queue behavior while
+providing the PR 9 activation boundary. Existing fences and missing/changed
+cleanup refs return their no-op results before dispatch/guard checks, including
+when preparation produced required-but-unavailable options.
+
+Focused real-git tests executed with exit 0 on 2026-10-20 cover rejected
+merge/squash/rebase/fast-forward builds, intermediate commits, unsigned markers,
+fence creation/advance, atomic base+fence landing and branch cleanup. Push spies
+prove no push invocation and compare complete bare-remote `show-ref` output.
+Accepted-build tests inspect the returned OID before push and count exactly one
+commit construction. Actual blob-size/path and merge-parent rules are exercised.
+Shared fake/real contracts reject unsigned objects and preserve read-first
+no-ops. PostgreSQL bootstrap tests use isolated schemas on localhost:54329 and
+real bare remotes: resolve/pin/observe precedes the first fence, and a basis
+change during preparation leaves the fence absent without a push.
+
+`scripts/check-adr0008-3a-legacy.py` supplies an identical reflection-based probe
+to both revisions. Fixed timestamps and entropy make raw Git objects comparable.
+For each of merge/squash/rebase/fast-forward it captures refs and every local
+bare-remote object after fence create, build, build update, fence advance,
+landing and cleanup. It separately captures the deterministic fake's complete
+ref/object maps for the same 24 checkpoints. Only the candidate's extra trailing
+zero argument differs at invocation; no remote service is contacted.
+
+Final full-check, object-equivalence, replay exits and artifact hashes follow
+below after execution. Earlier check iterations caught a missing lint comment
+and incomplete plumbing during implementation; those failed iterations are not
+acceptance evidence.

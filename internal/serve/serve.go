@@ -21,6 +21,11 @@ import (
 
 // Target identifies an explicitly configured repository and base branch.
 type Target struct {
+	// Authority preparation is dormant until PR 9 installs all three hooks.
+	// Serve calls resolve, durable pin, then protection observation in order.
+	PrepareAuthorityPush func(context.Context) (AuthorityPushPolicy, error)
+	PinAuthorityPush     func(context.Context, AuthorityPushPolicy) error
+	ObserveAuthorityPush func(context.Context, AuthorityPushPolicy) error
 	// Resolve binds historical credentials lazily; failures never discard a landing.
 	Resolve  func(context.Context) (Target, error)
 	Key      store.QueueKey
@@ -436,7 +441,12 @@ func (s *Server) initializeFence(ctx context.Context, w *worker) error {
 	if err != nil || state.Fence != "" || len(state.RulesProblems()) > 0 {
 		return err
 	}
-	token, err := w.Git.EnsureFence(ctx, w.repo(), "openmerge/fence/"+w.Key.BaseBranch)
+	ref := "openmerge/fence/" + w.Key.BaseBranch
+	opts := forge.PushOptions{}
+	if w.PrepareAuthorityPush != nil || state.AuthorityPin() != nil {
+		opts = s.authorityPushOptions(ctx, w, forge.PushEnsureFence, []forge.PushRefIntent{{Ref: "refs/heads/" + ref}})
+	}
+	token, err := w.Git.EnsureFence(ctx, w.repo(), ref, opts)
 	if err != nil {
 		return err
 	}

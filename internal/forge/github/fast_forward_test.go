@@ -20,7 +20,7 @@ func TestFastForwardHeadSuitesCannotAuthorizeMarker(t *testing.T) {
 			base, _ := git.Init(testRepo, "main", "openmerge/fence/main")
 			pr, err := git.OpenPR(testRepo, 1, base, scenario != "fork null branch")
 			must(t, err)
-			fence, err := git.EnsureFence(t.Context(), testRepo, "openmerge/fence/main")
+			fence, err := git.EnsureFence(t.Context(), testRepo, "openmerge/fence/main", forge.PushOptions{})
 			must(t, err)
 			cfg := queue.Config{MergeMethod: queue.FastForward}
 			state := queue.State{BaseBranch: "main", BaseSHA: base, Fence: fence}

@@ -31,33 +31,33 @@ func runGitValidation(t *testing.T, factory func(*testing.T) Env) {
 			t.Run(fmt.Sprintf("ref/%d", i), func(t *testing.T) {
 				req := build
 				req.Ref = ref
-				_, err := e.Git.BuildTestRef(ctx, e.Repo, req)
+				_, err := e.Git.BuildTestRef(ctx, e.Repo, req, forge.PushOptions{})
 				invalidInput(t, err)
 				_, err = e.Git.ReadRef(ctx, e.Repo, ref)
 				invalidInput(t, err)
 				_, _, _, err = e.Git.ReadFence(ctx, e.Repo, ref)
 				invalidInput(t, err)
-				_, err = e.Git.EnsureFence(ctx, e.Repo, ref)
+				_, err = e.Git.EnsureFence(ctx, e.Repo, ref, forge.PushOptions{})
 				invalidInput(t, err)
-				_, err = e.Git.AdvanceFence(ctx, e.Repo, ref, e.FenceSHA, "abandon/validation")
+				_, err = e.Git.AdvanceFence(ctx, e.Repo, ref, e.FenceSHA, "abandon/validation", forge.PushOptions{})
 				invalidInput(t, err)
 				lr := land
 				lr.Base = ref
-				_, err = e.Git.Land(ctx, e.Repo, lr)
+				_, err = e.Git.Land(ctx, e.Repo, lr, forge.PushOptions{})
 				invalidInput(t, err)
 				lr = land
 				lr.Fence = ref
-				_, err = e.Git.Land(ctx, e.Repo, lr)
+				_, err = e.Git.Land(ctx, e.Repo, lr, forge.PushOptions{})
 				invalidInput(t, err)
 			})
 		}
 		for i, branch := range []string{"", "refs/heads/topic", "refs/tags/tag", "openmerge/queue/topic", "bad..name", "bad name", "topic.lock"} {
-			t.Run(fmt.Sprintf("delete-branch/%d", i), func(t *testing.T) { invalidInput(t, e.Git.DeleteBranch(ctx, e.Repo, branch, e.BaseSHA)) })
+			t.Run(fmt.Sprintf("delete-branch/%d", i), func(t *testing.T) { invalidInput(t, e.Git.DeleteBranch(ctx, e.Repo, branch, e.BaseSHA, forge.PushOptions{})) })
 		}
 		for i, sha := range []string{"", "main", "--all", strings.Repeat("a", 39), strings.Repeat("g", 40), strings.Repeat("a", 63), strings.Repeat("a", 65)} {
 			t.Run(fmt.Sprintf("sha/%d", i), func(t *testing.T) {
-				invalidInput(t, e.Git.DeleteBranch(ctx, e.Repo, "missing", sha))
-				_, err := e.Git.AdvanceFence(ctx, e.Repo, e.FenceRef, sha, "abandon/validation")
+				invalidInput(t, e.Git.DeleteBranch(ctx, e.Repo, "missing", sha, forge.PushOptions{}))
+				_, err := e.Git.AdvanceFence(ctx, e.Repo, e.FenceRef, sha, "abandon/validation", forge.PushOptions{})
 				invalidInput(t, err)
 				for pos := range 2 {
 					pair := []string{e.BaseSHA, e.PRs[0].HeadSHA}
@@ -74,7 +74,7 @@ func runGitValidation(t *testing.T, factory func(*testing.T) Env) {
 				if sha != "" {
 					lr := land
 					lr.FastForwardHeadSHA = sha
-					_, err = e.Git.Land(ctx, e.Repo, lr)
+					_, err = e.Git.Land(ctx, e.Repo, lr, forge.PushOptions{})
 					invalidInput(t, err)
 				}
 				for pos := range 3 {
@@ -90,29 +90,29 @@ func runGitValidation(t *testing.T, factory func(*testing.T) Env) {
 					case 2:
 						lr.ExpectedFence = sha
 					}
-					_, err = e.Git.Land(ctx, e.Repo, lr)
+					_, err = e.Git.Land(ctx, e.Repo, lr, forge.PushOptions{})
 					invalidInput(t, err)
 				}
 				req := build
 				req.BaseSHA = sha
-				_, err = e.Git.BuildTestRef(ctx, e.Repo, req)
+				_, err = e.Git.BuildTestRef(ctx, e.Repo, req, forge.PushOptions{})
 				invalidInput(t, err)
 				req = build
 				req.PRs = []forge.BuildPR{{Number: e.PRs[0].Number, HeadSHA: sha}}
-				_, err = e.Git.BuildTestRef(ctx, e.Repo, req)
+				_, err = e.Git.BuildTestRef(ctx, e.Repo, req, forge.PushOptions{})
 				invalidInput(t, err)
 				lr := land
 				lr.PRs = req.PRs
-				_, err = e.Git.Land(ctx, e.Repo, lr)
+				_, err = e.Git.Land(ctx, e.Repo, lr, forge.PushOptions{})
 				invalidInput(t, err)
 			})
 		}
 		for _, id := range []string{"", "two tokens", "tab\tid", "cr\rid", "lf\nid", "nul\x00id"} {
-			_, err := e.Git.AdvanceFence(ctx, e.Repo, e.FenceRef, e.FenceSHA, id)
+			_, err := e.Git.AdvanceFence(ctx, e.Repo, e.FenceRef, e.FenceSHA, id, forge.PushOptions{})
 			invalidInput(t, err)
 			lr := land
 			lr.NextFenceID = id
-			_, err = e.Git.Land(ctx, e.Repo, lr)
+			_, err = e.Git.Land(ctx, e.Repo, lr, forge.PushOptions{})
 			invalidInput(t, err)
 		}
 		for _, tc := range []struct {
@@ -130,37 +130,37 @@ func runGitValidation(t *testing.T, factory func(*testing.T) Env) {
 				for i, metadata := range tc.metadata {
 					req.PRs[i].Metadata = metadata
 				}
-				_, err := e.Git.BuildTestRef(ctx, e.Repo, req)
+				_, err := e.Git.BuildTestRef(ctx, e.Repo, req, forge.PushOptions{})
 				invalidInput(t, err)
 			})
 		}
 		for _, number := range []int{-1, 0} {
 			req := build
 			req.PRs = []forge.BuildPR{{Number: number, HeadSHA: e.PRs[0].HeadSHA}}
-			_, err := e.Git.BuildTestRef(ctx, e.Repo, req)
+			_, err := e.Git.BuildTestRef(ctx, e.Repo, req, forge.PushOptions{})
 			invalidInput(t, err)
 			lr := land
 			lr.PRs = req.PRs
-			_, err = e.Git.Land(ctx, e.Repo, lr)
+			_, err = e.Git.Land(ctx, e.Repo, lr, forge.PushOptions{})
 			invalidInput(t, err)
 		}
 		for _, bad := range []string{"", "bad/id", "two tokens"} {
 			req := build
 			req.BatchID = bad
-			_, err := e.Git.BuildTestRef(ctx, e.Repo, req)
+			_, err := e.Git.BuildTestRef(ctx, e.Repo, req, forge.PushOptions{})
 			invalidInput(t, err)
 		}
 		req := build
 		req.PRs = nil
-		_, err := e.Git.BuildTestRef(ctx, e.Repo, req)
+		_, err := e.Git.BuildTestRef(ctx, e.Repo, req, forge.PushOptions{})
 		invalidInput(t, err)
 		req = build
 		req.Method = "invalid"
-		_, err = e.Git.BuildTestRef(ctx, e.Repo, req)
+		_, err = e.Git.BuildTestRef(ctx, e.Repo, req, forge.PushOptions{})
 		invalidInput(t, err)
 		lr := land
 		lr.Fence = "refs/heads/" + e.Base
-		_, err = e.Git.Land(ctx, e.Repo, lr)
+		_, err = e.Git.Land(ctx, e.Repo, lr, forge.PushOptions{})
 		invalidInput(t, err)
 		for _, pair := range [][2]string{{e.Base, e.BaseSHA}, {e.FenceRef, e.FenceSHA}} {
 			got, err := e.Git.ReadRef(ctx, e.Repo, pair[0])
@@ -176,9 +176,9 @@ func runGitValidation(t *testing.T, factory func(*testing.T) Env) {
 	t.Run("fence-token-before-stale-lease", func(t *testing.T) {
 		e := factory(t)
 		ctx := t.Context()
-		next, err := e.Git.AdvanceFence(ctx, e.Repo, e.FenceRef, e.FenceSHA, "abandon/validation")
+		next, err := e.Git.AdvanceFence(ctx, e.Repo, e.FenceRef, e.FenceSHA, "abandon/validation", forge.PushOptions{})
 		must(t, err)
-		_, err = e.Git.Land(ctx, e.Repo, forge.LandRequest{Base: e.Base, ExpectedBaseSHA: e.BaseSHA, TestedSHA: e.PRs[0].HeadSHA, Fence: e.FenceRef, ExpectedFence: e.FenceSHA, NextFenceID: "two tokens", PRs: e.PRs})
+		_, err = e.Git.Land(ctx, e.Repo, forge.LandRequest{Base: e.Base, ExpectedBaseSHA: e.BaseSHA, TestedSHA: e.PRs[0].HeadSHA, Fence: e.FenceRef, ExpectedFence: e.FenceSHA, NextFenceID: "two tokens", PRs: e.PRs}, forge.PushOptions{})
 		invalidInput(t, err)
 		for _, pair := range [][2]string{{e.Base, e.BaseSHA}, {e.FenceRef, next}} {
 			got, err := e.Git.ReadRef(ctx, e.Repo, pair[0])
@@ -196,12 +196,12 @@ func runGitValidation(t *testing.T, factory func(*testing.T) Env) {
 		if sha != e.BaseSHA {
 			t.Fatal("ReadRef alias differs")
 		}
-		sha, err = e.Git.EnsureFence(ctx, e.Repo, "refs/heads/"+e.FenceRef)
+		sha, err = e.Git.EnsureFence(ctx, e.Repo, "refs/heads/"+e.FenceRef, forge.PushOptions{})
 		must(t, err)
 		if sha != e.FenceSHA {
 			t.Fatal("EnsureFence alias differs")
 		}
-		next, err := e.Git.AdvanceFence(ctx, e.Repo, "refs/heads/"+e.FenceRef, e.FenceSHA, "abandon/alias")
+		next, err := e.Git.AdvanceFence(ctx, e.Repo, "refs/heads/"+e.FenceRef, e.FenceSHA, "abandon/alias", forge.PushOptions{})
 		must(t, err)
 		sha, id, _, err := e.Git.ReadFence(ctx, e.Repo, e.FenceRef)
 		must(t, err)
@@ -209,14 +209,14 @@ func runGitValidation(t *testing.T, factory func(*testing.T) Env) {
 			t.Fatal("Advance/ReadFence alias differs")
 		}
 		ref := "openmerge/queue/" + e.Base + "/alias"
-		tested, err := e.Git.BuildTestRef(ctx, e.Repo, forge.BuildRequest{Ref: "refs/heads/" + ref, BaseSHA: e.BaseSHA, PRs: e.PRs[:1], Method: forge.Merge, BatchID: "alias"})
+		tested, err := e.Git.BuildTestRef(ctx, e.Repo, forge.BuildRequest{Ref: "refs/heads/" + ref, BaseSHA: e.BaseSHA, PRs: e.PRs[:1], Method: forge.Merge, BatchID: "alias"}, forge.PushOptions{})
 		must(t, err)
 		sha, err = e.Git.ReadRef(ctx, e.Repo, ref)
 		must(t, err)
 		if sha != tested {
 			t.Fatal("BuildTestRef alias differs")
 		}
-		_, err = e.Git.Land(ctx, e.Repo, forge.LandRequest{Base: "refs/heads/" + e.Base, ExpectedBaseSHA: e.BaseSHA, TestedSHA: tested, Fence: "refs/heads/" + e.FenceRef, ExpectedFence: next, NextFenceID: "land/alias", PRs: e.PRs[:1]})
+		_, err = e.Git.Land(ctx, e.Repo, forge.LandRequest{Base: "refs/heads/" + e.Base, ExpectedBaseSHA: e.BaseSHA, TestedSHA: tested, Fence: "refs/heads/" + e.FenceRef, ExpectedFence: next, NextFenceID: "land/alias", PRs: e.PRs[:1]}, forge.PushOptions{})
 		must(t, err)
 	})
 }

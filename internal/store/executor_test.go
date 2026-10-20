@@ -19,9 +19,9 @@ type checkedGit struct {
 	beforeLand func(forge.LandRequest)
 }
 
-func (g checkedGit) Land(ctx context.Context, repo forge.RepoRef, request forge.LandRequest) (string, error) {
+func (g checkedGit) Land(ctx context.Context, repo forge.RepoRef, request forge.LandRequest, opts forge.PushOptions) (string, error) {
 	g.beforeLand(request)
-	return g.Git.Land(ctx, repo, request)
+	return g.Git.Land(ctx, repo, request, opts)
 }
 
 func TestExecutorDurablyLandsThreePRsSerially(t *testing.T) {

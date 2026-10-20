@@ -41,13 +41,13 @@ func (g *slowStatusGit) ReadCommitMessage(ctx context.Context, repo forge.RepoRe
 	return g.Forge.ReadCommitMessage(ctx, repo, sha)
 }
 
-func (g *slowStatusGit) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequest) (string, error) {
+func (g *slowStatusGit) Land(ctx context.Context, repo forge.RepoRef, req forge.LandRequest, opts forge.PushOptions) (string, error) {
 	if g.phase == "landing" {
 		if err := g.wait(ctx); err != nil {
 			return "", err
 		}
 	}
-	return g.Forge.Land(ctx, repo, req)
+	return g.Forge.Land(ctx, repo, req, opts)
 }
 
 func TestApprovalStatusDuringGateAndLanding(t *testing.T) {

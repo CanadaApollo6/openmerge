@@ -20,7 +20,7 @@ func TestRebaseReplaysEveryPRCommit(t *testing.T) {
 	for _, method := range []forge.MergeMethod{forge.Merge, forge.Squash, forge.Rebase} {
 		t.Run(string(method), func(t *testing.T) {
 			req := forge.BuildRequest{Ref: string(method), BaseSHA: e.BaseSHA, PRs: []forge.BuildPR{{Number: 1, HeadSHA: head.HeadSHA}}, Method: method, BatchID: "multi"}
-			tested, err := f.BuildTestRef(ctx, repo, req)
+			tested, err := f.BuildTestRef(ctx, repo, req, forge.PushOptions{})
 			must(t, err)
 			if !f.ContainsPR(repo, tested, 1) {
 				t.Fatal("test commit omitted a PR commit's file content")
@@ -88,7 +88,7 @@ func TestCommentDedupeRequiresOwnIdentity(t *testing.T) {
 func TestCheckProvenanceDefaultsPreserveExplicitSources(t *testing.T) {
 	f, e := fixture(t)
 	const ref = "openmerge/queue/main/b7"
-	sha, err := f.BuildTestRef(t.Context(), repo, forge.BuildRequest{Ref: ref, BaseSHA: e.BaseSHA, PRs: e.PRs[:1], Method: forge.Merge, BatchID: "b7"})
+	sha, err := f.BuildTestRef(t.Context(), repo, forge.BuildRequest{Ref: ref, BaseSHA: e.BaseSHA, PRs: e.PRs[:1], Method: forge.Merge, BatchID: "b7"}, forge.PushOptions{})
 	must(t, err)
 	f.SetCheckRuns(repo, sha, []forge.CheckRun{
 		{Name: "ci", State: forge.Success},

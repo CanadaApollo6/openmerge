@@ -75,7 +75,7 @@ func TestHTTPAskpassKeepsCredentialsOutOfArgvAndFiles(t *testing.T) {
 				t.Fatal("authenticated HTTP read returned the wrong base")
 			}
 			_, err = r.BuildTestRef(context.Background(), testRepo, forge.BuildRequest{
-				Ref: "openmerge/queue/main/http", BaseSHA: f.base, PRs: f.prs[:1], Method: forge.Merge, BatchID: "http"})
+				Ref: "openmerge/queue/main/http", BaseSHA: f.base, PRs: f.prs[:1], Method: forge.Merge, BatchID: "http"}, forge.PushOptions{})
 			must(t, err)
 			argv, err := os.ReadFile(record)
 			must(t, err)
@@ -181,7 +181,7 @@ func TestCancellationAndInfrastructureErrors(t *testing.T) {
 		return filepath.Join(t.TempDir(), "missing.git"), Auth{}, nil
 	}
 	_, err := f.g.BuildTestRef(context.Background(), testRepo, forge.BuildRequest{
-		Ref: "openmerge/queue/main/missing", BaseSHA: f.base, PRs: f.prs[:1], Method: forge.Merge, BatchID: "missing"})
+		Ref: "openmerge/queue/main/missing", BaseSHA: f.base, PRs: f.prs[:1], Method: forge.Merge, BatchID: "missing"}, forge.PushOptions{})
 	if err == nil || errors.Is(err, forge.ErrConflict) || errors.Is(err, forge.ErrLeaseRejected) {
 		t.Fatalf("infrastructure error misclassified: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestFinalPushRefreshesCredentials(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/fail-refresh=%v", operation, failRefresh), func(t *testing.T) {
 				f := newFixture(t)
 				ctx := context.Background()
-				initial, err := f.g.EnsureFence(ctx, testRepo, testFence)
+				initial, err := f.g.EnsureFence(ctx, testRepo, testFence, forge.PushOptions{})
 				must(t, err)
 				tested := f.build(forge.Merge, f.prs[:1], "refresh")
 				gitPath, err := exec.LookPath("git")
@@ -215,12 +215,12 @@ func TestFinalPushRefreshesCredentials(t *testing.T) {
 				}
 				switch operation {
 				case "build":
-					_, err = f.g.BuildTestRef(ctx, testRepo, forge.BuildRequest{Ref: "openmerge/queue/main/refresh-final", BaseSHA: f.base, PRs: f.prs[:1], Method: forge.Merge, BatchID: "refresh-final"})
+					_, err = f.g.BuildTestRef(ctx, testRepo, forge.BuildRequest{Ref: "openmerge/queue/main/refresh-final", BaseSHA: f.base, PRs: f.prs[:1], Method: forge.Merge, BatchID: "refresh-final"}, forge.PushOptions{})
 				case "land":
 					_, err = f.g.Land(ctx, testRepo, forge.LandRequest{Base: "main", ExpectedBaseSHA: f.base, TestedSHA: tested,
-						Fence: testFence, ExpectedFence: initial, NextFenceID: "land/refresh", PRs: f.prs[:1]})
+						Fence: testFence, ExpectedFence: initial, NextFenceID: "land/refresh", PRs: f.prs[:1]}, forge.PushOptions{})
 				default:
-					_, err = f.g.AdvanceFence(ctx, testRepo, testFence, initial, "abandon/refresh")
+					_, err = f.g.AdvanceFence(ctx, testRepo, testFence, initial, "abandon/refresh", forge.PushOptions{})
 				}
 				if calls != 2 {
 					t.Fatalf("resolved credentials %d times, want operation start and final push", calls)

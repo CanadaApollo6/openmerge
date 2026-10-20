@@ -289,16 +289,16 @@ type LandRequest struct {
 
 // Git builds exact tested commits and performs forge-enforced fenced writes.
 type Git interface {
-	BuildTestRef(ctx context.Context, repo RepoRef, req BuildRequest) (testedSHA string, err error)
-	Land(ctx context.Context, repo RepoRef, req LandRequest) (newFenceSHA string, err error)
+	BuildTestRef(ctx context.Context, repo RepoRef, req BuildRequest, opts PushOptions) (testedSHA string, err error)
+	Land(ctx context.Context, repo RepoRef, req LandRequest, opts PushOptions) (newFenceSHA string, err error)
 	// VerifyFastForward requires a single-parent, identical-tree marker above
 	// head, with head strictly descending from base. It never changes refs.
 	VerifyFastForward(ctx context.Context, repo RepoRef, base, tested, head string) error
 	// EnsureFence creates the initial fence only if absent, safely under
 	// concurrency, otherwise returning the existing SHA without changing it.
-	EnsureFence(ctx context.Context, repo RepoRef, fenceRef string) (sha string, err error)
+	EnsureFence(ctx context.Context, repo RepoRef, fenceRef string, opts PushOptions) (sha string, err error)
 	// AdvanceFence leases expectedSHA and mints a child with nextID and a fresh nonce.
-	AdvanceFence(ctx context.Context, repo RepoRef, fenceRef, expectedSHA, nextID string) (newSHA string, err error)
+	AdvanceFence(ctx context.Context, repo RepoRef, fenceRef, expectedSHA, nextID string, opts PushOptions) (newSHA string, err error)
 	// ReadFence reads identity and tested SHA from an exact single-line land or
 	// abandon message, validating the 32-hex nonce and 40/64-hex tested SHA.
 	// Unrecognized messages have empty identity fields; a missing ref is an error.
@@ -308,7 +308,7 @@ type Git interface {
 	// HasMergeCommits inspects all commits reachable from head but not base.
 	HasMergeCommits(ctx context.Context, repo RepoRef, base, head string) (bool, error)
 	// DeleteBranch deletes only expectedSHA; missing or changed refs are no-ops.
-	DeleteBranch(ctx context.Context, repo RepoRef, branch, expectedSHA string) error
+	DeleteBranch(ctx context.Context, repo RepoRef, branch, expectedSHA string, opts PushOptions) error
 }
 
 // MaxCommitHistoryCommits bounds general graph enumeration independently of

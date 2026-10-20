@@ -386,7 +386,7 @@ func TestAtomicDecisionExecutorCrashWindows(t *testing.T) {
 			id, err := (QueueKey{Installation: "7", Repository: "Owner/Repo", BaseBranch: "release"}).ChangeID(12)
 			must(t, err)
 			meta := &forge.ChangeMetadata{ChangeID: string(id), Revision: 1, Labels: []string{"docs", "owned:user:owner", "unknown"}}
-			tested, err := f.BuildTestRef(t.Context(), repo, forge.BuildRequest{Ref: "openmerge/queue/release/b1", BaseSHA: base, PRs: []forge.BuildPR{{Number: 12, HeadSHA: pr.HeadSHA, Metadata: meta}}, Method: forge.Squash, BatchID: "b1"})
+			tested, err := f.BuildTestRef(t.Context(), repo, forge.BuildRequest{Ref: "openmerge/queue/release/b1", BaseSHA: base, PRs: []forge.BuildPR{{Number: 12, HeadSHA: pr.HeadSHA, Metadata: meta}}, Method: forge.Squash, BatchID: "b1"}, forge.PushOptions{})
 			must(t, err)
 			raw, err := os.ReadFile("../queue/testdata/landing-start.json")
 			must(t, err)

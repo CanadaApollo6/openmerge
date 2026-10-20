@@ -160,7 +160,7 @@ func TestServeFastForwardMergeHeadDequeuedBeforeCI(t *testing.T) {
 	must(t, err)
 	first, err := f.PullRequest(t.Context(), repo, 1)
 	must(t, err)
-	merged, err := f.BuildTestRef(t.Context(), repo, forge.BuildRequest{Ref: "test-merge", BaseSHA: base, PRs: []forge.BuildPR{{Number: 1, HeadSHA: first.HeadSHA}}, Method: forge.Merge, BatchID: "merge"})
+	merged, err := f.BuildTestRef(t.Context(), repo, forge.BuildRequest{Ref: "test-merge", BaseSHA: base, PRs: []forge.BuildPR{{Number: 1, HeadSHA: first.HeadSHA}}, Method: forge.Merge, BatchID: "merge"}, forge.PushOptions{})
 	must(t, err)
 	pr, err := f.OpenPR(repo, 2, merged, true)
 	must(t, err)

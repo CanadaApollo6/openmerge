@@ -40,7 +40,7 @@ func TestFastForwardPreservesHeadsAndAtomicLeases(t *testing.T) {
 			}
 			before := gitCommand(t, f.source, "", nil, "cat-file", "commit", prs[len(prs)-1].HeadSHA)
 			ref := "openmerge/queue/main/ff"
-			tested, err := f.g.BuildTestRef(t.Context(), testRepo, forge.BuildRequest{Ref: ref, BaseSHA: f.base, PRs: prs, Method: forge.FastForward, BatchID: "ff"})
+			tested, err := f.g.BuildTestRef(t.Context(), testRepo, forge.BuildRequest{Ref: ref, BaseSHA: f.base, PRs: prs, Method: forge.FastForward, BatchID: "ff"}, forge.PushOptions{})
 			if scenario == "siblings" || scenario == "reverse" || scenario == "equal" || scenario == "stale-head" {
 				if err == nil {
 					t.Fatal("invalid fast-forward accepted")
@@ -62,17 +62,17 @@ func TestFastForwardPreservesHeadsAndAtomicLeases(t *testing.T) {
 			if got := gitCommand(t, f.source, "", nil, "cat-file", "commit", prs[len(prs)-1].HeadSHA); got != before {
 				t.Fatal("commit bytes changed")
 			}
-			fence, err := f.g.EnsureFence(t.Context(), testRepo, testFence)
+			fence, err := f.g.EnsureFence(t.Context(), testRepo, testFence, forge.PushOptions{})
 			must(t, err)
 			switch scenario {
 			case "moved-base":
 				f.push("main", f.heads[3], false)
 			case "moved-fence":
-				_, err = f.g.AdvanceFence(t.Context(), testRepo, testFence, fence, "abandon/other")
+				_, err = f.g.AdvanceFence(t.Context(), testRepo, testFence, fence, "abandon/other", forge.PushOptions{})
 				must(t, err)
 			}
 			baseBefore, fenceBefore := f.read("main"), f.read(testFence)
-			_, err = f.g.Land(t.Context(), testRepo, forge.LandRequest{Base: "main", ExpectedBaseSHA: f.base, TestedSHA: tested, Fence: testFence, ExpectedFence: fence, NextFenceID: "land/ff", PRs: prs, FastForwardHeadSHA: prs[len(prs)-1].HeadSHA})
+			_, err = f.g.Land(t.Context(), testRepo, forge.LandRequest{Base: "main", ExpectedBaseSHA: f.base, TestedSHA: tested, Fence: testFence, ExpectedFence: fence, NextFenceID: "land/ff", PRs: prs, FastForwardHeadSHA: prs[len(prs)-1].HeadSHA}, forge.PushOptions{})
 			if scenario == "moved-base" || scenario == "moved-fence" {
 				if !errors.Is(err, forge.ErrLeaseRejected) {
 					t.Fatal(err)
@@ -81,7 +81,7 @@ func TestFastForwardPreservesHeadsAndAtomicLeases(t *testing.T) {
 					t.Fatal("rejection moved refs")
 				}
 				if scenario == "moved-base" {
-					_, err = f.g.BuildTestRef(t.Context(), testRepo, forge.BuildRequest{Ref: ref, BaseSHA: baseBefore, PRs: prs, Method: forge.FastForward, BatchID: "retry"})
+					_, err = f.g.BuildTestRef(t.Context(), testRepo, forge.BuildRequest{Ref: ref, BaseSHA: baseBefore, PRs: prs, Method: forge.FastForward, BatchID: "retry"}, forge.PushOptions{})
 					if !errors.Is(err, forge.ErrNotFastForward) {
 						t.Fatalf("diverged head was rebased: %v", err)
 					}
@@ -130,9 +130,9 @@ func TestFastForwardMarkerIdentityIsUniqueAndAuthoritative(t *testing.T) {
 	f := newFixture(t)
 	head := f.heads[1]
 	req := forge.BuildRequest{Ref: "marker-test", BaseSHA: f.base, PRs: f.prs[:1], Method: forge.FastForward, BatchID: "marker-batch"}
-	first, err := f.g.BuildTestRef(t.Context(), testRepo, req)
+	first, err := f.g.BuildTestRef(t.Context(), testRepo, req, forge.PushOptions{})
 	must(t, err)
-	second, err := f.g.BuildTestRef(t.Context(), testRepo, req)
+	second, err := f.g.BuildTestRef(t.Context(), testRepo, req, forge.PushOptions{})
 	must(t, err)
 	if first == second {
 		t.Fatal("same-clock retry reused a marker SHA")
@@ -176,7 +176,7 @@ func TestFastForwardRejectsInvalidMarkerBeforeStartAndPush(t *testing.T) {
 			}
 			marker := gitCommand(t, f.source, "OpenMerge test\n\nOpenMerge-Batch: invalid\n", nil, append([]string{"commit-tree", tree}, parents...)...)
 			f.push("invalid-marker", marker, false)
-			fence, err := f.g.EnsureFence(t.Context(), testRepo, testFence)
+			fence, err := f.g.EnsureFence(t.Context(), testRepo, testFence, forge.PushOptions{})
 			must(t, err)
 			x := executor.Executor{Driver: &r2Driver{}, Git: f.g, Repo: testRepo, Base: "main", AllowNoRequiredChecks: true}
 			events := 0
@@ -184,7 +184,7 @@ func TestFastForwardRejectsInvalidMarkerBeforeStartAndPush(t *testing.T) {
 			if err == nil || events != 0 {
 				t.Fatalf("invalid marker began landing: events=%d, err=%v", events, err)
 			}
-			_, err = f.g.Land(t.Context(), testRepo, forge.LandRequest{Base: "main", ExpectedBaseSHA: base, TestedSHA: marker, Fence: testFence, ExpectedFence: fence, NextFenceID: "land/invalid", PRs: f.prs[:1], FastForwardHeadSHA: head})
+			_, err = f.g.Land(t.Context(), testRepo, forge.LandRequest{Base: "main", ExpectedBaseSHA: base, TestedSHA: marker, Fence: testFence, ExpectedFence: fence, NextFenceID: "land/invalid", PRs: f.prs[:1], FastForwardHeadSHA: head}, forge.PushOptions{})
 			if err == nil || f.read("main") != f.base || f.read(testFence) != fence {
 				t.Fatal("invalid marker moved landing refs")
 			}
@@ -194,7 +194,7 @@ func TestFastForwardRejectsInvalidMarkerBeforeStartAndPush(t *testing.T) {
 
 func TestFastForwardRecoversLostPushResponseFromFence(t *testing.T) {
 	f := newFixture(t)
-	fence, err := f.g.EnsureFence(t.Context(), testRepo, testFence)
+	fence, err := f.g.EnsureFence(t.Context(), testRepo, testFence, forge.PushOptions{})
 	must(t, err)
 	head := f.heads[1]
 	state := queue.State{BaseBranch: "main", BaseSHA: f.base, Fence: fence}
