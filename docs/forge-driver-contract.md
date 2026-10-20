@@ -393,22 +393,33 @@ Returned errors retain the shared quota deadline/type and successful evidence.
 
 `Protection.Target` records the ruleset target directly. Ref includes/excludes
 remain explicit; other conditions retain every leaf under its relative JSON
-pointer path, including repository-name, repository-ID and repository-property
-selectors. Rule parameters use the same paths, with escaped segments and numeric
-indices for object arrays. Scalar arrays retain source order in `Parameter.Values`.
-Each scalar leaf uses JSON spelling: strings include JSON quotes/escapes, while
-null, booleans and numbers are bare. A JSON null leaf has `Values:["null"]`, an
-empty array has `Values:[]`, and an absent leaf has no `Parameter`. The string
-`"null"` has `Values:["\"null\""]`; an empty object has `Values:["{}"]`, distinct
-from the string `"{}"`, whose value includes JSON quotes. This applies equally
-to unknown/future parameters and conditions. Revisions normalize `updated_at` to UTC.
+pointer-style path, including repository-name, repository-ID and repository-property
+selectors. Rule parameters use the same encoding documented on `authority.Parameter`
+in `internal/authority/evidence.go`. Object keys escape `~` and `/` per RFC 6901
+(`~0` and `~1`); the empty object key uses the reserved segment `~3`. Every array
+element, including scalar elements, uses the reserved segment `~2` followed by
+its zero-based decimal index without leading zeros. These are typed path
+extensions, not literal RFC 6901 pointers. For example, `{"leaf":42}` has path
+`leaf`, `{"leaf":[42]}` has `leaf/~20`, `{"leaf":{"0":42}}` has `leaf/0`, and
+`{"leaf":[[42]]}` has `leaf/~20/~20`. An object key `~20` escapes to `~020`, so
+it cannot impersonate an array index. Array order remains explicit in the paths.
+Each scalar leaf has exactly one value in JSON spelling: strings include JSON
+quotes/escapes, while null, booleans and numbers are bare. A JSON null leaf has
+`Values:["null"]`, an empty array has `Values:[]`, and an absent leaf has no
+`Parameter`. An empty object has `Values:["{}"]`; strings containing JSON retain
+their enclosing JSON quotes. Paths and values together preserve all JSON shapes,
+including empty keys and nested containers, without a parameter schema. This
+applies equally to unknown/future parameters and conditions within the evidence
+bounds. Revisions normalize `updated_at` to UTC.
 
 The observed bypass inventory is independent of the declared break-glass union.
 It records Apps, organization admins, repository roles, teams, users, deploy keys,
 enterprise roles/owners and unknown types. Apps, teams, users, repository roles
 and enterprise roles require positive IDs. OrganizationAdmin, DeployKey and
 EnterpriseOwner are class-wide: their IDs are discarded, even when supplied,
-in both the GitHub reader and configured fake evidence. Unknown actors retain
+in both the GitHub reader and configured fake evidence. Shared `BypassActor.Validate`
+rejects IDs on these class-wide kinds, enforcing the invariant for future drivers.
+Unknown actors retain
 an optional positive ID and their exact `RawKind`; a supplied non-positive ID
 marks bypass evidence `read_failure` and retains independent protection fields.
 Repository-admin bindings accept only built-in role `"5"` in both drivers.

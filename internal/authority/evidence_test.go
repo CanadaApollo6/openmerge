@@ -173,6 +173,9 @@ func TestBypassActorObservedKindsAndModes(t *testing.T) {
 		{Kind: "user", Mode: "always"}, {Kind: "unknown", Mode: "always"},
 		{Kind: "FuturePrincipal", Mode: "always"},
 		{Kind: "deploy_key", Mode: "other"},
+		{Kind: "organization_admin", ID: "95", Mode: "always"},
+		{Kind: "deploy_key", ID: "95", Mode: "always"},
+		{Kind: "enterprise_owner", ID: "95", Mode: "always"},
 		{Kind: "team", ID: "200", Mode: "always", RawKind: "Team"},
 	} {
 		if actor.Validate() == nil {

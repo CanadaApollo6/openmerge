@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"reflect"
 	"strconv"
@@ -77,6 +78,24 @@ func TestAuthorityParameterLeafTypesHaveDistinctFingerprints(t *testing.T) {
 		{"boolean-string", `{"leaf":"true"}`, []authority.Parameter{{Name: "leaf", Values: []string{`"true"`}}}},
 		{"number", `{"leaf":42}`, []authority.Parameter{{Name: "leaf", Values: []string{"42"}}}},
 		{"number-string", `{"leaf":"42"}`, []authority.Parameter{{Name: "leaf", Values: []string{`"42"`}}}},
+		{"string", `{"leaf":"a"}`, []authority.Parameter{{Name: "leaf", Values: []string{`"a"`}}}},
+		{"string-array", `{"leaf":["a"]}`, []authority.Parameter{{Name: "leaf/~20", Values: []string{`"a"`}}}},
+		{"number-array", `{"leaf":[42]}`, []authority.Parameter{{Name: "leaf/~20", Values: []string{"42"}}}},
+		{"null-array", `{"leaf":[null]}`, []authority.Parameter{{Name: "leaf/~20", Values: []string{"null"}}}},
+		{"boolean-array", `{"leaf":[true]}`, []authority.Parameter{{Name: "leaf/~20", Values: []string{"true"}}}},
+		{"empty-string", `{"leaf":""}`, []authority.Parameter{{Name: "leaf", Values: []string{`""`}}}},
+		{"empty-string-array", `{"leaf":[""]}`, []authority.Parameter{{Name: "leaf/~20", Values: []string{`""`}}}},
+		{"numeric-key", `{"leaf":{"0":42}}`, []authority.Parameter{{Name: "leaf/0", Values: []string{"42"}}}},
+		{"nested-array", `{"leaf":[[42]]}`, []authority.Parameter{{Name: "leaf/~20/~20", Values: []string{"42"}}}},
+		{"arrays-of-objects", `{"leaf":[[{"0":42}]]}`, []authority.Parameter{{Name: "leaf/~20/~20/0", Values: []string{"42"}}}},
+		{"objects-of-arrays", `{"leaf":{"0":[[42]]}}`, []authority.Parameter{{Name: "leaf/0/~20/~20", Values: []string{"42"}}}},
+		{"json-string", `{"leaf":"{\"0\":42}"}`, []authority.Parameter{{Name: "leaf", Values: []string{`"{\"0\":42}"`}}}},
+		{"reserved-array-marker-key", `{"leaf":{"~20":42}}`, []authority.Parameter{{Name: "leaf/~020", Values: []string{"42"}}}},
+		{"empty-key", `{"leaf":{"":42}}`, []authority.Parameter{{Name: "leaf/~3", Values: []string{"42"}}}},
+		{"reserved-empty-key-marker", `{"leaf":{"~3":42}}`, []authority.Parameter{{Name: "leaf/~03", Values: []string{"42"}}}},
+		{"top-level-empty-key", `{"":42}`, []authority.Parameter{{Name: "~3", Values: []string{"42"}}}},
+		{"nested-empty-array", `{"leaf":[[]]}`, []authority.Parameter{{Name: "leaf/~20", Values: []string{}}}},
+		{"array-of-empty-object", `{"leaf":[{}]}`, []authority.Parameter{{Name: "leaf/~20", Values: []string{"{}"}}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p, err := (authorityRuleset{ID: 10, SourceType: "Repository", Source: "acme/project", Target: "branch", Enforcement: "active", Conditions: json.RawMessage(`{"ref_name":{"include":["refs/heads/main"],"exclude":[]}}`), Rules: json.RawMessage(`[{"type":"future_rule","parameters":` + tc.raw + `}]`), Bypass: json.RawMessage(`[]`)}).protection("acme/project")
@@ -95,6 +114,66 @@ func TestAuthorityParameterLeafTypesHaveDistinctFingerprints(t *testing.T) {
 			seen[fingerprint] = tc.name
 		})
 	}
+}
+
+// Pair each generated value with several container shapes to exercise type and
+// path boundaries even when the random generator repeats a common scalar.
+func TestAuthorityParameterEncodingInjective(t *testing.T) {
+	rng := rand.New(rand.NewPCG(98, 3))
+	keys := []string{"", "0", "1", "a", "a/b", "~", "~20", "~3", "雪", "\x00"}
+	var value func(int) any
+	value = func(depth int) any {
+		kind := rng.IntN(6)
+		if depth == 0 {
+			kind = rng.IntN(4)
+		}
+		switch kind {
+		case 0:
+			return nil
+		case 1:
+			return rng.IntN(2) == 0
+		case 2:
+			return rng.IntN(200) - 100
+		case 3:
+			return []string{"", "a", "null", "42", "true", "{}", "[]", `{"0":[42]}`, "a/b~c", "雪", "\x00"}[rng.IntN(11)]
+		case 4:
+			items := make([]any, rng.IntN(4))
+			for i := range items {
+				items[i] = value(depth - 1)
+			}
+			return items
+		default:
+			object := map[string]any{}
+			for range rng.IntN(4) {
+				object[keys[rng.IntN(len(keys))]] = value(depth - 1)
+			}
+			return object
+		}
+	}
+	seen := map[string]string{}
+	const samples = 2000
+	for range samples {
+		x := value(4)
+		jsonString, err := json.Marshal(x)
+		must(t, err)
+		for _, shape := range []any{x, []any{x}, []any{[]any{x}}, map[string]any{"0": x}, map[string]any{"": x}, map[string]any{"~20": x}, map[string]any{"~3": x}, string(jsonString)} {
+			raw, err := json.Marshal(map[string]any{"leaf": shape})
+			must(t, err)
+			var decoded any
+			must(t, json.Unmarshal(raw, &decoded))
+			canonical, err := json.Marshal(decoded)
+			must(t, err)
+			parameters, err := authorityParameters(canonical)
+			must(t, err)
+			encoded, err := json.Marshal(parameters)
+			must(t, err)
+			if previous, ok := seen[string(encoded)]; ok && previous != string(canonical) {
+				t.Fatalf("encoding collision: %s and %s => %s", previous, canonical, encoded)
+			}
+			seen[string(encoded)] = string(canonical)
+		}
+	}
+	t.Logf("%d generated inputs, %d distinct canonical JSON values, no collisions (PCG seeds 98, 3)", samples*8, len(seen))
 }
 
 func authorityHTTPEnv(t *testing.T) (*apiFixture, forgetest.WriteRestrictionEnv) {
@@ -440,7 +519,7 @@ func TestAuthorityPartialAndMalformedHTTPResponses(t *testing.T) {
 					t.Fatal(p)
 				}
 			case "unknown-parameters":
-				if !reflect.DeepEqual(p.Rules[0].Parameters, []authority.Parameter{{Name: "new_param/a", Values: []string{"null"}}, {Name: "new_param/z", Values: []string{"1", `"two"`, "false"}}}) {
+				if !reflect.DeepEqual(p.Rules[0].Parameters, []authority.Parameter{{Name: "new_param/a", Values: []string{"null"}}, {Name: "new_param/z/~20", Values: []string{"1"}}, {Name: "new_param/z/~21", Values: []string{`"two"`}}, {Name: "new_param/z/~22", Values: []string{"false"}}}) {
 					t.Fatal(p.Rules)
 				}
 			case "failed-second-detail":
@@ -519,13 +598,13 @@ func TestAuthorityCollectionBoundary(t *testing.T) {
 			case "conditions":
 				n = len(p.Conditions)
 			case "condition-values":
-				n = len(p.Conditions[0].Values)
+				n = len(p.Conditions)
 			case "rules":
 				n = len(p.Rules)
 			case "rule-parameters":
 				n = len(p.Rules[0].Parameters)
 			case "rule-values":
-				n = len(p.Rules[0].Parameters[0].Values)
+				n = len(p.Rules[0].Parameters)
 			case "bypass":
 				n = len(p.BypassActors)
 			}
@@ -572,21 +651,25 @@ func TestAuthorityInheritedConditionAndNestedRulePaths(t *testing.T) {
 	must(t, o.Validate())
 	p := o.Protections[0]
 	wantConditions := []authority.Parameter{
-		{Name: "repository_id/repository_ids", Values: []string{"99", "100"}},
+		{Name: "repository_id/repository_ids/~20", Values: []string{"99"}},
+		{Name: "repository_id/repository_ids/~21", Values: []string{"100"}},
 		{Name: "repository_name/exclude", Values: []string{}},
-		{Name: "repository_name/include", Values: []string{`"project"`}},
+		{Name: "repository_name/include/~20", Values: []string{`"project"`}},
 		{Name: "repository_name/protected", Values: []string{"true"}},
 		{Name: "repository_property/exclude", Values: []string{}},
-		{Name: "repository_property/include/0/name", Values: []string{`"tier"`}},
-		{Name: "repository_property/include/0/property_values", Values: []string{`"critical"`, `"high"`}},
-		{Name: "repository_property/include/0/source", Values: []string{`"custom"`}},
+		{Name: "repository_property/include/~20/name", Values: []string{`"tier"`}},
+		{Name: "repository_property/include/~20/property_values/~20", Values: []string{`"critical"`}},
+		{Name: "repository_property/include/~20/property_values/~21", Values: []string{`"high"`}},
+		{Name: "repository_property/include/~20/source", Values: []string{`"custom"`}},
 	}
 	wantRules := []authority.Rule{{Kind: "required_status_checks", Parameters: []authority.Parameter{
-		{Name: "future~1key~0/values", Values: []string{"1", `"two"`, "false"}},
-		{Name: "required_status_checks/0/context", Values: []string{`"ci/a"`}},
-		{Name: "required_status_checks/0/integration_id", Values: []string{"42"}},
-		{Name: "required_status_checks/1/context", Values: []string{`"ci/b"`}},
-		{Name: "required_status_checks/1/integration_id", Values: []string{"null"}},
+		{Name: "future~1key~0/values/~20", Values: []string{"1"}},
+		{Name: "future~1key~0/values/~21", Values: []string{`"two"`}},
+		{Name: "future~1key~0/values/~22", Values: []string{"false"}},
+		{Name: "required_status_checks/~20/context", Values: []string{`"ci/a"`}},
+		{Name: "required_status_checks/~20/integration_id", Values: []string{"42"}},
+		{Name: "required_status_checks/~21/context", Values: []string{`"ci/b"`}},
+		{Name: "required_status_checks/~21/integration_id", Values: []string{"null"}},
 		{Name: "strict_required_status_checks_policy", Values: []string{"false"}},
 	}}}
 	wantActors := []authority.BypassActor{{Kind: "deploy_key", Mode: "pull_request"}, {Kind: "organization_admin", Mode: "always"}, {Kind: "enterprise_role", ID: "96", Mode: "exempt"}, {Kind: "enterprise_owner", Mode: "always"}}

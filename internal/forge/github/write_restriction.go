@@ -302,8 +302,8 @@ func jsonPresent(raw json.RawMessage) bool {
 	return len(raw) > 0 && !bytes.Equal(bytes.TrimSpace(raw), []byte("null"))
 }
 
-// Parameters retain scalar leaves at relative JSON pointer paths. Scalar arrays
-// keep source order; object arrays use indices so nested associations survive.
+// Parameters use authority.Parameter's typed path segments for every array
+// element, preserving container shapes as well as scalar types.
 func authorityParameters(raw json.RawMessage) ([]authority.Parameter, error) {
 	result := []authority.Parameter{}
 	if !jsonPresent(raw) {
@@ -351,10 +351,10 @@ func authorityParameters(raw json.RawMessage) ([]authority.Parameter, error) {
 			}
 			slices.Sort(names)
 			for _, name := range names {
-				if name == "" {
-					return errors.New("invalid authority parameter name")
-				}
 				segment := strings.ReplaceAll(strings.ReplaceAll(name, "~", "~0"), "/", "~1")
+				if name == "" {
+					segment = "~3"
+				}
 				if path != "" {
 					segment = path + "/" + segment
 				}
@@ -366,17 +366,11 @@ func authorityParameters(raw json.RawMessage) ([]authority.Parameter, error) {
 			if len(v) > maxAuthorityItems {
 				return errors.New("too many authority parameter values")
 			}
-			texts := make([]string, 0, len(v))
-			for _, item := range v {
-				if text, ok := scalar(item); ok {
-					texts = append(texts, text)
-				}
-			}
-			if len(texts) == len(v) {
-				return appendParameter(path, texts)
+			if len(v) == 0 {
+				return appendParameter(path, []string{})
 			}
 			for i, item := range v {
-				if err := walk(path+"/"+strconv.Itoa(i), item); err != nil {
+				if err := walk(path+"/~2"+strconv.Itoa(i), item); err != nil {
 					return err
 				}
 			}
