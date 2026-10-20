@@ -52,7 +52,9 @@ func runGitValidation(t *testing.T, factory func(*testing.T) Env) {
 			})
 		}
 		for i, branch := range []string{"", "refs/heads/topic", "refs/tags/tag", "openmerge/queue/topic", "bad..name", "bad name", "topic.lock"} {
-			t.Run(fmt.Sprintf("delete-branch/%d", i), func(t *testing.T) { invalidInput(t, e.Git.DeleteBranch(ctx, e.Repo, branch, e.BaseSHA, forge.PushOptions{})) })
+			t.Run(fmt.Sprintf("delete-branch/%d", i), func(t *testing.T) {
+				invalidInput(t, e.Git.DeleteBranch(ctx, e.Repo, branch, e.BaseSHA, forge.PushOptions{}))
+			})
 		}
 		for i, sha := range []string{"", "main", "--all", strings.Repeat("a", 39), strings.Repeat("g", 40), strings.Repeat("a", 63), strings.Repeat("a", 65)} {
 			t.Run(fmt.Sprintf("sha/%d", i), func(t *testing.T) {

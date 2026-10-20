@@ -214,7 +214,9 @@ func TestEveryForgeCallBoundary(t *testing.T) {
 			_, e := s.boundary.HeadBranchForDeletion(context.Background(), s.repo, 1, "", "main")
 			return e
 		},
-		"DeleteBranch": func() error { return s.boundary.DeleteBranch(context.Background(), s.repo, "", "", forge.PushOptions{}) },
+		"DeleteBranch": func() error {
+			return s.boundary.DeleteBranch(context.Background(), s.repo, "", "", forge.PushOptions{})
+		},
 		"PullRequest":  func() error { _, e := s.boundary.PullRequest(context.Background(), s.repo, 1); return e },
 		"CheckRuns":    func() error { _, e := s.boundary.CheckRuns(context.Background(), s.repo, ""); return e },
 		"DeleteRef":    func() error { return s.boundary.DeleteRef(context.Background(), s.repo, "") },
@@ -225,12 +227,21 @@ func TestEveryForgeCallBoundary(t *testing.T) {
 			_, e := s.boundary.BuildTestRef(context.Background(), s.repo, forge.BuildRequest{}, forge.PushOptions{})
 			return e
 		},
-		"Land":         func() error { _, e := s.boundary.Land(context.Background(), s.repo, forge.LandRequest{}, forge.PushOptions{}); return e },
-		"EnsureFence":  func() error { _, e := s.boundary.EnsureFence(context.Background(), s.repo, "", forge.PushOptions{}); return e },
-		"AdvanceFence": func() error { _, e := s.boundary.AdvanceFence(context.Background(), s.repo, "", "", "", forge.PushOptions{}); return e },
-		"ReadFence":    func() error { _, _, _, e := s.boundary.ReadFence(context.Background(), s.repo, ""); return e },
-		"ReadRef":      func() error { _, e := s.boundary.ReadRef(context.Background(), s.repo, ""); return e },
-		"IsAncestor":   func() error { _, e := s.boundary.IsAncestor(context.Background(), s.repo, "", ""); return e },
+		"Land": func() error {
+			_, e := s.boundary.Land(context.Background(), s.repo, forge.LandRequest{}, forge.PushOptions{})
+			return e
+		},
+		"EnsureFence": func() error {
+			_, e := s.boundary.EnsureFence(context.Background(), s.repo, "", forge.PushOptions{})
+			return e
+		},
+		"AdvanceFence": func() error {
+			_, e := s.boundary.AdvanceFence(context.Background(), s.repo, "", "", "", forge.PushOptions{})
+			return e
+		},
+		"ReadFence":  func() error { _, _, _, e := s.boundary.ReadFence(context.Background(), s.repo, ""); return e },
+		"ReadRef":    func() error { _, e := s.boundary.ReadRef(context.Background(), s.repo, ""); return e },
+		"IsAncestor": func() error { _, e := s.boundary.IsAncestor(context.Background(), s.repo, "", ""); return e },
 	}
 	for _, method := range forgeMethods {
 		t.Run(method, func(t *testing.T) {
