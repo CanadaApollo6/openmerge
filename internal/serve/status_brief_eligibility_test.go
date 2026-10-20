@@ -27,9 +27,10 @@ import (
 
 type journalBriefSource struct {
 	*Server
-	journal       store.Journal
-	changedConfig queue.ConfigApplied
-	changedPolicy cp.Policy
+	journal         store.Journal
+	changedConfig   queue.ConfigApplied
+	preservedConfig queue.ConfigApplied
+	changedPolicy   cp.Policy
 }
 
 func (s *journalBriefSource) Journals(context.Context, []store.QueueKey) ([]store.Journal, error) {
@@ -126,6 +127,11 @@ func briefEligibilityFixture(t *testing.T, receipt bool) (*journalBriefSource, c
 	}
 	src := &journalBriefSource{Server: &Server{queues: []*worker{{Target: Target{Key: key, Git: g}, configBranch: "main", cfg: cfg.Queues[0]}}}, journal: store.Journal{Key: key}}
 	appendBriefEvents(&src.journal, queue.ConfigApplied{Commit: base, Digest: effective, Policy: &cp.PolicyPin{DefaultBranch: "main", Resolved: resolved, ClassifierVersion: classification.Version}}, queue.BaseMoved{SHA: base}, queue.ChangeRevisionObserved{PR: 5, ChangeID: id, Revision: 1, HeadSHA: head, Basis: queue.RevisionObservationBasis{BaseSHA: base, At: b.At.Add(-time.Hour)}}, queue.PRObserved{PR: 5, HeadSHA: head, Eligible: true, Trusted: true}, queue.EnqueueRequested{PR: 5, At: b.At}, classified, queue.Accountability(b, author, author, nil, component), queue.Intent(b, "claimed intent", "body"), review)
+	// A different governing commit can preserve all component-policy inputs.
+	preservedCommit := object("unrelated governing commit\n", "commit-tree", tree("before\n"), "-p", base)
+	preservedDigest, err := cp.WithPolicyDigest(cfg.Queues[0].Digest(false), component)
+	must(t, err)
+	src.preservedConfig = queue.ConfigApplied{Commit: preservedCommit, Digest: preservedDigest, Policy: src.journal.Events[0].Event.(queue.ConfigApplied).Policy}
 	// Retain a second immutable config with a changed approvals component.
 	changedData := strings.Replace(data, "count: 1", "count: 2", 1)
 	changedCfg, _, err := config.Load([]byte(changedData))
@@ -395,5 +401,71 @@ func TestBriefEligibilityBareObservationCannotRenewChangedApprovals(t *testing.T
 	}
 	if _, err := state.RecordedBrief(src.changedPolicy, fresh.Basis); err == nil {
 		t.Fatal("gate accepted old classification under changed approvals")
+	}
+}
+
+// The HTTP surface can prove component equality from local immutable objects.
+// The reviewer check has only journal pins: an identical identity PolicyPin
+// cannot prove that CODEOWNERS, attributes or approval rules stayed unchanged.
+func TestBriefEligibilityGoverningCommitSurfaceDivergence(t *testing.T) {
+	for _, changed := range []bool{false, true} {
+		t.Run(fmt.Sprint("component-changed=", changed), func(t *testing.T) {
+			src, policy, fresh, _ := briefEligibilityFixture(t, false)
+			appendBriefEvents(&src.journal, fresh)
+			before := readEligibilityBrief(t, src, "reviewer")
+			config := src.preservedConfig
+			if changed {
+				config = src.changedConfig
+			}
+			original := src.journal.Events[0].Event.(queue.ConfigApplied)
+			if config.Commit == original.Commit || config.Digest == original.Digest || !reflect.DeepEqual(config.Policy, original.Policy) {
+				t.Fatal("fixture must change governing commit and effective digest while preserving PolicyPin")
+			}
+			appendBriefEvents(&src.journal, config)
+			fresh.Basis.ReadID = "renewed-after-governing-commit"
+			appendBriefEvents(&src.journal, fresh)
+			view := readEligibilityBrief(t, src, "reviewer")
+			if view.Digest != before.Digest || view.Obligations[0].Met == changed {
+				t.Fatalf("HTTP component guard: %+v", view)
+			}
+			if changed && (view.Obligations[0].Code != "eligibility_stale" || len(view.Obligations[0].ApprovedIDs) != 0) {
+				t.Fatal(view.Obligations)
+			}
+			q, _, _ := status.Project(src.journal, 0, 0, nil)
+			for _, reuse := range []bool{false, true} {
+				var summary string
+				var err error
+				if reuse {
+					summary, err = status.ReviewerCheckSummaryFromProjection(src.journal, &q, 5, policy, nil)
+				} else {
+					summary, err = status.ReviewerCheckSummary(src.journal, 5, policy)
+				}
+				must(t, err)
+				if strings.Contains(summary, "met=true") || !strings.Contains(summary, `eligibility\_stale`) || !strings.Contains(summary, "Digest: "+before.Digest) {
+					t.Fatalf("reuse=%t: reviewer check credited unverifiable policy: %s", reuse, summary)
+				}
+			}
+			state := replayBriefJournal(src.journal)
+			gatePolicy := policy
+			if changed {
+				gatePolicy = src.changedPolicy
+			}
+			fact, err := state.RecordedBrief(gatePolicy, fresh.Basis)
+			if changed {
+				if err == nil {
+					t.Fatal("gate accepted classification under changed component")
+				}
+				return
+			}
+			must(t, err)
+			identity, err := brief.Identity(fact)
+			must(t, err)
+			gate := state.EvaluateApprovals(gatePolicy, identity, fresh)
+			for i, requirement := range gate.Requirements {
+				if view.Obligations[i].Met && !requirement.Met {
+					t.Fatalf("HTTP credited requirement refused by gate: %+v", gate)
+				}
+			}
+		})
 	}
 }

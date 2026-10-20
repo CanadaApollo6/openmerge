@@ -44,8 +44,12 @@ func ReviewerCheckSummaryFromProjection(j store.Journal, q *Queue, pr int, polic
 		}
 		facts, _ := s.ApprovalFacts(b.ChangeID)
 		stored, _ := s.Classification(b.ChangeID, b.Revision)
-		pin, _ := recordedBriefPolicyPin(j, q, stored.Evidence)
-		return guardedBriefProgress(f, policy, s, facts, q.eligibilityPins[b.ChangeID], pin, currentBriefConfig(j, q), nil)
+		pin, pinKnown := recordedBriefPolicyPin(j, q, stored.Evidence)
+		eligibility := q.eligibilityPins[b.ChangeID]
+		if !pinKnown {
+			eligibility.stale = true
+		}
+		return guardedBriefProgress(f, policy, s, facts, eligibility, pin, currentBriefConfig(j, q), nil)
 	}})
 	if err != nil || !found {
 		return "", err
