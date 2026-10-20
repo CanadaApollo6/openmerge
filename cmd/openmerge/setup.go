@@ -36,7 +36,8 @@ Rollback: rulesets --authority github --rollback-preflight --config github.yml
   --installation-id ID --private-key KEY (read-only; admin and installation credentials)
 Permissions also accepts --authority openmerge or --config proposed.yml.
 Rulesets require GITHUB_TOKEN from a repository admin, with Administration read
-for inspection or write for --apply. Without --apply, only a preview is printed.
+for inspection or write for --apply. Setup without --apply prints a preview;
+--verify records operator evidence in the database.
 Verification requires --verify --authority openmerge and the first-emission
 drain/backup gate even on github queues. It rejects --apply, --restore,
 --rollback-preflight and --rotate-break-glass.

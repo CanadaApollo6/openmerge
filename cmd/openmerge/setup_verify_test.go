@@ -3,26 +3,88 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
 	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/store"
-	"os"
-	"strings"
-	"testing"
 )
 
-func TestVerifyRequiresGateBeforeDBOrGitHub(t *testing.T) {
-	for _, args := range [][]string{
-		{"rulesets", "--repo", "local/sandbox", "--app-id", "42", "--authority", "openmerge", "--verify"},
-		{"rulesets", "--repo", "local/sandbox", "--app-id", "42", "--authority", "openmerge", "--verify", "--apply"},
-	} {
-		var out, diagnostics bytes.Buffer
-		exit := runSetup(args, &out, &diagnostics)
-		if exit == 0 || !strings.Contains(diagnostics.String(), "--emission-receipt") || out.Len() != 0 {
-			t.Fatalf("gate bypassed: %d %s %s", exit, &out, &diagnostics)
+func TestRulesetsFlagParsingAndDispatch(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "mock-admin")
+	original := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = original })
+	calls := 0
+	http.DefaultTransport = importTestTransport(func(req *http.Request) (*http.Response, error) {
+		calls++
+		if req.Method != http.MethodGet || req.URL.Host != "api.github.com" {
+			t.Fatalf("unexpected request %s %s", req.Method, req.URL)
 		}
+		var value any
+		switch req.URL.Path {
+		case "/repos/acme/project":
+			value = map[string]any{"default_branch": "main", "permissions": map[string]bool{"admin": true}}
+		case "/repos/acme/project/rulesets":
+			value = []any{}
+		default:
+			t.Fatalf("unexpected route %s", req.URL.Path)
+		}
+		data, err := json.Marshal(value)
+		if err != nil {
+			return nil, err
+		}
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(data)), Request: req}, nil
+	})
+	plan := filepath.Join(t.TempDir(), "x")
+	if err := os.WriteFile(plan, []byte("version: 1\npolicy_authority: openmerge\nbreak_glass: {repository_admin: true}\nqueues: [{name: main, merge_when: ['check-success = ci']}]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tt := range []struct {
+		name    string
+		args    []string
+		code    int
+		message string
+		reads   bool
+	}{
+		{"help registers flags once", []string{"--help"}, 0, "--verify", false},
+		{"install preview", []string{"--authority", "openmerge", "--config", plan}, 0, "Preview only.", true},
+		{"verification gate", []string{"--authority", "openmerge", "--verify"}, 1, "--emission-receipt", false},
+		{"verification requires authority", []string{"--verify"}, 1, "--authority openmerge --verify requires", false},
+		{"verification rejects github", []string{"--verify", "--authority", "github"}, 1, "--authority openmerge --verify requires", false},
+		{"restore setup", []string{"--authority", "openmerge", "--restore", plan, "--config", plan}, 1, "--restore cannot be combined", false},
+		{"rollback credential wiring", []string{"--authority", "github", "--rollback-preflight", "--config", plan, "--installation-id", "7", "--private-key", plan + ".missing"}, 1, "x.missing", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			calls = 0
+			var out, diagnostics bytes.Buffer
+			args := append([]string{"rulesets", "--repo", "acme/project", "--app-id", "42"}, tt.args...)
+			if exit := runSetup(args, &out, &diagnostics); exit != tt.code || !strings.Contains(out.String()+diagnostics.String(), tt.message) || (calls > 0) != tt.reads {
+				t.Fatalf("dispatch: exit=%d out=%s diagnostics=%s calls=%d", exit, &out, &diagnostics, calls)
+			}
+		})
+	}
+}
+
+func TestVerifyRejectsSetupMutationsBeforeReads(t *testing.T) {
+	for _, args := range [][]string{
+		{"--apply"}, {"--restore", "capture.json"}, {"--rollback-preflight"}, {"--rotate-break-glass"},
+	} {
+		t.Run(args[0], func(t *testing.T) {
+			var out, diagnostics bytes.Buffer
+			base := []string{"rulesets", "--repo", "acme/project", "--app-id", "42", "--authority", "openmerge", "--verify"}
+			exit := runSetup(append(base, args...), &out, &diagnostics)
+			if exit != 1 || !strings.Contains(diagnostics.String(), "--verify cannot be combined") || out.Len() != 0 {
+				t.Fatalf("mutation accepted: %d %s %s", exit, &out, &diagnostics)
+			}
+		})
 	}
 }
 

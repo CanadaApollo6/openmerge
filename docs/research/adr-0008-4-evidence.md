@@ -54,8 +54,10 @@ openmerge setup rulesets --repo OWNER/REPO --app-id APP_ID \
 ```
 
 `GITHUB_TOKEN` is the separate repository-admin token with Administration read;
-inherited policy may require organization-owner visibility. `--apply` cannot
-be combined with verification. A failed/incomplete seeing read exits 1 and
+inherited policy may require organization-owner visibility. `--apply`, `--restore`, `--rollback-preflight` and `--rotate-break-glass`
+cannot be combined with verification. Only `--verify` selects verification;
+`--authority openmerge --config proposed.yml` continues through the setup
+preview/install path, and restore and rollback preflight keep their setup paths. A failed/incomplete seeing read exits 1 and
 records no verification. A visible violation is recorded and exits 1.
 Successful reads print the source event ID, scope, findings, seeing-read time,
 last observation time and last applied verification time. Proposed records do
@@ -281,7 +283,29 @@ The implementation is below the ADR's split threshold, so this is one PR.
 Remaining acceptance is the explicitly deferred organization-sandbox run above.
 The internal verification plan is an interim operator input until PR 9's policy
 resolver is wired. Classic inventory remains conservative for push validation;
-this PR does not introduce a new classic content-policy translator. No dependency
-on the PR 3b setup branch was taken; its CLI changes may need the planned
-rebase integration. No live verification, GitHub protection/ref writes, deployment or merge was
+this PR does not introduce a new classic content-policy translator. The original evidence predates the PR 3b integration; the rebase results below
+record validation on main including PR 3b. No live verification, GitHub protection/ref writes, deployment or merge was
 performed. Publishing the review PR uses the requested PR metadata operation.
+
+## Rebase onto PR 3b on main
+
+PR 112 is rebased onto `d4e15c8` (PR 111). Reconciled overlaps:
+
+- `rulesets` registers one `--authority`, owned by `github.RulesOptions`.
+  Only `--verify` dispatches to operator verification. Verification requires
+  explicit `--authority openmerge` and rejects `--apply`, `--restore`,
+  `--rollback-preflight` and `--rotate-break-glass` before credential construction,
+  database access or GitHub reads.
+- Non-verification commands retain PR 3b's `SetupRules` path, including
+  `--config` preview/install, guarded restore, break-glass rotation, and rollback
+  preflight's `RuntimeDriver` installation/private-key wiring. The existing
+  authority planner, recovery, coverage and permission helpers are reused.
+- Classic inventory and rollback preflight share PR 3b's wire validation,
+  exact `Branch not protected` 404 handling and separate signatures read through
+  `setupAPI.readClassicProtection`. Missing/malformed policy fields and explicit
+  null signatures cannot certify verification. Unknown policy fields remain in
+  PR 4's fingerprint. No second classic-response validator was introduced.
+- Combined help describes setup preview/install/recovery/preflight and the
+  explicit verification mode. CLI regressions exercise flag registration,
+  a GET-only mocked install preview, verification dispatch/gating, authority
+  requirements, incompatible flags, restore routing and preflight credentials.

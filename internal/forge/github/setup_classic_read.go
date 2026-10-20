@@ -1,9 +1,45 @@
 package github
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
 )
+
+// readClassicProtection shares the complete wire read between rollback preflight
+// and authority inventory, preserving unknown fields for the latter's fingerprint.
+func (c *setupAPI) readClassicProtection(ctx context.Context, repo, ref string) (map[string]json.RawMessage, error) {
+	endpoint := "repos/" + repo + "/branches/" + url.PathEscape(ref) + "/protection"
+	var raw json.RawMessage
+	if err := c.request(ctx, http.MethodGet, endpoint, nil, &raw); err != nil {
+		var api *setupAPIError
+		if errors.As(err, &api) && api.status.StatusCode == 404 && api.message == "Branch not protected" {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if err := completeClassicProtection(raw); err != nil {
+		return nil, fmt.Errorf("incomplete classic protection response: %w", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, err
+	}
+	if _, present := fields["required_signatures"]; !present {
+		var signatures json.RawMessage
+		if err := c.request(ctx, http.MethodGet, endpoint+"/required_signatures", nil, &signatures); err != nil {
+			return nil, err
+		}
+		if err := classicReadEnabled(signatures); err != nil {
+			return nil, errors.New("incomplete required-signatures response")
+		}
+		fields["required_signatures"] = signatures
+	}
+	return fields, nil
+}
 
 // Validate the wire values before go-github can replace absent/null fields with
 // permissive zero values. Only explicit null disables nullable protection kinds.

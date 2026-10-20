@@ -94,27 +94,13 @@ func observeClassicInventory(ctx context.Context, api *setupAPI, in forge.WriteR
 	// so changed parameters cannot silently reuse a draft pass.
 	for _, ref := range in.ExpectedRefs {
 		branch := strings.TrimPrefix(ref, "refs/heads/")
-		var fields map[string]json.RawMessage
-		endpoint := "repos/" + in.Repo.Path + "/branches/" + url.PathEscape(branch) + "/protection"
-		err := api.request(ctx, http.MethodGet, endpoint, nil, &fields)
+		fields, err := api.readClassicProtection(ctx, in.Repo.Path, branch)
 		if err != nil {
-			var response *setupAPIError
-			if errors.As(err, &response) && response.status.StatusCode == 404 && response.message == "Branch not protected" {
-				continue
-			}
 			o.Inventory = authority.ReadFailure
 			return o, err
 		}
 		if fields == nil {
-			return empty, errors.New("missing classic protection body")
-		}
-		if raw, ok := fields["required_signatures"]; !ok || !jsonPresent(raw) {
-			var signatures json.RawMessage
-			if err := api.request(ctx, http.MethodGet, endpoint+"/required_signatures", nil, &signatures); err != nil {
-				o.Inventory = authority.ReadFailure
-				return o, err
-			}
-			fields["required_signatures"] = signatures
+			continue
 		}
 		encoded, _ := json.Marshal(fields)
 		var body map[string]any
