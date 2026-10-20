@@ -37,8 +37,17 @@ mise exec -- go run ./tools/dogfood audit \
   --database-url "$OM_DOGFOOD_DB" \
   --installation "$OM_DOGFOOD_INSTALLATION" --repository "$OM_DOGFOOD_REPO" \
   --since '2026-10-17T12:00:00Z' --until '2026-11-14T12:00:00Z' \
-  --git-cache "$HOME/.local/share/openmerge/git-cache" --json > audit.json
+  --git-repo /path/to/openmerge/.git --json > audit.json
 ```
+
+Use a complete clone whose `main` has been fetched up to the audit's upper
+bound. The server's own cache (`--git-cache`) usually cannot serve an audit:
+the server periodically prunes unreferenced objects (`gc --prune=now` when its
+hourly or size trigger is due), so the cache often holds
+no landed commits, and every landing fails closed as a `tested_commit` and
+`main_forward` violation on a missing object. Those are missing-evidence
+failures, not incorrect landings; rerun with `--git-repo` before treating them
+as an abort condition.
 
 The dates above illustrate the syntax; replace them with the actual completed
 period. `--until` defaults to the invocation time. Run the audit **daily from
@@ -51,8 +60,9 @@ replayed to recover tested batches and the previous queue head, including before
 Only landings in `[since, until)` cause per-landing git and API checks. Actions lookups
 are cached by tested SHA within the invocation.
 
-Alternatively pass `--git-repo /path/to/complete/clone-or-bare.git`. The two git
-flags are mutually exclusive. `--git-cache` selects the existing
+`--git-repo` accepts a complete clone or bare repository. Alternatively pass
+`--git-cache <cache root>`; the two git flags are mutually exclusive. `--git-cache`
+selects the existing
 `<installation>/<sha256(exact owner/repo)>.git` beneath the supplied cache root,
 matching the server's per-installation layout. It never opens
 `gitops.Repo`, creates a repository, fetches, prunes, runs GC, or changes a ref.
