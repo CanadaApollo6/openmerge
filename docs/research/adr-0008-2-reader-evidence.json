@@ -1,0 +1,700 @@
+{
+  "app_id": 5383059,
+  "calls": [
+    {
+      "body": {
+        "id": 5383059,
+        "owner": {
+          "id": 262436228,
+          "login": "Smart-Data-Ohio",
+          "type": "Organization"
+        },
+        "permissions": {
+          "actions": "write",
+          "checks": "write",
+          "contents": "write",
+          "issues": "read",
+          "members": "read",
+          "metadata": "read",
+          "pull_requests": "write",
+          "statuses": "read",
+          "workflows": "write"
+        },
+        "slug": "openmerge-sandbox-smartdata"
+      },
+      "caller": "app-jwt",
+      "command_exit": 0,
+      "headers": {
+        "X-GitHub-Request-Id": "877E:303AB:2469D6:73EEB9:6AD77CA4"
+      },
+      "method": "GET",
+      "path": "app",
+      "status": 200
+    },
+    {
+      "body": {
+        "account": {
+          "id": 262436228,
+          "login": "Smart-Data-Ohio",
+          "type": "Organization"
+        },
+        "app_id": 5383059,
+        "created_at": "2026-10-19T15:39:18.000Z",
+        "id": 173082682,
+        "permissions": {
+          "actions": "write",
+          "checks": "write",
+          "contents": "write",
+          "issues": "read",
+          "members": "read",
+          "metadata": "read",
+          "pull_requests": "write",
+          "statuses": "read",
+          "workflows": "write"
+        },
+        "repository_selection": "selected",
+        "suspended_at": null,
+        "target_id": 262436228,
+        "target_type": "Organization",
+        "updated_at": "2026-10-19T15:49:12.000Z"
+      },
+      "caller": "app-jwt",
+      "command_exit": 0,
+      "headers": {
+        "X-GitHub-Request-Id": "8780:348F0:2128E3:6A0B2A:6AD77CA4"
+      },
+      "method": "GET",
+      "path": "app/installations/173082682",
+      "status": 200
+    },
+    {
+      "body": {
+        "archived": true,
+        "default_branch": "main",
+        "full_name": "Smart-Data-Ohio/openmerge-sandbox",
+        "id": 1425820965,
+        "owner": {
+          "id": 262436228,
+          "login": "Smart-Data-Ohio",
+          "type": "Organization"
+        },
+        "permissions": {
+          "admin": true,
+          "maintain": true,
+          "pull": true,
+          "push": true,
+          "triage": true
+        }
+      },
+      "caller": "admin",
+      "command_exit": 0,
+      "headers": {
+        "X-GitHub-Request-Id": "8792:35F0C1:22ECD3:6F07EE:6AD77CA5"
+      },
+      "method": "GET",
+      "path": "repos/Smart-Data-Ohio/openmerge-sandbox",
+      "status": 200
+    },
+    {
+      "body": [
+        {
+          "_links": {
+            "html": {
+              "href": "https://github.com/Smart-Data-Ohio/openmerge-sandbox/rules/25415566"
+            },
+            "self": {
+              "href": "https://api.github.com/repos/Smart-Data-Ohio/openmerge-sandbox/rulesets/25415566"
+            }
+          },
+          "created_at": "2026-10-19T11:40:58.403-04:00",
+          "enforcement": "active",
+          "id": 25415566,
+          "name": "openmerge-fence",
+          "node_id": "RRS_lACqUmVwb3NpdG9yec5U_E0lzgGDz44",
+          "source": "Smart-Data-Ohio/openmerge-sandbox",
+          "source_type": "Repository",
+          "target": "branch",
+          "updated_at": "2026-10-19T11:40:58.537-04:00"
+        }
+      ],
+      "caller": "admin",
+      "command_exit": 0,
+      "headers": {
+        "X-GitHub-Request-Id": "87A0:33B0C2:21A419:6B7FCF:6AD77CA5"
+      },
+      "method": "GET",
+      "path": "repos/Smart-Data-Ohio/openmerge-sandbox/rulesets?includes_parents=false&per_page=100&page=1",
+      "status": 200
+    },
+    {
+      "body": {
+        "_links": {
+          "html": {
+            "href": "https://github.com/Smart-Data-Ohio/openmerge-sandbox/rules/25415566"
+          },
+          "self": {
+            "href": "https://api.github.com/repos/Smart-Data-Ohio/openmerge-sandbox/rulesets/25415566"
+          }
+        },
+        "bypass_actors": [
+          {
+            "actor_id": 5383059,
+            "actor_type": "Integration",
+            "bypass_mode": "always"
+          }
+        ],
+        "conditions": {
+          "ref_name": {
+            "exclude": [],
+            "include": [
+              "refs/heads/openmerge/fence/*",
+              "refs/heads/openmerge/fence/**/*"
+            ]
+          }
+        },
+        "created_at": "2026-10-19T11:40:58.403-04:00",
+        "current_user_can_bypass": "never",
+        "enforcement": "active",
+        "id": 25415566,
+        "name": "openmerge-fence",
+        "node_id": "RRS_lACqUmVwb3NpdG9yec5U_E0lzgGDz44",
+        "rules": [
+          {
+            "type": "creation"
+          },
+          {
+            "type": "update"
+          },
+          {
+            "type": "deletion"
+          },
+          {
+            "type": "non_fast_forward"
+          }
+        ],
+        "source": "Smart-Data-Ohio/openmerge-sandbox",
+        "source_type": "Repository",
+        "target": "branch",
+        "updated_at": "2026-10-19T11:40:58.537-04:00"
+      },
+      "caller": "admin",
+      "command_exit": 0,
+      "headers": {
+        "X-GitHub-Request-Id": "87AA:23E327:24BF1D:75A84F:6AD77CA5"
+      },
+      "method": "GET",
+      "path": "repos/Smart-Data-Ohio/openmerge-sandbox/rulesets/25415566?includes_parents=true",
+      "status": 200
+    },
+    {
+      "body": [
+        {
+          "_links": {
+            "html": {
+              "href": "https://github.com/Smart-Data-Ohio/openmerge-sandbox/rules/25415566"
+            },
+            "self": {
+              "href": "https://api.github.com/repos/Smart-Data-Ohio/openmerge-sandbox/rulesets/25415566"
+            }
+          },
+          "created_at": "2026-10-19T11:40:58.403-04:00",
+          "enforcement": "active",
+          "id": 25415566,
+          "name": "openmerge-fence",
+          "node_id": "RRS_lACqUmVwb3NpdG9yec5U_E0lzgGDz44",
+          "source": "Smart-Data-Ohio/openmerge-sandbox",
+          "source_type": "Repository",
+          "target": "branch",
+          "updated_at": "2026-10-19T11:40:58.537-04:00"
+        }
+      ],
+      "caller": "admin",
+      "command_exit": 0,
+      "headers": {
+        "X-GitHub-Request-Id": "87B2:104E58:22E186:6FB624:6AD77CA6"
+      },
+      "method": "GET",
+      "path": "repos/Smart-Data-Ohio/openmerge-sandbox/rulesets?includes_parents=true&per_page=100&page=1",
+      "status": 200
+    },
+    {
+      "body": {
+        "_links": {
+          "html": {
+            "href": "https://github.com/Smart-Data-Ohio/openmerge-sandbox/rules/25415566"
+          },
+          "self": {
+            "href": "https://api.github.com/repos/Smart-Data-Ohio/openmerge-sandbox/rulesets/25415566"
+          }
+        },
+        "bypass_actors": [
+          {
+            "actor_id": 5383059,
+            "actor_type": "Integration",
+            "bypass_mode": "always"
+          }
+        ],
+        "conditions": {
+          "ref_name": {
+            "exclude": [],
+            "include": [
+              "refs/heads/openmerge/fence/*",
+              "refs/heads/openmerge/fence/**/*"
+            ]
+          }
+        },
+        "created_at": "2026-10-19T11:40:58.403-04:00",
+        "current_user_can_bypass": "never",
+        "enforcement": "active",
+        "id": 25415566,
+        "name": "openmerge-fence",
+        "node_id": "RRS_lACqUmVwb3NpdG9yec5U_E0lzgGDz44",
+        "rules": [
+          {
+            "type": "creation"
+          },
+          {
+            "type": "update"
+          },
+          {
+            "type": "deletion"
+          },
+          {
+            "type": "non_fast_forward"
+          }
+        ],
+        "source": "Smart-Data-Ohio/openmerge-sandbox",
+        "source_type": "Repository",
+        "target": "branch",
+        "updated_at": "2026-10-19T11:40:58.537-04:00"
+      },
+      "caller": "admin",
+      "command_exit": 0,
+      "headers": {
+        "X-GitHub-Request-Id": "87B4:17DF93:2273CE:6D0EE1:6AD77CA6"
+      },
+      "method": "GET",
+      "path": "repos/Smart-Data-Ohio/openmerge-sandbox/rulesets/25415566?includes_parents=true",
+      "status": 200
+    },
+    {
+      "body": {
+        "documentation_url": "https://docs.github.com/rest/orgs/rules#get-all-organization-repository-rulesets",
+        "message": "Upgrade to GitHub Team to enable this feature.",
+        "status": "403"
+      },
+      "caller": "admin",
+      "command_exit": 22,
+      "headers": {
+        "X-GitHub-Request-Id": "87C0:21179A:212C06:6968D5:6AD77CA6"
+      },
+      "method": "GET",
+      "path": "orgs/Smart-Data-Ohio/rulesets?per_page=100&page=1",
+      "status": 403
+    },
+    {
+      "body": {
+        "documentation_url": "https://docs.github.com/rest/teams/teams#get-a-team-by-name",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "caller": "admin",
+      "command_exit": 22,
+      "headers": {
+        "X-GitHub-Request-Id": "87CC:3EA830:226A3A:6E06B5:6AD77CA7"
+      },
+      "method": "GET",
+      "path": "orgs/Smart-Data-Ohio/teams/break-glass",
+      "status": 404
+    },
+    {
+      "body": [
+        {
+          "commit": {
+            "sha": "b4e0468c1838b4f944677dddcaa762516b992018",
+            "url": "https://api.github.com/repos/Smart-Data-Ohio/openmerge-sandbox/commits/b4e0468c1838b4f944677dddcaa762516b992018"
+          },
+          "name": "main",
+          "protected": false,
+          "protection": {
+            "enabled": false,
+            "required_status_checks": {
+              "checks": [],
+              "contexts": [],
+              "enforcement_level": "off"
+            }
+          },
+          "protection_url": "https://api.github.com/repos/Smart-Data-Ohio/openmerge-sandbox/branches/main/protection"
+        },
+        {
+          "commit": {
+            "sha": "f250fa16051cf3b1c0dce01f9b4301983daa1e6c",
+            "url": "https://api.github.com/repos/Smart-Data-Ohio/openmerge-sandbox/commits/f250fa16051cf3b1c0dce01f9b4301983daa1e6c"
+          },
+          "name": "openmerge/fence/main",
+          "protected": true,
+          "protection": {
+            "enabled": false,
+            "required_status_checks": {
+              "checks": [],
+              "contexts": [],
+              "enforcement_level": "off"
+            }
+          },
+          "protection_url": "https://api.github.com/repos/Smart-Data-Ohio/openmerge-sandbox/branches/openmerge/fence/main/protection"
+        }
+      ],
+      "caller": "admin",
+      "command_exit": 0,
+      "headers": {
+        "X-GitHub-Request-Id": "87CE:23DF96:254FD4:77D36D:6AD77CA7"
+      },
+      "method": "GET",
+      "path": "repos/Smart-Data-Ohio/openmerge-sandbox/branches?per_page=100&page=1",
+      "status": 200
+    },
+    {
+      "body": {
+        "documentation_url": "https://docs.github.com/rest/branches/branch-protection#get-branch-protection",
+        "message": "Branch not protected",
+        "status": "404"
+      },
+      "caller": "admin",
+      "command_exit": 22,
+      "headers": {
+        "X-GitHub-Request-Id": "87DA:381A7:21CA32:6B6A07:6AD77CA7"
+      },
+      "method": "GET",
+      "path": "repos/Smart-Data-Ohio/openmerge-sandbox/branches/main/protection",
+      "status": 404
+    },
+    {
+      "body": {
+        "documentation_url": "https://docs.github.com/rest/branches/branch-protection#get-branch-protection",
+        "message": "Branch not protected",
+        "status": "404"
+      },
+      "caller": "admin",
+      "command_exit": 22,
+      "headers": {
+        "X-GitHub-Request-Id": "87E0:32E70A:1EC5FC:6236C9:6AD77CA8"
+      },
+      "method": "GET",
+      "path": "repos/Smart-Data-Ohio/openmerge-sandbox/branches/openmerge%2Ffence%2Fmain/protection",
+      "status": 404
+    },
+    {
+      "body": {
+        "archived": true,
+        "default_branch": "main",
+        "full_name": "Smart-Data-Ohio/openmerge-sandbox",
+        "id": 1425820965,
+        "owner": {
+          "id": 262436228,
+          "login": "Smart-Data-Ohio",
+          "type": "Organization"
+        },
+        "permissions": {
+          "admin": false,
+          "maintain": false,
+          "pull": false,
+          "push": false,
+          "triage": false
+        }
+      },
+      "caller": "installation",
+      "command_exit": 0,
+      "headers": {
+        "X-Accepted-GitHub-Permissions": "metadata=read",
+        "X-GitHub-Request-Id": "87E4:38B19C:22AAAA:6F0977:6AD77CA8"
+      },
+      "method": "GET",
+      "path": "repos/Smart-Data-Ohio/openmerge-sandbox",
+      "status": 200
+    },
+    {
+      "body": [
+        {
+          "_links": {
+            "html": {
+              "href": "https://github.com/Smart-Data-Ohio/openmerge-sandbox/rules/25415566"
+            },
+            "self": {
+              "href": "https://api.github.com/repos/Smart-Data-Ohio/openmerge-sandbox/rulesets/25415566"
+            }
+          },
+          "created_at": "2026-10-19T15:40:58.403Z",
+          "enforcement": "active",
+          "id": 25415566,
+          "name": "openmerge-fence",
+          "node_id": "RRS_lACqUmVwb3NpdG9yec5U_E0lzgGDz44",
+          "source": "Smart-Data-Ohio/openmerge-sandbox",
+          "source_type": "Repository",
+          "target": "branch",
+          "updated_at": "2026-10-19T15:40:58.537Z"
+        }
+      ],
+      "caller": "installation",
+      "command_exit": 0,
+      "headers": {
+        "X-Accepted-GitHub-Permissions": "metadata=read",
+        "X-GitHub-Request-Id": "87F4:17DF93:228B0F:6D59F4:6AD77CA9"
+      },
+      "method": "GET",
+      "path": "repos/Smart-Data-Ohio/openmerge-sandbox/rulesets?includes_parents=false&per_page=100&page=1",
+      "status": 200
+    },
+    {
+      "body": {
+        "_links": {
+          "html": {
+            "href": "https://github.com/Smart-Data-Ohio/openmerge-sandbox/rules/25415566"
+          },
+          "self": {
+            "href": "https://api.github.com/repos/Smart-Data-Ohio/openmerge-sandbox/rulesets/25415566"
+          }
+        },
+        "conditions": {
+          "ref_name": {
+            "exclude": [],
+            "include": [
+              "refs/heads/openmerge/fence/*",
+              "refs/heads/openmerge/fence/**/*"
+            ]
+          }
+        },
+        "created_at": "2026-10-19T15:40:58.403Z",
+        "current_user_can_bypass": "always",
+        "enforcement": "active",
+        "id": 25415566,
+        "name": "openmerge-fence",
+        "node_id": "RRS_lACqUmVwb3NpdG9yec5U_E0lzgGDz44",
+        "rules": [
+          {
+            "type": "creation"
+          },
+          {
+            "type": "update"
+          },
+          {
+            "type": "deletion"
+          },
+          {
+            "type": "non_fast_forward"
+          }
+        ],
+        "source": "Smart-Data-Ohio/openmerge-sandbox",
+        "source_type": "Repository",
+        "target": "branch",
+        "updated_at": "2026-10-19T15:40:58.537Z"
+      },
+      "caller": "installation",
+      "command_exit": 0,
+      "headers": {
+        "X-Accepted-GitHub-Permissions": "metadata=read",
+        "X-GitHub-Request-Id": "87F6:22DB45:1FB302:64DE05:6AD77CA9"
+      },
+      "method": "GET",
+      "path": "repos/Smart-Data-Ohio/openmerge-sandbox/rulesets/25415566?includes_parents=true",
+      "status": 200
+    },
+    {
+      "body": [
+        {
+          "_links": {
+            "html": {
+              "href": "https://github.com/Smart-Data-Ohio/openmerge-sandbox/rules/25415566"
+            },
+            "self": {
+              "href": "https://api.github.com/repos/Smart-Data-Ohio/openmerge-sandbox/rulesets/25415566"
+            }
+          },
+          "created_at": "2026-10-19T15:40:58.403Z",
+          "enforcement": "active",
+          "id": 25415566,
+          "name": "openmerge-fence",
+          "node_id": "RRS_lACqUmVwb3NpdG9yec5U_E0lzgGDz44",
+          "source": "Smart-Data-Ohio/openmerge-sandbox",
+          "source_type": "Repository",
+          "target": "branch",
+          "updated_at": "2026-10-19T15:40:58.537Z"
+        }
+      ],
+      "caller": "installation",
+      "command_exit": 0,
+      "headers": {
+        "X-Accepted-GitHub-Permissions": "metadata=read",
+        "X-GitHub-Request-Id": "87FC:16FF84:23E8C3:733A44:6AD77CAA"
+      },
+      "method": "GET",
+      "path": "repos/Smart-Data-Ohio/openmerge-sandbox/rulesets?includes_parents=true&per_page=100&page=1",
+      "status": 200
+    },
+    {
+      "body": {
+        "_links": {
+          "html": {
+            "href": "https://github.com/Smart-Data-Ohio/openmerge-sandbox/rules/25415566"
+          },
+          "self": {
+            "href": "https://api.github.com/repos/Smart-Data-Ohio/openmerge-sandbox/rulesets/25415566"
+          }
+        },
+        "conditions": {
+          "ref_name": {
+            "exclude": [],
+            "include": [
+              "refs/heads/openmerge/fence/*",
+              "refs/heads/openmerge/fence/**/*"
+            ]
+          }
+        },
+        "created_at": "2026-10-19T15:40:58.403Z",
+        "current_user_can_bypass": "always",
+        "enforcement": "active",
+        "id": 25415566,
+        "name": "openmerge-fence",
+        "node_id": "RRS_lACqUmVwb3NpdG9yec5U_E0lzgGDz44",
+        "rules": [
+          {
+            "type": "creation"
+          },
+          {
+            "type": "update"
+          },
+          {
+            "type": "deletion"
+          },
+          {
+            "type": "non_fast_forward"
+          }
+        ],
+        "source": "Smart-Data-Ohio/openmerge-sandbox",
+        "source_type": "Repository",
+        "target": "branch",
+        "updated_at": "2026-10-19T15:40:58.537Z"
+      },
+      "caller": "installation",
+      "command_exit": 0,
+      "headers": {
+        "X-Accepted-GitHub-Permissions": "metadata=read",
+        "X-GitHub-Request-Id": "880C:3BC1A5:2339FE:70A980:6AD77CAA"
+      },
+      "method": "GET",
+      "path": "repos/Smart-Data-Ohio/openmerge-sandbox/rulesets/25415566?includes_parents=true",
+      "status": 200
+    },
+    {
+      "body": {
+        "documentation_url": "https://docs.github.com/rest/orgs/rules#get-all-organization-repository-rulesets",
+        "message": "Resource not accessible by integration",
+        "status": "403"
+      },
+      "caller": "installation",
+      "command_exit": 22,
+      "headers": {
+        "X-Accepted-GitHub-Permissions": "organization_administration=write",
+        "X-GitHub-Request-Id": "881C:2F57EE:235A49:7106A4:6AD77CAA"
+      },
+      "method": "GET",
+      "path": "orgs/Smart-Data-Ohio/rulesets?per_page=100&page=1",
+      "status": 403
+    },
+    {
+      "body": {
+        "documentation_url": "https://docs.github.com/rest/teams/teams#get-a-team-by-name",
+        "message": "Not Found",
+        "status": "404"
+      },
+      "caller": "installation",
+      "command_exit": 22,
+      "headers": {
+        "X-Accepted-GitHub-Permissions": "members=read",
+        "X-GitHub-Request-Id": "8828:19F4A4:232657:6F7327:6AD77CAA"
+      },
+      "method": "GET",
+      "path": "orgs/Smart-Data-Ohio/teams/break-glass",
+      "status": 404
+    },
+    {
+      "body": [
+        {
+          "commit": {
+            "sha": "b4e0468c1838b4f944677dddcaa762516b992018",
+            "url": "https://api.github.com/repos/Smart-Data-Ohio/openmerge-sandbox/commits/b4e0468c1838b4f944677dddcaa762516b992018"
+          },
+          "name": "main",
+          "protected": false
+        },
+        {
+          "commit": {
+            "sha": "f250fa16051cf3b1c0dce01f9b4301983daa1e6c",
+            "url": "https://api.github.com/repos/Smart-Data-Ohio/openmerge-sandbox/commits/f250fa16051cf3b1c0dce01f9b4301983daa1e6c"
+          },
+          "name": "openmerge/fence/main",
+          "protected": true
+        }
+      ],
+      "caller": "installation",
+      "command_exit": 0,
+      "headers": {
+        "X-Accepted-GitHub-Permissions": "contents=read",
+        "X-GitHub-Request-Id": "882E:2EE21:23DD72:71C4D3:6AD77CAB"
+      },
+      "method": "GET",
+      "path": "repos/Smart-Data-Ohio/openmerge-sandbox/branches?per_page=100&page=1",
+      "status": 200
+    },
+    {
+      "body": {
+        "documentation_url": "https://docs.github.com/rest/branches/branch-protection#get-branch-protection",
+        "message": "Resource not accessible by integration",
+        "status": "403"
+      },
+      "caller": "installation",
+      "command_exit": 22,
+      "headers": {
+        "X-Accepted-GitHub-Permissions": "administration=read",
+        "X-GitHub-Request-Id": "8838:3BC1A5:2343D0:70C9A1:6AD77CAB"
+      },
+      "method": "GET",
+      "path": "repos/Smart-Data-Ohio/openmerge-sandbox/branches/main/protection",
+      "status": 403
+    },
+    {
+      "body": {
+        "documentation_url": "https://docs.github.com/rest/branches/branch-protection#get-branch-protection",
+        "message": "Resource not accessible by integration",
+        "status": "403"
+      },
+      "caller": "installation",
+      "command_exit": 22,
+      "headers": {
+        "X-Accepted-GitHub-Permissions": "administration=read",
+        "X-GitHub-Request-Id": "883E:334FC5:20D15D:692EDB:6AD77CAB"
+      },
+      "method": "GET",
+      "path": "repos/Smart-Data-Ohio/openmerge-sandbox/branches/openmerge%2Ffence%2Fmain/protection",
+      "status": 403
+    }
+  ],
+  "installation_id": 173082682,
+  "repository": "Smart-Data-Ohio/openmerge-sandbox",
+  "timestamp_utc": "2026-10-20T14:37:24.426383+00:00",
+  "token_mint": {
+    "expires_at": "2026-10-20T15:37:25Z",
+    "http_status": 201,
+    "permissions": {
+      "actions": "write",
+      "checks": "write",
+      "contents": "write",
+      "issues": "read",
+      "members": "read",
+      "metadata": "read",
+      "pull_requests": "write",
+      "statuses": "read",
+      "workflows": "write"
+    },
+    "repository_selection": "selected"
+  }
+}

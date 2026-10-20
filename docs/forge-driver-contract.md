@@ -368,3 +368,76 @@ fixtures are keyed by their supplied login spelling; canonicalization and HTTP
 permission observations are covered by the GitHub and stable-identity tests.
 Fake git commits, identities, check sources and provider capabilities model the
 forge-neutral behavior, not GitHub object bytes or all GitHub API constraints.
+
+## Dormant authority observations (ADR 0008 PR 2)
+
+`forge.WriteRestrictionReader` is an optional acquisition capability implemented
+by the fake and GitHub drivers. No runtime consumer selects it until PR 9.
+`forgetest.RunWriteRestrictionReader` checks the same visibility contract against
+configured fake evidence and an installation-authenticated `httptest` server.
+Input refs use #83's shared `ValidateRefName`; actor reads use `ResolveTeam` and
+compare both stable organization and team IDs with the reviewed binding.
+
+The reader inventories repository and inherited rulesets with
+`includes_parents=true`, requests each detail, and retains successful pages and
+independent detail fields on later failures. Inventory visibility is `visible`
+only after the list completes with valid identities; it is `read_failure` after
+an incomplete list or failed actor binding. A completed empty ruleset inventory
+has zero protections. It does not establish the absence of classic protection.
+Each protection separately records target/condition, rule and bypass visibility.
+Omitted/null bypass JSON is `hidden`; `[]` is a visible empty set. Malformed
+values are `read_failure`, never silently omitted from a visible set.
+An inaccessible detail retains the listed identity/enforcement with hidden
+fields on plain 403/404, or failed fields on transport/quota/inconsistent reads.
+Returned errors retain the shared quota deadline/type and successful evidence.
+
+`Protection.Target` records the ruleset target directly. Ref includes/excludes
+remain explicit; other conditions retain every leaf under its relative JSON
+pointer-style path, including repository-name, repository-ID and repository-property
+selectors. Rule parameters use the same encoding documented on `authority.Parameter`
+in `internal/authority/evidence.go`. Object keys escape `~` and `/` per RFC 6901
+(`~0` and `~1`); the empty object key uses the reserved segment `~3`. Every array
+element, including scalar elements, uses the reserved segment `~2` followed by
+its zero-based decimal index without leading zeros. These are typed path
+extensions, not literal RFC 6901 pointers. For example, `{"leaf":42}` has path
+`leaf`, `{"leaf":[42]}` has `leaf/~20`, `{"leaf":{"0":42}}` has `leaf/0`, and
+`{"leaf":[[42]]}` has `leaf/~20/~20`. An object key `~20` escapes to `~020`, so
+it cannot impersonate an array index. Array order remains explicit in the paths.
+Each scalar leaf has exactly one value in JSON spelling: strings include JSON
+quotes/escapes, while null, booleans and numbers are bare. A JSON null leaf has
+`Values:["null"]`, an empty array has `Values:[]`, and an absent leaf has no
+`Parameter`. An empty object has `Values:["{}"]`; strings containing JSON retain
+their enclosing JSON quotes. Paths and values together preserve all JSON shapes,
+including empty keys and nested containers, without a parameter schema. This
+applies equally to unknown/future parameters and conditions within the evidence
+bounds. Revisions normalize `updated_at` to UTC.
+
+The observed bypass inventory is independent of the declared break-glass union.
+It records Apps, organization admins, repository roles, teams, users, deploy keys,
+enterprise roles/owners and unknown types. Apps, teams, users, repository roles
+and enterprise roles require positive IDs. OrganizationAdmin, DeployKey and
+EnterpriseOwner are class-wide: their IDs are discarded, even when supplied,
+in both the GitHub reader and configured fake evidence. Shared `BypassActor.Validate`
+rejects IDs on these class-wide kinds, enforcing the invariant for future drivers.
+Unknown actors retain
+an optional positive ID and their exact `RawKind`; a supplied non-positive ID
+marks bypass evidence `read_failure` and retains independent protection fields.
+Repository-admin bindings accept only built-in role `"5"` in both drivers.
+Modes include
+`always`, `pull_request` and `exempt`. Unauthorized actors remain visible evidence
+without a reader error. The reader never invents an App bypass, produces a
+finding or matches a selector. `Coverage` and `Findings` remain explicit empty
+slices for PR 3a's separate interpretation step.
+
+All HTTP reads use the existing installation client, conditional revalidation,
+pagination checks and request classes; settlement contexts are downgraded to
+ordinary active reads. The inventory is bounded to 1,000 rulesets/10 pages.
+Every inner evidence collection is bounded to 1,000 items, including ref conditions, normalized
+parameter leaves/values, rules and bypass actors. Overflow marks only the
+affected element `read_failure` and retains the independently visible evidence.
+Classic protection (`ValidateClassicProtection`) and installed permission grants
+(`ValidateInstallationPermissions`) remain independent sources. Administration
+read may improve visibility and is diagnostic/adoption guidance only. There is
+no new grant requirement for legacy queues and no automatic permission change.
+`ValidateRepositoryRules`, including its existing hidden-list substitution and
+warnings, is unchanged. See the [sandbox evidence](research/adr-0008-2-reader-evidence.md).

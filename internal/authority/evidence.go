@@ -65,10 +65,15 @@ func (b PolicyBinding) Validate() error {
 }
 
 // Parameter is a normalized rule/condition parameter, never a raw API body.
-// Name is a relative JSON pointer into parameters/conditions (escaped segments,
-// numeric array indices); scalar arrays use Values in source order. Scalars use
-// their schema-defined string/decimal/boolean spelling. Thus nested objects keep
-// their associations without storing a raw API body. Empty arrays remain explicit.
+// Name is a relative path with JSON-pointer-style segments. Object keys escape
+// ~ and / per RFC 6901 (~0 and ~1); the empty key uses reserved segment ~3.
+// Every array element uses reserved segment ~2 followed by its zero-based decimal
+// index (no leading zeros), even for scalar arrays. Escaped object keys cannot
+// collide with these markers: {"0":42}, [42] and [[42]] have different paths.
+// Each scalar has one Values entry in JSON spelling: strings are quoted;
+// numbers/booleans/null are bare. Empty arrays have Values [], empty objects
+// have Values ["{}"], and absent leaves have no Parameter. Thus "a" and ["a"],
+// null and [], and JSON strings and actual containers all remain distinct.
 type Parameter struct {
 	Name   string   `json:"name"`
 	Values []string `json:"values"`
@@ -81,7 +86,8 @@ type Rule struct {
 }
 
 // BypassActor records observed inventory, independently of the declared Actor
-// union. ID is absent for class-wide actors such as DeployKey. Unknown forge
+// union. ID is required for app/team/user/repository_role/enterprise_role and
+// absent for class-wide organization_admin/deploy_key/enterprise_owner. Unknown forge
 // types use Kind "unknown" and retain their exact type in RawKind; they must be
 // interpreted as unauthorized, never discarded. Role IDs come from the adapter.
 type BypassActor struct {
@@ -99,6 +105,9 @@ func (a BypassActor) Validate() error {
 			return fmt.Errorf("missing bypass actor identity")
 		}
 	case "organization_admin", "deploy_key", "enterprise_owner":
+		if a.ID != "" {
+			return fmt.Errorf("identity on class-wide bypass actor")
+		}
 	case "unknown":
 		if a.RawKind == "" {
 			return fmt.Errorf("missing unknown bypass actor kind")

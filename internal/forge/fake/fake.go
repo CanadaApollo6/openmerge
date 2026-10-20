@@ -56,6 +56,7 @@ type repository struct {
 type Forge struct {
 	mu                          sync.Mutex
 	identities                  identityState
+	writeRestrictions           map[forge.RepoRef]writeRestrictionState
 	nativeReviews               map[nativeReviewKey]forge.NativeReviews
 	repos                       map[forge.RepoRef]*repository
 	failures                    map[string][]error
