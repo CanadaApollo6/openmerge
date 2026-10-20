@@ -158,9 +158,6 @@ func ValidatePreparedPush(p PreparedPush) error {
 			if ValidateCommitIDs(c.OID) != nil || graph[c.OID].OID != "" || boundary[c.OID] || c.Parents == nil || c.Files == nil || c.Diffs == nil {
 				return invalid("incomplete or duplicate prepared commit")
 			}
-			if len(c.Parents) > MaxPushCommits {
-				return invalid("prepared parent budget exceeded")
-			}
 			for _, parent := range c.Parents {
 				if ValidateCommitIDs(parent) != nil {
 					return invalid("invalid prepared parent")

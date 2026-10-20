@@ -293,3 +293,23 @@ func TestBuildChecksRetainedBaseContentPolicy(t *testing.T) {
 		t.Fatal("base-only content policy did not reject generated marker")
 	}
 }
+
+func TestPreparedPushBoundsTotalParentEdges(t *testing.T) {
+	p := preparedFixture()
+	r := &p.Refs[0]
+	r.Commits = []PushCommit{}
+	parent := r.OldSHA
+	for i := 0; i < 11; i++ {
+		oid := fmt.Sprintf("%040x", i+1)
+		parents := make([]string, 10_000)
+		for j := range parents {
+			parents[j] = parent
+		}
+		r.Commits = append(r.Commits, PushCommit{OID: oid, Parents: parents, Files: []PushFile{}})
+		parent = oid
+	}
+	r.NewSHA = parent
+	if err := ValidatePreparedPush(p); err == nil {
+		t.Fatal("unbounded aggregate parent graph accepted")
+	}
+}

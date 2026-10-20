@@ -15,7 +15,7 @@ func (r *repository) validatePush(ctx context.Context, repo forge.RepoRef, opts 
 		return nil
 	}
 	p := forge.PreparedPush{Operation: operation, Refs: refs}
-	count, paths, metadata := 0, 0, 0
+	count, paths, metadata, parentEdges := 0, 0, 0, 0
 	for i := range p.Refs {
 		ref := &p.Refs[i]
 		ref.Commits = []forge.PushCommit{}
@@ -66,6 +66,10 @@ func (r *repository) validatePush(ctx context.Context, repo forge.RepoRef, opts 
 			c, ok := r.commits[oid]
 			if !ok {
 				return fmt.Errorf("missing prepared push object %s", oid)
+			}
+			parentEdges += len(c.Parents)
+			if parentEdges > forge.MaxPushParentEdges {
+				return fmt.Errorf("prepared push parent-edge budget exceeded")
 			}
 			parents := append([]string{}, c.Parents...)
 			prepared := forge.PushCommit{OID: oid, Message: c.Message, Parents: parents, Files: []forge.PushFile{}}

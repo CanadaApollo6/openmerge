@@ -48,7 +48,7 @@ func (s *session) preparedPush(ctx context.Context, operation forge.PushOperatio
 		return p, fmt.Errorf("push inventory history: %s", reason)
 	}
 	remaining := forge.MaxPushMetadataBytes
-	commitCount, pathCount := 0, 0
+	commitCount, pathCount, parentEdges := 0, 0, 0
 	read := func(args ...string) (string, error) {
 		raw, overflow, err := reader.diffCommand(ctx, remaining, args...)
 		if overflow {
@@ -104,6 +104,10 @@ func (s *session) preparedPush(ctx context.Context, operation forge.PushOperatio
 				} else {
 					signature = false
 				}
+			}
+			parentEdges += len(c.Parents)
+			if parentEdges > forge.MaxPushParentEdges {
+				return p, errors.New("push inventory parent-edge budget exceeded")
 			}
 			// A signature header alone cannot establish trust. Required signatures
 			// reject until a verified-signature capability supplies actual proof.
