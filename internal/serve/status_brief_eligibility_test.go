@@ -405,8 +405,10 @@ func TestBriefEligibilityBareObservationCannotRenewChangedApprovals(t *testing.T
 }
 
 // The HTTP surface can prove component equality from local immutable objects.
-// The reviewer check has only journal pins: an identical identity PolicyPin
-// cannot prove that CODEOWNERS, attributes or approval rules stayed unchanged.
+// The reviewer check caller has w.Git, cached governing objects and w.stageA.policy.
+// Its summary runs inside cycle while w.mu is held, however, so BriefPolicy would
+// always fail TryLock on that same mutex and report policy_busy. Keeping this
+// surface divergence is a deliberate fail-closed choice.
 func TestBriefEligibilityGoverningCommitSurfaceDivergence(t *testing.T) {
 	for _, changed := range []bool{false, true} {
 		t.Run(fmt.Sprint("component-changed=", changed), func(t *testing.T) {
@@ -461,6 +463,9 @@ func TestBriefEligibilityGoverningCommitSurfaceDivergence(t *testing.T) {
 			identity, err := brief.Identity(fact)
 			must(t, err)
 			gate := state.EvaluateApprovals(gatePolicy, identity, fresh)
+			if len(gate.Requirements) != 2 || gate.Allowed {
+				t.Fatalf("unchanged component must retain two requirements and await code-owner approval: %+v", gate)
+			}
 			for i, requirement := range gate.Requirements {
 				if view.Obligations[i].Met && !requirement.Met {
 					t.Fatalf("HTTP credited requirement refused by gate: %+v", gate)

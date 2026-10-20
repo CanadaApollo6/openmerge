@@ -277,6 +277,66 @@ func TestAuthorityPathSizeAndLinearRulesUseRealObjects(t *testing.T) {
 	}
 }
 
+func TestBuildCreationBoundaryRejectsUnprovenSources(t *testing.T) {
+	for _, name := range []string{"caller-selected-base", "absent-target-base", "failed-ancestry-proof"} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			base := f.base
+			rules := []authority.Rule{}
+			want := ""
+			switch name {
+			case "caller-selected-base":
+				// A caller base containing this path must not hide its introduction
+				// relative to the remotely observed main branch.
+				base = f.heads[1]
+				want = "restricted file path"
+				rules = []authority.Rule{{Kind: "file_path_restriction", Parameters: []authority.Parameter{{Name: "restricted_file_paths/~20", Values: []string{`"pr-1.txt"`}}}}}
+			case "absent-target-base":
+				gitCommand(t, f.remote, "", nil, "update-ref", "-d", "refs/heads/main")
+				want = "creation boundary base is absent"
+			case "failed-ancestry-proof":
+				wrapper := filepath.Join(t.TempDir(), "git")
+				writeExecutable(t, wrapper, "for arg do\nif [ \"$arg\" = --is-ancestor ]; then\necho 'injected ancestry proof failure' >&2\nexit 1\nfi\ndone\nexec "+shellQuote(f.g.git)+" \"$@\"\n")
+				f.g.git = wrapper
+				want = "prepared boundary proof"
+			}
+			assert := spyPushes(t, f)
+			defer assert()
+			ref := "refs/heads/reject-boundary"
+			opts := validationOptions(t, forge.PushBuild, []forge.PushRefIntent{{Ref: ref}}, rules)
+			_, err := f.g.BuildTestRef(t.Context(), testRepo, forge.BuildRequest{Ref: ref, BaseSHA: base, PRs: f.prs[1:2], Method: forge.Squash, BatchID: "boundary"}, opts)
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("expected creation boundary rejection %q, got %v", want, err)
+			}
+		})
+	}
+}
+
+func TestPreparedModeOnlyChangeRecordsPathWithoutPostImage(t *testing.T) {
+	f := newFixture(t)
+	tip := f.diffCommit(f.base, "make executable", map[string]diffEntry{"base.txt": {mode: "100755", content: "base\n"}})
+	before := gitCommand(t, f.source, "", nil, "rev-parse", f.base+":base.txt")
+	after := gitCommand(t, f.source, "", nil, "rev-parse", tip+":base.txt")
+	if before != after {
+		t.Fatal("mode-only fixture changed the blob")
+	}
+	s, unlock, err := f.g.open(t.Context(), testRepo)
+	must(t, err)
+	defer unlock()
+	p, err := s.preparedPush(t.Context(), forge.PushBuild, []forge.PushRef{{Ref: "refs/heads/mode-only", NewSHA: tip, CreationBaseSHA: f.base}})
+	must(t, err)
+	if len(p.Refs[0].Commits) != 1 {
+		t.Fatalf("expected one mode-only commit: %+v", p)
+	}
+	c := p.Refs[0].Commits[0]
+	if len(c.Diffs) != 1 || !slices.Equal(c.Diffs[0].Paths, []string{"base.txt"}) {
+		t.Fatalf("mode-only changed path lost: %+v", c.Diffs)
+	}
+	if len(c.Files) != 0 {
+		t.Fatalf("mode-only change invented post-images: %+v", c.Files)
+	}
+}
+
 func TestPreparedChangedPathsAndCreationBoundary(t *testing.T) {
 	f := newFixture(t)
 	ctx := t.Context()
