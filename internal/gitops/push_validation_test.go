@@ -26,9 +26,21 @@ func spyPushes(t *testing.T, f *fixture) func() {
 	t.Helper()
 	record := filepath.Join(t.TempDir(), "pushes")
 	wrapper := filepath.Join(t.TempDir(), "git")
-	writeExecutable(t, wrapper, "for arg do\nif [ \"$arg\" = push ]; then\nprintf push >> "+shellQuote(record)+"\nfi\ndone\nexec "+shellQuote(f.g.git)+" \"$@\"\n")
+	var evidenceDir string
+	script := "for arg do\nif [ \"$arg\" = push ]; then\nprintf push >> " + shellQuote(record) + "\nfi\ndone\n"
+	if root := os.Getenv("OPENMERGE_ADR0008_PUSH_EVIDENCE"); root != "" {
+		evidenceDir = filepath.Join(root, strings.ReplaceAll(t.Name(), "/", "__"))
+		must(t, os.MkdirAll(evidenceDir, 0755))
+		// Preserve the exact bytes consumed by inspection, including rejected
+		// objects later collected by cache maintenance. Only local fixtures use it.
+		script += "kind=''\nlast=''\nfor arg do\ncase \"$arg\" in\ncommit) kind=commit ;;\nls-tree) kind=tree ;;\nesac\nlast=\"$arg\"\ndone\nif [ -n \"$kind\" ]; then\nfile=" + shellQuote(evidenceDir) + "/\"$last.$kind\"\n" + shellQuote(f.g.git) + " \"$@\" > \"$file\"\nstatus=$?\ncat \"$file\"\nexit \"$status\"\nfi\n"
+	}
+	writeExecutable(t, wrapper, script+"exec "+shellQuote(f.g.git)+" \"$@\"\n")
 	f.g.git = wrapper
 	before := gitCommand(t, f.remote, "", nil, "show-ref")
+	if evidenceDir != "" {
+		must(t, os.WriteFile(filepath.Join(evidenceDir, "before.refs"), []byte(before), 0600))
+	}
 	return func() {
 		t.Helper()
 		raw, err := os.ReadFile(record)
@@ -41,6 +53,10 @@ func spyPushes(t *testing.T, f *fixture) func() {
 		after := gitCommand(t, f.remote, "", nil, "show-ref")
 		if before != after {
 			t.Fatalf("remote refs changed\nbefore %s\nafter %s", before, after)
+		}
+		if evidenceDir != "" {
+			must(t, os.WriteFile(filepath.Join(evidenceDir, "after.refs"), []byte(after), 0600))
+			must(t, os.WriteFile(filepath.Join(evidenceDir, "push-count"), []byte("0\n"), 0600))
 		}
 	}
 }
