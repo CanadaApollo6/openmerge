@@ -105,3 +105,39 @@ func TestBriefHistoricalPolicyContextErrorsAreBusy(t *testing.T) {
 		}
 	}
 }
+
+func TestReviewerCheckUnknownPolicyPinIsStale(t *testing.T) {
+	j, policy, eligibility := eligibilityJournal(t)
+	appendEligibilityEvents(&j, eligibility)
+	q, _, _ := Project(j, 0, 0, nil)
+	// Simulate a projection without the classification's config mapping. The
+	// seed digest equals the current digest, so digest comparison cannot hide
+	// an unknown historical governing commit.
+	q.policyPins = nil
+	j.Seed.ConfigDigest = q.state.ConfigDigest
+	j.Seed.ConfigCommit = q.state.ConfigCommit
+	for _, known := range []bool{true, false} {
+		t.Run(fmt.Sprint("known=", known), func(t *testing.T) {
+			journal := j
+			if !known {
+				journal.Seed.ConfigCommit = strings.Repeat("e", 40)
+			}
+			stored, _ := q.state.Classification(eligibility.Basis.ChangeID, eligibility.Basis.Revision)
+			_, pinKnown := recordedBriefPolicyPin(journal, &q, stored.Evidence)
+			if pinKnown != known {
+				t.Fatal("fixture did not exercise pinKnown")
+			}
+			summary, err := ReviewerCheckSummaryFromProjection(journal, &q, 12, policy, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if known {
+				if !strings.Contains(summary, "met=true") {
+					t.Fatal(summary)
+				}
+			} else if strings.Contains(summary, "met=true") || !strings.Contains(summary, "met=false") || !strings.Contains(summary, `eligibility\_stale`) {
+				t.Fatalf("unknown pin credited approval: %s", summary)
+			}
+		})
+	}
+}
