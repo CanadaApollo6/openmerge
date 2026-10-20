@@ -3,6 +3,7 @@ package fake
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
@@ -18,6 +19,16 @@ type writeRestrictionState struct {
 // SetWriteRestrictionObservation models a fresh full or partial acquisition.
 // Unconfigured repositories are unknown, never an authoritative empty inventory.
 func (f *Forge) SetWriteRestrictionObservation(repo forge.RepoRef, o authority.Observation, err error) error {
+	o = authority.CloneObservation(o)
+	for i := range o.Protections {
+		for j := range o.Protections[i].BypassActors {
+			a := &o.Protections[i].BypassActors[j]
+			switch a.Kind {
+			case "organization_admin", "deploy_key", "enterprise_owner":
+				a.ID = ""
+			}
+		}
+	}
 	if e := o.Validate(); e != nil {
 		return e
 	}
@@ -26,7 +37,7 @@ func (f *Forge) SetWriteRestrictionObservation(repo forge.RepoRef, o authority.O
 	if f.writeRestrictions == nil {
 		f.writeRestrictions = map[forge.RepoRef]writeRestrictionState{}
 	}
-	f.writeRestrictions[repo] = writeRestrictionState{authority.CloneObservation(o), err}
+	f.writeRestrictions[repo] = writeRestrictionState{o, err}
 	return nil
 }
 
@@ -35,6 +46,10 @@ func (f *Forge) ObserveWriteRestriction(ctx context.Context, in forge.WriteRestr
 	empty := forge.EmptyWriteRestrictionObservation()
 	if err := forge.ValidateWriteRestrictionInput(in); err != nil {
 		return empty, err
+	}
+	// Match the built-in repository-admin identity used by the GitHub reader.
+	if actor := in.Binding.ResolvedActor.RepositoryAdmin; actor != nil && actor.RoleID != "5" {
+		return empty, fmt.Errorf("unsupported repository-admin role: %w", forge.ErrIdentityMismatch)
 	}
 	f.mu.Lock()
 	err := f.failure(ctx, "ObserveWriteRestriction")

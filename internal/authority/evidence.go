@@ -66,9 +66,11 @@ func (b PolicyBinding) Validate() error {
 
 // Parameter is a normalized rule/condition parameter, never a raw API body.
 // Name is a relative JSON pointer into parameters/conditions (escaped segments,
-// numeric array indices); scalar arrays use Values in source order. Scalars use
-// their schema-defined string/decimal/boolean spelling. Thus nested objects keep
-// their associations without storing a raw API body. Empty arrays remain explicit.
+// numeric array indices); scalar arrays use Values in source order. Each scalar
+// uses JSON spelling: strings are quoted, numbers/booleans/null are bare. A null
+// leaf has Values ["null"], an empty array has Values [], and an absent leaf has
+// no Parameter. An empty object has Values ["{}"], distinct from the quoted
+// string "{}". Nested objects retain their associations through Name.
 type Parameter struct {
 	Name   string   `json:"name"`
 	Values []string `json:"values"`
@@ -81,7 +83,8 @@ type Rule struct {
 }
 
 // BypassActor records observed inventory, independently of the declared Actor
-// union. ID is absent for class-wide actors such as DeployKey. Unknown forge
+// union. ID is required for app/team/user/repository_role/enterprise_role and
+// absent for class-wide organization_admin/deploy_key/enterprise_owner. Unknown forge
 // types use Kind "unknown" and retain their exact type in RawKind; they must be
 // interpreted as unauthorized, never discarded. Role IDs come from the adapter.
 type BypassActor struct {

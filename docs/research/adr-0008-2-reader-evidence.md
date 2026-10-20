@@ -10,11 +10,14 @@ authorized by the maintainer; it changed no repository, organization or ruleset
 state. The token remained in process memory, was never printed or saved, and
 was left to expire naturally at `2026-10-20T15:37:25Z`.
 
-- Current PR 1 base: `0d1396a` (#97), itself based on main `e9b24e8`.
-- PR 2 was rebased with `--onto 0d1396a dbb0a4e`; only its two commits were
-  replayed. The old main merge was dropped; there are no merges above main.
-- Rebased reader implementation: `bfdd078`; initial evidence: `f309213`.
-- Reader adaptations and expanded contracts: `ccbe40f7dac4c926b883cd44ed3e957958f1c061`.
+- Current base: main `addec7dab9331d0341bf40abd3831d1c78cea28d`, the landed
+  squash of PR 1 (#97). PR 2 is no longer stacked.
+- Round 2 rebased only commits after `0d1396a` with
+  `git rebase --onto origin/main 0d1396a`; it completed without conflicts.
+  The local target branch belonged to another worktree, so this task used its
+  own branch from remote head `6fd173a` and pushes HEAD to the PR branch.
+- Prior reader adaptations and contracts were validated at `ccbe40f`; the
+  earlier verification below is retained as historical evidence.
 - The original sandbox read used reader `7b5351b` on old PR 1 `118b3a8` plus
   prerequisite merge `dbb0a4e`. Its retained transcript remains applicable:
   targets and bypass JSON were already recorded, and no sandbox GET was repeated.
@@ -145,8 +148,10 @@ enumerate; no branches were invented in its evidence. The disposable automated
 `TestAuthorityReaderWithRealGitRefInventory` exercises nested
 `release/2026/oct`, `openmerge/fence/release/2026/oct`,
 `openmerge/queue/nested/batch-1` and `main`/its fence against a fresh bare remote
-and gitops cache, enumerates and reads their actual SHAs, and verifies the reader
-leaves every remote ref unchanged. This follows the existing CLI-backed contract
+and gitops cache. It enumerates/reads their SHAs, supplies those refs as reader
+inputs, and verifies unchanged refs and empty coverage/findings. It does not
+compare protection observations with actual ref coverage; interpretation belongs
+to PR 3a. This follows the existing CLI-backed contract
 and Stage A worker fixture pattern without selecting a production consumer.
 
 ## Parity matrix and verification
@@ -169,7 +174,7 @@ and Stage A worker fixture pattern without selecting a production consumer.
 HTTP-only fixtures additionally check malformed/repeated IDs and pagination,
 primary versus secondary quota errors (including partial inventories), unknown
 parameters, malformed/hidden rules and conditions, malformed bypass actors,
-optional class-wide actor IDs, enterprise actors, nested object-array associations,
+class-wide actor ID canonicalization, enterprise actors, nested object-array associations,
 JSON pointer escaping, all three org-condition forms and exact 1,000-item limits,
 UTC revisions, binding mismatch, conditional revalidation, settlement reserves
 and independence from legacy permission/validation behavior. Tests and the fake
@@ -200,8 +205,9 @@ original check log was superseded by the rebased validation log below.
 ## Inert evidence
 
 Only tests invoke `ObserveWriteRestriction`. No serve/config/queue/executor
-consumer selects it. This PR changes no event, wire fixture, schema, migration,
-Makefile, CI file or test flag. `forge.PushOptions` remains PR 3a work.
+consumer selects it. This PR adds no events or wire fixtures and changes no schema,
+migration, Makefile, CI file or test flag. Round 2 updates three existing authority
+fixture values/fingerprints, listed below. `forge.PushOptions` remains PR 3a work.
 Classic and installation-permission sources remain independent.
 
 `runtime_rules.go`, `rules.go`, `classic_protection.go`, `permissions.go`,
@@ -214,8 +220,8 @@ revalidation, unchanged hidden-list App substitution, and no new Administration
 grant requirement. No production deployment, live DB access, systemd change, live
 status call, event emission, or actual remote ref write occurred.
 
-The current stack is main → PR 1 at `0d1396a` → PR 2 commits, with no merge
-commits. Shared validation now delegates to PR 1's `WriteRestrictionInput.Validate`,
+The current history is merged main `addec7d` → PR 2 commits, with no merge
+commits above main. Shared validation now delegates to PR 1's `WriteRestrictionInput.Validate`,
 including `ErrInvalidInput` wrapping and #92's ref validators, plus the reader's
 1,000-ref input bound. Real enforcement comparison remains deferred to PRs 3b/11;
 org/team visibility limitations above remain explicit.
@@ -225,8 +231,8 @@ org/team visibility limitations above remain explicit.
 `ccbe40f` maps `Protection.Target` directly, separates ref includes/excludes from
 other condition leaves, and normalizes nested rule/condition paths according to
 `authority/evidence.go`. Scalar arrays retain their order and empty arrays remain
-explicit. The observed bypass inventory covers every known actor kind, optional
-IDs and unknown kinds, and accepts `always`, `pull_request` and `exempt`. Missing
+explicit. The observed bypass inventory covers every known actor kind, canonical class-wide
+actors and unknown kinds, and accepts `always`, `pull_request` and `exempt`. Missing
 or null bypass JSON remains hidden. Collection overflow fails only its evidence
 element; independently acquired facts remain available.
 
@@ -271,3 +277,51 @@ was treated as acceptance evidence. No sandbox request was repeated.
 The [artifact SHA-256 manifest](adr-0008-2-reader-evidence.sha256) covers this
 report, the sanitized transcript, the check log and the inert report. No raw
 credential-bearing artifact is included.
+
+## Round 2 review corrections
+
+Class-wide `organization_admin`, `deploy_key` and `enterprise_owner` actors
+now discard supplied IDs. Both fake and GitHub contracts compare with-ID and
+without-ID observations, identical actors, and identical fingerprints (using
+synthetic test-only coverage; the reader itself still emits no coverage).
+Apps, teams, users, repository roles and enterprise roles require IDs. Unknown
+actors retain an optional positive ID and exact kind; supplied zero/negative IDs
+fail only bypass evidence instead of being silently dropped. A shared negative
+contract now rejects repository-admin role IDs other than `"5"` in both adapters.
+
+Repository source names use the existing ASCII case-folding helper, both against
+the configured repository and between inventory/detail reads. HTTP cases cover
+`acme/project` versus `Acme/Project`, different repositories, and changed repository
+IDs; numeric identity checks remain mandatory.
+
+Parameter scalar leaves now use JSON spelling from `encoding/json`: quoted and
+escaped strings, bare null/boolean/number. Null maps to `Values:["null"]`, an empty
+array to `Values:[]`, and absence to no Parameter; an empty object maps to
+`Values:["{}"]`. Strings `"null"` and `"{}"` include JSON quotes in Values and cannot
+collide with those markers. A single-leaf fixture matrix verifies these six forms
+plus boolean/number versus their string forms, with ten distinct fingerprints.
+The Parameter comment and driver contract document the encoding.
+
+Three PR 1 frozen authority fixtures change their parameter strings and
+fingerprints. These are the complete affected list, under
+`internal/queue/testdata/wire/v1/variants/`:
+
+- `write_restriction_verified_repository_id.json`:
+  `e067ef108bbcf3fbbbfb130dd7e7df58257370cd60a39385e56c868d939769d0` →
+  `7f63aee9c080cae8e8963eb91a6c2867a4610f4bfe39c975fabc4f9cb2341cb5`.
+- `write_restriction_verified_repository_name.json`:
+  `fd23673ab77b14b4e9d7cba52801a0e8f578cf26aeb6c43f359e9c64e2af17b7` →
+  `f586a6d529f172c19ef2bd122931330f4190ea5bec98247e84349f50764c4530`.
+- `write_restriction_verified_repository_property.json`:
+  `9069d2e1bdcf143bd1fe3e583492d5d7ec44610c3e2a45c56542063c8249e075` →
+  `fa88a49f372ea2942a040002e0afd4d43cf67773d3a4168b770b43fd9333bf08`.
+
+All other PR 1 wire fixtures and fingerprints are unchanged, including base
+observed/verified evidence and the activation fixture. The fingerprint algorithm
+is unchanged. The updated variants pass their fingerprint and exact wire
+round-trip checks; no schema or migration is added and nothing is persisted.
+
+The real-git test and evidence now state its actual assertions: refs remain
+unchanged and coverage/findings stay empty. It does not validate selector
+interpretation or compare protection coverage with refs. The sandbox transcript
+is retained unchanged; no sandbox GET was repeated in this round.

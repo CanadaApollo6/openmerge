@@ -16,7 +16,8 @@ import (
 
 // Use the CLI-backed contract/worker fixture pattern: a fresh bare remote and
 // cache, real nested bases and both protected ref families. Only HTTP is fake;
-// no production reader is selected and no actual GitHub enforcement is claimed.
+// the test verifies ref preservation and empty interpretation output. Comparing
+// protection observations with ref coverage belongs to the PR 3a interpreter.
 func TestAuthorityReaderWithRealGitRefInventory(t *testing.T) {
 	dir := t.TempDir()
 	remote := filepath.Join(dir, "remote.git")
@@ -62,7 +63,7 @@ func TestAuthorityReaderWithRealGitRefInventory(t *testing.T) {
 	observation, err := f.driver.ObserveWriteRestriction(t.Context(), in)
 	must(t, err)
 	if len(in.ExpectedRefs) != 5 || len(observation.Coverage) != 0 || len(observation.Findings) != 0 {
-		t.Fatalf("reader interpreted actual refs prematurely: %+v", observation)
+		t.Fatalf("reader produced coverage or findings: %+v", observation)
 	}
 	if after := inventory(); after != before {
 		t.Fatalf("authority read mutated refs: before=%s after=%s", before, after)

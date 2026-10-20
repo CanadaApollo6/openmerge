@@ -395,14 +395,24 @@ Returned errors retain the shared quota deadline/type and successful evidence.
 remain explicit; other conditions retain every leaf under its relative JSON
 pointer path, including repository-name, repository-ID and repository-property
 selectors. Rule parameters use the same paths, with escaped segments and numeric
-indices for object arrays. Scalar arrays retain source order in `Parameter.Values`;
-strings, numbers and booleans use their scalar spelling, and empty arrays remain
-explicit. Revisions normalize `updated_at` to UTC.
+indices for object arrays. Scalar arrays retain source order in `Parameter.Values`.
+Each scalar leaf uses JSON spelling: strings include JSON quotes/escapes, while
+null, booleans and numbers are bare. A JSON null leaf has `Values:["null"]`, an
+empty array has `Values:[]`, and an absent leaf has no `Parameter`. The string
+`"null"` has `Values:["\"null\""]`; an empty object has `Values:["{}"]`, distinct
+from the string `"{}"`, whose value includes JSON quotes. This applies equally
+to unknown/future parameters and conditions. Revisions normalize `updated_at` to UTC.
 
 The observed bypass inventory is independent of the declared break-glass union.
 It records Apps, organization admins, repository roles, teams, users, deploy keys,
-enterprise roles/owners and unknown types, with optional IDs for class-wide or
-unknown actors. Unknown types retain their exact `RawKind`; modes include
+enterprise roles/owners and unknown types. Apps, teams, users, repository roles
+and enterprise roles require positive IDs. OrganizationAdmin, DeployKey and
+EnterpriseOwner are class-wide: their IDs are discarded, even when supplied,
+in both the GitHub reader and configured fake evidence. Unknown actors retain
+an optional positive ID and their exact `RawKind`; a supplied non-positive ID
+marks bypass evidence `read_failure` and retains independent protection fields.
+Repository-admin bindings accept only built-in role `"5"` in both drivers.
+Modes include
 `always`, `pull_request` and `exempt`. Unauthorized actors remain visible evidence
 without a reader error. The reader never invents an App bypass, produces a
 finding or matches a selector. `Coverage` and `Findings` remain explicit empty

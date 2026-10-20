@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/ascii"
 	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
@@ -74,7 +75,7 @@ func (d *Driver) ObserveWriteRestriction(ctx context.Context, in forge.WriteRest
 			seen[entry.ID] = true
 			var detail authorityRuleset
 			_, readErr := d.readRules(ctx, fmt.Sprintf("repos/%s/rulesets/%d?includes_parents=true", in.Repo.Path, entry.ID), &detail)
-			if readErr == nil && (detail.ID != entry.ID || detail.SourceType != entry.SourceType || detail.Source != entry.Source || detail.Enforcement != entry.Enforcement || entry.Target != "" && detail.Target != entry.Target) {
+			if readErr == nil && (detail.ID != entry.ID || detail.SourceType != entry.SourceType || !ascii.EqualFold(detail.Source, entry.Source) || detail.Enforcement != entry.Enforcement || entry.Target != "" && detail.Target != entry.Target) {
 				readErr = errors.New("authority ruleset changed during detail read")
 			}
 			if readErr != nil {
@@ -151,7 +152,7 @@ func (r authorityRuleset) protection(repo string) (authority.Protection, error) 
 		Includes: []string{}, Excludes: []string{}, Conditions: []authority.Parameter{}, Rules: []authority.Rule{}, BypassActors: []authority.BypassActor{}}
 	switch r.SourceType {
 	case "Repository":
-		if r.Source != repo {
+		if !ascii.EqualFold(r.Source, repo) {
 			return authority.Protection{}, errors.New("authority ruleset repository source mismatch")
 		}
 		p.Source = "repository_ruleset"
@@ -260,8 +261,23 @@ func (r authorityRuleset) protection(repo string) (authority.Protection, error) 
 			if kind == "" {
 				a.Kind, a.RawKind = "unknown", actor.ActorType
 			}
-			if actor.ActorID != nil && *actor.ActorID > 0 {
-				a.ID = strconv.FormatInt(*actor.ActorID, 10)
+			switch a.Kind {
+			case "organization_admin", "deploy_key", "enterprise_owner":
+				// GitHub ignores IDs on these class-wide principals.
+			case "unknown":
+				// Preserve an optional unknown identity, but never silently turn
+				// an invalid supplied ID into an absent one.
+				if actor.ActorID != nil {
+					if *actor.ActorID <= 0 {
+						err = errors.New("invalid unknown authority bypass actor identity")
+					} else {
+						a.ID = strconv.FormatInt(*actor.ActorID, 10)
+					}
+				}
+			case "app", "team", "repository_role", "user", "enterprise_role":
+				if actor.ActorID != nil && *actor.ActorID > 0 {
+					a.ID = strconv.FormatInt(*actor.ActorID, 10)
+				}
 			}
 			if e := a.Validate(); e != nil {
 				err = errors.New("unsupported or incomplete authority bypass actor")
@@ -300,15 +316,12 @@ func authorityParameters(raw json.RawMessage) ([]authority.Parameter, error) {
 		return nil, errors.New("invalid authority parameter object")
 	}
 	scalar := func(value any) (string, bool) {
-		switch v := value.(type) {
-		case string:
-			return v, true
-		case json.Number:
-			return v.String(), true
-		case bool:
-			return strconv.FormatBool(v), true
-		case nil:
-			return "null", true
+		switch value.(type) {
+		case string, json.Number, bool, nil:
+			// JSON quotes distinguish strings from null, booleans, numbers
+			// and the empty-object marker, including in future parameters.
+			raw, _ := json.Marshal(value)
+			return string(raw), true
 		}
 		return "", false
 	}

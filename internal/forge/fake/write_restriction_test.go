@@ -51,6 +51,13 @@ func TestWriteRestrictionContract(t *testing.T) {
 			switch scenario {
 			case "unauthorized-actors":
 				p.BypassActors = []authority.BypassActor{{Kind: "user", ID: "91", Mode: "always"}, {Kind: "deploy_key", Mode: "always"}, {Kind: "organization_admin", Mode: "exempt"}, {Kind: "team", ID: "92", Mode: "exempt"}}
+			case "class-wide-actors", "class-wide-actors-with-id":
+				p.BypassActors = []authority.BypassActor{{Kind: "organization_admin", Mode: "always"}, {Kind: "deploy_key", Mode: "always"}, {Kind: "enterprise_owner", Mode: "always"}}
+				if scenario == "class-wide-actors-with-id" {
+					for i := range p.BypassActors {
+						p.BypassActors[i].ID = "95"
+					}
+				}
 			case "unknown-actor":
 				p.BypassActors = []authority.BypassActor{{Kind: "unknown", RawKind: "FutureActor", Mode: "pull_request"}, {Kind: "unknown", RawKind: "FutureActor", ID: "93", Mode: "exempt"}}
 			case "overflow-includes", "overflow-excludes", "overflow-conditions", "overflow-condition-values":

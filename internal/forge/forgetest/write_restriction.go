@@ -140,6 +140,33 @@ func RunWriteRestrictionReader(t *testing.T, factory func(*testing.T) WriteRestr
 			}
 		})
 	}
+	t.Run("class-wide-actor-identities", func(t *testing.T) {
+		e := factory(t)
+		e.SetTeam(team)
+		want := []authority.BypassActor{{Kind: "organization_admin", Mode: "always"}, {Kind: "deploy_key", Mode: "always"}, {Kind: "enterprise_owner", Mode: "always"}}
+		var fingerprint string
+		for _, scenario := range []string{"class-wide-actors", "class-wide-actors-with-id"} {
+			e.Configure(scenario)
+			o, err := e.Reader.ObserveWriteRestriction(t.Context(), WriteRestrictionInput())
+			must(t, err)
+			must(t, o.Validate())
+			if len(o.Protections) != 1 || !reflect.DeepEqual(o.Protections[0].BypassActors, want) {
+				t.Fatalf("class-wide IDs were retained: %+v", o)
+			}
+			if len(o.Coverage) != 0 {
+				t.Fatal("reader interpreted coverage")
+			}
+			// Supply synthetic coverage only to exercise the fingerprint contract;
+			// ref interpretation remains outside the reader.
+			o.Coverage = []authority.Coverage{{Ref: "refs/heads/main", Visibility: authority.Visible, ProtectionIDs: []string{"repository_ruleset/10"}}}
+			got, err := o.Fingerprint()
+			must(t, err)
+			if fingerprint != "" && got != fingerprint {
+				t.Fatalf("ignored actor IDs changed fingerprint: %s != %s", got, fingerprint)
+			}
+			fingerprint = got
+		}
+	})
 	for _, field := range []string{"includes", "excludes", "conditions", "condition-values", "rules", "rule-parameters", "rule-values", "bypass"} {
 		t.Run("overflow-"+field, func(t *testing.T) {
 			e := factory(t)
@@ -201,6 +228,17 @@ func RunWriteRestrictionReader(t *testing.T, factory func(*testing.T) WriteRestr
 		in.Binding.ResolvedActor = authority.ResolvedActor{RepositoryAdmin: &authority.ResolvedRepositoryAdmin{RoleID: "5"}}
 		_, err := e.Reader.ObserveWriteRestriction(t.Context(), in)
 		must(t, err)
+	})
+	t.Run("unsupported-repository-admin-role", func(t *testing.T) {
+		e := factory(t)
+		e.Configure("visible")
+		in := WriteRestrictionInput()
+		in.Binding.DeclaredActor = authority.Actor{RepositoryAdmin: true}
+		in.Binding.ResolvedActor = authority.ResolvedActor{RepositoryAdmin: &authority.ResolvedRepositoryAdmin{RoleID: "999"}}
+		o, err := e.Reader.ObserveWriteRestriction(t.Context(), in)
+		if !errors.Is(err, forge.ErrIdentityMismatch) || o.Inventory != authority.ReadFailure || len(o.Protections) != 0 {
+			t.Fatalf("unsupported admin role read facts: %+v %v", o, err)
+		}
 	})
 	t.Run("invalid-input", func(t *testing.T) {
 		e := factory(t)
