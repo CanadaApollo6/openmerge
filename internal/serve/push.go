@@ -37,6 +37,14 @@ func (s *Server) authorityPushOptions(ctx context.Context, w *worker, operation 
 		if err := w.PinAuthorityPush(ctx, policy); err != nil {
 			return unavailablePush(err)
 		}
+		pinned, _, err := s.store.Load(ctx, w.id)
+		if err != nil {
+			return unavailablePush(err)
+		}
+		actual := pinned.AuthorityPin()
+		if actual == nil || actual.GoverningCommit != policy.GoverningCommit || actual.EffectiveDigest != policy.EffectiveDigest || actual.Authority != policy.Mode || pinned.ConfigDigest != policy.EffectiveDigest {
+			return unavailablePush(errors.New("authority pin was not durably applied before observation"))
+		}
 		if policy.Mode == authority.OpenMerge {
 			if w.ObserveAuthorityPush == nil {
 				return unavailablePush(errors.New("authority protection observer unavailable"))
@@ -52,7 +60,7 @@ func (s *Server) authorityPushOptions(ctx context.Context, w *worker, operation 
 	}
 	pin := state.AuthorityPin()
 	if pin == nil {
-		if resolved == nil {
+		if resolved == nil && !w.AuthorityRequired {
 			return forge.PushOptions{}
 		}
 		return unavailablePush(errors.New("resolved authority policy has no durable pin"))

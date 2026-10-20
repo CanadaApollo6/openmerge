@@ -115,7 +115,7 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 		disableDeleteHeadBranch = false
 	}
 	x := executor.Executor{Driver: w.Driver, Git: w.Git, Repo: w.repo(), Base: w.Key.BaseBranch, DisableDeleteHeadBranch: disableDeleteHeadBranch}
-	if w.PrepareAuthorityPush != nil || state.AuthorityPin() != nil {
+	if w.AuthorityRequired || w.PrepareAuthorityPush != nil || state.AuthorityPin() != nil {
 		x.PreparePush = func(ctx context.Context, operation forge.PushOperation, refs []forge.PushRefIntent) (forge.PushOptions, error) {
 			return s.authorityPushOptions(ctx, w, operation, refs), nil
 		}

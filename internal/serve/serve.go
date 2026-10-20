@@ -21,6 +21,9 @@ import (
 
 // Target identifies an explicitly configured repository and base branch.
 type Target struct {
+	// AuthorityRequired marks entering/active/leaving authority before resolution.
+	// It cannot fall back to legacy when a required hook or pin is absent.
+	AuthorityRequired bool
 	// Authority preparation is dormant until PR 9 installs all three hooks.
 	// Serve calls resolve, durable pin, then protection observation in order.
 	PrepareAuthorityPush func(context.Context) (AuthorityPushPolicy, error)
@@ -443,7 +446,7 @@ func (s *Server) initializeFence(ctx context.Context, w *worker) error {
 	}
 	ref := "openmerge/fence/" + w.Key.BaseBranch
 	opts := forge.PushOptions{}
-	if w.PrepareAuthorityPush != nil || state.AuthorityPin() != nil {
+	if w.AuthorityRequired || w.PrepareAuthorityPush != nil || state.AuthorityPin() != nil {
 		opts = s.authorityPushOptions(ctx, w, forge.PushEnsureFence, []forge.PushRefIntent{{Ref: "refs/heads/" + ref}})
 	}
 	token, err := w.Git.EnsureFence(ctx, w.repo(), ref, opts)

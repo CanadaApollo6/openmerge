@@ -16,6 +16,7 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/forge/fake"
 	"github.com/CanadaApollo6/openmerge/internal/gitops"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
+	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
 type bootstrapDriver struct {
@@ -195,5 +196,40 @@ func TestAuthorityBootstrapPinsBeforeFirstRealFence(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestAuthorityBootstrapNeverFallsBackWithoutRequiredPin(t *testing.T) {
+	db := database(t)
+	s, err := newServer(db, Options{})
+	must(t, err)
+	f := fake.NewDeterministic()
+	key := store.QueueKey{Installation: "7", Repository: "local/required", BaseBranch: "main"}
+	w, err := s.register(t.Context(), Target{Key: key, Driver: f, Git: f, BotLogin: fake.Identity, AuthorityRequired: true})
+	must(t, err)
+	if err := s.initializeFence(t.Context(), w); err == nil {
+		t.Fatal("required missing resolver/pin selected zero options")
+	}
+	if sha, err := f.ReadRef(t.Context(), w.repo(), "openmerge/fence/main"); err == nil || sha != "" {
+		t.Fatal("created fence without authority pin")
+	}
+	// A pin callback that succeeds without recording a pin cannot trigger observation.
+	w.PrepareAuthorityPush = func(context.Context) (AuthorityPushPolicy, error) {
+		return AuthorityPushPolicy{Mode: authority.OpenMerge}, nil
+	}
+	w.PinAuthorityPush = func(context.Context, AuthorityPushPolicy) error { return nil }
+	observed := false
+	w.ObserveAuthorityPush = func(context.Context, AuthorityPushPolicy) error { observed = true; return nil }
+	if err := s.initializeFence(t.Context(), w); err == nil || observed {
+		t.Fatal("observed protection before durable pin")
+	}
+	// The existing-ref no-op is still allowed with required, unavailable options.
+	initial, err := f.EnsureFence(t.Context(), w.repo(), "openmerge/fence/main", forge.PushOptions{})
+	must(t, err)
+	must(t, s.initializeFence(t.Context(), w))
+	state, _, err := db.Load(t.Context(), w.id)
+	must(t, err)
+	if state.Fence != initial {
+		t.Fatal("existing fence was not recorded")
 	}
 }
