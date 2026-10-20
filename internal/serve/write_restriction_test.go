@@ -115,5 +115,5 @@ func TestStartedRealGitLandingSettlesAcrossAuthorityViolation(t *testing.T) {
 	if got := git("", "--git-dir="+remote, "rev-parse", "refs/heads/main"); got != tested {
 		t.Fatal("real remote differs", got, tested)
 	}
-	t.Logf("observer event=%d source revision=%d landed=%s remote=%s", id, state.RulesSourceRevision(queue.WriteRestriction), state.BaseSHA, tested)
+	t.Logf("governing_commit=%s effective_digest=%s coverage_digest=%s actor_team_id=%s observer_event=%d source_revision=%d landed=%s remote=%s", pin.GoverningCommit, pin.EffectiveDigest, pin.CoverageDigest, binding.ResolvedActor.Team.TeamID, id, state.RulesSourceRevision(queue.WriteRestriction), state.BaseSHA, tested)
 }
