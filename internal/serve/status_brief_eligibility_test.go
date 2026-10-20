@@ -192,14 +192,145 @@ func TestBriefEligibilitySandboxCasesRealGit(t *testing.T) {
 				t.Fatalf("check progress: %s", summary)
 			}
 			// The digest issued before the eligibility read still accepts a receipt.
-			for _, row := range src.journal.Events {
-				state = queue.Apply(state, row.Event)
-			}
+			state = replayBriefJournal(src.journal)
 			recorded, err := state.PrepareBareReceipt(policy, b, fresh.Actors["github.com:user:2"].Identity, "88", b.At, before.Digest)
 			must(t, err)
 			if !recorded.Accepted {
 				t.Fatalf("receipt invalidated: %+v", recorded)
 			}
+			appendBriefEvents(&src.journal, recorded)
+			state = queue.Apply(state, recorded)
+			if len(state.ReceiptRecords(b.ChangeID)) != 1 {
+				t.Fatal("accepted receipt was not applied")
+			}
+			if receipt {
+				accepted := readEligibilityBrief(t, src, "reviewer")
+				if !accepted.Obligations[1].Met || !reflect.DeepEqual(accepted.Obligations[1].ApprovedIDs, []string{"github.com:user:2"}) {
+					t.Fatalf("accepted receipt not credited: %+v", accepted.Obligations)
+				}
+				for _, change := range []string{"intent", "generation", "reviewer-id"} {
+					t.Run(change, func(t *testing.T) {
+						branch := *src
+						branch.journal.Events = append([]store.JournalEvent{}, src.journal.Events...)
+						switch change {
+						case "intent":
+							appendBriefEvents(&branch.journal, queue.Intent(b, "edited intent", "body"))
+						case "generation":
+							for _, row := range src.journal.Events {
+								if c, ok := row.Event.(queue.ChangeClassified); ok {
+									c.Evidence.Classification.Inputs.Generation++
+									appendBriefEvents(&branch.journal, c)
+								}
+							}
+							// Renew eligibility so missing credit tests the receipt binding,
+							// rather than just the stale classification pin.
+							renewed := fresh
+							renewed.Basis.ReadID = "after-generation"
+							appendBriefEvents(&branch.journal, renewed)
+						case "reviewer-id":
+							mismatch := fresh
+							mismatch.Basis.ReadID = "mismatched-reviewer"
+							mismatch.Actors = map[string]cp.Actor{}
+							for id, actor := range fresh.Actors {
+								if id == recorded.Actor.ID {
+									actor.Grant.ReturnedID = "github.com:user:3"
+								}
+								mismatch.Actors[id] = actor
+							}
+							appendBriefEvents(&branch.journal, mismatch)
+						}
+						view := readEligibilityBrief(t, &branch, "reviewer")
+						if change == "generation" && (view.Obligations[1].Code == "eligibility_stale" || view.Obligations[1].Code == "eligibility_pending") {
+							t.Fatal("eligibility was not renewed for the new generation")
+						}
+						if view.Obligations[1].Met || len(view.Obligations[1].ApprovedIDs) != 0 {
+							t.Fatalf("stale or mismatched receipt credited: %+v", view.Obligations)
+						}
+					})
+				}
+			}
 		})
+	}
+}
+
+func replayBriefJournal(j store.Journal) queue.State {
+	s := j.Seed
+	for _, row := range j.Events {
+		s = queue.Apply(s, row.Event)
+	}
+	return s
+}
+
+func TestBriefEligibilitySurfacesAfterConfigChange(t *testing.T) {
+	src, policy, fresh, _ := briefEligibilityFixture(t, false)
+	appendBriefEvents(&src.journal, fresh)
+	before := readEligibilityBrief(t, src, "reviewer")
+	// A non-approval setting changes the effective config digest while the
+	// classification's semantic policy and receipt identity remain unchanged.
+	config := src.journal.Events[0].Event.(queue.ConfigApplied)
+	config.Digest = strings.Repeat("e", 64)
+	appendBriefEvents(&src.journal, config)
+	stale := readEligibilityBrief(t, src, "reviewer")
+	if stale.Obligations[0].Code != "eligibility_stale" {
+		t.Fatal(stale.Obligations)
+	}
+	fresh.Basis.ReadID = "new-config-read"
+	appendBriefEvents(&src.journal, fresh)
+	view := readEligibilityBrief(t, src, "reviewer")
+	summary, err := status.ReviewerCheckSummary(src.journal, 5, policy)
+	must(t, err)
+	if !view.Obligations[0].Met || !strings.Contains(summary, "human count=1 receipt=false met=true") || strings.Contains(summary, "eligibility\\_stale") {
+		t.Fatalf("HTTP/check disagree: %+v\n%s", view.Obligations, summary)
+	}
+	if view.Digest != before.Digest {
+		t.Fatal("non-approval config changed receipt digest")
+	}
+}
+
+func TestBriefEligibilityAcceptedInputChangeRenewsPin(t *testing.T) {
+	src, policy, fresh, _ := briefEligibilityFixture(t, false)
+	denied := fresh
+	denied.Actors = map[string]cp.Actor{}
+	for id, actor := range fresh.Actors {
+		actor.Grant.Write = cp.False
+		denied.Actors[id] = actor
+	}
+	appendBriefEvents(&src.journal, denied)
+	config := src.journal.Events[0].Event.(queue.ConfigApplied)
+	config.Digest = strings.Repeat("e", 64)
+	appendBriefEvents(&src.journal, config)
+	before := readEligibilityBrief(t, src, "reviewer")
+	if before.Obligations[0].Code != "eligibility_stale" {
+		t.Fatal(before.Obligations)
+	}
+	b := fresh.Basis
+	prs := []queue.BatchPR{{PR: 5, HeadSHA: b.Head}}
+	tested := strings.Repeat("a", 40)
+	appendBriefEvents(&src.journal, queue.BatchStarted{BatchID: "b1", BaseSHA: replayBriefJournal(src.journal).BaseSHA, PRs: prs, At: b.At}, queue.TestRefBuilt{BatchID: "b1", TestedSHA: tested, Method: queue.Merge, At: b.At})
+	s := replayBriefJournal(src.journal)
+	appendBriefEvents(&src.journal, queue.ApprovalGateRejected{BatchID: "b1", TestedSHA: tested, PRs: prs, Waiting: []queue.ApprovalWait{{Basis: b, Fingerprint: s.ApprovalFingerprint(b.ChangeID), Reasons: []string{"approval-required"}}}})
+	s = replayBriefJournal(src.journal)
+	if len(s.ApprovalWaits()) != 1 {
+		t.Fatal("fixture did not enter approval wait")
+	}
+	fresh.Basis.ReadID = "renewed-inputs"
+	changed, ok := s.PrepareApprovalInputChange(fresh)
+	if !ok {
+		t.Fatal("changed inputs not prepared")
+	}
+	appendBriefEvents(&src.journal, changed)
+	s = replayBriefJournal(src.journal)
+	facts, _ := s.ApprovalFacts(b.ChangeID)
+	if facts.Eligibility == nil || facts.Eligibility.Basis != fresh.Basis || len(s.ApprovalWaits()) != 0 {
+		t.Fatal("input change was not accepted")
+	}
+	view := readEligibilityBrief(t, src, "reviewer")
+	if !view.Obligations[0].Met || !reflect.DeepEqual(view.Obligations[0].ApprovedIDs, []string{"github.com:user:2"}) || view.Digest != before.Digest {
+		t.Fatalf("accepted input change did not renew pin: %+v", view)
+	}
+	check, err := status.ReviewerCheckSummary(src.journal, 5, policy)
+	must(t, err)
+	if !strings.Contains(check, "human count=1 receipt=false met=true") {
+		t.Fatal(check)
 	}
 }

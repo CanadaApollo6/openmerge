@@ -42,8 +42,7 @@ func projectedEligibility(t *testing.T, j store.Journal, policy cp.Policy) brief
 	if err != nil {
 		t.Fatal(err)
 	}
-	pin := j.Events[0].Event.(queue.ConfigApplied)
-	f = recordedBriefProgress(f, policy, q.state, facts, pin.Digest, q.eligibilityPins[id])
+	f = recordedBriefProgress(f, policy, q.state, facts, q.eligibilityPins[id])
 	v, err := brief.Project(f, "reviewer")
 	if err != nil {
 		t.Fatal(err)
@@ -141,5 +140,67 @@ func TestBriefEligibilityStaleBindings(t *testing.T) {
 				t.Fatal(got.Obligations)
 			}
 		})
+	}
+}
+
+func TestBriefEligibilityBaseRewriteWindow(t *testing.T) {
+	j, p, e := eligibilityJournal(t)
+	appendEligibilityEvents(&j, e)
+	before := projectedEligibility(t, j, p)
+	if !before.Obligations[0].Met {
+		t.Fatal("fixture not approved")
+	}
+	// BaseMoved has no ancestry metadata. Until reclassification, the brief
+	// remains explicitly bound to the old base and generation.
+	newBase := strings.Repeat("e", 40)
+	appendEligibilityEvents(&j, queue.BaseMoved{SHA: newBase})
+	window := projectedEligibility(t, j, p)
+	if window.Classification.Base != before.Classification.Base || window.Classification.Generation != before.Classification.Generation || window.Digest != before.Digest {
+		t.Fatalf("base move relabeled old approval evidence: %+v", window)
+	}
+	classified := j.Events[2].Event.(queue.ChangeClassified)
+	classified.Evidence.Classification.Inputs.Base = newBase
+	classified.Evidence.Classification.Inputs.Generation++
+	appendEligibilityEvents(&j, classified)
+	after := projectedEligibility(t, j, p)
+	if after.Classification.Base != newBase || after.Classification.Generation != before.Classification.Generation+1 || after.Obligations[0].Met || after.Obligations[0].Code != "eligibility_stale" || len(after.Obligations[0].ApprovedIDs) != 0 {
+		t.Fatalf("old eligibility credited to rewritten base: %+v", after)
+	}
+}
+
+func TestBriefEligibilityReevaluatesLaterStances(t *testing.T) {
+	j, p, e := eligibilityJournal(t)
+	review := j.Events[len(j.Events)-1].Event.(queue.ReviewStanceObserved)
+	j.Events = j.Events[:len(j.Events)-1]
+	appendEligibilityEvents(&j, e)
+	before := projectedEligibility(t, j, p)
+	if before.Obligations[0].Met {
+		t.Fatal("approval not yet recorded")
+	}
+	appendEligibilityEvents(&j, review)
+	approved := projectedEligibility(t, j, p)
+	if !approved.Obligations[0].Met || !reflect.DeepEqual(approved.Obligations[0].ApprovedIDs, []string{review.Reviewer.ID}) {
+		t.Fatal(approved.Obligations)
+	}
+	withdrawal := review
+	withdrawal.Stance.Kind = cp.Withdraw
+	withdrawal.Stance.Source.DismissedReviewID = review.Stance.Source.ID
+	withdrawal.OriginalSubmission = review.SourceTime
+	withdrawal.SourceKind = forge.ReviewDismissalTime
+	withdrawal.SourceTime.Source = forge.ReviewDismissalTime
+	withdrawal.Stance.Source.ID = "5577526296"
+	withdrawal.Stance.Source.Sequence++
+	withdrawal.Stance.Source.Time = review.Stance.Source.Time.Add(time.Minute)
+	withdrawal.SourceTime.Time = withdrawal.Stance.Source.Time
+	if err := withdrawal.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	appendEligibilityEvents(&j, withdrawal)
+	withdrawn := projectedEligibility(t, j, p)
+	if withdrawn.Obligations[0].Met || len(withdrawn.Obligations[0].ApprovedIDs) != 0 {
+		t.Fatal(withdrawn.Obligations)
+	}
+	if approved.Digest != before.Digest || withdrawn.Digest != before.Digest {
+		t.Fatal("stance progress changed receipt identity")
 	}
 }
