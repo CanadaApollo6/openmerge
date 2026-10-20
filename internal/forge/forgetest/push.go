@@ -2,6 +2,7 @@ package forgetest
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 )
 
 func runPushOptions(t *testing.T, newEnv func(*testing.T) Env) {
+	runPushDispatchBeforeLease(t, newEnv)
 	t.Run("authority prepared push", func(t *testing.T) {
 		e := newEnv(t)
 		ctx := t.Context()
@@ -46,6 +48,18 @@ func runPushOptions(t *testing.T, newEnv func(*testing.T) Env) {
 		}
 		if err := e.Git.DeleteBranch(ctx, e.Repo, "authority-absent", e.BaseSHA, missing); err != nil {
 			t.Fatal("missing cleanup no-op rejected", err)
+		}
+	})
+}
+
+func runPushDispatchBeforeLease(t *testing.T, newEnv func(*testing.T) Env) {
+	t.Run("authority dispatch precedes stale fence lease", func(t *testing.T) {
+		e := newEnv(t)
+		sentinel := errors.New("dispatch policy unavailable")
+		opts := forge.PushOptions{AuthorityRequired: true, Guard: func(context.Context, forge.PushValidationContext) error { return sentinel }}
+		_, err := e.Git.AdvanceFence(t.Context(), e.Repo, "authority-absent-fence", e.BaseSHA, "abandon/order", opts)
+		if !errors.Is(err, sentinel) {
+			t.Fatalf("expected dispatch rejection before lease, got %v", err)
 		}
 	})
 }

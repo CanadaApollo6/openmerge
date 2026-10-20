@@ -123,3 +123,5 @@ func TestApprovalStatusDuringGateAndLanding(t *testing.T) {
 		})
 	}
 }
+
+var _ forge.Git = (*slowStatusGit)(nil)

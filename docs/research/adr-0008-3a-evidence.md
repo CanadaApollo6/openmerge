@@ -134,8 +134,9 @@ durable config/mode pinning and protection observation. Serve enforces that
 order before constructing options, reloads the durable pin/evidence, and never
 uses zero options for an unresolved authority policy. PR 9 supplies the adapters;
 none is installed by this PR, and public authority config stays rejected.
-The source accessor uses the latest retained applied observation's basis
-(highest basis first); PR 4 retains ownership of source revision interpretation.
+The source accessor supplies only the latest applied observation's basis and
+fingerprint for drift rejection (highest basis first). Evaluation consumes the
+activation's pinned seeing evidence; PR 4 owns source revision interpretation.
 Proposed verification never supplies runtime content evidence.
 
 The registration, actual `refreshWorker` bootstrap, and reconciliation-cycle
@@ -172,7 +173,7 @@ below after execution. Earlier check iterations caught a missing lint comment
 and incomplete plumbing during implementation; those failed iterations are not
 acceptance evidence.
 
-## Final executed results (2026-10-20 UTC)
+## Round-1 executed results (2026-10-20 UTC; historical)
 
 The code/evidence-probe revision is `3e64e48b84848b5ded989cf109559f0b0d7db8b5`.
 The final binary built by `make check` reports `3e64e48`. The evidence-only
@@ -275,3 +276,56 @@ contracts pass (`/home/riels/.cache/openmerge-3a-graph-cap.log`). Full `make che
 legacy object/ref/argv comparison and strict offline replay were all rerun after
 this final tightening and exited 0. The retained earlier rejection inventories
 remain the same valid small-graph cases; the final full suite re-exercised them.
+
+## Round 2: integration corrections
+
+Both PRs remain **Hold**. #105 rebased onto `cfa7bf6`; #106 rebased onto
+#105's round-2 head before its producer/boundary changes.
+
+Gitops now uses NUL-delimited raw `diff-tree --no-renames` separately for each
+parent (root against the empty tree), retains changed names including deletions
+and rename sources, and reads sizes only for changed post-image objects. The fake
+constructs the same per-parent evidence. Whole unchanged trees are not submitted
+to content rules. New queue refs exclude only the ancestry of their target base
+read from the remote in the locked session; every frontier entry gets a local
+ancestry proof. No caller-supplied arbitrary ancestor can select that source.
+Deletion inventories do not hydrate the deleted old object. Parent/frontier caps
+are enforced before growing traversal/maps, and OIDs count toward metadata.
+
+A cached GitHub pin permits legacy fallback only when `AuthorityRequired` is
+false and its governing commit/digest agree with resolved worker config and the
+durable `ConfigDigest`. Unresolved startup config returns unavailable options;
+`EnsureFence` can still return an existing ref, while absent-fence bootstrap
+recognizes the specific pending-config error and defers until reconciliation
+resolves config. Required/inconsistent options never create an absent fence.
+The fake now checks dispatch before the fence lease, as gitops does; a shared
+contract asserts the error class. All 20 overriding wrappers/test doubles have
+compile-time `forge.Git` assertions in addition to both concrete implementations.
+
+Runtime evaluation consumes **the pinned seeing observation in the authority
+activation**, with its recorded protection fingerprint, never fresh runtime
+protection evidence. The latest retained observation is used solely to reject
+source/fingerprint drift. Missing activation evidence rejects; constructors
+require `SeeingComplete()`. PR 9 activates these hooks/context construction.
+
+Round-2 3a-i verification at `0de94f725b37cbde7fc495e4fe3eb7cc6913590b`:
+
+- `make check`: exit 0, including race tests and test PostgreSQL at localhost:54329.
+  Log: `/home/riels/.cache/openmerge-3a-i-round2-final-check.log`.
+- Legacy comparison: exit 0, 24/24 real Git and 24/24 fake checkpoints identical.
+  Report: `/home/riels/.cache/openmerge-3a-i-round2-legacy/report.json`.
+- Strict offline replay: exit 0, gates 2/4 PASS, 2,159/2,159 checkpoints and 8,676
+  boundary probes agree; maximum 12, cap not hit. Repeat determinism, all 22
+  script self-tests and 7/7 synthetic checkpoints pass. Report:
+  `/home/riels/.cache/openmerge-3a-i-round2-replay/report.json`.
+- 3a-ii focused tests: exit 0 for forge/fake/GitHub/gitops/serve, plus the 18-case
+  real-Git bootstrap matrix (registration/refresh/cycle × success, basis drift,
+  config drift, reload failure, missing seeing activation, fingerprint drift).
+  Logs: `/home/riels/.cache/openmerge-3a-ii-round2-focused.log` and
+  `/home/riels/.cache/openmerge-3a-ii-round2-seeing.log`.
+
+All commands used the required host lock, `GOFLAGS=-p=2`, and 4 GiB memory limit
+(6 GiB for replay). The initial external-package test compile typo was corrected;
+a superseded full run was canceled after the final cap vectors were added. Only
+the final successful run above is acceptance evidence. No flags, Makefile, CI,
+live database/status API, service units, or live refs were changed.

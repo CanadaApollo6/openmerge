@@ -161,3 +161,5 @@ func assertStaleStart(t *testing.T, s *Store, q QueueID, claim ClaimedAction, wa
 		t.Fatal("stale action was not cancelled")
 	}
 }
+
+var _ forge.Git = (*startGit)(nil)

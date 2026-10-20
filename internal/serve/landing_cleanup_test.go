@@ -120,3 +120,5 @@ func TestLandingCleanupPolicySurvivesConfigurationChange(t *testing.T) {
 		})
 	}
 }
+
+var _ forge.Git = (*lostLandingResult)(nil)

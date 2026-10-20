@@ -404,3 +404,5 @@ func TestStageAAcceptanceCLI(t *testing.T) {
 		}
 	}
 }
+
+var _ forge.Git = (*acceptanceGit)(nil)

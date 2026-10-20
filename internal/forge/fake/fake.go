@@ -420,11 +420,11 @@ func (f *Forge) AdvanceFence(ctx context.Context, repo forge.RepoRef, fenceRef, 
 		return "", err
 	}
 	r := f.repo(repo)
-	if r.refs[fenceRef] != expectedSHA {
-		return "", forge.ErrLeaseRejected
-	}
 	if err := opts.CheckDispatch(ctx, repo, forge.PushAdvanceFence, []forge.PushRefIntent{{Ref: full, OldSHA: expectedSHA}}); err != nil {
 		return "", err
+	}
+	if r.refs[fenceRef] != expectedSHA {
+		return "", forge.ErrLeaseRejected
 	}
 	next, err := r.fence(expectedSHA, nextID, "")
 	if err != nil {

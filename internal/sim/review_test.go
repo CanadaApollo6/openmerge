@@ -594,3 +594,9 @@ func (g freshFenceGit) Land(ctx context.Context, repo forge.RepoRef, req forge.L
 	req.ExpectedFence = sha
 	return g.Git.Land(ctx, repo, req, opts)
 }
+
+var _ forge.Git = (*freshBaseGit)(nil)
+
+var _ forge.Git = (*freshFenceGit)(nil)
+
+var _ forge.Git = (*missingPRGit)(nil)

@@ -255,3 +255,5 @@ func TestOutsidePushRound2PeerAuditAfterRefRead(t *testing.T) {
 		t.Fatalf("older audit invented rollback: %+v", pushes)
 	}
 }
+
+var _ forge.Git = (*outsidePushRound2FenceHook)(nil)

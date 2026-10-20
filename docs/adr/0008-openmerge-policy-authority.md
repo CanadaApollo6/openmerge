@@ -481,7 +481,9 @@ All PRs follow these storage and acceptance rules:
   and current protection source revision, propagating reload errors. The executor
   forwards these options for its operations; serve's `initializeFence` supplies
   them directly to `EnsureFence`, which has no executor caller.
-  Missing required context or guard aborts a write. Context is **stale** when
+  Runtime context is built from the pinned seeing observation in the activation,
+  bound to its protection fingerprint, never from fresh runtime protection reads.
+  PR 9 activates this source. Missing required context or guard aborts a write. Context is **stale** when
   its policy/basis binding differs from the queue's current pin/revision or its
   intended operation/expected old SHAs differ from the prepared push. Check at
   dispatch for write-intending operations and recheck via the guard immediately

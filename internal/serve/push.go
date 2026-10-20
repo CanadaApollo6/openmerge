@@ -20,6 +20,10 @@ type AuthorityPushPolicy struct {
 	GoverningCommit, EffectiveDigest, AppID string
 }
 
+// Unresolved startup config defers an absent fence; EnsureFence still gets to
+// perform its existing-ref read-first no-op before this guard can run.
+var errFenceConfigPending = errors.New("fence bootstrap awaits resolved configuration")
+
 func unavailablePush(err error) forge.PushOptions {
 	return forge.PushOptions{AuthorityRequired: true, Guard: func(context.Context, forge.PushValidationContext) error { return err }}
 }
@@ -68,7 +72,10 @@ func (s *Server) authorityPushOptions(ctx context.Context, w *worker, operation 
 	}
 	if resolved == nil {
 		// A surviving pin cannot select an unconfigured legacy bootstrap path.
-		if pin.Authority == authority.GitHub && pin.GoverningCommit == w.configTip && pin.EffectiveDigest == w.configDigest {
+		if w.configTip == "" {
+			return unavailablePush(errFenceConfigPending)
+		}
+		if !w.AuthorityRequired && pin.Authority == authority.GitHub && pin.GoverningCommit == w.configTip && pin.EffectiveDigest == w.configDigest && state.ConfigDigest == pin.EffectiveDigest {
 			return forge.PushOptions{}
 		}
 		return unavailablePush(errors.New("authority policy has not been resolved"))
@@ -82,13 +89,23 @@ func (s *Server) authorityPushOptions(ctx context.Context, w *worker, operation 
 	if pin.OpenMerge == nil || !strings.EqualFold(pin.OpenMerge.Binding.Repository, w.Key.Repository) || strconv.FormatInt(pin.OpenMerge.Binding.InstallationID, 10) != w.Key.Installation || pin.OpenMerge.Binding.QueueKey != w.Key.Installation+"/"+pin.OpenMerge.Binding.Repository+"/"+w.Key.BaseBranch || w.Key.Lane != "" {
 		return unavailablePush(errors.New("authority repository binding missing"))
 	}
-	basis, evidence, ok := state.AuthorityProtection()
+	// PR 9 must supply the pinned seeing observation whose fingerprint was
+	// accepted at activation. Never substitute a fresh runtime protection read.
+	basis, currentEvidence, ok := state.AuthorityProtection()
 	if !ok {
 		return unavailablePush(errors.New("authority protection evidence missing"))
 	}
+	if pin.OpenMerge.Activation == nil {
+		return unavailablePush(errors.New("pinned seeing activation evidence missing"))
+	}
+	evidence := pin.OpenMerge.Activation.Evidence
 	fingerprint, err := evidence.Fingerprint()
 	if err != nil {
 		return unavailablePush(err)
+	}
+	currentFingerprint, err := currentEvidence.Fingerprint()
+	if err != nil || currentFingerprint != fingerprint || fingerprint != pin.OpenMerge.Activation.ProtectionFingerprint {
+		return unavailablePush(errors.New("protection differs from pinned seeing activation"))
 	}
 	if operation == forge.PushBuild {
 		reader, ok := w.Git.(forge.PreparedRefReader)

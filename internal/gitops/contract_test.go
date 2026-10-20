@@ -324,3 +324,5 @@ func TestConflictsPreserveRefsForEveryMethod(t *testing.T) {
 		})
 	}
 }
+
+var _ forge.Git = (*racingGit)(nil)

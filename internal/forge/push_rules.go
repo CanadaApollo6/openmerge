@@ -79,7 +79,7 @@ func EvaluatePushRules(p PreparedPush, ctx PushRuleContext) ([]PushWarning, erro
 			for _, rule := range policy.Rules {
 				if baseContentOnly {
 					switch rule.Kind {
-					case "creation", "update", "deletion", "non_fast_forward", "pull_request", "required_status_checks", "required_deployments", "required_workflows", "code_scanning":
+					case "creation", "update", "deletion", "non_fast_forward", "pull_request", "required_status_checks", "required_deployments", "workflows", "code_scanning":
 						continue
 					}
 				}

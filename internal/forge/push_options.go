@@ -28,13 +28,15 @@ type PushValidationContext struct {
 	rules     PushRuleContext
 }
 
-// NewPushValidationContext freezes the policy snapshot before dispatch.
+// NewPushValidationContext freezes the pinned seeing observation (the activation
+// fingerprint) before dispatch. Runtime consumers must never replace it with
+// fresh protection reads; PR 9 installs this context source.
 func NewPushValidationContext(binding PushBinding, operation PushOperation, refs []PushRefIntent, rules PushRuleContext) (PushValidationContext, error) {
 	if binding.Repository.Path == "" || binding.QueueKey == "" || ValidateCommitIDs(binding.GoverningCommit) != nil || !authority.IsDigest(binding.EffectiveDigest) {
 		return PushValidationContext{}, pushRejected("missing policy binding")
 	}
 	fingerprint, err := rules.Observation.Fingerprint()
-	if err != nil || fingerprint != binding.ProtectionFingerprint || rules.AppID == "" || rules.DefaultBranch == "" {
+	if err != nil || fingerprint != binding.ProtectionFingerprint || rules.AppID == "" || rules.DefaultBranch == "" || !rules.Observation.SeeingComplete() {
 		return PushValidationContext{}, pushRejected("invalid protection binding")
 	}
 	switch operation {
@@ -66,6 +68,9 @@ func NewPushValidationContext(binding PushBinding, operation PushOperation, refs
 
 // Binding returns a value copy for the store-reloading validity guard.
 func (c PushValidationContext) Binding() PushBinding { return c.binding }
+
+// BaseRef identifies the existing target base used to prove creation boundaries.
+func (c PushValidationContext) BaseRef() string { return c.rules.BaseRef }
 
 // Operation returns the intended mutation family.
 func (c PushValidationContext) Operation() PushOperation { return c.operation }

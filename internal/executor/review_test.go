@@ -156,3 +156,5 @@ func TestReviewRejectedAttemptCanStillLand(t *testing.T) {
 		t.Fatalf("paused worker landed after settled rejection and acknowledged dequeue: %v", err)
 	}
 }
+
+var _ forge.Git = (*reviewBeforeLand)(nil)

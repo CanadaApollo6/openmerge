@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -70,9 +71,13 @@ func TestAuthorityRejectsBeforeEveryPushFamily(t *testing.T) {
 			// an intermediate commit does not. Fast-forward's marker is unsigned too.
 			rule := authority.Rule{Kind: "required_signatures", Parameters: []authority.Parameter{}}
 			opts := validationOptions(t, forge.PushBuild, []forge.PushRefIntent{{Ref: "refs/heads/openmerge/queue/main/rejected"}}, []authority.Rule{rule})
-			_, err := f.g.BuildTestRef(t.Context(), testRepo, forge.BuildRequest{Ref: "openmerge/queue/main/rejected", BaseSHA: f.base, PRs: f.prs[:2], Method: method, BatchID: "rejected"}, opts)
-			if err == nil {
-				t.Fatal("accepted unsigned prepared objects")
+			prs := f.prs[:2]
+			if method == forge.FastForward {
+				prs = f.prs[:1]
+			} // base -> contributor -> marker is a valid chain.
+			_, err := f.g.BuildTestRef(t.Context(), testRepo, forge.BuildRequest{Ref: "openmerge/queue/main/rejected", BaseSHA: f.base, PRs: prs, Method: method, BatchID: "rejected"}, opts)
+			if !errors.Is(err, forge.ErrInvalidInput) || !strings.Contains(err.Error(), "commit lacks verified signature") {
+				t.Fatalf("expected signature validation rejection, got %v", err)
 			}
 			assert()
 		})
@@ -245,13 +250,13 @@ func TestAuthorityAcceptedBuildInspectsOnceBeforePublishing(t *testing.T) {
 }
 
 func TestAuthorityPathSizeAndLinearRulesUseRealObjects(t *testing.T) {
-	for _, kind := range []string{"file_size_restriction", "file_path_restriction", "required_linear_history"} {
+	for _, kind := range []string{"max_file_size", "file_path_restriction", "required_linear_history"} {
 		t.Run(kind, func(t *testing.T) {
 			f := newFixture(t)
 			method := forge.Squash
 			params := []authority.Parameter{}
 			switch kind {
-			case "file_size_restriction":
+			case "max_file_size":
 				head := f.commit(f.heads[1], "large blob", map[string]string{"large.bin": strings.Repeat("x", (1<<20)+1)})
 				gitCommand(t, f.source, "", nil, "push", f.remote, head+":"+headRef(1))
 				f.prs[0].HeadSHA = head
@@ -269,5 +274,68 @@ func TestAuthorityPathSizeAndLinearRulesUseRealObjects(t *testing.T) {
 			}
 			assert()
 		})
+	}
+}
+
+func TestPreparedChangedPathsAndCreationBoundary(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	old := f.diffCommit(f.base, "existing restricted files", map[string]diffEntry{"secret.pem": {mode: "100644", content: "secret"}, "large.bin": {mode: "100644", content: strings.Repeat("x", 2<<20)}})
+	f.push("main", old, false)
+	unrelated := f.diffCommit(old, "unrelated change", map[string]diffEntry{"base.txt": {mode: "100644", content: "changed"}})
+	renamed := f.diffCommit(old, "rename restricted source", map[string]diffEntry{"secret.pem": {}, "renamed.txt": {mode: "100644", content: "secret"}})
+	deleted := f.diffCommit(old, "delete restricted source", map[string]diffEntry{"secret.pem": {}})
+	right := f.diffCommit(old, "other merge parent", map[string]diffEntry{"secret.pem": {mode: "100644", content: "other secret"}})
+	merged := f.diffCommit(unrelated, "merge keeps first parent tree", nil, right)
+	s, unlock, err := f.g.open(ctx, testRepo)
+	must(t, err)
+	defer unlock()
+	for _, tc := range []struct {
+		name, tip string
+		reject    bool
+	}{{"unrelated", unrelated, false}, {"rename", renamed, true}, {"deletion", deleted, true}, {"merge", merged, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := s.preparedPush(ctx, forge.PushBuild, []forge.PushRef{{Ref: "refs/heads/new-queue", NewSHA: tc.tip, CreationBaseSHA: old}})
+			must(t, err)
+			if len(p.Refs[0].Boundary) != 1 || p.Refs[0].Boundary[0] != old {
+				t.Fatalf("unexpected frontier %v", p.Refs[0].Boundary)
+			}
+			rule := authority.Rule{Kind: "file_path_restriction", Parameters: []authority.Parameter{{Name: "restricted_file_paths/~20", Values: []string{`"secret.pem"`}}}}
+			opts := validationOptions(t, forge.PushBuild, []forge.PushRefIntent{{Ref: p.Refs[0].Ref, NewSHA: tc.tip}}, []authority.Rule{rule})
+			if err := opts.ValidateBeforePush(ctx, testRepo, p); (err != nil) != tc.reject {
+				t.Fatalf("changed-path validation: %v", err)
+			}
+			if tc.name == "unrelated" {
+				if len(p.Refs[0].Commits) != 1 || len(p.Refs[0].Commits[0].Files) != 1 || p.Refs[0].Commits[0].Files[0].Path != "base.txt" {
+					t.Fatalf("creation inventoried existing history/tree: %+v", p)
+				}
+				size := validationOptions(t, forge.PushBuild, []forge.PushRefIntent{{Ref: p.Refs[0].Ref, NewSHA: tc.tip}}, []authority.Rule{{Kind: "max_file_size", Parameters: []authority.Parameter{{Name: "max_file_size", Values: []string{"1"}}}}})
+				must(t, size.ValidateBeforePush(ctx, testRepo, p))
+			}
+			if tc.name == "merge" {
+				for _, c := range p.Refs[0].Commits {
+					if c.OID == merged {
+						if len(c.Diffs) != 2 || len(c.Diffs[0].Paths) != 0 || !slices.Contains(c.Diffs[1].Paths, "secret.pem") {
+							t.Fatalf("lost parent comparison: %+v", c.Diffs)
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestDeletionInventoryDoesNotHydrateOldObject(t *testing.T) {
+	f := newFixture(t)
+	ctx := t.Context()
+	s, unlock, err := f.g.open(ctx, testRepo)
+	must(t, err)
+	defer unlock()
+	// This valid OID is deliberately absent from both cache and remote. Fetching
+	// it would fail, but a deletion's empty content inventory needs no old object.
+	p, err := s.preparedPush(ctx, forge.PushDeleteBranch, []forge.PushRef{{Ref: "refs/heads/topic", OldSHA: strings.Repeat("e", 40)}})
+	must(t, err)
+	if len(p.Refs[0].Commits) != 0 || len(p.Refs[0].Boundary) != 0 {
+		t.Fatal("deletion introduced evidence")
 	}
 }

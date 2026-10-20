@@ -411,3 +411,7 @@ func TestRollbackBeforeMarkLandedRemainsVisible(t *testing.T) {
 		t.Fatal("restored landing omitted landed marker")
 	}
 }
+
+var _ forge.Git = (*missingLanding)(nil)
+
+var _ forge.Git = (*rollbackBeforeClosure)(nil)

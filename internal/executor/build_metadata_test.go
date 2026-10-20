@@ -392,3 +392,5 @@ func TestBuildMetadataMissingBatchFailsClosed(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+var _ forge.Git = (*recordingBuildGit)(nil)

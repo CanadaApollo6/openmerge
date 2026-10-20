@@ -47,7 +47,7 @@ func (g *bootstrapGit) EnsureFence(ctx context.Context, r forge.RepoRef, ref str
 
 func TestAuthorityBootstrapPinsBeforeFirstRealFence(t *testing.T) {
 	for _, path := range []string{"registration", "refreshWorker", "cycle"} {
-		for _, mode := range []string{"none", "basis", "policy", "reload"} {
+		for _, mode := range []string{"none", "basis", "policy", "reload", "missing-seeing", "seeing-drift"} {
 			change := mode != "none"
 			t.Run(fmt.Sprintf("%s/change-%s", path, mode), func(t *testing.T) {
 				db := database(t)
@@ -88,10 +88,22 @@ func TestAuthorityBootstrapPinsBeforeFirstRealFence(t *testing.T) {
 				pin.OpenMerge.Binding.DefaultBranch = "main"
 				must(t, pin.Validate())
 				evidence := authority.Observation{Inventory: authority.Visible, Protections: []authority.Protection{}, Coverage: []authority.Coverage{{Ref: "refs/heads/main", Visibility: authority.Absent, ProtectionIDs: []string{}}}, Findings: []authority.Finding{}}
+				fp, err := evidence.Fingerprint()
+				must(t, err)
+				seeing := time.Now().UTC()
+				pin.OpenMerge.Activation = &authority.Activation{Proposed: authority.ProposedVerification{EventID: 1, Scope: "proposed", Binding: pin.OpenMerge.Binding, ProtectionFingerprint: fp, SeeingReadAt: seeing}, ProtectionFingerprint: fp, SeeingReadAt: seeing, Evidence: evidence}
+				if mode == "missing-seeing" {
+					pin.OpenMerge.Activation = nil
+				}
+				must(t, pin.Validate())
 				policy := AuthorityPushPolicy{Mode: authority.OpenMerge, GoverningCommit: tip, EffectiveDigest: digest, AppID: "42"}
 				order := []string{}
 				observed := func(basis uint64) error {
-					_, err := db.Append(ctx, id, []queue.Event{queue.WriteRestrictionObserved{Binding: pin.OpenMerge.Binding, Basis: basis, ObservedAt: time.Now().UTC(), Evidence: evidence}}, "")
+					readEvidence := authority.CloneObservation(evidence)
+					if mode == "seeing-drift" {
+						readEvidence.Protections = []authority.Protection{{ID: "new", Source: "repository_ruleset", Target: "push", Enforcement: "active", TargetsVisibility: authority.Visible, RulesVisibility: authority.Visible, BypassVisibility: authority.Visible, Includes: []string{}, Excludes: []string{}, Conditions: []authority.Parameter{}, Rules: []authority.Rule{}, BypassActors: []authority.BypassActor{}}}
+					}
+					_, err := db.Append(ctx, id, []queue.Event{queue.WriteRestrictionObserved{Binding: pin.OpenMerge.Binding, Basis: basis, ObservedAt: time.Now().UTC(), Evidence: readEvidence}}, "")
 					return err
 				}
 				proxy := &bootstrapGit{Git: g}
@@ -247,5 +259,88 @@ func TestAuthorityBootstrapNeverFallsBackWithoutRequiredPin(t *testing.T) {
 	must(t, err)
 	if state.Fence != initial {
 		t.Fatal("existing fence was not recorded")
+	}
+}
+
+var _ forge.Git = (*bootstrapGit)(nil)
+
+func TestCachedGitHubPinCannotSkipRequiredValidation(t *testing.T) {
+	for _, scenario := range []string{"required", "durable-config-changed", "consistent-legacy", "startup", "startup-existing"} {
+		t.Run(scenario, func(t *testing.T) {
+			db := database(t)
+			ctx := t.Context()
+			f := fake.NewDeterministic()
+			repo := forge.RepoRef{Path: "local/cached-pin"}
+			tip, _ := f.Init(repo, "main", "existing")
+			// Init creates main, but no openmerge/fence/main ref.
+			key := store.QueueKey{Installation: "7", Repository: repo.Path, BaseBranch: "main"}
+			id, _, err := db.CanonicalQueue(ctx, key)
+			must(t, err)
+			digest := strings.Repeat("a", 64)
+			pin := queue.PolicyAuthorityApplied{GoverningCommit: tip, EffectiveDigest: digest, Authority: authority.GitHub, DefaultBranch: "main", CoverageDigest: strings.Repeat("b", 64)}
+			_, err = db.Append(ctx, id, []queue.Event{queue.ConfigApplied{Commit: tip, Digest: digest}, pin}, "")
+			must(t, err)
+			target := Target{Key: key, Driver: f, Git: f, BotLogin: fake.Identity, AuthorityRequired: scenario == "required"}
+			if scenario == "startup-existing" {
+				existing, err := f.EnsureFence(ctx, repo, "openmerge/fence/main", forge.PushOptions{})
+				must(t, err)
+				_, err = New(ctx, db, []Target{target}, Options{})
+				must(t, err)
+				state, _, err := db.Load(ctx, id)
+				must(t, err)
+				if state.Fence != existing {
+					t.Fatal("startup lost existing-ref no-op")
+				}
+				return
+			}
+			if scenario == "startup" {
+				s, err := New(ctx, db, []Target{target}, Options{})
+				must(t, err)
+				if len(s.queues) != 1 {
+					t.Fatal("startup lost queue")
+				}
+				if _, err := f.ReadRef(ctx, repo, "openmerge/fence/main"); err == nil {
+					t.Fatal("startup created unresolved fence")
+				}
+				w := s.queues[0]
+				w.configTip = tip
+				w.configDigest = digest
+				must(t, s.initializeFence(ctx, w))
+				if _, err := f.ReadRef(ctx, repo, "openmerge/fence/main"); err != nil {
+					t.Fatal("resolved bootstrap did not resume", err)
+				}
+				return
+			}
+			s, err := newServer(db, Options{})
+			must(t, err)
+			w, err := s.register(ctx, target)
+			must(t, err)
+			w.configTip = tip
+			w.configDigest = digest
+			if scenario == "durable-config-changed" {
+				_, err = db.Append(ctx, id, []queue.Event{queue.ConfigApplied{Commit: tip, Digest: strings.Repeat("c", 64)}}, "")
+				must(t, err)
+			}
+			err = s.initializeFence(ctx, w)
+			if scenario == "consistent-legacy" {
+				must(t, err)
+				return
+			}
+			if err == nil {
+				t.Fatal("cached pin bypassed validation")
+			}
+			if _, err := f.ReadRef(ctx, repo, "openmerge/fence/main"); err == nil {
+				t.Fatal("created absent fence through fallback")
+			}
+			// Required or inconsistent options must still allow the existing-ref no-op.
+			existing, err := f.EnsureFence(ctx, repo, "openmerge/fence/main", forge.PushOptions{})
+			must(t, err)
+			must(t, s.initializeFence(ctx, w))
+			state, _, err := db.Load(ctx, id)
+			must(t, err)
+			if state.Fence != existing {
+				t.Fatal("lost existing fence no-op")
+			}
+		})
 	}
 }

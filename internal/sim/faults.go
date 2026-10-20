@@ -281,3 +281,5 @@ func (f *faultForge) DeleteBranch(ctx context.Context, repo forge.RepoRef, branc
 	}
 	return f.Forge.DeleteBranch(ctx, repo, branch, expectedSHA, opts)
 }
+
+var _ forge.Git = (*faultForge)(nil)

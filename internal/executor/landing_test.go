@@ -438,3 +438,5 @@ func TestResolveRepeatedLeaseRejectionIsBounded(t *testing.T) {
 		t.Fatalf("repeated rejection did not stop after one re-decision: %v, reads %d, advances %d", err, git.reads, git.advances)
 	}
 }
+
+var _ forge.Git = (*raceGit)(nil)

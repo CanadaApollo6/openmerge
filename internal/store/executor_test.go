@@ -282,3 +282,5 @@ func TestCancelledResolveLandingReactivatesAndSettles(t *testing.T) {
 		t.Fatalf("resolved wrong tested commit: %+v / %+v", state, history)
 	}
 }
+
+var _ forge.Git = (*checkedGit)(nil)

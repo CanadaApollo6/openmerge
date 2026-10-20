@@ -450,6 +450,9 @@ func (s *Server) initializeFence(ctx context.Context, w *worker) error {
 		opts = s.authorityPushOptions(ctx, w, forge.PushEnsureFence, []forge.PushRefIntent{{Ref: "refs/heads/" + ref}})
 	}
 	token, err := w.Git.EnsureFence(ctx, w.repo(), ref, opts)
+	if errors.Is(err, errFenceConfigPending) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}

@@ -128,3 +128,5 @@ func TestLandingVerification(t *testing.T) {
 		}
 	}
 }
+
+var _ forge.Git = (*afterLandGit)(nil)

@@ -383,3 +383,5 @@ func TestOverlappingFailureAfterClearStillBlocks(t *testing.T) {
 		t.Fatalf("failure that overlapped a clear was discarded: revision=%d blocks=%+v", state.RulesRevision(), state.Blocks(queue.Config{}))
 	}
 }
+
+var _ forge.Git = (*countingFence)(nil)

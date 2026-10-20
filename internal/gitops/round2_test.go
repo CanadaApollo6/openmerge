@@ -302,3 +302,5 @@ func TestR2RefreshFailureScrubsBothTokens(t *testing.T) {
 		})
 	}
 }
+
+var _ forge.Git = (*r2LostLandResponse)(nil)
