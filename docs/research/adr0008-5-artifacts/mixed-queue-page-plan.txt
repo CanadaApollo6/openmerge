@@ -1,0 +1,10 @@
+Limit  (cost=0.29..102.58 rows=256 width=117) (actual time=0.030..0.116 rows=256.00 loops=1)
+  Buffers: shared hit=10
+  ->  Index Scan using events_queue_watermark on events  (cost=0.29..1984.22 rows=4965 width=117) (actual time=0.029..0.102 rows=256.00 loops=1)
+        Index Cond: ((queue_id = 1) AND (id > 0))
+        Index Searches: 1
+        Buffers: shared hit=10
+Planning:
+  Buffers: shared hit=287
+Planning Time: 0.800 ms
+Execution Time: 0.145 ms

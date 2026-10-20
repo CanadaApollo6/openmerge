@@ -1,0 +1,374 @@
+{
+  "commands": [
+    {
+      "command": [
+        "git",
+        "rev-parse",
+        "HEAD"
+      ],
+      "exit": 0,
+      "stdout": "4631fb8dc0c8f4e7ef4a0017e978b47dee0db3cf\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "psql",
+        "postgres://postgres@localhost:54329/postgres?sslmode=disable",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-c",
+        "CREATE DATABASE \"adr0008_5_source_1792534539738070568\" TEMPLATE template0"
+      ],
+      "exit": 0,
+      "stdout": "CREATE DATABASE\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "psql",
+        "postgres://postgres@localhost:54329/postgres?sslmode=disable",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-c",
+        "CREATE DATABASE \"adr0008_5_restored_1792534539738070568\" TEMPLATE template0"
+      ],
+      "exit": 0,
+      "stdout": "CREATE DATABASE\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "psql",
+        "postgres://postgres@localhost:54329/adr0008_5_source_1792534539738070568?sslmode=disable",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-f",
+        "/home/riels/.t3/worktrees/openmerge/t3-3ea3bbd8/internal/store/migrations/001_initial.sql"
+      ],
+      "exit": 0,
+      "stdout": "CREATE TABLE\nCREATE TABLE\nCREATE INDEX\nCREATE INDEX\nCREATE TABLE\nCREATE INDEX\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "psql",
+        "postgres://postgres@localhost:54329/adr0008_5_source_1792534539738070568?sslmode=disable",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-f",
+        "/home/riels/.t3/worktrees/openmerge/t3-3ea3bbd8/internal/store/migrations/002_action_poison.sql"
+      ],
+      "exit": 0,
+      "stdout": "ALTER TABLE\nUPDATE 0\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "psql",
+        "postgres://postgres@localhost:54329/adr0008_5_source_1792534539738070568?sslmode=disable",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-f",
+        "/home/riels/.t3/worktrees/openmerge/t3-3ea3bbd8/internal/store/migrations/003_reconciliation.sql"
+      ],
+      "exit": 0,
+      "stdout": "CREATE TABLE\nCREATE TABLE\nALTER TABLE\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "psql",
+        "postgres://postgres@localhost:54329/adr0008_5_source_1792534539738070568?sslmode=disable",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-f",
+        "/home/riels/.t3/worktrees/openmerge/t3-3ea3bbd8/internal/store/migrations/004_installation_apps.sql"
+      ],
+      "exit": 0,
+      "stdout": "CREATE TABLE\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "psql",
+        "postgres://postgres@localhost:54329/adr0008_5_source_1792534539738070568?sslmode=disable",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-f",
+        "/home/riels/.t3/worktrees/openmerge/t3-3ea3bbd8/internal/store/migrations/005_canonical_queues.sql"
+      ],
+      "exit": 0,
+      "stdout": "CREATE TABLE\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "psql",
+        "postgres://postgres@localhost:54329/adr0008_5_source_1792534539738070568?sslmode=disable",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-f",
+        "/home/riels/.t3/worktrees/openmerge/t3-3ea3bbd8/internal/store/migrations/006_evidence_type.sql"
+      ],
+      "exit": 0,
+      "stdout": "CREATE INDEX\nCREATE INDEX\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "psql",
+        "postgres://postgres@localhost:54329/adr0008_5_source_1792534539738070568?sslmode=disable",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-f",
+        "/home/riels/.t3/worktrees/openmerge/t3-3ea3bbd8/internal/store/migrations/007_reporting_indexes.sql"
+      ],
+      "exit": 0,
+      "stdout": "CREATE INDEX\nCREATE INDEX\nCREATE INDEX\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "psql",
+        "postgres://postgres@localhost:54329/adr0008_5_source_1792534539738070568?sslmode=disable",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-c",
+        "INSERT INTO queues(installation,repository,base) VALUES('fixture','local/backup','main'); INSERT INTO events(queue_id,type,payload) VALUES(1,'outside_push_recorded','{\"version\":1,\"type\":\"outside_push_recorded\",\"data\":{\"previous_sha\":\"base\",\"new_sha\":\"outside\",\"ancestry_known\":true,\"rewrite\":false,\"history_known\":true,\"commits\":[\"outside\"],\"truncated\":false,\"verification_before_landing\":\"none\",\"possible_stale_observation\":false,\"at\":\"2026-10-16T12:00:00Z\"}}'::jsonb)"
+      ],
+      "exit": 0,
+      "stdout": "INSERT 0 1\nINSERT 0 1\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "pg_dump",
+        "--format=custom",
+        "--file",
+        "/home/riels/.cache/adr0008-5-backup/pre-emission.dump",
+        "postgres://postgres@localhost:54329/adr0008_5_source_1792534539738070568?sslmode=disable"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "pg_restore",
+        "--exit-on-error",
+        "--no-owner",
+        "--dbname",
+        "postgres://postgres@localhost:54329/adr0008_5_restored_1792534539738070568?sslmode=disable",
+        "/home/riels/.cache/adr0008-5-backup/pre-emission.dump"
+      ],
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "psql",
+        "postgres://postgres@localhost:54329/adr0008_5_source_1792534539738070568?sslmode=disable",
+        "-Atc",
+        "SELECT jsonb_build_object('id',id,'type',type,'payload',payload)::text FROM events ORDER BY id"
+      ],
+      "exit": 0,
+      "stdout": "{\"id\": 1, \"type\": \"outside_push_recorded\", \"payload\": {\"data\": {\"at\": \"2026-10-16T12:00:00Z\", \"commits\": [\"outside\"], \"new_sha\": \"outside\", \"rewrite\": false, \"truncated\": false, \"previous_sha\": \"base\", \"history_known\": true, \"ancestry_known\": true, \"possible_stale_observation\": false, \"verification_before_landing\": \"none\"}, \"type\": \"outside_push_recorded\", \"version\": 1}}\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "psql",
+        "postgres://postgres@localhost:54329/adr0008_5_restored_1792534539738070568?sslmode=disable",
+        "-Atc",
+        "SELECT jsonb_build_object('id',id,'type',type,'payload',payload)::text FROM events ORDER BY id"
+      ],
+      "exit": 0,
+      "stdout": "{\"id\": 1, \"type\": \"outside_push_recorded\", \"payload\": {\"data\": {\"at\": \"2026-10-16T12:00:00Z\", \"commits\": [\"outside\"], \"new_sha\": \"outside\", \"rewrite\": false, \"truncated\": false, \"previous_sha\": \"base\", \"history_known\": true, \"ancestry_known\": true, \"possible_stale_observation\": false, \"verification_before_landing\": \"none\"}, \"type\": \"outside_push_recorded\", \"version\": 1}}\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "/home/riels/.t3/worktrees/openmerge/t3-3ea3bbd8/bin/openmerge",
+        "admin",
+        "acknowledge",
+        "--database-url",
+        "postgres://postgres@localhost:54329/adr0008_5_source_1792534539738070568?sslmode=disable",
+        "--queue",
+        "1",
+        "--event",
+        "1",
+        "--sha",
+        "outside",
+        "--operator",
+        "Retry operator",
+        "--drain-receipt",
+        "/home/riels/.cache/adr0008-5-backup/drain-receipt.json",
+        "--backup-receipt",
+        "/home/riels/.cache/adr0008-5-backup/backup-receipt.json"
+      ],
+      "exit": 0,
+      "stdout": "{\"event_id\":2,\"source_event_id\":1,\"sha\":\"outside\",\"operator\":\"Fixture operator\",\"at\":\"2026-10-20T22:15:39.94795184Z\"}\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "/home/riels/.t3/worktrees/openmerge/t3-3ea3bbd8/bin/openmerge",
+        "admin",
+        "acknowledge",
+        "--database-url",
+        "postgres://postgres@localhost:54329/adr0008_5_source_1792534539738070568?sslmode=disable",
+        "--queue",
+        "1",
+        "--event",
+        "1",
+        "--sha",
+        "outside",
+        "--operator",
+        "Retry operator",
+        "--drain-receipt",
+        "/home/riels/.cache/adr0008-5-backup/drain-receipt.json",
+        "--backup-receipt",
+        "/home/riels/.cache/adr0008-5-backup/backup-receipt.json"
+      ],
+      "exit": 0,
+      "stdout": "{\"event_id\":2,\"source_event_id\":1,\"sha\":\"outside\",\"operator\":\"Fixture operator\",\"at\":\"2026-10-20T22:15:39.94795184Z\"}\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "/home/riels/.t3/worktrees/openmerge/t3-3ea3bbd8/bin/openmerge",
+        "admin",
+        "acknowledge",
+        "--database-url",
+        "postgres://postgres@localhost:54329/adr0008_5_source_1792534539738070568?sslmode=disable",
+        "--queue",
+        "1",
+        "--event",
+        "1",
+        "--sha",
+        "wrong-sha",
+        "--operator",
+        "Retry operator",
+        "--drain-receipt",
+        "/home/riels/.cache/adr0008-5-backup/drain-receipt.json",
+        "--backup-receipt",
+        "/home/riels/.cache/adr0008-5-backup/backup-receipt.json"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "acknowledge outside push: source must be outside_push_recorded with the supplied new SHA\n"
+    },
+    {
+      "command": [
+        "psql",
+        "postgres://postgres@localhost:54329/adr0008_5_source_1792534539738070568?sslmode=disable",
+        "-Atc",
+        "SELECT count(*) FROM events WHERE type='outside_push_acknowledged'"
+      ],
+      "exit": 0,
+      "stdout": "1\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "psql",
+        "postgres://postgres@localhost:54329/adr0008_5_restored_1792534539738070568?sslmode=disable",
+        "-Atc",
+        "SELECT count(*) FROM events WHERE type='outside_push_acknowledged'"
+      ],
+      "exit": 0,
+      "stdout": "0\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "psql",
+        "postgres://postgres@localhost:54329/adr0008_5_source_1792534539738070568?sslmode=disable",
+        "-Atc",
+        "SELECT jsonb_build_object('id',id,'type',type,'payload',payload)::text FROM events WHERE id=1"
+      ],
+      "exit": 0,
+      "stdout": "{\"id\": 1, \"type\": \"outside_push_recorded\", \"payload\": {\"data\": {\"at\": \"2026-10-16T12:00:00Z\", \"commits\": [\"outside\"], \"new_sha\": \"outside\", \"rewrite\": false, \"truncated\": false, \"previous_sha\": \"base\", \"history_known\": true, \"ancestry_known\": true, \"possible_stale_observation\": false, \"verification_before_landing\": \"none\"}, \"type\": \"outside_push_recorded\", \"version\": 1}}\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "psql",
+        "postgres://postgres@localhost:54329/adr0008_5_source_1792534539738070568?sslmode=disable",
+        "-Atc",
+        "SELECT jsonb_build_object('id',id,'type',type,'payload',payload)::text FROM events ORDER BY id"
+      ],
+      "exit": 0,
+      "stdout": "{\"id\": 1, \"type\": \"outside_push_recorded\", \"payload\": {\"data\": {\"at\": \"2026-10-16T12:00:00Z\", \"commits\": [\"outside\"], \"new_sha\": \"outside\", \"rewrite\": false, \"truncated\": false, \"previous_sha\": \"base\", \"history_known\": true, \"ancestry_known\": true, \"possible_stale_observation\": false, \"verification_before_landing\": \"none\"}, \"type\": \"outside_push_recorded\", \"version\": 1}}\n{\"id\": 2, \"type\": \"outside_push_acknowledged\", \"payload\": {\"data\": {\"at\": \"2026-10-20T22:15:39.94795184Z\", \"sha\": \"outside\", \"operator\": \"Fixture operator\", \"source_event_id\": 1}, \"type\": \"outside_push_acknowledged\", \"version\": 1}}\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "psql",
+        "postgres://postgres@localhost:54329/adr0008_5_source_1792534539738070568?sslmode=disable",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-c",
+        "INSERT INTO queues(installation,repository,base) VALUES('fixture','local/sibling','main'); INSERT INTO events(queue_id,type,payload) SELECT 1,'refresh_requested','{\"version\":1,\"type\":\"refresh_requested\",\"data\":{}}'::jsonb FROM generate_series(1,5000); INSERT INTO events(queue_id,type,payload) SELECT 2,'refresh_requested','{\"version\":1,\"type\":\"refresh_requested\",\"data\":{}}'::jsonb FROM generate_series(1,50000); ANALYZE events"
+      ],
+      "exit": 0,
+      "stdout": "INSERT 0 1\nINSERT 0 5000\nINSERT 0 50000\nANALYZE\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "psql",
+        "postgres://postgres@localhost:54329/adr0008_5_source_1792534539738070568?sslmode=disable",
+        "-Atc",
+        "EXPLAIN (ANALYZE, BUFFERS) SELECT id,payload,COALESCE(dedupe_key,'') FROM events WHERE queue_id=1 AND id>0 ORDER BY id LIMIT 256"
+      ],
+      "exit": 0,
+      "stdout": "Limit  (cost=0.29..102.58 rows=256 width=117) (actual time=0.030..0.116 rows=256.00 loops=1)\n  Buffers: shared hit=10\n  ->  Index Scan using events_queue_watermark on events  (cost=0.29..1984.22 rows=4965 width=117) (actual time=0.029..0.102 rows=256.00 loops=1)\n        Index Cond: ((queue_id = 1) AND (id > 0))\n        Index Searches: 1\n        Buffers: shared hit=10\nPlanning:\n  Buffers: shared hit=287\nPlanning Time: 0.800 ms\nExecution Time: 0.145 ms\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "psql",
+        "postgres://postgres@localhost:54329/postgres?sslmode=disable",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-c",
+        "DROP DATABASE \"adr0008_5_restored_1792534539738070568\" WITH (FORCE)"
+      ],
+      "exit": 0,
+      "stdout": "DROP DATABASE\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "psql",
+        "postgres://postgres@localhost:54329/postgres?sslmode=disable",
+        "-v",
+        "ON_ERROR_STOP=1",
+        "-c",
+        "DROP DATABASE \"adr0008_5_source_1792534539738070568\" WITH (FORCE)"
+      ],
+      "exit": 0,
+      "stdout": "DROP DATABASE\n",
+      "stderr": ""
+    }
+  ],
+  "isolated_only": true,
+  "timestamp": "2026-10-20T22:15:39.738062+00:00",
+  "binary_sha256": "83e82301be1a5d4de01eedadc66da93f2903ced84e8e5b7c6f20e3964bb740c8",
+  "revision": "4631fb8dc0c8f4e7ef4a0017e978b47dee0db3cf",
+  "receipt": {
+    "event_id": 2,
+    "source_event_id": 1,
+    "sha": "outside",
+    "operator": "Fixture operator",
+    "at": "2026-10-20T22:15:39.94795184Z"
+  },
+  "mixed_queue_page_plan": "Limit  (cost=0.29..102.58 rows=256 width=117) (actual time=0.030..0.116 rows=256.00 loops=1)\n  Buffers: shared hit=10\n  ->  Index Scan using events_queue_watermark on events  (cost=0.29..1984.22 rows=4965 width=117) (actual time=0.029..0.102 rows=256.00 loops=1)\n        Index Cond: ((queue_id = 1) AND (id > 0))\n        Index Searches: 1\n        Buffers: shared hit=10\nPlanning:\n  Buffers: shared hit=287\nPlanning Time: 0.800 ms\nExecution Time: 0.145 ms\n",
+  "verdict": "PASS",
+  "dump_sha256": "80627285dd99eff24c097fea1426cf79c817fa75b102c6e6c78b77e2e0f9eea5",
+  "retry_bytes_identical": true,
+  "restore_journal_bytes_identical": true,
+  "source_audit_unchanged": true
+}
