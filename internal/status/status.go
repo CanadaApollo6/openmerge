@@ -28,6 +28,8 @@ type Response struct {
 
 // Queue describes one served installation/repository/base/lane partition.
 type Queue struct {
+	Authority         *Authority                 `json:"authority,omitempty"`
+	OutsideWarnings   *OutsideWarnings           `json:"outside_warnings,omitempty"`
 	OutsidePushes     []OutsidePush              `json:"outside_pushes,omitempty"`
 	Readiness         *Readiness                 `json:"readiness,omitempty"`
 	State             string                     `json:"state"`
@@ -292,6 +294,12 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 		q.RulesSources = append(q.RulesSources, RulesSource{string(source.Source), problems, source.Revision})
 	}
 	q.Paused = len(q.Blocks) > 0
+	q.Authority = ProjectAuthority(s, time.Now())
+	if q.Authority != nil {
+		for i := range q.Authority.Elements {
+			q.Authority.Elements[i].Element = sanitizer.Sanitize(q.Authority.Elements[i].Element)
+		}
+	}
 	q.state = s
 	q.runLedger = ledger
 	q.sanitizer = sanitizer

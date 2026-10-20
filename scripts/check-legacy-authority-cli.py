@@ -57,7 +57,7 @@ with tempfile.TemporaryDirectory(prefix='authority-cli-',dir=Path.home()/'.cache
     before,after=run(BASE),run(ROOT)
     if len(before)!=6 or before!=after:
         raise RuntimeError(f'CLI bytes changed: {before!r} / {after!r}')
-    receipt=Path.home()/'.cache/adr0008-7-legacy-cli-responses.json'
+    receipt=Path.home()/'.cache/adr0008-6-legacy-cli-responses.json'
     receipt.write_text(json.dumps({name:{'baseline_base64':base64.b64encode(raw).decode(),'candidate_base64':base64.b64encode(after[name]).decode(),'sha256':hashlib.sha256(raw).hexdigest()} for name,raw in before.items()},indent=2)+'\n')
     print('PASS: six complete CLI status outputs are byte-identical; no fields or whitespace stripped')
     print(f'Complete CLI receipt: {receipt}')

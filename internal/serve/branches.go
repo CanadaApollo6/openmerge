@@ -144,6 +144,7 @@ func (s *Server) registerID(ctx context.Context, target Target, id store.QueueID
 		return nil, err
 	}
 	w := &worker{Target: target, id: id, managed: true, logState: state, logWatermark: watermark, lifecycleState: state.LifecycleState(), lifecycleDetail: state.Lifecycle.Detail, accessBlocked: state.SourceBlocked(queue.RepositoryAccess), wake: make(chan struct{}, 1), prs: make(map[int]forge.PullRequest), summaries: make(map[int]forge.PullRequestSummary)}
+	s.publishHealth(w, state, false, nil, time.Now())
 	s.mu.Lock()
 	s.queues = append(s.queues, w)
 	s.mu.Unlock()

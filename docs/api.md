@@ -14,12 +14,13 @@ Authentication is optional only for loopback binds. Set `OPENMERGE_API_TOKEN` **
 The file must be readable and nonempty; surrounding whitespace is trimmed.
 Tokens use visible ASCII without spaces. Conflicting token sources fail startup.
 Clients send `Authorization: Bearer TOKEN`. Token changes require restarting
-serve. Authentication covers unknown paths and unsupported methods as well.
+serve. Authentication covers unknown paths and unsupported methods as well,
+except the exact `/v1/live` process probe.
 Never use an App private key, GitHub token, or webhook secret as the API token.
 
 ## Endpoints
 
-All responses are JSON with `version: 1`, `Content-Type: application/json`, and
+Except `/v1/live`, responses are JSON with `version: 1`, `Content-Type: application/json`, and
 `Cache-Control: no-store`. Only **GET** is accepted; there are no write endpoints.
 HEAD and other methods return 405 with `Allow: GET`. Request bodies are limited
 to 4096 bytes, including chunked bodies; oversized bodies return 413. Bodies
@@ -570,3 +571,53 @@ server logs `check approval policy unavailable`. Requirements and receipt
 binding remain unavailable; this warning does not authorize landing. Publishing
 honest unavailable evidence is intentional: retaining a stale check would hide
 the loss of policy evidence.
+
+## Authority and alerting probes (ADR 0008 PR 6, Hold)
+
+Exact `GET /v1/live` returns only `{"live":true}` with 200, before authentication,
+key discovery or DB reads. This response has no version or queue details. An
+encoded alias or trailing slash does not bypass authentication. Live and health
+reject queries (including an empty `?`) and any request body with 400; methods
+other than GET return 405. Existing routes retain their body/query rules.
+
+`GET /v1/health` uses the status listener's existing address and bearer-token
+rules. Unauthorized requests return 401 without queue details. Authenticated
+health is read-only: one `SELECT 1` and immutable process snapshots, with a 2s
+request deadline, at most 256 queues and a 256 KiB response cap. Missing DB access,
+a busy registry or a limit exceeded returns 503. Health never reads forge data
+or replays queue histories. It reports lifecycle, readiness/reasons, whether the
+queue is watched, process start, last successful reconciliation time/age, the
+worker loop's actual effective next deadline, consecutive failures, overdue and
+degraded. No completed reconciliation since startup is shown as null/unknown.
+Three consecutive failed turns or excessive time without success are degraded.
+Dormant/retired queues without pending attempts and completed recovery-only
+queues are excluded from alerting; unsettled starts remain watched.
+
+Any watched violated, overdue or degraded queue returns 503. Unverified authority
+and outstanding outside-push warnings alone return 200. Health is for alerting;
+**never configure it as a restart probe**. The process settings
+`--health-overdue-grace` / `OPENMERGE_HEALTH_OVERDUE_GRACE` (default 30s, range
+1–60s) and `--health-max-success-age` / `OPENMERGE_HEALTH_MAX_SUCCESS_AGE` (default
+15m, range 1–60m) are independent of queue policy.
+
+Authority queues add `authority` to queue JSON, omitted for legacy GitHub queues.
+It contains `state` (`unverified`, `verified`, `violated`), `inventory`, per-element
+`elements` visibility, `last_observed_at`, `last_verified_at`, and independent
+`last_observed_age_seconds` / `last_verified_age_seconds`. Missing times/ages
+are null; CLI text says “never (age unknown)” and “authority unverified”. Reading
+status never establishes verification. Health refreshes ages on its snapshots;
+it caps visibility details at 64 elements per queue and exposes `elements_omitted`
+when truncated. Ordinary status retains every per-element visibility.
+
+This main-based rendering currently consumes PR 1's retained applied inputs.
+PR 4 must supply its durable per-element findings (especially sticky violations
+through hidden reads) at the marked `ProjectAuthority` seam. Proposed verification
+is never presented as applied verification. `outside_warnings` is reserved for
+PR 5's ledger, with `outstanding`, bounded `event_ids`, and `truncated`. Its marked
+status provider / worker-snapshot seams deliberately leave it absent until that
+ledger exists. The deployed `outside_pushes` recent list is unchanged and is not
+substituted for outstanding warnings.
+
+This reporting change may merge but **must not deploy until ADR 0009 period B
+has drained**. PR 9 still owns authority activation; PR 11 owns real sandbox HTTP
+acceptance for violation, drift and break-glass warning cases.

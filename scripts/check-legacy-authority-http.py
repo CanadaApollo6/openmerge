@@ -67,7 +67,7 @@ with tempfile.TemporaryDirectory(prefix='authority-http-',dir=Path.home()/'.cach
         if old!=new:
             print(f'response {index} changed:\nbaseline: {old!r}\ncandidate: {new!r}',file=sys.stderr)
             sys.exit(1)
-    receipt=Path(sys.argv[2]).resolve() if len(sys.argv)>2 else Path.home()/'.cache/adr0008-7-legacy-http-responses.json'
+    receipt=Path(sys.argv[2]).resolve() if len(sys.argv)>2 else Path.home()/'.cache/adr0008-6-legacy-http-responses.json'
     receipt.parent.mkdir(parents=True,exist_ok=True)
     receipt.write_text(json.dumps({'baseline':str(BASE),'candidate':str(ROOT),'count':len(before),'responses':[{'index':i,'baseline_base64':base64.b64encode(old).decode(),'candidate_base64':base64.b64encode(new).decode(),'sha256':hashlib.sha256(old).hexdigest()} for i,(old,new) in enumerate(zip(before,after))]},indent=2)+'\n')
     print('PASS: all 56 complete HTTP responses (status line, headers, body) are byte-identical; no fields stripped')

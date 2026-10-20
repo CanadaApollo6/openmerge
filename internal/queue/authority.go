@@ -380,3 +380,12 @@ func (s State) AuthorityProtection() (uint64, authority.Observation, bool) {
 	}
 	return 0, authority.Observation{}, false
 }
+
+// AuthorityEvidence exposes the retained applied inputs for read-only reporting.
+// Proposed verification is deliberately excluded. PR 4 owns finding semantics.
+func (s State) AuthorityEvidence() (*WriteRestrictionObserved, *WriteRestrictionVerified) {
+	if s.authority == nil {
+		return nil, nil
+	}
+	return cloneAuthority(s.authority.Observed), cloneAuthority(s.authority.Verified)
+}
