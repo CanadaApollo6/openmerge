@@ -428,7 +428,15 @@ All PRs follow these storage and acceptance rules:
 - **Contract:** evaluate all applicable repository, inherited, push, and classic
   rules for today's operations: queue builds/updates, strict landing's atomic
   base and fence update, fast-forward's contributor head and marker, fence
-  creation/advance, and `DeleteBranch` cleanup. Verify pushes, green advances,
+  creation/advance, and `DeleteBranch` cleanup. Explicitly exclude today's
+  `forge.Driver.DeleteRef` API cleanup (`internal/forge/forge.go:219`, called by
+  `CleanupInvalidatedRef` and `DeleteRef` at `internal/executor/executor.go:123`
+  and `:407`): it deletes disposable `openmerge/queue/` test refs, introduces no
+  commit content, and neither lands a base nor changes a fence. Keep its existing
+  authorization, GitHub-enforced deletion rules, missing-ref success, and error
+  propagation; it is not a sixth `forge.Git` push or a locally validated content
+  operation. This exemption covers only those test-ref cleanup paths, not future
+  base/fence/verify/green/submission deletions. Verify pushes, green advances,
   generated reverts, and deploy candidates are future paths: they must use this
   boundary when implemented, and are not deliverables of 3a. Rule parameters
   and combinations matter. Unknown rules block. PR/review/check rules warn only
@@ -456,21 +464,53 @@ All PRs follow these storage and acceptance rules:
   These are today's two production push sites. Future verify/green/revert/deploy
   paths must enter this boundary when added, including creation and deletion.
   Carry context across `forge.Git` (`internal/forge/forge.go:292`) with a new
-  transient `forge.PushOptions` parameter on all five mutating methods, mirrored
-  by fake/gitops contracts and all callers. It contains an authority-required
-  flag and an immutable per-operation validation context supplied by the executor,
-  bound to repository/queue, governing commit, effective policy digest,
-  protection basis revision, and intended refs/leases; never store mutable policy
-  on a shared Repo. Missing required context aborts. Context is **stale** when
+  transient `forge.PushOptions` parameter on all five mutating methods. Update
+  all implementations and wrappers, plus all callers and fake/gitops contracts;
+  every `forge.Git`-embedding test double and simulation/fault wrapper (including
+  `internal/sim/faults.go:92`) must forward the options unchanged, including on
+  delayed execution. It contains an authority-required flag, an immutable
+  `forge.PushValidationContext`, and a typed `forge.PushValidityGuard` with
+  signature `func(context.Context, forge.PushValidationContext) error`.
+  Bind context to repository/queue, governing commit, effective policy digest,
+  protection basis revision, and intended operation/refs/leases; never store
+  mutable policy on a shared Repo. Serve constructs options and a store-reloading
+  guard, following the closures at `internal/serve/worker.go:124`: each invocation
+  calls `Store.Load` for the bound queue and compares its durable authority pin
+  and current protection source revision, propagating reload errors. The executor
+  forwards these options for its operations; serve's `initializeFence` supplies
+  them directly to `EnsureFence`, which has no executor caller.
+  Missing required context or guard aborts a write. Context is **stale** when
   its policy/basis binding differs from the queue's current pin/revision or its
   intended operation/expected old SHAs differ from the prepared push. Check at
-  dispatch and recheck before push via an executor-supplied validity guard;
-  a changed binding requires replanning with fresh context, not silent reuse.
-  Stale context, incomplete inventories, or rejection aborts before any
-  `git push`; uncertainty is not a warning. Existing started attempts
-  still run settlement/read-back after an error. Keep leases, atomicity,
-  credentials, commit bytes, and the no-context legacy path unchanged. Do not
-  add fields to deployed action wire payloads to carry this transient context.
+  dispatch for write-intending operations and recheck via the guard immediately
+  before push; a changed binding requires replanning with fresh context, not
+  silent reuse. Preserve read-first no-ops: `EnsureFence` returns an existing ref
+  at `internal/gitops/fence.go:175` without checking missing/stale context, and
+  `DeleteBranch` checks authority only after its missing/changed-ref return at
+  `internal/gitops/delete_branch.go:30`. Neither path pushes or needs validation.
+  Stale context, incomplete inventories, or rejection aborts before any actual
+  `git push`; uncertainty is not a warning. Existing started attempts still run
+  settlement/read-back after an error. Keep leases, atomicity, credentials,
+  commit bytes, and the no-context legacy path unchanged. Do not add fields to
+  deployed action wire payloads to carry this transient context.
+- **Fence bootstrap ordering (implemented here, activated by 9):** before any
+  potentially creating `initializeFence` call, serve must resolve and validate
+  governing configuration. For a queue entering, already under, or leaving
+  authority, durably apply its config and `policy_authority_applied` pin first.
+  In authority mode, observe protection against that pin, then reload the
+  pin/current source revision and construct options bound to the exact fence
+  ref with an absent-ref/create-only lease. Once absence is established, use
+  the same store-reloading guard above and recheck before the creation push.
+  Move/defer startup's call at
+  `internal/serve/serve.go:156` and the pre-reconciliation cycle call at `:527`
+  until this ordering is satisfied; the later call at `:541` obeys it too. A new
+  authority queue gets its first pin before its first fence, not a bootstrap
+  exemption. Unresolved/invalid configuration or unavailable required validation
+  evidence defers creation; an absent pin must never select a fail-open zero-value
+  option. Only a successfully resolved `github` policy, matching the durable
+  mode pin when one exists, uses legacy no-context creation. The existing-ref
+  no-op inside `EnsureFence` remains valid regardless
+  of context availability or freshness.
 - **Content checks:** in active authority mode, validate retained content rules
   even while the App still bypasses them; that bypass does not waive local
   validation. This covers the interval after runbook step 6 and before step 7
@@ -503,8 +543,14 @@ All PRs follow these storage and acceptance rules:
   compatible linear/message/path/size rules in the sandbox and prove actual
   App pushes succeed; incompatible signature/merge/unknown cases must be
   blocked before push, including while a retained content rule still has an
-  App bypass. Test missing context, changed digest/basis, mismatched refs/leases,
-  and the validity guard rejecting a policy change during preparation.
+  App bypass. Test missing context/guard, changed digest/basis, mismatched refs/leases,
+  and store-reload failure or the validity guard rejecting a policy change
+  during preparation. Cover registration and cycle bootstrap of a new authority
+  queue: pin/observation precede fence creation, options reach gitops, and a
+  policy/revision change before push leaves the fence absent. Assert an existing
+  fence and missing/changed cleanup refs still return their no-op result with
+  missing or stale options. Exercise option forwarding through wrappers and
+  preserve both API test-ref cleanup actions and their error/retry behavior.
   Unsupported/unavailable rule families stay explicitly unaccepted, not silently
   marked compatible.
 
@@ -717,17 +763,36 @@ All PRs follow these storage and acceptance rules:
   plus growth on isolated fixtures before acceptance.
 - **Ledger/config:** expose a journal-backed outstanding-warning ledger even
   after the original push falls outside the 20-item recent projection. Derive
-  warning eligibility in journal order from the authority pin active when the
-  existing `outside_push_recorded` event was appended; do not extend or rewrite
-  that deployed payload or persist another eligibility field on it. Enabling
-  authority does not relabel historic github-mode pushes. Switching modes or
-  retiring a queue never deletes receipts or audit evidence. This PR owns only
+  warning eligibility from the authority pin in force at the originating
+  `BaseMoved` journal position, never at the later `outside_push_recorded` append.
+  Read the audit row's existing `dedupe_key`, `outside-base/<BaseMoved event ID>`,
+  to associate it with that immutable source row in the same queue; reconstruct
+  the pin at that position from ordered journal history using bounded pages and
+  the existing queue/dedupe index, without a new index or persisted eligibility
+  field. Preserve deployed `BaseMoved` and `outside_push_recorded` payloads and
+  the attempt-aware audit's suppression/enrichment. That audit waits for
+  overlapping attempts to settle and enriches history asynchronously, so append
+  order and event timestamps cannot substitute for the source association.
+  No authority pin at the originating position means `github`: no authority warning.
+  Enabling authority does not relabel github-mode moves whose audit arrives
+  later; a move observed under authority remains warning-eligible even if its
+  audit arrives after rollback. Switching modes or retiring a queue never deletes
+  outstanding warnings, receipts, or audit evidence. This PR owns only
   the ledger and acknowledgement event/command; PR 6 alone owns warning rendering
   in status, CLI, API, and health. No YAML/schema or forge capability change,
   shared status-rendering changes, or acknowledgement on PR checks.
 - **Tests/real acceptance/evidence:** wrong queue/type/SHA, concurrent retry,
-  restart, more than 20 outstanding pushes, and archived queue lookup. Prove
-  acknowledgement does not clear rules/suspect blocks, change ancestry, grant
+  restart, more than 20 outstanding pushes, and archived queue lookup. Exercise
+  both activation (`github` → `openmerge`) and rollback (`openmerge` → `github`):
+  place a `BaseMoved` immediately before and another immediately after the
+  mode-specific `policy_authority_applied`, and delay each audit append until
+  after the boundary. Across the four moves, only the two originating under
+  authority become warnings; specifically, a pre-activation move gains none and
+  a pre-rollback move keeps its warning despite the later audit append. Hold
+  audits across settlement and history enrichment, and verify the same outcome
+  after cursor restart and ledger replay, with unchanged deployed payloads and
+  source dedupe associations. Prove acknowledgement does not clear rules/suspect
+  blocks, change ancestry, grant
   approvals, or move green. Real-git break-glass forward pushes and rewinds must
   flow through existing `ReadOutsidePushAudit` suppression after settlement,
   retaining `possible_stale_observation`, truncated/unknown history, and
@@ -862,15 +927,21 @@ All PRs follow these storage and acceptance rules:
   authority digest under the existing queue lock. An admitted start settles
   regardless of later drift. Do not change batching or fence protocol.
   Switching back to `github` records a mode-specific authority pin, stops new
-  authority observations/warnings, and removes only authority-specific admission
-  requirements. Preserve their history and every unrelated protection/block.
+  authority observations and warning eligibility for subsequent `BaseMoved`
+  events, and removes only authority-specific admission requirements. PR 5's
+  delayed audit records for moves originating under authority still create
+  warnings after rollback; preserve outstanding warnings until acknowledgement,
+  their history, and every unrelated protection/block.
   Re-enabling authority requires fresh policy-bound observation rather than
   reviving a stale verification. A repository-wide digest change must reach
   every served queue before the operator removes redundant protection.
 - **Forge/migrations:** wire the typed readers, compiler, and content validation
   into discovery/reconciliation and setup checks for authority mode only, and
-  supply 3a's per-operation immutable context to every generated-object push
-  before it runs. A post-build pinned read is evidence, never the push guard.
+  supply 3a's per-operation immutable context and store-reloading guard to every
+  generated-object push before it runs. Enforce 3a's pin/observation-before-fence
+  ordering at registration and every cycle, including a new authority queue's
+  first bootstrap; serve supplies `EnsureFence` options directly. A post-build
+  pinned read is evidence, never the push guard.
   Invalidate observations on default-branch, selector, actor, or method changes.
   No new capability or SQL migration beyond prerequisites. Manually drain older
   workers before the first emission, including pre-switch `--verify`, and obey
