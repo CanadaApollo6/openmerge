@@ -6,7 +6,6 @@ package gitops
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -201,23 +200,13 @@ func (s *session) resolveRemote(ctx context.Context, repo forge.RepoRef) error {
 	return err
 }
 
-func validSHA(sha string) bool {
-	if len(sha) != 40 && len(sha) != 64 {
-		return false
-	}
-	_, err := hex.DecodeString(sha)
-	return err == nil
-}
+func validSHA(sha string) bool { return forge.ValidDiffObjectID(sha) }
 
 func (s *session) branch(ctx context.Context, ref string) (string, error) {
-	if !strings.HasPrefix(ref, "refs/") {
-		ref = "refs/heads/" + ref
+	if err := ctx.Err(); err != nil {
+		return "", err
 	}
-	if !strings.HasPrefix(ref, "refs/heads/") {
-		return "", errors.New("expected a branch ref")
-	}
-	_, err := s.command(ctx, "", "check-ref-format", ref)
-	return ref, err
+	return forge.BranchRef(ref)
 }
 
 func (s *session) fetch(ctx context.Context, specs ...string) error {
@@ -228,8 +217,8 @@ func (s *session) fetch(ctx context.Context, specs ...string) error {
 
 func (s *session) commits(ctx context.Context, shas ...string) error {
 	for _, sha := range shas {
-		if !validSHA(sha) {
-			return errors.New("expected a full git commit SHA")
+		if err := forge.ValidateCommitIDs(sha); err != nil {
+			return err
 		}
 		if _, _, err := s.run(ctx, "", "cat-file", "-e", sha+"^{commit}"); err == nil {
 			continue

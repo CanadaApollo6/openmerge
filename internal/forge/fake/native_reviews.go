@@ -45,6 +45,9 @@ func (f *Forge) NativeReviews(ctx context.Context, repo forge.RepoRef, number in
 	if err := f.failure(ctx, "NativeReviews"); err != nil {
 		return forge.NativeReviews{}, err
 	}
+	if number <= 0 {
+		return forge.NativeReviews{}, forge.ErrNativeReviewsUnavailable
+	}
 	value, ok := f.nativeReviews[nativeReviewKey{repo, number}]
 	if !ok {
 		return forge.NativeReviews{}, forge.ErrNativeReviewsUnavailable

@@ -42,8 +42,12 @@ func TestIdentityContract(t *testing.T) {
 					t.Errorf("membership request must include all roles: %s", r.URL.RawQuery)
 				}
 				page, _ := strconv.Atoi(r.URL.Query().Get("page"))
-				start := (page - 1) * 2
-				end := min(start+2, len(members))
+				pageSize := 2
+				if len(members) >= forge.MaxTeamMembers {
+					pageSize = 100
+				}
+				start := (page - 1) * pageSize
+				end := min(start+pageSize, len(members))
 				if end < len(members) {
 					w.Header().Set("Link", fmt.Sprintf(`<%s%s?page=%d>; rel="next"`, f.server.URL, r.URL.Path, page+1))
 				}

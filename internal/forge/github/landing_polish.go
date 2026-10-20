@@ -13,6 +13,10 @@ import (
 // adding commit-list requests to reconciliation. GitHub caps this at 250 commits;
 // commits absent from the response retain git email-based attribution.
 func (d *Driver) CommitAuthors(ctx context.Context, repo forge.RepoRef, number int) ([]forge.CommitAuthor, error) {
+
+	if err := forge.ValidatePRNumber(number); err != nil {
+		return nil, err
+	}
 	owner, name, err := splitRepo(repo)
 	if err != nil {
 		return nil, err
@@ -34,6 +38,10 @@ func (d *Driver) CommitAuthors(ctx context.Context, repo forge.RepoRef, number i
 // HeadBranchForDeletion returns a plain branch name, never the owner:branch
 // label used in merge messages. An unavailable safety read prevents deletion.
 func (d *Driver) HeadBranchForDeletion(ctx context.Context, repo forge.RepoRef, number int, headSHA, base string) (string, error) {
+
+	if err := forge.ValidatePRNumber(number); err != nil {
+		return "", err
+	}
 	owner, name, err := splitRepo(repo)
 	if err != nil {
 		return "", err

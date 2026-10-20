@@ -24,10 +24,10 @@ func (s *session) heads(ctx context.Context, prs []forge.BuildPR) (err error) {
 		defer cancel()
 		err = errors.Join(err, s.deleteRefs(cleanupCtx, temporaryRefs))
 	}()
+	if err := forge.ValidateBuildPRs(prs); err != nil {
+		return err
+	}
 	for _, pr := range prs {
-		if pr.Number <= 0 || !validSHA(pr.HeadSHA) {
-			return errors.New("PR number and full pinned head SHA are required")
-		}
 		ref := s.r.cfg.HeadRef(pr.Number)
 		if !strings.HasPrefix(ref, "refs/") {
 			return errors.New("HeadRef must return a fully qualified git ref")
@@ -119,13 +119,7 @@ func (s *session) mergeTree(ctx context.Context, base, ours, theirs string) (str
 // BuildTestRef composes commits without an index or worktree, then force-pushes
 // the OpenMerge-owned test ref. All pinned heads are verified before composing.
 func (r *Repo) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.BuildRequest) (string, error) {
-	if req.Ref == "" || !forge.ValidBatchID(req.BatchID) || len(req.PRs) == 0 {
-		return "", errors.New("test ref, valid batch ID, and PRs are required")
-	}
-	if req.Method != forge.Merge && req.Method != forge.Squash && req.Method != forge.Rebase && req.Method != forge.FastForward {
-		return "", errors.New("unsupported git merge method")
-	}
-	if err := forge.ValidateBuildMetadata(req.PRs); err != nil {
+	if err := forge.ValidateBuildRequest(req); err != nil {
 		return "", err
 	}
 	s, unlock, err := r.open(ctx, repo)

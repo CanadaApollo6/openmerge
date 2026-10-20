@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"slices"
+	"strings"
 
 	"github.com/CanadaApollo6/openmerge/internal/ascii"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
@@ -75,8 +76,11 @@ func (f *Forge) ResolveUser(ctx context.Context, login string) (forge.UserIdenti
 	if err := f.failure(ctx, "ResolveUser"); err != nil {
 		return forge.UserIdentity{}, err
 	}
+	if !forge.ValidIdentityLogin(login) {
+		return forge.UserIdentity{}, forge.ErrIdentityUnavailable
+	}
 	user := f.identities.users[ascii.Lower(login)]
-	if user.ID <= 0 || user.Login == "" {
+	if user.ID <= 0 || !forge.ValidIdentityLogin(user.Login) {
 		return forge.UserIdentity{}, forge.ErrIdentityUnavailable
 	}
 	return user, nil
@@ -89,6 +93,10 @@ func (f *Forge) ResolveTeam(ctx context.Context, name string) (forge.TeamIdentit
 	f.identityCalls["ResolveTeam"]++
 	if err := f.failure(ctx, "ResolveTeam"); err != nil {
 		return forge.TeamIdentity{}, err
+	}
+	org, slug, ok := strings.Cut(name, "/")
+	if !ok || !forge.ValidIdentityName(org) || !forge.ValidIdentityName(slug) {
+		return forge.TeamIdentity{}, forge.ErrIdentityUnavailable
 	}
 	team := f.identities.teams[ascii.Lower(name)]
 	if team.ID <= 0 || team.OrganizationID <= 0 {
@@ -109,9 +117,12 @@ func (f *Forge) TeamMembers(ctx context.Context, team forge.TeamIdentity) ([]for
 	if !ok || team.ID <= 0 || team.OrganizationID <= 0 {
 		return nil, forge.ErrIdentityUnavailable
 	}
+	if len(members) > forge.MaxTeamMembers {
+		return nil, forge.ErrMembershipIncomplete
+	}
 	byID := map[int64]forge.UserIdentity{}
 	for _, user := range members {
-		if user.ID <= 0 || user.Login == "" {
+		if user.ID <= 0 || !forge.ValidIdentityLogin(user.Login) {
 			return nil, forge.ErrIdentityUnavailable
 		}
 		byID[user.ID] = user
@@ -132,7 +143,7 @@ func (f *Forge) WriteGrant(ctx context.Context, repo forge.RepoRef, author forge
 	if err := f.failure(ctx, "WriteGrant"); err != nil {
 		return forge.WriteGrant{}, err
 	}
-	if author.ID <= 0 || author.Login == "" {
+	if author.ID <= 0 || !forge.ValidIdentityLogin(author.Login) {
 		return forge.WriteGrant{}, forge.ErrIdentityUnavailable
 	}
 	user := f.identities.users[ascii.Lower(author.Login)]
@@ -141,7 +152,7 @@ func (f *Forge) WriteGrant(ctx context.Context, repo forge.RepoRef, author forge
 		return forge.WriteGrant{}, forge.ErrIdentityUnavailable
 	}
 	grant := forge.WriteGrant{User: user, Permission: permission}
-	if user.ID <= 0 || user.ID != author.ID {
+	if user.ID <= 0 || user.ID != author.ID || !forge.ValidIdentityLogin(user.Login) {
 		return grant, forge.ErrIdentityMismatch
 	}
 	return grant, nil

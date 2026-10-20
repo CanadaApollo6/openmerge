@@ -3,7 +3,6 @@ package gitops
 import (
 	"context"
 	"crypto/sha256"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -21,12 +20,12 @@ var _ forge.FirstParentCommitReader = (*Repo)(nil)
 // objects. Results are newest first and a missing first-parent base fails
 // closed rather than falling back to another graph edge.
 func (r *Repo) FirstParentCommits(ctx context.Context, repo forge.RepoRef, base, head string, limit int) ([]string, bool, error) {
-	if limit < 1 || limit > forge.MaxFirstParentCommits {
-		return nil, false, errors.New("invalid first-parent history limit")
+	if err := forge.ValidateHistoryLimit(limit, forge.MaxFirstParentCommits); err != nil {
+		return nil, false, err
 	}
 	for _, sha := range []string{base, head} {
 		if !forge.ValidDiffObjectID(sha) {
-			return nil, false, fmt.Errorf("invalid first-parent commit SHA")
+			return nil, false, forge.ValidateCommitIDs(sha)
 		}
 	}
 	dir := filepath.Join(r.cfg.WorkDir, fmt.Sprintf("%x.git", sha256.Sum256([]byte(repo.Path))))

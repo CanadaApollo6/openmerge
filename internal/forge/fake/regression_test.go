@@ -66,7 +66,7 @@ func TestRebaseReplaysEveryPRCommit(t *testing.T) {
 func TestCommentDedupeRequiresOwnIdentity(t *testing.T) {
 	f, _ := fixture(t)
 	ctx := context.Background()
-	f.AddComment(repo, 1, "contributor", "spoof <!-- openmerge:key -->")
+	f.AddComment(repo, 1, "contributor", "spoof <!-- openmerge:key=key -->")
 	must(t, f.Comment(ctx, repo, 1, "key", "original"))
 	must(t, f.Comment(ctx, repo, 1, "key", "retry"))
 	comments := f.CommentRecords(repo, 1)
@@ -78,7 +78,7 @@ func TestCommentDedupeRequiresOwnIdentity(t *testing.T) {
 		t.Fatal("CommentRecords exposed mutable state")
 	}
 	// Searching the marker, rather than an internal key, is part of the contract.
-	f.AddComment(repo, 1, fake.Identity, "existing <!-- openmerge:other -->")
+	f.AddComment(repo, 1, fake.Identity, "existing <!-- openmerge:key=other -->")
 	must(t, f.Comment(ctx, repo, 1, "other", "duplicate"))
 	if len(f.CommentRecords(repo, 1)) != 3 {
 		t.Fatal("driver ignored its own existing marker")

@@ -3,7 +3,6 @@ package gitops
 import (
 	"context"
 	"errors"
-	"strings"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
@@ -11,8 +10,8 @@ import (
 // DeleteBranch leases the exact landed head so cleanup cannot remove newer work.
 // Missing or changed branches converge without deleting their replacements.
 func (r *Repo) DeleteBranch(ctx context.Context, repo forge.RepoRef, branch, expectedSHA string) error {
-	if branch == "" || strings.HasPrefix(branch, "refs/") || strings.HasPrefix(branch, "openmerge/") || !validSHA(expectedSHA) {
-		return errors.New("cleanup requires a plain non-OpenMerge branch and pinned SHA")
+	if err := forge.ValidateDeleteBranch(branch, expectedSHA); err != nil {
+		return err
 	}
 	s, unlock, err := r.open(ctx, repo)
 	if err != nil {

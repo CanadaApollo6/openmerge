@@ -25,7 +25,7 @@ func identityContext(ctx context.Context) context.Context {
 }
 
 func validIdentityLogin(login string) bool {
-	return simpleName(strings.TrimSuffix(login, "[bot]"))
+	return forge.ValidIdentityLogin(login)
 }
 
 func userIdentity(user *gh.User) forge.UserIdentity {
@@ -60,7 +60,7 @@ func (d *Driver) ResolveUser(ctx context.Context, login string) (forge.UserIdent
 // ResolveTeam pins the organization and team IDs returned for an org/team name.
 func (d *Driver) ResolveTeam(ctx context.Context, name string) (forge.TeamIdentity, error) {
 	org, slug, ok := strings.Cut(name, "/")
-	if !ok || !simpleName(org) || !simpleName(slug) {
+	if !ok || !forge.ValidIdentityName(org) || !forge.ValidIdentityName(slug) {
 		return forge.TeamIdentity{}, forge.ErrIdentityUnavailable
 	}
 	team, _, err := d.client.Teams.GetTeamBySlug(identityContext(ctx), org, slug)
@@ -95,7 +95,7 @@ func (d *Driver) TeamMembers(ctx context.Context, team forge.TeamIdentity) ([]fo
 			}
 			members[identity.ID] = identity
 		}
-		if res.NextPage != 0 && (res.NextPage <= page || res.NextPage > 100) {
+		if res.NextPage != 0 && (res.NextPage <= page || res.NextPage > forge.MaxTeamMembers/100) {
 			return nil, forge.ErrMembershipIncomplete
 		}
 		page = res.NextPage

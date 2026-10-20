@@ -10,12 +10,15 @@ import (
 
 // CommitsBetween enumerates a deterministic reverse topological graph difference.
 func (f *Forge) CommitsBetween(ctx context.Context, repo forge.RepoRef, base, head string, limit int) ([]string, bool, error) {
-	if limit < 1 || limit > forge.MaxCommitHistoryCommits {
-		return nil, false, fmt.Errorf("invalid commit history limit")
+	if err := forge.ValidateHistoryLimit(limit, forge.MaxCommitHistoryCommits); err != nil {
+		return nil, false, err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.failure(ctx, "CommitsBetween"); err != nil {
+		return nil, false, err
+	}
+	if err := forge.ValidateCommitIDs(base, head); err != nil {
 		return nil, false, err
 	}
 	r := f.repo(repo)
@@ -49,12 +52,15 @@ func (f *Forge) CommitsBetween(ctx context.Context, repo forge.RepoRef, base, he
 // its single object map cannot model cache eviction; real-git gate tests cover
 // acquisition and object lifetime.
 func (f *Forge) FirstParentCommits(ctx context.Context, repo forge.RepoRef, base, head string, limit int) ([]string, bool, error) {
-	if limit < 1 || limit > forge.MaxFirstParentCommits {
-		return nil, false, fmt.Errorf("invalid first-parent history limit")
+	if err := forge.ValidateHistoryLimit(limit, forge.MaxFirstParentCommits); err != nil {
+		return nil, false, err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.failure(ctx, "FirstParentCommits"); err != nil {
+		return nil, false, err
+	}
+	if err := forge.ValidateCommitIDs(base, head); err != nil {
 		return nil, false, err
 	}
 	r := f.repo(repo)

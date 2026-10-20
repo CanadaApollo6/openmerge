@@ -3,6 +3,7 @@ package fake
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
@@ -15,10 +16,17 @@ func (f *Forge) VerifyFastForward(ctx context.Context, repo forge.RepoRef, base,
 	if err := f.failure(ctx, "VerifyFastForward"); err != nil {
 		return err
 	}
+
 	return f.repo(repo).verifyFastForward(base, tested, head)
 }
 
 func (r *repository) verifyFastForward(base, tested, head string) error {
+	if err := forge.ValidateCommitIDs(base, tested, head); err != nil {
+		return err
+	}
+	if _, ok := r.commits[base]; !ok {
+		return fmt.Errorf("unknown base commit %q", base)
+	}
 	marker, ok := r.commits[tested]
 	_, headOK := r.commits[head]
 	if !ok || !headOK || len(marker.Parents) != 1 || marker.Parents[0] != head || !maps.Equal(r.files(tested), r.files(head)) {

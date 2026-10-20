@@ -261,3 +261,95 @@ Scenarios that only the fake can stage, such as rolling a branch back, are gated
 
 The [operating guide](operating.md#landed-head-cleanup) defines the landed-head
 cleanup protocol, including `Driver.HeadBranchForDeletion` and `Git.DeleteBranch`.
+
+## Input validation and fake parity
+
+Failures from the shared core syntax validators wrap `forge.ErrInvalidInput`. They must not masquerade as
+`ErrLeaseRejected`, `ErrConflict`, or `ErrNotFastForward`, and must not change
+remote refs, comments, or statuses. Shared validators in
+[`validation.go`](../internal/forge/validation.go) serve gitops, the GitHub
+adapter, and the fake. `forgetest` executes rejection cases through both
+implementations. Gitops uses disposable local bare repositories; GitHub uses an
+`httptest` server, without GitHub credentials or network calls to GitHub.
+The ref validator is also compared with the installed `git check-ref-format`
+over a corpus including every non-NUL byte. NUL is rejected separately because
+it cannot be passed in an executable argument.
+
+The #83 audit covers every method of `Driver` and `Git`:
+
+| Methods | Validation and parity result |
+| --- | --- |
+| `DefaultBranch` | Missing default remains an error. Cancellation is shared; repository-path interpretation stays forge-specific. |
+| `ReadFile` | Both require nonempty ref and path before lookup. Missing file/ref retains `ErrFileNotFound`. Nonempty ref/path interpretation belongs to the content API. |
+| `PullRequest`, `CommitAuthors`, `ListComments` | Both reject nonpositive PR numbers. Unknown positive PRs and response completeness are observations, not syntax validation. |
+| `HeadBranchForDeletion` | Positive PR number; fake now also keeps default branches, qualified `refs/` names, and missing/moved head refs. It already kept forks, base, reserved/protected branches, and branches used by open PRs. |
+| `ListOpenPullRequests` | Empty base means all; nonempty base is an API filter, not a git mutation. Cancellation is shared. |
+| `CanWrite` | Shared legacy login rule rejects empty and `/`, backslash, `?`, `#`, `%`, CR, LF. It deliberately preserves the existing API rule rather than adopting the stricter identity-reader alphabet. |
+| `CheckRuns` | Revision resolution belongs to the API; it is not restricted to immutable IDs. Empty fake check fixtures still model an observed empty list. Cancellation is shared. |
+| `DeleteRef` | Shared branch/tag shorthand normalization and ref grammar; fake handles `heads/` and `refs/heads/` aliases. Missing *valid* refs remain successful. |
+| `ReportStatus` | Both reject states without a normalized check mapping, and nonpositive PR numbers. SHA resolution and write errors remain API-owned. |
+| `MarkLanded` | Positive PR number and validation of the derived `landed/<sha>` comment key on both sides. Fake additionally requires a known landed object; see limitations below. |
+| `Comment` | Positive PR number and shared hidden-marker key validation; fake now uses the real `<!-- openmerge:key=... -->` marker and shares keyed storage with `MarkLanded`. |
+| `BuildTestRef` | Shared method, batch ID, PR count/pins, base object ID, branch ref, and metadata validation. Fake now normalizes qualified branch aliases. Existing head-change/conflict/fast-forward contracts remain. |
+| `Land` | Shared branch syntax, distinct normalized refs, full base/tested/fence IDs, positive pinned PR numbers and full head IDs. Fake checks syntax and PR pins before refusing a lease. Valid leases and fence-token rules remain unchanged. |
+| `VerifyFastForward` | Fake now validates all three full IDs and requires a known base before ancestry checks, preserving infrastructure/input errors rather than returning an ancestry refusal for an unknown base. |
+| `EnsureFence`, `ReadFence`, `ReadRef` | Shared branch grammar, including empty, reserved namespace, component, punctuation and control-byte cases; fake normalizes qualified branch aliases. |
+| `AdvanceFence` | Same branch/expected-ID/token validation. Fake validates the expected object and next token before refusing a stale lease, matching gitops. |
+| `IsAncestor`, `HasMergeCommits` | Shared full-object-ID syntax; missing graph objects remain errors rather than negative ancestry observations. |
+| `DeleteBranch` | Shared plain/non-OpenMerge branch, ref grammar, and pinned full SHA validation. Missing or moved valid branches remain no-ops; a matched protected fixture reports a deletion error. |
+
+Optional capabilities were audited too:
+
+- `CommitsBetween` and `FirstParentCommits`: shared `[1, 10000]` limit rule and
+  full-object-ID syntax; existing history-limit contracts now assert the error
+  class instead of implementation-specific text.
+- `AcquireCommits` and `ReadCommitMessage`: already validate full IDs and
+  acquisition count (`1..MaxFirstParentCommits+2`); shared acquisition contracts
+  and real-git lifetime tests remain the authority for object availability.
+- `RevisionDiff` and `GoverningFiles`: already share object-ID/path validation,
+  diff semantics, typed coverage failures and bounds, with their dedicated
+  fake/gitops contracts. Their error taxonomy remains coverage-based, not
+  `ErrInvalidInput`.
+- `ResolveUser`, `ResolveTeam`, `TeamMembers`, `WriteGrant`: shared identity-name
+  rules now prevent malformed seeded fake identities or members from bypassing
+  API validation. The fake enforces the 10,000-member bound. Unavailable,
+  incomplete, and mismatched identities retain their existing identity error
+  classes; a write grant never authorizes on an error.
+- `NativeReviews`: fake now rejects nonpositive numbers even if fixtures were
+  seeded there, using `ErrNativeReviewsUnavailable` as the real reader does.
+  Wire/schema, pagination and dismissal-time checks remain the real adapter's
+  responsibility; fake DTOs are pre-normalized observations.
+- `RerunFailedChecks` and `CancelChecks`: both already require tested SHA, test
+  ref, key and nonempty runs before dispatch. Fake generic CI and GitHub Actions
+  have different supported producers; unsupported identities are results, not
+  syntax errors. Fake cancellation completes synchronously; GitHub acceptance
+  requires later observation. Provider-specific workflow validation is tested
+  against the HTTP fixture, not weakened to the fake's capability set.
+- `LinearHistoryRequired`: fake now normalizes `refs/heads/` aliases like the real reader. API protection/rules availability is modeled by a
+  configured fake policy and injected failures; it is not ref creation.
+- `PullRequestMetadataReader` and `RetryCheckReader`: optional GitHub
+  optimizations/enrichment; the fake uses the ordinary observation fallback.
+- Branch discovery (`ListBranches`, outside `Driver`) uses fake branch fixtures
+  versus paginated HTTP observations, with existing repository-driver tests.
+
+### Intentional model limits
+
+`RepoRef` stays opaque. GitHub rejects paths other than its validated
+`owner/name`; the fake supports nested groups and arbitrary fixture repository
+keys, and gitops delegates repository interpretation to its remote resolver.
+Do not move GitHub's repository shape into the forge-neutral contract.
+
+The fake has one durable object map and no transport, caches, garbage collection,
+HTTP status/ETag/rate-limit handling, native pagination, server-side repository
+identity, or unknown branch-protection state. Use `FailNext` and the real
+adapter's loopback/local-git tests for those failures. Unknown remote resources
+can therefore yield a generic fake fixture error or an empty configured
+observation instead of a GitHub `APIError`; they are not local syntax failures.
+`MarkLanded` is deliberately stricter in the fake about object existence, to
+catch tests trying to close a PR without a landed commit. The real App also redacts credential-bearing status/comment text with its
+credential-aware sanitizer; the fake stores fixture text without credentials.
+Fake permission
+fixtures are keyed by their supplied login spelling; canonicalization and HTTP
+permission observations are covered by the GitHub and stable-identity tests.
+Fake git commits, identities, check sources and provider capabilities model the
+forge-neutral behavior, not GitHub object bytes or all GitHub API constraints.
