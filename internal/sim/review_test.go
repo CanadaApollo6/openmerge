@@ -555,7 +555,7 @@ type missingPRGit struct {
 	reportMembership, keepContent bool
 }
 
-func (g missingPRGit) BuildTestRef(_ context.Context, repo forge.RepoRef, req forge.BuildRequest, opts forge.PushOptions) (string, error) {
+func (g missingPRGit) BuildTestRef(_ context.Context, repo forge.RepoRef, req forge.BuildRequest, _ forge.PushOptions) (string, error) {
 	if err := g.sim.forge.SetRef(repo, req.Ref, req.BaseSHA); err != nil {
 		return "", err
 	}
