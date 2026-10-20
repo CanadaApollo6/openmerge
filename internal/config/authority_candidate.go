@@ -50,7 +50,14 @@ func LoadAuthorityCandidate(data []byte) (AuthorityCandidate, []Diagnostic, erro
 	if publicErr != nil {
 		return AuthorityCandidate{}, nil, publicErr
 	}
-	return AuthorityCandidate{Config: cfg, Authority: declaration}, warnings, nil
+	candidate := AuthorityCandidate{Config: cfg, Authority: declaration}
+	// The default branch is resolved later; validate explicit selectors now.
+	if declaration.Mode.Normalized() == authority.OpenMerge {
+		if _, err := authority.CompileRefCoverage("candidate-default", candidate.BaseSelectors()); err != nil {
+			return AuthorityCandidate{}, nil, err
+		}
+	}
+	return candidate, warnings, nil
 }
 
 // authorityCandidatePublicYAML is test-visible only within this package. It
