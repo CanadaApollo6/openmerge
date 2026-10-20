@@ -86,7 +86,9 @@ func TestStartedRealGitLandingSettlesAcrossAuthorityViolation(t *testing.T) {
 	o.Protections[0].BypassActors = append(o.Protections[0].BypassActors, a)
 	id, err := ObserveWriteRestriction(t.Context(), db, q, restrictionReaderFunc(func(ctx context.Context, _ forge.WriteRestrictionInput) (authority.Observation, error) {
 		// A concurrent append completes during the read: no queue lock spans I/O.
-		_, _, err := db.Load(ctx, q)
+		readCtx, cancel := context.WithTimeout(ctx, time.Second)
+		defer cancel()
+		_, err := db.Append(readCtx, q, []queue.Event{queue.RulesSourceBlocked{Source: queue.Permissions, Problems: []string{"independent permission block"}}}, "")
 		return o, err
 	}), input)
 	must(t, err)

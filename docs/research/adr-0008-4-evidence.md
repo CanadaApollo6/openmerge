@@ -1,7 +1,7 @@
 # ADR 0008 PR 4: source persistence and operator verification
 
-Implementation base: `046de34` (main). Trial class and measured acceptance
-results are recorded below after offline verification. PR 3a remains Hold:
+Implementation base: `046de34` (main). **Trial class: Inert** for this PR: the
+required legacy comparisons passed with no observed byte changes. PR 3a remains Hold:
 an Inert result for this change does not authorize deploying that dependency.
 No live database, service unit, live refs/status endpoint, or GitHub writes are
 part of this implementation's tests. Organization-sandbox acceptance below is
@@ -178,4 +178,110 @@ credentials or change this project's production refs.
 
 ## Offline evidence
 
-Results and artifact hashes are added here after the required checks complete.
+Executed on 2026-10-20 UTC. Final production source/binary revision:
+`916d8a0fe1548fad9446b5deb0e71db60f904de4`; baseline:
+`046de34aa7433d47782eab68da062ff3adc977ce`. The following evidence/test-only
+commit changes no production Go source. PostgreSQL was 18.6 at
+`localhost:54329`, using disposable schemas/databases; Go was 1.27.2.
+
+All Go work held `/home/riels/.cache/openmerge-heavy.lock`, with
+`GOFLAGS=-p=2 GOMEMLIMIT=4GiB` (6GiB for replay). Module/toolchain downloads
+were disabled for final compatibility runs. Makefile, CI, test flags, public
+schema, SQL migrations/indexes and all deployed wire fixtures are unchanged.
+
+- **Full check, exit 0:** `flock /home/riels/.cache/openmerge-heavy.lock env
+  GOFLAGS=-p=2 GOMEMLIMIT=4GiB OPENMERGE_TEST_DATABASE_URL=<isolated localhost:54329 URL>
+  GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local make check`. Format, lint,
+  `go test -race -short -count=1 -timeout=15m ./...`, and binary build passed.
+  Log: `~/.cache/adr0008-4-make-check-verified.log`.
+- **Strict offline live-journal replay, exit 0:** unchanged
+  `scripts/check-live-journal-replay.py`, baseline checkout
+  `~/.cache/adr0008-4-main`, `--strict-state --config-file .openmerge.yml`,
+  using the frozen `~/.cache/om-pr72-fix1-input/{events,queues}.jsonl` exports.
+  Event export SHA-256:
+  `9c8f78f3e967c7cb030948cfc9871cc67a45da06f80b12f27d1c55d09ba8accf`;
+  queue export SHA-256:
+  `418f025a0e3c8792321b6d71d297f17fff1adf48cb616c8f4fcb774163696886`.
+  The 2,158 events plus initial state yielded **2,159/2,159** identical actions,
+  structural states, snapshot hashes and wake-boundary checkpoints. Gates 2/4
+  both PASS. Report: `~/.cache/adr0008-4-replay-receipt.json`. No comparator
+  allowances or fixture changes were added. Initial attempts refused reporting
+  after an untracked Python cache/source revision change; the accepted final run
+  used a clean, fixed `916d8a0` tree.
+- **Depth-1/4 contracts, exit 0:** unchanged
+  `scripts/check-legacy-plan-action-depths-1-4.py ~/.cache/adr0008-4-main`:
+  227,676 short-corpus checkpoints; 5,616,012 required-full-corpus checkpoints;
+  196 fixture checkpoints. Exact action/wake hashes, respectively:
+  `277bc31efbfd7c139b32069049f2a17fa66eaedf19e0ce5dc9a8ac0359365120`,
+  `7aeea830f37d4b3dc0bc4ee69055e20833ed2d6eba8144ce159e58f156508ddb`,
+  `6c3bd6e3c5ea4edff094712f6d95babbc949508b5ad9752020801d1ff6641554`.
+  Log: `~/.cache/adr0008-4-depths.log`. That comparison began at `b1f8aee`;
+  no previously deployed non-test Go file changed between it and `916d8a0`.
+  Later changes were confined to new authority endpoints, comments and tests.
+- **Simulator differential, both exits 0:** unchanged required
+  `make test-sim-exits` in baseline/candidate; **146** normalized result blocks
+  identical. SHA-256:
+  `a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7`.
+  Raw logs/report: `~/.cache/adr0008-4-simulator/`.
+- **Legacy reporting, exit 0:** unchanged
+  `scripts/check-legacy-reporting.py ~/.cache/adr0008-4-main`: all six checks
+  byte-identical; preexisting serialized status fields and their order match
+  under the unchanged comparator. Log: `~/.cache/adr0008-4-reporting.log`.
+- **First-emission compatibility/backup, exits 0:** old decoder
+  `e7000f8cc1df54372f5220617361f21aaca58b0a` preserves newly encoded v6 state
+  and cursor wrapper bytes, and rejects v7 plus all three authority event types.
+  V6/V7 fixture hashes and commands are in `~/.cache/adr0008-4-boundary/`.
+  A custom-format, 21,692-byte pre-emission fixture backup was restored into a
+  second isolated DB: one queue, one legacy event, one v6 cursor, migration
+  receipts and ordered payloads matched exactly. Backup SHA-256:
+  `bca5ce2a8d3428eaeaa2f2d5bd9f870cc47c1b8b93a8efba95e6c946879957fe`;
+  restored-state SHA-256:
+  `6537b57be21b4275197807f56d3b384b14f0b3d0cd14279f90271a5936c57dce`.
+  Both fixture DBs were removed. Commands/exits/timestamps are retained in
+  `~/.cache/adr0008-4-backup/report.json`. This is an isolated restore test,
+  not a receipt for production workers or a production backup.
+- **Paged query evidence, exits 0:** 5,201- and 15,201-event fixtures used
+  `events_queue_watermark`, with 256-row pages. Complete lookups took 4.543ms
+  and 12.357ms respectively in these compact fixtures; inspected-page execution
+  took 0.046ms/0.037ms, returning 256 rows. These are fixture measurements,
+  not production latency claims. Full `EXPLAIN (ANALYZE, BUFFERS)` output:
+  `~/.cache/adr0008-4-query-plans/{small,large}.log`. The small run uses only
+  an external test overlay changing the fixture size/boundary to 5,200 seed
+  events; no production query, test flag definition or repository test changed.
+- **Real-Git worker, race-enabled, exit 0:**
+  `TestStartedRealGitLandingSettlesAcrossAuthorityViolation` used a fresh bare
+  remote/cache, one merge batch, actual atomic base/fence landing, a concurrent
+  independent permission append inside the read callback, then source violation
+  and worker settlement. The append completes within a one-second callback
+  deadline, proving no queue lock spans the read. Governing fixture commit:
+  `576b768a751c09f6853dd5a21efdf841be67acee`; effective fixture digest:
+  `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`;
+  coverage digest:
+  `05d268603d3ab908c77d154c74f63388f85742115e7a81513773c7c574ac87f9`;
+  resolved team ID `200`. Observation event **11**, source revision **1**;
+  confirmed landed and remote SHA both
+  `9bb213bde1e0ab20cb263477e5607bde41743abb`. The violation remains after
+  settlement. Raw trace: `~/.cache/adr0008-4-real-git-verified.log`. These are
+  generated local Git fixtures, not GitHub enforcement evidence.
+- **Finding/verification cases:** final full/focused checks cover proposed
+  admission neutrality; exact/hidden/mismatched adoption; both concurrent append
+  orders; hidden-after-violation and mixed repaired/unseen findings; digest,
+  coverage and actor changes; same-binding governing commits; source isolation;
+  duplicate retries including monotonic-clock metadata; daily identical
+  fingerprints with distinct applied event IDs and advancing verification ages;
+  restart; hypothetical clearing; generic emitter exclusion; failed reads; and
+  mandatory unknown-actor findings. Retry/daily focused log:
+  `~/.cache/adr0008-4-retry-daily.log` (exit 0).
+
+[Artifact manifest and summary](adr-0008-4-artifacts.json) retain numeric outcomes,
+source revisions, raw-log locations and SHA-256 hashes. The local manifest hash
+is `52f1349e5fd5c7ddef70e853d2f25800d91cd01e2790ce9bb56e40240709e43f`.
+The implementation is below the ADR's split threshold, so this is one PR.
+
+Remaining acceptance is the explicitly deferred organization-sandbox run above.
+The internal verification plan is an interim operator input until PR 9's policy
+resolver is wired. Classic inventory remains conservative for push validation;
+this PR does not introduce a new classic content-policy translator. No dependency
+on the PR 3b setup branch was taken; its CLI changes may need the planned
+rebase integration. No live verification, GitHub protection/ref writes, deployment or merge was
+performed. Publishing the review PR uses the requested PR metadata operation.

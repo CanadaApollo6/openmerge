@@ -1,0 +1,90 @@
+{
+  "summary": {
+    "base": "046de34aa7433d47782eab68da062ff3adc977ce",
+    "production_revision": "916d8a0fe1548fad9446b5deb0e71db60f904de4",
+    "collected_at": "2026-10-20T21:48:39.678417+00:00",
+    "trial": "Inert",
+    "strict_replay": {
+      "candidate_commit": "916d8a0fe1548fad9446b5deb0e71db60f904de4",
+      "actions_identical": "2159/2159",
+      "structural_state_identical": "2159/2159",
+      "snapshot_hashes_identical": "2159/2159",
+      "boundary_checkpoints_identical": "2159/2159",
+      "gate2": "PASS",
+      "gate4": "PASS",
+      "verdict": "PASS"
+    },
+    "simulator": {
+      "blocks": 146,
+      "identical": true,
+      "normalized_sha256": "a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7",
+      "verdict": "PASS"
+    },
+    "old_decoder": {
+      "old_binary_commit": "e7000f8cc1df54372f5220617361f21aaca58b0a",
+      "legacy_v6_sha256": "94a9dea394ab17bb0921e76c413d40c2a3a8dfa73733e53728460de01d59d096",
+      "authority_v7_sha256": "47ca0a200d37f4883432ecd9f3c6a48941f78d4fb0a2dd3bc59e4e54f98445cd",
+      "verdict": "PASS"
+    },
+    "backup": {
+      "backup_sha256": "bca5ce2a8d3428eaeaa2f2d5bd9f870cc47c1b8b93a8efba95e6c946879957fe",
+      "restored_state_sha256": "6537b57be21b4275197807f56d3b384b14f0b3d0cd14279f90271a5936c57dce",
+      "backup_bytes": 21692,
+      "verdict": "PASS"
+    },
+    "deployed_go_files_changed_after_depth_comparison": [],
+    "manifest_sha256": "52f1349e5fd5c7ddef70e853d2f25800d91cd01e2790ce9bb56e40240709e43f",
+    "no_github_writes_or_live_db": true
+  },
+  "artifacts": {
+    "/home/riels/.cache/adr0008-4-make-check-verified.log": {
+      "sha256": "fb0f8a227c67a7708b1ba9bd79ef4a9da69fc43dda0ea4fb5cbe90431409481c",
+      "bytes": 1897
+    },
+    "/home/riels/.cache/adr0008-4-replay-receipt.json": {
+      "sha256": "909bfdb9be634c325995ce7f25243df4f8b757eda1690da8352ff4bae9b273b4",
+      "bytes": 215066
+    },
+    "/home/riels/.cache/adr0008-4-depths.log": {
+      "sha256": "a933fe69a49588ee66ae8ecbe5f3900cd98e578d7c20d75fe28e56f4485271ef",
+      "bytes": 932
+    },
+    "/home/riels/.cache/adr0008-4-reporting.log": {
+      "sha256": "fefff2134d77ab547e2867401e51be8a03d5e2ab0a4d2769f2f178d15f592d4b",
+      "bytes": 231
+    },
+    "/home/riels/.cache/adr0008-4-simulator/report.json": {
+      "sha256": "db9005a9115a6aee86970d5bb4de3ad13cdbd9f2f0a7e7287edeaab9a91964d1",
+      "bytes": 1233
+    },
+    "/home/riels/.cache/adr0008-4-boundary/report.json": {
+      "sha256": "0df13393cd83500b16b75e6787f37eb04805afa785ab1731093da33f288dfecb",
+      "bytes": 1992
+    },
+    "/home/riels/.cache/adr0008-4-backup/report.json": {
+      "sha256": "b87d66395f3c72548f29129b1dedeef7e240227b878de2392e070459353a252f",
+      "bytes": 3595
+    },
+    "/home/riels/.cache/adr0008-4-retry-daily.log": {
+      "sha256": "745173dd2d344b1c4abaaead478b4d4cda909b90fb53957926ad1ecd642795df",
+      "bytes": 62
+    },
+    "/home/riels/.cache/adr0008-4-final-focused.log": {
+      "sha256": "d7fa1e2c26f7d637aa1483f86c2132ee8b5be468a8d2b2dbeb36526db297a3c6",
+      "bytes": 32883
+    },
+    "/home/riels/.cache/adr0008-4-query-plans/small.log": {
+      "sha256": "d8e32e4651e6f22804d7527a96034c633d09afd742be6c25b17c993c87e6927b",
+      "bytes": 1078
+    },
+    "/home/riels/.cache/adr0008-4-query-plans/large.log": {
+      "sha256": "cd438bf232fdef6817343f409f1041d1bc2953144bdef0abc8c54aab533a7ee9",
+      "bytes": 1082
+    },
+    "/home/riels/.cache/adr0008-4-real-git-verified.log": {
+      "sha256": "b73191d9105f070b14319ffa6d2396e6649052634eabb88f6c83c8add661573e",
+      "bytes": 615
+    }
+  },
+  "note": "Raw logs/large replay streams stay in the local cache. Simulator/boundary runners initially labelled the candidate b1f8aee; subsequent changes touched only new authority endpoints or tests/comments, with no further changes to previously deployed Go source files. Final full check/replay use production revision 916d8a0."
+}
