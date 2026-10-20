@@ -3,6 +3,7 @@ package forge
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/CanadaApollo6/openmerge/internal/authority"
@@ -55,7 +56,7 @@ func (in WriteRestrictionInput) Validate() error {
 
 // WriteRestrictionReader only acquires typed facts, preserving partial reads,
 // visibility and absence. It does not interpret them or mutate protection.
-// No production driver implements or invokes this capability in PR 1.
+// Implementations remain dormant until authority activation in PR 9.
 type WriteRestrictionReader interface {
 	ObserveWriteRestriction(context.Context, WriteRestrictionInput) (authority.Observation, error)
 }
@@ -63,3 +64,46 @@ type WriteRestrictionReader interface {
 // WriteRestrictionInterpreter is a pure, forge-specific interpretation boundary.
 // It cannot perform network I/O. PR 2 adds readers and PR 3a adds interpretation.
 type WriteRestrictionInterpreter func(WriteRestrictionInput, authority.Observation) ([]authority.Finding, error)
+
+// EmptyWriteRestrictionObservation starts unknown, with explicit collections.
+// Coverage and findings belong to the separate PR 3a interpreter.
+func EmptyWriteRestrictionObservation() authority.Observation {
+	return authority.Observation{Inventory: authority.ReadFailure, Protections: []authority.Protection{}, Coverage: []authority.Coverage{}, Findings: []authority.Finding{}}
+}
+
+// ValidateWriteRestrictionInput reuses the shared forge ref validator at this
+// capability's boundary, before either adapter reads any remote state.
+func ValidateWriteRestrictionInput(in WriteRestrictionInput) error {
+	if err := in.Validate(); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidInput, err)
+	}
+	if len(in.ExpectedRefs) > 1000 {
+		return fmt.Errorf("too many expected refs: %w", ErrInvalidInput)
+	}
+	for _, ref := range in.ExpectedRefs {
+		if err := ValidateRefName(ref); err != nil {
+			return err
+		}
+		if !strings.HasPrefix(ref, "refs/heads/") {
+			return fmt.Errorf("expected fully qualified branch: %w", ErrInvalidInput)
+		}
+	}
+	return nil
+}
+
+// CheckWriteRestrictionActor refreshes a declared team through IdentityReader.
+// The adapter validates the documented repository-admin role identity separately.
+func CheckWriteRestrictionActor(ctx context.Context, reader IdentityReader, in WriteRestrictionInput) error {
+	actor := in.Binding.ResolvedActor
+	if actor.RepositoryAdmin != nil {
+		return nil
+	}
+	team, err := reader.ResolveTeam(ctx, in.Binding.DeclaredActor.Team)
+	if err != nil {
+		return err
+	}
+	if strconv.FormatInt(team.ID, 10) != actor.Team.TeamID || strconv.FormatInt(team.OrganizationID, 10) != actor.Team.OrganizationID {
+		return ErrIdentityMismatch
+	}
+	return nil
+}
