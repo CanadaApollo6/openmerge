@@ -13,12 +13,33 @@ import (
 func (s *Server) QueuePolicy(key store.QueueKey) (queue.Config, bool) {
 	for _, w := range s.workers() {
 		if w.Key == key {
+			if cfg := w.approvalStatus.Load(); cfg != nil {
+				return *cfg, true
+			}
 			w.mu.Lock()
 			defer w.mu.Unlock()
 			return w.plannerConfig(s.options.PollInterval), true
 		}
 	}
 	return queue.Config{}, false
+}
+
+// Called with exclusive worker ownership whenever configuration is replaced.
+func (w *worker) publishApprovalStatus(interval time.Duration) {
+	if w.cfg.Approvals == nil {
+		w.approvalStatus.Store(nil)
+		return
+	}
+	cfg := w.plannerConfig(interval)
+	w.approvalStatus.Store(&cfg)
+}
+
+func (w *worker) lockStatus() bool {
+	if w.approvalStatus.Load() != nil {
+		return w.mu.TryLock()
+	}
+	w.mu.Lock()
+	return true
 }
 
 // The worker mutex serializes reporting and cache updates. Gates depend on

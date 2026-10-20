@@ -193,6 +193,16 @@ landing settlement, without waiting for the discovery interval. A fresh process
 must verify rules before admitting work; an already verified worker retains its
 prior rules on a transient re-read failure.
 
+After approval configuration has loaded, a busy worker returns committed journal
+evidence with
+`readiness: {"ready": false, "reason": "policy_busy"}` and the last locally
+loaded policy settings. This is a transient reporting limitation: retry the read
+for current readiness. It does not pause the queue or change landing decisions.
+Discovery retains its last inventory snapshot while that worker is busy. These
+reads do not wait for gate, landing, or cache maintenance work. Legacy queues
+retain their existing reporting behavior during the trial. Workers whose
+configuration has not yet loaded also retain the existing startup behavior.
+
 ENTRY status values are `queued`, `building`, `testing`, `landing`,
 `dequeue-pending`, `paused`, `merged`, `dequeued`, `closed`, `blocked`, and
 `not-queued`. `reason` is the pause or pending/terminal dequeue reason where

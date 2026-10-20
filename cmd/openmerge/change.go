@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/brief"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -111,10 +110,10 @@ func runChange(args []string, stdout, stderr io.Writer) int {
 	if token != "" {
 		request.Header.Set("Authorization", "Bearer "+token)
 	}
-	client := &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := &http.Client{Timeout: statusClientTimeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	response, err := client.Do(request)
 	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "read status API:", err)
+		_, _ = fmt.Fprintln(stderr, "read status API:", statusReadError(err))
 		return 1
 	}
 	defer func() { _ = response.Body.Close() }()
@@ -122,6 +121,10 @@ func runChange(args []string, stdout, stderr io.Writer) int {
 		return queueAPIError(response, token, stderr)
 	}
 	raw, err := io.ReadAll(io.LimitReader(response.Body, brief.MaxViewBytes+1))
+	if os.IsTimeout(err) {
+		_, _ = fmt.Fprintln(stderr, "read status API:", statusReadError(err))
+		return 1
+	}
 	var view brief.View
 	if args[0] == "show" {
 		var result status.ChangeResponse

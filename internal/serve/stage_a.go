@@ -267,6 +267,7 @@ func (s *Server) refreshStageAPolicy(ctx context.Context, w *worker, tip string)
 		return err
 	}
 	a.pin = &cp.PolicyPin{DefaultBranch: a.defaultBranch, Resolved: resolved, ClassifierVersion: classification.Version}
+	w.publishApprovalStatus(s.options.PollInterval)
 	return nil
 }
 

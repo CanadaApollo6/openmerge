@@ -235,6 +235,7 @@ func (s *Server) loadConfiguration(ctx context.Context, w *worker, branch, tip s
 		}
 		w.configDigest = digest
 	}
+	w.publishApprovalStatus(s.options.PollInterval)
 	return nil
 }
 

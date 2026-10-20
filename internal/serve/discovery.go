@@ -458,7 +458,10 @@ func (s *Server) DiscoveryStatus() status.Discovery {
 			continue
 		}
 		for _, w := range s.repositoryWorkers(r.Installation, r.Name) {
-			w.mu.Lock()
+			if !w.lockStatus() {
+				// Retain the inventory snapshot until local validation can be read.
+				continue
+			}
 			if w.validationPending() {
 				r.State, r.Detail = "validating", w.readinessReason()
 			}
