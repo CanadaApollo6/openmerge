@@ -9,12 +9,14 @@ import (
 	"time"
 )
 
+// DefaultEmissionReceiptMaxAge bounds both drain and restore-test timestamps.
 const DefaultEmissionReceiptMaxAge = 24 * time.Hour
 
 // BuildRevision may be set by release tooling with -ldflags -X. VCS metadata
 // takes precedence; a dirty build cannot attest to a committed revision.
 var BuildRevision string
 
+// RunningBinaryRevision returns the clean embedded revision, or empty if unknown.
 func RunningBinaryRevision() string {
 	info, _ := debug.ReadBuildInfo()
 	return binaryRevision(info, BuildRevision)
