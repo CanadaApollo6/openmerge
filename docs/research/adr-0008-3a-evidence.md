@@ -174,8 +174,8 @@ acceptance evidence.
 
 ## Final executed results (2026-10-20 UTC)
 
-The code/evidence-probe revision is `1378213a9f00e68c17073cad6edc858ce3714342`.
-The final binary built by `make check` reports `1378213`. The evidence-only
+The code/evidence-probe revision is `3e64e48b84848b5ded989cf109559f0b0d7db8b5`.
+The final binary built by `make check` reports `3e64e48`. The evidence-only
 commit following it changes documentation/artifact metadata, not executable Go.
 The clean pure-layer revision is `7e34fe2`; the baseline is
 `ec09672f85c94540c2bf8287b9fa03f48a08e59c`.
@@ -184,7 +184,7 @@ The clean pure-layer revision is `7e34fe2`; the baseline is
   from its isolated clean checkout. Log: `/home/riels/.cache/openmerge-3a-i-clean-check.log`.
 - Integration `make check`: **exit 0**, including all real-git, simulator,
   PostgreSQL and race tests, lint, formatting and binary build. Completed around
-  18:02 UTC. Log: `/home/riels/.cache/openmerge-3a-ii-final-check.log`.
+  18:17 UTC. Log: `/home/riels/.cache/openmerge-3a-ii-edge-check.log`.
 - Final focused registration/refresh/cycle bootstrap matrix: **exit 0**.
   It covers basis change, digest change and actual store-pool closure before the
   final guard. The guard reloads rather than reusing a cached state. Canonical
@@ -212,9 +212,9 @@ The clean pure-layer revision is `7e34fe2`; the baseline is
 
 The [machine-readable results](adr-0008-3a-results.json) retain exact source
 revisions, before/after remote SHAs, exported-input watermarks, fixture seeds,
-commands/exits and a 134-artifact SHA-256 manifest. Raw object/ref/argv snapshots
-are under `/home/riels/.cache/openmerge-3a-legacy-final`; raw replay streams and
-the complete replay report are under `/home/riels/.cache/openmerge-3a-replay-final`.
+commands/exits and a 135-artifact SHA-256 manifest. Raw object/ref/argv snapshots
+are under `/home/riels/.cache/openmerge-3a-legacy-edge`; raw replay streams and
+the complete replay report are under `/home/riels/.cache/openmerge-3a-replay-edge`.
 
 Key artifact hashes:
 
@@ -238,7 +238,7 @@ flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB \
   make check
 python3 scripts/check-adr0008-3a-legacy.py \
   --baseline /home/riels/.cache/openmerge-3a-baseline \
-  --out /home/riels/.cache/openmerge-3a-legacy-final
+  --out /home/riels/.cache/openmerge-3a-legacy-edge
 flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=6GiB \
   GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local \
   python3 scripts/check-live-journal-replay.py \
@@ -246,7 +246,7 @@ flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=6GiB \
   --events /home/riels/.cache/om-pr72-fix1-input/events.jsonl \
   --queues /home/riels/.cache/om-pr72-fix1-input/queues.jsonl \
   --config-file .openmerge.yml --strict-state \
-  --out /home/riels/.cache/openmerge-3a-replay-final/report.json
+  --out /home/riels/.cache/openmerge-3a-replay-edge/report.json
 ```
 
 The object-comparison script acquires the required lock for every Go invocation
@@ -267,3 +267,11 @@ rule families, and trusted-signature verification remain explicit fail-closed
 cases rather than compatibility claims. Organization-sandbox enforcement is the
 unavailable acceptance item, still pending the dependent sandbox run. This is
 **Hold**, not deployment approval, and does not activate authority before PR 9.
+
+The final acceptance revision includes an aggregate 100,000-parent-edge budget
+in the shared validator and both local producers, in addition to the per-commit
+and object/path/metadata limits. The many-parent regression and shared fake/real
+contracts pass (`/home/riels/.cache/openmerge-3a-graph-cap.log`). Full `make check`,
+legacy object/ref/argv comparison and strict offline replay were all rerun after
+this final tightening and exited 0. The retained earlier rejection inventories
+remain the same valid small-graph cases; the final full suite re-exercised them.
