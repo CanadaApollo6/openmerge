@@ -59,6 +59,22 @@ func selectorPattern(pattern string) (string, error) {
 	return strings.Join(parts, "/"), nil
 }
 
+// CompileProtectedRefCoverage uses the same selector compiler for the managed
+// namespaces. Keep paired segment/recursive patterns even where they overlap.
+func CompileProtectedRefCoverage() RefCoverage {
+	result := RefCoverage{Includes: []string{}, Excludes: []string{}}
+	for _, family := range []string{"fence", "queue", "green", "verify"} {
+		for _, suffix := range []string{"*", "**"} {
+			pattern, err := selectorPattern("openmerge/" + family + "/" + suffix)
+			if err != nil {
+				panic(err)
+			}
+			result.Includes = append(result.Includes, "refs/heads/"+pattern)
+		}
+	}
+	return result
+}
+
 // MatchRefPattern implements only the fnmatch subset used by the compiler and
 // understood by the local validator. Unsupported external patterns fail closed.
 // **/ spans zero or more directories; a terminal ** is segment-local.

@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/config"
 	"github.com/CanadaApollo6/openmerge/internal/forge/github"
 )
 
@@ -27,6 +28,12 @@ App setup defaults to the signed-in personal account and polling (webhooks disab
 The manifest requests Actions read/write for optional CI retries and cancellation.
 Permissions diagnostics inspect the installed token grant without changing App settings.
 The config directory must not exist; defaults to $XDG_CONFIG_HOME/openmerge/<slug>/.
+Authority setup: rulesets --authority openmerge --config proposed.yml [--break-glass JSON]
+  [--apply --backup capture.json] [--rotate-break-glass]
+Recovery: rulesets --authority openmerge --restore capture.json [--apply]
+Rollback: rulesets --authority github --rollback-preflight --config github.yml
+  --installation-id ID --private-key KEY (read-only; admin and installation credentials)
+Permissions also accepts --authority openmerge or --config proposed.yml.
 Rulesets require GITHUB_TOKEN from a repository admin, with Administration read
 for inspection or write for --apply. Without --apply, only a preview is printed.
 Import-protection only makes GET requests; it also needs Contents, Checks and
@@ -70,11 +77,22 @@ func runSetup(args []string, stdout, stderr io.Writer) int {
 		flags.Int64Var(&rules.AppID, "app-id", 0, "App ID (not installation ID)")
 		flags.Int64Var(&installation, "installation-id", 0, "installation ID to inspect")
 		flags.StringVar(&privateKey, "private-key", "", "RSA PEM key path")
+		flags.StringVar(&rules.Authority, "authority", "", "setup policy authority: github or openmerge")
+		flags.StringVar(&rules.Config, "config", "", "reviewed proposed configuration")
 	case "rulesets":
 		flags.StringVar(&rules.Repo, "repo", "", "repository owner/name")
 		flags.Int64Var(&rules.AppID, "app-id", 0, "App ID (not installation ID)")
 		flags.StringVar(&configDir, "config-dir", "", "App directory containing app-id")
 		flags.BoolVar(&rules.Apply, "apply", false, "apply the printed changes")
+		flags.StringVar(&rules.Authority, "authority", "", "setup policy authority: github or openmerge")
+		flags.StringVar(&rules.Config, "config", "", "reviewed proposed configuration")
+		flags.StringVar(&rules.BreakGlass, "break-glass", "", `candidate actor as JSON: {"team":"org/team"} or {"repository_admin":true}`)
+		flags.StringVar(&rules.Backup, "backup", "", "exclusive recovery plan file; required for authority apply")
+		flags.StringVar(&rules.Restore, "restore", "", "preview or apply restoration from a recovery plan")
+		flags.BoolVar(&rules.RotateBreakGlass, "rotate-break-glass", false, "explicit single-update actor replacement after coordinated policy transition")
+		flags.BoolVar(&rules.RollbackPreflight, "rollback-preflight", false, "read-only prospective legacy compatibility checks")
+		flags.Int64Var(&installation, "installation-id", 0, "installation ID for rollback permission checks")
+		flags.StringVar(&privateKey, "private-key", "", "RSA PEM key path for installation checks")
 	default:
 		_, _ = io.WriteString(stderr, setupUsage)
 		return 2
@@ -126,6 +144,29 @@ func runSetup(args []string, stdout, stderr io.Writer) int {
 				driver, err = app.Installation(ctx, installation)
 				if err == nil {
 					err = driver.DiagnoseInstallationPermissions(ctx, stdout)
+					if err == nil {
+						authorityMode := rules.Authority
+						if rules.Config != "" {
+							var proposed []byte
+							proposed, err = os.ReadFile(rules.Config)
+							if err == nil {
+								candidate, _, loadErr := config.LoadAuthorityCandidate(proposed)
+								err = loadErr
+								if err == nil {
+									if authorityMode != "" && authorityMode != string(candidate.Authority.Mode.Normalized()) {
+										err = errors.New("--authority must agree with proposed config")
+									}
+									authorityMode = string(candidate.Authority.Mode.Normalized())
+								}
+							}
+						}
+						if err == nil && authorityMode != "" && authorityMode != "github" && authorityMode != "openmerge" {
+							err = errors.New("unknown --authority")
+						}
+						if err == nil && authorityMode == "openmerge" {
+							err = driver.DiagnoseAuthorityPermissions(ctx, stdout)
+						}
+					}
 				}
 			}
 		}
@@ -147,6 +188,20 @@ func runSetup(args []string, stdout, stderr io.Writer) int {
 		}
 		ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 		defer cancel()
+		if rules.RollbackPreflight && installation > 0 && privateKey != "" {
+			var key []byte
+			key, err = os.ReadFile(privateKey)
+			if err == nil {
+				var app *github.App
+				app, err = github.New(github.Config{AppID: rules.AppID, PrivateKey: key})
+				if err == nil {
+					rules.RuntimeDriver, err = app.Installation(ctx, installation)
+				}
+			}
+			if err != nil {
+				break
+			}
+		}
 		err = github.SetupRules(ctx, rules, os.Getenv("GITHUB_TOKEN"), stdout)
 	}
 	if err != nil {

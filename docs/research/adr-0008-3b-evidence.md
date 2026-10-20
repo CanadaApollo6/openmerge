@@ -1,0 +1,374 @@
+# ADR 0008 PR 3b: setup and recovery evidence
+
+Classification: **Inert, setup only**. Dependency PR 3a is Hold; this does not
+make a binary containing that dependency eligible for live deployment.
+
+Implementation baseline: `77b703e` (PR 3a, including PRs 1/2). The implementation
+commit and source/binary hashes are recorded below after verification. No live
+DB, status API, services, GitHub policies, teams, or sandbox state were touched.
+The only GitHub operations for this work are fetching main and publishing this
+implementation branch/PR. All automated GitHub interactions use `httptest`.
+
+## Implemented contract
+
+```sh
+openmerge setup rulesets --repo OWNER/REPO --app-id APP_ID \
+  --authority openmerge --config proposed.yml
+openmerge setup rulesets --repo OWNER/REPO --app-id APP_ID \
+  --authority openmerge --config proposed.yml --apply --backup install.json
+openmerge setup rulesets --repo OWNER/REPO --app-id APP_ID \
+  --authority openmerge --restore install.json                 # preview
+openmerge setup rulesets --repo OWNER/REPO --app-id APP_ID \
+  --authority openmerge --restore install.json --apply
+openmerge setup rulesets --repo OWNER/REPO --app-id APP_ID \
+  --authority github --rollback-preflight --config github.yml \
+  --installation-id INSTALLATION_ID --private-key APP_KEY
+```
+
+`GITHUB_TOKEN` is a separate repository-admin token, with Administration read for
+preview/preflight and Administration write for apply/restore. An installation
+credential does not substitute for it. The proposed file uses
+`config.LoadAuthorityCandidate`; the runtime loader and published schema still
+reject `policy_authority` and `break_glass`. Optional `--break-glass` repeats the
+same exclusive actor object as JSON, e.g. `'{"team":"ORG/TEAM"}'` or
+`'{"repository_admin":true}'`, and must agree with the file. Teams resolve through
+the admin client; a missing, cross-organization or mismatched team is refused.
+GitHub's repository-admin ruleset role is ID 5; the App Integration ID is never an
+installation ID. Sandbox acceptance of these representations remains pending.
+
+`openmerge-base` has active branch creation, strict update
+(`update_allows_fetch_and_merge=false`), deletion and non-fast-forward rules.
+Only the App and the resolved declared actor bypass, both `always`. Base includes
+come from the 3a compiler, including the default branch and all proposed
+selectors, with the OpenMerge namespace excluded.
+
+`openmerge-refs` renames the local `openmerge-fence` in place, retains its ID,
+coverage, unknown fields, rules and parameters, and adds paired `*` / `**/*`
+patterns for fence, queue, green and verify. The same compiler module generates
+these patterns; there is no second translator. Only the App bypasses, `always`.
+No submission refs are installed. Inherited managed-name collisions, duplicate
+names, ambiguous fence/refs pairs and incompatible managed shapes are refused.
+Unrelated/inherited content policy is never edited, including its existing App
+bypass. A retained content bypass may be removed only through ADR runbook step 7
+after step 6's activation and settlement requirements, outside this setup plan.
+
+Legacy `planRules` recognizes the successor by managed name, active branch
+coverage of the entire fence family, strict four-rule shape, and exactly the
+App bypass. It preserves additional coverage, creates no second fence, and
+rejects ambiguous pairs/incompatible successor names. Its original `github`
+setup preview/apply golden remains byte-identical.
+
+Rollback preflight uses the complete paginated prospective branch inventory and
+the actual `ValidateRules`, including inherited/push rulesets and protected ref
+families. Green/verify conditions are projected to the legacy validator's queue
+family for its conservative future-namespace overlap check. Classic reads use
+the admin client for every base and corresponding fence, including separate
+signature reads when omitted. The pure `classicProtectionProblems` receives the
+actual App ID, `hasMerges` only on merge-method bases, and `needsForce=false`.
+`Driver.ValidateClassicProtection` is never called. Explicit `Branch not
+protected` establishes absence; generic 404, null/incomplete details and failed
+reads block. Installation permission checks use the actual installation driver.
+
+Each blocker is one line, sorted/deduplicated:
+
+```text
+BLOCKER source=rulesets ref="refs/heads/main" code=base_bypass_missing: ruleset "content" (123): ... Operator choices: explicitly approve adding an App bypass (loses App content enforcement), disable/remove the owned rule, or ask its inherited-policy owner to act. Retain before/after evidence; if none is acceptable, stay in authority mode.
+BLOCKER source=classic ref="main" code=legacy_incompatible: [classic_signed_commits] ...
+BLOCKER source=permissions ref="" code=runtime_grant: installed App missing permission contents: write ...
+```
+
+Runtime warning grants remain warnings. A missing installation client is a
+blocker. Preflight collects blockers and exits 1, with no policy writes.
+
+Authority `setup permissions` (via `--authority openmerge` or proposed `--config`)
+recommends Administration read: it reads classic protection, does not grant
+ruleset writes, and does not guarantee bypass-list visibility. Setup inspects a
+fresh unrestricted installation token grant because runtime intentionally caches
+only its existing permission set. This setup diagnostic does not install the
+fresh token into the runtime cache. Runtime requirements, warnings and request
+traces remain unchanged with and without Administration read.
+
+## Recovery artifact and coordinated edits
+
+The UTF-8 JSON file is exclusively created mode 0600 and synced, including its
+parent directory, before the first write. Existing different/invalid captures
+are never overwritten. Version 1 shape:
+
+```json
+{
+  "version": 1,
+  "repository": "OWNER/REPO",
+  "app_id": 5383059,
+  "plan_sha256": "<SHA-256 of proposed file, resolved actor and rotation flag>",
+  "edits": [
+    {"id": 0, "name": "openmerge-base", "before": null, "after": {"name": "openmerge-base", "...": "complete planned settings"}},
+    {"id": 123, "name": "openmerge-refs", "before": {"name": "openmerge-fence", "...": "exact prior settings"}, "after": {"name": "openmerge-refs", "...": "complete planned settings"}}
+  ]
+}
+```
+
+Zero IDs mean creations. Response metadata is omitted, but unknown settings,
+conditions, rules and parameters are retained. Only managed edits are captured;
+credentials and unrelated policies are excluded. Credential-like content is
+refused before capture. The immutable file is the recovery intent, not journal
+verification. Retry with the same proposed file and `--backup` recognizes an
+already-completed write by ID/name **and** full expected settings, including a
+write whose HTTP response was lost. No mutable progress file is needed. Output
+names completed operations and pending/uncertain operations. Restore traverses
+captured edits in reverse, restores renamed/edited IDs and deletes only captured
+creations. Already-restored operations are skipped. Every mutation has a fresh
+inventory comparison and a read-back; unexpected/intervening edits refuse apply
+or restore. Known omitted-false update defaults and unordered actors/patterns
+compare semantically; unknown fields compare without omission.
+
+GitHub PUT has no CAS. The operator must serialize all repository policy edits;
+a read/write race cannot be eliminated by this client. A byte-identical concurrent
+creation is indistinguishable from the captured creation after an uncertain POST.
+
+For later selector edits, preview/apply the reviewed proposed file with a **new**
+backup before landing it. Setup installs the union of installed and proposed
+coverage; it never prunes old base/fence obligations or changes actors. Admin
+verification, policy-owner approval, all affected queue digests and settlement
+precede any pruning or creation of a newly matching branch. Applied admin
+verification and activation/settlement checks belong to later ADR PRs; this
+setup-only component cannot certify them.
+
+For rotation, serialize policy edits and first confirm installation bypass lists
+are hidden, with no unresolved finding requiring a seeing clear. Resolve/review
+the new actor. Land the owner-approved policy naming only the new actor while
+the old actor remains installed; wait for all affected digests and old attempts
+to settle. Then use a new capture and the explicit flag:
+
+```sh
+openmerge setup rulesets --repo OWNER/REPO --app-id APP_ID \
+  --authority openmerge --config landed-new-actor.yml --rotate-break-glass
+openmerge setup rulesets --repo OWNER/REPO --app-id APP_ID \
+  --authority openmerge --config landed-new-actor.yml --rotate-break-glass \
+  --backup rotation.json --apply
+```
+
+This permits one base update changing only its bypass list, never an actor union
+or a simultaneous selector/ref repair. Immediately run the future applied admin
+`--verify` against landed policy and retain its event. If apply/verification
+fails, stop the service until exact-list repair and applied verification succeed.
+Visible bypass lists require a separately reviewed admission-pause/recovery
+procedure. These operational preconditions are operator attestations, not
+runtime checks added by this PR. Do not interpret setup's successful exit as
+policy activation, settled attempts, or an applied verification receipt.
+
+## Automated verification
+
+Results and hash manifest are appended after the final check. Named coverage:
+
+- `TestAuthorityFaultEveryHTTPBoundary` / `TestAuthorityRestoreFaultEveryHTTPBoundary`:
+  inject HTTP 503 at every individual request, including both writes and all
+  per-mutation guards/read-backs; retry and exact restoration.
+- `TestAuthorityUncertainWritesAndActorAPIRejection`: committed POST/PUT with
+  lost response, API bypass rejection, safe partial diagnostics, idempotent retry.
+- `TestAuthorityCrashAfterFirstRuleset`: subprocess exit 73 after the first
+  completed ruleset, then a new process/client resumes the immutable capture.
+- Install/restore/union/rotation tests retain unknown top-level fields, rule
+  fields and parameters; reject concurrent edits, unsafe actors, name collisions,
+  unsupported conditions and inherited mutation; retain preactivation bypasses.
+- Legacy preview/apply after rename and restoration, extra successor coverage,
+  ambiguous pairs, and unchanged `github` golden; setup missing/adopted grant
+  diagnostics with unchanged runtime permission results and HTTP traces.
+- Rollback tests exercise real legacy validators, admin-only classic/signature
+  reads, nested merge-method bases, all blockers, inherited unbypassed compatible
+  content and missing installation credentials.
+- `TestSetupWriteRestrictionsRejectGeneratedAtomicPush`: fresh bare remote/cache,
+  real queue/fence generated objects, rejecting receive hooks on either atomic
+  ref, stale leases, unchanged remote SHAs on failure and successful exact retry.
+  This models local transport rejection; it does not prove GitHub enforcement.
+
+## Sandbox acceptance runbook — planned, NOT executed
+
+Only the maintainer/orchestrator runs this section. Do not unarchive the sandbox,
+create teams, or change unrelated protection as part of PR 3b implementation.
+Prerequisites: `Smart-Data-Ohio/openmerge-sandbox` is already writable through an
+approved process; App **5383059**, installation **173082682**, and existing team
+`Smart-Data-Ohio/break-glass` are present. Use separate tokens for the admin,
+an ordinary writer outside the team, and a writer in that team. Stop if any
+identity, existing old protection, or team resolution differs from the reviewed
+inventory. Do not grant the ordinary writer an admin bypass.
+
+Run in Bash, with the checked PR binary already built. Never enable `set -x` or
+put tokens in command arguments, URLs, committed files or evidence. Keep this
+entire evidence directory outside the repository and restrict it to its owner.
+
+```bash
+set -euo pipefail
+umask 077
+export REPO=Smart-Data-Ohio/openmerge-sandbox APP_ID=5383059 INSTALLATION_ID=173082682
+export APP_KEY=/absolute/path/to/sandbox-app-private-key.pem
+export OM=/absolute/path/to/reviewed/bin/openmerge
+EVIDENCE="$HOME/openmerge-3b-sandbox-$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -m 700 "$EVIDENCE"
+read -rs -p 'Separate admin token (Administration write): ' ADMIN_TOKEN; echo
+read -rs -p 'Ordinary writer token: ' WRITER_TOKEN; echo
+read -rs -p 'Break-glass team writer token: ' GLASS_TOKEN; echo
+export GITHUB_TOKEN="$ADMIN_TOKEN"
+date -u +%FT%TZ > "$EVIDENCE/start-utc.txt"
+"$OM" version > "$EVIDENCE/binary-version.txt"
+sha256sum "$OM" > "$EVIDENCE/binary.sha256"
+GH_TOKEN="$ADMIN_TOKEN" gh api "repos/$REPO" > "$EVIDENCE/repository-before.json"
+DEFAULT=$(jq -r .default_branch "$EVIDENCE/repository-before.json")
+GH_TOKEN="$ADMIN_TOKEN" gh api orgs/Smart-Data-Ohio/teams/break-glass > "$EVIDENCE/team.json"
+for actor in ADMIN WRITER GLASS; do
+  var="${actor}_TOKEN"
+  GH_TOKEN="${!var}" gh api user > "$EVIDENCE/identity-$actor.json"
+done
+capture_rules() {
+  local phase=$1 id
+  GH_TOKEN="$ADMIN_TOKEN" gh api --paginate --slurp \
+    "repos/$REPO/rulesets?includes_parents=true&per_page=100" > "$EVIDENCE/$phase-list.json"
+  while read -r id; do
+    GH_TOKEN="$ADMIN_TOKEN" gh api \
+      "repos/$REPO/rulesets/$id?includes_parents=true" > "$EVIDENCE/$phase-ruleset-$id.json"
+  done < <(jq -r '.[][] | .id' "$EVIDENCE/$phase-list.json")
+}
+capture_rules before
+# Retain the HTTP status/body even for an explicitly unprotected default.
+GH_TOKEN="$ADMIN_TOKEN" gh api --include \
+  "repos/$REPO/branches/$(jq -rn --arg ref "$DEFAULT" '$ref|@uri')/protection" \
+  > "$EVIDENCE/classic-before.http" 2>&1 || true
+cat > "$EVIDENCE/proposed.yml" <<'YAML'
+version: 1
+policy_authority: openmerge
+break_glass: {team: Smart-Data-Ohio/break-glass}
+queues:
+- name: main
+  merge_when: [check-success = ci]
+- name: sandbox-probes
+  base: sandbox-3b/**
+  merge_when: [check-success = ci]
+YAML
+sha256sum "$EVIDENCE/proposed.yml" > "$EVIDENCE/config.sha256"
+"$OM" setup permissions --app-id "$APP_ID" --installation-id "$INSTALLATION_ID" \
+  --private-key "$APP_KEY" --config "$EVIDENCE/proposed.yml" | tee "$EVIDENCE/permissions.txt"
+"$OM" setup rulesets --repo "$REPO" --app-id "$APP_ID" --authority openmerge \
+  --config "$EVIDENCE/proposed.yml" | tee "$EVIDENCE/preview.txt"
+# Review the exact plan and existing old protection before this write.
+"$OM" setup rulesets --repo "$REPO" --app-id "$APP_ID" --authority openmerge \
+  --config "$EVIDENCE/proposed.yml" --apply --backup "$EVIDENCE/install.json" \
+  | tee "$EVIDENCE/install.txt"
+echo 0 > "$EVIDENCE/install.exit"
+capture_rules after
+GH_TOKEN="$ADMIN_TOKEN" gh api --include \
+  "repos/$REPO/branches/$(jq -rn --arg ref "$DEFAULT" '$ref|@uri')/protection" \
+  > "$EVIDENCE/classic-after.http" 2>&1 || true
+"$OM" setup rulesets --repo "$REPO" --app-id "$APP_ID" --authority openmerge \
+  --config "$EVIDENCE/proposed.yml" --apply --backup "$EVIDENCE/rerun.json" \
+  | tee "$EVIDENCE/rerun.txt"
+echo 0 > "$EVIDENCE/rerun.exit"
+# Expected: "No ruleset changes needed.", no second fence, no edits to old
+# content/classic protection. A zero-change fresh run creates no backup file.
+```
+
+Retain all before/after bodies. Confirm old protections remain byte/semantically
+unchanged apart from response metadata, and any retained content App bypass
+remains present. The default branch is always covered even when not `main`.
+The probe selector is sandbox-only and is not landed or activated by setup.
+
+Mint an App token using its key, without printing JWT/token credentials:
+
+```bash
+b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+NOW=$(date +%s)
+HEADER=$(printf '%s' '{"alg":"RS256","typ":"JWT"}' | b64url)
+PAYLOAD=$(printf '{"iat":%s,"exp":%s,"iss":"5383059"}' "$((NOW-60))" "$((NOW+540))" | b64url)
+SIGNATURE=$(printf '%s' "$HEADER.$PAYLOAD" | openssl dgst -sha256 -sign "$APP_KEY" | b64url)
+APP_JWT="$HEADER.$PAYLOAD.$SIGNATURE"
+APP_TOKEN=$(GH_TOKEN="$APP_JWT" gh api --method POST \
+  "app/installations/173082682/access_tokens" --jq .token)
+unset APP_JWT SIGNATURE
+cat > "$EVIDENCE/askpass.sh" <<'SH'
+#!/bin/sh
+case "$1" in
+  *Username*) printf '%s\n' x-access-token ;;
+  *Password*) printf '%s\n' "$PUSH_TOKEN" ;;
+  *) exit 1 ;;
+esac
+SH
+chmod 700 "$EVIDENCE/askpass.sh"
+export GIT_ASKPASS="$EVIDENCE/askpass.sh" GIT_TERMINAL_PROMPT=0
+PUSH_TOKEN="$APP_TOKEN" git clone --bare "https://github.com/$REPO.git" "$EVIDENCE/probe.git" \
+  > "$EVIDENCE/clone.txt" 2>&1
+export GIT_AUTHOR_NAME='3b sandbox acceptance' GIT_AUTHOR_EMAIL='sandbox@example.invalid'
+export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+GIT_DIR="$EVIDENCE/probe.git"; export GIT_DIR
+TIP=$(git rev-parse "refs/heads/$DEFAULT")
+TREE=$(git rev-parse "$TIP^{tree}")
+S0=$(printf '3b probe root\n' | git commit-tree "$TREE" -p "$TIP")
+S1=$(printf '3b probe child\n' | git commit-tree "$TREE" -p "$S0")
+DIVERGED=$(printf '3b probe sibling\n' | git commit-tree "$TREE" -p "$TIP")
+printf '%s\n' "default=$TIP" "S0=$S0" "S1=$S1" "DIVERGED=$DIVERGED" > "$EVIDENCE/objects.txt"
+REFS=(sandbox-3b/base)
+for family in fence queue green verify; do
+  REFS+=("openmerge/$family/3b-single" "openmerge/$family/3b/nested")
+done
+expect_reject() {
+  local label=$1; shift
+  local code=0
+  "$@" > "$EVIDENCE/$label.response" 2>&1 || code=$?
+  printf '%s\n' "$code" > "$EVIDENCE/$label.exit"
+  if [ "$code" -eq 0 ]; then echo "UNEXPECTED SUCCESS: $label; stop and repair disposable refs" >&2; return 1; fi
+}
+# App creation works for a selector base and both depths in each ref family.
+for ref in "${REFS[@]}"; do
+  PUSH_TOKEN="$APP_TOKEN" git push --porcelain origin "$S0:refs/heads/$ref" \
+    > "$EVIDENCE/app-create-${ref//\//_}.response" 2>&1
+done
+# Ordinary writer: create/update/delete/non-FF are all rejected on bases+refs.
+# Team break-glass: those same operations are rejected on refs only.
+for actor in writer glass; do
+  token=$WRITER_TOKEN; [ "$actor" = writer ] || token=$GLASS_TOKEN
+  for ref in "${REFS[@]}"; do
+    [ "$actor" != glass ] || [ "$ref" != sandbox-3b/base ] || continue
+    label="$actor-${ref//\//_}"
+    PUSH_TOKEN="$token" expect_reject "$label-create" git push --porcelain origin "$S0:refs/heads/$ref-create"
+    PUSH_TOKEN="$token" expect_reject "$label-update" git push --porcelain origin "$S1:refs/heads/$ref"
+    PUSH_TOKEN="$token" expect_reject "$label-delete" git push --porcelain origin ":refs/heads/$ref"
+    PUSH_TOKEN="$token" expect_reject "$label-force" git push --porcelain \
+      "--force-with-lease=refs/heads/$ref:$S0" origin "$DIVERGED:refs/heads/$ref"
+  done
+done
+PUSH_TOKEN="$APP_TOKEN" git ls-remote origin > "$EVIDENCE/remote-after-rejections.txt"
+# Expected: every initialized probe remains S0. No *-create probe exists.
+# The declared team can create/update/force/delete a covered disposable base.
+for spec in "$S0:refs/heads/sandbox-3b/glass" "$S1:refs/heads/sandbox-3b/glass" \
+            "+$DIVERGED:refs/heads/sandbox-3b/glass" ':refs/heads/sandbox-3b/glass'; do
+  PUSH_TOKEN="$GLASS_TOKEN" git push --porcelain origin "$spec" >> "$EVIDENCE/glass-base.response" 2>&1
+done
+# App update/non-FF/delete work on every covered probe; lease the known tip.
+for ref in "${REFS[@]}"; do
+  label="app-${ref//\//_}"
+  PUSH_TOKEN="$APP_TOKEN" git push --porcelain "--force-with-lease=refs/heads/$ref:$S0" \
+    origin "$S1:refs/heads/$ref" > "$EVIDENCE/$label-update.response" 2>&1
+  PUSH_TOKEN="$APP_TOKEN" git push --porcelain "--force-with-lease=refs/heads/$ref:$S1" \
+    origin "$DIVERGED:refs/heads/$ref" > "$EVIDENCE/$label-force.response" 2>&1
+  PUSH_TOKEN="$APP_TOKEN" git push --porcelain "--force-with-lease=refs/heads/$ref:$DIVERGED" \
+    origin ":refs/heads/$ref" > "$EVIDENCE/$label-delete.response" 2>&1
+done
+PUSH_TOKEN="$APP_TOKEN" git ls-remote origin > "$EVIDENCE/remote-after.txt"
+unset GIT_DIR
+# Guarded ruleset restore is optional and separately reviewed; preview first.
+"$OM" setup rulesets --repo "$REPO" --app-id "$APP_ID" --authority openmerge \
+  --restore "$EVIDENCE/install.json" | tee "$EVIDENCE/restore-preview.txt"
+# Execute only if ending this isolated acceptance and restoring old settings:
+# "$OM" setup rulesets --repo "$REPO" --app-id "$APP_ID" --authority openmerge \
+#   --restore "$EVIDENCE/install.json" --apply | tee "$EVIDENCE/restore.txt"
+unset APP_TOKEN ADMIN_TOKEN WRITER_TOKEN GLASS_TOKEN GITHUB_TOKEN
+find "$EVIDENCE" -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > "$EVIDENCE/SHA256SUMS"
+```
+
+Expected positive pushes exit 0; each `expect_reject` retains a nonzero numeric
+exit and the actual GitHub rejection response (normally GH013/ruleset failure).
+A generic auth/network failure is **not** an enforcement pass: inspect the
+response and rerun after fixing credentials. Confirm remote SHAs remain `S0`
+after the rejection matrix, and capture that inventory before App success tests.
+Add timestamps/exits for every positive command to the retained terminal log.
+Keep the capture, rejection responses, before/after API bodies, config and object
+SHAs and hash manifest. Do not publish credentials or the private key. If old
+protection blocks an App push, preserve its rejection and defer acceptance;
+never silently add bypasses or remove content protections to make it pass.
