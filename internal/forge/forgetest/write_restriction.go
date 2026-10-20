@@ -135,7 +135,7 @@ func RunWriteRestrictionReader(t *testing.T, factory func(*testing.T) WriteRestr
 			o, err := e.Reader.ObserveWriteRestriction(t.Context(), WriteRestrictionInput())
 			must(t, err)
 			must(t, o.Validate())
-			if len(o.Protections) != 1 || o.Protections[0].BypassVisibility != authority.Visible || !reflect.DeepEqual(o.Protections[0].BypassActors, want) || len(o.Findings) != 0 {
+			if len(o.Protections) != 1 || o.Protections[0].BypassVisibility != authority.Visible || !reflect.DeepEqual(o.Protections[0].BypassActors, want) || scenario == "unknown-actor" && len(o.Findings) != len(want) || scenario != "unknown-actor" && len(o.Findings) != 0 {
 				t.Fatalf("reader rejected or interpreted observed actors: %+v", o)
 			}
 		})

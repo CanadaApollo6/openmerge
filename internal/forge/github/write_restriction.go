@@ -122,7 +122,7 @@ func (d *Driver) ObserveWriteRestriction(ctx context.Context, in forge.WriteRest
 		o.Inventory = authority.ReadFailure
 	}
 	slices.SortFunc(o.Protections, func(a, b authority.Protection) int { return cmp.Compare(a.Source+"/"+a.ID, b.Source+"/"+b.ID) })
-	return o, errors.Join(failures...)
+	return forge.UnknownBypassFindings(o), errors.Join(failures...)
 }
 
 func readVisibility(err error) authority.Visibility {

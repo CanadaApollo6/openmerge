@@ -14,9 +14,13 @@ const (
 	Rulesets          RulesSource = "rulesets"
 	ClassicProtection RulesSource = "classic_protection"
 	Permissions       RulesSource = "permissions"
+	// WriteRestriction is internal only; legacy source events reject it.
+	WriteRestriction RulesSource = "write_restriction"
 )
 
-var rulesSourceOrder = [...]RulesSource{Rulesets, ClassicProtection, Permissions}
+var legacyRulesSourceOrder = [...]RulesSource{Rulesets, ClassicProtection, Permissions}
+
+var rulesSourceOrder = [...]RulesSource{Rulesets, ClassicProtection, Permissions, WriteRestriction}
 
 // RulesSourceBlocked records definite findings, even if the read's basis is stale.
 type RulesSourceBlocked struct {
@@ -51,7 +55,7 @@ func (e RulesSourceCleared) Validate() error {
 }
 
 func (source RulesSource) validate() error {
-	if !slices.Contains(rulesSourceOrder[:], source) {
+	if !slices.Contains(legacyRulesSourceOrder[:], source) {
 		return fmt.Errorf("unknown rules source %q", source)
 	}
 	return nil

@@ -61,6 +61,13 @@ type WriteRestrictionReader interface {
 	ObserveWriteRestriction(context.Context, WriteRestrictionInput) (authority.Observation, error)
 }
 
+// WriteRestrictionInventoryReader includes classic protection in the inventory
+// used by source observers and activation fingerprints. The acquisition-only
+// PR 2 reader remains independently usable.
+type WriteRestrictionInventoryReader interface {
+	ObserveAuthorityInventory(context.Context, WriteRestrictionInput) (authority.Observation, error)
+}
+
 // WriteRestrictionInterpreter is a pure, forge-specific interpretation boundary.
 // It cannot perform network I/O. PR 2 adds readers and PR 3a adds interpretation.
 type WriteRestrictionInterpreter func(WriteRestrictionInput, authority.Observation) ([]authority.Finding, error)

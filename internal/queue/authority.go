@@ -125,14 +125,16 @@ func (e WriteRestrictionVerified) Validate() error {
 	return nil
 }
 
-// PR 1 retains pins and source inputs only. PR 4 owns interpretation, finding
-// reconciliation, source revisions and admission blocks. No planner consumes
-// this projection until complete authority activation in PR 9.
+// Authority evidence is isolated from legacy sources and proposed history.
 type authorityProjection struct {
-	Pin      *PolicyAuthorityApplied   `json:"pin,omitempty"`
-	Observed *WriteRestrictionObserved `json:"observed,omitempty"`
-	Verified *WriteRestrictionVerified `json:"verified,omitempty"`
-	Proposed *WriteRestrictionVerified `json:"proposed,omitempty"`
+	Pin            *PolicyAuthorityApplied      `json:"pin,omitempty"`
+	Observed       *WriteRestrictionObserved    `json:"observed,omitempty"`
+	Verified       *WriteRestrictionVerified    `json:"verified,omitempty"`
+	Proposed       *WriteRestrictionVerified    `json:"proposed,omitempty"`
+	Findings       map[string]authority.Finding `json:"findings,omitempty"`
+	LastObservedAt time.Time                    `json:"last_observed_at,omitempty"`
+	LastVerifiedAt time.Time                    `json:"last_verified_at,omitempty"`
+	Complete       bool                         `json:"complete,omitempty"`
 }
 
 func cloneAuthority[T any](v *T) *T {
@@ -159,55 +161,77 @@ func (s State) observeAuthority(e Event) (State, bool) {
 		if v.Validate() != nil || s.ConfigDigest != v.EffectiveDigest {
 			return s, true
 		}
-		p := authorityProjection{}
-		if s.authority != nil {
-			p = *s.authority
+		if s.authority != nil && reflect.DeepEqual(s.authority.Pin, &v) {
+			return s, true
 		}
-		if p.Pin == nil || !reflect.DeepEqual(p.Pin, &v) {
-			p.Observed = nil
-			p.Verified = nil
-			p.Proposed = nil
+		// A new governing commit with the same effective binding must not
+		// erase a known violation (for example a formatting-only policy edit).
+		if v.OpenMerge != nil && s.matchesAuthority(v.OpenMerge.Binding) {
+			p := *s.authority
+			p.Pin = cloneAuthority(&v)
+			s.authority = &p
+			return s, true
 		}
-		p.Pin = cloneAuthority(&v)
-		s.authority = &p
+		hadBlock := len(s.RulesSourceProblems(WriteRestriction)) > 0
+		s = cloneState(s)
+		s.authority = &authorityProjection{Pin: cloneAuthority(&v)}
+		delete(s.rulesSources, WriteRestriction)
+		if hadBlock {
+			s.revision++
+			s.rulesPauseRevision = s.revision
+		}
+		if v.OpenMerge != nil {
+			s.rulesSources[WriteRestriction] = rulesSourceState{}
+			if a := v.OpenMerge.Activation; a != nil {
+				s = s.foldWriteRestriction(0, a.SeeingReadAt, a.Evidence, true)
+			}
+		}
+		return s, true
 	case WriteRestrictionObserved:
-		if v.Validate() != nil || !s.matchesAuthority(v.Binding) {
+		if v.Validate() != nil || !s.matchesAuthority(v.Binding) || s.ConfigDigest != v.Binding.EffectiveDigest {
 			return s, true
 		}
-		p := *s.authority
-		if p.Observed != nil && (v.Basis < p.Observed.Basis || v.ObservedAt.Before(p.Observed.ObservedAt)) {
-			return s, true
+		accepted := len(v.Evidence.Findings) > 0 || v.Basis == s.RulesSourceRevision(WriteRestriction) && !v.ObservedAt.Before(s.authority.LastObservedAt)
+		s = s.foldWriteRestriction(v.Basis, v.ObservedAt, v.Evidence, false)
+		if accepted && (v.Evidence.Inventory != authority.ReadFailure || len(v.Evidence.Findings) > 0) && (s.authority.Observed == nil || !v.ObservedAt.Before(s.authority.Observed.ObservedAt)) {
+			p := *s.authority
+			p.Observed = cloneAuthority(&v)
+			s.authority = &p
 		}
-		p.Observed = cloneAuthority(&v)
-		s.authority = &p
+		return s, true
 	case WriteRestrictionVerified:
 		if v.Validate() != nil {
 			return s, true
 		}
-		p := authorityProjection{}
-		if s.authority != nil {
-			p = *s.authority
-		}
 		if v.Scope == "proposed" {
-			if p.Proposed != nil && v.VerifiedAt.Before(p.Proposed.VerifiedAt) {
-				return s, true
+			p := authorityProjection{}
+			if s.authority != nil {
+				p = *s.authority
 			}
-			p.Proposed = cloneAuthority(&v)
-		} else {
-			if !s.matchesAuthority(v.Binding) || p.Verified != nil && (v.Basis < p.Verified.Basis || v.VerifiedAt.Before(p.Verified.VerifiedAt)) {
-				return s, true
+			if p.Proposed == nil || !v.VerifiedAt.Before(p.Proposed.VerifiedAt) {
+				p.Proposed = cloneAuthority(&v)
+				s.authority = &p
 			}
-			p.Verified = cloneAuthority(&v)
+			return s, true
 		}
-		s.authority = &p
+		if !s.matchesAuthority(v.Binding) || s.ConfigDigest != v.Binding.EffectiveDigest {
+			return s, true
+		}
+		accepted := len(v.Evidence.Findings) > 0 || v.Basis == s.RulesSourceRevision(WriteRestriction) && !v.VerifiedAt.Before(s.authority.LastObservedAt)
+		s = s.foldWriteRestriction(v.Basis, v.VerifiedAt, v.Evidence, true)
+		if accepted && (s.authority.Verified == nil || !v.VerifiedAt.Before(s.authority.Verified.VerifiedAt)) {
+			p := *s.authority
+			p.Verified = cloneAuthority(&v)
+			s.authority = &p
+		}
+		return s, true
 	default:
 		return s, false
 	}
-	return s, true
 }
 
 func (s State) matchesAuthority(b authority.PolicyBinding) bool {
-	return s.authority != nil && s.authority.Pin != nil && s.authority.Pin.OpenMerge != nil && reflect.DeepEqual(s.authority.Pin.OpenMerge.Binding, b)
+	return s.authority != nil && s.authority.Pin != nil && s.authority.Pin.Authority == authority.OpenMerge && s.authority.Pin.OpenMerge != nil && reflect.DeepEqual(s.authority.Pin.OpenMerge.Binding, b)
 }
 
 func validateAuthoritySnapshot(p *authorityProjection) error {
@@ -220,6 +244,19 @@ func validateAuthoritySnapshot(p *authorityProjection) error {
 	if p.Pin != nil {
 		if err := p.Pin.Validate(); err != nil {
 			return err
+		}
+	}
+	if len(p.Findings) > 100000 {
+		return fmt.Errorf("authority findings exceed snapshot budget")
+	}
+	if p.Pin == nil || p.Pin.OpenMerge == nil {
+		if len(p.Findings) > 0 || !p.LastObservedAt.IsZero() || !p.LastVerifiedAt.IsZero() || p.Complete {
+			return fmt.Errorf("active authority evidence without an openmerge pin")
+		}
+	}
+	for element, f := range p.Findings {
+		if element == "" || f.Element != element {
+			return fmt.Errorf("invalid authority finding index")
 		}
 	}
 	state := State{authority: p}
@@ -325,7 +362,7 @@ func strictAuthorityFields(raw []byte, schema reflect.Type) error {
 }
 
 // AuthorityProtection returns the latest retained applied observation and its
-// source basis, without sharing mutable evidence. Proposed verification is never
+// source revision, without sharing mutable evidence. Proposed verification is never
 // runtime evidence. Push guards use this accessor for source drift detection;
 // evaluation uses the pin activation's seeing observation. PR 4 owns revisions;
 // this accessor activates
@@ -336,10 +373,10 @@ func (s State) AuthorityProtection() (uint64, authority.Observation, bool) {
 	}
 	observed, verified := s.authority.Observed, s.authority.Verified
 	if verified != nil && (observed == nil || (verified.Basis > observed.Basis || verified.Basis == observed.Basis && verified.VerifiedAt.After(observed.ObservedAt))) {
-		return verified.Basis, authority.CloneObservation(verified.Evidence), true
+		return s.RulesSourceRevision(WriteRestriction), authority.CloneObservation(verified.Evidence), true
 	}
 	if observed != nil {
-		return observed.Basis, authority.CloneObservation(observed.Evidence), true
+		return s.RulesSourceRevision(WriteRestriction), authority.CloneObservation(observed.Evidence), true
 	}
 	return 0, authority.Observation{}, false
 }

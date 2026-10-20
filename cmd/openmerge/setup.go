@@ -22,6 +22,7 @@ const setupUsage = `Usage:
   openmerge setup github [--owner ORG | --user] [--repo owner/name] [--name NAME] [--config-dir DIR] [--webhook-url URL]
   openmerge setup permissions --app-id ID --installation-id ID --private-key FILE
   openmerge setup rulesets --repo owner/name (--app-id ID | --config-dir DIR) [--apply]
+  openmerge setup rulesets --repo owner/name --app-id ID --authority openmerge --verify --database-url URL --verification-plan FILE --emission-receipt FILE --operator NAME
   openmerge setup import-protection --repo owner/name [--base BRANCH...] [--accept ID...] [--json] [--out FILE]
 
 App setup defaults to the signed-in personal account and polling (webhooks disabled).
@@ -36,6 +37,10 @@ Rollback: rulesets --authority github --rollback-preflight --config github.yml
 Permissions also accepts --authority openmerge or --config proposed.yml.
 Rulesets require GITHUB_TOKEN from a repository admin, with Administration read
 for inspection or write for --apply. Without --apply, only a preview is printed.
+Verification requires --verify --authority openmerge and the first-emission
+drain/backup gate even on github queues. It rejects --apply, --restore,
+--rollback-preflight and --rotate-break-glass.
+See docs/research/adr-0008-4-evidence.md before preparing the receipt and plan.
 Import-protection only makes GET requests; it also needs Contents, Checks and
 Commit statuses read. --out saves draft fragments locally. Exit 1 means a read
 failed or policy gaps/installation prerequisites remain; --accept only waives
@@ -55,6 +60,7 @@ func runSetup(args []string, stdout, stderr io.Writer) int {
 	var manifest github.ManifestOptions
 	var rules github.RulesOptions
 	var protection github.ImportOptions
+	var verification verifyOptions
 	var user bool
 	var installation int64
 	var privateKey string
@@ -80,6 +86,11 @@ func runSetup(args []string, stdout, stderr io.Writer) int {
 		flags.StringVar(&rules.Authority, "authority", "", "setup policy authority: github or openmerge")
 		flags.StringVar(&rules.Config, "config", "", "reviewed proposed configuration")
 	case "rulesets":
+		flags.BoolVar(&verification.Verify, "verify", false, "record an admin seeing read; never writes GitHub")
+		flags.StringVar(&verification.DatabaseURL, "database-url", "", "operator database credentials")
+		flags.StringVar(&verification.Plan, "verification-plan", "", "reviewed internal target plan JSON")
+		flags.StringVar(&verification.Receipt, "emission-receipt", "", "drained-worker inventory and restore-tested backup receipt JSON")
+		flags.StringVar(&verification.Operator, "operator", "", "operator name retained in verification evidence")
 		flags.StringVar(&rules.Repo, "repo", "", "repository owner/name")
 		flags.Int64Var(&rules.AppID, "app-id", 0, "App ID (not installation ID)")
 		flags.StringVar(&configDir, "config-dir", "", "App directory containing app-id")
@@ -188,6 +199,10 @@ func runSetup(args []string, stdout, stderr io.Writer) int {
 		}
 		ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 		defer cancel()
+		if verification.Verify {
+			err = runRulesVerification(ctx, verification, rules, stdout)
+			break
+		}
 		if rules.RollbackPreflight && installation > 0 && privateKey != "" {
 			var key []byte
 			key, err = os.ReadFile(privateKey)

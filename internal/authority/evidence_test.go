@@ -96,6 +96,10 @@ func TestUnknownBypassKindFingerprint(t *testing.T) {
 		{Kind: "unknown", RawKind: "FutureOne", Mode: "always"},
 		{Kind: "unknown", RawKind: "FutureTwo", Mode: "always"},
 	}
+	o.Findings = []authority.Finding{}
+	for i, actor := range o.Protections[0].BypassActors {
+		o.Findings = append(o.Findings, authority.Finding{Element: fmt.Sprint("unknown/", i), Kind: "unexpected_bypass", ProtectionID: o.Protections[0].Source + "/" + o.Protections[0].ID, Actor: &actor})
+	}
 	want, err := o.Fingerprint()
 	if err != nil {
 		t.Fatal(err)
@@ -107,6 +111,7 @@ func TestUnknownBypassKindFingerprint(t *testing.T) {
 		t.Fatal("unknown actor order changed fingerprint", err)
 	}
 	o.Protections[0].BypassActors[0].RawKind = "AnotherFutureKind"
+	o.Findings[0].Actor.RawKind = "AnotherFutureKind"
 	got, err = o.Fingerprint()
 	if err != nil || got == want {
 		t.Fatal("unknown kind omitted from fingerprint", err)
@@ -292,5 +297,23 @@ func TestObservationNestedCollectionBounds(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestUnknownActorRequiresItsOwnFinding(t *testing.T) {
+	o, _ := seeingEvidence(t)
+	actor := authority.BypassActor{Kind: "unknown", RawKind: "FutureActor", ID: "1", Mode: "always"}
+	o.Protections[0].BypassActors = append(o.Protections[0].BypassActors, actor)
+	if o.Validate() == nil {
+		t.Fatal("unknown actor without unexpected_bypass was accepted")
+	}
+	p := o.Protections[0]
+	o.Findings = append(o.Findings, authority.Finding{Element: "unknown", Kind: "unexpected_bypass", ProtectionID: p.Source + "/" + p.ID, Actor: &actor})
+	if err := o.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	o.Findings[len(o.Findings)-1].Actor = &authority.BypassActor{Kind: "unknown", RawKind: "AnotherActor", ID: "1", Mode: "always"}
+	if o.Validate() == nil {
+		t.Fatal("a different unknown actor's finding satisfied validation")
 	}
 }

@@ -330,6 +330,15 @@ func (o Observation) Validate() error {
 			}
 		}
 	}
+	for id, p := range protections {
+		for _, actor := range p.BypassActors {
+			if actor.Kind == "unknown" && !slices.ContainsFunc(o.Findings, func(f Finding) bool {
+				return f.Kind == "unexpected_bypass" && f.ProtectionID == id && f.Actor != nil && *f.Actor == actor
+			}) {
+				return fmt.Errorf("unknown bypass actor requires unexpected_bypass finding")
+			}
+		}
+	}
 	return nil
 }
 

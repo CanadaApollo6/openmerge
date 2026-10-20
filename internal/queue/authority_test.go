@@ -86,6 +86,10 @@ func TestCloneStateOwnsAuthorityEvidence(t *testing.T) {
 	applied.Scope = "applied"
 	state := State{}
 	for _, event := range []Event{ConfigApplied{Commit: pin.GoverningCommit, Digest: pin.EffectiveDigest}, pin, observed, applied, verified} {
+		if v, ok := event.(WriteRestrictionVerified); ok && v.Scope == "applied" {
+			v.Basis = state.RulesSourceRevision(WriteRestriction)
+			event = v
+		}
 		state = Apply(state, event)
 	}
 	before, err := EncodeSnapshot(state)
@@ -176,6 +180,7 @@ func TestAuthoritySnapshotTailAndIsolation(t *testing.T) {
 		t.Fatal("event aliases projection")
 	}
 	stale := observed
+	stale.Evidence = authority.CloneObservation(verified.Evidence)
 	stale.Basis = 2
 	stale.ObservedAt = observed.ObservedAt.Add(-time.Second)
 	s = Apply(s, observed)
