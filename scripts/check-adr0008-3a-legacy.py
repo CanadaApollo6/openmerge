@@ -22,13 +22,13 @@ func probeCall(t *testing.T,g any,name string,args ...any)string{
 }
 '''
 REAL = r'''package gitops
-import("bytes";"context";"crypto/rand";"encoding/json";"os";"reflect";"testing";"github.com/CanadaApollo6/openmerge/internal/forge")
+import("bytes";"context";"crypto/rand";"encoding/json";"os";"os/exec";"reflect";"testing";"github.com/CanadaApollo6/openmerge/internal/forge")
 ''' + COMMON + r'''
 func TestADR3aLegacyProbe(t *testing.T){
  original:=rand.Reader;defer func(){rand.Reader=original}();rows:=[]any{};ctx:=context.Background()
  for _,method:=range []forge.MergeMethod{forge.Merge,forge.Squash,forge.Rebase,forge.FastForward}{
   rand.Reader=bytes.NewReader(bytes.Repeat([]byte{0x5a},65536));f:=newFixture(t)
-  save:=func(step string){rows=append(rows,map[string]any{"method":method,"step":step,"refs":gitCommand(t,f.remote,"",nil,"show-ref"),"objects":gitCommand(t,f.remote,"",nil,"cat-file","--batch-all-objects","--batch")})}
+  save:=func(step string){cmd:=exec.Command("git","--git-dir="+f.remote,"cat-file","--batch-all-objects","--batch");cmd.Env=gitEnv();objects,e:=cmd.Output();probeMust(t,e);rows=append(rows,map[string]any{"method":method,"step":step,"refs":gitCommand(t,f.remote,"",nil,"show-ref"),"objects":objects})}
   fence:=probeCall(t,f.g,"EnsureFence",ctx,testRepo,testFence);save("fence-create")
   prs:=f.prs[:2];if method==forge.FastForward{prs=f.prs[:1]}
   req:=forge.BuildRequest{Ref:"openmerge/queue/main/equiv",BaseSHA:f.base,PRs:prs,Method:method,BatchID:"equiv"}
