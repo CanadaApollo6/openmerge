@@ -1,0 +1,3 @@
+/home/riels/.cache/adr0008-6-main: exit=0
+/home/riels/.t3/worktrees/openmerge/t3-6b9938ed: exit=0
+PASS: six legacy checks are byte-identical; serialized preexisting status fields and order match after stripping only change/landing

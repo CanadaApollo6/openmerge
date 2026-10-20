@@ -1,0 +1,4 @@
+/home/riels/.cache/adr0008-6-main: exit=0
+/home/riels/.t3/worktrees/openmerge/t3-6b9938ed: exit=0
+PASS: six complete CLI status outputs are byte-identical; no fields or whitespace stripped
+Complete CLI receipt: /home/riels/.cache/adr0008-6-legacy-cli-responses.json

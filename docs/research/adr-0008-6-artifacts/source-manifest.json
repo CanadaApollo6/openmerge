@@ -1,0 +1,31 @@
+{
+  "implementation_commit": "d4e99eac559d2bd865a8a4f72cccab7272c89a68",
+  "baseline_commit": "d4e15c89fa9a1e68d8cf9afe55d0f3a25318ae91",
+  "files": {
+    "cmd/openmerge/queue.go": "2de3a201338971953df96504893d4c59cc2fec62f31683b864df0994af583787",
+    "cmd/openmerge/queue_test.go": "3dacc8be3b6de927e6700dcd724d8e1e3700a77c9e9f551c60745a7d45ff35aa",
+    "cmd/openmerge/serve.go": "9439942adca1bc2ed363984ddfbf17d27830fc5076df48ebe8a0cbf6fe2bc2c1",
+    "cmd/openmerge/serve_test.go": "b5ef52612d897999c41a3f65102d1f912047f4861eda3152883d09ac103abbac",
+    "docs/api.md": "bec6876da228dfc90165e2c9b91e1fd39d6f623ac711286a24ebb9114efaca09",
+    "internal/queue/authority.go": "0db0855017878c1969cf474bc579769528edb2d373cfd535699d966a3c92a0eb",
+    "internal/serve/branches.go": "7f247dbdbc9d5c517e07b8ef32ba9623b290917eb7895d526b0bad06facc3808",
+    "internal/serve/health.go": "bef75166f175ba79d65dd06be505f23893cfb7be2b4fe60468e5d0c13a3a836e",
+    "internal/serve/health_real_git_test.go": "3fdb4562b8108d446c276a4a2be83ef8d0a49373e10861d29759b10e24372941",
+    "internal/serve/health_test.go": "1e7b97ac79c979be1e01016a14deb17cf6d06a5c962fee0d3483554c57ed2699",
+    "internal/serve/serve.go": "347ffaf53169c3bf6ec1f1947e18cd065bdd40554799b130aef0e22d118407ad",
+    "internal/status/authority.go": "7284b0abda0b353a25cdae47251874d9b6e78c5e92046aa5a8a4bf1ed47e0433",
+    "internal/status/authority_test.go": "aec317d12b3aaa988129223141d37c5baa564dae0d4e97e74b47e52849a3bfad",
+    "internal/status/health.go": "1c3b11b9cf202d9c5c9bd66cf40112b0fd7ef349ece7943bbdec5c8950ec0b28",
+    "internal/status/health_test.go": "8889e9455114d6062e3e520c3b24c00b2d22994a0abe885a8a58a60438ac4396",
+    "internal/status/http.go": "047a12ea30ec42d24af20c87baed787d25a454bb7636d611d6f14bbeb2ad6f38",
+    "internal/status/status.go": "0e7b41202853ec9409321e1f62b9a77ed55fbe2073a28ae2a0f6fad879a8d57b",
+    "internal/store/health.go": "c8d24ddcac3b8dbd890637495d6a0f9cdeadcdc4f7a339129f66e1d3f0ca691b",
+    "scripts/check-legacy-authority-cli.py": "2e7a4ed483e42e452bbb42a30fe84e508495d459d2defb87ac8eaa30540a4d00",
+    "scripts/check-legacy-authority-http.py": "409c87a51d56085dc10a493834746e3c00fe6ce1111befd9a55330f4164d8a6e"
+  },
+  "fixture_inputs": {
+    "internal/queue/testdata/wire/v1/event_policy_authority_applied.json": "7e6964d31510cc4a8f007363f81f8b8a0cdcabc0865ef1ad52274a7eb635cbf7",
+    "internal/queue/testdata/wire/v1/event_write_restriction_observed.json": "ded60181213f88d602803fb14121227df1be4ee01467e76b5a22f91ff2d4206d",
+    "internal/queue/testdata/wire/v1/event_write_restriction_verified.json": "8d84afaa170729c2bf72bf77b201b440f19e4109e6198efe5f8c9867f4958b48"
+  }
+}
