@@ -294,3 +294,48 @@ func TestAuthorityActivationRejectsMismatchedDraft(t *testing.T) {
 		t.Fatal("pin rebind retained a candidate draft")
 	}
 }
+
+func TestAuthorityLegacySiblingIsolation(t *testing.T) {
+	approval, approvalConfig, _, _, _, start, _ := landingDecisionSetup(t)
+	pin := authorityFixture[PolicyAuthorityApplied](t, "policy_authority_applied")
+	observed := authorityFixture[WriteRestrictionObserved](t, "write_restriction_observed")
+	proposed := authorityFixture[WriteRestrictionVerified](t, "write_restriction_verified")
+	for _, depth := range []int{1, 4} {
+		cfg := approvalConfig
+		cfg.SpeculationMaxDepth = depth
+		legacy := Apply(State{BaseBranch: "main", BaseSHA: "base", Fence: "fence"}, PRObserved{PR: 2, HeadSHA: "head", Eligible: true, Trusted: true})
+		legacy = Apply(legacy, EnqueueRequested{PR: 2, At: start.At})
+		siblings := []State{legacy, approval}
+		before := make([][]byte, len(siblings))
+		plans := make([][]Action, len(siblings))
+		for i, s := range siblings {
+			var err error
+			before[i], err = EncodeSnapshot(s)
+			if err != nil {
+				t.Fatal(err)
+			}
+			plans[i] = Plan(cfg, s, start.At)
+		}
+		// Start from a shared immutable value so authority operations also prove
+		// they cannot mutate slices/maps retained by an approval-enabled sibling.
+		active := Apply(approval, ConfigApplied{Commit: pin.GoverningCommit, Digest: pin.EffectiveDigest})
+		active = Apply(active, pin)
+		active = Apply(active, observed)
+		active = Apply(active, proposed)
+		invalid := observed
+		invalid.Binding.EffectiveDigest = "invalid"
+		active = Apply(active, invalid)
+		if active.AuthorityPin() == nil {
+			t.Fatal("authority sibling did not retain its pin")
+		}
+		for i, s := range siblings {
+			after, err := EncodeSnapshot(s)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(before[i], after) || !reflect.DeepEqual(plans[i], Plan(cfg, s, start.At)) || s.authority != nil {
+				t.Fatal("authority sibling changed legacy bytes or actions", depth, i)
+			}
+		}
+	}
+}

@@ -19,7 +19,7 @@ func TestActorValidation(t *testing.T) {
 		{},
 		{Team: "Smart-Data-Ohio/break-glass", RepositoryAdmin: true},
 		{Team: "Smart-Data-Ohio"},
-		{Team: "Smart Data Ohio/owners"},
+		{Team: "Smart Data Ohio/break-glass"},
 		{Team: "Smart-Data-Ohio/break-glass/extra"},
 		{Team: "Smart-Data-Ohio/openmerge[bot]"},
 	} {
