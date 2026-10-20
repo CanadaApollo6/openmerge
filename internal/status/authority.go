@@ -37,38 +37,28 @@ type OutsideWarnings struct {
 	Truncated   bool    `json:"truncated"`
 }
 
-// ProjectAuthority uses PR 1's retained evidence only. PR 4 integration must use
-// its durable per-element findings here (including sticky findings after hidden
-// reads), rather than interpreting forge responses or folding findings here.
+// ProjectAuthority renders PR 4's durable projection. It neither interprets
+// forge responses nor reconciles findings; hidden reads retain the source's
+// sticky violations and operator verification remains a distinct timestamp.
 func ProjectAuthority(s queue.State, now time.Time) *Authority {
 	pin := s.AuthorityPin()
 	if pin == nil || pin.Authority != authority.OpenMerge {
 		return nil
 	}
-	observed, verified := s.AuthorityEvidence()
-	a := &Authority{State: "unverified", Inventory: "unknown", Elements: []AuthorityElement{}}
-	var evidence *authority.Observation
-	if pin.OpenMerge.Activation != nil {
-		activation := pin.OpenMerge.Activation
-		a.LastObservedAt = &activation.SeeingReadAt
-		a.LastVerifiedAt = &activation.Proposed.SeeingReadAt
-		evidence = &activation.Evidence
+	durable := s.WriteRestrictionStatus()
+	a := &Authority{State: durable.State, Inventory: "unknown", Elements: []AuthorityElement{}}
+	if !durable.LastObservedAt.IsZero() {
+		a.LastObservedAt = &durable.LastObservedAt
 	}
-	if verified != nil {
-		a.LastVerifiedAt = &verified.VerifiedAt
-		if a.LastObservedAt == nil || !verified.VerifiedAt.Before(*a.LastObservedAt) {
-			a.LastObservedAt = &verified.VerifiedAt
-			evidence = &verified.Evidence
-		}
+	if !durable.LastVerifiedAt.IsZero() {
+		a.LastVerifiedAt = &durable.LastVerifiedAt
 	}
-	if observed != nil && (a.LastObservedAt == nil || !observed.ObservedAt.Before(*a.LastObservedAt)) {
-		a.LastObservedAt = &observed.ObservedAt
-		evidence = &observed.Evidence
+	_, evidence, found := s.AuthorityProtection()
+	if !found && pin.OpenMerge.Activation != nil {
+		evidence = pin.OpenMerge.Activation.Evidence
+		found = true
 	}
-	if _, latest, found := s.AuthorityProtection(); found {
-		evidence = &latest
-	}
-	if evidence != nil {
+	if found {
 		a.Inventory = string(evidence.Inventory)
 		for _, p := range evidence.Protections {
 			a.Elements = append(a.Elements, AuthorityElement{p.Source + "/" + p.ID + "/targets", string(p.TargetsVisibility)}, AuthorityElement{p.Source + "/" + p.ID + "/rules", string(p.RulesVisibility)}, AuthorityElement{p.Source + "/" + p.ID + "/bypass", string(p.BypassVisibility)})
@@ -76,13 +66,7 @@ func ProjectAuthority(s queue.State, now time.Time) *Authority {
 		for _, c := range evidence.Coverage {
 			a.Elements = append(a.Elements, AuthorityElement{c.Ref, string(c.Visibility)})
 		}
-		if len(evidence.Findings) > 0 {
-			a.State = "violated"
-		} else if a.LastVerifiedAt != nil && evidence.SeeingComplete() {
-			a.State = "verified"
-		}
 	}
-
 	a.RefreshAges(now)
 	return a
 }

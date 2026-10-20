@@ -43,21 +43,36 @@ func TestAuthorityRenderingAndRestart(t *testing.T) {
 	if err := violated.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	sticky := hidden
+	sticky.Evidence = authority.CloneObservation(hidden.Evidence)
+	sticky.Evidence.Protections[0].RulesVisibility = authority.Hidden
+	sticky.Evidence.Protections[0].Rules = []authority.Rule{}
 	for _, tc := range []struct {
 		name, want string
 		events     []queue.Event
 	}{
 		{"never", "unverified", nil},
-		{"observed only", "unverified", []queue.Event{seen}},
+		{"observed only", "verified", []queue.Event{seen}},
 		{"verified", "verified", []queue.Event{verified, seen}},
 		{"hidden", "unverified", []queue.Event{verified, hidden}},
 		{"violated", "violated", []queue.Event{verified, violated}},
+		{"hidden retains violation", "violated", []queue.Event{verified, violated, sticky}},
 		{"repaired", "verified", []queue.Event{verified, violated, queue.WriteRestrictionObserved{Binding: seen.Binding, Basis: seen.Basis + 1, ObservedAt: seen.ObservedAt.Add(time.Minute), Evidence: seen.Evidence}}},
 		{"stale observation", "verified", []queue.Event{verified, seen, queue.WriteRestrictionObserved{Binding: hidden.Binding, Basis: 0, ObservedAt: hidden.ObservedAt.Add(-time.Hour), Evidence: hidden.Evidence}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := base
-			for _, e := range tc.events {
+			for i, e := range tc.events {
+				switch v := e.(type) {
+				case queue.WriteRestrictionVerified:
+					v.Basis = s.RulesSourceRevision(queue.WriteRestriction)
+					e = v
+				case queue.WriteRestrictionObserved:
+					if tc.name != "stale observation" || i != len(tc.events)-1 {
+						v.Basis = s.RulesSourceRevision(queue.WriteRestriction)
+					}
+					e = v
+				}
 				s = queue.Apply(s, e)
 			}
 			a := ProjectAuthority(s, now)

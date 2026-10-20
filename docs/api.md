@@ -609,10 +609,10 @@ status never establishes verification. Health refreshes ages on its snapshots;
 it caps visibility details at 64 elements per queue and exposes `elements_omitted`
 when truncated. Ordinary status retains every per-element visibility.
 
-This main-based rendering currently consumes PR 1's retained applied inputs.
-PR 4 must supply its durable per-element findings (especially sticky violations
-through hidden reads) at the marked `ProjectAuthority` seam. Proposed verification
-is never presented as applied verification. `outside_warnings` is reserved for
+This rendering consumes PR 4's durable `WriteRestrictionStatus` projection,
+including sticky violations through hidden reads. Visibility comes from the
+retained applied evidence. Proposed verification is never presented as applied
+verification. `outside_warnings` is reserved for
 PR 5's ledger, with `outstanding`, bounded `event_ids`, and `truncated`. Its marked
 status provider / worker-snapshot seams deliberately leave it absent until that
 ledger exists. The deployed `outside_pushes` recent list is unchanged and is not
