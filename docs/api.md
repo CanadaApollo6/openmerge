@@ -366,6 +366,21 @@ does not trigger `not_recorded` / `record_evidence` advice. A later config canno
 substitute for the historical pin. Recorded progress is informational and never
 a fresh landing authorization.
 
+For approval queues, obligation progress uses the latest journaled eligibility
+observation in database commit order (`events.id`), including approval-wait
+input updates. The observation must match the current revision, head,
+classification and policy. A missing observation reports `eligibility_pending`
+("eligibility pending gate read"); an outdated binding reports
+`eligibility_stale`. Both use `wait_for_gate_read`. An observed unresolved read
+still reports `unknown_eligibility`. Brief reads use only the journal and local
+immutable Git objects and never refresh eligibility from the forge.
+
+An unmet, resolved receipt obligation reports `receipt_required`, with
+`next_step.action: post_receipt` and `next_step.command: "@openmerge approve <digest>"`.
+The command remains present in agent output. Approval progress, eligibility,
+display codes and next steps are excluded from the canonical brief digest, so
+changing approval progress does not invalidate a receipt.
+
 Display bounds are 32 rows per collection and eight hunks per displayed file.
 Each text field has a 2,048-byte JSON-escaped bound. Separate text budgets reserve
 64 KiB for metadata, 96 KiB for obligations, 96 KiB for provenance, 64 KiB for

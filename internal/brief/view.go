@@ -179,14 +179,15 @@ type ObligationView struct {
 
 // Step is a stable action with structured recovery parameters.
 type Step struct {
-	Source string `json:"source,omitempty"`
-	Action string `json:"action"`
-	Path   string `json:"path,omitempty"`
-	UserID string `json:"user_id,omitempty"`
-	After  string `json:"source_time_after,omitempty"`
-	Name   string `json:"name,omitempty"`
-	URL    string `json:"url,omitempty"`
-	Commit string `json:"commit,omitempty"`
+	Source  string `json:"source,omitempty"`
+	Action  string `json:"action"`
+	Path    string `json:"path,omitempty"`
+	UserID  string `json:"user_id,omitempty"`
+	After   string `json:"source_time_after,omitempty"`
+	Name    string `json:"name,omitempty"`
+	URL     string `json:"url,omitempty"`
+	Commit  string `json:"commit,omitempty"`
+	Command string `json:"command,omitempty"`
 }
 
 // Warning preserves a safety-relevant condition independently of row limits.
@@ -386,16 +387,34 @@ func Project(f Fact, audience string, sanitizers ...*diagnostic.Sanitizer) (View
 	if f.Obligations != nil {
 		v.Obligations = []ObligationView{}
 	}
+	if f.Obligations != nil && (f.Presentation == nil || !f.Presentation.RequirementsMissing) {
+		if digest, err := Digest(f); err == nil {
+			v.Digest = digest
+		}
+	}
 	for index, o := range f.Obligations {
 		code := o.Code
 		switch code {
-		case "met", "approval_required", "unknown_inventory", "unknown_owners", "unknown_eligibility", "excluded_owner":
+		case "met", "approval_required", "unknown_inventory", "unknown_owners", "unknown_eligibility", "eligibility_pending", "eligibility_stale", "excluded_owner":
 		default:
 			code = "unknown_eligibility"
 		}
+		if code == "approval_required" && o.Requirement.Receipt && v.Digest != NotRecorded {
+			code = "receipt_required"
+			o.Explanation = "receipt required — post `@openmerge approve " + v.Digest + "`"
+		}
 		clears, action := clearing(code)
+		step := Step{Action: action}
+		if code == "receipt_required" {
+			step.Command = "@openmerge approve " + v.Digest
+			clears = o.Explanation
+		}
 		if !o.Met {
-			warn(code, clears, action)
+			if step.Command != "" {
+				warnStep(code, clears, step)
+			} else {
+				warn(code, clears, action)
+			}
 		}
 		if index >= maxRows {
 			v.Truncated = true
@@ -420,7 +439,8 @@ func Project(f Fact, audience string, sanitizers ...*diagnostic.Sanitizer) (View
 			eligible[j] = bounded(eligible[j], &v.Truncated)
 		}
 		path := metadata.clean(o.Path, &v.Truncated)
-		v.Obligations = append(v.Obligations, ObligationView{o.Requirement.Human, eligible, bounded(code, &v.Truncated), path, bounded(string(o.Side), &v.Truncated), bounded(string(o.Requirement.Selector), &v.Truncated), bounded(o.Requirement.Group, &v.Truncated), o.Requirement.Count, o.Requirement.Receipt, o.Met, obligations.clean(o.Explanation, &v.Truncated), clears, ids, Step{Action: action, Path: path}})
+		step.Path = path
+		v.Obligations = append(v.Obligations, ObligationView{o.Requirement.Human, eligible, bounded(code, &v.Truncated), path, bounded(string(o.Side), &v.Truncated), bounded(string(o.Requirement.Selector), &v.Truncated), bounded(o.Requirement.Group, &v.Truncated), o.Requirement.Count, o.Requirement.Receipt, o.Met, obligations.clean(o.Explanation, &v.Truncated), clears, ids, step})
 	}
 	if p := f.Presentation; p != nil {
 		if p.Stances != nil {
@@ -492,11 +512,6 @@ func Project(f Fact, audience string, sanitizers ...*diagnostic.Sanitizer) (View
 	if v.Obligations != nil {
 		approvalsRequired := f.ApprovalsRequired
 		v.ApprovalsRequired = &approvalsRequired
-	}
-	if v.Obligations != nil && (f.Presentation == nil || !f.Presentation.RequirementsMissing) {
-		if digest, err := Digest(f); err == nil {
-			v.Digest = digest
-		}
 	}
 	if v.Intent == nil || v.Classification == nil {
 		warn("not_recorded", "Record missing evidence before relying on this brief for approval.", "record_evidence")
@@ -575,6 +590,10 @@ func clearing(code string) (string, string) {
 		return "Obtain an eligible independent owner's approval.", "independent_owner_approval"
 	case "unknown_eligibility":
 		return "Record resolved identity, membership and writer eligibility.", "record_eligibility"
+	case "eligibility_pending", "eligibility_stale":
+		return "Wait for the gate to record eligibility for the current revision, head and policy.", "wait_for_gate_read"
+	case "receipt_required":
+		return "Post an approval receipt for the exact current brief digest.", "post_receipt"
 	case "approval_required":
 		return "Obtain the required eligible approvals; receipt requirements need the exact current brief digest.", "wait_for_approval"
 	default:

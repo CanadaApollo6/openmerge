@@ -95,6 +95,9 @@ func briefPolicyProjection(ctx context.Context, source Source, j store.Journal, 
 		if err != nil {
 			return unavailable()
 		}
+		if policy.Approvals != nil {
+			f = recordedBriefProgress(f, policy, s, facts, pin.Digest, projection.eligibilityPins[b.ChangeID])
+		}
 		return f, ""
 	}
 }

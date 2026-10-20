@@ -42,6 +42,8 @@ func ReviewerCheckSummaryFromProjection(j store.Journal, q *Queue, pr int, polic
 			}
 			return brief.Fact{}, "policy_unavailable"
 		}
+		facts, _ := s.ApprovalFacts(b.ChangeID)
+		f = recordedBriefProgress(f, policy, s, facts, s.ConfigDigest, q.eligibilityPins[b.ChangeID])
 		return f, ""
 	}})
 	if err != nil || !found {
@@ -128,6 +130,9 @@ func reviewerCheckText(key store.QueueKey, id string, view brief.View, entry *En
 			break
 		}
 		text += fmt.Sprintf("\nRequirement %s: %s count=%d receipt=%t met=%t; next: %s", checkText(r.Path, 180), checkText(r.Selector, 80), r.Count, r.Receipt, r.Met, checkText(r.NextStep.Action, 100))
+		if r.NextStep.Command != "" {
+			text += " — post `" + checkText(r.NextStep.Command, 100) + "`"
+		}
 	}
 	text += "\nNative reviews bind the head; native intent/brief receipt: "
 	if len(view.Receipts) == 0 {
