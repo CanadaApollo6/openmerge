@@ -367,7 +367,7 @@ func TestBriefEligibilityAcceptedInputChangeRenewsPin(t *testing.T) {
 }
 
 func TestBriefEligibilityBareObservationCannotRenewChangedApprovals(t *testing.T) {
-	src, _, fresh, _ := briefEligibilityFixture(t, false)
+	src, oldPolicy, fresh, _ := briefEligibilityFixture(t, false)
 	appendBriefEvents(&src.journal, fresh)
 	before := readEligibilityBrief(t, src, "reviewer")
 	if !before.Obligations[0].Met {
@@ -379,6 +379,11 @@ func TestBriefEligibilityBareObservationCannotRenewChangedApprovals(t *testing.T
 	view := readEligibilityBrief(t, src, "reviewer")
 	if view.Obligations[0].Met || view.Obligations[0].Code != "eligibility_stale" || len(view.Obligations[0].ApprovedIDs) != 0 {
 		t.Fatalf("old-policy eligibility revived: %+v", view.Obligations)
+	}
+	check, err := status.ReviewerCheckSummary(src.journal, 5, oldPolicy)
+	must(t, err)
+	if strings.Contains(check, "met=true") || !strings.Contains(check, "eligibility\\_stale") {
+		t.Fatalf("old policy bypassed reviewer guard: %s", check)
 	}
 	if view.Digest != before.Digest {
 		t.Fatal("display guard changed receipt identity")
