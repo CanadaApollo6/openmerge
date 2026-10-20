@@ -578,6 +578,11 @@ func EncodeEvent(value Event) (string, []byte, error) {
 			return "", nil, err
 		}
 		return encodeWire("change_classified", nonNullClassification(v))
+	case OutsidePushAcknowledged:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("outside_push_acknowledged", v)
 	case OutsidePushRecorded:
 		if err := v.Validate(); err != nil {
 			return "", nil, err
@@ -895,6 +900,8 @@ func DecodeEvent(payload []byte) (Event, error) {
 			return nil, err
 		}
 		return v, v.Validate()
+	case "outside_push_acknowledged":
+		return decodeAuthorityEvent[OutsidePushAcknowledged](envelope.Data)
 	case "outside_push_recorded":
 		v, err := readWireData[OutsidePushRecorded](envelope.Data)
 		if err != nil {
