@@ -245,7 +245,7 @@ No consumer invents a second actor, observation, or digest contract.
 | 3a | Ref compilation, content validation, and pre-push integration | 1, 2 | Hold |
 | 3b | Reversible two-ruleset setup | 2, 3a | Inert |
 | 4 | Durable write-restriction observations and admin verification | 1, 2, 3a | Inert |
-| 5 | Durable acknowledgement and outside-push warnings | 1, 4 | Inert |
+| 5 | Durable acknowledgement and outstanding-warning ledger | 1, 4 | Inert |
 | 6 | Authority status/CLI/API, health, liveness, and deadlines | 4, 5 | Hold |
 | 7 | Human-facing PR check instructions | 1 | Hold |
 | 8 | Atomic per-check landing evidence | 1, 2 | Hold |
@@ -301,11 +301,14 @@ All PRs follow these storage and acceptance rules:
   worker across hosts after period B before startup with that migration, as for
   Stage A 006/007. No implicit “if needed” indexes remain.
 - **[Issue #83](https://github.com/CanadaApollo6/openmerge/issues/83) is a merge
-  prerequisite of PR 2.** Consume its shared `internal/forge/validation.go`
-  validators and `forgetest` contract-suite structure. #83 owns the existing
-  fake/real parity work; this plan does not reimplement or enumerate that scope.
-  PR 2 adds only authority-reader and visibility cases. Later new capabilities
-  extend the same shared validators/contracts rather than creating a fork.
+  prerequisite of PR 2.** Require its merged fake/real parity outcome. Consume
+  the shared validators #83 lands, currently planned as
+  `internal/forge/validation.go`, and its `forgetest` contract-suite structure;
+  that file path is a current integration plan, not an issue deliverable. If #83
+  lands in a different shape, amend this plan's PR 2/3a integration points before
+  implementing them. #83 owns the existing fake/real parity work; this plan does
+  not reimplement or enumerate that scope. PR 2 adds only authority-reader and
+  visibility cases. Later capabilities extend the landed shared contracts.
 - **First emission and downgrade:** drain old workers across hosts before any
   new journal type or persisted version-7 snapshot, including explicit admin
   commands against still-`github` queues. Capture and test a pre-emission DB
@@ -381,9 +384,10 @@ All PRs follow these storage and acceptance rules:
 
 ##### PR 2: Read actual authority protection after #83
 
-- **Prerequisite/scope:** merge #83 first and consume its shared validators and
-  contract-suite structure. Add only the new typed authority reader and its
-  visibility cases to the fake and GitHub driver. Reuse installation auth,
+- **Prerequisite/scope:** merge #83's fake/real parity outcome first and consume
+  the shared validators and contract-suite structure it actually lands, subject
+  to the integration-plan amendment above. Add only the typed authority reader
+  and its visibility cases to the fake and GitHub driver. Reuse installation auth,
   conditional reads, pagination checks, quota classes,
   and stable `IdentityReader.ResolveTeam` identities. Read repository and
   inherited rulesets, details, enforcement, conditions, rule parameters, and
@@ -422,9 +426,11 @@ All PRs follow these storage and acceptance rules:
   config edit from landing. The compiler still translates each selector exactly;
   this is a deliberate setup transition, not a glob approximation.
 - **Contract:** evaluate all applicable repository, inherited, push, and classic
-  rules for each operation: queue build/update/delete, strict landing's atomic
-  base and fence update, fast-forward's contributor head and marker, verify
-  pushes, green advances, and generated revert/deploy candidates. Rule parameters
+  rules for today's operations: queue builds/updates, strict landing's atomic
+  base and fence update, fast-forward's contributor head and marker, fence
+  creation/advance, and `DeleteBranch` cleanup. Verify pushes, green advances,
+  generated reverts, and deploy candidates are future paths: they must use this
+  boundary when implemented, and are not deliverables of 3a. Rule parameters
   and combinations matter. Unknown rules block. PR/review/check rules warn only
   when the App actually bypasses that particular policy; bypass elsewhere proves
   nothing. No new CI counting or merge semantics are introduced.
@@ -433,26 +439,43 @@ All PRs follow these storage and acceptance rules:
   each affected ref, with paths, blob sizes, messages, signatures, and parents.
   Acquisition supplies pinned contributor objects; generated objects are read
   directly from the same local session before publication. The fake and gitops
-  share its new input/completeness contracts using #83's validators. A remote
+  share its new input/completeness contracts using the shared validators #83
+  lands (currently planned as `internal/forge/validation.go`; amend the
+  integration plan if that shape changes). A remote
   `PushContentReader` after `BuildTestRef` returns cannot enforce this boundary.
 - **Pre-push integration (owned here, activated by 9):** refactor gitops to
   prepare → inspect/validate → push within its existing session/cache lock.
   Construct each commit exactly once using the existing builders and pass its
   actual OID to the pure validator; never regenerate a preview message/commit.
   `BuildTestRef` must validate after composing all commits/fast-forward markers
-  and before its current push in `build.go`. Route `Land`, `EnsureFence`, and
-  `AdvanceFence` through the same boundary after their fence objects exist,
-  validating the entire atomic base-and-fence update before either ref moves.
-  Cover verify, green, generated reverts/deploy candidates, ref creation, and
-  deletion through that boundary too; no authority push path may bypass it.
-  Supply an immutable, repository/policy-digest-bound validation context per
-  operation from the executor, not mutable global policy on a shared Repo.
-  Missing/stale authority context, incomplete inventories, or rejection aborts
-  before any `git push`; uncertainty is not a warning. Existing started attempts
+  and before its current push at `internal/gitops/build.go:279`. Route `Land`,
+  `EnsureFence`, `AdvanceFence`, and `DeleteBranch`
+  (`internal/gitops/delete_branch.go:36`) through the same boundary before
+  `pushLease` (`internal/gitops/fence.go:57`), after any fence objects exist;
+  validate the entire atomic base-and-fence update before either ref moves.
+  These are today's two production push sites. Future verify/green/revert/deploy
+  paths must enter this boundary when added, including creation and deletion.
+  Carry context across `forge.Git` (`internal/forge/forge.go:292`) with a new
+  transient `forge.PushOptions` parameter on all five mutating methods, mirrored
+  by fake/gitops contracts and all callers. It contains an authority-required
+  flag and an immutable per-operation validation context supplied by the executor,
+  bound to repository/queue, governing commit, effective policy digest,
+  protection basis revision, and intended refs/leases; never store mutable policy
+  on a shared Repo. Missing required context aborts. Context is **stale** when
+  its policy/basis binding differs from the queue's current pin/revision or its
+  intended operation/expected old SHAs differ from the prepared push. Check at
+  dispatch and recheck before push via an executor-supplied validity guard;
+  a changed binding requires replanning with fresh context, not silent reuse.
+  Stale context, incomplete inventories, or rejection aborts before any
+  `git push`; uncertainty is not a warning. Existing started attempts
   still run settlement/read-back after an error. Keep leases, atomicity,
   credentials, commit bytes, and the no-context legacy path unchanged. Do not
   add fields to deployed action wire payloads to carry this transient context.
-- **Content checks:** reject signatures for unsigned generated objects, including
+- **Content checks:** in active authority mode, validate retained content rules
+  even while the App still bypasses them; that bypass does not waive local
+  validation. This covers the interval after runbook step 6 and before step 7
+  removes the bypass. In `github` mode the legacy path remains unchanged.
+  Reject signatures for unsigned generated objects, including
   base-only fast-forward until proof exists. Reject linear-history merge builds
   and fast-forward contributor history containing merges. Validate message
   restrictions against real generated messages, metadata trailers, fences,
@@ -466,17 +489,24 @@ All PRs follow these storage and acceptance rules:
   integration touches shared build/landing paths, even while authority is dormant.
 - **Tests/real acceptance/evidence:** property vectors compare matching branches
   at multiple depths, omitted base, `release/*`, `release/**`, exclusions, and
-  future branch creation. Build commits with real `gitops` for squash, merge,
-  rebase, fast-forward, and available revert/verify/green paths. Retain commit
-  graphs/messages and allowed/rejected operation matrices. For every push family,
-  reject an actual intermediate commit, marker, or fence and assert a push-spy
-  saw no invocation and real bare-remote refs are byte-for-byte unchanged,
+  future branch creation. Exercise real `gitops` for squash, merge,
+  rebase, fast-forward, fence creation/advance, and `DeleteBranch`. Future
+  revert/verify/green/deploy paths must add equivalent acceptance when implemented.
+  Retain commit graphs/messages and allowed/rejected operation matrices. For
+  every commit-producing push family, reject an actual intermediate commit,
+  marker, or fence and assert a push-spy saw no invocation and real bare-remote
+  refs are byte-for-byte unchanged,
   including both base and fence. Also assert accepted objects equal the OIDs
-  inspected before push, and compare legacy commit IDs. On GitHub, apply
+  inspected before push, and compare legacy commit IDs. For `DeleteBranch`,
+  reject a disallowed deletion and assert no push invocation and an unchanged
+  remote; preserve existing missing/changed-ref no-op behavior. On GitHub, apply
   compatible linear/message/path/size rules in the sandbox and prove actual
   App pushes succeed; incompatible signature/merge/unknown cases must be
-  blocked before push. Unsupported/unavailable rule families stay explicitly
-  unaccepted, not silently marked compatible.
+  blocked before push, including while a retained content rule still has an
+  App bypass. Test missing context, changed digest/basis, mismatched refs/leases,
+  and the validity guard rejecting a policy change during preparation.
+  Unsupported/unavailable rule families stay explicitly unaccepted, not silently
+  marked compatible.
 
 ##### PR 3b: Install and recover the two write rulesets
 
@@ -493,6 +523,10 @@ All PRs follow these storage and acceptance rules:
   App bypasses refs. Do not include future submission refs. Refuse duplicate or
   ambiguous managed rulesets and name collisions. Never edit inherited rulesets
   or add bypasses to unrelated content rules in this authority path.
+  A retained content ruleset's existing App bypass may be removed only after
+  runbook step 6 completes: the authority digest is active in every affected
+  queue, old-policy attempts have settled, and no violation remains. Step 7
+  owns the reviewed removal; setup before activation must preserve that bypass.
   Teach legacy `planRules` to recognize `openmerge-refs` as the successor to
   `openmerge-fence` by managed name plus required fence coverage/App-only shape;
   keep its extra ref coverage, do not create a second fence ruleset, and reject
@@ -515,12 +549,42 @@ All PRs follow these storage and acceptance rules:
   creating a newly matching branch via App/break-glass. Failed setup leaves the
   old config active; never activate a new selector on an uncovered base. Repeat
   this setup-before-config sequence in 11 on a fresh `release/**` addition.
+- **Post-activation break-glass rotation (Decision refinement):** there is no
+  non-violating old/new actor union: every visible extra actor violates the
+  exact declaration. Serialize policy edits and confirm the installation's
+  bypass list is hidden, with no unresolved finding requiring a seeing clear.
+  Resolve/review the new actor and capture the old exact list for guarded
+  recovery. First land the owner-approved config naming only the new actor
+  while the old actor remains installed; wait for every affected queue's new
+  digest and old-attempt settlement. Hidden observations leave this interval
+  unverified and non-blocking, not verified. Then use an explicit reviewed
+  rotation apply, with 3b's backup/concurrency guards, to replace the old actor
+  with the new actor in one managed base-ruleset update, preserving App-only
+  refs and the App bypass; never install a union. Immediately run applied admin
+  `--verify` against the landed policy
+  and retain its event. Until replacement, the old actor remains trusted; after
+  replacement, only the new actor may exercise break-glass. A seeing read during
+  the mismatch may correctly block; on failed apply/verification the operator
+  stops the service until exact-list repair and a successful applied verify,
+  then restarts it and settles pending attempts. This availability
+  sequence relies on the hidden-list steady state; if lists are visible, defer
+  rotation to a separately reviewed admission-pause/recovery procedure rather
+  than claiming a non-violating transition. Repeat this sequence in 11.
 - **Rollback preflight:** provide a read-only proposed `setup rulesets
   --authority github --rollback-preflight --config github.yml` path using the
   complete prospective base inventory. Run the actual legacy `ValidateRules`
-  and `ValidateClassicProtection` with admin-visible full policies, plus the
-  installation's runtime permission checks, for every base and protected ref
-  family. Include inherited/push/classic policies and renamed fence recognition;
+  over admin-visible repository/inherited/push rulesets for each base and
+  protected ref family, including renamed fence recognition. For classic
+  protection, use the admin-token `setupAPI` to fetch each prospective base and
+  its `openmerge/fence/<base>` protection, including required-signature details,
+  and run the pure `classicProtectionProblems` (`classic_protection.go:85`) with
+  the actual App ID, prospective merge method (`hasMerges` only on merge-method
+  bases), and `needsForce: false`, matching the legacy base/fence checks. Do not
+  call `Driver.ValidateClassicProtection`: it uses the installation client,
+  which setup does not have. Expose a setup-internal wrapper around the pure
+  helper if needed; explicit unprotected responses establish absence and
+  incomplete/error reads fail preflight. Separately run the actual
+  installation's runtime permission checks with its installation credentials;
   no relaxed authority interpretation or hidden-list substitution may certify
   compatibility. Report all blockers before landing the rollback config.
   A compatible content rule without an App bypass still fails legacy validation:
@@ -564,6 +628,12 @@ All PRs follow these storage and acceptance rules:
   that new enum value or these new event types, so this choice does not waive
   the first-emission drain/downgrade gate. Reads happen outside locks; recorded
   basis revisions guard clears.
+  Represent `write_restriction` as a dedicated internal source-map entry whose
+  hypothetical unblock in `DeferredByPause` (`internal/queue/plan.go`) uses an
+  authority-specific in-memory clone helper instead of synthesizing an invalid
+  `RulesSourceCleared{write_restriction}`, and explicitly exclude it from the
+  generic source emitter loop in `internal/serve/rules.go`; only the authority
+  fold manages its durable block.
 - **Finding semantics:** index findings by violated element, such as a ruleset's
   target coverage or a bypass actor. A completed structural read may clear a
   repaired structure while a previously visible unauthorized actor remains
@@ -578,9 +648,15 @@ All PRs follow these storage and acceptance rules:
   proposed policy, including visible violations, are **evidence-only** on a
   still-`github` queue: they cannot set/clear an admission block, change active
   authority state, or satisfy active verification. Lock queues in canonical
-  order and append atomically with an idempotency key. Applied verification
-  folds only against the currently pinned authority policy. A visible violation
-  is recorded and exits nonzero; failed reads never claim verification.
+  order and append atomically with a key derived from verification kind,
+  queue key, and a fresh per-invocation nonce generated before the seeing read.
+  Reuse that nonce only for retries of that same read/atomic append; another
+  invocation or fresh seeing read gets a new nonce even if the protection
+  fingerprint is identical. Daily Q2 verification therefore appends fresh
+  evidence and advances verification time rather than deduping yesterday's event.
+  Applied verification folds only against the currently pinned authority policy.
+  A visible violation is recorded and exits nonzero; failed reads never claim
+  verification.
   The first-emission drain/backup rule **does gate `--verify` itself**, even
   before config lands: its new event is incompatible with old readers. During
   period B only isolated sandbox verification may write these events.
@@ -611,7 +687,10 @@ All PRs follow these storage and acceptance rules:
   queue/dedupe unique index for command retries. Test proposed violations leave
   `github` admission and next actions unchanged, draft mismatch/hidden binding,
   the first-emission drain procedure, concurrent verification/runtime reads, hidden-after-violation, mixed repaired/unseen
-  findings, digest changes, duplicate commands, restart, and source isolation.
+  findings, digest changes, duplicate append retries, two daily seeing reads
+  with identical fingerprints but distinct events/verification times, restart,
+  and source isolation. Test `DeferredByPause` hypothetical clearing and the
+  generic emitter's exclusion of the dedicated authority source.
   Real-git worker acceptance must settle a started atomic landing even when the
   observer records a violation. On GitHub, disable one managed rule, observe a
   block, repair it, and prove only a suitable visible observation clears it.
@@ -636,13 +715,16 @@ All PRs follow these storage and acceptance rules:
   outstanding warnings/receipt lookups; no 20-item cap or new indexed JSON query.
   Preserve atomic cancellation/failure behavior and measure the ~5k-event scan
   plus growth on isolated fixtures before acceptance.
-- **Projection/config:** query the journal-backed acknowledgement ledger even
-  after the original push falls outside the 20-item recent projection. Show
-  outstanding warnings in CLI status, API, and health for authority bases.
-  Record warning eligibility from authority active at the observed base move,
-  so enabling authority does not relabel all historic github-mode pushes.
-  Switching modes or retiring a queue never deletes receipts or audit evidence.
-  No YAML/schema or forge capability change. No acknowledgement on PR checks.
+- **Ledger/config:** expose a journal-backed outstanding-warning ledger even
+  after the original push falls outside the 20-item recent projection. Derive
+  warning eligibility in journal order from the authority pin active when the
+  existing `outside_push_recorded` event was appended; do not extend or rewrite
+  that deployed payload or persist another eligibility field on it. Enabling
+  authority does not relabel historic github-mode pushes. Switching modes or
+  retiring a queue never deletes receipts or audit evidence. This PR owns only
+  the ledger and acknowledgement event/command; PR 6 alone owns warning rendering
+  in status, CLI, API, and health. No YAML/schema or forge capability change,
+  shared status-rendering changes, or acknowledgement on PR checks.
 - **Tests/real acceptance/evidence:** wrong queue/type/SHA, concurrent retry,
   restart, more than 20 outstanding pushes, and archived queue lookup. Prove
   acknowledgement does not clear rules/suspect blocks, change ancestry, grant
@@ -1002,7 +1084,12 @@ Retain a fresh permission/install snapshot, not just the Stage A operator report
 7. **Remove only reviewed redundancy.** Capture a fresh policy snapshot. Remove
    only the specifically reviewed redundant PR/review/check requirements from
    their owned repository policies using the admin operator. Preserve compatible
-   content rules and both write rulesets. Inherited conflicts must be resolved
+   content rules and both write rulesets. Remove an App bypass on a retained
+   content ruleset only after step 6 has completed and the authority digest is
+   active everywhere with old-policy attempts settled. PR 3a's authority
+   validator already enforces that content rule while the App still bypasses
+   it; capture a successful validated landing in that interval, then explicitly
+   review and remove the bypass here. Inherited conflicts must be resolved
    by their actual owner or the switch stops. Rerun import, admin verification,
    runtime observation, and health. Save exact changed rules/parameters.
    **Selector addition:** while authority is active, prepare another reviewed
@@ -1014,6 +1101,14 @@ Retain a fresh permission/install snapshot, not just the Stage A operator report
    future matching base in that interval. Land the edit
    with owner approval, wait for every new digest/settlement, then use the App
    to create the branch and activate its queue. Retain both coverage bindings.
+   **Actor rotation:** exercise 3b's post-activation hidden-list sequence with a
+   second reviewed team: land the new-only declaration, wait for all digests and
+   settlement, replace the old bypass actor directly with the new one, then
+   immediately run applied `--verify`. Retain before/after lists, unverified
+   interval, and the fresh applied event; prove no union was installed and the
+   old actor can no longer bypass. If real installation lists are visible,
+   report that limit and exercise the hidden sequence in fixtures; do not claim
+   real acceptance of it or waive the admission-pause/recovery requirement.
 8. **Prove enforcement on real GitHub.** As an ordinary writer, attempt a
    fast-forward base push, matching release-branch creation, deletion, force
    update, and GitHub merge-button/API merge on a fresh test PR. Save rejections
@@ -1078,8 +1173,9 @@ Retain a fresh permission/install snapshot, not just the Stage A operator report
     authority landing succeeds under it. Restore the saved PR/review/check
     policy with App bypasses while keeping both authority write rulesets active.
     Run 3b's rollback preflight against the entire prospective `github` config,
-    all bases/ref families, inherited rulesets, classic protection, and actual
-    installation grants. Require it to reject that otherwise compatible content
+    all bases/ref families for rulesets, base-plus-fence classic protection via
+    admin-fetched inputs to `classicProtectionProblems`, and actual installation
+    grants. Require it to reject that otherwise compatible content
     rule under legacy `ValidateRules` before the config is queued. The operator
     explicitly approves and adds an App bypass to this retained content ruleset
     for the test, recording the loss of App content enforcement; disabling or
