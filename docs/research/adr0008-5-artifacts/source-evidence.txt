@@ -1,0 +1,28 @@
+=== RUN   TestOutsidePushWarningDelayedAuditAuthorityBoundaries
+=== RUN   TestOutsidePushWarningDelayedAuditAuthorityBoundaries/openmerge/return-before-audit-false
+    outside_push_ledger_test.go:115: mode=openmerge return_before_audit=false before_event=9 pin_event=10 after_event=11 warning_event=14 warning_origin=11 new_sha=after-boundary
+    outside_push_ledger_test.go:115: mode=openmerge return_before_audit=false before_event=9 pin_event=10 after_event=11 warning_event=14 warning_origin=11 new_sha=after-boundary
+=== RUN   TestOutsidePushWarningDelayedAuditAuthorityBoundaries/openmerge/return-before-audit-true
+    outside_push_ledger_test.go:115: mode=openmerge return_before_audit=true before_event=9 pin_event=10 after_event=11 warning_event=15 warning_origin=11 new_sha=after-boundary
+    outside_push_ledger_test.go:115: mode=openmerge return_before_audit=true before_event=9 pin_event=10 after_event=11 warning_event=15 warning_origin=11 new_sha=after-boundary
+=== RUN   TestOutsidePushWarningDelayedAuditAuthorityBoundaries/github/return-before-audit-false
+    outside_push_ledger_test.go:115: mode=github return_before_audit=false before_event=9 pin_event=10 after_event=11 warning_event=13 warning_origin=9 new_sha=before-boundary
+    outside_push_ledger_test.go:115: mode=github return_before_audit=false before_event=9 pin_event=10 after_event=11 warning_event=13 warning_origin=9 new_sha=before-boundary
+=== RUN   TestOutsidePushWarningDelayedAuditAuthorityBoundaries/github/return-before-audit-true
+    outside_push_ledger_test.go:115: mode=github return_before_audit=true before_event=9 pin_event=10 after_event=11 warning_event=14 warning_origin=9 new_sha=before-boundary
+    outside_push_ledger_test.go:115: mode=github return_before_audit=true before_event=9 pin_event=10 after_event=11 warning_event=14 warning_origin=9 new_sha=before-boundary
+--- PASS: TestOutsidePushWarningDelayedAuditAuthorityBoundaries (0.27s)
+    --- PASS: TestOutsidePushWarningDelayedAuditAuthorityBoundaries/openmerge/return-before-audit-false (0.09s)
+    --- PASS: TestOutsidePushWarningDelayedAuditAuthorityBoundaries/openmerge/return-before-audit-true (0.08s)
+    --- PASS: TestOutsidePushWarningDelayedAuditAuthorityBoundaries/github/return-before-audit-false (0.05s)
+    --- PASS: TestOutsidePushWarningDelayedAuditAuthorityBoundaries/github/return-before-audit-true (0.05s)
+PASS
+ok  	github.com/CanadaApollo6/openmerge/internal/store	0.276s
+=== RUN   TestOutsidePushAcknowledgementRealGit
+    outside_push_ack_real_git_test.go:74: base=558b3a15eaba2e83aac8ae1502717a550481541f landed=a3e2ecbeae15d395bac9acb1155e15a8b8f8fad8 outside=8fff2d72268a7550dabcb468525858fde7126635 remote_refs=refs/heads/main 558b3a15eaba2e83aac8ae1502717a550481541f warnings=[{EventID:15 BaseMovedEventID:11 OutsidePushRecorded:{PreviousSHA:a3e2ecbeae15d395bac9acb1155e15a8b8f8fad8 NewSHA:558b3a15eaba2e83aac8ae1502717a550481541f AncestryKnown:true Rewrite:true HistoryKnown:true Commits:[] Truncated:false VerificationBeforeLanding:none PossibleStaleObservation:true At:2026-10-20 18:19:04.173708 -0400 EDT}} {EventID:16 BaseMovedEventID:12 OutsidePushRecorded:{PreviousSHA:558b3a15eaba2e83aac8ae1502717a550481541f NewSHA:8fff2d72268a7550dabcb468525858fde7126635 AncestryKnown:true Rewrite:false HistoryKnown:true Commits:[8fff2d72268a7550dabcb468525858fde7126635 a3e2ecbeae15d395bac9acb1155e15a8b8f8fad8] Truncated:false VerificationBeforeLanding:none PossibleStaleObservation:false At:2026-10-20 18:19:04.175186 -0400 EDT}} {EventID:17 BaseMovedEventID:13 OutsidePushRecorded:{PreviousSHA:8fff2d72268a7550dabcb468525858fde7126635 NewSHA:558b3a15eaba2e83aac8ae1502717a550481541f AncestryKnown:true Rewrite:true HistoryKnown:true Commits:[] Truncated:false VerificationBeforeLanding:none PossibleStaleObservation:false At:2026-10-20 18:19:04.176511 -0400 EDT}}]
+    outside_push_ack_real_git_test.go:85: acknowledgement=&{EventID:18 OutsidePushAcknowledged:{SourceEventID:15 SHA:558b3a15eaba2e83aac8ae1502717a550481541f Operator:on-call At:2026-10-20 22:19:04.236723958 +0000 UTC}}
+    outside_push_ack_real_git_test.go:85: acknowledgement=&{EventID:19 OutsidePushAcknowledged:{SourceEventID:16 SHA:8fff2d72268a7550dabcb468525858fde7126635 Operator:on-call At:2026-10-20 22:19:04.237006784 +0000 UTC}}
+    outside_push_ack_real_git_test.go:85: acknowledgement=&{EventID:20 OutsidePushAcknowledged:{SourceEventID:17 SHA:558b3a15eaba2e83aac8ae1502717a550481541f Operator:on-call At:2026-10-20 22:19:04.237236076 +0000 UTC}}
+--- PASS: TestOutsidePushAcknowledgementRealGit (0.10s)
+PASS
+ok  	github.com/CanadaApollo6/openmerge/internal/serve	0.113s

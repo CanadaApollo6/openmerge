@@ -1662,3 +1662,70 @@ Conflict grace is excluded: delivered conflicts remove work as today, without
 a grace deadline or retry budget. Stage A does not claim cancellation at depth 1.
 Old-worker detection is manual: leases lack binary capability IDs. Keep the
 all-host drain checklist and pre-use backup as operational requirements.
+
+## Acknowledging outside pushes
+
+`openmerge admin acknowledge` records that someone with operator database access
+saw one particular outside-queue push. The target is the immutable
+`outside_push_recorded` **event ID**, its exact `new_sha`, and the exact numeric
+`queues.id` supplied as `--queue`. Use the persisted ID even for a retired queue;
+this command never discovers, registers, or reactivates queues. It uses
+`OPENMERGE_DATABASE_URL` (or `--database-url`) with operator credentials and never
+uses a forge token, PR authorization, or the status API. Connections do not run
+migrations. `--timeout` bounds connection, lock wait and transaction time together
+(default 2 minutes; allowed range 1ms through 2 minutes).
+
+Before the **first acknowledgement event**, finish the trial period-B drain and
+stop every incompatible worker on every host. Save the drained/stopped worker
+inventory. Capture a pre-emission database backup, restore it in isolation, and
+save a receipt with backup identity/hash, watermark, binary/config revisions,
+restore-test result, and timestamp. Retain those records outside the database.
+The command requires `--drain-receipt` and `--backup-receipt`: readable, nonempty
+regular files of at most 64KiB. These are operator attestations; file checks
+cannot discover other hosts or prove a backup restorable. Use the same retained
+receipts on retries. Merely deploying this dormant command writes nothing.
+
+For an isolated/sandbox database whose gate is complete:
+
+```sh
+openmerge admin acknowledge \
+  --queue 17 --event 442 --sha <original-new-sha> --operator 'On-call name' \
+  --drain-receipt /operator-evidence/workers-drained.txt \
+  --backup-receipt /operator-evidence/pre-emission-restore.txt
+```
+
+The JSON receipt contains the acknowledgement's journal ID, `source_event_id`,
+`sha`, original supplied `operator`, and `at`. Retries, including concurrent
+operators, return the original receipt and timestamp. A wrong queue, event type,
+or SHA fails before insertion, including on a retry. If output fails after a
+commit or a connection loses the commit result, retry the same target to recover
+its receipt. A failure/cancellation has no success receipt; it is never permission
+to remove journal evidence.
+
+Explicit acknowledgement is allowed in `github` mode, including queues that
+have never used authority. It records the same awareness but creates no authority
+warning. **It still emits a new wire type and crosses the binary compatibility
+boundary.** After the first `outside_push_acknowledged`, use a compatible binary
+or restore the verified pre-emission backup with all workers stopped. Mode
+rollback does not make an old decoder compatible. Reconcile actual remote refs
+and recover evidence of any landings since that backup before restarting; never
+resume stale state blindly or delete events to downgrade. This command is not
+authorized for the live dogfood database during the trial.
+
+Acknowledgement does not identify the pusher, approve the change, prove checks
+ran before landing, clear any rules/suspect/operator block, change ancestry, or
+advance green. Original unknown/truncated history,
+`possible_stale_observation`, and `verification_before_landing: none` remain in
+the audit evidence. A push followed by restoring the old tip between observations
+can leave nothing detectable.
+
+The journal-backed warning reader streams 256-event pages at one repeatable-read
+snapshot with a two-minute deadline. It folds authority pins in journal order at
+the originating `BaseMoved`, then probes the existing `outside-base/<event ID>`
+dedupe association and acknowledgement key. No pin means `github`. Audit append
+time and event timestamps never select authority. Rollback and retirement retain
+outstanding warnings and all receipts, even beyond the 20-item recent projection.
+The reader uses O(one page plus one pin) memory and O(queue history) work, plus
+indexed dedupe lookups. Consumers must discard partial output if it fails. ADR
+0008 PR 6 owns warning rendering in status, CLI, API, and health; this PR adds no
+such rendering, schema activation, migration, index, or runtime forge read.

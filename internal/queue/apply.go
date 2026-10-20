@@ -18,6 +18,9 @@ func Apply(s State, e Event) State {
 }
 
 func apply(s State, e Event) State {
+	if _, ok := e.(OutsidePushAcknowledged); ok {
+		return s
+	}
 	if next, ok := s.observeAuthority(e); ok {
 		return next
 	}
