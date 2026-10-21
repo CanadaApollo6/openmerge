@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -102,21 +103,36 @@ func TestLandingChecksRejectsAstra128By1000(t *testing.T) {
 	}
 }
 
+// Track only the appended JSON array elements while constructing the fixture.
+// The final boundary is still checked against the real encoder by the test.
 func landingChecksAtByteCap(t *testing.T) LandingChecksRecorded {
 	t.Helper()
 	e := checkFixture(t)
+	raw, err := json.Marshal(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	size := len(raw)
 	for {
-		raw, err := json.Marshal(e)
-		if err != nil {
-			t.Fatal(err)
-		}
-		gap := MaxLandingChecksBytes - landingChecksEnvelopeBytes - len(raw)
+		gap := MaxLandingChecksBytes - landingChecksEnvelopeBytes - size
 		if gap <= 60000 {
 			e.Expressions[0] += strings.Repeat("x", gap)
 			return e
 		}
 		index := len(e.Checks)
-		e.Checks = append(e.Checks, LandingCheck{Name: fmt.Sprintf("%04d%s", index, strings.Repeat("x", 4092)), ProducerKind: "unavailable", Result: forge.Success})
+		check := LandingCheck{Name: fmt.Sprintf("%04d%s", index, strings.Repeat("x", 4092)), ProducerKind: "unavailable", Result: forge.Success}
+		raw, err := json.Marshal(check)
+		if err != nil {
+			t.Fatal(err)
+		}
+		size += len(raw) + len(strconv.Itoa(index))
+		if len(e.Checks) > 0 {
+			size++ // checks comma
+		}
+		if len(e.CheckOrder) > 0 {
+			size++ // check_order comma
+		}
+		e.Checks = append(e.Checks, check)
 		e.CheckOrder = append(e.CheckOrder, index)
 	}
 }

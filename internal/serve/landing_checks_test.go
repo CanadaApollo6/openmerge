@@ -65,6 +65,7 @@ func TestLandingChecksAuthorityMethodsAndChainPositions(t *testing.T) {
 	for _, method := range []queue.MergeMethod{queue.Merge, queue.Squash, queue.Rebase, queue.FastForward} {
 		for _, depth := range []int{1, 4} {
 			t.Run(fmt.Sprintf("%s/depth-%d", method, depth), func(t *testing.T) {
+				t.Parallel()
 				s, w, f := shadowFixtureForMethod(t, depth, "main", "7", false, method)
 				must(t, s.configuration(t.Context(), w))
 				must(t, s.reconcile(t.Context(), w, true))
