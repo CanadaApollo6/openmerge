@@ -232,7 +232,10 @@ func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Conf
 	var acquisition *store.ApprovalRead
 	var checkEvidence *queue.LandingChecksRecorded
 	pin := basis.AuthorityPin()
-	recordChecks := pin != nil && pin.Authority == "openmerge"
+	// AuthorityRequired is an explicit internal Target opt-in. A setup draft or
+	// surviving journal pin cannot enable authority evidence on a public GitHub
+	// target while config.Load still rejects authority activation.
+	recordChecks := w.AuthorityRequired && pin != nil && pin.Authority == "openmerge"
 	gate := &executor.LandingDecisionGate{Policy: policy, ReloadAfterInputs: true,
 		Load: func(ctx context.Context) (queue.State, error) {
 			state, _, err := s.store.Load(ctx, w.id)

@@ -112,6 +112,7 @@ func TestLandingChecksAuthorityMethodsAndChainPositions(t *testing.T) {
 				pin.OpenMerge.Binding.EffectiveDigest = state.ConfigDigest
 				_, err = s.store.Append(t.Context(), w.id, []queue.Event{pin}, "")
 				must(t, err)
+				w.AuthorityRequired = true // explicit internal evidence seam
 				for n := 1; n <= depth; n++ {
 					// Trust refresh can reopen CI when a speculative member reaches
 					// the head. Follow that existing refresh before claiming Land.
@@ -187,8 +188,9 @@ func claimLandingChecksAction(t *testing.T, s *Server, w *worker, cfg queue.Conf
 }
 
 func TestLandingChecksLegacyGateAndPinRace(t *testing.T) {
-	for _, race := range []bool{false, true} {
-		t.Run(fmt.Sprintf("pin-race-%t", race), func(t *testing.T) {
+	for _, scenario := range []string{"legacy", "pin-before", "pin-race"} {
+		t.Run(scenario, func(t *testing.T) {
+			race := scenario == "pin-race"
 			s, w, f := shadowFixture(t, 1, "main", "7", false)
 			pr := w.prs[1]
 			f.SetNativeReviews(repo, 1, forge.NativeReviews{Reviews: []forge.NativeReview{{ID: 200, CommitID: pr.HeadSHA, Author: forge.UserIdentity{ID: 21, Login: "writer", Kind: forge.UserAccount}, State: forge.ReviewApproved, Submitted: forge.NativeTime{Time: time.Now().Add(time.Minute), Source: forge.ReviewSubmissionTime, Precision: time.Second}}}, Comments: []forge.NativeComment{shadowComment(100, "@openmerge queue")}})
@@ -204,6 +206,18 @@ func TestLandingChecksLegacyGateAndPinRace(t *testing.T) {
 				t.Fatal("claim did not begin")
 			}
 			basis := shadowState(t, s, w)
+			if scenario == "pin-before" {
+				raw, err := os.ReadFile("../queue/testdata/wire/v1/event_policy_authority_applied.json")
+				must(t, err)
+				event, err := queue.DecodeEvent(raw)
+				must(t, err)
+				pin := event.(queue.PolicyAuthorityApplied)
+				pin.GoverningCommit, pin.EffectiveDigest = basis.ConfigCommit, basis.ConfigDigest
+				pin.OpenMerge.Binding.EffectiveDigest = basis.ConfigDigest
+				_, err = s.store.Append(t.Context(), w.id, []queue.Event{pin}, "")
+				must(t, err)
+				basis = shadowState(t, s, w)
+			}
 			gate := s.stageAGate(w, claim, cfg, basis)
 			if gate.ReadInputs == nil || gate.ReadInputsWithChecks != nil {
 				t.Fatal("legacy gate opted into evidence read")
@@ -229,7 +243,7 @@ func TestLandingChecksLegacyGateAndPinRace(t *testing.T) {
 			}
 			x := executor.Executor{Driver: f, Git: f, Repo: repo, Base: "main", RequiredChecks: []string{"ci"}, LandingDecisions: gate}
 			err = x.Execute(t.Context(), claim.Action, s.store.EmitWithPolicy(t.Context(), claim, cfg, w.stageA.policy))
-			if race {
+			if scenario != "legacy" {
 				var required store.LandingChecksRequiredError
 				if !errors.As(err, &required) || errors.Is(err, store.ErrLandingDecisionStale) || errors.Is(err, store.ErrStale) {
 					t.Fatalf("pin race classification: %v", err)
@@ -248,7 +262,7 @@ func TestLandingChecksLegacyGateAndPinRace(t *testing.T) {
 					checks++
 				}
 			}
-			if checks != 0 || race && starts != 0 || !race && starts != 1 {
+			if checks != 0 || scenario != "legacy" && starts != 0 || scenario == "legacy" && starts != 1 {
 				t.Fatalf("legacy/racing gate recorded starts=%d checks=%d", starts, checks)
 			}
 		})
@@ -278,6 +292,7 @@ func TestLandingChecksGateOverflowPrecedesUnmetMembers(t *testing.T) {
 				_, err = s.store.Append(t.Context(), w.id, []queue.Event{pin}, "")
 				must(t, err)
 				basis = shadowState(t, s, w)
+				w.AuthorityRequired = true // explicit internal evidence seam
 				w.cfg.MergeWhen, err = condition.Parse("title = ready")
 				must(t, err)
 				land := queue.Land{BatchID: "gate-precedence", TestedSHA: strings.Repeat("e", 40), Ref: "queue", Method: queue.Merge}

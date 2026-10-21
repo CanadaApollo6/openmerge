@@ -3,6 +3,7 @@ package serve
 import (
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -10,7 +11,35 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/config"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
+	"github.com/CanadaApollo6/openmerge/internal/store"
 )
+
+func TestAuthorityBarrierPinCannotSelectAuthorityCheckGate(t *testing.T) {
+	for _, depth := range []int{1, 4} {
+		t.Run(strconv.Itoa(depth), func(t *testing.T) {
+			s, w, _ := shadowFixture(t, depth, "main", "7", false)
+			must(t, s.configuration(t.Context(), w))
+			state := shadowState(t, s, w)
+			raw, err := os.ReadFile("../queue/testdata/wire/v1/event_policy_authority_applied.json")
+			must(t, err)
+			event, err := queue.DecodeEvent(raw)
+			must(t, err)
+			pin := event.(queue.PolicyAuthorityApplied)
+			pin.GoverningCommit, pin.EffectiveDigest = state.ConfigCommit, state.ConfigDigest
+			pin.OpenMerge.Binding.EffectiveDigest = pin.EffectiveDigest
+			_, err = s.store.Append(t.Context(), w.id, []queue.Event{pin}, "")
+			must(t, err)
+			state = shadowState(t, s, w)
+			if state.AuthorityPin() == nil || w.stageA == nil {
+				t.Fatal("test needs a folded pin and ordinary approval policy")
+			}
+			gate := s.stageAGate(w, store.ClaimedAction{}, w.plannerConfig(s.options.PollInterval), state)
+			if gate.ReadInputs == nil || gate.ReadInputsWithChecks != nil {
+				t.Fatal("pin alone selected authority check evidence on a public GitHub target")
+			}
+		})
+	}
+}
 
 // Persisted evidence is data, not permission to install an authority hook. This
 // exercises the normal config path with both setup's candidate and journal data
