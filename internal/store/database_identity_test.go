@@ -181,6 +181,10 @@ func TestDatabaseIdentityDatabaseIncarnation(t *testing.T) {
 		_, err := original.pool.Exec(t.Context(), `CREATE DATABASE `+ident)
 		must(t, err)
 		s := seededIdentityStore(t, u.String())
+		// A restored journal can preserve genesis exactly. Hold it constant so
+		// same-name recreation must be distinguished by the database OID.
+		_, err = s.pool.Exec(t.Context(), `UPDATE events SET recorded_at='2000-01-01T00:00:00Z'`)
+		must(t, err)
 		got := identityOf(t, s)
 		if got == identityOf(t, original) || got == previous {
 			t.Fatal("database incarnation collided")

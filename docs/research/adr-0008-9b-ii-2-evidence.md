@@ -17,7 +17,7 @@ never set the internal opt-in. PR 11 retains organization release acceptance.
 | 1: empty identities and mismatch regression | `internal/authority/emission.go` rejects empty receipt or expected identities, including empty == empty. `TestAuthorityActivationReceiptBeforeIO` rejects local attestation errors before identity I/O; the different-database case leaves the store open, derives its actual identity, and rejects before the forge reader. `ErrBinaryRevisionMismatch` is asserted with `errors.Is`. |
 | 2: preflight precedence | `internal/serve/stage_a_gate.go:230` documents the explicitly enabled authority preflight's limited guarantee: local check-derived and available non-review input shape/budget errors precede ordinary policy handling. `approved-reviews-by` is unknown until final fresh acquisition. Review-derived overflow can surface only at final admission after successful CI, and an approval-read/quota failure can preempt it. The preflight clears cached approvals on a local PR copy before constructing values; no extra forge read is introduced. |
 | 2: chosen behavior test | `TestLandingChecksPreflightDefersReviewListOverflow` constructs its fixture inside `testSynctest`. Preflight ignores 10,001 stale cached approvals and journals nothing. `s.execute` acquires fresh reviews including an oversized login, persists eligibility, returns typed condition-input overflow, permanently blocks the operator source and reports `landing-checks-too-large`. Neither LandingStarted nor LandingChecksRecorded is emitted. |
-| 3: documentation nits | `docs/research/adr-0008-9-plan.md:63` and its first-emission section attribute caller max-age/BinaryRevision validation to completed 9b-ii-1. `internal/serve/authority_activation.go:16` names lifecycle slice 9b-ii-2b. Its doc comment at line 27 explicitly states that the receipt can still expire during the adoption transaction, including queue-lock wait and commit. The gate checks before I/O and again before entering adoption; it does not promise transaction-time expiry enforcement. |
+| 3: documentation nits | `docs/research/adr-0008-9-plan.md:63` and its first-emission section attribute caller max-age/BinaryRevision validation to completed 9b-ii-1. `internal/serve/authority_activation.go:16` names lifecycle slice 9b-ii-2b. Its doc comment at line 27 explicitly states that the receipt can still expire during the adoption transaction, including queue-lock wait and commit. Local age/binary checks precede identity I/O; server-side binding is checked before forge reads and before adoption. There is no transaction-time expiry guarantee. |
 
 The documented preflight limit is deliberate. Cached legacy reviews can differ
 from the fresh eligible set and cannot establish its final evidence size.
@@ -183,4 +183,47 @@ and asserts the operator block/status, with all fixtures inside the synctest
 bubble. Clearing cached approvals is documented as an allocation optimization;
 removing the review attribute is what makes preflight reviews unknown.
 
-Round-2 verification results and artifacts are appended after the clean-tree run.
+### Round-2 verification results
+
+The clean-tree driver returned **PASS** for production implementation
+`287cb0feeb5efa78209b330797ddce33b1de4ae0` against baseline
+`d449adcfb80c31dac02fad89417100f3c2cf1ef6`. Subsequent tracked changes only strengthen the
+recreation regression by preserving the genesis timestamp across drop/recreate,
+and retain documentation/artifacts. That exact final test source passed the
+focused race run via overlay. It requires the database OID to distinguish the
+same name/schema/genesis; an overlay omitting database OID fails with
+`database incarnation collided` (expected exit 1). Production code is unchanged
+from the clean-tree run.
+
+- `make check`: **exit 0**, formatting, lint, complete short race suite and build.
+- Final focused identity/activation/A2/preflight/command/sentinel race run:
+  **exit 0**. Database-OID removal mutation: **expected exit 1**.
+- Strict replay: **2159/2159** identical actions,
+  structural states and snapshot hashes, **8,676** matching boundary probes;
+  gates 2/4 and all mandatory self-tests pass. No differing/allowlisted fields.
+- Depth-1/4 contracts: **90/90 byte-identical**. SHA-256:
+  `88e727ebe7ea5b570f352c5c661c2cd1642c1b5120f3d3ed086993f4dd00362a`.
+- Seeded simulator: both exits **0**, **146/146 normalized blocks byte-identical**.
+  SHA-256: `a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7`.
+- Existing fixtures: **104/104 unchanged**, including **90** registry fixtures;
+  no new fixtures/events/wire fields. Manifest:
+  `d9fc673fbd7ec5410cf1491778157508533ca5c804932caaecb39204f2ae2776`.
+- Clean implementation binary SHA-256:
+  `1032a2e96e478e2a0bfc49432bb8e8077f2ff75a021805817db0942435fd3891`.
+
+Retained [summary/commands](adr-0008-9b-ii-2-artifacts/round-2/summary.json),
+[make check log](adr-0008-9b-ii-2-artifacts/round-2/make-check.log),
+[focused race log](adr-0008-9b-ii-2-artifacts/round-2/focused-final.log),
+[additional commands/source hashes](adr-0008-9b-ii-2-artifacts/round-2/additional-checks.json),
+[expected mutation failure](adr-0008-9b-ii-2-artifacts/round-2/identity-oid-mutation.log),
+[mutation patch](adr-0008-9b-ii-2-artifacts/round-2/identity-oid-mutation.patch),
+[depth contracts](adr-0008-9b-ii-2-artifacts/round-2/contracts-candidate.json),
+[normalized simulator blocks](adr-0008-9b-ii-2-artifacts/round-2/sim-normalized.json),
+[artifact hashes](adr-0008-9b-ii-2-artifacts/round-2/manifest.json), and
+[raw-cache hashes](adr-0008-9b-ii-2-artifacts/round-2/cache-manifest.json).
+Full streams/logs remain in `/home/riels/.cache/adr0008-9b-ii-2-round2-verification`; overlays remain in `/home/riels/.cache/adr0008-round2-strengthening`.
+The same reproduction command above applies with `--out /home/riels/.cache/adr0008-9b-ii-2-round2-verification`.
+All Go commands use both exported Go 1.27.3 GOROOT/PATH and the shared flock,
+GOFLAGS=-p=2, 4 GiB limit (6 GiB for replay). No live DB/status/systemd/OpenMerge
+refs or application GitHub APIs were accessed. A2/public barriers remain intact;
+this is still Hold, with no queue/merge or runtime deployment acceptance.

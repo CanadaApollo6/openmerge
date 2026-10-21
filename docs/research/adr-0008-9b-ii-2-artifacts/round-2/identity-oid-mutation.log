@@ -1,0 +1,5 @@
+--- FAIL: TestDatabaseIdentityDatabaseIncarnation (0.10s)
+    database_identity_test.go:190: database incarnation collided
+FAIL
+FAIL	github.com/CanadaApollo6/openmerge/internal/store	0.108s
+FAIL
