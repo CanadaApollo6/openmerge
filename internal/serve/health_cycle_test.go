@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"net"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
@@ -34,8 +33,8 @@ func assertHealthCode(t *testing.T, s *Server, code int) {
 }
 
 func TestHealthCycleRuntimeStartsAfterSlotAcquisition(t *testing.T) {
-	s, w, _, _ := fixture(t, repositoryConfig)
-	synctest.Test(t, func(t *testing.T) {
+	testSynctest(t, func(t *testing.T) {
+		s, w, _, _ := fixture(t, repositoryConfig)
 		s.options.Health.ProgressStallLimit = 2 * time.Minute
 		s.options.Health.MaxSuccessAge = time.Hour
 		w.Driver = stalledHealthDriver{w.Driver}
@@ -61,8 +60,8 @@ func TestHealthCycleRuntimeStartsAfterSlotAcquisition(t *testing.T) {
 
 func TestHealthSlotStarvationAndImmediateJournalWake(t *testing.T) {
 	for _, journalWake := range []bool{false, true} {
-		s, w, _, _ := fixture(t, repositoryConfig)
-		synctest.Test(t, func(t *testing.T) {
+		testSynctest(t, func(t *testing.T) {
+			s, w, _, _ := fixture(t, repositoryConfig)
 			ctx, cancel := context.WithCancel(t.Context())
 			done := make(chan struct{})
 			if journalWake {
@@ -135,7 +134,7 @@ func TestHealthRecoveryLoopExplicitlyExcludesSettledWorker(t *testing.T) {
 func TestHealthLongProgressingCycle(t *testing.T) {
 	for _, maxAge := range []time.Duration{15 * time.Minute, time.Hour} {
 		t.Run(maxAge.String(), func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
+			testSynctest(t, func(t *testing.T) {
 				s, w, f, _ := fixture(t, repositoryConfig)
 				s.options.Health.MaxSuccessAge = maxAge
 				base, err := f.ReadRef(t.Context(), repo, "main")
@@ -245,7 +244,7 @@ func (d *reconciliationHealthDriver) PullRequest(ctx context.Context, r forge.Re
 func TestHealthRealReconciliationProgressAndHungRead(t *testing.T) {
 	for _, hung := range []bool{false, true} {
 		t.Run(fmt.Sprintf("hung-%t", hung), func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
+			testSynctest(t, func(t *testing.T) {
 				s, w, f, _ := fixture(t, repositoryConfig)
 				base, err := f.ReadRef(t.Context(), repo, "main")
 				must(t, err)
@@ -371,9 +370,7 @@ func (d *unitHealthDriver) ReportStatus(ctx context.Context, r forge.RepoRef, n 
 	return d.Driver.ReportStatus(ctx, r, n, sha, value)
 }
 func TestHealthRealCyclePublishesEachReadAndReport(t *testing.T) {
-	_, err := net.LookupHost("localhost")
-	must(t, err)
-	synctest.Test(t, func(t *testing.T) {
+	testSynctest(t, func(t *testing.T) {
 		s, w, f, _ := fixture(t, repositoryConfig+"    enter_when:\n      - check-success = ci\n")
 		base, err := f.ReadRef(t.Context(), repo, "main")
 		must(t, err)

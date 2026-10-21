@@ -8,7 +8,6 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -46,16 +45,12 @@ func (d paginatedHealthDriver) ListOpenPullRequests(ctx context.Context, repo fo
 // Exercise the real worker loop, GitHub pagination, HTTP transport and health API
 // together. Fake HTTP completes in virtual time; no network or GitHub is used.
 func TestHealthGitHubPagination(t *testing.T) {
-	// Initialize the process-wide resolver outside virtual-time bubbles. Each
-	// database pool and its WaitGroups must then stay inside their own bubble.
-	_, err := net.LookupHost("localhost")
-	must(t, err)
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	must(t, err)
 	privateKey := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
 	for _, mode := range []string{"healthy", "revalidated", "hung", "streaming", "failed"} {
 		t.Run(mode, func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
+			testSynctest(t, func(t *testing.T) {
 				s, w, _, _ := fixture(t, repositoryConfig)
 				// Channels used by the virtual-time loop must belong to its bubble.
 				w.wake = make(chan struct{}, 1)

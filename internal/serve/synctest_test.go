@@ -1,0 +1,30 @@
+package serve
+
+import (
+	"net"
+	"testing"
+	"testing/synctest"
+)
+
+// testSynctest owns the entire fixture lifetime. Create fixtures in f using its
+// inner t: databaseConnection registers Close with that t, whose cleanups run
+// inside the bubble before synctest waits for background goroutines to exit.
+// Stop workers before pool cleanup (defer or a later t.Cleanup).
+// Never capture a store/server created outside f: puddle's WaitGroups cannot
+// cross bubble boundaries, even when ordinary queries appear to work.
+func testSynctest(t *testing.T, f func(*testing.T)) {
+	t.Helper()
+	// The process-wide resolver may start goroutines that outlive a bubble.
+	_, err := net.LookupHost("localhost")
+	must(t, err)
+	synctest.Test(t, f)
+}
+
+func TestSynctestPoolDestroy(t *testing.T) {
+	testSynctest(t, func(t *testing.T) {
+		db := database(t)
+		// Force puddle's asynchronous destruction path. Opening this fixture outside
+		// the bubble made Close abort the test binary with a WaitGroup fatal error.
+		db.Close()
+	})
+}

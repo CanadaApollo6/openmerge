@@ -10,9 +10,8 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 )
 
-// Create the DB fixture outside synctest so its background goroutines stay
-// outside the bubble. Inside, synctest.Wait drains each cycle (including real
-// request/response DB I/O) before assertions or further fake-clock advances.
+// The caller owns the fixture inside testSynctest. Wait drains each cycle
+// (including real request/response DB I/O) before fake-clock advances.
 func startIdleBackstop(t *testing.T, s *Server, w *worker) <-chan struct{} {
 	t.Helper()
 	s.options.WebhooksConfigured = true
@@ -58,8 +57,8 @@ func requireBackstopTesting(t *testing.T, s *Server, w *worker) {
 }
 
 func TestBackstopReplansInterruptedPeerEnqueue(t *testing.T) {
-	s, w, f, _ := fixture(t, repositoryConfig)
-	synctest.Test(t, func(t *testing.T) {
+	testSynctest(t, func(t *testing.T) {
+		s, w, f, _ := fixture(t, repositoryConfig)
 		target := w.Target
 		target.Driver = f
 		other, err := New(t.Context(), s.store, []Target{target}, s.options)
@@ -82,8 +81,8 @@ func TestBackstopReplansInterruptedPeerEnqueue(t *testing.T) {
 }
 
 func TestBackstopResumesPeerBuildingBatch(t *testing.T) {
-	s, w, f, _ := fixture(t, repositoryConfig)
-	synctest.Test(t, func(t *testing.T) {
+	testSynctest(t, func(t *testing.T) {
+		s, w, f, _ := fixture(t, repositoryConfig)
 		target := w.Target
 		target.Driver = f
 		other, err := New(t.Context(), s.store, []Target{target}, s.options)
@@ -107,8 +106,8 @@ func TestBackstopResumesPeerBuildingBatch(t *testing.T) {
 }
 
 func TestBackstopRecomputesPeerPartialBatchDeadline(t *testing.T) {
-	s, w, f, _ := fixture(t, repositoryConfig+"    batch: {max_size: 2, max_wait: 300ms}\n")
-	synctest.Test(t, func(t *testing.T) {
+	testSynctest(t, func(t *testing.T) {
+		s, w, f, _ := fixture(t, repositoryConfig+"    batch: {max_size: 2, max_wait: 300ms}\n")
 		target := w.Target
 		target.Driver = f
 		other, err := New(t.Context(), s.store, []Target{target}, s.options)

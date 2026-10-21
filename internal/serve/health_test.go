@@ -141,8 +141,8 @@ func TestHealthPublicationLifecycleAndFailures(t *testing.T) {
 }
 
 func TestHealthActualBackstopDeadlineAndWebhookSilence(t *testing.T) {
-	s, w, _, _ := fixture(t, repositoryConfig)
-	synctest.Test(t, func(t *testing.T) {
+	testSynctest(t, func(t *testing.T) {
+		s, w, _, _ := fixture(t, repositoryConfig)
 		polls := startIdleBackstop(t, s, w)
 		first := *w.health.Load()
 		if first.LastSuccess == nil || first.NextDeadline == nil {
@@ -172,8 +172,8 @@ func TestHealthActualBackstopDeadlineAndWebhookSilence(t *testing.T) {
 
 func TestHealthActualErrorAndQuotaDeadline(t *testing.T) {
 	for _, quota := range []bool{false, true} {
-		s, w, _, _ := fixture(t, repositoryConfig)
-		synctest.Test(t, func(t *testing.T) {
+		testSynctest(t, func(t *testing.T) {
+			s, w, _, _ := fixture(t, repositoryConfig)
 			now := time.Now()
 			failure := context.DeadlineExceeded
 			delay := 5 * time.Second
@@ -284,8 +284,8 @@ func TestHealthHTTPWatchedConditionsAndIsolation(t *testing.T) {
 
 func TestHealthActualValidationAndRulesRetryDeadlines(t *testing.T) {
 	for _, validation := range []bool{false, true} {
-		s, w, _, _ := fixture(t, repositoryConfig)
-		synctest.Test(t, func(t *testing.T) {
+		testSynctest(t, func(t *testing.T) {
+			s, w, _, _ := fixture(t, repositoryConfig)
 			now := time.Now()
 			s.options.PollInterval = time.Hour
 			s.options.RulesInterval = 2 * time.Second
