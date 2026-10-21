@@ -1,0 +1,155 @@
+=== RUN   TestOutsidePushLedgerOrphansRemainAnomaliesAfterAcknowledgement
+=== RUN   TestOutsidePushLedgerOrphansRemainAnomaliesAfterAcknowledgement/NULL
+=== RUN   TestOutsidePushLedgerOrphansRemainAnomaliesAfterAcknowledgement/#00
+=== RUN   TestOutsidePushLedgerOrphansRemainAnomaliesAfterAcknowledgement/outside-base/999999999
+=== RUN   TestOutsidePushLedgerOrphansRemainAnomaliesAfterAcknowledgement/outside-base/1
+=== RUN   TestOutsidePushLedgerOrphansRemainAnomaliesAfterAcknowledgement/garbage
+--- PASS: TestOutsidePushLedgerOrphansRemainAnomaliesAfterAcknowledgement (0.14s)
+    --- PASS: TestOutsidePushLedgerOrphansRemainAnomaliesAfterAcknowledgement/NULL (0.03s)
+    --- PASS: TestOutsidePushLedgerOrphansRemainAnomaliesAfterAcknowledgement/#00 (0.03s)
+    --- PASS: TestOutsidePushLedgerOrphansRemainAnomaliesAfterAcknowledgement/outside-base/999999999 (0.02s)
+    --- PASS: TestOutsidePushLedgerOrphansRemainAnomaliesAfterAcknowledgement/outside-base/1 (0.03s)
+    --- PASS: TestOutsidePushLedgerOrphansRemainAnomaliesAfterAcknowledgement/garbage (0.03s)
+=== RUN   TestOutsidePushLedgerMalformedAssociationsAgreeInEveryMode
+=== RUN   TestOutsidePushLedgerMalformedAssociationsAgreeInEveryMode/github/audit-type
+=== RUN   TestOutsidePushLedgerMalformedAssociationsAgreeInEveryMode/github/ack-type
+=== RUN   TestOutsidePushLedgerMalformedAssociationsAgreeInEveryMode/github/ack-sha
+=== RUN   TestOutsidePushLedgerMalformedAssociationsAgreeInEveryMode/openmerge/audit-type
+=== RUN   TestOutsidePushLedgerMalformedAssociationsAgreeInEveryMode/openmerge/ack-type
+=== RUN   TestOutsidePushLedgerMalformedAssociationsAgreeInEveryMode/openmerge/ack-sha
+--- PASS: TestOutsidePushLedgerMalformedAssociationsAgreeInEveryMode (0.20s)
+    --- PASS: TestOutsidePushLedgerMalformedAssociationsAgreeInEveryMode/github/audit-type (0.03s)
+    --- PASS: TestOutsidePushLedgerMalformedAssociationsAgreeInEveryMode/github/ack-type (0.03s)
+    --- PASS: TestOutsidePushLedgerMalformedAssociationsAgreeInEveryMode/github/ack-sha (0.03s)
+    --- PASS: TestOutsidePushLedgerMalformedAssociationsAgreeInEveryMode/openmerge/audit-type (0.04s)
+    --- PASS: TestOutsidePushLedgerMalformedAssociationsAgreeInEveryMode/openmerge/ack-type (0.03s)
+    --- PASS: TestOutsidePushLedgerMalformedAssociationsAgreeInEveryMode/openmerge/ack-sha (0.03s)
+=== RUN   TestJournalWarningQueryCountsAndIncrementalWatermark
+    outside_warning_cache_test.go:66: legacy 1024 events: total queries=4; extra ledger queries=0
+    outside_warning_cache_test.go:66: authority cold: total queries=4; extra ledger queries=0
+    outside_warning_cache_test.go:66: authority unchanged: total queries=4; extra ledger queries=0
+    outside_warning_cache_test.go:66: authority one new event: total queries=4; extra ledger queries=0
+    outside_warning_cache_test.go:116: background: unchanged=3 queries; 2 new audits=5 queries (2 indexed origin probes)
+--- PASS: TestJournalWarningQueryCountsAndIncrementalWatermark (0.13s)
+=== RUN   TestJournalWarningErrorIsolatesQueueAndReporting
+--- PASS: TestJournalWarningErrorIsolatesQueueAndReporting (0.03s)
+=== RUN   TestWarningCacheDelayedAuditRollbackAndAcknowledgement
+--- PASS: TestWarningCacheDelayedAuditRollbackAndAcknowledgement (0.03s)
+=== RUN   TestWarningCacheCompletesAfterCancelledPage
+--- PASS: TestWarningCacheCompletesAfterCancelledPage (0.06s)
+=== RUN   TestWarningRefreshNeverBlocksForegroundOrSibling
+--- PASS: TestWarningRefreshNeverBlocksForegroundOrSibling (0.03s)
+=== RUN   TestWarningFoldCancellationDoesNotFailJournals
+--- PASS: TestWarningFoldCancellationDoesNotFailJournals (0.02s)
+=== RUN   TestWarningRefreshDoesNotReplaceNewerForeground
+=== RUN   TestWarningRefreshDoesNotReplaceNewerForeground/incomplete-false
+=== RUN   TestWarningRefreshDoesNotReplaceNewerForeground/incomplete-true
+--- PASS: TestWarningRefreshDoesNotReplaceNewerForeground (0.17s)
+    --- PASS: TestWarningRefreshDoesNotReplaceNewerForeground/incomplete-false (0.07s)
+    --- PASS: TestWarningRefreshDoesNotReplaceNewerForeground/incomplete-true (0.10s)
+PASS
+ok  	github.com/CanadaApollo6/openmerge/internal/store	0.824s
+=== RUN   TestHealthAndLiveRouting
+--- PASS: TestHealthAndLiveRouting (0.00s)
+=== RUN   TestHealthFailureAndBounds
+=== RUN   TestHealthFailureAndBounds/db_failure
+=== RUN   TestHealthFailureAndBounds/unhealthy
+=== RUN   TestHealthFailureAndBounds/too_many_queues
+=== RUN   TestHealthFailureAndBounds/too_large
+=== RUN   TestHealthFailureAndBounds/warnings
+--- PASS: TestHealthFailureAndBounds (0.11s)
+    --- PASS: TestHealthFailureAndBounds/db_failure (0.00s)
+    --- PASS: TestHealthFailureAndBounds/unhealthy (0.00s)
+    --- PASS: TestHealthFailureAndBounds/too_many_queues (0.00s)
+    --- PASS: TestHealthFailureAndBounds/too_large (0.11s)
+    --- PASS: TestHealthFailureAndBounds/warnings (0.00s)
+=== RUN   TestHealthHonorsCancellation
+--- PASS: TestHealthHonorsCancellation (0.00s)
+=== RUN   TestHealthVisibilityBoundDoesNotMutateSnapshot
+--- PASS: TestHealthVisibilityBoundDoesNotMutateSnapshot (0.00s)
+=== RUN   TestHealthProgressThresholdBounds
+--- PASS: TestHealthProgressThresholdBounds (0.00s)
+PASS
+ok  	github.com/CanadaApollo6/openmerge/internal/status	0.119s
+=== RUN   TestHealthCycleRuntimeStartsAfterSlotAcquisition
+--- PASS: TestHealthCycleRuntimeStartsAfterSlotAcquisition (0.03s)
+=== RUN   TestHealthSlotStarvationAndImmediateJournalWake
+--- PASS: TestHealthSlotStarvationAndImmediateJournalWake (0.05s)
+=== RUN   TestHealthRecoveryLoopExplicitlyExcludesSettledWorker
+--- PASS: TestHealthRecoveryLoopExplicitlyExcludesSettledWorker (0.02s)
+=== RUN   TestHealthLongProgressingCycle
+=== RUN   TestHealthLongProgressingCycle/15m0s
+=== RUN   TestHealthLongProgressingCycle/1h0m0s
+--- PASS: TestHealthLongProgressingCycle (0.15s)
+    --- PASS: TestHealthLongProgressingCycle/15m0s (0.07s)
+    --- PASS: TestHealthLongProgressingCycle/1h0m0s (0.08s)
+=== RUN   TestHealthCompletedActionAndTurnPublishProgress
+--- PASS: TestHealthCompletedActionAndTurnPublishProgress (0.04s)
+=== RUN   TestHealthRealReconciliationProgressAndHungRead
+=== RUN   TestHealthRealReconciliationProgressAndHungRead/hung-false
+=== RUN   TestHealthRealReconciliationProgressAndHungRead/hung-true
+--- PASS: TestHealthRealReconciliationProgressAndHungRead (0.06s)
+    --- PASS: TestHealthRealReconciliationProgressAndHungRead/hung-false (0.03s)
+    --- PASS: TestHealthRealReconciliationProgressAndHungRead/hung-true (0.03s)
+=== RUN   TestHealthActionBudgetValidation
+--- PASS: TestHealthActionBudgetValidation (0.00s)
+=== RUN   TestHealthRealCyclePublishesEachReadAndReport
+    health_cycle_test.go:425: completed units: map[PR:4 check report:4 check source:4 comments:4 configuration file:4 default branch:1 permissions:2 protection:2 rules:2]
+--- PASS: TestHealthRealCyclePublishesEachReadAndReport (0.04s)
+=== RUN   TestHealthRealGitUnavailableRemote
+=== RUN   TestHealthRealGitUnavailableRemote/settled
+    health_real_git_test.go:65: settled pending attempt: base=68869437000c5bfb36854ece15cb7e23fe1c94dc head=8e2b06aadd509b0bf5a5e235a4ed0655a8e6925a fence=d5fcb7863a4f4c09bfffd3b2efae77b8d66e3667 watermark=13
+    health_real_git_test.go:96: pending=false base=68869437000c5bfb36854ece15cb7e23fe1c94dc head=8e2b06aadd509b0bf5a5e235a4ed0655a8e6925a fence=d5fcb7863a4f4c09bfffd3b2efae77b8d66e3667 watermark=13 last_success=2026-10-21T02:25:01.617388951Z next_deadline=2026-10-21T02:25:06.624486325Z failures=1
+=== RUN   TestHealthRealGitUnavailableRemote/pending
+    health_real_git_test.go:96: pending=true base=68869437000c5bfb36854ece15cb7e23fe1c94dc head=8e2b06aadd509b0bf5a5e235a4ed0655a8e6925a fence=183b7da2bb7c71a5bf640f841f94d7201a42926f watermark=8 last_success=2026-10-21T02:25:01.688609232Z next_deadline=2026-10-21T02:25:06.69775077Z failures=1
+--- PASS: TestHealthRealGitUnavailableRemote (0.18s)
+    --- PASS: TestHealthRealGitUnavailableRemote/settled (0.11s)
+    --- PASS: TestHealthRealGitUnavailableRemote/pending (0.07s)
+=== RUN   TestHealthDatabaseFailureAndLive
+--- PASS: TestHealthDatabaseFailureAndLive (0.02s)
+=== RUN   TestHealthPublicationLifecycleAndFailures
+--- PASS: TestHealthPublicationLifecycleAndFailures (0.00s)
+=== RUN   TestHealthActualBackstopDeadlineAndWebhookSilence
+--- PASS: TestHealthActualBackstopDeadlineAndWebhookSilence (0.04s)
+=== RUN   TestHealthActualErrorAndQuotaDeadline
+--- PASS: TestHealthActualErrorAndQuotaDeadline (0.05s)
+=== RUN   TestHealthHTTPWatchedConditionsAndIsolation
+=== RUN   TestHealthHTTPWatchedConditionsAndIsolation/healthy
+=== RUN   TestHealthHTTPWatchedConditionsAndIsolation/unverified
+=== RUN   TestHealthHTTPWatchedConditionsAndIsolation/warnings
+=== RUN   TestHealthHTTPWatchedConditionsAndIsolation/violated
+=== RUN   TestHealthHTTPWatchedConditionsAndIsolation/overdue
+=== RUN   TestHealthHTTPWatchedConditionsAndIsolation/degraded_age
+=== RUN   TestHealthHTTPWatchedConditionsAndIsolation/informational_failures
+=== RUN   TestHealthHTTPWatchedConditionsAndIsolation/retired_without_obligations
+--- PASS: TestHealthHTTPWatchedConditionsAndIsolation (0.02s)
+    --- PASS: TestHealthHTTPWatchedConditionsAndIsolation/healthy (0.00s)
+    --- PASS: TestHealthHTTPWatchedConditionsAndIsolation/unverified (0.00s)
+    --- PASS: TestHealthHTTPWatchedConditionsAndIsolation/warnings (0.00s)
+    --- PASS: TestHealthHTTPWatchedConditionsAndIsolation/violated (0.00s)
+    --- PASS: TestHealthHTTPWatchedConditionsAndIsolation/overdue (0.00s)
+    --- PASS: TestHealthHTTPWatchedConditionsAndIsolation/degraded_age (0.00s)
+    --- PASS: TestHealthHTTPWatchedConditionsAndIsolation/informational_failures (0.00s)
+    --- PASS: TestHealthHTTPWatchedConditionsAndIsolation/retired_without_obligations (0.00s)
+=== RUN   TestHealthActualValidationAndRulesRetryDeadlines
+--- PASS: TestHealthActualValidationAndRulesRetryDeadlines (0.06s)
+=== RUN   TestOutsideWarningsLedgerStatusHealthAndAcknowledgement
+--- PASS: TestOutsideWarningsLedgerStatusHealthAndAcknowledgement (0.03s)
+=== RUN   TestOutsideWarningsBoundedAcrossPagesAndAuthorityRollback
+--- PASS: TestOutsideWarningsBoundedAcrossPagesAndAuthorityRollback (0.13s)
+=== RUN   TestOutsideWarningsAuditLoopPublishesWhileWorkerBusy
+--- PASS: TestOutsideWarningsAuditLoopPublishesWhileWorkerBusy (0.03s)
+=== RUN   TestOutsideWarningErrorPreservesRegistration
+--- PASS: TestOutsideWarningErrorPreservesRegistration (0.03s)
+=== RUN   TestOutsideWarningsClearAfterPinRemoval
+--- PASS: TestOutsideWarningsClearAfterPinRemoval (0.03s)
+=== RUN   TestOutsideWarningsRefreshAfterRollback
+--- PASS: TestOutsideWarningsRefreshAfterRollback (0.03s)
+=== RUN   TestHealthyIdleLoopUsesBackstopAndDeliveryInterruptsTimer
+--- PASS: TestHealthyIdleLoopUsesBackstopAndDeliveryInterruptsTimer (0.03s)
+PASS
+ok  	github.com/CanadaApollo6/openmerge/internal/serve	1.081s
+=== RUN   TestServeHealthThresholdBounds
+--- PASS: TestServeHealthThresholdBounds (0.00s)
+PASS
+ok  	github.com/CanadaApollo6/openmerge/cmd/openmerge	0.003s

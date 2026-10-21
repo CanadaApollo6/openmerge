@@ -7,6 +7,83 @@ or Makefile/CI/test-flag change is part of this work. Health is for alerts, neve
 restarts. Runtime authority activation remains PR 9; organization-sandbox HTTP
 acceptance remains PR 11.
 
+## Round 4: reconciliation progress, action budgets, and ledger agreement
+
+Round 4 starts at `80660df` and rebases onto current main
+`a4c4f4bcd1befa718908b3ad801150c34c049c7d` (#117, including #116). Only the
+legacy harness receipt defaults conflicted during rebase; PR 6 retains its own
+receipt locations and widened coverage. #117's shared `writeStatus`, queue
+instructions and terminal-check refreshes remain intact. Reporting continues to
+use `ReportingJournals`, so worker-owned check rendering never scans warnings.
+
+Responses to review findings:
+
+1. **False 503s during healthy reconciliation.** Publish process progress only
+   after individual completed configuration/default-branch/ref reads, PR reads,
+   comment reads, rules/permissions/protection reads, check-source reads, approval
+   identity/review/diff/governing reads, observation writes and check-report writes.
+   Existing post-action completion and post-turn publications remain. No timer
+   or unrelated journal activity advances progress. `TestHealthRealReconciliationProgressAndHungRead`
+   drives the actual loop/cycle with four sequential 60s PR reads at a 150s stall
+   threshold and checks HTTP health throughout. A third hung read after two
+   completed reads keeps its progress fixed and returns 503 after the stall limit.
+   `TestHealthRealCyclePublishesEachReadAndReport` drives configuration, all three
+   rule sources, four PR/comment/check reads and four report writes through a
+   real cycle, requiring a new timestamp between operations and health 200
+   throughout. `TestHealthLongProgressingCycle` now uses 70 completed PR reads,
+   rather than test-generated progress ticks, for both 15m and 60m success ages.
+   No serve test calls `publishProgress` directly.
+2. **Stall/action-timeout compatibility.** Startup rejects a stall limit below
+   action timeout + Git maintenance (30s, shared with the actual Git timeout) +
+   completion write (10s, shared with the actual completion timeout) + configured
+   overdue grace. CLI parsing and embedded startup call the same validator.
+   The default stall limit is 4m; the default 2m action and 30s grace need 3m10s,
+   leaving 50s margin. A 1h action timeout is rejected; longer embedded actions
+   require an explicit compatible limit within the 30m ceiling. Boundary tests
+   accept the exact minimum and reject one nanosecond less, check extension,
+   reject incompatible explicit/default settings, and cover CLI flags/environment.
+3. **Scan/cache agreement.** Both paths validate reserved association keys and
+   acknowledgement SHA bindings in every authority mode. Differential cases
+   inject wrong event types under audit/acknowledgement keys and a wrong-SHA
+   acknowledgement for both GitHub- and OpenMerge-mode origins, then check scan,
+   background refresh and journal fold with warm caches and after cold restart.
+   An older background snapshot returned after a partially advanced foreground
+   fold now carries `ledger_refreshing`; a complete newer foreground publication
+   remains current and is returned without an error. The paused-COMMIT regression
+   covers both completed and interrupted foreground folds and subsequent recovery.
+
+Validation receipts and source hashes are retained under
+`docs/research/adr-0008-6-artifacts/round4/`. All Go commands and Go-invoking
+harnesses use the shared heavy-command flock, `GOFLAGS=-p=2`, `GOMEMLIMIT=4GiB`,
+and isolated test schemas on localhost:54329. No live services, DBs or refs were
+accessed; no real GitHub calls occur in code/tests. Main baseline checkout:
+`/home/riels/.cache/pr115-r4-main-a4c4f4b`.
+
+Implementation tested: `330542b4ab2b8e241384db29eacf4dbd5d5f878f`.
+`round4/manifest.json` records commands, exit codes, complete HTTP/CLI response
+bytes and hashes, source hashes and binary identity. Every source hash matches
+that committed implementation. The build reports `330542b-dirty`,
+`attestable: false`, because this evidence document was being updated; it is a
+local test artifact and was not deployed.
+
+- Focused store/status/serve/CLI regressions: **PASS** (`focused.log`).
+- `make check`: **PASS** (format, zero lint issues, full race-enabled short suite,
+  build; `make-check.log`). This includes #117 queue-instruction regressions.
+- Widened legacy HTTP: **1,304 complete responses byte-identical**, with no
+  stripping (`legacy-http.log`, `http-responses.json`).
+- Legacy CLI: **6 complete outputs byte-identical**, with no whitespace/field
+  stripping (`legacy-cli.log`, `cli-responses.json`).
+- Legacy reporting: **6 fixtures pass**, retaining the existing permitted
+  change/landing exclusions and comparator negative controls
+  (`legacy-reporting.log`).
+- Standalone query-count rerun: **PASS** (`query-counts.log`). Status legacy,
+  authority cold, unchanged and one-new-event reads each use **4 statements,
+  0 extra warning queries**. Background unchanged uses **3 statements**; two new
+  audits use **5**, including two indexed origin probes.
+
+A final fetch still observed main `a4c4f4b` after validation. Only evidence and
+receipts changed after the passing implementation checks.
+
 ## Round 3: deadline isolation, progress liveness, and #116 integration
 
 Round 3 starts at `ad449c3337cf5088c089659067733f461a7807c5`. The requested
