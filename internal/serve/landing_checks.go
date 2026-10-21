@@ -10,11 +10,17 @@ import (
 
 // landingCheckEvidence copies the exact evaluator read. It deliberately retains
 // all evaluator runs after the executor's provenance and retry filtering,
-// including unreferenced producer collisions. No later forge read enriches it.
-func landingCheckEvidence(basis queue.State, policyDigest string, land queue.Land, checks []forge.CheckRun, members []queue.LandingCheckMember, at time.Time) queue.LandingChecksRecorded {
-	e := queue.LandingChecksRecorded{BatchID: land.BatchID, ConfigCommit: basis.ConfigCommit, ConfigDigest: basis.ConfigDigest, PolicyDigest: policyDigest, TestedSHA: land.TestedSHA, LandedSHA: land.TestedSHA, Method: land.Method, TestRef: land.Ref, RequiredCheckSource: basis.LandingCheckSources(), Members: members, Checks: []queue.LandingCheck{}, ObservedAt: at.UTC()}
+// including unreferenced producer collisions. Under checks.retry_failed this is
+// only the newest-attempt set; superseded attempts remain in the retry ledger.
+// PR 10a must join by batch/tested SHA and provider run/attempt identity. No later forge read enriches it.
+func landingCheckEvidence(basis queue.State, policyDigest string, land queue.Land, checks []forge.CheckRun, at time.Time) (*queue.LandingChecksBuilder, error) {
+	e := queue.LandingChecksRecorded{BatchID: land.BatchID, ConfigCommit: basis.ConfigCommit, ConfigDigest: basis.ConfigDigest, PolicyDigest: policyDigest, TestedSHA: land.TestedSHA, LandedSHA: land.TestedSHA, Method: land.Method, TestRef: land.Ref, RequiredCheckSource: basis.LandingCheckSources(), ObservedAt: at.UTC()}
 	if land.Method == queue.FastForward && len(land.PRs) > 0 {
 		e.LandedSHA = land.PRs[len(land.PRs)-1].HeadSHA
+	}
+	builder, err := queue.NewLandingChecksBuilder(e)
+	if err != nil {
+		return nil, err
 	}
 	for _, run := range checks {
 		kind, identity, ok := strings.Cut(run.Source, ":")
@@ -39,9 +45,11 @@ func landingCheckEvidence(basis queue.State, policyDigest string, land queue.Lan
 			branch := run.HeadBranch
 			c.HeadBranch = &branch
 		}
-		e.Checks = append(e.Checks, c)
+		if err := builder.AddCheck(c); err != nil {
+			return nil, err
+		}
 	}
-	return e
+	return builder, nil
 }
 
 func knownCheckNumber(n uint64) *uint64 {

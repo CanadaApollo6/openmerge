@@ -272,7 +272,13 @@ func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Conf
 					return nil, err
 				}
 			}
-			checkMembers := []queue.LandingCheckMember{}
+			var builder *queue.LandingChecksBuilder
+			if recordChecks {
+				builder, err = landingCheckEvidence(basis, policy.Digest, land, checks, checksAt)
+				if err != nil {
+					return nil, err
+				}
+			}
 			for i, pin := range land.PRs {
 				evidence, err := stageAReviewEvidence(state, policy, fresh[i])
 				if err != nil {
@@ -286,10 +292,14 @@ func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Conf
 				if !met {
 					return nil, executor.ErrChecksNotSuccessful
 				}
-				checkMembers = append(checkMembers, queue.LandingCheckMember{PR: pin.PR, HeadSHA: pin.HeadSHA, Conditions: w.cfg.MergeWhen.Record(values)})
+				if recordChecks {
+					if err := builder.RecordMember(pin.PR, pin.HeadSHA, w.cfg.MergeWhen, values); err != nil {
+						return nil, err
+					}
+				}
 			}
 			if recordChecks {
-				e := landingCheckEvidence(basis, policy.Digest, land, checks, checkMembers, checksAt)
+				e := builder.Event()
 				checkEvidence = &e
 			}
 			return fresh, nil

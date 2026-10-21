@@ -2,7 +2,7 @@
 
 Trial class: **Hold**. Shared landing-start/check-read wiring changes even though
 emission is authority-only and activation remains PR 9. This builds on main
-through PR 5, without PR 6 or PR 7.
+through `2b21c6c` (PR 5 plus operator follow-up hardening), without PR 6 or PR 7 activation.
 
 `landing_checks_recorded` is a separate additive wire-v1 event. Its only registry
 fixture is `internal/queue/testdata/wire/v1/event_landing_checks_recorded.json`.
@@ -13,11 +13,38 @@ The event binds batch/landing attempt, governing config commit, effective config
 and policy digests, tested SHA, intended landed SHA, merge method, queue ref,
 ordered pinned PR heads, and check observation time. `required_check_source`
 identifies the effective `merge_when` expression and independent rule revisions.
-Each member retains the full nested/negative expression and all its typed
-observed inputs, including pending/missing check knowledge. Every evaluator run
+Event-wide `expressions`, `inputs`, and `checks` tables retain each distinct
+expression, typed input, and run exactly once. A member's `conditions.expression`
+and `conditions.inputs` contain zero-based indexes into the shared tables.
+`check_order` indexes `checks` in the exact evaluator-read order, preserving even
+repeated identical observations. Members share that check read. All nested and
+negative terms and pending/missing knowledge remain intact. Every evaluator run
 retains name, original source, producer kind/identity, normalized observed result,
 native check/status ID, workflow run ID, attempt, and branch provenance.
 Unavailable identities, attempts, and branch provenance are explicitly `null`.
+
+The complete compact wire-v1 envelope is capped at **1,048,576 bytes (1 MiB),
+inclusive**, counting JSON escapes, keys, indexes, punctuation, and timestamp.
+The builder charges each newly interned input before copying its borrowed lists;
+validation independently counts encoded bytes before serialization under the
+queue lock. Replay applies the same compact-size limit, with a coarse 2 MiB
+raw-data pre-decode limit to accommodate JSONB's added whitespace. Each check
+name, input value/list element, identity, and provenance string is at most
+**4,096 bytes**; expressions are at most **65,536 bytes**. Enum/object-ID fields
+retain their stricter semantic constraints. Counts remain at most 128 members,
+128 expressions, 1,536 distinct attribute inputs, 10,000 check-read entries/runs,
+and 10,000 elements per input list. Tables reject duplicate/unused entries and
+out-of-range or unordered member input references.
+
+An overflow returns typed `LandingChecksTooLargeError`, matching
+`ErrLandingChecksTooLarge`, without stale-authorization wrapping or truncation.
+No landing start or associated evidence commits. The worker persists an
+operator-clearable block with `landing-checks-too-large`, reports that reason for
+the batch, and fails the Land action. Reduce the checks/condition inputs before
+an operator refresh; automatic retries cannot bypass the size limit. Authority
+pin races that require evidence omitted by a legacy gate return
+`LandingChecksRequiredError`, classified beside `LandingDecisionRequiredError`.
+Legacy approval gates allocate no check-evidence tables or condition recordings.
 
 GitHub's legacy check reader defaults unknown attempts to one for retry
 compatibility. `AttemptInferred` marks that default without changing its retry
@@ -26,7 +53,11 @@ the inference. The event does not turn neutral/skipped/cancelled results into
 success or treat negative/alternative expressions as a flat success-check list.
 
 The executor shares one provenance-filtered and retry-selected CheckRuns read
-with the authority gate. There is no second forge read to reconstruct history.
+with the authority gate. Under `checks.retry_failed`, this event records only
+the newest-attempt set selected for that evaluation. Superseded attempts remain
+in the retry ledger. PR 10a must join both sources by queue/batch/tested SHA and
+provider run/attempt identity; this event alone is not a complete retry history.
+There is no second forge read to reconstruct history.
 The gate evaluates `checkSnapshot`/`policyValuesWithApprovals` using that read,
 then `Store.StartLanding` validates the claim, batch membership, tested SHA,
 config/policy bindings, and independent source revisions under the queue lock.

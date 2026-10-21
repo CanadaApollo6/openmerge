@@ -1,6 +1,8 @@
 package serve
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -29,7 +31,10 @@ func TestLandingCheckEvidenceUsesExactPolicyInputs(t *testing.T) {
 	}
 	land := queue.Land{BatchID: "batch", TestedSHA: strings.Repeat("a", 40), Method: queue.FastForward, Ref: "queue", PRs: []queue.BatchPR{{PR: 1, HeadSHA: strings.Repeat("b", 40)}}}
 	basis := queue.State{ConfigCommit: "config", ConfigDigest: strings.Repeat("c", 64)}
-	e := landingCheckEvidence(basis, strings.Repeat("d", 64), land, checks, []queue.LandingCheckMember{{PR: 1, HeadSHA: land.PRs[0].HeadSHA, Conditions: expr.Record(values)}}, time.Now())
+	builder, err := landingCheckEvidence(basis, strings.Repeat("d", 64), land, checks, time.Now())
+	must(t, err)
+	must(t, builder.RecordMember(1, land.PRs[0].HeadSHA, expr, values))
+	e := builder.Event()
 	e.AttemptID = "attempt"
 	must(t, e.Validate())
 	if len(e.Checks) != 4 || *e.Checks[1].Attempt != 2 || *e.Checks[1].RunID != 11 || e.Checks[2].Attempt != nil || e.Checks[3].ProducerIdentity != nil || e.Checks[3].RunID != nil || e.Checks[3].Attempt != nil || e.LandedSHA == e.TestedSHA {
@@ -150,7 +155,7 @@ func TestLandingChecksAuthorityMethodsAndChainPositions(t *testing.T) {
 					t.Fatal("missing per-position checks", len(recorded))
 				}
 				for i, e := range recorded {
-					if e.BatchID != batches[i].ID || e.TestedSHA != batches[i].TestedSHA || *e.Checks[0].RunID != uint64(701+i) || *e.Checks[0].Attempt != 2 || e.Members[0].Conditions.Expression != w.cfg.MergeWhen.String() {
+					if e.BatchID != batches[i].ID || e.TestedSHA != batches[i].TestedSHA || *e.Checks[0].RunID != uint64(701+i) || *e.Checks[0].Attempt != 2 || e.Expressions[e.Members[0].Conditions.Expression] != w.cfg.MergeWhen.String() {
 						t.Fatal("landing reused another batch's checks", e)
 					}
 					if method == queue.FastForward && e.LandedSHA == e.TestedSHA {
@@ -180,4 +185,73 @@ func claimLandingChecksAction(t *testing.T, s *Server, w *worker, cfg queue.Conf
 		t.Fatalf("requested check-evidence action missing: planned=%+v claims=%+v", planned, claims)
 	}
 	return claims[0]
+}
+
+func TestLandingChecksLegacyGateAndPinRace(t *testing.T) {
+	for _, race := range []bool{false, true} {
+		t.Run(fmt.Sprintf("pin-race-%t", race), func(t *testing.T) {
+			s, w, f := shadowFixture(t, 1, "main", "7", false)
+			pr := w.prs[1]
+			f.SetNativeReviews(repo, 1, forge.NativeReviews{Reviews: []forge.NativeReview{{ID: 200, CommitID: pr.HeadSHA, Author: forge.UserIdentity{ID: 21, Login: "writer", Kind: forge.UserAccount}, State: forge.ReviewApproved, Submitted: forge.NativeTime{Time: time.Now().Add(time.Minute), Source: forge.ReviewSubmissionTime, Precision: time.Second}}}, Comments: []forge.NativeComment{shadowComment(100, "@openmerge queue")}})
+			batch := shadowBuildBatch(t, s, w, 1)
+			shadowChecks(t, s, w, f, batch.TestedSHA, []forge.CheckRun{{Name: "ci", Source: "app:15368", State: forge.Success, HeadBranch: batch.TestRef}})
+			_, err := s.store.Append(t.Context(), w.id, []queue.Event{queue.ChecksCompleted{TestedSHA: batch.TestedSHA, Success: true}}, "")
+			must(t, err)
+			cfg := w.plannerConfig(s.options.PollInterval)
+			claim := claimLandingChecksAction(t, s, w, cfg, func(a queue.Action) bool { _, ok := a.(queue.Land); return ok })
+			proceed, err := s.store.BeginConsequential(t.Context(), claim, cfg, time.Now())
+			must(t, err)
+			if !proceed {
+				t.Fatal("claim did not begin")
+			}
+			basis := shadowState(t, s, w)
+			gate := s.stageAGate(w, claim, cfg, basis)
+			if gate.ReadInputs == nil || gate.ReadInputsWithChecks != nil {
+				t.Fatal("legacy gate opted into evidence read")
+			}
+			// This extra unused check exceeds the new evidence string cap. Legacy
+			// condition evaluation still accepts it without constructing evidence.
+			f.SetCheckRuns(repo, batch.TestedSHA, []forge.CheckRun{{Name: "ci", Source: "app:15368", State: forge.Success, HeadBranch: batch.TestRef}, {Name: strings.Repeat("x", 4097), Source: "app:15368", State: forge.Success, HeadBranch: batch.TestRef}})
+			if race {
+				commit := gate.Commit
+				gate.Commit = func(ctx context.Context, fresh []queue.ApprovalEligibilityObserved, decisions []queue.LandingDecisionRecorded, start queue.LandingStarted) error {
+					raw, err := os.ReadFile("../queue/testdata/wire/v1/event_policy_authority_applied.json")
+					must(t, err)
+					event, err := queue.DecodeEvent(raw)
+					must(t, err)
+					pin := event.(queue.PolicyAuthorityApplied)
+					pin.GoverningCommit = basis.ConfigCommit
+					pin.EffectiveDigest = basis.ConfigDigest
+					pin.OpenMerge.Binding.EffectiveDigest = basis.ConfigDigest
+					_, err = s.store.Append(ctx, w.id, []queue.Event{pin}, "")
+					must(t, err)
+					return commit(ctx, fresh, decisions, start)
+				}
+			}
+			x := executor.Executor{Driver: f, Git: f, Repo: repo, Base: "main", RequiredChecks: []string{"ci"}, LandingDecisions: gate}
+			err = x.Execute(t.Context(), claim.Action, s.store.EmitWithPolicy(t.Context(), claim, cfg, w.stageA.policy))
+			if race {
+				var required store.LandingChecksRequiredError
+				if !errors.As(err, &required) || errors.Is(err, store.ErrLandingDecisionStale) || errors.Is(err, store.ErrStale) {
+					t.Fatalf("pin race classification: %v", err)
+				}
+			} else {
+				must(t, err)
+			}
+			records, err := s.store.EventsAfter(t.Context(), w.id, 0)
+			must(t, err)
+			starts, checks := 0, 0
+			for _, record := range records {
+				switch record.Event.(type) {
+				case queue.LandingStarted:
+					starts++
+				case queue.LandingChecksRecorded:
+					checks++
+				}
+			}
+			if checks != 0 || race && starts != 0 || !race && starts != 1 {
+				t.Fatalf("legacy/racing gate recorded starts=%d checks=%d", starts, checks)
+			}
+		})
+	}
 }

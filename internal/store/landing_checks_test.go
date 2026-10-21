@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"os"
 	"reflect"
 	"strings"
@@ -48,7 +50,7 @@ func authorityCheckLandInput(t *testing.T, s *Store, rawCase []byte) (QueueID, C
 	if state.AuthorityPin() == nil {
 		t.Fatal("pin did not apply")
 	}
-	e := queue.LandingChecksRecorded{BatchID: c.Start.BatchID, AttemptID: c.Start.AttemptID, ConfigCommit: state.ConfigCommit, ConfigDigest: state.ConfigDigest, PolicyDigest: c.Policy.Digest, TestedSHA: c.Land.TestedSHA, LandedSHA: c.Land.TestedSHA, Method: c.Land.Method, TestRef: c.Land.Ref, RequiredCheckSource: state.LandingCheckSources(), ObservedAt: c.Start.At, Checks: []queue.LandingCheck{}, Members: []queue.LandingCheckMember{{PR: c.Land.PRs[0].PR, HeadSHA: c.Land.PRs[0].HeadSHA, Conditions: condition.All().Record(condition.Snapshot{})}}}
+	e := queue.LandingChecksRecorded{BatchID: c.Start.BatchID, AttemptID: c.Start.AttemptID, ConfigCommit: state.ConfigCommit, ConfigDigest: state.ConfigDigest, PolicyDigest: c.Policy.Digest, TestedSHA: c.Land.TestedSHA, LandedSHA: c.Land.TestedSHA, Method: c.Land.Method, TestRef: c.Land.Ref, RequiredCheckSource: state.LandingCheckSources(), ObservedAt: c.Start.At, Checks: []queue.LandingCheck{}, CheckOrder: []int{}, Expressions: []string{condition.All().String()}, Inputs: []condition.ObservedInput{}, Members: []queue.LandingCheckMember{{PR: c.Land.PRs[0].PR, HeadSHA: c.Land.PRs[0].HeadSHA, Conditions: queue.LandingCheckCondition{Expression: 0, Inputs: []int{}}}}}
 	must(t, e.Validate())
 	return q, claim, c, d, e
 }
@@ -107,7 +109,7 @@ func TestLandingChecksAtomicRollbackRetryAndRetention(t *testing.T) {
 }
 
 func TestLandingChecksValidateLockedBindings(t *testing.T) {
-	for _, kind := range []string{"missing", "source", "member", "sha", "config", "policy", "claim", "bypass", "final-start"} {
+	for _, kind := range []string{"missing", "source", "member", "sha", "config", "policy", "claim", "bypass", "final-start", "overflow"} {
 		t.Run(kind, func(t *testing.T) {
 			s := newStore(t)
 			q, claim, c, d, e := authorityCheckLand(t, s)
@@ -116,6 +118,8 @@ func TestLandingChecksValidateLockedBindings(t *testing.T) {
 			switch kind {
 			case "missing":
 				evidence = nil
+			case "overflow":
+				evidence[0].Expressions[0] = strings.Repeat("x", condition.MaxEvidenceExpressionBytes+1)
 			case "source":
 				evidence[0].RequiredCheckSource.RulesRevision++
 			case "member":
@@ -147,6 +151,20 @@ func TestLandingChecksValidateLockedBindings(t *testing.T) {
 			}
 			if err == nil {
 				t.Fatal("invalid check evidence admitted", kind)
+			}
+			if kind == "overflow" {
+				var tooLarge queue.LandingChecksTooLargeError
+				if !errors.Is(err, queue.ErrLandingChecksTooLarge) || !errors.As(err, &tooLarge) || errors.Is(err, ErrStale) || errors.Is(err, ErrLandingDecisionStale) {
+					t.Fatalf("overflow misclassified: %v", err)
+				}
+			}
+			if kind == "missing" {
+				// A gate built against a pre-pin basis omits checks, but the locked
+				// store must require them after authority is installed.
+				var required LandingChecksRequiredError
+				if !errors.As(err, &required) || errors.Is(err, ErrStale) {
+					t.Fatalf("pin race misclassified: %v", err)
+				}
 			}
 			assertNoLandingSideEffects(t, s, q, claim, before)
 		})
@@ -188,4 +206,42 @@ func TestLandingChecksSourceRevisionRace(t *testing.T) {
 		t.Fatal("source revision race admitted", err)
 	}
 	assertNoLandingSideEffects(t, s, q, claim, before+1)
+}
+
+func TestLandingChecksByteCapSurvivesJSONB(t *testing.T) {
+	s := newStore(t)
+	q, claim, c, d, e := authorityCheckLand(t, s)
+	// Build exactly a 1-MiB compact event, below every individual string cap.
+	const envelopeBytes = len(`{"version":1,"type":"landing_checks_recorded","data":}`)
+	for {
+		raw, err := json.Marshal(e)
+		must(t, err)
+		gap := queue.MaxLandingChecksBytes - envelopeBytes - len(raw)
+		if gap <= 60000 {
+			e.Expressions[0] += strings.Repeat("x", gap)
+			break
+		}
+		index := len(e.Checks)
+		e.Checks = append(e.Checks, queue.LandingCheck{Name: fmt.Sprintf("%04d%s", index, strings.Repeat("x", 4092)), ProducerKind: "unavailable", Result: forge.Success})
+		e.CheckOrder = append(e.CheckOrder, index)
+	}
+	before := eventCount(t, s, q)
+	e.Expressions[0] += "x"
+	err := s.StartLanding(t.Context(), claim, c.Config, c.Policy, []queue.ApprovalEligibilityObserved{c.Fresh}, []queue.LandingDecisionRecorded{d}, c.Start, e)
+	if !errors.Is(err, queue.ErrLandingChecksTooLarge) || errors.Is(err, ErrStale) {
+		t.Fatalf("cap+1 classification: %v", err)
+	}
+	assertNoLandingSideEffects(t, s, q, claim, before)
+	e.Expressions[0] = e.Expressions[0][:len(e.Expressions[0])-1]
+	_, raw, err := queue.EncodeEvent(e)
+	must(t, err)
+	if len(raw) != queue.MaxLandingChecksBytes {
+		t.Fatalf("event size %d", len(raw))
+	}
+	must(t, s.StartLanding(t.Context(), claim, c.Config, c.Policy, []queue.ApprovalEligibilityObserved{c.Fresh}, []queue.LandingDecisionRecorded{d}, c.Start, e))
+	records, err := s.EventsAfter(t.Context(), q, 0)
+	must(t, err)
+	if !reflect.DeepEqual(records[len(records)-2].Event, e) {
+		t.Fatal("JSONB cap boundary did not replay exactly")
+	}
 }

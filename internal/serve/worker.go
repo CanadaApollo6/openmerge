@@ -275,6 +275,24 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 			return s.store.Emit(persist, claim, cfg)(deferred)
 		}
 	}
+	if errors.Is(err, queue.ErrLandingChecksTooLarge) {
+		detail := "landing-checks-too-large: " + err.Error() + "; reduce checks/condition inputs, then refresh the queue"
+		if blockErr := s.block(actionCtx, w, queue.Operator, detail, ""); blockErr != nil {
+			return errors.Join(err, blockErr)
+		}
+		if reportErr := s.reportBatch(actionCtx, w, batch, forge.Status{State: forge.Blocked, Reason: "landing-checks-too-large", Summary: detail}); reportErr != nil {
+			return errors.Join(err, reportErr)
+		}
+		return err
+	}
+	// Missing atomic evidence (including a pin changing after gate construction)
+	// is a wiring failure, alongside missing approval decisions, never stale work.
+	var checksRequired store.LandingChecksRequiredError
+	var decisionRequired store.LandingDecisionRequiredError
+	if errors.As(err, &checksRequired) || errors.As(err, &decisionRequired) {
+		_ = s.report(actionCtx, w)
+		return err
+	}
 	var absent *executor.ErrLandingNotOnBase
 	var ambiguity *executor.CheckSourceAmbiguityError
 	if errors.As(err, &absent) {

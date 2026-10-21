@@ -97,6 +97,9 @@ func (s *Store) startLanding(ctx context.Context, claim ClaimedAction, cfg queue
 				return LandingChecksRequiredError{}
 			}
 			if err := state.ValidateLandingChecks(policy.Digest, land, start, checks[0]); err != nil {
+				if errors.Is(err, queue.ErrLandingChecksTooLarge) {
+					return err
+				}
 				return fmt.Errorf("%w: %w", ErrStale, err)
 			}
 		} else if len(checks) != 0 {
