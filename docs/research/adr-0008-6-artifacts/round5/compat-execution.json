@@ -1,0 +1,86 @@
+{
+  "focused": {
+    "command": [
+      "flock",
+      "/home/riels/.cache/openmerge-heavy.lock",
+      "env",
+      "GOFLAGS=-p=2",
+      "GOMEMLIMIT=4GiB",
+      "OPENMERGE_TEST_DATABASE_URL=postgres://postgres:openmerge@localhost:54329/postgres?sslmode=disable",
+      "go",
+      "test",
+      "./internal/forge",
+      "./internal/forge/github",
+      "./internal/store",
+      "./internal/status",
+      "./internal/serve",
+      "./cmd/openmerge",
+      "-run",
+      "Test(ProgressHook|TransportProgress|Warning|JournalWarning|Health|OutsidePushLedger|OutsideWarning|ServeHealth)",
+      "-count=1",
+      "-v"
+    ],
+    "exit": 0
+  },
+  "legacy-http": {
+    "command": [
+      "flock",
+      "/home/riels/.cache/openmerge-heavy.lock",
+      "env",
+      "GOFLAGS=-p=2",
+      "GOMEMLIMIT=4GiB",
+      "OPENMERGE_TEST_DATABASE_URL=postgres://postgres:openmerge@localhost:54329/postgres?sslmode=disable",
+      "python3",
+      "scripts/check-legacy-authority-http.py",
+      "/home/riels/.cache/pr115-r4-main-a4c4f4b",
+      "/home/riels/.cache/pr115-r5-validation/http-responses.json"
+    ],
+    "exit": 0
+  },
+  "legacy-cli": {
+    "command": [
+      "flock",
+      "/home/riels/.cache/openmerge-heavy.lock",
+      "env",
+      "GOFLAGS=-p=2",
+      "GOMEMLIMIT=4GiB",
+      "OPENMERGE_TEST_DATABASE_URL=postgres://postgres:openmerge@localhost:54329/postgres?sslmode=disable",
+      "python3",
+      "scripts/check-legacy-authority-cli.py",
+      "/home/riels/.cache/pr115-r4-main-a4c4f4b"
+    ],
+    "exit": 0
+  },
+  "legacy-reporting": {
+    "command": [
+      "flock",
+      "/home/riels/.cache/openmerge-heavy.lock",
+      "env",
+      "GOFLAGS=-p=2",
+      "GOMEMLIMIT=4GiB",
+      "OPENMERGE_TEST_DATABASE_URL=postgres://postgres:openmerge@localhost:54329/postgres?sslmode=disable",
+      "python3",
+      "scripts/check-legacy-reporting.py",
+      "/home/riels/.cache/pr115-r4-main-a4c4f4b"
+    ],
+    "exit": 0
+  },
+  "query-counts": {
+    "command": [
+      "flock",
+      "/home/riels/.cache/openmerge-heavy.lock",
+      "env",
+      "GOFLAGS=-p=2",
+      "GOMEMLIMIT=4GiB",
+      "OPENMERGE_TEST_DATABASE_URL=postgres://postgres:openmerge@localhost:54329/postgres?sslmode=disable",
+      "go",
+      "test",
+      "./internal/store",
+      "-run",
+      "^TestJournalWarningQueryCountsAndIncrementalWatermark$",
+      "-count=1",
+      "-v"
+    ],
+    "exit": 0
+  }
+}

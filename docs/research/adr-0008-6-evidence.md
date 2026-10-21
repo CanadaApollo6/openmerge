@@ -319,3 +319,82 @@ test DB environment. `round2/http-responses.json` retains both complete HTTP
 responses and SHA-256 hashes; `round2/cli-responses.json` does the same for CLI
 bytes. The manifest records commands, implementation, baseline and receipt
 hashes. No comparison touches a running listener, live API or GitHub.
+
+## Round 5 — successful page and sub-read progress
+
+Round 5 starts from remote `2022a987e65ef6bcb50db733f0ca63988325f7e7`.
+The stale worktree was clean; its rebased history was compared against the remote
+and retained at local `backup/pr115-pre-round5-992d435` before reset. The tested
+implementation is `dd1e4df978464dc6f19ffb50489d1da66ad65990`. The subsequent evidence
+commit changes only this document and receipts. Main baseline is unchanged at
+`a4c4f4bcd1befa718908b3ad801150c34c049c7d`.
+
+The blocking false 503 is fixed in the shared GitHub transport, not in each
+pagination loop. `forge.WithProgressHook` carries a worker-scoped callback from
+`Server.cycle`. A successful HTTP response publishes once when its body reaches
+EOF; an empty `http.NoBody` response is already complete. Successful conditional
+revalidation also passes through this boundary. Headers, early Close, HTTP
+failures, body read errors and hung requests/bodies cannot publish. This covers
+ListOpenPullRequests, ListComments, PR changed-files/reviews and future driver
+requests through the transport. Existing successful per-unit publications remain.
+
+Optional finding #3 is addressed: configuration, PR/comments/checks/rules and
+identity/native-review read-unit publication now requires success. Completed
+actions and turns retain their independent completion publications, and failed
+cycles still age against last success. Optional finding #4 is documented in both
+the operating guide and PR body: an old explicit `150s` stall override is rejected
+with standard action/grace settings; remove it for the 4m default or supply a
+compatible budget.
+
+Optional finding #2 is deferred. Cold-cache ReadRef clone/fetch and the one-time
+fence initialization push still have no intermediate Git progress. The operating
+guide and PR body explicitly document the startup/first-cycle overdue exposure.
+There is no timer-based progress or weakening of hung-operation detection.
+
+### Verification
+
+All Go commands and Go-invoking scripts used
+`flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB`
+(6GiB for strict replay). DB tests used only isolated schemas on localhost:54329.
+The full commands, exit codes, source hashes and receipt hashes are retained in
+[the round 5 manifest](adr-0008-6-artifacts/round5/manifest.json). Round 4 receipts
+remain historical; the new round 5 receipts rerun their checks on this implementation.
+
+- `make check`: exit **0**, format, zero lint issues, complete race-enabled short
+  suite and build. Source hashes in the manifest match the final implementation exactly.
+- Focused race regressions: **PASS**, including the round-4 per-unit regression
+  with success-only configuration probe expectations. The page counter is atomic;
+  DB pools remain inside their synctest bubble and process-wide DNS initializes outside.
+- [Focused regressions](adr-0008-6-artifacts/round5/focused.log): **PASS**, including
+  real worker loop + real GitHub paginator/transport + health HTTP handler with
+  fake HTTP and synctest. No GitHub calls or external network requests are made by these regressions.
+  - (a) `TestHealthGitHubPagination/healthy`: **20 × 30s pages**, **10m** total,
+    HTTP **200 at each 15s health check**, including after the 4m stall threshold.
+  - (b) `/hung` and `/streaming`: two successful pages, then a request that never
+    returns or a response body that never finishes. HTTP **503 at 4m1s after the
+    second page**, with `LastProgressAt` exactly frozen at that completed page.
+  - (c) `/failed` observes the real driver's failed page before the cycle completes
+    and asserts progress still equals the previous successful page. Transport
+    regressions separately reject HTTP 500, partial bodies, read errors and
+    transport errors as progress.
+  - (d) `TestHealthProgressHookOutsideCycle`, `TestProgressHookScope` and the
+    transport `/no-hook` case prove no publication outside a cycle or without a
+    hook in context.
+- [Strict offline replay](adr-0008-6-artifacts/round5/replay.json): **PASS**, with
+  mandatory synthetic self-tests and 2,159/2,159 matching action, strict state,
+  snapshot-hash and boundary checkpoints on the existing 2,158-event export.
+- [Simulator comparison](adr-0008-6-artifacts/round5/replay-sim-execution.json):
+  **PASS**, required `make test-sim-exits` in baseline and candidate, with complete
+  workload result blocks normalized only for harness timing/interleaving and
+  compared byte-for-byte. The normalized results and both raw logs are retained.
+- Refreshed legacy receipts: **1,304 complete HTTP responses**, **six complete CLI
+  outputs**, and **six reporting fixtures** match main. HTTP/CLI compare all
+  bytes with no stripping; reporting retains its preexisting permitted
+  change/landing exclusions and negative controls.
+- [Query counts](adr-0008-6-artifacts/round5/query-counts.log): **PASS**, status
+  legacy/cold/unchanged/one-new-event each uses **four statements, zero extra
+  warning queries**; background unchanged uses **three**, two new audits **five**.
+
+Hold constraints remain intact: no migrations/indexes, fixtures, wire/schema,
+Makefile/CI/Dockerfile/test-flag changes, deployment/merge, live DB/API/systemd or
+live ref operations. PR 9 retains activation; PR 11 retains sandbox acceptance.

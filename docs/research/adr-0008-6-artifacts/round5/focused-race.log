@@ -1,0 +1,17 @@
+=== RUN   TestHealthRealCyclePublishesEachReadAndReport
+    health_cycle_test.go:438: completed units: map[PR:4 check report:4 check source:4 comments:4 configuration file:1 configuration file missing:3 default branch:1 permissions:2 protection:2 rules:2]
+--- PASS: TestHealthRealCyclePublishesEachReadAndReport (0.10s)
+=== RUN   TestHealthGitHubPagination
+=== RUN   TestHealthGitHubPagination/healthy
+=== RUN   TestHealthGitHubPagination/hung
+=== RUN   TestHealthGitHubPagination/streaming
+=== RUN   TestHealthGitHubPagination/failed
+--- PASS: TestHealthGitHubPagination (0.17s)
+    --- PASS: TestHealthGitHubPagination/healthy (0.05s)
+    --- PASS: TestHealthGitHubPagination/hung (0.03s)
+    --- PASS: TestHealthGitHubPagination/streaming (0.03s)
+    --- PASS: TestHealthGitHubPagination/failed (0.03s)
+=== RUN   TestHealthProgressHookOutsideCycle
+--- PASS: TestHealthProgressHookOutsideCycle (0.02s)
+PASS
+ok  	github.com/CanadaApollo6/openmerge/internal/serve	1.306s

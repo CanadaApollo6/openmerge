@@ -1,0 +1,100 @@
+{
+  "recorded_at": "2026-10-21T03:33:55.761437+00:00",
+  "round5_start": "2022a987e65ef6bcb50db733f0ca63988325f7e7",
+  "implementation": "dd1e4df978464dc6f19ffb50489d1da66ad65990",
+  "production_change": "f5933cf5683bcac6203e076f4acea72f3a3a919a",
+  "legacy_baseline": "a4c4f4bcd1befa718908b3ad801150c34c049c7d",
+  "main_at_final_fetch": "a3873e65f8cea78be5953e530d795a6adbe892b6",
+  "wrapper": [
+    "flock",
+    "/home/riels/.cache/openmerge-heavy.lock",
+    "env",
+    "GOFLAGS=-p=2",
+    "GOMEMLIMIT=4GiB"
+  ],
+  "commands": {
+    "make_check": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB OPENMERGE_TEST_DATABASE_URL=postgres://postgres:openmerge@localhost:54329/postgres?sslmode=disable make check",
+    "focused_race": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB OPENMERGE_TEST_DATABASE_URL=postgres://postgres:openmerge@localhost:54329/postgres?sslmode=disable go test -race ./internal/serve -run 'TestHealth(GitHubPagination|RealCyclePublishesEachReadAndReport|ProgressHookOutsideCycle)$' -count=1 -timeout=60s -v"
+  },
+  "binary_sha256": "0650a75ea1907e4c7cda548fbabae9d320712f7bcea54e83a22643f163819f2c",
+  "strict_replay_memory": "6GiB",
+  "trial_class": "Hold",
+  "test_db": "localhost:54329; isolated schemas only",
+  "exit_codes": {
+    "make_check": 0,
+    "focused_race": 0,
+    "focused": 0,
+    "legacy-http": 0,
+    "legacy-cli": 0,
+    "legacy-reporting": 0,
+    "query-counts": 0,
+    "strict_replay": 0,
+    "baseline_simulator": 0,
+    "candidate_simulator": 0
+  },
+  "comparisons": {
+    "legacy_http": 1304,
+    "legacy_cli": 6,
+    "legacy_reporting": 6,
+    "strict_replay_checkpoints": 2159,
+    "simulator_blocks": 146
+  },
+  "query_counts": {
+    "status_legacy": 4,
+    "status_authority_cold": 4,
+    "status_authority_unchanged": 4,
+    "status_authority_new_event": 4,
+    "status_extra_warning_queries": 0,
+    "background_unchanged": 3,
+    "background_two_new_audits": 5
+  },
+  "progress_tests": {
+    "healthy": "20 pages x 30s = 10m; 200 at each 15s health check",
+    "hung_and_streaming": "503 at 4m1s since last successful page; LastProgressAt frozen",
+    "failed": "real driver failure observed before cycle completion; prior page progress unchanged",
+    "no_hook_and_outside_cycle": "no publication"
+  },
+  "deferred": [
+    "cold-cache ReadRef clone/fetch intermediate progress",
+    "one-time fence push intermediate progress"
+  ],
+  "source_sha256": {
+    "docs/api.md": "9fa387b0a3355f792c72611e4d2dbb984f52abad4310316c7ca2630e142d4f59",
+    "docs/operating.md": "392c22946310fd08a93740e128e56b0345c6a2fcfc5e09145b1cc0180b371caf",
+    "internal/forge/github/client.go": "f7260f54f876300b2f4b05cc0324663f50962ed44875bb481e6c0107128ea489",
+    "internal/forge/github/progress_test.go": "5dcbd1d28d4189aab2e7668d60d334e32e36e4257d4e9dd62c7496f2a19887fa",
+    "internal/forge/progress.go": "6f50a147ffd82a8fd4e74ffdbacb1907df75cfc7fd1d3a2616cd65d8979ba173",
+    "internal/forge/progress_test.go": "711c76345bb78a6ccb00a6c2ecf4cb135abf80b604da1a82505f16d19270ecf4",
+    "internal/serve/block_sources.go": "92eb1b439e8f10734e91083090289a34ee0956c7eff335272d971706d747806b",
+    "internal/serve/health_cycle_test.go": "2829a57cd7c6324d3624fb4c70a5898b99a776ee8bb3b9737d5c63c907528c1e",
+    "internal/serve/health_pagination_test.go": "e6964fd4642a0142ab90092c5a2f2bc59d8e36df824c57c73c4b5bc789218e80",
+    "internal/serve/health_readers.go": "e668a382b725e63169262399d45f90bf486c3bf5efca7abc3cb2288551d472ec",
+    "internal/serve/policy.go": "bcba707b6a443bc49ce135bd76f47583b5c9eb949ebe059a659fdd4eb8d86ade",
+    "internal/serve/reconcile.go": "325ec34ee280d10e74635a7c2bcf28c95d26e94f3f33f16894d2bf85fc5f150d",
+    "internal/serve/rules.go": "e55737cca914d390d3fe6dfc75e36305cbdb224c474a4272c50aa1d162234629",
+    "internal/serve/serve.go": "433a2319a435b403494903dea0283c51849164955b845bb058c933c0423a7a20",
+    "internal/serve/worker.go": "2d982f08fe1d13c0868870bc8629f2fc8554046b7e60b0bff46cf7be48706f32"
+  },
+  "source_matches_implementation": true,
+  "receipts_sha256": {
+    "baseline-simulator-command.txt": "51b039704b62ebe74cd939458efc29cced517a1f85fb3704688bd682c7d70f03",
+    "baseline-simulator.log": "56680e9d94180e15cf8f6043db362c11ddeb03b570cdd060f4a1d1dd90c00609",
+    "binary-version.txt": "9b6bb6a2a7d38fd0989ee852099387913736d031b51129d0e38b9e068b44acb0",
+    "candidate-simulator-command.txt": "b93ec1ad12bd4c74ff7a8ed461f78f2975e5c4fd5803789ab8a0b2cf96c04be4",
+    "candidate-simulator.log": "a78af8ed6890817f8215b2c3cb74f9a1477e57f6f84b9ad5a967be98d2cc5a6e",
+    "cli-responses.json": "46e73b32889d53c886a3e0482a2e25ac1391eeabeb2e31d2ff6bd818e9b76fc9",
+    "compat-execution.json": "72d739ce99b4c1b62c215acce1b18bb0c87e460c2a4b2ee7ec25159007278ba5",
+    "focused-race.log": "b36b2860f4bac9b1f5fc0019bb449ceba56f36e7e13da0a1c66bd0f9e9173bd1",
+    "focused.log": "86bc40354deac85b24f0dbed355f99a9dcde32cd63e92272c755ccb4ffd38200",
+    "http-responses.json": "19565615bedec686a27df2ada14de59f246accfd7e9343a15779b4d85300794f",
+    "legacy-cli.log": "164a4ab3018db76fad2b5cb31fd285ece93e46839e6765087f8dacf8ffc18da2",
+    "legacy-http.log": "ff2e3c289fa4316800de3763cadf377ed488fdfc5353ebe47023237a58aa5d37",
+    "legacy-reporting.log": "5f24a84bcab5936190040cba835b39c71400d9ec54d96e6358ec1713a01c3422",
+    "make-check.log": "ab48d8838585c0aa4634ef01126fbe08ef30be43d6e3fba87b6b6364aa14c220",
+    "query-counts.log": "cf7ced52b7c775ee4396b8ee44bf6045b7d225789699b3d57954ccbdae72ba00",
+    "replay-sim-execution.json": "0066da5b93f31373eb72e9a11ecff68ac8cfd5e1e6e9fe7b71958379c4dc3518",
+    "replay.json": "113da2c977d40d037508fe33ef8886f637a498d91f1fa88f8a6f6efff8476853",
+    "sim-normalized.json": "a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7",
+    "strict-replay-command.txt": "f3ae58bd504c5df40fe6a4f0edd3eb09031a3342f15b4c6749cda7c07faa82b8"
+  }
+}
