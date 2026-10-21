@@ -77,7 +77,32 @@ activation guard is deliberately stricter about *verification*: historical wire
 pins remain readable, but cannot establish verified authority from an
 uninterpreted inventory. 9b-ii retains the public barrier too; 9c still owns the
 complete forge gate and the only removal of that barrier. Neither 9b slice is
-deployment or organization acceptance. Stop after publishing 9b-i in this run.
+deployment or organization acceptance. The original prerequisite run stopped at 9b-i.
+
+### PR 9b-ii review split (2026-10-21)
+
+Runtime lifecycle, worker projections and lock-time admission are too large to
+review with the emission boundary and inherited runtime corrections. Split again:
+
+- **9b-ii-1 — runtime foundation:** add the package-private, explicit-opt-in
+  activation caller around the existing adoption writer. Validate receipt max-age
+  and attested running BinaryRevision before I/O and again before emission;
+  return and log the durable adopted/pinned-unverified outcome. Fix the inherited
+  cursor reset warning/CAS ordering, document future-version cursor replacement,
+  and make authority check preflight local so approval quota/read failures cannot
+  preempt check-input shape/budget validation. Recheck A2 at this caller boundary.
+- **9b-ii-2 — runtime integration:** owns every remaining runtime row below.
+  Integrate the caller into atomic config/pin and new-queue lifecycle, owner
+  enforcement without approvals, observations/projections, rollback/re-enable,
+  all-queue digest/invalidation and every landing start. Prove A2 again against
+  the **complete** integrated runtime seam; the foundation proof is not a
+  substitute. Include source-repair, mixed-state, quota/read, no-approvals and
+  depth-1/4 admission tests with that integration.
+
+Both slices remain **Hold** and independently safe behind 9a's public rejection.
+9b-ii-1 installs no hooks and has no production activation call site. Production
+constructors never set its explicit opt-in. 9b-ii-2 must preserve that boundary;
+only 9c may remove it. Publish 9b-ii-1 and stop in this run.
 
 Each row assigns the original requirement once; later slices consume earlier
 contracts without transferring their ownership.
@@ -87,19 +112,19 @@ contracts without transferring their ownership.
 | Scope/config: root schema + loader + CLI agreement, reserved fail-closed publication; pure default queue and governing-owner coverage validation | 9a |
 | Scope/config: resolve/obtain actual governing evidence in discovery/setup/import; import acceptance cannot waive; missing/unresolved/incomplete evidence cannot activate | 9c |
 | Owner enforcement: pure no-approvals decision/digest, no ordinary floor, mandatory exact-revision policy owners, `none` cannot waive; governing rather than proposed owner semantics | 9a |
-| Owner enforcement: runtime classification, briefs, eligibility and decision invocation without approvals | 9b-ii |
+| Owner enforcement: runtime classification, briefs, eligibility and decision invocation without approvals | 9b-ii-2 |
 | Owner enforcement: invalid landed config blocks work | 9c |
 | Wire/state: idempotent prerequisite pin writer, interpreted draft adoption and persisted fold provenance protection | 9b-i |
-| Wire/state: conditional matching ConfigApplied/pin emission and new-queue lifecycle wiring; no ordinary GitHub events or downgrade boundary | 9b-ii |
-| Wire/state: first-cycle observations, warnings, status/CLI/API/health, author messages, per-check evidence from PRs 4–8 | 9b-ii |
-| Wire/state: every landing start checks source findings/digest under lock at depths 1/4; admitted starts settle; unchanged batching/fence protocol | 9b-ii |
-| Wire/state: mode-specific rollback, no new authority observations/warning eligibility, retain delayed-origin warnings/history/unrelated blocks; fresh re-enable evidence; digest reaches every served queue | 9b-ii |
+| Wire/state: conditional matching ConfigApplied/pin emission and new-queue lifecycle wiring; no ordinary GitHub events or downgrade boundary | 9b-ii-2 |
+| Wire/state: first-cycle observations, warnings, status/CLI/API/health, author messages, per-check evidence from PRs 4–8 | 9b-ii-2 |
+| Wire/state: every landing start checks source findings/digest under lock at depths 1/4; admitted starts settle; unchanged batching/fence protocol | 9b-ii-2 |
+| Wire/state: mode-specific rollback, no new authority observations/warning eligibility, retain delayed-origin warnings/history/unrelated blocks; fresh re-enable evidence; digest reaches every served queue | 9b-ii-2 |
 | Forge/migrations: typed reader/compiler/content wiring and immutable context/reloading guard before every generated-object push | 9c |
 | Forge/migrations: registration/cycle/first-queue pin-observation-fence ordering, direct EnsureFence options, post-build read never a guard | 9c |
-| Forge/migrations: invalidate on default branch/selector/actor/method changes | 9b-ii |
+| Forge/migrations: invalidate on default branch/selector/actor/method changes | 9b-ii-2 |
 | Forge/migrations: no new capability/migration, old-worker inventory/drain, backup receipt/reconciliation and v7 downgrade gate incl. pre-switch verify | 9c |
 | Tests: static invalid coverage/default queue/selector and owner removal/head/stale eligibility cases | 9a |
-| Tests: source repair races, mixed repository/base state transitions, quota/read errors and no-approvals starts | 9b-ii |
+| Tests: source repair races, mixed repository/base state transitions, quota/read errors and no-approvals starts | 9b-ii-2 |
 | Tests: real default rename/deletion, cold-cache all-method gitops land/read-back/decisions; #82/#84; rejected objects leave refs unchanged; mixed GitHub commit IDs/permissions/traces; PR 11 organization release gate | 9c |
 
 ## Carry-over disposition
@@ -112,12 +137,15 @@ contracts without transferring their ownership.
 | #112(1): draft fingerprint strips findings | 9b-i: interpreted fresh evidence/findings equality required before adopting verified draft; raw evidence cannot fold verified activation |
 | #112(2): AdoptAuthorityPin idempotence before ProposedVerification scan | 9b-i: retry returns before history scan |
 | #112(3): adopted versus pinned-unverified receipt contract | 9b-i: explicit output and durable receipt/source IDs |
-| #112(3): production activation caller receipt/output wiring | 9b-ii: expose adopted versus pinned-unverified outcome from the internal activation caller |
+| #112(3): internal activation caller receipt/output wiring | 9b-ii-1: expose and log adopted versus pinned-unverified outcome; 9b-ii-2 consumes it in lifecycle integration |
 | #112 small: existing setup --verify emission receipt gates | 9b-i: command-boundary regressions for max-age and attested BinaryRevision validation |
-| #112 small: internal activation caller emission receipt gate | 9b-ii: validate emission receipt max-age and attested BinaryRevision at the internal activation caller before first emission |
+| #112 small: internal activation caller emission receipt gate | 9b-ii-1: validate emission receipt max-age and attested running BinaryRevision before I/O and before emission |
 | #112 small: stale setup --verify basis | 9b-i: nonzero exit with retry hint |
 | #90: branches.go refreshWorker is first fence-bootstrap site | 9c: end-to-end test through refreshWorker, direct serve PushOptions and pin/observation before first fence |
 | #120: empty attempt_id budget, untyped builder errors, overflow precedence, indirect caps, size-oracle fuzz | 9b-i: fix before any internal activation; typed permanent blocks, exact final attempt budget, expanded oracle/precedence tests |
+| #127: cursor warning before successful CAS | 9b-ii-1: log only after committed CAS; repeated competing repairs remain quiet |
+| #127: unsupported future-version cursor fallback | 9b-ii-1: operating docs and regression cover overwriting derived future-version cursor |
+| #127: ValidateChecks approval quota/read precedence | 9b-ii-1: local check preflight without DB/forge approval reads; fresh complete admission read retained |
 | Acceptance #82 history boundary / #84 tested acquisition | 9c: reproduce in cold-cache real-git acceptance |
 | Acceptance rejected intermediate/marker/fence refs unchanged and mixed GitHub compatibility | 9c: real remote ref read-back plus permission/event/commit comparisons |
 | Owner decision: no approvals means no ordinary floor | 9a: pure evaluation and atomic decision tests |

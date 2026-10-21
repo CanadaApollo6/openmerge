@@ -75,9 +75,6 @@ func (s *Server) auditOutsidePushes(ctx context.Context, id store.QueueID, key s
 	if err != nil {
 		return err
 	}
-	if audit.CursorResetReason != "" {
-		s.options.Logger.Warn("outside push audit cursor unusable; rescanning journal", "repository", key.Repository, "base", key.BaseBranch, "reason", audit.CursorResetReason)
-	}
 	var history forge.OutsidePushHistory
 	if len(audit.Moves) > 0 && s.options.OutsidePushHistory != nil {
 		history, err = s.options.OutsidePushHistory(ctx, key)
@@ -96,7 +93,10 @@ func (s *Server) auditOutsidePushes(ctx context.Context, id store.QueueID, key s
 	// Persistence has its own short deadline, with no git work under the lock.
 	commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	_, err = s.store.CommitOutsidePushAudit(commitCtx, id, audit, events)
+	committed, err := s.store.CommitOutsidePushAudit(commitCtx, id, audit, events)
+	if err == nil && committed && audit.CursorResetReason != "" {
+		s.options.Logger.Warn("outside push audit cursor unusable; rescanning journal", "repository", key.Repository, "base", key.BaseBranch, "reason", audit.CursorResetReason)
+	}
 	return err
 }
 

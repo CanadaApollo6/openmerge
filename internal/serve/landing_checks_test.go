@@ -373,6 +373,9 @@ func TestLandingChecksWorkerFailurePrecedence(t *testing.T) {
 							runs[0], runs[1] = runs[1], runs[0]
 						}
 						f.SetCheckRuns(repo, batch.TestedSHA, runs)
+						if authorityRequired && malformed != "bounded" {
+							f.FailNext("NativeReviews", errors.New("approval quota unavailable must not preempt permanent check error"))
+						}
 						err = s.execute(t.Context(), w, claim)
 						state = shadowState(t, s, w)
 						want := executor.ErrChecksNotSuccessful
@@ -411,5 +414,46 @@ func TestLandingChecksWorkerFailurePrecedence(t *testing.T) {
 				})
 			}
 		}
+	}
+}
+
+func TestLandingChecksPreflightDoesNotAcquireApprovals(t *testing.T) {
+	for _, result := range []forge.CheckState{forge.Failure, forge.Pending, forge.Success} {
+		t.Run(string(result), func(t *testing.T) {
+			testSynctest(t, func(t *testing.T) {
+				s, w, f := shadowFixture(t, 1, "main", "7", false)
+				basis := shadowState(t, s, w)
+				raw, err := os.ReadFile("../queue/testdata/wire/v1/event_policy_authority_applied.json")
+				must(t, err)
+				event, err := queue.DecodeEvent(raw)
+				must(t, err)
+				pin := event.(queue.PolicyAuthorityApplied)
+				pin.GoverningCommit, pin.EffectiveDigest = basis.ConfigCommit, basis.ConfigDigest
+				pin.OpenMerge.Binding.EffectiveDigest = basis.ConfigDigest
+				_, err = s.store.Append(t.Context(), w.id, []queue.Event{pin}, "")
+				must(t, err)
+				basis = shadowState(t, s, w)
+				w.AuthorityRequired = true
+				land := queue.Land{BatchID: "preflight", TestedSHA: strings.Repeat("e", 40), Ref: "queue", Method: queue.Merge, PRs: []queue.BatchPR{{PR: 1, HeadSHA: w.prs[1].HeadSHA}}}
+				checks := []forge.CheckRun{{Name: "ci", Source: "app:15368", State: result}}
+				gate := s.stageAGate(w, store.ClaimedAction{}, w.plannerConfig(s.options.PollInterval), basis)
+				sentinel := errors.New("approval quota exhausted")
+				f.FailNext("NativeReviews", sentinel)
+				_, before, err := s.store.Load(t.Context(), w.id)
+				must(t, err)
+				must(t, gate.ValidateChecks(t.Context(), land, checks, time.Now(), "attempt"))
+				_, after, err := s.store.Load(t.Context(), w.id)
+				must(t, err)
+				if before != after {
+					t.Fatal("preflight journaled approval evidence")
+				}
+				// The final gate still reads fresh approvals and surfaces the read
+				// error, proving preflight did not spend that queued forge request.
+				_, err = gate.ReadInputsWithChecks(t.Context(), land, basis, checks, time.Now(), "attempt")
+				if !errors.Is(err, sentinel) {
+					t.Fatalf("final read error=%v", err)
+				}
+			})
+		})
 	}
 }
