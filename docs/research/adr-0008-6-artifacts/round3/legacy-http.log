@@ -1,0 +1,6 @@
+/home/riels/.cache/pr115-r3-main-2b21c6c internal/status: exit=0
+/home/riels/.cache/pr115-r3-main-2b21c6c internal/serve: exit=0
+/home/riels/.t3/worktrees/openmerge/t3-7fd41c29 internal/status: exit=0
+/home/riels/.t3/worktrees/openmerge/t3-7fd41c29 internal/serve: exit=0
+PASS: all 1304 complete HTTP responses; Handler + DynamicHandler/Server readiness/policy and brief/change/decisions/discovery (status line, headers, body) are byte-identical; no fields stripped
+Complete response receipt: /home/riels/.t3/worktrees/openmerge/t3-7fd41c29/docs/research/adr-0008-6-artifacts/round3/http-responses.json

@@ -7,6 +7,97 @@ or Makefile/CI/test-flag change is part of this work. Health is for alerts, neve
 restarts. Runtime authority activation remains PR 9; organization-sandbox HTTP
 acceptance remains PR 11.
 
+## Round 3: deadline isolation, progress liveness, and #116 integration
+
+Round 3 starts at `ad449c3337cf5088c089659067733f461a7807c5`. The requested
+three-minute git-fetch polling observed #116 at the third poll (nine minutes):
+`2b21c6ce6a47fcd292175c0eed98a39584262505`. This branch was rebased onto that main
+commit; no #116 branch commits were merged. The same main commit is the widened
+legacy baseline, checked out at `/home/riels/.cache/pr115-r3-main-2b21c6c`.
+`round3/main-poll.log` records the poll receipts. Round 3 supersedes the earlier
+rounds' current-model and dependency claims below; their receipts remain history.
+
+The warning cache now separates a mutable fold index from its atomic complete
+snapshot. Background DB acquisition, suffix paging and origin lookups operate on
+a private index with no cache mutex held. A successful refresh swaps the complete
+index under a brief lock, provided foreground work has not advanced beyond it.
+Cancelled/failed refreshes discard private partial work. Foreground folds use
+TryLock and return last complete counts with queue-local `ledger_unavailable` on
+contention; older repeatable-read journals cannot see future snapshot counts.
+Warnings fold after the shared journal transaction commits, so a warning deadline
+cannot fail that transaction or its sibling queues.
+
+`TestWarningRefreshNeverBlocksForegroundOrSibling` pauses real background SQL and
+requires a multi-queue journal read to finish within its 50ms foreground deadline
+while the refresh stays paused. It also exercises the atomic contention fallback and rejects future counts for an
+older snapshot. `TestWarningRefreshDoesNotReplaceNewerForeground` pauses an older
+refresh at COMMIT, advances the foreground journal to a second warning, then
+verifies the refresh returns the newer complete counts without replacing its index.
+`TestWarningFoldCancellationDoesNotFailJournals` cancels at the commit boundary
+and verifies both journals survive with a queue-local warning error.
+`TestWarningCacheCompletesAfterCancelledPage` now asserts private partial indices
+remain unpublished and subsequent foreground/background reads recover normally.
+
+The worker seeds progress on slot acquisition and advances `last_progress_at`
+after every completed action (including completion persistence) and turn. Waiting
+overdue remains next-start deadline plus grace: default 30s, range 1–60s. In-cycle
+overdue is missing start/progress telemetry, progress older than
+`ProgressStallLimit` (default 2m30s, range 1s–30m), or the absolute maximum cycle
+duration (default 3h, range 2m–6h). `--health-progress-stall-limit` /
+`OPENMERGE_HEALTH_PROGRESS_STALL_LIMIT` configures the stall threshold. Embedded
+servers using default health settings derive it from action timeout plus grace,
+clamped to the supported range. Degraded compares now against the later of last
+success and in-cycle progress (queue process start before either exists), default
+15m, range 1–60m. Progress never invents a reconciliation success. Waiting retries
+continue aging from last success; failure counts remain informational.
+
+`TestHealthLongProgressingCycle` holds health 200 for 70 simulated minutes under
+both 15m and 60m success-age settings, then verifies stall detection, recovery
+with new progress, and the absolute backstop. `TestHealthCompletedActionAndTurnPublishProgress`
+executes a real claimed action and cycle using the fake forge. Missing cycle
+start/progress fails closed; the actual-loop slot-starvation, journal-wake,
+zero-delay first cycle, retry and recovery tests remain in the focused run.
+
+Both scan and cache apply paths call the shared `validateOutsidePushOrigin`.
+`EventRecord.DedupeKey` and `JournalEvent.DedupeKey` preserve pointers; all three
+ledger/journal `COALESCE(dedupe_key, '')` projections were removed. SQL NULL stays
+nil; NULL and explicit empty audit keys are orphan anomalies, never silently
+ignored or accepted as acknowledged. The extended #116 orphan regression checks
+scan, background cache and status journal cache before/after acknowledgement,
+including an unaffected sibling. The dedupe-loading test distinguishes SQL NULL
+from an explicitly empty key. Pin removal clears health's warning snapshot;
+rollback refreshes historical warnings and acknowledgements consistently with
+status, covered by `TestOutsideWarningsClearAfterPinRemoval` and
+`TestOutsideWarningsRefreshAfterRollback`.
+
+Implementation: `72bef61c9911ed719db3fb57fbdbc004f2ef4904`. Round 3 verification
+receipts, exact commands, source hashes and implementation revision are recorded
+in `round3/manifest.json`.
+
+- `make check`: **PASS**, including format, zero lint issues, the full race-enabled
+  short suite and build. `round3/make-check.log` retains every package result.
+- Focused store/status/serve/CLI regressions: **PASS**; no integration skips.
+- Widened legacy HTTP: **1,304 complete responses byte-identical** against main
+  `2b21c6c` (#116), with no stripping. Full bytes/hashes: `round3/http-responses.json`.
+- Legacy CLI: **six complete outputs byte-identical**, with no field or whitespace
+  stripping, through Journals → Project → printStatus. The existing harness writes
+  its receipt to `~/.cache/adr0008-6-legacy-cli-responses.json`; this was copied
+  unchanged to `round3/cli-responses.json` after the passing run.
+- Legacy reporting: **six fixtures PASS**, with byte-identical checks, unchanged
+  preexisting serialized fields/order under the already permitted Stage A
+  exclusions, and passing negative controls.
+- Fresh query-count rerun: **PASS**. Legacy/cold/unchanged/new-event status each
+  use **4 statements and 0 extra warning queries**. Background unchanged uses
+  **3 statements**; two new audits use **5**, including two indexed origin probes.
+  See `round3/query-counts.log`.
+
+For reruns, prepend the manifest's wrapper and test DB environment to each command;
+HTTP uses the explicit receipt argument, while CLI's fixed receipt path is copied
+afterward. All Go work uses the required
+shared flock, `GOFLAGS=-p=2`, `GOMEMLIMIT=4GiB`; DB integration uses isolated schemas
+only on localhost:54329. The API contract, operating guide and ADR refinement note
+now describe the final progress model.
+
 ## Round 2 revision and dependency scope
 
 Round 2 starts at PR #115 head `a9be8bb` on a fresh local branch
