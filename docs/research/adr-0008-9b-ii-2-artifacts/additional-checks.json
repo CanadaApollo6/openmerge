@@ -1,0 +1,21 @@
+{
+  "toolchain": {
+    "GOROOT": "/home/riels/.local/share/mise/installs/go/1.27.3",
+    "PATH_prefix": "/home/riels/.local/share/mise/installs/go/1.27.3/bin"
+  },
+  "test_database": "postgres://postgres:openmerge@localhost:54329/postgres?sslmode=disable",
+  "focused": {
+    "exit": 0,
+    "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB go test -race ./internal/authority ./internal/store ./internal/serve ./internal/config ./cmd/openmerge -run 'Test(FirstEmission|EmissionReceipt|DatabaseIdentity|AuthorityActivation|AuthorityBarrier|AuthorityPublicAgreement|LandingChecksPreflight|LandingChecksWorkerFailurePrecedence|LandingChecksGateOverflowPrecedesUnmetMembers|VerificationReceiptRejected)' -count=1"
+  },
+  "identity_mutation": {
+    "expected_exit": 1,
+    "actual_exit": 1,
+    "replacement": {
+      "before": "identity := s.store.DatabaseIdentity()",
+      "after": "identity := request.Receipt.DatabaseIdentity"
+    },
+    "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB go test -overlay /home/riels/.cache/adr0008-9b-ii-2-mutation/overlay.json ./internal/serve -run '^TestAuthorityActivationReceiptBeforeIO$/^caller-db-differs-from-store$' -count=1",
+    "raw_overlay": "/home/riels/.cache/adr0008-9b-ii-2-mutation/overlay.json"
+  }
+}

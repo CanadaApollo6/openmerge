@@ -1,0 +1,6 @@
+--- FAIL: TestAuthorityActivationReceiptBeforeIO (0.02s)
+    --- FAIL: TestAuthorityActivationReceiptBeforeIO/caller-db-differs-from-store (0.02s)
+        authority_activation_test.go:92: receipt validation error=closed pool, want "database-bound drain inventory"
+FAIL
+FAIL	github.com/CanadaApollo6/openmerge/internal/serve	0.025s
+FAIL
