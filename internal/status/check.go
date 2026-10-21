@@ -13,6 +13,8 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
+const queueInstructionParagraph = "\n\nThis repository merges through OpenMerge. To request a merge, post a comment whose entire body is `@openmerge queue` (no additional text)."
+
 // QueueInstructions belongs to the existing check, after queue state and before
 // the reviewer brief. Only the durable mode pin enables it; draft verification
 // and write-restriction visibility are not author-facing authority decisions.
@@ -21,7 +23,19 @@ func QueueInstructions(q *Queue) string {
 	if pin == nil || pin.Authority != authority.OpenMerge {
 		return ""
 	}
-	return "\n\nThis repository merges through OpenMerge. To request a merge, post a comment whose entire body is `@openmerge queue` (no additional text)."
+	return queueInstructionParagraph
+}
+
+// RefreshQueueInstructions changes only the authority paragraph in an existing
+// check, preserving terminal outcomes and any reviewer brief verbatim.
+func RefreshQueueInstructions(summary string, q *Queue) string {
+	summary = strings.ReplaceAll(summary, queueInstructionParagraph, "")
+	before, brief, found := strings.Cut(summary, "\n\nReviewer brief:")
+	before += QueueInstructions(q)
+	if found {
+		return before + "\n\nReviewer brief:" + brief
+	}
+	return before
 }
 
 // ReviewerCheckSummary is appended to the single existing check only for an

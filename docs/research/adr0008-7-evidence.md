@@ -3,7 +3,7 @@
 Trial class: **HOLD**. This PR may merge, but must not deploy before period B
 drains. It builds on main at `975b1b7762f58c128b1703f11fd5c4b6ff552c55` and
 has no dependency on PR 6 (#115). PR 9 remains the only runtime activation.
-Implementation revision: `c291ef8706604a14bb30932f94e048881aa3ab16`.
+Round-1 implementation revision: `c291ef8706604a14bb30932f94e048881aa3ab16`.
 Validation used exactly this implementation content; the following evidence-only
 commit does not change the tested source.
 
@@ -23,7 +23,10 @@ for periodic, readiness, and durable `ReportStatus` reporting, including termina
 outcomes. Ready, unqueued PRs gain a periodic check only after a mode pin exists;
 ordinary GitHub queues retain their previous absence of a check. Rollback pins
 refresh the pre-admission check without instructions. Admitted and terminal
-entries are excluded from that invitation path. Existing exact-head arguments, external check identity, durable cache,
+entries are excluded from that invitation path. Terminal checks on still-open PRs
+now refresh only the instruction paragraph from the cached successful reporting
+action; status, reason, exact head, ledger text and reviewer brief stay unchanged.
+Closed PRs are skipped by this refresh; existing closed-PR reporting paths are unchanged. Existing exact-head arguments, external check identity, durable cache,
 retry behavior, titles, annotations, comment effects, and wire payloads are
 unchanged. Approval brief rendering remains independent.
 
@@ -66,7 +69,7 @@ config commit to claim; those remain part of the deferred activation capture.
   CLI outputs and 56 complete HTTP responses are compared without stripping
   fields, headers, status lines, or whitespace.
 
-Final validation completed **2026-10-21 00:09:10 UTC**; every recorded command
+Round-1 validation completed **2026-10-21 00:09:10 UTC**; every recorded command
 exited **0**. `make check` passed formatting, lint (0 issues), the complete
 race-enabled short test suite with the test DB, and the build. The built local
 binary identifies revision `c291ef8`; its hash and the exact tested source hashes
@@ -82,3 +85,28 @@ operation was performed.
 
 No specification deviations. The shared ledger suffix is the integration point
 for the existing worker reporting paths, avoiding duplicate instruction logic.
+
+## Round 2: rollback refresh
+
+- Item 1: durable `ReportStatus` writes now record their exact successful output
+  in the existing status observation cache. Periodic reporting refreshes only the
+  instruction paragraph on open dequeued or merged checks, using the same
+  exact-head status dedupe. It preserves terminal state, dequeue reason, summary
+  details and reviewer brief even after repeated PR observations reset the
+  projected pre-admission ledger entry. Tests cover activation and rollback with
+  three observe/report cycles per transition, both dequeued and landed PRs,
+  and exactly one update per transition. Closed versions of both terminal cases
+  receive zero updates. No checks are deleted, and terminal PRs without a cached
+  successful terminal report do not gain a new check through this path.
+- Item 2: the refresh loop returns when `ledgerSummary` leaves `ledgerCache` nil,
+  matching the Stage A guard.
+- Item 3 decision: retain pre-admission checks after rollback, including creation
+  for newly observed unqueued heads. A durable GitHub pin therefore keeps the
+  existing “Not queued; waiting for a queue request” check without the paragraph
+  saying this repository merges through OpenMerge. The queue is optional again;
+  never-pinned GitHub repositories still receive no pre-admission check. The
+  regression verifies both existing-check rollback dedupe and a new unqueued
+  head after rollback. This retains the original PR 7 choice explicitly.
+
+Round-2 validation results and source hashes are recorded in the round-2 artifact
+manifest alongside the original round-1 receipts.

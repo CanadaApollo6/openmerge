@@ -95,3 +95,20 @@ func TestQueueInstructionsBeforeApprovalBriefAndHostileNames(t *testing.T) {
 		t.Fatal("instruction duplicated in brief")
 	}
 }
+
+func TestQueueInstructionsRefreshPreservesTerminalSummary(t *testing.T) {
+	pin := instructionPin(t)
+	active, _, _ := Project(journal(pin), 0, 0, nil)
+	pin.Authority = authority.GitHub
+	pin.OpenMerge = nil
+	rollback, _, _ := Project(journal(pin), 0, 0, nil)
+	before := "Dequeued: requested; exact head abc\n\nQueue: original ledger\n\nReviewer brief: url\nDigest: unchanged"
+	expected := "Dequeued: requested; exact head abc\n\nQueue: original ledger" + QueueInstructions(&active) + "\n\nReviewer brief: url\nDigest: unchanged"
+	got := RefreshQueueInstructions(before, &active)
+	if got != expected || RefreshQueueInstructions(got, &active) != got {
+		t.Fatalf("activation altered summary: %q", got)
+	}
+	if got := RefreshQueueInstructions(got, &rollback); got != before {
+		t.Fatalf("rollback altered summary: %q", got)
+	}
+}

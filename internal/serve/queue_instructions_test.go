@@ -165,12 +165,28 @@ func TestQueueInstructionsBeforeAdmissionAndTerminalPreservation(t *testing.T) {
 	pin.Authority = authority.GitHub
 	pin.OpenMerge = nil
 	appendEvents(pin)
-	must(t, s.report(t.Context(), w))
+	for range 3 {
+		must(t, s.report(t.Context(), w))
+	}
 	rollback, err := s.store.Observation(t.Context(), w.id, "status/1")
 	must(t, err)
 	if d.writes != 2 || strings.Contains(string(rollback), "@openmerge queue") {
 		t.Fatalf("rollback did not refresh pre-admission check: %s", rollback)
 	}
+	// New, unqueued heads after rollback also get the optional-queue check.
+	pr := w.prs[1]
+	pr.HeadSHA = "after-rollback"
+	w.prs[2] = pr
+	appendEvents(queue.PRObserved{PR: 2, HeadSHA: pr.HeadSHA, Eligible: true, Trusted: true})
+	for range 3 {
+		must(t, s.report(t.Context(), w))
+	}
+	optional, err := s.store.Observation(t.Context(), w.id, "status/2")
+	must(t, err)
+	if d.writes != 3 || !strings.Contains(string(optional), "Not queued") || strings.Contains(string(optional), "@openmerge queue") {
+		t.Fatalf("rollback invitation: %s", optional)
+	}
+	delete(w.prs, 2)
 	// A terminal ledger entry must not become a new queue invitation while
 	// the forge's open-PR observation catches up with the landing outcome.
 	now := time.Now()
@@ -182,5 +198,104 @@ func TestQueueInstructionsBeforeAdmissionAndTerminalPreservation(t *testing.T) {
 	must(t, s.report(t.Context(), w))
 	if before != d.writes {
 		t.Fatal("terminal PR overwritten by invitation")
+	}
+}
+
+func TestQueueInstructionsDequeuedActivationRollback(t *testing.T) {
+	for _, terminal := range []string{"dequeued", "merged"} {
+		for _, closed := range []bool{false, true} {
+			t.Run(terminal+"/"+map[bool]string{false: "open", true: "closed"}[closed], func(t *testing.T) {
+				s, w, f, _ := fixture(t, repositoryConfig)
+				must(t, s.reconcile(t.Context(), w, true))
+				d := &instructionDriver{Driver: w.Driver}
+				w.Driver = d
+				head := w.prs[1].HeadSHA
+				appendEvents := func(events ...queue.Event) {
+					t.Helper()
+					_, err := s.store.Append(t.Context(), w.id, events, "")
+					must(t, err)
+				}
+				appendEvents(queue.EnqueueRequested{PR: 1, At: time.Now()})
+				if terminal == "dequeued" {
+					appendEvents(queue.Dequeued{PR: 1, AdmissionID: shadowState(t, s, w).Entries[0].AdmissionID, Reason: queue.Requested})
+				} else {
+					now := time.Now()
+					appendEvents(queue.BatchStarted{BatchID: "b1", BaseSHA: shadowState(t, s, w).BaseSHA, PRs: []queue.BatchPR{{PR: 1, HeadSHA: head}}, At: now}, queue.TestRefBuilt{BatchID: "b1", TestedSHA: "landed", Method: queue.Merge, At: now}, queue.ChecksCompleted{TestedSHA: "landed", Success: true}, queue.LandingStarted{BatchID: "b1", AttemptID: "attempt", FenceToken: shadowState(t, s, w).Fence, At: now}, queue.Landed{BatchID: "b1", NewBaseSHA: "landed", NewFence: "next"})
+				}
+				claim := claimStageAAction(t, s, w, w.plannerConfig(s.options.PollInterval), func(a queue.Action) bool { r, ok := a.(queue.ReportStatus); return ok && r.Status == terminal })
+				must(t, s.execute(t.Context(), w, claim))
+				before := f.Statuses(repo, 1)[head]
+				if string(before.State) != terminal || terminal == "dequeued" && before.Reason != string(queue.Requested) {
+					t.Fatalf("terminal status: %+v", before)
+				}
+				raw, err := os.ReadFile("../queue/testdata/wire/v1/event_policy_authority_applied.json")
+				must(t, err)
+				event, err := queue.DecodeEvent(raw)
+				must(t, err)
+				pin := event.(queue.PolicyAuthorityApplied)
+				pin.EffectiveDigest = shadowState(t, s, w).ConfigDigest
+				pin.OpenMerge.Binding.EffectiveDigest = pin.EffectiveDigest
+				pr := w.prs[1]
+				pr.Closed = closed
+				w.prs[1] = pr
+				writes := d.writes
+				appendEvents(pin)
+				for range 3 {
+					appendEvents(queue.PRObserved{PR: 1, HeadSHA: head, Eligible: true, Trusted: true})
+					must(t, s.report(t.Context(), w))
+				}
+				active := f.Statuses(repo, 1)[head]
+				if closed {
+					if d.writes != writes || !reflect.DeepEqual(before, active) {
+						t.Fatal("closed check rewritten")
+					}
+				} else {
+					expected := before
+					expected.Summary += "\n\nThis repository merges through OpenMerge. To request a merge, post a comment whose entire body is `@openmerge queue` (no additional text)."
+					if d.writes != writes+1 || !reflect.DeepEqual(expected, active) {
+						t.Fatalf("activation changed terminal result: %+v", active)
+					}
+				}
+				pin.Authority = authority.GitHub
+				pin.OpenMerge = nil
+				appendEvents(pin)
+				for range 3 {
+					appendEvents(queue.PRObserved{PR: 1, HeadSHA: head, Eligible: true, Trusted: true})
+					must(t, s.report(t.Context(), w))
+				}
+				wantWrites := writes + 2
+				if closed {
+					wantWrites = writes
+				}
+				if d.writes != wantWrites || !reflect.DeepEqual(before, f.Statuses(repo, 1)[head]) {
+					t.Fatal("rollback failed to restore exact terminal check with one update")
+				}
+			})
+		}
+	}
+
+}
+
+func TestQueueInstructionsMissingLedgerJournal(t *testing.T) {
+	s, w, _, _ := fixture(t, repositoryConfig)
+	must(t, s.reconcile(t.Context(), w, true))
+	raw, err := os.ReadFile("../queue/testdata/wire/v1/event_policy_authority_applied.json")
+	must(t, err)
+	event, err := queue.DecodeEvent(raw)
+	must(t, err)
+	pin := event.(queue.PolicyAuthorityApplied)
+	pin.EffectiveDigest = shadowState(t, s, w).ConfigDigest
+	pin.OpenMerge.Binding.EffectiveDigest = pin.EffectiveDigest
+	_, err = s.store.Append(t.Context(), w.id, []queue.Event{pin}, "")
+	must(t, err)
+	// A valid queue ID with no journal for the requested key exercises the
+	// ledgerSummary empty-result path without mocking the store.
+	w.Key.Repository = "missing/repository"
+	w.ledgerCache = nil
+	d := &instructionDriver{Driver: w.Driver}
+	w.Driver = d
+	must(t, s.report(t.Context(), w))
+	if w.ledgerCache != nil || d.writes != 0 {
+		t.Fatal("missing journal created a check")
 	}
 }
