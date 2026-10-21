@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/authority"
+	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 )
 
@@ -106,6 +107,7 @@ func TestVerificationAtomicRetryDailyAndRestart(t *testing.T) {
 func TestVerificationConcurrentRuntimeAndAdoption(t *testing.T) {
 	s := newStore(t)
 	k, v, pin := verificationFixture(t)
+	in := adoptionInput(t, &v, &pin)
 	q, err := s.EnsureQueue(t.Context(), k)
 	must(t, err)
 	receipts, err := s.CommitWriteRestrictionVerification(t.Context(), []VerificationRecord{{q, v}})
@@ -113,18 +115,21 @@ func TestVerificationConcurrentRuntimeAndAdoption(t *testing.T) {
 	appendEvents(t, s, q, queue.ConfigApplied{Commit: pin.GoverningCommit, Digest: pin.EffectiveDigest})
 	started := time.Now().UTC()
 	readAt := time.Now().UTC()
-	id, err := s.AdoptAuthorityPin(t.Context(), q, pin, receipts[0].EventID, 0, started, readAt, v.Evidence)
+	receipt, err := s.AdoptAuthorityPin(t.Context(), q, pin, receipts[0].EventID, 0, started, readAt, in, v.Evidence)
 	must(t, err)
 	state, _, err := s.Load(t.Context(), q)
 	must(t, err)
 	if state.AuthorityPin().OpenMerge.Activation == nil || state.WriteRestrictionStatus().State != "verified" {
 		t.Fatal("matching draft not adopted")
 	}
-	_, err = s.AdoptAuthorityPin(t.Context(), q, pin, receipts[0].EventID, 0, started, readAt, v.Evidence)
+	retry, err := s.AdoptAuthorityPin(t.Context(), q, pin, 9223372036854775807, 0, time.Time{}, time.Time{}, forge.WriteRestrictionInput{}, authority.Observation{})
+	if err == nil && retry != receipt {
+		t.Fatal("retry lost durable receipt", retry, receipt)
+	}
 	must(t, err)
 	_, after, err := s.Load(t.Context(), q)
 	must(t, err)
-	if after != id {
+	if after != receipt.EventID {
 		t.Fatal("per-operation pin writer appended duplicate")
 	}
 	basis := state.RulesSourceRevision(queue.WriteRestriction)
@@ -249,5 +254,83 @@ func TestDailyAppliedVerificationAdvancesTimeWithIdenticalFingerprint(t *testing
 		if status.State != "verified" || !status.LastVerifiedAt.Equal(read.VerifiedAt) || !status.LastObservedAt.Equal(read.VerifiedAt) {
 			t.Fatal("daily applied evidence did not advance the active verification time", status)
 		}
+	}
+}
+
+func adoptionInput(t *testing.T, draft *queue.WriteRestrictionVerified, pin *queue.PolicyAuthorityApplied) forge.WriteRestrictionInput {
+	t.Helper()
+	selectors := []authority.BaseSelector{{DefaultBranch: true}, {Pattern: "release/**"}}
+	digest, err := authority.CoverageDigest("main", selectors)
+	must(t, err)
+	draft.Binding.CoverageDigest = digest
+	pin.CoverageDigest = digest
+	pin.OpenMerge.Binding = draft.Binding
+	in := forge.WriteRestrictionInput{Repo: forge.RepoRef{Path: draft.Binding.Repository}, Binding: draft.Binding, BaseSelectors: selectors, ExpectedRefs: []string{"refs/heads/main"}, AppID: "5383059"}
+	draft.Evidence.Findings = []authority.Finding{}
+	draft.Evidence, err = forge.InterpretWriteRestriction(in, draft.Evidence)
+	must(t, err)
+	draft.ProtectionFingerprint, err = draft.Evidence.Fingerprint()
+	must(t, err)
+	return in
+}
+
+func TestAuthorityAdoptionReceiptsAndNoOpRetry(t *testing.T) {
+	for _, adopted := range []bool{true, false} {
+		t.Run(fmt.Sprint(adopted), func(t *testing.T) {
+			s := newStore(t)
+			k, draft, pin := verificationFixture(t)
+			in := adoptionInput(t, &draft, &pin)
+			q, err := s.EnsureQueue(t.Context(), k)
+			must(t, err)
+			if !adopted {
+				// Fingerprints intentionally exclude findings. An invented draft
+				// finding must not be silently stripped into a passing adoption.
+				draft.Evidence.Findings = []authority.Finding{{Element: "invented", Kind: "missing_rule", ProtectionID: "repository_ruleset/base-10"}}
+			}
+			verification, err := s.CommitWriteRestrictionVerification(t.Context(), []VerificationRecord{{q, draft}})
+			must(t, err)
+			appendEvents(t, s, q, queue.ConfigApplied{Commit: pin.GoverningCommit, Digest: pin.EffectiveDigest})
+			started := time.Now().UTC()
+			receipt, err := s.AdoptAuthorityPin(t.Context(), q, pin, verification[0].EventID, 0, started, time.Now().UTC(), in, draft.Evidence)
+			must(t, err)
+			if receipt.QueueID != q || receipt.EventID <= verification[0].EventID {
+				t.Fatal(receipt)
+			}
+			if adopted {
+				if receipt.Outcome != AuthorityDraftAdopted || receipt.ProposedEventID != verification[0].EventID {
+					t.Fatal(receipt)
+				}
+			} else if receipt.Outcome != AuthorityPinnedUnverified || receipt.ProposedEventID != 0 {
+				t.Fatal(receipt)
+			}
+			wantOutput := fmt.Sprintf("authority %s: queue_id=%d pin_event_id=%d proposed_event_id=%d", receipt.Outcome, q, receipt.EventID, receipt.ProposedEventID)
+			if receipt.String() != wantOutput {
+				t.Fatal(receipt.String())
+			}
+			// Invalid draft IDs and unusable reads prove retry returns before
+			// proposed history lookup, without appending another pin event.
+			for range 3 {
+				retry, err := s.AdoptAuthorityPin(t.Context(), q, pin, 9223372036854775807, 42, time.Time{}, time.Time{}, forge.WriteRestrictionInput{}, authority.Observation{})
+				must(t, err)
+				if retry != receipt {
+					t.Fatal("retry changed receipt", retry, receipt)
+				}
+			}
+			restarted := openTestStore(t, s.pool.Config().ConnString())
+			state, watermark, err := restarted.Load(t.Context(), q)
+			must(t, err)
+			wantStatus := "unverified"
+			if adopted {
+				wantStatus = "verified"
+			}
+			if state.WriteRestrictionStatus().State != wantStatus || watermark != receipt.EventID {
+				t.Fatal(state.WriteRestrictionStatus(), watermark)
+			}
+			retry, err := restarted.AdoptAuthorityPin(t.Context(), q, pin, 9223372036854775807, 0, time.Time{}, time.Time{}, forge.WriteRestrictionInput{}, authority.Observation{})
+			must(t, err)
+			if retry != receipt {
+				t.Fatal("restart lost receipt", retry, receipt)
+			}
+		})
 	}
 }

@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -15,9 +17,66 @@ import (
 
 	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
+	"github.com/CanadaApollo6/openmerge/internal/forge/github"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
+
+func TestVerificationReceiptRejectedBeforeDatabaseOrSeeingRead(t *testing.T) {
+	// A command must reject an unusable first-emission attestation before it
+	// opens the operator DB, reads the plan, or acquires forge credentials.
+	previous := authority.BuildRevision
+	authority.BuildRevision = "receipt-command-test"
+	t.Cleanup(func() { authority.BuildRevision = previous })
+	revision := authority.RunningBinaryRevision()
+	if revision == "" {
+		t.Fatal("test binary cannot attest its revision")
+	}
+	dir := t.TempDir()
+	backup := filepath.Join(dir, "backup")
+	if err := os.WriteFile(backup, []byte("isolated restore-tested backup"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	databaseURL := "postgres://unused:unused@127.0.0.1:1/unused?sslmode=disable"
+	identity, err := verificationDatabaseIdentity(databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	receipt := authority.EmissionReceipt{DatabaseIdentity: identity, BinaryRevision: revision, DrainedWorkers: []string{"isolated/worker"}, DrainedAt: now.Add(-time.Minute), BackupPath: backup, BackupSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("isolated restore-tested backup"))), RestoreTestedAt: now, CompatibleReadersOnly: true}
+	for _, tc := range []struct {
+		name, diagnostic string
+		maxAge           time.Duration
+		mutate           func(*authority.EmissionReceipt)
+	}{
+		{"zero age", "maximum age must be positive", 0, func(*authority.EmissionReceipt) {}},
+		{"negative age", "maximum age must be positive", -time.Second, func(*authority.EmissionReceipt) {}},
+		{"stale drain", "stale emission receipt", time.Hour, func(r *authority.EmissionReceipt) { r.DrainedAt = now.Add(-2 * time.Hour) }},
+		{"stale restore", "stale emission receipt", time.Hour, func(r *authority.EmissionReceipt) {
+			r.DrainedAt = now.Add(-3 * time.Hour)
+			r.RestoreTestedAt = now.Add(-2 * time.Hour)
+		}},
+		{"wrong binary", "does not match running binary", time.Hour, func(r *authority.EmissionReceipt) { r.BinaryRevision = "another-binary" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := receipt
+			tc.mutate(&r)
+			path := filepath.Join(t.TempDir(), "receipt.json")
+			data, err := json.Marshal(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			var out bytes.Buffer
+			err = runRulesVerification(t.Context(), verifyOptions{Verify: true, ReceiptMaxAge: tc.maxAge, DatabaseURL: databaseURL, Plan: filepath.Join(dir, "must-not-read"), Receipt: path, Operator: "operator"}, github.RulesOptions{Authority: "openmerge"}, &out)
+			if err == nil || !strings.Contains(err.Error(), tc.diagnostic) || out.Len() != 0 {
+				t.Fatalf("first-emission boundary: err=%v output=%q", err, out.String())
+			}
+		})
+	}
+}
 
 func TestRulesetsFlagParsingAndDispatch(t *testing.T) {
 	t.Setenv("GITHUB_TOKEN", "mock-admin")

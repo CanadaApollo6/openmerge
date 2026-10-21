@@ -238,7 +238,7 @@ func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Conf
 			state, _, err := s.store.Load(ctx, w.id)
 			return state, err
 		},
-		ReadInputsWithChecks: func(ctx context.Context, land queue.Land, state queue.State, checks []forge.CheckRun, checksAt time.Time) ([]queue.ApprovalEligibilityObserved, error) {
+		ReadInputsWithChecks: func(ctx context.Context, land queue.Land, state queue.State, checks []forge.CheckRun, checksAt time.Time, attempt string) ([]queue.ApprovalEligibilityObserved, error) {
 			if w.stageA.policy.Digest != policy.Digest {
 				return nil, store.ErrLandingDecisionStale
 			}
@@ -274,11 +274,12 @@ func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Conf
 			}
 			var builder *queue.LandingChecksBuilder
 			if recordChecks {
-				builder, err = landingCheckEvidence(basis, policy.Digest, land, checks, checksAt)
+				builder, err = landingCheckEvidence(basis, policy.Digest, land, checks, checksAt, attempt)
 				if err != nil {
 					return nil, err
 				}
 			}
+			checksMet := true
 			for i, pin := range land.PRs {
 				evidence, err := stageAReviewEvidence(state, policy, fresh[i])
 				if err != nil {
@@ -288,15 +289,19 @@ func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Conf
 				if err != nil {
 					return nil, err
 				}
-				met, _ := w.cfg.MergeWhen.Evaluate(values)
-				if !met {
-					return nil, executor.ErrChecksNotSuccessful
-				}
 				if recordChecks {
 					if err := builder.RecordMember(pin.PR, pin.HeadSHA, w.cfg.MergeWhen, values); err != nil {
 						return nil, err
 					}
 				}
+				met, _ := w.cfg.MergeWhen.Evaluate(values)
+				if !recordChecks && !met {
+					return nil, executor.ErrChecksNotSuccessful
+				}
+				checksMet = checksMet && met
+			}
+			if !checksMet {
+				return nil, executor.ErrChecksNotSuccessful
 			}
 			if recordChecks {
 				e := builder.Event()
@@ -313,7 +318,9 @@ func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Conf
 				if checkEvidence == nil {
 					return store.ErrLandingDecisionStale
 				}
-				checkEvidence.AttemptID = start.AttemptID
+				if checkEvidence.AttemptID != start.AttemptID {
+					return store.ErrLandingDecisionStale
+				}
 				return s.store.StartLanding(acquisition.Context(ctx), claim, cfg, policy, fresh, decisions, start, *checkEvidence)
 			}
 			return s.store.StartLanding(acquisition.Context(ctx), claim, cfg, policy, fresh, decisions, start)
@@ -328,7 +335,7 @@ func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Conf
 	if !recordChecks {
 		read := gate.ReadInputsWithChecks
 		gate.ReadInputs = func(ctx context.Context, land queue.Land, state queue.State) ([]queue.ApprovalEligibilityObserved, error) {
-			return read(ctx, land, state, nil, time.Time{})
+			return read(ctx, land, state, nil, time.Time{}, "")
 		}
 		gate.ReadInputsWithChecks = nil
 	}

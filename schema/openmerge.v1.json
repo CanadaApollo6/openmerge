@@ -21,7 +21,8 @@
       "additionalProperties": false,
       "required": ["team"],
       "properties": {"team": {"type": "string", "minLength": 1}},
-      "not": {},
+      "$comment": "The object type and diagnostic string const intentionally conflict while activation is unavailable.",
+      "const": "break_glass is unavailable until OpenMerge authority activation is enabled",
       "description": "Reserved for a dedicated org/team under OpenMerge authority; activation is currently unavailable."
     },
     "version": {

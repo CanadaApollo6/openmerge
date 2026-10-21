@@ -46,6 +46,37 @@ byte-identical normalized seeded simulator results, including legacy approvals.
 
 ## Exhaustive PR 9 requirement ownership
 
+### PR 9b review split (2026-10-21)
+
+The 9b lifecycle, projection and admission wiring is too large to review together
+with its prerequisite corrections. Keep the row ownership below at 9b, delivered
+in two independently safe changes:
+
+- **9b-i, prerequisite hardening:** #106(b)'s idempotent pin writer; #112's
+  interpreted draft adoption, raw-activation fold protection, early retry check
+  and durable adopted/pinned-unverified receipts; command-boundary regression
+  coverage for the existing emission-age/binary and stale-verification gates;
+  #120's typed permanent evidence failures, final attempt budget, direct caps,
+  size oracle and precedence tests. Include 9a's documentation/schema nits and
+  regression coverage showing candidate/draft/pin data cannot install runtime
+  authority hooks. No production activation caller or new event type is added.
+- **9b-ii, runtime wiring:** all runtime rows assigned to 9b below: atomic
+  config/pin lifecycle including new queues; no-approvals owner enforcement;
+  first-cycle observation, warning, status, author and check projections;
+  rollback/re-enable and all-queue digest/invalidation; every landing-start
+  source/digest check under lock, with source-repair, mixed-state, quota/read
+  and no-approvals tests. Wire the prerequisite receipt output to the internal
+  activation caller. Prove A2 again against that complete runtime seam: a
+  candidate or journal-loaded draft/pin must never enable it by itself.
+
+9b-i leaves the existing public rejection and production target construction
+unchanged. Its adoption writer remains without a production caller. Its raw
+activation guard is deliberately stricter about *verification*: historical wire
+pins remain readable, but cannot establish verified authority from an
+uninterpreted inventory. 9b-ii retains the public barrier too; 9c still owns the
+complete forge gate and the only removal of that barrier. Neither 9b slice is
+deployment or organization acceptance. Stop after publishing 9b-i in this run.
+
 Each row assigns the original requirement once; later slices consume earlier
 contracts without transferring their ownership.
 

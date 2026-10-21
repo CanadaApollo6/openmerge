@@ -31,11 +31,10 @@ func TestLandingCheckEvidenceUsesExactPolicyInputs(t *testing.T) {
 	}
 	land := queue.Land{BatchID: "batch", TestedSHA: strings.Repeat("a", 40), Method: queue.FastForward, Ref: "queue", PRs: []queue.BatchPR{{PR: 1, HeadSHA: strings.Repeat("b", 40)}}}
 	basis := queue.State{ConfigCommit: "config", ConfigDigest: strings.Repeat("c", 64)}
-	builder, err := landingCheckEvidence(basis, strings.Repeat("d", 64), land, checks, time.Now())
+	builder, err := landingCheckEvidence(basis, strings.Repeat("d", 64), land, checks, time.Now(), "attempt")
 	must(t, err)
 	must(t, builder.RecordMember(1, land.PRs[0].HeadSHA, expr, values))
 	e := builder.Event()
-	e.AttemptID = "attempt"
 	must(t, e.Validate())
 	if len(e.Checks) != 4 || *e.Checks[1].Attempt != 2 || *e.Checks[1].RunID != 11 || e.Checks[2].Attempt != nil || e.Checks[3].ProducerIdentity != nil || e.Checks[3].RunID != nil || e.Checks[3].Attempt != nil || e.LandedSHA == e.TestedSHA {
 		t.Fatal("read identities/absence/marker lost", e)
@@ -252,6 +251,69 @@ func TestLandingChecksLegacyGateAndPinRace(t *testing.T) {
 			if checks != 0 || race && starts != 0 || !race && starts != 1 {
 				t.Fatalf("legacy/racing gate recorded starts=%d checks=%d", starts, checks)
 			}
+		})
+	}
+}
+
+func TestLandingChecksGateOverflowPrecedesUnmetMembers(t *testing.T) {
+	for _, oversizedMember := range []int{1, 2} {
+		t.Run(fmt.Sprintf("member-%d", oversizedMember), func(t *testing.T) {
+			testSynctest(t, func(t *testing.T) {
+				s, w, f := shadowFixture(t, 1, "main", "7", false)
+				base := shadowState(t, s, w).BaseSHA
+				_, err := f.OpenPR(repo, 2, base, true)
+				must(t, err)
+				for n := 1; n <= 2; n++ {
+					f.SetNativeReviews(repo, n, forge.NativeReviews{Comments: []forge.NativeComment{shadowComment(int64(100+n), "@openmerge queue")}})
+				}
+				must(t, s.reconcile(t.Context(), w, false))
+				basis := shadowState(t, s, w)
+				raw, err := os.ReadFile("../queue/testdata/wire/v1/event_policy_authority_applied.json")
+				must(t, err)
+				event, err := queue.DecodeEvent(raw)
+				must(t, err)
+				pin := event.(queue.PolicyAuthorityApplied)
+				pin.GoverningCommit, pin.EffectiveDigest = basis.ConfigCommit, basis.ConfigDigest
+				pin.OpenMerge.Binding.EffectiveDigest = basis.ConfigDigest
+				_, err = s.store.Append(t.Context(), w.id, []queue.Event{pin}, "")
+				must(t, err)
+				basis = shadowState(t, s, w)
+				w.cfg.MergeWhen, err = condition.Parse("title = ready")
+				must(t, err)
+				land := queue.Land{BatchID: "gate-precedence", TestedSHA: strings.Repeat("e", 40), Ref: "queue", Method: queue.Merge}
+				for n := 1; n <= 2; n++ {
+					pr := w.prs[n]
+					pr.Title = "unmet"
+					if n == oversizedMember {
+						pr.Title = strings.Repeat("x", condition.MaxEvidenceStringBytes+1)
+					}
+					w.prs[n] = pr
+					land.PRs = append(land.PRs, queue.BatchPR{PR: n, HeadSHA: pr.HeadSHA})
+				}
+				cfg := w.plannerConfig(s.options.PollInterval)
+				gate := s.stageAGate(w, store.ClaimedAction{}, cfg, basis)
+				_, err = gate.ReadInputsWithChecks(t.Context(), land, basis, nil, time.Now(), "attempt")
+				if !errors.Is(err, queue.ErrLandingChecksTooLarge) || errors.Is(err, executor.ErrChecksNotSuccessful) {
+					t.Fatalf("overflow lost to unmet condition: %v", err)
+				}
+				for n := 1; n <= 2; n++ {
+					pr := w.prs[n]
+					pr.Title = "unmet"
+					w.prs[n] = pr
+				}
+				_, err = gate.ReadInputsWithChecks(t.Context(), land, basis, nil, time.Now(), "attempt")
+				if !errors.Is(err, executor.ErrChecksNotSuccessful) {
+					t.Fatalf("bounded unmet policy changed outcome: %v", err)
+				}
+				records, err := s.store.EventsAfter(t.Context(), w.id, 0)
+				must(t, err)
+				for _, record := range records {
+					switch record.Event.(type) {
+					case queue.LandingStarted, queue.LandingChecksRecorded:
+						t.Fatal("rejected preflight emitted start evidence")
+					}
+				}
+			})
 		})
 	}
 }

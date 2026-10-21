@@ -24,8 +24,9 @@ var ErrLandingApprovals = errors.New("landing approvals unmet")
 type LandingDecisionGate struct {
 	// ReadInputsWithChecks opts into the exact provenance-filtered, retry-aware
 	// read and its observation time. It replaces ReadInputs only on authority
-	// paths; legacy approval paths retain their fresh-read callback.
-	ReadInputsWithChecks func(context.Context, queue.Land, queue.State, []forge.CheckRun, time.Time) ([]queue.ApprovalEligibilityObserved, error)
+	// paths; legacy approval paths retain their fresh-read callback. The final
+	// attempt ID is supplied before evidence is budgeted or conditions evaluated.
+	ReadInputsWithChecks func(context.Context, queue.Land, queue.State, []forge.CheckRun, time.Time, string) ([]queue.ApprovalEligibilityObserved, error)
 	// ReloadAfterInputs folds evidence journaled by the read before evaluating.
 	ReloadAfterInputs  bool
 	Reject             func(context.Context, []queue.ApprovalEligibilityObserved, []string, queue.LandingStarted, queue.ApprovalGateRejected) error
@@ -46,7 +47,7 @@ func (g *LandingDecisionGate) start(ctx context.Context, land queue.Land, start 
 	}
 	var fresh []queue.ApprovalEligibilityObserved
 	if g.ReadInputsWithChecks != nil {
-		fresh, err = g.ReadInputsWithChecks(ctx, land, state, checks, checksAt)
+		fresh, err = g.ReadInputsWithChecks(ctx, land, state, checks, checksAt, start.AttemptID)
 	} else {
 		fresh, err = g.ReadInputs(ctx, land, state)
 	}

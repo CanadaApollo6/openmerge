@@ -13,7 +13,7 @@ import (
 )
 
 func TestLandingDecisionErrorsFailWorkerAction(t *testing.T) {
-	for _, failure := range []error{store.LandingDecisionRequiredError{}, store.LandingChecksRequiredError{}, executor.ErrLandingApprovals, queue.LandingChecksTooLargeError{Field: "wire event", Limit: queue.MaxLandingChecksBytes}} {
+	for _, failure := range []error{store.LandingDecisionRequiredError{}, store.LandingChecksRequiredError{}, executor.ErrLandingApprovals, queue.LandingChecksTooLargeError{Field: "wire event", Limit: queue.MaxLandingChecksBytes}, queue.LandingChecksInvalidError{Err: errors.New("invalid UTF-8")}} {
 		t.Run(failure.Error(), func(t *testing.T) {
 			s, w, f, _ := fixture(t, repositoryConfig)
 			f.AddComment(repo, 1, "writer", "@openmerge queue")
@@ -45,14 +45,18 @@ func TestLandingDecisionErrorsFailWorkerAction(t *testing.T) {
 			if !errors.Is(err, failure) {
 				t.Fatal("failure swallowed", err)
 			}
-			if errors.Is(failure, queue.ErrLandingChecksTooLarge) {
+			if errors.Is(failure, queue.ErrLandingChecksTooLarge) || errors.Is(failure, queue.ErrLandingChecksInvalid) {
+				reason := "landing-checks-too-large"
+				if errors.Is(failure, queue.ErrLandingChecksInvalid) {
+					reason = "landing-checks-invalid"
+				}
 				state, _, loadErr := s.store.Load(t.Context(), w.id)
 				must(t, loadErr)
-				if !state.SourceBlocked(queue.Operator) || !strings.Contains(state.BlockSourceDetail(queue.Operator), "landing-checks-too-large") || state.Active.Phase == queue.Landing {
+				if !state.SourceBlocked(queue.Operator) || !strings.Contains(state.BlockSourceDetail(queue.Operator), reason) || state.Active.Phase == queue.Landing {
 					t.Fatalf("overflow did not fail closed: %+v", state)
 				}
 				status := f.Statuses(repo, 1)[state.Active.PRs[0].HeadSHA]
-				if status.State != forge.Blocked || status.Reason != "landing-checks-too-large" {
+				if status.State != forge.Blocked || status.Reason != reason {
 					t.Fatalf("overflow not reported: %+v", status)
 				}
 				records, loadErr := s.store.EventsAfter(t.Context(), w.id, 0)
