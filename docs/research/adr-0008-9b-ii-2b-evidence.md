@@ -13,11 +13,11 @@ activation gate to 9c.
 | 2b requirement | Implementation and proof |
 | --- | --- |
 | Matching atomic config/pin on entry, active policy changes and exit; resolved actor | `internal/serve/reconcile.go:104` prepares the internal lifecycle and routes config emission through `activateAuthority`. `internal/serve/authority_activation.go:79` consumes the 9b-ii-1 caller with the connected v2 database identity and receipt checks. `internal/store/write_restriction.go:356` validates the matching commit/digest, takes the existing queue lock, and commits ConfigApplied followed by PolicyAuthorityApplied in one transaction. `TestAuthorityLifecycleAdoptsDraftWithAtomicConfig` proves interpreted draft adoption through the actual configuration path. Store tests cover invalid pairs/bindings/drafts, full-config idempotence, concurrent retries/pairs and historical window backfill. |
-| New queues; ordinary GitHub gets no new event or downgrade boundary | `repositoryCandidate` requires both explicit opt-in and the private resolver before candidate parsing. `prepareAuthorityLifecycle` skips pin emission for GitHub unless the folded current pin is OpenMerge. Existing branch expansion registers new bases and invokes configuration independently for each worker. `TestAuthorityLifecycleMixedRepositoriesAndBases` adds a release base under authority alongside an ordinary repository, checks adjacent matching pairs and no ordinary authority events, and verifies unchanged-cycle idempotence. |
+| New queues; ordinary GitHub gets no new event or downgrade boundary | `internal/serve/reconcile.go:209` requires both explicit opt-in and the private resolver before candidate parsing. `internal/serve/authority_activation.go:145` skips pin emission for GitHub unless the folded current pin is OpenMerge. Existing branch expansion registers new bases and invokes configuration independently for each worker. `TestAuthorityLifecycleMixedRepositoriesAndBases` adds a release base under authority alongside an ordinary repository, checks adjacent matching pairs and no ordinary authority events, and verifies unchanged-cycle idempotence. |
 | Durable pin fold | All writes use the existing immutable events and `queue.Apply`; no worker-only pin exists. `TestApplyAuthorityConfigLifecycleAndRollback` opens another store, reloads the committed pair, and checks the interpreted activation survives. Queue rebind, snapshot and authority invalidation tests remain unchanged. |
-| Mode-specific rollback and fresh re-enable | GitHub rollback pins contain no OpenMerge actor or activation. Rollback still validates the database/binary/backup receipt and does not call the authority reader. `authorityDraftFloor` rejects adoption of proposals before rollback or an unverified pin. `TestAuthorityLifecycleRollbackReceiptAndUnchangedWire`, `TestAuthorityLifecycleInvalidatesPolicyChangesAndReenable` and the store lifecycle test cover receipt rejection, zero rollback reads, stale-draft rejection and no revived applied verification. |
-| Repository-wide digest propagation | The effective digest includes the full repository selector coverage and resolved actor, plus default branch, selected method and legacy queue digest. Every served base resolves it on each configuration cycle, including an unchanged governing tip. The mixed lifecycle test changes the resolved actor for all bases, injects one base's quota failure, verifies sibling pairs advance independently, and retries the failed base. This is per-queue atomicity, not a repository transaction or an all-queues-applied authorization signal. |
-| Invalidate default branch, selectors, actor and method changes | `prepareAuthorityLifecycle` computes `authority.EffectiveDigest` from current resolved inputs. The changed binding uses the existing authority fold to discard old observations/verification. `TestAuthorityLifecycleInvalidatesPolicyChangesAndReenable` seeds a complete applied observation and independently changes each input, requiring unverified fresh state. A same-policy governing-commit rebind emits a matching pair without changing the digest. |
+| Mode-specific rollback and fresh re-enable | GitHub rollback pins contain no OpenMerge actor or activation. Rollback still validates the database/binary/backup receipt and does not call the authority reader. `internal/store/write_restriction.go:311` rejects adoption of proposals before rollback or an unverified pin. `TestAuthorityLifecycleRollbackReceiptAndUnchangedWire`, `TestAuthorityLifecycleInvalidatesPolicyChangesAndReenable` and the store lifecycle test cover receipt rejection, zero rollback reads, stale-draft rejection and no revived applied verification. |
+| Repository-wide digest propagation | `internal/serve/authority_activation.go:131` includes the full repository selector coverage and resolved actor, plus default branch, selected method and legacy queue digest. Every served base resolves it on each configuration cycle, including an unchanged governing tip. The mixed lifecycle test changes the resolved actor for all bases, injects one base's quota failure, verifies sibling pairs advance independently, and retries the failed base. This is per-queue atomicity, not a repository transaction or an all-queues-applied authorization signal. |
+| Invalidate default branch, selectors, actor and method changes | `internal/serve/authority_activation.go:131` computes `authority.EffectiveDigest` from current resolved inputs. The changed binding uses the existing authority fold to discard old observations/verification. `TestAuthorityLifecycleInvalidatesPolicyChangesAndReenable` seeds a complete applied observation and independently changes each input, requiring unverified fresh state. A same-policy governing-commit rebind emits a matching pair without changing the digest. |
 | Mixed repositories/bases and lifecycle quota/read errors | The mixed test covers main/release queues, a new base, an ordinary repository, actor drift, a failed base, rollback and later GitHub changes. `TestAuthorityLifecycleReadFailuresDoNotPublishConfigOrPin` uses `testSynctest`, with every fixture inside its bubble, for resolver/read failures and receipt expiry during a slow read. Store tests recheck the observation basis after acquiring the queue lock. |
 
 The normal `ConfigApplied` payload remains unchanged, including omitted depth-1
@@ -70,4 +70,67 @@ The complete integrated A2 proof remains required in 2d.
 
 ## Verification
 
-Results are recorded after the clean-tree verification driver completes.
+Verified implementation: `e72e841419ea92512227de216ee506d90c3c81ea`.
+The complete clean-tree driver returned **PASS** against `b9f00f8` on
+2026-10-21 UTC. The following commit retains evidence only.
+
+- `make check`: **exit 0**, formatting, lint, complete short race suite and build.
+- Focused lifecycle, activation, public-barrier, queue/store and config race tests:
+  **exit 0**.
+- Strict offline replay: **2,159/2,159** identical actions, structural states,
+  snapshot hashes and boundary checkpoints; **8,676** matching boundary probes.
+  Gates 2/4 and all **22** mandatory self-tests pass. No differing or allowlisted
+  fields.
+- Depth-1/4 contracts: **90/90 byte-identical**. SHA-256:
+  `88e727ebe7ea5b570f352c5c661c2cd1642c1b5120f3d3ed086993f4dd00362a`.
+- Seeded simulator: both exits **0**, **146/146** normalized blocks byte-identical.
+  SHA-256: `a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7`.
+- Existing fixtures: **104/104 unchanged**, including **90** registry fixtures;
+  no new event types, fixtures or wire fields. Manifest SHA-256:
+  `d9fc673fbd7ec5410cf1491778157508533ca5c804932caaecb39204f2ae2776`.
+- Verified binary SHA-256:
+  `a8e66183ceab05611d73ba2d15255b2ad8d54c3df470e238f22df6868ff9c6ee`.
+
+Retained artifacts are the compact [summary and exact commands](adr-0008-9b-ii-2b-artifacts/summary.json),
+[make check log](adr-0008-9b-ii-2b-artifacts/make-check.log),
+[focused race log](adr-0008-9b-ii-2b-artifacts/focused.log),
+[source hashes](adr-0008-9b-ii-2b-artifacts/source-hashes.json),
+[artifact manifest](adr-0008-9b-ii-2b-artifacts/manifest.json),
+[raw-cache manifest](adr-0008-9b-ii-2b-artifacts/cache-manifest.json),
+[schema comparison](adr-0008-9b-ii-2b-artifacts/schema-cleanup.json), and
+[stopped-run cleanup audit](adr-0008-9b-ii-2b-artifacts/cleanup-audit.json).
+The full replay report, streams, contract records and simulator output remain in
+`/home/riels/.cache/adr0008-9b-ii-2b-verification`; they are hashed rather than
+copied into this PR.
+
+Reproduce from clean checkouts:
+
+```sh
+export GOROOT=/home/riels/.local/share/mise/installs/go/1.27.3
+export PATH="$GOROOT/bin:$PATH"
+export OPENMERGE_TEST_DATABASE_URL='postgres://postgres:openmerge@localhost:54329/postgres?sslmode=disable'
+python3 scripts/verify-adr0008-9b-ii-2b.py \
+  --baseline /home/riels/.cache/adr0008-9b-ii-2b-main-b9f00f8 \
+  --out /home/riels/.cache/adr0008-9b-ii-2b-verification-rerun
+```
+
+The driver verifies clean trees and frozen export hashes. Every heavy command
+uses the shared flock, `GOFLAGS=-p=2`, and 4 GiB memory, raised to 6 GiB for replay.
+Both Go 1.27.3 GOROOT and PATH are exported. Only the shared test Postgres on
+localhost:54329 and frozen offline journal export are used.
+
+One initial new store concurrency test blocked its own competing writer through
+the same test hook. That run was stopped, its identified scratch schemas were
+removed, and the test now uses a separate store for the competing writer.
+The final focused and full suites pass. The namespace lists before and after
+the complete driver match exactly; no unattributed pre-existing schema was
+removed. Earlier focused checks also caught two ineffective string replacements
+in new test inputs and an unnecessary change to same-digest commit folding.
+The test inputs were corrected and the fold change was removed before the
+verified implementation commit.
+
+No live database/status API, systemd unit, remote `openmerge/*` ref, real
+application GitHub API or Smart-Data-Ohio organization is accessed. Git push and
+PR creation are the requested publication operations. No SQL migration, index,
+new table, Makefile, CI, Dockerfile, test-flag or existing fixture changes are
+included. This remains Hold, without queueing or merging.
