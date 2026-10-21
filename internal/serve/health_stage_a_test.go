@@ -3,9 +3,7 @@ package serve
 import (
 	"context"
 	"errors"
-	"net"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
@@ -38,16 +36,15 @@ func (g *failedHealthGit) GoverningFiles(context.Context, forge.RepoRef, forge.G
 }
 
 func TestHealthStageAFailedGitRead(t *testing.T) {
-	_, err := net.LookupHost("localhost")
-	must(t, err)
 	for _, mode := range []string{"policy-governing", "diff", "classification-governing"} {
 		t.Run(mode, func(t *testing.T) {
-			synctest.Test(t, func(t *testing.T) {
+			testSynctest(t, func(t *testing.T) {
 				s, w, f := shadowFixture(t, 1, "main", "7", false)
 				w.publishCycleStarted(time.Now())
 				g := &failedHealthGit{Forge: f, w: w, failDiff: mode == "diff"}
 				w.Git = g
 				w.stageA.governing = newStageAGoverningCache()
+				var err error
 				if mode == "policy-governing" {
 					err = s.refreshStageAPolicy(t.Context(), w, w.configTip)
 				} else {

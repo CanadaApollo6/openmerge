@@ -331,8 +331,8 @@ func (d pollSignalDriver) ListOpenPullRequests(ctx context.Context, repo forge.R
 }
 
 func TestHealthyIdleLoopUsesBackstopAndDeliveryInterruptsTimer(t *testing.T) {
-	s, w, _, _ := fixture(t, repositoryConfig)
-	synctest.Test(t, func(t *testing.T) {
+	testSynctest(t, func(t *testing.T) {
+		s, w, _, _ := fixture(t, repositoryConfig)
 		polls := startIdleBackstop(t, s, w)
 		_, err := s.store.Append(t.Context(), w.id, []queue.Event{queue.PauseRequested{Reason: "operator", Detail: "idle change"}}, "")
 		must(t, err)
@@ -356,8 +356,8 @@ func TestHealthyIdleLoopUsesBackstopAndDeliveryInterruptsTimer(t *testing.T) {
 }
 
 func TestBackstopDetectsAnotherServerStartingTesting(t *testing.T) {
-	s, w, f, _ := fixture(t, repositoryConfig)
-	synctest.Test(t, func(t *testing.T) {
+	testSynctest(t, func(t *testing.T) {
+		s, w, f, _ := fixture(t, repositoryConfig)
 		target := w.Target
 		target.Driver = f
 		other, err := New(t.Context(), s.store, []Target{target}, s.options)
@@ -377,8 +377,8 @@ func TestBackstopDetectsAnotherServerStartingTesting(t *testing.T) {
 }
 
 func TestIdleActivityChecksPreserveForgeBackstopDeadline(t *testing.T) {
-	s, w, _, _ := fixture(t, repositoryConfig)
-	synctest.Test(t, func(t *testing.T) {
+	testSynctest(t, func(t *testing.T) {
+		s, w, _, _ := fixture(t, repositoryConfig)
 		polls := startIdleBackstop(t, s, w)
 		// startIdleBackstop has already advanced three activity checks.
 		remaining := s.options.BackstopInterval - 3*s.options.PollInterval
@@ -401,8 +401,8 @@ func TestIdleActivityChecksPreserveForgeBackstopDeadline(t *testing.T) {
 func TestActivityAndHealthyDeliveryDoNotShortenErrorOrQuotaBackoff(t *testing.T) {
 	for _, name := range []string{"error", "quota"} {
 		t.Run(name, func(t *testing.T) {
-			s, w, _, _ := fixture(t, repositoryConfig)
-			synctest.Test(t, func(t *testing.T) {
+			testSynctest(t, func(t *testing.T) {
+				s, w, _, _ := fixture(t, repositoryConfig)
 				s.options.WebhooksConfigured = true
 				s.options.PollInterval = time.Millisecond
 				s.webhooks.observe("7", repo.Path, time.Now())
