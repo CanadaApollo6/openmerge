@@ -276,7 +276,7 @@ func (s State) PrepareLandingDecision(policy cp.Policy, fresh ApprovalEligibilit
 // ValidateLandingDecisions rederives every member under the caller's queue lock.
 // It validates all evidence and admission budgets before any journal insert.
 func (s State) ValidateLandingDecisions(policy cp.Policy, land Land, start LandingStarted, fresh []ApprovalEligibilityObserved, decisions []LandingDecisionRecorded) error {
-	if policy.Approvals == nil || len(land.PRs) == 0 || len(fresh) != len(land.PRs) || len(decisions) != len(land.PRs) || land.BatchID != start.BatchID {
+	if !policy.Enabled() || len(land.PRs) == 0 || len(fresh) != len(land.PRs) || len(decisions) != len(land.PRs) || land.BatchID != start.BatchID {
 		return fmt.Errorf("incomplete landing decisions")
 	}
 	bindings := s.BatchRevisions(land.BatchID)
@@ -424,7 +424,7 @@ func (s State) CheckLandingDecisionAdmission(e LandingDecisionRecorded) error {
 // and is journaled no later than Waiting.Basis.At by RejectLanding.
 func (s State) PrepareLandingRejection(policy cp.Policy, land Land, fresh []ApprovalEligibilityObserved) (ApprovalGateRejected, error) {
 	e := ApprovalGateRejected{BatchID: land.BatchID, TestedSHA: land.TestedSHA, PRs: slices.Clone(land.PRs), Waiting: []ApprovalWait{}}
-	if policy.Approvals == nil || len(fresh) != len(land.PRs) {
+	if !policy.Enabled() || len(fresh) != len(land.PRs) {
 		return e, fmt.Errorf("incomplete approval rejection inputs")
 	}
 	next := s

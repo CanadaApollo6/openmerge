@@ -498,7 +498,7 @@ func (s State) ApprovalActorRelevant(policy cp.Policy, current cp.ReceiptIdentit
 }
 
 func (s State) evaluateApprovals(policy cp.Policy, current cp.ReceiptIdentity, fresh ApprovalEligibilityObserved, probeActor string) cp.Evaluation {
-	if policy.Approvals == nil {
+	if !policy.Enabled() {
 		return cp.Evaluate(policy, cp.Input{})
 	}
 	in := cp.Input{Current: current, Actors: map[string]cp.Actor{}, Stances: map[string]cp.Stance{}}
@@ -513,7 +513,7 @@ func (s State) evaluateApprovals(policy cp.Policy, current cp.ReceiptIdentity, f
 	f, ok := s.ApprovalFacts(id)
 	_, currentBinding := s.approvalBinding(fresh.Basis)
 	if f.Saturated || !currentBinding || fresh.Validate() != nil || !fresh.Known || fresh.Basis.ChangeID != id || uint64(fresh.Basis.Revision) != current.Revision || fresh.Basis.Head != current.Head {
-		return cp.Evaluation{OptedIn: policy.Approvals != nil, ReviewsKnown: false, Reasons: []string{"fresh eligibility unresolved"}}
+		return cp.Evaluation{OptedIn: policy.Enabled(), ReviewsKnown: false, Reasons: []string{"fresh eligibility unresolved"}}
 	}
 	if f.Intent == nil || f.Intent.Basis.Revision != fresh.Basis.Revision || f.Intent.Basis.Head != current.Head || f.Intent.Digest != current.IntentDigest {
 		return cp.Evaluation{OptedIn: true, Reasons: []string{"current intent not recorded"}}
@@ -528,7 +528,7 @@ func (s State) evaluateApprovals(policy cp.Policy, current cp.ReceiptIdentity, f
 		for _, h := range a.Humans {
 			in.ExcludedIDs = append(in.ExcludedIDs, h.ID)
 		}
-	} else if policy.Approvals != nil {
+	} else if policy.Enabled() {
 		return cp.Evaluation{OptedIn: true, Reasons: []string{"accountability not recorded"}}
 	}
 	for user, key := range f.Latest {

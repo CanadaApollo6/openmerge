@@ -66,7 +66,7 @@ func TestAuthorityCandidateSchemaAgreement(t *testing.T) {
 		{"omitted", "", true, authority.GitHub, authority.Actor{}},
 		{"github", "policy_authority: github\n", true, authority.GitHub, authority.Actor{}},
 		{"openmerge team", "policy_authority: openmerge\nbreak_glass: {team: Smart-Data-Ohio/break-glass}\n", true, authority.OpenMerge, authority.Actor{Team: "Smart-Data-Ohio/break-glass"}},
-		{"openmerge repository admin", "policy_authority: openmerge\nbreak_glass: {repository_admin: true}\n", true, authority.OpenMerge, authority.Actor{RepositoryAdmin: true}},
+		{"openmerge repository admin", "policy_authority: openmerge\nbreak_glass: {repository_admin: true}\n", false, "", authority.Actor{}},
 		{"break glass omitted mode", "break_glass: {team: Smart-Data-Ohio/break-glass}\n", false, "", authority.Actor{}},
 		{"github break glass", "policy_authority: github\nbreak_glass: {team: Smart-Data-Ohio/break-glass}\n", false, "", authority.Actor{}},
 		{"openmerge missing break glass", "policy_authority: openmerge\n", false, "", authority.Actor{}},
@@ -98,14 +98,16 @@ func TestAuthorityCandidateSchemaAgreement(t *testing.T) {
 				assertSchemaAgreement(t, publicData, publicErr)
 			}
 			valid := candidateErr == nil
-			if valid != tc.valid || (futureErr == nil && publicErr == nil) != tc.valid {
+			// The retained PR 1 fixture describes the historical role proposal.
+			futureValid := tc.valid || tc.name == "openmerge repository admin"
+			if valid != tc.valid || (futureErr == nil && publicErr == nil) != futureValid {
 				t.Fatalf("candidate/schema disagreement; candidate=%v future=%v public=%v", candidateErr, futureErr, publicErr)
 			}
 			if tc.valid {
 				if candidate.Authority.Mode.Normalized() != tc.mode || candidate.Authority.BreakGlass == nil && tc.actor != (authority.Actor{}) || candidate.Authority.BreakGlass != nil && *candidate.Authority.BreakGlass != tc.actor {
 					t.Fatalf("candidate authority = %+v, want mode=%s actor=%+v", candidate.Authority, tc.mode, tc.actor)
 				}
-				if tc.suffix != "" {
+				if tc.mode == authority.OpenMerge {
 					if _, _, err := Load(data); err == nil {
 						t.Fatal("public loader accepted a future authority key")
 					}

@@ -22,12 +22,13 @@ type GoverningContent struct {
 // DigestInputs contains static semantic inputs for one queue. Other queues and
 // config provenance are deliberately absent from the canonical encoding.
 type DigestInputs struct {
-	Repository        Repository
-	Queue             CandidateQueue
-	Resolved          []ResolvedIdentity
-	Owners            GoverningContent
-	Attributes        []GoverningContent
-	ClassifierVersion string
+	RequirePolicyOwners bool
+	Repository          Repository
+	Queue               CandidateQueue
+	Resolved            []ResolvedIdentity
+	Owners              GoverningContent
+	Attributes          []GoverningContent
+	ClassifierVersion   string
 }
 
 func sortedSet(values []string) []string {
@@ -46,7 +47,7 @@ func canonicalRequirement(r Requirement) Requirement {
 // PolicyDigest returns no component for a legacy queue, even in a repository
 // with opted-in siblings. Membership and current grants never enter this hash.
 func PolicyDigest(in DigestInputs) (string, error) {
-	if in.Queue.Approvals == nil {
+	if in.Queue.Approvals == nil && !in.RequirePolicyOwners {
 		return "", nil
 	}
 	if err := in.Repository.ValidateIdentities(in.Resolved); err != nil {
@@ -58,8 +59,17 @@ func PolicyDigest(in DigestInputs) (string, error) {
 	if in.ClassifierVersion == "" {
 		return "", fmt.Errorf("classifier version is required")
 	}
-	if err := in.Queue.Approvals.Default.Validate(); err != nil || in.Queue.Approvals.Default.Selector == None || in.Queue.Approvals.Default.Selector == CodeOwners {
-		return "", fmt.Errorf("invalid default")
+	a := in.Queue.Approvals
+	version := "openmerge-policy-v1"
+	if in.RequirePolicyOwners {
+		version = "openmerge-policy-authority-owners-v1"
+	}
+	if a != nil {
+		if err := a.Default.Validate(); err != nil || a.Default.Selector == None || a.Default.Selector == CodeOwners {
+			return "", fmt.Errorf("invalid default")
+		}
+	} else {
+		a = &Approvals{} // No ordinary default or rules in the authority-only digest.
 	}
 	classification := in.Repository.Classification
 	classification.Docs = sortedSet(classification.Docs)
@@ -79,8 +89,8 @@ func PolicyDigest(in DigestInputs) (string, error) {
 		resolved[i].Name = ascii.Lower(resolved[i].Name)
 	}
 	slices.SortFunc(resolved, func(a, b ResolvedIdentity) int { return strings.Compare(a.Name, b.Name) })
-	rules := make([]string, 0, len(in.Queue.Approvals.Rules))
-	for _, rule := range in.Queue.Approvals.Rules {
+	rules := make([]string, 0, len(a.Rules))
+	for _, rule := range a.Rules {
 		if err := rule.Require.Validate(); err != nil {
 			return "", err
 		}
@@ -133,7 +143,7 @@ func PolicyDigest(in DigestInputs) (string, error) {
 		Resolved          []digestIdentity
 		Contents          []GoverningContent
 		ClassifierVersion string
-	}{"openmerge-policy-v1", classification, canonicalRequirement(in.Queue.Approvals.Default), sortedSet(rules), groups, agents, canonicalResolved, contents, in.ClassifierVersion}
+	}{version, classification, canonicalRequirement(a.Default), sortedSet(rules), groups, agents, canonicalResolved, contents, in.ClassifierVersion}
 	data, err := json.Marshal(canonical)
 	if err != nil {
 		return "", err

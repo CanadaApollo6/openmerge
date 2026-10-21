@@ -322,3 +322,20 @@ class, mandatory old-worker drain, pre-use backup, and database-restore boundary
 The `config schema` command prints the same embedded `schema/openmerge.v1.json`
 validated by the docs-fence agreement tests. Future Stage B/C examples remain in
 `text` fences until their loader support is published.
+
+ADR 0008 PR 9a reserves repository-root `policy_authority` and `break_glass`.
+Omitted authority and explicit `policy_authority: github` have identical effective
+configuration and digests. `break_glass` is invalid in GitHub mode. The public
+schema, loader, and `openmerge config validate` reject `policy_authority: openmerge`
+with an activation-unavailable diagnostic until the complete PR 9c gate lands.
+No runtime switch is available in this intermediate release.
+
+Isolated setup/proposed verification can still parse an authority candidate with
+`break_glass: {team: acme/emergency}`. New declarations require a dedicated team;
+repository-admin actors are retained only in historical wire contracts. Candidate
+`ValidateGoverning` requires exactly one queue matching the resolved default
+branch, representable selectors, matching immutable governing config, and complete
+freshly resolved CODEOWNERS coverage of all four config locations and all three
+CODEOWNERS locations (including absent locations that could take precedence).
+It never grants activation; resolved actor/protection bindings and runtime wiring
+remain required. Import acceptance cannot substitute for governing evidence.

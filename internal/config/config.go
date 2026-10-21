@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/authority"
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
 	"github.com/CanadaApollo6/openmerge/internal/config/condition"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -51,6 +52,8 @@ func Find(read func(path string) ([]byte, bool, error)) (path string, data []byt
 
 // Config is a validated version 1 repository configuration.
 type Config struct {
+	PolicyAuthority  authority.Mode            `yaml:"policy_authority,omitempty"`
+	BreakGlass       *AuthorityTeam            `yaml:"break_glass,omitempty"`
 	Version          int                       `yaml:"version"`
 	Classification   cp.ClassificationSettings `yaml:"classification,omitempty"`
 	Groups           map[string][]string       `yaml:"groups,omitempty"`
@@ -58,6 +61,11 @@ type Config struct {
 	Policy           cp.Repository             `yaml:"-"`
 	Queues           []Queue                   `yaml:"queues"`
 	DeleteHeadBranch *bool                     `yaml:"delete_head_branch,omitempty"`
+}
+
+// AuthorityTeam is the dedicated break-glass team declaration reserved for activation.
+type AuthorityTeam struct {
+	Team string `yaml:"team"`
 }
 
 // Queue contains admission/merge conditions and serial planner settings.
@@ -179,6 +187,11 @@ func Load(data []byte) (Config, []Diagnostic, error) {
 	p := parser{}
 	fields := p.fields(root, "", configKeys...)
 	cfg := Config{}
+	declaration, authorityErrors := parseAuthorityDeclaration(root)
+	p.errors = append(p.errors, authorityErrors...)
+	if declaration.Mode == authority.OpenMerge {
+		p.error(fields["policy_authority"], "policy_authority", AuthorityActivationUnavailable)
+	}
 	if n := fields["version"]; n == nil {
 		p.error(root, "version", "required; supported versions: 1")
 	} else if n.Kind != yaml.ScalarNode || n.ShortTag() != "!!int" || n.Decode(&cfg.Version) != nil || cfg.Version != 1 {

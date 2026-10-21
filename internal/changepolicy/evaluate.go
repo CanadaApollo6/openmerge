@@ -11,11 +11,16 @@ import (
 // Policy contains one queue's policy and fresh membership observations.
 // Static resolved names/IDs belong in the digest; memberships and grants do not.
 type Policy struct {
+	// RequirePolicyOwners enables authority decisions without an approvals floor.
+	RequirePolicyOwners bool `json:",omitempty"`
 	// Digest is the semantic PolicyDigest computed by the configuration boundary.
 	Digest    string
 	Approvals *Approvals
 	Groups    map[string]IdentitySet
 }
+
+// Enabled reports whether immutable classification and decisions are required.
+func (p Policy) Enabled() bool { return p.Approvals != nil || p.RequirePolicyOwners }
 
 // Input contains already folded current stances, indexed by stable user ID.
 // ExcludedIDs includes the author, submitter and every accountable human.
@@ -187,16 +192,18 @@ func inventoryAffected(m Match, c Classification, author AccountKind, match Trut
 // return immediately without inspecting classification, grants or stances.
 func Evaluate(policy Policy, in Input) Evaluation {
 	e := Evaluation{Allowed: true}
-	if policy.Approvals == nil {
+	if !policy.Enabled() {
 		return e
 	}
 	e.OptedIn, e.ReviewsKnown = true, true
 	addFailure := func(reason string) { e.Allowed = false; e.Reasons = append(e.Reasons, reason) }
 	a := policy.Approvals
-	if err := a.Default.Validate(); err != nil || a.Default.Selector == None || a.Default.Selector == CodeOwners {
-		addFailure("invalid approvals.default")
-		e.ReviewsKnown = false
-		return e
+	if a != nil {
+		if err := a.Default.Validate(); err != nil || a.Default.Selector == None || a.Default.Selector == CodeOwners {
+			addFailure("invalid approvals.default")
+			e.ReviewsKnown = false
+			return e
+		}
 	}
 	c := in.Classification
 	if !c.Inputs.Recorded() || c.Inputs.ChangeID != in.Current.ChangeID ||
@@ -224,56 +231,58 @@ func Evaluate(policy Policy, in Input) Evaluation {
 		obligations = append(obligations, obligation{origin: "code owners", cause: CauseCodeOwnerEvidence, requirement: Requirement{Selector: CodeOwners, Count: 1}, pool: &pool})
 	}
 	definite := false
-	for i, rule := range a.Rules {
-		if err := rule.Require.Validate(); err != nil {
-			addFailure("invalid rule requirement")
-			e.ReviewsKnown = false
-			continue
-		}
-		match, err := MatchRule(rule.When, in.Classification, in.AuthorKind)
-		if err != nil {
-			addFailure("invalid rule match: " + err.Error())
-			e.ReviewsKnown = false
-			continue
-		}
-		if match == True {
-			definite = true
-		}
-		if match != False && rule.Require.Selector != None {
-			origin := fmt.Sprintf("rules[%d]", i)
-			ruleIndex := i
-			if rule.Require.Selector != CodeOwners {
-				obligations = append(obligations, obligation{origin: origin, cause: CauseRule, ruleIndex: &ruleIndex, requirement: rule.Require, inventoryAffected: inventoryAffected(rule.When, c, in.AuthorKind, match)})
+	if a != nil {
+		for i, rule := range a.Rules {
+			if err := rule.Require.Validate(); err != nil {
+				addFailure("invalid rule requirement")
+				e.ReviewsKnown = false
 				continue
 			}
-			r := rule.Require
-			r.Count = 1
-			if codeEvidenceErr != nil {
+			match, err := MatchRule(rule.When, in.Classification, in.AuthorKind)
+			if err != nil {
+				addFailure("invalid rule match: " + err.Error())
+				e.ReviewsKnown = false
 				continue
 			}
-			if !c.InventoryComplete || !c.CodeOwnersKnown {
-				pool := IdentitySet{Reason: "code owners or inventory unresolved; split incomplete changes"}
-				obligations = append(obligations, obligation{origin: origin + " code owners", cause: CauseRuleCodeOwners, ruleIndex: &ruleIndex, requirement: r, pool: &pool, inventoryAffected: !c.InventoryComplete})
+			if match == True {
+				definite = true
 			}
-			for _, owner := range c.CodeOwners {
-				if owner.Status == OwnersUncovered || owner.Status == OwnersOwnerless {
+			if match != False && rule.Require.Selector != None {
+				origin := fmt.Sprintf("rules[%d]", i)
+				ruleIndex := i
+				if rule.Require.Selector != CodeOwners {
+					obligations = append(obligations, obligation{origin: origin, cause: CauseRule, ruleIndex: &ruleIndex, requirement: rule.Require, inventoryAffected: inventoryAffected(rule.When, c, in.AuthorKind, match)})
 					continue
 				}
-				pool := owner.Eligible
-				if owner.Status != OwnersResolved || owner.Path == "" ||
-					(owner.Side != OldSide && owner.Side != NewSide) ||
-					owner.LastMatchingEntry == "" || len(pool.IDs) == 0 {
-					pool.Resolved = false
-					if pool.Reason == "" {
-						pool.Reason = "code owner entry unresolved"
-					}
+				r := rule.Require
+				r.Count = 1
+				if codeEvidenceErr != nil {
+					continue
 				}
-				obligations = append(obligations, obligation{origin: origin + " code owner: " + owner.Path + " (" + string(owner.Side) + ")", cause: CauseRuleCodeOwners, ruleIndex: &ruleIndex, requirement: r, pool: &pool, path: owner.Path, side: owner.Side})
+				if !c.InventoryComplete || !c.CodeOwnersKnown {
+					pool := IdentitySet{Reason: "code owners or inventory unresolved; split incomplete changes"}
+					obligations = append(obligations, obligation{origin: origin + " code owners", cause: CauseRuleCodeOwners, ruleIndex: &ruleIndex, requirement: r, pool: &pool, inventoryAffected: !c.InventoryComplete})
+				}
+				for _, owner := range c.CodeOwners {
+					if owner.Status == OwnersUncovered || owner.Status == OwnersOwnerless {
+						continue
+					}
+					pool := owner.Eligible
+					if owner.Status != OwnersResolved || owner.Path == "" ||
+						(owner.Side != OldSide && owner.Side != NewSide) ||
+						owner.LastMatchingEntry == "" || len(pool.IDs) == 0 {
+						pool.Resolved = false
+						if pool.Reason == "" {
+							pool.Reason = "code owner entry unresolved"
+						}
+					}
+					obligations = append(obligations, obligation{origin: origin + " code owner: " + owner.Path + " (" + string(owner.Side) + ")", cause: CauseRuleCodeOwners, ruleIndex: &ruleIndex, requirement: r, pool: &pool, path: owner.Path, side: owner.Side})
+				}
 			}
 		}
-	}
-	if !definite {
-		obligations = append(obligations, obligation{origin: "default", cause: CauseDefault, requirement: a.Default})
+		if !definite {
+			obligations = append(obligations, obligation{origin: "default", cause: CauseDefault, requirement: a.Default})
+		}
 	}
 	if policyEvidenceErr != nil {
 		pool := IdentitySet{Reason: "owner_evidence_incoherent: " + policyEvidenceErr.Error()}

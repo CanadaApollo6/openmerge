@@ -42,6 +42,10 @@ func (f *apiFixture) handleSetup(w http.ResponseWriter, r *http.Request, path st
 		f.json(w, map[string]any{"id": 42, "slug": "openmerge-test", "client_id": "Iv1.test", "pem": f.manifestPEM, "webhook_secret": secret, "client_secret": "unused-oauth-secret"})
 		return true
 	}
+	if path == "orgs/acme/teams/owners" {
+		f.json(w, map[string]any{"id": 98, "slug": "owners", "organization": map[string]any{"id": 55, "login": "acme"}})
+		return true
+	}
 	if path == "repos/acme/project" {
 		f.json(w, map[string]any{"default_branch": "main", "permissions": map[string]bool{"admin": true}})
 		return true

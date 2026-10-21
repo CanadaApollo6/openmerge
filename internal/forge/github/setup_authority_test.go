@@ -19,7 +19,7 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/config"
 )
 
-const setupCandidate = "version: 1\npolicy_authority: openmerge\nbreak_glass: {repository_admin: true}\nqueues:\n- name: main\n  merge_when: [check-success = ci]\n"
+const setupCandidate = "version: 1\npolicy_authority: openmerge\nbreak_glass: {team: acme/owners}\nqueues:\n- name: main\n  merge_when: [check-success = ci]\n"
 
 func authorityOptions(t *testing.T) RulesOptions {
 	t.Helper()
@@ -180,7 +180,7 @@ func TestAuthoritySelectorUnionAndSingleUpdateRotation(t *testing.T) {
 	if !bytes.Contains(data, []byte("refs/heads/release/**/*")) {
 		t.Fatal("selector union pruned coverage")
 	}
-	rotated := strings.Replace(expanded, "repository_admin: true", "team: acme/emergency", 1)
+	rotated := strings.Replace(expanded, "team: acme/owners", "team: acme/emergency", 1)
 	must(t, os.WriteFile(opts.Config, []byte(rotated), 0600))
 	opts.Backup = filepath.Join(t.TempDir(), "rotate.json")
 	f.override = func(w http.ResponseWriter, r *http.Request) bool {
@@ -225,7 +225,7 @@ func TestAuthoritySelectorUnionAndSingleUpdateRotation(t *testing.T) {
 	_, err = runAuthority(t, f, restore)
 	must(t, err)
 	data, _ = json.Marshal(base["bypass_actors"])
-	if !bytes.Contains(data, []byte("RepositoryRole")) || bytes.Contains(data, []byte("Team")) {
+	if !bytes.Contains(data, []byte("Team")) || bytes.Contains(data, []byte("99")) {
 		t.Fatal("rotation restore lost exact old actor", string(data))
 	}
 }
@@ -273,9 +273,9 @@ func TestAuthorityManagedCollisionsAndActorRejection(t *testing.T) {
 			case "mismatched actor":
 				opts.BreakGlass = `{"team":"acme/emergency"}`
 			case "wrong org":
-				must(t, os.WriteFile(opts.Config, []byte(strings.Replace(setupCandidate, "repository_admin: true", "team: other/emergency", 1)), 0600))
+				must(t, os.WriteFile(opts.Config, []byte(strings.Replace(setupCandidate, "team: acme/owners", "team: other/emergency", 1)), 0600))
 			case "unresolved team":
-				must(t, os.WriteFile(opts.Config, []byte(strings.Replace(setupCandidate, "repository_admin: true", "team: acme/emergency", 1)), 0600))
+				must(t, os.WriteFile(opts.Config, []byte(strings.Replace(setupCandidate, "team: acme/owners", "team: acme/emergency", 1)), 0600))
 				f.override = func(w http.ResponseWriter, r *http.Request) bool {
 					if strings.Contains(r.URL.Path, "/teams/") {
 						f.json(w, map[string]any{"id": 0})

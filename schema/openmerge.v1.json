@@ -11,6 +11,19 @@
     "queues"
   ],
   "properties": {
+    "policy_authority": {
+      "type": "string",
+      "const": "github",
+      "description": "Reserved authority mode. OpenMerge activation is unavailable until the complete ADR 0008 authority gate is enabled."
+    },
+    "break_glass": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["team"],
+      "properties": {"team": {"type": "string", "minLength": 1}},
+      "not": {},
+      "description": "Reserved for a dedicated org/team under OpenMerge authority; activation is currently unavailable."
+    },
     "version": {
       "type": "integer",
       "const": 1,

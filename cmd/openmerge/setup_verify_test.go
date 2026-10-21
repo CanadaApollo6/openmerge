@@ -33,6 +33,8 @@ func TestRulesetsFlagParsingAndDispatch(t *testing.T) {
 		switch req.URL.Path {
 		case "/repos/acme/project":
 			value = map[string]any{"default_branch": "main", "permissions": map[string]bool{"admin": true}}
+		case "/orgs/acme/teams/owners":
+			value = map[string]any{"id": 98, "slug": "owners", "organization": map[string]any{"id": 55, "login": "acme"}}
 		case "/repos/acme/project/rulesets":
 			value = []any{}
 		default:
@@ -45,7 +47,7 @@ func TestRulesetsFlagParsingAndDispatch(t *testing.T) {
 		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(bytes.NewReader(data)), Request: req}, nil
 	})
 	plan := filepath.Join(t.TempDir(), "x")
-	if err := os.WriteFile(plan, []byte("version: 1\npolicy_authority: openmerge\nbreak_glass: {repository_admin: true}\nqueues: [{name: main, merge_when: ['check-success = ci']}]\n"), 0o600); err != nil {
+	if err := os.WriteFile(plan, []byte("version: 1\npolicy_authority: openmerge\nbreak_glass: {team: acme/owners}\nqueues: [{name: main, merge_when: ['check-success = ci']}]\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	for _, tt := range []struct {

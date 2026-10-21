@@ -49,7 +49,7 @@ func (s *Store) StartLanding(ctx context.Context, claim ClaimedAction, cfg queue
 }
 
 func (s *Store) startLanding(ctx context.Context, claim ClaimedAction, cfg queue.Config, policy cp.Policy, fresh []queue.ApprovalEligibilityObserved, decisions []queue.LandingDecisionRecorded, start queue.LandingStarted, authorize func(context.Context, pgx.Tx, emission, queue.Event) (bool, error), checks ...queue.LandingChecksRecorded) error {
-	if policy.Approvals == nil && (len(fresh) != 0 || len(decisions) != 0) {
+	if !policy.Enabled() && (len(fresh) != 0 || len(decisions) != 0) {
 		return LandingDecisionRequiredError{}
 	}
 	// Charge lock waits and validation time to the lease in the worker clock.
@@ -57,7 +57,7 @@ func (s *Store) startLanding(ctx context.Context, claim ClaimedAction, cfg queue
 	entered := time.Now()
 	currentStart := func() queue.LandingStarted {
 		event := start
-		if policy.Approvals != nil || len(checks) != 0 {
+		if policy.Enabled() || len(checks) != 0 {
 			event.At = event.At.Add(time.Since(entered))
 		}
 		return event
@@ -69,7 +69,7 @@ func (s *Store) startLanding(ctx context.Context, claim ClaimedAction, cfg queue
 		if err := checkApprovalRead(ctx, tx, claim.QueueID); err != nil {
 			return err
 		}
-		execution := emission{claim: claim, cfg: cfg, decisionStart: true, approvalsRequired: policy.Approvals != nil}
+		execution := emission{claim: claim, cfg: cfg, decisionStart: true, approvalsRequired: policy.Enabled()}
 		stale, err := authorize(ctx, tx, execution, currentStart())
 		if err != nil {
 			return err
@@ -85,7 +85,7 @@ func (s *Store) startLanding(ctx context.Context, claim ClaimedAction, cfg queue
 		if !ok {
 			return ErrStale
 		}
-		if policy.Approvals != nil {
+		if policy.Enabled() {
 			if err := state.ValidateLandingDecisions(policy, land, start, fresh, decisions); err != nil {
 				return fmt.Errorf("%w: %w", ErrStale, err)
 			}
@@ -149,7 +149,7 @@ func (s *Store) startLanding(ctx context.Context, claim ClaimedAction, cfg queue
 // rejects this rejection too; a stale read must never regress or wake a wait.
 func (s *Store) RejectLanding(ctx context.Context, claim ClaimedAction, cfg queue.Config, policy cp.Policy, fresh []queue.ApprovalEligibilityObserved, expected []string, start queue.LandingStarted, rejection queue.ApprovalGateRejected) (result error) {
 	defer func() { result = retryLandingDecision(result) }()
-	if policy.Approvals == nil {
+	if !policy.Enabled() {
 		return LandingDecisionRequiredError{}
 	}
 	entered := time.Now()
@@ -165,7 +165,7 @@ func (s *Store) RejectLanding(ctx context.Context, claim ClaimedAction, cfg queu
 		if err := checkApprovalRead(ctx, tx, claim.QueueID); err != nil {
 			return err
 		}
-		execution := emission{claim: claim, cfg: cfg, decisionStart: true, approvalsRequired: policy.Approvals != nil}
+		execution := emission{claim: claim, cfg: cfg, decisionStart: true, approvalsRequired: policy.Enabled()}
 		stale, err := s.authorizeStart(ctx, tx, execution, currentStart())
 		if err != nil {
 			return err
