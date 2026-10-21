@@ -1,0 +1,36 @@
+{
+  "candidate": "5e7bb327acc14ec4c6a836ebae9a1de6d513abbd",
+  "logs": {
+    "admission_and_lock": {
+      "path": "/home/riels/.cache/adr9c-r3-logs-lock.log",
+      "sha256": "303915e07ce514050dc48582e3f146b2f7a9ec9575000f8370fce6597fc8ed0c",
+      "exit": 0
+    },
+    "lifecycle": {
+      "path": "/home/riels/.cache/adr9c-r3-lifecycle.log",
+      "sha256": "da80515a7ba957c71ce4eec56eac57f0b72f1522baa61c486050e20b724d726b",
+      "exit": 0
+    },
+    "activation": {
+      "path": "/home/riels/.cache/adr9c-r3-activation.log",
+      "sha256": "05a42d4b82061c8154dbecd0adaaf74ef7a8c432969cc2596fee2df5cda52699",
+      "exit": 0
+    },
+    "raw_error_mutation": {
+      "path": "/home/riels/.cache/adr9c-r3-mutation/result.log",
+      "sha256": "ccccd3a7f86319f43672dec01111dab2bfcd5a33d8cbcff9274eb75b2deddec1",
+      "exit": 1
+    }
+  },
+  "mutation_expected_exit": 1,
+  "lock_test_seconds": 1.6,
+  "lock_test_action_timeout": "1s",
+  "lock_test_persistence_timeout": "100ms",
+  "production_defaults_unchanged": true,
+  "make_check_serve_seconds": 290.715,
+  "test_schemas": {
+    "before": 94,
+    "after": 94,
+    "identical": true
+  }
+}

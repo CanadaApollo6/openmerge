@@ -143,3 +143,54 @@ fixture-ownership failures were fixed before the passing full run.
 [manifest](adr-0008-9c-1-artifacts/round2-manifest.json) retain compact receipts.
 Raw logs/replay streams: `$HOME/.cache/adr0008-9c-verification-round2-final`;
 mutation log: `$HOME/.cache/adr9c-r2-mutation-final/result.log`.
+
+## Round 3 corrections and verification
+
+Tested implementation: `5e7bb327acc14ec4c6a836ebae9a1de6d513abbd` against
+`051798c`; the following receipt commit changes evidence only. Hold, A2,
+public rejection and production opt-out remain.
+
+- `write_restriction.go:23` prints only the sanitized class, including in joined
+  append failures; `Unwrap` preserves `errors.Is`/`errors.As` and retry semantics.
+  The scan also protected activation/resolver reads (`authority_activation.go:70,112`);
+  no authority caller formats an unwrapped reader cause. The new
+  `TestAuthorityAdmissionReaderErrorsAreSanitized` captures real execute/cycle/
+  worker-loop failure logs and closed-store persistence failure, rejects the
+  token in every log line and returned string, and checks classification.
+  `TestAuthorityLifecycleReadFailuresDoNotPublishConfigOrPin` covers the other
+  two read paths. Restoring raw `Error()` via overlay fails the admission log
+  regression as expected (exit 1).
+- Nil admission readers now use the shared unavailable block/retry path
+  (`write_restriction.go:200`), covered by the new admission regression and the
+  existing observer test. A missing request still fails closed without writing:
+  no binding is available to identify a safe source-specific observation.
+- The real held-advisory-lock regression takes **1.60s** in the focused race run,
+  versus about 11s previously: one-second action budget, private 100ms persistence
+  bound (`serve.go:100`, `write_restriction.go:207`), unchanged production defaults.
+  It waits on real socket I/O/deadlines; other cases use `testSynctest` with
+  fixtures in-bubble. No explicit real-time sleeps or short-mode skips were added.
+- ADR `0008-openmerge-policy-authority.md:708` describes the remaining action
+  deadline and bounded parent-derived persistence. The plan scopes 9c-1 drain
+  proof to `read_error`, retaining general drain ownership in 9c-2c. Evidence now
+  references the ActionTimeout assignment at `write_restriction.go:194` and
+  describes a failed execute/`Failed` claim, without claiming `planned` recovery.
+
+An initial 100ms action-budget experiment expired before reaching the reader;
+only the persistence bound was shortened in the final fixture. The first full
+run also found an old activation assertion expecting raw reader text; it now
+expects the class while retaining `errors.Is`. Both were corrected before the
+passing run. Failed full-run logs: `$HOME/.cache/adr0008-9c-verification-round3-final`.
+
+Final clean-tree driver: **PASS**. `make check` **0** (zero lint issues,
+complete short race suite, build; serve **290.715s**); focused authority/barrier
+race checks **0**. Strict replay **2,159/2,159 identical**, **8,676** matching probes,
+gates 2/4 and all 22 self-tests pass. Simulator **146/146 byte-identical**, both
+exits 0; contracts **90/90 byte-identical**; GitHub projections/CLI bytes identical;
+existing wire fixtures **104/104 unchanged**. The 94 pre-existing test namespaces
+are unchanged and no random serve scratch schema remains.
+
+[Round-3 summary](adr-0008-9c-1-artifacts/round3-summary.json),
+[additional checks](adr-0008-9c-1-artifacts/round3-additional-checks.json) and
+[manifest](adr-0008-9c-1-artifacts/round3-manifest.json) retain receipts.
+Raw passing logs/replay streams: `$HOME/.cache/adr0008-9c-verification-round3-pass`;
+mutation: `$HOME/.cache/adr9c-r3-mutation/result.log`.
