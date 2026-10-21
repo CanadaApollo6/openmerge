@@ -529,7 +529,7 @@ func TestAuthorityCandidateAndLegacySuccessorPurePlans(t *testing.T) {
 	before, _ := json.Marshal(snap)
 	candidate, _, err := config.LoadAuthorityCandidate([]byte(setupCandidate))
 	must(t, err)
-	plan, err := planAuthorityRules(snap, opts, candidate, BypassActor{ActorID: new(int64(5)), ActorType: "RepositoryRole", BypassMode: "always"})
+	plan, err := planAuthorityRules(snap, opts, candidate, BypassActor{ActorID: new(int64(98)), ActorType: "Team", BypassMode: "always"})
 	must(t, err)
 	after, _ := json.Marshal(snap)
 	if len(plan.Edits) != 0 || !bytes.Equal(before, after) {
