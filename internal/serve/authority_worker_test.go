@@ -55,7 +55,7 @@ func TestAuthorityWorkerFirstCycleAndObservationCadence(t *testing.T) {
 		s, w, f, reads := authorityWorkerFixture(t)
 		must(t, s.cycle(t.Context(), w))
 		state := lifecycleState(t, s, w)
-		if *reads != 1 || state.WriteRestrictionStatus().LastObservedAt.IsZero() || w.stageA == nil || !w.stageA.policy.RequirePolicyOwners || w.stageA.policy.Approvals != nil {
+		if *reads != 2 || state.WriteRestrictionStatus().LastObservedAt.IsZero() || w.stageA == nil || !w.stageA.policy.RequirePolicyOwners || w.stageA.policy.Approvals != nil {
 			t.Fatalf("first cycle: reads=%d status=%+v policy=%+v", *reads, state.WriteRestrictionStatus(), w.stageA)
 		}
 		r, _ := state.PRRevision(1)
@@ -99,7 +99,7 @@ func TestAuthorityWorkerFirstCycleAndObservationCadence(t *testing.T) {
 		for range 3 {
 			must(t, s.configuration(t.Context(), w))
 		}
-		if *reads != 1 {
+		if *reads != 2 {
 			t.Fatal("unadopted pin polled during configuration", *reads)
 		}
 		_, err = f.PushBase(repo, "main", "unrelated", map[string]string{"README.md": "new"})
@@ -113,7 +113,7 @@ func TestAuthorityWorkerFirstCycleAndObservationCadence(t *testing.T) {
 		must(t, s.configuration(t.Context(), w))
 		w.resolveAuthorityLifecycle = saved
 		must(t, s.reconcile(t.Context(), w, false))
-		if *reads != 1 {
+		if *reads != 2 {
 			t.Fatal("observation cadence", *reads)
 		}
 		// Reconstruct from recorded local objects, without any forge access.

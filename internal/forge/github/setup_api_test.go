@@ -1,6 +1,7 @@
 package github
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"slices"
@@ -12,7 +13,7 @@ import (
 // responses deliberately omit policy details and use short pages.
 func (f *apiFixture) handleSetup(w http.ResponseWriter, r *http.Request, path string) bool {
 	conversion := strings.HasPrefix(path, "app-manifests/")
-	rules := f.setupRules != nil && (path == "repos/acme/project" || strings.HasPrefix(path, "repos/acme/project/rulesets") || r.Header.Get("Authorization") == "Bearer setup-admin-secret" && (strings.HasPrefix(path, "repos/acme/project/branches") || strings.HasPrefix(path, "orgs/")))
+	rules := f.setupRules != nil && (path == "repos/acme/project" || strings.HasPrefix(path, "repos/acme/project/rulesets") || r.Header.Get("Authorization") == "Bearer setup-admin-secret" && (strings.HasPrefix(path, "repos/acme/project/branches") || strings.HasPrefix(path, "orgs/") || strings.HasPrefix(path, "repos/acme/project/git/") || strings.HasPrefix(path, "users/") || strings.HasPrefix(path, "repos/acme/project/collaborators/")))
 	if !conversion && !rules {
 		return false
 	}
@@ -42,6 +43,41 @@ func (f *apiFixture) handleSetup(w http.ResponseWriter, r *http.Request, path st
 		f.json(w, map[string]any{"id": 42, "slug": "openmerge-test", "client_id": "Iv1.test", "pem": f.manifestPEM, "webhook_secret": secret, "client_secret": "unused-oauth-secret"})
 		return true
 	}
+	if path == "repos/acme/project/branches" {
+		f.json(w, []any{map[string]any{"name": "main", "commit": map[string]string{"sha": strings.Repeat("a", 40)}}})
+		return true
+	}
+	if path == "repos/acme/project/git/ref/heads/main" {
+		f.json(w, map[string]any{"object": map[string]string{"sha": strings.Repeat("a", 40), "type": "commit"}})
+		return true
+	}
+	if path == "repos/acme/project/git/trees/"+strings.Repeat("a", 40) {
+		f.json(w, map[string]any{"truncated": false, "tree": []any{
+			map[string]any{"path": ".openmerge.yml", "type": "blob", "mode": "100644", "sha": strings.Repeat("b", 40)},
+			map[string]any{"path": "CODEOWNERS", "type": "blob", "mode": "100644", "sha": strings.Repeat("c", 40)},
+		}})
+		return true
+	}
+	if strings.HasPrefix(path, "repos/acme/project/git/blobs/") {
+		content := "version: 1\nqueues: [{name: main, merge_when: ['check-success = ci']}]\n"
+		if strings.HasSuffix(path, strings.Repeat("c", 40)) {
+			content = "* @writer\n"
+		}
+		f.json(w, map[string]any{"encoding": "base64", "size": len(content), "content": base64.StdEncoding.EncodeToString([]byte(content))})
+		return true
+	}
+	if path == "users/writer" {
+		f.json(w, map[string]any{"id": 21, "login": "writer", "type": "User"})
+		return true
+	}
+	if path == "repos/acme/project/collaborators/writer/permission" {
+		f.json(w, map[string]any{"permission": "write", "user": map[string]any{"id": 21, "login": "writer", "type": "User"}})
+		return true
+	}
+	if strings.HasPrefix(path, "repos/acme/project/branches/") && strings.HasSuffix(path, "/protection") {
+		f.apiError(w, 404, "Branch not protected")
+		return true
+	}
 	if path == "orgs/acme/teams/owners" {
 		f.json(w, map[string]any{"id": 98, "slug": "owners", "organization": map[string]any{"id": 55, "login": "acme"}})
 		return true
@@ -61,7 +97,7 @@ func (f *apiFixture) handleSetup(w http.ResponseWriter, r *http.Request, path st
 		slices.Sort(ids)
 		list := []map[string]any{}
 		for _, id := range ids {
-			list = append(list, map[string]any{"id": id, "name": f.setupRules[id]["name"]})
+			list = append(list, map[string]any{"id": id, "name": f.setupRules[id]["name"], "source_type": f.setupRules[id]["source_type"], "source": f.setupRules[id]["source"], "enforcement": f.setupRules[id]["enforcement"], "target": f.setupRules[id]["target"]})
 		}
 		f.json(w, paginate(f, r, w, list))
 		return true

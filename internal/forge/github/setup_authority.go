@@ -78,6 +78,26 @@ func setupAuthorityRules(ctx context.Context, client *setupAPI, opts RulesOption
 	if err != nil {
 		return err
 	}
+	// Setup may propose a different future policy. Acquire and validate the
+	// actual landed governing policy independently; never validate proposed
+	// ownership against proposed CODEOWNERS. This emits no activation evidence.
+	landed, commit, governing, err := client.landedAuthority(ctx, opts.Repo, snapshot.DefaultBranch)
+	if err != nil {
+		return err
+	}
+	if err := client.validateLandedAuthority(ctx, opts.Repo, snapshot.DefaultBranch, commit, landed, governing); err != nil {
+		return err
+	}
+	if _, err := candidate.Config.ResolveBranch(snapshot.DefaultBranch, snapshot.DefaultBranch); len(err) != 0 {
+		return err
+	}
+	refs, err := client.operatorAuthorityRefs(ctx, opts.Repo, snapshot.DefaultBranch, commit, landed, candidate)
+	if err != nil {
+		return err
+	}
+	if _, err := client.operatorProtection(ctx, opts.Repo, refs); err != nil {
+		return err
+	}
 	capture, err := planAuthorityRules(snapshot, opts, candidate, actor)
 	if err != nil {
 		return err

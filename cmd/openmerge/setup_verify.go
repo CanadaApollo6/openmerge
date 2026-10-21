@@ -107,6 +107,11 @@ func runRulesVerification(ctx context.Context, opts verifyOptions, rules github.
 		return err
 	}
 	defer db.Close()
+	for _, target := range plan.Targets {
+		if err := reader.AcquireGoverning(ctx, target.Key.Repository); err != nil {
+			return err
+		}
+	}
 	return verifyTargets(ctx, db, reader, plan, opts.Operator, out)
 }
 

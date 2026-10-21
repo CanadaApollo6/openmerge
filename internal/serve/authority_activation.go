@@ -91,7 +91,7 @@ func (s *Server) activateAuthority(ctx context.Context, w *worker, request autho
 // authorityLifecycleResolution supplies only the independently resolved identity
 // and guarded observation request. The lifecycle computes the effective binding
 // from the loaded configuration, never from a persisted pin or proposed draft.
-// Governing acquisition/validation remains the future 9c adapter's obligation.
+// Governing content is acquired independently before this resolver is consulted.
 type authorityLifecycleResolution struct {
 	Policy       authority.Policy
 	RepositoryID int64
@@ -183,6 +183,33 @@ func (s *Server) prepareAuthorityLifecycle(ctx context.Context, w *worker, state
 		if inputsMatch && reflect.DeepEqual(previous.OpenMerge.Binding, request.Pin.OpenMerge.Binding) && reflect.DeepEqual(*previous, unchanged) {
 			return nil, nil
 		}
+	}
+	if mode == authority.OpenMerge && (previous == nil || previous.OpenMerge == nil || !reflect.DeepEqual(previous.OpenMerge.Binding, request.Pin.OpenMerge.Binding) || request.DraftID > 0 && !queue.AuthorityDraftAdopted(*previous)) {
+		if request.Read == nil {
+			return nil, errors.New("authority governing protection reader unavailable")
+		}
+		// Even draftless activation requires current, complete forge evidence.
+		// The proposed draft and --accept cannot supply or waive this read.
+		ids, ok := w.Driver.(forge.IdentityReader)
+		if !ok {
+			return nil, errors.New("authority governing identity reader unavailable")
+		}
+		if err := forge.CheckWriteRestrictionActor(ctx, ids, request.Input); err != nil {
+			return nil, &authorityObservationReadFailure{err: err}
+		}
+		fresh, err := request.Read(ctx)
+		if err != nil {
+			return nil, &authorityObservationReadFailure{err: err}
+		}
+		fresh, err = forge.InterpretWriteRestriction(request.Input, fresh)
+		if err != nil {
+			return nil, errors.New("authority governing protection interpretation failed")
+		}
+		if _, err := fresh.Fingerprint(); err != nil {
+			return nil, errors.New("authority governing protection evidence incomplete; retry with a complete seeing read")
+		}
+		// This acquisition gate cannot clear a source or certify draft adoption:
+		// those writes retain independent fresh reads after capturing their basis.
 	}
 	return &request, nil
 }

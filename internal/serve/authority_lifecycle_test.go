@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -21,12 +22,20 @@ func lifecycleConfig(contents string) string {
 	return strings.Replace(contents, "version: 1\n", "version: 1\npolicy_authority: openmerge\nbreak_glass: {team: acme/emergency}\n", 1)
 }
 
-// The internal adapter stands in for 9c's governing acquisition. It never
+// The internal adapter supplies receipts and typed forge observations. It never
 // installs worker policy/projection or push hooks from the candidate or journal.
 func lifecycleResolver(t *testing.T, s *Server, teamID *string, read func(context.Context) (authority.Observation, error)) func(context.Context, config.AuthorityCandidate, string, string) (authorityLifecycleResolution, error) {
 	t.Helper()
+	seedLifecycleGoverning(t, s)
 	receipt := activationReceipt(t, s.store)
 	return func(_ context.Context, c config.AuthorityCandidate, _, _ string) (authorityLifecycleResolution, error) {
+		id, err := strconv.ParseInt(*teamID, 10, 64)
+		must(t, err)
+		for _, w := range s.workers() {
+			if f, ok := w.Git.(*fake.Forge); ok {
+				f.SetTeam(forge.TeamIdentity{ID: id, OrganizationID: 100, Organization: "acme", Slug: "emergency"}, nil)
+			}
+		}
 		p := authority.Policy{Mode: c.Authority.Mode.Normalized()}
 		if p.Mode == authority.OpenMerge {
 			p.BreakGlass = authority.ActorBinding{Declared: *c.Authority.BreakGlass, Resolved: authority.ResolvedActor{Team: &authority.ResolvedTeam{OrganizationID: "100", TeamID: *teamID}}}
@@ -36,7 +45,7 @@ func lifecycleResolver(t *testing.T, s *Server, teamID *string, read func(contex
 }
 
 func lifecycleRead(context.Context) (authority.Observation, error) {
-	return authority.Observation{Inventory: authority.ReadFailure, Protections: []authority.Protection{}, Coverage: []authority.Coverage{}, Findings: []authority.Finding{}}, nil
+	return authority.Observation{Inventory: authority.Visible, Protections: []authority.Protection{}, Coverage: []authority.Coverage{}, Findings: []authority.Finding{}}, nil
 }
 
 func assertLifecyclePair(t *testing.T, s *Server, w *worker, before int64, mode authority.Mode) queue.PolicyAuthorityApplied {
@@ -277,6 +286,7 @@ func TestAuthorityLifecycleInvalidatesPolicyChangesAndReenable(t *testing.T) {
 				must(t, f.PushRef(repo, "trunk", tip))
 				f.SetDefaultBranch(repo, "trunk")
 				contents = strings.Replace(contents, "name: default", "name: default\n    base: main", 1)
+				contents += "  - name: trunk\n    base: trunk\n    merge_when: [check-success = ci]\n"
 				_, err = f.PushBase(repo, "trunk", "default rename", map[string]string{".openmerge.yml": contents})
 				must(t, err)
 			case "selector":
@@ -672,5 +682,20 @@ func TestAuthorityLifecycleDepthOneToFour(t *testing.T) {
 	state := lifecycleState(t, s, w)
 	if !state.WindowInitialized() || state.AuthorityPin().EffectiveDigest != w.configDigest || state.ConfigDigest != w.configDigest || w.cfg.QueueConfig().MaxDepth() != 4 {
 		t.Fatal("authority speculative config/pin did not commit")
+	}
+}
+
+func seedLifecycleGoverning(t *testing.T, s *Server) {
+	t.Helper()
+	for _, w := range s.workers() {
+		f, ok := w.Git.(*fake.Forge)
+		if !ok || w.Key.Repository != repo.Path {
+			continue
+		}
+		f.SetIdentity(forge.UserIdentity{ID: 21, Login: "writer", Kind: forge.UserAccount})
+		f.SetWriteGrant(repo, 21, "write")
+		_, err := f.PushBase(repo, "main", "governing policy owners", map[string]string{"CODEOWNERS": "* @writer\n"})
+		must(t, err)
+		break
 	}
 }

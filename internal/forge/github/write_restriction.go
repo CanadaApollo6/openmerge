@@ -50,13 +50,25 @@ func (d *Driver) ObserveWriteRestriction(ctx context.Context, in forge.WriteRest
 	if info.GetID() != in.Binding.RepositoryID || info.GetDefaultBranch() != in.Binding.DefaultBranch {
 		return o, errors.New("authority repository identity or default branch changed")
 	}
+	o, err = d.observeProtectionRules(ctx, in.Repo)
+	if actorErr := forge.CheckWriteRestrictionActor(ctx, d, in); actorErr != nil {
+		o.Inventory = authority.ReadFailure
+		err = errors.Join(err, actorErr)
+	}
+	return o, err
+}
+
+// observeProtectionRules is the existing typed acquisition without an activation
+// binding. Operator planning consumes facts, never a fabricated installation ID.
+func (d *Driver) observeProtectionRules(ctx context.Context, repo forge.RepoRef) (authority.Observation, error) {
+	o := forge.EmptyWriteRestrictionObservation()
 	var failures []error
 	seen := map[int64]bool{}
 	inventoryComplete := false
 	inventoryInvalid := false
 	for page := 1; page != 0; {
 		var list []authorityRuleset
-		response, err := d.readRules(ctx, fmt.Sprintf("repos/%s/rulesets?includes_parents=true&per_page=100&page=%d", in.Repo.Path, page), &list)
+		response, err := d.readRules(ctx, fmt.Sprintf("repos/%s/rulesets?includes_parents=true&per_page=100&page=%d", repo.Path, page), &list)
 		if err != nil {
 			failures = append(failures, err)
 			break
@@ -74,7 +86,7 @@ func (d *Driver) ObserveWriteRestriction(ctx context.Context, in forge.WriteRest
 			}
 			seen[entry.ID] = true
 			var detail authorityRuleset
-			_, readErr := d.readRules(ctx, fmt.Sprintf("repos/%s/rulesets/%d?includes_parents=true", in.Repo.Path, entry.ID), &detail)
+			_, readErr := d.readRules(ctx, fmt.Sprintf("repos/%s/rulesets/%d?includes_parents=true", repo.Path, entry.ID), &detail)
 			if readErr == nil && (detail.ID != entry.ID || detail.SourceType != entry.SourceType || !ascii.EqualFold(detail.Source, entry.Source) || detail.Enforcement != entry.Enforcement || entry.Target != "" && detail.Target != entry.Target) {
 				readErr = errors.New("authority ruleset changed during detail read")
 			}
@@ -85,7 +97,7 @@ func (d *Driver) ObserveWriteRestriction(ctx context.Context, in forge.WriteRest
 				detail = entry
 				detail.Conditions, detail.Rules, detail.Bypass = nil, nil, nil
 			}
-			p, decodeErr := detail.protection(in.Repo.Path)
+			p, decodeErr := detail.protection(repo.Path)
 			if decodeErr != nil {
 				failures = append(failures, decodeErr)
 			}
@@ -114,12 +126,6 @@ func (d *Driver) ObserveWriteRestriction(ctx context.Context, in forge.WriteRest
 	}
 	if inventoryComplete && !inventoryInvalid {
 		o.Inventory = authority.Visible
-	}
-	// Re-resolve the declared name through IdentityReader, then compare both
-	// immutable IDs. A reassigned slug cannot satisfy the reviewed actor binding.
-	if err := forge.CheckWriteRestrictionActor(ctx, d, in); err != nil {
-		failures = append(failures, err)
-		o.Inventory = authority.ReadFailure
 	}
 	slices.SortFunc(o.Protections, func(a, b authority.Protection) int { return cmp.Compare(a.Source+"/"+a.ID, b.Source+"/"+b.ID) })
 	return forge.UnknownBypassFindings(o), errors.Join(failures...)

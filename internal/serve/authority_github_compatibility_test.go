@@ -2,6 +2,7 @@ package serve
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
@@ -13,7 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/config"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
+	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/status"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
@@ -57,7 +60,7 @@ func TestAuthorityGithubProjectionBytes(t *testing.T) {
 
 func legacyGithubProjection(t *testing.T) map[string]string {
 	t.Helper()
-	s, w, _, _ := fixture(t, repositoryConfig)
+	s, w, f, _ := fixture(t, repositoryConfig)
 	must(t, s.cycle(t.Context(), w))
 	output := map[string]string{}
 	for _, path := range []string{"/v1/queues", "/v1/health"} {
@@ -66,6 +69,53 @@ func legacyGithubProjection(t *testing.T) map[string]string {
 	summary, err := s.ledgerSummary(t.Context(), w, 1)
 	must(t, err)
 	output["author"] = summary
+	// Export actual invalid-config journal and projections in both checkouts.
+	// Keep the same legacy behavior whether authority work is present or not.
+	_, err = f.PushBase(repo, "main", "invalid config", map[string]string{".openmerge.yml": "version: broken"})
+	must(t, err)
+	must(t, s.cycle(t.Context(), w))
+	if w.configError == nil {
+		t.Fatal("invalid config did not stop github work")
+	}
+	rows, err := s.store.EventsAfter(t.Context(), w.id, 0)
+	must(t, err)
+	events := []json.RawMessage{}
+	for _, row := range rows {
+		_, raw, err := queue.EncodeEvent(row.Event)
+		must(t, err)
+		events = append(events, json.RawMessage(raw))
+	}
+	raw, err := json.Marshal(events)
+	must(t, err)
+	output["invalid-config-journal"] = string(raw)
+	output["invalid-config-api"] = githubHTTP(t, s, w.Key, "/v1/queues")
+	output["invalid-config-health"] = githubHTTP(t, s, w.Key, "/v1/health")
+	// An opted-in worker that has rolled back to github must retain the same
+	// invalid-config diagnostics and behavior as this baseline too.
+	rolledBack, rw, rf, _ := fixture(t, repositoryConfig)
+	must(t, rolledBack.cycle(t.Context(), rw))
+	rw.AuthorityRequired = true
+	rw.resolveAuthorityLifecycle = func(context.Context, config.AuthorityCandidate, string, string) (authorityLifecycleResolution, error) {
+		t.Fatal("invalid config invoked authority resolver")
+		return authorityLifecycleResolution{}, nil
+	}
+	_, err = rf.PushBase(repo, "main", "invalid config", map[string]string{".openmerge.yml": "version: broken"})
+	must(t, err)
+	must(t, rolledBack.cycle(t.Context(), rw))
+	rows, err = rolledBack.store.EventsAfter(t.Context(), rw.id, 0)
+	must(t, err)
+	events = nil
+	for _, row := range rows {
+		_, raw, err := queue.EncodeEvent(row.Event)
+		must(t, err)
+		events = append(events, json.RawMessage(raw))
+	}
+	raw, err = json.Marshal(events)
+	must(t, err)
+	output["github-opted-invalid-config-journal"] = string(raw)
+	output["github-opted-invalid-config-api"] = githubHTTP(t, rolledBack, rw.Key, "/v1/queues")
+	output["github-opted-invalid-config-health"] = githubHTTP(t, rolledBack, rw.Key, "/v1/health")
+
 	return output
 }
 

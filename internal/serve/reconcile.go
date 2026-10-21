@@ -216,6 +216,27 @@ func stageADefiniteIdentityFailure(err error) bool {
 
 func (s *Server) repositoryConfig(ctx context.Context, target Target, tip string, w *worker) (config.Config, error) {
 	candidate, err := s.repositoryCandidate(ctx, target, tip, w)
+	if err == nil && candidate.Authority.Mode == authority.OpenMerge {
+		branch, readErr := target.Driver.DefaultBranch(ctx, forge.RepoRef{Path: target.Key.Repository})
+		if readErr != nil {
+			return config.Config{}, &config.GoverningReadError{Boundary: "default branch", Cause: readErr}
+		}
+		err = acquireAuthorityGoverning(ctx, target, candidate, branch, tip)
+		if err == nil {
+			resolved, resolveErr := target.resolveAuthorityLifecycle(ctx, candidate, branch, tip)
+			if resolveErr != nil {
+				return config.Config{}, &authorityObservationReadFailure{err: resolveErr}
+			}
+			if resolved.Activation.Read == nil {
+				return config.Config{}, errors.New("authority governing protection reader unavailable")
+			}
+			evidence, readErr := resolved.Activation.Read(ctx)
+			if readErr != nil {
+				return config.Config{}, &authorityObservationReadFailure{err: readErr}
+			}
+			err = forge.ValidateAuthorityAcquisition(evidence)
+		}
+	}
 	return candidate.Config, err
 }
 
@@ -231,6 +252,9 @@ func (s *Server) repositoryCandidate(ctx context.Context, target Target, tip str
 		return data, err == nil, err
 	})
 	if err != nil {
+		if target.AuthorityRequired && target.resolveAuthorityLifecycle != nil && w != nil && w.configCandidate.Authority.Mode == authority.OpenMerge && !errors.Is(err, config.ErrNotFound) {
+			return config.AuthorityCandidate{}, &config.GoverningReadError{Boundary: "config", Cause: err}
+		}
 		return config.AuthorityCandidate{}, err
 	}
 	var candidate config.AuthorityCandidate
@@ -241,6 +265,9 @@ func (s *Server) repositoryCandidate(ctx context.Context, target Target, tip str
 		candidate.Config, warnings, err = config.Load(data)
 	}
 	if err != nil {
+		if target.AuthorityRequired && target.resolveAuthorityLifecycle != nil && w != nil && w.configCandidate.Authority.Mode == authority.OpenMerge {
+			return config.AuthorityCandidate{}, config.Errors{{Path: "configuration", Message: "invalid landed authority configuration; repair the default-branch file"}}
+		}
 		return config.AuthorityCandidate{}, err
 	}
 	for _, warning := range warnings {
@@ -254,6 +281,11 @@ func (s *Server) loadConfiguration(ctx context.Context, w *worker, branch, tip s
 	cfg := candidate.Config
 	if err != nil {
 		return err
+	}
+	if candidate.Authority.Mode == authority.OpenMerge {
+		if err := acquireAuthorityGoverning(ctx, w.Target, candidate, branch, tip); err != nil {
+			return err
+		}
 	}
 	if w.managed && len(matchingQueues(cfg, w.Key.BaseBranch, branch)) == 0 {
 		if err := s.lifecycle(ctx, w, "retired", "Queue removed or base selector narrowed"); err != nil {
@@ -314,6 +346,12 @@ func (s *Server) reconcile(ctx context.Context, w *worker, force bool) error {
 	}
 	if err := s.observeWorkerAuthority(ctx, w); err != nil {
 		return err
+	}
+	// An authority worker must not classify or acquire policy inputs through
+	// the last good config after a definite landed-config failure. Settlement
+	// remains owned by cycle/execute; github retains its existing path.
+	if w.AuthorityRequired && w.resolveAuthorityLifecycle != nil && w.configCandidate.Authority.Mode == authority.OpenMerge && w.configError != nil {
+		return s.report(ctx, w)
 	}
 	if w.managed {
 		state, _, err := s.store.Load(ctx, w.id)
@@ -582,4 +620,10 @@ func (s *Server) authorityConfigurationFailed(w *worker) {
 	case s.refresh <- struct{}{}:
 	default:
 	}
+}
+
+func acquireAuthorityGoverning(ctx context.Context, target Target, candidate config.AuthorityCandidate, branch, tip string) error {
+	files, _ := target.Git.(forge.GoverningFilesReader)
+	ids, _ := target.Driver.(forge.IdentityReader)
+	return candidate.AcquireGoverning(ctx, forge.RepoRef{Path: target.Key.Repository}, branch, tip, files, ids)
 }
