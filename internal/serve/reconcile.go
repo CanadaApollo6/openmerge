@@ -268,12 +268,16 @@ func (s *Server) loadConfiguration(ctx context.Context, w *worker, branch, tip s
 		w.rulesNextCheck = time.Time{}
 	}
 	w.stageA = nil
-	if selected.Approvals != nil {
+	requireOwners := w.AuthorityRequired && w.resolveAuthorityLifecycle != nil && candidate.Authority.Mode == authority.OpenMerge
+	if selected.Approvals != nil || requireOwners {
 		for _, candidate := range cfg.Policy.Queues {
 			if candidate.Name == selected.Name {
-				w.stageA = &stageAPolicy{repository: cfg.Policy, candidate: candidate, defaultBranch: branch}
+				w.stageA = &stageAPolicy{repository: cfg.Policy, candidate: candidate, defaultBranch: branch, policy: cp.Policy{RequirePolicyOwners: requireOwners}}
 				break
 			}
+		}
+		if w.stageA == nil && requireOwners && len(cfg.Policy.Queues) == 0 {
+			w.stageA = &stageAPolicy{repository: cfg.Policy, candidate: cp.CandidateQueue{Name: selected.Name}, defaultBranch: branch, policy: cp.Policy{RequirePolicyOwners: true}}
 		}
 		if w.stageA == nil {
 			return config.Errors{{Path: "queues", Message: "approval queue has no parsed policy candidate"}}
@@ -306,6 +310,9 @@ func (s *Server) loadConfiguration(ctx context.Context, w *worker, branch, tip s
 
 func (s *Server) reconcile(ctx context.Context, w *worker, force bool) error {
 	if err := s.configuration(ctx, w); err != nil {
+		return err
+	}
+	if err := s.observeWorkerAuthority(ctx, w); err != nil {
 		return err
 	}
 	if w.managed {

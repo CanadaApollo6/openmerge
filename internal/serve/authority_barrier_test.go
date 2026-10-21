@@ -111,6 +111,12 @@ func TestAuthorityBarrierJournalCannotInstallRuntimeAuthority(t *testing.T) {
 			}
 			w.configTip = ""
 			must(t, s.configuration(t.Context(), w))
+			// New worker projections/enforcement require the same explicit
+			// runtime seam; candidates, receipts and replayed pins cannot run it.
+			must(t, s.observeWorkerAuthority(t.Context(), w))
+			if w.stageA != nil || w.authorityObservation != nil || w.approvalStatus.Load() != nil {
+				t.Fatal("journal data installed owner/observation/status policy")
+			}
 			if receipt, err := s.activateAuthority(t.Context(), w, request); err == nil || !strings.Contains(err.Error(), "internal authority activation opt-in required") || receipt != (store.AuthorityAdoptionReceipt{}) {
 				t.Fatal("journal data enabled internal activation", receipt, err)
 			}

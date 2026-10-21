@@ -103,21 +103,22 @@ type worker struct {
 	outsideWarnings atomic.Pointer[store.OutsideWarningSummary]
 	// Approval status uses an immutable policy snapshot while the worker is busy.
 	// Nil retains legacy reporting's locking behavior during the trial.
-	approvalStatus     atomic.Pointer[queue.Config]
-	stageA             *stageAPolicy
-	approvalInputProbe func(context.Context, queue.ApprovalBasis) (queue.ApprovalEligibilityObserved, error)
-	settlementOnly     bool
-	mu                 sync.Mutex
-	managed            bool
-	ready              bool // Branch and policy validation is process-local, never a lifecycle event.
-	waiting            string
-	lifecycleState     string
-	lifecycleDetail    string
-	accessBlocked      bool
-	rulesWaiting       string
-	validationNext     time.Time
-	reportingNext      time.Time
-	recovery           bool
+	approvalStatus       atomic.Pointer[queue.Config]
+	authorityObservation *authorityActivation
+	stageA               *stageAPolicy
+	approvalInputProbe   func(context.Context, queue.ApprovalBasis) (queue.ApprovalEligibilityObserved, error)
+	settlementOnly       bool
+	mu                   sync.Mutex
+	managed              bool
+	ready                bool // Branch and policy validation is process-local, never a lifecycle event.
+	waiting              string
+	lifecycleState       string
+	lifecycleDetail      string
+	accessBlocked        bool
+	rulesWaiting         string
+	validationNext       time.Time
+	reportingNext        time.Time
+	recovery             bool
 	Target
 	id               store.QueueID
 	wake             chan struct{}

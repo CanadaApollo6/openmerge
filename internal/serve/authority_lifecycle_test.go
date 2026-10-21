@@ -248,6 +248,7 @@ func TestAuthorityLifecycleInvalidatesPolicyChangesAndReenable(t *testing.T) {
 	for _, change := range []string{"default-branch", "selector", "actor", "method", "queue-rule", "reenable"} {
 		t.Run(change, func(t *testing.T) {
 			s, w, f, _ := fixture(t, repositoryConfig)
+			w.Driver = f
 			must(t, s.configuration(t.Context(), w))
 			team := "200"
 			w.AuthorityRequired = true
@@ -318,6 +319,7 @@ func TestAuthorityLifecycleReadFailuresDoNotPublishConfigOrPin(t *testing.T) {
 		t.Run(phase, func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
 				s, w, f, _ := fixture(t, repositoryConfig)
+				w.Driver = f
 				must(t, s.configuration(t.Context(), w))
 				old := lifecycleState(t, s, w)
 				_, before, err := s.store.Load(t.Context(), w.id)
@@ -333,6 +335,12 @@ func TestAuthorityLifecycleReadFailuresDoNotPublishConfigOrPin(t *testing.T) {
 					return authority.Observation{}, sentinel
 				}
 				w.resolveAuthorityLifecycle = lifecycleResolver(t, s, &team, read)
+				resolver := w.resolveAuthorityLifecycle
+				w.resolveAuthorityLifecycle = func(ctx context.Context, c config.AuthorityCandidate, branch, tip string) (authorityLifecycleResolution, error) {
+					resolved, err := resolver(ctx, c, branch, tip)
+					resolved.Activation.DraftID = 1 // this matrix tests adoption I/O, not draftless pinning
+					return resolved, err
+				}
 				if phase == "resolve" {
 					w.resolveAuthorityLifecycle = func(context.Context, config.AuthorityCandidate, string, string) (authorityLifecycleResolution, error) {
 						return authorityLifecycleResolution{}, sentinel
@@ -374,6 +382,7 @@ func TestAuthorityLifecycleReadFailuresDoNotPublishConfigOrPin(t *testing.T) {
 
 func TestAuthorityLifecycleAdoptsDraftWithAtomicConfig(t *testing.T) {
 	s, w, f, _ := fixture(t, repositoryConfig)
+	w.Driver = f
 	must(t, s.configuration(t.Context(), w))
 	old := lifecycleState(t, s, w)
 	raw, err := os.ReadFile("../queue/testdata/wire/v1/event_write_restriction_verified.json")
@@ -395,6 +404,7 @@ func TestAuthorityLifecycleAdoptsDraftWithAtomicConfig(t *testing.T) {
 	tip, err := f.PushBase(repo, "main", "activate verified draft", map[string]string{".openmerge.yml": lifecycleConfig(repositoryConfig)})
 	must(t, err)
 	must(t, s.loadConfiguration(t.Context(), w, "main", tip))
+	must(t, s.refreshStageAPolicy(t.Context(), w, tip))
 	request, err := s.prepareAuthorityLifecycle(t.Context(), w, old, "main", tip)
 	must(t, err)
 	draft.Binding = request.Pin.OpenMerge.Binding
@@ -465,6 +475,7 @@ func TestAuthorityLifecycleAdoptsDraftWithAtomicConfig(t *testing.T) {
 
 func TestAuthorityLifecycleRollbackReceiptAndUnchangedWire(t *testing.T) {
 	s, w, f, _ := fixture(t, repositoryConfig)
+	w.Driver = f
 	must(t, s.configuration(t.Context(), w))
 	team := "200"
 	w.AuthorityRequired = true
@@ -547,6 +558,7 @@ func TestAuthorityLifecycleRequiresFlagAndResolver(t *testing.T) {
 	for _, setup := range []string{"neither", "flag-only", "resolver-only"} {
 		t.Run(setup, func(t *testing.T) {
 			s, w, f, _ := fixture(t, repositoryConfig)
+			w.Driver = f
 			must(t, s.configuration(t.Context(), w))
 			team := "200"
 			resolver := lifecycleResolver(t, s, &team, func(context.Context) (authority.Observation, error) {
@@ -639,6 +651,7 @@ func TestAuthorityLifecycleUnchangedApprovalReadiness(t *testing.T) {
 
 func TestAuthorityLifecycleDepthOneToFour(t *testing.T) {
 	s, w, f, _ := fixture(t, repositoryConfig)
+	w.Driver = f
 	must(t, s.configuration(t.Context(), w))
 	team := "200"
 	w.AuthorityRequired = true

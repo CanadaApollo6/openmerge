@@ -26,7 +26,7 @@ func (s *Server) QueuePolicy(key store.QueueKey) (queue.Config, bool) {
 
 // Called with exclusive worker ownership whenever configuration is replaced.
 func (w *worker) publishApprovalStatus(interval time.Duration) {
-	if w.cfg.Approvals == nil {
+	if w.stageA == nil {
 		w.approvalStatus.Store(nil)
 		return
 	}
