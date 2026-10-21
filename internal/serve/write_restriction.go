@@ -14,12 +14,13 @@ import (
 
 const authorityReadErrorReason = "authority write restriction read failed"
 
-// authorityObservationReadFailure means the seeing read failed, but the
-// source-specific durable block was recorded. Persistence and wiring errors
-// intentionally remain ordinary errors so they still abort reconciliation.
+// authorityObservationReadFailure exposes only a sanitized seeing-read class.
+// Unwrap retains the cause for classification. Runtime observations attempt a
+// source-specific block; joined persistence errors still abort reconciliation
+// while retaining the read failure classification.
 type authorityObservationReadFailure struct{ err error }
 
-func (e *authorityObservationReadFailure) Error() string { return e.err.Error() }
+func (e *authorityObservationReadFailure) Error() string { return authorityReadFailureReason(e.err) }
 func (e *authorityObservationReadFailure) Unwrap() error { return e.err }
 
 // ObserveWriteRestriction is dormant until PR 9 installs the authority hook.
@@ -28,7 +29,13 @@ func (e *authorityObservationReadFailure) Unwrap() error { return e.err }
 // enabling this hook. A failed read is represented by a source-specific
 // observation so it cannot alter unrelated rule sources or their cadence.
 func ObserveWriteRestriction(ctx context.Context, db *store.Store, q store.QueueID, reader forge.WriteRestrictionReader, in forge.WriteRestrictionInput) (int64, error) {
-	state, _, err := db.Load(ctx, q)
+	return observeWriteRestriction(ctx, db, q, reader, in, completionWriteTimeout)
+}
+
+func observeWriteRestriction(ctx context.Context, db *store.Store, q store.QueueID, reader forge.WriteRestrictionReader, in forge.WriteRestrictionInput, writeTimeout time.Duration) (int64, error) {
+	loadCtx, cancelLoad := context.WithTimeout(ctx, writeTimeout)
+	state, _, err := db.Load(loadCtx, q)
+	cancelLoad()
 	if err != nil {
 		return 0, err
 	}
@@ -57,9 +64,9 @@ func ObserveWriteRestriction(ctx context.Context, db *store.Store, q store.Queue
 			cause = interpretErr
 		}
 		evidence = forge.EmptyWriteRestrictionObservation()
-		id, appendErr := appendWriteRestrictionObservation(ctx, db, q, in.Binding, basis, evidence, authorityReadErrorReason)
+		id, appendErr := appendWriteRestrictionObservation(ctx, db, q, in.Binding, basis, evidence, authorityReadFailureReason(cause), writeTimeout)
 		if appendErr != nil {
-			return id, errors.Join(cause, appendErr)
+			return id, errors.Join(&authorityObservationReadFailure{err: cause}, appendErr)
 		}
 		return id, &authorityObservationReadFailure{err: cause}
 	}
@@ -68,12 +75,12 @@ func ObserveWriteRestriction(ctx context.Context, db *store.Store, q store.Queue
 	}
 	readError := ""
 	if readErr != nil {
-		readError = authorityReadErrorReason
+		readError = authorityReadFailureReason(readErr)
 	}
-	id, appendErr := appendWriteRestrictionObservation(ctx, db, q, in.Binding, basis, evidence, readError)
+	id, appendErr := appendWriteRestrictionObservation(ctx, db, q, in.Binding, basis, evidence, readError, writeTimeout)
 	if appendErr != nil {
 		if readErr != nil {
-			return id, errors.Join(readErr, appendErr)
+			return id, errors.Join(&authorityObservationReadFailure{err: readErr}, appendErr)
 		}
 		return id, appendErr
 	}
@@ -83,8 +90,10 @@ func ObserveWriteRestriction(ctx context.Context, db *store.Store, q store.Queue
 	return id, nil
 }
 
-func appendWriteRestrictionObservation(ctx context.Context, db *store.Store, q store.QueueID, binding authority.PolicyBinding, basis uint64, evidence authority.Observation, readError string) (int64, error) {
-	return db.Append(ctx, q, []queue.Event{queue.WriteRestrictionObserved{
+func appendWriteRestrictionObservation(ctx context.Context, db *store.Store, q store.QueueID, binding authority.PolicyBinding, basis uint64, evidence authority.Observation, readError string, writeTimeout time.Duration) (int64, error) {
+	persist, cancel := context.WithTimeout(ctx, writeTimeout)
+	defer cancel()
+	return db.Append(persist, q, []queue.Event{queue.WriteRestrictionObserved{
 		Binding:    binding,
 		Basis:      basis,
 		ObservedAt: time.Now().UTC(),
@@ -154,41 +163,17 @@ func (s *Server) observeWorkerAuthority(ctx context.Context, w *worker) error {
 	if !w.authorityNextCheck.IsZero() && time.Now().Before(w.authorityNextCheck) {
 		return nil
 	}
-	if request.Read == nil {
-		readErr := errors.New("authority observation reader unavailable")
-		state, _, loadErr := s.store.Load(ctx, w.id)
-		if loadErr != nil {
-			return loadErr
-		}
-		pin := state.AuthorityPin()
-		if pin == nil || pin.OpenMerge == nil {
-			return errors.New("authority observation requires the current openmerge pin")
-		}
-		evidence := forge.EmptyWriteRestrictionObservation()
-		if _, appendErr := appendWriteRestrictionObservation(ctx, s.store, w.id, pin.OpenMerge.Binding, state.RulesSourceRevision(queue.WriteRestriction), evidence, authorityReadErrorReason); appendErr != nil {
-			return appendErr
-		}
-		s.scheduleAuthorityRetry(w, readErr)
-		return nil
-	}
-	readCtx := forge.WithRequestClass(ctx, forge.RulesRequest)
-	timeout := s.options.ActionTimeout
-	if timeout <= 0 {
-		timeout = DefaultActionTimeout
-	}
-	timedReadCtx, cancel := context.WithTimeout(readCtx, timeout)
-	reader := authorityObservationReader(func(context.Context) (authority.Observation, error) {
-		return request.Read(timedReadCtx)
-	})
-	_, err := ObserveWriteRestriction(readCtx, s.store, w.id, reader, request.Input)
-	cancel()
+	_, err := s.observeAuthorityRead(ctx, ctx, w, request)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 	var readFailure *authorityObservationReadFailure
 	if errors.As(err, &readFailure) {
 		s.scheduleAuthorityRetry(w, readFailure.err)
-		s.options.Logger.Warn("authority write restriction read failed", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "error", readFailure.err, "retry_at", w.authorityNextCheck)
+		s.options.Logger.Warn("authority write restriction read failed", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "cause", authorityReadFailureReason(readFailure.err), "retry_at", w.authorityNextCheck)
+		if err != readFailure {
+			return err // The read failed and its block could not be persisted.
+		}
 		return nil
 	}
 	if err != nil {
@@ -196,4 +181,46 @@ func (s *Server) observeWorkerAuthority(ctx context.Context, w *worker) error {
 	}
 	s.scheduleAuthoritySuccess(w)
 	return nil
+}
+
+// observeAuthorityRead caps forge I/O at ActionTimeout and the remaining action
+// deadline; it is not an independent read budget. A late-starting read can time
+// out with a healthy forge, and must fail closed and back off. Each persistence
+// operation has its own completionWriteTimeout based on the worker parent, so
+// action expiry permits a bounded block write while shutdown cancels it.
+func (s *Server) observeAuthorityRead(ctx, parent context.Context, w *worker, request *authorityActivation) (int64, error) {
+	readCtx := forge.WithRequestClass(ctx, forge.RulesRequest)
+	timeout := s.options.ActionTimeout
+	if timeout <= 0 {
+		timeout = DefaultActionTimeout
+	}
+	timedReadCtx, cancel := context.WithTimeout(readCtx, timeout)
+	defer cancel()
+	read := request.Read
+	if read == nil {
+		read = func(context.Context) (authority.Observation, error) {
+			return forge.EmptyWriteRestrictionObservation(), forge.ErrRulesUnavailable
+		}
+	}
+	reader := authorityObservationReader(func(context.Context) (authority.Observation, error) { return read(timedReadCtx) })
+	writeTimeout := s.authorityWriteTimeout
+	if writeTimeout <= 0 {
+		writeTimeout = completionWriteTimeout
+	}
+	return observeWriteRestriction(parent, s.store, w.id, reader, request.Input, writeTimeout)
+}
+
+// Persist only a bounded class, never transport text that may contain secrets.
+func authorityReadFailureReason(cause error) string {
+	var rate interface{ RetryAfter() time.Time }
+	switch {
+	case errors.Is(cause, context.DeadlineExceeded):
+		return authorityReadErrorReason + ": timeout"
+	case errors.As(cause, &rate):
+		return authorityReadErrorReason + ": quota"
+	case errors.Is(cause, context.Canceled):
+		return authorityReadErrorReason + ": canceled"
+	default:
+		return authorityReadErrorReason + ": unavailable"
+	}
 }

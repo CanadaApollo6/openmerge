@@ -32,7 +32,7 @@ func authorityFixture[T Event](t *testing.T, name string) T {
 
 func TestAuthorityObservationVariants(t *testing.T) {
 	paths, err := filepath.Glob("testdata/wire/v1/variants/write_restriction_*.json")
-	if err != nil || len(paths) != 4 {
+	if err != nil || len(paths) != 5 {
 		t.Fatal("missing evidence variants", paths, err)
 	}
 	for _, path := range paths {
@@ -51,6 +51,12 @@ func TestAuthorityObservationVariants(t *testing.T) {
 			}
 			observed, ok := event.(WriteRestrictionObserved)
 			if !ok {
+				return
+			}
+			if observed.ReadError != "" {
+				if observed.Evidence.Inventory != authority.ReadFailure {
+					t.Fatal("read error lost failed inventory")
+				}
 				return
 			}
 			declared, err := observed.Binding.ResolvedActor.BypassIdentity()

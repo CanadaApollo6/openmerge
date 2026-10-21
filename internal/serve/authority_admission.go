@@ -15,12 +15,12 @@ import (
 // readAuthorityAdmission is deliberately independent of the background cadence.
 // All I/O finishes before StartLanding takes the existing queue lock. Its exact
 // source revisions travel in LandingChecksRecorded and are rechecked there.
-func (s *Server) readAuthorityAdmission(ctx context.Context, w *worker, basis queue.State) (queue.State, error) {
+func (s *Server) readAuthorityAdmission(ctx, parent context.Context, w *worker, basis queue.State) (queue.State, error) {
 	if !w.AuthorityRequired || w.resolveAuthorityLifecycle == nil || w.configError != nil || w.configCandidate.Authority.Mode != authority.OpenMerge {
 		return queue.State{}, fmt.Errorf("authority admission opt-in/configuration unavailable")
 	}
 	request := w.authorityObservation
-	if request == nil || request.Read == nil {
+	if request == nil {
 		return queue.State{}, fmt.Errorf("authority admission reader unavailable")
 	}
 	if w.authorityCadenceBinding == nil || !reflect.DeepEqual(*w.authorityCadenceBinding, request.Input.Binding) {
@@ -29,9 +29,9 @@ func (s *Server) readAuthorityAdmission(ctx context.Context, w *worker, basis qu
 		w.authorityFailures = 0
 	}
 	ctx = forge.WithRequestClass(ctx, forge.RulesRequest)
-	if _, err := ObserveWriteRestriction(ctx, s.store, w.id, authorityObservationReader(request.Read), request.Input); err != nil {
+	if _, err := s.observeAuthorityRead(ctx, parent, w, request); err != nil {
 		var readFailure *authorityObservationReadFailure
-		if errors.As(err, &readFailure) {
+		if parent.Err() == nil && errors.As(err, &readFailure) {
 			s.scheduleAuthorityRetry(w, readFailure.err)
 		}
 		return queue.State{}, fmt.Errorf("authority admission read failed: %w", err)

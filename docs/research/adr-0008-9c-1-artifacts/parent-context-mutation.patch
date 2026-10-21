@@ -1,0 +1,5 @@
+--- internal/serve/worker.go	2026-10-21 16:42:27.556158225 -0400
++++ /home/riels/.cache/adr0008-9c-verification/parent-mutation/worker.go	2026-10-21 16:46:49.192855681 -0400
+@@ -145 +145 @@
+-		x.LandingDecisions = s.stageAGate(ctx, w, claim, cfg, state)
++		x.LandingDecisions = s.stageAGate(actionCtx, w, claim, cfg, state)

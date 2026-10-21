@@ -1,0 +1,23 @@
+{
+  "claim": "One successful local run per side; no speed or GitHub-runner prediction claimed.",
+  "baseline": "051798c98e4bbaac235771be3b1d7d85e8cbbcc9",
+  "candidate": "26b85a2aaceccfa5984a495d2ab1541d64aba0e8",
+  "command": "go test -race -short -count=1 -timeout=15m ./internal/serve",
+  "wrapper": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB",
+  "GOROOT": "/home/riels/.local/share/mise/installs/go/1.27.3",
+  "PATH_prefix": "/home/riels/.local/share/mise/installs/go/1.27.3/bin",
+  "test_postgres": "localhost:54329",
+  "baseline_seconds": 262.873,
+  "candidate_seconds": 254.835,
+  "exit_statuses": [
+    0,
+    0
+  ],
+  "runs_per_side": 1,
+  "initial_load_average": [
+    0.19,
+    0.19,
+    0.42
+  ],
+  "cores": 16
+}

@@ -24,7 +24,12 @@ import (
 // 9c's responsibility; these tests drive the worker policy and projection seam.
 func authorityWorkerFixture(t *testing.T) (*Server, *worker, *fake.Forge, *int) {
 	t.Helper()
-	s, w, f, _ := fixture(t, repositoryConfig)
+	return authorityWorkerWithStore(t, database(t))
+}
+
+func authorityWorkerWithStore(t *testing.T, db *store.Store) (*Server, *worker, *fake.Forge, *int) {
+	t.Helper()
+	s, w, f, _ := fixtureWithStore(t, repositoryConfig, db)
 	w.Driver = f
 	f.SetIdentity(forge.UserIdentity{ID: 12, Login: "contributor", Kind: forge.UserAccount})
 	f.SetIdentity(forge.UserIdentity{ID: 21, Login: "writer", Kind: forge.UserAccount})
@@ -63,7 +68,7 @@ func TestAuthorityWorkerFirstCycleAndObservationCadence(t *testing.T) {
 		if e := state.EvaluateApprovals(w.stageA.policy, identity, fresh); !e.Allowed || len(e.Requirements) != 0 {
 			t.Fatalf("invented ordinary floor: %+v", e)
 		}
-		if gate := s.stageAGate(w, store.ClaimedAction{}, w.plannerConfig(s.options.PollInterval), state); gate.ReadInputsWithChecks == nil || gate.ValidateChecks == nil {
+		if gate := s.stageAGate(t.Context(), w, store.ClaimedAction{}, w.plannerConfig(s.options.PollInterval), state); gate.ReadInputsWithChecks == nil || gate.ValidateChecks == nil {
 			t.Fatal("authority decision/check gate absent")
 		}
 		must(t, s.report(t.Context(), w))
@@ -303,7 +308,7 @@ func TestAuthorityWorkerAtomicDecisionAndCheckEvidence(t *testing.T) {
 		if err := s.store.EmitWithPolicy(t.Context(), claim, cfg, w.stageA.policy)(queue.LandingStarted{BatchID: land.BatchID, AttemptID: "bypass", FenceToken: state.Fence, At: time.Now()}); err == nil {
 			t.Fatal("direct start bypassed decision transaction")
 		}
-		x.LandingDecisions = s.stageAGate(w, claim, cfg, state)
+		x.LandingDecisions = s.stageAGate(t.Context(), w, claim, cfg, state)
 		must(t, x.Execute(t.Context(), claim.Action, s.store.EmitWithPolicy(t.Context(), claim, cfg, w.stageA.policy)))
 		rows, err := s.store.EventsAfter(t.Context(), w.id, 0)
 		must(t, err)

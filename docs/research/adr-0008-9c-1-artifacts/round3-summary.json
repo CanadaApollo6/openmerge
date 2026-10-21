@@ -1,0 +1,139 @@
+{
+  "trial_class": "Hold",
+  "slice": "9c-1",
+  "offline_only": true,
+  "commands": [
+    {
+      "name": "make-check",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/adr0008-9c-verification-round3-pass/make-check/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/adr0008-9c-verification-round3-pass/make-check/tmp make check",
+      "exit": 0,
+      "logs": "/home/riels/.cache/adr0008-9c-verification-round3-pass/make-check"
+    },
+    {
+      "name": "focused",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/adr0008-9c-verification-round3-pass/focused/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/adr0008-9c-verification-round3-pass/focused/tmp go test -race ./internal/serve ./internal/store ./internal/queue ./internal/config -run 'Authority|PublicAuthority' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/adr0008-9c-verification-round3-pass/focused"
+    },
+    {
+      "name": "baseline-github-projections",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/adr0008-9c-verification-round3-pass/baseline-github-projections/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/adr0008-9c-verification-round3-pass/baseline-github-projections/tmp ADR_GITHUB_PROJECTIONS=/home/riels/.cache/adr0008-9c-verification-round3-pass/baseline-projections/projections.json go test -overlay /home/riels/.cache/adr0008-9c-verification-round3-pass/baseline-projections/overlay.json ./internal/serve -run '^TestAuthorityGithubProjectionBytes$' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/adr0008-9c-verification-round3-pass/baseline-github-projections"
+    },
+    {
+      "name": "baseline-github-cli",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/adr0008-9c-verification-round3-pass/baseline-github-cli/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/adr0008-9c-verification-round3-pass/baseline-github-cli/tmp ADR_GITHUB_PROJECTIONS=/home/riels/.cache/adr0008-9c-verification-round3-pass/baseline-projections/projections.json ADR_GITHUB_CLI=/home/riels/.cache/adr0008-9c-verification-round3-pass/baseline-projections/cli.txt go test -overlay /home/riels/.cache/adr0008-9c-verification-round3-pass/baseline-projections/overlay.json ./cmd/openmerge -run '^TestADR2cGithubCLI$' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/adr0008-9c-verification-round3-pass/baseline-github-cli"
+    },
+    {
+      "name": "candidate-github-projections",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/adr0008-9c-verification-round3-pass/candidate-github-projections/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/adr0008-9c-verification-round3-pass/candidate-github-projections/tmp ADR_GITHUB_PROJECTIONS=/home/riels/.cache/adr0008-9c-verification-round3-pass/candidate-projections/projections.json go test -overlay /home/riels/.cache/adr0008-9c-verification-round3-pass/candidate-projections/overlay.json ./internal/serve -run '^TestAuthorityGithubProjectionBytes$' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/adr0008-9c-verification-round3-pass/candidate-github-projections"
+    },
+    {
+      "name": "candidate-github-cli",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/adr0008-9c-verification-round3-pass/candidate-github-cli/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/adr0008-9c-verification-round3-pass/candidate-github-cli/tmp ADR_GITHUB_PROJECTIONS=/home/riels/.cache/adr0008-9c-verification-round3-pass/candidate-projections/projections.json ADR_GITHUB_CLI=/home/riels/.cache/adr0008-9c-verification-round3-pass/candidate-projections/cli.txt go test -overlay /home/riels/.cache/adr0008-9c-verification-round3-pass/candidate-projections/overlay.json ./cmd/openmerge -run '^TestADR2cGithubCLI$' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/adr0008-9c-verification-round3-pass/candidate-github-cli"
+    },
+    {
+      "name": "baseline-contracts",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/adr0008-9c-verification-round3-pass/baseline-contracts/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/adr0008-9c-verification-round3-pass/baseline-contracts/tmp ADR_DIFF=/home/riels/.cache/adr0008-9c-verification-round3-pass/baseline/contracts.json go test -overlay /home/riels/.cache/adr0008-9c-verification-round3-pass/baseline/overlay.json ./internal/queue -run '^TestADR00081Differential$' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/adr0008-9c-verification-round3-pass/baseline-contracts"
+    },
+    {
+      "name": "candidate-contracts",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/adr0008-9c-verification-round3-pass/candidate-contracts/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/adr0008-9c-verification-round3-pass/candidate-contracts/tmp ADR_DIFF=/home/riels/.cache/adr0008-9c-verification-round3-pass/candidate/contracts.json go test -overlay /home/riels/.cache/adr0008-9c-verification-round3-pass/candidate/overlay.json ./internal/queue -run '^TestADR00081Differential$' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/adr0008-9c-verification-round3-pass/candidate-contracts"
+    },
+    {
+      "name": "strict-replay",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=6GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/adr0008-9c-verification-round3-pass/strict-replay/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/adr0008-9c-verification-round3-pass/strict-replay/tmp /home/riels/.local/share/mise/installs/python/latest/bin/python3 /home/riels/.t3/worktrees/openmerge/t3-cda3f69c/scripts/check-live-journal-replay.py --baseline /home/riels/.cache/adr0008-9c-main-051798c --candidate /home/riels/.t3/worktrees/openmerge/t3-cda3f69c --events /home/riels/.cache/om-pr72-fix1-input/events.jsonl --queues /home/riels/.cache/om-pr72-fix1-input/queues.jsonl --strict-state --out /home/riels/.cache/adr0008-9c-verification-round3-pass/replay.json",
+      "exit": 0,
+      "logs": "/home/riels/.cache/adr0008-9c-verification-round3-pass/strict-replay"
+    },
+    {
+      "name": "baseline-simulator",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/adr0008-9c-verification-round3-pass/baseline-simulator/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/adr0008-9c-verification-round3-pass/baseline-simulator/tmp make test-sim-exits",
+      "exit": 0,
+      "logs": "/home/riels/.cache/adr0008-9c-verification-round3-pass/baseline-simulator"
+    },
+    {
+      "name": "candidate-simulator",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/adr0008-9c-verification-round3-pass/candidate-simulator/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/adr0008-9c-verification-round3-pass/candidate-simulator/tmp make test-sim-exits",
+      "exit": 0,
+      "logs": "/home/riels/.cache/adr0008-9c-verification-round3-pass/candidate-simulator"
+    }
+  ],
+  "baseline": "051798c98e4bbaac235771be3b1d7d85e8cbbcc9",
+  "candidate": "5e7bb327acc14ec4c6a836ebae9a1de6d513abbd",
+  "environment": {
+    "GOROOT": "/home/riels/.local/share/mise/installs/go/1.27.3",
+    "PATH_prefix": "/home/riels/.local/share/mise/installs/go/1.27.3/bin",
+    "database": "localhost:54329, isolated test schemas"
+  },
+  "exports": {
+    "events": {
+      "path": "/home/riels/.cache/om-pr72-fix1-input/events.jsonl",
+      "sha256": "9c8f78f3e967c7cb030948cfc9871cc67a45da06f80b12f27d1c55d09ba8accf",
+      "rows": 2158,
+      "max_event_id": 2158
+    },
+    "queues": {
+      "path": "/home/riels/.cache/om-pr72-fix1-input/queues.jsonl",
+      "sha256": "418f025a0e3c8792321b6d71d297f17fff1adf48cb616c8f4fcb774163696886",
+      "rows": 1
+    }
+  },
+  "wire": {
+    "identical": true,
+    "legacy_fixtures": 104,
+    "legacy_registry_fixtures": 90,
+    "legacy_sha256": "d9fc673fbd7ec5410cf1491778157508533ca5c804932caaecb39204f2ae2776",
+    "new_fixtures": [
+      "variants/write_restriction_observed_read_error.json"
+    ]
+  },
+  "github_projections": {
+    "identical": true,
+    "status_api_health_author_sha256": "d60ce02d80dea505dfb3643041b28aa7d25a012964a3bd7c0e93321cbe998c89",
+    "cli_sha256": "4bea7d07d00c094c8824751d3b5db07932de48be34f6db2d98bc772139e248cf"
+  },
+  "contracts": {
+    "identical": true,
+    "records": 90,
+    "sha256": "88e727ebe7ea5b570f352c5c661c2cd1642c1b5120f3d3ed086993f4dd00362a"
+  },
+  "replay": {
+    "verdict": "PASS",
+    "state_mode": "strict",
+    "actions_identical": "2159/2159",
+    "structural_state_identical": "2159/2159",
+    "snapshot_hashes_identical": "2159/2159",
+    "boundary_checkpoints_identical": "2159/2159",
+    "boundary_probe_count": 8676,
+    "non_allowlisted_fields": [],
+    "gate2": "PASS",
+    "gate4": "PASS",
+    "self_test": "PASS",
+    "self_test_exit_status": 0,
+    "full_report_sha256": "5c71c58816bf2dbf7e6e0db55fc551f952b98a8673ac053728ab8f50893aaf4e"
+  },
+  "simulator": {
+    "baseline_exit": 0,
+    "candidate_exit": 0,
+    "identical": true,
+    "blocks": 146,
+    "normalized_sha256": "a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7"
+  },
+  "binary": {
+    "path": "/home/riels/.t3/worktrees/openmerge/t3-cda3f69c/bin/openmerge",
+    "sha256": "adf6572de93c14f6e9473747ad8ba39865e0304ca619df61e358e349b2b7617d"
+  },
+  "verdict": "PASS"
+}

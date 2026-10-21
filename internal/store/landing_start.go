@@ -99,6 +99,9 @@ func (s *Store) startLanding(ctx context.Context, claim ClaimedAction, cfg queue
 			if state.WriteRestrictionStatus().State != "verified" || len(state.RulesSourceProblems(queue.WriteRestriction)) != 0 {
 				return fmt.Errorf("%w: authority write restriction is not currently verified", ErrStale)
 			}
+			// ConfigApplied retains the first commit for an unchanged digest.
+			// ValidateLandingChecks binds e.ConfigCommit to pin.GoverningCommit
+			// so a same-digest rebind requires the current governing revision.
 			if err := state.ValidateLandingChecks(policy.Digest, land, start, checks[0]); err != nil {
 				if errors.Is(err, queue.ErrLandingChecksTooLarge) {
 					return err
