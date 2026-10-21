@@ -30,7 +30,9 @@ func activationReceipt(t *testing.T, db *store.Store) authority.EmissionReceipt 
 	}
 	path := filepath.Join(t.TempDir(), "backup")
 	must(t, os.WriteFile(path, []byte("offline test backup"), 0600))
-	return authority.EmissionReceipt{DatabaseIdentity: db.DatabaseIdentity(), BinaryRevision: authority.RunningBinaryRevision(), DrainedWorkers: []string{"test-worker"}, DrainedAt: time.Now().Add(-time.Minute), RestoreTestedAt: time.Now().Add(-time.Second), BackupPath: path, BackupSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("offline test backup"))), CompatibleReadersOnly: true}
+	identity, err := db.DatabaseIdentity(t.Context())
+	must(t, err)
+	return authority.EmissionReceipt{DatabaseIdentity: identity, BinaryRevision: authority.RunningBinaryRevision(), DrainedWorkers: []string{"test-worker"}, DrainedAt: time.Now().Add(-time.Minute), RestoreTestedAt: time.Now().Add(-time.Second), BackupPath: path, BackupSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("offline test backup"))), CompatibleReadersOnly: true}
 }
 
 func TestAuthorityActivationReceiptBeforeIO(t *testing.T) {
@@ -69,13 +71,13 @@ func TestAuthorityActivationReceiptBeforeIO(t *testing.T) {
 				// A caller can supply a self-consistent receipt for another DB.
 				// That attestation must not choose the runtime validation identity.
 				must(t, request.Receipt.ValidateForBinary(request.Receipt.DatabaseIdentity, time.Now(), request.ReceiptMaxAge, authority.RunningBinaryRevision()))
-				if request.Receipt.DatabaseIdentity == s.store.DatabaseIdentity() {
+				if request.Receipt.DatabaseIdentity == r.DatabaseIdentity {
 					t.Fatal("fixture did not use a different database")
 				}
 			case "missing-backup":
 				request.Receipt.BackupPath += ".missing"
 			}
-			if name != "read-error" {
+			if name != "read-error" && name != "caller-db-differs-from-store" {
 				s.store.Close() // receipt failures must precede database I/O
 			}
 			called := false
@@ -88,7 +90,10 @@ func TestAuthorityActivationReceiptBeforeIO(t *testing.T) {
 			if err == nil || receipt != (store.AuthorityAdoptionReceipt{}) || called != (name == "read-error") {
 				t.Fatalf("receipt=%+v err=%v read=%t", receipt, err, called)
 			}
-			if !strings.Contains(err.Error(), want) {
+			if name == "wrong-binary" && !errors.Is(err, authority.ErrBinaryRevisionMismatch) {
+				t.Fatal(err)
+			}
+			if name != "wrong-binary" && !strings.Contains(err.Error(), want) {
 				t.Fatalf("receipt validation error=%v, want %q", err, want)
 			}
 			if name == "read-error" && !errors.Is(err, sentinel) {

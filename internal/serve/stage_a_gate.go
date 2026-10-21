@@ -352,8 +352,8 @@ func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Conf
 			}
 			for _, pin := range land.PRs {
 				pr := w.prs[pin.PR]
-				// Remove cached reviews before snapshot construction as well as before
-				// recording, so preflight does not inspect or copy a stale review list.
+				// This only avoids building a large cached review list; deleting the
+				// review attribute below is what makes reviews unknown in preflight.
 				pr.Approvals = nil
 				values, err := policyValues(w.cfg.MergeWhen, pr, checks)
 				if err != nil {

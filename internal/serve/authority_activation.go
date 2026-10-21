@@ -12,7 +12,8 @@ import (
 )
 
 // authorityActivation is an internal, explicit request, never derived from a
-// candidate config or a journal pin. Production constructors do not enable it.
+// candidate config or a journal pin. w.AuthorityRequired is the mechanism;
+// production constructors do not enable it.
 // Config/pin lifecycle integration remains in 9b-ii-2b: this caller
 // requires an already durable matching config, as enforced by the store.
 type authorityActivation struct {
@@ -24,10 +25,10 @@ type authorityActivation struct {
 	Read          func(context.Context) (authority.Observation, error)
 }
 
-// activateAuthority gates the internal adoption writer before any DB/forge
-// work. Its receipt distinguishes adoption from pinned-unverified; successful
-// persistence alone never claims verification or installs runtime hooks.
-// Receipt age is checked before I/O and immediately before calling the adoption
+// activateAuthority requires w.AuthorityRequired before identity I/O. Local
+// receipt checks precede read-only identity queries; the database binding precedes
+// writes and forge reads. Its adoption receipt does not install runtime hooks.
+// Receipt age and database identity are rechecked before calling the adoption
 // transaction. It can still expire while that transaction waits for the queue
 // lock or commits; this is not a transaction-time expiry guarantee.
 func (s *Server) activateAuthority(ctx context.Context, w *worker, request authorityActivation) (store.AuthorityAdoptionReceipt, error) {
@@ -35,8 +36,15 @@ func (s *Server) activateAuthority(ctx context.Context, w *worker, request autho
 	if !w.AuthorityRequired {
 		return zero, errors.New("internal authority activation opt-in required")
 	}
-	identity := s.store.DatabaseIdentity()
+	// Reject locally invalid attestations before opening the identity transaction.
+	if err := request.Receipt.ValidateForBinary(request.Receipt.DatabaseIdentity, time.Now().UTC(), request.ReceiptMaxAge, authority.RunningBinaryRevision()); err != nil {
+		return zero, err
+	}
 	validateReceipt := func() error {
+		identity, err := s.store.DatabaseIdentity(ctx)
+		if err != nil {
+			return err
+		}
 		return request.Receipt.ValidateForBinary(identity, time.Now().UTC(), request.ReceiptMaxAge, authority.RunningBinaryRevision())
 	}
 	if err := validateReceipt(); err != nil {

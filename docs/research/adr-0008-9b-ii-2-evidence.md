@@ -13,10 +13,10 @@ never set the internal opt-in. PR 11 retains organization release acceptance.
 
 | #128 requirement | Implementation and proof |
 | --- | --- |
-| 1: configured database identity | `internal/store/database_identity.go:24` obtains the credential-free identity from the actual store pool's configured host, port, database and search_path, without database I/O. The DSN helper at line 13 shares this format with `cmd/openmerge/setup_verify.go:57`. `internal/serve/authority_activation.go:38` uses that identity for both receipt validations; the request no longer has a caller-supplied expected identity. `TestDatabaseIdentityUsesConfiguredConnection` checks the actual isolated schema, and `TestDatabaseIdentityFormat` checks URL/keyword DSNs and credential exclusion. |
-| 1: empty identities and mismatch regression | `internal/authority/emission.go:87` rejects empty receipt or expected identities, including empty == empty. `TestFirstEmissionDrainBackupGate` covers all three combinations. `TestAuthorityActivationReceiptBeforeIO` supplies a self-consistent receipt valid for another database, closes the configured store, and requires the receipt-validation diagnostic before any store/forge work. Each failure now asserts its specific diagnostic, so a closed-pool error cannot disguise a bypass. An overlay replacing the configured identity with the receipt's own identity fails this exact test with closed pool instead of the required database-bound validation error. |
+| 1: server-side database identity (round 2) | `internal/store/database_identity.go` reads cluster system identifier, current database name/OID, unambiguous effective store schema name/OID and journal genesis in a read-only repeatable-read transaction. Setup and runtime share the resolver. See round 2 below for privileges, restore limits and collision regressions. The original DSN-only identity was rejected in round 1 and is removed. |
+| 1: empty identities and mismatch regression | `internal/authority/emission.go` rejects empty receipt or expected identities, including empty == empty. `TestAuthorityActivationReceiptBeforeIO` rejects local attestation errors before identity I/O; the different-database case leaves the store open, derives its actual identity, and rejects before the forge reader. `ErrBinaryRevisionMismatch` is asserted with `errors.Is`. |
 | 2: preflight precedence | `internal/serve/stage_a_gate.go:230` documents the explicitly enabled authority preflight's limited guarantee: local check-derived and available non-review input shape/budget errors precede ordinary policy handling. `approved-reviews-by` is unknown until final fresh acquisition. Review-derived overflow can surface only at final admission after successful CI, and an approval-read/quota failure can preempt it. The preflight clears cached approvals on a local PR copy before constructing values; no extra forge read is introduced. |
-| 2: chosen behavior test | `internal/serve/landing_checks_test.go:477`, `TestLandingChecksPreflightDefersReviewListOverflow`, runs inside `testSynctest` with its fixture inside the bubble. Preflight ignores 10,001 stale cached approvals and journals nothing. The final gate reads one fresh reviewer whose login exceeds the condition-input byte cap; it records fresh eligibility, returns typed condition-input overflow, and emits neither LandingStarted nor LandingChecksRecorded. The existing failed/pending/successful preflight test proves the queued NativeReviews quota failure remains for final acquisition. |
+| 2: chosen behavior test | `TestLandingChecksPreflightDefersReviewListOverflow` constructs its fixture inside `testSynctest`. Preflight ignores 10,001 stale cached approvals and journals nothing. `s.execute` acquires fresh reviews including an oversized login, persists eligibility, returns typed condition-input overflow, permanently blocks the operator source and reports `landing-checks-too-large`. Neither LandingStarted nor LandingChecksRecorded is emitted. |
 | 3: documentation nits | `docs/research/adr-0008-9-plan.md:63` and its first-emission section attribute caller max-age/BinaryRevision validation to completed 9b-ii-1. `internal/serve/authority_activation.go:16` names lifecycle slice 9b-ii-2b. Its doc comment at line 27 explicitly states that the receipt can still expire during the adoption transaction, including queue-lock wait and commit. The gate checks before I/O and again before entering adoption; it does not promise transaction-time expiry enforcement. |
 
 The documented preflight limit is deliberate. Cached legacy reviews can differ
@@ -26,11 +26,13 @@ and change the existing read ordering. Final admission retains complete fresh
 review evidence and bounded validation before authorization. The oversized login
 is a synthetic boundary input, not a claim about GitHub's accepted login lengths.
 
-Independent review caught a false-positive test before full verification: an
+Historical round-1 validation: independent review caught a false-positive test: an
 unspecific error assertion could accept the closed pool after a receipt bypass.
 The validation-specific assertions and failing identity mutation above correct
 that gap. The mutation is retained only as an offline overlay artifact; the
-committed implementation always uses the configured store identity.
+round-1 implementation used the configured store identity. Round 2 replaces that
+insufficient DSN binding with server-side identity; the old overlay is historical
+evidence only.
 
 ## A2 boundary and remaining runtime rows
 
@@ -70,11 +72,11 @@ here, and its A2 proof is still mandatory in **2d**.
 acceptance remain outside these slices. An intermediate internal pin caller is
 not activation acceptance. Public rejection can be removed only with 9c's gate.
 
-## Verification
+## Round-1 verification (historical)
 
 Verified implementation: `010967e8eb00d9fb0e13b78d88d26fc73a13e9e7`.
 Baseline: `d449adcfb80c31dac02fad89417100f3c2cf1ef6`. The complete driver
-returned **PASS** on 2026-10-21 UTC. Later changes are evidence only.
+returned **PASS** on 2026-10-21 UTC. These results predate the round-2 implementation below.
 
 [Commands and results](adr-0008-9b-ii-2-artifacts/summary.json),
 [artifact hashes](adr-0008-9b-ii-2-artifacts/manifest.json),
@@ -128,5 +130,57 @@ Postgres localhost:54329. No live database, status API, systemd unit, openmerge/
 ref or real application GitHub API is accessed. Git push and PR creation are the
 explicitly requested publication operations. No SQL migration/index, Makefile,
 CI, Dockerfile, test flag, event type or wire field changes are included. Existing
-fixtures are unchanged. Subsequent changes to the verified implementation are
-evidence documents and retained receipts only.
+fixtures are unchanged. Those round-1 results do not verify the round-2 implementation.
+
+## Round 2 — connected database identity and worker overflow
+
+The P2 was real: configured DSN strings collapsed `options`-selected schemas,
+role defaults, alternate endpoints and database reincarnations. The v2 receipt
+identity is `openmerge-db-v2:sha256:` followed by a SHA-256 digest of a JSON-framed
+sequence of cluster `system_identifier`, `current_database()` name and catalog
+OID, effective store schema name and catalog OID, and earliest event ID, UTC
+microsecond `recorded_at` and canonical JSONB payload text. No connection secrets
+or raw payloads appear in the identity or its diagnostics.
+
+The resolver uses a read-only repeatable-read transaction and no migrations,
+indexes or new tables. Every existing persistent store table, including
+`schema_migrations`, must resolve uniquely in `current_schemas(true)` and share a
+schema. It rejects shadowed copies rather than choosing the first copy. Missing,
+split or empty histories fail closed. `pg_control_system()` access is required;
+unavailable/denied access produces an explicit EXECUTE privilege diagnostic and
+no DSN fallback. ACL failure is tested only inside a uniquely named scratch
+database; shared database privileges are untouched.
+
+Why these inputs: the server system identifier follows the actual connected
+cluster regardless of DSN/host ordering; database and schema OIDs distinguish
+recreation; effective schema resolution handles options and role defaults;
+genesis binds the receipt to an existing journal origin and is stable under
+ordinary appends/reconnects. This is not a full-history digest, authenticated
+attestation, restore counter or machine identity. A physical clone preserving
+cluster identity, database/schema OIDs and genesis, or a later divergent history
+sharing that genesis, is indistinguishable. No read-only catalog/genesis design
+can distinguish those copies. Restore/recreation requires the operator to repeat
+the receipt procedure; no universal restore-detection guarantee is claimed.
+
+Activation requires `w.AuthorityRequired` before identity I/O; production still
+leaves it unset. Local receipt validity is checked before DB access, then actual
+identity is resolved before forge reads and again immediately before adoption.
+Identity changes or expiry during adoption remain outside this caller's
+transaction guarantee. `setup --verify` and the read-only
+`setup rulesets --print-database-identity` use the same resolver. Existing
+hand-written endpoint receipts must be regenerated; the format/privileges and
+limits are documented in [operating instructions](../operating.md#receipt-database-binding).
+
+`TestDatabaseIdentityEffectiveSchemaAndReconnect` checks two options-selected
+schemas, ambiguity rejection, appends, genesis replacement and pool reconnects.
+`TestDatabaseIdentityRoleDefaultSchema` changes a role's default schema without
+changing its DSN and matches each actual store. `TestDatabaseIdentityDatabaseIncarnation`
+checks a second database and drop/recreate at the same name, plus denied cluster
+identity access. All scratch schemas/databases/roles are uniquely named and
+removed by test cleanup. `TestDatabaseIdentityEmptyJournalFailsClosed` covers an
+uninitialized history. The worker overflow regression now drives `s.execute`
+and asserts the operator block/status, with all fixtures inside the synctest
+bubble. Clearing cached approvals is documented as an allocation optimization;
+removing the review attribute is what makes preflight reviews unknown.
+
+Round-2 verification results and artifacts are appended after the clean-tree run.

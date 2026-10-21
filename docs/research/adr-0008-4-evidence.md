@@ -97,17 +97,20 @@ attestation; it does not automatically discover processes or their capabilities.
    procedure. Retain its path, SHA-256 and UTC receipt. Restore it into an isolated
    database and compare queue seeds, ordered event IDs/payloads, cursors and refs
    evidence. Retain dump/restore commands, exits, versions and comparison hashes.
-3. Write the receipt below. The credential-free connection identity is
-   `HOST:PORT/DATABASE?search_path=SCHEMA` (an omitted schema ends in `search_path=`).
-   Bind it to the exact operator connection. Keep the backup file available so
-   the command can verify its hash. `restore_tested_at` must follow the drain.
+3. Generate the server-side identity with
+   `openmerge setup rulesets --print-database-identity --database-url "$OPERATOR_DATABASE_URL"`
+   against the drained source database, then write the receipt below using that
+   exact output. See [receipt database binding](../operating.md#receipt-database-binding)
+   for privileges, format and restore limits. Old hand-written endpoint identities
+   must be regenerated. Keep the backup file available so the command can verify
+   its hash. `restore_tested_at` must follow the drain.
 4. Run the command only after ensuring that all restarted readers/workers use a
    compatible binary. Retain the receipt and its worker inventory outside the DB.
    There is no flag that skips this receipt, even for a proposed record.
 
 ```json
 {
-  "database_identity": "localhost:54329/isolated_sandbox?search_path=",
+  "database_identity": "openmerge-db-v2:sha256:REPLACE_WITH_PRINTED_DIGEST",
   "binary_revision": "REVIEWED_BINARY_COMMIT",
   "drained_workers": ["sandbox-host/worker", "sandbox-host/status-reader"],
   "drained_at": "2026-10-20T12:00:00Z",

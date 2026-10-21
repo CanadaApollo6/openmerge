@@ -38,10 +38,7 @@ func TestVerificationReceiptRejectedBeforeDatabaseOrSeeingRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	databaseURL := "postgres://unused:unused@127.0.0.1:1/unused?sslmode=disable"
-	identity, err := verificationDatabaseIdentity(databaseURL)
-	if err != nil {
-		t.Fatal(err)
-	}
+	identity := "openmerge-db-v2:sha256:offline-test"
 	now := time.Now().UTC()
 	receipt := authority.EmissionReceipt{DatabaseIdentity: identity, BinaryRevision: revision, DrainedWorkers: []string{"isolated/worker"}, DrainedAt: now.Add(-time.Minute), BackupPath: backup, BackupSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("isolated restore-tested backup"))), RestoreTestedAt: now, CompatibleReadersOnly: true}
 	for _, tc := range []struct {
@@ -71,7 +68,10 @@ func TestVerificationReceiptRejectedBeforeDatabaseOrSeeingRead(t *testing.T) {
 			}
 			var out bytes.Buffer
 			err = runRulesVerification(t.Context(), verifyOptions{Verify: true, ReceiptMaxAge: tc.maxAge, DatabaseURL: databaseURL, Plan: filepath.Join(dir, "must-not-read"), Receipt: path, Operator: "operator"}, github.RulesOptions{Authority: "openmerge"}, &out)
-			if err == nil || !strings.Contains(err.Error(), tc.diagnostic) || out.Len() != 0 {
+			if tc.name == "wrong binary" && !errors.Is(err, authority.ErrBinaryRevisionMismatch) {
+				t.Fatal(err)
+			}
+			if err == nil || (tc.name != "wrong binary" && !strings.Contains(err.Error(), tc.diagnostic)) || out.Len() != 0 {
 				t.Fatalf("first-emission boundary: err=%v output=%q", err, out.String())
 			}
 		})
@@ -116,6 +116,9 @@ func TestRulesetsFlagParsingAndDispatch(t *testing.T) {
 		message string
 		reads   bool
 	}{
+		{"identity requires database", []string{"--print-database-identity"}, 1, "requires --database-url", false},
+		{"identity rejects verification", []string{"--print-database-identity", "--verify", "--database-url", "unused"}, 1, "cannot be combined", false},
+		{"identity rejects mutations", []string{"--print-database-identity", "--apply", "--database-url", "unused"}, 1, "cannot be combined", false},
 		{"help registers flags once", []string{"--help"}, 0, "--verify", false},
 		{"install preview", []string{"--authority", "openmerge", "--config", plan}, 0, "Preview only.", true},
 		{"verification gate", []string{"--authority", "openmerge", "--verify"}, 1, "--emission-receipt", false},

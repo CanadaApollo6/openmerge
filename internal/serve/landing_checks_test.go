@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -477,6 +478,17 @@ func TestLandingChecksPreflightDoesNotAcquireApprovals(t *testing.T) {
 func TestLandingChecksPreflightDefersReviewListOverflow(t *testing.T) {
 	testSynctest(t, func(t *testing.T) {
 		s, w, f := shadowFixture(t, 1, "main", "7", false)
+		check, err := condition.Parse("check-success = ci")
+		must(t, err)
+		reviews, err := condition.Parse("#approved-reviews-by >= 1")
+		must(t, err)
+		w.cfg.MergeWhen = condition.All(check, reviews)
+		initialPR := w.prs[1]
+		f.SetNativeReviews(repo, 1, forge.NativeReviews{Reviews: []forge.NativeReview{{ID: 200, CommitID: initialPR.HeadSHA, Author: forge.UserIdentity{ID: 21, Login: "writer", Kind: forge.UserAccount}, State: forge.ReviewApproved, Submitted: forge.NativeTime{Time: time.Now().Add(time.Minute), Source: forge.ReviewSubmissionTime, Precision: time.Second}}}, Comments: []forge.NativeComment{shadowComment(100, "@openmerge queue")}})
+		batch := shadowBuildBatch(t, s, w, 1)
+		shadowChecks(t, s, w, f, batch.TestedSHA, []forge.CheckRun{{Name: "ci", Source: "app:15368", State: forge.Success, HeadBranch: batch.TestRef}})
+		_, err = s.store.Append(t.Context(), w.id, []queue.Event{queue.ChecksCompleted{TestedSHA: batch.TestedSHA, Success: true}}, "")
+		must(t, err)
 		basis := shadowState(t, s, w)
 		raw, err := os.ReadFile("../queue/testdata/wire/v1/event_policy_authority_applied.json")
 		must(t, err)
@@ -502,22 +514,14 @@ func TestLandingChecksPreflightDefersReviewListOverflow(t *testing.T) {
 		reviewer := forge.UserIdentity{ID: 22, Login: longLogin, Kind: forge.UserAccount}
 		f.SetIdentity(reviewer)
 		f.SetWriteGrant(repo, reviewer.ID, "write")
-		f.SetNativeReviews(repo, 1, forge.NativeReviews{Reviews: []forge.NativeReview{{
+		f.SetNativeReviews(repo, 1, forge.NativeReviews{Reviews: []forge.NativeReview{{ID: 200, CommitID: pr.HeadSHA, Author: forge.UserIdentity{ID: 21, Login: "writer", Kind: forge.UserAccount}, State: forge.ReviewApproved, Submitted: forge.NativeTime{Time: time.Now().UTC().Add(time.Minute), Source: forge.ReviewSubmissionTime, Precision: time.Second}}, {
 			ID: 202, CommitID: pr.HeadSHA, Author: reviewer, State: forge.ReviewApproved,
 			Submitted: forge.NativeTime{Time: time.Now().UTC().Add(time.Minute), Source: forge.ReviewSubmissionTime, Precision: time.Second},
 		}}})
 
-		check, err := condition.Parse("check-success = ci")
-		must(t, err)
-		reviews, err := condition.Parse("#approved-reviews-by >= 1")
-		must(t, err)
-		w.cfg.MergeWhen = condition.All(check, reviews)
-		land := queue.Land{
-			BatchID: "review-overflow", TestedSHA: strings.Repeat("e", 40),
-			ExpectedBaseSHA: basis.BaseSHA, Ref: "queue", Method: queue.Merge,
-			PRs: []queue.BatchPR{{PR: 1, HeadSHA: pr.HeadSHA}},
-		}
-		checks := []forge.CheckRun{{Name: "ci", Source: "app:15368", State: forge.Success, HeadBranch: "queue"}}
+		claim := claimLandingChecksAction(t, s, w, w.plannerConfig(s.options.PollInterval), func(a queue.Action) bool { _, ok := a.(queue.Land); return ok })
+		land := claim.Action.(queue.Land)
+		checks := []forge.CheckRun{{Name: "ci", Source: "app:15368", State: forge.Success, HeadBranch: batch.TestRef}}
 		gate := s.stageAGate(w, store.ClaimedAction{}, w.plannerConfig(s.options.PollInterval), basis)
 		_, before, err := s.store.Load(t.Context(), w.id)
 		must(t, err)
@@ -530,12 +534,19 @@ func TestLandingChecksPreflightDefersReviewListOverflow(t *testing.T) {
 			t.Fatal("preflight journaled approval evidence")
 		}
 
-		_, err = gate.ReadInputsWithChecks(t.Context(), land, basis, checks, time.Now(), "attempt")
+		err = s.execute(t.Context(), w, claim)
 		var tooLarge queue.LandingChecksTooLargeError
 		if !errors.Is(err, queue.ErrLandingChecksTooLarge) || !errors.As(err, &tooLarge) || tooLarge.Field != "condition input" {
 			t.Fatalf("final fresh review evidence error=%v, want condition-input overflow", err)
 		}
 		final := shadowState(t, s, w)
+		if !final.SourceBlocked(queue.Operator) {
+			t.Fatal("fresh overflow did not permanently block operator source")
+		}
+		status := f.Statuses(repo, 1)[pr.HeadSHA]
+		if status.State != forge.Blocked || status.Reason != "landing-checks-too-large" || !strings.Contains(status.Summary, "landing-checks-too-large") {
+			t.Fatalf("permanent failure status: %+v", status)
+		}
 		revision, ok := final.PRRevision(1)
 		if !ok {
 			t.Fatal("missing final revision")
@@ -546,7 +557,7 @@ func TestLandingChecksPreflightDefersReviewListOverflow(t *testing.T) {
 		}
 		evidence, err := stageAReviewEvidence(final, w.stageA.policy, *facts.Eligibility)
 		must(t, err)
-		if !evidence.Known || len(evidence.Reviewers) != 1 || evidence.Reviewers[0] != longLogin {
+		if !evidence.Known || len(evidence.Reviewers) != 2 || !slices.Contains(evidence.Reviewers, longLogin) {
 			t.Fatalf("final fresh reviewers=%+v", evidence)
 		}
 		records, err := s.store.EventsAfter(t.Context(), w.id, 0)

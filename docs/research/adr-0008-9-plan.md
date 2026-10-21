@@ -110,8 +110,8 @@ The complete runtime seam spans config adoption, every worker projection and
 lock-time landing authorization. Keep those changes independently reviewable:
 
 - **9b-ii-2a — receipt/preflight hardening (this PR):** resolve #128's review
-  before extending activation: derive the receipt identity from the configured
-  store connection, share its format with setup, reject empty identities, and
+  before extending activation: derive a server-side cluster/database/schema/journal-genesis digest through the
+  connected store, share its resolver with setup, reject empty identities, and
   document/test the local preflight's review-input limit. Correct stale ownership
   text and document transaction-time receipt expiry. No lifecycle hook is added.
 - **9b-ii-2b — atomic lifecycle:** consume the 9b-ii-1 caller in matching atomic
@@ -199,8 +199,8 @@ worker after period B, retain inventory and a tested pre-emission backup receipt
 and verify the attested emitting binary. This includes operator `--verify` before
 config activation. The internal activation caller already validates emission receipt max-age and attested `BinaryRevision` in
 9b-ii-1; 9b-ii-2a binds it to the configured database. The existing
-`setup --verify` command gate is separate. Runtime validation occurs before I/O
-and again before calling adoption; a receipt can still expire while the adoption
+`setup --verify` command gate is separate. Local receipt validation occurs before identity I/O; server-side identity and
+receipt age are checked before forge reads and again before calling adoption; a receipt can still expire while the adoption
 transaction waits for the queue lock or commits. This is not a transaction-time
 expiry guarantee.
 After new events or v7 cursors, rollback to `github` is not a

@@ -88,6 +88,7 @@ func runSetup(args []string, stdout, stderr io.Writer) int {
 		flags.StringVar(&rules.Authority, "authority", "", "setup policy authority: github or openmerge")
 		flags.StringVar(&rules.Config, "config", "", "reviewed proposed configuration")
 	case "rulesets":
+		flags.BoolVar(&verification.PrintDatabaseIdentity, "print-database-identity", false, "print read-only server-side receipt identity; requires --database-url")
 		flags.BoolVar(&verification.Verify, "verify", false, "record an admin seeing read; never writes GitHub")
 		flags.StringVar(&verification.DatabaseURL, "database-url", "", "operator database credentials")
 		flags.StringVar(&verification.Plan, "verification-plan", "", "reviewed internal target plan JSON")
@@ -202,6 +203,18 @@ func runSetup(args []string, stdout, stderr io.Writer) int {
 		}
 		ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 		defer cancel()
+		if verification.PrintDatabaseIdentity {
+			if verification.Verify || rules.Apply || rules.Restore != "" || rules.RollbackPreflight || rules.RotateBreakGlass || verification.DatabaseURL == "" {
+				err = errors.New("--print-database-identity requires --database-url and cannot be combined with verification or mutation operations")
+			} else {
+				var identity string
+				identity, err = verificationDatabaseIdentity(ctx, verification.DatabaseURL)
+				if err == nil {
+					_, err = fmt.Fprintln(stdout, identity)
+				}
+			}
+			break
+		}
 		if verification.Verify {
 			err = runRulesVerification(ctx, verification, rules, stdout)
 			break

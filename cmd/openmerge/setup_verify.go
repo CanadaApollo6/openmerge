@@ -31,7 +31,7 @@ type verificationPlan struct {
 	Targets []verificationTarget `json:"targets"`
 }
 type verifyOptions struct {
-	Verify                               bool
+	Verify, PrintDatabaseIdentity        bool
 	ReceiptMaxAge                        time.Duration
 	DatabaseURL, Plan, Receipt, Operator string
 }
@@ -54,8 +54,8 @@ func readVerificationJSON(path string, v any) error {
 	return nil
 }
 
-func verificationDatabaseIdentity(raw string) (string, error) {
-	return store.DatabaseIdentity(raw)
+func verificationDatabaseIdentity(ctx context.Context, raw string) (string, error) {
+	return store.DatabaseIdentity(ctx, raw)
 }
 
 func runRulesVerification(ctx context.Context, opts verifyOptions, rules github.RulesOptions, out io.Writer) error {
@@ -65,12 +65,15 @@ func runRulesVerification(ctx context.Context, opts verifyOptions, rules github.
 	if rules.Authority != "openmerge" || !opts.Verify || opts.Operator == "" || len(opts.Operator) > 256 || opts.Plan == "" || opts.Receipt == "" || opts.DatabaseURL == "" {
 		return errors.New("--authority openmerge --verify requires --verification-plan, --emission-receipt, --operator and --database-url")
 	}
-	identity, err := verificationDatabaseIdentity(opts.DatabaseURL)
-	if err != nil {
-		return err
-	}
 	var receipt authority.EmissionReceipt
 	if err := readVerificationJSON(opts.Receipt, &receipt); err != nil {
+		return err
+	}
+	if err := receipt.ValidateForBinary(receipt.DatabaseIdentity, time.Now(), opts.ReceiptMaxAge, authority.RunningBinaryRevision()); err != nil {
+		return err
+	}
+	identity, err := verificationDatabaseIdentity(ctx, opts.DatabaseURL)
+	if err != nil {
 		return err
 	}
 	if err := receipt.ValidateForBinary(identity, time.Now(), opts.ReceiptMaxAge, authority.RunningBinaryRevision()); err != nil {

@@ -2,6 +2,7 @@ package authority
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -81,7 +82,10 @@ func TestEmissionReceiptBinaryAndAgePolicy(t *testing.T) {
 		{"other", time.Hour, "does not match"},
 	} {
 		err := r.ValidateForBinary("db", time.Now(), tt.age, tt.revision)
-		if err == nil || !strings.Contains(err.Error(), tt.want) {
+		if tt.revision == "other" && !errors.Is(err, ErrBinaryRevisionMismatch) {
+			t.Fatal(err)
+		}
+		if err == nil || (tt.revision != "other" && !strings.Contains(err.Error(), tt.want)) {
 			t.Fatalf("%+v: %v", tt, err)
 		}
 	}
