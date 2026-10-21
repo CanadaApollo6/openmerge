@@ -1,11 +1,5 @@
 --- a/internal/store/database_identity.go
 +++ b/internal/store/database_identity.go
-@@ -74,7 +74,7 @@
- // column. Numeric ordering keeps genesis stable across sequence gaps/appends
- // and lets the primary-key index satisfy LIMIT without scanning the journal.
- func databaseGenesisQuery(schema string) string {
+@@ -77 +77 @@
 -	return `SELECT e.id::text, to_char(e.recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US'), e.payload::text FROM ` + pgx.Identifier{schema, "events"}.Sanitize() + ` AS e ORDER BY e.id LIMIT 1`
 +	return `SELECT e.id::text, to_char(e.recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US'), e.payload::text FROM ` + pgx.Identifier{schema, "events"}.Sanitize() + ` AS e ORDER BY id LIMIT 1`
- }
- 
- func clusterIdentityError(err error) error {
