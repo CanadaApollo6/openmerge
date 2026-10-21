@@ -227,3 +227,94 @@ All Go commands use both exported Go 1.27.3 GOROOT/PATH and the shared flock,
 GOFLAGS=-p=2, 4 GiB limit (6 GiB for replay). No live DB/status/systemd/OpenMerge
 refs or application GitHub APIs were accessed. A2/public barriers remain intact;
 this is still Hold, with no queue/merge or runtime deployment acceptance.
+
+## Round 3 — numeric genesis ordering and diagnostic corrections
+
+Verified clean implementation: `10b60faf6e02ab6cdefda5ede454859642eff3e5`,
+against unchanged baseline `d449adcfb80c31dac02fad89417100f3c2cf1ef6`.
+The following evidence commit adds only this section and retained artifacts.
+Trial class remains **Hold**; no queue/merge or runtime acceptance is claimed.
+
+The round-2 query's `ORDER BY id` resolved to the text output column from
+`id::text`. That selected lexicographic rather than numeric genesis and forced
+`Limit → Sort → Seq Scan`. The production query now aliases the journal as `e`
+and orders explicitly by `e.id`. The same query builder is used by the resolver
+and the EXPLAIN regression. No migration, index or table was added.
+
+`TestDatabaseIdentitySequenceGapAndIndexedGenesis` rolls back the first insert,
+so the first committed ID is 2. Appends through IDs 10, 100 and 10,000 preserve
+the identity. With ordinary planner settings after ANALYZE, EXPLAIN JSON must
+contain the existing `events_pkey` Index Scan and no Sort or Seq Scan. The passing
+plan is `Limit → Index Scan`. An offline overlay restoring `ORDER BY id` fails
+both stability and plan assertions, reproducing `Sort Key: ((id)::text)` and the
+full-journal Seq Scan (expected exit 1).
+
+The store already had direct overflow coverage in
+`TestLandingChecksValidateLockedBindings/overflow`, independent of the earlier
+worker gate. It supplies an oversized landing-checks expression directly to
+`StartLanding`. The assertion now also requires the returned error itself to be
+`LandingChecksTooLargeError`, with no wrapper, no stale-work classification,
+no appended events or landing projection, and the claim still in flight.
+Disabling the store's `errors.Is` propagation branch makes this exact subtest
+fail with the stale-work wrapper (expected exit 1). Thus the branch is reachable
+and directly protected; the fresh-review worker regression remains separate.
+
+Only SQLSTATE `42501` from `pg_control_system()` now produces EXECUTE grant
+advice. Other failures report a sanitized SQLSTATE or fixed cause category.
+Connection configuration, cancellation/deadline and network failures likewise
+retain a safe cause without printing driver/server text, DSNs or passwords.
+`TestReceiptIdentityDiagnostics` covers privilege and non-privilege SQLSTATEs,
+secret-bearing errors, malformed connection configuration and a canceled actual
+connection attempt. The existing scratch-database denied-EXECUTE test still
+passes. The receipt comment is wrapped, and operating instructions explicitly
+state that a `pg_dump` restore into a new cluster changes the system identifier
+and invalidates the original receipt.
+
+### Round-3 verification results
+
+The unchanged clean-tree driver returned **PASS**:
+
+- `make check`: **exit 0** (format, lint, complete short race suite and build).
+- Focused identity, diagnostics, store overflow, activation/A2 and preflight
+  race run: **exit 0**. Both overlay mutations: **expected exit 1**.
+- Strict offline replay: **2,159/2,159** identical actions, structural states,
+  snapshot hashes and boundary checkpoints; **8,676** matching probes. Gates
+  2/4 and all **22** mandatory self-tests pass, with no differing fields.
+- Depth-1/4 contracts: **90/90 byte-identical**. SHA-256:
+  `88e727ebe7ea5b570f352c5c661c2cd1642c1b5120f3d3ed086993f4dd00362a`.
+- Simulator: both exits **0**, **146/146 normalized blocks byte-identical**.
+  SHA-256: `a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7`.
+- Existing fixtures: **104/104 unchanged**, including **90** registry fixtures;
+  no new fixtures/events/wire fields. Manifest SHA-256:
+  `d9fc673fbd7ec5410cf1491778157508533ca5c804932caaecb39204f2ae2776`.
+- Clean implementation binary SHA-256:
+  `43fdac3e0cff3f656b95310c9b358d71ae386cf8082a97197c402a617a8e38d6`.
+
+Retained [summary/commands](adr-0008-9b-ii-2-artifacts/round-3/summary.json),
+[make check log](adr-0008-9b-ii-2-artifacts/round-3/make-check.log),
+[focused race log and passing plan](adr-0008-9b-ii-2-artifacts/round-3/focused-final.log),
+[additional commands/source hashes](adr-0008-9b-ii-2-artifacts/round-3/additional-checks.json),
+[numeric-order mutation failure](adr-0008-9b-ii-2-artifacts/round-3/numeric-order-mutation.log),
+[numeric-order mutation patch](adr-0008-9b-ii-2-artifacts/round-3/numeric-order.patch),
+[overflow propagation mutation failure](adr-0008-9b-ii-2-artifacts/round-3/overflow-mutation.log),
+[overflow mutation patch](adr-0008-9b-ii-2-artifacts/round-3/overflow-propagation.patch),
+[depth contracts](adr-0008-9b-ii-2-artifacts/round-3/contracts-candidate.json),
+[simulator blocks](adr-0008-9b-ii-2-artifacts/round-3/sim-normalized.json),
+[artifact hashes](adr-0008-9b-ii-2-artifacts/round-3/manifest.json), and
+[raw-cache hashes](adr-0008-9b-ii-2-artifacts/round-3/cache-manifest.json).
+Full streams/logs remain in `/home/riels/.cache/adr0008-9b-ii-2-round3-verification`;
+mutation overlays remain in `/home/riels/.cache/adr0008-9b-ii-2-round3-focused`.
+Reproduce with the earlier driver command and
+`--out /home/riels/.cache/adr0008-9b-ii-2-round3-verification-rerun`.
+
+All Go commands export both Go 1.27.3 GOROOT/PATH and use the shared heavy lock,
+GOFLAGS=-p=2 and 4 GiB limit (6 GiB for replay). Only shared test Postgres
+localhost:54329 was used. The four schemas left by earlier/unknown runs were
+not attributable to this run and were not dropped. The recorded
+[before](adr-0008-9b-ii-2-artifacts/round-3/schemas-before-driver.txt) and
+[after](adr-0008-9b-ii-2-artifacts/round-3/schemas-after-driver.txt) lists match
+exactly; this run left no additional schemas. Scratch databases/roles also use
+test cleanup. No live DB/status API, systemd unit, `openmerge/*` ref or real
+application GitHub API was accessed. Git/PR publication is explicitly requested.
+No Makefile/CI/Dockerfile/test-flag changes were made. Wire-v1 remains additive,
+existing fixtures are untouched, and A2/public activation barriers are retained.

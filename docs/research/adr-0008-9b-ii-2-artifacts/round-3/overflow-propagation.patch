@@ -1,0 +1,11 @@
+--- a/internal/store/landing_start.go
++++ b/internal/store/landing_start.go
+@@ -97,7 +97,7 @@
+ 				return LandingChecksRequiredError{}
+ 			}
+ 			if err := state.ValidateLandingChecks(policy.Digest, land, start, checks[0]); err != nil {
+-				if errors.Is(err, queue.ErrLandingChecksTooLarge) {
++				if false {
+ 					return err
+ 				}
+ 				return fmt.Errorf("%w: %w", ErrStale, err)
