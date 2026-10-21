@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
@@ -345,8 +346,13 @@ func (d *unitHealthDriver) DefaultBranch(ctx context.Context, r forge.RepoRef) (
 	return d.Driver.DefaultBranch(ctx, r)
 }
 func (d *unitHealthDriver) ReadFile(ctx context.Context, r forge.RepoRef, ref, path string) ([]byte, error) {
-	d.delay("configuration file")
-	return d.Driver.ReadFile(ctx, r, ref, path)
+	data, err := d.Driver.ReadFile(ctx, r, ref, path)
+	unit := "configuration file"
+	if err != nil {
+		unit = "configuration file missing"
+	}
+	d.delay(unit)
+	return data, err
 }
 func (d *unitHealthDriver) PullRequest(ctx context.Context, r forge.RepoRef, n int) (forge.PullRequest, error) {
 	d.delay("PR")
@@ -365,6 +371,8 @@ func (d *unitHealthDriver) ReportStatus(ctx context.Context, r forge.RepoRef, n 
 	return d.Driver.ReportStatus(ctx, r, n, sha, value)
 }
 func TestHealthRealCyclePublishesEachReadAndReport(t *testing.T) {
+	_, err := net.LookupHost("localhost")
+	must(t, err)
 	synctest.Test(t, func(t *testing.T) {
 		s, w, f, _ := fixture(t, repositoryConfig+"    enter_when:\n      - check-success = ci\n")
 		base, err := f.ReadRef(t.Context(), repo, "main")
@@ -399,13 +407,18 @@ func TestHealthRealCyclePublishesEachReadAndReport(t *testing.T) {
 		}()
 		seen := map[string]int{}
 		units := 0
+		previous := ""
 		for {
 			select {
 			case unit := <-d.start:
 				seen[unit]++
-				if units > 0 && time.Since(*w.health.Load().LastProgressAt) > 0 {
+				if units > 0 && previous != "configuration file missing" && time.Since(*w.health.Load().LastProgressAt) > 0 {
 					t.Errorf("no progress before next %s read: %s", unit, time.Since(*w.health.Load().LastProgressAt))
 				}
+				if previous == "configuration file missing" && strings.HasPrefix(unit, "configuration file") && w.health.Load().LastProgressAt.Equal(time.Now()) {
+					t.Error("failed configuration file read published progress")
+				}
+				previous = unit
 				units++
 				for range 3 {
 					time.Sleep(20 * time.Second)

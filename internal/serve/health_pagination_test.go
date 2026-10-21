@@ -8,8 +8,10 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -44,16 +46,20 @@ func (d paginatedHealthDriver) ListOpenPullRequests(ctx context.Context, repo fo
 // Exercise the real worker loop, GitHub pagination, HTTP transport and health API
 // together. Fake HTTP completes in virtual time; no network or GitHub is used.
 func TestHealthGitHubPagination(t *testing.T) {
+	// Initialize the process-wide resolver outside virtual-time bubbles. Each
+	// database pool and its WaitGroups must then stay inside their own bubble.
+	_, err := net.LookupHost("localhost")
+	must(t, err)
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	must(t, err)
 	privateKey := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
 	for _, mode := range []string{"healthy", "hung", "streaming", "failed"} {
 		t.Run(mode, func(t *testing.T) {
-			s, w, _, _ := fixture(t, repositoryConfig)
 			synctest.Test(t, func(t *testing.T) {
+				s, w, _, _ := fixture(t, repositoryConfig)
 				// Channels used by the virtual-time loop must belong to its bubble.
 				w.wake = make(chan struct{}, 1)
-				completed := 0
+				var completed atomic.Int64
 				failureChecked := false
 				tr := paginationTransport(func(r *http.Request) (*http.Response, error) {
 					body := "[]"
@@ -68,23 +74,23 @@ func TestHealthGitHubPagination(t *testing.T) {
 						if !strings.HasSuffix(r.URL.Path, "/pulls") {
 							return nil, fmt.Errorf("unexpected request: %s", r.URL.Path)
 						}
-						if completed == 2 && mode == "hung" {
+						if completed.Load() == 2 && mode == "hung" {
 							<-r.Context().Done()
 							return nil, r.Context().Err()
 						}
-						if completed == 2 && mode == "streaming" {
+						if completed.Load() == 2 && mode == "streaming" {
 							return &http.Response{StatusCode: 200, Header: header, Body: stalledPageBody{r.Context()}, Request: r}, nil
 						}
 						time.Sleep(30 * time.Second)
-						if completed == 2 && mode == "failed" {
+						if completed.Load() == 2 && mode == "failed" {
 							code = 500
 							body = `{"message":"fixture failure"}`
 						} else {
-							completed++
+							completed.Add(1)
 						}
 						// Enough pages to keep this single call running for ten minutes.
-						if mode != "healthy" || completed < 20 {
-							header.Set("Link", fmt.Sprintf(`<https://github.test/repos/owner/repo/pulls?page=%d>; rel="next"`, completed+1))
+						if mode != "healthy" || completed.Load() < 20 {
+							header.Set("Link", fmt.Sprintf(`<https://github.test/repos/owner/repo/pulls?page=%d>; rel="next"`, completed.Load()+1))
 						}
 					}
 					return &http.Response{StatusCode: code, Header: header, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
@@ -114,8 +120,8 @@ func TestHealthGitHubPagination(t *testing.T) {
 					assertHealthCode(t, s, 200)
 				}
 				last := *w.health.Load().LastProgressAt
-				if completed != 2 || !last.Equal(time.Now()) {
-					t.Fatalf("completed=%d last=%v now=%v", completed, last, time.Now())
+				if completed.Load() != 2 || !last.Equal(time.Now()) {
+					t.Fatalf("completed=%d last=%v now=%v", completed.Load(), last, time.Now())
 				}
 				switch mode {
 				case "healthy":
@@ -124,8 +130,8 @@ func TestHealthGitHubPagination(t *testing.T) {
 						synctest.Wait()
 						assertHealthCode(t, s, 200)
 					}
-					if completed != 20 {
-						t.Fatalf("pages=%d", completed)
+					if completed.Load() != 20 {
+						t.Fatalf("pages=%d", completed.Load())
 					}
 				case "hung", "streaming":
 					time.Sleep(4*time.Minute + time.Second)
@@ -139,7 +145,7 @@ func TestHealthGitHubPagination(t *testing.T) {
 					// refresh progress. Assert at the HTTP boundary in the separate driver test.
 					time.Sleep(30 * time.Second)
 					synctest.Wait()
-					if completed != 2 {
+					if completed.Load() != 2 {
 						t.Fatal("failed page counted as successful")
 					}
 				}
