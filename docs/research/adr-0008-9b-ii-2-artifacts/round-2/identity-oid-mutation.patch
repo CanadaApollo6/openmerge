@@ -1,0 +1,11 @@
+--- a/internal/store/database_identity.go
++++ b/internal/store/database_identity.go
+@@ -57,7 +57,7 @@
+ 		return "", errors.New("receipt database identity requires a readable nonempty journal genesis")
+ 	}
+ 	// JSON framing prevents delimiter collisions; only the digest leaves this read.
+-	encoded, err := json.Marshal([]string{cluster, database, databaseOID, schema, schemaOID, genesisID, recordedAt, payload})
++	encoded, err := json.Marshal([]string{cluster, database, "", schema, schemaOID, genesisID, recordedAt, payload})
+ 	if err != nil {
+ 		return "", err
+ 	}

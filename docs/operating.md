@@ -1821,3 +1821,51 @@ foreground fold, its last published counts carry `ledger_refreshing` until the
 newer fold or refresh completes. SQL NULL on an audit dedupe key is an orphan anomaly even
 if acknowledged. Pin removal clears health warnings; rollback keeps historical
 origin-time warning eligibility and refreshes acknowledgements as status does.
+
+## Receipt database binding
+
+Before an explicit authority verification or internal activation, drain workers,
+back up and restore-test the source as described in the
+[first-emission procedure](research/adr-0008-4-evidence.md). Generate its identity
+with the same operator connection that verification will use:
+
+```sh
+openmerge setup rulesets --print-database-identity --database-url "$OPERATOR_DATABASE_URL"
+```
+
+This command performs read-only catalog/journal queries, with no migrations or
+GitHub calls. Copy its `openmerge-db-v2:sha256:<64 hex digits>` output into the
+receipt's `database_identity`. **Existing hand-written host/port/search_path
+receipts must be regenerated**; there is no legacy identity fallback.
+
+The role needs catalog visibility, SELECT on the journal, schema USAGE, and
+EXECUTE on `pg_catalog.pg_control_system()`. Where that function is restricted,
+a database administrator must explicitly grant
+`GRANT EXECUTE ON FUNCTION pg_catalog.pg_control_system() TO operator_role;`
+to the operator/activation role in the target database. Missing access fails
+closed with a privilege diagnostic; there is no endpoint-based fallback. Review
+the privilege grant under local operating policy. A nonempty journal is required;
+normal GitHub-mode startup does not query this function or require this grant.
+
+The v2 digest covers a JSON-framed sequence of cluster system identifier,
+current database name/OID, effective OpenMerge schema name/OID, and the earliest
+journal event's ID, UTC microsecond timestamp and canonical JSONB payload text.
+All eight persistent store tables (including migration bookkeeping) must resolve
+uniquely in the effective search path and share that schema. Shadowed copies,
+split schemas, missing tables and an empty journal fail closed. DSN passwords,
+hosts and configured search_path strings are not identity inputs or output.
+Options, role defaults and alternate endpoints resolving to the same database,
+schema and genesis therefore produce the same digest across pool reconnects.
+
+A `pg_dump` restore into a new cluster also changes the system identifier, so
+the original receipt will not match. Database drop/recreate changes its OID; a schema replacement changes its OID;
+a replacement history with different genesis changes the digest. Regenerate the
+receipt after restore/recreation and repeat the drain/backup procedure. This is
+a genesis binding, not a full-history checksum or restore counter. A physical
+clone/restore preserving the system identifier, database/schema OIDs and genesis,
+or a later history fork sharing genesis, cannot be distinguished by these reads.
+The receipt remains an operator attestation, not authenticated proof of drainage.
+Identity is checked before seeing reads and again before internal adoption;
+endpoint replacement or receipt expiry during adoption is not transactionally
+excluded. Production authority activation remains disabled by the public barrier
+and unset `AuthorityRequired` opt-in.

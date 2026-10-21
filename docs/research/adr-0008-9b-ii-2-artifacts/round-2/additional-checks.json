@@ -1,0 +1,29 @@
+{
+  "verified_at_utc": "2026-10-21T12:34:47.188543+00:00",
+  "production_commit": "287cb0feeb5efa78209b330797ddce33b1de4ae0",
+  "baseline_commit": "d449adcfb80c31dac02fad89417100f3c2cf1ef6",
+  "environment": {
+    "GOROOT": "/home/riels/.local/share/mise/installs/go/1.27.3",
+    "PATH_prefix": "/home/riels/.local/share/mise/installs/go/1.27.3/bin",
+    "database": "localhost:54329, isolated test schemas"
+  },
+  "workdir": "/home/riels/.t3/worktrees/openmerge/t3-b00bb373",
+  "test_source_sha256": "a124d3fe979ad723b3af529f669e3e40f232506dffbf02eed165664643efa554",
+  "notes": "Clean-tree full driver verified production commit. Final source changes only strengthen the test by preserving genesis across recreation, plus documentation/artifacts. This exact strengthened test source was verified via overlay before copying it into the checkout.",
+  "checks": [
+    {
+      "exit": 0,
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB go test -race -overlay /home/riels/.cache/adr0008-round2-strengthening/positive.json ./internal/store ./internal/serve ./cmd/openmerge ./internal/authority -run 'TestDatabaseIdentity|TestAuthorityActivation|TestAuthorityBarrier|TestLandingChecksPreflight|TestVerificationReceipt|TestRulesetsFlagParsingAndDispatch|TestEmissionReceiptBinary' -count=1",
+      "log": "focused-final.log"
+    },
+    {
+      "exit": 1,
+      "expected_exit": 1,
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB go test -race -overlay /home/riels/.cache/adr0008-round2-strengthening/mutation.json ./internal/store -run '^TestDatabaseIdentityDatabaseIncarnation$' -count=1",
+      "log": "identity-oid-mutation.log",
+      "mutation": "identity-oid-mutation.patch",
+      "overlay_sha256": "dd6506a7a0595339e85238192c189c529e5c023b1eb5bc062e08fb32035a1a7e",
+      "mutated_source_sha256": "3a5fbe6f54ce665abb09b887ed8df72d5d0b15c2a3bcf7c375a4f51bbfe590d0"
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+golangci-lint run
+0 issues.
+go test -race -short -count=1 -timeout=15m ./...
+?   	github.com/CanadaApollo6/openmerge/cmd/capacity-report	[no test files]
+ok  	github.com/CanadaApollo6/openmerge/cmd/openmerge	61.861s
+ok  	github.com/CanadaApollo6/openmerge/internal/ascii	1.008s
+ok  	github.com/CanadaApollo6/openmerge/internal/authority	1.098s
+ok  	github.com/CanadaApollo6/openmerge/internal/brief	3.435s
+ok  	github.com/CanadaApollo6/openmerge/internal/changepolicy	1.841s
+?   	github.com/CanadaApollo6/openmerge/internal/changepolicy/replay	[no test files]
+ok  	github.com/CanadaApollo6/openmerge/internal/classification	2.278s
+ok  	github.com/CanadaApollo6/openmerge/internal/config	1.597s
+ok  	github.com/CanadaApollo6/openmerge/internal/config/condition	1.030s
+ok  	github.com/CanadaApollo6/openmerge/internal/diagnostic	1.019s
+ok  	github.com/CanadaApollo6/openmerge/internal/executor	1.175s
+ok  	github.com/CanadaApollo6/openmerge/internal/forge	8.430s
+ok  	github.com/CanadaApollo6/openmerge/internal/forge/fake	1.490s
+?   	github.com/CanadaApollo6/openmerge/internal/forge/forgetest	[no test files]
+ok  	github.com/CanadaApollo6/openmerge/internal/forge/github	59.078s
+ok  	github.com/CanadaApollo6/openmerge/internal/gitops	90.868s
+ok  	github.com/CanadaApollo6/openmerge/internal/queue	321.465s
+ok  	github.com/CanadaApollo6/openmerge/internal/serve	452.855s
+ok  	github.com/CanadaApollo6/openmerge/internal/sim	35.277s
+ok  	github.com/CanadaApollo6/openmerge/internal/sim/capacity	1.010s
+ok  	github.com/CanadaApollo6/openmerge/internal/status	10.786s
+ok  	github.com/CanadaApollo6/openmerge/internal/store	58.321s
+?   	github.com/CanadaApollo6/openmerge/schema	[no test files]
+ok  	github.com/CanadaApollo6/openmerge/scripts	1.077s
+ok  	github.com/CanadaApollo6/openmerge/tools/dogfood	1.652s
+CGO_ENABLED=0  go build -ldflags "-X main.version=010967e" -o bin/openmerge ./cmd/openmerge

@@ -1,0 +1,12 @@
+{
+  "additional-checks.json": "39d9b27609cc99f99f0a0ff5d0d24473169b836d7386f4304778c1e39fdb84cb",
+  "cache-manifest.json": "2a4bddc925591f0b4accd21f5dbcba073b89aa67fa39785106aedbb18d170fb5",
+  "contracts-baseline.json": "88e727ebe7ea5b570f352c5c661c2cd1642c1b5120f3d3ed086993f4dd00362a",
+  "contracts-candidate.json": "88e727ebe7ea5b570f352c5c661c2cd1642c1b5120f3d3ed086993f4dd00362a",
+  "focused-final.log": "86b21f9c481f00ea5bc789f3356e0388811358fb2517a43cff0f201590b67ee4",
+  "identity-oid-mutation.log": "c482739b0d5045ab8d6d819b46c30ea9d7277cfa973a428bfd13ec5bf6d2d883",
+  "identity-oid-mutation.patch": "6f6e347db675136ac5df7d7227e251364699d71d7a5f968a6b0e693b7a893b55",
+  "make-check.log": "f8bce5c3978099d7bd74e22ac386318384e4e03bbf07ddaa4e7186b7df8244d7",
+  "sim-normalized.json": "a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7",
+  "summary.json": "9c31f3dc05cf697d360b961c3803abf739c70e5dff80c90659f5e0aff6424267"
+}

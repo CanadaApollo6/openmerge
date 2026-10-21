@@ -19,7 +19,7 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
-func activationReceipt(t *testing.T) authority.EmissionReceipt {
+func activationReceipt(t *testing.T, db *store.Store) authority.EmissionReceipt {
 	t.Helper()
 	// Test binaries without VCS metadata use the same explicit fallback as
 	// release tooling. Never replace a revision already embedded by Go.
@@ -30,16 +30,28 @@ func activationReceipt(t *testing.T) authority.EmissionReceipt {
 	}
 	path := filepath.Join(t.TempDir(), "backup")
 	must(t, os.WriteFile(path, []byte("offline test backup"), 0600))
-	return authority.EmissionReceipt{DatabaseIdentity: "isolated-test-db", BinaryRevision: authority.RunningBinaryRevision(), DrainedWorkers: []string{"test-worker"}, DrainedAt: time.Now().Add(-time.Minute), RestoreTestedAt: time.Now().Add(-time.Second), BackupPath: path, BackupSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("offline test backup"))), CompatibleReadersOnly: true}
+	identity, err := db.DatabaseIdentity(t.Context())
+	must(t, err)
+	return authority.EmissionReceipt{DatabaseIdentity: identity, BinaryRevision: authority.RunningBinaryRevision(), DrainedWorkers: []string{"test-worker"}, DrainedAt: time.Now().Add(-time.Minute), RestoreTestedAt: time.Now().Add(-time.Second), BackupPath: path, BackupSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("offline test backup"))), CompatibleReadersOnly: true}
 }
 
 func TestAuthorityActivationReceiptBeforeIO(t *testing.T) {
-	for _, name := range []string{"no-opt-in", "zero-age", "negative-age", "stale-drain", "stale-restore", "wrong-binary", "wrong-db", "missing-backup", "read-error"} {
+	for name, want := range map[string]string{
+		"no-opt-in":                    "internal authority activation opt-in required",
+		"zero-age":                     "maximum age must be positive",
+		"negative-age":                 "maximum age must be positive",
+		"stale-drain":                  "stale emission receipt",
+		"stale-restore":                "stale emission receipt",
+		"wrong-binary":                 "BinaryRevision does not match",
+		"caller-db-differs-from-store": "database-bound drain inventory",
+		"missing-backup":               "first-emission backup unavailable",
+		"read-error":                   "quota exhausted",
+	} {
 		t.Run(name, func(t *testing.T) {
-			r := activationReceipt(t)
-			request := authorityActivation{Receipt: r, DatabaseIdentity: r.DatabaseIdentity, ReceiptMaxAge: time.Hour}
-			w := &worker{Target: Target{AuthorityRequired: true}}
-			s := &Server{} // invalid receipt must fail before touching the store
+			s, w, _, _ := fixture(t, repositoryConfig)
+			w.AuthorityRequired = true
+			r := activationReceipt(t, s.store)
+			request := authorityActivation{Receipt: r, ReceiptMaxAge: time.Hour}
 			switch name {
 			case "no-opt-in":
 				w.AuthorityRequired = false
@@ -54,15 +66,19 @@ func TestAuthorityActivationReceiptBeforeIO(t *testing.T) {
 				request.Receipt.RestoreTestedAt = time.Now().Add(-2 * time.Hour)
 			case "wrong-binary":
 				request.Receipt.BinaryRevision = "another-binary"
-			case "wrong-db":
-				request.DatabaseIdentity = "another-db"
+			case "caller-db-differs-from-store":
+				request.Receipt.DatabaseIdentity = "another-db"
+				// A caller can supply a self-consistent receipt for another DB.
+				// That attestation must not choose the runtime validation identity.
+				must(t, request.Receipt.ValidateForBinary(request.Receipt.DatabaseIdentity, time.Now(), request.ReceiptMaxAge, authority.RunningBinaryRevision()))
+				if request.Receipt.DatabaseIdentity == r.DatabaseIdentity {
+					t.Fatal("fixture did not use a different database")
+				}
 			case "missing-backup":
 				request.Receipt.BackupPath += ".missing"
-			case "read-error":
-				var realWorker *worker
-				s, realWorker, _, _ = fixture(t, repositoryConfig)
-				w = realWorker
-				w.AuthorityRequired = true
+			}
+			if name != "read-error" && name != "caller-db-differs-from-store" {
+				s.store.Close() // receipt failures must precede database I/O
 			}
 			called := false
 			sentinel := errors.New("quota exhausted")
@@ -73,6 +89,12 @@ func TestAuthorityActivationReceiptBeforeIO(t *testing.T) {
 			receipt, err := s.activateAuthority(t.Context(), w, request)
 			if err == nil || receipt != (store.AuthorityAdoptionReceipt{}) || called != (name == "read-error") {
 				t.Fatalf("receipt=%+v err=%v read=%t", receipt, err, called)
+			}
+			if name == "wrong-binary" && !errors.Is(err, authority.ErrBinaryRevisionMismatch) {
+				t.Fatal(err)
+			}
+			if name != "wrong-binary" && !strings.Contains(err.Error(), want) {
+				t.Fatalf("receipt validation error=%v, want %q", err, want)
 			}
 			if name == "read-error" && !errors.Is(err, sentinel) {
 				t.Fatal(err)
@@ -123,8 +145,8 @@ func TestAuthorityActivationReportsDurableOutcome(t *testing.T) {
 			must(t, err)
 			var log bytes.Buffer
 			s.options.Logger = slog.New(slog.NewTextHandler(&log, nil))
-			r := activationReceipt(t)
-			request := authorityActivation{Receipt: r, DatabaseIdentity: r.DatabaseIdentity, ReceiptMaxAge: time.Hour, Pin: pin, DraftID: verification[0].EventID, Input: in, Read: func(context.Context) (authority.Observation, error) { return fresh, nil }}
+			r := activationReceipt(t, s.store)
+			request := authorityActivation{Receipt: r, ReceiptMaxAge: time.Hour, Pin: pin, DraftID: verification[0].EventID, Input: in, Read: func(context.Context) (authority.Observation, error) { return fresh, nil }}
 			receipt, err := s.activateAuthority(t.Context(), w, request)
 			must(t, err)
 			want := store.AuthorityPinnedUnverified
@@ -150,10 +172,10 @@ func TestAuthorityActivationReceiptExpiresDuringSeeingRead(t *testing.T) {
 	testSynctest(t, func(t *testing.T) {
 		s, w, _, _ := fixture(t, repositoryConfig)
 		w.AuthorityRequired = true
-		r := activationReceipt(t)
+		r := activationReceipt(t, s.store)
 		_, before, err := s.store.Load(t.Context(), w.id)
 		must(t, err)
-		request := authorityActivation{Receipt: r, DatabaseIdentity: r.DatabaseIdentity, ReceiptMaxAge: time.Hour, Read: func(context.Context) (authority.Observation, error) {
+		request := authorityActivation{Receipt: r, ReceiptMaxAge: time.Hour, Read: func(context.Context) (authority.Observation, error) {
 			time.Sleep(2 * time.Hour)
 			return authority.Observation{}, nil
 		}}

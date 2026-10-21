@@ -2,6 +2,7 @@ package authority
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,6 +22,13 @@ func TestFirstEmissionDrainBackupGate(t *testing.T) {
 	receipt := EmissionReceipt{DatabaseIdentity: "localhost:54329/test", BinaryRevision: "test-revision", DrainedWorkers: []string{"sandbox-host/worker-1", "sandbox-host/worker-2"}, DrainedAt: now.Add(-time.Minute), BackupPath: backup, BackupSHA256: fmt.Sprintf("%x", sha256.Sum256(data)), RestoreTestedAt: now, CompatibleReadersOnly: true}
 	if err := receipt.ValidateForBinary(receipt.DatabaseIdentity, now, DefaultEmissionReceiptMaxAge, "test-revision"); err != nil {
 		t.Fatal(err)
+	}
+	for _, identities := range [][2]string{{"", ""}, {"", receipt.DatabaseIdentity}, {receipt.DatabaseIdentity, ""}} {
+		bad := receipt
+		bad.DatabaseIdentity = identities[0]
+		if err := bad.ValidateForBinary(identities[1], now, DefaultEmissionReceiptMaxAge, "test-revision"); err == nil {
+			t.Fatalf("empty database identity accepted: receipt=%q configured=%q", identities[0], identities[1])
+		}
 	}
 	r := receipt
 	r.DrainedAt = now.Add(-25 * time.Hour)
@@ -74,7 +82,10 @@ func TestEmissionReceiptBinaryAndAgePolicy(t *testing.T) {
 		{"other", time.Hour, "does not match"},
 	} {
 		err := r.ValidateForBinary("db", time.Now(), tt.age, tt.revision)
-		if err == nil || !strings.Contains(err.Error(), tt.want) {
+		if tt.revision == "other" && !errors.Is(err, ErrBinaryRevisionMismatch) {
+			t.Fatal(err)
+		}
+		if err == nil || (tt.revision != "other" && !strings.Contains(err.Error(), tt.want)) {
 			t.Fatalf("%+v: %v", tt, err)
 		}
 	}

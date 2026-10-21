@@ -1,0 +1,6 @@
+--- FAIL: TestLandingChecksValidateLockedBindings (0.04s)
+    --- FAIL: TestLandingChecksValidateLockedBindings/overflow (0.04s)
+        landing_checks_test.go:158: overflow misclassified: landing decision inputs changed; waiting for stable approval evidence; re-plan: action is no longer authorized to start: landing check evidence exceeds size limits: expression limit 65536 bytes/items; reduce evidence before retrying
+FAIL
+FAIL	github.com/CanadaApollo6/openmerge/internal/store	0.044s
+FAIL

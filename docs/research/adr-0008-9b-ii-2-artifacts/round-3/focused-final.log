@@ -1,0 +1,264 @@
+=== RUN   TestDatabaseIdentityEffectiveSchemaAndReconnect
+--- PASS: TestDatabaseIdentityEffectiveSchemaAndReconnect (0.09s)
+=== RUN   TestDatabaseIdentityRoleDefaultSchema
+--- PASS: TestDatabaseIdentityRoleDefaultSchema (0.08s)
+=== RUN   TestDatabaseIdentityDatabaseIncarnation
+--- PASS: TestDatabaseIdentityDatabaseIncarnation (0.22s)
+=== RUN   TestDatabaseIdentityEmptyJournalFailsClosed
+--- PASS: TestDatabaseIdentityEmptyJournalFailsClosed (0.03s)
+=== RUN   TestDatabaseIdentitySequenceGapAndIndexedGenesis
+    database_identity_test.go:269: genesis plan: [
+          {
+            "Plan": {
+              "Node Type": "Limit",
+              "Parallel Aware": false,
+              "Async Capable": false,
+              "Startup Cost": 0.29,
+              "Total Cost": 0.35,
+              "Plan Rows": 1,
+              "Plan Width": 104,
+              "Disabled": false,
+              "Plans": [
+                {
+                  "Node Type": "Index Scan",
+                  "Parent Relationship": "Outer",
+                  "Parallel Aware": false,
+                  "Async Capable": false,
+                  "Scan Direction": "Forward",
+                  "Index Name": "events_pkey",
+                  "Relation Name": "events",
+                  "Alias": "e",
+                  "Startup Cost": 0.29,
+                  "Total Cost": 667.25,
+                  "Plan Rows": 9999,
+                  "Plan Width": 104,
+                  "Disabled": false
+                }
+              ]
+            }
+          }
+        ]
+--- PASS: TestDatabaseIdentitySequenceGapAndIndexedGenesis (0.09s)
+=== RUN   TestReceiptIdentityDiagnostics
+=== RUN   TestReceiptIdentityDiagnostics/privilege
+=== RUN   TestReceiptIdentityDiagnostics/unavailable_function
+=== RUN   TestReceiptIdentityDiagnostics/canceled
+=== RUN   TestReceiptIdentityDiagnostics/deadline
+=== RUN   TestReceiptIdentityDiagnostics/network
+=== RUN   TestReceiptIdentityDiagnostics/unknown
+--- PASS: TestReceiptIdentityDiagnostics (0.00s)
+    --- PASS: TestReceiptIdentityDiagnostics/privilege (0.00s)
+    --- PASS: TestReceiptIdentityDiagnostics/unavailable_function (0.00s)
+    --- PASS: TestReceiptIdentityDiagnostics/canceled (0.00s)
+    --- PASS: TestReceiptIdentityDiagnostics/deadline (0.00s)
+    --- PASS: TestReceiptIdentityDiagnostics/network (0.00s)
+    --- PASS: TestReceiptIdentityDiagnostics/unknown (0.00s)
+=== RUN   TestLandingChecksAtomicRollbackRetryAndRetention
+--- PASS: TestLandingChecksAtomicRollbackRetryAndRetention (0.31s)
+=== RUN   TestLandingChecksValidateLockedBindings
+=== RUN   TestLandingChecksValidateLockedBindings/missing
+=== RUN   TestLandingChecksValidateLockedBindings/source
+=== RUN   TestLandingChecksValidateLockedBindings/member
+=== RUN   TestLandingChecksValidateLockedBindings/sha
+=== RUN   TestLandingChecksValidateLockedBindings/config
+=== RUN   TestLandingChecksValidateLockedBindings/policy
+=== RUN   TestLandingChecksValidateLockedBindings/claim
+=== RUN   TestLandingChecksValidateLockedBindings/bypass
+=== RUN   TestLandingChecksValidateLockedBindings/final-start
+=== RUN   TestLandingChecksValidateLockedBindings/overflow
+--- PASS: TestLandingChecksValidateLockedBindings (1.62s)
+    --- PASS: TestLandingChecksValidateLockedBindings/missing (0.17s)
+    --- PASS: TestLandingChecksValidateLockedBindings/source (0.16s)
+    --- PASS: TestLandingChecksValidateLockedBindings/member (0.18s)
+    --- PASS: TestLandingChecksValidateLockedBindings/sha (0.18s)
+    --- PASS: TestLandingChecksValidateLockedBindings/config (0.17s)
+    --- PASS: TestLandingChecksValidateLockedBindings/policy (0.16s)
+    --- PASS: TestLandingChecksValidateLockedBindings/claim (0.12s)
+    --- PASS: TestLandingChecksValidateLockedBindings/bypass (0.14s)
+    --- PASS: TestLandingChecksValidateLockedBindings/final-start (0.18s)
+    --- PASS: TestLandingChecksValidateLockedBindings/overflow (0.17s)
+=== RUN   TestLandingChecksAuthorityWithoutReviewFloor
+--- PASS: TestLandingChecksAuthorityWithoutReviewFloor (0.15s)
+=== RUN   TestLandingChecksSourceRevisionRace
+--- PASS: TestLandingChecksSourceRevisionRace (0.18s)
+=== RUN   TestLandingChecksByteCapSurvivesJSONB
+--- PASS: TestLandingChecksByteCapSurvivesJSONB (2.35s)
+=== RUN   TestAuthorityAdoptionReceiptsAndNoOpRetry
+=== RUN   TestAuthorityAdoptionReceiptsAndNoOpRetry/true
+=== RUN   TestAuthorityAdoptionReceiptsAndNoOpRetry/false
+--- PASS: TestAuthorityAdoptionReceiptsAndNoOpRetry (0.23s)
+    --- PASS: TestAuthorityAdoptionReceiptsAndNoOpRetry/true (0.15s)
+    --- PASS: TestAuthorityAdoptionReceiptsAndNoOpRetry/false (0.08s)
+PASS
+ok  	github.com/CanadaApollo6/openmerge/internal/store	6.364s
+=== RUN   TestAuthorityActivationReceiptBeforeIO
+=== RUN   TestAuthorityActivationReceiptBeforeIO/read-error
+=== RUN   TestAuthorityActivationReceiptBeforeIO/zero-age
+=== RUN   TestAuthorityActivationReceiptBeforeIO/stale-drain
+=== RUN   TestAuthorityActivationReceiptBeforeIO/stale-restore
+=== RUN   TestAuthorityActivationReceiptBeforeIO/missing-backup
+=== RUN   TestAuthorityActivationReceiptBeforeIO/no-opt-in
+=== RUN   TestAuthorityActivationReceiptBeforeIO/negative-age
+=== RUN   TestAuthorityActivationReceiptBeforeIO/wrong-binary
+=== RUN   TestAuthorityActivationReceiptBeforeIO/caller-db-differs-from-store
+--- PASS: TestAuthorityActivationReceiptBeforeIO (0.28s)
+    --- PASS: TestAuthorityActivationReceiptBeforeIO/read-error (0.03s)
+    --- PASS: TestAuthorityActivationReceiptBeforeIO/zero-age (0.03s)
+    --- PASS: TestAuthorityActivationReceiptBeforeIO/stale-drain (0.03s)
+    --- PASS: TestAuthorityActivationReceiptBeforeIO/stale-restore (0.04s)
+    --- PASS: TestAuthorityActivationReceiptBeforeIO/missing-backup (0.03s)
+    --- PASS: TestAuthorityActivationReceiptBeforeIO/no-opt-in (0.03s)
+    --- PASS: TestAuthorityActivationReceiptBeforeIO/negative-age (0.03s)
+    --- PASS: TestAuthorityActivationReceiptBeforeIO/wrong-binary (0.03s)
+    --- PASS: TestAuthorityActivationReceiptBeforeIO/caller-db-differs-from-store (0.03s)
+=== RUN   TestAuthorityActivationReportsDurableOutcome
+=== RUN   TestAuthorityActivationReportsDurableOutcome/true
+=== RUN   TestAuthorityActivationReportsDurableOutcome/false
+--- PASS: TestAuthorityActivationReportsDurableOutcome (0.21s)
+    --- PASS: TestAuthorityActivationReportsDurableOutcome/true (0.12s)
+    --- PASS: TestAuthorityActivationReportsDurableOutcome/false (0.09s)
+=== RUN   TestAuthorityActivationReceiptExpiresDuringSeeingRead
+--- PASS: TestAuthorityActivationReceiptExpiresDuringSeeingRead (0.04s)
+=== RUN   TestAuthorityBarrierPinCannotSelectAuthorityCheckGate
+=== RUN   TestAuthorityBarrierPinCannotSelectAuthorityCheckGate/1
+=== RUN   TestAuthorityBarrierPinCannotSelectAuthorityCheckGate/4
+--- PASS: TestAuthorityBarrierPinCannotSelectAuthorityCheckGate (0.25s)
+    --- PASS: TestAuthorityBarrierPinCannotSelectAuthorityCheckGate/1 (0.12s)
+    --- PASS: TestAuthorityBarrierPinCannotSelectAuthorityCheckGate/4 (0.13s)
+=== RUN   TestAuthorityBarrierJournalCannotInstallRuntimeAuthority
+=== RUN   TestAuthorityBarrierJournalCannotInstallRuntimeAuthority/draft
+=== RUN   TestAuthorityBarrierJournalCannotInstallRuntimeAuthority/pin
+=== RUN   TestAuthorityBarrierJournalCannotInstallRuntimeAuthority/raw-activation
+--- PASS: TestAuthorityBarrierJournalCannotInstallRuntimeAuthority (0.21s)
+    --- PASS: TestAuthorityBarrierJournalCannotInstallRuntimeAuthority/draft (0.08s)
+    --- PASS: TestAuthorityBarrierJournalCannotInstallRuntimeAuthority/pin (0.05s)
+    --- PASS: TestAuthorityBarrierJournalCannotInstallRuntimeAuthority/raw-activation (0.08s)
+=== RUN   TestAuthorityStatusAndHealthDoNotWaitForWorker
+--- PASS: TestAuthorityStatusAndHealthDoNotWaitForWorker (0.06s)
+=== RUN   TestLandingChecksAuthorityMethodsAndChainPositions
+=== RUN   TestLandingChecksAuthorityMethodsAndChainPositions/merge/depth-1
+=== RUN   TestLandingChecksAuthorityMethodsAndChainPositions/merge/depth-4
+=== RUN   TestLandingChecksAuthorityMethodsAndChainPositions/squash/depth-1
+=== RUN   TestLandingChecksAuthorityMethodsAndChainPositions/squash/depth-4
+=== RUN   TestLandingChecksAuthorityMethodsAndChainPositions/rebase/depth-1
+=== RUN   TestLandingChecksAuthorityMethodsAndChainPositions/rebase/depth-4
+=== RUN   TestLandingChecksAuthorityMethodsAndChainPositions/fast-forward/depth-1
+=== RUN   TestLandingChecksAuthorityMethodsAndChainPositions/fast-forward/depth-4
+--- PASS: TestLandingChecksAuthorityMethodsAndChainPositions (58.47s)
+    --- PASS: TestLandingChecksAuthorityMethodsAndChainPositions/merge/depth-1 (0.99s)
+    --- PASS: TestLandingChecksAuthorityMethodsAndChainPositions/merge/depth-4 (13.46s)
+    --- PASS: TestLandingChecksAuthorityMethodsAndChainPositions/squash/depth-1 (0.96s)
+    --- PASS: TestLandingChecksAuthorityMethodsAndChainPositions/squash/depth-4 (13.02s)
+    --- PASS: TestLandingChecksAuthorityMethodsAndChainPositions/rebase/depth-1 (0.96s)
+    --- PASS: TestLandingChecksAuthorityMethodsAndChainPositions/rebase/depth-4 (13.22s)
+    --- PASS: TestLandingChecksAuthorityMethodsAndChainPositions/fast-forward/depth-1 (1.00s)
+    --- PASS: TestLandingChecksAuthorityMethodsAndChainPositions/fast-forward/depth-4 (14.87s)
+=== RUN   TestLandingChecksLegacyGateAndPinRace
+=== RUN   TestLandingChecksLegacyGateAndPinRace/legacy
+=== RUN   TestLandingChecksLegacyGateAndPinRace/pin-before
+=== RUN   TestLandingChecksLegacyGateAndPinRace/pin-race
+--- PASS: TestLandingChecksLegacyGateAndPinRace (1.92s)
+    --- PASS: TestLandingChecksLegacyGateAndPinRace/legacy (0.64s)
+    --- PASS: TestLandingChecksLegacyGateAndPinRace/pin-before (0.66s)
+    --- PASS: TestLandingChecksLegacyGateAndPinRace/pin-race (0.62s)
+=== RUN   TestLandingChecksGateOverflowPrecedesUnmetMembers
+=== RUN   TestLandingChecksGateOverflowPrecedesUnmetMembers/member-1
+=== RUN   TestLandingChecksGateOverflowPrecedesUnmetMembers/member-2
+--- PASS: TestLandingChecksGateOverflowPrecedesUnmetMembers (1.49s)
+    --- PASS: TestLandingChecksGateOverflowPrecedesUnmetMembers/member-1 (0.75s)
+    --- PASS: TestLandingChecksGateOverflowPrecedesUnmetMembers/member-2 (0.74s)
+=== RUN   TestLandingChecksWorkerFailurePrecedence
+=== RUN   TestLandingChecksWorkerFailurePrecedence/authority-false/position-0/overflow
+=== RUN   TestLandingChecksWorkerFailurePrecedence/authority-false/position-0/invalid
+=== RUN   TestLandingChecksWorkerFailurePrecedence/authority-false/position-0/bounded
+=== RUN   TestLandingChecksWorkerFailurePrecedence/authority-false/position-1/overflow
+=== RUN   TestLandingChecksWorkerFailurePrecedence/authority-false/position-1/invalid
+=== RUN   TestLandingChecksWorkerFailurePrecedence/authority-false/position-1/bounded
+=== RUN   TestLandingChecksWorkerFailurePrecedence/authority-true/position-0/overflow
+=== RUN   TestLandingChecksWorkerFailurePrecedence/authority-true/position-0/invalid
+=== RUN   TestLandingChecksWorkerFailurePrecedence/authority-true/position-0/bounded
+=== RUN   TestLandingChecksWorkerFailurePrecedence/authority-true/position-1/overflow
+=== RUN   TestLandingChecksWorkerFailurePrecedence/authority-true/position-1/invalid
+=== RUN   TestLandingChecksWorkerFailurePrecedence/authority-true/position-1/bounded
+--- PASS: TestLandingChecksWorkerFailurePrecedence (8.24s)
+    --- PASS: TestLandingChecksWorkerFailurePrecedence/authority-false/position-0/overflow (0.71s)
+    --- PASS: TestLandingChecksWorkerFailurePrecedence/authority-false/position-0/invalid (0.69s)
+    --- PASS: TestLandingChecksWorkerFailurePrecedence/authority-false/position-0/bounded (0.70s)
+    --- PASS: TestLandingChecksWorkerFailurePrecedence/authority-false/position-1/overflow (0.71s)
+    --- PASS: TestLandingChecksWorkerFailurePrecedence/authority-false/position-1/invalid (0.69s)
+    --- PASS: TestLandingChecksWorkerFailurePrecedence/authority-false/position-1/bounded (0.72s)
+    --- PASS: TestLandingChecksWorkerFailurePrecedence/authority-true/position-0/overflow (0.66s)
+    --- PASS: TestLandingChecksWorkerFailurePrecedence/authority-true/position-0/invalid (0.64s)
+    --- PASS: TestLandingChecksWorkerFailurePrecedence/authority-true/position-0/bounded (0.72s)
+    --- PASS: TestLandingChecksWorkerFailurePrecedence/authority-true/position-1/overflow (0.66s)
+    --- PASS: TestLandingChecksWorkerFailurePrecedence/authority-true/position-1/invalid (0.63s)
+    --- PASS: TestLandingChecksWorkerFailurePrecedence/authority-true/position-1/bounded (0.71s)
+=== RUN   TestLandingChecksPreflightDoesNotAcquireApprovals
+=== RUN   TestLandingChecksPreflightDoesNotAcquireApprovals/failure
+=== RUN   TestLandingChecksPreflightDoesNotAcquireApprovals/pending
+=== RUN   TestLandingChecksPreflightDoesNotAcquireApprovals/success
+--- PASS: TestLandingChecksPreflightDoesNotAcquireApprovals (0.39s)
+    --- PASS: TestLandingChecksPreflightDoesNotAcquireApprovals/failure (0.13s)
+    --- PASS: TestLandingChecksPreflightDoesNotAcquireApprovals/pending (0.13s)
+    --- PASS: TestLandingChecksPreflightDoesNotAcquireApprovals/success (0.13s)
+=== RUN   TestLandingChecksPreflightDefersReviewListOverflow
+--- PASS: TestLandingChecksPreflightDefersReviewListOverflow (1.17s)
+=== RUN   TestAuthorityBootstrapPinsBeforeFirstRealFence
+=== RUN   TestAuthorityBootstrapPinsBeforeFirstRealFence/registration/change-none
+=== RUN   TestAuthorityBootstrapPinsBeforeFirstRealFence/registration/change-basis
+=== RUN   TestAuthorityBootstrapPinsBeforeFirstRealFence/registration/change-policy
+=== RUN   TestAuthorityBootstrapPinsBeforeFirstRealFence/registration/change-reload
+=== RUN   TestAuthorityBootstrapPinsBeforeFirstRealFence/registration/change-missing-seeing
+=== RUN   TestAuthorityBootstrapPinsBeforeFirstRealFence/registration/change-seeing-drift
+=== RUN   TestAuthorityBootstrapPinsBeforeFirstRealFence/registration/change-runtime-hidden
+=== RUN   TestAuthorityBootstrapPinsBeforeFirstRealFence/refreshWorker/change-none
+=== RUN   TestAuthorityBootstrapPinsBeforeFirstRealFence/refreshWorker/change-basis
+=== RUN   TestAuthorityBootstrapPinsBeforeFirstRealFence/refreshWorker/change-policy
+=== RUN   TestAuthorityBootstrapPinsBeforeFirstRealFence/refreshWorker/change-reload
+=== RUN   TestAuthorityBootstrapPinsBeforeFirstRealFence/refreshWorker/change-missing-seeing
+=== RUN   TestAuthorityBootstrapPinsBeforeFirstRealFence/refreshWorker/change-seeing-drift
+=== RUN   TestAuthorityBootstrapPinsBeforeFirstRealFence/refreshWorker/change-runtime-hidden
+=== RUN   TestAuthorityBootstrapPinsBeforeFirstRealFence/cycle/change-none
+=== RUN   TestAuthorityBootstrapPinsBeforeFirstRealFence/cycle/change-basis
+=== RUN   TestAuthorityBootstrapPinsBeforeFirstRealFence/cycle/change-policy
+2026/10/21 08:45:20 INFO configuration changed repository=local/composition base=main pr=0 batch="" sha="" reason="" commit=424dffac3254b735edd1f8baef498f89f5a69c83 digest=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+=== RUN   TestAuthorityBootstrapPinsBeforeFirstRealFence/cycle/change-reload
+2026/10/21 08:45:20 WARN read operational events repository=local/composition base=main error="closed pool"
+=== RUN   TestAuthorityBootstrapPinsBeforeFirstRealFence/cycle/change-missing-seeing
+=== RUN   TestAuthorityBootstrapPinsBeforeFirstRealFence/cycle/change-seeing-drift
+=== RUN   TestAuthorityBootstrapPinsBeforeFirstRealFence/cycle/change-runtime-hidden
+--- PASS: TestAuthorityBootstrapPinsBeforeFirstRealFence (2.75s)
+    --- PASS: TestAuthorityBootstrapPinsBeforeFirstRealFence/registration/change-none (0.13s)
+    --- PASS: TestAuthorityBootstrapPinsBeforeFirstRealFence/registration/change-basis (0.12s)
+    --- PASS: TestAuthorityBootstrapPinsBeforeFirstRealFence/registration/change-policy (0.12s)
+    --- PASS: TestAuthorityBootstrapPinsBeforeFirstRealFence/registration/change-reload (0.12s)
+    --- PASS: TestAuthorityBootstrapPinsBeforeFirstRealFence/registration/change-missing-seeing (0.07s)
+    --- PASS: TestAuthorityBootstrapPinsBeforeFirstRealFence/registration/change-seeing-drift (0.09s)
+    --- PASS: TestAuthorityBootstrapPinsBeforeFirstRealFence/registration/change-runtime-hidden (0.14s)
+    --- PASS: TestAuthorityBootstrapPinsBeforeFirstRealFence/refreshWorker/change-none (0.16s)
+    --- PASS: TestAuthorityBootstrapPinsBeforeFirstRealFence/refreshWorker/change-basis (0.15s)
+    --- PASS: TestAuthorityBootstrapPinsBeforeFirstRealFence/refreshWorker/change-policy (0.14s)
+    --- PASS: TestAuthorityBootstrapPinsBeforeFirstRealFence/refreshWorker/change-reload (0.12s)
+    --- PASS: TestAuthorityBootstrapPinsBeforeFirstRealFence/refreshWorker/change-missing-seeing (0.09s)
+    --- PASS: TestAuthorityBootstrapPinsBeforeFirstRealFence/refreshWorker/change-seeing-drift (0.10s)
+    --- PASS: TestAuthorityBootstrapPinsBeforeFirstRealFence/refreshWorker/change-runtime-hidden (0.17s)
+    --- PASS: TestAuthorityBootstrapPinsBeforeFirstRealFence/cycle/change-none (0.22s)
+    --- PASS: TestAuthorityBootstrapPinsBeforeFirstRealFence/cycle/change-basis (0.13s)
+    --- PASS: TestAuthorityBootstrapPinsBeforeFirstRealFence/cycle/change-policy (0.13s)
+    --- PASS: TestAuthorityBootstrapPinsBeforeFirstRealFence/cycle/change-reload (0.11s)
+    --- PASS: TestAuthorityBootstrapPinsBeforeFirstRealFence/cycle/change-missing-seeing (0.08s)
+    --- PASS: TestAuthorityBootstrapPinsBeforeFirstRealFence/cycle/change-seeing-drift (0.10s)
+    --- PASS: TestAuthorityBootstrapPinsBeforeFirstRealFence/cycle/change-runtime-hidden (0.26s)
+=== RUN   TestAuthorityBootstrapNeverFallsBackWithoutRequiredPin
+--- PASS: TestAuthorityBootstrapNeverFallsBackWithoutRequiredPin (0.03s)
+PASS
+ok  	github.com/CanadaApollo6/openmerge/internal/serve	76.524s
+=== RUN   TestAuthorityDigestGoldenVectors
+--- PASS: TestAuthorityDigestGoldenVectors (0.00s)
+=== RUN   TestEmissionReceiptBinaryAndAgePolicy
+--- PASS: TestEmissionReceiptBinaryAndAgePolicy (0.00s)
+PASS
+ok  	github.com/CanadaApollo6/openmerge/internal/authority	1.010s
+testing: warning: no tests to run
+PASS
+ok  	github.com/CanadaApollo6/openmerge/cmd/openmerge	1.011s [no tests to run]
