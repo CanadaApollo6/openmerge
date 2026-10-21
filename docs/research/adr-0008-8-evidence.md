@@ -73,4 +73,48 @@ history before claiming organization acceptance. Local HTTP and real-git fixture
 provide automated adapter/object evidence, including atomic start and read-back
 after real-git settlement with the test DB configured.
 
-Verification results are recorded below after execution.
+Executed verification completed on 2026-10-21 UTC against implementation
+`2ad97eecc72fa8477fcc598c5a0d739542f73f2c` and main
+`975b1b7762f58c128b1703f11fd5c4b6ff552c55`. The later evidence commit changes
+only these retained reports/docs. [Summary and commands](adr-0008-8-artifacts/summary.json),
+[hash manifest](adr-0008-8-artifacts/manifest.sha256),
+[make check log](adr-0008-8-artifacts/make-check.log), and
+[real-git event IDs/SHAs](adr-0008-8-artifacts/real-git-and-chain.log) are retained.
+Full replay streams, raw reports, simulator normalization, and command logs remain
+under `/home/riels/.cache/adr0008-8-verification`; their paths/hashes are in the manifest.
+
+- Wrapped `make check`: **exit 0**, zero lint issues, complete race suite and build.
+  Binary revision `2ad97ee`; binary SHA-256 is recorded in the summary/manifest.
+- Strict offline live-journal replay: **PASS**, 2,158 events from one queue,
+  2,159/2,159 identical actions, full structural states, snapshots, and boundary
+  checkpoints. All 8,676 boundary probes agree; gates 2 and 4 pass, mandatory
+  synthetic self-tests pass (22 tests), and no allowlisted differences are used.
+- Depth-1/4 contracts: **90/90 identical** checkpoint records, including all
+  snapshot/plan hashes and sizes. Approval fixtures contribute 13 checkpoints
+  per depth; legacy-block fixtures contribute 32 per depth.
+- Wire: all **103** deployed registry/variant fixtures unchanged (89 registry
+  fixtures); exactly one additive fixture. The previous decoder rejects it.
+- Reporting: all **six** complete legacy status/check fixtures byte-identical.
+- Simulator differential: baseline/candidate **exit 0**, all **146** normalized
+  result blocks identical. SHA-256:
+  `a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7`.
+- Atomic rollback/concurrency/stale claim, idempotent retry, crash before/after
+  push, retry/cancellation ledger, legacy approval-free starts, retention, and
+  snapshot gates pass in the full suite. All four methods at depths 1/4 pass;
+  four speculative positions each retain their own runs. Sixteen real-git
+  method/depth/restart cases persist start before push and read back the same
+  checks after settlement. Their source event IDs and remote SHAs are logged.
+
+Expected differences: the one new registry fixture and, after PR 9 activation,
+one checks event per admitted authority batch attempt. There are **no** planner,
+landing-outcome, snapshot, reporting, or simulator differences in the legacy
+comparisons. The check adapter's `AttemptInferred` metadata changes no existing
+wire payload or retry meaning. No new SQL lookup or query plan is introduced.
+
+Early local runs exposed fixture errors (nullable-field expectations, canonical
+snapshot comparison, accidentally leased unrelated actions, config overridden
+only in memory, and a non-planner batch ID) plus one lint finding. Those were
+corrected; an intermediate full run was interrupted to fix the fixtures. The
+accepted final runs above all exit 0. No implementation scope or SQL deviations;
+real GitHub organization acceptance and runtime remedy generation remain at the
+boundaries described above.
