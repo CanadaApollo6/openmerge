@@ -138,3 +138,15 @@ and unchanged never-authority behaviour. Existing terminal/closed and missing
 journal regressions remain. Paragraph replacement is anchored before reviewer
 warnings/brief (or at the summary end); a quoted copy inside the brief survives,
 both with and without leading safety warnings. Focused regressions passed.
+
+Round-3 validation completed **2026-10-21T01:31:13.681317+00:00** on implementation
+`bd1203dad6cce541428f0d8abef041767d1dd4c5`. `make check` passed formatting,
+lint (0 issues), the complete race-enabled short suite and the build. All six
+legacy checks, six complete CLI outputs and 56 complete HTTP responses match
+legacy baseline `975b1b7`; comparison rules and test flags are unchanged. Every
+final verification command exited **0**. Commands, logs, source/artifact hashes
+and compressed before/after receipts are retained in the
+[round-3 manifest](adr0008-7-artifacts/round3/manifest.json). #116 landed as
+`2b21c6ce6a47fcd292175c0eed98a39584262505` during verification; the merge-tree check
+was conflict-free, so no rebase was performed. No deployment or live
+DB/status/systemd/OpenMerge-ref operation was performed.

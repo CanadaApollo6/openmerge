@@ -1,0 +1,4 @@
+/home/riels/.cache/pr115-r2-main-975b1b7: exit=0
+/home/riels/.t3/worktrees/openmerge/t3-c461b9e3: exit=0
+PASS: all 56 complete HTTP responses (status line, headers, body) are byte-identical; no fields stripped
+Complete response receipt: /home/riels/.t3/worktrees/openmerge/t3-c461b9e3/docs/research/adr0008-7-artifacts/round3/legacy-http-responses.json

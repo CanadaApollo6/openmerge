@@ -1,0 +1,113 @@
+{
+  "format": {
+    "command": [
+      "flock",
+      "/home/riels/.cache/openmerge-heavy.lock",
+      "env",
+      "GOFLAGS=-p=2",
+      "GOMEMLIMIT=4GiB",
+      "OPENMERGE_TEST_DATABASE_URL=postgres://postgres:openmerge@localhost:54329/postgres?sslmode=disable",
+      "gofmt",
+      "-w",
+      "internal/serve/worker.go",
+      "internal/serve/queue_instructions_test.go",
+      "internal/status/check.go",
+      "internal/status/queue_instructions_test.go"
+    ],
+    "started_at": "2026-10-21T01:04:04.736701+00:00",
+    "exit": 0
+  },
+  "focused": {
+    "command": [
+      "flock",
+      "/home/riels/.cache/openmerge-heavy.lock",
+      "env",
+      "GOFLAGS=-p=2",
+      "GOMEMLIMIT=4GiB",
+      "OPENMERGE_TEST_DATABASE_URL=postgres://postgres:openmerge@localhost:54329/postgres?sslmode=disable",
+      "go",
+      "test",
+      "-short",
+      "-count=1",
+      "-v",
+      "./internal/serve",
+      "./internal/status",
+      "-run",
+      "QueueInstructions"
+    ],
+    "started_at": "2026-10-21T01:10:42.520133+00:00",
+    "exit": 0
+  },
+  "make-check": {
+    "command": [
+      "flock",
+      "/home/riels/.cache/openmerge-heavy.lock",
+      "env",
+      "GOFLAGS=-p=2",
+      "GOMEMLIMIT=4GiB",
+      "OPENMERGE_TEST_DATABASE_URL=postgres://postgres:openmerge@localhost:54329/postgres?sslmode=disable",
+      "make",
+      "check"
+    ],
+    "started_at": "2026-10-21T01:10:47.157016+00:00",
+    "exit": 0
+  },
+  "legacy-reporting": {
+    "command": [
+      "python3",
+      "scripts/check-legacy-reporting.py",
+      "/home/riels/.cache/pr115-r2-main-975b1b7"
+    ],
+    "shared_lock_held": true,
+    "outer_command": [
+      "flock",
+      "/home/riels/.cache/openmerge-heavy.lock",
+      "env",
+      "GOFLAGS=-p=2",
+      "GOMEMLIMIT=4GiB",
+      "python3",
+      "/tmp/pr117-round3-harness.py"
+    ],
+    "started_at": "2026-10-21T01:30:31.027297+00:00",
+    "exit": 0
+  },
+  "legacy-cli": {
+    "command": [
+      "python3",
+      "scripts/check-legacy-authority-cli.py",
+      "/home/riels/.cache/pr115-r2-main-975b1b7"
+    ],
+    "shared_lock_held": true,
+    "outer_command": [
+      "flock",
+      "/home/riels/.cache/openmerge-heavy.lock",
+      "env",
+      "GOFLAGS=-p=2",
+      "GOMEMLIMIT=4GiB",
+      "python3",
+      "/tmp/pr117-round3-harness.py"
+    ],
+    "started_at": "2026-10-21T01:30:31.854102+00:00",
+    "exit": 0
+  },
+  "legacy-http": {
+    "command": [
+      "python3",
+      "scripts/check-legacy-authority-http.py",
+      "/home/riels/.cache/pr115-r2-main-975b1b7",
+      "/home/riels/.t3/worktrees/openmerge/t3-c461b9e3/docs/research/adr0008-7-artifacts/round3/legacy-http-responses.json"
+    ],
+    "shared_lock_held": true,
+    "outer_command": [
+      "flock",
+      "/home/riels/.cache/openmerge-heavy.lock",
+      "env",
+      "GOFLAGS=-p=2",
+      "GOMEMLIMIT=4GiB",
+      "python3",
+      "/tmp/pr117-round3-harness.py"
+    ],
+    "started_at": "2026-10-21T01:30:33.000046+00:00",
+    "exit": 0
+  }
+}
