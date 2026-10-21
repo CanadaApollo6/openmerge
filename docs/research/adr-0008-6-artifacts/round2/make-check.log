@@ -1,0 +1,35 @@
+Command: make check
+Started: 2026-10-21T00:30:38.673681+00:00
+golangci-lint run
+0 issues.
+go test -race -short -count=1 -timeout=15m ./...
+?   	github.com/CanadaApollo6/openmerge/cmd/capacity-report	[no test files]
+ok  	github.com/CanadaApollo6/openmerge/cmd/openmerge	62.041s
+ok  	github.com/CanadaApollo6/openmerge/internal/ascii	1.005s
+ok  	github.com/CanadaApollo6/openmerge/internal/authority	1.114s
+ok  	github.com/CanadaApollo6/openmerge/internal/brief	3.416s
+ok  	github.com/CanadaApollo6/openmerge/internal/changepolicy	1.832s
+?   	github.com/CanadaApollo6/openmerge/internal/changepolicy/replay	[no test files]
+ok  	github.com/CanadaApollo6/openmerge/internal/classification	2.334s
+ok  	github.com/CanadaApollo6/openmerge/internal/config	1.619s
+ok  	github.com/CanadaApollo6/openmerge/internal/config/condition	1.024s
+ok  	github.com/CanadaApollo6/openmerge/internal/diagnostic	1.021s
+ok  	github.com/CanadaApollo6/openmerge/internal/executor	1.168s
+ok  	github.com/CanadaApollo6/openmerge/internal/forge	8.218s
+ok  	github.com/CanadaApollo6/openmerge/internal/forge/fake	1.467s
+?   	github.com/CanadaApollo6/openmerge/internal/forge/forgetest	[no test files]
+ok  	github.com/CanadaApollo6/openmerge/internal/forge/github	61.070s
+ok  	github.com/CanadaApollo6/openmerge/internal/gitops	81.790s
+ok  	github.com/CanadaApollo6/openmerge/internal/queue	316.200s
+ok  	github.com/CanadaApollo6/openmerge/internal/serve	369.259s
+ok  	github.com/CanadaApollo6/openmerge/internal/sim	35.323s
+ok  	github.com/CanadaApollo6/openmerge/internal/sim/capacity	1.009s
+ok  	github.com/CanadaApollo6/openmerge/internal/status	17.636s
+ok  	github.com/CanadaApollo6/openmerge/internal/store	53.763s
+?   	github.com/CanadaApollo6/openmerge/schema	[no test files]
+ok  	github.com/CanadaApollo6/openmerge/scripts	1.072s
+ok  	github.com/CanadaApollo6/openmerge/tools/dogfood	1.598s
+CGO_ENABLED=0  go build -ldflags "-X main.version=5a057ae-dirty" -o bin/openmerge ./cmd/openmerge
+
+Exit: 0
+Finished: 2026-10-21T00:39:25.011854+00:00

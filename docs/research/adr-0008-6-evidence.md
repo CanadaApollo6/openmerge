@@ -1,160 +1,153 @@
 # ADR 0008 PR 6 reporting and health evidence
 
-Trial class: **HOLD**. Merge is permitted; deployment is prohibited until ADR
-0009 period B drains. No deployment, live DB access, live status API request,
-real GitHub call in code/tests, live ref access, migration, wire event, public
-YAML/schema change, or Makefile/CI/test-flag change is part of this work.
+Trial class: **HOLD**. May merge; deployment remains prohibited until ADR 0009
+period B drains. No deployment, live DB/API access, systemd change, live ref
+access, real GitHub call in code/tests, migration, wire event, YAML/schema change,
+or Makefile/CI/test-flag change is part of this work. Health is for alerts, never
+restarts. Runtime authority activation remains PR 9; organization-sandbox HTTP
+acceptance remains PR 11.
 
-## Revision and dependency scope
+## Round 2 revision and dependency scope
 
-Initial baseline: `d4e15c89fa9a1e68d8cf9afe55d0f3a25318ae91` (fetched
-2026-10-20). Both #112 and #113 were OPEN at start. PR 4 reached main during
-initial verification. PR 5 then landed as
-`975b1b7762f58c128b1703f11fd5c4b6ff552c55`; this revision rebases PR 6 onto that
-main commit and wires its production ledger. Implementation commit:
-`e16a98c35da0e94e3efb68342c9fb33507bc6806`. The final evidence commit changes
-only receipts/documentation. Remote branch: `adr0008/6-authority-status`.
-The branch is checked out in another worktree, so implementation uses fresh local
-branch `t3/wire-authority-warnings-pr115` and pushes directly to the remote PR
-branch with a lease on old head `992d4351d0348071ddb488ed8820ea602bfecf4b`.
-This PR does not stack on #112 or #113. Legacy byte comparisons retain the
-original pre-PR-6 baseline `158afe96c43a6122edca8566b09ba0ebf2a1e4bd`.
+Round 2 starts at PR #115 head `a9be8bb` on a fresh local branch
+`adr0008-6-round2` from `origin/adr0008/6-authority-status`. Implementation:
+`4da72a1` plus `5a057ae05623dbc6df7360ff6ced5cd7f89d746f` (interrupted-page recovery).
+The following evidence commit changes only these receipts. Remote destination:
+`adr0008/6-authority-status`.
 
-`internal/status/authority.go: ProjectAuthority` directly consumes PR 4's
-`WriteRestrictionStatus` durable state, last-observed and last-verified times.
-It renders sticky violations through hidden reads without duplicating the
-source's finding fold. Visibility uses retained applied evidence. Proposed verification remains excluded from applied rendering.
-`internal/store/journal.go` reads PR 5's paged outstanding-warning ledger in
-the same read-only repeatable-read transaction as queue history. It counts all
-outstanding warnings and retains at most 20 IDs in originating BaseMoved order,
-setting truncation independently of the exact count. Ledger pages retain at most
-256 events. No warning eligibility or dedupe association is inferred from
-`EventsAfter` or the recent `outside_pushes` projection. The summary's zero value
-means no outstanding warnings; a failed read returns an error and discards any
-partial summary. Empty ledgers omit `outside_warnings`, including unchanged
-GitHub-mode queues. Authority-era warnings survive rollback until acknowledged.
+Main and the widened legacy baseline are `975b1b7762f58c128b1703f11fd5c4b6ff552c55`.
+PR #116 has not landed as of this verification; no rebase onto #116 and no version
+fallback change are included. The later landing branch must preserve #116's
+pointer-aware scanners and `validateOutsidePushOrigin`, including validation of
+acknowledged audits. Round 1 receipts remain in `adr-0008-6-artifacts/`; the
+`round2/` directory supersedes their implementation/results claims.
 
-Health restores warning summaries at worker registration and refreshes them in
-the independent outside-push audit loop, without worker locks. Requests read
-immutable atomic summaries and still perform exactly one `SELECT 1`. Acknowledged
-warnings disappear from status immediately and from health on the next audit
-pass; read failures preserve the last successful health summary. Ledger scanning
-is O(N) in journal length, bounded in memory and by the read deadline, and never
-runs on a health request. Warning presence does not affect health status.
-The PR 6 ADR section requires outstanding warnings, not a new receipt-history
-view; the existing bounded recent `outside_pushes` history remains byte-identical
-when a warning is acknowledged.
+## Ledger read cost and isolation (A, Muse 2/3)
 
-Runtime authority activation remains PR 9 work. Real organization HTTP acceptance is PR 11 work.
+`internal/store/outside_warning_cache.go` owns the per-queue index and mutex,
+independent of workers. Its watermark advances through new events only. It keeps
+accepted policy boundaries and outstanding event/origin IDs, rather than journal
+payloads or all historical base moves. Delayed audits use the originating base
+move's authority boundary, including after rollback. Acknowledgements delete
+warnings without changing recent outside-push history. Public summaries retain
+exact counts and at most 20 IDs in originating base-move order.
 
-## Automated acceptance
+`Journals` already loads immutable history for status explanations. It now feeds
+only the decoded suffix into the ledger API and uses binary searches for origins
+and receipt sources; it never re-pages or re-decodes that history. Never-pinned
+queues skip the ledger and allocate no warning index. Worker-owned CI check
+rendering uses `ReportingJournals`, which omits warning I/O entirely. Health reads
+atomic warning snapshots; the independent audit loop refreshes them from 256-row
+suffix pages, with indexed source probes only for new audits/acknowledgements.
+Authority registration seeds the cache once; legacy registration skips it.
 
-All Go processes, formatting, Python probes that invoke Go, and `make check`
-run under `/home/riels/.cache/openmerge-heavy.lock`, with `GOFLAGS=-p=2` and
-`GOMEMLIMIT=4GiB`. Integration tests use only
-`postgres://postgres@localhost:54329/postgres?sslmode=disable`, with per-test
-schemas and test lock scopes. No initdb was run.
+A ledger error labels only that queue's warning section with
+`error: "ledger_unavailable"`, preserving the last complete counts (possibly
+stale), never partial data. Multi-queue status and registration continue; the
+latter logs the failure. The snapshot gate keys on having had a pin, so rollback
+and complete acknowledgement do not restore blocking worker reads.
 
-**Final results:** `make check` exit 0 (format, zero lint issues, full race-enabled
-short suite, build); focused tests exit 0; six legacy reporting fixtures, six
-complete CLI outputs and 56 complete HTTP responses match. The build embeds
-`e16a98c-dirty` from the committed implementation (only evidence files were
-dirty while the build completed);
-`execution.json` retains the binary SHA-256 and exact source commit.
+`TestJournalWarningQueryCountsAndIncrementalWatermark` traces actual pgx SQL on a
+1,024-event prefix:
 
-The tests cover exact live routing before auth/key discovery; health auth and
-method/query/body validation; closed test-DB health 503 with live 200; worker
-mutex contention on authority status and health; zero queues; per-queue
-isolation; pending retirement/recovery obligations; successful versus failed
-and report-only turns; independent observed/verified ages and missing evidence;
-hidden, violated, repaired and stale applied inputs, including sticky violations
-through hidden reads; snapshot restart; warning
-visibility without failure; cancellation; queue/output/detail bounds; actual
-webhook backstop, rules/validation retry, quota and error deadlines; repeated
-on-time failures becoming degraded; and restart losing process success times.
+- Legacy: 4 statements total (BEGIN, queue lookup, journal query, COMMIT), **0
+  additional warning queries**; no ledger cache allocated.
+- Authority cold, unchanged, and one new event: the same **4 statements / 0
+  additional warning queries** each. The watermark advances only on new events.
+- Background refresh unchanged: **3 statements** (BEGIN, suffix page, COMMIT).
+- Background refresh with two new audits: **5 statements**: those same three
+  plus two indexed origin probes. Work scales with the new suffix, not history.
 
-The first in-flight full check started before the rollback fix; its newly
-extended regression ran against the earlier status build and blocked after
-rollback. A subsequent formatting check caught one import indentation. Both
-were superseded by the final full check on the committed implementation;
-`superseded-make-check.log` and `superseded-format-check.log` retain those results.
-Focused tests passed with the rollback fix before its formatting-only amend.
+`TestJournalWarningErrorIsolatesQueueAndReporting` covers a malformed association
+beside a healthy queue and verifies worker reporting excludes warning work.
+`TestWarningCacheDelayedAuditRollbackAndAcknowledgement` covers delayed origin
+eligibility. `TestWarningCacheCompletesAfterCancelledPage` cancels a background
+read after consuming a full page: partial counts stay unpublished, and the next
+successful empty suffix completes the pending index before publishing it.
+`TestOutsideWarningErrorPreservesRegistration` exercises both
+registration paths and visible per-queue errors. Existing 300-warning/page-boundary,
+restart, acknowledgement, GitHub omission and busy-worker audit-loop tests remain.
 
-The ledger integration adds:
+## Health model (B, C, Muse 4/6/7)
 
-- `TestOutsideWarningsLedgerStatusHealthAndAcknowledgement`: status/list/health
-  warning IDs and count, HTTP 200, restart, acknowledgement, unchanged history,
-  and failed refresh preserving the previous snapshot.
-- `TestOutsideWarningsBoundedAcrossPagesAndAuthorityRollback`: 300 outstanding
-  warnings across ledger pages with exactly 20 retained IDs; acknowledge an entry
-  older than recent history, retain 299 warnings across rollback, and match health.
-- `TestGitHubOutsidePushHasNoAuthorityWarnings`: default and explicitly pinned
-  GitHub queues retain outside-push history without authority warnings.
-- `TestOutsideWarningsAuditLoopPublishesWhileWorkerBusy`: the actual independent
-  audit loop publishes acknowledgement while the worker mutex stays held.
-- Extended `TestAuthorityStatusAndHealthDoNotWaitForWorker`: nonempty ledger
-  warnings remain visible in status/list/health with the worker mutex held,
-  including after rollback to GitHub mode.
+Waiting publishes the effective next cycle **start** deadline. Every immediate
+wake, including a journal-change wake, advances it to now. Slot starvation is
+overdue only after `deadline + OverdueGrace`. Acquiring a slot clears that deadline
+and publishes `in_cycle` / `cycle_started_at`; in-cycle overdue requires exceeding
+`cycle_started_at + MaxCycleDuration`. The next start deadline is published when
+the turn finishes. Defaults and supported process ranges:
 
-PR 5's existing acknowledgement, delayed-audit eligibility, snapshot and 5,000 /
-50,000-row bounded-page tests also pass after the shared reader extraction.
+- Grace: 30s, range 1–60s.
+- Maximum cycle duration: 3h, range 2m–6h, via
+  `--health-max-cycle-duration` / `OPENMERGE_HEALTH_MAX_CYCLE_DURATION`. A hot turn
+  can run 64 chained actions at the default 2m per-action timeout, plus other work.
+- Maximum success age: 15m, range 1–60m. Degraded depends **only** on elapsed time
+  since last successful reconciliation, or queue process start before first
+  success. Failure counts remain informational; three failures 15s after success
+  are healthy.
 
-`TestHealthRealGitUnavailableRemote` uses a fresh bare remote and cache from
-`newCompositionFixture`, with deterministic source commit inputs (Fixture author,
-source timestamp 1700000000) and a fake forge adapter. Production Git performs a
-healthy reconciliation, then the test renames its local remote out of service.
-Both a queue settled by the production real-git abandon path and a durable
-pending landing retain last-success
-and publish the actual five-second retry deadline. A failed remote never settles
-the pending attempt. These local refs are test artifacts, not sandbox/GitHub
-acceptance evidence.
+`TestHealthCycleRuntimeStartsAfterSlotAcquisition` runs the real loop with a
+stalled fake forge: the first zero-delay cycle returns health 200, remains 200
+beyond grace, and becomes overdue/503 beyond the configured runtime limit.
+`TestHealthSlotStarvationAndImmediateJournalWake` tests both initial slot
+starvation and a real journal wake interrupting the idle backstop. The existing
+quota, validation, rules, webhook and error retry deadline tests still pass.
 
-Health request DB work is exactly `SELECT 1`, independent of queue/event count;
-it acquires no queue/event locks and loads no journals. The HTTP deadline bounds
-pool acquisition and statement execution to 2s. The registry uses TryRLock,
-worker values are immutable atomic snapshots, queue count is capped at 256,
-visibility details at 64 per queue with explicit omission counts, and complete
-responses at 256 KiB. Oversized output fails before any partial response.
+`TestHealthRecoveryLoopExplicitlyExcludesSettledWorker` sets `w.recovery` and
+retains a stale landing log snapshot while durable state is settled. The actual
+loop exits and explicitly clears the health watch, avoiding permanent 503 even
+when best-effort log replay cannot advance. Pending obligations remain watched.
+`TestAuthorityStatusAndHealthDoNotWaitForWorker` now covers authority, rollback
+with a warning, and rollback with **zero** warnings while the worker mutex stays
+held.
 
-## Legacy compatibility
+Future evidence ages are null with `clock_skew` and independent observed/verified
+markers; CLI text exposes the skew. Health also marks future last-success times.
+`TestAuthorityFutureEvidenceHasExplicitClockSkew` verifies JSON, text, independent
+ages and clearing the marker when time catches up.
 
-The required probe is:
+`docs/api.md` and the appended ADR implementation-refinement note enumerate the
+final 503 contract: unavailable health provider/DB/deadline, busy registry,
+queue/serialization/response limits, or a watched violated/overdue/degraded queue.
+Readiness alone, warning availability and consecutive failures add no 503 reason.
+Accepted Decision prose is unchanged.
+
+## Verification and widened legacy compatibility (Muse 8)
+
+All Go processes, formatting and Go-invoking probes run under:
 
 ```
-flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB python3 scripts/check-legacy-reporting.py /home/riels/.cache/adr0008-6-main
+flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB
 ```
 
-It compares six legacy check outputs and serialized existing status fields,
-including field order, and checks its negative controls. It only permits the
-preexisting Stage A `change`/`landing` additive fields; it does not strip the new
-authority or warning fields.
+DB integration uses only isolated schemas on
+`postgres://postgres:openmerge@localhost:54329/postgres?sslmode=disable`. No initdb
+or live-service access was performed. Git integration uses disposable local
+remotes and fake forge adapters.
 
-The additional complete-response probe is:
+- Focused store/status/serve/CLI health regressions: **PASS**; exact query-count
+  evidence is in `round2/focused.log`.
+- `make check`: **PASS** (format, zero lint issues, full race-enabled short suite, build).
+- `scripts/check-legacy-reporting.py`: **PASS**, six check strings byte-identical;
+  preexisting JSON fields/order identical after stripping only the already
+  permitted Stage A `change`/`landing` additions; negative controls pass.
+- `scripts/check-legacy-authority-http.py`: **PASS**, **1,304 entire HTTP
+  responses** byte-identical, including status lines, headers and bodies, with
+  **no field stripping**. Retains the original 56 Handler responses and adds
+  1,248 DynamicHandler + real Server responses: six deterministic DB-backed
+  fixtures × ready/waiting × token/no-token × 13 routes × GET/POST ×
+  missing/valid credentials. Routes include queue lists/details, PR/event-limited
+  detail, invalid/missing routes, brief (reviewer/operator), change, decisions,
+  revision and discovery. Server supplies production readiness/policy methods;
+  Journals uses the test DB.
+- `scripts/check-legacy-authority-cli.py`: **PASS**, six entire CLI outputs
+  byte-identical, without stripping whitespace/fields. Empty, idle, waiting,
+  paused, active and outside-push fixtures now go through **Store.Journals →
+  status.Project → printStatus**, rather than hand-built status DTOs.
 
-```
-flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB python3 scripts/check-legacy-authority-http.py /home/riels/.cache/adr0008-6-main
-```
-
-It compares **56 entire HTTP responses**, including status line, every header
-and complete body, with no field stripping. Coverage includes list, repository,
-queue, PR detail and events-limited detail, invalid query and missing route;
-GET/POST; configured/unconfigured tokens; and valid/missing credentials. It
-uses Go overlays and deterministic local fixtures, never a running listener.
-
-A separate `scripts/check-legacy-authority-cli.py` overlay compares six complete
-CLI outputs (empty, idle, waiting, paused, active and outside-push warning) against
-the same baseline, without stripping fields or whitespace. It retains both sides
-as base64 and their hashes in the artifact directory.
-
-For queues without applied OpenMerge authority, `authority` is omitted. For
-queues without outstanding authority-era warnings, `outside_warnings` is omitted.
-Existing
-`outside_pushes`, deployed check text and preexisting JSON ordering are retained.
-The two new routes have their own response contracts and do not change existing
-routes.
-
-Execution receipts and SHA-256 manifest accompany this file in
-`adr-0008-6-artifacts/`. The complete HTTP response receipt stores both sides
-as base64 plus SHA-256 hashes. `health-query-plan.txt` retains one diagnostic
-test-DB EXPLAIN/ANALYZE for SELECT 1; its sample timing is not a service SLO. Sandbox healthy/unverified/violation/drift/outside-warning HTTP
-responses remain unavailable here and are explicitly deferred to PR 11.
+Re-run each Python script with `/home/riels/.cache/pr115-r2-main-975b1b7` as its
+baseline argument, inside the wrapper above; HTTP/CLI additionally require the
+test DB environment. `round2/http-responses.json` retains both complete HTTP
+responses and SHA-256 hashes; `round2/cli-responses.json` does the same for CLI
+bytes. The manifest records commands, implementation, baseline and receipt
+hashes. No comparison touches a running listener, live API or GitHub.
