@@ -8,7 +8,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/status"
@@ -105,7 +108,7 @@ func githubProjection(t *testing.T, config string, approvals bool) map[string]st
 		"reviewer-check": githubStatus.Summary,
 		"github-status":  string(statusBytes),
 		"api":            githubHTTP(t, s, w.Key, "/v1/queues"),
-		"health":         githubHTTP(t, s, w.Key, "/v1/health"),
+		"health":         utcGithubHealth(t, githubHTTP(t, s, w.Key, "/v1/health")),
 		"change":         githubHTTP(t, s, w.Key, changePath),
 	}
 	for _, audience := range []string{"reviewer", "operator", "agent"} {
@@ -115,6 +118,20 @@ func githubProjection(t *testing.T, config string, approvals bool) map[string]st
 	must(t, err)
 	output["author"] = summary
 	return output
+}
+
+// Normalize only health timestamp values: synctest fixes the instant, but
+// time.Now retains the host location. Preserve every other byte (including JSON
+// formatting) so the golden still catches changes outside timezone spelling.
+func utcGithubHealth(t *testing.T, raw string) string {
+	t.Helper()
+	timestamps := regexp.MustCompile(`"(?:checked_at|started_at|last_success_at|cycle_started_at|last_progress_at|next_deadline)":"([^"]+)"`)
+	return timestamps.ReplaceAllStringFunc(raw, func(field string) string {
+		value := timestamps.FindStringSubmatch(field)[1]
+		at, err := time.Parse(time.RFC3339Nano, value)
+		must(t, err)
+		return strings.Replace(field, value, at.UTC().Format(time.RFC3339Nano), 1)
+	})
 }
 
 func githubHTTP(t *testing.T, source status.Source, key store.QueueKey, path string) string {
