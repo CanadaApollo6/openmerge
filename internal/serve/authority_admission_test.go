@@ -207,7 +207,8 @@ func TestAuthorityAdmissionReaderErrorsAreSanitized(t *testing.T) {
 
 func TestAuthorityAdmissionWorkerLockedAppend(t *testing.T) {
 	// Real socket I/O prevents synctest's clock from advancing.
-	// Keep the lock until execute returns, with a real watchdog.
+	// The reader confirms the lock before returning a synthetic read timeout;
+	// keep it held until execute returns, with an independent real watchdog.
 	authorityAdmissionWorkerTimeout(t, "locked_append")
 }
 
@@ -244,12 +245,16 @@ func authorityAdmissionWorkerTimeout(t *testing.T, mode string) {
 	s.options.ActionTimeout = time.Second
 	writeTimeout := completionWriteTimeout
 	if mode == "locked_append" {
+		// Exclude unrelated error-status writes from the held-lock measurement.
+		w.reportingNext = time.Now().Add(time.Hour)
+		s.options.ActionTimeout = 30 * time.Second
 		s.authorityWriteTimeout = 100 * time.Millisecond
 		writeTimeout = s.authorityWriteTimeout
 	}
 	parent, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	read := false
+	var lockHeldAt time.Time
 	var logs bytes.Buffer
 	s.options.Logger = slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	readerErr := fmt.Errorf("https://x-access-token:ghs_SECRET@example.test/repo: %w", forge.ErrRulesUnavailable)
@@ -257,6 +262,8 @@ func authorityAdmissionWorkerTimeout(t *testing.T, mode string) {
 		read = true
 		if strings.HasPrefix(mode, "secret_") {
 			if mode == "secret_persist" {
+				// Store is concrete and has no append-failure injection seam. Closing
+				// this test-owned pool after Load fails only the subsequent persistence.
 				db.Close()
 			}
 			return forge.EmptyWriteRestrictionObservation(), readerErr
@@ -266,6 +273,14 @@ func authorityAdmissionWorkerTimeout(t *testing.T, mode string) {
 			must(t, err)
 			_, err = conn.Exec(t.Context(), `SELECT pg_advisory_xact_lock(1330464081, hashtext(current_schema() || '/' || $1))`, fmt.Sprint(w.id))
 			must(t, err)
+			// Also release the transaction if an assertion aborts this test.
+			t.Cleanup(func() {
+				_, err := conn.Exec(context.Background(), "ROLLBACK")
+				must(t, err)
+			})
+			// Exec returning confirms this separate connection holds the queue lock.
+			lockHeldAt = time.Now()
+			return forge.EmptyWriteRestrictionObservation(), context.DeadlineExceeded
 		}
 		if mode == "shutdown" {
 			cancel()
@@ -276,7 +291,11 @@ func authorityAdmissionWorkerTimeout(t *testing.T, mode string) {
 	before, err := s.store.EventsAfter(t.Context(), w.id, 0)
 	must(t, err)
 	started := time.Now()
-	watchdog, stop := context.WithTimeout(parent, s.options.ActionTimeout+writeTimeout+time.Second)
+	watchdogTimeout := s.options.ActionTimeout + writeTimeout + time.Second
+	if mode == "locked_append" {
+		watchdogTimeout = 45 * time.Second
+	}
+	watchdog, stop := context.WithTimeout(parent, watchdogTimeout)
 	defer stop()
 	if mode == "missing_reader" {
 		installWorkerAuthorityReader(t, w, nil)
@@ -319,6 +338,7 @@ func authorityAdmissionWorkerTimeout(t *testing.T, mode string) {
 		}
 		return
 	}
+	finished := time.Now()
 	if mode == "locked_append" {
 		_, unlockErr := conn.Exec(t.Context(), "ROLLBACK")
 		must(t, unlockErr)
@@ -331,10 +351,19 @@ func authorityAdmissionWorkerTimeout(t *testing.T, mode string) {
 		t.Fatalf("worker did not time out admission read: read=%v err=%v", read, err)
 	}
 	elapsed := time.Since(started)
-	if elapsed > s.options.ActionTimeout+writeTimeout+time.Second/2 || (mode == "shutdown" && elapsed != 0) {
+	if mode == "locked_append" {
+		elapsed = finished.Sub(lockHeldAt)
+		if elapsed < writeTimeout || elapsed > writeTimeout+5*time.Second {
+			t.Fatalf("unbounded or skipped locked admission persistence: elapsed=%v bound=%v", elapsed, writeTimeout)
+		}
+	} else if elapsed > s.options.ActionTimeout+writeTimeout+time.Second/2 || (mode == "shutdown" && elapsed != 0) {
 		t.Fatalf("unbounded admission persistence: elapsed=%v", elapsed)
 	}
-	if mode != "shutdown" && (w.authorityFailures != 1 || time.Until(w.authorityNextCheck) < time.Minute-time.Second/2 || time.Until(w.authorityNextCheck) > time.Minute) {
+	if mode == "locked_append" {
+		if w.authorityFailures != 1 || w.authorityNextCheck.Before(lockHeldAt.Add(time.Minute)) || w.authorityNextCheck.After(finished.Add(time.Minute)) {
+			t.Fatal("locked append skipped recovery schedule")
+		}
+	} else if mode != "shutdown" && (w.authorityFailures != 1 || time.Until(w.authorityNextCheck) < time.Minute-time.Second/2 || time.Until(w.authorityNextCheck) > time.Minute) {
 		t.Fatal("worker timeout skipped recovery schedule")
 	}
 	if got := hasAuthorityReadError(lifecycleState(t, s, w)); got != (mode == "read_timeout") {

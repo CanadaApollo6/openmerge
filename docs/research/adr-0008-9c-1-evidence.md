@@ -194,3 +194,36 @@ are unchanged and no random serve scratch schema remains.
 [manifest](adr-0008-9c-1-artifacts/round3-manifest.json) retain receipts.
 Raw passing logs/replay streams: `$HOME/.cache/adr0008-9c-verification-round3-pass`;
 mutation: `$HOME/.cache/adr9c-r3-mutation/result.log`.
+
+## Round 4 test-only correction and verification
+
+Starting head: `c47387d4ac98260b40acdd0caf4637721c27e3c0`. Hold remains;
+no production behavior, fixtures, migrations or build/CI configuration changed.
+
+- The real-Postgres locked-append test now uses a 30s action budget. Its reader
+  synchronously acquires the queue advisory lock on the separate connection,
+  then immediately returns `context.DeadlineExceeded`. The lock stays held until
+  `execute` returns. Elapsed time starts at confirmed lock acquisition and must
+  be 100ms–5.1s, independent of ActionTimeout; an independent 45s watchdog bounds
+  broken implementations. Retry, no landing start and no journal growth remain
+  asserted. Unrelated error-status writes are deferred in this fixture; the
+  first focused run exposed their wait on the same lock. Synctest timeout and
+  sanitization assertions remain intact. The closed-pool failure injection is
+  documented; the stray blank line in `write_restriction.go` is removed.
+- Stress: **30/30 PASS**, `GOMAXPROCS=1 go test -race -count=30 -cpu=1
+  -timeout=10m -v ./internal/serve -run '^TestAuthorityAdmissionWorkerLockedAppend$'`,
+  with eight concurrent CPU-burner processes inside the heavy lock. All eight
+  owned processes were terminated and reaped. Focused timeout/sanitization/lock
+  race tests also pass.
+- Mutation: a Go overlay replaces only the append's `context.WithTimeout` with
+  `context.WithCancel`. **Expected exit 1**: the elapsed assertion rejects
+  **44.43s** against the **5.1s** limit. Production source was never mutated.
+
+Receipts: `/home/riels/.cache/pr136-round4/{focused,stress,mutation,make-check}.log`.
+Both GOROOT and PATH select Go 1.27.3; Go checks run under
+`flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB`.
+Only shared test Postgres on localhost:54329 is used.
+
+`make check`: **exit 0**, zero lint issues, complete short race suite and build
+(serve: **293.332s**). Scratch cleanup leaves the same **94** pre-existing serve
+schemas, with no additions.

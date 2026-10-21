@@ -163,7 +163,6 @@ func (s *Server) observeWorkerAuthority(ctx context.Context, w *worker) error {
 	if !w.authorityNextCheck.IsZero() && time.Now().Before(w.authorityNextCheck) {
 		return nil
 	}
-
 	_, err := s.observeAuthorityRead(ctx, ctx, w, request)
 	if ctx.Err() != nil {
 		return ctx.Err()
