@@ -70,14 +70,17 @@ func legacyGithubProjection(t *testing.T) map[string]string {
 	must(t, err)
 	output["author"] = summary
 	// Export actual invalid-config journal and projections in both checkouts.
-	// Keep the same legacy behavior whether authority work is present or not.
+	// Capture the boundary before the invalid commit; bootstrap fence tokens
+	// are deliberately random and are not invalid-config output.
+	_, invalidBefore, err := s.store.Load(t.Context(), w.id)
+	must(t, err)
 	_, err = f.PushBase(repo, "main", "invalid config", map[string]string{".openmerge.yml": "version: broken"})
 	must(t, err)
 	must(t, s.cycle(t.Context(), w))
 	if w.configError == nil {
 		t.Fatal("invalid config did not stop github work")
 	}
-	rows, err := s.store.EventsAfter(t.Context(), w.id, 0)
+	rows, err := s.store.EventsAfter(t.Context(), w.id, invalidBefore)
 	must(t, err)
 	events := []json.RawMessage{}
 	for _, row := range rows {
@@ -99,10 +102,12 @@ func legacyGithubProjection(t *testing.T) map[string]string {
 		t.Fatal("invalid config invoked authority resolver")
 		return authorityLifecycleResolution{}, nil
 	}
+	_, rollbackBefore, err := rolledBack.store.Load(t.Context(), rw.id)
+	must(t, err)
 	_, err = rf.PushBase(repo, "main", "invalid config", map[string]string{".openmerge.yml": "version: broken"})
 	must(t, err)
 	must(t, rolledBack.cycle(t.Context(), rw))
-	rows, err = rolledBack.store.EventsAfter(t.Context(), rw.id, 0)
+	rows, err = rolledBack.store.EventsAfter(t.Context(), rw.id, rollbackBefore)
 	must(t, err)
 	events = nil
 	for _, row := range rows {
