@@ -101,6 +101,16 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 		}
 		return loadErr
 	}
+	var activation *authorityActivation
+	if loadErr == nil && w.AuthorityRequired && w.resolveAuthorityLifecycle != nil {
+		activation, loadErr = s.prepareAuthorityLifecycle(ctx, w, state, branch, configTip)
+		if loadErr != nil {
+			w.configError = loadErr
+			w.configBranch, w.configTip = "", ""
+			w.ready = false
+			return loadErr
+		}
+	}
 	if baseErr == nil && state.BaseSHA != tip {
 		if w.stageA != nil {
 			if loadErr == nil {
@@ -115,7 +125,7 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 		// default branch (and therefore the policy) stays at the same commit.
 		w.summaries = make(map[int]forge.PullRequestSummary)
 	}
-	if loadErr == nil && (state.ConfigDigest != w.configDigest || w.cfg.QueueConfig().MaxDepth() > 1 && !state.WindowInitialized()) {
+	if loadErr == nil && (activation != nil || state.ConfigDigest != w.configDigest || w.cfg.QueueConfig().MaxDepth() > 1 && !state.WindowInitialized()) {
 		// Publish the policy before using it. Replay invalidates work built under
 		// another digest, and start gates reject workers holding an older policy.
 		events := []queue.Event{}
@@ -149,9 +159,22 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 				applied.Window = &queue.WindowBounds{MinDepth: 1, MaxDepth: 1}
 			}
 		}
-		events = append(events, applied)
-		_, err = s.store.Append(ctx, w.id, events, "")
+		if activation != nil {
+			for _, event := range events {
+				activation.Historical = append(activation.Historical, event.(queue.ConfigApplied))
+			}
+			activation.Config = &applied
+			_, err = s.activateAuthority(ctx, w, *activation)
+		} else {
+			events = append(events, applied)
+			_, err = s.store.Append(ctx, w.id, events, "")
+		}
 		if err != nil {
+			if activation != nil {
+				w.configError = err
+				w.configBranch, w.configTip = "", ""
+				w.ready = false
+			}
 			return err
 		}
 	}
@@ -179,6 +202,11 @@ func stageADefiniteIdentityFailure(err error) bool {
 }
 
 func (s *Server) repositoryConfig(ctx context.Context, target Target, tip string, w *worker) (config.Config, error) {
+	candidate, err := s.repositoryCandidate(ctx, target, tip, w)
+	return candidate.Config, err
+}
+
+func (s *Server) repositoryCandidate(ctx context.Context, target Target, tip string, w *worker) (config.AuthorityCandidate, error) {
 	_, data, err := config.Find(func(path string) ([]byte, bool, error) {
 		data, err := target.Driver.ReadFile(ctx, forge.RepoRef{Path: target.Key.Repository}, tip, path)
 		if w != nil && err == nil {
@@ -190,20 +218,27 @@ func (s *Server) repositoryConfig(ctx context.Context, target Target, tip string
 		return data, err == nil, err
 	})
 	if err != nil {
-		return config.Config{}, err
+		return config.AuthorityCandidate{}, err
 	}
-	cfg, warnings, err := config.Load(data)
+	var candidate config.AuthorityCandidate
+	var warnings []config.Diagnostic
+	if target.AuthorityRequired && target.resolveAuthorityLifecycle != nil {
+		candidate, warnings, err = config.LoadAuthorityCandidate(data)
+	} else {
+		candidate.Config, warnings, err = config.Load(data)
+	}
 	if err != nil {
-		return config.Config{}, err
+		return config.AuthorityCandidate{}, err
 	}
 	for _, warning := range warnings {
 		s.options.Logger.Warn("repository configuration", "repository", target.Key.Repository, "diagnostic", warning.Error())
 	}
-	return cfg, nil
+	return candidate, nil
 }
 
 func (s *Server) loadConfiguration(ctx context.Context, w *worker, branch, tip string) error {
-	cfg, err := s.repositoryConfig(ctx, w.Target, tip, w)
+	candidate, err := s.repositoryCandidate(ctx, w.Target, tip, w)
+	cfg := candidate.Config
 	if err != nil {
 		return err
 	}
@@ -231,6 +266,7 @@ func (s *Server) loadConfiguration(ctx context.Context, w *worker, branch, tip s
 			return config.Errors{{Path: "queues", Message: "approval queue has no parsed policy candidate"}}
 		}
 	}
+	w.configCandidate = candidate
 	w.cfg = selected
 	w.deleteHeadBranch = cfg.DeleteHeadBranch
 	deleteHeadBranch := !s.options.DisableDeleteHeadBranch

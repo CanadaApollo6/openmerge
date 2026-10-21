@@ -217,6 +217,254 @@ func authorityAdoptionReceipt(q QueueID, id int64, pin queue.PolicyAuthorityAppl
 	return r
 }
 
+// authorityConfigPair validates the atomic lifecycle boundary before it takes a
+// queue lock. ConfigApplied is intentionally unchanged on the wire, so the
+// equal governing commit and digest are the only durable association between
+// its event and the authority pin that follows it.
+func authorityConfigPair(config queue.ConfigApplied, pin queue.PolicyAuthorityApplied) error {
+	if err := config.Validate(); err != nil {
+		return err
+	}
+	if err := pin.Validate(); err != nil {
+		return err
+	}
+	if config.Commit != pin.GoverningCommit || config.Digest != pin.EffectiveDigest {
+		return errors.New("authority pin differs from applied config")
+	}
+	switch pin.Authority {
+	case authority.OpenMerge:
+		if pin.OpenMerge == nil || pin.OpenMerge.Activation != nil || pin.OpenMerge.VerificationInput != nil {
+			return errors.New("expected an unadopted openmerge pin")
+		}
+	case authority.GitHub:
+		// PolicyAuthorityApplied.Validate already rejects an OpenMerge actor on
+		// this variant. A github pin is emitted only by the rollback rule below.
+	default:
+		return errors.New("invalid authority mode")
+	}
+	return nil
+}
+
+func latestAuthorityPin(ctx context.Context, tx pgx.Tx, q QueueID) (int64, queue.PolicyAuthorityApplied, bool, error) {
+	var id int64
+	var raw []byte
+	err := tx.QueryRow(ctx, `SELECT id,payload FROM events WHERE queue_id=$1 AND type='policy_authority_applied' ORDER BY id DESC LIMIT 1`, q).Scan(&id, &raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, queue.PolicyAuthorityApplied{}, false, nil
+	}
+	if err != nil {
+		return 0, queue.PolicyAuthorityApplied{}, false, err
+	}
+	event, err := queue.DecodeEvent(raw)
+	if err != nil {
+		return 0, queue.PolicyAuthorityApplied{}, false, err
+	}
+	pin, ok := event.(queue.PolicyAuthorityApplied)
+	if !ok {
+		return 0, queue.PolicyAuthorityApplied{}, false, errors.New("invalid persisted authority pin")
+	}
+	return id, pin, true, nil
+}
+
+func latestConfigApplied(ctx context.Context, tx pgx.Tx, q QueueID) (queue.ConfigApplied, bool, error) {
+	var raw []byte
+	err := tx.QueryRow(ctx, `SELECT payload FROM events WHERE queue_id=$1 AND type='config_applied' ORDER BY id DESC LIMIT 1`, q).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return queue.ConfigApplied{}, false, nil
+	}
+	if err != nil {
+		return queue.ConfigApplied{}, false, err
+	}
+	event, err := queue.DecodeEvent(raw)
+	if err != nil {
+		return queue.ConfigApplied{}, false, err
+	}
+	config, ok := event.(queue.ConfigApplied)
+	if !ok {
+		return queue.ConfigApplied{}, false, errors.New("invalid persisted config")
+	}
+	return config, true, nil
+}
+
+// sameAuthorityPin ignores an existing interpreted activation. A successful
+// retry must return that verified pin, rather than replacing it with the
+// caller's necessarily unadopted input pin.
+func sameAuthorityPin(previous, candidate queue.PolicyAuthorityApplied) bool {
+	if previous.GoverningCommit != candidate.GoverningCommit || previous.EffectiveDigest != candidate.EffectiveDigest || previous.Authority != candidate.Authority || previous.DefaultBranch != candidate.DefaultBranch || previous.CoverageDigest != candidate.CoverageDigest {
+		return false
+	}
+	switch candidate.Authority {
+	case authority.GitHub:
+		return previous.OpenMerge == nil
+	case authority.OpenMerge:
+		return previous.OpenMerge != nil && candidate.OpenMerge != nil && reflect.DeepEqual(previous.OpenMerge.Binding, candidate.OpenMerge.Binding)
+	default:
+		return false
+	}
+}
+
+// authorityDraftFloor returns the newest durable boundary after which a
+// proposed verification must have been recorded before it can be adopted. A
+// github pin is a rollback boundary. An OpenMerge pin that did not fold an
+// authenticated activation is likewise unverified; accepting a prior proposal
+// after either boundary would silently revive stale verification evidence.
+func authorityDraftFloor(ctx context.Context, tx pgx.Tx, q QueueID) (int64, error) {
+	rows, err := tx.Query(ctx, `SELECT id,payload FROM events WHERE queue_id=$1 AND type='policy_authority_applied' ORDER BY id DESC`, q)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var raw []byte
+		if err := rows.Scan(&id, &raw); err != nil {
+			return 0, err
+		}
+		event, err := queue.DecodeEvent(raw)
+		if err != nil {
+			return 0, err
+		}
+		pin, ok := event.(queue.PolicyAuthorityApplied)
+		if !ok {
+			return 0, errors.New("invalid persisted authority pin")
+		}
+		if pin.Authority == authority.GitHub || pin.Authority == authority.OpenMerge && !queue.AuthorityDraftAdopted(pin) {
+			return id, nil
+		}
+	}
+	return 0, rows.Err()
+}
+
+func freshAuthorityAdoption(state queue.State, basis uint64, readStarted, readAt time.Time) bool {
+	return basis == state.RulesSourceRevision(queue.WriteRestriction) && !readStarted.IsZero() && !readAt.Before(readStarted) && time.Since(readAt) >= 0 && time.Since(readStarted) <= 2*time.Minute
+}
+
+// ApplyAuthorityConfig atomically records a configuration and its authority
+// lifecycle pin. It is intentionally the only lifecycle writer that can create
+// a github pin: a github pin is a rollback receipt for a folded OpenMerge pin,
+// never an event for ordinary github configuration. For an OpenMerge pin, an
+// authenticated proposed draft is adopted only after the usual fresh seeing
+// read and source-basis checks; otherwise the committed pin is unverified.
+//
+// An optional historical ConfigApplied is the one-time fixed-window backfill
+// for the currently folded legacy policy. It precedes the target config and
+// pin in the same queue transaction. A matching retry returns the durable pin
+// before looking up draft/history state. In particular it never erases a
+// durable verified activation with the caller's unadopted pin. Config and pin
+// are inserted in one transaction under the queue lock, so invalid source
+// evidence and binding errors leave neither event behind.
+func (s *Store) ApplyAuthorityConfig(ctx context.Context, q QueueID, config queue.ConfigApplied, pin queue.PolicyAuthorityApplied, draftID int64, basis uint64, readStarted, readAt time.Time, in forge.WriteRestrictionInput, fresh authority.Observation, historical ...queue.ConfigApplied) (AuthorityAdoptionReceipt, error) {
+	var receipt AuthorityAdoptionReceipt
+	if err := authorityConfigPair(config, pin); err != nil {
+		return receipt, err
+	}
+	if len(historical) > 1 {
+		return receipt, errors.New("at most one historical config backfill is allowed")
+	}
+	if len(historical) == 1 {
+		if err := historical[0].Validate(); err != nil {
+			return receipt, err
+		}
+		if historical[0].Window == nil || historical[0].Policy != nil {
+			return receipt, errors.New("historical config backfill must contain only window bounds")
+		}
+	}
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		if err := s.lockQueue(ctx, tx, q); err != nil {
+			return err
+		}
+		var k QueueKey
+		if err := tx.QueryRow(ctx, `SELECT installation,repository,base,lane FROM queues WHERE id=$1`, q).Scan(&k.Installation, &k.Repository, &k.BaseBranch, &k.Lane); err != nil {
+			return err
+		}
+		if pin.Authority == authority.OpenMerge {
+			if err := validateAuthorityQueue(k, pin.OpenMerge.Binding); err != nil {
+				return err
+			}
+		}
+
+		previousID, previous, havePrevious, err := latestAuthorityPin(ctx, tx, q)
+		if err != nil {
+			return err
+		}
+		previousConfig, haveConfig, err := latestConfigApplied(ctx, tx, q)
+		if err != nil {
+			return err
+		}
+		// This path deliberately precedes journal replay and draft lookup. It
+		// mirrors AdoptAuthorityPin's no-op retry behavior and makes rollback
+		// retries safe after their current folded pin is github.
+		if havePrevious && haveConfig && sameAuthorityPin(previous, pin) && reflect.DeepEqual(previousConfig, config) {
+			receipt = authorityAdoptionReceipt(q, previousID, previous)
+			return nil
+		}
+
+		state, _, err := load(ctx, tx, q)
+		if err != nil {
+			return err
+		}
+		if len(historical) == 1 && (historical[0].Commit != state.ConfigCommit || historical[0].Digest != state.ConfigDigest) {
+			return errors.New("historical config backfill differs from folded config")
+		}
+		switch pin.Authority {
+		case authority.GitHub:
+			// This is a mode rollback, not a generic github config event. The
+			// folded state (rather than a caller-supplied event ID) proves the
+			// immediate lifecycle being rolled back.
+			current := state.AuthorityPin()
+			if current == nil || current.Authority != authority.OpenMerge {
+				return errors.New("github authority pin requires a folded openmerge pin")
+			}
+		case authority.OpenMerge:
+			var draft queue.WriteRestrictionVerified
+			if draftID > 0 {
+				draft, err = proposedVerification(ctx, tx, q, draftID)
+				if err != nil {
+					return err
+				}
+			}
+			floor, err := authorityDraftFloor(ctx, tx, q)
+			if err != nil {
+				return err
+			}
+			if draftID > 0 && (floor == 0 || draftID > floor) && freshAuthorityAdoption(state, basis, readStarted, readAt) {
+				pin = queue.BindAuthorityDraft(pin, draftID, draft, readStarted, readAt, in, fresh)
+			}
+		}
+
+		if len(historical) == 1 {
+			name, raw, err := queue.EncodeEvent(historical[0])
+			if err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `INSERT INTO events(queue_id,type,payload) VALUES($1,$2,$3::jsonb)`, q, name, string(raw)); err != nil {
+				return err
+			}
+		}
+		configName, configRaw, err := queue.EncodeEvent(config)
+		if err != nil {
+			return err
+		}
+		pinName, pinRaw, err := queue.EncodeEvent(pin)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO events(queue_id,type,payload) VALUES($1,$2,$3::jsonb)`, q, configName, string(configRaw)); err != nil {
+			return err
+		}
+		var id int64
+		if err := tx.QueryRow(ctx, `INSERT INTO events(queue_id,type,payload) VALUES($1,$2,$3::jsonb) RETURNING id`, q, pinName, string(pinRaw)).Scan(&id); err != nil {
+			return err
+		}
+		receipt = authorityAdoptionReceipt(q, id, pin)
+		return nil
+	})
+	if err != nil {
+		return AuthorityAdoptionReceipt{}, err
+	}
+	return receipt, nil
+}
+
 // AdoptAuthorityPin remains publicly unwired. The caller captures the source
 // basis before a fresh seeing read begun after landing. Draft mismatch or
 // incomplete evidence leaves activation unverified. Adoption and the authority
