@@ -287,7 +287,7 @@ func (s *Server) loadConfiguration(ctx context.Context, w *worker, branch, tip s
 		deleteHeadBranch = *cfg.DeleteHeadBranch
 	}
 	digest := selected.Digest(deleteHeadBranch)
-	if digest != w.configDigest && !(w.AuthorityRequired && w.resolveAuthorityLifecycle != nil) {
+	if digest != w.configDigest && (!w.AuthorityRequired || w.resolveAuthorityLifecycle == nil) {
 		// Authority lifecycle invalidates against the final folded digest below.
 		// Ordinary GitHub keeps its existing invalidation behavior.
 		w.summaries = make(map[int]forge.PullRequestSummary)

@@ -528,8 +528,8 @@ func TestAuthorityLifecycleRollbackReceiptAndUnchangedWire(t *testing.T) {
 	}
 
 	// A folded rollback receipt must survive later GitHub governing commits.
-	w.AuthorityRequired = false
-	for _, files := range []map[string]string{{"README.md": "unrelated"}, {".openmerge.yml": strings.Replace(repositoryConfig, "name: default", "name: default\n    enter_when: [label = ready]", 1)}} {
+	for i, files := range []map[string]string{{"README.md": "unrelated"}, {".openmerge.yml": strings.Replace(repositoryConfig, "name: default", "name: default\n    enter_when: [label = ready]", 1)}} {
+		w.AuthorityRequired = i == 0
 		_, err = f.PushBase(repo, "main", "github rebind", files)
 		must(t, err)
 		must(t, s.configuration(t.Context(), w))
@@ -632,7 +632,7 @@ func TestAuthorityLifecycleUnchangedApprovalReadiness(t *testing.T) {
 	if digest != w.configDigest || before != after {
 		t.Fatal("policy or journal changed")
 	}
-	if !w.ready {
+	if !w.ready || len(w.summaries) != 1 {
 		t.Fatalf("unchanged authority+approvals config cleared readiness; summaries=%d", len(w.summaries))
 	}
 }
@@ -652,5 +652,9 @@ func TestAuthorityLifecycleDepthOneToFour(t *testing.T) {
 	must(t, err)
 	if err := s.configuration(t.Context(), w); err != nil {
 		t.Fatalf("valid authority depth transition rejected: %v", err)
+	}
+	state := lifecycleState(t, s, w)
+	if !state.WindowInitialized() || state.AuthorityPin().EffectiveDigest != w.configDigest || state.ConfigDigest != w.configDigest || w.cfg.QueueConfig().MaxDepth() != 4 {
+		t.Fatal("authority speculative config/pin did not commit")
 	}
 }
