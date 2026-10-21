@@ -516,7 +516,7 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 				continue
 			}
 			entry := w.ledgerCache.projection.LedgerEntry(n)
-			if pin.Authority == authority.GitHub || entry != nil && entry.Position == 0 {
+			if pin.Authority == authority.GitHub || (entry != nil && entry.Position == 0) {
 				data, err := s.store.Observation(ctx, w.id, fmt.Sprintf("status/%d", n))
 				if err != nil {
 					return err
@@ -530,7 +530,7 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 						return err
 					}
 				}
-				if len(data) != 0 && (pin.Authority == authority.GitHub || previous.Head == entry.HeadSHA && (previous.Status.State == forge.Dequeued || previous.Status.State == forge.Merged)) {
+				if len(data) != 0 && (pin.Authority == authority.GitHub || (previous.Head == entry.HeadSHA && (previous.Status.State == forge.Dequeued || previous.Status.State == forge.Merged))) {
 					previous.Status.Summary = checkstatus.RefreshQueueInstructions(previous.Status.Summary, &w.ledgerCache.projection)
 					if err := s.writeStatus(ctx, w, n, previous.Head, previous.Status); err != nil {
 						return err

@@ -12,8 +12,8 @@ func WithProgressHook(ctx context.Context, hook func()) context.Context {
 
 // NotifyProgress reports a successful, fully consumed request. Without a hook it
 // is a no-op; drivers must not call it for failed or still-streaming responses.
-// Requests with a nil decode target (client.Do(req, nil)) close the body unread
-// and publish nothing; paginated reads must decode into a target to earn progress.
+// Requests whose response bodies are closed unread publish nothing. Empty-body
+// 2xx responses (204 / http.NoBody) publish at the transport regardless of decode target.
 func NotifyProgress(ctx context.Context) {
 	if hook, _ := ctx.Value(progressHookKey{}).(func()); hook != nil {
 		hook()

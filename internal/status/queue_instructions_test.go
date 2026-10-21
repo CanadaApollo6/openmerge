@@ -98,10 +98,14 @@ func TestQueueInstructionsBeforeApprovalBriefAndHostileNames(t *testing.T) {
 
 func TestQueueInstructionsRefreshPreservesTerminalSummary(t *testing.T) {
 	pin := instructionPin(t)
-	active, _, _ := Project(journal(pin), 0, 0, nil)
+	config := queue.ConfigApplied{Commit: pin.GoverningCommit, Digest: pin.EffectiveDigest}
+	active, _, _ := Project(journal(config, pin), 0, 0, nil)
+	if got := active.state.AuthorityPin(); got == nil || got.Authority != authority.OpenMerge || QueueInstructions(&active) == "" {
+		t.Fatal("expected an active OpenMerge authority pin and queue instructions")
+	}
 	pin.Authority = authority.GitHub
 	pin.OpenMerge = nil
-	rollback, _, _ := Project(journal(pin), 0, 0, nil)
+	rollback, _, _ := Project(journal(config, pin), 0, 0, nil)
 	for _, warning := range []string{"", "\nWARNING: retained safety warning"} {
 		before := "Dequeued: requested; exact head abc\n\nQueue: original ledger" + warning + "\n\nReviewer brief: url\nDigest: unchanged" + queueInstructionParagraph
 		expected := "Dequeued: requested; exact head abc\n\nQueue: original ledger" + QueueInstructions(&active) + warning + "\n\nReviewer brief: url\nDigest: unchanged" + queueInstructionParagraph
