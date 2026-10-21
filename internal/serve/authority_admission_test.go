@@ -91,7 +91,7 @@ func TestAuthorityAdmissionNoApprovalsChains(t *testing.T) {
 					if n == 1 {
 						resolver := w.resolveAuthorityLifecycle
 						w.resolveAuthorityLifecycle = nil
-						x.LandingDecisions = s.stageAGate(w, claim, cfg, basis)
+						x.LandingDecisions = s.stageAGate(t.Context(), w, claim, cfg, basis)
 						err = x.Execute(t.Context(), claim.Action, s.store.EmitWithPolicy(t.Context(), claim, cfg, w.stageA.policy))
 						if err == nil || !strings.Contains(err.Error(), "opt-in/configuration unavailable") {
 							t.Fatalf("missing resolver bypassed executor admission: %v", err)
@@ -101,7 +101,7 @@ func TestAuthorityAdmissionNoApprovalsChains(t *testing.T) {
 							w.authorityObservation.Read = func(context.Context) (authority.Observation, error) {
 								return authority.Observation{Inventory: authority.ReadFailure, Protections: []authority.Protection{}, Coverage: []authority.Coverage{}, Findings: []authority.Finding{}}, failure
 							}
-							x.LandingDecisions = s.stageAGate(w, claim, cfg, basis)
+							x.LandingDecisions = s.stageAGate(t.Context(), w, claim, cfg, basis)
 							err = x.Execute(t.Context(), claim.Action, s.store.EmitWithPolicy(t.Context(), claim, cfg, w.stageA.policy))
 							if !errors.Is(err, failure) || !strings.Contains(err.Error(), "authority admission read failed") {
 								t.Fatalf("read failure did not close admission: %v", err)
@@ -120,7 +120,7 @@ func TestAuthorityAdmissionNoApprovalsChains(t *testing.T) {
 						}
 						w.authorityObservation.Read = saved
 					}
-					x.LandingDecisions = s.stageAGate(w, claim, cfg, basis)
+					x.LandingDecisions = s.stageAGate(t.Context(), w, claim, cfg, basis)
 					must(t, x.Execute(t.Context(), claim.Action, s.store.EmitWithPolicy(t.Context(), claim, cfg, w.stageA.policy)))
 					if w.authorityFailures != 0 || !w.authorityNextCheck.Equal(time.Now().Add(s.options.RulesInterval)) {
 						t.Fatal("admitted fresh read did not reset observation cadence")
@@ -172,13 +172,67 @@ func TestAuthorityBarrierPinBearingBriefAndAdmission(t *testing.T) {
 		if _, err := s.BriefPolicy(t.Context(), w.Key, req); err == nil || !strings.Contains(err.Error(), "opt-in required") {
 			t.Fatal("pin-bearing brief bypassed worker opt-in", err)
 		}
-		if _, err := s.readAuthorityAdmission(t.Context(), w, state); err == nil || !strings.Contains(err.Error(), "opt-in/configuration unavailable") {
+		if _, err := s.readAuthorityAdmission(t.Context(), t.Context(), w, state); err == nil || !strings.Contains(err.Error(), "opt-in/configuration unavailable") {
 			t.Fatal("pin-bearing admission bypassed worker opt-in", err)
 		}
 		w.AuthorityRequired = true
 		w.resolveAuthorityLifecycle = nil
-		if _, err := s.readAuthorityAdmission(t.Context(), w, state); err == nil {
+		if _, err := s.readAuthorityAdmission(t.Context(), t.Context(), w, state); err == nil {
 			t.Fatal("flag alone enabled admission")
+		}
+	})
+}
+
+func TestAuthorityAdmissionWorkerTimeout(t *testing.T) {
+	testSynctest(t, func(t *testing.T) {
+		s, w, f, _ := authorityWorkerFixture(t)
+		f.SetNativeReviews(repo, 1, forge.NativeReviews{Comments: []forge.NativeComment{shadowComment(100, "@openmerge queue")}})
+		must(t, s.reconcile(t.Context(), w, true))
+		cfg := w.plannerConfig(s.options.PollInterval)
+		build := claimLandingChecksAction(t, s, w, cfg, func(a queue.Action) bool { _, ok := a.(queue.BuildTestRef); return ok })
+		proceed, err := s.store.BeginConsequential(t.Context(), build, cfg, time.Now())
+		must(t, err)
+		if !proceed {
+			t.Fatal("build did not begin")
+		}
+		// Build via the existing executor seam; this regression exercises the
+		// real serve landing path while the separate forge gate remains dormant.
+		x := executor.Executor{Driver: f, Git: f, Repo: repo, Base: "main", RequiredChecks: []string{"ci"}, BuildMetadataKey: w.Key, BuildPolicyDigest: w.stageA.policy.Digest}
+		x.BuildMetadata = func(_ queue.State, key executor.BuildChangeKey, batch queue.Batch, digest string) ([]*forge.ChangeMetadata, error) {
+			current := lifecycleState(t, s, w)
+			return executor.LoadBuildMetadataWithAncestry(current, key, *current.Batch(batch.ID), digest, func(a, b string) (bool, error) { return f.IsAncestor(t.Context(), repo, a, b) })
+		}
+		must(t, x.Execute(t.Context(), build.Action, s.store.EmitWithPolicy(t.Context(), build, cfg, w.stageA.policy)))
+		must(t, s.store.Complete(t.Context(), build, store.Done))
+		batch := lifecycleState(t, s, w).BatchForPR(1)
+		f.SetCheckRuns(repo, batch.TestedSHA, []forge.CheckRun{{Name: "ci", Source: "app:15368", ID: 701, Attempt: 1, State: forge.Success, HeadBranch: batch.TestRef}})
+		_, err = s.store.Append(t.Context(), w.id, []queue.Event{queue.ChecksCompleted{TestedSHA: batch.TestedSHA, Success: true}}, "")
+		must(t, err)
+		claim := claimLandingChecksAction(t, s, w, cfg, func(a queue.Action) bool { _, ok := a.(queue.Land); return ok })
+		s.options.ActionTimeout = time.Second
+		read := false
+		installWorkerAuthorityReader(t, w, func(ctx context.Context) (authority.Observation, error) {
+			read = true
+			<-ctx.Done()
+			return forge.EmptyWriteRestrictionObservation(), ctx.Err()
+		})
+		err = s.execute(t.Context(), w, claim)
+		if !read || !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("worker did not time out admission read: read=%v err=%v", read, err)
+		}
+		if w.authorityFailures != 1 || !w.authorityNextCheck.Equal(time.Now().Add(time.Minute)) {
+			t.Fatal("worker timeout skipped recovery schedule")
+		}
+		if !hasAuthorityReadError(lifecycleState(t, s, w)) {
+			t.Fatal("expired action discarded durable read_error")
+		}
+		rows, err := s.store.EventsAfter(t.Context(), w.id, 0)
+		must(t, err)
+		for _, row := range rows {
+			switch row.Event.(type) {
+			case queue.LandingStarted, queue.LandingChecksRecorded, queue.LandingDecisionRecorded:
+				t.Fatal("timed-out worker committed admission evidence or start")
+			}
 		}
 	})
 }

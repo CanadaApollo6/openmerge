@@ -85,7 +85,7 @@ func TestStageAGateRealGitAcquisition(t *testing.T) {
 						w.Git = g
 					}
 					land := queue.Land{BatchID: "b1", Ref: "openmerge/queue/main/b1", ExpectedBaseSHA: base, TestedSHA: tested, PRs: pins, Method: method}
-					gate := (&Server{}).stageAGate(w, store.ClaimedAction{}, queue.Config{}, queue.State{})
+					gate := (&Server{}).stageAGate(t.Context(), w, store.ClaimedAction{}, queue.Config{}, queue.State{})
 					messages, err := gate.ReadTestedMessages(t.Context(), land)
 					must(t, err)
 					wantMessages := depth

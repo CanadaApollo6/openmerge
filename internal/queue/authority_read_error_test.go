@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -65,5 +66,35 @@ func TestAuthorityReadErrorSourceIsolationAndRepair(t *testing.T) {
 		if bad.Validate() == nil {
 			t.Fatal("invalid read error accepted")
 		}
+	}
+}
+
+func TestAuthorityReadErrorFixtureSnapshot(t *testing.T) {
+	raw, err := os.ReadFile("testdata/wire/v1/variants/write_restriction_observed_read_error.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, err := DecodeEvent(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	failure := event.(WriteRestrictionObserved)
+	s, v := restrictionState(t)
+	s = restrictionRead(s, v, v.VerifiedAt, v.Evidence)
+	failure.Basis = s.RulesSourceRevision(WriteRestriction)
+	s = Apply(s, failure)
+	if !reflect.DeepEqual(s.RulesSourceProblems(WriteRestriction), []string{failure.ReadError}) {
+		t.Fatal("fixture did not block admission")
+	}
+	restored, err := DecodeSnapshot(snapshotBytes(t, s))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(s.RulesSources(), restored.RulesSources()) || !reflect.DeepEqual(s.WriteRestrictionStatus(), restored.WriteRestrictionStatus()) {
+		t.Fatal("snapshot lost fixture read failure")
+	}
+	repaired := restrictionRead(restored, v, failure.ObservedAt.Add(time.Second), v.Evidence)
+	if len(repaired.RulesSourceProblems(WriteRestriction)) != 0 {
+		t.Fatal("snapshot could not recover")
 	}
 }

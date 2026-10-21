@@ -1824,6 +1824,13 @@ origin-time warning eligibility and refreshes acknowledgements as status does.
 
 ## Receipt database binding
 
+The first authority `write_restriction_observed.read_error` is also a strict
+reader compatibility boundary. Inventory readers that lack the optional event
+and v7 snapshot field, even when they already support authority event types.
+Drain those readers before first emission, retain the tested pre-emission backup
+and reconciliation receipt, and use a compatible binary after rollback to GitHub.
+Removing the config cannot make these retained records safe for older readers.
+
 Before an explicit authority verification or internal activation, drain workers,
 back up and restore-test the source as described in the
 [first-emission procedure](research/adr-0008-4-evidence.md). Generate its identity

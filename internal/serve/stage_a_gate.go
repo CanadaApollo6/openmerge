@@ -233,7 +233,7 @@ func testedMemberCommits(ctx context.Context, w *worker, land queue.Land, histor
 // is known only after the final fresh approval read, so its list-driven overflow
 // can surface only at final admission after successful CI and may be preempted
 // by an approval-read or quota error.
-func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Config, basis queue.State) *executor.LandingDecisionGate {
+func (s *Server) stageAGate(parent context.Context, w *worker, claim store.ClaimedAction, cfg queue.Config, basis queue.State) *executor.LandingDecisionGate {
 	policy := w.stageA.policy
 	var acquisition *store.ApprovalRead
 	var checkEvidence *queue.LandingChecksRecorded
@@ -315,7 +315,7 @@ func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Conf
 			if recordChecks {
 				// Final authority admission is independent of the observer's
 				// cadence and cannot be bypassed by omitting its resolver.
-				current, err := s.readAuthorityAdmission(ctx, w, basis)
+				current, err := s.readAuthorityAdmission(ctx, parent, w, basis)
 				if err != nil {
 					return nil, err
 				}

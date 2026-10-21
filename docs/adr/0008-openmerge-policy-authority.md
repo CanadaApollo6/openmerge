@@ -699,7 +699,15 @@ All PRs follow these storage and acceptance rules:
   blocked behind a now-hidden list. New definite negatives invalidate earlier
   passes; stale positive reads cannot clear newer failures. A wrong policy
   digest or coverage/actor binding cannot clear current policy findings.
-  Read failure preserves prior state, including last-observed/verified ages.
+  Read failure preserves prior findings and last-observed/verified ages. The
+  optional `write_restriction_observed.read_error` records a sanitized failure
+  class and blocks admission until a fresh suitable read repairs it. Its v7
+  snapshot field and event key are rejected by older strict decoders, including
+  binaries that know the event type but lack the field. Inventory and drain
+  those readers before first emission; the backup/reconciliation and v7 downgrade
+  gate also applies to read-error observations. Admission reads have a separate
+  read-only timeout; persist failures and schedule retry on the action parent
+  context so an exhausted action cannot discard the block.
 - **Verification:** add `setup rulesets --authority openmerge --verify` using
   operator DB credentials and an admin-token read, never App admin-write
   credentials. It makes no GitHub writes. Validate all target queues and bind

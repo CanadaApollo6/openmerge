@@ -2,14 +2,14 @@ package serve
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/url"
 	"os"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -63,8 +63,6 @@ func database(t *testing.T) *store.Store {
 	return db
 }
 
-var databaseSchemaSequence atomic.Uint64
-
 func databaseConnection(t *testing.T) (*store.Store, *pgx.Conn) {
 	t.Helper()
 	raw := os.Getenv("OPENMERGE_TEST_DATABASE_URL")
@@ -73,7 +71,10 @@ func databaseConnection(t *testing.T) (*store.Store, *pgx.Conn) {
 	}
 	conn, err := pgx.Connect(t.Context(), raw)
 	must(t, err)
-	schema := fmt.Sprintf("serve_unit_%d_%d", time.Now().UnixNano(), databaseSchemaSequence.Add(1))
+	var token [12]byte
+	_, err = rand.Read(token[:])
+	must(t, err)
+	schema := "serve_unit_" + hex.EncodeToString(token[:])
 	_, err = conn.Exec(t.Context(), "CREATE SCHEMA "+pgx.Identifier{schema}.Sanitize())
 	must(t, err)
 	t.Cleanup(func() {

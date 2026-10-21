@@ -57,7 +57,7 @@ func ObserveWriteRestriction(ctx context.Context, db *store.Store, q store.Queue
 			cause = interpretErr
 		}
 		evidence = forge.EmptyWriteRestrictionObservation()
-		id, appendErr := appendWriteRestrictionObservation(ctx, db, q, in.Binding, basis, evidence, authorityReadErrorReason)
+		id, appendErr := appendWriteRestrictionObservation(ctx, db, q, in.Binding, basis, evidence, authorityReadFailureReason(cause))
 		if appendErr != nil {
 			return id, errors.Join(cause, appendErr)
 		}
@@ -68,7 +68,7 @@ func ObserveWriteRestriction(ctx context.Context, db *store.Store, q store.Queue
 	}
 	readError := ""
 	if readErr != nil {
-		readError = authorityReadErrorReason
+		readError = authorityReadFailureReason(readErr)
 	}
 	id, appendErr := appendWriteRestrictionObservation(ctx, db, q, in.Binding, basis, evidence, readError)
 	if appendErr != nil {
@@ -171,17 +171,7 @@ func (s *Server) observeWorkerAuthority(ctx context.Context, w *worker) error {
 		s.scheduleAuthorityRetry(w, readErr)
 		return nil
 	}
-	readCtx := forge.WithRequestClass(ctx, forge.RulesRequest)
-	timeout := s.options.ActionTimeout
-	if timeout <= 0 {
-		timeout = DefaultActionTimeout
-	}
-	timedReadCtx, cancel := context.WithTimeout(readCtx, timeout)
-	reader := authorityObservationReader(func(context.Context) (authority.Observation, error) {
-		return request.Read(timedReadCtx)
-	})
-	_, err := ObserveWriteRestriction(readCtx, s.store, w.id, reader, request.Input)
-	cancel()
+	_, err := s.observeAuthorityRead(ctx, ctx, w, request)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -196,4 +186,33 @@ func (s *Server) observeWorkerAuthority(ctx context.Context, w *worker) error {
 	}
 	s.scheduleAuthoritySuccess(w)
 	return nil
+}
+
+// observeAuthorityRead limits forge I/O only. The action can expire while the
+// read is pending; its parent still records the block and permits recovery.
+func (s *Server) observeAuthorityRead(ctx, parent context.Context, w *worker, request *authorityActivation) (int64, error) {
+	readCtx := forge.WithRequestClass(ctx, forge.RulesRequest)
+	timeout := s.options.ActionTimeout
+	if timeout <= 0 {
+		timeout = DefaultActionTimeout
+	}
+	timedReadCtx, cancel := context.WithTimeout(readCtx, timeout)
+	defer cancel()
+	reader := authorityObservationReader(func(context.Context) (authority.Observation, error) { return request.Read(timedReadCtx) })
+	return ObserveWriteRestriction(parent, s.store, w.id, reader, request.Input)
+}
+
+// Persist only a bounded class, never transport text that may contain secrets.
+func authorityReadFailureReason(cause error) string {
+	var rate interface{ RetryAfter() time.Time }
+	switch {
+	case errors.Is(cause, context.DeadlineExceeded):
+		return authorityReadErrorReason + ": timeout"
+	case errors.As(cause, &rate):
+		return authorityReadErrorReason + ": quota"
+	case errors.Is(cause, context.Canceled):
+		return authorityReadErrorReason + ": canceled"
+	default:
+		return authorityReadErrorReason + ": unavailable"
+	}
 }

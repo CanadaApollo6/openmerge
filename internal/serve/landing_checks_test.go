@@ -153,7 +153,7 @@ func TestLandingChecksAuthorityMethodsAndChainPositions(t *testing.T) {
 						t.Fatal("claim did not begin")
 					}
 					basis := shadowState(t, s, w)
-					x := executor.Executor{Driver: f, Git: f, Repo: repo, Base: "main", RequiredChecks: []string{"ci"}, Speculative: depth > 1, LandingDecisions: s.stageAGate(w, claim, cfg, basis)}
+					x := executor.Executor{Driver: f, Git: f, Repo: repo, Base: "main", RequiredChecks: []string{"ci"}, Speculative: depth > 1, LandingDecisions: s.stageAGate(t.Context(), w, claim, cfg, basis)}
 					withCheckAdmissionReader(t, w, basis, func() {
 						must(t, x.Execute(t.Context(), land, s.store.EmitWithPolicy(t.Context(), claim, cfg, w.stageA.policy)))
 					})
@@ -238,7 +238,7 @@ func TestLandingChecksLegacyGateAndPinRace(t *testing.T) {
 				must(t, err)
 				basis = shadowState(t, s, w)
 			}
-			gate := s.stageAGate(w, claim, cfg, basis)
+			gate := s.stageAGate(t.Context(), w, claim, cfg, basis)
 			if gate.ReadInputs == nil || gate.ReadInputsWithChecks != nil {
 				t.Fatal("legacy gate opted into evidence read")
 			}
@@ -326,7 +326,7 @@ func TestLandingChecksGateOverflowPrecedesUnmetMembers(t *testing.T) {
 					land.PRs = append(land.PRs, queue.BatchPR{PR: n, HeadSHA: pr.HeadSHA})
 				}
 				cfg := w.plannerConfig(s.options.PollInterval)
-				gate := s.stageAGate(w, store.ClaimedAction{}, cfg, basis)
+				gate := s.stageAGate(t.Context(), w, store.ClaimedAction{}, cfg, basis)
 				_, err = gate.ReadInputsWithChecks(t.Context(), land, basis, nil, time.Now(), "attempt")
 				if !errors.Is(err, queue.ErrLandingChecksTooLarge) || errors.Is(err, executor.ErrChecksNotSuccessful) {
 					t.Fatalf("overflow lost to unmet condition: %v", err)
@@ -471,7 +471,7 @@ func TestLandingChecksPreflightDoesNotAcquireApprovals(t *testing.T) {
 				w.AuthorityRequired = true
 				land := queue.Land{BatchID: "preflight", TestedSHA: strings.Repeat("e", 40), Ref: "queue", Method: queue.Merge, PRs: []queue.BatchPR{{PR: 1, HeadSHA: w.prs[1].HeadSHA}}}
 				checks := []forge.CheckRun{{Name: "ci", Source: "app:15368", State: result}}
-				gate := s.stageAGate(w, store.ClaimedAction{}, w.plannerConfig(s.options.PollInterval), basis)
+				gate := s.stageAGate(t.Context(), w, store.ClaimedAction{}, w.plannerConfig(s.options.PollInterval), basis)
 				sentinel := errors.New("approval quota exhausted")
 				f.FailNext("NativeReviews", sentinel)
 				_, before, err := s.store.Load(t.Context(), w.id)
@@ -540,7 +540,7 @@ func TestLandingChecksPreflightDefersReviewListOverflow(t *testing.T) {
 		claim := claimLandingChecksAction(t, s, w, w.plannerConfig(s.options.PollInterval), func(a queue.Action) bool { _, ok := a.(queue.Land); return ok })
 		land := claim.Action.(queue.Land)
 		checks := []forge.CheckRun{{Name: "ci", Source: "app:15368", State: forge.Success, HeadBranch: batch.TestRef}}
-		gate := s.stageAGate(w, store.ClaimedAction{}, w.plannerConfig(s.options.PollInterval), basis)
+		gate := s.stageAGate(t.Context(), w, store.ClaimedAction{}, w.plannerConfig(s.options.PollInterval), basis)
 		_, before, err := s.store.Load(t.Context(), w.id)
 		must(t, err)
 		if err := gate.ValidateChecks(t.Context(), land, checks, time.Now(), "attempt"); err != nil {
