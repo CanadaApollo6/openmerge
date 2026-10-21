@@ -1,0 +1,5 @@
+ok  	github.com/CanadaApollo6/openmerge/internal/config	0.012s
+ok  	github.com/CanadaApollo6/openmerge/internal/brief	0.002s
+ok  	github.com/CanadaApollo6/openmerge/internal/forge/github	6.864s
+ok  	github.com/CanadaApollo6/openmerge/internal/queue	0.091s
+ok  	github.com/CanadaApollo6/openmerge/internal/store	0.052s
