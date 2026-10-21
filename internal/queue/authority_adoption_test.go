@@ -2,6 +2,7 @@ package queue
 
 import (
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -152,6 +153,81 @@ func TestAuthoritySnapshotRejectsRawActivationVerification(t *testing.T) {
 	}
 	if _, err := DecodeSnapshot(raw); err == nil || !strings.Contains(err.Error(), "replay journal and reverify authority") {
 		t.Fatal("raw activation snapshot retained verified state", err)
+	}
+}
+
+func TestAuthorityVerificationInputRequiresActivationAndBoundedSize(t *testing.T) {
+	s, draft := restrictionState(t)
+	pin := *s.AuthorityPin()
+	in := adoptionInput(t, &pin, &draft)
+	started := draft.VerifiedAt.Add(time.Second)
+	valid := BindAuthorityDraft(pin, 123, draft, started, started.Add(time.Second), in, draft.Evidence)
+	if err := valid.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"without-activation", "too-many-selectors", "too-many-refs", "oversized-app", "oversized-selector", "oversized-ref"} {
+		t.Run(name, func(t *testing.T) {
+			bad := *cloneAuthority(&valid)
+			input := bad.OpenMerge.VerificationInput
+			switch name {
+			case "without-activation":
+				bad.OpenMerge.Activation = nil
+			case "too-many-selectors":
+				input.BaseSelectors = make([]authority.BaseSelector, 1001)
+			case "too-many-refs":
+				input.ExpectedRefs = make([]string, 1001)
+			case "oversized-app":
+				input.AppID = strings.Repeat("x", 1<<20)
+			case "oversized-selector":
+				input.BaseSelectors[0].Pattern = strings.Repeat("x", 1<<20)
+			case "oversized-ref":
+				input.ExpectedRefs[0] = strings.Repeat("x", 1<<20)
+			}
+			if _, _, err := EncodeEvent(bad); err == nil {
+				t.Fatal("encoded invalid verification input")
+			}
+			raw, err := json.Marshal(bad)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := decodeAuthorityEvent[PolicyAuthorityApplied](raw); err == nil {
+				t.Fatal("decoded invalid verification input")
+			}
+		})
+	}
+}
+
+func TestAuthorityDraftAdoptionRejectsRawCoverageWithSameFingerprint(t *testing.T) {
+	s, draft := restrictionState(t)
+	pin := *s.AuthorityPin()
+	in := adoptionInput(t, &pin, &draft)
+	started := draft.VerifiedAt.Add(time.Second)
+	crafted := BindAuthorityDraft(pin, 123, draft, started, started.Add(time.Second), in, draft.Evidence)
+	evidence := &crafted.OpenMerge.Activation.Evidence
+	if len(evidence.Coverage) < 2 {
+		t.Fatal("need multiple coverage records")
+	}
+	// Fingerprints canonicalize coverage ordering. A crafted raw representation
+	// can therefore retain the fingerprint while differing from interpretation.
+	slices.Reverse(evidence.Coverage)
+	fingerprint, err := evidence.Fingerprint()
+	if err != nil || fingerprint != crafted.OpenMerge.Activation.ProtectionFingerprint {
+		t.Fatal("probe did not preserve fingerprint", err)
+	}
+	_, raw, err := EncodeEvent(crafted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, err := DecodeEvent(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if AuthorityDraftAdopted(event.(PolicyAuthorityApplied)) {
+		t.Fatal("adopted raw evidence differing from interpreted evidence")
+	}
+	state := Apply(Apply(State{}, ConfigApplied{Commit: pin.GoverningCommit, Digest: pin.EffectiveDigest}), event)
+	if got := state.WriteRestrictionStatus(); got.State != "unverified" || !got.LastVerifiedAt.IsZero() {
+		t.Fatal(got)
 	}
 }
 

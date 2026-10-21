@@ -332,3 +332,84 @@ func TestLandingChecksGateOverflowPrecedesUnmetMembers(t *testing.T) {
 		})
 	}
 }
+
+// Exercise the worker's typed check-policy callback, not just the final gate.
+func TestLandingChecksWorkerFailurePrecedence(t *testing.T) {
+	for _, authorityRequired := range []bool{false, true} {
+		for _, position := range []int{0, 1} {
+			for _, malformed := range []string{"overflow", "invalid", "bounded"} {
+				t.Run(fmt.Sprintf("authority-%t/position-%d/%s", authorityRequired, position, malformed), func(t *testing.T) {
+					testSynctest(t, func(t *testing.T) {
+						s, w, f := shadowFixture(t, 1, "main", "7", false)
+						pr := w.prs[1]
+						f.SetNativeReviews(repo, 1, forge.NativeReviews{Reviews: []forge.NativeReview{{ID: 200, CommitID: pr.HeadSHA, Author: forge.UserIdentity{ID: 21, Login: "writer", Kind: forge.UserAccount}, State: forge.ReviewApproved, Submitted: forge.NativeTime{Time: time.Now().Add(time.Minute), Source: forge.ReviewSubmissionTime, Precision: time.Second}}}, Comments: []forge.NativeComment{shadowComment(100, "@openmerge queue")}})
+						batch := shadowBuildBatch(t, s, w, 1)
+						shadowChecks(t, s, w, f, batch.TestedSHA, []forge.CheckRun{{Name: "ci", Source: "app:15368", State: forge.Success, HeadBranch: batch.TestRef}})
+						_, err := s.store.Append(t.Context(), w.id, []queue.Event{queue.ChecksCompleted{TestedSHA: batch.TestedSHA, Success: true}}, "")
+						must(t, err)
+						cfg := w.plannerConfig(s.options.PollInterval)
+						claim := claimLandingChecksAction(t, s, w, cfg, func(a queue.Action) bool { _, ok := a.(queue.Land); return ok })
+						state := shadowState(t, s, w)
+						raw, err := os.ReadFile("../queue/testdata/wire/v1/event_policy_authority_applied.json")
+						must(t, err)
+						event, err := queue.DecodeEvent(raw)
+						must(t, err)
+						pin := event.(queue.PolicyAuthorityApplied)
+						pin.GoverningCommit, pin.EffectiveDigest = state.ConfigCommit, state.ConfigDigest
+						pin.OpenMerge.Binding.EffectiveDigest = state.ConfigDigest
+						_, err = s.store.Append(t.Context(), w.id, []queue.Event{pin}, "")
+						must(t, err)
+
+						w.AuthorityRequired = authorityRequired
+						name := "extra"
+						switch malformed {
+						case "overflow":
+							name = strings.Repeat("x", 4097)
+						case "invalid":
+							name = string([]byte{0xff})
+						}
+						runs := []forge.CheckRun{{Name: "ci", Source: "app:15368", State: forge.Failure, HeadBranch: batch.TestRef}, {Name: name, Source: "app:15368", State: forge.Success, HeadBranch: batch.TestRef}}
+						if position == 0 {
+							runs[0], runs[1] = runs[1], runs[0]
+						}
+						f.SetCheckRuns(repo, batch.TestedSHA, runs)
+						err = s.execute(t.Context(), w, claim)
+						state = shadowState(t, s, w)
+						want := executor.ErrChecksNotSuccessful
+						if authorityRequired && malformed == "overflow" {
+							want = queue.ErrLandingChecksTooLarge
+						}
+						if authorityRequired && malformed == "invalid" {
+							want = queue.ErrLandingChecksInvalid
+						}
+						if !errors.Is(err, want) {
+							t.Fatalf("worker error=%v want %v", err, want)
+						}
+						blocked := authorityRequired && malformed != "bounded"
+						if state.SourceBlocked(queue.Operator) != blocked {
+							t.Fatalf("operator block=%t want %t", state.SourceBlocked(queue.Operator), blocked)
+						}
+						if blocked {
+							reason := "landing-checks-too-large"
+							if malformed == "invalid" {
+								reason = "landing-checks-invalid"
+							}
+							status := f.Statuses(repo, 1)[pr.HeadSHA]
+							if status.State != forge.Blocked || status.Reason != reason || !strings.Contains(status.Summary, reason) {
+								t.Fatalf("permanent failure status: %+v", status)
+							}
+						}
+						records, err := s.store.EventsAfter(t.Context(), w.id, 0)
+						must(t, err)
+						for _, r := range records {
+							switch r.Event.(type) {
+							case queue.LandingStarted, queue.LandingChecksRecorded:
+								t.Fatal("rejected worker emitted landing evidence")
+							}
+						}
+					})
+				})
+			}
+		}
+	}
+}

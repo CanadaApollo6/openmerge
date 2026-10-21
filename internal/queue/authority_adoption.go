@@ -1,6 +1,8 @@
 package queue
 
 import (
+	"encoding/json"
+	"fmt"
 	"reflect"
 	"slices"
 	"strconv"
@@ -18,6 +20,22 @@ type AuthorityVerificationInput struct {
 	BaseSelectors []authority.BaseSelector `json:"base_selectors"`
 	ExpectedRefs  []string                 `json:"expected_refs"`
 	AppID         string                   `json:"app_id"`
+}
+
+func (in AuthorityVerificationInput) validateSize() error {
+	// Match the reader's expected-ref count bound and bound selector work plus
+	// the complete durable payload, including arbitrarily long string values.
+	if len(in.BaseSelectors) > 1000 || len(in.ExpectedRefs) > 1000 {
+		return fmt.Errorf("too many authority verification expectations")
+	}
+	raw, err := json.Marshal(in)
+	if err != nil {
+		return err
+	}
+	if len(raw) > 1<<20 {
+		return fmt.Errorf("authority verification input exceeds 1 MiB")
+	}
+	return nil
 }
 
 func authorityInput(binding authority.PolicyBinding, input AuthorityVerificationInput) forge.WriteRestrictionInput {
@@ -62,7 +80,7 @@ func AuthorityDraftAdopted(pin PolicyAuthorityApplied) bool {
 	}
 	a := pin.OpenMerge.Activation
 	interpreted, err := interpretedAuthorityEvidence(in, a.Evidence)
-	if err != nil || !sameAuthorityFindings(interpreted.Findings, a.Evidence.Findings) {
+	if err != nil || !reflect.DeepEqual(interpreted, a.Evidence) {
 		return false
 	}
 	fingerprint, err := interpreted.Fingerprint()

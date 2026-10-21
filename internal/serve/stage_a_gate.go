@@ -335,7 +335,21 @@ func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Conf
 			return s.store.RejectLanding(acquisition.Context(ctx), claim, cfg, policy, fresh, expected, start, rejection)
 		},
 	}
-	if !recordChecks {
+	if recordChecks {
+		gate.ValidateChecks = func(ctx context.Context, land queue.Land, checks []forge.CheckRun, at time.Time, attempt string) error {
+			state, err := gate.Load(ctx)
+			if err != nil {
+				return err
+			}
+			_, err = gate.ReadInputsWithChecks(ctx, land, state, checks, at, attempt)
+			// Bounded unmet conditions retain the executor's existing retry and
+			// approval handling. Permanent evidence failures take precedence.
+			if errors.Is(err, executor.ErrChecksNotSuccessful) {
+				return nil
+			}
+			return err
+		}
+	} else {
 		read := gate.ReadInputsWithChecks
 		gate.ReadInputs = func(ctx context.Context, land queue.Land, state queue.State) ([]queue.ApprovalEligibilityObserved, error) {
 			return read(ctx, land, state, nil, time.Time{}, "")

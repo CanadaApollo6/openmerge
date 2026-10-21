@@ -22,6 +22,9 @@ var ErrLandingApprovals = errors.New("landing approvals unmet")
 // store claim and invokes Store.StartLanding; it never emits individual events.
 // There is no forge I/O or git push inside Commit's transaction.
 type LandingDecisionGate struct {
+	// ValidateChecks budgets authority evidence before any check-policy rejection.
+	// The same final attempt ID is reused when the landing gate later commits.
+	ValidateChecks func(context.Context, queue.Land, []forge.CheckRun, time.Time, string) error
 	// ReadInputsWithChecks opts into the exact provenance-filtered, retry-aware
 	// read and its observation time. It replaces ReadInputs only on authority
 	// paths; legacy approval paths retain their fresh-read callback. The final

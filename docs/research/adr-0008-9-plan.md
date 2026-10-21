@@ -49,8 +49,8 @@ byte-identical normalized seeded simulator results, including legacy approvals.
 ### PR 9b review split (2026-10-21)
 
 The 9b lifecycle, projection and admission wiring is too large to review together
-with its prerequisite corrections. Keep the row ownership below at 9b, delivered
-in two independently safe changes:
+with its prerequisite corrections. Assign each prerequisite and runtime row below
+to one of two independently safe changes:
 
 - **9b-i, prerequisite hardening:** #106(b)'s idempotent pin writer; #112's
   interpreted draft adoption, raw-activation fold protection, early retry check
@@ -60,14 +60,16 @@ in two independently safe changes:
   size oracle and precedence tests. Include 9a's documentation/schema nits and
   regression coverage showing candidate/draft/pin data cannot install runtime
   authority hooks. No production activation caller or new event type is added.
-- **9b-ii, runtime wiring:** all runtime rows assigned to 9b below: atomic
+- **9b-ii, runtime wiring:** all runtime rows assigned to 9b-ii below: atomic
   config/pin lifecycle including new queues; no-approvals owner enforcement;
   first-cycle observation, warning, status, author and check projections;
   rollback/re-enable and all-queue digest/invalidation; every landing-start
   source/digest check under lock, with source-repair, mixed-state, quota/read
   and no-approvals tests. Wire the prerequisite receipt output to the internal
-  activation caller. Prove A2 again against that complete runtime seam: a
-  candidate or journal-loaded draft/pin must never enable it by itself.
+  activation caller, which must validate the emission receipt max-age and
+  attested `BinaryRevision` before its first emission. Prove A2 again against
+  that complete runtime seam: a candidate or journal-loaded draft/pin must never
+  enable it by itself.
 
 9b-i leaves the existing public rejection and production target construction
 unchanged. Its adoption writer remains without a production caller. Its raw
@@ -85,18 +87,19 @@ contracts without transferring their ownership.
 | Scope/config: root schema + loader + CLI agreement, reserved fail-closed publication; pure default queue and governing-owner coverage validation | 9a |
 | Scope/config: resolve/obtain actual governing evidence in discovery/setup/import; import acceptance cannot waive; missing/unresolved/incomplete evidence cannot activate | 9c |
 | Owner enforcement: pure no-approvals decision/digest, no ordinary floor, mandatory exact-revision policy owners, `none` cannot waive; governing rather than proposed owner semantics | 9a |
-| Owner enforcement: runtime classification, briefs, eligibility and decision invocation without approvals | 9b |
+| Owner enforcement: runtime classification, briefs, eligibility and decision invocation without approvals | 9b-ii |
 | Owner enforcement: invalid landed config blocks work | 9c |
-| Wire/state: conditional matching ConfigApplied/pin emission, new queues, persisted fold, draft adoption; no ordinary GitHub events or downgrade boundary | 9b |
-| Wire/state: first-cycle observations, warnings, status/CLI/API/health, author messages, per-check evidence from PRs 4–8 | 9b |
-| Wire/state: every landing start checks source findings/digest under lock at depths 1/4; admitted starts settle; unchanged batching/fence protocol | 9b |
-| Wire/state: mode-specific rollback, no new authority observations/warning eligibility, retain delayed-origin warnings/history/unrelated blocks; fresh re-enable evidence; digest reaches every served queue | 9b |
+| Wire/state: idempotent prerequisite pin writer, interpreted draft adoption and persisted fold provenance protection | 9b-i |
+| Wire/state: conditional matching ConfigApplied/pin emission and new-queue lifecycle wiring; no ordinary GitHub events or downgrade boundary | 9b-ii |
+| Wire/state: first-cycle observations, warnings, status/CLI/API/health, author messages, per-check evidence from PRs 4–8 | 9b-ii |
+| Wire/state: every landing start checks source findings/digest under lock at depths 1/4; admitted starts settle; unchanged batching/fence protocol | 9b-ii |
+| Wire/state: mode-specific rollback, no new authority observations/warning eligibility, retain delayed-origin warnings/history/unrelated blocks; fresh re-enable evidence; digest reaches every served queue | 9b-ii |
 | Forge/migrations: typed reader/compiler/content wiring and immutable context/reloading guard before every generated-object push | 9c |
 | Forge/migrations: registration/cycle/first-queue pin-observation-fence ordering, direct EnsureFence options, post-build read never a guard | 9c |
-| Forge/migrations: invalidate on default branch/selector/actor/method changes | 9b |
+| Forge/migrations: invalidate on default branch/selector/actor/method changes | 9b-ii |
 | Forge/migrations: no new capability/migration, old-worker inventory/drain, backup receipt/reconciliation and v7 downgrade gate incl. pre-switch verify | 9c |
 | Tests: static invalid coverage/default queue/selector and owner removal/head/stale eligibility cases | 9a |
-| Tests: source repair races, mixed repository/base state transitions, quota/read errors and no-approvals starts | 9b |
+| Tests: source repair races, mixed repository/base state transitions, quota/read errors and no-approvals starts | 9b-ii |
 | Tests: real default rename/deletion, cold-cache all-method gitops land/read-back/decisions; #82/#84; rejected objects leave refs unchanged; mixed GitHub commit IDs/permissions/traces; PR 11 organization release gate | 9c |
 
 ## Carry-over disposition
@@ -104,15 +107,17 @@ contracts without transferring their ownership.
 | Review carry-over | Slice and required proof |
 | --- | --- |
 | #106(a): empty OldSHA full-history inventory and cumulative paths | 9c: bound introduced history against build base; independent per-commit path budgets; large real-repo first build/cleaned ref regression |
-| #106(b): pin writer called on every executor op / cleanup no-op | 9b: idempotent pin before journal scans/writes; repeated no-op operations produce no extra pin events |
+| #106(b): pin writer called on every executor op / cleanup no-op | 9b-i: idempotent pin before journal scans/writes; repeated no-op operations produce no extra pin events |
 | #106(c): startup configTip unset with pin present/hooks absent | 9c: defer creation instead of failing construction; existing fence read-first no-op remains valid |
-| #112(1): draft fingerprint strips findings | 9b: interpreted fresh evidence/findings equality required before adopting verified draft; raw evidence cannot fold verified activation |
-| #112(2): AdoptAuthorityPin idempotence before ProposedVerification scan | 9b: retry returns before history scan |
-| #112(3): adopted versus pinned-unverified operator outcome | 9b: explicit output and durable receipt/source IDs |
-| #112 small: emission max-age and attested BinaryRevision | 9b: validate receipt age/binary attestation before first emission |
-| #112 small: stale setup --verify basis | 9b: nonzero exit with retry hint |
+| #112(1): draft fingerprint strips findings | 9b-i: interpreted fresh evidence/findings equality required before adopting verified draft; raw evidence cannot fold verified activation |
+| #112(2): AdoptAuthorityPin idempotence before ProposedVerification scan | 9b-i: retry returns before history scan |
+| #112(3): adopted versus pinned-unverified receipt contract | 9b-i: explicit output and durable receipt/source IDs |
+| #112(3): production activation caller receipt/output wiring | 9b-ii: expose adopted versus pinned-unverified outcome from the internal activation caller |
+| #112 small: existing setup --verify emission receipt gates | 9b-i: command-boundary regressions for max-age and attested BinaryRevision validation |
+| #112 small: internal activation caller emission receipt gate | 9b-ii: validate emission receipt max-age and attested BinaryRevision at the internal activation caller before first emission |
+| #112 small: stale setup --verify basis | 9b-i: nonzero exit with retry hint |
 | #90: branches.go refreshWorker is first fence-bootstrap site | 9c: end-to-end test through refreshWorker, direct serve PushOptions and pin/observation before first fence |
-| #120: empty attempt_id budget, untyped builder errors, overflow precedence, indirect caps, size-oracle fuzz | 9b: fix before any internal activation; typed permanent blocks, exact final attempt budget, expanded oracle/precedence tests |
+| #120: empty attempt_id budget, untyped builder errors, overflow precedence, indirect caps, size-oracle fuzz | 9b-i: fix before any internal activation; typed permanent blocks, exact final attempt budget, expanded oracle/precedence tests |
 | Acceptance #82 history boundary / #84 tested acquisition | 9c: reproduce in cold-cache real-git acceptance |
 | Acceptance rejected intermediate/marker/fence refs unchanged and mixed GitHub compatibility | 9c: real remote ref read-back plus permission/event/commit comparisons |
 | Owner decision: no approvals means no ordinary floor | 9a: pure evaluation and atomic decision tests |
@@ -126,7 +131,10 @@ contracts without transferring their ownership.
 internal activation tests exercise events. Before 9c deployment, drain every old
 worker after period B, retain inventory and a tested pre-emission backup receipt,
 and verify the attested emitting binary. This includes operator `--verify` before
-config activation. After new events or v7 cursors, rollback to `github` is not a
+config activation. Separately, 9b-ii must validate the emission receipt max-age
+and attested `BinaryRevision` at the internal activation caller before first
+emission; the existing `setup --verify` command gate is not that runtime gate.
+After new events or v7 cursors, rollback to `github` is not a
 binary downgrade: use a compatible reader or stop workers, restore the verified
 backup and reconcile subsequent real refs/evidence before resuming. Keep outside
 warnings and all immutable evidence through rollback/retirement. PR 11 owns the

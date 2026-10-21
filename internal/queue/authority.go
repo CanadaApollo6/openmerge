@@ -55,6 +55,14 @@ func (e PolicyAuthorityApplied) Validate() error {
 		if b.EffectiveDigest != e.EffectiveDigest || b.CoverageDigest != e.CoverageDigest || b.DefaultBranch != e.DefaultBranch {
 			return fmt.Errorf("authority pin binding mismatch")
 		}
+		if input := e.OpenMerge.VerificationInput; input != nil {
+			if e.OpenMerge.Activation == nil {
+				return fmt.Errorf("authority verification input requires activation")
+			}
+			if err := input.validateSize(); err != nil {
+				return err
+			}
+		}
 		if e.OpenMerge.Activation != nil {
 			if err := e.OpenMerge.Activation.Validate(); err != nil {
 				return err
