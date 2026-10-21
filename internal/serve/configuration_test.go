@@ -166,92 +166,96 @@ func TestReleaseBaseUsesDefaultBranchAuthorityAndReloads(t *testing.T) {
 func TestReleaseBatchNeverLandsUnderChangedDefaultPolicy(t *testing.T) {
 	for _, window := range []string{"while-testing", "landing-preflight"} {
 		t.Run(window, func(t *testing.T) {
-			s, w, f, d := releaseFixture(t, releaseConfig)
-			must(t, f.SetPRMetadata(repo, 1, "release/v1", false, "contributor"))
-			f.AddComment(repo, 1, "writer", "@openmerge queue")
-			must(t, s.cycle(t.Context(), w))
-			state, _, err := s.store.Load(t.Context(), w.id)
-			must(t, err)
-			if state.Active == nil || state.Active.Phase != queue.Testing || state.Active.Method != queue.Merge {
-				t.Fatalf("release batch did not reach testing under merge policy: %+v", state.Active)
-			}
-			old := *state.Active
-			base := state.BaseSHA
-			updated := strings.ReplaceAll(strings.ReplaceAll(releaseConfig, "merge_method: merge", "merge_method: squash"), "release-ci", "new-ci")
-			changePolicy := func() {
-				_, err := f.PushBase(repo, "main", "change release policy", map[string]string{".openmerge.yml": updated})
+			testSynctest(t, func(t *testing.T) {
+				s, w, f, d := releaseFixture(t, releaseConfig)
+				must(t, f.SetPRMetadata(repo, 1, "release/v1", false, "contributor"))
+				f.AddComment(repo, 1, "writer", "@openmerge queue")
+				must(t, s.cycle(t.Context(), w))
+				state, _, err := s.store.Load(t.Context(), w.id)
 				must(t, err)
-			}
-			oldResult := forge.Failure
-			if window == "landing-preflight" {
-				oldResult = forge.Success
-			}
-			f.SetCheckRuns(repo, old.TestedSHA, []forge.CheckRun{
-				{ID: 1, Name: "release-ci", State: oldResult, HeadBranch: old.TestRef},
-				{ID: 2, Name: "new-ci", State: forge.Success, HeadBranch: old.TestRef},
+				if state.Active == nil || state.Active.Phase != queue.Testing || state.Active.Method != queue.Merge {
+					t.Fatalf("release batch did not reach testing under merge policy: %+v", state.Active)
+				}
+				old := *state.Active
+				base := state.BaseSHA
+				updated := strings.ReplaceAll(strings.ReplaceAll(releaseConfig, "merge_method: merge", "merge_method: squash"), "release-ci", "new-ci")
+				changePolicy := func() {
+					_, err := f.PushBase(repo, "main", "change release policy", map[string]string{".openmerge.yml": updated})
+					must(t, err)
+				}
+				oldResult := forge.Failure
+				if window == "landing-preflight" {
+					oldResult = forge.Success
+				}
+				f.SetCheckRuns(repo, old.TestedSHA, []forge.CheckRun{
+					{ID: 1, Name: "release-ci", State: oldResult, HeadBranch: old.TestRef},
+					{ID: 2, Name: "new-ci", State: forge.Success, HeadBranch: old.TestRef},
+				})
+				if window == "while-testing" {
+					changePolicy()
+					must(t, s.cycle(t.Context(), w))
+				} else {
+					_, err := s.store.Append(t.Context(), w.id, []queue.Event{queue.ChecksCompleted{TestedSHA: old.TestedSHA, Success: true}}, "")
+					must(t, err)
+					_, err = s.store.Plan(t.Context(), w.id, w.plannerConfig(time.Millisecond), time.Now())
+					must(t, err)
+					claims, err := s.store.ClaimQueue(t.Context(), w.id, 1, time.Minute, time.Now())
+					must(t, err)
+					if len(claims) != 1 {
+						t.Fatalf("missing landing claim: %v", claims)
+					}
+					if _, ok := claims[0].Action.(queue.Land); !ok {
+						t.Fatalf("expected landing claim, got %T", claims[0].Action)
+					}
+					d.onChecks = changePolicy
+					must(t, s.execute(t.Context(), w, claims[0]))
+					must(t, s.cycle(t.Context(), w))
+				}
+				state, _, err = s.store.Load(t.Context(), w.id)
+				must(t, err)
+				actualBase, err := f.ReadRef(t.Context(), repo, "release/v1")
+				must(t, err)
+				if actualBase != base || state.BaseSHA != base || state.Active == nil || state.Active.ID == old.ID || state.Active.Method != queue.Squash || len(state.Entries) != 1 {
+					t.Fatalf("old policy batch landed or was not rebuilt: base=%s active=%+v entries=%v", actualBase, state.Active, state.Entries)
+				}
+				if state.ConfigCommit != w.configTip || state.ConfigDigest != w.configDigest || state.Active.ConfigDigest != state.ConfigDigest {
+					t.Fatal("rebuilt batch is not pinned to durable policy")
+				}
 			})
-			if window == "while-testing" {
-				changePolicy()
-				must(t, s.cycle(t.Context(), w))
-			} else {
-				_, err := s.store.Append(t.Context(), w.id, []queue.Event{queue.ChecksCompleted{TestedSHA: old.TestedSHA, Success: true}}, "")
-				must(t, err)
-				_, err = s.store.Plan(t.Context(), w.id, w.plannerConfig(time.Millisecond), time.Now())
-				must(t, err)
-				claims, err := s.store.ClaimQueue(t.Context(), w.id, 1, time.Minute, time.Now())
-				must(t, err)
-				if len(claims) != 1 {
-					t.Fatalf("missing landing claim: %v", claims)
-				}
-				if _, ok := claims[0].Action.(queue.Land); !ok {
-					t.Fatalf("expected landing claim, got %T", claims[0].Action)
-				}
-				d.onChecks = changePolicy
-				must(t, s.execute(t.Context(), w, claims[0]))
-				must(t, s.cycle(t.Context(), w))
-			}
-			state, _, err = s.store.Load(t.Context(), w.id)
-			must(t, err)
-			actualBase, err := f.ReadRef(t.Context(), repo, "release/v1")
-			must(t, err)
-			if actualBase != base || state.BaseSHA != base || state.Active == nil || state.Active.ID == old.ID || state.Active.Method != queue.Squash || len(state.Entries) != 1 {
-				t.Fatalf("old policy batch landed or was not rebuilt: base=%s active=%+v entries=%v", actualBase, state.Active, state.Entries)
-			}
-			if state.ConfigCommit != w.configTip || state.ConfigDigest != w.configDigest || state.Active.ConfigDigest != state.ConfigDigest {
-				t.Fatal("rebuilt batch is not pinned to durable policy")
-			}
 		})
 	}
 }
 
 func TestUnchangedEffectiveReleasePolicyPreservesActiveBatchAcrossRestart(t *testing.T) {
-	s, w, f, _ := releaseFixture(t, releaseConfig)
-	must(t, f.SetPRMetadata(repo, 1, "release/v1", false, "contributor"))
-	f.AddComment(repo, 1, "writer", "@openmerge queue")
-	must(t, s.cycle(t.Context(), w))
-	before, watermark, err := s.store.Load(t.Context(), w.id)
-	must(t, err)
-	if before.Active == nil || before.Active.Phase != queue.Testing {
-		t.Fatal("missing testing release batch")
-	}
-	// Formatting, comments, and another queue's policy are not this queue's inputs.
-	updated := "# repository policy\n" + strings.ReplaceAll(releaseConfig, "check-success = ci", "check-success = other-ci")
-	_, err = f.PushBase(repo, "main", "unrelated default branch update", map[string]string{".openmerge.yml": updated})
-	must(t, err)
-	must(t, s.reconcile(t.Context(), w, false))
-	after, next, err := s.store.Load(t.Context(), w.id)
-	must(t, err)
-	if next != watermark || !reflect.DeepEqual(before.Active, after.Active) || after.ConfigCommit != before.ConfigCommit {
-		t.Fatal("unchanged effective release policy invalidated work or appended events")
-	}
-	restarted, err := New(t.Context(), s.store, []Target{w.Target}, s.options)
-	must(t, err)
-	must(t, restarted.configuration(t.Context(), restarted.queues[0]))
-	after, next, err = s.store.Load(t.Context(), w.id)
-	must(t, err)
-	if next != watermark || !reflect.DeepEqual(before.Active, after.Active) {
-		t.Fatal("restart invalidated work with an identical durable policy")
-	}
+	testSynctest(t, func(t *testing.T) {
+		s, w, f, _ := releaseFixture(t, releaseConfig)
+		must(t, f.SetPRMetadata(repo, 1, "release/v1", false, "contributor"))
+		f.AddComment(repo, 1, "writer", "@openmerge queue")
+		must(t, s.cycle(t.Context(), w))
+		before, watermark, err := s.store.Load(t.Context(), w.id)
+		must(t, err)
+		if before.Active == nil || before.Active.Phase != queue.Testing {
+			t.Fatal("missing testing release batch")
+		}
+		// Formatting, comments, and another queue's policy are not this queue's inputs.
+		updated := "# repository policy\n" + strings.ReplaceAll(releaseConfig, "check-success = ci", "check-success = other-ci")
+		_, err = f.PushBase(repo, "main", "unrelated default branch update", map[string]string{".openmerge.yml": updated})
+		must(t, err)
+		must(t, s.reconcile(t.Context(), w, false))
+		after, next, err := s.store.Load(t.Context(), w.id)
+		must(t, err)
+		if next != watermark || !reflect.DeepEqual(before.Active, after.Active) || after.ConfigCommit != before.ConfigCommit {
+			t.Fatal("unchanged effective release policy invalidated work or appended events")
+		}
+		restarted, err := New(t.Context(), s.store, []Target{w.Target}, s.options)
+		must(t, err)
+		must(t, restarted.configuration(t.Context(), restarted.queues[0]))
+		after, next, err = s.store.Load(t.Context(), w.id)
+		must(t, err)
+		if next != watermark || !reflect.DeepEqual(before.Active, after.Active) {
+			t.Fatal("restart invalidated work with an identical durable policy")
+		}
+	})
 }
 
 func TestConfigurationReadsStayPinnedWhileDefaultBranchMoves(t *testing.T) {
@@ -447,35 +451,37 @@ func TestRepositoryDeleteHeadBranchOverridesServeDefault(t *testing.T) {
 		{"repo true overrides false", "delete_head_branch: true\n", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			// Load an explicit setting first, then reload the test's policy so
-			// omission must discard the previous override as well as inherit.
-			s, w, f, _ := fixture(t, repositoryConfig+"delete_head_branch: true\n")
-			s.options.DisableDeleteHeadBranch = !tc.flag
-			must(t, s.configuration(t.Context(), w))
-			_, err := f.PushBase(repo, "main", "reload cleanup policy", map[string]string{".openmerge.yml": repositoryConfig + tc.setting})
-			must(t, err)
-			pr, err := f.PullRequest(t.Context(), repo, 1)
-			must(t, err)
-			f.AddComment(repo, 1, "writer", "@openmerge queue")
-			must(t, s.cycle(t.Context(), w))
-			state, _, err := s.store.Load(t.Context(), w.id)
-			must(t, err)
-			if state.Active == nil || state.Active.Phase != queue.Testing {
-				t.Fatal("PR did not reach testing")
-			}
-			tested := state.Active.TestedSHA
-			f.SetCheckRuns(repo, tested, []forge.CheckRun{{ID: 1, Name: "ci", Source: "app:1", State: forge.Success, HeadBranch: state.Active.TestRef}})
-			time.Sleep(2 * time.Millisecond)
-			must(t, s.cycle(t.Context(), w))
-			state, _, err = s.store.Load(t.Context(), w.id)
-			must(t, err)
-			if state.BaseSHA != tested || state.Active != nil {
-				t.Fatal("PR did not land")
-			}
-			_, err = f.ReadRef(t.Context(), repo, pr.HeadBranch)
-			if (err != nil) != tc.deleted {
-				t.Fatalf("head deletion = %v, want %v", err, tc.deleted)
-			}
+			testSynctest(t, func(t *testing.T) {
+				// Load an explicit setting first, then reload the test's policy so
+				// omission must discard the previous override as well as inherit.
+				s, w, f, _ := fixture(t, repositoryConfig+"delete_head_branch: true\n")
+				s.options.DisableDeleteHeadBranch = !tc.flag
+				must(t, s.configuration(t.Context(), w))
+				_, err := f.PushBase(repo, "main", "reload cleanup policy", map[string]string{".openmerge.yml": repositoryConfig + tc.setting})
+				must(t, err)
+				pr, err := f.PullRequest(t.Context(), repo, 1)
+				must(t, err)
+				f.AddComment(repo, 1, "writer", "@openmerge queue")
+				must(t, s.cycle(t.Context(), w))
+				state, _, err := s.store.Load(t.Context(), w.id)
+				must(t, err)
+				if state.Active == nil || state.Active.Phase != queue.Testing {
+					t.Fatal("PR did not reach testing")
+				}
+				tested := state.Active.TestedSHA
+				f.SetCheckRuns(repo, tested, []forge.CheckRun{{ID: 1, Name: "ci", Source: "app:1", State: forge.Success, HeadBranch: state.Active.TestRef}})
+				time.Sleep(2 * time.Millisecond)
+				must(t, s.cycle(t.Context(), w))
+				state, _, err = s.store.Load(t.Context(), w.id)
+				must(t, err)
+				if state.BaseSHA != tested || state.Active != nil {
+					t.Fatal("PR did not land")
+				}
+				_, err = f.ReadRef(t.Context(), repo, pr.HeadBranch)
+				if (err != nil) != tc.deleted {
+					t.Fatalf("head deletion = %v, want %v", err, tc.deleted)
+				}
+			})
 		})
 	}
 }

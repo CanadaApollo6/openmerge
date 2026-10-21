@@ -1,7 +1,6 @@
 package queue
 
 import (
-	"bytes"
 	"fmt"
 	"strings"
 	"testing"
@@ -136,10 +135,14 @@ func TestReceiptSnapshotReachability(t *testing.T) {
 	for i := 0; i < maxApprovalSources-3; i++ {
 		s = Apply(s, native(b, int64(10000+i), cp.Approve, b.At.Add(time.Minute)))
 	}
+	if len(s.approvalFacts[b.ChangeID].Sources) != maxApprovalSources-1 {
+		t.Fatal("fixture must leave exactly one source slot")
+	}
 	s = restart(t, s)
 	initial := s
 	for caseIndex, actions := range [][]byte{{0, 1, 2, 3, 4, 5, 0}, {1, 1, 1, 0, 2, 4}, {2, 3, 0, 5}, {5, 4, 3, 2, 1, 0}} {
 		t.Run(fmt.Sprint(caseIndex), func(t *testing.T) {
+			t.Parallel()
 			s := initial
 			for i, action := range actions {
 				id := int64(20000 + i)
@@ -163,16 +166,12 @@ func TestReceiptSnapshotReachability(t *testing.T) {
 					e.ReasonCode = "receipt_digest_mismatch"
 					s = Apply(s, e)
 				}
+				// restart checks encode/decode/re-encode byte equality and the
+				// complete approval projection after every transition.
 				s = restart(t, s)
 				got := s.ReceiptRecords(b.ChangeID)[receipt.CommentID]
 				if !got.Accepted || got.Supplied != receipt.Supplied {
 					t.Fatal("accepted pin lost")
-				}
-				raw, _ := EncodeSnapshot(s)
-				decoded, err := DecodeSnapshot(raw)
-				again, _ := EncodeSnapshot(decoded)
-				if err != nil || !bytes.Equal(raw, again) {
-					t.Fatal("reachable state not round-trippable", err)
 				}
 			}
 		})
