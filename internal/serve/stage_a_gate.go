@@ -241,7 +241,7 @@ func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Conf
 	// AuthorityRequired is an explicit internal Target opt-in. A setup draft or
 	// surviving journal pin cannot enable authority evidence on a public GitHub
 	// target while config.Load still rejects authority activation.
-	recordChecks := w.AuthorityRequired && pin != nil && pin.Authority == "openmerge"
+	recordChecks := w.AuthorityRequired && (policy.RequirePolicyOwners || pin != nil && pin.Authority == "openmerge")
 	gate := &executor.LandingDecisionGate{Policy: policy, ReloadAfterInputs: true,
 		Load: func(ctx context.Context) (queue.State, error) {
 			state, _, err := s.store.Load(ctx, w.id)
@@ -313,7 +313,14 @@ func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Conf
 				return nil, executor.ErrChecksNotSuccessful
 			}
 			if recordChecks {
+				// Final authority admission is independent of the observer's
+				// cadence and cannot be bypassed by omitting its resolver.
+				current, err := s.readAuthorityAdmission(ctx, w, basis)
+				if err != nil {
+					return nil, err
+				}
 				e := builder.Event()
+				e.RequiredCheckSource = current.LandingCheckSources()
 				checkEvidence = &e
 			}
 			return fresh, nil

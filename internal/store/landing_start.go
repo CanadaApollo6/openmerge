@@ -96,6 +96,9 @@ func (s *Store) startLanding(ctx context.Context, claim ClaimedAction, cfg queue
 			if len(checks) != 1 {
 				return LandingChecksRequiredError{}
 			}
+			if state.WriteRestrictionStatus().State != "verified" || len(state.RulesSourceProblems(queue.WriteRestriction)) != 0 {
+				return fmt.Errorf("%w: authority write restriction is not currently verified", ErrStale)
+			}
 			if err := state.ValidateLandingChecks(policy.Digest, land, start, checks[0]); err != nil {
 				if errors.Is(err, queue.ErrLandingChecksTooLarge) {
 					return err

@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/authority"
+	"github.com/CanadaApollo6/openmerge/internal/config"
 	"github.com/CanadaApollo6/openmerge/internal/config/condition"
 	"github.com/CanadaApollo6/openmerge/internal/executor"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
@@ -113,7 +115,20 @@ func TestLandingChecksAuthorityMethodsAndChainPositions(t *testing.T) {
 				pin.GoverningCommit = state.ConfigCommit
 				pin.EffectiveDigest = state.ConfigDigest
 				pin.OpenMerge.Binding.EffectiveDigest = state.ConfigDigest
+				pin.OpenMerge.Binding.InstallationID = 7
+				pin.OpenMerge.Binding.Repository = w.Key.Repository
+				pin.OpenMerge.Binding.QueueKey = store.AuthorityQueueKey(w.Key)
+				selectors := []authority.BaseSelector{{DefaultBranch: true}}
+				pin.CoverageDigest, err = authority.CoverageDigest("main", selectors)
+				must(t, err)
+				pin.OpenMerge.Binding.CoverageDigest = pin.CoverageDigest
 				_, err = s.store.Append(t.Context(), w.id, []queue.Event{pin}, "")
+				must(t, err)
+				raw, err = os.ReadFile("../queue/testdata/wire/v1/event_write_restriction_verified.json")
+				must(t, err)
+				observedEvent, err := queue.DecodeEvent(raw)
+				must(t, err)
+				_, err = s.store.Append(t.Context(), w.id, []queue.Event{queue.WriteRestrictionObserved{Binding: pin.OpenMerge.Binding, ObservedAt: time.Now(), Evidence: observedEvent.(queue.WriteRestrictionVerified).Evidence}}, "")
 				must(t, err)
 				w.AuthorityRequired = true // explicit internal evidence seam
 				for n := 1; n <= depth; n++ {
@@ -139,7 +154,9 @@ func TestLandingChecksAuthorityMethodsAndChainPositions(t *testing.T) {
 					}
 					basis := shadowState(t, s, w)
 					x := executor.Executor{Driver: f, Git: f, Repo: repo, Base: "main", RequiredChecks: []string{"ci"}, Speculative: depth > 1, LandingDecisions: s.stageAGate(w, claim, cfg, basis)}
-					must(t, x.Execute(t.Context(), land, s.store.EmitWithPolicy(t.Context(), claim, cfg, w.stageA.policy)))
+					withCheckAdmissionReader(t, w, basis, func() {
+						must(t, x.Execute(t.Context(), land, s.store.EmitWithPolicy(t.Context(), claim, cfg, w.stageA.policy)))
+					})
 					must(t, s.store.Complete(t.Context(), claim, store.Done))
 				}
 				events, err := s.store.EventsAfter(t.Context(), w.id, 0)
@@ -570,4 +587,26 @@ func TestLandingChecksPreflightDefersReviewListOverflow(t *testing.T) {
 			}
 		}
 	})
+}
+
+// Older check-evidence cases use synthetic pins independently of lifecycle.
+// Supply the full private admission seam only while their executor is running.
+func withCheckAdmissionReader(t *testing.T, w *worker, state queue.State, run func()) {
+	t.Helper()
+	previousCandidate, previousResolver, previousObservation := w.configCandidate, w.resolveAuthorityLifecycle, w.authorityObservation
+	defer func() {
+		w.configCandidate, w.resolveAuthorityLifecycle, w.authorityObservation = previousCandidate, previousResolver, previousObservation
+	}()
+	w.configCandidate.Authority.Mode = authority.OpenMerge
+	w.resolveAuthorityLifecycle = func(context.Context, config.AuthorityCandidate, string, string) (authorityLifecycleResolution, error) {
+		t.Fatal("check-evidence fixture invoked lifecycle")
+		return authorityLifecycleResolution{}, nil
+	}
+	raw, err := os.ReadFile("../queue/testdata/wire/v1/event_write_restriction_verified.json")
+	must(t, err)
+	event, err := queue.DecodeEvent(raw)
+	must(t, err)
+	evidence := event.(queue.WriteRestrictionVerified).Evidence
+	w.authorityObservation = &authorityActivation{Input: forge.WriteRestrictionInput{Repo: w.repo(), Binding: state.AuthorityPin().OpenMerge.Binding, BaseSelectors: []authority.BaseSelector{{DefaultBranch: true}}, ExpectedRefs: []string{"refs/heads/main"}, AppID: "5383059"}, Read: func(context.Context) (authority.Observation, error) { return evidence, nil }}
+	run()
 }

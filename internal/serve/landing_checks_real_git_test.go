@@ -28,7 +28,11 @@ func recordRealGitCheckStart(t *testing.T, key store.QueueKey, land queue.Land, 
 	pin.GoverningCommit = e.ConfigCommit
 	pin.EffectiveDigest = e.ConfigDigest
 	pin.OpenMerge.Binding.EffectiveDigest = e.ConfigDigest
-	events := []queue.Event{queue.ConfigApplied{Commit: e.ConfigCommit, Digest: e.ConfigDigest}, pin, queue.BaseMoved{SHA: land.ExpectedBaseSHA}}
+	observedRaw, err := os.ReadFile("../queue/testdata/wire/v1/event_write_restriction_verified.json")
+	must(t, err)
+	observedEvent, err := queue.DecodeEvent(observedRaw)
+	must(t, err)
+	events := []queue.Event{queue.ConfigApplied{Commit: e.ConfigCommit, Digest: e.ConfigDigest}, pin, queue.WriteRestrictionObserved{Binding: pin.OpenMerge.Binding, ObservedAt: e.ObservedAt, Evidence: observedEvent.(queue.WriteRestrictionVerified).Evidence}, queue.BaseMoved{SHA: land.ExpectedBaseSHA}}
 	for _, p := range land.PRs {
 		events = append(events, queue.PRObserved{PR: p.PR, HeadSHA: p.HeadSHA, Eligible: true, Trusted: true}, queue.EnqueueRequested{PR: p.PR, At: e.ObservedAt.Add(-2 * time.Second)})
 	}

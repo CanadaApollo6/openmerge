@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/config"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -120,25 +121,28 @@ type worker struct {
 	reportingNext        time.Time
 	recovery             bool
 	Target
-	id               store.QueueID
-	wake             chan struct{}
-	cfg              config.Queue
-	configBranch     string
-	configTip        string
-	configDigest     string
-	configError      error
-	configCandidate  config.AuthorityCandidate
-	deleteHeadBranch *bool
-	prs              map[int]forge.PullRequest
-	diagnosticHeads  map[int]string
-	summaries        map[int]forge.PullRequestSummary
-	deferred         []string
-	logState         queue.State
-	logWatermark     int64
-	logChecks        string
-	ledgerCache      *ledgerCache
-	rulesNextCheck   time.Time
-	rulesFailures    int
+	id                      store.QueueID
+	wake                    chan struct{}
+	cfg                     config.Queue
+	configBranch            string
+	configTip               string
+	configDigest            string
+	configError             error
+	configCandidate         config.AuthorityCandidate
+	deleteHeadBranch        *bool
+	prs                     map[int]forge.PullRequest
+	diagnosticHeads         map[int]string
+	summaries               map[int]forge.PullRequestSummary
+	deferred                []string
+	logState                queue.State
+	logWatermark            int64
+	logChecks               string
+	ledgerCache             *ledgerCache
+	rulesNextCheck          time.Time
+	rulesFailures           int
+	authorityNextCheck      time.Time
+	authorityFailures       int
+	authorityCadenceBinding *authority.PolicyBinding
 
 	notificationPending atomic.Bool
 }
@@ -414,6 +418,9 @@ func (s *Server) loop(ctx context.Context, w *worker) {
 		}
 		if err == nil && w.rulesNextCheck.After(time.Now()) {
 			delay = min(delay, max(time.Millisecond, time.Until(w.rulesNextCheck)))
+		}
+		if err == nil && w.authorityNextCheck.After(time.Now()) {
+			delay = min(delay, max(time.Millisecond, time.Until(w.authorityNextCheck)))
 		}
 		w.mu.Unlock()
 		retryNotBefore = time.Time{}

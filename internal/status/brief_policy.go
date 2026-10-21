@@ -149,7 +149,8 @@ func guardedBriefProgress(f brief.Fact, policy cp.Policy, s queue.State, facts q
 // ReconstructBriefPolicy asserts the effective digest before exposing requirements.
 // Approval queues require the recorded static identity pin and local policy tree.
 func ReconstructBriefPolicy(data []byte, key store.QueueKey, defaultBranch string, req BriefPolicyRequest) (cp.Policy, error) {
-	cfg, _, err := config.Load(data)
+	var cfg config.Config
+	var err error
 	var selectors []authority.BaseSelector
 	requireOwners := req.Authority != nil && req.Authority.Authority == authority.OpenMerge
 	if requireOwners {
@@ -159,6 +160,9 @@ func ReconstructBriefPolicy(data []byte, key store.QueueKey, defaultBranch strin
 		if err == nil && (candidate.Authority.Mode != authority.OpenMerge || req.Authority.Validate() != nil || req.Authority.EffectiveDigest != req.Config.Digest || req.Authority.GoverningCommit != req.Config.Commit || req.Authority.OpenMerge.Binding.Repository != key.Repository || req.Authority.OpenMerge.Binding.QueueKey != store.AuthorityQueueKey(key) || candidate.Authority.BreakGlass == nil || !reflect.DeepEqual(*candidate.Authority.BreakGlass, req.Authority.OpenMerge.Binding.DeclaredActor)) {
 			return cp.Policy{}, fmt.Errorf("recorded authority binding unavailable")
 		}
+	}
+	if !requireOwners {
+		cfg, _, err = config.Load(data)
 	}
 	if err != nil {
 		return cp.Policy{}, fmt.Errorf("pinned config unavailable: %w", err)

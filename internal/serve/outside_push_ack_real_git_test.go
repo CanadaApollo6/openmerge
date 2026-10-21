@@ -52,7 +52,7 @@ func TestOutsidePushAcknowledgementRealGit(t *testing.T) {
 	initial, _, err := s.store.Load(t.Context(), w.id)
 	must(t, err)
 	now := time.Now().UTC()
-	appendEvents(queue.ConfigApplied{Commit: pin.GoverningCommit, Digest: pin.EffectiveDigest}, pin, queue.BaseMoved{SHA: base}, queue.PRObserved{PR: 1, HeadSHA: landed, Eligible: true, Trusted: true}, queue.EnqueueRequested{PR: 1, At: now}, queue.BatchStarted{BatchID: "b1", BaseSHA: base, PRs: []queue.BatchPR{{PR: 1, HeadSHA: landed}}, At: now}, queue.TestRefBuilt{BatchID: "b1", TestedSHA: landed, Method: queue.Merge, At: now}, queue.LandingStarted{BatchID: "b1", AttemptID: "attempt", FenceToken: initial.Fence, At: now})
+	appendEvents(queue.ConfigApplied{Commit: pin.GoverningCommit, Digest: pin.EffectiveDigest}, queue.BaseMoved{SHA: base}, queue.PRObserved{PR: 1, HeadSHA: landed, Eligible: true, Trusted: true}, queue.EnqueueRequested{PR: 1, At: now}, queue.BatchStarted{BatchID: "b1", BaseSHA: base, PRs: []queue.BatchPR{{PR: 1, HeadSHA: landed}}, At: now}, queue.TestRefBuilt{BatchID: "b1", TestedSHA: landed, Method: queue.Merge, At: now}, queue.LandingStarted{BatchID: "b1", AttemptID: "attempt", FenceToken: initial.Fence, At: now}, pin)
 	for _, sha := range []string{landed, base, head, base} {
 		git("", "--git-dir="+remote, "update-ref", "refs/heads/main", sha)
 		appendEvents(queue.BaseMoved{SHA: sha})

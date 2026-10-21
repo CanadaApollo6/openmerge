@@ -292,7 +292,7 @@ func (s State) ValidateLandingChecks(policyDigest string, land Land, start Landi
 	}
 	pin := s.AuthorityPin()
 	b := s.Batch(land.BatchID)
-	if pin == nil || pin.Authority != authority.OpenMerge || pin.EffectiveDigest != s.ConfigDigest || pin.GoverningCommit != s.ConfigCommit || e.ConfigCommit != s.ConfigCommit || e.ConfigDigest != s.ConfigDigest || e.PolicyDigest != policyDigest || b == nil || b.ConfigDigest != s.ConfigDigest || e.BatchID != land.BatchID || e.BatchID != start.BatchID || e.AttemptID != start.AttemptID || e.TestedSHA != land.TestedSHA || e.TestedSHA != b.TestedSHA || e.TestRef != land.Ref || e.TestRef != b.TestRef || e.Method != land.Method || e.Method != b.Method || e.ObservedAt.After(start.At) || e.ObservedAt.Before(b.StartedTestingAt) || !reflect.DeepEqual(e.RequiredCheckSource, s.LandingCheckSources()) || len(e.Members) != len(land.PRs) || !slices.Equal(b.PRs, land.PRs) {
+	if pin == nil || pin.Authority != authority.OpenMerge || pin.EffectiveDigest != s.ConfigDigest || e.ConfigCommit != pin.GoverningCommit || e.ConfigDigest != s.ConfigDigest || e.PolicyDigest != policyDigest || b == nil || b.ConfigDigest != s.ConfigDigest || e.BatchID != land.BatchID || e.BatchID != start.BatchID || e.AttemptID != start.AttemptID || e.TestedSHA != land.TestedSHA || e.TestedSHA != b.TestedSHA || e.TestRef != land.Ref || e.TestRef != b.TestRef || e.Method != land.Method || e.Method != b.Method || e.ObservedAt.After(start.At) || e.ObservedAt.Before(b.StartedTestingAt) || !reflect.DeepEqual(e.RequiredCheckSource, s.LandingCheckSources()) || len(e.Members) != len(land.PRs) || !slices.Equal(b.PRs, land.PRs) {
 		return fmt.Errorf("stale landing check binding")
 	}
 	for i, m := range e.Members {

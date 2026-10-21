@@ -73,7 +73,10 @@ func TestStartedRealGitLandingSettlesAcrossAuthorityViolation(t *testing.T) {
 	binding.CoverageDigest = coverage
 	pin := queue.PolicyAuthorityApplied{GoverningCommit: base, EffectiveDigest: binding.EffectiveDigest, Authority: authority.OpenMerge, DefaultBranch: "main", CoverageDigest: coverage, OpenMerge: &queue.AuthorityPin{Binding: binding}}
 	at := time.Now().UTC().Add(-2 * time.Minute)
-	events := []queue.Event{queue.ConfigApplied{Commit: base, Digest: binding.EffectiveDigest}, pin, queue.BaseMoved{SHA: base}, queue.PRObserved{PR: 1, HeadSHA: head, Eligible: true, Trusted: true}, queue.EnqueueRequested{PR: 1, At: at}, queue.BatchStarted{BatchID: "b1", BaseSHA: base, PRs: []queue.BatchPR{{PR: 1, HeadSHA: head}}, At: at}, queue.TestRefBuilt{BatchID: "b1", TestedSHA: tested, At: at, Method: queue.Merge}, queue.ChecksCompleted{TestedSHA: tested, Success: true}, queue.LandingStarted{BatchID: "b1", AttemptID: "attempt", FenceToken: fence, At: at}}
+	events := []queue.Event{queue.ConfigApplied{Commit: base, Digest: binding.EffectiveDigest}, queue.BaseMoved{SHA: base}, queue.PRObserved{PR: 1, HeadSHA: head, Eligible: true, Trusted: true}, queue.EnqueueRequested{PR: 1, At: at}, queue.BatchStarted{BatchID: "b1", BaseSHA: base, PRs: []queue.BatchPR{{PR: 1, HeadSHA: head}}, At: at}, queue.TestRefBuilt{BatchID: "b1", TestedSHA: tested, At: at, Method: queue.Merge}, queue.ChecksCompleted{TestedSHA: tested, Success: true}, queue.LandingStarted{BatchID: "b1", AttemptID: "attempt", FenceToken: fence, At: at}}
+	// Seed an already admitted historical attempt before authority activation;
+	// active authority starts must use StartLanding's atomic admission gate.
+	events = append(events, pin)
 	_, err = db.Append(t.Context(), q, events, "")
 	must(t, err)
 	// The push has started and its atomic base/fence transaction succeeds. No

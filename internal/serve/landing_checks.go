@@ -15,6 +15,11 @@ import (
 // PR 10a must join by batch/tested SHA and provider run/attempt identity. No later forge read enriches it.
 func landingCheckEvidence(basis queue.State, policyDigest string, land queue.Land, checks []forge.CheckRun, at time.Time, attempt string) (*queue.LandingChecksBuilder, error) {
 	e := queue.LandingChecksRecorded{BatchID: land.BatchID, AttemptID: attempt, ConfigCommit: basis.ConfigCommit, ConfigDigest: basis.ConfigDigest, PolicyDigest: policyDigest, TestedSHA: land.TestedSHA, LandedSHA: land.TestedSHA, Method: land.Method, TestRef: land.Ref, RequiredCheckSource: basis.LandingCheckSources(), ObservedAt: at.UTC()}
+	// ConfigApplied deliberately retains the first commit for a digest. A
+	// same-digest authority rebind carries the actual governing commit in its pin.
+	if pin := basis.AuthorityPin(); pin != nil && pin.OpenMerge != nil {
+		e.ConfigCommit = pin.GoverningCommit
+	}
 	if land.Method == queue.FastForward && len(land.PRs) > 0 {
 		e.LandedSHA = land.PRs[len(land.PRs)-1].HeadSHA
 	}

@@ -28,3 +28,16 @@ func TestSynctestPoolDestroy(t *testing.T) {
 		db.Close()
 	})
 }
+
+func TestSynctestDatabaseSchemasUnique(t *testing.T) {
+	testSynctest(t, func(t *testing.T) {
+		_, first := databaseConnection(t)
+		_, second := databaseConnection(t)
+		var firstSchema, secondSchema string
+		must(t, first.QueryRow(t.Context(), "SELECT current_schema()").Scan(&firstSchema))
+		must(t, second.QueryRow(t.Context(), "SELECT current_schema()").Scan(&secondSchema))
+		if firstSchema == secondSchema {
+			t.Fatal("same virtual instant reused a scratch schema")
+		}
+	})
+}

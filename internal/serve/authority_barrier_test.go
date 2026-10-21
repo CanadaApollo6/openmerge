@@ -114,6 +114,9 @@ func TestAuthorityBarrierJournalCannotInstallRuntimeAuthority(t *testing.T) {
 			// New worker projections/enforcement require the same explicit
 			// runtime seam; candidates, receipts and replayed pins cannot run it.
 			must(t, s.observeWorkerAuthority(t.Context(), w))
+			if _, err := s.readAuthorityAdmission(t.Context(), w, state); err == nil || !strings.Contains(err.Error(), "opt-in/configuration unavailable") {
+				t.Fatal("candidate/journal/receipt enabled complete admission seam", err)
+			}
 			if w.stageA != nil || w.authorityObservation != nil || w.approvalStatus.Load() != nil {
 				t.Fatal("journal data installed owner/observation/status policy")
 			}

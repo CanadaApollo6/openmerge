@@ -45,6 +45,12 @@ func authorityCheckLandInput(t *testing.T, s *Store, rawCase []byte) (QueueID, C
 	pin.GoverningCommit = state.ConfigCommit
 	pin.OpenMerge.Binding.EffectiveDigest = state.ConfigDigest
 	appendEvents(t, s, q, pin)
+	raw, err = os.ReadFile("../queue/testdata/wire/v1/event_write_restriction_verified.json")
+	must(t, err)
+	event, err = queue.DecodeEvent(raw)
+	must(t, err)
+	observed := event.(queue.WriteRestrictionVerified)
+	appendEvents(t, s, q, queue.WriteRestrictionObserved{Binding: pin.OpenMerge.Binding, ObservedAt: c.Start.At, Evidence: observed.Evidence})
 	state, _, err = s.Load(t.Context(), q)
 	must(t, err)
 	if state.AuthorityPin() == nil {
