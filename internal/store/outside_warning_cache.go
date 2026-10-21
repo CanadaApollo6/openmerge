@@ -2,12 +2,10 @@ package store
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"maps"
 	"slices"
 	"sort"
-	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -51,20 +49,8 @@ func (s *Store) warningCache(q QueueID) *outsideWarningCache {
 }
 
 func (c *outsideWarningIndex) apply(r EventRecord, lookup warningLookup) error {
-	// Validate associations even when their audits have already been acknowledged.
-	key := ""
-	if r.DedupeKey != nil {
-		key = *r.DedupeKey
-	}
-	if strings.HasPrefix(key, "outside-base/") {
-		if _, ok := r.Event.(queue.OutsidePushRecorded); !ok {
-			return fmt.Errorf("invalid outside push association at event %d", r.ID)
-		}
-	}
-	if strings.HasPrefix(key, "outside-push-acknowledged/") {
-		if _, ok := r.Event.(queue.OutsidePushAcknowledged); !ok {
-			return fmt.Errorf("invalid outside push acknowledgement association at event %d", r.ID)
-		}
+	if err := validateOutsidePushAssociation(r, lookup); err != nil {
+		return err
 	}
 	switch e := r.Event.(type) {
 	case queue.ConfigApplied, queue.PolicyAuthorityApplied:
@@ -85,17 +71,6 @@ func (c *outsideWarningIndex) apply(r EventRecord, lookup warningLookup) error {
 			c.dirty = true
 		}
 	case queue.OutsidePushAcknowledged:
-		if key != acknowledgementKey(e.SourceEventID) || r.ID <= e.SourceEventID {
-			return errors.New("invalid outside push acknowledgement association")
-		}
-		original, err := lookup(e.SourceEventID)
-		if err != nil {
-			return err
-		}
-		push, ok := original.Event.(queue.OutsidePushRecorded)
-		if !ok || push.NewSHA != e.SHA {
-			return errors.New("invalid outside push acknowledgement association")
-		}
 		if _, ok := c.outstanding[e.SourceEventID]; ok {
 			delete(c.outstanding, e.SourceEventID)
 			c.dirty = true
@@ -222,6 +197,9 @@ func (s *Store) cachedOutsidePushWarnings(ctx context.Context, q QueueID) (Outsi
 		c.published.Store(&outsideWarningSnapshot{through: local.through, summary: summary})
 	} else {
 		summary = c.lastComplete()
+		if snapshot := c.published.Load(); snapshot == nil || snapshot.through < c.through {
+			summary.Error = "ledger_refreshing"
+		}
 	}
 	c.mu.Unlock()
 	return cloneWarningSummary(summary), nil

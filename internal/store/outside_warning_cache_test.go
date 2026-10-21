@@ -364,56 +364,98 @@ func TestWarningFoldCancellationDoesNotFailJournals(t *testing.T) {
 }
 
 func TestWarningRefreshDoesNotReplaceNewerForeground(t *testing.T) {
-	s := newStore(t)
-	key := QueueKey{Installation: "7", Repository: "owner/repo", BaseBranch: "main"}
-	id, err := s.EnsureQueue(t.Context(), key)
-	must(t, err)
-	appendWarningPin(t, s, id, authority.OpenMerge)
-	appendEvents(t, s, id, queue.BaseMoved{SHA: "base"}, queue.BaseMoved{SHA: "outside-1"})
-	auditPass(t, s, id)
-	_, err = s.Journals(t.Context(), []QueueKey{key})
-	must(t, err)
-	original := s.pool
-	cfg := original.Config().Copy()
-	pause := &pausedWarningRefreshTrace{sql: "commit", entered: make(chan struct{}), release: make(chan struct{})}
-	cfg.ConnConfig.Tracer = pause
-	traced, err := pgxpool.NewWithConfig(t.Context(), cfg)
-	must(t, err)
-	s.pool = traced
-	t.Cleanup(original.Close)
-	done := make(chan OutsideWarningSummary, 1)
-	failures := make(chan error, 1)
-	go func() { summary, err := s.ReadOutsidePushWarnings(t.Context(), id); done <- summary; failures <- err }()
-	released := false
-	defer func() {
-		if !released {
+	for _, incomplete := range []bool{false, true} {
+		t.Run(fmt.Sprintf("incomplete-%t", incomplete), func(t *testing.T) {
+			s := newStore(t)
+			key := QueueKey{Installation: "7", Repository: "owner/repo", BaseBranch: "main"}
+			id, err := s.EnsureQueue(t.Context(), key)
+			must(t, err)
+			appendWarningPin(t, s, id, authority.OpenMerge)
+			appendEvents(t, s, id, queue.BaseMoved{SHA: "base"}, queue.BaseMoved{SHA: "outside-1"})
+			auditPass(t, s, id)
+			_, err = s.Journals(t.Context(), []QueueKey{key})
+			must(t, err)
+			original := s.pool
+			cfg := original.Config().Copy()
+			pause := &pausedWarningRefreshTrace{sql: "commit", entered: make(chan struct{}), release: make(chan struct{})}
+			cfg.ConnConfig.Tracer = pause
+			traced, err := pgxpool.NewWithConfig(t.Context(), cfg)
+			must(t, err)
+			s.pool = traced
+			t.Cleanup(original.Close)
+			done := make(chan OutsideWarningSummary, 1)
+			failures := make(chan error, 1)
+			go func() { summary, err := s.ReadOutsidePushWarnings(t.Context(), id); done <- summary; failures <- err }()
+			released := false
+			defer func() {
+				if !released {
+					close(pause.release)
+					<-done
+					<-failures
+				}
+			}()
+			select {
+			case <-pause.entered:
+			case <-time.After(time.Second):
+				t.Fatal("refresh did not reach commit")
+			}
+			appendEvents(t, s, id, queue.BaseMoved{SHA: "outside-2"})
+			auditPass(t, s, id)
+			if incomplete {
+				// Interrupt a real foreground fold after its new audit but before completion.
+				appendEvents(t, s, id, queue.RefreshRequested{})
+				js, err := s.ReportingJournals(t.Context(), []QueueKey{key})
+				must(t, err)
+				c := s.warningCache(id)
+				remaining := 0
+				for _, e := range js[0].Events {
+					if e.ID > c.through {
+						remaining++
+					}
+				}
+				ctx := &cancelWarningFoldContext{Context: t.Context(), remaining: remaining - 1}
+				summary := s.journalWarnings(ctx, id, js[0].Events)
+				if summary.Error != "ledger_unavailable" || c.through <= c.published.Load().through {
+					t.Fatal("test failed to interrupt an advanced fold", summary)
+				}
+			} else {
+				js, err := s.Journals(t.Context(), []QueueKey{key})
+				must(t, err)
+				if js[0].OutsideWarnings.Outstanding != 2 {
+					t.Fatal(js[0].OutsideWarnings)
+				}
+			}
 			close(pause.release)
-			<-done
-			<-failures
-		}
-	}()
-	select {
-	case <-pause.entered:
-	case <-time.After(time.Second):
-		t.Fatal("refresh did not reach commit")
+			released = true
+			summary := <-done
+			must(t, <-failures)
+			if incomplete {
+				if summary.Outstanding != 1 || summary.Error != "ledger_refreshing" {
+					t.Fatal("older snapshot lacks stale marker", summary)
+				}
+			} else if summary.Outstanding != 2 || summary.Error != "" {
+				t.Fatal("refresh republished older counts", summary)
+			}
+			js, err := s.Journals(t.Context(), []QueueKey{key})
+			must(t, err)
+			if js[0].OutsideWarnings.Outstanding != 2 {
+				t.Fatal("refresh replaced newer index", js[0].OutsideWarnings)
+			}
+
+		})
 	}
-	appendEvents(t, s, id, queue.BaseMoved{SHA: "outside-2"})
-	auditPass(t, s, id)
-	js, err := s.Journals(t.Context(), []QueueKey{key})
-	must(t, err)
-	if js[0].OutsideWarnings.Outstanding != 2 {
-		t.Fatal(js[0].OutsideWarnings)
+}
+
+// Cancel only between fold units, independent of SQL scheduling.
+type cancelWarningFoldContext struct {
+	context.Context
+	remaining int
+}
+
+func (c *cancelWarningFoldContext) Err() error {
+	if c.remaining == 0 {
+		return context.Canceled
 	}
-	close(pause.release)
-	released = true
-	summary := <-done
-	must(t, <-failures)
-	if summary.Outstanding != 2 {
-		t.Fatal("refresh republished older counts", summary)
-	}
-	js, err = s.Journals(t.Context(), []QueueKey{key})
-	must(t, err)
-	if js[0].OutsideWarnings.Outstanding != 2 {
-		t.Fatal("refresh replaced newer index", js[0].OutsideWarnings)
-	}
+	c.remaining--
+	return nil
 }

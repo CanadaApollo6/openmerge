@@ -619,10 +619,13 @@ Slot acquisition clears the start deadline and publishes the cycle start.
 In-cycle overdue means `now > last_progress_at + progress_stall_limit`, or a
 missing cycle start/progress timestamp (fail closed).
 `--health-progress-stall-limit` / `OPENMERGE_HEALTH_PROGRESS_STALL_LIMIT` defaults
-to 2m30s (the default 2m action timeout plus 30s grace), range 1s–30m. Embedded
-servers with default health settings derive this limit from their action timeout
-plus grace, clamped to that range. Slot acquisition seeds progress; each completed
-action (after its completion write) and turn advances it. The maximum cycle
+to 4m, range 1s–30m, with startup validation requiring at least action timeout +
+30s Git maintenance + 10s completion write + configured grace. CLI and embedded
+servers reject incompatible settings; longer embedded action timeouts require an
+explicit compatible stall limit. The default 2m timeout requires 3m10s including
+default grace, leaving 50s margin. Slot acquisition seeds progress; each completed
+reconciliation source read, observation write, check-report write, action (after
+its completion write) and turn advances it. Hung units cannot publish progress. The maximum cycle
 duration remains an absolute backstop, even with recent progress. This permits a
 hot turn's 64 chained actions while detecting a hung action promptly. Cycle end
 publishes the next effective start deadline. Slot starvation remains detectable,
@@ -670,6 +673,10 @@ outstanding warnings. Acknowledgement removes the warning while keeping
 the deployed recent `outside_pushes` history unchanged. Pushes originating in
 GitHub mode gain no authority warning; warnings from before a rollback remain
 until acknowledged.
+
+When a background warning refresh returns an older complete snapshot after an
+interrupted foreground fold advanced its index, that snapshot carries
+`error: "ledger_refreshing"`. A later complete fold/refresh clears the marker.
 
 This reporting change may merge but **must not deploy until ADR 0009 period B
 has drained**. PR 9 still owns authority activation; PR 11 owns real sandbox HTTP

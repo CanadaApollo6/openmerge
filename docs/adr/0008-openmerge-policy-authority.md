@@ -1422,7 +1422,7 @@ are implementation choices, not permission to weaken the accepted Decision.
 - **Have OpenMerge compile its policy into GitHub rulesets.** GitHub's rules cannot express approval by change class, accountable humans or post-merge verification, and they are evaluated on pull requests that the App bypasses anyway.
 
 
-## PR 6 implementation refinement (2026-10-20, round 3)
+## PR 6 implementation refinement (2026-10-20, round 4)
 
 This records implementation details without changing the accepted Decision.
 Health 503 has three exhaustive groups: a missing health provider, failed DB
@@ -1435,12 +1435,17 @@ remain 401, 400 and 405. See [the API contract](../api.md#authority-and-alerting
 The published deadline is the latest allowed next cycle **start**, including an
 immediate journal wake. Waiting for a slot is overdue after the deadline plus
 30s grace (configurable 1–60s). Slot acquisition publishes `in_cycle`,
-`cycle_started_at` and initial `last_progress_at`. Completed actions (after their
-completion write) and turns advance progress; journal activity does not. In-cycle
+`cycle_started_at` and initial `last_progress_at`. Completed reconciliation
+reads (PRs, configuration, rules, check sources and approval identities),
+observation and check-report writes, actions (after their completion write) and
+turns advance progress; journal activity does not. Publication happens only after
+a unit completes; a hung read or action still stalls. In-cycle
 overdue means time since progress exceeds `--health-progress-stall-limit` /
-`OPENMERGE_HEALTH_PROGRESS_STALL_LIMIT`: default 2m30s (2m action timeout plus
-30s grace), range 1s–30m. Embedded servers derive the default from their action
-timeout plus grace, clamped to that range. Missing cycle start or progress fails
+`OPENMERGE_HEALTH_PROGRESS_STALL_LIMIT`: default 4m, range 1s–30m. Startup
+rejects a limit below action timeout + 30s Git maintenance + 10s completion write
++ configured grace, equally for CLI and embedded servers. The 2m action default
+requires 3m10s with default grace, leaving 50s margin; embedded callers extending
+the action timeout must explicitly select a compatible stall limit. Missing cycle start or progress fails
 closed as overdue. `--health-max-cycle-duration` /
 `OPENMERGE_HEALTH_MAX_CYCLE_DURATION` remains an absolute backstop: default 3h,
 range 2m–6h. Cycle completion publishes the next start deadline. Degraded uses
@@ -1468,3 +1473,8 @@ Pin removal clears health warnings; rollback retains origin-time eligibility and
 refreshes acknowledgements. Nullable dedupe keys preserve SQL NULL: on an audit
 row, NULL is an orphan anomaly, including when an acknowledgement exists. Both
 scan and cache paths validate origins and surface errors locally.
+
+Round 4 validates reserved outside-push association keys and acknowledgement SHA
+bindings identically in scan and cache, including GitHub-mode origins. An older
+background snapshot returned after an interrupted newer foreground fold carries
+`ledger_refreshing` until a complete fold or refresh publishes current counts.

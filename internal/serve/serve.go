@@ -199,17 +199,16 @@ func newServer(db *store.Store, options Options) (*Server, error) {
 		options.RulesInterval = 10 * time.Minute
 	}
 	if options.ActionTimeout == 0 {
-		options.ActionTimeout = 2 * time.Minute
+		options.ActionTimeout = DefaultActionTimeout
 	}
 	if options.BackstopInterval < 0 || options.WebhookHealthWindow < 0 || options.DiscoveryInterval < 0 || options.PollInterval < 0 || options.RulesInterval < 0 || options.Concurrency < 1 || options.ActionTimeout < 0 {
 		return nil, errors.New("intervals, health window, concurrency and action timeout must be positive")
 	}
 	if options.Health == (status.HealthSettings{}) {
 		options.Health = status.DefaultHealthSettings()
-		options.Health.ProgressStallLimit = min(30*time.Minute, max(time.Second, options.ActionTimeout+options.Health.OverdueGrace))
 	}
-	if !options.Health.Valid() {
-		return nil, errors.New("health overdue grace must be 1–60s and maximum success age 1–60m and maximum cycle duration 2m–6h and progress stall limit 1s–30m")
+	if err := ValidateHealthSettings(options.Health, options.ActionTimeout); err != nil {
+		return nil, err
 	}
 	if options.Logger == nil {
 		options.Logger = slog.Default()

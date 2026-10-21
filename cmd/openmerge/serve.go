@@ -72,7 +72,7 @@ func parseServe(args []string, output io.Writer) (serveOptions, error) {
 	flags.DurationVar(&o.discoveryInterval, "discovery-interval", 10*time.Minute, "installation/repository discovery interval (OPENMERGE_DISCOVERY_INTERVAL)")
 	flags.DurationVar(&o.rulesInterval, "rules-interval", 10*time.Minute, "repository rules validation interval (OPENMERGE_RULES_INTERVAL)")
 	flags.BoolVar(&o.deleteHeadBranch, "delete-head-branch", true, "default for deleting eligible landed heads; repository config overrides (OPENMERGE_DELETE_HEAD_BRANCH)")
-	flags.DurationVar(&o.healthProgressStall, "health-progress-stall-limit", 150*time.Second, "health maximum time without cycle progress, 1s–30m (OPENMERGE_HEALTH_PROGRESS_STALL_LIMIT)")
+	flags.DurationVar(&o.healthProgressStall, "health-progress-stall-limit", status.DefaultHealthSettings().ProgressStallLimit, "health maximum time without cycle progress, at least action/cleanup/grace budget, at most 30m (OPENMERGE_HEALTH_PROGRESS_STALL_LIMIT)")
 	flags.DurationVar(&o.healthMaxCycle, "health-max-cycle-duration", 3*time.Hour, "health maximum cycle runtime, 2m–6h (OPENMERGE_HEALTH_MAX_CYCLE_DURATION)")
 	flags.DurationVar(&o.healthGrace, "health-overdue-grace", 30*time.Second, "health alert grace, 1–60s (OPENMERGE_HEALTH_OVERDUE_GRACE)")
 	flags.DurationVar(&o.healthMaxAge, "health-max-success-age", 15*time.Minute, "health maximum reconciliation age, 1–60m (OPENMERGE_HEALTH_MAX_SUCCESS_AGE)")
@@ -112,8 +112,8 @@ func parseServe(args []string, output io.Writer) (serveOptions, error) {
 	if o.backstop <= 0 || o.webhookHealthWindow <= 0 || o.poll <= 0 || o.rulesInterval <= 0 || o.discoveryInterval <= 0 || o.concurrency <= 0 || o.cache == "" {
 		return o, errors.New("poll, backstop, webhook health, rules and discovery intervals, concurrency and git cache must be nonempty and positive")
 	}
-	if !(status.HealthSettings{OverdueGrace: o.healthGrace, MaxSuccessAge: o.healthMaxAge, MaxCycleDuration: o.healthMaxCycle, ProgressStallLimit: o.healthProgressStall}).Valid() {
-		return o, errors.New("health overdue grace must be 1–60s and maximum success age 1–60m and maximum cycle duration 2m–6h and progress stall limit 1s–30m")
+	if err := serve.ValidateHealthSettings(status.HealthSettings{OverdueGrace: o.healthGrace, MaxSuccessAge: o.healthMaxAge, MaxCycleDuration: o.healthMaxCycle, ProgressStallLimit: o.healthProgressStall}, serve.DefaultActionTimeout); err != nil {
+		return o, err
 	}
 	if o.listen != "" && o.secret == "" {
 		return o, errors.New("webhook listen requires a webhook secret")

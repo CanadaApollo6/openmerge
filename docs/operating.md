@@ -1771,13 +1771,18 @@ While waiting, a queue is overdue after its published next-start deadline plus
 `--health-overdue-grace` / `OPENMERGE_HEALTH_OVERDUE_GRACE` (30s, range 1–60s).
 Immediate journal wakes publish a deadline of now, so slot starvation remains
 visible. Slot acquisition starts the cycle and seeds `last_progress_at`.
-Completed actions and turns advance progress; journal traffic alone does not.
+Completed PR, comment, rules, check-source, identity, configuration and Git reads,
+observation writes, check-report writes, actions and turns advance progress.
+A unit publishes only after returning; journal traffic alone does not.
 
 During a cycle, overdue means missing start/progress telemetry or no progress for
-`--health-progress-stall-limit` / `OPENMERGE_HEALTH_PROGRESS_STALL_LIMIT` (2m30s,
-range 1s–30m). This default covers the 2m action timeout plus 30s grace. Embedded
-servers derive it from their action timeout plus grace, clamped to the supported
-range. `--health-max-cycle-duration` / `OPENMERGE_HEALTH_MAX_CYCLE_DURATION`
+`--health-progress-stall-limit` / `OPENMERGE_HEALTH_PROGRESS_STALL_LIMIT` (4m,
+range 1s–30m, further constrained by the action budget). Startup rejects any limit
+below the action timeout + 30s Git cache maintenance + 10s completion write +
+configured overdue grace. The CLI and embedded servers enforce the same rule;
+embedded servers with longer action timeouts must explicitly extend the limit.
+A 1h action timeout is incompatible with the 30m stall-limit ceiling. The default
+2m action timeout and 30s grace require 3m10s, leaving 50s margin under 4m. `--health-max-cycle-duration` / `OPENMERGE_HEALTH_MAX_CYCLE_DURATION`
 remains an absolute 3h backstop (range 2m–6h). A progressing cycle may run past
 15m or 60m while staying healthy. A hung action becomes overdue after the stall
 limit. Degraded means the later of last success and progress while in-cycle is
@@ -1788,6 +1793,8 @@ failed cycles and backoff cannot hide degradation.
 
 Warning refresh never holds the cache lock during DB I/O. Contention or ledger
 anomalies label only that queue's warning section `ledger_unavailable`, retaining
-last complete counts. SQL NULL on an audit dedupe key is an orphan anomaly even
+last complete counts. If a background refresh loses to an interrupted newer
+foreground fold, its last published counts carry `ledger_refreshing` until the
+newer fold or refresh completes. SQL NULL on an audit dedupe key is an orphan anomaly even
 if acknowledged. Pin removal clears health warnings; rollback keeps historical
 origin-time warning eligibility and refreshes acknowledgements as status does.

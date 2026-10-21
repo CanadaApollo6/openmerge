@@ -48,7 +48,7 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 		if result != nil {
 			completion = store.Failed
 		}
-		persist, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		persist, cancel := context.WithTimeout(context.Background(), completionWriteTimeout)
 		defer cancel()
 		if err := s.store.Complete(persist, claim, completion); err != nil && !errors.Is(err, store.ErrClaimLost) {
 			result = errors.Join(result, err)
@@ -382,7 +382,12 @@ func (s *Server) writeStatus(ctx context.Context, w *worker, pr int, head string
 		}
 		return err
 	}
-	return s.store.Record(ctx, w.id, key, data)
+	w.publishProgress(time.Now())
+	err = s.store.Record(ctx, w.id, key, data)
+	if err == nil {
+		w.publishProgress(time.Now())
+	}
+	return err
 }
 
 func (s *Server) reportBatch(ctx context.Context, w *worker, batch *queue.Batch, status forge.Status) error {
@@ -600,6 +605,7 @@ func (w *worker) waitingStatus() forge.Status {
 
 func (s *Server) reportWaiting(ctx context.Context, w *worker) error {
 	summaries, err := w.Driver.ListOpenPullRequests(ctx, w.repo(), w.Key.BaseBranch)
+	w.publishProgress(time.Now())
 	if err != nil {
 		return err
 	}
@@ -634,6 +640,7 @@ func (s *Server) waitingCommands(ctx context.Context, w *worker, number int) err
 		}
 	}
 	comments, err := w.Driver.ListComments(ctx, w.repo(), number, since)
+	w.publishProgress(time.Now())
 	if err != nil {
 		return err
 	}
@@ -649,6 +656,7 @@ func (s *Server) waitingCommands(ctx context.Context, w *worker, number int) err
 				}
 			}
 		}
+		w.publishProgress(time.Now())
 		since = maxTime(since, c.CreatedAt)
 	}
 	return s.record(ctx, w, key, since)
@@ -660,6 +668,7 @@ func (s *Server) ignoreWaitingCommand(ctx context.Context, w *worker, number int
 		return err
 	}
 	allowed, err := w.Driver.CanWrite(ctx, w.repo(), comment.Author)
+	w.publishProgress(time.Now())
 	if err != nil {
 		return err
 	}

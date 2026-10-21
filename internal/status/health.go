@@ -35,7 +35,7 @@ func (s HealthSettings) Valid() bool {
 
 // DefaultHealthSettings returns the alerting defaults from ADR 0008.
 func DefaultHealthSettings() HealthSettings {
-	return HealthSettings{OverdueGrace: 30 * time.Second, MaxSuccessAge: 15 * time.Minute, MaxCycleDuration: 3 * time.Hour, ProgressStallLimit: 150 * time.Second}
+	return HealthSettings{OverdueGrace: 30 * time.Second, MaxSuccessAge: 15 * time.Minute, MaxCycleDuration: 3 * time.Hour, ProgressStallLimit: 4 * time.Minute}
 }
 
 // Health is the bounded alerting response on the status API listener.

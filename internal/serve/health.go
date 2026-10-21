@@ -3,12 +3,32 @@ package serve
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/gitops"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/status"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
+
+// DefaultActionTimeout bounds one queue action before cleanup and completion.
+const DefaultActionTimeout = 2 * time.Minute
+
+const completionWriteTimeout = 10 * time.Second
+
+// ValidateHealthSettings rejects thresholds that can flag a bounded action as
+// stalled before its cleanup and completion write have had time to finish.
+func ValidateHealthSettings(settings status.HealthSettings, actionTimeout time.Duration) error {
+	if !settings.Valid() {
+		return errors.New("health overdue grace must be 1–60s and maximum success age 1–60m and maximum cycle duration 2m–6h and progress stall limit 1s–30m")
+	}
+	minimum := actionTimeout + gitops.MaintenanceTimeout + completionWriteTimeout + settings.OverdueGrace
+	if actionTimeout < 0 || actionTimeout > settings.ProgressStallLimit || settings.ProgressStallLimit < minimum {
+		return fmt.Errorf("health progress stall limit %s must be at least action timeout %s + git maintenance %s + completion write %s + grace %s", settings.ProgressStallLimit, actionTimeout, gitops.MaintenanceTimeout, completionWriteTimeout, settings.OverdueGrace)
+	}
+	return nil
+}
 
 // Health performs exactly one constant-cost DB probe and reads immutable worker
 // snapshots. It never takes worker locks, scans journals or calls a forge.
@@ -197,7 +217,8 @@ func hasLandingObligations(state queue.State) bool {
 	return false
 }
 
-// Progress comes only from completed actions and turns, never journal activity.
+// Progress comes only from completed reconciliation/reporting units, actions and
+// turns, never from a timer or unrelated journal activity.
 func (w *worker) publishProgress(at time.Time) {
 	for {
 		old := w.health.Load()

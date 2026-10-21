@@ -106,6 +106,11 @@ func visitOutsidePushWarnings(ctx context.Context, tx pgx.Tx, q QueueID, visit f
 		}
 		for _, r := range page {
 			after = r.ID
+			if err := validateOutsidePushAssociation(r, func(id int64) (EventRecord, error) {
+				return outsideWarningEvent(ctx, tx, q, id)
+			}); err != nil {
+				return err
+			}
 			switch e := r.Event.(type) {
 			case queue.ConfigApplied, queue.PolicyAuthorityApplied:
 				// Use the same pin acceptance rules as replay, without building unrelated
@@ -131,7 +136,7 @@ func visitOutsidePushWarnings(ctx context.Context, tx pgx.Tx, q QueueID, visit f
 				}
 				push, ok := audit.Event.(queue.OutsidePushRecorded)
 				if !ok || audit.ID <= r.ID || push.NewSHA != e.SHA {
-					return fmt.Errorf("invalid outside push association for base event %d", r.ID)
+					return fmt.Errorf("outside push ledger anomaly: invalid outside push association for base event %d", r.ID)
 				}
 				receipt, err := acknowledgement(ctx, tx, q, audit.ID, push.NewSHA)
 				if err != nil {
@@ -171,7 +176,7 @@ func acknowledgement(ctx context.Context, tx pgx.Tx, q QueueID, source int64, sh
 	}
 	ack, ok := r.Event.(queue.OutsidePushAcknowledged)
 	if !ok || ack.SourceEventID != source || ack.SHA != sha || r.ID <= source {
-		return nil, errors.New("invalid outside push acknowledgement association")
+		return nil, errors.New("outside push ledger anomaly: invalid outside push acknowledgement association")
 	}
 	return &OutsidePushAcknowledgement{EventID: r.ID, OutsidePushAcknowledged: ack}, nil
 }
@@ -261,4 +266,37 @@ func validateOutsidePushOrigin(r EventRecord, push queue.OutsidePushRecorded, lo
 		return 0, anomaly
 	}
 	return source, nil
+}
+
+// Validate reserved association keys in every authority mode, including rows that
+// do not contribute a warning. Scan and incremental folds must fail identically.
+func validateOutsidePushAssociation(r EventRecord, lookup warningLookup) error {
+	key := ""
+	if r.DedupeKey != nil {
+		key = *r.DedupeKey
+	}
+	if strings.HasPrefix(key, "outside-base/") {
+		if _, ok := r.Event.(queue.OutsidePushRecorded); !ok {
+			return fmt.Errorf("outside push ledger anomaly: invalid association at event %d", r.ID)
+		}
+	}
+	if strings.HasPrefix(key, "outside-push-acknowledged/") {
+		if _, ok := r.Event.(queue.OutsidePushAcknowledged); !ok {
+			return fmt.Errorf("outside push ledger anomaly: invalid acknowledgement association at event %d", r.ID)
+		}
+	}
+	if ack, ok := r.Event.(queue.OutsidePushAcknowledged); ok {
+		if key != acknowledgementKey(ack.SourceEventID) || r.ID <= ack.SourceEventID {
+			return errors.New("outside push ledger anomaly: invalid acknowledgement association")
+		}
+		original, err := lookup(ack.SourceEventID)
+		if err != nil {
+			return err
+		}
+		push, ok := original.Event.(queue.OutsidePushRecorded)
+		if !ok || push.NewSHA != ack.SHA {
+			return errors.New("outside push ledger anomaly: invalid acknowledgement association")
+		}
+	}
+	return nil
 }

@@ -481,3 +481,54 @@ func TestEventRecordDedupeLoadingIsExplicit(t *testing.T) {
 		t.Fatal("loaded SQL NULL association was lost")
 	}
 }
+
+func TestOutsidePushLedgerMalformedAssociationsAgreeInEveryMode(t *testing.T) {
+	for _, mode := range []authority.Mode{authority.GitHub, authority.OpenMerge} {
+		for _, kind := range []string{"audit-type", "ack-type", "ack-sha"} {
+			t.Run(string(mode)+"/"+kind, func(t *testing.T) {
+				s := newStore(t)
+				key := QueueKey{Installation: "7", Repository: "owner/repo", BaseBranch: "main"}
+				q, err := s.EnsureQueue(t.Context(), key)
+				must(t, err)
+				appendWarningPin(t, s, q, mode)
+				origin := appendEvents(t, s, q, queue.BaseMoved{SHA: "outside"})
+				insert := func(event queue.Event, key string) int64 {
+					name, raw, err := queue.EncodeEvent(event)
+					must(t, err)
+					var id int64
+					must(t, s.pool.QueryRow(t.Context(), `INSERT INTO events(queue_id,type,payload,dedupe_key) VALUES($1,$2,$3::jsonb,$4) RETURNING id`, q, name, string(raw), key).Scan(&id))
+					return id
+				}
+				// Warm both caches before injecting the malformed suffix.
+				_, err = s.ReadOutsidePushWarnings(t.Context(), q)
+				must(t, err)
+				_, err = s.Journals(t.Context(), []QueueKey{key})
+				must(t, err)
+				if kind == "audit-type" {
+					insert(queue.RefreshRequested{}, fmt.Sprintf("outside-base/%d", origin))
+				} else {
+					audit := insert(queue.OutsidePushRecorded{PreviousSHA: "base", NewSHA: "outside", VerificationBeforeLanding: "none", At: time.Now().UTC()}, fmt.Sprintf("outside-base/%d", origin))
+					var event queue.Event = queue.RefreshRequested{}
+					if kind == "ack-sha" {
+						event = queue.OutsidePushAcknowledged{SourceEventID: audit, SHA: "wrong", Operator: "operator", At: time.Now().UTC()}
+					}
+					insert(event, acknowledgementKey(audit))
+				}
+				for _, db := range []*Store{s, restartWarningStore(t, s)} {
+					if err := db.VisitOutsidePushWarnings(t.Context(), q, func(OutsidePushWarning) error { return nil }); err == nil || !strings.Contains(err.Error(), "ledger anomaly") {
+						t.Fatalf("scan hid malformed row: %v", err)
+					}
+					summary, err := db.ReadOutsidePushWarnings(t.Context(), q)
+					if err == nil || summary.Error != "ledger_unavailable" {
+						t.Fatalf("cache hid malformed row: %+v %v", summary, err)
+					}
+					js, err := db.Journals(t.Context(), []QueueKey{key})
+					must(t, err)
+					if js[0].OutsideWarnings.Error != "ledger_unavailable" {
+						t.Fatalf("fold hid malformed row: %+v", js[0].OutsideWarnings)
+					}
+				}
+			})
+		}
+	}
+}

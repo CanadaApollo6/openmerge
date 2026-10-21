@@ -19,7 +19,11 @@ func (s *Server) record(ctx context.Context, w *worker, key string, value any, e
 	if err != nil {
 		return err
 	}
-	return s.store.Record(ctx, w.id, key, data, events...)
+	err = s.store.Record(ctx, w.id, key, data, events...)
+	if err == nil {
+		w.publishProgress(time.Now())
+	}
+	return err
 }
 
 func (s *Server) configuration(ctx context.Context, w *worker) error {
@@ -28,10 +32,12 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 		return err
 	}
 	branch, loadErr := w.Driver.DefaultBranch(ctx, w.repo())
+	w.publishProgress(time.Now())
 	if loadErr == nil && branch == "" {
 		loadErr = errors.New("repository default branch is missing")
 	}
 	tip, baseErr := w.Git.ReadRef(ctx, w.repo(), w.Key.BaseBranch)
+	w.publishProgress(time.Now())
 	if baseErr != nil {
 		loadErr = errors.Join(loadErr, fmt.Errorf("read queue base %q (default branch %q): %w", w.Key.BaseBranch, branch, baseErr))
 	}
@@ -45,6 +51,7 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 			configTip = tip
 		} else {
 			configTip, loadErr = w.Git.ReadRef(ctx, w.repo(), branch)
+			w.publishProgress(time.Now())
 		}
 	}
 	if loadErr == nil && (configTip != w.configTip || branch != w.configBranch) {
@@ -109,7 +116,7 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 		if state.ConfigDigest != "" && state.ConfigDigest != w.configDigest && !state.WindowInitialized() && w.cfg.QueueConfig().MaxDepth() > 1 {
 			// Old journals omit bounds. Recover the fixed window from the policy
 			// that actually ran before clamping it under the replacement policy.
-			previous, readErr := s.repositoryConfig(ctx, w.Target, state.ConfigCommit)
+			previous, readErr := s.repositoryConfig(ctx, w.Target, state.ConfigCommit, w)
 			if readErr != nil {
 				return fmt.Errorf("read historical window policy: %w", readErr)
 			}
@@ -165,9 +172,12 @@ func stageADefiniteIdentityFailure(err error) bool {
 	return errors.Is(err, forge.ErrIdentityUnavailable) || errors.Is(err, forge.ErrIdentityMismatch)
 }
 
-func (s *Server) repositoryConfig(ctx context.Context, target Target, tip string) (config.Config, error) {
+func (s *Server) repositoryConfig(ctx context.Context, target Target, tip string, w *worker) (config.Config, error) {
 	_, data, err := config.Find(func(path string) ([]byte, bool, error) {
 		data, err := target.Driver.ReadFile(ctx, forge.RepoRef{Path: target.Key.Repository}, tip, path)
+		if w != nil {
+			w.publishProgress(time.Now())
+		}
 		if errors.Is(err, forge.ErrFileNotFound) {
 			return nil, false, nil
 		}
@@ -187,7 +197,7 @@ func (s *Server) repositoryConfig(ctx context.Context, target Target, tip string
 }
 
 func (s *Server) loadConfiguration(ctx context.Context, w *worker, branch, tip string) error {
-	cfg, err := s.repositoryConfig(ctx, w.Target, tip)
+	cfg, err := s.repositoryConfig(ctx, w.Target, tip, w)
 	if err != nil {
 		return err
 	}
@@ -261,6 +271,7 @@ func (s *Server) reconcile(ctx context.Context, w *worker, force bool) error {
 	}
 	force = force || state.SourceBlocked(queue.CheckSources)
 	summaries, err := w.Driver.ListOpenPullRequests(ctx, w.repo(), w.Key.BaseBranch)
+	w.publishProgress(time.Now())
 	if err != nil {
 		return err
 	}
@@ -282,6 +293,7 @@ func (s *Server) reconcile(ctx context.Context, w *worker, force bool) error {
 			return err
 		}
 		w.summaries[summary.Number] = summary
+		w.publishProgress(time.Now())
 	}
 	state, _, err = s.store.Load(ctx, w.id)
 	if err != nil {
@@ -304,6 +316,7 @@ func (s *Server) reconcile(ctx context.Context, w *worker, force bool) error {
 		}
 		delete(w.prs, n)
 		delete(w.summaries, n)
+		w.publishProgress(time.Now())
 	}
 	if err := s.recheckCheckSources(ctx, w); err != nil {
 		return err
@@ -335,6 +348,7 @@ func (s *Server) observeWithClassification(ctx context.Context, w *worker, numbe
 		observedAt = time.Now().UTC()
 	}
 	pr, err := read(ctx, w.repo(), number)
+	w.publishProgress(time.Now())
 	if err != nil {
 		return pr, err
 	}
@@ -344,6 +358,7 @@ func (s *Server) observeWithClassification(ctx context.Context, w *worker, numbe
 				continue
 			}
 			allowed, err := w.Driver.CanWrite(ctx, w.repo(), approval.User)
+			w.publishProgress(time.Now())
 			if err != nil {
 				return pr, err
 			}
@@ -438,6 +453,7 @@ func (s *Server) commands(ctx context.Context, w *worker, number int) error {
 		}
 	}
 	comments, err := w.Driver.ListComments(ctx, w.repo(), number, since)
+	w.publishProgress(time.Now())
 	if err != nil {
 		return err
 	}
@@ -458,6 +474,7 @@ func (s *Server) commands(ctx context.Context, w *worker, number int) error {
 		if err != nil {
 			return err
 		}
+		w.publishProgress(time.Now())
 		if stop {
 			return nil
 		}

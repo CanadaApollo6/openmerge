@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -399,7 +400,7 @@ func TestServeHealthThresholdBounds(t *testing.T) {
 	t.Setenv("OPENMERGE_HEALTH_OVERDUE_GRACE", "30s")
 	t.Setenv("OPENMERGE_HEALTH_MAX_SUCCESS_AGE", "15m")
 	t.Setenv("OPENMERGE_HEALTH_PROGRESS_STALL_LIMIT", "4m")
-	for _, args := range [][]string{{"--health-progress-stall-limit=0s"}, {"--health-progress-stall-limit=31m"}, {"--health-max-cycle-duration=1m"}, {"--health-max-cycle-duration=7h"}, {"--health-overdue-grace=0s"}, {"--health-overdue-grace=61s"}, {"--health-max-success-age=59s"}, {"--health-max-success-age=61m"}} {
+	for _, args := range [][]string{{"--health-progress-stall-limit=0s"}, {"--health-progress-stall-limit=150s"}, {"--health-progress-stall-limit=31m"}, {"--health-max-cycle-duration=1m"}, {"--health-max-cycle-duration=7h"}, {"--health-overdue-grace=0s"}, {"--health-overdue-grace=61s"}, {"--health-max-success-age=59s"}, {"--health-max-success-age=61m"}} {
 		if _, err := parseServe(args, io.Discard); err == nil {
 			t.Fatalf("accepted %v", args)
 		}
@@ -411,6 +412,17 @@ func TestServeHealthThresholdBounds(t *testing.T) {
 	o, err = parseServe(nil, io.Discard)
 	if err != nil || o.healthProgressStall != 4*time.Minute {
 		t.Fatalf("stall environment: %+v %v", o, err)
+	}
+	t.Setenv("OPENMERGE_HEALTH_PROGRESS_STALL_LIMIT", "150s")
+	if _, err := parseServe(nil, io.Discard); err == nil || !strings.Contains(err.Error(), "git maintenance") {
+		t.Fatalf("accepted incompatible environment: %v", err)
+	}
+	if err := os.Unsetenv("OPENMERGE_HEALTH_PROGRESS_STALL_LIMIT"); err != nil {
+		t.Fatal(err)
+	}
+	o, err = parseServe(nil, io.Discard)
+	if err != nil || o.healthProgressStall != 4*time.Minute {
+		t.Fatalf("default stall: %+v %v", o, err)
 	}
 	t.Setenv("OPENMERGE_HEALTH_PROGRESS_STALL_LIMIT", "bad")
 	if _, err := parseServe(nil, io.Discard); err == nil {

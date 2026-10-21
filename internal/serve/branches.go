@@ -205,7 +205,7 @@ func (s *Server) refreshRepository(ctx context.Context, repo Repository) error {
 	if err != nil {
 		return &repositoryReadError{"default-branch tip", err}
 	}
-	cfg, err := s.repositoryConfig(ctx, target, tip)
+	cfg, err := s.repositoryConfig(ctx, target, tip, nil)
 	if err != nil {
 		return &repositoryReadError{"configuration", err}
 	}

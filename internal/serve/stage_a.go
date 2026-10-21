@@ -51,7 +51,7 @@ func (w *worker) stageReaders() (forge.IdentityReader, forge.NativeReviewReader,
 	if !ok || !rok {
 		return nil, nil, errors.New("stage A requires identity-bound grants and native reviews")
 	}
-	return ids, reviews, nil
+	return healthIdentityReader{ids, w}, healthReviewReader{reviews, w}, nil
 }
 
 // resolvePool does not reuse membership across decisions. A failed or incomplete
@@ -173,6 +173,7 @@ func (s *Server) refreshStageAPolicy(ctx context.Context, w *worker, tip string)
 		return errors.New("missing governing files reader")
 	}
 	g, err := a.governing.read(ctx, governingReader, w.repo(), forge.GoverningFilesRequest{CommitSHA: tip, PathsComplete: true, AllAttributes: true})
+	w.publishProgress(time.Now())
 	if err != nil {
 		return err
 	}
@@ -564,6 +565,7 @@ func (s *Server) prepareStageAClassification(ctx context.Context, w *worker, sta
 		return nil, errors.New("missing diff capability")
 	}
 	d, err := diffReader.RevisionDiff(ctx, w.repo(), forge.RevisionDiffRequest{BaseSHA: base, HeadSHA: r.HeadSHA})
+	w.publishProgress(time.Now())
 	if err != nil {
 		return nil, err
 	}
@@ -584,6 +586,7 @@ func (s *Server) prepareStageAClassification(ctx context.Context, w *worker, sta
 		w.stageA.governing = newStageAGoverningCache()
 	}
 	g, err := w.stageA.governing.read(ctx, greader, w.repo(), forge.GoverningFilesRequest{CommitSHA: governingTip, Paths: paths, PathsComplete: d.Inventory.Completeness == forge.DiffComplete})
+	w.publishProgress(time.Now())
 	if err != nil {
 		return nil, err
 	}
