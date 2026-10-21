@@ -19,7 +19,6 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/forge/github"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/store"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Prepared targets use existing internal contracts. This file is an operator
@@ -56,12 +55,7 @@ func readVerificationJSON(path string, v any) error {
 }
 
 func verificationDatabaseIdentity(raw string) (string, error) {
-	cfg, err := pgxpool.ParseConfig(raw)
-	if err != nil {
-		return "", errors.New("invalid operator database URL")
-	}
-	c := cfg.ConnConfig
-	return fmt.Sprintf("%s:%d/%s?search_path=%s", c.Host, c.Port, c.Database, c.RuntimeParams["search_path"]), nil
+	return store.DatabaseIdentity(raw)
 }
 
 func runRulesVerification(ctx context.Context, opts verifyOptions, rules github.RulesOptions, out io.Writer) error {

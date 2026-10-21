@@ -84,7 +84,7 @@ func (r EmissionReceipt) ValidateForBinary(identity string, now time.Time, maxAg
 	if r.DrainedAt.Before(now.Add(-maxAge)) || r.RestoreTestedAt.Before(now.Add(-maxAge)) {
 		return fmt.Errorf("stale emission receipt: drain and restore test must be within %s; repeat drain, backup and restore test", maxAge)
 	}
-	if r.DatabaseIdentity != identity || r.BinaryRevision == "" || len(r.DrainedWorkers) == 0 || !r.CompatibleReadersOnly || r.DrainedAt.IsZero() || r.RestoreTestedAt.Before(r.DrainedAt) || r.RestoreTestedAt.After(now) || !IsDigest(r.BackupSHA256) {
+	if identity == "" || r.DatabaseIdentity == "" || r.DatabaseIdentity != identity || r.BinaryRevision == "" || len(r.DrainedWorkers) == 0 || !r.CompatibleReadersOnly || r.DrainedAt.IsZero() || r.RestoreTestedAt.Before(r.DrainedAt) || r.RestoreTestedAt.After(now) || !IsDigest(r.BackupSHA256) {
 		return fmt.Errorf("first-emission gate requires a database-bound drain inventory and restore-tested backup receipt; see docs/research/adr-0008-4-evidence.md")
 	}
 	seen := map[string]bool{}

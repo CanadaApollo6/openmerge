@@ -22,6 +22,13 @@ func TestFirstEmissionDrainBackupGate(t *testing.T) {
 	if err := receipt.ValidateForBinary(receipt.DatabaseIdentity, now, DefaultEmissionReceiptMaxAge, "test-revision"); err != nil {
 		t.Fatal(err)
 	}
+	for _, identities := range [][2]string{{"", ""}, {"", receipt.DatabaseIdentity}, {receipt.DatabaseIdentity, ""}} {
+		bad := receipt
+		bad.DatabaseIdentity = identities[0]
+		if err := bad.ValidateForBinary(identities[1], now, DefaultEmissionReceiptMaxAge, "test-revision"); err == nil {
+			t.Fatalf("empty database identity accepted: receipt=%q configured=%q", identities[0], identities[1])
+		}
+	}
 	r := receipt
 	r.DrainedAt = now.Add(-25 * time.Hour)
 	r.RestoreTestedAt = now.Add(-24 * time.Hour)

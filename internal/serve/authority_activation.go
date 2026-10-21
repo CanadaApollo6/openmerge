@@ -13,28 +13,31 @@ import (
 
 // authorityActivation is an internal, explicit request, never derived from a
 // candidate config or a journal pin. Production constructors do not enable it.
-// Config/pin lifecycle integration remains the next 9b-ii slice: this caller
+// Config/pin lifecycle integration remains in 9b-ii-2b: this caller
 // requires an already durable matching config, as enforced by the store.
 type authorityActivation struct {
-	Receipt          authority.EmissionReceipt
-	DatabaseIdentity string
-	ReceiptMaxAge    time.Duration
-	Pin              queue.PolicyAuthorityApplied
-	DraftID          int64
-	Input            forge.WriteRestrictionInput
-	Read             func(context.Context) (authority.Observation, error)
+	Receipt       authority.EmissionReceipt
+	ReceiptMaxAge time.Duration
+	Pin           queue.PolicyAuthorityApplied
+	DraftID       int64
+	Input         forge.WriteRestrictionInput
+	Read          func(context.Context) (authority.Observation, error)
 }
 
 // activateAuthority gates the internal adoption writer before any DB/forge
 // work. Its receipt distinguishes adoption from pinned-unverified; successful
 // persistence alone never claims verification or installs runtime hooks.
+// Receipt age is checked before I/O and immediately before calling the adoption
+// transaction. It can still expire while that transaction waits for the queue
+// lock or commits; this is not a transaction-time expiry guarantee.
 func (s *Server) activateAuthority(ctx context.Context, w *worker, request authorityActivation) (store.AuthorityAdoptionReceipt, error) {
 	var zero store.AuthorityAdoptionReceipt
 	if !w.AuthorityRequired {
 		return zero, errors.New("internal authority activation opt-in required")
 	}
+	identity := s.store.DatabaseIdentity()
 	validateReceipt := func() error {
-		return request.Receipt.ValidateForBinary(request.DatabaseIdentity, time.Now().UTC(), request.ReceiptMaxAge, authority.RunningBinaryRevision())
+		return request.Receipt.ValidateForBinary(identity, time.Now().UTC(), request.ReceiptMaxAge, authority.RunningBinaryRevision())
 	}
 	if err := validateReceipt(); err != nil {
 		return zero, err

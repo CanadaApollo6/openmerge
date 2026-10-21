@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/config"
@@ -97,8 +98,10 @@ func TestAuthorityBarrierJournalCannotInstallRuntimeAuthority(t *testing.T) {
 				t.Fatal("journal data enabled runtime authority")
 			}
 			// Even explicitly invoking the new internal caller cannot use this
-			// candidate/draft/pin as its opt-in. It rejects before any I/O.
-			if receipt, err := s.activateAuthority(t.Context(), w, authorityActivation{}); err == nil || receipt != (store.AuthorityAdoptionReceipt{}) {
+			// candidate/draft/pin as its opt-in, even with a valid receipt for the
+			// configured database. It rejects before any I/O.
+			request := authorityActivation{Receipt: activationReceipt(t, s.store), ReceiptMaxAge: time.Hour}
+			if receipt, err := s.activateAuthority(t.Context(), w, request); err == nil || !strings.Contains(err.Error(), "internal authority activation opt-in required") || receipt != (store.AuthorityAdoptionReceipt{}) {
 				t.Fatal("journal data enabled internal activation", receipt, err)
 			}
 			if !reflect.DeepEqual(legacy, w.plannerConfig(s.options.PollInterval)) {

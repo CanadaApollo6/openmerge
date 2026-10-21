@@ -227,6 +227,12 @@ func testedMemberCommits(ctx context.Context, w *worker, land queue.Land, histor
 	}
 }
 
+// stageAGate's explicitly enabled authority path checks local check-derived
+// and available non-review evidence shape and size before ordinary policy
+// handling, without spending approval-read quota. There, approved-reviews-by
+// is known only after the final fresh approval read, so its list-driven overflow
+// can surface only at final admission after successful CI and may be preempted
+// by an approval-read or quota error.
 func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Config, basis queue.State) *executor.LandingDecisionGate {
 	policy := w.stageA.policy
 	var acquisition *store.ApprovalRead
@@ -337,16 +343,19 @@ func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Conf
 	}
 	if recordChecks {
 		gate.ValidateChecks = func(_ context.Context, land queue.Land, checks []forge.CheckRun, at time.Time, attempt string) error {
-			// Preflight validates only local check/policy input shape and budgets.
-			// It must not read approvals, journal stances, or acquire an approval
-			// read on failing/pending CI. Final admission still acquires fresh
-			// approvals and rebuilds the complete evidence, including review values.
+			// This preflight must not read approvals, journal stances, or acquire an
+			// approval read on failing/pending CI. Final admission rebuilds complete
+			// evidence from fresh approvals.
 			builder, err := landingCheckEvidence(basis, policy.Digest, land, checks, at, attempt)
 			if err != nil {
 				return err
 			}
 			for _, pin := range land.PRs {
-				values, err := policyValues(w.cfg.MergeWhen, w.prs[pin.PR], checks)
+				pr := w.prs[pin.PR]
+				// Remove cached reviews before snapshot construction as well as before
+				// recording, so preflight does not inspect or copy a stale review list.
+				pr.Approvals = nil
+				values, err := policyValues(w.cfg.MergeWhen, pr, checks)
 				if err != nil {
 					return err
 				}

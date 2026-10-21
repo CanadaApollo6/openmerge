@@ -473,3 +473,89 @@ func TestLandingChecksPreflightDoesNotAcquireApprovals(t *testing.T) {
 		})
 	}
 }
+
+func TestLandingChecksPreflightDefersReviewListOverflow(t *testing.T) {
+	testSynctest(t, func(t *testing.T) {
+		s, w, f := shadowFixture(t, 1, "main", "7", false)
+		basis := shadowState(t, s, w)
+		raw, err := os.ReadFile("../queue/testdata/wire/v1/event_policy_authority_applied.json")
+		must(t, err)
+		event, err := queue.DecodeEvent(raw)
+		must(t, err)
+		pin := event.(queue.PolicyAuthorityApplied)
+		pin.GoverningCommit, pin.EffectiveDigest = basis.ConfigCommit, basis.ConfigDigest
+		pin.OpenMerge.Binding.EffectiveDigest = basis.ConfigDigest
+		_, err = s.store.Append(t.Context(), w.id, []queue.Event{pin}, "")
+		must(t, err)
+		basis = shadowState(t, s, w)
+		w.AuthorityRequired = true
+
+		pr := w.prs[1]
+		cached := make([]forge.Approval, 10001)
+		for i := range cached {
+			cached[i] = forge.Approval{User: fmt.Sprintf("cached-%d", i), SHA: pr.HeadSHA, CanWrite: true}
+		}
+		pr.Approvals = cached
+		w.prs[1] = pr
+
+		longLogin := strings.Repeat("r", condition.MaxEvidenceStringBytes+1)
+		reviewer := forge.UserIdentity{ID: 22, Login: longLogin, Kind: forge.UserAccount}
+		f.SetIdentity(reviewer)
+		f.SetWriteGrant(repo, reviewer.ID, "write")
+		f.SetNativeReviews(repo, 1, forge.NativeReviews{Reviews: []forge.NativeReview{{
+			ID: 202, CommitID: pr.HeadSHA, Author: reviewer, State: forge.ReviewApproved,
+			Submitted: forge.NativeTime{Time: time.Now().UTC().Add(time.Minute), Source: forge.ReviewSubmissionTime, Precision: time.Second},
+		}}})
+
+		check, err := condition.Parse("check-success = ci")
+		must(t, err)
+		reviews, err := condition.Parse("#approved-reviews-by >= 1")
+		must(t, err)
+		w.cfg.MergeWhen = condition.All(check, reviews)
+		land := queue.Land{
+			BatchID: "review-overflow", TestedSHA: strings.Repeat("e", 40),
+			ExpectedBaseSHA: basis.BaseSHA, Ref: "queue", Method: queue.Merge,
+			PRs: []queue.BatchPR{{PR: 1, HeadSHA: pr.HeadSHA}},
+		}
+		checks := []forge.CheckRun{{Name: "ci", Source: "app:15368", State: forge.Success, HeadBranch: "queue"}}
+		gate := s.stageAGate(w, store.ClaimedAction{}, w.plannerConfig(s.options.PollInterval), basis)
+		_, before, err := s.store.Load(t.Context(), w.id)
+		must(t, err)
+		if err := gate.ValidateChecks(t.Context(), land, checks, time.Now(), "attempt"); err != nil {
+			t.Fatalf("preflight rejected cached legacy approvals: %v", err)
+		}
+		_, after, err := s.store.Load(t.Context(), w.id)
+		must(t, err)
+		if before != after {
+			t.Fatal("preflight journaled approval evidence")
+		}
+
+		_, err = gate.ReadInputsWithChecks(t.Context(), land, basis, checks, time.Now(), "attempt")
+		var tooLarge queue.LandingChecksTooLargeError
+		if !errors.Is(err, queue.ErrLandingChecksTooLarge) || !errors.As(err, &tooLarge) || tooLarge.Field != "condition input" {
+			t.Fatalf("final fresh review evidence error=%v, want condition-input overflow", err)
+		}
+		final := shadowState(t, s, w)
+		revision, ok := final.PRRevision(1)
+		if !ok {
+			t.Fatal("missing final revision")
+		}
+		facts, ok := final.ApprovalFacts(revision.ChangeID)
+		if !ok || facts.Eligibility == nil {
+			t.Fatal("final approval read did not persist eligibility")
+		}
+		evidence, err := stageAReviewEvidence(final, w.stageA.policy, *facts.Eligibility)
+		must(t, err)
+		if !evidence.Known || len(evidence.Reviewers) != 1 || evidence.Reviewers[0] != longLogin {
+			t.Fatalf("final fresh reviewers=%+v", evidence)
+		}
+		records, err := s.store.EventsAfter(t.Context(), w.id, 0)
+		must(t, err)
+		for _, record := range records {
+			switch record.Event.(type) {
+			case queue.LandingStarted, queue.LandingChecksRecorded:
+				t.Fatal("review overflow emitted landing evidence")
+			}
+		}
+	})
+}
