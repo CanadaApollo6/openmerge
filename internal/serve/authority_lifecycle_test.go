@@ -245,7 +245,7 @@ func TestAuthorityLifecycleMixedRepositoriesAndBases(t *testing.T) {
 }
 
 func TestAuthorityLifecycleInvalidatesPolicyChangesAndReenable(t *testing.T) {
-	for _, change := range []string{"default-branch", "selector", "actor", "method", "reenable"} {
+	for _, change := range []string{"default-branch", "selector", "actor", "method", "queue-rule", "reenable"} {
 		t.Run(change, func(t *testing.T) {
 			s, w, f, _ := fixture(t, repositoryConfig)
 			must(t, s.configuration(t.Context(), w))
@@ -287,6 +287,10 @@ func TestAuthorityLifecycleInvalidatesPolicyChangesAndReenable(t *testing.T) {
 			case "method":
 				contents = strings.Replace(contents, "name: default", "name: default\n    merge_method: merge", 1)
 				_, err = f.PushBase(repo, "main", "method", map[string]string{".openmerge.yml": contents})
+				must(t, err)
+			case "queue-rule":
+				contents = strings.Replace(contents, "name: default", "name: default\n    enter_when: [label = ready]", 1)
+				_, err = f.PushBase(repo, "main", "queue rule", map[string]string{".openmerge.yml": contents})
 				must(t, err)
 			case "reenable":
 				_, err = f.PushBase(repo, "main", "rollback", map[string]string{".openmerge.yml": repositoryConfig})
@@ -336,7 +340,14 @@ func TestAuthorityLifecycleReadFailuresDoNotPublishConfigOrPin(t *testing.T) {
 				}
 				_, err = f.PushBase(repo, "main", "authority", map[string]string{".openmerge.yml": lifecycleConfig(repositoryConfig)})
 				must(t, err)
+				w.managed, w.ready = true, true
+				for len(s.refresh) > 0 {
+					<-s.refresh
+				}
 				err = s.configuration(t.Context(), w)
+				if w.ready || !strings.Contains(w.waiting, "discovery will retry") || len(s.refresh) == 0 {
+					t.Fatal("failed lifecycle did not notify discovery", w.ready, w.waiting)
+				}
 				if phase == "receipt-expiry" {
 					if err == nil || !strings.Contains(err.Error(), "stale emission receipt") {
 						t.Fatal(err)
@@ -371,7 +382,8 @@ func TestAuthorityLifecycleAdoptsDraftWithAtomicConfig(t *testing.T) {
 	must(t, err)
 	draft := event.(queue.WriteRestrictionVerified)
 	team := "200"
-	resolver := lifecycleResolver(t, s, &team, func(context.Context) (authority.Observation, error) { return draft.Evidence, nil })
+	reads := 0
+	resolver := lifecycleResolver(t, s, &team, func(context.Context) (authority.Observation, error) { reads++; return draft.Evidence, nil })
 	draftID := int64(0)
 	w.AuthorityRequired = true
 	w.resolveAuthorityLifecycle = func(ctx context.Context, c config.AuthorityCandidate, branch, tip string) (authorityLifecycleResolution, error) {
@@ -406,6 +418,49 @@ func TestAuthorityLifecycleAdoptsDraftWithAtomicConfig(t *testing.T) {
 	if lifecycleState(t, s, w).WriteRestrictionStatus().State != "verified" {
 		t.Fatal("atomic adopted pin did not fold verified")
 	}
+
+	// An unchanged adopted queue needs neither a seeing read nor another pair.
+	draftID = 0
+	_, before, err = s.store.Load(t.Context(), w.id)
+	must(t, err)
+	readsBefore := reads
+	must(t, s.configuration(t.Context(), w))
+	_, after, err := s.store.Load(t.Context(), w.id)
+	must(t, err)
+	if reads != readsBefore || after != before {
+		t.Errorf("unchanged adopted cycle read or wrote: reads %d -> %d, events %d -> %d", readsBefore, reads, before, after)
+	}
+	// Runtime observation is a separate seam (2c); seed it before testing push
+	// options so this test isolates activation retention across the rebind.
+	state := lifecycleState(t, s, w)
+	_, err = s.store.Append(t.Context(), w.id, []queue.Event{queue.WriteRestrictionObserved{Binding: pin.OpenMerge.Binding, Basis: state.RulesSourceRevision(queue.WriteRestriction), ObservedAt: time.Now(), Evidence: draft.Evidence}}, "")
+	must(t, err)
+	_, err = f.PushBase(repo, "main", "unrelated rebind", map[string]string{"README.md": "unrelated"})
+	must(t, err)
+	must(t, s.configuration(t.Context(), w))
+	rebound := lifecycleState(t, s, w).AuthorityPin()
+	if !queue.AuthorityDraftAdopted(*rebound) || !reflect.DeepEqual(rebound.OpenMerge.Activation, pin.OpenMerge.Activation) {
+		t.Fatal("same-binding rebind lost adopted activation")
+	}
+	w.PrepareAuthorityPush = func(context.Context) (AuthorityPushPolicy, error) {
+		return AuthorityPushPolicy{Mode: authority.OpenMerge, GoverningCommit: w.configTip, EffectiveDigest: w.configDigest, AppID: "5383059"}, nil
+	}
+	w.PinAuthorityPush = func(context.Context, AuthorityPushPolicy) error { return nil }
+	w.ObserveAuthorityPush = func(context.Context, AuthorityPushPolicy) error { return nil }
+	opts := s.authorityPushOptions(t.Context(), w, forge.PushLand, []forge.PushRefIntent{{Ref: "refs/heads/main", OldSHA: w.configTip, NewSHA: w.configTip}})
+	if opts.Context.Binding().GoverningCommit == "" {
+		t.Fatalf("rebind has no valid push context: %v", opts.Guard(t.Context(), opts.Context))
+	}
+	must(t, opts.Guard(t.Context(), opts.Context))
+	// Queue display names are not effective rules or selector coverage.
+	_, err = f.PushBase(repo, "main", "rename queue", map[string]string{".openmerge.yml": strings.Replace(lifecycleConfig(repositoryConfig), "name: default", "name: renamed", 1)})
+	must(t, err)
+	must(t, s.configuration(t.Context(), w))
+	renamed := lifecycleState(t, s, w).AuthorityPin()
+	if renamed.EffectiveDigest != pin.EffectiveDigest || !queue.AuthorityDraftAdopted(*renamed) {
+		t.Fatal("queue display name invalidated verification")
+	}
+
 }
 
 func TestAuthorityLifecycleRollbackReceiptAndUnchangedWire(t *testing.T) {
@@ -471,6 +526,21 @@ func TestAuthorityLifecycleRollbackReceiptAndUnchangedWire(t *testing.T) {
 			}
 		}
 	}
+
+	// A folded rollback receipt must survive later GitHub governing commits.
+	w.AuthorityRequired = false
+	for _, files := range []map[string]string{{"README.md": "unrelated"}, {".openmerge.yml": strings.Replace(repositoryConfig, "name: default", "name: default\n    enter_when: [label = ready]", 1)}} {
+		_, err = f.PushBase(repo, "main", "github rebind", files)
+		must(t, err)
+		must(t, s.configuration(t.Context(), w))
+		for _, operation := range []forge.PushOperation{forge.PushBuild, forge.PushLand, forge.PushEnsureFence} {
+			opts := s.authorityPushOptions(t.Context(), w, operation, nil)
+			if !reflect.DeepEqual(opts, forge.PushOptions{}) {
+				t.Fatalf("rollback rebind returned guarded options for %s", operation)
+			}
+		}
+	}
+
 }
 
 func TestAuthorityLifecycleRequiresFlagAndResolver(t *testing.T) {
@@ -534,5 +604,53 @@ func TestAuthorityLifecycleDirectConstructorDoesNotBootstrapFence(t *testing.T) 
 	must(t, err)
 	if state.Fence != "" || state.AuthorityPin() != nil {
 		t.Fatal("incomplete direct gate emitted pin or fence")
+	}
+}
+
+func TestAuthorityLifecycleUnchangedApprovalReadiness(t *testing.T) {
+	s, w, f := shadowFixture(t, 1, "main", "7", false)
+	tip, err := f.ReadRef(t.Context(), repo, "main")
+	must(t, err)
+	contents, err := f.ReadFile(t.Context(), repo, tip, ".openmerge.yml")
+	must(t, err)
+	team := "200"
+	w.AuthorityRequired = true
+	w.resolveAuthorityLifecycle = lifecycleResolver(t, s, &team, lifecycleRead)
+	_, err = f.PushBase(repo, "main", "authority", map[string]string{".openmerge.yml": lifecycleConfig(string(contents))})
+	must(t, err)
+	must(t, s.configuration(t.Context(), w))
+	digest := w.configDigest
+	_, before, err := s.store.Load(t.Context(), w.id)
+	must(t, err)
+	// A successful managed branch refresh ends with ready=true.
+	w.managed = true
+	w.ready = true
+	w.summaries[123] = forge.PullRequestSummary{}
+	must(t, s.configuration(t.Context(), w))
+	_, after, err := s.store.Load(t.Context(), w.id)
+	must(t, err)
+	if digest != w.configDigest || before != after {
+		t.Fatal("policy or journal changed")
+	}
+	if !w.ready {
+		t.Fatalf("unchanged authority+approvals config cleared readiness; summaries=%d", len(w.summaries))
+	}
+}
+
+func TestAuthorityLifecycleDepthOneToFour(t *testing.T) {
+	s, w, f, _ := fixture(t, repositoryConfig)
+	must(t, s.configuration(t.Context(), w))
+	team := "200"
+	w.AuthorityRequired = true
+	w.resolveAuthorityLifecycle = lifecycleResolver(t, s, &team, lifecycleRead)
+	contents := lifecycleConfig(repositoryConfig)
+	_, err := f.PushBase(repo, "main", "authority depth one", map[string]string{".openmerge.yml": contents})
+	must(t, err)
+	must(t, s.configuration(t.Context(), w))
+	contents = strings.Replace(contents, "name: default", "name: default\n    speculation: {min_depth: 1, max_depth: 4}", 1)
+	_, err = f.PushBase(repo, "main", "authority depth four", map[string]string{".openmerge.yml": contents})
+	must(t, err)
+	if err := s.configuration(t.Context(), w); err != nil {
+		t.Fatalf("valid authority depth transition rejected: %v", err)
 	}
 }

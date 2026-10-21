@@ -75,7 +75,10 @@ func (s *Server) authorityPushOptions(ctx context.Context, w *worker, operation 
 		if w.configTip == "" {
 			return unavailablePush(errFenceConfigPending)
 		}
-		if !w.AuthorityRequired && pin.Authority == authority.GitHub && pin.GoverningCommit == w.configTip && pin.EffectiveDigest == w.configDigest && state.ConfigDigest == pin.EffectiveDigest {
+		// A rollback pin is historical evidence, not a permanent binding for
+		// subsequent GitHub policies. Require a successfully loaded, durably
+		// applied GitHub config; required but unresolved workers still fail closed.
+		if (!w.AuthorityRequired || w.resolveAuthorityLifecycle != nil) && pin.Authority == authority.GitHub && w.configCandidate.Authority.Mode.Normalized() == authority.GitHub && w.configError == nil && state.ConfigDigest == w.configDigest {
 			return forge.PushOptions{}
 		}
 		return unavailablePush(errors.New("authority policy has not been resolved"))

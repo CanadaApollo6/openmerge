@@ -132,10 +132,14 @@ func (s *Server) prepareAuthorityLifecycle(ctx context.Context, w *worker, state
 	if err != nil {
 		return nil, err
 	}
-	if w.configDigest != digest {
+	if state.ConfigDigest != digest {
 		w.summaries = make(map[int]forge.PullRequestSummary)
 		if w.managed {
 			w.ready = false
+			select {
+			case s.refresh <- struct{}{}:
+			default:
+			}
 		}
 	}
 	w.configDigest = digest
@@ -164,6 +168,16 @@ func (s *Server) prepareAuthorityLifecycle(ctx context.Context, w *worker, state
 	}
 	if err := request.Pin.Validate(); err != nil {
 		return nil, err
+	}
+	// The durable adopted pin already carries the seeing evidence. An unchanged
+	// cycle needs no emission receipt, identity transaction, live read or lock.
+	if mode == authority.OpenMerge && previous != nil && queue.AuthorityDraftAdopted(*previous) && (request.DraftID == 0 || request.DraftID == previous.OpenMerge.Activation.Proposed.EventID) {
+		unchanged := request.Pin
+		unchanged.OpenMerge = previous.OpenMerge
+		input := previous.OpenMerge.VerificationInput
+		if reflect.DeepEqual(previous.OpenMerge.Binding, request.Pin.OpenMerge.Binding) && reflect.DeepEqual(*previous, unchanged) && reflect.DeepEqual(*input, queue.AuthorityVerificationInput{BaseSelectors: request.Input.BaseSelectors, ExpectedRefs: request.Input.ExpectedRefs, AppID: request.Input.AppID}) {
+			return nil, nil
+		}
 	}
 	return &request, nil
 }

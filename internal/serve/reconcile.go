@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"slices"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/authority"
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
 	"github.com/CanadaApollo6/openmerge/internal/config"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
@@ -107,7 +109,7 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 		if loadErr != nil {
 			w.configError = loadErr
 			w.configBranch, w.configTip = "", ""
-			w.ready = false
+			s.authorityConfigurationFailed(w)
 			return loadErr
 		}
 	}
@@ -132,11 +134,11 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 		if state.ConfigDigest != "" && state.ConfigDigest != w.configDigest && !state.WindowInitialized() && w.cfg.QueueConfig().MaxDepth() > 1 {
 			// Old journals omit bounds. Recover the fixed window from the policy
 			// that actually ran before clamping it under the replacement policy.
-			previous, readErr := s.repositoryConfig(ctx, w.Target, state.ConfigCommit, w)
+			previousCandidate, readErr := s.repositoryCandidate(ctx, w.Target, state.ConfigCommit, w)
 			if readErr != nil {
 				return fmt.Errorf("read historical window policy: %w", readErr)
 			}
-			selected, diagnostics := previous.ResolveBranch(w.Key.BaseBranch, branch)
+			selected, diagnostics := previousCandidate.Config.ResolveBranch(w.Key.BaseBranch, branch)
 			if len(diagnostics) != 0 {
 				return diagnostics
 			}
@@ -145,7 +147,18 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 				return s.block(ctx, w, queue.ConfigSource, "Default-branch configuration: "+w.configError.Error(), "")
 			}
 			// The serve cleanup default may have changed since the old policy.
-			if selected.Digest(true) != state.ConfigDigest && selected.Digest(false) != state.ConfigDigest {
+			matches := selected.Digest(true) == state.ConfigDigest || selected.Digest(false) == state.ConfigDigest
+			if pin := state.AuthorityPin(); !matches && pin != nil && pin.Authority == authority.OpenMerge && pin.EffectiveDigest == state.ConfigDigest && previousCandidate.Authority.Mode == authority.OpenMerge {
+				binding := pin.OpenMerge.Binding
+				policy := authority.Policy{Mode: authority.OpenMerge, BreakGlass: authority.ActorBinding{Declared: binding.DeclaredActor, Resolved: binding.ResolvedActor}}
+				if previousCandidate.Authority.BreakGlass != nil && reflect.DeepEqual(*previousCandidate.Authority.BreakGlass, binding.DeclaredActor) {
+					for _, cleanup := range []bool{true, false} {
+						digest, err := authority.EffectiveDigest(authority.DigestInputs{LegacyDigest: selected.Digest(cleanup), Policy: policy, DefaultBranch: pin.DefaultBranch, MergeMethod: authority.MergeMethod(selected.MergeMethod), Selectors: previousCandidate.BaseSelectors()})
+						matches = matches || err == nil && digest == state.ConfigDigest
+					}
+				}
+			}
+			if !matches {
 				return fmt.Errorf("historical window policy does not match recorded digest")
 			}
 			if selected.QueueConfig().MaxDepth() > 1 {
@@ -173,7 +186,7 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 			if activation != nil {
 				w.configError = err
 				w.configBranch, w.configTip = "", ""
-				w.ready = false
+				s.authorityConfigurationFailed(w)
 			}
 			return err
 		}
@@ -274,9 +287,9 @@ func (s *Server) loadConfiguration(ctx context.Context, w *worker, branch, tip s
 		deleteHeadBranch = *cfg.DeleteHeadBranch
 	}
 	digest := selected.Digest(deleteHeadBranch)
-	if digest != w.configDigest {
-		// Invalidate at the digest's only write site, including refreshes and
-		// policies awaiting activation before the next reconciliation.
+	if digest != w.configDigest && !(w.AuthorityRequired && w.resolveAuthorityLifecycle != nil) {
+		// Authority lifecycle invalidates against the final folded digest below.
+		// Ordinary GitHub keeps its existing invalidation behavior.
 		w.summaries = make(map[int]forge.PullRequestSummary)
 		if w.managed {
 			w.ready = false
@@ -285,8 +298,8 @@ func (s *Server) loadConfiguration(ctx context.Context, w *worker, branch, tip s
 			default:
 			}
 		}
-		w.configDigest = digest
 	}
+	w.configDigest = digest
 	w.publishApprovalStatus(s.options.PollInterval)
 	return nil
 }
@@ -552,4 +565,14 @@ func (s *Server) replyQueued(ctx context.Context, w *worker, number int, receipt
 		return nil
 	}
 	return w.Driver.Comment(ctx, w.repo(), number, receipt+"/queued", "Queue request accepted for exact SHA "+outcome.QueuedSHA+"; entry conditions and the fresh trust gate still apply.")
+}
+
+// Failed authority acquisition must be visible to discovery as well as pushes.
+func (s *Server) authorityConfigurationFailed(w *worker) {
+	w.ready = false
+	w.waiting = "authority configuration could not be resolved; discovery will retry"
+	select {
+	case s.refresh <- struct{}{}:
+	default:
+	}
 }

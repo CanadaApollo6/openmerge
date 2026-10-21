@@ -416,6 +416,12 @@ func (s *Store) ApplyAuthorityConfig(ctx context.Context, q QueueID, config queu
 				return errors.New("github authority pin requires a folded openmerge pin")
 			}
 		case authority.OpenMerge:
+			// A governing commit rebind does not change the authenticated policy.
+			// Preserve both activation and interpretation context; emitting an
+			// unadopted pin here would create a spurious draft floor.
+			if draftID == 0 && havePrevious && queue.AuthorityDraftAdopted(previous) && reflect.DeepEqual(previous.OpenMerge.Binding, pin.OpenMerge.Binding) {
+				pin.OpenMerge = previous.OpenMerge
+			}
 			var draft queue.WriteRestrictionVerified
 			if draftID > 0 {
 				draft, err = proposedVerification(ctx, tx, q, draftID)

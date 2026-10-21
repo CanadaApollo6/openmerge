@@ -16,7 +16,7 @@ activation gate to 9c.
 | New queues; ordinary GitHub gets no new event or downgrade boundary | `internal/serve/reconcile.go:209` requires both explicit opt-in and the private resolver before candidate parsing. `internal/serve/authority_activation.go:145` skips pin emission for GitHub unless the folded current pin is OpenMerge. Existing branch expansion registers new bases and invokes configuration independently for each worker. `TestAuthorityLifecycleMixedRepositoriesAndBases` adds a release base under authority alongside an ordinary repository, checks adjacent matching pairs and no ordinary authority events, and verifies unchanged-cycle idempotence. |
 | Durable pin fold | All writes use the existing immutable events and `queue.Apply`; no worker-only pin exists. `TestApplyAuthorityConfigLifecycleAndRollback` opens another store, reloads the committed pair, and checks the interpreted activation survives. Queue rebind, snapshot and authority invalidation tests remain unchanged. |
 | Mode-specific rollback and fresh re-enable | GitHub rollback pins contain no OpenMerge actor or activation. Rollback still validates the database/binary/backup receipt and does not call the authority reader. `internal/store/write_restriction.go:311` rejects adoption of proposals before rollback or an unverified pin. `TestAuthorityLifecycleRollbackReceiptAndUnchangedWire`, `TestAuthorityLifecycleInvalidatesPolicyChangesAndReenable` and the store lifecycle test cover receipt rejection, zero rollback reads, stale-draft rejection and no revived applied verification. |
-| Repository-wide digest propagation | `internal/serve/authority_activation.go:131` includes the full repository selector coverage and resolved actor, plus default branch, selected method and legacy queue digest. Every served base resolves it on each configuration cycle, including an unchanged governing tip. The mixed lifecycle test changes the resolved actor for all bases, injects one base's quota failure, verifies sibling pairs advance independently, and retries the failed base. This is per-queue atomicity, not a repository transaction or an all-queues-applied authorization signal. |
+| Repository-wide digest propagation | `internal/serve/authority_activation.go:131` includes the full repository selector coverage and resolved actor, plus default branch, selected method and legacy queue digest. Every served base resolves policy inputs on each configuration cycle, including an unchanged governing tip. An unchanged adopted pin short-circuits before receipt/identity transactions, live seeing reads and queue-lock writes; changed or unadopted pins still pay that cost. The mixed lifecycle test changes the resolved actor for all bases, injects one base's quota failure, verifies sibling pairs advance independently, and retries the failed base. There is **no repository-wide “all served queues carry digest X” completion signal** yet. Per-queue receipts do not authorize removing redundant protection; 9c owns providing that signal. |
 | Invalidate default branch, selectors, actor and method changes | `internal/serve/authority_activation.go:131` computes `authority.EffectiveDigest` from current resolved inputs. The changed binding uses the existing authority fold to discard old observations/verification. `TestAuthorityLifecycleInvalidatesPolicyChangesAndReenable` seeds a complete applied observation and independently changes each input, requiring unverified fresh state. A same-policy governing-commit rebind emits a matching pair without changing the digest. |
 | Mixed repositories/bases and lifecycle quota/read errors | The mixed test covers main/release queues, a new base, an ordinary repository, actor drift, a failed base, rollback and later GitHub changes. `TestAuthorityLifecycleReadFailuresDoNotPublishConfigOrPin` uses `testSynctest`, with every fixture inside its bubble, for resolver/read failures and receipt expiry during a slow read. Store tests recheck the observation basis after acquiring the queue lock. |
 
@@ -61,7 +61,7 @@ The complete integrated A2 proof remains required in 2d.
 - A fresh read can commit a pinned-unverified outcome. It cannot make incomplete
   evidence verified. After rollback, adoption requires a new proposed record
   beyond the rollback/unverified boundary; older verification remains history.
-- Receipt age/database identity are checked before observation and immediately
+- 9c retains the receipt lock-wait/commit gap: receipt age/database identity are checked before observation and immediately
   before the store call. As in 2a, this does not guarantee validity throughout
   queue-lock wait or commit.
 - No 2c owner enforcement/projections or 2d admission is enabled. No production
@@ -134,3 +134,45 @@ application GitHub API or Smart-Data-Ohio organization is accessed. Git push and
 PR creation are the requested publication operations. No SQL migration, index,
 new table, Makefile, CI, Dockerfile, test-flag or existing fixture changes are
 included. This remains Hold, without queueing or merging.
+
+## Round 2 — lifecycle corrections (Hold)
+
+The four blocking regression paths were run against `30b088a` before fixing
+production code and all failed: unchanged approval readiness, authority depth
+1→4, rollback followed by a GitHub rebind, and adopted activation rebind.
+The adopted test also demonstrated the redundant unchanged-cycle seeing read.
+
+- Final authority digests, rather than intermediate Stage A digests, control
+  readiness/summary invalidation. `TestAuthorityLifecycleUnchangedApprovalReadiness`
+  preserves readiness and summaries with approvals enabled.
+- Historical depth recovery recomputes authority-bound digests from the retained
+  prior actor binding and historical candidate. Ordinary GitHub still uses its
+  exact legacy digest checks. `TestAuthorityLifecycleDepthOneToFour` covers omitted
+  depth-1 bounds followed by speculative depth 4.
+- A GitHub rollback pin remains historical proof of rollback, not a permanent
+  governing-commit constraint. Push acceptance requires successfully loaded GitHub
+  mode and the current durable config digest; required unresolved workers still
+  fail closed. This avoids new authority events/downgrade boundaries on later
+  GitHub commits. `TestAuthorityLifecycleRollbackReceiptAndUnchangedWire` covers
+  unrelated default-branch rebind and later rule changes with empty build, land
+  and fence push options.
+- Same-binding rebind with no new draft retains authenticated activation and
+  interpretation context under the queue lock. `TestAuthorityLifecycleAdoptsDraftWithAtomicConfig`
+  checks adoption, zero additional reads/events on an unchanged cycle, preserved
+  activation after unrelated rebind, verified status and valid push options.
+  Runtime observation is explicitly seeded as the separate 2c seam.
+- Resolver/activation failures publish an operator waiting message and nudge
+  discovery. The existing in-bubble `testSynctest` failure matrix asserts both.
+
+Invalidation is intentionally conservative and broader than the four named
+triggers: `EffectiveDigest` includes the legacy queue digest, so changes to any
+effective queue rule reset verification. The invalidation matrix now includes
+an entry-condition change. No effective rule change is exempt. Queue display
+names are metadata rather than effective rules; the adopted lifecycle test
+checks that renaming one preserves the digest and verification.
+
+There is **no repository-wide “all served queues carry digest X” completion
+signal**. Per-queue receipts do not authorize removing redundant protection.
+The ownership table assigns providing that signal to **9c**. 9c also retains the
+receipt lock-wait/commit expiry gap. Public rejection and unset production
+opt-in/resolver (A2) remain unchanged; no queueing or merging is authorized.
