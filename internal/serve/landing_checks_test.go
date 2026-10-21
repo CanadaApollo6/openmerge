@@ -12,6 +12,7 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/config/condition"
 	"github.com/CanadaApollo6/openmerge/internal/executor"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
+	"github.com/CanadaApollo6/openmerge/internal/forge/fake"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
@@ -333,6 +334,21 @@ func TestLandingChecksGateOverflowPrecedesUnmetMembers(t *testing.T) {
 	}
 }
 
+// Inject only after the worker's mandatory initial trust refresh, when the
+// executor obtains the tested check read. The trust read keeps its ordering.
+type landingChecksQuotaDriver struct {
+	*fake.Forge
+	tested string
+}
+
+func (d *landingChecksQuotaDriver) CheckRuns(ctx context.Context, repo forge.RepoRef, sha string) ([]forge.CheckRun, error) {
+	checks, err := d.Forge.CheckRuns(ctx, repo, sha)
+	if sha == d.tested {
+		d.FailNext("NativeReviews", errors.New("approval quota unavailable must not preempt permanent check error"))
+	}
+	return checks, err
+}
+
 // Exercise the worker's typed check-policy callback, not just the final gate.
 func TestLandingChecksWorkerFailurePrecedence(t *testing.T) {
 	for _, authorityRequired := range []bool{false, true} {
@@ -374,7 +390,7 @@ func TestLandingChecksWorkerFailurePrecedence(t *testing.T) {
 						}
 						f.SetCheckRuns(repo, batch.TestedSHA, runs)
 						if authorityRequired && malformed != "bounded" {
-							f.FailNext("NativeReviews", errors.New("approval quota unavailable must not preempt permanent check error"))
+							w.Driver = &landingChecksQuotaDriver{Forge: f, tested: batch.TestedSHA}
 						}
 						err = s.execute(t.Context(), w, claim)
 						state = shadowState(t, s, w)

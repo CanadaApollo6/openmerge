@@ -51,6 +51,14 @@ acquisition/push integration and the only removal of the public barrier.
 
 ## Verification
 
+The first full run failed four newly extended worker precedence cases: their
+NativeReviews failure was injected before the worker's mandatory initial trust
+refresh, so it never reached the authority preflight being tested. The injection
+now happens when the executor reads the tested checks, after that trust refresh.
+This preserves the initial trust-read ordering and tests the intended quota seam;
+no production correction was needed for that test failure. The failed run remains
+in `/home/riels/.cache/adr0008-9b-ii-verification`.
+
 Final verification artifacts and results are recorded below after execution.
 The reproducible driver is `scripts/verify-adr0008-9b-ii.py`; it uses the frozen
 offline live-journal export and the same strict comparisons as 9b-i. All Go
