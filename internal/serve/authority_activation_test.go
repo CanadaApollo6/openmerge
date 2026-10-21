@@ -45,7 +45,7 @@ func TestAuthorityActivationReceiptBeforeIO(t *testing.T) {
 		"wrong-binary":                 "BinaryRevision does not match",
 		"caller-db-differs-from-store": "database-bound drain inventory",
 		"missing-backup":               "first-emission backup unavailable",
-		"read-error":                   "quota exhausted",
+		"read-error":                   authorityReadErrorReason + ": unavailable",
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, w, _, _ := fixture(t, repositoryConfig)
