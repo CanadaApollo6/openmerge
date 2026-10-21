@@ -1,3 +1,107 @@
+=== RUN   TestLandingChecksDeduplicatesExactRead
+--- PASS: TestLandingChecksDeduplicatesExactRead (0.00s)
+=== RUN   TestLandingChecksRejectsAstra128By1000
+--- PASS: TestLandingChecksRejectsAstra128By1000 (0.00s)
+=== RUN   TestLandingChecksExactByteBoundary
+--- PASS: TestLandingChecksExactByteBoundary (0.14s)
+=== RUN   TestLandingChecksJSONSizeMatchesEncoder
+--- PASS: TestLandingChecksJSONSizeMatchesEncoder (0.00s)
+=== RUN   TestLandingChecksStringAndReferenceLimits
+=== RUN   TestLandingChecksStringAndReferenceLimits/source
+=== RUN   TestLandingChecksStringAndReferenceLimits/identity
+=== RUN   TestLandingChecksStringAndReferenceLimits/branch
+=== RUN   TestLandingChecksStringAndReferenceLimits/input-text
+=== RUN   TestLandingChecksStringAndReferenceLimits/input-observed
+=== RUN   TestLandingChecksStringAndReferenceLimits/expression
+=== RUN   TestLandingChecksStringAndReferenceLimits/input-list
+=== RUN   TestLandingChecksStringAndReferenceLimits/input-unsettled
+=== RUN   TestLandingChecksStringAndReferenceLimits/event-identity
+=== RUN   TestLandingChecksStringAndReferenceLimits/check-name
+=== RUN   TestLandingChecksStringAndReferenceLimits/negative-check
+=== RUN   TestLandingChecksStringAndReferenceLimits/missing-check
+=== RUN   TestLandingChecksStringAndReferenceLimits/missing-expression
+=== RUN   TestLandingChecksStringAndReferenceLimits/unordered-input
+=== RUN   TestLandingChecksStringAndReferenceLimits/invalid-utf8
+=== RUN   TestLandingChecksStringAndReferenceLimits/missing-input
+=== RUN   TestLandingChecksStringAndReferenceLimits/duplicate-input
+=== RUN   TestLandingChecksStringAndReferenceLimits/duplicate-check
+=== RUN   TestLandingChecksStringAndReferenceLimits/duplicate-expression
+--- PASS: TestLandingChecksStringAndReferenceLimits (0.00s)
+    --- PASS: TestLandingChecksStringAndReferenceLimits/source (0.00s)
+    --- PASS: TestLandingChecksStringAndReferenceLimits/identity (0.00s)
+    --- PASS: TestLandingChecksStringAndReferenceLimits/branch (0.00s)
+    --- PASS: TestLandingChecksStringAndReferenceLimits/input-text (0.00s)
+    --- PASS: TestLandingChecksStringAndReferenceLimits/input-observed (0.00s)
+    --- PASS: TestLandingChecksStringAndReferenceLimits/expression (0.00s)
+    --- PASS: TestLandingChecksStringAndReferenceLimits/input-list (0.00s)
+    --- PASS: TestLandingChecksStringAndReferenceLimits/input-unsettled (0.00s)
+    --- PASS: TestLandingChecksStringAndReferenceLimits/event-identity (0.00s)
+    --- PASS: TestLandingChecksStringAndReferenceLimits/check-name (0.00s)
+    --- PASS: TestLandingChecksStringAndReferenceLimits/negative-check (0.00s)
+    --- PASS: TestLandingChecksStringAndReferenceLimits/missing-check (0.00s)
+    --- PASS: TestLandingChecksStringAndReferenceLimits/missing-expression (0.00s)
+    --- PASS: TestLandingChecksStringAndReferenceLimits/unordered-input (0.00s)
+    --- PASS: TestLandingChecksStringAndReferenceLimits/invalid-utf8 (0.00s)
+    --- PASS: TestLandingChecksStringAndReferenceLimits/missing-input (0.00s)
+    --- PASS: TestLandingChecksStringAndReferenceLimits/duplicate-input (0.00s)
+    --- PASS: TestLandingChecksStringAndReferenceLimits/duplicate-check (0.00s)
+    --- PASS: TestLandingChecksStringAndReferenceLimits/duplicate-expression (0.00s)
+=== RUN   TestLandingChecksSharesInputsAcrossDifferentMembers
+--- PASS: TestLandingChecksSharesInputsAcrossDifferentMembers (0.00s)
+=== RUN   TestLandingChecksStrictWire
+=== RUN   TestLandingChecksStrictWire/zero_attempt
+=== RUN   TestLandingChecksStrictWire/null_result
+=== RUN   TestLandingChecksStrictWire/missing_input
+=== RUN   TestLandingChecksStrictWire/missing
+=== RUN   TestLandingChecksStrictWire/unknown
+=== RUN   TestLandingChecksStrictWire/case
+=== RUN   TestLandingChecksStrictWire/duplicate
+--- PASS: TestLandingChecksStrictWire (0.00s)
+    --- PASS: TestLandingChecksStrictWire/zero_attempt (0.00s)
+    --- PASS: TestLandingChecksStrictWire/null_result (0.00s)
+    --- PASS: TestLandingChecksStrictWire/missing_input (0.00s)
+    --- PASS: TestLandingChecksStrictWire/missing (0.00s)
+    --- PASS: TestLandingChecksStrictWire/unknown (0.00s)
+    --- PASS: TestLandingChecksStrictWire/case (0.00s)
+    --- PASS: TestLandingChecksStrictWire/duplicate (0.00s)
+=== RUN   TestLandingChecksJournalOnlyAndSnapshotGate
+--- PASS: TestLandingChecksJournalOnlyAndSnapshotGate (0.00s)
+PASS
+ok  	github.com/CanadaApollo6/openmerge/internal/queue	0.154s
+=== RUN   TestLandingChecksAtomicRollbackRetryAndRetention
+--- PASS: TestLandingChecksAtomicRollbackRetryAndRetention (0.05s)
+=== RUN   TestLandingChecksValidateLockedBindings
+=== RUN   TestLandingChecksValidateLockedBindings/missing
+=== RUN   TestLandingChecksValidateLockedBindings/source
+=== RUN   TestLandingChecksValidateLockedBindings/member
+=== RUN   TestLandingChecksValidateLockedBindings/sha
+=== RUN   TestLandingChecksValidateLockedBindings/config
+=== RUN   TestLandingChecksValidateLockedBindings/policy
+=== RUN   TestLandingChecksValidateLockedBindings/claim
+=== RUN   TestLandingChecksValidateLockedBindings/bypass
+=== RUN   TestLandingChecksValidateLockedBindings/final-start
+=== RUN   TestLandingChecksValidateLockedBindings/overflow
+--- PASS: TestLandingChecksValidateLockedBindings (0.43s)
+    --- PASS: TestLandingChecksValidateLockedBindings/missing (0.04s)
+    --- PASS: TestLandingChecksValidateLockedBindings/source (0.05s)
+    --- PASS: TestLandingChecksValidateLockedBindings/member (0.04s)
+    --- PASS: TestLandingChecksValidateLockedBindings/sha (0.04s)
+    --- PASS: TestLandingChecksValidateLockedBindings/config (0.05s)
+    --- PASS: TestLandingChecksValidateLockedBindings/policy (0.05s)
+    --- PASS: TestLandingChecksValidateLockedBindings/claim (0.04s)
+    --- PASS: TestLandingChecksValidateLockedBindings/bypass (0.04s)
+    --- PASS: TestLandingChecksValidateLockedBindings/final-start (0.05s)
+    --- PASS: TestLandingChecksValidateLockedBindings/overflow (0.04s)
+=== RUN   TestLandingChecksAuthorityWithoutReviewFloor
+--- PASS: TestLandingChecksAuthorityWithoutReviewFloor (0.04s)
+=== RUN   TestLandingChecksSourceRevisionRace
+--- PASS: TestLandingChecksSourceRevisionRace (0.05s)
+=== RUN   TestLandingChecksByteCapSurvivesJSONB
+--- PASS: TestLandingChecksByteCapSurvivesJSONB (0.18s)
+PASS
+ok  	github.com/CanadaApollo6/openmerge/internal/store	0.761s
+=== RUN   TestLandingCheckEvidenceUsesExactPolicyInputs
+--- PASS: TestLandingCheckEvidenceUsesExactPolicyInputs (0.00s)
 === RUN   TestLandingChecksAuthorityMethodsAndChainPositions
 === RUN   TestLandingChecksAuthorityMethodsAndChainPositions/merge/depth-1
 === RUN   TestLandingChecksAuthorityMethodsAndChainPositions/merge/depth-4
@@ -7,64 +111,80 @@
 === RUN   TestLandingChecksAuthorityMethodsAndChainPositions/rebase/depth-4
 === RUN   TestLandingChecksAuthorityMethodsAndChainPositions/fast-forward/depth-1
 === RUN   TestLandingChecksAuthorityMethodsAndChainPositions/fast-forward/depth-4
---- PASS: TestLandingChecksAuthorityMethodsAndChainPositions (5.91s)
-    --- PASS: TestLandingChecksAuthorityMethodsAndChainPositions/merge/depth-1 (0.15s)
-    --- PASS: TestLandingChecksAuthorityMethodsAndChainPositions/merge/depth-4 (1.29s)
-    --- PASS: TestLandingChecksAuthorityMethodsAndChainPositions/squash/depth-1 (0.15s)
-    --- PASS: TestLandingChecksAuthorityMethodsAndChainPositions/squash/depth-4 (1.23s)
+--- PASS: TestLandingChecksAuthorityMethodsAndChainPositions (5.55s)
+    --- PASS: TestLandingChecksAuthorityMethodsAndChainPositions/merge/depth-1 (0.14s)
+    --- PASS: TestLandingChecksAuthorityMethodsAndChainPositions/merge/depth-4 (1.19s)
+    --- PASS: TestLandingChecksAuthorityMethodsAndChainPositions/squash/depth-1 (0.13s)
+    --- PASS: TestLandingChecksAuthorityMethodsAndChainPositions/squash/depth-4 (1.21s)
     --- PASS: TestLandingChecksAuthorityMethodsAndChainPositions/rebase/depth-1 (0.13s)
-    --- PASS: TestLandingChecksAuthorityMethodsAndChainPositions/rebase/depth-4 (1.25s)
-    --- PASS: TestLandingChecksAuthorityMethodsAndChainPositions/fast-forward/depth-1 (0.14s)
-    --- PASS: TestLandingChecksAuthorityMethodsAndChainPositions/fast-forward/depth-4 (1.57s)
+    --- PASS: TestLandingChecksAuthorityMethodsAndChainPositions/rebase/depth-4 (1.23s)
+    --- PASS: TestLandingChecksAuthorityMethodsAndChainPositions/fast-forward/depth-1 (0.13s)
+    --- PASS: TestLandingChecksAuthorityMethodsAndChainPositions/fast-forward/depth-4 (1.38s)
+=== RUN   TestLandingChecksLegacyGateAndPinRace
+=== RUN   TestLandingChecksLegacyGateAndPinRace/pin-race-false
+=== RUN   TestLandingChecksLegacyGateAndPinRace/pin-race-true
+--- PASS: TestLandingChecksLegacyGateAndPinRace (0.19s)
+    --- PASS: TestLandingChecksLegacyGateAndPinRace/pin-race-false (0.09s)
+    --- PASS: TestLandingChecksLegacyGateAndPinRace/pin-race-true (0.10s)
+=== RUN   TestLandingDecisionErrorsFailWorkerAction
+=== RUN   TestLandingDecisionErrorsFailWorkerAction/approval_policy_requires_landing_decision_gate
+=== RUN   TestLandingDecisionErrorsFailWorkerAction/authority_policy_requires_atomic_landing_check_evidence
+=== RUN   TestLandingDecisionErrorsFailWorkerAction/landing_approvals_unmet
+=== RUN   TestLandingDecisionErrorsFailWorkerAction/landing_check_evidence_exceeds_size_limits:_wire_event_limit_1048576_bytes/items;_reduce_evidence_before_retrying
+--- PASS: TestLandingDecisionErrorsFailWorkerAction (0.17s)
+    --- PASS: TestLandingDecisionErrorsFailWorkerAction/approval_policy_requires_landing_decision_gate (0.04s)
+    --- PASS: TestLandingDecisionErrorsFailWorkerAction/authority_policy_requires_atomic_landing_check_evidence (0.04s)
+    --- PASS: TestLandingDecisionErrorsFailWorkerAction/landing_approvals_unmet (0.05s)
+    --- PASS: TestLandingDecisionErrorsFailWorkerAction/landing_check_evidence_exceeds_size_limits:_wire_event_limit_1048576_bytes/items;_reduce_evidence_before_retrying (0.04s)
 === RUN   TestStageAGateRealGitAcquisition
 === RUN   TestStageAGateRealGitAcquisition/depth-1/restart-false/merge
-    stage_a_real_git_test.go:156: checks=9 start=10 settlement=11 tested=62be6b469383ecb4a66fbcd57c0e0bd57130543d landed=62be6b469383ecb4a66fbcd57c0e0bd57130543d run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    stage_a_real_git_test.go:157: checks=9 start=10 settlement=11 tested=93f4338b640d2e1b448a18178caaa87c43d52558 landed=93f4338b640d2e1b448a18178caaa87c43d52558 run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 === RUN   TestStageAGateRealGitAcquisition/depth-1/restart-false/squash
-    stage_a_real_git_test.go:156: checks=9 start=10 settlement=11 tested=d432bb4c62c845d3a37d18d8693ae4d4b9c7a265 landed=d432bb4c62c845d3a37d18d8693ae4d4b9c7a265 run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    stage_a_real_git_test.go:157: checks=9 start=10 settlement=11 tested=b4c8b4ef45ee42a3b514a247f02dde9f96331d26 landed=b4c8b4ef45ee42a3b514a247f02dde9f96331d26 run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 === RUN   TestStageAGateRealGitAcquisition/depth-1/restart-false/rebase
-    stage_a_real_git_test.go:156: checks=9 start=10 settlement=11 tested=5f0b43a19b4d7dbc3ce512ccc93ae6529ed77bd8 landed=5f0b43a19b4d7dbc3ce512ccc93ae6529ed77bd8 run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    stage_a_real_git_test.go:157: checks=9 start=10 settlement=11 tested=5d4a85e3d99de62788e528494ed610fc7cc7e46d landed=5d4a85e3d99de62788e528494ed610fc7cc7e46d run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 === RUN   TestStageAGateRealGitAcquisition/depth-1/restart-false/fast-forward
-    stage_a_real_git_test.go:156: checks=9 start=10 settlement=11 tested=74c4de0a22819dc35ac867b191fc43e3cb5708be landed=db6006407b4e07eb216f7d2e996cd02a8ed6b5a3 run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    stage_a_real_git_test.go:157: checks=9 start=10 settlement=11 tested=93aa03702132c455d92a04cdc48fd8da7363d41f landed=2df1f5bc2f6cd1f61f9c4dcf88769fba580d0c60 run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 === RUN   TestStageAGateRealGitAcquisition/depth-1/restart-true/merge
-    stage_a_real_git_test.go:156: checks=9 start=10 settlement=11 tested=81626fc81e0f3f2c923fc94aa36c9fbcf6ab1ade landed=81626fc81e0f3f2c923fc94aa36c9fbcf6ab1ade run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    stage_a_real_git_test.go:157: checks=9 start=10 settlement=11 tested=81f06fe35015ed9b9d44b59a520b6c822bc092a2 landed=81f06fe35015ed9b9d44b59a520b6c822bc092a2 run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 === RUN   TestStageAGateRealGitAcquisition/depth-1/restart-true/squash
-    stage_a_real_git_test.go:156: checks=9 start=10 settlement=11 tested=2014c48e66af30ff70b296a7ba3ebbc487764224 landed=2014c48e66af30ff70b296a7ba3ebbc487764224 run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    stage_a_real_git_test.go:157: checks=9 start=10 settlement=11 tested=ba5d6b1be5313bac3d659b80f8b7298e2210a7a3 landed=ba5d6b1be5313bac3d659b80f8b7298e2210a7a3 run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 === RUN   TestStageAGateRealGitAcquisition/depth-1/restart-true/rebase
-    stage_a_real_git_test.go:156: checks=9 start=10 settlement=11 tested=cddb31c10d2339bc0d71b7d5e0cfc43e00149b1e landed=cddb31c10d2339bc0d71b7d5e0cfc43e00149b1e run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    stage_a_real_git_test.go:157: checks=9 start=10 settlement=11 tested=68f2f9a2bd81ef785fdd5bc00374a308c52fc538 landed=68f2f9a2bd81ef785fdd5bc00374a308c52fc538 run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 === RUN   TestStageAGateRealGitAcquisition/depth-1/restart-true/fast-forward
-    stage_a_real_git_test.go:156: checks=9 start=10 settlement=11 tested=9ae3e8d233ea948bcc6439276bbf9cd10968977a landed=6009c0303a57c0e47c15cb050addaa0124c9eb9e run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    stage_a_real_git_test.go:157: checks=9 start=10 settlement=11 tested=d51efec719acb3845e17a734941228fd466b3fa0 landed=490f68849a017f2534f459ed3f39928251775b51 run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 === RUN   TestStageAGateRealGitAcquisition/depth-4/restart-false/merge
-    stage_a_real_git_test.go:156: checks=15 start=16 settlement=17 tested=71f7589679ca301724bf3b0676f336fb2402c680 landed=71f7589679ca301724bf3b0676f336fb2402c680 run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    stage_a_real_git_test.go:157: checks=15 start=16 settlement=17 tested=6945096de5d07edfb7e01847fb6d6e5c229f7428 landed=6945096de5d07edfb7e01847fb6d6e5c229f7428 run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 === RUN   TestStageAGateRealGitAcquisition/depth-4/restart-false/squash
-    stage_a_real_git_test.go:156: checks=15 start=16 settlement=17 tested=d94ab79be6066c09ed9fe668b4293d4ed5cb7eaa landed=d94ab79be6066c09ed9fe668b4293d4ed5cb7eaa run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    stage_a_real_git_test.go:157: checks=15 start=16 settlement=17 tested=ee00cd571f9a0b38af458cb6e75a997b16f99d90 landed=ee00cd571f9a0b38af458cb6e75a997b16f99d90 run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 === RUN   TestStageAGateRealGitAcquisition/depth-4/restart-false/rebase
-    stage_a_real_git_test.go:156: checks=15 start=16 settlement=17 tested=74096ac6ff594a246f1cbad29683af0488dff42b landed=74096ac6ff594a246f1cbad29683af0488dff42b run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    stage_a_real_git_test.go:157: checks=15 start=16 settlement=17 tested=07500dae98612dd0a56a78c367010f2c18c89e6d landed=07500dae98612dd0a56a78c367010f2c18c89e6d run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 === RUN   TestStageAGateRealGitAcquisition/depth-4/restart-false/fast-forward
-    stage_a_real_git_test.go:156: checks=15 start=16 settlement=17 tested=df5d3986c150abb08b752216072f64826d8e9c4d landed=31ff4372e7f527893f154b7053b58bc1b82b6eda run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    stage_a_real_git_test.go:157: checks=15 start=16 settlement=17 tested=184a565faae98a4a4f16c3a404c9a1db65596ca9 landed=7aa471a4a4a85108bf75c12a68ec24989f05d3fb run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 === RUN   TestStageAGateRealGitAcquisition/depth-4/restart-true/merge
-    stage_a_real_git_test.go:156: checks=15 start=16 settlement=17 tested=ba50acf3092d2195fcdd72b2e9ddfd305ba3db09 landed=ba50acf3092d2195fcdd72b2e9ddfd305ba3db09 run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    stage_a_real_git_test.go:157: checks=15 start=16 settlement=17 tested=26b4f4915f51cd5b6dcac43d2681f83f7c693f6b landed=26b4f4915f51cd5b6dcac43d2681f83f7c693f6b run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 === RUN   TestStageAGateRealGitAcquisition/depth-4/restart-true/squash
-    stage_a_real_git_test.go:156: checks=15 start=16 settlement=17 tested=692fc82dd3ed445f41bab4c22bbeea48c331228a landed=692fc82dd3ed445f41bab4c22bbeea48c331228a run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    stage_a_real_git_test.go:157: checks=15 start=16 settlement=17 tested=a8c7c4f2e2bd09dbe92135bedb48e504483bc6df landed=a8c7c4f2e2bd09dbe92135bedb48e504483bc6df run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 === RUN   TestStageAGateRealGitAcquisition/depth-4/restart-true/rebase
-    stage_a_real_git_test.go:156: checks=15 start=16 settlement=17 tested=c2cf64016b4b716cd14dc3f36b90df5005b79329 landed=c2cf64016b4b716cd14dc3f36b90df5005b79329 run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+    stage_a_real_git_test.go:157: checks=15 start=16 settlement=17 tested=c8b65b1221c80b24a945878c003c4184312dfcad landed=c8b65b1221c80b24a945878c003c4184312dfcad run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 === RUN   TestStageAGateRealGitAcquisition/depth-4/restart-true/fast-forward
-    stage_a_real_git_test.go:156: checks=15 start=16 settlement=17 tested=efb2b6af1d33e37e769b03f870ef083677e9e80d landed=b16e7d9c9929ad53dfef084e25d64fd3462ed4eb run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
---- PASS: TestStageAGateRealGitAcquisition (6.08s)
-    --- PASS: TestStageAGateRealGitAcquisition/depth-1/restart-false/merge (0.30s)
-    --- PASS: TestStageAGateRealGitAcquisition/depth-1/restart-false/squash (0.32s)
-    --- PASS: TestStageAGateRealGitAcquisition/depth-1/restart-false/rebase (0.37s)
-    --- PASS: TestStageAGateRealGitAcquisition/depth-1/restart-false/fast-forward (0.26s)
+    stage_a_real_git_test.go:157: checks=15 start=16 settlement=17 tested=5fd58d4c7d814f5e309d2903d000ebab731ab391 landed=26156be4734da25df4fce5536674daa7eb602415 run=701 attempt=2 source=app:15368 result=success config=real-config digest=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+--- PASS: TestStageAGateRealGitAcquisition (6.18s)
+    --- PASS: TestStageAGateRealGitAcquisition/depth-1/restart-false/merge (0.31s)
+    --- PASS: TestStageAGateRealGitAcquisition/depth-1/restart-false/squash (0.33s)
+    --- PASS: TestStageAGateRealGitAcquisition/depth-1/restart-false/rebase (0.38s)
+    --- PASS: TestStageAGateRealGitAcquisition/depth-1/restart-false/fast-forward (0.27s)
     --- PASS: TestStageAGateRealGitAcquisition/depth-1/restart-true/merge (0.30s)
-    --- PASS: TestStageAGateRealGitAcquisition/depth-1/restart-true/squash (0.32s)
-    --- PASS: TestStageAGateRealGitAcquisition/depth-1/restart-true/rebase (0.38s)
-    --- PASS: TestStageAGateRealGitAcquisition/depth-1/restart-true/fast-forward (0.27s)
-    --- PASS: TestStageAGateRealGitAcquisition/depth-4/restart-false/merge (0.38s)
-    --- PASS: TestStageAGateRealGitAcquisition/depth-4/restart-false/squash (0.45s)
+    --- PASS: TestStageAGateRealGitAcquisition/depth-1/restart-true/squash (0.33s)
+    --- PASS: TestStageAGateRealGitAcquisition/depth-1/restart-true/rebase (0.39s)
+    --- PASS: TestStageAGateRealGitAcquisition/depth-1/restart-true/fast-forward (0.28s)
+    --- PASS: TestStageAGateRealGitAcquisition/depth-4/restart-false/merge (0.39s)
+    --- PASS: TestStageAGateRealGitAcquisition/depth-4/restart-false/squash (0.46s)
     --- PASS: TestStageAGateRealGitAcquisition/depth-4/restart-false/rebase (0.64s)
     --- PASS: TestStageAGateRealGitAcquisition/depth-4/restart-false/fast-forward (0.31s)
     --- PASS: TestStageAGateRealGitAcquisition/depth-4/restart-true/merge (0.38s)
-    --- PASS: TestStageAGateRealGitAcquisition/depth-4/restart-true/squash (0.44s)
-    --- PASS: TestStageAGateRealGitAcquisition/depth-4/restart-true/rebase (0.64s)
-    --- PASS: TestStageAGateRealGitAcquisition/depth-4/restart-true/fast-forward (0.31s)
+    --- PASS: TestStageAGateRealGitAcquisition/depth-4/restart-true/squash (0.45s)
+    --- PASS: TestStageAGateRealGitAcquisition/depth-4/restart-true/rebase (0.65s)
+    --- PASS: TestStageAGateRealGitAcquisition/depth-4/restart-true/fast-forward (0.32s)
 PASS
-ok  	github.com/CanadaApollo6/openmerge/internal/serve	12.000s
+ok  	github.com/CanadaApollo6/openmerge/internal/serve	12.106s

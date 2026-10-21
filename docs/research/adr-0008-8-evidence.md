@@ -104,18 +104,21 @@ history before claiming organization acceptance. Local HTTP and real-git fixture
 provide automated adapter/object evidence, including atomic start and read-back
 after real-git settlement with the test DB configured.
 
-Executed verification completed on 2026-10-21 UTC against implementation
-`2ad97eecc72fa8477fcc598c5a0d739542f73f2c` and main
-`975b1b7762f58c128b1703f11fd5c4b6ff552c55`. The later evidence commit changes
-only these retained reports/docs. [Summary and commands](adr-0008-8-artifacts/summary.json),
+Round 2 verification completed on 2026-10-21 UTC against implementation
+`abf6a63458263809bf64754c0a84a343abad6fe6` and main
+`2b21c6ce6a47fcd292175c0eed98a39584262505`. Main advanced to
+`a4c4f4bcd1befa718908b3ad801150c34c049c7d` (PR 7, #117)
+during validation. `git merge-tree --write-tree` against that main exits 0 with
+no conflicts; the tested comparison baseline remains `2b21c6c`. The later
+evidence commit changes only these retained reports/docs. [Summary and commands](adr-0008-8-artifacts/summary.json),
 [hash manifest](adr-0008-8-artifacts/manifest.sha256),
 [make check log](adr-0008-8-artifacts/make-check.log), and
 [real-git event IDs/SHAs](adr-0008-8-artifacts/real-git-and-chain.log) are retained.
 Full replay streams, raw reports, simulator normalization, and command logs remain
-under `/home/riels/.cache/adr0008-8-verification`; their paths/hashes are in the manifest.
+under `/home/riels/.cache/adr0008-8-r2-verification`; their paths/hashes are in the manifest.
 
 - Wrapped `make check`: **exit 0**, zero lint issues, complete race suite and build.
-  Binary revision `2ad97ee`; binary SHA-256 is recorded in the summary/manifest.
+  Binary revision `abf6a63`; binary SHA-256 is recorded in the summary/manifest.
 - Strict offline live-journal replay: **PASS**, 2,158 events from one queue,
   2,159/2,159 identical actions, full structural states, snapshots, and boundary
   checkpoints. All 8,676 boundary probes agree; gates 2 and 4 pass, mandatory
@@ -124,11 +127,23 @@ under `/home/riels/.cache/adr0008-8-verification`; their paths/hashes are in the
   snapshot/plan hashes and sizes. Approval fixtures contribute 13 checkpoints
   per depth; legacy-block fixtures contribute 32 per depth.
 - Wire: all **103** deployed registry/variant fixtures unchanged (89 registry
-  fixtures); exactly one additive fixture. The previous decoder rejects it.
+  fixtures); exactly one additive fixture, updated to the shared-table shape.
+  The previous decoder rejects it.
 - Reporting: all **six** complete legacy status/check fixtures byte-identical.
 - Simulator differential: baseline/candidate **exit 0**, all **146** normalized
   result blocks identical. SHA-256:
   `a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7`.
+- Bounds/deduplication: the 128-member/1,000-check reproduction fails closed
+  with the typed overflow before copying the large input. Exactly 1 MiB encodes,
+  replays, and round-trips through JSONB; one byte over returns the overflow
+  without stale wrapping or partial start. Distinct member review inputs share
+  CI inputs, repeated check-read order survives, invalid references/duplicates
+  fail strict validation, and individual string overflows fail closed.
+- A legacy gate accepts values exceeding the new evidence caps without making
+  evidence. An authority pin injected immediately before its commit requires
+  checks with `LandingChecksRequiredError`; no start/evidence is recorded. The
+  worker tests retain failed completion and verify the durable overflow block
+  plus the batch's `landing-checks-too-large` status.
 - Atomic rollback/concurrency/stale claim, idempotent retry, crash before/after
   push, retry/cancellation ledger, legacy approval-free starts, retention, and
   snapshot gates pass in the full suite. All four methods at depths 1/4 pass;
@@ -142,10 +157,9 @@ landing-outcome, snapshot, reporting, or simulator differences in the legacy
 comparisons. The check adapter's `AttemptInferred` metadata changes no existing
 wire payload or retry meaning. No new SQL lookup or query plan is introduced.
 
-Early local runs exposed fixture errors (nullable-field expectations, canonical
-snapshot comparison, accidentally leased unrelated actions, config overridden
-only in memory, and a non-planner batch ID) plus one lint finding. Those were
-corrected; an intermediate full run was interrupted to fix the fixtures. The
-accepted final runs above all exit 0. No implementation scope or SQL deviations;
-real GitHub organization acceptance and runtime remedy generation remain at the
-boundaries described above.
+The first round-2 size oracle exposed invalid UTF-8 normalization, so encoding
+now rejects invalid UTF-8. The first two full checks found field-order and
+trailing-newline mismatches in the new fixture only; `abf6a63` corrected its exact bytes, and the focused golden
+test plus final complete `make check` and comparisons above pass. Round 1's retained evidence remains in Git history.
+There are no SQL or deployment changes. Real GitHub organization acceptance and
+runtime remedy generation remain at the boundaries described above.
