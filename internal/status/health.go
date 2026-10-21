@@ -22,18 +22,19 @@ const (
 
 // HealthSettings are process alerting thresholds, never queue policy.
 type HealthSettings struct {
-	OverdueGrace  time.Duration
-	MaxSuccessAge time.Duration
+	OverdueGrace     time.Duration
+	MaxSuccessAge    time.Duration
+	MaxCycleDuration time.Duration
 }
 
 // Valid checks the supported process threshold ranges.
 func (s HealthSettings) Valid() bool {
-	return s.OverdueGrace >= time.Second && s.OverdueGrace <= time.Minute && s.MaxSuccessAge >= time.Minute && s.MaxSuccessAge <= time.Hour
+	return s.OverdueGrace >= time.Second && s.OverdueGrace <= time.Minute && s.MaxSuccessAge >= time.Minute && s.MaxSuccessAge <= time.Hour && s.MaxCycleDuration >= 2*time.Minute && s.MaxCycleDuration <= 6*time.Hour
 }
 
 // DefaultHealthSettings returns the alerting defaults from ADR 0008.
 func DefaultHealthSettings() HealthSettings {
-	return HealthSettings{30 * time.Second, 15 * time.Minute}
+	return HealthSettings{OverdueGrace: 30 * time.Second, MaxSuccessAge: 15 * time.Minute, MaxCycleDuration: 3 * time.Hour}
 }
 
 // Health is the bounded alerting response on the status API listener.
@@ -47,40 +48,51 @@ type Health struct {
 // HealthQueue contains process telemetry and durable display state. It is not an
 // audit assertion, and cannot be used to justify a restart or a landing.
 type HealthQueue struct {
-	Installation    string           `json:"installation"`
-	Repository      string           `json:"repo"`
-	Base            string           `json:"base"`
-	Lane            string           `json:"lane"`
-	Lifecycle       string           `json:"lifecycle"`
-	Readiness       Readiness        `json:"readiness"`
-	Watched         bool             `json:"watched"`
-	StartedAt       time.Time        `json:"started_at"`
-	LastSuccess     *time.Time       `json:"last_success_at"`
-	LastSuccessAge  *float64         `json:"last_success_age_seconds"`
-	NextDeadline    *time.Time       `json:"next_deadline"`
-	Failures        int              `json:"consecutive_failures"`
-	Overdue         bool             `json:"overdue"`
-	Degraded        bool             `json:"degraded"`
-	Reasons         []string         `json:"reasons"`
-	Authority       *Authority       `json:"authority,omitempty"`
-	OutsideWarnings *OutsideWarnings `json:"outside_warnings,omitempty"`
+	Installation         string           `json:"installation"`
+	Repository           string           `json:"repo"`
+	Base                 string           `json:"base"`
+	Lane                 string           `json:"lane"`
+	Lifecycle            string           `json:"lifecycle"`
+	Readiness            Readiness        `json:"readiness"`
+	Watched              bool             `json:"watched"`
+	StartedAt            time.Time        `json:"started_at"`
+	LastSuccess          *time.Time       `json:"last_success_at"`
+	LastSuccessClockSkew bool             `json:"last_success_clock_skew,omitempty"`
+	LastSuccessAge       *float64         `json:"last_success_age_seconds"`
+	InCycle              bool             `json:"in_cycle"`
+	CycleStartedAt       *time.Time       `json:"cycle_started_at"`
+	NextDeadline         *time.Time       `json:"next_deadline"`
+	Failures             int              `json:"consecutive_failures"`
+	Overdue              bool             `json:"overdue"`
+	Degraded             bool             `json:"degraded"`
+	Reasons              []string         `json:"reasons"`
+	Authority            *Authority       `json:"authority,omitempty"`
+	OutsideWarnings      *OutsideWarnings `json:"outside_warnings,omitempty"`
 }
 
 // EvaluateHealth only renders the schedule published by the actual worker loop.
 func EvaluateHealth(q HealthQueue, settings HealthSettings, now time.Time) HealthQueue {
 	q.Reasons = append([]string{}, q.Reasons...)
 	q.LastSuccessAge = age(q.LastSuccess, now)
+	q.LastSuccessClockSkew = q.LastSuccess != nil && q.LastSuccess.After(now)
 	if q.Authority != nil {
 		a := *q.Authority
 		a.RefreshAges(now)
 		q.Authority = &a
 	}
-	q.Overdue = q.Watched && q.NextDeadline != nil && now.After(q.NextDeadline.Add(settings.OverdueGrace))
+	q.Overdue = false
+	if q.Watched {
+		if q.InCycle {
+			q.Overdue = q.CycleStartedAt != nil && now.After(q.CycleStartedAt.Add(settings.MaxCycleDuration))
+		} else {
+			q.Overdue = q.NextDeadline != nil && now.After(q.NextDeadline.Add(settings.OverdueGrace))
+		}
+	}
 	since := q.StartedAt
 	if q.LastSuccess != nil {
 		since = *q.LastSuccess
 	}
-	q.Degraded = q.Watched && (q.Failures >= 3 || !since.IsZero() && now.Sub(since) > settings.MaxSuccessAge)
+	q.Degraded = q.Watched && !since.IsZero() && now.Sub(since) > settings.MaxSuccessAge
 	if q.LastSuccess == nil {
 		q.Reasons = append(q.Reasons, "not-yet-reconciled")
 	}

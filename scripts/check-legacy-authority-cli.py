@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare complete CLI status text against a base checkout, without DB/network.
+"""Compare complete CLI status text against a base checkout, through Journals and Project.
 
 Run under the heavy-command flock with GOFLAGS/GOMEMLIMIT set. Uses Go overlays
 in ~/.cache; no fields or whitespace are stripped from the compared output.
@@ -12,29 +12,26 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from legacy_authority_fixtures import GO_IMPORTS, GO_FIXTURES
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = Path(sys.argv[1]).resolve()
-PROBE = r'''package main
-import (
+PROBE = "package main\nimport (\n" + GO_IMPORTS + r'''
  "bytes"
  "encoding/base64"
- "fmt"
- "testing"
  "github.com/CanadaApollo6/openmerge/internal/status"
- "github.com/CanadaApollo6/openmerge/internal/queue"
 )
+''' + GO_FIXTURES + r'''
 func TestLegacyAuthorityCLIProbe(t *testing.T) {
  for _,kind:=range []string{"empty","idle","waiting","paused","active","outside"} {
-  q:=status.Queue{Repository:"owner/repo",Base:"main",State:"active"}
-  switch kind {
-  case "waiting":q.Readiness=&status.Readiness{Ready:false,Reason:"validation pending"}
-  case "paused":q.Paused=true;q.PauseReason="operator";q.Blocks=[]status.Block{{Source:"operator",Reason:"operator",Detail:"fixture"}}
-  case "active":q.Entries=[]status.Entry{{Position:1,PR:42,HeadSHA:"0123456789abcdef",Status:"testing",Reason:"ci pending"}}
-  case "outside":q.OutsidePushes=[]status.OutsidePush{{EventID:12,OutsidePushRecorded:queue.OutsidePushRecorded{PreviousSHA:"base",NewSHA:"outside",AncestryKnown:true,HistoryKnown:true,Commits:[]string{"outside"},VerificationBeforeLanding:"none"}}}
+  db,key:=legacyDBFixture(t,kind)
+  journals,err:=db.Journals(t.Context(),[]store.QueueKey{key});if err!=nil {t.Fatal(err)}
+  response:=status.Response{Version:1,Queues:[]status.Queue{}}
+  for _,j:=range journals {
+   q,_,_:=status.Project(j,0,0,nil)
+   if kind=="waiting" {q.Readiness=&status.Readiness{Ready:false,Reason:"validation pending"}}
+   response.Queues=append(response.Queues,q)
   }
-  response:=status.Response{Version:1,Queue:&q}
-  if kind=="empty" { response=status.Response{Version:1,Queues:[]status.Queue{}} }
   var out bytes.Buffer
   if err:=printStatus(&out,response);err!=nil { t.Fatal(err) }
   fmt.Printf("LEGACY-CLI %s %s\n",kind,base64.StdEncoding.EncodeToString(out.Bytes()))

@@ -82,31 +82,18 @@ func (s *Store) VisitOutsidePushWarnings(ctx context.Context, q QueueID, visit f
 const OutsideWarningIDLimit = 20
 
 // OutsideWarningSummary has an unambiguous zero value: no outstanding warnings.
-// A failed read returns an error rather than a partial count or event list.
+// A failed refresh labels the last complete counts with Error, never partial data.
 type OutsideWarningSummary struct {
 	Outstanding int
 	EventIDs    []int64
 	Truncated   bool
+	Error       string
 }
 
-func (s *OutsideWarningSummary) add(w OutsidePushWarning) error {
-	s.Outstanding++
-	if len(s.EventIDs) < OutsideWarningIDLimit {
-		s.EventIDs = append(s.EventIDs, w.EventID)
-	} else {
-		s.Truncated = true
-	}
-	return nil
-}
-
-// ReadOutsidePushWarnings counts the ledger with bounded retained memory. It
-// takes no application or advisory locks and never reads EventsAfter.
+// ReadOutsidePushWarnings incrementally indexes the ledger. It retains only
+// policy boundaries and outstanding event/origin IDs, and never reads EventsAfter.
 func (s *Store) ReadOutsidePushWarnings(ctx context.Context, q QueueID) (OutsideWarningSummary, error) {
-	var summary OutsideWarningSummary
-	if err := s.VisitOutsidePushWarnings(ctx, q, summary.add); err != nil {
-		return OutsideWarningSummary{}, err
-	}
-	return summary, nil
+	return s.cachedOutsidePushWarnings(ctx, q)
 }
 
 func visitOutsidePushWarnings(ctx context.Context, tx pgx.Tx, q QueueID, visit func(OutsidePushWarning) error) error {

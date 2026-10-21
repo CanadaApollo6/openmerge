@@ -53,16 +53,16 @@ func (s *Server) outsidePushLoop(ctx context.Context) {
 	}
 }
 
-// refreshOutsideWarnings publishes only complete ledger snapshots. A failed
-// read preserves the last successful snapshot without turning warnings into a
-// health failure. Health's own DB probe still reports database outages.
+// refreshOutsideWarnings publishes complete ledger snapshots. Failed reads
+// preserve the last complete counts with an explicit queue-local error. Warning
+// availability does not change health; its DB probe reports database outages.
 func (s *Server) refreshOutsideWarnings(ctx context.Context, w *worker) error {
-	summary, err := s.store.ReadOutsidePushWarnings(ctx, w.id)
-	if err != nil {
-		return err
+	if !w.hasAuthorityPin.Load() {
+		return nil
 	}
+	summary, err := s.store.ReadOutsidePushWarnings(ctx, w.id)
 	w.outsideWarnings.Store(&summary)
-	return nil
+	return err
 }
 
 func (s *Server) auditOutsidePushes(ctx context.Context, id store.QueueID, key store.QueueKey) error {
@@ -90,4 +90,10 @@ func (s *Server) auditOutsidePushes(ctx context.Context, id store.QueueID, key s
 	defer cancel()
 	_, err = s.store.CommitOutsidePushAudit(commitCtx, id, audit, events)
 	return err
+}
+
+func (s *Server) initializeOutsideWarnings(ctx context.Context, w *worker) {
+	if err := s.refreshOutsideWarnings(ctx, w); err != nil {
+		s.options.Logger.Warn("outside push warnings; preserving queue registration", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "error", err)
+	}
 }

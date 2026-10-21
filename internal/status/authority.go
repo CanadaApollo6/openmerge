@@ -11,16 +11,19 @@ import (
 )
 
 // Authority is a read-only rendering of durable applied evidence. Ages are
-// seconds; nil means never observed/verified, not a fresh observation.
+// seconds; nil means absent or clock-skewed evidence, never a fresh observation.
 type Authority struct {
-	State           string             `json:"state"`
-	LastObservedAt  *time.Time         `json:"last_observed_at"`
-	LastObservedAge *float64           `json:"last_observed_age_seconds"`
-	LastVerifiedAt  *time.Time         `json:"last_verified_at"`
-	LastVerifiedAge *float64           `json:"last_verified_age_seconds"`
-	Inventory       string             `json:"inventory"`
-	Elements        []AuthorityElement `json:"elements"`
-	ElementsOmitted int                `json:"elements_omitted,omitempty"`
+	State                 string             `json:"state"`
+	ClockSkew             bool               `json:"clock_skew,omitempty"`
+	LastObservedClockSkew bool               `json:"last_observed_clock_skew,omitempty"`
+	LastVerifiedClockSkew bool               `json:"last_verified_clock_skew,omitempty"`
+	LastObservedAt        *time.Time         `json:"last_observed_at"`
+	LastObservedAge       *float64           `json:"last_observed_age_seconds"`
+	LastVerifiedAt        *time.Time         `json:"last_verified_at"`
+	LastVerifiedAge       *float64           `json:"last_verified_age_seconds"`
+	Inventory             string             `json:"inventory"`
+	Elements              []AuthorityElement `json:"elements"`
+	ElementsOmitted       int                `json:"elements_omitted,omitempty"`
 }
 
 // AuthorityElement names one independently visible policy element.
@@ -35,15 +38,16 @@ type OutsideWarnings struct {
 	Outstanding int     `json:"outstanding"`
 	EventIDs    []int64 `json:"event_ids"`
 	Truncated   bool    `json:"truncated"`
+	Error       string  `json:"error,omitempty"`
 }
 
-// ProjectOutsideWarnings omits empty ledgers to preserve legacy output. The
-// ledger read must have succeeded; callers must discard summaries on error.
+// ProjectOutsideWarnings omits successful empty ledgers to preserve legacy
+// output. Errors label the last complete counts, which may now be stale.
 func ProjectOutsideWarnings(summary store.OutsideWarningSummary) *OutsideWarnings {
-	if summary.Outstanding == 0 {
+	if summary.Outstanding == 0 && summary.Error == "" {
 		return nil
 	}
-	return &OutsideWarnings{Outstanding: summary.Outstanding, EventIDs: append([]int64{}, summary.EventIDs...), Truncated: summary.Truncated}
+	return &OutsideWarnings{Outstanding: summary.Outstanding, EventIDs: append([]int64{}, summary.EventIDs...), Truncated: summary.Truncated, Error: summary.Error}
 }
 
 // ProjectAuthority renders PR 4's durable projection. It neither interprets
@@ -81,15 +85,18 @@ func ProjectAuthority(s queue.State, now time.Time) *Authority {
 }
 
 func age(at *time.Time, now time.Time) *float64 {
-	if at == nil {
+	if at == nil || at.After(now) {
 		return nil
 	}
-	value := max(0, now.Sub(*at).Seconds())
+	value := now.Sub(*at).Seconds()
 	return &value
 }
 
 // RefreshAges updates display ages without asserting new evidence.
 func (a *Authority) RefreshAges(now time.Time) {
+	a.LastObservedClockSkew = a.LastObservedAt != nil && a.LastObservedAt.After(now)
+	a.LastVerifiedClockSkew = a.LastVerifiedAt != nil && a.LastVerifiedAt.After(now)
+	a.ClockSkew = a.LastObservedClockSkew || a.LastVerifiedClockSkew
 	a.LastObservedAge = age(a.LastObservedAt, now)
 	a.LastVerifiedAge = age(a.LastVerifiedAt, now)
 }
@@ -103,7 +110,7 @@ func AuthoritySummary(a *Authority) string {
 		if at == nil {
 			return "never (age unknown)"
 		}
-		elapsed := "unknown"
+		elapsed := "clock_skew"
 		if seconds != nil {
 			elapsed = (time.Duration(*seconds * float64(time.Second))).Round(time.Second).String()
 		}

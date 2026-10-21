@@ -35,10 +35,20 @@ func TestAuthorityStatusAndHealthDoNotWaitForWorker(t *testing.T) {
 	handler := status.DynamicHandler(s, func() []store.QueueKey { return s.Keys() }, "secret", nil)
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	for _, mode := range []authority.Mode{authority.OpenMerge, authority.GitHub} {
+	for _, step := range []struct {
+		mode        authority.Mode
+		acknowledge bool
+	}{{authority.OpenMerge, false}, {authority.GitHub, false}, {authority.GitHub, true}} {
+		mode := step.mode
 		if mode == authority.GitHub {
 			// Historical authority warnings must also use snapshots after rollback.
 			reportingPin(t, s, w, mode)
+		}
+		if step.acknowledge {
+			warning := w.outsideWarnings.Load()
+			_, err := s.store.AcknowledgeOutsidePush(t.Context(), w.id, warning.EventIDs[0], "outside-0", "operator")
+			must(t, err)
+			must(t, s.refreshOutsideWarnings(t.Context(), w))
 		}
 		for _, path := range []string{"/v1/live", "/v1/health", "/v1/queues/owner/repo/main", "/v1/queues"} {
 			done := make(chan *httptest.ResponseRecorder, 1)
@@ -57,8 +67,11 @@ func TestAuthorityStatusAndHealthDoNotWaitForWorker(t *testing.T) {
 				if path != "/v1/live" && !json.Valid(rr.Body.Bytes()) {
 					t.Fatal(rr.Body)
 				}
-				if path != "/v1/live" && !strings.Contains(rr.Body.String(), `"outside_warnings":{"outstanding":1,`) {
+				if path != "/v1/live" && !step.acknowledge && !strings.Contains(rr.Body.String(), `"outside_warnings":{"outstanding":1,`) {
 					t.Fatalf("%s lost warnings while worker held: %s", path, rr.Body)
+				}
+				if step.acknowledge && strings.Contains(rr.Body.String(), `"outside_warnings"`) {
+					t.Fatalf("acknowledged queue retained warnings: %s", rr.Body)
 				}
 			case <-time.After(200 * time.Millisecond):
 				t.Fatalf("%s blocked on worker lock", path)
@@ -101,7 +114,7 @@ func TestHealthPublicationLifecycleAndFailures(t *testing.T) {
 		s.publishHealth(w, state, false, context.DeadlineExceeded, now.Add(time.Duration(i)*time.Minute))
 	}
 	q := status.EvaluateHealth(*w.health.Load(), s.options.Health, now.Add(3*time.Minute))
-	if !q.Degraded || q.LastSuccess == nil || !q.LastSuccess.Equal(now) {
+	if q.Degraded || q.LastSuccess == nil || !q.LastSuccess.Equal(now) {
 		t.Fatalf("%+v", q)
 	}
 	s.publishHealth(w, state, true, nil, now.Add(4*time.Minute))
@@ -195,8 +208,8 @@ func TestHealthActualErrorAndQuotaDeadline(t *testing.T) {
 				synctest.Wait()
 				requireBackstopPoll(t, polls)
 				q := status.EvaluateHealth(*w.health.Load(), s.options.Health, time.Now())
-				if !q.Degraded || q.Overdue {
-					t.Fatalf("on-time failures not degraded: %+v", q)
+				if q.Degraded || q.Overdue {
+					t.Fatalf("on-time failures incorrectly degraded: %+v", q)
 				}
 			}
 		})
@@ -226,7 +239,7 @@ func TestHealthHTTPWatchedConditionsAndIsolation(t *testing.T) {
 		{"violated", func(q *status.HealthQueue) { q.Authority = &status.Authority{State: "violated"} }, 503},
 		{"overdue", func(q *status.HealthQueue) { q.NextDeadline = &overdue }, 503},
 		{"degraded age", func(q *status.HealthQueue) { q.LastSuccess = &old }, 503},
-		{"degraded failures", func(q *status.HealthQueue) { q.Failures = 3 }, 503},
+		{"informational failures", func(q *status.HealthQueue) { q.Failures = 3 }, 200},
 		{"retired without obligations", func(q *status.HealthQueue) {
 			q.Watched = false
 			q.Lifecycle = "retired"
@@ -301,7 +314,7 @@ func TestHealthActualValidationAndRulesRetryDeadlines(t *testing.T) {
 					synctest.Wait()
 				}
 				q := status.EvaluateHealth(*w.health.Load(), s.options.Health, time.Now())
-				if !q.Degraded || q.LastSuccess != nil {
+				if q.Degraded || q.LastSuccess != nil {
 					t.Fatalf("failed rules reads claimed success: %+v", q)
 				}
 			}

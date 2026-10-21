@@ -56,7 +56,7 @@ func (s *Server) ledgerSummary(ctx context.Context, w *worker, pr int) (string, 
 		return "", err
 	}
 	if w.ledgerCache == nil || w.ledgerCache.watermark != watermark {
-		journals, err := s.store.Journals(ctx, []store.QueueKey{w.Key})
+		journals, err := s.store.ReportingJournals(ctx, []store.QueueKey{w.Key})
 		if err != nil {
 			return "", err
 		}

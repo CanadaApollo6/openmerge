@@ -51,6 +51,7 @@ type Queue struct {
 	LastWindowFailure *queue.WindowFailure       `json:"last_window_failure,omitempty"`
 	Window            int                        `json:"window,omitempty"`
 	BatchSize         int                        `json:"batch_size,omitempty"`
+	hasAuthorityPin   bool
 	sanitizer         *diagnostic.Sanitizer
 	state             queue.State
 	policyPins        []briefPolicyPin
@@ -281,7 +282,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 		e.HeadSHA = head
 		known[n] = e
 	}
-	q := Queue{OutsideWarnings: ProjectOutsideWarnings(j.OutsideWarnings), OutsidePushes: outsidePushes, State: s.LifecycleState(), Installation: j.Key.Installation, Repository: j.Key.Repository, Base: j.Key.BaseBranch, Lane: j.Key.Lane,
+	q := Queue{hasAuthorityPin: j.HasAuthorityPin || s.AuthorityPin() != nil, OutsideWarnings: ProjectOutsideWarnings(j.OutsideWarnings), OutsidePushes: outsidePushes, State: s.LifecycleState(), Installation: j.Key.Installation, Repository: j.Key.Repository, Base: j.Key.BaseBranch, Lane: j.Key.Lane,
 		Watermark: watermark, BaseSHA: s.BaseSHA, PauseReason: sanitizer.Sanitize(s.PauseReason(queue.Config{})), PauseDetail: sanitizer.Sanitize(s.PauseDetail(queue.Config{})), Blocks: make([]Block, 0), Entries: make([]Entry, 0, len(s.Entries))}
 	for _, block := range s.Blocks(queue.Config{}) {
 		q.Blocks = append(q.Blocks, Block{Source: string(block.Source), Revision: block.Revision, Reason: sanitizer.Sanitize(block.Reason), Detail: sanitizer.Sanitize(block.Detail)})

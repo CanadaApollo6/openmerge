@@ -587,25 +587,48 @@ request deadline, at most 256 queues and a 256 KiB response cap. Missing DB acce
 a busy registry or a limit exceeded returns 503. Health never reads forge data
 or replays queue histories. It reports lifecycle, readiness/reasons, whether the
 queue is watched, process start, last successful reconciliation time/age, the
-worker loop's actual effective next deadline, consecutive failures, overdue and
-degraded. No completed reconciliation since startup is shown as null/unknown.
-Three consecutive failed turns or excessive time without success are degraded.
+worker loop's effective next-start deadline, `in_cycle`, `cycle_started_at`,
+consecutive failures, overdue and degraded. Last success is null until a completed
+reconciliation. Consecutive failures are informational. Degraded means only that
+time since last success (or process queue start if never successful) exceeds
+`MaxSuccessAge`; three failures with a recent success remain healthy.
 Dormant/retired queues without pending attempts and completed recovery-only
 queues are excluded from alerting; unsettled starts remain watched.
 
-Any watched violated, overdue or degraded queue returns 503. Unverified authority
+The complete health 503 enumeration is:
+
+- The health provider is unavailable, its read-only DB probe fails, or the 2s
+  request deadline/cancellation prevents determining health.
+- The worker registry is busy (TryRLock fails), more than 256 queues would be
+  inspected, serialization fails, or the complete response exceeds 256 KiB.
+- A watched queue is authority-violated, overdue, or degraded.
+
+Readiness alone, warning-ledger availability, and failure counts do not add 503
+conditions. Method/query/body errors remain 405/400 and unauthorized reads 401. Unverified authority
 and outstanding outside-push warnings alone return 200. Health is for alerting;
 **never configure it as a restart probe**. The process settings
 `--health-overdue-grace` / `OPENMERGE_HEALTH_OVERDUE_GRACE` (default 30s, range
 1–60s) and `--health-max-success-age` / `OPENMERGE_HEALTH_MAX_SUCCESS_AGE` (default
-15m, range 1–60m) are independent of queue policy.
+15m, range 1–60m), plus `--health-max-cycle-duration` /
+`OPENMERGE_HEALTH_MAX_CYCLE_DURATION` (default 3h, range 2m–6h), are independent
+of queue policy. While waiting, overdue means `now > next_deadline + grace`;
+every immediate wake, including journal changes, sets that deadline to now.
+Slot acquisition clears the start deadline and publishes the cycle start.
+In-cycle overdue means `now > cycle_started_at + max_cycle_duration`; grace no
+longer applies. The 3h runtime default allows a hot turn's 64 chained actions at
+the default 2m per-action timeout plus reconciliation/reporting work. Cycle end
+publishes the next effective start deadline. Slot starvation remains detectable,
+and a first cycle with zero delay does not become overdue after the grace period.
 
 Authority queues add `authority` to queue JSON, omitted for legacy GitHub queues.
 It contains `state` (`unverified`, `verified`, `violated`), `inventory`, per-element
 `elements` visibility, `last_observed_at`, `last_verified_at`, and independent
 `last_observed_age_seconds` / `last_verified_age_seconds`. Missing times/ages
-are null; CLI text says “never (age unknown)” and “authority unverified”. Reading
-status never establishes verification. Health refreshes ages on its snapshots;
+are null; CLI text says “never (age unknown)” and “authority unverified”.
+Future evidence timestamps render a null age, `clock_skew: true`, and the
+corresponding `last_observed_clock_skew` / `last_verified_clock_skew` marker;
+CLI age text says `clock_skew`. Health also marks future process success times
+with `last_success_clock_skew`. Reading status never establishes verification. Health refreshes ages on its snapshots;
 it caps visibility details at 64 elements per queue and exposes `elements_omitted`
 when truncated. Ordinary status retains every per-element visibility.
 
@@ -614,14 +637,24 @@ including sticky violations through hidden reads. Visibility comes from the
 retained applied evidence. Proposed verification is never presented as applied
 verification. `outside_warnings` consumes PR 5's outstanding ledger, with an
 exact `outstanding` count, at most 20 `event_ids` in originating base-move order,
-and `truncated` when IDs are omitted. Empty ledgers omit the field. Status reads
-share the journal's read-only snapshot and use 256-row ledger pages, with no
-worker locks or `EventsAfter` dedupe assumptions. Health reads an atomic summary,
-restored at worker registration and refreshed by the independent outside-push
-audit loop; acknowledgement appears there on its next pass. Ledger read failures
-retain the last successful health warning snapshot. The warning scan is O(N) in
-journal length, bounded in memory and by the read deadline; health requests never
-perform that scan. Acknowledgement removes the outstanding warning while keeping
+and `truncated` when IDs are omitted. Empty successful ledgers omit the field.
+Ledger errors affect only that queue's warning section: `error: "ledger_unavailable"`
+retains the last complete counts, which may be stale; they never fail a multi-queue
+status response or worker registration. Registration logs the error and continues.
+
+The per-queue warning cache advances only after its last event watermark. HTTP/CLI
+status reuse the journal's already decoded snapshot, with zero additional warning
+queries and no second history scan/decode. Queues that have never had an authority
+pin skip the ledger entirely. Worker-owned CI check rendering omits warning I/O;
+health reads immutable atomic summaries. The independent outside-push loop pages
+only the new suffix (256 rows/page), probing indexed origins for new audits and
+sources for new acknowledgements. Registration seeds authority queues once and
+skips legacy queues. The index retains policy boundaries and outstanding event/
+origin IDs; public samples remain capped at 20. Acknowledgement appears in health
+on the next audit pass. Failed reads preserve the last complete warning snapshot
+with the explicit error. Health requests never scan journals. Authority-era queues
+keep using nonblocking readiness/policy snapshots after rollback, even with zero
+outstanding warnings. Acknowledgement removes the warning while keeping
 the deployed recent `outside_pushes` history unchanged. Pushes originating in
 GitHub mode gain no authority warning; warnings from before a rollback remain
 until acknowledged.

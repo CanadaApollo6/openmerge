@@ -113,7 +113,7 @@ func TestOutsideWarningsLedgerStatusHealthAndAcknowledgement(t *testing.T) {
 	previous := w.outsideWarnings.Load()
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if s.refreshOutsideWarnings(ctx, w) == nil || w.outsideWarnings.Load() != previous {
+	if s.refreshOutsideWarnings(ctx, w) == nil || w.outsideWarnings.Load().Outstanding != previous.Outstanding || w.outsideWarnings.Load().Error == "" {
 		t.Fatal("failed read replaced warning snapshot")
 	}
 }
@@ -198,5 +198,28 @@ func TestOutsideWarningsAuditLoopPublishesWhileWorkerBusy(t *testing.T) {
 	must(t, json.Unmarshal(reportingResponse(t, s, "/v1/health").Body.Bytes(), &health))
 	if !health.Healthy || health.Queues[0].OutsideWarnings != nil {
 		t.Fatal("health lost refreshed ledger")
+	}
+}
+
+func TestOutsideWarningErrorPreservesRegistration(t *testing.T) {
+	s, w, _, _ := fixture(t, repositoryConfig)
+	reportingPin(t, s, w, authority.OpenMerge)
+	_, err := s.store.Append(t.Context(), w.id, []queue.Event{queue.OutsidePushRecorded{PreviousSHA: "base", NewSHA: "orphan", At: time.Now(), VerificationBeforeLanding: "none"}}, "")
+	must(t, err)
+	restarted, err := New(t.Context(), s.store, []Target{w.Target}, s.options)
+	must(t, err)
+	if len(restarted.queues) != 1 || restarted.queues[0].outsideWarnings.Load().Error != "ledger_unavailable" {
+		t.Fatal("registration lost queue or ledger error")
+	}
+	registered, err := newServer(s.store, s.options)
+	must(t, err)
+	restored, err := registered.registerID(t.Context(), w.Target, w.id)
+	must(t, err)
+	if restored.outsideWarnings.Load().Error != "ledger_unavailable" {
+		t.Fatal("managed registration hid ledger failure")
+	}
+	q := reportingQueue(t, restarted)
+	if q.OutsideWarnings == nil || q.OutsideWarnings.Error != "ledger_unavailable" {
+		t.Fatal("status did not isolate ledger failure")
 	}
 }

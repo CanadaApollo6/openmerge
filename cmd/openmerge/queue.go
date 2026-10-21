@@ -238,6 +238,11 @@ func printStatus(out io.Writer, response status.Response) error {
 			}
 		}
 		if q.OutsideWarnings != nil {
+			if q.OutsideWarnings.Error != "" {
+				if _, err := fmt.Fprintf(out, "%s %s: outside-push warnings: %s\n", q.Repository, q.Base, q.OutsideWarnings.Error); err != nil {
+					return err
+				}
+			}
 			if _, err := fmt.Fprintf(out, "%s %s: outstanding outside-push warnings: %d; event IDs %v; truncated: %t\n", q.Repository, q.Base, q.OutsideWarnings.Outstanding, q.OutsideWarnings.EventIDs, q.OutsideWarnings.Truncated); err != nil {
 				return err
 			}

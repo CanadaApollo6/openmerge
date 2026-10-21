@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"sync"
 	"time"
 
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
@@ -25,6 +26,7 @@ type QueueKey struct {
 
 // Store is safe for concurrent workers. Close it when all workers have stopped.
 type Store struct {
+	warningCaches sync.Map // QueueID -> *outsideWarningCache; never a worker lock
 	pool          *pgxpool.Pool
 	testLockScope string
 	// Tests synchronize contenders immediately before the blocking lock call.

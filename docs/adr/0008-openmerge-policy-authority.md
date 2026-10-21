@@ -1420,3 +1420,36 @@ are implementation choices, not permission to weaken the accepted Decision.
 - **Drop GitHub protection entirely.** Anyone with write access could push around OpenMerge, so its policies would be suggestions.
 - **Fail closed on unverified protection.** It would block nearly every installation, since the App usually cannot see bypass lists, and it would repeat the wedge that #35 fixed. Reporting unverified state honestly, and blocking only on what is visibly wrong, keeps the queue running without overclaiming.
 - **Have OpenMerge compile its policy into GitHub rulesets.** GitHub's rules cannot express approval by change class, accountable humans or post-merge verification, and they are evaluated on pull requests that the App bypasses anyway.
+
+
+## PR 6 implementation refinement (2026-10-20, round 2)
+
+This records implementation details without changing the accepted Decision.
+Health 503 has three exhaustive groups: a missing health provider, failed DB
+probe or expired/cancelled 2s read; a busy worker registry, more than 256 queues,
+serialization failure or response over 256 KiB; or a watched violated, overdue or
+degraded queue. Warning presence/availability, readiness alone and consecutive
+failure counts do not add failure conditions. Existing auth and validation errors
+remain 401, 400 and 405. See [the API contract](../api.md#authority-and-alerting-probes-adr-0008-pr-6-hold).
+
+The published deadline is the latest allowed next cycle **start**, including an
+immediate journal wake. Waiting for a slot is overdue after the deadline plus
+30s grace (configurable 1–60s). After slot acquisition, `in_cycle` and
+`cycle_started_at` replace that deadline; overdue then requires exceeding
+`--health-max-cycle-duration` / `OPENMERGE_HEALTH_MAX_CYCLE_DURATION`, default 3h,
+range 2m–6h. This allows up to 64 actions at the default 2m action timeout plus
+other turn work. Cycle completion publishes the next start deadline. Degraded
+uses only elapsed time since successful reconciliation, or queue process start
+until the first success: default 15m, configurable 1–60m. Consecutive failures
+remain informational. Recovery exit explicitly removes the watch obligation
+independently of best-effort operational log replay.
+
+Warning summaries are cached per queue by watermark and updated from new events.
+Already loaded status journals supply the suffix and association records without
+additional SQL or decoding. Worker-owned reporting never scans warnings; the
+independent audit loop refreshes health summaries using bounded suffix pages.
+Never-pinned queues skip warning work, including at registration. A ledger error
+preserves the queue and last complete warning counts, with an explicit error in
+that queue's warning section. The index retains policy boundaries and outstanding
+IDs; API samples remain bounded at 20. The snapshot gate survives rollback and
+acknowledgement. Future evidence ages are null with explicit clock-skew markers.

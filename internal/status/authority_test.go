@@ -128,3 +128,25 @@ func TestAuthorityRenderingAndRestart(t *testing.T) {
 		t.Fatal("proposed verification became applied")
 	}
 }
+
+func TestAuthorityFutureEvidenceHasExplicitClockSkew(t *testing.T) {
+	now := time.Now()
+	future := now.Add(time.Minute)
+	past := now.Add(-time.Minute)
+	a := &Authority{LastObservedAt: &future, LastVerifiedAt: &past}
+	a.RefreshAges(now)
+	if !a.ClockSkew || !a.LastObservedClockSkew || a.LastVerifiedClockSkew || a.LastObservedAge != nil || a.LastVerifiedAge == nil || *a.LastVerifiedAge != 60 {
+		t.Fatalf("%+v", a)
+	}
+	raw, err := json.Marshal(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"clock_skew":true`) || !strings.Contains(string(raw), `"last_observed_age_seconds":null`) || !strings.Contains(AuthoritySummary(a), "clock_skew") {
+		t.Fatalf("%s / %s", raw, AuthoritySummary(a))
+	}
+	a.RefreshAges(future.Add(time.Second))
+	if a.ClockSkew || a.LastObservedClockSkew || a.LastObservedAge == nil {
+		t.Fatal("skew marker failed to clear")
+	}
+}

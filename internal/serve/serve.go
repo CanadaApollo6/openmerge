@@ -95,6 +95,7 @@ type Server struct {
 }
 
 type worker struct {
+	hasAuthorityPin atomic.Bool
 	health          atomic.Pointer[status.HealthQueue]
 	outsideWarnings atomic.Pointer[store.OutsideWarningSummary]
 	// Approval status uses an immutable policy snapshot while the worker is busy.
@@ -172,9 +173,7 @@ func New(ctx context.Context, db *store.Store, targets []Target, options Options
 			return nil, err
 		}
 		s.publishHealth(w, state, false, nil, time.Now())
-		if err := s.refreshOutsideWarnings(ctx, w); err != nil {
-			return nil, err
-		}
+		s.initializeOutsideWarnings(ctx, w)
 		s.queues = append(s.queues, w)
 	}
 	return s, nil
@@ -209,7 +208,7 @@ func newServer(db *store.Store, options Options) (*Server, error) {
 		options.Health = status.DefaultHealthSettings()
 	}
 	if !options.Health.Valid() {
-		return nil, errors.New("health overdue grace must be 1–60s and maximum success age 1–60m")
+		return nil, errors.New("health overdue grace must be 1–60s and maximum success age 1–60m and maximum cycle duration 2m–6h")
 	}
 	if options.Logger == nil {
 		options.Logger = slog.Default()
@@ -367,12 +366,14 @@ func (s *Server) loop(ctx context.Context, w *worker) {
 			case <-ctx.Done():
 				return
 			}
+			w.publishCycleStarted(time.Now())
 			err = s.cycle(ctx, w)
 			<-s.slots
 		}
 		if err == nil && w.recovery {
 			state, _, loadErr := s.store.Load(ctx, w.id)
-			if loadErr == nil && (state.Active == nil || state.Active.Phase != queue.Landing) {
+			if loadErr == nil && !hasLandingObligations(state) {
+				w.publishRecoveryFinished()
 				return
 			}
 		}
@@ -450,6 +451,7 @@ func (s *Server) waitForCycle(ctx context.Context, w *worker, delay time.Duratio
 		if latest == watermark {
 			continue
 		}
+		w.publishDeadline(time.Now())
 		return nil
 	}
 }

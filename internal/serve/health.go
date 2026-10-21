@@ -52,6 +52,8 @@ func (w *worker) publishDeadline(at time.Time) {
 		}
 		next := *old
 		next.NextDeadline = &at
+		next.InCycle = false
+		next.CycleStartedAt = nil
 		if w.health.CompareAndSwap(old, &next) {
 			return
 		}
@@ -61,20 +63,20 @@ func (w *worker) publishDeadline(at time.Time) {
 // Called under worker ownership. Successful report-only turns do not advance
 // LastSuccess. No journal timestamp is used as reconciliation telemetry.
 func (s *Server) publishHealth(w *worker, state queue.State, success bool, err error, now time.Time) {
+	w.hasAuthorityPin.Store(state.AuthorityPin() != nil)
 	q := status.HealthQueue{Installation: w.Key.Installation, Repository: w.Key.Repository, Base: w.Key.BaseBranch, Lane: w.Key.Lane, Lifecycle: state.LifecycleState(), StartedAt: now, Readiness: status.Readiness{Ready: !w.managed || w.ready}, Watched: true}
 	if old := w.health.Load(); old != nil {
 		q.StartedAt = old.StartedAt
 		q.LastSuccess = old.LastSuccess
 		q.Failures = old.Failures
 		q.NextDeadline = old.NextDeadline
+		q.InCycle = old.InCycle
+		q.CycleStartedAt = old.CycleStartedAt
 	}
 	if !q.Readiness.Ready {
 		q.Readiness.Reason = w.readinessReason()
 	}
-	pending := false
-	for _, b := range state.Batches() {
-		pending = pending || b.Phase == queue.Landing || b.LandingAttempt.ID != ""
-	}
+	pending := hasLandingObligations(state)
 	if !pending && (w.settlementOnly || q.Lifecycle == "retired" || q.Lifecycle == "dormant") {
 		q.Watched = false
 	}
@@ -140,4 +142,49 @@ func (s *Server) QueuePolicySnapshot(key store.QueueKey) (queue.Config, bool) {
 		return cfg, true
 	}
 	return queue.Config{}, false
+}
+
+// Slot acquisition ends the next-start obligation, including the first turn.
+func (w *worker) publishCycleStarted(at time.Time) {
+	for {
+		old := w.health.Load()
+		if old == nil {
+			return
+		}
+		next := *old
+		next.NextDeadline = nil
+		next.InCycle = true
+		next.CycleStartedAt = &at
+		if w.health.CompareAndSwap(old, &next) {
+			return
+		}
+	}
+}
+
+// Recovery's terminal health state is explicit and independent of best-effort
+// log replay. A failed log read must not leave an exited worker watched forever.
+func (w *worker) publishRecoveryFinished() {
+	for {
+		old := w.health.Load()
+		if old == nil {
+			return
+		}
+		next := *old
+		next.Watched = false
+		next.InCycle = false
+		next.CycleStartedAt = nil
+		next.NextDeadline = nil
+		if w.health.CompareAndSwap(old, &next) {
+			return
+		}
+	}
+}
+
+func hasLandingObligations(state queue.State) bool {
+	for _, b := range state.Batches() {
+		if b.Phase == queue.Landing || b.LandingAttempt.ID != "" {
+			return true
+		}
+	}
+	return false
 }

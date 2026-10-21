@@ -117,6 +117,7 @@ func TestHealthFailureAndBounds(t *testing.T) {
 func TestEvaluateHealth(t *testing.T) {
 	now := time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC)
 	past := now.Add(-2 * time.Minute)
+	recent := now.Add(-15 * time.Second)
 	due := now.Add(-time.Minute)
 	settings := DefaultHealthSettings()
 	for _, tc := range []struct {
@@ -128,7 +129,8 @@ func TestEvaluateHealth(t *testing.T) {
 		{"overdue", HealthQueue{Watched: true, StartedAt: now, NextDeadline: &due}, true, false, true},
 		{"stale success", HealthQueue{Watched: true, LastSuccess: &past}, false, false, false},
 		{"never succeeded", HealthQueue{Watched: true, StartedAt: now.Add(-time.Hour)}, false, true, true},
-		{"repeated failures", HealthQueue{Watched: true, StartedAt: now, Failures: 3}, false, true, true},
+		{"recent success after three failures", HealthQueue{Watched: true, LastSuccess: &recent, Failures: 3}, false, false, false},
+		{"repeated failures", HealthQueue{Watched: true, StartedAt: now, Failures: 3}, false, false, false},
 		{"violation", HealthQueue{Watched: true, StartedAt: now, Authority: &Authority{State: "violated"}}, false, false, true},
 		{"unverified", HealthQueue{Watched: true, StartedAt: now, Authority: &Authority{State: "unverified"}}, false, false, false},
 		{"retired", HealthQueue{Watched: false, Failures: 8, NextDeadline: &due, Authority: &Authority{State: "violated"}}, false, false, false},
@@ -144,7 +146,7 @@ func TestEvaluateHealth(t *testing.T) {
 	if q.LastSuccessAge == nil || *q.LastSuccessAge != 120 {
 		t.Fatal("wrong success age")
 	}
-	for _, bad := range []HealthSettings{{0, time.Minute}, {time.Second, 0}, {61 * time.Second, time.Minute}, {time.Second, 61 * time.Minute}} {
+	for _, bad := range []HealthSettings{{0, time.Minute, 3 * time.Hour}, {time.Second, 0, 3 * time.Hour}, {61 * time.Second, time.Minute, 3 * time.Hour}, {time.Second, 61 * time.Minute, 3 * time.Hour}, {time.Second, time.Minute, time.Minute}, {time.Second, time.Minute, 7 * time.Hour}} {
 		if bad.Valid() {
 			t.Fatal("unbounded settings accepted")
 		}
