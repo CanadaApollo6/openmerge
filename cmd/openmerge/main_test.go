@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"runtime/debug"
+	"strings"
 	"testing"
 )
 
@@ -23,7 +25,7 @@ func TestRun(t *testing.T) {
 		{
 			name:       "version",
 			args:       []string{"version"},
-			wantStdout: `openmerge \S+\ncommit: (unknown|[[:xdigit:]]{40})\ngo: ` + regexp.QuoteMeta(runtime.Version()) + `\n`,
+			wantStdout: `openmerge \S+\ncommit: (unknown|[[:xdigit:]]{40})\nattestable: (true|false)\ngo: ` + regexp.QuoteMeta(runtime.Version()) + `\n`,
 		},
 		{
 			name:       "help",
@@ -183,5 +185,25 @@ func TestValidationOutputFailure(t *testing.T) {
 	var stderr bytes.Buffer
 	if got := run([]string{"config", "validate"}, brokenWriter{}, &stderr); got != 1 {
 		t.Fatalf("exit = %d, want 1", got)
+	}
+}
+
+func TestVersionRevision(t *testing.T) {
+	for _, tt := range []struct {
+		name           string
+		settings       []debug.BuildSetting
+		fallback, want string
+	}{
+		{"vcs", []debug.BuildSetting{{Key: "vcs.revision", Value: "vcs-commit"}}, "release-commit", "commit: vcs-commit\nattestable: true\n"},
+		{"ldflags", nil, "release-commit", "commit: release-commit\nattestable: true\n"},
+		{"neither", nil, "", "commit: unknown\nattestable: false\n"},
+		{"dirty", []debug.BuildSetting{{Key: "vcs.revision", Value: "vcs-commit"}, {Key: "vcs.modified", Value: "true"}}, "release-commit", "commit: vcs-commit\nattestable: false\n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := versionOutput(&debug.BuildInfo{Settings: tt.settings}, tt.fallback)
+			if !strings.Contains(got, tt.want) {
+				t.Fatalf("version output %q does not contain %q", got, tt.want)
+			}
+		})
 	}
 }

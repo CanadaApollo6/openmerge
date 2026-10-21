@@ -350,3 +350,44 @@ pass without changing production behavior. All final log, binary and replay
 stream hashes are recorded in `adr-0008-4-artifacts.json` under
 `rebase_onto_pr_111`; the original summary remains historical. Updated manifest
 SHA-256: `6d0a6464e9a74fcac96694374623f577bbaf3726a4ada31569928197e8aedcb7`.
+
+## Operator implementation refinement (#114)
+
+`openmerge admin acknowledge --queue <queue-id>` uses the numeric durable
+`queues.id`, including for retired queues. Read the queue identity with
+`openmerge queue status --json` or `GET /v1/queues`
+on the operator API, then resolve its numeric ID using the operator SQL lookup in
+[the operating guide](../operating.md#acknowledging-outside-pushes). Current status
+responses expose identity fields, not `queues.id`.
+This refines the implementation notation; the accepted ADR Decision is unchanged.
+
+Verification emission receipts expire after **24 hours** by default. Both
+`drained_at` and `restore_tested_at` must be within the bound; future timestamps
+are rejected. Set a positive duration with `--emission-receipt-max-age 24h`.
+A stale receipt requires a fresh drain inventory, backup and restore test.
+
+Until [Docker/release revision wiring #118](https://github.com/CanadaApollo6/openmerge/issues/118)
+lands after ADR 0009 period B, operators must use a binary built with `make build`
+from a clean git checkout for `--verify` and `admin acknowledge`. The shipped
+Docker build excludes `.git` and does not embed the fallback; it cannot attest.
+This is an operator prerequisite for acknowledgement; its two-file gate checks
+receipt files rather than binary revision metadata.
+
+`binary_revision` must exactly match the running binary's effective embedded
+revision. `openmerge version` prints `commit` and `attestable`: only use a commit
+with `attestable: true`. It selects Go build information's `vcs.revision` first,
+then `authority.BuildRevision` when VCS revision metadata is absent. Custom
+release tooling may embed the reviewed commit with
+`-ldflags '-X github.com/CanadaApollo6/openmerge/internal/authority.BuildRevision=COMMIT'`;
+`openmerge version` also prints that fallback commit. Dirty builds show their
+revision with `attestable: false`; binaries with neither source print
+`commit: unknown` and `attestable: false`. Verification rejects either case with
+`cannot attest BinaryRevision offline` and directs operators to rebuild with
+`make build` from a clean git checkout. Offline matching checks consistency with local build
+metadata, not binary provenance, signatures, remote worker versions, worker drain,
+or restore success; these remain operator attestations. The gate uses one combined
+receipt, so the two-file distinctness rule for `admin acknowledge` does not apply.
+
+If an applied verification basis changes during its seeing read, the command
+retains the appended evidence, exits nonzero, and asks the operator to retry
+`--verify`. That stale read does not advance the active verification time.

@@ -172,3 +172,33 @@ It adds no comparator allowances, CI/Makefile changes, or test-flag changes.
 The otherwise unspecified CLI queue selector is the immutable numeric queues.id,
 so retired and case-variant histories are unambiguous. No scope deviations;
 real GitHub break-glass acceptance remains the dependent PR 11 exercise.
+
+## Operator implementation refinement (#114)
+
+`openmerge admin acknowledge --queue <queue-id>` uses the numeric durable
+`queues.id`, including for retired queues. Read the queue identity with
+`openmerge queue status --json` or `GET /v1/queues`
+on the operator API, then resolve its numeric ID using the operator SQL lookup in
+[the operating guide](../operating.md#acknowledging-outside-pushes). Current status
+responses expose identity fields, not `queues.id`.
+This refines the implementation notation; the accepted ADR Decision is unchanged.
+
+Until [Docker/release revision wiring #118](https://github.com/CanadaApollo6/openmerge/issues/118)
+lands after ADR 0009 period B, `--verify` and `admin acknowledge` require operators
+to use a binary built with `make build` from a clean git checkout. Shipped Docker
+images exclude `.git` and have no embedded revision fallback, so they cannot
+attest. Run `openmerge version` and retain the exact `commit` with
+`attestable: true` in the evidence. The command prefers `vcs.revision`, otherwise
+prints the `authority.BuildRevision` ldflags fallback; missing or dirty metadata
+is not attestable. Verification enforces revision matching; acknowledgement's
+receipt-file checks leave this build prerequisite to the operator.
+
+The acknowledgement gate now requires separate JSON documents with `kind: drain`
+and `kind: backup`, distinct resolved paths and distinct SHA-256 content hashes;
+see [the operating guide](../operating.md#acknowledging-outside-pushes).
+The ledger validates every `outside_push_recorded` origin, including rows without
+a dedupe key. An orphan is an explicit ledger anomaly error, even if an
+acknowledgement exists; callers must discard partial results on error. The visitor
+signature and warning ordering stay unchanged. `EventRecord.DedupeKey` is optional:
+`nil` means not loaded by `EventsAfter`, while a pointer to an empty string means
+loaded with no association. The operational logging SQL is unchanged.

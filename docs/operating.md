@@ -1668,12 +1668,36 @@ all-host drain checklist and pre-use backup as operational requirements.
 `openmerge admin acknowledge` records that someone with operator database access
 saw one particular outside-queue push. The target is the immutable
 `outside_push_recorded` **event ID**, its exact `new_sha`, and the exact numeric
-`queues.id` supplied as `--queue`. Use the persisted ID even for a retired queue;
-this command never discovers, registers, or reactivates queues. It uses
+`queues.id` supplied as `--queue`. Read the queue identity with
+`openmerge queue status --json` or `GET /v1/queues`
+on the operator API. These responses currently expose `installation`, `repo`,
+`base`, and `lane`, not the database ID. Resolve that exact tuple with operator
+DB credentials (isolated sandbox only during period B):
+
+```sql
+SELECT id, installation, repository, base, lane
+FROM queues
+WHERE installation = '173082682' AND repository = 'owner/repo'
+  AND base = 'main' AND lane = '';
+```
+
+Use the numeric result as `--queue 17`, for example. Retired queues may be absent
+from current status; look up their retained exact identity directly in `queues`.
+Use the persisted ID even for a retired queue; this command never discovers, registers, or reactivates queues. It uses
 `OPENMERGE_DATABASE_URL` (or `--database-url`) with operator credentials and never
 uses a forge token, PR authorization, or the status API. Connections do not run
 migrations. `--timeout` bounds connection, lock wait and transaction time together
 (default 2 minutes; allowed range 1ms through 2 minutes).
+
+Until [Docker/release revision wiring #118](https://github.com/CanadaApollo6/openmerge/issues/118)
+lands after ADR 0009 period B, `--verify` and `admin acknowledge` require operators
+to use a binary built with `make build` from a clean git checkout. Shipped Docker
+images exclude `.git` and have no embedded revision fallback, so they cannot
+attest. Run `openmerge version` and retain the exact `commit` with
+`attestable: true` in the evidence. The command prefers `vcs.revision`, otherwise
+prints the `authority.BuildRevision` ldflags fallback; missing or dirty metadata
+is not attestable. Verification enforces revision matching; acknowledgement's
+receipt-file checks leave this build prerequisite to the operator.
 
 Before the **first acknowledgement event**, finish the trial period-B drain and
 stop every incompatible worker on every host. Save the drained/stopped worker
@@ -1681,8 +1705,14 @@ inventory. Capture a pre-emission database backup, restore it in isolation, and
 save a receipt with backup identity/hash, watermark, binary/config revisions,
 restore-test result, and timestamp. Retain those records outside the database.
 The command requires `--drain-receipt` and `--backup-receipt`: readable, nonempty
-regular files of at most 64KiB. These are operator attestations; file checks
-cannot discover other hosts or prove a backup restorable. Use the same retained
+regular JSON files of at most 64KiB, with distinct resolved paths, underlying files (inodes), and SHA-256
+content hashes. Each document must have its own top-level `kind`: `"drain"` for
+`--drain-receipt`, `"backup"` for `--backup-receipt`. Include the corresponding
+inventory or backup/restore evidence as additional JSON fields, for example
+`{"kind":"drain","workers":["sandbox-host/worker"],"drained_at":"UTC timestamp"}`
+and `{"kind":"backup","backup_sha256":"SHA256","restore_test":"passed"}`.
+Copies, hard links, aliases and swapped/untyped receipts are rejected. These are
+operator attestations; file checks cannot discover other hosts or prove a backup restorable. Use the same retained
 receipts on retries. Merely deploying this dormant command writes nothing.
 
 For an isolated/sandbox database whose gate is complete:
@@ -1690,8 +1720,8 @@ For an isolated/sandbox database whose gate is complete:
 ```sh
 openmerge admin acknowledge \
   --queue 17 --event 442 --sha <original-new-sha> --operator 'On-call name' \
-  --drain-receipt /operator-evidence/workers-drained.txt \
-  --backup-receipt /operator-evidence/pre-emission-restore.txt
+  --drain-receipt /operator-evidence/workers-drained.json \
+  --backup-receipt /operator-evidence/pre-emission-restore.json
 ```
 
 The JSON receipt contains the acknowledgement's journal ID, `source_event_id`,

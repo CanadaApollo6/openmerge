@@ -163,6 +163,15 @@ A queue is **overdue** when it passes that deadline plus a bounded grace, and **
 
 ### Implementation
 
+**Implementation refinement (#114):** `admin acknowledge --queue` takes the
+numeric durable `queues.id`, not a queue key. The accepted Decision's `<key>`
+notation above is historical; operator invocations use `--queue <queue-id>`.
+Read the queue identity with `openmerge queue status --json` or `GET /v1/queues`
+on the operator API, then resolve its numeric ID with the operator SQL lookup in
+[the operating guide](../operating.md#acknowledging-outside-pushes). These responses
+currently expose identity fields rather than `queues.id`; retain the persisted
+ID for retired queues.
+
 Each part lands as its prerequisites exist:
 
 1. `setup import-protection`, as a read-only report usable in `github` mode. Implemented as an admin-token, GET-only audit with stable JSON item IDs, repeatable `--base`/`--accept`, local `--out` drafts, inherited/classic protection reads, CODEOWNERS comparisons and workflow-trigger inspection. Approval fragments require the release implementing ADR 0007 Stage A; owner requirements remain annotated pending its full schema. Installation prerequisites cannot be accepted; bypass acceptance remains "to verify at switch". See the [operating guide](../operating.md#auditing-protection-before-a-policy-authority-switch).
@@ -749,7 +758,7 @@ All PRs follow these storage and acceptance rules:
 ##### PR 5: Acknowledge outside pushes without changing their meaning
 
 - **Scope:** add proposed `cmd/openmerge/admin.go` for
-  `openmerge admin acknowledge --queue <key> --event <id> --sha <sha>
+  `openmerge admin acknowledge --queue <queue-id> --event <id> --sha <sha>
   --operator <name>`. Use operator DB access, not PR authorization or a status
   API mutation. Check the event exists in that exact queue, is
   `outside_push_recorded`, and its `new_sha` equals the supplied SHA.
@@ -1208,7 +1217,7 @@ Retain a fresh permission/install snapshot, not just the Stage A operator report
     move. Status/API/health show a warning, not a new admission block, and the
     event says no verification before landing. Queue and land another change
     before acknowledging to prove the warning does not stop merges. Run
-    `openmerge admin acknowledge --queue <sandbox-key> --event <outside-event>
+    `openmerge admin acknowledge --queue <sandbox-queue-id> --event <outside-event>
     --sha <new-sha> --operator <name>` twice. Require the same receipt ID, the
     warning cleared, original evidence unchanged, and no green-ref move caused
     by acknowledgement. Do not claim the supplied name proves who pushed.

@@ -532,3 +532,13 @@ fixture; the full race suite above includes the corrected test. No production
 change was needed for that development failure. Round-1 replay evidence and its
 artifact manifest remain historical records; no new replay or live deployment
 was required for these setup-only review fixes.
+
+## Operator implementation refinement (#114)
+
+`openmerge admin acknowledge --queue <queue-id>` uses the numeric durable
+`queues.id`, including for retired queues. Read the queue identity with
+`openmerge queue status --json` or `GET /v1/queues`
+on the operator API, then resolve its numeric ID using the operator SQL lookup in
+[the operating guide](../operating.md#acknowledging-outside-pushes). Current status
+responses expose identity fields, not `queues.id`.
+This refines the implementation notation; the accepted ADR Decision is unchanged.

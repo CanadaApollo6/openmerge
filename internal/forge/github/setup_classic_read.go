@@ -43,7 +43,7 @@ func (c *setupAPI) readClassicProtection(ctx context.Context, repo, ref string) 
 
 // Validate the wire values before go-github can replace absent/null fields with
 // permissive zero values. Only explicit null disables nullable protection kinds.
-// Signatures alone may be omitted: setupClassicProtection reads their endpoint.
+// Signatures alone may be omitted: readClassicProtection reads their endpoint.
 func completeClassicProtection(raw json.RawMessage) error {
 	fields, err := classicReadObject(raw)
 	if err != nil {

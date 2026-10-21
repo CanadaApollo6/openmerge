@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
@@ -166,5 +167,93 @@ func TestVerifyTargetsProposedViolationAndFailedRead(t *testing.T) {
 	}
 	if before != after {
 		t.Fatal("failed read appended verification")
+	}
+}
+
+func TestVerifyTargetsStaleBasisRetainsEvidenceAndRequiresRetry(t *testing.T) {
+	db := acceptanceDB(t)
+	read := func(name string) queue.Event {
+		t.Helper()
+		raw, err := os.ReadFile("../../internal/queue/testdata/wire/v1/" + name + ".json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		e, err := queue.DecodeEvent(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return e
+	}
+	v := read("event_write_restriction_verified").(queue.WriteRestrictionVerified)
+	pin := read("variants/policy_authority_applied_activation").(queue.PolicyAuthorityApplied)
+	pin.OpenMerge.Activation = nil
+	selectors := []authority.BaseSelector{{DefaultBranch: true}, {Pattern: "release/**"}}
+	coverageDigest, err := authority.CoverageDigest("main", selectors)
+	v.Binding.CoverageDigest = coverageDigest
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin.OpenMerge.Binding = v.Binding
+	pin.CoverageDigest = v.Binding.CoverageDigest
+	key := store.QueueKey{Installation: "173082682", Repository: v.Binding.Repository, BaseBranch: "main"}
+	q, err := db.EnsureQueue(t.Context(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.Append(t.Context(), q, []queue.Event{queue.ConfigApplied{Commit: pin.GoverningCommit, Digest: pin.EffectiveDigest}, pin}, ""); err != nil {
+		t.Fatal(err)
+	}
+	state, before, err := db.Load(t.Context(), q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldTime := state.WriteRestrictionStatus().LastVerifiedAt
+	plan := verificationPlan{Targets: []verificationTarget{{Key: key, Input: forge.WriteRestrictionInput{Repo: forge.RepoRef{Path: key.Repository}, Binding: v.Binding, AppID: "5383059", BaseSelectors: selectors, ExpectedRefs: []string{"refs/heads/main"}}}}}
+	reader := verifyReaderFunc(func(context.Context, forge.WriteRestrictionInput) (authority.Observation, error) {
+		state, _, err := db.Load(t.Context(), q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = db.Append(t.Context(), q, []queue.Event{queue.WriteRestrictionObserved{Binding: v.Binding, Basis: state.RulesSourceRevision(queue.WriteRestriction), ObservedAt: time.Now().UTC(), Evidence: authority.CloneObservation(v.Evidence)}}, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return authority.CloneObservation(v.Evidence), nil
+	})
+	var out bytes.Buffer
+	err = verifyTargets(t.Context(), db, reader, plan, "operator", &out)
+	if err == nil || !strings.Contains(err.Error(), "retry --verify") {
+		t.Fatalf("stale read claimed success: %v %s", err, &out)
+	}
+	state, after, err := db.Load(t.Context(), q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after <= before || !state.WriteRestrictionStatus().LastVerifiedAt.Equal(oldTime) {
+		t.Fatal("stale read advanced verification")
+	}
+	records, err := db.EventsAfter(t.Context(), q, before)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("lost evidence: %+v", records)
+	}
+	evidence, ok := records[1].Event.(queue.WriteRestrictionVerified)
+	if !ok || evidence.Scope != "applied" || !strings.Contains(out.String(), "write_restriction_verified event") {
+		t.Fatal("missing appended evidence", out.String())
+	}
+	good := verifyReaderFunc(func(context.Context, forge.WriteRestrictionInput) (authority.Observation, error) {
+		return authority.CloneObservation(v.Evidence), nil
+	})
+	if err := verifyTargets(t.Context(), db, good, plan, "operator", &out); err != nil {
+		t.Fatal("fresh retry failed", err)
+	}
+	state, _, err = db.Load(t.Context(), q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.WriteRestrictionStatus().LastVerifiedAt.After(oldTime) {
+		t.Fatal("fresh retry did not advance verification time")
 	}
 }

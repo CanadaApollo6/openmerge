@@ -8,6 +8,7 @@ import (
 	"runtime/debug"
 	"strings"
 
+	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/schema"
 )
 
@@ -40,19 +41,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case len(args) == 0, len(args) == 1 && args[0] == "help":
 		output = usage
 	case len(args) == 1 && args[0] == "version":
-		release, commit, goVersion := version, "unknown", "unknown"
-		if info, ok := debug.ReadBuildInfo(); ok {
-			goVersion = info.GoVersion
-			if release == "dev" && info.Main.Version != "" && info.Main.Version != "(devel)" {
-				release = info.Main.Version
-			}
-			for _, setting := range info.Settings {
-				if setting.Key == "vcs.revision" {
-					commit = setting.Value
-				}
-			}
-		}
-		output = fmt.Sprintf("openmerge %s\ncommit: %s\ngo: %s\n", release, commit, goVersion)
+		info, _ := debug.ReadBuildInfo()
+		output = versionOutput(info, authority.BuildRevision)
 	case len(args) == 2 && args[0] == "config" && args[1] == "schema":
 		output = schema.V1
 	case (len(args) == 2 || len(args) == 3) && args[0] == "config" && args[1] == "validate":
@@ -77,4 +67,19 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func versionOutput(info *debug.BuildInfo, fallback string) string {
+	release, goVersion := version, "unknown"
+	if info != nil {
+		goVersion = info.GoVersion
+		if release == "dev" && info.Main.Version != "" && info.Main.Version != "(devel)" {
+			release = info.Main.Version
+		}
+	}
+	commit, attestable := authority.EmbeddedBinaryRevision(info, fallback)
+	if commit == "" {
+		commit = "unknown"
+	}
+	return fmt.Sprintf("openmerge %s\ncommit: %s\nattestable: %t\ngo: %s\n", release, commit, attestable, goVersion)
 }

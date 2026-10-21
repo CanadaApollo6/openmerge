@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/config"
 	"github.com/CanadaApollo6/openmerge/internal/forge/github"
 )
@@ -90,6 +91,7 @@ func runSetup(args []string, stdout, stderr io.Writer) int {
 		flags.BoolVar(&verification.Verify, "verify", false, "record an admin seeing read; never writes GitHub")
 		flags.StringVar(&verification.DatabaseURL, "database-url", "", "operator database credentials")
 		flags.StringVar(&verification.Plan, "verification-plan", "", "reviewed internal target plan JSON")
+		flags.DurationVar(&verification.ReceiptMaxAge, "emission-receipt-max-age", authority.DefaultEmissionReceiptMaxAge, "maximum age of drain and restore test (positive duration; default 24h)")
 		flags.StringVar(&verification.Receipt, "emission-receipt", "", "drained-worker inventory and restore-tested backup receipt JSON")
 		flags.StringVar(&verification.Operator, "operator", "", "operator name retained in verification evidence")
 		flags.StringVar(&rules.Repo, "repo", "", "repository owner/name")
