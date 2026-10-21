@@ -26,12 +26,19 @@ var shadowFixtureSlots = make(chan struct{}, 16)
 
 // Shared approval fixture enters through the production configuration loader.
 func shadowFixture(t *testing.T, depth int, base, installation string, receipt bool) (*Server, *worker, *fake.Forge) {
+	return shadowFixtureForMethod(t, depth, base, installation, receipt, "")
+}
+
+func shadowFixtureForMethod(t *testing.T, depth int, base, installation string, receipt bool, method queue.MergeMethod) (*Server, *worker, *fake.Forge) {
 	t.Helper()
 	shadowFixtureSlots <- struct{}{}
 	t.Cleanup(func() { <-shadowFixtureSlots })
 	f := fake.New()
 	f.Init(repo, base, "openmerge/fence/"+base)
 	cfg := fmt.Sprintf("version: 1\nqueues:\n  - name: default\n    base: %s\n    speculation: {min_depth: %d, max_depth: %d}\n    merge_when: [check-success = ci]\n", base, depth, depth)
+	if method != "" {
+		cfg += fmt.Sprintf("    merge_method: %s\n", method)
+	}
 	if receipt {
 		cfg += "    approvals: {default: {any_writer: true, count: 1, receipt: true}}\n"
 	} else {

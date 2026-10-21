@@ -455,8 +455,15 @@ func (s *Store) authorizeStart(ctx context.Context, tx pgx.Tx, execution emissio
 	if err != nil {
 		return false, err
 	}
-	if _, landing := event.(queue.LandingStarted); landing && execution.approvalsRequired && !execution.decisionStart {
-		return false, LandingDecisionRequiredError{}
+	pin := state.AuthorityPin()
+	authority := pin != nil && pin.Authority == "openmerge"
+	if _, landing := event.(queue.LandingStarted); landing && !execution.decisionStart {
+		if authority {
+			return false, LandingChecksRequiredError{}
+		}
+		if execution.approvalsRequired {
+			return false, LandingDecisionRequiredError{}
+		}
 	}
 	if stored.Key == stored.Action.Key() && queue.CanStart(execution.cfg, state, stored.Action, event) {
 		return false, nil

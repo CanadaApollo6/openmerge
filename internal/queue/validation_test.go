@@ -76,7 +76,16 @@ func TestWireV1RequiresEveryField(t *testing.T) {
 					} else {
 						_, err = DecodeEvent(payload)
 					}
-					if err == nil {
+					// PR 8 requires these keys even when their evidence is explicitly
+					// unavailable. Removing a key must still fail; null is a value.
+					nullable := filepath.Base(path) == "event_landing_checks_recorded.json" && slices.Contains([]string{
+						"data/checks/item/run_id/null", "data/checks/item/attempt/null",
+						"data/checks/item/workflow_run_id/null", "data/checks/item/head_branch/null",
+					}, mutation.path)
+					if nullable && err != nil {
+						t.Fatalf("rejected explicit unavailable evidence: %v", err)
+					}
+					if !nullable && err == nil {
 						t.Fatalf("accepted incomplete wire value: %s", payload)
 					}
 				})

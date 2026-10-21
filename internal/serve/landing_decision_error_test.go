@@ -2,6 +2,7 @@ package serve
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 )
 
 func TestLandingDecisionErrorsFailWorkerAction(t *testing.T) {
-	for _, failure := range []error{store.LandingDecisionRequiredError{}, executor.ErrLandingApprovals} {
+	for _, failure := range []error{store.LandingDecisionRequiredError{}, store.LandingChecksRequiredError{}, executor.ErrLandingApprovals, queue.LandingChecksTooLargeError{Field: "wire event", Limit: queue.MaxLandingChecksBytes}} {
 		t.Run(failure.Error(), func(t *testing.T) {
 			s, w, f, _ := fixture(t, repositoryConfig)
 			f.AddComment(repo, 1, "writer", "@openmerge queue")
@@ -43,6 +44,25 @@ func TestLandingDecisionErrorsFailWorkerAction(t *testing.T) {
 			err = s.execute(t.Context(), w, land)
 			if !errors.Is(err, failure) {
 				t.Fatal("failure swallowed", err)
+			}
+			if errors.Is(failure, queue.ErrLandingChecksTooLarge) {
+				state, _, loadErr := s.store.Load(t.Context(), w.id)
+				must(t, loadErr)
+				if !state.SourceBlocked(queue.Operator) || !strings.Contains(state.BlockSourceDetail(queue.Operator), "landing-checks-too-large") || state.Active.Phase == queue.Landing {
+					t.Fatalf("overflow did not fail closed: %+v", state)
+				}
+				status := f.Statuses(repo, 1)[state.Active.PRs[0].HeadSHA]
+				if status.State != forge.Blocked || status.Reason != "landing-checks-too-large" {
+					t.Fatalf("overflow not reported: %+v", status)
+				}
+				records, loadErr := s.store.EventsAfter(t.Context(), w.id, 0)
+				must(t, loadErr)
+				for _, record := range records {
+					switch record.Event.(type) {
+					case queue.LandingStarted, queue.LandingChecksRecorded:
+						t.Fatal("overflow started landing")
+					}
+				}
 			}
 			retry, err := s.store.ClaimQueue(t.Context(), w.id, 100, time.Minute, now.Add(24*time.Hour))
 			must(t, err)

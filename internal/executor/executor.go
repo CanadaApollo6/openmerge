@@ -269,6 +269,10 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		return ambiguity
 	case queue.Land:
 		checks, err := x.readChecks(ctx, a.TestedSHA)
+		var checksAt time.Time
+		if x.LandingDecisions != nil && x.LandingDecisions.ReadInputsWithChecks != nil {
+			checksAt = x.now()
+		}
 		if err != nil {
 			return err
 		}
@@ -372,7 +376,7 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		}
 		start := queue.LandingStarted{BatchID: a.BatchID, AttemptID: attemptID, FenceToken: a.FenceToken, At: x.now()}
 		if x.LandingDecisions != nil {
-			if err := x.LandingDecisions.start(ctx, a, start, x.now); err != nil {
+			if err := x.LandingDecisions.start(ctx, a, start, x.now, x.policyChecks(checks, a.BatchID), checksAt); err != nil {
 				return err
 			}
 		} else if err := emit(start); err != nil {
@@ -545,10 +549,7 @@ func (x *Executor) checkResultOutcome(checks []forge.CheckRun, batchID string) (
 func (x *Executor) checkResultOutcomeWith(checks []forge.CheckRun, batchID string, typed bool) (CheckOutcome, error) {
 	// Batch refs are deterministic, including for persisted RefreshChecks actions.
 	// Filter before either policy compares run IDs or checks source ambiguity.
-	checks = x.filteredChecks(checks, batchID)
-	if x.ChecksRetryFailed == 1 {
-		checks = x.newestRetryChecks(checks)
-	}
+	checks = x.policyChecks(checks, batchID)
 	if typed && x.CheckPolicyOutcome != nil {
 		return x.CheckPolicyOutcome(checks)
 	}
@@ -601,6 +602,16 @@ func (x *Executor) checkResultOutcomeWith(checks []forge.CheckRun, batchID strin
 		}
 	}
 	return CheckOutcome{Terminal: terminal, Success: success}, ambiguity
+}
+
+// policyChecks is the exact input shared by policy evaluation and the atomic
+// landing gate. Retry selection and branch provenance must not diverge at start.
+func (x *Executor) policyChecks(checks []forge.CheckRun, batchID string) []forge.CheckRun {
+	checks = x.filteredChecks(checks, batchID)
+	if x.ChecksRetryFailed == 1 {
+		checks = x.newestRetryChecks(checks)
+	}
+	return checks
 }
 
 // filteredChecks applies the queue provenance contract once for both policy

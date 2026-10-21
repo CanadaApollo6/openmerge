@@ -18,6 +18,9 @@ func Apply(s State, e Event) State {
 }
 
 func apply(s State, e Event) State {
+	if _, ok := e.(LandingChecksRecorded); ok {
+		return s
+	}
 	if _, ok := e.(OutsidePushAcknowledged); ok {
 		return s
 	}

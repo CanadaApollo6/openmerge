@@ -375,8 +375,19 @@ func TestDecisionSnapshotSettlesAfterPauseRemovalAndHeadChange(t *testing.T) {
 }
 
 func TestAtomicDecisionExecutorCrashWindows(t *testing.T) {
-	for _, window := range []string{"last-start-stale", "before-push", "after-push", "trailers-mismatch", "lease-expires-during-forge", "fresh-read-completes-later"} {
-		t.Run(window, func(t *testing.T) {
+	type crashCase struct {
+		window       string
+		recordChecks bool
+	}
+	var cases []crashCase
+	for _, recordChecks := range []bool{false, true} {
+		for _, window := range []string{"last-start-stale", "before-push", "after-push", "trailers-mismatch", "lease-expires-during-forge", "fresh-read-completes-later"} {
+			cases = append(cases, crashCase{window, recordChecks})
+		}
+	}
+	for _, cse := range cases {
+		window, recordChecks := cse.window, cse.recordChecks
+		t.Run(fmt.Sprintf("%s/checks-%t", window, recordChecks), func(t *testing.T) {
 			s := newStore(t)
 			f := fake.New()
 			repo := forge.RepoRef{Path: "Owner/Repo"}
@@ -393,7 +404,15 @@ func TestAtomicDecisionExecutorCrashWindows(t *testing.T) {
 			for old, next := range map[string]string{strings.Repeat("a", 40): base, strings.Repeat("b", 40): pr.HeadSHA, strings.Repeat("e", 40): tested, `"fence"`: `"` + fence + `"`} {
 				raw = bytes.ReplaceAll(raw, []byte(old), []byte(next))
 			}
-			q, claim, c, _ := decisionLandInput(t, s, raw)
+			var q QueueID
+			var claim ClaimedAction
+			var c landingCase
+			var checkEvidence queue.LandingChecksRecorded
+			if recordChecks {
+				q, claim, c, _, checkEvidence = authorityCheckLandInput(t, s, raw)
+			} else {
+				q, claim, c, _ = decisionLandInput(t, s, raw)
+			}
 			before := eventCount(t, s, q)
 			pushes := &startGit{Git: f}
 			f.SetCheckRuns(repo, tested, []forge.CheckRun{{Name: "ci", State: forge.Success}})
@@ -424,6 +443,11 @@ func TestAtomicDecisionExecutorCrashWindows(t *testing.T) {
 					return []queue.ApprovalEligibilityObserved{c.Fresh}, nil
 				},
 				Commit: func(ctx context.Context, fresh []queue.ApprovalEligibilityObserved, ds []queue.LandingDecisionRecorded, start queue.LandingStarted) error {
+					var checks []queue.LandingChecksRecorded
+					if recordChecks {
+						checkEvidence.AttemptID = start.AttemptID
+						checks = append(checks, checkEvidence)
+					}
 					if window == "last-start-stale" {
 						n := 0
 						return s.startLanding(ctx, claim, c.Config, c.Policy, fresh, ds, start, func(ctx context.Context, tx pgx.Tx, e emission, event queue.Event) (bool, error) {
@@ -432,9 +456,9 @@ func TestAtomicDecisionExecutorCrashWindows(t *testing.T) {
 								return true, nil
 							}
 							return s.authorizeStart(ctx, tx, e, event)
-						})
+						}, checks...)
 					}
-					return s.StartLanding(ctx, claim, c.Config, c.Policy, fresh, ds, start)
+					return s.StartLanding(ctx, claim, c.Config, c.Policy, fresh, ds, start, checks...)
 				},
 			}
 			x := executor.Executor{Driver: f, Git: pushes, Repo: repo, Base: "release", RequiredChecks: []string{"ci"}, LandingDecisions: gate, Now: func() time.Time { return clock }, NewID: func() (string, error) { return c.Start.AttemptID, nil }}
@@ -499,6 +523,22 @@ func TestAtomicDecisionExecutorCrashWindows(t *testing.T) {
 			}
 			if state.Active != nil && state.Active.Phase == queue.Landing {
 				t.Fatal("fence did not settle crash")
+			}
+			if recordChecks {
+				records, err := s.EventsAfter(t.Context(), q, 0)
+				must(t, err)
+				found := 0
+				for _, r := range records {
+					if e, ok := r.Event.(queue.LandingChecksRecorded); ok {
+						found++
+						if !reflect.DeepEqual(e, checkEvidence) {
+							t.Fatal("crash recovery rewrote check evidence")
+						}
+					}
+				}
+				if found != 1 {
+					t.Fatal("crash recovery lost or duplicated check evidence", found)
+				}
 			}
 		})
 	}

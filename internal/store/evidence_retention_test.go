@@ -29,7 +29,7 @@ var decisionEvidenceRetentionSQL = regexp.MustCompile(
 func TestDecisionEvidenceRetentionNoPruning(t *testing.T) {
 	check := func(path, text string) {
 		if decisionEvidenceRetentionSQL.MatchString(text) {
-			t.Errorf("%s introduces history pruning SQL: prove landing_decision_recorded and approval_eligibility_observed retention before replacing this guard", path)
+			t.Errorf("%s introduces history pruning SQL: prove landing_checks_recorded, landing_decision_recorded and approval_eligibility_observed retention before replacing this guard", path)
 		}
 	}
 	repoRoot := filepath.Join("..", "..")

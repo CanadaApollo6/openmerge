@@ -533,6 +533,11 @@ func EncodeEvent(value Event) (string, []byte, error) {
 		return encodeWire("pr_metadata_observed", wirePRMetadataObserved(v))
 	case PRObserved:
 		return encodeWire("pr_observed", wirePRObserved(v))
+	case LandingChecksRecorded:
+		if err := v.Validate(); err != nil {
+			return "", nil, err
+		}
+		return encodeWire("landing_checks_recorded", v)
 	case LandingDecisionRecorded:
 		if err := v.Validate(); err != nil {
 			return "", nil, err
@@ -859,6 +864,8 @@ func DecodeEvent(payload []byte) (Event, error) {
 		return decodeWireData(envelope.Data, func(v wirePRObserved) Event {
 			return PRObserved(v)
 		})
+	case "landing_checks_recorded":
+		return readLandingChecksWire(envelope.Data)
 	case "landing_decision_recorded":
 		v, err := readLandingDecisionWire(envelope.Data)
 		return v, err
