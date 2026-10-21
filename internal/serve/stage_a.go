@@ -51,7 +51,7 @@ func (w *worker) stageReaders() (forge.IdentityReader, forge.NativeReviewReader,
 	if !ok || !rok {
 		return nil, nil, errors.New("stage A requires identity-bound grants and native reviews")
 	}
-	return ids, reviews, nil
+	return healthIdentityReader{ids, w}, healthReviewReader{reviews, w}, nil
 }
 
 // resolvePool does not reuse membership across decisions. A failed or incomplete
@@ -176,6 +176,7 @@ func (s *Server) refreshStageAPolicy(ctx context.Context, w *worker, tip string)
 	if err != nil {
 		return err
 	}
+	w.publishProgress(time.Now())
 	if g.Coverage.Completeness != forge.DiffComplete {
 		return errors.New("governing policy content unavailable")
 	}
@@ -567,6 +568,7 @@ func (s *Server) prepareStageAClassification(ctx context.Context, w *worker, sta
 	if err != nil {
 		return nil, err
 	}
+	w.publishProgress(time.Now())
 	paths := []string{}
 	for _, f := range d.Files {
 		if f.OldPath != "" {
@@ -587,6 +589,7 @@ func (s *Server) prepareStageAClassification(ctx context.Context, w *worker, sta
 	if err != nil {
 		return nil, err
 	}
+	w.publishProgress(time.Now())
 	ids, _, err := w.stageReaders()
 	if err != nil {
 		return nil, err

@@ -1,0 +1,93 @@
+{
+  "implementation": "d6dbc1c9c15c48d9e8c404e9caea1c489be2e44d",
+  "source_sha256": {
+    "docs/api.md": "af282b3c256a34a95a2bf4b85b4762fb0a826c4134afda155cd19075193c321b",
+    "docs/operating.md": "19fff1ed8f995be8867ed945eeb5c013078c0e792185cb2c2ffd978efb7f25ce",
+    "internal/forge/github/cache_test.go": "e9c8243b511cb2ebd7221c235739e8030d30e984a6063b19c66febc8dbc3224f",
+    "internal/forge/github/client.go": "aa738be6e9dde6e53d7b3a98e3363f2a935ce64d9983fcbc71c4a6c122513c1f",
+    "internal/forge/github/progress_test.go": "a6452f3a72727531fb3e37e99654bcfe24621c879afc4c89ab734814075e5c28",
+    "internal/forge/progress.go": "f38de55b92a7eb5696abe11c3cfea2523addecfa7d2a5a96804a11792b614a20",
+    "internal/serve/health_pagination_test.go": "a28549c63bc25ef70881ae26b7cb5b45385adf80833f4dea6a0c58c5d6548f98",
+    "internal/serve/health_stage_a_test.go": "d8859d5fb0089524806b7d8f91ed5d9c4cf3ca0ec1d957e3c42f2b05a2de960d",
+    "internal/serve/stage_a.go": "e4db5b39452c9b081a89b69cf794afed19ef36c153f4e6b6a775086a7a0325cc"
+  },
+  "round6_start": "f7653b958ddcddf624131f513235425359e6991e",
+  "baseline": "a4c4f4bcd1befa718908b3ad801150c34c049c7d",
+  "trial_class": "Hold",
+  "test_db": "localhost:54329; isolated schemas only",
+  "commands": {
+    "make_check": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB OPENMERGE_TEST_DATABASE_URL=postgres://postgres:openmerge@localhost:54329/postgres?sslmode=disable make check",
+    "focused_race": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB OPENMERGE_TEST_DATABASE_URL=postgres://postgres:openmerge@localhost:54329/postgres?sslmode=disable go test -race ./internal/forge/github ./internal/serve -run 'Test(TransportProgress|ConditionalGETReplaysPaginatedSDKResponses|HealthGitHubPagination|HealthRealCyclePublishesEachReadAndReport|HealthProgressHookOutsideCycle)' -count=1 -timeout=120s -v",
+    "stage_a_race": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB OPENMERGE_TEST_DATABASE_URL=postgres://postgres:openmerge@localhost:54329/postgres?sslmode=disable go test -race ./internal/serve -run '^TestHealthStageAFailedGitRead$' -count=1 -v",
+    "replay_simulator": [
+      {
+        "name": "strict-replay",
+        "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=6GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/pr115-r6-validation/strict-replay/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/pr115-r6-validation/strict-replay/tmp /home/riels/.local/share/mise/installs/python/latest/bin/python3 /home/riels/.t3/worktrees/openmerge/t3-6b9938ed/scripts/check-live-journal-replay.py --baseline /home/riels/.cache/pr115-r4-main-a4c4f4b --candidate /home/riels/.t3/worktrees/openmerge/t3-6b9938ed --events /home/riels/.cache/om-pr72-fix1-input/events.jsonl --queues /home/riels/.cache/om-pr72-fix1-input/queues.jsonl --strict-state --out /home/riels/.cache/pr115-r6-validation/replay.json",
+        "exit": 0,
+        "logs": "/home/riels/.cache/pr115-r6-validation/strict-replay"
+      },
+      {
+        "name": "baseline-simulator",
+        "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/pr115-r6-validation/baseline-simulator/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/pr115-r6-validation/baseline-simulator/tmp make test-sim-exits",
+        "exit": 0,
+        "logs": "/home/riels/.cache/pr115-r6-validation/baseline-simulator"
+      },
+      {
+        "name": "candidate-simulator",
+        "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/pr115-r6-validation/candidate-simulator/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/pr115-r6-validation/candidate-simulator/tmp make test-sim-exits",
+        "exit": 0,
+        "logs": "/home/riels/.cache/pr115-r6-validation/candidate-simulator"
+      }
+    ]
+  },
+  "exit_codes": {
+    "make_check": 0,
+    "focused_race": 0,
+    "stage_a_race": 0,
+    "strict_replay": 0,
+    "baseline_simulator": 0,
+    "candidate_simulator": 0
+  },
+  "initial_replay_attempt": "Refused dirty checkout (exit 2) before replay; committed implementation and reran successfully.",
+  "replay": {
+    "verdict": "PASS",
+    "actions_identical": "2159/2159",
+    "state_identical": "2159/2159",
+    "snapshot_hashes_identical": "2159/2159",
+    "boundary_checkpoints_identical": "2159/2159",
+    "self_test": "PASS",
+    "gate2": "PASS",
+    "gate4": "PASS"
+  },
+  "simulator": {
+    "baseline_exit": 0,
+    "candidate_exit": 0,
+    "identical": true,
+    "blocks": 146,
+    "normalized_sha256": "a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7"
+  },
+  "fixtures": {
+    "baseline": "f7653b958ddcddf624131f513235425359e6991e",
+    "files": 201,
+    "byte_identical": true
+  },
+  "receipt_sha256": {
+    "focused-race.log": "06d1614f81513ecbed95b977db867d2e59de3c4b22cbc31823e93f228bb0c382",
+    "stage-a-race.log": "3d5bcba1d76fdb9b40ee2587de93fc0605919db2091722cd3f5eb83512c88906",
+    "make-check.log": "773d79fb24196adeefc1a6d7862f89e204b37b3db39e86b9b7f2b49bbf9d1fe8",
+    "replay.json": "b580e10d0ee90ab3880a1e61d88aca88bc1e2587fc4798e8d418e2105d377fa6",
+    "replay-sim-execution.json": "a754382ad02745391dda18649910b2f029b95aba134862639852bff6c62551f2",
+    "sim-normalized.json": "a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7",
+    "fixture-identity.json": "512d3d0609c1a6cb16efb574c40d8a3df1abfb56a413e2fea621e7d2e21f4dfd",
+    "replay-dirty-refusal.json": "db6d0a4cf8e0a12de272cbce4c43f83bb5ec94d25cf5cfe7c717b5503b103e10",
+    "strict-replay-command.txt": "deadb4ead0f10e985796240d0b00e0084633972aa1915cff95ba85158c2c9b68",
+    "strict-replay-log": "b580e10d0ee90ab3880a1e61d88aca88bc1e2587fc4798e8d418e2105d377fa6",
+    "strict-replay-stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "baseline-simulator-command.txt": "bd807b6d8dcb415d7587ee74d511bf94a44b0d4e52ad865024aca0153dd84259",
+    "baseline-simulator-log": "9a96c3ad7a4f12757a8c04c4daac7c9709ab4be474d887f95ec2c5ba2f13ffcd",
+    "baseline-simulator-stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "candidate-simulator-command.txt": "5144996a91655f01e28d362a15121ead25c5e00ce35c52d50d900c1ed0c38911",
+    "candidate-simulator-log": "a4b521faceaf277f853771996885f6b4e22fddf8eac77fcf4fce430aafcc2d24",
+    "candidate-simulator-stderr.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}

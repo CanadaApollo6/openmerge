@@ -1,0 +1,153 @@
+=== RUN   TestHealthRealGitUnavailableRemote
+=== RUN   TestHealthRealGitUnavailableRemote/settled
+    health_real_git_test.go:65: settled pending attempt: base=8d3f0c5c4dc5f997b7416b936090257872af8080 head=de4e492e2b971d11a9579a2fe2cdb29082b00d5e fence=ba53a980d16e7373042fa6fbb831b693359c148b watermark=13
+    health_real_git_test.go:96: pending=false base=8d3f0c5c4dc5f997b7416b936090257872af8080 head=de4e492e2b971d11a9579a2fe2cdb29082b00d5e fence=ba53a980d16e7373042fa6fbb831b693359c148b watermark=13 last_success=2026-10-20T23:25:46.354668231Z next_deadline=2026-10-20T23:25:51.363066868Z failures=1
+=== RUN   TestHealthRealGitUnavailableRemote/pending
+    health_real_git_test.go:96: pending=true base=8d3f0c5c4dc5f997b7416b936090257872af8080 head=de4e492e2b971d11a9579a2fe2cdb29082b00d5e fence=6d5e36230a9edcd78aebefdc5ac9ad308c78272e watermark=8 last_success=2026-10-20T23:25:46.433178973Z next_deadline=2026-10-20T23:25:51.445091914Z failures=1
+--- PASS: TestHealthRealGitUnavailableRemote (0.23s)
+    --- PASS: TestHealthRealGitUnavailableRemote/settled (0.14s)
+    --- PASS: TestHealthRealGitUnavailableRemote/pending (0.08s)
+=== RUN   TestAuthorityStatusAndHealthDoNotWaitForWorker
+--- PASS: TestAuthorityStatusAndHealthDoNotWaitForWorker (0.03s)
+=== RUN   TestHealthDatabaseFailureAndLive
+--- PASS: TestHealthDatabaseFailureAndLive (0.02s)
+=== RUN   TestHealthPublicationLifecycleAndFailures
+--- PASS: TestHealthPublicationLifecycleAndFailures (0.00s)
+=== RUN   TestHealthActualBackstopDeadlineAndWebhookSilence
+--- PASS: TestHealthActualBackstopDeadlineAndWebhookSilence (0.04s)
+=== RUN   TestHealthActualErrorAndQuotaDeadline
+--- PASS: TestHealthActualErrorAndQuotaDeadline (0.05s)
+=== RUN   TestHealthHTTPWatchedConditionsAndIsolation
+=== RUN   TestHealthHTTPWatchedConditionsAndIsolation/healthy
+=== RUN   TestHealthHTTPWatchedConditionsAndIsolation/unverified
+=== RUN   TestHealthHTTPWatchedConditionsAndIsolation/warnings
+=== RUN   TestHealthHTTPWatchedConditionsAndIsolation/violated
+=== RUN   TestHealthHTTPWatchedConditionsAndIsolation/overdue
+=== RUN   TestHealthHTTPWatchedConditionsAndIsolation/degraded_age
+=== RUN   TestHealthHTTPWatchedConditionsAndIsolation/degraded_failures
+=== RUN   TestHealthHTTPWatchedConditionsAndIsolation/retired_without_obligations
+--- PASS: TestHealthHTTPWatchedConditionsAndIsolation (0.02s)
+    --- PASS: TestHealthHTTPWatchedConditionsAndIsolation/healthy (0.00s)
+    --- PASS: TestHealthHTTPWatchedConditionsAndIsolation/unverified (0.00s)
+    --- PASS: TestHealthHTTPWatchedConditionsAndIsolation/warnings (0.00s)
+    --- PASS: TestHealthHTTPWatchedConditionsAndIsolation/violated (0.00s)
+    --- PASS: TestHealthHTTPWatchedConditionsAndIsolation/overdue (0.00s)
+    --- PASS: TestHealthHTTPWatchedConditionsAndIsolation/degraded_age (0.00s)
+    --- PASS: TestHealthHTTPWatchedConditionsAndIsolation/degraded_failures (0.00s)
+    --- PASS: TestHealthHTTPWatchedConditionsAndIsolation/retired_without_obligations (0.00s)
+=== RUN   TestHealthActualValidationAndRulesRetryDeadlines
+--- PASS: TestHealthActualValidationAndRulesRetryDeadlines (0.06s)
+=== RUN   TestOutsidePushAcknowledgementRealGit
+--- PASS: TestOutsidePushAcknowledgementRealGit (0.11s)
+=== RUN   TestOutsideWarningsLedgerStatusHealthAndAcknowledgement
+--- PASS: TestOutsideWarningsLedgerStatusHealthAndAcknowledgement (0.03s)
+=== RUN   TestOutsideWarningsBoundedAcrossPagesAndAuthorityRollback
+--- PASS: TestOutsideWarningsBoundedAcrossPagesAndAuthorityRollback (0.32s)
+=== RUN   TestGitHubOutsidePushHasNoAuthorityWarnings
+=== RUN   TestGitHubOutsidePushHasNoAuthorityWarnings/false
+=== RUN   TestGitHubOutsidePushHasNoAuthorityWarnings/true
+--- PASS: TestGitHubOutsidePushHasNoAuthorityWarnings (0.05s)
+    --- PASS: TestGitHubOutsidePushHasNoAuthorityWarnings/false (0.03s)
+    --- PASS: TestGitHubOutsidePushHasNoAuthorityWarnings/true (0.03s)
+=== RUN   TestOutsideWarningsAuditLoopPublishesWhileWorkerBusy
+--- PASS: TestOutsideWarningsAuditLoopPublishesWhileWorkerBusy (0.03s)
+=== RUN   TestHealthyIdleLoopUsesBackstopAndDeliveryInterruptsTimer
+--- PASS: TestHealthyIdleLoopUsesBackstopAndDeliveryInterruptsTimer (0.04s)
+PASS
+ok  	github.com/CanadaApollo6/openmerge/internal/serve	1.051s
+=== RUN   TestAuthorityRenderingAndRestart
+=== RUN   TestAuthorityRenderingAndRestart/never
+=== RUN   TestAuthorityRenderingAndRestart/observed_only
+=== RUN   TestAuthorityRenderingAndRestart/verified
+=== RUN   TestAuthorityRenderingAndRestart/hidden
+=== RUN   TestAuthorityRenderingAndRestart/violated
+=== RUN   TestAuthorityRenderingAndRestart/hidden_retains_violation
+=== RUN   TestAuthorityRenderingAndRestart/repaired
+=== RUN   TestAuthorityRenderingAndRestart/stale_observation
+--- PASS: TestAuthorityRenderingAndRestart (0.01s)
+    --- PASS: TestAuthorityRenderingAndRestart/never (0.00s)
+    --- PASS: TestAuthorityRenderingAndRestart/observed_only (0.00s)
+    --- PASS: TestAuthorityRenderingAndRestart/verified (0.00s)
+    --- PASS: TestAuthorityRenderingAndRestart/hidden (0.00s)
+    --- PASS: TestAuthorityRenderingAndRestart/violated (0.00s)
+    --- PASS: TestAuthorityRenderingAndRestart/hidden_retains_violation (0.00s)
+    --- PASS: TestAuthorityRenderingAndRestart/repaired (0.00s)
+    --- PASS: TestAuthorityRenderingAndRestart/stale_observation (0.00s)
+=== RUN   TestHealthAndLiveRouting
+--- PASS: TestHealthAndLiveRouting (0.00s)
+=== RUN   TestHealthFailureAndBounds
+=== RUN   TestHealthFailureAndBounds/db_failure
+=== RUN   TestHealthFailureAndBounds/unhealthy
+=== RUN   TestHealthFailureAndBounds/too_many_queues
+=== RUN   TestHealthFailureAndBounds/too_large
+=== RUN   TestHealthFailureAndBounds/warnings
+--- PASS: TestHealthFailureAndBounds (0.04s)
+    --- PASS: TestHealthFailureAndBounds/db_failure (0.00s)
+    --- PASS: TestHealthFailureAndBounds/unhealthy (0.00s)
+    --- PASS: TestHealthFailureAndBounds/too_many_queues (0.00s)
+    --- PASS: TestHealthFailureAndBounds/too_large (0.04s)
+    --- PASS: TestHealthFailureAndBounds/warnings (0.00s)
+=== RUN   TestEvaluateHealth
+=== RUN   TestEvaluateHealth/new
+=== RUN   TestEvaluateHealth/overdue
+=== RUN   TestEvaluateHealth/stale_success
+=== RUN   TestEvaluateHealth/never_succeeded
+=== RUN   TestEvaluateHealth/repeated_failures
+=== RUN   TestEvaluateHealth/violation
+=== RUN   TestEvaluateHealth/unverified
+=== RUN   TestEvaluateHealth/retired
+--- PASS: TestEvaluateHealth (0.00s)
+    --- PASS: TestEvaluateHealth/new (0.00s)
+    --- PASS: TestEvaluateHealth/overdue (0.00s)
+    --- PASS: TestEvaluateHealth/stale_success (0.00s)
+    --- PASS: TestEvaluateHealth/never_succeeded (0.00s)
+    --- PASS: TestEvaluateHealth/repeated_failures (0.00s)
+    --- PASS: TestEvaluateHealth/violation (0.00s)
+    --- PASS: TestEvaluateHealth/unverified (0.00s)
+    --- PASS: TestEvaluateHealth/retired (0.00s)
+=== RUN   TestHealthHonorsCancellation
+--- PASS: TestHealthHonorsCancellation (0.00s)
+=== RUN   TestHealthVisibilityBoundDoesNotMutateSnapshot
+--- PASS: TestHealthVisibilityBoundDoesNotMutateSnapshot (0.00s)
+PASS
+ok  	github.com/CanadaApollo6/openmerge/internal/status	0.053s
+=== RUN   TestOutsidePushWarningDelayedAuditAuthorityBoundaries
+=== RUN   TestOutsidePushWarningDelayedAuditAuthorityBoundaries/openmerge/return-before-audit-false
+=== RUN   TestOutsidePushWarningDelayedAuditAuthorityBoundaries/openmerge/return-before-audit-true
+=== RUN   TestOutsidePushWarningDelayedAuditAuthorityBoundaries/github/return-before-audit-false
+=== RUN   TestOutsidePushWarningDelayedAuditAuthorityBoundaries/github/return-before-audit-true
+--- PASS: TestOutsidePushWarningDelayedAuditAuthorityBoundaries (0.19s)
+    --- PASS: TestOutsidePushWarningDelayedAuditAuthorityBoundaries/openmerge/return-before-audit-false (0.04s)
+    --- PASS: TestOutsidePushWarningDelayedAuditAuthorityBoundaries/openmerge/return-before-audit-true (0.05s)
+    --- PASS: TestOutsidePushWarningDelayedAuditAuthorityBoundaries/github/return-before-audit-false (0.05s)
+    --- PASS: TestOutsidePushWarningDelayedAuditAuthorityBoundaries/github/return-before-audit-true (0.05s)
+=== RUN   TestOutsidePushAcknowledgementAtomicRetriesAndIsolation
+--- PASS: TestOutsidePushAcknowledgementAtomicRetriesAndIsolation (0.07s)
+=== RUN   TestOutsidePushWarningsUncappedArchivedAndLegacy
+--- PASS: TestOutsidePushWarningsUncappedArchivedAndLegacy (0.06s)
+=== RUN   TestOutsidePushWarningPagePlansAndGrowth
+=== RUN   TestOutsidePushWarningPagePlansAndGrowth/5000
+    outside_push_ledger_test.go:334: rows=5000 warnings=30 bounded-page scan=28.729002ms
+    outside_push_ledger_test.go:358: query=SELECT id, payload, COALESCE(dedupe_key, '') FROM events
+         WHERE queue_id=$1 AND id>$2 ORDER BY id LIMIT $3 plan=[Limit  (cost=0.28..15.72 rows=256 width=118) (actual time=0.012..0.071 rows=256.00 loops=1)   Buffers: shared hit=7   ->  Index Scan using events_pkey on events  (cost=0.28..305.54 rows=5063 width=118) (actual time=0.011..0.057 rows=256.00 loops=1)         Index Cond: (id > '0'::bigint)         Filter: (queue_id = '1'::bigint)         Index Searches: 1         Buffers: shared hit=7 Planning:   Buffers: shared hit=8 Planning Time: 0.073 ms Execution Time: 0.086 ms]
+    outside_push_ledger_test.go:358: query=SELECT id,payload,dedupe_key FROM events WHERE queue_id=$1 AND dedupe_key=$2 plan=[Index Scan using events_queue_dedupe on events  (cost=0.14..8.16 rows=1 width=104) (actual time=0.005..0.005 rows=1.00 loops=1)   Index Cond: ((queue_id = '1'::bigint) AND (dedupe_key = 'outside-base/5004'::text))   Index Searches: 1   Buffers: shared hit=2 Planning:   Buffers: shared hit=5 Planning Time: 0.046 ms Execution Time: 0.010 ms]
+    outside_push_ledger_test.go:363: rows=5000 acknowledge=530.553µs
+=== RUN   TestOutsidePushWarningPagePlansAndGrowth/50000
+    outside_push_ledger_test.go:334: rows=50000 warnings=30 bounded-page scan=199.838575ms
+    outside_push_ledger_test.go:358: query=SELECT id, payload, COALESCE(dedupe_key, '') FROM events
+         WHERE queue_id=$1 AND id>$2 ORDER BY id LIMIT $3 plan=[Limit  (cost=0.29..13.22 rows=256 width=117) (actual time=0.006..0.034 rows=256.00 loops=1)   Buffers: shared hit=7   ->  Index Scan using events_pkey on events  (cost=0.29..2529.55 rows=50063 width=117) (actual time=0.005..0.026 rows=256.00 loops=1)         Index Cond: (id > '0'::bigint)         Filter: (queue_id = '1'::bigint)         Index Searches: 1         Buffers: shared hit=7 Planning:   Buffers: shared hit=8 Planning Time: 0.031 ms Execution Time: 0.041 ms]
+    outside_push_ledger_test.go:358: query=SELECT id,payload,dedupe_key FROM events WHERE queue_id=$1 AND dedupe_key=$2 plan=[Index Scan using events_queue_dedupe on events  (cost=0.14..8.16 rows=1 width=104) (actual time=0.003..0.003 rows=1.00 loops=1)   Index Cond: ((queue_id = '1'::bigint) AND (dedupe_key = 'outside-base/50004'::text))   Index Searches: 1   Buffers: shared hit=2 Planning:   Buffers: shared hit=5 Planning Time: 0.021 ms Execution Time: 0.005 ms]
+    outside_push_ledger_test.go:363: rows=50000 acknowledge=310.792µs
+--- PASS: TestOutsidePushWarningPagePlansAndGrowth (2.02s)
+    --- PASS: TestOutsidePushWarningPagePlansAndGrowth/5000 (0.20s)
+    --- PASS: TestOutsidePushWarningPagePlansAndGrowth/50000 (1.82s)
+=== RUN   TestOutsidePushWarningsSnapshotAndStalePin
+--- PASS: TestOutsidePushWarningsSnapshotAndStalePin (0.03s)
+PASS
+ok  	github.com/CanadaApollo6/openmerge/internal/store	2.376s
+=== RUN   TestQueueAuthorityAndOutstandingWarnings
+--- PASS: TestQueueAuthorityAndOutstandingWarnings (0.00s)
+=== RUN   TestServeHealthThresholdBounds
+--- PASS: TestServeHealthThresholdBounds (0.00s)
+PASS
+ok  	github.com/CanadaApollo6/openmerge/cmd/openmerge	0.004s

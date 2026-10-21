@@ -102,6 +102,14 @@ func ReadToken(value, file string) (string, error) {
 // branches created after the listener started and recovery-only partitions.
 func DynamicHandler(source Source, keys func() []store.QueueKey, token string, sanitizer *diagnostic.Sanitizer, discovery ...func() Discovery) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if processLive(w, r) {
+			return
+		}
+		// Health uses its own bounded runtime snapshot; it never discovers keys.
+		if r.URL.EscapedPath() == "/v1/health" {
+			Handler(source, nil, token, sanitizer).ServeHTTP(w, r)
+			return
+		}
 		Handler(source, keys(), token, sanitizer, discovery...).ServeHTTP(w, r)
 	})
 }
@@ -118,6 +126,9 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 	})
 	want := sha256.Sum256([]byte("Bearer " + token))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if processLive(w, r) {
+			return
+		}
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "application/json")
 		if token != "" {
@@ -127,6 +138,10 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 				fail(w, http.StatusUnauthorized, "unauthorized", "valid bearer token required")
 				return
 			}
+		}
+		if r.URL.EscapedPath() == "/v1/health" {
+			serveHealth(w, r, source, sanitizer)
+			return
 		}
 		const maxRequestBody = 4 << 10
 		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
@@ -348,6 +363,17 @@ func writeJSON(w http.ResponseWriter, value any) {
 }
 
 func applyReadiness(source Source, q *Queue, sanitizer *diagnostic.Sanitizer) {
+	if q.hasAuthorityPin {
+		if runtime, ok := source.(interface {
+			QueueReadinessSnapshot(store.QueueKey) *Readiness
+		}); ok {
+			q.Readiness = runtime.QueueReadinessSnapshot(store.QueueKey{Installation: q.Installation, Repository: q.Repository, BaseBranch: q.Base, Lane: q.Lane})
+			if q.Readiness != nil {
+				q.Readiness.Reason = sanitizer.Sanitize(q.Readiness.Reason)
+			}
+			return
+		}
+	}
 	if runtime, ok := source.(interface {
 		QueueReadiness(store.QueueKey) *Readiness
 	}); ok {
@@ -359,6 +385,17 @@ func applyReadiness(source Source, q *Queue, sanitizer *diagnostic.Sanitizer) {
 }
 
 func applyPolicy(source Source, q *Queue, selected *Entry) {
+	if q.hasAuthorityPin {
+		if runtime, ok := source.(interface {
+			QueuePolicySnapshot(store.QueueKey) (queue.Config, bool)
+		}); ok {
+			cfg, found := runtime.QueuePolicySnapshot(store.QueueKey{Installation: q.Installation, Repository: q.Repository, BaseBranch: q.Base, Lane: q.Lane})
+			if found {
+				ApplyPolicy(q, selected, cfg, time.Now())
+			}
+			return
+		}
+	}
 	if runtime, ok := source.(interface {
 		QueuePolicy(store.QueueKey) (queue.Config, bool)
 	}); ok {

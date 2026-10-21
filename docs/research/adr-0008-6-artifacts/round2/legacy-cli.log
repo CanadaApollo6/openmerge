@@ -1,0 +1,9 @@
+Command: python3 scripts/check-legacy-authority-cli.py /home/riels/.cache/pr115-r2-main-975b1b7
+Started: 2026-10-21T00:39:28.203904+00:00
+/home/riels/.cache/pr115-r2-main-975b1b7: exit=0
+/home/riels/.t3/worktrees/openmerge/t3-b8f2188b: exit=0
+PASS: six complete CLI status outputs are byte-identical; no fields or whitespace stripped
+Complete CLI receipt: /home/riels/.cache/adr0008-6-legacy-cli-responses.json
+
+Exit: 0
+Finished: 2026-10-21T00:39:29.616507+00:00

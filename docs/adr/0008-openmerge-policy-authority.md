@@ -1420,3 +1420,61 @@ are implementation choices, not permission to weaken the accepted Decision.
 - **Drop GitHub protection entirely.** Anyone with write access could push around OpenMerge, so its policies would be suggestions.
 - **Fail closed on unverified protection.** It would block nearly every installation, since the App usually cannot see bypass lists, and it would repeat the wedge that #35 fixed. Reporting unverified state honestly, and blocking only on what is visibly wrong, keeps the queue running without overclaiming.
 - **Have OpenMerge compile its policy into GitHub rulesets.** GitHub's rules cannot express approval by change class, accountable humans or post-merge verification, and they are evaluated on pull requests that the App bypasses anyway.
+
+
+## PR 6 implementation refinement (2026-10-20, round 4)
+
+This records implementation details without changing the accepted Decision.
+Health 503 has three exhaustive groups: a missing health provider, failed DB
+probe or expired/cancelled 2s read; a busy worker registry, more than 256 queues,
+serialization failure or response over 256 KiB; or a watched violated, overdue or
+degraded queue. Warning presence/availability, readiness alone and consecutive
+failure counts do not add failure conditions. Existing auth and validation errors
+remain 401, 400 and 405. See [the API contract](../api.md#authority-and-alerting-probes-adr-0008-pr-6-hold).
+
+The published deadline is the latest allowed next cycle **start**, including an
+immediate journal wake. Waiting for a slot is overdue after the deadline plus
+30s grace (configurable 1–60s). Slot acquisition publishes `in_cycle`,
+`cycle_started_at` and initial `last_progress_at`. Completed reconciliation
+reads (PRs, configuration, rules, check sources and approval identities),
+observation and check-report writes, actions (after their completion write) and
+turns advance progress; journal activity does not. Publication happens only after
+a unit completes; a hung read or action still stalls. In-cycle
+overdue means time since progress exceeds `--health-progress-stall-limit` /
+`OPENMERGE_HEALTH_PROGRESS_STALL_LIMIT`: default 4m, range 1s–30m. Startup
+rejects a limit below action timeout + 30s Git maintenance + 10s completion write
++ configured grace, equally for CLI and embedded servers. The 2m action default
+requires 3m10s with default grace, leaving 50s margin; embedded callers extending
+the action timeout must explicitly select a compatible stall limit. Missing cycle start or progress fails
+closed as overdue. `--health-max-cycle-duration` /
+`OPENMERGE_HEALTH_MAX_CYCLE_DURATION` remains an absolute backstop: default 3h,
+range 2m–6h. Cycle completion publishes the next start deadline. Degraded uses
+the later of last success and in-cycle progress, or queue process start before
+either exists: default 15m, configurable 1–60m. A long progressing cycle stays
+healthy past both limits; a stalled one becomes overdue within the stall limit.
+Consecutive failures remain informational. Recovery exit explicitly removes the
+watch obligation independently of best-effort operational log replay.
+
+Warning summaries are cached per queue by watermark and updated from new events.
+Already loaded status journals supply the suffix and association records without
+additional SQL or decoding. Worker-owned reporting never scans warnings; the
+independent audit loop refreshes health summaries using bounded suffix pages.
+Never-pinned queues skip warning work, including at registration. A ledger error
+preserves the queue and last complete warning counts, with an explicit error in
+that queue's warning section. The index retains policy boundaries and outstanding
+IDs; API samples remain bounded at 20. The snapshot gate survives rollback and
+acknowledgement. Future evidence ages are null with explicit clock-skew markers.
+
+
+Background warning refresh pages DB results into a private index, then swaps the
+complete index under a brief lock. Foreground folds never wait for that lock;
+contention preserves last complete counts with queue-local `ledger_unavailable`.
+Pin removal clears health warnings; rollback retains origin-time eligibility and
+refreshes acknowledgements. Nullable dedupe keys preserve SQL NULL: on an audit
+row, NULL is an orphan anomaly, including when an acknowledgement exists. Both
+scan and cache paths validate origins and surface errors locally.
+
+Round 4 validates reserved outside-push association keys and acknowledgement SHA
+bindings identically in scan and cache, including GitHub-mode origins. An older
+background snapshot returned after an interrupted newer foreground fold carries
+`ledger_refreshing` until a complete fold or refresh publishes current counts.

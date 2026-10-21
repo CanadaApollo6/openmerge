@@ -14,12 +14,13 @@ Authentication is optional only for loopback binds. Set `OPENMERGE_API_TOKEN` **
 The file must be readable and nonempty; surrounding whitespace is trimmed.
 Tokens use visible ASCII without spaces. Conflicting token sources fail startup.
 Clients send `Authorization: Bearer TOKEN`. Token changes require restarting
-serve. Authentication covers unknown paths and unsupported methods as well.
+serve. Authentication covers unknown paths and unsupported methods as well,
+except the exact `/v1/live` process probe.
 Never use an App private key, GitHub token, or webhook secret as the API token.
 
 ## Endpoints
 
-All responses are JSON with `version: 1`, `Content-Type: application/json`, and
+Except `/v1/live`, responses are JSON with `version: 1`, `Content-Type: application/json`, and
 `Cache-Control: no-store`. Only **GET** is accepted; there are no write endpoints.
 HEAD and other methods return 405 with `Allow: GET`. Request bodies are limited
 to 4096 bytes, including chunked bodies; oversized bodies return 413. Bodies
@@ -570,3 +571,121 @@ server logs `check approval policy unavailable`. Requirements and receipt
 binding remain unavailable; this warning does not authorize landing. Publishing
 honest unavailable evidence is intentional: retaining a stale check would hide
 the loss of policy evidence.
+
+## Authority and alerting probes (ADR 0008 PR 6, Hold)
+
+Exact `GET /v1/live` returns only `{"live":true}` with 200, before authentication,
+key discovery or DB reads. This response has no version or queue details. An
+encoded alias or trailing slash does not bypass authentication. Live and health
+reject queries (including an empty `?`) and any request body with 400; methods
+other than GET return 405. Existing routes retain their body/query rules.
+
+`GET /v1/health` uses the status listener's existing address and bearer-token
+rules. Unauthorized requests return 401 without queue details. Authenticated
+health is read-only: one `SELECT 1` and immutable process snapshots, with a 2s
+request deadline, at most 256 queues and a 256 KiB response cap. Missing DB access,
+a busy registry or a limit exceeded returns 503. Health never reads forge data
+or replays queue histories. It reports lifecycle, readiness/reasons, whether the
+queue is watched, process start, last successful reconciliation time/age, the
+worker loop's effective next-start deadline, `in_cycle`, `cycle_started_at`, `last_progress_at`,
+consecutive failures, overdue and degraded. Last success is null until a completed
+reconciliation. Consecutive failures are informational. Degraded means that time since the later of last success and in-cycle progress
+(or process queue start before either exists) exceeds `MaxSuccessAge`. Completed
+actions and turns publish progress; journal activity and waiting wakes do not.
+A progressing long cycle remains healthy past both 15m and 60m without inventing
+a reconciliation success. Failure counts remain informational.
+Dormant/retired queues without pending attempts and completed recovery-only
+queues are excluded from alerting; unsettled starts remain watched.
+
+The complete health 503 enumeration is:
+
+- The health provider is unavailable, its read-only DB probe fails, or the 2s
+  request deadline/cancellation prevents determining health.
+- The worker registry is busy (TryRLock fails), more than 256 queues would be
+  inspected, serialization fails, or the complete response exceeds 256 KiB.
+- A watched queue is authority-violated, overdue, or degraded.
+
+Readiness alone, warning-ledger availability, and failure counts do not add 503
+conditions. Method/query/body errors remain 405/400 and unauthorized reads 401. Unverified authority
+and outstanding outside-push warnings alone return 200. Health is for alerting;
+**never configure it as a restart probe**. The process settings
+`--health-overdue-grace` / `OPENMERGE_HEALTH_OVERDUE_GRACE` (default 30s, range
+1–60s) and `--health-max-success-age` / `OPENMERGE_HEALTH_MAX_SUCCESS_AGE` (default
+15m, range 1–60m), plus `--health-max-cycle-duration` /
+`OPENMERGE_HEALTH_MAX_CYCLE_DURATION` (default 3h, range 2m–6h), are independent
+of queue policy. While waiting, overdue means `now > next_deadline + grace`;
+every immediate wake, including journal changes, sets that deadline to now.
+Slot acquisition clears the start deadline and publishes the cycle start.
+In-cycle overdue means `now > last_progress_at + progress_stall_limit`, or a
+missing cycle start/progress timestamp (fail closed).
+`--health-progress-stall-limit` / `OPENMERGE_HEALTH_PROGRESS_STALL_LIMIT` defaults
+to 4m, range 1s–30m, with startup validation requiring at least action timeout +
+30s Git maintenance + 10s completion write + configured grace. CLI and embedded
+servers reject incompatible settings; longer embedded action timeouts require an
+explicit compatible stall limit. The default 2m timeout requires 3m10s including
+default grace, leaving 50s margin. Slot acquisition seeds progress; each completed
+reconciliation source read, observation write, check-report write, action (after
+its completion write) and turn advances it. GitHub also publishes after each
+successful HTTP response body reaches EOF, so every pagination page and PR
+sub-read counts independently. Failed responses, incomplete bodies and hung
+requests cannot publish request progress. Read-unit progress likewise requires
+success; completed actions and turns still record their completion independently.
+A validated wire 304 served from cache counts as a successful round trip once
+the cached body reaches EOF, including each revalidated pagination page. A 304
+that cannot be served from cache publishes nothing.
+The maximum cycle
+duration remains an absolute backstop, even with recent progress. This permits a
+hot turn's 64 chained actions while detecting a hung action promptly. Cycle end
+publishes the next effective start deadline. Slot starvation remains detectable,
+and a first cycle with zero delay does not become overdue after the grace period.
+
+Authority queues add `authority` to queue JSON, omitted for legacy GitHub queues.
+It contains `state` (`unverified`, `verified`, `violated`), `inventory`, per-element
+`elements` visibility, `last_observed_at`, `last_verified_at`, and independent
+`last_observed_age_seconds` / `last_verified_age_seconds`. Missing times/ages
+are null; CLI text says “never (age unknown)” and “authority unverified”.
+Future evidence timestamps render a null age, `clock_skew: true`, and the
+corresponding `last_observed_clock_skew` / `last_verified_clock_skew` marker;
+CLI age text says `clock_skew`. Health also marks future process success times
+with `last_success_clock_skew`. Reading status never establishes verification. Health refreshes ages on its snapshots;
+it caps visibility details at 64 elements per queue and exposes `elements_omitted`
+when truncated. Ordinary status retains every per-element visibility.
+
+This rendering consumes PR 4's durable `WriteRestrictionStatus` projection,
+including sticky violations through hidden reads. Visibility comes from the
+retained applied evidence. Proposed verification is never presented as applied
+verification. `outside_warnings` consumes PR 5's outstanding ledger, with an
+exact `outstanding` count, at most 20 `event_ids` in originating base-move order,
+and `truncated` when IDs are omitted. Empty successful ledgers omit the field.
+Ledger errors affect only that queue's warning section: `error: "ledger_unavailable"`
+retains the last complete counts, which may be stale; they never fail a multi-queue
+status response or worker registration. Registration logs the error and continues.
+
+The per-queue warning cache advances only after its last event watermark. HTTP/CLI
+status reuse the journal's already decoded snapshot, with zero additional warning
+queries and no second history scan/decode. Queues that have never had an authority
+pin skip the ledger entirely. Worker-owned CI check rendering omits warning I/O;
+health reads immutable atomic summaries. Background refresh performs DB paging
+against a private index and swaps it in only after success; no DB I/O holds the
+cache lock. Foreground rendering never waits for that lock: contention returns
+last complete counts with queue-local `ledger_unavailable`. Pin removal clears
+the published health warnings; rollback refreshes the historical ledger as status does. The independent outside-push loop pages
+only the new suffix (256 rows/page), probing indexed origins for new audits and
+sources for new acknowledgements. Registration seeds authority queues once and
+skips legacy queues. The index retains policy boundaries and outstanding event/
+origin IDs; public samples remain capped at 20. Acknowledgement appears in health
+on the next audit pass. Failed reads preserve the last complete warning snapshot
+with the explicit error. Health requests never scan journals. Authority-era queues
+keep using nonblocking readiness/policy snapshots after rollback, even with zero
+outstanding warnings. Acknowledgement removes the warning while keeping
+the deployed recent `outside_pushes` history unchanged. Pushes originating in
+GitHub mode gain no authority warning; warnings from before a rollback remain
+until acknowledged.
+
+When a background warning refresh returns an older complete snapshot after an
+interrupted foreground fold advanced its index, that snapshot carries
+`error: "ledger_refreshing"`. A later complete fold/refresh clears the marker.
+
+This reporting change may merge but **must not deploy until ADR 0009 period B
+has drained**. PR 9 still owns authority activation; PR 11 owns real sandbox HTTP
+acceptance for violation, drift and break-glass warning cases.

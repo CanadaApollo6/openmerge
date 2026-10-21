@@ -33,6 +33,12 @@ func (s *Server) outsidePushLoop(ctx context.Context) {
 			auditCtx, cancel := context.WithTimeout(ctx, s.options.ActionTimeout)
 			err := s.auditOutsidePushes(auditCtx, w.id, w.Key)
 			cancel()
+			// Warning rendering has its own read deadline and never waits for worker
+			// ownership. Acknowledgements are reflected on the next audit pass.
+			warningErr := s.refreshOutsideWarnings(ctx, w)
+			if warningErr != nil && ctx.Err() == nil {
+				s.options.Logger.Warn("outside push warnings", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "error", warningErr)
+			}
 			if err != nil && ctx.Err() == nil {
 				s.options.Logger.Warn("outside push audit", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "error", err)
 			}
@@ -45,6 +51,23 @@ func (s *Server) outsidePushLoop(ctx context.Context) {
 		case <-timer.C:
 		}
 	}
+}
+
+// refreshOutsideWarnings publishes complete ledger snapshots. Failed reads
+// preserve the last complete counts with an explicit queue-local error. Warning
+// availability does not change health; its DB probe reports database outages.
+func (s *Server) refreshOutsideWarnings(ctx context.Context, w *worker) error {
+	if !w.hasAuthorityPin.Load() {
+		w.outsideWarnings.Store(nil)
+		return nil
+	}
+	summary, err := s.store.ReadOutsidePushWarnings(ctx, w.id)
+	if w.hasAuthorityPin.Load() {
+		w.outsideWarnings.Store(&summary)
+	} else {
+		w.outsideWarnings.Store(nil)
+	}
+	return err
 }
 
 func (s *Server) auditOutsidePushes(ctx context.Context, id store.QueueID, key store.QueueKey) error {
@@ -72,4 +95,10 @@ func (s *Server) auditOutsidePushes(ctx context.Context, id store.QueueID, key s
 	defer cancel()
 	_, err = s.store.CommitOutsidePushAudit(commitCtx, id, audit, events)
 	return err
+}
+
+func (s *Server) initializeOutsideWarnings(ctx context.Context, w *worker) {
+	if err := s.refreshOutsideWarnings(ctx, w); err != nil {
+		s.options.Logger.Warn("outside push warnings; preserving queue registration", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "error", err)
+	}
 }

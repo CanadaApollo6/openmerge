@@ -1,0 +1,118 @@
+golangci-lint run
+0 issues.
+go test -race -short -count=1 -timeout=15m ./...
+?   	github.com/CanadaApollo6/openmerge/cmd/capacity-report	[no test files]
+ok  	github.com/CanadaApollo6/openmerge/cmd/openmerge	62.211s
+ok  	github.com/CanadaApollo6/openmerge/internal/ascii	1.008s
+ok  	github.com/CanadaApollo6/openmerge/internal/authority	1.112s
+ok  	github.com/CanadaApollo6/openmerge/internal/brief	3.442s
+ok  	github.com/CanadaApollo6/openmerge/internal/changepolicy	1.844s
+?   	github.com/CanadaApollo6/openmerge/internal/changepolicy/replay	[no test files]
+ok  	github.com/CanadaApollo6/openmerge/internal/classification	2.249s
+ok  	github.com/CanadaApollo6/openmerge/internal/config	1.579s
+ok  	github.com/CanadaApollo6/openmerge/internal/config/condition	1.024s
+ok  	github.com/CanadaApollo6/openmerge/internal/diagnostic	1.022s
+ok  	github.com/CanadaApollo6/openmerge/internal/executor	1.171s
+ok  	github.com/CanadaApollo6/openmerge/internal/forge	8.271s
+ok  	github.com/CanadaApollo6/openmerge/internal/forge/fake	1.486s
+?   	github.com/CanadaApollo6/openmerge/internal/forge/forgetest	[no test files]
+ok  	github.com/CanadaApollo6/openmerge/internal/forge/github	64.495s
+ok  	github.com/CanadaApollo6/openmerge/internal/gitops	80.970s
+ok  	github.com/CanadaApollo6/openmerge/internal/queue	312.222s
+2026/10/20 19:20:23 WARN base validation failed; keeping previous state repository=Owner/Repo base=main error="conflicting case-variant queue histories: landing settlement pending for queue 2"
+2026/10/20 19:20:23 WARN base validation failed; keeping previous state repository=owner/repo base=main error="conflicting case-variant queue histories: landing settlement pending for queue 2"
+2026/10/20 19:20:23 WARN discovery failed; retaining previous observations error="owner/repo: base main registration: conflicting case-variant queue histories: landing settlement pending for queue 2\nconflicting case-variant queue histories: landing settlement pending for queue 2\nconflicting case-variant queue histories: landing settlement pending for queue 2"
+2026/10/20 19:20:23 INFO landed repository=owner/repo base=main pr=41 batch=b1 sha=d48501da5e33ae0cef7833786f58a791fe8f18b90bf7c9c1c31ff03d3397fafa reason=""
+2026/10/20 19:20:23 INFO enqueued repository=owner/repo base=main pr=42 batch="" sha=ac56d12de5367e6c593699a2edf32b778c79c8bb7583ea73ddf01c16ef7cc63f reason=requested
+2026/10/20 19:20:23 INFO test ref built repository=owner/repo base=main pr=42 batch=b2 sha=1e30bc389d2b689a3227009c0cb3081e516c354501edaeb0de7ebeeea6091ac1 reason="" ref=openmerge/queue/main/b2
+2026/10/20 19:20:23 INFO checks result repository=owner/repo base=main pr=42 batch=b2 sha=1e30bc389d2b689a3227009c0cb3081e516c354501edaeb0de7ebeeea6091ac1 reason="" success=true
+2026/10/20 19:20:23 INFO landing started repository=owner/repo base=main pr=42 batch=b2 sha=1e30bc389d2b689a3227009c0cb3081e516c354501edaeb0de7ebeeea6091ac1 reason="" attempt=78fcd13d35d8e5446a793203b8fbcffc
+2026/10/20 19:20:23 INFO landed repository=owner/repo base=main pr=42 batch=b2 sha=1e30bc389d2b689a3227009c0cb3081e516c354501edaeb0de7ebeeea6091ac1 reason=""
+2026/10/20 19:20:24 WARN base validation failed; keeping previous state repository=Owner/Repo base=main error="conflicting case-variant queue histories: landing settlement pending for queue 1"
+2026/10/20 19:20:24 WARN base validation failed; keeping previous state repository=owner/repo base=main error="conflicting case-variant queue histories: landing settlement pending for queue 1"
+2026/10/20 19:20:24 WARN discovery failed; retaining previous observations error="owner/repo: base main registration: conflicting case-variant queue histories: landing settlement pending for queue 1\nconflicting case-variant queue histories: landing settlement pending for queue 1\nconflicting case-variant queue histories: landing settlement pending for queue 1"
+2026/10/20 19:20:24 INFO landed repository=Owner/Repo base=main pr=41 batch=b1 sha=d48501da5e33ae0cef7833786f58a791fe8f18b90bf7c9c1c31ff03d3397fafa reason=""
+2026/10/20 19:20:24 INFO landed repository=owner/repo base=main pr=41 batch=b1 sha=d48501da5e33ae0cef7833786f58a791fe8f18b90bf7c9c1c31ff03d3397fafa reason=""
+2026/10/20 19:20:24 WARN base validation failed; keeping previous state repository=Owner/Repo base=main error="conflicting case-variant queue histories: unique fence ownership required; operator reconciliation required (docs/operating.md#case-variant-history-recovery)"
+2026/10/20 19:20:24 WARN base validation failed; keeping previous state repository=owner/repo base=main error="conflicting case-variant queue histories: unique fence ownership required; operator reconciliation required (docs/operating.md#case-variant-history-recovery)"
+2026/10/20 19:20:24 WARN discovery failed; retaining previous observations error="owner/repo: base main registration: conflicting case-variant queue histories have live state; operator reconciliation required (docs/operating.md#case-variant-history-recovery)\nconflicting case-variant queue histories: unique fence ownership required; operator reconciliation required (docs/operating.md#case-variant-history-recovery)\nconflicting case-variant queue histories: unique fence ownership required; operator reconciliation required (docs/operating.md#case-variant-history-recovery)"
+2026/10/20 19:20:27 INFO queue block set repository=owner/repo base=main pr=0 batch="" sha=00cce3cdbf38f09a190512888362d51f18bc6b31655219159bcb9391d88d8aeb reason=repository-removed source=repository-removed detail="Excluded by repository or installation allowlist" revision=1
+2026/10/20 19:20:27 INFO queue paused repository=owner/repo base=main pr=0 batch="" sha=00cce3cdbf38f09a190512888362d51f18bc6b31655219159bcb9391d88d8aeb reason=repository-removed detail="Excluded by repository or installation allowlist"
+2026/10/20 19:20:27 INFO queue block set repository=owner/repo base=main pr=0 batch="" sha=00cce3cdbf38f09a190512888362d51f18bc6b31655219159bcb9391d88d8aeb reason=config source=config detail="configuration could not be read: line 1: version: unsupported version \"broken\"; supported versions: 1\nline 1: queues: at least one queue is required" revision=1
+2026/10/20 19:20:27 INFO queue paused repository=owner/repo base=main pr=0 batch="" sha=00cce3cdbf38f09a190512888362d51f18bc6b31655219159bcb9391d88d8aeb reason=invalid-config detail="configuration could not be read: line 1: version: unsupported version \"broken\"; supported versions: 1\nline 1: queues: at least one queue is required"
+2026/10/20 19:20:27 INFO configuration error repository=owner/repo base=main pr=0 batch="" sha=00cce3cdbf38f09a190512888362d51f18bc6b31655219159bcb9391d88d8aeb reason=invalid-config error="configuration could not be read: line 1: version: unsupported version \"broken\"; supported versions: 1\nline 1: queues: at least one queue is required"
+2026/10/20 19:20:27 WARN discovery failed; retaining previous observations error="installation 7 listing: reporting budget exhausted"
+2026/10/20 19:20:27 WARN discovery failed; retaining previous observations error="forge quota reserved until 2026-10-21T00:20:27Z"
+2026/10/20 19:20:31 WARN repository rules unavailable; keeping previous state for source repository=owner/repo base=main source=classic_protection error="denied: repository rules unavailable to this installation"
+2026/10/20 19:20:31 WARN repository rules unavailable; keeping previous state for source repository=owner/repo base=main source=classic_protection error="denied: repository rules unavailable to this installation"
+2026/10/20 19:20:31 WARN repository rules unavailable; keeping previous state for source repository=owner/repo base=main source=classic_protection error="denied: repository rules unavailable to this installation"
+2026/10/20 19:20:31 WARN base validation failed; keeping previous state repository=owner/repo base=main error="conflicting case-variant queue histories have live state; operator reconciliation required (docs/operating.md#case-variant-history-recovery)"
+2026/10/20 19:20:31 WARN base validation failed; keeping previous state repository=Owner/Repo base=main error="conflicting case-variant queue histories have live state; operator reconciliation required (docs/operating.md#case-variant-history-recovery)"
+2026/10/20 19:20:31 WARN discovery failed; retaining previous observations error="owner/repo: base main registration: conflicting case-variant queue histories have live state; operator reconciliation required (docs/operating.md#case-variant-history-recovery)\nconflicting case-variant queue histories have live state; operator reconciliation required (docs/operating.md#case-variant-history-recovery)\nconflicting case-variant queue histories have live state; operator reconciliation required (docs/operating.md#case-variant-history-recovery)"
+2026/10/20 19:20:31 WARN base validation failed; keeping previous state repository=Owner/Repo base=main error="conflicting case-variant queue histories: unique fence ownership required; operator reconciliation required (docs/operating.md#case-variant-history-recovery)"
+2026/10/20 19:20:31 WARN base validation failed; keeping previous state repository=owner/repo base=main error="conflicting case-variant queue histories: unique fence ownership required; operator reconciliation required (docs/operating.md#case-variant-history-recovery)"
+2026/10/20 19:20:31 WARN discovery failed; retaining previous observations error="owner/repo: base main registration: conflicting case-variant queue histories: unique fence ownership required; operator reconciliation required (docs/operating.md#case-variant-history-recovery): read actual fence: fence transport failure\nconflicting case-variant queue histories: unique fence ownership required; operator reconciliation required (docs/operating.md#case-variant-history-recovery)\nconflicting case-variant queue histories: unique fence ownership required; operator reconciliation required (docs/operating.md#case-variant-history-recovery)"
+2026/10/20 19:20:31 WARN base validation failed; keeping previous state repository=Owner/Repo base=main error="conflicting case-variant queue histories: unique fence ownership required; operator reconciliation required (docs/operating.md#case-variant-history-recovery)"
+2026/10/20 19:20:31 WARN base validation failed; keeping previous state repository=owner/repo base=main error="conflicting case-variant queue histories: unique fence ownership required; operator reconciliation required (docs/operating.md#case-variant-history-recovery)"
+2026/10/20 19:20:31 WARN discovery failed; retaining previous observations error="owner/repo: base main registration: conflicting case-variant queue histories: unique fence ownership required; operator reconciliation required (docs/operating.md#case-variant-history-recovery)\nconflicting case-variant queue histories: unique fence ownership required; operator reconciliation required (docs/operating.md#case-variant-history-recovery)\nconflicting case-variant queue histories: unique fence ownership required; operator reconciliation required (docs/operating.md#case-variant-history-recovery)"
+2026/10/20 19:20:37 INFO enqueued repository=owner/repo base=main pr=41 batch="" sha=dacf22da23947c731c58139e520bc353a0051382fb6aa12d9515c9ef846a214e reason=requested
+2026/10/20 19:20:37 INFO test ref built repository=owner/repo base=main pr=41 batch=b1 sha=e297d47638a97030f70989d050fc48a3d1fe903fe253d493603addd57ae0ee8c reason="" ref=openmerge/queue/main/b1
+2026/10/20 19:20:37 INFO landing started repository=owner/repo base=main pr=41 batch=b1 sha=e297d47638a97030f70989d050fc48a3d1fe903fe253d493603addd57ae0ee8c reason="" attempt=crashed
+2026/10/20 19:20:37 INFO queue block set repository=owner/repo base=main pr=0 batch="" sha=00cce3cdbf38f09a190512888362d51f18bc6b31655219159bcb9391d88d8aeb reason=operator source=operator detail="operator hold" revision=1
+2026/10/20 19:20:37 INFO queue paused repository=owner/repo base=main pr=0 batch=b1 sha=e297d47638a97030f70989d050fc48a3d1fe903fe253d493603addd57ae0ee8c reason=operator detail="operator hold"
+2026/10/20 19:20:37 INFO queue block set repository=owner/repo base=main pr=0 batch="" sha=00cce3cdbf38f09a190512888362d51f18bc6b31655219159bcb9391d88d8aeb reason=repository-removed source=repository-removed detail="Repository absent from successful installation listing" revision=1
+2026/10/20 19:20:37 INFO queue paused repository=owner/repo base=main pr=0 batch=b1 sha=e297d47638a97030f70989d050fc48a3d1fe903fe253d493603addd57ae0ee8c reason=repository-removed detail="Repository absent from successful installation listing"
+2026/10/20 19:20:37 INFO landed repository=owner/repo base=main pr=41 batch=b1 sha=e297d47638a97030f70989d050fc48a3d1fe903fe253d493603addd57ae0ee8c reason=""
+2026/10/20 19:20:37 INFO enqueued repository=owner/repo base=main pr=41 batch="" sha=dacf22da23947c731c58139e520bc353a0051382fb6aa12d9515c9ef846a214e reason=requested
+2026/10/20 19:20:37 INFO test ref built repository=owner/repo base=main pr=41 batch=b1 sha=e297d47638a97030f70989d050fc48a3d1fe903fe253d493603addd57ae0ee8c reason="" ref=openmerge/queue/main/b1
+2026/10/20 19:20:37 INFO landing started repository=owner/repo base=main pr=41 batch=b1 sha=e297d47638a97030f70989d050fc48a3d1fe903fe253d493603addd57ae0ee8c reason="" attempt=crashed
+2026/10/20 19:20:37 INFO queue block set repository=owner/repo base=main pr=0 batch="" sha=00cce3cdbf38f09a190512888362d51f18bc6b31655219159bcb9391d88d8aeb reason=operator source=operator detail="operator hold" revision=1
+2026/10/20 19:20:37 INFO queue paused repository=owner/repo base=main pr=0 batch=b1 sha=e297d47638a97030f70989d050fc48a3d1fe903fe253d493603addd57ae0ee8c reason=operator detail="operator hold"
+2026/10/20 19:20:37 INFO queue block set repository=owner/repo base=main pr=0 batch="" sha=00cce3cdbf38f09a190512888362d51f18bc6b31655219159bcb9391d88d8aeb reason=repository-removed source=repository-removed detail="Installation absent from successful App listing" revision=1
+2026/10/20 19:20:37 INFO queue paused repository=owner/repo base=main pr=0 batch=b1 sha=e297d47638a97030f70989d050fc48a3d1fe903fe253d493603addd57ae0ee8c reason=repository-removed detail="Installation absent from successful App listing"
+2026/10/20 19:20:37 INFO landed repository=owner/repo base=main pr=41 batch=b1 sha=e297d47638a97030f70989d050fc48a3d1fe903fe253d493603addd57ae0ee8c reason=""
+2026/10/20 19:20:37 INFO enqueued repository=owner/repo base=main pr=41 batch="" sha=dacf22da23947c731c58139e520bc353a0051382fb6aa12d9515c9ef846a214e reason=requested
+2026/10/20 19:20:37 INFO test ref built repository=owner/repo base=main pr=41 batch=b1 sha=e297d47638a97030f70989d050fc48a3d1fe903fe253d493603addd57ae0ee8c reason="" ref=openmerge/queue/main/b1
+2026/10/20 19:20:37 INFO landing started repository=owner/repo base=main pr=41 batch=b1 sha=e297d47638a97030f70989d050fc48a3d1fe903fe253d493603addd57ae0ee8c reason="" attempt=crashed
+2026/10/20 19:20:37 INFO queue block set repository=owner/repo base=main pr=0 batch="" sha=00cce3cdbf38f09a190512888362d51f18bc6b31655219159bcb9391d88d8aeb reason=operator source=operator detail="operator hold" revision=1
+2026/10/20 19:20:37 INFO queue paused repository=owner/repo base=main pr=0 batch=b1 sha=e297d47638a97030f70989d050fc48a3d1fe903fe253d493603addd57ae0ee8c reason=operator detail="operator hold"
+2026/10/20 19:20:37 INFO queue block set repository=owner/repo base=main pr=0 batch="" sha=00cce3cdbf38f09a190512888362d51f18bc6b31655219159bcb9391d88d8aeb reason=repository-removed source=repository-removed detail="Installation suspended" revision=1
+2026/10/20 19:20:37 INFO queue paused repository=owner/repo base=main pr=0 batch=b1 sha=e297d47638a97030f70989d050fc48a3d1fe903fe253d493603addd57ae0ee8c reason=repository-removed detail="Installation suspended"
+2026/10/20 19:20:37 INFO landed repository=owner/repo base=main pr=41 batch=b1 sha=e297d47638a97030f70989d050fc48a3d1fe903fe253d493603addd57ae0ee8c reason=""
+2026/10/20 19:20:37 INFO enqueued repository=owner/repo base=main pr=41 batch="" sha=dacf22da23947c731c58139e520bc353a0051382fb6aa12d9515c9ef846a214e reason=requested
+2026/10/20 19:20:37 INFO test ref built repository=owner/repo base=main pr=41 batch=b1 sha=e297d47638a97030f70989d050fc48a3d1fe903fe253d493603addd57ae0ee8c reason="" ref=openmerge/queue/main/b1
+2026/10/20 19:20:37 INFO landing started repository=owner/repo base=main pr=41 batch=b1 sha=e297d47638a97030f70989d050fc48a3d1fe903fe253d493603addd57ae0ee8c reason="" attempt=crashed
+2026/10/20 19:20:37 INFO queue block set repository=owner/repo base=main pr=0 batch="" sha=00cce3cdbf38f09a190512888362d51f18bc6b31655219159bcb9391d88d8aeb reason=operator source=operator detail="operator hold" revision=1
+2026/10/20 19:20:37 INFO queue paused repository=owner/repo base=main pr=0 batch=b1 sha=e297d47638a97030f70989d050fc48a3d1fe903fe253d493603addd57ae0ee8c reason=operator detail="operator hold"
+2026/10/20 19:20:37 INFO queue block set repository=owner/repo base=main pr=0 batch="" sha=00cce3cdbf38f09a190512888362d51f18bc6b31655219159bcb9391d88d8aeb reason=repository-removed source=repository-removed detail="Excluded by repository or installation allowlist" revision=1
+2026/10/20 19:20:37 INFO queue paused repository=owner/repo base=main pr=0 batch=b1 sha=e297d47638a97030f70989d050fc48a3d1fe903fe253d493603addd57ae0ee8c reason=repository-removed detail="Excluded by repository or installation allowlist"
+2026/10/20 19:20:37 INFO landed repository=owner/repo base=main pr=41 batch=b1 sha=e297d47638a97030f70989d050fc48a3d1fe903fe253d493603addd57ae0ee8c reason=""
+2026/10/20 19:20:37 INFO enqueued repository=owner/repo base=main pr=41 batch="" sha=dacf22da23947c731c58139e520bc353a0051382fb6aa12d9515c9ef846a214e reason=requested
+2026/10/20 19:20:37 INFO test ref built repository=owner/repo base=main pr=41 batch=b1 sha=e297d47638a97030f70989d050fc48a3d1fe903fe253d493603addd57ae0ee8c reason="" ref=openmerge/queue/main/b1
+2026/10/20 19:20:37 INFO landing started repository=owner/repo base=main pr=41 batch=b1 sha=e297d47638a97030f70989d050fc48a3d1fe903fe253d493603addd57ae0ee8c reason="" attempt=crashed
+2026/10/20 19:20:37 INFO queue block set repository=owner/repo base=main pr=0 batch="" sha=00cce3cdbf38f09a190512888362d51f18bc6b31655219159bcb9391d88d8aeb reason=operator source=operator detail="operator hold" revision=1
+2026/10/20 19:20:37 INFO queue paused repository=owner/repo base=main pr=0 batch=b1 sha=e297d47638a97030f70989d050fc48a3d1fe903fe253d493603addd57ae0ee8c reason=operator detail="operator hold"
+2026/10/20 19:20:37 INFO queue block set repository=owner/repo base=main pr=0 batch="" sha=00cce3cdbf38f09a190512888362d51f18bc6b31655219159bcb9391d88d8aeb reason=repository-removed source=repository-removed detail="No default-branch OpenMerge configuration" revision=1
+2026/10/20 19:20:37 INFO queue paused repository=owner/repo base=main pr=0 batch=b1 sha=e297d47638a97030f70989d050fc48a3d1fe903fe253d493603addd57ae0ee8c reason=repository-removed detail="No default-branch OpenMerge configuration"
+2026/10/20 19:20:37 INFO landed repository=owner/repo base=main pr=41 batch=b1 sha=e297d47638a97030f70989d050fc48a3d1fe903fe253d493603addd57ae0ee8c reason=""
+2026/10/20 19:20:37 WARN discovery failed; retaining previous observations error="page two failed"
+2026/10/20 19:20:37 WARN discovery failed; retaining previous observations error="installation 7 listing: page two failed"
+2026/10/20 19:20:37 WARN discovery failed; retaining previous observations error="owner/repo: default branch could not be read: metadata unavailable"
+2026/10/20 19:20:37 WARN discovery failed; retaining previous observations error="owner/repo: configuration could not be read: read .openmerge.yml: file unavailable"
+2026/10/20 19:20:37 WARN discovery failed; retaining previous observations error="owner/repo: branch listing could not be read: branches unavailable"
+2026/10/20 19:20:37 INFO landed repository=owner/repo base=main pr=41 batch=b1 sha=e297d47638a97030f70989d050fc48a3d1fe903fe253d493603addd57ae0ee8c reason=""
+--- FAIL: TestAuthorityStatusAndHealthDoNotWaitForWorker (0.26s)
+    health_test.go:64: /v1/queues/owner/repo/main blocked on worker lock
+2026/10/20 19:22:16 INFO configuration changed repository=local/composition base=main pr=0 batch="" sha="" reason="" commit=8556f57be1a0f7a8b5d37694a26f31fc67a7de4d digest=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+2026/10/20 19:22:16 WARN read operational events repository=local/composition base=main error="closed pool"
+FAIL
+FAIL	github.com/CanadaApollo6/openmerge/internal/serve	364.829s
+ok  	github.com/CanadaApollo6/openmerge/internal/sim	43.906s
+ok  	github.com/CanadaApollo6/openmerge/internal/sim/capacity	1.011s
+ok  	github.com/CanadaApollo6/openmerge/internal/status	11.484s
+ok  	github.com/CanadaApollo6/openmerge/internal/store	49.603s
+?   	github.com/CanadaApollo6/openmerge/schema	[no test files]
+ok  	github.com/CanadaApollo6/openmerge/scripts	1.072s
+ok  	github.com/CanadaApollo6/openmerge/tools/dogfood	1.591s
+FAIL
+make: *** [Makefile:10: test] Error 1

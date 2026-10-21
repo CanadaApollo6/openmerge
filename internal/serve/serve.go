@@ -46,6 +46,7 @@ type Target struct {
 
 // Options bounds API polling and concurrent queue execution.
 type Options struct {
+	Health              status.HealthSettings
 	PollInterval        time.Duration
 	BackstopInterval    time.Duration
 	WebhookHealthWindow time.Duration
@@ -69,6 +70,7 @@ type Options struct {
 // Server owns one serial reconciler/worker per target, with bounded concurrency.
 // Each process must have its own git cache directory.
 type Server struct {
+	startedAt           time.Time
 	store               *store.Store
 	webhooks            webhookObservations
 	options             Options
@@ -93,6 +95,9 @@ type Server struct {
 }
 
 type worker struct {
+	hasAuthorityPin atomic.Bool
+	health          atomic.Pointer[status.HealthQueue]
+	outsideWarnings atomic.Pointer[store.OutsideWarningSummary]
 	// Approval status uses an immutable policy snapshot while the worker is busy.
 	// Nil retains legacy reporting's locking behavior during the trial.
 	approvalStatus     atomic.Pointer[queue.Config]
@@ -167,6 +172,8 @@ func New(ctx context.Context, db *store.Store, targets []Target, options Options
 		if err := s.initializeFence(ctx, w); err != nil {
 			return nil, err
 		}
+		s.publishHealth(w, state, false, nil, time.Now())
+		s.initializeOutsideWarnings(ctx, w)
 		s.queues = append(s.queues, w)
 	}
 	return s, nil
@@ -192,15 +199,21 @@ func newServer(db *store.Store, options Options) (*Server, error) {
 		options.RulesInterval = 10 * time.Minute
 	}
 	if options.ActionTimeout == 0 {
-		options.ActionTimeout = 2 * time.Minute
+		options.ActionTimeout = DefaultActionTimeout
 	}
 	if options.BackstopInterval < 0 || options.WebhookHealthWindow < 0 || options.DiscoveryInterval < 0 || options.PollInterval < 0 || options.RulesInterval < 0 || options.Concurrency < 1 || options.ActionTimeout < 0 {
 		return nil, errors.New("intervals, health window, concurrency and action timeout must be positive")
 	}
+	if options.Health == (status.HealthSettings{}) {
+		options.Health = status.DefaultHealthSettings()
+	}
+	if err := ValidateHealthSettings(options.Health, options.ActionTimeout); err != nil {
+		return nil, err
+	}
 	if options.Logger == nil {
 		options.Logger = slog.Default()
 	}
-	return &Server{store: db, options: options, slots: make(chan struct{}, options.Concurrency), refresh: make(chan struct{}, 1)}, nil
+	return &Server{startedAt: time.Now(), store: db, options: options, slots: make(chan struct{}, options.Concurrency), refresh: make(chan struct{}, 1)}, nil
 }
 
 // Notify durably deduplicates a webhook and wakes only matching targets. An empty
@@ -329,6 +342,9 @@ func (s *Server) workers() []*worker {
 }
 
 func (s *Server) loop(ctx context.Context, w *worker) {
+	w.mu.Lock()
+	s.publishHealth(w, w.logState, false, nil, time.Now())
+	w.mu.Unlock()
 	delay := time.Duration(0)
 	failures := 0
 	var retryNotBefore time.Time
@@ -350,12 +366,14 @@ func (s *Server) loop(ctx context.Context, w *worker) {
 			case <-ctx.Done():
 				return
 			}
+			w.publishCycleStarted(time.Now())
 			err = s.cycle(ctx, w)
 			<-s.slots
 		}
 		if err == nil && w.recovery {
 			state, _, loadErr := s.store.Load(ctx, w.id)
-			if loadErr == nil && (state.Active == nil || state.Active.Phase != queue.Landing) {
+			if loadErr == nil && !hasLandingObligations(state) {
+				w.publishRecoveryFinished()
 				return
 			}
 		}
@@ -405,6 +423,7 @@ func (s *Server) loop(ctx context.Context, w *worker) {
 // and recompute deadlines. Unchanged checks never take an API slot or write state.
 func (s *Server) waitForCycle(ctx context.Context, w *worker, delay time.Duration, checkActivity bool, watermark int64) error {
 	deadline := time.Now().Add(delay)
+	w.publishDeadline(deadline)
 	for {
 		remaining := time.Until(deadline)
 		wait := remaining
@@ -417,6 +436,7 @@ func (s *Server) waitForCycle(ctx context.Context, w *worker, delay time.Duratio
 			timer.Stop()
 			return ctx.Err()
 		case <-w.wake:
+			w.publishDeadline(time.Now())
 			timer.Stop()
 			return nil
 		case <-timer.C:
@@ -431,6 +451,7 @@ func (s *Server) waitForCycle(ctx context.Context, w *worker, delay time.Duratio
 		if latest == watermark {
 			continue
 		}
+		w.publishDeadline(time.Now())
 		return nil
 	}
 }
@@ -468,8 +489,10 @@ func (w *worker) plannerConfig(interval time.Duration) queue.Config {
 }
 
 func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
+	ctx = forge.WithProgressHook(ctx, func() { w.publishProgress(time.Now()) })
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	reconciled := false
 	s.options.Logger.Debug("reconcile cycle started", "repository", w.Key.Repository, "base", w.Key.BaseBranch)
 	defer func() {
 		var rate interface{ RetryAfter() time.Time }
@@ -482,6 +505,8 @@ func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
 			w.validationNext = time.Now().Add(5 * time.Second)
 		}
 		s.logCommitted(ctx, w)
+		w.publishProgress(time.Now())
+		s.publishHealth(w, w.logState, reconciled && result == nil, result, time.Now())
 		s.options.Logger.Debug("reconcile cycle finished", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "error", result)
 	}()
 	current, _, err := s.store.Load(ctx, w.id)
@@ -501,6 +526,7 @@ func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
 	}
 	unsettled, err := s.settle(forge.WithRequestClass(ctx, forge.SettlementRequest), w)
 	if err != nil || unsettled {
+		reconciled = err == nil && unsettled
 		return err
 	}
 	state, _, err := s.store.Load(ctx, w.id)
@@ -602,6 +628,7 @@ func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
 			return err
 		}
 	}
+	reconciled = !w.managed || w.ready && state.LifecycleState() == "active"
 	return s.report(ctx, w)
 }
 

@@ -390,3 +390,20 @@ func TestStatusTimeoutDiagnostic(t *testing.T) {
 		}
 	}
 }
+
+func TestQueueAuthorityAndOutstandingWarnings(t *testing.T) {
+	now := time.Date(2026, 10, 20, 13, 0, 0, 0, time.UTC)
+	observed, verified := now.Add(-10*time.Minute), now.Add(-time.Hour)
+	a := &status.Authority{State: "unverified", LastObservedAt: &observed, LastVerifiedAt: &verified, Inventory: "read_failure", Elements: []status.AuthorityElement{{Element: "ruleset/bypass", Visibility: "hidden"}}}
+	a.RefreshAges(now)
+	var output bytes.Buffer
+	q := status.Queue{Repository: "owner/repo", Base: "main", Authority: a, OutsideWarnings: &status.OutsideWarnings{Outstanding: 30, EventIDs: []int64{42}, Truncated: true}}
+	if err := printStatus(&output, status.Response{Queue: &q}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"authority unverified", "last observed: 2026-10-20T12:50:00Z (age 10m0s)", "last verified: 2026-10-20T12:00:00Z (age 1h0m0s)", "ruleset/bypass: hidden", "outstanding outside-push warnings: 30", "[42]"} {
+		if !strings.Contains(output.String(), want) {
+			t.Fatalf("missing %q: %s", want, &output)
+		}
+	}
+}

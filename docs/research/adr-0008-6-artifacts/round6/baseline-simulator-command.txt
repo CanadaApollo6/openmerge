@@ -1,0 +1,1 @@
+flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/pr115-r6-validation/baseline-simulator/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/pr115-r6-validation/baseline-simulator/tmp make test-sim-exits

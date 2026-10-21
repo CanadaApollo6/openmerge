@@ -1,0 +1,27 @@
+{
+  "implementation": "f7653b958ddcddf624131f513235425359e6991e",
+  "baseline": "a4c4f4bcd1befa718908b3ad801150c34c049c7d",
+  "exports": {
+    "events": {
+      "path": "/home/riels/.cache/om-pr72-fix1-input/events.jsonl",
+      "sha256": "9c8f78f3e967c7cb030948cfc9871cc67a45da06f80b12f27d1c55d09ba8accf",
+      "rows": 2158,
+      "max_event_id": 2158
+    },
+    "queues": {
+      "path": "/home/riels/.cache/om-pr72-fix1-input/queues.jsonl",
+      "sha256": "418f025a0e3c8792321b6d71d297f17fff1adf48cb616c8f4fcb774163696886",
+      "rows": 1
+    }
+  },
+  "verdict": "FAIL",
+  "error": "strict-replay exit 2; see /home/riels/.cache/pr115-r6-validation/strict-replay",
+  "commands": [
+    {
+      "name": "strict-replay",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=6GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/pr115-r6-validation/strict-replay/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/pr115-r6-validation/strict-replay/tmp /home/riels/.local/share/mise/installs/python/latest/bin/python3 /home/riels/.t3/worktrees/openmerge/t3-6b9938ed/scripts/check-live-journal-replay.py --baseline /home/riels/.cache/pr115-r4-main-a4c4f4b --candidate /home/riels/.t3/worktrees/openmerge/t3-6b9938ed --events /home/riels/.cache/om-pr72-fix1-input/events.jsonl --queues /home/riels/.cache/om-pr72-fix1-input/queues.jsonl --strict-state --out /home/riels/.cache/pr115-r6-validation/replay.json",
+      "exit": 2,
+      "logs": "/home/riels/.cache/pr115-r6-validation/strict-replay"
+    }
+  ]
+}

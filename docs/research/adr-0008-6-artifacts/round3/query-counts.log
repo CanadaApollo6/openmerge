@@ -1,0 +1,9 @@
+=== RUN   TestJournalWarningQueryCountsAndIncrementalWatermark
+    outside_warning_cache_test.go:66: legacy 1024 events: total queries=4; extra ledger queries=0
+    outside_warning_cache_test.go:66: authority cold: total queries=4; extra ledger queries=0
+    outside_warning_cache_test.go:66: authority unchanged: total queries=4; extra ledger queries=0
+    outside_warning_cache_test.go:66: authority one new event: total queries=4; extra ledger queries=0
+    outside_warning_cache_test.go:116: background: unchanged=3 queries; 2 new audits=5 queries (2 indexed origin probes)
+--- PASS: TestJournalWarningQueryCountsAndIncrementalWatermark (0.09s)
+PASS
+ok  	github.com/CanadaApollo6/openmerge/internal/store	0.099s

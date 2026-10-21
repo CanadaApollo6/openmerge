@@ -1759,3 +1759,56 @@ The reader uses O(one page plus one pin) memory and O(queue history) work, plus
 indexed dedupe lookups. Consumers must discard partial output if it fails. ADR
 0008 PR 6 owns warning rendering in status, CLI, API, and health; this PR adds no
 such rendering, schema activation, migration, index, or runtime forge read.
+
+
+## Authority health alerts (ADR 0008 PR 6, HOLD)
+
+Use `/v1/live` for process restarts and authenticated `/v1/health` for alerts.
+Health uses a bounded read-only DB probe and process snapshots. A warning or
+unverified authority alone does not fail health. See [the complete API contract](api.md#authority-and-alerting-probes-adr-0008-pr-6-hold).
+
+While waiting, a queue is overdue after its published next-start deadline plus
+`--health-overdue-grace` / `OPENMERGE_HEALTH_OVERDUE_GRACE` (30s, range 1–60s).
+Immediate journal wakes publish a deadline of now, so slot starvation remains
+visible. Slot acquisition starts the cycle and seeds `last_progress_at`.
+Completed PR, comment, rules, check-source, identity, configuration and Git reads,
+observation writes, check-report writes, actions and turns advance progress.
+A unit publishes only after returning; journal traffic alone does not.
+
+During a cycle, overdue means missing start/progress telemetry or no progress for
+`--health-progress-stall-limit` / `OPENMERGE_HEALTH_PROGRESS_STALL_LIMIT` (4m,
+range 1s–30m, further constrained by the action budget). Startup rejects any limit
+below the action timeout + 30s Git cache maintenance + 10s completion write +
+configured overdue grace. The CLI and embedded servers enforce the same rule;
+embedded servers with longer action timeouts must explicitly extend the limit.
+Upgrade note: an explicitly configured `150s` stall limit now fails startup with
+standard action/grace settings. Remove that override to use `4m`, or configure a
+limit that covers the validated action, maintenance, completion and grace budget.
+
+GitHub progress advances after each successful HTTP response is fully consumed,
+including individual pagination pages and PR sub-reads. Failed HTTP responses,
+partial bodies and hung requests do not count. Read-unit progress requires
+success. A validated wire 304 served from cache counts once its cached body
+reaches EOF, including each revalidated pagination page; a 304 that cannot be
+served from cache publishes nothing. Cold-cache Git clone/fetch inside
+ReadRef and the one-time fence initialization push still have no intermediate
+progress notifications; this startup/first-cycle exposure can report overdue
+while that single Git operation runs beyond the stall limit.
+
+A 1h action timeout is incompatible with the 30m stall-limit ceiling. The default
+2m action timeout and 30s grace require 3m10s, leaving 50s margin under 4m. `--health-max-cycle-duration` / `OPENMERGE_HEALTH_MAX_CYCLE_DURATION`
+remains an absolute 3h backstop (range 2m–6h). A progressing cycle may run past
+15m or 60m while staying healthy. A hung action becomes overdue after the stall
+limit. Degraded means the later of last success and progress while in-cycle is
+older than `--health-max-success-age` / `OPENMERGE_HEALTH_MAX_SUCCESS_AGE` (15m,
+range 1–60m), using process queue start before either exists. Progress does not
+change `last_success_at`. Waiting queues still age from last success, so repeated
+failed cycles and backoff cannot hide degradation.
+
+Warning refresh never holds the cache lock during DB I/O. Contention or ledger
+anomalies label only that queue's warning section `ledger_unavailable`, retaining
+last complete counts. If a background refresh loses to an interrupted newer
+foreground fold, its last published counts carry `ledger_refreshing` until the
+newer fold or refresh completes. SQL NULL on an audit dedupe key is an orphan anomaly even
+if acknowledged. Pin removal clears health warnings; rollback keeps historical
+origin-time warning eligibility and refreshes acknowledgements as status does.

@@ -15,7 +15,7 @@ import (
 
 const warningPageSize = 256
 
-const warningPageSQL = `SELECT id, payload, COALESCE(dedupe_key, '') FROM events
+const warningPageSQL = `SELECT id, payload, dedupe_key FROM events
  WHERE queue_id=$1 AND id>$2 ORDER BY id LIMIT $3`
 
 // eventPage uses events_queue_watermark, retaining at most one bounded page.
@@ -28,11 +28,9 @@ func eventPage(ctx context.Context, tx pgx.Tx, q QueueID, after int64) ([]EventR
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (EventRecord, error) {
 		var r EventRecord
 		var raw []byte
-		var key string
-		if err := row.Scan(&r.ID, &raw, &key); err != nil {
+		if err := row.Scan(&r.ID, &raw, &r.DedupeKey); err != nil {
 			return r, err
 		}
-		r.DedupeKey = &key
 		r.Event, err = queue.DecodeEvent(raw)
 		return r, err
 	})
@@ -41,9 +39,8 @@ func eventPage(ctx context.Context, tx pgx.Tx, q QueueID, after int64) ([]EventR
 func dedupeEvent(ctx context.Context, tx pgx.Tx, q QueueID, key string) (EventRecord, error) {
 	var r EventRecord
 	var raw []byte
-	err := tx.QueryRow(ctx, `SELECT id, payload, dedupe_key FROM events WHERE queue_id=$1 AND dedupe_key=$2`, q, key).Scan(&r.ID, &raw, &key)
+	err := tx.QueryRow(ctx, `SELECT id, payload, dedupe_key FROM events WHERE queue_id=$1 AND dedupe_key=$2`, q, key).Scan(&r.ID, &raw, &r.DedupeKey)
 	if err == nil {
-		r.DedupeKey = &key
 		r.Event, err = queue.DecodeEvent(raw)
 	}
 	return r, err
@@ -76,58 +73,86 @@ func (s *Store) VisitOutsidePushWarnings(ctx context.Context, q QueueID, visit f
 		if !exists {
 			return fmt.Errorf("queue %d does not exist", q)
 		}
-		var policy queue.State
-		var after int64
-		for {
-			page, err := eventPage(ctx, tx, q, after)
-			if err != nil {
+		return visitOutsidePushWarnings(ctx, tx, q, visit)
+	})
+}
+
+// OutsideWarningIDLimit bounds IDs retained for status and health, independently
+// of the outstanding count and the ledger's journal page size.
+const OutsideWarningIDLimit = 20
+
+// OutsideWarningSummary has an unambiguous zero value: no outstanding warnings.
+// A failed refresh labels the last complete counts with Error, never partial data.
+type OutsideWarningSummary struct {
+	Outstanding int
+	EventIDs    []int64
+	Truncated   bool
+	Error       string
+}
+
+// ReadOutsidePushWarnings incrementally indexes the ledger. It retains only
+// policy boundaries and outstanding event/origin IDs, and never reads EventsAfter.
+func (s *Store) ReadOutsidePushWarnings(ctx context.Context, q QueueID) (OutsideWarningSummary, error) {
+	return s.cachedOutsidePushWarnings(ctx, q)
+}
+
+func visitOutsidePushWarnings(ctx context.Context, tx pgx.Tx, q QueueID, visit func(OutsidePushWarning) error) error {
+	var policy queue.State
+	var after int64
+	for {
+		page, err := eventPage(ctx, tx, q, after)
+		if err != nil {
+			return err
+		}
+		for _, r := range page {
+			after = r.ID
+			if err := validateOutsidePushAssociation(r, func(id int64) (EventRecord, error) {
+				return outsideWarningEvent(ctx, tx, q, id)
+			}); err != nil {
 				return err
 			}
-			for _, r := range page {
-				after = r.ID
-				switch e := r.Event.(type) {
-				case queue.ConfigApplied, queue.PolicyAuthorityApplied:
-					// Use the same pin acceptance rules as replay, without building unrelated
-					// queue projections or retaining all pending BaseMoved associations.
-					policy = queue.Apply(policy, e)
-				case queue.OutsidePushRecorded:
-					// Validate every audit independently of origin-mode warnings, before
-					// consulting acknowledgements. Orphans remain anomalies even if acked.
-					if err := validateOutsidePushOrigin(ctx, tx, q, r, e); err != nil {
+			switch e := r.Event.(type) {
+			case queue.ConfigApplied, queue.PolicyAuthorityApplied:
+				// Use the same pin acceptance rules as replay, without building unrelated
+				// queue projections or retaining all pending BaseMoved associations.
+				policy = queue.Apply(policy, e)
+			case queue.OutsidePushRecorded:
+				if _, err := validateOutsidePushOrigin(r, e, func(id int64) (EventRecord, error) {
+					return outsideWarningEvent(ctx, tx, q, id)
+				}); err != nil {
+					return err
+				}
+			case queue.BaseMoved:
+				pin := policy.AuthorityPin()
+				if pin == nil || pin.Authority != authority.OpenMerge {
+					continue
+				}
+				audit, err := dedupeEvent(ctx, tx, q, fmt.Sprintf("outside-base/%d", r.ID))
+				if errors.Is(err, pgx.ErrNoRows) {
+					continue
+				} // audit still awaiting settlement/enrichment
+				if err != nil {
+					return err
+				}
+				push, ok := audit.Event.(queue.OutsidePushRecorded)
+				if !ok || audit.ID <= r.ID || push.NewSHA != e.SHA {
+					return fmt.Errorf("outside push ledger anomaly: invalid outside push association for base event %d", r.ID)
+				}
+				receipt, err := acknowledgement(ctx, tx, q, audit.ID, push.NewSHA)
+				if err != nil {
+					return err
+				}
+				if receipt == nil {
+					if err := visit(OutsidePushWarning{EventID: audit.ID, BaseMovedEventID: r.ID, OutsidePushRecorded: push}); err != nil {
 						return err
-					}
-				case queue.BaseMoved:
-					pin := policy.AuthorityPin()
-					if pin == nil || pin.Authority != authority.OpenMerge {
-						continue
-					}
-					audit, err := dedupeEvent(ctx, tx, q, fmt.Sprintf("outside-base/%d", r.ID))
-					if errors.Is(err, pgx.ErrNoRows) {
-						continue
-					} // audit still awaiting settlement/enrichment
-					if err != nil {
-						return err
-					}
-					push, ok := audit.Event.(queue.OutsidePushRecorded)
-					if !ok || audit.ID <= r.ID || push.NewSHA != e.SHA {
-						return fmt.Errorf("outside push ledger anomaly: invalid outside push association for base event %d", r.ID)
-					}
-					receipt, err := acknowledgement(ctx, tx, q, audit.ID, push.NewSHA)
-					if err != nil {
-						return err
-					}
-					if receipt == nil {
-						if err := visit(OutsidePushWarning{EventID: audit.ID, BaseMovedEventID: r.ID, OutsidePushRecorded: push}); err != nil {
-							return err
-						}
 					}
 				}
 			}
-			if len(page) < warningPageSize {
-				return ctx.Err()
-			}
 		}
-	})
+		if len(page) < warningPageSize {
+			return ctx.Err()
+		}
+	}
 }
 
 // OutsidePushAcknowledgement is the original immutable receipt, including its
@@ -151,7 +176,7 @@ func acknowledgement(ctx context.Context, tx pgx.Tx, q QueueID, source int64, sh
 	}
 	ack, ok := r.Event.(queue.OutsidePushAcknowledged)
 	if !ok || ack.SourceEventID != source || ack.SHA != sha || r.ID <= source {
-		return nil, errors.New("invalid outside push acknowledgement association")
+		return nil, errors.New("outside push ledger anomaly: invalid outside push acknowledgement association")
 	}
 	return &OutsidePushAcknowledgement{EventID: r.ID, OutsidePushAcknowledged: ack}, nil
 }
@@ -204,8 +229,22 @@ func (s *Store) AcknowledgeOutsidePush(ctx context.Context, q QueueID, source in
 	return receipt, nil
 }
 
-// validateOutsidePushOrigin uses the primary key, retaining bounded scan memory.
-func validateOutsidePushOrigin(ctx context.Context, tx pgx.Tx, q QueueID, r EventRecord, push queue.OutsidePushRecorded) error {
+// warningLookup supplies the same immutable origin from a DB snapshot or journal.
+type warningLookup func(int64) (EventRecord, error)
+
+func outsideWarningEvent(ctx context.Context, tx pgx.Tx, q QueueID, id int64) (EventRecord, error) {
+	var r EventRecord
+	var raw []byte
+	err := tx.QueryRow(ctx, `SELECT id,payload,dedupe_key FROM events WHERE queue_id=$1 AND id=$2`, q, id).Scan(&r.ID, &raw, &r.DedupeKey)
+	if err == nil {
+		r.Event, err = queue.DecodeEvent(raw)
+	}
+	return r, err
+}
+
+// validateOutsidePushOrigin is shared by scan and incremental cache folds.
+// NULL and empty keys both mean orphan audit, even if it was acknowledged.
+func validateOutsidePushOrigin(r EventRecord, push queue.OutsidePushRecorded, lookup warningLookup) (int64, error) {
 	key := ""
 	if r.DedupeKey != nil {
 		key = *r.DedupeKey
@@ -213,23 +252,51 @@ func validateOutsidePushOrigin(ctx context.Context, tx pgx.Tx, q QueueID, r Even
 	source, err := strconv.ParseInt(strings.TrimPrefix(key, "outside-base/"), 10, 64)
 	anomaly := fmt.Errorf("outside push ledger anomaly: orphan outside_push_recorded event %d (dedupe key %q)", r.ID, key)
 	if err != nil || source <= 0 || source >= r.ID || key != fmt.Sprintf("outside-base/%d", source) {
-		return anomaly
+		return 0, anomaly
 	}
-	var raw []byte
-	err = tx.QueryRow(ctx, `SELECT payload FROM events WHERE queue_id=$1 AND id=$2`, q, source).Scan(&raw)
+	origin, err := lookup(source)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return anomaly
+		return 0, anomaly
 	}
 	if err != nil {
-		return err
+		return 0, err
 	}
-	event, err := queue.DecodeEvent(raw)
-	if err != nil {
-		return err
-	}
-	base, ok := event.(queue.BaseMoved)
+	base, ok := origin.Event.(queue.BaseMoved)
 	if !ok || base.SHA != push.NewSHA {
-		return anomaly
+		return 0, anomaly
+	}
+	return source, nil
+}
+
+// Validate reserved association keys in every authority mode, including rows that
+// do not contribute a warning. Scan and incremental folds must fail identically.
+func validateOutsidePushAssociation(r EventRecord, lookup warningLookup) error {
+	key := ""
+	if r.DedupeKey != nil {
+		key = *r.DedupeKey
+	}
+	if strings.HasPrefix(key, "outside-base/") {
+		if _, ok := r.Event.(queue.OutsidePushRecorded); !ok {
+			return fmt.Errorf("outside push ledger anomaly: invalid association at event %d", r.ID)
+		}
+	}
+	if strings.HasPrefix(key, "outside-push-acknowledged/") {
+		if _, ok := r.Event.(queue.OutsidePushAcknowledged); !ok {
+			return fmt.Errorf("outside push ledger anomaly: invalid acknowledgement association at event %d", r.ID)
+		}
+	}
+	if ack, ok := r.Event.(queue.OutsidePushAcknowledged); ok {
+		if key != acknowledgementKey(ack.SourceEventID) || r.ID <= ack.SourceEventID {
+			return errors.New("outside push ledger anomaly: invalid acknowledgement association")
+		}
+		original, err := lookup(ack.SourceEventID)
+		if err != nil {
+			return err
+		}
+		push, ok := original.Event.(queue.OutsidePushRecorded)
+		if !ok || push.NewSHA != ack.SHA {
+			return errors.New("outside push ledger anomaly: invalid acknowledgement association")
+		}
 	}
 	return nil
 }

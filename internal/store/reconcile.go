@@ -78,8 +78,8 @@ func (s *Store) TakeNotification(ctx context.Context, q QueueID) (bool, error) {
 type EventRecord struct {
 	ID    int64
 	Event queue.Event
-	// DedupeKey is nil when not loaded (EventsAfter), or points to an empty
-	// string when loaded without an association. Ledger pages always load it.
+	// DedupeKey preserves SQL NULL. EventsAfter does not load this field;
+	// journal and ledger readers load it. NULL/empty audit keys are orphans.
 	DedupeKey *string
 }
 

@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/forge"
+
 	gh "github.com/google/go-github/v93/github"
 )
 
@@ -187,7 +189,42 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		t.strikes = 0
 		t.mu.Unlock()
 	}
+	// This deliberately runs after cache revalidation: a validated wire 304
+	// served as a cached 200 is a successful round trip and earns progress at EOF.
+	if res.StatusCode >= 200 && res.StatusCode < 300 {
+		if res.Body == nil || res.Body == http.NoBody {
+			res.Body = http.NoBody
+			forge.NotifyProgress(req.Context())
+		} else {
+			res.Body = &progressBody{ReadCloser: res.Body, ctx: req.Context()}
+		}
+	}
 	return res, nil
+}
+
+// EOF, rather than headers or Close, proves that the entire response arrived.
+// An early Close or any read error must never turn a hung/failed page into progress.
+type progressBody struct {
+	io.ReadCloser
+	ctx      context.Context
+	finished sync.Once
+}
+
+func (b *progressBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err != nil {
+		b.finished.Do(func() {
+			if err == io.EOF {
+				forge.NotifyProgress(b.ctx)
+			}
+		})
+	}
+	return n, err
+}
+
+func (b *progressBody) Close() error {
+	b.finished.Do(func() {})
+	return b.ReadCloser.Close()
 }
 
 type prefixBody struct {

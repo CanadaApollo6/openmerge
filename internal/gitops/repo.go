@@ -24,6 +24,9 @@ import (
 // must remain valid for that push.
 type Remote func(context.Context, forge.RepoRef) (url string, auth Auth, err error)
 
+// MaintenanceTimeout bounds cache maintenance after an operation's context ends.
+const MaintenanceTimeout = 30 * time.Second
+
 // Identity names an author or committer of a git commit.
 type Identity struct{ Name, Email string }
 
@@ -177,7 +180,7 @@ func (r *Repo) openSession(ctx context.Context, repo forge.RepoRef, diffRead boo
 	return s, func() {
 		defer mu.Unlock()
 		// All commands, including push, have completed before maintenance runs.
-		maintenanceCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		maintenanceCtx, cancel := context.WithTimeout(context.Background(), MaintenanceTimeout)
 		defer cancel()
 		_ = s.maintainCache(maintenanceCtx)
 	}, nil
