@@ -95,35 +95,51 @@ export were used. No live DB/status API, service units, live OpenMerge refs,
 application GitHub API or Smart-Data-Ohio organization was accessed. Git push and
 PR creation are the explicitly requested publication operations.
 
-## Round 2 corrections
+## Round 2 corrections and verification
 
-Persistence Load and Append each have a `completionWriteTimeout` derived from the
-worker parent. The append timer starts after forge I/O so the read cannot consume
-its write budget. Shutdown still cancels both. Joined append failures retain read
-classification for retry but remain errors: no durable block is claimed when the
-queue lock prevents its write. The action completion row is returned to `planned`,
-the in-memory authority cadence backs off, and no decision/check/start is recorded.
+Verified implementation: `9a2055716c5ea98468badaf5fafaf0b07ba9f19d` against the
+same `051798c` baseline. The subsequent receipt commit changes only this evidence
+and artifacts. Hold, public rejection, production opt-out and A2 remain intact.
 
-`TestAuthorityAdmissionWorkerTimeout` drives actual `execute` through ordinary
-expiry and parent cancellation; `TestAuthorityAdmissionWorkerLockedAppend` holds
-the queue advisory lock in a competing transaction. The real lock case uses wall time and a watchdog because real socket
-I/O prevents synctest clock advancement; the other cases use `testSynctest` with
-fixtures inside its bubble. `TestAuthorityMissingReaderAndLogsAreClassified`
-checks missing-reader persistence and token-bearing URL redaction in logs.
+- `write_restriction.go:31,89` bounds each Load/Append by
+  `completionWriteTimeout` from the worker parent; the append timer starts after
+  forge I/O. Joined persistence errors retain read classification for retry
+  (`authority_admission.go:34`) while remaining errors. If the queue lock prevents
+  persistence, no block is claimed: the journal is unchanged, the action returns
+  to `planned`, in-memory authority backoff is scheduled and no landing starts.
+- `TestAuthorityAdmissionWorkerTimeout` covers action expiry and parent
+  cancellation with `testSynctest` fixtures inside its bubble.
+  `TestAuthorityAdmissionWorkerLockedAppend` holds the real queue advisory lock
+  until `execute` returns, within action timeout + completion-write timeout.
+  It uses wall time because socket I/O prevents synctest clock advancement.
+  Removing the append deadline fails at its 12-second watchdog (expected exit 1).
+- The read still inherits the remaining action budget: a late-starting read can
+  time out with a healthy forge. A fresh parent-derived ActionTimeout would
+  extend the action by another full budget. The code/PR/evidence now state this
+  limit and justify fail-closed block/backoff without claiming independence.
+- Missing readers use the classified unavailable path; logs contain a sanitized
+  cause, never transport text. `TestAuthorityMissingReaderAndLogsAreClassified`
+  checks both missing-reader persistence and token-bearing URL redaction.
+- The plan assigns every remaining 9c row/carry-over to one of 2a/2b/2c/2d,
+  public removal exclusively to 9c-3, and the owner-run organization gate only to
+  PR 11 outside every slice. 9c-3 must test consultation of the completion API
+  and verify/drain refusal. Operating prose is fixed. The driver accepts
+  toolchain/lock/export paths; credentials come from the environment, checked
+  for localhost:54329 without a password literal. Historical artifact paths and
+  the unchanged inherited PR 1 helper's Go cache path are machine-local receipts.
 
-The read retains the action deadline. Giving it a fresh parent-derived ActionTimeout
-would extend an almost-expired action by a full action budget and undermine the
-health bound. A timeout means budget exhaustion, not proof the forge was unhealthy;
-the fail-closed block/backoff is intentional. The code and this evidence now state
-that limit instead of claiming an independent production read budget.
+Final clean-tree driver: **PASS**. `make check` **0** (zero lint issues, complete
+short race suite, build); focused authority/barrier race checks **0**.
+Strict replay **2,159/2,159 identical**, **8,676** matching probes, gates 2/4 and
+all 22 self-tests pass, no differing fields. Simulator **146/146 byte-identical**,
+both exits 0; contracts **90/90 byte-identical**; GitHub projections and CLI
+bytes **identical**; existing wire fixtures **104/104 unchanged**. No random serve
+schema remains; the 94 pre-existing namespaces are unchanged. Two scratch
+schemas from interrupted test-clock experiments were removed. Initial lint and
+fixture-ownership failures were fixed before the passing full run.
 
-The plan gives each remaining 9c row/carry-over exactly one owner among 2a/2b/2c/2d,
-keeps public removal exclusively in 9c-3, and assigns the owner-run organization
-release gate exclusively to PR 11 outside the slices. 9c-3 must test consultation
-of the completion API and verify/drain refusal, not merely their presence.
-
-The driver accepts toolchain, lock and frozen-export paths; credentials come only
-from `OPENMERGE_TEST_DATABASE_URL`, validated as localhost:54329 without a password
-literal or password comparison. Earlier artifact paths are machine-local historical
-receipts. Its inherited PR 1 helper still uses this machine's Go build cache path;
-that helper is unchanged. No credential is published by the driver.
+[Round-2 summary](adr-0008-9c-1-artifacts/round2-summary.json),
+[additional checks](adr-0008-9c-1-artifacts/round2-additional-checks.json) and
+[manifest](adr-0008-9c-1-artifacts/round2-manifest.json) retain compact receipts.
+Raw logs/replay streams: `$HOME/.cache/adr0008-9c-verification-round2-final`;
+mutation log: `$HOME/.cache/adr9c-r2-mutation-final/result.log`.

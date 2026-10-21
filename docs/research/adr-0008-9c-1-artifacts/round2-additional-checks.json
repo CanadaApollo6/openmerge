@@ -1,0 +1,35 @@
+{
+  "implementation": "9a2055716c5ea98468badaf5fafaf0b07ba9f19d",
+  "focused_regressions": {
+    "exit": 0,
+    "log": "/home/riels/.cache/adr9c-r2-regressions-final.log"
+  },
+  "append_deadline_mutation": {
+    "exit": 1,
+    "expected": true,
+    "failure": "unbounded admission persistence at 12-second watchdog"
+  },
+  "plan_ownership": {
+    "rows": 16,
+    "single_owner_each": true,
+    "PR_11_outside_every_slice": true
+  },
+  "development_attempts": [
+    "Stopped real-socket contention inside synctest; separated wall-time lock regression, removed its two scratch schemas.",
+    "Fixed local copy identifier rejected by revive.",
+    "Replaced callback indirection rejected by TestSynctestFixtureOwnership with explicit in-bubble calls."
+  ],
+  "schema_cleanup": {
+    "interrupted_test_schemas_removed": 2,
+    "random_serve_schemas_remaining": 0,
+    "preexisting_serve_schemas_unchanged": 94
+  },
+  "source_sha256": {
+    "internal/serve/write_restriction.go": "4fd3869c396e49b291e586f066c3276571bf5c02d8d79b62382e25842492ebdf",
+    "internal/serve/authority_admission.go": "5361e9c10231f3e5dd2b1b53f29bc9f94e0a8eb0207e468b19e0ba71b9452871",
+    "internal/serve/authority_admission_test.go": "55d4ecc8b468e4225cff16ade7d7ca0c8d796ac97c9dab0671c9bad08ad73c59",
+    "internal/serve/write_restriction_worker_test.go": "6d43d0ea7b0468bc52e9836c6084c2a60b52d0d1caba1754f812b8f481abfc27",
+    "docs/research/adr-0008-9-plan.md": "e6ba285df3d086b50be4a119f70b16052300ba5bbc66ce0686c724e56eaaa78e",
+    "scripts/verify-adr0008-9c-1.py": "d3f83ce6f90b75d8400db71d49e00b26339de4cfbef354411dc551ee0266dcdc"
+  }
+}

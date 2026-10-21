@@ -1,0 +1,5 @@
+--- FAIL: TestAuthorityAdmissionWorkerLockedAppend (12.10s)
+    authority_admission_test.go:199: unbounded admission persistence: elapsed=12.012854841s
+FAIL
+FAIL	github.com/CanadaApollo6/openmerge/internal/serve	12.101s
+FAIL
