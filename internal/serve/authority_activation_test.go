@@ -51,7 +51,7 @@ func TestAuthorityActivationReceiptBeforeIO(t *testing.T) {
 			s, w, _, _ := fixture(t, repositoryConfig)
 			w.AuthorityRequired = true
 			r := activationReceipt(t, s.store)
-			request := authorityActivation{Receipt: r, ReceiptMaxAge: time.Hour}
+			request := authorityActivation{Receipt: r, ReceiptMaxAge: time.Hour, DraftID: 1}
 			switch name {
 			case "no-opt-in":
 				w.AuthorityRequired = false
@@ -175,7 +175,7 @@ func TestAuthorityActivationReceiptExpiresDuringSeeingRead(t *testing.T) {
 		r := activationReceipt(t, s.store)
 		_, before, err := s.store.Load(t.Context(), w.id)
 		must(t, err)
-		request := authorityActivation{Receipt: r, ReceiptMaxAge: time.Hour, Read: func(context.Context) (authority.Observation, error) {
+		request := authorityActivation{Receipt: r, ReceiptMaxAge: time.Hour, DraftID: 1, Read: func(context.Context) (authority.Observation, error) {
 			time.Sleep(2 * time.Hour)
 			return authority.Observation{}, nil
 		}}

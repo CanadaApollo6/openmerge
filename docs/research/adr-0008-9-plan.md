@@ -169,6 +169,8 @@ contracts without transferring their ownership.
 
 | Review carry-over | Slice and required proof |
 | --- | --- |
+| #130: unchanged unadopted cycles and draftless same-binding rebind reads | 9b-ii-2c: lifecycle skips seeing reads without a draft; once-per-reconciliation observations include unadopted pins; read-count and failed-reader rebind tests |
+| #130: VerificationInput drift when ExpectedRefs changes without a binding change | 9c: bind/refreeze interpretation inputs and invalidate stale adoption before the complete push gate can activate; 2c does not change persisted adoption input |
 | #106(a): empty OldSHA full-history inventory and cumulative paths | 9c: bound introduced history against build base; independent per-commit path budgets; large real-repo first build/cleaned ref regression |
 | #106(b): pin writer called on every executor op / cleanup no-op | 9b-i: idempotent pin before journal scans/writes; repeated no-op operations produce no extra pin events |
 | #106(c): startup configTip unset with pin present/hooks absent | 9c: defer creation instead of failing construction; existing fence read-first no-op remains valid |

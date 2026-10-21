@@ -1,0 +1,21 @@
+{
+  "docs/research/adr-0008-9-plan.md": "6303a7138c1232d7ecf9de860a2f26131c4699dad8f54499be9e7da8c0fb9b09",
+  "docs/research/adr-0008-9b-ii-2b-evidence.md": "184aec9e1cd7d65fc31ac962f2350e9bfa7bc622caf436c88695d9a1d43148e5",
+  "internal/serve/authority_activation.go": "ca8600014c614fabfd37af7515fa3d57d626fafa167a5c0e905075f7c328abbe",
+  "internal/serve/authority_activation_test.go": "177b36709d1bf066c505a199a60bd543ed1c78c393a711fc67a9c13ec1e84023",
+  "internal/serve/authority_barrier_test.go": "e43c4cffa64d2f6eb11db67b80823afc65c0777eb1f2638fef3912d0e64e2f1b",
+  "internal/serve/authority_github_compatibility_test.go": "7f381db3ee6a9425cd3660e1b6dfba9c9697dd49aa85a60132e169ed1dae2f33",
+  "internal/serve/authority_lifecycle_test.go": "ad07d9e494f249401c9cb403ec769b15ca13c3befec9b853ea8cfe311101d4bc",
+  "internal/serve/authority_worker_test.go": "86d7e5d53aa8a0bb91f4ebb586e2ba09f1e486458e24bf66b469f4173bbf5bc5",
+  "internal/serve/reconcile.go": "dba3ee148e5127abde36477e3aea5a8d6681ff009257b13c9b38360f7aaf878b",
+  "internal/serve/serve.go": "359c5446e1770b7bacac824338d03b7a043c4700a82ed807c93a8db25ec3f4b2",
+  "internal/serve/stage_a.go": "5d28b9500518ee2b76459856c1bd516e942fe4b579e43659d846df66c06e57bb",
+  "internal/serve/status_brief_test.go": "cf42762f0de918be1cb893e6127a11da7539ccbb0f5fe1114fd451cf2578b7c2",
+  "internal/serve/status_ledger.go": "247972ec065e6f59942f6e33a4998678796fa4784cf194c17f232399ff5477b6",
+  "internal/serve/write_restriction.go": "470a64737743559193cb3bd3508d67178b8d41fa89384629373c066d6de52e42",
+  "internal/status/brief_policy.go": "4e83dd0fc8d085e58e9f84df0f36e685746094b2e2f3f3cd4cb3efa0995b44d4",
+  "internal/status/check.go": "a0c066ee5bcb5b5a7773e36576c4cdc624e2daaa0faebdeb9eae134548a48c71",
+  "internal/status/status.go": "7458cbc5c0f9cde7e460d0c1a8a8ee927673df22cfb60367eba6e38088edf81d",
+  "internal/store/store.go": "c539d4db42c978da90f4dd55ca31d0c200c0f6d428be8b4f4305f03ef0416ea9",
+  "scripts/verify-adr0008-9b-ii-2c.py": "3c241b949b6aeaa694ed57bcc932910d390634ba7f826fd288fac7b5cc6c7cff"
+}

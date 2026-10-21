@@ -46,3 +46,26 @@ func ObserveWriteRestriction(ctx context.Context, db *store.Store, q store.Queue
 	id, appendErr := db.Append(ctx, q, []queue.Event{queue.WriteRestrictionObserved{Binding: in.Binding, Basis: basis, ObservedAt: time.Now().UTC(), Evidence: evidence}}, "")
 	return id, errors.Join(readErr, appendErr)
 }
+
+// authorityObservationReader adapts the private lifecycle acquisition seam to
+// the shared interpreter/fold. It cannot be installed by persisted evidence.
+type authorityObservationReader func(context.Context) (authority.Observation, error)
+
+func (read authorityObservationReader) ObserveWriteRestriction(ctx context.Context, _ forge.WriteRestrictionInput) (authority.Observation, error) {
+	return read(ctx)
+}
+
+// observeWorkerAuthority runs once per reconciliation, including the first
+// cycle and unadopted pins. Status requests never trigger acquisition. Rollback
+// disables new reads without changing warning history or unrelated sources.
+func (s *Server) observeWorkerAuthority(ctx context.Context, w *worker) error {
+	if !w.AuthorityRequired || w.resolveAuthorityLifecycle == nil || w.configError != nil || w.configCandidate.Authority.Mode != authority.OpenMerge {
+		return nil
+	}
+	request := w.authorityObservation
+	if request == nil || request.Read == nil {
+		return errors.New("authority observation reader unavailable")
+	}
+	_, err := ObserveWriteRestriction(ctx, s.store, w.id, authorityObservationReader(request.Read), request.Input)
+	return err
+}

@@ -43,7 +43,7 @@ func RefreshQueueInstructions(summary string, q *Queue) string {
 // ReviewerCheckSummary is appended to the single existing check only for an
 // opted-in queue. Legacy output is byte-for-byte unchanged. No forge reads occur.
 func ReviewerCheckSummary(j store.Journal, pr int, policy cp.Policy) (string, error) {
-	if policy.Approvals == nil {
+	if !policy.Enabled() {
 		return "", nil
 	}
 	q, _, _ := Project(j, 0, 0, nil)
@@ -52,7 +52,7 @@ func ReviewerCheckSummary(j store.Journal, pr int, policy cp.Policy) (string, er
 
 // ReviewerCheckSummaryFromProjection reuses the ledger snapshot for a check write.
 func ReviewerCheckSummaryFromProjection(j store.Journal, q *Queue, pr int, policy cp.Policy, warn func(error)) (string, error) {
-	if policy.Approvals == nil {
+	if !policy.Enabled() {
 		return "", nil
 	}
 	id, err := j.Key.ChangeID(pr)

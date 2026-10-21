@@ -171,7 +171,19 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 		if e, ok := record.Event.(queue.ConfigApplied); ok && e.Commit == after.ConfigCommit && e.Digest == after.ConfigDigest {
 			configPin = e
 		}
-		if e, ok := record.Event.(queue.ChangeClassified); ok && configPin.Commit == after.ConfigCommit && configPin.Digest == after.ConfigDigest {
+		// Same-digest authority rebinds retain the legacy ConfigCommit in the
+		// fold. Their adjacent pair still supplies the actual governing tree
+		// used by subsequent classifications and historical brief rendering.
+		if pin, ok := record.Event.(queue.PolicyAuthorityApplied); ok && pin.OpenMerge != nil {
+			if applied, ok := previous.(queue.ConfigApplied); ok && applied.Commit == pin.GoverningCommit && applied.Digest == after.ConfigDigest && after.AuthorityPin() != nil && after.AuthorityPin().GoverningCommit == pin.GoverningCommit {
+				configPin = applied
+			}
+		}
+		governingConfig := configPin.Commit == after.ConfigCommit
+		if pin := after.AuthorityPin(); pin != nil && pin.OpenMerge != nil && pin.GoverningCommit == configPin.Commit {
+			governingConfig = true
+		}
+		if e, ok := record.Event.(queue.ChangeClassified); ok && governingConfig && configPin.Digest == after.ConfigDigest {
 			policyPins = append(policyPins, briefPolicyPin{e.Evidence, configPin})
 		}
 		pinBriefEligibility(eligibilityPins, record.Event, before, after)

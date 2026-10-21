@@ -379,12 +379,12 @@ func (s *Store) Emit(ctx context.Context, claim ClaimedAction, cfg queue.Config)
 }
 
 // EmitWithPolicy binds the current approval policy as well as the action claim.
-// Approval-enabled callers must use StartLanding for starts; result/settlement
-// emissions remain available. A nil approval policy is legacy-start-only,
+// Enabled policies must use StartLanding for starts; result/settlement
+// emissions remain available. A disabled policy is legacy-start-only,
 // irrespective of any historical approval facts in the journal.
 func (s *Store) EmitWithPolicy(ctx context.Context, claim ClaimedAction, cfg queue.Config, policy cp.Policy) func(queue.Event) error {
 	return func(e queue.Event) error {
-		_, err := s.append(ctx, claim.QueueID, []queue.Event{e}, "", &emission{claim: claim, cfg: cfg, approvalsRequired: policy.Approvals != nil}, nil)
+		_, err := s.append(ctx, claim.QueueID, []queue.Event{e}, "", &emission{claim: claim, cfg: cfg, approvalsRequired: policy.Enabled()}, nil)
 		return err
 	}
 }

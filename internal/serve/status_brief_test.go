@@ -14,11 +14,12 @@ import (
 )
 
 type localPolicyGit struct {
-	forge.Git // Every ordinary Git operation is deliberately unavailable.
-	data      []byte
-	commit    string
-	calls     int
-	governing forge.GoverningFiles
+	forge.Git         // Every ordinary Git operation is deliberately unavailable.
+	data              []byte
+	commit            string
+	calls             int
+	governing         forge.GoverningFiles
+	governingByCommit map[string]forge.GoverningFiles
 }
 
 func (g *localPolicyGit) LocalConfig(_ context.Context, _ forge.RepoRef, commit string) ([]byte, error) {
@@ -78,6 +79,9 @@ func TestR4BriefPolicyDefaultBranch(t *testing.T) {
 
 func (g *localPolicyGit) LocalGoverningFiles(_ context.Context, _ forge.RepoRef, commit string) (forge.GoverningFiles, error) {
 	g.commit = commit
+	if g.governingByCommit != nil {
+		return g.governingByCommit[commit], nil
+	}
 	return g.governing, nil
 }
 

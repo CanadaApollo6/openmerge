@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 
+	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/brief"
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
 	"github.com/CanadaApollo6/openmerge/internal/classification"
@@ -23,6 +24,7 @@ type BriefPolicyRequest struct {
 	Evidence  classification.Evidence
 	Facts     queue.ApprovalFacts
 	Governing *forge.GoverningFiles
+	Authority *queue.PolicyAuthorityApplied
 }
 
 type briefPolicySource interface {
@@ -70,7 +72,7 @@ func briefPolicyProjection(ctx context.Context, source Source, j store.Journal, 
 		if !pinKnown || pin.Commit == "" || pin.Digest == "" {
 			return unavailable()
 		}
-		policy, err := provider.BriefPolicy(ctx, j.Key, BriefPolicyRequest{Config: pin, Evidence: stored.Evidence, Facts: facts})
+		policy, err := provider.BriefPolicy(ctx, j.Key, BriefPolicyRequest{Config: pin, Evidence: stored.Evidence, Facts: facts, Authority: briefAuthorityPin(j, pin)})
 		var mismatch queue.BriefPolicyMismatchError
 		if errors.As(err, &mismatch) {
 			return brief.Fact{}, "policy_digest_mismatch"
@@ -89,15 +91,19 @@ func briefPolicyProjection(ctx context.Context, source Source, j store.Journal, 
 			return unavailable()
 		}
 		return guardedBriefProgress(f, policy, s, facts, projection.eligibilityPins[b.ChangeID], pin, current, func() (cp.Policy, error) {
-			return provider.BriefPolicy(ctx, j.Key, BriefPolicyRequest{Config: current, Evidence: stored.Evidence, Facts: facts})
+			return provider.BriefPolicy(ctx, j.Key, BriefPolicyRequest{Config: current, Evidence: stored.Evidence, Facts: facts, Authority: briefAuthorityPin(j, current)})
 		})
 	}
 }
 
 func currentBriefConfig(j store.Journal, projection *Queue) queue.ConfigApplied {
 	current := queue.ConfigApplied{Commit: j.Seed.ConfigCommit, Digest: j.Seed.ConfigDigest}
+	governing := projection.state.ConfigCommit
+	if pin := projection.state.AuthorityPin(); pin != nil && pin.OpenMerge != nil {
+		governing = pin.GoverningCommit
+	}
 	for _, row := range j.Events {
-		if applied, ok := row.Event.(queue.ConfigApplied); ok && applied.Commit == projection.state.ConfigCommit && applied.Digest == projection.state.ConfigDigest {
+		if applied, ok := row.Event.(queue.ConfigApplied); ok && applied.Commit == governing && applied.Digest == projection.state.ConfigDigest {
 			current = applied
 		}
 	}
@@ -124,7 +130,7 @@ func briefPolicyBusy(err error) bool {
 // Without a local policy provider, only the same governing commit and recorded
 // identity pin can prove that a config change preserves the policy component.
 func guardedBriefProgress(f brief.Fact, policy cp.Policy, s queue.State, facts queue.ApprovalFacts, eligibility briefEligibilityPin, historical, current queue.ConfigApplied, currentPolicy func() (cp.Policy, error)) (brief.Fact, string) {
-	if policy.Approvals == nil {
+	if !policy.Enabled() {
 		return f, ""
 	}
 	if !eligibility.stale && facts.Eligibility != nil && current.Digest != historical.Digest {
@@ -144,6 +150,16 @@ func guardedBriefProgress(f brief.Fact, policy cp.Policy, s queue.State, facts q
 // Approval queues require the recorded static identity pin and local policy tree.
 func ReconstructBriefPolicy(data []byte, key store.QueueKey, defaultBranch string, req BriefPolicyRequest) (cp.Policy, error) {
 	cfg, _, err := config.Load(data)
+	var selectors []authority.BaseSelector
+	requireOwners := req.Authority != nil && req.Authority.Authority == authority.OpenMerge
+	if requireOwners {
+		candidate, _, candidateErr := config.LoadAuthorityCandidate(data)
+		cfg, err = candidate.Config, candidateErr
+		selectors = candidate.BaseSelectors()
+		if err == nil && (candidate.Authority.Mode != authority.OpenMerge || req.Authority.Validate() != nil || req.Authority.EffectiveDigest != req.Config.Digest || req.Authority.GoverningCommit != req.Config.Commit || req.Authority.OpenMerge.Binding.Repository != key.Repository || req.Authority.OpenMerge.Binding.QueueKey != store.AuthorityQueueKey(key) || candidate.Authority.BreakGlass == nil || !reflect.DeepEqual(*candidate.Authority.BreakGlass, req.Authority.OpenMerge.Binding.DeclaredActor)) {
+			return cp.Policy{}, fmt.Errorf("recorded authority binding unavailable")
+		}
+	}
 	if err != nil {
 		return cp.Policy{}, fmt.Errorf("pinned config unavailable: %w", err)
 	}
@@ -158,7 +174,7 @@ func ReconstructBriefPolicy(data []byte, key store.QueueKey, defaultBranch strin
 		return cp.Policy{}, fmt.Errorf("pinned branch policy unavailable: %v", diagnostics)
 	}
 	component := ""
-	if selected.Approvals != nil {
+	if selected.Approvals != nil || requireOwners {
 		if req.Config.Policy == nil || req.Governing == nil {
 			return cp.Policy{}, fmt.Errorf("recorded identity pin or local governing objects unavailable")
 		}
@@ -167,13 +183,13 @@ func ReconstructBriefPolicy(data []byte, key store.QueueKey, defaultBranch strin
 			return cp.Policy{}, fmt.Errorf("local governing tree unavailable")
 		}
 		owners, attrs := policyContents(*g)
-		var candidate cp.CandidateQueue
+		candidate := cp.CandidateQueue{Name: selected.Name}
 		for _, q := range cfg.Policy.Queues {
 			if q.Name == selected.Name {
 				candidate = q
 			}
 		}
-		component, err = cp.PolicyDigest(cp.DigestInputs{Repository: cfg.Policy, Queue: candidate, Resolved: req.Config.Policy.Resolved, Owners: owners, Attributes: attrs, ClassifierVersion: req.Config.Policy.ClassifierVersion})
+		component, err = cp.PolicyDigest(cp.DigestInputs{Repository: cfg.Policy, Queue: candidate, Resolved: req.Config.Policy.Resolved, Owners: owners, Attributes: attrs, ClassifierVersion: req.Config.Policy.ClassifierVersion, RequirePolicyOwners: requireOwners})
 		if err != nil {
 			return cp.Policy{}, err
 		}
@@ -187,6 +203,10 @@ func ReconstructBriefPolicy(data []byte, key store.QueueKey, defaultBranch strin
 			continue
 		}
 		effective, err := cp.WithPolicyDigest(selected.Digest(deleteHead), component)
+		if err == nil && requireOwners {
+			binding := req.Authority.OpenMerge.Binding
+			effective, err = authority.EffectiveDigest(authority.DigestInputs{LegacyDigest: effective, Policy: authority.Policy{Mode: authority.OpenMerge, BreakGlass: authority.ActorBinding{Declared: binding.DeclaredActor, Resolved: binding.ResolvedActor}}, DefaultBranch: defaultBranch, MergeMethod: authority.MergeMethod(selected.MergeMethod), Selectors: selectors})
+		}
 		if err == nil && effective == req.Config.Digest {
 			matches = true
 		}
@@ -195,7 +215,7 @@ func ReconstructBriefPolicy(data []byte, key store.QueueKey, defaultBranch strin
 		return cp.Policy{}, queue.BriefPolicyMismatchError{Recorded: req.Config.Digest}
 	}
 	if component != "" {
-		return cp.Policy{Digest: component, Approvals: selected.Approvals}, nil
+		return cp.Policy{Digest: component, Approvals: selected.Approvals, RequirePolicyOwners: requireOwners}, nil
 	}
 	return cp.Policy{Digest: req.Config.Digest}, nil
 }
@@ -217,4 +237,19 @@ func policyContents(g forge.GoverningFiles) (cp.GoverningContent, []cp.Governing
 		}
 	}
 	return owners, attrs
+}
+
+// Find the matching historical pin, rather than interpreting today's mode as
+// permission to reconstruct another revision's requirements.
+func briefAuthorityPin(j store.Journal, config queue.ConfigApplied) *queue.PolicyAuthorityApplied {
+	var pin *queue.PolicyAuthorityApplied
+	if p := j.Seed.AuthorityPin(); p != nil && p.EffectiveDigest == config.Digest && p.GoverningCommit == config.Commit {
+		pin = p
+	}
+	for _, row := range j.Events {
+		if p, ok := row.Event.(queue.PolicyAuthorityApplied); ok && p.EffectiveDigest == config.Digest && p.GoverningCommit == config.Commit {
+			pin = &p
+		}
+	}
+	return pin
 }

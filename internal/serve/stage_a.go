@@ -21,7 +21,7 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/status"
 )
 
-// stageAPolicy is installed only for a resolved queue with approvals. A nil
+// stageAPolicy is installed for approvals or explicitly enabled authority owners. A nil
 // policy preserves every legacy read and write path.
 type stageAPolicy struct {
 	repository    cp.Repository
@@ -241,7 +241,7 @@ func (s *Server) refreshStageAPolicy(ctx context.Context, w *worker, tip string)
 	if err := a.repository.ValidateIdentities(resolved); err != nil {
 		return config.Errors{{Path: "approvals", Message: err.Error()}}
 	}
-	digest, err := cp.PolicyDigest(cp.DigestInputs{Repository: a.repository, Queue: a.candidate, Resolved: resolved, Owners: owners, Attributes: attrs, ClassifierVersion: classification.Version})
+	digest, err := cp.PolicyDigest(cp.DigestInputs{Repository: a.repository, Queue: a.candidate, Resolved: resolved, Owners: owners, Attributes: attrs, ClassifierVersion: classification.Version, RequirePolicyOwners: a.policy.RequirePolicyOwners})
 	if err != nil {
 		return err
 	}
@@ -258,7 +258,7 @@ func (s *Server) refreshStageAPolicy(ctx context.Context, w *worker, tip string)
 			}
 		}
 	}
-	a.policy, a.mappings, a.identities = cp.Policy{Digest: digest, Approvals: a.candidate.Approvals}, mappings, pins
+	a.policy, a.mappings, a.identities = cp.Policy{Digest: digest, Approvals: a.candidate.Approvals, RequirePolicyOwners: a.policy.RequirePolicyOwners}, mappings, pins
 	deleteHead := !s.options.DisableDeleteHeadBranch
 	if w.deleteHeadBranch != nil {
 		deleteHead = *w.deleteHeadBranch

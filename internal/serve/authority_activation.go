@@ -54,7 +54,7 @@ func (s *Server) activateAuthority(ctx context.Context, w *worker, request autho
 	if err := validateReceipt(); err != nil {
 		return zero, err
 	}
-	if request.Pin.Authority != authority.GitHub && request.Read == nil {
+	if request.Pin.Authority != authority.GitHub && request.DraftID > 0 && request.Read == nil {
 		return zero, errors.New("authority activation seeing reader required")
 	}
 	state, _, err := s.store.Load(ctx, w.id)
@@ -64,7 +64,7 @@ func (s *Server) activateAuthority(ctx context.Context, w *worker, request autho
 	basis := state.RulesSourceRevision(queue.WriteRestriction)
 	started := time.Now().UTC()
 	var fresh authority.Observation
-	if request.Pin.Authority != authority.GitHub {
+	if request.Pin.Authority != authority.GitHub && request.DraftID > 0 {
 		fresh, err = request.Read(ctx)
 		if err != nil {
 			return zero, err
@@ -99,6 +99,7 @@ type authorityLifecycleResolution struct {
 }
 
 func (s *Server) prepareAuthorityLifecycle(ctx context.Context, w *worker, state queue.State, branch, tip string) (*authorityActivation, error) {
+	w.authorityObservation = nil
 	if !w.AuthorityRequired {
 		return nil, errors.New("internal authority activation opt-in required")
 	}
@@ -169,13 +170,17 @@ func (s *Server) prepareAuthorityLifecycle(ctx context.Context, w *worker, state
 	if err := request.Pin.Validate(); err != nil {
 		return nil, err
 	}
-	// The durable adopted pin already carries the seeing evidence. An unchanged
-	// cycle needs no emission receipt, identity transaction, live read or lock.
-	if mode == authority.OpenMerge && previous != nil && queue.AuthorityDraftAdopted(*previous) && (request.DraftID == 0 || request.DraftID == previous.OpenMerge.Activation.Proposed.EventID) {
+	// Reconciliation owns recurring observations, independently of pin adoption.
+	// A draftless lifecycle operation never spends a seeing read it would discard.
+	if mode == authority.OpenMerge {
+		w.authorityObservation = &request
+	}
+	if mode == authority.OpenMerge && previous != nil && previous.OpenMerge != nil && (request.DraftID == 0 || queue.AuthorityDraftAdopted(*previous) && request.DraftID == previous.OpenMerge.Activation.Proposed.EventID) {
 		unchanged := request.Pin
 		unchanged.OpenMerge = previous.OpenMerge
 		input := previous.OpenMerge.VerificationInput
-		if reflect.DeepEqual(previous.OpenMerge.Binding, request.Pin.OpenMerge.Binding) && reflect.DeepEqual(*previous, unchanged) && reflect.DeepEqual(*input, queue.AuthorityVerificationInput{BaseSelectors: request.Input.BaseSelectors, ExpectedRefs: request.Input.ExpectedRefs, AppID: request.Input.AppID}) {
+		inputsMatch := !queue.AuthorityDraftAdopted(*previous) || input != nil && reflect.DeepEqual(*input, queue.AuthorityVerificationInput{BaseSelectors: request.Input.BaseSelectors, ExpectedRefs: request.Input.ExpectedRefs, AppID: request.Input.AppID})
+		if inputsMatch && reflect.DeepEqual(previous.OpenMerge.Binding, request.Pin.OpenMerge.Binding) && reflect.DeepEqual(*previous, unchanged) {
 			return nil, nil
 		}
 	}
