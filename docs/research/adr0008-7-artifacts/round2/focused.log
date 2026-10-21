@@ -1,0 +1,38 @@
+=== RUN   TestQueueInstructionsReportingPathsDedupeRetryRollback
+=== RUN   TestQueueInstructionsReportingPathsDedupeRetryRollback/legacy
+=== RUN   TestQueueInstructionsReportingPathsDedupeRetryRollback/approval
+--- PASS: TestQueueInstructionsReportingPathsDedupeRetryRollback (0.08s)
+    --- PASS: TestQueueInstructionsReportingPathsDedupeRetryRollback/legacy (0.03s)
+    --- PASS: TestQueueInstructionsReportingPathsDedupeRetryRollback/approval (0.05s)
+=== RUN   TestQueueInstructionsBeforeAdmissionAndTerminalPreservation
+--- PASS: TestQueueInstructionsBeforeAdmissionAndTerminalPreservation (0.03s)
+=== RUN   TestQueueInstructionsDequeuedActivationRollback
+=== RUN   TestQueueInstructionsDequeuedActivationRollback/dequeued/open
+=== RUN   TestQueueInstructionsDequeuedActivationRollback/dequeued/closed
+=== RUN   TestQueueInstructionsDequeuedActivationRollback/merged/open
+=== RUN   TestQueueInstructionsDequeuedActivationRollback/merged/closed
+--- PASS: TestQueueInstructionsDequeuedActivationRollback (0.14s)
+    --- PASS: TestQueueInstructionsDequeuedActivationRollback/dequeued/open (0.04s)
+    --- PASS: TestQueueInstructionsDequeuedActivationRollback/dequeued/closed (0.03s)
+    --- PASS: TestQueueInstructionsDequeuedActivationRollback/merged/open (0.04s)
+    --- PASS: TestQueueInstructionsDequeuedActivationRollback/merged/closed (0.04s)
+=== RUN   TestQueueInstructionsMissingLedgerJournal
+--- PASS: TestQueueInstructionsMissingLedgerJournal (0.02s)
+PASS
+ok  	github.com/CanadaApollo6/openmerge/internal/serve	0.280s
+=== RUN   TestQueueInstructionsGoldensAndRollback
+=== RUN   TestQueueInstructionsGoldensAndRollback/waiting
+=== RUN   TestQueueInstructionsGoldensAndRollback/testing
+=== RUN   TestQueueInstructionsGoldensAndRollback/blocked
+=== RUN   TestQueueInstructionsGoldensAndRollback/landed
+--- PASS: TestQueueInstructionsGoldensAndRollback (0.00s)
+    --- PASS: TestQueueInstructionsGoldensAndRollback/waiting (0.00s)
+    --- PASS: TestQueueInstructionsGoldensAndRollback/testing (0.00s)
+    --- PASS: TestQueueInstructionsGoldensAndRollback/blocked (0.00s)
+    --- PASS: TestQueueInstructionsGoldensAndRollback/landed (0.00s)
+=== RUN   TestQueueInstructionsBeforeApprovalBriefAndHostileNames
+--- PASS: TestQueueInstructionsBeforeApprovalBriefAndHostileNames (0.00s)
+=== RUN   TestQueueInstructionsRefreshPreservesTerminalSummary
+--- PASS: TestQueueInstructionsRefreshPreservesTerminalSummary (0.00s)
+PASS
+ok  	github.com/CanadaApollo6/openmerge/internal/status	0.006s

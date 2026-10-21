@@ -1,0 +1,6 @@
+Queue: window: 1; batch size: 1; p̂: 0.0000 (0/1)
+
+CI run ledger:
+b1 tested aggregate (identity unavailable)=success
+
+This repository merges through OpenMerge. To request a merge, post a comment whose entire body is `@openmerge queue` (no additional text).

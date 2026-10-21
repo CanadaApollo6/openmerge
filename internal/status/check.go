@@ -6,11 +6,39 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/brief"
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
+
+const queueInstructionParagraph = "\n\nThis repository merges through OpenMerge. To request a merge, post a comment whose entire body is `@openmerge queue` (no additional text)."
+
+// QueueInstructions belongs to the existing check, after queue state and before
+// the reviewer brief. Only the durable mode pin enables it; draft verification
+// and write-restriction visibility are not author-facing authority decisions.
+func QueueInstructions(q *Queue) string {
+	pin := q.state.AuthorityPin()
+	if pin == nil || pin.Authority != authority.OpenMerge {
+		return ""
+	}
+	return queueInstructionParagraph
+}
+
+// RefreshQueueInstructions changes only the authority paragraph in an existing
+// check, preserving terminal outcomes and any reviewer brief verbatim.
+func RefreshQueueInstructions(summary string, q *Queue) string {
+	// Reviewer output starts with safety warnings when present, otherwise with
+	// its brief locator. Only the paragraph at that boundary belongs to us.
+	end := len(summary)
+	for _, marker := range []string{"\nWARNING: ", "\n\nReviewer brief:"} {
+		if i := strings.Index(summary, marker); i >= 0 && i < end {
+			end = i
+		}
+	}
+	return strings.TrimSuffix(summary[:end], queueInstructionParagraph) + QueueInstructions(q) + summary[end:]
+}
 
 // ReviewerCheckSummary is appended to the single existing check only for an
 // opted-in queue. Legacy output is byte-for-byte unchanged. No forge reads occur.

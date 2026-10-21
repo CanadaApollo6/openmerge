@@ -73,5 +73,5 @@ func (s *Server) ledgerSummary(ctx context.Context, w *worker, pr int) (string, 
 	}
 	entry := q.LedgerEntry(pr)
 	status.ApplyPolicy(q, entry, w.plannerConfig(s.options.PollInterval), time.Now())
-	return "\n\nQueue: " + status.AdaptiveSummary(q) + status.LedgerSummary(entry), nil
+	return "\n\nQueue: " + status.AdaptiveSummary(q) + status.LedgerSummary(entry) + status.QueueInstructions(q), nil
 }

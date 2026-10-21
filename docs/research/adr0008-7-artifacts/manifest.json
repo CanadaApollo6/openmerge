@@ -1,0 +1,115 @@
+{
+  "recorded_at": "2026-10-21T00:09:39.045300+00:00",
+  "baseline_revision": "975b1b7762f58c128b1703f11fd5c4b6ff552c55",
+  "implementation_revision": "c291ef8706604a14bb30932f94e048881aa3ab16",
+  "built_version": "c291ef8",
+  "local_binary": {
+    "bytes": 35509762,
+    "sha256": "f5f2c2ab3bc4b2e64aabea0ad936d1dadcbe4bc2cc201785ddd5f9c13b333375"
+  },
+  "sources": {
+    "internal/forge/github/queue_instructions_test.go": {
+      "bytes": 4033,
+      "sha256": "727ae4b0510e72dbe4f5f68ae89acd38f6886606d26cf7d4b25666fbcb08af50"
+    },
+    "internal/serve/queue_instructions_test.go": {
+      "bytes": 6998,
+      "sha256": "0fac0f69f5bab34f1375adf0a15379539e0e6259be75db68260a26470e3cbd72"
+    },
+    "internal/serve/status_ledger.go": {
+      "bytes": 2249,
+      "sha256": "4ac9e10bb29025f569215f4301fbc65d974fbaff04c46c1a63d0ca101e96e9fe"
+    },
+    "internal/serve/worker.go": {
+      "bytes": 20221,
+      "sha256": "2d369b889e6633e16095a5626393d961688bbe03b726a7c167689f34130781f9"
+    },
+    "internal/status/check.go": {
+      "bytes": 7997,
+      "sha256": "be2cd645e5572f55a410840950b636620852ff95cc3fad5691ea12a854fbe4ad"
+    },
+    "internal/status/queue_instructions_test.go": {
+      "bytes": 4034,
+      "sha256": "dcdb5f61b8f9c5c93ddce8999df5d7388ea3e06857c3806299e7c63962244b68"
+    },
+    "internal/status/testdata/legacy-check.txt": {
+      "bytes": 166,
+      "sha256": "fb6a97b1161cc5ed2185a1054d49842a76b5ba91d97cfa1a94a351555e7b6653"
+    },
+    "internal/status/testdata/queue-instructions-blocked.txt": {
+      "bytes": 193,
+      "sha256": "77a3b143c998d73d7856adba16e8a8038a849d1922be2f06fb6654bd05a399d2"
+    },
+    "internal/status/testdata/queue-instructions-landed.txt": {
+      "bytes": 257,
+      "sha256": "9e72b1f9b605f6b5315a984d5b4a2a627dd479c0b5e35780510c09de9590dc52"
+    },
+    "internal/status/testdata/queue-instructions-testing.txt": {
+      "bytes": 243,
+      "sha256": "4a35fdc3023e39fb7c9d1c04061394b15e37e72991b43c84074d7d4cebfabb4c"
+    },
+    "internal/status/testdata/queue-instructions-waiting.txt": {
+      "bytes": 193,
+      "sha256": "77a3b143c998d73d7856adba16e8a8038a849d1922be2f06fb6654bd05a399d2"
+    },
+    "scripts/check-legacy-authority-cli.py": {
+      "bytes": 3302,
+      "sha256": "fd1c8a5f2793c8cc6d78c35b45db28d3ea08936f99f59b930e4873b81789a67d"
+    },
+    "scripts/check-legacy-authority-http.py": {
+      "bytes": 3724,
+      "sha256": "c385e32e791a5094b06414b74c19243650a69db22b7d5488fe8ac0834ac3ef57"
+    },
+    "scripts/check-legacy-reporting.py": {
+      "bytes": 10369,
+      "sha256": "37c4122385fa13e5025f16d56a019cc21101150caeeed22f011a91a6db8c7413"
+    }
+  },
+  "artifacts": {
+    "docs/research/adr0008-7-artifacts/focused.log": {
+      "bytes": 2299,
+      "sha256": "1f9f1559d41c0a3b723ba1fb1f008890f8a61e1c6e0f66f9f4c4bff153bbb595"
+    },
+    "docs/research/adr0008-7-artifacts/legacy-cli-responses.json.gz": {
+      "bytes": 860,
+      "sha256": "3d958cc7df8c519c64b3a014a5d060794025b75e88d692c2f56c5d77aaf4aad5"
+    },
+    "docs/research/adr0008-7-artifacts/legacy-cli.log": {
+      "bytes": 708,
+      "sha256": "42775a470e8c7265edc714b09a1dcef7a1285cab5095b71485cd9da2aca616db"
+    },
+    "docs/research/adr0008-7-artifacts/legacy-http-responses.json.gz": {
+      "bytes": 9646,
+      "sha256": "dc69adc7478072f574259b3e8a26971d0f6ec508a9dcc718c610692556fffd85"
+    },
+    "docs/research/adr0008-7-artifacts/legacy-http.log": {
+      "bytes": 729,
+      "sha256": "b733fc0ac68b68e9118292f0031bc34aabd1383eca3bc64bbb9612ddfe49825d"
+    },
+    "docs/research/adr0008-7-artifacts/legacy-reporting.log": {
+      "bytes": 669,
+      "sha256": "8a26baae9fbd3bfc6c44d887e336f861ea2c82936be84a311d6fd381f6bea97f"
+    },
+    "docs/research/adr0008-7-artifacts/make-check.log": {
+      "bytes": 2247,
+      "sha256": "0c91dcc15fac9e019fc87a299a3a3a915aa5aa4f53986c733185ed3ec4e8b496"
+    }
+  },
+  "legacy_check_fixtures": [
+    "legacy-golden",
+    "multi-entry",
+    "landed",
+    "dequeued",
+    "blocked",
+    "depth4"
+  ],
+  "cli_outputs": 6,
+  "http_responses": 56,
+  "exits": {
+    "focused": 0,
+    "legacy-reporting": 0,
+    "legacy-cli": 0,
+    "legacy-http": 0,
+    "make-check": 0
+  }
+}

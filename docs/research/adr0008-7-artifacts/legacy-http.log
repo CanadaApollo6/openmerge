@@ -1,0 +1,10 @@
+Implementation: c291ef8706604a14bb30932f94e048881aa3ab16
+Started: 2026-10-21T00:00:26.939840+00:00
+Command: flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB OPENMERGE_TEST_DATABASE_URL=postgres://postgres:openmerge@localhost:54329/postgres?sslmode=disable python3 scripts/check-legacy-authority-http.py /home/riels/.cache/adr0008-7-baseline-975b1b7
+/home/riels/.cache/adr0008-7-baseline-975b1b7: exit=0
+/home/riels/.t3/worktrees/openmerge/t3-2c0cc552: exit=0
+PASS: all 56 complete HTTP responses (status line, headers, body) are byte-identical; no fields stripped
+Complete response receipt: /home/riels/.cache/adr0008-7-legacy-http-responses.json
+
+Exit: 0
+Finished: 2026-10-21T00:00:27.763635+00:00

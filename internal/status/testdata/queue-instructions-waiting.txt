@@ -1,0 +1,3 @@
+Queue: window: 1; batch size: 1; p̂: n/a (0 samples)
+
+This repository merges through OpenMerge. To request a merge, post a comment whose entire body is `@openmerge queue` (no additional text).

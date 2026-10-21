@@ -8,9 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/executor"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
+	checkstatus "github.com/CanadaApollo6/openmerge/internal/status"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
@@ -262,6 +264,20 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 		executionAction = report
 	}
 	err = x.Execute(actionCtx, executionAction, func(event queue.Event) error {
+		// Capture the exact successful action output so later authority changes
+		// can refresh its paragraph without reconstructing a terminal result.
+		if report, ok := executionAction.(queue.ReportStatus); ok {
+			data, err := json.Marshal(struct {
+				Head   string
+				Status forge.Status
+			}{report.HeadSHA, forge.Status{State: forge.StatusState(report.Status), Reason: report.Reason, Summary: report.Detail}})
+			if err != nil {
+				return err
+			}
+			if err := s.store.Record(actionCtx, w.id, fmt.Sprintf("status/%d", report.PR), data); err != nil {
+				return err
+			}
+		}
 		if err := emit(event); err != nil {
 			return err
 		}
@@ -329,6 +345,16 @@ func (s *Server) status(ctx context.Context, w *worker, pr int, head string, sta
 		}
 		status.Summary += detail
 	}
+	return s.writeStatus(ctx, w, pr, head, status)
+}
+
+// writeStatus shares exact-head dedupe between periodic reporting and
+// paragraph-only refreshes of checks whose queue outcome is already terminal.
+func (s *Server) writeStatus(ctx context.Context, w *worker, pr int, head string, status forge.Status) error {
+	if time.Now().Before(w.reportingNext) {
+		return nil
+	}
+	ctx = forge.WithRequestClass(ctx, forge.ReportingRequest)
 	key := fmt.Sprintf("status/%d", pr)
 	value := struct {
 		Head   string
@@ -450,6 +476,61 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 		}
 		if err := s.status(ctx, w, entry.PR, entry.HeadSHA, status); err != nil {
 			return err
+		}
+	}
+	// Authors need the command before admission only under active authority.
+	// A rollback pin refreshes cached checks but must never create invitations.
+	if pin := state.AuthorityPin(); pin != nil {
+		if _, err := s.ledgerSummary(ctx, w, 0); err != nil {
+			return err
+		}
+		if w.ledgerCache == nil {
+			return nil
+		}
+		for n, pr := range w.prs {
+			if pr.Closed {
+				continue
+			}
+			entry := w.ledgerCache.projection.LedgerEntry(n)
+			if pin.Authority == authority.GitHub || entry != nil && entry.Position == 0 {
+				data, err := s.store.Observation(ctx, w.id, fmt.Sprintf("status/%d", n))
+				if err != nil {
+					return err
+				}
+				var previous struct {
+					Head   string
+					Status forge.Status
+				}
+				if len(data) != 0 {
+					if err := json.Unmarshal(data, &previous); err != nil {
+						return err
+					}
+				}
+				if len(data) != 0 && (pin.Authority == authority.GitHub || previous.Head == entry.HeadSHA && (previous.Status.State == forge.Dequeued || previous.Status.State == forge.Merged)) {
+					previous.Status.Summary = checkstatus.RefreshQueueInstructions(previous.Status.Summary, &w.ledgerCache.projection)
+					if err := s.writeStatus(ctx, w, n, previous.Head, previous.Status); err != nil {
+						return err
+					}
+					continue
+				}
+			}
+			if pin.Authority != authority.OpenMerge {
+				continue
+			}
+			// Never overwrite an admitted or terminal outcome with a queue invitation.
+			if entry == nil || entry.Position > 0 || entry.HeadSHA != pr.HeadSHA || entry.Status != "not-queued" && entry.Status != "blocked" {
+				continue
+			}
+			status := forge.Status{State: forge.Queued, Summary: "Not queued; waiting for a queue request"}
+			if entry.Status == "blocked" {
+				status = forge.Status{State: forge.Blocked, Reason: entry.Reason, Summary: "Not queued; PR does not satisfy queue entry conditions"}
+				if entry.Reason == string(queue.Untrusted) {
+					status.Summary = "Not queued; PR head has not passed the trust gate"
+				}
+			}
+			if err := s.status(ctx, w, n, pr.HeadSHA, status); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
