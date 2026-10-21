@@ -1,0 +1,10 @@
+=== RUN   TestHealthStageAFailedGitRead
+=== RUN   TestHealthStageAFailedGitRead/policy-governing
+=== RUN   TestHealthStageAFailedGitRead/diff
+=== RUN   TestHealthStageAFailedGitRead/classification-governing
+--- PASS: TestHealthStageAFailedGitRead (0.29s)
+    --- PASS: TestHealthStageAFailedGitRead/policy-governing (0.10s)
+    --- PASS: TestHealthStageAFailedGitRead/diff (0.10s)
+    --- PASS: TestHealthStageAFailedGitRead/classification-governing (0.10s)
+PASS
+ok  	github.com/CanadaApollo6/openmerge/internal/serve	1.301s

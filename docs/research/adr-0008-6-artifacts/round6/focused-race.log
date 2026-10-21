@@ -1,0 +1,41 @@
+=== RUN   TestConditionalGETReplaysPaginatedSDKResponses
+--- PASS: TestConditionalGETReplaysPaginatedSDKResponses (0.10s)
+=== RUN   TestTransportProgressOnlyAfterSuccessfulBody
+=== RUN   TestTransportProgressOnlyAfterSuccessfulBody/success
+=== RUN   TestTransportProgressOnlyAfterSuccessfulBody/failed
+=== RUN   TestTransportProgressOnlyAfterSuccessfulBody/partial
+=== RUN   TestTransportProgressOnlyAfterSuccessfulBody/read-error
+=== RUN   TestTransportProgressOnlyAfterSuccessfulBody/transport-error
+=== RUN   TestTransportProgressOnlyAfterSuccessfulBody/no-hook
+--- PASS: TestTransportProgressOnlyAfterSuccessfulBody (0.00s)
+    --- PASS: TestTransportProgressOnlyAfterSuccessfulBody/success (0.00s)
+    --- PASS: TestTransportProgressOnlyAfterSuccessfulBody/failed (0.00s)
+    --- PASS: TestTransportProgressOnlyAfterSuccessfulBody/partial (0.00s)
+    --- PASS: TestTransportProgressOnlyAfterSuccessfulBody/read-error (0.00s)
+    --- PASS: TestTransportProgressOnlyAfterSuccessfulBody/transport-error (0.00s)
+    --- PASS: TestTransportProgressOnlyAfterSuccessfulBody/no-hook (0.00s)
+=== RUN   TestTransportProgressUncached304
+--- PASS: TestTransportProgressUncached304 (0.00s)
+=== RUN   TestTransportProgressNilBody
+--- PASS: TestTransportProgressNilBody (0.00s)
+PASS
+ok  	github.com/CanadaApollo6/openmerge/internal/forge/github	1.114s
+=== RUN   TestHealthRealCyclePublishesEachReadAndReport
+    health_cycle_test.go:438: completed units: map[PR:4 check report:4 check source:4 comments:4 configuration file:1 configuration file missing:3 default branch:1 permissions:2 protection:2 rules:2]
+--- PASS: TestHealthRealCyclePublishesEachReadAndReport (0.09s)
+=== RUN   TestHealthGitHubPagination
+=== RUN   TestHealthGitHubPagination/healthy
+=== RUN   TestHealthGitHubPagination/revalidated
+=== RUN   TestHealthGitHubPagination/hung
+=== RUN   TestHealthGitHubPagination/streaming
+=== RUN   TestHealthGitHubPagination/failed
+--- PASS: TestHealthGitHubPagination (0.26s)
+    --- PASS: TestHealthGitHubPagination/healthy (0.05s)
+    --- PASS: TestHealthGitHubPagination/revalidated (0.05s)
+    --- PASS: TestHealthGitHubPagination/hung (0.03s)
+    --- PASS: TestHealthGitHubPagination/streaming (0.03s)
+    --- PASS: TestHealthGitHubPagination/failed (0.03s)
+=== RUN   TestHealthProgressHookOutsideCycle
+--- PASS: TestHealthProgressHookOutsideCycle (0.03s)
+PASS
+ok  	github.com/CanadaApollo6/openmerge/internal/serve	1.391s

@@ -398,3 +398,51 @@ remain historical; the new round 5 receipts rerun their checks on this implement
 Hold constraints remain intact: no migrations/indexes, fixtures, wire/schema,
 Makefile/CI/Dockerfile/test-flag changes, deployment/merge, live DB/API/systemd or
 live ref operations. PR 9 retains activation; PR 11 retains sandbox acceptance.
+
+## Round 6 — validated 304 progress and successful Stage A reads
+
+Started clean at fetched remote `f7653b958ddcddf624131f513235425359e6991e`.
+The orchestrator corrected the round-5 review brief: a validated wire 304 served
+from cache is a completed, successful GitHub round trip. It deliberately earns
+progress once the cached response body reaches EOF. Excluding these revalidated
+pages would restore the pagination false 503 in steady-state polling. A 304
+without a usable cached representation remains an error and publishes nothing.
+The transport comment and API/operating guides now state this rule explicitly.
+
+The existing ListComments cache test now primes three pages without a hook,
+observes three wire 304s on the second read and requires exactly three progress
+notifications. The real worker/GitHub paginator/health regression adds twenty
+revalidated pages at 30s each (10m total), with HTTP 200 at each 15s health check,
+well beyond the 4m stall limit. The uncached-304 regression requires an error and
+zero notifications. A custom RoundTripper's nil-body successful response publishes
+exactly once and returns http.NoBody. The progress helper documents that nil
+decode targets close bodies unread; paginated reads must decode into a target.
+
+All three Stage A governing-file/diff publications now follow their error checks.
+Race regressions inject failures separately into policy governing reads, revision
+diffs and classification governing reads; each leaves LastProgressAt unchanged.
+
+Verification uses the shared flock, GOFLAGS=-p=2 and GOMEMLIMIT=4GiB (6GiB for
+strict replay). DB tests use isolated schemas only on localhost:54329. Receipts,
+commands and tested source hashes are in [the round-6 manifest](adr-0008-6-artifacts/round6/manifest.json).
+
+Tested implementation: `d6dbc1c9c15c48d9e8c404e9caea1c489be2e44d`; this evidence
+update changes only documentation and receipts.
+
+- `make check`: exit **0**; formatting, zero lint issues, full race-enabled short
+  suite and build pass.
+- Focused race regressions: **PASS**, including all cached/uncached 304,
+  pagination health, nil-body and three Stage A failure cases described above.
+- Strict offline replay: **PASS**, mandatory synthetic self-tests and all
+  **2,159/2,159** action, strict state, snapshot-hash and boundary checkpoints.
+  The initial attempt refused a dirty checkout (exit 2) before replay; after
+  committing the implementation, the clean-checkout rerun exited **0**.
+- Required `make test-sim-exits`: baseline and candidate both exit **0**;
+  **146** complete normalized workload result blocks are byte-identical
+  (only harness timing/interleaving excluded). Normalized SHA-256:
+  `a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7`.
+- All **201** existing testdata files remain byte-identical to round-5 head.
+
+Hold remains in place. No migrations/indexes, fixture, wire-v1, Makefile/CI/
+Dockerfile/test-flag changes, live DB/API/systemd/ref operations, real GitHub API
+calls from code/tests, deployment, queueing or merge were performed.
