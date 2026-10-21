@@ -3,6 +3,8 @@ package serve
 import (
 	"context"
 	"fmt"
+
+	"github.com/CanadaApollo6/openmerge/internal/authority"
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
 	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
@@ -33,6 +35,9 @@ func (s *Server) BriefPolicy(ctx context.Context, key store.QueueKey, req status
 		}
 		target, defaultBranch := w.Target, w.configBranch
 		w.mu.Unlock()
+		if req.Authority != nil && req.Authority.Authority == authority.OpenMerge && (!target.AuthorityRequired || target.resolveAuthorityLifecycle == nil) {
+			return cp.Policy{}, fmt.Errorf("internal authority brief opt-in required")
+		}
 		reader, ok := target.Git.(interface {
 			LocalConfig(context.Context, forge.RepoRef, string) ([]byte, error)
 		})

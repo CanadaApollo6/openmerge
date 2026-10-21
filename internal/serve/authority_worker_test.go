@@ -89,7 +89,8 @@ func TestAuthorityWorkerFirstCycleAndObservationCadence(t *testing.T) {
 			t.Fatal("health projection absent")
 		}
 		// Config-only unchanged cycles and same-binding rebinds spend zero seeing
-		// reads even for an unadopted pin. Recurring reconciliations spend one each.
+		// reads even for an unadopted pin. Recurring reconciliations respect the
+		// observer cadence.
 		for range 3 {
 			must(t, s.configuration(t.Context(), w))
 		}
@@ -107,7 +108,7 @@ func TestAuthorityWorkerFirstCycleAndObservationCadence(t *testing.T) {
 		must(t, s.configuration(t.Context(), w))
 		w.resolveAuthorityLifecycle = saved
 		must(t, s.reconcile(t.Context(), w, false))
-		if *reads != 2 {
+		if *reads != 1 {
 			t.Fatal("observation cadence", *reads)
 		}
 		// Reconstruct from recorded local objects, without any forge access.

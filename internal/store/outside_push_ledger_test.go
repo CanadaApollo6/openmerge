@@ -62,8 +62,10 @@ func TestOutsidePushWarningDelayedAuditAuthorityBoundaries(t *testing.T) {
 				if mode == authority.GitHub {
 					initial = authority.OpenMerge
 				}
-				appendWarningPin(t, s, q, initial)
+				// This audit fixture starts with an already admitted attempt;
+				// authority starts themselves require the atomic store gate.
 				seedOutsideLanding(t, s, q)
+				appendWarningPin(t, s, q, initial)
 				before := appendEvents(t, s, q, queue.BaseMoved{SHA: "before-boundary"})
 				// The pin itself immediately separates the two immutable BaseMoved rows.
 				boundary := appendEvents(t, s, q, warningPin(t, mode))

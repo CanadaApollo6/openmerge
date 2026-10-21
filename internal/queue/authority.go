@@ -85,6 +85,9 @@ type WriteRestrictionObserved struct {
 	Basis      uint64                  `json:"basis"`
 	ObservedAt time.Time               `json:"observed_at"`
 	Evidence   authority.Observation   `json:"evidence"`
+	// ReadError blocks admission without manufacturing a protection finding or
+	// refreshing successful observation/verification ages.
+	ReadError string `json:"read_error,omitempty"`
 }
 
 func (WriteRestrictionObserved) queueEvent() {}
@@ -96,6 +99,9 @@ func (e WriteRestrictionObserved) Validate() error {
 	}
 	if e.Basis == math.MaxUint64 || e.ObservedAt.IsZero() {
 		return fmt.Errorf("invalid authority observation basis/time")
+	}
+	if len(e.ReadError) > 1024 || e.ReadError != "" && e.Evidence.Inventory != authority.ReadFailure {
+		return fmt.Errorf("invalid authority read error")
 	}
 	return e.Evidence.Validate()
 }
@@ -145,6 +151,7 @@ type authorityProjection struct {
 	LastObservedAt time.Time                    `json:"last_observed_at,omitempty"`
 	LastVerifiedAt time.Time                    `json:"last_verified_at,omitempty"`
 	Complete       bool                         `json:"complete,omitempty"`
+	ReadError      string                       `json:"read_error,omitempty"`
 }
 
 func cloneAuthority[T any](v *T) *T {
@@ -194,7 +201,7 @@ func (s State) observeAuthority(e Event) (State, bool) {
 			s.rulesSources[WriteRestriction] = rulesSourceState{}
 			if a := v.OpenMerge.Activation; a != nil && AuthorityDraftAdopted(v) {
 				s.authority.Adopted = cloneAuthority(&v)
-				s = s.foldWriteRestriction(0, a.SeeingReadAt, a.Evidence, true)
+				s = s.foldWriteRestriction(0, a.SeeingReadAt, a.Evidence, true, "")
 			}
 		}
 		return s, true
@@ -203,7 +210,7 @@ func (s State) observeAuthority(e Event) (State, bool) {
 			return s, true
 		}
 		accepted := len(v.Evidence.Findings) > 0 || v.Basis == s.RulesSourceRevision(WriteRestriction) && !v.ObservedAt.Before(s.authority.LastObservedAt)
-		s = s.foldWriteRestriction(v.Basis, v.ObservedAt, v.Evidence, false)
+		s = s.foldWriteRestriction(v.Basis, v.ObservedAt, v.Evidence, false, v.ReadError)
 		if accepted && (v.Evidence.Inventory != authority.ReadFailure || len(v.Evidence.Findings) > 0) && (s.authority.Observed == nil || !v.ObservedAt.Before(s.authority.Observed.ObservedAt)) {
 			p := *s.authority
 			p.Observed = cloneAuthority(&v)
@@ -229,7 +236,7 @@ func (s State) observeAuthority(e Event) (State, bool) {
 			return s, true
 		}
 		accepted := len(v.Evidence.Findings) > 0 || v.Basis == s.RulesSourceRevision(WriteRestriction) && !v.VerifiedAt.Before(s.authority.LastObservedAt)
-		s = s.foldWriteRestriction(v.Basis, v.VerifiedAt, v.Evidence, true)
+		s = s.foldWriteRestriction(v.Basis, v.VerifiedAt, v.Evidence, true, "")
 		if accepted && (s.authority.Verified == nil || !v.VerifiedAt.Before(s.authority.Verified.VerifiedAt)) {
 			p := *s.authority
 			p.Verified = cloneAuthority(&v)
@@ -257,11 +264,14 @@ func validateAuthoritySnapshot(p *authorityProjection) error {
 			return err
 		}
 	}
+	if len(p.ReadError) > 1024 {
+		return fmt.Errorf("invalid authority read error")
+	}
 	if len(p.Findings) > 100000 {
 		return fmt.Errorf("authority findings exceed snapshot budget")
 	}
 	if p.Pin == nil || p.Pin.OpenMerge == nil {
-		if len(p.Findings) > 0 || !p.LastObservedAt.IsZero() || !p.LastVerifiedAt.IsZero() || p.Complete {
+		if p.ReadError != "" || len(p.Findings) > 0 || !p.LastObservedAt.IsZero() || !p.LastVerifiedAt.IsZero() || p.Complete {
 			return fmt.Errorf("active authority evidence without an openmerge pin")
 		}
 	}

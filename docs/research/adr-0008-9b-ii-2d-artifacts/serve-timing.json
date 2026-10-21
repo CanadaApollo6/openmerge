@@ -1,0 +1,26 @@
+{
+  "baseline": "d01baeaca2568ba80bbf39aa2c44931277da5904",
+  "candidate": "e5dd4c74fa4298dc8c160f454bf7b86a4aa133d3",
+  "command": [
+    "go",
+    "test",
+    "-race",
+    "-short",
+    "./internal/serve",
+    "-count=1"
+  ],
+  "GOROOT": "/home/riels/.local/share/mise/installs/go/1.27.3",
+  "PATH_prefix": "/home/riels/.local/share/mise/installs/go/1.27.3/bin",
+  "wrapper": [
+    "flock",
+    "/home/riels/.cache/openmerge-heavy.lock",
+    "env",
+    "GOFLAGS=-p=2",
+    "GOMEMLIMIT=4GiB"
+  ],
+  "before_seconds": 233.547,
+  "after_seconds": 248.872,
+  "make_check_serve_seconds": 283.287,
+  "scope": "isolated local package measurements; not a GitHub runner prediction",
+  "delta_seconds": 15.325
+}

@@ -331,6 +331,15 @@ func (s *Store) append(ctx context.Context, q QueueID, events []queue.Event, ded
 					return err
 				}
 			}
+			if _, starting := event.(queue.LandingStarted); starting && execution == nil {
+				state, _, err := load(ctx, tx, q)
+				if err != nil {
+					return err
+				}
+				if pin := state.AuthorityPin(); pin != nil && pin.OpenMerge != nil {
+					return LandingChecksRequiredError{}
+				}
+			}
 			if execution != nil {
 				var err error
 				stale, err = s.authorizeStart(ctx, tx, *execution, event)

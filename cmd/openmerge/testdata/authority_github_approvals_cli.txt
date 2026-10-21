@@ -1,0 +1,4 @@
+REPO        BASE  POS  PR  HEAD          STATUS   REASON  STATE
+owner/repo  main  1    #1  db2211b736de  testing          active
+owner/repo main window: 1; batch size: 1; p̂: n/a (0 samples); chain: b1(testing)
+  batch b1 position 1: testing tested 13e06a69aeabd7757bf0917b6fb0c7003642f7313e641f05ea0b83ddb232c261 (0 ahead)

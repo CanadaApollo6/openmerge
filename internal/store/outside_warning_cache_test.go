@@ -144,8 +144,10 @@ func TestJournalWarningErrorIsolatesQueueAndReporting(t *testing.T) {
 func TestWarningCacheDelayedAuditRollbackAndAcknowledgement(t *testing.T) {
 	s := newStore(t)
 	q := ensureQueue(t, s, "")
-	appendWarningPin(t, s, q, authority.OpenMerge)
+	// Seed the historical admitted attempt before enabling authority; new
+	// authority starts require the atomic admission gate.
 	seedOutsideLanding(t, s, q)
+	appendWarningPin(t, s, q, authority.OpenMerge)
 	appendEvents(t, s, q, queue.BaseMoved{SHA: "delayed"})
 	summary, err := s.ReadOutsidePushWarnings(t.Context(), q)
 	must(t, err)

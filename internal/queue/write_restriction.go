@@ -39,17 +39,18 @@ func (s State) WriteRestrictionStatus() WriteRestrictionStatus {
 	})
 	if len(result.Findings) > 0 {
 		result.State = "violated"
-	} else if p.Complete {
+	} else if p.Complete && p.ReadError == "" {
 		result.State = "verified"
 	}
 	return result
 }
 
-func (s State) foldWriteRestriction(basis uint64, at time.Time, evidence authority.Observation, operator bool) State {
+func (s State) foldWriteRestriction(basis uint64, at time.Time, evidence authority.Observation, operator bool, readError string) State {
 	// A failed read cannot refresh ages or clear old findings. Definite partial
 	// negatives still invalidate any earlier pass, regardless of their basis.
 	failed := evidence.Inventory == authority.ReadFailure
-	if (failed || basis != s.RulesSourceRevision(WriteRestriction) || at.Before(s.authority.LastObservedAt)) && len(evidence.Findings) == 0 {
+	freshRead := basis == s.RulesSourceRevision(WriteRestriction) && !at.Before(s.authority.LastObservedAt)
+	if (!freshRead || failed && (readError == "" || readError == s.authority.ReadError)) && len(evidence.Findings) == 0 {
 		return s
 	}
 	s = cloneState(s)
@@ -59,8 +60,12 @@ func (s State) foldWriteRestriction(basis uint64, at time.Time, evidence authori
 	}
 	current := s.rulesSources[WriteRestriction]
 	hadProblems := len(current.problems) > 0
-	fresh := basis == current.revision && !at.Before(p.LastObservedAt)
+	fresh := freshRead
+	if fresh && failed && readError != "" {
+		p.ReadError = readError
+	}
 	if fresh && !failed {
+		p.ReadError = ""
 		for element, f := range p.Findings {
 			if findingSeen(f, evidence) {
 				delete(p.Findings, element)
@@ -84,6 +89,9 @@ func (s State) foldWriteRestriction(basis uint64, at time.Time, evidence authori
 	}
 	current.revision++
 	current.problems = nil
+	if p.ReadError != "" {
+		current.problems = append(current.problems, p.ReadError)
+	}
 	status := s.WriteRestrictionStatus()
 	for _, f := range status.Findings {
 		current.problems = append(current.problems, fmt.Sprintf("%s: %s", f.Element, f.Kind))
@@ -91,7 +99,7 @@ func (s State) foldWriteRestriction(basis uint64, at time.Time, evidence authori
 	s.rulesSources[WriteRestriction] = current
 	// Revisions only affect planner keys when the visible block changes or a
 	// definite negative invalidates an earlier in-flight pass.
-	if len(evidence.Findings) > 0 || len(current.problems) == 0 && hadProblems {
+	if len(evidence.Findings) > 0 || len(current.problems) == 0 && hadProblems || len(current.problems) > 0 && !hadProblems {
 		s.revision++
 		s.rulesPauseRevision = s.revision
 	}
