@@ -1,0 +1,11 @@
+{
+  "cache_root": "/home/riels/.cache/adr0008-9b-round2-verification",
+  "files": {
+    "cache-manifest.json": "a052dc6d7951cccae31d6808ff73c05eab18ed0e7b21e0ce73735a9906686b59",
+    "contracts-baseline.json": "88e727ebe7ea5b570f352c5c661c2cd1642c1b5120f3d3ed086993f4dd00362a",
+    "contracts-candidate.json": "88e727ebe7ea5b570f352c5c661c2cd1642c1b5120f3d3ed086993f4dd00362a",
+    "make-check.log": "14202bc43aaa3b5234b79c1c0e6c936697aaf23699beda8b91924327e1ec22c5",
+    "sim-normalized.json": "a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7",
+    "summary.json": "842a8086e4ec4e1d3ecbdbae1b8f84267b7945af6cb0c77194aee4ed303c2e37"
+  }
+}

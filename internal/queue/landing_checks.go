@@ -83,34 +83,21 @@ func (LandingChecksRecorded) queueEvent() {}
 
 // Validate checks event identity, member bindings, and explicit evidence shapes.
 func (e LandingChecksRecorded) Validate() error {
-	if err := e.checkSize(); err != nil {
+	if err := e.validateHeader(); err != nil {
 		return err
-	}
-	for _, text := range []string{e.BatchID, e.AttemptID, e.ConfigCommit, e.ConfigDigest, e.PolicyDigest, e.TestedSHA, e.LandedSHA, e.TestRef} {
-		if len(text) > MaxLandingCheckStringBytes {
-			return LandingChecksTooLargeError{"identity", MaxLandingCheckStringBytes}
-		}
-	}
-	if requireActionText("batch_id", e.BatchID, "attempt_id", e.AttemptID, "config_commit", e.ConfigCommit, "test_ref", e.TestRef) != nil || !digestHex(e.ConfigDigest) || !digestHex(e.PolicyDigest) || !forge.ValidDiffObjectID(e.TestedSHA) || !forge.ValidDiffObjectID(e.LandedSHA) || e.ObservedAt.IsZero() || !slices.Contains([]MergeMethod{Merge, Squash, Rebase, FastForward}, e.Method) {
-		return fmt.Errorf("invalid landing checks identity")
-	}
-	if e.RequiredCheckSource.Kind != "merge_when" || len(e.RequiredCheckSource.SourceRevisions) != len(rulesSourceOrder) {
-		return fmt.Errorf("invalid required check source")
-	}
-	for i, r := range e.RequiredCheckSource.SourceRevisions {
-		if r.Source != rulesSourceOrder[i] {
-			return fmt.Errorf("invalid check source revisions")
-		}
 	}
 	for _, count := range []struct {
 		field       string
 		size, limit int
 	}{
-		{"members", len(e.Members), 128}, {"checks", len(e.Checks), 10000}, {"check order", len(e.CheckOrder), 10000}, {"expressions", len(e.Expressions), 128}, {"inputs", len(e.Inputs), 128 * 12},
+		{"members", len(e.Members), maxLandingCheckMembers}, {"checks", len(e.Checks), maxLandingCheckRuns}, {"check order", len(e.CheckOrder), maxLandingCheckRuns}, {"expressions", len(e.Expressions), maxLandingCheckMembers}, {"inputs", len(e.Inputs), maxLandingCheckInputs},
 	} {
 		if count.size > count.limit {
 			return LandingChecksTooLargeError{count.field, count.limit}
 		}
+	}
+	if err := e.checkSize(); err != nil {
+		return err
 	}
 	if len(e.Members) < 1 || e.Checks == nil || e.CheckOrder == nil || e.Expressions == nil || e.Inputs == nil {
 		return fmt.Errorf("invalid landing check members/runs")
@@ -155,6 +142,12 @@ func (e LandingChecksRecorded) Validate() error {
 	}
 	seen := map[int]bool{}
 	for _, m := range e.Members {
+		if len(m.HeadSHA) > MaxLandingCheckStringBytes {
+			return LandingChecksTooLargeError{"member head", MaxLandingCheckStringBytes}
+		}
+		if len(m.Conditions.Inputs) > maxLandingCheckMemberInputs {
+			return LandingChecksTooLargeError{"member inputs", maxLandingCheckMemberInputs}
+		}
 		if m.PR < 1 || seen[m.PR] || !forge.ValidDiffObjectID(m.HeadSHA) || m.Conditions.Expression < 0 || m.Conditions.Expression >= len(e.Expressions) || m.Conditions.Inputs == nil {
 			return fmt.Errorf("invalid landing check member")
 		}
@@ -198,6 +191,36 @@ func (e LandingChecksRecorded) Validate() error {
 		seenChecks[key] = true
 	}
 
+	return nil
+}
+
+// validateHeader bounds and validates the fixed envelope before a builder retains it.
+func (e LandingChecksRecorded) validateHeader() error {
+	for _, text := range []string{e.BatchID, e.AttemptID, e.ConfigCommit, e.ConfigDigest, e.PolicyDigest, e.TestedSHA, e.LandedSHA, e.TestRef} {
+		if len(text) > MaxLandingCheckStringBytes {
+			return LandingChecksTooLargeError{"identity", MaxLandingCheckStringBytes}
+		}
+	}
+	if requireActionText("batch_id", e.BatchID, "attempt_id", e.AttemptID, "config_commit", e.ConfigCommit, "test_ref", e.TestRef) != nil || !digestHex(e.ConfigDigest) || !digestHex(e.PolicyDigest) || !forge.ValidDiffObjectID(e.TestedSHA) || !forge.ValidDiffObjectID(e.LandedSHA) || e.ObservedAt.IsZero() || !slices.Contains([]MergeMethod{Merge, Squash, Rebase, FastForward}, e.Method) {
+		return fmt.Errorf("invalid landing checks identity")
+	}
+	if len(e.RequiredCheckSource.Kind) > MaxLandingCheckStringBytes {
+		return LandingChecksTooLargeError{"source kind", MaxLandingCheckStringBytes}
+	}
+	if len(e.RequiredCheckSource.SourceRevisions) > len(rulesSourceOrder) {
+		return LandingChecksTooLargeError{"source revisions", len(rulesSourceOrder)}
+	}
+	if e.RequiredCheckSource.Kind != "merge_when" || len(e.RequiredCheckSource.SourceRevisions) != len(rulesSourceOrder) {
+		return fmt.Errorf("invalid required check source")
+	}
+	for i, r := range e.RequiredCheckSource.SourceRevisions {
+		if len(r.Source) > MaxLandingCheckStringBytes {
+			return LandingChecksTooLargeError{"source revision", MaxLandingCheckStringBytes}
+		}
+		if r.Source != rulesSourceOrder[i] {
+			return fmt.Errorf("invalid check source revisions")
+		}
+	}
 	return nil
 }
 

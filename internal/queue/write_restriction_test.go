@@ -151,6 +151,7 @@ func TestAuthorityHypotheticalClearAndRestart(t *testing.T) {
 func TestAuthorityDraftBinding(t *testing.T) {
 	s, v := restrictionState(t)
 	pin := *s.AuthorityPin()
+	in := adoptionInput(t, &pin, &v)
 	for _, name := range []string{"match", "digest", "actor", "selector", "method", "inventory", "hidden", "incomplete", "old-read"} {
 		t.Run(name, func(t *testing.T) {
 			candidate := *cloneAuthority(&pin)
@@ -176,7 +177,7 @@ func TestAuthorityDraftBinding(t *testing.T) {
 			case "old-read":
 				started = v.VerifiedAt.Add(-time.Second)
 			}
-			result := BindAuthorityDraft(candidate, 123, v, started, started.Add(time.Second), fresh)
+			result := BindAuthorityDraft(candidate, 123, v, started, started.Add(time.Second), in, fresh)
 			if (result.OpenMerge.Activation != nil) != (name == "match") {
 				t.Fatal(result)
 			}

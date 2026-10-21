@@ -276,6 +276,16 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 		if err != nil {
 			return err
 		}
+		attemptID := ""
+		if x.LandingDecisions != nil && x.LandingDecisions.ValidateChecks != nil {
+			attemptID, err = x.newID()
+			if err != nil {
+				return err
+			}
+			if err := x.LandingDecisions.ValidateChecks(ctx, a, x.policyChecks(checks, a.BatchID), checksAt, attemptID); err != nil {
+				return err
+			}
+		}
 		if x.rerunPermissionLost(checks) {
 			if err := emit(queue.CheckRerunDispatched{BatchID: a.BatchID, TestedSHA: a.TestedSHA, Generation: x.CheckRetry.Generation, OutcomeUnknown: true}); err != nil {
 				return err
@@ -370,9 +380,11 @@ func (x *Executor) Execute(ctx context.Context, action queue.Action, emit func(q
 			}
 			landedSHA = fastForwardHead
 		}
-		attemptID, err := x.newID()
-		if err != nil {
-			return err
+		if attemptID == "" {
+			attemptID, err = x.newID()
+			if err != nil {
+				return err
+			}
 		}
 		start := queue.LandingStarted{BatchID: a.BatchID, AttemptID: attemptID, FenceToken: a.FenceToken, At: x.now()}
 		if x.LandingDecisions != nil {

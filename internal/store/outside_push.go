@@ -48,14 +48,19 @@ type outsidePushProgress struct {
 // OutsidePushAudit is a read-only journal derivation, followed by an atomic
 // cursor/event commit. No transaction or queue lock survives this read.
 type OutsidePushAudit struct {
-	Moves    []OutsidePushMove
-	expected []byte
-	progress outsidePushProgress
+	Moves []OutsidePushMove
+
+	// CursorResetReason reports an unusable derived cursor rebuilt from the
+	// journal. Its original bytes remain the compare-and-swap expectation.
+	CursorResetReason string
+	expected          []byte
+	progress          outsidePushProgress
 }
 
-// ReadOutsidePushAudit scans only the suffix after the durable cursor. The last
-// settled landing travels with each candidate: an old landing at the same SHA
-// cannot hide a later rewind to that SHA.
+// ReadOutsidePushAudit scans the suffix after a usable durable cursor, or
+// rebuilds an unusable cursor from the journal in bounded passes. The last settled
+// landing travels with each candidate: an old landing at the same SHA cannot hide
+// a later rewind to that SHA.
 func (s *Store) ReadOutsidePushAudit(ctx context.Context, q QueueID) (*OutsidePushAudit, error) {
 	a := &OutsidePushAudit{}
 	var err error
@@ -65,11 +70,19 @@ func (s *Store) ReadOutsidePushAudit(ctx context.Context, q QueueID) (*OutsidePu
 	}
 	var state queue.State
 	if len(a.expected) != 0 {
-		if err := json.Unmarshal(a.expected, &a.progress); err != nil {
-			return nil, err
+		err = json.Unmarshal(a.expected, &a.progress)
+		if err == nil {
+			state, err = queue.DecodeSnapshot(a.progress.State)
 		}
-		state, err = queue.DecodeSnapshot(a.progress.State)
-	} else {
+		if err != nil {
+			a.CursorResetReason = err.Error()
+			a.progress = outsidePushProgress{}
+			state = queue.State{}
+		}
+	}
+	if len(a.expected) == 0 || a.CursorResetReason != "" {
+		// This observation is only a cache. Rebuild in the same bounded passes
+		// as a new audit; immutable BaseMoved dedupe keys preserve receipts.
 		err = s.pool.QueryRow(ctx, `SELECT base, COALESCE(initial_fence, '') FROM queues WHERE id=$1`, q).Scan(&state.BaseBranch, &state.Fence)
 	}
 	if err != nil {

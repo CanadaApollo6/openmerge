@@ -15,8 +15,9 @@ import (
 // AuthorityPin is present only in the openmerge variant. Activation is optional:
 // a hidden or incomplete fresh read cannot adopt a draft verification.
 type AuthorityPin struct {
-	Binding    authority.PolicyBinding `json:"binding"`
-	Activation *authority.Activation   `json:"activation,omitempty"`
+	Binding           authority.PolicyBinding     `json:"binding"`
+	Activation        *authority.Activation       `json:"activation,omitempty"`
+	VerificationInput *AuthorityVerificationInput `json:"verification_input,omitempty"`
 }
 
 // PolicyAuthorityApplied binds the actual governing commit to policy identity.
@@ -53,6 +54,14 @@ func (e PolicyAuthorityApplied) Validate() error {
 		}
 		if b.EffectiveDigest != e.EffectiveDigest || b.CoverageDigest != e.CoverageDigest || b.DefaultBranch != e.DefaultBranch {
 			return fmt.Errorf("authority pin binding mismatch")
+		}
+		if input := e.OpenMerge.VerificationInput; input != nil {
+			if e.OpenMerge.Activation == nil {
+				return fmt.Errorf("authority verification input requires activation")
+			}
+			if err := input.validateSize(); err != nil {
+				return err
+			}
 		}
 		if e.OpenMerge.Activation != nil {
 			if err := e.OpenMerge.Activation.Validate(); err != nil {
@@ -128,6 +137,7 @@ func (e WriteRestrictionVerified) Validate() error {
 // Authority evidence is isolated from legacy sources and proposed history.
 type authorityProjection struct {
 	Pin            *PolicyAuthorityApplied      `json:"pin,omitempty"`
+	Adopted        *PolicyAuthorityApplied      `json:"adopted,omitempty"`
 	Observed       *WriteRestrictionObserved    `json:"observed,omitempty"`
 	Verified       *WriteRestrictionVerified    `json:"verified,omitempty"`
 	Proposed       *WriteRestrictionVerified    `json:"proposed,omitempty"`
@@ -182,7 +192,8 @@ func (s State) observeAuthority(e Event) (State, bool) {
 		}
 		if v.OpenMerge != nil {
 			s.rulesSources[WriteRestriction] = rulesSourceState{}
-			if a := v.OpenMerge.Activation; a != nil {
+			if a := v.OpenMerge.Activation; a != nil && AuthorityDraftAdopted(v) {
+				s.authority.Adopted = cloneAuthority(&v)
 				s = s.foldWriteRestriction(0, a.SeeingReadAt, a.Evidence, true)
 			}
 		}
@@ -277,6 +288,21 @@ func validateAuthoritySnapshot(p *authorityProjection) error {
 	}
 	if p.Verified != nil && (p.Verified.Scope != "applied" || !state.matchesAuthority(p.Verified.Binding)) || p.Proposed != nil && p.Proposed.Scope != "proposed" {
 		return fmt.Errorf("snapshot verification scope/binding mismatch")
+	}
+	if p.Adopted != nil && (!AuthorityDraftAdopted(*p.Adopted) || !state.matchesAuthority(p.Adopted.OpenMerge.Binding)) {
+		return fmt.Errorf("snapshot adoption interpretation/binding mismatch; replay journal and reverify authority")
+	}
+	// Materialized completeness and operator ages need a retained source. The
+	// original interpreted adoption survives same-binding governing pin changes;
+	// an old snapshot containing only raw activation cannot authenticate a pass.
+	if !p.LastVerifiedAt.IsZero() && p.Verified == nil && p.Adopted == nil {
+		return fmt.Errorf("snapshot verification lacks interpreted provenance; replay journal and reverify authority")
+	}
+	adoptedPass := p.Adopted != nil && len(p.Adopted.OpenMerge.Activation.Evidence.Findings) == 0
+	observedPass := p.Observed != nil && p.Observed.Evidence.SeeingComplete() && len(p.Observed.Evidence.Findings) == 0
+	verifiedPass := p.Verified != nil && p.Verified.Evidence.SeeingComplete() && len(p.Verified.Evidence.Findings) == 0
+	if p.Complete && !adoptedPass && !observedPass && !verifiedPass {
+		return fmt.Errorf("snapshot completeness lacks evidence provenance; replay journal and reverify authority")
 	}
 	return nil
 }

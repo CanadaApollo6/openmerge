@@ -30,7 +30,10 @@ func TestLandingChecksShareRetryLedgerRead(t *testing.T) {
 			c.x.CheckRetry = state.Active.CheckRetry
 			c.x.LandingDecisions = &executor.LandingDecisionGate{Policy: cp.Policy{Approvals: &cp.Approvals{}}, Load: func(context.Context) (queue.State, error) { return state, nil }, ReadTestedMessages: func(context.Context, queue.Land) ([]string, error) { return nil, stopped }, Commit: func(context.Context, []queue.ApprovalEligibilityObserved, []queue.LandingDecisionRecorded, queue.LandingStarted) error {
 				return stopped
-			}, ReadInputsWithChecks: func(_ context.Context, _ queue.Land, _ queue.State, runs []forge.CheckRun, at time.Time) ([]queue.ApprovalEligibilityObserved, error) {
+			}, ReadInputsWithChecks: func(_ context.Context, _ queue.Land, _ queue.State, runs []forge.CheckRun, at time.Time, attempt string) ([]queue.ApprovalEligibilityObserved, error) {
+				if attempt != "attempt" {
+					t.Fatalf("read attempt = %q", attempt)
+				}
 				calls++
 				if len(runs) != 1 || runs[0].ID != 1 || runs[0].Attempt != 2 || runs[0].State != forge.Success || !at.Equal(c.now) {
 					t.Fatal("gate diverged from retry identity ledger", runs, at)

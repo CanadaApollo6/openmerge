@@ -3,6 +3,8 @@ package store
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 
@@ -204,6 +206,75 @@ func TestOutsidePushIncrementalScanAndBoundedPass(t *testing.T) {
 	must(t, json.Unmarshal(raw, &cursor))
 	if cursor.AuditedBaseMove != a.Moves[0].ID {
 		t.Fatal("durable base move cursor not advanced")
+	}
+}
+
+func TestOutsidePushRejectedAuthorityCursorRescansWithoutDuplicateReceipts(t *testing.T) {
+	s := newStore(t)
+	q := ensureQueue(t, s, "")
+	appendEvents(t, s, q, queue.BaseMoved{SHA: "base"}, queue.BaseMoved{SHA: "B"})
+	auditPass(t, s, q) // A receipt already exists before the cursor is rejected.
+	for range outsidePushScanLimit {
+		appendEvents(t, s, q, queue.RefreshRequested{})
+	}
+	lastMove := appendEvents(t, s, q, queue.BaseMoved{SHA: "C"}, queue.BaseMoved{SHA: "D"})
+
+	// Model a v7 cursor written before raw activation provenance was rejected.
+	raw, err := os.ReadFile("../queue/testdata/wire/v1/variants/policy_authority_applied_activation.json")
+	must(t, err)
+	event, err := queue.DecodeEvent(raw)
+	must(t, err)
+	pin := event.(queue.PolicyAuthorityApplied)
+	state := queue.Apply(queue.Apply(queue.State{}, queue.ConfigApplied{Commit: pin.GoverningCommit, Digest: pin.EffectiveDigest}), pin)
+	raw, err = queue.EncodeSnapshot(state)
+	must(t, err)
+	var snapshot map[string]any
+	must(t, json.Unmarshal(raw, &snapshot))
+	projection := snapshot["Authority"].(map[string]any)
+	projection["complete"] = true
+	projection["last_observed_at"] = pin.OpenMerge.Activation.SeeingReadAt
+	projection["last_verified_at"] = pin.OpenMerge.Activation.SeeingReadAt
+	raw, err = json.Marshal(snapshot)
+	must(t, err)
+	if _, err := queue.DecodeSnapshot(raw); err == nil || !strings.Contains(err.Error(), "replay journal and reverify authority") {
+		t.Fatalf("test cursor not rejected for activation provenance: %v", err)
+	}
+	cursor, err := json.Marshal(outsidePushProgress{ScannedThrough: lastMove, State: raw})
+	must(t, err)
+	_, err = s.pool.Exec(t.Context(), `UPDATE observations SET value=$1 WHERE queue_id=$2 AND key=$3`, cursor, q, outsidePushCursorKey)
+	must(t, err)
+
+	first, err := s.ReadOutsidePushAudit(t.Context(), q)
+	must(t, err)
+	competitor, err := s.ReadOutsidePushAudit(t.Context(), q)
+	must(t, err)
+	if first.CursorResetReason == "" || first.progress.ScannedThrough >= lastMove || len(first.Moves) != 1 || first.Moves[0].NewSHA != "B" {
+		t.Fatalf("rebuild did not reset to bounded journal prefix: %+v", first)
+	}
+	ok, err := s.CommitOutsidePushAudit(t.Context(), q, first, auditEvidence(first))
+	must(t, err)
+	if !ok {
+		t.Fatal("rebuild lost its original cursor CAS")
+	}
+	ok, err = s.CommitOutsidePushAudit(t.Context(), q, competitor, auditEvidence(competitor))
+	must(t, err)
+	if ok {
+		t.Fatal("competing rebuild overwrote newer progress")
+	}
+	restarted, err := Open(t.Context(), s.pool.Config().ConnString(), WithTestLockScope(s.testLockScope))
+	must(t, err)
+	defer restarted.Close()
+	resumed := auditPass(t, restarted, q)
+	if resumed.CursorResetReason != "" || len(resumed.Moves) != 2 || resumed.Moves[0].NewSHA != "C" || resumed.Moves[1].NewSHA != "D" {
+		t.Fatalf("restart lost remaining transitions: %+v", resumed)
+	}
+	if len(auditPass(t, restarted, q).Moves) != 0 {
+		t.Fatal("caught-up cursor repeated transitions")
+	}
+	loaded, _, err := restarted.Load(t.Context(), q)
+	must(t, err)
+	if moves := loaded.RecentOutsidePushes(); len(moves) != 3 || moves[0].NewSHA != "B" || moves[1].NewSHA != "C" || moves[2].NewSHA != "D" {
+		t.Fatalf("rescan lost or duplicated durable receipts: %+v", moves)
 	}
 }
 

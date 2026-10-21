@@ -33,6 +33,35 @@ func (e LandingChecksTooLargeError) Error() string {
 // Is preserves the overflow classification through error wrappers.
 func (e LandingChecksTooLargeError) Is(target error) bool { return target == ErrLandingChecksTooLarge }
 
+// ErrLandingChecksInvalid identifies evidence the builder cannot faithfully record.
+// It requires an operator repair rather than a stale-work retry.
+var ErrLandingChecksInvalid = errors.New("invalid landing check evidence")
+
+// LandingChecksInvalidError retains the validation cause for operator repair.
+type LandingChecksInvalidError struct{ Err error }
+
+func (e LandingChecksInvalidError) Error() string {
+	return fmt.Sprintf("%s: %v", ErrLandingChecksInvalid, e.Err)
+}
+func (e LandingChecksInvalidError) Unwrap() error { return e.Err }
+
+// Is preserves permanent validation classification through error wrappers.
+func (e LandingChecksInvalidError) Is(target error) bool { return target == ErrLandingChecksInvalid }
+
+func landingChecksBuildError(err error) error {
+	if err == nil || errors.Is(err, ErrLandingChecksTooLarge) || errors.Is(err, ErrLandingChecksInvalid) {
+		return err
+	}
+	return LandingChecksInvalidError{Err: err}
+}
+
+const (
+	maxLandingCheckMembers      = 128
+	maxLandingCheckRuns         = 10000
+	maxLandingCheckMemberInputs = 12
+	maxLandingCheckInputs       = maxLandingCheckMembers * maxLandingCheckMemberInputs
+)
+
 const landingChecksEnvelopeBytes = len(`{"version":1,"type":"landing_checks_recorded","data":}`)
 
 func (e LandingChecksRecorded) checkSize() error {

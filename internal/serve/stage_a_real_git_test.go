@@ -111,13 +111,12 @@ func TestStageAGateRealGitAcquisition(t *testing.T) {
 					runs := []forge.CheckRun{{Name: "ci", Source: "app:15368", ID: 701, Attempt: 2, State: forge.Success, HeadBranch: land.Ref}}
 					values, err := checkSnapshot(expression, runs)
 					must(t, err)
-					builder, err := landingCheckEvidence(queue.State{ConfigCommit: "real-config", ConfigDigest: strings.Repeat("c", 64)}, strings.Repeat("d", 64), land, runs, time.Now())
+					builder, err := landingCheckEvidence(queue.State{ConfigCommit: "real-config", ConfigDigest: strings.Repeat("c", 64)}, strings.Repeat("d", 64), land, runs, time.Now(), "real-start")
 					must(t, err)
 					for _, pin := range pins {
 						must(t, builder.RecordMember(pin.PR, pin.HeadSHA, expression, values))
 					}
 					recorded := builder.Event()
-					recorded.AttemptID = "real-start"
 					_, encoded, err := queue.EncodeEvent(recorded)
 					must(t, err)
 					decoded, err := queue.DecodeEvent(encoded)

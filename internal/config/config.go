@@ -51,6 +51,8 @@ func Find(read func(path string) ([]byte, bool, error)) (path string, data []byt
 }
 
 // Config is a validated version 1 repository configuration.
+// Load never populates PolicyAuthority or BreakGlass while public authority
+// activation is unavailable; explicit github normalizes to their zero values.
 type Config struct {
 	PolicyAuthority  authority.Mode            `yaml:"policy_authority,omitempty"`
 	BreakGlass       *AuthorityTeam            `yaml:"break_glass,omitempty"`

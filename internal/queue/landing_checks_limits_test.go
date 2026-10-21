@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/CanadaApollo6/openmerge/internal/config/condition"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
@@ -259,4 +261,185 @@ func TestLandingChecksSharesInputsAcrossDifferentMembers(t *testing.T) {
 	if err != nil || b.bytes != size+landingChecksEnvelopeBytes {
 		t.Fatal("member budget drift", err)
 	}
+}
+
+func TestLandingChecksBuilderRejectsInvalidEvidence(t *testing.T) {
+	for name, build := range map[string]func() error{
+		"missing-attempt": func() error {
+			header := checkFixture(t)
+			header.AttemptID = ""
+			_, err := NewLandingChecksBuilder(header)
+			return err
+		},
+		"invalid-time": func() error {
+			header := checkFixture(t)
+			header.ObservedAt = time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)
+			_, err := NewLandingChecksBuilder(header)
+			return err
+		},
+		"invalid-utf8": func() error {
+			b, err := NewLandingChecksBuilder(checkFixture(t))
+			if err != nil {
+				return err
+			}
+			return b.AddCheck(LandingCheck{Name: string([]byte{0xff}), ProducerKind: "unavailable", Result: forge.Success})
+		},
+		"fabricated-id": func() error {
+			b, err := NewLandingChecksBuilder(checkFixture(t))
+			if err != nil {
+				return err
+			}
+			zero := uint64(0)
+			return b.AddCheck(LandingCheck{Name: "ci", ProducerKind: "unavailable", Result: forge.Success, RunID: &zero})
+		},
+		"invalid-member": func() error {
+			b, err := NewLandingChecksBuilder(checkFixture(t))
+			if err != nil {
+				return err
+			}
+			return b.RecordMember(0, strings.Repeat("c", 40), condition.Expression{}, condition.Snapshot{})
+		},
+		"invalid-input": func() error {
+			b, err := NewLandingChecksBuilder(checkFixture(t))
+			if err != nil {
+				return err
+			}
+			expr, err := condition.Parse("title = ready")
+			if err != nil {
+				return err
+			}
+			return b.RecordMember(1, strings.Repeat("c", 40), expr, condition.Snapshot{"title": condition.Bool(true)})
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := build()
+			var invalid LandingChecksInvalidError
+			if !errors.Is(err, ErrLandingChecksInvalid) || !errors.As(err, &invalid) || errors.Is(err, ErrLandingChecksTooLarge) {
+				t.Fatalf("invalid evidence lost permanent classification: %v", err)
+			}
+		})
+	}
+}
+
+func TestLandingChecksDirectCollectionCaps(t *testing.T) {
+	for name, mutate := range map[string]func(*LandingChecksRecorded){
+		"members":     func(e *LandingChecksRecorded) { e.Members = make([]LandingCheckMember, maxLandingCheckMembers+1) },
+		"checks":      func(e *LandingChecksRecorded) { e.Checks = make([]LandingCheck, maxLandingCheckRuns+1) },
+		"check-order": func(e *LandingChecksRecorded) { e.CheckOrder = make([]int, maxLandingCheckRuns+1) },
+		"expressions": func(e *LandingChecksRecorded) { e.Expressions = make([]string, maxLandingCheckMembers+1) },
+		"inputs":      func(e *LandingChecksRecorded) { e.Inputs = make([]condition.ObservedInput, maxLandingCheckInputs+1) },
+		"source-revisions": func(e *LandingChecksRecorded) {
+			e.RequiredCheckSource.SourceRevisions = make([]LandingCheckSourceRevision, len(rulesSourceOrder)+1)
+		},
+		"member-inputs": func(e *LandingChecksRecorded) { e.Members[0].Conditions.Inputs = make([]int, 13) },
+		"member-head": func(e *LandingChecksRecorded) {
+			e.Members[0].HeadSHA = strings.Repeat("x", MaxLandingCheckStringBytes+1)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			e := checkFixture(t)
+			mutate(&e)
+			err := e.Validate()
+			var limit LandingChecksTooLargeError
+			if !errors.As(err, &limit) || limit.Field != strings.ReplaceAll(name, "-", " ") {
+				t.Fatalf("missing direct cap for %s: %v", name, err)
+			}
+		})
+	}
+	for name, mutate := range map[string]func(*LandingChecksRecorded){
+		"identity": func(e *LandingChecksRecorded) { e.AttemptID = strings.Repeat("x", MaxLandingCheckStringBytes+1) },
+		"source-revisions": func(e *LandingChecksRecorded) {
+			e.RequiredCheckSource.SourceRevisions = make([]LandingCheckSourceRevision, len(rulesSourceOrder)+1)
+		},
+	} {
+		t.Run("header-"+name, func(t *testing.T) {
+			e := checkFixture(t)
+			mutate(&e)
+			if _, err := NewLandingChecksBuilder(e); !errors.Is(err, ErrLandingChecksTooLarge) {
+				t.Fatalf("missing direct header cap: %v", err)
+			}
+		})
+	}
+}
+
+func TestLandingChecksBuilderBudgetsFinalAttempt(t *testing.T) {
+	header := checkFixture(t)
+	// Escapes cost two wire bytes; this must be the exact final attempt, not
+	// an empty placeholder or an estimate based on unescaped string length.
+	header.AttemptID = strings.Repeat("\"", MaxLandingCheckStringBytes)
+	b, err := NewLandingChecksBuilder(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expr, err := condition.Parse("check-success = ci")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.RecordMember(1, strings.Repeat("c", 40), expr, condition.CheckResults([]string{"ci"}, nil, nil)); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		c := LandingCheck{Name: fmt.Sprintf("padding-%d-", len(b.event.Checks)), ProducerKind: "unavailable", Result: forge.Success}
+		e := b.Event()
+		e.Checks = append(slices.Clone(e.Checks), c)
+		e.CheckOrder = append(slices.Clone(e.CheckOrder), len(e.Checks)-1)
+		raw, err := json.Marshal(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gap := MaxLandingChecksBytes - landingChecksEnvelopeBytes - len(raw)
+		if gap < 0 {
+			t.Fatal("padding overshot boundary")
+		}
+		padding := min(gap, MaxLandingCheckStringBytes-len(c.Name))
+		c.Name += strings.Repeat("x", padding)
+		if err := b.AddCheck(c); err != nil {
+			t.Fatal(err)
+		}
+		if padding == gap {
+			break
+		}
+	}
+	e := b.Event()
+	_, raw, err := EncodeEvent(e)
+	if err != nil || len(raw) != MaxLandingChecksBytes || b.bytes != len(raw) {
+		t.Fatalf("final-attempt boundary: %d/%d: %v", b.bytes, len(raw), err)
+	}
+	if err := b.AddCheck(LandingCheck{Name: "overflow", ProducerKind: "unavailable", Result: forge.Success}); !errors.Is(err, ErrLandingChecksTooLarge) {
+		t.Fatalf("cap+1 accepted: %v", err)
+	}
+	if _, err := DecodeEvent(raw); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func FuzzLandingChecksJSONSizeMatchesEncoder(f *testing.F) {
+	for _, seed := range []string{"", "ascii", "\"\\\b\f\n\r\t\x00<>&", "世界\u2028\u2029"} {
+		f.Add(seed, uint64(0), int64(0), false)
+	}
+	f.Add("optional nulls", ^uint64(0), int64(-1<<63), true)
+	f.Add("numeric boundaries", ^uint64(0), int64(-1<<63), false)
+	f.Fuzz(func(t *testing.T, text string, id uint64, index int64, nullable bool) {
+		if len(text) > 4096 || !utf8.ValidString(text) {
+			t.Skip()
+		}
+		e := LandingChecksRecorded{BatchID: text, AttemptID: text, ObservedAt: time.Date(2026, 10, 21, 1, 2, 3, int(id%1e9), time.FixedZone("test", int(index%86400)))}
+		if !nullable {
+			e.Members = []LandingCheckMember{{PR: int(index), HeadSHA: text, Conditions: LandingCheckCondition{Expression: int(index), Inputs: []int{int(index), 0}}}}
+			e.Checks = []LandingCheck{{Name: text, Source: text, ProducerIdentity: &text, RunID: &id, Attempt: &id, WorkflowRunID: &id, HeadBranch: &text}}
+			e.CheckOrder, e.Expressions = []int{int(index)}, []string{text}
+			e.Inputs = []condition.ObservedInput{{Attribute: text, Kind: text, Text: text, List: []string{text}, Flag: id%2 == 0, Checks: id%2 == 1, Observed: []string{text}, Unsettled: []string{text}}}
+		}
+		raw, err := json.Marshal(e)
+		if err != nil {
+			t.Fatal(err)
+		}
+		size, err := landingJSONBytes(reflect.ValueOf(e), len(raw))
+		if err != nil || size != len(raw) {
+			t.Fatalf("oracle mismatch: %d vs %d: %v", size, len(raw), err)
+		}
+		if _, err := landingJSONBytes(reflect.ValueOf(e), len(raw)-1); !errors.Is(err, ErrLandingChecksTooLarge) {
+			t.Fatalf("oracle under-budget accepted: %v", err)
+		}
+	})
 }

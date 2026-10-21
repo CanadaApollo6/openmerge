@@ -292,12 +292,16 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 			return s.store.Emit(persist, claim, cfg)(deferred)
 		}
 	}
-	if errors.Is(err, queue.ErrLandingChecksTooLarge) {
-		detail := "landing-checks-too-large: " + err.Error() + "; reduce checks/condition inputs, then refresh the queue"
+	if errors.Is(err, queue.ErrLandingChecksTooLarge) || errors.Is(err, queue.ErrLandingChecksInvalid) {
+		reason, repair := "landing-checks-too-large", "reduce checks/condition inputs"
+		if errors.Is(err, queue.ErrLandingChecksInvalid) {
+			reason, repair = "landing-checks-invalid", "repair check/condition evidence"
+		}
+		detail := reason + ": " + err.Error() + "; " + repair + ", then refresh the queue"
 		if blockErr := s.block(actionCtx, w, queue.Operator, detail, ""); blockErr != nil {
 			return errors.Join(err, blockErr)
 		}
-		if reportErr := s.reportBatch(actionCtx, w, batch, forge.Status{State: forge.Blocked, Reason: "landing-checks-too-large", Summary: detail}); reportErr != nil {
+		if reportErr := s.reportBatch(actionCtx, w, batch, forge.Status{State: forge.Blocked, Reason: reason, Summary: detail}); reportErr != nil {
 			return errors.Join(err, reportErr)
 		}
 		return err

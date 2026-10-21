@@ -43,8 +43,9 @@ func (m Mode) Validate() error {
 }
 
 // Actor is the declared break-glass actor. Exactly one discriminator is set:
-// a team name (org/team) or repository_admin: true. It deliberately has no
-// user, bot, or membership representation.
+// a team name (org/team) or the historical-wire-only repository_admin: true.
+// New declarations require a dedicated team; the role remains readable for
+// retained evidence. It has no user, bot, or membership representation.
 type Actor struct {
 	Team            string `json:"team,omitempty"`
 	RepositoryAdmin bool   `json:"repository_admin,omitempty"`

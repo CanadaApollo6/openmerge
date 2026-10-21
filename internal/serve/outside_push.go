@@ -75,6 +75,9 @@ func (s *Server) auditOutsidePushes(ctx context.Context, id store.QueueID, key s
 	if err != nil {
 		return err
 	}
+	if audit.CursorResetReason != "" {
+		s.options.Logger.Warn("outside push audit cursor unusable; rescanning journal", "repository", key.Repository, "base", key.BaseBranch, "reason", audit.CursorResetReason)
+	}
 	var history forge.OutsidePushHistory
 	if len(audit.Moves) > 0 && s.options.OutsidePushHistory != nil {
 		history, err = s.options.OutsidePushHistory(ctx, key)

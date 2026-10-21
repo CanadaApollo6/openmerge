@@ -232,13 +232,16 @@ func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Conf
 	var acquisition *store.ApprovalRead
 	var checkEvidence *queue.LandingChecksRecorded
 	pin := basis.AuthorityPin()
-	recordChecks := pin != nil && pin.Authority == "openmerge"
+	// AuthorityRequired is an explicit internal Target opt-in. A setup draft or
+	// surviving journal pin cannot enable authority evidence on a public GitHub
+	// target while config.Load still rejects authority activation.
+	recordChecks := w.AuthorityRequired && pin != nil && pin.Authority == "openmerge"
 	gate := &executor.LandingDecisionGate{Policy: policy, ReloadAfterInputs: true,
 		Load: func(ctx context.Context) (queue.State, error) {
 			state, _, err := s.store.Load(ctx, w.id)
 			return state, err
 		},
-		ReadInputsWithChecks: func(ctx context.Context, land queue.Land, state queue.State, checks []forge.CheckRun, checksAt time.Time) ([]queue.ApprovalEligibilityObserved, error) {
+		ReadInputsWithChecks: func(ctx context.Context, land queue.Land, state queue.State, checks []forge.CheckRun, checksAt time.Time, attempt string) ([]queue.ApprovalEligibilityObserved, error) {
 			if w.stageA.policy.Digest != policy.Digest {
 				return nil, store.ErrLandingDecisionStale
 			}
@@ -274,11 +277,12 @@ func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Conf
 			}
 			var builder *queue.LandingChecksBuilder
 			if recordChecks {
-				builder, err = landingCheckEvidence(basis, policy.Digest, land, checks, checksAt)
+				builder, err = landingCheckEvidence(basis, policy.Digest, land, checks, checksAt, attempt)
 				if err != nil {
 					return nil, err
 				}
 			}
+			checksMet := true
 			for i, pin := range land.PRs {
 				evidence, err := stageAReviewEvidence(state, policy, fresh[i])
 				if err != nil {
@@ -288,15 +292,19 @@ func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Conf
 				if err != nil {
 					return nil, err
 				}
-				met, _ := w.cfg.MergeWhen.Evaluate(values)
-				if !met {
-					return nil, executor.ErrChecksNotSuccessful
-				}
 				if recordChecks {
 					if err := builder.RecordMember(pin.PR, pin.HeadSHA, w.cfg.MergeWhen, values); err != nil {
 						return nil, err
 					}
 				}
+				met, _ := w.cfg.MergeWhen.Evaluate(values)
+				if !recordChecks && !met {
+					return nil, executor.ErrChecksNotSuccessful
+				}
+				checksMet = checksMet && met
+			}
+			if !checksMet {
+				return nil, executor.ErrChecksNotSuccessful
 			}
 			if recordChecks {
 				e := builder.Event()
@@ -313,7 +321,9 @@ func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Conf
 				if checkEvidence == nil {
 					return store.ErrLandingDecisionStale
 				}
-				checkEvidence.AttemptID = start.AttemptID
+				if checkEvidence.AttemptID != start.AttemptID {
+					return store.ErrLandingDecisionStale
+				}
 				return s.store.StartLanding(acquisition.Context(ctx), claim, cfg, policy, fresh, decisions, start, *checkEvidence)
 			}
 			return s.store.StartLanding(acquisition.Context(ctx), claim, cfg, policy, fresh, decisions, start)
@@ -325,10 +335,24 @@ func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Conf
 			return s.store.RejectLanding(acquisition.Context(ctx), claim, cfg, policy, fresh, expected, start, rejection)
 		},
 	}
-	if !recordChecks {
+	if recordChecks {
+		gate.ValidateChecks = func(ctx context.Context, land queue.Land, checks []forge.CheckRun, at time.Time, attempt string) error {
+			state, err := gate.Load(ctx)
+			if err != nil {
+				return err
+			}
+			_, err = gate.ReadInputsWithChecks(ctx, land, state, checks, at, attempt)
+			// Bounded unmet conditions retain the executor's existing retry and
+			// approval handling. Permanent evidence failures take precedence.
+			if errors.Is(err, executor.ErrChecksNotSuccessful) {
+				return nil
+			}
+			return err
+		}
+	} else {
 		read := gate.ReadInputsWithChecks
 		gate.ReadInputs = func(ctx context.Context, land queue.Land, state queue.State) ([]queue.ApprovalEligibilityObserved, error) {
-			return read(ctx, land, state, nil, time.Time{})
+			return read(ctx, land, state, nil, time.Time{}, "")
 		}
 		gate.ReadInputsWithChecks = nil
 	}

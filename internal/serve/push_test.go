@@ -131,7 +131,9 @@ func TestAuthorityBootstrapPinsBeforeFirstRealFence(t *testing.T) {
 						if calls == 2 {
 							switch mode {
 							case "basis":
-								must(t, observed(2))
+								current, _, err := db.Load(ctx, id)
+								must(t, err)
+								must(t, observed(current.RulesSourceRevision(queue.WriteRestriction)))
 							case "policy":
 								_, err := db.Append(ctx, id, []queue.Event{queue.ConfigApplied{Commit: tip, Digest: strings.Repeat("d", 64)}}, "")
 								must(t, err)

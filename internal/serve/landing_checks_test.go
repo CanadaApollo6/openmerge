@@ -31,11 +31,10 @@ func TestLandingCheckEvidenceUsesExactPolicyInputs(t *testing.T) {
 	}
 	land := queue.Land{BatchID: "batch", TestedSHA: strings.Repeat("a", 40), Method: queue.FastForward, Ref: "queue", PRs: []queue.BatchPR{{PR: 1, HeadSHA: strings.Repeat("b", 40)}}}
 	basis := queue.State{ConfigCommit: "config", ConfigDigest: strings.Repeat("c", 64)}
-	builder, err := landingCheckEvidence(basis, strings.Repeat("d", 64), land, checks, time.Now())
+	builder, err := landingCheckEvidence(basis, strings.Repeat("d", 64), land, checks, time.Now(), "attempt")
 	must(t, err)
 	must(t, builder.RecordMember(1, land.PRs[0].HeadSHA, expr, values))
 	e := builder.Event()
-	e.AttemptID = "attempt"
 	must(t, e.Validate())
 	if len(e.Checks) != 4 || *e.Checks[1].Attempt != 2 || *e.Checks[1].RunID != 11 || e.Checks[2].Attempt != nil || e.Checks[3].ProducerIdentity != nil || e.Checks[3].RunID != nil || e.Checks[3].Attempt != nil || e.LandedSHA == e.TestedSHA {
 		t.Fatal("read identities/absence/marker lost", e)
@@ -113,6 +112,7 @@ func TestLandingChecksAuthorityMethodsAndChainPositions(t *testing.T) {
 				pin.OpenMerge.Binding.EffectiveDigest = state.ConfigDigest
 				_, err = s.store.Append(t.Context(), w.id, []queue.Event{pin}, "")
 				must(t, err)
+				w.AuthorityRequired = true // explicit internal evidence seam
 				for n := 1; n <= depth; n++ {
 					// Trust refresh can reopen CI when a speculative member reaches
 					// the head. Follow that existing refresh before claiming Land.
@@ -188,8 +188,9 @@ func claimLandingChecksAction(t *testing.T, s *Server, w *worker, cfg queue.Conf
 }
 
 func TestLandingChecksLegacyGateAndPinRace(t *testing.T) {
-	for _, race := range []bool{false, true} {
-		t.Run(fmt.Sprintf("pin-race-%t", race), func(t *testing.T) {
+	for _, scenario := range []string{"legacy", "pin-before", "pin-race"} {
+		t.Run(scenario, func(t *testing.T) {
+			race := scenario == "pin-race"
 			s, w, f := shadowFixture(t, 1, "main", "7", false)
 			pr := w.prs[1]
 			f.SetNativeReviews(repo, 1, forge.NativeReviews{Reviews: []forge.NativeReview{{ID: 200, CommitID: pr.HeadSHA, Author: forge.UserIdentity{ID: 21, Login: "writer", Kind: forge.UserAccount}, State: forge.ReviewApproved, Submitted: forge.NativeTime{Time: time.Now().Add(time.Minute), Source: forge.ReviewSubmissionTime, Precision: time.Second}}}, Comments: []forge.NativeComment{shadowComment(100, "@openmerge queue")}})
@@ -205,6 +206,18 @@ func TestLandingChecksLegacyGateAndPinRace(t *testing.T) {
 				t.Fatal("claim did not begin")
 			}
 			basis := shadowState(t, s, w)
+			if scenario == "pin-before" {
+				raw, err := os.ReadFile("../queue/testdata/wire/v1/event_policy_authority_applied.json")
+				must(t, err)
+				event, err := queue.DecodeEvent(raw)
+				must(t, err)
+				pin := event.(queue.PolicyAuthorityApplied)
+				pin.GoverningCommit, pin.EffectiveDigest = basis.ConfigCommit, basis.ConfigDigest
+				pin.OpenMerge.Binding.EffectiveDigest = basis.ConfigDigest
+				_, err = s.store.Append(t.Context(), w.id, []queue.Event{pin}, "")
+				must(t, err)
+				basis = shadowState(t, s, w)
+			}
 			gate := s.stageAGate(w, claim, cfg, basis)
 			if gate.ReadInputs == nil || gate.ReadInputsWithChecks != nil {
 				t.Fatal("legacy gate opted into evidence read")
@@ -230,7 +243,7 @@ func TestLandingChecksLegacyGateAndPinRace(t *testing.T) {
 			}
 			x := executor.Executor{Driver: f, Git: f, Repo: repo, Base: "main", RequiredChecks: []string{"ci"}, LandingDecisions: gate}
 			err = x.Execute(t.Context(), claim.Action, s.store.EmitWithPolicy(t.Context(), claim, cfg, w.stageA.policy))
-			if race {
+			if scenario != "legacy" {
 				var required store.LandingChecksRequiredError
 				if !errors.As(err, &required) || errors.Is(err, store.ErrLandingDecisionStale) || errors.Is(err, store.ErrStale) {
 					t.Fatalf("pin race classification: %v", err)
@@ -249,9 +262,154 @@ func TestLandingChecksLegacyGateAndPinRace(t *testing.T) {
 					checks++
 				}
 			}
-			if checks != 0 || race && starts != 0 || !race && starts != 1 {
+			if checks != 0 || scenario != "legacy" && starts != 0 || scenario == "legacy" && starts != 1 {
 				t.Fatalf("legacy/racing gate recorded starts=%d checks=%d", starts, checks)
 			}
 		})
+	}
+}
+
+func TestLandingChecksGateOverflowPrecedesUnmetMembers(t *testing.T) {
+	for _, oversizedMember := range []int{1, 2} {
+		t.Run(fmt.Sprintf("member-%d", oversizedMember), func(t *testing.T) {
+			testSynctest(t, func(t *testing.T) {
+				s, w, f := shadowFixture(t, 1, "main", "7", false)
+				base := shadowState(t, s, w).BaseSHA
+				_, err := f.OpenPR(repo, 2, base, true)
+				must(t, err)
+				for n := 1; n <= 2; n++ {
+					f.SetNativeReviews(repo, n, forge.NativeReviews{Comments: []forge.NativeComment{shadowComment(int64(100+n), "@openmerge queue")}})
+				}
+				must(t, s.reconcile(t.Context(), w, false))
+				basis := shadowState(t, s, w)
+				raw, err := os.ReadFile("../queue/testdata/wire/v1/event_policy_authority_applied.json")
+				must(t, err)
+				event, err := queue.DecodeEvent(raw)
+				must(t, err)
+				pin := event.(queue.PolicyAuthorityApplied)
+				pin.GoverningCommit, pin.EffectiveDigest = basis.ConfigCommit, basis.ConfigDigest
+				pin.OpenMerge.Binding.EffectiveDigest = basis.ConfigDigest
+				_, err = s.store.Append(t.Context(), w.id, []queue.Event{pin}, "")
+				must(t, err)
+				basis = shadowState(t, s, w)
+				w.AuthorityRequired = true // explicit internal evidence seam
+				w.cfg.MergeWhen, err = condition.Parse("title = ready")
+				must(t, err)
+				land := queue.Land{BatchID: "gate-precedence", TestedSHA: strings.Repeat("e", 40), Ref: "queue", Method: queue.Merge}
+				for n := 1; n <= 2; n++ {
+					pr := w.prs[n]
+					pr.Title = "unmet"
+					if n == oversizedMember {
+						pr.Title = strings.Repeat("x", condition.MaxEvidenceStringBytes+1)
+					}
+					w.prs[n] = pr
+					land.PRs = append(land.PRs, queue.BatchPR{PR: n, HeadSHA: pr.HeadSHA})
+				}
+				cfg := w.plannerConfig(s.options.PollInterval)
+				gate := s.stageAGate(w, store.ClaimedAction{}, cfg, basis)
+				_, err = gate.ReadInputsWithChecks(t.Context(), land, basis, nil, time.Now(), "attempt")
+				if !errors.Is(err, queue.ErrLandingChecksTooLarge) || errors.Is(err, executor.ErrChecksNotSuccessful) {
+					t.Fatalf("overflow lost to unmet condition: %v", err)
+				}
+				for n := 1; n <= 2; n++ {
+					pr := w.prs[n]
+					pr.Title = "unmet"
+					w.prs[n] = pr
+				}
+				_, err = gate.ReadInputsWithChecks(t.Context(), land, basis, nil, time.Now(), "attempt")
+				if !errors.Is(err, executor.ErrChecksNotSuccessful) {
+					t.Fatalf("bounded unmet policy changed outcome: %v", err)
+				}
+				records, err := s.store.EventsAfter(t.Context(), w.id, 0)
+				must(t, err)
+				for _, record := range records {
+					switch record.Event.(type) {
+					case queue.LandingStarted, queue.LandingChecksRecorded:
+						t.Fatal("rejected preflight emitted start evidence")
+					}
+				}
+			})
+		})
+	}
+}
+
+// Exercise the worker's typed check-policy callback, not just the final gate.
+func TestLandingChecksWorkerFailurePrecedence(t *testing.T) {
+	for _, authorityRequired := range []bool{false, true} {
+		for _, position := range []int{0, 1} {
+			for _, malformed := range []string{"overflow", "invalid", "bounded"} {
+				t.Run(fmt.Sprintf("authority-%t/position-%d/%s", authorityRequired, position, malformed), func(t *testing.T) {
+					testSynctest(t, func(t *testing.T) {
+						s, w, f := shadowFixture(t, 1, "main", "7", false)
+						pr := w.prs[1]
+						f.SetNativeReviews(repo, 1, forge.NativeReviews{Reviews: []forge.NativeReview{{ID: 200, CommitID: pr.HeadSHA, Author: forge.UserIdentity{ID: 21, Login: "writer", Kind: forge.UserAccount}, State: forge.ReviewApproved, Submitted: forge.NativeTime{Time: time.Now().Add(time.Minute), Source: forge.ReviewSubmissionTime, Precision: time.Second}}}, Comments: []forge.NativeComment{shadowComment(100, "@openmerge queue")}})
+						batch := shadowBuildBatch(t, s, w, 1)
+						shadowChecks(t, s, w, f, batch.TestedSHA, []forge.CheckRun{{Name: "ci", Source: "app:15368", State: forge.Success, HeadBranch: batch.TestRef}})
+						_, err := s.store.Append(t.Context(), w.id, []queue.Event{queue.ChecksCompleted{TestedSHA: batch.TestedSHA, Success: true}}, "")
+						must(t, err)
+						cfg := w.plannerConfig(s.options.PollInterval)
+						claim := claimLandingChecksAction(t, s, w, cfg, func(a queue.Action) bool { _, ok := a.(queue.Land); return ok })
+						state := shadowState(t, s, w)
+						raw, err := os.ReadFile("../queue/testdata/wire/v1/event_policy_authority_applied.json")
+						must(t, err)
+						event, err := queue.DecodeEvent(raw)
+						must(t, err)
+						pin := event.(queue.PolicyAuthorityApplied)
+						pin.GoverningCommit, pin.EffectiveDigest = state.ConfigCommit, state.ConfigDigest
+						pin.OpenMerge.Binding.EffectiveDigest = state.ConfigDigest
+						_, err = s.store.Append(t.Context(), w.id, []queue.Event{pin}, "")
+						must(t, err)
+
+						w.AuthorityRequired = authorityRequired
+						name := "extra"
+						switch malformed {
+						case "overflow":
+							name = strings.Repeat("x", 4097)
+						case "invalid":
+							name = string([]byte{0xff})
+						}
+						runs := []forge.CheckRun{{Name: "ci", Source: "app:15368", State: forge.Failure, HeadBranch: batch.TestRef}, {Name: name, Source: "app:15368", State: forge.Success, HeadBranch: batch.TestRef}}
+						if position == 0 {
+							runs[0], runs[1] = runs[1], runs[0]
+						}
+						f.SetCheckRuns(repo, batch.TestedSHA, runs)
+						err = s.execute(t.Context(), w, claim)
+						state = shadowState(t, s, w)
+						want := executor.ErrChecksNotSuccessful
+						if authorityRequired && malformed == "overflow" {
+							want = queue.ErrLandingChecksTooLarge
+						}
+						if authorityRequired && malformed == "invalid" {
+							want = queue.ErrLandingChecksInvalid
+						}
+						if !errors.Is(err, want) {
+							t.Fatalf("worker error=%v want %v", err, want)
+						}
+						blocked := authorityRequired && malformed != "bounded"
+						if state.SourceBlocked(queue.Operator) != blocked {
+							t.Fatalf("operator block=%t want %t", state.SourceBlocked(queue.Operator), blocked)
+						}
+						if blocked {
+							reason := "landing-checks-too-large"
+							if malformed == "invalid" {
+								reason = "landing-checks-invalid"
+							}
+							status := f.Statuses(repo, 1)[pr.HeadSHA]
+							if status.State != forge.Blocked || status.Reason != reason || !strings.Contains(status.Summary, reason) {
+								t.Fatalf("permanent failure status: %+v", status)
+							}
+						}
+						records, err := s.store.EventsAfter(t.Context(), w.id, 0)
+						must(t, err)
+						for _, r := range records {
+							switch r.Event.(type) {
+							case queue.LandingStarted, queue.LandingChecksRecorded:
+								t.Fatal("rejected worker emitted landing evidence")
+							}
+						}
+					})
+				})
+			}
+		}
 	}
 }
