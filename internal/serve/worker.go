@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/executor"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -477,9 +478,9 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 			return err
 		}
 	}
-	// Authors need the command before admission. Ordinary GitHub queues never
-	// have a mode pin; a rollback pin refreshes these checks without instructions.
-	if state.AuthorityPin() != nil {
+	// Authors need the command before admission only under active authority.
+	// A rollback pin refreshes cached checks but must never create invitations.
+	if pin := state.AuthorityPin(); pin != nil {
 		if _, err := s.ledgerSummary(ctx, w, 0); err != nil {
 			return err
 		}
@@ -491,7 +492,7 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 				continue
 			}
 			entry := w.ledgerCache.projection.LedgerEntry(n)
-			if entry != nil && entry.Position == 0 {
+			if pin.Authority == authority.GitHub || entry != nil && entry.Position == 0 {
 				data, err := s.store.Observation(ctx, w.id, fmt.Sprintf("status/%d", n))
 				if err != nil {
 					return err
@@ -505,13 +506,16 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 						return err
 					}
 				}
-				if previous.Head == entry.HeadSHA && (previous.Status.State == forge.Dequeued || previous.Status.State == forge.Merged) {
+				if len(data) != 0 && (pin.Authority == authority.GitHub || previous.Head == entry.HeadSHA && (previous.Status.State == forge.Dequeued || previous.Status.State == forge.Merged)) {
 					previous.Status.Summary = checkstatus.RefreshQueueInstructions(previous.Status.Summary, &w.ledgerCache.projection)
 					if err := s.writeStatus(ctx, w, n, previous.Head, previous.Status); err != nil {
 						return err
 					}
 					continue
 				}
+			}
+			if pin.Authority != authority.OpenMerge {
+				continue
 			}
 			// Never overwrite an admitted or terminal outcome with a queue invitation.
 			if entry == nil || entry.Position > 0 || entry.HeadSHA != pr.HeadSHA || entry.Status != "not-queued" && entry.Status != "blocked" {

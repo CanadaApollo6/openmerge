@@ -2,6 +2,7 @@ package serve
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"reflect"
@@ -129,75 +130,101 @@ func TestQueueInstructionsReportingPathsDedupeRetryRollback(t *testing.T) {
 }
 
 func TestQueueInstructionsBeforeAdmissionAndTerminalPreservation(t *testing.T) {
-	s, w, _, _ := fixture(t, repositoryConfig)
-	must(t, s.reconcile(t.Context(), w, true))
-	d := &instructionDriver{Driver: w.Driver}
-	w.Driver = d
-	head := w.prs[1].HeadSHA
-	must(t, s.report(t.Context(), w))
-	if d.writes != 0 {
-		t.Fatal("legacy unqueued PR gained a check")
-	}
-	raw, err := os.ReadFile("../queue/testdata/wire/v1/event_policy_authority_applied.json")
-	must(t, err)
-	event, err := queue.DecodeEvent(raw)
-	must(t, err)
-	pin := event.(queue.PolicyAuthorityApplied)
-	pin.EffectiveDigest = shadowState(t, s, w).ConfigDigest
-	pin.OpenMerge.Binding.EffectiveDigest = pin.EffectiveDigest
-	appendEvents := func(events ...queue.Event) {
-		t.Helper()
-		_, err := s.store.Append(t.Context(), w.id, events, "")
-		must(t, err)
-	}
-	appendEvents(pin)
-	for range 3 {
-		must(t, s.report(t.Context(), w))
-	}
-	if d.writes != 1 || d.comments != 0 {
-		t.Fatalf("unqueued report writes=%d comments=%d", d.writes, d.comments)
-	}
-	rendered, err := s.store.Observation(t.Context(), w.id, "status/1")
-	must(t, err)
-	if strings.Count(string(rendered), "@openmerge queue") != 1 || !strings.Contains(string(rendered), head) || !strings.Contains(string(rendered), "Not queued") {
-		t.Fatalf("no pre-admission instruction on current head: %s", rendered)
-	}
-	pin.Authority = authority.GitHub
-	pin.OpenMerge = nil
-	appendEvents(pin)
-	for range 3 {
-		must(t, s.report(t.Context(), w))
-	}
-	rollback, err := s.store.Observation(t.Context(), w.id, "status/1")
-	must(t, err)
-	if d.writes != 2 || strings.Contains(string(rollback), "@openmerge queue") {
-		t.Fatalf("rollback did not refresh pre-admission check: %s", rollback)
-	}
-	// New, unqueued heads after rollback also get the optional-queue check.
-	pr := w.prs[1]
-	pr.HeadSHA = "after-rollback"
-	w.prs[2] = pr
-	appendEvents(queue.PRObserved{PR: 2, HeadSHA: pr.HeadSHA, Eligible: true, Trusted: true})
-	for range 3 {
-		must(t, s.report(t.Context(), w))
-	}
-	optional, err := s.store.Observation(t.Context(), w.id, "status/2")
-	must(t, err)
-	if d.writes != 3 || !strings.Contains(string(optional), "Not queued") || strings.Contains(string(optional), "@openmerge queue") {
-		t.Fatalf("rollback invitation: %s", optional)
-	}
-	delete(w.prs, 2)
-	// A terminal ledger entry must not become a new queue invitation while
-	// the forge's open-PR observation catches up with the landing outcome.
-	now := time.Now()
-	appendEvents(queue.EnqueueRequested{PR: 1, At: now}, queue.BatchStarted{BatchID: "b1", BaseSHA: shadowState(t, s, w).BaseSHA, PRs: []queue.BatchPR{{PR: 1, HeadSHA: head}}, At: now}, queue.TestRefBuilt{BatchID: "b1", TestedSHA: "landed", Method: queue.Merge, At: now}, queue.ChecksCompleted{TestedSHA: "landed", Success: true}, queue.LandingStarted{BatchID: "b1", AttemptID: "attempt", FenceToken: shadowState(t, s, w).Fence, At: now}, queue.Landed{BatchID: "b1", NewBaseSHA: "landed", NewFence: "next"})
-	if state := shadowState(t, s, w); len(state.Entries) != 0 || state.BaseSHA != "landed" {
-		t.Fatalf("fixture did not land: %+v", state)
-	}
-	before := d.writes
-	must(t, s.report(t.Context(), w))
-	if before != d.writes {
-		t.Fatal("terminal PR overwritten by invitation")
+	for _, eligible := range []bool{true, false} {
+		t.Run(map[bool]string{true: "eligible", false: "ineligible"}[eligible], func(t *testing.T) {
+			s, w, _, _ := fixture(t, repositoryConfig)
+			must(t, s.reconcile(t.Context(), w, true))
+			d := &instructionDriver{Driver: w.Driver}
+			w.Driver = d
+			head := w.prs[1].HeadSHA
+			if !eligible {
+				_, err := s.store.Append(t.Context(), w.id, []queue.Event{queue.PRObserved{PR: 1, HeadSHA: head, Eligible: false, Trusted: false}}, "")
+				must(t, err)
+			}
+			must(t, s.report(t.Context(), w))
+			if d.writes != 0 {
+				t.Fatal("legacy unqueued PR gained a check")
+			}
+			raw, err := os.ReadFile("../queue/testdata/wire/v1/event_policy_authority_applied.json")
+			must(t, err)
+			event, err := queue.DecodeEvent(raw)
+			must(t, err)
+			pin := event.(queue.PolicyAuthorityApplied)
+			pin.EffectiveDigest = shadowState(t, s, w).ConfigDigest
+			pin.OpenMerge.Binding.EffectiveDigest = pin.EffectiveDigest
+			appendEvents := func(events ...queue.Event) {
+				t.Helper()
+				_, err := s.store.Append(t.Context(), w.id, events, "")
+				must(t, err)
+			}
+			appendEvents(pin)
+			for range 3 {
+				must(t, s.report(t.Context(), w))
+			}
+			if d.writes != 1 || d.comments != 0 {
+				t.Fatalf("unqueued report writes=%d comments=%d", d.writes, d.comments)
+			}
+			rendered, err := s.store.Observation(t.Context(), w.id, "status/1")
+			must(t, err)
+			if strings.Count(string(rendered), "@openmerge queue") != 1 || !strings.Contains(string(rendered), head) || !strings.Contains(string(rendered), "Not queued") {
+				t.Fatalf("no pre-admission instruction on current head: %s", rendered)
+			}
+			pin.Authority = authority.GitHub
+			pin.OpenMerge = nil
+			appendEvents(pin)
+			for range 3 {
+				must(t, s.report(t.Context(), w))
+			}
+			rollback, err := s.store.Observation(t.Context(), w.id, "status/1")
+			must(t, err)
+			if d.writes != 2 || strings.Contains(string(rollback), "@openmerge queue") {
+				t.Fatalf("rollback did not refresh pre-admission check: %s", rollback)
+			}
+			// Rollback refresh changes only the instruction paragraph, once.
+			var prior, refreshed struct {
+				Head   string
+				Status forge.Status
+			}
+			must(t, json.Unmarshal(rendered, &prior))
+			must(t, json.Unmarshal(rollback, &refreshed))
+			prior.Status.Summary = strings.Replace(prior.Status.Summary, "\n\nThis repository merges through OpenMerge. To request a merge, post a comment whose entire body is `@openmerge queue` (no additional text).", "", 1)
+			if !reflect.DeepEqual(prior, refreshed) {
+				t.Fatalf("rollback changed cached status: before=%+v after=%+v", prior, refreshed)
+			}
+			// Newly observed eligible and ineligible PRs stay quiet after rollback.
+			pr := w.prs[1]
+			pr.HeadSHA = "after-rollback"
+			w.prs[2] = pr
+			w.prs[3] = pr
+			appendEvents(queue.PRObserved{PR: 2, HeadSHA: pr.HeadSHA, Eligible: true, Trusted: true}, queue.PRObserved{PR: 3, HeadSHA: pr.HeadSHA, Eligible: false, Trusted: false})
+			for range 3 {
+				must(t, s.report(t.Context(), w))
+			}
+			for _, key := range []string{"status/2", "status/3"} {
+				optional, err := s.store.Observation(t.Context(), w.id, key)
+				must(t, err)
+				if d.writes != 2 || len(optional) != 0 {
+					t.Fatalf("rollback created invitation %s: %s (writes=%d)", key, optional, d.writes)
+				}
+			}
+			delete(w.prs, 2)
+			delete(w.prs, 3)
+			if !eligible {
+				return
+			}
+			// A terminal ledger entry must not become a new queue invitation while
+			// the forge's open-PR observation catches up with the landing outcome.
+			now := time.Now()
+			appendEvents(queue.EnqueueRequested{PR: 1, At: now}, queue.BatchStarted{BatchID: "b1", BaseSHA: shadowState(t, s, w).BaseSHA, PRs: []queue.BatchPR{{PR: 1, HeadSHA: head}}, At: now}, queue.TestRefBuilt{BatchID: "b1", TestedSHA: "landed", Method: queue.Merge, At: now}, queue.ChecksCompleted{TestedSHA: "landed", Success: true}, queue.LandingStarted{BatchID: "b1", AttemptID: "attempt", FenceToken: shadowState(t, s, w).Fence, At: now}, queue.Landed{BatchID: "b1", NewBaseSHA: "landed", NewFence: "next"})
+			if state := shadowState(t, s, w); len(state.Entries) != 0 || state.BaseSHA != "landed" {
+				t.Fatalf("fixture did not land: %+v", state)
+			}
+			before := d.writes
+			must(t, s.report(t.Context(), w))
+			if before != d.writes {
+				t.Fatal("terminal PR overwritten by invitation")
+			}
+		})
 	}
 }
 

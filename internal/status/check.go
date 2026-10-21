@@ -29,13 +29,15 @@ func QueueInstructions(q *Queue) string {
 // RefreshQueueInstructions changes only the authority paragraph in an existing
 // check, preserving terminal outcomes and any reviewer brief verbatim.
 func RefreshQueueInstructions(summary string, q *Queue) string {
-	summary = strings.ReplaceAll(summary, queueInstructionParagraph, "")
-	before, brief, found := strings.Cut(summary, "\n\nReviewer brief:")
-	before += QueueInstructions(q)
-	if found {
-		return before + "\n\nReviewer brief:" + brief
+	// Reviewer output starts with safety warnings when present, otherwise with
+	// its brief locator. Only the paragraph at that boundary belongs to us.
+	end := len(summary)
+	for _, marker := range []string{"\nWARNING: ", "\n\nReviewer brief:"} {
+		if i := strings.Index(summary, marker); i >= 0 && i < end {
+			end = i
+		}
 	}
-	return before
+	return strings.TrimSuffix(summary[:end], queueInstructionParagraph) + QueueInstructions(q) + summary[end:]
 }
 
 // ReviewerCheckSummary is appended to the single existing check only for an

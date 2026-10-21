@@ -20,9 +20,10 @@ separate paragraph preserve the existing name escaping and per-line bounds.
 
 `serve.ledgerSummary` composes it once. Existing worker call sites use that suffix
 for periodic, readiness, and durable `ReportStatus` reporting, including terminal
-outcomes. Ready, unqueued PRs gain a periodic check only after a mode pin exists;
-ordinary GitHub queues retain their previous absence of a check. Rollback pins
-refresh the pre-admission check without instructions. Admitted and terminal
+outcomes. Ready, unqueued PRs gain a periodic check only while the current mode pin is
+`openmerge`; ordinary GitHub queues retain their previous absence of a check.
+Rollback pins refresh existing cached checks without instructions, preserving
+their status, reason and head, and never create new pre-admission checks. Admitted and terminal
 entries are excluded from that invitation path. Terminal checks on still-open PRs
 now refresh only the instruction paragraph from the cached successful reporting
 action; status, reason, exact head, ledger text and reviewer brief stay unchanged.
@@ -100,13 +101,12 @@ for the existing worker reporting paths, avoiding duplicate instruction logic.
   successful terminal report do not gain a new check through this path.
 - Item 2: the refresh loop returns when `ledgerSummary` leaves `ledgerCache` nil,
   matching the Stage A guard.
-- Item 3 decision: retain pre-admission checks after rollback, including creation
-  for newly observed unqueued heads. A durable GitHub pin therefore keeps the
-  existing “Not queued; waiting for a queue request” check without the paragraph
-  saying this repository merges through OpenMerge. The queue is optional again;
-  never-pinned GitHub repositories still receive no pre-admission check. The
-  regression verifies both existing-check rollback dedupe and a new unqueued
-  head after rollback. This retains the original PR 7 choice explicitly.
+- Item 3 decision (superseded by round 3): the round-2 implementation retained
+  creation of pre-admission checks after rollback. Both reviewers rejected this
+  because optional queues must stay quiet for newly observed PRs. Round 3 gates
+  new pre-admission checks on the current `openmerge` pin. A `github` rollback
+  only refreshes successful cached checks, preserving status, reason and head.
+  Once old PRs close, rendering converges to legacy behaviour.
 
 Round-2 validation completed **2026-10-21T00:49:35.894632+00:00** on implementation
 `4cf9589a1f77eb1db00c62f62b10d2041c01d4ca`. `make check` passed formatting,
@@ -122,3 +122,19 @@ The first focused attempt exposed an aggregate-write assertion counting the new
 synthetic unqueued PR during another PR's landing. The test now removes that
 synthetic open observation before the independent terminal assertion; the final
 focused run and full suite both pass.
+
+## Round 3: quiet rollback
+
+New pre-admission check creation now requires the current `openmerge` pin. A
+`github` pin only refreshes successful cached checks on open PRs, removing the
+instruction paragraph while preserving status, reason, exact head and all other
+summary text. Newly observed eligible and ineligible PRs receive zero checks
+after rollback; closing old PRs therefore converges to legacy rendering.
+
+The pre-admission regression covers eligible and ineligible existing checks,
+three stable cycles per transition, exactly one rollback refresh, complete cached
+status equality except for the paragraph, zero new checks on newly observed PRs,
+and unchanged never-authority behaviour. Existing terminal/closed and missing
+journal regressions remain. Paragraph replacement is anchored before reviewer
+warnings/brief (or at the summary end); a quoted copy inside the brief survives,
+both with and without leading safety warnings. Focused regressions passed.
