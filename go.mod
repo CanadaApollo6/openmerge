@@ -1,6 +1,6 @@
 module github.com/CanadaApollo6/openmerge
 
-go 1.27
+go 1.27.3
 
 require (
 	github.com/google/go-github/v93 v93.0.0
