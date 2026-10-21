@@ -69,6 +69,7 @@ func runAdmin(args []string, stdout, stderr io.Writer) int {
 func adminReceiptFiles(drain, backup string) error {
 	var paths [2]string
 	var hashes [2][32]byte
+	var files [2]os.FileInfo
 	var kinds [2]string
 	for i, path := range []string{drain, backup} {
 		resolved, err := filepath.EvalSymlinks(path)
@@ -95,6 +96,7 @@ func adminReceiptFiles(drain, backup string) error {
 			_ = f.Close()
 			return errors.New("receipts must be nonempty regular JSON files up to 64KiB")
 		}
+		files[i] = info
 		data, err := io.ReadAll(io.LimitReader(f, 64*1024+1))
 		_ = f.Close()
 		if err != nil {
@@ -112,7 +114,7 @@ func adminReceiptFiles(drain, backup string) error {
 		}
 		kinds[i] = receipt.Kind
 	}
-	if paths[0] == paths[1] || hashes[0] == hashes[1] {
+	if paths[0] == paths[1] || os.SameFile(files[0], files[1]) || hashes[0] == hashes[1] {
 		return errors.New("drain and backup receipts must have distinct resolved paths and content hashes")
 	}
 	for i, kind := range []string{"drain", "backup"} {

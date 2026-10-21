@@ -69,7 +69,7 @@ func TestEmissionReceiptBinaryAndAgePolicy(t *testing.T) {
 		age      time.Duration
 		want     string
 	}{
-		{"", time.Hour, "cannot attest BinaryRevision offline"},
+		{"", time.Hour, "rebuild with `make build` from a clean git checkout"},
 		{"revision", 0, "maximum age must be positive"},
 		{"other", time.Hour, "does not match"},
 	} {
@@ -85,16 +85,17 @@ func TestBinaryRevisionMetadata(t *testing.T) {
 		name           string
 		info           *debug.BuildInfo
 		fallback, want string
+		attestable     bool
 	}{
-		{"missing", nil, "", ""},
-		{"ldflags", nil, "release-commit", "release-commit"},
-		{"empty metadata", &debug.BuildInfo{}, "release-commit", "release-commit"},
-		{"vcs", &debug.BuildInfo{Settings: []debug.BuildSetting{{Key: "vcs.revision", Value: "vcs-commit"}, {Key: "vcs.modified", Value: "false"}}}, "release-commit", "vcs-commit"},
-		{"dirty", &debug.BuildInfo{Settings: []debug.BuildSetting{{Key: "vcs.revision", Value: "vcs-commit"}, {Key: "vcs.modified", Value: "true"}}}, "release-commit", ""},
+		{"missing", nil, "", "", false},
+		{"ldflags", nil, "release-commit", "release-commit", true},
+		{"empty metadata", &debug.BuildInfo{}, "release-commit", "release-commit", true},
+		{"vcs", &debug.BuildInfo{Settings: []debug.BuildSetting{{Key: "vcs.revision", Value: "vcs-commit"}, {Key: "vcs.modified", Value: "false"}}}, "release-commit", "vcs-commit", true},
+		{"dirty", &debug.BuildInfo{Settings: []debug.BuildSetting{{Key: "vcs.revision", Value: "vcs-commit"}, {Key: "vcs.modified", Value: "true"}}}, "release-commit", "vcs-commit", false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := binaryRevision(tt.info, tt.fallback); got != tt.want {
-				t.Fatalf("revision=%q want %q", got, tt.want)
+			if got, attestable := EmbeddedBinaryRevision(tt.info, tt.fallback); got != tt.want || attestable != tt.attestable {
+				t.Fatalf("revision=%q attestable=%t want %q %t", got, attestable, tt.want, tt.attestable)
 			}
 		})
 	}

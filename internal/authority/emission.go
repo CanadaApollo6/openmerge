@@ -16,28 +16,35 @@ const DefaultEmissionReceiptMaxAge = 24 * time.Hour
 // takes precedence; a dirty build cannot attest to a committed revision.
 var BuildRevision string
 
-// RunningBinaryRevision returns the clean embedded revision, or empty if unknown.
+// RunningBinaryRevision returns the attestable embedded revision, or empty.
 func RunningBinaryRevision() string {
 	info, _ := debug.ReadBuildInfo()
-	return binaryRevision(info, BuildRevision)
+	revision, attestable := EmbeddedBinaryRevision(info, BuildRevision)
+	if !attestable {
+		return ""
+	}
+	return revision
 }
 
-func binaryRevision(info *debug.BuildInfo, fallback string) string {
+// EmbeddedBinaryRevision reports the effective revision and whether it can be
+// used in a receipt. VCS metadata takes precedence over the ldflags fallback;
+// dirty metadata prevents attestation regardless of the revision source.
+func EmbeddedBinaryRevision(info *debug.BuildInfo, fallback string) (revision string, attestable bool) {
+	dirty := false
 	if info != nil {
-		revision := ""
 		for _, setting := range info.Settings {
 			if setting.Key == "vcs.modified" && setting.Value == "true" {
-				return ""
+				dirty = true
 			}
 			if setting.Key == "vcs.revision" {
 				revision = setting.Value
 			}
 		}
-		if revision != "" {
-			return revision
-		}
 	}
-	return fallback
+	if revision == "" {
+		revision = fallback
+	}
+	return revision, revision != "" && !dirty
 }
 
 // EmissionReceipt is retained by the operator with the pre-emission backup.
@@ -69,7 +76,7 @@ func (r EmissionReceipt) ValidateForBinary(identity string, now time.Time, maxAg
 		return fmt.Errorf("emission receipt maximum age must be positive")
 	}
 	if revision == "" {
-		return fmt.Errorf("cannot attest BinaryRevision offline: running binary has no clean embedded build revision; rebuild with VCS metadata or authority.BuildRevision ldflags; see docs/research/adr-0008-4-evidence.md")
+		return fmt.Errorf("cannot attest BinaryRevision offline: this binary has no embedded revision available for attestation (dirty builds and Docker images built without .git cannot attest); rebuild with `make build` from a clean git checkout; see docs/research/adr-0008-4-evidence.md")
 	}
 	if r.BinaryRevision != revision {
 		return fmt.Errorf("emission receipt BinaryRevision does not match running binary revision %s", revision)

@@ -183,6 +183,16 @@ on the operator API, then resolve its numeric ID using the operator SQL lookup i
 responses expose identity fields, not `queues.id`.
 This refines the implementation notation; the accepted ADR Decision is unchanged.
 
+Until [Docker/release revision wiring #118](https://github.com/CanadaApollo6/openmerge/issues/118)
+lands after ADR 0009 period B, `--verify` and `admin acknowledge` require operators
+to use a binary built with `make build` from a clean git checkout. Shipped Docker
+images exclude `.git` and have no embedded revision fallback, so they cannot
+attest. Run `openmerge version` and retain the exact `commit` with
+`attestable: true` in the evidence. The command prefers `vcs.revision`, otherwise
+prints the `authority.BuildRevision` ldflags fallback; missing or dirty metadata
+is not attestable. Verification enforces revision matching; acknowledgement's
+receipt-file checks leave this build prerequisite to the operator.
+
 The acknowledgement gate now requires separate JSON documents with `kind: drain`
 and `kind: backup`, distinct resolved paths and distinct SHA-256 content hashes;
 see [the operating guide](../operating.md#acknowledging-outside-pushes).

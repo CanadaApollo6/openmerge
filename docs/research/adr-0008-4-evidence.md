@@ -366,13 +366,24 @@ Verification emission receipts expire after **24 hours** by default. Both
 are rejected. Set a positive duration with `--emission-receipt-max-age 24h`.
 A stale receipt requires a fresh drain inventory, backup and restore test.
 
-`binary_revision` must exactly match the running binary's clean embedded
-`vcs.revision` from Go build information (`openmerge version` prints the commit).
-Release tooling without VCS metadata may embed the reviewed commit with
-`-ldflags '-X github.com/CanadaApollo6/openmerge/internal/authority.BuildRevision=COMMIT'`.
-VCS metadata takes precedence. Dirty builds, or binaries with neither source of
-revision metadata, fail with `cannot attest BinaryRevision offline`; rebuild from
-a clean reviewed commit. Offline matching checks consistency with local build
+Until [Docker/release revision wiring #118](https://github.com/CanadaApollo6/openmerge/issues/118)
+lands after ADR 0009 period B, operators must use a binary built with `make build`
+from a clean git checkout for `--verify` and `admin acknowledge`. The shipped
+Docker build excludes `.git` and does not embed the fallback; it cannot attest.
+This is an operator prerequisite for acknowledgement; its two-file gate checks
+receipt files rather than binary revision metadata.
+
+`binary_revision` must exactly match the running binary's effective embedded
+revision. `openmerge version` prints `commit` and `attestable`: only use a commit
+with `attestable: true`. It selects Go build information's `vcs.revision` first,
+then `authority.BuildRevision` when VCS revision metadata is absent. Custom
+release tooling may embed the reviewed commit with
+`-ldflags '-X github.com/CanadaApollo6/openmerge/internal/authority.BuildRevision=COMMIT'`;
+`openmerge version` also prints that fallback commit. Dirty builds show their
+revision with `attestable: false`; binaries with neither source print
+`commit: unknown` and `attestable: false`. Verification rejects either case with
+`cannot attest BinaryRevision offline` and directs operators to rebuild with
+`make build` from a clean git checkout. Offline matching checks consistency with local build
 metadata, not binary provenance, signatures, remote worker versions, worker drain,
 or restore success; these remain operator attestations. The gate uses one combined
 receipt, so the two-file distinctness rule for `admin acknowledge` does not apply.
