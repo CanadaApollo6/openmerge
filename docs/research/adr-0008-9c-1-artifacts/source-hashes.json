@@ -1,0 +1,22 @@
+{
+  "docs/adr/0008-openmerge-policy-authority.md": "a96967bbd5979b97c1ba0fdd17d7c10b880591099bd1544e48a83aa5fbbe5a0c",
+  "docs/operating.md": "5dd57579dad5da71871556795eaf8482b78e7ee9886516203640ebfd102e6233",
+  "docs/research/adr-0008-9-plan.md": "edfd459339223aea85b04e1955fbda449ace7ef471276ea0a42e16c010710039",
+  "internal/queue/authority_read_error_test.go": "0cdfb9616cbecd1a40043b136d247c087837493feb269b21701b1d31d37e5121",
+  "internal/queue/authority_test.go": "bcaf85ce2f4b137e674b19e672ffcb32630814a95c7c5bb452d6fc178b2f5b0f",
+  "internal/queue/testdata/wire/v1/variants/write_restriction_observed_read_error.json": "b8ab868fdec2eed8f97ccc776bdaa35bb1ac9c761fff910a8011e9f8ca40feea",
+  "internal/serve/authority_admission.go": "5554d04730e64af507a7f3a8b007a553021786df1895b48f016cbe91fd472323",
+  "internal/serve/authority_admission_test.go": "4ad3be85fad223ddf58d9981e91948c13cc5f014c8a22c7d698c4b007b39b7ca",
+  "internal/serve/authority_barrier_test.go": "4946ebd44d484121e05a13591b4ce648b2d4032941701f0882ccf3deb56b51af",
+  "internal/serve/authority_worker_test.go": "555ccf0de95e469424320e55cfd57d00a03869b6ec8cce8f672639269d212083",
+  "internal/serve/landing_checks_test.go": "213ef2e0664aebedb7c9f932ab2254fee7b4967ea7d1b3272bf6c0dc8a6ab9d6",
+  "internal/serve/serve_test.go": "f5e9cc62664d88abea96fa0c7c04c0c88b155624953933481d78176eaa04f1da",
+  "internal/serve/stage_a_fresh_gate_test.go": "5ea6fd981a90a9cdce6521fa33a32577ae1ac18bd63138671a297b6603ebd07f",
+  "internal/serve/stage_a_gate.go": "30462a899fd3b030fda8e16aa056e41ec3dfeb7ccb7c2261332983dbd1476119",
+  "internal/serve/stage_a_real_git_test.go": "a911072159a4df556bbd9d3e46894a5e8364b058a7f10920b16ddaeb0ad76171",
+  "internal/serve/worker.go": "4f8bb88ddabd7c6cbc1f4583f8d550d354e3cd40e4816fd38c1d00df89e6178f",
+  "internal/serve/write_restriction.go": "a3393dac233033c240c36f6d22527a085c99dc761ce9c4f511e8b717f2af232d",
+  "internal/serve/write_restriction_worker_test.go": "03d25001ed1eddcb82abbd7a7766602e67bf84950cb865c58f9c71e4997d3e47",
+  "internal/store/landing_start.go": "4495b6a90ea4978fc99d1aa81a95d0cef32c37ce7aca549666032b077f88c5b1",
+  "scripts/verify-adr0008-9c-1.py": "acbf4783b73068ce2f2ae49df95a5aa0f61b32bf3d42b174f903cbd2f2d62648"
+}

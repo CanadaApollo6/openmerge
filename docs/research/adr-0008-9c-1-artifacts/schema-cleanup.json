@@ -1,0 +1,10 @@
+{
+  "scope": "serve_unit schemas on test Postgres localhost:54329",
+  "before_note": "Captured during baseline run, before candidate tests.",
+  "before_count": 95,
+  "after_count": 94,
+  "added": [],
+  "removed": [
+    "serve_unit_1792615490796952545_361"
+  ]
+}

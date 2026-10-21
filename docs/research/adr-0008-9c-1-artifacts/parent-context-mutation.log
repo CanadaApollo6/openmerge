@@ -1,0 +1,5 @@
+--- FAIL: TestAuthorityAdmissionWorkerTimeout (1.08s)
+    authority_admission_test.go:224: worker timeout skipped recovery schedule
+FAIL
+FAIL	github.com/CanadaApollo6/openmerge/internal/serve	1.091s
+FAIL
