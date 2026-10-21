@@ -176,3 +176,24 @@ signal**. Per-queue receipts do not authorize removing redundant protection.
 The ownership table assigns providing that signal to **9c**. 9c also retains the
 receipt lock-wait/commit expiry gap. Public rejection and unset production
 opt-in/resolver (A2) remain unchanged; no queueing or merging is authorized.
+
+Round-2 clean-tree verification at `6c4194bae13853fd5ec6241b58ffcd5d2f178782`:
+`make check` **exit 0**; focused lifecycle/store/queue/config and public-barrier
+race tests **exit 0**; strict replay **2,159/2,159 identical** with **8,676**
+matching boundary probes, gates 2/4 and mandatory self-tests passing; contracts
+**90/90 byte-identical**; simulator **146/146 blocks byte-identical** (both exits
+0); existing fixtures **104/104 unchanged** (90 registry fixtures). Contract,
+simulator and fixture hashes match round 1 above. Test Postgres namespaces before
+and after match exactly; scratch objects were cleaned by the test fixtures.
+
+Retained round-2 [summary and exact commands](adr-0008-9b-ii-2b-artifacts/round-2/summary.json),
+[pre-fix regression failures](adr-0008-9b-ii-2b-artifacts/round-2/regressions-before-fix.log),
+[make check log](adr-0008-9b-ii-2b-artifacts/round-2/make-check.log),
+[focused race log](adr-0008-9b-ii-2b-artifacts/round-2/focused.log),
+[source hashes](adr-0008-9b-ii-2b-artifacts/round-2/source-hashes.json),
+[schema cleanup](adr-0008-9b-ii-2b-artifacts/round-2/schema-cleanup.json) and
+[manifest](adr-0008-9b-ii-2b-artifacts/round-2/manifest.json).
+Full streams remain in `/home/riels/.cache/adr0008-130-round2-verification-final`.
+Reproduce using the driver command above with that directory as `--out`.
+The first full attempt stopped on a lint simplification; the final clean driver
+passed. This evidence-only commit changes no verified implementation source.
