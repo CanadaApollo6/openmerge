@@ -67,7 +67,7 @@ func (s *Server) activateAuthority(ctx context.Context, w *worker, request autho
 	if request.Pin.Authority != authority.GitHub && request.DraftID > 0 {
 		fresh, err = request.Read(ctx)
 		if err != nil {
-			return zero, err
+			return zero, &authorityObservationReadFailure{err: err}
 		}
 	}
 	at := time.Now().UTC()
@@ -109,7 +109,7 @@ func (s *Server) prepareAuthorityLifecycle(ctx context.Context, w *worker, state
 	candidate := w.configCandidate
 	resolved, err := w.resolveAuthorityLifecycle(ctx, candidate, branch, tip)
 	if err != nil {
-		return nil, err
+		return nil, &authorityObservationReadFailure{err: err}
 	}
 	mode := candidate.Authority.Mode.Normalized()
 	if err := resolved.Policy.Validate(); err != nil {

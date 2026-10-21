@@ -326,7 +326,7 @@ func TestAuthorityLifecycleReadFailuresDoNotPublishConfigOrPin(t *testing.T) {
 				must(t, err)
 				w.AuthorityRequired = true
 				team := "200"
-				sentinel := errors.New("lifecycle quota exhausted")
+				sentinel := errors.New("https://x-access-token:ghs_SECRET@example.test/lifecycle")
 				read := func(context.Context) (authority.Observation, error) {
 					if phase == "receipt-expiry" {
 						time.Sleep(2 * time.Hour)
@@ -360,8 +360,11 @@ func TestAuthorityLifecycleReadFailuresDoNotPublishConfigOrPin(t *testing.T) {
 					if err == nil || !strings.Contains(err.Error(), "stale emission receipt") {
 						t.Fatal(err)
 					}
-				} else if !errors.Is(err, sentinel) {
-					t.Fatal(err)
+				} else {
+					var classified *authorityObservationReadFailure
+					if !errors.Is(err, sentinel) || !errors.As(err, &classified) || strings.Contains(err.Error(), "ghs_SECRET") || strings.Contains(w.waiting, "ghs_SECRET") {
+						t.Fatalf("lifecycle error lost classification or leaked reader text: %v; waiting=%s", err, w.waiting)
+					}
 				}
 				after := lifecycleState(t, s, w)
 				if after.ConfigDigest != old.ConfigDigest || after.ConfigCommit != old.ConfigCommit || after.AuthorityPin() != nil || w.configError == nil {

@@ -152,7 +152,8 @@ constructors remain opted out; each is independently safe at that boundary.
 
 1. **9c-1 — admission hardening:** #135 items 1–5: action-bounded admission
    reads; parent-derived, deadline-bounded persistence and retry even when the
-   read-error block cannot persist; additive variant/snapshot and drain proofs;
+   read-error block cannot persist; additive read_error variant/snapshot and read_error-only drain proofs
+   (general drain ownership remains 9c-2c);
    cryptographic scratch schema names; exact exponential deadlines; sanitized
    reason classes and governing-pin comment. Focused tests cover timeout under
    queue-lock contention, shutdown cancellation, classification and backoff.

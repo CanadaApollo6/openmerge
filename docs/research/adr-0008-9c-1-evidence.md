@@ -11,11 +11,11 @@ opted out. Deployment waits for dogfood period B to drain. This run implements
 | Plan / issue item | Implementation and regression |
 | --- | --- |
 | 9c split | [Plan](adr-0008-9-plan.md#pr-9c-review-split-2026-10-21): 9c-1 owns #135; 9c-2a/2b/2c/2d separately own acquisition, push gates/ordering, operational gates and integrated real-git acceptance; 9c-3 is public schema/loader/CLI acceptance and production opt-in only. Every original row has exactly one owner. 9c-3 requires the repository-wide completion signal and drain/backup/v7 gate first. The owner-executed PR 11 sandbox switch remains the final release acceptance gate. |
-| #135.1 admission timeout | `internal/serve/write_restriction.go:193` caps admission reads by ActionTimeout/default and the remaining action deadline. This is not an independent read budget; late reads can time out despite a healthy forge. Forge I/O keeps RulesRequest and action cancellation; Load and Append each use a completionWriteTimeout derived from the worker parent. `worker.go:145`, `stage_a_gate.go:318`, `authority_admission.go:32` carry that parent through the actual landing path and schedule retry on read failure even when persistence also fails (unless shutting down). `write_restriction_worker_test.go:134` covers reader-only expiry and earlier action expiry. `authority_admission_test.go:186` drives `s.execute`, proves the block/retry survives action expiry and rejects any decision/check/start record. |
+| #135.1 admission timeout | `internal/serve/write_restriction.go:194` caps admission reads by ActionTimeout/default and the remaining action deadline. This is not an independent read budget; late reads can time out despite a healthy forge. Forge I/O keeps RulesRequest and action cancellation; Load and Append each use a completionWriteTimeout derived from the worker parent. `worker.go:145`, `stage_a_gate.go:318`, `authority_admission.go:32` carry that parent through the actual landing path and schedule retry on read failure even when persistence also fails (unless shutting down). `write_restriction_worker_test.go:134` covers reader-only expiry and earlier action expiry. `authority_admission_test.go:186` drives `s.execute`, proves the block/retry survives action expiry and rejects any decision/check/start record. |
 | #135.2 persisted variant / snapshot / drain | New `internal/queue/testdata/wire/v1/variants/write_restriction_observed_read_error.json:1`; strict variant byte round-trip in `authority_test.go:33`; snapshot block/recovery in `authority_read_error_test.go:72`. ADR `docs/adr/0008-openmerge-policy-authority.md:702`, `docs/operating.md:1827` and the plan's first-emission notes include strict readers lacking the optional event/v7 field in inventory/drain and backup/reconciliation/downgrade obligations. No existing fixture changed. |
 | #135.3 cross-process schemas | `internal/serve/serve_test.go:74` uses 96 bits from crypto/rand, independent of the bubble clock and process counter. Existing same-instant schema-isolation regression remains exercised. Scratch schemas retain cleanup. |
 | #135.4 real backoff | `internal/serve/write_restriction_worker_test.go:185` uses a ten-minute RulesInterval, asserts exact 1/2/4/5-minute deadlines, no read one nanosecond before each, a read exactly at each, and quota RetryAfter. All waits advance virtual time. |
-| #135.5 reasons / rebind comment | `internal/serve/write_restriction.go:206` records only timeout/quota/canceled/unavailable classes, with wrapped-error and secret-text tests at `write_restriction_worker_test.go:295`. Untyped permission failures deliberately remain unavailable; no transport-text inference or secret-bearing text is persisted. `internal/store/landing_start.go:102` explains why ValidateLandingChecks compares evidence with the current pin's governing commit when ConfigApplied retains the first commit for an unchanged digest. |
+| #135.5 reasons / rebind comment | `internal/serve/write_restriction.go:215` records only timeout/quota/canceled/unavailable classes, with wrapped-error and secret-text tests at `write_restriction_worker_test.go:295`. Untyped permission failures deliberately remain unavailable; no transport-text inference or secret-bearing text is persisted. `internal/store/landing_start.go:102` explains why ValidateLandingChecks compares evidence with the current pin's governing commit when ConfigApplied retains the first commit for an unchanged digest. |
 
 The parent-context mutation changes only `worker.go` to pass `actionCtx` into
 the landing gate. `TestAuthorityAdmissionWorkerTimeout` then fails with
@@ -63,7 +63,8 @@ Timing is one successful isolated run per side on the same local machine;
 no speedup/regression or GitHub-runner prediction is claimed. Initial load
 averages were 0.19/0.19/0.42 on 16 cores. Tests actually ran with `-count=1`,
 shared test Postgres and race enabled. The new tests use fixtures inside
-`testSynctest` and add no real-time sleeps or short-mode skips. No slow real-git
+`testSynctest` and add no explicit real-time sleeps or short-mode skips. The real advisory-lock
+regression waits on socket I/O and deadlines using wall time. No slow real-git
 acceptance is added in 9c-1; complete real-git activation acceptance belongs to 9c-2d.
 
 Compact receipts live in [9c-1 artifacts](adr-0008-9c-1-artifacts/summary.json).
@@ -101,12 +102,11 @@ Verified implementation: `9a2055716c5ea98468badaf5fafaf0b07ba9f19d` against the
 same `051798c` baseline. The subsequent receipt commit changes only this evidence
 and artifacts. Hold, public rejection, production opt-out and A2 remain intact.
 
-- `write_restriction.go:31,89` bounds each Load/Append by
+- `write_restriction.go:37,95` bounds each Load/Append by
   `completionWriteTimeout` from the worker parent; the append timer starts after
   forge I/O. Joined persistence errors retain read classification for retry
   (`authority_admission.go:34`) while remaining errors. If the queue lock prevents
-  persistence, no block is claimed: the journal is unchanged, the action returns
-  to `planned`, in-memory authority backoff is scheduled and no landing starts.
+  persistence, no block is claimed: the journal is unchanged, execute returns an error and completes the claim as `Failed`, in-memory authority backoff is scheduled and no landing starts.
 - `TestAuthorityAdmissionWorkerTimeout` covers action expiry and parent
   cancellation with `testSynctest` fixtures inside its bubble.
   `TestAuthorityAdmissionWorkerLockedAppend` holds the real queue advisory lock
@@ -117,8 +117,8 @@ and artifacts. Hold, public rejection, production opt-out and A2 remain intact.
   time out with a healthy forge. A fresh parent-derived ActionTimeout would
   extend the action by another full budget. The code/PR/evidence now state this
   limit and justify fail-closed block/backoff without claiming independence.
-- Missing readers use the classified unavailable path; logs contain a sanitized
-  cause, never transport text. `TestAuthorityMissingReaderAndLogsAreClassified`
+- Missing readers use the classified unavailable path; the observer warning contains a sanitized
+  cause. Round 3 below fixes propagation into admission/cycle errors. `TestAuthorityMissingReaderAndLogsAreClassified`
   checks both missing-reader persistence and token-bearing URL redaction.
 - The plan assigns every remaining 9c row/carry-over to one of 2a/2b/2c/2d,
   public removal exclusively to 9c-3, and the owner-run organization gate only to

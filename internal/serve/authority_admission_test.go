@@ -1,9 +1,11 @@
 package serve
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -193,6 +195,16 @@ func TestAuthorityAdmissionWorkerTimeout(t *testing.T) {
 	}
 }
 
+func TestAuthorityAdmissionReaderErrorsAreSanitized(t *testing.T) {
+	for _, mode := range []string{"secret_execute", "secret_cycle", "secret_loop", "secret_persist", "missing_reader"} {
+		t.Run(mode, func(t *testing.T) {
+			testSynctest(t, func(t *testing.T) {
+				authorityAdmissionWorkerTimeout(t, mode)
+			})
+		})
+	}
+}
+
 func TestAuthorityAdmissionWorkerLockedAppend(t *testing.T) {
 	// Real socket I/O prevents synctest's clock from advancing.
 	// Keep the lock until execute returns, with a real watchdog.
@@ -225,13 +237,30 @@ func authorityAdmissionWorkerTimeout(t *testing.T, mode string) {
 	f.SetCheckRuns(repo, batch.TestedSHA, []forge.CheckRun{{Name: "ci", Source: "app:15368", ID: 701, Attempt: 1, State: forge.Success, HeadBranch: batch.TestRef}})
 	_, err = s.store.Append(t.Context(), w.id, []queue.Event{queue.ChecksCompleted{TestedSHA: batch.TestedSHA, Success: true}}, "")
 	must(t, err)
-	claim := claimLandingChecksAction(t, s, w, cfg, func(a queue.Action) bool { _, ok := a.(queue.Land); return ok })
+	var claim store.ClaimedAction
+	if mode != "secret_cycle" && mode != "secret_loop" && mode != "secret_persist" {
+		claim = claimLandingChecksAction(t, s, w, cfg, func(a queue.Action) bool { _, ok := a.(queue.Land); return ok })
+	}
 	s.options.ActionTimeout = time.Second
+	writeTimeout := completionWriteTimeout
+	if mode == "locked_append" {
+		s.authorityWriteTimeout = 100 * time.Millisecond
+		writeTimeout = s.authorityWriteTimeout
+	}
 	parent, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	read := false
+	var logs bytes.Buffer
+	s.options.Logger = slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	readerErr := fmt.Errorf("https://x-access-token:ghs_SECRET@example.test/repo: %w", forge.ErrRulesUnavailable)
 	installWorkerAuthorityReader(t, w, func(ctx context.Context) (authority.Observation, error) {
 		read = true
+		if strings.HasPrefix(mode, "secret_") {
+			if mode == "secret_persist" {
+				db.Close()
+			}
+			return forge.EmptyWriteRestrictionObservation(), readerErr
+		}
 		if mode == "locked_append" {
 			_, err := conn.Exec(t.Context(), "BEGIN")
 			must(t, err)
@@ -247,9 +276,49 @@ func authorityAdmissionWorkerTimeout(t *testing.T, mode string) {
 	before, err := s.store.EventsAfter(t.Context(), w.id, 0)
 	must(t, err)
 	started := time.Now()
-	watchdog, stop := context.WithTimeout(parent, s.options.ActionTimeout+completionWriteTimeout+time.Second)
+	watchdog, stop := context.WithTimeout(parent, s.options.ActionTimeout+writeTimeout+time.Second)
 	defer stop()
-	err = s.execute(watchdog, w, claim)
+	if mode == "missing_reader" {
+		installWorkerAuthorityReader(t, w, nil)
+	}
+	if mode == "secret_cycle" || mode == "secret_loop" || mode == "secret_persist" {
+		// Skip the recurring read so the real cycle reaches fresh landing admission.
+		w.authorityNextCheck = time.Now().Add(time.Hour)
+		if mode == "secret_loop" {
+			capture := &cancelOnAdmissionFailure{Handler: s.options.Logger.Handler(), cancel: cancel}
+			s.options.Logger = slog.New(capture)
+			s.loop(watchdog, w)
+			err = capture.err
+		} else {
+			err = s.cycle(watchdog, w)
+		}
+	} else {
+		err = s.execute(watchdog, w, claim)
+	}
+	if strings.HasPrefix(mode, "secret_") || mode == "missing_reader" {
+		var classified *authorityObservationReadFailure
+		if !errors.As(err, &classified) || !errors.Is(err, forge.ErrRulesUnavailable) {
+			t.Fatalf("lost read classification: %v", err)
+		}
+		if mode != "missing_reader" && (!read || !errors.Is(err, readerErr)) {
+			t.Fatalf("reader not reached or cause lost: %v", err)
+		}
+		if strings.Contains(err.Error(), "ghs_SECRET") || strings.Contains(logs.String(), "ghs_SECRET") || strings.Contains(err.Error(), "https://") || strings.Contains(logs.String(), "https://") {
+			t.Fatalf("reader credentials escaped: error=%v logs=%s", err, &logs)
+		}
+		if !strings.Contains(err.Error(), "unavailable") || w.authorityFailures != 1 {
+			t.Fatalf("missing sanitized class/retry: %v failures=%d", err, w.authorityFailures)
+		}
+		if mode == "secret_cycle" || mode == "secret_loop" || mode == "secret_persist" {
+			if !strings.Contains(logs.String(), `"msg":"reconcile cycle finished"`) || !strings.Contains(logs.String(), "authority admission read failed") {
+				t.Fatalf("cycle did not log admission failure: %s", &logs)
+			}
+		}
+		if mode != "secret_persist" && !hasAuthorityReadError(lifecycleState(t, s, w)) {
+			t.Fatal("read failure did not persist block")
+		}
+		return
+	}
 	if mode == "locked_append" {
 		_, unlockErr := conn.Exec(t.Context(), "ROLLBACK")
 		must(t, unlockErr)
@@ -262,7 +331,7 @@ func authorityAdmissionWorkerTimeout(t *testing.T, mode string) {
 		t.Fatalf("worker did not time out admission read: read=%v err=%v", read, err)
 	}
 	elapsed := time.Since(started)
-	if elapsed > s.options.ActionTimeout+completionWriteTimeout+time.Second/2 || (mode == "shutdown" && elapsed != 0) {
+	if elapsed > s.options.ActionTimeout+writeTimeout+time.Second/2 || (mode == "shutdown" && elapsed != 0) {
 		t.Fatalf("unbounded admission persistence: elapsed=%v", elapsed)
 	}
 	if mode != "shutdown" && (w.authorityFailures != 1 || time.Until(w.authorityNextCheck) < time.Minute-time.Second/2 || time.Until(w.authorityNextCheck) > time.Minute) {
@@ -285,4 +354,25 @@ func authorityAdmissionWorkerTimeout(t *testing.T, mode string) {
 			t.Fatal("timed-out worker committed admission evidence or start")
 		}
 	}
+}
+
+// Capture the actual loop error attribute and stop after its failure log.
+type cancelOnAdmissionFailure struct {
+	slog.Handler
+	cancel context.CancelFunc
+	err    error
+}
+
+func (h *cancelOnAdmissionFailure) Handle(ctx context.Context, record slog.Record) error {
+	err := h.Handler.Handle(ctx, record)
+	if record.Message == "queue cycle failed" {
+		record.Attrs(func(attr slog.Attr) bool {
+			if attr.Key == "error" {
+				h.err, _ = attr.Value.Any().(error)
+			}
+			return true
+		})
+		h.cancel()
+	}
+	return err
 }

@@ -20,7 +20,7 @@ func (s *Server) readAuthorityAdmission(ctx, parent context.Context, w *worker, 
 		return queue.State{}, fmt.Errorf("authority admission opt-in/configuration unavailable")
 	}
 	request := w.authorityObservation
-	if request == nil || request.Read == nil {
+	if request == nil {
 		return queue.State{}, fmt.Errorf("authority admission reader unavailable")
 	}
 	if w.authorityCadenceBinding == nil || !reflect.DeepEqual(*w.authorityCadenceBinding, request.Input.Binding) {

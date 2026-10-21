@@ -705,9 +705,11 @@ All PRs follow these storage and acceptance rules:
   snapshot field and event key are rejected by older strict decoders, including
   binaries that know the event type but lack the field. Inventory and drain
   those readers before first emission; the backup/reconciliation and v7 downgrade
-  gate also applies to read-error observations. Admission reads have a separate
-  read-only timeout; persist failures and schedule retry on the action parent
-  context so an exhausted action cannot discard the block.
+  gate also applies to read-error observations. Admission reads are capped by
+  ActionTimeout and the remaining action deadline; late-starting reads can time
+  out even with a healthy forge. Persist failures using a separate bounded
+  write budget derived from the worker parent and schedule retry there, so an
+  exhausted action cannot discard the block; worker shutdown cancels persistence.
 - **Verification:** add `setup rulesets --authority openmerge --verify` using
   operator DB credentials and an admin-token read, never App admin-write
   credentials. It makes no GitHub writes. Validate all target queues and bind

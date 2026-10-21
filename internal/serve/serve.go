@@ -96,6 +96,8 @@ type Server struct {
 	refreshNextAt       time.Time
 	refreshRetryAt      time.Time
 	refreshNotBefore    time.Time
+	// Internal persistence budget seam; zero retains the production bound.
+	authorityWriteTimeout time.Duration
 }
 
 type worker struct {
