@@ -1,0 +1,9 @@
+{
+  "cache-manifest.json": "0741d0a48099aa897462bee96ec637a548d88a9b3da7e8ec547a733523fff8b0",
+  "contracts-baseline.json": "88e727ebe7ea5b570f352c5c661c2cd1642c1b5120f3d3ed086993f4dd00362a",
+  "contracts-candidate.json": "88e727ebe7ea5b570f352c5c661c2cd1642c1b5120f3d3ed086993f4dd00362a",
+  "focused-final.log": "e0fb3ec0c3b84a6f29fdd98e626ecf3b4d1006b07178ff0a3b9392f085307efe",
+  "make-check.log": "ceabd72a9f18f67ad63a655960c429e0d2d22830024f7118d986130f361f7ede",
+  "sim-normalized.json": "a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7",
+  "summary.json": "636e635f0c49b71c42f047bfc7c32ba88ba9f2107103610c03797686b4990bee"
+}

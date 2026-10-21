@@ -11,11 +11,11 @@ rejected until 9c; PR 11 owns the organization acceptance gate.
 
 | Requirement | Implementation and proof |
 | --- | --- |
-| #112(3), internal caller outcome | `internal/serve/authority_activation.go` wraps `AdoptAuthorityPin`, returns its durable receipt and logs its explicit adopted/pinned-unverified string only after commit. `TestAuthorityActivationReportsDurableOutcome` exercises both outcomes with interpreted fresh inventory and findings mismatch, durable event/source IDs and idempotent retry. This caller requires an already durable matching config; atomic lifecycle integration is 9b-ii-2. |
+| #112(3), internal caller outcome | `internal/serve/authority_activation.go:31` wraps `AdoptAuthorityPin`, returns its durable receipt and logs its explicit adopted/pinned-unverified string only after commit. `TestAuthorityActivationReportsDurableOutcome` exercises both outcomes with interpreted fresh inventory and findings mismatch, durable event/source IDs and idempotent retry. This caller requires an already durable matching config; atomic lifecycle integration is 9b-ii-2. |
 | #112 small, runtime emission gate | `activateAuthority` validates max-age, database identity, backup hash and the attested running `BinaryRevision` before DB/forge work and again after the seeing read, before adoption. `TestAuthorityActivationReceiptBeforeIO` covers zero/negative ages, stale drain/restore, wrong binary/database, missing backup, absent opt-in and quota failure. `TestAuthorityActivationReceiptExpiresDuringSeeingRead` proves a slow read cannot carry an expired receipt to emission. |
-| #127 cursor warning | `internal/serve/outside_push.go` logs reset only when `CommitOutsidePushAudit` returns successful committed CAS. `TestOutsidePushCursorResetWarnsOnlyAfterCAS` loses three consecutive competing CAS attempts without warning, then replaces the cursor and warns exactly once. |
-| #127 future-version fallback | `docs/operating.md`, Outside-push observations, explicitly documents overwriting unsupported future-version derived cursors, including after binary downgrade, without waiving journal/backup compatibility. The cursor test starts with an unsupported future-version snapshot and proves replacement. |
-| #127 approval-read quota and precedence | `internal/serve/stage_a_gate.go` checks local exact check inputs, member condition shape and bounded evidence before executor policy handling, without DB/approval reads or journaling. Final admission retains fresh approval acquisition and complete evidence validation. `TestLandingChecksPreflightDoesNotAcquireApprovals` covers failed, pending and successful CI, preserves an injected NativeReviews quota error for the final read, and checks no preflight events. `TestLandingChecksWorkerFailurePrecedence` injects approval quota errors alongside invalid/oversized checks and retains permanent blocked outcomes in either input order. |
+| #127 cursor warning | `internal/serve/outside_push.go:96` logs reset only when `CommitOutsidePushAudit` returns successful committed CAS. `TestOutsidePushCursorResetWarnsOnlyAfterCAS` loses three consecutive competing CAS attempts without warning, then replaces the cursor and warns exactly once. |
+| #127 future-version fallback | `docs/operating.md:1513`, Outside-push observations, explicitly documents overwriting unsupported future-version derived cursors, including after binary downgrade, without waiving journal/backup compatibility. The cursor test starts with an unsupported future-version snapshot and proves replacement. |
+| #127 approval-read quota and precedence | `internal/serve/stage_a_gate.go:339` checks local exact check inputs, member condition shape and bounded evidence before executor policy handling, without DB/approval reads or journaling. Final admission retains fresh approval acquisition and complete evidence validation. `TestLandingChecksPreflightDoesNotAcquireApprovals` covers failed, pending and successful CI, preserves an injected NativeReviews quota error for the final read, and checks no preflight events. `TestLandingChecksWorkerFailurePrecedence` injects approval quota errors alongside invalid/oversized checks and retains permanent blocked outcomes in either input order. |
 
 ## A2 boundary
 
@@ -59,7 +59,51 @@ This preserves the initial trust-read ordering and tests the intended quota seam
 no production correction was needed for that test failure. The failed run remains
 in `/home/riels/.cache/adr0008-9b-ii-verification`.
 
-Final verification artifacts and results are recorded below after execution.
+Verified implementation: `86b51f3654e50d9fca1a45ac1b099f6e0404f260`.
+Baseline: `6aad022966f6730307f63bfbafb1d03f84fc2a61`.
+The complete driver returned **PASS** on 2026-10-21 UTC. Subsequent changes
+are evidence documents and retained receipts only.
+
+[Commands and results](adr-0008-9b-ii-artifacts/summary.json),
+[artifact hashes](adr-0008-9b-ii-artifacts/manifest.json),
+[raw-cache hashes](adr-0008-9b-ii-artifacts/cache-manifest.json),
+[full make check log](adr-0008-9b-ii-artifacts/make-check.log),
+[corrected focused race log](adr-0008-9b-ii-artifacts/focused-final.log),
+[depth contracts](adr-0008-9b-ii-artifacts/contracts-candidate.json), and
+[normalized simulator results](adr-0008-9b-ii-artifacts/sim-normalized.json)
+are retained. Raw replay streams and complete command logs remain under
+`/home/riels/.cache/adr0008-9b-ii-final-verification`, with hashes in the manifest.
+
+- `make check`: **exit 0**, formatting, zero lint issues, complete race suite and build.
+- Corrected focused race check: **exit 0**; worker quota/failure precedence,
+  failed/pending/successful preflight, and receipt expiry during seeing read.
+- Strict offline live-journal replay: **2,159/2,159** identical actions,
+  structural states, snapshot hashes and boundary checkpoints. All **8,676**
+  boundary probes match; gates 2/4 and all **22** mandatory synthetic self-tests
+  pass. No differing or allowlisted fields.
+- Depth-1/4 approval and legacy-block contracts: **90/90** byte-identical,
+  including plan/snapshot hashes and sizes. SHA-256:
+  `88e727ebe7ea5b570f352c5c661c2cd1642c1b5120f3d3ed086993f4dd00362a`.
+- Seeded simulator: both exits **0**, all **146/146** normalized blocks
+  byte-identical. SHA-256:
+  `a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7`.
+- Existing wire fixtures: **104/104** unchanged, including **90** registry
+  fixtures; no added fixture or event type. Manifest SHA-256:
+  `d9fc673fbd7ec5410cf1491778157508533ca5c804932caaecb39204f2ae2776`.
+- Verified binary SHA-256:
+  `e01817f615246ec956e66da945e6fa8a46b251c2b9fc19e1892585d53770fa35`.
+
+Reproduce from clean checkouts:
+
+```sh
+export GOROOT=/home/riels/.local/share/mise/installs/go/1.27.3
+export PATH="$GOROOT/bin:$PATH"
+export OPENMERGE_TEST_DATABASE_URL='postgres://postgres:openmerge@localhost:54329/postgres?sslmode=disable'
+python3 scripts/verify-adr0008-9b-ii.py \
+  --baseline /home/riels/.cache/adr0008-9b-ii-main-6aad022 \
+  --out /home/riels/.cache/adr0008-9b-ii-verification-rerun
+```
+
 The reproducible driver is `scripts/verify-adr0008-9b-ii.py`; it uses the frozen
 offline live-journal export and the same strict comparisons as 9b-i. All Go
 commands export both Go 1.27.3 GOROOT and PATH, use the shared heavy flock,
