@@ -76,7 +76,7 @@ func (c *responseCache) put(key cacheKey, value *cachedResponse) {
 // error never falls back to a cached authorization or CI result.
 func (t *transport) conditionalGET(req *http.Request, token string, revalidated func()) (*http.Response, error) {
 	if t.cache == nil || req.Method != http.MethodGet || req.Header.Get("If-None-Match") != "" || req.Header.Get("If-Modified-Since") != "" || req.Header.Get("Range") != "" {
-		return t.base.RoundTrip(req)
+		return t.roundTrip(req)
 	}
 	headers := req.Header.Clone()
 	headers.Del("Authorization")
@@ -93,7 +93,7 @@ func (t *transport) conditionalGET(req *http.Request, token string, revalidated 
 	if cached != nil {
 		req.Header.Set("If-None-Match", cached.header.Get("ETag"))
 	}
-	res, err := t.base.RoundTrip(req)
+	res, err := t.roundTrip(req)
 	if err != nil {
 		return nil, err
 	}

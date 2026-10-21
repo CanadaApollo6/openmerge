@@ -63,6 +63,7 @@ func TestHealthGitHubPagination(t *testing.T) {
 				failureChecked := false
 				priming := mode == "revalidated"
 				var revalidated atomic.Int64
+				var unprimed atomic.Bool
 				tr := paginationTransport(func(r *http.Request) (*http.Response, error) {
 					body := "[]"
 					header := make(http.Header)
@@ -99,7 +100,7 @@ func TestHealthGitHubPagination(t *testing.T) {
 						header.Set("ETag", `"page"`)
 						if mode == "revalidated" && !priming {
 							if r.Header.Get("If-None-Match") != `"page"` {
-								t.Fatal("page was not primed")
+								unprimed.Store(true)
 							}
 							code, body = http.StatusNotModified, ""
 							revalidated.Add(1)
@@ -130,7 +131,13 @@ func TestHealthGitHubPagination(t *testing.T) {
 				ctx, cancel := context.WithCancel(t.Context())
 				done := make(chan struct{})
 				go func() { defer close(done); s.loop(ctx, w) }()
-				defer func() { cancel(); <-done }()
+				defer func() {
+					cancel()
+					<-done
+					if unprimed.Load() {
+						t.Error("page was not primed")
+					}
+				}()
 				synctest.Wait()
 				for range 2 {
 					time.Sleep(30 * time.Second)

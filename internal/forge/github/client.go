@@ -97,6 +97,15 @@ func preSendError(req *http.Request, err error) error {
 	return err
 }
 
+// Normalize contract-violating transports before cache or rate-limit body reads.
+func (t *transport) roundTrip(req *http.Request) (*http.Response, error) {
+	res, err := t.base.RoundTrip(req)
+	if err == nil && res.Body == nil {
+		res.Body = http.NoBody
+	}
+	return res, err
+}
+
 func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req.URL.Scheme != t.origin.Scheme || req.URL.Host != t.origin.Host || !strings.HasPrefix(req.URL.Path, t.origin.Path) {
 		return nil, preSendError(req, errors.New("github refused credentials outside API origin"))
@@ -192,8 +201,7 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 	// This deliberately runs after cache revalidation: a validated wire 304
 	// served as a cached 200 is a successful round trip and earns progress at EOF.
 	if res.StatusCode >= 200 && res.StatusCode < 300 {
-		if res.Body == nil || res.Body == http.NoBody {
-			res.Body = http.NoBody
+		if res.Body == http.NoBody {
 			forge.NotifyProgress(req.Context())
 		} else {
 			res.Body = &progressBody{ReadCloser: res.Body, ctx: req.Context()}
