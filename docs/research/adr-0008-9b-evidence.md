@@ -49,7 +49,8 @@ The final point is deliberate: a hand-crafted journal pin requires journal write
 access and can change GitHub-mode behavior in the fail-closed direction. Push
 options fail closed (pre-existing on main); landing now returns
 `LandingChecksRequiredError` where main recorded checks. This behavior is retained.
-Baseline pins already affect push guards and status. This change does **not** claim arbitrary authority-bearing journals act
+Baseline pins already affect push guards and status. This change does **not**
+claim arbitrary authority-bearing journals act
 like pin-free GitHub journals. It proves that journal data alone cannot promote
 the dormant activation seam. Raw activation cannot establish verified state,
 including through a retained snapshot. Ordinary GitHub behavior is compared
@@ -66,11 +67,11 @@ events. A handcrafted pin cannot select the new builder or its permanent errors.
 draft or candidate must not become its enablement signal. This prerequisite
 proof does not stand in for that future runtime proof.
 
-## Verification
+## Round 1 verification
 
 Verified implementation: `81d523f982d01112975fbb43b97686ea6f114c56`. Baseline:
 `9a1b4af968d66ebb71a9ab0f8541ca30dcbc160e`. Verification completed on
-2026-10-21 UTC. Subsequent changes are evidence only.
+2026-10-21 UTC. This records the round-1 implementation; round-2 results follow below.
 [Commands and results](adr-0008-9b-artifacts/summary.json),
 [artifact hash manifest](adr-0008-9b-artifacts/manifest.json),
 [raw-cache hash manifest](adr-0008-9b-artifacts/cache-manifest.json),
@@ -130,6 +131,52 @@ The reported final run verifies both corrections.
 No SQL migration/index, Makefile, CI, Dockerfile or test-flag changes are included.
 There are no new event types and no existing fixture modifications. The new
 pin context and snapshot provenance are optional additive snake_case fields.
+
+## Round 2 review corrections
+
+Verified implementation: `8e19b0e9e327b6ee043e84f7c3295f25629dbaa3`. Baseline:
+`9a1b4af968d66ebb71a9ab0f8541ca30dcbc160e`. Trial class remains **Hold**;
+public authority activation remains blocked, and this run stops at 9b-i.
+
+| Review item | Change and proof |
+| --- | --- |
+| Astra P2 / #120 real worker precedence | `internal/executor/executor.go:279` invokes authority-only `LandingDecisionGate.ValidateChecks` before rerun-permission or policy rejection. `internal/serve/stage_a_gate.go:339` builds/validates all evidence with the final attempt ID before returning ordinary unmet conditions to the original executor handling. Final admission still rereads approvals and validates evidence. `TestLandingChecksWorkerFailurePrecedence` runs through `s.execute`, inside `testSynctest` with fixtures inside each bubble: failed required CI plus overflow/invalid/bounded extra checks in either position, authority enabled/disabled, exact permanent blocked status reason and no landing/check-evidence events. Existing two-member precedence tests cover the oversized member first or later. |
+| Low 1: ownership | `docs/research/adr-0008-9-plan.md:92` splits prerequisite wire/state work from lifecycle wiring; the tables assign each original requirement once to 9a, 9b-i, 9b-ii or 9c, with no ambiguous 9b ownership. |
+| Low 2: runtime receipt | `docs/research/adr-0008-9-plan.md:117` assigns max-age and attested `BinaryRevision` validation at the internal activation caller, before first emission, to 9b-ii. Existing command-boundary verification does not discharge that runtime gate. |
+| Low 3: rejected snapshot cursor | **Safe fallback chosen.** `internal/store/outside_push.go:72` discards unusable derived progress and rebuilds from the journal in bounded 256-event passes. Original cursor bytes remain the CAS expectation; immutable BaseMoved dedupe keys preserve existing receipts. `internal/serve/outside_push.go:78` logs the reason. `TestOutsidePushRejectedAuthorityCursorRescansWithoutDuplicateReceipts` covers a rejected raw-activation v7 snapshot, competing CAS, restart, bounded scanning and no lost/duplicate receipts. No operator cursor deletion is required. |
+| Low 4: orphan/size validation | `internal/queue/authority.go:58` rejects `VerificationInput` without activation; `internal/queue/authority_adoption.go:25` bounds it to 1,000 selectors, 1,000 refs and 1 MiB JSON. `TestAuthorityVerificationInputRequiresActivationAndBoundedSize` covers orphaned inputs, collection limits and oversized App/selector/ref values through validation and decoding. |
+| Low 5: raw vs interpreted evidence | `internal/queue/authority_adoption.go:83` requires full deep equality between interpreted and retained evidence before folding raw evidence. `TestAuthorityDraftAdoptionRejectsRawCoverageWithSameFingerprint` hand-builds a pin with reordered raw Coverage, confirms its fingerprint is unchanged, round-trips the event and proves it remains unverified. |
+| Low 6: journal boundary | The A2 section above explicitly states that journal write access can create a pin that changes GitHub-mode behavior in the fail-closed direction: push options already failed closed on main; landing now returns `LandingChecksRequiredError` where main recorded checks. That behavior is retained. |
+
+The optional concurrent adoption test was not added. The mandatory regression
+coverage and all existing pin idempotence tests run in the complete race suite.
+
+[Round-2 commands and results](adr-0008-9b-artifacts/round-2/summary.json),
+[artifact hashes](adr-0008-9b-artifacts/round-2/manifest.json),
+[raw-cache hashes](adr-0008-9b-artifacts/round-2/cache-manifest.json), and
+[full make check log](adr-0008-9b-artifacts/round-2/make-check.log) are retained
+separately from round 1. The complete driver returned **PASS** on 2026-10-21 UTC.
+
+- `make check`: **exit 0**, formatting, zero lint issues, complete race suite and build.
+- Strict replay: **2,159/2,159** identical actions, structural states, snapshot
+  hashes and checkpoints; **8,676** matching boundary probes; gates 2/4 and
+  all **22** mandatory synthetic self-tests pass, with no allowed differences.
+- Depth contracts: **90/90** byte-identical; SHA-256
+  `88e727ebe7ea5b570f352c5c661c2cd1642c1b5120f3d3ed086993f4dd00362a`.
+- Seeded simulator: **146/146** normalized blocks byte-identical, both exits 0;
+  SHA-256 `a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7`.
+- Existing wire fixtures: **104/104** unchanged, including 90 registry fixtures;
+  no added event type or modified existing fixture.
+- Verified binary SHA-256:
+  `04c1a4c513cf35b2a7ffab4338cba87da017b096873b5195988132e6bebdd43f`.
+
+Reproduce with the same toolchain/DB exports and driver command above, using
+`--out /home/riels/.cache/adr0008-9b-round2-verification-rerun`.
+All Go commands used the required flock, parallelism and memory limits; replay
+used 6 GiB. Only the shared test Postgres and frozen offline journal export were
+used. No live DB/status/service refs or application GitHub API calls occurred.
+No migrations/indexes, Makefile, CI, Dockerfile or test flags changed.
+Subsequent changes to the verified implementation are evidence only.
 
 ## Remaining 9b-ii and 9c work
 
