@@ -25,7 +25,7 @@ type JournalEvent struct {
 	RecordedAt time.Time
 	Payload    json.RawMessage
 	Event      queue.Event
-	DedupeKey  string
+	DedupeKey  *string
 }
 
 // Journals reads only explicitly served targets, without locks or writes. All
@@ -43,6 +43,7 @@ func (s *Store) ReportingJournals(ctx context.Context, keys []QueueKey) ([]Journ
 
 func (s *Store) journals(ctx context.Context, keys []QueueKey, warnings bool) ([]Journal, error) {
 	result := make([]Journal, 0, len(keys))
+	ids := make([]QueueID, 0, len(keys))
 	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
 		for _, key := range keys {
 			journal := Journal{Key: key}
@@ -56,7 +57,7 @@ func (s *Store) journals(ctx context.Context, keys []QueueKey, warnings bool) ([
 			if err != nil {
 				return err
 			}
-			rows, err := tx.Query(ctx, `SELECT id, recorded_at, payload, COALESCE(dedupe_key, '') FROM events WHERE queue_id = $1 ORDER BY id`, id)
+			rows, err := tx.Query(ctx, `SELECT id, recorded_at, payload, dedupe_key FROM events WHERE queue_id = $1 ORDER BY id`, id)
 			if err != nil {
 				return err
 			}
@@ -74,14 +75,19 @@ func (s *Store) journals(ctx context.Context, keys []QueueKey, warnings bool) ([
 			if err != nil {
 				return err
 			}
-			if warnings && journal.HasAuthorityPin {
-				// Reuse decoded history. Only events after the cached watermark enter
-				// the ledger; no re-paging, re-decoding or association SQL is needed.
-				journal.OutsideWarnings = s.journalWarnings(ctx, id, journal.Events)
-			}
+			ids = append(ids, id)
 			result = append(result, journal)
 		}
 		return nil
 	})
+	if err == nil && warnings {
+		// Fold immutable journal data after COMMIT: a warning deadline must never
+		// poison the DB transaction or fail sibling queues in the response.
+		for i := range result {
+			if result[i].HasAuthorityPin {
+				result[i].OutsideWarnings = s.journalWarnings(ctx, ids[i], result[i].Events)
+			}
+		}
+	}
 	return result, err
 }

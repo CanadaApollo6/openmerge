@@ -169,8 +169,8 @@ func TestWarningCacheDelayedAuditRollbackAndAcknowledgement(t *testing.T) {
 	}
 }
 
-// Cancellation after a completely consumed page leaves a resumable index, but
-// must not publish its partial counts. An empty successful suffix completes it.
+// Cancellation after a consumed page discards the private refresh index.
+// Foreground and the next refresh must still recover the complete snapshot.
 type cancelWarningPageTrace struct {
 	cancel context.CancelFunc
 	pages  atomic.Int32
@@ -210,8 +210,8 @@ func TestWarningCacheCompletesAfterCancelledPage(t *testing.T) {
 	if !errors.Is(err, context.Canceled) || summary.Error == "" || summary.Outstanding != 0 {
 		t.Fatalf("partial snapshot published: %+v / %v", summary, err)
 	}
-	if s.warningCache(q).through != warningPageSize {
-		t.Fatalf("cancellation did not exercise an already consumed full page: watermark=%d", s.warningCache(q).through)
+	if s.warningCache(q).through != 0 {
+		t.Fatal("cancelled refresh published a partial index")
 	}
 	key := QueueKey{}
 	must(t, s.pool.QueryRow(t.Context(), `SELECT installation,repository,base,lane FROM queues WHERE id=$1`, q).Scan(&key.Installation, &key.Repository, &key.BaseBranch, &key.Lane))
@@ -224,5 +224,196 @@ func TestWarningCacheCompletesAfterCancelledPage(t *testing.T) {
 	must(t, err)
 	if summary.Outstanding != 1 || summary.Error != "" {
 		t.Fatalf("background recovery failed: %+v", summary)
+	}
+}
+
+// Pause real background SQL after the refresh has started, without delaying the
+// journal query. A foreground multi-queue read must not inherit that pause.
+type pausedWarningRefreshTrace struct {
+	sql     string
+	entered chan struct{}
+	release chan struct{}
+	paused  atomic.Bool
+}
+
+func (p *pausedWarningRefreshTrace) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	target := p.sql
+	if target == "" {
+		target = warningPageSQL
+	}
+	if data.SQL == target && p.paused.CompareAndSwap(false, true) {
+		close(p.entered)
+		select {
+		case <-p.release:
+		case <-ctx.Done():
+		}
+	}
+	return ctx
+}
+func (*pausedWarningRefreshTrace) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
+func TestWarningRefreshNeverBlocksForegroundOrSibling(t *testing.T) {
+	s := newStore(t)
+	keys := []QueueKey{
+		{Installation: "7", Repository: "owner/repo", BaseBranch: "main"},
+		{Installation: "7", Repository: "owner/repo", BaseBranch: "release"},
+	}
+	var ids []QueueID
+	for _, key := range keys {
+		id, err := s.EnsureQueue(t.Context(), key)
+		must(t, err)
+		appendWarningPin(t, s, id, authority.OpenMerge)
+		ids = append(ids, id)
+	}
+	appendEvents(t, s, ids[0], queue.BaseMoved{SHA: "base"}, queue.BaseMoved{SHA: "outside"})
+	auditPass(t, s, ids[0])
+	_, err := s.Journals(t.Context(), keys)
+	must(t, err)
+	original := s.pool
+	cfg := original.Config().Copy()
+	pause := &pausedWarningRefreshTrace{entered: make(chan struct{}), release: make(chan struct{})}
+	cfg.ConnConfig.Tracer = pause
+	traced, err := pgxpool.NewWithConfig(t.Context(), cfg)
+	must(t, err)
+	s.pool = traced
+	t.Cleanup(original.Close)
+	done := make(chan error, 1)
+	go func() { _, err := s.ReadOutsidePushWarnings(t.Context(), ids[0]); done <- err }()
+	defer func() { close(pause.release); must(t, <-done) }()
+	select {
+	case <-pause.entered:
+	case <-time.After(time.Second):
+		t.Fatal("refresh did not reach SQL")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	result := make(chan []Journal, 1)
+	failures := make(chan error, 1)
+	go func() { js, err := s.Journals(ctx, keys); result <- js; failures <- err }()
+	select {
+	case js := <-result:
+		must(t, <-failures)
+		if ctx.Err() != nil {
+			t.Fatal("foreground exceeded deadline")
+		}
+		if len(js) != 2 || js[0].OutsideWarnings.Outstanding != 1 || js[0].OutsideWarnings.Error != "" || js[1].OutsideWarnings.Outstanding != 0 || js[1].OutsideWarnings.Error != "" {
+			t.Fatalf("refresh affected foreground/sibling: %+v", js)
+		}
+	case <-ctx.Done():
+		t.Fatal("foreground blocked on background I/O")
+	}
+	// Even CPU fold contention falls back immediately to a complete snapshot.
+	c := s.warningCache(ids[0])
+	c.mu.Lock()
+	snapshot := s.journalWarnings(ctx, ids[0], []JournalEvent{{ID: c.through}})
+	older := s.journalWarnings(ctx, ids[0], nil)
+	c.mu.Unlock()
+	if older.Outstanding != 0 || older.Error != "ledger_unavailable" {
+		t.Fatal("older snapshot saw future warnings", older)
+	}
+	if snapshot.Outstanding != 1 || snapshot.Error != "ledger_unavailable" {
+		t.Fatal(snapshot)
+	}
+}
+
+type cancelAfterJournalCommitTrace struct{ cancel context.CancelFunc }
+
+func (p *cancelAfterJournalCommitTrace) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	return context.WithValue(ctx, journalCommitTraceKey{}, data.SQL == "commit")
+}
+
+type journalCommitTraceKey struct{}
+
+func (p *cancelAfterJournalCommitTrace) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryEndData) {
+	if committed, _ := ctx.Value(journalCommitTraceKey{}).(bool); committed && data.Err == nil {
+		p.cancel()
+	}
+}
+
+func TestWarningFoldCancellationDoesNotFailJournals(t *testing.T) {
+	s := newStore(t)
+	keys := []QueueKey{
+		{Installation: "7", Repository: "owner/repo", BaseBranch: "main"},
+		{Installation: "7", Repository: "owner/repo", BaseBranch: "release"},
+	}
+	for i, key := range keys {
+		id, err := s.EnsureQueue(t.Context(), key)
+		must(t, err)
+		if i == 0 {
+			appendWarningPin(t, s, id, authority.OpenMerge)
+		}
+		appendEvents(t, s, id, queue.RefreshRequested{})
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	original := s.pool
+	cfg := original.Config().Copy()
+	cfg.ConnConfig.Tracer = &cancelAfterJournalCommitTrace{cancel: cancel}
+	traced, err := pgxpool.NewWithConfig(t.Context(), cfg)
+	must(t, err)
+	s.pool = traced
+	t.Cleanup(original.Close)
+	js, err := s.Journals(ctx, keys)
+	must(t, err)
+	if ctx.Err() == nil {
+		t.Fatal("test failed to cancel at committed snapshot")
+	}
+	if len(js) != 2 || js[0].OutsideWarnings.Error != "ledger_unavailable" || js[1].OutsideWarnings.Error != "" || len(js[1].Events) != 1 {
+		t.Fatalf("warning cancellation contaminated whole response: %+v", js)
+	}
+}
+
+func TestWarningRefreshDoesNotReplaceNewerForeground(t *testing.T) {
+	s := newStore(t)
+	key := QueueKey{Installation: "7", Repository: "owner/repo", BaseBranch: "main"}
+	id, err := s.EnsureQueue(t.Context(), key)
+	must(t, err)
+	appendWarningPin(t, s, id, authority.OpenMerge)
+	appendEvents(t, s, id, queue.BaseMoved{SHA: "base"}, queue.BaseMoved{SHA: "outside-1"})
+	auditPass(t, s, id)
+	_, err = s.Journals(t.Context(), []QueueKey{key})
+	must(t, err)
+	original := s.pool
+	cfg := original.Config().Copy()
+	pause := &pausedWarningRefreshTrace{sql: "commit", entered: make(chan struct{}), release: make(chan struct{})}
+	cfg.ConnConfig.Tracer = pause
+	traced, err := pgxpool.NewWithConfig(t.Context(), cfg)
+	must(t, err)
+	s.pool = traced
+	t.Cleanup(original.Close)
+	done := make(chan OutsideWarningSummary, 1)
+	failures := make(chan error, 1)
+	go func() { summary, err := s.ReadOutsidePushWarnings(t.Context(), id); done <- summary; failures <- err }()
+	released := false
+	defer func() {
+		if !released {
+			close(pause.release)
+			<-done
+			<-failures
+		}
+	}()
+	select {
+	case <-pause.entered:
+	case <-time.After(time.Second):
+		t.Fatal("refresh did not reach commit")
+	}
+	appendEvents(t, s, id, queue.BaseMoved{SHA: "outside-2"})
+	auditPass(t, s, id)
+	js, err := s.Journals(t.Context(), []QueueKey{key})
+	must(t, err)
+	if js[0].OutsideWarnings.Outstanding != 2 {
+		t.Fatal(js[0].OutsideWarnings)
+	}
+	close(pause.release)
+	released = true
+	summary := <-done
+	must(t, <-failures)
+	if summary.Outstanding != 2 {
+		t.Fatal("refresh republished older counts", summary)
+	}
+	js, err = s.Journals(t.Context(), []QueueKey{key})
+	must(t, err)
+	if js[0].OutsideWarnings.Outstanding != 2 {
+		t.Fatal("refresh replaced newer index", js[0].OutsideWarnings)
 	}
 }

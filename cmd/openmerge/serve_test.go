@@ -398,15 +398,25 @@ func TestServeHealthThresholdBounds(t *testing.T) {
 	t.Setenv("OPENMERGE_API_LISTEN", "")
 	t.Setenv("OPENMERGE_HEALTH_OVERDUE_GRACE", "30s")
 	t.Setenv("OPENMERGE_HEALTH_MAX_SUCCESS_AGE", "15m")
-	for _, args := range [][]string{{"--health-max-cycle-duration=1m"}, {"--health-max-cycle-duration=7h"}, {"--health-overdue-grace=0s"}, {"--health-overdue-grace=61s"}, {"--health-max-success-age=59s"}, {"--health-max-success-age=61m"}} {
+	t.Setenv("OPENMERGE_HEALTH_PROGRESS_STALL_LIMIT", "4m")
+	for _, args := range [][]string{{"--health-progress-stall-limit=0s"}, {"--health-progress-stall-limit=31m"}, {"--health-max-cycle-duration=1m"}, {"--health-max-cycle-duration=7h"}, {"--health-overdue-grace=0s"}, {"--health-overdue-grace=61s"}, {"--health-max-success-age=59s"}, {"--health-max-success-age=61m"}} {
 		if _, err := parseServe(args, io.Discard); err == nil {
 			t.Fatalf("accepted %v", args)
 		}
 	}
-	o, err := parseServe([]string{"--health-overdue-grace=1s", "--health-max-success-age=60m", "--health-max-cycle-duration=2h"}, io.Discard)
-	if err != nil || o.healthGrace != time.Second || o.healthMaxAge != time.Hour || o.healthMaxCycle != 2*time.Hour {
+	o, err := parseServe([]string{"--health-overdue-grace=1s", "--health-max-success-age=60m", "--health-max-cycle-duration=2h", "--health-progress-stall-limit=3m"}, io.Discard)
+	if err != nil || o.healthGrace != time.Second || o.healthMaxAge != time.Hour || o.healthMaxCycle != 2*time.Hour || o.healthProgressStall != 3*time.Minute {
 		t.Fatalf("%+v %v", o, err)
 	}
+	o, err = parseServe(nil, io.Discard)
+	if err != nil || o.healthProgressStall != 4*time.Minute {
+		t.Fatalf("stall environment: %+v %v", o, err)
+	}
+	t.Setenv("OPENMERGE_HEALTH_PROGRESS_STALL_LIMIT", "bad")
+	if _, err := parseServe(nil, io.Discard); err == nil {
+		t.Fatal("accepted malformed stall env")
+	}
+	t.Setenv("OPENMERGE_HEALTH_PROGRESS_STALL_LIMIT", "4m")
 	t.Setenv("OPENMERGE_HEALTH_MAX_SUCCESS_AGE", "bad")
 	if _, err := parseServe(nil, io.Discard); err == nil {
 		t.Fatal("accepted malformed threshold env")

@@ -411,17 +411,25 @@ func TestOutsidePushWarningsSnapshotAndStalePin(t *testing.T) {
 }
 
 func TestOutsidePushLedgerOrphansRemainAnomaliesAfterAcknowledgement(t *testing.T) {
-	for _, key := range []string{"", "outside-base/999999999", "outside-base/1", "garbage"} {
+	for _, key := range []string{"NULL", "", "outside-base/999999999", "outside-base/1", "garbage"} {
 		t.Run(key, func(t *testing.T) {
 			s := newStore(t)
 			q := ensureQueue(t, s, "")
+			appendWarningPin(t, s, q, authority.OpenMerge)
+			bad := QueueKey{Installation: "installation/1", Repository: "owner/repo", BaseBranch: "main"}
+			sibling := QueueKey{Installation: "installation/1", Repository: "owner/repo", BaseBranch: "release"}
+			siblingID, err := s.EnsureQueue(t.Context(), sibling)
+			must(t, err)
+			appendWarningPin(t, s, siblingID, authority.OpenMerge)
+			_, err = s.Journals(t.Context(), []QueueKey{bad, sibling})
+			must(t, err)
 			// Deliberately inject an audit without a valid originating BaseMoved.
 			push := queue.OutsidePushRecorded{PreviousSHA: "base", NewSHA: "orphan", VerificationBeforeLanding: "none", At: time.Now().UTC()}
 			name, raw, err := queue.EncodeEvent(push)
 			must(t, err)
 			var id int64
 			var dedupe any
-			if key != "" {
+			if key != "NULL" {
 				dedupe = key
 			}
 			must(t, s.pool.QueryRow(t.Context(), `INSERT INTO events(queue_id,type,payload,dedupe_key) VALUES($1,$2,$3::jsonb,$4) RETURNING id`, q, name, string(raw), dedupe).Scan(&id))
@@ -429,6 +437,18 @@ func TestOutsidePushLedgerOrphansRemainAnomaliesAfterAcknowledgement(t *testing.
 				err = s.VisitOutsidePushWarnings(t.Context(), q, func(OutsidePushWarning) error { t.Fatal("orphan presented as valid warning"); return nil })
 				if err == nil || !strings.Contains(err.Error(), "ledger anomaly: orphan") {
 					t.Fatalf("silently dropped orphan: %v", err)
+				}
+				summary, readErr := s.ReadOutsidePushWarnings(t.Context(), q)
+				if readErr == nil || summary.Error != "ledger_unavailable" || summary.Outstanding != 0 {
+					t.Fatalf("background hid orphan: %+v %v", summary, readErr)
+				}
+				js, journalErr := s.Journals(t.Context(), []QueueKey{bad, sibling})
+				must(t, journalErr)
+				if len(js) != 2 || js[0].OutsideWarnings.Error != "ledger_unavailable" || js[0].OutsideWarnings.Outstanding != 0 || js[1].OutsideWarnings.Error != "" {
+					t.Fatalf("orphan not queue-local: %+v", js)
+				}
+				if key == "NULL" && js[0].Events[len(js[0].Events)-1-i].DedupeKey != nil {
+					t.Fatal("journal replaced NULL key")
 				}
 				if i == 0 {
 					_, err = s.AcknowledgeOutsidePush(t.Context(), q, id, push.NewSHA, "operator")
@@ -448,12 +468,16 @@ func TestEventRecordDedupeLoadingIsExplicit(t *testing.T) {
 	if len(records) != 1 || records[0].DedupeKey != nil {
 		t.Fatal("EventsAfter pretended to load dedupe association")
 	}
+	name, raw, err := queue.EncodeEvent(queue.RefreshRequested{})
+	must(t, err)
+	_, err = s.pool.Exec(t.Context(), `INSERT INTO events(queue_id,type,payload,dedupe_key) VALUES($1,$2,$3::jsonb,'')`, q, name, string(raw))
+	must(t, err)
 	tx, err := s.pool.Begin(t.Context())
 	must(t, err)
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	page, err := eventPage(t.Context(), tx, q, 0)
 	must(t, err)
-	if len(page) != 1 || page[0].DedupeKey == nil || *page[0].DedupeKey != "" {
-		t.Fatal("loaded empty association is ambiguous")
+	if len(page) != 2 || page[0].DedupeKey != nil || page[1].DedupeKey == nil || *page[1].DedupeKey != "" {
+		t.Fatal("loaded SQL NULL association was lost")
 	}
 }

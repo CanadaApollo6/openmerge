@@ -223,3 +223,39 @@ func TestOutsideWarningErrorPreservesRegistration(t *testing.T) {
 		t.Fatal("status did not isolate ledger failure")
 	}
 }
+
+func TestOutsideWarningsClearAfterPinRemoval(t *testing.T) {
+	s, w, _, _ := fixture(t, repositoryConfig)
+	reportingPin(t, s, w, authority.OpenMerge)
+	reportingMoves(t, s, w, 1)
+	// Publish a new unpinned projection, as after replacing the queue's history.
+	unpinned := queue.State{BaseBranch: w.Key.BaseBranch}
+	s.publishHealth(w, unpinned, true, nil, time.Now())
+	must(t, s.refreshOutsideWarnings(t.Context(), w))
+	q, _, _ := status.Project(store.Journal{Key: w.Key, Seed: unpinned}, 0, 0, nil)
+	h, err := s.Health(t.Context())
+	must(t, err)
+	if q.OutsideWarnings != nil || h.Queues[0].OutsideWarnings != nil || w.outsideWarnings.Load() != nil {
+		t.Fatalf("frozen warning after pin removal: status=%+v health=%+v", q.OutsideWarnings, h.Queues[0].OutsideWarnings)
+	}
+}
+
+func TestOutsideWarningsRefreshAfterRollback(t *testing.T) {
+	s, w, _, _ := fixture(t, repositoryConfig)
+	reportingPin(t, s, w, authority.OpenMerge)
+	reportingMoves(t, s, w, 1)
+	warning := w.outsideWarnings.Load()
+	reportingPin(t, s, w, authority.GitHub)
+	_, err := s.store.AcknowledgeOutsidePush(t.Context(), w.id, warning.EventIDs[0], "outside-0", "operator")
+	must(t, err)
+	state, _, err := s.store.Load(t.Context(), w.id)
+	must(t, err)
+	s.publishHealth(w, state, true, nil, time.Now())
+	must(t, s.refreshOutsideWarnings(t.Context(), w))
+	q := reportingQueue(t, s)
+	h, err := s.Health(t.Context())
+	must(t, err)
+	if q.OutsideWarnings != nil || h.Queues[0].OutsideWarnings != nil {
+		t.Fatalf("frozen warning after rollback: status=%+v health=%+v", q.OutsideWarnings, h.Queues[0].OutsideWarnings)
+	}
+}

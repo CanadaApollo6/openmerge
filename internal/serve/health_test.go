@@ -254,6 +254,7 @@ func TestHealthHTTPWatchedConditionsAndIsolation(t *testing.T) {
 			if q.OutsideWarnings != nil {
 				summary = store.OutsideWarningSummary{Outstanding: q.OutsideWarnings.Outstanding, EventIDs: q.OutsideWarnings.EventIDs, Truncated: q.OutsideWarnings.Truncated}
 			}
+			w.hasAuthorityPin.Store(true)
 			w.outsideWarnings.Store(&summary)
 			w.health.Store(&q)
 			r := httptest.NewRequest("GET", "/v1/health", nil)

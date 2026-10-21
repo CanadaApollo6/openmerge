@@ -58,10 +58,15 @@ func (s *Server) outsidePushLoop(ctx context.Context) {
 // availability does not change health; its DB probe reports database outages.
 func (s *Server) refreshOutsideWarnings(ctx context.Context, w *worker) error {
 	if !w.hasAuthorityPin.Load() {
+		w.outsideWarnings.Store(nil)
 		return nil
 	}
 	summary, err := s.store.ReadOutsidePushWarnings(ctx, w.id)
-	w.outsideWarnings.Store(&summary)
+	if w.hasAuthorityPin.Load() {
+		w.outsideWarnings.Store(&summary)
+	} else {
+		w.outsideWarnings.Store(nil)
+	}
 	return err
 }
 

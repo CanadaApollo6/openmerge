@@ -1759,3 +1759,35 @@ The reader uses O(one page plus one pin) memory and O(queue history) work, plus
 indexed dedupe lookups. Consumers must discard partial output if it fails. ADR
 0008 PR 6 owns warning rendering in status, CLI, API, and health; this PR adds no
 such rendering, schema activation, migration, index, or runtime forge read.
+
+
+## Authority health alerts (ADR 0008 PR 6, HOLD)
+
+Use `/v1/live` for process restarts and authenticated `/v1/health` for alerts.
+Health uses a bounded read-only DB probe and process snapshots. A warning or
+unverified authority alone does not fail health. See [the complete API contract](api.md#authority-and-alerting-probes-adr-0008-pr-6-hold).
+
+While waiting, a queue is overdue after its published next-start deadline plus
+`--health-overdue-grace` / `OPENMERGE_HEALTH_OVERDUE_GRACE` (30s, range 1–60s).
+Immediate journal wakes publish a deadline of now, so slot starvation remains
+visible. Slot acquisition starts the cycle and seeds `last_progress_at`.
+Completed actions and turns advance progress; journal traffic alone does not.
+
+During a cycle, overdue means missing start/progress telemetry or no progress for
+`--health-progress-stall-limit` / `OPENMERGE_HEALTH_PROGRESS_STALL_LIMIT` (2m30s,
+range 1s–30m). This default covers the 2m action timeout plus 30s grace. Embedded
+servers derive it from their action timeout plus grace, clamped to the supported
+range. `--health-max-cycle-duration` / `OPENMERGE_HEALTH_MAX_CYCLE_DURATION`
+remains an absolute 3h backstop (range 2m–6h). A progressing cycle may run past
+15m or 60m while staying healthy. A hung action becomes overdue after the stall
+limit. Degraded means the later of last success and progress while in-cycle is
+older than `--health-max-success-age` / `OPENMERGE_HEALTH_MAX_SUCCESS_AGE` (15m,
+range 1–60m), using process queue start before either exists. Progress does not
+change `last_success_at`. Waiting queues still age from last success, so repeated
+failed cycles and backoff cannot hide degradation.
+
+Warning refresh never holds the cache lock during DB I/O. Contention or ledger
+anomalies label only that queue's warning section `ledger_unavailable`, retaining
+last complete counts. SQL NULL on an audit dedupe key is an orphan anomaly even
+if acknowledged. Pin removal clears health warnings; rollback keeps historical
+origin-time warning eligibility and refreshes acknowledgements as status does.

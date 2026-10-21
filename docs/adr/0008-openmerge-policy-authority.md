@@ -1422,7 +1422,7 @@ are implementation choices, not permission to weaken the accepted Decision.
 - **Have OpenMerge compile its policy into GitHub rulesets.** GitHub's rules cannot express approval by change class, accountable humans or post-merge verification, and they are evaluated on pull requests that the App bypasses anyway.
 
 
-## PR 6 implementation refinement (2026-10-20, round 2)
+## PR 6 implementation refinement (2026-10-20, round 3)
 
 This records implementation details without changing the accepted Decision.
 Health 503 has three exhaustive groups: a missing health provider, failed DB
@@ -1434,15 +1434,21 @@ remain 401, 400 and 405. See [the API contract](../api.md#authority-and-alerting
 
 The published deadline is the latest allowed next cycle **start**, including an
 immediate journal wake. Waiting for a slot is overdue after the deadline plus
-30s grace (configurable 1–60s). After slot acquisition, `in_cycle` and
-`cycle_started_at` replace that deadline; overdue then requires exceeding
-`--health-max-cycle-duration` / `OPENMERGE_HEALTH_MAX_CYCLE_DURATION`, default 3h,
-range 2m–6h. This allows up to 64 actions at the default 2m action timeout plus
-other turn work. Cycle completion publishes the next start deadline. Degraded
-uses only elapsed time since successful reconciliation, or queue process start
-until the first success: default 15m, configurable 1–60m. Consecutive failures
-remain informational. Recovery exit explicitly removes the watch obligation
-independently of best-effort operational log replay.
+30s grace (configurable 1–60s). Slot acquisition publishes `in_cycle`,
+`cycle_started_at` and initial `last_progress_at`. Completed actions (after their
+completion write) and turns advance progress; journal activity does not. In-cycle
+overdue means time since progress exceeds `--health-progress-stall-limit` /
+`OPENMERGE_HEALTH_PROGRESS_STALL_LIMIT`: default 2m30s (2m action timeout plus
+30s grace), range 1s–30m. Embedded servers derive the default from their action
+timeout plus grace, clamped to that range. Missing cycle start or progress fails
+closed as overdue. `--health-max-cycle-duration` /
+`OPENMERGE_HEALTH_MAX_CYCLE_DURATION` remains an absolute backstop: default 3h,
+range 2m–6h. Cycle completion publishes the next start deadline. Degraded uses
+the later of last success and in-cycle progress, or queue process start before
+either exists: default 15m, configurable 1–60m. A long progressing cycle stays
+healthy past both limits; a stalled one becomes overdue within the stall limit.
+Consecutive failures remain informational. Recovery exit explicitly removes the
+watch obligation independently of best-effort operational log replay.
 
 Warning summaries are cached per queue by watermark and updated from new events.
 Already loaded status journals supply the suffix and association records without
@@ -1453,3 +1459,12 @@ preserves the queue and last complete warning counts, with an explicit error in
 that queue's warning section. The index retains policy boundaries and outstanding
 IDs; API samples remain bounded at 20. The snapshot gate survives rollback and
 acknowledgement. Future evidence ages are null with explicit clock-skew markers.
+
+
+Background warning refresh pages DB results into a private index, then swaps the
+complete index under a brief lock. Foreground folds never wait for that lock;
+contention preserves last complete counts with queue-local `ledger_unavailable`.
+Pin removal clears health warnings; rollback retains origin-time eligibility and
+refreshes acknowledgements. Nullable dedupe keys preserve SQL NULL: on an audit
+row, NULL is an orphan anomaly, including when an acknowledgement exists. Both
+scan and cache paths validate origins and surface errors locally.

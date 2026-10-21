@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -18,9 +19,20 @@ import (
 // This index retains policy boundaries and outstanding warnings, not journal
 // payloads. A late audit resolves its origin at that origin's policy boundary.
 // Acknowledgements delete entries, allowing the bounded ID sample to refill.
-// Each queue has its own mutex, independent of worker ownership and reporting.
+// Each queue has a brief fold lock; background I/O uses a private index.
+// Foreground readers never wait for that lock and can use the last complete snapshot.
 type outsideWarningCache struct {
-	mu          sync.Mutex
+	mu        sync.Mutex
+	published atomic.Pointer[outsideWarningSnapshot]
+	outsideWarningIndex
+}
+
+type outsideWarningSnapshot struct {
+	through int64
+	summary OutsideWarningSummary
+}
+
+type outsideWarningIndex struct {
 	through     int64
 	policy      queue.State
 	modes       []warningMode
@@ -32,21 +44,24 @@ type warningMode struct {
 	after   int64
 	enabled bool
 }
-type warningLookup func(int64) (EventRecord, error)
 
 func (s *Store) warningCache(q QueueID) *outsideWarningCache {
-	c, _ := s.warningCaches.LoadOrStore(q, &outsideWarningCache{outstanding: make(map[int64]OutsidePushWarning)})
+	c, _ := s.warningCaches.LoadOrStore(q, &outsideWarningCache{outsideWarningIndex: outsideWarningIndex{outstanding: make(map[int64]OutsidePushWarning)}})
 	return c.(*outsideWarningCache)
 }
 
-func (c *outsideWarningCache) apply(r EventRecord, lookup warningLookup) error {
+func (c *outsideWarningIndex) apply(r EventRecord, lookup warningLookup) error {
 	// Validate associations even when their audits have already been acknowledged.
-	if strings.HasPrefix(r.DedupeKey, "outside-base/") {
+	key := ""
+	if r.DedupeKey != nil {
+		key = *r.DedupeKey
+	}
+	if strings.HasPrefix(key, "outside-base/") {
 		if _, ok := r.Event.(queue.OutsidePushRecorded); !ok {
 			return fmt.Errorf("invalid outside push association at event %d", r.ID)
 		}
 	}
-	if strings.HasPrefix(r.DedupeKey, "outside-push-acknowledged/") {
+	if strings.HasPrefix(key, "outside-push-acknowledged/") {
 		if _, ok := r.Event.(queue.OutsidePushAcknowledged); !ok {
 			return fmt.Errorf("invalid outside push acknowledgement association at event %d", r.ID)
 		}
@@ -60,17 +75,9 @@ func (c *outsideWarningCache) apply(r EventRecord, lookup warningLookup) error {
 			c.modes = append(c.modes, warningMode{r.ID, enabled})
 		}
 	case queue.OutsidePushRecorded:
-		source, err := strconv.ParseInt(strings.TrimPrefix(r.DedupeKey, "outside-base/"), 10, 64)
-		if err != nil || source <= 0 || source >= r.ID || r.DedupeKey != fmt.Sprintf("outside-base/%d", source) {
-			return fmt.Errorf("invalid outside push origin at event %d", r.ID)
-		}
-		origin, err := lookup(source)
+		source, err := validateOutsidePushOrigin(r, e, lookup)
 		if err != nil {
 			return err
-		}
-		base, ok := origin.Event.(queue.BaseMoved)
-		if !ok || base.SHA != e.NewSHA {
-			return fmt.Errorf("invalid outside push association for base event %d", source)
 		}
 		boundary := sort.Search(len(c.modes), func(i int) bool { return c.modes[i].after >= source }) - 1
 		if boundary >= 0 && c.modes[boundary].enabled {
@@ -78,7 +85,7 @@ func (c *outsideWarningCache) apply(r EventRecord, lookup warningLookup) error {
 			c.dirty = true
 		}
 	case queue.OutsidePushAcknowledged:
-		if r.DedupeKey != acknowledgementKey(e.SourceEventID) || r.ID <= e.SourceEventID {
+		if key != acknowledgementKey(e.SourceEventID) || r.ID <= e.SourceEventID {
 			return errors.New("invalid outside push acknowledgement association")
 		}
 		original, err := lookup(e.SourceEventID)
@@ -98,7 +105,7 @@ func (c *outsideWarningCache) apply(r EventRecord, lookup warningLookup) error {
 	return nil
 }
 
-func (c *outsideWarningCache) complete() OutsideWarningSummary {
+func (c *outsideWarningIndex) complete() OutsideWarningSummary {
 	if !c.dirty {
 		return cloneWarningSummary(c.summary)
 	}
@@ -127,14 +134,20 @@ func (c *outsideWarningCache) complete() OutsideWarningSummary {
 // work. Binary searches locate the suffix and exact origin/receipt targets.
 func (s *Store) journalWarnings(ctx context.Context, q QueueID, events []JournalEvent) OutsideWarningSummary {
 	c := s.warningCache(q)
-	c.mu.Lock()
-	defer c.mu.Unlock()
 	watermark := int64(0)
 	if len(events) > 0 {
 		watermark = events[len(events)-1].ID
 	}
+	if !c.mu.TryLock() {
+		// An older repeatable-read snapshot must never see future warning counts.
+		if snapshot := c.published.Load(); snapshot != nil && snapshot.through <= watermark {
+			return warningReadError(snapshot.summary)
+		}
+		return warningReadError(OutsideWarningSummary{})
+	}
+	defer c.mu.Unlock()
 	if c.through > watermark { // An older repeatable-read snapshot must not see future warnings.
-		c = &outsideWarningCache{outstanding: make(map[int64]OutsidePushWarning)}
+		c = &outsideWarningCache{outsideWarningIndex: outsideWarningIndex{outstanding: make(map[int64]OutsidePushWarning)}}
 	}
 	lookup := func(id int64) (EventRecord, error) {
 		i := sort.Search(len(events), func(i int) bool { return events[i].ID >= id })
@@ -173,25 +186,22 @@ func (s *Store) cachedOutsidePushWarnings(ctx context.Context, q QueueID) (Outsi
 	defer cancel()
 	c := s.warningCache(q)
 	c.mu.Lock()
-	defer c.mu.Unlock()
+	local := c.outsideWarningIndex
+	local.modes = slices.Clone(c.modes)
+	local.outstanding = maps.Clone(c.outstanding)
+	c.mu.Unlock()
 	var summary OutsideWarningSummary
 	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
 		lookup := func(id int64) (EventRecord, error) {
-			var r EventRecord
-			var raw []byte
-			err := tx.QueryRow(ctx, `SELECT id,payload,COALESCE(dedupe_key,'') FROM events WHERE queue_id=$1 AND id=$2`, q, id).Scan(&r.ID, &raw, &r.DedupeKey)
-			if err == nil {
-				r.Event, err = queue.DecodeEvent(raw)
-			}
-			return r, err
+			return outsideWarningEvent(ctx, tx, q, id)
 		}
 		for {
-			page, err := eventPage(ctx, tx, q, c.through)
+			page, err := eventPage(ctx, tx, q, local.through)
 			if err != nil {
 				return err
 			}
 			for _, r := range page {
-				if err := c.apply(r, lookup); err != nil {
+				if err := local.apply(r, lookup); err != nil {
 					return err
 				}
 			}
@@ -199,16 +209,38 @@ func (s *Store) cachedOutsidePushWarnings(ctx context.Context, q QueueID) (Outsi
 				break
 			}
 		}
-		summary = c.complete()
+		summary = local.complete()
 		return nil
 	})
 	if err != nil {
-		return warningReadError(c.summary), err
+		return warningReadError(c.lastComplete()), err
 	}
+	c.mu.Lock()
+	// A foreground fold may have advanced while this transaction was paging.
+	if local.through >= c.through {
+		c.outsideWarningIndex = local
+		c.published.Store(&outsideWarningSnapshot{through: local.through, summary: summary})
+	} else {
+		summary = c.lastComplete()
+	}
+	c.mu.Unlock()
 	return cloneWarningSummary(summary), nil
 }
 
 func cloneWarningSummary(s OutsideWarningSummary) OutsideWarningSummary {
 	s.EventIDs = slices.Clone(s.EventIDs)
 	return s
+}
+
+func (c *outsideWarningCache) lastComplete() OutsideWarningSummary {
+	if summary := c.published.Load(); summary != nil {
+		return cloneWarningSummary(summary.summary)
+	}
+	return OutsideWarningSummary{}
+}
+
+func (c *outsideWarningCache) complete() OutsideWarningSummary {
+	summary := c.outsideWarningIndex.complete()
+	c.published.Store(&outsideWarningSnapshot{through: c.through, summary: summary})
+	return cloneWarningSummary(summary)
 }

@@ -206,9 +206,10 @@ func newServer(db *store.Store, options Options) (*Server, error) {
 	}
 	if options.Health == (status.HealthSettings{}) {
 		options.Health = status.DefaultHealthSettings()
+		options.Health.ProgressStallLimit = min(30*time.Minute, max(time.Second, options.ActionTimeout+options.Health.OverdueGrace))
 	}
 	if !options.Health.Valid() {
-		return nil, errors.New("health overdue grace must be 1–60s and maximum success age 1–60m and maximum cycle duration 2m–6h")
+		return nil, errors.New("health overdue grace must be 1–60s and maximum success age 1–60m and maximum cycle duration 2m–6h and progress stall limit 1s–30m")
 	}
 	if options.Logger == nil {
 		options.Logger = slog.Default()
@@ -504,6 +505,7 @@ func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
 			w.validationNext = time.Now().Add(5 * time.Second)
 		}
 		s.logCommitted(ctx, w)
+		w.publishProgress(time.Now())
 		s.publishHealth(w, w.logState, reconciled && result == nil, result, time.Now())
 		s.options.Logger.Debug("reconcile cycle finished", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "error", result)
 	}()

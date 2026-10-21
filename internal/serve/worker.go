@@ -53,6 +53,7 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 		if err := s.store.Complete(persist, claim, completion); err != nil && !errors.Is(err, store.ErrClaimLost) {
 			result = errors.Join(result, err)
 		}
+		w.publishProgress(time.Now())
 	}()
 	actionCtx, cancel := context.WithTimeout(ctx, s.options.ActionTimeout)
 	defer cancel()

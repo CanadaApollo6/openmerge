@@ -15,7 +15,7 @@ import (
 
 const warningPageSize = 256
 
-const warningPageSQL = `SELECT id, payload, COALESCE(dedupe_key, '') FROM events
+const warningPageSQL = `SELECT id, payload, dedupe_key FROM events
  WHERE queue_id=$1 AND id>$2 ORDER BY id LIMIT $3`
 
 // eventPage uses events_queue_watermark, retaining at most one bounded page.
@@ -112,7 +112,9 @@ func visitOutsidePushWarnings(ctx context.Context, tx pgx.Tx, q QueueID, visit f
 				// queue projections or retaining all pending BaseMoved associations.
 				policy = queue.Apply(policy, e)
 			case queue.OutsidePushRecorded:
-				if err := validateOutsidePushOrigin(ctx, tx, q, r, e); err != nil {
+				if _, err := validateOutsidePushOrigin(r, e, func(id int64) (EventRecord, error) {
+					return outsideWarningEvent(ctx, tx, q, id)
+				}); err != nil {
 					return err
 				}
 			case queue.BaseMoved:
@@ -222,8 +224,22 @@ func (s *Store) AcknowledgeOutsidePush(ctx context.Context, q QueueID, source in
 	return receipt, nil
 }
 
-// validateOutsidePushOrigin uses the primary key, retaining bounded scan memory.
-func validateOutsidePushOrigin(ctx context.Context, tx pgx.Tx, q QueueID, r EventRecord, push queue.OutsidePushRecorded) error {
+// warningLookup supplies the same immutable origin from a DB snapshot or journal.
+type warningLookup func(int64) (EventRecord, error)
+
+func outsideWarningEvent(ctx context.Context, tx pgx.Tx, q QueueID, id int64) (EventRecord, error) {
+	var r EventRecord
+	var raw []byte
+	err := tx.QueryRow(ctx, `SELECT id,payload,dedupe_key FROM events WHERE queue_id=$1 AND id=$2`, q, id).Scan(&r.ID, &raw, &r.DedupeKey)
+	if err == nil {
+		r.Event, err = queue.DecodeEvent(raw)
+	}
+	return r, err
+}
+
+// validateOutsidePushOrigin is shared by scan and incremental cache folds.
+// NULL and empty keys both mean orphan audit, even if it was acknowledged.
+func validateOutsidePushOrigin(r EventRecord, push queue.OutsidePushRecorded, lookup warningLookup) (int64, error) {
 	key := ""
 	if r.DedupeKey != nil {
 		key = *r.DedupeKey
@@ -231,23 +247,18 @@ func validateOutsidePushOrigin(ctx context.Context, tx pgx.Tx, q QueueID, r Even
 	source, err := strconv.ParseInt(strings.TrimPrefix(key, "outside-base/"), 10, 64)
 	anomaly := fmt.Errorf("outside push ledger anomaly: orphan outside_push_recorded event %d (dedupe key %q)", r.ID, key)
 	if err != nil || source <= 0 || source >= r.ID || key != fmt.Sprintf("outside-base/%d", source) {
-		return anomaly
+		return 0, anomaly
 	}
-	var raw []byte
-	err = tx.QueryRow(ctx, `SELECT payload FROM events WHERE queue_id=$1 AND id=$2`, q, source).Scan(&raw)
+	origin, err := lookup(source)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return anomaly
+		return 0, anomaly
 	}
 	if err != nil {
-		return err
+		return 0, err
 	}
-	event, err := queue.DecodeEvent(raw)
-	if err != nil {
-		return err
-	}
-	base, ok := event.(queue.BaseMoved)
+	base, ok := origin.Event.(queue.BaseMoved)
 	if !ok || base.SHA != push.NewSHA {
-		return anomaly
+		return 0, anomaly
 	}
-	return nil
+	return source, nil
 }

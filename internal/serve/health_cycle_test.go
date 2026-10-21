@@ -32,7 +32,7 @@ func assertHealthCode(t *testing.T, s *Server, code int) {
 func TestHealthCycleRuntimeStartsAfterSlotAcquisition(t *testing.T) {
 	s, w, _, _ := fixture(t, repositoryConfig)
 	synctest.Test(t, func(t *testing.T) {
-		s.options.Health.MaxCycleDuration = 2 * time.Minute
+		s.options.Health.ProgressStallLimit = 2 * time.Minute
 		s.options.Health.MaxSuccessAge = time.Hour
 		w.Driver = stalledHealthDriver{w.Driver}
 		ctx, cancel := context.WithCancel(t.Context())
@@ -50,7 +50,7 @@ func TestHealthCycleRuntimeStartsAfterSlotAcquisition(t *testing.T) {
 		assertHealthCode(t, s, 503)
 		q := status.EvaluateHealth(*w.health.Load(), s.options.Health, time.Now())
 		if !q.Overdue || q.Degraded {
-			t.Fatalf("runtime limit: %+v", q)
+			t.Fatalf("progress stall limit: %+v", q)
 		}
 	})
 }
@@ -126,4 +126,71 @@ func TestHealthRecoveryLoopExplicitlyExcludesSettledWorker(t *testing.T) {
 		t.Fatal("exited recovery remains watched")
 	}
 	assertHealthCode(t, s, 200)
+}
+
+func TestHealthLongProgressingCycle(t *testing.T) {
+	for _, maxAge := range []time.Duration{15 * time.Minute, time.Hour} {
+		t.Run(maxAge.String(), func(t *testing.T) {
+			s, w, _, _ := fixture(t, repositoryConfig)
+			s.options.Health.MaxSuccessAge = maxAge
+			synctest.Test(t, func(t *testing.T) {
+				started := time.Now()
+				s.publishHealth(w, w.logState, true, nil, started)
+				w.publishCycleStarted(started)
+				// Both the default 15m and maximum configurable 60m success ages elapse.
+				for minute := 1; minute <= 70; minute++ {
+					time.Sleep(time.Minute)
+					w.publishProgress(time.Now())
+					assertHealthCode(t, s, 200)
+				}
+				if w.health.Load().LastSuccess.After(started) {
+					t.Fatal("progress fabricated reconciliation success")
+				}
+				time.Sleep(s.options.Health.ProgressStallLimit + time.Second)
+				assertHealthCode(t, s, 503)
+				q := status.EvaluateHealth(*w.health.Load(), s.options.Health, time.Now())
+				if !q.Overdue || q.Degraded {
+					t.Fatalf("stall: %+v", q)
+				}
+				w.publishProgress(time.Now())
+				assertHealthCode(t, s, 200)
+				// Progress cannot bypass the absolute cycle backstop.
+				old := *w.health.Load()
+				longAgo := time.Now().Add(-s.options.Health.MaxCycleDuration - time.Second)
+				old.CycleStartedAt = &longAgo
+				w.health.Store(&old)
+				assertHealthCode(t, s, 503)
+			})
+		})
+	}
+}
+
+func TestHealthCompletedActionAndTurnPublishProgress(t *testing.T) {
+	s, w, f, _ := fixture(t, repositoryConfig)
+	// Seed a real planned action without running a whole cycle first.
+	must(t, s.reconcile(t.Context(), w, false))
+	f.AddComment(repo, 1, "writer", "@openmerge queue")
+	must(t, s.reconcile(t.Context(), w, true))
+	cfg := w.plannerConfig(s.options.PollInterval)
+	_, err := s.store.Plan(t.Context(), w.id, cfg, time.Now())
+	must(t, err)
+	claims, err := s.store.ClaimQueue(t.Context(), w.id, 1, time.Minute, time.Now())
+	must(t, err)
+	if len(claims) != 1 {
+		t.Fatalf("missing planned action: %+v", claims)
+	}
+	old := time.Now().Add(-time.Hour)
+	w.publishCycleStarted(old)
+	must(t, s.execute(t.Context(), w, claims[0]))
+	afterAction := w.health.Load().LastProgressAt
+	if afterAction == nil || !afterAction.After(old) {
+		t.Fatal("completed action did not publish progress")
+	}
+	q := *w.health.Load()
+	q.LastProgressAt = &old
+	w.health.Store(&q)
+	must(t, s.cycle(t.Context(), w))
+	if progress := w.health.Load().LastProgressAt; progress == nil || !progress.After(old) {
+		t.Fatal("completed turn did not publish progress")
+	}
 }

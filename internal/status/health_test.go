@@ -126,6 +126,10 @@ func TestEvaluateHealth(t *testing.T) {
 		overdue, degraded, failing bool
 	}{
 		{"new", HealthQueue{Watched: true, StartedAt: now}, false, false, false},
+		{"cycle missing both timestamps", HealthQueue{Watched: true, InCycle: true, StartedAt: now}, true, false, true},
+		{"cycle missing progress", HealthQueue{Watched: true, InCycle: true, StartedAt: now, CycleStartedAt: &now}, true, false, true},
+		{"cycle missing start", HealthQueue{Watched: true, InCycle: true, StartedAt: now, LastProgressAt: &now}, true, false, true},
+
 		{"overdue", HealthQueue{Watched: true, StartedAt: now, NextDeadline: &due}, true, false, true},
 		{"stale success", HealthQueue{Watched: true, LastSuccess: &past}, false, false, false},
 		{"never succeeded", HealthQueue{Watched: true, StartedAt: now.Add(-time.Hour)}, false, true, true},
@@ -146,7 +150,7 @@ func TestEvaluateHealth(t *testing.T) {
 	if q.LastSuccessAge == nil || *q.LastSuccessAge != 120 {
 		t.Fatal("wrong success age")
 	}
-	for _, bad := range []HealthSettings{{0, time.Minute, 3 * time.Hour}, {time.Second, 0, 3 * time.Hour}, {61 * time.Second, time.Minute, 3 * time.Hour}, {time.Second, 61 * time.Minute, 3 * time.Hour}, {time.Second, time.Minute, time.Minute}, {time.Second, time.Minute, 7 * time.Hour}} {
+	for _, bad := range []HealthSettings{{0, time.Minute, 3 * time.Hour, 150 * time.Second}, {time.Second, 0, 3 * time.Hour, 150 * time.Second}, {61 * time.Second, time.Minute, 3 * time.Hour, 150 * time.Second}, {time.Second, 61 * time.Minute, 3 * time.Hour, 150 * time.Second}, {time.Second, time.Minute, time.Minute, 150 * time.Second}, {time.Second, time.Minute, 7 * time.Hour, 150 * time.Second}} {
 		if bad.Valid() {
 			t.Fatal("unbounded settings accepted")
 		}
@@ -183,5 +187,22 @@ func TestHealthVisibilityBoundDoesNotMutateSnapshot(t *testing.T) {
 	}
 	if len(s.health.Queues[0].Authority.Elements) != 100 || s.health.Queues[0].Authority.ElementsOmitted != 0 {
 		t.Fatal("health rendering mutated the shared snapshot")
+	}
+}
+
+func TestHealthProgressThresholdBounds(t *testing.T) {
+	for _, limit := range []time.Duration{0, time.Second - time.Nanosecond, 30*time.Minute + time.Nanosecond} {
+		settings := DefaultHealthSettings()
+		settings.ProgressStallLimit = limit
+		if settings.Valid() {
+			t.Fatalf("accepted stall limit %s", limit)
+		}
+	}
+	for _, limit := range []time.Duration{time.Second, 150 * time.Second, 30 * time.Minute} {
+		settings := DefaultHealthSettings()
+		settings.ProgressStallLimit = limit
+		if !settings.Valid() {
+			t.Fatalf("rejected stall limit %s", limit)
+		}
 	}
 }

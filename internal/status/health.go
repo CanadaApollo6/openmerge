@@ -22,19 +22,20 @@ const (
 
 // HealthSettings are process alerting thresholds, never queue policy.
 type HealthSettings struct {
-	OverdueGrace     time.Duration
-	MaxSuccessAge    time.Duration
-	MaxCycleDuration time.Duration
+	OverdueGrace       time.Duration
+	MaxSuccessAge      time.Duration
+	MaxCycleDuration   time.Duration
+	ProgressStallLimit time.Duration
 }
 
 // Valid checks the supported process threshold ranges.
 func (s HealthSettings) Valid() bool {
-	return s.OverdueGrace >= time.Second && s.OverdueGrace <= time.Minute && s.MaxSuccessAge >= time.Minute && s.MaxSuccessAge <= time.Hour && s.MaxCycleDuration >= 2*time.Minute && s.MaxCycleDuration <= 6*time.Hour
+	return s.OverdueGrace >= time.Second && s.OverdueGrace <= time.Minute && s.MaxSuccessAge >= time.Minute && s.MaxSuccessAge <= time.Hour && s.MaxCycleDuration >= 2*time.Minute && s.MaxCycleDuration <= 6*time.Hour && s.ProgressStallLimit >= time.Second && s.ProgressStallLimit <= 30*time.Minute
 }
 
 // DefaultHealthSettings returns the alerting defaults from ADR 0008.
 func DefaultHealthSettings() HealthSettings {
-	return HealthSettings{OverdueGrace: 30 * time.Second, MaxSuccessAge: 15 * time.Minute, MaxCycleDuration: 3 * time.Hour}
+	return HealthSettings{OverdueGrace: 30 * time.Second, MaxSuccessAge: 15 * time.Minute, MaxCycleDuration: 3 * time.Hour, ProgressStallLimit: 150 * time.Second}
 }
 
 // Health is the bounded alerting response on the status API listener.
@@ -61,6 +62,7 @@ type HealthQueue struct {
 	LastSuccessAge       *float64         `json:"last_success_age_seconds"`
 	InCycle              bool             `json:"in_cycle"`
 	CycleStartedAt       *time.Time       `json:"cycle_started_at"`
+	LastProgressAt       *time.Time       `json:"last_progress_at"`
 	NextDeadline         *time.Time       `json:"next_deadline"`
 	Failures             int              `json:"consecutive_failures"`
 	Overdue              bool             `json:"overdue"`
@@ -83,7 +85,9 @@ func EvaluateHealth(q HealthQueue, settings HealthSettings, now time.Time) Healt
 	q.Overdue = false
 	if q.Watched {
 		if q.InCycle {
-			q.Overdue = q.CycleStartedAt != nil && now.After(q.CycleStartedAt.Add(settings.MaxCycleDuration))
+			q.Overdue = q.CycleStartedAt == nil || q.LastProgressAt == nil ||
+				now.After(q.LastProgressAt.Add(settings.ProgressStallLimit)) ||
+				now.After(q.CycleStartedAt.Add(settings.MaxCycleDuration))
 		} else {
 			q.Overdue = q.NextDeadline != nil && now.After(q.NextDeadline.Add(settings.OverdueGrace))
 		}
@@ -91,6 +95,9 @@ func EvaluateHealth(q HealthQueue, settings HealthSettings, now time.Time) Healt
 	since := q.StartedAt
 	if q.LastSuccess != nil {
 		since = *q.LastSuccess
+	}
+	if q.InCycle && q.LastProgressAt != nil && q.LastProgressAt.After(since) {
+		since = *q.LastProgressAt
 	}
 	q.Degraded = q.Watched && !since.IsZero() && now.Sub(since) > settings.MaxSuccessAge
 	if q.LastSuccess == nil {

@@ -32,7 +32,8 @@ func (s *Server) Health(ctx context.Context) (status.Health, error) {
 			q = &status.HealthQueue{Installation: w.Key.Installation, Repository: w.Key.Repository, Base: w.Key.BaseBranch, Lane: w.Key.Lane, Lifecycle: "unknown", Watched: true, StartedAt: s.startedAt, Readiness: status.Readiness{Reason: "not-yet-reconciled"}}
 		}
 		snapshot := *q
-		if warnings := w.outsideWarnings.Load(); warnings != nil {
+		snapshot.OutsideWarnings = nil
+		if warnings := w.outsideWarnings.Load(); w.hasAuthorityPin.Load() && warnings != nil {
 			snapshot.OutsideWarnings = status.ProjectOutsideWarnings(*warnings)
 		}
 		view := status.EvaluateHealth(snapshot, s.options.Health, h.CheckedAt)
@@ -63,7 +64,11 @@ func (w *worker) publishDeadline(at time.Time) {
 // Called under worker ownership. Successful report-only turns do not advance
 // LastSuccess. No journal timestamp is used as reconciliation telemetry.
 func (s *Server) publishHealth(w *worker, state queue.State, success bool, err error, now time.Time) {
-	w.hasAuthorityPin.Store(state.AuthorityPin() != nil)
+	hasPin := state.AuthorityPin() != nil
+	w.hasAuthorityPin.Store(hasPin)
+	if !hasPin {
+		w.outsideWarnings.Store(nil)
+	}
 	q := status.HealthQueue{Installation: w.Key.Installation, Repository: w.Key.Repository, Base: w.Key.BaseBranch, Lane: w.Key.Lane, Lifecycle: state.LifecycleState(), StartedAt: now, Readiness: status.Readiness{Ready: !w.managed || w.ready}, Watched: true}
 	if old := w.health.Load(); old != nil {
 		q.StartedAt = old.StartedAt
@@ -72,6 +77,7 @@ func (s *Server) publishHealth(w *worker, state queue.State, success bool, err e
 		q.NextDeadline = old.NextDeadline
 		q.InCycle = old.InCycle
 		q.CycleStartedAt = old.CycleStartedAt
+		q.LastProgressAt = old.LastProgressAt
 	}
 	if !q.Readiness.Ready {
 		q.Readiness.Reason = w.readinessReason()
@@ -155,6 +161,7 @@ func (w *worker) publishCycleStarted(at time.Time) {
 		next.NextDeadline = nil
 		next.InCycle = true
 		next.CycleStartedAt = &at
+		next.LastProgressAt = &at
 		if w.health.CompareAndSwap(old, &next) {
 			return
 		}
@@ -173,6 +180,7 @@ func (w *worker) publishRecoveryFinished() {
 		next.Watched = false
 		next.InCycle = false
 		next.CycleStartedAt = nil
+		next.LastProgressAt = nil
 		next.NextDeadline = nil
 		if w.health.CompareAndSwap(old, &next) {
 			return
@@ -187,4 +195,19 @@ func hasLandingObligations(state queue.State) bool {
 		}
 	}
 	return false
+}
+
+// Progress comes only from completed actions and turns, never journal activity.
+func (w *worker) publishProgress(at time.Time) {
+	for {
+		old := w.health.Load()
+		if old == nil || !old.InCycle {
+			return
+		}
+		next := *old
+		next.LastProgressAt = &at
+		if w.health.CompareAndSwap(old, &next) {
+			return
+		}
+	}
 }

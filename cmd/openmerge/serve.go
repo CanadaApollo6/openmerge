@@ -29,15 +29,15 @@ import (
 )
 
 type serveOptions struct {
-	database, key, repos, base, cache, listen, secret string
-	app, installation                                 int64
-	logLevel, committerName, committerEmail           string
-	apiListen, apiToken, apiTokenFile                 string
-	poll, rulesInterval, discoveryInterval            time.Duration
-	backstop, webhookHealthWindow                     time.Duration
-	healthGrace, healthMaxAge, healthMaxCycle         time.Duration
-	concurrency                                       int
-	deleteHeadBranch                                  bool
+	database, key, repos, base, cache, listen, secret              string
+	app, installation                                              int64
+	logLevel, committerName, committerEmail                        string
+	apiListen, apiToken, apiTokenFile                              string
+	poll, rulesInterval, discoveryInterval                         time.Duration
+	backstop, webhookHealthWindow                                  time.Duration
+	healthGrace, healthMaxAge, healthMaxCycle, healthProgressStall time.Duration
+	concurrency                                                    int
+	deleteHeadBranch                                               bool
 }
 
 func parseServe(args []string, output io.Writer) (serveOptions, error) {
@@ -72,6 +72,7 @@ func parseServe(args []string, output io.Writer) (serveOptions, error) {
 	flags.DurationVar(&o.discoveryInterval, "discovery-interval", 10*time.Minute, "installation/repository discovery interval (OPENMERGE_DISCOVERY_INTERVAL)")
 	flags.DurationVar(&o.rulesInterval, "rules-interval", 10*time.Minute, "repository rules validation interval (OPENMERGE_RULES_INTERVAL)")
 	flags.BoolVar(&o.deleteHeadBranch, "delete-head-branch", true, "default for deleting eligible landed heads; repository config overrides (OPENMERGE_DELETE_HEAD_BRANCH)")
+	flags.DurationVar(&o.healthProgressStall, "health-progress-stall-limit", 150*time.Second, "health maximum time without cycle progress, 1s–30m (OPENMERGE_HEALTH_PROGRESS_STALL_LIMIT)")
 	flags.DurationVar(&o.healthMaxCycle, "health-max-cycle-duration", 3*time.Hour, "health maximum cycle runtime, 2m–6h (OPENMERGE_HEALTH_MAX_CYCLE_DURATION)")
 	flags.DurationVar(&o.healthGrace, "health-overdue-grace", 30*time.Second, "health alert grace, 1–60s (OPENMERGE_HEALTH_OVERDUE_GRACE)")
 	flags.DurationVar(&o.healthMaxAge, "health-max-success-age", 15*time.Minute, "health maximum reconciliation age, 1–60m (OPENMERGE_HEALTH_MAX_SUCCESS_AGE)")
@@ -81,7 +82,7 @@ func parseServe(args []string, output io.Writer) (serveOptions, error) {
 	}
 	overridden := make(map[string]bool)
 	flags.Visit(func(f *flag.Flag) { overridden[f.Name] = true })
-	for _, entry := range []struct{ flag, env string }{{"health-max-cycle-duration", "HEALTH_MAX_CYCLE_DURATION"}, {"health-overdue-grace", "HEALTH_OVERDUE_GRACE"}, {"health-max-success-age", "HEALTH_MAX_SUCCESS_AGE"}, {"delete-head-branch", "DELETE_HEAD_BRANCH"}, {"github-app-id", "GITHUB_APP_ID"}, {"github-installation-id", "GITHUB_INSTALLATION_ID"}, {"poll-interval", "POLL_INTERVAL"}, {"backstop-interval", "BACKSTOP_INTERVAL"}, {"webhook-health-window", "WEBHOOK_HEALTH_WINDOW"}, {"discovery-interval", "DISCOVERY_INTERVAL"}, {"rules-interval", "RULES_INTERVAL"}, {"concurrency", "CONCURRENCY"}} {
+	for _, entry := range []struct{ flag, env string }{{"health-progress-stall-limit", "HEALTH_PROGRESS_STALL_LIMIT"}, {"health-max-cycle-duration", "HEALTH_MAX_CYCLE_DURATION"}, {"health-overdue-grace", "HEALTH_OVERDUE_GRACE"}, {"health-max-success-age", "HEALTH_MAX_SUCCESS_AGE"}, {"delete-head-branch", "DELETE_HEAD_BRANCH"}, {"github-app-id", "GITHUB_APP_ID"}, {"github-installation-id", "GITHUB_INSTALLATION_ID"}, {"poll-interval", "POLL_INTERVAL"}, {"backstop-interval", "BACKSTOP_INTERVAL"}, {"webhook-health-window", "WEBHOOK_HEALTH_WINDOW"}, {"discovery-interval", "DISCOVERY_INTERVAL"}, {"rules-interval", "RULES_INTERVAL"}, {"concurrency", "CONCURRENCY"}} {
 		if value, ok := os.LookupEnv("OPENMERGE_" + entry.env); ok && !overridden[entry.flag] {
 			if err := flags.Set(entry.flag, value); err != nil {
 				return o, fmt.Errorf("OPENMERGE_%s: %w", entry.env, err)
@@ -111,8 +112,8 @@ func parseServe(args []string, output io.Writer) (serveOptions, error) {
 	if o.backstop <= 0 || o.webhookHealthWindow <= 0 || o.poll <= 0 || o.rulesInterval <= 0 || o.discoveryInterval <= 0 || o.concurrency <= 0 || o.cache == "" {
 		return o, errors.New("poll, backstop, webhook health, rules and discovery intervals, concurrency and git cache must be nonempty and positive")
 	}
-	if !(status.HealthSettings{OverdueGrace: o.healthGrace, MaxSuccessAge: o.healthMaxAge, MaxCycleDuration: o.healthMaxCycle}).Valid() {
-		return o, errors.New("health overdue grace must be 1–60s and maximum success age 1–60m and maximum cycle duration 2m–6h")
+	if !(status.HealthSettings{OverdueGrace: o.healthGrace, MaxSuccessAge: o.healthMaxAge, MaxCycleDuration: o.healthMaxCycle, ProgressStallLimit: o.healthProgressStall}).Valid() {
+		return o, errors.New("health overdue grace must be 1–60s and maximum success age 1–60m and maximum cycle duration 2m–6h and progress stall limit 1s–30m")
 	}
 	if o.listen != "" && o.secret == "" {
 		return o, errors.New("webhook listen requires a webhook secret")
@@ -243,7 +244,7 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger, saniti
 			return result, nil
 		},
 	}
-	service, err := serve.NewDiscovery(ctx, db, discovery, serve.Options{Health: status.HealthSettings{OverdueGrace: o.healthGrace, MaxSuccessAge: o.healthMaxAge, MaxCycleDuration: o.healthMaxCycle}, PollInterval: o.poll, BackstopInterval: o.backstop, WebhookHealthWindow: o.webhookHealthWindow, WebhooksConfigured: o.listen != "", RulesInterval: o.rulesInterval, DiscoveryInterval: o.discoveryInterval, BaseAllowlist: splitAllowlist(o.base), Concurrency: o.concurrency, Logger: logger, DisableDeleteHeadBranch: !o.deleteHeadBranch, OutsidePushHistory: auditFactory.outsidePushHistory})
+	service, err := serve.NewDiscovery(ctx, db, discovery, serve.Options{Health: status.HealthSettings{OverdueGrace: o.healthGrace, MaxSuccessAge: o.healthMaxAge, MaxCycleDuration: o.healthMaxCycle, ProgressStallLimit: o.healthProgressStall}, PollInterval: o.poll, BackstopInterval: o.backstop, WebhookHealthWindow: o.webhookHealthWindow, WebhooksConfigured: o.listen != "", RulesInterval: o.rulesInterval, DiscoveryInterval: o.discoveryInterval, BaseAllowlist: splitAllowlist(o.base), Concurrency: o.concurrency, Logger: logger, DisableDeleteHeadBranch: !o.deleteHeadBranch, OutsidePushHistory: auditFactory.outsidePushHistory})
 	if err != nil {
 		return err
 	}

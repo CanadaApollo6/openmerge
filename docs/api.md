@@ -587,11 +587,13 @@ request deadline, at most 256 queues and a 256 KiB response cap. Missing DB acce
 a busy registry or a limit exceeded returns 503. Health never reads forge data
 or replays queue histories. It reports lifecycle, readiness/reasons, whether the
 queue is watched, process start, last successful reconciliation time/age, the
-worker loop's effective next-start deadline, `in_cycle`, `cycle_started_at`,
+worker loop's effective next-start deadline, `in_cycle`, `cycle_started_at`, `last_progress_at`,
 consecutive failures, overdue and degraded. Last success is null until a completed
-reconciliation. Consecutive failures are informational. Degraded means only that
-time since last success (or process queue start if never successful) exceeds
-`MaxSuccessAge`; three failures with a recent success remain healthy.
+reconciliation. Consecutive failures are informational. Degraded means that time since the later of last success and in-cycle progress
+(or process queue start before either exists) exceeds `MaxSuccessAge`. Completed
+actions and turns publish progress; journal activity and waiting wakes do not.
+A progressing long cycle remains healthy past both 15m and 60m without inventing
+a reconciliation success. Failure counts remain informational.
 Dormant/retired queues without pending attempts and completed recovery-only
 queues are excluded from alerting; unsettled starts remain watched.
 
@@ -614,9 +616,15 @@ and outstanding outside-push warnings alone return 200. Health is for alerting;
 of queue policy. While waiting, overdue means `now > next_deadline + grace`;
 every immediate wake, including journal changes, sets that deadline to now.
 Slot acquisition clears the start deadline and publishes the cycle start.
-In-cycle overdue means `now > cycle_started_at + max_cycle_duration`; grace no
-longer applies. The 3h runtime default allows a hot turn's 64 chained actions at
-the default 2m per-action timeout plus reconciliation/reporting work. Cycle end
+In-cycle overdue means `now > last_progress_at + progress_stall_limit`, or a
+missing cycle start/progress timestamp (fail closed).
+`--health-progress-stall-limit` / `OPENMERGE_HEALTH_PROGRESS_STALL_LIMIT` defaults
+to 2m30s (the default 2m action timeout plus 30s grace), range 1s–30m. Embedded
+servers with default health settings derive this limit from their action timeout
+plus grace, clamped to that range. Slot acquisition seeds progress; each completed
+action (after its completion write) and turn advances it. The maximum cycle
+duration remains an absolute backstop, even with recent progress. This permits a
+hot turn's 64 chained actions while detecting a hung action promptly. Cycle end
 publishes the next effective start deadline. Slot starvation remains detectable,
 and a first cycle with zero delay does not become overdue after the grace period.
 
@@ -646,7 +654,11 @@ The per-queue warning cache advances only after its last event watermark. HTTP/C
 status reuse the journal's already decoded snapshot, with zero additional warning
 queries and no second history scan/decode. Queues that have never had an authority
 pin skip the ledger entirely. Worker-owned CI check rendering omits warning I/O;
-health reads immutable atomic summaries. The independent outside-push loop pages
+health reads immutable atomic summaries. Background refresh performs DB paging
+against a private index and swaps it in only after success; no DB I/O holds the
+cache lock. Foreground rendering never waits for that lock: contention returns
+last complete counts with queue-local `ledger_unavailable`. Pin removal clears
+the published health warnings; rollback refreshes the historical ledger as status does. The independent outside-push loop pages
 only the new suffix (256 rows/page), probing indexed origins for new audits and
 sources for new acknowledgements. Registration seeds authority queues once and
 skips legacy queues. The index retains policy boundaries and outstanding event/
