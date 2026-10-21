@@ -67,8 +67,9 @@ type EmissionReceipt struct {
 
 // Validate gates every explicit verification, including still-github queues.
 // Local receipt failures precede identity reads; binding failures precede
-// writes and seeing reads. Operators inventory all hosts, stop old workers, capture a backup, restore-test it, then attest that
-// only compatible readers may restart. Period B permits isolated sandboxes only.
+// writes and seeing reads. Operators inventory all hosts, stop old workers,
+// capture a backup, restore-test it, then attest that only compatible readers
+// may restart. Period B permits isolated sandboxes only.
 func (r EmissionReceipt) Validate(identity string, now time.Time) error {
 	return r.ValidateForBinary(identity, now, DefaultEmissionReceiptMaxAge, RunningBinaryRevision())
 }

@@ -1857,7 +1857,8 @@ hosts and configured search_path strings are not identity inputs or output.
 Options, role defaults and alternate endpoints resolving to the same database,
 schema and genesis therefore produce the same digest across pool reconnects.
 
-Database drop/recreate changes its OID; a schema replacement changes its OID;
+A `pg_dump` restore into a new cluster also changes the system identifier, so
+the original receipt will not match. Database drop/recreate changes its OID; a schema replacement changes its OID;
 a replacement history with different genesis changes the digest. Regenerate the
 receipt after restore/recreation and repeat the drain/backup procedure. This is
 a genesis binding, not a full-history checksum or restore counter. A physical

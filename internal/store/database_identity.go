@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // DatabaseIdentity reads the same server-side receipt binding as activation,
@@ -15,7 +18,7 @@ import (
 func DatabaseIdentity(ctx context.Context, raw string) (string, error) {
 	s, err := OpenAdmin(ctx, raw, DefaultJournalReadTimeout)
 	if err != nil {
-		return "", errors.New("open receipt identity connection failed")
+		return "", receiptIdentityError("open receipt identity connection failed", err)
 	}
 	defer s.Close()
 	return s.DatabaseIdentity(ctx)
@@ -27,12 +30,12 @@ func DatabaseIdentity(ctx context.Context, raw string) (string, error) {
 func (s *Store) DatabaseIdentity(ctx context.Context) (string, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
-		return "", errors.New("begin receipt database identity read failed")
+		return "", receiptIdentityError("begin receipt database identity read failed", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var cluster, database, databaseOID string
 	if err := tx.QueryRow(ctx, `SELECT system_identifier::text FROM pg_catalog.pg_control_system()`).Scan(&cluster); err != nil {
-		return "", errors.New("receipt database identity requires EXECUTE on pg_catalog.pg_control_system(); grant it explicitly to the operator/activation role")
+		return "", clusterIdentityError(err)
 	}
 	if err := tx.QueryRow(ctx, `SELECT datname, oid::text FROM pg_catalog.pg_database WHERE datname=current_database()`).Scan(&database, &databaseOID); err != nil {
 		return "", errors.New("read receipt database catalog identity failed")
@@ -52,7 +55,7 @@ func (s *Store) DatabaseIdentity(ctx context.Context) (string, error) {
 		schema, schemaOID = name, oid
 	}
 	var genesisID, recordedAt, payload string
-	query := `SELECT id::text, to_char(recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US'), payload::text FROM ` + pgx.Identifier{schema, "events"}.Sanitize() + ` ORDER BY id LIMIT 1`
+	query := databaseGenesisQuery(schema)
 	if err := tx.QueryRow(ctx, query).Scan(&genesisID, &recordedAt, &payload); err != nil {
 		return "", errors.New("receipt database identity requires a readable nonempty journal genesis")
 	}
@@ -65,4 +68,44 @@ func (s *Store) DatabaseIdentity(ctx context.Context) (string, error) {
 		return "", errors.New("commit receipt database identity read failed")
 	}
 	return fmt.Sprintf("openmerge-db-v2:sha256:%x", sha256.Sum256(encoded)), nil
+}
+
+// Qualifying the sort key avoids PostgreSQL resolving id to the text output
+// column. Numeric ordering keeps genesis stable across sequence gaps/appends
+// and lets the primary-key index satisfy LIMIT without scanning the journal.
+func databaseGenesisQuery(schema string) string {
+	return `SELECT e.id::text, to_char(e.recorded_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US'), e.payload::text FROM ` + pgx.Identifier{schema, "events"}.Sanitize() + ` AS e ORDER BY e.id LIMIT 1`
+}
+
+func clusterIdentityError(err error) error {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == "42501" {
+		return errors.New("receipt database identity requires EXECUTE on pg_catalog.pg_control_system(); grant it explicitly to the operator/activation role (SQLSTATE 42501)")
+	}
+	return receiptIdentityError("read receipt cluster identity failed", err)
+}
+
+// Driver error strings can contain DSNs, passwords and server-supplied detail.
+// Retain only structured codes and fixed cause categories in operator output.
+func receiptIdentityError(operation string, err error) error {
+	cause := "connection or protocol failure"
+	var pgErr *pgconn.PgError
+	var parseErr *pgconn.ParseConfigError
+	var networkErr net.Error
+	switch {
+	case errors.As(err, &pgErr):
+		cause = "PostgreSQL error"
+		if len(pgErr.Code) == 5 && strings.Trim(pgErr.Code, "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ") == "" {
+			cause += " (SQLSTATE " + pgErr.Code + ")"
+		}
+	case errors.Is(err, context.DeadlineExceeded):
+		cause = "deadline exceeded"
+	case errors.Is(err, context.Canceled):
+		cause = "context canceled"
+	case errors.As(err, &parseErr):
+		cause = "invalid connection configuration"
+	case errors.As(err, &networkErr):
+		cause = "network failure"
+	}
+	return fmt.Errorf("%s: %s", operation, cause)
 }

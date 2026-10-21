@@ -154,7 +154,7 @@ func TestLandingChecksValidateLockedBindings(t *testing.T) {
 			}
 			if kind == "overflow" {
 				var tooLarge queue.LandingChecksTooLargeError
-				if !errors.Is(err, queue.ErrLandingChecksTooLarge) || !errors.As(err, &tooLarge) || errors.Is(err, ErrStale) || errors.Is(err, ErrLandingDecisionStale) {
+				if !errors.Is(err, queue.ErrLandingChecksTooLarge) || !errors.As(err, &tooLarge) || err != tooLarge || errors.Is(err, ErrStale) || errors.Is(err, ErrLandingDecisionStale) {
 					t.Fatalf("overflow misclassified: %v", err)
 				}
 			}

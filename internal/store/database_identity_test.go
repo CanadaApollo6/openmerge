@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 	"testing"
@@ -10,6 +13,7 @@ import (
 
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func seededIdentityStore(t *testing.T, raw string) *Store {
@@ -208,5 +212,93 @@ func TestDatabaseIdentityEmptyJournalFailsClosed(t *testing.T) {
 	s := openTestStore(t, databaseURL(t))
 	if _, err := s.DatabaseIdentity(t.Context()); err == nil || !strings.Contains(err.Error(), "nonempty journal") {
 		t.Fatal(fmt.Sprint(err))
+	}
+}
+
+func TestDatabaseIdentitySequenceGapAndIndexedGenesis(t *testing.T) {
+	raw := databaseURL(t)
+	s := openTestStore(t, raw)
+	q := ensureQueue(t, s, "")
+	// A rolled-back first insert consumes id 1 without creating genesis.
+	tx, err := s.pool.Begin(t.Context())
+	must(t, err)
+	_, err = tx.Exec(t.Context(), `INSERT INTO events(queue_id,type,payload) VALUES ($1,'pause_requested','{}')`, q)
+	must(t, err)
+	must(t, tx.Rollback(t.Context()))
+	appendEvents(t, s, q, queue.PauseRequested{Reason: "operator", Detail: "genesis at 2"})
+	var first int64
+	must(t, s.pool.QueryRow(t.Context(), `SELECT min(id) FROM events`).Scan(&first))
+	if first != 2 {
+		t.Fatalf("genesis id=%d, want 2", first)
+	}
+	want := identityOf(t, s)
+	for _, last := range []int{10, 100, 10000} {
+		_, err := s.pool.Exec(t.Context(), `INSERT INTO events(queue_id,type,payload) SELECT queue_id,type,payload FROM events CROSS JOIN generate_series((SELECT max(id)::int+1 FROM events),$1) WHERE id=2`, last)
+		must(t, err)
+		if got := identityOf(t, s); got != want {
+			t.Errorf("append through %d changed identity", last)
+		}
+	}
+	_, err = s.pool.Exec(t.Context(), `ANALYZE events`)
+	must(t, err)
+	u, err := url.Parse(raw)
+	must(t, err)
+	var planJSON []byte
+	must(t, s.pool.QueryRow(t.Context(), `EXPLAIN (FORMAT JSON) `+databaseGenesisQuery(u.Query().Get("search_path"))).Scan(&planJSON))
+	var plans []struct{ Plan map[string]any }
+	must(t, json.Unmarshal(planJSON, &plans))
+	indexed := false
+	var inspect func(map[string]any)
+	inspect = func(node map[string]any) {
+		kind, _ := node["Node Type"].(string)
+		if strings.Contains(kind, "Sort") || kind == "Seq Scan" {
+			t.Fatalf("genesis scans/sorts journal: %s", planJSON)
+		}
+		if kind == "Index Scan" && node["Index Name"] == "events_pkey" {
+			indexed = true
+		}
+		children, _ := node["Plans"].([]any)
+		for _, child := range children {
+			inspect(child.(map[string]any))
+		}
+	}
+	inspect(plans[0].Plan)
+	if !indexed {
+		t.Fatalf("genesis did not use primary-key index: %s", planJSON)
+	}
+	t.Logf("genesis plan: %s", planJSON)
+}
+
+func TestReceiptIdentityDiagnostics(t *testing.T) {
+	const secret = "postgres://operator:secret-password@private-host/database"
+	for _, tc := range []struct {
+		name  string
+		err   error
+		want  string
+		grant bool
+	}{
+		{"privilege", &pgconn.PgError{Code: "42501", Message: secret}, "SQLSTATE 42501", true},
+		{"unavailable function", &pgconn.PgError{Code: "42883", Message: secret}, "SQLSTATE 42883", false},
+		{"canceled", fmt.Errorf("%s: %w", secret, context.Canceled), "context canceled", false},
+		{"deadline", context.DeadlineExceeded, "deadline exceeded", false},
+		{"network", &net.OpError{Op: "dial", Net: "tcp", Err: errors.New(secret)}, "network failure", false},
+		{"unknown", errors.New(secret), "connection or protocol failure", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := clusterIdentityError(tc.err).Error()
+			if !strings.Contains(got, tc.want) || strings.Contains(got, "requires EXECUTE") != tc.grant || strings.Contains(got, "secret-password") || strings.Contains(got, "private-host") {
+				t.Fatal(got)
+			}
+		})
+	}
+	_, err := DatabaseIdentity(t.Context(), "postgres://operator:secret-password@private-host:bad-port/database")
+	if err == nil || !strings.Contains(err.Error(), "invalid connection configuration") || strings.Contains(err.Error(), "secret-password") || strings.Contains(err.Error(), "private-host") {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, err = DatabaseIdentity(ctx, databaseURL(t))
+	if err == nil || !strings.Contains(err.Error(), "context canceled") {
+		t.Fatal(err)
 	}
 }
