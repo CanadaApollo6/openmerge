@@ -146,7 +146,7 @@ func (s *Store) journalWarnings(ctx context.Context, q QueueID, events []Journal
 	}
 	start := sort.Search(len(events), func(i int) bool { return events[i].ID > c.through })
 	if start == len(events) {
-		return cloneWarningSummary(c.summary)
+		return c.complete()
 	}
 	for _, e := range events[start:] {
 		if err := ctx.Err(); err != nil {
@@ -175,7 +175,6 @@ func (s *Store) cachedOutsidePushWarnings(ctx context.Context, q QueueID) (Outsi
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var summary OutsideWarningSummary
-	before := c.through
 	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
 		lookup := func(id int64) (EventRecord, error) {
 			var r EventRecord
@@ -200,10 +199,7 @@ func (s *Store) cachedOutsidePushWarnings(ctx context.Context, q QueueID) (Outsi
 				break
 			}
 		}
-		summary = c.summary
-		if c.through != before {
-			summary = c.complete()
-		}
+		summary = c.complete()
 		return nil
 	})
 	if err != nil {

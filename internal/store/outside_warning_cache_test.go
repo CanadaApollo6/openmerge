@@ -1,13 +1,17 @@
 package store
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -162,5 +166,63 @@ func TestWarningCacheDelayedAuditRollbackAndAcknowledgement(t *testing.T) {
 	must(t, err)
 	if summary.Outstanding != 0 {
 		t.Fatal(summary)
+	}
+}
+
+// Cancellation after a completely consumed page leaves a resumable index, but
+// must not publish its partial counts. An empty successful suffix completes it.
+type cancelWarningPageTrace struct {
+	cancel context.CancelFunc
+	pages  atomic.Int32
+}
+
+func (t *cancelWarningPageTrace) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
+	if data.SQL == warningPageSQL && t.pages.Add(1) == 2 {
+		t.cancel()
+	}
+	return ctx
+}
+func (*cancelWarningPageTrace) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
+func TestWarningCacheCompletesAfterCancelledPage(t *testing.T) {
+	s := newStore(t)
+	q := ensureQueue(t, s, "")
+	appendWarningPin(t, s, q, authority.OpenMerge)
+	appendEvents(t, s, q, queue.BaseMoved{SHA: "base"}, queue.BaseMoved{SHA: "outside"})
+	auditPass(t, s, q)
+	_, watermark, err := s.Load(t.Context(), q)
+	must(t, err)
+	events := make([]queue.Event, warningPageSize-int(watermark))
+	for i := range events {
+		events[i] = queue.RefreshRequested{}
+	}
+	appendEvents(t, s, q, events...)
+	original := s.pool
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	cfg := original.Config().Copy()
+	cfg.ConnConfig.Tracer = &cancelWarningPageTrace{cancel: cancel}
+	traced, err := pgxpool.NewWithConfig(t.Context(), cfg)
+	must(t, err)
+	s.pool = traced
+	t.Cleanup(original.Close)
+	summary, err := s.ReadOutsidePushWarnings(ctx, q)
+	if !errors.Is(err, context.Canceled) || summary.Error == "" || summary.Outstanding != 0 {
+		t.Fatalf("partial snapshot published: %+v / %v", summary, err)
+	}
+	if s.warningCache(q).through != warningPageSize {
+		t.Fatalf("cancellation did not exercise an already consumed full page: watermark=%d", s.warningCache(q).through)
+	}
+	key := QueueKey{}
+	must(t, s.pool.QueryRow(t.Context(), `SELECT installation,repository,base,lane FROM queues WHERE id=$1`, q).Scan(&key.Installation, &key.Repository, &key.BaseBranch, &key.Lane))
+	js, err := s.Journals(t.Context(), []QueueKey{key})
+	must(t, err)
+	if js[0].OutsideWarnings.Outstanding != 1 || js[0].OutsideWarnings.Error != "" {
+		t.Fatalf("empty suffix failed to complete recovered index: %+v", js[0].OutsideWarnings)
+	}
+	summary, err = s.ReadOutsidePushWarnings(t.Context(), q)
+	must(t, err)
+	if summary.Outstanding != 1 || summary.Error != "" {
+		t.Fatalf("background recovery failed: %+v", summary)
 	}
 }
