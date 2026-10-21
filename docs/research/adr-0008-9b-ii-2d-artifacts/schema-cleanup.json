@@ -1,0 +1,9 @@
+{
+  "identical": true,
+  "before_count": 96,
+  "after_count": 96,
+  "before_sha256": "e7a31c7090e739695b509d034a671d28634136dacd6d3873b5d29f291d920936",
+  "after_sha256": "e7a31c7090e739695b509d034a671d28634136dacd6d3873b5d29f291d920936",
+  "new_schemas": [],
+  "removed_preexisting_schemas": []
+}
