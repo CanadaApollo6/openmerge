@@ -1,0 +1,124 @@
+{
+  "recorded_at": "2026-10-21T00:49:35.894632+00:00",
+  "baseline_revision": "975b1b7762f58c128b1703f11fd5c4b6ff552c55",
+  "implementation_revision": "4cf9589a1f77eb1db00c62f62b10d2041c01d4ca",
+  "built_version": "openmerge 4cf9589\ncommit: 4cf9589a1f77eb1db00c62f62b10d2041c01d4ca\ngo: go1.27.2",
+  "local_binary": {
+    "bytes": 35516694,
+    "sha256": "529e68610e4c3a32c282336f187071346b68c640792776ee24c19c19896a66bb"
+  },
+  "sources": {
+    "internal/forge/github/queue_instructions_test.go": {
+      "bytes": 4033,
+      "sha256": "727ae4b0510e72dbe4f5f68ae89acd38f6886606d26cf7d4b25666fbcb08af50"
+    },
+    "internal/serve/queue_instructions_test.go": {
+      "bytes": 11916,
+      "sha256": "49fa4255e6efac2deb378ab2ef479522afe10198a12aaae5bb61c815b9376b1e"
+    },
+    "internal/serve/status_ledger.go": {
+      "bytes": 2249,
+      "sha256": "4ac9e10bb29025f569215f4301fbc65d974fbaff04c46c1a63d0ca101e96e9fe"
+    },
+    "internal/serve/worker.go": {
+      "bytes": 22075,
+      "sha256": "68bfb26dc3613c9ac2761a98bfe2b39fce460ede9f4abd4cfea9aaef00d94172"
+    },
+    "internal/status/check.go": {
+      "bytes": 8527,
+      "sha256": "5333207bb7b1a85b460cfd309142050121b3af7442a821139027825b6abc936e"
+    },
+    "internal/status/queue_instructions_test.go": {
+      "bytes": 4858,
+      "sha256": "956ad16393a8c9f66303da0c8cecaa5dd0bcae512b75e7c0a8a48a8dbfdec1cd"
+    },
+    "internal/status/testdata/legacy-check.txt": {
+      "bytes": 166,
+      "sha256": "fb6a97b1161cc5ed2185a1054d49842a76b5ba91d97cfa1a94a351555e7b6653"
+    },
+    "internal/status/testdata/queue-instructions-blocked.txt": {
+      "bytes": 193,
+      "sha256": "77a3b143c998d73d7856adba16e8a8038a849d1922be2f06fb6654bd05a399d2"
+    },
+    "internal/status/testdata/queue-instructions-landed.txt": {
+      "bytes": 257,
+      "sha256": "9e72b1f9b605f6b5315a984d5b4a2a627dd479c0b5e35780510c09de9590dc52"
+    },
+    "internal/status/testdata/queue-instructions-testing.txt": {
+      "bytes": 243,
+      "sha256": "4a35fdc3023e39fb7c9d1c04061394b15e37e72991b43c84074d7d4cebfabb4c"
+    },
+    "internal/status/testdata/queue-instructions-waiting.txt": {
+      "bytes": 193,
+      "sha256": "77a3b143c998d73d7856adba16e8a8038a849d1922be2f06fb6654bd05a399d2"
+    },
+    "scripts/check-legacy-authority-cli.py": {
+      "bytes": 3302,
+      "sha256": "fd1c8a5f2793c8cc6d78c35b45db28d3ea08936f99f59b930e4873b81789a67d"
+    },
+    "scripts/check-legacy-authority-http.py": {
+      "bytes": 3724,
+      "sha256": "c385e32e791a5094b06414b74c19243650a69db22b7d5488fe8ac0834ac3ef57"
+    },
+    "scripts/check-legacy-reporting.py": {
+      "bytes": 10369,
+      "sha256": "37c4122385fa13e5025f16d56a019cc21101150caeeed22f011a91a6db8c7413"
+    }
+  },
+  "artifacts": {
+    "docs/research/adr0008-7-artifacts/round2/focused.log": {
+      "bytes": 2489,
+      "sha256": "7cba610549cf08755d63a2481a659309817d93e47f7ea6d5a366296488a4808e"
+    },
+    "docs/research/adr0008-7-artifacts/round2/legacy-cli-responses.json.gz": {
+      "bytes": 860,
+      "sha256": "3d958cc7df8c519c64b3a014a5d060794025b75e88d692c2f56c5d77aaf4aad5"
+    },
+    "docs/research/adr0008-7-artifacts/round2/legacy-cli.log": {
+      "bytes": 273,
+      "sha256": "0415afa84f4ab2f596337c49df3f5c36ddf394528b2c77da4916c199e9785832"
+    },
+    "docs/research/adr0008-7-artifacts/round2/legacy-http-responses.json.gz": {
+      "bytes": 9647,
+      "sha256": "48a9ccd164edf868ecf66a3e13881ff25856ae5b3dba7e5991e2dadda5bc8b7f"
+    },
+    "docs/research/adr0008-7-artifacts/round2/legacy-http.log": {
+      "bytes": 300,
+      "sha256": "e54e741a74b9b2b9fae4e60403c732fe917d0297509f8f67d854b8c917231d93"
+    },
+    "docs/research/adr0008-7-artifacts/round2/legacy-reporting.log": {
+      "bytes": 238,
+      "sha256": "8bcda3a7bb54c67a59ca2bafa91b92c1a29dc8bb3954d74d93f01735e8f36f74"
+    },
+    "docs/research/adr0008-7-artifacts/round2/make-check.log": {
+      "bytes": 1897,
+      "sha256": "c203f8dac88d34f1dec64d1cb1f6131c6fe4210507aa0c8d7934daa466a1afec"
+    }
+  },
+  "legacy_check_fixtures": [
+    "legacy-golden",
+    "multi-entry",
+    "landed",
+    "dequeued",
+    "blocked",
+    "depth4"
+  ],
+  "cli_outputs": 6,
+  "http_responses": 56,
+  "exits": {
+    "focused": 0,
+    "make-check": 0,
+    "legacy-reporting": 0,
+    "legacy-cli": 0,
+    "legacy-http": 0
+  },
+  "command_prefix": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB",
+  "test_database": "postgres://postgres:openmerge@localhost:54329/postgres?sslmode=disable",
+  "commands": {
+    "focused": "go test -short -count=1 -v ./internal/serve ./internal/status -run QueueInstructions",
+    "make-check": "make check",
+    "legacy-reporting": "python3 scripts/check-legacy-reporting.py /home/riels/.cache/pr115-r2-main-975b1b7",
+    "legacy-cli": "python3 scripts/check-legacy-authority-cli.py /home/riels/.cache/pr115-r2-main-975b1b7",
+    "legacy-http": "python3 scripts/check-legacy-authority-http.py /home/riels/.cache/pr115-r2-main-975b1b7 /home/riels/.cache/adr0008-7-round2-legacy-http-responses.json"
+  }
+}

@@ -108,5 +108,17 @@ for the existing worker reporting paths, avoiding duplicate instruction logic.
   regression verifies both existing-check rollback dedupe and a new unqueued
   head after rollback. This retains the original PR 7 choice explicitly.
 
-Round-2 validation results and source hashes are recorded in the round-2 artifact
-manifest alongside the original round-1 receipts.
+Round-2 validation completed **2026-10-21T00:49:35.894632+00:00** on implementation
+`4cf9589a1f77eb1db00c62f62b10d2041c01d4ca`. `make check` passed formatting,
+lint (0 issues), the entire race-enabled short suite and the build. Focused
+regressions passed. All six legacy checks, six complete CLI outputs and 56
+complete HTTP responses are byte-identical to main `975b1b7`. Every final command
+exited **0**. The build identifies `4cf9589`; full logs, compressed before/after
+receipts, commands and SHA-256 source/artifact hashes are retained in the
+[round-2 manifest](adr0008-7-artifacts/round2/manifest.json). Main and the PR remained
+conflict-free at the pre-push check; no rebase was needed. #115 had not landed.
+
+The first focused attempt exposed an aggregate-write assertion counting the new
+synthetic unqueued PR during another PR's landing. The test now removes that
+synthetic open observation before the independent terminal assertion; the final
+focused run and full suite both pass.
