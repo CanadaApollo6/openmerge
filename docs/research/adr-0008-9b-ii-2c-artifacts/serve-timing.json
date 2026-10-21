@@ -1,0 +1,15 @@
+{
+  "baseline_commit": "0c63b8dd12ff4a9b01e8e2c9df4d44edbea3b17e",
+  "candidate_commit": "07f308a624589693f95c538bc70a02d604ffcacc",
+  "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB go test -race -short -count=1 -timeout=15m ./internal/serve",
+  "GOROOT": "/home/riels/.local/share/mise/installs/go/1.27.3",
+  "PATH_prefix": "/home/riels/.local/share/mise/installs/go/1.27.3/bin",
+  "isolated_before_seconds": 228.444,
+  "isolated_after_seconds": 224.38,
+  "make_check_serve_seconds": 261.928,
+  "interpretation": "Isolated package runs use the same flags and shared test database. Full-suite timing includes concurrent packages; these are local observations, not a GitHub-runner speed prediction.",
+  "logs": {
+    "/home/riels/.cache/adr0008-2c-serve-before.log": "d1b4b97243b8d181e5fd611225531c432c574b954a1dddb463942b5b01a04f03",
+    "/home/riels/.cache/adr0008-2c-serve-after.log": "5de11d3b4c5f5da9d955a829cbd7c10dbb43e489306cc40c7178da70053886db"
+  }
+}
