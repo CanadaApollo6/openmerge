@@ -155,6 +155,7 @@ contracts without transferring their ownership.
 | Wire/state: mode-specific rollback pin, fresh re-enable evidence and digest reaches every served queue | 9b-ii-2b |
 | Wire/state: rollback removes only authority-specific admission requirements | 9b-ii-2d |
 | Wire/state: rollback stops new authority observations/warning eligibility, retains delayed-origin warnings/history/unrelated blocks | 9b-ii-2c |
+| Forge/migrations: repository-wide “all served queues carry digest X” completion signal before redundant protection removal; per-queue receipts never authorize removal | 9c |
 | Forge/migrations: typed reader/compiler/content wiring and immutable context/reloading guard before every generated-object push | 9c |
 | Forge/migrations: registration/cycle/first-queue pin-observation-fence ordering, direct EnsureFence options, post-build read never a guard | 9c |
 | Forge/migrations: invalidate on default branch/selector/actor/method changes | 9b-ii-2b |
@@ -208,3 +209,5 @@ binary downgrade: use a compatible reader or stop workers, restore the verified
 backup and reconcile subsequent real refs/evidence before resuming. Keep outside
 warnings and all immutable evidence through rollback/retirement. PR 11 owns the
 actual organization switch, never this implementation worktree.
+
+There is currently **no repository-wide “all served queues carry digest X” completion signal**. 2b provides independent per-queue receipts only; they do not authorize removing redundant protection. 9c owns providing and validating that completion signal before protection removal.

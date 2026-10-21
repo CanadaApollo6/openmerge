@@ -24,6 +24,9 @@ type Target struct {
 	// AuthorityRequired marks entering/active/leaving authority before resolution.
 	// It cannot fall back to legacy when a required hook or pin is absent.
 	AuthorityRequired bool
+	// The lifecycle adapter is package-private and requires the explicit opt-in.
+	// Production target constructors cannot install it from candidate/journal data.
+	resolveAuthorityLifecycle func(context.Context, config.AuthorityCandidate, string, string) (authorityLifecycleResolution, error)
 	// Authority preparation is dormant until PR 9 installs all three hooks.
 	// Serve calls resolve, durable pin, then protection observation in order.
 	PrepareAuthorityPush func(context.Context) (AuthorityPushPolicy, error)
@@ -123,6 +126,7 @@ type worker struct {
 	configTip        string
 	configDigest     string
 	configError      error
+	configCandidate  config.AuthorityCandidate
 	deleteHeadBranch *bool
 	prs              map[int]forge.PullRequest
 	diagnosticHeads  map[int]string

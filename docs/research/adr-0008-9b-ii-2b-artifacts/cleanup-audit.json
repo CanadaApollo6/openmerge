@@ -1,0 +1,13 @@
+{
+  "stopped_store_run": {
+    "reason": "new concurrency test reused its blocking queue-lock hook for the competing writer; corrected to use a separate store",
+    "removed_owned_schemas": [
+      "om_test_235329d57d82a986bca5bb7e",
+      "om_test_2b7e2fccd30c4af90141c72b",
+      "om_test_3cc60d9097bb1d47f3d9c38c"
+    ],
+    "ownership_evidence": "stopped-run audit: two empty schemas and one containing write_restriction_verified, config_applied, policy_authority_applied",
+    "focused_reruns": "passed; test cleanup removed their schemas"
+  },
+  "unrelated_preexisting_schemas": "retained; no unattributed schema was dropped"
+}

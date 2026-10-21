@@ -1,0 +1,108 @@
+{
+  "trial_class": "Hold",
+  "slice": "9b-ii-2b",
+  "offline_only": true,
+  "commands": [
+    {
+      "name": "make-check",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/adr0008-9b-ii-2b-verification/make-check/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/adr0008-9b-ii-2b-verification/make-check/tmp make check",
+      "exit": 0,
+      "logs": "/home/riels/.cache/adr0008-9b-ii-2b-verification/make-check"
+    },
+    {
+      "name": "focused",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/adr0008-9b-ii-2b-verification/focused/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/adr0008-9b-ii-2b-verification/focused/tmp go test -race ./internal/serve ./internal/store ./internal/queue ./internal/config -run 'Authority|PublicAuthority' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/adr0008-9b-ii-2b-verification/focused"
+    },
+    {
+      "name": "baseline-contracts",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/adr0008-9b-ii-2b-verification/baseline-contracts/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/adr0008-9b-ii-2b-verification/baseline-contracts/tmp ADR_DIFF=/home/riels/.cache/adr0008-9b-ii-2b-verification/baseline/contracts.json go test -overlay /home/riels/.cache/adr0008-9b-ii-2b-verification/baseline/overlay.json ./internal/queue -run '^TestADR00081Differential$' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/adr0008-9b-ii-2b-verification/baseline-contracts"
+    },
+    {
+      "name": "candidate-contracts",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/adr0008-9b-ii-2b-verification/candidate-contracts/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/adr0008-9b-ii-2b-verification/candidate-contracts/tmp ADR_DIFF=/home/riels/.cache/adr0008-9b-ii-2b-verification/candidate/contracts.json go test -overlay /home/riels/.cache/adr0008-9b-ii-2b-verification/candidate/overlay.json ./internal/queue -run '^TestADR00081Differential$' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/adr0008-9b-ii-2b-verification/candidate-contracts"
+    },
+    {
+      "name": "strict-replay",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=6GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/adr0008-9b-ii-2b-verification/strict-replay/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/adr0008-9b-ii-2b-verification/strict-replay/tmp /home/riels/.local/share/mise/installs/python/latest/bin/python3 /home/riels/.t3/worktrees/openmerge/t3-ff3ed213/scripts/check-live-journal-replay.py --baseline /home/riels/.cache/adr0008-9b-ii-2b-main-b9f00f8 --candidate /home/riels/.t3/worktrees/openmerge/t3-ff3ed213 --events /home/riels/.cache/om-pr72-fix1-input/events.jsonl --queues /home/riels/.cache/om-pr72-fix1-input/queues.jsonl --strict-state --out /home/riels/.cache/adr0008-9b-ii-2b-verification/replay.json",
+      "exit": 0,
+      "logs": "/home/riels/.cache/adr0008-9b-ii-2b-verification/strict-replay"
+    },
+    {
+      "name": "baseline-simulator",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/adr0008-9b-ii-2b-verification/baseline-simulator/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/adr0008-9b-ii-2b-verification/baseline-simulator/tmp make test-sim-exits",
+      "exit": 0,
+      "logs": "/home/riels/.cache/adr0008-9b-ii-2b-verification/baseline-simulator"
+    },
+    {
+      "name": "candidate-simulator",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/adr0008-9b-ii-2b-verification/candidate-simulator/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/adr0008-9b-ii-2b-verification/candidate-simulator/tmp make test-sim-exits",
+      "exit": 0,
+      "logs": "/home/riels/.cache/adr0008-9b-ii-2b-verification/candidate-simulator"
+    }
+  ],
+  "baseline": "b9f00f86854c62a206ba2815a12b19a114a779c5",
+  "candidate": "e72e841419ea92512227de216ee506d90c3c81ea",
+  "environment": {
+    "GOROOT": "/home/riels/.local/share/mise/installs/go/1.27.3",
+    "PATH_prefix": "/home/riels/.local/share/mise/installs/go/1.27.3/bin",
+    "database": "localhost:54329, isolated test schemas"
+  },
+  "exports": {
+    "events": {
+      "path": "/home/riels/.cache/om-pr72-fix1-input/events.jsonl",
+      "sha256": "9c8f78f3e967c7cb030948cfc9871cc67a45da06f80b12f27d1c55d09ba8accf",
+      "rows": 2158,
+      "max_event_id": 2158
+    },
+    "queues": {
+      "path": "/home/riels/.cache/om-pr72-fix1-input/queues.jsonl",
+      "sha256": "418f025a0e3c8792321b6d71d297f17fff1adf48cb616c8f4fcb774163696886",
+      "rows": 1
+    }
+  },
+  "wire": {
+    "identical": true,
+    "legacy_fixtures": 104,
+    "legacy_registry_fixtures": 90,
+    "legacy_sha256": "d9fc673fbd7ec5410cf1491778157508533ca5c804932caaecb39204f2ae2776",
+    "new_fixtures": []
+  },
+  "contracts": {
+    "identical": true,
+    "records": 90,
+    "sha256": "88e727ebe7ea5b570f352c5c661c2cd1642c1b5120f3d3ed086993f4dd00362a"
+  },
+  "replay": {
+    "verdict": "PASS",
+    "state_mode": "strict",
+    "actions_identical": "2159/2159",
+    "structural_state_identical": "2159/2159",
+    "snapshot_hashes_identical": "2159/2159",
+    "boundary_checkpoints_identical": "2159/2159",
+    "boundary_probe_count": 8676,
+    "non_allowlisted_fields": [],
+    "gate2": "PASS",
+    "gate4": "PASS",
+    "self_test": "PASS",
+    "self_test_exit_status": 0,
+    "full_report_sha256": "1ef554648a47b54d40b7f94ac2bb10a25aec01443545917ab092207a3ec4b034"
+  },
+  "simulator": {
+    "baseline_exit": 0,
+    "candidate_exit": 0,
+    "identical": true,
+    "blocks": 146,
+    "normalized_sha256": "a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7"
+  },
+  "binary": {
+    "path": "/home/riels/.t3/worktrees/openmerge/t3-ff3ed213/bin/openmerge",
+    "sha256": "a8e66183ceab05611d73ba2d15255b2ad8d54c3df470e238f22df6868ff9c6ee"
+  },
+  "verdict": "PASS"
+}

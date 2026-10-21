@@ -1,0 +1,8 @@
+{
+  "identical": true,
+  "namespaces": 104,
+  "before_sha256": "5f03a82f096ca669ec97f6d7dd2d35d40a1edb7d6efc7df4d9dd39e44aacc70b",
+  "after_sha256": "5f03a82f096ca669ec97f6d7dd2d35d40a1edb7d6efc7df4d9dd39e44aacc70b",
+  "before_path": "/home/riels/.cache/adr0008-9b-ii-2b-verification/schemas-before.txt",
+  "after_path": "/home/riels/.cache/adr0008-9b-ii-2b-verification/schemas-after.txt"
+}

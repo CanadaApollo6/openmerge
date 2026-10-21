@@ -1,6 +1,7 @@
 package serve
 
 import (
+	"context"
 	"os"
 	"reflect"
 	"strconv"
@@ -48,7 +49,7 @@ func TestAuthorityBarrierPinCannotSelectAuthorityCheckGate(t *testing.T) {
 func TestAuthorityBarrierJournalCannotInstallRuntimeAuthority(t *testing.T) {
 	for _, history := range []string{"draft", "pin", "raw-activation"} {
 		t.Run(history, func(t *testing.T) {
-			s, w, _, _ := fixture(t, repositoryConfig)
+			s, w, f, _ := fixture(t, repositoryConfig)
 			must(t, s.configuration(t.Context(), w))
 			legacy := w.plannerConfig(s.options.PollInterval)
 			read := func(name string) queue.Event {
@@ -100,7 +101,16 @@ func TestAuthorityBarrierJournalCannotInstallRuntimeAuthority(t *testing.T) {
 			// Even explicitly invoking the new internal caller cannot use this
 			// candidate/draft/pin as its opt-in, even with a valid receipt for the
 			// configured database. It rejects before any I/O.
-			request := authorityActivation{Receipt: activationReceipt(t, s.store), ReceiptMaxAge: time.Hour}
+			request := authorityActivation{Receipt: activationReceipt(t, s.store), ReceiptMaxAge: time.Hour, Config: &queue.ConfigApplied{Commit: w.configTip, Digest: w.configDigest}}
+			w.resolveAuthorityLifecycle = func(context.Context, config.AuthorityCandidate, string, string) (authorityLifecycleResolution, error) {
+				t.Fatal("resolver ran without opt-in")
+				return authorityLifecycleResolution{}, nil
+			}
+			if _, err := s.prepareAuthorityLifecycle(t.Context(), w, state, w.configBranch, w.configTip); err == nil || !strings.Contains(err.Error(), "opt-in required") {
+				t.Fatal("lifecycle preparation bypassed opt-in", err)
+			}
+			w.configTip = ""
+			must(t, s.configuration(t.Context(), w))
 			if receipt, err := s.activateAuthority(t.Context(), w, request); err == nil || !strings.Contains(err.Error(), "internal authority activation opt-in required") || receipt != (store.AuthorityAdoptionReceipt{}) {
 				t.Fatal("journal data enabled internal activation", receipt, err)
 			}
@@ -117,6 +127,12 @@ func TestAuthorityBarrierJournalCannotInstallRuntimeAuthority(t *testing.T) {
 				}
 			} else if !opts.AuthorityRequired || opts.Guard == nil || opts.Guard(t.Context(), opts.Context) == nil {
 				t.Fatal("unresolved journal pin supplied usable authority push options")
+			}
+			_, err = f.PushBase(w.repo(), "main", "public candidate remains blocked", map[string]string{".openmerge.yml": proposed})
+			must(t, err)
+			must(t, s.configuration(t.Context(), w))
+			if w.configError == nil || !strings.Contains(w.configError.Error(), config.AuthorityActivationUnavailable) {
+				t.Fatal("lifecycle reader bypassed public candidate barrier", w.configError)
 			}
 			events, err := s.store.EventsAfter(t.Context(), w.id, before)
 			must(t, err)

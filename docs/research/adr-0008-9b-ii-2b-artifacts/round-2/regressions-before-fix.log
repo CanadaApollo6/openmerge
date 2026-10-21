@@ -1,0 +1,12 @@
+--- FAIL: TestAuthorityLifecycleAdoptsDraftWithAtomicConfig (0.07s)
+    authority_lifecycle_test.go:420: unchanged adopted cycle read or wrote: reads 1 -> 2, events 7 -> 7
+    authority_lifecycle_test.go:427: same-binding rebind lost adopted activation
+--- FAIL: TestAuthorityLifecycleRollbackReceiptAndUnchangedWire (0.04s)
+    authority_lifecycle_test.go:512: rollback rebind returned guarded options for build
+--- FAIL: TestAuthorityLifecycleUnchangedApprovalReadiness (0.06s)
+    authority_lifecycle_test.go:605: unchanged authority+approvals config cleared readiness; summaries=0
+--- FAIL: TestAuthorityLifecycleDepthOneToFour (0.03s)
+    authority_lifecycle_test.go:621: valid authority depth transition rejected: historical window policy does not match recorded digest
+FAIL
+FAIL	github.com/CanadaApollo6/openmerge/internal/serve	0.209s
+FAIL

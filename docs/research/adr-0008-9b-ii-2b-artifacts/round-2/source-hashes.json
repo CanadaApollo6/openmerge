@@ -1,0 +1,7 @@
+{
+  "internal/serve/authority_activation.go": "383319a11d9f16940dd77b2df7e6194b2366163f654df93bcf2d3fe133858e4d",
+  "internal/serve/authority_lifecycle_test.go": "0ed11b8d080693a15e6e3d5f2b20decfe7ec95881038ebc82517bf842d20febe",
+  "internal/serve/push.go": "c91ce5870fd800e75afd21f18ba44f748ebb2210b03c3b94a4f5dd09fb3e6a53",
+  "internal/serve/reconcile.go": "b5efd79e590681b738476da34a86aef34a6c1790426f73dd13f0f81bbda1e166",
+  "internal/store/write_restriction.go": "f0987a9040aefde61bc9262376f19ede5ac7ca98dd7f294bbd102c5d0cae5197"
+}

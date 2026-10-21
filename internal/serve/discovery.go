@@ -514,6 +514,7 @@ func (w *worker) bind(target Target) {
 	w.CheckRules, w.CheckPermissions, w.CheckProtection = target.CheckRules, target.CheckPermissions, target.CheckProtection
 	w.Resolve = target.Resolve
 	w.AuthorityRequired = target.AuthorityRequired
+	w.resolveAuthorityLifecycle = target.resolveAuthorityLifecycle
 	w.PrepareAuthorityPush, w.PinAuthorityPush, w.ObserveAuthorityPush = target.PrepareAuthorityPush, target.PinAuthorityPush, target.ObserveAuthorityPush
 }
 

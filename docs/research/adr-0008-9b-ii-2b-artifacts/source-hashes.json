@@ -1,0 +1,14 @@
+{
+  "verified_implementation": "e72e841419ea92512227de216ee506d90c3c81ea",
+  "files": {
+    "internal/serve/authority_activation.go": "5b122e00b858d9febbb49c0d7e997ddb6250f8f882cb063af1f227246690de24",
+    "internal/serve/authority_barrier_test.go": "39187951da1280399b7f81c1db806034a87b7cb3f51963d4a3ec5dc755963d95",
+    "internal/serve/authority_lifecycle_test.go": "6cc9f3be97b239ec395e4fb16c0062585d4ad0e97d51226a35d97598347f76a0",
+    "internal/serve/discovery.go": "dee7159525062e7076cc75270090a26d7ce94e6b29218a2e4161ecb94ca13845",
+    "internal/serve/reconcile.go": "975de17a9687e4d8d5e0ed85f2a2ff53847db93fc6d0e8b8e4caf5a4646dfa80",
+    "internal/serve/serve.go": "35a7873131b58451131a7f1f31a5a2d06eea441be0124f068d24c6397ad6802d",
+    "internal/store/authority_config_test.go": "82b84bd232535bfe9b86cb88bb35afba8f792067d6dd496c2c22c59129c38326",
+    "internal/store/write_restriction.go": "2089c3358470605042ff1f4b346416264ad13ddb5f78dcd9e4b66c43c1a2e731",
+    "scripts/verify-adr0008-9b-ii-2b.py": "1364ffb52e55d84523e4e6453ca859e56f2e732fc1ce150d9176b3a0b91ccdf9"
+  }
+}

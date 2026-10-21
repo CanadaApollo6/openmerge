@@ -1,0 +1,114 @@
+{
+  "/home/riels/.cache/adr0008-9b-ii-2b-verification/replay.json": {
+    "bytes": 215102,
+    "sha256": "1ef554648a47b54d40b7f94ac2bb10a25aec01443545917ab092207a3ec4b034"
+  },
+  "/home/riels/.cache/adr0008-9b-ii-2b-verification/sim-normalized.json": {
+    "bytes": 74727,
+    "sha256": "a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7"
+  },
+  "/home/riels/.cache/adr0008-9b-ii-2b-verification/baseline/contracts.json": {
+    "bytes": 22957,
+    "sha256": "88e727ebe7ea5b570f352c5c661c2cd1642c1b5120f3d3ed086993f4dd00362a"
+  },
+  "/home/riels/.cache/adr0008-9b-ii-2b-verification/candidate/contracts.json": {
+    "bytes": 22957,
+    "sha256": "88e727ebe7ea5b570f352c5c661c2cd1642c1b5120f3d3ed086993f4dd00362a"
+  },
+  "/home/riels/.cache/adr0008-9b-ii-2b-verification/baseline-contracts/command.txt": {
+    "bytes": 550,
+    "sha256": "6ed296aec9f8c15d7ba8da3ca09cecfe99b19d24c88fb71da10f4f81a249efc9"
+  },
+  "/home/riels/.cache/adr0008-9b-ii-2b-verification/baseline-contracts/stderr.log": {
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "/home/riels/.cache/adr0008-9b-ii-2b-verification/baseline-contracts/stdout.log": {
+    "bytes": 62,
+    "sha256": "a60aef94d366a7d271118cd3facbeeb6b9ceac544837f30d0e7a731a485009e3"
+  },
+  "/home/riels/.cache/adr0008-9b-ii-2b-verification/baseline-simulator/command.txt": {
+    "bytes": 340,
+    "sha256": "834137ab4e598ee3b8cc0afe1d00bad090dbf73a3efed3df789f15ebd88e672a"
+  },
+  "/home/riels/.cache/adr0008-9b-ii-2b-verification/baseline-simulator/stderr.log": {
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "/home/riels/.cache/adr0008-9b-ii-2b-verification/baseline-simulator/stdout.log": {
+    "bytes": 94047,
+    "sha256": "a804ff91841c8e90cb493359b6c0e539ce5ea79f54154da147265117a089fdce"
+  },
+  "/home/riels/.cache/adr0008-9b-ii-2b-verification/candidate-contracts/command.txt": {
+    "bytes": 554,
+    "sha256": "cdf37df9001fc245ce637ad04395ddec84a4c6ccb814b5ec2e404e87a346f5fd"
+  },
+  "/home/riels/.cache/adr0008-9b-ii-2b-verification/candidate-contracts/stderr.log": {
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "/home/riels/.cache/adr0008-9b-ii-2b-verification/candidate-contracts/stdout.log": {
+    "bytes": 62,
+    "sha256": "00598c19c850a91a8fc85b8667904519514862b386066707fd9e075da7eab268"
+  },
+  "/home/riels/.cache/adr0008-9b-ii-2b-verification/candidate-simulator/command.txt": {
+    "bytes": 342,
+    "sha256": "f1689bf017bcc13ce30fa500eb92bf689193405cfb3c0580c4973d7c6858b542"
+  },
+  "/home/riels/.cache/adr0008-9b-ii-2b-verification/candidate-simulator/stderr.log": {
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "/home/riels/.cache/adr0008-9b-ii-2b-verification/candidate-simulator/stdout.log": {
+    "bytes": 93992,
+    "sha256": "e8733c0fb10f636da2a0907d38250fd6ed7d83016df28794b4456c56c6b93b37"
+  },
+  "/home/riels/.cache/adr0008-9b-ii-2b-verification/focused/command.txt": {
+    "bytes": 423,
+    "sha256": "71029e2dc10da742c9c78da13ca8161a2e5a107543ddfcb23925cafc04dd2c72"
+  },
+  "/home/riels/.cache/adr0008-9b-ii-2b-verification/focused/stderr.log": {
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "/home/riels/.cache/adr0008-9b-ii-2b-verification/focused/stdout.log": {
+    "bytes": 250,
+    "sha256": "8923dfea881839a194859fa942ef98d5b13e218f85c451ab78fb33814b2ef72e"
+  },
+  "/home/riels/.cache/adr0008-9b-ii-2b-verification/make-check/command.txt": {
+    "bytes": 315,
+    "sha256": "5e10929302ffac049d8b6d47aa820b1c6a1ea8e68bc0890d688ee810fea0dc04"
+  },
+  "/home/riels/.cache/adr0008-9b-ii-2b-verification/make-check/stderr.log": {
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "/home/riels/.cache/adr0008-9b-ii-2b-verification/make-check/stdout.log": {
+    "bytes": 1898,
+    "sha256": "fb478db84dadf6e1f92e94a6ba295e205b90a224d5965fbdd5910a8d1a82dbc9"
+  },
+  "/home/riels/.cache/adr0008-9b-ii-2b-verification/strict-replay/command.txt": {
+    "bytes": 782,
+    "sha256": "a859487d20d2f5aa43bc4b9859051bfaba859cc2cdb5f57e4803d7bbded73828"
+  },
+  "/home/riels/.cache/adr0008-9b-ii-2b-verification/strict-replay/stderr.log": {
+    "bytes": 0,
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "/home/riels/.cache/adr0008-9b-ii-2b-verification/strict-replay/stdout.log": {
+    "bytes": 215102,
+    "sha256": "1ef554648a47b54d40b7f94ac2bb10a25aec01443545917ab092207a3ec4b034"
+  },
+  "/home/riels/.cache/adr0008-9b-ii-2b-verification/replay-streams-57288iv_/baseline.jsonl": {
+    "bytes": 214167188,
+    "sha256": "1fe079295539183b7008e70b940c7f71d45bd4aa4e443c8c1e581fa10d31051a"
+  },
+  "/home/riels/.cache/adr0008-9b-ii-2b-verification/replay-streams-57288iv_/candidate-repeat.jsonl": {
+    "bytes": 214167188,
+    "sha256": "1fe079295539183b7008e70b940c7f71d45bd4aa4e443c8c1e581fa10d31051a"
+  },
+  "/home/riels/.cache/adr0008-9b-ii-2b-verification/replay-streams-57288iv_/candidate.jsonl": {
+    "bytes": 214167188,
+    "sha256": "1fe079295539183b7008e70b940c7f71d45bd4aa4e443c8c1e581fa10d31051a"
+  }
+}
