@@ -1824,8 +1824,8 @@ origin-time warning eligibility and refreshes acknowledgements as status does.
 
 ## Receipt database binding
 
-The first authority `write_restriction_observed.read_error` is also a strict
-reader compatibility boundary. Inventory readers that lack the optional event
+The first emission of authority `write_restriction_observed.read_error` creates
+a strict reader compatibility boundary. Inventory readers that lack the optional event
 and v7 snapshot field, even when they already support authority event types.
 Drain those readers before first emission, retain the tested pre-emission backup
 and reconciliation receipt, and use a compatible binary after rollback to GitHub.

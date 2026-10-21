@@ -96,7 +96,11 @@ func databaseConnection(t *testing.T) (*store.Store, *pgx.Conn) {
 }
 func fixture(t *testing.T, contents string) (*Server, *worker, *fake.Forge, *countingDriver) {
 	t.Helper()
-	db := database(t)
+	return fixtureWithStore(t, contents, database(t))
+}
+
+func fixtureWithStore(t *testing.T, contents string, db *store.Store) (*Server, *worker, *fake.Forge, *countingDriver) {
+	t.Helper()
 	f := fake.New()
 	f.Init(repo, "main", "openmerge/fence/main")
 	files := map[string]string{}

@@ -1,9 +1,11 @@
 package serve
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -306,5 +308,35 @@ func TestAuthorityReadFailureReasonsAreSanitized(t *testing.T) {
 		if got := authorityReadFailureReason(tc.cause); got != authorityReadErrorReason+": "+tc.class {
 			t.Fatalf("reason = %q, want class %q", got, tc.class)
 		}
+	}
+}
+
+func TestAuthorityMissingReaderAndLogsAreClassified(t *testing.T) {
+	for _, missing := range []bool{false, true} {
+		t.Run(fmt.Sprint(missing), func(t *testing.T) {
+			testSynctest(t, func(t *testing.T) {
+				s, w, _, _ := authorityWorkerFixture(t)
+				must(t, s.cycle(t.Context(), w))
+				var logs bytes.Buffer
+				s.options.Logger = slog.New(slog.NewTextHandler(&logs, nil))
+				w.authorityNextCheck = time.Time{}
+				w.authorityObservation.Read = nil
+				if !missing {
+					w.authorityObservation.Read = func(context.Context) (authority.Observation, error) {
+						return forge.EmptyWriteRestrictionObservation(), errors.New("https://user:secret-token@example.test/private?token=secret-token")
+					}
+				}
+				must(t, s.observeWorkerAuthority(t.Context(), w))
+				rows, err := s.store.EventsAfter(t.Context(), w.id, 0)
+				must(t, err)
+				observed := rows[len(rows)-1].Event.(queue.WriteRestrictionObserved)
+				if observed.ReadError != authorityReadErrorReason+": unavailable" || w.authorityFailures != 1 {
+					t.Fatalf("unclassified failure: %+v, retries=%d", observed, w.authorityFailures)
+				}
+				if strings.Contains(logs.String(), "secret-token") || strings.Contains(logs.String(), "https://") || !strings.Contains(logs.String(), "unavailable") {
+					t.Fatalf("unsanitized log: %s", &logs)
+				}
+			})
+		})
 	}
 }

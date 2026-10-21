@@ -184,55 +184,105 @@ func TestAuthorityBarrierPinBearingBriefAndAdmission(t *testing.T) {
 }
 
 func TestAuthorityAdmissionWorkerTimeout(t *testing.T) {
-	testSynctest(t, func(t *testing.T) {
-		s, w, f, _ := authorityWorkerFixture(t)
-		f.SetNativeReviews(repo, 1, forge.NativeReviews{Comments: []forge.NativeComment{shadowComment(100, "@openmerge queue")}})
-		must(t, s.reconcile(t.Context(), w, true))
-		cfg := w.plannerConfig(s.options.PollInterval)
-		build := claimLandingChecksAction(t, s, w, cfg, func(a queue.Action) bool { _, ok := a.(queue.BuildTestRef); return ok })
-		proceed, err := s.store.BeginConsequential(t.Context(), build, cfg, time.Now())
-		must(t, err)
-		if !proceed {
-			t.Fatal("build did not begin")
-		}
-		// Build via the existing executor seam; this regression exercises the
-		// real serve landing path while the separate forge gate remains dormant.
-		x := executor.Executor{Driver: f, Git: f, Repo: repo, Base: "main", RequiredChecks: []string{"ci"}, BuildMetadataKey: w.Key, BuildPolicyDigest: w.stageA.policy.Digest}
-		x.BuildMetadata = func(_ queue.State, key executor.BuildChangeKey, batch queue.Batch, digest string) ([]*forge.ChangeMetadata, error) {
-			current := lifecycleState(t, s, w)
-			return executor.LoadBuildMetadataWithAncestry(current, key, *current.Batch(batch.ID), digest, func(a, b string) (bool, error) { return f.IsAncestor(t.Context(), repo, a, b) })
-		}
-		must(t, x.Execute(t.Context(), build.Action, s.store.EmitWithPolicy(t.Context(), build, cfg, w.stageA.policy)))
-		must(t, s.store.Complete(t.Context(), build, store.Done))
-		batch := lifecycleState(t, s, w).BatchForPR(1)
-		f.SetCheckRuns(repo, batch.TestedSHA, []forge.CheckRun{{Name: "ci", Source: "app:15368", ID: 701, Attempt: 1, State: forge.Success, HeadBranch: batch.TestRef}})
-		_, err = s.store.Append(t.Context(), w.id, []queue.Event{queue.ChecksCompleted{TestedSHA: batch.TestedSHA, Success: true}}, "")
-		must(t, err)
-		claim := claimLandingChecksAction(t, s, w, cfg, func(a queue.Action) bool { _, ok := a.(queue.Land); return ok })
-		s.options.ActionTimeout = time.Second
-		read := false
-		installWorkerAuthorityReader(t, w, func(ctx context.Context) (authority.Observation, error) {
-			read = true
-			<-ctx.Done()
-			return forge.EmptyWriteRestrictionObservation(), ctx.Err()
+	for _, mode := range []string{"read_timeout", "shutdown"} {
+		t.Run(mode, func(t *testing.T) {
+			testSynctest(t, func(t *testing.T) {
+				authorityAdmissionWorkerTimeout(t, mode)
+			})
 		})
-		err = s.execute(t.Context(), w, claim)
-		if !read || !errors.Is(err, context.DeadlineExceeded) {
-			t.Fatalf("worker did not time out admission read: read=%v err=%v", read, err)
+	}
+}
+
+func TestAuthorityAdmissionWorkerLockedAppend(t *testing.T) {
+	// Real socket I/O prevents synctest's clock from advancing.
+	// Keep the lock until execute returns, with a real watchdog.
+	authorityAdmissionWorkerTimeout(t, "locked_append")
+}
+
+func authorityAdmissionWorkerTimeout(t *testing.T, mode string) {
+	t.Helper()
+	db, conn := databaseConnection(t)
+	s, w, f, _ := authorityWorkerWithStore(t, db)
+	f.SetNativeReviews(repo, 1, forge.NativeReviews{Comments: []forge.NativeComment{shadowComment(100, "@openmerge queue")}})
+	must(t, s.reconcile(t.Context(), w, true))
+	cfg := w.plannerConfig(s.options.PollInterval)
+	build := claimLandingChecksAction(t, s, w, cfg, func(a queue.Action) bool { _, ok := a.(queue.BuildTestRef); return ok })
+	proceed, err := s.store.BeginConsequential(t.Context(), build, cfg, time.Now())
+	must(t, err)
+	if !proceed {
+		t.Fatal("build did not begin")
+	}
+	// Build via the existing executor seam; this regression exercises the
+	// real serve landing path while the separate forge gate remains dormant.
+	x := executor.Executor{Driver: f, Git: f, Repo: repo, Base: "main", RequiredChecks: []string{"ci"}, BuildMetadataKey: w.Key, BuildPolicyDigest: w.stageA.policy.Digest}
+	x.BuildMetadata = func(_ queue.State, key executor.BuildChangeKey, batch queue.Batch, digest string) ([]*forge.ChangeMetadata, error) {
+		current := lifecycleState(t, s, w)
+		return executor.LoadBuildMetadataWithAncestry(current, key, *current.Batch(batch.ID), digest, func(a, b string) (bool, error) { return f.IsAncestor(t.Context(), repo, a, b) })
+	}
+	must(t, x.Execute(t.Context(), build.Action, s.store.EmitWithPolicy(t.Context(), build, cfg, w.stageA.policy)))
+	must(t, s.store.Complete(t.Context(), build, store.Done))
+	batch := lifecycleState(t, s, w).BatchForPR(1)
+	f.SetCheckRuns(repo, batch.TestedSHA, []forge.CheckRun{{Name: "ci", Source: "app:15368", ID: 701, Attempt: 1, State: forge.Success, HeadBranch: batch.TestRef}})
+	_, err = s.store.Append(t.Context(), w.id, []queue.Event{queue.ChecksCompleted{TestedSHA: batch.TestedSHA, Success: true}}, "")
+	must(t, err)
+	claim := claimLandingChecksAction(t, s, w, cfg, func(a queue.Action) bool { _, ok := a.(queue.Land); return ok })
+	s.options.ActionTimeout = time.Second
+	parent, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	read := false
+	installWorkerAuthorityReader(t, w, func(ctx context.Context) (authority.Observation, error) {
+		read = true
+		if mode == "locked_append" {
+			_, err := conn.Exec(t.Context(), "BEGIN")
+			must(t, err)
+			_, err = conn.Exec(t.Context(), `SELECT pg_advisory_xact_lock(1330464081, hashtext(current_schema() || '/' || $1))`, fmt.Sprint(w.id))
+			must(t, err)
 		}
-		if w.authorityFailures != 1 || !w.authorityNextCheck.Equal(time.Now().Add(time.Minute)) {
-			t.Fatal("worker timeout skipped recovery schedule")
+		if mode == "shutdown" {
+			cancel()
 		}
-		if !hasAuthorityReadError(lifecycleState(t, s, w)) {
-			t.Fatal("expired action discarded durable read_error")
-		}
-		rows, err := s.store.EventsAfter(t.Context(), w.id, 0)
-		must(t, err)
-		for _, row := range rows {
-			switch row.Event.(type) {
-			case queue.LandingStarted, queue.LandingChecksRecorded, queue.LandingDecisionRecorded:
-				t.Fatal("timed-out worker committed admission evidence or start")
-			}
-		}
+		<-ctx.Done()
+		return forge.EmptyWriteRestrictionObservation(), ctx.Err()
 	})
+	before, err := s.store.EventsAfter(t.Context(), w.id, 0)
+	must(t, err)
+	started := time.Now()
+	watchdog, stop := context.WithTimeout(parent, s.options.ActionTimeout+completionWriteTimeout+time.Second)
+	defer stop()
+	err = s.execute(watchdog, w, claim)
+	if mode == "locked_append" {
+		_, unlockErr := conn.Exec(t.Context(), "ROLLBACK")
+		must(t, unlockErr)
+	}
+	wantErr := context.DeadlineExceeded
+	if mode == "shutdown" {
+		wantErr = context.Canceled
+	}
+	if !read || !errors.Is(err, wantErr) {
+		t.Fatalf("worker did not time out admission read: read=%v err=%v", read, err)
+	}
+	elapsed := time.Since(started)
+	if elapsed > s.options.ActionTimeout+completionWriteTimeout+time.Second/2 || (mode == "shutdown" && elapsed != 0) {
+		t.Fatalf("unbounded admission persistence: elapsed=%v", elapsed)
+	}
+	if mode != "shutdown" && (w.authorityFailures != 1 || time.Until(w.authorityNextCheck) < time.Minute-time.Second/2 || time.Until(w.authorityNextCheck) > time.Minute) {
+		t.Fatal("worker timeout skipped recovery schedule")
+	}
+	if got := hasAuthorityReadError(lifecycleState(t, s, w)); got != (mode == "read_timeout") {
+		t.Fatalf("durable read_error=%v in %s", got, mode)
+	}
+	if mode == "shutdown" && w.authorityFailures != 0 {
+		t.Fatal("shutdown scheduled another read")
+	}
+	rows, err := s.store.EventsAfter(t.Context(), w.id, 0)
+	must(t, err)
+	if mode != "read_timeout" && len(rows) != len(before) {
+		t.Fatalf("failed persistence/shutdown appended events: %d -> %d", len(before), len(rows))
+	}
+	for _, row := range rows {
+		switch row.Event.(type) {
+		case queue.LandingStarted, queue.LandingChecksRecorded, queue.LandingDecisionRecorded:
+			t.Fatal("timed-out worker committed admission evidence or start")
+		}
+	}
 }

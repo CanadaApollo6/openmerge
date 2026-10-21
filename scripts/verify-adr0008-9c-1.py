@@ -6,6 +6,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 sys.dont_write_bytecode = True
 
@@ -36,19 +37,29 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--toolchain", type=Path, default=os.environ.get("GOROOT"))
+    parser.add_argument("--lock", type=Path, default=Path.home() / ".cache/openmerge-heavy.lock")
+    parser.add_argument("--events", type=Path, default=Path.home() / ".cache/om-pr72-fix1-input/events.jsonl")
+    parser.add_argument("--queues", type=Path, default=Path.home() / ".cache/om-pr72-fix1-input/queues.jsonl")
     args = parser.parse_args()
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
     spec = importlib.util.spec_from_file_location("evidence", root / "scripts/adr-0008-1-verify.py")
     v = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(v)
+    v.LOCK, v.EVENTS, v.QUEUES = args.lock, args.events, args.queues
     result = {"trial_class": "Hold", "slice": "9c-1", "offline_only": True, "commands": v.COMMANDS}
     try:
-        toolchain = "/home/riels/.local/share/mise/installs/go/1.27.3"
+        if args.toolchain is None:
+            raise v.VerifyError("set GOROOT or pass --toolchain for Go 1.27.3")
+        toolchain = str(args.toolchain.resolve())
         if os.environ.get("GOROOT") != toolchain or os.environ["PATH"].split(":")[0] != toolchain + "/bin":
             raise v.VerifyError("export both Go 1.27.3 GOROOT and its bin directory first in PATH")
-        if os.environ.get("OPENMERGE_TEST_DATABASE_URL") != "postgres://postgres:openmerge@localhost:54329/postgres?sslmode=disable":
-            raise v.VerifyError("use the shared test Postgres URL on localhost:54329")
+        if (args.toolchain / "VERSION").read_text().splitlines()[0] != "go1.27.3":
+            raise v.VerifyError("Go 1.27.3 is required")
+        database = urlsplit(os.environ.get("OPENMERGE_TEST_DATABASE_URL", ""))
+        if database.hostname != "localhost" or database.port != 54329:
+            raise v.VerifyError("set OPENMERGE_TEST_DATABASE_URL to the shared test Postgres on localhost:54329")
         result["baseline"] = v.check_tree("baseline", args.baseline, "051798c98e4bbaac235771be3b1d7d85e8cbbcc9")
         result["candidate"] = v.check_tree("candidate", root)
         result["environment"] = {"GOROOT": toolchain, "PATH_prefix": toolchain + "/bin", "database": "localhost:54329, isolated test schemas"}

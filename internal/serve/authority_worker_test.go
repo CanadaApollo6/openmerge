@@ -24,7 +24,12 @@ import (
 // 9c's responsibility; these tests drive the worker policy and projection seam.
 func authorityWorkerFixture(t *testing.T) (*Server, *worker, *fake.Forge, *int) {
 	t.Helper()
-	s, w, f, _ := fixture(t, repositoryConfig)
+	return authorityWorkerWithStore(t, database(t))
+}
+
+func authorityWorkerWithStore(t *testing.T, db *store.Store) (*Server, *worker, *fake.Forge, *int) {
+	t.Helper()
+	s, w, f, _ := fixtureWithStore(t, repositoryConfig, db)
 	w.Driver = f
 	f.SetIdentity(forge.UserIdentity{ID: 12, Login: "contributor", Kind: forge.UserAccount})
 	f.SetIdentity(forge.UserIdentity{ID: 21, Login: "writer", Kind: forge.UserAccount})

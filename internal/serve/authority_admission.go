@@ -31,7 +31,7 @@ func (s *Server) readAuthorityAdmission(ctx, parent context.Context, w *worker, 
 	ctx = forge.WithRequestClass(ctx, forge.RulesRequest)
 	if _, err := s.observeAuthorityRead(ctx, parent, w, request); err != nil {
 		var readFailure *authorityObservationReadFailure
-		if errors.As(err, &readFailure) {
+		if parent.Err() == nil && errors.As(err, &readFailure) {
 			s.scheduleAuthorityRetry(w, readFailure.err)
 		}
 		return queue.State{}, fmt.Errorf("authority admission read failed: %w", err)
