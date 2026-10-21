@@ -259,7 +259,9 @@ func (s *Server) eligible(ctx context.Context, w *worker, pr forge.PullRequest) 
 	if hasChecks(w.cfg.EnterWhen) {
 		var err error
 		checks, err = w.Driver.CheckRuns(ctx, w.repo(), pr.HeadSHA)
-		w.publishProgress(time.Now())
+		if err == nil {
+			w.publishProgress(time.Now())
+		}
 		if err != nil {
 			return false, err
 		}

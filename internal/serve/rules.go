@@ -43,7 +43,9 @@ func (s *Server) repositoryRules(ctx context.Context, w *worker) error {
 		}
 		readCtx, cancel := context.WithTimeout(ctx, s.options.ActionTimeout)
 		problems, warnings, readErr := check.read(readCtx)
-		w.publishProgress(time.Now())
+		if readErr == nil {
+			w.publishProgress(time.Now())
+		}
 		cancel()
 		if ctx.Err() != nil {
 			return ctx.Err()

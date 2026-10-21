@@ -489,6 +489,7 @@ func (w *worker) plannerConfig(interval time.Duration) queue.Config {
 }
 
 func (s *Server) cycle(ctx context.Context, w *worker) (result error) {
+	ctx = forge.WithProgressHook(ctx, func() { w.publishProgress(time.Now()) })
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	reconciled := false

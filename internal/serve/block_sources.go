@@ -65,7 +65,9 @@ func (s *Server) recheckCheckSources(ctx context.Context, w *worker) error {
 	}
 	read := func(sha string, ref string) error {
 		checks, err := w.Driver.CheckRuns(ctx, w.repo(), sha)
-		w.publishProgress(time.Now())
+		if err == nil {
+			w.publishProgress(time.Now())
+		}
 		if err != nil {
 			return err
 		}

@@ -32,12 +32,16 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 		return err
 	}
 	branch, loadErr := w.Driver.DefaultBranch(ctx, w.repo())
-	w.publishProgress(time.Now())
+	if loadErr == nil {
+		w.publishProgress(time.Now())
+	}
 	if loadErr == nil && branch == "" {
 		loadErr = errors.New("repository default branch is missing")
 	}
 	tip, baseErr := w.Git.ReadRef(ctx, w.repo(), w.Key.BaseBranch)
-	w.publishProgress(time.Now())
+	if baseErr == nil {
+		w.publishProgress(time.Now())
+	}
 	if baseErr != nil {
 		loadErr = errors.Join(loadErr, fmt.Errorf("read queue base %q (default branch %q): %w", w.Key.BaseBranch, branch, baseErr))
 	}
@@ -51,7 +55,9 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 			configTip = tip
 		} else {
 			configTip, loadErr = w.Git.ReadRef(ctx, w.repo(), branch)
-			w.publishProgress(time.Now())
+			if loadErr == nil {
+				w.publishProgress(time.Now())
+			}
 		}
 	}
 	if loadErr == nil && (configTip != w.configTip || branch != w.configBranch) {
@@ -175,7 +181,7 @@ func stageADefiniteIdentityFailure(err error) bool {
 func (s *Server) repositoryConfig(ctx context.Context, target Target, tip string, w *worker) (config.Config, error) {
 	_, data, err := config.Find(func(path string) ([]byte, bool, error) {
 		data, err := target.Driver.ReadFile(ctx, forge.RepoRef{Path: target.Key.Repository}, tip, path)
-		if w != nil {
+		if w != nil && err == nil {
 			w.publishProgress(time.Now())
 		}
 		if errors.Is(err, forge.ErrFileNotFound) {
@@ -271,7 +277,9 @@ func (s *Server) reconcile(ctx context.Context, w *worker, force bool) error {
 	}
 	force = force || state.SourceBlocked(queue.CheckSources)
 	summaries, err := w.Driver.ListOpenPullRequests(ctx, w.repo(), w.Key.BaseBranch)
-	w.publishProgress(time.Now())
+	if err == nil {
+		w.publishProgress(time.Now())
+	}
 	if err != nil {
 		return err
 	}
@@ -348,7 +356,9 @@ func (s *Server) observeWithClassification(ctx context.Context, w *worker, numbe
 		observedAt = time.Now().UTC()
 	}
 	pr, err := read(ctx, w.repo(), number)
-	w.publishProgress(time.Now())
+	if err == nil {
+		w.publishProgress(time.Now())
+	}
 	if err != nil {
 		return pr, err
 	}
@@ -358,7 +368,9 @@ func (s *Server) observeWithClassification(ctx context.Context, w *worker, numbe
 				continue
 			}
 			allowed, err := w.Driver.CanWrite(ctx, w.repo(), approval.User)
-			w.publishProgress(time.Now())
+			if err == nil {
+				w.publishProgress(time.Now())
+			}
 			if err != nil {
 				return pr, err
 			}
@@ -453,7 +465,9 @@ func (s *Server) commands(ctx context.Context, w *worker, number int) error {
 		}
 	}
 	comments, err := w.Driver.ListComments(ctx, w.repo(), number, since)
-	w.publishProgress(time.Now())
+	if err == nil {
+		w.publishProgress(time.Now())
+	}
 	if err != nil {
 		return err
 	}

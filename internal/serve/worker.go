@@ -605,7 +605,9 @@ func (w *worker) waitingStatus() forge.Status {
 
 func (s *Server) reportWaiting(ctx context.Context, w *worker) error {
 	summaries, err := w.Driver.ListOpenPullRequests(ctx, w.repo(), w.Key.BaseBranch)
-	w.publishProgress(time.Now())
+	if err == nil {
+		w.publishProgress(time.Now())
+	}
 	if err != nil {
 		return err
 	}
@@ -640,7 +642,9 @@ func (s *Server) waitingCommands(ctx context.Context, w *worker, number int) err
 		}
 	}
 	comments, err := w.Driver.ListComments(ctx, w.repo(), number, since)
-	w.publishProgress(time.Now())
+	if err == nil {
+		w.publishProgress(time.Now())
+	}
 	if err != nil {
 		return err
 	}
@@ -668,7 +672,9 @@ func (s *Server) ignoreWaitingCommand(ctx context.Context, w *worker, number int
 		return err
 	}
 	allowed, err := w.Driver.CanWrite(ctx, w.repo(), comment.Author)
-	w.publishProgress(time.Now())
+	if err == nil {
+		w.publishProgress(time.Now())
+	}
 	if err != nil {
 		return err
 	}

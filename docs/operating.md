@@ -1781,6 +1781,17 @@ range 1s–30m, further constrained by the action budget). Startup rejects any l
 below the action timeout + 30s Git cache maintenance + 10s completion write +
 configured overdue grace. The CLI and embedded servers enforce the same rule;
 embedded servers with longer action timeouts must explicitly extend the limit.
+Upgrade note: an explicitly configured `150s` stall limit now fails startup with
+standard action/grace settings. Remove that override to use `4m`, or configure a
+limit that covers the validated action, maintenance, completion and grace budget.
+
+GitHub progress advances after each successful HTTP response is fully consumed,
+including individual pagination pages and PR sub-reads. Failed HTTP responses,
+partial bodies and hung requests do not count. Cold-cache Git clone/fetch inside
+ReadRef and the one-time fence initialization push still have no intermediate
+progress notifications; this startup/first-cycle exposure can report overdue
+while that single Git operation runs beyond the stall limit.
+
 A 1h action timeout is incompatible with the 30m stall-limit ceiling. The default
 2m action timeout and 30s grace require 3m10s, leaving 50s margin under 4m. `--health-max-cycle-duration` / `OPENMERGE_HEALTH_MAX_CYCLE_DURATION`
 remains an absolute 3h backstop (range 2m–6h). A progressing cycle may run past

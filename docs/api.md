@@ -625,7 +625,12 @@ servers reject incompatible settings; longer embedded action timeouts require an
 explicit compatible stall limit. The default 2m timeout requires 3m10s including
 default grace, leaving 50s margin. Slot acquisition seeds progress; each completed
 reconciliation source read, observation write, check-report write, action (after
-its completion write) and turn advances it. Hung units cannot publish progress. The maximum cycle
+its completion write) and turn advances it. GitHub also publishes after each
+successful HTTP response body reaches EOF, so every pagination page and PR
+sub-read counts independently. Failed responses, incomplete bodies and hung
+requests cannot publish request progress. Read-unit progress likewise requires
+success; completed actions and turns still record their completion independently.
+The maximum cycle
 duration remains an absolute backstop, even with recent progress. This permits a
 hot turn's 64 chained actions while detecting a hung action promptly. Cycle end
 publishes the next effective start deadline. Slot starvation remains detectable,
