@@ -1,0 +1,301 @@
+{
+  "commands": [
+    {
+      "name": "baseline-contracts",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/adr0008-9a-verification/baseline-contracts/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/adr0008-9a-verification/baseline-contracts/tmp ADR_DIFF=/home/riels/.cache/adr0008-9a-verification/baseline/contracts.json go test -overlay /home/riels/.cache/adr0008-9a-verification/baseline/overlay.json ./internal/queue -run '^TestADR00081Differential$' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/adr0008-9a-verification/baseline-contracts"
+    },
+    {
+      "name": "candidate-contracts",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/adr0008-9a-verification/candidate-contracts/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/adr0008-9a-verification/candidate-contracts/tmp ADR_DIFF=/home/riels/.cache/adr0008-9a-verification/candidate/contracts.json go test -overlay /home/riels/.cache/adr0008-9a-verification/candidate/overlay.json ./internal/queue -run '^TestADR00081Differential$' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/adr0008-9a-verification/candidate-contracts"
+    },
+    {
+      "name": "strict-replay",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=6GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/adr0008-9a-verification/strict-replay/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/adr0008-9a-verification/strict-replay/tmp /home/riels/.local/share/mise/installs/python/latest/bin/python3 /home/riels/.t3/worktrees/openmerge/t3-0579273f/scripts/check-live-journal-replay.py --baseline /home/riels/.cache/adr0008-9a-main-7207a72 --candidate /home/riels/.t3/worktrees/openmerge/t3-0579273f --events /home/riels/.cache/om-pr72-fix1-input/events.jsonl --queues /home/riels/.cache/om-pr72-fix1-input/queues.jsonl --strict-state --out /home/riels/.cache/adr0008-9a-verification/replay.json",
+      "exit": 0,
+      "logs": "/home/riels/.cache/adr0008-9a-verification/strict-replay"
+    },
+    {
+      "name": "baseline-simulator",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/adr0008-9a-verification/baseline-simulator/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/adr0008-9a-verification/baseline-simulator/tmp make test-sim-exits",
+      "exit": 0,
+      "logs": "/home/riels/.cache/adr0008-9a-verification/baseline-simulator"
+    },
+    {
+      "name": "candidate-simulator",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/adr0008-9a-verification/candidate-simulator/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/adr0008-9a-verification/candidate-simulator/tmp make test-sim-exits",
+      "exit": 0,
+      "logs": "/home/riels/.cache/adr0008-9a-verification/candidate-simulator"
+    }
+  ],
+  "trial_class": "Hold",
+  "offline_only": true,
+  "toolchain": "/home/riels/.local/share/mise/installs/go/1.27.3",
+  "baseline": "7207a72a699185058d2f2afa2cd61738b0fbcd75",
+  "candidate": "c8dbebb23f1e898ce8c8d00bf54fa678433f8f54",
+  "exports": {
+    "events": {
+      "path": "/home/riels/.cache/om-pr72-fix1-input/events.jsonl",
+      "sha256": "9c8f78f3e967c7cb030948cfc9871cc67a45da06f80b12f27d1c55d09ba8accf",
+      "rows": 2158,
+      "max_event_id": 2158
+    },
+    "queues": {
+      "path": "/home/riels/.cache/om-pr72-fix1-input/queues.jsonl",
+      "sha256": "418f025a0e3c8792321b6d71d297f17fff1adf48cb616c8f4fcb774163696886",
+      "rows": 1
+    }
+  },
+  "wire": {
+    "identical": true,
+    "legacy_fixtures": 104,
+    "legacy_registry_fixtures": 90,
+    "legacy_sha256": "d9fc673fbd7ec5410cf1491778157508533ca5c804932caaecb39204f2ae2776",
+    "new_fixtures": []
+  },
+  "contracts": {
+    "identical": true,
+    "baseline_sha256": "88e727ebe7ea5b570f352c5c661c2cd1642c1b5120f3d3ed086993f4dd00362a",
+    "candidate_sha256": "88e727ebe7ea5b570f352c5c661c2cd1642c1b5120f3d3ed086993f4dd00362a",
+    "baseline_checkpoints": 90,
+    "candidate_checkpoints": 90,
+    "first_difference_index": null,
+    "numeric_by_case_depth": {
+      "approval/depth1": {
+        "baseline": {
+          "checkpoints": 13,
+          "plan_count": 6,
+          "snapshot_bytes": 80375,
+          "plan_bytes": 2123
+        },
+        "candidate": {
+          "checkpoints": 13,
+          "plan_count": 6,
+          "snapshot_bytes": 80375,
+          "plan_bytes": 2123
+        },
+        "delta_checkpoints": 0,
+        "delta_plan_count": 0,
+        "delta_snapshot_bytes": 0,
+        "delta_plan_bytes": 0
+      },
+      "approval/depth4": {
+        "baseline": {
+          "checkpoints": 13,
+          "plan_count": 6,
+          "snapshot_bytes": 80375,
+          "plan_bytes": 2182
+        },
+        "candidate": {
+          "checkpoints": 13,
+          "plan_count": 6,
+          "snapshot_bytes": 80375,
+          "plan_bytes": 2182
+        },
+        "delta_checkpoints": 0,
+        "delta_plan_count": 0,
+        "delta_snapshot_bytes": 0,
+        "delta_plan_bytes": 0
+      },
+      "legacy-block/depth1": {
+        "baseline": {
+          "checkpoints": 32,
+          "plan_count": 37,
+          "snapshot_bytes": 51904,
+          "plan_bytes": 9634
+        },
+        "candidate": {
+          "checkpoints": 32,
+          "plan_count": 37,
+          "snapshot_bytes": 51904,
+          "plan_bytes": 9634
+        },
+        "delta_checkpoints": 0,
+        "delta_plan_count": 0,
+        "delta_snapshot_bytes": 0,
+        "delta_plan_bytes": 0
+      },
+      "legacy-block/depth4": {
+        "baseline": {
+          "checkpoints": 32,
+          "plan_count": 37,
+          "snapshot_bytes": 51904,
+          "plan_bytes": 9693
+        },
+        "candidate": {
+          "checkpoints": 32,
+          "plan_count": 37,
+          "snapshot_bytes": 51904,
+          "plan_bytes": 9693
+        },
+        "delta_checkpoints": 0,
+        "delta_plan_count": 0,
+        "delta_snapshot_bytes": 0,
+        "delta_plan_bytes": 0
+      }
+    },
+    "first_difference": null
+  },
+  "replay": {
+    "actions_identical": "2159/2159",
+    "adapter": "wire-v1 / queue.Apply / serve.worker.plannerConfig / queue.NextWake / reflection",
+    "baseline_clean": true,
+    "baseline_commit": "7207a72a699185058d2f2afa2cd61738b0fbcd75",
+    "boundary_cap_hit": false,
+    "boundary_cap_per_checkpoint": 128,
+    "boundary_checkpoints_identical": "2159/2159",
+    "boundary_probe_count": 8676,
+    "boundary_probe_max": 12,
+    "candidate_clean": true,
+    "candidate_commit": "c8dbebb23f1e898ce8c8d00bf54fa678433f8f54",
+    "clock": "event recorded_at",
+    "config_sha256": "3efb43bbc05f5f0b03c005331f79064829fa018e9f6446224682e00dd357fead",
+    "deadline_enumeration_clock": "zero time (includes elapsed timers)",
+    "default_branch": "main",
+    "delete_head_branch_default": true,
+    "derived_determinism": "PASS",
+    "derived_nonempty_checkpoints": {
+      "BatchRevisions": 1649,
+      "ChangeRevisions": 2158
+    },
+    "events": 2158,
+    "exceptions": {
+      "approvalFacts": {
+        "reason": "PR #71 adds dormant approval evidence. Permit only the absent-to-nil field; populated evidence requires a separate activation review.",
+        "reference": "PR #71; Stage A 6 inertness"
+      },
+      "approvalWaits": {
+        "reason": "Stage A 8 adds dormant approval waits. Only an absent-to-nil map is allowed; populated waits fail legacy comparison.",
+        "reference": "ADR 0007 PR 8 (Hold)"
+      },
+      "landingDecisions": {
+        "reason": "Stage A 9 adds frozen decision evidence; only an absent-to-nil map is permitted for legacy journals.",
+        "reference": "ADR 0007 PR 9 (Hold)"
+      },
+      "outsidePushes": {
+        "reason": "PR #53 adds the audit-only outside-push projection; the pre-Stage-A export has none. Permit only its nil/zero state; any recorded outside push fails.",
+        "reference": "PR #53; ADR 0007 outside-push isolation"
+      },
+      "receipts": {
+        "reason": "Stage A 7a adds dormant receipt acceptance/rejection evidence; only a nil map is allowed for a legacy deployment pair.",
+        "reference": "ADR 0007 PR 7a"
+      }
+    },
+    "exports": {
+      "/home/riels/.cache/om-pr72-fix1-input/events.jsonl": "9c8f78f3e967c7cb030948cfc9871cc67a45da06f80b12f27d1c55d09ba8accf",
+      "/home/riels/.cache/om-pr72-fix1-input/queues.jsonl": "418f025a0e3c8792321b6d71d297f17fff1adf48cb616c8f4fcb774163696886"
+    },
+    "first_action_divergence": null,
+    "first_boundary_divergence": null,
+    "first_derived_divergence": null,
+    "first_difference": null,
+    "first_state_divergence": null,
+    "gate2": "PASS",
+    "gate4": "PASS",
+    "legacy_state_identical": "2159/2159",
+    "non_allowlisted_fields": [],
+    "poll_interval_seconds": 60,
+    "queues": 1,
+    "self_test": "PASS",
+    "self_test_exit_status": 0,
+    "self_test_output": "......................\n----------------------------------------------------------------------\nRan 22 tests in 30.147s\n\nOK",
+    "snapshot_hashes_identical": "2159/2159",
+    "state_identical": "2159/2159",
+    "state_mode": "strict",
+    "streams": {
+      "baseline": {
+        "checkpoints": 2159,
+        "path": "/home/riels/.cache/adr0008-9a-verification/replay-streams-ba7ls9q_/baseline.jsonl",
+        "policies": [
+          {
+            "journal_digest": "e58c893b8b3af7685dc07a086824b3bc1fc044456083d193f9566f8387cb58fc",
+            "kind": "policy",
+            "queue_id": 1,
+            "recomputed_digest": "e58c893b8b3af7685dc07a086824b3bc1fc044456083d193f9566f8387cb58fc",
+            "would_emit_config_applied": false
+          }
+        ],
+        "records": 2160,
+        "sha256": "1fe079295539183b7008e70b940c7f71d45bd4aa4e443c8c1e581fa10d31051a"
+      },
+      "candidate": {
+        "checkpoints": 2159,
+        "path": "/home/riels/.cache/adr0008-9a-verification/replay-streams-ba7ls9q_/candidate.jsonl",
+        "policies": [
+          {
+            "journal_digest": "e58c893b8b3af7685dc07a086824b3bc1fc044456083d193f9566f8387cb58fc",
+            "kind": "policy",
+            "queue_id": 1,
+            "recomputed_digest": "e58c893b8b3af7685dc07a086824b3bc1fc044456083d193f9566f8387cb58fc",
+            "would_emit_config_applied": false
+          }
+        ],
+        "records": 2160,
+        "sha256": "1fe079295539183b7008e70b940c7f71d45bd4aa4e443c8c1e581fa10d31051a"
+      },
+      "candidate-repeat": {
+        "checkpoints": 2159,
+        "path": "/home/riels/.cache/adr0008-9a-verification/replay-streams-ba7ls9q_/candidate-repeat.jsonl",
+        "policies": [
+          {
+            "journal_digest": "e58c893b8b3af7685dc07a086824b3bc1fc044456083d193f9566f8387cb58fc",
+            "kind": "policy",
+            "queue_id": 1,
+            "recomputed_digest": "e58c893b8b3af7685dc07a086824b3bc1fc044456083d193f9566f8387cb58fc",
+            "would_emit_config_applied": false
+          }
+        ],
+        "records": 2160,
+        "sha256": "1fe079295539183b7008e70b940c7f71d45bd4aa4e443c8c1e581fa10d31051a"
+      }
+    },
+    "structural_state_identical": "2159/2159",
+    "tool_sha256": "9e50209d7a39638b71e96c96942d491ba289e4fedda2d2d2136b8a5ae810ec28",
+    "verdict": "PASS",
+    "watermark": {
+      "event_rows": 2158,
+      "latest_config_applied": [
+        {
+          "digest": "e58c893b8b3af7685dc07a086824b3bc1fc044456083d193f9566f8387cb58fc",
+          "event_id": 1287,
+          "queue_id": 1
+        }
+      ],
+      "max_event_id": 2158,
+      "max_recorded_at": "2026-10-18T01:08:55.427607-04:00",
+      "queue_rows": 1
+    }
+  },
+  "simulator": {
+    "baseline_exit": 0,
+    "candidate_exit": 0,
+    "identical": true,
+    "blocks": 146,
+    "normalized_sha256": "a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7"
+  },
+  "verdict": "PASS",
+  "verified_at_utc": "2026-10-21T06:50:13.520039+00:00",
+  "make_check": {
+    "exit": 0,
+    "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB OPENMERGE_TEST_DATABASE_URL='postgres://postgres:openmerge@localhost:54329/postgres?sslmode=disable' make check",
+    "log": "make-check.log"
+  },
+  "focused": {
+    "exit": 0,
+    "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB OPENMERGE_TEST_DATABASE_URL='postgres://postgres:openmerge@localhost:54329/postgres?sslmode=disable' go test ./internal/config ./internal/brief ./internal/forge/github ./internal/queue ./internal/store -run 'TestAuthority|TestAtomicOwner|TestConfigValidateAuthority|TestSchemaKeysMatchLoader|TestSetupVerify' -count=1",
+    "log": "focused.log"
+  },
+  "environment": {
+    "GOROOT": "/home/riels/.local/share/mise/installs/go/1.27.3",
+    "PATH_prefix": "/home/riels/.local/share/mise/installs/go/1.27.3/bin",
+    "database": "localhost:54329, isolated test schemas"
+  },
+  "binary": {
+    "path": "bin/openmerge",
+    "revision": "c8dbebb23f1e898ce8c8d00bf54fa678433f8f54",
+    "sha256": "23bc7ff22b31b89c169018343252571c124cf53c00272c59b2aa42d5545b7e62"
+  }
+}

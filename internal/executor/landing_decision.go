@@ -37,7 +37,7 @@ type LandingDecisionGate struct {
 }
 
 func (g *LandingDecisionGate) start(ctx context.Context, land queue.Land, start queue.LandingStarted, now func() time.Time, checks []forge.CheckRun, checksAt time.Time) error {
-	if g.Policy.Approvals == nil || g.Load == nil || (g.ReadInputs == nil && g.ReadInputsWithChecks == nil) || g.ReadTestedMessages == nil || g.Commit == nil {
+	if !g.Policy.Enabled() || g.Load == nil || (g.ReadInputs == nil && g.ReadInputsWithChecks == nil) || g.ReadTestedMessages == nil || g.Commit == nil {
 		return fmt.Errorf("incomplete landing decision gate")
 	}
 	state, err := g.Load(ctx)

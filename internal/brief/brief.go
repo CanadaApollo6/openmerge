@@ -70,7 +70,7 @@ func BuildRecorded(policy cp.Policy, in cp.Input, title, body string) (Fact, err
 		return Fact{}, err
 	}
 	c := in.Classification
-	f := Fact{Classification: &c, Intent: &Intent{true, cp.NormalizeIntent(title), cp.NormalizeIntent(body), cp.IntentDigest(title, body)}, ApprovalsRequired: policy.Approvals != nil}
+	f := Fact{Classification: &c, Intent: &Intent{true, cp.NormalizeIntent(title), cp.NormalizeIntent(body), cp.IntentDigest(title, body)}, ApprovalsRequired: policy.Enabled()}
 	in.Current = receiptBasis(f)
 	f.Obligations = obligations(cp.Evaluate(policy, in).Requirements)
 	return f, nil
@@ -80,19 +80,21 @@ func validateBuildInputs(policy cp.Policy, in cp.Input) error {
 	if !in.Classification.Inputs.Recorded() {
 		return fmt.Errorf("brief classification evidence not recorded")
 	}
-	if policy.Approvals == nil {
+	if !policy.Enabled() {
 		return nil
 	}
 	a := policy.Approvals
-	if err := a.Default.Validate(); err != nil || a.Default.Selector == cp.None || a.Default.Selector == cp.CodeOwners {
-		return fmt.Errorf("invalid approvals.default")
-	}
-	for i, rule := range a.Rules {
-		if err := rule.Require.Validate(); err != nil {
-			return fmt.Errorf("invalid rule requirement at %d", i)
+	if a != nil {
+		if err := a.Default.Validate(); err != nil || a.Default.Selector == cp.None || a.Default.Selector == cp.CodeOwners {
+			return fmt.Errorf("invalid approvals.default")
 		}
-		if _, err := cp.MatchRule(rule.When, in.Classification, in.AuthorKind); err != nil {
-			return fmt.Errorf("invalid rule match at %d: %w", i, err)
+		for i, rule := range a.Rules {
+			if err := rule.Require.Validate(); err != nil {
+				return fmt.Errorf("invalid rule requirement at %d", i)
+			}
+			if _, err := cp.MatchRule(rule.When, in.Classification, in.AuthorKind); err != nil {
+				return fmt.Errorf("invalid rule match at %d: %w", i, err)
+			}
 		}
 	}
 	c, current := in.Classification.Inputs, in.Current

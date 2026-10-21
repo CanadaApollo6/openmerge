@@ -21,7 +21,7 @@ func rollbackOptions(t *testing.T, f *apiFixture) RulesOptions {
 	opts.Apply = false
 	opts.Backup = ""
 	opts.RuntimeDriver = f.driver
-	must(t, os.WriteFile(opts.Config, []byte(strings.Replace(strings.Replace(setupCandidate, "policy_authority: openmerge\n", "", 1), "break_glass: {repository_admin: true}\n", "", 1)+"- name: release\n  base: release/**\n  merge_method: merge\n  merge_when: [check-success = ci]\n"), 0600))
+	must(t, os.WriteFile(opts.Config, []byte(strings.Replace(strings.Replace(setupCandidate, "policy_authority: openmerge\n", "", 1), "break_glass: {team: acme/owners}\n", "", 1)+"- name: release\n  base: release/**\n  merge_method: merge\n  merge_when: [check-success = ci]\n"), 0600))
 	return opts
 }
 

@@ -11,8 +11,8 @@ import (
 )
 
 // AuthorityCandidate is the future authority configuration paired with the
-// current public configuration. It is intentionally candidate-only: Load and
-// the published schema continue rejecting these keys until ADR 0008 PR 9.
+// public GitHub configuration. OpenMerge remains candidate-only until the
+// complete runtime gate is wired in ADR 0008 PR 9c.
 type AuthorityCandidate struct {
 	Config    Config
 	Authority authority.Declaration
@@ -183,11 +183,7 @@ func parseAuthorityActor(node *yaml.Node) (authority.Actor, Errors) {
 			}
 			actor.Team = value.Value
 		case "repository_admin":
-			if value.Kind != yaml.ScalarNode || value.ShortTag() != "!!bool" || value.Value != "true" {
-				diagnostics = append(diagnostics, Diagnostic{Line: max(1, value.Line), Path: path, Message: "must be true"})
-				continue
-			}
-			actor.RepositoryAdmin = true
+			diagnostics = append(diagnostics, Diagnostic{Line: max(1, value.Line), Path: path, Message: "break_glass requires a dedicated team; repository_admin is not supported"})
 		default:
 			diagnostics = append(diagnostics, Diagnostic{Line: max(1, key.Line), Path: path, Message: fmt.Sprintf("unknown key %q", key.Value)})
 		}
