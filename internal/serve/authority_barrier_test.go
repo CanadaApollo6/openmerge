@@ -96,6 +96,11 @@ func TestAuthorityBarrierJournalCannotInstallRuntimeAuthority(t *testing.T) {
 			if w.AuthorityRequired || w.PrepareAuthorityPush != nil || w.PinAuthorityPush != nil || w.ObserveAuthorityPush != nil || w.stageA != nil {
 				t.Fatal("journal data enabled runtime authority")
 			}
+			// Even explicitly invoking the new internal caller cannot use this
+			// candidate/draft/pin as its opt-in. It rejects before any I/O.
+			if receipt, err := s.activateAuthority(t.Context(), w, authorityActivation{}); err == nil || receipt != (store.AuthorityAdoptionReceipt{}) {
+				t.Fatal("journal data enabled internal activation", receipt, err)
+			}
 			if !reflect.DeepEqual(legacy, w.plannerConfig(s.options.PollInterval)) {
 				t.Fatal("journal data changed github planner configuration")
 			}

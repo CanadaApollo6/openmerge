@@ -336,18 +336,27 @@ func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Conf
 		},
 	}
 	if recordChecks {
-		gate.ValidateChecks = func(ctx context.Context, land queue.Land, checks []forge.CheckRun, at time.Time, attempt string) error {
-			state, err := gate.Load(ctx)
+		gate.ValidateChecks = func(_ context.Context, land queue.Land, checks []forge.CheckRun, at time.Time, attempt string) error {
+			// Preflight validates only local check/policy input shape and budgets.
+			// It must not read approvals, journal stances, or acquire an approval
+			// read on failing/pending CI. Final admission still acquires fresh
+			// approvals and rebuilds the complete evidence, including review values.
+			builder, err := landingCheckEvidence(basis, policy.Digest, land, checks, at, attempt)
 			if err != nil {
 				return err
 			}
-			_, err = gate.ReadInputsWithChecks(ctx, land, state, checks, at, attempt)
-			// Bounded unmet conditions retain the executor's existing retry and
-			// approval handling. Permanent evidence failures take precedence.
-			if errors.Is(err, executor.ErrChecksNotSuccessful) {
-				return nil
+			for _, pin := range land.PRs {
+				values, err := policyValues(w.cfg.MergeWhen, w.prs[pin.PR], checks)
+				if err != nil {
+					return err
+				}
+				// Reviews are unknown here, never an authorization result.
+				delete(values, reviewAttribute)
+				if err := builder.RecordMember(pin.PR, pin.HeadSHA, w.cfg.MergeWhen, values); err != nil {
+					return err
+				}
 			}
-			return err
+			return nil
 		}
 	} else {
 		read := gate.ReadInputsWithChecks

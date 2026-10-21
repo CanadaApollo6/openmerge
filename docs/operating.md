@@ -1510,6 +1510,15 @@ a stuck history read delays only audits. Outstanding landing attempts must settl
 in the shared journal before their observations can be classified. The durable
 audit cursor and pending transitions survive restart; no operator action is needed
 to retry a delayed audit. Unreadable ancestry or history appears as permanently unknown, without retry.
+An unusable audit cursor is derived data: the worker rebuilds it from immutable
+journal events in bounded passes and replaces the original bytes only after a
+successful compare-and-swap. This also overwrites an unsupported future-version
+cursor, for example after a binary downgrade. The reset warning is logged only
+after that replacement commits; failed repairs and competing CAS attempts do not
+repeat it each poll. Existing audit receipts remain deduplicated. This cache
+fallback does not waive journal/snapshot compatibility or backup requirements for
+a binary downgrade.
+
 An attempt that never settles can defer audits indefinitely and grow the persisted
 pending list without a bound. History initialization and enrichment make zero
 installation-authenticated REST/GraphQL requests. App-JWT token minting is
