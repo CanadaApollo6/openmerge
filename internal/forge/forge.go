@@ -96,6 +96,9 @@ const (
 // Attempt together with ID to identify a run when Attempt is known.
 // Sources identify independent producers whose IDs cannot be compared.
 type CheckRun struct {
+	// AttemptInferred distinguishes the legacy default of one from a provider
+	// observation. It preserves retry behavior but must export as unavailable.
+	AttemptInferred bool
 	// RetryPermissionDenied marks an un-enriched read that cannot verify a requested rerun.
 	RetryPermissionDenied bool
 	RetryUnsupported      string

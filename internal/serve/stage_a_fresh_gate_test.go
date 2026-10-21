@@ -88,7 +88,7 @@ func TestStageAFreshNegativeStancesBeforeStart(t *testing.T) {
 					}
 					f.SetNativeReviews(repo, 1, native)
 				}
-				gate := s.stageAGate(w, claim, cfg)
+				gate := s.stageAGate(w, claim, cfg, queue.State{})
 				switch timing {
 				case "final-read":
 					load := gate.Load

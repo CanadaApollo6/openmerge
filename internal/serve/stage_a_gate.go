@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/executor"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
@@ -226,15 +227,18 @@ func testedMemberCommits(ctx context.Context, w *worker, land queue.Land, histor
 	}
 }
 
-func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Config) *executor.LandingDecisionGate {
+func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Config, basis queue.State) *executor.LandingDecisionGate {
 	policy := w.stageA.policy
 	var acquisition *store.ApprovalRead
-	return &executor.LandingDecisionGate{Policy: policy, ReloadAfterInputs: true,
+	var checkEvidence *queue.LandingChecksRecorded
+	pin := basis.AuthorityPin()
+	recordChecks := pin != nil && pin.Authority == "openmerge"
+	gate := &executor.LandingDecisionGate{Policy: policy, ReloadAfterInputs: true,
 		Load: func(ctx context.Context) (queue.State, error) {
 			state, _, err := s.store.Load(ctx, w.id)
 			return state, err
 		},
-		ReadInputs: func(ctx context.Context, land queue.Land, state queue.State) ([]queue.ApprovalEligibilityObserved, error) {
+		ReadInputsWithChecks: func(ctx context.Context, land queue.Land, state queue.State, checks []forge.CheckRun, checksAt time.Time) ([]queue.ApprovalEligibilityObserved, error) {
 			if w.stageA.policy.Digest != policy.Digest {
 				return nil, store.ErrLandingDecisionStale
 			}
@@ -260,10 +264,15 @@ func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Conf
 			if err != nil {
 				return nil, err
 			}
-			checks, err := w.Driver.CheckRuns(ctx, w.repo(), land.TestedSHA)
-			if err != nil {
-				return nil, err
+			// Authority uses the executor's exact retry-enriched, provenance-checked
+			// read. Legacy approval queues retain their existing fresh-read path.
+			if !recordChecks {
+				checks, err = w.Driver.CheckRuns(ctx, w.repo(), land.TestedSHA)
+				if err != nil {
+					return nil, err
+				}
 			}
+			checkMembers := []queue.LandingCheckMember{}
 			for i, pin := range land.PRs {
 				evidence, err := stageAReviewEvidence(state, policy, fresh[i])
 				if err != nil {
@@ -277,6 +286,11 @@ func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Conf
 				if !met {
 					return nil, executor.ErrChecksNotSuccessful
 				}
+				checkMembers = append(checkMembers, queue.LandingCheckMember{PR: pin.PR, HeadSHA: pin.HeadSHA, Conditions: w.cfg.MergeWhen.Record(values)})
+			}
+			if recordChecks {
+				e := landingCheckEvidence(basis, policy.Digest, land, checks, checkMembers, checksAt)
+				checkEvidence = &e
 			}
 			return fresh, nil
 		},
@@ -284,6 +298,13 @@ func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Conf
 		Commit: func(ctx context.Context, fresh []queue.ApprovalEligibilityObserved, decisions []queue.LandingDecisionRecorded, start queue.LandingStarted) error {
 			if acquisition == nil {
 				return store.ErrLandingDecisionStale
+			}
+			if recordChecks {
+				if checkEvidence == nil {
+					return store.ErrLandingDecisionStale
+				}
+				checkEvidence.AttemptID = start.AttemptID
+				return s.store.StartLanding(acquisition.Context(ctx), claim, cfg, policy, fresh, decisions, start, *checkEvidence)
 			}
 			return s.store.StartLanding(acquisition.Context(ctx), claim, cfg, policy, fresh, decisions, start)
 		},
@@ -294,6 +315,14 @@ func (s *Server) stageAGate(w *worker, claim store.ClaimedAction, cfg queue.Conf
 			return s.store.RejectLanding(acquisition.Context(ctx), claim, cfg, policy, fresh, expected, start, rejection)
 		},
 	}
+	if !recordChecks {
+		read := gate.ReadInputsWithChecks
+		gate.ReadInputs = func(ctx context.Context, land queue.Land, state queue.State) ([]queue.ApprovalEligibilityObserved, error) {
+			return read(ctx, land, state, nil, time.Time{})
+		}
+		gate.ReadInputsWithChecks = nil
+	}
+	return gate
 }
 
 // stageACheckPolicy consumes approval-only waits BEFORE executor CI timers,

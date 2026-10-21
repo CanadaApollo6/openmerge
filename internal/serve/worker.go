@@ -139,7 +139,7 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 				return w.Git.IsAncestor(actionCtx, w.repo(), ancestor, descendant)
 			})
 		}
-		x.LandingDecisions = s.stageAGate(w, claim, cfg)
+		x.LandingDecisions = s.stageAGate(w, claim, cfg, state)
 	}
 	x.Speculative = cfg.MaxDepth() > 1
 	x.ChecksRetryFailed = cfg.RetryLimit()

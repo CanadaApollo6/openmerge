@@ -20,6 +20,14 @@ func (LandingDecisionRequiredError) Error() string {
 	return "approval policy requires landing decision gate"
 }
 
+// LandingChecksRequiredError identifies an authority start bypassing the atomic
+// check-evidence seam. Like the approval equivalent, this is a wiring failure.
+type LandingChecksRequiredError struct{}
+
+func (LandingChecksRequiredError) Error() string {
+	return "authority policy requires atomic landing check evidence"
+}
+
 // ErrLandingDecisionStale asks the worker to re-plan after an atomic rollback.
 // It also wraps ErrStale, but must not use legacy starts' done/cancelled path.
 var ErrLandingDecisionStale = errors.New("landing decision inputs changed; waiting for stable approval evidence; re-plan")
@@ -36,11 +44,11 @@ func retryLandingDecision(err error) error {
 // All forge reads must finish before this call. No callback runs under the lock.
 // Unlike append's legacy cancellation path, any stale authorization returns an
 // error INSIDE the transaction, rolling back even authorization side effects.
-func (s *Store) StartLanding(ctx context.Context, claim ClaimedAction, cfg queue.Config, policy cp.Policy, fresh []queue.ApprovalEligibilityObserved, decisions []queue.LandingDecisionRecorded, start queue.LandingStarted) error {
-	return retryLandingDecision(s.startLanding(ctx, claim, cfg, policy, fresh, decisions, start, s.authorizeStart))
+func (s *Store) StartLanding(ctx context.Context, claim ClaimedAction, cfg queue.Config, policy cp.Policy, fresh []queue.ApprovalEligibilityObserved, decisions []queue.LandingDecisionRecorded, start queue.LandingStarted, checks ...queue.LandingChecksRecorded) error {
+	return retryLandingDecision(s.startLanding(ctx, claim, cfg, policy, fresh, decisions, start, s.authorizeStart, checks...))
 }
 
-func (s *Store) startLanding(ctx context.Context, claim ClaimedAction, cfg queue.Config, policy cp.Policy, fresh []queue.ApprovalEligibilityObserved, decisions []queue.LandingDecisionRecorded, start queue.LandingStarted, authorize func(context.Context, pgx.Tx, emission, queue.Event) (bool, error)) error {
+func (s *Store) startLanding(ctx context.Context, claim ClaimedAction, cfg queue.Config, policy cp.Policy, fresh []queue.ApprovalEligibilityObserved, decisions []queue.LandingDecisionRecorded, start queue.LandingStarted, authorize func(context.Context, pgx.Tx, emission, queue.Event) (bool, error), checks ...queue.LandingChecksRecorded) error {
 	if policy.Approvals == nil && (len(fresh) != 0 || len(decisions) != 0) {
 		return LandingDecisionRequiredError{}
 	}
@@ -49,7 +57,7 @@ func (s *Store) startLanding(ctx context.Context, claim ClaimedAction, cfg queue
 	entered := time.Now()
 	currentStart := func() queue.LandingStarted {
 		event := start
-		if policy.Approvals != nil {
+		if policy.Approvals != nil || len(checks) != 0 {
 			event.At = event.At.Add(time.Since(entered))
 		}
 		return event
@@ -82,9 +90,24 @@ func (s *Store) startLanding(ctx context.Context, claim ClaimedAction, cfg queue
 				return fmt.Errorf("%w: %w", ErrStale, err)
 			}
 		}
-		events := make([]queue.Event, 0, len(fresh)+len(decisions)+1)
+		pin := state.AuthorityPin()
+		authority := pin != nil && pin.Authority == "openmerge"
+		if authority {
+			if len(checks) != 1 {
+				return LandingChecksRequiredError{}
+			}
+			if err := state.ValidateLandingChecks(policy.Digest, land, start, checks[0]); err != nil {
+				return fmt.Errorf("%w: %w", ErrStale, err)
+			}
+		} else if len(checks) != 0 {
+			return fmt.Errorf("%w: check evidence requires authority", ErrStale)
+		}
+		events := make([]queue.Event, 0, len(fresh)+len(decisions)+len(checks)+1)
 		for i := range decisions {
 			events = append(events, fresh[i], decisions[i])
+		}
+		for _, evidence := range checks {
+			events = append(events, evidence)
 		}
 		events = append(events, start)
 		// Pre-encode the whole operation before inserting. SQL failures still roll

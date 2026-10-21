@@ -324,6 +324,7 @@ func (d *Driver) CheckRunsForRetry(ctx context.Context, repo forge.RepoRef, sha 
 	for i := range checks {
 		if attempt := attempts[checks[i].WorkflowRunID][checks[i].ID]; attempt > 0 {
 			checks[i].Attempt = attempt
+			checks[i].AttemptInferred = false
 		}
 	}
 	return checks, nil

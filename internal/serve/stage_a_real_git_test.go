@@ -9,7 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/config/condition"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/gitops"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -19,11 +21,12 @@ import (
 // Exercise the production gate's tested-message callback with queue-built real
 // objects, then land those exact objects in an isolated local bare remote.
 // Eligibility/persistence are covered by TestStageAReceiptGateAllMethods; this
-// probe deliberately needs neither Postgres nor a GitHub driver.
+// object probe needs no GitHub driver. With the test DB configured, it also
+// persists the atomic start and reads the checks back after real-git settlement.
 func TestStageAGateRealGitAcquisition(t *testing.T) {
 	for _, depth := range []int{1, 4} {
 		for _, restart := range []bool{false, true} {
-			for _, method := range []queue.MergeMethod{queue.Merge, queue.Squash, queue.Rebase} {
+			for _, method := range []queue.MergeMethod{queue.Merge, queue.Squash, queue.Rebase, queue.FastForward} {
 				t.Run(fmt.Sprintf("depth-%d/restart-%t/%s", depth, restart, method), func(t *testing.T) {
 					dir := t.TempDir()
 					remote := filepath.Join(dir, "remote.git")
@@ -52,6 +55,9 @@ func TestStageAGateRealGitAcquisition(t *testing.T) {
 						// Two source commits per member make rebase's composition longer than
 						// the batch member count, unlike merge and squash.
 						head := base
+						if method == queue.FastForward && i > 0 {
+							head = prs[i-1].HeadSHA
+						}
 						for j := 0; j < 2; j++ {
 							head = git(fmt.Sprintf("source %d/%d\n", n, j), "--git-dir="+remote, "commit-tree", tree, "-p", head)
 						}
@@ -69,7 +75,7 @@ func TestStageAGateRealGitAcquisition(t *testing.T) {
 					cache := filepath.Join(cfg.WorkDir, fmt.Sprintf("%x.git", sha256.Sum256([]byte(key.Repository))))
 					git("", "--git-dir="+cache, "fetch", "--no-tags", remote, base+":refs/heads/fixture-base")
 					w := &worker{Target: Target{Key: key, Git: g}, stageA: &stageAPolicy{}}
-					tested, err := g.BuildTestRef(t.Context(), w.repo(), forge.BuildRequest{Ref: "test-composition", BaseSHA: base, PRs: prs, Method: forge.MergeMethod(method), BatchID: "real-gate"}, forge.PushOptions{})
+					tested, err := g.BuildTestRef(t.Context(), w.repo(), forge.BuildRequest{Ref: "openmerge/queue/main/b1", BaseSHA: base, PRs: prs, Method: forge.MergeMethod(method), BatchID: "b1"}, forge.PushOptions{})
 					must(t, err)
 					if restart {
 						// Restart with no local objects: only the pushed remote survives.
@@ -78,35 +84,76 @@ func TestStageAGateRealGitAcquisition(t *testing.T) {
 						must(t, err)
 						w.Git = g
 					}
-					land := queue.Land{ExpectedBaseSHA: base, TestedSHA: tested, PRs: pins, Method: method}
-					gate := (&Server{}).stageAGate(w, store.ClaimedAction{}, queue.Config{})
+					land := queue.Land{BatchID: "b1", Ref: "openmerge/queue/main/b1", ExpectedBaseSHA: base, TestedSHA: tested, PRs: pins, Method: method}
+					gate := (&Server{}).stageAGate(w, store.ClaimedAction{}, queue.Config{}, queue.State{})
 					messages, err := gate.ReadTestedMessages(t.Context(), land)
 					must(t, err)
-					if len(messages) != depth {
-						t.Fatalf("messages=%d, want %d", len(messages), depth)
+					wantMessages := depth
+					if method == queue.FastForward {
+						wantMessages = 1
+					}
+					if len(messages) != wantMessages {
+						t.Fatalf("messages=%d, want %d", len(messages), wantMessages)
 					}
 					for i, message := range messages {
 						metadata, err := forge.ParseChangeTrailers(message)
 						must(t, err)
-						if len(metadata) != 1 || metadata[0].ChangeID != prs[i].Metadata.ChangeID {
+						wantMembers := 1
+						if method == queue.FastForward {
+							wantMembers = depth
+						}
+						if len(metadata) != wantMembers || metadata[0].ChangeID != prs[i].Metadata.ChangeID {
 							t.Fatalf("member %d: %+v", i, metadata)
 						}
 					}
-					// An extra queue-generated segment must fail closed at the
-					// batch-derived limit, even though all objects are readable.
-					extra, err := g.BuildTestRef(t.Context(), w.repo(), forge.BuildRequest{Ref: "extra-composition", BaseSHA: tested, PRs: prs[:1], Method: forge.MergeMethod(method), BatchID: "extra-gate"}, forge.PushOptions{})
+					expression, err := condition.Parse("check-success = ci")
 					must(t, err)
-					overlong := land
-					overlong.TestedSHA = extra
-					if _, err := gate.ReadTestedMessages(t.Context(), overlong); err == nil || !strings.Contains(err.Error(), "tested member history exceeds composition limit") {
-						t.Fatalf("overlong composition accepted: %v", err)
+					runs := []forge.CheckRun{{Name: "ci", Source: "app:15368", ID: 701, Attempt: 2, State: forge.Success, HeadBranch: land.Ref}}
+					values, err := checkSnapshot(expression, runs)
+					must(t, err)
+					members := []queue.LandingCheckMember{}
+					for _, pin := range pins {
+						members = append(members, queue.LandingCheckMember{PR: pin.PR, HeadSHA: pin.HeadSHA, Conditions: expression.Record(values)})
+					}
+					recorded := landingCheckEvidence(queue.State{ConfigCommit: "real-config", ConfigDigest: strings.Repeat("c", 64)}, strings.Repeat("d", 64), land, runs, members, time.Now())
+					recorded.AttemptID = "real-start"
+					_, encoded, err := queue.EncodeEvent(recorded)
+					must(t, err)
+					decoded, err := queue.DecodeEvent(encoded)
+					must(t, err)
+					if decoded.(queue.LandingChecksRecorded).TestedSHA != tested {
+						t.Fatal("real tested object not bound")
+					}
+					if method != queue.FastForward {
+						// An extra queue-generated segment must fail closed at the
+						// batch-derived limit, even though all objects are readable.
+						extra, err := g.BuildTestRef(t.Context(), w.repo(), forge.BuildRequest{Ref: "extra-composition", BaseSHA: tested, PRs: prs[:1], Method: forge.MergeMethod(method), BatchID: "extra-gate"}, forge.PushOptions{})
+						must(t, err)
+						overlong := land
+						overlong.TestedSHA = extra
+						if _, err := gate.ReadTestedMessages(t.Context(), overlong); err == nil || !strings.Contains(err.Error(), "tested member history exceeds composition limit") {
+							t.Fatalf("overlong composition accepted: %v", err)
+						}
 					}
 					fence, err := g.EnsureFence(t.Context(), w.repo(), "test-fence", forge.PushOptions{})
 					must(t, err)
-					_, err = g.Land(t.Context(), w.repo(), forge.LandRequest{Base: "main", ExpectedBaseSHA: base, TestedSHA: tested, Fence: "test-fence", ExpectedFence: fence, NextFenceID: "land/real-gate", PRs: prs}, forge.PushOptions{})
+					head := ""
+					if method == queue.FastForward {
+						head = pins[len(pins)-1].HeadSHA
+						must(t, g.VerifyFastForward(t.Context(), w.repo(), base, tested, head))
+					}
+					var settledEvidence func(string, string)
+					if os.Getenv("OPENMERGE_TEST_DATABASE_URL") != "" {
+						settledEvidence = recordRealGitCheckStart(t, key, land, recorded, fence)
+					}
+					nextFence, err := g.Land(t.Context(), w.repo(), forge.LandRequest{Base: "main", ExpectedBaseSHA: base, TestedSHA: tested, FastForwardHeadSHA: head, Fence: "test-fence", ExpectedFence: fence, NextFenceID: "land/" + recorded.AttemptID, PRs: prs}, forge.PushOptions{})
 					must(t, err)
-					if got := git("", "--git-dir="+remote, "rev-parse", "refs/heads/main"); got != tested {
-						t.Fatalf("landed %s, want %s", got, tested)
+					got := git("", "--git-dir="+remote, "rev-parse", "refs/heads/main")
+					if got != recorded.LandedSHA {
+						t.Fatalf("landed %s, want %s", got, recorded.LandedSHA)
+					}
+					if settledEvidence != nil {
+						settledEvidence(got, nextFence)
 					}
 				})
 			}

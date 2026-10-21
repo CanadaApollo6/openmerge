@@ -334,7 +334,7 @@ func (d *Driver) CheckRuns(ctx context.Context, repo forge.RepoRef, sha string) 
 				workflowURL = fmt.Sprintf("%s/%s/%s/actions/runs/%d", strings.TrimSuffix(d.app.git.String(), "/"), owner, name, workflowID)
 				checkURL = actionsCheckURL(run, d.app.git, owner, name, workflowID)
 			}
-			result = append(result, forge.CheckRun{WorkflowRunID: workflowID, WorkflowRunURL: workflowURL, URL: checkURL, ID: id, Attempt: nextCheckRunAttempt(run), Name: run.GetName(), Source: source, State: state, HeadBranch: suite.GetHeadBranch()})
+			result = append(result, forge.CheckRun{AttemptInferred: checkRunAttemptFromURL(run) == 0, WorkflowRunID: workflowID, WorkflowRunURL: workflowURL, URL: checkURL, ID: id, Attempt: nextCheckRunAttempt(run), Name: run.GetName(), Source: source, State: state, HeadBranch: suite.GetHeadBranch()})
 		}
 	}
 	for page := 1; page != 0; {

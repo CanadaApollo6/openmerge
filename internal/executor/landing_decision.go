@@ -22,8 +22,11 @@ var ErrLandingApprovals = errors.New("landing approvals unmet")
 // store claim and invokes Store.StartLanding; it never emits individual events.
 // There is no forge I/O or git push inside Commit's transaction.
 type LandingDecisionGate struct {
-	// ReloadAfterInputs folds evidence journaled by ReadInputs before evaluating.
-	// Atomic start rederives the same decisions against the locked journal.
+	// ReadInputsWithChecks opts into the exact provenance-filtered, retry-aware
+	// read and its observation time. It replaces ReadInputs only on authority
+	// paths; legacy approval paths retain their fresh-read callback.
+	ReadInputsWithChecks func(context.Context, queue.Land, queue.State, []forge.CheckRun, time.Time) ([]queue.ApprovalEligibilityObserved, error)
+	// ReloadAfterInputs folds evidence journaled by the read before evaluating.
 	ReloadAfterInputs  bool
 	Reject             func(context.Context, []queue.ApprovalEligibilityObserved, []string, queue.LandingStarted, queue.ApprovalGateRejected) error
 	Policy             cp.Policy
@@ -33,15 +36,20 @@ type LandingDecisionGate struct {
 	Commit             func(context.Context, []queue.ApprovalEligibilityObserved, []queue.LandingDecisionRecorded, queue.LandingStarted) error
 }
 
-func (g *LandingDecisionGate) start(ctx context.Context, land queue.Land, start queue.LandingStarted, now func() time.Time) error {
-	if g.Policy.Approvals == nil || g.Load == nil || g.ReadInputs == nil || g.ReadTestedMessages == nil || g.Commit == nil {
+func (g *LandingDecisionGate) start(ctx context.Context, land queue.Land, start queue.LandingStarted, now func() time.Time, checks []forge.CheckRun, checksAt time.Time) error {
+	if g.Policy.Approvals == nil || g.Load == nil || (g.ReadInputs == nil && g.ReadInputsWithChecks == nil) || g.ReadTestedMessages == nil || g.Commit == nil {
 		return fmt.Errorf("incomplete landing decision gate")
 	}
 	state, err := g.Load(ctx)
 	if err != nil {
 		return err
 	}
-	fresh, err := g.ReadInputs(ctx, land, state)
+	var fresh []queue.ApprovalEligibilityObserved
+	if g.ReadInputsWithChecks != nil {
+		fresh, err = g.ReadInputsWithChecks(ctx, land, state, checks, checksAt)
+	} else {
+		fresh, err = g.ReadInputs(ctx, land, state)
+	}
 	if err != nil {
 		return err
 	}
