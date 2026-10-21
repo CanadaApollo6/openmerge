@@ -1787,7 +1787,10 @@ limit that covers the validated action, maintenance, completion and grace budget
 
 GitHub progress advances after each successful HTTP response is fully consumed,
 including individual pagination pages and PR sub-reads. Failed HTTP responses,
-partial bodies and hung requests do not count. Cold-cache Git clone/fetch inside
+partial bodies and hung requests do not count. Read-unit progress requires
+success. A validated wire 304 served from cache counts once its cached body
+reaches EOF, including each revalidated pagination page; a 304 that cannot be
+served from cache publishes nothing. Cold-cache Git clone/fetch inside
 ReadRef and the one-time fence initialization push still have no intermediate
 progress notifications; this startup/first-cycle exposure can report overdue
 while that single Git operation runs beyond the stall limit.

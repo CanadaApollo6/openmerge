@@ -630,6 +630,9 @@ successful HTTP response body reaches EOF, so every pagination page and PR
 sub-read counts independently. Failed responses, incomplete bodies and hung
 requests cannot publish request progress. Read-unit progress likewise requires
 success; completed actions and turns still record their completion independently.
+A validated wire 304 served from cache counts as a successful round trip once
+the cached body reaches EOF, including each revalidated pagination page. A 304
+that cannot be served from cache publishes nothing.
 The maximum cycle
 duration remains an absolute backstop, even with recent progress. This permits a
 hot turn's 64 chained actions while detecting a hung action promptly. Cycle end

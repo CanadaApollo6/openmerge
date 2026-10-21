@@ -53,7 +53,7 @@ func TestHealthGitHubPagination(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	must(t, err)
 	privateKey := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
-	for _, mode := range []string{"healthy", "hung", "streaming", "failed"} {
+	for _, mode := range []string{"healthy", "revalidated", "hung", "streaming", "failed"} {
 		t.Run(mode, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				s, w, _, _ := fixture(t, repositoryConfig)
@@ -61,6 +61,8 @@ func TestHealthGitHubPagination(t *testing.T) {
 				w.wake = make(chan struct{}, 1)
 				var completed atomic.Int64
 				failureChecked := false
+				priming := mode == "revalidated"
+				var revalidated atomic.Int64
 				tr := paginationTransport(func(r *http.Request) (*http.Response, error) {
 					body := "[]"
 					header := make(http.Header)
@@ -81,7 +83,9 @@ func TestHealthGitHubPagination(t *testing.T) {
 						if completed.Load() == 2 && mode == "streaming" {
 							return &http.Response{StatusCode: 200, Header: header, Body: stalledPageBody{r.Context()}, Request: r}, nil
 						}
-						time.Sleep(30 * time.Second)
+						if !priming {
+							time.Sleep(30 * time.Second)
+						}
 						if completed.Load() == 2 && mode == "failed" {
 							code = 500
 							body = `{"message":"fixture failure"}`
@@ -89,8 +93,16 @@ func TestHealthGitHubPagination(t *testing.T) {
 							completed.Add(1)
 						}
 						// Enough pages to keep this single call running for ten minutes.
-						if mode != "healthy" || completed.Load() < 20 {
+						if mode != "healthy" && mode != "revalidated" || completed.Load() < 20 {
 							header.Set("Link", fmt.Sprintf(`<https://github.test/repos/owner/repo/pulls?page=%d>; rel="next"`, completed.Load()+1))
+						}
+						header.Set("ETag", `"page"`)
+						if mode == "revalidated" && !priming {
+							if r.Header.Get("If-None-Match") != `"page"` {
+								t.Fatal("page was not primed")
+							}
+							code, body = http.StatusNotModified, ""
+							revalidated.Add(1)
 						}
 					}
 					return &http.Response{StatusCode: code, Header: header, Body: io.NopCloser(strings.NewReader(body)), Request: r}, nil
@@ -99,6 +111,12 @@ func TestHealthGitHubPagination(t *testing.T) {
 				must(t, err)
 				pages, err := app.Installation(t.Context(), 7)
 				must(t, err)
+				if priming {
+					_, err = pages.ListOpenPullRequests(t.Context(), w.repo(), "main")
+					must(t, err)
+					completed.Store(0)
+					priming = false
+				}
 				w.Driver = paginatedHealthDriver{Driver: w.Driver, pages: pages, after: func(err error) {
 					if mode == "failed" && err != nil && !failureChecked {
 						failureChecked = true
@@ -124,11 +142,14 @@ func TestHealthGitHubPagination(t *testing.T) {
 					t.Fatalf("completed=%d last=%v now=%v", completed.Load(), last, time.Now())
 				}
 				switch mode {
-				case "healthy":
+				case "healthy", "revalidated":
 					for range 36 {
 						time.Sleep(15 * time.Second)
 						synctest.Wait()
 						assertHealthCode(t, s, 200)
+					}
+					if mode == "revalidated" && revalidated.Load() != 20 {
+						t.Fatalf("wire 304s=%d want=20", revalidated.Load())
 					}
 					if completed.Load() != 20 {
 						t.Fatalf("pages=%d", completed.Load())

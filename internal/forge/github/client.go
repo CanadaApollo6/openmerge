@@ -189,8 +189,11 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		t.strikes = 0
 		t.mu.Unlock()
 	}
+	// This deliberately runs after cache revalidation: a validated wire 304
+	// served as a cached 200 is a successful round trip and earns progress at EOF.
 	if res.StatusCode >= 200 && res.StatusCode < 300 {
-		if res.Body == http.NoBody {
+		if res.Body == nil || res.Body == http.NoBody {
+			res.Body = http.NoBody
 			forge.NotifyProgress(req.Context())
 		} else {
 			res.Body = &progressBody{ReadCloser: res.Body, ctx: req.Context()}

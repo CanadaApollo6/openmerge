@@ -68,3 +68,40 @@ func TestTransportProgressOnlyAfterSuccessfulBody(t *testing.T) {
 		})
 	}
 }
+
+func TestTransportProgressUncached304(t *testing.T) {
+	calls := 0
+	tr := cacheTransport(t, 4, 4096, roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		h := make(http.Header)
+		h.Set("ETag", `"missing"`)
+		return &http.Response{StatusCode: http.StatusNotModified, Header: h, Body: http.NoBody, Request: r}, nil
+	}))
+	ctx := forge.WithProgressHook(t.Context(), func() { calls++ })
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.test/items", nil)
+	must(t, err)
+	_, err = tr.RoundTrip(req)
+	if err == nil || calls != 0 {
+		t.Fatalf("uncached 304: error=%v progress=%d", err, calls)
+	}
+}
+
+func TestTransportProgressNilBody(t *testing.T) {
+	calls := 0
+	tr := cacheTransport(t, 4, 4096, roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusNoContent, Header: make(http.Header), Request: r}, nil
+	}))
+	ctx := forge.WithProgressHook(t.Context(), func() { calls++ })
+	req, err := http.NewRequestWithContext(ctx, "GET", "https://api.test/items", nil)
+	must(t, err)
+	res, err := tr.RoundTrip(req)
+	must(t, err)
+	if res.Body != http.NoBody || calls != 1 {
+		t.Fatalf("empty response: body=%v progress=%d", res.Body, calls)
+	}
+	_, err = io.ReadAll(res.Body)
+	must(t, err)
+	must(t, res.Body.Close())
+	if calls != 1 {
+		t.Fatalf("empty response published twice: %d", calls)
+	}
+}

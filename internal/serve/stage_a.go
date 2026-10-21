@@ -173,10 +173,10 @@ func (s *Server) refreshStageAPolicy(ctx context.Context, w *worker, tip string)
 		return errors.New("missing governing files reader")
 	}
 	g, err := a.governing.read(ctx, governingReader, w.repo(), forge.GoverningFilesRequest{CommitSHA: tip, PathsComplete: true, AllAttributes: true})
-	w.publishProgress(time.Now())
 	if err != nil {
 		return err
 	}
+	w.publishProgress(time.Now())
 	if g.Coverage.Completeness != forge.DiffComplete {
 		return errors.New("governing policy content unavailable")
 	}
@@ -565,10 +565,10 @@ func (s *Server) prepareStageAClassification(ctx context.Context, w *worker, sta
 		return nil, errors.New("missing diff capability")
 	}
 	d, err := diffReader.RevisionDiff(ctx, w.repo(), forge.RevisionDiffRequest{BaseSHA: base, HeadSHA: r.HeadSHA})
-	w.publishProgress(time.Now())
 	if err != nil {
 		return nil, err
 	}
+	w.publishProgress(time.Now())
 	paths := []string{}
 	for _, f := range d.Files {
 		if f.OldPath != "" {
@@ -586,10 +586,10 @@ func (s *Server) prepareStageAClassification(ctx context.Context, w *worker, sta
 		w.stageA.governing = newStageAGoverningCache()
 	}
 	g, err := w.stageA.governing.read(ctx, greader, w.repo(), forge.GoverningFilesRequest{CommitSHA: governingTip, Paths: paths, PathsComplete: d.Inventory.Completeness == forge.DiffComplete})
-	w.publishProgress(time.Now())
 	if err != nil {
 		return nil, err
 	}
+	w.publishProgress(time.Now())
 	ids, _, err := w.stageReaders()
 	if err != nil {
 		return nil, err

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/forge"
 	gh "github.com/google/go-github/v93/github"
 )
 
@@ -23,10 +24,12 @@ func TestConditionalGETReplaysPaginatedSDKResponses(t *testing.T) {
 	ctx := context.Background()
 	first, err := f.driver.ListComments(ctx, testRepo, 1, time.Time{})
 	must(t, err)
+	notifications := 0
+	ctx = forge.WithProgressHook(ctx, func() { notifications++ })
 	second, err := f.driver.ListComments(ctx, testRepo, 1, time.Time{})
 	must(t, err)
-	if len(first) != 5 || !reflect.DeepEqual(first, second) || f.notModified != 3 {
-		t.Fatalf("304 lost bodies or pagination: first=%+v second=%+v 304s=%d", first, second, f.notModified)
+	if len(first) != 5 || !reflect.DeepEqual(first, second) || f.notModified != 3 || notifications != 3 {
+		t.Fatalf("304 lost bodies or pagination: first=%+v second=%+v 304s=%d progress=%d", first, second, f.notModified, notifications)
 	}
 	f.comments[1][0].Body = new("changed")
 	third, err := f.driver.ListComments(ctx, testRepo, 1, time.Time{})
