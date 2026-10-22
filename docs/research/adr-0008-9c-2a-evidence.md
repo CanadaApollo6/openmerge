@@ -137,4 +137,22 @@ branch inventory (at most ten 100-branch pages), and final metadata/ref rechecks
 A truncated recursive tree fails closed. Both limits are documented in operating
 instructions; complete protection visibility is in setup help too.
 
-Round-2 validation receipts are recorded below after the clean-tree evidence run.
+Round-2 receipts supersede the earlier run above. Tested production revision:
+`4e3bd92aadf33f7e33d22defc0659293aea3b56d` against main `c53f425`.
+Raw logs/manifests: `/home/riels/.cache/openmerge-137-r2-approved-evidence`;
+stress: `/home/riels/.cache/openmerge-137-r2-stress`.
+
+- `make check`: **exit 0**, zero lint issues, full short race suite and build;
+  focused authority/governing/setup/import/barrier race checks **exit 0**.
+- Strict replay: **2,159/2,159 identical** actions, states, snapshots and boundary
+  checkpoints; **8,676** matching probes; gates 2/4 and all **22** self-tests pass.
+- Contracts **90/90**, simulator **146/146**, GitHub projections/status CLI and
+  invalid-config exports: **byte-identical**. Wire fixtures **105/105 unchanged**.
+- Final run retains every required check from the verifier and omits only its
+  duplicate timing-only measurement; no repository script/test flag was changed.
+- Selected regressions plus the inherited held-lock test: **20 iterations each
+  pass**, `-race -cpu=1`, `GOMAXPROCS=1`, **eight owned CPU burners**, all reaped
+  (elapsed 58.767s). New worker tests run entirely inside `testSynctest`.
+- Shared test Postgres has exactly the same **94** pre-existing serve schemas;
+  no scratch schema remains. Hold/A2, frozen paths and live-system restrictions
+  remain unchanged. The follow-up receipt commit changes only this document.
