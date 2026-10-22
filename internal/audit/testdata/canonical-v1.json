@@ -1,0 +1,47 @@
+[
+  {
+    "Input": " {\"z\":1.2300e2,\"a\":-0.0,\"i\":90071992547409931234567890}",
+    "Bytes": "{\"a\":0,\"i\":90071992547409931234567890,\"z\":123}",
+    "SHA256": "3ba198a7d941566558622a40748b5b51f2e420a655d105af25cee404db6bb593"
+  },
+  {
+    "Input": "{\"z\":1.23e-3,\"a\":123.45000}",
+    "Bytes": "{\"a\":123.45,\"z\":0.00123}",
+    "SHA256": "8ec2844d0e71c9a3afd1df4e8f635e54a3e43d59ceaf949488f0b2b05a50606d"
+  },
+  {
+    "Input": "\"\\u96ea\\ud83d\\ude00<>&\\u2028\"",
+    "Bytes": "\"雪😀<>& \"",
+    "SHA256": "5a6a539700b6e16e8deac8a5519f146365ed67e3e9a9dac86b3ec290e5092c2b"
+  },
+  {
+    "Input": "{\"timestamp\":\"2026-10-22T07:00:00-05:00\",\"escape\":\"\\b\\f\\n\\r\\t\\u0000\\\"\\\\\"}",
+    "Bytes": "{\"escape\":\"\\b\\f\\n\\r\\t\\u0000\\\"\\\\\",\"timestamp\":\"2026-10-22T07:00:00-05:00\"}",
+    "SHA256": "6f08ffbc2b298690f535bba82346786368b6203410c19dd5cc4d0f606fd0ebc2"
+  },
+  {
+    "Input": " [true,false,null,{},[]] ",
+    "Bytes": "[true,false,null,{},[]]",
+    "SHA256": "9ea8f3856a89c1190f602b6f66c9e6f950f0f23d7d20e63d0d6ce7e56aafc722"
+  },
+  {
+    "Input": "1.2300e2",
+    "Bytes": "123",
+    "SHA256": "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3"
+  },
+  {
+    "Input": "123",
+    "Bytes": "123",
+    "SHA256": "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3"
+  },
+  {
+    "Input": "123.000",
+    "Bytes": "123",
+    "SHA256": "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3"
+  },
+  {
+    "Input": "0e2147483647",
+    "Bytes": "0",
+    "SHA256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+  }
+]
