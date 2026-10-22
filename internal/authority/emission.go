@@ -79,17 +79,8 @@ func (r EmissionReceipt) Validate(identity string, now time.Time) error {
 // ValidateForBinary checks the operator attestation against local build metadata.
 // It cannot prove remote workers are stopped or authenticate the binary itself.
 func (r EmissionReceipt) ValidateForBinary(identity string, now time.Time, maxAge time.Duration, revision string) error {
-	if maxAge <= 0 {
-		return fmt.Errorf("emission receipt maximum age must be positive")
-	}
-	if revision == "" {
-		return fmt.Errorf("cannot attest BinaryRevision offline: this binary has no embedded revision available for attestation (dirty builds and Docker images built without .git cannot attest); rebuild with `make build` from a clean git checkout; see docs/research/adr-0008-4-evidence.md")
-	}
-	if r.BinaryRevision != revision {
-		return fmt.Errorf("%w %s", ErrBinaryRevisionMismatch, revision)
-	}
-	if r.DrainedAt.Before(now.Add(-maxAge)) || r.RestoreTestedAt.Before(now.Add(-maxAge)) {
-		return fmt.Errorf("stale emission receipt: drain and restore test must be within %s; repeat drain, backup and restore test", maxAge)
+	if err := r.RecheckEmissionWindowForBinary(now, maxAge, revision); err != nil {
+		return err
 	}
 	if identity == "" || r.DatabaseIdentity == "" || r.DatabaseIdentity != identity || r.BinaryRevision == "" || len(r.DrainedWorkers) == 0 || !r.CompatibleReadersOnly || r.DrainedAt.IsZero() || r.RestoreTestedAt.Before(r.DrainedAt) || r.RestoreTestedAt.After(now) || !IsDigest(r.BackupSHA256) {
 		return fmt.Errorf("first-emission gate requires a database-bound drain inventory and restore-tested backup receipt; see docs/research/adr-0008-4-evidence.md")
@@ -119,6 +110,29 @@ func (r EmissionReceipt) ValidateForBinary(identity string, now time.Time, maxAg
 	}
 	if fmt.Sprintf("%x", h.Sum(nil)) != r.BackupSHA256 {
 		return fmt.Errorf("first-emission backup hash mismatch")
+	}
+	return nil
+}
+
+// RecheckEmissionWindowForBinary performs no I/O. It only rechecks freshness and
+// the emitting binary AFTER a complete ValidateForBinary check, so a final forge
+// ref check can remain the last I/O before the store call. It is not a standalone
+// inventory, backup or database-identity gate.
+func (r EmissionReceipt) RecheckEmissionWindowForBinary(now time.Time, maxAge time.Duration, revision string) error {
+	if maxAge <= 0 {
+		return fmt.Errorf("emission receipt maximum age must be positive")
+	}
+	if revision == "" {
+		return fmt.Errorf("cannot attest BinaryRevision offline: this binary has no embedded revision available for attestation (dirty builds and Docker images built without .git cannot attest); rebuild with `make build` from a clean git checkout; see docs/research/adr-0008-4-evidence.md")
+	}
+	if r.BinaryRevision != revision {
+		return fmt.Errorf("%w %s", ErrBinaryRevisionMismatch, revision)
+	}
+	if r.DrainedAt.Before(now.Add(-maxAge)) || r.RestoreTestedAt.Before(now.Add(-maxAge)) {
+		return fmt.Errorf("stale emission receipt: drain and restore test must be within %s; repeat drain, backup and restore test", maxAge)
+	}
+	if r.DrainedAt.After(now) || r.RestoreTestedAt.After(now) {
+		return fmt.Errorf("emission receipt timestamps are in the future")
 	}
 	return nil
 }

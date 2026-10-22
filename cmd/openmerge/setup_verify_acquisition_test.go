@@ -103,7 +103,21 @@ func TestVerifyAcquiresOnceAfterEveryTargetValidated(t *testing.T) {
 		return authority.CloneObservation(v.Evidence), nil
 	}
 	checked := false
-	err = verifyTargets(t.Context(), db, reader, plan, "operator", io.Discard, func() error { checked = true; return errors.New("stale emission receipt after seeing read") })
+	priorRechecks := reader.rechecked
+	prepared := false
+	err = verifyTargets(t.Context(), db, reader, plan, "operator", io.Discard, verificationReceiptGate{Prepare: func() error {
+		if reader.rechecked != priorRechecks {
+			t.Fatal("receipt I/O ran after final governing read")
+		}
+		prepared = true
+		return nil
+	}, Recheck: func() error {
+		if !prepared || reader.rechecked != priorRechecks+1 {
+			t.Fatal("receipt age recheck did not follow final governing read")
+		}
+		checked = true
+		return errors.New("stale emission receipt after seeing read")
+	}})
 	if err == nil || !checked {
 		t.Fatal("missing final receipt refusal", err)
 	}

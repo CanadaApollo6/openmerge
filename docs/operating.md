@@ -1971,7 +1971,9 @@ For example, the additional receipt fields are:
 
 Use the same operator connection for `--print-database-identity` and `--verify`.
 Receipt age, attested emitting binary and database identity are checked before
-forge reads and again immediately before the verification/adoption store call.
+forge reads. Verification rechecks identity/backup bytes before the final governing
+ref check, then rechecks age/binary without I/O immediately before the store call;
+adoption retains its existing immediate pre-call receipt check.
 A receipt **can expire while that transaction waits for queue locks or commits**;
 there is no transaction-time expiry guarantee. Keep the stopped window bounded,
 renew stale receipts by repeating the procedure, and do not treat command success
