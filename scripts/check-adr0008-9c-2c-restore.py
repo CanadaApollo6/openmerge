@@ -6,7 +6,9 @@ import json
 import os
 from pathlib import Path
 import subprocess
-from urllib.parse import urlsplit, urlunsplit
+import sys
+sys.dont_write_bytecode = True
+from adr0008_scratch_db import scratch_url
 import uuid
 
 
@@ -16,17 +18,14 @@ def main():
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
-    base = os.environ["OPENMERGE_TEST_DATABASE_URL"]
-    parsed = urlsplit(base)
-    if parsed.hostname != "localhost" or parsed.port != 54329:
-        raise RuntimeError("only shared test Postgres localhost:54329 is permitted")
+    base = scratch_url(os.environ["OPENMERGE_TEST_DATABASE_URL"])
     out = args.out.resolve()
     if not out.is_relative_to(Path.home() / ".cache"):
         raise RuntimeError("scratch artifacts must be under ~/.cache")
     out.mkdir(parents=True, exist_ok=True)
     binary = str(args.binary.resolve())
     names = ["om_9c2c_" + uuid.uuid4().hex for _ in range(2)]
-    urls = [urlunsplit(parsed._replace(path="/" + name)) for name in names]
+    urls = [scratch_url(base, name) for name in names]
     created = []
 
     def run(argv, *, stdin=None, expected=0):

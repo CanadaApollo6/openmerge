@@ -62,6 +62,11 @@ func (c AuthorityCompletion) RequireComplete() error {
 	if !c.Complete || len(c.Queues) == 0 {
 		return errors.New("repository authority propagation incomplete; retain redundant protection")
 	}
+	for _, q := range c.Queues {
+		if q.Reason != "complete" {
+			return errors.New("repository authority propagation incomplete; retain redundant protection")
+		}
+	}
 	return nil
 }
 
@@ -125,9 +130,6 @@ func (s *Store) RepositoryAuthorityCompletion(ctx context.Context, request Autho
 			if pin != nil && pin.OpenMerge != nil && pin.Authority == authority.OpenMerge {
 				inputsCurrent := pin.DefaultBranch == inventory.DefaultBranch
 				if pin.OpenMerge.VerificationInput != nil {
-					if !slices.Contains(liveBases, pin.DefaultBranch) {
-						inputsCurrent = false
-					}
 					coverage, err := authority.CompileRefCoverage(pin.DefaultBranch, pin.OpenMerge.VerificationInput.BaseSelectors)
 					if err != nil {
 						return err

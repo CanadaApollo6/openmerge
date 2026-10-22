@@ -1914,6 +1914,15 @@ requires a fresh acquisition and records no verification.
 
 ### Repository authority propagation and operational gates (Hold)
 
+Each authenticated GET to `/v1/authority-completion` performs outbound App
+installation/repository, branch and governing-ref discovery. It returns all
+registered partitions for the requested repository across installations,
+including partitions excluded by worker allowlists. The bearer token grants
+this repository-wide visibility. Discovery is uncached, with a 15-second request
+deadline and no separate concurrency semaphore; serialize operator polling to
+avoid concurrent discovery exhausting the App's API budget.
+
+
 Before any authority event or v7 cursor, including **pre-switch**
 `setup rulesets --authority openmerge --verify`, freeze admissions, let every
 attempt settle, stop every journal writer and incompatible reader on every
@@ -1946,6 +1955,14 @@ Capture time must follow the drain; restore-test time must follow capture;
 reconciliation must follow the restore test. Retain the actual evidence whose
 hash is recorded. Receipt checks validate these attestations and the backup's
 bytes; they cannot independently prove that the restore or reconciliation ran.
+The Prepare gate does not require live `max(events.id)` to equal the backup
+watermark: this is the retained **pre-emission** backup, and subsequent verify
+invocations can legitimately follow earlier verification/adoption events.
+Watermark equality would reject those invocations without proving writer
+quiescence. Keep every writer stopped and reconcile all post-backup evidence;
+watermark/restore equality remains an operator attestation, not a live drain
+proof.
+
 
 For example, the additional receipt fields are:
 
@@ -2059,8 +2076,8 @@ translate every failure to a successful base-moved observation. GitHub mode
 retains its existing behavior and output.
 
 Rollback to `github` does **not** make retained new events or v7 cursors readable
-by an older binary. With all workers stopped, run the compatible binary's
-read-only, migration-free check:
+by an older binary. With all workers stopped, run this build or later's
+read-only, migration-free downgrade check:
 
 ```sh
 openmerge admin downgrade-check --database-url "$OPERATOR_DATABASE_URL"

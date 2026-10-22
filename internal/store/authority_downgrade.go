@@ -5,10 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/jackc/pgx/v5"
 )
+
+// authorityDowngradeEventTypes lists every event added since the pre-ADR-0008
+// wire baseline. TestAuthorityDowngradeEventCoverage guards this boundary.
+var authorityDowngradeEventTypes = []string{
+	"policy_authority_applied", "write_restriction_observed", "write_restriction_verified",
+	"outside_push_acknowledged", "landing_checks_recorded",
+}
 
 // ErrAuthorityDowngradeRefused marks a decided refusal: retained journal or
 // cursor data crosses (or cannot be shown not to cross) the ADR 0008 boundary.
@@ -50,18 +58,10 @@ func (r *JournalReader) CheckAuthorityDowngrade(ctx context.Context) error {
 				rows.Close()
 				return downgradeRefused("journal compatibility unknown")
 			}
-			incompatible := false
-			switch envelope.Type {
-			case "policy_authority_applied", "write_restriction_observed", "write_restriction_verified", "outside_push_acknowledged":
-				incompatible = true
-			}
-			for _, field := range []string{"source", "origin_authority"} {
-				var value string
-				_ = json.Unmarshal(envelope.Data[field], &value)
-				if value == "write_restriction" || value == "openmerge" {
-					incompatible = true
-				}
-			}
+			incompatible := slices.Contains(authorityDowngradeEventTypes, envelope.Type)
+			var source string
+			_ = json.Unmarshal(envelope.Data["source"], &source)
+			incompatible = incompatible || source == "write_restriction"
 			if incompatible {
 				rows.Close()
 				return downgradeRefused("authority journal boundary present; use a compatible reader or restore and reconcile the pre-emission backup")

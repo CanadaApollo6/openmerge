@@ -101,9 +101,8 @@ call. Adoption keeps its pre-call full validation. None of this rules out expiry
 or endpoint replacement during the queue-lock wait or commit. Mode rollback keeps
 the immutable journal/v7 boundary. `downgrade-check` never erases it, and it
 certifies only this ADR's boundary, not every other difference between binaries.
-Nested `write_restriction` sources (for example in `landing_checks_recorded`)
-only exist after a top-level `write_restriction_*` event in the same journal,
-which the check already refuses.
+`landing_checks_recorded` independently crosses the reader boundary, even
+without a preceding authority event; the downgrade check refuses it directly.
 
 ## Verification
 

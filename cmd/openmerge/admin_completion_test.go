@@ -72,6 +72,10 @@ func TestAdminAuthorityCompletionCLI(t *testing.T) {
 	if code, out, stderr := invoke(args); code != 1 || !strings.Contains(out, "digest_mismatch") || !strings.Contains(stderr, "retain redundant protection") {
 		t.Fatalf("incomplete: %d %q %q", code, out, stderr)
 	}
+	reply = completion(true, "digest_mismatch")
+	if code, _, _ := invoke(args); code != 1 {
+		t.Fatal("complete flag with incomplete row accepted")
+	}
 	// A complete flag without rows is never success.
 	reply = func(w http.ResponseWriter, request store.AuthorityCompletionRequest) {
 		_ = json.NewEncoder(w).Encode(store.AuthorityCompletion{Request: request, Complete: true, Queues: []store.AuthorityQueueCompletion{}})

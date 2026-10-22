@@ -127,6 +127,6 @@
   ],
   "mutation_method": "In-place single-line edit of the committed tree, focused go test, then git checkout HEAD of that file; each fails on its assertion, not compilation.",
   "superseded": "A first full pass at 2af2432 also passed; it was superseded when the governing-tip check moved into the store fold. An earlier stress run on that tree was stopped by this implementer and its own burners reaped.",
-  "raw_cache": "/home/riels/.cache/adr0008-9c-2c-verification-opus",
+  "raw_cache": "~/.cache/adr0008-9c-2c-verification-opus",
   "release_acceptance": "Not executed; PR 11 owner-run sandbox required."
 }

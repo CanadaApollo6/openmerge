@@ -4,11 +4,12 @@ import argparse
 import importlib.util
 import json
 import os
-import sys
 from pathlib import Path
-from urllib.parse import urlsplit
-
+import subprocess
+import uuid
+import sys
 sys.dont_write_bytecode = True
+from adr0008_scratch_db import scratch_url
 
 
 CLI_GO = r'''package main
@@ -32,6 +33,13 @@ func TestADR2cGithubCLI(t *testing.T) {
 '''
 
 
+def scratch_sql(url, sql):
+    result = subprocess.run(["psql", "-X", "-qAt", "-v", "ON_ERROR_STOP=1", url],
+                            input=sql, text=True, capture_output=True, timeout=120)
+    if result.returncode:
+        raise RuntimeError("scratch database operation failed")
+
+
 def main():
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
@@ -42,6 +50,11 @@ def main():
     parser.add_argument("--events", type=Path, default=Path.home() / ".cache/om-pr72-fix1-input/events.jsonl")
     parser.add_argument("--queues", type=Path, default=Path.home() / ".cache/om-pr72-fix1-input/queues.jsonl")
     args = parser.parse_args()
+    maintenance = scratch_url(os.environ.get("OPENMERGE_TEST_DATABASE_URL", ""))
+    database_name = "om_9c2c_" + uuid.uuid4().hex
+    database_url = scratch_url(maintenance, database_name)
+    created = False
+    original_database = os.environ.get("OPENMERGE_TEST_DATABASE_URL")
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=True)
     spec = importlib.util.spec_from_file_location("evidence", root / "scripts/adr-0008-1-verify.py")
@@ -57,14 +70,15 @@ def main():
             raise v.VerifyError("export both Go 1.27.3 GOROOT and its bin directory first in PATH")
         if (args.toolchain / "VERSION").read_text().splitlines()[0] != "go1.27.3":
             raise v.VerifyError("Go 1.27.3 is required")
-        database = urlsplit(os.environ.get("OPENMERGE_TEST_DATABASE_URL", ""))
-        if database.hostname != "localhost" or database.port != 54329:
-            raise v.VerifyError("set OPENMERGE_TEST_DATABASE_URL to the shared test Postgres on localhost:54329")
+
         result["baseline"] = v.check_tree("baseline", args.baseline, "eaddd8428ebe5acc9ad435276304516d7d389f7a")
         result["candidate"] = v.check_tree("candidate", root)
         result["environment"] = {"GOROOT": toolchain, "PATH_prefix": toolchain + "/bin", "database": "localhost:54329, isolated test schemas"}
         result["exports"] = v.exports(v.EVENTS, v.QUEUES)
         result["wire"] = v.compare_fixtures(args.baseline, root)
+        scratch_sql(maintenance, f'CREATE DATABASE "{database_name}"')
+        created = True
+        os.environ["OPENMERGE_TEST_DATABASE_URL"] = database_url
         print("make check", flush=True)
         v.invoke(["make", "check"], root, out, "make-check")
         print("focused propagation, operations, barrier and exact-output race tests", flush=True)
@@ -124,6 +138,13 @@ def main():
     except Exception as error:
         result["verdict"] = "FAIL"
         result["error"] = str(error)
+    finally:
+        if original_database is None:
+            os.environ.pop("OPENMERGE_TEST_DATABASE_URL", None)
+        else:
+            os.environ["OPENMERGE_TEST_DATABASE_URL"] = original_database
+        if created:
+            scratch_sql(maintenance, f'DROP DATABASE "{database_name}"')
     (out / "summary.json").write_text(json.dumps(result, indent=2) + "\n")
     manifest = {str(path.relative_to(out)): v.sha(path) for path in sorted(out.rglob("*")) if path.is_file() and path.name != "manifest.json"}
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")

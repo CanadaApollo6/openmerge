@@ -77,7 +77,13 @@ func runRulesVerification(ctx context.Context, opts verifyOptions, rules github.
 	if err != nil {
 		return err
 	}
-	if err := receipt.ValidateForBinary(identity, time.Now(), opts.ReceiptMaxAge, authority.RunningBinaryRevision()); err != nil {
+	// The immutable receipt and backup were validated above, before database I/O.
+	// Bind that proof to the live identity without hashing the same dump again;
+	// Prepare revalidates its bytes after the seeing reads.
+	if identity == "" || identity != receipt.DatabaseIdentity {
+		return errors.New("first-emission receipt database identity mismatch")
+	}
+	if err := receipt.RecheckEmissionWindowForBinary(time.Now(), opts.ReceiptMaxAge, authority.RunningBinaryRevision()); err != nil {
 		return err
 	}
 	var plan verificationPlan

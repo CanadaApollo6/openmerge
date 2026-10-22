@@ -87,10 +87,19 @@ func TestAuthorityCompletionDiscovery(t *testing.T) {
 			t.Fatal("ref change cached", err)
 		}
 		s.discovery.Installations = func(context.Context) ([]Installation, error) {
-			return []Installation{{ID: w.Key.Installation, Repositories: func(context.Context) ([]Repository, error) { return []Repository{repo}, nil }}, {ID: "another", Repositories: func(context.Context) ([]Repository, error) { return []Repository{repo}, nil }}}, nil
+			return []Installation{{ID: w.Key.Installation, Repositories: func(context.Context) ([]Repository, error) { return []Repository{repo}, nil }}, {ID: "8", Repositories: func(context.Context) ([]Repository, error) { return []Repository{repo}, nil }}}, nil
 		}
 		if _, err := s.AuthorityCompletion(t.Context(), request); err == nil {
 			t.Fatal("multiple installation scopes partially certified")
+		}
+		// Installation 8 has no registered partition. Its live scope must still
+		// refuse completion when the worker allowlist admits only this worker.
+		s.discovery.InstallationAllowlist = w.Key.Installation
+		if _, err := s.AuthorityCompletion(t.Context(), request); err == nil || !strings.Contains(err.Error(), "across installations") {
+			t.Fatalf("worker allowlist hid competing live installation: %v", err)
+		}
+		s.discovery.Installations = func(context.Context) ([]Installation, error) {
+			return []Installation{{ID: w.Key.Installation, Repositories: func(context.Context) ([]Repository, error) { return []Repository{repo}, nil }}}, nil
 		}
 		s.discovery.RepositoryAllowlist = []string{"another/repo"}
 		if _, err := s.AuthorityCompletion(t.Context(), request); err == nil {
