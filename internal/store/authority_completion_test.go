@@ -142,12 +142,17 @@ func TestAuthorityDowngradeGate(t *testing.T) {
 	id := ensureQueue(t, s, "")
 	reader := &JournalReader{store: s, timeout: time.Minute}
 	must(t, reader.CheckAuthorityDowngrade(t.Context()))
-	snapshot, err := queue.EncodeSnapshot(queue.State{})
+	raw, err := os.ReadFile("../queue/testdata/wire/v1/event_policy_authority_applied.json")
 	must(t, err)
-	var value map[string]any
-	must(t, json.Unmarshal(snapshot, &value))
-	value["Version"] = 7
-	snapshot, err = json.Marshal(value)
+	e, err := queue.DecodeEvent(raw)
+	must(t, err)
+	pin := e.(queue.PolicyAuthorityApplied)
+	// Persist a valid v7 snapshot without appending any authority journal event.
+	state := queue.Apply(queue.State{}, queue.ConfigApplied{Commit: pin.GoverningCommit, Digest: pin.EffectiveDigest})
+	state = queue.Apply(state, pin)
+	snapshot, err := queue.EncodeSnapshot(state)
+	must(t, err)
+	_, err = queue.DecodeSnapshot(snapshot)
 	must(t, err)
 	cursor, err := json.Marshal(outsidePushProgress{State: snapshot})
 	must(t, err)
@@ -159,10 +164,6 @@ func TestAuthorityDowngradeGate(t *testing.T) {
 	_, err = s.pool.Exec(t.Context(), `DELETE FROM observations WHERE queue_id=$1`, id)
 	must(t, err)
 	must(t, reader.CheckAuthorityDowngrade(t.Context()))
-	raw, err := os.ReadFile("../queue/testdata/wire/v1/event_policy_authority_applied.json")
-	must(t, err)
-	e, err := queue.DecodeEvent(raw)
-	must(t, err)
 	appendEvents(t, s, id, e)
 	// Retirement and mode rollback cannot erase retained journal compatibility.
 	appendEvents(t, s, id, queue.LifecycleChanged{State: "retired", Detail: "fixture lifecycle"})
