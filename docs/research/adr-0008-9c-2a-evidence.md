@@ -242,4 +242,20 @@ against main `c53f425`; raw logs, summaries and SHA-256 manifest:
 - Pin mixed missing-owner/transient-owner acquisition as mutable, and reuse one
   local for Stage A's policy-owner requirement. Hold/A2 and frozen surfaces remain.
 - Focused race regressions pass; the GitHub retry regression fails on `7e7d061`.
-  Full round-5 receipts follow after verification.
+  The same cadence probe passes against main `c53f425` (external test overlay).
+
+
+Round-5 receipts: implementation `f655295724fb54d3eab5eceb5de81c3894acff70`
+against main `c53f425`; logs, summaries and SHA-256 manifest:
+`/home/riels/.cache/openmerge-137-r5-approved-evidence`.
+
+- `make check`: **exit 0**, zero lint issues, full short race suite/build;
+  focused authority/governing and isolated serve/CLI race checks pass, including
+  Stage A exact-output tests and the new same-tip/rollback regressions.
+- Strict replay: **2,159/2,159 identical** actions, states, snapshots and boundary
+  checkpoints; **8,676** matching probes, gates 2/4 and all **22** self-tests pass.
+- Simulator **146/146**, depth contracts **90/90**, GitHub projections/CLI and
+  invalid-config exports: **byte-identical**. Wire fixtures **105/105 unchanged**.
+- Test Postgres namespace lists match before/after, including the same **94**
+  pre-existing serve schemas; no scratch object remains. This receipt commit
+  changes only this document. Hold/A2 and all operational restrictions remain.
