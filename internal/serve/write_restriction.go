@@ -33,7 +33,8 @@ func ObserveWriteRestriction(ctx context.Context, db *store.Store, q store.Queue
 }
 
 func observeWriteRestriction(ctx context.Context, db *store.Store, q store.QueueID, reader forge.WriteRestrictionReader, in forge.WriteRestrictionInput, writeTimeout time.Duration) (int64, error) {
-	loadCtx, cancelLoad := context.WithTimeout(ctx, writeTimeout)
+	// Keep the pre-read independent of the append budget overridden by tests.
+	loadCtx, cancelLoad := context.WithTimeout(ctx, completionWriteTimeout)
 	state, _, err := db.Load(loadCtx, q)
 	cancelLoad()
 	if err != nil {
