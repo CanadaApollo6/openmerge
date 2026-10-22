@@ -69,7 +69,7 @@ func (s *Store) CommitWriteRestrictionVerification(ctx context.Context, records 
 		}
 	}
 	var receipts []VerificationReceipt
-	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.ReadCommitted}, func(tx pgx.Tx) error {
 		for _, r := range records {
 			if err := s.lockQueue(ctx, tx, r.QueueID); err != nil {
 				return err
@@ -390,7 +390,7 @@ func (s *Store) applyAuthorityConfig(ctx context.Context, q QueueID, config queu
 			return receipt, errors.New("historical config backfill must contain only window bounds")
 		}
 	}
-	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.ReadCommitted}, func(tx pgx.Tx) error {
 		if err := s.lockQueue(ctx, tx, q); err != nil {
 			return err
 		}
@@ -511,7 +511,7 @@ func (s *Store) AdoptAuthorityPin(ctx context.Context, q QueueID, pin queue.Poli
 	if err := pin.Validate(); err != nil {
 		return receipt, err
 	}
-	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.ReadCommitted}, func(tx pgx.Tx) error {
 		if err := s.lockQueue(ctx, tx, q); err != nil {
 			return err
 		}

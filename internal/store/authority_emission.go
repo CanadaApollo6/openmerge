@@ -33,7 +33,7 @@ func (s *Store) AuthorityBoundaryExists(ctx context.Context) (bool, error) {
 // CheckAuthorityEmissionBackup is a preflight only. The committing transaction
 // must also call checkAuthorityEmission while holding the global append lock.
 func (s *Store) CheckAuthorityEmissionBackup(ctx context.Context, watermark int64) error {
-	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+	return pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.ReadCommitted}, func(tx pgx.Tx) error {
 		return checkAuthorityEmission(ctx, tx, AuthorityEmissionGate{Watermark: watermark})
 	})
 }
@@ -53,7 +53,8 @@ func checkAuthorityEmission(ctx context.Context, tx pgx.Tx, gate AuthorityEmissi
 	if _, err := tx.Exec(ctx, `LOCK TABLE events IN SHARE ROW EXCLUSIVE MODE`); err != nil {
 		return err
 	}
-	// READ COMMITTED takes a fresh snapshot after any lock wait.
+	// Callers explicitly select READ COMMITTED so role/DSN isolation defaults
+	// cannot retain the pre-lock snapshot after waiting for an append.
 	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM events WHERE type=ANY($1) LIMIT 1)`, authorityEmissionEventTypes).Scan(&boundary); err != nil {
 		return err
 	}
