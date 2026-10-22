@@ -72,7 +72,7 @@ func (c AuthorityCandidate) ValidateGoverningIdentities(ctx context.Context, rep
 		return classification.ValidateAuthorityOwners(commit, g, resolve)
 	}
 	failure := func(err error) error {
-		return Errors{{Path: "governing policy", Message: "authority governing validation failed: " + diagnostic.Sanitize(err.Error())}}
+		return Errors{{NoLine: true, Path: "governing policy", Message: "authority governing validation failed: " + diagnostic.Sanitize(err.Error())}}
 	}
 	// Establish immutable coverage/schema independently of live eligibility. A
 	// simultaneous revoked grant must not make invalid content appear mutable.
@@ -143,7 +143,11 @@ func (c AuthorityCandidate) ValidateGoverningIdentities(ctx context.Context, rep
 	}
 	err := validate(resolve)
 	if readErr != nil {
-		return &GoverningReadError{Boundary: "owners", Cause: readErr}
+		failure := &GoverningReadError{Boundary: "owners", Cause: readErr}
+		if errors.Is(readErr, forge.ErrIdentityUnavailable) || errors.Is(readErr, forge.ErrIdentityMismatch) {
+			return &GoverningIdentityError{Cause: failure}
+		}
+		return failure
 	}
 	if err != nil {
 		return &GoverningIdentityError{Cause: failure(err)}
@@ -159,10 +163,11 @@ func SanitizedAuthorityErrors(err error) error {
 	if errors.As(err, &diagnostics) {
 		out := slices.Clone(diagnostics)
 		for i := range out {
+			out[i].NoLine = true
 			out[i].Path = diagnostic.Sanitize(out[i].Path)
 			out[i].Message = "invalid landed authority configuration: " + diagnostic.Sanitize(out[i].Message)
 		}
 		return out
 	}
-	return Errors{{Path: "configuration", Message: "invalid landed authority configuration; repair the default-branch file"}}
+	return Errors{{NoLine: true, Path: "configuration", Message: "invalid landed authority configuration; repair the default-branch file"}}
 }

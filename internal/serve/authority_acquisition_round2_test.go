@@ -27,7 +27,7 @@ func TestAuthorityDiscoveryReusesUnchangedAcquisition(t *testing.T) {
 		must(t, err)
 		files, protection, owners := f.GoverningFilesCalls(), *reads, f.IdentityCalls("WriteGrant")
 		f.FailNext("DefaultBranch", context.DeadlineExceeded)
-		_, err = s.repositoryConfig(t.Context(), w.Target, "main", tip, nil)
+		_, err = s.repositoryConfig(t.Context(), target, "main", tip, nil)
 		must(t, err)
 		if _, err := f.DefaultBranch(t.Context(), repo); err != context.DeadlineExceeded {
 			t.Fatal("discovery re-read known default branch", err)

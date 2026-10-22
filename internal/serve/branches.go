@@ -218,8 +218,13 @@ func (s *Server) refreshRepository(ctx context.Context, repo Repository) error {
 					}
 					w.mu.Lock()
 					if w.AuthorityRequired && w.resolveAuthorityLifecycle != nil {
+						var mutable *config.GoverningIdentityError
+						if !errors.As(err, &mutable) {
+							w.configFailureRetryAt = time.Time{}
+						} else if w.configFailureBranch != branch || w.configFailureTip != tip || w.configFailureRetryAt.IsZero() {
+							w.configFailureRetryAt = time.Now().Add(s.options.RulesInterval)
+						}
 						w.configError, w.configFailure, w.configFailureBranch, w.configFailureTip = err, err, branch, tip
-						w.configFailureRetryAt = time.Time{}
 						err = errors.Join(err, s.block(ctx, w, queue.ConfigSource, "Default-branch configuration: "+w.configError.Error(), ""))
 					}
 					w.mu.Unlock()

@@ -78,7 +78,8 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 	// base/config observations. A parsed invalid file or proven deletion is a
 	// definite condition and can be recorded independently.
 	var invalid config.Errors
-	if loadErr != nil && !errors.Is(loadErr, config.ErrNotFound) && !errors.As(loadErr, &invalid) && (w.stageA == nil || !stageADefiniteIdentityFailure(loadErr)) {
+	var mutable *config.GoverningIdentityError
+	if loadErr != nil && !errors.Is(loadErr, config.ErrNotFound) && !errors.As(loadErr, &invalid) && !errors.As(loadErr, &mutable) && (w.stageA == nil || !stageADefiniteIdentityFailure(loadErr)) {
 		w.configError = loadErr
 		w.configBranch, w.configTip = "", ""
 		if w.managed {
@@ -94,12 +95,15 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 	stageARefresh := loadErr == nil && w.stageA != nil
 	if stageARefresh {
 		loadErr = s.refreshStageAPolicy(ctx, w, configTip)
+		if loadErr != nil && w.configCandidate.Authority.Mode == authority.OpenMerge && stageADefiniteIdentityFailure(loadErr) {
+			loadErr = &config.GoverningIdentityError{Cause: &config.GoverningReadError{Boundary: "identities", Cause: loadErr}}
+		}
 	}
 	// Identity absence/mismatch is a proved policy failure and must be durable.
 	// Transport, rate-limit and incomplete-membership errors abort entirely: a
 	// stale in-memory policy is never used, but neither is an uncertain result
 	// written as a durable configuration failure.
-	if loadErr != nil && stageARefresh && !errors.As(loadErr, &invalid) && !stageADefiniteIdentityFailure(loadErr) {
+	if loadErr != nil && stageARefresh && !errors.As(loadErr, &invalid) && !errors.As(loadErr, &mutable) && !stageADefiniteIdentityFailure(loadErr) {
 		w.configError = loadErr
 		w.configBranch, w.configTip = "", ""
 		if w.managed {
@@ -204,9 +208,8 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 	// pause admission and must never leave a previously valid policy usable.
 	w.configFailure = nil
 	w.configFailureRetryAt = time.Time{}
-	if w.AuthorityRequired && w.resolveAuthorityLifecycle != nil && loadErr != nil && (errors.As(loadErr, &invalid) || errors.Is(loadErr, config.ErrNotFound)) {
+	if w.AuthorityRequired && w.resolveAuthorityLifecycle != nil && loadErr != nil && (errors.As(loadErr, &invalid) || errors.As(loadErr, &mutable) || errors.Is(loadErr, config.ErrNotFound)) {
 		w.configFailure, w.configFailureBranch, w.configFailureTip = loadErr, branch, configTip
-		var mutable *config.GoverningIdentityError
 		if errors.As(loadErr, &mutable) {
 			w.configFailureRetryAt = time.Now().Add(s.options.RulesInterval)
 		}
@@ -294,7 +297,8 @@ func (s *Server) repositoryConfig(ctx context.Context, target Target, branch, ti
 		}
 	}
 	var invalid config.Errors
-	if err == nil || errors.As(err, &invalid) {
+	var mutable *config.GoverningIdentityError
+	if err == nil || errors.As(err, &invalid) || errors.As(err, &mutable) {
 		s.rememberDiscoveryAcquisition(key, discoveryAcquisition{branch: branch, tip: tip, bindings: bindings, cfg: candidate.Config, err: err})
 	}
 	return candidate.Config, err
@@ -332,7 +336,7 @@ func (s *Server) repositoryCandidate(ctx context.Context, target Target, tip str
 	if err != nil {
 		if authorityLanded && !errors.Is(err, config.ErrNotFound) {
 			if errors.Is(err, config.ErrMultipleFound) {
-				return config.AuthorityCandidate{}, config.Errors{{Path: "configuration", Message: err.Error()}}
+				return config.AuthorityCandidate{}, config.Errors{{NoLine: true, Path: "configuration", Message: err.Error()}}
 			}
 			return config.AuthorityCandidate{}, &config.GoverningReadError{Boundary: "config", Cause: err}
 		}

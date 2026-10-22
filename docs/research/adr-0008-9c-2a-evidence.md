@@ -197,3 +197,20 @@ against main `c53f425`; logs and SHA-256 manifest:
 - Test Postgres namespace lists match exactly before/after, including the same
   **94** pre-existing serve schemas; no scratch object remains. This receipt
   commit changes only this document.
+
+## Round 4
+
+- Restore the shared diagnostic formatter, including GitHub Stage A's `line 0:`
+  prefix. Only authority-produced diagnostics opt out of nonexistent file lines.
+  Exact-output tests cover both identity-budget paths, accountable identities,
+  the queue-candidate diagnostic and the corresponding authority message.
+- Classify live accountable-identity validation and missing user/team owners as
+  mutable failures. Worker and discovery caches retain the block within
+  `RulesInterval`, then permit same-tip recovery. Synctest regressions count
+  governing/identity reads across repeated cycles and preserve discovery retry
+  deadlines; immutable content still waits for a changed tip.
+- Add the partial setup regression: tip movement after write one stops at 1/2,
+  retains the backup and recovery instruction, and resumes without duplicate
+  writes. Remove the test-only admin-reader acquisition wrapper; the production
+  candidate acquisition remains required. Exercise the actual discovery cache
+  hit with a case-variant repository name. Hold/A2 and frozen surfaces remain.

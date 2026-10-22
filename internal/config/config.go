@@ -145,10 +145,12 @@ type Diagnostic struct {
 	Line    int
 	Path    string
 	Message string
+	// NoLine marks authority diagnostics that do not refer to a file location.
+	NoLine bool
 }
 
 func (d Diagnostic) Error() string {
-	if d.Line == 0 {
+	if d.NoLine && d.Line == 0 {
 		if d.Path == "" {
 			return d.Message
 		}

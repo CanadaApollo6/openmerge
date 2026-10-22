@@ -140,7 +140,7 @@ func TestAuthorityVerifyAcquiresServerGoverningCommit(t *testing.T) {
 	if err := recheck(t.Context()); err == nil {
 		t.Fatal("retained verification recheck accepted moved tip")
 	}
-	if err := reader.AcquireGoverning(t.Context(), "acme/project"); err == nil {
+	if _, err := reader.AcquireGoverningRecheck(t.Context(), "acme/project"); err == nil {
 		t.Fatal("verify accepted unresolved governing commit")
 	}
 }
@@ -173,7 +173,7 @@ func TestAuthorityAcquisitionRechecksDefaultAfterProtection(t *testing.T) {
 				} else {
 					reader, createErr := newAdminWriteRestrictionReader("setup-admin-secret", f.server.URL+"/api/v3/")
 					must(t, createErr)
-					err = reader.AcquireGoverning(t.Context(), "acme/project")
+					_, err = reader.AcquireGoverningRecheck(t.Context(), "acme/project")
 				}
 				if err == nil || !moved || !rechecked || f.setupWrites != 0 || !strings.Contains(err.Error(), "changed; retry acquisition") {
 					t.Fatalf("moved=%v rechecked=%v writes=%d err=%v", moved, rechecked, f.setupWrites, err)
@@ -221,7 +221,7 @@ func TestGoverningPermissionDeniedIsSanitized(t *testing.T) {
 	}
 	reader, err := newAdminWriteRestrictionReader("setup-admin-secret", f.server.URL+"/api/v3/")
 	must(t, err)
-	err = reader.AcquireGoverning(t.Context(), "acme/project")
+	_, err = reader.AcquireGoverningRecheck(t.Context(), "acme/project")
 	if err == nil || !strings.Contains(err.Error(), "permission denied") || strings.Contains(err.Error(), "ghs_SECRET") {
 		t.Fatal("lost sanitized permission class", err)
 	}
@@ -249,5 +249,41 @@ func TestAuthoritySetupRechecksAfterApplyPreflight(t *testing.T) {
 	_, err := runAuthority(t, f, opts)
 	if err == nil || !moved || f.setupWrites != 0 || !strings.Contains(err.Error(), "changed; retry acquisition") {
 		t.Fatalf("refs=%d moved=%v writes=%d err=%v", refs, moved, f.setupWrites, err)
+	}
+}
+
+func TestAuthoritySetupPartialApplyStopsAndResumes(t *testing.T) {
+	f := rulesAPI(t)
+	moved := false
+	f.override = func(w http.ResponseWriter, r *http.Request) bool {
+		if f.setupWrites == 1 && strings.HasSuffix(r.URL.Path, "/git/ref/heads/main") {
+			moved = true
+			f.json(w, map[string]any{"object": map[string]string{"type": "commit", "sha": strings.Repeat("d", 40)}})
+			return true
+		}
+		return false
+	}
+	opts := authorityOptions(t)
+	out, err := runAuthority(t, f, opts)
+	if err == nil || !moved || f.setupWrites != 1 || !strings.Contains(err.Error(), "changed; retry acquisition") || !strings.Contains(out, "completed 1/2 operations") || !strings.Contains(out, "Re-run with the same --backup file") {
+		t.Fatalf("moved=%v writes=%d output=%q err=%v", moved, f.setupWrites, out, err)
+	}
+	backup, err := os.ReadFile(opts.Backup)
+	must(t, err)
+	f.override = nil
+	_, err = runAuthority(t, f, opts)
+	must(t, err)
+	if f.setupWrites != 2 {
+		t.Fatal("resume repeated first write", f.setupWrites)
+	}
+	after, err := os.ReadFile(opts.Backup)
+	must(t, err)
+	if string(after) != string(backup) {
+		t.Fatal("resume changed retained backup")
+	}
+	_, err = runAuthority(t, f, opts)
+	must(t, err)
+	if f.setupWrites != 2 {
+		t.Fatal("completed resume repeated writes", f.setupWrites)
 	}
 }

@@ -190,13 +190,6 @@ func (c *setupAPI) governingTree(ctx context.Context, repo, commit string) (map[
 	return tree, nil
 }
 
-// AcquireGoverning protects --verify as well as setup/import. It performs no
-// writes and derives the governing ref from the forge, never a verification plan.
-func (r *AdminWriteRestrictionReader) AcquireGoverning(ctx context.Context, repo string) error {
-	_, err := r.AcquireGoverningRecheck(ctx, repo)
-	return err
-}
-
 // AcquireGoverningRecheck retains the forge-selected branch and commit for the
 // caller's final check after all seeing reads and before recording evidence.
 func (r *AdminWriteRestrictionReader) AcquireGoverningRecheck(ctx context.Context, repo string) (func(context.Context) error, error) {

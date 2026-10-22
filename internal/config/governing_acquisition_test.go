@@ -86,7 +86,22 @@ func TestGoverningAcquisitionUsesForgeIdentitiesAndGrants(t *testing.T) {
 }
 
 func TestGoverningDiagnosticHasNoFileLine(t *testing.T) {
-	if got := (Diagnostic{Path: "governing policy", Message: "invalid owners"}).Error(); got != "governing policy: invalid owners" {
+	if got := (Diagnostic{NoLine: true, Path: "governing policy", Message: "invalid owners"}).Error(); got != "governing policy: invalid owners" {
 		t.Fatal(got)
+	}
+}
+
+func TestLegacyLineZeroDiagnosticsRemainExact(t *testing.T) {
+	for _, tc := range []struct {
+		diagnostic Diagnostic
+		want       string
+	}{
+		{Diagnostic{Path: "queues", Message: "approval queue has no parsed policy candidate"}, "line 0: queues: approval queue has no parsed policy candidate"},
+		{Diagnostic{Path: "approvals", Message: "accountable identity \"human\" must resolve to a human"}, "line 0: approvals: accountable identity \"human\" must resolve to a human"},
+		{Diagnostic{Message: "invalid configuration"}, "line 0: invalid configuration"},
+	} {
+		if got := tc.diagnostic.Error(); got != tc.want {
+			t.Fatalf("got %q; want %q", got, tc.want)
+		}
 	}
 }
