@@ -23,7 +23,7 @@ func TestAdminAuthorityCompletionCLI(t *testing.T) {
 	other := strings.Repeat("b", 64)
 	var gotQuery url.Values
 	var gotAuth string
-	reply := func(w http.ResponseWriter, request store.AuthorityCompletionRequest) {}
+	reply := func(http.ResponseWriter, store.AuthorityCompletionRequest) {}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/authority-completion" || r.Method != http.MethodGet {
 			http.NotFound(w, r)
