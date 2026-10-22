@@ -42,6 +42,31 @@ def scratch_sql(url, sql):
         raise RuntimeError("scratch database operation failed")
 
 
+STRESS_GROUPS = (
+    ("stress-landing-history", ["./internal/serve"], "^TestAuthorityAcceptance(ColdCacheAllMethods|HistoryBoundary)$"),
+    ("stress-transitions-guards-mixed", ["./internal/serve"], "^TestAuthorityAcceptance(DefaultBranchTransitions|MixedGithubBytes|IntegratedObjectRefusal|BaseAdvanceBeforeBuild|MixedRealGit)$"),
+    ("stress-gitops-cli", ["./internal/gitops", "./cmd/openmerge"], "^TestAuthorityAcceptance"),
+)
+
+
+def run_stress(v, root, out, groups=STRESS_GROUPS):
+    """Bound each package invocation while retaining 20 loaded runs per test."""
+    print("20-iteration race stress in bounded groups with eight owned CPU burners", flush=True)
+    burners = []
+    try:
+        for _ in range(8):
+            burners.append(subprocess.Popen([sys.executable, "-c", "while True: pass"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+        for name, packages, pattern in groups:
+            print(name, flush=True)
+            v.invoke(["go", "test", "-p=1", "-race", "-short", "-cpu=1", "-count=20", "-timeout=15m", *packages, "-run", pattern], root, out, name, env_extra={"GOMAXPROCS": "1"})
+    finally:
+        for burner in burners:
+            burner.terminate()
+        for burner in burners:
+            burner.wait()
+    return {"iterations": 20, "GOMAXPROCS": 1, "race": True, "owned_cpu_burners": len(burners), "all_reaped": True, "groups": [name for name, _, _ in groups]}
+
+
 def main():
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
@@ -185,18 +210,7 @@ def main():
         result["legacy"] = json.loads((out / "legacy/report.json").read_text())
         print("seeded simulator in both trees", flush=True)
         result["simulator"] = v.compare_simulator(args.baseline, root, out)
-        print("20-iteration race stress with eight owned CPU burners", flush=True)
-        burners = []
-        try:
-            for _ in range(8):
-                burners.append(subprocess.Popen([sys.executable, "-c", "while True: pass"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
-            v.invoke(["go", "test", "-p=1", "-race", "-short", "-cpu=1", "-count=20", "-timeout=15m", "./internal/serve", "./internal/gitops", "./cmd/openmerge", "-run", "^TestAuthorityAcceptance"], root, out, "stress", env_extra={"GOMAXPROCS": "1"})
-        finally:
-            for burner in burners:
-                burner.terminate()
-            for burner in burners:
-                burner.wait()
-        result["stress"] = {"iterations": 20, "GOMAXPROCS": 1, "race": True, "owned_cpu_burners": len(burners), "all_reaped": True}
+        result["stress"] = run_stress(v, root, out)
         binary = root / "bin/openmerge"
         result["binary"] = {"path": str(binary), "sha256": v.sha(binary)}
         result["verdict"] = "PASS"
