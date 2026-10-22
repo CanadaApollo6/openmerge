@@ -368,7 +368,7 @@ func TestAuthorityLifecycleReadFailuresDoNotPublishConfigOrPin(t *testing.T) {
 					t.Fatal("failed lifecycle did not notify discovery", w.ready, w.waiting)
 				}
 				if phase == "receipt-expiry" {
-					if err == nil || !strings.Contains(err.Error(), "stale emission receipt") {
+					if err == nil || !strings.Contains(err.Error(), "emission receipt stale/invalid") {
 						t.Fatal(err)
 					}
 				} else {
