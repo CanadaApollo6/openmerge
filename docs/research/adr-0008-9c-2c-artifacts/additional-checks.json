@@ -1,0 +1,132 @@
+{
+  "verified_at_utc": "2026-10-22T07:27:27.073234+00:00",
+  "implementation": "4a926c31fa3ad2b09909ac0eeac21e534c8386b8",
+  "baseline": "eaddd8428ebe5acc9ad435276304516d7d389f7a",
+  "trial_class": "Hold",
+  "serve_seconds": {
+    "before_eaddd84": 190.638,
+    "after": 189.874,
+    "within_make_check": 206.51,
+    "command": "go test -race -short -count=1 -timeout=15m ./internal/serve",
+    "interpretation": "Single local race/short run per side; no GitHub-runner prediction."
+  },
+  "stress": {
+    "command": "GOMAXPROCS=1 GOFLAGS=-p=2 go test -race -count=20 -cpu=1 -timeout=30m ./internal/authority ./internal/store ./internal/status ./internal/serve ./cmd/openmerge -run 'Completion|OperationalReceipts|FirstEmission|Downgrade|VerificationReceipt|VerifyAcquires|AuthorityInputDrift|AuthorityActivationReceipt'",
+    "burners": 8,
+    "owned_pids": [
+      "269291",
+      "269292",
+      "269293",
+      "269294",
+      "269295",
+      "269296",
+      "269297",
+      "269298"
+    ],
+    "go_test_exit": 0,
+    "elapsed_seconds": 131,
+    "packages_ok": [
+      "github.com/CanadaApollo6/openmerge/internal/authority",
+      "github.com/CanadaApollo6/openmerge/internal/store",
+      "github.com/CanadaApollo6/openmerge/internal/status",
+      "github.com/CanadaApollo6/openmerge/internal/serve",
+      "github.com/CanadaApollo6/openmerge/cmd/openmerge"
+    ],
+    "burners_alive_after_reap": 0,
+    "restore_runs_under_load": [
+      {
+        "verdict": "PASS",
+        "backup_sha256": "220343eb06321e8f47da8a2a576f03d80b8433ffa3f02e035f24b57fbcee60f1",
+        "backup_watermark": 1,
+        "restored_watermark": 1,
+        "immutable_events_identical": true,
+        "source_downgrade_exit": 1,
+        "restored_downgrade_exit": 0,
+        "evidence_sha256": "62c83ec18154f4b5f75cd572f41ee80ac6ebd884341b03a017b135f530aad163",
+        "scratch_databases_removed": [
+          "om_9c2c_0a9548e7426e429899a40e47b0b8f5bb",
+          "om_9c2c_7e043e66f7704d09b7b3d31aae0d18c7"
+        ]
+      },
+      {
+        "verdict": "PASS",
+        "backup_sha256": "e9ce23f97898d56e79680b40cada075bdcada26237ecd59043d768c4ae41384c",
+        "backup_watermark": 1,
+        "restored_watermark": 1,
+        "immutable_events_identical": true,
+        "source_downgrade_exit": 1,
+        "restored_downgrade_exit": 0,
+        "evidence_sha256": "713c915904f868432d3caa3e2dc0e2e846175505102654bf4f6fe50bc7ea7aef",
+        "scratch_databases_removed": [
+          "om_9c2c_4521ce11a0d04c1e9b3f0bcb49a44c58",
+          "om_9c2c_1203cf69d71b42028574ee83cd677aa6"
+        ]
+      },
+      {
+        "verdict": "PASS",
+        "backup_sha256": "e5ea699502ab9832423116ec81c07e6a82a4f675591e7b363566a6a12b8bd53f",
+        "backup_watermark": 1,
+        "restored_watermark": 1,
+        "immutable_events_identical": true,
+        "source_downgrade_exit": 1,
+        "restored_downgrade_exit": 0,
+        "evidence_sha256": "c7fd0de6cd5ba3873afde2ab0f538a4921eba28701e820d73ebb4fa9c9521c94",
+        "scratch_databases_removed": [
+          "om_9c2c_fb37ad281b84410b924818b98d48369d",
+          "om_9c2c_245342982a1a4e62a2dc88bd3f6ad14d"
+        ]
+      }
+    ],
+    "restore_exits": [
+      0,
+      0,
+      0
+    ]
+  },
+  "mutations": [
+    {
+      "name": "tip-recheck-removed",
+      "exit": 1,
+      "expected_exit": 1
+    },
+    {
+      "name": "lane-reason-removed",
+      "exit": 1,
+      "expected_exit": 1
+    },
+    {
+      "name": "adoption-reason-removed",
+      "exit": 1,
+      "expected_exit": 1
+    },
+    {
+      "name": "cli-echo-unchecked",
+      "exit": 1,
+      "expected_exit": 1
+    },
+    {
+      "name": "cli-incomplete-success",
+      "exit": 1,
+      "expected_exit": 1
+    },
+    {
+      "name": "downgrade-unavailable-as-refusal",
+      "exit": 1,
+      "expected_exit": 1
+    },
+    {
+      "name": "governing-tip-reason-removed",
+      "exit": 1,
+      "expected_exit": 1
+    },
+    {
+      "name": "foreign-installation-reason-removed",
+      "exit": 1,
+      "expected_exit": 1
+    }
+  ],
+  "mutation_method": "In-place single-line edit of the committed tree, focused go test, then git checkout HEAD of that file; each fails on its assertion, not compilation.",
+  "superseded": "A first full pass at 2af2432 also passed; it was superseded when the governing-tip check moved into the store fold. An earlier stress run on that tree was stopped by this implementer and its own burners reaped.",
+  "raw_cache": "/home/riels/.cache/adr0008-9c-2c-verification-opus",
+  "release_acceptance": "Not executed; PR 11 owner-run sandbox required."
+}
