@@ -44,7 +44,73 @@ Completion-only races now register an additional branch in the same installation
 cross-installation refusal is independently asserted by the tenancy tests, so
 completion mutations cannot be hidden by the earlier tenancy guard.
 
-Round-3 full verification is pending. Prior-round evidence follows for provenance.
+The clean-tree round-3 verifier returned **PASS** on implementation
+`bae36308f0b01f6001881e98710d1ca7c5a2880e`, against main
+`75c4029447ae4d24a439ae6ef8ad6103ebcf3926`. The final evidence follow-up changes only this document
+and the JSON receipt; runtime, tests and verifier source remain exactly tested.
+
+- `make check`: **0**, zero lint issues, complete short race suite and build.
+  Serve took **306.976 s** inside this check.
+- Focused public/acceptance/completion/barrier and Stage A exact-output race
+  checks: **0**.
+- All **46/46** mutations failed their named behavioral tests with exit 1,
+  including all seven tenancy mutations above. Build failures do not count.
+- Strict replay (`GOMEMLIMIT=6GiB`): **2,159/2,159** identical actions,
+  structural states, snapshot hashes and boundary checkpoints; **8,676** probes.
+  Gates 2/4 and self-tests pass with no non-allowlisted differences.
+- Simulator: both exits **0**, **146/146** normalized blocks identical.
+  SHA-256 remains `a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7`.
+- Depth-1/4 contracts: **90/90 identical**. GitHub status/API/health/author
+  projections, actual CLI bytes and legacy Git object/ref/command probes are
+  identical. Existing GitHub projection/CLI goldens and Stage A exact-output
+  checks pass unchanged.
+- MixedGithubBytes remains
+  `cc95a654054e61e816120f2e57b9e19ffea3ff4855c32f4f5c055c4e99b913ee`.
+- **105/105** retained wire fixtures (90 registry fixtures) are identical.
+  Direct Git blob comparison also confirms all **211** testdata files from
+  `72574eb` and original PR head `bc9779c`, and all **208** from main
+  `75c4029`, remain unchanged.
+- Every new/changed test passes **20 iterations** with
+  `GOMAXPROCS=1 -race -cpu=1`, under **eight owned CPU burners**.
+  Independent `/proc` observation confirmed all eight accumulated CPU time
+  and were reaped. Public serve: **541.884 s**; real-Git base recovery:
+  **204.817 s**; config: **3.142 s**; changepolicy: **2.050 s**;
+  store: **12.056 s**; CLI: **19.973 s**; gitops: **33.989 s**.
+
+Fresh CI-like package timings, both exits **0**, with
+`GOMAXPROCS=2 go test -p=1 -race -short -count=1 -timeout=15m`:
+
+| Package | Main 75c4029 (s) | Round 3 (s) | Delta (s) |
+| --- | ---: | ---: | ---: |
+| `internal/serve` | 268.647 | 290.395 | +21.748 |
+| `internal/gitops` | 95.543 | 94.956 | -0.587 |
+| `internal/queue` | 158.953 | 158.335 | -0.618 |
+| `cmd/openmerge` | 64.395 | 64.606 | +0.211 |
+
+These are single local suite measurements, not daemon throughput or a causal
+performance estimate. Package times exclude lock waiting; every measured package
+and stress group is below 900 seconds. No timeout or test setting changed.
+
+Reproduce with the existing command below, using
+`--out "$HOME/.cache/openmerge-143-r3/rerun"`. Full logs, overlays, source hashes
+and manifests are retained at `~/.cache/openmerge-143-r3/full-r3/`;
+independent burner and fixture-blob receipts are in
+`~/.cache/openmerge-143-r3/`.
+
+Round-3 receipt: [verification/source hashes](adr-0008-9c-3-artifacts/verification.json),
+SHA-256 `aa3cf454c350194f344d6b1df5d4d0cb23bf0e94a41087d6f2eb918d5fc6278d`.
+
+No migrations, Makefile, CI configuration, test flags, Dockerfile, shared GitHub
+formatters, Stage A retry behavior or existing fixtures changed. No live database,
+units, OpenMerge refs/status API or Smart-Data-Ohio was touched. Code, tests and
+simulator made no real forge API calls. Publication is confined to this requested
+branch and the Hold PR body, with no PR comment or queue operation.
+
+Prior-round evidence follows for provenance; its timings and mutation counts are
+historical. The initial round-3 full attempt exposed two completion tests whose
+multi-installation fixtures conflicted with the new model. Those test scenarios
+were changed to same-installation branches and the complete verifier was rerun;
+only the clean PASS above is acceptance evidence.
 
 ---
 
@@ -182,4 +248,4 @@ No migrations, Makefile, CI configuration, test flags, Dockerfile, shared GitHub
 
 Development runs with lint failures, the old diagnostic assertion and a noncompiling scratch mutation were excluded from acceptance. The final clean-tree run reran every gate. The final documentation-only follow-up changes no runtime, test or verifier source from the tested commit.
 
-Receipt: [verification/source hashes](adr-0008-9c-3-artifacts/verification.json), SHA-256 `3c75fc211e6a9d8151dcf800567055b23cd1c65a68e99241ff1f6da0f38c75c3`.
+Historical receipt: [prior-round verification/source hashes](https://github.com/CanadaApollo6/openmerge/blob/72574ebf64c625e8431ecbfdd3de104f43aa0f04/docs/research/adr-0008-9c-3-artifacts/verification.json), SHA-256 `3c75fc211e6a9d8151dcf800567055b23cd1c65a68e99241ff1f6da0f38c75c3`.
