@@ -15,7 +15,7 @@ import (
 )
 
 func TestAuthorityPublicAgreement(t *testing.T) {
-	raw, err := os.ReadFile("testdata/authority-public.json")
+	raw, err := os.ReadFile("testdata/authority-public-activation.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,11 +39,8 @@ func TestAuthorityPublicAgreement(t *testing.T) {
 				t.Fatalf("Load = %v", err)
 			}
 			assertSchemaAgreement(t, data, err)
-			if tc.Valid && !reflect.DeepEqual(got, legacy) {
+			if tc.Valid && tc.Name != "authority enabled" && !reflect.DeepEqual(got, legacy) {
 				t.Fatal("explicit github changed effective config")
-			}
-			if tc.Name == "authority unavailable" && (err == nil || !strings.Contains(err.Error(), AuthorityActivationUnavailable)) {
-				t.Fatal("missing activation barrier", err)
 			}
 		})
 	}

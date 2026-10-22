@@ -13,17 +13,23 @@
   "properties": {
     "policy_authority": {
       "type": "string",
-      "const": "github",
-      "description": "Reserved authority mode. OpenMerge activation is unavailable until the complete ADR 0008 authority gate is enabled."
+      "enum": [
+        "github",
+        "openmerge"
+      ]
     },
     "break_glass": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["team"],
-      "properties": {"team": {"type": "string", "minLength": 1}},
-      "$comment": "The object type and diagnostic string const intentionally conflict while activation is unavailable.",
-      "const": "break_glass is unavailable until OpenMerge authority activation is enabled",
-      "description": "Reserved for a dedicated org/team under OpenMerge authority; activation is currently unavailable."
+      "required": [
+        "team"
+      ],
+      "properties": {
+        "team": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?/[A-Za-z0-9](?:[A-Za-z0-9_-]*[A-Za-z0-9])?$"
+        }
+      }
     },
     "version": {
       "type": "integer",
@@ -520,5 +526,31 @@
       },
       "minProperties": 1
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "policy_authority"
+        ],
+        "properties": {
+          "policy_authority": {
+            "const": "openmerge"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "break_glass"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "break_glass"
+          ]
+        }
+      }
+    }
+  ]
 }

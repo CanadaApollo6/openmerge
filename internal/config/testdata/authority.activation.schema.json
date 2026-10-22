@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "authority-candidate.json",
+  "title": "Candidate ADR 0008 authority fields",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "policy_authority": {
+      "type": "string",
+      "enum": [
+        "github",
+        "openmerge"
+      ]
+    },
+    "break_glass": {
+      "required": [
+        "team"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "team": {
+          "type": "string",
+          "minLength": 1,
+          "format": "openmerge-authority-team"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "policy_authority"
+        ],
+        "properties": {
+          "policy_authority": {
+            "const": "openmerge"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "break_glass"
+        ]
+      }
+    },
+    {
+      "if": {
+        "anyOf": [
+          {
+            "not": {
+              "required": [
+                "policy_authority"
+              ]
+            }
+          },
+          {
+            "required": [
+              "policy_authority"
+            ],
+            "properties": {
+              "policy_authority": {
+                "const": "github"
+              }
+            }
+          }
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "break_glass"
+          ]
+        }
+      }
+    }
+  ]
+}

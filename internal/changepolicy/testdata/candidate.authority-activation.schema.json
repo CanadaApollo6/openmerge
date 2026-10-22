@@ -1,0 +1,522 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:openmerge:stage-a:repository-authority-activation",
+  "title": "Stage A repository schema with public ADR 0008 authority (variant)",
+  "description": "Repository policy read from the default branch for every queue. See internal/config/README.md for YAML, grammar, and semantic validation details.",
+  "$comment": "Activation variant of the immutable historical Stage A candidate. Composes the public v1 schema with policy.schema.json; authority declarations require a dedicated team.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "queues"
+  ],
+  "properties": {
+    "policy_authority": {
+      "type": "string",
+      "enum": [
+        "github",
+        "openmerge"
+      ]
+    },
+    "break_glass": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "team"
+      ],
+      "properties": {
+        "team": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?/[A-Za-z0-9](?:[A-Za-z0-9_-]*[A-Za-z0-9])?$"
+        }
+      }
+    },
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Configuration version. Only version 1 is supported."
+    },
+    "queues": {
+      "type": "array",
+      "minItems": 1,
+      "description": "One or more queues with unique names. Each concrete base branch must match only one queue.",
+      "items": {
+        "$ref": "#/$defs/queue"
+      }
+    },
+    "delete_head_branch": {
+      "type": "boolean",
+      "description": "Delete eligible same-repository landed heads. When omitted, inherit the serve --delete-head-branch setting (true by default)."
+    },
+    "classification": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "docs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "format": "policy-glob"
+          }
+        },
+        "generated": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "format": "policy-glob"
+          }
+        },
+        "sensitive": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "format": "policy-glob"
+          }
+        }
+      }
+    },
+    "groups": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string",
+        "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+      },
+      "additionalProperties": {
+        "type": "array",
+        "minItems": 1,
+        "items": {
+          "type": "string",
+          "format": "policy-member"
+        }
+      }
+    },
+    "agents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "identity": {
+            "type": "string",
+            "format": "policy-login"
+          },
+          "accountable": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "format": "policy-login"
+            }
+          }
+        },
+        "required": [
+          "identity",
+          "accountable"
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "queue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "merge_when"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "[^\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]",
+          "description": "Nonempty queue name (must contain a non-whitespace character)."
+        },
+        "base": {
+          "type": "string",
+          "pattern": "[^\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]",
+          "format": "openmerge-base",
+          "description": "Branch name or whole-path glob. Omission selects the repository's default branch. * and ? stay within slash-separated segments; ** crosses slashes; **/ also matches zero segments; backslash escapes the next character. Overlapping matches pause only the affected queues."
+        },
+        "enter_when": {
+          "$ref": "#/$defs/conditions",
+          "default": [],
+          "description": "Conjunction required to enter and remain queued. Empty means true; exact-head trust is independently required."
+        },
+        "merge_when": {
+          "$ref": "#/$defs/conditions",
+          "contains": {
+            "$ref": "#/$defs/requiredCheck"
+          },
+          "description": "Conjunction evaluated on the tested commit. Must require a positive named check-success equality directly or through nested and groups; or/not/counts do not qualify. The loader also rejects expressions passing with missing or failed checks."
+        },
+        "merge_method": {
+          "type": "string",
+          "enum": [
+            "merge",
+            "squash",
+            "rebase",
+            "fast-forward"
+          ],
+          "default": "squash",
+          "description": "Commit preparation method. Fast-forward tests the unchanged final head and dequeues diverged heads without rebasing; only a consecutive linear chain can batch."
+        },
+        "check_timeout": {
+          "$ref": "#/$defs/duration",
+          "default": "1h",
+          "description": "Maximum check wait, measured from test-ref publication. Zero disables the timeout."
+        },
+        "checks": {
+          "type": "object",
+          "additionalProperties": false,
+          "default": {
+            "retry_failed": 0
+          },
+          "description": "Optional bounded retry policy for failed required checks.",
+          "properties": {
+            "retry_failed": {
+              "type": "integer",
+              "enum": [
+                0,
+                1
+              ],
+              "default": 0,
+              "description": "Rerun failed required checks once before confirming failure."
+            }
+          }
+        },
+        "batch": {
+          "type": "object",
+          "additionalProperties": false,
+          "default": {
+            "max_size": 1,
+            "max_wait": "0s"
+          },
+          "description": "Serial batch formation. Failing batches are bisected in queue order.",
+          "properties": {
+            "target_pass_rate": {
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "exclusiveMaximum": 1,
+              "description": "Opt in to exact adaptive fresh-batch sizing from the last 200 check outcomes; cold start below 20."
+            },
+            "max_size": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 128,
+              "default": 1,
+              "description": "Maximum PRs tested together. Fast-forward selects only a consecutive linear prefix."
+            },
+            "max_wait": {
+              "$ref": "#/$defs/duration",
+              "default": "0s",
+              "description": "Wait for a partial fresh batch to fill; singleton mode and pending retry/bisection groups start immediately."
+            }
+          }
+        },
+        "speculation": {
+          "type": "object",
+          "additionalProperties": false,
+          "default": {
+            "max_depth": 1,
+            "min_depth": 1
+          },
+          "description": "Adaptive admission window (AIMD). The loader also requires min_depth <= max_depth. Depth above one enables one failed-check rerun on the oldest batch.",
+          "properties": {
+            "max_depth": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 32,
+              "default": 1
+            },
+            "min_depth": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 32,
+              "default": 1
+            }
+          }
+        },
+        "changes": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "pull_requests": {
+              "const": "required",
+              "default": "required"
+            }
+          }
+        },
+        "approvals": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "default": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/requirement"
+                },
+                {
+                  "not": {
+                    "const": "none"
+                  }
+                },
+                {
+                  "not": {
+                    "type": "object",
+                    "required": [
+                      "code_owners"
+                    ]
+                  }
+                }
+              ]
+            },
+            "rules": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "when": {
+                    "$ref": "#/$defs/match"
+                  },
+                  "require": {
+                    "$ref": "#/$defs/requirement"
+                  }
+                },
+                "required": [
+                  "when",
+                  "require"
+                ]
+              }
+            }
+          },
+          "required": [
+            "default"
+          ]
+        }
+      }
+    },
+    "duration": {
+      "description": "Nonnegative Go time.ParseDuration string (signed 64-bit nanoseconds); integer zero also disables. Units: ns, us, \u00b5s, \u03bcs, ms, s, m, h. Fractions and composite durations are accepted. The loader checks range and sign, including negative zero.",
+      "oneOf": [
+        {
+          "type": "integer",
+          "const": 0
+        },
+        {
+          "type": "string",
+          "format": "openmerge-duration",
+          "pattern": "^(?:[+-]?0|[+-]?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:ns|us|\u00b5s|\u03bcs|ms|s|m|h)(?:(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:ns|us|\u00b5s|\u03bcs|ms|s|m|h))*)$"
+        }
+      ]
+    },
+    "conditions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/condition"
+      },
+      "description": "Implicit AND of condition strings and logical groups. Quote strings beginning with # in YAML."
+    },
+    "condition": {
+      "description": "Atom [-][#]attribute [operator value], or exactly one and/or/not group. Missing or mistyped observations stay unknown, including under negation.",
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*-?(?:(?:draft|conflict)(?:[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*(?:=|!=)[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*(?:true|false))?|#(?:label|approved-reviews-by|files|check-success|check-failure|check-pending)[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*(?:=|!=|<=|>=|<|>)[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*[+-]?[0-9]+|(?:base|head|author|title|label|approved-reviews-by|files|check-success|check-failure|check-pending)[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*(?:=|!=|~=|glob[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+)[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*[\\s\\S]*[^\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000][\\s\\S]*)[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*$",
+          "format": "openmerge-condition",
+          "description": "Strings/lists: =, !=, ~= (Go RE2), glob. List lengths (#): =, !=, <, <=, >, >= and a Go integer. Booleans draft/conflict: bare or =/!= true/false. Prefix - negates. Value is the trimmed remainder, with no inner quoting syntax."
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "maxProperties": 1,
+          "properties": {
+            "and": {
+              "$ref": "#/$defs/conditions",
+              "description": "All children must hold. Empty AND is true."
+            },
+            "or": {
+              "$ref": "#/$defs/conditions",
+              "description": "Any child must hold. Empty OR is false."
+            },
+            "not": {
+              "$ref": "#/$defs/condition",
+              "description": "Negates one string or logical group; unknown remains unknown."
+            }
+          }
+        }
+      ]
+    },
+    "requiredCheck": {
+      "description": "A required positive success atom, possibly nested only through conjunctions.",
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*check-success[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*=[\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]*[^\\t\\n\\v\\f\\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000][\\s\\S]*$"
+        },
+        {
+          "type": "object",
+          "required": [
+            "and"
+          ],
+          "properties": {
+            "and": {
+              "type": "array",
+              "contains": {
+                "$ref": "#/$defs/requiredCheck"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "requirement": {
+      "oneOf": [
+        {
+          "enum": [
+            "none",
+            "any_writer"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "any_writer": {
+              "const": true
+            },
+            "group": {
+              "type": "string",
+              "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+            },
+            "human": {
+              "const": true
+            },
+            "receipt": {
+              "const": true
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9223372036854775807,
+              "default": 1
+            }
+          },
+          "anyOf": [
+            {
+              "required": [
+                "any_writer"
+              ]
+            },
+            {
+              "required": [
+                "group"
+              ]
+            },
+            {
+              "required": [
+                "human"
+              ]
+            }
+          ],
+          "not": {
+            "required": [
+              "any_writer",
+              "group"
+            ]
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "code_owners": {
+              "const": true
+            },
+            "receipt": {
+              "const": true
+            }
+          },
+          "required": [
+            "code_owners"
+          ]
+        }
+      ]
+    },
+    "match": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "labels": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "format": "policy-label"
+          }
+        },
+        "paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "format": "policy-glob"
+          }
+        },
+        "touches": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "format": "policy-glob"
+          }
+        },
+        "authors": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": [
+              "human",
+              "agent"
+            ]
+          }
+        }
+      },
+      "minProperties": 1
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "policy_authority"
+        ],
+        "properties": {
+          "policy_authority": {
+            "const": "openmerge"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "break_glass"
+        ]
+      },
+      "else": {
+        "not": {
+          "required": [
+            "break_glass"
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -6,6 +6,14 @@ No slice authorizes deployment or organization acceptance. No SQL migrations or
 indexes, Makefile/CI/Dockerfile/test-flag changes, or modifications to existing
 wire fixtures. Existing wire-v1 contracts remain strict and additive.
 
+**9c complete:** 9c-1 (#136), 2a (#137), 2b (#138), 2c (#140), 2d (#141)
+and the whole 9c-3 row are implemented. Public activation consumes current
+repository-wide completion and actual pre-switch verification/drain/backup
+refusals, with spies and 13 named mutation kills. See the
+[9c-3 evidence](adr-0008-9c-3-evidence.md) for equality, stress and CI-like timing
+receipts. Deployment remains **Hold** until dogfood period B drains; the
+owner-executed organization switch remains PR 11.
+
 ## Merge boundaries
 
 1. **9a — authority contracts and governing-owner decisions.** Publish reserved
@@ -187,13 +195,13 @@ constructors remain opted out; each is independently safe at that boundary.
    mixed-GitHub commit IDs/permissions/event traces and integrated `import --accept`
    regression. These focused integrated tests consume 2a/2b/2c contracts without
    moving their ownership. Retain public rejection and production opt-out.
-6. **9c-3 — public activation and production opt-in only:** last and smallest;
+6. **9c-3 — public activation and production opt-in only (complete):** last and smallest;
    accept `policy_authority: openmerge` in schema/loader/CLI together and enable
    production constructors using the completed wiring. Require 9c-1 and every
    2a/2b/2c/2d row landed with equality evidence. Add tests that **fail unless**
    the completion-signal API and pre-switch `--verify`/drain receipt refusal
    exist **and are consulted** by public activation; absent/incomplete propagation
-   or missing/invalid receipts must refuse activation. Exercise `AuthorityCompletion.RequireComplete`, the actual repository-wide source (including missing/stale discovery), and the actual `setup --verify` / `EmissionReceipt.ValidateForBinary` refusal, with spies/mutations proving each was consulted; per-queue adoption receipts cannot substitute. Include the #138 recovery rows below. Only then remove the
+   or missing/invalid receipts before the first boundary must refuse emission. Exercise `AuthorityCompletion.RequireComplete`, the actual repository-wide source (including missing/stale discovery), and the actual `setup --verify` / `EmissionReceipt.ValidateForBinary` refusal, with spies/mutations proving each was consulted; per-queue adoption receipts cannot substitute. Include the #138 recovery rows below. Only then remove the
    barrier. Retain deployment Hold until dogfood period B drains.
 
 The real organization switch remains **PR 11**, in the sandbox with the owner.
@@ -205,7 +213,7 @@ contracts without transferring their ownership.
 
 | ADR PR 9 bullet / requirement | Slice |
 | --- | --- |
-| Scope/config: public OpenMerge acceptance in schema/loader/CLI and production constructor opt-in | 9c-3 |
+| Scope/config: public OpenMerge acceptance in schema/loader/CLI and production constructor opt-in | 9c-3 complete; public runtime/CLI and consult-proof evidence |
 | Scope/config: root schema + loader + CLI agreement, reserved fail-closed publication; pure default queue and governing-owner coverage validation | 9a |
 | Scope/config: resolve/obtain actual governing evidence in discovery/setup/import; import acceptance cannot waive; missing/unresolved/incomplete evidence cannot activate | 9c-2a |
 | Owner enforcement: pure no-approvals decision/digest, no ordinary floor, mandatory exact-revision policy owners, `none` cannot waive; governing rather than proposed owner semantics | 9a |
@@ -252,8 +260,8 @@ contracts without transferring their ownership.
 | #127: unsupported future-version cursor fallback | 9b-ii-1: operating docs and regression cover overwriting derived future-version cursor |
 | #127: ValidateChecks approval quota/read precedence | 9b-ii-1: local check preflight without DB/forge approval reads; fresh complete admission read retained |
 | #128: configured database receipt identity, empty identities, preflight review-input precedence, stale ownership/transaction-expiry documentation | 9b-ii-2a |
-| #138: ExpectedRefs/input drift recovery | 9c-2c documents rollback → fresh proposed verification → re-enable. Applied verification cannot safely mint proposed-adoption provenance; direct re-adoption is deliberately unavailable. 9c-3 must test this runbook through public activation and require current completion. |
-| #138: external base advance between plan/build | 9c-2c documents conservative transient failure and normal base observation/replan recovery. 9c-3 must test public recovery; do not classify arbitrary ancestry/read failures as a successful base-moved observation. GitHub path stays unchanged. |
+| #138: ExpectedRefs/input drift recovery | 9c-2c documents rollback → fresh proposed verification → re-enable. Applied verification cannot safely mint proposed-adoption provenance; direct re-adoption is deliberately unavailable. 9c-3 complete: public rollback → fresh proposed verification → re-enable keeps the new selected branch; both queues must adopt current inputs before current repository completion succeeds. |
+| #138: external base advance between plan/build | 9c-2c documents conservative transient failure and normal base observation/replan recovery. 9c-3 complete: typed BaseMovedError from a successful different-tip/negative-ancestry observation; public real-Git replan recovery passes. Arbitrary ancestry/read failures remain errors. GitHub path stays unchanged. |
 | #138: seeing-drift assertion, shared input comparison, draftless floor query | 9c-2c comments the assertion, centralizes `queue.AuthorityInputsMatch` with explicit historical-nil policy, and skips AdoptAuthorityPin draft-floor reads for draftID zero. |
 | Acceptance #82 history boundary / #84 tested acquisition | 9c-2d: reproduce in cold-cache real-git acceptance |
 | Acceptance rejected intermediate/marker/fence refs unchanged and mixed GitHub compatibility | 9c-2d: real remote ref read-back plus permission/event/commit comparisons |
@@ -264,23 +272,26 @@ contracts without transferring their ownership.
 
 ## First-emission and release boundary
 
-9a emits no new events or v7 state. 9b retains the public barrier even though
+Historically, 9a emitted no new events or v7 state. 9b retained the public barrier even though
 internal activation tests exercise events. Before any 9c deployment, drain every old
 worker after period B, retain inventory and a tested pre-emission backup receipt,
 and verify the attested emitting binary. This includes operator `--verify` before
-config activation. The internal activation caller already validates emission receipt max-age and attested `BinaryRevision` in
-9b-ii-1; 9b-ii-2a binds it to the configured database. The existing
-`setup --verify` command gate is separate. Local receipt validation occurs before identity I/O; server-side identity and
-receipt age are checked before forge reads and again before calling adoption; a receipt can still expire while the adoption
-transaction waits for the queue lock or commits. This is not a transaction-time
-expiry guarantee.
+config activation. Receipt age, binary revision, backup hash and drain/restore
+attestations gate only the first authority-boundary event. Proposed verification
+is already such an event. The writing transaction holds the global event-table
+lock while it checks the absence of a boundary and live backup watermark, then
+commits the first event. No append from another queue can cross that check.
+After the boundary, steady-state reconciliation, tip re-pins, re-enable and
+subsequent verification require no receipt; configured database identity remains
+bound. Rollback to GitHub never requires a receipt. Before the boundary, invalid
+receipts report `emission receipt stale/invalid`.
 After new events or v7 cursors, rollback to `github` is not a
 binary downgrade: use a compatible reader or stop workers, restore the verified
 backup and reconcile subsequent real refs/evidence before resuming. Keep outside
 warnings and all immutable evidence through rollback/retirement. PR 11 owns the
 actual organization switch, never this implementation worktree.
 
-Historical baseline: at 9c-1 there was **no repository-wide “all served queues carry digest X” completion signal**. 9b-ii-2b provides independent per-queue receipts only; they do not authorize removing redundant protection. 9c-2c provides `Server.AuthorityCompletion` / `Store.RepositoryAuthorityCompletion`, authenticated `/v1/authority-completion` and `openmerge admin authority-completion` (exit 0 only when complete); `AuthorityCompletion.RequireComplete` is the refusal contract. It covers all registered partitions (including other installations and paused/retired/excluded) plus fresh selected discovery, not a worker subset. 9c-3 must consult it before the public switch/protection-removal sequence.
+Historical baseline: at 9c-1 there was **no repository-wide “all served queues carry digest X” completion signal**. 9b-ii-2b provides independent per-queue receipts only; they do not authorize removing redundant protection. 9c-2c provides `Server.AuthorityCompletion` / `Store.RepositoryAuthorityCompletion`, authenticated `/v1/authority-completion` and `openmerge admin authority-completion` (exit 0 only when complete); `AuthorityCompletion.RequireComplete` is the refusal contract. It covers all registered partitions (including other installations and paused/retired/excluded) plus fresh selected discovery, not a worker subset. 9c-3 now consumes it through the production public push guard, with fresh discovery and the actual all-partition Store source. Spies and named call-removal mutations prove consultation; per-queue adoption never substitutes.
 
 The optional `write_restriction_observed.read_error` and its v7 snapshot field
 are also strict-decoder compatibility boundaries. Include workers/readers that
@@ -288,3 +299,39 @@ lack these fields in the old-worker inventory even if they recognize the event
 type or v7. Drain them before the first such observation, including admission
 failures, and retain the tested backup/reconciliation receipts. Rollback to
 GitHub does not erase this boundary or permit a v7-incompatible binary downgrade.
+
+Authority mode requires **one dedicated database per client (installation)**.
+Every queue counts, including paused, retired, excluded queues and queues in
+other repositories. Setup verification, public activation and each final public
+authority push check this inventory afresh; more than one installation refuses
+with `authority mode requires a dedicated database per installation: this database
+serves N installations`. The first-emission transaction takes an exclusive transaction advisory tenancy
+lock before queue or event locks, serializing registration, and checks tenancy alongside
+the database-wide events lock and watermark. The backup/restore receipt covers
+the whole database and is waived once any authority boundary exists in it.
+A newly registered second installation therefore stops authority even after the
+boundary; rollback to GitHub remains available and ordinary GitHub workers are
+unaffected. Shared multi-tenant deployment requires a future ADR defining a
+per-installation boundary: scoped watermark, lock, receipt and completion, plus
+per-tenant export/restore.
+
+9c-3 activation supports a **single installation only**, with **no lanes**.
+Freeze the default branch and selected configuration/branch inventory during the
+switch. Require complete inherited, repository and classic protection visibility,
+including targets, rules and bypass actors. Before the first authority-boundary
+event, live global `max(events.id) == BackupWatermark` is required rather than an
+operator attestation alone. The actual pre-switch `setup --verify` path checks
+this atomically in the first proposed-verification transaction and rejects
+invalid/expired receipts before that boundary. Final public lifecycle writes
+recheck the live governing name/tip before emission. The final push guard repeats
+the durable repository-wide completion snapshot after its last outbound read and
+requires an identical verdict. The database-check-to-remote-push interval remains
+an irreducible window, as with other immediate-before-write guards.
+
+For input drift restore GitHub protection first, roll back to GitHub authority,
+record fresh proposed verification for current inputs, update the runtime plan
+and re-enable; require current completion for every registered partition. Keep
+strict-decoder-incompatible readers drained before new events, `read_error` or v7.
+GitHub rollback preserves that boundary: retain a compatible binary, or stop all
+workers, restore the tested pre-emission backup and reconcile subsequent real
+refs/evidence before resuming. See the public activation operating runbook.

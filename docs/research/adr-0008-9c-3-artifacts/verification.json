@@ -1,0 +1,1635 @@
+{
+  "trial_class": "Hold",
+  "slice": "9c-3",
+  "offline_only": true,
+  "commands": [
+    {
+      "name": "mutant-public-reader-error-class",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-public-reader-error-class/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-public-reader-error-class/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-public-reader-error-class/overlay.json -race -short -count=1 ./internal/serve -run '^TestPublicAuthorityReaderPreservesSanitizedErrorClasses$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-public-reader-error-class",
+      "wall_seconds": 0.633,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-public-github-loader",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-public-github-loader/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-public-github-loader/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-public-github-loader/overlay.json -race -short -count=1 ./internal/serve -run '^TestPublicAuthorityGithubConfigurationBytes$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-public-github-loader",
+      "wall_seconds": 0.631,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-setup-live-backup-call",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-setup-live-backup-call/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-setup-live-backup-call/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-setup-live-backup-call/overlay.json -race -short -count=1 ./cmd/openmerge -run '^TestPublicAuthoritySetupVerifyRequiresLiveBackupWatermark$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-setup-live-backup-call",
+      "wall_seconds": 0.604,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-typed-base-move",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-typed-base-move/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-typed-base-move/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-typed-base-move/overlay.json -race -short -count=1 ./internal/serve -run '^TestAuthorityAcceptanceBaseAdvanceBeforeBuild$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-typed-base-move",
+      "wall_seconds": 2.676,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-final-governing-recheck",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-final-governing-recheck/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-final-governing-recheck/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-final-governing-recheck/overlay.json -race -short -count=1 ./internal/serve -run '^TestPublicAuthorityActivationRechecksGoverningTip$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-final-governing-recheck",
+      "wall_seconds": 0.692,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-require-complete",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-require-complete/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-require-complete/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-require-complete/overlay.json -race -short -count=1 ./internal/serve -run '^TestPublicAuthorityActivationConsultsCompletion$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-require-complete",
+      "wall_seconds": 2.561,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-repository-source",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-repository-source/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-repository-source/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-repository-source/overlay.json -race -short -count=1 ./internal/serve -run '^TestPublicAuthorityActivationConsultsCompletion$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-repository-source",
+      "wall_seconds": 1.393,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-pre-switch-verification",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-pre-switch-verification/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-pre-switch-verification/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-pre-switch-verification/overlay.json -race -short -count=1 ./internal/serve -run '^TestPublicAuthorityActivationRequiresVerification$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-pre-switch-verification",
+      "wall_seconds": 5.633,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-live-backup-watermark",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-live-backup-watermark/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-live-backup-watermark/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-live-backup-watermark/overlay.json -race -short -count=1 ./internal/store -run '^TestAuthorityEmissionLiveBackupWatermark$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-live-backup-watermark",
+      "wall_seconds": 2.377,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-production-constructor",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-production-constructor/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-production-constructor/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-production-constructor/overlay.json -race -short -count=1 ./internal/serve -run '^TestPublicAuthorityProductionConstructor$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-production-constructor",
+      "wall_seconds": 5.637,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-first-emission-final-watermark",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-first-emission-final-watermark/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-first-emission-final-watermark/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-first-emission-final-watermark/overlay.json -race -short -count=1 ./cmd/openmerge -run '^TestReviewFirstEmissionAppendRace$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-first-emission-final-watermark",
+      "wall_seconds": 3.577,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-first-emission-global-append-lock",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-first-emission-global-append-lock/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-first-emission-global-append-lock/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-first-emission-global-append-lock/overlay.json -race -short -count=1 ./internal/store -run '^TestAuthorityEmissionSerializesAllQueueAppends$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-first-emission-global-append-lock",
+      "wall_seconds": 2.405,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-receipt-boundary-ignore-first",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-receipt-boundary-ignore-first/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-receipt-boundary-ignore-first/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-receipt-boundary-ignore-first/overlay.json -race -short -count=1 ./internal/store -run '^TestAuthorityEmissionReceiptBoundary$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-receipt-boundary-ignore-first",
+      "wall_seconds": 2.465,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-receipt-boundary-require-after",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-receipt-boundary-require-after/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-receipt-boundary-require-after/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-receipt-boundary-require-after/overlay.json -race -short -count=1 ./internal/store -run '^TestAuthorityEmissionReceiptBoundary$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-receipt-boundary-require-after",
+      "wall_seconds": 2.426,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-runtime-receipt-after-boundary",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-runtime-receipt-after-boundary/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-runtime-receipt-after-boundary/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-runtime-receipt-after-boundary/overlay.json -race -short -count=1 ./internal/serve -run '^TestPublicAuthorityReceiptNotRequiredAfterBoundary$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-runtime-receipt-after-boundary",
+      "wall_seconds": 5.935,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-rollback-receipt-required",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-rollback-receipt-required/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-rollback-receipt-required/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-rollback-receipt-required/overlay.json -race -short -count=1 ./internal/serve -run '^TestPublicAuthorityReceiptNotRequiredAfterBoundary$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-rollback-receipt-required",
+      "wall_seconds": 6.21,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-setup-receipt-after-boundary",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-setup-receipt-after-boundary/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-setup-receipt-after-boundary/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-setup-receipt-after-boundary/overlay.json -race -short -count=1 ./cmd/openmerge -run '^TestVerificationReceiptOnlyBeforeBoundary$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-setup-receipt-after-boundary",
+      "wall_seconds": 1.613,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-setup-receipt-validation-bypass",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-setup-receipt-validation-bypass/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-setup-receipt-validation-bypass/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-setup-receipt-validation-bypass/overlay.json -race -short -count=1 ./cmd/openmerge -run '^TestVerificationReceiptValidationSanitizedBeforeSeeingRead$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-setup-receipt-validation-bypass",
+      "wall_seconds": 1.599,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-public-unlisted-adopts-first",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-public-unlisted-adopts-first/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-public-unlisted-adopts-first/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-public-unlisted-adopts-first/overlay.json -race -short -count=1 ./internal/serve -run '^TestPublicAuthorityUnlistedQueueStaysGithub$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-public-unlisted-adopts-first",
+      "wall_seconds": 5.698,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-reviewed-plan-binding-bypass",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-reviewed-plan-binding-bypass/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-reviewed-plan-binding-bypass/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-reviewed-plan-binding-bypass/overlay.json -race -short -count=1 ./internal/serve -run '^TestPublicAuthorityReviewedBindingMustMatch$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-reviewed-plan-binding-bypass",
+      "wall_seconds": 5.72,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-inventory-error-class-erasure",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-inventory-error-class-erasure/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-inventory-error-class-erasure/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-inventory-error-class-erasure/overlay.json -race -short -count=1 ./internal/serve -run '^TestReviewPublicInventoryErrorClass$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-inventory-error-class-erasure",
+      "wall_seconds": 5.606,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-negative-ancestry-any-error",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-negative-ancestry-any-error/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-negative-ancestry-any-error/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-negative-ancestry-any-error/overlay.json -race -short -count=1 ./internal/gitops -run '^TestBuildBaseProofPreservesFailureClasses$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-negative-ancestry-any-error",
+      "wall_seconds": 1.137,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-negative-ancestry-diagnostic",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-negative-ancestry-diagnostic/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-negative-ancestry-diagnostic/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-negative-ancestry-diagnostic/overlay.json -race -short -count=1 ./internal/gitops -run '^TestBuildBaseProofPreservesFailureClasses$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-negative-ancestry-diagnostic",
+      "wall_seconds": 1.119,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-production-runtime-wiring",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-production-runtime-wiring/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-production-runtime-wiring/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-production-runtime-wiring/overlay.json -race -short -count=1 ./cmd/openmerge -run '^TestProductionAuthorityRuntimeWiring$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-production-runtime-wiring",
+      "wall_seconds": 1.613,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-production-app-binding",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-production-app-binding/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-production-app-binding/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-production-app-binding/overlay.json -race -short -count=1 ./cmd/openmerge -run '^TestProductionAuthorityRuntimeWiring$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-production-app-binding",
+      "wall_seconds": 1.633,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-production-completion-cache",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-production-completion-cache/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-production-completion-cache/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-production-completion-cache/overlay.json -race -short -count=1 ./cmd/openmerge -run '^TestReview4AuditPreservesWorkerQuota$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-production-completion-cache",
+      "wall_seconds": 1.806,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-runtime-first-receipt-bypass",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-runtime-first-receipt-bypass/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-runtime-first-receipt-bypass/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-runtime-first-receipt-bypass/overlay.json -race -short -count=1 ./internal/serve -run '^TestAuthorityActivationReceiptBeforeIO$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-runtime-first-receipt-bypass",
+      "wall_seconds": 5.757,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-legacy-ack-waives-authority-receipt",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-legacy-ack-waives-authority-receipt/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-legacy-ack-waives-authority-receipt/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-legacy-ack-waives-authority-receipt/overlay.json -race -short -count=1 ./internal/store -run '^TestAuthorityEmissionLiveBackupWatermark$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-legacy-ack-waives-authority-receipt",
+      "wall_seconds": 2.389,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-rollback-configured-database-binding",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-rollback-configured-database-binding/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-rollback-configured-database-binding/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-rollback-configured-database-binding/overlay.json -race -short -count=1 ./internal/serve -run '^TestPublicAuthorityRollbackKeepsDatabaseBinding$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-rollback-configured-database-binding",
+      "wall_seconds": 5.845,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-first-emission-default-isolation",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-first-emission-default-isolation/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-first-emission-default-isolation/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-first-emission-default-isolation/overlay.json -race -short -count=1 ./internal/store -run '^TestAuthorityEmissionRefreshesSnapshotAfterAppendLockWait$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-first-emission-default-isolation",
+      "wall_seconds": 2.425,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-S7-adopt-gate-skipped",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-S7-adopt-gate-skipped/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-S7-adopt-gate-skipped/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-S7-adopt-gate-skipped/overlay.json -race -short -count=1 ./internal/store -run '^TestAuthorityLifecycleEmissionDefenseInDepth$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-S7-adopt-gate-skipped",
+      "wall_seconds": 2.566,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-S8-config-gate-skipped",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-S8-config-gate-skipped/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-S8-config-gate-skipped/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-S8-config-gate-skipped/overlay.json -race -short -count=1 ./internal/store -run '^TestAuthorityLifecycleEmissionDefenseInDepth$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-S8-config-gate-skipped",
+      "wall_seconds": 2.561,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-A4-no-gate-created",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-A4-no-gate-created/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-A4-no-gate-created/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-A4-no-gate-created/overlay.json -race -short -count=1 ./internal/serve -run '^TestPublicAuthorityActivationEmissionDefenseInDepth$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-A4-no-gate-created",
+      "wall_seconds": 5.516,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-W-no-db-identity-pin",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-W-no-db-identity-pin/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-W-no-db-identity-pin/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-W-no-db-identity-pin/overlay.json -race -short -count=1 ./cmd/openmerge -run '^TestProductionAuthorityRuntimeWiring$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-W-no-db-identity-pin",
+      "wall_seconds": 1.623,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-E3-receipt-cause-kept-in-message",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-E3-receipt-cause-kept-in-message/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-E3-receipt-cause-kept-in-message/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-E3-receipt-cause-kept-in-message/overlay.json -race -short -count=1 ./internal/serve -run '^TestPublicAuthorityRuntimeReceiptErrorSanitized$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-E3-receipt-cause-kept-in-message",
+      "wall_seconds": 5.771,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-boundary-positive-cache-disabled",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-boundary-positive-cache-disabled/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-boundary-positive-cache-disabled/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-boundary-positive-cache-disabled/overlay.json -race -short -count=1 ./internal/store -run '^TestAuthorityBoundaryPositiveCache$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-boundary-positive-cache-disabled",
+      "wall_seconds": 2.372,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-boundary-negative-cache",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-boundary-negative-cache/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-boundary-negative-cache/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-boundary-negative-cache/overlay.json -race -short -count=1 ./internal/store -run '^TestAuthorityBoundaryPositiveCache$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-boundary-negative-cache",
+      "wall_seconds": 2.359,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-tenancy-emission",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-emission/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-emission/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-tenancy-emission/overlay.json -race -short -count=1 ./internal/store -run '^TestAuthorityTenancyEmission$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-emission",
+      "wall_seconds": 2.379,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-tenancy-registration-lock",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-registration-lock/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-registration-lock/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-tenancy-registration-lock/overlay.json -race -short -count=1 ./internal/store -run '^TestAuthorityTenancyConcurrentRegistration$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-registration-lock",
+      "wall_seconds": 3.23,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-tenancy-registration-held",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-registration-held/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-registration-held/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-tenancy-registration-held/overlay.json -race -short -count=1 ./internal/store -run '^TestAuthorityTenancyRegistrationWaitsForEmission$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-registration-held",
+      "wall_seconds": 0.429,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-tenancy-setup",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-setup/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-setup/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-tenancy-setup/overlay.json -race -short -count=1 ./cmd/openmerge -run '^TestVerificationTenancyBeforeReceipt$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-setup",
+      "wall_seconds": 1.613,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-tenancy-lifecycle",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-lifecycle/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-lifecycle/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-tenancy-lifecycle/overlay.json -race -short -count=1 ./internal/serve -run '^TestPublicAuthorityTenancyLifecycle$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-lifecycle",
+      "wall_seconds": 5.544,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-tenancy-push-preflight",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-push-preflight/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-push-preflight/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-tenancy-push-preflight/overlay.json -race -short -count=1 ./internal/serve -run '^TestPublicAuthorityTenancyPushAndRollback$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-push-preflight",
+      "wall_seconds": 5.751,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-tenancy-push-final",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-push-final/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-push-final/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-tenancy-push-final/overlay.json -race -short -count=1 ./internal/serve -run '^TestPublicAuthorityTenancyFinalInventory$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-push-final",
+      "wall_seconds": 5.925,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-completion-verdict-equality",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-verdict-equality/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-verdict-equality/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-completion-verdict-equality/overlay.json -race -short -count=1 ./internal/serve -run '^TestPublicAuthorityCompletionPartitionRace$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-verdict-equality",
+      "wall_seconds": 7.05,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-completion-partition-race",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-partition-race/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-partition-race/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-completion-partition-race/overlay.json -race -short -count=1 ./internal/serve -run '^TestPublicAuthorityCompletionPartitionRace$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-partition-race",
+      "wall_seconds": 6.643,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-completion-discovery-error-class",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-discovery-error-class/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-discovery-error-class/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-completion-discovery-error-class/overlay.json -race -short -count=1 ./internal/serve -run '^TestPublicAuthorityCompletionErrorClasses$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-discovery-error-class",
+      "wall_seconds": 10.964,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-completion-dispatch-duplicate",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-dispatch-duplicate/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-dispatch-duplicate/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-completion-dispatch-duplicate/overlay.json -race -short -count=1 ./internal/serve -run '^TestPublicAuthorityCompletionRealLandCallBudget$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-dispatch-duplicate",
+      "wall_seconds": 8.227,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-completion-consult-PushBuild",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-consult-PushBuild/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-consult-PushBuild/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-completion-consult-PushBuild/overlay.json -race -short -count=1 ./internal/serve -run '^TestPublicAuthorityEveryPushConsultsCompletion$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-consult-PushBuild",
+      "wall_seconds": 7.323,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-completion-consult-PushLand",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-consult-PushLand/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-consult-PushLand/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-completion-consult-PushLand/overlay.json -race -short -count=1 ./internal/serve -run '^TestPublicAuthorityEveryPushConsultsCompletion$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-consult-PushLand",
+      "wall_seconds": 7.315,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-completion-consult-PushEnsureFence",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-consult-PushEnsureFence/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-consult-PushEnsureFence/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-completion-consult-PushEnsureFence/overlay.json -race -short -count=1 ./internal/serve -run '^TestPublicAuthorityEveryPushConsultsCompletion$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-consult-PushEnsureFence",
+      "wall_seconds": 7.36,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-completion-consult-PushAdvanceFence",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-consult-PushAdvanceFence/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-consult-PushAdvanceFence/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-completion-consult-PushAdvanceFence/overlay.json -race -short -count=1 ./internal/serve -run '^TestPublicAuthorityEveryPushConsultsCompletion$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-consult-PushAdvanceFence",
+      "wall_seconds": 7.29,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-completion-consult-PushDeleteBranch",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-consult-PushDeleteBranch/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-consult-PushDeleteBranch/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-completion-consult-PushDeleteBranch/overlay.json -race -short -count=1 ./internal/serve -run '^TestPublicAuthorityEveryPushConsultsCompletion$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-consult-PushDeleteBranch",
+      "wall_seconds": 7.451,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-tenancy-registration-shared",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-registration-shared/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-registration-shared/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-tenancy-registration-shared/overlay.json -race -short -count=1 ./internal/store -run '^TestAuthorityTenancyConcurrentRegistration$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-registration-shared",
+      "wall_seconds": 2.386,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-tenancy-exclusive-after-events",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-exclusive-after-events/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-exclusive-after-events/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-tenancy-exclusive-after-events/overlay.json -race -short -count=1 ./internal/store -run '^TestAuthorityTenancyConcurrentRegistration$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-exclusive-after-events",
+      "wall_seconds": 2.481,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-tenancy-boundary-defense",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-boundary-defense/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-boundary-defense/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-tenancy-boundary-defense/overlay.json -race -short -count=1 ./internal/store -run '^TestAuthorityTenancyBoundaryDefense$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-tenancy-boundary-defense",
+      "wall_seconds": 2.377,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-completion-installation-verdict",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-installation-verdict/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-installation-verdict/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-completion-installation-verdict/overlay.json -race -short -count=1 ./internal/store -run '^TestRepositoryAuthorityCompletion$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-installation-verdict",
+      "wall_seconds": 2.651,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-notification-table-deadlock",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-notification-table-deadlock/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-notification-table-deadlock/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-notification-table-deadlock/overlay.json -race -short -count=1 ./internal/store -run '^TestAuthorityTenancyNotificationOverlap$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-notification-table-deadlock",
+      "wall_seconds": 3.422,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-completion-field-Reason",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-Reason/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-Reason/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-completion-field-Reason/overlay.json -race -short -count=1 ./internal/serve -run '^TestSameAuthorityCompletionFields$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-Reason",
+      "wall_seconds": 5.731,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-completion-field-Digest",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-Digest/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-Digest/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-completion-field-Digest/overlay.json -race -short -count=1 ./internal/serve -run '^TestSameAuthorityCompletionFields$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-Digest",
+      "wall_seconds": 5.517,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-completion-field-ExpectedDigest",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-ExpectedDigest/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-ExpectedDigest/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-completion-field-ExpectedDigest/overlay.json -race -short -count=1 ./internal/serve -run '^TestSameAuthorityCompletionFields$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-ExpectedDigest",
+      "wall_seconds": 5.733,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-completion-field-GoverningCommit",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-GoverningCommit/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-GoverningCommit/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-completion-field-GoverningCommit/overlay.json -race -short -count=1 ./internal/serve -run '^TestSameAuthorityCompletionFields$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-GoverningCommit",
+      "wall_seconds": 7.224,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-completion-field-ID",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-ID/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-ID/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-completion-field-ID/overlay.json -race -short -count=1 ./internal/serve -run '^TestSameAuthorityCompletionFields$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-ID",
+      "wall_seconds": 5.471,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-completion-field-Installation",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-Installation/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-Installation/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-completion-field-Installation/overlay.json -race -short -count=1 ./internal/serve -run '^TestSameAuthorityCompletionFields$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-Installation",
+      "wall_seconds": 5.622,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-completion-field-Base",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-Base/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-Base/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-completion-field-Base/overlay.json -race -short -count=1 ./internal/serve -run '^TestSameAuthorityCompletionFields$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-Base",
+      "wall_seconds": 5.519,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-completion-field-Lane",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-Lane/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-Lane/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-completion-field-Lane/overlay.json -race -short -count=1 ./internal/serve -run '^TestSameAuthorityCompletionFields$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-Lane",
+      "wall_seconds": 5.625,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-completion-field-installation-count",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-installation-count/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-installation-count/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-completion-field-installation-count/overlay.json -race -short -count=1 ./internal/serve -run '^TestSameAuthorityCompletionFields$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-installation-count",
+      "wall_seconds": 5.597,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-completion-field-complete",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-complete/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-complete/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-completion-field-complete/overlay.json -race -short -count=1 ./internal/serve -run '^TestSameAuthorityCompletionFields$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-complete",
+      "wall_seconds": 5.544,
+      "package_seconds": {}
+    },
+    {
+      "name": "mutant-completion-field-queue-count",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-queue-count/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-queue-count/tmp go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/mutation-completion-field-queue-count/overlay.json -race -short -count=1 ./internal/serve -run '^TestSameAuthorityCompletionFields$'",
+      "exit": 1,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/mutant-completion-field-queue-count",
+      "wall_seconds": 5.593,
+      "package_seconds": {}
+    },
+    {
+      "name": "make-check",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/make-check/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/make-check/tmp make check",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/make-check",
+      "wall_seconds": 486.497,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/cmd/openmerge": 66.005,
+        "github.com/CanadaApollo6/openmerge/internal/ascii": 1.008,
+        "github.com/CanadaApollo6/openmerge/internal/authority": 1.096,
+        "github.com/CanadaApollo6/openmerge/internal/brief": 3.341,
+        "github.com/CanadaApollo6/openmerge/internal/changepolicy": 1.71,
+        "github.com/CanadaApollo6/openmerge/internal/classification": 2.205,
+        "github.com/CanadaApollo6/openmerge/internal/config": 1.617,
+        "github.com/CanadaApollo6/openmerge/internal/config/condition": 1.024,
+        "github.com/CanadaApollo6/openmerge/internal/diagnostic": 1.018,
+        "github.com/CanadaApollo6/openmerge/internal/executor": 1.157,
+        "github.com/CanadaApollo6/openmerge/internal/forge": 7.928,
+        "github.com/CanadaApollo6/openmerge/internal/forge/fake": 1.444,
+        "github.com/CanadaApollo6/openmerge/internal/forge/github": 66.345,
+        "github.com/CanadaApollo6/openmerge/internal/gitops": 99.934,
+        "github.com/CanadaApollo6/openmerge/internal/queue": 166.125,
+        "github.com/CanadaApollo6/openmerge/internal/serve": 306.964,
+        "github.com/CanadaApollo6/openmerge/internal/sim": 33.963,
+        "github.com/CanadaApollo6/openmerge/internal/sim/capacity": 1.009,
+        "github.com/CanadaApollo6/openmerge/internal/status": 10.481,
+        "github.com/CanadaApollo6/openmerge/internal/store": 70.279,
+        "github.com/CanadaApollo6/openmerge/scripts": 1.075,
+        "github.com/CanadaApollo6/openmerge/tools/dogfood": 1.633
+      }
+    },
+    {
+      "name": "focused",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/focused/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/focused/tmp go test -race -short -v ./internal/authority ./internal/gitops ./internal/serve ./internal/store ./internal/queue ./internal/config ./internal/status ./cmd/openmerge -run 'PublicAuthority|AuthorityAcceptance|AuthorityEmissionLiveBackup|Completion|AuthorityBarrier|LegacyLineZero|StageAAccountableIdentityDiagnosticExact' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/focused",
+      "wall_seconds": 64.828,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/internal/authority": 1.013,
+        "github.com/CanadaApollo6/openmerge/internal/gitops": 1.707,
+        "github.com/CanadaApollo6/openmerge/internal/serve": 63.059,
+        "github.com/CanadaApollo6/openmerge/internal/store": 4.013,
+        "github.com/CanadaApollo6/openmerge/internal/queue": 1.052,
+        "github.com/CanadaApollo6/openmerge/internal/config": 1.03,
+        "github.com/CanadaApollo6/openmerge/internal/status": 1.024,
+        "github.com/CanadaApollo6/openmerge/cmd/openmerge": 1.267
+      }
+    },
+    {
+      "name": "timing-before",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/timing-before/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/timing-before/tmp GOMAXPROCS=2 go test -p=1 -race -short -count=1 -timeout=15m ./internal/serve ./internal/gitops ./internal/queue ./cmd/openmerge",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/timing-before",
+      "wall_seconds": 601.494,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/internal/serve": 265.607,
+        "github.com/CanadaApollo6/openmerge/internal/gitops": 93.328,
+        "github.com/CanadaApollo6/openmerge/internal/queue": 164.53,
+        "github.com/CanadaApollo6/openmerge/cmd/openmerge": 64.14
+      }
+    },
+    {
+      "name": "timing-after",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/timing-after/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/timing-after/tmp GOMAXPROCS=2 go test -p=1 -race -short -count=1 -timeout=15m ./internal/serve ./internal/gitops ./internal/queue ./cmd/openmerge",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/timing-after",
+      "wall_seconds": 616.456,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/internal/serve": 289.044,
+        "github.com/CanadaApollo6/openmerge/internal/gitops": 96.468,
+        "github.com/CanadaApollo6/openmerge/internal/queue": 164.122,
+        "github.com/CanadaApollo6/openmerge/cmd/openmerge": 64.611
+      }
+    },
+    {
+      "name": "baseline-github-projections",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/baseline-github-projections/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/baseline-github-projections/tmp ADR_GITHUB_PROJECTIONS=/home/riels/.cache/openmerge-143-r5/full-r3/baseline-projections/projections.json go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/baseline-projections/overlay.json ./internal/serve -run '^TestAuthorityGithubProjectionBytes$' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/baseline-github-projections",
+      "wall_seconds": 0.767,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/internal/serve": 0.066
+      }
+    },
+    {
+      "name": "baseline-github-cli",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/baseline-github-cli/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/baseline-github-cli/tmp ADR_GITHUB_PROJECTIONS=/home/riels/.cache/openmerge-143-r5/full-r3/baseline-projections/projections.json ADR_GITHUB_CLI=/home/riels/.cache/openmerge-143-r5/full-r3/baseline-projections/cli.txt go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/baseline-projections/overlay.json ./cmd/openmerge -run '^TestADR2dGithubCLI$' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/baseline-github-cli",
+      "wall_seconds": 0.431,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/cmd/openmerge": 0.004
+      }
+    },
+    {
+      "name": "candidate-github-projections",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/candidate-github-projections/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/candidate-github-projections/tmp ADR_GITHUB_PROJECTIONS=/home/riels/.cache/openmerge-143-r5/full-r3/candidate-projections/projections.json go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/candidate-projections/overlay.json ./internal/serve -run '^TestAuthorityGithubProjectionBytes$' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/candidate-github-projections",
+      "wall_seconds": 0.559,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/internal/serve": 0.06
+      }
+    },
+    {
+      "name": "candidate-github-cli",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/candidate-github-cli/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/candidate-github-cli/tmp ADR_GITHUB_PROJECTIONS=/home/riels/.cache/openmerge-143-r5/full-r3/candidate-projections/projections.json ADR_GITHUB_CLI=/home/riels/.cache/openmerge-143-r5/full-r3/candidate-projections/cli.txt go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/candidate-projections/overlay.json ./cmd/openmerge -run '^TestADR2dGithubCLI$' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/candidate-github-cli",
+      "wall_seconds": 1.112,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/cmd/openmerge": 0.004
+      }
+    },
+    {
+      "name": "baseline-mixed-github",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/baseline-mixed-github/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/baseline-mixed-github/tmp ADR_ACCEPTANCE_GITHUB_BYTES=/home/riels/.cache/openmerge-143-r5/full-r3/baseline-mixed/mixed.json go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/baseline-mixed/overlay.json ./internal/serve -run '^TestAuthorityAcceptanceMixedGithubBytes$' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/baseline-mixed-github",
+      "wall_seconds": 0.915,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/internal/serve": 0.507
+      }
+    },
+    {
+      "name": "candidate-mixed-github",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/candidate-mixed-github/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/candidate-mixed-github/tmp ADR_ACCEPTANCE_GITHUB_BYTES=/home/riels/.cache/openmerge-143-r5/full-r3/candidate-mixed/mixed.json go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/candidate-mixed/overlay.json ./internal/serve -run '^TestAuthorityAcceptanceMixedGithubBytes$' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/candidate-mixed-github",
+      "wall_seconds": 0.915,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/internal/serve": 0.507
+      }
+    },
+    {
+      "name": "baseline-contracts",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/baseline-contracts/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/baseline-contracts/tmp ADR_DIFF=/home/riels/.cache/openmerge-143-r5/full-r3/baseline/contracts.json go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/baseline/overlay.json ./internal/queue -run '^TestADR00081Differential$' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/baseline-contracts",
+      "wall_seconds": 0.244,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/internal/queue": 0.008
+      }
+    },
+    {
+      "name": "candidate-contracts",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/candidate-contracts/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/candidate-contracts/tmp ADR_DIFF=/home/riels/.cache/openmerge-143-r5/full-r3/candidate/contracts.json go test -overlay /home/riels/.cache/openmerge-143-r5/full-r3/candidate/overlay.json ./internal/queue -run '^TestADR00081Differential$' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/candidate-contracts",
+      "wall_seconds": 0.22,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/internal/queue": 0.008
+      }
+    },
+    {
+      "name": "strict-replay",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=6GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/strict-replay/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/strict-replay/tmp /home/riels/.local/share/mise/installs/python/latest/bin/python3 /home/riels/.t3/worktrees/openmerge/t3-17687222/scripts/check-live-journal-replay.py --baseline /home/riels/.cache/openmerge-143-r1-main-75c4029 --candidate /home/riels/.t3/worktrees/openmerge/t3-17687222 --events /home/riels/.cache/om-pr72-fix1-input/events.jsonl --queues /home/riels/.cache/om-pr72-fix1-input/queues.jsonl --strict-state --out /home/riels/.cache/openmerge-143-r5/full-r3/replay.json",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/strict-replay",
+      "wall_seconds": 84.148,
+      "package_seconds": {}
+    },
+    {
+      "name": "baseline-simulator",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/baseline-simulator/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/baseline-simulator/tmp make test-sim-exits",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/baseline-simulator",
+      "wall_seconds": 47.614,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/internal/sim": 47.433
+      }
+    },
+    {
+      "name": "candidate-simulator",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/candidate-simulator/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/candidate-simulator/tmp make test-sim-exits",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/candidate-simulator",
+      "wall_seconds": 47.876,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/internal/sim": 47.702
+      }
+    },
+    {
+      "name": "stress-public-serve",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/stress-public-serve/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/stress-public-serve/tmp GOMAXPROCS=1 go test -p=1 -race -short -cpu=1 -count=20 -timeout=15m ./internal/serve -run '^TestPublicAuthority|^TestReviewPublicInventoryErrorClass$|^TestAuthorityActivationReceiptBeforeIO$|^TestAuthorityActivationReceiptExpiresDuringSeeingRead$|^TestAuthorityLifecycleRollbackReceiptAndUnchangedWire$|^TestAuthorityLifecycleReadFailuresDoNotPublishConfigOrPin$|^TestAuthorityBarrierJournalCannotInstallRuntimeAuthority$|^TestAuthorityLifecycleRequiresFlagAndResolver$'",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/stress-public-serve",
+      "wall_seconds": 574.049,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/internal/serve": 572.701
+      }
+    },
+    {
+      "name": "stress-public-base-recovery",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/stress-public-base-recovery/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/stress-public-base-recovery/tmp GOMAXPROCS=1 go test -p=1 -race -short -cpu=1 -count=20 -timeout=15m ./internal/serve -run '^TestAuthorityAcceptanceBaseAdvanceBeforeBuild$'",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/stress-public-base-recovery",
+      "wall_seconds": 202.367,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/internal/serve": 201.575
+      }
+    },
+    {
+      "name": "stress-public-config-store-cli-gitops",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/stress-public-config-store-cli-gitops/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/full-r3/stress-public-config-store-cli-gitops/tmp GOMAXPROCS=1 go test -p=1 -race -short -cpu=1 -count=20 -timeout=15m ./internal/config ./internal/changepolicy ./internal/store ./cmd/openmerge ./internal/gitops -run 'TestFullCandidateSchemaComposition|TestAuthorityPublicAgreement|TestAuthorityCandidate|TestConfigValidateAuthorityPublicCorpus|TestPublicAuthority|TestAuthorityBoundaryPositiveCache|TestAuthorityLifecycleEmissionDefenseInDepth|TestAuthorityEmissionLiveBackup|TestAuthorityTenancy|TestRepositoryAuthorityCompletion|TestSameAuthorityCompletionFields|TestVerificationTenancy|TestBuildCreationBoundaryRejectsUnprovenSources|TestSetupImportGoverningEvidenceCannotBeAccepted|TestAuthorityAcceptanceImportGoverningEvidenceCannotBeAccepted|TestReviewFirstEmissionAppendRace|TestAuthorityEmissionReceiptBoundary|TestAuthorityEmissionSerializesAllQueueAppends|TestAuthorityEmissionRefreshesSnapshotAfterAppendLockWait|TestVerificationReceiptOnlyBeforeBoundary|TestVerificationReceiptValidationSanitizedBeforeSeeingRead|TestBuildBaseProofPreservesFailureClasses|TestAuthorityCompletionDedicatedCacheAvoidsSessionLock|TestProductionAuthorityRuntimeWiring|TestHistoricalStageAAuthoritySchemaComposition|TestReview4AuditPreservesWorkerQuota'",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-143-r5/full-r3/stress-public-config-store-cli-gitops",
+      "wall_seconds": 160.38,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/internal/config": 3.124,
+        "github.com/CanadaApollo6/openmerge/internal/changepolicy": 2.017,
+        "github.com/CanadaApollo6/openmerge/internal/store": 97.406,
+        "github.com/CanadaApollo6/openmerge/cmd/openmerge": 18.26,
+        "github.com/CanadaApollo6/openmerge/internal/gitops": 37.407
+      }
+    }
+  ],
+  "baseline": "75c4029447ae4d24a439ae6ef8ad6103ebcf3926",
+  "candidate": "4d9aa0f157c0d62b1b0baa9a5ad80319b01e01aa",
+  "environment": {
+    "GOROOT": "/home/riels/.local/share/mise/installs/go/1.27.3",
+    "PATH_prefix": "/home/riels/.local/share/mise/installs/go/1.27.3/bin",
+    "database": "localhost:54329, isolated test schemas"
+  },
+  "exports": {
+    "events": {
+      "path": "/home/riels/.cache/om-pr72-fix1-input/events.jsonl",
+      "sha256": "9c8f78f3e967c7cb030948cfc9871cc67a45da06f80b12f27d1c55d09ba8accf",
+      "rows": 2158,
+      "max_event_id": 2158
+    },
+    "queues": {
+      "path": "/home/riels/.cache/om-pr72-fix1-input/queues.jsonl",
+      "sha256": "418f025a0e3c8792321b6d71d297f17fff1adf48cb616c8f4fcb774163696886",
+      "rows": 1
+    }
+  },
+  "wire": {
+    "identical": true,
+    "legacy_fixtures": 105,
+    "legacy_registry_fixtures": 90,
+    "legacy_sha256": "19c9d4ddd14947a59fbfd55e28c870e8a7d4aec6c6747b718a989a04c16e7e8f",
+    "new_fixtures": []
+  },
+  "existing_fixtures_unchanged": true,
+  "source_hashes": {
+    "cmd/openmerge/authority_acceptance_import_test.go": "8b1c4b7559c0cd3a81b24db781cbf7824c975ac8a1473308478952303db47513",
+    "cmd/openmerge/authority_emission_race_test.go": "a42ca5d507703f21a0f16555365e095db8747601e4965275860bb0b7adacba71",
+    "cmd/openmerge/authority_public_test.go": "55840f71b53a41af4291a088ccb9fd785ae544a908165138d58947035e73ba32",
+    "cmd/openmerge/authority_wiring_test.go": "7ea42a1b97557de0aa22bbb4d0fe970d0d33d2ba1f1578e624b11c6b28a41530",
+    "cmd/openmerge/config_authority_test.go": "f429c0905b16abcde2bd949723eb2a9f873acdc5f5ce9c8d06b8b3193ba5f2de",
+    "cmd/openmerge/installations.go": "a4a8314c6cf5d820d3f8fb6c98e9551d8327a4edf4e9f94268d234504d5ac28c",
+    "cmd/openmerge/outside_push_history_test.go": "283d15be37b5aa36a4d4e75d581c33ddf52d045c30256a09061a1e2acf7273c9",
+    "cmd/openmerge/serve.go": "2170cd1542c5f85b9bd5d046d753db32761515face9b68e92e4af127be27e843",
+    "cmd/openmerge/setup_governing_test.go": "7a16a1fabc7b29cd9ad45d1cd1eb6a31505d55da63c1175f6ba2b5b5f0287aec",
+    "cmd/openmerge/setup_verify.go": "e90cc06bd63080e496f54a40030f5dbd8abf77097627f2d575192dd87071f267",
+    "cmd/openmerge/setup_verify_test.go": "3954392390dbcf1ab2a37f9d43515e6f86981babd90f1ecd4885f378eb2ca611",
+    "docs/adr/0008-openmerge-policy-authority.md": "bc6c6961f038fdd90f74a57b83ec1a49b479e56ab6056ca1bb4ac30e7cc75b80",
+    "docs/operating.md": "40040ff2caa3947db5af309ea67e4dda407fbcc22183b97d8466b96045c6dfcb",
+    "docs/research/adr-0008-9-plan.md": "c197d0c8cf550c0f03f24401d0e33955a3037c7feaa64aa63c23eadbc2dd982b",
+    "docs/research/adr-0008-9c-3-artifacts/verification.json": "55fa7a7c04626b5cd9e77d1f07ae387a2ab9b61fe330b3fc7cbde9e2fd7e5fee",
+    "docs/research/adr-0008-9c-3-evidence.md": "d7424a4fd26be52665a04b015a05145e4409347b05a20b5ac4e11358be3985dd",
+    "internal/authority/emission.go": "642173277c3ad8052a0e935dd53746011d4656c03dc090165bd605634c7bb704",
+    "internal/changepolicy/compatibility_test.go": "00dbc7b49863a17405fe4571763a6814df363298181195a607f70d36bc1864f7",
+    "internal/changepolicy/testdata/candidate.authority-activation.schema.json": "d546804c029062b6dd48e8f2acc3300b7928731c6a73a24029bb78db11f77f8c",
+    "internal/config/README.md": "2e6aaea3c2e191acf0e8ca86c0b35c0a51a402a39c36a57293f4c636e94a1269",
+    "internal/config/authority.go": "4412df41435b131b4e0418c90cb8be80a6ffa92d711b913350de314952aba3a1",
+    "internal/config/authority_candidate.go": "5dda9518ba98b5c64f407ea24c7262147f69bbfa615797908de8b11882c667f4",
+    "internal/config/authority_candidate_test.go": "0f47457d0795d69b176956dc6c844e5b15770ce11917e2af6744b046f76cfe39",
+    "internal/config/authority_historical_schema_test.go": "533e5c987c684d14fb35ec7ee1598d1974412369388037e560f4d9196005b025",
+    "internal/config/authority_test.go": "48293ffe43327b16ab59e62c91cdca65ed95c57035b85c165cff41efbb10a2c3",
+    "internal/config/config.go": "a4da513ae66c9d4ff781b02e057d0204b6138160a83bdea0eb8dc3ee1fa6444d",
+    "internal/config/testdata/authority-public-activation.json": "9444e4f48daf04db43b214c0b402d7d3168ec1e88c4745f1bda33fa1d7189dec",
+    "internal/config/testdata/authority.activation.schema.json": "4cc053c418101255274a629b239bfbb2ac91931276d44638b156414a5e9ddc36",
+    "internal/forge/base_moved.go": "da4e4f547c5de88b62aa716e7312b39f11e239a18945869ee7949f598f892ef9",
+    "internal/forge/github/import_read.go": "c6501053caf0468203ec449ceb548d4554594aed8a6ff1269f6ef4382e8e75d6",
+    "internal/forge/push_options.go": "345e51a3834e4e3e15464b5f99bff5e25f622d5c607d883eef3b9e04e54681ca",
+    "internal/gitops/base_proof_errors_test.go": "0bc2250707399bbd73cbd36d23f3c0be56fe9470d3142bbec10c6e5dcc57573b",
+    "internal/gitops/build.go": "20d3544eda5f460f6fc72eb545a42ac11a12cb2eb4a66ab998a2c453f76ee8f4",
+    "internal/gitops/prepared_push.go": "0905a19e053393bb3d9a92ad8f5383fb76dc264e11a4bf3b32f53985759b606f",
+    "internal/serve/authority_acceptance_rejection_test.go": "3be52f3c6b77e71466463c8593092d9a117762404bc1b0a2acfa73f1d1c2884c",
+    "internal/serve/authority_activation.go": "d4b43bdf2bd07d594d7518bee6ea219576a80a0565ae0e564164835c073ca0dc",
+    "internal/serve/authority_activation_test.go": "c4512c3b5bbe2d4741723f814091364f3db75caef6d7f4f0ef0e231422ee854f",
+    "internal/serve/authority_barrier_test.go": "f3f6578ed3727746dd93513c237650941965850bc169976eb4df55d47e4fb05c",
+    "internal/serve/authority_completion.go": "3ff2a593cbfc730f308bd616034e9732870c5e712717fb42c0704f270e668b31",
+    "internal/serve/authority_completion_guard_test.go": "ed8ad0d166be94784b2528c98edae5b9665aa03eb231b8ece3d195cf25db7c97",
+    "internal/serve/authority_completion_test.go": "1e01090c49284b10c05c3357cedd18a32baf1bdb5f9243b926d6b0c840c6e54b",
+    "internal/serve/authority_lifecycle_test.go": "23cff2cd01533a6ac480ca7a2be6723a147e9f038812318cebe010bd7bd1acca",
+    "internal/serve/authority_public.go": "fbd8f1b60a9399a5e058459cf7c62733b9ea946b5d40b98cec0f2e141f55f158",
+    "internal/serve/authority_public_test.go": "ca5aec4154a5007c672f8179f41667f6730428f40112bf99136663911d52254e",
+    "internal/serve/authority_tenancy_test.go": "56df4688ec562c12d70e0c19dd4180d072fd1987e3811d744c4941ac93f5b506",
+    "internal/serve/branches.go": "a4960359aa1647492806e00cff1760ebec2a6bae61577de64f7ab3dd8fba4a73",
+    "internal/serve/discovery.go": "270503c3260e9d1628c44ebffde2680ca79deafefc12b71da0aaf8fc47cc4ccc",
+    "internal/serve/push.go": "0352dcc23c817093d57831d8bef66bd27371363ffb87bc2213ae35ac5f486f60",
+    "internal/serve/reconcile.go": "0869b4e8ac6b1939183d59bc6203b09c4a690ad804065f7e3bd6460ed8889cd4",
+    "internal/serve/serve.go": "7604ce1ae37ad12fc1b0368d2fbca7e9e51cd5515d0ed36b316a6d37bdf82451",
+    "internal/serve/worker.go": "33146391706be2dd1d72595634029f571ad78b677313d865d77e8d0fac45b2eb",
+    "internal/store/authority_completion.go": "4f3390ce6a6e8815cc90db6cbc8d1db985874f6c31a0f53e0f9f7e898e96a834",
+    "internal/store/authority_completion_test.go": "855123347d760af912f67256ff804ceac790d4e14074ec2495cb8b1c0f8efda5",
+    "internal/store/authority_downgrade.go": "ce7e483f6b40587f924ff65d78f70d175dbf5e7e681f7aac1558aa09a2123f23",
+    "internal/store/authority_emission.go": "505b975726b1bcdf67da71c99793c34523ecb3112b2a1d7db17da611971c0df0",
+    "internal/store/authority_emission_test.go": "e576367dc43889c64a54c9a2dca65a23357471ce00dda18469c45127d69b2f79",
+    "internal/store/authority_tenancy_test.go": "8138d9ca71a92c78335555b008dd6023f7fd2f918a9813819d24a01225d5f502",
+    "internal/store/locks.go": "d856848ee3a7670b658509ccedbbf0ad00bf60e16f97259600559616114bfe8d",
+    "internal/store/reconcile.go": "c516fbb4b2b31b1efa1be4a5d9ee0ae1f4bc9dfc218ccfdda860d8e14e4c634a",
+    "internal/store/store.go": "317f7407f49b9cc0653e41e2de14dfb009d9a1faaa56a71a7e31cc37ce994666",
+    "internal/store/write_restriction.go": "2768f159ead9f65e1962ee0f6cc40cd420f3447740596035c4a269795b33bab5",
+    "schema/openmerge.v1.json": "c82692c98a39d0c6795ddb1558665c12e8485b57ddddd997ddd2e0da3531acef",
+    "scripts/test_adr0008_scratch_db.py": "bbd5018be9393e0a96a7cf300d9dd653b78a515205aa20a29dfce85a003b8c83",
+    "scripts/verify-adr0008-9c-3.py": "7a50c1c5ac86978934ffd80a34aa43dd4cf8ef0327e566555d7bfe2c1c33e1a6"
+  },
+  "consult_mutations": [
+    {
+      "mutation": "public-reader-error-class",
+      "path": "internal/serve/authority_public.go",
+      "test": "TestPublicAuthorityReaderPreservesSanitizedErrorClasses",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "public-github-loader",
+      "path": "internal/serve/reconcile.go",
+      "test": "TestPublicAuthorityGithubConfigurationBytes",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "setup-live-backup-call",
+      "path": "cmd/openmerge/setup_verify.go",
+      "test": "TestPublicAuthoritySetupVerifyRequiresLiveBackupWatermark",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "typed-base-move",
+      "path": "internal/gitops/prepared_push.go",
+      "test": "TestAuthorityAcceptanceBaseAdvanceBeforeBuild",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "final-governing-recheck",
+      "path": "internal/serve/authority_activation.go",
+      "test": "TestPublicAuthorityActivationRechecksGoverningTip",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "require-complete",
+      "path": "internal/serve/authority_public.go",
+      "test": "TestPublicAuthorityActivationConsultsCompletion",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "repository-source",
+      "path": "internal/serve/authority_completion.go",
+      "test": "TestPublicAuthorityActivationConsultsCompletion",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "pre-switch-verification",
+      "path": "internal/serve/authority_public.go",
+      "test": "TestPublicAuthorityActivationRequiresVerification",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "live-backup-watermark",
+      "path": "internal/store/authority_emission.go",
+      "test": "TestAuthorityEmissionLiveBackupWatermark",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "production-constructor",
+      "path": "internal/serve/branches.go",
+      "test": "TestPublicAuthorityProductionConstructor",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "first-emission-final-watermark",
+      "path": "internal/store/write_restriction.go",
+      "test": "TestReviewFirstEmissionAppendRace",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "first-emission-global-append-lock",
+      "path": "internal/store/authority_emission.go",
+      "test": "TestAuthorityEmissionSerializesAllQueueAppends",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "receipt-boundary-ignore-first",
+      "path": "internal/store/authority_emission.go",
+      "test": "TestAuthorityEmissionReceiptBoundary",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "receipt-boundary-require-after",
+      "path": "internal/store/authority_emission.go",
+      "test": "TestAuthorityEmissionReceiptBoundary",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "runtime-receipt-after-boundary",
+      "path": "internal/serve/authority_public.go",
+      "test": "TestPublicAuthorityReceiptNotRequiredAfterBoundary",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "rollback-receipt-required",
+      "path": "internal/serve/authority_activation.go",
+      "test": "TestPublicAuthorityReceiptNotRequiredAfterBoundary",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "setup-receipt-after-boundary",
+      "path": "cmd/openmerge/setup_verify.go",
+      "test": "TestVerificationReceiptOnlyBeforeBoundary",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "setup-receipt-validation-bypass",
+      "path": "cmd/openmerge/setup_verify.go",
+      "test": "TestVerificationReceiptValidationSanitizedBeforeSeeingRead",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "public-unlisted-adopts-first",
+      "path": "internal/serve/authority_public.go",
+      "test": "TestPublicAuthorityUnlistedQueueStaysGithub",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "reviewed-plan-binding-bypass",
+      "path": "internal/serve/authority_activation.go",
+      "test": "TestPublicAuthorityReviewedBindingMustMatch",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "inventory-error-class-erasure",
+      "path": "internal/serve/authority_public.go",
+      "test": "TestReviewPublicInventoryErrorClass",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "negative-ancestry-any-error",
+      "path": "internal/gitops/prepared_push.go",
+      "test": "TestBuildBaseProofPreservesFailureClasses",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "negative-ancestry-diagnostic",
+      "path": "internal/gitops/prepared_push.go",
+      "test": "TestBuildBaseProofPreservesFailureClasses",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "production-runtime-wiring",
+      "path": "cmd/openmerge/serve.go",
+      "test": "TestProductionAuthorityRuntimeWiring",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "production-app-binding",
+      "path": "cmd/openmerge/serve.go",
+      "test": "TestProductionAuthorityRuntimeWiring",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "production-completion-cache",
+      "path": "cmd/openmerge/installations.go",
+      "test": "TestReview4AuditPreservesWorkerQuota",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "runtime-first-receipt-bypass",
+      "path": "internal/serve/authority_activation.go",
+      "test": "TestAuthorityActivationReceiptBeforeIO",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "legacy-ack-waives-authority-receipt",
+      "path": "internal/store/authority_emission.go",
+      "test": "TestAuthorityEmissionLiveBackupWatermark",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "rollback-configured-database-binding",
+      "path": "internal/serve/authority_activation.go",
+      "test": "TestPublicAuthorityRollbackKeepsDatabaseBinding",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "first-emission-default-isolation",
+      "path": "internal/store/write_restriction.go",
+      "test": "TestAuthorityEmissionRefreshesSnapshotAfterAppendLockWait",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "S7-adopt-gate-skipped",
+      "path": "internal/store/write_restriction.go",
+      "test": "TestAuthorityLifecycleEmissionDefenseInDepth",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "S8-config-gate-skipped",
+      "path": "internal/store/write_restriction.go",
+      "test": "TestAuthorityLifecycleEmissionDefenseInDepth",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "A4-no-gate-created",
+      "path": "internal/serve/authority_activation.go",
+      "test": "TestPublicAuthorityActivationEmissionDefenseInDepth",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "W-no-db-identity-pin",
+      "path": "cmd/openmerge/serve.go",
+      "test": "TestProductionAuthorityRuntimeWiring",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "E3-receipt-cause-kept-in-message",
+      "path": "internal/serve/authority_public.go",
+      "test": "TestPublicAuthorityRuntimeReceiptErrorSanitized",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "boundary-positive-cache-disabled",
+      "path": "internal/store/authority_emission.go",
+      "test": "TestAuthorityBoundaryPositiveCache",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "boundary-negative-cache",
+      "path": "internal/store/authority_emission.go",
+      "test": "TestAuthorityBoundaryPositiveCache",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "tenancy-emission",
+      "path": "internal/store/authority_emission.go",
+      "test": "TestAuthorityTenancyEmission",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "tenancy-registration-lock",
+      "path": "internal/store/locks.go",
+      "test": "TestAuthorityTenancyConcurrentRegistration",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "tenancy-registration-held",
+      "path": "internal/store/locks.go",
+      "test": "TestAuthorityTenancyRegistrationWaitsForEmission",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "tenancy-setup",
+      "path": "cmd/openmerge/setup_verify.go",
+      "test": "TestVerificationTenancyBeforeReceipt",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "tenancy-lifecycle",
+      "path": "internal/serve/authority_public.go",
+      "test": "TestPublicAuthorityTenancyLifecycle",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "tenancy-push-preflight",
+      "path": "internal/serve/authority_public.go",
+      "test": "TestPublicAuthorityTenancyPushAndRollback",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "tenancy-push-final",
+      "path": "internal/serve/authority_public.go",
+      "test": "TestPublicAuthorityTenancyFinalInventory",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "completion-verdict-equality",
+      "path": "internal/serve/authority_completion.go",
+      "test": "TestPublicAuthorityCompletionPartitionRace",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "completion-partition-race",
+      "path": "internal/serve/authority_completion.go",
+      "test": "TestPublicAuthorityCompletionPartitionRace",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "completion-discovery-error-class",
+      "path": "internal/serve/authority_completion.go",
+      "test": "TestPublicAuthorityCompletionErrorClasses",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "completion-dispatch-duplicate",
+      "path": "internal/serve/push.go",
+      "test": "TestPublicAuthorityCompletionRealLandCallBudget",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "completion-consult-PushBuild",
+      "path": "internal/serve/push.go",
+      "test": "TestPublicAuthorityEveryPushConsultsCompletion",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "completion-consult-PushLand",
+      "path": "internal/serve/push.go",
+      "test": "TestPublicAuthorityEveryPushConsultsCompletion",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "completion-consult-PushEnsureFence",
+      "path": "internal/serve/push.go",
+      "test": "TestPublicAuthorityEveryPushConsultsCompletion",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "completion-consult-PushAdvanceFence",
+      "path": "internal/serve/push.go",
+      "test": "TestPublicAuthorityEveryPushConsultsCompletion",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "completion-consult-PushDeleteBranch",
+      "path": "internal/serve/push.go",
+      "test": "TestPublicAuthorityEveryPushConsultsCompletion",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "tenancy-registration-shared",
+      "path": "internal/store/locks.go",
+      "test": "TestAuthorityTenancyConcurrentRegistration",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "tenancy-exclusive-after-events",
+      "path": "internal/store/write_restriction.go",
+      "test": "TestAuthorityTenancyConcurrentRegistration",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "tenancy-boundary-defense",
+      "path": "internal/store/authority_emission.go",
+      "test": "TestAuthorityTenancyBoundaryDefense",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "completion-installation-verdict",
+      "path": "internal/store/authority_completion.go",
+      "test": "TestRepositoryAuthorityCompletion",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "notification-table-deadlock",
+      "path": "internal/store/authority_emission.go",
+      "test": "TestAuthorityTenancyNotificationOverlap",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "completion-field-Reason",
+      "path": "internal/serve/authority_completion.go",
+      "test": "TestSameAuthorityCompletionFields",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "completion-field-Digest",
+      "path": "internal/serve/authority_completion.go",
+      "test": "TestSameAuthorityCompletionFields",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "completion-field-ExpectedDigest",
+      "path": "internal/serve/authority_completion.go",
+      "test": "TestSameAuthorityCompletionFields",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "completion-field-GoverningCommit",
+      "path": "internal/serve/authority_completion.go",
+      "test": "TestSameAuthorityCompletionFields",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "completion-field-ID",
+      "path": "internal/serve/authority_completion.go",
+      "test": "TestSameAuthorityCompletionFields",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "completion-field-Installation",
+      "path": "internal/serve/authority_completion.go",
+      "test": "TestSameAuthorityCompletionFields",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "completion-field-Base",
+      "path": "internal/serve/authority_completion.go",
+      "test": "TestSameAuthorityCompletionFields",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "completion-field-Lane",
+      "path": "internal/serve/authority_completion.go",
+      "test": "TestSameAuthorityCompletionFields",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "completion-field-installation-count",
+      "path": "internal/serve/authority_completion.go",
+      "test": "TestSameAuthorityCompletionFields",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "completion-field-complete",
+      "path": "internal/serve/authority_completion.go",
+      "test": "TestSameAuthorityCompletionFields",
+      "killed": true,
+      "exit": 1
+    },
+    {
+      "mutation": "completion-field-queue-count",
+      "path": "internal/serve/authority_completion.go",
+      "test": "TestSameAuthorityCompletionFields",
+      "killed": true,
+      "exit": 1
+    }
+  ],
+  "github_projections": {
+    "identical": true,
+    "status_api_health_author_sha256": "b6d532d17347fd1ad25c9391760bfda786436c2b142da0238f12b66a0919b02a",
+    "cli_sha256": "4bea7d07d00c094c8824751d3b5db07932de48be34f6db2d98bc772139e248cf"
+  },
+  "mixed_github": {
+    "identical": true,
+    "sha256": "cc95a654054e61e816120f2e57b9e19ffea3ff4855c32f4f5c055c4e99b913ee",
+    "golden_asserted_in_tree": true,
+    "golden_baseline": "75c4029447ae4d24a439ae6ef8ad6103ebcf3926"
+  },
+  "contracts": {
+    "identical": true,
+    "records": 90,
+    "sha256": "88e727ebe7ea5b570f352c5c661c2cd1642c1b5120f3d3ed086993f4dd00362a"
+  },
+  "replay": {
+    "verdict": "PASS",
+    "state_mode": "strict",
+    "actions_identical": "2159/2159",
+    "structural_state_identical": "2159/2159",
+    "snapshot_hashes_identical": "2159/2159",
+    "boundary_checkpoints_identical": "2159/2159",
+    "boundary_probe_count": 8676,
+    "non_allowlisted_fields": [],
+    "gate2": "PASS",
+    "gate4": "PASS",
+    "self_test": "PASS",
+    "self_test_exit_status": 0,
+    "full_report_sha256": "2d3e582ccb111337afd532a3e062938adf92d806aec139f68b4fa547d8520940"
+  },
+  "legacy": {
+    "commands": [
+      {
+        "command": [
+          "flock",
+          "/home/riels/.cache/openmerge-heavy.lock",
+          "env",
+          "GOFLAGS=-p=2",
+          "GOMEMLIMIT=4GiB",
+          "GOPROXY=off",
+          "GOSUMDB=off",
+          "GOTOOLCHAIN=local",
+          "LEGACY_OUTPUT=/home/riels/.cache/openmerge-143-r5/full-r3/legacy/baseline-gitops/objects.json",
+          "go",
+          "test",
+          "-overlay",
+          "/home/riels/.cache/openmerge-143-r5/full-r3/legacy/baseline-gitops/overlay.json",
+          "./internal/gitops",
+          "-run",
+          "^TestADR3aLegacyProbe$",
+          "-count=1"
+        ],
+        "cwd": "/home/riels/.cache/openmerge-143-r1-main-75c4029",
+        "exit": 0
+      },
+      {
+        "command": [
+          "flock",
+          "/home/riels/.cache/openmerge-heavy.lock",
+          "env",
+          "GOFLAGS=-p=2",
+          "GOMEMLIMIT=4GiB",
+          "GOPROXY=off",
+          "GOSUMDB=off",
+          "GOTOOLCHAIN=local",
+          "LEGACY_OUTPUT=/home/riels/.cache/openmerge-143-r5/full-r3/legacy/baseline-fake/objects.json",
+          "go",
+          "test",
+          "-overlay",
+          "/home/riels/.cache/openmerge-143-r5/full-r3/legacy/baseline-fake/overlay.json",
+          "./internal/forge/fake",
+          "-run",
+          "^TestADR3aLegacyProbe$",
+          "-count=1"
+        ],
+        "cwd": "/home/riels/.cache/openmerge-143-r1-main-75c4029",
+        "exit": 0
+      },
+      {
+        "command": [
+          "flock",
+          "/home/riels/.cache/openmerge-heavy.lock",
+          "env",
+          "GOFLAGS=-p=2",
+          "GOMEMLIMIT=4GiB",
+          "GOPROXY=off",
+          "GOSUMDB=off",
+          "GOTOOLCHAIN=local",
+          "LEGACY_OUTPUT=/home/riels/.cache/openmerge-143-r5/full-r3/legacy/candidate-gitops/objects.json",
+          "go",
+          "test",
+          "-overlay",
+          "/home/riels/.cache/openmerge-143-r5/full-r3/legacy/candidate-gitops/overlay.json",
+          "./internal/gitops",
+          "-run",
+          "^TestADR3aLegacyProbe$",
+          "-count=1"
+        ],
+        "cwd": "/home/riels/.t3/worktrees/openmerge/t3-17687222",
+        "exit": 0
+      },
+      {
+        "command": [
+          "flock",
+          "/home/riels/.cache/openmerge-heavy.lock",
+          "env",
+          "GOFLAGS=-p=2",
+          "GOMEMLIMIT=4GiB",
+          "GOPROXY=off",
+          "GOSUMDB=off",
+          "GOTOOLCHAIN=local",
+          "LEGACY_OUTPUT=/home/riels/.cache/openmerge-143-r5/full-r3/legacy/candidate-fake/objects.json",
+          "go",
+          "test",
+          "-overlay",
+          "/home/riels/.cache/openmerge-143-r5/full-r3/legacy/candidate-fake/overlay.json",
+          "./internal/forge/fake",
+          "-run",
+          "^TestADR3aLegacyProbe$",
+          "-count=1"
+        ],
+        "cwd": "/home/riels/.t3/worktrees/openmerge/t3-17687222",
+        "exit": 0
+      }
+    ],
+    "comparisons": {
+      "gitops": {
+        "identical": true,
+        "snapshots": 24,
+        "baseline_sha256": "c4540c89e3f93b997c6132bb976532d7701b0a07e434a70868123cb80b626d0e",
+        "candidate_sha256": "c4540c89e3f93b997c6132bb976532d7701b0a07e434a70868123cb80b626d0e"
+      },
+      "fake": {
+        "identical": true,
+        "snapshots": 24,
+        "baseline_sha256": "041deff2b2f2fd0985c4c1d185267ad9e759d6af1404ee9ef6eda6eee2f342fd",
+        "candidate_sha256": "041deff2b2f2fd0985c4c1d185267ad9e759d6af1404ee9ef6eda6eee2f342fd"
+      }
+    },
+    "offline_only": true,
+    "baseline": "75c4029447ae4d24a439ae6ef8ad6103ebcf3926",
+    "candidate": "4d9aa0f157c0d62b1b0baa9a5ad80319b01e01aa"
+  },
+  "simulator": {
+    "baseline_exit": 0,
+    "candidate_exit": 0,
+    "identical": true,
+    "blocks": 146,
+    "normalized_sha256": "a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7"
+  },
+  "stress": {
+    "iterations": 20,
+    "GOMAXPROCS": 1,
+    "race": true,
+    "owned_cpu_burners": 8,
+    "all_reaped": true,
+    "groups": [
+      "stress-public-serve",
+      "stress-public-base-recovery",
+      "stress-public-config-store-cli-gitops"
+    ]
+  },
+  "binary": {
+    "path": "/home/riels/.t3/worktrees/openmerge/t3-17687222/bin/openmerge",
+    "sha256": "5e23d76f66c0e254894d706c4ae58431f6bee4ea107773775dc309eecc3102a0"
+  },
+  "verdict": "PASS",
+  "supplemental_stress": {
+    "iterations": 20,
+    "GOMAXPROCS": 1,
+    "race": true,
+    "owned_cpu_burners": 8,
+    "all_reaped": true,
+    "groups": [
+      "stress-completion-fields"
+    ],
+    "commands": [
+      {
+        "name": "stress-completion-fields",
+        "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-143-r5/supplement/stress-completion-fields/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-143-r5/supplement/stress-completion-fields/tmp GOMAXPROCS=1 go test -p=1 -race -short -cpu=1 -count=20 -timeout=15m ./internal/serve -run '^TestSameAuthorityCompletionFields$'",
+        "exit": 0,
+        "logs": "/home/riels/.cache/openmerge-143-r5/supplement/stress-completion-fields"
+      }
+    ]
+  },
+  "burner_observation": {
+    "verifier_pid": 1738359,
+    "owned_cpu_burners": {
+      "2107407": {
+        "first_cpu_ticks": 10,
+        "last_cpu_ticks": 93118
+      },
+      "2107408": {
+        "first_cpu_ticks": 10,
+        "last_cpu_ticks": 92954
+      },
+      "2107409": {
+        "first_cpu_ticks": 10,
+        "last_cpu_ticks": 93308
+      },
+      "2107410": {
+        "first_cpu_ticks": 10,
+        "last_cpu_ticks": 93176
+      },
+      "2107411": {
+        "first_cpu_ticks": 10,
+        "last_cpu_ticks": 93324
+      },
+      "2107412": {
+        "first_cpu_ticks": 10,
+        "last_cpu_ticks": 93307
+      },
+      "2107413": {
+        "first_cpu_ticks": 10,
+        "last_cpu_ticks": 93186
+      },
+      "2107414": {
+        "first_cpu_ticks": 10,
+        "last_cpu_ticks": 93306
+      }
+    },
+    "all_reaped": true,
+    "all_accumulated_cpu": true
+  },
+  "supplemental_burner_observation": {
+    "verifier_pid": 1752115,
+    "owned_cpu_burners": {
+      "1752116": {
+        "first_cpu_ticks": 116,
+        "last_cpu_ticks": 116
+      },
+      "1752117": {
+        "first_cpu_ticks": 116,
+        "last_cpu_ticks": 116
+      },
+      "1752118": {
+        "first_cpu_ticks": 116,
+        "last_cpu_ticks": 116
+      },
+      "1752119": {
+        "first_cpu_ticks": 114,
+        "last_cpu_ticks": 114
+      },
+      "1752120": {
+        "first_cpu_ticks": 115,
+        "last_cpu_ticks": 115
+      },
+      "1752121": {
+        "first_cpu_ticks": 116,
+        "last_cpu_ticks": 116
+      },
+      "1752122": {
+        "first_cpu_ticks": 116,
+        "last_cpu_ticks": 116
+      },
+      "1752123": {
+        "first_cpu_ticks": 116,
+        "last_cpu_ticks": 116
+      }
+    },
+    "all_reaped": true,
+    "all_accumulated_cpu": false
+  },
+  "fixture_blobs": {
+    "bc9779c": {
+      "fixtures": 211,
+      "changed": [],
+      "identical": true
+    },
+    "75c4029": {
+      "fixtures": 208,
+      "changed": [],
+      "identical": true
+    },
+    "fe80399": {
+      "fixtures": 211,
+      "changed": [],
+      "identical": true
+    }
+  }
+}

@@ -96,6 +96,9 @@ type PushOptions struct {
 	AuthorityRequired bool
 	Context           PushValidationContext
 	Guard             PushValidityGuard
+	// DispatchGuard optionally performs the cheap durable checks before preparation.
+	// Guard remains mandatory and runs in full immediately before publication.
+	DispatchGuard PushValidityGuard
 	// Warn reports policy-specific bypasses; it never changes acceptance.
 	Warn func([]PushWarning)
 }
@@ -109,7 +112,11 @@ func (o PushOptions) CheckDispatch(ctx context.Context, repo RepoRef, operation 
 	if o.Guard == nil {
 		return pushRejected("missing authority guard")
 	}
-	if err := o.Guard(ctx, o.Context); err != nil {
+	guard := o.DispatchGuard
+	if guard == nil {
+		guard = o.Guard
+	}
+	if err := guard(ctx, o.Context); err != nil {
 		return err
 	}
 	if o.Context.binding.Repository != repo || o.Context.operation != operation || !sameIntents(o.Context.refs, refs) || !authority.IsDigest(o.Context.binding.EffectiveDigest) {

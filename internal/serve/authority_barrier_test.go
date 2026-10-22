@@ -87,7 +87,7 @@ func TestAuthorityBarrierJournalCannotInstallRuntimeAuthority(t *testing.T) {
 			if candidate.Authority.Mode != authority.OpenMerge {
 				t.Fatal("setup did not parse the candidate")
 			}
-			if _, _, err := config.Load([]byte(proposed)); err == nil || !strings.Contains(err.Error(), config.AuthorityActivationUnavailable) {
+			if _, _, err := config.Load([]byte(proposed)); err != nil {
 				t.Fatal("public activation barrier missing", err)
 			}
 			// Reloading the real github config, even after replaying a pin, must
@@ -152,7 +152,7 @@ func TestAuthorityBarrierJournalCannotInstallRuntimeAuthority(t *testing.T) {
 			_, err = f.PushBase(w.repo(), "main", "public candidate remains blocked", map[string]string{".openmerge.yml": proposed})
 			must(t, err)
 			must(t, s.configuration(t.Context(), w))
-			if w.configError == nil || !strings.Contains(w.configError.Error(), config.AuthorityActivationUnavailable) {
+			if w.configError == nil || !strings.Contains(w.configError.Error(), "authority production opt-in required") {
 				t.Fatal("lifecycle reader bypassed public candidate barrier", w.configError)
 			}
 			tip, err := f.ReadRef(t.Context(), w.repo(), "main")
@@ -162,7 +162,7 @@ func TestAuthorityBarrierJournalCannotInstallRuntimeAuthority(t *testing.T) {
 				func() error { _, err := s.repositoryConfig(t.Context(), w.Target, "main", tip, nil); return err },
 				func() error { return s.loadConfiguration(t.Context(), w, "main", tip) },
 			} {
-				if err := acquire(); err == nil || !strings.Contains(err.Error(), config.AuthorityActivationUnavailable) {
+				if err := acquire(); err == nil || !strings.Contains(err.Error(), "authority production opt-in required") {
 					t.Fatal("acquisition entry point bypassed public barrier", err)
 				}
 			}

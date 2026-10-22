@@ -10,9 +10,8 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// AuthorityCandidate is the future authority configuration paired with the
-// public GitHub configuration. OpenMerge remains candidate-only until the
-// complete runtime gate is wired in ADR 0008 PR 9c.
+// AuthorityCandidate pairs parsed queue configuration with the authority
+// declaration used by setup and the production lifecycle.
 type AuthorityCandidate struct {
 	Config    Config
 	Authority authority.Declaration
@@ -31,8 +30,8 @@ func (c AuthorityCandidate) BaseSelectors() []authority.BaseSelector {
 }
 
 // LoadAuthorityCandidate validates the current configuration after removing
-// the two future keys, then validates their proposed grammar separately. It
-// does not resolve actors, activate authority, or alter Config.Load.
+// authority keys, then validates their grammar separately. It does not resolve
+// actors or activate authority.
 func LoadAuthorityCandidate(data []byte) (AuthorityCandidate, []Diagnostic, error) {
 	root, err := authorityCandidateRoot(data)
 	if err != nil {

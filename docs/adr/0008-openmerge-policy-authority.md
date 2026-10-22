@@ -1488,3 +1488,54 @@ Round 4 validates reserved outside-push association keys and acknowledgement SHA
 bindings identically in scan and cache, including GitHub-mode origins. An older
 background snapshot returned after an interrupted newer foreground fold carries
 `ledger_refreshing` until a complete fold or refresh publishes current counts.
+
+### PR 9c-3 activation boundary
+
+Public schema/loader/CLI acceptance is coordinated with explicit production
+opt-in. The [operating guide](../operating.md#public-authority-activation-9c-3-hold)
+defines the reviewed runtime plan and authentic proposed verification IDs. This
+release supports a single installation only; lanes are unsupported. Freeze the
+default branch and selected branch/configuration inventory during the switch.
+The final production push guard consumes fresh repository-wide completion, never
+per-queue receipts. Missing/stale discovery and any registered incomplete
+partition refuse. The final durable repository-wide snapshot follows the last
+outbound read and must equal the snapshot checked against discovery. The interval
+from that database check to the remote Git push remains an irreducible window;
+freeze changes during the switch, as for other immediate-before-write guards.
+
+Authority mode requires **one dedicated database per client (installation)**.
+Every queue counts, including paused, retired, excluded queues and queues in
+other repositories. Setup verification, public activation and each final public
+authority push check this inventory afresh; more than one installation refuses
+with `authority mode requires a dedicated database per installation: this database
+serves N installations`. The first-emission transaction takes an exclusive transaction advisory tenancy
+lock before queue or event locks, serializing registration, and checks tenancy alongside
+the database-wide events lock and watermark. The backup/restore receipt covers
+the whole database and is waived once any authority boundary exists in it.
+A newly registered second installation therefore stops authority even after the
+boundary; rollback to GitHub remains available and ordinary GitHub workers are
+unaffected. Shared multi-tenant deployment requires a future ADR defining a
+per-installation boundary: scoped watermark, lock, receipt and completion, plus
+per-tenant export/restore.
+
+Before the first authority-boundary event, pre-switch `setup --verify` validates
+the emitting binary, receipt age, backup hash and drain/restore attestations.
+The first proposed verification is itself a boundary event. Its transaction
+serializes against appends in every queue and requires live
+`max(events.id) == BackupWatermark` while no boundary exists. After a boundary
+exists, steady-state reconciles, tip re-pins, re-enable and subsequent
+verification do not require the receipt. The cheap configured-database identity
+binding remains. Rollback to GitHub never requires a receipt. Pre-boundary
+receipt failures report `emission receipt stale/invalid`.
+
+Drain all old strict readers before new events, `read_error` or v7 cursors.
+GitHub rollback retains those boundaries: restore GitHub protection first, then
+land GitHub authority. Input-drift recovery requires fresh proposed verification,
+re-enable and current completion. A binary downgrade requires stopping workers,
+retaining evidence, restoring the tested pre-emission backup and reconciling
+subsequent real refs/evidence; otherwise retain a compatible reader. Receipt
+validation is a first-emission gate, not a recurring liveness requirement.
+Complete protection visibility includes all applicable inherited,
+repository and classic protections and their targets, rules and bypass actors.
+The deployment Hold lasts until dogfood period B drains; PR 11 remains the
+owner-executed organization release gate.

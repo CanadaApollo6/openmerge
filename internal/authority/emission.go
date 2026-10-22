@@ -67,9 +67,9 @@ type EmissionReceipt struct {
 	CompatibleReadersOnly bool                   `json:"compatible_readers_only"`
 }
 
-// Validate gates every explicit verification, including still-github queues.
-// Local receipt failures precede identity reads; binding failures precede
-// writes and seeing reads. Operators inventory all hosts, stop old workers,
+// Validate checks the first-emission attestation, including proposed verification
+// on still-github queues. Callers waive it after a retained authority boundary.
+// Binding failures precede writes and seeing reads. Operators inventory all hosts, stop old workers,
 // capture a backup, restore-test it, then attest that only compatible readers
 // may restart. Period B permits isolated sandboxes only.
 func (r EmissionReceipt) Validate(identity string, now time.Time) error {

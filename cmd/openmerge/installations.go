@@ -17,8 +17,9 @@ import (
 )
 
 type installationBundle struct {
-	driver *github.Driver
-	git    *gitops.Repo
+	driver       *github.Driver
+	git          *gitops.Repo
+	authorityGit *gitops.Repo
 }
 
 type bundleFailure struct {
@@ -88,6 +89,12 @@ func (f *installationTargets) bundle(ctx context.Context, id string) (result *in
 		return nil, err
 	}
 	bundle := &installationBundle{driver: driver, git: git}
+	if f.options.authorityPlan != "" {
+		bundle.authorityGit, err = gitops.New(ctx, gitops.Config{WorkDir: filepath.Join(f.options.cache, "authority-completion", id), Remote: driver.Remote, HeadRef: github.HeadRef})
+		if err != nil {
+			return nil, err
+		}
+	}
 	f.mu.Lock()
 	f.bundles[id] = bundle
 	f.mu.Unlock()
@@ -117,7 +124,7 @@ func (f *installationTargets) outsidePushHistory(ctx context.Context, key store.
 
 func (b *installationBundle) target(key store.QueueKey) serve.Target {
 	ref := forge.RepoRef{Path: key.Repository}
-	return serve.Target{Key: key, Driver: b.driver, Git: b.git, BotLogin: b.driver.BotLogin(), CheckRules: func(ctx context.Context) ([]string, []string, error) {
+	return serve.Target{Key: key, Driver: b.driver, Git: b.git, AuthorityCompletionGit: b.authorityGit, BotLogin: b.driver.BotLogin(), CheckRules: func(ctx context.Context) ([]string, []string, error) {
 		return b.driver.ValidateRepositoryRules(ctx, ref, key.BaseBranch)
 	}, CheckPermissions: b.driver.ValidateInstallationPermissions, CheckProtection: func(ctx context.Context, method forge.MergeMethod) ([]string, []string, error) {
 		return b.driver.ValidateClassicProtection(ctx, ref, key.BaseBranch, method)

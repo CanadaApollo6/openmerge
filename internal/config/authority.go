@@ -9,8 +9,8 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
 
-// AuthorityActivationUnavailable is the public fail-closed barrier until PR 9c.
-const AuthorityActivationUnavailable = "openmerge authority activation is unavailable: the complete ADR 0008 authority gate is not enabled"
+// AuthorityActivationPrerequisites identifies the operator-controlled activation prerequisites.
+const AuthorityActivationPrerequisites = "openmerge authority activation requires setup --verify, a valid drain/backup receipt and current repository-wide completion"
 
 // ValidateGoverning checks a candidate against immutable default-branch evidence.
 // It grants no runtime activation and has no import-accept bypass. Actor binding

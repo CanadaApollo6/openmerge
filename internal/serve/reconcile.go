@@ -120,6 +120,10 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 	if loadErr == nil && w.AuthorityRequired && w.resolveAuthorityLifecycle != nil {
 		activation, loadErr = s.prepareAuthorityLifecycle(ctx, w, state, branch, configTip)
 		if loadErr != nil {
+			if errors.As(loadErr, &mutable) {
+				w.configFailure, w.configFailureBranch, w.configFailureTip = loadErr, branch, configTip
+				w.configFailureRetryAt = time.Now().Add(s.options.RulesInterval)
+			}
 			w.configError = loadErr
 			w.configBranch, w.configTip = "", ""
 			s.authorityConfigurationFailed(w)
@@ -263,6 +267,7 @@ func (s *Server) discoveryBindings(target Target) (string, bool) {
 }
 
 func (s *Server) repositoryConfig(ctx context.Context, target Target, branch, tip string, w *worker) (config.Config, error) {
+	target = s.publicAuthorityTarget(target)
 	key := target.Key.Installation + "/" + strings.ToLower(target.Key.Repository)
 	bindings, _ := s.discoveryBindings(target)
 	s.mu.RLock()
@@ -344,10 +349,20 @@ func (s *Server) repositoryCandidate(ctx context.Context, target Target, tip str
 	}
 	var candidate config.AuthorityCandidate
 	var warnings []config.Diagnostic
-	if target.AuthorityRequired && target.resolveAuthorityLifecycle != nil {
+	if target.publicAuthority {
+		// Keep original bytes and line numbers for opted-in GitHub workers. Only
+		// an actual OpenMerge declaration selects the authority candidate parser.
+		candidate.Config, warnings, err = config.Load(data)
+		if err == nil && candidate.Config.PolicyAuthority == authority.OpenMerge {
+			candidate, warnings, err = config.LoadAuthorityCandidate(data)
+		}
+	} else if target.AuthorityRequired && target.resolveAuthorityLifecycle != nil {
 		candidate, warnings, err = config.LoadAuthorityCandidate(data)
 	} else {
 		candidate.Config, warnings, err = config.Load(data)
+		if err == nil && candidate.Config.PolicyAuthority == authority.OpenMerge {
+			return config.AuthorityCandidate{}, config.Errors{{Path: "policy_authority", Message: "authority production opt-in required"}}
+		}
 	}
 	if err != nil {
 		if authorityLanded {

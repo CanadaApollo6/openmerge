@@ -22,11 +22,12 @@ import (
 
 // Target identifies an explicitly configured repository and base branch.
 type Target struct {
+	publicAuthority bool
 	// AuthorityRequired marks entering/active/leaving authority before resolution.
 	// It cannot fall back to legacy when a required hook or pin is absent.
 	AuthorityRequired bool
 	// The lifecycle adapter is package-private and requires the explicit opt-in.
-	// Production target constructors cannot install it from candidate/journal data.
+	// Production constructors install it only from an explicit reviewed runtime plan.
 	resolveAuthorityLifecycle func(context.Context, config.AuthorityCandidate, string, string) (authorityLifecycleResolution, error)
 	// Authority preparation is dormant until PR 9 installs all three hooks.
 	// Serve calls resolve, durable pin, then protection observation in order.
@@ -34,11 +35,13 @@ type Target struct {
 	PinAuthorityPush     func(context.Context, AuthorityPushPolicy) error
 	ObserveAuthorityPush func(context.Context, AuthorityPushPolicy) error
 	// Resolve binds historical credentials lazily; failures never discard a landing.
-	Resolve  func(context.Context) (Target, error)
-	Key      store.QueueKey
-	Driver   forge.Driver
-	Git      forge.Git
-	BotLogin string
+	Resolve func(context.Context) (Target, error)
+	Key     store.QueueKey
+	Driver  forge.Driver
+	Git     forge.Git
+	// AuthorityCompletionGit must have independent locks/cache: guards run while Git holds its session lock.
+	AuthorityCompletionGit forge.Git
+	BotLogin               string
 	// CheckRules is supplied by the forge adapter, without admin credentials.
 	CheckRules func(context.Context) (problems, warnings []string, err error)
 	// CheckPermissions checks the installation's grants independently of policy reads.
@@ -50,6 +53,7 @@ type Target struct {
 
 // Options bounds API polling and concurrent queue execution.
 type Options struct {
+	Authority           *AuthorityRuntime
 	Health              status.HealthSettings
 	PollInterval        time.Duration
 	BackstopInterval    time.Duration
@@ -74,28 +78,29 @@ type Options struct {
 // Server owns one serial reconciler/worker per target, with bounded concurrency.
 // Each process must have its own git cache directory.
 type Server struct {
-	startedAt           time.Time
-	store               *store.Store
-	webhooks            webhookObservations
-	options             Options
-	queues              []*worker
-	slots               chan struct{}
-	mu                  sync.RWMutex
-	refreshMu           sync.Mutex
-	notificationMu      sync.Mutex
-	refreshDeliveries   map[string]bool
-	registerMu          sync.Mutex
-	discovery           *Discovery
-	discoveryStatus     status.Discovery
-	discoveryBudgets    map[string]func() status.Budget
-	discoveryBackoffs   map[string]time.Time
-	dormantRepositories map[string]bool
-	repositories        []Repository
-	refresh             chan struct{}
-	refreshFailures     int
-	refreshNextAt       time.Time
-	refreshRetryAt      time.Time
-	refreshNotBefore    time.Time
+	authorityCompletionStore authorityCompletionStore
+	startedAt                time.Time
+	store                    *store.Store
+	webhooks                 webhookObservations
+	options                  Options
+	queues                   []*worker
+	slots                    chan struct{}
+	mu                       sync.RWMutex
+	refreshMu                sync.Mutex
+	notificationMu           sync.Mutex
+	refreshDeliveries        map[string]bool
+	registerMu               sync.Mutex
+	discovery                *Discovery
+	discoveryStatus          status.Discovery
+	discoveryBudgets         map[string]func() status.Budget
+	discoveryBackoffs        map[string]time.Time
+	dormantRepositories      map[string]bool
+	repositories             []Repository
+	refresh                  chan struct{}
+	refreshFailures          int
+	refreshNextAt            time.Time
+	refreshRetryAt           time.Time
+	refreshNotBefore         time.Time
 
 	discoveryAcquisitions map[string]discoveryAcquisition
 
@@ -170,6 +175,7 @@ func New(ctx context.Context, db *store.Store, targets []Target, options Options
 	}
 	seen := make(map[store.QueueID]bool)
 	for _, target := range targets {
+		target = s.publicAuthorityTarget(target)
 		if target.Driver == nil || target.Git == nil || target.BotLogin == "" {
 			return nil, errors.New("target requires driver, git and App login")
 		}
@@ -201,6 +207,9 @@ func New(ctx context.Context, db *store.Store, targets []Target, options Options
 }
 
 func newServer(db *store.Store, options Options) (*Server, error) {
+	if err := options.Authority.Validate(); err != nil {
+		return nil, err
+	}
 	if options.PollInterval == 0 {
 		options.PollInterval = time.Minute
 	}
@@ -234,7 +243,7 @@ func newServer(db *store.Store, options Options) (*Server, error) {
 	if options.Logger == nil {
 		options.Logger = slog.Default()
 	}
-	return &Server{startedAt: time.Now(), store: db, options: options, slots: make(chan struct{}, options.Concurrency), refresh: make(chan struct{}, 1)}, nil
+	return &Server{startedAt: time.Now(), store: db, authorityCompletionStore: db, options: options, slots: make(chan struct{}, options.Concurrency), refresh: make(chan struct{}, 1)}, nil
 }
 
 // Notify durably deduplicates a webhook and wakes only matching targets. An empty

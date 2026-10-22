@@ -1,0 +1,67 @@
+[
+  {
+    "name": "omitted",
+    "suffix": "",
+    "valid": true
+  },
+  {
+    "name": "github",
+    "suffix": "policy_authority: github\n",
+    "valid": true
+  },
+  {
+    "name": "authority enabled",
+    "suffix": "policy_authority: openmerge\nbreak_glass: {team: acme/emergency}\n",
+    "valid": true
+  },
+  {
+    "name": "missing team",
+    "suffix": "policy_authority: openmerge\n",
+    "valid": false
+  },
+  {
+    "name": "repository role rejected",
+    "suffix": "policy_authority: openmerge\nbreak_glass: {repository_admin: true}\n",
+    "valid": false
+  },
+  {
+    "name": "github actor rejected",
+    "suffix": "policy_authority: github\nbreak_glass: {team: acme/emergency}\n",
+    "valid": false
+  },
+  {
+    "name": "actor without mode",
+    "suffix": "break_glass: {team: acme/emergency}\n",
+    "valid": false
+  },
+  {
+    "name": "unknown mode",
+    "suffix": "policy_authority: future\n",
+    "valid": false
+  },
+  {
+    "name": "null mode",
+    "suffix": "policy_authority: null\n",
+    "valid": false
+  },
+  {
+    "name": "empty mode",
+    "suffix": "policy_authority: ''\n",
+    "valid": false
+  },
+  {
+    "name": "duplicate mode",
+    "suffix": "policy_authority: github\npolicy_authority: openmerge\n",
+    "valid": false
+  },
+  {
+    "name": "duplicate team",
+    "suffix": "policy_authority: openmerge\nbreak_glass: {team: acme/emergency, team: acme/other}\n",
+    "valid": false
+  },
+  {
+    "name": "unknown actor",
+    "suffix": "policy_authority: openmerge\nbreak_glass: {user: alice}\n",
+    "valid": false
+  }
+]

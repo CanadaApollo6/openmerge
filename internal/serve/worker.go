@@ -285,6 +285,12 @@ func (s *Server) execute(ctx context.Context, w *worker, claim store.ClaimedActi
 		s.logCommitted(actionCtx, w)
 		return nil
 	})
+	var moved *forge.BaseMovedError
+	if w.configCandidate.Authority.Mode == "openmerge" && errors.As(err, &moved) {
+		if refreshErr := s.configuration(actionCtx, w); refreshErr != nil {
+			return errors.Join(err, refreshErr)
+		}
+	}
 	if err != nil {
 		if deferred, ok := queue.DeferCheckCancellation(claim.Action, time.Now(), err.Error()); ok {
 			persist, cancel := context.WithTimeout(context.Background(), 10*time.Second)

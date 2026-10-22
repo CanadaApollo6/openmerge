@@ -314,21 +314,24 @@ the last 200 departures (minimum 20 samples), uses exact rational comparisons,
 and restarts the history at a policy digest change. Unset keeps fixed sizing.
 
 Stage A policy keys are public as of PR 11b. `classification`, `groups`, and
-`agents` apply at repository scope; each queue opts into the complete approval
-pipeline by declaring `approvals`. `changes.pull_requests` accepts only
-`required`. A legacy sibling without `approvals` keeps its existing condition
+`agents` apply at repository scope; in GitHub mode each queue opts into the
+complete approval pipeline by declaring `approvals`. `changes.pull_requests` accepts only
+`required`. A GitHub sibling without `approvals` keeps its existing condition
 semantics and effective digest. See `docs/operating.md` for the Hold deployment
 class, mandatory old-worker drain, pre-use backup, and database-restore boundary.
 The `config schema` command prints the same embedded `schema/openmerge.v1.json`
 validated by the docs-fence agreement tests. Future Stage B/C examples remain in
 `text` fences until their loader support is published.
 
-ADR 0008 PR 9a reserves repository-root `policy_authority` and `break_glass`.
+ADR 0008 PR 9c-3 publishes repository-root `policy_authority` and `break_glass`.
 Omitted authority and explicit `policy_authority: github` have identical effective
 configuration and digests. `break_glass` is invalid in GitHub mode. The public
-schema, loader, and `openmerge config validate` reject `policy_authority: openmerge`
-with an activation-unavailable diagnostic until the complete PR 9c gate lands.
-No runtime switch is available in this intermediate release.
+schema, loader, and `openmerge config validate` accept `policy_authority: openmerge`
+with a dedicated-team `break_glass`. Production activation independently requires
+the reviewed runtime plan, pre-switch verification, drain/backup receipt and fresh
+repository-wide completion; see the public activation runbook in `docs/operating.md`.
+OpenMerge authority requires eligible exact-revision governing policy owners even
+without ordinary `approvals`; `none` cannot waive that requirement.
 
 Isolated setup/proposed verification can still parse an authority candidate with
 `break_glass: {team: acme/emergency}`. New declarations require a dedicated team;

@@ -38,3 +38,33 @@ func (s *Store) lockMigration(ctx context.Context, tx pgx.Tx) error {
 	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(-7046029254386353131::bigint)`)
 	return err
 }
+
+// Tenancy uses two-int namespace 1330464084, disjoint from queue (4081),
+// registration (4082), test migration (4083), and PostgreSQL's bigint key space.
+// Lock order inventory (all locks are transaction scoped):
+// registration: shared tenancy -> registration key -> queues INSERT/FK row locks
+// -> canonical_queues upsert; history reads take only ACCESS SHARE on events.
+// Notify: delivery INSERT/FK KEY SHARE -> queues UPDATE (ROW EXCLUSIVE/row lock).
+// TakeNotification: queues ROW SHARE/FOR UPDATE -> UPDATE ROW EXCLUSIVE.
+// InitializeFence: queue advisory -> queues UPDATE -> events ACCESS SHARE read.
+// Append/EmitWithPolicy/Record, landing-start and outside-push writers: queue
+// advisory -> action/observation locks as needed -> events ROW EXCLUSIVE INSERT
+// -> queues FK KEY SHARE. Plan/BeginConsequential/poison publication take queue
+// advisory -> actions row locks -> event INSERT/FK locks. Claim/ClaimQueue commit
+// action row locks before a separate queue-locked poison-publication transaction;
+// Complete updates action rows only. None acquires tenancy after a queue lock.
+// Verification commit, AdoptAuthorityPin, ApplyAuthorityConfig: when gated,
+// exclusive tenancy FIRST -> ascending queue advisories -> tenancy/boundary reads
+// -> events SHARE ROW EXCLUSIVE -> events INSERT/FK KEY SHARE. Ungated paths
+// start at queue advisory and do not acquire tenancy. Preflight has no queue lock.
+// Emission never upgrades a queues table lock. Notification holders never wait
+// for tenancy, queue advisories or events; registration never waits for event write locks or
+// queue advisories. Thus neither can close a cycle through an emitter's FK lock.
+func (s *Store) lockTenancy(ctx context.Context, tx pgx.Tx, shared bool) error {
+	if shared {
+		_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock_shared(1330464084, hashtext($1))`, s.testLockScope)
+		return err
+	}
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(1330464084, hashtext($1))`, s.testLockScope)
+	return err
+}

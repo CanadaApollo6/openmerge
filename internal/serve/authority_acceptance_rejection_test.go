@@ -90,8 +90,7 @@ func TestAuthorityAcceptanceIntegratedObjectRefusal(t *testing.T) {
 	}
 }
 
-// #138 item 2 carries over to 9c-3. Keep safety strict while allowing its
-// typed lease refusal to replace the current generic boundary-proof refusal.
+// Public activation recovers from a typed, successfully observed base advance.
 func TestAuthorityAcceptanceBaseAdvanceBeforeBuild(t *testing.T) {
 	testSynctest(t, func(t *testing.T) {
 		// Observe actual Git dispatch independently of unchanged remote refs.
@@ -105,6 +104,7 @@ func TestAuthorityAcceptanceBaseAdvanceBeforeBuild(t *testing.T) {
 		t.Setenv("PATH", spyDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 		f := acceptanceGitFixture(t, queue.Merge, 0)
 		s, w := f.s, f.w
+		enableAcceptancePublic(t, f)
 		cfg := w.plannerConfig(s.options.PollInterval)
 		build := claimLandingChecksAction(t, s, w, cfg, func(a queue.Action) bool { _, ok := a.(queue.BuildTestRef); return ok })
 		tree := f.git("", "--git-dir="+f.remote, "rev-parse", f.base+"^{tree}")
@@ -126,9 +126,9 @@ func TestAuthorityAcceptanceBaseAdvanceBeforeBuild(t *testing.T) {
 		if !moved {
 			t.Fatal("build did not reach synchronized base advance")
 		}
-		// 9c-3 may change the refusal type and failure/recovery journal shape.
-		if err == nil || (!errors.Is(err, forge.ErrLeaseRejected) && !strings.Contains(err.Error(), "prepared boundary proof")) {
-			t.Fatalf("expected boundary or typed lease refusal, got %v", err)
+		var baseMoved *forge.BaseMovedError
+		if !errors.As(err, &baseMoved) || baseMoved.SHA != advanced {
+			t.Fatalf("expected typed base-moved refusal, got %v", err)
 		}
 		if _, statErr := os.Stat(pushMarker); !errors.Is(statErr, os.ErrNotExist) {
 			t.Fatalf("stale-base build dispatched push past the guard: %v", statErr)
@@ -145,6 +145,19 @@ func TestAuthorityAcceptanceBaseAdvanceBeforeBuild(t *testing.T) {
 			case queue.TestRefBuilt, queue.FastForwardRefBuilt, queue.LandingDecisionRecorded, queue.LandingChecksRecorded, queue.LandingStarted, queue.Landed:
 				t.Fatalf("stale-base build recorded success: %+v", row.Event)
 			}
+		}
+		if lifecycleState(t, s, w).BaseSHA != advanced {
+			t.Fatal("typed base move did not enter observation/replan path")
+		}
+		w.Git = f.g
+		for range 6 {
+			must(t, s.cycle(t.Context(), w))
+			if batch := lifecycleState(t, s, w).BatchForPR(1); batch != nil && batch.TestedSHA != "" {
+				break
+			}
+		}
+		if batch := lifecycleState(t, s, w).BatchForPR(1); batch == nil || batch.TestedSHA == "" {
+			t.Fatal("public base-moved replan did not build")
 		}
 	})
 }

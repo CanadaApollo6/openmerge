@@ -18,14 +18,13 @@ import (
 
 	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
-	"github.com/CanadaApollo6/openmerge/internal/forge/github"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
-func TestVerificationReceiptRejectedBeforeDatabaseOrSeeingRead(t *testing.T) {
-	// A command must reject an unusable first-emission attestation before it
-	// opens the operator DB, reads the plan, or acquires forge credentials.
+func TestVerificationReceiptValidationSanitizedBeforeSeeingRead(t *testing.T) {
+	// Once configured DB inspection establishes an empty authority boundary,
+	// invalid receipts produce a distinct sanitized error before seeing reads.
 	previous := authority.BuildRevision
 	authority.BuildRevision = "receipt-command-test"
 	t.Cleanup(func() { authority.BuildRevision = previous })
@@ -38,7 +37,6 @@ func TestVerificationReceiptRejectedBeforeDatabaseOrSeeingRead(t *testing.T) {
 	if err := os.WriteFile(backup, []byte("isolated restore-tested backup"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	databaseURL := "postgres://unused:unused@127.0.0.1:1/unused?sslmode=disable"
 	identity := "openmerge-db-v2:sha256:offline-test"
 	now := time.Now().UTC()
 	receipt := authority.EmissionReceipt{DatabaseIdentity: identity, BinaryRevision: revision, DrainedWorkers: []string{"isolated/worker"}, DrainedAt: now.Add(-time.Minute), BackupPath: backup, BackupSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("isolated restore-tested backup"))), RestoreTestedAt: now, CompatibleReadersOnly: true}
@@ -71,11 +69,15 @@ func TestVerificationReceiptRejectedBeforeDatabaseOrSeeingRead(t *testing.T) {
 				t.Fatal(err)
 			}
 			var out bytes.Buffer
-			err = runRulesVerification(t.Context(), verifyOptions{Verify: true, ReceiptMaxAge: tc.maxAge, DatabaseURL: databaseURL, Plan: filepath.Join(dir, "must-not-read"), Receipt: path, Operator: "operator"}, github.RulesOptions{Authority: "openmerge"}, &out)
+			var loaded authority.EmissionReceipt
+			if err := readVerificationJSON(path, &loaded); err != nil {
+				t.Fatal(err)
+			}
+			err = validateVerificationEmissionReceipt(loaded, identity, tc.maxAge)
 			if tc.name == "wrong binary" && !errors.Is(err, authority.ErrBinaryRevisionMismatch) {
 				t.Fatal(err)
 			}
-			if err == nil || (tc.name != "wrong binary" && !strings.Contains(err.Error(), tc.diagnostic)) || out.Len() != 0 {
+			if err == nil || (tc.name != "wrong binary" && !strings.Contains(err.Error(), "emission receipt stale/invalid")) || out.Len() != 0 {
 				t.Fatalf("first-emission boundary: err=%v output=%q", err, out.String())
 			}
 		})

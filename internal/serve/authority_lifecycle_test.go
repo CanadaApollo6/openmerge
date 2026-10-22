@@ -368,7 +368,7 @@ func TestAuthorityLifecycleReadFailuresDoNotPublishConfigOrPin(t *testing.T) {
 					t.Fatal("failed lifecycle did not notify discovery", w.ready, w.waiting)
 				}
 				if phase == "receipt-expiry" {
-					if err == nil || !strings.Contains(err.Error(), "stale emission receipt") {
+					if err == nil || !strings.Contains(err.Error(), "emission receipt stale/invalid") {
 						t.Fatal(err)
 					}
 				} else {
@@ -576,84 +576,75 @@ func TestAuthorityLifecycleAdoptsDraftWithAtomicConfig(t *testing.T) {
 }
 
 func TestAuthorityLifecycleRollbackReceiptAndUnchangedWire(t *testing.T) {
-	s, w, f, _ := fixture(t, repositoryConfig)
-	w.Driver = f
-	must(t, s.configuration(t.Context(), w))
-	team := "200"
-	w.AuthorityRequired = true
-	resolver := lifecycleResolver(t, s, &team, func(context.Context) (authority.Observation, error) { return lifecycleRead(t.Context()) })
-	w.resolveAuthorityLifecycle = resolver
-	_, err := f.PushBase(repo, "main", "authority", map[string]string{".openmerge.yml": lifecycleConfig(repositoryConfig)})
-	must(t, err)
-	must(t, s.configuration(t.Context(), w))
-	original := lifecycleState(t, s, w)
-	_, before, err := s.store.Load(t.Context(), w.id)
-	must(t, err)
-	tip, err := f.PushBase(repo, "main", "rollback", map[string]string{".openmerge.yml": repositoryConfig})
-	must(t, err)
-	readerCalled := false
-	w.resolveAuthorityLifecycle = func(ctx context.Context, c config.AuthorityCandidate, branch, tip string) (authorityLifecycleResolution, error) {
-		r, err := resolver(ctx, c, branch, tip)
-		r.Activation.Receipt.BinaryRevision = "wrong-binary"
-		r.Activation.Read = func(context.Context) (authority.Observation, error) {
-			readerCalled = true
-			return authority.Observation{}, errors.New("rollback must not read")
-		}
-		return r, err
-	}
-	if err := s.configuration(t.Context(), w); !errors.Is(err, authority.ErrBinaryRevisionMismatch) {
-		t.Fatal(err)
-	}
-	if readerCalled || !reflect.DeepEqual(lifecycleState(t, s, w).AuthorityPin(), original.AuthorityPin()) {
-		t.Fatal("invalid rollback receipt changed pin or read authority")
-	}
-	events, err := s.store.EventsAfter(t.Context(), w.id, before)
-	must(t, err)
-	for _, event := range events {
-		switch event.Event.(type) {
-		case queue.ConfigApplied, queue.PolicyAuthorityApplied:
-			t.Fatal("invalid receipt emitted lifecycle")
-		}
-	}
-	w.resolveAuthorityLifecycle = func(ctx context.Context, c config.AuthorityCandidate, branch, tip string) (authorityLifecycleResolution, error) {
-		r, err := resolver(ctx, c, branch, tip)
-		r.Activation.Read = func(context.Context) (authority.Observation, error) {
-			t.Fatal("rollback read authority")
-			return authority.Observation{}, nil
-		}
-		return r, err
-	}
-	must(t, s.configuration(t.Context(), w))
-	assertLifecyclePair(t, s, w, before, authority.GitHub)
-	events, err = s.store.EventsAfter(t.Context(), w.id, before)
-	must(t, err)
-	want := w.cfg.QueueConfig().Applied(tip, w.configDigest)
-	_, wantRaw, err := queue.EncodeEvent(want)
-	must(t, err)
-	for _, event := range events {
-		if applied, ok := event.Event.(queue.ConfigApplied); ok {
-			_, got, err := queue.EncodeEvent(applied)
-			must(t, err)
-			if string(got) != string(wantRaw) {
-				t.Fatal("lifecycle changed normal ConfigApplied wire", string(got), string(wantRaw))
-			}
-		}
-	}
-
-	// A folded rollback receipt must survive later GitHub governing commits.
-	for i, files := range []map[string]string{{"README.md": "unrelated"}, {".openmerge.yml": strings.Replace(repositoryConfig, "name: default", "name: default\n    enter_when: [label = ready]", 1)}} {
-		w.AuthorityRequired = i == 0
-		_, err = f.PushBase(repo, "main", "github rebind", files)
+	testSynctest(t, func(t *testing.T) {
+		s, w, f, _ := fixture(t, repositoryConfig)
+		w.Driver = f
+		must(t, s.configuration(t.Context(), w))
+		team := "200"
+		w.AuthorityRequired = true
+		resolver := lifecycleResolver(t, s, &team, func(context.Context) (authority.Observation, error) { return lifecycleRead(t.Context()) })
+		w.resolveAuthorityLifecycle = resolver
+		_, err := f.PushBase(repo, "main", "authority", map[string]string{".openmerge.yml": lifecycleConfig(repositoryConfig)})
 		must(t, err)
 		must(t, s.configuration(t.Context(), w))
-		for _, operation := range []forge.PushOperation{forge.PushBuild, forge.PushLand, forge.PushEnsureFence} {
-			opts := s.authorityPushOptions(t.Context(), w, operation, nil)
-			if !reflect.DeepEqual(opts, forge.PushOptions{}) {
-				t.Fatalf("rollback rebind returned guarded options for %s", operation)
+		_, before, err := s.store.Load(t.Context(), w.id)
+		must(t, err)
+		tip, err := f.PushBase(repo, "main", "rollback", map[string]string{".openmerge.yml": repositoryConfig})
+		must(t, err)
+		readerCalled := false
+		w.resolveAuthorityLifecycle = func(ctx context.Context, c config.AuthorityCandidate, branch, tip string) (authorityLifecycleResolution, error) {
+			r, err := resolver(ctx, c, branch, tip)
+			r.Activation.Receipt.BinaryRevision = "wrong-binary"
+			r.Activation.Read = func(context.Context) (authority.Observation, error) {
+				readerCalled = true
+				return authority.Observation{}, errors.New("rollback must not read")
+			}
+			return r, err
+		}
+		must(t, s.configuration(t.Context(), w))
+		if readerCalled {
+			t.Fatal("rollback read authority")
+		}
+		w.resolveAuthorityLifecycle = func(ctx context.Context, c config.AuthorityCandidate, branch, tip string) (authorityLifecycleResolution, error) {
+			r, err := resolver(ctx, c, branch, tip)
+			r.Activation.Read = func(context.Context) (authority.Observation, error) {
+				t.Fatal("rollback read authority")
+				return authority.Observation{}, nil
+			}
+			return r, err
+		}
+		must(t, s.configuration(t.Context(), w))
+		assertLifecyclePair(t, s, w, before, authority.GitHub)
+		events, err := s.store.EventsAfter(t.Context(), w.id, before)
+		must(t, err)
+		want := w.cfg.QueueConfig().Applied(tip, w.configDigest)
+		_, wantRaw, err := queue.EncodeEvent(want)
+		must(t, err)
+		for _, event := range events {
+			if applied, ok := event.Event.(queue.ConfigApplied); ok {
+				_, got, err := queue.EncodeEvent(applied)
+				must(t, err)
+				if string(got) != string(wantRaw) {
+					t.Fatal("lifecycle changed normal ConfigApplied wire", string(got), string(wantRaw))
+				}
 			}
 		}
-	}
 
+		// A folded rollback receipt must survive later GitHub governing commits.
+		for i, files := range []map[string]string{{"README.md": "unrelated"}, {".openmerge.yml": strings.Replace(repositoryConfig, "name: default", "name: default\n    enter_when: [label = ready]", 1)}} {
+			w.AuthorityRequired = i == 0
+			_, err = f.PushBase(repo, "main", "github rebind", files)
+			must(t, err)
+			must(t, s.configuration(t.Context(), w))
+			for _, operation := range []forge.PushOperation{forge.PushBuild, forge.PushLand, forge.PushEnsureFence} {
+				opts := s.authorityPushOptions(t.Context(), w, operation, nil)
+				if !reflect.DeepEqual(opts, forge.PushOptions{}) {
+					t.Fatalf("rollback rebind returned guarded options for %s", operation)
+				}
+			}
+		}
+
+	})
 }
 
 func TestAuthorityLifecycleRequiresFlagAndResolver(t *testing.T) {
@@ -679,7 +670,7 @@ func TestAuthorityLifecycleRequiresFlagAndResolver(t *testing.T) {
 			_, err = f.PushBase(repo, "main", "candidate", map[string]string{".openmerge.yml": lifecycleConfig(repositoryConfig)})
 			must(t, err)
 			must(t, s.configuration(t.Context(), w))
-			if w.configError == nil || !strings.Contains(w.configError.Error(), config.AuthorityActivationUnavailable) {
+			if w.configError == nil || !strings.Contains(w.configError.Error(), "authority production opt-in required") {
 				t.Fatal("partial opt-in parsed public candidate", w.configError)
 			}
 			events, err := s.store.EventsAfter(t.Context(), w.id, before)

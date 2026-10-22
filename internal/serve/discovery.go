@@ -504,6 +504,7 @@ func (s *Server) resolveTarget(ctx context.Context, w *worker) error {
 		return errors.New("resolved target requires credentials and App identity")
 	}
 	target.Key = w.Key
+	target = s.publicAuthorityTarget(target)
 	w.bind(target)
 	return nil
 }
@@ -511,8 +512,10 @@ func (s *Server) resolveTarget(ctx context.Context, w *worker) error {
 // bind changes credentials while Key remains immutable for notifications/status.
 func (w *worker) bind(target Target) {
 	w.Driver, w.Git, w.BotLogin = target.Driver, target.Git, target.BotLogin
+	w.AuthorityCompletionGit = target.AuthorityCompletionGit
 	w.CheckRules, w.CheckPermissions, w.CheckProtection = target.CheckRules, target.CheckPermissions, target.CheckProtection
 	w.Resolve = target.Resolve
+	w.publicAuthority = target.publicAuthority
 	w.AuthorityRequired = target.AuthorityRequired
 	w.resolveAuthorityLifecycle = target.resolveAuthorityLifecycle
 	w.PrepareAuthorityPush, w.PinAuthorityPush, w.ObserveAuthorityPush = target.PrepareAuthorityPush, target.PinAuthorityPush, target.ObserveAuthorityPush
