@@ -86,6 +86,12 @@ func (w *worker) publishDeadline(at time.Time) {
 func (s *Server) publishHealth(w *worker, state queue.State, success bool, err error, now time.Time) {
 	hasPin := state.AuthorityPin() != nil
 	w.hasAuthorityPin.Store(hasPin)
+	if pin := state.AuthorityPin(); pin != nil && pin.OpenMerge != nil {
+		binding := pin.OpenMerge.Binding
+		w.authorityDiscoveryPin.Store(&binding)
+	} else {
+		w.authorityDiscoveryPin.Store(nil)
+	}
 	if !hasPin {
 		w.outsideWarnings.Store(nil)
 	}

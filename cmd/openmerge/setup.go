@@ -39,6 +39,9 @@ Permissions also accepts --authority openmerge or --config proposed.yml.
 Rulesets require GITHUB_TOKEN from a repository admin, with Administration read
 for inspection or write for --apply. Setup without --apply prints a preview;
 --verify records operator evidence in the database.
+Authority setup/verify/import require complete protection visibility, including
+all inherited rulesets' targets, rules and bypass lists and classic protection.
+Administration read alone may not expose inherited bypass lists; ask their owner.
 Verification requires --verify --authority openmerge and the first-emission
 drain/backup gate even on github queues. It rejects --apply, --restore,
 --rollback-preflight and --rotate-break-glass.

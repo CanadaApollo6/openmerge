@@ -375,9 +375,11 @@ func TestAuthorityConcurrentEditsAndBackupGuards(t *testing.T) {
 			case "before first", "before second", "after write":
 				repos := 0
 				f.override = func(_ http.ResponseWriter, r *http.Request) bool {
-					if r.URL.Path == "/api/v3/repos/acme/project" {
+					// Count only apply snapshots, after the immutable recovery capture.
+					// Governing acquisition may independently recheck repository metadata.
+					if _, err := os.Stat(opts.Backup); err == nil && r.URL.Path == "/api/v3/repos/acme/project" {
 						repos++
-						if kind == "before first" && repos == 3 || kind == "before second" && repos == 5 || kind == "after write" && repos == 4 {
+						if kind == "before first" && repos == 2 || kind == "before second" && repos == 4 || kind == "after write" && repos == 3 {
 							f.setupRules[10]["name"] = "concurrent-edit"
 						}
 					}

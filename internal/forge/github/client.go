@@ -33,6 +33,9 @@ func (e *RateLimitError) Error() string {
 // diagnostics: GitHub or a proxy could echo credentials in any of those.
 type APIError struct{ StatusCode int }
 
+// HTTPStatusCode supports sanitized failure classification across packages.
+func (e *APIError) HTTPStatusCode() int { return e.StatusCode }
+
 func (e *APIError) Error() string {
 	return fmt.Sprintf("github API request failed (HTTP %d)", e.StatusCode)
 }

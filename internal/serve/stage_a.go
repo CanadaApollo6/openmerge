@@ -16,6 +16,7 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/classification"
 	"github.com/CanadaApollo6/openmerge/internal/config"
 	"github.com/CanadaApollo6/openmerge/internal/config/condition"
+	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/status"
@@ -32,6 +33,20 @@ type stageAPolicy struct {
 	mappings      map[string][]cp.Identity
 	identities    map[string]cp.ResolvedIdentity
 	governing     *stageAGoverningCache
+}
+
+func (a *stageAPolicy) identityValidationError(err error, count int) error {
+	requireOwners := a.policy.RequirePolicyOwners
+	message := err.Error()
+	if requireOwners {
+		message = diagnostic.Sanitize(message)
+	}
+	failure := config.Errors{{NoLine: requireOwners, Path: "approvals", Message: message}}
+	// The identity count is fixed by the tree; account kinds and aliases are live.
+	if requireOwners && count <= cp.MaxPolicyIdentities {
+		return &config.GoverningIdentityError{Cause: failure}
+	}
+	return failure
 }
 
 func policyIdentity(u forge.UserIdentity) (cp.Identity, error) {
@@ -164,7 +179,7 @@ func (s *Server) refreshStageAPolicy(ctx context.Context, w *worker, tip string)
 		resolved = append(resolved, r)
 	}
 	if err := a.repository.ValidateIdentities(resolved); err != nil {
-		return config.Errors{{Path: "approvals", Message: err.Error()}}
+		return a.identityValidationError(err, len(resolved))
 	}
 	// Policy identity covers the governing tree, independent of the open-change
 	// set. Per-revision classification still reads only its pinned path evidence.
@@ -239,7 +254,7 @@ func (s *Server) refreshStageAPolicy(ctx context.Context, w *worker, tip string)
 		resolved = append(resolved, r)
 	}
 	if err := a.repository.ValidateIdentities(resolved); err != nil {
-		return config.Errors{{Path: "approvals", Message: err.Error()}}
+		return a.identityValidationError(err, len(resolved))
 	}
 	digest, err := cp.PolicyDigest(cp.DigestInputs{Repository: a.repository, Queue: a.candidate, Resolved: resolved, Owners: owners, Attributes: attrs, ClassifierVersion: classification.Version, RequirePolicyOwners: a.policy.RequirePolicyOwners})
 	if err != nil {

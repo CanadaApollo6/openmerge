@@ -121,6 +121,10 @@ func TestStageAIdentityPinBudgetConfigError(t *testing.T) {
 			must(t, err)
 			must(t, s.configuration(t.Context(), w))
 			state := shadowState(t, s, w)
+			want := "Default-branch configuration: line 0: approvals: approval policy resolves 1025 identities; maximum is 1024; reduce configured groups, agents or governing owners"
+			if got := state.BlockSourceDetail(queue.ConfigSource); got != want {
+				t.Fatalf("got %q; want %q", got, want)
+			}
 			if w.configError == nil || !state.SourceBlocked(queue.ConfigSource) || !strings.Contains(state.BlockSourceDetail(queue.ConfigSource), "1025 identities; maximum is 1024") || state.ConfigDigest != oldDigest {
 				t.Fatalf("not an actionable config failure: %v %s", w.configError, state.BlockSourceDetail(queue.ConfigSource))
 			}
@@ -138,4 +142,19 @@ func TestStageAEmptyPolicyKeysDoNotActivate(t *testing.T) {
 	if w.stageA != nil || w.configDigest != digest {
 		t.Fatal("empty keys activated policy or changed digest")
 	}
+}
+
+func TestStageAAccountableIdentityDiagnosticExact(t *testing.T) {
+	testSynctest(t, func(t *testing.T) {
+		s, w, f := shadowFixture(t, 1, "main", "7", false)
+		f.SetIdentity(forge.UserIdentity{ID: 30, Login: "robot", Kind: forge.BotAccount})
+		f.SetIdentity(forge.UserIdentity{ID: 31, Login: "human", Kind: forge.BotAccount})
+		_, err := f.PushBase(repo, "main", "accountable identity", map[string]string{".openmerge.yml": githubApprovalsConfig + "agents: [{identity: robot, accountable: [human]}]\n"})
+		must(t, err)
+		must(t, s.configuration(t.Context(), w))
+		want := "Default-branch configuration: line 0: approvals: accountable identity \"human\" must resolve to a human"
+		if got := shadowState(t, s, w).BlockSourceDetail(queue.ConfigSource); got != want {
+			t.Fatalf("got %q; want %q", got, want)
+		}
+	})
 }

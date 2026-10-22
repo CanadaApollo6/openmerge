@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/authority"
@@ -149,6 +150,30 @@ func verifyTargets(ctx context.Context, db *store.Store, reader forge.WriteRestr
 		}
 		records = append(records, store.VerificationRecord{QueueID: id, Event: queue.WriteRestrictionVerified{Binding: target.Input.Binding, Basis: state.RulesSourceRevision(queue.WriteRestriction), Scope: scope, Nonce: nonce, Operator: operator}})
 	}
+	// Acquisition is a seeing read: all targets and the nonce are ready first.
+	acquirer, ok := reader.(interface {
+		AcquireGoverningRecheck(context.Context, string) (func(context.Context) error, error)
+	})
+	if !ok {
+		return errors.New("verification governing acquisition reader unavailable")
+	}
+	rechecks := []func(context.Context) error{}
+	seen := map[string]bool{}
+	for _, target := range plan.Targets {
+		key := strings.ToLower(target.Key.Repository)
+		if seen[key] {
+			continue
+		}
+		recheck, err := acquirer.AcquireGoverningRecheck(ctx, target.Key.Repository)
+		if err != nil {
+			return err
+		}
+		if recheck == nil {
+			return errors.New("verification governing recheck unavailable")
+		}
+		rechecks = append(rechecks, recheck)
+		seen[key] = true
+	}
 	for i, target := range plan.Targets {
 		evidence, err := reader.ObserveWriteRestriction(ctx, target.Input)
 		if err != nil {
@@ -165,6 +190,11 @@ func verifyTargets(ctx context.Context, db *store.Store, reader forge.WriteRestr
 		records[i].Event.Evidence = evidence
 		records[i].Event.ProtectionFingerprint = fp
 		records[i].Event.VerifiedAt = time.Now().UTC()
+	}
+	for _, recheck := range rechecks {
+		if err := recheck(ctx); err != nil {
+			return errors.New("governing policy changed or unavailable; no verification recorded; retry acquisition")
+		}
 	}
 	receipts, err := db.CommitWriteRestrictionVerification(ctx, records)
 	if err != nil {

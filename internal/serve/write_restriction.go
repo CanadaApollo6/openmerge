@@ -212,12 +212,15 @@ func (s *Server) observeAuthorityRead(ctx, parent context.Context, w *worker, re
 
 // Persist only a bounded class, never transport text that may contain secrets.
 func authorityReadFailureReason(cause error) string {
+	var permission interface{ HTTPStatusCode() int }
 	var rate interface{ RetryAfter() time.Time }
 	switch {
 	case errors.Is(cause, context.DeadlineExceeded):
 		return authorityReadErrorReason + ": timeout"
 	case errors.As(cause, &rate):
 		return authorityReadErrorReason + ": quota"
+	case errors.As(cause, &permission) && (permission.HTTPStatusCode() == 403 || permission.HTTPStatusCode() == 401):
+		return authorityReadErrorReason + ": permission denied"
 	case errors.Is(cause, context.Canceled):
 		return authorityReadErrorReason + ": canceled"
 	default:

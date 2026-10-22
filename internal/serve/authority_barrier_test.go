@@ -143,6 +143,21 @@ func TestAuthorityBarrierJournalCannotInstallRuntimeAuthority(t *testing.T) {
 			if w.configError == nil || !strings.Contains(w.configError.Error(), config.AuthorityActivationUnavailable) {
 				t.Fatal("lifecycle reader bypassed public candidate barrier", w.configError)
 			}
+			tip, err := f.ReadRef(t.Context(), w.repo(), "main")
+			must(t, err)
+			governingReads := f.GoverningFilesCalls()
+			for _, acquire := range []func() error{
+				func() error { _, err := s.repositoryConfig(t.Context(), w.Target, "main", tip, nil); return err },
+				func() error { return s.loadConfiguration(t.Context(), w, "main", tip) },
+			} {
+				if err := acquire(); err == nil || !strings.Contains(err.Error(), config.AuthorityActivationUnavailable) {
+					t.Fatal("acquisition entry point bypassed public barrier", err)
+				}
+			}
+			if f.GoverningFilesCalls() != governingReads || w.AuthorityRequired || w.authorityObservation != nil {
+				t.Fatal("acquisition enabled authority or read governing evidence without opt-in")
+			}
+
 			events, err := s.store.EventsAfter(t.Context(), w.id, before)
 			must(t, err)
 			for _, event := range events {

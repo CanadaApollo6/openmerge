@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/config"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
@@ -129,7 +130,22 @@ func (c *setupAPI) readProtection(ctx context.Context, opts ImportOptions) (Prot
 	})
 	var cfg config.Config
 	if err == nil {
-		cfg, _, err = config.Load(data)
+		var candidate config.AuthorityCandidate
+		candidate, _, _ = config.LoadAuthorityCandidate(data)
+		if candidate.Authority.Mode == authority.OpenMerge {
+			g, acquireErr := c.operatorGoverning(ctx, opts.Repo, r.GoverningCommit)
+			if acquireErr == nil {
+				acquireErr = c.validateLandedAuthority(ctx, opts.Repo, r.DefaultBranch, r.GoverningCommit, candidate, g)
+			}
+			if acquireErr != nil {
+				r.add("", "governing-evidence", "governing-acquisition", "unsupported", true, acquireErr.Error(), "# Repair landed config, CODEOWNERS and forge visibility; --accept cannot waive governing evidence.\n")
+			}
+
+			r.add("", "activation", "public-activation-barrier", "equivalent", true, config.AuthorityActivationUnavailable, "# Public activation remains unavailable.\n")
+			cfg = candidate.Config
+		} else {
+			cfg, _, err = config.Load(data)
+		}
 	}
 	if err != nil && !errors.Is(err, config.ErrNotFound) {
 		return r, fmt.Errorf("default-branch configuration: %w", err)
@@ -166,6 +182,24 @@ func (c *setupAPI) readProtection(ctx context.Context, opts ImportOptions) (Prot
 		r.Bases = append(r.Bases, base)
 	}
 	slices.Sort(r.Bases)
+	if candidate, _, parseErr := config.LoadAuthorityCandidate(data); parseErr == nil && candidate.Authority.Mode == authority.OpenMerge {
+		refs := []string{}
+		for _, base := range r.Bases {
+			refs = append(refs, "refs/heads/"+base)
+		}
+		for base := range tips {
+			for _, family := range []string{"fence", "queue", "green", "verify"} {
+				if strings.HasPrefix(base, "openmerge/"+family+"/") {
+					refs = append(refs, "refs/heads/"+base)
+					break
+				}
+			}
+		}
+		slices.Sort(refs)
+		if _, protectionErr := c.operatorProtection(ctx, opts.Repo, refs); protectionErr != nil {
+			r.add("", "governing-evidence", "governing-protection", "unsupported", true, protectionErr.Error(), "# Obtain complete governing protection evidence; --accept cannot waive this.\n")
+		}
+	}
 	r.add("", "installation", "served-default", "equivalent", !servedDefault, "The default branch must be served by a configured queue; --base only adds audit targets.", "# Serve the default branch in queues before switching policy authority.")
 	r.add("", "installation", "bypass-verification", "equivalent", true, "To verify at switch: GitHub must accept the installed OpenMerge App and exactly one team or repository-admin break-glass actor. Read-only inspection cannot prove a future ruleset write will be accepted; bots cannot be break-glass.", "# Install and verify the App and break-glass bypass before switching.")
 	r.add("", "installation", "policy-approval", "equivalent", true, "Mandatory owner approval for policy-class changes cannot be waived. Install the release implementing ADR 0007 Stage A and verify this gate at switch.", "# policy_authority: openmerge (only after Stage A and all installation prerequisites)\n# Mandatory policy owner approval applies even without approvals rules.")

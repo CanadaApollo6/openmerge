@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -96,6 +97,24 @@ func TestRulesetsFlagParsingAndDispatch(t *testing.T) {
 			value = map[string]any{"id": 98, "slug": "owners", "organization": map[string]any{"id": 55, "login": "acme"}}
 		case "/repos/acme/project/rulesets":
 			value = []any{}
+		case "/repos/acme/project/branches":
+			value = []any{map[string]any{"name": "main", "commit": map[string]string{"sha": strings.Repeat("a", 40)}}}
+		case "/repos/acme/project/git/ref/heads/main":
+			value = map[string]any{"object": map[string]string{"sha": strings.Repeat("a", 40), "type": "commit"}}
+		case "/repos/acme/project/git/trees/" + strings.Repeat("a", 40):
+			value = map[string]any{"truncated": false, "tree": []any{map[string]string{"path": ".openmerge.yml", "type": "blob", "mode": "100644", "sha": strings.Repeat("b", 40)}, map[string]string{"path": "CODEOWNERS", "type": "blob", "mode": "100644", "sha": strings.Repeat("c", 40)}}}
+		case "/repos/acme/project/git/blobs/" + strings.Repeat("b", 40), "/repos/acme/project/git/blobs/" + strings.Repeat("c", 40):
+			content := "version: 1\nqueues: [{name: main, merge_when: ['check-success = ci']}]\n"
+			if strings.HasSuffix(req.URL.Path, strings.Repeat("c", 40)) {
+				content = "* @writer\n"
+			}
+			value = map[string]any{"size": len(content), "encoding": "base64", "content": base64.StdEncoding.EncodeToString([]byte(content))}
+		case "/users/writer":
+			value = map[string]any{"id": 21, "login": "writer", "type": "User"}
+		case "/repos/acme/project/collaborators/writer/permission":
+			value = map[string]any{"permission": "write", "user": map[string]any{"id": 21, "login": "writer", "type": "User"}}
+		case "/repos/acme/project/branches/main/protection":
+			return &http.Response{StatusCode: 404, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{"message":"Branch not protected"}`)), Request: req}, nil
 		default:
 			t.Fatalf("unexpected route %s", req.URL.Path)
 		}
@@ -154,6 +173,10 @@ func TestVerifyRejectsSetupMutationsBeforeReads(t *testing.T) {
 }
 
 type verifyReaderFunc func(context.Context, forge.WriteRestrictionInput) (authority.Observation, error)
+
+func (f verifyReaderFunc) AcquireGoverningRecheck(context.Context, string) (func(context.Context) error, error) {
+	return func(context.Context) error { return nil }, nil
+}
 
 func (f verifyReaderFunc) ObserveWriteRestriction(ctx context.Context, in forge.WriteRestrictionInput) (authority.Observation, error) {
 	return f(ctx, in)

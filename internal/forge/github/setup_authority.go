@@ -78,6 +78,29 @@ func setupAuthorityRules(ctx context.Context, client *setupAPI, opts RulesOption
 	if err != nil {
 		return err
 	}
+	// Setup may propose a different future policy. Acquire and validate the
+	// actual landed governing policy independently; never validate proposed
+	// ownership against proposed CODEOWNERS. This emits no activation evidence.
+	landed, commit, governing, err := client.landedAuthority(ctx, opts.Repo, snapshot.DefaultBranch)
+	if err != nil {
+		return err
+	}
+	if err := client.validateLandedAuthority(ctx, opts.Repo, snapshot.DefaultBranch, commit, landed, governing); err != nil {
+		return err
+	}
+	if _, err := candidate.Config.ResolveBranch(snapshot.DefaultBranch, snapshot.DefaultBranch); len(err) != 0 {
+		return err
+	}
+	refs, err := client.operatorAuthorityRefs(ctx, opts.Repo, snapshot.DefaultBranch, commit, landed, candidate)
+	if err != nil {
+		return err
+	}
+	if _, err := client.operatorProtection(ctx, opts.Repo, refs); err != nil {
+		return err
+	}
+	if err := client.recheckGoverningRef(ctx, opts.Repo, snapshot.DefaultBranch, commit); err != nil {
+		return err
+	}
 	capture, err := planAuthorityRules(snapshot, opts, candidate, actor)
 	if err != nil {
 		return err
@@ -117,10 +140,13 @@ func setupAuthorityRules(ctx context.Context, client *setupAPI, opts RulesOption
 	if _, redacted := diagnostic.NewSanitizer(client.secrets...).SanitizeTextRedacted(string(encoded)); redacted {
 		return errors.New("managed settings contain credential-like data; refusing recovery capture")
 	}
+	if err := client.recheckGoverningRef(ctx, opts.Repo, snapshot.DefaultBranch, commit); err != nil {
+		return err
+	}
 	if err := writeRulesBackup(opts.Backup, capture); err != nil {
 		return err
 	}
-	return client.applyRulesBackup(ctx, opts, capture, false, out)
+	return client.applyRulesBackup(ctx, opts, capture, false, out, &governingRef{branch: snapshot.DefaultBranch, commit: commit})
 }
 
 func (c *setupAPI) setupBreakGlass(ctx context.Context, repo string, actor authority.Actor) (BypassActor, error) {

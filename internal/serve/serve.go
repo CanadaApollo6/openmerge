@@ -96,6 +96,9 @@ type Server struct {
 	refreshNextAt       time.Time
 	refreshRetryAt      time.Time
 	refreshNotBefore    time.Time
+
+	discoveryAcquisitions map[string]discoveryAcquisition
+
 	// Internal persistence budget seam; zero retains the production bound.
 	authorityWriteTimeout time.Duration
 }
@@ -145,6 +148,13 @@ type worker struct {
 	authorityNextCheck      time.Time
 	authorityFailures       int
 	authorityCadenceBinding *authority.PolicyBinding
+
+	authorityDiscoveryPin   atomic.Pointer[authority.PolicyBinding]
+	discoveryAuthorityError error
+	configFailure           error
+	configFailureBranch     string
+	configFailureTip        string
+	configFailureRetryAt    time.Time
 
 	notificationPending atomic.Bool
 }
