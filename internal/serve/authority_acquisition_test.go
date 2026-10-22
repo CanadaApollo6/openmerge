@@ -79,10 +79,10 @@ func TestAuthorityGoverningAcquisitionBoundaries(t *testing.T) {
 						}
 						return
 					}
-					if err == nil {
+					if err == nil && (boundary != "configuration" || !lifecycleState(t, s, w).SourceBlocked(queue.ConfigSource)) {
 						t.Fatal("incomplete evidence accepted")
 					}
-					if strings.Contains(err.Error(), "ghs_SECRET") {
+					if err != nil && strings.Contains(err.Error(), "ghs_SECRET") {
 						t.Fatal("transport secret exposed")
 					}
 					after := lifecycleState(t, s, w)

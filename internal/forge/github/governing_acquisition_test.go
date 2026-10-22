@@ -140,3 +140,85 @@ func TestAuthorityVerifyAcquiresServerGoverningCommit(t *testing.T) {
 		t.Fatal("verify accepted unresolved governing commit")
 	}
 }
+
+func TestAuthorityAcquisitionRechecksDefaultAfterProtection(t *testing.T) {
+	for _, operation := range []string{"setup", "verify"} {
+		for _, movement := range []string{"tip", "branch"} {
+			t.Run(operation+"/"+movement, func(t *testing.T) {
+				f := rulesAPI(t)
+				moved, rechecked := false, false
+				f.override = func(w http.ResponseWriter, r *http.Request) bool {
+					if strings.HasSuffix(r.URL.Path, "/branches/main/protection") {
+						moved = true
+					}
+					if moved && movement == "tip" && strings.HasSuffix(r.URL.Path, "/git/ref/heads/main") {
+						rechecked = true
+						f.json(w, map[string]any{"object": map[string]string{"type": "commit", "sha": strings.Repeat("d", 40)}})
+						return true
+					}
+					if moved && movement == "branch" && r.URL.Path == "/api/v3/repos/acme/project" {
+						rechecked = true
+						f.json(w, map[string]any{"default_branch": "renamed"})
+						return true
+					}
+					return false
+				}
+				var err error
+				if operation == "setup" {
+					_, err = runAuthority(t, f, authorityOptions(t))
+				} else {
+					reader, createErr := newAdminWriteRestrictionReader("setup-admin-secret", f.server.URL+"/api/v3/")
+					must(t, createErr)
+					err = reader.AcquireGoverning(t.Context(), "acme/project")
+				}
+				if err == nil || !moved || !rechecked || f.setupWrites != 0 || !strings.Contains(err.Error(), "changed; retry acquisition") {
+					t.Fatalf("moved=%v rechecked=%v writes=%d err=%v", moved, rechecked, f.setupWrites, err)
+				}
+			})
+		}
+	}
+}
+
+func TestOperatorGoverningIncludesNestedAttributes(t *testing.T) {
+	f := rulesAPI(t)
+	nested := strings.Repeat("d", 40)
+	f.override = func(w http.ResponseWriter, r *http.Request) bool {
+		if strings.Contains(r.URL.Path, "/git/trees/") {
+			f.json(w, map[string]any{"truncated": false, "tree": []any{map[string]any{"path": "src/.gitattributes", "type": "blob", "mode": "100644", "sha": nested, "size": 8}}})
+			return true
+		}
+		if strings.HasSuffix(r.URL.Path, "/git/blobs/"+nested) {
+			content := "* -diff\n"
+			f.json(w, map[string]any{"encoding": "base64", "size": len(content), "content": base64.StdEncoding.EncodeToString([]byte(content))})
+			return true
+		}
+		return false
+	}
+	c, err := setupClient(f.server.URL+"/api/v3/", "setup-admin-secret")
+	must(t, err)
+	files, err := c.operatorGoverning(t.Context(), "acme/project", strings.Repeat("a", 40))
+	must(t, err)
+	for _, file := range files.Attributes {
+		if file.Path == "src/.gitattributes" && file.Present && file.Content == "* -diff\n" {
+			return
+		}
+	}
+	t.Fatal("operator omitted nested governing attributes")
+}
+
+func TestGoverningPermissionDeniedIsSanitized(t *testing.T) {
+	f := rulesAPI(t)
+	f.override = func(w http.ResponseWriter, r *http.Request) bool {
+		if strings.HasSuffix(r.URL.Path, "/branches/main/protection") {
+			f.apiError(w, 403, "ghs_SECRET")
+			return true
+		}
+		return false
+	}
+	reader, err := newAdminWriteRestrictionReader("setup-admin-secret", f.server.URL+"/api/v3/")
+	must(t, err)
+	err = reader.AcquireGoverning(t.Context(), "acme/project")
+	if err == nil || !strings.Contains(err.Error(), "permission denied") || strings.Contains(err.Error(), "ghs_SECRET") {
+		t.Fatal("lost sanitized permission class", err)
+	}
+}

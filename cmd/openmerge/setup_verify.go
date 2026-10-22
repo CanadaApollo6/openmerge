@@ -107,11 +107,6 @@ func runRulesVerification(ctx context.Context, opts verifyOptions, rules github.
 		return err
 	}
 	defer db.Close()
-	for _, target := range plan.Targets {
-		if err := reader.AcquireGoverning(ctx, target.Key.Repository); err != nil {
-			return err
-		}
-	}
 	return verifyTargets(ctx, db, reader, plan, opts.Operator, out)
 }
 
@@ -153,6 +148,21 @@ func verifyTargets(ctx context.Context, db *store.Store, reader forge.WriteRestr
 			}
 		}
 		records = append(records, store.VerificationRecord{QueueID: id, Event: queue.WriteRestrictionVerified{Binding: target.Input.Binding, Basis: state.RulesSourceRevision(queue.WriteRestriction), Scope: scope, Nonce: nonce, Operator: operator}})
+	}
+	// Acquisition is a seeing read: all targets and the nonce are ready first.
+	if acquirer, ok := reader.(interface {
+		AcquireGoverning(context.Context, string) error
+	}); ok {
+		seen := map[string]bool{}
+		for _, target := range plan.Targets {
+			if seen[target.Key.Repository] {
+				continue
+			}
+			if err := acquirer.AcquireGoverning(ctx, target.Key.Repository); err != nil {
+				return err
+			}
+			seen[target.Key.Repository] = true
+		}
 	}
 	for i, target := range plan.Targets {
 		evidence, err := reader.ObserveWriteRestriction(ctx, target.Input)

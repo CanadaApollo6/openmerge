@@ -16,7 +16,7 @@ import (
 // All I/O finishes before StartLanding takes the existing queue lock. Its exact
 // source revisions travel in LandingChecksRecorded and are rechecked there.
 func (s *Server) readAuthorityAdmission(ctx, parent context.Context, w *worker, basis queue.State) (queue.State, error) {
-	if !w.AuthorityRequired || w.resolveAuthorityLifecycle == nil || w.configError != nil || w.configCandidate.Authority.Mode != authority.OpenMerge {
+	if !w.AuthorityRequired || w.resolveAuthorityLifecycle == nil || w.configError != nil || w.discoveryAuthorityError != nil || w.configCandidate.Authority.Mode != authority.OpenMerge {
 		return queue.State{}, fmt.Errorf("authority admission opt-in/configuration unavailable")
 	}
 	request := w.authorityObservation

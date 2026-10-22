@@ -98,6 +98,9 @@ func setupAuthorityRules(ctx context.Context, client *setupAPI, opts RulesOption
 	if _, err := client.operatorProtection(ctx, opts.Repo, refs); err != nil {
 		return err
 	}
+	if err := client.recheckGoverningRef(ctx, opts.Repo, snapshot.DefaultBranch, commit); err != nil {
+		return err
+	}
 	capture, err := planAuthorityRules(snapshot, opts, candidate, actor)
 	if err != nil {
 		return err
@@ -136,6 +139,9 @@ func setupAuthorityRules(ctx context.Context, client *setupAPI, opts RulesOption
 	encoded, _ := json.Marshal(capture)
 	if _, redacted := diagnostic.NewSanitizer(client.secrets...).SanitizeTextRedacted(string(encoded)); redacted {
 		return errors.New("managed settings contain credential-like data; refusing recovery capture")
+	}
+	if err := client.recheckGoverningRef(ctx, opts.Repo, snapshot.DefaultBranch, commit); err != nil {
+		return err
 	}
 	if err := writeRulesBackup(opts.Backup, capture); err != nil {
 		return err

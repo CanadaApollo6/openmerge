@@ -10,6 +10,7 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/authority"
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
 	"github.com/CanadaApollo6/openmerge/internal/classification"
+	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 )
 
@@ -22,12 +23,15 @@ type GoverningReadError struct {
 
 func (e *GoverningReadError) Error() string {
 	class := "unavailable"
+	var permission interface{ HTTPStatusCode() int }
 	var quota interface{ RetryAfter() time.Time }
 	switch {
 	case errors.Is(e.Cause, context.DeadlineExceeded):
 		class = "timeout"
 	case errors.As(e.Cause, &quota):
 		class = "quota"
+	case errors.As(e.Cause, &permission) && (permission.HTTPStatusCode() == 403 || permission.HTTPStatusCode() == 401):
+		class = "permission denied"
 	case errors.Is(e.Cause, context.Canceled):
 		class = "canceled"
 	}
@@ -51,6 +55,9 @@ func (c AuthorityCandidate) AcquireGoverning(ctx context.Context, repo forge.Rep
 
 // ValidateGoverningIdentities also serves bounded tree-backed operator readers.
 func (c AuthorityCandidate) ValidateGoverningIdentities(ctx context.Context, repo forge.RepoRef, branch, commit string, g forge.GoverningFiles, ids forge.IdentityReader) error {
+	if g.Coverage.Completeness != forge.DiffComplete || g.CommitSHA != commit {
+		return &GoverningReadError{Boundary: "files", Cause: errors.New("incomplete governing provenance")}
+	}
 	var readErr error
 	resolve := func(o classification.Owner) cp.IdentitySet {
 		unknown := cp.IdentitySet{Reason: "governing owner unresolved"}
@@ -121,7 +128,22 @@ func (c AuthorityCandidate) ValidateGoverningIdentities(ctx context.Context, rep
 		return &GoverningReadError{Boundary: "owners", Cause: readErr}
 	}
 	if err != nil {
-		return errors.New("authority governing validation failed: require complete landed config, exactly one default queue, supported selectors and eligible CODEOWNERS coverage for all policy paths")
+		return Errors{{Path: "governing policy", Message: "authority governing validation failed: " + diagnostic.Sanitize(err.Error())}}
 	}
 	return nil
+}
+
+// SanitizedAuthorityErrors preserves actionable locations without raw values or
+// credentials crossing the authority diagnostic boundary.
+func SanitizedAuthorityErrors(err error) error {
+	var diagnostics Errors
+	if errors.As(err, &diagnostics) {
+		out := slices.Clone(diagnostics)
+		for i := range out {
+			out[i].Path = diagnostic.Sanitize(out[i].Path)
+			out[i].Message = "invalid landed authority configuration: " + diagnostic.Sanitize(out[i].Message)
+		}
+		return out
+	}
+	return Errors{{Path: "configuration", Message: "invalid landed authority configuration; repair the default-branch file"}}
 }

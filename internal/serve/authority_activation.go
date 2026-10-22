@@ -84,6 +84,12 @@ func (s *Server) activateAuthority(ctx context.Context, w *worker, request autho
 	if err != nil {
 		return zero, err
 	}
+	if request.Pin.OpenMerge != nil {
+		binding := request.Pin.OpenMerge.Binding
+		w.authorityDiscoveryPin.Store(&binding)
+	} else {
+		w.authorityDiscoveryPin.Store(nil)
+	}
 	s.options.Logger.Info(receipt.String(), "repository", w.Key.Repository, "base", w.Key.BaseBranch)
 	return receipt, nil
 }

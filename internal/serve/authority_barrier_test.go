@@ -147,7 +147,7 @@ func TestAuthorityBarrierJournalCannotInstallRuntimeAuthority(t *testing.T) {
 			must(t, err)
 			governingReads := f.GoverningFilesCalls()
 			for _, acquire := range []func() error{
-				func() error { _, err := s.repositoryConfig(t.Context(), w.Target, tip, nil); return err },
+				func() error { _, err := s.repositoryConfig(t.Context(), w.Target, "main", tip, nil); return err },
 				func() error { return s.loadConfiguration(t.Context(), w, "main", tip) },
 			} {
 				if err := acquire(); err == nil || !strings.Contains(err.Error(), config.AuthorityActivationUnavailable) {

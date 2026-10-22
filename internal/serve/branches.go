@@ -205,10 +205,42 @@ func (s *Server) refreshRepository(ctx context.Context, repo Repository) error {
 	if err != nil {
 		return &repositoryReadError{"default-branch tip", err}
 	}
-	cfg, err := s.repositoryConfig(ctx, target, tip, nil)
+	cfg, err := s.repositoryConfig(ctx, target, branch, tip, nil)
+	acquisitionErr := err
 	if err != nil {
-		return &repositoryReadError{"configuration", err}
+		_, active := s.discoveryBindings(target)
+		if active && len(cfg.Queues) == 0 {
+			var invalid config.Errors
+			if errors.As(err, &invalid) || errors.Is(err, config.ErrNotFound) {
+				for _, w := range s.workers() {
+					if w.Key.Installation != repo.Installation || !strings.EqualFold(w.Key.Repository, repo.Name) {
+						continue
+					}
+					w.mu.Lock()
+					if w.AuthorityRequired && w.resolveAuthorityLifecycle != nil {
+						w.configError, w.configFailure, w.configFailureBranch, w.configFailureTip = err, err, branch, tip
+						err = errors.Join(err, s.block(ctx, w, queue.ConfigSource, "Default-branch configuration: "+w.configError.Error(), ""))
+					}
+					w.mu.Unlock()
+				}
+			}
+		}
+		if !active || len(cfg.Queues) == 0 {
+			return &repositoryReadError{"configuration", err}
+		}
 	}
+	// Capture bindings after worker activation so the next unchanged refresh is
+	// already warm. Failures retain no successful acquisition cache.
+	defer func() {
+		bindings, _ := s.discoveryBindings(target)
+		key := target.Key.Installation + "/" + target.Key.Repository
+		s.mu.Lock()
+		if entry, ok := s.discoveryAcquisitions[key]; ok && entry.branch == branch && entry.tip == tip {
+			entry.bindings = bindings
+			s.discoveryAcquisitions[key] = entry
+		}
+		s.mu.Unlock()
+	}()
 	branches, err := repo.Branches(ctx)
 	if err != nil {
 		return &repositoryReadError{"branch listing", err}
@@ -240,7 +272,13 @@ func (s *Server) refreshRepository(ctx context.Context, repo Repository) error {
 			}
 		}
 	}
+	// Finish base expansion before returning acquisition read failures. Their
+	// causes must still reach discovery's existing quota/backoff scheduler.
 	var result error
+	var invalid config.Errors
+	if acquisitionErr != nil && !errors.As(acquisitionErr, &invalid) {
+		result = acquisitionErr
+	}
 	for _, base := range branches {
 		if !s.allowedBase(base) || len(matchingQueues(cfg, base, branch)) == 0 {
 			continue
@@ -255,6 +293,9 @@ func (s *Server) refreshRepository(ctx context.Context, repo Repository) error {
 			continue
 		}
 		w.mu.Lock()
+		if w.AuthorityRequired && w.resolveAuthorityLifecycle != nil {
+			w.discoveryAuthorityError = acquisitionErr
+		}
 		err := s.refreshWorker(ctx, w, cfg, branch, tip, branches, overlaps)
 		if err != nil {
 			s.options.Logger.Warn("base validation failed; keeping previous state", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "error", err)
@@ -314,6 +355,11 @@ func (s *Server) refreshWorker(ctx context.Context, w *worker, cfg config.Config
 		return s.lifecycle(ctx, w, "dormant", "Base branch is absent; log and fence retained")
 	case slices.ContainsFunc(matches, func(q config.Queue) bool { return overlaps[q.Name] }):
 		return s.lifecycle(ctx, w, "overlapping", "Queue selector overlaps another queue on an existing branch")
+	}
+	if w.discoveryAuthorityError != nil {
+		w.ready = false
+		w.waiting = w.discoveryAuthorityError.Error()
+		return s.block(ctx, w, queue.ConfigSource, "Authority discovery acquisition: "+w.waiting, "")
 	}
 	w.lifecycleState = "active"
 	if err := s.resolveTarget(ctx, w); err != nil {

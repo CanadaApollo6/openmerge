@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"path"
 	"slices"
 	"strings"
 
@@ -23,7 +24,14 @@ func (c *setupAPI) operatorGoverning(ctx context.Context, repo, commit string) (
 	if err != nil {
 		return forge.GoverningFiles{}, &config.GoverningReadError{Boundary: "tree", Cause: err}
 	}
-	return forge.CollectGoverningFiles(ctx, forge.GoverningFilesRequest{CommitSHA: commit, PathsComplete: true}, func(ctx context.Context, path string, remaining int) (forge.GoverningFile, error) {
+	paths := []string{}
+	for name := range tree {
+		if path.Base(name) == ".gitattributes" {
+			paths = append(paths, name)
+		}
+	}
+	slices.Sort(paths)
+	return forge.CollectGoverningFiles(ctx, forge.GoverningFilesRequest{CommitSHA: commit, Paths: paths, PathsComplete: true, AllAttributes: true}, func(ctx context.Context, path string, remaining int) (forge.GoverningFile, error) {
 		file := forge.GoverningFile{Path: path, Coverage: forge.DiffCoverage{Completeness: forge.DiffComplete}}
 		entry, exists := tree[path]
 		sha := entry.SHA
@@ -90,7 +98,7 @@ func (c *setupAPI) landedAuthority(ctx context.Context, repo, branch string) (co
 	}
 	candidate, _, err := config.LoadAuthorityCandidate(contents)
 	if err != nil {
-		return candidate, "", g, errors.New("authority landed governing config is invalid")
+		return candidate, "", g, config.SanitizedAuthorityErrors(err)
 	}
 	return candidate, ref.Object.SHA, g, nil
 }
@@ -207,8 +215,10 @@ func (r *AdminWriteRestrictionReader) AcquireGoverning(ctx context.Context, repo
 	if err != nil {
 		return err
 	}
-	_, err = c.operatorProtection(ctx, repo, refs)
-	return err
+	if _, err = c.operatorProtection(ctx, repo, refs); err != nil {
+		return err
+	}
+	return c.recheckGoverningRef(ctx, repo, info.DefaultBranch, commit)
 }
 
 // Protection reads cover the server's complete current branch inventory. Proposed
@@ -260,4 +270,26 @@ func (c *setupAPI) operatorAuthorityRefs(ctx context.Context, repo, branch, comm
 		}
 	}
 	return nil, errors.New("authority governing branch inventory exceeds acquisition bound")
+}
+
+// Re-read both mutable selectors after all evidence reads. Immutable object
+// reads cannot detect a concurrent default-branch rename or tip movement.
+func (c *setupAPI) recheckGoverningRef(ctx context.Context, repo, branch, commit string) error {
+	var info struct {
+		DefaultBranch string `json:"default_branch"`
+	}
+	if err := c.request(ctx, http.MethodGet, "repos/"+repo, nil, &info); err != nil {
+		return &config.GoverningReadError{Boundary: "default branch recheck", Cause: err}
+	}
+	if info.DefaultBranch != branch {
+		return errors.New("authority governing default branch changed; retry acquisition")
+	}
+	var ref struct{ Object struct{ SHA, Type string } }
+	if err := c.request(ctx, http.MethodGet, "repos/"+repo+"/git/ref/heads/"+url.PathEscape(branch), nil, &ref); err != nil {
+		return &config.GoverningReadError{Boundary: "default tip recheck", Cause: err}
+	}
+	if ref.Object.Type != "commit" || ref.Object.SHA != commit {
+		return errors.New("authority governing default tip changed; retry acquisition")
+	}
+	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/authority"
@@ -29,6 +30,10 @@ func (s *Server) record(ctx context.Context, w *worker, key string, value any, e
 }
 
 func (s *Server) configuration(ctx context.Context, w *worker) error {
+	if w.discoveryAuthorityError != nil {
+		w.configError = w.discoveryAuthorityError
+		return s.block(ctx, w, queue.ConfigSource, "Authority discovery acquisition: "+w.discoveryAuthorityError.Error(), "")
+	}
 	basis, _, err := s.store.Load(ctx, w.id)
 	if err != nil {
 		return err
@@ -61,6 +66,10 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 				w.publishProgress(time.Now())
 			}
 		}
+	}
+	if loadErr == nil && w.configFailure != nil && w.configFailureBranch == branch && w.configFailureTip == configTip {
+		w.configError = w.configFailure
+		return s.block(ctx, w, queue.ConfigSource, "Default-branch configuration: "+w.configError.Error(), "")
 	}
 	if loadErr == nil && (configTip != w.configTip || branch != w.configBranch) {
 		loadErr = s.loadConfiguration(ctx, w, branch, configTip)
@@ -193,6 +202,10 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 	}
 	// Retry failures even at the same tip. Failed metadata/ref/file reads must
 	// pause admission and must never leave a previously valid policy usable.
+	w.configFailure = nil
+	if w.AuthorityRequired && w.resolveAuthorityLifecycle != nil && loadErr != nil && (errors.As(loadErr, &invalid) || errors.Is(loadErr, config.ErrNotFound)) {
+		w.configFailure, w.configFailureBranch, w.configFailureTip = loadErr, branch, configTip
+	}
 	w.configError = loadErr
 	if loadErr == nil {
 		w.configBranch, w.configTip = branch, configTip
@@ -214,33 +227,91 @@ func stageADefiniteIdentityFailure(err error) bool {
 	return errors.Is(err, forge.ErrIdentityUnavailable) || errors.Is(err, forge.ErrIdentityMismatch)
 }
 
-func (s *Server) repositoryConfig(ctx context.Context, target Target, tip string, w *worker) (config.Config, error) {
-	candidate, err := s.repositoryCandidate(ctx, target, tip, w)
-	if err == nil && candidate.Authority.Mode == authority.OpenMerge {
-		branch, readErr := target.Driver.DefaultBranch(ctx, forge.RepoRef{Path: target.Key.Repository})
-		if readErr != nil {
-			return config.Config{}, &config.GoverningReadError{Boundary: "default branch", Cause: readErr}
+// Discovery acquisition is separate from the fresh reads at activation and
+// admission. Reuse only the same immutable policy and current binding set.
+type discoveryAcquisition struct {
+	branch, tip, bindings string
+	cfg                   config.Config
+	err                   error
+}
+
+func (s *Server) discoveryBindings(target Target) (string, bool) {
+	bindings := []string{}
+	active := false
+	for _, w := range s.workers() {
+		if w.Key.Installation != target.Key.Installation || !strings.EqualFold(w.Key.Repository, target.Key.Repository) {
+			continue
 		}
-		err = acquireAuthorityGoverning(ctx, target, candidate, branch, tip)
-		if err == nil {
-			resolved, resolveErr := target.resolveAuthorityLifecycle(ctx, candidate, branch, tip)
-			if resolveErr != nil {
-				return config.Config{}, &authorityObservationReadFailure{err: resolveErr}
-			}
-			if resolved.Activation.Read == nil {
-				return config.Config{}, errors.New("authority governing protection reader unavailable")
-			}
+		if pin := w.authorityDiscoveryPin.Load(); pin != nil {
+			data, _ := json.Marshal(pin)
+			bindings = append(bindings, string(data))
+			active = true
+		}
+	}
+	slices.Sort(bindings)
+	data, _ := json.Marshal(bindings)
+	return string(data), active
+}
+
+func (s *Server) repositoryConfig(ctx context.Context, target Target, branch, tip string, w *worker) (config.Config, error) {
+	key := target.Key.Installation + "/" + target.Key.Repository
+	bindings, _ := s.discoveryBindings(target)
+	s.mu.RLock()
+	cached, ok := s.discoveryAcquisitions[key]
+	s.mu.RUnlock()
+	if ok && cached.branch == branch && cached.tip == tip && cached.bindings == bindings {
+		return cached.cfg, cached.err
+	}
+	candidate, err := s.repositoryCandidate(ctx, target, tip, w)
+	if err != nil || candidate.Authority.Mode != authority.OpenMerge {
+		_, active := s.discoveryBindings(target)
+		var invalid config.Errors
+		if active && (errors.As(err, &invalid) || errors.Is(err, config.ErrNotFound)) {
+			s.rememberDiscoveryAcquisition(key, discoveryAcquisition{branch: branch, tip: tip, bindings: bindings, cfg: candidate.Config, err: err})
+		}
+		return candidate.Config, err
+	}
+	err = acquireAuthorityGoverning(ctx, target, candidate, branch, tip)
+	if err == nil {
+		resolved, resolveErr := target.resolveAuthorityLifecycle(ctx, candidate, branch, tip)
+		if resolveErr != nil {
+			err = &authorityObservationReadFailure{err: resolveErr}
+		} else if resolved.Activation.Read == nil {
+			err = errors.New("authority governing protection reader unavailable")
+		} else {
 			evidence, readErr := resolved.Activation.Read(ctx)
 			if readErr != nil {
-				return config.Config{}, &authorityObservationReadFailure{err: readErr}
+				err = &authorityObservationReadFailure{err: readErr}
+			} else {
+				err = forge.ValidateAuthorityAcquisition(evidence)
 			}
-			err = forge.ValidateAuthorityAcquisition(evidence)
 		}
+	}
+	var invalid config.Errors
+	if err == nil || errors.As(err, &invalid) {
+		s.rememberDiscoveryAcquisition(key, discoveryAcquisition{branch: branch, tip: tip, bindings: bindings, cfg: candidate.Config, err: err})
 	}
 	return candidate.Config, err
 }
 
+func (s *Server) rememberDiscoveryAcquisition(key string, entry discoveryAcquisition) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.discoveryAcquisitions == nil {
+		s.discoveryAcquisitions = map[string]discoveryAcquisition{}
+	}
+	s.discoveryAcquisitions[key] = entry
+}
+
 func (s *Server) repositoryCandidate(ctx context.Context, target Target, tip string, w *worker) (config.AuthorityCandidate, error) {
+	authorityLanded := false
+	if target.AuthorityRequired && target.resolveAuthorityLifecycle != nil {
+		if w != nil {
+			authorityLanded = w.configCandidate.Authority.Mode == authority.OpenMerge
+		} else {
+			_, authorityLanded = s.discoveryBindings(target)
+		}
+	}
 	_, data, err := config.Find(func(path string) ([]byte, bool, error) {
 		data, err := target.Driver.ReadFile(ctx, forge.RepoRef{Path: target.Key.Repository}, tip, path)
 		if w != nil && err == nil {
@@ -252,7 +323,10 @@ func (s *Server) repositoryCandidate(ctx context.Context, target Target, tip str
 		return data, err == nil, err
 	})
 	if err != nil {
-		if target.AuthorityRequired && target.resolveAuthorityLifecycle != nil && w != nil && w.configCandidate.Authority.Mode == authority.OpenMerge && !errors.Is(err, config.ErrNotFound) {
+		if authorityLanded && !errors.Is(err, config.ErrNotFound) {
+			if errors.Is(err, config.ErrMultipleFound) {
+				return config.AuthorityCandidate{}, config.Errors{{Path: "configuration", Message: err.Error()}}
+			}
 			return config.AuthorityCandidate{}, &config.GoverningReadError{Boundary: "config", Cause: err}
 		}
 		return config.AuthorityCandidate{}, err
@@ -265,8 +339,8 @@ func (s *Server) repositoryCandidate(ctx context.Context, target Target, tip str
 		candidate.Config, warnings, err = config.Load(data)
 	}
 	if err != nil {
-		if target.AuthorityRequired && target.resolveAuthorityLifecycle != nil && w != nil && w.configCandidate.Authority.Mode == authority.OpenMerge {
-			return config.AuthorityCandidate{}, config.Errors{{Path: "configuration", Message: "invalid landed authority configuration; repair the default-branch file"}}
+		if authorityLanded {
+			return config.AuthorityCandidate{}, config.SanitizedAuthorityErrors(err)
 		}
 		return config.AuthorityCandidate{}, err
 	}

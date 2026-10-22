@@ -23,6 +23,9 @@ import (
 // ErrNotFound means none of the four supported repository paths exists.
 var ErrNotFound = errors.New("no OpenMerge configuration found")
 
+// ErrMultipleFound means more than one supported configuration path exists.
+var ErrMultipleFound = errors.New("multiple OpenMerge configuration files found")
+
 // Find reads all supported paths in order, rejecting ambiguous configurations.
 // A read error is never treated as an absent file.
 func Find(read func(path string) ([]byte, bool, error)) (path string, data []byte, err error) {
@@ -46,7 +49,7 @@ func Find(read func(path string) ([]byte, bool, error)) (path string, data []byt
 	case 1:
 		return path, data, nil
 	default:
-		return "", nil, fmt.Errorf("multiple OpenMerge configuration files found: %s", strings.Join(found, ", "))
+		return "", nil, fmt.Errorf("%w: %s", ErrMultipleFound, strings.Join(found, ", "))
 	}
 }
 

@@ -96,3 +96,45 @@ the final clean-tree run.
   propagation/drain/backup/downgrade gates remain 2c; integrated real-git acceptance
   remains 2d. Existing receipt lock-wait/commit expiry limits are unchanged.
   Owner-executed organization release acceptance remains PR 11.
+
+## Round 2
+
+- Setup and verification re-read the server default-branch name and commit after
+  all evidence; setup rechecks again immediately before recovery capture/apply.
+  HTTP regressions move the tip or rename the default during classic protection
+  acquisition and require zero writes (`TestAuthorityAcquisitionRechecksDefaultAfterProtection`).
+- Verification acquires once per repository after all targets are resolved and
+  validated and the invocation nonce exists. The two-target regression also
+  proves an invalid final target causes zero acquisitions
+  (`TestVerifyAcquiresOnceAfterEveryTargetValidated`).
+- Discovery reuses acquisition for an unchanged repository/default branch/tip
+  and binding set, using the default branch already read by refresh. The cache
+  does not replace activation, recurring observation or admission reads.
+  `TestAuthorityDiscoveryReusesUnchangedAcquisition` counts governing, owner and
+  protection calls and invalidates the cache when the binding changes.
+  `TestAuthorityDiscoveryHiddenBypassPreservesBaseDiscovery` proves active
+  repositories still add/remove bases while authority admission records a
+  sanitized config-source block. Read errors return after base expansion so the
+  existing discovery quota/backoff scheduler remains in control. New bindings
+  still require complete visibility.
+- Deterministic governing validation, ambiguous config and invalid landed config
+  record config-source blocks and wait for a new governing tip. Timeout/quota/
+  unavailable reads retry. `TestAuthorityDefiniteConfigFailuresWaitForNewTip`
+  covers both paths; landed validation retains sanitized line/path diagnostics.
+  Permission denial has a separate sanitized class. Operator acquisition now
+  includes nested attributes (`TestOperatorGoverningIncludesNestedAttributes`).
+
+Acquisition cost: each refresh reads repository metadata/default tip and branch
+inventory. A warm, unchanged acquisition skips config/governing/identity/
+protection reads. A cold or changed policy reads configuration candidates; authority
+acquisition additionally reads governing content, resolves CODEOWNERS identities,
+then reads protection inventory. Owner resolution scales with each owner: one
+user lookup, or team lookup plus paginated membership, then one repository grant
+read per member (a 200-member team can require 200 grant calls). Protection reads
+include ruleset pagination/details and classic protection for relevant refs.
+Operator reads additionally use the immutable recursive tree and bounded blobs,
+branch inventory (at most ten 100-branch pages), and final metadata/ref rechecks.
+A truncated recursive tree fails closed. Both limits are documented in operating
+instructions; complete protection visibility is in setup help too.
+
+Round-2 validation receipts are recorded below after the clean-tree evidence run.
