@@ -67,6 +67,27 @@ def run_stress(v, root, out, groups=STRESS_GROUPS):
     return {"iterations": 20, "GOMAXPROCS": 1, "race": True, "owned_cpu_burners": len(burners), "all_reaped": True, "groups": [name for name, _, _ in groups]}
 
 
+def verify_history_limit_mutation(v, root, out):
+    """Mutate a scratch source copy through an overlay; never edit production."""
+    original = root / "internal/forge/forge.go"
+    text = original.read_text()
+    declaration = "const MaxFirstParentCommits = 10_000"
+    if text.count(declaration) != 1:
+        raise v.VerifyError("cannot locate the pinned production history limit")
+    work = out / "history-limit-mutation"
+    work.mkdir(exist_ok=True)
+    mutant = work / "forge.go"
+    mutant.write_text(text.replace(declaration, "const MaxFirstParentCommits = 9_999"))
+    overlay = work / "overlay.json"
+    overlay.write_text(json.dumps({"Replace": {str(original): str(mutant)}}))
+    probe = v.invoke(["go", "test", "-overlay", str(overlay), "-race", "-short", "-count=1",
+                      "./internal/serve", "-run", "^TestAuthorityAcceptanceHistoryBoundary$"],
+                     root, out, "history-limit-mutant", check=False)
+    if probe.returncode != 1 or "production first-parent limit = 9999, want 10000" not in probe.stdout:
+        raise v.VerifyError("history-limit mutation was not killed by the independent assertion")
+    return {"from": 10000, "to": 9999, "killed": True, "exit": probe.returncode}
+
+
 def main():
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__)
@@ -118,13 +139,14 @@ def main():
         result["environment"] = {"GOROOT": toolchain, "PATH_prefix": toolchain + "/bin", "database": "localhost:54329, isolated test schemas"}
         result["exports"] = v.exports(v.EVENTS, v.QUEUES)
         result["wire"] = v.compare_fixtures(args.baseline, root)
-        sources = sorted(root.glob("internal/*/authority_acceptance*_test.go")) + sorted(root.glob("cmd/openmerge/authority_acceptance*_test.go")) + [root / "scripts/verify-adr0008-9c-2d.py", root / "scripts/test_adr0008_scratch_db.py"]
+        sources = sorted(root.glob("internal/*/authority_acceptance*_test.go")) + sorted(root.glob("cmd/openmerge/authority_acceptance*_test.go")) + [root / "scripts/verify-adr0008-9c-2d.py", root / "scripts/test_adr0008_scratch_db.py", root / "scripts/adr0008_scratch_db.py"]
         result["source_hashes"] = {str(path.relative_to(root)): v.sha(path) for path in sources}
         scratch_sql(maintenance, f'CREATE DATABASE "{database_name}"')
         created = True
         os.environ["OPENMERGE_TEST_DATABASE_URL"] = database_url
         print("make check", flush=True)
         v.invoke(["make", "check"], root, out, "make-check")
+        result["history_limit_mutation"] = verify_history_limit_mutation(v, root, out)
         print("focused propagation, operations, barrier and exact-output race tests", flush=True)
         v.invoke(["go", "test", "-race", "-short", "-v", "./internal/authority", "./internal/gitops", "./internal/serve", "./internal/store", "./internal/queue", "./internal/config", "./internal/status", "./cmd/openmerge", "-run", "AuthorityAcceptance|Completion|AuthorityBarrier|LegacyLineZero|StageAAccountableIdentityDiagnosticExact", "-count=1"], root, out, "focused")
         for label, tree in (("before", args.baseline), ("after", root)):
@@ -176,7 +198,7 @@ def main():
             v.invoke(["go", "test", "-overlay", str(overlay), "./internal/serve", "-run", "^TestAuthorityAcceptanceMixedGithubBytes$", "-count=1"], tree, out, label + "-mixed-github", env_extra={"ADR_ACCEPTANCE_GITHUB_BYTES": output})
         if mixed_paths[0].read_bytes() != mixed_paths[1].read_bytes():
             raise v.VerifyError("same-repository mixed GitHub bytes differ from main-built expectations")
-        result["mixed_github"] = {"identical": True, "sha256": v.sha(mixed_paths[1])}
+        result["mixed_github"] = {"identical": True, "sha256": v.sha(mixed_paths[1]), "golden_asserted_in_tree": True, "golden_baseline": result["baseline"]}
         paths = []
         for label, tree in (("baseline", args.baseline), ("candidate", root)):
             work = out / label

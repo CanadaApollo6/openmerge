@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -20,7 +21,7 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
-// The exported bytes can also be built on local main with this test overlaid.
+// The golden export was built on main d9ec975 with this test overlaid.
 // They contain actual legacy generated OIDs and complete, unnormalized event
 // payloads for deterministic builds, permission failure/repair and commands.
 func TestAuthorityAcceptanceMixedGithubBytes(t *testing.T) {
@@ -35,6 +36,11 @@ func TestAuthorityAcceptanceMixedGithubBytes(t *testing.T) {
 	must(t, err)
 	if !bytes.Equal(a, b) {
 		t.Fatalf("same-repository authority worker changed GitHub bytes\nalone: %s\nmixed: %s", a, b)
+	}
+	// Pin main-built compatibility in CI, independently of alone/mixed equality.
+	const mainSHA256 = "cc95a654054e61e816120f2e57b9e19ffea3ff4855c32f4f5c055c4e99b913ee"
+	if got := fmt.Sprintf("%x", sha256.Sum256(b)); got != mainSHA256 {
+		t.Fatalf("GitHub export SHA-256 = %s, want main d9ec975 %s", got, mainSHA256)
 	}
 	if path := os.Getenv("ADR_ACCEPTANCE_GITHUB_BYTES"); path != "" {
 		must(t, os.WriteFile(path, b, 0600))

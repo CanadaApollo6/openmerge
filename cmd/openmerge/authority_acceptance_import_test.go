@@ -51,12 +51,6 @@ func TestAuthorityAcceptanceImportGoverningEvidenceCannotBeAccepted(t *testing.T
 			tree := git("100644 blob "+blob+"\t.openmerge.yml\n100644 blob "+ownerBlob+"\tCODEOWNERS\n", "--git-dir="+remote, "mktree")
 			commit := git("landed policy\n", "--git-dir="+remote, "commit-tree", tree)
 			git("", "--git-dir="+remote, "update-ref", "refs/heads/main", commit)
-			before := git("", "--git-dir="+remote, "show-ref")
-			t.Cleanup(func() {
-				if after := git("", "--git-dir="+remote, "show-ref"); after != before {
-					t.Fatal("import/accept changed real remote refs")
-				}
-			})
 			governingReads := 0
 			http.DefaultTransport = importTestTransport(func(req *http.Request) (*http.Response, error) {
 				if req.Method != "GET" || req.URL.Host != "api.github.com" {

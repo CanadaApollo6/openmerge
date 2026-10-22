@@ -162,104 +162,106 @@ func acceptanceGitFixture(t *testing.T, method queue.MergeMethod, history int, m
 func TestAuthorityAcceptanceColdCacheAllMethods(t *testing.T) {
 	for _, method := range []queue.MergeMethod{queue.FastForward, queue.Rebase, queue.Merge, queue.Squash} {
 		t.Run(string(method), func(t *testing.T) {
-			history := 0
-			if method == queue.Merge {
-				history = forge.MaxCommitHistoryCommits + 1
-			}
-			f := acceptanceGitFixture(t, method, history)
-			s, w := f.s, f.w
-			must(t, os.RemoveAll(f.cache))
-			cfg := w.plannerConfig(s.options.PollInterval)
-			claim := claimLandingChecksAction(t, s, w, cfg, func(a queue.Action) bool { _, ok := a.(queue.BuildTestRef); return ok })
-			must(t, s.execute(t.Context(), w, claim))
-			batch := lifecycleState(t, s, w).BatchForPR(1)
-			if batch == nil || batch.TestedSHA == "" {
-				t.Fatal("authority build did not produce tested object")
-			}
-			tested, ref := batch.TestedSHA, batch.TestRef
-			if got := f.git("", "--git-dir="+f.remote, "rev-parse", "refs/heads/"+ref); got != tested {
-				t.Fatal("remote tested ref mismatch", got, tested)
-			}
-			// #84: the landing process starts without a single local Git object. The
-			// tested marker/composition must be acquired from its advertised remote ref.
-			must(t, os.RemoveAll(f.cache))
-			cold, err := gitops.New(t.Context(), gitops.Config{WorkDir: f.cache, Remote: func(context.Context, forge.RepoRef) (string, gitops.Auth, error) { return f.remote, gitops.Auth{}, nil }, HeadRef: func(n int) string { return fmt.Sprintf("refs/pull/%d/head", n) }})
-			must(t, err)
-			w.Git = cold
-			f.driver.fixture.g = cold
-			if entries, err := os.ReadDir(f.cache); err != nil || len(entries) != 1 || entries[0].Name() != "askpass" {
-				t.Fatalf("restart cache not cold: %v, entries=%d", err, len(entries))
-			}
-			f.driver.SetCheckRuns(w.repo(), tested, []forge.CheckRun{{Name: "ci", Source: "app:15368", ID: 701, Attempt: 2, State: forge.Success, HeadBranch: ref}})
-			_, err = s.store.Append(t.Context(), w.id, []queue.Event{queue.ChecksCompleted{TestedSHA: tested, Success: true}}, "")
-			must(t, err)
-			claim = claimLandingChecksAction(t, s, w, cfg, func(a queue.Action) bool { _, ok := a.(queue.Land); return ok })
-			must(t, s.execute(t.Context(), w, claim))
-			state := lifecycleState(t, s, w)
-			landed := f.git("", "--git-dir="+f.remote, "rev-parse", "refs/heads/main")
-			want := tested
-			if method == queue.FastForward {
-				want = f.pins[0].HeadSHA
-			}
-			if landed != want || state.BaseSHA != landed {
-				t.Fatalf("remote=%s state=%s want=%s", landed, state.BaseSHA, want)
-			}
-			fence := f.git("", "--git-dir="+f.remote, "rev-parse", "refs/heads/openmerge/fence/main")
-			if state.Fence != fence {
-				t.Fatal("remote fence differs from settlement")
-			}
-			rows, err := s.store.EventsAfter(t.Context(), w.id, 0)
-			must(t, err)
-			metadata, err := forge.ParseChangeTrailers(f.git("", "--git-dir="+f.remote, "show", "-s", "--format=%B", tested))
-			must(t, err)
-			if len(metadata) != 1 {
-				t.Fatal("remote tested object lost member trailers")
-			}
-			decisions, checks, starts, settlements := 0, 0, 0, 0
-			journalReplay := queue.State{BaseBranch: w.Key.BaseBranch}
-			decisionAttempt := ""
-			for i, row := range rows {
-				journalReplay = queue.Apply(journalReplay, row.Event)
-				switch e := row.Event.(type) {
-				case queue.LandingDecisionRecorded:
-					decisions++
-					decisionAttempt = e.AttemptID
-					if e.TestedSHA != tested || e.LandedSHA != landed || e.Approval == nil || e.Approval.Basis.Head != f.pins[0].HeadSHA || e.Approval.Identity.ChangeID != metadata[0].ChangeID || e.Approval.Identity.Revision != metadata[0].Revision || e.Approval.Identity.PolicyDigest != w.stageA.policy.Digest || len(e.Approval.Requirements) != 0 || e.Approval.ClassificationDigest == "" || e.Approval.EligibilityReadID == "" {
-						t.Fatalf("wrong recorded authority decision: %+v", e)
-					}
-					t.Logf("decision_event=%d attempt=%s classification=%s eligibility=%s", row.ID, e.AttemptID, e.Approval.ClassificationDigest, e.Approval.EligibilityReadID)
-				case queue.LandingChecksRecorded:
-					checks++
-					if e.TestedSHA != tested || e.LandedSHA != landed || e.ConfigCommit != f.base || e.ConfigDigest != state.ConfigDigest || decisionAttempt == "" || e.AttemptID != decisionAttempt || e.PolicyDigest != w.stageA.policy.Digest || len(e.Checks) != 1 || e.Checks[0].RunID == nil || *e.Checks[0].RunID != 701 || e.Checks[0].Attempt == nil || *e.Checks[0].Attempt != 2 || e.Checks[0].Source != "app:15368" || e.Checks[0].Result != forge.Success {
-						t.Fatalf("wrong persisted evidence: %+v", e)
-					}
-					start, ok := rows[i+1].Event.(queue.LandingStarted)
-					if !ok || start.AttemptID != e.AttemptID {
-						t.Fatal("checks/start lost atomic adjacency")
-					}
-					t.Logf("checks_event=%d start_event=%d tested=%s landed=%s fence=%s", row.ID, rows[i+1].ID, tested, landed, fence)
-				case queue.LandingStarted:
-					starts++
-				case queue.Landed:
-					settlements++
-					if e.NewBaseSHA != landed || e.NewFence != fence {
-						t.Fatal("settlement lost remote values")
+			testSynctest(t, func(t *testing.T) {
+				history := 0
+				if method == queue.Merge {
+					history = forge.MaxCommitHistoryCommits + 1
+				}
+				f := acceptanceGitFixture(t, method, history)
+				s, w := f.s, f.w
+				must(t, os.RemoveAll(f.cache))
+				cfg := w.plannerConfig(s.options.PollInterval)
+				claim := claimLandingChecksAction(t, s, w, cfg, func(a queue.Action) bool { _, ok := a.(queue.BuildTestRef); return ok })
+				must(t, s.execute(t.Context(), w, claim))
+				batch := lifecycleState(t, s, w).BatchForPR(1)
+				if batch == nil || batch.TestedSHA == "" {
+					t.Fatal("authority build did not produce tested object")
+				}
+				tested, ref := batch.TestedSHA, batch.TestRef
+				if got := f.git("", "--git-dir="+f.remote, "rev-parse", "refs/heads/"+ref); got != tested {
+					t.Fatal("remote tested ref mismatch", got, tested)
+				}
+				// #84: the landing process starts without a single local Git object. The
+				// tested marker/composition must be acquired from its advertised remote ref.
+				must(t, os.RemoveAll(f.cache))
+				cold, err := gitops.New(t.Context(), gitops.Config{WorkDir: f.cache, Remote: func(context.Context, forge.RepoRef) (string, gitops.Auth, error) { return f.remote, gitops.Auth{}, nil }, HeadRef: func(n int) string { return fmt.Sprintf("refs/pull/%d/head", n) }})
+				must(t, err)
+				w.Git = cold
+				f.driver.fixture.g = cold
+				if entries, err := os.ReadDir(f.cache); err != nil || len(entries) != 1 || entries[0].Name() != "askpass" {
+					t.Fatalf("restart cache not cold: %v, entries=%d", err, len(entries))
+				}
+				f.driver.SetCheckRuns(w.repo(), tested, []forge.CheckRun{{Name: "ci", Source: "app:15368", ID: 701, Attempt: 2, State: forge.Success, HeadBranch: ref}})
+				_, err = s.store.Append(t.Context(), w.id, []queue.Event{queue.ChecksCompleted{TestedSHA: tested, Success: true}}, "")
+				must(t, err)
+				claim = claimLandingChecksAction(t, s, w, cfg, func(a queue.Action) bool { _, ok := a.(queue.Land); return ok })
+				must(t, s.execute(t.Context(), w, claim))
+				state := lifecycleState(t, s, w)
+				landed := f.git("", "--git-dir="+f.remote, "rev-parse", "refs/heads/main")
+				want := tested
+				if method == queue.FastForward {
+					want = f.pins[0].HeadSHA
+				}
+				if landed != want || state.BaseSHA != landed {
+					t.Fatalf("remote=%s state=%s want=%s", landed, state.BaseSHA, want)
+				}
+				fence := f.git("", "--git-dir="+f.remote, "rev-parse", "refs/heads/openmerge/fence/main")
+				if state.Fence != fence {
+					t.Fatal("remote fence differs from settlement")
+				}
+				rows, err := s.store.EventsAfter(t.Context(), w.id, 0)
+				must(t, err)
+				metadata, err := forge.ParseChangeTrailers(f.git("", "--git-dir="+f.remote, "show", "-s", "--format=%B", tested))
+				must(t, err)
+				if len(metadata) != 1 {
+					t.Fatal("remote tested object lost member trailers")
+				}
+				decisions, checks, starts, settlements := 0, 0, 0, 0
+				journalReplay := queue.State{BaseBranch: w.Key.BaseBranch}
+				decisionAttempt := ""
+				for i, row := range rows {
+					journalReplay = queue.Apply(journalReplay, row.Event)
+					switch e := row.Event.(type) {
+					case queue.LandingDecisionRecorded:
+						decisions++
+						decisionAttempt = e.AttemptID
+						if e.TestedSHA != tested || e.LandedSHA != landed || e.Approval == nil || e.Approval.Basis.Head != f.pins[0].HeadSHA || e.Approval.Identity.ChangeID != metadata[0].ChangeID || e.Approval.Identity.Revision != metadata[0].Revision || e.Approval.Identity.PolicyDigest != w.stageA.policy.Digest || len(e.Approval.Requirements) != 0 || e.Approval.ClassificationDigest == "" || e.Approval.EligibilityReadID == "" {
+							t.Fatalf("wrong recorded authority decision: %+v", e)
+						}
+						t.Logf("decision_event=%d attempt=%s classification=%s eligibility=%s", row.ID, e.AttemptID, e.Approval.ClassificationDigest, e.Approval.EligibilityReadID)
+					case queue.LandingChecksRecorded:
+						checks++
+						if e.TestedSHA != tested || e.LandedSHA != landed || e.ConfigCommit != f.base || e.ConfigDigest != state.ConfigDigest || decisionAttempt == "" || e.AttemptID != decisionAttempt || e.PolicyDigest != w.stageA.policy.Digest || len(e.Checks) != 1 || e.Checks[0].RunID == nil || *e.Checks[0].RunID != 701 || e.Checks[0].Attempt == nil || *e.Checks[0].Attempt != 2 || e.Checks[0].Source != "app:15368" || e.Checks[0].Result != forge.Success {
+							t.Fatalf("wrong persisted evidence: %+v", e)
+						}
+						start, ok := rows[i+1].Event.(queue.LandingStarted)
+						if !ok || start.AttemptID != e.AttemptID {
+							t.Fatal("checks/start lost atomic adjacency")
+						}
+						t.Logf("checks_event=%d start_event=%d tested=%s landed=%s fence=%s", row.ID, rows[i+1].ID, tested, landed, fence)
+					case queue.LandingStarted:
+						starts++
+					case queue.Landed:
+						settlements++
+						if e.NewBaseSHA != landed || e.NewFence != fence {
+							t.Fatal("settlement lost remote values")
+						}
 					}
 				}
-			}
-			if decisions != 1 || checks != 1 || starts != 1 || settlements != 1 {
-				t.Fatal("decision/check/start/settlement counts", decisions, checks, starts, settlements)
-			}
-			if journalReplay.BaseSHA != landed || journalReplay.Fence != fence || !reflect.DeepEqual(journalReplay.LandingDecisions(), state.LandingDecisions()) {
-				t.Fatal("full journal replay lost remote settlement/decisions")
-			}
-			snapshot, err := queue.EncodeSnapshot(state)
-			must(t, err)
-			replay, err := queue.DecodeSnapshot(snapshot)
-			must(t, err)
-			if replay.BaseSHA != landed || replay.Fence != fence || !reflect.DeepEqual(replay.LandingDecisions(), state.LandingDecisions()) {
-				t.Fatal("recorded decisions lost on snapshot round trip")
-			}
+				if decisions != 1 || checks != 1 || starts != 1 || settlements != 1 {
+					t.Fatal("decision/check/start/settlement counts", decisions, checks, starts, settlements)
+				}
+				if journalReplay.BaseSHA != landed || journalReplay.Fence != fence || !reflect.DeepEqual(journalReplay.LandingDecisions(), state.LandingDecisions()) {
+					t.Fatal("full journal replay lost remote settlement/decisions")
+				}
+				snapshot, err := queue.EncodeSnapshot(state)
+				must(t, err)
+				replay, err := queue.DecodeSnapshot(snapshot)
+				must(t, err)
+				if replay.BaseSHA != landed || replay.Fence != fence || !reflect.DeepEqual(replay.LandingDecisions(), state.LandingDecisions()) {
+					t.Fatal("recorded decisions lost on snapshot round trip")
+				}
+			})
 		})
 	}
 }
@@ -268,85 +270,89 @@ func TestAuthorityAcceptanceColdCacheAllMethods(t *testing.T) {
 // 10,000 commits through the rebase builder. Only the over-limit attempt runs
 // the executor: its durable composition refusal must precede any generated push.
 func TestAuthorityAcceptanceHistoryBoundary(t *testing.T) {
-	f := acceptanceGitFixture(t, queue.Rebase, 0)
-	var input strings.Builder
-	for i := 1; i <= forge.MaxFirstParentCommits+1; i++ {
-		fmt.Fprintf(&input, "commit refs/pull/1/head\nmark :%d\ncommitter Fixture <fixture@example.test> 1700000000 +0000\ndata 2\nx\n", i)
-		if i == 1 {
-			fmt.Fprintf(&input, "from %s\nM 100644 inline README.md\ndata 6\nchange\n", f.base)
-		} else {
-			fmt.Fprintf(&input, "from :%d\n", i-1)
-		}
-		input.WriteByte('\n')
-		if i == forge.MaxFirstParentCommits {
-			fmt.Fprintf(&input, "reset refs/pull/2/head\nfrom :%d\n\n", i)
-		}
+	if forge.MaxFirstParentCommits != 10_000 {
+		t.Fatalf("production first-parent limit = %d, want 10000", forge.MaxFirstParentCommits)
 	}
-	f.git(input.String(), "--git-dir="+f.remote, "fast-import", "--quiet", "--force")
-	atLimit := f.git("", "--git-dir="+f.remote, "rev-parse", "refs/pull/2/head")
-	overLimit := f.git("", "--git-dir="+f.remote, "rev-parse", "refs/pull/1/head")
-	must(t, os.RemoveAll(f.cache))
-	for _, tc := range []struct {
-		name, head string
-		count      int
-	}{{"exact-10000", atLimit, forge.MaxFirstParentCommits}, {"lookahead-10001", overLimit, forge.MaxFirstParentCommits + 1}} {
-		t.Run(tc.name, func(t *testing.T) {
+	testSynctest(t, func(t *testing.T) {
+		f := acceptanceGitFixture(t, queue.Rebase, 0)
+		var input strings.Builder
+		for i := 1; i <= 10_001; i++ {
+			fmt.Fprintf(&input, "commit refs/pull/1/head\nmark :%d\ncommitter Fixture <fixture@example.test> 1700000000 +0000\ndata 2\nx\n", i)
+			if i == 1 {
+				fmt.Fprintf(&input, "from %s\nM 100644 inline README.md\ndata 6\nchange\n", f.base)
+			} else {
+				fmt.Fprintf(&input, "from :%d\n", i-1)
+			}
+			input.WriteByte('\n')
+			if i == 10_000 {
+				fmt.Fprintf(&input, "reset refs/pull/2/head\nfrom :%d\n\n", i)
+			}
+		}
+		f.git(input.String(), "--git-dir="+f.remote, "fast-import", "--quiet", "--force")
+		atLimit := f.git("", "--git-dir="+f.remote, "rev-parse", "refs/pull/2/head")
+		overLimit := f.git("", "--git-dir="+f.remote, "rev-parse", "refs/pull/1/head")
+		must(t, os.RemoveAll(f.cache))
+		for _, tc := range []struct {
+			name, head string
+			count      int
+		}{{"exact-10000", atLimit, 10_000}, {"lookahead-10001", overLimit, 10_001}} {
+			t.Log(tc.name)
 			must(t, os.RemoveAll(f.cache))
 			observed, err := readRebaseComposition(t.Context(), f.w, queue.BuildTestRef{BatchID: "boundary", BaseSHA: f.base, PRs: []queue.BatchPR{{PR: 1, HeadSHA: tc.head}}}, forge.MaxFirstParentCommits)
 			must(t, err)
-			if len(observed.Counts) != 1 || observed.Counts[0] != tc.count || observed.Limit != forge.MaxFirstParentCommits {
+			if len(observed.Counts) != 1 || observed.Counts[0] != tc.count || observed.Limit != 10_000 {
 				t.Fatalf("wrong production boundary: %+v", observed)
 			}
 			selected, rejected, _ := observed.Select()
-			if tc.count == forge.MaxFirstParentCommits && (len(selected) != 1 || len(rejected) != 0) || tc.count > forge.MaxFirstParentCommits && (len(selected) != 0 || len(rejected) != 1) {
+			if tc.count == 10_000 && (len(selected) != 1 || len(rejected) != 0) || tc.count > 10_000 && (len(selected) != 0 || len(rejected) != 1) {
 				t.Fatalf("wrong boundary selection: %+v", observed)
 			}
-		})
-	}
-	f.driver.pr.HeadSHA = overLimit
-	_, err := f.s.observe(t.Context(), f.w, 1)
-	must(t, err)
-	cfg := f.w.plannerConfig(f.s.options.PollInterval)
-	for _, action := range queue.Plan(cfg, lifecycleState(t, f.s, f.w), time.Now()) {
-		if d, ok := action.(queue.Dequeue); ok && d.PR == 1 {
-			_, err = f.s.store.Append(t.Context(), f.w.id, []queue.Event{queue.Dequeued{PR: d.PR, AdmissionID: d.AdmissionID, Reason: d.Reason}}, "")
-			must(t, err)
 		}
-	}
-	_, err = f.s.store.Append(t.Context(), f.w.id, []queue.Event{queue.EnqueueRequested{PR: 1, At: time.Now()}}, "")
-	must(t, err)
-	before := f.git("", "--git-dir="+f.remote, "show-ref")
-	must(t, os.RemoveAll(f.cache))
-	claim := claimLandingChecksAction(t, f.s, f.w, cfg, func(a queue.Action) bool { _, ok := a.(queue.BuildTestRef); return ok })
-	must(t, f.s.execute(t.Context(), f.w, claim))
-	rows, err := f.s.store.EventsAfter(t.Context(), f.w.id, 0)
-	must(t, err)
-	found := false
-	for _, row := range rows {
-		switch e := row.Event.(type) {
-		case queue.RebaseCompositionObserved:
-			found = true
-			if e.Counts[0] != forge.MaxFirstParentCommits+1 {
-				t.Fatal("over-limit count not durable", e)
+		f.driver.pr.HeadSHA = overLimit
+		_, err := f.s.observe(t.Context(), f.w, 1)
+		must(t, err)
+		cfg := f.w.plannerConfig(f.s.options.PollInterval)
+		for _, action := range queue.Plan(cfg, lifecycleState(t, f.s, f.w), time.Now()) {
+			if d, ok := action.(queue.Dequeue); ok && d.PR == 1 {
+				_, err = f.s.store.Append(t.Context(), f.w.id, []queue.Event{queue.Dequeued{PR: d.PR, AdmissionID: d.AdmissionID, Reason: d.Reason}}, "")
+				must(t, err)
 			}
-		case queue.TestRefBuilt, queue.LandingStarted, queue.Landed:
-			t.Fatalf("over-limit source reached generated build/land: %T", e)
 		}
-	}
-	if !found {
-		t.Fatal("executor omitted durable composition refusal")
-	}
-	state := lifecycleState(t, f.s, f.w)
-	plannedDequeue := false
-	for _, a := range queue.Plan(cfg, state, time.Now()) {
-		if d, ok := a.(queue.Dequeue); ok && d.PR == 1 && d.Reason == queue.RebaseCompositionExceeded {
-			plannedDequeue = true
+		_, err = f.s.store.Append(t.Context(), f.w.id, []queue.Event{queue.EnqueueRequested{PR: 1, At: time.Now()}}, "")
+		must(t, err)
+		before := f.git("", "--git-dir="+f.remote, "show-ref")
+		must(t, os.RemoveAll(f.cache))
+		claim := claimLandingChecksAction(t, f.s, f.w, cfg, func(a queue.Action) bool { _, ok := a.(queue.BuildTestRef); return ok })
+		must(t, f.s.execute(t.Context(), f.w, claim))
+		rows, err := f.s.store.EventsAfter(t.Context(), f.w.id, 0)
+		must(t, err)
+		found := false
+		for _, row := range rows {
+			switch e := row.Event.(type) {
+			case queue.RebaseCompositionObserved:
+				found = true
+				if len(e.Counts) != 1 || e.Counts[0] != 10_001 {
+					t.Fatal("over-limit count not durable", e)
+				}
+			case queue.TestRefBuilt, queue.LandingStarted, queue.Landed:
+				t.Fatalf("over-limit source reached generated build/land: %T", e)
+			}
 		}
-	}
-	if !plannedDequeue {
-		t.Fatal("over-limit source did not plan composition dequeue")
-	}
-	if after := f.git("", "--git-dir="+f.remote, "show-ref"); after != before {
-		t.Fatal("composition rejection changed real remote refs")
-	}
+		if !found {
+			t.Fatal("executor omitted durable composition refusal")
+		}
+		state := lifecycleState(t, f.s, f.w)
+		plannedDequeue := false
+		for _, a := range queue.Plan(cfg, state, time.Now()) {
+			if d, ok := a.(queue.Dequeue); ok && d.PR == 1 && d.Reason == queue.RebaseCompositionExceeded {
+				plannedDequeue = true
+			}
+		}
+		if !plannedDequeue {
+			t.Fatal("over-limit source did not plan composition dequeue")
+		}
+		if after := f.git("", "--git-dir="+f.remote, "show-ref"); after != before {
+			t.Fatal("composition rejection changed real remote refs")
+		}
+	})
 }
