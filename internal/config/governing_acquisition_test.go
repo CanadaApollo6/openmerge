@@ -105,3 +105,44 @@ func TestLegacyLineZeroDiagnosticsRemainExact(t *testing.T) {
 		}
 	}
 }
+
+// Different owners may fail for different reasons in the same acquisition.
+type mixedGoverningFailures struct {
+	forge.IdentityReader
+	calls map[string]int
+}
+
+func (r mixedGoverningFailures) ResolveUser(_ context.Context, name string) (forge.UserIdentity, error) {
+	r.calls[name]++
+	if name == "missing" {
+		return forge.UserIdentity{}, forge.ErrIdentityUnavailable
+	}
+	return forge.UserIdentity{}, context.DeadlineExceeded
+}
+
+func TestGoverningMissingAndTransientOwnersRemainMutable(t *testing.T) {
+	f := fake.New()
+	repo := forge.RepoRef{Path: "acme/project"}
+	f.Init(repo, "main", "openmerge/fence/main")
+	raw := "version: 1\npolicy_authority: openmerge\nbreak_glass: {team: acme/emergency}\nqueues: [{name: main, merge_when: ['check-success = ci']}]\n"
+	tip, err := f.PushBase(repo, "main", "mixed owner failures", map[string]string{".openmerge.yml": raw, "CODEOWNERS": "* @missing @transient\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, _, err := LoadAuthorityCandidate([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := mixedGoverningFailures{IdentityReader: f, calls: map[string]int{}}
+	err = candidate.AcquireGoverning(t.Context(), repo, "main", tip, f, ids)
+	var mutable *GoverningIdentityError
+	if !errors.As(err, &mutable) || !errors.Is(err, forge.ErrIdentityUnavailable) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("mixed owner failure must remain mutable and retain both causes: %v", err)
+	}
+	if ids.calls["missing"] == 0 || ids.calls["transient"] == 0 {
+		t.Fatal("did not read both owners", ids.calls)
+	}
+	if got := err.Error(); got != "authority governing owners: timeout" {
+		t.Fatalf("unexpected sanitized error: %q", got)
+	}
+}

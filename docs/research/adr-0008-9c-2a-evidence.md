@@ -231,3 +231,15 @@ against main `c53f425`; raw logs, summaries and SHA-256 manifest:
 - Test Postgres namespace lists match exactly before/after, including the same
   **94** pre-existing serve schemas; no scratch object remains. This receipt
   commit changes only this document.
+
+## Round 5 (narrow)
+
+- Scope failure memoization and its early-return gate to landed OpenMerge mode.
+  Authority-opted-in GitHub workers retain main's every-cycle identity retry,
+  exact `line 0:` diagnostic and immediate same-tip recovery. Synctest compares
+  ordinary/opted-in workers (two `ResolveUser` calls each cycle) and proves an
+  OpenMerge-to-GitHub rollback clears a previously memoized authority failure.
+- Pin mixed missing-owner/transient-owner acquisition as mutable, and reuse one
+  local for Stage A's policy-owner requirement. Hold/A2 and frozen surfaces remain.
+- Focused race regressions pass; the GitHub retry regression fails on `7e7d061`.
+  Full round-5 receipts follow after verification.

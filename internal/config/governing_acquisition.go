@@ -144,6 +144,8 @@ func (c AuthorityCandidate) ValidateGoverningIdentities(ctx context.Context, rep
 	err := validate(resolve)
 	if readErr != nil {
 		failure := &GoverningReadError{Boundary: "owners", Cause: readErr}
+		// A definite missing/mismatched owner keeps the failure mutable even when
+		// another owner has a transient read error; retry the whole acquisition.
 		if errors.Is(readErr, forge.ErrIdentityUnavailable) || errors.Is(readErr, forge.ErrIdentityMismatch) {
 			return &GoverningIdentityError{Cause: failure}
 		}

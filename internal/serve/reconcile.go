@@ -67,7 +67,7 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 			}
 		}
 	}
-	if loadErr == nil && w.configFailure != nil && w.configFailureBranch == branch && w.configFailureTip == configTip && (w.configFailureRetryAt.IsZero() || time.Now().Before(w.configFailureRetryAt)) {
+	if loadErr == nil && w.configCandidate.Authority.Mode == authority.OpenMerge && w.configFailure != nil && w.configFailureBranch == branch && w.configFailureTip == configTip && (w.configFailureRetryAt.IsZero() || time.Now().Before(w.configFailureRetryAt)) {
 		w.configError = w.configFailure
 		return s.block(ctx, w, queue.ConfigSource, "Default-branch configuration: "+w.configError.Error(), "")
 	}
@@ -208,7 +208,7 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 	// pause admission and must never leave a previously valid policy usable.
 	w.configFailure = nil
 	w.configFailureRetryAt = time.Time{}
-	if w.AuthorityRequired && w.resolveAuthorityLifecycle != nil && loadErr != nil && (errors.As(loadErr, &invalid) || errors.As(loadErr, &mutable) || errors.Is(loadErr, config.ErrNotFound)) {
+	if w.AuthorityRequired && w.resolveAuthorityLifecycle != nil && w.configCandidate.Authority.Mode == authority.OpenMerge && loadErr != nil && (errors.As(loadErr, &invalid) || errors.As(loadErr, &mutable) || errors.Is(loadErr, config.ErrNotFound)) {
 		w.configFailure, w.configFailureBranch, w.configFailureTip = loadErr, branch, configTip
 		if errors.As(loadErr, &mutable) {
 			w.configFailureRetryAt = time.Now().Add(s.options.RulesInterval)

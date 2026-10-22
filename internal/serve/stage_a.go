@@ -36,13 +36,14 @@ type stageAPolicy struct {
 }
 
 func (a *stageAPolicy) identityValidationError(err error, count int) error {
+	requireOwners := a.policy.RequirePolicyOwners
 	message := err.Error()
-	if a.policy.RequirePolicyOwners {
+	if requireOwners {
 		message = diagnostic.Sanitize(message)
 	}
-	failure := config.Errors{{NoLine: a.policy.RequirePolicyOwners, Path: "approvals", Message: message}}
+	failure := config.Errors{{NoLine: requireOwners, Path: "approvals", Message: message}}
 	// The identity count is fixed by the tree; account kinds and aliases are live.
-	if a.policy.RequirePolicyOwners && count <= cp.MaxPolicyIdentities {
+	if requireOwners && count <= cp.MaxPolicyIdentities {
 		return &config.GoverningIdentityError{Cause: failure}
 	}
 	return failure
