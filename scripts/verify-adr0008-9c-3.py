@@ -197,7 +197,7 @@ def verify_consult_mutations(v, root, out):
       'test': 'TestAuthorityActivationReceiptBeforeIO',
       'old': 'request.Receipt.ValidateForBinary(identity, time.Now().UTC(), request.ReceiptMaxAge, '
              'authority.RunningBinaryRevision())',
-      'new': 'error(nil)'}]
+      'new': 'func() error { _ = identity; return nil }()'}]
     recipes.append({"name": "legacy-ack-waives-authority-receipt", "file": "internal/store/authority_emission.go",
                     "package": "./internal/store", "test": "TestAuthorityEmissionLiveBackupWatermark",
                     "old": "authorityEmissionEventTypes).Scan", "new": "authorityDowngradeEventTypes).Scan"})
@@ -232,6 +232,7 @@ def verify_consult_mutations(v, root, out):
         if result.returncode != 1 or "--- FAIL: " + test not in result.stdout or "[build failed]" in result.stdout:
             raise v.VerifyError("mutation was not killed by named test: " + name)
         receipts.append({"mutation": name, "path": path, "test": test, "killed": True, "exit": result.returncode})
+        print(f"mutation {len(receipts)}/{len(cases)} killed: {name}", flush=True)
     return receipts
 
 
