@@ -45,7 +45,7 @@ def scratch_sql(url, sql):
 STRESS_GROUPS = (
     ("stress-public-serve", ["./internal/serve"], "^TestPublicAuthority|^TestAuthorityBarrierJournalCannotInstallRuntimeAuthority$|^TestAuthorityLifecycleRequiresFlagAndResolver$"),
     ("stress-public-base-recovery", ["./internal/serve"], "^TestAuthorityAcceptanceBaseAdvanceBeforeBuild$"),
-    ("stress-public-config-store-cli-gitops", ["./internal/config", "./internal/store", "./cmd/openmerge", "./internal/gitops"], "TestAuthorityPublicAgreement|TestAuthorityCandidate|TestConfigValidateAuthorityPublicCorpus|TestPublicAuthority|TestAuthorityEmissionLiveBackup|TestBuildCreationBoundaryRejectsUnprovenSources|TestSetupImportGoverningEvidenceCannotBeAccepted|TestAuthorityAcceptanceImportGoverningEvidenceCannotBeAccepted"),
+    ("stress-public-config-store-cli-gitops", ["./internal/config", "./internal/changepolicy", "./internal/store", "./cmd/openmerge", "./internal/gitops"], "TestFullCandidateSchemaComposition|TestAuthorityPublicAgreement|TestAuthorityCandidate|TestConfigValidateAuthorityPublicCorpus|TestPublicAuthority|TestAuthorityEmissionLiveBackup|TestBuildCreationBoundaryRejectsUnprovenSources|TestSetupImportGoverningEvidenceCannotBeAccepted|TestAuthorityAcceptanceImportGoverningEvidenceCannotBeAccepted"),
 )
 
 
@@ -70,6 +70,8 @@ def run_stress(v, root, out, groups=STRESS_GROUPS):
 def verify_consult_mutations(v, root, out):
     """Every bypass must fail a named behavioral test, never merely fail to build."""
     cases = [
+        ("public-github-loader", "internal/serve/reconcile.go", "./internal/serve", "TestPublicAuthorityGithubConfigurationBytes",
+         lambda s: s.replace("candidate.Config, warnings, err = config.Load(data)", "candidate, warnings, err = config.LoadAuthorityCandidate(data)", 1)),
         ("setup-live-backup-call", "cmd/openmerge/setup_verify.go", "./cmd/openmerge", "TestPublicAuthoritySetupVerifyRequiresLiveBackupWatermark",
          lambda s: s.replace("if err := db.CheckAuthorityEmissionBackup(ctx, receipt.Reconciliation.BackupWatermark); err != nil {", "if err := error(nil); err != nil {", 1)),
         ("typed-base-move", "internal/gitops/prepared_push.go", "./internal/serve", "TestAuthorityAcceptanceBaseAdvanceBeforeBuild",

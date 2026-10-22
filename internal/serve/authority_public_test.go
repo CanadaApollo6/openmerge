@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -419,6 +420,38 @@ func TestPublicAuthorityMutableActorFailureRetriesOnRulesCadence(t *testing.T) {
 		must(t, p.s.configuration(t.Context(), p.w))
 		if p.f.IdentityCalls("ResolveTeam") == calls || p.w.configError != nil {
 			t.Fatal("mutable actor failure did not retry after rules cadence")
+		}
+	})
+}
+
+func TestPublicAuthorityGithubConfigurationBytes(t *testing.T) {
+	testSynctest(t, func(t *testing.T) {
+		p := newPublicFixture(t, true)
+		_, err := p.f.PushBase(repo, "main", "github", map[string]string{".openmerge.yml": repositoryConfig})
+		must(t, err)
+		must(t, p.s.configuration(t.Context(), p.w))
+		for _, data := range []string{
+			"# retained source line\npolicy_authority: github\n" + repositoryConfig,
+			"# retained source line\npolicy_authority: github\n" + repositoryConfig + "    unsupported: true\n",
+			"# retained source line\npolicy_authority: github\n" + repositoryConfig + "    approvals: {default: unknown_requirement}\n",
+		} {
+			tip, err := p.f.PushBase(repo, "main", "github source", map[string]string{".openmerge.yml": data})
+			must(t, err)
+			want, warnings, wantErr := config.Load([]byte(data))
+			got, gotErr := p.s.repositoryCandidate(t.Context(), p.w.Target, tip, p.w)
+			if (gotErr == nil) != (wantErr == nil) {
+				t.Fatalf("GitHub loader result differs: got %v want %v", gotErr, wantErr)
+			}
+			if wantErr != nil {
+				if gotErr.Error() != wantErr.Error() {
+					t.Fatalf("GitHub diagnostics changed: got %q want %q", gotErr.Error(), wantErr.Error())
+				}
+			} else if len(warnings) != 0 || !reflect.DeepEqual(got.Config, want) {
+				t.Fatal("GitHub configuration changed through public opt-in")
+			}
+		}
+		if *p.receiptReads != 0 || p.probe.reads != 0 {
+			t.Fatal("GitHub parsing consulted authority receipt/forge")
 		}
 	})
 }

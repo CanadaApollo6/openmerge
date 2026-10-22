@@ -104,18 +104,13 @@ func TestFullCandidateSchemaComposition(t *testing.T) {
 		return value
 	}
 	fragment := read("testdata/policy.schema.json")
-	candidate := read("testdata/candidate.schema.json")
+	candidate := read("testdata/candidate.authority-activation.schema.json")
 	var want map[string]any
 	if err := json.Unmarshal([]byte(schema.V1), &want); err != nil {
 		t.Fatal(err)
 	}
 	for _, key := range []string{"$id", "title", "$comment"} {
 		want[key] = candidate[key]
-	}
-	// Preserve the historical Stage A candidate fixture. ADR 0008 reserved
-	// keys are covered by config's public schema/loader/CLI corpus.
-	for _, key := range []string{"policy_authority", "break_glass"} {
-		delete(want["properties"].(map[string]any), key)
 	}
 	props := fragment["properties"].(map[string]any)
 	for _, key := range []string{"classification", "groups", "agents"} {

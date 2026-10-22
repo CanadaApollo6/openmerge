@@ -349,7 +349,14 @@ func (s *Server) repositoryCandidate(ctx context.Context, target Target, tip str
 	}
 	var candidate config.AuthorityCandidate
 	var warnings []config.Diagnostic
-	if target.AuthorityRequired && target.resolveAuthorityLifecycle != nil {
+	if target.publicAuthority {
+		// Keep original bytes and line numbers for opted-in GitHub workers. Only
+		// an actual OpenMerge declaration selects the authority candidate parser.
+		candidate.Config, warnings, err = config.Load(data)
+		if err == nil && candidate.Config.PolicyAuthority == authority.OpenMerge {
+			candidate, warnings, err = config.LoadAuthorityCandidate(data)
+		}
+	} else if target.AuthorityRequired && target.resolveAuthorityLifecycle != nil {
 		candidate, warnings, err = config.LoadAuthorityCandidate(data)
 	} else {
 		candidate.Config, warnings, err = config.Load(data)
