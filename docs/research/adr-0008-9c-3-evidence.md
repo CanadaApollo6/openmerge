@@ -9,6 +9,58 @@ is no new independent timeout. Production supplies no gate after the boundary.
 Direct SQL registration and old binaries do not participate in this protocol:
 stop old workers and freeze installation registration during the switch.
 
+## Issue #144 test-only tenancy lock pins
+
+Hold remains. This follow-up adds no production changes. The three subtests of
+`TestAuthorityTenancyConcurrentFirstEmissionRegistration` reuse the concurrent
+registration protocol from `TestAuthorityTenancyConcurrentRegistration` for
+`ApplyAuthorityConfigWithEmissionGate`,
+`AdoptAuthorityPin`, and `CheckAuthorityEmissionBackup`. Each waits until a real
+second-installation registration holds shared tenancy behind a registration-key
+holder, then observes the entry point waiting for exclusive tenancy before any
+events write lock. Releasing registration must produce a sanitized tenancy
+refusal, no authority boundary, and no partial journal events. Adoption starts
+with only its required governing config. Synchronization uses PostgreSQL lock
+state and channels inside synctest, with no sleeps or new production seams.
+
+The preflight lock remains in the lock-order inventory and in production. Its
+new pin checks that preflight waits for pending registration before returning a
+tenancy verdict, even though the committing transaction also rechecks tenancy.
+
+Scratch-copy Go overlays remove exactly one entry point's lock per mutation.
+All three compile and fail the named subtest with
+`tenancy ExclusiveLock granted=false not observed`, exit 1:
+
+| Mutation | Removed lock | Test that killed it |
+| --- | --- | --- |
+| M8 | `CheckAuthorityEmissionBackup` exclusive tenancy | `TestAuthorityTenancyConcurrentFirstEmissionRegistration/preflight` |
+| M9 | `AdoptAuthorityPin` gated exclusive tenancy | `TestAuthorityTenancyConcurrentFirstEmissionRegistration/adopt-pin` |
+| M10 | `applyAuthorityConfig` gated exclusive tenancy | `TestAuthorityTenancyConcurrentFirstEmissionRegistration/apply-config` |
+
+The new test passed `GOMAXPROCS=1 go test -race -count=20` with eight owned CPU
+burners. All eight accumulated CPU ticks during the run and were terminated and
+reaped afterward. The store package reported 4.677 s. Mutation and verification
+logs, scratch overlays, and the burner observations are retained locally in
+`~/.cache/openmerge-144-verification/`.
+
+CI-like `GOMAXPROCS=2 go test -race -short -count=1 -p=1 -timeout=15m`
+passed for both packages on main `7aa71a3` and this test-only branch:
+
+| Package | Main 7aa71a3 (s) | Issue #144 branch (s) |
+| --- | ---: | ---: |
+| `internal/store` | 63.895 | 75.273 |
+| `internal/serve` | 329.261 | 335.314 |
+
+After the reboot, `make check` passed with exit 0 (479.748 s wall time),
+including formatting, zero lint issues, the full short race suite, and build.
+
+These are single local suite timings, excluding compilation and flock waiting,
+not a causal performance estimate. The baseline ran in a clean detached worktree.
+All Go commands exported Go 1.27.3 GOROOT and PATH and ran under the heavy flock
+with `GOFLAGS=-p=2 GOMEMLIMIT=4GiB`, against the shared test Postgres on
+localhost:54329. No existing fixture, production code, migration, Makefile, CI
+configuration, test flag, or Dockerfile changed.
+
 ## Round-5 lock-order inventory
 
 The code inventory is in `internal/store/locks.go`. Advisory tenancy namespace

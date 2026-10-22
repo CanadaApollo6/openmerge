@@ -6,6 +6,7 @@ import (
 	"net"
 	"testing"
 	"testing/synctest"
+	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/jackc/pgx/v5"
@@ -97,6 +98,77 @@ func TestAuthorityTenancyConcurrentRegistration(t *testing.T) {
 			t.Fatal("concurrent registration allowed boundary")
 		}
 	})
+}
+
+// Each entry point must wait for a registration that already holds shared
+// tenancy, then inventory the committed second installation before proceeding.
+func TestAuthorityTenancyConcurrentFirstEmissionRegistration(t *testing.T) {
+	_, err := net.LookupHost("localhost")
+	must(t, err)
+	for _, path := range []string{"apply-config", "adopt-pin", "preflight"} {
+		t.Run(path, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				s := newStore(t)
+				k, draft, pin := verificationFixture(t)
+				in := adoptionInput(t, &draft, &pin)
+				q, err := s.EnsureQueue(t.Context(), k)
+				must(t, err)
+				var watermark int64
+				// Adoption requires a governing config, but no authority boundary yet.
+				if path == "adopt-pin" {
+					watermark = appendEvents(t, s, q, authorityLifecycleConfig(pin))
+				}
+				before := count(t, s, `SELECT count(*) FROM events`)
+				holder, err := s.pool.BeginTx(t.Context(), pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+				must(t, err)
+				defer func() { _ = holder.Rollback(t.Context()) }()
+				other := k
+				other.Installation = "second"
+				must(t, s.lockRegistration(t.Context(), holder, other))
+				registered := make(chan error, 1)
+				go func() { _, err := s.EnsureQueue(t.Context(), other); registered <- err }()
+				// The holder owns only the registration key. This shared lock therefore
+				// proves the real EnsureQueue transaction has entered the tenancy protocol.
+				waitTenancyLock(t, s, "ShareLock", true)
+				finished := make(chan error, 1)
+				go func() {
+					gate := AuthorityEmissionGate{Watermark: watermark}
+					var err error
+					switch path {
+					case "apply-config":
+						_, err = s.ApplyAuthorityConfigWithEmissionGate(t.Context(), q, authorityLifecycleConfig(pin), pin, 0, 0, time.Time{}, time.Time{}, in, draft.Evidence, &gate)
+					case "adopt-pin":
+						_, err = s.AdoptAuthorityPin(t.Context(), q, pin, 0, 0, time.Time{}, time.Time{}, in, draft.Evidence, gate)
+					case "preflight":
+						err = s.CheckAuthorityEmissionBackup(t.Context(), watermark)
+					}
+					finished <- err
+				}()
+				waitTenancyLock(t, s, "ExclusiveLock", false)
+				select {
+				case err := <-finished:
+					t.Fatalf("%s escaped pending registration: %v", path, err)
+				default:
+				}
+				var eventLock bool
+				must(t, s.pool.QueryRow(t.Context(), `SELECT EXISTS (SELECT 1 FROM pg_locks WHERE relation='events'::regclass AND mode='ShareRowExclusiveLock' AND granted)`).Scan(&eventLock))
+				if eventLock {
+					t.Fatal("emission acquired events before tenancy")
+				}
+				must(t, holder.Commit(t.Context()))
+				must(t, <-registered)
+				requireTenancyRefusal(t, <-finished)
+				boundary, err := s.AuthorityBoundaryExists(t.Context())
+				must(t, err)
+				if boundary {
+					t.Fatal("concurrent registration allowed boundary")
+				}
+				if after := count(t, s, `SELECT count(*) FROM events`); after != before {
+					t.Fatalf("tenancy refusal left partial events: before=%d after=%d", before, after)
+				}
+			})
+		})
+	}
 }
 
 func TestAuthorityTenancyRegistrationWaitsForEmission(t *testing.T) {
