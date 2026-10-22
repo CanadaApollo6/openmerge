@@ -89,6 +89,7 @@ func TestAuthorityTenancyConcurrentRegistration(t *testing.T) {
 		if eventLock {
 			t.Fatal("emission acquired events before tenancy")
 		}
+		requireNoQueueLockBeforeTenancy(t, s, q)
 		must(t, holder.Commit(t.Context()))
 		must(t, <-registered)
 		requireTenancyRefusal(t, <-finished)
@@ -155,6 +156,9 @@ func TestAuthorityTenancyConcurrentFirstEmissionRegistration(t *testing.T) {
 				if eventLock {
 					t.Fatal("emission acquired events before tenancy")
 				}
+				if path != "preflight" {
+					requireNoQueueLockBeforeTenancy(t, s, q)
+				}
 				must(t, holder.Commit(t.Context()))
 				must(t, <-registered)
 				requireTenancyRefusal(t, <-finished)
@@ -205,6 +209,24 @@ func TestAuthorityTenancyRegistrationWaitsForEmission(t *testing.T) {
 		must(t, <-registered)
 		requireTenancyRefusal(t, s.CheckAuthorityTenancy(t.Context()))
 	})
+}
+
+func requireNoQueueLockBeforeTenancy(t *testing.T, s *Store, q QueueID) {
+	t.Helper()
+	var queueLock bool
+	// Match lockQueue's scoped two-int key, and only inspect the emitter
+	// backend whose exclusive tenancy request is pending for this test scope.
+	must(t, s.pool.QueryRow(t.Context(), `SELECT EXISTS (
+		SELECT 1 FROM pg_locks q JOIN pg_locks tenancy ON tenancy.pid=q.pid
+		WHERE q.locktype='advisory' AND q.classid=1330464081
+		AND q.objid=hashtext($1 || '/' || $2)::oid AND q.objsubid=2 AND q.granted
+		AND tenancy.locktype='advisory' AND tenancy.classid=1330464084
+		AND tenancy.objid=hashtext($1)::oid AND tenancy.objsubid=2
+		AND tenancy.mode='ExclusiveLock' AND NOT tenancy.granted
+	)`, s.testLockScope, fmt.Sprint(q)).Scan(&queueLock))
+	if queueLock {
+		t.Fatal("emission acquired queue before tenancy")
+	}
 }
 
 // Poll actual database synchronization, with a fixed bound and no sleeps.

@@ -18,7 +18,7 @@ registration protocol from `TestAuthorityTenancyConcurrentRegistration` for
 `AdoptAuthorityPin`, and `CheckAuthorityEmissionBackup`. Each waits until a real
 second-installation registration holds shared tenancy behind a registration-key
 holder, then observes the entry point waiting for exclusive tenancy before any
-events write lock. Releasing registration must produce a sanitized tenancy
+queue advisory and events lock. Releasing registration must produce a sanitized tenancy
 refusal, no authority boundary, and no partial journal events. Adoption starts
 with only its required governing config. Synchronization uses PostgreSQL lock
 state and channels inside synctest, with no sleeps or new production seams.
@@ -60,6 +60,47 @@ All Go commands exported Go 1.27.3 GOROOT and PATH and ran under the heavy flock
 with `GOFLAGS=-p=2 GOMEMLIMIT=4GiB`, against the shared test Postgres on
 localhost:54329. No existing fixture, production code, migration, Makefile, CI
 configuration, test flag, or Dockerfile changed.
+
+## PR #145 round-1 ordering pins
+
+The verification-commit path and the apply-config/adopt-pin paths now also
+assert that the backend waiting for exclusive tenancy holds no granted queue
+advisory for the target queue. The query matches `lockQueue`'s scoped two-int
+key (namespace `1330464081`, `hashtext(test scope + "/" + queue ID)`) and joins
+the pending tenancy request by backend PID and test scope. Unrelated lock
+holders cannot trip the assertion. Preflight takes no queue advisory.
+
+Scratch source overlays independently remove tenancy or acquire events/queue
+before tenancy. Each compiled mutation fails its named behavioral test; build
+failures do not count. The earlier M8/M9/M10 removal pins remain effective.
+
+| Mutation | Changed ordering | Test that killed it |
+| --- | --- | --- |
+| M8 | Remove preflight tenancy | `TestAuthorityTenancyConcurrentFirstEmissionRegistration/preflight` |
+| M9 | Remove adoption tenancy | `TestAuthorityTenancyConcurrentFirstEmissionRegistration/adopt-pin` |
+| M10 | Remove config tenancy | `TestAuthorityTenancyConcurrentFirstEmissionRegistration/apply-config` |
+| M9c | Adoption queue before tenancy | `TestAuthorityTenancyConcurrentFirstEmissionRegistration/adopt-pin` |
+| M10c | Config queue before tenancy | `TestAuthorityTenancyConcurrentFirstEmissionRegistration/apply-config` |
+| Verification queue-before-tenancy | Verification queue before tenancy | `TestAuthorityTenancyConcurrentRegistration` |
+| M8 events-before-tenancy | Preflight events before tenancy | `TestAuthorityTenancyConcurrentFirstEmissionRegistration/preflight` |
+| M9 events-before-tenancy | Adoption events before tenancy | `TestAuthorityTenancyConcurrentFirstEmissionRegistration/adopt-pin` |
+| M10 events-before-tenancy | Config events before tenancy | `TestAuthorityTenancyConcurrentFirstEmissionRegistration/apply-config` |
+| Verification events-before-tenancy | Verification events before tenancy | `TestAuthorityTenancyConcurrentRegistration` |
+| Verification removal | Remove verification tenancy | `TestAuthorityTenancyConcurrentRegistration` |
+
+The two unmutated tests passed `GOMAXPROCS=1 go test -race -count=20`
+under eight owned CPU burners (store test time 6.643 s). All eight accumulated
+CPU ticks and were terminated and reaped afterward. All 11 scratch mutations
+failed with the expected assertion and exit 1.
+
+`make check` passed with exit 0: formatting, zero lint issues, the complete
+short race suite and build. The store package reported 81.889 s and serve
+359.091 s; these are single local suite timings, not performance estimates.
+All Go commands used the pinned Go 1.27.3 GOROOT/PATH, heavy flock,
+`GOFLAGS=-p=2 GOMEMLIMIT=4GiB` and the test Postgres on localhost:54329.
+
+Round-1 validation logs, source overlays, mutation results and CPU burner
+observations are retained in `~/.cache/openmerge-145-r1/`.
 
 ## Round-5 lock-order inventory
 
