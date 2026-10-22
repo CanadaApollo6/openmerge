@@ -1,4 +1,25 @@
-# ADR 0008 PR 9c-3 round-3 tenancy evidence
+# ADR 0008 PR 9c-3 round-4 review evidence
+
+Round 4 retains **Hold**. Completion compares the partition identities, installation
+count, completeness, reasons, digests and governing commits across discovery,
+ignoring only watermarks, and returns the final snapshot. Ordinary sibling
+appends pass; partition registration still refuses. Positive authority-boundary
+lookups are cached per store process; negatives query again. Restore stops all
+workers before replacing history. The runtime role needs UPDATE, DELETE or
+TRUNCATE on events for the first-emission lock; registration waits on the queues
+SHARE lock.
+
+Setup verification is the primary public first-emission gate. A positive DraftID
+already implies a boundary; lifecycle writer gates remain defense in depth for
+internal/draftless callers, covered directly at store level and through the
+internal activation seam. Startup runtime construction now pins database identity
+in the tested constructor. Runtime receipt errors preserve cause identity while
+omitting its text. The discovery_round2_test synctest conversion is inherited
+from main merge #142, not authored by this PR.
+
+Round-4 verification is recorded below once the clean-tree run completes.
+
+## Retained round-3 evidence
 
 Classification: **Hold**. Round 3 enforces the user-selected **one database per
 client (installation)** model. No migration is needed. All queues count, including
@@ -143,13 +164,13 @@ The authority-emission boundary is `write_restriction_verified`, `policy_authori
 
 The first-emission transaction acquires canonical queue locks, then `SHARE ROW EXCLUSIVE` on `events`. PostgreSQL INSERT takes `ROW EXCLUSIVE`, so every queue's append conflicts without adding locks to ordinary append paths. Competing first emitters also serialize. The lock tests observe actual PostgreSQL lock waits. One holds an append behind the first-emission transaction; another holds first emission behind an uncommitted append, commits that append and requires a fresh-watermark refusal even when the connection defaults to repeatable read.
 
-SQL uses the `type` column with `EXISTS (... LIMIT 1)`, never JSONB detoast or a whole-journal bool_or. `max(id)` uses the existing primary key. There is no type-only index and this PR adds no migration: proving absence scans the discriminator, and later queries can scan the legacy prefix before the first match. LIMIT 1 stops on that match. This is an explicit retained-schema tradeoff, not a claim that every boundary lookup is constant time.
+SQL uses the `type` column with `EXISTS (... LIMIT 1)`, never JSONB detoast or a whole-journal bool_or. `max(id)` uses the existing primary key. There is no type-only index and this PR adds no migration: proving absence scans the discriminator, and later queries can scan the legacy prefix before the first match. LIMIT 1 stops on that match. Positive results are now cached in-process, relying on the documented worker-stop-before-restore procedure; negatives remain uncached.
 
 Before the boundary, receipt failure reports `emission receipt stale/invalid`, separately from protection read failure. Production pins the configured database identity at startup and retains cheap comparisons after the receipt gate ends. A rollback never requires receipt validation. Retained events and v7 cursors still prohibit an incompatible binary downgrade.
 
 The receipt window is rechecked inside the first-emission transaction after lock waits. It can still expire between the last window check and commit; receipt validation is not a lease.
 
-The final completion snapshot follows the last outbound read. The interval from this database check to the remote Git push remains irreducible, as with other immediate-before-write guards. Freeze configuration, selected refs and installations during the switch; completion is not a distributed lease.
+The final completion snapshot follows the last outbound read. Semantic equality excludes journal watermarks and retains partition identity, installation count and the complete folded safety verdict. The interval from this database check to the remote Git push remains irreducible, as with other immediate-before-write guards. Freeze configuration, selected refs and installations during the switch; completion is not a distributed lease.
 
 ## Forge budget
 

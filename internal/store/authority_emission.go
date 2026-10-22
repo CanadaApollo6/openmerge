@@ -23,11 +23,18 @@ type AuthorityEmissionGate struct {
 
 // AuthorityBoundaryExists uses only the event discriminator, never JSON payloads.
 // There is no type-only index in the retained schema: LIMIT 1 stops at the first
-// boundary. Proving absence scans the discriminator, and a later lookup may
-// scan the legacy prefix before its first match. No index migration is added.
+// boundary. Cache only positive results: boundaries are monotonic while this
+// process runs. The documented restore procedure stops all workers first.
+// Negative results must query again to notice another process emitting.
 func (s *Store) AuthorityBoundaryExists(ctx context.Context) (bool, error) {
+	if s.authorityBoundary.Load() {
+		return true, nil
+	}
 	var boundary bool
 	err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM events WHERE type=ANY($1) LIMIT 1)`, authorityEmissionEventTypes).Scan(&boundary)
+	if err == nil && boundary {
+		s.authorityBoundary.Store(true)
+	}
 	return boundary, err
 }
 

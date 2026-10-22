@@ -204,3 +204,36 @@ func completeEmissionOperations(r *authority.EmissionReceipt) {
 	}
 	r.Reconciliation = &authority.RestoreReconciliation{SourceDatabaseIdentity: r.DatabaseIdentity, RestoredDatabaseIdentity: "isolated-restore", BackupSHA256: r.BackupSHA256, BackupCapturedAt: r.DrainedAt, BackupWatermark: 1, RestoredWatermark: 1, ReconciledAt: r.RestoreTestedAt, EvidenceSHA256: r.BackupSHA256, AllRefsAndEvidenceReconciled: true}
 }
+
+func TestPublicAuthorityActivationEmissionDefenseInDepth(t *testing.T) {
+	for _, configPair := range []bool{false, true} {
+		t.Run(fmt.Sprint(configPair), func(t *testing.T) {
+			testSynctest(t, func(t *testing.T) {
+				p := newPublicFixture(t, false)
+				s, w := p.s, p.w
+				plan := s.options.Authority.Targets[0]
+				coverage, err := authority.CoverageDigest(plan.Input.Binding.DefaultBranch, plan.Input.BaseSelectors)
+				must(t, err)
+				tip, err := p.f.ReadRef(t.Context(), repo, "main")
+				must(t, err)
+				pin := queue.PolicyAuthorityApplied{GoverningCommit: tip, EffectiveDigest: plan.Input.Binding.EffectiveDigest, Authority: authority.OpenMerge, DefaultBranch: plan.Input.Binding.DefaultBranch, CoverageDigest: coverage, OpenMerge: &queue.AuthorityPin{Binding: plan.Input.Binding}}
+				// Deliberately call the internal seam with a nonexistent draft. Real public
+				// setup has already emitted a boundary; this tests defense in depth only.
+				request := authorityActivation{Receipt: *p.receipt, ReceiptMaxAge: time.Hour, Pin: pin, DraftID: 1, Input: plan.Input, Read: func(context.Context) (authority.Observation, error) { return authority.Observation{}, nil }}
+				if configPair {
+					request.Config = &queue.ConfigApplied{Commit: pin.GoverningCommit, Digest: pin.EffectiveDigest}
+				}
+				request.Recheck = func(ctx context.Context) error {
+					// Journal progress after receipt preflight must be caught in the writer,
+					// before it tries to find the deliberately nonexistent draft.
+					_, err := s.store.Append(ctx, w.id, []queue.Event{queue.BaseMoved{SHA: "sibling-progress"}}, "")
+					return err
+				}
+				_, err = s.activateAuthority(t.Context(), w, request)
+				if err == nil || !strings.Contains(err.Error(), "backup watermark differs") {
+					t.Fatalf("activation omitted transaction gate: %v", err)
+				}
+			})
+		})
+	}
+}

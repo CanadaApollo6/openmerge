@@ -2000,13 +2000,18 @@ cannot waive this stronger authority gate.
 The first-emission transaction takes `SHARE ROW EXCLUSIVE` on `events` after
 its queue locks. Every PostgreSQL `INSERT` takes `ROW EXCLUSIVE`, so this lock
 blocks appends from all queues without adding work to ordinary append paths.
-It also serializes competing first emitters. After any lock wait, a fresh
+It also serializes competing first emitters. The runtime database role needs
+`UPDATE`, `DELETE`, or `TRUNCATE` privilege on `events` to acquire this lock;
+an INSERT-only role fails with permission denied at first emission. Queue
+registration waits on the first-emission SHARE lock on `queues` through commit. After any lock wait, a fresh
 explicit READ COMMITTED transaction checks the boundary again and reads `max(id)` through
 the existing primary-key index. The boundary query uses
 `EXISTS (SELECT 1 ... WHERE type = ANY(...) LIMIT 1)` and never reads JSONB.
 There is no type-only index in the current schema. Proving absence before first
 emission requires scanning the discriminator; after a boundary exists, the
-query stops at its first match. This avoids the former whole-journal aggregate
+query stops at its first match. A positive result is cached in-process; negative
+results are always re-queried. This is monotonic for a running process because
+the restore procedure stops all workers before replacing journal history. This avoids the former whole-journal aggregate
 and JSON detoast without introducing a migration for the initial switch.
 
 The receipt window is checked again inside the first-emission transaction after

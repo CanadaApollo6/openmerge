@@ -192,16 +192,11 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger, saniti
 			logger.Warn(setting.flag+" / "+setting.env+" is deprecated; use "+setting.replacement+"; this setting now only narrows discovery", "allowlist", setting.value)
 		}
 	}
-	authorityRuntime, err := productionAuthorityRuntime(o)
+	authorityRuntime, err := productionAuthorityRuntime(ctx, o, db)
 	if err != nil {
 		return err
 	}
-	if authorityRuntime != nil {
-		authorityRuntime.DatabaseIdentity, err = db.DatabaseIdentity(ctx)
-		if err != nil {
-			return errors.New("authority database identity unavailable")
-		}
-	}
+
 	factory := &installationTargets{app: app, options: o, logger: logger, bundles: make(map[string]*installationBundle)}
 	// Audits have their own token refresh locks and Git caches. They spend no
 	// installation REST/GraphQL quota; credentials are minted with the App JWT.
@@ -402,7 +397,9 @@ func splitAllowlist(value string) []string {
 	return strings.Split(value, ",")
 }
 
-func productionAuthorityRuntime(o serveOptions) (*serve.AuthorityRuntime, error) {
+func productionAuthorityRuntime(ctx context.Context, o serveOptions, db interface {
+	DatabaseIdentity(context.Context) (string, error)
+}) (*serve.AuthorityRuntime, error) {
 	if o.authorityPlan == "" && o.emissionReceipt == "" {
 		return nil, nil
 	}
@@ -428,7 +425,15 @@ func productionAuthorityRuntime(o serveOptions) (*serve.AuthorityRuntime, error)
 		}
 		return receipt, nil
 	}}
-	return runtime, runtime.Validate()
+	if err := runtime.Validate(); err != nil {
+		return nil, err
+	}
+	identity, err := db.DatabaseIdentity(ctx)
+	if err != nil {
+		return nil, errors.New("authority database identity unavailable")
+	}
+	runtime.DatabaseIdentity = identity
+	return runtime, nil
 }
 
 func productionServeOptions(o serveOptions, authorityRuntime *serve.AuthorityRuntime, history func(context.Context, store.QueueKey) (forge.OutsidePushHistory, error), logger *slog.Logger) serve.Options {

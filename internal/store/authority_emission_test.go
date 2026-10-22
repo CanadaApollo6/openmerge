@@ -181,3 +181,80 @@ func TestAuthorityEmissionRefreshesSnapshotAfterAppendLockWait(t *testing.T) {
 		}
 	})
 }
+
+func TestAuthorityBoundaryPositiveCache(t *testing.T) {
+	_, err := net.LookupHost("localhost")
+	must(t, err)
+	synctest.Test(t, func(t *testing.T) {
+		s := newStore(t)
+		for i := 0; i < 2; i++ {
+			boundary, err := s.AuthorityBoundaryExists(t.Context())
+			must(t, err)
+			if boundary {
+				t.Fatal("empty journal has boundary")
+			}
+		}
+		k, v, _ := verificationFixture(t)
+		q, err := s.EnsureQueue(t.Context(), k)
+		must(t, err)
+		_, err = s.CommitWriteRestrictionVerification(t.Context(), []VerificationRecord{{q, v}})
+		must(t, err)
+		boundary, err := s.AuthorityBoundaryExists(t.Context())
+		must(t, err)
+		if !boundary {
+			t.Fatal("negative result was cached")
+		}
+		// Closing the pool proves subsequent positive lookups issue no queries.
+		s.Close()
+		for i := 0; i < 2; i++ {
+			boundary, err := s.AuthorityBoundaryExists(t.Context())
+			if err != nil || !boundary {
+				t.Fatalf("positive cache queried closed pool: %v %v", boundary, err)
+			}
+		}
+	})
+}
+
+func TestAuthorityLifecycleEmissionDefenseInDepth(t *testing.T) {
+	_, err := net.LookupHost("localhost")
+	must(t, err)
+	for _, path := range []string{"adopt", "config"} {
+		for _, failure := range []string{"watermark", "receipt", "tenancy"} {
+			t.Run(path+"/"+failure, func(t *testing.T) {
+				synctest.Test(t, func(t *testing.T) {
+					s := newStore(t)
+					k, v, pin := verificationFixture(t)
+					in := adoptionInput(t, &v, &pin)
+					q, err := s.EnsureQueue(t.Context(), k)
+					must(t, err)
+					gate := AuthorityEmissionGate{}
+					want := "watermark"
+					switch failure {
+					case "watermark":
+						gate.Watermark = -1
+					case "receipt":
+						want = "receipt expired in transaction"
+						gate.Validate = func() error { return errors.New(want) }
+					case "tenancy":
+						want = "dedicated database"
+						k.Installation = "another-installation"
+						_, err := s.EnsureQueue(t.Context(), k)
+						must(t, err)
+					}
+					now := time.Now().UTC()
+					if path == "adopt" {
+						_, err = s.AdoptAuthorityPin(t.Context(), q, pin, 0, 0, now, now, in, v.Evidence, gate)
+					} else {
+						_, err = s.ApplyAuthorityConfigWithEmissionGate(t.Context(), q, authorityLifecycleConfig(pin), pin, 0, 0, now, now, in, v.Evidence, &gate)
+					}
+					if err == nil || !strings.Contains(err.Error(), want) {
+						t.Fatalf("%s gate bypassed: %v", failure, err)
+					}
+					if n := count(t, s, `SELECT count(*) FROM events`); n != 0 {
+						t.Fatalf("rejected emission left %d events", n)
+					}
+				})
+			})
+		}
+	}
+}

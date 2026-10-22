@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/forge/fake"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
@@ -151,10 +152,55 @@ func TestPublicAuthorityCompletionPartitionRace(t *testing.T) {
 	for _, change := range []string{"register", "append"} {
 		t.Run(change, func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
-				f := newPublicFixture(t, true)
+				f := newPublicFixture(t, true, releaseConfig)
 				must(t, f.s.configuration(t.Context(), f.w))
 				state := lifecycleState(t, f.s, f.w)
+				// A second durable partition has its own valid folded authority verdict.
+				siblingKey := f.w.Key
+				siblingKey.BaseBranch = "release/sibling"
+				sibling, err := f.s.store.EnsureQueue(t.Context(), siblingKey)
+				must(t, err)
+
+				mainPin := *state.AuthorityPin()
+				evidence := mainPin.OpenMerge.Activation.Evidence
+				evidence.Coverage = append(evidence.Coverage, authority.Coverage{Ref: "refs/heads/" + siblingKey.BaseBranch, Visibility: authority.Visible, ProtectionIDs: []string{"repository_ruleset/base-10"}})
+				for _, key := range []store.QueueKey{f.w.Key, siblingKey} {
+					input := f.s.options.Authority.Targets[0].Input
+					input.Binding.QueueKey = store.AuthorityQueueKey(key)
+					input.ExpectedRefs = []string{"refs/heads/main", "refs/heads/" + siblingKey.BaseBranch}
+					fresh, err := forge.InterpretWriteRestriction(input, evidence)
+					must(t, err)
+					fingerprint, err := fresh.Fingerprint()
+					must(t, err)
+					now := time.Now().UTC()
+					proposal := queue.WriteRestrictionVerified{Binding: input.Binding, Scope: "proposed", Nonce: "sibling-complete", Operator: "operator", VerifiedAt: now, Evidence: fresh, ProtectionFingerprint: fingerprint}
+					id, err := f.s.store.EnsureQueue(t.Context(), key)
+					must(t, err)
+					proposalID, err := f.s.store.Append(t.Context(), id, []queue.Event{proposal}, "")
+					must(t, err)
+					pin := mainPin
+					pin.OpenMerge = &queue.AuthorityPin{Binding: input.Binding}
+					pin = queue.BindAuthorityDraft(pin, proposalID, proposal, now, now, input, fresh)
+					if !queue.AuthorityDraftAdopted(pin) {
+						t.Fatal("sibling draft not adopted")
+					}
+					_, err = f.s.store.Append(t.Context(), id, []queue.Event{queue.ConfigApplied{Commit: pin.GoverningCommit, Digest: pin.EffectiveDigest}, pin}, "")
+					must(t, err)
+					if key == f.w.Key {
+						f.w.authorityObservation.Input = input
+					}
+					if key == siblingKey {
+						f.s.options.Authority.Targets = append(f.s.options.Authority.Targets, AuthorityTarget{Key: key, Input: input})
+					}
+				}
+				f.s.repositories[0].Branches = func(context.Context) ([]string, error) { return []string{"main", siblingKey.BaseBranch}, nil }
+
 				opts := f.s.authorityPushOptions(t.Context(), f.w, forge.PushAdvanceFence, []forge.PushRefIntent{{Ref: "refs/heads/openmerge/fence/main", OldSHA: state.Fence}})
+				completion, err := f.s.AuthorityCompletion(t.Context(), f.s.publicAuthorityRequest(f.w))
+				must(t, err)
+				if !completion.Complete {
+					t.Fatalf("sibling fixture incomplete: %+v", completion)
+				}
 				c := instrumentCompletion(f.s)
 				c.git.after = func() {
 					if c.git.calls == 2 {
@@ -164,14 +210,16 @@ func TestPublicAuthorityCompletionPartitionRace(t *testing.T) {
 							_, err := f.s.store.EnsureQueue(t.Context(), key)
 							must(t, err)
 						} else {
-							// Even unchanged semantic completion must match the actual durable verdict
-							// checked against outbound reads, including each partition's watermark.
-							_, err := f.s.store.Append(t.Context(), f.w.id, []queue.Event{queue.BaseMoved{SHA: state.BaseSHA}}, "")
+							// Ordinary sibling journal progress leaves the safety verdict unchanged.
+							_, err := f.s.store.Append(t.Context(), sibling, []queue.Event{queue.BaseMoved{SHA: state.BaseSHA}}, "")
 							must(t, err)
 						}
 					}
 				}
-				if err := opts.Guard(t.Context(), opts.Context); err == nil || !strings.Contains(err.Error(), "durable inventory changed") {
+				err = opts.Guard(t.Context(), opts.Context)
+				if change == "append" {
+					must(t, err)
+				} else if err == nil || !strings.Contains(err.Error(), "durable inventory changed") {
 					t.Fatalf("partition changed in final outbound read accepted: %v", err)
 				}
 				c.assert(t, 1)

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -28,18 +30,24 @@ func TestProductionAuthorityRuntimeWiring(t *testing.T) {
 		t.Fatal(err)
 	}
 	o := serveOptions{app: 5383059, authorityPlan: plan, emissionReceipt: "receipt.json", emissionReceiptMaxAge: time.Hour}
-	runtime, err := productionAuthorityRuntime(o)
+	runtime, err := productionAuthorityRuntime(t.Context(), o, authorityIdentityStub{})
 	if err == nil || runtime != nil || !strings.Contains(err.Error(), "App binding mismatch") {
 		t.Fatalf("mismatched App accepted: %v", err)
 	}
 	// The valid plan comes from the same App identity used by production discovery.
 	o.app = 42
-	runtime, err = productionAuthorityRuntime(o)
+	runtime, err = productionAuthorityRuntime(t.Context(), o, authorityIdentityStub{})
 	if err != nil || runtime == nil {
 		t.Fatal("valid runtime missing", err)
 	}
+	if runtime.DatabaseIdentity != "startup-database" {
+		t.Fatal("startup failed to pin database identity", runtime.DatabaseIdentity)
+	}
+	if _, err := productionAuthorityRuntime(t.Context(), o, authorityIdentityStub{fail: true}); err == nil || err.Error() != "authority database identity unavailable" {
+		t.Fatalf("identity failure accepted: %v", err)
+	}
 	o.emissionReceipt = ""
-	runtime, err = productionAuthorityRuntime(o)
+	runtime, err = productionAuthorityRuntime(t.Context(), o, authorityIdentityStub{})
 	if err != nil {
 		t.Fatalf("plan-only runtime must permit operation after first emission: %v", err)
 	}
@@ -50,4 +58,13 @@ func TestProductionAuthorityRuntimeWiring(t *testing.T) {
 	if opts.Authority != runtime || opts.Authority == nil {
 		t.Fatal("production discovery omitted authority runtime")
 	}
+}
+
+type authorityIdentityStub struct{ fail bool }
+
+func (s authorityIdentityStub) DatabaseIdentity(context.Context) (string, error) {
+	if s.fail {
+		return "", errors.New("SECRET")
+	}
+	return "startup-database", nil
 }

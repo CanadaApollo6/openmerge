@@ -110,7 +110,7 @@ func (s *Server) AuthorityCompletion(ctx context.Context, request store.Authorit
 	if err != nil {
 		return store.AuthorityCompletion{}, completionReadError("durable inventory", err)
 	}
-	if !reflect.DeepEqual(result, final) {
+	if !sameAuthorityCompletion(result, final) {
 		return store.AuthorityCompletion{}, errors.New("authority completion durable inventory changed; retry")
 	}
 	return final, nil
@@ -158,4 +158,20 @@ func (s *Server) authorityCompletionRepository(ctx context.Context, request stor
 		return Repository{}, errors.New("authority completion repository is not uniquely served")
 	}
 	return matched[0], nil
+}
+
+// Watermarks report journal progress; only the folded safety verdict must stay
+// stable across discovery. Keep the final snapshot so callers see fresh progress.
+func sameAuthorityCompletion(a, b store.AuthorityCompletion) bool {
+	if a.InstallationCount != b.InstallationCount || a.Complete != b.Complete || !reflect.DeepEqual(a.Request, b.Request) || len(a.Queues) != len(b.Queues) {
+		return false
+	}
+	for i, left := range a.Queues {
+		right := b.Queues[i]
+		left.Watermark, right.Watermark = 0, 0
+		if left != right {
+			return false
+		}
+	}
+	return true
 }

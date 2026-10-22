@@ -52,9 +52,10 @@ type AuthorityQueueCompletion struct {
 // remove protection. Empty, mixed, unverified and undiscovered partitions fail
 // closed. Per-queue adoption receipts cannot substitute for RequireComplete.
 type AuthorityCompletion struct {
-	Request  AuthorityCompletionRequest `json:"request"`
-	Complete bool                       `json:"complete"`
-	Queues   []AuthorityQueueCompletion `json:"queues"`
+	InstallationCount int                        `json:"installation_count"`
+	Request           AuthorityCompletionRequest `json:"request"`
+	Complete          bool                       `json:"complete"`
+	Queues            []AuthorityQueueCompletion `json:"queues"`
 }
 
 // RequireComplete is the fail-closed gate consumed by the final public switch.
@@ -94,6 +95,9 @@ func (s *Store) RepositoryAuthorityCompletion(ctx context.Context, request Autho
 		return result, errors.New("authority completion requires complete live branch inventory")
 	}
 	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `SELECT count(DISTINCT installation) FROM queues`).Scan(&result.InstallationCount); err != nil {
+			return err
+		}
 		rows, err := tx.Query(ctx, `SELECT id,installation,base,lane FROM queues WHERE lower(repository)=lower($1) ORDER BY id`, request.Repository)
 		if err != nil {
 			return err
@@ -200,7 +204,7 @@ func (s *Store) RepositoryAuthorityCompletion(ctx context.Context, request Autho
 		}
 		return a.ID < b.ID
 	})
-	result.Complete = len(result.Queues) > 0
+	result.Complete = len(result.Queues) > 0 && result.InstallationCount <= 1
 	for _, q := range result.Queues {
 		result.Complete = result.Complete && q.Reason == "complete"
 	}

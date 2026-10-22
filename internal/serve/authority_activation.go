@@ -32,8 +32,9 @@ type authorityActivation struct {
 
 // activateAuthority requires explicit opt-in before identity I/O. A receipt
 // gates only an initial boundary; durable authority history ends that gate.
-// Public initial writes retain their watermark/window check in the committing
-// store transaction. Rollback never consults an emission receipt.
+// Setup verification is the primary public first-emission gate: a positive
+// DraftID already implies a durable boundary. The store transaction gate below
+// remains defense in depth for draftless/internal callers. Rollback skips it.
 func (s *Server) activateAuthority(ctx context.Context, w *worker, request authorityActivation) (store.AuthorityAdoptionReceipt, error) {
 	var zero store.AuthorityAdoptionReceipt
 	if !w.AuthorityRequired {

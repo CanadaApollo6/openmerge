@@ -606,3 +606,20 @@ func TestPublicAuthorityRollbackKeepsDatabaseBinding(t *testing.T) {
 		}
 	})
 }
+
+func TestPublicAuthorityRuntimeReceiptErrorSanitized(t *testing.T) {
+	testSynctest(t, func(t *testing.T) {
+		p := newPublicFixture(t, false)
+		// No proposed event exists yet. Exercise the runtime receipt read before
+		// identity/protection I/O, with an explicitly reviewed target ID.
+		p.s.options.Authority.Targets[0].DraftID = 1
+		cause := errors.New("SECRET /operator/private/receipt.json")
+		p.s.options.Authority.Receipt = func() (authority.EmissionReceipt, error) { return authority.EmissionReceipt{}, cause }
+		p.w.resolveAuthorityLifecycle = nil
+		p.w.Target = p.s.publicAuthorityTarget(p.w.Target)
+		err := p.s.configuration(t.Context(), p.w)
+		if err == nil || strings.Contains(err.Error(), "SECRET") || strings.Contains(err.Error(), "/operator/private") || !strings.Contains(err.Error(), "emission receipt stale/invalid") || !errors.Is(err, cause) {
+			t.Fatalf("runtime receipt diagnostic lost sanitization/cause: %v", err)
+		}
+	})
+}
