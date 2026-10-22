@@ -83,33 +83,35 @@ func TestRunInstallationQuotaAllowsLaterValidationWake(t *testing.T) {
 func TestDeniedWaitingBoundaryCommentChecksPermissionOnce(t *testing.T) {
 	for _, mode := range []string{"waiting diagnostics", "commands"} {
 		t.Run(mode, func(t *testing.T) {
-			s, w, f, driver := fixture(t, repositoryConfig)
-			must(t, s.cycle(t.Context(), w))
-			w.managed, w.ready = true, false
-			f.AddComment(repo, 1, "reader", "@openmerge queue")
-			comment := f.CommentRecords(repo, 1)[0]
-			before := driver.permissions
-			for range 6 {
-				if mode == "commands" {
-					must(t, s.commands(t.Context(), w, 1))
-				} else {
-					must(t, s.reportWaiting(t.Context(), w))
+			testSynctest(t, func(t *testing.T) {
+				s, w, f, driver := fixture(t, repositoryConfig)
+				must(t, s.cycle(t.Context(), w))
+				w.managed, w.ready = true, false
+				f.AddComment(repo, 1, "reader", "@openmerge queue")
+				comment := f.CommentRecords(repo, 1)[0]
+				before := driver.permissions
+				for range 6 {
+					if mode == "commands" {
+						must(t, s.commands(t.Context(), w, 1))
+					} else {
+						must(t, s.reportWaiting(t.Context(), w))
+					}
 				}
-			}
-			if got := driver.permissions - before; got != 1 {
-				t.Fatalf("six denied waiting cycles made %d CanWrite reads, want 1", got)
-			}
-			receipt, err := s.store.Observation(t.Context(), w.id, fmt.Sprintf("comment/%d", comment.ID))
-			must(t, err)
-			if len(receipt) != 0 {
-				t.Fatal("waiting consumed denied command")
-			}
-			f.SetCanWrite(repo, "reader", true)
-			w.ready = true
-			must(t, s.cycle(t.Context(), w))
-			if driver.permissions-before != 2 || len(lifecycleState(t, s, w).Entries) != 1 {
-				t.Fatal("readiness recovery did not freshly authorize previously denied command")
-			}
+				if got := driver.permissions - before; got != 1 {
+					t.Fatalf("six denied waiting cycles made %d CanWrite reads, want 1", got)
+				}
+				receipt, err := s.store.Observation(t.Context(), w.id, fmt.Sprintf("comment/%d", comment.ID))
+				must(t, err)
+				if len(receipt) != 0 {
+					t.Fatal("waiting consumed denied command")
+				}
+				f.SetCanWrite(repo, "reader", true)
+				w.ready = true
+				must(t, s.cycle(t.Context(), w))
+				if driver.permissions-before != 2 || len(lifecycleState(t, s, w).Entries) != 1 {
+					t.Fatal("readiness recovery did not freshly authorize previously denied command")
+				}
+			})
 		})
 	}
 }

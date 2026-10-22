@@ -115,29 +115,31 @@ func TestOversizedFakePRKeepsAllFilePredicatesUnknown(t *testing.T) {
 }
 
 func TestMergeMetadataRevalidatedBeforeLanding(t *testing.T) {
-	cfg := strings.Replace(repositoryConfig, "      - check-success = ci", "      - check-success = ci\n      - label = ready\n      - files glob pr-*.txt\n      - -conflict", 1)
-	s, w, f, _ := fixture(t, cfg)
-	must(t, f.SetPRConditions(repo, 1, []string{"ready"}, new(false)))
-	f.AddComment(repo, 1, "writer", "@openmerge queue")
-	must(t, s.cycle(t.Context(), w))
-	state, _, err := s.store.Load(t.Context(), w.id)
-	must(t, err)
-	if state.Active == nil || state.Active.TestedSHA == "" {
-		t.Fatal("metadata-gated PR did not start testing")
-	}
-	tested := state.Active.TestedSHA
-	f.SetCheckRuns(repo, tested, []forge.CheckRun{{ID: 1, Name: "ci", State: forge.Success}})
-	// Leave the worker's summaries/cache unchanged: the fresh landing read must
-	// discover a label removed after the passing policy snapshot was collected.
-	gate := &labelRevocationDriver{Driver: w.Driver, revoke: func() { must(t, f.SetPRConditions(repo, 1, []string{}, new(false))) }}
-	w.Driver = gate
-	time.Sleep(2 * time.Millisecond)
-	must(t, s.cycle(t.Context(), w))
-	base, err := f.ReadRef(t.Context(), repo, "main")
-	must(t, err)
-	if base == tested {
-		t.Fatal("stale metadata authorized landing after label revocation")
-	}
+	testSynctest(t, func(t *testing.T) {
+		cfg := strings.Replace(repositoryConfig, "      - check-success = ci", "      - check-success = ci\n      - label = ready\n      - files glob pr-*.txt\n      - -conflict", 1)
+		s, w, f, _ := fixture(t, cfg)
+		must(t, f.SetPRConditions(repo, 1, []string{"ready"}, new(false)))
+		f.AddComment(repo, 1, "writer", "@openmerge queue")
+		must(t, s.cycle(t.Context(), w))
+		state, _, err := s.store.Load(t.Context(), w.id)
+		must(t, err)
+		if state.Active == nil || state.Active.TestedSHA == "" {
+			t.Fatal("metadata-gated PR did not start testing")
+		}
+		tested := state.Active.TestedSHA
+		f.SetCheckRuns(repo, tested, []forge.CheckRun{{ID: 1, Name: "ci", State: forge.Success}})
+		// Leave the worker's summaries/cache unchanged: the fresh landing read must
+		// discover a label removed after the passing policy snapshot was collected.
+		gate := &labelRevocationDriver{Driver: w.Driver, revoke: func() { must(t, f.SetPRConditions(repo, 1, []string{}, new(false))) }}
+		w.Driver = gate
+		time.Sleep(2 * time.Millisecond)
+		must(t, s.cycle(t.Context(), w))
+		base, err := f.ReadRef(t.Context(), repo, "main")
+		must(t, err)
+		if base == tested {
+			t.Fatal("stale metadata authorized landing after label revocation")
+		}
+	})
 }
 
 type labelRevocationDriver struct {

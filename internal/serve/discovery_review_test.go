@@ -267,23 +267,25 @@ func (d *throttledReporting) ReportStatus(context.Context, forge.RepoRef, int, s
 }
 
 func TestReportingQuotaDoesNotStopActiveLanding(t *testing.T) {
-	s, w, f, _ := fixture(t, repositoryConfig)
-	driver := &throttledReporting{Driver: w.Driver}
-	w.Driver = driver
-	f.AddComment(repo, 1, "writer", "@openmerge queue")
-	must(t, s.cycle(t.Context(), w))
-	state := lifecycleState(t, s, w)
-	if state.Active == nil || state.Active.TestedSHA == "" {
-		t.Fatal("reporting quota stopped build")
-	}
-	sha := state.Active.TestedSHA
-	f.SetCheckRuns(repo, sha, []forge.CheckRun{{ID: 1, Name: "ci", Source: "app:1", State: forge.Success, HeadBranch: state.Active.TestRef}})
-	time.Sleep(2 * time.Millisecond)
-	must(t, s.cycle(t.Context(), w))
-	state = lifecycleState(t, s, w)
-	if state.Active != nil || state.BaseSHA != sha || driver.reports != 1 {
-		t.Fatalf("reporting quota stopped landing: %+v reports=%d", state, driver.reports)
-	}
+	testSynctest(t, func(t *testing.T) {
+		s, w, f, _ := fixture(t, repositoryConfig)
+		driver := &throttledReporting{Driver: w.Driver}
+		w.Driver = driver
+		f.AddComment(repo, 1, "writer", "@openmerge queue")
+		must(t, s.cycle(t.Context(), w))
+		state := lifecycleState(t, s, w)
+		if state.Active == nil || state.Active.TestedSHA == "" {
+			t.Fatal("reporting quota stopped build")
+		}
+		sha := state.Active.TestedSHA
+		f.SetCheckRuns(repo, sha, []forge.CheckRun{{ID: 1, Name: "ci", Source: "app:1", State: forge.Success, HeadBranch: state.Active.TestRef}})
+		time.Sleep(2 * time.Millisecond)
+		must(t, s.cycle(t.Context(), w))
+		state = lifecycleState(t, s, w)
+		if state.Active != nil || state.BaseSHA != sha || driver.reports != 1 {
+			t.Fatalf("reporting quota stopped landing: %+v reports=%d", state, driver.reports)
+		}
+	})
 }
 
 func TestExcludedInstallationAndRemovedWorkerAvoidCredentials(t *testing.T) {

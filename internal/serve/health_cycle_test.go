@@ -186,33 +186,35 @@ func TestHealthLongProgressingCycle(t *testing.T) {
 }
 
 func TestHealthCompletedActionAndTurnPublishProgress(t *testing.T) {
-	s, w, f, _ := fixture(t, repositoryConfig)
-	// Seed a real planned action without running a whole cycle first.
-	must(t, s.reconcile(t.Context(), w, false))
-	f.AddComment(repo, 1, "writer", "@openmerge queue")
-	must(t, s.reconcile(t.Context(), w, true))
-	cfg := w.plannerConfig(s.options.PollInterval)
-	_, err := s.store.Plan(t.Context(), w.id, cfg, time.Now())
-	must(t, err)
-	claims, err := s.store.ClaimQueue(t.Context(), w.id, 1, time.Minute, time.Now())
-	must(t, err)
-	if len(claims) != 1 {
-		t.Fatalf("missing planned action: %+v", claims)
-	}
-	old := time.Now().Add(-time.Hour)
-	w.publishCycleStarted(old)
-	must(t, s.execute(t.Context(), w, claims[0]))
-	afterAction := w.health.Load().LastProgressAt
-	if afterAction == nil || !afterAction.After(old) {
-		t.Fatal("completed action did not publish progress")
-	}
-	q := *w.health.Load()
-	q.LastProgressAt = &old
-	w.health.Store(&q)
-	must(t, s.cycle(t.Context(), w))
-	if progress := w.health.Load().LastProgressAt; progress == nil || !progress.After(old) {
-		t.Fatal("completed turn did not publish progress")
-	}
+	testSynctest(t, func(t *testing.T) {
+		s, w, f, _ := fixture(t, repositoryConfig)
+		// Seed a real planned action without running a whole cycle first.
+		must(t, s.reconcile(t.Context(), w, false))
+		f.AddComment(repo, 1, "writer", "@openmerge queue")
+		must(t, s.reconcile(t.Context(), w, true))
+		cfg := w.plannerConfig(s.options.PollInterval)
+		_, err := s.store.Plan(t.Context(), w.id, cfg, time.Now())
+		must(t, err)
+		claims, err := s.store.ClaimQueue(t.Context(), w.id, 1, time.Minute, time.Now())
+		must(t, err)
+		if len(claims) != 1 {
+			t.Fatalf("missing planned action: %+v", claims)
+		}
+		old := time.Now().Add(-time.Hour)
+		w.publishCycleStarted(old)
+		must(t, s.execute(t.Context(), w, claims[0]))
+		afterAction := w.health.Load().LastProgressAt
+		if afterAction == nil || !afterAction.After(old) {
+			t.Fatal("completed action did not publish progress")
+		}
+		q := *w.health.Load()
+		q.LastProgressAt = &old
+		w.health.Store(&q)
+		must(t, s.cycle(t.Context(), w))
+		if progress := w.health.Load().LastProgressAt; progress == nil || !progress.After(old) {
+			t.Fatal("completed turn did not publish progress")
+		}
+	})
 }
 
 // Each delay is one completed forge operation, not an artificial progress tick.
