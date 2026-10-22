@@ -4,10 +4,20 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/jackc/pgx/v5"
 )
+
+// ErrAuthorityDowngradeRefused marks a decided refusal: retained journal or
+// cursor data crosses (or cannot be shown not to cross) the ADR 0008 boundary.
+// Other errors mean the check itself could not run and decide nothing.
+var ErrAuthorityDowngradeRefused = errors.New("authority downgrade refused")
+
+func downgradeRefused(reason string) error {
+	return fmt.Errorf("%w: %s", ErrAuthorityDowngradeRefused, reason)
+}
 
 // CheckAuthorityDowngrade refuses a binary-only downgrade across the ADR 0008
 // boundary even after rollback/retirement, and even when v7 exists only in a
@@ -30,7 +40,7 @@ func (r *JournalReader) CheckAuthorityDowngrade(ctx context.Context) error {
 			}
 			if _, err := queue.DecodeEvent(raw); err != nil {
 				rows.Close()
-				return errors.New("journal compatibility unknown")
+				return downgradeRefused("journal compatibility unknown")
 			}
 			var envelope struct {
 				Type string                     `json:"type"`
@@ -38,7 +48,7 @@ func (r *JournalReader) CheckAuthorityDowngrade(ctx context.Context) error {
 			}
 			if err := json.Unmarshal(raw, &envelope); err != nil {
 				rows.Close()
-				return errors.New("journal compatibility unknown")
+				return downgradeRefused("journal compatibility unknown")
 			}
 			incompatible := false
 			switch envelope.Type {
@@ -54,7 +64,7 @@ func (r *JournalReader) CheckAuthorityDowngrade(ctx context.Context) error {
 			}
 			if incompatible {
 				rows.Close()
-				return errors.New("authority journal boundary present; use a compatible reader or restore and reconcile the pre-emission backup")
+				return downgradeRefused("authority journal boundary present; use a compatible reader or restore and reconcile the pre-emission backup")
 			}
 		}
 		err = rows.Err()
@@ -74,14 +84,14 @@ func (r *JournalReader) CheckAuthorityDowngrade(ctx context.Context) error {
 			}
 			var cursor struct{ State json.RawMessage }
 			if json.Unmarshal(raw, &cursor) != nil || len(cursor.State) == 0 {
-				return errors.New("cursor compatibility unknown")
+				return downgradeRefused("cursor compatibility unknown")
 			}
 			var snapshot struct{ Version int }
 			if json.Unmarshal(cursor.State, &snapshot) != nil || snapshot.Version > 6 {
-				return errors.New("v7 cursor boundary present; use a compatible reader or restore and reconcile the pre-emission backup")
+				return downgradeRefused("v7 cursor boundary present; use a compatible reader or restore and reconcile the pre-emission backup")
 			}
 			if _, err := queue.DecodeSnapshot(cursor.State); err != nil {
-				return errors.New("cursor compatibility unknown")
+				return downgradeRefused("cursor compatibility unknown")
 			}
 		}
 		return rows.Err()

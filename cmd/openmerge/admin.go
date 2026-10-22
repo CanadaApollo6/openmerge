@@ -20,6 +20,9 @@ func runAdmin(args []string, stdout, stderr io.Writer) int {
 	if len(args) > 0 && args[0] == "downgrade-check" {
 		return runAuthorityDowngradeCheck(args[1:], stdout, stderr)
 	}
+	if len(args) > 0 && args[0] == "authority-completion" {
+		return runAuthorityCompletion(args[1:], stdout, stderr)
+	}
 	if len(args) == 0 || args[0] != "acknowledge" {
 		_, _ = fmt.Fprintln(stderr, "Usage: openmerge admin acknowledge --queue <database queue ID> --event <outside push event ID> --sha <SHA> --operator <name> --drain-receipt <file> --backup-receipt <file>")
 		return 2

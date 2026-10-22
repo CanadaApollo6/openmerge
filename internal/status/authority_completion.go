@@ -9,7 +9,10 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
-type authorityCompletionSource interface {
+// AuthorityCompletionSource is the repository-wide completion provider. The
+// production server implements it; a Source without it answers 503, never a
+// worker-key fold of per-queue receipts.
+type AuthorityCompletionSource interface {
 	AuthorityCompletion(context.Context, store.AuthorityCompletionRequest) (store.AuthorityCompletion, error)
 }
 
@@ -33,7 +36,7 @@ func serveAuthorityCompletion(w http.ResponseWriter, r *http.Request, source Sou
 		fail(w, 400, "invalid-request", "completion requires installation, repository and expected digests")
 		return
 	}
-	provider, ok := source.(authorityCompletionSource)
+	provider, ok := source.(AuthorityCompletionSource)
 	if !ok {
 		fail(w, 503, "unavailable", "repository completion source unavailable")
 		return

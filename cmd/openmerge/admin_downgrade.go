@@ -32,8 +32,13 @@ func runAuthorityDowngradeCheck(args []string, stdout, stderr io.Writer) int {
 		defer reader.Close()
 		err = reader.CheckAuthorityDowngrade(ctx)
 	}
-	if err != nil {
+	// Neither message echoes the error: it can carry connection details.
+	if errors.Is(err, store.ErrAuthorityDowngradeRefused) {
 		_, _ = fmt.Fprintln(stderr, "authority downgrade refused; retained journal/cursors require a compatible reader or a verified pre-emission restore and ref/evidence reconciliation")
+		return 1
+	}
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "authority downgrade check unavailable; nothing was decided; retry with the operator database reachable and all workers stopped")
 		return 1
 	}
 	_, err = fmt.Fprintln(stdout, "ADR 0008 authority boundary absent; verify all other target-binary compatibility requirements before restart")

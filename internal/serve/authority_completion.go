@@ -7,8 +7,13 @@ import (
 	"strings"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
+	"github.com/CanadaApollo6/openmerge/internal/status"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
+
+// The status API only serves completion through this interface; signature drift
+// would otherwise silently turn the production endpoint into a 503.
+var _ status.AuthorityCompletionSource = (*Server)(nil)
 
 // AuthorityCompletion performs fresh discovery on both sides of the durable
 // repository snapshot. It never treats this process's worker list as exhaustive,
