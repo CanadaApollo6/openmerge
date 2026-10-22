@@ -30,31 +30,41 @@ type authorityActivation struct {
 	Read          func(context.Context) (authority.Observation, error)
 }
 
-// activateAuthority requires w.AuthorityRequired before identity I/O. Local
-// receipt checks precede read-only identity queries; the database binding precedes
-// writes and forge reads. Its adoption receipt does not install runtime hooks.
-// Receipt age and database identity are rechecked before calling the adoption
-// transaction. It can still expire while that transaction waits for the queue
-// lock or commits; this is not a transaction-time expiry guarantee.
+// activateAuthority requires explicit opt-in before identity I/O. A receipt
+// gates only an initial boundary; durable authority history ends that gate.
+// Public initial writes retain their watermark/window check in the committing
+// store transaction. Rollback never consults an emission receipt.
 func (s *Server) activateAuthority(ctx context.Context, w *worker, request authorityActivation) (store.AuthorityAdoptionReceipt, error) {
 	var zero store.AuthorityAdoptionReceipt
 	if !w.AuthorityRequired {
 		return zero, errors.New("internal authority activation opt-in required")
 	}
-	// Reject locally invalid attestations before opening the identity transaction.
-	if err := request.Receipt.ValidateForBinary(request.Receipt.DatabaseIdentity, time.Now().UTC(), request.ReceiptMaxAge, authority.RunningBinaryRevision()); err != nil {
+	// Rollback skips the receipt but remains bound to the configured database.
+	// Ordinary GitHub configuration with no authority pin never enters here.
+	if w.publicAuthority && s.options.Authority != nil && s.options.Authority.DatabaseIdentity != "" {
+		identity, err := s.store.DatabaseIdentity(ctx)
+		if err != nil {
+			return zero, err
+		}
+		if identity != s.options.Authority.DatabaseIdentity {
+			return zero, errors.New("authority configured database identity mismatch")
+		}
+	}
+	boundary, err := s.store.AuthorityBoundaryExists(ctx)
+	if err != nil {
 		return zero, err
 	}
+	needsReceipt := request.Pin.Authority != authority.GitHub && !boundary
 	validateReceipt := func() error {
+		if !needsReceipt {
+			return nil
+		}
 		identity, err := s.store.DatabaseIdentity(ctx)
 		if err != nil {
 			return err
 		}
 		if err := request.Receipt.ValidateForBinary(identity, time.Now().UTC(), request.ReceiptMaxAge, authority.RunningBinaryRevision()); err != nil {
-			return err
-		}
-		if w.publicAuthority {
-			return s.store.CheckAuthorityEmissionBackup(ctx, request.Receipt.Reconciliation.BackupWatermark)
+			return &emissionReceiptFailure{err: err}
 		}
 		return nil
 	}
@@ -89,15 +99,28 @@ func (s *Server) activateAuthority(ctx context.Context, w *worker, request autho
 		if err := request.Recheck(ctx); err != nil {
 			return zero, err
 		}
-		if err := request.Receipt.RecheckEmissionWindowForBinary(time.Now().UTC(), request.ReceiptMaxAge, authority.RunningBinaryRevision()); err != nil {
-			return zero, err
+		if needsReceipt {
+			if err := request.Receipt.RecheckEmissionWindowForBinary(time.Now().UTC(), request.ReceiptMaxAge, authority.RunningBinaryRevision()); err != nil {
+				return zero, &emissionReceiptFailure{err: err}
+			}
 		}
+	}
+	var gate *store.AuthorityEmissionGate
+	var emission []store.AuthorityEmissionGate
+	if needsReceipt && w.publicAuthority {
+		gate = &store.AuthorityEmissionGate{Watermark: request.Receipt.Reconciliation.BackupWatermark, Validate: func() error {
+			if err := request.Receipt.RecheckEmissionWindowForBinary(time.Now().UTC(), request.ReceiptMaxAge, authority.RunningBinaryRevision()); err != nil {
+				return &emissionReceiptFailure{err: err}
+			}
+			return nil
+		}}
+		emission = append(emission, *gate)
 	}
 	var receipt store.AuthorityAdoptionReceipt
 	if request.Config != nil {
-		receipt, err = s.store.ApplyAuthorityConfig(ctx, w.id, *request.Config, request.Pin, request.DraftID, basis, started, at, request.Input, fresh, request.Historical...)
+		receipt, err = s.store.ApplyAuthorityConfigWithEmissionGate(ctx, w.id, *request.Config, request.Pin, request.DraftID, basis, started, at, request.Input, fresh, gate, request.Historical...)
 	} else {
-		receipt, err = s.store.AdoptAuthorityPin(ctx, w.id, request.Pin, request.DraftID, basis, started, at, request.Input, fresh)
+		receipt, err = s.store.AdoptAuthorityPin(ctx, w.id, request.Pin, request.DraftID, basis, started, at, request.Input, fresh, emission...)
 	}
 	if err != nil {
 		return zero, err
@@ -133,6 +156,10 @@ func (s *Server) prepareAuthorityLifecycle(ctx context.Context, w *worker, state
 	candidate := w.configCandidate
 	resolved, err := w.resolveAuthorityLifecycle(ctx, candidate, branch, tip)
 	if err != nil {
+		var receiptErr *emissionReceiptFailure
+		if errors.As(err, &receiptErr) {
+			return nil, err
+		}
 		return nil, &authorityObservationReadFailure{err: err}
 	}
 	mode := candidate.Authority.Mode.Normalized()
@@ -196,16 +223,6 @@ func (s *Server) prepareAuthorityLifecycle(ctx context.Context, w *worker, state
 		}
 	}
 
-	if w.publicAuthority && mode == authority.GitHub {
-		if s.options.Authority.Receipt == nil {
-			return nil, errors.New("authority rollback receipt unavailable")
-		}
-		request.Receipt, err = s.options.Authority.Receipt()
-		if err != nil {
-			return nil, errors.New("authority rollback receipt unavailable")
-		}
-		request.ReceiptMaxAge = s.options.Authority.ReceiptMaxAge
-	}
 	request.Pin = queue.PolicyAuthorityApplied{GoverningCommit: tip, EffectiveDigest: digest, Authority: mode, DefaultBranch: branch, CoverageDigest: coverage}
 	if mode == authority.OpenMerge {
 		installation, err := strconv.ParseInt(w.Key.Installation, 10, 64)

@@ -46,7 +46,7 @@ type VerificationReceipt struct {
 // CommitWriteRestrictionVerification takes all queue locks in canonical queue-ID
 // order and commits every record in one transaction. Network reads and nonce
 // generation have already finished. The existing queue/dedupe index owns retries.
-func (s *Store) CommitWriteRestrictionVerification(ctx context.Context, records []VerificationRecord) ([]VerificationReceipt, error) {
+func (s *Store) CommitWriteRestrictionVerification(ctx context.Context, records []VerificationRecord, emission ...AuthorityEmissionGate) ([]VerificationReceipt, error) {
 	if len(records) == 0 || len(records) > 1000 {
 		return nil, errors.New("invalid verification target count")
 	}
@@ -72,6 +72,11 @@ func (s *Store) CommitWriteRestrictionVerification(ctx context.Context, records 
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		for _, r := range records {
 			if err := s.lockQueue(ctx, tx, r.QueueID); err != nil {
+				return err
+			}
+		}
+		for _, gate := range emission {
+			if err := checkAuthorityEmission(ctx, tx, gate); err != nil {
 				return err
 			}
 		}
@@ -360,6 +365,16 @@ func freshAuthorityAdoption(state queue.State, basis uint64, readStarted, readAt
 // are inserted in one transaction under the queue lock, so invalid source
 // evidence and binding errors leave neither event behind.
 func (s *Store) ApplyAuthorityConfig(ctx context.Context, q QueueID, config queue.ConfigApplied, pin queue.PolicyAuthorityApplied, draftID int64, basis uint64, readStarted, readAt time.Time, in forge.WriteRestrictionInput, fresh authority.Observation, historical ...queue.ConfigApplied) (AuthorityAdoptionReceipt, error) {
+	return s.applyAuthorityConfig(ctx, q, config, pin, draftID, basis, readStarted, readAt, in, fresh, nil, historical...)
+}
+
+// ApplyAuthorityConfigWithEmissionGate protects an initial boundary in the same
+// transaction as its config/pin pair. Rollback callers never supply this gate.
+func (s *Store) ApplyAuthorityConfigWithEmissionGate(ctx context.Context, q QueueID, config queue.ConfigApplied, pin queue.PolicyAuthorityApplied, draftID int64, basis uint64, readStarted, readAt time.Time, in forge.WriteRestrictionInput, fresh authority.Observation, gate *AuthorityEmissionGate, historical ...queue.ConfigApplied) (AuthorityAdoptionReceipt, error) {
+	return s.applyAuthorityConfig(ctx, q, config, pin, draftID, basis, readStarted, readAt, in, fresh, gate, historical...)
+}
+
+func (s *Store) applyAuthorityConfig(ctx context.Context, q QueueID, config queue.ConfigApplied, pin queue.PolicyAuthorityApplied, draftID int64, basis uint64, readStarted, readAt time.Time, in forge.WriteRestrictionInput, fresh authority.Observation, gate *AuthorityEmissionGate, historical ...queue.ConfigApplied) (AuthorityAdoptionReceipt, error) {
 	var receipt AuthorityAdoptionReceipt
 	if err := authorityConfigPair(config, pin); err != nil {
 		return receipt, err
@@ -378,6 +393,11 @@ func (s *Store) ApplyAuthorityConfig(ctx context.Context, q QueueID, config queu
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		if err := s.lockQueue(ctx, tx, q); err != nil {
 			return err
+		}
+		if gate != nil {
+			if err := checkAuthorityEmission(ctx, tx, *gate); err != nil {
+				return err
+			}
 		}
 		var k QueueKey
 		if err := tx.QueryRow(ctx, `SELECT installation,repository,base,lane FROM queues WHERE id=$1`, q).Scan(&k.Installation, &k.Repository, &k.BaseBranch, &k.Lane); err != nil {
@@ -483,7 +503,7 @@ func (s *Store) ApplyAuthorityConfig(ctx context.Context, q QueueID, config queu
 // incomplete evidence leaves activation unverified. Adoption and the authority
 // pin are one event/transaction. Repeated per-operation calls append nothing and
 // return before replaying the journal or looking up a proposed verification.
-func (s *Store) AdoptAuthorityPin(ctx context.Context, q QueueID, pin queue.PolicyAuthorityApplied, draftID int64, basis uint64, readStarted, readAt time.Time, in forge.WriteRestrictionInput, fresh authority.Observation) (AuthorityAdoptionReceipt, error) {
+func (s *Store) AdoptAuthorityPin(ctx context.Context, q QueueID, pin queue.PolicyAuthorityApplied, draftID int64, basis uint64, readStarted, readAt time.Time, in forge.WriteRestrictionInput, fresh authority.Observation, emission ...AuthorityEmissionGate) (AuthorityAdoptionReceipt, error) {
 	var receipt AuthorityAdoptionReceipt
 	if pin.OpenMerge == nil || pin.OpenMerge.Activation != nil {
 		return receipt, errors.New("expected an unadopted openmerge pin")
@@ -494,6 +514,11 @@ func (s *Store) AdoptAuthorityPin(ctx context.Context, q QueueID, pin queue.Poli
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		if err := s.lockQueue(ctx, tx, q); err != nil {
 			return err
+		}
+		for _, gate := range emission {
+			if err := checkAuthorityEmission(ctx, tx, gate); err != nil {
+				return err
+			}
 		}
 		var k QueueKey
 		if err := tx.QueryRow(ctx, `SELECT installation,repository,base,lane FROM queues WHERE id=$1`, q).Scan(&k.Installation, &k.Repository, &k.BaseBranch, &k.Lane); err != nil {

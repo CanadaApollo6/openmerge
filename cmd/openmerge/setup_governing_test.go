@@ -86,7 +86,7 @@ func TestSetupImportGoverningEvidenceCannotBeAccepted(t *testing.T) {
 			var out, stderr bytes.Buffer
 			args := []string{"setup", "import-protection", "--repo", "acme/project", "--json"}
 			code := run(args, &out, &stderr)
-			if code != 0 && code != 1 {
+			if code != 1 {
 				t.Fatal("unexpected import exit", code)
 			}
 			if bytes.Contains(stderr.Bytes(), []byte("ghs_SECRET")) || bytes.Contains(out.Bytes(), []byte("ghs_SECRET")) {
@@ -101,6 +101,10 @@ func TestSetupImportGoverningEvidenceCannotBeAccepted(t *testing.T) {
 			var report github.ProtectionReport
 			if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 				t.Fatalf("%v: %s", err, &stderr)
+			}
+			// Non-blocking activation guidance cannot make an incomplete import ready.
+			if report.Ready {
+				t.Fatalf("import readiness=%v for %s", report.Ready, failure)
 			}
 			if governingReads == 0 || report.GoverningCommit != commit {
 				t.Fatal("governing evidence missing")

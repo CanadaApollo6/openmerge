@@ -27,11 +27,12 @@ type AuthorityTarget struct {
 }
 
 // AuthorityRuntime enables the completed lifecycle for reviewed targets only.
-// Receipt is reloaded on each resolution so an expired or removed file refuses.
+// Receipt gates only the first authority-boundary event, never steady-state operation.
 type AuthorityRuntime struct {
-	Targets       []AuthorityTarget
-	Receipt       func() (authority.EmissionReceipt, error)
-	ReceiptMaxAge time.Duration
+	DatabaseIdentity string
+	Targets          []AuthorityTarget
+	Receipt          func() (authority.EmissionReceipt, error)
+	ReceiptMaxAge    time.Duration
 }
 
 // Validate checks a reviewed runtime plan without reading receipts or the forge.
@@ -96,12 +97,32 @@ func (s *Server) publicAuthorityTarget(target Target) Target {
 		if target.AuthorityCompletionGit == nil || target.Key.Lane != "" || runtime.Receipt == nil || plan.Input.Binding.DefaultBranch != branch || candidate.Authority.BreakGlass == nil || !reflect.DeepEqual(*candidate.Authority.BreakGlass, plan.Input.Binding.DeclaredActor) {
 			return authorityLifecycleResolution{}, errors.New("authority reviewed plan differs from current policy")
 		}
-		receipt, err := runtime.Receipt()
-		if err != nil {
-			return authorityLifecycleResolution{}, errors.New("authority emission receipt unavailable")
+		if runtime.DatabaseIdentity != "" {
+			identity, err := s.store.DatabaseIdentity(ctx)
+			if err != nil {
+				return authorityLifecycleResolution{}, err
+			}
+			if identity != runtime.DatabaseIdentity {
+				return authorityLifecycleResolution{}, errors.New("authority configured database identity mismatch")
+			}
 		}
-		if err := receipt.ValidateForBinary(receipt.DatabaseIdentity, time.Now(), runtime.ReceiptMaxAge, authority.RunningBinaryRevision()); err != nil {
+		var receipt authority.EmissionReceipt
+		boundary, err := s.store.AuthorityBoundaryExists(ctx)
+		if err != nil {
 			return authorityLifecycleResolution{}, err
+		}
+		if !boundary {
+			receipt, err = runtime.Receipt()
+			if err != nil {
+				return authorityLifecycleResolution{}, &emissionReceiptFailure{err: err}
+			}
+			identity, err := s.store.DatabaseIdentity(ctx)
+			if err != nil {
+				return authorityLifecycleResolution{}, err
+			}
+			if err := receipt.ValidateForBinary(identity, time.Now(), runtime.ReceiptMaxAge, authority.RunningBinaryRevision()); err != nil {
+				return authorityLifecycleResolution{}, &emissionReceiptFailure{err: err}
+			}
 		}
 		ids, ok := target.Driver.(forge.IdentityReader)
 		if !ok {
@@ -123,12 +144,15 @@ func (s *Server) publicAuthorityTarget(target Target) Target {
 		}
 		// Live branch names are interpretation inputs, even with an unchanged binding.
 		repo, err := s.authorityCompletionRepository(ctx, store.AuthorityCompletionRequest{Installation: target.Key.Installation, Repository: target.Key.Repository})
-		if err != nil || repo.Branches == nil {
+		if err != nil {
+			return authorityLifecycleResolution{}, &sanitizedAuthorityInventoryError{cause: err}
+		}
+		if repo.Branches == nil {
 			return authorityLifecycleResolution{}, errors.New("authority branch inventory unavailable")
 		}
 		branches, err := repo.Branches(ctx)
 		if err != nil {
-			return authorityLifecycleResolution{}, errors.New("authority branch inventory unavailable")
+			return authorityLifecycleResolution{}, &sanitizedAuthorityInventoryError{cause: err}
 		}
 		coverage, err := authority.CompileRefCoverage(branch, candidate.BaseSelectors())
 		if err != nil {
@@ -185,3 +209,16 @@ func (s *Server) publicAuthorityRequest(w *worker) store.AuthorityCompletionRequ
 	}
 	return request
 }
+
+// Preserve quota and cancellation identity without exposing forge diagnostics.
+type sanitizedAuthorityInventoryError struct{ cause error }
+
+func (e *sanitizedAuthorityInventoryError) Error() string {
+	return "authority branch inventory unavailable"
+}
+func (e *sanitizedAuthorityInventoryError) Unwrap() error { return e.cause }
+
+type emissionReceiptFailure struct{ err error }
+
+func (e *emissionReceiptFailure) Error() string { return "emission receipt stale/invalid" }
+func (e *emissionReceiptFailure) Unwrap() error { return e.err }

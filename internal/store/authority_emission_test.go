@@ -1,12 +1,14 @@
 package store
 
 import (
+	"errors"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"net"
 	"os"
 	"strings"
 	"testing"
 	"testing/synctest"
+	"time"
 )
 
 func TestAuthorityEmissionLiveBackupWatermark(t *testing.T) {
@@ -25,6 +27,16 @@ func TestAuthorityEmissionLiveBackupWatermark(t *testing.T) {
 		if err := s.CheckAuthorityEmissionBackup(t.Context(), watermark); err == nil || !strings.Contains(err.Error(), "watermark") {
 			t.Fatalf("stale live backup accepted: %v", err)
 		}
+		// A legacy acknowledgement cannot waive the stronger authority gate.
+		appendEvents(t, s, id, queue.OutsidePushAcknowledged{SourceEventID: watermark, SHA: "outside", Operator: "operator", At: time.Now().UTC()})
+		boundary, err := s.AuthorityBoundaryExists(t.Context())
+		must(t, err)
+		if boundary {
+			t.Fatal("legacy acknowledgement waived authority emission receipt")
+		}
+		if err := s.CheckAuthorityEmissionBackup(t.Context(), watermark); err == nil {
+			t.Fatal("acknowledgement waived stale backup watermark")
+		}
 		// A real retained boundary means subsequent compatible emissions use the
 		// original tested pre-emission backup, rather than inventing a newer one.
 		raw, err := os.ReadFile("../queue/testdata/wire/v1/event_write_restriction_verified.json")
@@ -33,5 +45,77 @@ func TestAuthorityEmissionLiveBackupWatermark(t *testing.T) {
 		must(t, err)
 		appendEvents(t, s, id, event)
 		must(t, s.CheckAuthorityEmissionBackup(t.Context(), watermark))
+	})
+}
+
+func TestAuthorityEmissionReceiptBoundary(t *testing.T) {
+	_, dnsErr := net.LookupHost("localhost")
+	must(t, dnsErr)
+	synctest.Test(t, func(t *testing.T) {
+		s := newStore(t)
+		k, v, _ := verificationFixture(t)
+		q, err := s.EnsureQueue(t.Context(), k)
+		must(t, err)
+		stale := errors.New("emission receipt stale/invalid")
+		calls := 0
+		gate := AuthorityEmissionGate{Watermark: 0, Validate: func() error { calls++; return stale }}
+		if _, err := s.CommitWriteRestrictionVerification(t.Context(), []VerificationRecord{{q, v}}, gate); !errors.Is(err, stale) {
+			t.Fatalf("first emission ignored invalid receipt: %v", err)
+		}
+		events, err := s.EventsAfter(t.Context(), q, 0)
+		must(t, err)
+		if len(events) != 0 || calls != 1 {
+			t.Fatal("invalid first receipt emitted event", len(events), calls)
+		}
+		gate.Validate = func() error { calls++; return nil }
+		_, err = s.CommitWriteRestrictionVerification(t.Context(), []VerificationRecord{{q, v}}, gate)
+		must(t, err)
+		v.Nonce = "after-boundary"
+		gate.Watermark = -1
+		gate.Validate = func() error { t.Fatal("post-boundary emission consulted receipt"); return stale }
+		_, err = s.CommitWriteRestrictionVerification(t.Context(), []VerificationRecord{{q, v}}, gate)
+		must(t, err)
+	})
+}
+
+func TestAuthorityEmissionSerializesAllQueueAppends(t *testing.T) {
+	_, err := net.LookupHost("localhost")
+	must(t, err)
+	synctest.Test(t, func(t *testing.T) {
+		s := newStore(t)
+		k, v, _ := verificationFixture(t)
+		q, err := s.EnsureQueue(t.Context(), k)
+		must(t, err)
+		k.BaseBranch = "release/other"
+		other, err := s.EnsureQueue(t.Context(), k)
+		must(t, err)
+		appended := make(chan error, 1)
+		gate := AuthorityEmissionGate{Watermark: 0, Validate: func() error {
+			go func() {
+				_, err := s.Append(t.Context(), other, []queue.Event{queue.BaseMoved{SHA: "concurrent"}}, "")
+				appended <- err
+			}()
+			// Observe the actual PostgreSQL lock wait, not wall-clock scheduling. The
+			// contender can finish freely when the global lock is removed by mutation.
+			for i := 0; i < 10000; i++ {
+				select {
+				case err := <-appended:
+					t.Fatalf("other queue append escaped first-emission lock: %v", err)
+				default:
+				}
+				var blocked bool
+				err := s.pool.QueryRow(t.Context(), `SELECT EXISTS (SELECT 1 FROM pg_locks l WHERE l.relation='events'::regclass AND l.mode='RowExclusiveLock' AND NOT l.granted)`).Scan(&blocked)
+				if err != nil {
+					return err
+				}
+				if blocked {
+					return nil
+				}
+			}
+			return errors.New("other queue append never reached global lock")
+		}}
+		_, err = s.CommitWriteRestrictionVerification(t.Context(), []VerificationRecord{{q, v}}, gate)
+		must(t, err)
+		must(t, <-appended)
 	})
 }

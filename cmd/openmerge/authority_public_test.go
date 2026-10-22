@@ -29,6 +29,11 @@ import (
 )
 
 func TestPublicAuthoritySetupVerifyConsultsReceipt(t *testing.T) {
+	_, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	stop()
+	if _, err := net.LookupHost("localhost"); err != nil {
+		t.Fatal(err)
+	}
 	previous := authority.BuildRevision
 	authority.BuildRevision = "public-command-test"
 	t.Cleanup(func() { authority.BuildRevision = previous })
@@ -42,44 +47,63 @@ func TestPublicAuthoritySetupVerifyConsultsReceipt(t *testing.T) {
 	t.Cleanup(func() { http.DefaultTransport = original })
 	for _, kind := range []string{"binary", "expired", "inventory", "reconciliation", "backup"} {
 		t.Run(kind, func(t *testing.T) {
-			backup := filepath.Join(t.TempDir(), "backup")
-			if err := os.WriteFile(backup, []byte("public offline backup"), 0600); err != nil {
-				t.Fatal(err)
-			}
-			now := time.Now().UTC()
-			r := authority.EmissionReceipt{DatabaseIdentity: "unused-test-identity", BinaryRevision: revision, DrainedWorkers: []string{"worker"}, DrainedAt: now.Add(-time.Minute), RestoreTestedAt: now, BackupPath: backup, BackupSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("public offline backup"))), CompatibleReadersOnly: true}
-			completeEmissionOperations(&r)
-			diagnostic := ""
-			switch kind {
-			case "binary":
-				r.BinaryRevision = "wrong"
-				diagnostic = "does not match running binary"
-			case "expired":
-				r.DrainedAt = now.Add(-48 * time.Hour)
-				diagnostic = "stale emission receipt"
-			case "inventory":
-				r.Inventory = nil
-				diagnostic = "complete all-host stopped worker inventory"
-			case "reconciliation":
-				r.Reconciliation = nil
-				diagnostic = "reconciliation receipt required"
-			case "backup":
-				r.BackupPath += ".missing"
-				diagnostic = "first-emission backup unavailable"
-			}
-			raw, err := json.Marshal(r)
-			if err != nil {
-				t.Fatal(err)
-			}
-			path := filepath.Join(t.TempDir(), "receipt.json")
-			if err := os.WriteFile(path, raw, 0600); err != nil {
-				t.Fatal(err)
-			}
-			var out, stderr bytes.Buffer
-			code := run([]string{"setup", "rulesets", "--authority", "openmerge", "--verify", "--repo", "owner/repo", "--app-id", "5383059", "--operator", "operator", "--verification-plan", "must-not-read", "--emission-receipt", path, "--database-url", "postgres://unused:unused@127.0.0.1:1/unused?sslmode=disable"}, &out, &stderr)
-			if code != 1 || !strings.Contains(stderr.String(), diagnostic) || out.Len() != 0 || calls != 0 {
-				t.Fatalf("public setup --verify skipped receipt refusal: exit=%d calls=%d stderr=%s", code, calls, &stderr)
-			}
+			synctest.Test(t, func(t *testing.T) {
+				rawURL := publicVerificationDatabaseURL(t)
+				db, err := store.Open(t.Context(), rawURL)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(db.Close)
+				q, err := db.EnsureQueue(t.Context(), store.QueueKey{Installation: "7", Repository: "owner/repo", BaseBranch: "main"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := db.Append(t.Context(), q, []queue.Event{queue.BaseMoved{SHA: "receipt-genesis"}}, ""); err != nil {
+					t.Fatal(err)
+				}
+				identity, err := db.DatabaseIdentity(t.Context())
+				if err != nil {
+					t.Fatal(err)
+				}
+				backup := filepath.Join(t.TempDir(), "backup")
+				if err := os.WriteFile(backup, []byte("public offline backup"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				now := time.Now().UTC()
+				r := authority.EmissionReceipt{DatabaseIdentity: identity, BinaryRevision: revision, DrainedWorkers: []string{"worker"}, DrainedAt: now.Add(-time.Minute), RestoreTestedAt: now, BackupPath: backup, BackupSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("public offline backup"))), CompatibleReadersOnly: true}
+				completeEmissionOperations(&r)
+
+				switch kind {
+				case "binary":
+					r.BinaryRevision = "wrong"
+
+				case "expired":
+					r.DrainedAt = now.Add(-48 * time.Hour)
+
+				case "inventory":
+					r.Inventory = nil
+
+				case "reconciliation":
+					r.Reconciliation = nil
+
+				case "backup":
+					r.BackupPath += ".missing"
+
+				}
+				raw, err := json.Marshal(r)
+				if err != nil {
+					t.Fatal(err)
+				}
+				path := filepath.Join(t.TempDir(), "receipt.json")
+				if err := os.WriteFile(path, raw, 0600); err != nil {
+					t.Fatal(err)
+				}
+				var out, stderr bytes.Buffer
+				code := run([]string{"setup", "rulesets", "--authority", "openmerge", "--verify", "--repo", "owner/repo", "--app-id", "5383059", "--operator", "operator", "--verification-plan", "must-not-read", "--emission-receipt", path, "--database-url", rawURL}, &out, &stderr)
+				if code != 1 || !strings.Contains(stderr.String(), "emission receipt stale/invalid") || out.Len() != 0 || calls != 0 {
+					t.Fatalf("public setup --verify skipped receipt refusal: exit=%d calls=%d stderr=%s", code, calls, &stderr)
+				}
+			})
 		})
 	}
 }
@@ -181,4 +205,37 @@ func TestPublicAuthoritySetupVerifyRequiresLiveBackupWatermark(t *testing.T) {
 			t.Fatalf("public setup --verify skipped live backup gate: exit=%d calls=%d stderr=%s", code, calls, &stderr)
 		}
 	})
+}
+
+// Each CLI invocation gets an isolated schema inside the caller's bubble.
+func publicVerificationDatabaseURL(t *testing.T) string {
+	t.Helper()
+	raw := os.Getenv("OPENMERGE_TEST_DATABASE_URL")
+	if raw == "" {
+		t.Skip("set OPENMERGE_TEST_DATABASE_URL")
+	}
+	conn, err := pgx.Connect(t.Context(), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nonce [12]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		t.Fatal(err)
+	}
+	schema := "public_receipt_" + hex.EncodeToString(nonce[:])
+	if _, err := conn.Exec(t.Context(), "CREATE SCHEMA "+pgx.Identifier{schema}.Sanitize()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = conn.Exec(context.Background(), "DROP SCHEMA "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
+		_ = conn.Close(context.Background())
+	})
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := u.Query()
+	query.Set("search_path", schema)
+	u.RawQuery = query.Encode()
+	return u.String()
 }

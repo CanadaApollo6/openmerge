@@ -180,11 +180,6 @@ func (s *Server) authorityPushOptions(ctx context.Context, w *worker, operation 
 	}
 	id, repo, base, logger := w.id, w.Key.Repository, w.Key.BaseBranch, s.options.Logger
 	guard := forge.PushValidityGuard(func(ctx context.Context, c forge.PushValidationContext) error {
-		if w.publicAuthority {
-			if err := s.RequireAuthorityActivation(ctx, s.publicAuthorityRequest(w)); err != nil {
-				return err
-			}
-		}
 		// Never close over a cached state: reload errors propagate on every call.
 		current, _, err := s.store.Load(ctx, id)
 		if err != nil {
@@ -213,7 +208,17 @@ func (s *Server) authorityPushOptions(ctx context.Context, w *worker, operation 
 		}
 		return nil
 	})
-	return forge.PushOptions{AuthorityRequired: true, Context: frozen, Guard: guard, Warn: func(warnings []forge.PushWarning) {
+	var dispatchGuard forge.PushValidityGuard
+	if w.publicAuthority {
+		dispatchGuard = guard
+		guard = func(ctx context.Context, c forge.PushValidationContext) error {
+			if err := s.RequireAuthorityActivation(ctx, s.publicAuthorityRequest(w)); err != nil {
+				return err
+			}
+			return dispatchGuard(ctx, c)
+		}
+	}
+	return forge.PushOptions{AuthorityRequired: true, Context: frozen, Guard: guard, DispatchGuard: dispatchGuard, Warn: func(warnings []forge.PushWarning) {
 		for _, warning := range warnings {
 			logger.Warn("App bypasses pull-request policy", "repository", repo, "base", base, "protection", warning.ProtectionID, "ref", warning.Ref, "rule", warning.Rule)
 		}

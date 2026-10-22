@@ -201,7 +201,7 @@ constructors remain opted out; each is independently safe at that boundary.
    2a/2b/2c/2d row landed with equality evidence. Add tests that **fail unless**
    the completion-signal API and pre-switch `--verify`/drain receipt refusal
    exist **and are consulted** by public activation; absent/incomplete propagation
-   or missing/invalid receipts must refuse activation. Exercise `AuthorityCompletion.RequireComplete`, the actual repository-wide source (including missing/stale discovery), and the actual `setup --verify` / `EmissionReceipt.ValidateForBinary` refusal, with spies/mutations proving each was consulted; per-queue adoption receipts cannot substitute. Include the #138 recovery rows below. Only then remove the
+   or missing/invalid receipts before the first boundary must refuse emission. Exercise `AuthorityCompletion.RequireComplete`, the actual repository-wide source (including missing/stale discovery), and the actual `setup --verify` / `EmissionReceipt.ValidateForBinary` refusal, with spies/mutations proving each was consulted; per-queue adoption receipts cannot substitute. Include the #138 recovery rows below. Only then remove the
    barrier. Retain deployment Hold until dogfood period B drains.
 
 The real organization switch remains **PR 11**, in the sandbox with the owner.
@@ -276,12 +276,15 @@ Historically, 9a emitted no new events or v7 state. 9b retained the public barri
 internal activation tests exercise events. Before any 9c deployment, drain every old
 worker after period B, retain inventory and a tested pre-emission backup receipt,
 and verify the attested emitting binary. This includes operator `--verify` before
-config activation. The internal activation caller already validates emission receipt max-age and attested `BinaryRevision` in
-9b-ii-1; 9b-ii-2a binds it to the configured database. The existing
-`setup --verify` command gate is separate. Local receipt validation occurs before identity I/O; server-side identity and
-receipt age are checked before forge reads and again before calling adoption; a receipt can still expire while the adoption
-transaction waits for the queue lock or commits. This is not a transaction-time
-expiry guarantee.
+config activation. Receipt age, binary revision, backup hash and drain/restore
+attestations gate only the first authority-boundary event. Proposed verification
+is already such an event. The writing transaction holds the global event-table
+lock while it checks the absence of a boundary and live backup watermark, then
+commits the first event. No append from another queue can cross that check.
+After the boundary, steady-state reconciliation, tip re-pins, re-enable and
+subsequent verification require no receipt; configured database identity remains
+bound. Rollback to GitHub never requires a receipt. Before the boundary, invalid
+receipts report `emission receipt stale/invalid`.
 After new events or v7 cursors, rollback to `github` is not a
 binary downgrade: use a compatible reader or stop workers, restore the verified
 backup and reconcile subsequent real refs/evidence before resuming. Keep outside
@@ -303,8 +306,12 @@ switch. Require complete inherited, repository and classic protection visibility
 including targets, rules and bypass actors. Before the first authority-boundary
 event, live global `max(events.id) == BackupWatermark` is required rather than an
 operator attestation alone. The actual pre-switch `setup --verify` path checks
-this and rejects invalid/expired receipts. Final public lifecycle writes recheck
-the live governing name/tip before emission.
+this atomically in the first proposed-verification transaction and rejects
+invalid/expired receipts before that boundary. Final public lifecycle writes
+recheck the live governing name/tip before emission. The final push guard repeats
+the durable repository-wide completion snapshot after its last outbound read and
+requires an identical verdict. The database-check-to-remote-push interval remains
+an irreducible window, as with other immediate-before-write guards.
 
 For input drift restore GitHub protection first, roll back to GitHub authority,
 record fresh proposed verification for current inputs, update the runtime plan

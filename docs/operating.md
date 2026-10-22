@@ -1871,9 +1871,9 @@ clone/restore preserving the system identifier, database/schema OIDs and genesis
 or a later history fork sharing genesis, cannot be distinguished by these reads.
 The receipt remains an operator attestation, not authenticated proof of drainage.
 Identity is checked before seeing reads and again before internal adoption;
-endpoint replacement or receipt expiry during adoption is not transactionally
-excluded. Production authority activation remains disabled by the public barrier
-and unset `AuthorityRequired` opt-in.
+endpoint replacement during adoption is not transactionally excluded. Public
+activation requires the reviewed production opt-in described below and remains
+under the deployment Hold.
 
 ### Authority governing acquisition (Hold)
 
@@ -1882,7 +1882,8 @@ classic branch protection and every applicable repository or inherited ruleset's
 targets, rules and bypass lists. Administration read alone does not guarantee
 inherited bypass visibility; the owning organization may need to grant access.
 Hidden evidence blocks a new binding and cannot be waived with `--accept`.
-Public activation and production opt-in remain unavailable in this Hold slice.
+Public activation requires the reviewed production opt-in below. Deployment
+remains on Hold until dogfood period B drains.
 
 Setup and verification fail closed if the branch inventory exceeds ten pages
 of 100 branches, or GitHub truncates its recursive tree response. Reduce the
@@ -1984,14 +1985,30 @@ For example, the additional receipt fields are:
 ```
 
 Use the same operator connection for `--print-database-identity` and `--verify`.
-Receipt age, attested emitting binary and database identity are checked before
-forge reads. Verification rechecks identity/backup bytes before the final governing
-ref check, then rechecks age/binary without I/O immediately before the store call;
-adoption retains its existing immediate pre-call receipt check.
-A receipt **can expire while that transaction waits for queue locks or commits**;
-there is no transaction-time expiry guarantee. Keep the stopped window bounded,
-renew stale receipts by repeating the procedure, and do not treat command success
-as proof that a stopped remote process cannot restart.
+Before the first authority-boundary event, receipt age, the attested binary,
+backup hash and database identity are checked before forge reads. The first
+proposed verification is itself a boundary event. Its commit checks the live
+global watermark and absence of a prior boundary inside the writing transaction,
+serialized against event appends in every queue. Keep the stopped window bounded;
+command success cannot prove that a stopped remote process cannot restart.
+
+The first-emission transaction takes `SHARE ROW EXCLUSIVE` on `events` after
+its queue locks. Every PostgreSQL `INSERT` takes `ROW EXCLUSIVE`, so this lock
+blocks appends from all queues without adding work to ordinary append paths.
+It also serializes competing first emitters. After any lock wait, a fresh
+READ COMMITTED statement checks the boundary again and reads `max(id)` through
+the existing primary-key index. The boundary query uses
+`EXISTS (SELECT 1 ... WHERE type = ANY(...) LIMIT 1)` and never reads JSONB.
+There is no type-only index in the current schema. Proving absence before first
+emission requires scanning the discriminator; after a boundary exists, the
+query stops at its first match. This avoids the former whole-journal aggregate
+and JSON detoast without introducing a migration for the initial switch.
+
+Once a boundary event exists, steady-state reconciliation, tip-move re-pins,
+re-enable and subsequent verification require no emission receipt. The configured
+database identity binding remains in force. Rollback to GitHub never requires a
+receipt. Before the boundary, a missing, expired or invalid receipt reports
+`emission receipt stale/invalid`; repeat drain, backup and restore testing.
 
 Consult the independent authenticated GET endpoint before removing redundant
 protection:
@@ -2035,9 +2052,10 @@ them. Retain protection until a complete aggregate discovery proof is supported;
 repeating per-installation queries is not a substitute.
 
 The API freshly resolves installation/repository access, reads the live default
-branch/tip and full branch inventory, folds all registered partitions in one
-read-only repeatable-read database snapshot, then rechecks branch inventory and
-default ref. It requires matching digests, authenticated adoption, verified
+branch/tip and full branch inventory, folds all registered partitions in a
+read-only repeatable-read database snapshot, rechecks branch inventory and
+default ref, then takes a second durable repository-wide snapshot. Both
+snapshots must match. It requires matching digests, authenticated adoption, verified
 current protection evidence and current selected discovery inputs. A newly
 selected branch blocks completion before registration and while its siblings
 still carry old ExpectedRefs. A changed governing tip or default-branch name blocks completion until
@@ -2048,7 +2066,31 @@ later discovery/policy changes. Freeze configuration/branch changes during the
 operator switch, consult it again immediately before protection removal, and
 recheck after each resumable partial step. Missing/incomplete propagation means
 retain protection and retry normal reconciliation. Public activation requires the reviewed production opt-in below; the final
-push guard independently consumes the same fresh repository-wide completion gate.
+push guard independently consumes the same fresh repository-wide completion gate
+inside the Git session lock. Its final database check follows the last outbound
+read and immediately precedes the push. A database change between that check and
+the remote Git push remains possible, just as with other guards that recheck
+immediately before a write. Freeze changes during the switch; this check is not
+a distributed lease.
+
+The final guard's discovery budget per push is one installation listing, one
+repository listing per active installation, two branch listings, two default
+branch reads and two Git ref reads. It also takes two durable completion
+snapshots. The early dispatch check performs no discovery. These are logical
+calls; each paginated listing can issue several HTTP requests. The resolver adds
+one installation listing, repository listings and one branch listing per
+reconcile to detect selected-ref changes even at an unchanged governing tip.
+Normal configuration, identity and protection reads remain separate costs.
+
+For a large installation, budget both pagination and the number of active
+queues. With `I` active installations and one page per listing, completion alone
+costs `I + 5` REST requests and two Git ref reads per push; resolver discovery
+adds `I + 2` REST requests per reconcile. Multiply by pushes and reconciles in
+the quota window, then include normal protection/identity traffic and API
+pagination. Retain redundant protection and reduce active queue concurrency or
+reconcile frequency when this exceeds the available App budget. Completion
+verdicts are never cached to save quota. Serialize operator completion polling;
+each poll repeats the same discovery budget.
 
 ### Public authority activation (9c-3, Hold)
 
@@ -2066,29 +2108,32 @@ GitHub protection until current repository-wide completion succeeds.
    and live database identity. Before any authority-boundary event exists, the
    live repository-independent `max(events.id)` must equal `BackupWatermark`.
    An operator's assertion cannot waive a changed journal: repeat drain, backup
-   and restore testing. Verification checks this before reads and again before
-   its final governing recheck. The documented lock-wait/commit expiry limitation
-   still applies.
+   and restore testing. Verification checks this before reads and atomically in the transaction
+   that commits the first proposed verification, after its final governing recheck.
 2. Install the write rulesets under existing protection. Complete protection
    visibility means the complete applicable inventory: inherited organization
    rulesets, repository rulesets, classic protection, targets, rules, parameters,
    bypass actors and selected-ref coverage. Permission grants, an empty partial
    listing or one visible managed ruleset do not establish complete visibility.
 3. Run the existing `setup rulesets --authority openmerge --verify` with the
-   reviewed `--verification-plan`, `--emission-receipt`, `--operator`, `--app-id`,
-   `--repo` and operator `--database-url`. Missing, invalid, expired or wrong-binary
-   receipts refuse before seeing reads. Retain each returned **proposed** event ID.
+   reviewed `--verification-plan`, `--operator`, `--app-id`,
+   `--repo` and operator `--database-url`. Supply `--emission-receipt` for the
+   first emission. Missing, invalid, expired or wrong-binary
+   receipts refuse before seeing reads when no boundary event exists. Retain each
+   returned **proposed** event ID.
    Copy the plan to a runtime plan and add `draft_id` to each target, naming that
    target's returned proposed event. Keep `queue` and `input` unchanged. No inline
    proposed payload or per-queue receipt substitutes for that durable event.
 4. Enable the production worker with `serve --authority-plan runtime-plan.json
    --emission-receipt receipt.json` (or `OPENMERGE_AUTHORITY_PLAN` and
-   `OPENMERGE_EMISSION_RECEIPT`). The default maximum receipt age is 24 hours;
+   `OPENMERGE_EMISSION_RECEIPT`). The receipt flag is optional after a boundary
+   event exists. The default maximum receipt age is 24 hours;
    `--emission-receipt-max-age` must be positive. The plan binds each queue,
    installation, App, repository, resolved dedicated team and intended digest.
    Review a replacement plan and restart when changing that intended binding.
-   The receipt is reloaded and validated during authority resolution; its absence
-   or expiry cannot silently select GitHub behavior. An opted-in target whose
+   After the first boundary event, receipt age, backup bytes and binary revision
+   are no longer runtime liveness requirements. The configured database identity
+   binding remains required. An opted-in target whose
    landed configuration remains `github` retains the ordinary GitHub path.
 5. Land `policy_authority: openmerge` with its dedicated-team `break_glass` under
    the old protection. Workers acquire governing evidence, adopt authentic fresh
@@ -2103,7 +2148,7 @@ land `policy_authority: github`, wait for rollback pins, run a **fresh proposed*
 verification for the current inventory, update the runtime plan's event IDs and
 binding, restart and re-enable. Require current completion again. An applied
 verification or an old successful completion cannot repair proposal provenance.
-A rollback to GitHub preserves evidence and does not undo the strict-decoder
+A rollback to GitHub never requires an emission receipt. It preserves evidence and does not undo the strict-decoder
 boundary. To downgrade across new events, `read_error` or v7, stop all workers,
 retain the post-emission journal, restore the tested pre-emission backup and
 reconcile subsequent real refs and evidence before resuming. Otherwise keep a
@@ -2116,8 +2161,7 @@ without changing the effective policy digest. The worker invalidates the old
 adoption before any fallible read, so old frozen push contexts stop working.
 Keep redundant protection. Use the compatible binary to roll the repository
 back to `github`, wait for rollback pins on all partitions, prepare a **fresh
-proposed** `setup --verify` with complete current inputs and valid drain/backup
-receipt, then re-enable through the reviewed activation procedure. Consult the
+proposed** `setup --verify` with complete current inputs, then re-enable through the reviewed activation procedure. Consult the
 repository completion API again. An applied verification alone cannot re-adopt
 an invalidated proposal; do not reuse the prior proposal/event ID. This recovery
 remains conservative pending a separately designed provenance contract.

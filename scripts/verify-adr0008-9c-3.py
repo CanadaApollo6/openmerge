@@ -43,9 +43,9 @@ def scratch_sql(url, sql):
 
 
 STRESS_GROUPS = (
-    ("stress-public-serve", ["./internal/serve"], "^TestPublicAuthority|^TestAuthorityBarrierJournalCannotInstallRuntimeAuthority$|^TestAuthorityLifecycleRequiresFlagAndResolver$"),
+    ("stress-public-serve", ["./internal/serve"], "^TestPublicAuthority|^TestReviewPublicInventoryErrorClass$|^TestAuthorityActivationReceiptBeforeIO$|^TestAuthorityActivationReceiptExpiresDuringSeeingRead$|^TestAuthorityLifecycleRollbackReceiptAndUnchangedWire$|^TestAuthorityBarrierJournalCannotInstallRuntimeAuthority$|^TestAuthorityLifecycleRequiresFlagAndResolver$"),
     ("stress-public-base-recovery", ["./internal/serve"], "^TestAuthorityAcceptanceBaseAdvanceBeforeBuild$"),
-    ("stress-public-config-store-cli-gitops", ["./internal/config", "./internal/changepolicy", "./internal/store", "./cmd/openmerge", "./internal/gitops"], "TestFullCandidateSchemaComposition|TestAuthorityPublicAgreement|TestAuthorityCandidate|TestConfigValidateAuthorityPublicCorpus|TestPublicAuthority|TestAuthorityEmissionLiveBackup|TestBuildCreationBoundaryRejectsUnprovenSources|TestSetupImportGoverningEvidenceCannotBeAccepted|TestAuthorityAcceptanceImportGoverningEvidenceCannotBeAccepted"),
+    ("stress-public-config-store-cli-gitops", ["./internal/config", "./internal/changepolicy", "./internal/store", "./cmd/openmerge", "./internal/gitops"], "TestFullCandidateSchemaComposition|TestAuthorityPublicAgreement|TestAuthorityCandidate|TestConfigValidateAuthorityPublicCorpus|TestPublicAuthority|TestAuthorityEmissionLiveBackup|TestBuildCreationBoundaryRejectsUnprovenSources|TestSetupImportGoverningEvidenceCannotBeAccepted|TestAuthorityAcceptanceImportGoverningEvidenceCannotBeAccepted|TestReviewFirstEmissionAppendRace|TestAuthorityEmissionReceiptBoundary|TestAuthorityEmissionSerializesAllQueueAppends|TestVerificationReceiptOnlyBeforeBoundary|TestVerificationReceiptValidationSanitizedBeforeSeeingRead|TestBuildBaseProofPreservesFailureClasses|TestAuthorityCompletionDedicatedCacheAvoidsSessionLock|TestProductionAuthorityRuntimeWiring|TestHistoricalStageAAuthoritySchemaComposition|TestReview4AuditPreservesWorkerQuota"),
 )
 
 
@@ -83,20 +83,137 @@ def verify_consult_mutations(v, root, out):
         ("require-complete", "internal/serve/authority_public.go", "./internal/serve", "TestPublicAuthorityActivationConsultsCompletion",
          lambda s: s.replace("return completion.RequireComplete()", "_ = completion; return nil")),
         ("repository-source", "internal/serve/authority_completion.go", "./internal/serve", "TestPublicAuthorityActivationConsultsCompletion",
-         lambda s: s.replace("source.RepositoryAuthorityCompletion(ctx, request, store.AuthorityBranchInventory{DefaultBranch: branch, DefaultTip: sha, Branches: before})", "func() (store.AuthorityCompletion,error) { return store.AuthorityCompletion{Request:request,Complete:true,Queues:[]store.AuthorityQueueCompletion{{Reason:\"complete\"}}},nil }()")),
-        ("setup-verify-receipt", "cmd/openmerge/setup_verify.go", "./cmd/openmerge", "TestPublicAuthoritySetupVerifyConsultsReceipt",
-         lambda s: s.replace("receipt.ValidateForBinary(receipt.DatabaseIdentity, time.Now(), opts.ReceiptMaxAge, authority.RunningBinaryRevision())", "error(nil)", 1)),
-        ("public-runtime-receipt", "internal/serve/authority_public.go", "./internal/serve", "TestPublicAuthorityActivationConsultsReceipt",
-         lambda s: s.replace("receipt.ValidateForBinary(receipt.DatabaseIdentity, time.Now(), runtime.ReceiptMaxAge, authority.RunningBinaryRevision())", "error(nil)", 1)),
+         lambda s: re.sub(r"source\.RepositoryAuthorityCompletion\(ctx, request, store\.AuthorityBranchInventory\{DefaultBranch: branch, DefaultTip: sha, Branches: (?:before|after)\}\)", "func() (store.AuthorityCompletion,error) { return store.AuthorityCompletion{Request:request,Complete:true,Queues:[]store.AuthorityQueueCompletion{{Reason:\"complete\"}}},nil }()", s)),
         ("pre-switch-verification", "internal/serve/authority_public.go", "./internal/serve", "TestPublicAuthorityActivationRequiresVerification",
          lambda s: re.sub(r"if plan.DraftID <= 0 \{\s*return authorityLifecycleResolution\{\}, ErrAuthorityVerificationRequired\s*\}", "", s, count=1)),
         ("live-backup-watermark", "internal/store/authority_emission.go", "./internal/store", "TestAuthorityEmissionLiveBackupWatermark",
-         lambda s: s.replace("!boundary && live != watermark", "false")),
+         lambda s: s.replace("if live != gate.Watermark {", "if false {")),
         ("production-constructor", "internal/serve/branches.go", "./internal/serve", "TestPublicAuthorityProductionConstructor",
          lambda s: s.replace("target = s.publicAuthorityTarget(target)", "")),
-        ("production-push-completion", "internal/serve/push.go", "./internal/serve", "TestPublicAuthorityActivationConsultsCompletion",
-         lambda s: re.sub(r"if w.publicAuthority \{\s*if err := s.RequireAuthorityActivation\(ctx, s.publicAuthorityRequest\(w\)\); err != nil \{\s*return err\s*\}\s*\}", "", s, count=1)),
     ]
+    # Round-1 behavioral regressions. Replace all occurrences so a second
+    # defensive check cannot hide the same bypass.
+    recipes = [{'name': 'first-emission-final-watermark',
+      'file': 'internal/store/write_restriction.go',
+      'package': './cmd/openmerge',
+      'test': 'TestReviewFirstEmissionAppendRace',
+      'old': 'for _, gate := range emission {',
+      'new': 'for _, gate := range []AuthorityEmissionGate{} {'},
+     {'name': 'first-emission-global-append-lock',
+      'file': 'internal/store/authority_emission.go',
+      'package': './internal/store',
+      'test': 'TestAuthorityEmissionSerializesAllQueueAppends',
+      'old': 'LOCK TABLE events IN SHARE ROW EXCLUSIVE MODE',
+      'new': 'SELECT 1'},
+     {'name': 'receipt-boundary-ignore-first',
+      'file': 'internal/store/authority_emission.go',
+      'package': './internal/store',
+      'test': 'TestAuthorityEmissionReceiptBoundary',
+      'old': 'if gate.Validate != nil {',
+      'new': 'if false && gate.Validate != nil {'},
+     {'name': 'receipt-boundary-require-after',
+      'file': 'internal/store/authority_emission.go',
+      'package': './internal/store',
+      'test': 'TestAuthorityEmissionReceiptBoundary',
+      'old': 'if boundary {',
+      'new': 'if false && boundary {'},
+     {'name': 'runtime-receipt-after-boundary',
+      'file': 'internal/serve/authority_public.go',
+      'package': './internal/serve',
+      'test': 'TestPublicAuthorityReceiptNotRequiredAfterBoundary',
+      'old': 'if !boundary {',
+      'new': 'if true || !boundary {'},
+     {'name': 'rollback-receipt-required',
+      'file': 'internal/serve/authority_activation.go',
+      'package': './internal/serve',
+      'test': 'TestPublicAuthorityReceiptNotRequiredAfterBoundary',
+      'old': 'needsReceipt := request.Pin.Authority != authority.GitHub && !boundary',
+      'new': 'needsReceipt := request.Pin.Authority == authority.GitHub || !boundary'},
+     {'name': 'setup-receipt-after-boundary',
+      'file': 'cmd/openmerge/setup_verify.go',
+      'package': './cmd/openmerge',
+      'test': 'TestVerificationReceiptOnlyBeforeBoundary',
+      'old': 'if boundary {',
+      'new': 'if false && boundary {'},
+     {'name': 'setup-receipt-validation-bypass',
+      'file': 'cmd/openmerge/setup_verify.go',
+      'package': './cmd/openmerge',
+      'test': 'TestVerificationReceiptValidationSanitizedBeforeSeeingRead',
+      'old': 'receipt.ValidateForBinary(identity, time.Now(), maxAge, '
+             'authority.RunningBinaryRevision())',
+      'new': 'error(nil)'},
+     {'name': 'public-unlisted-adopts-first',
+      'file': 'internal/serve/authority_public.go',
+      'package': './internal/serve',
+      'test': 'TestPublicAuthorityUnlistedQueueStaysGithub',
+      'old': 'if intended == nil {\n\t\treturn target\n\t}',
+      'new': 'if intended == nil { intended = &runtime.Targets[0] }'},
+     {'name': 'reviewed-plan-binding-bypass',
+      'file': 'internal/serve/authority_activation.go',
+      'package': './internal/serve',
+      'test': 'TestPublicAuthorityReviewedBindingMustMatch',
+      'old': 'if w.publicAuthority && !reflect.DeepEqual(request.Input.Binding, binding) {',
+      'new': 'if false && w.publicAuthority && !reflect.DeepEqual(request.Input.Binding, binding) {'},
+     {'name': 'inventory-error-class-erasure',
+      'file': 'internal/serve/authority_public.go',
+      'package': './internal/serve',
+      'test': 'TestReviewPublicInventoryErrorClass',
+      'old': 'return authorityLifecycleResolution{}, &sanitizedAuthorityInventoryError{cause: err}',
+      'new': 'return authorityLifecycleResolution{}, errors.New("authority branch inventory '
+             'unavailable")'},
+     {'name': 'negative-ancestry-any-error',
+      'file': 'internal/gitops/prepared_push.go',
+      'package': './internal/gitops',
+      'test': 'TestBuildBaseProofPreservesFailureClasses',
+      'old': 'live != base && exitCode(err, 1) && strings.TrimSpace(diagnostic) == ""',
+      'new': 'live != base && err != nil'},
+     {'name': 'negative-ancestry-diagnostic',
+      'file': 'internal/gitops/prepared_push.go',
+      'package': './internal/gitops',
+      'test': 'TestBuildBaseProofPreservesFailureClasses',
+      'old': ' && strings.TrimSpace(diagnostic) == ""',
+      'new': ''},
+     {'name': 'production-runtime-wiring',
+      'file': 'cmd/openmerge/serve.go',
+      'package': './cmd/openmerge',
+      'test': 'TestProductionAuthorityRuntimeWiring',
+      'old': 'Authority: authorityRuntime, ',
+      'new': ''},
+     {'name': 'production-app-binding',
+      'file': 'cmd/openmerge/serve.go',
+      'package': './cmd/openmerge',
+      'test': 'TestProductionAuthorityRuntimeWiring',
+      'old': 'return nil, errors.New("authority plan App binding mismatch")',
+      'new': ''},
+     {'name': 'production-completion-cache',
+      'file': 'cmd/openmerge/installations.go',
+      'package': './cmd/openmerge',
+      'test': 'TestReview4AuditPreservesWorkerQuota',
+      'old': 'AuthorityCompletionGit: b.authorityGit, ',
+      'new': ''},
+     {'name': 'runtime-first-receipt-bypass',
+      'file': 'internal/serve/authority_activation.go',
+      'package': './internal/serve',
+      'test': 'TestAuthorityActivationReceiptBeforeIO',
+      'old': 'request.Receipt.ValidateForBinary(identity, time.Now().UTC(), request.ReceiptMaxAge, '
+             'authority.RunningBinaryRevision())',
+      'new': 'error(nil)'}]
+    recipes.append({"name": "legacy-ack-waives-authority-receipt", "file": "internal/store/authority_emission.go",
+                    "package": "./internal/store", "test": "TestAuthorityEmissionLiveBackupWatermark",
+                    "old": "authorityEmissionEventTypes).Scan", "new": "authorityDowngradeEventTypes).Scan"})
+    recipes.append({'name': 'rollback-configured-database-binding', 'file': 'internal/serve/authority_activation.go', 'package': './internal/serve', 'test': 'TestPublicAuthorityRollbackKeepsDatabaseBinding', 'old': 'if w.publicAuthority && s.options.Authority != nil && s.options.Authority.DatabaseIdentity != "" {', 'new': 'if false && w.publicAuthority && s.options.Authority != nil && s.options.Authority.DatabaseIdentity != "" {'})
+    for recipe in recipes:
+        cases.append((recipe["name"], recipe["file"], recipe["package"], recipe["test"],
+                      lambda source, r=recipe: source.replace(r["old"], r["new"])))
+    COMPLETION_CASES = [
+     ('completion-verdict-equality', 'internal/serve/authority_completion.go', './internal/serve', 'TestPublicAuthorityCompletionPartitionRace', lambda s: s.replace('if !reflect.DeepEqual(result, final) {', 'if false && !reflect.DeepEqual(result, final) {', 1)),
+     ('completion-partition-race', 'internal/serve/authority_completion.go', './internal/serve', 'TestPublicAuthorityCompletionPartitionRace', lambda s: s.replace('final, err := source.RepositoryAuthorityCompletion(ctx, request, store.AuthorityBranchInventory{DefaultBranch: branch, DefaultTip: sha, Branches: after})', 'final, err := result, error(nil)', 1)),
+     ('completion-discovery-error-class', 'internal/serve/authority_completion.go', './internal/serve', 'TestPublicAuthorityCompletionErrorClasses', lambda s: s.replace('return &authorityCompletionReadError{operation: operation, cause: cause}', 'return &authorityCompletionReadError{operation: operation}', 1)),
+     ('completion-dispatch-duplicate', 'internal/serve/push.go', './internal/serve', 'TestPublicAuthorityCompletionRealLandCallBudget', lambda s: s.replace('DispatchGuard: dispatchGuard,', 'DispatchGuard: nil,', 1)),
+    ]
+    for _operation in ['PushBuild','PushLand','PushEnsureFence','PushAdvanceFence','PushDeleteBranch']:
+     COMPLETION_CASES.append(('completion-consult-'+_operation,'internal/serve/push.go','./internal/serve','TestPublicAuthorityEveryPushConsultsCompletion',lambda s,op=_operation:s.replace('if w.publicAuthority {','if w.publicAuthority && operation != forge.'+op+' {',1)))
+    cases.extend(COMPLETION_CASES)
     receipts = []
     for name, path, package, test, mutate in cases:
         original = root / path
@@ -126,7 +243,7 @@ def main():
     parser.add_argument("--lock", type=Path, default=Path.home() / ".cache/openmerge-heavy.lock")
     parser.add_argument("--events", type=Path, default=Path.home() / ".cache/om-pr72-fix1-input/events.jsonl")
     parser.add_argument("--queues", type=Path, default=Path.home() / ".cache/om-pr72-fix1-input/queues.jsonl")
-    parser.add_argument("--timing-before-log", type=Path, help="reuse a completed 5fcfd11 CI-like timing stdout log; otherwise measure it")
+    parser.add_argument("--timing-before-log", type=Path, help="reuse a completed 75c4029 CI-like timing stdout log; otherwise measure it")
     args = parser.parse_args()
     maintenance = scratch_url(os.environ.get("OPENMERGE_TEST_DATABASE_URL", ""))
     # Reuse the shared guard's strictly allowlisted scratch namespace.
@@ -161,8 +278,8 @@ def main():
             raise v.VerifyError("Go 1.27.3 is required")
 
         result["baseline"] = v.check_tree("baseline", args.baseline)
-        if not result["baseline"].startswith("5fcfd11"):
-            raise v.VerifyError("baseline must be local main 5fcfd11")
+        if not result["baseline"].startswith("75c4029"):
+            raise v.VerifyError("baseline must be main 75c4029")
         result["candidate"] = v.check_tree("candidate", root)
         os.environ.setdefault("GOMAXPROCS", "2")
         result["environment"] = {"GOROOT": toolchain, "PATH_prefix": toolchain + "/bin", "database": "localhost:54329, isolated test schemas"}

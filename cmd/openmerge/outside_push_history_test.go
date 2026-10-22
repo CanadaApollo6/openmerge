@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/forge/github"
+	"github.com/CanadaApollo6/openmerge/internal/gitops"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 	"io"
 	"log/slog"
@@ -124,6 +125,12 @@ func TestReview4AuditPreservesWorkerQuota(t *testing.T) {
 			driver, err := workerApp.Installation(t.Context(), 7)
 			if err != nil {
 				t.Fatal(err)
+			}
+			workerGit := &gitops.Repo{}
+			completionGit := &gitops.Repo{}
+			target := (&installationBundle{driver: driver, git: workerGit, authorityGit: completionGit}).target(store.QueueKey{Installation: "7", Repository: "acme/project", BaseBranch: "main"})
+			if target.Git != workerGit || target.AuthorityCompletionGit != completionGit {
+				t.Fatal("completion Git must retain its dedicated cache")
 			}
 			if audit {
 				auditApp, err := github.New(cfg)

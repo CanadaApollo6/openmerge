@@ -50,58 +50,61 @@ func TestAuthorityActivationReceiptBeforeIO(t *testing.T) {
 		"read-error":                   authorityReadErrorReason + ": unavailable",
 	} {
 		t.Run(name, func(t *testing.T) {
-			s, w, _, _ := fixture(t, repositoryConfig)
-			w.AuthorityRequired = true
-			r := activationReceipt(t, s.store)
-			request := authorityActivation{Receipt: r, ReceiptMaxAge: time.Hour, DraftID: 1}
-			switch name {
-			case "no-opt-in":
-				w.AuthorityRequired = false
-			case "zero-age":
-				request.ReceiptMaxAge = 0
-			case "negative-age":
-				request.ReceiptMaxAge = -time.Second
-			case "stale-drain":
-				request.Receipt.DrainedAt = time.Now().Add(-2 * time.Hour)
-			case "stale-restore":
-				request.Receipt.DrainedAt = time.Now().Add(-3 * time.Hour)
-				request.Receipt.RestoreTestedAt = time.Now().Add(-2 * time.Hour)
-			case "wrong-binary":
-				request.Receipt.BinaryRevision = "another-binary"
-			case "caller-db-differs-from-store":
-				request.Receipt.DatabaseIdentity = "another-db"
-				request.Receipt.Reconciliation.SourceDatabaseIdentity = "another-db"
-				// A caller can supply a self-consistent receipt for another DB.
-				// That attestation must not choose the runtime validation identity.
-				must(t, request.Receipt.ValidateForBinary(request.Receipt.DatabaseIdentity, time.Now(), request.ReceiptMaxAge, authority.RunningBinaryRevision()))
-				if request.Receipt.DatabaseIdentity == r.DatabaseIdentity {
-					t.Fatal("fixture did not use a different database")
+			testSynctest(t, func(t *testing.T) {
+				s, w, _, _ := fixture(t, repositoryConfig)
+				w.AuthorityRequired = true
+				r := activationReceipt(t, s.store)
+				request := authorityActivation{Receipt: r, ReceiptMaxAge: time.Hour, DraftID: 1}
+				switch name {
+				case "no-opt-in":
+					w.AuthorityRequired = false
+				case "zero-age":
+					request.ReceiptMaxAge = 0
+				case "negative-age":
+					request.ReceiptMaxAge = -time.Second
+				case "stale-drain":
+					request.Receipt.DrainedAt = time.Now().Add(-2 * time.Hour)
+				case "stale-restore":
+					request.Receipt.DrainedAt = time.Now().Add(-3 * time.Hour)
+					request.Receipt.RestoreTestedAt = time.Now().Add(-2 * time.Hour)
+				case "wrong-binary":
+					request.Receipt.BinaryRevision = "another-binary"
+				case "caller-db-differs-from-store":
+					request.Receipt.DatabaseIdentity = "another-db"
+					request.Receipt.Reconciliation.SourceDatabaseIdentity = "another-db"
+					// A caller can supply a self-consistent receipt for another DB.
+					// That attestation must not choose the runtime validation identity.
+					must(t, request.Receipt.ValidateForBinary(request.Receipt.DatabaseIdentity, time.Now(), request.ReceiptMaxAge, authority.RunningBinaryRevision()))
+					if request.Receipt.DatabaseIdentity == r.DatabaseIdentity {
+						t.Fatal("fixture did not use a different database")
+					}
+				case "missing-backup":
+					request.Receipt.BackupPath += ".missing"
 				}
-			case "missing-backup":
-				request.Receipt.BackupPath += ".missing"
-			}
-			if name != "read-error" && name != "caller-db-differs-from-store" {
-				s.store.Close() // receipt failures must precede database I/O
-			}
-			called := false
-			sentinel := errors.New("quota exhausted")
-			request.Read = func(context.Context) (authority.Observation, error) {
-				called = true
-				return authority.Observation{}, sentinel
-			}
-			receipt, err := s.activateAuthority(t.Context(), w, request)
-			if err == nil || receipt != (store.AuthorityAdoptionReceipt{}) || called != (name == "read-error") {
-				t.Fatalf("receipt=%+v err=%v read=%t", receipt, err, called)
-			}
-			if name == "wrong-binary" && !errors.Is(err, authority.ErrBinaryRevisionMismatch) {
-				t.Fatal(err)
-			}
-			if name != "wrong-binary" && !strings.Contains(err.Error(), want) {
-				t.Fatalf("receipt validation error=%v, want %q", err, want)
-			}
-			if name == "read-error" && !errors.Is(err, sentinel) {
-				t.Fatal(err)
-			}
+
+				called := false
+				sentinel := errors.New("quota exhausted")
+				request.Read = func(context.Context) (authority.Observation, error) {
+					called = true
+					return authority.Observation{}, sentinel
+				}
+				receipt, err := s.activateAuthority(t.Context(), w, request)
+				if err == nil || receipt != (store.AuthorityAdoptionReceipt{}) || called != (name == "read-error") {
+					t.Fatalf("receipt=%+v err=%v read=%t", receipt, err, called)
+				}
+				if name == "wrong-binary" && !errors.Is(err, authority.ErrBinaryRevisionMismatch) {
+					t.Fatal(err)
+				}
+				if name != "no-opt-in" && name != "read-error" {
+					want = "emission receipt stale/invalid"
+				}
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("receipt validation error=%v, want %q", err, want)
+				}
+				if name == "read-error" && !errors.Is(err, sentinel) {
+					t.Fatal(err)
+				}
+			})
 		})
 	}
 }
@@ -183,7 +186,7 @@ func TestAuthorityActivationReceiptExpiresDuringSeeingRead(t *testing.T) {
 			return authority.Observation{}, nil
 		}}
 		receipt, err := s.activateAuthority(t.Context(), w, request)
-		if err == nil || !strings.Contains(err.Error(), "stale emission receipt") || receipt != (store.AuthorityAdoptionReceipt{}) {
+		if err == nil || !strings.Contains(err.Error(), "emission receipt stale/invalid") || receipt != (store.AuthorityAdoptionReceipt{}) {
 			t.Fatal("expired receipt reached emission", receipt, err)
 		}
 		_, after, err := s.store.Load(t.Context(), w.id)

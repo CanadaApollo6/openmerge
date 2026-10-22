@@ -121,8 +121,8 @@ func TestPublicAuthorityActivationConsultsCompletion(t *testing.T) {
 				s, w := p.s, p.w
 				must(t, s.configuration(t.Context(), w))
 				request := s.publicAuthorityRequest(w)
-				if !w.AuthorityRequired || !w.publicAuthority || w.resolveAuthorityLifecycle == nil || *p.receiptReads == 0 || p.probe.reads == 0 {
-					t.Fatal("public constructor did not consult receipt and protection reader")
+				if !w.AuthorityRequired || !w.publicAuthority || w.resolveAuthorityLifecycle == nil || *p.receiptReads != 0 || p.probe.reads == 0 {
+					t.Fatal("public constructor did not consult protection reader or consulted obsolete receipt")
 				}
 				if result, err := s.AuthorityCompletion(t.Context(), request); err != nil || result.RequireComplete() != nil {
 					t.Fatalf("initial completion: %+v err=%v status=%+v findings=%+v", result, err, lifecycleState(t, s, w).WriteRestrictionStatus(), lifecycleState(t, s, w).AuthorityPin().OpenMerge.Activation.Evidence.Findings)
@@ -191,8 +191,8 @@ func TestPublicAuthorityActivationRequiresVerification(t *testing.T) {
 	})
 }
 
-func TestPublicAuthorityActivationConsultsReceipt(t *testing.T) {
-	for _, kind := range []string{"missing", "binary", "expired", "inventory", "backup", "reconciliation"} {
+func TestPublicAuthorityReceiptNotRequiredAfterBoundary(t *testing.T) {
+	for _, kind := range []string{"missing", "binary", "expired", "backup"} {
 		t.Run(kind, func(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
 				p := newPublicFixture(t, true)
@@ -203,25 +203,21 @@ func TestPublicAuthorityActivationConsultsReceipt(t *testing.T) {
 					p.receipt.BinaryRevision = "wrong"
 				case "expired":
 					p.receipt.DrainedAt = time.Now().Add(-48 * time.Hour)
-				case "inventory":
-					p.receipt.Inventory = nil
 				case "backup":
-					p.receipt.BackupPath = "/missing-public-activation-backup"
-				case "reconciliation":
-					p.receipt.Reconciliation = nil
+					p.receipt.BackupPath = "/missing-backup"
 				}
-				err := p.s.configuration(t.Context(), p.w)
-				if err == nil {
-					t.Fatal("public activation skipped emission receipt validation")
+				must(t, p.s.configuration(t.Context(), p.w))
+				if *p.receiptReads != 0 {
+					t.Fatal("steady state loaded emission receipt")
 				}
-				if *p.receiptReads == 0 || p.probe.reads != 0 {
-					t.Fatal("receipt refusal did not precede seeing read")
+				_, err := p.f.PushBase(repo, "main", "rollback", map[string]string{".openmerge.yml": repositoryConfig})
+				must(t, err)
+				must(t, p.s.configuration(t.Context(), p.w))
+				if pin := lifecycleState(t, p.s, p.w).AuthorityPin(); pin == nil || pin.Authority != authority.GitHub {
+					t.Fatal("rollback did not succeed")
 				}
-				if kind == "binary" && !errors.Is(err, authority.ErrBinaryRevisionMismatch) {
-					t.Fatal(err)
-				}
-				if lifecycleState(t, p.s, p.w).AuthorityPin() != nil {
-					t.Fatal("invalid receipt emitted authority pin")
+				if *p.receiptReads != 0 {
+					t.Fatal("rollback loaded receipt")
 				}
 			})
 		})
@@ -486,6 +482,128 @@ func TestPublicAuthorityReaderPreservesSanitizedErrorClasses(t *testing.T) {
 					t.Fatal("public reader lost quota retry deadline")
 				}
 			}
+		}
+	})
+}
+
+func TestReviewPublicInventoryErrorClass(t *testing.T) {
+	testSynctest(t, func(t *testing.T) {
+		p := newPublicFixture(t, true)
+		tip, err := p.f.ReadRef(t.Context(), repo, "main")
+		must(t, err)
+		for _, cause := range []error{&workerAuthorityQuota{until: time.Now().Add(time.Hour)}, context.Canceled, context.DeadlineExceeded} {
+			p.s.repositories[0].Branches = func(context.Context) ([]string, error) { return nil, cause }
+			_, err := p.w.resolveAuthorityLifecycle(t.Context(), p.w.configCandidate, "main", tip)
+			if !errors.Is(err, cause) {
+				t.Errorf("public inventory erased %T: %v", cause, err)
+			}
+		}
+	})
+}
+
+func TestPublicAuthorityUnlistedQueueStaysGithub(t *testing.T) {
+	for _, mismatch := range []string{"repository", "base"} {
+		t.Run(mismatch, func(t *testing.T) {
+			testSynctest(t, func(t *testing.T) {
+				p := newPublicFixture(t, true)
+				plan := &p.s.options.Authority.Targets[0]
+				if mismatch == "repository" {
+					plan.Key.Repository = "unlisted/repo"
+				} else {
+					plan.Key.BaseBranch = "release/unlisted"
+				}
+				target := p.w.Target
+				target.AuthorityRequired = false
+				target.publicAuthority = false
+				target.resolveAuthorityLifecycle = nil
+				p.w.Target = p.s.publicAuthorityTarget(target)
+				if p.w.AuthorityRequired || p.w.publicAuthority || p.w.resolveAuthorityLifecycle != nil {
+					t.Fatal("unlisted queue adopted reviewed target")
+				}
+				tip, err := p.f.PushBase(repo, "main", "github", map[string]string{".openmerge.yml": strings.Replace(repositoryConfig, "check-success = ci", "check-success = ci-new", 1)})
+				must(t, err)
+				p.w.configTip = ""
+				_, before, err := p.s.store.Load(t.Context(), p.w.id)
+				must(t, err)
+				must(t, p.s.configuration(t.Context(), p.w))
+				events, err := p.s.store.EventsAfter(t.Context(), p.w.id, before)
+				must(t, err)
+				want := p.w.cfg.QueueConfig().Applied(tip, p.w.configDigest)
+				_, wantRaw, err := queue.EncodeEvent(want)
+				must(t, err)
+				found := false
+				for _, event := range events {
+					if applied, ok := event.Event.(queue.ConfigApplied); ok {
+						_, raw, err := queue.EncodeEvent(applied)
+						must(t, err)
+						if string(raw) != string(wantRaw) {
+							t.Fatal("unlisted GitHub event bytes changed")
+						}
+						found = true
+					}
+				}
+				if !found {
+					t.Fatal("no GitHub config event")
+				}
+				_, err = p.f.PushBase(repo, "main", "unlisted authority", map[string]string{".openmerge.yml": lifecycleConfig(repositoryConfig)})
+				must(t, err)
+				if err := p.s.configuration(t.Context(), p.w); err == nil && p.w.configError == nil {
+					t.Fatal("unlisted landed openmerge config accepted")
+				}
+			})
+		})
+	}
+}
+
+func TestPublicAuthorityReviewedBindingMustMatch(t *testing.T) {
+	testSynctest(t, func(t *testing.T) {
+		p := newPublicFixture(t, true)
+		original := p.w.resolveAuthorityLifecycle
+		p.w.resolveAuthorityLifecycle = func(ctx context.Context, candidate config.AuthorityCandidate, branch, tip string) (authorityLifecycleResolution, error) {
+			resolved, err := original(ctx, candidate, branch, tip)
+			resolved.Activation.Input.Binding.EffectiveDigest = strings.Repeat("f", 64)
+			return resolved, err
+		}
+		var err error
+		err = p.s.configuration(t.Context(), p.w)
+		if err == nil || !strings.Contains(err.Error(), "reviewed authority plan differs from current binding") {
+			t.Fatalf("changed binding accepted: %v", err)
+		}
+		if lifecycleState(t, p.s, p.w).AuthorityPin() != nil {
+			t.Fatal("changed binding emitted pin")
+		}
+	})
+}
+
+func TestPublicAuthorityRollbackKeepsDatabaseBinding(t *testing.T) {
+	testSynctest(t, func(t *testing.T) {
+		p := newPublicFixture(t, true)
+		identity, err := p.s.store.DatabaseIdentity(t.Context())
+		must(t, err)
+		p.s.options.Authority.DatabaseIdentity = identity
+		must(t, p.s.configuration(t.Context(), p.w))
+		original := lifecycleState(t, p.s, p.w).AuthorityPin()
+		*p.receipt = authority.EmissionReceipt{}
+		p.s.options.Authority.DatabaseIdentity = "another-configured-database"
+		_, err = p.f.PushBase(repo, "main", "rollback", map[string]string{".openmerge.yml": repositoryConfig})
+		must(t, err)
+		err = p.s.configuration(t.Context(), p.w)
+		if err == nil || err.Error() != "authority configured database identity mismatch" {
+			t.Fatalf("rollback escaped database binding: %v", err)
+		}
+		if !reflect.DeepEqual(original, lifecycleState(t, p.s, p.w).AuthorityPin()) {
+			t.Fatal("database mismatch changed authority pin")
+		}
+		if *p.receiptReads != 0 {
+			t.Fatal("rollback consulted receipt")
+		}
+		p.s.options.Authority.DatabaseIdentity = identity
+		must(t, p.s.configuration(t.Context(), p.w))
+		if pin := lifecycleState(t, p.s, p.w).AuthorityPin(); pin == nil || pin.Authority != authority.GitHub {
+			t.Fatal("bound rollback failed")
+		}
+		if *p.receiptReads != 0 {
+			t.Fatal("bound rollback consulted receipt")
 		}
 	})
 }

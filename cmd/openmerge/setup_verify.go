@@ -64,27 +64,16 @@ func runRulesVerification(ctx context.Context, opts verifyOptions, rules github.
 	if rules.Apply || rules.Restore != "" || rules.RollbackPreflight || rules.RotateBreakGlass {
 		return errors.New("--verify cannot be combined with --apply, --restore, --rollback-preflight or --rotate-break-glass")
 	}
-	if rules.Authority != "openmerge" || !opts.Verify || opts.Operator == "" || len(opts.Operator) > 256 || opts.Plan == "" || opts.Receipt == "" || opts.DatabaseURL == "" {
-		return errors.New("--authority openmerge --verify requires --verification-plan, --emission-receipt, --operator and --database-url")
+	if rules.Authority != "openmerge" || !opts.Verify || opts.Operator == "" || len(opts.Operator) > 256 || opts.Plan == "" || opts.DatabaseURL == "" {
+		return errors.New("--authority openmerge --verify requires --verification-plan, --operator and --database-url; first emission also requires --emission-receipt")
 	}
-	var receipt authority.EmissionReceipt
-	if err := readVerificationJSON(opts.Receipt, &receipt); err != nil {
-		return err
-	}
-	if err := receipt.ValidateForBinary(receipt.DatabaseIdentity, time.Now(), opts.ReceiptMaxAge, authority.RunningBinaryRevision()); err != nil {
-		return err
-	}
-	identity, err := verificationDatabaseIdentity(ctx, opts.DatabaseURL)
+	db, err := store.Open(ctx, opts.DatabaseURL)
 	if err != nil {
 		return err
 	}
-	// The immutable receipt and backup were validated above, before database I/O.
-	// Bind that proof to the live identity without hashing the same dump again;
-	// Prepare revalidates its bytes after the seeing reads.
-	if identity == "" || identity != receipt.DatabaseIdentity {
-		return errors.New("first-emission receipt database identity mismatch")
-	}
-	if err := receipt.RecheckEmissionWindowForBinary(time.Now(), opts.ReceiptMaxAge, authority.RunningBinaryRevision()); err != nil {
+	defer db.Close()
+	receipt, err := verificationEmissionReceipt(ctx, db, opts)
+	if err != nil {
 		return err
 	}
 	var plan verificationPlan
@@ -110,31 +99,33 @@ func runRulesVerification(ctx context.Context, opts verifyOptions, rules github.
 	if err != nil {
 		return err
 	}
-	db, err := store.Open(ctx, opts.DatabaseURL)
-	if err != nil {
-		return err
+	var gates []verificationReceiptGate
+	if receipt != nil {
+		gates = append(gates, verificationReceiptGate{Watermark: &receipt.Reconciliation.BackupWatermark, Prepare: func() error {
+			identity, err := db.DatabaseIdentity(ctx)
+			if err != nil {
+				return err
+			}
+			if err := validateVerificationEmissionReceipt(*receipt, identity, opts.ReceiptMaxAge); err != nil {
+				return err
+			}
+			return db.CheckAuthorityEmissionBackup(ctx, receipt.Reconciliation.BackupWatermark)
+		}, Recheck: func() error {
+			if err := receipt.RecheckEmissionWindowForBinary(time.Now(), opts.ReceiptMaxAge, authority.RunningBinaryRevision()); err != nil {
+				return errors.New("emission receipt stale/invalid")
+			}
+			return nil
+		}})
 	}
-	defer db.Close()
-	if err := db.CheckAuthorityEmissionBackup(ctx, receipt.Reconciliation.BackupWatermark); err != nil {
-		return err
-	}
-	return verifyTargets(ctx, db, reader, plan, opts.Operator, out, verificationReceiptGate{Prepare: func() error {
-		identity, err := db.DatabaseIdentity(ctx)
-		if err != nil {
-			return errors.New("verification receipt database identity unavailable")
-		}
-		if err := receipt.ValidateForBinary(identity, time.Now(), opts.ReceiptMaxAge, authority.RunningBinaryRevision()); err != nil {
-			return err
-		}
-		return db.CheckAuthorityEmissionBackup(ctx, receipt.Reconciliation.BackupWatermark)
-	}, Recheck: func() error {
-		return receipt.RecheckEmissionWindowForBinary(time.Now(), opts.ReceiptMaxAge, authority.RunningBinaryRevision())
-	}})
+	return verifyTargets(ctx, db, reader, plan, opts.Operator, out, gates...)
 }
 
 // Prepare may read receipt identity/backup bytes. Recheck MUST be pure: after
 // the final governing recheck there can be no intervening I/O before commit.
-type verificationReceiptGate struct{ Prepare, Recheck func() error }
+type verificationReceiptGate struct {
+	Prepare, Recheck func() error
+	Watermark        *int64
+}
 
 // Generate the invocation nonce before any seeing read. A fresh invocation
 // never dedupes identical daily fingerprints. Callers retry Commit with these
@@ -235,7 +226,13 @@ func verifyTargets(ctx context.Context, db *store.Store, reader forge.WriteRestr
 			}
 		}
 	}
-	receipts, err := db.CommitWriteRestrictionVerification(ctx, records)
+	var emission []store.AuthorityEmissionGate
+	for _, gate := range receiptGates {
+		if gate.Watermark != nil {
+			emission = append(emission, store.AuthorityEmissionGate{Watermark: *gate.Watermark, Validate: gate.Recheck})
+		}
+	}
+	receipts, err := db.CommitWriteRestrictionVerification(ctx, records, emission...)
 	if err != nil {
 		return err
 	}
@@ -264,4 +261,42 @@ func verifyTargets(ctx context.Context, db *store.Store, reader forge.WriteRestr
 		return errors.New("visible write-restriction violation recorded")
 	}
 	return nil
+}
+
+type verificationEmissionReceiptError struct{ cause error }
+
+func (e *verificationEmissionReceiptError) Error() string { return "emission receipt stale/invalid" }
+func (e *verificationEmissionReceiptError) Unwrap() error { return e.cause }
+func validateVerificationEmissionReceipt(receipt authority.EmissionReceipt, identity string, maxAge time.Duration) error {
+	if err := receipt.ValidateForBinary(identity, time.Now(), maxAge, authority.RunningBinaryRevision()); err != nil {
+		return &verificationEmissionReceiptError{cause: err}
+	}
+	return nil
+}
+
+// Inspect the configured DB before touching a receipt. A durable boundary
+// permanently ends the drain/backup gate, including setup recovery invocations.
+func verificationEmissionReceipt(ctx context.Context, db *store.Store, opts verifyOptions) (*authority.EmissionReceipt, error) {
+	boundary, err := db.AuthorityBoundaryExists(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if boundary {
+		return nil, nil
+	}
+	var receipt authority.EmissionReceipt
+	if err := readVerificationJSON(opts.Receipt, &receipt); err != nil {
+		return nil, &verificationEmissionReceiptError{cause: err}
+	}
+	identity, err := db.DatabaseIdentity(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateVerificationEmissionReceipt(receipt, identity, opts.ReceiptMaxAge); err != nil {
+		return nil, err
+	}
+	if err := db.CheckAuthorityEmissionBackup(ctx, receipt.Reconciliation.BackupWatermark); err != nil {
+		return nil, err
+	}
+	return &receipt, nil
 }

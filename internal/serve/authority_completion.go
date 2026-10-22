@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -11,9 +12,23 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
-// authorityCompletionStore keeps the repository-wide source explicit. Production
-// installs the actual Store; tests may wrap it to count calls without replacing
-// its all-partition snapshot with per-queue receipts.
+// authorityCompletionReadError hides remote diagnostics while retaining retry and
+// cancellation classes for the worker's existing backoff/cancellation handling.
+type authorityCompletionReadError struct {
+	operation string
+	cause     error
+}
+
+func (e *authorityCompletionReadError) Error() string {
+	return "authority completion " + e.operation + " unavailable"
+}
+func (e *authorityCompletionReadError) Unwrap() error { return e.cause }
+func completionReadError(operation string, cause error) error {
+	return &authorityCompletionReadError{operation: operation, cause: cause}
+}
+
+// authorityCompletionStore uses the actual all-partition durable snapshot.
+// Tests may wrap it to count reads without substituting per-queue receipts.
 type authorityCompletionStore interface {
 	RepositoryAuthorityCompletion(context.Context, store.AuthorityCompletionRequest, store.AuthorityBranchInventory) (store.AuthorityCompletion, error)
 }
@@ -51,12 +66,15 @@ func (s *Server) AuthorityCompletion(ctx context.Context, request store.Authorit
 		return branch, sha, err
 	}
 	branch, sha, err := tip()
-	if err != nil || sha == "" {
+	if err != nil {
+		return store.AuthorityCompletion{}, completionReadError("governing ref", err)
+	}
+	if sha == "" {
 		return store.AuthorityCompletion{}, errors.New("authority completion governing ref unavailable")
 	}
 	before, err := repo.Branches(ctx)
 	if err != nil {
-		return store.AuthorityCompletion{}, errors.New("authority completion branch inventory unavailable")
+		return store.AuthorityCompletion{}, completionReadError("branch inventory", err)
 	}
 	before = slices.Clone(before)
 	source := s.authorityCompletionStore
@@ -65,14 +83,17 @@ func (s *Server) AuthorityCompletion(ctx context.Context, request store.Authorit
 	}
 	result, err := source.RepositoryAuthorityCompletion(ctx, request, store.AuthorityBranchInventory{DefaultBranch: branch, DefaultTip: sha, Branches: before})
 	if err != nil {
-		return store.AuthorityCompletion{}, errors.New("authority completion durable inventory unavailable")
+		return store.AuthorityCompletion{}, completionReadError("durable inventory", err)
 	}
 	after, err := repo.Branches(ctx)
 	if err != nil {
-		return store.AuthorityCompletion{}, errors.New("authority completion branch inventory unavailable")
+		return store.AuthorityCompletion{}, completionReadError("branch inventory", err)
 	}
 	nextBranch, nextSHA, err := tip()
-	if err != nil || nextBranch != branch || nextSHA != sha {
+	if err != nil {
+		return store.AuthorityCompletion{}, completionReadError("governing ref", err)
+	}
+	if nextBranch != branch || nextSHA != sha {
 		return store.AuthorityCompletion{}, errors.New("authority completion governing ref changed; retry")
 	}
 	after = slices.Clone(after)
@@ -81,7 +102,18 @@ func (s *Server) AuthorityCompletion(ctx context.Context, request store.Authorit
 	if !slices.Equal(before, after) {
 		return store.AuthorityCompletion{}, errors.New("authority completion branch inventory changed; retry")
 	}
-	return result, nil
+	// Reevaluate every durable partition after the LAST outbound read. A queue
+	// registered/changed during discovery must not inherit the earlier verdict.
+	// No DB lock can cover git push: the remaining DB-check -> push window is the
+	// same irreducible external-write window as the pin and protection guards.
+	final, err := source.RepositoryAuthorityCompletion(ctx, request, store.AuthorityBranchInventory{DefaultBranch: branch, DefaultTip: sha, Branches: after})
+	if err != nil {
+		return store.AuthorityCompletion{}, completionReadError("durable inventory", err)
+	}
+	if !reflect.DeepEqual(result, final) {
+		return store.AuthorityCompletion{}, errors.New("authority completion durable inventory changed; retry")
+	}
+	return final, nil
 }
 
 func (s *Server) authorityCompletionRepository(ctx context.Context, request store.AuthorityCompletionRequest) (Repository, error) {
@@ -89,7 +121,7 @@ func (s *Server) authorityCompletionRepository(ctx context.Context, request stor
 	if s.discovery != nil {
 		installations, err := s.discovery.Installations(ctx)
 		if err != nil {
-			return Repository{}, errors.New("authority completion installation inventory unavailable")
+			return Repository{}, completionReadError("installation inventory", err)
 		}
 		repos = nil
 		for _, installation := range installations {
@@ -98,7 +130,7 @@ func (s *Server) authorityCompletionRepository(ctx context.Context, request stor
 			}
 			listed, err := installation.Repositories(ctx)
 			if err != nil {
-				return Repository{}, errors.New("authority completion repository inventory unavailable")
+				return Repository{}, completionReadError("repository inventory", err)
 			}
 			for _, repo := range listed {
 				repo.Installation = installation.ID

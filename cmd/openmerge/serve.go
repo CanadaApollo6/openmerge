@@ -196,6 +196,12 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger, saniti
 	if err != nil {
 		return err
 	}
+	if authorityRuntime != nil {
+		authorityRuntime.DatabaseIdentity, err = db.DatabaseIdentity(ctx)
+		if err != nil {
+			return errors.New("authority database identity unavailable")
+		}
+	}
 	factory := &installationTargets{app: app, options: o, logger: logger, bundles: make(map[string]*installationBundle)}
 	// Audits have their own token refresh locks and Git caches. They spend no
 	// installation REST/GraphQL quota; credentials are minted with the App JWT.
@@ -204,8 +210,7 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger, saniti
 	if err != nil {
 		return err
 	}
-	auditOptions := o
-	auditOptions.cache = filepath.Join(o.cache, "outside-push-audit")
+	auditOptions := serveOptions{cache: filepath.Join(o.cache, "outside-push-audit")}
 	auditFactory := &installationTargets{app: auditApp, options: auditOptions, logger: logger, bundles: make(map[string]*installationBundle)}
 	discovery := serve.Discovery{
 		App: strconv.FormatInt(o.app, 10),
@@ -254,7 +259,7 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger, saniti
 			return result, nil
 		},
 	}
-	service, err := serve.NewDiscovery(ctx, db, discovery, serve.Options{Authority: authorityRuntime, Health: status.HealthSettings{OverdueGrace: o.healthGrace, MaxSuccessAge: o.healthMaxAge, MaxCycleDuration: o.healthMaxCycle, ProgressStallLimit: o.healthProgressStall}, PollInterval: o.poll, BackstopInterval: o.backstop, WebhookHealthWindow: o.webhookHealthWindow, WebhooksConfigured: o.listen != "", RulesInterval: o.rulesInterval, DiscoveryInterval: o.discoveryInterval, BaseAllowlist: splitAllowlist(o.base), Concurrency: o.concurrency, Logger: logger, DisableDeleteHeadBranch: !o.deleteHeadBranch, OutsidePushHistory: auditFactory.outsidePushHistory})
+	service, err := serve.NewDiscovery(ctx, db, discovery, productionServeOptions(o, authorityRuntime, auditFactory.outsidePushHistory, logger))
 	if err != nil {
 		return err
 	}
@@ -401,8 +406,8 @@ func productionAuthorityRuntime(o serveOptions) (*serve.AuthorityRuntime, error)
 	if o.authorityPlan == "" && o.emissionReceipt == "" {
 		return nil, nil
 	}
-	if o.authorityPlan == "" || o.emissionReceipt == "" || o.emissionReceiptMaxAge <= 0 {
-		return nil, errors.New("authority opt-in requires plan, receipt and positive maximum age")
+	if o.authorityPlan == "" || o.emissionReceiptMaxAge <= 0 {
+		return nil, errors.New("authority opt-in requires plan and positive maximum age")
 	}
 	var plan struct {
 		Targets []serve.AuthorityTarget `json:"targets"`
@@ -424,4 +429,8 @@ func productionAuthorityRuntime(o serveOptions) (*serve.AuthorityRuntime, error)
 		return receipt, nil
 	}}
 	return runtime, runtime.Validate()
+}
+
+func productionServeOptions(o serveOptions, authorityRuntime *serve.AuthorityRuntime, history func(context.Context, store.QueueKey) (forge.OutsidePushHistory, error), logger *slog.Logger) serve.Options {
+	return serve.Options{Authority: authorityRuntime, Health: status.HealthSettings{OverdueGrace: o.healthGrace, MaxSuccessAge: o.healthMaxAge, MaxCycleDuration: o.healthMaxCycle, ProgressStallLimit: o.healthProgressStall}, PollInterval: o.poll, BackstopInterval: o.backstop, WebhookHealthWindow: o.webhookHealthWindow, WebhooksConfigured: o.listen != "", RulesInterval: o.rulesInterval, DiscoveryInterval: o.discoveryInterval, BaseAllowlist: splitAllowlist(o.base), Concurrency: o.concurrency, Logger: logger, DisableDeleteHeadBranch: !o.deleteHeadBranch, OutsidePushHistory: history}
 }
