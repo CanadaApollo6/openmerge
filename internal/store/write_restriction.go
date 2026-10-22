@@ -70,6 +70,11 @@ func (s *Store) CommitWriteRestrictionVerification(ctx context.Context, records 
 	}
 	var receipts []VerificationReceipt
 	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.ReadCommitted}, func(tx pgx.Tx) error {
+		if len(emission) > 0 {
+			if err := s.lockTenancy(ctx, tx, false); err != nil {
+				return err
+			}
+		}
 		for _, r := range records {
 			if err := s.lockQueue(ctx, tx, r.QueueID); err != nil {
 				return err
@@ -391,6 +396,11 @@ func (s *Store) applyAuthorityConfig(ctx context.Context, q QueueID, config queu
 		}
 	}
 	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.ReadCommitted}, func(tx pgx.Tx) error {
+		if gate != nil {
+			if err := s.lockTenancy(ctx, tx, false); err != nil {
+				return err
+			}
+		}
 		if err := s.lockQueue(ctx, tx, q); err != nil {
 			return err
 		}
@@ -512,6 +522,11 @@ func (s *Store) AdoptAuthorityPin(ctx context.Context, q QueueID, pin queue.Poli
 		return receipt, err
 	}
 	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.ReadCommitted}, func(tx pgx.Tx) error {
+		if len(emission) > 0 {
+			if err := s.lockTenancy(ctx, tx, false); err != nil {
+				return err
+			}
+		}
 		if err := s.lockQueue(ctx, tx, q); err != nil {
 			return err
 		}

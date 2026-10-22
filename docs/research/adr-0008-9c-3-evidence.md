@@ -1,3 +1,69 @@
+# ADR 0008 PR 9c-3 round-5 evidence
+
+Hold remains. Round 5 removes the queues table lock that deadlocked with
+TakeNotification. GitHub notification, Notify and InitializeFence row locks keep
+their existing strengths. Registration gains only a shared transaction advisory
+lock; it briefly waits during gated first emission, through commit. Caller
+contexts and the drained no-network transaction bound the intended wait; there
+is no new independent timeout. Production supplies no gate after the boundary.
+Direct SQL registration and old binaries do not participate in this protocol:
+stop old workers and freeze installation registration during the switch.
+
+## Round-5 lock-order inventory
+
+The code inventory is in `internal/store/locks.go`. Advisory tenancy namespace
+`1330464084` uses the two-int key space, distinct from queue `1330464081`,
+registration `1330464082`, test migration `1330464083` and the production bigint
+migration key. The second key is hashtext(test scope), empty in production.
+
+| Path | Locks in acquisition order |
+| --- | --- |
+| canonicalQueue / only queues INSERT | shared tenancy; registration advisory; queues ACCESS SHARE lookup then ROW EXCLUSIVE insert; canonical_queues upsert and queues FK KEY SHARE. Case-history folding reads events with ACCESS SHARE only. |
+| Notify / NotifyDelivery | webhook delivery insert and queues FK KEY SHARE; queues ROW EXCLUSIVE and update row lock. No queue advisory, tenancy, or events write lock. |
+| TakeNotification | queues ROW SHARE and FOR UPDATE; queues ROW EXCLUSIVE for flag update. No tenancy, queue advisory or events lock. |
+| InitializeFence | queue advisory; queues ROW EXCLUSIVE/update row lock; events ACCESS SHARE subquery. |
+| Append / EmitWithPolicy / Record / landing and observation writers | queue advisory; projection ACCESS SHARE reads; action/observation locks as needed; events ROW EXCLUSIVE insert; queues FK KEY SHARE. |
+| verification commit | if gated, exclusive tenancy FIRST; ascending queue advisories; tenancy/boundary reads; events SHARE ROW EXCLUSIVE; event inserts and queues FK KEY SHARE. Ungated starts with queue advisories. |
+| AdoptAuthorityPin / ApplyAuthorityConfig | if gated, exclusive tenancy FIRST; queue advisory; tenancy/boundary reads; events SHARE ROW EXCLUSIVE; event inserts and queues FK KEY SHARE. Ungated starts with queue advisory. |
+| first-emission preflight | exclusive tenancy FIRST; inventory ACCESS SHARE reads; events SHARE ROW EXCLUSIVE; fresh boundary/watermark reads. No queue row lock. |
+| other readers, completion, journal, snapshots | ACCESS SHARE reads; no tenancy or conflicting event table lock. |
+| migration | migration advisory before schema DDL; startup-only, outside supported concurrent serving. |
+
+No queues table lock is upgraded by emission. Notification row holders never
+wait on tenancy, queue advisories or events; registration never takes queue
+advisories or event write locks. Existing writers holding queue advisories can
+finish before emission takes events. ACCESS SHARE reads are compatible with the
+event lock. There is no reverse edge to close the reported cycle. Claims/action
+row operations do not acquire tenancy or event table locks after their row locks.
+
+`TestAuthorityTenancyNotificationOverlap` retains Astra's real TakeNotification
+probe with a deterministic seam after FOR UPDATE and before UPDATE. The gate
+releases that seam while emission holds its locks. Both must commit; restoring
+the old queues SHARE lock reproduces 40P01 and fails the named test.
+`TestAuthorityTenancyConcurrentWriters` runs bounded notification consumption,
+Notify, real registrations, ordinary appends and first emission together. A
+pending second-installation registration forces tenancy refusal and no boundary.
+`TestAuthorityTenancyConcurrentWritersSuccess` also commits a real first boundary
+under that writer load, with notifications finishing while emission holds locks.
+The adapted registration tests observe actual advisory waits, including proving
+that emission holds no events write lock while waiting for shared tenancy.
+
+`TestRepositoryAuthorityCompletion/second_installation` keeps all requested
+partitions complete while a second installation's unrelated queue makes the
+aggregate incomplete. `TestSameAuthorityCompletionFields` pins every queue field,
+complete, installation count, request and queue count; only watermarks may differ.
+`TestAuthorityTenancyBoundaryDefense` pins the explicit post-boundary in-tx
+inventory. This is defense in depth: production never supplies an emission gate
+once the boundary exists.
+
+A restore under a live process invalidates the positive boundary cache; stop all
+workers before restoring. `/v1/authority-completion` adds `installation_count`;
+an older strict admin CLI fails closed against the new server and must upgrade.
+
+Round-5 verification results are recorded below after the clean-tree run.
+
+---
+
 # ADR 0008 PR 9c-3 round-4 review evidence
 
 Round 4 retains **Hold**. Completion compares the partition identities, installation
@@ -6,8 +72,8 @@ ignoring only watermarks, and returns the final snapshot. Ordinary sibling
 appends pass; partition registration still refuses. Positive authority-boundary
 lookups are cached per store process; negatives query again. Restore stops all
 workers before replacing history. The runtime role needs UPDATE, DELETE or
-TRUNCATE on events for the first-emission lock; registration waits on the queues
-SHARE lock.
+TRUNCATE on events for the first-emission lock. Round 5 replaces the queues
+SHARE lock with the advisory tenancy protocol described below.
 
 Setup verification is the primary public first-emission gate. A positive DraftID
 already implies a boundary; lifecycle writer gates remain defense in depth for
@@ -99,7 +165,7 @@ Hold PR body; no comment, queue, merge or deployment.
 Classification: **Hold**. Round 3 enforces the user-selected **one database per
 client (installation)** model. No migration is needed. All queues count, including
 other repositories and paused, retired or excluded partitions. First emission
-holds `LOCK TABLE queues IN SHARE MODE` until transaction completion: PostgreSQL
+previously held `LOCK TABLE queues IN SHARE MODE` until transaction completion (superseded in round 5): PostgreSQL
 queue INSERTs take the conflicting ROW EXCLUSIVE lock. The READ COMMITTED count
 therefore includes a registration committed while first emission waited, and a
 registration arriving after the lock cannot commit before the boundary.

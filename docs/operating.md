@@ -1997,15 +1997,19 @@ The authority boundary consists of `write_restriction_verified`,
 acknowledgement retains its separate historical operator receipt contract and
 cannot waive this stronger authority gate.
 
-The first-emission transaction takes `SHARE ROW EXCLUSIVE` on `events` after
-its queue locks. Every PostgreSQL `INSERT` takes `ROW EXCLUSIVE`, so this lock
+The first-emission transaction first takes the exclusive advisory tenancy lock,
+then its queue locks, then `SHARE ROW EXCLUSIVE` on `events`. Every PostgreSQL `INSERT` takes `ROW EXCLUSIVE`, so this lock
 blocks appends from all queues without adding work to ordinary append paths.
 It also serializes competing first emitters. The runtime database role needs
 `UPDATE`, `DELETE`, or `TRUNCATE` privilege on `events` to acquire this lock;
-an INSERT-only role fails with permission denied at first emission. The same
-privilege requirement applies to `queues` for its SHARE lock. Queue
-registration waits on the first-emission SHARE lock on `queues` through commit. After any lock wait, a fresh
-explicit READ COMMITTED transaction checks the boundary again and reads `max(id)` through
+an INSERT-only role fails with permission denied at first emission. Queue
+registration takes only a shared advisory tenancy lock, uncontended except
+during a gated first emission. Ordinary GitHub registration briefly waits through
+that transaction, bounded by the caller context and the drained, no-network
+first-emission work; there is no independent lock-wait deadline. Production
+supplies no emission gate after the boundary exists. Notification and fence row
+lock strengths are unchanged. After any lock wait, the explicit READ COMMITTED
+transaction uses a fresh statement snapshot, checks the boundary again and reads `max(id)` through
 the existing primary-key index. The boundary query uses
 `EXISTS (SELECT 1 ... WHERE type = ANY(...) LIMIT 1)` and never reads JSONB.
 There is no type-only index in the current schema. Proving absence before first
@@ -2121,8 +2125,8 @@ Every queue counts, including paused, retired, excluded queues and queues in
 other repositories. Setup verification, public activation and each final public
 authority push check this inventory afresh; more than one installation refuses
 with `authority mode requires a dedicated database per installation: this database
-serves N installations`. The first-emission transaction holds a SHARE lock on
-`queues` through commit, serializing registration, and checks tenancy alongside
+serves N installations`. The first-emission transaction takes an exclusive transaction advisory tenancy
+lock before queue or event locks, serializing registration, and checks tenancy alongside
 the database-wide events lock and watermark. The backup/restore receipt covers
 the whole database and is waived once any authority boundary exists in it.
 A newly registered second installation therefore stops authority even after the
@@ -2225,3 +2229,9 @@ actual base/fence refs, external landings and immutable decisions/evidence since
 the backup, retain the reconciliation artifact/receipt, regenerate the restored
 source identity and repeat drain/backup verification. A successful check is
 not an automatic restore or an authorization to restart stale state.
+
+The additive `installation_count` field in `/v1/authority-completion` is new in
+ADR 0008 PR 9c-3. An older admin CLI using `DisallowUnknownFields` fails closed
+against this newer server; upgrade the admin CLI with the server. A restore under
+a live process would invalidate the positive boundary cache: stop all workers
+before replacing journal history, as required by the restore procedure.

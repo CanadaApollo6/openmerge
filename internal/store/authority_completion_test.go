@@ -126,6 +126,21 @@ func TestRepositoryAuthorityCompletion(t *testing.T) {
 	request.Targets = map[string]string{"release/v1": strings.Repeat("b", 64)}
 	// Different effective queue digests are explicit targets, never auto-selected.
 	check(true)
+	t.Run("second installation", func(t *testing.T) {
+		// Keep every selected partition complete; only tenancy changes.
+		_, err := s.EnsureQueue(t.Context(), QueueKey{Installation: "8", Repository: "other/repo", BaseBranch: "main"})
+		must(t, err)
+		check(false)
+		result, err := s.RepositoryAuthorityCompletion(t.Context(), request, current())
+		must(t, err)
+		if result.InstallationCount != 2 {
+			t.Fatalf("installation count: %d", result.InstallationCount)
+		}
+		_, err = s.pool.Exec(t.Context(), `DELETE FROM canonical_queues WHERE installation='8'`)
+		must(t, err)
+		_, err = s.pool.Exec(t.Context(), `DELETE FROM queues WHERE installation='8'`)
+		must(t, err)
+	})
 	t.Run("case variant repository", func(t *testing.T) {
 		request.Repository = "OWNER/Repo"
 		defer func() { request.Repository = "owner/repo" }()

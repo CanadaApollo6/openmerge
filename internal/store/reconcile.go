@@ -68,6 +68,9 @@ func (s *Store) TakeNotification(ctx context.Context, q QueueID) (bool, error) {
 		if err := tx.QueryRow(ctx, `SELECT reconcile_requested FROM queues WHERE id = $1 FOR UPDATE`, q).Scan(&requested); err != nil {
 			return err
 		}
+		if s.beforeNotificationUpdate != nil {
+			s.beforeNotificationUpdate()
+		}
 		_, err := tx.Exec(ctx, `UPDATE queues SET reconcile_requested = false WHERE id = $1`, q)
 		return err
 	})

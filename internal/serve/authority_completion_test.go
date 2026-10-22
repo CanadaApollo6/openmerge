@@ -107,3 +107,37 @@ func TestAuthorityCompletionDiscovery(t *testing.T) {
 		}
 	})
 }
+
+func TestSameAuthorityCompletionFields(t *testing.T) {
+	original := store.AuthorityCompletion{InstallationCount: 1, Complete: true, Request: store.AuthorityCompletionRequest{Installation: "7", Repository: "owner/repo", Digest: "digest"}, Queues: []store.AuthorityQueueCompletion{{ID: 1, Installation: "7", Base: "main", Lane: "lane", Watermark: 1, GoverningCommit: "tip", Digest: "digest", ExpectedDigest: "expected", Reason: "complete"}}}
+	cases := []struct {
+		name   string
+		change func(*store.AuthorityCompletion)
+		equal  bool
+	}{
+		{"unchanged", func(*store.AuthorityCompletion) {}, true},
+		{"watermark", func(c *store.AuthorityCompletion) { c.Queues[0].Watermark++ }, true},
+		{"installation count", func(c *store.AuthorityCompletion) { c.InstallationCount++ }, false},
+		{"complete", func(c *store.AuthorityCompletion) { c.Complete = false }, false},
+		{"request", func(c *store.AuthorityCompletion) { c.Request.Repository = "other/repo" }, false},
+		{"queue count", func(c *store.AuthorityCompletion) { c.Queues = append(c.Queues, c.Queues[0]) }, false},
+		{"id", func(c *store.AuthorityCompletion) { c.Queues[0].ID++ }, false},
+		{"installation", func(c *store.AuthorityCompletion) { c.Queues[0].Installation = "8" }, false},
+		{"base", func(c *store.AuthorityCompletion) { c.Queues[0].Base = "next" }, false},
+		{"lane", func(c *store.AuthorityCompletion) { c.Queues[0].Lane = "next" }, false},
+		{"reason", func(c *store.AuthorityCompletion) { c.Queues[0].Reason = "unverified" }, false},
+		{"digest", func(c *store.AuthorityCompletion) { c.Queues[0].Digest = "next" }, false},
+		{"expected digest", func(c *store.AuthorityCompletion) { c.Queues[0].ExpectedDigest = "next" }, false},
+		{"governing commit", func(c *store.AuthorityCompletion) { c.Queues[0].GoverningCommit = "next" }, false},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			changed := original
+			changed.Queues = append([]store.AuthorityQueueCompletion(nil), original.Queues...)
+			test.change(&changed)
+			if sameAuthorityCompletion(original, changed) != test.equal || sameAuthorityCompletion(changed, original) != test.equal {
+				t.Fatal("unexpected completion equality")
+			}
+		})
+	}
+}

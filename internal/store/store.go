@@ -32,7 +32,8 @@ type Store struct {
 	pool              *pgxpool.Pool
 	testLockScope     string
 	// Tests synchronize contenders immediately before the blocking lock call.
-	beforeQueueLock func()
+	beforeQueueLock          func()
+	beforeNotificationUpdate func()
 }
 
 // Option configures a store before migrations run.
@@ -107,6 +108,11 @@ func (s *Store) canonicalQueue(ctx context.Context, key QueueKey, actualFence st
 	}
 	var id QueueID
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		// Shared except during a gated first emission; held through registration
+		// commit. This must precede the registration key and every table lock.
+		if err := s.lockTenancy(ctx, tx, true); err != nil {
+			return err
+		}
 		// Registration uses its own namespace, separate from queue event locks.
 		if err := s.lockRegistration(ctx, tx, key); err != nil {
 			return err

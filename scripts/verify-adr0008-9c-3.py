@@ -45,7 +45,7 @@ def scratch_sql(url, sql):
 STRESS_GROUPS = (
     ("stress-public-serve", ["./internal/serve"], "^TestPublicAuthority|^TestReviewPublicInventoryErrorClass$|^TestAuthorityActivationReceiptBeforeIO$|^TestAuthorityActivationReceiptExpiresDuringSeeingRead$|^TestAuthorityLifecycleRollbackReceiptAndUnchangedWire$|^TestAuthorityLifecycleReadFailuresDoNotPublishConfigOrPin$|^TestAuthorityBarrierJournalCannotInstallRuntimeAuthority$|^TestAuthorityLifecycleRequiresFlagAndResolver$"),
     ("stress-public-base-recovery", ["./internal/serve"], "^TestAuthorityAcceptanceBaseAdvanceBeforeBuild$"),
-    ("stress-public-config-store-cli-gitops", ["./internal/config", "./internal/changepolicy", "./internal/store", "./cmd/openmerge", "./internal/gitops"], "TestFullCandidateSchemaComposition|TestAuthorityPublicAgreement|TestAuthorityCandidate|TestConfigValidateAuthorityPublicCorpus|TestPublicAuthority|TestAuthorityBoundaryPositiveCache|TestAuthorityLifecycleEmissionDefenseInDepth|TestAuthorityEmissionLiveBackup|TestAuthorityTenancy|TestVerificationTenancy|TestBuildCreationBoundaryRejectsUnprovenSources|TestSetupImportGoverningEvidenceCannotBeAccepted|TestAuthorityAcceptanceImportGoverningEvidenceCannotBeAccepted|TestReviewFirstEmissionAppendRace|TestAuthorityEmissionReceiptBoundary|TestAuthorityEmissionSerializesAllQueueAppends|TestAuthorityEmissionRefreshesSnapshotAfterAppendLockWait|TestVerificationReceiptOnlyBeforeBoundary|TestVerificationReceiptValidationSanitizedBeforeSeeingRead|TestBuildBaseProofPreservesFailureClasses|TestAuthorityCompletionDedicatedCacheAvoidsSessionLock|TestProductionAuthorityRuntimeWiring|TestHistoricalStageAAuthoritySchemaComposition|TestReview4AuditPreservesWorkerQuota"),
+    ("stress-public-config-store-cli-gitops", ["./internal/config", "./internal/changepolicy", "./internal/store", "./cmd/openmerge", "./internal/gitops"], "TestFullCandidateSchemaComposition|TestAuthorityPublicAgreement|TestAuthorityCandidate|TestConfigValidateAuthorityPublicCorpus|TestPublicAuthority|TestAuthorityBoundaryPositiveCache|TestAuthorityLifecycleEmissionDefenseInDepth|TestAuthorityEmissionLiveBackup|TestAuthorityTenancy|TestRepositoryAuthorityCompletion|TestSameAuthorityCompletionFields|TestVerificationTenancy|TestBuildCreationBoundaryRejectsUnprovenSources|TestSetupImportGoverningEvidenceCannotBeAccepted|TestAuthorityAcceptanceImportGoverningEvidenceCannotBeAccepted|TestReviewFirstEmissionAppendRace|TestAuthorityEmissionReceiptBoundary|TestAuthorityEmissionSerializesAllQueueAppends|TestAuthorityEmissionRefreshesSnapshotAfterAppendLockWait|TestVerificationReceiptOnlyBeforeBoundary|TestVerificationReceiptValidationSanitizedBeforeSeeingRead|TestBuildBaseProofPreservesFailureClasses|TestAuthorityCompletionDedicatedCacheAvoidsSessionLock|TestProductionAuthorityRuntimeWiring|TestHistoricalStageAAuthoritySchemaComposition|TestReview4AuditPreservesWorkerQuota"),
 )
 
 
@@ -218,10 +218,10 @@ def verify_consult_mutations(v, root, out):
     cases.extend([
         ("tenancy-emission", "internal/store/authority_emission.go", "./internal/store", "TestAuthorityTenancyEmission",
          lambda s: s.replace("if err := checkAuthorityTenancy(ctx, tx); err != nil {", "if err := error(nil); err != nil {", 1)),
-        ("tenancy-registration-lock", "internal/store/authority_emission.go", "./internal/store", "TestAuthorityTenancyConcurrentRegistration",
-         lambda s: s.replace("LOCK TABLE queues IN SHARE MODE", "SELECT 1", 1)),
-        ("tenancy-registration-held", "internal/store/authority_emission.go", "./internal/store", "TestAuthorityTenancyRegistrationWaitsForEmission",
-         lambda s: s.replace("LOCK TABLE queues IN SHARE MODE", "SELECT 1", 1)),
+        ("tenancy-registration-lock", "internal/store/locks.go", "./internal/store", "TestAuthorityTenancyConcurrentRegistration",
+         lambda s: s.replace("SELECT pg_advisory_xact_lock(1330464084, hashtext($1))", "SELECT 1", 1)),
+        ("tenancy-registration-held", "internal/store/locks.go", "./internal/store", "TestAuthorityTenancyRegistrationWaitsForEmission",
+         lambda s: s.replace("SELECT pg_advisory_xact_lock(1330464084, hashtext($1))", "SELECT 1", 1)),
         ("tenancy-setup", "cmd/openmerge/setup_verify.go", "./cmd/openmerge", "TestVerificationTenancyBeforeReceipt",
          lambda s: s.replace("if err := db.CheckAuthorityTenancy(ctx); err != nil {", "if err := error(nil); err != nil {", 1)),
         ("tenancy-lifecycle", "internal/serve/authority_public.go", "./internal/serve", "TestPublicAuthorityTenancyLifecycle",
@@ -240,6 +240,27 @@ def verify_consult_mutations(v, root, out):
     for _operation in ['PushBuild','PushLand','PushEnsureFence','PushAdvanceFence','PushDeleteBranch']:
      COMPLETION_CASES.append(('completion-consult-'+_operation,'internal/serve/push.go','./internal/serve','TestPublicAuthorityEveryPushConsultsCompletion',lambda s,op=_operation:s.replace('if w.publicAuthority {','if w.publicAuthority && operation != forge.'+op+' {',1)))
     cases.extend(COMPLETION_CASES)
+    cases.extend([
+        ("tenancy-registration-shared", "internal/store/locks.go", "./internal/store", "TestAuthorityTenancyConcurrentRegistration",
+         lambda s: s.replace("SELECT pg_advisory_xact_lock_shared(1330464084, hashtext($1))", "SELECT 1", 1)),
+        ("tenancy-exclusive-after-events", "internal/store/write_restriction.go", "./internal/store", "TestAuthorityTenancyConcurrentRegistration",
+         lambda s: s.replace("if err := s.lockTenancy(ctx, tx, false); err != nil {", "if err := error(nil); err != nil {").replace("if err := checkAuthorityEmission(ctx, tx, gate); err != nil {\n\t\t\t\treturn err\n\t\t\t}", "if err := checkAuthorityEmission(ctx, tx, gate); err != nil {\n\t\t\t\treturn err\n\t\t\t}\n\t\t\tif err := s.lockTenancy(ctx, tx, false); err != nil { return err }")),
+        ("tenancy-boundary-defense", "internal/store/authority_emission.go", "./internal/store", "TestAuthorityTenancyBoundaryDefense",
+         lambda s: s.replace("if err := checkAuthorityTenancy(ctx, tx); err != nil {\n\t\treturn err\n\t}", "", 1).replace("// INSERT takes ROW EXCLUSIVE", "if err := checkAuthorityTenancy(ctx, tx); err != nil { return err }\n\t// INSERT takes ROW EXCLUSIVE", 1)),
+        ("completion-installation-verdict", "internal/store/authority_completion.go", "./internal/store", "TestRepositoryAuthorityCompletion",
+         lambda s: s.replace(" && result.InstallationCount <= 1", "", 1)),
+        ("notification-table-deadlock", "internal/store/authority_emission.go", "./internal/store", "TestAuthorityTenancyNotificationOverlap",
+         lambda s: s.replace("// The caller holds exclusive tenancy", "if _, err := tx.Exec(ctx, `LOCK TABLE queues IN SHARE MODE`); err != nil { return err }\n\t// The caller holds exclusive tenancy", 1)),
+    ])
+    for field in ("Reason", "Digest", "ExpectedDigest", "GoverningCommit", "ID", "Installation", "Base", "Lane"):
+        zero = "0" if field == "ID" else '\"\"'
+        cases.append(("completion-field-" + field, "internal/serve/authority_completion.go", "./internal/serve", "TestSameAuthorityCompletionFields",
+                      lambda s, f=field, z=zero: s.replace("if left != right {", f"left.{f}, right.{f} = {z}, {z}\n\t\tif left != right {{", 1)))
+    for label, expression in (("installation-count", "a.InstallationCount != b.InstallationCount || "), ("complete", "a.Complete != b.Complete || "), ("queue-count", " || len(a.Queues) != len(b.Queues)")):
+        # Queue-count must also avoid indexing past the shorter slice; the
+        # table case always passes the shorter inventory as the left operand.
+        cases.append(("completion-field-" + label, "internal/serve/authority_completion.go", "./internal/serve", "TestSameAuthorityCompletionFields",
+                      lambda s, e=expression: s.replace(e, "", 1)))
     receipts = []
     for name, path, package, test, mutate in cases:
         original = root / path

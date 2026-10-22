@@ -24,7 +24,8 @@ type AuthorityEmissionGate struct {
 // AuthorityBoundaryExists uses only the event discriminator, never JSON payloads.
 // There is no type-only index in the retained schema: LIMIT 1 stops at the first
 // boundary. Cache only positive results: boundaries are monotonic while this
-// process runs. The documented restore procedure stops all workers first.
+// process runs. A restore under a live process would invalidate this cache;
+// the documented restore procedure requires stopping all workers first.
 // Negative results must query again to notice another process emitting.
 func (s *Store) AuthorityBoundaryExists(ctx context.Context) (bool, error) {
 	if s.authorityBoundary.Load() {
@@ -42,6 +43,9 @@ func (s *Store) AuthorityBoundaryExists(ctx context.Context) (bool, error) {
 // must also call checkAuthorityEmission while holding the global append lock.
 func (s *Store) CheckAuthorityEmissionBackup(ctx context.Context, watermark int64) error {
 	return pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.ReadCommitted}, func(tx pgx.Tx) error {
+		if err := s.lockTenancy(ctx, tx, false); err != nil {
+			return err
+		}
 		return checkAuthorityEmission(ctx, tx, AuthorityEmissionGate{Watermark: watermark})
 	})
 }
@@ -73,13 +77,9 @@ func checkAuthorityTenancy(ctx context.Context, db interface {
 }
 
 func checkAuthorityEmission(ctx context.Context, tx pgx.Tx, gate AuthorityEmissionGate) error {
-	// SHARE conflicts with the ROW EXCLUSIVE lock taken by every queues INSERT,
-	// including registration outside this binary. Hold through boundary commit.
-	// READ COMMITTED below sees registrations committed while this lock waited.
-	// Registration never takes event append locks; ordinary GitHub paths are unchanged.
-	if _, err := tx.Exec(ctx, `LOCK TABLE queues IN SHARE MODE`); err != nil {
-		return err
-	}
+	// The caller holds exclusive tenancy from its FIRST lock (see locks.go).
+	// This post-boundary inventory is defense in depth for explicit gate callers;
+	// production supplies no gate once a boundary exists.
 	if err := checkAuthorityTenancy(ctx, tx); err != nil {
 		return err
 	}

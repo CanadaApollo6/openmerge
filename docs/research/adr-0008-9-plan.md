@@ -305,8 +305,8 @@ Every queue counts, including paused, retired, excluded queues and queues in
 other repositories. Setup verification, public activation and each final public
 authority push check this inventory afresh; more than one installation refuses
 with `authority mode requires a dedicated database per installation: this database
-serves N installations`. The first-emission transaction holds a SHARE lock on
-`queues` through commit, serializing registration, and checks tenancy alongside
+serves N installations`. The first-emission transaction takes an exclusive transaction advisory tenancy
+lock before queue or event locks, serializing registration, and checks tenancy alongside
 the database-wide events lock and watermark. The backup/restore receipt covers
 the whole database and is waived once any authority boundary exists in it.
 A newly registered second installation therefore stops authority even after the
