@@ -145,7 +145,7 @@ func TestAuthorityEmissionRefreshesSnapshotAfterAppendLockWait(t *testing.T) {
 		must(t, err)
 		holder, err := s.pool.BeginTx(t.Context(), pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 		must(t, err)
-		defer holder.Rollback(t.Context())
+		defer func() { _ = holder.Rollback(t.Context()) }()
 		name, payload, err := queue.EncodeEvent(queue.BaseMoved{SHA: "unbacked-concurrent-append"})
 		must(t, err)
 		_, err = holder.Exec(t.Context(), `INSERT INTO events(queue_id,type,payload) VALUES($1,$2,$3::jsonb)`, other, name, string(payload))

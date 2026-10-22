@@ -1519,7 +1519,8 @@ land GitHub authority. Input-drift recovery requires fresh proposed verification
 re-enable and current completion. A binary downgrade requires stopping workers,
 retaining evidence, restoring the tested pre-emission backup and reconciling
 subsequent real refs/evidence; otherwise retain a compatible reader. Receipt
-validation is a first-emission gate, not a recurring liveness requirement. Complete protection visibility includes all applicable inherited,
+validation is a first-emission gate, not a recurring liveness requirement.
+Complete protection visibility includes all applicable inherited,
 repository and classic protections and their targets, rules and bypass actors.
 The deployment Hold lasts until dogfood period B drains; PR 11 remains the
 owner-executed organization release gate.

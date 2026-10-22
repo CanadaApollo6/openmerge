@@ -1992,11 +1992,16 @@ global watermark and absence of a prior boundary inside the writing transaction,
 serialized against event appends in every queue. Keep the stopped window bounded;
 command success cannot prove that a stopped remote process cannot restart.
 
+The authority boundary consists of `write_restriction_verified`,
+`policy_authority_applied` and `write_restriction_observed`. An outside-push
+acknowledgement retains its separate historical operator receipt contract and
+cannot waive this stronger authority gate.
+
 The first-emission transaction takes `SHARE ROW EXCLUSIVE` on `events` after
 its queue locks. Every PostgreSQL `INSERT` takes `ROW EXCLUSIVE`, so this lock
 blocks appends from all queues without adding work to ordinary append paths.
 It also serializes competing first emitters. After any lock wait, a fresh
-READ COMMITTED statement checks the boundary again and reads `max(id)` through
+explicit READ COMMITTED transaction checks the boundary again and reads `max(id)` through
 the existing primary-key index. The boundary query uses
 `EXISTS (SELECT 1 ... WHERE type = ANY(...) LIMIT 1)` and never reads JSONB.
 There is no type-only index in the current schema. Proving absence before first
