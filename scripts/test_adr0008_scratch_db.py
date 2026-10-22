@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Connection-free bypass regressions for both scratch driver entry points."""
+"""Connection-free bypass regressions for scratch driver entry points."""
 import importlib.util
 import os
 from pathlib import Path
@@ -30,7 +30,7 @@ class ScratchGuardTest(unittest.TestCase):
         )] + [BASE.replace("localhost:54329", host) for host in ("localhost:5432", "%2Ftmp:54329", "localhost:54329,other:5432")]
         env_attacks = ["PGHOST", "PGHOSTADDR", "PGPORT", "PGDATABASE", "PGSERVICE", "PGSERVICEFILE",
                        "PGOPTIONS", "PGTARGETSESSIONATTRS", "PGPASSWORD"]
-        for driver in ("check-adr0008-9c-2c-restore.py", "verify-adr0008-9c-2c.py"):
+        for driver in ("check-adr0008-9c-2c-restore.py", "verify-adr0008-9c-2c.py", "verify-adr0008-9c-2d.py"):
             spec = importlib.util.spec_from_file_location("driver", Path(__file__).with_name(driver))
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)

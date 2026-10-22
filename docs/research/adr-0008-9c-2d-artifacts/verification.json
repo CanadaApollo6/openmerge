@@ -1,0 +1,756 @@
+{
+  "verdict": "PASS",
+  "trial_class": "Hold",
+  "baseline": "d9ec97580472fc880154b38674b03c2d34733238",
+  "source_hashes": {
+    "internal/gitops/authority_acceptance_rejection_test.go": "1de0130f09f36123779c0f31a35b706da70409681032ae465a955dff20fdf021",
+    "internal/serve/authority_acceptance_branches_test.go": "89834ecbf3e9fc168ecb5a69ac0131205982fc4736744cf7d71841db5079dbd9",
+    "internal/serve/authority_acceptance_compat_test.go": "af6ff1c43166f268fe5b4d2110f654afee750436308a91ee101084f99538f9ae",
+    "internal/serve/authority_acceptance_git_test.go": "ca6867a3fa682c63d992bbc9ca5d72d6f9fe8880aabe55632b4aa1ce08288783",
+    "internal/serve/authority_acceptance_rejection_test.go": "dbc12b3602f8bcc24ad8473c1cc879d03b53b4a5587f7e621dc70c5ac0bcd313",
+    "cmd/openmerge/authority_acceptance_import_test.go": "3e38f453b1e992e391f973855d4cc2d2a45c57395c4203d186de1f87e35a80d3",
+    "scripts/verify-adr0008-9c-2d.py": "95876581515462dc474f6619ac881e4c024d3a253a6f219b28e307fb20b5a070",
+    "scripts/test_adr0008_scratch_db.py": "c9a3faea4436965b494abfc4cb08983a0423495f0c1ac6d6f38f9ca56241c915",
+    "scripts/adr0008_scratch_db.py": "56f9af3a1815059d1c819abc9c331224f81b4496625fdc804e252d53020d3040"
+  },
+  "gates": {
+    "wire": {
+      "identical": true,
+      "legacy_fixtures": 105,
+      "legacy_registry_fixtures": 90,
+      "legacy_sha256": "19c9d4ddd14947a59fbfd55e28c870e8a7d4aec6c6747b718a989a04c16e7e8f",
+      "new_fixtures": []
+    },
+    "github_projections": {
+      "identical": true,
+      "status_api_health_author_sha256": "b6d532d17347fd1ad25c9391760bfda786436c2b142da0238f12b66a0919b02a",
+      "cli_sha256": "4bea7d07d00c094c8824751d3b5db07932de48be34f6db2d98bc772139e248cf"
+    },
+    "mixed_github": {
+      "identical": true,
+      "sha256": "cc95a654054e61e816120f2e57b9e19ffea3ff4855c32f4f5c055c4e99b913ee"
+    },
+    "contracts": {
+      "identical": true,
+      "records": 90,
+      "sha256": "88e727ebe7ea5b570f352c5c661c2cd1642c1b5120f3d3ed086993f4dd00362a"
+    },
+    "replay": {
+      "verdict": "PASS",
+      "state_mode": "strict",
+      "actions_identical": "2159/2159",
+      "structural_state_identical": "2159/2159",
+      "snapshot_hashes_identical": "2159/2159",
+      "boundary_checkpoints_identical": "2159/2159",
+      "boundary_probe_count": 8676,
+      "non_allowlisted_fields": [],
+      "gate2": "PASS",
+      "gate4": "PASS",
+      "self_test": "PASS",
+      "self_test_exit_status": 0,
+      "full_report_sha256": "8af8113d96862e7e657c373d4c1358b4897bd7df59da41a1fbe10f05d026f309"
+    },
+    "legacy": {
+      "commands": [
+        {
+          "command": [
+            "flock",
+            "/home/riels/.cache/openmerge-heavy.lock",
+            "env",
+            "GOFLAGS=-p=2",
+            "GOMEMLIMIT=4GiB",
+            "GOPROXY=off",
+            "GOSUMDB=off",
+            "GOTOOLCHAIN=local",
+            "LEGACY_OUTPUT=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/legacy/baseline-gitops/objects.json",
+            "go",
+            "test",
+            "-overlay",
+            "/home/riels/.cache/openmerge-9c2d-evidence/final-r2/legacy/baseline-gitops/overlay.json",
+            "./internal/gitops",
+            "-run",
+            "^TestADR3aLegacyProbe$",
+            "-count=1"
+          ],
+          "cwd": "/home/riels/.cache/openmerge-9c2d-baseline",
+          "exit": 0
+        },
+        {
+          "command": [
+            "flock",
+            "/home/riels/.cache/openmerge-heavy.lock",
+            "env",
+            "GOFLAGS=-p=2",
+            "GOMEMLIMIT=4GiB",
+            "GOPROXY=off",
+            "GOSUMDB=off",
+            "GOTOOLCHAIN=local",
+            "LEGACY_OUTPUT=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/legacy/baseline-fake/objects.json",
+            "go",
+            "test",
+            "-overlay",
+            "/home/riels/.cache/openmerge-9c2d-evidence/final-r2/legacy/baseline-fake/overlay.json",
+            "./internal/forge/fake",
+            "-run",
+            "^TestADR3aLegacyProbe$",
+            "-count=1"
+          ],
+          "cwd": "/home/riels/.cache/openmerge-9c2d-baseline",
+          "exit": 0
+        },
+        {
+          "command": [
+            "flock",
+            "/home/riels/.cache/openmerge-heavy.lock",
+            "env",
+            "GOFLAGS=-p=2",
+            "GOMEMLIMIT=4GiB",
+            "GOPROXY=off",
+            "GOSUMDB=off",
+            "GOTOOLCHAIN=local",
+            "LEGACY_OUTPUT=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/legacy/candidate-gitops/objects.json",
+            "go",
+            "test",
+            "-overlay",
+            "/home/riels/.cache/openmerge-9c2d-evidence/final-r2/legacy/candidate-gitops/overlay.json",
+            "./internal/gitops",
+            "-run",
+            "^TestADR3aLegacyProbe$",
+            "-count=1"
+          ],
+          "cwd": "/home/riels/.t3/worktrees/openmerge/t3-d9510d2c",
+          "exit": 0
+        },
+        {
+          "command": [
+            "flock",
+            "/home/riels/.cache/openmerge-heavy.lock",
+            "env",
+            "GOFLAGS=-p=2",
+            "GOMEMLIMIT=4GiB",
+            "GOPROXY=off",
+            "GOSUMDB=off",
+            "GOTOOLCHAIN=local",
+            "LEGACY_OUTPUT=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/legacy/candidate-fake/objects.json",
+            "go",
+            "test",
+            "-overlay",
+            "/home/riels/.cache/openmerge-9c2d-evidence/final-r2/legacy/candidate-fake/overlay.json",
+            "./internal/forge/fake",
+            "-run",
+            "^TestADR3aLegacyProbe$",
+            "-count=1"
+          ],
+          "cwd": "/home/riels/.t3/worktrees/openmerge/t3-d9510d2c",
+          "exit": 0
+        }
+      ],
+      "comparisons": {
+        "gitops": {
+          "identical": true,
+          "snapshots": 24,
+          "baseline_sha256": "c4540c89e3f93b997c6132bb976532d7701b0a07e434a70868123cb80b626d0e",
+          "candidate_sha256": "c4540c89e3f93b997c6132bb976532d7701b0a07e434a70868123cb80b626d0e"
+        },
+        "fake": {
+          "identical": true,
+          "snapshots": 24,
+          "baseline_sha256": "041deff2b2f2fd0985c4c1d185267ad9e759d6af1404ee9ef6eda6eee2f342fd",
+          "candidate_sha256": "041deff2b2f2fd0985c4c1d185267ad9e759d6af1404ee9ef6eda6eee2f342fd"
+        }
+      },
+      "offline_only": true,
+      "baseline": "d9ec97580472fc880154b38674b03c2d34733238",
+      "candidate": "3302b0c33b1c02ba3458d923adddcb39b53e54cd"
+    },
+    "simulator": {
+      "baseline_exit": 0,
+      "candidate_exit": 0,
+      "identical": true,
+      "blocks": 146,
+      "normalized_sha256": "a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7"
+    }
+  },
+  "ci_and_focused_commands": [
+    {
+      "name": "make-check",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/make-check/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/make-check/tmp make check",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-9c2d-evidence/final-r2/make-check",
+      "wall_seconds": 464.193,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/cmd/openmerge": 65.366,
+        "github.com/CanadaApollo6/openmerge/internal/ascii": 1.006,
+        "github.com/CanadaApollo6/openmerge/internal/authority": 1.099,
+        "github.com/CanadaApollo6/openmerge/internal/brief": 3.29,
+        "github.com/CanadaApollo6/openmerge/internal/changepolicy": 1.753,
+        "github.com/CanadaApollo6/openmerge/internal/classification": 2.238,
+        "github.com/CanadaApollo6/openmerge/internal/config": 1.578,
+        "github.com/CanadaApollo6/openmerge/internal/config/condition": 1.021,
+        "github.com/CanadaApollo6/openmerge/internal/diagnostic": 1.021,
+        "github.com/CanadaApollo6/openmerge/internal/executor": 1.163,
+        "github.com/CanadaApollo6/openmerge/internal/forge": 7.849,
+        "github.com/CanadaApollo6/openmerge/internal/forge/fake": 1.439,
+        "github.com/CanadaApollo6/openmerge/internal/forge/github": 67.022,
+        "github.com/CanadaApollo6/openmerge/internal/gitops": 94.416,
+        "github.com/CanadaApollo6/openmerge/internal/queue": 163.329,
+        "github.com/CanadaApollo6/openmerge/internal/serve": 281.776,
+        "github.com/CanadaApollo6/openmerge/internal/sim": 34.585,
+        "github.com/CanadaApollo6/openmerge/internal/sim/capacity": 1.01,
+        "github.com/CanadaApollo6/openmerge/internal/status": 10.917,
+        "github.com/CanadaApollo6/openmerge/internal/store": 66.123,
+        "github.com/CanadaApollo6/openmerge/scripts": 1.075,
+        "github.com/CanadaApollo6/openmerge/tools/dogfood": 1.618
+      }
+    },
+    {
+      "name": "focused",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/focused/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/focused/tmp go test -race -short -v ./internal/authority ./internal/gitops ./internal/serve ./internal/store ./internal/queue ./internal/config ./internal/status ./cmd/openmerge -run 'AuthorityAcceptance|Completion|AuthorityBarrier|LegacyLineZero|StageAAccountableIdentityDiagnosticExact' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-9c2d-evidence/final-r2/focused",
+      "wall_seconds": 40.015,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/internal/authority": 1.011,
+        "github.com/CanadaApollo6/openmerge/internal/gitops": 1.53,
+        "github.com/CanadaApollo6/openmerge/internal/serve": 38.26,
+        "github.com/CanadaApollo6/openmerge/internal/store": 3.754,
+        "github.com/CanadaApollo6/openmerge/internal/queue": 1.04,
+        "github.com/CanadaApollo6/openmerge/internal/config": 1.025,
+        "github.com/CanadaApollo6/openmerge/internal/status": 1.023,
+        "github.com/CanadaApollo6/openmerge/cmd/openmerge": 1.088
+      }
+    },
+    {
+      "name": "timing-after",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/timing-after/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/timing-after/tmp GOMAXPROCS=2 go test -p=1 -race -short -count=1 -timeout=15m ./internal/serve ./internal/gitops ./internal/queue ./cmd/openmerge",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-9c2d-evidence/final-r2/timing-after",
+      "wall_seconds": 587.327,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/internal/serve": 265.655,
+        "github.com/CanadaApollo6/openmerge/internal/gitops": 93.167,
+        "github.com/CanadaApollo6/openmerge/internal/queue": 162.474,
+        "github.com/CanadaApollo6/openmerge/cmd/openmerge": 64.469
+      }
+    },
+    {
+      "name": "baseline-github-projections",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/baseline-github-projections/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/baseline-github-projections/tmp ADR_GITHUB_PROJECTIONS=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/baseline-projections/projections.json go test -overlay /home/riels/.cache/openmerge-9c2d-evidence/final-r2/baseline-projections/overlay.json ./internal/serve -run '^TestAuthorityGithubProjectionBytes$' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-9c2d-evidence/final-r2/baseline-github-projections",
+      "wall_seconds": 5.715,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/internal/serve": 0.069
+      }
+    },
+    {
+      "name": "baseline-github-cli",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/baseline-github-cli/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/baseline-github-cli/tmp ADR_GITHUB_PROJECTIONS=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/baseline-projections/projections.json ADR_GITHUB_CLI=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/baseline-projections/cli.txt go test -overlay /home/riels/.cache/openmerge-9c2d-evidence/final-r2/baseline-projections/overlay.json ./cmd/openmerge -run '^TestADR2dGithubCLI$' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-9c2d-evidence/final-r2/baseline-github-cli",
+      "wall_seconds": 1.62,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/cmd/openmerge": 0.003
+      }
+    },
+    {
+      "name": "candidate-github-projections",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/candidate-github-projections/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/candidate-github-projections/tmp ADR_GITHUB_PROJECTIONS=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/candidate-projections/projections.json go test -overlay /home/riels/.cache/openmerge-9c2d-evidence/final-r2/candidate-projections/overlay.json ./internal/serve -run '^TestAuthorityGithubProjectionBytes$' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-9c2d-evidence/final-r2/candidate-github-projections",
+      "wall_seconds": 0.504,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/internal/serve": 0.06
+      }
+    },
+    {
+      "name": "candidate-github-cli",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/candidate-github-cli/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/candidate-github-cli/tmp ADR_GITHUB_PROJECTIONS=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/candidate-projections/projections.json ADR_GITHUB_CLI=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/candidate-projections/cli.txt go test -overlay /home/riels/.cache/openmerge-9c2d-evidence/final-r2/candidate-projections/overlay.json ./cmd/openmerge -run '^TestADR2dGithubCLI$' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-9c2d-evidence/final-r2/candidate-github-cli",
+      "wall_seconds": 1.032,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/cmd/openmerge": 0.004
+      }
+    },
+    {
+      "name": "baseline-mixed-github",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/baseline-mixed-github/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/baseline-mixed-github/tmp ADR_ACCEPTANCE_GITHUB_BYTES=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/baseline-mixed/mixed.json go test -overlay /home/riels/.cache/openmerge-9c2d-evidence/final-r2/baseline-mixed/overlay.json ./internal/serve -run '^TestAuthorityAcceptanceMixedGithubBytes$' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-9c2d-evidence/final-r2/baseline-mixed-github",
+      "wall_seconds": 3.733,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/internal/serve": 0.522
+      }
+    },
+    {
+      "name": "candidate-mixed-github",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/candidate-mixed-github/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/candidate-mixed-github/tmp ADR_ACCEPTANCE_GITHUB_BYTES=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/candidate-mixed/mixed.json go test -overlay /home/riels/.cache/openmerge-9c2d-evidence/final-r2/candidate-mixed/overlay.json ./internal/serve -run '^TestAuthorityAcceptanceMixedGithubBytes$' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-9c2d-evidence/final-r2/candidate-mixed-github",
+      "wall_seconds": 0.901,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/internal/serve": 0.486
+      }
+    },
+    {
+      "name": "baseline-contracts",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/baseline-contracts/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/baseline-contracts/tmp ADR_DIFF=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/baseline/contracts.json go test -overlay /home/riels/.cache/openmerge-9c2d-evidence/final-r2/baseline/overlay.json ./internal/queue -run '^TestADR00081Differential$' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-9c2d-evidence/final-r2/baseline-contracts",
+      "wall_seconds": 2.305,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/internal/queue": 0.008
+      }
+    },
+    {
+      "name": "candidate-contracts",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/candidate-contracts/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/candidate-contracts/tmp ADR_DIFF=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/candidate/contracts.json go test -overlay /home/riels/.cache/openmerge-9c2d-evidence/final-r2/candidate/overlay.json ./internal/queue -run '^TestADR00081Differential$' -count=1",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-9c2d-evidence/final-r2/candidate-contracts",
+      "wall_seconds": 2.182,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/internal/queue": 0.012
+      }
+    },
+    {
+      "name": "strict-replay",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=6GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/strict-replay/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/strict-replay/tmp /home/riels/.local/share/mise/installs/python/latest/bin/python3 /home/riels/.t3/worktrees/openmerge/t3-d9510d2c/scripts/check-live-journal-replay.py --baseline /home/riels/.cache/openmerge-9c2d-baseline --candidate /home/riels/.t3/worktrees/openmerge/t3-d9510d2c --events /home/riels/.cache/om-pr72-fix1-input/events.jsonl --queues /home/riels/.cache/om-pr72-fix1-input/queues.jsonl --strict-state --out /home/riels/.cache/openmerge-9c2d-evidence/final-r2/replay.json",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-9c2d-evidence/final-r2/strict-replay",
+      "wall_seconds": 93.931,
+      "package_seconds": {}
+    },
+    {
+      "name": "baseline-simulator",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/baseline-simulator/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/baseline-simulator/tmp make test-sim-exits",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-9c2d-evidence/final-r2/baseline-simulator",
+      "wall_seconds": 47.763,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/internal/sim": 47.219
+      }
+    },
+    {
+      "name": "candidate-simulator",
+      "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/candidate-simulator/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/final-r2/candidate-simulator/tmp make test-sim-exits",
+      "exit": 0,
+      "logs": "/home/riels/.cache/openmerge-9c2d-evidence/final-r2/candidate-simulator",
+      "wall_seconds": 47.363,
+      "package_seconds": {
+        "github.com/CanadaApollo6/openmerge/internal/sim": 47.176
+      }
+    }
+  ],
+  "timing_before": {
+    "package_seconds": {
+      "github.com/CanadaApollo6/openmerge/internal/serve": 229.118,
+      "github.com/CanadaApollo6/openmerge/internal/gitops": 92.847,
+      "github.com/CanadaApollo6/openmerge/internal/queue": 163.717,
+      "github.com/CanadaApollo6/openmerge/cmd/openmerge": 64.169
+    },
+    "source_sha256": "39d64321ba57a325f6eb0ba6021deee129482b568d8edc4178edd01b743b6a1b",
+    "reused": true
+  },
+  "bounded_stress": {
+    "candidate": "cadd432a969576c5af1e2637c0b65b39f5fde0c7",
+    "go_sources_identical_to_full_verification": true,
+    "full_verification_candidate": "3302b0c33b1c02ba3458d923adddcb39b53e54cd",
+    "commands": [
+      {
+        "name": "stress-landing-history",
+        "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/stress-bounded/stress-landing-history/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/stress-bounded/stress-landing-history/tmp GOMAXPROCS=1 go test -p=1 -race -short -cpu=1 -count=20 -timeout=15m ./internal/serve -run '^TestAuthorityAcceptance(ColdCacheAllMethods|HistoryBoundary)$'",
+        "exit": 0,
+        "logs": "/home/riels/.cache/openmerge-9c2d-evidence/stress-bounded/stress-landing-history",
+        "wall_seconds": 594.831,
+        "package_seconds": {
+          "github.com/CanadaApollo6/openmerge/internal/serve": 594.102
+        }
+      },
+      {
+        "name": "stress-transitions-guards-mixed",
+        "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/stress-bounded/stress-transitions-guards-mixed/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-9c2d-evidence/stress-bounded/stress-transitions-guards-mixed/tmp GOMAXPROCS=1 go test -p=1 -race -short -cpu=1 -count=20 -timeout=15m ./internal/serve -run '^TestAuthorityAcceptance(DefaultBranchTransitions|MixedGithubBytes|IntegratedObjectRefusal|BaseAdvanceBeforeBuild|MixedRealGit)$'",
+        "exit": 0,
+        "logs": "/home/riels/.cache/openmerge-9c2d-evidence/stress-bounded/stress-transitions-guards-mixed",
+        "wall_seconds": 404.123,
+        "package_seconds": {
+          "github.com/CanadaApollo6/openmerge/internal/serve": 403.325
+        }
+      }
+    ],
+    "source_hashes": {
+      "internal/gitops/authority_acceptance_rejection_test.go": "1de0130f09f36123779c0f31a35b706da70409681032ae465a955dff20fdf021",
+      "internal/serve/authority_acceptance_branches_test.go": "89834ecbf3e9fc168ecb5a69ac0131205982fc4736744cf7d71841db5079dbd9",
+      "internal/serve/authority_acceptance_compat_test.go": "3553a4a8c12315ac8f3ddb2e84d471b088be6030d69248e2896ac972d0193e3d",
+      "internal/serve/authority_acceptance_git_test.go": "6256d4bb3eb2193e5f1c0c40dd7bd86fd8ce25ebfb1f43f3bd22872493ca37c3",
+      "internal/serve/authority_acceptance_rejection_test.go": "f20c9b2c60c62be63827454a9ade51820ce3581d3a639f20566800790896d4f7",
+      "cmd/openmerge/authority_acceptance_import_test.go": "6c55e0e1aa345ff85347f0bb78c89fea3bd9a4ff9d324732ec13662580827f9d",
+      "scripts/verify-adr0008-9c-2d.py": "61b3825fd5f1785bd826a3c34fac7087dfedcaac1c7eec6ed9ffe28893124733",
+      "scripts/test_adr0008_scratch_db.py": "c9a3faea4436965b494abfc4cb08983a0423495f0c1ac6d6f38f9ca56241c915"
+    },
+    "prior_gitops_cli_20x_pass": {
+      "gitops_seconds": 10.585,
+      "cmd_seconds": 2.525,
+      "log": "../final-r2/stress/stdout.log"
+    },
+    "stress": {
+      "iterations": 20,
+      "GOMAXPROCS": 1,
+      "race": true,
+      "owned_cpu_burners": 8,
+      "all_reaped": true,
+      "groups": [
+        "stress-landing-history",
+        "stress-transitions-guards-mixed"
+      ]
+    },
+    "verdict": "PASS",
+    "scratch_database_dropped": true
+  },
+  "initial_combined_stress": {
+    "exit": 1,
+    "reason": "900-second package timeout, no assertion failure or race report",
+    "serve_seconds": 900.029,
+    "gitops_20x_pass_seconds": 10.585,
+    "cli_20x_pass_seconds": 2.525,
+    "completed_real_landings": 77
+  },
+  "scratch_guard": {
+    "exit": 0,
+    "entrypoint_refusal_cases": 90
+  },
+  "raw_receipts": {
+    "final-r2/summary.json": "ef8642f5d5c38f76c405842bc6aeaeabad2bf3caf8737d6cfdeff4715b7a059e",
+    "stress-bounded/summary.json": "9c75c2e317350ec271d001b3d8488d333279fbffd24def1e38f35673f2450557",
+    "final-r2/stress/stdout.log": "12215e5b83a5b1573f95190dc47585d43f9d342e8d1e57ebeb282c1115c4f329",
+    "stress-bounded/guard.stderr.log": "79653f6bd6a50bf3c34fe777bae92cca36c726e8a6695c1cd5e576f85a032d8f"
+  },
+  "original_go_implementation": "3302b0c33b1c02ba3458d923adddcb39b53e54cd",
+  "original_verifier_implementation": "cadd432a969576c5af1e2637c0b65b39f5fde0c7",
+  "original_go_sources_identical": true,
+  "original_source_hashes": {
+    "internal/gitops/authority_acceptance_rejection_test.go": "1de0130f09f36123779c0f31a35b706da70409681032ae465a955dff20fdf021",
+    "internal/serve/authority_acceptance_branches_test.go": "89834ecbf3e9fc168ecb5a69ac0131205982fc4736744cf7d71841db5079dbd9",
+    "internal/serve/authority_acceptance_compat_test.go": "3553a4a8c12315ac8f3ddb2e84d471b088be6030d69248e2896ac972d0193e3d",
+    "internal/serve/authority_acceptance_git_test.go": "6256d4bb3eb2193e5f1c0c40dd7bd86fd8ce25ebfb1f43f3bd22872493ca37c3",
+    "internal/serve/authority_acceptance_rejection_test.go": "f20c9b2c60c62be63827454a9ade51820ce3581d3a639f20566800790896d4f7",
+    "cmd/openmerge/authority_acceptance_import_test.go": "6c55e0e1aa345ff85347f0bb78c89fea3bd9a4ff9d324732ec13662580827f9d",
+    "scripts/verify-adr0008-9c-2d.py": "61b3825fd5f1785bd826a3c34fac7087dfedcaac1c7eec6ed9ffe28893124733",
+    "scripts/test_adr0008_scratch_db.py": "c9a3faea4436965b494abfc4cb08983a0423495f0c1ac6d6f38f9ca56241c915"
+  },
+  "candidate_parent": "bf702b35471748e280d0c047721cf896ea5bbab1",
+  "round_1": {
+    "scope": "acceptance tests, offline verifier and evidence only; no production, existing fixtures, Makefile/CI/test flags or Dockerfile changes",
+    "history_limit_mutation": {
+      "from": 10000,
+      "to": 9999,
+      "original_test_exit": 0,
+      "revised_test_exit": 1,
+      "killed": true,
+      "verifier_helper": {
+        "result": {
+          "from": 10000,
+          "to": 9999,
+          "killed": true,
+          "exit": 1
+        },
+        "commands": [
+          {
+            "name": "history-limit-mutant",
+            "command": "flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=/home/riels/.cache/openmerge-141-r1-evidence/history-limit-mutant/go-tmp GOCACHE=/home/riels/.cache/go-build TMPDIR=/home/riels/.cache/openmerge-141-r1-evidence/history-limit-mutant/tmp go test -overlay /home/riels/.cache/openmerge-141-r1-evidence/history-limit-mutation/overlay.json -race -short -count=1 ./internal/serve -run '^TestAuthorityAcceptanceHistoryBoundary$'",
+            "exit": 1,
+            "logs": "/home/riels/.cache/openmerge-141-r1-evidence/history-limit-mutant"
+          }
+        ]
+      }
+    },
+    "exact_limit_worker": {
+      "scratch_overlay_only": true,
+      "exit": 0,
+      "test_seconds": 217.36,
+      "package_seconds": 218.375,
+      "included_in_short_suite": false,
+      "reason": "exceeds approximately 10-second budget",
+      "in_limit_executor_coverage": "TestStageARebaseCompositionBeforeCI/at-limit without -short; short variant uses limit 4",
+      "overlay_sha256": "94ac0c8e1114a6c714a9c5cddba61a91c347b7485c78021a994dc11e0fa73f9e"
+    },
+    "mixed_github": {
+      "identical": true,
+      "golden_asserted_in_tree": true,
+      "baseline": "d9ec97580472fc880154b38674b03c2d34733238",
+      "main_sha256": "cc95a654054e61e816120f2e57b9e19ffea3ff4855c32f4f5c055c4e99b913ee",
+      "candidate_sha256": "cc95a654054e61e816120f2e57b9e19ffea3ff4855c32f4f5c055c4e99b913ee"
+    },
+    "scratch_guard": {
+      "exit": 0,
+      "entrypoint_refusal_cases": 90,
+      "log_sha256": "deb0c67af64f9caddf45fad3e31d327e93d33d56d9a219d3a5ea9a3963db4d7a"
+    },
+    "ci_like_serve_timing": {
+      "GOMAXPROCS": 2,
+      "p": 1,
+      "race": true,
+      "short": true,
+      "count": 1,
+      "before_head": "bf702b3",
+      "before_seconds": 264.493,
+      "after_seconds": 266.537,
+      "delta_seconds": 2.044,
+      "before_log_sha256": "f0ff89b40fd5c4e9a014dbb35f7e15fc4375056db95202efce8bf6ffedd0ed28",
+      "single_local_measurement": true
+    },
+    "shared_path_proofs": "Original proofs retained; no shared production paths changed, so full GitHub projection/replay/legacy proofs were not rerun. Required main-built mixed export regenerated.",
+    "raw_directory": "/home/riels/.cache/openmerge-141-r1-evidence",
+    "commands": {
+      "focused": {
+        "exit_code": 0,
+        "wall_seconds_including_lock_wait": 11.917,
+        "command": [
+          "go",
+          "test",
+          "-race",
+          "-short",
+          "-count=1",
+          "./internal/serve",
+          "./cmd/openmerge",
+          "-run",
+          "^TestAuthorityAcceptance(HistoryBoundary|BaseAdvanceBeforeBuild|MixedGithubBytes|ImportGoverningEvidenceCannotBeAccepted)$",
+          "-v"
+        ],
+        "cwd": "/home/riels/.t3/worktrees/openmerge/t3-d9510d2c",
+        "GOMAXPROCS": "2",
+        "package_seconds": {
+          "github.com/CanadaApollo6/openmerge/internal/serve": 6.854,
+          "github.com/CanadaApollo6/openmerge/cmd/openmerge": 1.077
+        },
+        "log_sha256": "bb1b32b69a85db25c645e92d112514f94bc885258b7c9e32cb3d28e32705d248"
+      },
+      "main-export": {
+        "exit_code": 0,
+        "wall_seconds_including_lock_wait": 396.165,
+        "command": [
+          "env",
+          "ADR_ACCEPTANCE_GITHUB_BYTES=/home/riels/.cache/openmerge-141-r1-evidence/main-bytes.json",
+          "go",
+          "test",
+          "-overlay",
+          "/home/riels/.cache/openmerge-141-r1-evidence/main-overlay.json",
+          "-race",
+          "-short",
+          "-count=1",
+          "./internal/serve",
+          "-run",
+          "^TestAuthorityAcceptanceMixedGithubBytes$",
+          "-v"
+        ],
+        "cwd": "/home/riels/.cache/openmerge-141-main-d9ec975",
+        "GOMAXPROCS": "2",
+        "package_seconds": {
+          "github.com/CanadaApollo6/openmerge/internal/serve": 1.814
+        },
+        "log_sha256": "39ab77ae68d40226bef5bb3f65a18091ad51541a56261dce25d32407f82ee821"
+      },
+      "candidate-export": {
+        "exit_code": 0,
+        "wall_seconds_including_lock_wait": 51.391,
+        "command": [
+          "env",
+          "ADR_ACCEPTANCE_GITHUB_BYTES=/home/riels/.cache/openmerge-141-r1-evidence/candidate-bytes.json",
+          "go",
+          "test",
+          "-race",
+          "-short",
+          "-count=1",
+          "./internal/serve",
+          "-run",
+          "^TestAuthorityAcceptanceMixedGithubBytes$",
+          "-v"
+        ],
+        "cwd": "/home/riels/.t3/worktrees/openmerge/t3-d9510d2c",
+        "GOMAXPROCS": "2",
+        "package_seconds": {
+          "github.com/CanadaApollo6/openmerge/internal/serve": 1.84
+        },
+        "log_sha256": "1d25a37b8a42429e99c04415e4f44d60fda1abcdef2e7ac2e737292b82f4ac2b"
+      },
+      "old-mutation": {
+        "exit_code": 0,
+        "wall_seconds_including_lock_wait": 12.529,
+        "command": [
+          "go",
+          "test",
+          "-overlay",
+          "/home/riels/.cache/openmerge-141-r1-evidence/old-mutation-overlay.json",
+          "-race",
+          "-short",
+          "-count=1",
+          "./internal/serve",
+          "-run",
+          "^TestAuthorityAcceptanceHistoryBoundary$",
+          "-v"
+        ],
+        "cwd": "/home/riels/.t3/worktrees/openmerge/t3-d9510d2c",
+        "GOMAXPROCS": "2",
+        "package_seconds": {
+          "github.com/CanadaApollo6/openmerge/internal/serve": 3.983
+        },
+        "log_sha256": "e4a5df013ec690f9b34ade59e4c7072daa8fd19d1ab3535c138958c693a606b7"
+      },
+      "mutation": {
+        "exit_code": 1,
+        "wall_seconds_including_lock_wait": 5.042,
+        "command": [
+          "go",
+          "test",
+          "-overlay",
+          "/home/riels/.cache/openmerge-141-r1-evidence/mutation-overlay.json",
+          "-race",
+          "-short",
+          "-count=1",
+          "./internal/serve",
+          "-run",
+          "^TestAuthorityAcceptanceHistoryBoundary$",
+          "-v"
+        ],
+        "cwd": "/home/riels/.t3/worktrees/openmerge/t3-d9510d2c",
+        "GOMAXPROCS": "2",
+        "package_seconds": {},
+        "log_sha256": "9352d8d0fb8bc8317d86e740b789ed95a4994a3be92fc644d83243fad80c71fe"
+      },
+      "exact-worker": {
+        "exit_code": 0,
+        "wall_seconds_including_lock_wait": 228.708,
+        "command": [
+          "go",
+          "test",
+          "-overlay",
+          "/home/riels/.cache/openmerge-141-r1-evidence/exact-worker-overlay.json",
+          "-p=1",
+          "-race",
+          "-short",
+          "-count=1",
+          "-timeout=15m",
+          "./internal/serve",
+          "-run",
+          "^TestAuthorityAcceptanceHistoryBoundary$",
+          "-v"
+        ],
+        "cwd": "/home/riels/.t3/worktrees/openmerge/t3-d9510d2c",
+        "GOMAXPROCS": "2",
+        "package_seconds": {
+          "github.com/CanadaApollo6/openmerge/internal/serve": 218.375
+        },
+        "log_sha256": "4a7f0a225179984624072e231852af4de564d9032e24f849c9b186eff6fb4007"
+      },
+      "acceptance-count5": {
+        "exit_code": 0,
+        "wall_seconds_including_lock_wait": 409.434,
+        "command": [
+          "go",
+          "test",
+          "-race",
+          "-short",
+          "-count=5",
+          "-timeout=15m",
+          "./internal/serve",
+          "./internal/gitops",
+          "./cmd/openmerge",
+          "-run",
+          "^TestAuthorityAcceptance",
+          "-v"
+        ],
+        "cwd": "/home/riels/.t3/worktrees/openmerge/t3-d9510d2c",
+        "GOMAXPROCS": "2",
+        "package_seconds": {
+          "github.com/CanadaApollo6/openmerge/internal/serve": 180.575,
+          "github.com/CanadaApollo6/openmerge/internal/gitops": 3.385,
+          "github.com/CanadaApollo6/openmerge/cmd/openmerge": 1.304
+        },
+        "log_sha256": "2b6317ca2e2e94ae5e6771afabffe189a4a5f9268b039702397a21a3ff988d39"
+      },
+      "acceptance-gomaxprocs1": {
+        "exit_code": 0,
+        "wall_seconds_including_lock_wait": 51.377,
+        "command": [
+          "go",
+          "test",
+          "-race",
+          "-short",
+          "-count=1",
+          "-timeout=15m",
+          "./internal/serve",
+          "./internal/gitops",
+          "./cmd/openmerge",
+          "-run",
+          "^TestAuthorityAcceptance",
+          "-v"
+        ],
+        "cwd": "/home/riels/.t3/worktrees/openmerge/t3-d9510d2c",
+        "GOMAXPROCS": "1",
+        "package_seconds": {
+          "github.com/CanadaApollo6/openmerge/internal/serve": 37.946,
+          "github.com/CanadaApollo6/openmerge/internal/gitops": 1.484,
+          "github.com/CanadaApollo6/openmerge/cmd/openmerge": 1.075
+        },
+        "log_sha256": "ed4d46d6e292da1c176bfa4e1dc9f75e856785aee4872afc4efbb0d890ed0c5c"
+      },
+      "make-check": {
+        "exit_code": 0,
+        "wall_seconds_including_lock_wait": 442.624,
+        "command": [
+          "make",
+          "check"
+        ],
+        "cwd": "/home/riels/.t3/worktrees/openmerge/t3-d9510d2c",
+        "GOMAXPROCS": "2",
+        "package_seconds": {
+          "github.com/CanadaApollo6/openmerge/cmd/openmerge": 65.631,
+          "github.com/CanadaApollo6/openmerge/internal/ascii": 1.005,
+          "github.com/CanadaApollo6/openmerge/internal/authority": 1.096,
+          "github.com/CanadaApollo6/openmerge/internal/brief": 3.27,
+          "github.com/CanadaApollo6/openmerge/internal/changepolicy": 1.702,
+          "github.com/CanadaApollo6/openmerge/internal/classification": 2.144,
+          "github.com/CanadaApollo6/openmerge/internal/config": 1.591,
+          "github.com/CanadaApollo6/openmerge/internal/config/condition": 1.017,
+          "github.com/CanadaApollo6/openmerge/internal/diagnostic": 1.018,
+          "github.com/CanadaApollo6/openmerge/internal/executor": 1.152,
+          "github.com/CanadaApollo6/openmerge/internal/forge": 7.823,
+          "github.com/CanadaApollo6/openmerge/internal/forge/fake": 1.441,
+          "github.com/CanadaApollo6/openmerge/internal/forge/github": 72.572,
+          "github.com/CanadaApollo6/openmerge/internal/gitops": 86.323,
+          "github.com/CanadaApollo6/openmerge/internal/queue": 163.608,
+          "github.com/CanadaApollo6/openmerge/internal/serve": 281.119,
+          "github.com/CanadaApollo6/openmerge/internal/sim": 34.834,
+          "github.com/CanadaApollo6/openmerge/internal/sim/capacity": 1.007,
+          "github.com/CanadaApollo6/openmerge/internal/status": 11.126,
+          "github.com/CanadaApollo6/openmerge/internal/store": 66.313,
+          "github.com/CanadaApollo6/openmerge/scripts": 1.071,
+          "github.com/CanadaApollo6/openmerge/tools/dogfood": 1.621
+        },
+        "log_sha256": "6e6617baa4657429ab78f5f2213ddedf156ae7310c4a23c5f159f9d7c74e046d"
+      },
+      "timing-after": {
+        "exit_code": 0,
+        "wall_seconds_including_lock_wait": 267.063,
+        "command": [
+          "go",
+          "test",
+          "-p=1",
+          "-race",
+          "-short",
+          "-count=1",
+          "-timeout=15m",
+          "./internal/serve"
+        ],
+        "cwd": "/home/riels/.t3/worktrees/openmerge/t3-d9510d2c",
+        "GOMAXPROCS": "2",
+        "package_seconds": {
+          "github.com/CanadaApollo6/openmerge/internal/serve": 266.537
+        },
+        "log_sha256": "6c1201d72e8e5ce43e45375004a92a72593728fe2b057d80d8c94d87b02d4abd"
+      }
+    }
+  },
+  "original_receipt_sha256": "e821c0a43009943709e4c672cbbb13efd8db17dda7a6153c7ef3883f6bfe681e",
+  "receipt_scope": "source_hashes and round_1 describe the review fixes; other prior gates, commands, timings and stress receipts are retained from the original verification."
+}
