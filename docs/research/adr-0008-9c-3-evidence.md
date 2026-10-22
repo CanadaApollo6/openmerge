@@ -33,8 +33,10 @@ No queues table lock is upgraded by emission. Notification row holders never
 wait on tenancy, queue advisories or events; registration never takes queue
 advisories or event write locks. Existing writers holding queue advisories can
 finish before emission takes events. ACCESS SHARE reads are compatible with the
-event lock. There is no reverse edge to close the reported cycle. Claims/action
-row operations do not acquire tenancy or event table locks after their row locks.
+event lock. There is no reverse edge to close the reported cycle. Plan and BeginConsequential take the queue advisory before action-row locks and
+poison event inserts. Claim commits and releases action-row locks before its
+separate queue-locked poison-publication transaction. `Complete` updates hold
+action rows only, with no tenancy or event lock.
 
 `TestAuthorityTenancyNotificationOverlap` retains Astra's real TakeNotification
 probe with a deterministic seam after FOR UPDATE and before UPDATE. The gate
@@ -60,7 +62,95 @@ A restore under a live process invalidates the positive boundary cache; stop all
 workers before restoring. `/v1/authority-completion` adds `installation_count`;
 an older strict admin CLI fails closed against the new server and must upgrade.
 
-Round-5 verification results are recorded below after the clean-tree run.
+## Round-5 verification results
+
+Clean-tree implementation `4d9aa0f157c0d62b1b0baa9a5ad80319b01e01aa` passed against fresh main
+`75c4029447ae4d24a439ae6ef8ad6103ebcf3926`. The final follow-up changes only inventory comments,
+documentation and this receipt; executable code and tests remain as verified.
+
+- `make check`: **0**, zero lint issues, complete short race suite and build;
+  serve **306.964 s**. Focused propagation,
+  completion, barrier and Stage A exact-output race checks: **0**.
+- **69/69** named behavioral mutations killed (53 retained, 16 round-5 additions).
+  No build failures count. The old-table-lock overlay reproduces exactly
+  `notification=ERROR: deadlock detected (SQLSTATE 40P01)` while emission commits.
+  Late exclusive acquisition fails with `emission acquired events before tenancy`.
+- Strict replay with `GOMEMLIMIT=6GiB`: **2,159/2,159** identical actions,
+  structural states, snapshot hashes and boundary checkpoints; **8,676** probes.
+  Gates, self-tests and non-allowlisted differences all pass.
+- Simulator **146/146** identical; normalized SHA-256
+  `a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7`.
+  Contracts **90/90** identical. GitHub projection/CLI goldens and legacy Git
+  object/ref/command probes pass. MixedGithubBytes remains
+  `cc95a654054e61e816120f2e57b9e19ffea3ff4855c32f4f5c055c4e99b913ee`.
+- Existing fixtures: **211/211** identical to both `fe80399` and original PR head
+  `bc9779c`; **208/208** identical to main. Wire inventory **105/105** unchanged.
+- New/changed tests passed **20 iterations**, `GOMAXPROCS=1 -race -cpu=1`,
+  with **eight owned CPU burners**, all reaped. The separate completion-field
+  table supplement also passed 20 iterations with eight owned burners. Independent
+  `/proc` observations saw all eight accumulating CPU in the full run; the short
+  supplement observation saw all eight with nonzero CPU ticks before reaping.
+
+Loaded stress package times:
+
+- `stress-public-serve`: internal/serve 572.701 s.
+- `stress-public-base-recovery`: internal/serve 201.575 s.
+- `stress-public-config-store-cli-gitops`: internal/config 3.124 s, internal/changepolicy 2.017 s, internal/store 97.406 s, cmd/openmerge 18.260 s, internal/gitops 37.407 s.
+- `stress-completion-fields`: internal/serve 1.039 s.
+
+CI-like `GOMAXPROCS=2 go test -race -short -count=1 -p=1 -timeout=15m`:
+
+| Package | Main 75c4029 (s) | Round 5 (s) | Delta (s) |
+| --- | ---: | ---: | ---: |
+| `internal/serve` | 265.607 | 289.044 | +23.437 |
+| `internal/gitops` | 93.328 | 96.468 | +3.140 |
+| `internal/queue` | 164.530 | 164.122 | -0.408 |
+| `cmd/openmerge` | 64.140 | 64.611 | +0.471 |
+
+These are single local suite timings, not daemon throughput or causal performance
+estimates. All measured packages and stress groups remain below 900 seconds.
+No timeout, Makefile, CI, test flag, Dockerfile, migration, shared GitHub formatter,
+Stage A retry behavior or existing fixture changed. GitHub registration adds
+only the shared advisory lock and the equality evidence above remains unchanged.
+
+Round-5 mutation additions (all killed by named assertions):
+
+| Mutation | Test |
+| --- | --- |
+| `tenancy-registration-shared` | `TestAuthorityTenancyConcurrentRegistration` |
+| `tenancy-exclusive-after-events` | `TestAuthorityTenancyConcurrentRegistration` |
+| `tenancy-boundary-defense` | `TestAuthorityTenancyBoundaryDefense` |
+| `completion-installation-verdict` | `TestRepositoryAuthorityCompletion` |
+| `notification-table-deadlock` | `TestAuthorityTenancyNotificationOverlap` |
+| `completion-field-Reason` | `TestSameAuthorityCompletionFields` |
+| `completion-field-Digest` | `TestSameAuthorityCompletionFields` |
+| `completion-field-ExpectedDigest` | `TestSameAuthorityCompletionFields` |
+| `completion-field-GoverningCommit` | `TestSameAuthorityCompletionFields` |
+| `completion-field-ID` | `TestSameAuthorityCompletionFields` |
+| `completion-field-Installation` | `TestSameAuthorityCompletionFields` |
+| `completion-field-Base` | `TestSameAuthorityCompletionFields` |
+| `completion-field-Lane` | `TestSameAuthorityCompletionFields` |
+| `completion-field-installation-count` | `TestSameAuthorityCompletionFields` |
+| `completion-field-complete` | `TestSameAuthorityCompletionFields` |
+| `completion-field-queue-count` | `TestSameAuthorityCompletionFields` |
+
+The retained `tenancy-registration-lock` and `tenancy-registration-held` recipes
+now remove exclusive advisory tenancy, and are killed by the adapted
+`TestAuthorityTenancyConcurrentRegistration` and
+`TestAuthorityTenancyRegistrationWaitsForEmission`. The new shared-lock recipe
+removes registration's shared advisory lock. The late-lock recipe places the
+exclusive acquisition after `checkAuthorityEmission` has locked events.
+
+Logs, overlays, manifests and source hashes: `~/.cache/openmerge-143-r5/full-r3/`;
+fixture and independent burner observations: `~/.cache/openmerge-143-r5/`;
+completion-field supplemental stress: `~/.cache/openmerge-143-r5/supplement/`.
+The initial clean-tree rejection for a generated Python bytecode directory, an
+interrupted preliminary mutation run, and a development-only invalid nested
+synctest subtest were excluded. They are not acceptance results. The final
+clean-tree verifier reran all gates. No live database, systemd units, live
+refs/status API, real forge call from code/tests/simulator, or Smart-Data-Ohio was
+touched. No PR comment, queue or deployment was performed.
+
 
 ---
 
