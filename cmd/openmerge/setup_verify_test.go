@@ -42,6 +42,7 @@ func TestVerificationReceiptRejectedBeforeDatabaseOrSeeingRead(t *testing.T) {
 	identity := "openmerge-db-v2:sha256:offline-test"
 	now := time.Now().UTC()
 	receipt := authority.EmissionReceipt{DatabaseIdentity: identity, BinaryRevision: revision, DrainedWorkers: []string{"isolated/worker"}, DrainedAt: now.Add(-time.Minute), BackupPath: backup, BackupSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("isolated restore-tested backup"))), RestoreTestedAt: now, CompatibleReadersOnly: true}
+	completeEmissionOperations(&receipt)
 	for _, tc := range []struct {
 		name, diagnostic string
 		maxAge           time.Duration
@@ -55,6 +56,8 @@ func TestVerificationReceiptRejectedBeforeDatabaseOrSeeingRead(t *testing.T) {
 			r.RestoreTestedAt = now.Add(-2 * time.Hour)
 		}},
 		{"wrong binary", "does not match running binary", time.Hour, func(r *authority.EmissionReceipt) { r.BinaryRevision = "another-binary" }},
+		{"missing inventory", "complete all-host stopped worker inventory required", time.Hour, func(r *authority.EmissionReceipt) { r.Inventory = nil }},
+		{"missing reconciliation", "reconciliation receipt required", time.Hour, func(r *authority.EmissionReceipt) { r.Reconciliation = nil }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := receipt
@@ -343,4 +346,12 @@ func TestVerifyTargetsStaleBasisRetainsEvidenceAndRequiresRetry(t *testing.T) {
 	if !state.WriteRestrictionStatus().LastVerifiedAt.After(oldTime) {
 		t.Fatal("fresh retry did not advance verification time")
 	}
+}
+
+func completeEmissionOperations(r *authority.EmissionReceipt) {
+	r.Inventory = &authority.WorkerInventory{Complete: true}
+	for _, id := range r.DrainedWorkers {
+		r.Inventory.Workers = append(r.Inventory.Workers, authority.StoppedWorker{ID: id, BinaryRevision: "prior-test-revision", StoppedAt: r.DrainedAt})
+	}
+	r.Reconciliation = &authority.RestoreReconciliation{SourceDatabaseIdentity: r.DatabaseIdentity, RestoredDatabaseIdentity: "isolated-restore", BackupSHA256: r.BackupSHA256, BackupCapturedAt: r.DrainedAt, BackupWatermark: 1, RestoredWatermark: 1, ReconciledAt: r.RestoreTestedAt, EvidenceSHA256: r.BackupSHA256, AllRefsAndEvidenceReconciled: true}
 }

@@ -306,7 +306,7 @@ func sameAuthorityPin(previous, candidate queue.PolicyAuthorityApplied) bool {
 // authorityInputsMatch keeps retries and governing-commit rebinds bound to
 // the interpretation inputs of the durable adoption, not just its policy digest.
 func authorityInputsMatch(pin queue.PolicyAuthorityApplied, in forge.WriteRestrictionInput) bool {
-	return pin.OpenMerge == nil || pin.OpenMerge.VerificationInput == nil || reflect.DeepEqual(*pin.OpenMerge.VerificationInput, queue.AuthorityVerificationInput{BaseSelectors: in.BaseSelectors, ExpectedRefs: in.ExpectedRefs, AppID: in.AppID})
+	return pin.OpenMerge == nil || pin.OpenMerge.VerificationInput == nil || queue.AuthorityInputsMatch(pin.OpenMerge.VerificationInput, in)
 }
 
 // authorityDraftFloor returns the newest durable boundary after which a
@@ -549,9 +549,14 @@ func (s *Store) AdoptAuthorityPin(ctx context.Context, q QueueID, pin queue.Poli
 				return err
 			}
 		}
-		floor, err := authorityDraftFloor(ctx, tx, q)
-		if err != nil {
-			return err
+		// A draftless invalidation cannot adopt a proposal; avoid scanning its
+		// historical floor, while retaining the exact same guarded write.
+		var floor int64
+		if draftID > 0 {
+			floor, err = authorityDraftFloor(ctx, tx, q)
+			if err != nil {
+				return err
+			}
 		}
 		var governingRecordedAt time.Time
 		if err := tx.QueryRow(ctx, `SELECT recorded_at FROM events WHERE queue_id=$1 AND type='config_applied' ORDER BY id DESC LIMIT 1`, q).Scan(&governingRecordedAt); err != nil {

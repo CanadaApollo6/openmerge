@@ -193,7 +193,7 @@ constructors remain opted out; each is independently safe at that boundary.
    2a/2b/2c/2d row landed with equality evidence. Add tests that **fail unless**
    the completion-signal API and pre-switch `--verify`/drain receipt refusal
    exist **and are consulted** by public activation; absent/incomplete propagation
-   or missing/invalid receipts must refuse activation. Only then remove the
+   or missing/invalid receipts must refuse activation. Exercise `AuthorityCompletion.RequireComplete`, the actual repository-wide source (including missing/stale discovery), and the actual `setup --verify` / `EmissionReceipt.ValidateForBinary` refusal, with spies/mutations proving each was consulted; per-queue adoption receipts cannot substitute. Include the #138 recovery rows below. Only then remove the
    barrier. Retain deployment Hold until dogfood period B drains.
 
 The real organization switch remains **PR 11**, in the sandbox with the owner.
@@ -252,6 +252,9 @@ contracts without transferring their ownership.
 | #127: unsupported future-version cursor fallback | 9b-ii-1: operating docs and regression cover overwriting derived future-version cursor |
 | #127: ValidateChecks approval quota/read precedence | 9b-ii-1: local check preflight without DB/forge approval reads; fresh complete admission read retained |
 | #128: configured database receipt identity, empty identities, preflight review-input precedence, stale ownership/transaction-expiry documentation | 9b-ii-2a |
+| #138: ExpectedRefs/input drift recovery | 9c-2c documents rollback → fresh proposed verification → re-enable. Applied verification cannot safely mint proposed-adoption provenance; direct re-adoption is deliberately unavailable. 9c-3 must test this runbook through public activation and require current completion. |
+| #138: external base advance between plan/build | 9c-2c documents conservative transient failure and normal base observation/replan recovery. 9c-3 must test public recovery; do not classify arbitrary ancestry/read failures as a successful base-moved observation. GitHub path stays unchanged. |
+| #138: seeing-drift assertion, shared input comparison, draftless floor query | 9c-2c comments the assertion, centralizes `queue.AuthorityInputsMatch` with explicit historical-nil policy, and skips AdoptAuthorityPin draft-floor reads for draftID zero. |
 | Acceptance #82 history boundary / #84 tested acquisition | 9c-2d: reproduce in cold-cache real-git acceptance |
 | Acceptance rejected intermediate/marker/fence refs unchanged and mixed GitHub compatibility | 9c-2d: real remote ref read-back plus permission/event/commit comparisons |
 | Owner decision: no approvals means no ordinary floor | 9a: pure evaluation and atomic decision tests |
@@ -277,7 +280,7 @@ backup and reconcile subsequent real refs/evidence before resuming. Keep outside
 warnings and all immutable evidence through rollback/retirement. PR 11 owns the
 actual organization switch, never this implementation worktree.
 
-At the 9c-1 baseline there is **no repository-wide “all served queues carry digest X” completion signal**. 9b-ii-2b provides independent per-queue receipts only; they do not authorize removing redundant protection. 9c-2c owns providing and validating that completion signal before protection removal.
+Historical baseline: at 9c-1 there was **no repository-wide “all served queues carry digest X” completion signal**. 9b-ii-2b provides independent per-queue receipts only; they do not authorize removing redundant protection. 9c-2c provides `Server.AuthorityCompletion` / `Store.RepositoryAuthorityCompletion` and authenticated `/v1/authority-completion`; `AuthorityCompletion.RequireComplete` is the refusal contract. It covers all registered partitions (including paused/retired/excluded) plus fresh selected discovery, not a worker subset. 9c-3 must consult it before the public switch/protection-removal sequence.
 
 The optional `write_restriction_observed.read_error` and its v7 snapshot field
 are also strict-decoder compatibility boundaries. Include workers/readers that

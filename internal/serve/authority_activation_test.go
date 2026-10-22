@@ -32,7 +32,9 @@ func activationReceipt(t *testing.T, db *store.Store) authority.EmissionReceipt 
 	must(t, os.WriteFile(path, []byte("offline test backup"), 0600))
 	identity, err := db.DatabaseIdentity(t.Context())
 	must(t, err)
-	return authority.EmissionReceipt{DatabaseIdentity: identity, BinaryRevision: authority.RunningBinaryRevision(), DrainedWorkers: []string{"test-worker"}, DrainedAt: time.Now().Add(-time.Minute), RestoreTestedAt: time.Now().Add(-time.Second), BackupPath: path, BackupSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("offline test backup"))), CompatibleReadersOnly: true}
+	receipt := authority.EmissionReceipt{DatabaseIdentity: identity, BinaryRevision: authority.RunningBinaryRevision(), DrainedWorkers: []string{"test-worker"}, DrainedAt: time.Now().Add(-time.Minute), RestoreTestedAt: time.Now().Add(-time.Second), BackupPath: path, BackupSHA256: fmt.Sprintf("%x", sha256.Sum256([]byte("offline test backup"))), CompatibleReadersOnly: true}
+	completeEmissionOperations(&receipt)
+	return receipt
 }
 
 func TestAuthorityActivationReceiptBeforeIO(t *testing.T) {
@@ -68,6 +70,7 @@ func TestAuthorityActivationReceiptBeforeIO(t *testing.T) {
 				request.Receipt.BinaryRevision = "another-binary"
 			case "caller-db-differs-from-store":
 				request.Receipt.DatabaseIdentity = "another-db"
+				request.Receipt.Reconciliation.SourceDatabaseIdentity = "another-db"
 				// A caller can supply a self-consistent receipt for another DB.
 				// That attestation must not choose the runtime validation identity.
 				must(t, request.Receipt.ValidateForBinary(request.Receipt.DatabaseIdentity, time.Now(), request.ReceiptMaxAge, authority.RunningBinaryRevision()))
@@ -189,4 +192,12 @@ func TestAuthorityActivationReceiptExpiresDuringSeeingRead(t *testing.T) {
 			t.Fatal("expired seeing read emitted events")
 		}
 	})
+}
+
+func completeEmissionOperations(r *authority.EmissionReceipt) {
+	r.Inventory = &authority.WorkerInventory{Complete: true}
+	for _, id := range r.DrainedWorkers {
+		r.Inventory.Workers = append(r.Inventory.Workers, authority.StoppedWorker{ID: id, BinaryRevision: "prior-test-revision", StoppedAt: r.DrainedAt})
+	}
+	r.Reconciliation = &authority.RestoreReconciliation{SourceDatabaseIdentity: r.DatabaseIdentity, RestoredDatabaseIdentity: "isolated-restore", BackupSHA256: r.BackupSHA256, BackupCapturedAt: r.DrainedAt, BackupWatermark: 1, RestoredWatermark: 1, ReconciledAt: r.RestoreTestedAt, EvidenceSHA256: r.BackupSHA256, AllRefsAndEvidenceReconciled: true}
 }

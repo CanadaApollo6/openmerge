@@ -141,6 +141,8 @@ func TestAuthorityBootstrapPinsBeforeFirstRealFence(t *testing.T) {
 					state, _, err := db.Load(ctx, id)
 					must(t, err)
 					_, _, ok := state.AuthorityProtection()
+					// A complete conflicting seeing read invalidates positive protection
+					// provenance; the drift case must still retain the durable pin.
 					if state.AuthorityPin() == nil || !ok && mode != "seeing-drift" {
 						t.Fatal("first fence preceded pin or observation")
 					}

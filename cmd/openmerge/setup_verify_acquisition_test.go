@@ -98,6 +98,25 @@ func TestVerifyAcquiresOnceAfterEveryTargetValidated(t *testing.T) {
 		}
 		watermarks[id] = int64(mark)
 	}
+	reader.moved = false
+	reader.verifyReaderFunc = func(context.Context, forge.WriteRestrictionInput) (authority.Observation, error) {
+		return authority.CloneObservation(v.Evidence), nil
+	}
+	checked := false
+	err = verifyTargets(t.Context(), db, reader, plan, "operator", io.Discard, func() error { checked = true; return errors.New("stale emission receipt after seeing read") })
+	if err == nil || !checked {
+		t.Fatal("missing final receipt refusal", err)
+	}
+	for id, mark := range watermarks {
+		_, after, err := db.Load(t.Context(), id)
+		if err != nil || int64(after) != mark {
+			t.Fatal("verification committed after receipt refusal", err)
+		}
+	}
+	reader.verifyReaderFunc = func(context.Context, forge.WriteRestrictionInput) (authority.Observation, error) {
+		reader.moved = true
+		return authority.CloneObservation(v.Evidence), nil
+	}
 	err = verifyTargets(t.Context(), db, reader, plan, "operator", io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "no verification recorded") || strings.Contains(err.Error(), "SECRET") {
 		t.Fatal(err)

@@ -55,14 +55,16 @@ func EmbeddedBinaryRevision(info *debug.BuildInfo, fallback string) (revision st
 // This is an explicit operator attestation, not automatic worker discovery.
 // DatabaseIdentity is the versioned server-side cluster/database/schema/genesis digest.
 type EmissionReceipt struct {
-	DatabaseIdentity      string    `json:"database_identity"`
-	BinaryRevision        string    `json:"binary_revision"`
-	DrainedWorkers        []string  `json:"drained_workers"`
-	DrainedAt             time.Time `json:"drained_at"`
-	BackupPath            string    `json:"backup_path"`
-	BackupSHA256          string    `json:"backup_sha256"`
-	RestoreTestedAt       time.Time `json:"restore_tested_at"`
-	CompatibleReadersOnly bool      `json:"compatible_readers_only"`
+	Inventory             *WorkerInventory       `json:"inventory"`
+	Reconciliation        *RestoreReconciliation `json:"reconciliation"`
+	DatabaseIdentity      string                 `json:"database_identity"`
+	BinaryRevision        string                 `json:"binary_revision"`
+	DrainedWorkers        []string               `json:"drained_workers"`
+	DrainedAt             time.Time              `json:"drained_at"`
+	BackupPath            string                 `json:"backup_path"`
+	BackupSHA256          string                 `json:"backup_sha256"`
+	RestoreTestedAt       time.Time              `json:"restore_tested_at"`
+	CompatibleReadersOnly bool                   `json:"compatible_readers_only"`
 }
 
 // Validate gates every explicit verification, including still-github queues.
@@ -99,14 +101,17 @@ func (r EmissionReceipt) ValidateForBinary(identity string, now time.Time, maxAg
 		}
 		seen[worker] = true
 	}
+	if err := r.validateOperations(now); err != nil {
+		return err
+	}
 	f, err := os.Open(r.BackupPath)
 	if err != nil {
 		return fmt.Errorf("first-emission backup unavailable")
 	}
 	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
-	if err != nil || !info.Mode().IsRegular() {
-		return fmt.Errorf("first-emission backup must be a regular file")
+	if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+		return fmt.Errorf("first-emission backup must be a nonempty regular file")
 	}
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {

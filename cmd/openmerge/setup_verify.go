@@ -108,13 +108,19 @@ func runRulesVerification(ctx context.Context, opts verifyOptions, rules github.
 		return err
 	}
 	defer db.Close()
-	return verifyTargets(ctx, db, reader, plan, opts.Operator, out)
+	return verifyTargets(ctx, db, reader, plan, opts.Operator, out, func() error {
+		identity, err := db.DatabaseIdentity(ctx)
+		if err != nil {
+			return errors.New("verification receipt database identity unavailable")
+		}
+		return receipt.ValidateForBinary(identity, time.Now(), opts.ReceiptMaxAge, authority.RunningBinaryRevision())
+	})
 }
 
 // Generate the invocation nonce before any seeing read. A fresh invocation
 // never dedupes identical daily fingerprints. Callers retry Commit with these
 // exact records; a new read must create a new invocation and nonce.
-func verifyTargets(ctx context.Context, db *store.Store, reader forge.WriteRestrictionReader, plan verificationPlan, operator string, out io.Writer) error {
+func verifyTargets(ctx context.Context, db *store.Store, reader forge.WriteRestrictionReader, plan verificationPlan, operator string, out io.Writer, beforeCommit ...func() error) error {
 	var random [32]byte
 	if _, err := rand.Read(random[:]); err != nil {
 		return err
@@ -194,6 +200,11 @@ func verifyTargets(ctx context.Context, db *store.Store, reader forge.WriteRestr
 	for _, recheck := range rechecks {
 		if err := recheck(ctx); err != nil {
 			return errors.New("governing policy changed or unavailable; no verification recorded; retry acquisition")
+		}
+	}
+	for _, check := range beforeCommit {
+		if err := check(); err != nil {
+			return err
 		}
 	}
 	receipts, err := db.CommitWriteRestrictionVerification(ctx, records)

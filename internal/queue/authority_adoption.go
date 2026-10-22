@@ -22,6 +22,13 @@ type AuthorityVerificationInput struct {
 	AppID         string                   `json:"app_id"`
 }
 
+// AuthorityInputsMatch compares the full durable interpretation contract. Nil
+// historical input is not positive evidence; callers preserving unadopted pins
+// must explicitly choose whether missing historical input is acceptable.
+func AuthorityInputsMatch(input *AuthorityVerificationInput, in forge.WriteRestrictionInput) bool {
+	return input != nil && reflect.DeepEqual(*input, AuthorityVerificationInput{BaseSelectors: in.BaseSelectors, ExpectedRefs: in.ExpectedRefs, AppID: in.AppID})
+}
+
 func (in AuthorityVerificationInput) validateSize() error {
 	// Match the reader's expected-ref count bound and bound selector work plus
 	// the complete durable payload, including arbitrarily long string values.
