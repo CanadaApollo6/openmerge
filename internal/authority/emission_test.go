@@ -20,6 +20,7 @@ func TestFirstEmissionDrainBackupGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	receipt := EmissionReceipt{DatabaseIdentity: "localhost:54329/test", BinaryRevision: "test-revision", DrainedWorkers: []string{"sandbox-host/worker-1", "sandbox-host/worker-2"}, DrainedAt: now.Add(-time.Minute), BackupPath: backup, BackupSHA256: fmt.Sprintf("%x", sha256.Sum256(data)), RestoreTestedAt: now, CompatibleReadersOnly: true}
+	completeEmissionOperations(&receipt)
 	if err := receipt.ValidateForBinary(receipt.DatabaseIdentity, now, DefaultEmissionReceiptMaxAge, "test-revision"); err != nil {
 		t.Fatal(err)
 	}
@@ -33,10 +34,12 @@ func TestFirstEmissionDrainBackupGate(t *testing.T) {
 	r := receipt
 	r.DrainedAt = now.Add(-25 * time.Hour)
 	r.RestoreTestedAt = now.Add(-24 * time.Hour)
+	completeEmissionOperations(&r)
 	if err := r.ValidateForBinary(r.DatabaseIdentity, now, 26*time.Hour, "test-revision"); err != nil {
 		t.Fatal(err)
 	}
 	r.DrainedAt = now.Add(-DefaultEmissionReceiptMaxAge)
+	completeEmissionOperations(&r)
 	if err := r.ValidateForBinary(r.DatabaseIdentity, now, DefaultEmissionReceiptMaxAge, "test-revision"); err != nil {
 		t.Fatal(err)
 	}
@@ -110,4 +113,12 @@ func TestBinaryRevisionMetadata(t *testing.T) {
 			}
 		})
 	}
+}
+
+func completeEmissionOperations(r *EmissionReceipt) {
+	r.Inventory = &WorkerInventory{Complete: true}
+	for _, id := range r.DrainedWorkers {
+		r.Inventory.Workers = append(r.Inventory.Workers, StoppedWorker{ID: id, BinaryRevision: "prior-test-revision", StoppedAt: r.DrainedAt})
+	}
+	r.Reconciliation = &RestoreReconciliation{SourceDatabaseIdentity: r.DatabaseIdentity, RestoredDatabaseIdentity: "isolated-restore", BackupSHA256: r.BackupSHA256, BackupCapturedAt: r.DrainedAt, BackupWatermark: 1, RestoredWatermark: 1, ReconciledAt: r.RestoreTestedAt, EvidenceSHA256: r.BackupSHA256, AllRefsAndEvidenceReconciled: true}
 }

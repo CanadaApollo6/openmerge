@@ -1911,3 +1911,188 @@ preflight read, immediately before its write. Verification retains that same
 acquired identity per repository and rechecks after all target observations,
 immediately before committing evidence. A changed or unavailable governing ref
 requires a fresh acquisition and records no verification.
+
+### Repository authority propagation and operational gates (Hold)
+
+Each authenticated GET to `/v1/authority-completion` performs outbound App
+installation/repository, branch and governing-ref discovery. It returns all
+registered partitions for the requested repository across installations,
+including partitions excluded by worker allowlists. The bearer token grants
+this repository-wide visibility. Discovery is uncached, with a 15-second request
+deadline and no separate concurrency semaphore; serialize operator polling to
+avoid concurrent discovery exhausting the App's API budget.
+
+
+Before any authority event or v7 cursor, including **pre-switch**
+`setup rulesets --authority openmerge --verify`, freeze admissions, let every
+attempt settle, stop every journal writer and incompatible reader on every
+host, and prevent automatic restarts. Paused, blocked, dormant and retired
+queues are not evidence of drainage. Inventory service processes, spare hosts,
+other installations, admin commands and offline readers; include readers lacking
+`read_error` even if they recognize authority events and snapshot version 7.
+Record each process's stable host/process ID, binary revision and stop timestamp.
+Check leases and outstanding actions separately; this is operator-controlled,
+not automatic remote capability detection.
+
+The database-bound emission receipt now additionally requires `inventory` and
+`reconciliation`; regenerate older receipts. `inventory.complete` attests that
+all hosts/readers were reviewed. Its `workers` must match `drained_workers`
+exactly, each with `id`, nonempty `binary_revision` and `stopped_at` no later
+than `drained_at`. Keep the complete inventory with the matching binary/config
+revisions and object cache. The receipt remains an operator attestation.
+
+With all writers stopped, record the source identity and journal watermark,
+capture `pg_dump -Fc`, hash its actual bytes, and restore with `pg_restore` into
+an **isolated scratch database**, never over the source for the restore test.
+Verify restored journal watermark and replay, retain restore logs and compare
+actual base/fence refs and any post-backup landings/evidence. A no-change result
+still requires an explicit reconciliation record. Record the artifact hash,
+source and restored database identities (they must differ), backup hash,
+`backup_captured_at`, positive `backup_watermark`, matching `restored_watermark`,
+`reconciled_at`, `evidence_sha256`, and
+`all_refs_and_evidence_reconciled: true` in `reconciliation`.
+Capture time must follow the drain; restore-test time must follow capture;
+reconciliation must follow the restore test. Retain the actual evidence whose
+hash is recorded. Receipt checks validate these attestations and the backup's
+bytes; they cannot independently prove that the restore or reconciliation ran.
+The Prepare gate does not require live `max(events.id)` to equal the backup
+watermark: this is the retained **pre-emission** backup, and subsequent verify
+invocations can legitimately follow earlier verification/adoption events.
+Watermark equality would reject those invocations without proving writer
+quiescence. Keep every writer stopped and reconcile all post-backup evidence;
+watermark/restore equality remains an operator attestation, not a live drain
+proof.
+
+
+For example, the additional receipt fields are:
+
+```json
+{
+  "inventory": {
+    "complete": true,
+    "workers": [{"id": "host/worker", "binary_revision": "saved-revision", "stopped_at": "2026-10-22T12:00:00Z"}]
+  },
+  "reconciliation": {
+    "source_database_identity": "source identity from print-database-identity",
+    "restored_database_identity": "isolated restore identity",
+    "backup_sha256": "same SHA-256 as backup_sha256 in the emission receipt",
+    "backup_captured_at": "2026-10-22T12:01:00Z",
+    "backup_watermark": 123,
+    "restored_watermark": 123,
+    "reconciled_at": "2026-10-22T12:03:00Z",
+    "evidence_sha256": "SHA-256 of retained restore/ref/evidence reconciliation artifact",
+    "all_refs_and_evidence_reconciled": true
+  }
+}
+```
+
+Use the same operator connection for `--print-database-identity` and `--verify`.
+Receipt age, attested emitting binary and database identity are checked before
+forge reads. Verification rechecks identity/backup bytes before the final governing
+ref check, then rechecks age/binary without I/O immediately before the store call;
+adoption retains its existing immediate pre-call receipt check.
+A receipt **can expire while that transaction waits for queue locks or commits**;
+there is no transaction-time expiry guarantee. Keep the stopped window bounded,
+renew stale receipts by repeating the procedure, and do not treat command success
+as proof that a stopped remote process cannot restart.
+
+Consult the independent authenticated GET endpoint before removing redundant
+protection:
+
+```text
+/v1/authority-completion?installation=INSTALLATION&repo=owner/repo&digest=EXPECTED_EFFECTIVE_DIGEST
+```
+
+or the equivalent CLI, which uses the same `--api`/token settings as `queue status`:
+
+```sh
+openmerge admin authority-completion --installation INSTALLATION --repo owner/repo \
+  --digest EXPECTED_EFFECTIVE_DIGEST [--targets '{"release/v1":"DIGEST"}']
+```
+
+It prints the API response and exits **0 only** when the server reports
+`complete: true` with at least one partition for exactly the requested intent
+(installation, repository, digest and targets echoed back). An incomplete
+answer, an empty or mismatched response, or any API failure exits nonzero;
+treat every nonzero exit as "retain redundant protection".
+
+A repository can have different effective digests for different queue policies.
+For that case supply `targets`, a URL-encoded JSON object mapping each base to
+its reviewed expected digest; `digest` supplies an optional common default.
+The response echoes the request and returns `complete` plus each partition's
+ID/installation/base/lane/watermark, actual/expected digest, governing commit and reason. HTTP 200 can
+mean **incomplete**: require `complete: true`. Missing/unavailable discovery is
+503 and must be retried; the API never caches failures or a prior success.
+
+“Served queues” conservatively means **every registered partition of this
+repository across installations**, including paused, blocked, dormant, retired,
+recovery-only and excluded-by-worker/base-allowlist partitions, plus every
+selected base in fresh complete branch discovery and every explicit target.
+No per-queue receipt or subset of current worker keys can authorize removal.
+Retired queues are deliberately not exempt: if they cannot be brought to the
+intended policy, retain redundant protection. Do not delete their histories.
+Historical partitions under another installation are included and block completion
+when their discovery inventory is unavailable. Multiple live installation scopes
+currently fail closed: this endpoint cannot issue a partial success for one of
+them. Retain protection until a complete aggregate discovery proof is supported;
+repeating per-installation queries is not a substitute.
+
+The API freshly resolves installation/repository access, reads the live default
+branch/tip and full branch inventory, folds all registered partitions in one
+read-only repeatable-read database snapshot, then rechecks branch inventory and
+default ref. It requires matching digests, authenticated adoption, verified
+current protection evidence and current selected discovery inputs. A newly
+selected branch blocks completion before registration and while its siblings
+still carry old ExpectedRefs. A changed governing tip or default-branch name blocks completion until
+all pins rebind, even when two branches point to the same commit. The API performs no mutation or authority opt-in.
+
+This is a point-in-time completion signal, not a lease or permission surviving
+later discovery/policy changes. Freeze configuration/branch changes during the
+operator switch, consult it again immediately before protection removal, and
+recheck after each resumable partial step. Missing/incomplete propagation means
+retain protection and retry normal reconciliation. Public authority activation
+remains rejected in this build; only 9c-3 may wire these prerequisites into the
+public switch.
+
+### Authority input drift and binary downgrade recovery
+
+Creating a selected branch (for example `release/v2`) can change ExpectedRefs
+without changing the effective policy digest. The worker invalidates the old
+adoption before any fallible read, so old frozen push contexts stop working.
+Keep redundant protection. Use the compatible binary to roll the repository
+back to `github`, wait for rollback pins on all partitions, prepare a **fresh
+proposed** `setup --verify` with complete current inputs and valid drain/backup
+receipt, then re-enable through the reviewed activation procedure. Consult the
+repository completion API again. An applied verification alone cannot re-adopt
+an invalidated proposal; do not reuse the prior proposal/event ID. This recovery
+remains conservative pending a separately designed provenance contract.
+
+If the live base advances externally between planning and building, the authority
+creation-boundary ancestry check can reject the build as a transient infrastructure
+failure. Retain protection and allow normal base observation/replanning and retry;
+do not bypass validation or treat this as a content conflict. An ancestry-proof
+failure can also mean missing/incomplete history, so this release does not
+translate every failure to a successful base-moved observation. GitHub mode
+retains its existing behavior and output.
+
+Rollback to `github` does **not** make retained new events or v7 cursors readable
+by an older binary. With all workers stopped, run the read-only, migration-free downgrade check
+from this build or later:
+
+```sh
+openmerge admin downgrade-check --database-url "$OPERATOR_DATABASE_URL"
+```
+
+It refuses the authority journal boundary, new authority enum values, v7/future
+cursors and unreadable/unknown journal or cursor snapshot data, including a v7-only cursor
+with no authority events. A refusal prints `authority downgrade refused`; a database it
+cannot read prints `authority downgrade check unavailable` and decides nothing.
+Both exit 1, and neither echoes connection details. Success certifies only absence of this ADR's boundary;
+check every other target-binary compatibility requirement separately. Never edit
+or delete journal/cursor rows to force success. Keep the post-emission database
+and immutable evidence, use a compatible reader, or restore the tested pre-emission
+backup with all workers stopped. Before restarting after restoration, reconcile
+actual base/fence refs, external landings and immutable decisions/evidence since
+the backup, retain the reconciliation artifact/receipt, regenerate the restored
+source identity and repeat drain/backup verification. A successful check is
+not an automatic restore or an authorization to restart stale state.

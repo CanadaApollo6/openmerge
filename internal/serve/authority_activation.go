@@ -179,8 +179,7 @@ func (s *Server) prepareAuthorityLifecycle(ctx context.Context, w *worker, state
 	if err := request.Pin.Validate(); err != nil {
 		return nil, err
 	}
-	expectedInput := &queue.AuthorityVerificationInput{BaseSelectors: request.Input.BaseSelectors, ExpectedRefs: request.Input.ExpectedRefs, AppID: request.Input.AppID}
-	inputsChanged := previous != nil && previous.OpenMerge != nil && queue.AuthorityDraftAdopted(*previous) && !reflect.DeepEqual(previous.OpenMerge.VerificationInput, expectedInput)
+	inputsChanged := previous != nil && previous.OpenMerge != nil && queue.AuthorityDraftAdopted(*previous) && !queue.AuthorityInputsMatch(previous.OpenMerge.VerificationInput, request.Input)
 	// Reconciliation owns recurring observations, independently of pin adoption.
 	// A draftless lifecycle operation never spends a seeing read it would discard.
 	if mode == authority.OpenMerge {
@@ -200,8 +199,7 @@ func (s *Server) prepareAuthorityLifecycle(ctx context.Context, w *worker, state
 	if mode == authority.OpenMerge && previous != nil && previous.OpenMerge != nil && (request.DraftID == 0 || queue.AuthorityDraftAdopted(*previous) && request.DraftID == previous.OpenMerge.Activation.Proposed.EventID) {
 		unchanged := request.Pin
 		unchanged.OpenMerge = previous.OpenMerge
-		input := previous.OpenMerge.VerificationInput
-		inputsMatch := !queue.AuthorityDraftAdopted(*previous) || reflect.DeepEqual(input, expectedInput)
+		inputsMatch := !queue.AuthorityDraftAdopted(*previous) || queue.AuthorityInputsMatch(previous.OpenMerge.VerificationInput, request.Input)
 		if inputsMatch && reflect.DeepEqual(previous.OpenMerge.Binding, request.Pin.OpenMerge.Binding) && reflect.DeepEqual(*previous, unchanged) {
 			return nil, nil
 		}

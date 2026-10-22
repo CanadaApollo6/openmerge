@@ -128,7 +128,7 @@ func (s *Server) authorityPushOptions(ctx context.Context, w *worker, operation 
 	}
 	if w.AuthorityRequired && w.resolveAuthorityLifecycle != nil {
 		request := w.authorityObservation
-		if request == nil || !queue.AuthorityDraftAdopted(*pin) || !reflect.DeepEqual(pin.OpenMerge.VerificationInput, &queue.AuthorityVerificationInput{BaseSelectors: request.Input.BaseSelectors, ExpectedRefs: request.Input.ExpectedRefs, AppID: request.Input.AppID}) {
+		if request == nil || !queue.AuthorityDraftAdopted(*pin) || !queue.AuthorityInputsMatch(pin.OpenMerge.VerificationInput, request.Input) {
 			return unavailablePush(errors.New("authority push requires current adopted interpretation inputs"))
 		}
 	}

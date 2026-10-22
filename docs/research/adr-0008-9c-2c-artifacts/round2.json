@@ -1,0 +1,296 @@
+{
+  "trial_class": "Hold",
+  "go_implementation": "383f571c55ea9df15ae4abcf5816ac8490d48d26",
+  "go_files_unchanged_after_full_verification": true,
+  "guard_self_test": {
+    "command": "python3 scripts/test_adr0008_scratch_db.py",
+    "exit": 0,
+    "entrypoint_refusals_without_subprocess": 60,
+    "note": "Includes empty routing parameters; final Python-only tightening follows the full Go run."
+  },
+  "full_verification": {
+    "verdict": "PASS",
+    "baseline": "eaddd8428ebe5acc9ad435276304516d7d389f7a",
+    "candidate": "383f571c55ea9df15ae4abcf5816ac8490d48d26",
+    "wire": {
+      "identical": true,
+      "legacy_fixtures": 105,
+      "legacy_registry_fixtures": 90,
+      "legacy_sha256": "19c9d4ddd14947a59fbfd55e28c870e8a7d4aec6c6747b718a989a04c16e7e8f",
+      "new_fixtures": []
+    },
+    "github_projections": {
+      "identical": true,
+      "status_api_health_author_sha256": "b6d532d17347fd1ad25c9391760bfda786436c2b142da0238f12b66a0919b02a",
+      "cli_sha256": "4bea7d07d00c094c8824751d3b5db07932de48be34f6db2d98bc772139e248cf"
+    },
+    "contracts": {
+      "identical": true,
+      "records": 90,
+      "sha256": "88e727ebe7ea5b570f352c5c661c2cd1642c1b5120f3d3ed086993f4dd00362a"
+    },
+    "replay": {
+      "verdict": "PASS",
+      "state_mode": "strict",
+      "actions_identical": "2159/2159",
+      "structural_state_identical": "2159/2159",
+      "snapshot_hashes_identical": "2159/2159",
+      "boundary_checkpoints_identical": "2159/2159",
+      "boundary_probe_count": 8676,
+      "non_allowlisted_fields": [],
+      "gate2": "PASS",
+      "gate4": "PASS",
+      "self_test": "PASS",
+      "self_test_exit_status": 0,
+      "full_report_sha256": "957c7adcf31f07a6a78fa97982ecba6fb52d7a5efb3d989dd0324fc48387fd58"
+    },
+    "simulator": {
+      "baseline_exit": 0,
+      "candidate_exit": 0,
+      "identical": true,
+      "blocks": 146,
+      "normalized_sha256": "a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7"
+    }
+  },
+  "commands": [
+    {
+      "name": "make-check",
+      "exit": 0
+    },
+    {
+      "name": "focused",
+      "exit": 0
+    },
+    {
+      "name": "timing-after",
+      "exit": 0
+    },
+    {
+      "name": "baseline-github-projections",
+      "exit": 0
+    },
+    {
+      "name": "baseline-github-cli",
+      "exit": 0
+    },
+    {
+      "name": "candidate-github-projections",
+      "exit": 0
+    },
+    {
+      "name": "candidate-github-cli",
+      "exit": 0
+    },
+    {
+      "name": "baseline-contracts",
+      "exit": 0
+    },
+    {
+      "name": "candidate-contracts",
+      "exit": 0
+    },
+    {
+      "name": "strict-replay",
+      "exit": 0
+    },
+    {
+      "name": "baseline-simulator",
+      "exit": 0
+    },
+    {
+      "name": "candidate-simulator",
+      "exit": 0
+    }
+  ],
+  "stress": {
+    "GOMAXPROCS": 1,
+    "burners": 8,
+    "owned_burner_pids": [
+      431689,
+      431690,
+      431691,
+      431692,
+      431693,
+      431694,
+      431695,
+      431696
+    ],
+    "burners_reaped": true,
+    "results": [
+      {
+        "name": "race-build",
+        "exit": 0,
+        "seconds": 1.407
+      },
+      {
+        "name": "go-count20",
+        "exit": 0,
+        "seconds": 118.14
+      },
+      {
+        "name": "restore-1",
+        "exit": 0,
+        "seconds": 3.554
+      },
+      {
+        "name": "restore-2",
+        "exit": 0,
+        "seconds": 3.357
+      },
+      {
+        "name": "restore-3",
+        "exit": 0,
+        "seconds": 3.379
+      },
+      {
+        "name": "restore-4",
+        "exit": 0,
+        "seconds": 3.366
+      },
+      {
+        "name": "restore-5",
+        "exit": 0,
+        "seconds": 3.323
+      },
+      {
+        "name": "restore-6",
+        "exit": 0,
+        "seconds": 3.372
+      },
+      {
+        "name": "restore-7",
+        "exit": 0,
+        "seconds": 3.35
+      },
+      {
+        "name": "restore-8",
+        "exit": 0,
+        "seconds": 3.397
+      },
+      {
+        "name": "restore-9",
+        "exit": 0,
+        "seconds": 3.355
+      },
+      {
+        "name": "restore-10",
+        "exit": 0,
+        "seconds": 3.328
+      },
+      {
+        "name": "restore-11",
+        "exit": 0,
+        "seconds": 3.388
+      },
+      {
+        "name": "restore-12",
+        "exit": 0,
+        "seconds": 3.349
+      },
+      {
+        "name": "restore-13",
+        "exit": 0,
+        "seconds": 3.41
+      },
+      {
+        "name": "restore-14",
+        "exit": 0,
+        "seconds": 3.402
+      },
+      {
+        "name": "restore-15",
+        "exit": 0,
+        "seconds": 3.397
+      },
+      {
+        "name": "restore-16",
+        "exit": 0,
+        "seconds": 3.39
+      },
+      {
+        "name": "restore-17",
+        "exit": 0,
+        "seconds": 3.375
+      },
+      {
+        "name": "restore-18",
+        "exit": 0,
+        "seconds": 3.38
+      },
+      {
+        "name": "restore-19",
+        "exit": 0,
+        "seconds": 3.365
+      },
+      {
+        "name": "restore-20",
+        "exit": 0,
+        "seconds": 3.343
+      }
+    ]
+  },
+  "mutations": [
+    {
+      "mutation": "repository-case",
+      "exit": 1,
+      "killed": true
+    },
+    {
+      "mutation": "durable-config",
+      "exit": 1,
+      "killed": true
+    },
+    {
+      "mutation": "missing-default",
+      "exit": 1,
+      "killed": true
+    },
+    {
+      "mutation": "deleted-expected-ref",
+      "exit": 1,
+      "killed": true
+    },
+    {
+      "mutation": "unregistered-target",
+      "exit": 1,
+      "killed": true
+    },
+    {
+      "mutation": "installation-allowlist",
+      "exit": 1,
+      "killed": true
+    },
+    {
+      "mutation": "landing-check-boundary",
+      "exit": 1,
+      "killed": true
+    },
+    {
+      "mutation": "trust-complete-flag",
+      "exit": 1,
+      "killed": true
+    }
+  ],
+  "raw_logs": "~/.cache/adr0008-9c-2c-round2",
+  "raw_receipt_sha256": {
+    "full/summary.json": "c03fdcf0a4430efe3563ddab3f07e6cceb46af215cf71d739b3b83ae75a243f4",
+    "full/manifest.json": "33bfa25c3ae5c74b7d0c55b6425c41a27c474e40af3883a30f53156aa22da879",
+    "stress/summary.json": "13f25fad670d012ef6c4dd2735f6921002c9cd811abd1818b2d39baef62d4397",
+    "mutations/summary.json": "f13aeff8a4cc6e1fce41712b84101d32165d78f95e3af8fee8921c2d7886914b",
+    "final-case-mutation/summary.json": "6755df229dfb3d93986447452765070496062ac0ae7d8f2e1ec1efdb8409ce4c",
+    "guard-self-test.log": "f17e74ae6d4c64bbf7742b3b4c4070447c991e5a061c812e883aa883e88edd81"
+  },
+  "source_sha256": {
+    "scripts/adr0008_scratch_db.py": "56f9af3a1815059d1c819abc9c331224f81b4496625fdc804e252d53020d3040",
+    "scripts/test_adr0008_scratch_db.py": "080056bed2a260a7ffabd0eb5d9345a5db4fdc7acb3615fbba671c99cc0f30f8",
+    "scripts/verify-adr0008-9c-2c.py": "f1aba883e22dccaf7dd1c070f2082cc9dba66142fb1c324444c30d8f28e01db4",
+    "scripts/check-adr0008-9c-2c-restore.py": "861492296e914c8940499f2704b8d652787fda377880c144f2f7e67029481d83",
+    "internal/serve/authority_completion.go": "f3665c31f568829d8d8db53c0e6ced8d59bac00e478a9224c1d7497806a6bd2d",
+    "internal/serve/authority_completion_test.go": "55e055d732da0ccf896076aafc6ca067b64c00610d4b32d571451a82c367608c",
+    "internal/store/authority_completion.go": "5cdfdf2fd0c82d62e11b3df9f65e077e3083b5af8bd705f251d65d57fd35a11d",
+    "internal/store/authority_completion_test.go": "8b17c257bc6926e06597599b065f044556c60ce826d7a617f10f021d0ec1cbd9",
+    "internal/store/authority_downgrade.go": "b33e080910283a5b7275f6edb16a0f026d52647f1d22c5f565f5c456c82c65b0",
+    "cmd/openmerge/admin_completion_test.go": "e6df272918cb9ed1f41a35e650ea1aa75a5f207891f2df1f9cc2943b561e7bcf",
+    "cmd/openmerge/setup_verify.go": "b040905c4b632c114afa1b5417b4755dbe9cd479646f7975c265316df80e4572"
+  }
+}

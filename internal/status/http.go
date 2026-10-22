@@ -159,6 +159,10 @@ func Handler(source Source, keys []store.QueueKey, token string, sanitizer *diag
 			fail(w, http.StatusMethodNotAllowed, "method-not-allowed", "only GET is supported")
 			return
 		}
+		if r.URL.EscapedPath() == "/v1/authority-completion" {
+			serveAuthorityCompletion(w, r, source)
+			return
+		}
 		if r.URL.Path == "/v1/discovery" && len(discovery) > 0 {
 			if r.URL.RawQuery != "" {
 				fail(w, http.StatusBadRequest, "invalid-request", "discovery accepts no query")

@@ -77,7 +77,13 @@ func runRulesVerification(ctx context.Context, opts verifyOptions, rules github.
 	if err != nil {
 		return err
 	}
-	if err := receipt.ValidateForBinary(identity, time.Now(), opts.ReceiptMaxAge, authority.RunningBinaryRevision()); err != nil {
+	// The immutable receipt and backup were validated above, before database I/O.
+	// Bind that proof to the live identity without hashing the same dump again;
+	// Prepare revalidates its bytes after the seeing reads.
+	if identity == "" || identity != receipt.DatabaseIdentity {
+		return errors.New("first-emission receipt database identity mismatch")
+	}
+	if err := receipt.RecheckEmissionWindowForBinary(time.Now(), opts.ReceiptMaxAge, authority.RunningBinaryRevision()); err != nil {
 		return err
 	}
 	var plan verificationPlan
@@ -108,13 +114,25 @@ func runRulesVerification(ctx context.Context, opts verifyOptions, rules github.
 		return err
 	}
 	defer db.Close()
-	return verifyTargets(ctx, db, reader, plan, opts.Operator, out)
+	return verifyTargets(ctx, db, reader, plan, opts.Operator, out, verificationReceiptGate{Prepare: func() error {
+		identity, err := db.DatabaseIdentity(ctx)
+		if err != nil {
+			return errors.New("verification receipt database identity unavailable")
+		}
+		return receipt.ValidateForBinary(identity, time.Now(), opts.ReceiptMaxAge, authority.RunningBinaryRevision())
+	}, Recheck: func() error {
+		return receipt.RecheckEmissionWindowForBinary(time.Now(), opts.ReceiptMaxAge, authority.RunningBinaryRevision())
+	}})
 }
+
+// Prepare may read receipt identity/backup bytes. Recheck MUST be pure: after
+// the final governing recheck there can be no intervening I/O before commit.
+type verificationReceiptGate struct{ Prepare, Recheck func() error }
 
 // Generate the invocation nonce before any seeing read. A fresh invocation
 // never dedupes identical daily fingerprints. Callers retry Commit with these
 // exact records; a new read must create a new invocation and nonce.
-func verifyTargets(ctx context.Context, db *store.Store, reader forge.WriteRestrictionReader, plan verificationPlan, operator string, out io.Writer) error {
+func verifyTargets(ctx context.Context, db *store.Store, reader forge.WriteRestrictionReader, plan verificationPlan, operator string, out io.Writer, receiptGates ...verificationReceiptGate) error {
 	var random [32]byte
 	if _, err := rand.Read(random[:]); err != nil {
 		return err
@@ -191,9 +209,23 @@ func verifyTargets(ctx context.Context, db *store.Store, reader forge.WriteRestr
 		records[i].Event.ProtectionFingerprint = fp
 		records[i].Event.VerifiedAt = time.Now().UTC()
 	}
+	for _, gate := range receiptGates {
+		if gate.Prepare != nil {
+			if err := gate.Prepare(); err != nil {
+				return err
+			}
+		}
+	}
 	for _, recheck := range rechecks {
 		if err := recheck(ctx); err != nil {
 			return errors.New("governing policy changed or unavailable; no verification recorded; retry acquisition")
+		}
+	}
+	for _, gate := range receiptGates {
+		if gate.Recheck != nil {
+			if err := gate.Recheck(); err != nil {
+				return err
+			}
 		}
 	}
 	receipts, err := db.CommitWriteRestrictionVerification(ctx, records)

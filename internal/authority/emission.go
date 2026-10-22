@@ -55,14 +55,16 @@ func EmbeddedBinaryRevision(info *debug.BuildInfo, fallback string) (revision st
 // This is an explicit operator attestation, not automatic worker discovery.
 // DatabaseIdentity is the versioned server-side cluster/database/schema/genesis digest.
 type EmissionReceipt struct {
-	DatabaseIdentity      string    `json:"database_identity"`
-	BinaryRevision        string    `json:"binary_revision"`
-	DrainedWorkers        []string  `json:"drained_workers"`
-	DrainedAt             time.Time `json:"drained_at"`
-	BackupPath            string    `json:"backup_path"`
-	BackupSHA256          string    `json:"backup_sha256"`
-	RestoreTestedAt       time.Time `json:"restore_tested_at"`
-	CompatibleReadersOnly bool      `json:"compatible_readers_only"`
+	Inventory             *WorkerInventory       `json:"inventory"`
+	Reconciliation        *RestoreReconciliation `json:"reconciliation"`
+	DatabaseIdentity      string                 `json:"database_identity"`
+	BinaryRevision        string                 `json:"binary_revision"`
+	DrainedWorkers        []string               `json:"drained_workers"`
+	DrainedAt             time.Time              `json:"drained_at"`
+	BackupPath            string                 `json:"backup_path"`
+	BackupSHA256          string                 `json:"backup_sha256"`
+	RestoreTestedAt       time.Time              `json:"restore_tested_at"`
+	CompatibleReadersOnly bool                   `json:"compatible_readers_only"`
 }
 
 // Validate gates every explicit verification, including still-github queues.
@@ -77,6 +79,46 @@ func (r EmissionReceipt) Validate(identity string, now time.Time) error {
 // ValidateForBinary checks the operator attestation against local build metadata.
 // It cannot prove remote workers are stopped or authenticate the binary itself.
 func (r EmissionReceipt) ValidateForBinary(identity string, now time.Time, maxAge time.Duration, revision string) error {
+	if err := r.RecheckEmissionWindowForBinary(now, maxAge, revision); err != nil {
+		return err
+	}
+	if identity == "" || r.DatabaseIdentity == "" || r.DatabaseIdentity != identity || r.BinaryRevision == "" || len(r.DrainedWorkers) == 0 || !r.CompatibleReadersOnly || r.DrainedAt.IsZero() || r.RestoreTestedAt.Before(r.DrainedAt) || r.RestoreTestedAt.After(now) || !IsDigest(r.BackupSHA256) {
+		return fmt.Errorf("first-emission gate requires a database-bound drain inventory and restore-tested backup receipt; see docs/research/adr-0008-4-evidence.md")
+	}
+	seen := map[string]bool{}
+	for _, worker := range r.DrainedWorkers {
+		if worker == "" || seen[worker] {
+			return fmt.Errorf("invalid drained worker inventory")
+		}
+		seen[worker] = true
+	}
+	if err := r.validateOperations(now); err != nil {
+		return err
+	}
+	f, err := os.Open(r.BackupPath)
+	if err != nil {
+		return fmt.Errorf("first-emission backup unavailable")
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil || !info.Mode().IsRegular() || info.Size() == 0 {
+		return fmt.Errorf("first-emission backup must be a nonempty regular file")
+	}
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return fmt.Errorf("cannot hash first-emission backup")
+	}
+	if fmt.Sprintf("%x", h.Sum(nil)) != r.BackupSHA256 {
+		return fmt.Errorf("first-emission backup hash mismatch")
+	}
+	return nil
+}
+
+// RecheckEmissionWindowForBinary performs no I/O. It only rechecks freshness and
+// the emitting binary AFTER a complete ValidateForBinary check, so a final forge
+// ref check can remain the last I/O before the store call. It is not a standalone
+// inventory, backup or database-identity gate.
+func (r EmissionReceipt) RecheckEmissionWindowForBinary(now time.Time, maxAge time.Duration, revision string) error {
 	if maxAge <= 0 {
 		return fmt.Errorf("emission receipt maximum age must be positive")
 	}
@@ -89,31 +131,8 @@ func (r EmissionReceipt) ValidateForBinary(identity string, now time.Time, maxAg
 	if r.DrainedAt.Before(now.Add(-maxAge)) || r.RestoreTestedAt.Before(now.Add(-maxAge)) {
 		return fmt.Errorf("stale emission receipt: drain and restore test must be within %s; repeat drain, backup and restore test", maxAge)
 	}
-	if identity == "" || r.DatabaseIdentity == "" || r.DatabaseIdentity != identity || r.BinaryRevision == "" || len(r.DrainedWorkers) == 0 || !r.CompatibleReadersOnly || r.DrainedAt.IsZero() || r.RestoreTestedAt.Before(r.DrainedAt) || r.RestoreTestedAt.After(now) || !IsDigest(r.BackupSHA256) {
-		return fmt.Errorf("first-emission gate requires a database-bound drain inventory and restore-tested backup receipt; see docs/research/adr-0008-4-evidence.md")
-	}
-	seen := map[string]bool{}
-	for _, worker := range r.DrainedWorkers {
-		if worker == "" || seen[worker] {
-			return fmt.Errorf("invalid drained worker inventory")
-		}
-		seen[worker] = true
-	}
-	f, err := os.Open(r.BackupPath)
-	if err != nil {
-		return fmt.Errorf("first-emission backup unavailable")
-	}
-	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil || !info.Mode().IsRegular() {
-		return fmt.Errorf("first-emission backup must be a regular file")
-	}
-	h := sha256.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return fmt.Errorf("cannot hash first-emission backup")
-	}
-	if fmt.Sprintf("%x", h.Sum(nil)) != r.BackupSHA256 {
-		return fmt.Errorf("first-emission backup hash mismatch")
+	if r.DrainedAt.After(now) || r.RestoreTestedAt.After(now) {
+		return fmt.Errorf("emission receipt timestamps are in the future")
 	}
 	return nil
 }

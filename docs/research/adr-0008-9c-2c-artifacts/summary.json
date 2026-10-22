@@ -1,0 +1,143 @@
+{
+  "trial_class": "Hold",
+  "slice": "9c-2c",
+  "offline_only": true,
+  "commands": [
+    {
+      "name": "make-check",
+      "command": "flock ~/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=~/.cache/adr0008-9c-2c-verification-opus/final/make-check/go-tmp GOCACHE=~/.cache/go-build TMPDIR=~/.cache/adr0008-9c-2c-verification-opus/final/make-check/tmp make check",
+      "exit": 0,
+      "logs": "~/.cache/adr0008-9c-2c-verification-opus/final/make-check"
+    },
+    {
+      "name": "focused",
+      "command": "flock ~/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=~/.cache/adr0008-9c-2c-verification-opus/final/focused/go-tmp GOCACHE=~/.cache/go-build TMPDIR=~/.cache/adr0008-9c-2c-verification-opus/final/focused/tmp go test -race ./internal/authority ./internal/serve ./internal/store ./internal/queue ./internal/config ./internal/status ./cmd/openmerge -run 'Completion|OperationalReceipts|FirstEmission|Downgrade|VerificationReceipt|VerifyAcquires|AuthorityBarrier|AuthorityInputDrift|LegacyLineZero|StageAAccountableIdentityDiagnosticExact' -count=1",
+      "exit": 0,
+      "logs": "~/.cache/adr0008-9c-2c-verification-opus/final/focused"
+    },
+    {
+      "name": "timing-after",
+      "command": "flock ~/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=~/.cache/adr0008-9c-2c-verification-opus/final/timing-after/go-tmp GOCACHE=~/.cache/go-build TMPDIR=~/.cache/adr0008-9c-2c-verification-opus/final/timing-after/tmp go test -race -short -count=1 -timeout=15m ./internal/serve",
+      "exit": 0,
+      "logs": "~/.cache/adr0008-9c-2c-verification-opus/final/timing-after"
+    },
+    {
+      "name": "baseline-github-projections",
+      "command": "flock ~/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=~/.cache/adr0008-9c-2c-verification-opus/final/baseline-github-projections/go-tmp GOCACHE=~/.cache/go-build TMPDIR=~/.cache/adr0008-9c-2c-verification-opus/final/baseline-github-projections/tmp ADR_GITHUB_PROJECTIONS=~/.cache/adr0008-9c-2c-verification-opus/final/baseline-projections/projections.json go test -overlay ~/.cache/adr0008-9c-2c-verification-opus/final/baseline-projections/overlay.json ./internal/serve -run '^TestAuthorityGithubProjectionBytes$' -count=1",
+      "exit": 0,
+      "logs": "~/.cache/adr0008-9c-2c-verification-opus/final/baseline-github-projections"
+    },
+    {
+      "name": "baseline-github-cli",
+      "command": "flock ~/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=~/.cache/adr0008-9c-2c-verification-opus/final/baseline-github-cli/go-tmp GOCACHE=~/.cache/go-build TMPDIR=~/.cache/adr0008-9c-2c-verification-opus/final/baseline-github-cli/tmp ADR_GITHUB_PROJECTIONS=~/.cache/adr0008-9c-2c-verification-opus/final/baseline-projections/projections.json ADR_GITHUB_CLI=~/.cache/adr0008-9c-2c-verification-opus/final/baseline-projections/cli.txt go test -overlay ~/.cache/adr0008-9c-2c-verification-opus/final/baseline-projections/overlay.json ./cmd/openmerge -run '^TestADR2cGithubCLI$' -count=1",
+      "exit": 0,
+      "logs": "~/.cache/adr0008-9c-2c-verification-opus/final/baseline-github-cli"
+    },
+    {
+      "name": "candidate-github-projections",
+      "command": "flock ~/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=~/.cache/adr0008-9c-2c-verification-opus/final/candidate-github-projections/go-tmp GOCACHE=~/.cache/go-build TMPDIR=~/.cache/adr0008-9c-2c-verification-opus/final/candidate-github-projections/tmp ADR_GITHUB_PROJECTIONS=~/.cache/adr0008-9c-2c-verification-opus/final/candidate-projections/projections.json go test -overlay ~/.cache/adr0008-9c-2c-verification-opus/final/candidate-projections/overlay.json ./internal/serve -run '^TestAuthorityGithubProjectionBytes$' -count=1",
+      "exit": 0,
+      "logs": "~/.cache/adr0008-9c-2c-verification-opus/final/candidate-github-projections"
+    },
+    {
+      "name": "candidate-github-cli",
+      "command": "flock ~/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=~/.cache/adr0008-9c-2c-verification-opus/final/candidate-github-cli/go-tmp GOCACHE=~/.cache/go-build TMPDIR=~/.cache/adr0008-9c-2c-verification-opus/final/candidate-github-cli/tmp ADR_GITHUB_PROJECTIONS=~/.cache/adr0008-9c-2c-verification-opus/final/candidate-projections/projections.json ADR_GITHUB_CLI=~/.cache/adr0008-9c-2c-verification-opus/final/candidate-projections/cli.txt go test -overlay ~/.cache/adr0008-9c-2c-verification-opus/final/candidate-projections/overlay.json ./cmd/openmerge -run '^TestADR2cGithubCLI$' -count=1",
+      "exit": 0,
+      "logs": "~/.cache/adr0008-9c-2c-verification-opus/final/candidate-github-cli"
+    },
+    {
+      "name": "baseline-contracts",
+      "command": "flock ~/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=~/.cache/adr0008-9c-2c-verification-opus/final/baseline-contracts/go-tmp GOCACHE=~/.cache/go-build TMPDIR=~/.cache/adr0008-9c-2c-verification-opus/final/baseline-contracts/tmp ADR_DIFF=~/.cache/adr0008-9c-2c-verification-opus/final/baseline/contracts.json go test -overlay ~/.cache/adr0008-9c-2c-verification-opus/final/baseline/overlay.json ./internal/queue -run '^TestADR00081Differential$' -count=1",
+      "exit": 0,
+      "logs": "~/.cache/adr0008-9c-2c-verification-opus/final/baseline-contracts"
+    },
+    {
+      "name": "candidate-contracts",
+      "command": "flock ~/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=~/.cache/adr0008-9c-2c-verification-opus/final/candidate-contracts/go-tmp GOCACHE=~/.cache/go-build TMPDIR=~/.cache/adr0008-9c-2c-verification-opus/final/candidate-contracts/tmp ADR_DIFF=~/.cache/adr0008-9c-2c-verification-opus/final/candidate/contracts.json go test -overlay ~/.cache/adr0008-9c-2c-verification-opus/final/candidate/overlay.json ./internal/queue -run '^TestADR00081Differential$' -count=1",
+      "exit": 0,
+      "logs": "~/.cache/adr0008-9c-2c-verification-opus/final/candidate-contracts"
+    },
+    {
+      "name": "strict-replay",
+      "command": "flock ~/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=6GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=~/.cache/adr0008-9c-2c-verification-opus/final/strict-replay/go-tmp GOCACHE=~/.cache/go-build TMPDIR=~/.cache/adr0008-9c-2c-verification-opus/final/strict-replay/tmp ~/.local/share/mise/installs/python/latest/bin/python3 ~/.t3/worktrees/openmerge/t3-729fd10f/scripts/check-live-journal-replay.py --baseline ~/.cache/adr0008-9c-2c-baseline-eaddd84 --candidate ~/.t3/worktrees/openmerge/t3-729fd10f --events ~/.cache/om-pr72-fix1-input/events.jsonl --queues ~/.cache/om-pr72-fix1-input/queues.jsonl --strict-state --out ~/.cache/adr0008-9c-2c-verification-opus/final/replay.json",
+      "exit": 0,
+      "logs": "~/.cache/adr0008-9c-2c-verification-opus/final/strict-replay"
+    },
+    {
+      "name": "baseline-simulator",
+      "command": "flock ~/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=~/.cache/adr0008-9c-2c-verification-opus/final/baseline-simulator/go-tmp GOCACHE=~/.cache/go-build TMPDIR=~/.cache/adr0008-9c-2c-verification-opus/final/baseline-simulator/tmp make test-sim-exits",
+      "exit": 0,
+      "logs": "~/.cache/adr0008-9c-2c-verification-opus/final/baseline-simulator"
+    },
+    {
+      "name": "candidate-simulator",
+      "command": "flock ~/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOPROXY=off GOSUMDB=off GOTOOLCHAIN=local GOTMPDIR=~/.cache/adr0008-9c-2c-verification-opus/final/candidate-simulator/go-tmp GOCACHE=~/.cache/go-build TMPDIR=~/.cache/adr0008-9c-2c-verification-opus/final/candidate-simulator/tmp make test-sim-exits",
+      "exit": 0,
+      "logs": "~/.cache/adr0008-9c-2c-verification-opus/final/candidate-simulator"
+    }
+  ],
+  "baseline": "eaddd8428ebe5acc9ad435276304516d7d389f7a",
+  "candidate": "4a926c31fa3ad2b09909ac0eeac21e534c8386b8",
+  "environment": {
+    "GOROOT": "~/.local/share/mise/installs/go/1.27.3",
+    "PATH_prefix": "~/.local/share/mise/installs/go/1.27.3/bin",
+    "database": "localhost:54329, isolated test schemas"
+  },
+  "exports": {
+    "events": {
+      "path": "~/.cache/om-pr72-fix1-input/events.jsonl",
+      "sha256": "9c8f78f3e967c7cb030948cfc9871cc67a45da06f80b12f27d1c55d09ba8accf",
+      "rows": 2158,
+      "max_event_id": 2158
+    },
+    "queues": {
+      "path": "~/.cache/om-pr72-fix1-input/queues.jsonl",
+      "sha256": "418f025a0e3c8792321b6d71d297f17fff1adf48cb616c8f4fcb774163696886",
+      "rows": 1
+    }
+  },
+  "wire": {
+    "identical": true,
+    "legacy_fixtures": 105,
+    "legacy_registry_fixtures": 90,
+    "legacy_sha256": "19c9d4ddd14947a59fbfd55e28c870e8a7d4aec6c6747b718a989a04c16e7e8f",
+    "new_fixtures": []
+  },
+  "github_projections": {
+    "identical": true,
+    "status_api_health_author_sha256": "b6d532d17347fd1ad25c9391760bfda786436c2b142da0238f12b66a0919b02a",
+    "cli_sha256": "4bea7d07d00c094c8824751d3b5db07932de48be34f6db2d98bc772139e248cf"
+  },
+  "contracts": {
+    "identical": true,
+    "records": 90,
+    "sha256": "88e727ebe7ea5b570f352c5c661c2cd1642c1b5120f3d3ed086993f4dd00362a"
+  },
+  "replay": {
+    "verdict": "PASS",
+    "state_mode": "strict",
+    "actions_identical": "2159/2159",
+    "structural_state_identical": "2159/2159",
+    "snapshot_hashes_identical": "2159/2159",
+    "boundary_checkpoints_identical": "2159/2159",
+    "boundary_probe_count": 8676,
+    "non_allowlisted_fields": [],
+    "gate2": "PASS",
+    "gate4": "PASS",
+    "self_test": "PASS",
+    "self_test_exit_status": 0,
+    "full_report_sha256": "1e46f41f05915b4db807db297d62e1d804f8c40316a90cff988d72e77f0e6333"
+  },
+  "simulator": {
+    "baseline_exit": 0,
+    "candidate_exit": 0,
+    "identical": true,
+    "blocks": 146,
+    "normalized_sha256": "a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7"
+  },
+  "binary": {
+    "path": "~/.t3/worktrees/openmerge/t3-729fd10f/bin/openmerge",
+    "sha256": "ff0886d565ee94c3afb92e81e7dbcfeea5bea8a68496fcdcd73b1285b8a5c381"
+  },
+  "verdict": "PASS"
+}
