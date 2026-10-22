@@ -157,7 +157,7 @@ func (s *Server) publicAuthorityTarget(target Target) Target {
 		read := func(ctx context.Context) (authority.Observation, error) {
 			evidence, err := reader.ObserveWriteRestriction(ctx, input)
 			if err != nil {
-				return evidence, errors.New("authority protection read unavailable")
+				return evidence, &authorityObservationReadFailure{err: err}
 			}
 			return evidence, nil
 		}

@@ -70,6 +70,8 @@ def run_stress(v, root, out, groups=STRESS_GROUPS):
 def verify_consult_mutations(v, root, out):
     """Every bypass must fail a named behavioral test, never merely fail to build."""
     cases = [
+        ("public-reader-error-class", "internal/serve/authority_public.go", "./internal/serve", "TestPublicAuthorityReaderPreservesSanitizedErrorClasses",
+         lambda s: s.replace("return evidence, &authorityObservationReadFailure{err: err}", "return evidence, errors.New(\"authority protection read unavailable\")", 1)),
         ("public-github-loader", "internal/serve/reconcile.go", "./internal/serve", "TestPublicAuthorityGithubConfigurationBytes",
          lambda s: s.replace("candidate.Config, warnings, err = config.Load(data)", "candidate, warnings, err = config.LoadAuthorityCandidate(data)", 1)),
         ("setup-live-backup-call", "cmd/openmerge/setup_verify.go", "./cmd/openmerge", "TestPublicAuthoritySetupVerifyRequiresLiveBackupWatermark",

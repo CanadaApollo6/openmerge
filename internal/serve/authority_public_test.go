@@ -455,3 +455,37 @@ func TestPublicAuthorityGithubConfigurationBytes(t *testing.T) {
 		}
 	})
 }
+
+func TestPublicAuthorityReaderPreservesSanitizedErrorClasses(t *testing.T) {
+	testSynctest(t, func(t *testing.T) {
+		p := newPublicFixture(t, true)
+		quota := &workerAuthorityQuota{until: time.Now().Add(time.Hour)}
+		for _, tc := range []struct {
+			err   error
+			class string
+		}{
+			{quota, "quota"},
+			{errors.Join(errors.New("SECRET"), context.Canceled), "canceled"},
+			{errors.Join(errors.New("SECRET"), context.DeadlineExceeded), "timeout"},
+			{errors.New("SECRET"), "unavailable"},
+		} {
+			tip, err := p.f.ReadRef(t.Context(), repo, "main")
+			must(t, err)
+			resolution, err := p.w.resolveAuthorityLifecycle(t.Context(), p.w.configCandidate, "main", tip)
+			must(t, err)
+			evidence, err := lifecycleRead(t.Context())
+			must(t, err)
+			must(t, p.f.SetWriteRestrictionObservation(repo, evidence, tc.err))
+			_, err = resolution.Activation.Read(t.Context())
+			if !errors.Is(err, tc.err) || !strings.Contains(err.Error(), tc.class) || strings.Contains(err.Error(), "SECRET") {
+				t.Fatalf("public reader lost sanitized error class: %v", err)
+			}
+			if tc.err == quota {
+				var retry interface{ RetryAfter() time.Time }
+				if !errors.As(err, &retry) || !retry.RetryAfter().Equal(quota.until) {
+					t.Fatal("public reader lost quota retry deadline")
+				}
+			}
+		}
+	})
+}
