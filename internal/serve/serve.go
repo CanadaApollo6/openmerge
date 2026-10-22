@@ -486,13 +486,38 @@ func (w *worker) repo() forge.RepoRef { return forge.RepoRef{Path: w.Key.Reposit
 // can serve diagnostics and initialize its fence after a successful recheck.
 func (s *Server) initializeFence(ctx context.Context, w *worker) error {
 	state, _, err := s.store.Load(ctx, w.id)
-	if err != nil || state.Fence != "" || len(state.RulesProblems()) > 0 {
+	if err != nil || state.Fence != "" {
+		return err
+	}
+	// Lifecycle preparation must precede the very first fence, including New's
+	// startup call and cycle's call before reconciliation. Legacy targets retain
+	// their original I/O ordering.
+	internalLifecycle := w.AuthorityRequired && w.resolveAuthorityLifecycle != nil && w.PrepareAuthorityPush == nil
+	pending := false
+	if internalLifecycle {
+		prepareErr := s.configuration(ctx, w)
+		if prepareErr == nil && w.configError == nil {
+			prepareErr = s.observeWorkerAuthority(ctx, w)
+		}
+		pending = prepareErr != nil || w.configError != nil
+		state, _, err = s.store.Load(ctx, w.id)
+	}
+	if err != nil || state.Fence != "" || !internalLifecycle && len(state.RulesProblems()) > 0 {
 		return err
 	}
 	ref := "openmerge/fence/" + w.Key.BaseBranch
 	opts := forge.PushOptions{}
-	if w.AuthorityRequired || w.PrepareAuthorityPush != nil || state.AuthorityPin() != nil {
+	if internalLifecycle && (pending || len(state.RulesProblems()) > 0) {
+		// Even unavailable preparation must preserve EnsureFence's existing-ref
+		// no-op. Absent refs cannot dispatch with these options and are deferred.
+		opts = unavailablePush(errFenceConfigPending)
+	} else if w.AuthorityRequired || w.PrepareAuthorityPush != nil || state.AuthorityPin() != nil {
 		opts = s.authorityPushOptions(ctx, w, forge.PushEnsureFence, []forge.PushRefIntent{{Ref: "refs/heads/" + ref}})
+	}
+	if internalLifecycle && opts.AuthorityRequired && opts.Context.Binding().GoverningCommit == "" {
+		// A durable unverified pin is not sufficient content evidence. Keep the
+		// server available for verification while refusing absent-ref creation.
+		opts = unavailablePush(errFenceConfigPending)
 	}
 	token, err := w.Git.EnsureFence(ctx, w.repo(), ref, opts)
 	if errors.Is(err, errFenceConfigPending) {

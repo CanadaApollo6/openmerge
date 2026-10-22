@@ -17,12 +17,21 @@ func TestPushOptionsRequiredBindingsAndGuard(t *testing.T) {
 	}
 	repo := RepoRef{Path: "owner/repo"}
 	binding := PushBinding{Repository: repo, QueueKey: "main", GoverningCommit: strings.Repeat("a", 40), EffectiveDigest: strings.Repeat("b", 64), ProtectionFingerprint: fingerprint}
-	refs := []PushRefIntent{{Ref: p.Refs[0].Ref, OldSHA: p.Refs[0].OldSHA}}
+	refs := []PushRefIntent{{Ref: p.Refs[0].Ref, OldSHA: p.Refs[0].OldSHA, BuildBaseSHA: p.Refs[0].OldSHA}}
 	frozen, err := NewPushValidationContext(binding, PushBuild, refs, rules)
 	if err != nil {
 		t.Fatal(err)
 	}
 	refs[0].Ref = "refs/heads/changed"
+	refs[0].BuildBaseSHA = strings.Repeat("e", 40)
+	returned := frozen.RefIntents()
+	returned[0].BuildBaseSHA = strings.Repeat("f", 40)
+	if frozen.BuildBaseSHA() != p.Refs[0].OldSHA {
+		t.Fatal("build base did not remain immutable")
+	}
+	if _, err := NewPushValidationContext(binding, PushBuild, []PushRefIntent{{Ref: p.Refs[0].Ref}}, rules); err == nil {
+		t.Fatal("build accepted without authenticated base")
+	}
 	rules.Observation.Protections[0].Rules = []authority.Rule{{Kind: "future", Parameters: []authority.Parameter{}}}
 	calls := 0
 	opts := PushOptions{AuthorityRequired: true, Context: frozen, Guard: func(context.Context, PushValidationContext) error { calls++; return nil }}

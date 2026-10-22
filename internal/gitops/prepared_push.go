@@ -19,8 +19,9 @@ func (s *session) validatePush(ctx context.Context, repo forge.RepoRef, opts for
 	if !opts.AuthorityRequired {
 		return nil
 	}
-	// Only a remotely observed existing target base can bound a new queue ref.
-	// A caller's arbitrary BaseSHA is insufficient evidence of reachability.
+	// Bound a new ref to the authenticated build base, including speculative
+	// prior-batch tips. The live target must still exist and reach that base.
+	// An arbitrary request BaseSHA cannot change the frozen dispatch intent.
 	for i := range refs {
 		if operation == forge.PushBuild && refs[i].OldSHA == "" && refs[i].NewSHA != "" {
 			baseRef := opts.Context.BaseRef()
@@ -31,7 +32,18 @@ func (s *session) validatePush(ctx context.Context, repo forge.RepoRef, opts for
 			if values[baseRef] == "" {
 				return errors.New("creation boundary base is absent")
 			}
-			refs[i].CreationBaseSHA = values[baseRef]
+			base := opts.Context.BuildBaseSHA()
+			if err := s.commits(ctx, base); err != nil {
+				return err
+			}
+			if err := s.commits(ctx, values[baseRef]); err != nil {
+				return err
+			}
+			_, diagnostic, err := s.run(ctx, "", "merge-base", "--is-ancestor", values[baseRef], base)
+			if err != nil {
+				return s.failure("prepared boundary proof", diagnostic, err)
+			}
+			refs[i].CreationBaseSHA = base
 		}
 	}
 	p, err := s.preparedPush(ctx, operation, refs)
@@ -67,7 +79,7 @@ func (s *session) preparedPush(ctx context.Context, operation forge.PushOperatio
 		return p, fmt.Errorf("push inventory history: %s", reason)
 	}
 	remaining := forge.MaxPushMetadataBytes
-	commitCount, pathCount, parentEdges, boundaryCount := 0, 0, 0, 0
+	commitCount, parentEdges, boundaryCount := 0, 0, 0
 	read := func(args ...string) (string, error) {
 		raw, overflow, err := reader.diffCommand(ctx, remaining, args...)
 		if overflow {
@@ -106,6 +118,7 @@ func (s *session) preparedPush(ctx context.Context, operation forge.PushOperatio
 			return p, errors.New("push inventory commit budget exceeded")
 		}
 		for _, oid := range oids {
+			pathCount := 0
 			raw, err := read("cat-file", "commit", oid)
 			if err != nil {
 				return p, err

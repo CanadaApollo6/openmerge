@@ -198,6 +198,11 @@ func (r *Repo) EnsureFence(ctx context.Context, repo forge.RepoRef, ref string, 
 	if err != nil {
 		return "", err
 	}
+	if opts.AuthorityRequired {
+		if err := s.resolveRemote(ctx, repo); err != nil {
+			return "", err
+		}
+	}
 	if err := s.validatePush(ctx, repo, opts, forge.PushEnsureFence, forge.PushRef{Ref: full, NewSHA: next}); err != nil {
 		return "", err
 	}

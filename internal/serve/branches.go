@@ -390,6 +390,9 @@ func (s *Server) refreshWorker(ctx context.Context, w *worker, cfg config.Config
 	if w.configTip != tip || w.configBranch != branch {
 		return errors.New("default-branch policy changed during branch refresh")
 	}
+	if err := s.observeWorkerAuthority(ctx, w); err != nil {
+		return err
+	}
 	if err := s.repositoryRules(ctx, w); err != nil {
 		return err
 	}

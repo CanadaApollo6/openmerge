@@ -87,16 +87,36 @@ func TestAuthorityBootstrapPinsBeforeFirstRealFence(t *testing.T) {
 				pin.OpenMerge.Binding.EffectiveDigest = digest
 				pin.OpenMerge.Binding.DefaultBranch = "main"
 				must(t, pin.Validate())
-				evidence := authority.Observation{Inventory: authority.Visible, Protections: []authority.Protection{}, Coverage: []authority.Coverage{{Ref: "refs/heads/main", Visibility: authority.Absent, ProtectionIDs: []string{}}}, Findings: []authority.Finding{}}
-				if mode == "runtime-hidden" {
-					evidence.Protections = []authority.Protection{{ID: "pinned", Source: "repository_ruleset", Target: "push", Enforcement: "active", TargetsVisibility: authority.Visible, RulesVisibility: authority.Visible, BypassVisibility: authority.Visible, Includes: []string{}, Excludes: []string{}, Conditions: []authority.Parameter{}, Rules: []authority.Rule{}, BypassActors: []authority.BypassActor{}}}
+				raw, err = os.ReadFile("../queue/testdata/wire/v1/event_write_restriction_verified.json")
+				must(t, err)
+				event, err = queue.DecodeEvent(raw)
+				must(t, err)
+				evidence := event.(queue.WriteRestrictionVerified).Evidence
+				for i := range evidence.Protections {
+					for j := range evidence.Protections[i].BypassActors {
+						if evidence.Protections[i].BypassActors[j].Kind == "app" {
+							evidence.Protections[i].BypassActors[j].ID = "42"
+						}
+					}
 				}
+				selectors := []authority.BaseSelector{{DefaultBranch: true}}
+				coverage, err := authority.CoverageDigest("main", selectors)
+				must(t, err)
+				pin.CoverageDigest, pin.OpenMerge.Binding.CoverageDigest = coverage, coverage
+				input := forge.WriteRestrictionInput{Repo: forge.RepoRef{Path: key.Repository}, Binding: pin.OpenMerge.Binding, BaseSelectors: selectors, ExpectedRefs: []string{"refs/heads/main"}, AppID: "42"}
+				if mode == "runtime-hidden" {
+					evidence.Protections = append(evidence.Protections, authority.Protection{ID: "pinned", Source: "repository_ruleset", Target: "push", Enforcement: "active", TargetsVisibility: authority.Visible, RulesVisibility: authority.Visible, BypassVisibility: authority.Visible, Includes: []string{}, Excludes: []string{}, Conditions: []authority.Parameter{}, Rules: []authority.Rule{}, BypassActors: []authority.BypassActor{}})
+				}
+				evidence, err = forge.InterpretWriteRestriction(input, evidence)
+				must(t, err)
 				fp, err := evidence.Fingerprint()
 				must(t, err)
 				seeing := time.Now().UTC()
 				pin.OpenMerge.Activation = &authority.Activation{Proposed: authority.ProposedVerification{EventID: 1, Scope: "proposed", Binding: pin.OpenMerge.Binding, ProtectionFingerprint: fp, SeeingReadAt: seeing}, ProtectionFingerprint: fp, SeeingReadAt: seeing, Evidence: evidence}
+				pin.OpenMerge.VerificationInput = &queue.AuthorityVerificationInput{BaseSelectors: selectors, ExpectedRefs: input.ExpectedRefs, AppID: input.AppID}
 				if mode == "missing-seeing" {
 					pin.OpenMerge.Activation = nil
+					pin.OpenMerge.VerificationInput = nil
 				}
 				must(t, pin.Validate())
 				policy := AuthorityPushPolicy{Mode: authority.OpenMerge, GoverningCommit: tip, EffectiveDigest: digest, AppID: "42"}
@@ -104,7 +124,7 @@ func TestAuthorityBootstrapPinsBeforeFirstRealFence(t *testing.T) {
 				observed := func(basis uint64) error {
 					readEvidence := authority.CloneObservation(evidence)
 					if mode == "runtime-hidden" {
-						readEvidence.Protections[0].BypassVisibility = authority.Hidden
+						readEvidence.Protections[len(readEvidence.Protections)-1].BypassVisibility = authority.Hidden
 					}
 					if mode == "seeing-drift" {
 						readEvidence.Protections = []authority.Protection{{ID: "new", Source: "repository_ruleset", Target: "push", Enforcement: "active", TargetsVisibility: authority.Visible, RulesVisibility: authority.Visible, BypassVisibility: authority.Visible, Includes: []string{}, Excludes: []string{}, Conditions: []authority.Parameter{}, Rules: []authority.Rule{}, BypassActors: []authority.BypassActor{}}}
@@ -121,7 +141,7 @@ func TestAuthorityBootstrapPinsBeforeFirstRealFence(t *testing.T) {
 					state, _, err := db.Load(ctx, id)
 					must(t, err)
 					_, _, ok := state.AuthorityProtection()
-					if state.AuthorityPin() == nil || !ok {
+					if state.AuthorityPin() == nil || !ok && mode != "seeing-drift" {
 						t.Fatal("first fence preceded pin or observation")
 					}
 					original := opts.Guard

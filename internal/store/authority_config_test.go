@@ -2,8 +2,10 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -261,7 +263,7 @@ func TestApplyAuthorityConfigLifecycleAndRollback(t *testing.T) {
 	}
 	// Retrying the same lifecycle event must return before examining an invalid
 	// draft and, critically, must keep the persisted interpreted activation.
-	retry, err := s.ApplyAuthorityConfig(t.Context(), q, authorityLifecycleConfig(pin), pin, 9223372036854775807, 99, time.Time{}, time.Time{}, forge.WriteRestrictionInput{}, authority.Observation{})
+	retry, err := s.ApplyAuthorityConfig(t.Context(), q, authorityLifecycleConfig(pin), pin, 9223372036854775807, 99, time.Time{}, time.Time{}, in, authority.Observation{})
 	must(t, err)
 	if retry != adopted {
 		t.Fatalf("retry changed durable receipt: got %#v want %#v", retry, adopted)
@@ -380,5 +382,107 @@ func TestApplyAuthorityConfigChecksBasisAfterQueueLock(t *testing.T) {
 	must(t, err)
 	if got := state.AuthorityPin(); got == nil || got.OpenMerge == nil || got.OpenMerge.Activation != nil {
 		t.Fatalf("stale basis retained an activation: %#v", got)
+	}
+}
+
+// Live branch inventory is not part of the policy binding. Both lifecycle
+// writers must invalidate adoption before an unchanged binding can be reused.
+func TestAuthorityInputDriftInvalidatesBothWriters(t *testing.T) {
+	for _, configWriter := range []bool{true, false} {
+		for _, oldDraft := range []bool{true, false} {
+			t.Run(fmt.Sprintf("config=%v/draft=%v", configWriter, oldDraft), func(t *testing.T) {
+				s := newStore(t)
+				key, draft, pin := verificationFixture(t)
+				in := adoptionInput(t, &draft, &pin)
+				q, err := s.EnsureQueue(t.Context(), key)
+				must(t, err)
+				verification, err := s.CommitWriteRestrictionVerification(t.Context(), []VerificationRecord{{QueueID: q, Event: draft}})
+				must(t, err)
+				started := time.Now().UTC()
+				first, err := s.ApplyAuthorityConfig(t.Context(), q, authorityLifecycleConfig(pin), pin, verification[0].EventID, 0, started, started, in, draft.Evidence)
+				must(t, err)
+				if first.Outcome != AuthorityDraftAdopted {
+					t.Fatal(first)
+				}
+				// A newly discovered live branch changes interpretation without changing the
+				// coverage digest, policy binding, config or raw fingerprint.
+				changed := in
+				changed.ExpectedRefs = append(slices.Clone(in.ExpectedRefs), "refs/heads/release/new")
+				id := int64(0)
+				if oldDraft {
+					id = verification[0].EventID
+				}
+				var receipt AuthorityAdoptionReceipt
+				if configWriter {
+					receipt, err = s.ApplyAuthorityConfig(t.Context(), q, authorityLifecycleConfig(pin), pin, id, 0, started, started, changed, draft.Evidence)
+				} else {
+					receipt, err = s.AdoptAuthorityPin(t.Context(), q, pin, id, 0, started, started, changed, draft.Evidence)
+				}
+				must(t, err)
+				state, _, err := s.Load(t.Context(), q)
+				must(t, err)
+				if receipt.EventID <= first.EventID || receipt.Outcome != AuthorityPinnedUnverified || state.AuthorityPin().OpenMerge.Activation != nil || state.WriteRestrictionStatus().State == "verified" || !state.WriteRestrictionStatus().LastVerifiedAt.IsZero() {
+					t.Fatalf("stale adoption survived input drift: %#v %#v", receipt, state.WriteRestrictionStatus())
+				}
+				// Retrying with the old proposal cannot undo the durable floor.
+				retry, err := s.ApplyAuthorityConfig(t.Context(), q, authorityLifecycleConfig(pin), pin, verification[0].EventID, state.RulesSourceRevision(queue.WriteRestriction), started, started, changed, draft.Evidence)
+				must(t, err)
+				if retry.Outcome != AuthorityPinnedUnverified {
+					t.Fatal(retry)
+				}
+				restarted := openTestStore(t, s.pool.Config().ConnString())
+				state, _, err = restarted.Load(t.Context(), q)
+				must(t, err)
+				if state.WriteRestrictionStatus().State == "verified" {
+					t.Fatal("restart revived adoption")
+				}
+				// Proposed verification is a GitHub-mode preparation operation.
+				// Recover through the supported rollback, fresh proposal and
+				// re-enable lifecycle rather than reviving the old proposal.
+				rollback := cloneLifecyclePin(t, pin)
+				rollback.Authority, rollback.OpenMerge = authority.GitHub, nil
+				_, err = s.ApplyAuthorityConfig(t.Context(), q, authorityLifecycleConfig(rollback), rollback, 0, 0, time.Time{}, time.Time{}, forge.WriteRestrictionInput{}, authority.Observation{})
+				must(t, err)
+				freshDraft := draft
+				freshDraft.Nonce = "after-live-ref-drift"
+				freshDraft.VerifiedAt = time.Now().UTC()
+				freshDraft.Evidence = authority.CloneObservation(draft.Evidence)
+				freshDraft.Evidence.Coverage = append(freshDraft.Evidence.Coverage, authority.Coverage{Ref: "refs/heads/release/new", Visibility: authority.Visible, ProtectionIDs: []string{"repository_ruleset/base-10"}})
+				freshDraft.Evidence, err = forge.InterpretWriteRestriction(changed, freshDraft.Evidence)
+				must(t, err)
+				freshDraft.ProtectionFingerprint, err = freshDraft.Evidence.Fingerprint()
+				must(t, err)
+				proposal, err := s.CommitWriteRestrictionVerification(t.Context(), []VerificationRecord{{QueueID: q, Event: freshDraft}})
+				must(t, err)
+				state, _, err = s.Load(t.Context(), q)
+				must(t, err)
+				started = time.Now().UTC()
+				if configWriter {
+					receipt, err = s.ApplyAuthorityConfig(t.Context(), q, authorityLifecycleConfig(pin), pin, proposal[0].EventID, state.RulesSourceRevision(queue.WriteRestriction), started, started, changed, freshDraft.Evidence)
+				} else {
+					receipt, err = s.AdoptAuthorityPin(t.Context(), q, pin, proposal[0].EventID, state.RulesSourceRevision(queue.WriteRestriction), started, started, changed, freshDraft.Evidence)
+				}
+				must(t, err)
+				state, _, err = s.Load(t.Context(), q)
+				must(t, err)
+				if receipt.Outcome != AuthorityDraftAdopted || !reflect.DeepEqual(state.AuthorityPin().OpenMerge.VerificationInput.ExpectedRefs, changed.ExpectedRefs) {
+					t.Fatal("new proposal did not refreeze current inputs", receipt, state.AuthorityPin())
+				}
+				if got := state.WriteRestrictionStatus(); got.State != "verified" || got.LastVerifiedAt.IsZero() {
+					t.Fatal("fresh adoption did not restore interpreted provenance", got)
+				}
+				// Replaying the same journal must retain the new input and pass.
+				state, _, err = restarted.Load(t.Context(), q)
+				must(t, err)
+				if state.WriteRestrictionStatus().State != "verified" {
+					t.Fatal("replay lost fresh adoption")
+				}
+				retry, err = s.ApplyAuthorityConfig(t.Context(), q, authorityLifecycleConfig(pin), pin, proposal[0].EventID, 0, time.Time{}, time.Time{}, changed, authority.Observation{})
+				must(t, err)
+				if retry != receipt {
+					t.Fatal("fresh adoption retry changed receipt", retry, receipt)
+				}
+			})
+		}
 	}
 }

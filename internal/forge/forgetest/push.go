@@ -21,7 +21,7 @@ func runPushOptions(t *testing.T, newEnv func(*testing.T) Env) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		c, err := forge.NewPushValidationContext(forge.PushBinding{Repository: e.Repo, QueueKey: "contract/main", GoverningCommit: e.BaseSHA, EffectiveDigest: strings.Repeat("a", 64), ProtectionFingerprint: fingerprint}, forge.PushBuild, []forge.PushRefIntent{{Ref: ref}}, forge.PushRuleContext{DefaultBranch: e.Base, BaseRef: "refs/heads/" + e.Base, AppID: "42", Observation: evidence})
+		c, err := forge.NewPushValidationContext(forge.PushBinding{Repository: e.Repo, QueueKey: "contract/main", GoverningCommit: e.BaseSHA, EffectiveDigest: strings.Repeat("a", 64), ProtectionFingerprint: fingerprint}, forge.PushBuild, []forge.PushRefIntent{{Ref: ref, BuildBaseSHA: e.BaseSHA}}, forge.PushRuleContext{DefaultBranch: e.Base, BaseRef: "refs/heads/" + e.Base, AppID: "42", Observation: evidence})
 		if err != nil {
 			t.Fatal(err)
 		}

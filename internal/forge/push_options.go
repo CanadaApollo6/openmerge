@@ -52,7 +52,7 @@ func NewPushValidationContext(binding PushBinding, operation PushOperation, refs
 	}
 	seen := map[string]bool{}
 	for _, ref := range refs {
-		if ValidateRefName(ref.Ref) != nil || seen[ref.Ref] {
+		if ValidateRefName(ref.Ref) != nil || seen[ref.Ref] || (operation == PushBuild && ValidateCommitIDs(ref.BuildBaseSHA) != nil) || (operation != PushBuild && ref.BuildBaseSHA != "") {
 			return PushValidationContext{}, pushRejected("invalid ref intent")
 		}
 		seen[ref.Ref] = true
@@ -68,6 +68,14 @@ func NewPushValidationContext(binding PushBinding, operation PushOperation, refs
 
 // Binding returns a value copy for the store-reloading validity guard.
 func (c PushValidationContext) Binding() PushBinding { return c.binding }
+
+// BuildBaseSHA is the authenticated build boundary frozen before composition.
+func (c PushValidationContext) BuildBaseSHA() string {
+	if c.operation == PushBuild && len(c.refs) == 1 {
+		return c.refs[0].BuildBaseSHA
+	}
+	return ""
+}
 
 // BaseRef identifies the existing target base used to prove creation boundaries.
 func (c PushValidationContext) BaseRef() string { return c.rules.BaseRef }

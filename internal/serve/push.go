@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
+	"github.com/CanadaApollo6/openmerge/internal/queue"
 )
 
 // AuthorityPushPolicy is the successfully resolved governing policy. PR 9
@@ -24,12 +26,19 @@ type AuthorityPushPolicy struct {
 // perform its existing-ref read-first no-op before this guard can run.
 var errFenceConfigPending = errors.New("fence bootstrap awaits resolved configuration")
 
+type authorityPushReadError struct{ cause error }
+
+func (e *authorityPushReadError) Error() string { return "authority push durable state unavailable" }
+func (e *authorityPushReadError) Unwrap() error { return e.cause }
+
 func unavailablePush(err error) forge.PushOptions {
 	return forge.PushOptions{AuthorityRequired: true, Guard: func(context.Context, forge.PushValidationContext) error { return err }}
 }
 
 func (s *Server) authorityPushOptions(ctx context.Context, w *worker, operation forge.PushOperation, refs []forge.PushRefIntent) forge.PushOptions {
+	refs = slices.Clone(refs)
 	var resolved *AuthorityPushPolicy
+	internalLifecycle := w.PrepareAuthorityPush == nil && w.AuthorityRequired && w.resolveAuthorityLifecycle != nil
 	if w.PrepareAuthorityPush != nil {
 		policy, err := w.PrepareAuthorityPush(ctx)
 		if err != nil {
@@ -44,7 +53,7 @@ func (s *Server) authorityPushOptions(ctx context.Context, w *worker, operation 
 		}
 		pinned, _, err := s.store.Load(ctx, w.id)
 		if err != nil {
-			return unavailablePush(err)
+			return unavailablePush(&authorityPushReadError{cause: err})
 		}
 		actual := pinned.AuthorityPin()
 		if actual == nil || actual.GoverningCommit != policy.GoverningCommit || actual.EffectiveDigest != policy.EffectiveDigest || actual.Authority != policy.Mode || pinned.ConfigDigest != policy.EffectiveDigest {
@@ -59,11 +68,33 @@ func (s *Server) authorityPushOptions(ctx context.Context, w *worker, operation 
 			}
 		}
 	}
+	// Only the explicit internal opt-in may consume lifecycle resolution. A
+	// candidate or restored pin cannot install this adapter on a public target.
+	if internalLifecycle {
+		if w.configTip == "" || w.configError != nil {
+			return unavailablePush(errFenceConfigPending)
+		}
+		request := w.authorityObservation
+		if w.configCandidate.Authority.Mode == authority.OpenMerge {
+			if request == nil {
+				return unavailablePush(errors.New("authority push lifecycle unavailable"))
+			}
+			if err := s.observeWorkerAuthority(ctx, w); err != nil {
+				return unavailablePush(err)
+			}
+			resolved = &AuthorityPushPolicy{Mode: authority.OpenMerge, GoverningCommit: w.configTip, EffectiveDigest: w.configDigest, AppID: request.Input.AppID}
+		} else {
+			resolved = &AuthorityPushPolicy{Mode: authority.GitHub, GoverningCommit: w.configTip, EffectiveDigest: w.configDigest}
+		}
+	}
 	state, _, err := s.store.Load(ctx, w.id)
 	if err != nil {
-		return unavailablePush(err)
+		return unavailablePush(&authorityPushReadError{cause: err})
 	}
 	pin := state.AuthorityPin()
+	if internalLifecycle && resolved.Mode == authority.GitHub && state.ConfigDigest == resolved.EffectiveDigest && (pin == nil || pin.Authority == authority.GitHub) {
+		return forge.PushOptions{}
+	}
 	if pin == nil {
 		if resolved == nil && !w.AuthorityRequired {
 			return forge.PushOptions{}
@@ -91,6 +122,15 @@ func (s *Server) authorityPushOptions(ctx context.Context, w *worker, operation 
 	}
 	if pin.OpenMerge == nil || !strings.EqualFold(pin.OpenMerge.Binding.Repository, w.Key.Repository) || strconv.FormatInt(pin.OpenMerge.Binding.InstallationID, 10) != w.Key.Installation || pin.OpenMerge.Binding.QueueKey != w.Key.Installation+"/"+pin.OpenMerge.Binding.Repository+"/"+w.Key.BaseBranch || w.Key.Lane != "" {
 		return unavailablePush(errors.New("authority repository binding missing"))
+	}
+	if !queue.AuthorityDraftAdopted(*pin) {
+		return unavailablePush(errors.New("authority push requires adopted interpretation evidence"))
+	}
+	if w.AuthorityRequired && w.resolveAuthorityLifecycle != nil {
+		request := w.authorityObservation
+		if request == nil || !queue.AuthorityDraftAdopted(*pin) || !reflect.DeepEqual(pin.OpenMerge.VerificationInput, &queue.AuthorityVerificationInput{BaseSelectors: request.Input.BaseSelectors, ExpectedRefs: request.Input.ExpectedRefs, AppID: request.Input.AppID}) {
+			return unavailablePush(errors.New("authority push requires current adopted interpretation inputs"))
+		}
 	}
 	// PR 9 must supply the pinned seeing observation whose fingerprint was
 	// accepted at activation. Never substitute a fresh runtime protection read.
@@ -123,6 +163,9 @@ func (s *Server) authorityPushOptions(ctx context.Context, w *worker, operation 
 			return unavailablePush(errors.New("authority build needs exact ref lease reader"))
 		}
 		for i := range refs {
+			if !authorityBuildBase(state, refs[i].BuildBaseSHA) {
+				return unavailablePush(errors.New("authority build base differs from durable queue planning"))
+			}
 			old, err := reader.ReadPreparedRef(ctx, w.repo(), refs[i].Ref)
 			if err != nil {
 				return unavailablePush(err)
@@ -135,11 +178,12 @@ func (s *Server) authorityPushOptions(ctx context.Context, w *worker, operation 
 	if err != nil {
 		return unavailablePush(err)
 	}
+	id, repo, base, logger := w.id, w.Key.Repository, w.Key.BaseBranch, s.options.Logger
 	guard := forge.PushValidityGuard(func(ctx context.Context, c forge.PushValidationContext) error {
 		// Never close over a cached state: reload errors propagate on every call.
-		current, _, err := s.store.Load(ctx, w.id)
+		current, _, err := s.store.Load(ctx, id)
 		if err != nil {
-			return err
+			return &authorityPushReadError{cause: err}
 		}
 		actual := current.AuthorityPin()
 		b := c.Binding()
@@ -155,11 +199,33 @@ func (s *Server) authorityPushOptions(ctx context.Context, w *worker, operation 
 		if !reflect.DeepEqual(evidence, currentEvidence) {
 			return errors.New("stale push protection evidence")
 		}
+		if operation == forge.PushBuild {
+			for _, ref := range refs {
+				if !authorityBuildBase(current, ref.BuildBaseSHA) {
+					return errors.New("stale push build base")
+				}
+			}
+		}
 		return nil
 	})
 	return forge.PushOptions{AuthorityRequired: true, Context: frozen, Guard: guard, Warn: func(warnings []forge.PushWarning) {
 		for _, warning := range warnings {
-			s.options.Logger.Warn("App bypasses pull-request policy", "repository", w.Key.Repository, "base", w.Key.BaseBranch, "protection", warning.ProtectionID, "ref", warning.Ref, "rule", warning.Rule)
+			logger.Warn("App bypasses pull-request policy", "repository", repo, "base", base, "protection", warning.ProtectionID, "ref", warning.Ref, "rule", warning.Rule)
 		}
 	}}
+}
+
+func authorityBuildBase(state queue.State, sha string) bool {
+	if sha == "" {
+		return false
+	}
+	if sha == state.BaseSHA {
+		return true
+	}
+	for _, batch := range state.Batches() {
+		if batch.ConfigDigest == state.ConfigDigest && batch.TestedSHA == sha && (batch.Phase == queue.Testing || batch.Phase == queue.Landing) {
+			return true
+		}
+	}
+	return false
 }

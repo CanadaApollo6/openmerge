@@ -25,7 +25,7 @@ func (x *Executor) buildWithValidation(ctx context.Context, req forge.BuildReque
 	if err != nil {
 		return "", err
 	}
-	opts, err := x.pushOptions(ctx, forge.PushBuild, []forge.PushRefIntent{{Ref: ref}})
+	opts, err := x.pushOptions(ctx, forge.PushBuild, []forge.PushRefIntent{{Ref: ref, BuildBaseSHA: req.BaseSHA}})
 	if err != nil {
 		return "", err
 	}
