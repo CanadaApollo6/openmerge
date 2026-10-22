@@ -80,7 +80,7 @@ func (s *Server) authorityCompletionRepository(ctx context.Context, request stor
 		}
 		repos = nil
 		for _, installation := range installations {
-			if installation.ID != request.Installation || installation.Suspended || installation.Repositories == nil {
+			if installation.Suspended || installation.Repositories == nil {
 				continue
 			}
 			listed, err := installation.Repositories(ctx)
@@ -89,7 +89,10 @@ func (s *Server) authorityCompletionRepository(ctx context.Context, request stor
 			}
 			for _, repo := range listed {
 				repo.Installation = installation.ID
-				if s.allowedRepository(repo) {
+				if s.allowedRepository(repo) && strings.EqualFold(repo.Name, request.Repository) {
+					if repo.Installation != request.Installation {
+						return Repository{}, errors.New("authority completion requires complete discovery across installations")
+					}
 					repos = append(repos, repo)
 				}
 			}
@@ -97,7 +100,10 @@ func (s *Server) authorityCompletionRepository(ctx context.Context, request stor
 	}
 	var matched []Repository
 	for _, repo := range repos {
-		if repo.Installation == request.Installation && strings.EqualFold(repo.Name, request.Repository) {
+		if strings.EqualFold(repo.Name, request.Repository) {
+			if repo.Installation != request.Installation {
+				return Repository{}, errors.New("authority completion requires complete discovery across installations")
+			}
 			matched = append(matched, repo)
 		}
 	}

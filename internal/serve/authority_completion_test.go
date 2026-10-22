@@ -47,6 +47,12 @@ func TestAuthorityCompletionDiscovery(t *testing.T) {
 		if _, err := s.AuthorityCompletion(t.Context(), request); err != nil {
 			t.Fatal("mutable failure cached", err)
 		}
+		s.discovery.Installations = func(context.Context) ([]Installation, error) {
+			return []Installation{{ID: w.Key.Installation, Repositories: func(context.Context) ([]Repository, error) { return []Repository{repo}, nil }}, {ID: "another", Repositories: func(context.Context) ([]Repository, error) { return []Repository{repo}, nil }}}, nil
+		}
+		if _, err := s.AuthorityCompletion(t.Context(), request); err == nil {
+			t.Fatal("multiple installation scopes partially certified")
+		}
 		s.discovery.RepositoryAllowlist = []string{"another/repo"}
 		if _, err := s.AuthorityCompletion(t.Context(), request); err == nil {
 			t.Fatal("excluded repository accepted")

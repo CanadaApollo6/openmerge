@@ -37,6 +37,7 @@ func (r AuthorityCompletionRequest) Validate() error {
 
 // AuthorityQueueCompletion explains one registered or expected partition.
 type AuthorityQueueCompletion struct {
+	Installation    string  `json:"installation"`
 	Watermark       int64   `json:"watermark"`
 	GoverningCommit string  `json:"governing_commit"`
 	ID              QueueID `json:"id"`
@@ -65,7 +66,7 @@ func (c AuthorityCompletion) RequireComplete() error {
 }
 
 // RepositoryAuthorityCompletion folds ALL registered partitions for this
-// installation/repository in one read-only repeatable-read snapshot, regardless
+// repository across installations in one read-only repeatable-read snapshot, regardless
 // of worker allowlists, pause, retirement or outstanding obligations. liveBases
 // must be a complete fresh discovery inventory, not a worker-key snapshot. The
 // caller must recheck that inventory after this read. No result is cached.
@@ -78,13 +79,13 @@ func (s *Store) RepositoryAuthorityCompletion(ctx context.Context, request Autho
 		return result, errors.New("authority completion requires complete live branch inventory")
 	}
 	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT id,base,lane FROM queues WHERE installation=$1 AND lower(repository)=lower($2) ORDER BY id`, request.Installation, request.Repository)
+		rows, err := tx.Query(ctx, `SELECT id,installation,base,lane FROM queues WHERE lower(repository)=lower($1) ORDER BY id`, request.Repository)
 		if err != nil {
 			return err
 		}
 		partitions, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (AuthorityQueueCompletion, error) {
 			var q AuthorityQueueCompletion
-			err := row.Scan(&q.ID, &q.Base, &q.Lane)
+			err := row.Scan(&q.ID, &q.Installation, &q.Base, &q.Lane)
 			return q, err
 		})
 		if err != nil {
@@ -144,6 +145,8 @@ func (s *Store) RepositoryAuthorityCompletion(ctx context.Context, request Autho
 					}
 				}
 				switch {
+				case q.Installation != request.Installation:
+					q.Reason = "installation_inventory_unavailable"
 				case q.Lane != "":
 					q.Reason = "unsupported_lane"
 				case q.ExpectedDigest == "" || pin.EffectiveDigest != q.ExpectedDigest || state.ConfigDigest != q.ExpectedDigest:
@@ -168,7 +171,7 @@ func (s *Store) RepositoryAuthorityCompletion(ctx context.Context, request Autho
 				}
 			}
 			if !found {
-				result.Queues = append(result.Queues, AuthorityQueueCompletion{Base: base, Reason: "registration_missing"})
+				result.Queues = append(result.Queues, AuthorityQueueCompletion{Installation: request.Installation, Base: base, Reason: "registration_missing"})
 			}
 		}
 		return nil

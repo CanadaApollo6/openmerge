@@ -280,7 +280,7 @@ backup and reconcile subsequent real refs/evidence before resuming. Keep outside
 warnings and all immutable evidence through rollback/retirement. PR 11 owns the
 actual organization switch, never this implementation worktree.
 
-Historical baseline: at 9c-1 there was **no repository-wide “all served queues carry digest X” completion signal**. 9b-ii-2b provides independent per-queue receipts only; they do not authorize removing redundant protection. 9c-2c provides `Server.AuthorityCompletion` / `Store.RepositoryAuthorityCompletion` and authenticated `/v1/authority-completion`; `AuthorityCompletion.RequireComplete` is the refusal contract. It covers all registered partitions (including paused/retired/excluded) plus fresh selected discovery, not a worker subset. 9c-3 must consult it before the public switch/protection-removal sequence.
+Historical baseline: at 9c-1 there was **no repository-wide “all served queues carry digest X” completion signal**. 9b-ii-2b provides independent per-queue receipts only; they do not authorize removing redundant protection. 9c-2c provides `Server.AuthorityCompletion` / `Store.RepositoryAuthorityCompletion` and authenticated `/v1/authority-completion`; `AuthorityCompletion.RequireComplete` is the refusal contract. It covers all registered partitions (including other installations and paused/retired/excluded) plus fresh selected discovery, not a worker subset. 9c-3 must consult it before the public switch/protection-removal sequence.
 
 The optional `write_restriction_observed.read_error` and its v7 snapshot field
 are also strict-decoder compatibility boundaries. Include workers/readers that

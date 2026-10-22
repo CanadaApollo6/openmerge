@@ -1988,19 +1988,22 @@ A repository can have different effective digests for different queue policies.
 For that case supply `targets`, a URL-encoded JSON object mapping each base to
 its reviewed expected digest; `digest` supplies an optional common default.
 The response echoes the request and returns `complete` plus each partition's
-ID/base/lane, actual/expected digest, governing commit and reason. HTTP 200 can
+ID/installation/base/lane/watermark, actual/expected digest, governing commit and reason. HTTP 200 can
 mean **incomplete**: require `complete: true`. Missing/unavailable discovery is
 503 and must be retried; the API never caches failures or a prior success.
 
-“Served queues” conservatively means **every registered partition in this
-installation/repository**, including paused, blocked, dormant, retired,
+“Served queues” conservatively means **every registered partition of this
+repository across installations**, including paused, blocked, dormant, retired,
 recovery-only and excluded-by-worker/base-allowlist partitions, plus every
 selected base in fresh complete branch discovery and every explicit target.
 No per-queue receipt or subset of current worker keys can authorize removal.
 Retired queues are deliberately not exempt: if they cannot be brought to the
 intended policy, retain redundant protection. Do not delete their histories.
-Other installations are separate scopes; repeat for every installation serving
-the repository before changing shared protection.
+Historical partitions under another installation are included and block completion
+when their discovery inventory is unavailable. Multiple live installation scopes
+currently fail closed: this endpoint cannot issue a partial success for one of
+them. Retain protection until a complete aggregate discovery proof is supported;
+repeating per-installation queries is not a substitute.
 
 The API freshly resolves installation/repository access, reads the live default
 branch/tip and full branch inventory, folds all registered partitions in one
@@ -2049,7 +2052,7 @@ openmerge admin downgrade-check --database-url "$OPERATOR_DATABASE_URL"
 ```
 
 It refuses the authority journal boundary, new authority enum values, v7/future
-cursors and unreadable/unknown journal or cursor data, including a v7-only cursor
+cursors and unreadable/unknown journal or cursor snapshot data, including a v7-only cursor
 with no authority events. Success certifies only absence of this ADR's boundary;
 check every other target-binary compatibility requirement separately. Never edit
 or delete journal/cursor rows to force success. Keep the post-emission database

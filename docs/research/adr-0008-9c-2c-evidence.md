@@ -20,10 +20,13 @@ existing fixture changes or Makefile/CI/Dockerfile/test-flag changes.
 ## Completion contract and decisions
 
 “Served” conservatively includes every registered partition for the requested
-installation/repository, including paused, blocked, dormant, retired, recovery-only
+repository across installations, including paused, blocked, dormant, retired, recovery-only
 and worker/base-allowlist-excluded partitions, plus selected bases from fresh
 complete discovery and explicit targets. No historical partition can silently
-disappear from this proof. Retired histories which cannot reach the intended
+disappear from this proof. Historical installation partitions without current
+discovery keep completion false; multiple live installation scopes fail closed
+rather than issuing independent partial successes. Aggregate multi-installation
+success is deliberately unsupported, never inferred from individual receipts. Retired histories which cannot reach the intended
 policy keep completion false; retain redundant protection rather than deleting
 history or inferring a safe exclusion from inactivity.
 

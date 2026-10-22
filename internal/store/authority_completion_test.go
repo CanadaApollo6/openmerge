@@ -105,12 +105,29 @@ func TestRepositoryAuthorityCompletion(t *testing.T) {
 	must(t, err)
 	appendEvents(t, s, mainID, queue.WriteRestrictionVerified{Binding: pin.OpenMerge.Binding, Basis: state.RulesSourceRevision(queue.WriteRestriction), Scope: "applied", Nonce: strings.Repeat("c", 64), Operator: "operator", VerifiedAt: draft.VerifiedAt.Add(2 * time.Hour), Evidence: pin.OpenMerge.Activation.Evidence, ProtectionFingerprint: pin.OpenMerge.Activation.ProtectionFingerprint})
 	check(true)
+	otherID, err := s.EnsureQueue(t.Context(), QueueKey{Installation: "another", Repository: "owner/repo", BaseBranch: "historical"})
+	must(t, err)
+	resultWithHistory, err := s.RepositoryAuthorityCompletion(t.Context(), request, inventory)
+	must(t, err)
+	if resultWithHistory.Complete {
+		t.Fatal("different installation history was omitted")
+	}
+	foundHistory := false
+	for _, q := range resultWithHistory.Queues {
+		if q.ID == otherID && q.Installation == "another" {
+			foundHistory = true
+		}
+	}
+	if !foundHistory {
+		t.Fatal("different installation partition not reported")
+	}
 	// Pausing never removes a queue from the completion set.
 	id, err := s.EnsureQueue(t.Context(), QueueKey{Installation: "7", Repository: "owner/repo", BaseBranch: "paused"})
 	must(t, err)
 	appendEvents(t, s, id, queue.PauseRequested{Reason: "operator", Detail: "fixture pause"})
 	check(false)
-	// An unrelated repository/installation cannot supply the missing partition.
+	// A different installation of the same repository cannot be omitted from
+	// the repository-wide proof, even when its current worker is absent.
 	_, err = s.EnsureQueue(t.Context(), QueueKey{Installation: "other", Repository: "owner/repo", BaseBranch: "paused"})
 	must(t, err)
 	check(false)
