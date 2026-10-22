@@ -206,30 +206,32 @@ func TestChecksRefreshDespiteUnchangedPRAndAmbiguityRecovers(t *testing.T) {
 }
 
 func TestRevocationAtLandingCancelsStaleWork(t *testing.T) {
-	s, w, f, d := fixture(t, repositoryConfig)
-	base, err := f.ReadRef(t.Context(), repo, "main")
-	must(t, err)
-	_, err = f.OpenPR(repo, 2, base, false)
-	must(t, err)
-	pr, err := f.PullRequest(t.Context(), repo, 2)
-	must(t, err)
-	must(t, f.Approve(repo, 2, forge.Approval{User: "writer", SHA: pr.HeadSHA, CanWrite: true}))
-	f.AddComment(repo, 2, "writer", "@openmerge queue")
-	must(t, s.cycle(t.Context(), w))
-	state, _, err := s.store.Load(t.Context(), w.id)
-	must(t, err)
-	sha := state.Active.TestedSHA
-	f.SetCheckRuns(repo, sha, []forge.CheckRun{{ID: 1, Name: "ci", State: forge.Success}})
-	// Revoking write does not change the PR summary; only the landing gate reads it.
-	f.SetCanWrite(repo, "writer", false)
-	pulls := d.pulls
-	time.Sleep(2 * time.Millisecond)
-	must(t, s.cycle(t.Context(), w))
-	state, _, err = s.store.Load(t.Context(), w.id)
-	must(t, err)
-	if state.BaseSHA == sha || len(state.Entries) != 0 || d.pulls <= pulls {
-		t.Fatalf("revoked fork was not dequeued: %+v", state)
-	}
+	testSynctest(t, func(t *testing.T) {
+		s, w, f, d := fixture(t, repositoryConfig)
+		base, err := f.ReadRef(t.Context(), repo, "main")
+		must(t, err)
+		_, err = f.OpenPR(repo, 2, base, false)
+		must(t, err)
+		pr, err := f.PullRequest(t.Context(), repo, 2)
+		must(t, err)
+		must(t, f.Approve(repo, 2, forge.Approval{User: "writer", SHA: pr.HeadSHA, CanWrite: true}))
+		f.AddComment(repo, 2, "writer", "@openmerge queue")
+		must(t, s.cycle(t.Context(), w))
+		state, _, err := s.store.Load(t.Context(), w.id)
+		must(t, err)
+		sha := state.Active.TestedSHA
+		f.SetCheckRuns(repo, sha, []forge.CheckRun{{ID: 1, Name: "ci", State: forge.Success}})
+		// Revoking write does not change the PR summary; only the landing gate reads it.
+		f.SetCanWrite(repo, "writer", false)
+		pulls := d.pulls
+		time.Sleep(2 * time.Millisecond)
+		must(t, s.cycle(t.Context(), w))
+		state, _, err = s.store.Load(t.Context(), w.id)
+		must(t, err)
+		if state.BaseSHA == sha || len(state.Entries) != 0 || d.pulls <= pulls {
+			t.Fatalf("revoked fork was not dequeued: %+v", state)
+		}
+	})
 }
 
 type missingLanding struct{ forge.Git }

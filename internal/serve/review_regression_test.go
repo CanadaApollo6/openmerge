@@ -104,64 +104,66 @@ func TestNonCommandsAreSilentlyIgnored(t *testing.T) {
 func TestQueueCommandPinsHead(t *testing.T) {
 	for _, mode := range []string{"stale unpinned", "stale full", "matching full", "matching uppercase", "first observation"} {
 		t.Run(mode, func(t *testing.T) {
-			s, w, f, _ := fixture(t, repositoryConfig)
-			pr, err := f.PullRequest(t.Context(), repo, 1)
-			must(t, err)
-			if mode != "first observation" {
-				must(t, s.reconcile(t.Context(), w, true))
-			}
-			body := "@openmerge queue"
-			switch mode {
-			case "matching uppercase":
-				body += " " + strings.ToUpper(pr.HeadSHA)
-			case "stale full", "matching full":
-				body += " " + pr.HeadSHA
-			}
-			f.AddComment(repo, 1, "writer", body)
-			if strings.HasPrefix(mode, "stale") {
-				pr, err = f.PushPR(repo, 1, "new head")
+			testSynctest(t, func(t *testing.T) {
+				s, w, f, _ := fixture(t, repositoryConfig)
+				pr, err := f.PullRequest(t.Context(), repo, 1)
 				must(t, err)
-			}
-			// Restart before processing so binding uses the fresh head read.
-			s, err = New(t.Context(), s.store, []Target{w.Target}, s.options)
-			must(t, err)
-			w = s.queues[0]
-			must(t, s.cycle(t.Context(), w))
-			state, _, err := s.store.Load(t.Context(), w.id)
-			must(t, err)
-			accept := mode != "stale full"
-			if (len(state.Entries) == 1) != accept {
-				t.Fatalf("accept=%v: %+v", accept, state)
-			}
-			if accept && state.Entries[0].HeadSHA != pr.HeadSHA {
-				t.Fatalf("queued head=%s, want current head=%s", state.Entries[0].HeadSHA, pr.HeadSHA)
-			}
-			replies := f.Comments(repo, 1)
-			if len(replies) != 1 {
-				t.Fatalf("expected one acceptance/refusal, got %v", replies)
-			}
-			for _, reply := range replies {
-				if accept && !strings.Contains(reply, pr.HeadSHA) {
-					t.Fatalf("acceptance omitted queued SHA: %s", reply)
+				if mode != "first observation" {
+					must(t, s.reconcile(t.Context(), w, true))
 				}
-				if !accept && !strings.Contains(reply, "re-issue") {
-					t.Fatalf("refusal omitted recovery command: %s", reply)
+				body := "@openmerge queue"
+				switch mode {
+				case "matching uppercase":
+					body += " " + strings.ToUpper(pr.HeadSHA)
+				case "stale full", "matching full":
+					body += " " + pr.HeadSHA
 				}
-			}
-			must(t, s.cycle(t.Context(), w))
-			if len(f.Comments(repo, 1)) != 1 {
-				t.Fatal("command reply duplicated")
-			}
-			if accept {
-				_, err = f.PushPR(repo, 1, "push after acceptance")
+				f.AddComment(repo, 1, "writer", body)
+				if strings.HasPrefix(mode, "stale") {
+					pr, err = f.PushPR(repo, 1, "new head")
+					must(t, err)
+				}
+				// Restart before processing so binding uses the fresh head read.
+				s, err = New(t.Context(), s.store, []Target{w.Target}, s.options)
 				must(t, err)
+				w = s.queues[0]
 				must(t, s.cycle(t.Context(), w))
-				state, _, err = s.store.Load(t.Context(), w.id)
+				state, _, err := s.store.Load(t.Context(), w.id)
 				must(t, err)
-				if len(state.Entries) != 0 {
-					t.Fatalf("push after acceptance retained admission: %+v", state)
+				accept := mode != "stale full"
+				if (len(state.Entries) == 1) != accept {
+					t.Fatalf("accept=%v: %+v", accept, state)
 				}
-			}
+				if accept && state.Entries[0].HeadSHA != pr.HeadSHA {
+					t.Fatalf("queued head=%s, want current head=%s", state.Entries[0].HeadSHA, pr.HeadSHA)
+				}
+				replies := f.Comments(repo, 1)
+				if len(replies) != 1 {
+					t.Fatalf("expected one acceptance/refusal, got %v", replies)
+				}
+				for _, reply := range replies {
+					if accept && !strings.Contains(reply, pr.HeadSHA) {
+						t.Fatalf("acceptance omitted queued SHA: %s", reply)
+					}
+					if !accept && !strings.Contains(reply, "re-issue") {
+						t.Fatalf("refusal omitted recovery command: %s", reply)
+					}
+				}
+				must(t, s.cycle(t.Context(), w))
+				if len(f.Comments(repo, 1)) != 1 {
+					t.Fatal("command reply duplicated")
+				}
+				if accept {
+					_, err = f.PushPR(repo, 1, "push after acceptance")
+					must(t, err)
+					must(t, s.cycle(t.Context(), w))
+					state, _, err = s.store.Load(t.Context(), w.id)
+					must(t, err)
+					if len(state.Entries) != 0 {
+						t.Fatalf("push after acceptance retained admission: %+v", state)
+					}
+				}
+			})
 		})
 	}
 }
@@ -244,28 +246,30 @@ func TestUnsafeMergeConditionsCannotLand(t *testing.T) {
 }
 
 func TestORCheckFailureWaitsForAlternative(t *testing.T) {
-	s, w, f, _ := fixture(t, "version: 1\nqueues:\n  - name: default\n    merge_when:\n      - check-success = ci\n      - or: [check-success = linux, check-success = fallback]\n")
-	f.AddComment(repo, 1, "writer", "@openmerge queue")
-	must(t, s.cycle(t.Context(), w))
-	state, _, err := s.store.Load(t.Context(), w.id)
-	must(t, err)
-	sha := state.Active.TestedSHA
-	f.SetCheckRuns(repo, sha, []forge.CheckRun{{ID: 4, Name: "ci", State: forge.Success}, {ID: 1, Name: "linux", State: forge.Failure}, {ID: 2, Name: "fallback", State: forge.Pending}})
-	time.Sleep(2 * time.Millisecond)
-	must(t, s.cycle(t.Context(), w))
-	state, _, err = s.store.Load(t.Context(), w.id)
-	must(t, err)
-	if state.Active == nil || state.Active.Phase != queue.Testing || len(state.Entries) != 1 {
-		t.Fatalf("OR failed before fallback completed: %+v", state)
-	}
-	f.SetCheckRuns(repo, sha, []forge.CheckRun{{ID: 4, Name: "ci", State: forge.Success}, {ID: 1, Name: "linux", State: forge.Failure}, {ID: 3, Name: "fallback", State: forge.Success}})
-	time.Sleep(2 * time.Millisecond)
-	must(t, s.cycle(t.Context(), w))
-	pr, err := f.PullRequest(t.Context(), repo, 1)
-	must(t, err)
-	if !pr.Closed {
-		t.Fatal("successful OR alternative did not land and close PR")
-	}
+	testSynctest(t, func(t *testing.T) {
+		s, w, f, _ := fixture(t, "version: 1\nqueues:\n  - name: default\n    merge_when:\n      - check-success = ci\n      - or: [check-success = linux, check-success = fallback]\n")
+		f.AddComment(repo, 1, "writer", "@openmerge queue")
+		must(t, s.cycle(t.Context(), w))
+		state, _, err := s.store.Load(t.Context(), w.id)
+		must(t, err)
+		sha := state.Active.TestedSHA
+		f.SetCheckRuns(repo, sha, []forge.CheckRun{{ID: 4, Name: "ci", State: forge.Success}, {ID: 1, Name: "linux", State: forge.Failure}, {ID: 2, Name: "fallback", State: forge.Pending}})
+		time.Sleep(2 * time.Millisecond)
+		must(t, s.cycle(t.Context(), w))
+		state, _, err = s.store.Load(t.Context(), w.id)
+		must(t, err)
+		if state.Active == nil || state.Active.Phase != queue.Testing || len(state.Entries) != 1 {
+			t.Fatalf("OR failed before fallback completed: %+v", state)
+		}
+		f.SetCheckRuns(repo, sha, []forge.CheckRun{{ID: 4, Name: "ci", State: forge.Success}, {ID: 1, Name: "linux", State: forge.Failure}, {ID: 3, Name: "fallback", State: forge.Success}})
+		time.Sleep(2 * time.Millisecond)
+		must(t, s.cycle(t.Context(), w))
+		pr, err := f.PullRequest(t.Context(), repo, 1)
+		must(t, err)
+		if !pr.Closed {
+			t.Fatal("successful OR alternative did not land and close PR")
+		}
+	})
 }
 
 func TestDeferredBacklogDoesNotStarvePausedWork(t *testing.T) {

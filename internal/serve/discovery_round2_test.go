@@ -147,61 +147,63 @@ func TestRefreshNotificationsHaveMinimumSweepInterval(t *testing.T) {
 }
 
 func TestWaitingPreservesPolicyAndDefersCommandsOnce(t *testing.T) {
-	s, w, f, _ := fixture(t, repositoryConfig)
-	must(t, s.cycle(t.Context(), w))
-	before := w.prs[1]
-	if before.HeadSHA == "" || !trusted(before) {
-		t.Fatal("test requires complete trusted observation")
-	}
-	w.managed, w.ready = true, false
-	w.waiting = "temporary validation failure"
-	f.AddComment(repo, 1, "writer", "@openmerge queue")
-	f.AddComment(repo, 1, w.BotLogin, "@openmerge queue")
-	f.AddComment(repo, 1, "reader", "@openmerge queue")
-	var logs bytes.Buffer
-	s.options.Logger = slog.New(slog.NewTextHandler(&logs, nil))
-	for range 3 {
-		must(t, s.reportWaiting(t.Context(), w))
-	}
-	if !reflect.DeepEqual(w.prs[1], before) {
-		t.Fatal("diagnostic reporting replaced complete policy data")
-	}
-	if count := strings.Count(logs.String(), "ignored @openmerge queue command"); count != 1 {
-		t.Fatalf("ignored logs=%d: %s", count, logs.String())
-	}
-	must(t, s.commands(t.Context(), w, 1))
-	comments := f.CommentRecords(repo, 1)
-	receipt := fmt.Sprintf("comment/%d", comments[0].ID)
-	raw, err := s.store.Observation(t.Context(), w.id, receipt)
-	must(t, err)
-	if len(raw) != 0 {
-		t.Fatal("waiting consumed command receipt")
-	}
-	w.ready = true
-	must(t, s.cycle(t.Context(), w))
-	state := lifecycleState(t, s, w)
-	if len(state.Entries) != 1 || !trusted(w.prs[1]) {
-		t.Fatalf("same-tip recovery lost policy or queue command: %+v", state)
-	}
-	for range 2 {
-		must(t, s.commands(t.Context(), w, 1))
-	}
-	events, err := s.store.EventsAfter(t.Context(), w.id, 0)
-	must(t, err)
-	requests := 0
-	for _, event := range events {
-		if e, ok := event.Event.(queue.EnqueueRequested); ok && e.PR == 1 {
-			requests++
+	testSynctest(t, func(t *testing.T) {
+		s, w, f, _ := fixture(t, repositoryConfig)
+		must(t, s.cycle(t.Context(), w))
+		before := w.prs[1]
+		if before.HeadSHA == "" || !trusted(before) {
+			t.Fatal("test requires complete trusted observation")
 		}
-	}
-	if requests != 1 {
-		t.Fatalf("pending command processed %d times", requests)
-	}
-	w.ready = false
-	must(t, s.reportWaiting(t.Context(), w))
-	if strings.Count(logs.String(), "ignored @openmerge queue command") != 1 {
-		t.Fatal("honored command logged as ignored")
-	}
+		w.managed, w.ready = true, false
+		w.waiting = "temporary validation failure"
+		f.AddComment(repo, 1, "writer", "@openmerge queue")
+		f.AddComment(repo, 1, w.BotLogin, "@openmerge queue")
+		f.AddComment(repo, 1, "reader", "@openmerge queue")
+		var logs bytes.Buffer
+		s.options.Logger = slog.New(slog.NewTextHandler(&logs, nil))
+		for range 3 {
+			must(t, s.reportWaiting(t.Context(), w))
+		}
+		if !reflect.DeepEqual(w.prs[1], before) {
+			t.Fatal("diagnostic reporting replaced complete policy data")
+		}
+		if count := strings.Count(logs.String(), "ignored @openmerge queue command"); count != 1 {
+			t.Fatalf("ignored logs=%d: %s", count, logs.String())
+		}
+		must(t, s.commands(t.Context(), w, 1))
+		comments := f.CommentRecords(repo, 1)
+		receipt := fmt.Sprintf("comment/%d", comments[0].ID)
+		raw, err := s.store.Observation(t.Context(), w.id, receipt)
+		must(t, err)
+		if len(raw) != 0 {
+			t.Fatal("waiting consumed command receipt")
+		}
+		w.ready = true
+		must(t, s.cycle(t.Context(), w))
+		state := lifecycleState(t, s, w)
+		if len(state.Entries) != 1 || !trusted(w.prs[1]) {
+			t.Fatalf("same-tip recovery lost policy or queue command: %+v", state)
+		}
+		for range 2 {
+			must(t, s.commands(t.Context(), w, 1))
+		}
+		events, err := s.store.EventsAfter(t.Context(), w.id, 0)
+		must(t, err)
+		requests := 0
+		for _, event := range events {
+			if e, ok := event.Event.(queue.EnqueueRequested); ok && e.PR == 1 {
+				requests++
+			}
+		}
+		if requests != 1 {
+			t.Fatalf("pending command processed %d times", requests)
+		}
+		w.ready = false
+		must(t, s.reportWaiting(t.Context(), w))
+		if strings.Count(logs.String(), "ignored @openmerge queue command") != 1 {
+			t.Fatal("honored command logged as ignored")
+		}
+	})
 }
 
 func TestDiscoveryClassicProtectionPermanentlyUnavailableIsReady(t *testing.T) {

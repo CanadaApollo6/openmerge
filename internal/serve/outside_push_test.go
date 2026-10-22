@@ -92,66 +92,68 @@ func TestOutsidePushSettlesOutstandingLandingFirst(t *testing.T) {
 		{name: "admin push while landing outstanding", outside: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			s, w, f, _ := fixture(t, repositoryConfig)
-			f.AddComment(repo, 1, "writer", "@openmerge queue")
-			must(t, s.cycle(t.Context(), w))
-			runOutsidePushAudit(t, s, w)
-			state, _, err := s.store.Load(t.Context(), w.id)
-			must(t, err)
-			b := state.Active
-			if b == nil || b.Phase != queue.Testing {
-				t.Fatal("not testing")
-			}
-			_, err = s.store.Append(t.Context(), w.id, []queue.Event{queue.LandingStarted{BatchID: b.ID, AttemptID: "outside-test", FenceToken: state.Fence, At: time.Now().Add(-time.Hour)}}, "")
-			must(t, err)
-			expectedPrevious := state.BaseSHA
-			if tc.land {
-				_, err = f.Land(t.Context(), repo, forge.LandRequest{Base: "main", ExpectedBaseSHA: state.BaseSHA, TestedSHA: b.TestedSHA, Fence: "openmerge/fence/main", ExpectedFence: state.Fence, NextFenceID: "land/outside-test", PRs: []forge.BuildPR{{Number: 1, HeadSHA: b.PRs[0].HeadSHA}}}, forge.PushOptions{})
+			testSynctest(t, func(t *testing.T) {
+				s, w, f, _ := fixture(t, repositoryConfig)
+				f.AddComment(repo, 1, "writer", "@openmerge queue")
+				must(t, s.cycle(t.Context(), w))
+				runOutsidePushAudit(t, s, w)
+				state, _, err := s.store.Load(t.Context(), w.id)
 				must(t, err)
-				expectedPrevious = b.TestedSHA
-			}
-			if tc.outside {
-				_, err = f.PushBase(repo, "main", "admin during uncertain landing", nil)
+				b := state.Active
+				if b == nil || b.Phase != queue.Testing {
+					t.Fatal("not testing")
+				}
+				_, err = s.store.Append(t.Context(), w.id, []queue.Event{queue.LandingStarted{BatchID: b.ID, AttemptID: "outside-test", FenceToken: state.Fence, At: time.Now().Add(-time.Hour)}}, "")
 				must(t, err)
-			}
-			if tc.outside {
-				f.FailNext("ReadFence", errors.New("temporary settlement read failure"))
-				if err := s.cycle(t.Context(), w); err == nil {
-					t.Fatal("failed settlement was ignored")
+				expectedPrevious := state.BaseSHA
+				if tc.land {
+					_, err = f.Land(t.Context(), repo, forge.LandRequest{Base: "main", ExpectedBaseSHA: state.BaseSHA, TestedSHA: b.TestedSHA, Fence: "openmerge/fence/main", ExpectedFence: state.Fence, NextFenceID: "land/outside-test", PRs: []forge.BuildPR{{Number: 1, HeadSHA: b.PRs[0].HeadSHA}}}, forge.PushOptions{})
+					must(t, err)
+					expectedPrevious = b.TestedSHA
 				}
-				pending, _, err := s.store.Load(t.Context(), w.id)
-				must(t, err)
-				if len(pending.RecentOutsidePushes()) != 0 {
-					t.Fatal("classified before successful settlement")
+				if tc.outside {
+					_, err = f.PushBase(repo, "main", "admin during uncertain landing", nil)
+					must(t, err)
 				}
-			}
-			must(t, s.cycle(t.Context(), w))
-			runOutsidePushAudit(t, s, w)
-			state, _, err = s.store.Load(t.Context(), w.id)
-			must(t, err)
-			pushes := state.RecentOutsidePushes()
-			if !tc.outside {
-				if len(pushes) != 0 {
-					t.Fatalf("own landing classified outside: %+v", pushes)
-				}
-				return
-			}
-			if len(pushes) != 1 || pushes[0].PreviousSHA != expectedPrevious {
-				t.Fatalf("settlement baseline lost: %+v", pushes)
-			}
-			records, err := s.store.EventsAfter(t.Context(), w.id, 0)
-			must(t, err)
-			settled := false
-			for _, record := range records {
-				switch record.Event.(type) {
-				case queue.Landed, queue.LandingAbandoned:
-					settled = true
-				case queue.OutsidePushRecorded:
-					if !settled {
-						t.Fatal("outside push recorded before settlement")
+				if tc.outside {
+					f.FailNext("ReadFence", errors.New("temporary settlement read failure"))
+					if err := s.cycle(t.Context(), w); err == nil {
+						t.Fatal("failed settlement was ignored")
+					}
+					pending, _, err := s.store.Load(t.Context(), w.id)
+					must(t, err)
+					if len(pending.RecentOutsidePushes()) != 0 {
+						t.Fatal("classified before successful settlement")
 					}
 				}
-			}
+				must(t, s.cycle(t.Context(), w))
+				runOutsidePushAudit(t, s, w)
+				state, _, err = s.store.Load(t.Context(), w.id)
+				must(t, err)
+				pushes := state.RecentOutsidePushes()
+				if !tc.outside {
+					if len(pushes) != 0 {
+						t.Fatalf("own landing classified outside: %+v", pushes)
+					}
+					return
+				}
+				if len(pushes) != 1 || pushes[0].PreviousSHA != expectedPrevious {
+					t.Fatalf("settlement baseline lost: %+v", pushes)
+				}
+				records, err := s.store.EventsAfter(t.Context(), w.id, 0)
+				must(t, err)
+				settled := false
+				for _, record := range records {
+					switch record.Event.(type) {
+					case queue.Landed, queue.LandingAbandoned:
+						settled = true
+					case queue.OutsidePushRecorded:
+						if !settled {
+							t.Fatal("outside push recorded before settlement")
+						}
+					}
+				}
+			})
 		})
 	}
 }

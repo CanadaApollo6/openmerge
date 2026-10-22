@@ -81,86 +81,90 @@ func TestOperationalLogsIgnoreStaleRulesEvents(t *testing.T) {
 }
 
 func TestOperationalLogsDequeueAndPause(t *testing.T) {
-	s, w, f, _ := fixture(t, repositoryConfig)
-	var output bytes.Buffer
-	s.options.Logger = slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	f.AddComment(repo, 1, "writer", "@openmerge queue")
-	must(t, s.cycle(t.Context(), w))
-	f.AddComment(repo, 1, "writer", "@openmerge dequeue")
-	must(t, s.Notify(t.Context(), "7", repo.Path, "dequeue-command"))
-	must(t, s.cycle(t.Context(), w))
-	must(t, s.block(t.Context(), w, queue.ConfigSource, "broken configuration", ""))
-	must(t, s.block(t.Context(), w, queue.ConfigSource, "broken configuration", ""))
-	_, err := s.store.Append(t.Context(), w.id, []queue.Event{queue.BlockSourceCleared{Source: queue.ConfigSource, Basis: 2}}, "")
-	must(t, err)
-	s.logCommitted(t.Context(), w)
-	found := map[string]int{}
-	for _, row := range logRows(t, &output) {
-		message := row["msg"].(string)
-		found[message]++
-		switch message {
-		case "dequeued":
-			if row["level"] != "INFO" || row["reason"] != "requested" || row["pr"] != float64(1) || row["sha"] == "" {
-				t.Fatalf("dequeue context: %v", row)
-			}
-		case "queue paused", "queue resumed", "configuration error":
-			if row["level"] != "INFO" || row["reason"] != "invalid-config" {
-				t.Fatalf("pause context: %v", row)
-			}
-		case "reconcile cycle started", "reconcile cycle finished":
-			if row["level"] != "DEBUG" {
-				t.Fatalf("cycle logged above DEBUG: %v", row)
+	testSynctest(t, func(t *testing.T) {
+		s, w, f, _ := fixture(t, repositoryConfig)
+		var output bytes.Buffer
+		s.options.Logger = slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug}))
+		f.AddComment(repo, 1, "writer", "@openmerge queue")
+		must(t, s.cycle(t.Context(), w))
+		f.AddComment(repo, 1, "writer", "@openmerge dequeue")
+		must(t, s.Notify(t.Context(), "7", repo.Path, "dequeue-command"))
+		must(t, s.cycle(t.Context(), w))
+		must(t, s.block(t.Context(), w, queue.ConfigSource, "broken configuration", ""))
+		must(t, s.block(t.Context(), w, queue.ConfigSource, "broken configuration", ""))
+		_, err := s.store.Append(t.Context(), w.id, []queue.Event{queue.BlockSourceCleared{Source: queue.ConfigSource, Basis: 2}}, "")
+		must(t, err)
+		s.logCommitted(t.Context(), w)
+		found := map[string]int{}
+		for _, row := range logRows(t, &output) {
+			message := row["msg"].(string)
+			found[message]++
+			switch message {
+			case "dequeued":
+				if row["level"] != "INFO" || row["reason"] != "requested" || row["pr"] != float64(1) || row["sha"] == "" {
+					t.Fatalf("dequeue context: %v", row)
+				}
+			case "queue paused", "queue resumed", "configuration error":
+				if row["level"] != "INFO" || row["reason"] != "invalid-config" {
+					t.Fatalf("pause context: %v", row)
+				}
+			case "reconcile cycle started", "reconcile cycle finished":
+				if row["level"] != "DEBUG" {
+					t.Fatalf("cycle logged above DEBUG: %v", row)
+				}
 			}
 		}
-	}
-	for _, message := range []string{"dequeued", "queue paused", "queue resumed", "configuration error"} {
-		if found[message] != 1 {
-			t.Fatalf("%q logs=%d; output=%s", message, found[message], &output)
+		for _, message := range []string{"dequeued", "queue paused", "queue resumed", "configuration error"} {
+			if found[message] != 1 {
+				t.Fatalf("%q logs=%d; output=%s", message, found[message], &output)
+			}
 		}
-	}
-	if found["reconcile cycle started"] != 2 || found["reconcile cycle finished"] != 2 {
-		t.Fatalf("missing cycle logs: %s", &output)
-	}
+		if found["reconcile cycle started"] != 2 || found["reconcile cycle finished"] != 2 {
+			t.Fatalf("missing cycle logs: %s", &output)
+		}
+	})
 }
 
 func TestOperationalLogsAbandonmentAndQuota(t *testing.T) {
-	s, w, f, _ := fixture(t, repositoryConfig)
-	var output bytes.Buffer
-	s.options.Logger = slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	f.AddComment(repo, 1, "writer", "@openmerge queue")
-	must(t, s.cycle(t.Context(), w))
-	state, _, err := s.store.Load(t.Context(), w.id)
-	must(t, err)
-	_, err = s.store.Append(t.Context(), w.id, []queue.Event{
-		queue.LandingStarted{BatchID: state.Active.ID, AttemptID: "uncertain", FenceToken: state.Fence, At: time.Now()},
-		queue.LandingAbandoned{BatchID: state.Active.ID, NewFence: "advanced"},
-	}, "")
-	must(t, err)
-	s.logCommitted(t.Context(), w)
-	found := false
-	for _, row := range logRows(t, &output) {
-		if row["msg"] == "abandoned" {
-			found = row["level"] == "INFO" && row["batch"] == state.Active.ID && row["sha"] == state.Active.TestedSHA && row["pr"] == float64(1)
+	testSynctest(t, func(t *testing.T) {
+		s, w, f, _ := fixture(t, repositoryConfig)
+		var output bytes.Buffer
+		s.options.Logger = slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug}))
+		f.AddComment(repo, 1, "writer", "@openmerge queue")
+		must(t, s.cycle(t.Context(), w))
+		state, _, err := s.store.Load(t.Context(), w.id)
+		must(t, err)
+		_, err = s.store.Append(t.Context(), w.id, []queue.Event{
+			queue.LandingStarted{BatchID: state.Active.ID, AttemptID: "uncertain", FenceToken: state.Fence, At: time.Now()},
+			queue.LandingAbandoned{BatchID: state.Active.ID, NewFence: "advanced"},
+		}, "")
+		must(t, err)
+		s.logCommitted(t.Context(), w)
+		found := false
+		for _, row := range logRows(t, &output) {
+			if row["msg"] == "abandoned" {
+				found = row["level"] == "INFO" && row["batch"] == state.Active.ID && row["sha"] == state.Active.TestedSHA && row["pr"] == float64(1)
+			}
 		}
-	}
-	if !found {
-		t.Fatalf("missing abandonment: %s", &output)
-	}
-	// Quota exhaustion is distinguished from an operational failure.
-	s.options.BackoffUntil = func() time.Time { return time.Now().Add(time.Hour) }
-	err = s.quota()
-	if _, ok := err.(*quotaBackoff); !ok {
-		t.Fatalf("quota has no typed backoff: %v", err)
-	}
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
-	s.options.Logger = slog.New(cancelOnQuota{Handler: slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug}), cancel: cancel})
-	s.loop(ctx, w)
-	rows := logRows(t, &output)
-	last := rows[len(rows)-1]
-	if last["msg"] != "quota backoff" || last["level"] != "DEBUG" || last["repository"] != repo.Path || last["base"] != "main" {
-		t.Fatalf("quota backoff was not DEBUG: %v", last)
-	}
+		if !found {
+			t.Fatalf("missing abandonment: %s", &output)
+		}
+		// Quota exhaustion is distinguished from an operational failure.
+		s.options.BackoffUntil = func() time.Time { return time.Now().Add(time.Hour) }
+		err = s.quota()
+		if _, ok := err.(*quotaBackoff); !ok {
+			t.Fatalf("quota has no typed backoff: %v", err)
+		}
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		s.options.Logger = slog.New(cancelOnQuota{Handler: slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug}), cancel: cancel})
+		s.loop(ctx, w)
+		rows := logRows(t, &output)
+		last := rows[len(rows)-1]
+		if last["msg"] != "quota backoff" || last["level"] != "DEBUG" || last["repository"] != repo.Path || last["base"] != "main" {
+			t.Fatalf("quota backoff was not DEBUG: %v", last)
+		}
+	})
 }
 
 type cancelOnQuota struct {

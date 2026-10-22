@@ -72,47 +72,49 @@ func TestStartupMissingLandingGrantBlocksBeforeFenceAndRecovers(t *testing.T) {
 }
 
 func TestRulesStartupPauseSlowRecheckAndAutomaticRecovery(t *testing.T) {
-	s, w, f, _ := fixture(t, repositoryConfig)
-	calls := 0
-	bad := true
-	w.CheckRules = func(context.Context) ([]string, []string, error) {
-		calls++
-		if bad {
-			return []string{"fence is not protected"}, nil, nil
+	testSynctest(t, func(t *testing.T) {
+		s, w, f, _ := fixture(t, repositoryConfig)
+		calls := 0
+		bad := true
+		w.CheckRules = func(context.Context) ([]string, []string, error) {
+			calls++
+			if bad {
+				return []string{"fence is not protected"}, nil, nil
+			}
+			return nil, nil, nil
 		}
-		return nil, nil, nil
-	}
-	// Recreate the server to prove the first check and pause happen in New.
-	restarted, err := New(t.Context(), s.store, []Target{w.Target}, s.options)
-	must(t, err)
-	s, w = restarted, restarted.queues[0]
-	state, _, err := s.store.Load(t.Context(), w.id)
-	must(t, err)
-	if calls != 1 || state.PauseReason(queue.Config{}) != "repository-rules" {
-		t.Fatalf("startup calls=%d pause=%s", calls, state.PauseReason(queue.Config{}))
-	}
-	f.AddComment(repo, 1, "writer", "@openmerge queue")
-	f.AddComment(repo, 1, "writer", "@openmerge refresh")
-	must(t, s.cycle(t.Context(), w))
-	state, watermark, err := s.store.Load(t.Context(), w.id)
-	must(t, err)
-	if calls != 1 || state.Active != nil || state.PauseReason(queue.Config{}) != "repository-rules" || len(state.Entries) != 1 {
-		t.Fatal("poll or refresh bypassed known rules failure")
-	}
-	must(t, s.cycle(t.Context(), w))
-	_, unchanged, err := s.store.Load(t.Context(), w.id)
-	must(t, err)
-	if unchanged != watermark {
-		t.Fatal("unchanged pause appended duplicate events")
-	}
-	bad = false
-	w.rulesNextCheck = time.Time{}
-	must(t, s.cycle(t.Context(), w))
-	state, _, err = s.store.Load(t.Context(), w.id)
-	must(t, err)
-	if calls != 2 || state.PauseReason(queue.Config{}) != "" || state.Active == nil {
-		t.Fatalf("later passing check did not resume: calls=%d state=%+v", calls, state)
-	}
+		// Recreate the server to prove the first check and pause happen in New.
+		restarted, err := New(t.Context(), s.store, []Target{w.Target}, s.options)
+		must(t, err)
+		s, w = restarted, restarted.queues[0]
+		state, _, err := s.store.Load(t.Context(), w.id)
+		must(t, err)
+		if calls != 1 || state.PauseReason(queue.Config{}) != "repository-rules" {
+			t.Fatalf("startup calls=%d pause=%s", calls, state.PauseReason(queue.Config{}))
+		}
+		f.AddComment(repo, 1, "writer", "@openmerge queue")
+		f.AddComment(repo, 1, "writer", "@openmerge refresh")
+		must(t, s.cycle(t.Context(), w))
+		state, watermark, err := s.store.Load(t.Context(), w.id)
+		must(t, err)
+		if calls != 1 || state.Active != nil || state.PauseReason(queue.Config{}) != "repository-rules" || len(state.Entries) != 1 {
+			t.Fatal("poll or refresh bypassed known rules failure")
+		}
+		must(t, s.cycle(t.Context(), w))
+		_, unchanged, err := s.store.Load(t.Context(), w.id)
+		must(t, err)
+		if unchanged != watermark {
+			t.Fatal("unchanged pause appended duplicate events")
+		}
+		bad = false
+		w.rulesNextCheck = time.Time{}
+		must(t, s.cycle(t.Context(), w))
+		state, _, err = s.store.Load(t.Context(), w.id)
+		must(t, err)
+		if calls != 2 || state.PauseReason(queue.Config{}) != "" || state.Active == nil {
+			t.Fatalf("later passing check did not resume: calls=%d state=%+v", calls, state)
+		}
+	})
 }
 
 func TestRulesReadFailurePreservesStateAndRetriesSooner(t *testing.T) {

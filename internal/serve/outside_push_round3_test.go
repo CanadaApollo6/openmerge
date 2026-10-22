@@ -59,50 +59,54 @@ func TestReviewRound3PeerSettlesAlreadyLandingAfterRefRead(t *testing.T) {
 func TestOutsidePushRealRollbackAndRestoreHasSameFlag(t *testing.T) {
 	for _, method := range []string{"merge", "fast-forward"} {
 		t.Run(method, func(t *testing.T) {
-			s, w, f, before, req := outsidePushRound2Attempt(t, method, false)
-			_, err := f.Land(t.Context(), repo, req, forge.PushOptions{})
-			must(t, err)
-			held, err := s.settle(t.Context(), w)
-			must(t, err)
-			if held {
-				t.Fatal("landing did not settle")
-			}
-			runOutsidePushAudit(t, s, w) // persist the landing receipt before the rewind
-			must(t, f.SetRef(repo, "main", before.BaseSHA))
-			must(t, s.configuration(t.Context(), w))
-			must(t, f.SetRef(repo, "main", before.Active.LandingCommit()))
-			must(t, s.configuration(t.Context(), w))
-			restarted, err := New(t.Context(), s.store, []Target{w.Target}, s.options)
-			must(t, err)
-			assertFlaggedRewind(t, restarted, restarted.queues[0], before.Active.LandingCommit(), before.BaseSHA)
+			testSynctest(t, func(t *testing.T) {
+				s, w, f, before, req := outsidePushRound2Attempt(t, method, false)
+				_, err := f.Land(t.Context(), repo, req, forge.PushOptions{})
+				must(t, err)
+				held, err := s.settle(t.Context(), w)
+				must(t, err)
+				if held {
+					t.Fatal("landing did not settle")
+				}
+				runOutsidePushAudit(t, s, w) // persist the landing receipt before the rewind
+				must(t, f.SetRef(repo, "main", before.BaseSHA))
+				must(t, s.configuration(t.Context(), w))
+				must(t, f.SetRef(repo, "main", before.Active.LandingCommit()))
+				must(t, s.configuration(t.Context(), w))
+				restarted, err := New(t.Context(), s.store, []Target{w.Target}, s.options)
+				must(t, err)
+				assertFlaggedRewind(t, restarted, restarted.queues[0], before.Active.LandingCommit(), before.BaseSHA)
+			})
 		})
 	}
 }
 
 func TestOutsidePushOnlyExactPreLandingRewindIsFlagged(t *testing.T) {
-	s, w, f, before, req := outsidePushRound2Attempt(t, "merge", false)
-	_, err := f.Land(t.Context(), repo, req, forge.PushOptions{})
-	must(t, err)
-	held, err := s.settle(t.Context(), w)
-	must(t, err)
-	if held {
-		t.Fatal("landing did not settle")
-	}
-	runOutsidePushAudit(t, s, w)
-	must(t, f.SetRef(repo, "main", before.BaseSHA))
-	must(t, s.configuration(t.Context(), w))
-	next, err := f.PushBase(repo, "main", "continue after rewind", nil)
-	must(t, err)
-	must(t, s.configuration(t.Context(), w))
-	must(t, f.SetRef(repo, "main", before.BaseSHA))
-	must(t, s.configuration(t.Context(), w))
-	runOutsidePushAudit(t, s, w)
-	after, _, err := s.store.Load(t.Context(), w.id)
-	must(t, err)
-	pushes := after.RecentOutsidePushes()
-	if len(pushes) != 3 || !pushes[0].PossibleStaleObservation || pushes[1].PossibleStaleObservation || pushes[2].PossibleStaleObservation || pushes[1].NewSHA != next || !pushes[2].Rewrite {
-		t.Fatalf("flag applied beyond exact landing-base rewind: %+v", pushes)
-	}
+	testSynctest(t, func(t *testing.T) {
+		s, w, f, before, req := outsidePushRound2Attempt(t, "merge", false)
+		_, err := f.Land(t.Context(), repo, req, forge.PushOptions{})
+		must(t, err)
+		held, err := s.settle(t.Context(), w)
+		must(t, err)
+		if held {
+			t.Fatal("landing did not settle")
+		}
+		runOutsidePushAudit(t, s, w)
+		must(t, f.SetRef(repo, "main", before.BaseSHA))
+		must(t, s.configuration(t.Context(), w))
+		next, err := f.PushBase(repo, "main", "continue after rewind", nil)
+		must(t, err)
+		must(t, s.configuration(t.Context(), w))
+		must(t, f.SetRef(repo, "main", before.BaseSHA))
+		must(t, s.configuration(t.Context(), w))
+		runOutsidePushAudit(t, s, w)
+		after, _, err := s.store.Load(t.Context(), w.id)
+		must(t, err)
+		pushes := after.RecentOutsidePushes()
+		if len(pushes) != 3 || !pushes[0].PossibleStaleObservation || pushes[1].PossibleStaleObservation || pushes[2].PossibleStaleObservation || pushes[1].NewSHA != next || !pushes[2].Rewrite {
+			t.Fatalf("flag applied beyond exact landing-base rewind: %+v", pushes)
+		}
+	})
 }
 
 type reviewRound3BlockingHistory struct {

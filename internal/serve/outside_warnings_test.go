@@ -119,34 +119,36 @@ func TestOutsideWarningsLedgerStatusHealthAndAcknowledgement(t *testing.T) {
 }
 
 func TestOutsideWarningsBoundedAcrossPagesAndAuthorityRollback(t *testing.T) {
-	s, w, _, _ := fixture(t, repositoryConfig)
-	reportingPin(t, s, w, authority.OpenMerge)
-	const count = 300
-	reportingMoves(t, s, w, count)
-	q := reportingQueue(t, s)
-	if q.OutsideWarnings == nil || q.OutsideWarnings.Outstanding != count || len(q.OutsideWarnings.EventIDs) != store.OutsideWarningIDLimit || !q.OutsideWarnings.Truncated {
-		t.Fatalf("unbounded/inexact warnings: %+v", q.OutsideWarnings)
-	}
-	// The oldest warning is no longer in the recent history but is acknowledgeable.
-	id := q.OutsideWarnings.EventIDs[0]
-	for _, push := range q.OutsidePushes {
-		if push.EventID == id {
-			t.Fatal("test did not outgrow recent history")
+	testSynctest(t, func(t *testing.T) {
+		s, w, _, _ := fixture(t, repositoryConfig)
+		reportingPin(t, s, w, authority.OpenMerge)
+		const count = 300
+		reportingMoves(t, s, w, count)
+		q := reportingQueue(t, s)
+		if q.OutsideWarnings == nil || q.OutsideWarnings.Outstanding != count || len(q.OutsideWarnings.EventIDs) != store.OutsideWarningIDLimit || !q.OutsideWarnings.Truncated {
+			t.Fatalf("unbounded/inexact warnings: %+v", q.OutsideWarnings)
 		}
-	}
-	_, err := s.store.AcknowledgeOutsidePush(t.Context(), w.id, id, "outside-0", "operator")
-	must(t, err)
-	reportingPin(t, s, w, authority.GitHub)
-	q = reportingQueue(t, s)
-	if q.Authority != nil || q.OutsideWarnings == nil || q.OutsideWarnings.Outstanding != count-1 || q.OutsideWarnings.EventIDs[0] == id || len(q.OutsideWarnings.EventIDs) != store.OutsideWarningIDLimit || !q.OutsideWarnings.Truncated {
-		t.Fatalf("rollback/ack lost historical eligibility: %+v", q)
-	}
-	must(t, s.refreshOutsideWarnings(t.Context(), w))
-	var health status.Health
-	must(t, json.Unmarshal(reportingResponse(t, s, "/v1/health").Body.Bytes(), &health))
-	if !reflect.DeepEqual(health.Queues[0].OutsideWarnings, q.OutsideWarnings) {
-		t.Fatal("health bounds/count disagree")
-	}
+		// The oldest warning is no longer in the recent history but is acknowledgeable.
+		id := q.OutsideWarnings.EventIDs[0]
+		for _, push := range q.OutsidePushes {
+			if push.EventID == id {
+				t.Fatal("test did not outgrow recent history")
+			}
+		}
+		_, err := s.store.AcknowledgeOutsidePush(t.Context(), w.id, id, "outside-0", "operator")
+		must(t, err)
+		reportingPin(t, s, w, authority.GitHub)
+		q = reportingQueue(t, s)
+		if q.Authority != nil || q.OutsideWarnings == nil || q.OutsideWarnings.Outstanding != count-1 || q.OutsideWarnings.EventIDs[0] == id || len(q.OutsideWarnings.EventIDs) != store.OutsideWarningIDLimit || !q.OutsideWarnings.Truncated {
+			t.Fatalf("rollback/ack lost historical eligibility: %+v", q)
+		}
+		must(t, s.refreshOutsideWarnings(t.Context(), w))
+		var health status.Health
+		must(t, json.Unmarshal(reportingResponse(t, s, "/v1/health").Body.Bytes(), &health))
+		if !reflect.DeepEqual(health.Queues[0].OutsideWarnings, q.OutsideWarnings) {
+			t.Fatal("health bounds/count disagree")
+		}
+	})
 }
 
 func TestGitHubOutsidePushHasNoAuthorityWarnings(t *testing.T) {
