@@ -60,7 +60,7 @@ def main():
         database = urlsplit(os.environ.get("OPENMERGE_TEST_DATABASE_URL", ""))
         if database.hostname != "localhost" or database.port != 54329:
             raise v.VerifyError("set OPENMERGE_TEST_DATABASE_URL to the shared test Postgres on localhost:54329")
-        result["baseline"] = v.check_tree("baseline", args.baseline, "07a1cf8066aef4978a7175d9b39e4b94633630c2")
+        result["baseline"] = v.check_tree("baseline", args.baseline, "eaddd8428ebe5acc9ad435276304516d7d389f7a")
         result["candidate"] = v.check_tree("candidate", root)
         result["environment"] = {"GOROOT": toolchain, "PATH_prefix": toolchain + "/bin", "database": "localhost:54329, isolated test schemas"}
         result["exports"] = v.exports(v.EVENTS, v.QUEUES)

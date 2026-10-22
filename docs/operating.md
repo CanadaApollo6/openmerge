@@ -1986,6 +1986,19 @@ protection:
 /v1/authority-completion?installation=INSTALLATION&repo=owner/repo&digest=EXPECTED_EFFECTIVE_DIGEST
 ```
 
+or the equivalent CLI, which uses the same `--api`/token settings as `queue status`:
+
+```sh
+openmerge admin authority-completion --installation INSTALLATION --repo owner/repo \
+  --digest EXPECTED_EFFECTIVE_DIGEST [--targets '{"release/v1":"DIGEST"}']
+```
+
+It prints the API response and exits **0 only** when the server reports
+`complete: true` with at least one partition for exactly the requested intent
+(installation, repository, digest and targets echoed back). An incomplete
+answer, an empty or mismatched response, or any API failure exits nonzero;
+treat every nonzero exit as "retain redundant protection".
+
 A repository can have different effective digests for different queue policies.
 For that case supply `targets`, a URL-encoded JSON object mapping each base to
 its reviewed expected digest; `digest` supplies an optional common default.
@@ -2055,7 +2068,9 @@ openmerge admin downgrade-check --database-url "$OPERATOR_DATABASE_URL"
 
 It refuses the authority journal boundary, new authority enum values, v7/future
 cursors and unreadable/unknown journal or cursor snapshot data, including a v7-only cursor
-with no authority events. Success certifies only absence of this ADR's boundary;
+with no authority events. A refusal prints `authority downgrade refused`; a database it
+cannot read prints `authority downgrade check unavailable` and decides nothing.
+Both exit 1, and neither echoes connection details. Success certifies only absence of this ADR's boundary;
 check every other target-binary compatibility requirement separately. Never edit
 or delete journal/cursor rows to force success. Keep the post-emission database
 and immutable evidence, use a compatible reader, or restore the tested pre-emission
