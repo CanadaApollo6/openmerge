@@ -478,3 +478,25 @@ func TestSourceSanitizedErrors(t *testing.T) {
 		t.Fatal("unsafe query error")
 	}
 }
+
+func TestSourceSubmicrosecondBoundaries(t *testing.T) {
+	f := database(t)
+	f.queue(t, 1, "")
+	for _, at := range []string{"2026-10-22T12:00:00Z", "2026-10-22T12:00:00.000001Z", "2026-10-22T12:00:00.000002Z"} {
+		insert(t, f.admin, 1, at)
+	}
+	for _, tc := range []struct {
+		from, until string
+		count       int64
+	}{
+		{"2026-10-22T12:00:00.000000001Z", "2026-10-22T12:00:00.000001001Z", 1},
+		{"2026-10-22T12:00:00.000000001Z", "2026-10-22T12:00:00.000000002Z", 0},
+		{"2026-10-22T07:00:00-05:00", "2026-10-22T07:00:00.000002-05:00", 2},
+	} {
+		m, e := f.reader.Export(t.Context(), Request{Repository: "owner/repo", From: tc.from, Until: tc.until}, filepath.Join(t.TempDir(), "bounds"))
+		must(t, e)
+		if m.Count != tc.count {
+			t.Fatalf("submicrosecond count=%d want=%d", m.Count, tc.count)
+		}
+	}
+}

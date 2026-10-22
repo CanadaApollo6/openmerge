@@ -140,6 +140,18 @@ func parseRange(req Request) (*time.Time, *time.Time, error) {
 	if from != nil && until != nil && !from.Before(*until) {
 		return nil, nil, errSource
 	}
+	// DB timestamps are discrete microseconds. Ceil both bounds so pgx's
+	// microsecond encoding preserves the exact half-open comparison, including
+	// a valid interval lying entirely between two DB timestamp values.
+	for _, bound := range []*time.Time{from, until} {
+		if bound != nil {
+			floor := bound.Truncate(time.Microsecond)
+			if !floor.Equal(*bound) {
+				floor = floor.Add(time.Microsecond)
+			}
+			*bound = floor
+		}
+	}
 	return from, until, nil
 }
 

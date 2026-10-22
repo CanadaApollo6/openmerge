@@ -43,5 +43,10 @@
     "Input": "0e2147483647",
     "Bytes": "0",
     "SHA256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+  },
+  {
+    "Input": "-0.000e9999999999999999999999",
+    "Bytes": "0",
+    "SHA256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
   }
 ]

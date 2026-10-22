@@ -150,7 +150,9 @@ to exactly one installation. Queue discovery uses the queues identity index,
 without consulting the live canonical inventory. Queue key components are
 compared by UTF-8 bytes (`COLLATE "C"` in SQL). Both queue and event keyset pages
 contain at most 32 rows. The per-queue snapshot maximum ID is a scan bound, not
-a reusable source selection. Time windows compare database `recorded_at`.
+a reusable source selection. Time windows compare database `recorded_at`; both query bounds are rounded
+up to the next microsecond when needed, preserving exact `[from, until)`
+semantics for a database whose timestamp values are discrete microseconds.
 
 V1 files are `events.jsonl`, `selection.jsonl`, `watermarks.jsonl`, and
 `manifest.json`. All records are compact canonical UTF-8 JSON followed by LF.

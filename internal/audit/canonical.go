@@ -219,12 +219,9 @@ func decimal(s string) (string, error) {
 	neg := strings.HasPrefix(s, "-")
 	s = strings.TrimPrefix(s, "-")
 	exp := int64(0)
+	exponent := ""
 	if i := strings.IndexAny(s, "eE"); i >= 0 {
-		var err error
-		exp, err = strconv.ParseInt(s[i+1:], 10, 32)
-		if err != nil {
-			return "", errCanonical
-		}
+		exponent = s[i+1:]
 		s = s[:i]
 	}
 	if i := strings.IndexByte(s, '.'); i >= 0 {
@@ -234,6 +231,13 @@ func decimal(s string) (string, error) {
 	s = strings.TrimLeft(s, "0")
 	if s == "" {
 		return "0", nil
+	}
+	if exponent != "" {
+		shift, err := strconv.ParseInt(exponent, 10, 32)
+		if err != nil {
+			return "", errCanonical
+		}
+		exp += shift
 	}
 	for strings.HasSuffix(s, "0") {
 		s = s[:len(s)-1]
