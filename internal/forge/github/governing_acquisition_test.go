@@ -128,13 +128,17 @@ func TestAuthorityVerifyAcquiresServerGoverningCommit(t *testing.T) {
 	f := rulesAPI(t)
 	reader, err := newAdminWriteRestrictionReader("setup-admin-secret", f.server.URL+"/api/v3/")
 	must(t, err)
-	must(t, reader.AcquireGoverning(t.Context(), "acme/project"))
+	recheck, err := reader.AcquireGoverningRecheck(t.Context(), "acme/project")
+	must(t, err)
 	f.override = func(w http.ResponseWriter, r *http.Request) bool {
 		if strings.HasSuffix(r.URL.Path, "/git/ref/heads/main") {
 			f.json(w, map[string]any{"object": map[string]string{"sha": "caller-supplied-tip", "type": "commit"}})
 			return true
 		}
 		return false
+	}
+	if err := recheck(t.Context()); err == nil {
+		t.Fatal("retained verification recheck accepted moved tip")
 	}
 	if err := reader.AcquireGoverning(t.Context(), "acme/project"); err == nil {
 		t.Fatal("verify accepted unresolved governing commit")
@@ -220,5 +224,30 @@ func TestGoverningPermissionDeniedIsSanitized(t *testing.T) {
 	err = reader.AcquireGoverning(t.Context(), "acme/project")
 	if err == nil || !strings.Contains(err.Error(), "permission denied") || strings.Contains(err.Error(), "ghs_SECRET") {
 		t.Fatal("lost sanitized permission class", err)
+	}
+}
+
+func TestAuthoritySetupRechecksAfterApplyPreflight(t *testing.T) {
+	f := rulesAPI(t)
+	refs, moved := 0, false
+	f.override = func(w http.ResponseWriter, r *http.Request) bool {
+		if strings.HasSuffix(r.URL.Path, "/git/ref/heads/main") {
+			refs++
+			if moved {
+				f.json(w, map[string]any{"object": map[string]string{"type": "commit", "sha": strings.Repeat("d", 40)}})
+				return true
+			}
+		}
+		if refs >= 3 && strings.HasSuffix(r.URL.Path, "/rulesets") && r.Method == http.MethodGet {
+			moved = true
+		}
+		return false
+	}
+	opts := authorityOptions(t)
+	opts.Apply = true
+	opts.Backup = t.TempDir() + "/backup.json"
+	_, err := runAuthority(t, f, opts)
+	if err == nil || !moved || f.setupWrites != 0 || !strings.Contains(err.Error(), "changed; retry acquisition") {
+		t.Fatalf("refs=%d moved=%v writes=%d err=%v", refs, moved, f.setupWrites, err)
 	}
 }

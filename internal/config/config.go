@@ -148,6 +148,12 @@ type Diagnostic struct {
 }
 
 func (d Diagnostic) Error() string {
+	if d.Line == 0 {
+		if d.Path == "" {
+			return d.Message
+		}
+		return d.Path + ": " + d.Message
+	}
 	if d.Path == "" {
 		return fmt.Sprintf("line %d: %s", d.Line, d.Message)
 	}

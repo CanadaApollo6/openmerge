@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/CanadaApollo6/openmerge/internal/authority"
@@ -14,12 +16,20 @@ import (
 
 type acquiringVerifyReader struct {
 	verifyReaderFunc
-	acquired int
+	acquired  int
+	moved     bool
+	rechecked int
 }
 
-func (r *acquiringVerifyReader) AcquireGoverning(context.Context, string) error {
+func (r *acquiringVerifyReader) AcquireGoverningRecheck(context.Context, string) (func(context.Context) error, error) {
 	r.acquired++
-	return nil
+	return func(context.Context) error {
+		r.rechecked++
+		if r.moved {
+			return errors.New("ghs_SECRET")
+		}
+		return nil
+	}, nil
 }
 
 func TestVerifyAcquiresOnceAfterEveryTargetValidated(t *testing.T) {
@@ -45,12 +55,16 @@ func TestVerifyAcquiresOnceAfterEveryTargetValidated(t *testing.T) {
 		return authority.CloneObservation(v.Evidence), nil
 	}
 	plan := verificationPlan{}
-	for _, base := range []string{"main", "release/v1"} {
+	for i, base := range []string{"main", "release/v1"} {
 		key := store.QueueKey{Installation: "173082682", Repository: v.Binding.Repository, BaseBranch: base}
+		if i == 1 {
+			key.Repository = strings.ToUpper(key.Repository)
+		}
 		if _, err := db.EnsureQueue(t.Context(), key); err != nil {
 			t.Fatal(err)
 		}
 		input := forge.WriteRestrictionInput{Repo: forge.RepoRef{Path: key.Repository}, Binding: v.Binding, AppID: "5383059", BaseSelectors: []authority.BaseSelector{{DefaultBranch: true}, {Pattern: "release/**"}}, ExpectedRefs: []string{"refs/heads/main"}}
+		input.Binding.Repository = key.Repository
 		input.Binding.QueueKey = store.AuthorityQueueKey(key)
 		plan.Targets = append(plan.Targets, verificationTarget{Key: key, Input: input})
 	}
@@ -59,10 +73,46 @@ func TestVerifyAcquiresOnceAfterEveryTargetValidated(t *testing.T) {
 	if err := verifyTargets(t.Context(), db, reader, invalid, "operator", io.Discard); err == nil || reader.acquired != 0 {
 		t.Fatalf("validation ordering: err=%v reads=%d", err, reader.acquired)
 	}
+	if err := verifyTargets(t.Context(), db, observeOnlyVerifyReader{reader}, plan, "operator", io.Discard); err == nil || reader.acquired != 0 {
+		t.Fatal("missing acquisition reader accepted", err)
+	}
 	if err := verifyTargets(t.Context(), db, reader, plan, "operator", io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	if reader.acquired != 1 {
+	if reader.acquired != 1 || reader.rechecked != 1 {
 		t.Fatalf("acquisitions=%d", reader.acquired)
 	}
+	reader.verifyReaderFunc = func(context.Context, forge.WriteRestrictionInput) (authority.Observation, error) {
+		reader.moved = true
+		return authority.CloneObservation(v.Evidence), nil
+	}
+	watermarks := map[store.QueueID]int64{}
+	for _, q := range plan.Targets {
+		id, err := db.EnsureQueue(t.Context(), q.Key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, mark, err := db.Load(t.Context(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		watermarks[id] = int64(mark)
+	}
+	err = verifyTargets(t.Context(), db, reader, plan, "operator", io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "no verification recorded") || strings.Contains(err.Error(), "SECRET") {
+		t.Fatal(err)
+	}
+	for id, mark := range watermarks {
+		_, after, err := db.Load(t.Context(), id)
+		if err != nil || int64(after) != mark {
+			t.Fatal("verification committed after movement", err)
+		}
+	}
+
+}
+
+type observeOnlyVerifyReader struct{ reader forge.WriteRestrictionReader }
+
+func (r observeOnlyVerifyReader) ObserveWriteRestriction(ctx context.Context, in forge.WriteRestrictionInput) (authority.Observation, error) {
+	return r.reader.ObserveWriteRestriction(ctx, in)
 }

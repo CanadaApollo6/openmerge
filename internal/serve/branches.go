@@ -219,6 +219,7 @@ func (s *Server) refreshRepository(ctx context.Context, repo Repository) error {
 					w.mu.Lock()
 					if w.AuthorityRequired && w.resolveAuthorityLifecycle != nil {
 						w.configError, w.configFailure, w.configFailureBranch, w.configFailureTip = err, err, branch, tip
+						w.configFailureRetryAt = time.Time{}
 						err = errors.Join(err, s.block(ctx, w, queue.ConfigSource, "Default-branch configuration: "+w.configError.Error(), ""))
 					}
 					w.mu.Unlock()
@@ -233,7 +234,7 @@ func (s *Server) refreshRepository(ctx context.Context, repo Repository) error {
 	// already warm. Failures retain no successful acquisition cache.
 	defer func() {
 		bindings, _ := s.discoveryBindings(target)
-		key := target.Key.Installation + "/" + target.Key.Repository
+		key := target.Key.Installation + "/" + strings.ToLower(target.Key.Repository)
 		s.mu.Lock()
 		if entry, ok := s.discoveryAcquisitions[key]; ok && entry.branch == branch && entry.tip == tip {
 			entry.bindings = bindings

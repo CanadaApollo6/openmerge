@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/config"
@@ -111,6 +112,8 @@ func TestAuthorityDefiniteConfigFailuresWaitForNewTip(t *testing.T) {
 			testSynctest(t, func(t *testing.T) {
 				s, w, f, _ := authorityWorkerFixture(t)
 				must(t, s.configuration(t.Context(), w))
+				validTip, err := f.ReadRef(t.Context(), repo, "main")
+				must(t, err)
 				changes := map[string]string{"CODEOWNERS": "/README.md @writer\n"}
 				switch failure {
 				case "multiple":
@@ -120,7 +123,7 @@ func TestAuthorityDefiniteConfigFailuresWaitForNewTip(t *testing.T) {
 				case "transient":
 					changes = map[string]string{"README.md": "new tip"}
 				}
-				_, err := f.PushBase(repo, "main", failure, changes)
+				_, err = f.PushBase(repo, "main", failure, changes)
 				must(t, err)
 				if failure == "transient" {
 					f.FailNext("GoverningFiles", context.DeadlineExceeded)
@@ -157,12 +160,136 @@ func TestAuthorityDefiniteConfigFailuresWaitForNewTip(t *testing.T) {
 				if f.GoverningFilesCalls() != files || !lifecycleState(t, s, w).SourceBlocked(queue.ConfigSource) {
 					t.Fatal("definite failure retried at same tip")
 				}
-				_, err = f.PushBase(repo, "main", "repair", map[string]string{"CODEOWNERS": "* @writer\n", ".openmerge.yml": lifecycleConfig(repositoryConfig), ".github/openmerge.yml": ""})
+				must(t, f.SetRef(repo, "main", validTip))
+				_, err = f.PushBase(repo, "main", "repair", map[string]string{"CODEOWNERS": "* @writer\n", ".openmerge.yml": lifecycleConfig(repositoryConfig)})
 				must(t, err)
 				if err := s.configuration(t.Context(), w); err == nil {
 					t.Fatal("queued read failure was consumed before tip changed")
 				}
+				must(t, s.configuration(t.Context(), w))
+				if w.configError != nil || lifecycleState(t, s, w).SourceBlocked(queue.ConfigSource) {
+					t.Fatal("repaired tip did not clear durable block", w.configError)
+				}
+
 			})
 		})
 	}
+}
+
+func TestAuthorityMutableOwnersRecoverAtSameTip(t *testing.T) {
+	for _, boundary := range []string{"worker", "discovery"} {
+		t.Run(boundary, func(t *testing.T) {
+			testSynctest(t, func(t *testing.T) {
+				s, w, f, _ := authorityWorkerFixture(t)
+				must(t, s.configuration(t.Context(), w))
+				target := w.Target
+				s.repositories = []Repository{{Installation: w.Key.Installation, Name: w.Key.Repository, Branches: func(ctx context.Context) ([]string, error) { return f.ListBranches(ctx, repo) }, Target: func(base string) Target { v := target; v.Key.BaseBranch = base; return v }}}
+				refresh := func() {
+					if boundary == "worker" {
+						must(t, s.configuration(t.Context(), w))
+					} else {
+						_ = s.RefreshBranches(t.Context())
+						must(t, s.configuration(t.Context(), w))
+					}
+				}
+				f.SetWriteGrant(repo, 21, "read")
+				// Force acquisition of live eligibility at a new policy tip, then repair the
+				// grant without changing that tip.
+				tip, err := f.PushBase(repo, "main", "recheck owners", map[string]string{"README.md": "grant test"})
+				must(t, err)
+				refresh()
+				if !lifecycleState(t, s, w).SourceBlocked(queue.ConfigSource) {
+					t.Fatal("revoked grant did not block")
+				}
+				calls := f.IdentityCalls("WriteGrant")
+				f.SetWriteGrant(repo, 21, "write")
+				refresh()
+				if f.IdentityCalls("WriteGrant") != calls || !lifecycleState(t, s, w).SourceBlocked(queue.ConfigSource) {
+					t.Fatal("mutable block bypassed retry cadence")
+				}
+				time.Sleep(s.options.RulesInterval)
+				refresh()
+				if w.configError != nil || lifecycleState(t, s, w).SourceBlocked(queue.ConfigSource) {
+					t.Fatal("restored grant did not clear block", w.configError)
+				}
+				after, err := f.ReadRef(t.Context(), repo, "main")
+				must(t, err)
+				if after != tip {
+					t.Fatal("tip changed")
+				}
+			})
+		})
+	}
+}
+
+func TestAuthorityDiscoveryContentBlockClearsOnRepairedTip(t *testing.T) {
+	testSynctest(t, func(t *testing.T) {
+		s, w, f, _ := authorityWorkerFixture(t)
+		must(t, s.configuration(t.Context(), w))
+		target := w.Target
+		s.repositories = []Repository{{Installation: w.Key.Installation, Name: w.Key.Repository, Branches: func(ctx context.Context) ([]string, error) { return f.ListBranches(ctx, repo) }, Target: func(base string) Target { v := target; v.Key.BaseBranch = base; return v }}}
+		_, err := f.PushBase(repo, "main", "coverage failure", map[string]string{"CODEOWNERS": "/README.md @writer\n"})
+		must(t, err)
+		must(t, s.RefreshBranches(t.Context()))
+		must(t, s.configuration(t.Context(), w))
+		if w.discoveryAuthorityError == nil || !lifecycleState(t, s, w).SourceBlocked(queue.ConfigSource) {
+			t.Fatal("missing discovery block")
+		}
+		calls := f.GoverningFilesCalls()
+		time.Sleep(2 * s.options.RulesInterval)
+		must(t, s.RefreshBranches(t.Context()))
+		if f.GoverningFilesCalls() != calls {
+			t.Fatal("content failure retried at unchanged tip")
+		}
+		_, err = f.PushBase(repo, "main", "repair", map[string]string{"CODEOWNERS": "* @writer\n"})
+		must(t, err)
+		must(t, s.RefreshBranches(t.Context()))
+		must(t, s.configuration(t.Context(), w))
+		if w.discoveryAuthorityError != nil || w.configError != nil || lifecycleState(t, s, w).SourceBlocked(queue.ConfigSource) {
+			t.Fatal("repaired discovery tip did not clear block", w.configError)
+		}
+	})
+}
+
+func TestAuthorityDiscoveryProtectionCacheExpires(t *testing.T) {
+	testSynctest(t, func(t *testing.T) {
+		s, w, f, reads := authorityWorkerFixture(t)
+		must(t, s.configuration(t.Context(), w))
+		tip, err := f.ReadRef(t.Context(), repo, "main")
+		must(t, err)
+		_, err = s.repositoryConfig(t.Context(), w.Target, "main", tip, nil)
+		must(t, err)
+		before := *reads
+		original := w.resolveAuthorityLifecycle
+		w.resolveAuthorityLifecycle = func(ctx context.Context, c config.AuthorityCandidate, branch, tip string) (authorityLifecycleResolution, error) {
+			r, err := original(ctx, c, branch, tip)
+			read := r.Activation.Read
+			r.Activation.Read = func(ctx context.Context) (authority.Observation, error) {
+				e, err := read(ctx)
+				if err != nil {
+					return e, err
+				}
+				e = authority.CloneObservation(e)
+				hidden := e.Protections[0]
+				hidden.ID = "new-unrelated"
+				hidden.Includes = []string{"refs/heads/unrelated"}
+				hidden.BypassVisibility = authority.Hidden
+				hidden.BypassActors = []authority.BypassActor{}
+				e.Protections = append(e.Protections, hidden)
+				return e, nil
+			}
+			return r, err
+		}
+		time.Sleep(s.options.RulesInterval - time.Nanosecond)
+		_, err = s.repositoryConfig(t.Context(), w.Target, "main", tip, nil)
+		must(t, err)
+		if *reads != before {
+			t.Fatal("warm TTL performed protection read")
+		}
+		time.Sleep(time.Nanosecond)
+		_, err = s.repositoryConfig(t.Context(), w.Target, "main", tip, nil)
+		if err == nil || *reads != before+1 {
+			t.Fatal("expired cache missed hidden bypass", err)
+		}
+	})
 }

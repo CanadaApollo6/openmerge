@@ -156,3 +156,27 @@ stress: `/home/riels/.cache/openmerge-137-r2-stress`.
 - Shared test Postgres has exactly the same **94** pre-existing serve schemas;
   no scratch schema remains. Hold/A2, frozen paths and live-system restrictions
   remain unchanged. The follow-up receipt commit changes only this document.
+
+## Round 3
+
+- Setup carries its acquired branch/tip into recovery apply and rechecks after
+  final preflight, immediately before each write. The HTTP regression moves the
+  tip during apply preflight and requires zero writes
+  (`TestAuthoritySetupRechecksAfterApplyPreflight`).
+- Verification requires acquisition, deduplicates repository casing, retains a
+  branch/tip recheck per repository, and checks after all target observations.
+  `TestVerifyAcquiresOnceAfterEveryTargetValidated` proves movement records no
+  events and exposes only a sanitized retry error.
+- Live owner/grant/membership failures block but retry after `RulesInterval`;
+  immutable content failures wait for a changed branch/tip. Worker and discovery
+  regressions prove same-tip grant restoration recovers, content failures remain
+  blocked, and a repaired tip clears each durable block. Non-file diagnostics
+  omit `line 0`.
+- Discovery success and mutable-failure cache entries expire after `RulesInterval`
+  (default 10 minutes), without sliding renewal. The next discovery after expiry
+  revalidates complete protection visibility, subject to discovery scheduling and
+  read-error backoff. Cache hits within the TTL preserve round-2 read counts;
+  the cache certifies past acquisition only, never current admission. Synctest
+  detects a new unrelated hidden-bypass ruleset at the same tip at TTL expiry
+  (`TestAuthorityDiscoveryProtectionCacheExpires`). Operating docs record these
+  semantics. Hold/A2 and all frozen surfaces remain unchanged.

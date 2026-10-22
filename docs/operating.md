@@ -1891,3 +1891,23 @@ of 100 branches, or GitHub truncates its recursive tree response. Reduce the
 inventory or wait for a complete supported acquisition; a partial inventory
 cannot establish absence of policy. The collector also enforces the shared
 256-file and 1 MiB governing-content budgets, including nested attributes.
+
+Discovery reuses a governing acquisition only for the same installation,
+case-insensitive repository, default branch, tip and binding set. Successful
+acquisitions and definite live owner-eligibility failures expire after
+`RulesInterval` (`--rules-interval`, default 10 minutes), measured from acquisition,
+without renewal on cache hits. The next scheduled discovery after expiry reads
+owners and complete protection visibility again, including unrelated rulesets;
+detection can additionally wait for the discovery interval or read-error backoff.
+This cache certifies a past acquisition, not current protection or authorization:
+activation, recurring observation and admission retain their fresh reads. A
+revoked grant blocks admission; restoring grants or team eligibility can clear
+that block at the same tip after the retry cadence. Immutable content failures
+(coverage, multiple files, invalid configuration/schema) remain blocked until the
+governing branch/tip changes. Transport/quota failures retain existing backoff.
+
+Setup rechecks the acquired default branch and tip after each mutation's final
+preflight read, immediately before its write. Verification retains that same
+acquired identity per repository and rechecks after all target observations,
+immediately before committing evidence. A changed or unavailable governing ref
+requires a fresh acquisition and records no verification.

@@ -193,32 +193,43 @@ func (c *setupAPI) governingTree(ctx context.Context, repo, commit string) (map[
 // AcquireGoverning protects --verify as well as setup/import. It performs no
 // writes and derives the governing ref from the forge, never a verification plan.
 func (r *AdminWriteRestrictionReader) AcquireGoverning(ctx context.Context, repo string) error {
+	_, err := r.AcquireGoverningRecheck(ctx, repo)
+	return err
+}
+
+// AcquireGoverningRecheck retains the forge-selected branch and commit for the
+// caller's final check after all seeing reads and before recording evidence.
+func (r *AdminWriteRestrictionReader) AcquireGoverningRecheck(ctx context.Context, repo string) (func(context.Context) error, error) {
 	c, err := setupClient(r.api, r.token)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	c.http.Transport = readOnlyTransport{c.http.Transport}
 	var info struct {
 		DefaultBranch string `json:"default_branch"`
 	}
 	if err := c.request(ctx, http.MethodGet, "repos/"+repo, nil, &info); err != nil {
-		return &config.GoverningReadError{Boundary: "repository", Cause: err}
+		return nil, &config.GoverningReadError{Boundary: "repository", Cause: err}
 	}
 	landed, commit, g, err := c.landedAuthority(ctx, repo, info.DefaultBranch)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := c.validateLandedAuthority(ctx, repo, info.DefaultBranch, commit, landed, g); err != nil {
-		return err
+		return nil, err
 	}
 	refs, err := c.operatorAuthorityRefs(ctx, repo, info.DefaultBranch, commit, landed)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if _, err = c.operatorProtection(ctx, repo, refs); err != nil {
-		return err
+		return nil, err
 	}
-	return c.recheckGoverningRef(ctx, repo, info.DefaultBranch, commit)
+	recheck := func(ctx context.Context) error { return c.recheckGoverningRef(ctx, repo, info.DefaultBranch, commit) }
+	if err := recheck(ctx); err != nil {
+		return nil, err
+	}
+	return recheck, nil
 }
 
 // Protection reads cover the server's complete current branch inventory. Proposed

@@ -67,7 +67,7 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 			}
 		}
 	}
-	if loadErr == nil && w.configFailure != nil && w.configFailureBranch == branch && w.configFailureTip == configTip {
+	if loadErr == nil && w.configFailure != nil && w.configFailureBranch == branch && w.configFailureTip == configTip && (w.configFailureRetryAt.IsZero() || time.Now().Before(w.configFailureRetryAt)) {
 		w.configError = w.configFailure
 		return s.block(ctx, w, queue.ConfigSource, "Default-branch configuration: "+w.configError.Error(), "")
 	}
@@ -203,8 +203,13 @@ func (s *Server) configuration(ctx context.Context, w *worker) error {
 	// Retry failures even at the same tip. Failed metadata/ref/file reads must
 	// pause admission and must never leave a previously valid policy usable.
 	w.configFailure = nil
+	w.configFailureRetryAt = time.Time{}
 	if w.AuthorityRequired && w.resolveAuthorityLifecycle != nil && loadErr != nil && (errors.As(loadErr, &invalid) || errors.Is(loadErr, config.ErrNotFound)) {
 		w.configFailure, w.configFailureBranch, w.configFailureTip = loadErr, branch, configTip
+		var mutable *config.GoverningIdentityError
+		if errors.As(loadErr, &mutable) {
+			w.configFailureRetryAt = time.Now().Add(s.options.RulesInterval)
+		}
 	}
 	w.configError = loadErr
 	if loadErr == nil {
@@ -233,6 +238,7 @@ type discoveryAcquisition struct {
 	branch, tip, bindings string
 	cfg                   config.Config
 	err                   error
+	acquiredAt            time.Time
 }
 
 func (s *Server) discoveryBindings(target Target) (string, bool) {
@@ -254,12 +260,12 @@ func (s *Server) discoveryBindings(target Target) (string, bool) {
 }
 
 func (s *Server) repositoryConfig(ctx context.Context, target Target, branch, tip string, w *worker) (config.Config, error) {
-	key := target.Key.Installation + "/" + target.Key.Repository
+	key := target.Key.Installation + "/" + strings.ToLower(target.Key.Repository)
 	bindings, _ := s.discoveryBindings(target)
 	s.mu.RLock()
 	cached, ok := s.discoveryAcquisitions[key]
 	s.mu.RUnlock()
-	if ok && cached.branch == branch && cached.tip == tip && cached.bindings == bindings {
+	if ok && cached.branch == branch && cached.tip == tip && cached.bindings == bindings && (durableGoverningFailure(cached.err) || time.Now().Before(cached.acquiredAt.Add(s.options.RulesInterval))) {
 		return cached.cfg, cached.err
 	}
 	candidate, err := s.repositoryCandidate(ctx, target, tip, w)
@@ -300,6 +306,7 @@ func (s *Server) rememberDiscoveryAcquisition(key string, entry discoveryAcquisi
 	if s.discoveryAcquisitions == nil {
 		s.discoveryAcquisitions = map[string]discoveryAcquisition{}
 	}
+	entry.acquiredAt = time.Now()
 	s.discoveryAcquisitions[key] = entry
 }
 
@@ -700,4 +707,10 @@ func acquireAuthorityGoverning(ctx context.Context, target Target, candidate con
 	files, _ := target.Git.(forge.GoverningFilesReader)
 	ids, _ := target.Driver.(forge.IdentityReader)
 	return candidate.AcquireGoverning(ctx, forge.RepoRef{Path: target.Key.Repository}, branch, tip, files, ids)
+}
+
+func durableGoverningFailure(err error) bool {
+	var mutable *config.GoverningIdentityError
+	var invalid config.Errors
+	return !errors.As(err, &mutable) && (errors.As(err, &invalid) || errors.Is(err, config.ErrNotFound))
 }

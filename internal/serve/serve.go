@@ -154,6 +154,7 @@ type worker struct {
 	configFailure           error
 	configFailureBranch     string
 	configFailureTip        string
+	configFailureRetryAt    time.Time
 
 	notificationPending atomic.Bool
 }

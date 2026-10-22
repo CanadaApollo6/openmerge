@@ -84,3 +84,9 @@ func TestGoverningAcquisitionUsesForgeIdentitiesAndGrants(t *testing.T) {
 		})
 	}
 }
+
+func TestGoverningDiagnosticHasNoFileLine(t *testing.T) {
+	if got := (Diagnostic{Path: "governing policy", Message: "invalid owners"}).Error(); got != "governing policy: invalid owners" {
+		t.Fatal(got)
+	}
+}

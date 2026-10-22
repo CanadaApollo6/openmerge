@@ -229,7 +229,7 @@ func (c *setupAPI) restoreRules(ctx context.Context, opts RulesOptions, out io.W
 	if backup.Repository != opts.Repo || backup.AppID != opts.AppID {
 		return errors.New("backup repository/App does not match --repo/--app-id")
 	}
-	return c.applyRulesBackup(ctx, opts, backup, true, out)
+	return c.applyRulesBackup(ctx, opts, backup, true, out, nil)
 }
 
 // editPosition refuses all unexpected states, including inherited replacements
@@ -283,7 +283,9 @@ func sameRuleInventory(a, b ruleSnapshot) bool {
 	return true
 }
 
-func (c *setupAPI) applyRulesBackup(ctx context.Context, opts RulesOptions, backup rulesBackup, restore bool, out io.Writer) (err error) {
+type governingRef struct{ branch, commit string }
+
+func (c *setupAPI) applyRulesBackup(ctx context.Context, opts RulesOptions, backup rulesBackup, restore bool, out io.Writer, governing *governingRef) (err error) {
 	encoded, _ := json.Marshal(backup)
 	if _, redacted := diagnostic.NewSanitizer(c.secrets...).SanitizeTextRedacted(string(encoded)); redacted {
 		return errors.New("managed settings contain credential-like data; refusing recovery capture")
@@ -345,6 +347,11 @@ func (c *setupAPI) applyRulesBackup(ctx context.Context, opts RulesOptions, back
 		}
 		// A PUT carries all captured settings, including unknown retained fields.
 		// The separate operator token is never handed to runtime clients.
+		if governing != nil {
+			if err := c.recheckGoverningRef(ctx, opts.Repo, governing.branch, governing.commit); err != nil {
+				return err
+			}
+		}
 		if method == http.MethodDelete {
 			err = c.deleteRuleset(ctx, endpoint)
 		} else {

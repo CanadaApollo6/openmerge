@@ -39,6 +39,13 @@ func (e *GoverningReadError) Error() string {
 }
 func (e *GoverningReadError) Unwrap() error { return e.Cause }
 
+// GoverningIdentityError is a definite block whose live identity/grant evidence
+// can recover without a change to the governing tree.
+type GoverningIdentityError struct{ Cause error }
+
+func (e *GoverningIdentityError) Error() string { return e.Cause.Error() }
+func (e *GoverningIdentityError) Unwrap() error { return e.Cause }
+
 // AcquireGoverning validates immutable landed content and freshly resolved,
 // write-eligible owners. The server selects branch/commit; proposed files and
 // draft verification are never substitutes for this read.
@@ -57,6 +64,22 @@ func (c AuthorityCandidate) AcquireGoverning(ctx context.Context, repo forge.Rep
 func (c AuthorityCandidate) ValidateGoverningIdentities(ctx context.Context, repo forge.RepoRef, branch, commit string, g forge.GoverningFiles, ids forge.IdentityReader) error {
 	if g.Coverage.Completeness != forge.DiffComplete || g.CommitSHA != commit {
 		return &GoverningReadError{Boundary: "files", Cause: errors.New("incomplete governing provenance")}
+	}
+	validate := func(resolve classification.OwnerResolver) error {
+		if c.Authority.Mode == authority.OpenMerge {
+			return c.ValidateGoverning(branch, commit, g, resolve)
+		}
+		return classification.ValidateAuthorityOwners(commit, g, resolve)
+	}
+	failure := func(err error) error {
+		return Errors{{Path: "governing policy", Message: "authority governing validation failed: " + diagnostic.Sanitize(err.Error())}}
+	}
+	// Establish immutable coverage/schema independently of live eligibility. A
+	// simultaneous revoked grant must not make invalid content appear mutable.
+	if err := validate(func(classification.Owner) cp.IdentitySet {
+		return cp.IdentitySet{Resolved: true, Fresh: true, IDs: []string{classification.GitHubUserID(1)}}
+	}); err != nil {
+		return failure(err)
 	}
 	var readErr error
 	resolve := func(o classification.Owner) cp.IdentitySet {
@@ -118,18 +141,14 @@ func (c AuthorityCandidate) ValidateGoverningIdentities(ctx context.Context, rep
 		pool.IDs = slices.Compact(pool.IDs)
 		return pool
 	}
-	var err error
-	if c.Authority.Mode == authority.OpenMerge {
-		err = c.ValidateGoverning(branch, commit, g, resolve)
-	} else {
-		err = classification.ValidateAuthorityOwners(commit, g, resolve)
-	}
+	err := validate(resolve)
 	if readErr != nil {
 		return &GoverningReadError{Boundary: "owners", Cause: readErr}
 	}
 	if err != nil {
-		return Errors{{Path: "governing policy", Message: "authority governing validation failed: " + diagnostic.Sanitize(err.Error())}}
+		return &GoverningIdentityError{Cause: failure(err)}
 	}
+
 	return nil
 }
 

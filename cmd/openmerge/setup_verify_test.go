@@ -174,6 +174,10 @@ func TestVerifyRejectsSetupMutationsBeforeReads(t *testing.T) {
 
 type verifyReaderFunc func(context.Context, forge.WriteRestrictionInput) (authority.Observation, error)
 
+func (f verifyReaderFunc) AcquireGoverningRecheck(context.Context, string) (func(context.Context) error, error) {
+	return func(context.Context) error { return nil }, nil
+}
+
 func (f verifyReaderFunc) ObserveWriteRestriction(ctx context.Context, in forge.WriteRestrictionInput) (authority.Observation, error) {
 	return f(ctx, in)
 }

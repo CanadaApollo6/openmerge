@@ -146,7 +146,7 @@ func setupAuthorityRules(ctx context.Context, client *setupAPI, opts RulesOption
 	if err := writeRulesBackup(opts.Backup, capture); err != nil {
 		return err
 	}
-	return client.applyRulesBackup(ctx, opts, capture, false, out)
+	return client.applyRulesBackup(ctx, opts, capture, false, out, &governingRef{branch: snapshot.DefaultBranch, commit: commit})
 }
 
 func (c *setupAPI) setupBreakGlass(ctx context.Context, repo string, actor authority.Actor) (BypassActor, error) {
