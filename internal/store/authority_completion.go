@@ -65,17 +65,25 @@ func (c AuthorityCompletion) RequireComplete() error {
 	return nil
 }
 
+// AuthorityBranchInventory is a fresh complete discovery result, including the
+// default-branch NAME independently of its tip (two branches can share a tip).
+type AuthorityBranchInventory struct {
+	DefaultBranch string
+	Branches      []string
+}
+
 // RepositoryAuthorityCompletion folds ALL registered partitions for this
 // repository across installations in one read-only repeatable-read snapshot, regardless
-// of worker allowlists, pause, retirement or outstanding obligations. liveBases
-// must be a complete fresh discovery inventory, not a worker-key snapshot. The
+// of worker allowlists, pause, retirement or outstanding obligations. inventory
+// must be complete fresh discovery, not a worker-key snapshot. The
 // caller must recheck that inventory after this read. No result is cached.
-func (s *Store) RepositoryAuthorityCompletion(ctx context.Context, request AuthorityCompletionRequest, liveBases []string) (AuthorityCompletion, error) {
+func (s *Store) RepositoryAuthorityCompletion(ctx context.Context, request AuthorityCompletionRequest, inventory AuthorityBranchInventory) (AuthorityCompletion, error) {
 	result := AuthorityCompletion{Request: request, Queues: []AuthorityQueueCompletion{}}
 	if err := request.Validate(); err != nil {
 		return result, err
 	}
-	if len(liveBases) == 0 {
+	liveBases := slices.Clone(inventory.Branches)
+	if inventory.DefaultBranch == "" || !slices.Contains(liveBases, inventory.DefaultBranch) {
 		return result, errors.New("authority completion requires complete live branch inventory")
 	}
 	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
@@ -91,7 +99,7 @@ func (s *Store) RepositoryAuthorityCompletion(ctx context.Context, request Autho
 		if err != nil {
 			return err
 		}
-		expected := map[string]bool{}
+		expected := map[string]bool{inventory.DefaultBranch: true}
 		for base := range request.Targets {
 			expected[base] = true
 		}
@@ -114,6 +122,7 @@ func (s *Store) RepositoryAuthorityCompletion(ctx context.Context, request Autho
 				q.GoverningCommit = pin.GoverningCommit
 			}
 			if pin != nil && pin.OpenMerge != nil && pin.Authority == authority.OpenMerge {
+				inputsCurrent = pin.DefaultBranch == inventory.DefaultBranch
 				if pin.OpenMerge.VerificationInput != nil {
 					if !slices.Contains(liveBases, pin.DefaultBranch) {
 						inputsCurrent = false

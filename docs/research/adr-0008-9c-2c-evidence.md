@@ -35,7 +35,7 @@ queue rules can differ per base, `targets` optionally maps bases to their expect
 digests, with `digest` as a common default. The API echoes the explicit intent;
 it never chooses the target from an arbitrary successful queue. Each row names
 the persisted ID, watermark, governing commit, actual/expected digest and reason.
-Missing pins/registration/adoption, stale discovery inputs/governing commit,
+Missing pins/registration/adoption, stale discovery inputs/default-branch name/governing commit,
 unverified evidence, unsupported lanes and mixed digests prevent completion.
 Empty or unavailable inventories never succeed. Successful responses can be
 incomplete; errors are sanitized and retried without caching.

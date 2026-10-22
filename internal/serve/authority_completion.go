@@ -42,7 +42,8 @@ func (s *Server) AuthorityCompletion(ctx context.Context, request store.Authorit
 	if err != nil {
 		return store.AuthorityCompletion{}, errors.New("authority completion branch inventory unavailable")
 	}
-	result, err := s.store.RepositoryAuthorityCompletion(ctx, request, before)
+	before = slices.Clone(before)
+	result, err := s.store.RepositoryAuthorityCompletion(ctx, request, store.AuthorityBranchInventory{DefaultBranch: branch, Branches: before})
 	if err != nil {
 		return store.AuthorityCompletion{}, errors.New("authority completion durable inventory unavailable")
 	}
@@ -54,7 +55,6 @@ func (s *Server) AuthorityCompletion(ctx context.Context, request store.Authorit
 	if err != nil || nextBranch != branch || nextSHA != sha {
 		return store.AuthorityCompletion{}, errors.New("authority completion governing ref changed; retry")
 	}
-	before = slices.Clone(before)
 	after = slices.Clone(after)
 	slices.Sort(before)
 	slices.Sort(after)

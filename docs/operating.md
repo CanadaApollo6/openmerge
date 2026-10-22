@@ -2013,8 +2013,8 @@ read-only repeatable-read database snapshot, then rechecks branch inventory and
 default ref. It requires matching digests, authenticated adoption, verified
 current protection evidence and current selected discovery inputs. A newly
 selected branch blocks completion before registration and while its siblings
-still carry old ExpectedRefs. A changed governing tip blocks completion until
-all pins rebind. The API performs no mutation or authority opt-in.
+still carry old ExpectedRefs. A changed governing tip or default-branch name blocks completion until
+all pins rebind, even when two branches point to the same commit. The API performs no mutation or authority opt-in.
 
 This is a point-in-time completion signal, not a lease or permission surviving
 later discovery/policy changes. Freeze configuration/branch changes during the

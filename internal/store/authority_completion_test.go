@@ -23,7 +23,7 @@ func TestRepositoryAuthorityCompletion(t *testing.T) {
 	inventory := []string{"main", "release/v1"}
 	check := func(want bool) {
 		t.Helper()
-		result, err := s.RepositoryAuthorityCompletion(t.Context(), request, inventory)
+		result, err := s.RepositoryAuthorityCompletion(t.Context(), request, AuthorityBranchInventory{DefaultBranch: "main", Branches: inventory})
 		must(t, err)
 		if result.Complete != want || (result.RequireComplete() == nil) != want {
 			t.Fatalf("completion: %+v", result)
@@ -105,9 +105,16 @@ func TestRepositoryAuthorityCompletion(t *testing.T) {
 	must(t, err)
 	appendEvents(t, s, mainID, queue.WriteRestrictionVerified{Binding: pin.OpenMerge.Binding, Basis: state.RulesSourceRevision(queue.WriteRestriction), Scope: "applied", Nonce: strings.Repeat("c", 64), Operator: "operator", VerifiedAt: draft.VerifiedAt.Add(2 * time.Hour), Evidence: pin.OpenMerge.Activation.Evidence, ProtectionFingerprint: pin.OpenMerge.Activation.ProtectionFingerprint})
 	check(true)
+	// Changing the default setting to another EXISTING served branch must
+	// invalidate completion even if all refs share the same commit and digests.
+	renamedDefault, err := s.RepositoryAuthorityCompletion(t.Context(), request, AuthorityBranchInventory{DefaultBranch: "release/v1", Branches: inventory})
+	must(t, err)
+	if renamedDefault.Complete {
+		t.Fatal("default-branch name drift accepted with matching commit/digests")
+	}
 	otherID, err := s.EnsureQueue(t.Context(), QueueKey{Installation: "another", Repository: "owner/repo", BaseBranch: "historical"})
 	must(t, err)
-	resultWithHistory, err := s.RepositoryAuthorityCompletion(t.Context(), request, inventory)
+	resultWithHistory, err := s.RepositoryAuthorityCompletion(t.Context(), request, AuthorityBranchInventory{DefaultBranch: "main", Branches: inventory})
 	must(t, err)
 	if resultWithHistory.Complete {
 		t.Fatal("different installation history was omitted")
@@ -131,7 +138,7 @@ func TestRepositoryAuthorityCompletion(t *testing.T) {
 	_, err = s.EnsureQueue(t.Context(), QueueKey{Installation: "other", Repository: "owner/repo", BaseBranch: "paused"})
 	must(t, err)
 	check(false)
-	result, err := s.RepositoryAuthorityCompletion(t.Context(), request, nil)
+	result, err := s.RepositoryAuthorityCompletion(t.Context(), request, AuthorityBranchInventory{DefaultBranch: "main"})
 	if err == nil || result.Complete {
 		t.Fatal("missing discovery accepted")
 	}
