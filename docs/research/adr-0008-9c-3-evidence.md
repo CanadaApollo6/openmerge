@@ -17,7 +17,82 @@ in the tested constructor. Runtime receipt errors preserve cause identity while
 omitting its text. The discovery_round2_test synctest conversion is inherited
 from main merge #142, not authored by this PR.
 
-Round-4 verification is recorded below once the clean-tree run completes.
+## Round-4 verification
+
+The clean-tree verifier returned **PASS** on implementation
+`7323d90cba72f76c410775cec4fe65c189669c8d`, against a fresh clean
+main `75c4029447ae4d24a439ae6ef8ad6103ebcf3926` run. This evidence follow-up
+changes only documentation and the JSON receipt; runtime, tests and verifier
+source remain exactly tested.
+
+- `make check`: **0**, zero lint issues, complete short race suite and build;
+  serve **310.154 s**. Focused public/completion/barrier/Stage A exact-output: **0**.
+- **53/53** named behavioral mutations killed with exit 1, without build failures:
+  retained 39, seven round-3 tenancy rows below, and seven new round-4 rows.
+  The existing `completion-verdict-equality` overlay now bypasses semantic
+  comparison and fails `TestPublicAuthorityCompletionPartitionRace/register`.
+  Its `/append` case now accepts a real, complete sibling partition's append.
+- Strict replay (`GOMEMLIMIT=6GiB`): **2,159/2,159** identical actions, structural
+  states, snapshot hashes and boundary checkpoints; **8,676** probes, gates 2/4
+  and self-tests pass; no non-allowlisted differences.
+- Simulator: **146/146** identical normalized blocks, both exits **0**, SHA-256
+  `a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7`.
+- Depth-1/4 contracts: **90/90 identical**. GitHub projection/CLI goldens,
+  status/API/health/author and actual CLI bytes, Stage A exact-output, and
+  legacy Git object/ref/command probes pass unchanged.
+- MixedGithubBytes SHA-256 remains
+  `cc95a654054e61e816120f2e57b9e19ffea3ff4855c32f4f5c055c4e99b913ee`.
+- Retained wire fixtures **105/105**, registry fixtures **90/90**, unchanged.
+  Direct blob comparison: all **211** testdata files at `833157a`, `72574eb`
+  and `bc9779c`, and all **208** at `75c4029`, remain identical.
+- Every new/changed test passes **20 iterations**, `GOMAXPROCS=1 -race -cpu=1`,
+  under **eight owned CPU burners**. Independent `/proc` observation confirms
+  all eight accumulated CPU and were reaped. Public serve **581.640 s**;
+  real-Git recovery **211.307 s**; config **3.716 s**, changepolicy **2.167 s**,
+  store **19.746 s**, CLI **19.582 s**, gitops **36.803 s**. No timeout changed.
+
+| New round-4 mutation | Named test |
+| --- | --- |
+| `S7-adopt-gate-skipped` | `TestAuthorityLifecycleEmissionDefenseInDepth` |
+| `S8-config-gate-skipped` | `TestAuthorityLifecycleEmissionDefenseInDepth` |
+| `A4-no-gate-created` | `TestPublicAuthorityActivationEmissionDefenseInDepth` |
+| `W-no-db-identity-pin` | `TestProductionAuthorityRuntimeWiring` |
+| `E3-receipt-cause-kept-in-message` | `TestPublicAuthorityRuntimeReceiptErrorSanitized` |
+| `boundary-positive-cache-disabled` | `TestAuthorityBoundaryPositiveCache` |
+| `boundary-negative-cache` | `TestAuthorityBoundaryPositiveCache` |
+
+S7/S8 are exercised directly through the store lifecycle writers with stale
+watermark, invalid receipt and mixed tenancy, asserting no partial append.
+A4 exercises internal activation with a deliberately nonexistent draft and a
+journal append after preflight, requiring the committing gate's watermark
+refusal before draft lookup. It does not claim this is reachable through the
+normal public setup flow. W tests the startup constructor's database pin and
+sanitized failure; E3 drives a runtime receipt read through configuration and
+checks cause identity and omission of the private diagnostic.
+
+Fresh CI-like `GOMAXPROCS=2 go test -race -short -count=1 -p=1 -timeout=15m`:
+
+| Package | Main 75c4029 (s) | Round 4 (s) | Delta (s) |
+| --- | ---: | ---: | ---: |
+| `internal/serve` | 265.228 | 289.957 | +24.729 |
+| `internal/gitops` | 96.262 | 94.782 | -1.480 |
+| `internal/queue` | 164.276 | 164.621 | +0.345 |
+| `cmd/openmerge` | 64.594 | 64.886 | +0.292 |
+
+These are single local suite measurements, not daemon throughput or a causal
+performance estimate. Package durations exclude heavy-lock waiting. All are
+below 900 seconds. Both GOROOT and PATH used Go 1.27.3; Go commands retained the
+heavy flock, GOFLAGS=-p=2 and 4 GiB limit (6 GiB for replay).
+
+Full logs, overlays, manifest and normalized outputs:
+`~/.cache/openmerge-143-r4/full-r1/`. Independent burner and fixture observations:
+`~/.cache/openmerge-143-r4/{burners-observed,fixture-blobs}.json`.
+The isolated small test database was dropped; scratch files stayed on disk under
+the cache, outside `/tmp`. No live database, systemd unit, live refs/status API,
+Smart-Data-Ohio, real forge API call, migration, existing fixture, Makefile, CI,
+test flag or Dockerfile changed. Shared GitHub formatters and Stage A retry
+behavior are unchanged. Publication remains limited to the requested branch and
+Hold PR body; no comment, queue, merge or deployment.
 
 ## Retained round-3 evidence
 
@@ -180,9 +255,9 @@ An unchanged configuration reconcile performs one installation listing, I reposi
 
 At one page per listing, completion costs I+5 REST requests and two Git ref reads per push; resolver discovery adds I+2 REST requests per reconcile. Paginated inventories multiply HTTP requests. Large installations must budget the sum across active queues and operator polls, plus identity/protection traffic. Tune concurrency and reconcile cadence within quota; never cache the completion verdict to reduce cost.
 
-## Mutation table
+## Retained round-2 mutation table
 
-All **39/39** overlays failed their named behavioral tests with exit 1. A compile failure never counts. The verifier requires the named test failure and rejects build failures.
+Round 2: all **39/39** overlays failed their named behavioral tests with exit 1. A compile failure never counts. The verifier requires the named test failure and rejects build failures.
 
 | Mutation | Test that killed it |
 | --- | --- |
@@ -226,7 +301,7 @@ All **39/39** overlays failed their named behavioral tests with exit 1. A compil
 | `completion-consult-PushAdvanceFence` | `TestPublicAuthorityEveryPushConsultsCompletion` |
 | `completion-consult-PushDeleteBranch` | `TestPublicAuthorityEveryPushConsultsCompletion` |
 
-## Verification
+## Retained round-2 verification
 
 The clean-tree verifier returned **PASS** on the tested implementation above.
 

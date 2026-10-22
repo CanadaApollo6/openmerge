@@ -2002,7 +2002,8 @@ its queue locks. Every PostgreSQL `INSERT` takes `ROW EXCLUSIVE`, so this lock
 blocks appends from all queues without adding work to ordinary append paths.
 It also serializes competing first emitters. The runtime database role needs
 `UPDATE`, `DELETE`, or `TRUNCATE` privilege on `events` to acquire this lock;
-an INSERT-only role fails with permission denied at first emission. Queue
+an INSERT-only role fails with permission denied at first emission. The same
+privilege requirement applies to `queues` for its SHARE lock. Queue
 registration waits on the first-emission SHARE lock on `queues` through commit. After any lock wait, a fresh
 explicit READ COMMITTED transaction checks the boundary again and reads `max(id)` through
 the existing primary-key index. The boundary query uses
