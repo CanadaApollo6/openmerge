@@ -26,7 +26,7 @@ class ScratchGuardTest(unittest.TestCase):
             "host=/tmp/review-nonexistent&port=5432&dbname=production_example",
             "host=localhost", "hostaddr=127.0.0.1", "port=5432", "dbname=production_example",
             "service=live", "servicefile=/tmp/service", "options=-csearch_path=public",
-            "target_session_attrs=read-write", "%68ost=/tmp/socket", "sslmode=disable&host=localhost",
+            "target_session_attrs=read-write", "host=", "hostaddr=", "port=", "dbname=", "service=", "options=", "target_session_attrs=", "%68ost=/tmp/socket", "sslmode=disable&host=localhost",
         )] + [BASE.replace("localhost:54329", host) for host in ("localhost:5432", "%2Ftmp:54329", "localhost:54329,other:5432")]
         env_attacks = ["PGHOST", "PGHOSTADDR", "PGPORT", "PGDATABASE", "PGSERVICE", "PGSERVICEFILE",
                        "PGOPTIONS", "PGTARGETSESSIONATTRS", "PGPASSWORD"]

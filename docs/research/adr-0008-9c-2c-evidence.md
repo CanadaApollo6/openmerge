@@ -165,3 +165,45 @@ python3 scripts/check-adr0008-9c-2c-restore.py \
 No live database, status API, systemd unit, live OpenMerge ref, application GitHub
 API or Smart-Data-Ohio organization was accessed. The only publication is the
 requested branch push and PR. Hold, public rejection and production opt-out remain.
+
+
+## Round 2 — 2026-10-22
+
+Go implementation: `383f571`; Go files are unchanged in the final evidence
+commit. [Round-2 receipts and source hashes](adr-0008-9c-2c-artifacts/round2.json).
+
+- Both scratch drivers share a connection-free allowlist: reject routing query
+  parameters (including empty values) and every `PG*` environment override;
+  rebuild localhost:54329 DSNs and use/drop unique `om_9c2c_<uuid>` databases.
+  `python3 scripts/test_adr0008_scratch_db.py` passes **60 entrypoint refusal
+  cases**, each asserting no subprocess was invoked, plus the rebuilt-DSN test.
+  The final Python-only empty-value tightening was self-tested after the full run.
+- Competing live installations are checked before worker allowlists. The
+  in-bubble discovery regression includes installations 7/8, allowlist 7 and no
+  registered partition for 8. Restoring the old order fails the test.
+- A `landing_checks_recorded`-only journal refuses downgrade. The gate's event
+  list must exactly match decoder additions since the frozen pre-ADR-0008
+  baseline (`addec7d^`); dead `origin_authority` scanning is removed.
+- Completion cases independently pin case-insensitive repository lookup,
+  durable config digest, missing live default, deleted selected ExpectedRef and
+  an explicit unregistered target. All five mutations fail. The redundant pin
+  membership check is removed: default-name equality plus the initial live
+  default membership gate already imply it. `RequireComplete` and the CLI also
+  refuse a true aggregate flag with an incomplete row. **8/8 mutations killed**
+  by behavioral assertions, including allowlist, landing-check and CLI mutations.
+- `make check`: **0**, lint **0 issues**; focused race/A2/Stage A exact-output
+  set **0**. Strict replay **2,159/2,159**, **8,676 probes**, all gates/self-tests
+  pass. Simulator **146/146**, contracts **90/90**, GitHub projections/CLI bytes
+  identical; existing wire fixtures **105/105 unchanged**. Serve: **206.893 s**
+  inside `make check`, **190.480 s** isolated (single local measurements).
+- `GOMAXPROCS=1 -race -count=20 -cpu=1` on the five focused packages passed in
+  **118.140 s** under **eight owned CPU burners**. **20/20** real dump/restore
+  cycles passed under the same load using a race-built binary. Scratch databases
+  were dropped; all owned burners were terminated and reaped.
+- Runbook documents per-GET outbound discovery, bearer-token partition scope,
+  the 15-second deadline and serialized polling (no separate concurrency bound).
+  It explains why the retained pre-emission backup watermark cannot equal the
+  live watermark after later verification events. Verification hashes the backup
+  twice instead of three times, retaining initial and Prepare validation. The
+  downgrade command requires this build or later; committed receipts use portable
+  home paths. Hold, A2, public rejection and production opt-out remain.

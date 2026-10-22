@@ -2076,8 +2076,8 @@ translate every failure to a successful base-moved observation. GitHub mode
 retains its existing behavior and output.
 
 Rollback to `github` does **not** make retained new events or v7 cursors readable
-by an older binary. With all workers stopped, run this build or later's
-read-only, migration-free downgrade check:
+by an older binary. With all workers stopped, run the read-only, migration-free downgrade check
+from this build or later:
 
 ```sh
 openmerge admin downgrade-check --database-url "$OPERATOR_DATABASE_URL"

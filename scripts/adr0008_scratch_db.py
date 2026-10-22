@@ -15,7 +15,7 @@ def scratch_url(raw, database="postgres", environ=None):
         raise ValueError("PG environment overrides are forbidden for scratch verification")
     try:
         parsed = urlsplit(raw)
-        query = parse_qsl(parsed.query, strict_parsing=True)
+        query = parse_qsl(parsed.query, strict_parsing=True, keep_blank_values=True)
         valid = (parsed.scheme in ("postgres", "postgresql")
                  and parsed.hostname == "localhost" and parsed.port == 54329
                  and not parsed.fragment
