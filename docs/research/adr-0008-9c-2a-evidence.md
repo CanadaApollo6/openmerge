@@ -180,3 +180,20 @@ stress: `/home/riels/.cache/openmerge-137-r2-stress`.
   detects a new unrelated hidden-bypass ruleset at the same tip at TTL expiry
   (`TestAuthorityDiscoveryProtectionCacheExpires`). Operating docs record these
   semantics. Hold/A2 and all frozen surfaces remain unchanged.
+
+Round-3 receipts: implementation `1461dba90f0a65285459f687ecb33e0385b04dd6`
+against main `c53f425`; logs and SHA-256 manifest:
+`/home/riels/.cache/openmerge-137-r3-approved-evidence`.
+
+- `make check`: **exit 0**, zero lint issues, complete short race suite/build;
+  focused authority/governing checks and isolated serve/CLI race run pass.
+- Strict replay: **2,159/2,159 identical** actions, states, snapshots and boundary
+  checkpoints; **8,676** matching probes, gates 2/4 and all **22** self-tests pass.
+- Simulator **146/146**, depth contracts **90/90**, GitHub projections/CLI and
+  invalid-config goldens: **byte-identical**. Wire fixtures **105/105 unchanged**.
+- Selected regressions and inherited held-lock test: **20 iterations each pass**
+  with `-race -cpu=1`, `GOMAXPROCS=1` and **eight owned CPU burners**, all reaped
+  (`stress.log`). New cadence tests use `testSynctest`.
+- Test Postgres namespace lists match exactly before/after, including the same
+  **94** pre-existing serve schemas; no scratch object remains. This receipt
+  commit changes only this document.
