@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -23,7 +24,7 @@ func TestRepositoryAuthorityCompletion(t *testing.T) {
 	inventory := []string{"main", "release/v1"}
 	check := func(want bool) {
 		t.Helper()
-		result, err := s.RepositoryAuthorityCompletion(t.Context(), request, AuthorityBranchInventory{DefaultBranch: "main", Branches: inventory})
+		result, err := s.RepositoryAuthorityCompletion(t.Context(), request, AuthorityBranchInventory{DefaultBranch: "main", DefaultTip: "tip", Branches: inventory})
 		must(t, err)
 		if result.Complete != want || (result.RequireComplete() == nil) != want {
 			t.Fatalf("completion: %+v", result)
@@ -43,7 +44,7 @@ func TestRepositoryAuthorityCompletion(t *testing.T) {
 		return ""
 	}
 	current := func() AuthorityBranchInventory {
-		return AuthorityBranchInventory{DefaultBranch: "main", Branches: inventory}
+		return AuthorityBranchInventory{DefaultBranch: "main", DefaultTip: "tip", Branches: inventory}
 	}
 	check(false)
 	if got := reason("main", "", current()); got != "registration_missing" {
@@ -53,7 +54,8 @@ func TestRepositoryAuthorityCompletion(t *testing.T) {
 		id, err := s.EnsureQueue(t.Context(), key)
 		must(t, err)
 		binding := draft.Binding
-		binding.InstallationID = 7
+		binding.InstallationID, err = strconv.ParseInt(key.Installation, 10, 64)
+		must(t, err)
 		binding.Repository = "owner/repo"
 		binding.QueueKey = AuthorityQueueKey(key)
 		binding.EffectiveDigest = digest
@@ -151,17 +153,17 @@ func TestRepositoryAuthorityCompletion(t *testing.T) {
 	check(true)
 	// Changing the default setting to another EXISTING served branch must
 	// invalidate completion even if all refs share the same commit and digests.
-	renamedDefault, err := s.RepositoryAuthorityCompletion(t.Context(), request, AuthorityBranchInventory{DefaultBranch: "release/v1", Branches: inventory})
+	renamedDefault, err := s.RepositoryAuthorityCompletion(t.Context(), request, AuthorityBranchInventory{DefaultBranch: "release/v1", DefaultTip: "tip", Branches: inventory})
 	must(t, err)
 	if renamedDefault.Complete {
 		t.Fatal("default-branch name drift accepted with matching commit/digests")
 	}
-	if got := reason("main", "", AuthorityBranchInventory{DefaultBranch: "release/v1", Branches: inventory}); got != "discovery_inputs_stale" {
+	if got := reason("main", "", AuthorityBranchInventory{DefaultBranch: "release/v1", DefaultTip: "tip", Branches: inventory}); got != "discovery_inputs_stale" {
 		t.Fatalf("default rename reason %q", got)
 	}
 	otherID, err := s.EnsureQueue(t.Context(), QueueKey{Installation: "another", Repository: "owner/repo", BaseBranch: "historical"})
 	must(t, err)
-	resultWithHistory, err := s.RepositoryAuthorityCompletion(t.Context(), request, AuthorityBranchInventory{DefaultBranch: "main", Branches: inventory})
+	resultWithHistory, err := s.RepositoryAuthorityCompletion(t.Context(), request, AuthorityBranchInventory{DefaultBranch: "main", DefaultTip: "tip", Branches: inventory})
 	must(t, err)
 	if resultWithHistory.Complete {
 		t.Fatal("different installation history was omitted")
@@ -185,9 +187,31 @@ func TestRepositoryAuthorityCompletion(t *testing.T) {
 	_, err = s.EnsureQueue(t.Context(), QueueKey{Installation: "other", Repository: "owner/repo", BaseBranch: "paused"})
 	must(t, err)
 	check(false)
-	result, err := s.RepositoryAuthorityCompletion(t.Context(), request, AuthorityBranchInventory{DefaultBranch: "main"})
+	result, err := s.RepositoryAuthorityCompletion(t.Context(), request, AuthorityBranchInventory{DefaultBranch: "main", DefaultTip: "tip"})
 	if err == nil || result.Complete {
 		t.Fatal("missing discovery accepted")
+	}
+	if result, err := s.RepositoryAuthorityCompletion(t.Context(), request, AuthorityBranchInventory{DefaultBranch: "main", Branches: inventory}); err == nil || result.Complete {
+		t.Fatal("missing governing tip accepted")
+	}
+	// The live default tip advanced: every pin bound to the old commit is stale
+	// until it rebinds, even with matching digests and adoption.
+	if got := reason("main", "", AuthorityBranchInventory{DefaultBranch: "main", DefaultTip: "advanced", Branches: inventory}); got != "governing_commit_stale" {
+		t.Fatalf("advanced tip reason %q", got)
+	}
+	// A pinned partition under another installation cannot be certified by this
+	// installation's discovery.
+	addWith(QueueKey{Installation: "8", Repository: "owner/repo", BaseBranch: "main"}, request.Digest, "", true)
+	foreign, err := s.RepositoryAuthorityCompletion(t.Context(), request, current())
+	must(t, err)
+	foundForeign := false
+	for _, q := range foreign.Queues {
+		if q.Installation == "8" && q.Base == "main" {
+			foundForeign = q.Reason == "installation_inventory_unavailable"
+		}
+	}
+	if !foundForeign || foreign.Complete {
+		t.Fatalf("foreign installation pin: %+v", foreign)
 	}
 	if got := reason("paused", "", current()); got != "pin_missing" {
 		t.Fatalf("paused reason %q", got)

@@ -67,8 +67,10 @@ func (c AuthorityCompletion) RequireComplete() error {
 
 // AuthorityBranchInventory is a fresh complete discovery result, including the
 // default-branch NAME independently of its tip (two branches can share a tip).
+// DefaultTip is the live governing commit every pin must be bound to.
 type AuthorityBranchInventory struct {
 	DefaultBranch string
+	DefaultTip    string
 	Branches      []string
 }
 
@@ -83,7 +85,7 @@ func (s *Store) RepositoryAuthorityCompletion(ctx context.Context, request Autho
 		return result, err
 	}
 	liveBases := slices.Clone(inventory.Branches)
-	if inventory.DefaultBranch == "" || !slices.Contains(liveBases, inventory.DefaultBranch) {
+	if inventory.DefaultBranch == "" || inventory.DefaultTip == "" || !slices.Contains(liveBases, inventory.DefaultBranch) {
 		return result, errors.New("authority completion requires complete live branch inventory")
 	}
 	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
@@ -161,6 +163,8 @@ func (s *Store) RepositoryAuthorityCompletion(ctx context.Context, request Autho
 					q.Reason = "digest_mismatch"
 				case !inputsCurrent:
 					q.Reason = "discovery_inputs_stale"
+				case pin.GoverningCommit != inventory.DefaultTip:
+					q.Reason = "governing_commit_stale"
 				case !queue.AuthorityDraftAdopted(*pin):
 					q.Reason = "adoption_missing"
 				case state.WriteRestrictionStatus().State != "verified":
