@@ -212,7 +212,7 @@ func (f *Forge) build(ctx context.Context, repo forge.RepoRef, r *repository, re
 	full, _ := forge.BranchRef(req.Ref)
 	req.Ref = strings.TrimPrefix(full, "refs/heads/")
 	old := r.refs[req.Ref]
-	if err := opts.CheckDispatch(ctx, repo, forge.PushBuild, []forge.PushRefIntent{{Ref: full, OldSHA: old}}); err != nil {
+	if err := opts.CheckDispatch(ctx, repo, forge.PushBuild, []forge.PushRefIntent{{Ref: full, OldSHA: old, BuildBaseSHA: req.BaseSHA}}); err != nil {
 		return "", nil, false, err
 	}
 	if _, ok := r.commits[req.BaseSHA]; !ok {

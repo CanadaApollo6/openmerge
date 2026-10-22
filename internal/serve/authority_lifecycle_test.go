@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"strconv"
@@ -405,13 +406,15 @@ func TestAuthorityLifecycleAdoptsDraftWithAtomicConfig(t *testing.T) {
 	draft := event.(queue.WriteRestrictionVerified)
 	team := "200"
 	reads := 0
-	resolver := lifecycleResolver(t, s, &team, func(context.Context) (authority.Observation, error) { reads++; return draft.Evidence, nil })
+	var readFailure error
+	resolver := lifecycleResolver(t, s, &team, func(context.Context) (authority.Observation, error) { reads++; return draft.Evidence, readFailure })
 	draftID := int64(0)
+	expectedRefs := []string{"refs/heads/main"}
 	w.AuthorityRequired = true
 	w.resolveAuthorityLifecycle = func(ctx context.Context, c config.AuthorityCandidate, branch, tip string) (authorityLifecycleResolution, error) {
 		resolved, err := resolver(ctx, c, branch, tip)
 		resolved.Activation.DraftID = draftID
-		resolved.Activation.Input.ExpectedRefs = []string{"refs/heads/main"}
+		resolved.Activation.Input.ExpectedRefs = expectedRefs
 		return resolved, err
 	}
 	tip, err := f.PushBase(repo, "main", "activate verified draft", map[string]string{".openmerge.yml": lifecycleConfig(repositoryConfig)})
@@ -465,16 +468,29 @@ func TestAuthorityLifecycleAdoptsDraftWithAtomicConfig(t *testing.T) {
 	if !queue.AuthorityDraftAdopted(*rebound) || !reflect.DeepEqual(rebound.OpenMerge.Activation, pin.OpenMerge.Activation) {
 		t.Fatal("same-binding rebind lost adopted activation")
 	}
-	w.PrepareAuthorityPush = func(context.Context) (AuthorityPushPolicy, error) {
-		return AuthorityPushPolicy{Mode: authority.OpenMerge, GoverningCommit: w.configTip, EffectiveDigest: w.configDigest, AppID: "5383059"}, nil
-	}
-	w.PinAuthorityPush = func(context.Context, AuthorityPushPolicy) error { return nil }
-	w.ObserveAuthorityPush = func(context.Context, AuthorityPushPolicy) error { return nil }
 	opts := s.authorityPushOptions(t.Context(), w, forge.PushLand, []forge.PushRefIntent{{Ref: "refs/heads/main", OldSHA: w.configTip, NewSHA: w.configTip}})
 	if opts.Context.Binding().GoverningCommit == "" {
 		t.Fatalf("rebind has no valid push context: %v", opts.Guard(t.Context(), opts.Context))
 	}
 	must(t, opts.Guard(t.Context(), opts.Context))
+	// Delayed operations retain the queue selected when options were frozen.
+	// Worker rebinding and caller-owned intent slices cannot redirect the guard.
+	id := w.id
+	w.id = store.QueueID(-1)
+	must(t, opts.Guard(t.Context(), opts.Context))
+	w.id = id
+	must(t, f.PushRef(repo, "openmerge/queue/main/immutable", w.configTip))
+	intents := []forge.PushRefIntent{{Ref: "refs/heads/openmerge/queue/main/immutable", BuildBaseSHA: lifecycleState(t, s, w).BaseSHA}}
+	build := s.authorityPushOptions(t.Context(), w, forge.PushBuild, intents)
+	if intents[0].OldSHA != "" {
+		t.Fatal("push preparation mutated caller lease")
+	}
+	intents[0].BuildBaseSHA = strings.Repeat("f", 40)
+	must(t, build.Guard(t.Context(), build.Context))
+	invalid := s.authorityPushOptions(t.Context(), w, forge.PushBuild, intents)
+	if invalid.Guard(t.Context(), invalid.Context) == nil || invalid.Context.Binding().GoverningCommit != "" {
+		t.Fatal("caller-selected history exclusion base accepted")
+	}
 	// Queue display names are not effective rules or selector coverage.
 	_, err = f.PushBase(repo, "main", "rename queue", map[string]string{".openmerge.yml": strings.Replace(lifecycleConfig(repositoryConfig), "name: default", "name: renamed", 1)})
 	must(t, err)
@@ -482,6 +498,79 @@ func TestAuthorityLifecycleAdoptsDraftWithAtomicConfig(t *testing.T) {
 	renamed := lifecycleState(t, s, w).AuthorityPin()
 	if renamed.EffectiveDigest != pin.EffectiveDigest || !queue.AuthorityDraftAdopted(*renamed) {
 		t.Fatal("queue display name invalidated verification")
+	}
+	// Changes to live branch expectations invalidate the old interpretation at
+	// the same governing tip and across a same-binding governing rebind. A new
+	// proposed verification is interpreted and frozen with the current refs.
+	for _, rebind := range []bool{false, true} {
+		frozen := s.authorityPushOptions(t.Context(), w, forge.PushLand, []forge.PushRefIntent{{Ref: "refs/heads/main", OldSHA: w.configTip, NewSHA: w.configTip}})
+		must(t, frozen.Guard(t.Context(), frozen.Context))
+		expectedRefs = append(expectedRefs, "refs/heads/release/new")
+		if rebind {
+			expectedRefs = []string{"refs/heads/main"}
+			_, err = f.PushBase(repo, "main", "same binding, changed branch inventory", nil)
+			must(t, err)
+		}
+		before := lifecycleState(t, s, w)
+		// A failed seeing read must not leave old guards usable on another
+		// node. Invalidation goes first even when the resolver offers the old
+		// proposal again; observation then records its own sanitized failure.
+		draftID = before.AuthorityPin().OpenMerge.Activation.Proposed.EventID
+		readFailure = fmt.Errorf("%w: ghs_SECRET transport unavailable", forge.ErrRulesUnavailable)
+		readsBefore := reads
+		must(t, s.configuration(t.Context(), w))
+		if reads != readsBefore {
+			t.Fatal("seeing read preceded durable input invalidation")
+		}
+		changed := lifecycleState(t, s, w)
+		if queue.AuthorityDraftAdopted(*changed.AuthorityPin()) || changed.WriteRestrictionStatus().State == "verified" || changed.AuthorityPin().OpenMerge.VerificationInput != nil {
+			t.Fatalf("live branch drift retained adoption: %+v", changed.AuthorityPin())
+		}
+		if !reflect.DeepEqual(before.AuthorityPin().OpenMerge.Binding, changed.AuthorityPin().OpenMerge.Binding) {
+			t.Fatal("live refs unexpectedly changed binding")
+		}
+		if frozen.Guard(t.Context(), frozen.Context) == nil {
+			t.Fatal("old push context survived input drift")
+		}
+		unavailable := s.authorityPushOptions(t.Context(), w, forge.PushLand, []forge.PushRefIntent{{Ref: "refs/heads/main", OldSHA: w.configTip, NewSHA: w.configTip}})
+		if unavailable.Guard(t.Context(), unavailable.Context) == nil || unavailable.Context.Binding().GoverningCommit != "" {
+			t.Fatal("unverified drift supplied push context")
+		}
+		afterFailure := lifecycleState(t, s, w)
+		if afterFailure.WriteRestrictionStatus().State == "verified" || len(afterFailure.RulesSourceProblems(queue.WriteRestriction)) == 0 || strings.Contains(strings.Join(afterFailure.RulesProblems(), " "), "ghs_SECRET") {
+			t.Fatal("failed post-invalidation observation retained verification or leaked transport text")
+		}
+		replayed, _, err := s.store.Load(t.Context(), w.id)
+		must(t, err)
+		if queue.AuthorityDraftAdopted(*replayed.AuthorityPin()) || replayed.WriteRestrictionStatus().State == "verified" {
+			t.Fatal("replay revived stale input")
+		}
+		readFailure = nil
+		input := w.authorityObservation.Input
+		// Operator verification of a proposed policy is accepted only in
+		// GitHub mode. Roll back before issuing the replacement proposal.
+		_, err = f.PushBase(repo, "main", "rollback before fresh verification", map[string]string{".openmerge.yml": repositoryConfig})
+		must(t, err)
+		must(t, s.configuration(t.Context(), w))
+		draft.Evidence.Findings = []authority.Finding{}
+		draft.Evidence, err = forge.InterpretWriteRestriction(input, draft.Evidence)
+		must(t, err)
+		draft.ProtectionFingerprint, err = draft.Evidence.Fingerprint()
+		must(t, err)
+		draft.VerifiedAt = time.Now()
+		draft.Basis = lifecycleState(t, s, w).RulesSourceRevision(queue.WriteRestriction)
+		draft.Nonce += "-refreshed"
+		receipts, err = s.store.CommitWriteRestrictionVerification(t.Context(), []store.VerificationRecord{{QueueID: w.id, Event: draft}})
+		must(t, err)
+		draftID = receipts[0].EventID
+		_, err = f.PushBase(repo, "main", "reactivate freshly verified refs", map[string]string{".openmerge.yml": lifecycleConfig(repositoryConfig)})
+		must(t, err)
+		must(t, s.configuration(t.Context(), w))
+		refrozen := lifecycleState(t, s, w).AuthorityPin()
+		if !queue.AuthorityDraftAdopted(*refrozen) || !reflect.DeepEqual(refrozen.OpenMerge.VerificationInput.ExpectedRefs, expectedRefs) {
+			t.Fatal("fresh draft did not freeze current live refs", refrozen)
+		}
+		draftID = 0
 	}
 
 }
@@ -605,10 +694,9 @@ func TestAuthorityLifecycleRequiresFlagAndResolver(t *testing.T) {
 	}
 }
 
-// First-fence authority bootstrap remains 9c. Managed expansion can apply the
-// lifecycle before validating an existing fence; New retains its old ordering
-// and cannot create an authority fence from candidate/receipt data alone.
-func TestAuthorityLifecycleDirectConstructorDoesNotBootstrapFence(t *testing.T) {
+// A resolved target whose base is absent from the configuration defers creation
+// and remains available for diagnostics.
+func TestAuthorityLifecycleDirectConstructorDefersInvalidConfig(t *testing.T) {
 	s, _, f, _ := fixture(t, repositoryConfig)
 	tip, err := f.ReadRef(t.Context(), repo, "main")
 	must(t, err)
@@ -620,9 +708,7 @@ func TestAuthorityLifecycleDirectConstructorDoesNotBootstrapFence(t *testing.T) 
 		return authority.Observation{}, nil
 	})
 	_, err = New(t.Context(), s.store, []Target{target}, s.options)
-	if err == nil || !strings.Contains(err.Error(), "no durable pin") {
-		t.Fatal("direct constructor bootstrapped authority", err)
-	}
+	must(t, err)
 	id, err := s.store.EnsureQueue(t.Context(), target.Key)
 	must(t, err)
 	state, _, err := s.store.Load(t.Context(), id)

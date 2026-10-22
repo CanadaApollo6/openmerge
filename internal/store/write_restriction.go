@@ -303,6 +303,12 @@ func sameAuthorityPin(previous, candidate queue.PolicyAuthorityApplied) bool {
 	}
 }
 
+// authorityInputsMatch keeps retries and governing-commit rebinds bound to
+// the interpretation inputs of the durable adoption, not just its policy digest.
+func authorityInputsMatch(pin queue.PolicyAuthorityApplied, in forge.WriteRestrictionInput) bool {
+	return pin.OpenMerge == nil || pin.OpenMerge.VerificationInput == nil || reflect.DeepEqual(*pin.OpenMerge.VerificationInput, queue.AuthorityVerificationInput{BaseSelectors: in.BaseSelectors, ExpectedRefs: in.ExpectedRefs, AppID: in.AppID})
+}
+
 // authorityDraftFloor returns the newest durable boundary after which a
 // proposed verification must have been recorded before it can be adopted. A
 // github pin is a rollback boundary. An OpenMerge pin that did not fold an
@@ -394,7 +400,7 @@ func (s *Store) ApplyAuthorityConfig(ctx context.Context, q QueueID, config queu
 		// This path deliberately precedes journal replay and draft lookup. It
 		// mirrors AdoptAuthorityPin's no-op retry behavior and makes rollback
 		// retries safe after their current folded pin is github.
-		if havePrevious && haveConfig && sameAuthorityPin(previous, pin) && reflect.DeepEqual(previousConfig, config) {
+		if havePrevious && haveConfig && sameAuthorityPin(previous, pin) && authorityInputsMatch(previous, in) && reflect.DeepEqual(previousConfig, config) {
 			receipt = authorityAdoptionReceipt(q, previousID, previous)
 			return nil
 		}
@@ -419,11 +425,12 @@ func (s *Store) ApplyAuthorityConfig(ctx context.Context, q QueueID, config queu
 			// A governing commit rebind does not change the authenticated policy.
 			// Preserve both activation and interpretation context; emitting an
 			// unadopted pin here would create a spurious draft floor.
-			if draftID == 0 && havePrevious && queue.AuthorityDraftAdopted(previous) && reflect.DeepEqual(previous.OpenMerge.Binding, pin.OpenMerge.Binding) {
+			inputsDrifted := havePrevious && !authorityInputsMatch(previous, in)
+			if draftID == 0 && havePrevious && !inputsDrifted && queue.AuthorityDraftAdopted(previous) && reflect.DeepEqual(previous.OpenMerge.Binding, pin.OpenMerge.Binding) {
 				pin.OpenMerge = previous.OpenMerge
 			}
 			var draft queue.WriteRestrictionVerified
-			if draftID > 0 {
+			if draftID > 0 && !inputsDrifted {
 				draft, err = proposedVerification(ctx, tx, q, draftID)
 				if err != nil {
 					return err
@@ -433,7 +440,7 @@ func (s *Store) ApplyAuthorityConfig(ctx context.Context, q QueueID, config queu
 			if err != nil {
 				return err
 			}
-			if draftID > 0 && (floor == 0 || draftID > floor) && freshAuthorityAdoption(state, basis, readStarted, readAt) {
+			if !inputsDrifted && draftID > 0 && (floor == 0 || draftID > floor) && freshAuthorityAdoption(state, basis, readStarted, readAt) {
 				pin = queue.BindAuthorityDraft(pin, draftID, draft, readStarted, readAt, in, fresh)
 			}
 		}
@@ -498,6 +505,7 @@ func (s *Store) AdoptAuthorityPin(ctx context.Context, q QueueID, pin queue.Poli
 		// Read the latest durable pin/config directly: an executor no-op must not
 		// scan all proposed history, require a still-valid draft ID, or append.
 		var previousID int64
+		inputsDrifted := false
 		var previousRaw, configRaw []byte
 		err := tx.QueryRow(ctx, `SELECT id,payload FROM events WHERE queue_id=$1 AND type='policy_authority_applied' ORDER BY id DESC LIMIT 1`, q).Scan(&previousID, &previousRaw)
 		if err == nil {
@@ -509,7 +517,8 @@ func (s *Store) AdoptAuthorityPin(ctx context.Context, q QueueID, pin queue.Poli
 			if !ok {
 				return errors.New("invalid persisted authority pin")
 			}
-			if previous.GoverningCommit == pin.GoverningCommit && previous.EffectiveDigest == pin.EffectiveDigest && previous.OpenMerge != nil && reflect.DeepEqual(previous.OpenMerge.Binding, pin.OpenMerge.Binding) {
+			inputsDrifted = !authorityInputsMatch(previous, in)
+			if !inputsDrifted && previous.GoverningCommit == pin.GoverningCommit && previous.EffectiveDigest == pin.EffectiveDigest && previous.OpenMerge != nil && reflect.DeepEqual(previous.OpenMerge.Binding, pin.OpenMerge.Binding) {
 				if err := tx.QueryRow(ctx, `SELECT payload FROM events WHERE queue_id=$1 AND type='config_applied' ORDER BY id DESC LIMIT 1`, q).Scan(&configRaw); err != nil {
 					return err
 				}
@@ -534,17 +543,21 @@ func (s *Store) AdoptAuthorityPin(ctx context.Context, q QueueID, pin queue.Poli
 			return errors.New("authority pin differs from governing config")
 		}
 		var draft queue.WriteRestrictionVerified
-		if draftID > 0 {
+		if draftID > 0 && !inputsDrifted {
 			draft, err = proposedVerification(ctx, tx, q, draftID)
 			if err != nil {
 				return err
 			}
 		}
+		floor, err := authorityDraftFloor(ctx, tx, q)
+		if err != nil {
+			return err
+		}
 		var governingRecordedAt time.Time
 		if err := tx.QueryRow(ctx, `SELECT recorded_at FROM events WHERE queue_id=$1 AND type='config_applied' ORDER BY id DESC LIMIT 1`, q).Scan(&governingRecordedAt); err != nil {
 			return err
 		}
-		if !readStarted.Before(governingRecordedAt) && basis == state.RulesSourceRevision(queue.WriteRestriction) && !readStarted.IsZero() && !readAt.Before(readStarted) && time.Since(readAt) >= 0 && time.Since(readStarted) <= 2*time.Minute {
+		if !inputsDrifted && (floor == 0 || draftID > floor) && !readStarted.Before(governingRecordedAt) && basis == state.RulesSourceRevision(queue.WriteRestriction) && !readStarted.IsZero() && !readAt.Before(readStarted) && time.Since(readAt) >= 0 && time.Since(readStarted) <= 2*time.Minute {
 			pin = queue.BindAuthorityDraft(pin, draftID, draft, readStarted, readAt, in, fresh)
 		}
 		name, raw, err := queue.EncodeEvent(pin)

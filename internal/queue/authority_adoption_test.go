@@ -243,6 +243,7 @@ func TestAuthorityAdoptedProvenanceSurvivesSameBindingRebind(t *testing.T) {
 	}
 	// A same-binding pin updates only the governing revision; the original
 	// interpreted source remains the proof for the preserved verification.
+	pin = adopted
 	pin.GoverningCommit = "formatting-only"
 	s = Apply(s, ConfigApplied{Commit: pin.GoverningCommit, Digest: pin.EffectiveDigest})
 	s = Apply(s, pin)
@@ -252,5 +253,28 @@ func TestAuthorityAdoptedProvenanceSurvivesSameBindingRebind(t *testing.T) {
 	}
 	if restored.authority.Adopted == nil || restored.authority.Adopted.GoverningCommit != adopted.GoverningCommit {
 		t.Fatal("lost original durable adoption provenance")
+	}
+}
+
+func TestAuthorityInputInvalidationKeepsViolations(t *testing.T) {
+	s, draft := restrictionState(t)
+	pin := *s.AuthorityPin()
+	in := adoptionInput(t, &pin, &draft)
+	at := draft.VerifiedAt.Add(time.Second)
+	adopted := BindAuthorityDraft(pin, 123, draft, at, at, in, draft.Evidence)
+	s = Apply(Apply(State{}, ConfigApplied{Commit: pin.GoverningCommit, Digest: pin.EffectiveDigest}), adopted)
+	negative := authority.CloneObservation(draft.Evidence)
+	negative.Findings = []authority.Finding{{Element: "blocked", Kind: "missing_rule", ProtectionID: "repository_ruleset/base-10"}}
+	s = Apply(s, WriteRestrictionObserved{Binding: pin.OpenMerge.Binding, Basis: s.RulesSourceRevision(WriteRestriction), ObservedAt: at.Add(time.Second), Evidence: negative})
+	s = Apply(s, pin)
+	if got := s.WriteRestrictionStatus(); got.State != "violated" || len(got.Findings) != 1 || !got.LastVerifiedAt.IsZero() || !got.LastObservedAt.IsZero() {
+		t.Fatalf("input invalidation lost violation or retained provenance: %#v", got)
+	}
+	if _, _, ok := s.AuthorityProtection(); ok {
+		t.Fatal("stale interpretation is still push evidence")
+	}
+	restored, err := DecodeSnapshot(snapshotBytes(t, s))
+	if err != nil || restored.WriteRestrictionStatus().State != "violated" {
+		t.Fatal("invalidation snapshot", err)
 	}
 }

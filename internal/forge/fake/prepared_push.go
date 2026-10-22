@@ -15,7 +15,7 @@ func (r *repository) validatePush(ctx context.Context, repo forge.RepoRef, opts 
 		return nil
 	}
 	p := forge.PreparedPush{Operation: operation, Refs: refs}
-	count, paths, metadata, parentEdges, frontierEntries := 0, 0, 0, 0, 0
+	count, metadata, parentEdges, frontierEntries := 0, 0, 0, 0
 	for i := range p.Refs {
 		ref := &p.Refs[i]
 		ref.Commits = []forge.PushCommit{}
@@ -25,9 +25,13 @@ func (r *repository) validatePush(ctx context.Context, repo forge.RepoRef, opts 
 		}
 		if operation == forge.PushBuild && ref.OldSHA == "" {
 			baseRef := strings.TrimPrefix(opts.Context.BaseRef(), "refs/heads/")
-			ref.CreationBaseSHA = r.refs[baseRef]
-			if ref.CreationBaseSHA == "" {
+			liveBase := r.refs[baseRef]
+			if liveBase == "" {
 				return fmt.Errorf("creation boundary base is absent")
+			}
+			ref.CreationBaseSHA = opts.Context.BuildBaseSHA()
+			if !r.isAncestor(liveBase, ref.CreationBaseSHA) {
+				return fmt.Errorf("creation boundary base does not descend from live base")
 			}
 		}
 		metadata += len(ref.Ref) + len(ref.OldSHA) + len(ref.NewSHA) + len(ref.CreationBaseSHA)
@@ -90,6 +94,7 @@ func (r *repository) validatePush(ctx context.Context, repo forge.RepoRef, opts 
 				continue
 			}
 			seen[oid] = true
+			paths := 0
 			c, ok := r.commits[oid]
 			if !ok {
 				return fmt.Errorf("missing prepared push object %s", oid)

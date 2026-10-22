@@ -3,9 +3,11 @@ package gitops
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -70,7 +72,7 @@ func TestAuthorityRejectsBeforeEveryPushFamily(t *testing.T) {
 			// The final commit of a multi-member build carries the batch trailer;
 			// an intermediate commit does not. Fast-forward's marker is unsigned too.
 			rule := authority.Rule{Kind: "required_signatures", Parameters: []authority.Parameter{}}
-			opts := validationOptions(t, forge.PushBuild, []forge.PushRefIntent{{Ref: "refs/heads/openmerge/queue/main/rejected"}}, []authority.Rule{rule})
+			opts := validationOptions(t, forge.PushBuild, []forge.PushRefIntent{{Ref: "refs/heads/openmerge/queue/main/rejected", BuildBaseSHA: f.base}}, []authority.Rule{rule})
 			prs := f.prs[:2]
 			if method == forge.FastForward {
 				prs = f.prs[:1]
@@ -135,7 +137,7 @@ func TestAuthorityActualIntermediateCommitAndAtomicFence(t *testing.T) {
 			f := newFixture(t)
 			assert := spyPushes(t, f)
 			rule := authority.Rule{Kind: "commit_message_pattern", Parameters: []authority.Parameter{{Name: "operator", Values: []string{`"contains"`}}, {Name: "pattern", Values: []string{`"OpenMerge-Batch: middle"`}}}}
-			opts := validationOptions(t, forge.PushBuild, []forge.PushRefIntent{{Ref: "refs/heads/test-middle"}}, []authority.Rule{rule})
+			opts := validationOptions(t, forge.PushBuild, []forge.PushRefIntent{{Ref: "refs/heads/test-middle", BuildBaseSHA: f.base}}, []authority.Rule{rule})
 			_, err := f.g.BuildTestRef(t.Context(), testRepo, forge.BuildRequest{Ref: "test-middle", BaseSHA: f.base, PRs: f.prs[:2], Method: method, BatchID: "middle"}, opts)
 			if err == nil {
 				t.Fatal("intermediate commit skipped")
@@ -197,7 +199,7 @@ func TestAuthorityAcceptedObjectIsTheInspectedOID(t *testing.T) {
 	top := f.build(forge.Squash, f.prs[:1], "accepted")
 	s, unlock, err := f.g.open(ctx, testRepo)
 	must(t, err)
-	p, err := s.preparedPush(ctx, forge.PushBuild, []forge.PushRef{{Ref: "refs/heads/accepted", NewSHA: top}})
+	p, err := s.preparedPush(ctx, forge.PushBuild, []forge.PushRef{{Ref: "refs/heads/accepted", NewSHA: top, CreationBaseSHA: f.base}})
 	must(t, err)
 	unlock()
 	if p.Refs[0].NewSHA != top {
@@ -210,7 +212,7 @@ func TestAuthorityAcceptedObjectIsTheInspectedOID(t *testing.T) {
 		}
 	}
 	// The very OID inspected above can be accepted and published without rebuild.
-	opts := validationOptions(t, forge.PushBuild, []forge.PushRefIntent{{Ref: "refs/heads/accepted", NewSHA: top}}, []authority.Rule{})
+	opts := validationOptions(t, forge.PushBuild, []forge.PushRefIntent{{Ref: "refs/heads/accepted", NewSHA: top, BuildBaseSHA: f.base}}, []authority.Rule{})
 	must(t, opts.ValidateBeforePush(ctx, testRepo, p))
 }
 
@@ -223,7 +225,7 @@ func TestAuthorityAcceptedBuildInspectsOnceBeforePublishing(t *testing.T) {
 			writeExecutable(t, wrapper, "printf 'CALL\\n' >> "+shellQuote(record)+"\nprintf '%s\\n' \"$@\" >> "+shellQuote(record)+"\nexec "+shellQuote(f.g.git)+" \"$@\"\n")
 			f.g.git = wrapper
 			ref := "refs/heads/accepted-build"
-			opts := validationOptions(t, forge.PushBuild, []forge.PushRefIntent{{Ref: ref}}, []authority.Rule{})
+			opts := validationOptions(t, forge.PushBuild, []forge.PushRefIntent{{Ref: ref, BuildBaseSHA: f.base}}, []authority.Rule{})
 			top, err := f.g.BuildTestRef(t.Context(), testRepo, forge.BuildRequest{Ref: ref, BaseSHA: f.base, PRs: f.prs[:1], Method: method, BatchID: "accepted"}, opts)
 			must(t, err)
 			raw, err := os.ReadFile(record)
@@ -267,7 +269,7 @@ func TestAuthorityPathSizeAndLinearRulesUseRealObjects(t *testing.T) {
 				method = forge.Merge
 			}
 			assert := spyPushes(t, f)
-			opts := validationOptions(t, forge.PushBuild, []forge.PushRefIntent{{Ref: "refs/heads/reject-content"}}, []authority.Rule{{Kind: kind, Parameters: params}})
+			opts := validationOptions(t, forge.PushBuild, []forge.PushRefIntent{{Ref: "refs/heads/reject-content", BuildBaseSHA: f.base}}, []authority.Rule{{Kind: kind, Parameters: params}})
 			_, err := f.g.BuildTestRef(t.Context(), testRepo, forge.BuildRequest{Ref: "reject-content", BaseSHA: f.base, PRs: f.prs[:1], Method: method, BatchID: "content"}, opts)
 			if err == nil {
 				t.Fatal("invalid actual object accepted")
@@ -286,10 +288,10 @@ func TestBuildCreationBoundaryRejectsUnprovenSources(t *testing.T) {
 			want := ""
 			switch name {
 			case "caller-selected-base":
-				// A caller base containing this path must not hide its introduction
-				// relative to the remotely observed main branch.
+				// An arbitrary request base cannot change the immutable build
+				// base authenticated before dispatch and hide introduced paths.
 				base = f.heads[1]
-				want = "restricted file path"
+				want = "missing or mismatched authority context"
 				rules = []authority.Rule{{Kind: "file_path_restriction", Parameters: []authority.Parameter{{Name: "restricted_file_paths/~20", Values: []string{`"pr-1.txt"`}}}}}
 			case "absent-target-base":
 				gitCommand(t, f.remote, "", nil, "update-ref", "-d", "refs/heads/main")
@@ -303,7 +305,7 @@ func TestBuildCreationBoundaryRejectsUnprovenSources(t *testing.T) {
 			assert := spyPushes(t, f)
 			defer assert()
 			ref := "refs/heads/reject-boundary"
-			opts := validationOptions(t, forge.PushBuild, []forge.PushRefIntent{{Ref: ref}}, rules)
+			opts := validationOptions(t, forge.PushBuild, []forge.PushRefIntent{{Ref: ref, BuildBaseSHA: f.base}}, rules)
 			_, err := f.g.BuildTestRef(t.Context(), testRepo, forge.BuildRequest{Ref: ref, BaseSHA: base, PRs: f.prs[1:2], Method: forge.Squash, BatchID: "boundary"}, opts)
 			if err == nil || !strings.Contains(err.Error(), want) {
 				t.Fatalf("expected creation boundary rejection %q, got %v", want, err)
@@ -361,7 +363,7 @@ func TestPreparedChangedPathsAndCreationBoundary(t *testing.T) {
 				t.Fatalf("unexpected frontier %v", p.Refs[0].Boundary)
 			}
 			rule := authority.Rule{Kind: "file_path_restriction", Parameters: []authority.Parameter{{Name: "restricted_file_paths/~20", Values: []string{`"secret.pem"`}}}}
-			opts := validationOptions(t, forge.PushBuild, []forge.PushRefIntent{{Ref: p.Refs[0].Ref, NewSHA: tc.tip}}, []authority.Rule{rule})
+			opts := validationOptions(t, forge.PushBuild, []forge.PushRefIntent{{Ref: p.Refs[0].Ref, NewSHA: tc.tip, BuildBaseSHA: old}}, []authority.Rule{rule})
 			if err := opts.ValidateBeforePush(ctx, testRepo, p); (err != nil) != tc.reject {
 				t.Fatalf("changed-path validation: %v", err)
 			}
@@ -369,7 +371,7 @@ func TestPreparedChangedPathsAndCreationBoundary(t *testing.T) {
 				if len(p.Refs[0].Commits) != 1 || len(p.Refs[0].Commits[0].Files) != 1 || p.Refs[0].Commits[0].Files[0].Path != "base.txt" {
 					t.Fatalf("creation inventoried existing history/tree: %+v", p)
 				}
-				size := validationOptions(t, forge.PushBuild, []forge.PushRefIntent{{Ref: p.Refs[0].Ref, NewSHA: tc.tip}}, []authority.Rule{{Kind: "max_file_size", Parameters: []authority.Parameter{{Name: "max_file_size", Values: []string{"1"}}}}})
+				size := validationOptions(t, forge.PushBuild, []forge.PushRefIntent{{Ref: p.Refs[0].Ref, NewSHA: tc.tip, BuildBaseSHA: old}}, []authority.Rule{{Kind: "max_file_size", Parameters: []authority.Parameter{{Name: "max_file_size", Values: []string{"1"}}}}})
 				must(t, size.ValidateBeforePush(ctx, testRepo, p))
 			}
 			if tc.name == "merge" {
@@ -397,5 +399,186 @@ func TestDeletionInventoryDoesNotHydrateOldObject(t *testing.T) {
 	must(t, err)
 	if len(p.Refs[0].Commits) != 0 || len(p.Refs[0].Boundary) != 0 {
 		t.Fatal("deletion introduced evidence")
+	}
+}
+
+func TestAuthorityFinalGuardEveryPushSite(t *testing.T) {
+	for _, op := range []forge.PushOperation{forge.PushBuild, forge.PushLand, forge.PushEnsureFence, forge.PushAdvanceFence, forge.PushDeleteBranch} {
+		for _, reject := range []bool{false, true} {
+			t.Run(string(op)+"/reject="+strconv.FormatBool(reject), func(t *testing.T) {
+				f := newFixture(t)
+				ctx := t.Context()
+				var fence, tested string
+				if op == forge.PushAdvanceFence || op == forge.PushLand {
+					var err error
+					fence, err = f.g.EnsureFence(ctx, testRepo, testFence, forge.PushOptions{})
+					must(t, err)
+				}
+				if op == forge.PushLand {
+					tested = f.build(forge.Squash, f.prs[:1], "guard-land")
+				}
+				if op == forge.PushDeleteBranch {
+					f.push("topic", f.heads[1], false)
+				}
+				intents := []forge.PushRefIntent{{Ref: "refs/heads/" + testFence, OldSHA: fence}}
+				switch op {
+				case forge.PushBuild:
+					intents = []forge.PushRefIntent{{Ref: "refs/heads/guard-build", BuildBaseSHA: f.base}}
+				case forge.PushLand:
+					intents = []forge.PushRefIntent{{Ref: "refs/heads/main", OldSHA: f.base, NewSHA: tested}, {Ref: "refs/heads/" + testFence, OldSHA: fence}}
+				case forge.PushDeleteBranch:
+					intents = []forge.PushRefIntent{{Ref: "refs/heads/topic", OldSHA: f.heads[1], Delete: true}}
+				}
+				opts := validationOptions(t, op, intents, []authority.Rule{})
+				var assert func()
+				if reject {
+					assert = spyPushes(t, f)
+				}
+				armed, first := filepath.Join(t.TempDir(), "armed"), filepath.Join(t.TempDir(), "first-command")
+				wrapper := filepath.Join(t.TempDir(), "git")
+				writeExecutable(t, wrapper, "if [ -f "+shellQuote(armed)+" ] && [ ! -f "+shellQuote(first)+" ]; then\nkind=other\nfor arg do\n[ \"$arg\" != push ] || kind=push\ndone\nprintf '%s' \"$kind\" > "+shellQuote(first)+"\nfi\nexec "+shellQuote(f.g.git)+" \"$@\"\n")
+				f.g.git = wrapper
+				calls := 0
+				sentinel := errors.New("durable source changed after preparation")
+				opts.Guard = func(context.Context, forge.PushValidationContext) error {
+					calls++
+					if calls == 2 {
+						if reject {
+							return sentinel
+						}
+						must(t, os.WriteFile(armed, nil, 0600))
+					}
+					return nil
+				}
+				var err error
+				switch op {
+				case forge.PushBuild:
+					_, err = f.g.BuildTestRef(ctx, testRepo, forge.BuildRequest{Ref: "guard-build", BaseSHA: f.base, PRs: f.prs[:1], Method: forge.Squash, BatchID: "guard"}, opts)
+				case forge.PushLand:
+					_, err = f.g.Land(ctx, testRepo, forge.LandRequest{Base: "main", ExpectedBaseSHA: f.base, TestedSHA: tested, Fence: testFence, ExpectedFence: fence, NextFenceID: "land/guard", PRs: f.prs[:1]}, opts)
+				case forge.PushEnsureFence:
+					_, err = f.g.EnsureFence(ctx, testRepo, testFence, opts)
+				case forge.PushAdvanceFence:
+					_, err = f.g.AdvanceFence(ctx, testRepo, testFence, fence, "abandon/guard", opts)
+				case forge.PushDeleteBranch:
+					err = f.g.DeleteBranch(ctx, testRepo, "topic", f.heads[1], opts)
+				}
+				if calls != 2 {
+					t.Fatalf("guard calls=%d err=%v", calls, err)
+				}
+				if reject {
+					if !errors.Is(err, sentinel) {
+						t.Fatal(err)
+					}
+					assert()
+				} else {
+					must(t, err)
+					command, err := os.ReadFile(first)
+					must(t, err)
+					if string(command) != "push" {
+						t.Fatalf("I/O between final guard and push: %s", command)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestAuthorityBuildCreationBoundsLargeHistoryAndCleanedRef(t *testing.T) {
+	f := newFixture(t)
+	// Fast-import creates more history than the introduced-commit cap without
+	// thousands of subprocesses. Only the new build belongs in its inventory.
+	var input strings.Builder
+	for i := 0; i <= forge.MaxPushCommits; i++ {
+		fmt.Fprintf(&input, "commit refs/heads/long-history\ncommitter Fixture <fixture@localhost> %d +0000\ndata 7\nhistory\n", 1700000000+i)
+		if i == 0 {
+			fmt.Fprintf(&input, "from %s\n", f.base)
+		}
+		input.WriteByte('\n')
+	}
+	gitCommand(t, f.source, input.String(), nil, "fast-import", "--quiet")
+	f.base = gitCommand(t, f.source, "", nil, "rev-parse", "refs/heads/long-history")
+	f.push("main", f.base, false)
+	head := f.commit(f.base, "new PR", map[string]string{"fresh.txt": "fresh"})
+	gitCommand(t, f.source, "", nil, "push", "--force", f.remote, head+":"+headRef(1))
+	f.prs[0].HeadSHA = head
+	ref := "refs/heads/cleaned-build"
+	for attempt := 0; attempt < 2; attempt++ {
+		opts := validationOptions(t, forge.PushBuild, []forge.PushRefIntent{{Ref: ref, BuildBaseSHA: f.base}}, []authority.Rule{})
+		_, err := f.g.BuildTestRef(t.Context(), testRepo, forge.BuildRequest{Ref: ref, BaseSHA: f.base, PRs: f.prs[:1], Method: forge.Squash, BatchID: "large-history"}, opts)
+		must(t, err)
+		gitCommand(t, f.remote, "", nil, "update-ref", "-d", ref)
+	}
+}
+
+func TestPreparedPathBudgetsArePerCommitRealGit(t *testing.T) {
+	f := newFixture(t)
+	blob := gitCommand(t, f.source, "", nil, "rev-parse", f.base+":base.txt")
+	// Construct wide trees directly so this boundary test does not spawn a
+	// process for each path or repeatedly rewrite fast-import's flat tree.
+	wideTree := func(executable int) string {
+		var tree strings.Builder
+		for i := 0; i <= forge.MaxPushPaths; i++ {
+			mode := "100644"
+			if i < executable {
+				mode = "100755"
+			}
+			fmt.Fprintf(&tree, "%s blob %s\tp%06d\n", mode, blob, i)
+		}
+		return gitCommand(t, f.source, tree.String(), nil, "mktree")
+	}
+	baseTree := wideTree(0)
+	base := gitCommand(t, f.source, "wide base\n", nil, "commit-tree", baseTree, "-p", f.base)
+	middle := gitCommand(t, f.source, "first bounded\n", nil, "commit-tree", wideTree(60_000), "-p", base)
+	good := gitCommand(t, f.source, "second bounded\n", nil, "commit-tree", baseTree, "-p", middle)
+	bad := gitCommand(t, f.source, "overflow\n", nil, "commit-tree", wideTree(forge.MaxPushPaths+1), "-p", base)
+	f.push("wide-base", base, false)
+	f.push("two-bounded", good, false)
+	f.push("one-overflow", bad, false)
+	s, unlock, err := f.g.open(t.Context(), testRepo)
+	must(t, err)
+	defer unlock()
+	p, err := s.preparedPush(t.Context(), forge.PushBuild, []forge.PushRef{{Ref: "refs/heads/paths", NewSHA: good, CreationBaseSHA: base}})
+	must(t, err)
+	if len(p.Refs[0].Commits) != 2 {
+		t.Fatalf("expected two introduced commits, got %d", len(p.Refs[0].Commits))
+	}
+	for _, c := range p.Refs[0].Commits {
+		if len(c.Diffs[0].Paths) != 60_000 || len(c.Files) != 0 {
+			t.Fatalf("mode-only inventory: paths=%d files=%d", len(c.Diffs[0].Paths), len(c.Files))
+		}
+	}
+	_, err = s.preparedPush(t.Context(), forge.PushBuild, []forge.PushRef{{Ref: "refs/heads/paths-overflow", NewSHA: bad, CreationBaseSHA: base}})
+	if err == nil || !strings.Contains(err.Error(), "path budget exceeded") {
+		t.Fatalf("expected independent commit path rejection, got %v", err)
+	}
+}
+
+func TestDisabledAuthorityOptionsPreserveLegacyBuildBytesAndIO(t *testing.T) {
+	f := newFixture(t)
+	ref := "refs/heads/legacy-options"
+	disabled := validationOptions(t, forge.PushBuild, []forge.PushRefIntent{{Ref: ref, BuildBaseSHA: f.base}}, []authority.Rule{{Kind: "required_signatures", Parameters: []authority.Parameter{}}})
+	disabled.AuthorityRequired = false
+	disabled.Guard = func(context.Context, forge.PushValidationContext) error {
+		t.Fatal("disabled authority invoked guard")
+		return nil
+	}
+	disabled.Warn = func([]forge.PushWarning) { t.Fatal("disabled authority warned") }
+	var traces, tips []string
+	for _, opts := range []forge.PushOptions{{}, disabled} {
+		g := f.client(t, 0)
+		record := filepath.Join(t.TempDir(), "commands")
+		wrapper := filepath.Join(t.TempDir(), "git")
+		writeExecutable(t, wrapper, "printf 'CALL\\n' >> "+shellQuote(record)+"\nprintf '%s\\n' \"$@\" >> "+shellQuote(record)+"\nexec "+shellQuote(g.git)+" \"$@\"\n")
+		g.git = wrapper
+		tip, err := g.BuildTestRef(t.Context(), testRepo, forge.BuildRequest{Ref: ref, BaseSHA: f.base, PRs: f.prs[:1], Method: forge.Squash, BatchID: "legacy-options"}, opts)
+		must(t, err)
+		raw, err := os.ReadFile(record)
+		must(t, err)
+		traces = append(traces, strings.ReplaceAll(string(raw), g.cfg.WorkDir, "CACHE"))
+		tips = append(tips, tip)
+	}
+	if tips[0] != tips[1] || traces[0] != traces[1] {
+		t.Fatalf("disabled options changed legacy build: OIDs=%v\nzero commands:\n%s\ndisabled commands:\n%s", tips, traces[0], traces[1])
 	}
 }

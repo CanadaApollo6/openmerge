@@ -129,14 +129,26 @@ func TestAuthorityBarrierJournalCannotInstallRuntimeAuthority(t *testing.T) {
 			// A surviving pin already selects the fail-closed push path in the
 			// baseline. Preserve that protection: it must not manufacture a
 			// resolved authority context or invoke the dormant pin writer.
-			opts := s.authorityPushOptions(t.Context(), w, forge.PushBuild, nil)
-			if history == "draft" {
-				if opts.AuthorityRequired || opts.Guard != nil {
-					t.Fatal("proposed evidence changed legacy push options")
+			for _, operation := range []forge.PushOperation{forge.PushBuild, forge.PushLand, forge.PushEnsureFence, forge.PushAdvanceFence, forge.PushDeleteBranch} {
+				opts := s.authorityPushOptions(t.Context(), w, operation, nil)
+				if history == "draft" {
+					if opts.AuthorityRequired || opts.Guard != nil {
+						t.Fatalf("proposed evidence changed legacy %s options", operation)
+					}
+				} else if !opts.AuthorityRequired || opts.Guard == nil || opts.Guard(t.Context(), opts.Context) == nil {
+					t.Fatalf("unresolved journal pin supplied usable %s options", operation)
 				}
-			} else if !opts.AuthorityRequired || opts.Guard == nil || opts.Guard(t.Context(), opts.Context) == nil {
-				t.Fatal("unresolved journal pin supplied usable authority push options")
+				if opts.Context.Binding().GoverningCommit != "" {
+					t.Fatal("journal installed push context")
+				}
 			}
+			// The new first-fence adapter must also ignore a resolver without
+			// the independent opt-in, including a loaded candidate and pin.
+			must(t, s.initializeFence(t.Context(), w))
+			if w.AuthorityRequired || w.authorityObservation != nil {
+				t.Fatal("first fence enabled authority")
+			}
+
 			_, err = f.PushBase(w.repo(), "main", "public candidate remains blocked", map[string]string{".openmerge.yml": proposed})
 			must(t, err)
 			must(t, s.configuration(t.Context(), w))

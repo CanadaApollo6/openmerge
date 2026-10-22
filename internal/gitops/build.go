@@ -139,7 +139,7 @@ func (r *Repo) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.B
 		}
 		old = values[ref]
 	}
-	if err := opts.CheckDispatch(ctx, repo, forge.PushBuild, []forge.PushRefIntent{{Ref: ref, OldSHA: old}}); err != nil {
+	if err := opts.CheckDispatch(ctx, repo, forge.PushBuild, []forge.PushRefIntent{{Ref: ref, OldSHA: old, BuildBaseSHA: req.BaseSHA}}); err != nil {
 		return "", err
 	}
 	if err := s.heads(ctx, req.PRs); err != nil {

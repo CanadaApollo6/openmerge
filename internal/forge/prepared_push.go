@@ -19,7 +19,7 @@ const (
 	PushDeleteBranch       PushOperation = "delete_branch"
 	MaxPushRefs                          = 2
 	MaxPushCommits                       = 10_000
-	MaxPushPaths                         = 100_000
+	MaxPushPaths                         = 100_000 // Per introduced commit, across all parent diffs and post-images.
 	MaxPushParentEdges                   = 100_000
 	MaxPushBoundaryEntries               = 100_000
 	MaxPushMetadataBytes                 = 16 << 20
@@ -59,8 +59,9 @@ type PushCommit struct {
 // Producers must inspect locally under their existing session/cache lock, bound
 // enumeration, reject shallow/incomplete graphs, and prove every Boundary entry
 // reachable from OldSHA, or CreationBaseSHA for creation. CreationBaseSHA must
-// be an existing target base/ref tip observed in this locked session; the producer
-// must prove each boundary ancestor locally. An arbitrary ancestor is not proof.
+// be the authenticated build base frozen in the operation context, rooted in
+// the live target tip observed in this locked session; the producer must prove
+// each boundary ancestor locally. An arbitrary request ancestor is not proof.
 // Deletions introduce no commits and have no boundary.
 type PushRef struct {
 	Ref, OldSHA, NewSHA string
@@ -220,7 +221,9 @@ func ValidatePreparedPush(p PreparedPush) error {
 // distinguishes deletion from a not-yet-built generated object.
 type PushRefIntent struct {
 	Ref, OldSHA, NewSHA string
-	Delete              bool
+	// BuildBaseSHA is authenticated by the caller against durable queue planning.
+	BuildBaseSHA string
+	Delete       bool
 }
 
 // MatchesPreparedRefs checks leases and optional known new OIDs as a set.
@@ -239,6 +242,9 @@ func MatchesPreparedRefs(intents []PushRefIntent, refs []PushRef) bool {
 			return false
 		}
 		r := refs[n]
+		if i.BuildBaseSHA != "" && r.OldSHA == "" && r.CreationBaseSHA != i.BuildBaseSHA {
+			return false
+		}
 		if i.OldSHA != r.OldSHA || i.Delete != (r.NewSHA == "") || i.NewSHA != "" && i.NewSHA != r.NewSHA {
 			return false
 		}
@@ -255,7 +261,7 @@ func validPushPath(path string) bool {
 }
 
 func preparedBudgets(p PreparedPush) error {
-	commits, paths, edges, frontier, metadata := 0, 0, 0, 0, 0
+	commits, edges, frontier, metadata := 0, 0, 0, 0
 	for _, r := range p.Refs {
 		commits += len(r.Commits)
 		frontier += len(r.Boundary)
@@ -267,6 +273,10 @@ func preparedBudgets(p PreparedPush) error {
 			metadata += len(oid)
 		}
 		for _, c := range r.Commits {
+			paths := len(c.Files)
+			if paths > MaxPushPaths {
+				return invalid("prepared commit exceeds path budget")
+			}
 			edges += len(c.Parents)
 			if edges > MaxPushParentEdges {
 				return invalid("prepared push exceeds parent budget")
@@ -275,6 +285,9 @@ func preparedBudgets(p PreparedPush) error {
 			for _, oid := range c.Parents {
 				metadata += len(oid)
 			}
+			if metadata > MaxPushMetadataBytes {
+				return invalid("prepared push exceeds aggregate budget")
+			}
 			// Reject excessive comparison counts before inspecting their contents.
 			if len(c.Diffs) > max(1, len(c.Parents)) {
 				return invalid("excess parent comparisons")
@@ -282,17 +295,25 @@ func preparedBudgets(p PreparedPush) error {
 			for _, d := range c.Diffs {
 				metadata += len(d.Parent)
 				paths += len(d.Paths)
+				if paths > MaxPushPaths {
+					return invalid("prepared commit exceeds path budget")
+				}
 				for _, path := range d.Paths {
 					metadata += len(path)
+					if metadata > MaxPushMetadataBytes {
+						return invalid("prepared push exceeds aggregate budget")
+					}
 				}
 			}
-			paths += len(c.Files)
 			for _, f := range c.Files {
 				metadata += len(f.Path) + len(f.OID) + len(f.Kind)
+				if metadata > MaxPushMetadataBytes {
+					return invalid("prepared push exceeds aggregate budget")
+				}
 			}
 		}
 	}
-	if commits > MaxPushCommits || paths > MaxPushPaths || edges > MaxPushParentEdges || frontier > MaxPushBoundaryEntries || metadata > MaxPushMetadataBytes {
+	if commits > MaxPushCommits || edges > MaxPushParentEdges || frontier > MaxPushBoundaryEntries || metadata > MaxPushMetadataBytes {
 		return invalid("prepared push exceeds aggregate budget")
 	}
 	return nil

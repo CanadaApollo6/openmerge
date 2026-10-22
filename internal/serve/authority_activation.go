@@ -118,6 +118,9 @@ func (s *Server) prepareAuthorityLifecycle(ctx context.Context, w *worker, state
 		return nil, &authorityObservationReadFailure{err: err}
 	}
 	mode := candidate.Authority.Mode.Normalized()
+	if mode == authority.GitHub {
+		resetAuthorityCadence(w)
+	}
 	if err := resolved.Policy.Validate(); err != nil {
 		return nil, err
 	}
@@ -176,16 +179,29 @@ func (s *Server) prepareAuthorityLifecycle(ctx context.Context, w *worker, state
 	if err := request.Pin.Validate(); err != nil {
 		return nil, err
 	}
+	expectedInput := &queue.AuthorityVerificationInput{BaseSelectors: request.Input.BaseSelectors, ExpectedRefs: request.Input.ExpectedRefs, AppID: request.Input.AppID}
+	inputsChanged := previous != nil && previous.OpenMerge != nil && queue.AuthorityDraftAdopted(*previous) && !reflect.DeepEqual(previous.OpenMerge.VerificationInput, expectedInput)
 	// Reconciliation owns recurring observations, independently of pin adoption.
 	// A draftless lifecycle operation never spends a seeing read it would discard.
 	if mode == authority.OpenMerge {
+		if inputsChanged {
+			// Live branch coverage is an interpretation input even when the
+			// selector/actor binding is unchanged. Re-observe before refreezing.
+			resetAuthorityCadence(w)
+			if reflect.DeepEqual(previous.OpenMerge.Binding, request.Pin.OpenMerge.Binding) {
+				// Publish invalidation before any fallible seeing read. Other
+				// nodes and already frozen guards must stop using the old input
+				// even if observation is temporarily unavailable.
+				request.DraftID = 0
+			}
+		}
 		w.authorityObservation = &request
 	}
 	if mode == authority.OpenMerge && previous != nil && previous.OpenMerge != nil && (request.DraftID == 0 || queue.AuthorityDraftAdopted(*previous) && request.DraftID == previous.OpenMerge.Activation.Proposed.EventID) {
 		unchanged := request.Pin
 		unchanged.OpenMerge = previous.OpenMerge
 		input := previous.OpenMerge.VerificationInput
-		inputsMatch := !queue.AuthorityDraftAdopted(*previous) || input != nil && reflect.DeepEqual(*input, queue.AuthorityVerificationInput{BaseSelectors: request.Input.BaseSelectors, ExpectedRefs: request.Input.ExpectedRefs, AppID: request.Input.AppID})
+		inputsMatch := !queue.AuthorityDraftAdopted(*previous) || reflect.DeepEqual(input, expectedInput)
 		if inputsMatch && reflect.DeepEqual(previous.OpenMerge.Binding, request.Pin.OpenMerge.Binding) && reflect.DeepEqual(*previous, unchanged) {
 			return nil, nil
 		}

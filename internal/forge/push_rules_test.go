@@ -313,3 +313,26 @@ func TestPreparedPushBoundsTotalParentEdges(t *testing.T) {
 		t.Fatal("unbounded aggregate parent graph accepted")
 	}
 }
+
+func TestPreparedPathBudgetIsIndependentPerCommit(t *testing.T) {
+	p := preparedFixture()
+	first := p.Refs[0].Commits[0]
+	first.Files = []PushFile{}
+	first.Diffs[0].Paths = make([]string, MaxPushPaths)
+	for i := range first.Diffs[0].Paths {
+		first.Diffs[0].Paths[i] = fmt.Sprintf("p%06d", i)
+	}
+	second := first
+	second.OID = strings.Repeat("d", 40)
+	second.Parents = []string{first.OID}
+	second.Diffs = []PushDiff{{Parent: first.OID, Paths: append([]string{}, first.Diffs[0].Paths...)}}
+	p.Refs[0].NewSHA = second.OID
+	p.Refs[0].Commits = []PushCommit{first, second}
+	if err := ValidatePreparedPush(p); err != nil {
+		t.Fatalf("individually bounded commits rejected cumulatively: %v", err)
+	}
+	p.Refs[0].Commits[1].Diffs[0].Paths = append(second.Diffs[0].Paths, "overflow")
+	if err := ValidatePreparedPush(p); err == nil {
+		t.Fatal("accepted one commit over its independent path cap")
+	}
+}

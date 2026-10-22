@@ -122,7 +122,7 @@ func TestVerificationConcurrentRuntimeAndAdoption(t *testing.T) {
 	if state.AuthorityPin().OpenMerge.Activation == nil || state.WriteRestrictionStatus().State != "verified" {
 		t.Fatal("matching draft not adopted")
 	}
-	retry, err := s.AdoptAuthorityPin(t.Context(), q, pin, 9223372036854775807, 0, time.Time{}, time.Time{}, forge.WriteRestrictionInput{}, authority.Observation{})
+	retry, err := s.AdoptAuthorityPin(t.Context(), q, pin, 9223372036854775807, 0, time.Time{}, time.Time{}, in, authority.Observation{})
 	if err == nil && retry != receipt {
 		t.Fatal("retry lost durable receipt", retry, receipt)
 	}
@@ -310,7 +310,7 @@ func TestAuthorityAdoptionReceiptsAndNoOpRetry(t *testing.T) {
 			// Invalid draft IDs and unusable reads prove retry returns before
 			// proposed history lookup, without appending another pin event.
 			for range 3 {
-				retry, err := s.AdoptAuthorityPin(t.Context(), q, pin, 9223372036854775807, 42, time.Time{}, time.Time{}, forge.WriteRestrictionInput{}, authority.Observation{})
+				retry, err := s.AdoptAuthorityPin(t.Context(), q, pin, 9223372036854775807, 42, time.Time{}, time.Time{}, in, authority.Observation{})
 				must(t, err)
 				if retry != receipt {
 					t.Fatal("retry changed receipt", retry, receipt)
@@ -326,7 +326,7 @@ func TestAuthorityAdoptionReceiptsAndNoOpRetry(t *testing.T) {
 			if state.WriteRestrictionStatus().State != wantStatus || watermark != receipt.EventID {
 				t.Fatal(state.WriteRestrictionStatus(), watermark)
 			}
-			retry, err := restarted.AdoptAuthorityPin(t.Context(), q, pin, 9223372036854775807, 0, time.Time{}, time.Time{}, forge.WriteRestrictionInput{}, authority.Observation{})
+			retry, err := restarted.AdoptAuthorityPin(t.Context(), q, pin, 9223372036854775807, 0, time.Time{}, time.Time{}, in, authority.Observation{})
 			must(t, err)
 			if retry != receipt {
 				t.Fatal("restart lost receipt", retry, receipt)

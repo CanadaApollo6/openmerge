@@ -186,6 +186,26 @@ func (s State) observeAuthority(e Event) (State, bool) {
 		if v.OpenMerge != nil && s.matchesAuthority(v.OpenMerge.Binding) {
 			p := *s.authority
 			p.Pin = cloneAuthority(&v)
+			// A policy binding omits the live ref inventory. Losing or changing
+			// its interpreted adoption invalidates positive evidence even when
+			// that binding and the governing commit are unchanged. Keep known
+			// violations until a new observation can positively clear them.
+			if !reflect.DeepEqual(s.authority.Pin.OpenMerge.VerificationInput, v.OpenMerge.VerificationInput) || AuthorityDraftAdopted(*s.authority.Pin) && !AuthorityDraftAdopted(v) {
+				s = cloneState(s)
+				p.Adopted, p.Verified, p.Observed = nil, nil, nil
+				p.LastVerifiedAt, p.LastObservedAt = time.Time{}, time.Time{}
+				p.Complete = false
+				current := s.rulesSources[WriteRestriction]
+				current.revision++
+				s.rulesSources[WriteRestriction] = current
+				s.authority = &p
+				if AuthorityDraftAdopted(v) {
+					s.authority.Adopted = cloneAuthority(&v)
+					a := v.OpenMerge.Activation
+					s = s.foldWriteRestriction(current.revision, a.SeeingReadAt, a.Evidence, true, "")
+				}
+				return s, true
+			}
 			s.authority = &p
 			return s, true
 		}
