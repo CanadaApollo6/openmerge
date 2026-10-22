@@ -29,9 +29,27 @@ func TestRepositoryAuthorityCompletion(t *testing.T) {
 			t.Fatalf("completion: %+v", result)
 		}
 	}
+	// reason reports the explanation for one partition; every incomplete state
+	// must be attributable, not just a false aggregate.
+	reason := func(base, lane string, inv AuthorityBranchInventory) string {
+		t.Helper()
+		result, err := s.RepositoryAuthorityCompletion(t.Context(), request, inv)
+		must(t, err)
+		for _, q := range result.Queues {
+			if q.Base == base && q.Lane == lane && q.Installation == "7" {
+				return q.Reason
+			}
+		}
+		return ""
+	}
+	current := func() AuthorityBranchInventory {
+		return AuthorityBranchInventory{DefaultBranch: "main", Branches: inventory}
+	}
 	check(false)
-	add := func(base, digest string, lifecycle string) QueueID {
-		key := QueueKey{Installation: "7", Repository: "owner/repo", BaseBranch: base}
+	if got := reason("main", "", current()); got != "registration_missing" {
+		t.Fatalf("empty repository reason %q", got)
+	}
+	addWith := func(key QueueKey, digest string, lifecycle string, adopt bool) QueueID {
 		id, err := s.EnsureQueue(t.Context(), key)
 		must(t, err)
 		binding := draft.Binding
@@ -69,9 +87,11 @@ func TestRepositoryAuthorityCompletion(t *testing.T) {
 		proposal.Scope = "proposed"
 		pin := queue.PolicyAuthorityApplied{Authority: authority.OpenMerge, GoverningCommit: "tip", EffectiveDigest: digest, DefaultBranch: "main", CoverageDigest: binding.CoverageDigest, OpenMerge: &queue.AuthorityPin{Binding: binding}}
 		at := proposal.VerifiedAt.Add(time.Second)
-		pin = queue.BindAuthorityDraft(pin, 1, proposal, at, at, in, evidence)
-		if !queue.AuthorityDraftAdopted(pin) {
-			t.Fatal("fixture did not adopt")
+		if adopt {
+			pin = queue.BindAuthorityDraft(pin, 1, proposal, at, at, in, evidence)
+			if !queue.AuthorityDraftAdopted(pin) {
+				t.Fatal("fixture did not adopt")
+			}
 		}
 		appendEvents(t, s, id, queue.ConfigApplied{Commit: "tip", Digest: digest}, pin)
 		if lifecycle != "" {
@@ -79,15 +99,36 @@ func TestRepositoryAuthorityCompletion(t *testing.T) {
 		}
 		return id
 	}
+	add := func(base, digest string, lifecycle string) QueueID {
+		return addWith(QueueKey{Installation: "7", Repository: "owner/repo", BaseBranch: base}, digest, lifecycle, true)
+	}
 	add("main", request.Digest, "")
 	check(false)
+	if got := reason("release/v1", "", current()); got != "registration_missing" {
+		t.Fatalf("selected unregistered base reason %q", got)
+	}
 	add("release/v1", strings.Repeat("b", 64), "retired")
 	check(false)
+	// Mixed digests: a retired partition on another policy is not silently excluded.
+	if got := reason("release/v1", "", current()); got != "digest_mismatch" {
+		t.Fatalf("mixed digest reason %q", got)
+	}
+	if got := reason("main", "", current()); got != "complete" {
+		t.Fatalf("matching partition reason %q", got)
+	}
 	request.Targets = map[string]string{"release/v1": strings.Repeat("b", 64)}
 	// Different effective queue digests are explicit targets, never auto-selected.
 	check(true)
 	inventory = append(inventory, "release/v2")
 	check(false)
+	// Incomplete propagation: a newly selected branch is unregistered and every
+	// existing pin still carries the old ExpectedRefs.
+	if got := reason("release/v2", "", current()); got != "registration_missing" {
+		t.Fatalf("new branch reason %q", got)
+	}
+	if got := reason("main", "", current()); got != "discovery_inputs_stale" {
+		t.Fatalf("stale inputs reason %q", got)
+	}
 	request.Targets["release/v2"] = request.Digest
 	add("release/v2", request.Digest, "dormant")
 	check(false) // Existing pins must also adopt the newly discovered inventory.
@@ -101,6 +142,9 @@ func TestRepositoryAuthorityCompletion(t *testing.T) {
 	pin := state.AuthorityPin()
 	appendEvents(t, s, mainID, queue.WriteRestrictionObserved{Binding: pin.OpenMerge.Binding, Basis: state.RulesSourceRevision(queue.WriteRestriction), ObservedAt: draft.VerifiedAt.Add(time.Hour), Evidence: authority.Observation{Inventory: authority.ReadFailure, Protections: []authority.Protection{}, Coverage: []authority.Coverage{}, Findings: []authority.Finding{}}, ReadError: "authority write restriction read failed: timeout"})
 	check(false)
+	if got := reason("main", "", current()); got != "verification_incomplete" {
+		t.Fatalf("read failure reason %q", got)
+	}
 	state, _, err = s.Load(t.Context(), mainID)
 	must(t, err)
 	appendEvents(t, s, mainID, queue.WriteRestrictionVerified{Binding: pin.OpenMerge.Binding, Basis: state.RulesSourceRevision(queue.WriteRestriction), Scope: "applied", Nonce: strings.Repeat("c", 64), Operator: "operator", VerifiedAt: draft.VerifiedAt.Add(2 * time.Hour), Evidence: pin.OpenMerge.Activation.Evidence, ProtectionFingerprint: pin.OpenMerge.Activation.ProtectionFingerprint})
@@ -111,6 +155,9 @@ func TestRepositoryAuthorityCompletion(t *testing.T) {
 	must(t, err)
 	if renamedDefault.Complete {
 		t.Fatal("default-branch name drift accepted with matching commit/digests")
+	}
+	if got := reason("main", "", AuthorityBranchInventory{DefaultBranch: "release/v1", Branches: inventory}); got != "discovery_inputs_stale" {
+		t.Fatalf("default rename reason %q", got)
 	}
 	otherID, err := s.EnsureQueue(t.Context(), QueueKey{Installation: "another", Repository: "owner/repo", BaseBranch: "historical"})
 	must(t, err)
@@ -141,6 +188,22 @@ func TestRepositoryAuthorityCompletion(t *testing.T) {
 	result, err := s.RepositoryAuthorityCompletion(t.Context(), request, AuthorityBranchInventory{DefaultBranch: "main"})
 	if err == nil || result.Complete {
 		t.Fatal("missing discovery accepted")
+	}
+	if got := reason("paused", "", current()); got != "pin_missing" {
+		t.Fatalf("paused reason %q", got)
+	}
+	// A lane partition with an adopted, matching pin is still unsupported, and
+	// a pinned but unadopted partition never counts as propagated.
+	addWith(QueueKey{Installation: "7", Repository: "owner/repo", BaseBranch: "main", Lane: "priority"}, request.Digest, "", true)
+	if got := reason("main", "priority", current()); got != "unsupported_lane" {
+		t.Fatalf("lane reason %q", got)
+	}
+	if got := reason("release/v2", "", current()); got != "complete" {
+		t.Fatalf("release/v2 before unadopted repin %q", got)
+	}
+	addWith(QueueKey{Installation: "7", Repository: "owner/repo", BaseBranch: "release/v2"}, request.Digest, "", false)
+	if got := reason("release/v2", "", current()); got != "adoption_missing" {
+		t.Fatalf("unadopted reason %q", got)
 	}
 }
 
