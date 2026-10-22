@@ -24,24 +24,9 @@ func (s *session) validatePush(ctx context.Context, repo forge.RepoRef, opts for
 	// An arbitrary request BaseSHA cannot change the frozen dispatch intent.
 	for i := range refs {
 		if operation == forge.PushBuild && refs[i].OldSHA == "" && refs[i].NewSHA != "" {
-			baseRef := opts.Context.BaseRef()
-			values, err := s.read(ctx, baseRef)
-			if err != nil {
-				return err
-			}
-			if values[baseRef] == "" {
-				return errors.New("creation boundary base is absent")
-			}
 			base := opts.Context.BuildBaseSHA()
-			if err := s.commits(ctx, base); err != nil {
+			if err := s.proveBuildBase(ctx, opts.Context); err != nil {
 				return err
-			}
-			if err := s.commits(ctx, values[baseRef]); err != nil {
-				return err
-			}
-			_, diagnostic, err := s.run(ctx, "", "merge-base", "--is-ancestor", values[baseRef], base)
-			if err != nil {
-				return s.failure("prepared boundary proof", diagnostic, err)
 			}
 			refs[i].CreationBaseSHA = base
 		}
@@ -51,6 +36,34 @@ func (s *session) validatePush(ctx context.Context, repo forge.RepoRef, opts for
 		return err
 	}
 	return opts.ValidateBeforePush(ctx, repo, p)
+}
+
+// proveBuildBase distinguishes a successful negative ancestry observation from
+// transport, missing-object and Git execution failures. It is authority-only.
+func (s *session) proveBuildBase(ctx context.Context, c forge.PushValidationContext) error {
+	baseRef := c.BaseRef()
+	values, err := s.read(ctx, baseRef)
+	if err != nil {
+		return err
+	}
+	live, base := values[baseRef], c.BuildBaseSHA()
+	if live == "" {
+		return errors.New("creation boundary base is absent")
+	}
+	if err := s.commits(ctx, base); err != nil {
+		return err
+	}
+	if err := s.commits(ctx, live); err != nil {
+		return err
+	}
+	_, diagnostic, err := s.run(ctx, "", "merge-base", "--is-ancestor", live, base)
+	if live != base && exitCode(err, 1) && strings.TrimSpace(diagnostic) == "" {
+		return &forge.BaseMovedError{SHA: live}
+	}
+	if err != nil {
+		return s.failure("prepared boundary proof", diagnostic, err)
+	}
+	return nil
 }
 
 func (s *session) preparedPush(ctx context.Context, operation forge.PushOperation, refs []forge.PushRef) (forge.PreparedPush, error) {

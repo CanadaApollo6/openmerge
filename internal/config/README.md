@@ -326,8 +326,10 @@ validated by the docs-fence agreement tests. Future Stage B/C examples remain in
 ADR 0008 PR 9a reserves repository-root `policy_authority` and `break_glass`.
 Omitted authority and explicit `policy_authority: github` have identical effective
 configuration and digests. `break_glass` is invalid in GitHub mode. The public
-schema, loader, and `openmerge config validate` reject `policy_authority: openmerge`
-with an activation-unavailable diagnostic until the complete PR 9c gate lands.
+schema, loader, and `openmerge config validate` accept `policy_authority: openmerge`
+with a dedicated-team `break_glass`. Production activation independently requires
+the reviewed runtime plan, pre-switch verification, drain/backup receipt and fresh
+repository-wide completion; see the public activation runbook in `docs/operating.md`.
 No runtime switch is available in this intermediate release.
 
 Isolated setup/proposed verification can still parse an authority candidate with

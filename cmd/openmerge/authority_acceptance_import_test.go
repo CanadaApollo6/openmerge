@@ -100,24 +100,28 @@ func TestAuthorityAcceptanceImportGoverningEvidenceCannotBeAccepted(t *testing.T
 			var out, stderr bytes.Buffer
 			args := []string{"setup", "import-protection", "--repo", "acme/project", "--json"}
 			code := run(args, &out, &stderr)
-			if code != 1 {
-				t.Fatal("public activation barrier lost", code)
+			if code != 0 && code != 1 {
+				t.Fatal("unexpected import exit", code)
 			}
 
 			var report github.ProtectionReport
 			if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 				t.Fatalf("%v: %s", err, &stderr)
 			}
-			if governingReads == 0 || report.GoverningCommit != commit || report.Ready {
-				t.Fatal("governing evidence or public barrier missing")
+			if governingReads == 0 || report.GoverningCommit != commit {
+				t.Fatal("governing evidence missing")
 			}
 			governingFailure := false
-			activationBarrier := false
+			activationGuidance := false
 			for _, item := range report.Items {
-				if item.Source == "activation" && strings.Contains(item.Message, config.AuthorityActivationUnavailable) {
-					activationBarrier = true
+				if item.Source == "activation" && strings.Contains(item.Message, config.AuthorityActivationPrerequisites) {
+					activationGuidance = true
+					if item.Blocking {
+						t.Fatal("public import retained permanent activation barrier")
+					}
+					continue
 				}
-				if item.Source != "governing-evidence" && item.Source != "activation" {
+				if item.Source != "governing-evidence" {
 					continue
 				}
 				if item.Source == "governing-evidence" {
@@ -141,8 +145,8 @@ func TestAuthorityAcceptanceImportGoverningEvidenceCannotBeAccepted(t *testing.T
 					t.Fatalf("accept waived governing gate: %d %s", code, &stderr)
 				}
 			}
-			if !activationBarrier {
-				t.Fatal("public activation barrier absent")
+			if !activationGuidance {
+				t.Fatal("public activation guidance absent")
 			}
 			if governingFailure != (failure == "owners") {
 				t.Fatal("governing failure did not reflect actual landed owner coverage", failure)

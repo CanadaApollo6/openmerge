@@ -88,6 +88,7 @@ func NewRepositories(ctx context.Context, db *store.Store, repos []Repository, o
 }
 
 func (s *Server) register(ctx context.Context, target Target) (*worker, error) {
+	target = s.publicAuthorityTarget(target)
 	if target.Resolve == nil && (target.Driver == nil || target.Git == nil || target.BotLogin == "") {
 		return nil, errors.New("target requires driver, git and App login")
 	}
@@ -129,6 +130,7 @@ func (s *Server) canonicalQueue(ctx context.Context, target Target) (store.Queue
 }
 
 func (s *Server) registerID(ctx context.Context, target Target, id store.QueueID) (*worker, error) {
+	target = s.publicAuthorityTarget(target)
 	for _, w := range s.workers() {
 		if w.id == id {
 			w.mu.Lock()

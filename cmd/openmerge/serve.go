@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/config/condition"
 	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
@@ -29,6 +30,8 @@ import (
 )
 
 type serveOptions struct {
+	authorityPlan, emissionReceipt                                 string
+	emissionReceiptMaxAge                                          time.Duration
 	database, key, repos, base, cache, listen, secret              string
 	app, installation                                              int64
 	logLevel, committerName, committerEmail                        string
@@ -50,6 +53,9 @@ func parseServe(args []string, output io.Writer) (serveOptions, error) {
 		}
 		return fallback
 	}
+	flags.StringVar(&o.authorityPlan, "authority-plan", env("AUTHORITY_PLAN", ""), "reviewed verification plan with proposed event IDs")
+	flags.StringVar(&o.emissionReceipt, "emission-receipt", env("EMISSION_RECEIPT", ""), "database-bound drain and tested-backup receipt")
+	flags.DurationVar(&o.emissionReceiptMaxAge, "emission-receipt-max-age", authority.DefaultEmissionReceiptMaxAge, "maximum drain/backup receipt age")
 	flags.StringVar(&o.database, "database-url", env("DATABASE_URL", ""), "Postgres URL (OPENMERGE_DATABASE_URL)")
 	flags.StringVar(&o.key, "github-private-key", env("GITHUB_PRIVATE_KEY", ""), "RSA PEM key path (OPENMERGE_GITHUB_PRIVATE_KEY)")
 	flags.StringVar(&o.repos, "repos", env("REPOS", ""), "deprecated optional comma-separated owner/repo glob allowlist (OPENMERGE_REPOS)")
@@ -186,6 +192,10 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger, saniti
 			logger.Warn(setting.flag+" / "+setting.env+" is deprecated; use "+setting.replacement+"; this setting now only narrows discovery", "allowlist", setting.value)
 		}
 	}
+	authorityRuntime, err := productionAuthorityRuntime(o)
+	if err != nil {
+		return err
+	}
 	factory := &installationTargets{app: app, options: o, logger: logger, bundles: make(map[string]*installationBundle)}
 	// Audits have their own token refresh locks and Git caches. They spend no
 	// installation REST/GraphQL quota; credentials are minted with the App JWT.
@@ -244,7 +254,7 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger, saniti
 			return result, nil
 		},
 	}
-	service, err := serve.NewDiscovery(ctx, db, discovery, serve.Options{Health: status.HealthSettings{OverdueGrace: o.healthGrace, MaxSuccessAge: o.healthMaxAge, MaxCycleDuration: o.healthMaxCycle, ProgressStallLimit: o.healthProgressStall}, PollInterval: o.poll, BackstopInterval: o.backstop, WebhookHealthWindow: o.webhookHealthWindow, WebhooksConfigured: o.listen != "", RulesInterval: o.rulesInterval, DiscoveryInterval: o.discoveryInterval, BaseAllowlist: splitAllowlist(o.base), Concurrency: o.concurrency, Logger: logger, DisableDeleteHeadBranch: !o.deleteHeadBranch, OutsidePushHistory: auditFactory.outsidePushHistory})
+	service, err := serve.NewDiscovery(ctx, db, discovery, serve.Options{Authority: authorityRuntime, Health: status.HealthSettings{OverdueGrace: o.healthGrace, MaxSuccessAge: o.healthMaxAge, MaxCycleDuration: o.healthMaxCycle, ProgressStallLimit: o.healthProgressStall}, PollInterval: o.poll, BackstopInterval: o.backstop, WebhookHealthWindow: o.webhookHealthWindow, WebhooksConfigured: o.listen != "", RulesInterval: o.rulesInterval, DiscoveryInterval: o.discoveryInterval, BaseAllowlist: splitAllowlist(o.base), Concurrency: o.concurrency, Logger: logger, DisableDeleteHeadBranch: !o.deleteHeadBranch, OutsidePushHistory: auditFactory.outsidePushHistory})
 	if err != nil {
 		return err
 	}
@@ -385,4 +395,33 @@ func splitAllowlist(value string) []string {
 		return nil
 	}
 	return strings.Split(value, ",")
+}
+
+func productionAuthorityRuntime(o serveOptions) (*serve.AuthorityRuntime, error) {
+	if o.authorityPlan == "" && o.emissionReceipt == "" {
+		return nil, nil
+	}
+	if o.authorityPlan == "" || o.emissionReceipt == "" || o.emissionReceiptMaxAge <= 0 {
+		return nil, errors.New("authority opt-in requires plan, receipt and positive maximum age")
+	}
+	var plan struct {
+		Targets []serve.AuthorityTarget `json:"targets"`
+	}
+	if err := readVerificationJSON(o.authorityPlan, &plan); err != nil {
+		return nil, errors.New("authority plan unavailable or invalid")
+	}
+	for _, target := range plan.Targets {
+		if target.Input.AppID != strconv.FormatInt(o.app, 10) {
+			return nil, errors.New("authority plan App binding mismatch")
+		}
+	}
+
+	runtime := &serve.AuthorityRuntime{Targets: plan.Targets, ReceiptMaxAge: o.emissionReceiptMaxAge, Receipt: func() (authority.EmissionReceipt, error) {
+		var receipt authority.EmissionReceipt
+		if err := readVerificationJSON(o.emissionReceipt, &receipt); err != nil {
+			return receipt, errors.New("authority emission receipt unavailable or invalid")
+		}
+		return receipt, nil
+	}}
+	return runtime, runtime.Validate()
 }

@@ -54,8 +54,8 @@ func Find(read func(path string) ([]byte, bool, error)) (path string, data []byt
 }
 
 // Config is a validated version 1 repository configuration.
-// Load never populates PolicyAuthority or BreakGlass while public authority
-// activation is unavailable; explicit github normalizes to their zero values.
+// Explicit github normalizes to zero authority fields. OpenMerge declarations
+// are public; production activation independently requires operational evidence.
 type Config struct {
 	PolicyAuthority  authority.Mode            `yaml:"policy_authority,omitempty"`
 	BreakGlass       *AuthorityTeam            `yaml:"break_glass,omitempty"`
@@ -68,7 +68,7 @@ type Config struct {
 	DeleteHeadBranch *bool                     `yaml:"delete_head_branch,omitempty"`
 }
 
-// AuthorityTeam is the dedicated break-glass team declaration reserved for activation.
+// AuthorityTeam is the dedicated break-glass team declaration.
 type AuthorityTeam struct {
 	Team string `yaml:"team"`
 }
@@ -203,7 +203,10 @@ func Load(data []byte) (Config, []Diagnostic, error) {
 	declaration, authorityErrors := parseAuthorityDeclaration(root)
 	p.errors = append(p.errors, authorityErrors...)
 	if declaration.Mode == authority.OpenMerge {
-		p.error(fields["policy_authority"], "policy_authority", AuthorityActivationUnavailable)
+		cfg.PolicyAuthority = authority.OpenMerge
+		if declaration.BreakGlass != nil {
+			cfg.BreakGlass = &AuthorityTeam{Team: declaration.BreakGlass.Team}
+		}
 	}
 	if n := fields["version"]; n == nil {
 		p.error(root, "version", "required; supported versions: 1")

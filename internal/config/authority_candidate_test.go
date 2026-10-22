@@ -13,7 +13,7 @@ import (
 
 func authorityCandidateSchema(t *testing.T) *jsonschema.Schema {
 	t.Helper()
-	data, err := os.ReadFile("testdata/authority.candidate.schema.json")
+	data, err := os.ReadFile("testdata/authority.activation.schema.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,8 +98,7 @@ func TestAuthorityCandidateSchemaAgreement(t *testing.T) {
 				assertSchemaAgreement(t, publicData, publicErr)
 			}
 			valid := candidateErr == nil
-			// The retained PR 1 fixture describes the historical role proposal.
-			futureValid := tc.valid || tc.name == "openmerge repository admin"
+			futureValid := tc.valid
 			if valid != tc.valid || (futureErr == nil && publicErr == nil) != futureValid {
 				t.Fatalf("candidate/schema disagreement; candidate=%v future=%v public=%v", candidateErr, futureErr, publicErr)
 			}
@@ -108,8 +107,8 @@ func TestAuthorityCandidateSchemaAgreement(t *testing.T) {
 					t.Fatalf("candidate authority = %+v, want mode=%s actor=%+v", candidate.Authority, tc.mode, tc.actor)
 				}
 				if tc.mode == authority.OpenMerge {
-					if _, _, err := Load(data); err == nil {
-						t.Fatal("public loader accepted a future authority key")
+					if _, _, err := Load(data); err != nil {
+						t.Fatal("public loader refused authority", err)
 					}
 				}
 			}

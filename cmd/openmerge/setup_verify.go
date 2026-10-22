@@ -25,8 +25,9 @@ import (
 // Prepared targets use existing internal contracts. This file is an operator
 // artifact; it is never accepted by the repository's public config loader.
 type verificationTarget struct {
-	Key   store.QueueKey              `json:"queue"`
-	Input forge.WriteRestrictionInput `json:"input"`
+	Key     store.QueueKey              `json:"queue"`
+	Input   forge.WriteRestrictionInput `json:"input"`
+	DraftID int64                       `json:"draft_id,omitempty"`
 }
 type verificationPlan struct {
 	Targets []verificationTarget `json:"targets"`
@@ -114,12 +115,18 @@ func runRulesVerification(ctx context.Context, opts verifyOptions, rules github.
 		return err
 	}
 	defer db.Close()
+	if err := db.CheckAuthorityEmissionBackup(ctx, receipt.Reconciliation.BackupWatermark); err != nil {
+		return err
+	}
 	return verifyTargets(ctx, db, reader, plan, opts.Operator, out, verificationReceiptGate{Prepare: func() error {
 		identity, err := db.DatabaseIdentity(ctx)
 		if err != nil {
 			return errors.New("verification receipt database identity unavailable")
 		}
-		return receipt.ValidateForBinary(identity, time.Now(), opts.ReceiptMaxAge, authority.RunningBinaryRevision())
+		if err := receipt.ValidateForBinary(identity, time.Now(), opts.ReceiptMaxAge, authority.RunningBinaryRevision()); err != nil {
+			return err
+		}
+		return db.CheckAuthorityEmissionBackup(ctx, receipt.Reconciliation.BackupWatermark)
 	}, Recheck: func() error {
 		return receipt.RecheckEmissionWindowForBinary(time.Now(), opts.ReceiptMaxAge, authority.RunningBinaryRevision())
 	}})

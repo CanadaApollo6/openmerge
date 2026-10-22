@@ -15,7 +15,7 @@ import (
 
 // authorityActivation is an internal, explicit request, never derived from a
 // candidate config or a journal pin. w.AuthorityRequired is the mechanism;
-// production constructors do not enable it.
+// production constructors enable it only with a reviewed runtime plan.
 // Config selects atomic config/pin lifecycle emission. A nil Config retains
 // the pin-only adoption seam for an already durable governing configuration.
 type authorityActivation struct {
@@ -26,6 +26,7 @@ type authorityActivation struct {
 	Pin           queue.PolicyAuthorityApplied
 	DraftID       int64
 	Input         forge.WriteRestrictionInput
+	Recheck       func(context.Context) error
 	Read          func(context.Context) (authority.Observation, error)
 }
 
@@ -49,7 +50,13 @@ func (s *Server) activateAuthority(ctx context.Context, w *worker, request autho
 		if err != nil {
 			return err
 		}
-		return request.Receipt.ValidateForBinary(identity, time.Now().UTC(), request.ReceiptMaxAge, authority.RunningBinaryRevision())
+		if err := request.Receipt.ValidateForBinary(identity, time.Now().UTC(), request.ReceiptMaxAge, authority.RunningBinaryRevision()); err != nil {
+			return err
+		}
+		if w.publicAuthority {
+			return s.store.CheckAuthorityEmissionBackup(ctx, request.Receipt.Reconciliation.BackupWatermark)
+		}
+		return nil
 	}
 	if err := validateReceipt(); err != nil {
 		return zero, err
@@ -60,6 +67,9 @@ func (s *Server) activateAuthority(ctx context.Context, w *worker, request autho
 	state, _, err := s.store.Load(ctx, w.id)
 	if err != nil {
 		return zero, err
+	}
+	if w.publicAuthority && request.Pin.Authority == authority.OpenMerge && state.AuthorityPin() == nil && request.DraftID <= 0 {
+		return zero, errors.New("public authority activation requires setup --verify proposed verification")
 	}
 	basis := state.RulesSourceRevision(queue.WriteRestriction)
 	started := time.Now().UTC()
@@ -74,6 +84,14 @@ func (s *Server) activateAuthority(ctx context.Context, w *worker, request autho
 	// A slow/quota-delayed read must not outlive the first-emission receipt.
 	if err := validateReceipt(); err != nil {
 		return zero, err
+	}
+	if request.Recheck != nil {
+		if err := request.Recheck(ctx); err != nil {
+			return zero, err
+		}
+		if err := request.Receipt.RecheckEmissionWindowForBinary(time.Now().UTC(), request.ReceiptMaxAge, authority.RunningBinaryRevision()); err != nil {
+			return zero, err
+		}
 	}
 	var receipt store.AuthorityAdoptionReceipt
 	if request.Config != nil {
@@ -164,6 +182,30 @@ func (s *Server) prepareAuthorityLifecycle(ctx context.Context, w *worker, state
 		return nil, err
 	}
 	request := resolved.Activation
+	if w.publicAuthority {
+		request.Recheck = func(ctx context.Context) error {
+			currentBranch, err := w.Driver.DefaultBranch(ctx, w.repo())
+			if err != nil || currentBranch != branch || w.AuthorityCompletionGit == nil {
+				return errors.New("authority governing ref changed or unavailable; retry")
+			}
+			currentTip, err := w.AuthorityCompletionGit.ReadRef(ctx, w.repo(), branch)
+			if err != nil || currentTip != tip {
+				return errors.New("authority governing ref changed or unavailable; retry")
+			}
+			return nil
+		}
+	}
+
+	if w.publicAuthority && mode == authority.GitHub {
+		if s.options.Authority.Receipt == nil {
+			return nil, errors.New("authority rollback receipt unavailable")
+		}
+		request.Receipt, err = s.options.Authority.Receipt()
+		if err != nil {
+			return nil, errors.New("authority rollback receipt unavailable")
+		}
+		request.ReceiptMaxAge = s.options.Authority.ReceiptMaxAge
+	}
 	request.Pin = queue.PolicyAuthorityApplied{GoverningCommit: tip, EffectiveDigest: digest, Authority: mode, DefaultBranch: branch, CoverageDigest: coverage}
 	if mode == authority.OpenMerge {
 		installation, err := strconv.ParseInt(w.Key.Installation, 10, 64)
@@ -172,6 +214,9 @@ func (s *Server) prepareAuthorityLifecycle(ctx context.Context, w *worker, state
 		}
 		binding := authority.PolicyBinding{InstallationID: installation, RepositoryID: resolved.RepositoryID, Repository: w.Key.Repository, QueueKey: w.Key.Installation + "/" + w.Key.Repository + "/" + w.Key.BaseBranch, EffectiveDigest: digest, CoverageDigest: coverage, DefaultBranch: branch, MergeMethod: string(w.cfg.MergeMethod), DeclaredActor: resolved.Policy.BreakGlass.Declared, ResolvedActor: resolved.Policy.BreakGlass.Resolved}
 		request.Pin.OpenMerge = &queue.AuthorityPin{Binding: binding}
+		if w.publicAuthority && !reflect.DeepEqual(request.Input.Binding, binding) {
+			return nil, errors.New("reviewed authority plan differs from current binding; refresh proposed verification and plan")
+		}
 		request.Input.Repo = w.repo()
 		request.Input.Binding = binding
 		request.Input.BaseSelectors = candidate.BaseSelectors()

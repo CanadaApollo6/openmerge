@@ -180,6 +180,11 @@ func (s *Server) authorityPushOptions(ctx context.Context, w *worker, operation 
 	}
 	id, repo, base, logger := w.id, w.Key.Repository, w.Key.BaseBranch, s.options.Logger
 	guard := forge.PushValidityGuard(func(ctx context.Context, c forge.PushValidationContext) error {
+		if w.publicAuthority {
+			if err := s.RequireAuthorityActivation(ctx, s.publicAuthorityRequest(w)); err != nil {
+				return err
+			}
+		}
 		// Never close over a cached state: reload errors propagate on every call.
 		current, _, err := s.store.Load(ctx, id)
 		if err != nil {

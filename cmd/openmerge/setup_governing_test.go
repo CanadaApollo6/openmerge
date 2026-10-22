@@ -86,8 +86,8 @@ func TestSetupImportGoverningEvidenceCannotBeAccepted(t *testing.T) {
 			var out, stderr bytes.Buffer
 			args := []string{"setup", "import-protection", "--repo", "acme/project", "--json"}
 			code := run(args, &out, &stderr)
-			if code != 1 {
-				t.Fatal("public activation barrier lost", code)
+			if code != 0 && code != 1 {
+				t.Fatal("unexpected import exit", code)
 			}
 			if bytes.Contains(stderr.Bytes(), []byte("ghs_SECRET")) || bytes.Contains(out.Bytes(), []byte("ghs_SECRET")) {
 				t.Fatal("secret exposed")
@@ -102,15 +102,21 @@ func TestSetupImportGoverningEvidenceCannotBeAccepted(t *testing.T) {
 			if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 				t.Fatalf("%v: %s", err, &stderr)
 			}
-			if governingReads == 0 || report.GoverningCommit != commit || report.Ready {
-				t.Fatal("governing evidence or public barrier missing")
+			if governingReads == 0 || report.GoverningCommit != commit {
+				t.Fatal("governing evidence missing")
 			}
 			found := false
 			for _, item := range report.Items {
-				if failure == "none" && strings.Contains(item.Message, config.AuthorityActivationUnavailable) {
+				if failure == "none" && strings.Contains(item.Message, config.AuthorityActivationPrerequisites) {
 					found = true
 				}
-				if item.Source != "governing-evidence" && item.Source != "activation" {
+				if item.Source == "activation" {
+					if item.Blocking {
+						t.Fatal("public import retained permanent activation barrier")
+					}
+					continue
+				}
+				if item.Source != "governing-evidence" {
 					continue
 				}
 				found = true

@@ -1636,7 +1636,6 @@ lazily; unsupported or oversized patterns produce conservative uncertainty.
 Decision-time code owners always pass through `ResolveOwnerEligibility` with
 fresh identity-bound observations, never a saved membership pool.
 
-
 ### Activation acceptance and handback
 
 Adopt `members: read` on the sandbox App **and its organization installation**
@@ -1768,7 +1767,6 @@ The reader uses O(one page plus one pin) memory and O(queue history) work, plus
 indexed dedupe lookups. Consumers must discard partial output if it fails. ADR
 0008 PR 6 owns warning rendering in status, CLI, API, and health; this PR adds no
 such rendering, schema activation, migration, index, or runtime forge read.
-
 
 ## Authority health alerts (ADR 0008 PR 6, HOLD)
 
@@ -1922,7 +1920,6 @@ this repository-wide visibility. Discovery is uncached, with a 15-second request
 deadline and no separate concurrency semaphore; serialize operator polling to
 avoid concurrent discovery exhausting the App's API budget.
 
-
 Before any authority event or v7 cursor, including **pre-switch**
 `setup rulesets --authority openmerge --verify`, freeze admissions, let every
 attempt settle, stop every journal writer and incompatible reader on every
@@ -1955,14 +1952,14 @@ Capture time must follow the drain; restore-test time must follow capture;
 reconciliation must follow the restore test. Retain the actual evidence whose
 hash is recorded. Receipt checks validate these attestations and the backup's
 bytes; they cannot independently prove that the restore or reconciliation ran.
-The Prepare gate does not require live `max(events.id)` to equal the backup
-watermark: this is the retained **pre-emission** backup, and subsequent verify
-invocations can legitimately follow earlier verification/adoption events.
-Watermark equality would reject those invocations without proving writer
-quiescence. Keep every writer stopped and reconcile all post-backup evidence;
-watermark/restore equality remains an operator attestation, not a live drain
-proof.
-
+Before the first authority-boundary event, the Prepare gate requires live
+`max(events.id) == BackupWatermark` across the database. A changed journal
+refuses; repeat drain, backup and restore testing. After an authority-boundary
+event exists, compatible subsequent verification/adoption may legitimately use
+the retained pre-emission backup. This live check supplements the operator's
+inventory and restore/reconciliation attestations; it cannot prove that a remote
+stopped process will never restart. Keep every writer stopped during first
+emission and retain all post-backup evidence.
 
 For example, the additional receipt fields are:
 
@@ -2050,9 +2047,67 @@ This is a point-in-time completion signal, not a lease or permission surviving
 later discovery/policy changes. Freeze configuration/branch changes during the
 operator switch, consult it again immediately before protection removal, and
 recheck after each resumable partial step. Missing/incomplete propagation means
-retain protection and retry normal reconciliation. Public authority activation
-remains rejected in this build; only 9c-3 may wire these prerequisites into the
-public switch.
+retain protection and retry normal reconciliation. Public activation requires the reviewed production opt-in below; the final
+push guard independently consumes the same fresh repository-wide completion gate.
+
+### Public authority activation (9c-3, Hold)
+
+This implementation merges under **Hold**. Deploy it only after dogfood period B
+drains. The actual organization switch is owner-executed PR 11; offline test
+success does not authorize that switch. Activation supports **one installation
+only**, with **no lanes**. Freeze the default branch, configuration, selectors,
+actor and selected branch inventory for the entire switch. Keep every applicable
+GitHub protection until current repository-wide completion succeeds.
+
+1. Inventory and stop every old worker and strict reader, including admin tools
+   that lack `write_restriction_observed.read_error` or v7 cursor support. Retain
+   the stopped-host inventory, a pre-emission database backup, its SHA-256 and a
+   tested restore/reconciliation receipt bound to the emitting binary revision
+   and live database identity. Before any authority-boundary event exists, the
+   live repository-independent `max(events.id)` must equal `BackupWatermark`.
+   An operator's assertion cannot waive a changed journal: repeat drain, backup
+   and restore testing. Verification checks this before reads and again before
+   its final governing recheck. The documented lock-wait/commit expiry limitation
+   still applies.
+2. Install the write rulesets under existing protection. Complete protection
+   visibility means the complete applicable inventory: inherited organization
+   rulesets, repository rulesets, classic protection, targets, rules, parameters,
+   bypass actors and selected-ref coverage. Permission grants, an empty partial
+   listing or one visible managed ruleset do not establish complete visibility.
+3. Run the existing `setup rulesets --authority openmerge --verify` with the
+   reviewed `--verification-plan`, `--emission-receipt`, `--operator`, `--app-id`,
+   `--repo` and operator `--database-url`. Missing, invalid, expired or wrong-binary
+   receipts refuse before seeing reads. Retain each returned **proposed** event ID.
+   Copy the plan to a runtime plan and add `draft_id` to each target, naming that
+   target's returned proposed event. Keep `queue` and `input` unchanged. No inline
+   proposed payload or per-queue receipt substitutes for that durable event.
+4. Enable the production worker with `serve --authority-plan runtime-plan.json
+   --emission-receipt receipt.json` (or `OPENMERGE_AUTHORITY_PLAN` and
+   `OPENMERGE_EMISSION_RECEIPT`). The default maximum receipt age is 24 hours;
+   `--emission-receipt-max-age` must be positive. The plan binds each queue,
+   installation, App, repository, resolved dedicated team and intended digest.
+   Review a replacement plan and restart when changing that intended binding.
+   The receipt is reloaded and validated during authority resolution; its absence
+   or expiry cannot silently select GitHub behavior. An opted-in target whose
+   landed configuration remains `github` retains the ordinary GitHub path.
+5. Land `policy_authority: openmerge` with its dedicated-team `break_glass` under
+   the old protection. Workers acquire governing evidence, adopt authentic fresh
+   proposals and propagate pins. Before each authority push the production guard
+   requires `AuthorityCompletion.RequireComplete` from actual fresh discovery
+   and `Store.RepositoryAuthorityCompletion`, including all registered partitions.
+   Continue requiring the operator completion CLI immediately before removing
+   only reviewed redundant protection, and after every resumable partial step.
+
+For ExpectedRefs/input drift, retain protection, restore GitHub protection first,
+land `policy_authority: github`, wait for rollback pins, run a **fresh proposed**
+verification for the current inventory, update the runtime plan's event IDs and
+binding, restart and re-enable. Require current completion again. An applied
+verification or an old successful completion cannot repair proposal provenance.
+A rollback to GitHub preserves evidence and does not undo the strict-decoder
+boundary. To downgrade across new events, `read_error` or v7, stop all workers,
+retain the post-emission journal, restore the tested pre-emission backup and
+reconcile subsequent real refs and evidence before resuming. Otherwise keep a
+compatible binary. Never delete evidence or rewrite cursors to force a downgrade.
 
 ### Authority input drift and binary downgrade recovery
 
@@ -2067,13 +2122,13 @@ repository completion API again. An applied verification alone cannot re-adopt
 an invalidated proposal; do not reuse the prior proposal/event ID. This recovery
 remains conservative pending a separately designed provenance contract.
 
-If the live base advances externally between planning and building, the authority
-creation-boundary ancestry check can reject the build as a transient infrastructure
-failure. Retain protection and allow normal base observation/replanning and retry;
-do not bypass validation or treat this as a content conflict. An ancestry-proof
-failure can also mean missing/incomplete history, so this release does not
-translate every failure to a successful base-moved observation. GitHub mode
-retains its existing behavior and output.
+If the live base advances externally between planning and building, a successful
+live ref read plus Git's explicit negative ancestry result produces a typed
+base-moved refusal. Normal configuration/base observation then replans against
+the new base. Retain protection and retry; do not bypass validation or classify
+this as a content conflict. Missing history, ref-read failures and ancestry
+command failures remain errors and never become a successful base observation.
+GitHub mode retains its existing behavior and output.
 
 Rollback to `github` does **not** make retained new events or v7 cursors readable
 by an older binary. With all workers stopped, run the read-only, migration-free downgrade check

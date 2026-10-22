@@ -679,7 +679,7 @@ func TestAuthorityLifecycleRequiresFlagAndResolver(t *testing.T) {
 			_, err = f.PushBase(repo, "main", "candidate", map[string]string{".openmerge.yml": lifecycleConfig(repositoryConfig)})
 			must(t, err)
 			must(t, s.configuration(t.Context(), w))
-			if w.configError == nil || !strings.Contains(w.configError.Error(), config.AuthorityActivationUnavailable) {
+			if w.configError == nil || !strings.Contains(w.configError.Error(), "authority production opt-in required") {
 				t.Fatal("partial opt-in parsed public candidate", w.configError)
 			}
 			events, err := s.store.EventsAfter(t.Context(), w.id, before)

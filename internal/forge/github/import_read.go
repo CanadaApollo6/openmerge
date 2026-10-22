@@ -141,7 +141,7 @@ func (c *setupAPI) readProtection(ctx context.Context, opts ImportOptions) (Prot
 				r.add("", "governing-evidence", "governing-acquisition", "unsupported", true, acquireErr.Error(), "# Repair landed config, CODEOWNERS and forge visibility; --accept cannot waive governing evidence.\n")
 			}
 
-			r.add("", "activation", "public-activation-barrier", "equivalent", true, config.AuthorityActivationUnavailable, "# Public activation remains unavailable.\n")
+			r.add("", "activation", "activation-prerequisites", "equivalent", false, config.AuthorityActivationPrerequisites, "# Run setup --verify, enable the reviewed runtime plan, and require repository-wide completion before removing redundant protection.\n")
 			cfg = candidate.Config
 		} else {
 			cfg, _, err = config.Load(data)

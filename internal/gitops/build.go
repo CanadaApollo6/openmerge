@@ -133,6 +133,11 @@ func (r *Repo) BuildTestRef(ctx context.Context, repo forge.RepoRef, req forge.B
 	}
 	var old string
 	if opts.AuthorityRequired {
+		if opts.Context.BuildBaseSHA() == req.BaseSHA && opts.Context.BaseRef() != "" {
+			if err := s.proveBuildBase(ctx, opts.Context); err != nil {
+				return "", err
+			}
+		}
 		values, err := s.read(ctx, ref)
 		if err != nil {
 			return "", err

@@ -11,6 +11,13 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
 
+// authorityCompletionStore keeps the repository-wide source explicit. Production
+// installs the actual Store; tests may wrap it to count calls without replacing
+// its all-partition snapshot with per-queue receipts.
+type authorityCompletionStore interface {
+	RepositoryAuthorityCompletion(context.Context, store.AuthorityCompletionRequest, store.AuthorityBranchInventory) (store.AuthorityCompletion, error)
+}
+
 // The status API only serves completion through this interface; signature drift
 // would otherwise silently turn the production endpoint into a 503.
 var _ status.AuthorityCompletionSource = (*Server)(nil)
@@ -31,12 +38,16 @@ func (s *Server) AuthorityCompletion(ctx context.Context, request store.Authorit
 	if repo.Branches == nil || target.Driver == nil || target.Git == nil {
 		return store.AuthorityCompletion{}, errors.New("authority completion discovery unavailable")
 	}
+	reader := target.AuthorityCompletionGit
+	if reader == nil {
+		reader = target.Git
+	}
 	tip := func() (string, string, error) {
 		branch, err := target.Driver.DefaultBranch(ctx, forge.RepoRef{Path: repo.Name})
 		if err != nil {
 			return "", "", err
 		}
-		sha, err := target.Git.ReadRef(ctx, forge.RepoRef{Path: repo.Name}, branch)
+		sha, err := reader.ReadRef(ctx, forge.RepoRef{Path: repo.Name}, branch)
 		return branch, sha, err
 	}
 	branch, sha, err := tip()
@@ -48,7 +59,11 @@ func (s *Server) AuthorityCompletion(ctx context.Context, request store.Authorit
 		return store.AuthorityCompletion{}, errors.New("authority completion branch inventory unavailable")
 	}
 	before = slices.Clone(before)
-	result, err := s.store.RepositoryAuthorityCompletion(ctx, request, store.AuthorityBranchInventory{DefaultBranch: branch, DefaultTip: sha, Branches: before})
+	source := s.authorityCompletionStore
+	if source == nil {
+		source = s.store
+	}
+	result, err := source.RepositoryAuthorityCompletion(ctx, request, store.AuthorityBranchInventory{DefaultBranch: branch, DefaultTip: sha, Branches: before})
 	if err != nil {
 		return store.AuthorityCompletion{}, errors.New("authority completion durable inventory unavailable")
 	}

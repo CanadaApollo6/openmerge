@@ -1488,3 +1488,29 @@ Round 4 validates reserved outside-push association keys and acknowledgement SHA
 bindings identically in scan and cache, including GitHub-mode origins. An older
 background snapshot returned after an interrupted newer foreground fold carries
 `ledger_refreshing` until a complete fold or refresh publishes current counts.
+
+### PR 9c-3 activation boundary
+
+Public schema/loader/CLI acceptance is coordinated with explicit production
+opt-in. The [operating guide](../operating.md#public-authority-activation-9c-3-hold)
+defines the reviewed runtime plan and authentic proposed verification IDs. This
+release supports a single installation only; lanes are unsupported. Freeze the
+default branch and selected branch/configuration inventory during the switch.
+The final production push guard consumes fresh repository-wide completion, never
+per-queue receipts. Missing/stale discovery and any registered incomplete
+partition refuse. Pre-switch `setup --verify` and production resolution validate
+the emitting binary, stopped-worker inventory and tested backup receipt. Before
+the first authority-boundary event, live `max(events.id) == BackupWatermark` is
+required in addition to the operator's attestations.
+
+Drain all old strict readers before new events, `read_error` or v7 cursors.
+GitHub rollback retains those boundaries: restore GitHub protection first, then
+land GitHub authority. Input-drift recovery requires fresh proposed verification,
+re-enable and current completion. A binary downgrade requires stopping workers,
+retaining evidence, restoring the tested pre-emission backup and reconciling
+subsequent real refs/evidence; otherwise retain a compatible reader. Receipt
+checks immediately before adoption do not guarantee freshness through lock waits
+or commit. Complete protection visibility includes all applicable inherited,
+repository and classic protections and their targets, rules and bypass actors.
+The deployment Hold lasts until dogfood period B drains; PR 11 remains the
+owner-executed organization release gate.

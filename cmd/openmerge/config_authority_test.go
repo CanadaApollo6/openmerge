@@ -5,12 +5,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
 func TestConfigValidateAuthorityPublicCorpus(t *testing.T) {
-	raw, err := os.ReadFile("../../internal/config/testdata/authority-public.json")
+	raw, err := os.ReadFile("../../internal/config/testdata/authority-public-activation.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -31,9 +30,6 @@ func TestConfigValidateAuthorityPublicCorpus(t *testing.T) {
 			code := validateConfig([]string{path}, &out, &diagnostic)
 			if (code == 0) != tc.Valid {
 				t.Fatalf("exit=%d stderr=%s", code, diagnostic.String())
-			}
-			if tc.Name == "authority unavailable" && !strings.Contains(diagnostic.String(), "authority activation is unavailable") {
-				t.Fatal(diagnostic.String())
 			}
 		})
 	}

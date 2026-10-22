@@ -12,7 +12,7 @@ import (
 )
 
 // authorityDowngradeEventTypes lists every event added since the pre-ADR-0008
-// wire baseline. TestAuthorityDowngradeEventCoverage guards this boundary.
+// wire baseline addec7d^. TestAuthorityDowngradeEventCoverage guards this boundary.
 var authorityDowngradeEventTypes = []string{
 	"policy_authority_applied", "write_restriction_observed", "write_restriction_verified",
 	"outside_push_acknowledged", "landing_checks_recorded",
