@@ -188,6 +188,12 @@ func (s *Server) prepareAuthorityLifecycle(ctx context.Context, w *worker, state
 			// Live branch coverage is an interpretation input even when the
 			// selector/actor binding is unchanged. Re-observe before refreezing.
 			resetAuthorityCadence(w)
+			if reflect.DeepEqual(previous.OpenMerge.Binding, request.Pin.OpenMerge.Binding) {
+				// Publish invalidation before any fallible seeing read. Other
+				// nodes and already frozen guards must stop using the old input
+				// even if observation is temporarily unavailable.
+				request.DraftID = 0
+			}
 		}
 		w.authorityObservation = &request
 	}
@@ -200,7 +206,7 @@ func (s *Server) prepareAuthorityLifecycle(ctx context.Context, w *worker, state
 			return nil, nil
 		}
 	}
-	if mode == authority.OpenMerge && (previous == nil || previous.OpenMerge == nil || !reflect.DeepEqual(previous.OpenMerge.Binding, request.Pin.OpenMerge.Binding) || inputsChanged || request.DraftID > 0 && !queue.AuthorityDraftAdopted(*previous)) {
+	if mode == authority.OpenMerge && (previous == nil || previous.OpenMerge == nil || !reflect.DeepEqual(previous.OpenMerge.Binding, request.Pin.OpenMerge.Binding) || request.DraftID > 0 && !queue.AuthorityDraftAdopted(*previous)) {
 		if request.Read == nil {
 			return nil, errors.New("authority governing protection reader unavailable")
 		}

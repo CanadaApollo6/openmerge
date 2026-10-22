@@ -3,6 +3,7 @@ package serve
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"strconv"
@@ -405,7 +406,8 @@ func TestAuthorityLifecycleAdoptsDraftWithAtomicConfig(t *testing.T) {
 	draft := event.(queue.WriteRestrictionVerified)
 	team := "200"
 	reads := 0
-	resolver := lifecycleResolver(t, s, &team, func(context.Context) (authority.Observation, error) { reads++; return draft.Evidence, nil })
+	var readFailure error
+	resolver := lifecycleResolver(t, s, &team, func(context.Context) (authority.Observation, error) { reads++; return draft.Evidence, readFailure })
 	draftID := int64(0)
 	expectedRefs := []string{"refs/heads/main"}
 	w.AuthorityRequired = true
@@ -510,7 +512,16 @@ func TestAuthorityLifecycleAdoptsDraftWithAtomicConfig(t *testing.T) {
 			must(t, err)
 		}
 		before := lifecycleState(t, s, w)
+		// A failed seeing read must not leave old guards usable on another
+		// node. Invalidation goes first even when the resolver offers the old
+		// proposal again; observation then records its own sanitized failure.
+		draftID = before.AuthorityPin().OpenMerge.Activation.Proposed.EventID
+		readFailure = fmt.Errorf("%w: ghs_SECRET transport unavailable", forge.ErrRulesUnavailable)
+		readsBefore := reads
 		must(t, s.configuration(t.Context(), w))
+		if reads != readsBefore {
+			t.Fatal("seeing read preceded durable input invalidation")
+		}
 		changed := lifecycleState(t, s, w)
 		if queue.AuthorityDraftAdopted(*changed.AuthorityPin()) || changed.WriteRestrictionStatus().State == "verified" || changed.AuthorityPin().OpenMerge.VerificationInput != nil {
 			t.Fatalf("live branch drift retained adoption: %+v", changed.AuthorityPin())
@@ -525,6 +536,16 @@ func TestAuthorityLifecycleAdoptsDraftWithAtomicConfig(t *testing.T) {
 		if unavailable.Guard(t.Context(), unavailable.Context) == nil || unavailable.Context.Binding().GoverningCommit != "" {
 			t.Fatal("unverified drift supplied push context")
 		}
+		afterFailure := lifecycleState(t, s, w)
+		if afterFailure.WriteRestrictionStatus().State == "verified" || len(afterFailure.RulesSourceProblems(queue.WriteRestriction)) == 0 || strings.Contains(strings.Join(afterFailure.RulesProblems(), " "), "ghs_SECRET") {
+			t.Fatal("failed post-invalidation observation retained verification or leaked transport text")
+		}
+		replayed, _, err := s.store.Load(t.Context(), w.id)
+		must(t, err)
+		if queue.AuthorityDraftAdopted(*replayed.AuthorityPin()) || replayed.WriteRestrictionStatus().State == "verified" {
+			t.Fatal("replay revived stale input")
+		}
+		readFailure = nil
 		input := w.authorityObservation.Input
 		// Operator verification of a proposed policy is accepted only in
 		// GitHub mode. Roll back before issuing the replacement proposal.
