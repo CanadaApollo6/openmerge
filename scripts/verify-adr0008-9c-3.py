@@ -295,9 +295,10 @@ def main():
         scratch_sql(maintenance, f'CREATE DATABASE "{database_name}"')
         created = True
         os.environ["OPENMERGE_TEST_DATABASE_URL"] = database_url
+        print("named behavioral mutations", flush=True)
+        result["consult_mutations"] = verify_consult_mutations(v, root, out)
         print("make check", flush=True)
         v.invoke(["make", "check"], root, out, "make-check")
-        result["consult_mutations"] = verify_consult_mutations(v, root, out)
         print("focused propagation, operations, barrier and exact-output race tests", flush=True)
         v.invoke(["go", "test", "-race", "-short", "-v", "./internal/authority", "./internal/gitops", "./internal/serve", "./internal/store", "./internal/queue", "./internal/config", "./internal/status", "./cmd/openmerge", "-run", "PublicAuthority|AuthorityAcceptance|AuthorityEmissionLiveBackup|Completion|AuthorityBarrier|LegacyLineZero|StageAAccountableIdentityDiagnosticExact", "-count=1"], root, out, "focused")
         for label, tree in (("before", args.baseline), ("after", root)):
