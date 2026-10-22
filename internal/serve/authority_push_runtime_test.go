@@ -31,25 +31,25 @@ func TestAuthorityLifecycleFirstFenceEntrypoints(t *testing.T) {
 			db := database(t)
 			s, err := newServer(db, Options{})
 			must(t, err)
-			real := newCompositionFixture(t, []int{1})
-			repo := real.w.repo()
+			gitFixture := newCompositionFixture(t, []int{1})
+			repo := gitFixture.w.repo()
 			f := fake.NewDeterministic()
 			f.SetIdentity(forge.UserIdentity{ID: 21, Login: "writer", Kind: forge.UserAccount})
 			f.SetWriteGrant(repo, 21, "write")
 			f.SetTeam(forge.TeamIdentity{ID: 200, OrganizationID: 100, Organization: "acme", Slug: "emergency"}, nil)
 			contents := lifecycleConfig(repositoryConfig)
-			blob := real.git(contents, "--git-dir="+real.remote, "hash-object", "-w", "--stdin")
-			owners := real.git("* @writer\n", "--git-dir="+real.remote, "hash-object", "-w", "--stdin")
-			tree := real.git("100644 blob "+blob+"\t.openmerge.yml\n100644 blob "+owners+"\tCODEOWNERS\n", "--git-dir="+real.remote, "mktree")
-			tip := real.git("authority configuration\n", "--git-dir="+real.remote, "commit-tree", tree, "-p", real.base)
-			real.git("", "--git-dir="+real.remote, "update-ref", "refs/heads/main", tip)
+			blob := gitFixture.git(contents, "--git-dir="+gitFixture.remote, "hash-object", "-w", "--stdin")
+			owners := gitFixture.git("* @writer\n", "--git-dir="+gitFixture.remote, "hash-object", "-w", "--stdin")
+			tree := gitFixture.git("100644 blob "+blob+"\t.openmerge.yml\n100644 blob "+owners+"\tCODEOWNERS\n", "--git-dir="+gitFixture.remote, "mktree")
+			tip := gitFixture.git("authority configuration\n", "--git-dir="+gitFixture.remote, "commit-tree", tree, "-p", gitFixture.base)
+			gitFixture.git("", "--git-dir="+gitFixture.remote, "update-ref", "refs/heads/main", tip)
 			driver := lifecycleFenceDriver{Forge: f, read: func(ref, path string) []byte {
-				return []byte(real.git("", "--git-dir="+real.remote, "show", ref+":"+path))
+				return []byte(gitFixture.git("", "--git-dir="+gitFixture.remote, "show", ref+":"+path))
 			}}
-			target := Target{Key: real.w.Key, Driver: driver, Git: real.g, BotLogin: fake.Identity, AuthorityRequired: true}
+			target := Target{Key: gitFixture.w.Key, Driver: driver, Git: gitFixture.g, BotLogin: fake.Identity, AuthorityRequired: true}
 			w, err := s.register(t.Context(), target)
 			must(t, err)
-			_, err = db.Append(t.Context(), w.id, []queue.Event{queue.BaseMoved{SHA: real.base}}, "")
+			_, err = db.Append(t.Context(), w.id, []queue.Event{queue.BaseMoved{SHA: gitFixture.base}}, "")
 			must(t, err)
 			raw, err := os.ReadFile("../queue/testdata/wire/v1/event_write_restriction_verified.json")
 			must(t, err)
@@ -82,7 +82,7 @@ func TestAuthorityLifecycleFirstFenceEntrypoints(t *testing.T) {
 				draftID = 0
 			}
 			called := false
-			proxy := &lifecycleFenceGit{Repo: real.g, before: func(options forge.PushOptions) {
+			proxy := &lifecycleFenceGit{Repo: gitFixture.g, before: func(options forge.PushOptions) {
 				called = true
 				if path == "unadopted" {
 					if !options.AuthorityRequired || options.Guard == nil || options.Guard(t.Context(), options.Context) == nil {
@@ -119,12 +119,12 @@ func TestAuthorityLifecycleFirstFenceEntrypoints(t *testing.T) {
 				if !called || state.Fence != "" || state.AuthorityPin() == nil {
 					t.Fatal("unadopted startup failed to defer")
 				}
-				if sha, readErr := real.g.ReadRef(t.Context(), repo, "openmerge/fence/main"); readErr == nil || sha != "" {
+				if sha, readErr := gitFixture.g.ReadRef(t.Context(), repo, "openmerge/fence/main"); readErr == nil || sha != "" {
 					t.Fatal("unadopted startup created remote fence")
 				}
 				return
 			}
-			remoteFence := real.git("", "--git-dir="+real.remote, "rev-parse", "refs/heads/openmerge/fence/main")
+			remoteFence := gitFixture.git("", "--git-dir="+gitFixture.remote, "rev-parse", "refs/heads/openmerge/fence/main")
 			if !called || state.Fence == "" || state.Fence != remoteFence {
 				t.Fatal("entrypoint did not initialize/read back first real fence")
 			}
@@ -191,21 +191,21 @@ func TestAuthorityStartupUnavailablePreparationPreservesRealFenceNoop(t *testing
 	for _, existing := range []bool{false, true} {
 		t.Run(map[bool]string{false: "absent", true: "existing"}[existing], func(t *testing.T) {
 			db := database(t)
-			real := newCompositionFixture(t, []int{1})
-			blob := real.git(repositoryConfig, "--git-dir="+real.remote, "hash-object", "-w", "--stdin")
-			tree := real.git("100644 blob "+blob+"\t.openmerge.yml\n", "--git-dir="+real.remote, "mktree")
-			tip := real.git("governing configuration\n", "--git-dir="+real.remote, "commit-tree", tree, "-p", real.base)
-			real.git("", "--git-dir="+real.remote, "update-ref", "refs/heads/main", tip)
+			gitFixture := newCompositionFixture(t, []int{1})
+			blob := gitFixture.git(repositoryConfig, "--git-dir="+gitFixture.remote, "hash-object", "-w", "--stdin")
+			tree := gitFixture.git("100644 blob "+blob+"\t.openmerge.yml\n", "--git-dir="+gitFixture.remote, "mktree")
+			tip := gitFixture.git("governing configuration\n", "--git-dir="+gitFixture.remote, "commit-tree", tree, "-p", gitFixture.base)
+			gitFixture.git("", "--git-dir="+gitFixture.remote, "update-ref", "refs/heads/main", tip)
 			token := ""
 			var err error
 			if existing {
-				token, err = real.g.EnsureFence(t.Context(), real.w.repo(), "openmerge/fence/main", forge.PushOptions{})
+				token, err = gitFixture.g.EnsureFence(t.Context(), gitFixture.w.repo(), "openmerge/fence/main", forge.PushOptions{})
 				must(t, err)
 			}
-			before := real.git("", "--git-dir="+real.remote, "show-ref")
+			before := gitFixture.git("", "--git-dir="+gitFixture.remote, "show-ref")
 			called := false
-			target := Target{Key: real.w.Key, Git: real.g, Driver: bootstrapDriver{Driver: fake.NewDeterministic(), read: func(input string, args ...string) string {
-				return real.git(input, append([]string{"--git-dir=" + real.remote}, args...)...)
+			target := Target{Key: gitFixture.w.Key, Git: gitFixture.g, Driver: bootstrapDriver{Driver: fake.NewDeterministic(), read: func(input string, args ...string) string {
+				return gitFixture.git(input, append([]string{"--git-dir=" + gitFixture.remote}, args...)...)
 			}}, BotLogin: fake.Identity, AuthorityRequired: true,
 				resolveAuthorityLifecycle: func(context.Context, config.AuthorityCandidate, string, string) (authorityLifecycleResolution, error) {
 					called = true
@@ -218,7 +218,7 @@ func TestAuthorityStartupUnavailablePreparationPreservesRealFenceNoop(t *testing
 			if !called || state.Fence != token || state.AuthorityPin() != nil {
 				t.Fatal("unavailable preparation changed fence/pin", state.Fence, token)
 			}
-			after := real.git("", "--git-dir="+real.remote, "show-ref")
+			after := gitFixture.git("", "--git-dir="+gitFixture.remote, "show-ref")
 			if before != after {
 				t.Fatal("unavailable startup changed real remote refs")
 			}
