@@ -1,34 +1,98 @@
 # ADR 0008 PR 9c-2a evidence
 
-Trial class: **Hold**. Baseline: local main
-`c53f4253fb9c79ff8527494a7f0c307cbd6b1470` (#136). This implements the whole
-9c-2a acquisition/config-blocking slice in one PR. Public authority activation
-remains unavailable and production targets remain opted out. No deployment,
-queueing, merging or organization acceptance is authorized.
+Trial class: **Hold**. Baseline: `c53f4253fb9c79ff8527494a7f0c307cbd6b1470`
+(local main, #136). Verified implementation:
+`f0449e5e076f8d93956e8584bf9bd57614d9f153`. The following receipt commit
+changes documentation/artifacts only. This delivers the whole 2a slice in one
+PR; no deployment, queueing, merging or organization acceptance is authorized.
 
-Governing acquisition reads the landed immutable config and selected CODEOWNERS,
-requires effective coverage of every supported policy location, and resolves
-owners/membership/write grants through the forge. Proposed files, drafts,
-verification plans and import acceptance cannot supply those identities or waive
-missing evidence. Discovery and worker loading share that gate. New authority
-bindings additionally require complete typed protection acquisition; same-binding
-draftless rebinds retain the existing zero-seeing-read behavior. Adoption and
-source observation keep independent reads after capturing their source basis.
+## Requirement and test map
 
-Setup reads the server's default-branch ref and complete tree before planning
-mutations. The actual landed queues remain in the protection-read inventory even
-when the proposed file narrows selectors. Setup verification also acquires landed
-evidence before recording verification. Import uses typed governing/protection
-readers for landed authority policy, reports non-waivable blockers and retains
-the public activation barrier. Ordinary GitHub import and workers retain their
-existing parser/behavior.
+| 2a requirement | Implementation and regression |
+| --- | --- |
+| Actual governing acquisition in discovery and worker loading | `internal/serve/reconcile.go:216,282,625` uses `internal/config/governing_acquisition.go:41,53`: immutable landed config and selected CODEOWNERS, equality with the loaded candidate, exactly one default queue, exact supported selectors and effective eligible-owner coverage of every supported config/CODEOWNERS location. `TestAuthorityGoverningAcquisitionBoundaries` (`internal/serve/authority_acquisition_test.go:32`) drives actual `RefreshBranches` and configuration paths, including missing/uncovered/unresolved owners, incomplete files, wrong commit and failed/missing protection reads. |
+| Actual governing acquisition in setup and verification | `internal/forge/github/setup_authority.go:84` and `cmd/openmerge/setup_verify.go:111` use `internal/forge/github/governing_acquisition.go:21,63,131,154,187,216`: server default ref must identify a commit; bounded tree/blob provenance and explicit completeness precede mutation/verification. Typed protection reads cover the server's current bases and protected refs; a proposed selector cannot narrow landed obligations. `TestAuthoritySetupAcquiresLandedEvidenceBeforeMutation`, `TestAuthoritySetupCannotNarrowLandedProtectionEvidence`, `TestAuthorityVerifyAcquiresServerGoverningCommit` (`internal/forge/github/governing_acquisition_test.go:24,101,127`). Failed acquisition writes neither GitHub settings nor a backup artifact. |
+| Import acquisition; acceptance cannot waive governing gates | `internal/forge/github/import_read.go:134,186` acquires landed authority evidence through the same typed collector/identity/protection readers and adds blocking items. Existing `ProtectionReport.accept` refuses blocking items. `TestSetupImportGoverningEvidenceCannotBeAccepted` (`cmd/openmerge/setup_governing_test.go:21`) runs the real command, obtains actual item IDs and retries `--accept --out`: refusal, no partial output and no draft overwrite. It also refuses the public activation barrier with otherwise complete evidence. |
+| Incomplete evidence cannot partially activate | `internal/serve/authority_activation.go:187` requires complete interpreted protection evidence for a new binding, even without a draft. `internal/forge/authority_acquisition.go:10` validates raw typed inventory in discovery/setup/import. Boundary tests compare durable config/commit/pin before and after every failure. The candidate-only and reassigned-grant tests at `internal/config/governing_acquisition_test.go:39` require server-derived identity/membership/write eligibility; no caller-supplied owner pool can authorize acquisition. |
+| Invalid landed config blocks authority work; GitHub behavior unchanged | `internal/serve/reconcile.go:268,353` retains the last durable policy, records the config block and stops authority classification/admission until repair; cycle settlement still runs first. `TestAuthorityInvalidLandedConfigurationBlocks` (`internal/serve/authority_acquisition_test.go:101`) drives the real cycle, checks the block, excludes config/pin/start records and proves repair. `internal/serve/authority_github_compatibility_test.go:70` exports invalid-config journal/API/health bytes for both ordinary and opted-in GitHub workers into the baseline comparison. |
+| Public barrier, production opt-out and sanitized errors | Public schema/loader/CLI rejection and `cmd/openmerge/installations.go:118` remain unchanged. `TestAuthorityBarrierJournalCannotInstallRuntimeAuthority` (`internal/serve/authority_barrier_test.go:49,147`) adds discovery/load entry points; the real import regression covers its new reporting path. `GoverningReadError` (`internal/config/governing_acquisition.go:18`) exposes only timeout/quota/canceled/unavailable while retaining `errors.Is`/`errors.As`; its classification test and token-bearing boundary failures reject transport-text exposure. |
 
-Invalid landed authority config retains the last durable config/pin, blocks the
-config source and stops further classification/admission until repair. Started
-landing settlement remains before reconciliation. Transport failures expose only
-sanitized classes while preserving error identity and quota retry information.
+## A2 and operation boundary
 
-Verification receipts and the complete requirement/test map are recorded below
-after the clean-tree offline driver completes. The driver is
-`scripts/verify-adr0008-9c-2a.py`; it retains the existing strict comparator,
-fixtures and frozen Makefile/CI flags.
+Acquisition is read-only. Runtime candidate parsing requires the explicit target
+flag and private resolver; candidate/draft/pin data installs neither. The extended
+complete-seam barrier test covers discovery/load, owner/observer/status/push and
+admission paths and excludes new authority events. Production construction sets
+neither opt-in. A handcrafted journal pin retains existing fail-closed effects;
+database write access is not an activation security boundary.
+
+New bindings require complete acquisition. Same-binding draftless rebinds retain
+zero seeing reads. Adoption and source observations capture basis before their
+independent fresh reads; acquisition cannot clear a newer finding. Setup may
+propose a future policy while independently validating the landed policy.
+
+## Verification
+
+The clean-tree driver returned **PASS**. [Summary](adr-0008-9c-2a-artifacts/summary.json),
+[additional checks](adr-0008-9c-2a-artifacts/additional-checks.json) and
+[hash manifest](adr-0008-9c-2a-artifacts/manifest.json) retain compact receipts.
+Raw logs/replay streams: `/home/riels/.cache/adr0008-9c-2a-all-pass`.
+
+- `make check`: **exit 0**, zero lint issues, complete short race suite and build
+  (serve **291.929s**, cmd **61.136s**). Focused acquisition/setup/import/
+  lifecycle/barrier race checks: **exit 0**.
+- Strict offline replay: **2,159/2,159 identical** checkpoints, actions,
+  structural states and snapshot hashes; **8,676** matching boundary probes,
+  gates 2/4 and all **22** mandatory self-tests pass, no differing fields.
+- Depth-1/4 contracts: **90/90 byte-identical**. Simulator: both exits **0**,
+  **146/146 normalized blocks byte-identical**. GitHub projections, actual CLI,
+  and both invalid-config journal/projection exports: **byte-identical**.
+  Existing wire fixtures: **105/105 unchanged**; no new wire type/field/fixture.
+- Matching local two-package race/short timing command: serve **273.236s before →
+  265.829s after**; cmd **61.030s before → 61.040s after**. These are
+  package runtimes from one run per side, not a speedup or GitHub-runner forecast.
+- Stress: **20/20 iterations of each selected test pass** with `GOMAXPROCS=1`,
+  `-race -count=20 -cpu=1`, and **eight concurrent owned CPU burners**. Selection:
+  inherited `TestAuthorityAdmissionWorkerLockedAppend` plus both new serve tests.
+  Elapsed **55.039s**; all eight burners terminated and reaped. The later
+  export-only fix changes no production/selected-test source. Raw receipts:
+  `/home/riels/.cache/adr0008-9c-2a-stress`.
+- A Go-overlay mutation removes only the complete-protection fingerprint gate.
+  The real configuration-boundary regression fails with “incomplete evidence
+  accepted” (**expected exit 1**). Production source was never mutated.
+  Raw receipt: `/home/riels/.cache/adr0008-9c-2a-mutation`.
+- Shared test Postgres retains exactly the same **94** pre-existing serve schemas;
+  no new scratch schema remains. No live DB/status API, units, live OpenMerge
+  refs, application GitHub API or Smart-Data-Ohio organization was accessed.
+
+Reproduce with both Go 1.27.3 `GOROOT` and its `bin` first in `PATH`, and
+`OPENMERGE_TEST_DATABASE_URL` pointing to shared test Postgres localhost:54329:
+
+```sh
+python3 scripts/verify-adr0008-9c-2a.py \
+  --baseline /home/riels/.cache/adr0008-9c-2a-baseline \
+  --out /home/riels/.cache/adr0008-9c-2a-rerun
+```
+
+Every Go check uses the shared heavy flock, `GOFLAGS=-p=2` and 4 GiB memory
+(6 GiB for replay). New serve fixtures live inside `testSynctest`; new HTTP and
+pure-reader tests assert no wall-clock ordering. An initial full pass was
+superseded after self-review narrowed invalid-config handling to currently
+loaded authority policy and added the opted-in GitHub byte comparison. The new
+journal export initially included random bootstrap fence tokens; it now
+compares every event after a captured pre-invalid-commit watermark, without any
+field normalization. Early fixture/compile/lint failures were corrected before
+the final clean-tree run.
+
+## Reviewer flags
+
+- **Hold** remains. Public activation and production opt-in remain exclusively
+  9c-3. Missing/hidden/incomplete protection visibility defers a new binding;
+  it cannot be supplied by a draft or waived by import acceptance.
+- No migrations/indexes/tables, new forge capability, frozen build/CI/test-flag
+  changes or existing wire fixture edits. GitHub runtime and import retain their
+  legacy path; setup's authority-only path intentionally gains these prerequisites.
+- Push guards/ordering and ExpectedRefs/VerificationInput drift remain 2b;
+  propagation/drain/backup/downgrade gates remain 2c; integrated real-git acceptance
+  remains 2d. Existing receipt lock-wait/commit expiry limits are unchanged.
+  Owner-executed organization release acceptance remains PR 11.

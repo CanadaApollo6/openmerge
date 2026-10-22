@@ -1,0 +1,80 @@
+{
+  "verified_implementation": "f0449e5e076f8d93956e8584bf9bd57614d9f153",
+  "timing": {
+    "command": "go test -race -short -count=1 -timeout=15m ./internal/serve ./cmd/openmerge",
+    "before_commit": "c53f4253fb9c79ff8527494a7f0c307cbd6b1470",
+    "before_seconds": {
+      "internal/serve": 273.236,
+      "cmd/openmerge": 61.03
+    },
+    "after_commit": "f0449e5e076f8d93956e8584bf9bd57614d9f153",
+    "after_seconds": {
+      "internal/serve": 265.829,
+      "cmd/openmerge": 61.04
+    },
+    "make_check_seconds": {
+      "internal/serve": 291.929,
+      "cmd/openmerge": 61.136
+    }
+  },
+  "stress": {
+    "command": [
+      "go",
+      "test",
+      "-race",
+      "-count=20",
+      "-cpu=1",
+      "-timeout=15m",
+      "./internal/serve",
+      "-run",
+      "^(TestAuthorityAdmissionWorkerLockedAppend|TestAuthorityGoverningAcquisitionBoundaries|TestAuthorityInvalidLandedConfigurationBlocks)$"
+    ],
+    "GOMAXPROCS": "1",
+    "cpu_burners": 8,
+    "exit": 0,
+    "elapsed_seconds": 55.039,
+    "hold_class": "Hold",
+    "owned_burners_reaped": 8,
+    "source_commit": "3a2169e505a0d4f69facbd54e478c944d3e97f4c",
+    "production_and_selected_tests_unchanged_after_stress": true
+  },
+  "mutation": {
+    "command": [
+      "flock",
+      "/home/riels/.cache/openmerge-heavy.lock",
+      "env",
+      "GOFLAGS=-p=2",
+      "GOMEMLIMIT=4GiB",
+      "go",
+      "test",
+      "-overlay",
+      "/home/riels/.cache/adr0008-9c-2a-mutation/overlay.json",
+      "-race",
+      "./internal/serve",
+      "-run",
+      "^TestAuthorityGoverningAcquisitionBoundaries$/^configuration$/^incomplete-protection$",
+      "-count=1"
+    ],
+    "exit": 1,
+    "expected_exit": 1,
+    "result": "PASS",
+    "production_source_unchanged": true
+  },
+  "scratch_schemas": {
+    "server": "localhost:54329",
+    "before": 94,
+    "after": 94,
+    "identical_names": true,
+    "names_sha256": "a7090d0e1fd1d32c1935e4d4c830fbb9caf2f0f1cbef897ef9c84d7be4d7b242"
+  },
+  "frozen_paths_unchanged": [
+    "Makefile",
+    "Dockerfile",
+    ".github",
+    "schema",
+    "internal/queue/testdata",
+    "internal/serve/testdata",
+    "cmd/openmerge/testdata"
+  ],
+  "github_invalid_config_export": "Every record after a pre-invalid-commit watermark; no normalization or field allowlist. Bootstrap random fence tokens precede this boundary."
+}
