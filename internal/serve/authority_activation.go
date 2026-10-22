@@ -157,7 +157,8 @@ func (s *Server) prepareAuthorityLifecycle(ctx context.Context, w *worker, state
 	resolved, err := w.resolveAuthorityLifecycle(ctx, candidate, branch, tip)
 	if err != nil {
 		var receiptErr *emissionReceiptFailure
-		if errors.As(err, &receiptErr) {
+		var tenancyErr *store.AuthorityTenancyError
+		if errors.As(err, &receiptErr) || errors.As(err, &tenancyErr) {
 			return nil, err
 		}
 		return nil, &authorityObservationReadFailure{err: err}

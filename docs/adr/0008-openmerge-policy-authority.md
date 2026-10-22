@@ -1503,6 +1503,21 @@ outbound read and must equal the snapshot checked against discovery. The interva
 from that database check to the remote Git push remains an irreducible window;
 freeze changes during the switch, as for other immediate-before-write guards.
 
+Authority mode requires **one dedicated database per client (installation)**.
+Every queue counts, including paused, retired, excluded queues and queues in
+other repositories. Setup verification, public activation and each final public
+authority push check this inventory afresh; more than one installation refuses
+with `authority mode requires a dedicated database per installation: this database
+serves N installations`. The first-emission transaction holds a SHARE lock on
+`queues` through commit, serializing registration, and checks tenancy alongside
+the database-wide events lock and watermark. The backup/restore receipt covers
+the whole database and is waived once any authority boundary exists in it.
+A newly registered second installation therefore stops authority even after the
+boundary; rollback to GitHub remains available and ordinary GitHub workers are
+unaffected. Shared multi-tenant deployment requires a future ADR defining a
+per-installation boundary: scoped watermark, lock, receipt and completion, plus
+per-tenant export/restore.
+
 Before the first authority-boundary event, pre-switch `setup --verify` validates
 the emitting binary, receipt age, backup hash and drain/restore attestations.
 The first proposed verification is itself a boundary event. Its transaction

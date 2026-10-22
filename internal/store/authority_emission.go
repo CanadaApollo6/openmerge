@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -38,7 +39,44 @@ func (s *Store) CheckAuthorityEmissionBackup(ctx context.Context, watermark int6
 	})
 }
 
+// AuthorityTenancyError exposes only the installation count, never queue identities.
+type AuthorityTenancyError struct{ Installations int }
+
+func (e *AuthorityTenancyError) Error() string {
+	return fmt.Sprintf("authority mode requires a dedicated database per installation: this database serves %d installations", e.Installations)
+}
+
+// CheckAuthorityTenancy inventories ALL queues, regardless of repository, lane,
+// lifecycle or discovery membership. The verdict is never cached.
+func (s *Store) CheckAuthorityTenancy(ctx context.Context) error {
+	return checkAuthorityTenancy(ctx, s.pool)
+}
+
+func checkAuthorityTenancy(ctx context.Context, db interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}) error {
+	var count int
+	if err := db.QueryRow(ctx, `SELECT count(DISTINCT installation) FROM queues`).Scan(&count); err != nil {
+		return errors.New("authority database tenancy inventory unavailable")
+	}
+	if count > 1 {
+		return &AuthorityTenancyError{Installations: count}
+	}
+	return nil
+}
+
 func checkAuthorityEmission(ctx context.Context, tx pgx.Tx, gate AuthorityEmissionGate) error {
+	// SHARE conflicts with the ROW EXCLUSIVE lock taken by every queues INSERT,
+	// including registration outside this binary. Hold through boundary commit.
+	// READ COMMITTED below sees registrations committed while this lock waited.
+	// Registration never takes event append locks; ordinary GitHub paths are unchanged.
+	if _, err := tx.Exec(ctx, `LOCK TABLE queues IN SHARE MODE`); err != nil {
+		return err
+	}
+	if err := checkAuthorityTenancy(ctx, tx); err != nil {
+		return err
+	}
+
 	var boundary bool
 	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM events WHERE type=ANY($1) LIMIT 1)`, authorityEmissionEventTypes).Scan(&boundary); err != nil {
 		return errors.New("first-emission journal inventory unavailable")

@@ -90,6 +90,9 @@ func (s *Server) publicAuthorityTarget(target Target) Target {
 		if policy.Mode == authority.GitHub {
 			return authorityLifecycleResolution{Policy: policy}, nil
 		}
+		if err := s.store.CheckAuthorityTenancy(ctx); err != nil {
+			return authorityLifecycleResolution{}, err
+		}
 		if plan.DraftID <= 0 {
 			return authorityLifecycleResolution{}, ErrAuthorityVerificationRequired
 		}
@@ -193,7 +196,15 @@ func (s *Server) publicAuthorityTarget(target Target) Target {
 // RequireAuthorityActivation is the public final switch gate. Its only source
 // is fresh repository discovery plus the actual all-partition store snapshot.
 func (s *Server) RequireAuthorityActivation(ctx context.Context, request store.AuthorityCompletionRequest) error {
+	if err := s.store.CheckAuthorityTenancy(ctx); err != nil {
+		return err
+	}
 	completion, err := s.AuthorityCompletion(ctx, request)
+	// Prefer the distinct tenancy diagnostic even if concurrent registration also
+	// invalidated completion's repository snapshot.
+	if tenancyErr := s.store.CheckAuthorityTenancy(ctx); tenancyErr != nil {
+		return tenancyErr
+	}
 	if err != nil {
 		return err
 	}

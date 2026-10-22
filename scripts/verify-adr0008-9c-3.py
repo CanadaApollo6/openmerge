@@ -45,7 +45,7 @@ def scratch_sql(url, sql):
 STRESS_GROUPS = (
     ("stress-public-serve", ["./internal/serve"], "^TestPublicAuthority|^TestReviewPublicInventoryErrorClass$|^TestAuthorityActivationReceiptBeforeIO$|^TestAuthorityActivationReceiptExpiresDuringSeeingRead$|^TestAuthorityLifecycleRollbackReceiptAndUnchangedWire$|^TestAuthorityLifecycleReadFailuresDoNotPublishConfigOrPin$|^TestAuthorityBarrierJournalCannotInstallRuntimeAuthority$|^TestAuthorityLifecycleRequiresFlagAndResolver$"),
     ("stress-public-base-recovery", ["./internal/serve"], "^TestAuthorityAcceptanceBaseAdvanceBeforeBuild$"),
-    ("stress-public-config-store-cli-gitops", ["./internal/config", "./internal/changepolicy", "./internal/store", "./cmd/openmerge", "./internal/gitops"], "TestFullCandidateSchemaComposition|TestAuthorityPublicAgreement|TestAuthorityCandidate|TestConfigValidateAuthorityPublicCorpus|TestPublicAuthority|TestAuthorityEmissionLiveBackup|TestBuildCreationBoundaryRejectsUnprovenSources|TestSetupImportGoverningEvidenceCannotBeAccepted|TestAuthorityAcceptanceImportGoverningEvidenceCannotBeAccepted|TestReviewFirstEmissionAppendRace|TestAuthorityEmissionReceiptBoundary|TestAuthorityEmissionSerializesAllQueueAppends|TestAuthorityEmissionRefreshesSnapshotAfterAppendLockWait|TestVerificationReceiptOnlyBeforeBoundary|TestVerificationReceiptValidationSanitizedBeforeSeeingRead|TestBuildBaseProofPreservesFailureClasses|TestAuthorityCompletionDedicatedCacheAvoidsSessionLock|TestProductionAuthorityRuntimeWiring|TestHistoricalStageAAuthoritySchemaComposition|TestReview4AuditPreservesWorkerQuota"),
+    ("stress-public-config-store-cli-gitops", ["./internal/config", "./internal/changepolicy", "./internal/store", "./cmd/openmerge", "./internal/gitops"], "TestFullCandidateSchemaComposition|TestAuthorityPublicAgreement|TestAuthorityCandidate|TestConfigValidateAuthorityPublicCorpus|TestPublicAuthority|TestAuthorityEmissionLiveBackup|TestAuthorityTenancy|TestVerificationTenancy|TestBuildCreationBoundaryRejectsUnprovenSources|TestSetupImportGoverningEvidenceCannotBeAccepted|TestAuthorityAcceptanceImportGoverningEvidenceCannotBeAccepted|TestReviewFirstEmissionAppendRace|TestAuthorityEmissionReceiptBoundary|TestAuthorityEmissionSerializesAllQueueAppends|TestAuthorityEmissionRefreshesSnapshotAfterAppendLockWait|TestVerificationReceiptOnlyBeforeBoundary|TestVerificationReceiptValidationSanitizedBeforeSeeingRead|TestBuildBaseProofPreservesFailureClasses|TestAuthorityCompletionDedicatedCacheAvoidsSessionLock|TestProductionAuthorityRuntimeWiring|TestHistoricalStageAAuthoritySchemaComposition|TestReview4AuditPreservesWorkerQuota"),
 )
 
 
@@ -206,6 +206,22 @@ def verify_consult_mutations(v, root, out):
     for recipe in recipes:
         cases.append((recipe["name"], recipe["file"], recipe["package"], recipe["test"],
                       lambda source, r=recipe: source.replace(r["old"], r["new"])))
+    cases.extend([
+        ("tenancy-emission", "internal/store/authority_emission.go", "./internal/store", "TestAuthorityTenancyEmission",
+         lambda s: s.replace("if err := checkAuthorityTenancy(ctx, tx); err != nil {", "if err := error(nil); err != nil {", 1)),
+        ("tenancy-registration-lock", "internal/store/authority_emission.go", "./internal/store", "TestAuthorityTenancyConcurrentRegistration",
+         lambda s: s.replace("LOCK TABLE queues IN SHARE MODE", "SELECT 1", 1)),
+        ("tenancy-registration-held", "internal/store/authority_emission.go", "./internal/store", "TestAuthorityTenancyRegistrationWaitsForEmission",
+         lambda s: s.replace("LOCK TABLE queues IN SHARE MODE", "SELECT 1", 1)),
+        ("tenancy-setup", "cmd/openmerge/setup_verify.go", "./cmd/openmerge", "TestVerificationTenancyBeforeReceipt",
+         lambda s: s.replace("if err := db.CheckAuthorityTenancy(ctx); err != nil {", "if err := error(nil); err != nil {", 1)),
+        ("tenancy-lifecycle", "internal/serve/authority_public.go", "./internal/serve", "TestPublicAuthorityTenancyLifecycle",
+         lambda s: s.replace("if err := s.store.CheckAuthorityTenancy(ctx); err != nil {", "if err := error(nil); err != nil {", 1)),
+        ("tenancy-push-preflight", "internal/serve/authority_public.go", "./internal/serve", "TestPublicAuthorityTenancyPushAndRollback",
+         lambda s: s.replace("if err := s.store.CheckAuthorityTenancy(ctx); err != nil {\n\t\treturn err\n\t}", "if err := error(nil); err != nil {\n\t\treturn err\n\t}", 1)),
+        ("tenancy-push-final", "internal/serve/authority_public.go", "./internal/serve", "TestPublicAuthorityTenancyFinalInventory",
+         lambda s: s.replace("if tenancyErr := s.store.CheckAuthorityTenancy(ctx); tenancyErr != nil {\n\t\treturn tenancyErr\n\t}", "", 1)),
+    ])
     COMPLETION_CASES = [
      ('completion-verdict-equality', 'internal/serve/authority_completion.go', './internal/serve', 'TestPublicAuthorityCompletionPartitionRace', lambda s: s.replace('if !reflect.DeepEqual(result, final) {', 'if false && !reflect.DeepEqual(result, final) {', 1)),
      ('completion-partition-race', 'internal/serve/authority_completion.go', './internal/serve', 'TestPublicAuthorityCompletionPartitionRace', lambda s: s.replace('final, err := source.RepositoryAuthorityCompletion(ctx, request, store.AuthorityBranchInventory{DefaultBranch: branch, DefaultTip: sha, Branches: after})', 'final, err := result, error(nil)', 1)),

@@ -1,3 +1,53 @@
+# ADR 0008 PR 9c-3 round-3 tenancy evidence
+
+Classification: **Hold**. Round 3 enforces the user-selected **one database per
+client (installation)** model. No migration is needed. All queues count, including
+other repositories and paused, retired or excluded partitions. First emission
+holds `LOCK TABLE queues IN SHARE MODE` until transaction completion: PostgreSQL
+queue INSERTs take the conflicting ROW EXCLUSIVE lock. The READ COMMITTED count
+therefore includes a registration committed while first emission waited, and a
+registration arriving after the lock cannot commit before the boundary.
+The existing database-wide events lock, watermark and whole-database receipt
+remain intact.
+
+Tenancy is a separate sanitized check, not a completion reason. Setup checks it
+before receipt loading (also after a retained boundary); the public resolver
+checks before verification/protection I/O; the final activation/push guard checks
+before discovery and again after the last discovery read. None caches a verdict.
+Rollback resolves GitHub before consulting tenancy. Shared multi-tenant authority
+requires a future ADR for an installation-scoped watermark, lock, receipt,
+completion and per-tenant export/restore.
+
+New behavioral tests: `TestAuthorityTenancyEmission`,
+`TestAuthorityTenancyConcurrentRegistration`,
+`TestAuthorityTenancyRegistrationWaitsForEmission`,
+`TestVerificationTenancyBeforeReceipt`,
+`TestPublicAuthorityTenancyLifecycle`,
+`TestPublicAuthorityTenancyPushAndRollback`,
+`TestPublicAuthorityTenancyFinalInventory`,
+`TestPublicAuthorityTenancyGithubUnaffected`.
+Store and command fixtures run on the shared test Postgres; serve fixtures are
+created and closed inside `testSynctest`. Race synchronization observes actual
+PostgreSQL lock waits, without wall-clock ordering.
+
+| Round-3 mutation | Named test |
+| --- | --- |
+| `tenancy-emission` | `TestAuthorityTenancyEmission` |
+| `tenancy-registration-lock` | `TestAuthorityTenancyConcurrentRegistration` |
+| `tenancy-registration-held` | `TestAuthorityTenancyRegistrationWaitsForEmission` |
+| `tenancy-setup` | `TestVerificationTenancyBeforeReceipt` |
+| `tenancy-lifecycle` | `TestPublicAuthorityTenancyLifecycle` |
+| `tenancy-push-preflight` | `TestPublicAuthorityTenancyPushAndRollback` |
+| `tenancy-push-final` | `TestPublicAuthorityTenancyFinalInventory` |
+
+Completion-only races now register an additional branch in the same installation;
+cross-installation refusal is independently asserted by the tenancy tests, so
+completion mutations cannot be hidden by the earlier tenancy guard.
+
+Round-3 full verification is pending. Prior-round evidence follows for provenance.
+
+---
+
 # ADR 0008 PR 9c-3 round-1 evidence
 
 Classification: **Hold**. Deployment remains prohibited until dogfood period B drains. PR 11 remains the owner-executed organization switch. Tested implementation: `845684399fb3c2db4a05890814f62e3901ef8314`. Baseline: `75c4029447ae4d24a439ae6ef8ad6103ebcf3926`. This round merges main `75c4029` normally and addresses both reviewers' requested changes without migrations or fixture edits.

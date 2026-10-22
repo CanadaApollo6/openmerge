@@ -110,3 +110,45 @@ func TestVerificationReceiptOnlyBeforeBoundary(t *testing.T) {
 		}
 	})
 }
+
+func TestVerificationTenancyBeforeReceipt(t *testing.T) {
+	_, err := net.LookupHost("localhost")
+	if err != nil {
+		t.Fatal(err)
+	}
+	synctest.Test(t, func(t *testing.T) {
+		db := acceptanceDB(t)
+		raw, err := os.ReadFile("../../internal/queue/testdata/wire/v1/event_write_restriction_verified.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		event, err := queue.DecodeEvent(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		v := event.(queue.WriteRestrictionVerified)
+		key := store.QueueKey{Installation: "173082682", Repository: v.Binding.Repository, BaseBranch: "main"}
+		q, err := db.EnsureQueue(t.Context(), key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		key.Installation = "private-second"
+		key.Repository = "other/private"
+		key.BaseBranch = "excluded"
+		if _, err := db.EnsureQueue(t.Context(), key); err != nil {
+			t.Fatal(err)
+		}
+		opts := verifyOptions{Receipt: "/missing", ReceiptMaxAge: time.Hour}
+		for _, boundary := range []bool{false, true} {
+			if boundary {
+				if _, err := db.Append(t.Context(), q, []queue.Event{event}, ""); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, err := verificationEmissionReceipt(t.Context(), db, opts)
+			if err == nil || err.Error() != "authority mode requires a dedicated database per installation: this database serves 2 installations" {
+				t.Fatalf("setup tenancy guard boundary=%v: %v", boundary, err)
+			}
+		}
+	})
+}

@@ -277,6 +277,9 @@ func validateVerificationEmissionReceipt(receipt authority.EmissionReceipt, iden
 // Inspect the configured DB before touching a receipt. A durable boundary
 // permanently ends the drain/backup gate, including setup recovery invocations.
 func verificationEmissionReceipt(ctx context.Context, db *store.Store, opts verifyOptions) (*authority.EmissionReceipt, error) {
+	if err := db.CheckAuthorityTenancy(ctx); err != nil {
+		return nil, err
+	}
 	boundary, err := db.AuthorityBoundaryExists(ctx)
 	if err != nil {
 		return nil, err

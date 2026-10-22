@@ -114,10 +114,10 @@ func TestPublicAuthorityEveryPushConsultsCompletion(t *testing.T) {
 				c.assert(t, 0)
 				must(t, opts.Guard(t.Context(), opts.Context))
 				c.assert(t, 1)
-				// A competing installation is absent from local workers but invalidates ALL
+				// A competing partition is absent from local workers but invalidates ALL
 				// publication families, including ones which never compose a test ref.
 				key := f.w.Key
-				key.Installation = "another-installation"
+				key.BaseBranch = "release/hidden"
 				_, err := f.s.store.EnsureQueue(t.Context(), key)
 				must(t, err)
 				if err := opts.Guard(t.Context(), opts.Context); err == nil {
@@ -160,7 +160,7 @@ func TestPublicAuthorityCompletionPartitionRace(t *testing.T) {
 					if c.git.calls == 2 {
 						if change == "register" {
 							key := f.w.Key
-							key.Installation = "competing"
+							key.BaseBranch = "release/competing"
 							_, err := f.s.store.EnsureQueue(t.Context(), key)
 							must(t, err)
 						} else {
