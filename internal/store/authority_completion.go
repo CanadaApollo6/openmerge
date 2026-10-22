@@ -116,13 +116,12 @@ func (s *Store) RepositoryAuthorityCompletion(ctx context.Context, request Autho
 			}
 			q.Digest = state.ConfigDigest
 			q.Reason = "pin_missing"
-			inputsCurrent := true
 			pin := state.AuthorityPin()
 			if pin != nil {
 				q.GoverningCommit = pin.GoverningCommit
 			}
 			if pin != nil && pin.OpenMerge != nil && pin.Authority == authority.OpenMerge {
-				inputsCurrent = pin.DefaultBranch == inventory.DefaultBranch
+				inputsCurrent := pin.DefaultBranch == inventory.DefaultBranch
 				if pin.OpenMerge.VerificationInput != nil {
 					if !slices.Contains(liveBases, pin.DefaultBranch) {
 						inputsCurrent = false
