@@ -35,8 +35,8 @@ func TestProductionAuthorityRuntimeWiring(t *testing.T) {
 	// The valid plan comes from the same App identity used by production discovery.
 	o.app = 42
 	runtime, err = productionAuthorityRuntime(o)
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || runtime == nil {
+		t.Fatal("valid runtime missing", err)
 	}
 	o.emissionReceipt = ""
 	runtime, err = productionAuthorityRuntime(o)

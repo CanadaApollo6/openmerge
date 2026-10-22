@@ -605,8 +605,6 @@ func TestAuthorityLifecycleRollbackReceiptAndUnchangedWire(t *testing.T) {
 		if readerCalled {
 			t.Fatal("rollback read authority")
 		}
-		events, err := s.store.EventsAfter(t.Context(), w.id, before)
-		must(t, err)
 		w.resolveAuthorityLifecycle = func(ctx context.Context, c config.AuthorityCandidate, branch, tip string) (authorityLifecycleResolution, error) {
 			r, err := resolver(ctx, c, branch, tip)
 			r.Activation.Read = func(context.Context) (authority.Observation, error) {
@@ -617,7 +615,7 @@ func TestAuthorityLifecycleRollbackReceiptAndUnchangedWire(t *testing.T) {
 		}
 		must(t, s.configuration(t.Context(), w))
 		assertLifecyclePair(t, s, w, before, authority.GitHub)
-		events, err = s.store.EventsAfter(t.Context(), w.id, before)
+		events, err := s.store.EventsAfter(t.Context(), w.id, before)
 		must(t, err)
 		want := w.cfg.QueueConfig().Applied(tip, w.configDigest)
 		_, wantRaw, err := queue.EncodeEvent(want)

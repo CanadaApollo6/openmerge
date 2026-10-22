@@ -564,8 +564,7 @@ func TestPublicAuthorityReviewedBindingMustMatch(t *testing.T) {
 			resolved.Activation.Input.Binding.EffectiveDigest = strings.Repeat("f", 64)
 			return resolved, err
 		}
-		var err error
-		err = p.s.configuration(t.Context(), p.w)
+		err := p.s.configuration(t.Context(), p.w)
 		if err == nil || !strings.Contains(err.Error(), "reviewed authority plan differs from current binding") {
 			t.Fatalf("changed binding accepted: %v", err)
 		}
