@@ -100,6 +100,8 @@ func TestInactiveLifecyclesDoNotRefreshDiscovery(t *testing.T) {
 				var sweeps atomic.Int32
 				original := s.repositories[0].Branches
 				s.repositories[0].Branches = func(ctx context.Context) ([]string, error) { sweeps.Add(1); return original(ctx) }
+				var logs bytes.Buffer
+				s.options.Logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				done := make(chan error, 1)
@@ -107,9 +109,19 @@ func TestInactiveLifecyclesDoNotRefreshDiscovery(t *testing.T) {
 				// Wait for the initial cycle (including status publication) to finish.
 				// A real deadline can cancel slow database I/O before it gets there.
 				synctest.Wait()
+				cycles := strings.Count(logs.String(), "reconcile cycle finished")
+				if cycles == 0 {
+					t.Fatal("initial cycle did not finish")
+				}
 				// Drive another turn explicitly, without racing a poll or cancellation.
-				w.wake <- struct{}{}
+				select {
+				case w.wake <- struct{}{}:
+				default:
+				}
 				synctest.Wait()
+				if got := strings.Count(logs.String(), "reconcile cycle finished"); got <= cycles {
+					t.Fatalf("wake did not finish another cycle: before=%d after=%d", cycles, got)
+				}
 				cancel()
 				must(t, <-done)
 				if sweeps.Load() != 0 || !w.validationNext.IsZero() {
