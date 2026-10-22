@@ -2009,6 +2009,10 @@ emission requires scanning the discriminator; after a boundary exists, the
 query stops at its first match. This avoids the former whole-journal aggregate
 and JSON detoast without introducing a migration for the initial switch.
 
+The receipt window is checked again inside the first-emission transaction after
+any lock wait. It can still expire after that last check and before commit;
+receipt validation is not a lease guaranteeing freshness through commit.
+
 Once a boundary event exists, steady-state reconciliation, tip-move re-pins,
 re-enable and subsequent verification require no emission receipt. The configured
 database identity binding remains in force. Rollback to GitHub never requires a
