@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
@@ -80,39 +81,50 @@ func TestValidationLoopHonorsIdleAndBackoffDeadlines(t *testing.T) {
 func TestInactiveLifecyclesDoNotRefreshDiscovery(t *testing.T) {
 	for _, lifecycle := range []string{"dormant", "retired", "overlapping"} {
 		t.Run(lifecycle, func(t *testing.T) {
-			s, f := managedFixture(t, repositoryConfig, Options{PollInterval: 20 * time.Millisecond, DiscoveryInterval: time.Hour})
-			w := baseWorker(t, s, "main")
-			base, err := f.ReadRef(t.Context(), repo, "main")
-			must(t, err)
-			_, err = f.OpenPR(repo, 1, base, true)
-			must(t, err)
-			must(t, s.lifecycle(t.Context(), w, lifecycle, "lifecycle reason: "+lifecycle))
-			w.validationNext = time.Now().Add(-time.Second)
-			w.waiting = "unrelated configuration read failure"
-			for len(s.refresh) > 0 {
-				<-s.refresh
-			}
-			for len(w.wake) > 0 {
-				<-w.wake
-			}
-			var sweeps atomic.Int32
-			original := s.repositories[0].Branches
-			s.repositories[0].Branches = func(ctx context.Context) ([]string, error) { sweeps.Add(1); return original(ctx) }
-			ctx, cancel := context.WithTimeout(t.Context(), 180*time.Millisecond)
-			defer cancel()
-			must(t, s.Run(ctx))
-			if sweeps.Load() != 0 || !w.validationNext.IsZero() {
-				t.Fatalf("inactive queue drove discovery: sweeps=%d next=%v", sweeps.Load(), w.validationNext)
-			}
-			statuses := f.Statuses(repo, 1)
-			if len(statuses) == 0 {
-				t.Fatal("lifecycle status absent")
-			}
-			for _, check := range statuses {
-				if check.Reason == "validation-pending" || !strings.Contains(check.Summary, lifecycle) {
-					t.Fatalf("lifecycle hidden: %+v", statuses)
+			testSynctest(t, func(t *testing.T) {
+				s, f := managedFixture(t, repositoryConfig, Options{PollInterval: 20 * time.Millisecond, DiscoveryInterval: time.Hour})
+				w := baseWorker(t, s, "main")
+				base, err := f.ReadRef(t.Context(), repo, "main")
+				must(t, err)
+				_, err = f.OpenPR(repo, 1, base, true)
+				must(t, err)
+				must(t, s.lifecycle(t.Context(), w, lifecycle, "lifecycle reason: "+lifecycle))
+				w.validationNext = time.Now().Add(-time.Second)
+				w.waiting = "unrelated configuration read failure"
+				for len(s.refresh) > 0 {
+					<-s.refresh
 				}
-			}
+				for len(w.wake) > 0 {
+					<-w.wake
+				}
+				var sweeps atomic.Int32
+				original := s.repositories[0].Branches
+				s.repositories[0].Branches = func(ctx context.Context) ([]string, error) { sweeps.Add(1); return original(ctx) }
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				done := make(chan error, 1)
+				go func() { done <- s.Run(ctx) }()
+				// Wait for the initial cycle (including status publication) to finish.
+				// A real deadline can cancel slow database I/O before it gets there.
+				synctest.Wait()
+				// Drive another turn explicitly, without racing a poll or cancellation.
+				w.wake <- struct{}{}
+				synctest.Wait()
+				cancel()
+				must(t, <-done)
+				if sweeps.Load() != 0 || !w.validationNext.IsZero() {
+					t.Fatalf("inactive queue drove discovery: sweeps=%d next=%v", sweeps.Load(), w.validationNext)
+				}
+				statuses := f.Statuses(repo, 1)
+				if len(statuses) == 0 {
+					t.Fatal("lifecycle status absent")
+				}
+				for _, check := range statuses {
+					if check.Reason == "validation-pending" || !strings.Contains(check.Summary, lifecycle) {
+						t.Fatalf("lifecycle hidden: %+v", statuses)
+					}
+				}
+			})
 		})
 	}
 }

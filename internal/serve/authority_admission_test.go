@@ -248,7 +248,9 @@ func authorityAdmissionWorkerTimeout(t *testing.T, mode string) {
 		// Exclude unrelated error-status writes from the held-lock measurement.
 		w.reportingNext = time.Now().Add(time.Hour)
 		s.options.ActionTimeout = 30 * time.Second
-		s.authorityWriteTimeout = 100 * time.Millisecond
+		// The same budget covers the pre-read Load, before the lock is held.
+		// Leave room for loaded runners while still bounding the locked append.
+		s.authorityWriteTimeout = 2 * time.Second
 		writeTimeout = s.authorityWriteTimeout
 	}
 	parent, cancel := context.WithCancel(t.Context())
