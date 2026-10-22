@@ -9,6 +9,99 @@ is no new independent timeout. Production supplies no gate after the boundary.
 Direct SQL registration and old binaries do not participate in this protocol:
 stop old workers and freeze installation registration during the switch.
 
+## Issue #144 test-only tenancy lock pins
+
+Hold remains. This follow-up adds no production changes. The three subtests of
+`TestAuthorityTenancyConcurrentFirstEmissionRegistration` reuse the concurrent
+registration protocol from `TestAuthorityTenancyConcurrentRegistration` for
+`ApplyAuthorityConfigWithEmissionGate`,
+`AdoptAuthorityPin`, and `CheckAuthorityEmissionBackup`. Each waits until a real
+second-installation registration holds shared tenancy behind a registration-key
+holder, then observes the entry point waiting for exclusive tenancy before any
+queue advisory and events lock. Releasing registration must produce a sanitized tenancy
+refusal, no authority boundary, and no partial journal events. Adoption starts
+with only its required governing config. Synchronization uses PostgreSQL lock
+state and channels inside synctest, with no sleeps or new production seams.
+
+The preflight lock remains in the lock-order inventory and in production. Its
+new pin checks that preflight waits for pending registration before returning a
+tenancy verdict, even though the committing transaction also rechecks tenancy.
+
+Scratch-copy Go overlays remove exactly one entry point's lock per mutation.
+All three compile and fail the named subtest with
+`tenancy ExclusiveLock granted=false not observed`, exit 1:
+
+| Mutation | Removed lock | Test that killed it |
+| --- | --- | --- |
+| M8 | `CheckAuthorityEmissionBackup` exclusive tenancy | `TestAuthorityTenancyConcurrentFirstEmissionRegistration/preflight` |
+| M9 | `AdoptAuthorityPin` gated exclusive tenancy | `TestAuthorityTenancyConcurrentFirstEmissionRegistration/adopt-pin` |
+| M10 | `applyAuthorityConfig` gated exclusive tenancy | `TestAuthorityTenancyConcurrentFirstEmissionRegistration/apply-config` |
+
+The new test passed `GOMAXPROCS=1 go test -race -count=20` with eight owned CPU
+burners. All eight accumulated CPU ticks during the run and were terminated and
+reaped afterward. The store package reported 4.677 s. Mutation and verification
+logs, scratch overlays, and the burner observations are retained locally in
+`~/.cache/openmerge-144-verification/`.
+
+CI-like `GOMAXPROCS=2 go test -race -short -count=1 -p=1 -timeout=15m`
+passed for both packages on main `7aa71a3` and this test-only branch:
+
+| Package | Main 7aa71a3 (s) | Issue #144 branch (s) |
+| --- | ---: | ---: |
+| `internal/store` | 63.895 | 75.273 |
+| `internal/serve` | 329.261 | 335.314 |
+
+After the reboot, `make check` passed with exit 0 (479.748 s wall time),
+including formatting, zero lint issues, the full short race suite, and build.
+
+These are single local suite timings, excluding compilation and flock waiting,
+not a causal performance estimate. The baseline ran in a clean detached worktree.
+All Go commands exported Go 1.27.3 GOROOT and PATH and ran under the heavy flock
+with `GOFLAGS=-p=2 GOMEMLIMIT=4GiB`, against the shared test Postgres on
+localhost:54329. No existing fixture, production code, migration, Makefile, CI
+configuration, test flag, or Dockerfile changed.
+
+## PR #145 round-1 ordering pins
+
+The verification-commit path and the apply-config/adopt-pin paths now also
+assert that the backend waiting for exclusive tenancy holds no granted queue
+advisory for the target queue. The query matches `lockQueue`'s scoped two-int
+key (namespace `1330464081`, `hashtext(test scope + "/" + queue ID)`) and joins
+the pending tenancy request by backend PID and test scope. Unrelated lock
+holders cannot trip the assertion. Preflight takes no queue advisory.
+
+Scratch source overlays independently remove tenancy or acquire events/queue
+before tenancy. Each compiled mutation fails its named behavioral test; build
+failures do not count. The earlier M8/M9/M10 removal pins remain effective.
+
+| Mutation | Changed ordering | Test that killed it |
+| --- | --- | --- |
+| M8 | Remove preflight tenancy | `TestAuthorityTenancyConcurrentFirstEmissionRegistration/preflight` |
+| M9 | Remove adoption tenancy | `TestAuthorityTenancyConcurrentFirstEmissionRegistration/adopt-pin` |
+| M10 | Remove config tenancy | `TestAuthorityTenancyConcurrentFirstEmissionRegistration/apply-config` |
+| M9c | Adoption queue before tenancy | `TestAuthorityTenancyConcurrentFirstEmissionRegistration/adopt-pin` |
+| M10c | Config queue before tenancy | `TestAuthorityTenancyConcurrentFirstEmissionRegistration/apply-config` |
+| Verification queue-before-tenancy | Verification queue before tenancy | `TestAuthorityTenancyConcurrentRegistration` |
+| M8 events-before-tenancy | Preflight events before tenancy | `TestAuthorityTenancyConcurrentFirstEmissionRegistration/preflight` |
+| M9 events-before-tenancy | Adoption events before tenancy | `TestAuthorityTenancyConcurrentFirstEmissionRegistration/adopt-pin` |
+| M10 events-before-tenancy | Config events before tenancy | `TestAuthorityTenancyConcurrentFirstEmissionRegistration/apply-config` |
+| Verification events-before-tenancy | Verification events before tenancy | `TestAuthorityTenancyConcurrentRegistration` |
+| Verification removal | Remove verification tenancy | `TestAuthorityTenancyConcurrentRegistration` |
+
+The two unmutated tests passed `GOMAXPROCS=1 go test -race -count=20`
+under eight owned CPU burners (store test time 6.643 s). All eight accumulated
+CPU ticks and were terminated and reaped afterward. All 11 scratch mutations
+failed with the expected assertion and exit 1.
+
+`make check` passed with exit 0: formatting, zero lint issues, the complete
+short race suite and build. The store package reported 81.889 s and serve
+359.091 s; these are single local suite timings, not performance estimates.
+All Go commands used the pinned Go 1.27.3 GOROOT/PATH, heavy flock,
+`GOFLAGS=-p=2 GOMEMLIMIT=4GiB` and the test Postgres on localhost:54329.
+
+Round-1 validation logs, source overlays, mutation results and CPU burner
+observations are retained in `~/.cache/openmerge-145-r1/`.
+
 ## Round-5 lock-order inventory
 
 The code inventory is in `internal/store/locks.go`. Advisory tenancy namespace
