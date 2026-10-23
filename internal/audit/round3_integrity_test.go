@@ -173,6 +173,7 @@ func TestSpoolRejectsConflictingDuplicateRecords(t *testing.T) {
 	}{
 		{name: "payload", a: spoolRecord{Source: source, Payload: json.RawMessage(`{"n":1}`), Role: "scope"}, b: spoolRecord{Source: source, Payload: json.RawMessage(`{"n":2}`), Role: "scope"}},
 		{name: "references", a: spoolRecord{Source: source, Payload: json.RawMessage(`{}`), Role: "scope", References: []Reference{refA}}, b: spoolRecord{Source: source, Payload: json.RawMessage(`{}`), Role: "scope", References: []Reference{refB}}},
+		{name: "watermark", a: spoolRecord{Source: source, Payload: json.RawMessage(`{}`), Role: "scope", MaxID: 7}, b: spoolRecord{Source: source, Payload: json.RawMessage(`{}`), Role: "dependency", MaxID: 8}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()

@@ -118,3 +118,56 @@ func TestCheckAttemptDispatchFollowsRequestGeneration(t *testing.T) {
 		return nil
 	}))
 }
+
+// Range, not closure, owns the scope label: an out-of-range retained record
+// relabelled as a scope root is self-consistent under exact closure.
+func TestReplayRejectsOutOfRangeRecordClaimedAsScope(t *testing.T) {
+	f := database(t)
+	f.queue(t, 1, "")
+	rootID := insert(t, f.admin, 1, "2026-10-22T12:00:00Z")
+	laterID := insert(t, f.admin, 1, "2026-10-22T14:00:00Z")
+	original := filepath.Join(t.TempDir(), "original")
+	_, err := f.reader.Export(t.Context(), req(), original)
+	must(t, err)
+	artifact := buildReplayArtifact(t, f, original,
+		[]sourceEvent{replayEvent(t, f, rootID), replayEvent(t, f, laterID)}, []string{"scope", "scope"})
+	if _, err = f.reader.Replay(t.Context(), filepath.Join(artifact, "manifest.json"), filepath.Join(t.TempDir(), "replay")); err != errIntegrity {
+		t.Fatalf("got %v want integrity rejection of an out-of-range scope claim", err)
+	}
+}
+
+// Several member decisions share one attempt. Each event resolves against the
+// retained item with its own event ID, never another member's decision.
+func TestRound3DecisionOwnerSelectsItsOwnRetainedItem(t *testing.T) {
+	fx := round3ApprovalFixture(t)
+	remedy := func(evidence string) queue.LandingDecisionRecorded {
+		d := fx.decision
+		d.Variant, d.Approval = "generated_remedy", nil
+		d.Remedy = &queue.GeneratedRemedyDecision{ChangeID: fx.decision.Approval.Basis.ChangeID, Revision: fx.decision.Approval.Basis.Revision, Head: fx.decision.Approval.Basis.Head, Suspect: fx.decision.TestedSHA, Evidence: []string{evidence}, OnRed: "revert"}
+		return d
+	}
+	first, second := remedy("first"), remedy("second")
+	firstID := evidenceInsert(t, fx.f, first)
+	evidenceInsert(t, fx.f, second)
+	resolve := func(id int64, d queue.LandingDecisionRecorded) error {
+		_, raw, err := queue.EncodeEvent(d)
+		must(t, err)
+		var resolveErr error
+		must(t, fx.f.reader.snapshot(t.Context(), func(ctx context.Context, tx pgx.Tx) error {
+			var watermark int64
+			must(t, tx.QueryRow(ctx, `SELECT max(id) FROM events WHERE queue_id=1`).Scan(&watermark))
+			_, _, resolveErr = resolveEvidenceAt(ctx, tx, sourceEvent{source: Source{QueueID: 1, ID: id, Type: "landing_decision_recorded", Queue: Key{Installation: "7", Repository: "Owner/Repo", Base: "release"}}, payload: raw}, watermark)
+			return nil
+		}))
+		return resolveErr
+	}
+	if err := resolve(firstID, first); err != nil {
+		t.Fatalf("member decision rejected beside a later member: %v", err)
+	}
+	if err := resolve(fx.decisionID, fx.decision); err != nil {
+		t.Fatalf("approval decision rejected beside remedy members: %v", err)
+	}
+	if err := resolve(firstID, second); err == nil {
+		t.Fatal("accepted the later member's payload under the first member's event ID")
+	}
+}
