@@ -2235,3 +2235,54 @@ ADR 0008 PR 9c-3. An older admin CLI using `DisallowUnknownFields` fails closed
 against this newer server; upgrade the admin CLI with the server. A restore under
 a live process would invalidate the positive boundary cache: stop all workers
 before replacing journal history, as required by the restore procedure.
+
+## Offline audit export (ADR 0008 v1)
+
+Deploy this command only after period B drains (**Hold**). Supply the operator
+connection through OPENMERGE_DATABASE_URL; a SELECT-only role with schema USAGE
+and SELECT on queues/events is sufficient. The command sets read-only transaction
+defaults and uses a repeatable-read snapshot, without migrations, worker locks,
+journal writes, status API calls or forge access.
+
+```sh
+openmerge audit export --repo owner/name --installation 7 \
+  --from 2026-10-22T00:00:00Z --until 2026-10-23T00:00:00Z --out ./audit-day
+openmerge audit export --manifest ./audit-day/manifest.json --out ./audit-replay
+```
+
+All range selectors are required in range mode; manifest mode rejects any of
+--repo, --installation, --from or --until, even if empty. Bounds are half-open,
+normalized to UTC microseconds by ceiling both endpoints. Equal bounds are
+valid. Installation is a positive decimal ID; repository is the exact stored
+owner/name, including case. Tenancy must resolve to that installation.
+The output directory must not exist. Publication uses private sibling staging
+and atomic no-replace rename; never overwrite a previous result. Exit 0 means
+success; 2 means usage, selectors or bounds; 1 means a sanitized connection,
+source, integrity or publication failure. See audit --help. If publication
+fails after rename, a complete directory may exist: preserve it and exact-replay
+it to a distinct fresh directory before investigating or retrying.
+
+`governing authority pin rejected by queue fold` means retained pin history
+contains a malformed or digest-mismatched transition. It blocks later exports
+for that queue even after a valid replacement. Preserve the journal and consult
+the authority-transition incident procedure/maintainer; do not delete or edit
+retained history to make export pass. A pre-incident range whose decisions
+precede the rejection, or a different unaffected queue/repository, can still be
+exported where its dependency closure is valid. There is no CLI repair bypass.
+
+V1 is frozen with PR 10a-2b-2. All four streams and the manifest are deterministic;
+serialization shape changes after merge require a version bump. Replay verifies
+saved selected sources against the database and recomputes exact dependency
+closure, but accepts a fully rehashed export with dropped events or whole queues.
+Only an externally anchored manifest (10b) detects such omissions. Retain the
+original manifest separately; local integrity alone does not establish completeness.
+
+Memory is bounded by paging/spooling, but database work can grow with owners ×
+retained events × checks. Long configuration history is folded incrementally per
+queue segment within each snapshot. Export and replay can each take minutes on
+large journals; the command has a five-minute snapshot timeout. Use modest
+intervals and preserve failed outputs as described above. Growth inputs, measured
+plans, timings and projected costs are in the 10a-2b-2 evidence note.
+`(queue_id,type,id)` and batch-ID expression indexes are post-trial candidates
+only; this release adds no migration or index. Do not infer sublinear database
+work from bounded memory or the pin-fold cursor.

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"sort"
@@ -756,13 +757,34 @@ func (f *pinFold) apply(id int64, event queue.Event) {
 	}
 }
 
+// ErrPinRejected identifies retained authority history rejected by the queue fold.
+// It contains no source payload, connection details or credentials.
+var ErrPinRejected = errors.New("audit: governing authority pin rejected by queue fold")
+
+type pinCursorKey struct{}
+
+type pinCursor struct {
+	queueID int64
+	before  int64
+	fold    pinFold
+}
+
 func governingPin(ctx context.Context, tx pgx.Tx, queueID, before int64) (int64, error) {
-	rows, err := tx.Query(ctx, `SELECT id,type,CASE WHEN octet_length(payload::text)<=4194304 THEN payload::text ELSE NULL END FROM events WHERE queue_id=$1 AND id<$2 AND type IN ('config_applied','policy_authority_applied') ORDER BY id`, queueID, before)
+	// One cursor per snapshot, retaining only one queue segment. Closure can
+	// revisit earlier prefixes; reset rather than reusing future authority state.
+	cursor, ok := ctx.Value(pinCursorKey{}).(*pinCursor)
+	if !ok {
+		cursor = &pinCursor{}
+	}
+	if cursor.queueID != queueID || before < cursor.before {
+		*cursor = pinCursor{queueID: queueID}
+	}
+	rows, err := tx.Query(ctx, `SELECT id,type,CASE WHEN octet_length(payload::text)<=4194304 THEN payload::text ELSE NULL END FROM events WHERE queue_id=$1 AND id<$2 AND id>=$3 AND type IN ('config_applied','policy_authority_applied') ORDER BY id`, queueID, before, cursor.before)
 	if err != nil {
 		return 0, errSource
 	}
 	defer rows.Close()
-	var fold pinFold
+	fold := cursor.fold
 	for rows.Next() {
 		var e sourceEvent
 		if rows.Scan(&e.source.ID, &e.source.Type, &e.payload) != nil {
@@ -770,12 +792,19 @@ func governingPin(ctx context.Context, tx pgx.Tx, queueID, before int64) (int64,
 		}
 		v, err := decodeEvidence(&e)
 		if err != nil {
+			if e.source.Type == "policy_authority_applied" {
+				return 0, ErrPinRejected
+			}
 			return 0, errSource
 		}
 		fold.apply(e.source.ID, v)
 	}
-	if rows.Err() != nil || fold.rejected {
+	if fold.rejected {
+		return 0, ErrPinRejected
+	}
+	if rows.Err() != nil {
 		return 0, errSource
 	}
+	cursor.before, cursor.fold = before, fold
 	return fold.id, nil
 }

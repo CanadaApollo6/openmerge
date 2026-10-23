@@ -216,27 +216,14 @@ DB sources and all hashes); inspect/retain the verified result. If verification
 fails, investigate the storage failure and remove only that failed export target
 before retrying. Never blindly retry against or overwrite the existing target.
 
-V1 is provisional until 10a-2 merges; 10a-2 defines and freezes the
-dependency/absence model. No released exports exist. Scope-only exports accept
-only `role: "scope"` and a non-null empty `references` array. The role/reference
-extension points deliberately specify no dependency, absence or boundary record
-shape yet. There is no dependency-boundaries file in 10a-1.
-
-10a-2 must define absent-evidence identity without invented source IDs, distinct
-from required-but-missing evidence (which fails); an owning decision/selection
-entry; evidence kind and expected type (eligibility, classification,
-accountability, receipt, authority, check attempt, settlement); representation of
-the governing check attempt and excluded retries after the decision boundary;
-and replay validation of each reference's status against the database.
-
-Replay validates the frozen inventory: every saved watermark queue must still
-exist with the identical canonical key. Current DB queues omitted from the saved
-watermarks are allowed, whether empty or populated. The selection alone defines
-the sources, just as for late commits. Missing watermarks for selected queues,
-unknown IDs, key mismatches, duplicates, ordering violations and watermarks below
-selected IDs still fail. 10a-1 reports source facts only: no decision validity,
-check/retry join, closure selection, real-git acceptance or operator CLI.
-
+V1 is frozen with PR 10a-2b-2. Any serialization shape change after merge
+requires a version bump. The complete contract includes events.jsonl,
+selection.jsonl, watermarks.jsonl, dependency_boundaries.jsonl and manifest.json.
+See internal/audit/testdata/README.md and journal-v1.json for literal independent
+complete-export vectors, including dependency roles, explicit absence, boundaries,
+metadata hashes, chain links and manifest/file integrity. Canonical primitive
+vectors remain unchanged. Payload timestamps retain their original spelling;
+source and request bounds use UTC with exactly six fractional digits.
 
 ### 10a-2a round-1 historical boundary clarification
 
@@ -250,10 +237,10 @@ are canonical JSON string tuples. Without new indexes, JSON-filtered retained lo
 remain owners × retained events (multiplied by checks); bounded memory is not a
 claim of sublinear database work. See the 10a-2a evidence note for limits and plans.
 
-## 10a-2b-1 provisional evidence correction
+## Governing evidence and final v1 contract
 
-The approved sequence is in `adr-0008-10a-2b-size-gate.md`. This step leaves
-complete-export fixtures and v1 **PROVISIONAL**. It does not freeze bytes.
+The approved sequence is in `adr-0008-10a-2b-size-gate.md`. Step 2 completes
+the original 10a row and freezes the complete-export bytes.
 Audit projects only config/pin events through `queue.Apply` in journal order
 before each decision. An invalid or digest-ignored pin fails that export
 closed, even if later history contains a valid replacement. Config changes
@@ -261,7 +248,9 @@ alone preserve the durable pin exactly as the queue fold does.
 
 A governing github pin has `status: "inapplicable"` and retains its actual
 source. `not_recorded` means the resolver found no applicable source. Reference
-shape validation restricts `inapplicable` to the governing authority edge;
+shape validation restricts `inapplicable` to the governing authority edge.
+Under github authority `landing_checks_recorded` remains `not_recorded`, even
+when an instrumented check event is retained; only the pin edge is inapplicable;
 closure retains its source and replay re-resolves its status and identity
 against retained history. Rehashing a status or source substitution cannot
 legitimize it. Fully rehashed omissions still need the future 10b anchor.
@@ -272,3 +261,13 @@ therefore selects the later event. Within the chosen event, Go normalization
 validates the retained run and describes its reference; these are distinct
 selection and validation responsibilities. Retry-generation selection stays
 in SQL; the redundant `sameGeneration` helper and its helper-only test are gone.
+
+
+The operator command uses audit.Open, Reader.Export and Reader.Replay; it never
+runs migrations, takes worker locks, writes to Postgres or contacts a forge.
+The snapshot-local governing-pin cursor retains one queue segment only and
+resets on queue changes or backward decision traversal. It folds only new
+config/pin prefixes through queue.Apply. Rejected pins still fail closed with
+`audit: governing authority pin rejected by queue fold`, including after a
+later valid replacement. No shared queue fold or wire behavior changes.
+Classification: **Hold**; deploy only after period B drains.

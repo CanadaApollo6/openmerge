@@ -81,7 +81,7 @@ func TestGoverningPinPrefixAgreement(t *testing.T) {
 					must(t, f.reader.snapshot(t.Context(), func(ctx context.Context, tx pgx.Tx) error {
 						got, err := governingPin(ctx, tx, 1, id+1)
 						if rejected {
-							if err != errSource {
+							if err != ErrPinRejected {
 								t.Fatalf("prefix %d accepted rejected/ignored pin: %d %v", i+1, got, err)
 							}
 						} else if err != nil || got != acceptedID {
@@ -111,7 +111,7 @@ func TestGoverningPinRejectedHistoryFailsExport(t *testing.T) {
 			_, err = fx.f.admin.Exec(t.Context(), `UPDATE events SET payload=$2 WHERE id=$1`, fx.pinID, raw)
 			must(t, err)
 			_, err = fx.f.reader.Export(t.Context(), Request{Installation: "7", Repository: "Owner/Repo"}, filepath.Join(t.TempDir(), "export"))
-			if err != errSource {
+			if err != ErrPinRejected {
 				t.Fatalf("bad pin hid requiredness: %v", err)
 			}
 		})
@@ -247,4 +247,47 @@ func TestGoverningPinInapplicableReferenceShape(t *testing.T) {
 			t.Fatal("invalid inapplicable shape accepted", mode)
 		}
 	}
+}
+
+// Proposed regression: governingPin is scoped to its own queue.
+func TestGoverningPinQueueScoped(t *testing.T) {
+	f := database(t)
+	f.queue(t, 1, "")
+	f.queue(t, 2, "lane2")
+	pin := agreementPin(t)
+	ins := func(q int, e queue.Event) int64 {
+		typ, raw, err := queue.EncodeEvent(e)
+		must(t, err)
+		var id int64
+		must(t, f.admin.QueryRow(t.Context(), `INSERT INTO events(queue_id,type,payload,recorded_at) VALUES($1,$2,$3,'2026-10-22T12:00:00Z') RETURNING id`, q, typ, raw).Scan(&id))
+		return id
+	}
+	// queue 2: a digest-mismatched (rejected) github pin, and a different valid pin.
+	bad := pin
+	bad.Authority, bad.OpenMerge, bad.EffectiveDigest = "github", nil, strings.Repeat("e", 64)
+	ins(2, bad)
+	ins(1, queue.ConfigApplied{Commit: pin.GoverningCommit, Digest: pin.EffectiveDigest})
+	own := ins(1, pin)
+	ins(2, queue.ConfigApplied{Commit: pin.GoverningCommit, Digest: pin.EffectiveDigest})
+	ins(2, pin)
+	end := ins(1, queue.PauseRequested{Reason: "operator", Detail: "d"})
+	must(t, f.reader.snapshot(t.Context(), func(ctx context.Context, tx pgx.Tx) error {
+		got, err := governingPin(ctx, tx, 1, end)
+		if err != nil || got != own {
+			t.Fatalf("queue 1 pin: got %d,%v want %d", got, err, own)
+		}
+		if _, err := governingPin(ctx, tx, 2, end+1); err != ErrPinRejected {
+			t.Fatalf("queue 2 rejection lost across cursor switch: %v", err)
+		}
+		if got, err := governingPin(ctx, tx, 1, end); err != nil || got != own {
+			t.Fatalf("queue 1 poisoned by queue 2: %d %v", got, err)
+		}
+		if got, err := governingPin(ctx, tx, 1, own); err != nil || got != 0 {
+			t.Fatalf("backward prefix reused future pin: %d %v", got, err)
+		}
+		if got, err := governingPin(ctx, tx, 1, end); err != nil || got != own {
+			t.Fatalf("forward prefix lost pin: %d %v", got, err)
+		}
+		return nil
+	}))
 }

@@ -53,7 +53,7 @@ type Source struct {
 }
 
 // Selection is independently hashed immutable metadata plus a canonical payload hash.
-// Typed evidence metadata is provisional until the 10a-2b operator/freeze layer.
+// Typed evidence metadata is part of frozen serialization v1.
 type Selection struct {
 	Source         Source      `json:"source"`
 	PayloadSHA256  string      `json:"payload_sha256"`
@@ -120,6 +120,7 @@ func (r *Reader) snapshot(ctx context.Context, fn func(context.Context, pgx.Tx) 
 		return errSource
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
+	ctx = context.WithValue(ctx, pinCursorKey{}, &pinCursor{})
 	if err = fn(ctx, tx); err != nil {
 		return err
 	}

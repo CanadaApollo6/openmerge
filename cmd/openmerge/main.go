@@ -24,6 +24,7 @@ Commands:
   change brief <id>       Read a recorded change brief
   change decisions <id>   Read recorded landing decisions
   queue status [options]  Read queue status and PR explanations
+  audit export [options]  Export recorded audit evidence
   admin acknowledge       Record operator awareness of an outside push
   serve [options]         Run the GitHub merge queue server
   setup <github|rulesets>  Set up the GitHub App and repository rules
@@ -47,6 +48,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		output = schema.V1
 	case (len(args) == 2 || len(args) == 3) && args[0] == "config" && args[1] == "validate":
 		return validateConfig(args[2:], stdout, stderr)
+	case len(args) > 0 && args[0] == "audit":
+		return runAudit(args[1:], stdout, stderr)
 	case len(args) > 0 && args[0] == "admin":
 		return runAdmin(args[1:], stdout, stderr)
 	case len(args) > 0 && args[0] == "serve":

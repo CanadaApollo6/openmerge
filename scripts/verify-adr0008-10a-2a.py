@@ -15,6 +15,10 @@ from adr0008_scratch_db import scratch_url
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE = "4b1fe46"
+SLICE = "10a-2b-1"
+CLASSIFICATION = "Inert by own behaviour; depends on Hold; deploy after B"
+EXTRA_PACKAGES = []
+EXTRA_MUTATIONS = []
 
 
 def module(name, path):
@@ -74,9 +78,9 @@ def mutation_proofs(measured, out, pattern):
         # Do not count helper-only removals of pin Validate/Apply as behaviour
         # kills: production decode already validates, and its pin value is not
         # read back here. Mutate actual rejection at the retained-source boundary.
-        ("pin-ignore-rejected-decode", "evidence.go", "v, err := decodeEvidence(&e)\n\t\tif err != nil {\n\t\t\treturn 0, errSource\n\t\t}", "v, err := decodeEvidence(&e)\n\t\tif err != nil { continue }"),
+        ("pin-ignore-rejected-decode", "evidence.go", 'v, err := decodeEvidence(&e)\n\t\tif err != nil {\n\t\t\tif e.source.Type == "policy_authority_applied" {\n\t\t\t\treturn 0, ErrPinRejected\n\t\t\t}\n\t\t\treturn 0, errSource\n\t\t}', 'v, err := decodeEvidence(&e)\n\t\tif err != nil { continue }'),
         ("pin-ignore-digest", "evidence.go", "v.Validate() != nil || v.EffectiveDigest != f.state.ConfigDigest", "v.Validate() != nil"),
-        ("pin-hide-rejection", "evidence.go", "rows.Err() != nil || fold.rejected", "rows.Err() != nil"),
+        ("pin-hide-rejection", "evidence.go", "if fold.rejected {", "if false {"),
         ("rollback-status-recorded", "evidence.go", 'r.refs[len(r.refs)-1].Status = "inapplicable"', 'r.refs[len(r.refs)-1].Status = "recorded"'),
         ("rollback-status-absent", "evidence.go", 'r.refs[len(r.refs)-1].Status = "inapplicable"', 'r.refs[len(r.refs)-1].Status = "not_recorded"'),
         ("inapplicable-shape", "evidence.go", 'r.Status == "inapplicable" && (', 'false && ('),
@@ -86,6 +90,7 @@ def mutation_proofs(measured, out, pattern):
         # Deliberately report this defensive call's equivalence separately.
         ("closure-valid-resolution-call", "spool.go", "if !validResolution(r.Source, refs, deps) {", "if false {"),
     ]
+    targets += EXTRA_MUTATIONS
     equivalent = {"closure-valid-resolution-call"}
     runs = "FROM jsonb_array_elements(e.payload->'data'->'runs') run WHERE run->>'name'=$6 AND run->>'source'=$7"
     tuple_pick = "(SELECT ARRAY[(run->>'id')::numeric,greatest((run->>'attempt')::numeric,1)] " + runs + " ORDER BY (run->>'id')::numeric DESC,greatest((run->>'attempt')::numeric,1) DESC LIMIT 1)"
@@ -147,7 +152,7 @@ def mutation_proofs(measured, out, pattern):
         replacement.write_text(text)
         overlay = work / "overlay.json"
         overlay.write_text(json.dumps({"Replace": {str(source): str(replacement)}}))
-        packages = ["./internal/store"] if file.startswith("internal/store/") else ["./internal/audit"]
+        packages = ["./internal/store"] if file.startswith("internal/store/") else ["./cmd/openmerge"] if file.startswith("cmd/") else ["./internal/audit"]
         test = measured(["go", "test", "-overlay", str(overlay), "-short", "-count=1", "-timeout=2m", *packages, "-run", pattern + "|TestLandingEvidence|TestLandingDecisionEvidence"], ROOT, out, "mutation-" + name, check=False)
         output = test.stdout + test.stderr
         if "build failed" in output or "[setup failed]" in output:
@@ -194,7 +199,7 @@ def main():
         return result
 
     v.invoke = measured
-    result = {"slice": "10a-2b-1", "classification": "Inert by own behaviour; depends on Hold; deploy after B", "commands": v.COMMANDS}
+    result = {"slice": SLICE, "classification": CLASSIFICATION, "commands": v.COMMANDS}
     try:
         result["baseline"] = v.check_tree("baseline", args.baseline, v.git(args.baseline, "rev-parse", BASE))
         result["candidate"] = v.check_tree("candidate", ROOT)
@@ -207,8 +212,19 @@ def main():
                 raise ValueError("existing fixture changed")
         result["existing_fixtures_unchanged"] = len(fixtures)
         changed = v.git(ROOT, "diff", "--name-only", BASE, "HEAD").splitlines()
-        if any(not (p.startswith("internal/audit/") or p.startswith("docs/") or p.startswith("scripts/")) for p in changed):
+        if any(not (p.startswith("internal/audit/") or p.startswith("docs/") or p.startswith("scripts/") or p in ("cmd/openmerge/audit.go", "cmd/openmerge/audit_test.go", "cmd/openmerge/main.go", "cmd/openmerge/main_test.go")) for p in changed):
             raise ValueError("change outside approved audit/tests/docs/scripts scope")
+        if EXTRA_PACKAGES:
+            result["changed_lines"] = sum(int(n) for line in v.git(ROOT, "diff", "--numstat", BASE, "HEAD").splitlines() for n in line.split("\t")[:2])
+            if result["changed_lines"] > 2000:
+                raise ValueError("2000 changed-line scope gate exceeded")
+            main_before = (args.baseline / "cmd/openmerge/main.go").read_text()
+            main_after = (ROOT / "cmd/openmerge/main.go").read_text()
+            entry = "  audit export [options]  Export recorded audit evidence\n"
+            dispatch = '\tcase len(args) > 0 && args[0] == "audit":\n\t\treturn runAudit(args[1:], stdout, stderr)\n'
+            if main_after.replace(entry, "", 1).replace(dispatch, "", 1) != main_before:
+                raise ValueError("main.go changed beyond additive audit wiring")
+            result["additive_help_dispatch_diff"] = v.git(ROOT, "diff", BASE, "HEAD", "--", "cmd/openmerge/main.go", "cmd/openmerge/main_test.go")
         result["source_sha256"] = {p: v.sha(ROOT / p) for p in changed}
         callers = [p for p in v.git(args.baseline, "ls-files", "internal/store/*test.go").splitlines()
                    if "LandingDecisionEvidence" in (args.baseline / p).read_text()]
@@ -226,17 +242,17 @@ def main():
         if args.phase != "regression":
             result["mutations"] = mutation_proofs(measured, out, "TestGoverningPin|TestEvidence|TestClosure|TestCheckAttempt|TestRound3|TestReplay|TestValid|TestSpool|TestSourceLess|TestNormalize|TestSourceReplayRejectsScopeShapeAndCrossQueueOrder|TestExportV1SemanticExpectations")
             outcomes = [m["outcome"] for m in result["mutations"]]
-            result["mutation_counts"] = {k: outcomes.count(k) for k in ("assertion_kill", "equivalent", "survived", "build_or_setup_failure", "infrastructure_failure")}
+            result["mutation_counts"] = {k: outcomes.count(k) for k in ("assertion_kill", "equivalent", "unreachable", "survived", "build_or_setup_failure", "infrastructure_failure")}
             if any(result["mutation_counts"][k] for k in ("survived", "build_or_setup_failure", "infrastructure_failure")):
                 raise ValueError("mutation verification incomplete; inspect separate outcomes")
             measured(["make", "check"], ROOT, out, "make-check")
-            measured(["go", "test", "-race", "-v", "-count=1", "./internal/audit"], ROOT, out, "evidence-full")
+            measured(["go", "test", "-race", "-v", "-count=1", "./internal/audit", *EXTRA_PACKAGES], ROOT, out, "evidence-full")
             burners = []
             try:
                 for _ in range(8):
                     burners.append(subprocess.Popen([sys.executable, "-c", "while True: pass"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
                 before_cpu = {b.pid: int(Path(f"/proc/{b.pid}/stat").read_text().split()[13]) for b in burners}
-                stress = measured(["go", "test", "-race", "-count=20", "-v", "-timeout=240m", "./internal/audit", "-run", args.stress_pattern], ROOT, out, "evidence-stress", env_extra={"GOMAXPROCS": "1"})
+                stress = measured(["go", "test", "-race", "-count=20", "-v", "-timeout=240m", "./internal/audit", *EXTRA_PACKAGES, "-run", args.stress_pattern], ROOT, out, "evidence-stress", env_extra={"GOMAXPROCS": "1"})
                 passed = re.findall(r"^--- PASS: (\S+)", stress.stdout, re.MULTILINE)
                 if not passed or any(passed.count(name) != 20 for name in set(passed)):
                     raise ValueError("stress did not execute each selected test 20 times")

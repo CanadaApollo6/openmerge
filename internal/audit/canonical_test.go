@@ -81,9 +81,8 @@ func TestExportV1SemanticExpectations(t *testing.T) {
 			source.ID++
 			return emit(sourceEvent{source: source, payload: []byte(`{"type":"historic","decimal":12345e-2}`)}, nil)
 		}, nil, &m))
-		// Complete-export v1 remains provisional. Canonical primitive vectors
-		// above are frozen; these semantic expectations are independently
-		// specified so adding evidence metadata does not freeze a final export.
+		// Complete bytes are independently frozen by TestCompleteExportV1.
+		// These assertions also explain the primitive event semantics.
 		wantCount := int64(2)
 		if empty {
 			wantCount = 0
