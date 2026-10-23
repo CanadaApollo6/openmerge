@@ -8,16 +8,20 @@ import (
 )
 
 func TestEvidenceAuthorityRequiredAtDecisionBoundary(t *testing.T) {
-	for _, mode := range []string{"github-stage-a-dogfood", "mixed-activation", "rollback", "required-check-missing"} {
+	for _, mode := range []string{"github-stage-a-dogfood", "github-inapplicable-retained-check", "mixed-activation", "rollback", "required-check-missing"} {
 		t.Run(mode, func(t *testing.T) {
 			fx := round3ApprovalFixture(t)
 			f := fx.f
 			// Stage A approval history is present while no authority/check instrumentation
 			// governed the original decision: this matches the offline dogfood shape.
-			_, err := f.admin.Exec(t.Context(), `DELETE FROM events WHERE id=$1 OR id=$2`, fx.pinID, fx.checksID)
+			_, err := f.admin.Exec(t.Context(), `DELETE FROM events WHERE id=$1`, fx.pinID)
 			must(t, err)
+			if mode != "github-inapplicable-retained-check" {
+				_, err = f.admin.Exec(t.Context(), `DELETE FROM events WHERE id=$1`, fx.checksID)
+				must(t, err)
+			}
 			expected := map[int64]bool{fx.decisionID: false}
-			if mode != "github-stage-a-dogfood" {
+			if mode == "mixed-activation" || mode == "rollback" || mode == "required-check-missing" {
 				pin := fx.events["policy_authority_applied"][0].(queue.PolicyAuthorityApplied)
 				evidenceInsert(t, f, pin)
 				d := fx.decision

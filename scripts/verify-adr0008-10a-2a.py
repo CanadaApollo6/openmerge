@@ -52,6 +52,11 @@ def mutation_proofs(measured, out, pattern):
         ("resolved-references", "export.go", 'if !bytes.Equal(got, want) {', 'if false && !bytes.Equal(got, want) {'),
         ("additional-transaction", "source.go", "if err = fn(ctx, tx); err != nil {", ""),
     ]
+    runs = "FROM jsonb_array_elements(e.payload->'data'->'runs') run WHERE run->>'name'=$6 AND run->>'source'=$7"
+    tuple_pick = "(SELECT ARRAY[(run->>'id')::numeric,greatest((run->>'attempt')::numeric,1)] " + runs + " ORDER BY (run->>'id')::numeric DESC,greatest((run->>'attempt')::numeric,1) DESC LIMIT 1)"
+    maxima = "(SELECT ARRAY[max((run->>'id')::numeric),max(greatest((run->>'attempt')::numeric,1))] " + runs + ")"
+    targets.append(("independent-run-maxima", "evidence.go", tuple_pick, maxima))
+    targets.append(("retain-inapplicable-check", "evidence.go", " AND $5::boolean", " AND ($5::boolean OR true)"))
     # Each family must retain its exact source edge, not merely a kind label.
     for typ in ("change_classified", "change_revision_observed", "review_stance_observed",
                 "approval_receipt_recorded", "landing_checks_recorded", "landing_abandoned",
@@ -112,7 +117,8 @@ def mutation_proofs(measured, out, pattern):
         output = test.stdout + test.stderr
         if test.returncode == 0 or "build failed" in output or "[setup failed]" in output or "--- FAIL:" not in output:
             raise ValueError("mutation survived or failed before assertions: " + name)
-        results.append({"mutation": name, "killed": True, "pattern": pattern})
+        results.append({"mutation": name, "killed": True, "pattern": pattern,
+                        "failed_tests": re.findall(r"^--- FAIL: (\S+)", output, re.MULTILINE)})
     return results
 
 
@@ -121,7 +127,7 @@ def main():
     parser.add_argument("--baseline", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--phase", choices=("all", "regression"), default="all")
-    parser.add_argument("--stress-pattern", default="TestEvidence|TestClosure|TestCheckAttempt|TestRound3|TestReplay|TestValidResolution|TestSpool|TestSourceLess|TestSourceReplayRejectsScopeShapeAndCrossQueueOrder|TestExportV1SemanticExpectations")
+    parser.add_argument("--stress-pattern", default="TestEvidence|TestClosure|TestCheckAttempt|TestRound3|TestReplay|TestValid|TestSpool|TestSourceLess|TestSourceReplayRejectsScopeShapeAndCrossQueueOrder|TestExportV1SemanticExpectations")
     parser.add_argument("--baseline-timing-log", type=Path, help="reuse an already completed identical baseline timing; requires adjacent exit-status.txt containing 0")
     args = parser.parse_args()
     # Guard before any subprocess; do not propagate a caller-controlled libpq route.
