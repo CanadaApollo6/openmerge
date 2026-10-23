@@ -4,8 +4,8 @@ Classification: **Inert by its own behavior; deploy after B**. Depends on Hold
 PR 8 and transitively 3a–4. No deployment before period B drains. The package has
 no daemon/command caller and adds no advertised `openmerge audit` CLI.
 
-The sections below record the original pre-review acceptance; round-1 results
-and the superseding finalized v1 contract are recorded in the round-1 section.
+The earlier sections record historical pre-review and round-1 acceptance.
+The round-2 section below records the current provisional v1 contract and results.
 
 Base main: `7aa71a3f20b7c7b1b7538aaaa5caf1fdf77dff3d`. Tested implementation:
 `4e652cc0f5a3e5052d1f6ff5d57d107d4a3c3c56`. The final evidence commit changes
@@ -229,7 +229,7 @@ were separately rerun 20/20 under the same race/GOMAXPROCS/burner conditions.
 2. **Queue discovery growth (P2):** one index-eligible ID/key-only query, then Go UTF-8 byte sorting; no repeated collation/page scan. `TestSourceQueueIdentityQueryOnce` kills restoration of the original rescanning implementation; `TestSourceQueueGrowthPlan` records EXPLAIN ANALYZE/BUFFERS at 32/512/2048/8192 matching queues.
 3. **Forged watermarks (P2):** validates every ID/key mapping against snapshot inventory, unique bytewise order and frozen queue coverage for selected sources, retained max, positive watermark existence in its own queue, and each selected event's ID bound. `TestSourceReplayRejectsForgedWatermarks` rejects below-selected, unknown queue, swapped IDs, forged keys, duplicates, order and missing queues, The round-2 contract allows omitted unselected queues and tests this explicitly. `TestReplayRejectsWatermarkIDFromAnotherQueue` also rejects an event ID belonging only to a different queue. The validation-bypass mutant is killed.
 4. **Pagination/collation proof (P2):** ICU-collated base/lane columns have a demonstrably different order from byte order; every fixture queue has events straddling event pages, and queue keys vary both components. `TestSourcePagingAcrossQueuesAndCollation` kills duplicate/skipped queue-boundary, lane-before-base, database-order and inclusive-event-keyset mutants. The old queue keyset code is removed; duplicate/skip mutations target equivalent inventory boundary mistakes.
-5. **Historical round-1 v1 proposal (superseded by round 2):** dependency role, typed relationship/status references (including historical `not_recorded`), and manifest boundary stream/hash are specified now. `TestCanonicalReferenceShapeGolden`, `TestCanonicalEnvelopeAndManifestShapeGolden`, `TestExportV1Golden`, and `TestV1DependencyAndHistoricalAbsenceReplay` fix the shape and prove populated strict replay and rejection of nested unknown fields. Dependency-role and historical-absence rejection mutations are killed. 10a-2 may populate these fields/kinds only; any other serialization change requires a version bump.
+5. **Superseded round-1 v1 proposal:** the dependency/absence/boundary model and its tests were removed in round 2. V1 is provisional until 10a-2 merges; 10a-2 defines and freezes that model. See the current design and round-2 results below.
 6. **Line safety:** `TestCanonicalV1EscapesLineSeparators` and canonical goldens fix lowercase escapes for U+0085/U+2028/U+2029. The independent Python Decimal encoder checks all 11 vectors, exact four-stream files, chains and manifest self-hashes. Reproduce via `independent_goldens()` in the committed verifier (no Go serializer used to derive expected bytes).
 7. **Canonical request timestamps:** resolve normalizes nonempty bounds to UTC with exactly six fractional digits and `Z`, after the microsecond ceiling. `TestSourceEquivalentMicrosecondBoundsHaveIdenticalManifest` proves identical bytes for equivalent effective bounds, UTC-offset spellings and extra fractional zeroes; `TestSourceSubmicrosecondBoundaries` also covers offset spellings. Equal normalized bounds represent an empty interval.
 8. **Submicrosecond ceiling:** added `from=.000000001Z, until=.000002Z`, expected one event. `TestSourceSubmicrosecondBoundaries` kills truncation (two events).
@@ -321,3 +321,131 @@ The live OpenMerge DB, systemd units, `openmerge/*` refs, live status API and
 Smart-Data-Ohio were untouched. Tests and verification made no real GitHub API
 calls. Publication is limited to the requested branch and PR body; no deployment,
 PR comment, review request, merge or queue action.
+
+## Round-2 fixes (current contract; supersedes round-1 shape and inventory rules)
+
+Classification remains **Inert; deploy after B**. V1 is provisional until
+10a-2 merges; 10a-2 defines and freezes the dependency/absence model. The
+speculative dependency/reference fields and boundary stream were removed.
+Scope exports retain only `scope` role and non-null empty references. The
+three source streams and manifest remain deterministic; only this package's
+unreleased manifest goldens changed, and the two empty boundary fixtures were
+removed. Other audit golden bytes and every pre-existing external fixture remain
+unchanged.
+
+### Resolution by review item
+
+- **P2-1 frozen inventory:** `TestSourceReplayAfterNewQueue/empty` and `/events`
+  prove untouched exact replay after a new lane is created, with and without
+  events. `TestSourceReplayAllowsUnselectedQueueOmission` permits omission of an
+  event-free queue. The `missing` case of
+  `TestSourceReplayRejectsForgedWatermarks` now removes a selected queue's
+  watermark. Unknown IDs, key mismatches, duplicates, ordering, and selected-ID
+  bounds remain rejected; `TestReplayRejectsWatermarkIDFromAnotherQueue` remains.
+- **P2-2 provisional model:** removed the speculative dependency/absence/boundary
+  records, boundary stream, populated reference goldens and extension replay
+  test. `TestExportV1Golden` fixes the remaining scope-only output.
+  `TestSourceReplayRejectsScopeShapeAndCrossQueueOrder` rejects bad/dependency
+  roles and null/nonempty references using internally coherent rehashed exports.
+  The design lists absent-evidence identity without invented IDs, required-but-
+  missing failure, owning selection/decision, all seven evidence kinds/expected
+  types, governing check attempt/excluded later retries, and DB status validation
+  as requirements for 10a-2.
+- **P3 semantic gaps:** `TestSourceReplayRejectsForgedWatermarks/event-free-key`
+  isolates a forged key on an event-free queue.
+  `TestSourceReplayRejectsScopeShapeAndCrossQueueOrder/cross-queue-order` reverses
+  selected queues and rebuilds every metadata/file/chain/manifest hash. The
+  remaining shape cases exercise role and reference validation directly.
+- **P3 inventory cost:** one set SQL statement retrieves IDs, keys and watermarks
+  using a lateral indexed top-one lookup. It avoids per-queue Go SQL round trips
+  and full history aggregation. `TestSourceQueueIdentityQueryOnce` checks query
+  count and rejects the old max-ID loop; `TestSourceQueueGrowthPlan` now includes
+  populated events and verifies both existing indexes at the largest size.
+  No new index or migration. Queue identities still use uncapped
+  O(total queue-key bytes) memory; replay holds current and frozen maps. Expected
+  scale is thousands of queues with ordinary short names; 8,192 matching queues
+  are measured. Large keys/inventories require separate memory budgeting or a
+  future spool design, rather than a constant-memory claim.
+- **Publication nit:** the design gives the operator remedy after parent fsync
+  failure: preserve the visible target, verify it through exact replay into a
+  fresh path, investigate storage failure and remove only the failed export
+  target before retrying; never overwrite blindly.
+
+### Mutation accounting
+
+All **17/17** applicable mutations are killed by behavioral test failures, with
+no build failures counted. These include all **12** still-applicable round-1
+mutations and **5** new mutations (event-free forged key, cross-queue selection
+order, invalid role, invalid references, restored current-inventory completeness).
+The old completeness-removal mutant is retired because omission of unselected
+queues is now correct. The old dependency-role and historical-absence rejection
+mutants are retired with the speculative shapes, rather than counted as killed.
+A development ordering mutant initially produced an unused-variable compile
+error; the verifier was corrected to preserve the variable reference, and the
+final run proves the behavioral failure specifically in `/cross-queue-order`.
+
+### Round-2 acceptance
+
+Tested candidate: `980eaf4a9d45eda178b11c6c53e101c62ae3cc8a`; baseline main: `59194fd46c06526d6dbd7cd4a8d8e9b350e51410`.
+The subsequent evidence commit changes documentation only; production and test
+Go files and the verifier retain their tested bytes.
+
+- `make-check`: exit **0**, wall including lock **541.102 s**; package seconds: `github.com/CanadaApollo6/openmerge/internal/audit` **2.770 s**, `github.com/CanadaApollo6/openmerge/internal/serve` **356.784 s**.
+- `foundation-full`: exit **0**, wall including lock **71.244 s**; package seconds: `github.com/CanadaApollo6/openmerge/internal/audit` **70.482 s**.
+- `foundation-stress`: exit **0**, wall including lock **698.104 s**; package seconds: `github.com/CanadaApollo6/openmerge/internal/audit` **697.636 s**.
+- `ci-packages-before`: exit **0**, wall including lock **340.397 s**; package seconds: `github.com/CanadaApollo6/openmerge/internal/serve` **339.206 s**.
+- `timing-before`: exit **0**, wall including lock **921.775 s**; package seconds: `github.com/CanadaApollo6/openmerge/internal/serve` **335.694 s**.
+- `ci-packages-after`: exit **0**, wall including lock **334.058 s**; package seconds: `github.com/CanadaApollo6/openmerge/internal/audit` **2.655 s**, `github.com/CanadaApollo6/openmerge/internal/serve` **333.349 s**.
+- `timing-after`: exit **0**, wall including lock **921.196 s**; package seconds: `github.com/CanadaApollo6/openmerge/internal/audit` **2.582 s**, `github.com/CanadaApollo6/openmerge/internal/serve` **335.403 s**.
+
+- **25** selected top-level tests passed **20/20**, including all new/changed
+  tests and non-short queue-growth/large-payload cases, at `GOMAXPROCS=1 -race`.
+  An independent observer confirmed eight owned burners accumulated positive
+  CPU deltas; all eight were terminated/reaped and their PIDs are absent.
+- Independent canonical comparison: **0 mismatches / 6,128 cases**. The supplied
+  reviewer corpus contains 6,118 entries; the scratch rerun adds ten explicit
+  zero-exponent, Unicode, duplicate-key, decimal and surrogate edge cases.
+- Independent Python Decimal goldens: **11/11** vectors and both complete
+  scope-only exports reproduce bytes, file hashes, chains and manifest self-hashes.
+- Strict replay (`GOMEMLIMIT=6GiB`): **2,159/2,159** identical actions, structural
+  states, snapshot hashes and boundary checkpoints, **8,676** probes, zero
+  non-allowlisted differences; gates 2/4 and self-tests pass.
+- Simulator **146/146** identical; contracts **90/90** identical; GitHub
+  projections and CLI goldens identical; Stage A exact-output and legacy
+  line-zero diagnostics pass on both trees. MixedGithubBytes remains
+  `cc95a654054e61e816120f2e57b9e19ffea3ff4855c32f4f5c055c4e99b913ee`.
+- All **211/211** existing external fixtures remain byte-identical. No fixture
+  outside `internal/audit/testdata` changed.
+
+Populated inventory growth (one event per queue, seven noise queues per matching
+queue), from the full race run:
+
+| Matching / total queues | Combined identity + watermark SQL execution |
+| --- | ---: |
+| 32 / 256 | 0.345 ms |
+| 512 / 4,096 | 0.467 ms |
+| 2,048 / 16,384 | 1.588 ms |
+| 8,192 / 65,536 | 7.004 ms |
+
+The largest plan uses `queues_installation_repository_base_lane_key` and backward
+index-only `events_queue_watermark` lookups. These local single-run SQL samples
+include watermark work, excluding client sorting/serialization. No speedup is
+inferred. The full growth test records export/replay sampled heaps below 4 MB at
+5,000 and 20,000 events; queue-key inventory remains a separate uncapped cost.
+
+Reproduce the complete verifier with pinned GOROOT/PATH and the permitted test
+DSN as above, using baseline `/home/riels/.cache/openmerge-146-r1-main` and a fresh
+`--out` directory. The verifier enforces the shared flock, memory limits,
+isolated test schemas and clean candidate/baseline checks.
+
+Primary artifacts: `/home/riels/.cache/openmerge-146-r2-acceptance-final/`.
+Canonical differential: `/home/riels/.cache/openmerge-146-r2-differential/`.
+Burner observer: `/home/riels/.cache/openmerge-146-r2-burners.json`.
+
+Primary summary.json SHA-256: `a8d5f592b7bbfb06688dd45d0e02c04c45c264ce9fe5e1b41530afd37f823f99`.
+
+Primary manifest.json SHA-256: `8c0918eb8da00801bc868269856658c49d9f243015a25b3605da94118278a454`.
+
+The live DB, systemd, `openmerge/*` refs and live status API were untouched.
+Verification used no real forge API calls. No deployment, comment, merge,
+review request or queue action; only the requested branch push and PR body edit.

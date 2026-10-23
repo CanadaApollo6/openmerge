@@ -84,10 +84,10 @@ The manifest stores count and terminal digest; an empty export has the zero dige
 Golden vectors must independently fix full bytes and digests, including Unicode,
 HTML characters, large integers, equivalent decimals, timestamps and empty output.
 
-The selection file streams source identity, scope/dependency role, canonical
+The selection file streams source identity, role (`scope` in 10a-1), canonical
 payload hash and immutable envelope metadata. Hash its exact canonical bytes.
 The manifest references that file and digest and records serialization version,
-repository/installation, filter, per-queue watermarks and selection,
+repository/installation, filter, per-queue watermarks and stream hashes,
 record count and terminal digest. No export-time clock or added remote URLs.
 Original wire fields remain intact even when they contain historical URLs.
 
