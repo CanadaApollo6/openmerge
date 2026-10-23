@@ -29,6 +29,9 @@ func TestAuditUsageAndSanitization(t *testing.T) {
 		{[]string{"audit", "export", "--manifest", "a", "--out", "b", "--repo", ""}, 2},
 		{[]string{"audit", "export", "--manifest", "", "--out", "b"}, 2},
 		{good, 1},
+		{append(append([]string{}, good...), "--timeout", "0s"), 2},
+		{append(append([]string{}, good...), "--until", "10000-01-01T00:00:00Z"), 2},
+		{append(append([]string{}, good...), "stray"), 2},
 	} {
 		var out, err bytes.Buffer
 		if code := run(tc.args, &out, &err); code != tc.code {
@@ -50,10 +53,22 @@ func TestAuditUsageAndSanitization(t *testing.T) {
 			t.Fatal("invalid selector accepted", flag)
 		}
 	}
+	for _, id := range []string{"007", "+7"} {
+		args := append([]string{}, good...)
+		args[6] = id
+		var out, err bytes.Buffer
+		if run(args, &out, &err) != 2 {
+			t.Fatal("noncanonical installation accepted", id)
+		}
+	}
 	t.Setenv("OPENMERGE_DATABASE_URL", "")
 	var out, err bytes.Buffer
 	if run(good, &out, &err) != 1 {
 		t.Fatal("missing connection accepted")
+	}
+	auditFailure(&err, audit.ErrTimeout)
+	if !strings.Contains(err.String(), "audit: export timed out") {
+		t.Fatal("missing timeout diagnostic")
 	}
 	auditFailure(&err, audit.ErrPinRejected)
 	if !strings.Contains(err.String(), "governing authority pin rejected by queue fold") {
@@ -117,6 +132,24 @@ func TestAuditSelectOnlyCommand(t *testing.T) {
 		code := run(append([]string{"audit", "export"}, args...), &out, &err)
 		if code != 0 {
 			t.Log(err.String())
+		} else {
+			var target string
+			for i, arg := range args {
+				if arg == "--out" {
+					target = args[i+1]
+				}
+			}
+			raw, e := os.ReadFile(filepath.Join(target, "manifest.json"))
+			if e != nil {
+				t.Fatal(e)
+			}
+			var manifest audit.Manifest
+			if json.Unmarshal(raw, &manifest) != nil {
+				t.Fatal("manifest")
+			}
+			if !strings.Contains(out.String(), target) || !strings.Contains(out.String(), manifest.ManifestSHA256) {
+				t.Fatal("missing publication path/digest")
+			}
 		}
 		return code
 	}
@@ -155,11 +188,38 @@ func TestAuditSelectOnlyCommand(t *testing.T) {
 	exec(`INSERT INTO queues VALUES(2,'8','owner/name','main','')`)
 	wrong := append([]string{}, selectors...)
 	wrong[3] = "9"
-	if call(append(wrong, "--out", filepath.Join(root, "wrong"))...) != 1 {
+	if call(append(wrong, "--out", filepath.Join(root, "wrong"))...) != 2 {
 		t.Fatal("wrong tenancy accepted")
 	}
 	var count int
 	if err = conn.QueryRow(t.Context(), "SELECT count(*) FROM events").Scan(&count); err != nil || count != 1 {
 		t.Fatal(fmt.Sprint("journal changed: ", count))
 	}
+	// The same SELECT-only connection must resolve every decision evidence family.
+	var vectors map[string]struct {
+		Events []struct {
+			Source  audit.Source    `json:"source"`
+			Payload json.RawMessage `json:"payload"`
+		} `json:"events"`
+	}
+	rawVector, e := os.ReadFile("../../internal/audit/testdata/journal-v1.json")
+	if e != nil {
+		t.Fatal(e)
+	}
+	if json.Unmarshal(rawVector, &vectors) != nil {
+		t.Fatal("journal inputs")
+	}
+	exec(`INSERT INTO queues VALUES(3,'7','Owner/Repo','release','')`)
+	for _, event := range vectors["approval"].Events {
+		exec(`INSERT INTO events VALUES($1,3,$2,$3,$4)`, event.Source.ID+100, event.Source.Type, event.Payload, event.Source.RecordedAt)
+	}
+	if call("--repo", "Owner/Repo", "--installation", "7", "--from", "2026-10-22T00:00:00Z", "--until", "2026-10-23T00:00:00Z", "--out", filepath.Join(root, "approval")) != 0 {
+		t.Fatal("decision-bearing SELECT-only export failed")
+	}
+	for _, repo := range []string{"missing/repo", "owner/Repo"} {
+		if call("--repo", repo, "--installation", "7", "--from", "2026-10-22T00:00:00Z", "--until", "2026-10-23T00:00:00Z", "--out", filepath.Join(root, "bad-selector")) != 2 {
+			t.Fatal("missing or wrong-case repository accepted")
+		}
+	}
+
 }

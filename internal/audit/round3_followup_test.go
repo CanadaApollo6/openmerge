@@ -36,8 +36,8 @@ func TestReplayRejectsUnreferencedExtraDependency(t *testing.T) {
 
 func TestEvidenceIdentityIsCanonicalStringTuple(t *testing.T) {
 	// Arity and component boundaries are both part of the identity.
-	distinct := []string{evidenceIdentity("b"), evidenceIdentity("b", "a"), evidenceIdentity("b/a"), evidenceIdentity(`b","a`), evidenceIdentity("")}
-	seen := map[string]bool{}
+	distinct := []Identity{evidenceIdentity("b"), evidenceIdentity("b", "a"), evidenceIdentity("b/a"), evidenceIdentity(`b","a`), evidenceIdentity("")}
+	seen := map[Identity]bool{}
 	for _, id := range distinct {
 		if seen[id] || !validIdentity(id) {
 			t.Fatalf("identity %q collides or is invalid", id)
@@ -48,7 +48,7 @@ func TestEvidenceIdentityIsCanonicalStringTuple(t *testing.T) {
 		t.Fatalf("identity escaped payload text: %s", got)
 	}
 	for _, raw := range []string{"", "batch", "b/a", "[]", "null", `"b"`, `[1]`, `["b",1]`, `[ "b"]`, `["b"] `, "[\"\\u0062\"]", `{"b":"a"}`} {
-		if validIdentity(raw) {
+		if validIdentity(Identity(raw)) {
 			t.Fatalf("accepted non-canonical identity %q", raw)
 		}
 	}

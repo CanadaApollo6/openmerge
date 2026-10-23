@@ -2286,3 +2286,15 @@ plans, timings and projected costs are in the 10a-2b-2 evidence note.
 `(queue_id,type,id)` and batch-ID expression indexes are post-trial candidates
 only; this release adds no migration or index. Do not infer sublinear database
 work from bounded memory or the pin-fold cursor.
+
+Audit publication requires Linux `renameat2(RENAME_NOREPLACE)`; the CLI fails
+before opening the database on other platforms. `--timeout 5m` is the default
+snapshot deadline; choose a larger positive Go duration for larger journals.
+Timeouts report `audit: export timed out` (exit 1). Success prints the published
+directory and manifest SHA-256 for external anchoring.
+
+After a killed run, first confirm its process has stopped. In the intended
+output parent, inspect private `.audit-staging-*` directories and their nested
+`.closure-*` spools, then remove only directories belonging to that stopped run.
+These are unpublished temporary artifacts; preserve any published target and
+verify it by replay before retrying. Do not sweep another active export's spools.

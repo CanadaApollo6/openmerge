@@ -5,25 +5,29 @@ merges requires a version bump. Do not regenerate expected bytes to accept a
 Go implementation change.
 
 `canonical-v1.json` fixes canonical input, exact bytes without LF, and SHA-256.
-`journal-v1.json` is the documented literal journal input for three complete
-exports: `full`, `empty`, and `closure`. IDs above 2^53, exact decimal tokens,
-Unicode, UTC microsecond database timestamps, and offset payload timestamps
-are intentional. The full vector has two historical scope events. Empty has
-no queues or events. Closure selects the landed event in [12:00,13:00), retains
-the preceding landing start as a dependency, and records the start's missing
-decision and abandoned edges as explicit absence. Both events share batch b1
-and attempt attempt. The start's landed edge and the landed event's start edge
-form a retained cycle, not duplicate output. Watermarks are literal inputs.
+`journal-v1.json` contains literal retained journal inputs for six exports:
+full, empty on an existing queue, closure, approval under openmerge authority,
+github authority with rerun and a later excluded retry, and two queues whose
+key order reverses their database IDs. The approval journal inputs originate
+from the existing landing-start fixture and its prepared receipt/decision;
+only raw journal inputs were captured, never Go export output or references.
+The github retry input extends those literals using the existing wire samples.
+IDs above 2^53, decimals, Unicode and offset payload timestamps are intentional.
 
-`scripts/verify-adr0008-10a-2b-2.py` independently derives all expected bytes
-using Python Decimal, UTF-8 byte-key ordering, explicit relationships, and an
-encoder adapted from `verify-adr0008-10a-1.py`. It never uses Go output as an
-expected input. `--write-reference` writes only this independently calculated
-reference; normal invocation compares it. `TestCompleteExportV1` separately
-loads the journal into scratch Postgres, runs closure/export/replay, and compares
-all files byte for byte. The empty vector also exercises the Go builder without
-a database. The reference fixes metadata hashes, selection, all chain links,
-terminal hash, all four stream hashes, boundaries, and manifest self-hash.
+`scripts/verify-adr0008-10a-2b-2.py` computes edges independently from journal
+semantic keys and boundaries and derives all 30 complete expected files with
+Python Decimal. No Go output or saved selection is an expected input. These
+selectors are a deliberately small reference for these literal journals, not a
+second general exporter. No expected edges are copied from Go. `--write-reference`
+regenerates only this independent reference. `verify-audit-v1-node.cjs` separately
+re-encodes exact numeric tokens and verifies all canonical bytes, manifest self
+hashes and stream hashes. Node does not supply a second semantic resolver.
+`TestCompleteExportV1` loads every vector into scratch Postgres and compares
+Export and Replay with all five reference files, including the existing empty
+queue. Every database reader uses a SELECT-only role.
+
+The normative contract is the
+[v1 frozen specification](../../../docs/research/adr-0008-10a-design.md#v1-frozen-specification).
 
 Each export has events.jsonl, selection.jsonl, watermarks.jsonl,
 dependency_boundaries.jsonl, and manifest.json. Records include LF; the manifest

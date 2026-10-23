@@ -20,6 +20,28 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// Identity encodes a semantic key tuple as a JSON array of strings.
+// The comparable representation is private to Go; JSON strings are rejected.
+type Identity string
+
+// MarshalJSON emits the tuple itself, without a second string encoding.
+func (id Identity) MarshalJSON() ([]byte, error) {
+	if !validIdentity(id) {
+		return nil, errCanonical
+	}
+	return []byte(id), nil
+}
+
+// UnmarshalJSON rejects legacy string identities and non-string components.
+func (id *Identity) UnmarshalJSON(raw []byte) error {
+	var parts []string
+	if json.Unmarshal(raw, &parts) != nil || len(parts) == 0 {
+		return errCanonical
+	}
+	*id = evidenceIdentity(parts...)
+	return nil
+}
+
 // EvidenceOwner pins the decision and its immutable member/attempt identity.
 type EvidenceOwner struct {
 	QueueID   int64  `json:"queue_id"`
@@ -40,7 +62,7 @@ type Reference struct {
 	Status       string        `json:"status"`
 	Owner        EvidenceOwner `json:"owner"`
 	ExpectedType string        `json:"expected_type"`
-	Identity     string        `json:"identity"`
+	Identity     Identity      `json:"identity"`
 	Generation   uint64        `json:"generation"`
 	RunID        uint64        `json:"run_id"`
 	Attempt      uint64        `json:"attempt"`
@@ -96,7 +118,7 @@ type evidenceResolver struct {
 
 // lookup reads one bounded identity result. The caller supplies fixed SQL only;
 // values always remain query parameters. A duplicate immutable identity fails.
-func (r *evidenceResolver) lookup(kind, typ, identity, predicate string, required bool, args ...any) (*sourceEvent, error) {
+func (r *evidenceResolver) lookup(kind, typ string, identity Identity, predicate string, required bool, args ...any) (*sourceEvent, error) {
 	values := []any{r.event.source.QueueID, typ}
 	values = append(values, args...)
 	bound := r.maxID
@@ -647,7 +669,7 @@ func (r *evidenceResolver) startRelations(start queue.LandingStarted) error {
 		return err
 	}
 	for _, item := range items {
-		if _, err := r.lookup("settlement", "landing_decision_recorded", evidenceIdentity(fmt.Sprint(item.DecisionEventID)), `id=$3`, true, item.DecisionEventID); err != nil {
+		if _, err := r.lookup("settlement", "landing_decision_recorded", evidenceIdentity(start.BatchID, start.AttemptID), `id=$3`, true, item.DecisionEventID); err != nil {
 			return err
 		}
 	}
@@ -696,16 +718,16 @@ func (r *evidenceResolver) checkBasis(c queue.LandingChecksRecorded) error {
 // Every identity is a non-empty JSON string tuple, so component boundaries
 // survive slashes and suffixes, and arity distinguishes ["b"] from ["b","a"].
 // HTML escaping is disabled: it would only inflate payload-derived strings.
-func evidenceIdentity(parts ...string) string {
+func evidenceIdentity(parts ...string) Identity {
 	var b strings.Builder
 	e := json.NewEncoder(&b)
 	e.SetEscapeHTML(false)
 	_ = e.Encode(parts) // A string slice is always JSON encodable.
-	return strings.TrimSuffix(b.String(), "\n")
+	return Identity(strings.TrimSuffix(b.String(), "\n"))
 }
 
 // validIdentity accepts only evidenceIdentity's exact encoding of >=1 strings.
-func validIdentity(identity string) bool {
+func validIdentity(identity Identity) bool {
 	var parts []string
 	if json.Unmarshal([]byte(identity), &parts) != nil || len(parts) == 0 {
 		return false

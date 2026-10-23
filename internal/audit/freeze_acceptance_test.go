@@ -21,8 +21,9 @@ import (
 // explicit relationships. This path exercises source selection/closure too.
 func TestCompleteExportV1(t *testing.T) {
 	var vectors map[string]struct {
-		Request Request `json:"request"`
-		Events  []struct {
+		Request    Request     `json:"request"`
+		Watermarks []watermark `json:"watermarks"`
+		Events     []struct {
 			Source  Source          `json:"source"`
 			Payload json.RawMessage `json:"payload"`
 		} `json:"events"`
@@ -31,24 +32,29 @@ func TestCompleteExportV1(t *testing.T) {
 	for name, v := range vectors {
 		t.Run(name, func(t *testing.T) {
 			target := filepath.Join(t.TempDir(), "export")
-			if name == "empty" {
-				must(t, os.Mkdir(target, 0700))
-				var m Manifest
-				must(t, build(target, v.Request, func(func(sourceEvent, *Selection) error, func(watermark) error) error { return nil }, nil, &m))
-			} else {
-				f := database(t)
-				f.queue(t, 1, "é")
-				for _, event := range v.Events {
-					_, err := f.admin.Exec(t.Context(), `INSERT INTO events(id,queue_id,type,payload,recorded_at) VALUES($1,1,$2,$3,$4)`, event.Source.ID, event.Source.Type, event.Payload, event.Source.RecordedAt)
-					must(t, err)
-				}
-				_, err := f.reader.Export(t.Context(), v.Request, target)
-				must(t, err)
-				replay := filepath.Join(t.TempDir(), "replay")
-				_, err = f.reader.Replay(t.Context(), filepath.Join(target, "manifest.json"), replay)
-				must(t, err)
-				manifests(t, target, replay)
+			f := database(t)
+			queues := map[int64]Key{}
+			for _, event := range v.Events {
+				queues[event.Source.QueueID] = event.Source.Queue
 			}
+			for _, mark := range v.Watermarks {
+				queues[mark.QueueID] = mark.Queue
+			}
+			for id, key := range queues {
+				_, err := f.admin.Exec(t.Context(), `INSERT INTO queues VALUES($1,$2,$3,$4,$5)`, id, key.Installation, key.Repository, key.Base, key.Lane)
+				must(t, err)
+			}
+			for _, event := range v.Events {
+				_, err := f.admin.Exec(t.Context(), `INSERT INTO events(id,queue_id,type,payload,recorded_at) VALUES($1,$2,$3,$4,$5)`, event.Source.ID, event.Source.QueueID, event.Source.Type, event.Payload, event.Source.RecordedAt)
+				must(t, err)
+			}
+			_, err := f.reader.Export(t.Context(), v.Request, target)
+			must(t, err)
+			replay := filepath.Join(t.TempDir(), "replay")
+			_, err = f.reader.Replay(t.Context(), filepath.Join(target, "manifest.json"), replay)
+			must(t, err)
+			manifests(t, target, replay)
+
 			for _, file := range []string{"selection.jsonl", "events.jsonl", "manifest.json", "watermarks.jsonl", "dependency_boundaries.jsonl"} {
 				if !bytes.Equal(read(t, filepath.Join(target, file)), read(t, filepath.Join("testdata", name+"-"+file))) {
 					t.Fatalf("independent frozen bytes differ %s\ngot %s\nwant %s", file, read(t, filepath.Join(target, file)), read(t, filepath.Join("testdata", name+"-"+file)))
@@ -113,7 +119,7 @@ func TestAuditBareRemote(t *testing.T) {
 				} `json:"data"`
 			}
 			must(t, json.Unmarshal(e.Payload, &p))
-			if p.Data.TestedSHA != tested {
+			if p.Data.TestedSHA != tested || git(remote, "rev-parse", "refs/heads/main^") != p.Data.TestedSHA {
 				t.Fatal("tested SHA differs")
 			}
 			seen[e.Source.Type] = true

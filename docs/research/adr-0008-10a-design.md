@@ -271,3 +271,104 @@ config/pin prefixes through queue.Apply. Rejected pins still fail closed with
 `audit: governing authority pin rejected by queue fold`, including after a
 later valid replacement. No shared queue fold or wire behavior changes.
 Classification: **Hold**; deploy only after period B drains.
+
+## v1 frozen specification
+
+This section is normative and supersedes every earlier serialization definition
+in this document and the evidence notes. V1 freezes when PR 149 merges. Later
+shape changes require a new version. Hashes establish local integrity, not
+provenance or completeness; external manifest anchoring is separate (10b).
+
+An export contains exactly `manifest.json` and four UTF-8 JSONL streams:
+`events.jsonl`, `selection.jsonl`, `watermarks.jsonl`, and
+`dependency_boundaries.jsonl`. Each record ends in LF, including the manifest.
+Empty streams contain zero bytes. An existing queue with no selected events
+still has a watermark. The CLI cannot export a nonexistent repository/installation.
+
+The event envelope has exactly `kind` (always `source`), `source`, `payload`,
+`role`, `references`, `evidence_kinds`, and `previous_sha256`. Source has
+`queue_id`, `id`, `type`, `recorded_at`, and `queue`; queue has `installation`,
+`repository`, `base`, `lane`. The payload is the retained event JSON value.
+Selection has exactly `source`, `role`, `references`, `evidence_kinds`,
+`payload_sha256`, `metadata_sha256`. Metadata hash input is precisely the
+canonical object `{source, role, references, evidence_kinds}`. Payload hashes
+cover the canonical payload alone. Empty references and kinds are `[]`, never
+null. Unknown historical event types have empty evidence kinds.
+
+Roles are `scope` (in the half-open normalized request range) and `dependency`
+(outside the range, transitively required); scope wins when both apply.
+References have exactly `kind`, `relation`, `status`, `owner`, `expected_type`,
+`identity`, `generation`, `run_id`, `attempt`, `source`. Owner has exactly
+`queue_id`, `event_id`, `batch_id`, `attempt_id`, `change_id`, `revision`, `head`,
+`tested_sha`. Owner identifies the referencing event, not the dependency.
+Relations are `relied_on` and `excluded_later`; the latter retains the first
+later observation without substituting it for the governing observation.
+Statuses are `recorded`, `not_recorded`, `inapplicable`. Not-recorded has null
+source and relied-on relation. Recorded has a retained source. Inapplicable is
+reserved for a retained github-authority pin, with its source retained; the
+corresponding decision's check edge is not_recorded, not inapplicable.
+Numeric generation/run_id/attempt and owner revision/event_id/queue_id use 0
+when not applicable; applicable source and owner database IDs are positive.
+Nonapplicable owner string fields are empty strings.
+
+The kind to expected-type mapping is exhaustive:
+
+| Kind | Expected types |
+| --- | --- |
+| settlement | landing_decision_recorded, landing_started, landed, landing_abandoned |
+| classification | change_revision_observed, change_classified |
+| eligibility | approval_eligibility_observed |
+| accountability | change_accountability_observed |
+| receipt | approval_receipt_recorded, review_stance_observed |
+| authority | policy_authority_applied |
+| check | batch_started, test_ref_built, landing_checks_recorded, checks_observed, checks_completed, check_rerun_requested, check_rerun_dispatch_progress, check_rerun_dispatched, checks_failure_confirmed |
+
+Identity is a nonempty structured JSON **array of strings**, never a JSON
+string containing an array, and never a database event ID. Numeric components
+are canonical decimal strings. Each edge uses the semantic selector below;
+recorded and absent edges use the same selector. Owner and source provide the
+queue, decision boundary, and actual retained event identity separately.
+
+| Expected type | Identity tuple |
+| --- | --- |
+| landing_decision_recorded | [batch_id, attempt_id] (one edge per member source) |
+| landing_started | [batch_id, attempt_id] when an attempt is known; [batch_id] for the preceding batch start selector from a settlement |
+| landed, landing_abandoned, batch_started | [batch_id] |
+| test_ref_built | [batch_id, tested_sha] |
+| landing_checks_recorded | [batch_id, attempt_id] |
+| change_revision_observed, change_accountability_observed | [change_id, revision] |
+| change_classified | [change_id, revision, generation] |
+| approval_eligibility_observed | [read_id] |
+| approval_receipt_recorded, review_stance_observed | [source_channel, source_id] |
+| policy_authority_applied | ["governing"] (latest accepted pin before owner) |
+| checks_observed | [check_source, check_name], or [check_source, check_name, "later"] for the excluded boundary selector |
+| check_rerun_requested, check_rerun_dispatch_progress, check_rerun_dispatched | [check_source, check_name] |
+| checks_completed, checks_failure_confirmed | no emitted references in v1; source evidence-kind classification only |
+
+Watermarks have `queue_id`, `queue`, `id` (retained maximum or zero).
+Dependency boundaries have `queue_id`, `queue`, `first`, `last`, `count` and
+summarize only dependency records, one nonempty record per affected queue.
+Events and selection share queue-key order (installation, repository, base,
+lane, compared lexicographically by UTF-8 bytes), then numeric source ID.
+Watermarks and boundaries use the same queue-key order, never queue-ID order.
+References sort by the complete canonical reference bytes and exact duplicates
+are removed. Arrays in retained payloads preserve their original order.
+
+The manifest fields are exactly `manifest_sha256`, `version` (1), `request`,
+`count`, `terminal_sha256`, and for each of the four stream names above without
+`.jsonl`, the filename field and its `<name>_sha256` field. Request has exactly
+`installation`, `repository`, `from`, `until`. File names are fixed safe relative
+names. Stream hashes include every LF. Each chain link is SHA-256 of the previous
+canonical event envelope without LF; the initial previous hash and empty terminal
+hash are 64 zeroes. Manifest self-hash covers its canonical JSON with
+`manifest_sha256` set to the empty string, without LF. Digests are lowercase hex.
+
+All JSON object keys sort by UTF-8 bytes. Whitespace is absent outside strings.
+Numbers use exact decimal arithmetic (including integers above 2^53), no binary
+float rounding, no exponent, and no redundant fractional zeroes; negative zero
+is 0. Strings retain Unicode without HTML escaping and escape control characters
+and U+0085/U+2028/U+2029; no Unicode normalization is performed. Source timestamps
+are UTC with six fractional digits. Request bounds are ceiled to database
+microseconds, UTC with six fractional digits, years 1 through 9999. Payload
+strings, including timestamp spellings, remain unchanged. Requests select
+`from <= recorded_at < until`; equal bounds are a valid empty selection.

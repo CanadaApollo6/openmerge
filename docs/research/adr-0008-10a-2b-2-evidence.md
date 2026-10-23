@@ -207,3 +207,62 @@ Artifact manifest SHA-256:
 `b5f381a67f9e93ee9ee201011a4ca9a786ef97f1e1d3ca9d0b8e2fd5c9b18f13`.
 Reproduce with the pinned exported environment and
 `scripts/verify-adr0008-10a-2b-2.py --baseline <clean-2d6792c-worktree> --out <cache-directory>`.
+
+## Round 1 (supersedes the original freeze and mutation claims above)
+
+D1/D2 are applied before freezing. Identities are structured arrays of strings;
+landing-start decision edges use batch/attempt rather than decision event ID.
+The consolidated [v1 frozen specification](adr-0008-10a-design.md#v1-frozen-specification)
+supersedes older descriptions, including the three-stream and metadata-hash
+claims. Python independently computes semantic edges and all 30 complete files
+for six literal journals; Node separately checks exact-number canonical bytes
+and hashes. Approval covers all families and nonempty member ownership. Github
+retry covers nonzero generation/run/attempt, excluded_later, and the retained
+inapplicable authority source. Two-queue key order reverses queue IDs. Empty
+now exercises Export/Replay on an existing queue with its watermark.
+
+CLI additions: --timeout (default 5m), distinct sanitized timeout error, Linux
+startup check, published path and manifest digest on success. Missing selectors
+and out-of-range UTC bounds return exit 2. Canonical installation and stray
+positionals have direct tests and mutation targets. SELECT-only command testing
+now includes the approval-bearing journal with every evidence family. Real-git
+tested SHA is checked against the bare remote graph as well as the local fixture.
+
+### Decision-count scaling
+
+`TestAuditDecisionCountScaling` uses the real approval fixture, one shared basis,
+distinct attempts with their own decision/check/start, and no unrelated filler.
+The scratch schema has only the pre-existing queue watermark index. An initial
+non-race run measured:
+
+| Decisions | Selected | Export | Replay | Export ms/decision |
+| --- | --- | --- | --- | --- |
+| 32 | 112 | 0.424 s | 0.474 s | 13.242 |
+| 128 | 400 | 1.863 s | 2.132 s | 14.553 |
+| 512 | 1552 | 12.080 s | 13.598 s | 23.593 |
+
+The superlinear term remains. Each decision and start resolves immutable attempt
+and settlement identities using retained-event filters; batch/attempt are JSON
+predicates, not indexed keys. As attempts grow, repeated filters examine growing
+queue prefixes, producing an owners × retained-events term even with no unrelated
+history. The incremental authority cursor removes repeated config decoding but
+cannot eliminate those filters. This is distinct from bounded spool memory.
+Fixing it without indexes requires a broader per-snapshot semantic lookup/spool
+redesign; that is outside this format/CLI correction. No index/migration is added.
+The test logs a representative EXPLAIN ANALYZE plan at each decision count.
+
+A descriptive `a*D+b*D²` fit through 32 and 512 gives a≈0.01255 seconds and
+b≈0.00002057 seconds. It predicts about 33 s for 1,000 decisions, 107 s for
+2,000, and 577 s for 5,000, for export alone; 128 predicts 1.94 s versus the
+measured 1.86 s. These are extrapolations from one local run, not capacity
+promises; checks and unrelated retained history can increase cost. Five thousand
+of these decisions would exceed the default five-minute snapshot deadline.
+Use narrower ranges or an explicit larger --timeout, and allow comparable replay
+time. Each run remains snapshot bounded; timeout output contains no source data.
+
+Mutation reporting now distinguishes assertion kills, panic kills, build/setup
+failure, infrastructure failure, equivalent, and survivor. A panic marker wins
+over the Go harness's `--- FAIL:` marker; test deadline/runtime infrastructure
+failures never count as kills. The original claim of 86 assertion kills was
+incorrect: review reproduced 11 panic-only failures. The new full table and
+counts below are authoritative for this revision.

@@ -22,6 +22,12 @@ const replayPageSQL = `WITH candidate AS MATERIALIZED (SELECT e.id,q.installatio
 const pageSize = 32
 const zeroDigest = "0000000000000000000000000000000000000000000000000000000000000000"
 
+// ErrSelectors identifies missing tenancy or invalid request bounds.
+var ErrSelectors = errors.New("audit: invalid selectors or bounds")
+
+// ErrTimeout identifies an expired snapshot without exposing connection details.
+var ErrTimeout = errors.New("audit: export timed out")
+
 var errSource = errors.New("audit: source snapshot unavailable or invalid")
 var errIntegrity = errors.New("audit: export integrity check failed")
 
@@ -112,9 +118,14 @@ func Open(ctx context.Context, dsn string, timeout time.Duration) (*Reader, erro
 // Close releases database connections.
 func (r *Reader) Close() { r.pool.Close() }
 
-func (r *Reader) snapshot(ctx context.Context, fn func(context.Context, pgx.Tx) error) error {
+func (r *Reader) snapshot(ctx context.Context, fn func(context.Context, pgx.Tx) error) (result error) {
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
+	defer func() {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			result = ErrTimeout
+		}
+	}()
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return errSource
@@ -141,8 +152,8 @@ func parseRange(req Request) (*time.Time, *time.Time, error) {
 	}{{req.From, &from}, {req.Until, &until}} {
 		if item.s != "" {
 			t, e := time.Parse(time.RFC3339Nano, item.s)
-			if e != nil {
-				return nil, nil, errSource
+			if e != nil || t.UTC().Year() < 1 || t.UTC().Year() > 9999 {
+				return nil, nil, ErrSelectors
 			}
 			*item.p = &t
 		}
@@ -161,6 +172,9 @@ func parseRange(req Request) (*time.Time, *time.Time, error) {
 			floor := bound.Truncate(time.Microsecond)
 			if !floor.Equal(*bound) {
 				floor = floor.Add(time.Microsecond)
+			}
+			if floor.UTC().Year() > 9999 {
+				return nil, nil, ErrSelectors
 			}
 			*bound = floor
 		}
@@ -186,8 +200,11 @@ func resolve(ctx context.Context, tx pgx.Tx, req Request) (Request, error) {
 		}
 		found = append(found, s)
 	}
-	if rows.Err() != nil || len(found) != 1 {
+	if rows.Err() != nil {
 		return req, errSource
+	}
+	if len(found) != 1 {
+		return req, ErrSelectors
 	}
 	req.Installation = found[0]
 	if from != nil {

@@ -165,8 +165,8 @@ func TestValidReferencesRejectsInventedAbsenceAndDuplicates(t *testing.T) {
 
 func TestSpoolRejectsConflictingDuplicateRecords(t *testing.T) {
 	source := Source{QueueID: 1, ID: 5, Type: "history", Queue: Key{Installation: "i", Repository: "owner/repo", Base: "main"}}
-	refA := Reference{Identity: "a"}
-	refB := Reference{Identity: "b"}
+	refA := Reference{Identity: evidenceIdentity("a")}
+	refB := Reference{Identity: evidenceIdentity("b")}
 	for _, tc := range []struct {
 		name string
 		a, b spoolRecord
