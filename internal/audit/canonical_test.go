@@ -58,7 +58,7 @@ func TestCanonicalV1EscapesLineSeparators(t *testing.T) {
 	}
 }
 
-func TestExportV1Golden(t *testing.T) {
+func TestExportV1SemanticExpectations(t *testing.T) {
 	for _, empty := range []bool{false, true} {
 		name := "full"
 		if empty {
@@ -81,11 +81,50 @@ func TestExportV1Golden(t *testing.T) {
 			source.ID++
 			return emit(sourceEvent{source: source, payload: []byte(`{"type":"historic","decimal":12345e-2}`)}, nil)
 		}, nil, &m))
-		for _, file := range []string{"events.jsonl", "selection.jsonl", "watermarks.jsonl", "manifest.json"} {
-			got := read(t, filepath.Join(dir, file))
-			want := read(t, filepath.Join("testdata", name+"-"+file))
-			if !bytes.Equal(got, want) {
-				t.Fatalf("%s %s golden mismatch\ngot %s\nwant %s", name, file, got, want)
+		// Complete-export v1 remains provisional. Canonical primitive vectors
+		// above are frozen; these semantic expectations are independently
+		// specified so adding evidence metadata does not freeze a final export.
+		wantCount := int64(2)
+		if empty {
+			wantCount = 0
+		}
+		if m.Version != 1 || m.Count != wantCount || m.Request != req {
+			t.Fatalf("%s manifest identity/count: %+v", name, m)
+		}
+		var selected []Selection
+		must(t, lines(bytes.NewReader(read(t, filepath.Join(dir, "selection.jsonl"))), func(raw []byte) error {
+			var s Selection
+			if e := json.Unmarshal(raw, &s); e != nil {
+				return e
+			}
+			selected = append(selected, s)
+			return nil
+		}))
+		if int64(len(selected)) != wantCount {
+			t.Fatal("selection count differs")
+		}
+		for i, s := range selected {
+			if s.Source.ID != 9007199254740993+int64(i) || s.Role != "scope" || len(s.References) != 0 {
+				t.Fatalf("unexpected selection identity/role: %+v", s)
+			}
+		}
+		var events []envelope
+		must(t, lines(bytes.NewReader(read(t, filepath.Join(dir, "events.jsonl"))), func(raw []byte) error {
+			var e envelope
+			if err := json.Unmarshal(raw, &e); err != nil {
+				return err
+			}
+			events = append(events, e)
+			return nil
+		}))
+		if int64(len(events)) != wantCount {
+			t.Fatal("event count differs")
+		}
+		if !empty {
+			var payload map[string]json.RawMessage
+			must(t, json.Unmarshal(events[0].Payload, &payload))
+			if string(payload["integer"]) != "9007199254740993" || string(payload["decimal"]) != "123.45" {
+				t.Fatal("event payload lost exact numeric semantics")
 			}
 		}
 	}

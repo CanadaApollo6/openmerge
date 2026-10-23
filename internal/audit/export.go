@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -25,17 +26,19 @@ var errOutput = errors.New("audit: output unavailable or already exists")
 // Manifest contains only deterministic selection and integrity data. The
 // metadata streams are separate files so manifest memory is independent of size.
 type Manifest struct {
-	ManifestSHA256   string  `json:"manifest_sha256"`
-	Version          int     `json:"version"`
-	Request          Request `json:"request"`
-	Selection        string  `json:"selection"`
-	SelectionSHA256  string  `json:"selection_sha256"`
-	Watermarks       string  `json:"watermarks"`
-	WatermarksSHA256 string  `json:"watermarks_sha256"`
-	Events           string  `json:"events"`
-	EventsSHA256     string  `json:"events_sha256"`
-	Count            int64   `json:"count"`
-	TerminalSHA256   string  `json:"terminal_sha256"`
+	ManifestSHA256     string  `json:"manifest_sha256"`
+	Version            int     `json:"version"`
+	Request            Request `json:"request"`
+	Selection          string  `json:"selection"`
+	SelectionSHA256    string  `json:"selection_sha256"`
+	Watermarks         string  `json:"watermarks"`
+	WatermarksSHA256   string  `json:"watermarks_sha256"`
+	Events             string  `json:"events"`
+	EventsSHA256       string  `json:"events_sha256"`
+	Count              int64   `json:"count"`
+	TerminalSHA256     string  `json:"terminal_sha256"`
+	Dependencies       string  `json:"dependency_boundaries"`
+	DependenciesSHA256 string  `json:"dependency_boundaries_sha256"`
 }
 
 type stream struct {
@@ -80,11 +83,12 @@ func metadata(s Selection) ([]byte, error) {
 		Source     Source      `json:"source"`
 		Role       string      `json:"role"`
 		References []Reference `json:"references"`
-	}{s.Source, s.Role, s.References})
+		Kinds      []string    `json:"evidence_kinds"`
+	}{s.Source, s.Role, s.References, s.Kinds})
 }
 
 // Export publishes a fresh source selection from one repeatable-read snapshot.
-// It retains every selected kind and does not interpret event/wire semantics.
+// It retains every selected kind and resolves typed dependencies in that snapshot.
 func (r *Reader) Export(ctx context.Context, req Request, target string) (Manifest, error) {
 	var result Manifest
 	err := publish(target, func(dir string) error {
@@ -93,14 +97,60 @@ func (r *Reader) Export(ctx context.Context, req Request, target string) (Manife
 			if e != nil {
 				return e
 			}
-			return build(dir, resolved, func(emit func(sourceEvent, *Selection) error, water func(watermark) error) error {
-				return queues(ctx, tx, resolved, func(w watermark) error {
-					if e := water(w); e != nil {
-						return e
-					}
-					return scan(ctx, tx, w, resolved, func(e sourceEvent) error { return emit(e, nil) })
+			spoolDir, e := os.MkdirTemp(dir, ".closure-")
+			if e != nil {
+				return errOutput
+			}
+			defer func() { _ = os.RemoveAll(spoolDir) }()
+			input := filepath.Join(spoolDir, "input")
+			watersPath := filepath.Join(spoolDir, "waters")
+			e = spoolFile(watersPath, func(w io.Writer) error {
+				return spoolFile(input, func(out io.Writer) error {
+					return queues(ctx, tx, resolved, spoolDir, func(mark watermark) error {
+						raw, e := json.Marshal(mark)
+						if e != nil {
+							return errCanonical
+						}
+						if _, e = w.Write(append(raw, '\n')); e != nil {
+							return errOutput
+						}
+						return scan(ctx, tx, mark, resolved, func(event sourceEvent) error {
+							return spoolWrite(out, spoolRecord{Source: event.source, Payload: event.payload, Role: "scope", MaxID: mark.ID})
+						})
+					})
 				})
+			})
+			if e != nil {
+				return e
+			}
+			selected, e := closure(ctx, tx, spoolDir, input)
+			if e != nil {
+				return e
+			}
+			e = build(dir, resolved, func(emit func(sourceEvent, *Selection) error, water func(watermark) error) error {
+				f, e := os.Open(watersPath)
+				if e != nil {
+					return errOutput
+				}
+				defer func() { _ = f.Close() }()
+				if e = lines(f, func(raw []byte) error {
+					var w watermark
+					if json.Unmarshal(raw, &w) != nil {
+						return errIntegrity
+					}
+					return water(w)
+				}); e != nil {
+					return e
+				}
+				return emitSpool(selected, emit)
 			}, nil, &result)
+			if e != nil {
+				return e
+			}
+			if os.RemoveAll(spoolDir) != nil {
+				return errOutput
+			}
+			return nil
 		})
 	})
 	return result, err
@@ -124,16 +174,55 @@ func build(dir string, req Request, produce producer, want *Manifest, result *Ma
 		return e
 	}
 	defer func() { _ = waters.f.Close() }()
-	m := Manifest{Version: 1, Request: req, Selection: "selection.jsonl", Watermarks: "watermarks.jsonl", Events: "events.jsonl", TerminalSHA256: zeroDigest}
+	boundaries, e := newStream(dir, "dependency_boundaries.jsonl")
+	if e != nil {
+		return e
+	}
+	defer func() { _ = boundaries.f.Close() }()
+	type boundary struct {
+		QueueID int64 `json:"queue_id"`
+		Queue   Key   `json:"queue"`
+		First   int64 `json:"first"`
+		Last    int64 `json:"last"`
+		Count   int64 `json:"count"`
+	}
+	var current *boundary
+	flushBoundary := func() error {
+		if current == nil {
+			return nil
+		}
+		raw, e := encode(current)
+		if e != nil {
+			return e
+		}
+		current = nil
+		return boundaries.write(raw)
+	}
+	m := Manifest{Dependencies: "dependency_boundaries.jsonl", Version: 1, Request: req, Selection: "selection.jsonl", Watermarks: "watermarks.jsonl", Events: "events.jsonl", TerminalSHA256: zeroDigest}
 	emit := func(event sourceEvent, want *Selection) error {
 		payload, e := Canonical(event.payload)
 		if e != nil {
 			return e
 		}
-		s := Selection{Source: event.source, PayloadSHA256: digest(payload), Role: "scope", References: []Reference{}}
+		s := Selection{Source: event.source, PayloadSHA256: digest(payload), Role: "scope", References: []Reference{}, Kinds: evidenceKinds(event.source.Type)}
 		if want != nil {
 			s.Role = want.Role
 			s.References = want.References
+		}
+		if !validRole(s.Role) || !validReferences(s.References) {
+			return errIntegrity
+		}
+		if s.Role == "dependency" {
+			if current != nil && current.QueueID != s.Source.QueueID {
+				if e := flushBoundary(); e != nil {
+					return e
+				}
+			}
+			if current == nil {
+				current = &boundary{QueueID: s.Source.QueueID, Queue: s.Source.Queue, First: s.Source.ID}
+			}
+			current.Last = s.Source.ID
+			current.Count++
 		}
 		meta, e := metadata(s)
 		if e != nil {
@@ -150,7 +239,7 @@ func build(dir string, req Request, produce producer, want *Manifest, result *Ma
 				return errIntegrity
 			}
 		}
-		raw, e := encode(envelope{Kind: "source", Source: event.source, Payload: payload, Role: s.Role, References: s.References, PreviousSHA256: m.TerminalSHA256})
+		raw, e := encode(envelope{Kind: "source", Source: event.source, Payload: payload, Role: s.Role, References: s.References, Kinds: s.Kinds, PreviousSHA256: m.TerminalSHA256})
 		if e != nil {
 			return e
 		}
@@ -172,6 +261,13 @@ func build(dir string, req Request, produce producer, want *Manifest, result *Ma
 		}
 		return waters.write(raw)
 	}); e != nil {
+		return e
+	}
+	if e = flushBoundary(); e != nil {
+		return e
+	}
+	m.DependenciesSHA256, e = boundaries.finish()
+	if e != nil {
 		return e
 	}
 	m.EventsSHA256, e = events.finish()
@@ -233,7 +329,7 @@ func (r *Reader) Replay(ctx context.Context, manifestPath, target string) (Manif
 		return result, errIntegrity
 	}
 	var m Manifest
-	if strict(raw, &m) != nil || m.Version != 1 || m.Count < 0 || m.Selection != "selection.jsonl" || m.Events != "events.jsonl" || m.Watermarks != "watermarks.jsonl" || !validDigest(m.TerminalSHA256) {
+	if strict(raw, &m) != nil || m.Version != 1 || m.Count < 0 || m.Selection != "selection.jsonl" || m.Events != "events.jsonl" || m.Watermarks != "watermarks.jsonl" || m.Dependencies != "dependency_boundaries.jsonl" || !validDigest(m.TerminalSHA256) {
 		return result, errIntegrity
 	}
 	canonicalManifest, ce := encode(m)
@@ -257,7 +353,7 @@ func (r *Reader) Replay(ctx context.Context, manifestPath, target string) (Manif
 			_ = f.Close()
 		}
 	}()
-	for _, item := range []struct{ name, sha string }{{m.Selection, m.SelectionSHA256}, {m.Watermarks, m.WatermarksSHA256}, {m.Events, m.EventsSHA256}} {
+	for _, item := range []struct{ name, sha string }{{m.Selection, m.SelectionSHA256}, {m.Watermarks, m.WatermarksSHA256}, {m.Events, m.EventsSHA256}, {m.Dependencies, m.DependenciesSHA256}} {
 		f, e := openRegular(root, item.name)
 		if e != nil {
 			return result, e
@@ -280,20 +376,34 @@ func (r *Reader) Replay(ctx context.Context, manifestPath, target string) (Manif
 			if e != nil || resolved != m.Request {
 				return errIntegrity
 			}
-			identities := map[int64]watermark{}
-			if e = queues(ctx, tx, m.Request, func(w watermark) error { identities[w.QueueID] = w; return nil }); e != nil {
-				return e
+			spoolDir, e := os.MkdirTemp(dir, ".replay-closure-")
+			if e != nil {
+				return errOutput
 			}
-			waters := map[int64]watermark{}
+			defer func() { _ = os.RemoveAll(spoolDir) }()
+			selectedPath := filepath.Join(spoolDir, "selected")
+			rootsPath := filepath.Join(spoolDir, "roots")
+			retained, e := os.OpenFile(selectedPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+			if e != nil {
+				return errOutput
+			}
+			defer func() { _ = retained.Close() }()
+			roots, e := os.OpenFile(rootsPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+			if e != nil {
+				return errOutput
+			}
+			defer func() { _ = roots.Close() }()
+			var checkedEmit func(sourceEvent, *Selection) error
 			var previousWater *Source
-			return build(dir, m.Request, func(emit func(sourceEvent, *Selection) error, water func(watermark) error) error {
+			e = build(dir, m.Request, func(emit func(sourceEvent, *Selection) error, water func(watermark) error) error {
 				if e = lines(files[1], func(raw []byte) error {
 					var w watermark
 					if strict(raw, &w) != nil || w.ID < 0 || w.QueueID <= 0 || w.Queue.Installation != m.Request.Installation || w.Queue.Repository != m.Request.Repository {
 						return errIntegrity
 					}
-					actual, ok := identities[w.QueueID]
-					if !ok || actual.Queue != w.Queue || w.ID > actual.ID {
+					var actual watermark
+					actual.QueueID = w.QueueID
+					if tx.QueryRow(ctx, `SELECT installation,repository,base,lane,COALESCE((SELECT id FROM events WHERE queue_id=$1 ORDER BY id DESC LIMIT 1),0) FROM queues WHERE id=$1`, w.QueueID).Scan(&actual.Queue.Installation, &actual.Queue.Repository, &actual.Queue.Base, &actual.Queue.Lane, &actual.ID) != nil || actual.Queue != w.Queue || w.ID > actual.ID {
 						return errIntegrity
 					}
 					if w.ID > 0 {
@@ -302,25 +412,54 @@ func (r *Reader) Replay(ctx context.Context, manifestPath, target string) (Manif
 							return errIntegrity
 						}
 					}
-					if _, duplicate := waters[w.QueueID]; duplicate {
-						return errIntegrity
-					}
 					current := Source{QueueID: w.QueueID, Queue: w.Queue}
 					if previousWater != nil && !sourceLess(*previousWater, current) {
 						return errIntegrity
 					}
 					previousWater = &current
-					waters[w.QueueID] = w
 					return water(w)
 				}); e != nil {
 					return e
 				}
 				// Only the frozen inventory is required: newer/unselected queues do not
 				// expand the saved source selection.
+				if _, e = files[1].Seek(0, io.SeekStart); e != nil {
+					return errIntegrity
+				}
+				waterScanner := bufio.NewScanner(files[1])
+				waterScanner.Buffer(make([]byte, 64<<10), MaxBytes+2)
+				var frozen watermark
+				// Semantic evidence is checked once, after the stream: exact closure
+				// re-resolves every record reachable from the scope roots inside this
+				// snapshot and compares complete selections, so each record's references,
+				// retained dependencies and the absence of extra records share one owner.
+				checkedEmit = func(event sourceEvent, s *Selection) error {
+					from, until, e := parseRange(m.Request)
+					if e != nil {
+						return e
+					}
+					at, e := time.Parse(time.RFC3339Nano, event.source.RecordedAt)
+					if e != nil {
+						return errIntegrity
+					}
+					inRange := (from == nil || !at.Before(*from)) && (until == nil || at.Before(*until))
+					if (s.Role == "scope") != inRange {
+						return errIntegrity
+					}
+					if s.Role == "scope" {
+						if e = spoolWrite(roots, spoolRecord{Source: event.source, Payload: event.payload, Role: "scope", MaxID: frozen.ID}); e != nil {
+							return e
+						}
+					}
+					if e = spoolWrite(retained, spoolRecord{Source: event.source, Payload: event.payload, Role: s.Role, References: s.References}); e != nil {
+						return e
+					}
+					return emit(event, s)
+				}
 				var previous *Source
 				var page []Selection
 				flush := func() error {
-					if e := fetchPage(ctx, tx, page, emit); e != nil {
+					if e := fetchPage(ctx, tx, page, checkedEmit); e != nil {
 						return e
 					}
 					page = page[:0]
@@ -331,8 +470,21 @@ func (r *Reader) Replay(ctx context.Context, manifestPath, target string) (Manif
 					if strict(raw, &s) != nil || s.Source.ID <= 0 || s.Source.QueueID <= 0 || !validRole(s.Role) || !validReferences(s.References) || !validDigest(s.PayloadSHA256) || !validDigest(s.MetadataSHA256) {
 						return errIntegrity
 					}
-					w, ok := waters[s.Source.QueueID]
-					if !ok || w.Queue != s.Source.Queue || s.Source.ID > w.ID {
+					if len(page) > 0 && page[0].Source.QueueID != s.Source.QueueID {
+						if e := flush(); e != nil {
+							return e
+						}
+					}
+					for frozen.QueueID != s.Source.QueueID {
+						if !waterScanner.Scan() || strict(waterScanner.Bytes(), &frozen) != nil {
+							return errIntegrity
+						}
+						if keyLess(s.Source.Queue, frozen.Queue) {
+							return errIntegrity
+						}
+					}
+					w := frozen
+					if w.Queue != s.Source.Queue || s.Source.ID > w.ID {
 						return errIntegrity
 					}
 					if s.Source.Queue.Installation != m.Request.Installation || s.Source.Queue.Repository != m.Request.Repository {
@@ -354,8 +506,21 @@ func (r *Reader) Replay(ctx context.Context, manifestPath, target string) (Manif
 				if e != nil {
 					return e
 				}
-				return flush()
+				if e = flush(); e != nil {
+					return e
+				}
+				if retained.Close() != nil || roots.Close() != nil {
+					return errOutput
+				}
+				return verifyExactClosure(ctx, tx, spoolDir, rootsPath, selectedPath)
 			}, &m, &result)
+			if e != nil {
+				return e
+			}
+			if os.RemoveAll(spoolDir) != nil {
+				return errOutput
+			}
+			return nil
 		})
 	})
 	return result, e
@@ -365,10 +530,12 @@ func sourceLess(a, b Source) bool {
 	if a.Queue != b.Queue {
 		return keyLess(a.Queue, b.Queue)
 	}
-	return a.QueueID == b.QueueID && a.ID < b.ID
+	if a.QueueID != b.QueueID {
+		return a.QueueID < b.QueueID
+	}
+	return a.ID < b.ID
 }
-func validRole(role string) bool            { return role == "scope" }
-func validReferences(refs []Reference) bool { return refs != nil && len(refs) == 0 }
+func validRole(role string) bool { return role == "scope" || role == "dependency" }
 func validDigest(s string) bool {
 	if len(s) != 64 || strings.ToLower(s) != s {
 		return false

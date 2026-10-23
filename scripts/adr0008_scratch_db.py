@@ -16,8 +16,11 @@ def scratch_url(raw, database="postgres", environ=None):
     try:
         parsed = urlsplit(raw)
         query = parse_qsl(parsed.query, strict_parsing=True, keep_blank_values=True)
+        allowed_ports = (54329,)
+        if env.get("GITHUB_ACTIONS") == "true" and env.get("CI") == "true":
+            allowed_ports = (54329, 5432)
         valid = (parsed.scheme in ("postgres", "postgresql")
-                 and parsed.hostname == "localhost" and parsed.port == 54329
+                 and parsed.hostname == "localhost" and parsed.port in allowed_ports
                  and not parsed.fragment
                  and all(key == "sslmode" and value == "disable" for key, value in query)
                  and re.fullmatch(r"postgres|om_9c2c_[0-9a-f]{32}", database))
@@ -29,6 +32,6 @@ def scratch_url(raw, database="postgres", environ=None):
             if parsed.password is not None:
                 credentials += ":" + quote(unquote(parsed.password), safe="")
             credentials += "@"
-        return f"postgresql://{credentials}localhost:54329/{database}?sslmode=disable"
+        return f"postgresql://{credentials}localhost:{parsed.port}/{database}?sslmode=disable"
     except (ValueError, UnicodeError):
-        raise ValueError("only explicit shared test Postgres localhost:54329 without overrides is permitted") from None
+        raise ValueError("only explicit shared test Postgres localhost:54329 is permitted; localhost:5432 requires GitHub Actions CI") from None

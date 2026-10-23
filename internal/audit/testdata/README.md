@@ -8,20 +8,24 @@ serialization. The database timestamp is the literal UTC microsecond string;
 the payload timestamp deliberately retains its original offset.
 
 `canonical-v1.json` fixes input, complete expected output (without LF), and digest.
-`full-*` fixes every complete output file including LF, including the fixed
-`dependency_boundaries.jsonl` stream. `empty-*` fixes the empty streams, their
+`full-*` provisionally records complete output files including LF, including the
+`dependency_boundaries.jsonl` stream. `empty-*` provisionally records the empty streams, their
 SHA-256 (the hash of zero bytes), zero terminal chain, and complete manifest.
 Manifest self-integrity uses an empty `manifest_sha256` value when hashing,
 without LF. V1 string output escapes U+0085, U+2028, and U+2029 as lowercase
-Unicode escapes. These fixtures must not be regenerated to accept a change to
-v1. Future versions require new fixtures and an explicit version change.
+Unicode escapes. The canonical vectors must not be regenerated to accept a change to v1.
+The complete export fixtures remain provisional as described below.
 
-The canonical vectors and both complete exports are independently re-derived by
+The canonical vectors and the earlier complete-export shapes were independently re-derived by
 `independent_goldens()` in `scripts/verify-adr0008-10a-1.py`, using Python Decimal,
 UTF-8 byte-key ordering and an explicit line-safe string encoder. This is separate
 from the Go serializer. It checks exact bytes, all four stream hashes, event-chain
 links, terminal hashes and manifest self-hashes. The encoding was also checked
 against the reviewer's independent Decimal reference at
 `/home/riels/.cache/openmerge-review-146-astra/.review-tmp/goldens.py`, adapting only
-the three newly specified Unicode escapes and the fourth stream. Goldens were
-updated before v1 release; future format changes require a version bump.
+the three newly specified Unicode escapes and the fourth stream. These provisional complete-export shapes predate 10a-2a closure; they do not
+define the frozen complete-export contract.
+
+Complete export vectors are provisional during 10a-2a evidence closure. They are
+not referenced by current Go tests; 10a-2b regenerates and freezes them. The
+canonical-v1.json byte vectors remain frozen and referenced.

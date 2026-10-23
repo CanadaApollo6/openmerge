@@ -21,16 +21,45 @@ class ScratchGuardTest(unittest.TestCase):
         self.assertEqual(scratch_url(BASE.rsplit("/", 1)[0] + "/ignored", environ={}),
                          scratch_url(BASE, environ={}))
 
+    def test_ci_port(self):
+        ci_url = BASE.replace(":54329", ":5432")
+        self.assertRaises(ValueError, scratch_url, ci_url, environ={})
+        self.assertRaises(ValueError, scratch_url, ci_url, environ={"GITHUB_ACTIONS": "true"})
+        self.assertRaises(ValueError, scratch_url, ci_url, environ={"CI": "true"})
+        self.assertEqual(scratch_url(ci_url, environ={"GITHUB_ACTIONS": "true", "CI": "true"}),
+                         "postgresql://postgres@localhost:5432/postgres?sslmode=disable")
+        for value in ("1", "TRUE", "True", "yes", ""):
+            self.assertRaises(ValueError, scratch_url, ci_url, environ={"GITHUB_ACTIONS": value, "CI": "true"})
+            self.assertRaises(ValueError, scratch_url, ci_url, environ={"GITHUB_ACTIONS": "true", "CI": value})
+
+    def test_ci_mode_keeps_every_bypass_rejection(self):
+        ci = {"GITHUB_ACTIONS": "true", "CI": "true"}
+        for base in (BASE, BASE.replace(":54329", ":5432")):
+            for query in ("host=/tmp/review-nonexistent", "hostaddr=127.0.0.1", "port=54329", "dbname=production_example",
+                          "service=live", "servicefile=/tmp/service", "options=-csearch_path=public",
+                          "target_session_attrs=read-write", "%68ost=/tmp/socket", "sslmode=require", "sslmode=disable&host=localhost"):
+                with self.subTest(base=base, query=query):
+                    self.assertRaises(ValueError, scratch_url, base + "?" + query, environ=ci)
+            for key in ("PGHOST", "PGHOSTADDR", "PGPORT", "PGDATABASE", "PGSERVICE", "PGSERVICEFILE", "PGOPTIONS",
+                        "PGTARGETSESSIONATTRS", "PGPASSWORD", "pgport"):
+                with self.subTest(base=base, env=key):
+                    self.assertRaises(ValueError, scratch_url, base, environ={**ci, key: "override"})
+        for host in ("127.0.0.1:5432", "localhost:5433", "db:5432", "%2Ftmp:5432", "localhost:5432,other:5432"):
+            with self.subTest(host=host):
+                self.assertRaises(ValueError, scratch_url, BASE.replace("localhost:54329", host), environ=ci)
+        self.assertRaises(ValueError, scratch_url, BASE, "production", environ=ci)
+
     def test_bypasses_refused_before_subprocess(self):
         attacks = [BASE + "?" + query for query in (
             "host=/tmp/review-nonexistent&port=5432&dbname=production_example",
             "host=localhost", "hostaddr=127.0.0.1", "port=5432", "dbname=production_example",
             "service=live", "servicefile=/tmp/service", "options=-csearch_path=public",
             "target_session_attrs=read-write", "host=", "hostaddr=", "port=", "dbname=", "service=", "options=", "target_session_attrs=", "%68ost=/tmp/socket", "sslmode=disable&host=localhost",
-        )] + [BASE.replace("localhost:54329", host) for host in ("localhost:5432", "%2Ftmp:54329", "localhost:54329,other:5432")]
+        )] + [BASE.replace("localhost:54329", host) for host in ("localhost:5433", "%2Ftmp:54329", "localhost:54329,other:5432")]
+        attacks.append(BASE.replace(":54329", ":5432"))
         env_attacks = ["PGHOST", "PGHOSTADDR", "PGPORT", "PGDATABASE", "PGSERVICE", "PGSERVICEFILE",
                        "PGOPTIONS", "PGTARGETSESSIONATTRS", "PGPASSWORD"]
-        for driver in ("check-adr0008-9c-2c-restore.py", "verify-adr0008-9c-2c.py", "verify-adr0008-9c-2d.py", "verify-adr0008-9c-3.py"):
+        for driver in ("check-adr0008-9c-2c-restore.py", "verify-adr0008-9c-2c.py", "verify-adr0008-9c-2d.py", "verify-adr0008-9c-3.py", "verify-adr0008-10a-2a.py"):
             spec = importlib.util.spec_from_file_location("driver", Path(__file__).with_name(driver))
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
