@@ -2289,7 +2289,7 @@ work from bounded memory or the pin-fold cursor.
 
 Audit publication requires Linux `renameat2(RENAME_NOREPLACE)`; the CLI fails
 before opening the database on other platforms. `--timeout 5m` is the default
-snapshot deadline; choose a larger positive Go duration for larger journals.
+snapshot deadline; choose a larger Go duration (at least 1ms) for larger journals.
 Timeouts report `audit: export timed out` (exit 1). Success prints the published
 directory and manifest SHA-256 for external anchoring.
 

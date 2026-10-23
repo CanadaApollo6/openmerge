@@ -31,8 +31,7 @@ records the complete literal diff and checks that removing the help/dispatch
 additions yields byte-identical main.go.
 
 V1 freezes with this PR. Shape changes after merge require a version bump.
-The independent Python reference derives 15 complete files for full, empty and
-typed-closure exports from documented journal-v1.json literals, with no Go output
+The independent Python reference now derives 30 complete files for six exports from documented journal-v1.json literals, with no Go output
 as expected input. It fixes all streams, chain links, terminal/metadata/file
 hashes, selection metadata and manifest self-hash. Go loads those literal journals
 into scratch Postgres and compares export and replay byte for byte. The closure
@@ -129,9 +128,11 @@ API was accessed by acceptance. No Smart-Data-Ohio write occurred.
 
 ### Mutation coverage
 
-**87 targets: 86 assertion kills, 1 equivalent, 0 unreachable, 0 unexpected
-survivors, 0 build/setup failures, 0 infrastructure failures.** Only compiled
-semantic assertion failures count as kills. The declared equivalent removes
+**Original 87-target run, reclassified: 72 assertion kills, 14 panic kills,
+1 equivalent, 0 survivors, 0 build/setup failures, 0 infrastructure failures.**
+Eleven targets were panic-only; three also reported earlier assertion failures.
+Any panic conservatively wins classification over the harness failure marker.
+Build, setup and infrastructure failures never count as kills. The declared equivalent removes
 closure's defensive validResolution call; the resolver constructs matching
 references/dependencies together. Its validator remains directly tested.
 The final verifier preserves #148's 79 targets and adds SQL queue scope,
@@ -264,5 +265,6 @@ Mutation reporting now distinguishes assertion kills, panic kills, build/setup
 failure, infrastructure failure, equivalent, and survivor. A panic marker wins
 over the Go harness's `--- FAIL:` marker; test deadline/runtime infrastructure
 failures never count as kills. The original claim of 86 assertion kills was
-incorrect: review reproduced 11 panic-only failures. The new full table and
+incorrect: review reproduced 11 panic-only failures; inspection of the retained
+logs also found three mixed assertion/panic targets, conservatively panic kills. The new full table and
 counts below are authoritative for this revision.

@@ -18,7 +18,9 @@ IDs above 2^53, decimals, Unicode and offset payload timestamps are intentional.
 semantic keys and boundaries and derives all 30 complete expected files with
 Python Decimal. No Go output or saved selection is an expected input. These
 selectors are a deliberately small reference for these literal journals, not a
-second general exporter. No expected edges are copied from Go. `--write-reference`
+second general exporter. No expected edges are copied from Go. The selected journal sets and their
+scope/dependency annotations are normative hand-written expectations, never
+copied from Go export output. `--write-reference`
 regenerates only this independent reference. `verify-audit-v1-node.cjs` separately
 re-encodes exact numeric tokens and verifies all canonical bytes, manifest self
 hashes and stream hashes. Node does not supply a second semantic resolver.

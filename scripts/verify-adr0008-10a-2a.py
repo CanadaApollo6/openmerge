@@ -91,7 +91,9 @@ def mutation_proofs(measured, out, pattern):
         ("closure-valid-resolution-call", "spool.go", "if !validResolution(r.Source, refs, deps) {", "if false {"),
     ]
     targets += EXTRA_MUTATIONS
-    equivalent = {"closure-valid-resolution-call"}
+    # Identity.MarshalJSON independently rejects every invalid tuple before
+    # validReferences can return true: removing its earlier guard is equivalent.
+    equivalent = {"closure-valid-resolution-call", "identity-structure"}
     runs = "FROM jsonb_array_elements(e.payload->'data'->'runs') run WHERE run->>'name'=$6 AND run->>'source'=$7"
     tuple_pick = "(SELECT ARRAY[(run->>'id')::numeric,greatest((run->>'attempt')::numeric,1)] " + runs + " ORDER BY (run->>'id')::numeric DESC,greatest((run->>'attempt')::numeric,1) DESC LIMIT 1)"
     maxima = "(SELECT ARRAY[max((run->>'id')::numeric),max(greatest((run->>'attempt')::numeric,1))] " + runs + ")"

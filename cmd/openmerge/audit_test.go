@@ -55,7 +55,7 @@ func TestAuditUsageAndSanitization(t *testing.T) {
 	}
 	for _, id := range []string{"007", "+7"} {
 		args := append([]string{}, good...)
-		args[6] = id
+		args[5] = id
 		var out, err bytes.Buffer
 		if run(args, &out, &err) != 2 {
 			t.Fatal("noncanonical installation accepted", id)

@@ -192,6 +192,7 @@ def main():
     prior.EXTRA_PACKAGES = ["./cmd/openmerge"]
     prior.EXTRA_PATTERN = "|TestAuditUsageAndSanitization|TestAuditSelectOnlyCommand|TestCompleteExportV1|TestIdentityJSONArray|TestAuditSnapshotTimeout|TestAuditBareRemote"
     prior.EXTRA_MUTATIONS = [
+        ("identity-json-string", "evidence.go", "return []byte(id), nil", "return json.Marshal(string(id))"),
         ("pin-queue-scope", "evidence.go", "WHERE queue_id=$1 AND id<$2 AND id>=$3 AND type IN", "WHERE ($1::bigint IS NOT NULL) AND id<$2 AND id>=$3 AND type IN"),
         ("cli-manifest-selector-conflict", "cmd/openmerge/audit.go", 'case "repo", "installation", "from", "until":', 'case "unused":'),
         ("pin-cursor-no-queue-reset", "evidence.go", "cursor.queueID != queueID || before < cursor.before", "before < cursor.before"),
