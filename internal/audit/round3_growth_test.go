@@ -66,7 +66,7 @@ func TestEvidenceCheckHistoryGrowthPlan(t *testing.T) {
 // Owner × retained-event growth for the complete pipeline with real check
 // history. Lookups are counted, so per-lookup cost and lookups per owner are
 // separable; the honest bound is documented in the 10a-2a evidence note.
-func TestEvidenceOwnerEventScalingProbe(t *testing.T) {
+func TestScalingProbeOwnerEvent(t *testing.T) {
 	if testing.Short() {
 		t.Skip("owner × event scaling evidence")
 	}

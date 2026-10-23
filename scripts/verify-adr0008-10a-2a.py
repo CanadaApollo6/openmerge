@@ -32,11 +32,11 @@ def mutation_proofs(measured, out, pattern):
         ("oldest-observation", "evidence.go", "DESC,e.id DESC LIMIT 1", "ASC,e.id ASC LIMIT 1"),
         ("accept-wrong-check-result", "evidence.go", "string(check.Result) != newest.State", "false"),
         ("accept-invalid-role", "export.go", 'return role == "scope" || role == "dependency"', "return true"),
-        ("omit-retained-closure", "export.go", "return verifyRetained(spoolDir, requiredPath, selectedPath)", "return nil"),
+        ("omit-exact-closure", "export.go", "return verifyExactClosure(ctx, tx, spoolDir, rootsPath, selectedPath)", "return nil"),
     ]
     targets += [
         ("absence-source-id", "evidence.go", 'r.Source != nil || r.Relation != "relied_on"', 'r.Relation != "relied_on"'),
-        ("adjacent-reference-duplicates", "evidence.go", 'bytes.Compare(a, b) >= 0', 'bytes.Compare(a, b) > 0'),
+        ("adjacent-reference-duplicates", "evidence.go", 'bytes.Compare(previous, raw) >= 0', 'bytes.Compare(previous, raw) > 0'),
         ("duplicate-identity", "evidence.go", 'len(found) > 1 || required', 'required'),
         ("owning-decision", "evidence.go", 'if !matched {', 'if false && matched {'),
         ("conflicting-spool-payload", "spool.go", '!bytes.Equal(a.Payload, b.Payload)', 'false'),
@@ -49,7 +49,22 @@ def mutation_proofs(measured, out, pattern):
         ("queue-id-order", "export.go", 'return a.QueueID < b.QueueID', 'return false'),
         ("exact-closure", "spool.go", 'func verifyExactClosure(ctx context.Context, tx pgx.Tx, dir, roots, selected string) error {', 'func verifyExactClosure(ctx context.Context, tx pgx.Tx, dir, roots, selected string) error { return nil;'),
         ("valid-resolution", "spool.go", 'if !validReferences(refs) {', 'if true { return true }; if !validReferences(refs) {'),
-        ("resolved-references", "export.go", 'if !bytes.Equal(got, want) {', 'if false && !bytes.Equal(got, want) {'),
+        # Replay's per-record re-resolution was subsumed by exact closure, which
+        # now owns resolved-reference, absence and retained-source agreement.
+        ("resolved-references", "spool.go", 'if e != nil || !bytes.Equal(wantRaw, gotRaw) {', 'if e != nil || false && !bytes.Equal(wantRaw, gotRaw) {'),
+        ("missing-retained-source", "spool.go", 'if !expected.ok || !actual.ok {', 'if !actual.ok { break }; if !expected.ok {'),
+        ("closure-valid-resolution", "spool.go", 'if !validResolution(r.Source, refs, deps) {', 'if false {'),
+        ("scope-range", "export.go", 'if (s.Role == "scope") != inRange {', 'if false && inRange {'),
+        ("owning-decision-id", "evidence.go", 'if item.DecisionEventID == event.source.ID {', 'if true {'),
+        ("conflicting-spool-watermark", "spool.go", 'if b.MaxID != 0 && a.MaxID != b.MaxID {', 'if false {'),
+        ("identity-structure", "evidence.go", '!validIdentity(r.Identity)', 'r.Identity == ""'),
+        ("identity-canonical", "evidence.go", 'return evidenceIdentity(parts...) == identity', 'return true'),
+        ("identity-html-escape", "evidence.go", 'e.SetEscapeHTML(false)', 'e.SetEscapeHTML(true)'),
+        ("normalize-encode-error", "evidence.go", 'if err != nil { return nil, errCanonical } items[i] = keyed{r, raw}', '_ = err; items[i] = keyed{r, raw}'),
+        ("github-pin-keeps-source", "evidence.go", 'r.sources = r.sources[:len(r.sources)-1]', '_ = 0'),
+        ("multi-run-oldest-run-sql", "evidence.go", "ORDER BY (run->>'id')::numeric DESC,greatest", "ORDER BY (run->>'id')::numeric ASC,greatest"),
+        ("multi-run-lowest-attempt-sql", "evidence.go", "greatest((run->>'attempt')::numeric,1) DESC LIMIT 1) DESC", "greatest((run->>'attempt')::numeric,1) ASC LIMIT 1) DESC"),
+        ("dispatch-generation-sql", "evidence.go", "match = ` AND payload->'data'->>'generation'=$6`", "match = ` AND $6::text IS NOT NULL`"),
         ("additional-transaction", "source.go", "if err = fn(ctx, tx); err != nil {", ""),
     ]
     runs = "FROM jsonb_array_elements(e.payload->'data'->'runs') run WHERE run->>'name'=$6 AND run->>'source'=$7"
@@ -93,10 +108,10 @@ def mutation_proofs(measured, out, pattern):
         if match is None:
             raise ValueError("mutation target changed: " + name)
         text = text[:match.start()] + new + text[match.end():]
-        if name in ("resolved-references", "omit-retained-closure", "accept-invalid-role"):
-            # Exact closure independently regenerates and compares references.
-            # Remove that redundant guard too for the conceptual mutation.
-            text = text.replace('if e := verifyExactClosure(ctx, tx, spoolDir, rootsPath, selectedPath); e != nil {', 'if false {')
+        if name == "accept-invalid-role":
+            # Exact closure compares roles too; remove it for this one
+            # conceptual mutant so the enum guard itself is exercised.
+            text = text.replace("return verifyExactClosure(ctx, tx, spoolDir, rootsPath, selectedPath)", "return nil")
         if name == "exact-closure":
             text = text.replace('if !expected.ok || !actual.ok {', 'if false {')
         if name == "accept-invalid-role":
@@ -127,7 +142,7 @@ def main():
     parser.add_argument("--baseline", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--phase", choices=("all", "regression"), default="all")
-    parser.add_argument("--stress-pattern", default="TestEvidence|TestClosure|TestCheckAttempt|TestRound3|TestReplay|TestValid|TestSpool|TestSourceLess|TestSourceReplayRejectsScopeShapeAndCrossQueueOrder|TestExportV1SemanticExpectations")
+    parser.add_argument("--stress-pattern", default="TestEvidence|TestClosure|TestCheckAttempt|TestRound3|TestReplay|TestValid|TestSpool|TestSourceLess|TestNormalize|TestSourceReplayRejectsScopeShapeAndCrossQueueOrder|TestExportV1SemanticExpectations")
     parser.add_argument("--baseline-timing-log", type=Path, help="reuse an already completed identical baseline timing; requires adjacent exit-status.txt containing 0")
     args = parser.parse_args()
     # Guard before any subprocess; do not propagate a caller-controlled libpq route.
