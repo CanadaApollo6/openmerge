@@ -257,3 +257,23 @@ func TestEvidenceRequiredRetainedSourceAndHistoricalAbsence(t *testing.T) {
 		return nil
 	}))
 }
+
+func TestEvidenceLegacyZeroAttemptUsesFirstAttemptIdentity(t *testing.T) {
+	f := database(t)
+	f.queue(t, 1, "")
+	observation := queue.ChecksObserved{BatchID: "batch", TestedSHA: "tested", Runs: []queue.CheckRun{{ID: 71, Attempt: 0, WorkflowRunID: 81, Name: "unit", Source: "app:1", State: "success"}}, Terminal: true, Success: true}
+	sourceID := evidenceInsert(t, f, observation)
+	boundary := insert(t, f.admin, 1, "2026-10-22T12:00:01Z")
+	run, attempt, workflow := uint64(71), uint64(1), uint64(81)
+	checks := queue.LandingChecksRecorded{BatchID: "batch", AttemptID: "land", TestedSHA: "tested", Checks: []queue.LandingCheck{{Name: "unit", Source: "app:1", RunID: &run, Attempt: &attempt, WorkflowRunID: &workflow, Result: forge.CheckState("success")}}}
+	must(t, f.reader.snapshot(t.Context(), func(ctx context.Context, tx pgx.Tx) error {
+		r := &evidenceResolver{ctx: ctx, tx: tx, event: sourceEvent{source: Source{QueueID: 1, ID: boundary}}, owner: EvidenceOwner{QueueID: 1, EventID: boundary}, refs: []Reference{}}
+		if err := r.checkHistory(checks); err != nil {
+			return err
+		}
+		if r.refs[0].Source == nil || r.refs[0].Source.ID != sourceID || r.refs[0].Attempt != 1 {
+			t.Fatal("legacy zero attempt did not retain first-attempt identity")
+		}
+		return nil
+	}))
+}

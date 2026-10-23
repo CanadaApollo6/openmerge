@@ -473,7 +473,7 @@ func (r *evidenceResolver) checkHistory(c queue.LandingChecksRecorded) error {
 			if newest == nil {
 				return errSource
 			}
-			if check.RunID != nil && *check.RunID != newest.ID || check.Attempt != nil && *check.Attempt != newest.Attempt || check.WorkflowRunID != nil && *check.WorkflowRunID != newest.WorkflowRunID || string(check.Result) != newest.State {
+			if check.RunID != nil && *check.RunID != newest.ID || check.Attempt != nil && max(*check.Attempt, 1) != max(newest.Attempt, 1) || check.WorkflowRunID != nil && *check.WorkflowRunID != newest.WorkflowRunID || string(check.Result) != newest.State {
 				return errSource
 			}
 			ref := &r.refs[len(r.refs)-1]
