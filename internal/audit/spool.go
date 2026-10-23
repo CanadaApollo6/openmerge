@@ -372,45 +372,10 @@ func selectionFor(e sourceEvent, role string, refs []Reference) (Selection, erro
 	return s, nil
 }
 
-// Check the complete resolved reference set against retained sources with a
-// streaming merge. Recomputing valid hashes cannot make a missing edge valid.
-func verifyRetained(dir, required, selected string) error {
-	sorted := filepath.Join(dir, "required-sorted")
-	if e := sortSpool(dir, required, sorted); e != nil {
-		return e
-	}
-	need, e := openSpool(sorted)
-	if e != nil {
-		return e
-	}
-	defer func() { _ = need.f.Close() }()
-	have, e := openSpool(selected)
-	if e != nil {
-		return e
-	}
-	defer func() { _ = have.f.Close() }()
-	for need.ok {
-		for have.ok && recordLess(have.value, need.value) {
-			if e = have.next(); e != nil {
-				return e
-			}
-		}
-		if !have.ok || !sameSource(need.value.Source, have.value.Source) {
-			return errIntegrity
-		}
-		if _, e = mergeRecord(need.value, have.value); e != nil {
-			return e
-		}
-		if e = need.next(); e != nil {
-			return e
-		}
-	}
-	return nil
-}
-
 // Replay must contain exactly the transitive closure of its listed scope roots.
-// Checking only that every required source is present leaves unrelated
-// dependency components, including self-contained cycles, unaccounted for.
+// Export's own closure is recomputed from those roots in replay's snapshot, so
+// a contradicted reference or absence, a missing retained source, and an
+// unrelated dependency component (including a self-contained cycle) all fail.
 func verifyExactClosure(ctx context.Context, tx pgx.Tx, dir, roots, selected string) error {
 	expectedPath, e := closure(ctx, tx, dir, roots)
 	if e != nil {

@@ -381,14 +381,8 @@ func (r *Reader) Replay(ctx context.Context, manifestPath, target string) (Manif
 				return errOutput
 			}
 			defer func() { _ = os.RemoveAll(spoolDir) }()
-			requiredPath := filepath.Join(spoolDir, "required")
 			selectedPath := filepath.Join(spoolDir, "selected")
 			rootsPath := filepath.Join(spoolDir, "roots")
-			required, e := os.OpenFile(requiredPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-			if e != nil {
-				return errOutput
-			}
-			defer func() { _ = required.Close() }()
 			retained, e := os.OpenFile(selectedPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 			if e != nil {
 				return errOutput
@@ -435,19 +429,11 @@ func (r *Reader) Replay(ctx context.Context, manifestPath, target string) (Manif
 				waterScanner := bufio.NewScanner(files[1])
 				waterScanner.Buffer(make([]byte, 64<<10), MaxBytes+2)
 				var frozen watermark
+				// Semantic evidence is checked once, after the stream: exact closure
+				// re-resolves every record reachable from the scope roots inside this
+				// snapshot and compares complete selections, so each record's references,
+				// retained dependencies and the absence of extra records share one owner.
 				checkedEmit = func(event sourceEvent, s *Selection) error {
-					refs, deps, e := resolveEvidenceAt(ctx, tx, event, frozen.ID)
-					if e != nil {
-						return e
-					}
-					if !validResolution(event.source, refs, deps) {
-						return errIntegrity
-					}
-					got, _ := encode(refs)
-					want, _ := encode(s.References)
-					if !bytes.Equal(got, want) {
-						return errIntegrity
-					}
 					from, until, e := parseRange(m.Request)
 					if e != nil {
 						return e
@@ -459,11 +445,6 @@ func (r *Reader) Replay(ctx context.Context, manifestPath, target string) (Manif
 					inRange := (from == nil || !at.Before(*from)) && (until == nil || at.Before(*until))
 					if (s.Role == "scope") != inRange {
 						return errIntegrity
-					}
-					for _, d := range deps {
-						if e = spoolWrite(required, spoolRecord{Source: d.source, Payload: d.payload, Role: "dependency"}); e != nil {
-							return e
-						}
 					}
 					if s.Role == "scope" {
 						if e = spoolWrite(roots, spoolRecord{Source: event.source, Payload: event.payload, Role: "scope", MaxID: frozen.ID}); e != nil {
@@ -528,13 +509,10 @@ func (r *Reader) Replay(ctx context.Context, manifestPath, target string) (Manif
 				if e = flush(); e != nil {
 					return e
 				}
-				if required.Close() != nil || retained.Close() != nil || roots.Close() != nil {
+				if retained.Close() != nil || roots.Close() != nil {
 					return errOutput
 				}
-				if e := verifyExactClosure(ctx, tx, spoolDir, rootsPath, selectedPath); e != nil {
-					return e
-				}
-				return verifyRetained(spoolDir, requiredPath, selectedPath)
+				return verifyExactClosure(ctx, tx, spoolDir, rootsPath, selectedPath)
 			}, &m, &result)
 			if e != nil {
 				return e
