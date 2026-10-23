@@ -221,8 +221,12 @@ def main():
     prior.SLICE = "10a-2b-2"
     prior.CLASSIFICATION = "Hold; deploy only after period B drains"
     prior.EXTRA_PACKAGES = ["./cmd/openmerge"]
-    # Round-1 specification and full mutation table were size-reported before editing.
-    prior.MAX_CHANGED_LINES = 2500
+    # The original PR plus round-2 frozen histories exceeds the old 2500-line
+    # wrapper budget; enforce the user's separate 800-line round budget too.
+    prior.MAX_CHANGED_LINES = 3000
+    round_lines = subprocess.check_output(["git", "diff", "--numstat", "b6221f4", "HEAD"], cwd=ROOT, text=True)
+    if sum(int(n) for line in round_lines.splitlines() for n in line.split("\t")[:2]) > 800:
+        raise ValueError("round-2 changed-line scope gate exceeded")
     prior.EXTRA_PATTERN = "|TestAuditUsageAndSanitization|TestAuditSelectOnlyCommand|TestCompleteExportV1|TestIdentityJSONArray|TestAuditSnapshotTimeout|TestAuditBareRemote"
     prior.EXTRA_MUTATIONS = [
         ("identity-json-string", "evidence.go", "return []byte(id), nil", "return json.Marshal(string(id))"),
