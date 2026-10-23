@@ -119,10 +119,10 @@ def main():
         ("cli-manifest-selector-conflict", "cmd/openmerge/audit.go", 'case "repo", "installation", "from", "until":', 'case "unused":'),
         ("pin-cursor-no-queue-reset", "evidence.go", "cursor.queueID != queueID || before < cursor.before", "before < cursor.before"),
         ("pin-cursor-no-backward-reset", "evidence.go", "cursor.queueID != queueID || before < cursor.before", "cursor.queueID != queueID"),
-        ("cli-inverted-range", "cmd/openmerge/audit.go", "start.After(end)", "false"),
+        ("cli-inverted-range", "cmd/openmerge/audit.go", "start.After(end)", "start.After(end) && false"),
         ("cli-zero-installation", "cmd/openmerge/audit.go", "id <= 0", "false"),
         ("cli-leak-connection", "cmd/openmerge/audit.go", 'fmt.Fprintln(stderr, "audit: connection, source, integrity or publication failure")', 'fmt.Fprintln(stderr, os.Getenv("OPENMERGE_DATABASE_URL"))'),
-        ("cli-exit-source", "cmd/openmerge/audit.go", 'return 1\n}', 'return 0\n}'),
+        ("cli-exit-source", "cmd/openmerge/audit.go", 'fmt.Fprintln(stderr, "audit: connection, source, integrity or publication failure")\n\t}\n\treturn 1', 'fmt.Fprintln(stderr, "audit: connection, source, integrity or publication failure")\n\t}\n\treturn 0'),
     ]
     # The fold now has its own sanitized diagnostic, retaining fail-closed semantics.
     original = prior.mutation_proofs
