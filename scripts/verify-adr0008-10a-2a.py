@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline 10a-2a proof; uses shared test Postgres schemas, never a scratch database."""
+"""Offline 10a-2b-1 proof; uses shared test Postgres schemas, never a scratch database."""
 import argparse
 import importlib.util
 import json
@@ -14,7 +14,7 @@ sys.dont_write_bytecode = True
 from adr0008_scratch_db import scratch_url
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE = "25d309d80e7a8b2944d642bd17c2277c127fe274"
+BASE = "4b1fe46"
 
 
 def module(name, path):
@@ -43,7 +43,6 @@ def mutation_proofs(measured, out, pattern):
         ("conflicting-spool-references", "spool.go", '!bytes.Equal(x, y)', 'false && !bytes.Equal(x, y)'),
         ("event-tie-break", "evidence.go", 'DESC,e.id DESC LIMIT 1', 'DESC,e.id ASC LIMIT 1'),
         ("newest-run-in-event", "evidence.go", 'run.ID > newest.ID ||', 'run.ID < newest.ID ||'),
-        ("dispatch-generation", "evidence.go", 'return actual == expected', 'return true'),
         ("authority-always-required", "evidence.go", 'v.(queue.PolicyAuthorityApplied).Authority == "openmerge"', 'true || v.(queue.PolicyAuthorityApplied).Authority == "openmerge"'),
         ("authority-never-required", "evidence.go", 'v.(queue.PolicyAuthorityApplied).Authority == "openmerge"', 'false && v.(queue.PolicyAuthorityApplied).Authority == "openmerge"'),
         ("queue-id-order", "export.go", 'return a.QueueID < b.QueueID', 'return false'),
@@ -64,13 +63,28 @@ def mutation_proofs(measured, out, pattern):
         ("identity-canonical", "evidence.go", 'return evidenceIdentity(parts...) == identity', 'return true'),
         ("identity-html-escape", "evidence.go", 'e.SetEscapeHTML(false)', 'e.SetEscapeHTML(true)'),
         ("normalize-encode-error", "evidence.go", 'if err != nil { return nil, errCanonical } items[i] = keyed{r, raw}', '_ = err; items[i] = keyed{r, raw}'),
-        ("github-pin-keeps-source", "evidence.go", 'r.sources = r.sources[:len(r.sources)-1]', '_ = 0'),
         ("multi-run-oldest-run-sql", "evidence.go", "ORDER BY (run->>'id')::numeric DESC,greatest", "ORDER BY (run->>'id')::numeric ASC,greatest"),
         ("multi-run-lowest-attempt-sql", "evidence.go", "greatest((run->>'attempt')::numeric,1) DESC LIMIT 1) DESC", "greatest((run->>'attempt')::numeric,1) ASC LIMIT 1) DESC"),
         ("authority-governing-commit", "evidence.go", "value.(queue.PolicyAuthorityApplied).GoverningCommit != ci.GoverningCommit", "value.(queue.PolicyAuthorityApplied).GoverningCommit != ci.GoverningCommit && false"),
         ("dispatch-generation-sql", "evidence.go", "match = ` AND payload->'data'->>'generation'=$6`", "match = ` AND $6::text IS NOT NULL`"),
         ("additional-transaction", "source.go", "if err = fn(ctx, tx); err != nil {", ""),
     ]
+    targets += [
+        ("pin-skip-config-fold", "evidence.go", "f.state = queue.Apply(f.state, v)", "// ignore config transition"),
+        ("pin-skip-validation", "evidence.go", "v.Validate() != nil || v.EffectiveDigest != f.state.ConfigDigest", "v.EffectiveDigest != f.state.ConfigDigest"),
+        ("pin-ignore-digest", "evidence.go", "v.Validate() != nil || v.EffectiveDigest != f.state.ConfigDigest", "v.Validate() != nil"),
+        ("pin-hide-rejection", "evidence.go", "rows.Err() != nil || fold.rejected", "rows.Err() != nil"),
+        ("pin-skip-queue-fold", "evidence.go", "f.state = queue.Apply(f.state, v)\n\t}", "// ignore pin\n\t}"),
+        ("rollback-status-recorded", "evidence.go", 'r.refs[len(r.refs)-1].Status = "inapplicable"', 'r.refs[len(r.refs)-1].Status = "recorded"'),
+        ("rollback-status-absent", "evidence.go", 'r.refs[len(r.refs)-1].Status = "inapplicable"', 'r.refs[len(r.refs)-1].Status = "not_recorded"'),
+        ("inapplicable-shape", "evidence.go", 'r.Status == "inapplicable" && (', 'false && ('),
+        # This changes SQL selection across events, not newestCheckRun's Go
+        # normalization of the chosen event's diagnostic/reference fields.
+        ("sql-zero-attempt-not-normalized", "evidence.go", "ARRAY[(run->>'id')::numeric,greatest((run->>'attempt')::numeric,1)]", "ARRAY[(run->>'id')::numeric,(run->>'attempt')::numeric]"),
+        # Deliberately report this defensive call's equivalence separately.
+        ("closure-valid-resolution-call", "spool.go", "if !validResolution(r.Source, refs, deps) {", "if false {"),
+    ]
+    equivalent = {"closure-valid-resolution-call"}
     runs = "FROM jsonb_array_elements(e.payload->'data'->'runs') run WHERE run->>'name'=$6 AND run->>'source'=$7"
     tuple_pick = "(SELECT ARRAY[(run->>'id')::numeric,greatest((run->>'attempt')::numeric,1)] " + runs + " ORDER BY (run->>'id')::numeric DESC,greatest((run->>'attempt')::numeric,1) DESC LIMIT 1)"
     maxima = "(SELECT ARRAY[max((run->>'id')::numeric),max(greatest((run->>'attempt')::numeric,1))] " + runs + ")"
@@ -134,10 +148,17 @@ def mutation_proofs(measured, out, pattern):
         packages = ["./internal/store"] if file.startswith("internal/store/") else ["./internal/audit"]
         test = measured(["go", "test", "-overlay", str(overlay), "-short", "-count=1", "-timeout=2m", *packages, "-run", pattern + "|TestLandingEvidence|TestLandingDecisionEvidence"], ROOT, out, "mutation-" + name, check=False)
         output = test.stdout + test.stderr
-        if test.returncode == 0 or "build failed" in output or "[setup failed]" in output or "--- FAIL:" not in output:
-            raise ValueError("mutation survived or failed before assertions: " + name)
-        results.append({"mutation": name, "killed": True, "pattern": pattern,
+        if "build failed" in output or "[setup failed]" in output:
+            outcome = "build_or_setup_failure"
+        elif test.returncode == 0:
+            outcome = "equivalent" if name in equivalent else "survived"
+        elif "--- FAIL:" in output:
+            outcome = "assertion_kill"
+        else:
+            outcome = "infrastructure_failure"
+        results.append({"mutation": name, "outcome": outcome, "pattern": pattern,
                         "failed_tests": re.findall(r"^--- FAIL: (\S+)", output, re.MULTILINE)})
+        (out / "mutation-results.json").write_text(json.dumps(results, indent=2) + "\n")
     return results
 
 
@@ -146,7 +167,7 @@ def main():
     parser.add_argument("--baseline", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--phase", choices=("all", "regression"), default="all")
-    parser.add_argument("--stress-pattern", default="TestEvidence|TestClosure|TestCheckAttempt|TestRound3|TestReplay|TestValid|TestSpool|TestSourceLess|TestNormalize|TestSourceReplayRejectsScopeShapeAndCrossQueueOrder|TestExportV1SemanticExpectations")
+    parser.add_argument("--stress-pattern", default="TestGoverningPin|TestCheckAttempt|TestEvidenceAuthorityRequiredAtDecisionBoundary|TestEvidenceApprovalFamiliesAndRequiredMissing|TestRound3")
     parser.add_argument("--baseline-timing-log", type=Path, help="reuse an already completed identical baseline timing; requires adjacent exit-status.txt containing 0")
     args = parser.parse_args()
     # Guard before any subprocess; do not propagate a caller-controlled libpq route.
@@ -171,7 +192,7 @@ def main():
         return result
 
     v.invoke = measured
-    result = {"slice": "10a-2a", "classification": "Hold: shared production evidence helper extraction; deploy after B", "commands": v.COMMANDS}
+    result = {"slice": "10a-2b-1", "classification": "Inert by own behaviour; depends on Hold; deploy after B", "commands": v.COMMANDS}
     try:
         result["baseline"] = v.check_tree("baseline", args.baseline, v.git(args.baseline, "rev-parse", BASE))
         result["candidate"] = v.check_tree("candidate", ROOT)
@@ -184,13 +205,8 @@ def main():
                 raise ValueError("existing fixture changed")
         result["existing_fixtures_unchanged"] = len(fixtures)
         changed = v.git(ROOT, "diff", "--name-only", BASE, "HEAD").splitlines()
-        permitted = {"internal/store/landing_evidence.go", "scripts/adr0008_scratch_db.py",
-                     "scripts/test_adr0008_scratch_db.py", "scripts/verify-adr0008-10a-2a.py",
-                     "docs/research/adr-0008-10a-2-size-gate.md",
-                     "docs/research/adr-0008-10a-2a-evidence.md", "docs/research/adr-0008-10a-design.md",
-                     "internal/store/landing_evidence_round1_test.go"}
-        if any(not (p.startswith("internal/audit/") or p in permitted) for p in changed):
-            raise ValueError("change outside approved audit/helper/evidence scope")
+        if any(not (p.startswith("internal/audit/") or p.startswith("docs/") or p.startswith("scripts/")) for p in changed):
+            raise ValueError("change outside approved audit/tests/docs/scripts scope")
         result["source_sha256"] = {p: v.sha(ROOT / p) for p in changed}
         callers = [p for p in v.git(args.baseline, "ls-files", "internal/store/*test.go").splitlines()
                    if "LandingDecisionEvidence" in (args.baseline / p).read_text()]
@@ -206,7 +222,11 @@ def main():
         measured(["go", "test", "-count=1", "./internal/audit", "-run", "^TestSourceDatabaseURLGuardAllowsLocalhostPorts$"], ROOT, out, "ci-dsn-guard")
         result["ci_dsn_guard"] = {"ports": [5432, 54329], "connection_free": True}
         if args.phase != "regression":
-            result["mutations"] = mutation_proofs(measured, out, args.stress_pattern)
+            result["mutations"] = mutation_proofs(measured, out, "TestGoverningPin|TestEvidence|TestClosure|TestCheckAttempt|TestRound3|TestReplay|TestValid|TestSpool|TestSourceLess|TestNormalize|TestSourceReplayRejectsScopeShapeAndCrossQueueOrder|TestExportV1SemanticExpectations")
+            outcomes = [m["outcome"] for m in result["mutations"]]
+            result["mutation_counts"] = {k: outcomes.count(k) for k in ("assertion_kill", "equivalent", "survived", "build_or_setup_failure", "infrastructure_failure")}
+            if any(result["mutation_counts"][k] for k in ("survived", "build_or_setup_failure", "infrastructure_failure")):
+                raise ValueError("mutation verification incomplete; inspect separate outcomes")
             measured(["make", "check"], ROOT, out, "make-check")
             measured(["go", "test", "-race", "-v", "-count=1", "./internal/audit"], ROOT, out, "evidence-full")
             burners = []

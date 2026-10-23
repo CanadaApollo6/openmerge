@@ -158,6 +158,7 @@ func TestEvidenceApprovalFamiliesAndRequiredMissing(t *testing.T) {
 	must(t, err)
 	pin := v.(queue.PolicyAuthorityApplied)
 	pin.GoverningCommit = classified.Evidence.Classification.Inputs.GoverningCommit
+	evidenceInsert(t, f, queue.ConfigApplied{Commit: pin.GoverningCommit, Digest: pin.EffectiveDigest})
 	evidenceInsert(t, f, pin)
 	eligibilityID := evidenceInsert(t, f, input.Fresh)
 	decisionID := evidenceInsert(t, f, decision)
