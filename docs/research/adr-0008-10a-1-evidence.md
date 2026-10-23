@@ -4,6 +4,9 @@ Classification: **Inert by its own behavior; deploy after B**. Depends on Hold
 PR 8 and transitively 3a–4. No deployment before period B drains. The package has
 no daemon/command caller and adds no advertised `openmerge audit` CLI.
 
+The sections below record the original pre-review acceptance; round-1 results
+and the superseding finalized v1 contract are recorded in the round-1 section.
+
 Base main: `7aa71a3f20b7c7b1b7538aaaa5caf1fdf77dff3d`. Tested implementation:
 `4e652cc0f5a3e5052d1f6ff5d57d107d4a3c3c56`. The final evidence commit changes
 documentation only;
@@ -172,3 +175,17 @@ or Stage A retry behavior changed. The live OpenMerge DB, systemd units, live
 refs/status API and Smart-Data-Ohio were untouched. The implementation and
 verifier made no real forge API calls. Publication is limited to the requested
 branch and PR; no deployment, merge, queue or GitHub comment.
+
+## Round-1 review fixes (supersedes pre-review contract)
+
+Merged test-only main `59194fd` normally. Classification remains **Inert; deploy
+after B**. The unreleased v1 shape is finalized now: explicit dependency roles,
+recorded/not_recorded references with relationships, and the hashed
+`dependency_boundaries.jsonl` stream. 10a-2 may populate these fields only;
+other shape changes require a serialization-version bump.
+
+Round-1 verification and measured evidence are recorded after the clean
+implementation acceptance run. The verifier compares against main `59194fd`,
+checks goldens independently with Python Decimal, runs overlay mutations without
+editing the worktree, exercises the CI-shaped DSN against shared test Postgres,
+and includes queue growth and cumulative-byte page proofs.

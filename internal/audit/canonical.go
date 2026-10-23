@@ -201,6 +201,12 @@ func writeString(out *bytes.Buffer, s string) {
 			out.WriteString(`\r`)
 		case '\t':
 			out.WriteString(`\t`)
+		case '\u0085':
+			out.WriteString(`\u0085`)
+		case '\u2028':
+			out.WriteString(`\u2028`)
+		case '\u2029':
+			out.WriteString(`\u2029`)
 		default:
 			if r < 32 {
 				const hex = "0123456789abcdef"

@@ -47,6 +47,17 @@ func TestCanonicalV1Rejects(t *testing.T) {
 	}
 }
 
+func TestCanonicalV1EscapesLineSeparators(t *testing.T) {
+	const want = `"\u0085\u2028\u2029"`
+	for _, input := range []string{`"\u0085\u2028\u2029"`, `"` + string([]rune{0x0085, 0x2028, 0x2029}) + `"`} {
+		got, e := Canonical([]byte(input))
+		must(t, e)
+		if string(got) != want {
+			t.Fatalf("input %q: got %q, want %q", input, got, want)
+		}
+	}
+}
+
 func TestExportV1Golden(t *testing.T) {
 	for _, empty := range []bool{false, true} {
 		name := "full"
@@ -70,7 +81,7 @@ func TestExportV1Golden(t *testing.T) {
 			source.ID++
 			return emit(sourceEvent{source: source, payload: []byte(`{"type":"historic","decimal":12345e-2}`)}, nil)
 		}, nil, &m))
-		for _, file := range []string{"events.jsonl", "selection.jsonl", "watermarks.jsonl", "manifest.json"} {
+		for _, file := range []string{"events.jsonl", "selection.jsonl", "watermarks.jsonl", "dependency_boundaries.jsonl", "manifest.json"} {
 			got := read(t, filepath.Join(dir, file))
 			want := read(t, filepath.Join("testdata", name+"-"+file))
 			if !bytes.Equal(got, want) {

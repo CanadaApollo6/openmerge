@@ -4,13 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const sourcePageSQL = `SELECT id,type,recorded_at,CASE WHEN octet_length(payload::text)<=4194304 THEN payload ELSE NULL END FROM events WHERE queue_id=$1 AND id>$2 AND id<=$3 AND ($4::timestamptz IS NULL OR recorded_at >= $4) AND ($5::timestamptz IS NULL OR recorded_at < $5) ORDER BY id LIMIT 32`
+const queueIdentitySQL = `SELECT id,base,lane FROM queues WHERE installation=$1 AND repository=$2`
+
+const sourcePageSQL = `WITH candidate AS MATERIALIZED (SELECT id,type,recorded_at,payload::text AS payload FROM events WHERE queue_id=$1 AND id>$2 AND id<=$3 AND ($4::timestamptz IS NULL OR recorded_at >= $4) AND ($5::timestamptz IS NULL OR recorded_at < $5) ORDER BY id LIMIT 32), sized AS (SELECT id,type,recorded_at,payload,sum(octet_length(payload)) OVER (ORDER BY id) AS page_bytes FROM candidate), bounded AS (SELECT id,type,recorded_at,payload,page_bytes,lag(page_bytes,1,0::bigint) OVER (ORDER BY id) AS prior_bytes FROM sized) SELECT id,type,recorded_at,payload FROM bounded WHERE page_bytes<=4194304 OR prior_bytes<=4194304 ORDER BY id`
+
+const replayPageSQL = `WITH candidate AS MATERIALIZED (SELECT e.id,q.installation,q.repository,q.base,q.lane,e.type,e.recorded_at,e.payload::text AS payload FROM events e JOIN queues q ON q.id=e.queue_id WHERE e.queue_id=$1 AND e.id=ANY($2::bigint[]) ORDER BY e.id LIMIT 32), sized AS (SELECT id,installation,repository,base,lane,type,recorded_at,payload,sum(octet_length(payload)) OVER (ORDER BY id) AS page_bytes FROM candidate), bounded AS (SELECT id,installation,repository,base,lane,type,recorded_at,payload,page_bytes,lag(page_bytes,1,0::bigint) OVER (ORDER BY id) AS prior_bytes FROM sized) SELECT id,installation,repository,base,lane,type,recorded_at,payload FROM bounded WHERE page_bytes<=4194304 OR prior_bytes<=4194304 ORDER BY id`
 
 const pageSize = 32
 const zeroDigest = "0000000000000000000000000000000000000000000000000000000000000000"
@@ -48,11 +53,19 @@ type Source struct {
 // Selection is independently hashed immutable metadata plus a canonical payload hash.
 // Role and References are reserved now so 10a-2 can express closure without a v1 change.
 type Selection struct {
-	Source         Source   `json:"source"`
-	PayloadSHA256  string   `json:"payload_sha256"`
-	MetadataSHA256 string   `json:"metadata_sha256"`
-	Role           string   `json:"role"`
-	References     []Source `json:"references"`
+	Source         Source      `json:"source"`
+	PayloadSHA256  string      `json:"payload_sha256"`
+	MetadataSHA256 string      `json:"metadata_sha256"`
+	Role           string      `json:"role"`
+	References     []Reference `json:"references"`
+}
+
+// Reference records an explicit dependency relationship, including historical absence.
+// A not_recorded reference preserves the requested identity without inventing evidence.
+type Reference struct {
+	Source       Source `json:"source"`
+	Relationship string `json:"relationship"`
+	Status       string `json:"status"`
 }
 
 type envelope struct {
@@ -60,7 +73,7 @@ type envelope struct {
 	Source         Source          `json:"source"`
 	Payload        json.RawMessage `json:"payload"`
 	Role           string          `json:"role"`
-	References     []Source        `json:"references"`
+	References     []Reference     `json:"references"`
 	PreviousSHA256 string          `json:"previous_sha256"`
 }
 
@@ -137,7 +150,10 @@ func parseRange(req Request) (*time.Time, *time.Time, error) {
 			*item.p = &t
 		}
 	}
-	if from != nil && until != nil && !from.Before(*until) {
+	// Equal bounds are a valid empty half-open interval. This matters after
+	// ceiling sub-microsecond request bounds to PostgreSQL's microsecond
+	// timestamp precision: a non-empty source interval may normalize to [t,t).
+	if from != nil && until != nil && from.After(*until) {
 		return nil, nil, errSource
 	}
 	// DB timestamps are discrete microseconds. Ceil both bounds so pgx's
@@ -156,7 +172,8 @@ func parseRange(req Request) (*time.Time, *time.Time, error) {
 }
 
 func resolve(ctx context.Context, tx pgx.Tx, req Request) (Request, error) {
-	if _, _, err := parseRange(req); err != nil {
+	from, until, err := parseRange(req)
+	if err != nil {
 		return req, err
 	}
 	rows, err := tx.Query(ctx, `SELECT DISTINCT installation COLLATE "C" FROM queues WHERE repository=$1 AND ($2='' OR installation=$2) ORDER BY installation COLLATE "C" LIMIT 2`, req.Repository, req.Installation)
@@ -176,48 +193,60 @@ func resolve(ctx context.Context, tx pgx.Tx, req Request) (Request, error) {
 		return req, errSource
 	}
 	req.Installation = found[0]
+	if from != nil {
+		req.From = stamp(*from)
+	}
+	if until != nil {
+		req.Until = stamp(*until)
+	}
 	return req, nil
 }
 
 // queues uses the existing identity unique index; no canonical/lifecycle table is
 // consulted, so drained/retired queues and all retained source kinds remain visible.
-// Keyset pages bound queue discovery as well as event reads.
+// The identity predicate is index-backed; canonical bytewise ordering happens in Go
+// because repeating a COLLATE query for each page rescans the same identity range.
 func queues(ctx context.Context, tx pgx.Tx, req Request, visit func(watermark) error) error {
-	var base, lane string
-	first := true
-	for {
-		rows, err := tx.Query(ctx, `SELECT id,base,lane FROM queues WHERE installation=$1 AND repository=$2 AND ($3 OR (base COLLATE "C",lane COLLATE "C")>($4 COLLATE "C",$5 COLLATE "C")) ORDER BY base COLLATE "C",lane COLLATE "C" LIMIT 32`, req.Installation, req.Repository, first, base, lane)
-		if err != nil {
+	rows, err := tx.Query(ctx, queueIdentitySQL, req.Installation, req.Repository)
+	if err != nil {
+		return errSource
+	}
+	inventory := make([]watermark, 0, pageSize)
+	for rows.Next() {
+		w := watermark{Queue: Key{Installation: req.Installation, Repository: req.Repository}}
+		if rows.Scan(&w.QueueID, &w.Queue.Base, &w.Queue.Lane) != nil {
+			rows.Close()
 			return errSource
 		}
-		var page []watermark
-		for rows.Next() {
-			w := watermark{Queue: Key{Installation: req.Installation, Repository: req.Repository}}
-			if rows.Scan(&w.QueueID, &w.Queue.Base, &w.Queue.Lane) != nil {
-				rows.Close()
-				return errSource
-			}
-			page = append(page, w)
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
+		inventory = append(inventory, w)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return errSource
+	}
+	sort.Slice(inventory, func(i, j int) bool { return keyLess(inventory[i].Queue, inventory[j].Queue) })
+	for i := range inventory {
+		if tx.QueryRow(ctx, `SELECT COALESCE(max(id),0) FROM events WHERE queue_id=$1`, inventory[i].QueueID).Scan(&inventory[i].ID) != nil {
 			return errSource
 		}
-		for _, w := range page {
-			if tx.QueryRow(ctx, `SELECT COALESCE(max(id),0) FROM events WHERE queue_id=$1`, w.QueueID).Scan(&w.ID) != nil {
-				return errSource
-			}
-			if err = visit(w); err != nil {
-				return err
-			}
-			base, lane = w.Queue.Base, w.Queue.Lane
-			first = false
-		}
-		if len(page) < pageSize {
-			return nil
+		if err = visit(inventory[i]); err != nil {
+			return err
 		}
 	}
+	return nil
+}
+
+// keyLess compares identity components as UTF-8 bytes. Go string comparison is
+// deliberately used instead of a database collation, so the order is stable
+// across database locale/ICU settings.
+func keyLess(a, b Key) bool {
+	for _, p := range [][2]string{{a.Installation, b.Installation}, {a.Repository, b.Repository}, {a.Base, b.Base}, {a.Lane, b.Lane}} {
+		if p[0] != p[1] {
+			return p[0] < p[1]
+		}
+	}
+	return false
 }
 
 func scan(ctx context.Context, tx pgx.Tx, w watermark, req Request, visit func(sourceEvent) error) error {
@@ -232,7 +261,9 @@ func scan(ctx context.Context, tx pgx.Tx, w watermark, req Request, visit func(s
 			return errSource
 		}
 		// Consume the cursor before callbacks issue any queries on this transaction.
-		var page []sourceEvent
+		page := make([]sourceEvent, 0, pageSize)
+		pageBytes := 0
+		split := false
 		for rows.Next() {
 			e := sourceEvent{source: Source{QueueID: w.QueueID, Queue: w.Queue}}
 			var at time.Time
@@ -245,7 +276,12 @@ func scan(ctx context.Context, tx pgx.Tx, w watermark, req Request, visit func(s
 				rows.Close()
 				return errCanonical
 			}
+			if len(page) > 0 && pageBytes+len(e.payload) > MaxBytes {
+				split = true
+				break
+			}
 			page = append(page, e)
+			pageBytes += len(e.payload)
 		}
 		err = rows.Err()
 		rows.Close()
@@ -258,7 +294,7 @@ func scan(ctx context.Context, tx pgx.Tx, w watermark, req Request, visit func(s
 			}
 			after = e.source.ID
 		}
-		if len(page) < pageSize {
+		if len(page) == 0 || (!split && len(page) < pageSize) {
 			return nil
 		}
 	}
@@ -270,38 +306,65 @@ func fetchPage(ctx context.Context, tx pgx.Tx, selected []Selection, emit func(s
 	if len(selected) == 0 {
 		return nil
 	}
-	ids := make([]int64, len(selected))
-	for i, s := range selected {
-		ids[i] = s.Source.ID
+	queueID := selected[0].Source.QueueID
+	for _, s := range selected {
+		if s.Source.QueueID != queueID {
+			return errIntegrity
+		}
 	}
-	rows, err := tx.Query(ctx, `SELECT e.id,q.installation,q.repository,q.base,q.lane,e.type,e.recorded_at,CASE WHEN octet_length(e.payload::text)<=4194304 THEN e.payload ELSE NULL END FROM events e JOIN queues q ON q.id=e.queue_id WHERE e.queue_id=$1 AND e.id=ANY($2::bigint[]) ORDER BY e.id`, selected[0].Source.QueueID, ids)
-	if err != nil {
-		return errSource
-	}
-	var events []sourceEvent
-	for rows.Next() {
-		e := sourceEvent{source: Source{QueueID: selected[0].Source.QueueID}}
-		var at time.Time
-		if rows.Scan(&e.source.ID, &e.source.Queue.Installation, &e.source.Queue.Repository, &e.source.Queue.Base, &e.source.Queue.Lane, &e.source.Type, &at, &e.payload) != nil {
-			rows.Close()
+	remaining := selected
+	for len(remaining) > 0 {
+		ids := make([]int64, len(remaining))
+		for i, s := range remaining {
+			ids[i] = s.Source.ID
+		}
+		rows, err := tx.Query(ctx, replayPageSQL, queueID, ids)
+		if err != nil {
 			return errSource
 		}
-		e.source.RecordedAt = stamp(at)
-		if len(e.payload) == 0 || len(e.payload) > MaxBytes {
-			rows.Close()
-			return errCanonical
+		events := make([]sourceEvent, 0, pageSize)
+		pageBytes := 0
+		split := false
+		for rows.Next() {
+			e := sourceEvent{source: Source{QueueID: queueID}}
+			var at time.Time
+			if rows.Scan(&e.source.ID, &e.source.Queue.Installation, &e.source.Queue.Repository, &e.source.Queue.Base, &e.source.Queue.Lane, &e.source.Type, &at, &e.payload) != nil {
+				rows.Close()
+				return errSource
+			}
+			if len(events) >= len(remaining) || e.source.ID != remaining[len(events)].Source.ID {
+				rows.Close()
+				return errIntegrity
+			}
+			e.source.RecordedAt = stamp(at)
+			if len(e.payload) == 0 || len(e.payload) > MaxBytes {
+				rows.Close()
+				return errCanonical
+			}
+			if len(events) >= pageSize || len(events) > 0 && pageBytes+len(e.payload) > MaxBytes {
+				split = true
+				break
+			}
+			events = append(events, e)
+			pageBytes += len(e.payload)
 		}
-		events = append(events, e)
-	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil || len(events) != len(selected) {
-		return errIntegrity
-	}
-	for i, e := range events {
-		if err = emit(e, &selected[i]); err != nil {
-			return err
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return errSource
 		}
+		if !split && len(events) == pageSize && len(events) < len(remaining) {
+			split = true
+		}
+		if len(events) == 0 || (!split && len(events) != len(remaining)) {
+			return errIntegrity
+		}
+		for i, e := range events {
+			if err = emit(e, &remaining[i]); err != nil {
+				return err
+			}
+		}
+		remaining = remaining[len(events):]
 	}
 	return nil
 }

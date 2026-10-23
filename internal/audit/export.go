@@ -13,26 +13,31 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/jackc/pgx/v5"
 )
 
+var errUnsupported = errors.New("audit: atomic publication unsupported")
+
 var errOutput = errors.New("audit: output unavailable or already exists")
 
-// Manifest contains only deterministic selection and integrity data. The two
+// Manifest contains only deterministic selection and integrity data. The
 // metadata streams are separate files so manifest memory is independent of size.
 type Manifest struct {
-	ManifestSHA256   string  `json:"manifest_sha256"`
-	Version          int     `json:"version"`
-	Request          Request `json:"request"`
-	Selection        string  `json:"selection"`
-	SelectionSHA256  string  `json:"selection_sha256"`
-	Watermarks       string  `json:"watermarks"`
-	WatermarksSHA256 string  `json:"watermarks_sha256"`
-	Events           string  `json:"events"`
-	EventsSHA256     string  `json:"events_sha256"`
-	Count            int64   `json:"count"`
-	TerminalSHA256   string  `json:"terminal_sha256"`
+	DependencyBoundaries       string  `json:"dependency_boundaries"`
+	DependencyBoundariesSHA256 string  `json:"dependency_boundaries_sha256"`
+	ManifestSHA256             string  `json:"manifest_sha256"`
+	Version                    int     `json:"version"`
+	Request                    Request `json:"request"`
+	Selection                  string  `json:"selection"`
+	SelectionSHA256            string  `json:"selection_sha256"`
+	Watermarks                 string  `json:"watermarks"`
+	WatermarksSHA256           string  `json:"watermarks_sha256"`
+	Events                     string  `json:"events"`
+	EventsSHA256               string  `json:"events_sha256"`
+	Count                      int64   `json:"count"`
+	TerminalSHA256             string  `json:"terminal_sha256"`
 }
 
 type stream struct {
@@ -74,9 +79,9 @@ func encode(v any) ([]byte, error) {
 }
 func metadata(s Selection) ([]byte, error) {
 	return encode(struct {
-		Source     Source   `json:"source"`
-		Role       string   `json:"role"`
-		References []Source `json:"references"`
+		Source     Source      `json:"source"`
+		Role       string      `json:"role"`
+		References []Reference `json:"references"`
 	}{s.Source, s.Role, s.References})
 }
 
@@ -105,7 +110,7 @@ func (r *Reader) Export(ctx context.Context, req Request, target string) (Manife
 
 type producer func(func(sourceEvent, *Selection) error, func(watermark) error) error
 
-func build(dir string, req Request, produce producer, want *Manifest, result *Manifest) error {
+func build(dir string, req Request, produce producer, want *Manifest, result *Manifest, boundaryProducer ...func(*stream) error) error {
 	events, e := newStream(dir, "events.jsonl")
 	if e != nil {
 		return e
@@ -121,13 +126,18 @@ func build(dir string, req Request, produce producer, want *Manifest, result *Ma
 		return e
 	}
 	defer func() { _ = waters.f.Close() }()
-	m := Manifest{Version: 1, Request: req, Selection: "selection.jsonl", Watermarks: "watermarks.jsonl", Events: "events.jsonl", TerminalSHA256: zeroDigest}
+	boundaries, e := newStream(dir, "dependency_boundaries.jsonl")
+	if e != nil {
+		return e
+	}
+	defer func() { _ = boundaries.f.Close() }()
+	m := Manifest{DependencyBoundaries: "dependency_boundaries.jsonl", Version: 1, Request: req, Selection: "selection.jsonl", Watermarks: "watermarks.jsonl", Events: "events.jsonl", TerminalSHA256: zeroDigest}
 	emit := func(event sourceEvent, want *Selection) error {
 		payload, e := Canonical(event.payload)
 		if e != nil {
 			return e
 		}
-		s := Selection{Source: event.source, PayloadSHA256: digest(payload), Role: "scope", References: []Source{}}
+		s := Selection{Source: event.source, PayloadSHA256: digest(payload), Role: "scope", References: []Reference{}}
 		if want != nil {
 			s.Role = want.Role
 			s.References = want.References
@@ -169,6 +179,15 @@ func build(dir string, req Request, produce producer, want *Manifest, result *Ma
 		}
 		return waters.write(raw)
 	}); e != nil {
+		return e
+	}
+	for _, produceBoundaries := range boundaryProducer {
+		if e = produceBoundaries(boundaries); e != nil {
+			return e
+		}
+	}
+	m.DependencyBoundariesSHA256, e = boundaries.finish()
+	if e != nil {
 		return e
 	}
 	m.EventsSHA256, e = events.finish()
@@ -230,7 +249,7 @@ func (r *Reader) Replay(ctx context.Context, manifestPath, target string) (Manif
 		return result, errIntegrity
 	}
 	var m Manifest
-	if strict(raw, &m) != nil || m.Version != 1 || m.Count < 0 || m.Selection != "selection.jsonl" || m.Events != "events.jsonl" || m.Watermarks != "watermarks.jsonl" || !validDigest(m.TerminalSHA256) {
+	if strict(raw, &m) != nil || m.Version != 1 || m.Count < 0 || m.Selection != "selection.jsonl" || m.Events != "events.jsonl" || m.Watermarks != "watermarks.jsonl" || m.DependencyBoundaries != "dependency_boundaries.jsonl" || !validDigest(m.TerminalSHA256) {
 		return result, errIntegrity
 	}
 	canonicalManifest, ce := encode(m)
@@ -248,13 +267,13 @@ func (r *Reader) Replay(ctx context.Context, manifestPath, target string) (Manif
 		return result, errIntegrity
 	}
 	// Pin open file descriptors for all input streams throughout verification/replay.
-	files := make([]*os.File, 0, 3)
+	files := make([]*os.File, 0, 4)
 	defer func() {
 		for _, f := range files {
 			_ = f.Close()
 		}
 	}()
-	for _, item := range []struct{ name, sha string }{{m.Selection, m.SelectionSHA256}, {m.Watermarks, m.WatermarksSHA256}, {m.Events, m.EventsSHA256}} {
+	for _, item := range []struct{ name, sha string }{{m.Selection, m.SelectionSHA256}, {m.Watermarks, m.WatermarksSHA256}, {m.Events, m.EventsSHA256}, {m.DependencyBoundaries, m.DependencyBoundariesSHA256}} {
 		f, e := openRegular(root, item.name)
 		if e != nil {
 			return result, e
@@ -277,15 +296,43 @@ func (r *Reader) Replay(ctx context.Context, manifestPath, target string) (Manif
 			if e != nil || resolved != m.Request {
 				return errIntegrity
 			}
+			identities := map[int64]watermark{}
+			if e = queues(ctx, tx, m.Request, func(w watermark) error { identities[w.QueueID] = w; return nil }); e != nil {
+				return e
+			}
+			waters := map[int64]watermark{}
+			var previousWater *Source
 			return build(dir, m.Request, func(emit func(sourceEvent, *Selection) error, water func(watermark) error) error {
 				if e = lines(files[1], func(raw []byte) error {
 					var w watermark
 					if strict(raw, &w) != nil || w.ID < 0 || w.QueueID <= 0 || w.Queue.Installation != m.Request.Installation || w.Queue.Repository != m.Request.Repository {
 						return errIntegrity
 					}
+					actual, ok := identities[w.QueueID]
+					if !ok || actual.Queue != w.Queue || w.ID > actual.ID {
+						return errIntegrity
+					}
+					if w.ID > 0 {
+						var exists bool
+						if tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM events WHERE queue_id=$1 AND id=$2)`, w.QueueID, w.ID).Scan(&exists) != nil || !exists {
+							return errIntegrity
+						}
+					}
+					if _, duplicate := waters[w.QueueID]; duplicate {
+						return errIntegrity
+					}
+					current := Source{QueueID: w.QueueID, Queue: w.Queue}
+					if previousWater != nil && !sourceLess(*previousWater, current) {
+						return errIntegrity
+					}
+					previousWater = &current
+					waters[w.QueueID] = w
 					return water(w)
 				}); e != nil {
 					return e
+				}
+				if len(waters) != len(identities) {
+					return errIntegrity
 				}
 				var previous *Source
 				var page []Selection
@@ -298,7 +345,11 @@ func (r *Reader) Replay(ctx context.Context, manifestPath, target string) (Manif
 				}
 				e = lines(files[0], func(raw []byte) error {
 					var s Selection
-					if strict(raw, &s) != nil || s.Source.ID <= 0 || s.Source.QueueID <= 0 || s.Role != "scope" || s.References == nil || len(s.References) != 0 || !validDigest(s.PayloadSHA256) || !validDigest(s.MetadataSHA256) {
+					if strict(raw, &s) != nil || s.Source.ID <= 0 || s.Source.QueueID <= 0 || !validRole(s.Role) || !validReferences(s.References) || !validDigest(s.PayloadSHA256) || !validDigest(s.MetadataSHA256) {
+						return errIntegrity
+					}
+					w, ok := waters[s.Source.QueueID]
+					if !ok || w.Queue != s.Source.Queue || s.Source.ID > w.ID {
 						return errIntegrity
 					}
 					if s.Source.Queue.Installation != m.Request.Installation || s.Source.Queue.Repository != m.Request.Repository {
@@ -321,19 +372,44 @@ func (r *Reader) Replay(ctx context.Context, manifestPath, target string) (Manif
 					return e
 				}
 				return flush()
-			}, &m, &result)
+			}, &m, &result, func(out *stream) error {
+				return lines(files[3], func(raw []byte) error {
+					var boundary Reference
+					if strict(raw, &boundary) != nil || !validReference(boundary) {
+						return errIntegrity
+					}
+					canonical, e := encode(boundary)
+					if e != nil {
+						return e
+					}
+					return out.write(canonical)
+				})
+			})
 		})
 	})
 	return result, e
 }
 
 func sourceLess(a, b Source) bool {
-	for _, p := range [][2]string{{a.Queue.Installation, b.Queue.Installation}, {a.Queue.Repository, b.Queue.Repository}, {a.Queue.Base, b.Queue.Base}, {a.Queue.Lane, b.Queue.Lane}} {
-		if p[0] != p[1] {
-			return p[0] < p[1]
-		}
+	if a.Queue != b.Queue {
+		return keyLess(a.Queue, b.Queue)
 	}
 	return a.QueueID == b.QueueID && a.ID < b.ID
+}
+func validRole(role string) bool { return role == "scope" || role == "dependency" }
+func validReference(r Reference) bool {
+	return (r.Relationship == "requires" || r.Relationship == "caused_by" || r.Relationship == "supersedes") && (r.Status == "recorded" || r.Status == "not_recorded") && r.Source.QueueID > 0 && r.Source.ID > 0
+}
+func validReferences(refs []Reference) bool {
+	if refs == nil {
+		return false
+	}
+	for _, r := range refs {
+		if !validReference(r) {
+			return false
+		}
+	}
+	return true
 }
 func validDigest(s string) bool {
 	if len(s) != 64 || strings.ToLower(s) != s {
@@ -415,7 +491,23 @@ func publish(target string, build func(string) error) error {
 		return errOutput
 	}
 	if e = renameNoReplace(dir, target); e != nil {
+		return publicationError(e)
+	}
+	parent, e := os.Open(filepath.Dir(target))
+	if e != nil {
+		return errOutput
+	}
+	e = parent.Sync()
+	closeErr := parent.Close()
+	if e != nil || closeErr != nil {
 		return errOutput
 	}
 	return nil
+}
+
+func publicationError(e error) error {
+	if errors.Is(e, syscall.EINVAL) || errors.Is(e, syscall.ENOSYS) || errors.Is(e, syscall.EOPNOTSUPP) || errors.Is(e, errUnsupported) {
+		return errUnsupported
+	}
+	return errOutput
 }

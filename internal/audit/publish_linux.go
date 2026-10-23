@@ -22,7 +22,7 @@ func renameNoReplace(from, to string) error {
 	case "386":
 		number = 353
 	default:
-		return errOutput
+		return errUnsupported
 	}
 	a, e := syscall.BytePtrFromString(from)
 	if e != nil {
@@ -37,7 +37,7 @@ func renameNoReplace(from, to string) error {
 	runtime.KeepAlive(a)
 	runtime.KeepAlive(b)
 	if errno != 0 {
-		return errOutput
+		return errno
 	}
 	return nil
 }

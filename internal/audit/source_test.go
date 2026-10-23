@@ -25,16 +25,25 @@ type fixture struct {
 	dsn    string
 }
 
+func sourceDatabaseURL(raw string) (*url.URL, bool) {
+	u, e := url.Parse(raw)
+	if e != nil || u.Hostname() != "localhost" {
+		return nil, false
+	}
+	return u, true
+}
+
 func database(t *testing.T) *fixture {
 	t.Helper()
 	raw := os.Getenv("OPENMERGE_TEST_DATABASE_URL")
 	if raw == "" {
 		t.Skip("shared test Postgres not configured")
 	}
-	u, e := url.Parse(raw)
-	if e != nil || u.Hostname() != "localhost" || u.Port() != "54329" || u.Path != "/postgres" || u.RawQuery != "sslmode=disable" {
+	u, ok := sourceDatabaseURL(raw)
+	if !ok {
 		t.Fatal("only shared test Postgres is permitted")
 	}
+	var e error
 	conn, e := pgx.Connect(t.Context(), raw)
 	if e != nil {
 		t.Fatal("test database unavailable")
@@ -57,7 +66,7 @@ func database(t *testing.T) *fixture {
 	})
 	_, e = conn.Exec(t.Context(), "SET search_path TO "+schemaSQL)
 	must(t, e)
-	_, e = conn.Exec(t.Context(), `CREATE TABLE queues(id bigint PRIMARY KEY,installation text NOT NULL,repository text NOT NULL,base text NOT NULL,lane text NOT NULL,UNIQUE(installation,repository,base,lane));
+	_, e = conn.Exec(t.Context(), `CREATE TABLE queues(id bigint PRIMARY KEY,installation text NOT NULL,repository text NOT NULL,base text COLLATE "und-x-icu" NOT NULL,lane text COLLATE "und-x-icu" NOT NULL,UNIQUE(installation,repository,base,lane));
  CREATE TABLE events(id bigserial PRIMARY KEY,queue_id bigint NOT NULL REFERENCES queues(id),type text NOT NULL,payload jsonb NOT NULL,recorded_at timestamptz NOT NULL);
  CREATE INDEX events_queue_watermark ON events(queue_id,id);
  CREATE TABLE canonical_queues(queue_id bigint PRIMARY KEY)`)
@@ -73,6 +82,31 @@ func database(t *testing.T) *fixture {
 	t.Cleanup(reader.Close)
 	return &fixture{admin: conn, reader: reader, dsn: u.String()}
 }
+
+func TestSourceDatabaseURLGuardAllowsLocalhostPorts(t *testing.T) {
+	for _, raw := range []string{
+		"postgres://postgres:openmerge@localhost:5432/openmerge_test?sslmode=disable",
+		"postgres://postgres:openmerge@localhost:5432/openmerge_test?sslmode=require&application_name=ci",
+		"postgres://postgres@localhost:54329/postgres?sslmode=disable",
+	} {
+		if _, ok := sourceDatabaseURL(raw); !ok {
+			t.Fatal("rejected permitted localhost test database URL")
+		}
+	}
+	if _, ok := sourceDatabaseURL("postgres://postgres@example.invalid:5432/openmerge_test?sslmode=disable"); ok {
+		t.Fatal("accepted non-localhost database URL")
+	}
+	if _, ok := sourceDatabaseURL("postgres://postgres@127.0.0.1:5432/openmerge_test?sslmode=disable"); ok {
+		t.Fatal("accepted non-localhost database URL")
+	}
+	if _, ok := sourceDatabaseURL("postgres://postgres@localhost:5432"); !ok {
+		t.Fatal("rejected localhost URL without a database path")
+	}
+	if _, ok := sourceDatabaseURL("postgres://postgres@localhost:5432/openmerge_test?sslmode=disable&search_path=custom"); !ok {
+		t.Fatal("rejected localhost URL with extra options")
+	}
+}
+
 func (f *fixture) queue(t *testing.T, id int, lane string) {
 	t.Helper()
 	_, e := f.admin.Exec(t.Context(), `INSERT INTO queues VALUES($1,'i','owner/repo','main',$2)`, id, lane)
@@ -91,7 +125,7 @@ func req() Request {
 }
 func manifests(t *testing.T, a, b string) {
 	t.Helper()
-	for _, name := range []string{"manifest.json", "events.jsonl", "selection.jsonl", "watermarks.jsonl"} {
+	for _, name := range []string{"manifest.json", "events.jsonl", "selection.jsonl", "watermarks.jsonl", "dependency_boundaries.jsonl"} {
 		if !reflect.DeepEqual(read(t, filepath.Join(a, name)), read(t, filepath.Join(b, name))) {
 			t.Fatalf("replay changed %s", name)
 		}
@@ -295,7 +329,7 @@ func rewriteManifest(t *testing.T, dir string, change func(*Manifest)) {
 func copyExport(t *testing.T, from string) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, name := range []string{"manifest.json", "events.jsonl", "selection.jsonl", "watermarks.jsonl"} {
+	for _, name := range []string{"manifest.json", "events.jsonl", "selection.jsonl", "watermarks.jsonl", "dependency_boundaries.jsonl"} {
 		must(t, os.WriteFile(filepath.Join(dir, name), read(t, filepath.Join(from, name)), 0600))
 	}
 	return dir
@@ -490,6 +524,7 @@ func TestSourceSubmicrosecondBoundaries(t *testing.T) {
 		count       int64
 	}{
 		{"2026-10-22T12:00:00.000000001Z", "2026-10-22T12:00:00.000001001Z", 1},
+		{"2026-10-22T12:00:00.000000001Z", "2026-10-22T12:00:00.000002Z", 1},
 		{"2026-10-22T12:00:00.000000001Z", "2026-10-22T12:00:00.000000002Z", 0},
 		{"2026-10-22T07:00:00-05:00", "2026-10-22T07:00:00.000002-05:00", 2},
 	} {
