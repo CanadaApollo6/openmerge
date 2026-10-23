@@ -148,7 +148,7 @@ func round3Resolve(t *testing.T, fx *round3EvidenceFixture, eventID int64, dropT
 		must(t, tx.QueryRow(ctx, `SELECT type,payload FROM events WHERE id=$1`, eventID).Scan(&typ, &raw))
 		var maxID int64
 		must(t, tx.QueryRow(ctx, `SELECT COALESCE(max(id),0) FROM events WHERE queue_id=1`).Scan(&maxID))
-		var resolverTx pgx.Tx = tx
+		resolverTx := tx
 		if dropType != "" {
 			resolverTx = &round3DropLookupTx{Tx: tx, typ: dropType}
 		}
