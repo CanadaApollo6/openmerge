@@ -26,6 +26,8 @@ against the reviewer's independent Decimal reference at
 the three newly specified Unicode escapes and the fourth stream. These provisional complete-export shapes predate 10a-2a closure; they do not
 define the frozen complete-export contract.
 
-Complete export vectors are provisional during 10a-2a evidence closure. They are
-not referenced by current Go tests; 10a-2b regenerates and freezes them. The
+Complete export vectors remain **PROVISIONAL** through 10a-2b-1 governing-pin
+agreement, inapplicable status and attempt-tie corrections. They are not
+referenced by current Go tests. Step 10a-2b-2 owns independent regeneration and
+final complete-export acceptance before any freeze. The
 canonical-v1.json byte vectors remain frozen and referenced.

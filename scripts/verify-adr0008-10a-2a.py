@@ -71,10 +71,12 @@ def mutation_proofs(measured, out, pattern):
     ]
     targets += [
         ("pin-skip-config-fold", "evidence.go", "f.state = queue.Apply(f.state, v)", "// ignore config transition"),
-        ("pin-skip-validation", "evidence.go", "v.Validate() != nil || v.EffectiveDigest != f.state.ConfigDigest", "v.EffectiveDigest != f.state.ConfigDigest"),
+        # Do not count helper-only removals of pin Validate/Apply as behaviour
+        # kills: production decode already validates, and its pin value is not
+        # read back here. Mutate actual rejection at the retained-source boundary.
+        ("pin-ignore-rejected-decode", "evidence.go", "v, err := decodeEvidence(&e)\n\t\tif err != nil {\n\t\t\treturn 0, errSource\n\t\t}", "v, err := decodeEvidence(&e)\n\t\tif err != nil { continue }"),
         ("pin-ignore-digest", "evidence.go", "v.Validate() != nil || v.EffectiveDigest != f.state.ConfigDigest", "v.Validate() != nil"),
         ("pin-hide-rejection", "evidence.go", "rows.Err() != nil || fold.rejected", "rows.Err() != nil"),
-        ("pin-skip-queue-fold", "evidence.go", "f.state = queue.Apply(f.state, v)\n\t}", "// ignore pin\n\t}"),
         ("rollback-status-recorded", "evidence.go", 'r.refs[len(r.refs)-1].Status = "inapplicable"', 'r.refs[len(r.refs)-1].Status = "recorded"'),
         ("rollback-status-absent", "evidence.go", 'r.refs[len(r.refs)-1].Status = "inapplicable"', 'r.refs[len(r.refs)-1].Status = "not_recorded"'),
         ("inapplicable-shape", "evidence.go", 'r.Status == "inapplicable" && (', 'false && ('),
