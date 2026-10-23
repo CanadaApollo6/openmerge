@@ -53,7 +53,10 @@ def mutation_proofs(measured, out, pattern):
         # now owns resolved-reference, absence and retained-source agreement.
         ("resolved-references", "spool.go", 'if e != nil || !bytes.Equal(wantRaw, gotRaw) {', 'if e != nil || false && !bytes.Equal(wantRaw, gotRaw) {'),
         ("missing-retained-source", "spool.go", 'if !expected.ok || !actual.ok {', 'if !actual.ok { break }; if !expected.ok {'),
-        ("closure-valid-resolution", "spool.go", 'if !validResolution(r.Source, refs, deps) {', 'if false {'),
+        # closure's validResolution call is a defensive invariant: lookup always
+        # appends a reference and its source together, so removing the call is
+        # an equivalent mutant. Its logic is pinned directly by
+        # TestValidResolutionRequiresExactReferenceAndDependencySets.
         ("scope-range", "export.go", 'if (s.Role == "scope") != inRange {', 'if false && inRange {'),
         ("owning-decision-id", "evidence.go", 'if item.DecisionEventID == event.source.ID {', 'if true {'),
         ("conflicting-spool-watermark", "spool.go", 'if b.MaxID != 0 && a.MaxID != b.MaxID {', 'if false {'),
