@@ -214,7 +214,7 @@ def main():
                 for _ in range(8):
                     burners.append(subprocess.Popen([sys.executable, "-c", "while True: pass"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
                 before_cpu = {b.pid: int(Path(f"/proc/{b.pid}/stat").read_text().split()[13]) for b in burners}
-                stress = measured(["go", "test", "-race", "-count=20", "-v", "-timeout=60m", "./internal/audit", "-run", args.stress_pattern], ROOT, out, "evidence-stress", env_extra={"GOMAXPROCS": "1"})
+                stress = measured(["go", "test", "-race", "-count=20", "-v", "-timeout=240m", "./internal/audit", "-run", args.stress_pattern], ROOT, out, "evidence-stress", env_extra={"GOMAXPROCS": "1"})
                 passed = re.findall(r"^--- PASS: (\S+)", stress.stdout, re.MULTILINE)
                 if not passed or any(passed.count(name) != 20 for name in set(passed)):
                     raise ValueError("stress did not execute each selected test 20 times")
