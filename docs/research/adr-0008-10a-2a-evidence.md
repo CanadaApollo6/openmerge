@@ -318,8 +318,209 @@ own and this round's are run against the final commit with overlays over the
 complete `-short` audit (and, for the helper, store) suites. Build or setup
 failures do not count as kills. The reviewers' mutants of guards that this
 round removed are mapped onto exact closure, which now owns those properties.
-PENDING_MUTATION_TABLE
+Reviewer table (`mutants.py`, measured on `596aabe`; every later commit
+changes only documentation and the verifier, so all Go sources are identical
+to the final head). Prefixes: `astra-` Astra's six, `m1-`/`m2-`/`m3-`
+Sonnet's, `f-` this round's. **103 of 104 are killed.** The killing test shown
+is the first of each mutant's failing set.
+
+| Mutant | Result | First killing test |
+| --- | --- | --- |
+| `astra-landing-helper` | killed | TestChangeDecisionsIndexedReadbackAndSettlement |
+| `astra-drop-family-kind` | killed | TestEvidenceApprovalFamiliesAndRequiredMissing |
+| `astra-oldest-attempt` | killed | TestCheckAttemptMultiRunEventOrderedByItsNewestRun |
+| `astra-invented-id` | killed | TestValidReferencesRejectsInventedAbsenceAndDuplicates |
+| `astra-skip-status` | killed | TestReplayRejectsResolvedSettlementRewrittenAsAbsent |
+| `astra-second-tx` | killed | TestReplayUsesItsOwnReaderSnapshot |
+| `m1-store-budget` | killed | TestLandingDecisionJournalReadbackAfterSettlement |
+| `m1-store-cardinality` | killed | TestLandingDecisionEvidenceBoundedAndEligibilityCardinality |
+| `m1-store-empty-identity` | killed | TestLandingEvidenceBoundaryQueryShapes |
+| `m1-boundary-decision-id` | killed | TestClosureReplayDBStatusContradiction |
+| `m1-boundary-eligibility-id` | killed | TestEvidenceApprovalFamiliesAndRequiredMissing |
+| `m1-cap-decision` | killed | TestLandingEvidenceBoundaryQueryShapes |
+| `m1-cap-eligibility` | killed | TestLandingEvidenceBoundaryQueryShapes |
+| `m1-eligibility-head-arg` | killed | TestChangeDecisionsIndexedReadbackAndSettlement |
+| `m1-bounded-path-unbounded-sql` | killed | TestLandingDecisionEvidenceBoundedAndEligibilityCardinality |
+| `m2-required-false-0-change_revision_observed` | killed | TestRound3RequiredFamilyLookupsRejectMissingIdentity |
+| `m2-required-false-1-batch_started` | killed | TestRound3RequiredFamilyLookupsRejectMissingIdentity |
+| `m2-required-false-2-approval_eligibility_observed` | killed | TestRound3RequiredFamilyLookupsRejectMissingIdentity |
+| `m2-required-false-3-change_classified` | killed | TestRound3RequiredFamilyLookupsRejectMissingIdentity |
+| `m2-required-false-4-change_accountability_observed` | killed | TestRound3RequiredFamilyLookupsRejectMissingIdentity |
+| `m2-required-false-5-review_stance_observed` | killed | TestRound3RequiredFamilyLookupsRejectMissingIdentity |
+| `m2-required-false-6-approval_receipt_recorded` | killed | TestRound3RequiredFamilyLookupsRejectMissingIdentity |
+| `m2-required-false-7-change_revision_observed` | killed | TestRound3RequiredFamilyLookupsRejectMissingIdentity |
+| `m2-required-false-8-landing_started` | killed | TestRound3RequiredFamilyLookupsRejectMissingIdentity |
+| `m2-required-false-9-landing_decision_recorded` | killed | TestRound3RequiredFamilyLookupsRejectMissingIdentity |
+| `m2-required-false-10-batch_started` | killed | TestRound3RequiredFamilyLookupsRejectMissingIdentity |
+| `m2-required-false-11-test_ref_built` | killed | TestRound3RequiredFamilyLookupsRejectMissingIdentity |
+| `m2-required-false-landing_checks` | killed | TestEvidenceAuthorityRequiredAtDecisionBoundary |
+| `m2-authority-always` | killed | TestEvidenceAuthorityRequiredAtDecisionBoundary |
+| `m2-authority-never` | killed | TestEvidenceAuthorityRequiredAtDecisionBoundary |
+| `m2-authority-pin-required` | killed | TestEvidenceAuthorityRequiredAtDecisionBoundary |
+| `m2-authority-pin-any-time` | killed | TestEvidenceAuthorityRequiredAtDecisionBoundary |
+| `m2-authority-pin-first` | killed | TestEvidenceAuthorityRequiredAtDecisionBoundary |
+| `m2-authority-governing-commit` | killed | TestRound3OpenMergePinMustMatchClassificationGoverningCommit |
+| `m2-attempt-oldest-run-in-event-sql` | killed | TestCheckAttemptMultiRunEventOrderedByItsNewestRun |
+| `m2-attempt-lowest-attempt-sql` | killed | TestCheckAttemptMultiRunEventOrderedByItsNewestRun |
+| `m2-attempt-oldest-tuple-across-events` | killed | TestCheckAttemptMultiRunEventOrderedByItsNewestRun |
+| `m2-attempt-event-id-tiebreak` | killed | TestCheckAttemptRunTupleAndEventTie |
+| `m2-attempt-include-later` | killed | TestCheckAttemptDispatchFollowsRequestGeneration |
+| `m2-attempt-independent-maxima` | killed | TestCheckAttemptRunTupleAndEventTie |
+| `m2-go-newest-oldest-run` | killed | TestCheckAttemptNewestRunWithinEvent |
+| `m2-go-newest-lowest-attempt` | killed | TestCheckAttemptNewestRunWithinEvent |
+| `m2-no-check-result-compare` | killed | TestEvidenceNewestCheckAttemptAtBoundary |
+| `m2-later-not-excluded` | killed | TestEvidenceNewestCheckAttemptAtBoundary |
+| `m2-dispatch-generation-go` | killed | TestCheckAttemptDispatchGenerationConsistency |
+| `m2-dispatch-generation-sql` | killed | TestCheckAttemptDispatchFollowsRequestGeneration |
+| `m2-dispatch-generation-both` | killed | TestCheckAttemptDispatchFollowsRequestGeneration |
+| `m2-valid-refs-absence-source` | killed | TestValidReferencesRejectsInventedAbsenceAndDuplicates |
+| `m2-valid-refs-order` | killed | TestValidReferencesRejectsInventedAbsenceAndDuplicates |
+| `m2-no-dedup-normalize` | killed | TestEvidenceReferenceComparatorAndAbsence |
+| `m2-replay-skip-ref-compare` | killed | TestReplayRejectsResolvedSettlementRewrittenAsAbsent |
+| `m2-replay-skip-valid-resolution` | equivalent | none possible: see below |
+| `m2-replay-skip-verify-retained` | killed | TestClosureReplayRejectsRehashedMissingDependency |
+| `m2-replay-skip-scope-range` | killed | TestReplayRejectsOutOfRangeRecordClaimedAsScope |
+| `m2-replay-skip-exact-closure` | killed | TestClosureReplayDBStatusContradiction |
+| `m2-replay-skip-roots` | killed | TestClosureCrossRangeSharedSource |
+| `f-identity-structure` | killed | TestEvidenceIdentityIsCanonicalStringTuple |
+| `f-identity-canonical` | killed | TestEvidenceIdentityIsCanonicalStringTuple |
+| `f-identity-html-escape` | killed | TestEvidenceIdentityIsCanonicalStringTuple |
+| `f-normalize-encode-error` | killed | TestNormalizeReferencesRejectsExcessiveIdentity |
+| `f-valid-refs-encode-error` | killed | TestNormalizeReferencesRejectsExcessiveIdentity |
+| `f-github-pin-keeps-source` | killed | TestEvidenceAuthorityRequiredAtDecisionBoundary |
+| `f-github-pin-keeps-ref` | killed | TestEvidenceAuthorityRequiredAtDecisionBoundary |
+| `m2-exact-closure-allow-extra` | killed | TestClosureReplayRejectsRehashedMissingDependency |
+| `m2-closure-single-wave` | killed | TestClosureCrossRangeSharedSource |
+| `m2-merge-scope-precedence` | killed | TestClosureSpoolMultipleMergePasses |
+| `m2-merge-conflicting-refs` | killed | TestSpoolRejectsConflictingDuplicateRecords |
+| `m2-merge-conflicting-payload` | killed | TestSpoolRejectsConflictingDuplicateRecords |
+| `m2-merge-conflicting-maxid` | killed | TestSpoolRejectsConflictingDuplicateRecords |
+| `m2-boundary-count` | killed | TestClosureCrossRangeSharedSource |
+| `m2-sourceless-queue-id` | killed | TestSourceLessUsesQueueIDForEqualKeys |
+| `m2-closure-no-visited` | killed | TestClosureReplayDBStatusContradiction |
+| `m2-spool-chunk-dedup` | killed | TestClosureCrossRangeSharedSource |
+| `m2-owner-decision-match` | killed | TestRound3DecisionOwnerSelectsItsOwnRetainedItem |
+| `m2-owner-decision-id` | killed | TestRound3DecisionOwnerSelectsItsOwnRetainedItem |
+| `m2-lookup-duplicates` | killed | TestRound3DuplicateImmutableIdentityRejectedRegardlessOfRequiredness |
+| `m2-lookup-no-snapshot-bound` | killed | TestClosureReplayIgnoresSettlementAboveSavedWatermark |
+| `m3-drop-family-approval_eligibility_observed` | killed | TestEvidenceApprovalFamiliesAndRequiredMissing |
+| `m3-drop-family-change_classified` | killed | TestRound3DecisionReferencesAreExactByFamily |
+| `m3-drop-family-change_accountability_observed` | killed | TestEvidenceApprovalFamiliesAndRequiredMissing |
+| `m3-drop-family-policy_authority_applied` | killed | TestEvidenceApprovalFamiliesAndRequiredMissing |
+| `m3-drop-family-review_stance_observed` | killed | TestRound3DecisionReferencesAreExactByFamily |
+| `m3-drop-family-approval_receipt_recorded` | killed | TestRound3DecisionReferencesAreExactByFamily |
+| `m3-drop-family-change_revision_observed` | killed | TestRound3DecisionReferencesAreExactByFamily |
+| `m3-drop-family-batch_started` | killed | TestClosureCrossRangeSharedSource |
+| `m3-drop-family-test_ref_built` | killed | TestClosureCrossRangeSharedSource |
+| `m3-drop-family-landing_checks_recorded` | killed | TestEvidenceAuthorityRequiredAtDecisionBoundary |
+| `m3-drop-family-checks_observed` | killed | TestClosureCrossRangeSharedSource |
+| `m3-drop-family-check_rerun_requested` | killed | TestCheckAttemptDispatchFollowsRequestGeneration |
+| `m3-drop-family-check_rerun_dispatch_progress` | killed | TestCheckAttemptDispatchFollowsRequestGeneration |
+| `m3-drop-family-check_rerun_dispatched` | killed | TestCheckAttemptDispatchFollowsRequestGeneration |
+| `m3-drop-family-landing_started` | killed | TestClosureReplayPinsWatermarkAcrossQueuePageBoundary |
+| `m3-drop-family-landed` | killed | TestClosureReplayDBStatusContradiction |
+| `m3-drop-family-landing_abandoned` | killed | TestRound3DecisionReferencesAreExactByFamily |
+| `m3-drop-family-landing_decision_recorded` | killed | TestRound3StartReferencesExactOwningDecision |
+| `m3-drop-ref-keep-source-change_classified` | killed | TestEvidenceApprovalFamiliesAndRequiredMissing |
+| `m3-drop-ref-keep-source-change_revision_observed` | killed | TestEvidenceApprovalFamiliesAndRequiredMissing |
+| `m3-drop-ref-keep-source-review_stance_observed` | killed | TestEvidenceApprovalFamiliesAndRequiredMissing |
+| `m3-drop-ref-keep-source-approval_receipt_recorded` | killed | TestEvidenceApprovalFamiliesAndRequiredMissing |
+| `m3-drop-ref-keep-source-landing_checks_recorded` | killed | TestEvidenceApprovalFamiliesAndRequiredMissing |
+| `m3-drop-ref-keep-source-landing_abandoned` | killed | TestRound3DecisionReferencesAreExactByFamily |
+| `m3-drop-ref-keep-source-landing_decision_recorded` | killed | TestEvidenceApprovalFamiliesAndRequiredMissing |
+| `m3-drop-ref-keep-source-landed` | killed | TestClosureReplayDBStatusContradiction |
+| `m3-drop-ref-keep-source-landing_started` | killed | TestClosureReplayPinsWatermarkAcrossQueuePageBoundary |
+
+The one survivor removes closure's `validResolution` call. It is an
+equivalent mutant: `lookup` appends each reference and its source together,
+so the resolver cannot produce a mismatched pair for the call to reject.
+The validator stays as a defensive invariant and is pinned directly by
+`TestValidResolutionRequiresExactReferenceAndDependencySets`. Killing the
+call itself would need a test-only fault hook in the resolver. Replay's
+removed guards (`astra-skip-status`, `m2-replay-skip-ref-compare`,
+`m2-replay-skip-verify-retained`) are killed through exact closure.
+
+The verifier's own overlay table (`scripts/verify-adr0008-10a-2a.py`) runs on
+the final head: **72/72 mutants compile and are killed by a semantic `--- FAIL`**,
+with build/setup failures rejected. That includes the always/never-required
+authority mutants, all 18 per-family exact-edge drops, the 12 required call
+sites, the multi-run SQL orderings, dispatch generation, identity
+structure/canonical/HTML escaping, spool payload/reference/watermark conflicts,
+scope range, owning decision, the extra transaction and four store-helper
+mutants (cardinality, empty batch, decision and eligibility 4 MiB caps).
 
 ### Round-1 acceptance
 
-PENDING_ACCEPTANCE
+`scripts/verify-adr0008-10a-2a.py` against the exact base above, on code head
+`b9a8af6d3c6d0b46c076304a0ea20d0345b53a36`. That head's Go sources are
+byte-identical to `596aabe`, and this evidence commit changes only this note.
+**Verdict PASS.**
+
+- `make check`: **exit 0** (formatting, lint, short race suite, build), 540 s.
+- Full non-short audit race suite: **exit 0**, 416.4 s. The pipeline growth
+  probe (128 → 1,024 owners with real check history, `-race`) takes
+  19.3 s → 163.7 s for export plus replay. Sampled peak heap is
+  7.69 → 8.46 MB, and retained heap after GC is 0.81 → 0.80 MB.
+- Strict replay at 6 GiB: **2,159/2,159 identical** actions, structural states,
+  snapshot hashes and boundary checkpoints. 8,676 boundary probes, no
+  non-allowlisted fields, Gate 2 / Gate 4 PASS, self-test exit 0.
+- Simulator **146/146 identical** normalized blocks. Contracts **90/90 identical**.
+  Wire: 105 legacy fixtures (90 registry) identical, none new.
+- GitHub projection and actual CLI bytes, MixedGithubBytes (`cc95a654…`) and
+  Stage A exact output are identical to the base. All **211 fixtures outside
+  audit testdata** are byte-identical. No complete-export golden was regenerated.
+- `internal/store/landing_wiring_test.go` is byte-identical, and
+  `go test -race ./internal/store -run 'Landing|Decision'` passes unchanged.
+- The shared DSN guard's connection-free tests pass. CI-mode `localhost:5432`
+  parses only under `GITHUB_ACTIONS=true` and `CI=true`, and the local run used
+  only `localhost:54329`.
+- Stress: **47 audit tests × 20 = 940 top-level passes**, `GOMAXPROCS=1 -race`,
+  non-short (including the pipeline growth and check-history plan probes), in
+  5,638.8 s. No data race. Eight owned CPU burners each consumed CPU (minimum
+  560,098 ticks), and all were reaped. The four new store tests also passed
+  ×20 (80 passes) under the same flags with eight owned burners, all reaped.
+- The verifier's 72/72 overlay mutants are killed (see above).
+
+Paired CI-like package timings (`GOMAXPROCS=2 go test -race -short -count=1
+-p=1 ./...`, 23 packages, exit 0 on both sides). The baseline is the
+`timing-before` run above. Go-reported seconds exclude compilation and lock
+waiting. These are single-run descriptive figures, not a benchmark.
+
+| Package | Main (s) | Round 1 (s) | Delta (s) |
+| --- | ---: | ---: | ---: |
+| `cmd/openmerge` | 68.443 | 68.816 | +0.373 |
+| `internal/ascii` | 1.007 | 1.006 | -0.001 |
+| `internal/audit` | 2.599 | 8.986 | +6.387 |
+| `internal/authority` | 1.111 | 1.107 | -0.004 |
+| `internal/brief` | 3.400 | 3.473 | +0.073 |
+| `internal/changepolicy` | 1.750 | 1.806 | +0.056 |
+| `internal/classification` | 2.265 | 2.227 | -0.038 |
+| `internal/config` | 1.652 | 1.644 | -0.008 |
+| `internal/config/condition` | 1.020 | 1.020 | +0.000 |
+| `internal/diagnostic` | 1.019 | 1.019 | +0.000 |
+| `internal/executor` | 1.168 | 1.163 | -0.005 |
+| `internal/forge` | 8.306 | 8.173 | -0.133 |
+| `internal/forge/fake` | 1.460 | 1.454 | -0.006 |
+| `internal/forge/github` | 65.667 | 65.677 | +0.010 |
+| `internal/gitops` | 103.400 | 103.718 | +0.318 |
+| `internal/queue` | 179.622 | 177.934 | -1.688 |
+| `internal/serve` | 337.080 | 335.895 | -1.185 |
+| `internal/sim` | 37.558 | 37.705 | +0.147 |
+| `internal/sim/capacity` | 1.009 | 1.007 | -0.002 |
+| `internal/status` | 11.853 | 11.753 | -0.100 |
+| `internal/store` | 74.253 | 74.826 | +0.573 |
+| `scripts` | 1.081 | 1.084 | +0.003 |
+| `tools/dogfood` | 1.689 | 1.656 | -0.033 |
+
+The audit package's short suite grows by 6.4 s because of the round-1 semantic
+tests. The expensive growth, scaling and plan probes stay outside `-short`.
+Every other package is within ±1.7 s of main, and the 23-package total is
+908.4 s → 913.1 s.
+
+Artifacts are under `/home/riels/.cache/openmerge-147-r1-opus/acceptance`
+(`summary.json`, per-command logs, `replay.json`, normalized simulator output,
+`manifest.json` with SHA-256
+`4d746c4dc64e8ad4473c1f1c616e663c96ac082efb75617f593550af13668da3`). The
+reviewer mutation table is under `/home/riels/.cache/openmerge-review-147-opus`
+(`final-mutation-table.{md,json}`, `mutants.py`). No run used a live OpenMerge
+database, a real forge API, a service controller or `/tmp`.
