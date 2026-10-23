@@ -9,6 +9,16 @@ import (
 )
 
 func TestLandingEvidenceBoundaryQueryShapes(t *testing.T) {
+	// Invalid arguments must fail before opening a transaction, even on a store
+	// without a pool. This pins the original public method's early validation.
+	var disconnected Store
+	if _, err := disconnected.LandingDecisionEvidence(t.Context(), 0, "", "attempt"); err == nil {
+		t.Fatal("public empty batch accepted")
+	}
+	if _, err := disconnected.LandingDecisionEvidence(t.Context(), 0, "batch", ""); err == nil {
+		t.Fatal("public empty attempt accepted")
+	}
+
 	if landingDecisionEvidenceSQL != `SELECT id,payload FROM events WHERE queue_id=$1 AND type='landing_decision_recorded'
    AND payload->'data'->>'batch_id'=$2 AND payload->'data'->>'attempt_id'=$3 ORDER BY id LIMIT 129` {
 		t.Fatal("unbounded decision evidence SQL changed")

@@ -22,8 +22,8 @@ type LandingEvidence struct {
 // eligibility observations. These two event types must survive any compaction.
 // SQL selects indexed decision/read identities before decoding, never replaying a journal.
 func (s *Store) LandingDecisionEvidence(ctx context.Context, q QueueID, batch, attempt string) ([]LandingEvidence, error) {
-	if batch == "" || attempt == "" {
-		return nil, fmt.Errorf("batch and attempt required")
+	if err := landingEvidenceIdentity(batch, attempt); err != nil {
+		return nil, err
 	}
 	var result []LandingEvidence
 	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
@@ -36,9 +36,10 @@ func (s *Store) LandingDecisionEvidence(ctx context.Context, q QueueID, batch, a
 
 // LandingDecisionEvidenceTx reads the same retained evidence in the caller's
 // snapshot. It opens no transaction and leaves transaction ownership to callers.
+// A nil boundary is unbounded; a non-nil boundary of zero selects no rows.
 func LandingDecisionEvidenceTx(ctx context.Context, tx pgx.Tx, q QueueID, batch, attempt string, boundary *int64) ([]LandingEvidence, error) {
-	if batch == "" || attempt == "" {
-		return nil, fmt.Errorf("batch and attempt required")
+	if err := landingEvidenceIdentity(batch, attempt); err != nil {
+		return nil, err
 	}
 	var result []LandingEvidence
 	decisionSQL := landingDecisionEvidenceSQL
@@ -131,3 +132,10 @@ const eligibilityReadEvidenceSQL = `SELECT id,payload FROM events WHERE queue_id
 const boundedEligibilityReadEvidenceSQL = `SELECT id,CASE WHEN octet_length(payload::text)<=4194304 THEN payload ELSE NULL END FROM events WHERE queue_id=$1 AND type='approval_eligibility_observed'
      AND payload->'data'->'basis'->>'change_id'=$2 AND payload->'data'->'basis'->>'read_id'=$3
      AND payload->'data'->'basis'->>'revision'=$4 AND payload->'data'->'basis'->>'head'=$5 AND id<=$6 ORDER BY id LIMIT 2`
+
+func landingEvidenceIdentity(batch, attempt string) error {
+	if batch == "" || attempt == "" {
+		return fmt.Errorf("batch and attempt required")
+	}
+	return nil
+}
