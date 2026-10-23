@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -119,5 +120,34 @@ func TestLandingEvidencePayloadCapAtFourMiB(t *testing.T) {
 		_, err := s.pool.Exec(t.Context(), `UPDATE events SET payload=jsonb_set(payload,'{data,padding}',to_jsonb(repeat('x',$2))) WHERE id=$1`, id, n)
 		must(t, err)
 		check(n == padding)
+	}
+}
+
+func TestLandingEvidenceEligibilityPayloadCapAtFourMiB(t *testing.T) {
+	s := newStore(t)
+	q, claim, c, d := decisionLand(t, s)
+	must(t, commitDecision(t, s, claim, c, d))
+	var id int64
+	must(t, s.pool.QueryRow(t.Context(), `SELECT id FROM events WHERE queue_id=$1 AND type='approval_eligibility_observed'`, q).Scan(&id))
+	var padding int
+	must(t, s.pool.QueryRow(t.Context(), `SELECT 4194304-octet_length(jsonb_set(payload,'{data,padding}',to_jsonb(''::text))::text) FROM events WHERE id=$1`, id).Scan(&padding))
+	if padding < 0 {
+		t.Fatal("event fixture exceeds payload cap")
+	}
+	b := c.Fresh.Basis
+	for _, n := range []int{padding, padding + 1} {
+		_, err := s.pool.Exec(t.Context(), `UPDATE events SET payload=jsonb_set(payload,'{data,padding}',to_jsonb(repeat('x',$2))) WHERE id=$1`, id, n)
+		must(t, err)
+		var gotID int64
+		var raw []byte
+		must(t, s.pool.QueryRow(t.Context(), boundedEligibilityReadEvidenceSQL, q, string(b.ChangeID), b.ReadID, fmt.Sprint(b.Revision), b.Head, id).Scan(&gotID, &raw))
+		if gotID != id || (raw != nil) != (n == padding) || raw != nil && len(raw) != 4194304 {
+			t.Fatalf("padding %d: id=%d bytes=%d present=%t", n, gotID, len(raw), raw != nil)
+		}
+		// The unbounded path used by existing callers has no cap.
+		must(t, s.pool.QueryRow(t.Context(), eligibilityReadEvidenceSQL, q, string(b.ChangeID), b.ReadID, fmt.Sprint(b.Revision), b.Head).Scan(&gotID, &raw))
+		if gotID != id || raw == nil {
+			t.Fatal("unbounded eligibility read capped payload")
+		}
 	}
 }

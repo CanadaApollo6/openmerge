@@ -28,6 +28,26 @@ class ScratchGuardTest(unittest.TestCase):
         self.assertRaises(ValueError, scratch_url, ci_url, environ={"CI": "true"})
         self.assertEqual(scratch_url(ci_url, environ={"GITHUB_ACTIONS": "true", "CI": "true"}),
                          "postgresql://postgres@localhost:5432/postgres?sslmode=disable")
+        for value in ("1", "TRUE", "True", "yes", ""):
+            self.assertRaises(ValueError, scratch_url, ci_url, environ={"GITHUB_ACTIONS": value, "CI": "true"})
+            self.assertRaises(ValueError, scratch_url, ci_url, environ={"GITHUB_ACTIONS": "true", "CI": value})
+
+    def test_ci_mode_keeps_every_bypass_rejection(self):
+        ci = {"GITHUB_ACTIONS": "true", "CI": "true"}
+        for base in (BASE, BASE.replace(":54329", ":5432")):
+            for query in ("host=/tmp/review-nonexistent", "hostaddr=127.0.0.1", "port=54329", "dbname=production_example",
+                          "service=live", "servicefile=/tmp/service", "options=-csearch_path=public",
+                          "target_session_attrs=read-write", "%68ost=/tmp/socket", "sslmode=require", "sslmode=disable&host=localhost"):
+                with self.subTest(base=base, query=query):
+                    self.assertRaises(ValueError, scratch_url, base + "?" + query, environ=ci)
+            for key in ("PGHOST", "PGHOSTADDR", "PGPORT", "PGDATABASE", "PGSERVICE", "PGSERVICEFILE", "PGOPTIONS",
+                        "PGTARGETSESSIONATTRS", "PGPASSWORD", "pgport"):
+                with self.subTest(base=base, env=key):
+                    self.assertRaises(ValueError, scratch_url, base, environ={**ci, key: "override"})
+        for host in ("127.0.0.1:5432", "localhost:5433", "db:5432", "%2Ftmp:5432", "localhost:5432,other:5432"):
+            with self.subTest(host=host):
+                self.assertRaises(ValueError, scratch_url, BASE.replace("localhost:54329", host), environ=ci)
+        self.assertRaises(ValueError, scratch_url, BASE, "production", environ=ci)
 
     def test_bypasses_refused_before_subprocess(self):
         attacks = [BASE + "?" + query for query in (
