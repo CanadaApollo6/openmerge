@@ -43,6 +43,13 @@ def mutation_proofs(measured, out, pattern):
         if match is None:
             raise ValueError("mutation target changed: " + name)
         text = text[:match.start()] + new + text[match.end():]
+        if name == "accept-invalid-role":
+            # Remove both independent role guards for this one conceptual
+            # mutant; leaving the range/role guard intact masks enum removal.
+            guard = 'if (s.Role == "scope") != inRange {'
+            if guard not in text:
+                raise ValueError("role/range mutation target changed")
+            text = text.replace(guard, "if false && inRange {", 1)
         work = out / "mutations" / name
         work.mkdir(parents=True, exist_ok=True)
         replacement = work / file

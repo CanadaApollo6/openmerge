@@ -113,7 +113,7 @@ fails acceptance. The checkout itself is never edited by these experiments.
 | Permit a missing required retained source | Export fails for the explicitly required owner/source identity. |
 | Choose oldest instead of newest applicable observation | The last observation before the decision boundary governs. |
 | Ignore selected check result mismatch | A result from a different attempt cannot satisfy the decision. |
-| Accept arbitrary role strings | Empty and `Scope` roles fail strict replay. |
+| Accept arbitrary role strings (remove enum and range/role guards together) | Empty and `Scope` roles fail strict replay. |
 | Skip retained closure verification | Rehashed omission of a referenced dependency still fails replay. |
 
 ## Baseline timing run
