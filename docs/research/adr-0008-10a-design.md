@@ -283,7 +283,8 @@ An export contains exactly `manifest.json` and four UTF-8 JSONL streams:
 `events.jsonl`, `selection.jsonl`, `watermarks.jsonl`, and
 `dependency_boundaries.jsonl`. Each record ends in LF, including the manifest.
 Empty streams contain zero bytes. An existing queue with no selected events
-still has a watermark. The CLI cannot export a nonexistent repository/installation.
+still has a watermark. Range-mode CLI export rejects a nonexistent
+repository/installation.
 
 The event envelope has exactly `kind` (always `source`), `source`, `payload`,
 `role`, `references`, `evidence_kinds`, and `previous_sha256`. Source has
@@ -311,7 +312,8 @@ Numeric generation/run_id/attempt and owner revision/event_id/queue_id use 0
 when not applicable; applicable source and owner database IDs are positive.
 Nonapplicable owner string fields are empty strings.
 
-The kind to expected-type mapping is exhaustive:
+For a recognized source type, `evidence_kinds` is the singleton containing its
+mapped kind. The kind to expected-type mapping is exhaustive:
 
 | Kind | Expected types |
 | --- | --- |
@@ -353,6 +355,17 @@ lane, compared lexicographically by UTF-8 bytes), then numeric source ID.
 Watermarks and boundaries use the same queue-key order, never queue-ID order.
 References sort by the complete canonical reference bytes and exact duplicates
 are removed. Arrays in retained payloads preserve their original order.
+For governing check observations, order candidate runs by greatest run ID,
+then greatest attempt with zero normalized to one, then greatest source event
+ID across observations; the owner boundary excludes events at or after itself.
+The first later observation is instead the lowest matching source ID after the
+boundary and is retained as excluded_later. Retry request selection is scoped
+to the check/workflow; dispatch and progress follow that request's generation.
+Settlement edges belong to the interval from the matching batch/attempt start
+until the next start for that batch. A settlement's preceding start selector
+uses the greatest source ID before it. Governing authority folds only config
+and pin events strictly before the owning decision. These selection orderings
+are independent of the canonical byte comparator used to serialize references.
 
 The manifest fields are exactly `manifest_sha256`, `version` (1), `request`,
 `count`, `terminal_sha256`, and for each of the four stream names above without

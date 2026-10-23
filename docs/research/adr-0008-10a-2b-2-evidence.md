@@ -252,8 +252,8 @@ Fixing it without indexes requires a broader per-snapshot semantic lookup/spool
 redesign; that is outside this format/CLI correction. No index/migration is added.
 The test logs a representative EXPLAIN ANALYZE plan at each decision count.
 
-A descriptive `a*D+b*D²` fit through 32 and 512 gives a≈0.01255 seconds and
-b≈0.00002156 seconds. It predicts about 34 s for 1,000 decisions, 111 s for
+A descriptive `a*D+b*D²` fit through 32 and 512 gives a≈0.01255 s/decision and
+b≈0.00002156 s/decision². It predicts about 34 s for 1,000 decisions, 111 s for
 2,000, and 602 s for 5,000, for export alone; 128 predicts 1.96 s versus the
 measured 1.86 s. These are extrapolations from one local run, not capacity
 promises; checks and unrelated retained history can increase cost. Five thousand
@@ -406,3 +406,93 @@ and test files are unchanged from 2323235. No test flag source file, Makefile or
 CI configuration changed. Stress selects every new/changed test explicitly;
 unchanged TestAuditRealisticGrowth remains in full race acceptance, while the
 new 32/128/512 decision-count probe runs all 20 stress iterations.
+
+## Completed round-1 verification
+
+The acceptance continuation finished **PASS** on 7457dda; Go and test sources
+are byte-for-byte identical to implementation commit 2323235. Every command in
+that continuation exited 0. The earlier completed 90-target mutation table and
+make-check exit 0 compose with this result; the interrupted ten-minute acceptance
+is explicitly excluded from passing evidence.
+
+- Strict replay: actions, structural state, snapshot hashes and boundary
+  checkpoints **2,159/2,159 identical**; 8,676 boundary probes; gates 2/4 PASS,
+  zero non-allowlisted fields, self-test exit 0. GOMEMLIMIT=6GiB.
+- Simulator: **146 identical blocks**, both exits 0.
+- Contracts: **90/90 identical**. GitHub projections/CLI and Stage A exact output
+  passed on both trees. MixedGithubBytes remains
+  `cc95a654054e61e816120f2e57b9e19ffea3ff4855c32f4f5c055c4e99b913ee`.
+- **211 fixtures outside internal/audit/testdata unchanged**; main help/dispatch
+  still differs only by the additive audit entry.
+- Full non-short race acceptance: audit 657.548 s, CLI 142.338 s, exit 0.
+- Stress: **25 tests ×20 = 500 top-level passes**, every selected test exactly
+  20 times, GOMAXPROCS=1, race enabled, with eight owned CPU burners. Audit
+  4,879.103 s, CLI 7.514 s. All eight burners were terminated and reaped;
+  minimum measured burner CPU ticks: **484,579**.
+- Scratch cleanup: zero new schemas and zero new roles remain. Pre-existing
+  schemas/roles were preserved. The one owned schema/reader role left by the
+  interrupted acceptance was explicitly dropped before continuation.
+- All started local verification processes finished; none remain running.
+
+### Scaling across verification environments
+
+Times below are seconds. Initial unloaded measurements above were non-race with
+the default 16 available Go CPUs. Full race uses GOMAXPROCS=2. Stress medians use
+GOMAXPROCS=1 and eight burners; 20 measurements per size. They are different
+resource/instrumentation environments and should not be compared as speedups.
+Selected counts are 112/400/1552 (=3×decisions+16), confirming the workload size.
+
+| Decisions | Full-race export | Full-race replay | Stress median export | Stress median replay |
+| --- | --- | --- | --- | --- |
+| 32 | 2.982 | 3.790 | 4.461 | 5.544 |
+| 128 | 12.374 | 15.783 | 18.293 | 23.196 |
+| 512 | 54.340 | 67.600 | 81.554 | 102.122 |
+
+### Fresh CI-like package timings
+
+Both runs: GOMAXPROCS=2, pinned Go 1.27.3, heavy lock, GOFLAGS=-p=2,
+GOMEMLIMIT=4GiB; command `go test -race -short -count=1 -p=1 -timeout=15m ./...`.
+Both passed all 23 packages. Burners had already been reaped. These are single
+local runs; descriptive package times, not statistical performance guarantees.
+
+| Package | Main seconds | Candidate seconds |
+| --- | --- | --- |
+| cmd/openmerge | 68.794 | 69.055 |
+| internal/ascii | 1.007 | 1.008 |
+| internal/audit | 11.440 | 12.894 |
+| internal/authority | 1.110 | 1.103 |
+| internal/brief | 3.416 | 3.390 |
+| internal/changepolicy | 1.761 | 1.718 |
+| internal/classification | 2.251 | 2.226 |
+| internal/config | 1.667 | 1.671 |
+| internal/config/condition | 1.021 | 1.019 |
+| internal/diagnostic | 1.019 | 1.017 |
+| internal/executor | 1.166 | 1.163 |
+| internal/forge | 8.334 | 8.379 |
+| internal/forge/fake | 1.449 | 1.464 |
+| internal/forge/github | 72.163 | 69.810 |
+| internal/gitops | 103.858 | 103.752 |
+| internal/queue | 180.972 | 185.741 |
+| internal/serve | 336.566 | 337.566 |
+| internal/sim | 37.555 | 37.901 |
+| internal/sim/capacity | 1.010 | 1.009 |
+| internal/status | 11.874 | 11.909 |
+| internal/store | 75.210 | 75.652 |
+| scripts | 1.084 | 1.084 |
+| tools/dogfood | 1.669 | 1.676 |
+| Sum of package times | 926.396 | 932.207 |
+
+Wall times including lock/build overhead: 933.217 → 938.618 s.
+
+### Artifact provenance
+
+- Completed mutation/make-check evidence plus the explicitly interrupted first
+  acceptance: `/home/riels/.cache/openmerge-149-round1-final`.
+- Passing acceptance/stress/timing/regression continuation:
+  `/home/riels/.cache/openmerge-149-round1-acceptance`.
+- Combined assertions and summary/manifest checksums:
+  `/home/riels/.cache/149-round1-combined-evidence.json`.
+
+Mutation/make-check artifact manifest SHA-256: `47cd05f907ea6f131484afaf4ffcb6964d6502a050ae587962b35929834ff793`.
+
+Acceptance artifact manifest SHA-256: `f9afafedcb7d92540166c78157c2001f2555ef043e00c0eb49b2ef4b6cfd6951`.
