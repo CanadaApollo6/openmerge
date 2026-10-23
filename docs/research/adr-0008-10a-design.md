@@ -134,8 +134,8 @@ Measured 10a-1 acceptance is recorded separately in its evidence document.
    CLI, real-git and complete evidence acceptance. Both layers carry their own
    regression, stress and timing proofs. This completes the original row.
 
-Both layers remain inert by their own behavior and depend on Hold PR 8 and
-transitively 3a–4. Neither permits deployment before period B drains. PR 10b's
+10a-1 is inert; 10a-2a is Hold because it changes shared production store
+code. Both depend on Hold PR 8 and transitively 3a–4. Neither permits deployment before period B drains. PR 10b's
 backup/restore and external anchoring acceptance remains out of scope. This
 proposal changes no retention behavior, queue event, wire payload, schema,
 index, forge method, worker behavior, formatter, fixture, CI or build setting.
@@ -236,3 +236,15 @@ the sources, just as for late commits. Missing watermarks for selected queues,
 unknown IDs, key mismatches, duplicates, ordering violations and watermarks below
 selected IDs still fail. 10a-1 reports source facts only: no decision validity,
 check/retry join, closure selection, real-git acceptance or operator CLI.
+
+
+### 10a-2a round-1 historical boundary clarification
+
+This layer is Hold because it changes the shared production landing-evidence
+helper; deployment remains after period B. Authority/check requiredness is
+conditional on the latest mode pin before each decision. GitHub history and
+rollback produce explicit absence records without invented source IDs. Replay
+requires the exact closure reachable from scope roots, and identities encode
+components as JSON tuples. Without new indexes, JSON-filtered retained lookups
+remain owners × retained events (multiplied by checks); bounded memory is not a
+claim of sublinear database work. See the 10a-2a evidence note for limits and plans.

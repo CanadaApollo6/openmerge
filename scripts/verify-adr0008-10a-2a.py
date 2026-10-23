@@ -34,15 +34,66 @@ def mutation_proofs(measured, out, pattern):
         ("accept-invalid-role", "export.go", 'return role == "scope" || role == "dependency"', "return true"),
         ("omit-retained-closure", "export.go", "return verifyRetained(spoolDir, requiredPath, selectedPath)", "return nil"),
     ]
+    targets += [
+        ("absence-source-id", "evidence.go", 'r.Source != nil || r.Relation != "relied_on"', 'r.Relation != "relied_on"'),
+        ("adjacent-reference-duplicates", "evidence.go", 'bytes.Compare(a, b) >= 0', 'bytes.Compare(a, b) > 0'),
+        ("duplicate-identity", "evidence.go", 'len(found) > 1 || required', 'required'),
+        ("owning-decision", "evidence.go", 'if !matched {', 'if false && matched {'),
+        ("conflicting-spool-payload", "spool.go", '!bytes.Equal(a.Payload, b.Payload)', 'false'),
+        ("conflicting-spool-references", "spool.go", '!bytes.Equal(x, y)', 'false && !bytes.Equal(x, y)'),
+        ("event-tie-break", "evidence.go", 'DESC,e.id DESC LIMIT 1', 'DESC,e.id ASC LIMIT 1'),
+        ("newest-run-in-event", "evidence.go", 'run.ID > newest.ID ||', 'run.ID < newest.ID ||'),
+        ("dispatch-generation", "evidence.go", 'return actual == expected', 'return true'),
+        ("authority-always-required", "evidence.go", 'v.(queue.PolicyAuthorityApplied).Authority == "openmerge"', 'true || v.(queue.PolicyAuthorityApplied).Authority == "openmerge"'),
+        ("authority-never-required", "evidence.go", 'v.(queue.PolicyAuthorityApplied).Authority == "openmerge"', 'false && v.(queue.PolicyAuthorityApplied).Authority == "openmerge"'),
+        ("queue-id-order", "export.go", 'return a.QueueID < b.QueueID', 'return false'),
+        ("exact-closure", "spool.go", 'func verifyExactClosure(ctx context.Context, tx pgx.Tx, dir, roots, selected string) error {', 'func verifyExactClosure(ctx context.Context, tx pgx.Tx, dir, roots, selected string) error { return nil;'),
+        ("valid-resolution", "spool.go", 'if !validReferences(refs) {', 'if true { return true }; if !validReferences(refs) {'),
+        ("resolved-references", "export.go", 'if !bytes.Equal(got, want) {', 'if false && !bytes.Equal(got, want) {'),
+        ("additional-transaction", "source.go", "if err = fn(ctx, tx); err != nil {", ""),
+    ]
+    # Each family must retain its exact source edge, not merely a kind label.
+    for typ in ("change_classified", "change_revision_observed", "review_stance_observed",
+                "approval_receipt_recorded", "landing_checks_recorded", "landing_abandoned",
+                "landing_decision_recorded", "approval_eligibility_observed", "batch_started",
+                "test_ref_built", "change_accountability_observed", "policy_authority_applied",
+                "landing_started", "landed", "checks_observed", "check_rerun_requested",
+                "check_rerun_dispatch_progress", "check_rerun_dispatched"):
+        old = 'ref := Reference{Kind: kind, Relation: "relied_on"'
+        new = ('if typ == "' + typ + '" { if len(found)==1 { return &found[0], nil }; return nil,nil }\n\t' + old)
+        targets.append(("drop-family-" + typ, "evidence.go", old, new))
+    # Pin every still-required call site independently. Authority itself is now
+    # the historical mode discriminator, rather than an unconditionally required
+    # lookup; its old always-required mutant is covered above.
+    evidence = (ROOT / "internal/audit/evidence.go").read_text()
+    for i, match in enumerate(re.finditer(r"r\.lookup\([^\n]+, true,", evidence)):
+        call = match.group()
+        targets.append(("required-call-" + str(i), "evidence.go", call, call.rsplit(", true,", 1)[0] + ", false,"))
+    targets.append(("required-checks", "evidence.go", ', r.authority, batch, attempt, r.authority)', ', false, batch, attempt, r.authority)'))
+    targets += [
+        ("store-cardinality", "internal/store/landing_evidence.go", "len(reads) != 1", "len(reads) < 1"),
+        ("store-empty-batch", "internal/store/landing_evidence.go", 'if batch == "" || attempt == "" {', 'if false {'),
+        ("store-decision-cap", "internal/store/landing_evidence.go", "octet_length(payload::text)<=4194304", "true"),
+        ("store-eligibility-cap", "internal/store/landing_evidence.go", "CASE WHEN octet_length(payload::text)<=4194304 THEN payload ELSE NULL END FROM events WHERE queue_id=$1 AND type='approval_eligibility_observed'", "payload FROM events WHERE queue_id=$1 AND type='approval_eligibility_observed'"),
+    ]
     results = []
     for name, file, old, new in targets:
-        source = ROOT / "internal/audit" / file
+        source = ROOT / (file if "/" in file else "internal/audit/" + file)
         text = source.read_text()
+        if name == "additional-transaction":
+            old = "if err = fn(ctx, tx); err != nil {"
+            new = "extra, extraErr := r.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}); if extraErr != nil { return errSource }; _ = extra.Rollback(ctx); " + old
         # Whitespace changes are irrelevant to the mutation intent.
         match = re.search(r"\s*".join(re.escape(x) for x in old.split()), text)
         if match is None:
             raise ValueError("mutation target changed: " + name)
         text = text[:match.start()] + new + text[match.end():]
+        if name in ("resolved-references", "omit-retained-closure", "accept-invalid-role"):
+            # Exact closure independently regenerates and compares references.
+            # Remove that redundant guard too for the conceptual mutation.
+            text = text.replace('if e := verifyExactClosure(ctx, tx, spoolDir, rootsPath, selectedPath); e != nil {', 'if false {')
+        if name == "exact-closure":
+            text = text.replace('if !expected.ok || !actual.ok {', 'if false {')
         if name == "accept-invalid-role":
             # Remove both independent role guards for this one conceptual
             # mutant; leaving the range/role guard intact masks enum removal.
@@ -52,11 +103,12 @@ def mutation_proofs(measured, out, pattern):
             text = text.replace(guard, "if false && inRange {", 1)
         work = out / "mutations" / name
         work.mkdir(parents=True, exist_ok=True)
-        replacement = work / file
+        replacement = work / Path(file).name
         replacement.write_text(text)
         overlay = work / "overlay.json"
         overlay.write_text(json.dumps({"Replace": {str(source): str(replacement)}}))
-        test = measured(["go", "test", "-overlay", str(overlay), "-short", "-count=1", "-timeout=2m", "./internal/audit", "-run", pattern], ROOT, out, "mutation-" + name, check=False)
+        packages = ["./internal/store"] if file.startswith("internal/store/") else ["./internal/audit"]
+        test = measured(["go", "test", "-overlay", str(overlay), "-short", "-count=1", "-timeout=2m", *packages, "-run", pattern + "|TestLandingEvidence|TestLandingDecisionEvidence"], ROOT, out, "mutation-" + name, check=False)
         output = test.stdout + test.stderr
         if test.returncode == 0 or "build failed" in output or "[setup failed]" in output or "--- FAIL:" not in output:
             raise ValueError("mutation survived or failed before assertions: " + name)
@@ -69,7 +121,7 @@ def main():
     parser.add_argument("--baseline", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--phase", choices=("all", "regression"), default="all")
-    parser.add_argument("--stress-pattern", default="TestEvidence|TestClosure|TestCheckAttempt|TestSourceReplayRejectsScopeShapeAndCrossQueueOrder|TestExportV1SemanticExpectations")
+    parser.add_argument("--stress-pattern", default="TestEvidence|TestClosure|TestCheckAttempt|TestRound3|TestReplay|TestValidResolution|TestSpool|TestSourceLess|TestSourceReplayRejectsScopeShapeAndCrossQueueOrder|TestExportV1SemanticExpectations")
     parser.add_argument("--baseline-timing-log", type=Path, help="reuse an already completed identical baseline timing; requires adjacent exit-status.txt containing 0")
     args = parser.parse_args()
     # Guard before any subprocess; do not propagate a caller-controlled libpq route.
@@ -94,7 +146,7 @@ def main():
         return result
 
     v.invoke = measured
-    result = {"slice": "10a-2a", "classification": "Inert; depends on Hold PR 8 and 3a–4; deploy after B", "commands": v.COMMANDS}
+    result = {"slice": "10a-2a", "classification": "Hold: shared production evidence helper extraction; deploy after B", "commands": v.COMMANDS}
     try:
         result["baseline"] = v.check_tree("baseline", args.baseline, v.git(args.baseline, "rev-parse", BASE))
         result["candidate"] = v.check_tree("candidate", ROOT)
@@ -110,7 +162,8 @@ def main():
         permitted = {"internal/store/landing_evidence.go", "scripts/adr0008_scratch_db.py",
                      "scripts/test_adr0008_scratch_db.py", "scripts/verify-adr0008-10a-2a.py",
                      "docs/research/adr-0008-10a-2-size-gate.md",
-                     "docs/research/adr-0008-10a-2a-evidence.md"}
+                     "docs/research/adr-0008-10a-2a-evidence.md", "docs/research/adr-0008-10a-design.md",
+                     "internal/store/landing_evidence_round1_test.go"}
         if any(not (p.startswith("internal/audit/") or p in permitted) for p in changed):
             raise ValueError("change outside approved audit/helper/evidence scope")
         result["source_sha256"] = {p: v.sha(ROOT / p) for p in changed}
@@ -123,7 +176,7 @@ def main():
         measured(["go", "test", "-race", "-count=1", "./internal/store", "-run", "Landing|Decision"], ROOT, out, "existing-landing-caller")
         # Both authority ports are parsed without connecting to CI's endpoint.
         # Database integration remains on the explicitly guarded caller endpoint.
-        if ":5432/" not in scratch_url("postgres://postgres@localhost:5432/postgres?sslmode=disable"):
+        if ":5432/" not in scratch_url("postgres://postgres@localhost:5432/postgres?sslmode=disable", environ={"GITHUB_ACTIONS": "true", "CI": "true"}):
             raise ValueError("CI scratch endpoint rejected")
         measured(["go", "test", "-count=1", "./internal/audit", "-run", "^TestSourceDatabaseURLGuardAllowsLocalhostPorts$"], ROOT, out, "ci-dsn-guard")
         result["ci_dsn_guard"] = {"ports": [5432, 54329], "connection_free": True}

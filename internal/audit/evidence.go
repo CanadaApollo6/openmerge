@@ -46,26 +46,28 @@ type Reference struct {
 	Source       *Source       `json:"source"`
 }
 
+var evidenceKind = map[string]string{"landing_decision_recorded": "settlement", "change_revision_observed": "classification", "batch_started": "check", "test_ref_built": "check", "approval_eligibility_observed": "eligibility", "change_classified": "classification", "change_accountability_observed": "accountability", "approval_receipt_recorded": "receipt", "review_stance_observed": "receipt", "policy_authority_applied": "authority", "landing_checks_recorded": "check", "checks_observed": "check", "checks_completed": "check", "check_rerun_requested": "check", "check_rerun_dispatch_progress": "check", "check_rerun_dispatched": "check", "checks_failure_confirmed": "check", "landing_started": "settlement", "landed": "settlement", "landing_abandoned": "settlement"}
+
 func evidenceKinds(typ string) []string {
-	kinds := map[string]string{"landing_decision_recorded": "settlement", "change_revision_observed": "classification", "batch_started": "check", "test_ref_built": "check", "approval_eligibility_observed": "eligibility", "change_classified": "classification", "change_accountability_observed": "accountability", "approval_receipt_recorded": "receipt", "review_stance_observed": "receipt", "policy_authority_applied": "authority", "landing_checks_recorded": "check", "checks_observed": "check", "checks_completed": "check", "check_rerun_requested": "check", "check_rerun_dispatch_progress": "check", "check_rerun_dispatched": "check", "checks_failure_confirmed": "check", "landing_started": "settlement", "landed": "settlement", "landing_abandoned": "settlement"}
-	if k := kinds[typ]; k != "" {
+	if k := evidenceKind[typ]; k != "" {
 		return []string{k}
 	}
 	return []string{}
 }
 
+// References contain only JSON-safe scalar fields; marshaling cannot fail.
 // References use canonical JSON byte order as a total comparator. All fields,
 // including complete owner/source identities, participate; equal bytes dedup.
 func normalizeReferences(refs []Reference) []Reference {
 	sort.Slice(refs, func(i, j int) bool {
-		a, _ := encode(refs[i])
-		b, _ := encode(refs[j])
+		a := referenceBytes(refs[i])
+		b := referenceBytes(refs[j])
 		return bytes.Compare(a, b) < 0
 	})
 	out := refs[:0]
 	var previous []byte
 	for _, r := range refs {
-		b, _ := encode(r)
+		b := referenceBytes(r)
 		if !bytes.Equal(b, previous) {
 			out = append(out, r)
 			previous = b
@@ -75,13 +77,14 @@ func normalizeReferences(refs []Reference) []Reference {
 }
 
 type evidenceResolver struct {
-	ctx     context.Context
-	tx      pgx.Tx
-	event   sourceEvent
-	owner   EvidenceOwner
-	refs    []Reference
-	sources []sourceEvent
-	maxID   int64
+	ctx       context.Context
+	tx        pgx.Tx
+	event     sourceEvent
+	owner     EvidenceOwner
+	refs      []Reference
+	sources   []sourceEvent
+	maxID     int64
+	authority bool
 }
 
 // lookup reads one bounded identity result. The caller supplies fixed SQL only;
@@ -176,7 +179,7 @@ func resolveEvidenceAt(ctx context.Context, tx pgx.Tx, event sourceEvent, maxID 
 		r.owner.AttemptID = d.AttemptID
 		r.owner.TestedSHA = d.TestedSHA
 		// Reuse the existing retained eligibility semantics in this exact snapshot.
-		retained, err := store.LandingDecisionEvidenceTx(ctx, tx, store.QueueID(event.source.QueueID), d.BatchID, d.AttemptID, maxID)
+		retained, err := store.LandingDecisionEvidenceTx(ctx, tx, store.QueueID(event.source.QueueID), d.BatchID, d.AttemptID, &maxID)
 		if err != nil {
 			return nil, nil, errSource
 		}
@@ -189,12 +192,31 @@ func resolveEvidenceAt(ctx context.Context, tx pgx.Tx, event sourceEvent, maxID 
 		if !matched {
 			return nil, nil, errSource
 		}
+		// The latest pin before this decision governs requiredness. Future
+		// activation and historical openmerge pins before rollback cannot govern it.
+		pin, err := r.lookup("authority", "policy_authority_applied", "governing", `id=(SELECT max(id) FROM events WHERE queue_id=$1 AND type=$2 AND id<$3)`, false, event.source.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		if pin != nil {
+			v, err := decodeEvidence(pin)
+			if err != nil {
+				return nil, nil, err
+			}
+			r.authority = v.(queue.PolicyAuthorityApplied).Authority == "openmerge"
+		}
+		if !r.authority {
+			// A github pin records rollback, not applicable openmerge evidence.
+			r.refs[len(r.refs)-1].Status = "not_recorded"
+			r.refs[len(r.refs)-1].Source = nil
+			r.sources = r.sources[:0]
+		}
 		if a := d.Approval; a != nil {
 			b := a.Basis
 			r.owner.ChangeID = string(b.ChangeID)
 			r.owner.Revision = uint64(b.Revision)
 			r.owner.Head = b.Head
-			rev, err := r.lookup("classification", "change_revision_observed", string(b.ChangeID)+"/"+fmt.Sprint(b.Revision), `payload->'data'->>'change_id'=$3 AND payload->'data'->>'revision'=$4 AND payload->'data'->>'head_sha'=$5 AND id<$6`, true, string(b.ChangeID), fmt.Sprint(b.Revision), b.Head, event.source.ID)
+			rev, err := r.lookup("classification", "change_revision_observed", evidenceIdentity(string(b.ChangeID), fmt.Sprint(b.Revision)), `payload->'data'->>'change_id'=$3 AND payload->'data'->>'revision'=$4 AND payload->'data'->>'head_sha'=$5 AND id<$6`, true, string(b.ChangeID), fmt.Sprint(b.Revision), b.Head, event.source.ID)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -227,7 +249,7 @@ func resolveEvidenceAt(ctx context.Context, tx pgx.Tx, event sourceEvent, maxID 
 				return nil, nil, err
 			}
 			id := cp.ReceiptIdentity(a.Identity)
-			class, err := r.lookup("classification", "change_classified", fmt.Sprintf("%s/%d/%d", id.ChangeID, id.Revision, id.Generation), `payload->'data'->'evidence'->'Classification'->'Inputs'->>'ChangeID'=$3 AND payload->'data'->'evidence'->'Classification'->'Inputs'->>'Revision'=$4 AND payload->'data'->'evidence'->'Classification'->'Inputs'->>'Generation'=$5 AND id<$6`, true, id.ChangeID, fmt.Sprint(id.Revision), fmt.Sprint(id.Generation), event.source.ID)
+			class, err := r.lookup("classification", "change_classified", evidenceIdentity(id.ChangeID, fmt.Sprint(id.Revision), fmt.Sprint(id.Generation)), `payload->'data'->'evidence'->'Classification'->'Inputs'->>'ChangeID'=$3 AND payload->'data'->'evidence'->'Classification'->'Inputs'->>'Revision'=$4 AND payload->'data'->'evidence'->'Classification'->'Inputs'->>'Generation'=$5 AND id<$6`, true, id.ChangeID, fmt.Sprint(id.Revision), fmt.Sprint(id.Generation), event.source.ID)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -242,7 +264,7 @@ func resolveEvidenceAt(ctx context.Context, tx pgx.Tx, event sourceEvent, maxID 
 			}
 			accArgs := basisArgs(b)
 			accArgs = append(accArgs, event.source.ID)
-			acc, err := r.lookup("accountability", "change_accountability_observed", string(b.ChangeID)+"/"+fmt.Sprint(b.Revision), basisPredicate(3)+` AND id=(SELECT max(id) FROM events WHERE queue_id=$1 AND type=$2 AND `+basisPredicate(3)+` AND id<$6)`, true, accArgs...)
+			acc, err := r.lookup("accountability", "change_accountability_observed", evidenceIdentity(string(b.ChangeID), fmt.Sprint(b.Revision)), basisPredicate(3)+` AND id=(SELECT max(id) FROM events WHERE queue_id=$1 AND type=$2 AND `+basisPredicate(3)+` AND id<$6)`, true, accArgs...)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -254,22 +276,17 @@ func resolveEvidenceAt(ctx context.Context, tx pgx.Tx, event sourceEvent, maxID 
 			if ac.PolicyDigest != id.PolicyDigest || ac.Actor != cp.Identity(a.Actor) || ac.Author != cp.Identity(a.Author) || ac.SubmitterID != a.SubmitterID || !accountableHumansEqual(ac.Humans, a) || ac.Recorded != a.AccountabilityRecorded {
 				return nil, nil, errSource
 			}
-			authorityEvent, authorityErr := r.lookup("authority", "policy_authority_applied", id.PolicyDigest, `payload->'data'->>'governing_commit'=$3 AND id=(SELECT max(id) FROM events WHERE queue_id=$1 AND type=$2 AND id<$4)`, true, ci.GoverningCommit, event.source.ID)
-			if authorityErr != nil {
-				return nil, nil, authorityErr
-			}
-			authorityValue, authorityErr := decodeEvidence(authorityEvent)
-			if authorityErr != nil {
-				return nil, nil, authorityErr
-			}
-			if authorityValue.(queue.PolicyAuthorityApplied).GoverningCommit != ci.GoverningCommit {
-				return nil, nil, errSource
+			if r.authority {
+				value, err := decodeEvidence(pin)
+				if err != nil || value.(queue.PolicyAuthorityApplied).GoverningCommit != ci.GoverningCommit {
+					return nil, nil, errSource
+				}
 			}
 			for _, src := range a.Sources {
 				if src.Receipt == nil {
 					args := basisArgs(src.Basis)
 					args = append(args, src.Basis.ReadID, src.Source.ID, event.source.ID)
-					stance, err := r.lookup("receipt", "review_stance_observed", string(src.Source.Channel)+"/"+src.Source.ID, basisPredicate(3)+` AND payload->'data'->'basis'->>'read_id'=$6 AND payload->'data'->'stance'->'Source'->>'ID'=$7 AND id<$8`, true, args...)
+					stance, err := r.lookup("receipt", "review_stance_observed", evidenceIdentity(string(src.Source.Channel), src.Source.ID), basisPredicate(3)+` AND payload->'data'->'basis'->>'read_id'=$6 AND payload->'data'->'stance'->'Source'->>'ID'=$7 AND id<$8`, true, args...)
 					if err != nil {
 						return nil, nil, err
 					}
@@ -317,7 +334,7 @@ func resolveEvidenceAt(ctx context.Context, tx pgx.Tx, event sourceEvent, maxID 
 			r.owner.ChangeID = string(d.Remedy.ChangeID)
 			r.owner.Revision = uint64(d.Remedy.Revision)
 			r.owner.Head = d.Remedy.Head
-			revisionEvent, revisionErr := r.lookup("classification", "change_revision_observed", r.owner.ChangeID+"/"+fmt.Sprint(r.owner.Revision), `payload->'data'->>'change_id'=$3 AND payload->'data'->>'revision'=$4 AND payload->'data'->>'head_sha'=$5 AND id<$6`, true, r.owner.ChangeID, fmt.Sprint(r.owner.Revision), r.owner.Head, event.source.ID)
+			revisionEvent, revisionErr := r.lookup("classification", "change_revision_observed", evidenceIdentity(r.owner.ChangeID, fmt.Sprint(r.owner.Revision)), `payload->'data'->>'change_id'=$3 AND payload->'data'->>'revision'=$4 AND payload->'data'->>'head_sha'=$5 AND id<$6`, true, r.owner.ChangeID, fmt.Sprint(r.owner.Revision), r.owner.Head, event.source.ID)
 			if revisionErr != nil {
 				return nil, nil, revisionErr
 			}
@@ -390,12 +407,15 @@ func resolveEvidenceAt(ctx context.Context, tx pgx.Tx, event sourceEvent, maxID 
 		}
 
 	}
+	for i := range r.refs {
+		r.refs[i].Owner = r.owner
+	}
 	return normalizeReferences(r.refs), r.sources, nil
 }
 
 func (r *evidenceResolver) attemptRelations(d queue.LandingDecisionRecorded) error {
 	batch, attempt, tested := d.BatchID, d.AttemptID, d.TestedSHA
-	e, err := r.lookup("check", "landing_checks_recorded", batch+"/"+attempt, `payload->'data'->>'batch_id'=$3 AND payload->'data'->>'attempt_id'=$4`, true, batch, attempt)
+	e, err := r.lookup("check", "landing_checks_recorded", evidenceIdentity(batch, attempt), `payload->'data'->>'batch_id'=$3 AND payload->'data'->>'attempt_id'=$4 AND $5::boolean`, r.authority, batch, attempt, r.authority)
 	if err != nil {
 		return err
 	}
@@ -403,23 +423,25 @@ func (r *evidenceResolver) attemptRelations(d queue.LandingDecisionRecorded) err
 	if err != nil {
 		return err
 	}
-	c := v.(queue.LandingChecksRecorded)
-	if c.TestedSHA != tested || c.LandedSHA != d.LandedSHA || d.Approval != nil && c.PolicyDigest != d.Approval.Identity.PolicyDigest {
-		return errSource
-	}
-	if r.owner.ChangeID != "" {
-		found := false
-		for _, m := range c.Members {
-			memberID, identityErr := queue.PRChangeID(r.event.source.Queue.Installation, r.event.source.Queue.Repository, r.event.source.Queue.Base, r.event.source.Queue.Lane, m.PR)
-			if identityErr == nil && string(memberID) == r.owner.ChangeID && m.HeadSHA == r.owner.Head {
-				found = true
-			}
-		}
-		if !found {
+	if v != nil {
+		c := v.(queue.LandingChecksRecorded)
+		if c.TestedSHA != tested || c.LandedSHA != d.LandedSHA || d.Approval != nil && c.PolicyDigest != d.Approval.Identity.PolicyDigest {
 			return errSource
 		}
+		if r.owner.ChangeID != "" {
+			found := false
+			for _, m := range c.Members {
+				memberID, identityErr := queue.PRChangeID(r.event.source.Queue.Installation, r.event.source.Queue.Repository, r.event.source.Queue.Base, r.event.source.Queue.Lane, m.PR)
+				if identityErr == nil && string(memberID) == r.owner.ChangeID && m.HeadSHA == r.owner.Head {
+					found = true
+				}
+			}
+			if !found {
+				return errSource
+			}
+		}
 	}
-	if _, err = r.lookup("settlement", "landing_started", batch+"/"+attempt, `payload->'data'->>'batch_id'=$3 AND payload->'data'->>'attempt_id'=$4`, true, batch, attempt); err != nil {
+	if _, err = r.lookup("settlement", "landing_started", evidenceIdentity(batch, attempt), `payload->'data'->>'batch_id'=$3 AND payload->'data'->>'attempt_id'=$4`, true, batch, attempt); err != nil {
 		return err
 	}
 	return r.settlement(batch, attempt)
@@ -447,10 +469,10 @@ func (r *evidenceResolver) settlement(batch, attempt string) error {
 
 func (r *evidenceResolver) checkHistory(c queue.LandingChecksRecorded) error {
 	for _, check := range c.Checks {
-		identity := check.Source + "/" + check.Name
+		identity := evidenceIdentity(check.Source, check.Name)
 		// A single latest observation is selected at the immutable decision boundary,
 		// never from the current forge or from the latest projection.
-		obs, err := r.lookup("check", "checks_observed", identity, `payload->'data'->>'batch_id'=$3 AND payload->'data'->>'tested_sha'=$4 AND id=(SELECT e.id FROM events e WHERE e.queue_id=$1 AND e.type=$2 AND e.payload->'data'->>'batch_id'=$3 AND e.payload->'data'->>'tested_sha'=$4 AND e.id<$5 AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.payload->'data'->'runs') run WHERE run->>'name'=$6 AND run->>'source'=$7) ORDER BY (SELECT max((run->>'id')::numeric) FROM jsonb_array_elements(e.payload->'data'->'runs') run WHERE run->>'name'=$6 AND run->>'source'=$7) DESC,(SELECT max(greatest((run->>'attempt')::numeric,1)) FROM jsonb_array_elements(e.payload->'data'->'runs') run WHERE run->>'name'=$6 AND run->>'source'=$7) DESC,e.id DESC LIMIT 1)`, false, c.BatchID, c.TestedSHA, r.event.source.ID, check.Name, check.Source)
+		obs, err := r.lookup("check", "checks_observed", identity, checkObservationPredicate, false, c.BatchID, c.TestedSHA, r.event.source.ID, check.Name, check.Source)
 		if err != nil {
 			return err
 		}
@@ -460,16 +482,7 @@ func (r *evidenceResolver) checkHistory(c queue.LandingChecksRecorded) error {
 				return err
 			}
 			o := v.(queue.ChecksObserved)
-			var newest *queue.CheckRun
-			for _, run := range o.Runs {
-				if run.Name != check.Name || run.Source != check.Source {
-					continue
-				}
-				if newest == nil || run.ID > newest.ID || run.ID == newest.ID && max(run.Attempt, 1) > max(newest.Attempt, 1) {
-					candidate := run
-					newest = &candidate
-				}
-			}
+			newest := newestCheckRun(o.Runs, check.Name, check.Source)
 			if newest == nil {
 				return errSource
 			}
@@ -525,16 +538,17 @@ func (r *evidenceResolver) checkHistory(c queue.LandingChecksRecorded) error {
 				if typ == "check_rerun_requested" {
 					generation = g
 				}
-				if g != generation {
+				if !sameGeneration(g, generation) {
 					return errSource
 				}
 				r.refs[len(r.refs)-1].Generation = g
 			}
 		}
 
-		// Explicitly identify the first subsequent retry boundary, which cannot
+		// The first later event ID wins, even when run/attempt ties. It cannot
+		// replace the governing observation. Explicitly identify the retry boundary, which cannot
 		// replace the governing observation even when its result changes.
-		later, err := r.lookup("check", "checks_observed", identity+"/later", `payload->'data'->>'batch_id'=$3 AND payload->'data'->>'tested_sha'=$4 AND id=(SELECT min(id) FROM events WHERE queue_id=$1 AND type=$2 AND payload->'data'->>'batch_id'=$3 AND payload->'data'->>'tested_sha'=$4 AND id>$5 AND EXISTS (SELECT 1 FROM jsonb_array_elements(payload->'data'->'runs') run WHERE run->>'name'=$6 AND run->>'source'=$7))`, false, c.BatchID, c.TestedSHA, r.event.source.ID, check.Name, check.Source)
+		later, err := r.lookup("check", "checks_observed", evidenceIdentity(check.Source, check.Name, "later"), `payload->'data'->>'batch_id'=$3 AND payload->'data'->>'tested_sha'=$4 AND id=(SELECT min(id) FROM events WHERE queue_id=$1 AND type=$2 AND payload->'data'->>'batch_id'=$3 AND payload->'data'->>'tested_sha'=$4 AND id>$5 AND EXISTS (SELECT 1 FROM jsonb_array_elements(payload->'data'->'runs') run WHERE run->>'name'=$6 AND run->>'source'=$7))`, false, c.BatchID, c.TestedSHA, r.event.source.ID, check.Name, check.Source)
 		if err != nil {
 			return err
 		}
@@ -570,8 +584,8 @@ func validReferences(refs []Reference) bool {
 			return false
 		}
 		if i > 0 {
-			a, _ := encode(refs[i-1])
-			b, _ := encode(r)
+			a := referenceBytes(refs[i-1])
+			b := referenceBytes(r)
 			if bytes.Compare(a, b) >= 0 {
 				return false
 			}
@@ -614,12 +628,12 @@ func accountableHumansEqual(humans []cp.Identity, a *queue.LandingApprovalDecisi
 }
 
 func (r *evidenceResolver) startRelations(start queue.LandingStarted) error {
-	items, err := store.LandingDecisionEvidenceTx(r.ctx, r.tx, store.QueueID(r.event.source.QueueID), start.BatchID, start.AttemptID, r.maxID)
+	items, err := store.LandingDecisionEvidenceTx(r.ctx, r.tx, store.QueueID(r.event.source.QueueID), start.BatchID, start.AttemptID, &r.maxID)
 	if err != nil {
 		return errSource
 	}
 	if len(items) == 0 {
-		_, err = r.lookup("settlement", "landing_decision_recorded", start.BatchID+"/"+start.AttemptID, `payload->'data'->>'batch_id'=$3 AND payload->'data'->>'attempt_id'=$4`, false, start.BatchID, start.AttemptID)
+		_, err = r.lookup("settlement", "landing_decision_recorded", evidenceIdentity(start.BatchID, start.AttemptID), `payload->'data'->>'batch_id'=$3 AND payload->'data'->>'attempt_id'=$4`, false, start.BatchID, start.AttemptID)
 		return err
 	}
 	for _, item := range items {
@@ -654,7 +668,7 @@ func (r *evidenceResolver) checkBasis(c queue.LandingChecksRecorded) error {
 			return errSource
 		}
 	}
-	built, err := r.lookup("check", "test_ref_built", c.BatchID+"/"+c.TestedSHA, `payload->'data'->>'batch_id'=$3 AND payload->'data'->>'tested_sha'=$4 AND id=(SELECT max(id) FROM events WHERE queue_id=$1 AND type=$2 AND payload->'data'->>'batch_id'=$3 AND id<$5)`, true, c.BatchID, c.TestedSHA, r.event.source.ID)
+	built, err := r.lookup("check", "test_ref_built", evidenceIdentity(c.BatchID, c.TestedSHA), `payload->'data'->>'batch_id'=$3 AND payload->'data'->>'tested_sha'=$4 AND id=(SELECT max(id) FROM events WHERE queue_id=$1 AND type=$2 AND payload->'data'->>'batch_id'=$3 AND id<$5)`, true, c.BatchID, c.TestedSHA, r.event.source.ID)
 	if err != nil {
 		return err
 	}
@@ -668,3 +682,36 @@ func (r *evidenceResolver) checkBasis(c queue.LandingChecksRecorded) error {
 	}
 	return nil
 }
+
+// JSON string tuples preserve component boundaries even for slashes and suffixes.
+func evidenceIdentity(parts ...string) string {
+	raw, _ := json.Marshal(parts) // A string tuple is always JSON encodable.
+	return string(raw)
+}
+
+func referenceBytes(ref Reference) []byte {
+	raw, err := encode(ref)
+	if err != nil {
+		panic("audit: invalid internal reference encoding")
+	}
+	return raw
+}
+
+// Run identity precedes normalized attempt; event ID breaks equal tuples in SQL.
+func newestCheckRun(runs []queue.CheckRun, name, source string) *queue.CheckRun {
+	var newest *queue.CheckRun
+	for _, run := range runs {
+		if run.Name != name || run.Source != source {
+			continue
+		}
+		if newest == nil || run.ID > newest.ID || run.ID == newest.ID && max(run.Attempt, 1) > max(newest.Attempt, 1) {
+			candidate := run
+			newest = &candidate
+		}
+	}
+	return newest
+}
+
+func sameGeneration(actual, expected uint64) bool { return actual == expected }
+
+const checkObservationPredicate = `payload->'data'->>'batch_id'=$3 AND payload->'data'->>'tested_sha'=$4 AND id=(SELECT e.id FROM events e WHERE e.queue_id=$1 AND e.type=$2 AND e.payload->'data'->>'batch_id'=$3 AND e.payload->'data'->>'tested_sha'=$4 AND e.id<$5 AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.payload->'data'->'runs') run WHERE run->>'name'=$6 AND run->>'source'=$7) ORDER BY (SELECT ARRAY[(run->>'id')::numeric,greatest((run->>'attempt')::numeric,1)] FROM jsonb_array_elements(e.payload->'data'->'runs') run WHERE run->>'name'=$6 AND run->>'source'=$7 ORDER BY (run->>'id')::numeric DESC,greatest((run->>'attempt')::numeric,1) DESC LIMIT 1) DESC,e.id DESC LIMIT 1)`

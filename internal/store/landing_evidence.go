@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/jackc/pgx/v5"
@@ -29,7 +28,7 @@ func (s *Store) LandingDecisionEvidence(ctx context.Context, q QueueID, batch, a
 	var result []LandingEvidence
 	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
 		var err error
-		result, err = LandingDecisionEvidenceTx(ctx, tx, q, batch, attempt)
+		result, err = LandingDecisionEvidenceTx(ctx, tx, q, batch, attempt, nil)
 		return err
 	})
 	return result, err
@@ -37,17 +36,16 @@ func (s *Store) LandingDecisionEvidence(ctx context.Context, q QueueID, batch, a
 
 // LandingDecisionEvidenceTx reads the same retained evidence in the caller's
 // snapshot. It opens no transaction and leaves transaction ownership to callers.
-func LandingDecisionEvidenceTx(ctx context.Context, tx pgx.Tx, q QueueID, batch, attempt string, boundary ...int64) ([]LandingEvidence, error) {
+func LandingDecisionEvidenceTx(ctx context.Context, tx pgx.Tx, q QueueID, batch, attempt string, boundary *int64) ([]LandingEvidence, error) {
 	if batch == "" || attempt == "" {
 		return nil, fmt.Errorf("batch and attempt required")
 	}
 	var result []LandingEvidence
 	decisionSQL := landingDecisionEvidenceSQL
 	decisionArgs := []any{q, batch, attempt}
-	if len(boundary) > 0 {
-		decisionSQL = strings.Replace(decisionSQL, "SELECT id,payload", "SELECT id,CASE WHEN octet_length(payload::text)<=4194304 THEN payload ELSE NULL END", 1)
-		decisionSQL = strings.Replace(decisionSQL, " ORDER BY id", " AND id<=$4 ORDER BY id", 1)
-		decisionArgs = append(decisionArgs, boundary[0])
+	if boundary != nil {
+		decisionSQL = boundedLandingDecisionEvidenceSQL
+		decisionArgs = append(decisionArgs, *boundary)
 	}
 	rows, err := tx.Query(ctx, decisionSQL, decisionArgs...)
 	if err != nil {
@@ -81,10 +79,9 @@ func LandingDecisionEvidenceTx(ctx context.Context, tx pgx.Tx, q QueueID, batch,
 			basis := d.Approval.Basis
 			eligibilitySQL := eligibilityReadEvidenceSQL
 			eligibilityArgs := []any{q, string(basis.ChangeID), d.Approval.EligibilityReadID, fmt.Sprint(basis.Revision), basis.Head}
-			if len(boundary) > 0 {
-				eligibilitySQL = strings.Replace(eligibilitySQL, "SELECT id,payload", "SELECT id,CASE WHEN octet_length(payload::text)<=4194304 THEN payload ELSE NULL END", 1)
-				eligibilitySQL = strings.Replace(eligibilitySQL, " ORDER BY id", " AND id<=$6 ORDER BY id", 1)
-				eligibilityArgs = append(eligibilityArgs, boundary[0])
+			if boundary != nil {
+				eligibilitySQL = boundedEligibilityReadEvidenceSQL
+				eligibilityArgs = append(eligibilityArgs, *boundary)
 			}
 			rows, err := tx.Query(ctx, eligibilitySQL, eligibilityArgs...)
 			if err != nil {
@@ -124,6 +121,13 @@ func LandingDecisionEvidenceTx(ctx context.Context, tx pgx.Tx, q QueueID, batch,
 const landingDecisionEvidenceSQL = `SELECT id,payload FROM events WHERE queue_id=$1 AND type='landing_decision_recorded'
    AND payload->'data'->>'batch_id'=$2 AND payload->'data'->>'attempt_id'=$3 ORDER BY id LIMIT 129`
 
+const boundedLandingDecisionEvidenceSQL = `SELECT id,CASE WHEN octet_length(payload::text)<=4194304 THEN payload ELSE NULL END FROM events WHERE queue_id=$1 AND type='landing_decision_recorded'
+   AND payload->'data'->>'batch_id'=$2 AND payload->'data'->>'attempt_id'=$3 AND id<=$4 ORDER BY id LIMIT 129`
+
 const eligibilityReadEvidenceSQL = `SELECT id,payload FROM events WHERE queue_id=$1 AND type='approval_eligibility_observed'
      AND payload->'data'->'basis'->>'change_id'=$2 AND payload->'data'->'basis'->>'read_id'=$3
      AND payload->'data'->'basis'->>'revision'=$4 AND payload->'data'->'basis'->>'head'=$5 ORDER BY id LIMIT 2`
+
+const boundedEligibilityReadEvidenceSQL = `SELECT id,CASE WHEN octet_length(payload::text)<=4194304 THEN payload ELSE NULL END FROM events WHERE queue_id=$1 AND type='approval_eligibility_observed'
+     AND payload->'data'->'basis'->>'change_id'=$2 AND payload->'data'->'basis'->>'read_id'=$3
+     AND payload->'data'->'basis'->>'revision'=$4 AND payload->'data'->'basis'->>'head'=$5 AND id<=$6 ORDER BY id LIMIT 2`

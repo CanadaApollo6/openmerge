@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/CanadaApollo6/openmerge/internal/config/condition"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 )
 
@@ -174,16 +173,9 @@ func TestClosurePipelineGrowthBoundedMemory(t *testing.T) {
 		_, e := f.admin.Exec(t.Context(), `TRUNCATE events`)
 		must(t, e)
 		checks, _, _ := closureSharedChecks(t, f)
-		// This probe grows closure owners and payload volume. Producer retry
-		// semantics have focused tests; an explicit empty all() condition keeps
-		// this pipeline probe from multiplying unrelated history queries.
-		checks.Checks = []queue.LandingCheck{}
-		checks.CheckOrder = []int{}
-		checks.Inputs = []condition.ObservedInput{}
-		checks.Expressions = []string{condition.All().String()}
-		for i := range checks.Members {
-			checks.Members[i].Conditions = queue.LandingCheckCondition{Expression: 0, Inputs: []int{}}
-		}
+		// Keep real checks: growth includes observation/retry history queries.
+		runs := []queue.CheckRun{{ID: 701, Attempt: 2, WorkflowRunID: 700, Name: "ci", Source: "app:15368", State: "success"}, {ID: 800, Name: "lint", Source: "status:bot", State: "success"}}
+		closureEvent(t, f, "2026-10-22T14:00:02Z", queue.ChecksObserved{BatchID: checks.BatchID, TestedSHA: checks.TestedSHA, Runs: runs})
 		for i := 0; i < n; i++ {
 			checks.AttemptID = fmt.Sprint(i)
 			closureEvent(t, f, "2026-10-22T12:00:00Z", checks)
@@ -199,7 +191,7 @@ func TestClosurePipelineGrowthBoundedMemory(t *testing.T) {
 		start := time.Now()
 		m, e := r.Export(t.Context(), req(), out)
 		must(t, e)
-		if m.Count != int64(2*n+2) {
+		if m.Count != int64(2*n+3) {
 			t.Fatal("pipeline closure truncated or duplicated")
 		}
 		_, e = r.Replay(t.Context(), filepath.Join(out, "manifest.json"), filepath.Join(parent, "replay"))

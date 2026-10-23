@@ -2,7 +2,7 @@ package audit
 
 import (
 	"bytes"
-	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -55,64 +55,51 @@ func TestSourceReplayRejectsScopeShapeAndCrossQueueOrder(t *testing.T) {
 			insert(t, f.admin, 1, "2026-10-22T12:00:00Z")
 			insert(t, f.admin, 2, "2026-10-22T12:00:00Z")
 			original := filepath.Join(t.TempDir(), "original")
-			m, e := f.reader.Export(t.Context(), req(), original)
+			_, e := f.reader.Export(t.Context(), req(), original)
 			must(t, e)
-			selections := readSelections(t, original)
-			waters := readWatermarks(t, original)
-			var events []envelope
-			must(t, lines(bytes.NewReader(read(t, filepath.Join(original, "events.jsonl"))), func(raw []byte) error {
-				var v envelope
-				if e := json.Unmarshal(raw, &v); e != nil {
-					return e
+			mutated := copyExport(t, original)
+			rewriteSelections(t, mutated, func(selections []Selection) {
+				switch name {
+				case "bad-role":
+					selections[0].Role = "invalid"
+				case "empty-role":
+					selections[0].Role = ""
+				case "case-role":
+					selections[0].Role = "Scope"
+				case "dependency-role":
+					selections[0].Role = "dependency"
+				case "null-references":
+					selections[0].References = nil
+				case "nonempty-references":
+					selections[0].References = []Reference{{}}
+				case "cross-queue-order":
+					selections[0], selections[1] = selections[1], selections[0]
 				}
-				events = append(events, v)
-				return nil
-			}))
-			switch name {
-			case "bad-role":
-				selections[0].Role = "invalid"
-			case "empty-role":
-				selections[0].Role = ""
-			case "case-role":
-				selections[0].Role = "Scope"
-			case "dependency-role":
-				selections[0].Role = "dependency"
-			case "null-references":
-				selections[0].References = nil
-			case "nonempty-references":
-				selections[0].References = []Reference{{}}
-			case "cross-queue-order":
-				selections[0], selections[1] = selections[1], selections[0]
-				events[0], events[1] = events[1], events[0]
-			}
-			for i := range selections {
-				raw, e := metadata(selections[i])
-				must(t, e)
-				selections[i].MetadataSHA256 = digest(raw)
-			}
-			coherent := t.TempDir()
-			buildErr := build(coherent, m.Request, func(emit func(sourceEvent, *Selection) error, water func(watermark) error) error {
-				for _, w := range waters {
-					if e := water(w); e != nil {
-						return e
-					}
-				}
-				for i, s := range selections {
-					if e := emit(sourceEvent{source: s.Source, payload: events[i].Payload}, &s); e != nil {
-						return e
-					}
-				}
-				return nil
-			}, nil, &m)
-			if buildErr != nil {
-				if buildErr != errIntegrity {
-					t.Fatal(buildErr)
-				}
-				return
-			}
-			if _, e = f.reader.Replay(t.Context(), filepath.Join(coherent, "manifest.json"), filepath.Join(t.TempDir(), "bad")); e != errIntegrity {
+			})
+			if _, e = f.reader.Replay(t.Context(), filepath.Join(mutated, "manifest.json"), filepath.Join(t.TempDir(), "bad")); e != errIntegrity {
 				t.Fatalf("got %v want integrity rejection", e)
 			}
 		})
 	}
+}
+
+// rewriteSelections keeps the artifact's selection and manifest digests
+// internally consistent so Replay's semantic guards own these rejections.
+func rewriteSelections(t *testing.T, dir string, change func([]Selection)) {
+	t.Helper()
+	selections := readSelections(t, dir)
+	change(selections)
+	var b bytes.Buffer
+	for i := range selections {
+		meta, e := metadata(selections[i])
+		must(t, e)
+		selections[i].MetadataSHA256 = digest(meta)
+		raw, e := encode(selections[i])
+		must(t, e)
+		b.Write(raw)
+		b.WriteByte('\n')
+	}
+	contents := b.Bytes()
+	must(t, os.WriteFile(filepath.Join(dir, "selection.jsonl"), contents, 0600))
+	rewriteManifest(t, dir, func(m *Manifest) { m.SelectionSHA256 = digest(contents) })
 }

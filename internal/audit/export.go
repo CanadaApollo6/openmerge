@@ -383,6 +383,7 @@ func (r *Reader) Replay(ctx context.Context, manifestPath, target string) (Manif
 			defer func() { _ = os.RemoveAll(spoolDir) }()
 			requiredPath := filepath.Join(spoolDir, "required")
 			selectedPath := filepath.Join(spoolDir, "selected")
+			rootsPath := filepath.Join(spoolDir, "roots")
 			required, e := os.OpenFile(requiredPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 			if e != nil {
 				return errOutput
@@ -393,6 +394,11 @@ func (r *Reader) Replay(ctx context.Context, manifestPath, target string) (Manif
 				return errOutput
 			}
 			defer func() { _ = retained.Close() }()
+			roots, e := os.OpenFile(rootsPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+			if e != nil {
+				return errOutput
+			}
+			defer func() { _ = roots.Close() }()
 			var checkedEmit func(sourceEvent, *Selection) error
 			var previousWater *Source
 			e = build(dir, m.Request, func(emit func(sourceEvent, *Selection) error, water func(watermark) error) error {
@@ -459,7 +465,12 @@ func (r *Reader) Replay(ctx context.Context, manifestPath, target string) (Manif
 							return e
 						}
 					}
-					if e = spoolWrite(retained, spoolRecord{Source: event.source, Payload: event.payload, Role: "dependency"}); e != nil {
+					if s.Role == "scope" {
+						if e = spoolWrite(roots, spoolRecord{Source: event.source, Payload: event.payload, Role: "scope", MaxID: frozen.ID}); e != nil {
+							return e
+						}
+					}
+					if e = spoolWrite(retained, spoolRecord{Source: event.source, Payload: event.payload, Role: s.Role, References: s.References}); e != nil {
 						return e
 					}
 					return emit(event, s)
@@ -517,8 +528,11 @@ func (r *Reader) Replay(ctx context.Context, manifestPath, target string) (Manif
 				if e = flush(); e != nil {
 					return e
 				}
-				if required.Close() != nil || retained.Close() != nil {
+				if required.Close() != nil || retained.Close() != nil || roots.Close() != nil {
 					return errOutput
+				}
+				if e := verifyExactClosure(ctx, tx, spoolDir, rootsPath, selectedPath); e != nil {
+					return e
 				}
 				return verifyRetained(spoolDir, requiredPath, selectedPath)
 			}, &m, &result)

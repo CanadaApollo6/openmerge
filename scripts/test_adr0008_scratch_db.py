@@ -22,7 +22,11 @@ class ScratchGuardTest(unittest.TestCase):
                          scratch_url(BASE, environ={}))
 
     def test_ci_port(self):
-        self.assertEqual(scratch_url(BASE.replace(":54329", ":5432"), environ={}),
+        ci_url = BASE.replace(":54329", ":5432")
+        self.assertRaises(ValueError, scratch_url, ci_url, environ={})
+        self.assertRaises(ValueError, scratch_url, ci_url, environ={"GITHUB_ACTIONS": "true"})
+        self.assertRaises(ValueError, scratch_url, ci_url, environ={"CI": "true"})
+        self.assertEqual(scratch_url(ci_url, environ={"GITHUB_ACTIONS": "true", "CI": "true"}),
                          "postgresql://postgres@localhost:5432/postgres?sslmode=disable")
 
     def test_bypasses_refused_before_subprocess(self):
@@ -32,6 +36,7 @@ class ScratchGuardTest(unittest.TestCase):
             "service=live", "servicefile=/tmp/service", "options=-csearch_path=public",
             "target_session_attrs=read-write", "host=", "hostaddr=", "port=", "dbname=", "service=", "options=", "target_session_attrs=", "%68ost=/tmp/socket", "sslmode=disable&host=localhost",
         )] + [BASE.replace("localhost:54329", host) for host in ("localhost:5433", "%2Ftmp:54329", "localhost:54329,other:5432")]
+        attacks.append(BASE.replace(":54329", ":5432"))
         env_attacks = ["PGHOST", "PGHOSTADDR", "PGPORT", "PGDATABASE", "PGSERVICE", "PGSERVICEFILE",
                        "PGOPTIONS", "PGTARGETSESSIONATTRS", "PGPASSWORD"]
         for driver in ("check-adr0008-9c-2c-restore.py", "verify-adr0008-9c-2c.py", "verify-adr0008-9c-2d.py", "verify-adr0008-9c-3.py", "verify-adr0008-10a-2a.py"):

@@ -408,6 +408,54 @@ func verifyRetained(dir, required, selected string) error {
 	return nil
 }
 
+// Replay must contain exactly the transitive closure of its listed scope roots.
+// Checking only that every required source is present leaves unrelated
+// dependency components, including self-contained cycles, unaccounted for.
+func verifyExactClosure(ctx context.Context, tx pgx.Tx, dir, roots, selected string) error {
+	expectedPath, e := closure(ctx, tx, dir, roots)
+	if e != nil {
+		return e
+	}
+	expected, e := openSpool(expectedPath)
+	if e != nil {
+		return e
+	}
+	defer func() { _ = expected.f.Close() }()
+	actual, e := openSpool(selected)
+	if e != nil {
+		return e
+	}
+	defer func() { _ = actual.f.Close() }()
+	for expected.ok || actual.ok {
+		if !expected.ok || !actual.ok {
+			return errIntegrity
+		}
+		want, e := selectionFor(expected.value.event(), expected.value.Role, expected.value.References)
+		if e != nil {
+			return e
+		}
+		got, e := selectionFor(actual.value.event(), actual.value.Role, actual.value.References)
+		if e != nil {
+			return e
+		}
+		wantRaw, e := encode(want)
+		if e != nil {
+			return e
+		}
+		gotRaw, e := encode(got)
+		if e != nil || !bytes.Equal(wantRaw, gotRaw) {
+			return errIntegrity
+		}
+		if e = expected.next(); e != nil {
+			return e
+		}
+		if e = actual.next(); e != nil {
+			return e
+		}
+	}
+	return nil
+}
+
 // The resolver's references and emitted sources must agree before a work item
 // is marked resolved. The lists are bounded by one record's evidence budget.
 func validResolution(owner Source, refs []Reference, deps []sourceEvent) bool {

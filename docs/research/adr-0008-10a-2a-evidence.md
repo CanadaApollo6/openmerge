@@ -1,6 +1,6 @@
 # ADR 0008 PR 10a-2a evidence
 
-Classification: **Inert by its own behavior; deploy only after period B**.
+Classification: **Hold; shared production store helper changes; deploy only after period B**.
 This layer depends on Hold PRs. It has no operator CLI, migration, schema,
 index, event/wire/YAML change or forge read. The base is main
 `25d309d80e7a8b2944d642bd17c2277c127fe274`.
@@ -56,10 +56,14 @@ byte-identical and are run unchanged.
 Use the existing shared test PostgreSQL, with isolated test schemas; do not
 create a large scratch database. The verifier validates the DSN with
 `scripts/adr0008_scratch_db.py` before any subprocess. Its allowlist accepts the
-explicit test TCP endpoints `localhost:5432` (CI) and `localhost:54329` (local),
+explicit test TCP endpoint `localhost:54329` by default. Port `localhost:5432`
+is accepted only when both `GITHUB_ACTIONS=true` and `CI=true`; it
 rebuilds the destination URL and refuses libpq routing overrides. The local
 run uses only port 54329. This compatibility adjustment to the shared guard and
-its connection-free tests is required by the requested CI/local acceptance.
+its connection-free tests is required because the CI Postgres service publishes
+5432 while the workstation shared test service publishes 54329. Without explicit
+CI detection the ordinary workstation Postgres could be targeted. PG environment
+and query routing overrides remain forbidden in both modes.
 
 ```sh
 export GOROOT=/home/riels/.local/share/mise/installs/go/1.27.3
@@ -190,3 +194,48 @@ remain outside `-short`.
 | `internal/store` | 74.253 | 74.603 | +0.350 |
 | `scripts` | 1.081 | 1.079 | -0.002 |
 | `tools/dogfood` | 1.689 | 1.703 | +0.014 |
+
+## PR 147 round 1
+
+Requiredness follows the latest `policy_authority_applied` ID strictly before
+an owning decision, not the export watermark or current mode. No pin and a
+GitHub rollback pin emit explicit source-free authority and landing-check
+absences; an openmerge pin requires the attempt check record. Approval's other
+immutable references remain required. Mixed activation/rollback exports replay
+exactly. `TestEvidenceAuthorityRequiredAtDecisionBoundary` includes a Stage A
+approval history without authority, matching the offline dogfood journal shape.
+
+Replay reconstructs closure from scope roots within the saved snapshot and
+compares the complete selection. An unreferenced dependency, including a
+self-contained two-event settlement cycle, fails. JSON tuple identities replace
+slash joins. Check history SQL orders an actual run/normalized-attempt tuple,
+then event ID; it cannot combine maxima from different runs. The unchanged
+shared codec rejects duplicate name/source runs in a single event; direct helper
+coverage additionally pins selection across such a slice without changing wire
+admission. The shared store helper uses an explicit optional boundary pointer:
+`nil` is the original unbounded path, while a pointer to zero selects no rows.
+Its non-boundary SQL is pinned verbatim, and existing store tests are unchanged.
+
+Scaling limitation: retained lookups still use queue/id scans plus JSON filters.
+No migration or index is introduced. For O owners, E retained queue events and
+C checks per owner, worst-case evidence work remains O(O * E * (1+C)); replay's
+exact-closure pass adds a constant factor. Bounded disk spools bound memory, not
+CPU or database scanning. A one-pass per-queue resolver would require a separate
+bounded identity index/spool join covering every predicate and attempt segment;
+this round does not implement or claim that redesign. Use bounded historical
+ranges and queues with hundreds of decision owners; thousands of owners over
+large unindexed histories are an offline batch workload, not an interactive SLA.
+The previous empty-check growth numbers above are historical and do not measure
+checkHistory. The revised pipeline probe retains both real checks and a recorded
+observation. `TestEvidenceCheckHistoryGrowthPlan` adds 0/2,000/8,000 unrelated
+retained rows and logs EXPLAIN (ANALYZE, BUFFERS) for the exact observation query.
+Timings are descriptive single-run observations under local load, not speedups.
+
+The expanded verifier records each family-drop and required-call mutation,
+source-free absence validation, owner matching, duplicate identities, run/event
+ordering, dispatch generation, source ordering, transaction count, spool conflict
+handling, bounded store cardinality/payload caps, and exact closure. Recomputed
+closure duplicates replay's direct reference and retained-edge guards; conceptual
+mutants remove the equivalent guards together. Direct validator assertions remain
+separate so a redundant caller guard is not misreported as independent coverage.
+Complete export goldens remain provisional for 10a-2b; canonical vectors stay frozen.
