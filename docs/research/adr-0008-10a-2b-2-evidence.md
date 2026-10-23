@@ -536,3 +536,45 @@ that all 90 targets were rerun in round 2.
 
 Private command logs, overlays, timings and schema inventories are retained in
 `/home/riels/.cache/openmerge-149-r2-fix/`. Only scratch localhost:54329 was used.
+
+Round-2 corrected non-race scaling, same shared-batch fixture and full
+Export/Replay pipeline, exact production migrations 006/007 loaded:
+
+| Decisions | Selected | Export seconds | Replay seconds | Export ms/decision |
+| --- | --- | --- | --- | --- |
+| 64 | 208 | 0.791441 | 0.981180 | 12.366 |
+| 256 | 784 | 3.351671 | 4.136564 | 13.092 |
+| 512 | 1552 | 7.119419 | 8.350652 | 13.905 |
+| 1536 | 4624 | 24.967566 | 29.540945 | 16.255 |
+
+These are descriptive single runs, not calibrated production capacity. The
+representative start EXPLAIN uses `events_reporting_settlement` in every case,
+filtering 63/255/511/1535 other attempts within the shared batch. Decision
+identity lookup also has the migration-006 expression index. This corrects
+the previous attribution of all JSON predicates as unindexed. Residual
+batch_started, landing_checks_recorded, test_ref_built and accountability
+lookup scans still contribute O(E) per lookup; no projection to 5,000 owners
+is retained. Scaling command wall time: 80.458 s.
+
+Fresh `make check`: exit 0 in 483.874 s (lint: zero issues; short race suite
+and command build pass). Fresh offline regression comparisons: strict replay
+2,159/2,159 identical in all four categories (8,676 boundary probes, no
+non-allowlisted fields); simulator 146 identical blocks; contracts 90/90;
+GitHub projection/CLI and MixedGithubBytes hashes unchanged; Stage A exact
+output passes. Strict replay used GOMEMLIMIT=6GiB; other Go commands used 4GiB,
+GOFLAGS=-p=2 and the heavy-work flock, with pinned GOROOT and PATH.
+
+The first stress attempt was deliberately interrupted after 160.269 s to
+replace a three-hour harness deadline before a likely timeout. It is not a
+passing stress result. Its eight owned burners were terminated and reaped.
+The interrupted 512-decision fixture left schema
+`om_audit_6147eb6ab0637f57c723677e` and its `_reader` role; its 512 decision,
+check and start rows identified the active fixture. Both were explicitly
+dropped. The four schema/role pairs present before any round-2 command were
+preserved. The replacement foreground stress run uses a six-hour deadline.
+
+Round-2 scope currently remains below the requested 800-line reporting
+threshold. New frozen histories bring the whole PR beyond the historical
+2,500-line wrapper ceiling; it now has a 3,000-line whole-PR ceiling and a
+separate 800-line round-2 gate. No Makefile, CI, Dockerfile or test-flag source
+was changed.
