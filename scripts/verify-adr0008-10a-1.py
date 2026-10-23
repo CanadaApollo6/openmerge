@@ -92,6 +92,7 @@ def mutation_proofs(measured, out):
         mutations.append((name, file, source.replace(old, new, 1), test))
 
     add("restore-port-54329-guard", "source_test.go", 'u.Hostname() != "localhost"', 'u.Hostname() != "localhost" || u.Port() != "54329"', "^TestSourceDatabaseURLGuardAllowsLocalhostPorts$")
+    add("remove-oversized-transfer-guard", "source.go", "CASE WHEN octet_length(payload)<=4194304 THEN payload ELSE NULL END", "payload", "^TestSourcePageRejectsOversizedBeforeTransfer$")
     paging = "^TestSourcePagingAcrossQueuesAndCollation$"
     add("duplicate-queue-boundary", "source.go", "for i := range inventory {", "inventory = append(inventory[:pageSize], inventory[pageSize-1:]...)\nfor i := range inventory {", paging)
     add("skip-queue-boundary", "source.go", "for i := range inventory {", "inventory = append(inventory[:pageSize], inventory[pageSize+1:]...)\nfor i := range inventory {", paging)
@@ -196,7 +197,7 @@ def main():
         try:
             for _ in range(8):
                 burners.append(subprocess.Popen([sys.executable, "-c", "while True: pass"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
-            measured(["go", "test", "-race", "-count=20", "-v", "-timeout=60m", "./internal/audit", "-run", "TestCanonical|TestExportV1|TestStrictDecode|TestPublication|TestV1|TestReplay|TestSource(Snapshot|ReadOnly|Strict|Submicrosecond|DatabaseURL|Paging|Replay|Equivalent|PageQueries|Queue|LargePayload)"], ROOT, out, "foundation-stress", env_extra={"GOMAXPROCS": "1"})
+            measured(["go", "test", "-race", "-count=20", "-v", "-timeout=60m", "./internal/audit", "-run", "TestCanonical|TestExportV1|TestStrictDecode|TestPublication|TestV1|TestReplay|TestSource(Snapshot|ReadOnly|Strict|Submicrosecond|DatabaseURL|Paging|Replay|Equivalent|Page|Queue|LargePayload)"], ROOT, out, "foundation-stress", env_extra={"GOMAXPROCS": "1"})
             if any(b.poll() is not None for b in burners):
                 raise ValueError("CPU burner exited during stress")
             result["stress"] = {"iterations": 20, "GOMAXPROCS": 1, "race": True, "new_and_changed_tests": True, "non_short_included": True, "owned_burners": [b.pid for b in burners]}

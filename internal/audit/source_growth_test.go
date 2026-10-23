@@ -171,3 +171,27 @@ func countTraceQueries(tr *queryTrace, needle string) int {
 	}
 	return count
 }
+
+func TestSourcePageRejectsOversizedBeforeTransfer(t *testing.T) {
+	f := database(t)
+	f.queue(t, 1, "")
+	_, e := f.admin.Exec(t.Context(), `INSERT INTO events(queue_id,type,payload,recorded_at) VALUES(1,'large',jsonb_build_object('pad',repeat('x',4194305)),'2026-10-22T12:00:00Z')`)
+	must(t, e)
+	rows, e := f.admin.Query(t.Context(), sourcePageSQL, 1, int64(0), int64(1<<62), nil, nil)
+	must(t, e)
+	if !rows.Next() {
+		t.Fatal("missing oversized rejection marker")
+	}
+	var id int64
+	var kind string
+	var at time.Time
+	var payload []byte
+	must(t, rows.Scan(&id, &kind, &at, &payload))
+	rows.Close()
+	if payload != nil {
+		t.Fatal("SQL transferred oversized payload")
+	}
+	if _, e = f.reader.Export(t.Context(), req(), filepath.Join(t.TempDir(), "oversized")); e != errCanonical {
+		t.Fatal("oversized source was not rejected")
+	}
+}
