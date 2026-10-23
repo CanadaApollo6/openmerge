@@ -171,3 +171,21 @@ func TestRound3DecisionOwnerSelectsItsOwnRetainedItem(t *testing.T) {
 		t.Fatal("accepted the later member's payload under the first member's event ID")
 	}
 }
+
+// An openmerge pin governs an approval only for the governing commit its
+// classification was made under; a codec-valid pin for another commit fails.
+func TestRound3OpenMergePinMustMatchClassificationGoverningCommit(t *testing.T) {
+	fx := round3ApprovalFixture(t)
+	if _, _, err := round3Resolve(t, fx, fx.decisionID, ""); err != nil {
+		t.Fatalf("matching governing commit rejected: %v", err)
+	}
+	pin := fx.events["policy_authority_applied"][0].(queue.PolicyAuthorityApplied)
+	pin.GoverningCommit = strings.Repeat("e", len(pin.GoverningCommit))
+	_, raw, err := queue.EncodeEvent(pin)
+	must(t, err)
+	_, err = fx.f.admin.Exec(t.Context(), `UPDATE events SET payload=$2 WHERE id=$1`, fx.pinID, raw)
+	must(t, err)
+	if _, _, err := round3Resolve(t, fx, fx.decisionID, ""); err != errSource {
+		t.Fatalf("got %v want rejection of a pin for another governing commit", err)
+	}
+}

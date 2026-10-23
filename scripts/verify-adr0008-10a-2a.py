@@ -64,6 +64,7 @@ def mutation_proofs(measured, out, pattern):
         ("github-pin-keeps-source", "evidence.go", 'r.sources = r.sources[:len(r.sources)-1]', '_ = 0'),
         ("multi-run-oldest-run-sql", "evidence.go", "ORDER BY (run->>'id')::numeric DESC,greatest", "ORDER BY (run->>'id')::numeric ASC,greatest"),
         ("multi-run-lowest-attempt-sql", "evidence.go", "greatest((run->>'attempt')::numeric,1) DESC LIMIT 1) DESC", "greatest((run->>'attempt')::numeric,1) ASC LIMIT 1) DESC"),
+        ("authority-governing-commit", "evidence.go", "value.(queue.PolicyAuthorityApplied).GoverningCommit != ci.GoverningCommit", "value.(queue.PolicyAuthorityApplied).GoverningCommit != ci.GoverningCommit && false"),
         ("dispatch-generation-sql", "evidence.go", "match = ` AND payload->'data'->>'generation'=$6`", "match = ` AND $6::text IS NOT NULL`"),
         ("additional-transaction", "source.go", "if err = fn(ctx, tx); err != nil {", ""),
     ]
