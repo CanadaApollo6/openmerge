@@ -89,7 +89,7 @@ artifact manifest. Error output is sanitized. It never calls a real GitHub API,
 live status API or service controller. It compares the fixed offline journal
 export rather than querying a live OpenMerge database.
 
-## Acceptance results
+## Initial acceptance results (superseded by PR 147 round 1)
 
 Measured against the exact base above, on code commit
 `4a33f8a2c7dfe925ed58e553315eea02a45404be`. The final evidence commit
@@ -197,45 +197,129 @@ remain outside `-short`.
 
 ## PR 147 round 1
 
-Requiredness follows the latest `policy_authority_applied` ID strictly before
-an owning decision, not the export watermark or current mode. No pin and a
-GitHub rollback pin emit explicit source-free authority and landing-check
-absences; an openmerge pin requires the attempt check record. Approval's other
-immutable references remain required. Mixed activation/rollback exports replay
-exactly. `TestEvidenceAuthorityRequiredAtDecisionBoundary` includes a Stage A
-approval history without authority, matching the offline dogfood journal shape.
+Both reviewers requested changes on `8f53303`. Round-1 fixes are commits
+`6eb8b29..HEAD`; the acceptance below is measured on the final code commit.
 
-Replay reconstructs closure from scope roots within the saved snapshot and
-compares the complete selection. An unreferenced dependency, including a
-self-contained two-event settlement cycle, fails. JSON tuple identities replace
-slash joins. Check history SQL orders an actual run/normalized-attempt tuple,
-then event ID; it cannot combine maxima from different runs. The unchanged
-shared codec rejects duplicate name/source runs in a single event; direct helper
-coverage additionally pins selection across such a slice without changing wire
-admission. The shared store helper uses an explicit optional boundary pointer:
-`nil` is the original unbounded path, while a pointer to zero selects no rows.
-Its non-boundary SQL is pinned verbatim, and existing store tests are unchanged.
+### Requiredness at each decision boundary (P1)
 
-Scaling limitation: retained lookups still use queue/id scans plus JSON filters.
-No migration or index is introduced. For O owners, E retained queue events and
-C checks per owner, worst-case evidence work remains O(O * E * (1+C)); replay's
-exact-closure pass adds a constant factor. Bounded disk spools bound memory, not
-CPU or database scanning. A one-pass per-queue resolver would require a separate
-bounded identity index/spool join covering every predicate and attempt segment;
-this round does not implement or claim that redesign. Use bounded historical
-ranges and queues with hundreds of decision owners; thousands of owners over
-large unindexed histories are an offline batch workload, not an interactive SLA.
-The previous empty-check growth numbers above are historical and do not measure
-checkHistory. The revised pipeline probe retains both real checks and a recorded
-observation. `TestEvidenceCheckHistoryGrowthPlan` adds 0/2,000/8,000 unrelated
-retained rows and logs EXPLAIN (ANALYZE, BUFFERS) for the exact observation query.
-Timings are descriptive single-run observations under local load, not speedups.
+The governing mode is the latest `policy_authority_applied` with an event ID
+strictly below the owning decision, which is the store's own
+`latestAuthorityPin` at write time: pins are only written validated and paired
+with a matching `config_applied`. Only an `openmerge` pin makes the authority
+pin and `landing_checks_recorded` required. With no pin, or a `github`
+rollback pin, both are explicit absences that carry the owner and expected kind,
+with no source ID, and export never fails on them. A retained check row under a
+GitHub decision is not attributed to it. The other immutable approval evidence
+remains required. An openmerge pin must also match the classification's
+governing commit. `TestEvidenceAuthorityRequiredAtDecisionBoundary` covers the
+dogfood shape (GitHub mode, Stage A approval history, no authority), a retained
+inapplicable check, a range spanning activation, rollback to GitHub followed by
+decisions, and a required-but-missing check under openmerge. Each replays
+exactly. The always-required and never-required mutants are both killed.
 
-The expanded verifier records each family-drop and required-call mutation,
-source-free absence validation, owner matching, duplicate identities, run/event
-ordering, dispatch generation, source ordering, transaction count, spool conflict
-handling, bounded store cardinality/payload caps, and exact closure. Recomputed
-closure duplicates replay's direct reference and retained-edge guards; conceptual
-mutants remove the equivalent guards together. Direct validator assertions remain
-separate so a redundant caller guard is not misreported as independent coverage.
-Complete export goldens remain provisional for 10a-2b; canonical vectors stay frozen.
+### Replay: exact closure is the single semantic owner (P2-2, P3-5)
+
+Replay rebuilds export's own closure from the selected scope roots, inside
+replay's snapshot and at the saved watermarks, then compares complete
+selections in source order. This one comparison owns resolved references,
+contradicted absences (including a contradicted in-range scope record), missing
+retained sources and any record outside the closure, whether a single
+unreferenced dependency or a self-contained cycle. The earlier per-record
+re-resolution, reference comparison, `validResolution` call and retained-source
+merge were strictly subsumed. Their mutants were equivalent, and they doubled
+replay's database work, so they were removed. Range, not closure, owns the scope
+label: an out-of-range record relabelled as scope is self-consistent under
+closure, so the range/role check stays.
+
+The test forger `rewriteSelections` previously rewrote only `selection.jsonl`
+and the manifest. Because `events.jsonl` chains each record's role and
+references, every forged artifact failed stream integrity before any semantic
+guard, so the role cases and the rewritten-absence case passed without
+exercising Replay. It now rebuilds the chained events stream, boundaries,
+digests, count and terminal hash without `build`'s validation. An
+unchanged-selection control must replay.
+
+### Identity, encoding and check attempts (P2-4, P3-6, nits)
+
+Every reference identity is a non-empty JSON string tuple, encoded without HTML
+escaping. `validReferences` rejects any other form, so arity and component
+boundaries are structural: `["b"]`, `["b","a"]` and `["b/a"]` are distinct, and
+bare strings are invalid. References are encoded once while normalizing. An
+identity that exceeds the canonical bound (reachable from a ~4 MiB payload of
+escaped characters) is a sanitized `errCanonical` rather than a panic.
+
+Check observations are ordered identically in SQL and Go. Within an event, the
+greatest run ID wins, then the greatest normalized attempt. Across events, the
+greater per-event tuple wins, then the greater event ID. Malformed events
+holding several runs of one check (which the codec rejects) are ordered by their
+own newest run: when such an event governs the boundary it is selected and
+rejected, never silently replaced by an older valid event. Dispatch progress and
+results follow the selected request generation, even when a newer retry of
+another check in the same batch dispatches later. Member decisions sharing an
+attempt each resolve against their own retained item.
+
+### Shared store helper (P3-8)
+
+`LandingDecisionEvidenceTx` takes an explicit `*int64` boundary. `nil` is the
+original unbounded path; a pointer to zero selects no rows. Bounded and
+unbounded SQL are separate constants, and the unbounded constants are pinned
+verbatim. Public invalid-argument rejection still happens before a transaction.
+Tests cover zero/exact boundaries, eligibility cardinality 0 and 2, empty batch
+and attempt, and the 4 MiB cap at and above the limit for both the decision
+and the eligibility read (the unbounded path stays uncapped). Existing store
+tests are byte-identical and pass.
+
+### Scaling bound (P3-7)
+
+No migration or index is added. Each retained lookup is a scan over the queue's
+`(queue_id, id)` watermark range with JSON filters. The plan below (8,000
+unrelated rows, the exact check-observation predicate) removes 8,034 rows by
+filter for one result:
+
+```text
+Limit (actual rows=1)
+  InitPlan 3 -> Limit -> Sort (Sort Key: (SubPlan 1) DESC, e.id DESC)
+    -> Seq Scan on events e  Filter: id<8100, queue_id, type, batch_id, tested_sha, EXISTS(run)
+       Rows Removed by Filter: 8034
+  -> Index Scan using events_queue_watermark (queue_id, id <= 8100, id = InitPlan 3)
+```
+
+Work is therefore O(O × L × E): O owners, L lookups per owner (2 + 5 per
+admitted check for a check record, about 15 for an approval decision), and E
+retained events in the queue. Bounded spools bound memory, not database work.
+The partial indexes from migrations 006/007 could serve only the decision,
+eligibility and settlement families, so they would not change the bound. A
+single-pass per-queue resolver would need a bounded identity spool join
+covering every predicate and attempt segment, and it is not attempted here.
+Use bounded ranges and queues with hundreds of decision owners; thousands of
+owners over large unindexed histories are an offline batch workload.
+
+Measured without `-race` (single runs, descriptive; Sol's snapshot `dd5e52b` vs final):
+
+| Owners | Retained events | Lookups export / replay | Export (s) | Replay before (s) | Replay final (s) |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 64 | 67 | 768 / 768 (was 1,536) | 0.207 | 0.484 | 0.234 |
+| 64 | 16,451 | 768 / 768 (was 1,536) | 1.019 | 2.213 | 1.079 |
+| 256 | 259 | 3,072 / 3,072 (was 6,144) | 0.820 | 2.033 | 0.891 |
+| 256 | 16,643 | 3,072 / 3,072 (was 6,144) | 3.904 | 8.416 | 4.129 |
+
+Lookups are exactly 12 per check-record owner. Export time grows linearly with
+owners at fixed history (×4 owners → ×3.8) and with retained events at fixed
+owners. The complete pipeline probe with real check history (128 → 1,024
+owners) takes 1.689 → 14.816 s for export plus replay (22.0 s before the replay
+change). Sampled peak heap is 8.47 → 8.66 MB and retained heap 1.11 → 1.15 MB.
+`TestEvidenceCheckHistoryGrowthPlan` (32 owners, 0/2,000/8,000 unrelated rows)
+measures 0.357/0.448/0.660 s. `TestScalingProbeOwnerEvent` reproduces the table.
+
+### Mutation table
+
+Every mutant from both reviewers (Astra's six; Sonnet's m1–m3), the verifier's
+own and this round's are run against the final commit with overlays over the
+complete `-short` audit (and, for the helper, store) suites. Build or setup
+failures do not count as kills. The reviewers' mutants of guards that this
+round removed are mapped onto exact closure, which now owns those properties.
+PENDING_MUTATION_TABLE
+
+### Round-1 acceptance
+
+PENDING_ACCEPTANCE

@@ -244,7 +244,8 @@ This layer is Hold because it changes the shared production landing-evidence
 helper; deployment remains after period B. Authority/check requiredness is
 conditional on the latest mode pin before each decision. GitHub history and
 rollback produce explicit absence records without invented source IDs. Replay
-requires the exact closure reachable from scope roots, and identities encode
-components as JSON tuples. Without new indexes, JSON-filtered retained lookups
+recomputes export's closure from the scope roots and requires exactly that
+selection; this single comparison replaced per-record re-resolution. Identities
+are canonical JSON string tuples. Without new indexes, JSON-filtered retained lookups
 remain owners × retained events (multiplied by checks); bounded memory is not a
 claim of sublinear database work. See the 10a-2a evidence note for limits and plans.
