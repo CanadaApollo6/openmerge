@@ -15,8 +15,9 @@ new v1 bytes and edits none of #149's files.
 
 Retain all journal evidence. Add retention integration acceptance and a documented
 external anchoring procedure using existing `audit export --manifest`; add no
-CLI verb or flag. Standard SHA-256 tools bind an independently stored manifest,
-while exact replay validates its sources. This meets the ADR without new wire,
+CLI verb or flag. Retain the replay-printed v1 manifest SHA-256 independently;
+exact replay recomputes that commitment and validates its sources. This meets
+the ADR without new wire,
 configuration, forge contracts, migrations or indexes. No retention YAML is
 accepted by the schema or loader. No daemon retention behavior changes.
 
@@ -34,7 +35,8 @@ Preserve every journal row, including unknown historical kinds, original JSONB
 value, source ID, queue identity/key, type and database recorded_at. JSONB does
 not preserve original input text; compare canonical payloads and metadata.
 Keep queue identity rows discoverable after retirement, plus all retained
-lookup/ledger data needed to reproduce evidence. A snapshot, current config,
+`events` and `queues` rows needed to reproduce evidence; these are the only
+tables read by `internal/audit`. A snapshot, current config,
 current forge read or derived warning summary cannot replace original sources.
 
 Explicit coverage must include these families (the policy is not an allowlist):
@@ -77,119 +79,173 @@ Future configurable pruning is deferred. It must preserve all transitive
 sources for every retained audit window and ship compaction integration tests;
 10b does not introduce a pruning path or weaken the existing guard.
 
+## Lifecycle acceptance driver
+
+Use a new command-package integration journey modeled on
+`cmd/openmerge/stage_a_acceptance_test.go`, but construct the server with
+`serve.NewRepositories` and drive `Server.Run` / `Server.RefreshBranches`.
+Use fake forge inputs and private local Git history with the real store and
+production authority runtime wiring (`productionAuthorityRuntime` and
+`productionServeOptions`); provide valid scratch adoption/emission receipts.
+Do not append lifecycle/config/pin events directly for the tested transitions.
+
+- Land a changed `.openmerge.yml` selecting `policy_authority: github` in the
+  fixture's governing Git history. Worker `configuration` in
+  `internal/serve/reconcile.go` calls `prepareAuthorityLifecycle` and
+  `activateAuthority` in `authority_activation.go`, then
+  `Store.ApplyAuthorityConfigWithEmissionGate`. Wait for the persisted github
+  pin/config pair. Return to openmerge through the same path with fresh valid
+  verification/proposal inputs; retain the prior history.
+- Remove the queue selector in a valid default-branch config, retain the branch,
+  then call `Server.RefreshBranches`. `refreshRepository` / `refreshWorker`
+  in `internal/serve/branches.go` reach `Server.lifecycle`, which appends the
+  validated `queue.LifecycleChanged{State: "retired"}` through `Store.Append`.
+  Assert that event and the unchanged earlier inventory; do not synthesize it.
+- Cancel the Run context, wait for Run to return, close all audit readers and
+  `Store.Close`, then reopen the store and construct a new `NewRepositories`
+  server against the same DB. This exercises stored-queue discovery,
+  `Store.Load` and worker reconstruction, rather than reusing in-memory state.
+
+`authority_github_compatibility_test.go` tests status CLI projections, not a mode
+switch; reuse its CLI assertions only after driving the transition above.
+`internal/queue/lifecycle.go` validates lifecycle events, not retirement discovery.
+`cmd/openmerge/admin.go` has no retirement/mode-switch command: use its
+`runAdmin` acknowledgement path only for warning evidence, with scratch receipts.
+
 ## External anchor and verification
 
-Use a full-manifest anchor as the default. Outside OpenMerge retain:
+The primary anchor is exactly the `manifest SHA-256: <hex>` printed by successful
+#149 export/replay: v1 `manifest_sha256`, canonical manifest with that field
+empty, without LF. It binds all four stream hashes, request, count and terminal.
+It is **not** `sha256sum manifest.json`. An optional separately named
+`manifest_file_sha256` may record exact file bytes including LF, but is never a
+substitute for the primary anchor. This deliberately narrows the ADR's
+"manifest/terminal digest" option to manifest-required acceptance: a terminal
+alone does not bind selection, watermarks, absence metadata or empty identity.
 
-- The complete original export bundle: `manifest.json`, `events.jsonl`,
-  `selection.jsonl`, `watermarks.jsonl`, `dependency_boundaries.jsonl`.
-- SHA-256 of the exact manifest file bytes, including its final LF, separately
-  named `manifest_file_sha256`; the printed v1 `manifest_sha256`; terminal digest
-  and count. These two manifest hashes are different algorithms/inputs.
-- Repository/installation, normalized bounds, serialization version, binary
-  commit/hash, backup identity/hash and independently recorded custody time.
-  Do not put database credentials in the receipt.
+Outside OpenMerge retain all five original files, the printed/recomputed primary
+anchor, count/terminal, repository/installation, normalized bounds, version,
+binary hash, backup identity/hash and independent custody time. Record an adopted
+maximum transaction/commit lag L and require `until <= custody_time - L`.
+Establish L by bounded writers or a quiesce/drain barrier, not an assumed timeout;
+if no defensible bound exists, record the window as provisional. This condition
+reduces late-commit risk but cannot authenticate recorded_at or exclude backdating.
+Do not retain credentials. Sign/store the receipt under separate custody.
 
-V1 `manifest_sha256` hashes canonical manifest JSON with that field empty,
-without LF. It is not `sha256sum manifest.json`. The file checksum chosen here
-also commits the embedded v1 digest and all stream hashes. Verification must
-recompute hashes, not trust a digest copied from an untrusted manifest field.
-The terminal chain hashes each canonical event without LF, includes the previous
-digest, starts at 64 zeroes and is zero for an empty export. File hashes include LF.
-A terminal-only receipt commits event bytes/order, but not all selection,
-watermark or absence-boundary metadata, and an empty terminal commits no identity.
-Therefore terminal-only custody is insufficient for full 10b acceptance; retain
-its context and the manifest commitment as well.
-
-Proposed runbook commands, using #149's CLI, on a compatible binary:
+At anchor creation on a compatible binary:
 
 ```sh
 openmerge audit export --repo "$REPO" --installation "$INSTALLATION" \
   --from "$FROM" --until "$UNTIL" --out "$EVIDENCE/original"
-(cd "$EVIDENCE/original" && sha256sum manifest.json) > "$EVIDENCE/manifest.sha256"
-openmerge audit export --manifest "$EVIDENCE/original/manifest.json" \
+openmerge audit export --repo "$REPO" --installation "$INSTALLATION" \
+  --from "$FROM" --until "$UNTIL" --out "$EVIDENCE/fresh-crosscheck"
+openmerge audit export --manifest "$PRIVATE/original/manifest.json" \
   --out "$EVIDENCE/initial-replay"
 ```
 
-Require both exports to exit 0 and compare all five files byte-for-byte using
-`cmp` (exit 0 each). Capture each command's exit independently; do not allow a
-pipeline's final success to conceal an earlier failure. Copy the bundle,
-checksum file and receipt to separately controlled storage, verify the copy,
-and record its immutable version/object identity. The checksum stored next to
-an editable bundle on the same host is not an external anchor.
+Before replay, copy original into a private directory with no untrusted writers:
+reject symlinks/nonregular files and copy bytes (no shared hard links). Create
+the parent as 0700 while copying; then grant only a dedicated reader group
+traversal/read access (0750 parent, 0550 bundle directory, 0440 files). The
+trusted custodian owns these paths; run replay as a different OS identity in
+that reader group with no ownership/write or chmod authority over the copy; the trusted custodian must not modify it until
+verification ends. Permissions alone do not restrain an owner or root; that
+custody separation is a procedure precondition. Use this same read-only private
+copy for every validation/comparison to close the manifest-open TOCTOU.
 
-To verify a later supplied bundle against the original commitment:
+Freeze crosscheck into a second private read-only copy too. Require all three
+commands exit 0; `cmp` all five private original/crosscheck/replay files (each
+exit 0), with replay output kept under trusted exclusive control. Any difference is investigate-and-record, not a pass.
+Capture stdout/stderr/exits separately. Retain initial replay's printed digest,
+verify the independently stored bundle copy, and record its immutable object ID.
+A checksum beside an editable bundle on the same host is not an external anchor.
 
-1. Obtain the checksum/receipt and original bundle from independent custody.
-   Verify a detached signature if used, including the trusted signer identity.
-   Refuse a receipt supplied solely by the party supplying the candidate export.
-2. Run `(cd "$CANDIDATE" && sha256sum -c "$TRUSTED/manifest.sha256")`.
-   The checksum entry names only `manifest.json`; validate that fixed name when
-   admitting a receipt. Exit 0 is a match; exit 1 with `manifest.json: FAILED`
-   is an anchor mismatch. Missing/unreadable files also fail; never treat an
-   inability to check as a pass.
-3. Run `openmerge audit export --manifest "$CANDIDATE/manifest.json"
-   --out "$NEW_REPLAY"` against the intended source or isolated restored DB.
-   Require exit 0. Replay validates canonical schema, all stream hashes,
-   dependencies, exact source selection and database payload/metadata.
-4. Compare all five candidate/replay files using `cmp`; require exit 0 each.
-   Record actual hashes, stdout/stderr and exits. A checksum pass alone checks
-   the manifest commitment, not the files it references; all steps are required.
+Later verification:
 
-Run these checks against untrusted copies; never replace the trusted anchor
-with newly calculated values on mismatch. If the DB is unavailable, file hashes
-and an independent v1 validator can check archive consistency, but mark database
-replay unexecuted. The standard 10b acceptance requires DB replay.
+1. Obtain the trusted receipt/bundle from independent custody; verify any
+   signature against trusted signer identity. Admit primary digest text only as
+   exactly one line matching `[0-9a-f]{64}` plus one LF; reject extra lines,
+   malformed text and trailing content. Do not use permissive `sha256sum -c`.
+2. Prepare the candidate as the read-only private copy described above. Run
+   `openmerge audit export --manifest "$PRIVATE/candidate/manifest.json"
+   --out "$NEW_REPLAY"` against the intended DB or isolated restored DB.
+   Require exit 0; failure is not an anchor comparison pass.
+3. From captured successful stdout require exactly one line matching
+   `manifest SHA-256: [0-9a-f]{64}`. Compare those 64 hex bytes with the trusted
+   digest. Require equality; never compare only an unvalidated input field.
+   The planned offline tool below reports mismatch as exit 1 / `anchor mismatch`.
+4. Compare all five private candidate/replay files with `cmp`, exit 0 each.
+   Record actual digests, stdout/stderr and exits. Preserve originals on failure;
+   never update the trusted value to make a mismatch disappear.
 
-## Why the external comparison closes the gap
+Optional file-hash receipts also require exactly one lowercase 64-hex digest
+line; compute `sha256sum manifest.json` on the same private copy, extract the
+first field and compare hex directly. No checksum-file parser or multi-line
+`-c` gate is used. Receipt syntax errors fail closed before comparison.
+Without the DB, offline archive checks are useful but DB replay is unexecuted;
+standard 10b acceptance requires replay.
 
-Without recomputation, editing/reordering/dropping/truncating records changes
-file hashes and/or the next record's previous digest or terminal/count.
-Replay must fail. For a last-record truncation the unchanged manifest count and
-terminal/file hashes provide the check even without a successor record.
+## Detection boundary
 
-An attacker can instead rebuild event links, selection metadata, boundaries,
-stream hashes and the manifest. Replay may then accept a semantically valid
-smaller selection: it replays listed roots, not an independently known complete
-historical inventory. A fully rehashed edit may require matching scratch DB
-mutation too; otherwise source validation already rejects it. Reordering can
-also violate canonical source ordering regardless of rehashing. Do not claim
-that every altered/rehashed input passes replay.
+Unmodified hashes catch archive edits at the stream-file hash check, before any
+chain reconstruction. Replay does not walk supplied previous_sha256 links: it
+rebuilds canonical events from DB/selection, calculates the chain, then compares
+the rebuilt manifest to the supplied one. The matrix separates those gates.
 
-For any successful rewrite of committed bytes, the candidate manifest file hash
-now differs from the externally retained value (assuming SHA-256 collision
-resistance). Keeping the old manifest instead makes its stream hashes fail.
-Thus either the anchor comparison or replay rejects. A full rehash cannot change
-the independent earlier commitment. An alteration only to non-event metadata may
-leave terminal_sha256 unchanged, which is why the manifest anchor is primary.
+An attacker can rebuild links, selection, boundaries and every hash; replay may
+accept a valid smaller selection because it replays listed roots. A matching DB
+edit may also be necessary for payload changes. A recomputed manifest digest
+then differs from the independent earlier anchor (assuming SHA-256 collision
+resistance). Keeping the old manifest instead fails stream/rebuild checks.
+This detects disagreement with a prior commitment, not completeness of history.
+Omissions before the first anchor and later in-window additions remain open.
+A late commit and a backdated insert cannot be distinguished by this procedure.
 
 ## Overlapping and extended windows
 
-Each export starts a new zero-based chain. Larger/different selections can change
-roles, references, dependency boundaries and record order, including dependencies
-before an earlier range. Their terminal and manifest hashes need not match.
-Do not compare a later export's terminal with an earlier terminal or assume the
-earlier export is a byte prefix. Fresh same-range scans can see late commits too.
+A new selection starts a zero-based chain; different roles, references,
+boundaries and pre-window dependencies prevent prefix/terminal comparisons.
+Fresh same-range scans can see late commits. For anchored A and later B:
 
-For original anchored export A and later overlapping/extended export B:
+1. Validate each bundle by replay; verify A against its external anchor.
+   Replay A on the later DB into C: all five files must equal A. B cannot
+   substitute for C's retention proof.
+2. Join selection rows by `(source.queue_id, source.id)`. Shared identities must
+   match queue key, type, recorded_at and payload_sha256. Compare source facts,
+   not context-dependent roles/references; report contextual differences.
+3. For the common half-open time interval, every A scope identity must appear
+   in B. If B claims full coverage of A, require every A identity including
+   closure dependencies. Missing required identities fail. Closure-only A
+   identities need not occur in an ordinary partial overlap.
+4. Every B source with recorded_at in A's anchored interval but absent from A
+   is `in-window addition`: investigate-and-record, never pass, including when
+   the receipt's lag bound was satisfied. Do not relabel it harmless late commit.
+5. Anchor B separately only after discrepancies are resolved and documented;
+   retain A and its receipt. Resolution does not rewrite A's commitment.
 
-1. Verify A against its external anchor and replay A's saved manifest against
-   the later database into C. All five C files must equal A exactly. This proves
-   retention of A's frozen selection; B alone cannot stand in for C.
-2. Validate B independently. For every source identity `(queue_id, event_id)`
-   shared by A and B require identical queue key, type, recorded_at and canonical
-   payload hash. Missing an A source that is selected by B's scope/closure is a
-   failure. Closure-only sources in A need not be selected by every overlap B.
-3. If B claims to contain all A evidence, require every A identity in B, not just
-   the intersection. Roles/references and absence boundaries may differ with
-   selection/watermark context; A's exact replay, not naive envelope comparison,
-   preserves their earlier meaning. Record all contextual differences.
-4. Anchor B separately and retain A. A new anchor does not supersede evidence
-   required to verify an earlier commitment.
+10b-2 will add a small Python stdlib-only offline operator verifier,
+`scripts/verify-audit-anchor.py` (proposed path, not implemented here), distinct
+from #149's scratch acceptance driver. Invocation contract:
 
-Failure to reproduce A after restore is a retention/recovery failure even if B
-is internally consistent. Neither overlap comparison nor A replay proves that
-new unanchored events were never omitted from B.
+```sh
+python3 scripts/verify-audit-anchor.py --anchor "$TRUSTED/digest.txt" \
+  --replay-stdout "$REPLAY_STDOUT" --earlier "$PRIVATE/A" --later "$PRIVATE/B"
+```
+
+Inputs must be already replay-validated read-only private bundles; this tool
+neither connects to DB nor replaces replay. It checks strict receipt/stdout
+syntax, digest equality against A's successful replay stdout and A manifest
+field (whose validity replay established), repository/installation/version identity,
+then the join/range rules above. Add `--require-full-coverage` for rule 3's full
+claim. Reject duplicate identities/JSON keys and malformed source/digest/time
+fields; use exact integer IDs and UTC timestamps, not floating point.
+Use a temporary SQLite database (stdlib sqlite3) for a disk-backed join, bounded
+JSONL reads and deterministic identity-sorted findings; clean up on all exits.
+Do not infer closure requiredness for partial overlaps beyond these rules.
+Exit 0: `anchor and overlap match`; exit 1: `anchor mismatch`, `missing source`,
+`source mismatch` or `in-window addition`; exit 2: malformed/usage/unreadable input.
+Emit all discrepancies with identity and reason, never payloads or credentials.
+No later bundle is required for a primary-anchor-only check; omit `--later`.
 
 ## Acceptance evidence plan
 
@@ -198,47 +254,96 @@ All database work uses scratch databases only on shared test Postgres
 `localhost:54329`. Reuse `scripts/adr0008_scratch_db.py` before any connection or
 subprocess, reject PG environment/routing overrides, allocate unique
 `om_9c2c_<32 hex>` names, and guard each source/restore/tamper DSN separately.
-Track ownership and clean up only owned databases. Never read the live DB,
+Reuse ownership/cleanup patterns from `scripts/check-adr0008-9c-2c-restore.py`
+and its `adr0008_scratch_db.py` guard; do not reuse its synthetic event injection
+for lifecycle transitions. Track owned databases and cluster-global roles with
+unique `om_10b_<32 hex>` role names; record successful creations immediately,
+revoke owned grants/drop owned roles in finally cleanup after closing pools,
+and assert no owned roles/databases remain, including failed runs. Never read the live DB,
 production units, `openmerge/*` refs or `127.0.0.1:8081`.
 
 | ADR requirement | Planned proof and retained evidence |
 | --- | --- |
 | Export twice, same selection | Quiesce a seeded source; range export A, fresh same-range export B, then A-manifest replay C. All commands exit 0; all five files byte-identical, including empty and multiple/retired-queue cases. Save binary commit, selectors, per-file SHA-256, count/terminal and exact commands. Replay additionally covers frozen selection after late commits. |
 | Isolated backup → restore | Stop scratch writers before A and `pg_dump -Fc`; save dump SHA-256, PostgreSQL/tool versions and source identity. Restore with `pg_restore --exit-on-error` into a distinct guarded owned DB. Dump/restore exit 0; use the identical binary to fresh-export and replay A there, all five files equal A. Preserve queue/event IDs, keys, recorded_at and complete inventory. No migration on the audit connection. |
-| Switch to github and retire queue | Drive real supported mode transitions and retirement in the scratch fixture, with process/pool restart; compare original inventory after each step. Replay pre-switch A unchanged and fresh-export old/new ranges. Cover return to openmerge, cross-range dependencies, original github history and active-config removal. Save transition event IDs, read-only discovery and byte comparisons. |
+| Switch to github and retire queue | Drive the lifecycle journey specified above; compare original inventory after each step. Replay pre-switch A unchanged and fresh-export old/new ranges. Cover return to openmerge, cross-range dependencies, original github history and active-config removal. Save transition event IDs, read-only discovery and byte comparisons. |
 | Edit/reorder/drop/truncate | Execute every matrix row below on separate bundle copies and, where needed, separate cloned scratch DBs. Preserve originals and record raw stderr/exits, expected result and candidate/trusted hashes. |
-| Real-git source read-back | Use a private local bare remote and working clone with ordinary fixture refs. Read back commit objects/parents using `git cat-file` and `git rev-list`; match source head, tested SHA, intended landing, confirmed landing and outside movement to exported evidence. Distinguish intended from confirmed. Retain graph/output and hashes; no forge writes or production refs. |
+| Real-git source read-back | Reuse #149 `internal/audit/freeze_acceptance_test.go:TestAuditBareRemote` graph/read-back assertions. The 10b delta applies them to post-transition and isolated restored-DB exports, matching tested/intended/confirmed/outside SHAs and parents to the same private bare remote. Save `git cat-file` / `git rev-list` output; no production refs or forge writes. |
 | Repeat on PR 11 journal | Defer actual organization authority switch, real App observations, break-glass, drift, rollback and the sandbox journal export to PR 11. Repeat export/replay, isolated restore, lifecycle and tamper/anchor evidence there. Fixture success does not complete Part 3 without that real export. |
 
-Tamper matrix: `Replay` below means #149's `audit export --manifest`; each
-mutation must be meaningful (at least two records for reorder, nonempty for drop).
+Additional acceptance cases:
 
-| Input | Replay exit / diagnostic | External verification |
+| Requirement | Expected result |
+| --- | --- |
+| No retention config | Loader rejects top-level and queue `retention:`, `pruning:` and `prune_after:` keys; schema validation rejects the same corpus. Extend `cmd/openmerge/schema_test.go` to assert generated schema exposes no retention/pruning property and does not allow unknown keys there (therefore arbitrary pruning-key spellings fail too). No schema artifact edits in this design PR. |
+| Exact operator role | Export/replay exit 0 with CONNECT, schema USAGE, SELECT only on events/queues; no inherited writer privileges, CREATE, TEMP or public write. Denied INSERT/UPDATE/DELETE/CREATE/TEMP probes fail. Independently omit events or queues SELECT: each export exits 1 with generic diagnostic below. Capture read-only/repeatable-read settings and owned-role cleanup. |
+| Overlap missing source | Delete an independent A scope row from B's common interval, fully rehash into a replay-valid subset; offline join exits 1 / `missing source`. Test partial and full-coverage modes, including a replay-valid B that omits an entire owner/dependency component, which fails the full-coverage claim. |
+| Overlap added source | Commit an additional scratch event with recorded_at inside A's interval after A's snapshot; fresh B/replay exit 0, offline join exits 1 / `in-window addition`. Repeat with deliberate backdating; verdict is identical. |
+| Strict receipt/private copy | Extra receipt lines, malformed hex or duplicate stdout anchor lines exit 2; mismatched valid digest exits 1. Attempt writes as replay identity: denied. All comparisons use the same frozen copy. |
+
+Tamper recipe notation (acceptance implementation, not executed here): choose
+three independent, valid `base_moved` scope records E1/E2/E3 in one queue, IDs
+1/2/3, no references, data.sha equal to 40 lowercase `a`, `b`, `c` bytes
+respectively; use 40 lowercase `d` bytes for the replacement SHA. Use a separate
+linked-check fixture for dependency cases. Number IDs per owned fixture, not globally.
+Serialize edits with v1 canonical JSON plus LF. `H` means update each affected
+whole-file SHA-256 (including LF), then recompute manifest_sha256 with its field
+empty/no LF. `R` means additionally regenerate previous_sha256 from zero and
+terminal/count. All unmentioned bytes/files remain unchanged. Choose mutations
+that change bytes; save before/after files and hex digests, not just descriptions.
+
+`G` below is exact CLI stderr
+`audit: connection, source, integrity or publication failure` (exit 1).
+`M` is the offline primary comparison `anchor mismatch` (exit 1), reached only
+after successful replay. Do not claim anchor success when replay failed.
+
+| Exact mutation | Replay result and first catching check | Anchor result |
 | --- | --- | --- |
-| Unchanged archive | 0 / printed manifest SHA-256 | checksum 0; all `cmp` 0 |
-| Edit payload, keep hashes | 1 / generic integrity failure | checksum may remain 0; replay rejects |
-| Swap records, keep hashes | 1 / generic integrity failure | checksum may remain 0; replay rejects |
-| Drop interior record, keep hashes | 1 / generic integrity failure | checksum may remain 0; replay rejects |
-| Truncate last record or partial final line | 1 / generic integrity failure | checksum may remain 0; replay rejects |
-| Rehash omission of an independent scope root and its now-unneeded closure | 0 if remaining selection is valid / success | manifest checksum 1 / FAILED |
-| Rehash edited source and matching cloned DB, maintaining valid wire/closure | 0 if semantically valid / success | manifest checksum 1 / FAILED |
-| Rehash reorder or truncate/drop with invalid order/dependencies | 1 / generic integrity failure | changed manifest checksum 1 as well |
-| Rehash valid suffix omission (no remaining required references) | 0 / success | manifest checksum 1 / FAILED |
-| Wrong selector/manifest flag combination | 2 / invalid selectors, bounds or output | do not proceed |
-| Required dependency missing in restored/cloned DB | 1 / generic source/integrity failure | anchor may match; replay rejects |
+| None | 0, prints manifest SHA-256 | 0 |
+| Replace E1 payload data.sha string with another valid SHA; keep hashes | 1/G, events file hash | replay failed |
+| Swap complete E1/E2 lines; keep hashes | 1/G, events file hash | replay failed |
+| Remove complete E2 line; keep hashes | 1/G, events file hash | replay failed |
+| Remove E3 line, or remove final LF and final `}` of E3; keep hashes | 1/G, events file hash | replay failed |
+| Replace E2.previous_sha256 with 64 zeroes; H only, leave terminal old | 1/G, rebuilt events hash/manifest equality, not a supplied-link walker | replay failed |
+| Remove E2, relink E3 to hash(E1); leave original manifest unchanged | 1/G, events file hash | replay failed |
+| Swap E1/E2 in events AND selection; R+H | 1/G, selection source-order validation | replay failed |
+| Remove a referenced checks_observed event and its selection row, leave owning landing_checks_recorded reference intact; R+H | 1/G, exact closure comparison against retained DB | replay failed |
+| Remove that required checks_observed row from a cloned DB only | 1/G, retained source fetch | replay failed |
+| Remove independent E2 from events/selection; R+H, retain valid watermarks | 0, valid smaller scope/closure, demonstrates omission gap | 1/M |
+| Remove E3 from events/selection; R+H | 0, valid suffix omission | 1/M |
+| Change E1 payload data.sha in events and cloned DB, update its selection payload_sha256; R+H | 0, valid wire/source and empty closure | 1/M |
+| Lower watermark as described below; H only | expected 0, same terminal, changed manifest | 1/M |
+| Combine --manifest with --repo | 2, `audit: invalid selectors, bounds or output; see audit --help` | not run |
 
-Generic CLI text in inspected #149 is
-`audit: connection, source, integrity or publication failure`.
-Record it exactly in execution evidence; checksum diagnostics are from the
-checksum tool, not a new OpenMerge exit code. Pin rejection has its own diagnostic.
-Archive edits must not be confused with valid database evidence: demonstrate the
-known omission gap with a genuine exit-0 rehashed case, not just an expected pass.
+The H-only bad-link case intentionally leaves terminal/count unchanged: the DB
+rebuild produces the original chain while the altered stream hash differs.
+Also exercise an edited payload with H but no relinking: rebuilding unchanged DB
+sources fails manifest equality even if supplied file hashes are now consistent.
+
+Terminal-only demonstrator: seed one selected opaque `base_moved` at ID 1 and a
+second `base_moved` ID 2 recorded outside the request interval. Original queue
+watermark is 2; change only that watermark JSONL `id` from 2 to 1, H the watermark
+stream and manifest. All selected IDs remain <=1, ID 1 exists, no owner closure
+uses the changed bound. Expected replay exit 0 with byte-identical events and
+terminal but changed printed manifest digest, so primary comparison exits 1/M.
+Source inspection of `Reader.Replay` in `internal/audit/export.go` confirms it
+accepts an existing saved watermark <= actual max and `build` reproduces that
+saved watermark. This is a code-derived expectation, not an executed DB result;
+10b-2 must demonstrate exit 0 or correct the recipe before claiming acceptance.
+It does not justify terminal-only custody in the meantime.
 
 ## Operator guidance to land with implementation
 
-Use a separate operator database login: CONNECT, schema USAGE and SELECT on
-required audit tables only; no DDL, writes, migration role, service credentials
-or forge credentials. Test denied writes and read-only/repeatable-read snapshots.
+Land the runbook in `docs/operating.md` after #149 merges; record executed
+commands/hashes in a new `docs/research/adr-0008-10b-evidence.md`. Mirror #149: the
+audit binary is **Hold for deployment until period B drains**, including when
+following these operator instructions. Documentation is not a dependency waiver.
+
+Use a separate operator database login: CONNECT, schema USAGE and SELECT only on
+`events` and `queues`; revoke database CREATE/TEMP from PUBLIC as well as the
+role, and revoke PUBLIC schema writes in the owned scratch DB, with no inherited
+grants. Never change shared-cluster defaults or another database for this test. No DDL, writes, migration role,
+service or forge credentials. Test under exactly this role as specified above.
 Backup/restore uses a separately authorized scratch recovery role, not that login.
 The audit command must remain migration-free and make no forge calls.
 
@@ -273,22 +378,18 @@ but depends on 10a and transitively Hold PR 8 and 3a–4 (including the shared-s
 10a-2a change). Do not deploy its binary before dogfood period B drains. Merging
 docs or testing held code in isolation is not deployment permission.
 
-Estimate implementation at 650–950 changed lines including evidence. If the
-reviewable diff exceeds about 800 lines, propose two slices before implementation:
-10b-1 retention/lifecycle/restore proofs (350–500); 10b-2 external anchor tamper
-acceptance and operator guidance/evidence (300–450). Each carries its own
-acceptance evidence; no partial slice claims 10b or Part 3 complete. Final paths
+Estimate implementation at 900–1,200 changed lines including the offline verifier
+and evidence; remeasure after #149 merges. If the reviewable diff exceeds about 800 lines, use the proposed two-slice plan:
+10b-1 retention/lifecycle/restore/role/config proofs (400–550); 10b-2 offline
+anchor/overlap verifier, tamper acceptance and operator guidance (500–650).
+Each carries its own acceptance evidence; no partial slice claims 10b or Part 3 complete. Final paths
 must avoid concurrent #149 edits until it merges.
 
 ## Questions for the maintainer
 
-1. Approve the documented full-manifest checksum procedure without a new CLI,
-   and requiring manifest custody even when a terminal digest is also retained?
-2. Who owns independent anchor storage/signing and recovery verification, and
-   what cadence, retention duration and access separation will be adopted?
-3. Approve the >800-line implementation split above, with size rechecked after
-   #149 merges and its final v1/CLI contract is confirmed?
-4. Which lifecycle fixture/driver should exercise supported retirement and
-   mode transitions without bypassing production persistence paths?
-5. Confirm PR 11 owns the executed real sandbox journal repeat and the named
-   operator schedules; fixture evidence alone leaves Part 3 incomplete.
+1. Who owns independent anchor storage/signing and recovery verification, and
+   what custody cadence, lag bound, retention duration and access separation
+   will be adopted?
+2. Confirm the proposed >800-line implementation split and revised estimates,
+   with size rechecked after #149 merges. The mechanism, lifecycle driver and
+   ADR-assigned PR 11 real-journal boundary are decisions above, not open scope.
