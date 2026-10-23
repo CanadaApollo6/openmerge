@@ -69,7 +69,11 @@ func TestAuditSelectOnlyCommand(t *testing.T) {
 		t.Skip("shared test Postgres not configured")
 	}
 	u, err := url.Parse(raw)
-	if err != nil || u.Hostname() != "localhost" || (u.Port() != "54329" && !(u.Port() == "5432" && os.Getenv("CI") == "true" && os.Getenv("GITHUB_ACTIONS") == "true")) {
+	if err != nil {
+		t.Fatal("scratch endpoint required")
+	}
+	allowedPort := u.Port() == "54329" || u.Port() == "5432" && os.Getenv("CI") == "true" && os.Getenv("GITHUB_ACTIONS") == "true"
+	if u.Hostname() != "localhost" || !allowedPort {
 		t.Fatal("scratch endpoint required")
 	}
 	conn, err := pgx.Connect(t.Context(), raw)
