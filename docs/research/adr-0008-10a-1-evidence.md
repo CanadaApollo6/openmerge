@@ -19,7 +19,7 @@ verdicts, CLI and real-git evidence acceptance. It can reuse the snapshot-local
 producer/builder and existing role/reference fields. Existing v1 input bytes
 stay fixed; a different closure selection creates its own chain.
 
-## Acceptance
+## Pre-review acceptance (archived)
 
 The committed verifier returned **PASS** on the tested implementation.
 
@@ -184,8 +184,142 @@ recorded/not_recorded references with relationships, and the hashed
 `dependency_boundaries.jsonl` stream. 10a-2 may populate these fields only;
 other shape changes require a serialization-version bump.
 
-Round-1 verification and measured evidence are recorded after the clean
-implementation acceptance run. The verifier compares against main `59194fd`,
-checks goldens independently with Python Decimal, runs overlay mutations without
-editing the worktree, exercises the CI-shaped DSN against shared test Postgres,
-and includes queue growth and cumulative-byte page proofs.
+The clean full verifier returned **PASS** on production revision
+`45218fe1e8c6e798545b882d21a7930674dab792`, compared with clean main `59194fd`.
+The final follow-up changes only test assertions, the verifier's completeness
+mutation, and documentation; production Go files remain identical to that
+revision. The strengthened timestamp-spelling and empty-queue watermark tests
+were separately rerun 20/20 under the same race/GOMAXPROCS/burner conditions.
+
+### Round-1 acceptance
+
+- `make check`: **0**, lint **0 issues**, short race suite and build pass.
+- Full audit race suite (including non-short cases): **0**, **70.438 s**.
+- All **25** new or changed top-level tests passed **20/20** with
+  `GOMAXPROCS=1 -race -count=20`; elapsed **692.802 s**. This includes queue-growth
+  and large-payload non-short tests. The unchanged 5,000/20,000-event growth test
+  ran in the full race suite.
+- The two strengthened tests passed a further **20/20**, **3.973 s**, with eight
+  freshly owned burners. Both runs verify all eight burners alive with positive
+  CPU deltas and terminate/reap only their own processes. Original and
+  supplemental burner PIDs are absent after their runs.
+- All **15/15** final overlay mutations are killed by behavioral test failures,
+  with no build failures counted as kills. The clean primary run killed 14;
+  the supplemental run reran those 14 and added the empty-queue completeness
+  mutation. The committed verifier reproduces all 15.
+- Independent Python Decimal verification: **11/11** canonical vectors and both
+  complete four-stream export fixtures reproduce exact bytes, hashes, chains,
+  and manifest self-hashes. The supplement reran this check and lint (**0**).
+- Strict replay at `GOMEMLIMIT=6GiB`: **2,159/2,159** identical actions,
+  structural states, snapshot hashes and boundary checkpoints; **8,676** probes;
+  no non-allowlisted differences; gates 2/4 and mandatory self-tests pass.
+- Simulator **146/146** identical blocks; normalized SHA-256
+  `a7e088668bc1c6b2159a043aa40f2aa49487625bbb3eeb418cb3c8df39751ca7`.
+- Contracts **90/90** identical. GitHub projections and CLI goldens are identical;
+  Stage A exact-output and legacy line-zero diagnostics pass on both trees.
+- MixedGithubBytes remains
+  `cc95a654054e61e816120f2e57b9e19ffea3ff4855c32f4f5c055c4e99b913ee`.
+- All **211/211** existing fixtures are byte-identical, including **105** wire
+  fixtures and **90** registry fixtures. Only this package's unreleased v1
+  goldens were finalized. No Makefile/CI/Dockerfile/project-test-flag, existing
+  schema/index, queue event/wire/YAML/forge, shared formatter, or Stage A retry
+  behavior changes were made.
+
+### Per-item resolution and regression evidence
+
+1. **CI DSN guard (P1):** test helper accepts localhost at any port, database path and options; Python verifier retains the stricter sandbox guard. `TestSourceDatabaseURLGuardAllowsLocalhostPorts` kills the fixed-port mutation. All four originally failing DB tests run with a `:5432` authority and `port=54329` sandbox route override.
+2. **Queue discovery growth (P2):** one index-eligible ID/key-only query, then Go UTF-8 byte sorting; no repeated collation/page scan. `TestSourceQueueIdentityQueryOnce` kills restoration of the original rescanning implementation; `TestSourceQueueGrowthPlan` records EXPLAIN ANALYZE/BUFFERS at 32/512/2048/8192 matching queues.
+3. **Forged watermarks (P2):** validates every ID/key mapping against snapshot inventory, unique bytewise order and complete queue coverage, retained max, positive watermark existence in its own queue, and each selected event's ID bound. `TestSourceReplayRejectsForgedWatermarks` rejects below-selected, unknown queue, swapped IDs, forged keys, duplicates, order and missing queues, including an event-free queue whose absence cannot be detected from the selection. The completeness-only mutation is independently killed. `TestReplayRejectsWatermarkIDFromAnotherQueue` also rejects an event ID belonging only to a different queue. The validation-bypass mutant is killed.
+4. **Pagination/collation proof (P2):** ICU-collated base/lane columns have a demonstrably different order from byte order; every fixture queue has events straddling event pages, and queue keys vary both components. `TestSourcePagingAcrossQueuesAndCollation` kills duplicate/skipped queue-boundary, lane-before-base, database-order and inclusive-event-keyset mutants. The old queue keyset code is removed; duplicate/skip mutations target equivalent inventory boundary mistakes.
+5. **Final v1 extensibility (P2):** dependency role, typed relationship/status references (including historical `not_recorded`), and manifest boundary stream/hash are specified now. `TestCanonicalReferenceShapeGolden`, `TestCanonicalEnvelopeAndManifestShapeGolden`, `TestExportV1Golden`, and `TestV1DependencyAndHistoricalAbsenceReplay` fix the shape and prove populated strict replay and rejection of nested unknown fields. Dependency-role and historical-absence rejection mutations are killed. 10a-2 may populate these fields/kinds only; any other serialization change requires a version bump.
+6. **Line safety:** `TestCanonicalV1EscapesLineSeparators` and canonical goldens fix lowercase escapes for U+0085/U+2028/U+2029. The independent Python Decimal encoder checks all 11 vectors, exact four-stream files, chains and manifest self-hashes. Reproduce via `independent_goldens()` in the committed verifier (no Go serializer used to derive expected bytes).
+7. **Canonical request timestamps:** resolve normalizes nonempty bounds to UTC with exactly six fractional digits and `Z`, after the microsecond ceiling. `TestSourceEquivalentMicrosecondBoundsHaveIdenticalManifest` proves identical bytes for equivalent effective bounds, UTC-offset spellings and extra fractional zeroes; `TestSourceSubmicrosecondBoundaries` also covers offset spellings. Equal normalized bounds represent an empty interval.
+8. **Submicrosecond ceiling:** added `from=.000000001Z, until=.000002Z`, expected one event. `TestSourceSubmicrosecondBoundaries` kills truncation (two events).
+9. **Input-file hash proof:** `TestSourceReplayRejectsEventCorruptionWithoutManifestRehash` changes events.jsonl alone, preserving manifest bytes; removing the input-file comparison is killed.
+10. **Durability:** publication syncs files and staging, atomically renames without replacement, then syncs the parent before returning success. The design now states local crash durability and the visible-target possibility if parent sync fails; no backup/anchoring claim is added.
+11. **Memory:** both export/replay retain at most 32 events and 4 MiB cumulative payload bytes per page, plus at most one bounded lookahead payload and per-record canonical copies. `TestSourceLargePayloadPagesBounded` streams/replays 33 payloads of 1,398,131 bytes, requiring at least 17 reads in both directions. Removing SQL and Go byte bounds is killed. `TestSourcePageRejectsOversizedBeforeTransfer` proves SQL returns a rejection marker instead of transferring an oversized payload; its transfer-guard mutation is killed. `TestSourcePageQueriesBoundCandidateBeforeSizing` also asserts the limited candidate precedes sizing and only one payload::text conversion.
+12. **Nits:** unsupported rename EINVAL/ENOSYS/EOPNOTSUPP maps to a distinct sanitized error (`TestPublicationSanitizedUnsupportedFilesystem`); `sourceLess` delegates queue comparison to `keyLess`; materialized candidate projections compute payload::text once per row.
+
+### Queue-count growth and payload budget
+
+`TestSourceQueueGrowthPlan` measures the one identity-query access path, with
+seven noise queues per matching queue. Full EXPLAIN (ANALYZE, BUFFERS) output is
+in `foundation-full/stdout.log` of the primary artifact directory.
+
+```text
+matching / total queues   SQL execution    access path
+32 / 256                 0.073 ms         one small-table sequential scan
+512 / 4,096              0.071 ms         bitmap identity-index scan
+2,048 / 16,384            0.236 ms         bitmap identity-index scan
+8,192 / 65,536            0.970 ms         bitmap identity-index scan
+```
+
+Each plan has one scan loop; the larger plans have one identity-index search.
+The query returns only matching ID/base/lane identities, then Go sorts by UTF-8
+bytes. Discovery never repeats that query per page. The one-query regression
+kills restoration of the reviewer's original repeated COLLATE scan. These are
+single-run identity SQL execution times; indexed per-queue watermark lookups
+and event serialization are separate work.
+
+`TestSourceLargePayloadPagesBounded` exports and replays **33** payloads of
+**1,398,131 bytes** each. A retained page can hold only **two** such payloads
+within the **4,194,304-byte** budget, so both directions require at least **17**
+reads. Removing the SQL and Go byte checks fails this test. A query may return
+one bounded lookahead payload, which is discarded and reread on the next page;
+canonical copies are limited per record. Oversized values are replaced with a
+rejection marker before client transfer. The count cap remains 32.
+
+The original streaming growth check remains bounded: 5,000 / 20,000 events have
+post-GC heaps **537,008 / 540,832 bytes**, sampled export peaks
+**3,761,008 / 3,779,856 bytes**, and sampled replay peaks
+**3,696,320 / 3,710,912 bytes**. Export times were **2.752 / 15.050 s**.
+
+### Main-versus-branch package timings
+
+With pinned Go, the shared flock, `GOFLAGS=-p=2`, `GOMEMLIMIT=4GiB`,
+`GOMAXPROCS=2`, no owned burners, and `go test -race -short -count=1`:
+
+- `internal/audit`: absent on main; **2.442 s** on the branch.
+- `internal/serve`: **336.945 s** on main; **335.749 s** on the branch.
+
+The additional serialized all-package race-short passes both exit **0**:
+`internal/serve` **336.438 / 333.721 s** (main/branch), and branch audit
+**2.403 s**. Go-reported package elapsed times exclude compilation and waiting
+for the flock. These are single-run measurements; no speedup is inferred.
+
+### Reproduce and inspect round 1
+
+```sh
+export GOROOT=/home/riels/.local/share/mise/installs/go/1.27.3
+export PATH="$GOROOT/bin:$PATH"
+export OPENMERGE_TEST_DATABASE_URL='postgres://postgres@localhost:54329/postgres?sslmode=disable'
+python3 scripts/verify-adr0008-10a-1.py \
+  --baseline /home/riels/.cache/openmerge-146-r1-main \
+  --out /home/riels/.cache/openmerge-146-r1-rerun
+```
+
+The baseline must be clean main `59194fd`. The verifier retains the stricter
+Python sandbox DSN guard before any subprocess, while Go test helpers accept
+localhost ports and options like the store tests. Its CI-shaped probe uses a
+5432 authority with the fixed 54329 sandbox route override and runs all four
+originally failing source tests. It creates no database, initializes no server,
+and uses only isolated schemas on shared test Postgres.
+
+Primary artifacts:
+`/home/riels/.cache/openmerge-146-r1-acceptance-final/`.
+Supplementary test/mutation/lint proof:
+`/home/riels/.cache/openmerge-146-r1-supplement/`.
+Both contain summaries and content-hash manifests; the primary also contains
+raw plans, package logs, strict replay, normalized simulator output and the
+independent burner observer. The supplemental summary hashes the exact final
+test and verifier files and confirms the production diff is empty.
+
+Primary summary SHA-256: `274e4781f5f0178db7f3578067daec6f4a432e643a1b0e9d50c9daab347b0a46`.
+Primary artifact manifest SHA-256: `f73a8bcc5769ab0d72a8171cda8b441e54c12a45cd60bbeb6382d47189acfbf6`.
+Supplement summary SHA-256: `33d243486359962dfc36a859b4eb0b6c90356465fe8d1d5770964d2fe1ed08a1`.
+Supplement artifact manifest SHA-256: `d0132869fb485c9c675f1c9ea7d33a780e5ce5c1159bf8a91d4078515106f33f`.
+
+The live OpenMerge DB, systemd units, `openmerge/*` refs, live status API and
+Smart-Data-Ohio were untouched. Tests and verification made no real GitHub API
+calls. Publication is limited to the requested branch and PR body; no deployment,
+PR comment, review request, merge or queue action.

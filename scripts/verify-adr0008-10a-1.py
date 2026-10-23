@@ -93,6 +93,7 @@ def mutation_proofs(measured, out):
 
     add("restore-port-54329-guard", "source_test.go", 'u.Hostname() != "localhost"', 'u.Hostname() != "localhost" || u.Port() != "54329"', "^TestSourceDatabaseURLGuardAllowsLocalhostPorts$")
     add("remove-oversized-transfer-guard", "source.go", "CASE WHEN octet_length(payload)<=4194304 THEN payload ELSE NULL END", "payload", "^TestSourcePageRejectsOversizedBeforeTransfer$")
+    add("omit-empty-queue-watermark-check", "export.go", "if len(waters) != len(identities) {", "if false && len(waters) != len(identities) {", "^TestSourceReplayRejectsForgedWatermarks$/^missing$")
     paging = "^TestSourcePagingAcrossQueuesAndCollation$"
     add("duplicate-queue-boundary", "source.go", "for i := range inventory {", "inventory = append(inventory[:pageSize], inventory[pageSize-1:]...)\nfor i := range inventory {", paging)
     add("skip-queue-boundary", "source.go", "for i := range inventory {", "inventory = append(inventory[:pageSize], inventory[pageSize+1:]...)\nfor i := range inventory {", paging)

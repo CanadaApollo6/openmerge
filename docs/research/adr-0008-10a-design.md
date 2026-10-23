@@ -148,11 +148,14 @@ one explicit repeatable-read, read-only transaction. Repository names are exact
 stored identities (no locale/case folding); an omitted installation must resolve
 to exactly one installation. Queue discovery uses the queues identity index,
 without consulting the live canonical inventory. Queue key components are
-compared by UTF-8 bytes in Go. One identity-index-backed query reads only IDs and
+compared by UTF-8 bytes in Go. One identity-index-eligible query reads only IDs and
 key components for the repository, then sorts that small inventory in memory.
-There is no queue keyset rescan or database collation dependency. Event pages
+There is no queue keyset rescan or database collation dependency. Retained event pages
 contain at most 32 rows and at most 4 MiB of cumulative raw payload bytes; replay
-uses the same byte bound. Each event payload is converted to text once per query. The per-queue snapshot maximum ID is a scan bound, not
+uses the same retained-page byte bound. One bounded lookahead payload may be
+returned and reread on the next page; canonical copies remain bounded per record.
+Oversized values return a rejection marker before client transfer. Each event
+payload is converted to text once per query. The per-queue snapshot maximum ID is a scan bound, not
 a reusable source selection. Time windows compare database `recorded_at`; both query bounds are rounded
 up to the next microsecond when needed, preserving exact `[from, until)`
 semantics for a database whose timestamp values are discrete microseconds.

@@ -162,12 +162,13 @@ func TestSourceReplayRejectsForgedWatermarks(t *testing.T) {
 		insert(t, f.admin, q.id, "2026-10-22T12:00:00Z")
 		insert(t, f.admin, q.id, "2026-10-22T12:00:01Z")
 	}
+	f.queue(t, 3, "empty")
 	original := filepath.Join(t.TempDir(), "original")
 	_, e := f.reader.Export(t.Context(), req(), original)
 	must(t, e)
 	watermarks := readWatermarks(t, original)
 	selections := readSelections(t, original)
-	if len(watermarks) != len(queues) || len(selections) != len(queues)*2 {
+	if len(watermarks) != len(queues)+1 || len(selections) != len(queues)*2 {
 		t.Fatalf("fixture rows watermarks=%d selections=%d", len(watermarks), len(selections))
 	}
 	minSelected := make(map[int64]int64, len(queues))
@@ -309,4 +310,16 @@ func TestSourceEquivalentMicrosecondBoundsHaveIdenticalManifest(t *testing.T) {
 		t.Fatalf("equivalent timestamp bounds produced different manifests:\n%+v\n%+v", first, second)
 	}
 	manifests(t, firstDir, secondDir)
+	for _, spellings := range []Request{
+		{Repository: "owner/repo", From: "2026-10-22T07:00:00.000001-05:00", Until: "2026-10-22T07:00:00.000002-05:00"},
+		{Repository: "owner/repo", From: "2026-10-22T12:00:00.000001000Z", Until: "2026-10-22T12:00:00.000002000Z"},
+	} {
+		spellingDir := filepath.Join(t.TempDir(), "spelling")
+		spellingManifest, e := f.reader.Export(t.Context(), spellings, spellingDir)
+		must(t, e)
+		if spellingManifest != second {
+			t.Fatal("equivalent instant spelling changed canonical manifest")
+		}
+		manifests(t, secondDir, spellingDir)
+	}
 }
