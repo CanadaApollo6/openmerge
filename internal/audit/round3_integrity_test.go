@@ -83,7 +83,9 @@ func TestReplayRejectsResolvedSettlementRewrittenAsAbsent(t *testing.T) {
 		if !found {
 			t.Fatal("fixture has no landed reference")
 		}
-		selections[0].References = normalizeReferences(selections[0].References)
+		var err error
+		selections[0].References, err = normalizeReferences(selections[0].References)
+		must(t, err)
 	})
 	if _, err = f.reader.Replay(t.Context(), filepath.Join(dir, "manifest.json"), filepath.Join(t.TempDir(), "replay")); err != errIntegrity {
 		t.Fatalf("got %v want integrity rejection", err)
@@ -120,8 +122,8 @@ func TestReplayUsesItsOwnReaderSnapshot(t *testing.T) {
 func TestValidResolutionRequiresExactReferenceAndDependencySets(t *testing.T) {
 	owner := Source{QueueID: 1, ID: 8, Type: "landing_started"}
 	dependency := Source{QueueID: 1, ID: 7, Type: "landed"}
-	ref := Reference{Kind: "settlement", Relation: "relied_on", Status: "recorded", Owner: EvidenceOwner{QueueID: 1, EventID: owner.ID}, ExpectedType: "landed", Identity: "batch", Source: &dependency}
-	absence := Reference{Kind: "settlement", Relation: "relied_on", Status: "not_recorded", Owner: EvidenceOwner{QueueID: 1, EventID: owner.ID}, ExpectedType: "landing_abandoned", Identity: "batch"}
+	ref := Reference{Kind: "settlement", Relation: "relied_on", Status: "recorded", Owner: EvidenceOwner{QueueID: 1, EventID: owner.ID}, ExpectedType: "landed", Identity: evidenceIdentity("batch"), Source: &dependency}
+	absence := Reference{Kind: "settlement", Relation: "relied_on", Status: "not_recorded", Owner: EvidenceOwner{QueueID: 1, EventID: owner.ID}, ExpectedType: "landing_abandoned", Identity: evidenceIdentity("batch")}
 	dep := sourceEvent{source: dependency, payload: []byte(`{"type":"landed"}`)}
 	other := sourceEvent{source: Source{QueueID: 1, ID: 6, Type: "landing_abandoned"}, payload: []byte(`{"type":"landing_abandoned"}`)}
 	cases := []struct {
@@ -147,7 +149,7 @@ func TestValidResolutionRequiresExactReferenceAndDependencySets(t *testing.T) {
 }
 
 func TestValidReferencesRejectsInventedAbsenceAndDuplicates(t *testing.T) {
-	ref := Reference{Kind: "settlement", Relation: "relied_on", Status: "not_recorded", Owner: EvidenceOwner{QueueID: 1, EventID: 8}, ExpectedType: "landing_started", Identity: "batch"}
+	ref := Reference{Kind: "settlement", Relation: "relied_on", Status: "not_recorded", Owner: EvidenceOwner{QueueID: 1, EventID: 8}, ExpectedType: "landing_started", Identity: evidenceIdentity("batch")}
 	if !validReferences([]Reference{ref}) {
 		t.Fatal("valid historical absence rejected")
 	}

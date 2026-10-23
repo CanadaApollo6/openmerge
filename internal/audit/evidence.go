@@ -55,25 +55,31 @@ func evidenceKinds(typ string) []string {
 	return []string{}
 }
 
-// References contain only JSON-safe scalar fields; marshaling cannot fail.
 // References use canonical JSON byte order as a total comparator. All fields,
 // including complete owner/source identities, participate; equal bytes dedup.
-func normalizeReferences(refs []Reference) []Reference {
-	sort.Slice(refs, func(i, j int) bool {
-		a := referenceBytes(refs[i])
-		b := referenceBytes(refs[j])
-		return bytes.Compare(a, b) < 0
-	})
-	out := refs[:0]
-	var previous []byte
-	for _, r := range refs {
-		b := referenceBytes(r)
-		if !bytes.Equal(b, previous) {
-			out = append(out, r)
-			previous = b
+// Each reference is encoded once. Identities copy payload strings, so canonical
+// size limits can reject one; that is a sanitized error, never a panic.
+func normalizeReferences(refs []Reference) ([]Reference, error) {
+	type keyed struct {
+		ref Reference
+		raw []byte
+	}
+	items := make([]keyed, len(refs))
+	for i, r := range refs {
+		raw, err := encode(r)
+		if err != nil {
+			return nil, errCanonical
+		}
+		items[i] = keyed{r, raw}
+	}
+	sort.Slice(items, func(i, j int) bool { return bytes.Compare(items[i].raw, items[j].raw) < 0 })
+	out := make([]Reference, 0, len(items))
+	for i, item := range items {
+		if i == 0 || !bytes.Equal(item.raw, items[i-1].raw) {
+			out = append(out, item.ref)
 		}
 	}
-	return out
+	return out, nil
 }
 
 type evidenceResolver struct {
@@ -192,9 +198,11 @@ func resolveEvidenceAt(ctx context.Context, tx pgx.Tx, event sourceEvent, maxID 
 		if !matched {
 			return nil, nil, errSource
 		}
-		// The latest pin before this decision governs requiredness. Future
-		// activation and historical openmerge pins before rollback cannot govern it.
-		pin, err := r.lookup("authority", "policy_authority_applied", "governing", `id=(SELECT max(id) FROM events WHERE queue_id=$1 AND type=$2 AND id<$3)`, false, event.source.ID)
+		// The latest pin before this decision governs requiredness, as with the
+		// store's latestAuthorityPin at write time (pins are written validated and
+		// paired with their config). Future activation and openmerge pins before a
+		// rollback cannot govern it.
+		pin, err := r.lookup("authority", "policy_authority_applied", evidenceIdentity("governing"), `id=(SELECT max(id) FROM events WHERE queue_id=$1 AND type=$2 AND id<$3)`, false, event.source.ID)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -209,7 +217,9 @@ func resolveEvidenceAt(ctx context.Context, tx pgx.Tx, event sourceEvent, maxID 
 			// A github pin records rollback, not applicable openmerge evidence.
 			r.refs[len(r.refs)-1].Status = "not_recorded"
 			r.refs[len(r.refs)-1].Source = nil
-			r.sources = r.sources[:0]
+			if pin != nil {
+				r.sources = r.sources[:len(r.sources)-1]
+			}
 		}
 		if a := d.Approval; a != nil {
 			b := a.Basis
@@ -225,7 +235,7 @@ func resolveEvidenceAt(ctx context.Context, tx pgx.Tx, event sourceEvent, maxID 
 				return nil, nil, err
 			}
 			revision := rv.(queue.ChangeRevisionObserved)
-			batch, err := r.lookup("check", "batch_started", d.BatchID, `payload->'data'->>'batch_id'=$3 AND id<$4`, true, d.BatchID, event.source.ID)
+			batch, err := r.lookup("check", "batch_started", evidenceIdentity(d.BatchID), `payload->'data'->>'batch_id'=$3 AND id<$4`, true, d.BatchID, event.source.ID)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -245,7 +255,7 @@ func resolveEvidenceAt(ctx context.Context, tx pgx.Tx, event sourceEvent, maxID 
 
 			args := basisArgs(b)
 			args = append(args, a.EligibilityReadID, event.source.ID)
-			if _, err = r.lookup("eligibility", "approval_eligibility_observed", a.EligibilityReadID, basisPredicate(3)+` AND payload->'data'->'basis'->>'read_id'=$6 AND id<$7`, true, args...); err != nil {
+			if _, err = r.lookup("eligibility", "approval_eligibility_observed", evidenceIdentity(a.EligibilityReadID), basisPredicate(3)+` AND payload->'data'->'basis'->>'read_id'=$6 AND id<$7`, true, args...); err != nil {
 				return nil, nil, err
 			}
 			id := cp.ReceiptIdentity(a.Identity)
@@ -303,7 +313,7 @@ func resolveEvidenceAt(ctx context.Context, tx pgx.Tx, event sourceEvent, maxID 
 				if src.Receipt != nil {
 					args := basisArgs(src.Basis)
 					args = append(args, src.Receipt.Basis.ReadID, src.Source.ID, event.source.ID)
-					receipt, err := r.lookup("receipt", "approval_receipt_recorded", src.Source.ID, basisPredicate(3)+` AND payload->'data'->'basis'->>'read_id'=$6 AND payload->'data'->>'comment_id'=$7 AND id<$8`, true, args...)
+					receipt, err := r.lookup("receipt", "approval_receipt_recorded", evidenceIdentity(string(src.Source.Channel), src.Source.ID), basisPredicate(3)+` AND payload->'data'->'basis'->>'read_id'=$6 AND payload->'data'->>'comment_id'=$7 AND id<$8`, true, args...)
 					if err != nil {
 						return nil, nil, err
 					}
@@ -393,7 +403,7 @@ func resolveEvidenceAt(ctx context.Context, tx pgx.Tx, event sourceEvent, maxID 
 			batch = s.BatchID
 		}
 		r.owner.BatchID = batch
-		start, err := r.lookup("settlement", "landing_started", batch, `payload->'data'->>'batch_id'=$3 AND id=(SELECT max(id) FROM events WHERE queue_id=$1 AND type=$2 AND payload->'data'->>'batch_id'=$3 AND id<$4)`, false, batch, event.source.ID)
+		start, err := r.lookup("settlement", "landing_started", evidenceIdentity(batch), `payload->'data'->>'batch_id'=$3 AND id=(SELECT max(id) FROM events WHERE queue_id=$1 AND type=$2 AND payload->'data'->>'batch_id'=$3 AND id<$4)`, false, batch, event.source.ID)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -410,7 +420,11 @@ func resolveEvidenceAt(ctx context.Context, tx pgx.Tx, event sourceEvent, maxID 
 	for i := range r.refs {
 		r.refs[i].Owner = r.owner
 	}
-	return normalizeReferences(r.refs), r.sources, nil
+	refs, err := normalizeReferences(r.refs)
+	if err != nil {
+		return nil, nil, err
+	}
+	return refs, r.sources, nil
 }
 
 func (r *evidenceResolver) attemptRelations(d queue.LandingDecisionRecorded) error {
@@ -460,7 +474,7 @@ func (r *evidenceResolver) settlement(batch, attempt string) error {
 	}
 
 	for _, typ := range []string{"landed", "landing_abandoned"} {
-		if _, err := r.lookup("settlement", typ, batch, `payload->'data'->>'batch_id'=$3 AND id>$4 AND ($5::bigint=0 OR id<$5)`, false, batch, start, next); err != nil {
+		if _, err := r.lookup("settlement", typ, evidenceIdentity(batch), `payload->'data'->>'batch_id'=$3 AND id>$4 AND ($5::bigint=0 OR id<$5)`, false, batch, start, next); err != nil {
 			return err
 		}
 	}
@@ -545,9 +559,10 @@ func (r *evidenceResolver) checkHistory(c queue.LandingChecksRecorded) error {
 			}
 		}
 
-		// The first later event ID wins, even when run/attempt ties. It cannot
-		// replace the governing observation. Explicitly identify the retry boundary, which cannot
-		// replace the governing observation even when its result changes.
+		// Record the retry boundary: the lowest event ID after the decision that
+		// observes this check. Run/attempt order is irrelevant here (min(id) only),
+		// and the boundary never replaces the governing observation, even when its
+		// result differs.
 		later, err := r.lookup("check", "checks_observed", evidenceIdentity(check.Source, check.Name, "later"), `payload->'data'->>'batch_id'=$3 AND payload->'data'->>'tested_sha'=$4 AND id=(SELECT min(id) FROM events WHERE queue_id=$1 AND type=$2 AND payload->'data'->>'batch_id'=$3 AND payload->'data'->>'tested_sha'=$4 AND id>$5 AND EXISTS (SELECT 1 FROM jsonb_array_elements(payload->'data'->'runs') run WHERE run->>'name'=$6 AND run->>'source'=$7))`, false, c.BatchID, c.TestedSHA, r.event.source.ID, check.Name, check.Source)
 		if err != nil {
 			return err
@@ -563,8 +578,9 @@ func validReferences(refs []Reference) bool {
 	if refs == nil {
 		return false
 	}
+	var previous []byte
 	for i, r := range refs {
-		if r.Owner.QueueID <= 0 || r.Owner.EventID <= 0 || r.ExpectedType == "" || r.Identity == "" || r.Relation != "relied_on" && r.Relation != "excluded_later" {
+		if r.Owner.QueueID <= 0 || r.Owner.EventID <= 0 || r.ExpectedType == "" || !validIdentity(r.Identity) || r.Relation != "relied_on" && r.Relation != "excluded_later" {
 			return false
 		}
 		kinds := evidenceKinds(r.ExpectedType)
@@ -583,13 +599,11 @@ func validReferences(refs []Reference) bool {
 		default:
 			return false
 		}
-		if i > 0 {
-			a := referenceBytes(refs[i-1])
-			b := referenceBytes(r)
-			if bytes.Compare(a, b) >= 0 {
-				return false
-			}
+		raw, err := encode(r)
+		if err != nil || i > 0 && bytes.Compare(previous, raw) >= 0 {
+			return false
 		}
+		previous = raw
 	}
 	return true
 }
@@ -637,7 +651,7 @@ func (r *evidenceResolver) startRelations(start queue.LandingStarted) error {
 		return err
 	}
 	for _, item := range items {
-		if _, err := r.lookup("settlement", "landing_decision_recorded", fmt.Sprint(item.DecisionEventID), `id=$3`, true, item.DecisionEventID); err != nil {
+		if _, err := r.lookup("settlement", "landing_decision_recorded", evidenceIdentity(fmt.Sprint(item.DecisionEventID)), `id=$3`, true, item.DecisionEventID); err != nil {
 			return err
 		}
 	}
@@ -645,7 +659,7 @@ func (r *evidenceResolver) startRelations(start queue.LandingStarted) error {
 }
 
 func (r *evidenceResolver) checkBasis(c queue.LandingChecksRecorded) error {
-	batch, err := r.lookup("check", "batch_started", c.BatchID, `payload->'data'->>'batch_id'=$3 AND id<$4`, true, c.BatchID, r.event.source.ID)
+	batch, err := r.lookup("check", "batch_started", evidenceIdentity(c.BatchID), `payload->'data'->>'batch_id'=$3 AND id<$4`, true, c.BatchID, r.event.source.ID)
 	if err != nil {
 		return err
 	}
@@ -683,21 +697,30 @@ func (r *evidenceResolver) checkBasis(c queue.LandingChecksRecorded) error {
 	return nil
 }
 
-// JSON string tuples preserve component boundaries even for slashes and suffixes.
+// Every identity is a non-empty JSON string tuple, so component boundaries
+// survive slashes and suffixes, and arity distinguishes ["b"] from ["b","a"].
+// HTML escaping is disabled: it would only inflate payload-derived strings.
 func evidenceIdentity(parts ...string) string {
-	raw, _ := json.Marshal(parts) // A string tuple is always JSON encodable.
-	return string(raw)
+	var b strings.Builder
+	e := json.NewEncoder(&b)
+	e.SetEscapeHTML(false)
+	_ = e.Encode(parts) // A string slice is always JSON encodable.
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
-func referenceBytes(ref Reference) []byte {
-	raw, err := encode(ref)
-	if err != nil {
-		panic("audit: invalid internal reference encoding")
+// validIdentity accepts only evidenceIdentity's exact encoding of >=1 strings.
+func validIdentity(identity string) bool {
+	var parts []string
+	if json.Unmarshal([]byte(identity), &parts) != nil || len(parts) == 0 {
+		return false
 	}
-	return raw
+	return evidenceIdentity(parts...) == identity
 }
 
-// Run identity precedes normalized attempt; event ID breaks equal tuples in SQL.
+// Within one event, the greatest run ID wins, then the greatest normalized
+// attempt (0 means 1). An exactly equal tuple keeps the first run; the codec
+// rejects such duplicates. Across events, checkObservationPredicate compares
+// the same per-event tuple, then the greater event ID wins an equal tuple.
 func newestCheckRun(runs []queue.CheckRun, name, source string) *queue.CheckRun {
 	var newest *queue.CheckRun
 	for _, run := range runs {

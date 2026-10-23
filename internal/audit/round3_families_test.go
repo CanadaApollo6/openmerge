@@ -100,11 +100,11 @@ func round3ExpectedReferences(t *testing.T, fx *round3EvidenceFixture) []round3W
 	t.Helper()
 	d, a := fx.decision, fx.decision.Approval
 	wants := []round3WantReference{
-		{"authority", "policy_authority_applied", "governing", fx.pinID}, {"classification", "change_revision_observed", evidenceIdentity(string(a.Basis.ChangeID), fmt.Sprint(a.Basis.Revision)), fx.ids["change_revision_observed"][0]},
-		{"check", "batch_started", d.BatchID, fx.ids["batch_started"][0]}, {"eligibility", "approval_eligibility_observed", a.EligibilityReadID, fx.freshID},
+		{"authority", "policy_authority_applied", evidenceIdentity("governing"), fx.pinID}, {"classification", "change_revision_observed", evidenceIdentity(string(a.Basis.ChangeID), fmt.Sprint(a.Basis.Revision)), fx.ids["change_revision_observed"][0]},
+		{"check", "batch_started", evidenceIdentity(d.BatchID), fx.ids["batch_started"][0]}, {"eligibility", "approval_eligibility_observed", evidenceIdentity(a.EligibilityReadID), fx.freshID},
 		{"classification", "change_classified", evidenceIdentity(a.Identity.ChangeID, fmt.Sprint(a.Identity.Revision), fmt.Sprint(a.Identity.Generation)), fx.ids["change_classified"][0]}, {"accountability", "change_accountability_observed", evidenceIdentity(string(a.Basis.ChangeID), fmt.Sprint(a.Basis.Revision)), fx.ids["change_accountability_observed"][0]},
 		{"check", "landing_checks_recorded", evidenceIdentity(d.BatchID, d.AttemptID), fx.checksID}, {"settlement", "landing_started", evidenceIdentity(d.BatchID, d.AttemptID), fx.startID},
-		{"settlement", "landed", d.BatchID, 0}, {"settlement", "landing_abandoned", d.BatchID, 0},
+		{"settlement", "landed", evidenceIdentity(d.BatchID), 0}, {"settlement", "landing_abandoned", evidenceIdentity(d.BatchID), 0},
 	}
 	for _, src := range a.Sources {
 		if src.Receipt == nil {
@@ -132,7 +132,7 @@ func round3ExpectedReferences(t *testing.T, fx *round3EvidenceFixture) []round3W
 		if id == 0 {
 			t.Fatal("fixture receipt source missing", src.Source)
 		}
-		wants = append(wants, round3WantReference{"receipt", "approval_receipt_recorded", src.Source.ID, id})
+		wants = append(wants, round3WantReference{"receipt", "approval_receipt_recorded", evidenceIdentity(string(src.Source.Channel), src.Source.ID), id})
 	}
 	return wants
 }
@@ -360,7 +360,7 @@ func TestRound3StartReferencesExactOwningDecision(t *testing.T) {
 	for _, ref := range refs {
 		if ref.ExpectedType == "landing_decision_recorded" {
 			found = true
-			if ref.Identity != fmt.Sprint(fx.decisionID) || ref.Status != "recorded" || ref.Source == nil || ref.Source.ID != fx.decisionID || ref.Owner.EventID != fx.startID {
+			if ref.Identity != evidenceIdentity(fmt.Sprint(fx.decisionID)) || ref.Status != "recorded" || ref.Source == nil || ref.Source.ID != fx.decisionID || ref.Owner.EventID != fx.startID {
 				t.Fatal("wrong decision edge", ref)
 			}
 		}

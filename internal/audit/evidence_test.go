@@ -23,8 +23,11 @@ func TestEvidenceReferenceComparatorAndAbsence(t *testing.T) {
 	a := Reference{Kind: "eligibility", Status: "not_recorded", Owner: owner, ExpectedType: "approval_eligibility_observed", Identity: "read"}
 	b := a
 	b.Identity = "other"
-	refs := normalizeReferences([]Reference{a, b, a})
-	if len(refs) != 2 || refs[0].Source != nil || !reflect.DeepEqual(refs, normalizeReferences([]Reference{b, a})) {
+	refs, err := normalizeReferences([]Reference{a, b, a})
+	must(t, err)
+	again, err := normalizeReferences([]Reference{b, a})
+	must(t, err)
+	if len(refs) != 2 || refs[0].Source != nil || !reflect.DeepEqual(refs, again) {
 		t.Fatal("total order/dedup or explicit absence changed")
 	}
 	if got := evidenceKinds("unknown_historical"); len(got) != 0 {
