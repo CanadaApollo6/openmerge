@@ -8,7 +8,7 @@ remains deferred. The size estimates below record the original gate assessment,
 not measured implementation sizes. Current measured acceptance belongs in
 `adr-0008-10a-2a-evidence.md`.
 
-## Remaining size
+## Original remaining-size estimate
 
 | Work | Estimated changed lines |
 | --- | ---: |
@@ -21,8 +21,8 @@ not measured implementation sizes. Current measured acceptance belongs in
 | Scratch verifier, mutation table and evidence/design documentation | 450–550 |
 | **Total** | **3,350–4,250** |
 
-The existing source exporter streams selected records directly. It does not
-resolve dependency closure; the current manifest has no dependency boundaries.
+At the original gate, the source exporter streamed selected records directly
+and did not resolve dependency closure or record dependency boundaries.
 Its replay authenticates retained selections against the database but does not
 interpret evidence relationships. LandingDecisionEvidence opens a separate
 transaction and cannot simply be called from the audit snapshot. The design

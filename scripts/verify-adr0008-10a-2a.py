@@ -69,7 +69,7 @@ def main():
     parser.add_argument("--baseline", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--phase", choices=("all", "regression"), default="all")
-    parser.add_argument("--stress-pattern", default="TestEvidence|TestClosure|TestCheckAttempt|TestSourceReplayRejectsScopeShapeAndCrossQueueOrder")
+    parser.add_argument("--stress-pattern", default="TestEvidence|TestClosure|TestCheckAttempt|TestSourceReplayRejectsScopeShapeAndCrossQueueOrder|TestExportV1SemanticExpectations")
     parser.add_argument("--baseline-timing-log", type=Path, help="reuse an already completed identical baseline timing; requires adjacent exit-status.txt containing 0")
     args = parser.parse_args()
     # Guard before any subprocess; do not propagate a caller-controlled libpq route.

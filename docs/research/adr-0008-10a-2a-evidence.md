@@ -19,6 +19,8 @@ type identity. It does not invent a source event ID. Required retained evidence
 that is missing is an integrity failure. Replay checks both recorded and
 not_recorded claims against retained database history, including recorded claims
 for nonexistent sources and absence contradicted by a retained matching source.
+Claims are evaluated within the saved per-queue watermark; later appended
+history does not alter exact replay.
 
 Export verifies closure within its repeatable-read, read-only snapshot by
 exhausting a typed resolver worklist and checking references against selected
@@ -38,10 +40,11 @@ export with dropped events or queues can replay. The external anchor in 10b
 detects substitution relative to a previously anchored manifest.
 
 Check evidence is historical: admitted checks are joined to the decision's
-batch and tested SHA, then to producer/run retry history. The newest applicable
-attempt at the decision boundary governs, with generation and dispatch /
-observation provenance; later retries are explicitly excluded. No current forge
-read repairs missing historical evidence.
+batch and tested SHA, then to producer/run retry history. Applicable observations
+before the decision boundary sort by run ID, normalized attempt and observation
+ID. Generation and dispatch/observation provenance are retained. The first later
+observation records an explicit exclusion boundary; subsequent retries remain
+outside the governing window. No current forge read repairs missing history.
 
 LandingDecisionEvidence is reused through transaction-local helpers so the
 audit snapshot does not open a second transaction. Existing callers retain
@@ -64,7 +67,8 @@ export PATH="$GOROOT/bin:$PATH"
 export OPENMERGE_TEST_DATABASE_URL='postgres://postgres@localhost:54329/postgres?sslmode=disable'
 python3 scripts/verify-adr0008-10a-2a.py \
   --baseline /home/riels/.cache/openmerge-10a-2a/main \
-  --out /home/riels/.cache/openmerge-10a-2a/acceptance
+  --out /home/riels/.cache/openmerge-10a-2a/acceptance-r3 \
+  --baseline-timing-log /home/riels/.cache/openmerge-10a-2a/timing-before/stdout.log
 ```
 
 The baseline is a detached checkout of the exact base above, never a checkout
@@ -83,25 +87,60 @@ export rather than querying a live OpenMerge database.
 
 ## Acceptance results
 
-Measurements are pending completion of the implementation. No result from a
-previous PR is claimed as evidence for this layer. The required acceptance is:
+Measured against the exact base above, on code commit
+`4a33f8a2c7dfe925ed58e553315eea02a45404be`. The final evidence commit
+changes only documentation and the verifier's default test selection; every Go
+source and test remains byte-identical to the fully verified commit.
 
-- `make check` exit 0 and unchanged LandingDecisionEvidence caller tests.
-- Strict replay: 2,159 identical checkpoints at 6 GiB, simulator 146 identical
-  normalized blocks, depth-1/4 contracts 90/90 identical.
-- GitHub projection and actual CLI bytes, Stage A exact output and
-  MixedGithubBytes unchanged; all fixtures outside `internal/audit/testdata`
-  byte-identical.
-- All seven evidence families; cross-range and shared sources; unknown history;
-  missing evidence; invalid roles `""` and `"Scope"`; database-status
-  contradictions; success→failure / failure→success; identity mismatches.
-- Complete closure/export/replay growth and bounded-memory probes outside short
-  mode, focused semantic mutation coverage and race evidence.
-- New-test stress with `GOMAXPROCS=1 -race -count=20` and eight owned CPU
-  burners; only those burners are terminated and reaped.
-- Both trees timed with `GOMAXPROCS=2 go test -race -short -count=1 -p=1`.
-  Package elapsed time excludes compilation and lock waiting. A single local
-  pair is descriptive evidence, not a causal throughput benchmark.
+- `make check`: **exit 0**, including formatting, lint, short race suite and build.
+- Full non-short audit race suite: **exit 0**, 209.371 seconds.
+- Strict replay at 6 GiB: **2,159/2,159 identical** actions, structural states,
+  snapshot hashes and boundary checkpoints; 8,676 boundary probes, no new
+  non-allowlisted fields, Gate 2 / Gate 4 PASS, self-test exit 0.
+- Simulator: **146/146 identical** normalized blocks. Contracts: **90/90 identical**.
+- GitHub projection and actual CLI bytes, MixedGithubBytes and Stage A exact
+  output checks all pass. All **211 fixtures outside audit testdata** are
+  byte-identical. No complete-export golden was regenerated.
+- Existing `internal/store/landing_wiring_test.go` is byte-identical. Its original
+  LandingDecisionEvidence tests and all existing store callers' tests pass unchanged.
+- All seven evidence families, cross-range/shared/forward sources, unknown history,
+  missing required evidence, invalid roles `""` / `"Scope"`, DB-status contradictions,
+  multi-queue watermark pinning, retry result reversals, producer/run/attempt
+  identity mismatches, generation/dispatch provenance and legacy attempt normalization pass.
+- All **six focused mutants are killed** by semantic tests, with build/setup
+  failures rejected as mutation evidence.
+- Main stress: **16 tests × 20 = 320 top-level passes**, `GOMAXPROCS=1 -race`,
+  including non-short growth, in 2,515.800 seconds. Eight owned burners each
+  consumed positive CPU time (minimum 249,922 ticks); all were reaped.
+- The renamed provisional-export semantic test also passed **20 times** under
+  identical flags with eight fresh owned burners (minimum 188 ticks); all reaped.
+  This gives **17 tests / 340 top-level passes** across the two runs. The verifier
+  default now includes that test in the integrated stress selection.
+- The shared DSN guard's three connection-free tests pass; both explicit CI
+  `localhost:5432` and local `localhost:54329` endpoints are accepted.
+
+Complete export/closure/replay growth (`-race`, non-short, GOMAXPROCS=2):
+
+| Owners | Unique sources | Export + replay (s) | Sampled peak heap (bytes) | Retained heap after GC (bytes) |
+| ---: | ---: | ---: | ---: | ---: |
+| 128 | 258 | 9.306 | 6,911,304 | 798,592 |
+| 1,024 | 2,050 | 77.540 | 8,238,264 | 793,728 |
+
+The eightfold input includes real shared out-of-range batch/build dependencies
+and opaque historical payloads. Query-boundary heap sampling supplements the
+structural 32-record / fixed-fan-in bound; it is not an instantaneous heap profiler.
+Across all 20 stress runs, the large case's sampled peak was 10,144,304–12,111,064
+bytes. The existing 20,000-event streaming probe also passes (export 39.225 s,
+export/replay sampled peaks 3,759,744 / 3,715,584 bytes).
+
+Artifacts are under `/home/riels/.cache/openmerge-10a-2a/acceptance-r3`:
+`summary.json`, per-command logs, `replay.json`, normalized simulator output and
+`manifest.json`. The artifact manifest SHA-256 is
+`87acb369ec632508a6b2fcb63b011c365703cc8062d9924acbe67b464ff6d831`.
+Supplementary stress artifacts are under the sibling `supplemental-stress`
+directory; its manifest SHA-256 is
+`e1feff9563c61d71d6feb6e759207baa320343a42f2f7a0d74cfe55abe36f202`.
+Neither run used a live OpenMerge DB, real forge API, or `/tmp` for spools.
 
 The verifier's focused overlay mutation table requires each mutant to compile
 and fail a semantic assertion; a surviving mutant or a build/setup failure
@@ -111,40 +150,43 @@ fails acceptance. The checkout itself is never edited by these experiments.
 | --- | --- |
 | Reuse spool decode storage | Heterogeneous immutable source payloads survive sorting and replay. |
 | Permit a missing required retained source | Export fails for the explicitly required owner/source identity. |
-| Choose oldest instead of newest applicable observation | The last observation before the decision boundary governs. |
+| Choose oldest instead of newest applicable observation | The newest run ID / normalized attempt at the decision boundary governs. |
 | Ignore selected check result mismatch | A result from a different attempt cannot satisfy the decision. |
 | Accept arbitrary role strings (remove enum and range/role guards together) | Empty and `Scope` roles fail strict replay. |
 | Skip retained closure verification | Rehashed omission of a referenced dependency still fails replay. |
 
-## Baseline timing run
+## Paired CI-like package timings
 
-The exact base checkout completed the requested CI-like command with exit 0.
-The command, toolchain/checkout provenance and complete stdout/stderr are in
-`/home/riels/.cache/openmerge-10a-2a/timing-before`. Candidate timing and the
-remaining acceptance measurements are pending. Go-reported seconds:
+Both exact checkouts completed `GOMAXPROCS=2 go test -race -short -count=1 -p=1`
+with exit 0 and 23 tested packages, under the pinned toolchain and shared lock.
+Baseline logs/provenance are in `timing-before`; candidate logs are in
+`acceptance-r3/timing-after`. Go-reported package seconds exclude compilation
+and lock waiting. This single local pair is descriptive, not a causal throughput
+benchmark. Audit short cost increased by 2.443 seconds; expensive growth probes
+remain outside `-short`.
 
-| Package | Base main (s) |
-| --- | ---: |
-| `cmd/openmerge` | 68.443 |
-| `internal/ascii` | 1.007 |
-| `internal/audit` | 2.599 |
-| `internal/authority` | 1.111 |
-| `internal/brief` | 3.400 |
-| `internal/changepolicy` | 1.750 |
-| `internal/classification` | 2.265 |
-| `internal/config` | 1.652 |
-| `internal/config/condition` | 1.020 |
-| `internal/diagnostic` | 1.019 |
-| `internal/executor` | 1.168 |
-| `internal/forge` | 8.306 |
-| `internal/forge/fake` | 1.460 |
-| `internal/forge/github` | 65.667 |
-| `internal/gitops` | 103.400 |
-| `internal/queue` | 179.622 |
-| `internal/serve` | 337.080 |
-| `internal/sim` | 37.558 |
-| `internal/sim/capacity` | 1.009 |
-| `internal/status` | 11.853 |
-| `internal/store` | 74.253 |
-| `scripts` | 1.081 |
-| `tools/dogfood` | 1.689 |
+| Package | Main (s) | 10a-2a (s) | Delta (s) |
+| --- | ---: | ---: | ---: |
+| `cmd/openmerge` | 68.443 | 69.950 | +1.507 |
+| `internal/ascii` | 1.007 | 1.006 | -0.001 |
+| `internal/audit` | 2.599 | 5.042 | +2.443 |
+| `internal/authority` | 1.111 | 1.102 | -0.009 |
+| `internal/brief` | 3.400 | 3.490 | +0.090 |
+| `internal/changepolicy` | 1.750 | 1.746 | -0.004 |
+| `internal/classification` | 2.265 | 2.274 | +0.009 |
+| `internal/config` | 1.652 | 1.617 | -0.035 |
+| `internal/config/condition` | 1.020 | 1.020 | +0.000 |
+| `internal/diagnostic` | 1.019 | 1.019 | +0.000 |
+| `internal/executor` | 1.168 | 1.172 | +0.004 |
+| `internal/forge` | 8.306 | 8.232 | -0.074 |
+| `internal/forge/fake` | 1.460 | 1.503 | +0.043 |
+| `internal/forge/github` | 65.667 | 72.185 | +6.518 |
+| `internal/gitops` | 103.400 | 103.247 | -0.153 |
+| `internal/queue` | 179.622 | 184.099 | +4.477 |
+| `internal/serve` | 337.080 | 334.315 | -2.765 |
+| `internal/sim` | 37.558 | 37.468 | -0.090 |
+| `internal/sim/capacity` | 1.009 | 1.008 | -0.001 |
+| `internal/status` | 11.853 | 11.905 | +0.052 |
+| `internal/store` | 74.253 | 74.603 | +0.350 |
+| `scripts` | 1.081 | 1.079 | -0.002 |
+| `tools/dogfood` | 1.689 | 1.703 | +0.014 |
