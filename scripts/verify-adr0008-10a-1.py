@@ -111,7 +111,7 @@ def mutation_proofs(measured, out):
     mutations.append(("accept-forged-watermarks", "export.go", source, "^TestSourceReplayRejectsForgedWatermarks$"))
     shape = "^TestSourceReplayRejectsScopeShapeAndCrossQueueOrder$"
     add("accept-event-free-forged-key", "export.go", "actual.Queue != w.Queue", "false", "^TestSourceReplayRejectsForgedWatermarks$/^event-free-key$")
-    add("accept-cross-queue-order", "export.go", "previous != nil && !sourceLess(*previous, s.Source)", "false", shape)
+    add("accept-cross-queue-order", "export.go", "previous != nil && !sourceLess(*previous, s.Source)", "false && previous != nil && !sourceLess(*previous, s.Source)", shape)
     add("accept-invalid-role", "export.go", "!validRole(s.Role)", "false", shape)
     add("accept-invalid-references", "export.go", "!validReferences(s.References)", "false", shape)
     add("require-current-inventory", "export.go", "var previous *Source", "if len(waters) != len(identities) { return errIntegrity }; var previous *Source", "^TestSourceReplay(AfterNewQueue|AllowsUnselectedQueueOmission)$")
