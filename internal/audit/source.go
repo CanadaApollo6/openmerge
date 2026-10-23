@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-const queueIdentitySQL = `SELECT id,base,lane FROM queues WHERE installation=$1 AND repository=$2`
+const queueIdentitySQL = `SELECT q.id,q.base,q.lane,COALESCE(e.id,0) FROM queues q LEFT JOIN LATERAL (SELECT id FROM events WHERE queue_id=q.id ORDER BY id DESC LIMIT 1) e ON true WHERE q.installation=$1 AND q.repository=$2`
 
 const sourcePageSQL = `WITH candidate AS MATERIALIZED (SELECT id,type,recorded_at,payload::text AS payload FROM events WHERE queue_id=$1 AND id>$2 AND id<=$3 AND ($4::timestamptz IS NULL OR recorded_at >= $4) AND ($5::timestamptz IS NULL OR recorded_at < $5) ORDER BY id LIMIT 32), sized AS (SELECT id,type,recorded_at,payload,sum(octet_length(payload)) OVER (ORDER BY id) AS page_bytes FROM candidate), bounded AS (SELECT id,type,recorded_at,payload,page_bytes,lag(page_bytes,1,0::bigint) OVER (ORDER BY id) AS prior_bytes FROM sized) SELECT id,type,recorded_at,CASE WHEN octet_length(payload)<=4194304 THEN payload ELSE NULL END FROM bounded WHERE page_bytes<=4194304 OR prior_bytes<=4194304 ORDER BY id`
 
@@ -51,7 +51,7 @@ type Source struct {
 }
 
 // Selection is independently hashed immutable metadata plus a canonical payload hash.
-// Role and References are reserved now so 10a-2 can express closure without a v1 change.
+// Role and References are extension points; v1 remains provisional until 10a-2.
 type Selection struct {
 	Source         Source      `json:"source"`
 	PayloadSHA256  string      `json:"payload_sha256"`
@@ -60,13 +60,9 @@ type Selection struct {
 	References     []Reference `json:"references"`
 }
 
-// Reference records an explicit dependency relationship, including historical absence.
-// A not_recorded reference preserves the requested identity without inventing evidence.
-type Reference struct {
-	Source       Source `json:"source"`
-	Relationship string `json:"relationship"`
-	Status       string `json:"status"`
-}
+// Reference is intentionally uninhabited in scope-only exports. 10a-2 defines
+// and freezes evidence identity, ownership, kinds and replay status validation.
+type Reference struct{}
 
 type envelope struct {
 	Kind           string          `json:"kind"`
@@ -206,6 +202,8 @@ func resolve(ctx context.Context, tx pgx.Tx, req Request) (Request, error) {
 // consulted, so drained/retired queues and all retained source kinds remain visible.
 // The identity predicate is index-backed; canonical bytewise ordering happens in Go
 // because repeating a COLLATE query for each page rescans the same identity range.
+// The lateral top-one uses events_queue_watermark and avoids one SQL round trip
+// per queue. Inventory memory is O(total queue-key bytes), intentionally uncapped.
 func queues(ctx context.Context, tx pgx.Tx, req Request, visit func(watermark) error) error {
 	rows, err := tx.Query(ctx, queueIdentitySQL, req.Installation, req.Repository)
 	if err != nil {
@@ -214,7 +212,7 @@ func queues(ctx context.Context, tx pgx.Tx, req Request, visit func(watermark) e
 	inventory := make([]watermark, 0, pageSize)
 	for rows.Next() {
 		w := watermark{Queue: Key{Installation: req.Installation, Repository: req.Repository}}
-		if rows.Scan(&w.QueueID, &w.Queue.Base, &w.Queue.Lane) != nil {
+		if rows.Scan(&w.QueueID, &w.Queue.Base, &w.Queue.Lane, &w.ID) != nil {
 			rows.Close()
 			return errSource
 		}
@@ -227,9 +225,6 @@ func queues(ctx context.Context, tx pgx.Tx, req Request, visit func(watermark) e
 	}
 	sort.Slice(inventory, func(i, j int) bool { return keyLess(inventory[i].Queue, inventory[j].Queue) })
 	for i := range inventory {
-		if tx.QueryRow(ctx, `SELECT COALESCE(max(id),0) FROM events WHERE queue_id=$1`, inventory[i].QueueID).Scan(&inventory[i].ID) != nil {
-			return errSource
-		}
 		if err = visit(inventory[i]); err != nil {
 			return err
 		}

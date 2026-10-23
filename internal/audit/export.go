@@ -25,19 +25,17 @@ var errOutput = errors.New("audit: output unavailable or already exists")
 // Manifest contains only deterministic selection and integrity data. The
 // metadata streams are separate files so manifest memory is independent of size.
 type Manifest struct {
-	DependencyBoundaries       string  `json:"dependency_boundaries"`
-	DependencyBoundariesSHA256 string  `json:"dependency_boundaries_sha256"`
-	ManifestSHA256             string  `json:"manifest_sha256"`
-	Version                    int     `json:"version"`
-	Request                    Request `json:"request"`
-	Selection                  string  `json:"selection"`
-	SelectionSHA256            string  `json:"selection_sha256"`
-	Watermarks                 string  `json:"watermarks"`
-	WatermarksSHA256           string  `json:"watermarks_sha256"`
-	Events                     string  `json:"events"`
-	EventsSHA256               string  `json:"events_sha256"`
-	Count                      int64   `json:"count"`
-	TerminalSHA256             string  `json:"terminal_sha256"`
+	ManifestSHA256   string  `json:"manifest_sha256"`
+	Version          int     `json:"version"`
+	Request          Request `json:"request"`
+	Selection        string  `json:"selection"`
+	SelectionSHA256  string  `json:"selection_sha256"`
+	Watermarks       string  `json:"watermarks"`
+	WatermarksSHA256 string  `json:"watermarks_sha256"`
+	Events           string  `json:"events"`
+	EventsSHA256     string  `json:"events_sha256"`
+	Count            int64   `json:"count"`
+	TerminalSHA256   string  `json:"terminal_sha256"`
 }
 
 type stream struct {
@@ -110,7 +108,7 @@ func (r *Reader) Export(ctx context.Context, req Request, target string) (Manife
 
 type producer func(func(sourceEvent, *Selection) error, func(watermark) error) error
 
-func build(dir string, req Request, produce producer, want *Manifest, result *Manifest, boundaryProducer ...func(*stream) error) error {
+func build(dir string, req Request, produce producer, want *Manifest, result *Manifest) error {
 	events, e := newStream(dir, "events.jsonl")
 	if e != nil {
 		return e
@@ -126,12 +124,7 @@ func build(dir string, req Request, produce producer, want *Manifest, result *Ma
 		return e
 	}
 	defer func() { _ = waters.f.Close() }()
-	boundaries, e := newStream(dir, "dependency_boundaries.jsonl")
-	if e != nil {
-		return e
-	}
-	defer func() { _ = boundaries.f.Close() }()
-	m := Manifest{DependencyBoundaries: "dependency_boundaries.jsonl", Version: 1, Request: req, Selection: "selection.jsonl", Watermarks: "watermarks.jsonl", Events: "events.jsonl", TerminalSHA256: zeroDigest}
+	m := Manifest{Version: 1, Request: req, Selection: "selection.jsonl", Watermarks: "watermarks.jsonl", Events: "events.jsonl", TerminalSHA256: zeroDigest}
 	emit := func(event sourceEvent, want *Selection) error {
 		payload, e := Canonical(event.payload)
 		if e != nil {
@@ -179,15 +172,6 @@ func build(dir string, req Request, produce producer, want *Manifest, result *Ma
 		}
 		return waters.write(raw)
 	}); e != nil {
-		return e
-	}
-	for _, produceBoundaries := range boundaryProducer {
-		if e = produceBoundaries(boundaries); e != nil {
-			return e
-		}
-	}
-	m.DependencyBoundariesSHA256, e = boundaries.finish()
-	if e != nil {
 		return e
 	}
 	m.EventsSHA256, e = events.finish()
@@ -249,7 +233,7 @@ func (r *Reader) Replay(ctx context.Context, manifestPath, target string) (Manif
 		return result, errIntegrity
 	}
 	var m Manifest
-	if strict(raw, &m) != nil || m.Version != 1 || m.Count < 0 || m.Selection != "selection.jsonl" || m.Events != "events.jsonl" || m.Watermarks != "watermarks.jsonl" || m.DependencyBoundaries != "dependency_boundaries.jsonl" || !validDigest(m.TerminalSHA256) {
+	if strict(raw, &m) != nil || m.Version != 1 || m.Count < 0 || m.Selection != "selection.jsonl" || m.Events != "events.jsonl" || m.Watermarks != "watermarks.jsonl" || !validDigest(m.TerminalSHA256) {
 		return result, errIntegrity
 	}
 	canonicalManifest, ce := encode(m)
@@ -267,13 +251,13 @@ func (r *Reader) Replay(ctx context.Context, manifestPath, target string) (Manif
 		return result, errIntegrity
 	}
 	// Pin open file descriptors for all input streams throughout verification/replay.
-	files := make([]*os.File, 0, 4)
+	files := make([]*os.File, 0, 3)
 	defer func() {
 		for _, f := range files {
 			_ = f.Close()
 		}
 	}()
-	for _, item := range []struct{ name, sha string }{{m.Selection, m.SelectionSHA256}, {m.Watermarks, m.WatermarksSHA256}, {m.Events, m.EventsSHA256}, {m.DependencyBoundaries, m.DependencyBoundariesSHA256}} {
+	for _, item := range []struct{ name, sha string }{{m.Selection, m.SelectionSHA256}, {m.Watermarks, m.WatermarksSHA256}, {m.Events, m.EventsSHA256}} {
 		f, e := openRegular(root, item.name)
 		if e != nil {
 			return result, e
@@ -331,9 +315,8 @@ func (r *Reader) Replay(ctx context.Context, manifestPath, target string) (Manif
 				}); e != nil {
 					return e
 				}
-				if len(waters) != len(identities) {
-					return errIntegrity
-				}
+				// Only the frozen inventory is required: newer/unselected queues do not
+				// expand the saved source selection.
 				var previous *Source
 				var page []Selection
 				flush := func() error {
@@ -372,19 +355,7 @@ func (r *Reader) Replay(ctx context.Context, manifestPath, target string) (Manif
 					return e
 				}
 				return flush()
-			}, &m, &result, func(out *stream) error {
-				return lines(files[3], func(raw []byte) error {
-					var boundary Reference
-					if strict(raw, &boundary) != nil || !validReference(boundary) {
-						return errIntegrity
-					}
-					canonical, e := encode(boundary)
-					if e != nil {
-						return e
-					}
-					return out.write(canonical)
-				})
-			})
+			}, &m, &result)
 		})
 	})
 	return result, e
@@ -396,21 +367,8 @@ func sourceLess(a, b Source) bool {
 	}
 	return a.QueueID == b.QueueID && a.ID < b.ID
 }
-func validRole(role string) bool { return role == "scope" || role == "dependency" }
-func validReference(r Reference) bool {
-	return (r.Relationship == "requires" || r.Relationship == "caused_by" || r.Relationship == "supersedes") && (r.Status == "recorded" || r.Status == "not_recorded") && r.Source.QueueID > 0 && r.Source.ID > 0
-}
-func validReferences(refs []Reference) bool {
-	if refs == nil {
-		return false
-	}
-	for _, r := range refs {
-		if !validReference(r) {
-			return false
-		}
-	}
-	return true
-}
+func validRole(role string) bool            { return role == "scope" }
+func validReferences(refs []Reference) bool { return refs != nil && len(refs) == 0 }
 func validDigest(s string) bool {
 	if len(s) != 64 || strings.ToLower(s) != s {
 		return false

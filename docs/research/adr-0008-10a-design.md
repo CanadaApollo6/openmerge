@@ -87,7 +87,7 @@ HTML characters, large integers, equivalent decimals, timestamps and empty outpu
 The selection file streams source identity, scope/dependency role, canonical
 payload hash and immutable envelope metadata. Hash its exact canonical bytes.
 The manifest references that file and digest and records serialization version,
-repository/installation, filter, per-queue watermarks and dependency_boundaries,
+repository/installation, filter, per-queue watermarks and selection,
 record count and terminal digest. No export-time clock or added remote URLs.
 Original wire fields remain intact even when they contain historical URLs.
 
@@ -149,7 +149,14 @@ stored identities (no locale/case folding); an omitted installation must resolve
 to exactly one installation. Queue discovery uses the queues identity index,
 without consulting the live canonical inventory. Queue key components are
 compared by UTF-8 bytes in Go. One identity-index-eligible query reads only IDs and
-key components for the repository, then sorts that small inventory in memory.
+key components and watermarks for the repository, then sorts the inventory in memory.
+One set query uses a lateral indexed top-one event lookup per queue, avoiding
+per-queue SQL round trips and full event-history aggregation. Queue identities
+use O(total queue-key bytes) uncapped memory; replay also holds maps for current
+and frozen identities. Expected scale is thousands of queues per repository
+(the growth probe covers 8,192 matching queues), with ordinary short base/lane
+names. This is an inventory assumption, not constant-memory behavior; unusually
+large inventories or keys require budgeting or a future spool design.
 There is no queue keyset rescan or database collation dependency. Retained event pages
 contain at most 32 rows and at most 4 MiB of cumulative raw payload bytes; replay
 uses the same retained-page byte bound. One bounded lookahead payload may be
@@ -162,7 +169,7 @@ semantics for a database whose timestamp values are discrete microseconds.
 Equal normalized bounds denote an empty interval; reversed bounds are rejected.
 
 V1 files are `events.jsonl`, `selection.jsonl`, `watermarks.jsonl`,
-`dependency_boundaries.jsonl`, and
+and
 `manifest.json`. All records are compact canonical UTF-8 JSON followed by LF.
 Object keys use UTF-8 byte order. Arrays retain order. Strings escape quotes,
 backslashes and controls (short escapes for b/f/n/r/t, lowercase u00xx otherwise);
@@ -178,7 +185,7 @@ the initial and empty terminal hash is 64 zeroes. Whole-file hashes include LF.
 
 Source metadata is ID, queue ID/key, type and database timestamp. Each selection
 entry hashes canonical payload separately from canonical `{source, role,
-references}` metadata. The manifest hashes all four streams and carries
+references}` metadata. The manifest hashes all three streams and carries
 version, resolved request, count and terminal hash. `manifest_sha256` hashes its
 canonical representation with that field set to the empty string (without LF).
 These unkeyed integrity hashes detect corruption; they are not authentication or
@@ -186,7 +193,7 @@ external anchoring. No export clock is recorded.
 
 Replay strictly decodes metadata, verifies manifest/file/payload/metadata hashes
 and canonical schema, validates every watermark against snapshot queue identity,
-unique bytewise order, retained maximum and selected IDs (no unknown/missing
+unique bytewise order, retained maximum and selected IDs (no unknown saved
 queues or selected ID above its watermark), retrieves exactly the listed IDs in one new snapshot,
 then rebuilds all files and requires the same manifest, count and terminal hash.
 Only fixed safe relative filenames are accepted; symlinks and nonregular files
@@ -203,30 +210,29 @@ the directory entry across a crash on filesystems honoring fsync. This is local
 publication durability; backup and external anchoring remain out of scope.
 Unsupported atomic rename (including EINVAL) returns a distinct sanitized error.
 Failed staging is removed; a parent-sync failure after rename returns failure
-although the complete target may already be visible.
+although the complete target may already be visible. Before retrying, preserve
+the target and verify it by exact Replay to a distinct fresh path (which checks
+DB sources and all hashes); inspect/retain the verified result. If verification
+fails, investigate the storage failure and remove only that failed export target
+before retrying. Never blindly retry against or overwrite the existing target.
 
-V1 is finalized before release; no exports or deployed binary predate this shape.
-`role` is exactly `scope` or `dependency`. Every source envelope and selection has
-`references`, an ordered array of `{source, relationship, status}` records.
-`source` carries the referenced queue identity, positive queue/event IDs, type and
-recorded timestamp (empty type/timestamp preserve unavailable historical metadata).
-`relationship` is exactly `requires`, `caused_by`, or `supersedes` and supplies the
-explicit dependency reason. `status` is exactly `recorded` or `not_recorded`.
-The latter records historical absence at the referenced identity without inventing
-a source payload; it is distinct from a required retained source that is missing,
-which must fail closure selection. No separate absence envelope is needed.
+V1 is provisional until 10a-2 merges; 10a-2 defines and freezes the
+dependency/absence model. No released exports exist. Scope-only exports accept
+only `role: "scope"` and a non-null empty `references` array. The role/reference
+extension points deliberately specify no dependency, absence or boundary record
+shape yet. There is no dependency-boundaries file in 10a-1.
 
-The manifest's `dependency_boundaries` is the fixed relative filename
-`dependency_boundaries.jsonl`; `dependency_boundaries_sha256` hashes its exact
-bytes. That stream contains the same strict reference records in deterministic
-closure order, representing decision-boundary relationships and historical
-absence. 10a-1 writes an empty stream. Replay validates and reproduces populated
-v1 boundary streams and dependency roles/reference arrays without selecting new
-closure facts. Strict decoding rejects missing or unknown fields in every record.
+10a-2 must define absent-evidence identity without invented source IDs, distinct
+from required-but-missing evidence (which fails); an owning decision/selection
+entry; evidence kind and expected type (eligibility, classification,
+accountability, receipt, authority, check attempt, settlement); representation of
+the governing check attempt and excluded retries after the decision boundary;
+and replay validation of each reference's status against the database.
 
-Within v1, 10a-2 may only populate these already specified roles, references and
-boundary records. Any other field, kind, enum, normalization, or shape change
-requires a serialization version bump. Existing finalized v1 inputs keep their
-bytes; a different closure selection has its own chain. 10a-1 reports source facts
-only: no decision validity, check/retry join, dependency closure selection,
-real-git acceptance or advertised `openmerge audit` command.
+Replay validates the frozen inventory: every saved watermark queue must still
+exist with the identical canonical key. Current DB queues omitted from the saved
+watermarks are allowed, whether empty or populated. The selection alone defines
+the sources, just as for late commits. Missing watermarks for selected queues,
+unknown IDs, key mismatches, duplicates, ordering violations and watermarks below
+selected IDs still fail. 10a-1 reports source facts only: no decision validity,
+check/retry join, closure selection, real-git acceptance or operator CLI.

@@ -63,7 +63,7 @@ def independent_goldens():
         if sha(canonical(manifest).encode()) != claimed:
             raise ValueError("independent manifest golden mismatch")
         previous, count = "0" * 64, 0
-        for name in ("events", "selection", "watermarks", "dependency_boundaries"):
+        for name in ("events", "selection", "watermarks"):
             raw = (data / (prefix + "-" + name + ".jsonl")).read_bytes()
             if sha(raw) != manifest[name + "_sha256"]:
                 raise ValueError("independent file golden mismatch")
@@ -93,7 +93,6 @@ def mutation_proofs(measured, out):
 
     add("restore-port-54329-guard", "source_test.go", 'u.Hostname() != "localhost"', 'u.Hostname() != "localhost" || u.Port() != "54329"', "^TestSourceDatabaseURLGuardAllowsLocalhostPorts$")
     add("remove-oversized-transfer-guard", "source.go", "CASE WHEN octet_length(payload)<=4194304 THEN payload ELSE NULL END", "payload", "^TestSourcePageRejectsOversizedBeforeTransfer$")
-    add("omit-empty-queue-watermark-check", "export.go", "if len(waters) != len(identities) {", "if false && len(waters) != len(identities) {", "^TestSourceReplayRejectsForgedWatermarks$/^missing$")
     paging = "^TestSourcePagingAcrossQueuesAndCollation$"
     add("duplicate-queue-boundary", "source.go", "for i := range inventory {", "inventory = append(inventory[:pageSize], inventory[pageSize-1:]...)\nfor i := range inventory {", paging)
     add("skip-queue-boundary", "source.go", "for i := range inventory {", "inventory = append(inventory[:pageSize], inventory[pageSize+1:]...)\nfor i := range inventory {", paging)
@@ -102,16 +101,20 @@ def mutation_proofs(measured, out):
     add("event-keyset-inclusive", "source.go", "id>$2", "id>=$2", paging)
     add("truncate-bounds", "source.go", "floor = floor.Add(time.Microsecond)", "floor = floor", "^TestSourceSubmicrosecondBoundaries$")
     add("omit-file-hash", "export.go", "hex.EncodeToString(h.Sum(nil)) != item.sha", "false", "^TestSourceReplayRejectsEventCorruptionWithoutManifestRehash$")
-    add("reject-v1-dependencies", "export.go", 'return role == "scope" || role == "dependency"', 'return role == "scope"', "^TestV1DependencyAndHistoricalAbsenceReplay$")
-    add("reject-v1-historical-absence", "export.go", 'r.Status == "not_recorded"', 'false', "^TestV1DependencyAndHistoricalAbsenceReplay$")
     source = (ROOT / "internal/audit/export.go").read_text()
-    for condition in ("!ok || actual.Queue != w.Queue || w.ID > actual.ID", "previousWater != nil && !sourceLess(*previousWater, current)", "len(waters) != len(identities)", "!ok || w.Queue != s.Source.Queue || s.Source.ID > w.ID"):
+    for condition in ("!ok || actual.Queue != w.Queue || w.ID > actual.ID", "previousWater != nil && !sourceLess(*previousWater, current)", "!ok || w.Queue != s.Source.Queue || s.Source.ID > w.ID"):
         old = "if " + condition + " {"
         if old not in source:
             raise ValueError("watermark mutation target changed")
         source = source.replace(old, "if false && (" + condition + ") {", 1)
     source = source.replace("; duplicate {", "; false && duplicate {", 1)
     mutations.append(("accept-forged-watermarks", "export.go", source, "^TestSourceReplayRejectsForgedWatermarks$"))
+    shape = "^TestSourceReplayRejectsScopeShapeAndCrossQueueOrder$"
+    add("accept-event-free-forged-key", "export.go", "actual.Queue != w.Queue", "false", "^TestSourceReplayRejectsForgedWatermarks$/^event-free-key$")
+    add("accept-cross-queue-order", "export.go", "previous != nil && !sourceLess(*previous, s.Source)", "false", shape)
+    add("accept-invalid-role", "export.go", "!validRole(s.Role)", "false", shape)
+    add("accept-invalid-references", "export.go", "!validReferences(s.References)", "false", shape)
+    add("require-current-inventory", "export.go", "var previous *Source", "if len(waters) != len(identities) { return errIntegrity }; var previous *Source", "^TestSourceReplay(AfterNewQueue|AllowsUnselectedQueueOmission)$")
     current = (ROOT / "internal/audit/source.go").read_text()
     original = subprocess.check_output(["git", "show", "eada85c:internal/audit/source.go"], cwd=ROOT, text=True)
     old_queues = original[original.index("func queues("):original.index("func scan(")]

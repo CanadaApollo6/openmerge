@@ -125,7 +125,7 @@ func req() Request {
 }
 func manifests(t *testing.T, a, b string) {
 	t.Helper()
-	for _, name := range []string{"manifest.json", "events.jsonl", "selection.jsonl", "watermarks.jsonl", "dependency_boundaries.jsonl"} {
+	for _, name := range []string{"manifest.json", "events.jsonl", "selection.jsonl", "watermarks.jsonl"} {
 		if !reflect.DeepEqual(read(t, filepath.Join(a, name)), read(t, filepath.Join(b, name))) {
 			t.Fatalf("replay changed %s", name)
 		}
@@ -329,7 +329,7 @@ func rewriteManifest(t *testing.T, dir string, change func(*Manifest)) {
 func copyExport(t *testing.T, from string) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, name := range []string{"manifest.json", "events.jsonl", "selection.jsonl", "watermarks.jsonl", "dependency_boundaries.jsonl"} {
+	for _, name := range []string{"manifest.json", "events.jsonl", "selection.jsonl", "watermarks.jsonl"} {
 		must(t, os.WriteFile(filepath.Join(dir, name), read(t, filepath.Join(from, name)), 0600))
 	}
 	return dir

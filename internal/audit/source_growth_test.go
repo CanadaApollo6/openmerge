@@ -51,6 +51,9 @@ func TestSourceQueueIdentityQueryOnce(t *testing.T) {
 		if strings.Contains(lower, needle) {
 			identityQueries++
 		}
+		if strings.Contains(lower, "select coalesce(max(id),0) from events") {
+			t.Fatal("per-queue watermark round trip")
+		}
 		if strings.Contains(lower, "base collate") || strings.Contains(lower, "lane collate") {
 			t.Fatal("queue inventory repeated a collation-dependent page query")
 		}
@@ -78,7 +81,9 @@ SELECT g,
        'lane-' || lpad(g::text,8,'0')
 FROM generate_series(1,$2::bigint) AS generated(g)`, n, total)
 			must(t, e)
-			_, e = f.admin.Exec(t.Context(), `ANALYZE queues`)
+			_, e = f.admin.Exec(t.Context(), `INSERT INTO events(queue_id,type,payload,recorded_at) SELECT id,'history','{"type":"history"}'::jsonb,'2026-10-22T12:00:00Z' FROM queues`)
+			must(t, e)
+			_, e = f.admin.Exec(t.Context(), `ANALYZE events; ANALYZE queues`)
 			must(t, e)
 
 			started := time.Now()
@@ -95,7 +100,7 @@ FROM generate_series(1,$2::bigint) AS generated(g)`, n, total)
 			rows.Close()
 			text := plan.String()
 			t.Logf("matching_queues=%d total_queues=%d explain_wall=%s\n%s", n, total, time.Since(started), text)
-			if n == 8192 && !strings.Contains(strings.ToLower(text), "index") {
+			if n == 8192 && (!strings.Contains(text, "queues_installation_repository_base_lane_key") || !strings.Contains(text, "events_queue_watermark")) {
 				t.Fatal("largest identity query did not use an index access path")
 			}
 		})

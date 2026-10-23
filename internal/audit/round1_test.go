@@ -207,6 +207,18 @@ func TestSourceReplayRejectsForgedWatermarks(t *testing.T) {
 			},
 		},
 		{
+			name: "event-free-key",
+			mutate: func(in []watermark) []watermark {
+				out := append([]watermark(nil), in...)
+				for i := range out {
+					if out[i].ID == 0 {
+						out[i].Queue.Base += "-forged"
+					}
+				}
+				return out
+			},
+		},
+		{
 			name: "queue-id-mapping",
 			mutate: func(in []watermark) []watermark {
 				out := append([]watermark(nil), in...)
@@ -233,7 +245,7 @@ func TestSourceReplayRejectsForgedWatermarks(t *testing.T) {
 			name: "missing",
 			mutate: func(in []watermark) []watermark {
 				out := append([]watermark(nil), in...)
-				return out[:len(out)-1]
+				return out[1:]
 			},
 		},
 	}

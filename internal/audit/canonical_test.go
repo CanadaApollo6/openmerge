@@ -81,7 +81,7 @@ func TestExportV1Golden(t *testing.T) {
 			source.ID++
 			return emit(sourceEvent{source: source, payload: []byte(`{"type":"historic","decimal":12345e-2}`)}, nil)
 		}, nil, &m))
-		for _, file := range []string{"events.jsonl", "selection.jsonl", "watermarks.jsonl", "dependency_boundaries.jsonl", "manifest.json"} {
+		for _, file := range []string{"events.jsonl", "selection.jsonl", "watermarks.jsonl", "manifest.json"} {
 			got := read(t, filepath.Join(dir, file))
 			want := read(t, filepath.Join("testdata", name+"-"+file))
 			if !bytes.Equal(got, want) {
