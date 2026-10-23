@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/jackc/pgx/v5"
@@ -27,71 +28,96 @@ func (s *Store) LandingDecisionEvidence(ctx context.Context, q QueueID, batch, a
 	}
 	var result []LandingEvidence
 	err := pgx.BeginTxFunc(ctx, s.pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, landingDecisionEvidenceSQL, q, batch, attempt)
-		if err != nil {
-			return err
-		}
-		decisions, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (LandingEvidence, error) {
-			var raw []byte
-			var id int64
-			if err := row.Scan(&id, &raw); err != nil {
-				return LandingEvidence{}, err
-			}
-			event, err := queue.DecodeEvent(raw)
-			if err != nil {
-				return LandingEvidence{}, err
-			}
-			d, ok := event.(queue.LandingDecisionRecorded)
-			if !ok {
-				return LandingEvidence{}, fmt.Errorf("invalid landing decision event type")
-			}
-			return LandingEvidence{Decision: d, DecisionEventID: id}, nil
-		})
-		if err != nil {
-			return err
-		}
-		if len(decisions) > 128 {
-			return fmt.Errorf("landing decision member budget exceeded")
-		}
-		for _, evidence := range decisions {
-			d := evidence.Decision
-			if d.Approval != nil {
-				basis := d.Approval.Basis
-				rows, err := tx.Query(ctx, eligibilityReadEvidenceSQL,
-					q, string(basis.ChangeID), d.Approval.EligibilityReadID, fmt.Sprint(basis.Revision), basis.Head)
-				if err != nil {
-					return err
-				}
-				reads, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (LandingEvidence, error) {
-					var raw []byte
-					var id int64
-					if err := row.Scan(&id, &raw); err != nil {
-						return LandingEvidence{}, err
-					}
-					event, err := queue.DecodeEvent(raw)
-					if err != nil {
-						return LandingEvidence{}, err
-					}
-					f, ok := event.(queue.ApprovalEligibilityObserved)
-					if !ok {
-						return LandingEvidence{}, fmt.Errorf("invalid eligibility event type")
-					}
-					return LandingEvidence{Eligibility: &f, EligibilityEventID: id}, nil
-				})
-				if err != nil {
-					return err
-				}
-				if len(reads) != 1 {
-					return fmt.Errorf("expected one retained eligibility observation, got %d", len(reads))
-				}
-				evidence.Eligibility = reads[0].Eligibility
-				evidence.EligibilityEventID = reads[0].EligibilityEventID
-			}
-			result = append(result, evidence)
-		}
-		return nil
+		var err error
+		result, err = LandingDecisionEvidenceTx(ctx, tx, q, batch, attempt)
+		return err
 	})
 	return result, err
+}
+
+// LandingDecisionEvidenceTx reads the same retained evidence in the caller's
+// snapshot. It opens no transaction and leaves transaction ownership to callers.
+func LandingDecisionEvidenceTx(ctx context.Context, tx pgx.Tx, q QueueID, batch, attempt string, boundary ...int64) ([]LandingEvidence, error) {
+	if batch == "" || attempt == "" {
+		return nil, fmt.Errorf("batch and attempt required")
+	}
+	var result []LandingEvidence
+	decisionSQL := landingDecisionEvidenceSQL
+	decisionArgs := []any{q, batch, attempt}
+	if len(boundary) > 0 {
+		decisionSQL = strings.Replace(decisionSQL, "SELECT id,payload", "SELECT id,CASE WHEN octet_length(payload::text)<=4194304 THEN payload ELSE NULL END", 1)
+		decisionSQL = strings.Replace(decisionSQL, " ORDER BY id", " AND id<=$4 ORDER BY id", 1)
+		decisionArgs = append(decisionArgs, boundary[0])
+	}
+	rows, err := tx.Query(ctx, decisionSQL, decisionArgs...)
+	if err != nil {
+		return result, err
+	}
+	decisions, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (LandingEvidence, error) {
+		var raw []byte
+		var id int64
+		if err := row.Scan(&id, &raw); err != nil {
+			return LandingEvidence{}, err
+		}
+		event, err := queue.DecodeEvent(raw)
+		if err != nil {
+			return LandingEvidence{}, err
+		}
+		d, ok := event.(queue.LandingDecisionRecorded)
+		if !ok {
+			return LandingEvidence{}, fmt.Errorf("invalid landing decision event type")
+		}
+		return LandingEvidence{Decision: d, DecisionEventID: id}, nil
+	})
+	if err != nil {
+		return result, err
+	}
+	if len(decisions) > 128 {
+		return result, fmt.Errorf("landing decision member budget exceeded")
+	}
+	for _, evidence := range decisions {
+		d := evidence.Decision
+		if d.Approval != nil {
+			basis := d.Approval.Basis
+			eligibilitySQL := eligibilityReadEvidenceSQL
+			eligibilityArgs := []any{q, string(basis.ChangeID), d.Approval.EligibilityReadID, fmt.Sprint(basis.Revision), basis.Head}
+			if len(boundary) > 0 {
+				eligibilitySQL = strings.Replace(eligibilitySQL, "SELECT id,payload", "SELECT id,CASE WHEN octet_length(payload::text)<=4194304 THEN payload ELSE NULL END", 1)
+				eligibilitySQL = strings.Replace(eligibilitySQL, " ORDER BY id", " AND id<=$6 ORDER BY id", 1)
+				eligibilityArgs = append(eligibilityArgs, boundary[0])
+			}
+			rows, err := tx.Query(ctx, eligibilitySQL, eligibilityArgs...)
+			if err != nil {
+				return result, err
+			}
+			reads, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (LandingEvidence, error) {
+				var raw []byte
+				var id int64
+				if err := row.Scan(&id, &raw); err != nil {
+					return LandingEvidence{}, err
+				}
+				event, err := queue.DecodeEvent(raw)
+				if err != nil {
+					return LandingEvidence{}, err
+				}
+				f, ok := event.(queue.ApprovalEligibilityObserved)
+				if !ok {
+					return LandingEvidence{}, fmt.Errorf("invalid eligibility event type")
+				}
+				return LandingEvidence{Eligibility: &f, EligibilityEventID: id}, nil
+			})
+			if err != nil {
+				return result, err
+			}
+			if len(reads) != 1 {
+				return result, fmt.Errorf("expected one retained eligibility observation, got %d", len(reads))
+			}
+			evidence.Eligibility = reads[0].Eligibility
+			evidence.EligibilityEventID = reads[0].EligibilityEventID
+		}
+		result = append(result, evidence)
+	}
+	return result, nil
 }
 
 // Keep these expressions identical to migration 006's partial index keys.

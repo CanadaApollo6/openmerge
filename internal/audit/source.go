@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"sort"
+	"io"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -51,18 +53,15 @@ type Source struct {
 }
 
 // Selection is independently hashed immutable metadata plus a canonical payload hash.
-// Role and References are extension points; v1 remains provisional until 10a-2.
+// Typed evidence metadata is provisional until the 10a-2b operator/freeze layer.
 type Selection struct {
 	Source         Source      `json:"source"`
 	PayloadSHA256  string      `json:"payload_sha256"`
 	MetadataSHA256 string      `json:"metadata_sha256"`
 	Role           string      `json:"role"`
 	References     []Reference `json:"references"`
+	Kinds          []string    `json:"evidence_kinds"`
 }
-
-// Reference is intentionally uninhabited in scope-only exports. 10a-2 defines
-// and freezes evidence identity, ownership, kinds and replay status validation.
-type Reference struct{}
 
 type envelope struct {
 	Kind           string          `json:"kind"`
@@ -70,6 +69,7 @@ type envelope struct {
 	Payload        json.RawMessage `json:"payload"`
 	Role           string          `json:"role"`
 	References     []Reference     `json:"references"`
+	Kinds          []string        `json:"evidence_kinds"`
 	PreviousSHA256 string          `json:"previous_sha256"`
 }
 
@@ -198,35 +198,51 @@ func resolve(ctx context.Context, tx pgx.Tx, req Request) (Request, error) {
 	return req, nil
 }
 
-// queues uses the existing identity unique index; no canonical/lifecycle table is
-// consulted, so drained/retired queues and all retained source kinds remain visible.
-// The identity predicate is index-backed; canonical bytewise ordering happens in Go
-// because repeating a COLLATE query for each page rescans the same identity range.
-// The lateral top-one uses events_queue_watermark and avoids one SQL round trip
-// per queue. Inventory memory is O(total queue-key bytes), intentionally uncapped.
-func queues(ctx context.Context, tx pgx.Tx, req Request, visit func(watermark) error) error {
-	rows, err := tx.Query(ctx, queueIdentitySQL, req.Installation, req.Repository)
-	if err != nil {
-		return errSource
-	}
-	inventory := make([]watermark, 0, pageSize)
-	for rows.Next() {
-		w := watermark{Queue: Key{Installation: req.Installation, Repository: req.Repository}}
-		if rows.Scan(&w.QueueID, &w.Queue.Base, &w.Queue.Lane, &w.ID) != nil {
-			rows.Close()
+// queues takes one indexed inventory snapshot and sorts it on disk using the
+// same bounded merge as sources. The inventory spool stays in private staging.
+func queues(ctx context.Context, tx pgx.Tx, req Request, dir string, visit func(watermark) error) error {
+	input := filepath.Join(dir, "queue-input")
+	sorted := filepath.Join(dir, "queue-sorted")
+	e := spoolFile(input, func(out io.Writer) error {
+		rows, e := tx.Query(ctx, queueIdentitySQL, req.Installation, req.Repository)
+		if e != nil {
 			return errSource
 		}
-		inventory = append(inventory, w)
+		defer rows.Close()
+		for rows.Next() {
+			w := watermark{Queue: Key{Installation: req.Installation, Repository: req.Repository}}
+			if rows.Scan(&w.QueueID, &w.Queue.Base, &w.Queue.Lane, &w.ID) != nil {
+				return errSource
+			}
+			if e = spoolWrite(out, spoolRecord{Source: Source{QueueID: w.QueueID, ID: w.ID, Queue: w.Queue}, Payload: []byte(`{}`)}); e != nil {
+				return e
+			}
+		}
+		if rows.Err() != nil {
+			return errSource
+		}
+		return nil
+	})
+	if e != nil {
+		return e
 	}
-	err = rows.Err()
-	rows.Close()
-	if err != nil {
-		return errSource
+	if e = sortSpool(dir, input, sorted); e != nil {
+		return e
 	}
-	sort.Slice(inventory, func(i, j int) bool { return keyLess(inventory[i].Queue, inventory[j].Queue) })
-	for i := range inventory {
-		if err = visit(inventory[i]); err != nil {
-			return err
+	defer func() { _ = os.Remove(input) }()
+	defer func() { _ = os.Remove(sorted) }()
+	c, e := openSpool(sorted)
+	if e != nil {
+		return e
+	}
+	defer func() { _ = c.f.Close() }()
+	for c.ok {
+		s := c.value.Source
+		if e = visit(watermark{QueueID: s.QueueID, Queue: s.Queue, ID: s.ID}); e != nil {
+			return e
+		}
+		if e = c.next(); e != nil {
+			return e
 		}
 	}
 	return nil

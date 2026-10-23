@@ -47,7 +47,7 @@ func TestSourceReplayAllowsUnselectedQueueOmission(t *testing.T) {
 // Build internally coherent artifacts, including all metadata, stream and chain
 // hashes. Rejection must come from semantic validation rather than stale hashes.
 func TestSourceReplayRejectsScopeShapeAndCrossQueueOrder(t *testing.T) {
-	for _, name := range []string{"bad-role", "dependency-role", "null-references", "nonempty-references", "cross-queue-order"} {
+	for _, name := range []string{"bad-role", "empty-role", "case-role", "dependency-role", "null-references", "nonempty-references", "cross-queue-order"} {
 		t.Run(name, func(t *testing.T) {
 			f := database(t)
 			f.queue(t, 1, "")
@@ -71,6 +71,10 @@ func TestSourceReplayRejectsScopeShapeAndCrossQueueOrder(t *testing.T) {
 			switch name {
 			case "bad-role":
 				selections[0].Role = "invalid"
+			case "empty-role":
+				selections[0].Role = ""
+			case "case-role":
+				selections[0].Role = "Scope"
 			case "dependency-role":
 				selections[0].Role = "dependency"
 			case "null-references":
@@ -87,7 +91,7 @@ func TestSourceReplayRejectsScopeShapeAndCrossQueueOrder(t *testing.T) {
 				selections[i].MetadataSHA256 = digest(raw)
 			}
 			coherent := t.TempDir()
-			must(t, build(coherent, m.Request, func(emit func(sourceEvent, *Selection) error, water func(watermark) error) error {
+			buildErr := build(coherent, m.Request, func(emit func(sourceEvent, *Selection) error, water func(watermark) error) error {
 				for _, w := range waters {
 					if e := water(w); e != nil {
 						return e
@@ -99,7 +103,13 @@ func TestSourceReplayRejectsScopeShapeAndCrossQueueOrder(t *testing.T) {
 					}
 				}
 				return nil
-			}, nil, &m))
+			}, nil, &m)
+			if buildErr != nil {
+				if buildErr != errIntegrity {
+					t.Fatal(buildErr)
+				}
+				return
+			}
 			if _, e = f.reader.Replay(t.Context(), filepath.Join(coherent, "manifest.json"), filepath.Join(t.TempDir(), "bad")); e != errIntegrity {
 				t.Fatalf("got %v want integrity rejection", e)
 			}

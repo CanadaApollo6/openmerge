@@ -21,16 +21,20 @@ class ScratchGuardTest(unittest.TestCase):
         self.assertEqual(scratch_url(BASE.rsplit("/", 1)[0] + "/ignored", environ={}),
                          scratch_url(BASE, environ={}))
 
+    def test_ci_port(self):
+        self.assertEqual(scratch_url(BASE.replace(":54329", ":5432"), environ={}),
+                         "postgresql://postgres@localhost:5432/postgres?sslmode=disable")
+
     def test_bypasses_refused_before_subprocess(self):
         attacks = [BASE + "?" + query for query in (
             "host=/tmp/review-nonexistent&port=5432&dbname=production_example",
             "host=localhost", "hostaddr=127.0.0.1", "port=5432", "dbname=production_example",
             "service=live", "servicefile=/tmp/service", "options=-csearch_path=public",
             "target_session_attrs=read-write", "host=", "hostaddr=", "port=", "dbname=", "service=", "options=", "target_session_attrs=", "%68ost=/tmp/socket", "sslmode=disable&host=localhost",
-        )] + [BASE.replace("localhost:54329", host) for host in ("localhost:5432", "%2Ftmp:54329", "localhost:54329,other:5432")]
+        )] + [BASE.replace("localhost:54329", host) for host in ("localhost:5433", "%2Ftmp:54329", "localhost:54329,other:5432")]
         env_attacks = ["PGHOST", "PGHOSTADDR", "PGPORT", "PGDATABASE", "PGSERVICE", "PGSERVICEFILE",
                        "PGOPTIONS", "PGTARGETSESSIONATTRS", "PGPASSWORD"]
-        for driver in ("check-adr0008-9c-2c-restore.py", "verify-adr0008-9c-2c.py", "verify-adr0008-9c-2d.py", "verify-adr0008-9c-3.py"):
+        for driver in ("check-adr0008-9c-2c-restore.py", "verify-adr0008-9c-2c.py", "verify-adr0008-9c-2d.py", "verify-adr0008-9c-3.py", "verify-adr0008-10a-2a.py"):
             spec = importlib.util.spec_from_file_location("driver", Path(__file__).with_name(driver))
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)

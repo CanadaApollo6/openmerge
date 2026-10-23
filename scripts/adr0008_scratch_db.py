@@ -17,7 +17,7 @@ def scratch_url(raw, database="postgres", environ=None):
         parsed = urlsplit(raw)
         query = parse_qsl(parsed.query, strict_parsing=True, keep_blank_values=True)
         valid = (parsed.scheme in ("postgres", "postgresql")
-                 and parsed.hostname == "localhost" and parsed.port == 54329
+                 and parsed.hostname == "localhost" and parsed.port in (5432, 54329)
                  and not parsed.fragment
                  and all(key == "sslmode" and value == "disable" for key, value in query)
                  and re.fullmatch(r"postgres|om_9c2c_[0-9a-f]{32}", database))
@@ -29,6 +29,6 @@ def scratch_url(raw, database="postgres", environ=None):
             if parsed.password is not None:
                 credentials += ":" + quote(unquote(parsed.password), safe="")
             credentials += "@"
-        return f"postgresql://{credentials}localhost:54329/{database}?sslmode=disable"
+        return f"postgresql://{credentials}localhost:{parsed.port}/{database}?sslmode=disable"
     except (ValueError, UnicodeError):
-        raise ValueError("only explicit shared test Postgres localhost:54329 without overrides is permitted") from None
+        raise ValueError("only explicit shared test Postgres localhost:5432 or localhost:54329 without overrides is permitted") from None
