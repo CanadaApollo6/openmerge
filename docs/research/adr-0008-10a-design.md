@@ -333,7 +333,7 @@ queue, decision boundary, and actual retained event identity separately.
 
 | Expected type | Identity tuple |
 | --- | --- |
-| landing_decision_recorded | [batch_id, attempt_id] (one edge per member source) |
+| landing_decision_recorded | [batch_id, attempt_id] (one edge per retained decision event for that attempt) |
 | landing_started | [batch_id, attempt_id] when an attempt is known; [batch_id] for the preceding batch start selector from a settlement |
 | landed, landing_abandoned, batch_started | [batch_id] |
 | test_ref_built | [batch_id, tested_sha] |
@@ -346,6 +346,38 @@ queue, decision boundary, and actual retained event identity separately.
 | checks_observed | [check_source, check_name], or [check_source, check_name, "later"] for the excluded boundary selector |
 | check_rerun_requested, check_rerun_dispatch_progress, check_rerun_dispatched | [check_source, check_name] |
 | checks_completed, checks_failure_confirmed | no emitted references in v1; source evidence-kind classification only |
+
+Every non-null `reference.source`, including inapplicable and excluded-later
+sources, is included recursively in the export. Closure is computed against the
+retained snapshot, not just the request range; each source appears once.
+
+| Owner type | Emitted expected types | Populated owner fields beyond queue_id/event_id |
+| --- | --- | --- |
+| landing_decision_recorded | policy_authority_applied; landing_checks_recorded; landing_started; landed; landing_abandoned; with approval: change_revision_observed, batch_started, approval_eligibility_observed, change_classified, change_accountability_observed, and one approval_receipt_recorded or review_stance_observed per relied source | batch_id, attempt_id, tested_sha; approval basis supplies change_id/revision/head |
+| remedy landing_decision_recorded | decision edges above plus change_revision_observed for remedy change/revision/head | batch_id, attempt_id, tested_sha; remedy supplies change_id/revision/head |
+| landing_started | landing_decision_recorded for every retained decision of this batch/attempt; landed; landing_abandoned | batch_id, attempt_id |
+| landing_checks_recorded | batch_started, test_ref_built; per check: checks_observed, check_rerun_requested, check_rerun_dispatch_progress, check_rerun_dispatched, and later checks_observed | batch_id, attempt_id, tested_sha |
+| landed, landing_abandoned | landing_started | batch_id; attempt_id copied from the greatest-ID preceding start of that batch |
+| all other source types | none | no references, hence no owners |
+
+All selectors are queue-local and bounded by the retained watermark. Revision,
+batch-start, test-ref and accountability selectors take the greatest matching
+ID strictly before the owner. Eligibility, classification and relied receipt or
+stance match their complete recorded basis/read/identity and precede the owner;
+required evidence must resolve uniquely. Test-ref selection first chooses the
+latest batch test-ref before the owner, then validates tested_sha. Decision
+check/start references match batch and attempt; the checks edge is absent unless
+OpenMerge authority applies. A start emits all matching retained decision events,
+or one not_recorded decision edge if none exist. Settlement selectors take each
+matching landed/abandoned event strictly after that attempt's start and strictly
+before the next start for the same batch (or through the watermark if no next
+start); optional single-source selectors must not resolve ambiguously.
+Rerun requests select the greatest matching ID before the check owner, matching
+batch, tested SHA, check source/name AND workflow_run_id when nonzero. Dispatch
+and progress select before the owner in that request's generation; progress also
+matches nonzero workflow_run_id. A missing request leaves generation zero
+for dispatch/progress lookup. The later observation uses the lowest matching event ID
+strictly after the owner, with the same batch/tested SHA/check source/name.
 
 Watermarks have `queue_id`, `queue`, `id` (retained maximum or zero).
 Dependency boundaries have `queue_id`, `queue`, `first`, `last`, `count` and
@@ -379,9 +411,15 @@ hash are 64 zeroes. Manifest self-hash covers its canonical JSON with
 All JSON object keys sort by UTF-8 bytes. Whitespace is absent outside strings.
 Numbers use exact decimal arithmetic (including integers above 2^53), no binary
 float rounding, no exponent, and no redundant fractional zeroes; negative zero
-is 0. Strings retain Unicode without HTML escaping and escape control characters
-and U+0085/U+2028/U+2029; no Unicode normalization is performed. Source timestamps
+is 0. Strings must use `\b`, `\t`, `\n`, `\f`, `\r` for U+0008, U+0009,
+U+000A, U+000C, U+000D respectively; all other U+0000–U+001F controls use
+lowercase `\u00xx`. Quote and backslash use `\"` and `\`. U+0085, U+2028,
+and U+2029 use `\u0085`, `\u2028`, and `\u2029`. All remaining characters
+are literal UTF-8, without HTML escaping or Unicode normalization. Invalid
+UTF-8 is rejected. Source timestamps
 are UTC with six fractional digits. Request bounds are ceiled to database
 microseconds, UTC with six fractional digits, years 1 through 9999. Payload
 strings, including timestamp spellings, remain unchanged. Requests select
 `from <= recorded_at < until`; equal bounds are a valid empty selection.
+An absent request bound is spelled `""`; the CLI always supplies both bounds
+and therefore never emits the absent-bound shape.

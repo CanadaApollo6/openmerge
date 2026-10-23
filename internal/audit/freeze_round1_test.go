@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -45,10 +46,17 @@ func TestAuditDecisionCountScaling(t *testing.T) {
 	if testing.Short() {
 		t.Skip("decision-count scaling")
 	}
-	for _, n := range []int{32, 128, 512} {
+	for _, n := range []int{64, 256, 512, 1536} {
 		t.Run(fmt.Sprint(n), func(t *testing.T) {
 			fx := round3ApprovalFixture(t)
 			f := fx.f
+			// Production reporting indexes are part of the measured schema.
+			for _, migration := range []string{"006_evidence_type.sql", "007_reporting_indexes.sql"} {
+				ddl, err := os.ReadFile(filepath.Join("..", "store", "migrations", migration))
+				must(t, err)
+				_, err = f.admin.Exec(t.Context(), string(ddl))
+				must(t, err)
+			}
 			f.reader.timeout = 5 * time.Minute
 			for i := 1; i < n; i++ {
 				d := fx.decision

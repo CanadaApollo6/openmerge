@@ -71,8 +71,8 @@ def references(item, journal):
         if approval:
             basis, identity = approval["basis"], approval["identity"]
             owner.update(change_id=basis["change_id"], revision=basis["revision"], head=basis["head"])
-            edge("change_revision_observed", [basis["change_id"], str(basis["revision"])], select("change_revision_observed", lambda d: d["change_id"] == basis["change_id"] and d["revision"] == basis["revision"]))
-            edge("batch_started", [batch], select("batch_started", by_batch))
+            edge("change_revision_observed", [basis["change_id"], str(basis["revision"])], select("change_revision_observed", lambda d: d["change_id"] == basis["change_id"] and d["revision"] == basis["revision"], before=source["id"]))
+            edge("batch_started", [batch], select("batch_started", by_batch, before=source["id"]))
             edge("approval_eligibility_observed", [approval["eligibility_read_id"]], select("approval_eligibility_observed", lambda d: d["basis"]["read_id"] == approval["eligibility_read_id"]))
             edge("change_classified", [identity["change_id"], str(identity["revision"]), str(identity["generation"])], select("change_classified", lambda d: d["evidence"]["Classification"]["Inputs"]["Generation"] == identity["generation"]))
             edge("change_accountability_observed", [basis["change_id"], str(basis["revision"])], select("change_accountability_observed", lambda d: d["basis"]["change_id"] == basis["change_id"], before=source["id"]))
@@ -80,12 +80,16 @@ def references(item, journal):
                 s = relied["source"]
                 kind = "approval_receipt_recorded" if relied["receipt"] else "review_stance_observed"
                 edge(kind, [s["channel"], s["id"]], select(kind, lambda d: d.get("comment_id", d.get("stance", {}).get("Source", {}).get("ID")) == s["id"] and d["basis"]["read_id"] == relied["basis"]["read_id"]))
+        remedy = data.get("remedy")
+        if remedy:
+            owner.update(change_id=remedy["change_id"], revision=remedy["revision"], head=remedy["head"])
+            edge("change_revision_observed", [remedy["change_id"], str(remedy["revision"])], select("change_revision_observed", lambda d: d["change_id"] == remedy["change_id"] and d["revision"] == remedy["revision"] and d["head_sha"] == remedy["head"], before=source["id"]))
         edge("landing_checks_recorded", [batch, owner["attempt_id"]], select("landing_checks_recorded", by_attempt) if openmerge else None)
         edge("landing_started", [batch, owner["attempt_id"]], select("landing_started", by_attempt))
     elif typ == "landing_checks_recorded":
         owner["tested_sha"] = data["tested_sha"]
-        edge("batch_started", [batch], select("batch_started", by_batch))
-        edge("test_ref_built", [batch, data["tested_sha"]], select("test_ref_built", by_batch))
+        edge("batch_started", [batch], select("batch_started", by_batch, before=source["id"]))
+        edge("test_ref_built", [batch, data["tested_sha"]], select("test_ref_built", by_batch, before=source["id"]))
         for check in data["checks"]:
             identity = [check["source"], check["name"]]
             def matching(e):
@@ -99,7 +103,7 @@ def references(item, journal):
             if observation:
                 chosen = max(matching(observation), key=lambda r: (r["id"], max(r["attempt"], 1)))
                 refs[-1].update(run_id=chosen["id"], attempt=max(chosen["attempt"], 1))
-            request = select("check_rerun_requested", lambda d: by_batch(d) and any(r["name"] == check["name"] and r["source"] == check["source"] for r in d["runs"]), before=source["id"])
+            request = select("check_rerun_requested", lambda d: by_batch(d) and any(r["name"] == check["name"] and r["source"] == check["source"] and (not check["workflow_run_id"] or r["workflow_run_id"] == check["workflow_run_id"]) for r in d["runs"]), before=source["id"])
             generation = request["payload"]["data"]["generation"] if request else 0
             for kind in ("check_rerun_requested", "check_rerun_dispatch_progress", "check_rerun_dispatched"):
                 target = request if kind == "check_rerun_requested" else select(kind, lambda d: by_batch(d) and d["generation"] == generation and (kind != "check_rerun_dispatch_progress" or not check["workflow_run_id"] or d["target"]["workflow_run_id"] == check["workflow_run_id"]), before=source["id"])
@@ -116,7 +120,16 @@ def references(item, journal):
         if start: owner["attempt_id"] = start["payload"]["data"]["attempt_id"]
         edge("landing_started", [batch], start)
     if typ in ("landing_started", "landing_decision_recorded"):
-        for kind in ("landed", "landing_abandoned"): edge(kind, [batch], select(kind, by_batch))
+        start = select("landing_started", by_attempt)
+        following = [e["source"]["id"] for e in events if e["source"]["type"] == "landing_started" and by_batch(e["payload"]["data"]) and e["source"]["id"] > start["source"]["id"]]
+        for kind in ("landed", "landing_abandoned"):
+            settlements = [e for e in events if e["source"]["type"] == kind
+                           and by_batch(e["payload"]["data"])
+                           and e["source"]["id"] > start["source"]["id"]
+                           and (not following or e["source"]["id"] < min(following))]
+            if len(settlements) > 1:
+                raise ValueError("ambiguous settlement")
+            edge(kind, [batch], settlements[0] if settlements else None)
     return sorted(refs, key=raw)
 
 
@@ -124,19 +137,37 @@ def reference(write=False):
     """Expected bytes derive only from literal inputs and explicit relationships.
 
     No Go invocation, exported file, saved manifest or saved selection is an input.
-    The closure vector independently specifies its three start edges and land edge.
+    Range closure follows independently selected references over the full universe.
     """
     journal = json.loads((DATA / "journal-v1.json").read_text(), parse_int=Decimal, parse_float=Decimal)
+    journal.update(json.loads((DATA / "journal-r2.json").read_text(), parse_int=Decimal, parse_float=Decimal))
     total = 0
     for name, literal in journal.items():
         request, events, watermarks = literal["request"], literal["events"], literal["watermarks"]
+        universe = events
+        selected = {(e["source"]["queue_id"], e["source"]["id"]): dict(e, role="scope") for e in universe
+                    if (not request["from"] or e["source"]["recorded_at"] >= request["from"])
+                    and (not request["until"] or e["source"]["recorded_at"] < request["until"])}
+        frontier = list(selected.values())
+        while frontier:
+            following = []
+            for event in frontier:
+                for ref in references(event, universe):
+                    if ref["source"]:
+                        key = (ref["source"]["queue_id"], ref["source"]["id"])
+                        if key not in selected:
+                            item = next(e for e in universe if (e["source"]["queue_id"], e["source"]["id"]) == key)
+                            selected[key] = dict(item, role="dependency")
+                            following.append(selected[key])
+            frontier = following
+        events = sorted(selected.values(), key=lambda e: tuple(e["source"]["queue"][k].encode() for k in ("installation", "repository", "base", "lane")) + (e["source"]["id"],))
         streams = {k: b"" for k in ("events", "selection", "watermarks", "dependency_boundaries")}
         previous = "0" * 64
         dependencies = []
         for item in events:
             source, payload, role = item["source"], item["payload"], item["role"]
             kinds = [KINDS[source["type"]]] if source["type"] in KINDS else []
-            refs = references(item, events)
+            refs = references(item, universe)
             meta = dict(source=source, role=role, references=refs, evidence_kinds=kinds)
             selection = dict(meta, payload_sha256=sha(raw(payload)), metadata_sha256=sha(raw(meta)))
             envelope = dict(meta, kind="source", payload=payload, previous_sha256=previous)
@@ -205,6 +236,18 @@ def main():
         ("cli-zero-installation", "cmd/openmerge/audit.go", "id <= 0", "false"),
         ("cli-leak-connection", "cmd/openmerge/audit.go", 'fmt.Fprintln(stderr, "audit: connection, source, integrity or publication failure")', 'fmt.Fprintln(stderr, os.Getenv("OPENMERGE_DATABASE_URL"))'),
         ("cli-exit-source", "cmd/openmerge/audit.go", 'fmt.Fprintln(stderr, "audit: connection, source, integrity or publication failure")\n\t}\n\treturn 1', 'fmt.Fprintln(stderr, "audit: connection, source, integrity or publication failure")\n\t}\n\treturn 0'),
+    ]
+    # Round-2 surviving selectors; retain placeholders in workflow no-op mutants.
+    prior.EXTRA_MUTATIONS += [
+        ('start-selector-unbounded', 'evidence.go', "AND id=(SELECT max(id) FROM events WHERE queue_id=$1 AND type=$2 AND payload->'data'->>'batch_id'=$3 AND id<$4)`, false, batch, event.source.ID)", "AND id=(SELECT max(id) FROM events WHERE queue_id=$1 AND type=$2 AND payload->'data'->>'batch_id'=$3)`, false, batch)"),
+        ('remedy-owner-head', 'evidence.go', 'r.owner.Head = d.Remedy.Head', 'r.owner.Head = ""'),
+        ('accountability-latest', 'evidence.go', 'AND id=(SELECT max(id) FROM events WHERE queue_id=$1 AND type=$2 AND `+basisPredicate(3)+` AND id<$6)`', 'AND id=(SELECT min(id) FROM events WHERE queue_id=$1 AND type=$2 AND `+basisPredicate(3)+` AND id<$6)`'),
+        ('test-ref-latest', 'evidence.go', "id=(SELECT max(id) FROM events WHERE queue_id=$1 AND type=$2 AND payload->'data'->>'batch_id'=$3 AND id<$5)`, true, c.BatchID, c.TestedSHA", "id=(SELECT min(id) FROM events WHERE queue_id=$1 AND type=$2 AND payload->'data'->>'batch_id'=$3 AND id<$5)`, true, c.BatchID, c.TestedSHA"),
+        ('rerun-latest-request', 'evidence.go', 'predicate+` AND id=(SELECT max(id) FROM events', 'predicate+` AND id=(SELECT min(id) FROM events'),
+        ('landed-owner-attempt', 'evidence.go', 'r.owner.AttemptID = sv.(queue.LandingStarted).AttemptID', '_ = sv'),
+        ('start-multi-decision-all', 'evidence.go', 'for _, item := range items {\n\t\tif _, err := r.lookup("settlement"', 'for _, item := range items[:1] {\n\t\tif _, err := r.lookup("settlement"'),
+        ('rerun-request-ignores-workflow2', 'evidence.go', "AND ($8='0' OR run->>'workflow_run_id'=$8))`", "AND ($8='0' OR true OR run->>'workflow_run_id'=$8))`"),
+        ('progress-ignores-workflow2', 'evidence.go', "match += ` AND ($7='0' OR payload->'data'->'target'->>'workflow_run_id'=$7)`", "match += ` AND ($7='0' OR true OR payload->'data'->'target'->>'workflow_run_id'=$7)`"),
     ]
     # The fold now has its own sanitized diagnostic, retaining fail-closed semantics.
     original = prior.mutation_proofs

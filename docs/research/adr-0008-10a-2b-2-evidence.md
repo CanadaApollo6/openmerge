@@ -88,8 +88,10 @@ for export/replay at 80k configs plus 80k check rows. This uses the measured
 0.259/0.246-second increments over 1536 rows of each kind; it excludes plan
 changes, disk/cache effects and larger owner/check counts. This is a capacity
 estimate, not a promised limit. Many owners still multiply JSON-filtered work;
-measure before deployment. `(queue_id,type,id)` and batch-ID expression indexes
-are post-trial candidates only. No migration or index is part of this PR.
+measure before deployment. These historical measurements omitted production
+indexes 006/007 and are not calibrated production capacity. Existing decision
+identity and settlement expression indexes already cover those selectors.
+No migration or index is part of this PR.
 
 ## Final verification
 
@@ -242,24 +244,17 @@ non-race run measured:
 | 128 | 400 | 1.863 s | 2.132 s | 14.553 |
 | 512 | 1552 | 12.080 s | 13.598 s | 23.593 |
 
-The superlinear term remains. Each decision and start resolves immutable attempt
-and settlement identities using retained-event filters; batch/attempt are JSON
-predicates, not indexed keys. As attempts grow, repeated filters examine growing
-queue prefixes, producing an owners × retained-events term even with no unrelated
-history. The incremental authority cursor removes repeated config decoding but
-cannot eliminate those filters. This is distinct from bounded spool memory.
-Fixing it without indexes requires a broader per-snapshot semantic lookup/spool
-redesign; that is outside this format/CLI correction. No index/migration is added.
-The test logs a representative EXPLAIN ANALYZE plan at each decision count.
-
-A descriptive `a*D+b*D²` fit through 32 and 512 gives a≈0.01255 s/decision and
-b≈0.00002156 s/decision². It predicts about 34 s for 1,000 decisions, 111 s for
-2,000, and 602 s for 5,000, for export alone; 128 predicts 1.96 s versus the
-measured 1.86 s. These are extrapolations from one local run, not capacity
-promises; checks and unrelated retained history can increase cost. Five thousand
-of these decisions would exceed the default five-minute snapshot deadline.
-Use narrower ranges or an explicit larger --timeout, and allow comparable replay
-time. Each run remains snapshot bounded; timeout output contains no source data.
+These round-1 numbers used an incomplete scratch schema and are superseded by
+the round-2 measurements below. The old quadratic fit and capacity projections
+are withdrawn. Production migration 006 indexes decision batch/attempt identity;
+007 indexes batch settlement (landed/abandoned/started), including the preceding
+start selector. The growth fixture now executes those exact migration files.
+Residual O(E) scans remain for batch_started, landing_checks_recorded,
+test_ref_built and accountability families; multiplied across owners these can
+still produce O(owners × retained events) work. Sharing one batch across many
+attempts also leaves attempt filtering within that batch's settlement index
+range. The authority cursor removes repeated config decoding, not those scans.
+No new index, migration, production Go or serialization change is included.
 
 Mutation reporting now distinguishes assertion kills, panic kills, build/setup
 failure, infrastructure failure, equivalent, and survivor. A panic marker wins
@@ -277,7 +272,7 @@ counts below are authoritative for this revision.
 | Consolidated P2 spec | Normative v1 section covers files, fields, hashes, enums, mapping, tuples, zero sentinels, timestamps and ordering; README links to it; both independent encoders verify all 30 files |
 | Independent vectors | TestCompleteExportV1/{approval,github_retry,two_queue,empty}; Python derives semantic edges, Node checks exact bytes and hashes |
 | Mutation categories | Panic detection precedes harness failure markers; full table below separates 74 assertion kills, 14 panic kills and two equivalents; no build/setup/infra failures or survivors |
-| Decision growth | TestAuditDecisionCountScaling records 32/128/512 decisions and retained-filter EXPLAIN plans; superlinear work and projections explicitly retained as a limitation |
+| Decision growth | TestAuditDecisionCountScaling now records 64/256/512/1536 decisions with exact migrations 006/007; round-1 projections withdrawn, remaining lookup scans documented |
 | Timeout | --timeout defaults to 5m; TestAuditSnapshotTimeout and TestAuditUsageAndSanitization verify distinct sanitized timeout and invalid duration behavior |
 | CLI surviving mutants | TestAuditUsageAndSanitization rejects 007, +7 and stray positionals; cli-canonical-installation and cli-positional are assertion kills |
 | Real git | TestAuditBareRemote checks tested SHA against refs/heads/main^ in the bare remote graph |
@@ -496,3 +491,48 @@ Wall times including lock/build overhead: 933.217 → 938.618 s.
 Mutation/make-check artifact manifest SHA-256: `47cd05f907ea6f131484afaf4ffcb6964d6502a050ae587962b35929834ff793`.
 
 Acceptance artifact manifest SHA-256: `f9afafedcb7d92540166c78157c2001f2555ef043e00c0eb49b2ef4b6cfd6951`.
+
+### Round-2 spec completeness and selector pinning
+
+The normative section now specifies exact string escapes, owner-to-edge mapping,
+owner field population, selector boundaries and dependency closure. Unbounded
+library request bounds are `""`; the CLI always supplies both bounds. A start
+references every retained decision event of its attempt, not a member count.
+Operating guidance explains how a large timeout retains a repeatable-read
+snapshot and holds back vacuum.
+
+Ten new literal journals produce 50 new frozen files using the independent
+Python Decimal resolver/encoder (80 files across 16 exports in total). Six are
+Sonnet's unmodified journals: approval/retry range closure, retry ordering ties,
+two-attempt settlement intervals and missing pin. Their 30 Python files match
+Sonnet's independent Node semantic derivations byte-for-byte. Additional remedy,
+multiple-decision and repeated-selector histories pin owner population and
+oldest/latest/workflow distinctions. Node's repository verifier independently
+checks exact-number encoding, hashes and canonical bytes for all 80 files.
+The original 30 frozen files and fixtures outside audit testdata are unchanged.
+No Go export output supplies expected bytes.
+
+Round-2 focused overlay results (each compiled and ran TestCompleteExportV1):
+
+| Mutant | Classification |
+| --- | --- |
+| start-selector-unbounded | assertion_kill |
+| remedy-owner-head | assertion_kill |
+| accountability-latest | assertion_kill |
+| test-ref-latest | assertion_kill |
+| rerun-latest-request | assertion_kill |
+| landed-owner-attempt | assertion_kill |
+| start-multi-decision-all | assertion_kill |
+| rerun-request-ignores-workflow2 | assertion_kill |
+| progress-ignores-workflow2 | assertion_kill |
+
+Nine assertion kills, zero panic kills, equivalent/unreachable targets,
+survivors, build/setup failures or infrastructure failures. The workflow
+no-ops retain SQL placeholders so missing parameters cannot count as kills.
+The accountability mutation initially survived a single-source fixture; the
+new repeated-accountability history kills it by frozen-byte assertion.
+The prior 90-target table remains historical round-1 evidence, not a claim
+that all 90 targets were rerun in round 2.
+
+Private command logs, overlays, timings and schema inventories are retained in
+`/home/riels/.cache/openmerge-149-r2-fix/`. Only scratch localhost:54329 was used.

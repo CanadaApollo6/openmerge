@@ -29,6 +29,7 @@ func TestCompleteExportV1(t *testing.T) {
 		} `json:"events"`
 	}
 	must(t, json.Unmarshal(read(t, "testdata/journal-v1.json"), &vectors))
+	must(t, json.Unmarshal(read(t, "testdata/journal-r2.json"), &vectors))
 	for name, v := range vectors {
 		t.Run(name, func(t *testing.T) {
 			target := filepath.Join(t.TempDir(), "export")

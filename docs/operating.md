@@ -2283,13 +2283,15 @@ queue segment within each snapshot. Export and replay can each take minutes on
 large journals; the command has a five-minute snapshot timeout. Use modest
 intervals and preserve failed outputs as described above. Growth inputs, measured
 plans, timings and projected costs are in the 10a-2b-2 evidence note.
-`(queue_id,type,id)` and batch-ID expression indexes are post-trial candidates
-only; this release adds no migration or index. Do not infer sublinear database
+Existing migrations 006/007 index decision identity and settlement lookup.
+Other lookup families still scan retained events; this release adds no index. Do not infer sublinear database
 work from bounded memory or the pin-fold cursor.
 
 Audit publication requires Linux `renameat2(RENAME_NOREPLACE)`; the CLI fails
 before opening the database on other platforms. `--timeout 5m` is the default
 snapshot deadline; choose a larger Go duration (at least 1ms) for larger journals.
+A large `--timeout` can hold the repeatable-read snapshot open for that duration,
+holding back vacuum reclamation of old row versions.
 Timeouts report `audit: export timed out` (exit 1). Success prints the published
 directory and manifest SHA-256 for external anchoring.
 
