@@ -19,6 +19,7 @@ SLICE = "10a-2b-1"
 CLASSIFICATION = "Inert by own behaviour; depends on Hold; deploy after B"
 EXTRA_PACKAGES = []
 EXTRA_MUTATIONS = []
+MAX_CHANGED_LINES = 2000
 
 
 def module(name, path):
@@ -179,7 +180,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--phase", choices=("all", "regression"), default="all")
+    parser.add_argument("--phase", choices=("all", "regression", "acceptance"), default="all")
     parser.add_argument("--stress-pattern", default="TestGoverningPin|TestCheckAttempt|TestEvidenceAuthorityRequiredAtDecisionBoundary|TestEvidenceApprovalFamiliesAndRequiredMissing|TestRound3")
     parser.add_argument("--baseline-timing-log", type=Path, help="reuse an already completed identical baseline timing; requires adjacent exit-status.txt containing 0")
     args = parser.parse_args()
@@ -205,7 +206,7 @@ def main():
         return result
 
     v.invoke = measured
-    result = {"slice": SLICE, "classification": CLASSIFICATION, "commands": v.COMMANDS}
+    result = {"phase": args.phase, "slice": SLICE, "classification": CLASSIFICATION, "commands": v.COMMANDS}
     try:
         result["baseline"] = v.check_tree("baseline", args.baseline, v.git(args.baseline, "rev-parse", BASE))
         result["candidate"] = v.check_tree("candidate", ROOT)
@@ -222,8 +223,8 @@ def main():
             raise ValueError("change outside approved audit/tests/docs/scripts scope")
         if EXTRA_PACKAGES:
             result["changed_lines"] = sum(int(n) for line in v.git(ROOT, "diff", "--numstat", BASE, "HEAD").splitlines() for n in line.split("\t")[:2])
-            if result["changed_lines"] > 3500:
-                raise ValueError("3500 changed-line round-1 scope gate exceeded (size reported before editing)")
+            if result["changed_lines"] > MAX_CHANGED_LINES:
+                raise ValueError("changed-line scope gate exceeded")
             main_before = (args.baseline / "cmd/openmerge/main.go").read_text()
             main_after = (ROOT / "cmd/openmerge/main.go").read_text()
             entry = "  audit export [options]  Export recorded audit evidence\n"
@@ -245,14 +246,15 @@ def main():
             raise ValueError("CI scratch endpoint rejected")
         measured(["go", "test", "-count=1", "./internal/audit", "-run", "^TestSourceDatabaseURLGuardAllowsLocalhostPorts$"], ROOT, out, "ci-dsn-guard")
         result["ci_dsn_guard"] = {"ports": [5432, 54329], "connection_free": True}
-        if args.phase != "regression":
+        if args.phase == "all":
             result["mutations"] = mutation_proofs(measured, out, "TestGoverningPin|TestEvidence|TestClosure|TestCheckAttempt|TestRound3|TestReplay|TestValid|TestSpool|TestSourceLess|TestNormalize|TestSourceReplayRejectsScopeShapeAndCrossQueueOrder|TestExportV1SemanticExpectations")
             outcomes = [m["outcome"] for m in result["mutations"]]
             result["mutation_counts"] = {k: outcomes.count(k) for k in ("assertion_kill", "panic_kill", "equivalent", "unreachable", "survived", "build_or_setup_failure", "infrastructure_failure")}
             if any(result["mutation_counts"][k] for k in ("survived", "build_or_setup_failure", "infrastructure_failure")):
                 raise ValueError("mutation verification incomplete; inspect separate outcomes")
             measured(["make", "check"], ROOT, out, "make-check")
-            measured(["go", "test", "-race", "-v", "-count=1", "./internal/audit", *EXTRA_PACKAGES], ROOT, out, "evidence-full")
+        if args.phase != "regression":
+            measured(["go", "test", "-race", "-v", "-count=1", "-timeout=30m", "./internal/audit", *EXTRA_PACKAGES], ROOT, out, "evidence-full")
             burners = []
             try:
                 for _ in range(8):

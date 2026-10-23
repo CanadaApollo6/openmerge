@@ -253,8 +253,8 @@ redesign; that is outside this format/CLI correction. No index/migration is adde
 The test logs a representative EXPLAIN ANALYZE plan at each decision count.
 
 A descriptive `a*D+b*D²` fit through 32 and 512 gives a≈0.01255 seconds and
-b≈0.00002057 seconds. It predicts about 33 s for 1,000 decisions, 107 s for
-2,000, and 577 s for 5,000, for export alone; 128 predicts 1.94 s versus the
+b≈0.00002156 seconds. It predicts about 34 s for 1,000 decisions, 111 s for
+2,000, and 602 s for 5,000, for export alone; 128 predicts 1.96 s versus the
 measured 1.86 s. These are extrapolations from one local run, not capacity
 promises; checks and unrelated retained history can increase cost. Five thousand
 of these decisions would exceed the default five-minute snapshot deadline.
@@ -268,3 +268,141 @@ failures never count as kills. The original claim of 86 assertion kills was
 incorrect: review reproduced 11 panic-only failures; inspection of the retained
 logs also found three mixed assertion/panic targets, conservatively panic kills. The new full table and
 counts below are authoritative for this revision.
+
+### Round-1 resolution map
+
+| Request | Resolution and verification |
+| --- | --- |
+| D1/D2 | Array wire identity and batch/attempt decision key; TestIdentityJSONArray, TestRound3StartReferencesExactOwningDecision, TestCompleteExportV1/closure and /approval |
+| Consolidated P2 spec | Normative v1 section covers files, fields, hashes, enums, mapping, tuples, zero sentinels, timestamps and ordering; README links to it; both independent encoders verify all 30 files |
+| Independent vectors | TestCompleteExportV1/{approval,github_retry,two_queue,empty}; Python derives semantic edges, Node checks exact bytes and hashes |
+| Mutation categories | Panic detection precedes harness failure markers; full table below separates 74 assertion kills, 14 panic kills and two equivalents; no build/setup/infra failures or survivors |
+| Decision growth | TestAuditDecisionCountScaling records 32/128/512 decisions and retained-filter EXPLAIN plans; superlinear work and projections explicitly retained as a limitation |
+| Timeout | --timeout defaults to 5m; TestAuditSnapshotTimeout and TestAuditUsageAndSanitization verify distinct sanitized timeout and invalid duration behavior |
+| CLI surviving mutants | TestAuditUsageAndSanitization rejects 007, +7 and stray positionals; cli-canonical-installation and cli-positional are assertion kills |
+| Real git | TestAuditBareRemote checks tested SHA against refs/heads/main^ in the bare remote graph |
+| SELECT only | TestAuditSelectOnlyCommand additionally exports the complete approval-bearing journal, including every evidence family |
+| Remaining nits | TestAuditSelectOnlyCommand verifies success path/digest and missing/wrong-case selectors; TestAuditUsageAndSanitization rejects year 10000; operating.md documents Linux startup rejection and stopped-run staging cleanup |
+
+### Complete corrected mutation table
+
+**90 targets: 74 assertion kills, 14 panic kills, two equivalents, zero survivors,
+zero build/setup failures, zero infrastructure failures.** Panic-containing runs
+are conservatively panic kills even when earlier tests also asserted failure.
+The two equivalents remove redundant defensive guards: closure's matching-source
+validator, and the identity guard independently enforced by Identity.MarshalJSON.
+The identity-json-string target instead exercises the actual array wire contract.
+Removing the canonical installation check now fails the corrected value test;
+the first attempted round exposed its wrong argument index and is not counted.
+The table is from the complete repeated run on implementation head 2323235.
+
+| Mutation | Outcome |
+| --- | --- |
+| reuse-spool-decode-storage | assertion kill |
+| missing-required-source | panic kill |
+| oldest-observation | assertion kill |
+| accept-wrong-check-result | assertion kill |
+| accept-invalid-role | assertion kill |
+| omit-exact-closure | assertion kill |
+| absence-source-id | assertion kill |
+| adjacent-reference-duplicates | assertion kill |
+| duplicate-identity | assertion kill |
+| owning-decision | assertion kill |
+| conflicting-spool-payload | assertion kill |
+| conflicting-spool-references | assertion kill |
+| event-tie-break | assertion kill |
+| newest-run-in-event | assertion kill |
+| authority-always-required | assertion kill |
+| authority-never-required | assertion kill |
+| queue-id-order | assertion kill |
+| exact-closure | assertion kill |
+| valid-resolution | assertion kill |
+| resolved-references | assertion kill |
+| missing-retained-source | assertion kill |
+| scope-range | assertion kill |
+| owning-decision-id | assertion kill |
+| conflicting-spool-watermark | assertion kill |
+| identity-structure | equivalent |
+| identity-canonical | assertion kill |
+| identity-html-escape | assertion kill |
+| normalize-encode-error | assertion kill |
+| multi-run-oldest-run-sql | assertion kill |
+| multi-run-lowest-attempt-sql | assertion kill |
+| authority-governing-commit | assertion kill |
+| dispatch-generation-sql | assertion kill |
+| additional-transaction | assertion kill |
+| pin-skip-config-fold | assertion kill |
+| pin-ignore-rejected-decode | assertion kill |
+| pin-ignore-digest | assertion kill |
+| pin-hide-rejection | assertion kill |
+| rollback-status-recorded | assertion kill |
+| rollback-status-absent | assertion kill |
+| inapplicable-shape | assertion kill |
+| sql-zero-attempt-not-normalized | assertion kill |
+| closure-valid-resolution-call | equivalent |
+| identity-json-string | assertion kill |
+| pin-queue-scope | assertion kill |
+| cli-manifest-selector-conflict | assertion kill |
+| pin-cursor-no-queue-reset | assertion kill |
+| pin-cursor-no-backward-reset | assertion kill |
+| cli-canonical-installation | assertion kill |
+| cli-positional | assertion kill |
+| cli-inverted-range | assertion kill |
+| cli-zero-installation | assertion kill |
+| cli-leak-connection | assertion kill |
+| cli-exit-source | assertion kill |
+| independent-run-maxima | assertion kill |
+| retain-inapplicable-check | assertion kill |
+| drop-family-change_classified | assertion kill |
+| drop-family-change_revision_observed | assertion kill |
+| drop-family-review_stance_observed | assertion kill |
+| drop-family-approval_receipt_recorded | assertion kill |
+| drop-family-landing_checks_recorded | assertion kill |
+| drop-family-landing_abandoned | assertion kill |
+| drop-family-landing_decision_recorded | assertion kill |
+| drop-family-approval_eligibility_observed | assertion kill |
+| drop-family-batch_started | assertion kill |
+| drop-family-test_ref_built | assertion kill |
+| drop-family-change_accountability_observed | assertion kill |
+| drop-family-policy_authority_applied | panic kill |
+| drop-family-landing_started | panic kill |
+| drop-family-landed | assertion kill |
+| drop-family-checks_observed | panic kill |
+| drop-family-check_rerun_requested | assertion kill |
+| drop-family-check_rerun_dispatch_progress | assertion kill |
+| drop-family-check_rerun_dispatched | assertion kill |
+| required-call-0 | panic kill |
+| required-call-1 | panic kill |
+| required-call-2 | assertion kill |
+| required-call-3 | panic kill |
+| required-call-4 | panic kill |
+| required-call-5 | panic kill |
+| required-call-6 | panic kill |
+| required-call-7 | panic kill |
+| required-call-8 | assertion kill |
+| required-call-9 | assertion kill |
+| required-call-10 | panic kill |
+| required-call-11 | panic kill |
+| required-checks | assertion kill |
+| store-cardinality | assertion kill |
+| store-empty-batch | panic kill |
+| store-decision-cap | assertion kill |
+| store-eligibility-cap | assertion kill |
+
+The complete format specification, expanded independent vectors and full mutation
+table cross the prior 2,000-line PR gate. This was reported before proceeding,
+as required by the round's approximately 1,000-line reporting threshold. The
+10a-2b-2 wrapper now has a 2,500-line ceiling; the shared historical verifier
+retains its 2,000-line default. No Makefile, CI or Go test flag changed.
+
+The first full race acceptance command exhausted Go's implicit ten-minute
+command deadline during TestSourceStreamingGrowth. The completed mutation
+and make-check stages above remain authoritative; that interrupted acceptance
+is not a pass. The verifier's explicit `--phase acceptance` continues full
+non-short race acceptance with a 30-minute command deadline, then stress,
+CI-like timings and every regression comparison. This phase is reported in its
+summary and does not claim to rerun mutations or make-check. Go implementation
+and test files are unchanged from 2323235. No test flag source file, Makefile or
+CI configuration changed. Stress selects every new/changed test explicitly;
+unchanged TestAuditRealisticGrowth remains in full race acceptance, while the
+new 32/128/512 decision-count probe runs all 20 stress iterations.

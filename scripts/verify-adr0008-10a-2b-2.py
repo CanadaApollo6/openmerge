@@ -174,7 +174,7 @@ def main():
     parser.add_argument("--write-reference", action="store_true")
     parser.add_argument("--baseline", type=Path)
     parser.add_argument("--out", type=Path)
-    parser.add_argument("--phase", choices=("all", "regression"), default="all")
+    parser.add_argument("--phase", choices=("all", "regression", "acceptance"), default="all")
     args = parser.parse_args()
     result = reference(args.write_reference)
     print(json.dumps(result), flush=True)
@@ -190,6 +190,8 @@ def main():
     prior.SLICE = "10a-2b-2"
     prior.CLASSIFICATION = "Hold; deploy only after period B drains"
     prior.EXTRA_PACKAGES = ["./cmd/openmerge"]
+    # Round-1 specification and full mutation table were size-reported before editing.
+    prior.MAX_CHANGED_LINES = 2500
     prior.EXTRA_PATTERN = "|TestAuditUsageAndSanitization|TestAuditSelectOnlyCommand|TestCompleteExportV1|TestIdentityJSONArray|TestAuditSnapshotTimeout|TestAuditBareRemote"
     prior.EXTRA_MUTATIONS = [
         ("identity-json-string", "evidence.go", "return []byte(id), nil", "return json.Marshal(string(id))"),
@@ -210,7 +212,7 @@ def main():
         return original(measured, out, pattern + prior.EXTRA_PATTERN)
     prior.mutation_proofs = mutations
     sys.argv = [str(prior.ROOT), "--baseline", str(args.baseline), "--out", str(args.out), "--phase", args.phase,
-                "--stress-pattern", "TestAudit|TestCompleteExportV1|TestGoverningPin|TestIdentityJSONArray|TestEvidenceIdentity|TestEvidenceReferenceComparator|TestRound3|TestSpoolRejectsConflictingDuplicateRecords|TestSourceReplayRejectsScopeShapeAndCrossQueueOrder"]
+                "--stress-pattern", "TestAuditUsageAndSanitization|TestAuditSelectOnlyCommand|TestAuditSnapshotTimeout|TestAuditBareRemote|TestAuditDecisionCountScaling|TestCompleteExportV1|TestGoverningPin|TestIdentityJSONArray|TestEvidenceIdentity|TestEvidenceReferenceComparator|TestRound3|TestSpoolRejectsConflictingDuplicateRecords|TestSourceReplayRejectsScopeShapeAndCrossQueueOrder"]
     return prior.main()
 
 
