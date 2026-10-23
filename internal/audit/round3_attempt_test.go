@@ -68,12 +68,6 @@ func TestCheckAttemptNewestRunWithinEvent(t *testing.T) {
 	}
 }
 
-func TestCheckAttemptDispatchGenerationConsistency(t *testing.T) {
-	if sameGeneration(7, 8) || !sameGeneration(7, 7) {
-		t.Fatal("dispatch generation mismatch accepted")
-	}
-}
-
 // An event holding several runs of one check is malformed for the codec, but
 // the SQL still orders it by its own newest run tuple. When that tuple governs
 // the boundary, the malformed observation is selected and rejected; a pick of

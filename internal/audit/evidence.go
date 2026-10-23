@@ -198,11 +198,11 @@ func resolveEvidenceAt(ctx context.Context, tx pgx.Tx, event sourceEvent, maxID 
 		if !matched {
 			return nil, nil, errSource
 		}
-		// The latest pin before this decision governs requiredness, as with the
-		// store's latestAuthorityPin at write time (pins are written validated and
-		// paired with their config). Future activation and openmerge pins before a
-		// rollback cannot govern it.
-		pin, err := r.lookup("authority", "policy_authority_applied", evidenceIdentity("governing"), `id=(SELECT max(id) FROM events WHERE queue_id=$1 AND type=$2 AND id<$3)`, false, event.source.ID)
+		pinID, err := governingPin(ctx, tx, event.source.QueueID, event.source.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		pin, err := r.lookup("authority", "policy_authority_applied", evidenceIdentity("governing"), `id=$3`, false, pinID)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -212,13 +212,8 @@ func resolveEvidenceAt(ctx context.Context, tx pgx.Tx, event sourceEvent, maxID 
 				return nil, nil, err
 			}
 			r.authority = v.(queue.PolicyAuthorityApplied).Authority == "openmerge"
-		}
-		if !r.authority {
-			// A github pin records rollback, not applicable openmerge evidence.
-			r.refs[len(r.refs)-1].Status = "not_recorded"
-			r.refs[len(r.refs)-1].Source = nil
-			if pin != nil {
-				r.sources = r.sources[:len(r.sources)-1]
+			if !r.authority {
+				r.refs[len(r.refs)-1].Status = "inapplicable"
 			}
 		}
 		if a := d.Approval; a != nil {
@@ -552,9 +547,6 @@ func (r *evidenceResolver) checkHistory(c queue.LandingChecksRecorded) error {
 				if typ == "check_rerun_requested" {
 					generation = g
 				}
-				if !sameGeneration(g, generation) {
-					return errSource
-				}
 				r.refs[len(r.refs)-1].Generation = g
 			}
 		}
@@ -588,7 +580,10 @@ func validReferences(refs []Reference) bool {
 			return false
 		}
 		switch r.Status {
-		case "recorded":
+		case "recorded", "inapplicable":
+			if r.Status == "inapplicable" && (r.ExpectedType != "policy_authority_applied" || r.Relation != "relied_on" || r.Identity != evidenceIdentity("governing")) {
+				return false
+			}
 			if r.Source == nil || r.Source.ID <= 0 || r.Source.QueueID != r.Owner.QueueID || r.Source.Type != r.ExpectedType {
 				return false
 			}
@@ -735,6 +730,52 @@ func newestCheckRun(runs []queue.CheckRun, name, source string) *queue.CheckRun 
 	return newest
 }
 
-func sameGeneration(actual, expected uint64) bool { return actual == expected }
-
 const checkObservationPredicate = `payload->'data'->>'batch_id'=$3 AND payload->'data'->>'tested_sha'=$4 AND id=(SELECT e.id FROM events e WHERE e.queue_id=$1 AND e.type=$2 AND e.payload->'data'->>'batch_id'=$3 AND e.payload->'data'->>'tested_sha'=$4 AND e.id<$5 AND EXISTS (SELECT 1 FROM jsonb_array_elements(e.payload->'data'->'runs') run WHERE run->>'name'=$6 AND run->>'source'=$7) ORDER BY (SELECT ARRAY[(run->>'id')::numeric,greatest((run->>'attempt')::numeric,1)] FROM jsonb_array_elements(e.payload->'data'->'runs') run WHERE run->>'name'=$6 AND run->>'source'=$7 ORDER BY (run->>'id')::numeric DESC,greatest((run->>'attempt')::numeric,1) DESC LIMIT 1) DESC,e.id DESC LIMIT 1)`
+
+// Only config and pin events can change AuthorityPin. Reuse the queue fold
+// rather than maintaining a second interpretation of configuration transitions.
+// Rejected pins poison this prefix: retaining the previous pin alone could hide
+// required evidence from a malformed or mismatched attempted mode transition.
+type pinFold struct {
+	state    queue.State
+	id       int64
+	rejected bool
+}
+
+func (f *pinFold) apply(id int64, event queue.Event) {
+	switch v := event.(type) {
+	case queue.ConfigApplied:
+		f.state = queue.Apply(f.state, v)
+	case queue.PolicyAuthorityApplied:
+		if v.Validate() != nil || v.EffectiveDigest != f.state.ConfigDigest {
+			f.rejected = true
+		} else {
+			f.id = id
+		}
+		f.state = queue.Apply(f.state, v)
+	}
+}
+
+func governingPin(ctx context.Context, tx pgx.Tx, queueID, before int64) (int64, error) {
+	rows, err := tx.Query(ctx, `SELECT id,type,CASE WHEN octet_length(payload::text)<=4194304 THEN payload::text ELSE NULL END FROM events WHERE queue_id=$1 AND id<$2 AND type IN ('config_applied','policy_authority_applied') ORDER BY id`, queueID, before)
+	if err != nil {
+		return 0, errSource
+	}
+	defer rows.Close()
+	var fold pinFold
+	for rows.Next() {
+		var e sourceEvent
+		if rows.Scan(&e.source.ID, &e.source.Type, &e.payload) != nil {
+			return 0, errSource
+		}
+		v, err := decodeEvidence(&e)
+		if err != nil {
+			return 0, errSource
+		}
+		fold.apply(e.source.ID, v)
+	}
+	if rows.Err() != nil || fold.rejected {
+		return 0, errSource
+	}
+	return fold.id, nil
+}

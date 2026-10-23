@@ -249,3 +249,26 @@ selection; this single comparison replaced per-record re-resolution. Identities
 are canonical JSON string tuples. Without new indexes, JSON-filtered retained lookups
 remain owners × retained events (multiplied by checks); bounded memory is not a
 claim of sublinear database work. See the 10a-2a evidence note for limits and plans.
+
+## 10a-2b-1 provisional evidence correction
+
+The approved sequence is in `adr-0008-10a-2b-size-gate.md`. This step leaves
+complete-export fixtures and v1 **PROVISIONAL**. It does not freeze bytes.
+Audit projects only config/pin events through `queue.Apply` in journal order
+before each decision. An invalid or digest-ignored pin fails that export
+closed, even if later history contains a valid replacement. Config changes
+alone preserve the durable pin exactly as the queue fold does.
+
+A governing github pin has `status: "inapplicable"` and retains its actual
+source. `not_recorded` means the resolver found no applicable source. Reference
+shape validation restricts `inapplicable` to the governing authority edge;
+closure retains its source and replay re-resolves its status and identity
+against retained history. Rehashing a status or source substitution cannot
+legitimize it. Fully rehashed omissions still need the future 10b anchor.
+
+Across check-observation events SQL compares run ID, normalized attempt
+(`0` means `1`), then event ID. Run 5 attempt 1 followed by run 5 attempt 0
+therefore selects the later event. Within the chosen event, Go normalization
+validates the retained run and describes its reference; these are distinct
+selection and validation responsibilities. Retry-generation selection stays
+in SQL; the redundant `sameGeneration` helper and its helper-only test are gone.

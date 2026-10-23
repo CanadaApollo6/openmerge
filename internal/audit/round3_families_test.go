@@ -77,6 +77,7 @@ func round3ApprovalFixture(t *testing.T) *round3EvidenceFixture {
 	must(t, err)
 	pin := v.(queue.PolicyAuthorityApplied)
 	pin.GoverningCommit = classified.Evidence.Classification.Inputs.GoverningCommit
+	add(queue.ConfigApplied{Commit: pin.GoverningCommit, Digest: pin.EffectiveDigest})
 	fx.pinID = add(pin)
 	fx.freshID = add(input.Fresh)
 	fx.decision = decision
@@ -281,7 +282,8 @@ func TestRound3OptionalAuthorityAndChecksAbsence(t *testing.T) {
 				t.Fatalf("missing optional reference %s", typ)
 				return Reference{}
 			}
-			if ref := find("policy_authority_applied"); ref.Status != "not_recorded" || ref.Source != nil {
+			ref := find("policy_authority_applied")
+			if mode == "github-pin" && (ref.Status != "inapplicable" || ref.Source == nil || ref.Source.ID != fx.pinID) || mode == "no-pin" && (ref.Status != "not_recorded" || ref.Source != nil) {
 				t.Fatalf("authority pin absence not explicit: %+v", ref)
 			}
 			if ref := find("landing_checks_recorded"); ref.Status != "not_recorded" || ref.Source != nil {

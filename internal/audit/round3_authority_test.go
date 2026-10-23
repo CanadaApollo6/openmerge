@@ -21,6 +21,7 @@ func TestEvidenceAuthorityRequiredAtDecisionBoundary(t *testing.T) {
 				must(t, err)
 			}
 			expected := map[int64]bool{fx.decisionID: false}
+			var rollbackID, rollbackDecision int64
 			if mode == "mixed-activation" || mode == "rollback" || mode == "required-check-missing" {
 				pin := fx.events["policy_authority_applied"][0].(queue.PolicyAuthorityApplied)
 				evidenceInsert(t, f, pin)
@@ -39,10 +40,11 @@ func TestEvidenceAuthorityRequiredAtDecisionBoundary(t *testing.T) {
 				if mode == "rollback" {
 					pin.Authority = "github"
 					pin.OpenMerge = nil
-					evidenceInsert(t, f, pin)
+					rollbackID = evidenceInsert(t, f, pin)
 					d.AttemptID = "rolled-back"
 					id := evidenceInsert(t, f, d)
 					expected[id] = false
+					rollbackDecision = id
 					start.AttemptID = d.AttemptID
 					evidenceInsert(t, f, start)
 				}
@@ -76,6 +78,10 @@ func TestEvidenceAuthorityRequiredAtDecisionBoundary(t *testing.T) {
 						if required {
 							if ref.Status != "recorded" || ref.Source == nil {
 								t.Fatal("governing evidence absent", ref)
+							}
+						} else if typ == "policy_authority_applied" && s.Source.ID == rollbackDecision {
+							if ref.Status != "inapplicable" || ref.Source == nil || ref.Source.ID != rollbackID {
+								t.Fatal("rollback source lost", ref)
 							}
 						} else if ref.Status != "not_recorded" || ref.Source != nil {
 							t.Fatal("inapplicable evidence acquired source IDs", ref)

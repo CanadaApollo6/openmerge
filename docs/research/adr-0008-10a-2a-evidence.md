@@ -370,9 +370,9 @@ is the first of each mutant's failing set.
 | `m2-go-newest-lowest-attempt` | killed | TestCheckAttemptNewestRunWithinEvent |
 | `m2-no-check-result-compare` | killed | TestEvidenceNewestCheckAttemptAtBoundary |
 | `m2-later-not-excluded` | killed | TestEvidenceNewestCheckAttemptAtBoundary |
-| `m2-dispatch-generation-go` | killed | TestCheckAttemptDispatchGenerationConsistency |
+| `m2-dispatch-generation-go` | removed in 10a-2b-1: dead production guard | helper-only test did not prove SQL selection |
 | `m2-dispatch-generation-sql` | killed | TestCheckAttemptDispatchFollowsRequestGeneration |
-| `m2-dispatch-generation-both` | killed | TestCheckAttemptDispatchFollowsRequestGeneration |
+| `m2-dispatch-generation-both` | SQL mutation killed; Go guard equivalent | TestCheckAttemptDispatchFollowsRequestGeneration |
 | `m2-valid-refs-absence-source` | killed | TestValidReferencesRejectsInventedAbsenceAndDuplicates |
 | `m2-valid-refs-order` | killed | TestValidReferencesRejectsInventedAbsenceAndDuplicates |
 | `m2-no-dedup-normalize` | killed | TestEvidenceReferenceComparatorAndAbsence |
@@ -387,8 +387,8 @@ is the first of each mutant's failing set.
 | `f-identity-html-escape` | killed | TestEvidenceIdentityIsCanonicalStringTuple |
 | `f-normalize-encode-error` | killed | TestNormalizeReferencesRejectsExcessiveIdentity |
 | `f-valid-refs-encode-error` | killed | TestNormalizeReferencesRejectsExcessiveIdentity |
-| `f-github-pin-keeps-source` | killed | TestEvidenceAuthorityRequiredAtDecisionBoundary |
-| `f-github-pin-keeps-ref` | killed | TestEvidenceAuthorityRequiredAtDecisionBoundary |
+| `f-github-pin-keeps-source` | obsolete: source preservation is required in 10a-2b-1 | superseded by retained rollback tests |
+| `f-github-pin-keeps-ref` | obsolete: inapplicable retains its source | superseded by status/source replay tests |
 | `m2-exact-closure-allow-extra` | killed | TestClosureReplayRejectsRehashedMissingDependency |
 | `m2-closure-single-wave` | killed | TestClosureCrossRangeSharedSource |
 | `m2-merge-scope-precedence` | killed | TestClosureSpoolMultipleMergePasses |
@@ -440,9 +440,12 @@ call itself would need a test-only fault hook in the resolver. Replay's
 removed guards (`astra-skip-status`, `m2-replay-skip-ref-compare`,
 `m2-replay-skip-verify-retained`) are killed through exact closure.
 
-The verifier's own overlay table (`scripts/verify-adr0008-10a-2a.py`) runs on
-the final head: **72/72 mutants compile and are killed by a semantic `--- FAIL`**,
-with build/setup failures rejected. That includes the always/never-required
+The historical verifier reported **72/72** failing overlays on that head.
+That historical count included a helper-only generation assertion and obsolete
+github source-erasure assertions; it is not a current behavioural kill count.
+10a-2b-1 removes those targets and reports assertion kills, equivalents and
+survivors separately in its focused evidence note. The old run rejected
+build/setup failures. Its remaining targets included the always/never-required
 authority mutants, all 18 per-family exact-edge drops, the 12 required call
 sites, the multi-run SQL orderings, dispatch generation, identity
 structure/canonical/HTML escaping, spool payload/reference/watermark conflicts,
