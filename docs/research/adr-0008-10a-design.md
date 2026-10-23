@@ -360,9 +360,10 @@ retained snapshot, not just the request range; each source appears once.
 | landed, landing_abandoned | landing_started | batch_id; attempt_id copied from the greatest-ID preceding start of that batch |
 | all other source types | none | no references, hence no owners |
 
-All selectors are queue-local and bounded by the retained watermark. Revision,
-batch-start, test-ref and accountability selectors take the greatest matching
-ID strictly before the owner. Eligibility, classification and relied receipt or
+All selectors are queue-local and bounded by the retained watermark. Revision and batch-start selectors require a unique matching ID strictly
+before the owner (hence the greatest matching preceding ID); test-ref and
+accountability selectors take the greatest matching ID strictly before the
+owner. Eligibility, classification and relied receipt or
 stance match their complete recorded basis/read/identity and precede the owner;
 required evidence must resolve uniquely. Test-ref selection first chooses the
 latest batch test-ref before the owner, then validates tested_sha. Decision
@@ -413,7 +414,7 @@ Numbers use exact decimal arithmetic (including integers above 2^53), no binary
 float rounding, no exponent, and no redundant fractional zeroes; negative zero
 is 0. Strings must use `\b`, `\t`, `\n`, `\f`, `\r` for U+0008, U+0009,
 U+000A, U+000C, U+000D respectively; all other U+0000–U+001F controls use
-lowercase `\u00xx`. Quote and backslash use `\"` and `\`. U+0085, U+2028,
+lowercase `\u00xx`. Quote and backslash use `\"` and `\\`. U+0085, U+2028,
 and U+2029 use `\u0085`, `\u2028`, and `\u2029`. All remaining characters
 are literal UTF-8, without HTML escaping or Unicode normalization. Invalid
 UTF-8 is rejected. Source timestamps
