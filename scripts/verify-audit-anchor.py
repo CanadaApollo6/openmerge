@@ -76,10 +76,10 @@ def load(db, label, directory):
             require(len(raw) <= LIMIT + 1 and raw.endswith(b'\n'))
             row = decode(raw.decode('utf-8'))
             source = row['source']
-            require(set(source) == {'queue_id', 'id', 'type', 'recorded_at', 'queue'})
+            require(isinstance(source, dict) and set(source) == {'queue_id', 'id', 'type', 'recorded_at', 'queue'})
             qid, sid = integer(source['queue_id']), integer(source['id'])
             queue = source['queue']
-            require(set(queue) == {'installation', 'repository', 'base', 'lane'})
+            require(isinstance(queue, dict) and set(queue) == {'installation', 'repository', 'base', 'lane'})
             require(all(isinstance(v, str) for v in queue.values()))
             for value in [source['type'], *queue.values()]:
                 require(isinstance(value, str))
@@ -120,8 +120,9 @@ def main():
         require(re.fullmatch(r'[0-9a-f]{64}\n', anchor))
         stdout = read(args.replay_stdout)
         require('\n' not in args.replay_out and '\r' not in args.replay_out and args.replay_out)
-        require(re.fullmatch(re.escape(args.replay_out) + r'\nmanifest SHA-256: [0-9a-f]{64}\n', stdout))
-        replay_digest = stdout.splitlines()[1][18:]
+        match = re.fullmatch(re.escape(args.replay_out) + r'\nmanifest SHA-256: ([0-9a-f]{64})\n', stdout)
+        require(match is not None)
+        replay_digest = match.group(1)
         with tempfile.TemporaryDirectory(prefix='openmerge-anchor-') as temporary:
             with sqlite3.connect(str(Path(temporary) / 'join.sqlite')) as db:
                 db.execute('CREATE TABLE sources(label TEXT,q INTEGER,id INTEGER,at TEXT,role TEXT,facts TEXT,context TEXT,PRIMARY KEY(label,q,id))')
@@ -156,7 +157,7 @@ def main():
                 if not failed:
                     print('anchor and overlap match')
                 return int(failed)
-    except (OSError, ValueError, KeyError, TypeError, RecursionError, sqlite3.Error):
+    except Exception:
         print('malformed or unreadable input', file=sys.stderr)
         return 2
 

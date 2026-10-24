@@ -30,13 +30,42 @@ class Contract(unittest.TestCase):
             receipt, stdout = root / 'receipt', root / 'stdout'
             receipt.write_text('a' * 64 + '\n')
             stdout.write_text('output\nmanifest SHA-256: ' + 'a' * 64 + '\n')
-            def check(code, reason='', extra=()):
+            def check(code, reason='', extra=(), out='output'):
                 result = subprocess.run([sys.executable, str(SCRIPT), '--anchor', str(receipt),
-                    '--replay-stdout', str(stdout), '--replay-out', 'output',
-                    '--earlier', str(a), '--later', str(b), *extra], capture_output=True, text=True)
+                    '--replay-stdout', str(stdout), '--replay-out', out,
+                    '--earlier', str(a), '--later', str(b), *extra], capture_output=True, text=True, input='')
                 self.assertEqual(result.returncode, code, result.stdout + result.stderr)
                 self.assertIn(reason, result.stdout + result.stderr)
             write(a, [row]); write(b, [row]); check(0)
+            for separator in '\v\f\x1c\x1d\x1e\x85\u2028\u2029':
+                crafted = 'output' + separator + 'manifest SHA-256: ' + 'a' * 64 + separator + 'tail'
+                stdout.write_text(crafted + '\nmanifest SHA-256: ' + 'd' * 64 + '\n')
+                check(1, 'anchor mismatch', out=crafted)
+                benign = 'output' + separator + 'tail'
+                stdout.write_text(benign + '\nmanifest SHA-256: ' + 'a' * 64 + '\n')
+                check(0, out=benign)
+            stdout.write_text('output\nmanifest SHA-256: ' + 'd' * 64 + '\n')
+            check(1, 'anchor mismatch')  # Anchor equals manifest only.
+            receipt.write_text('d' * 64 + '\n'); check(1, 'anchor mismatch')  # Equals stdout only.
+            receipt.write_text('a' * 64 + '\n'); stdout.write_text('output\nmanifest SHA-256: ' + 'a' * 64 + '\n')
+            check(2, extra=['--anchor', '-', '--replay-stdout', '-'])
+            malformed = json.loads(json.dumps(row)); malformed['source']['queue'] = list(row['source']['queue'])
+            write(b, [malformed]); check(2); write(b, [row])
+            for file in ['manifest.json', 'selection.jsonl']:
+                target = b / file; saved = root / file; target.rename(saved); target.symlink_to(saved)
+                check(2); target.unlink(); saved.rename(target)
+            tail = json.loads(json.dumps(manifest)); tail['request']['until'] = '2026-10-22T13:00:00.000000Z'
+            write(b, [row], tail); check(1, 'interval not contained', ['--require-full-coverage'])
+            tail['request']['until'] = row['source']['recorded_at']
+            write(b, [], tail); check(0)  # A source exactly at common until is not required.
+            boundary = json.loads(json.dumps(row)); boundary['source']['recorded_at'] = manifest['request']['from']
+            write(a, []); write(b, [boundary]); check(1, 'in-window addition')
+            boundary['role'] = 'dependency'; write(b, [boundary]); check(2)
+            boundary['role'] = 'scope'; boundary['source']['recorded_at'] = manifest['request']['until']
+            write(b, [boundary]); check(2)
+            identity = json.loads(json.dumps(manifest)); identity['request']['installation'] = '8'
+            write(b, [], identity); check(1, 'bundle identity'); write(a, [row]); write(b, [row])
+
             write(b, []); check(1, 'missing source'); check(1, 'missing source', ['--require-full-coverage'])
             added = json.loads(json.dumps(row)); added['source']['id'] = 2
             write(b, [row, added]); check(1, 'in-window addition')

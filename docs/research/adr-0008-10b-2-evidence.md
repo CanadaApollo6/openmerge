@@ -15,7 +15,7 @@ export PATH="$GOROOT/bin:$PATH"
 export TMPDIR=/home/riels/.cache/openmerge-10b2
 export OPENMERGE_TEST_DATABASE_URL='postgres://postgres:openmerge@localhost:54329/postgres?sslmode=disable'
 flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB go test ./... -count=1
-flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB go test ./internal/audit ./cmd/openmerge -run 'Test(OfflineAnchorContract|AnchorTamperAcceptance|AnchorRequiredCheckTamper|AuditSelectOnlyCommand|AuditUsageAndSanitization)$' -v -count=1
+flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB go test -race -short ./internal/audit ./cmd/openmerge -run 'Test(OfflineAnchorContract|AnchorTamperAcceptance|AnchorRequiredCheckTamper|AuditSelectOnlyCommand|AuditUsageAndSanitization)$' -v -count=1
 flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB go test -race -short ./internal/audit -run 'Test(OfflineAnchorContract|AnchorTamperAcceptance|AnchorRequiredCheckTamper)$' -v -count=1
 flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB golangci-lint run
 python3 scripts/test_verify_audit_anchor.py
@@ -51,8 +51,9 @@ asserts exact successful two-line CLI stdout; usage/sanitization covers combined
 manifest/range selectors (exit 2). Replay API failures below are **not** passed
 to the anchor verifier and are not claimed as anchor successes. Its generic CLI
 mapping is `audit: connection, source, integrity or publication failure` (exit 1).
-The matrix's rejection gates follow the changed bytes and Replay's implementation;
-it does not expose separate public error codes for every internal gate.
+The table lists source-derived candidate gates: rejection is by at least one
+of the listed checks. Tests assert aggregate errIntegrity, not an independently
+isolated gate; disabling a redundant gate can leave them green.
 
 E1/E2/E3 are independent base_moved sources 1/2/3, recorded at
 2026-10-22T12:00:00Z; data.sha contains respectively 40 a/b/c bytes. ID 4, with
@@ -61,7 +62,7 @@ existing `req()` range [2026-10-22T12:00:00Z, 2026-10-22T13:00:00Z).
 H updates affected stream hashes and manifest self-hash; R also relinks events
 from zero and updates terminal/count. Unmentioned bytes remain unchanged.
 
-| Case / exact byte edit | Replay / first check | Offline anchor |
+| Case / exact byte edit | Replay / rejected by at least one of | Offline anchor |
 | --- | --- | --- |
 | unchanged | success | 0 |
 | payload: E1's 40 a bytes → 40 d bytes; no H | reject / events file hash | not run |
@@ -72,9 +73,9 @@ from zero and updates terminal/count. Unmentioned bytes remain unchanged.
 | bad-link-H: E2.previous_sha256 → 64 zeroes, H; terminal unchanged | reject / rebuilt manifest equality | not run |
 | payload-H: E1's 40 a bytes → 40 d bytes, H without relinking | reject / rebuilt manifest equality against unchanged DB | not run |
 | relink-old-manifest: delete E2 event line, relink E3 to hash(E1); original manifest/selection | reject / events file hash | not run |
-| swap-RH: exchange E1/E2 lines in events and selection, R+H | reject / selection source order | not run |
+| swap-RH: exchange E1/E2 lines in events and selection, R+H | reject / source order, fetchPage ID order, closure or rebuilt manifest checks | not run |
 | required-check archive: delete source 22 in retry_full events/selection, retain owner 24's reference; R+H | reject / exact closure comparison | not run |
-| required-check DB: delete retained source 22 only in independent scratch fixture | reject / retained source fetch | not run |
+| required-check DB: delete retained source 22 only in independent scratch fixture | reject / retained fetch ID/count, source, closure or rebuilt manifest checks | not run |
 | drop-RH: remove E2 events/selection lines; R+H | success / valid smaller selection | 1, anchor mismatch |
 | suffix-RH: remove E3 events/selection lines; R+H | success / valid suffix omission | 1, anchor mismatch |
 | payload-db-RH: E1's 40 a → 40 d bytes in archive and scratch JSONB; selection payload digest updated; R+H | success / matching source | 1, anchor mismatch |
@@ -124,7 +125,29 @@ API acceptance constructs captured stdout from successful Replay results; the
 existing command integration asserts the exact real stdout format independently.
 The three-source watermark fixture extends the proposed one-source recipe.
 Operator identity separation/private-copy write denial remains a runbook
-precondition; this slice does not claim a new OS-user test.
+precondition; **open: attempt writes as replay identity: denied** is unexecuted.
 Custody ownership, cadence, retention/access separation and L remain explicit
 organization decisions without invented defaults. Backup/lifecycle/role proofs
 remain 10b-1; real journal acceptance remains PR 11.
+
+## Round 1 revision (items 1–5 and 7)
+
+Digest extraction now uses the validated regex capture, never splitlines.
+Tests pin all eight non-LF separator paths (crafted and benign), each anchor
+comparison independently, malformed queue types, tail containment, half-open
+bounds, role/interval consistency, empty-bundle identity, stdin exclusivity and
+bundle-file symlinks. Optional hardening is deferred to a follow-up for size:
+selection stream hash verification, bundle-directory symlinks, CRLF rejection,
+and negative lowered/raised watermark acceptance. OS write-denial remains open.
+
+The design-document revision (item 6 and the original watermark correction) is
+in [companion PR #154](https://github.com/CanadaApollo6/openmerge/pull/154); it should land with or
+just after #153. The two PRs deliberately share no changed files.
+
+Round-1 foreground verification: the combined Go command above, Python tests,
+and golangci-lint all exited 0 (lint: zero issues). New logs under
+`/home/riels/.cache/openmerge-10b2-r1` have SHA-256:
+
+- go.log: `babb5a53b87c79257045c839662e49391afac8fb44d139efda9db6f6f15ec447`
+- python.log: `220be22afb09a7f549445dfc985daef81ac717a363dfeb846ee08244b8a0e5b9`
+- lint.log: `e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47`

@@ -2376,7 +2376,9 @@ python3 scripts/verify-audit-anchor.py --anchor "$TRUSTED/digest.txt" \
 `--replay-out` must equal the replay command's literal `--out` value. Omit
 `--later` for anchor-only comparison. The offline stdlib tool reads files (or
 `--anchor -` / `--replay-stdout -` from stdin), never the DB. Both bundles must
-already be replay-validated. Exit 0 says `anchor and overlap match`; 1 reports
+already be replay-validated; replay B to its own fresh output, require exit 0
+and compare all five files with B before comparison. Use `-` for at most one
+input. Exit 0 says `anchor and overlap match`; 1 reports
 anchor/source mismatch, missing source or in-window addition; 2 means malformed,
 unreadable or usage input. Preserve originals, outputs and actual exits on
 failure; never replace the trusted digest to make a mismatch disappear.
@@ -2384,7 +2386,9 @@ failure; never replace the trusted digest to make a mismatch disappear.
 For anchored A and later B, first replay A into C on the later DB and compare
 all five files to A: B cannot substitute for this retention proof. The verifier
 joins exact integer queue/source IDs, comparing queue keys, type, recorded_at
-and payload digest. Contextual role/reference changes are reported separately.
+and payload digest. `context differs …` reports contextual role/reference
+changes but still exits 0; an exit-code-only gate misses these notices. Review
+them before anchoring B.
 A scope source in the common half-open interval must exist in B; any B source
 inside A's anchored interval absent from A is an in-window addition requiring
 investigation, even with an adopted lag bound. `--require-full-coverage` also
