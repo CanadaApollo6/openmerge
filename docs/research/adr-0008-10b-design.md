@@ -207,7 +207,7 @@ Fresh same-range scans can see late commits. For anchored A and later B:
    substitute for C's retention proof.
 2. Join selection rows by `(source.queue_id, source.id)`. Shared identities must
    match queue key, type, recorded_at and payload_sha256. Compare source facts,
-   not context-dependent roles/references; report contextual differences.
+   not context-dependent roles/references; `context differs` notices still exit 0.
 3. For the common half-open time interval, every A scope identity must appear
    in B. If B claims full coverage of A, require every A identity including
    closure dependencies. Missing required identities fail. Closure-only A
@@ -237,14 +237,17 @@ fields; use exact integer IDs and UTC timestamps, not floating point.
 Use a temporary SQLite database (stdlib sqlite3) for a disk-backed join, bounded
 JSONL reads and deterministic identity-sorted findings; clean up on all exits.
 Do not infer closure requiredness for partial overlaps beyond these rules.
-Exit 0: `anchor and overlap match`; exit 1: `anchor mismatch`, `missing source`,
+Exit 0: `anchor and overlap match` (including `context differs` notices);
+exit 1: `anchor mismatch`, `missing source`,
 `source mismatch` or `in-window addition`; exit 2: malformed/usage/unreadable input.
 Emit all discrepancies with identity and reason, never payloads or credentials.
 No later bundle is required for a primary-anchor-only check; omit `--later`.
 
-## Acceptance evidence plan
+## Acceptance evidence and remaining work
 
-One evidence section per ADR Tests/real evidence requirement; no pass until run.
+Executed fixture results are recorded in the 10b-1/10b-2 evidence files linked
+below. The table states required proof; those files identify executed coverage
+and remaining work. PR 11 real-journal acceptance and OS write denial remain open.
 All database work uses scratch databases only on shared test Postgres
 `localhost:54329`. Reuse `scripts/adr0008_scratch_db.py` before any connection or
 subprocess, reject PG environment/routing overrides, allocate unique
@@ -257,7 +260,7 @@ revoke owned grants/drop owned roles in finally cleanup after closing pools,
 and assert no owned roles/databases remain, including failed runs. Never read the live DB,
 production units, `openmerge/*` refs or `127.0.0.1:8081`.
 
-| ADR requirement | Planned proof and retained evidence |
+| ADR requirement | Required proof and retained evidence |
 | --- | --- |
 | Export twice, same selection | Quiesce a seeded source; range export A, fresh same-range export B, then A-manifest replay C. All commands exit 0; all five files byte-identical, including empty and multiple/retired-queue cases. Save binary commit, selectors, per-file SHA-256, count/terminal and exact commands. Replay additionally covers frozen selection after late commits. |
 | Isolated backup → restore | Stop scratch writers before A and `pg_dump -Fc`; save dump SHA-256, PostgreSQL/tool versions and source identity. Restore with `pg_restore --exit-on-error` into a distinct guarded owned DB. Dump/restore exit 0; use the identical binary to fresh-export and replay A there, all five files equal A. Preserve queue/event IDs, keys, recorded_at and complete inventory. No migration on the audit connection. |
@@ -276,7 +279,7 @@ Additional acceptance cases:
 | Overlap added source | Commit an additional scratch event with recorded_at inside A's interval after A's snapshot; fresh B/replay exit 0, offline join exits 1 / `in-window addition`. Repeat with deliberate backdating; verdict is identical. |
 | Strict receipt/private copy | Extra receipt lines, malformed hex or duplicate stdout anchor lines exit 2; mismatched valid digest exits 1. Attempt writes as replay identity: denied. All comparisons use the same frozen copy. |
 
-Tamper recipe notation (acceptance implementation, not executed here): choose
+Tamper recipe notation (executed coverage/deviations: see 10b-2 evidence): choose
 three independent, valid `base_moved` scope records E1/E2/E3 in one queue, IDs
 1/2/3, no references, data.sha equal to 40 lowercase `a`, `b`, `c` bytes
 respectively; use 40 lowercase `d` bytes for the replacement SHA. Use a separate
@@ -366,24 +369,19 @@ and restores the archive and adopted cadence; do not assert certification.
 
 ## Size and deployment gate
 
-This design PR changes only this new document. No code, tests, scripts, fixtures,
-CI, build, migrations or indexes. Implementation is Inert by its own behavior,
-but depends on 10a and transitively Hold PR 8 and 3a–4 (including the shared-store
+This companion updates the implemented design and its evidence references.
+Implementation is Inert by its own behavior, but depends on 10a and transitively
+Hold PR 8 and 3a–4 (including the shared-store
 10a-2a change). Do not deploy its binary before dogfood period B drains. Merging
 docs or testing held code in isolation is not deployment permission.
 
-Estimate implementation at 900–1,200 changed lines including the offline verifier
-and evidence; remeasure after #149 merges. If the reviewable diff exceeds about 800 lines, use the proposed two-slice plan:
-10b-1 retention/lifecycle/restore/role/config proofs (400–550); 10b-2 offline
-anchor/overlap verifier, tamper acceptance and operator guidance (500–650).
-Each carries its own acceptance evidence; no partial slice claims 10b or Part 3 complete. Final paths
-must avoid concurrent #149 edits until it merges.
+The size split was taken: 10b-1 retention/lifecycle/restore/role/config proofs
+are in #152; 10b-2's offline verifier, tamper acceptance and runbook are in #153,
+with design alignment in this docs-only companion. Each implementation slice
+carries its own evidence; neither alone completes 10b or Part 3.
 
 ## Questions for the maintainer
 
 1. Who owns independent anchor storage/signing and recovery verification, and
    what custody cadence, lag bound, retention duration and access separation
    will be adopted?
-2. Confirm the proposed >800-line implementation split and revised estimates,
-   with size rechecked after #149 merges. The mechanism, lifecycle driver and
-   ADR-assigned PR 11 real-journal boundary are decisions above, not open scope.
