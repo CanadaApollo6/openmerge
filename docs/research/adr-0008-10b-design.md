@@ -330,7 +330,7 @@ These results do not justify terminal-only custody.
 
 ## Operator guidance to land with implementation
 
-Land the runbook in `docs/operating.md` after #149 merges; record executed
+The runbook landed in #153 in `docs/operating.md`; record executed
 commands/hashes in [10b-1](adr-0008-10b-1-evidence.md) and
 [10b-2](adr-0008-10b-2-evidence.md). Mirror #149: the
 audit binary is **Hold for deployment until period B drains**, including when
