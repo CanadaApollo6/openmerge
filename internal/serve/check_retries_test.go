@@ -33,7 +33,7 @@ func TestChainSummaryRootAndMixedWorkerFailure(t *testing.T) {
 				t.Fatal("missing PR status")
 			}
 			for _, status := range statuses {
-				if status.State != forge.Testing || !strings.HasPrefix(status.Summary, want+"\n\nQueue: window: 4; batch size: 1; p̂: n/a (0 samples); chain: b1(testing); gate: checks") {
+				if status.State != forge.Testing || !strings.HasPrefix(status.Summary, want+"\n\nWaiting: Waiting for CI on batch b1") || !strings.Contains(status.Summary, "\n\nQueue: window: 4; batch size: 1; p̂: n/a (0 samples); chain: b1(testing); gate: checks") {
 					t.Fatalf("status=%+v, want testing with summary %q", status, want)
 				}
 			}

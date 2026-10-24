@@ -113,6 +113,11 @@ func TestQueueInstructionsReportingPathsDedupeRetryRollback(t *testing.T) {
 			if !reflect.DeepEqual(waiting, diagnostic) || strings.Count(string(waiting), "@openmerge queue") != 1 {
 				t.Fatal("readiness paths differ")
 			}
+			if !strings.Contains(string(waiting), "Waiting for queue readiness: validation pending") {
+				t.Fatalf("readiness waiting reason missing: %s", waiting)
+			}
+			// Compare rollback bytes with the same readiness as the initial check.
+			w.managed = false
 			pin.Authority = authority.GitHub
 			pin.OpenMerge = nil
 			appendPin(pin)

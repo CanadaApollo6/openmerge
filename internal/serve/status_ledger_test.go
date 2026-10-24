@@ -16,9 +16,16 @@ func TestLedgerSummaryCacheTracksWatermarkAndCurrentPolicy(t *testing.T) {
 		must(t, s.cycle(t.Context(), w))
 		first, err := s.ledgerSummary(t.Context(), w, 1)
 		must(t, err)
+		if !strings.Contains(first, "Waiting: Waiting for CI on batch b1") {
+			t.Fatalf("missing waiting reason: %s", first)
+		}
+		beforePulls, beforeChecks := w.Driver.(*countingDriver).pulls, w.Driver.(*countingDriver).checks
 		cached := w.ledgerCache
 		second, err := s.ledgerSummary(t.Context(), w, 1)
 		must(t, err)
+		if d := w.Driver.(*countingDriver); d.pulls != beforePulls || d.checks != beforeChecks {
+			t.Fatal("waiting presentation observed the forge")
+		}
 		if first != second || w.ledgerCache != cached {
 			t.Fatal("unchanged history was rebuilt")
 		}

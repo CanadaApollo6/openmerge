@@ -1,4 +1,4 @@
-REPO        BASE  POS  PR  HEAD          STATUS   REASON  STATE
-owner/repo  main  1    #1  50a6805de180  testing          active
+REPO        BASE  POS  PR  HEAD          STATUS   REASON  STATE   WAITING
+owner/repo  main  1    #1  50a6805de180  testing          active  Waiting for CI on batch b1
 owner/repo main window: 1; batch size: 1; p̂: n/a (0 samples); chain: b1(testing)
   batch b1 position 1: testing tested 18b73a833c928a6a7f034fdbcfdc5dd06c38f09769b9bb96243e00890a7107d0 (0 ahead)

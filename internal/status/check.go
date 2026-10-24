@@ -229,3 +229,6 @@ func checkText(s string, limit int) string {
 	s = html.EscapeString(s)
 	return strings.NewReplacer("\\", "\\\\", "*", "\\*", "_", "\\_", "[", "\\[", "]", "\\]", "`", "\\`", "#", "\\#", "\n", " ", "\r", " ").Replace(s)
 }
+
+// WaitingCheckText preserves the check escaping and display bounds.
+func WaitingCheckText(r WaitingReason) string { return checkText(WaitingSummary(r), 1200) }

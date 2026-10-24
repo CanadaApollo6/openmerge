@@ -389,6 +389,14 @@ func applyReadiness(source Source, q *Queue, sanitizer *diagnostic.Sanitizer) {
 }
 
 func applyPolicy(source Source, q *Queue, selected *Entry) {
+	defer func() {
+		for i := range q.Entries {
+			q.Entries[i].WaitingReason = DeriveWaitingReason(q, q.Entries[i])
+		}
+		if selected != nil {
+			selected.WaitingReason = DeriveWaitingReason(q, *selected)
+		}
+	}()
 	if q.hasAuthorityPin {
 		if runtime, ok := source.(interface {
 			QueuePolicySnapshot(store.QueueKey) (queue.Config, bool)
