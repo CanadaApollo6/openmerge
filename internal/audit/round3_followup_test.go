@@ -89,15 +89,15 @@ func TestCheckAttemptDispatchFollowsRequestGeneration(t *testing.T) {
 		return queue.CheckRerunRequested{BatchID: "batch", TestedSHA: "tested", Generation: generation, Runs: []queue.CheckRun{r}, OriginalDeadline: at.Add(time.Hour), At: at, Deadline: at.Add(time.Hour), Timeout: time.Hour}
 	}
 	requested := evidenceInsert(t, f, request(7, run("unit", 81, 1, "failure")))
-	progress := evidenceInsert(t, f, queue.CheckRerunDispatchProgress{BatchID: "batch", TestedSHA: "tested", Generation: 7, Target: queue.CheckRerunTarget{WorkflowRunID: 81, Attempt: 1, Accepted: true, At: at}})
-	dispatched := evidenceInsert(t, f, queue.CheckRerunDispatched{BatchID: "batch", TestedSHA: "tested", Generation: 7})
+	evidenceInsert(t, f, queue.CheckRerunDispatchProgress{BatchID: "batch", TestedSHA: "tested", Generation: 7, Target: queue.CheckRerunTarget{WorkflowRunID: 81, Attempt: 1, Accepted: true, At: at}})
+	evidenceInsert(t, f, queue.CheckRerunDispatched{BatchID: "batch", TestedSHA: "tested", Generation: 7})
 	observed := evidenceInsert(t, f, queue.ChecksObserved{BatchID: "batch", TestedSHA: "tested", Runs: []queue.CheckRun{run("unit", 81, 2, "success")}, Terminal: true, Success: true, OriginalDeadline: at.Add(time.Hour), Timeout: time.Hour})
 	evidenceInsert(t, f, request(8, queue.CheckRun{ID: 90, Attempt: 1, WorkflowRunID: 99, Name: "other", Source: "app:1", State: "failure"}))
 	evidenceInsert(t, f, queue.CheckRerunDispatchProgress{BatchID: "batch", TestedSHA: "tested", Generation: 8, Target: queue.CheckRerunTarget{WorkflowRunID: 99, Attempt: 1, Accepted: true, At: at}})
 	evidenceInsert(t, f, queue.CheckRerunDispatched{BatchID: "batch", TestedSHA: "tested", Generation: 8, Unsupported: true})
 	// Equal generation/workflow candidates use latest event ID before the owner.
-	progress = evidenceInsert(t, f, queue.CheckRerunDispatchProgress{BatchID: "batch", TestedSHA: "tested", Generation: 7, Target: queue.CheckRerunTarget{WorkflowRunID: 81, Attempt: 1, Accepted: true, At: at}})
-	dispatched = evidenceInsert(t, f, queue.CheckRerunDispatched{BatchID: "batch", TestedSHA: "tested", Generation: 7})
+	progress := evidenceInsert(t, f, queue.CheckRerunDispatchProgress{BatchID: "batch", TestedSHA: "tested", Generation: 7, Target: queue.CheckRerunTarget{WorkflowRunID: 81, Attempt: 1, Accepted: true, At: at}})
+	dispatched := evidenceInsert(t, f, queue.CheckRerunDispatched{BatchID: "batch", TestedSHA: "tested", Generation: 7})
 	boundary := insert(t, f.admin, 1, "2026-10-22T12:00:01Z")
 	// Still newer matching events after the owner must not replace either edge.
 	evidenceInsert(t, f, queue.CheckRerunDispatchProgress{BatchID: "batch", TestedSHA: "tested", Generation: 7, Target: queue.CheckRerunTarget{WorkflowRunID: 81, Attempt: 1, Accepted: true, At: at}})
