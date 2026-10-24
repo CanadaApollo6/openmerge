@@ -45,8 +45,8 @@ func TestCheckAttemptRunTupleAndEventTie(t *testing.T) {
 
 func TestEvidenceIdentityComponentBoundaries(t *testing.T) {
 	// Both pairs formerly joined to a/b/c; the last two collided with /later.
-	identities := []string{evidenceIdentity("a/b", "c"), evidenceIdentity("a", "b/c"), evidenceIdentity("a", "b", "later"), evidenceIdentity("a", "b/later")}
-	seen := map[string]bool{}
+	identities := []Identity{evidenceIdentity("a/b", "c"), evidenceIdentity("a", "b/c"), evidenceIdentity("a", "b", "later"), evidenceIdentity("a", "b/later")}
+	seen := map[Identity]bool{}
 	for _, id := range identities {
 		if seen[id] {
 			t.Fatal("identity collision", id)

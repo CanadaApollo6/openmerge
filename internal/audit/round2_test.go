@@ -72,7 +72,7 @@ func TestSourceReplayRejectsScopeShapeAndCrossQueueOrder(t *testing.T) {
 				case "null-references":
 					selections[0].References = nil
 				case "nonempty-references":
-					selections[0].References = []Reference{{}}
+					selections[0].References = []Reference{{Identity: evidenceIdentity("invalid")}}
 				case "cross-queue-order":
 					selections[0], selections[1] = selections[1], selections[0]
 				}

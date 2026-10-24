@@ -20,9 +20,9 @@ import (
 
 func TestEvidenceReferenceComparatorAndAbsence(t *testing.T) {
 	owner := EvidenceOwner{QueueID: 1, EventID: 12, BatchID: "batch", AttemptID: "attempt", ChangeID: "change", Revision: 2, Head: "head", TestedSHA: "tested"}
-	a := Reference{Kind: "eligibility", Status: "not_recorded", Owner: owner, ExpectedType: "approval_eligibility_observed", Identity: "read"}
+	a := Reference{Kind: "eligibility", Status: "not_recorded", Owner: owner, ExpectedType: "approval_eligibility_observed", Identity: evidenceIdentity("read")}
 	b := a
-	b.Identity = "other"
+	b.Identity = evidenceIdentity("other")
 	refs, err := normalizeReferences([]Reference{a, b, a})
 	must(t, err)
 	again, err := normalizeReferences([]Reference{b, a})

@@ -82,10 +82,13 @@ test files stayed under the cache directory.
 
 ### Honest mutation results
 
-**79 targets: 78 assertion kills, 1 equivalent,
-0 unexpected survivors, 0 build/setup failures,
-0 infrastructure failures.** Every counted kill compiled and
-reached a semantic test failure. Equivalents never count as assertion kills.
+**79 historical targets, reclassified during PR 149 round 1: 64 assertion
+kills, 14 panic kills, 1 equivalent, 0 survivors, 0 build/setup failures,
+0 infrastructure failures.** The original 78-assertion total counted Go panic
+failures as assertions. Retained mutations-final logs were reclassified with
+panic output taking precedence over harness failure markers. Build/setup and
+infrastructure failures never count as kills. The current table is in the
+[10a-2b-2 round-1 evidence](adr-0008-10a-2b-2-evidence.md#complete-corrected-mutation-table).
 The historical filename `scripts/verify-adr0008-10a-2a.py` now targets this step.
 Dead generation and github source-erasure targets are removed. Generation SQL
 mutations remain, independently of Go normalization within a chosen event.

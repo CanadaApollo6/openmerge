@@ -89,12 +89,13 @@ func round3ApprovalFixture(t *testing.T) *round3EvidenceFixture {
 }
 
 type round3WantReference struct {
-	kind, typ, identity string
-	sourceID            int64
+	kind, typ string
+	identity  Identity
+	sourceID  int64
 }
 
-func round3ReferenceKey(kind, typ, identity string) string {
-	return kind + "\x00" + typ + "\x00" + identity
+func round3ReferenceKey(kind, typ string, identity Identity) string {
+	return kind + "\x00" + typ + "\x00" + string(identity)
 }
 
 func round3ExpectedReferences(t *testing.T, fx *round3EvidenceFixture) []round3WantReference {
@@ -323,7 +324,7 @@ func TestRound3DuplicateImmutableIdentityRejectedRegardlessOfRequiredness(t *tes
 				var maxID int64
 				must(t, tx.QueryRow(ctx, `SELECT COALESCE(max(id),0) FROM events WHERE queue_id=1`).Scan(&maxID))
 				r := &evidenceResolver{ctx: ctx, tx: tx, event: sourceEvent{source: Source{QueueID: 1, ID: fx.startID}}, owner: EvidenceOwner{QueueID: 1, EventID: fx.startID}, maxID: maxID, refs: []Reference{}, sources: []sourceEvent{}}
-				_, resolveErr = r.lookup("check", "batch_started", batch.BatchID, `payload->'data'->>'batch_id'=$3`, required, batch.BatchID)
+				_, resolveErr = r.lookup("check", "batch_started", evidenceIdentity(batch.BatchID), `payload->'data'->>'batch_id'=$3`, required, batch.BatchID)
 				return nil
 			}))
 			if resolveErr == nil {
@@ -362,7 +363,7 @@ func TestRound3StartReferencesExactOwningDecision(t *testing.T) {
 	for _, ref := range refs {
 		if ref.ExpectedType == "landing_decision_recorded" {
 			found = true
-			if ref.Identity != evidenceIdentity(fmt.Sprint(fx.decisionID)) || ref.Status != "recorded" || ref.Source == nil || ref.Source.ID != fx.decisionID || ref.Owner.EventID != fx.startID {
+			if ref.Identity != evidenceIdentity(fx.decision.BatchID, fx.decision.AttemptID) || ref.Status != "recorded" || ref.Source == nil || ref.Source.ID != fx.decisionID || ref.Owner.EventID != fx.startID {
 				t.Fatal("wrong decision edge", ref)
 			}
 		}

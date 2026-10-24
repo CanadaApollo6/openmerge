@@ -36,8 +36,8 @@ func TestReplayRejectsUnreferencedExtraDependency(t *testing.T) {
 
 func TestEvidenceIdentityIsCanonicalStringTuple(t *testing.T) {
 	// Arity and component boundaries are both part of the identity.
-	distinct := []string{evidenceIdentity("b"), evidenceIdentity("b", "a"), evidenceIdentity("b/a"), evidenceIdentity(`b","a`), evidenceIdentity("")}
-	seen := map[string]bool{}
+	distinct := []Identity{evidenceIdentity("b"), evidenceIdentity("b", "a"), evidenceIdentity("b/a"), evidenceIdentity(`b","a`), evidenceIdentity("")}
+	seen := map[Identity]bool{}
 	for _, id := range distinct {
 		if seen[id] || !validIdentity(id) {
 			t.Fatalf("identity %q collides or is invalid", id)
@@ -48,7 +48,7 @@ func TestEvidenceIdentityIsCanonicalStringTuple(t *testing.T) {
 		t.Fatalf("identity escaped payload text: %s", got)
 	}
 	for _, raw := range []string{"", "batch", "b/a", "[]", "null", `"b"`, `[1]`, `["b",1]`, `[ "b"]`, `["b"] `, "[\"\\u0062\"]", `{"b":"a"}`} {
-		if validIdentity(raw) {
+		if validIdentity(Identity(raw)) {
 			t.Fatalf("accepted non-canonical identity %q", raw)
 		}
 	}
@@ -89,13 +89,19 @@ func TestCheckAttemptDispatchFollowsRequestGeneration(t *testing.T) {
 		return queue.CheckRerunRequested{BatchID: "batch", TestedSHA: "tested", Generation: generation, Runs: []queue.CheckRun{r}, OriginalDeadline: at.Add(time.Hour), At: at, Deadline: at.Add(time.Hour), Timeout: time.Hour}
 	}
 	requested := evidenceInsert(t, f, request(7, run("unit", 81, 1, "failure")))
-	progress := evidenceInsert(t, f, queue.CheckRerunDispatchProgress{BatchID: "batch", TestedSHA: "tested", Generation: 7, Target: queue.CheckRerunTarget{WorkflowRunID: 81, Attempt: 1, Accepted: true, At: at}})
-	dispatched := evidenceInsert(t, f, queue.CheckRerunDispatched{BatchID: "batch", TestedSHA: "tested", Generation: 7})
+	evidenceInsert(t, f, queue.CheckRerunDispatchProgress{BatchID: "batch", TestedSHA: "tested", Generation: 7, Target: queue.CheckRerunTarget{WorkflowRunID: 81, Attempt: 1, Accepted: true, At: at}})
+	evidenceInsert(t, f, queue.CheckRerunDispatched{BatchID: "batch", TestedSHA: "tested", Generation: 7})
 	observed := evidenceInsert(t, f, queue.ChecksObserved{BatchID: "batch", TestedSHA: "tested", Runs: []queue.CheckRun{run("unit", 81, 2, "success")}, Terminal: true, Success: true, OriginalDeadline: at.Add(time.Hour), Timeout: time.Hour})
 	evidenceInsert(t, f, request(8, queue.CheckRun{ID: 90, Attempt: 1, WorkflowRunID: 99, Name: "other", Source: "app:1", State: "failure"}))
 	evidenceInsert(t, f, queue.CheckRerunDispatchProgress{BatchID: "batch", TestedSHA: "tested", Generation: 8, Target: queue.CheckRerunTarget{WorkflowRunID: 99, Attempt: 1, Accepted: true, At: at}})
 	evidenceInsert(t, f, queue.CheckRerunDispatched{BatchID: "batch", TestedSHA: "tested", Generation: 8, Unsupported: true})
+	// Equal generation/workflow candidates use latest event ID before the owner.
+	progress := evidenceInsert(t, f, queue.CheckRerunDispatchProgress{BatchID: "batch", TestedSHA: "tested", Generation: 7, Target: queue.CheckRerunTarget{WorkflowRunID: 81, Attempt: 1, Accepted: true, At: at}})
+	dispatched := evidenceInsert(t, f, queue.CheckRerunDispatched{BatchID: "batch", TestedSHA: "tested", Generation: 7})
 	boundary := insert(t, f.admin, 1, "2026-10-22T12:00:01Z")
+	// Still newer matching events after the owner must not replace either edge.
+	evidenceInsert(t, f, queue.CheckRerunDispatchProgress{BatchID: "batch", TestedSHA: "tested", Generation: 7, Target: queue.CheckRerunTarget{WorkflowRunID: 81, Attempt: 1, Accepted: true, At: at}})
+	evidenceInsert(t, f, queue.CheckRerunDispatched{BatchID: "batch", TestedSHA: "tested", Generation: 7})
 	id, attempt, workflow := uint64(71), uint64(2), uint64(81)
 	c := queue.LandingChecksRecorded{BatchID: "batch", AttemptID: "land", TestedSHA: "tested", Checks: []queue.LandingCheck{{Name: "unit", Source: "app:1", RunID: &id, Attempt: &attempt, WorkflowRunID: &workflow, Result: forge.CheckState("success")}}}
 	must(t, f.reader.snapshot(t.Context(), func(ctx context.Context, tx pgx.Tx) error {

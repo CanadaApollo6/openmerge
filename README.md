@@ -453,3 +453,6 @@ Legacy nil-metadata builds preserve forged `OpenMerge-Change` and
 `OpenMerge-Classification` text in contributor bodies for byte identity. Future
 trailer consumers must trust only commits reached via a recorded tested/landed
 SHA of an activated build, never arbitrary history scans.
+
+The audit export format is defined by the normative
+[v1 frozen specification](docs/research/adr-0008-10a-design.md#v1-frozen-specification).

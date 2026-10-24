@@ -88,8 +88,9 @@ Measure closure/export/replay with realistic `checks_observed` filler outside
 short mode. The reported Sonnet 16 ms lookup and 12.5 s export/12.7 s replay
 at 64 owners and 80k rows are prior review observations, not measurements
 from this branch. New measurements must state inputs, plans, and projected
-costs. Document `(queue_id,type,id)` and batch-ID expression indexes as
-post-trial candidates only. No migration or index belongs in either step.
+costs. Account for existing production decision/settlement expression indexes
+from migrations 006/007; report remaining lookup scans separately. No migration
+or index belongs in either step.
 
 The final verifier must retain the strict scratch-DB guard and note that
 `act` sets both CI variables. It must prove the requested regression counts,

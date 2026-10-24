@@ -216,27 +216,14 @@ DB sources and all hashes); inspect/retain the verified result. If verification
 fails, investigate the storage failure and remove only that failed export target
 before retrying. Never blindly retry against or overwrite the existing target.
 
-V1 is provisional until 10a-2 merges; 10a-2 defines and freezes the
-dependency/absence model. No released exports exist. Scope-only exports accept
-only `role: "scope"` and a non-null empty `references` array. The role/reference
-extension points deliberately specify no dependency, absence or boundary record
-shape yet. There is no dependency-boundaries file in 10a-1.
-
-10a-2 must define absent-evidence identity without invented source IDs, distinct
-from required-but-missing evidence (which fails); an owning decision/selection
-entry; evidence kind and expected type (eligibility, classification,
-accountability, receipt, authority, check attempt, settlement); representation of
-the governing check attempt and excluded retries after the decision boundary;
-and replay validation of each reference's status against the database.
-
-Replay validates the frozen inventory: every saved watermark queue must still
-exist with the identical canonical key. Current DB queues omitted from the saved
-watermarks are allowed, whether empty or populated. The selection alone defines
-the sources, just as for late commits. Missing watermarks for selected queues,
-unknown IDs, key mismatches, duplicates, ordering violations and watermarks below
-selected IDs still fail. 10a-1 reports source facts only: no decision validity,
-check/retry join, closure selection, real-git acceptance or operator CLI.
-
+V1 is frozen with PR 10a-2b-2. Any serialization shape change after merge
+requires a version bump. The complete contract includes events.jsonl,
+selection.jsonl, watermarks.jsonl, dependency_boundaries.jsonl and manifest.json.
+See internal/audit/testdata/README.md and journal-v1.json for literal independent
+complete-export vectors, including dependency roles, explicit absence, boundaries,
+metadata hashes, chain links and manifest/file integrity. Canonical primitive
+vectors remain unchanged. Payload timestamps retain their original spelling;
+source and request bounds use UTC with exactly six fractional digits.
 
 ### 10a-2a round-1 historical boundary clarification
 
@@ -250,10 +237,10 @@ are canonical JSON string tuples. Without new indexes, JSON-filtered retained lo
 remain owners × retained events (multiplied by checks); bounded memory is not a
 claim of sublinear database work. See the 10a-2a evidence note for limits and plans.
 
-## 10a-2b-1 provisional evidence correction
+## Governing evidence and final v1 contract
 
-The approved sequence is in `adr-0008-10a-2b-size-gate.md`. This step leaves
-complete-export fixtures and v1 **PROVISIONAL**. It does not freeze bytes.
+The approved sequence is in `adr-0008-10a-2b-size-gate.md`. Step 2 completes
+the original 10a row and freezes the complete-export bytes.
 Audit projects only config/pin events through `queue.Apply` in journal order
 before each decision. An invalid or digest-ignored pin fails that export
 closed, even if later history contains a valid replacement. Config changes
@@ -261,7 +248,9 @@ alone preserve the durable pin exactly as the queue fold does.
 
 A governing github pin has `status: "inapplicable"` and retains its actual
 source. `not_recorded` means the resolver found no applicable source. Reference
-shape validation restricts `inapplicable` to the governing authority edge;
+shape validation restricts `inapplicable` to the governing authority edge.
+Under github authority `landing_checks_recorded` remains `not_recorded`, even
+when an instrumented check event is retained; only the pin edge is inapplicable;
 closure retains its source and replay re-resolves its status and identity
 against retained history. Rehashing a status or source substitution cannot
 legitimize it. Fully rehashed omissions still need the future 10b anchor.
@@ -272,3 +261,169 @@ therefore selects the later event. Within the chosen event, Go normalization
 validates the retained run and describes its reference; these are distinct
 selection and validation responsibilities. Retry-generation selection stays
 in SQL; the redundant `sameGeneration` helper and its helper-only test are gone.
+
+
+The operator command uses audit.Open, Reader.Export and Reader.Replay; it never
+runs migrations, takes worker locks, writes to Postgres or contacts a forge.
+The snapshot-local governing-pin cursor retains one queue segment only and
+resets on queue changes or backward decision traversal. It folds only new
+config/pin prefixes through queue.Apply. Rejected pins still fail closed with
+`audit: governing authority pin rejected by queue fold`, including after a
+later valid replacement. No shared queue fold or wire behavior changes.
+Classification: **Hold**; deploy only after period B drains.
+
+## v1 frozen specification
+
+This section is normative and supersedes every earlier serialization definition
+in this document and the evidence notes. V1 freezes when PR 149 merges. Later
+shape changes require a new version. Hashes establish local integrity, not
+provenance or completeness; external manifest anchoring is separate (10b).
+
+An export contains exactly `manifest.json` and four UTF-8 JSONL streams:
+`events.jsonl`, `selection.jsonl`, `watermarks.jsonl`, and
+`dependency_boundaries.jsonl`. Each record ends in LF, including the manifest.
+Empty streams contain zero bytes. An existing queue with no selected events
+still has a watermark. Range-mode CLI export rejects a nonexistent
+repository/installation.
+
+The event envelope has exactly `kind` (always `source`), `source`, `payload`,
+`role`, `references`, `evidence_kinds`, and `previous_sha256`. Source has
+`queue_id`, `id`, `type`, `recorded_at`, and `queue`; queue has `installation`,
+`repository`, `base`, `lane`. The payload is the retained event JSON value.
+Selection has exactly `source`, `role`, `references`, `evidence_kinds`,
+`payload_sha256`, `metadata_sha256`. Metadata hash input is precisely the
+canonical object `{source, role, references, evidence_kinds}`. Payload hashes
+cover the canonical payload alone. Empty references and kinds are `[]`, never
+null. Unknown historical event types have empty evidence kinds.
+
+Roles are `scope` (in the half-open normalized request range) and `dependency`
+(outside the range, transitively required); scope wins when both apply.
+References have exactly `kind`, `relation`, `status`, `owner`, `expected_type`,
+`identity`, `generation`, `run_id`, `attempt`, `source`. Owner has exactly
+`queue_id`, `event_id`, `batch_id`, `attempt_id`, `change_id`, `revision`, `head`,
+`tested_sha`. Owner identifies the referencing event, not the dependency.
+Relations are `relied_on` and `excluded_later`; the latter retains the first
+later observation without substituting it for the governing observation.
+Statuses are `recorded`, `not_recorded`, `inapplicable`. Not-recorded has null
+source and relied-on relation. Recorded has a retained source. Inapplicable is
+reserved for a retained github-authority pin, with its source retained; the
+corresponding decision's check edge is not_recorded, not inapplicable.
+Numeric generation/run_id/attempt and owner revision/event_id/queue_id use 0
+when not applicable; applicable source and owner database IDs are positive.
+Nonapplicable owner string fields are empty strings.
+
+For a recognized source type, `evidence_kinds` is the singleton containing its
+mapped kind. The kind to expected-type mapping is exhaustive:
+
+| Kind | Expected types |
+| --- | --- |
+| settlement | landing_decision_recorded, landing_started, landed, landing_abandoned |
+| classification | change_revision_observed, change_classified |
+| eligibility | approval_eligibility_observed |
+| accountability | change_accountability_observed |
+| receipt | approval_receipt_recorded, review_stance_observed |
+| authority | policy_authority_applied |
+| check | batch_started, test_ref_built, landing_checks_recorded, checks_observed, checks_completed, check_rerun_requested, check_rerun_dispatch_progress, check_rerun_dispatched, checks_failure_confirmed |
+
+Identity is a nonempty structured JSON **array of strings**, never a JSON
+string containing an array, and never a database event ID. Numeric components
+are canonical decimal strings. Each edge uses the semantic selector below;
+recorded and absent edges use the same selector. Owner and source provide the
+queue, decision boundary, and actual retained event identity separately.
+
+| Expected type | Identity tuple |
+| --- | --- |
+| landing_decision_recorded | [batch_id, attempt_id] (one edge per retained decision event for that attempt) |
+| landing_started | [batch_id, attempt_id] when an attempt is known; [batch_id] for the preceding batch start selector from a settlement |
+| landed, landing_abandoned, batch_started | [batch_id] |
+| test_ref_built | [batch_id, tested_sha] |
+| landing_checks_recorded | [batch_id, attempt_id] |
+| change_revision_observed, change_accountability_observed | [change_id, revision] |
+| change_classified | [change_id, revision, generation] |
+| approval_eligibility_observed | [read_id] |
+| approval_receipt_recorded, review_stance_observed | [source_channel, source_id] |
+| policy_authority_applied | ["governing"] (latest accepted pin before owner) |
+| checks_observed | [check_source, check_name], or [check_source, check_name, "later"] for the excluded boundary selector |
+| check_rerun_requested, check_rerun_dispatch_progress, check_rerun_dispatched | [check_source, check_name] |
+| checks_completed, checks_failure_confirmed | no emitted references in v1; source evidence-kind classification only |
+
+Every non-null `reference.source`, including inapplicable and excluded-later
+sources, is included recursively in the export. Closure is computed against the
+retained snapshot, not just the request range; each source appears once.
+
+| Owner type | Emitted expected types | Populated owner fields beyond queue_id/event_id |
+| --- | --- | --- |
+| landing_decision_recorded | policy_authority_applied; landing_checks_recorded; landing_started; landed; landing_abandoned; with approval: change_revision_observed, batch_started, approval_eligibility_observed, change_classified, change_accountability_observed, and one approval_receipt_recorded or review_stance_observed per relied source | batch_id, attempt_id, tested_sha; approval basis supplies change_id/revision/head |
+| remedy landing_decision_recorded | decision edges above plus change_revision_observed for remedy change/revision/head | batch_id, attempt_id, tested_sha; remedy supplies change_id/revision/head |
+| landing_started | landing_decision_recorded for every retained decision of this batch/attempt; landed; landing_abandoned | batch_id, attempt_id |
+| landing_checks_recorded | batch_started, test_ref_built; per check: checks_observed, check_rerun_requested, check_rerun_dispatch_progress, check_rerun_dispatched, and later checks_observed | batch_id, attempt_id, tested_sha |
+| landed, landing_abandoned | landing_started | batch_id; attempt_id copied from the greatest-ID preceding start of that batch |
+| all other source types | none | no references, hence no owners |
+
+All selectors are queue-local and bounded by the retained watermark. Revision and batch-start selectors require a unique matching ID strictly
+before the owner (hence the greatest matching preceding ID); test-ref and
+accountability selectors take the greatest matching ID strictly before the
+owner. Eligibility, classification and relied receipt or
+stance match their complete recorded basis/read/identity and precede the owner;
+required evidence must resolve uniquely. Test-ref selection first chooses the
+latest batch test-ref before the owner, then validates tested_sha. Decision
+check/start references match batch and attempt; the checks edge is emitted as
+`not_recorded` unless OpenMerge authority applies. A start emits all matching
+retained decision events,
+or one not_recorded decision edge if none exist. Settlement selectors take each
+matching landed/abandoned event strictly after that attempt's start and strictly
+before the next start for the same batch (or through the watermark if no next
+start); optional single-source selectors must not resolve ambiguously.
+Rerun requests select the greatest matching ID before the check owner, matching
+batch, tested SHA, check source/name AND workflow_run_id when nonzero. Dispatch
+and progress each select the greatest matching event ID strictly before the
+owner, scoped to the same batch, tested SHA and selected request generation;
+progress also matches nonzero workflow_run_id. A missing request leaves
+generation zero
+for dispatch/progress lookup. The later observation uses the lowest matching event ID
+strictly after the owner, with the same batch/tested SHA/check source/name.
+
+Watermarks have `queue_id`, `queue`, `id` (retained maximum or zero).
+Dependency boundaries have `queue_id`, `queue`, `first`, `last`, `count` and
+summarize only dependency records, one nonempty record per affected queue.
+Events and selection share queue-key order (installation, repository, base,
+lane, compared lexicographically by UTF-8 bytes), then numeric source ID.
+Watermarks and boundaries use the same queue-key order, never queue-ID order.
+References sort by the complete canonical reference bytes and exact duplicates
+are removed. Arrays in retained payloads preserve their original order.
+For governing check observations, order candidate runs by greatest run ID,
+then greatest attempt with zero normalized to one, then greatest source event
+ID across observations; the owner boundary excludes events at or after itself.
+The first later observation is instead the lowest matching source ID after the
+boundary and is retained as excluded_later. Retry request selection is scoped
+to the check/workflow; dispatch and progress follow that request's generation.
+Settlement edges belong to the interval from the matching batch/attempt start
+until the next start for that batch. A settlement's preceding start selector
+uses the greatest source ID before it. Governing authority folds only config
+and pin events strictly before the owning decision. These selection orderings
+are independent of the canonical byte comparator used to serialize references.
+
+The manifest fields are exactly `manifest_sha256`, `version` (1), `request`,
+`count`, `terminal_sha256`, and for each of the four stream names above without
+`.jsonl`, the filename field and its `<name>_sha256` field. Request has exactly
+`installation`, `repository`, `from`, `until`. File names are fixed safe relative
+names. Stream hashes include every LF. Each chain link is SHA-256 of the previous
+canonical event envelope without LF; the initial previous hash and empty terminal
+hash are 64 zeroes. Manifest self-hash covers its canonical JSON with
+`manifest_sha256` set to the empty string, without LF. Digests are lowercase hex.
+
+All JSON object keys sort by UTF-8 bytes. Whitespace is absent outside strings.
+Numbers use exact decimal arithmetic (including integers above 2^53), no binary
+float rounding, no exponent, and no redundant fractional zeroes; negative zero
+is 0. Strings must use `\b`, `\t`, `\n`, `\f`, `\r` for U+0008, U+0009,
+U+000A, U+000C, U+000D respectively; all other U+0000–U+001F controls use
+lowercase `\u00xx`. Quote and backslash use `\"` and `\\`. U+0085, U+2028,
+and U+2029 use `\u0085`, `\u2028`, and `\u2029`. All remaining characters
+are literal UTF-8, without HTML escaping or Unicode normalization. Invalid
+UTF-8 is rejected. Source timestamps
+are UTC with six fractional digits. Request bounds are ceiled to database
+microseconds, UTC with six fractional digits, years 1 through 9999. Payload
+strings, including timestamp spellings, remain unchanged. Requests select
+`from <= recorded_at < until`; equal bounds are a valid empty selection.
+An absent request bound is spelled `""`; the CLI always supplies both bounds
+and therefore never emits the absent-bound shape.

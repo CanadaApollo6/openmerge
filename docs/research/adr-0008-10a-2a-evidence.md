@@ -443,8 +443,8 @@ removed guards (`astra-skip-status`, `m2-replay-skip-ref-compare`,
 The historical verifier reported **72/72** failing overlays on that head.
 That historical count included a helper-only generation assertion and obsolete
 github source-erasure assertions; it is not a current behavioural kill count.
-10a-2b-1 removes those targets and reports assertion kills, equivalents and
-survivors separately in its focused evidence note. The old run rejected
+10a-2b-1 removes those targets; its evidence note now separately reports
+assertion kills, panic kills, equivalents and survivors in its focused evidence note. The old run rejected
 build/setup failures. Its remaining targets included the always/never-required
 authority mutants, all 18 per-family exact-edge drops, the 12 required call
 sites, the multi-run SQL orderings, dispatch generation, identity
