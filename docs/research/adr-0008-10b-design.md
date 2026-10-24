@@ -328,8 +328,10 @@ uses the changed bound. Expected replay exit 0 with byte-identical events and
 terminal but changed printed manifest digest, so primary comparison exits 1/M.
 Source inspection of `Reader.Replay` in `internal/audit/export.go` confirms it
 accepts an existing saved watermark <= actual max and `build` reproduces that
-saved watermark. This is a code-derived expectation, not an executed DB result;
-10b-2 must demonstrate exit 0 or correct the recipe before claiming acceptance.
+saved watermark. This was a code-derived expectation at design time. The
+[10b-2 evidence](adr-0008-10b-2-evidence.md) executes the extended three-selected-row
+fixture (watermark 4 → 3): replay succeeds, terminal/events remain unchanged,
+and the manifest anchor comparison exits 1.
 It does not justify terminal-only custody in the meantime.
 
 ## Operator guidance to land with implementation
