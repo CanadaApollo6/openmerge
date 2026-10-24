@@ -38,11 +38,11 @@ Explicit coverage must include these families (the policy is not an allowlist):
 
 | Family | Required retained evidence |
 | --- | --- |
-| Decisions and settlement | `landing_decision_recorded`, `landing_started`, `landed`, `landing_abandoned`, including unsuccessful/remedy attempts |
+| Decisions and settlement (10b-1b covered) | `landing_decision_recorded`, `landing_started`, `landed`, `landing_abandoned`, including unsuccessful/remedy attempts |
 | Approval | `approval_eligibility_observed`, `approval_receipt_recorded`, `review_stance_observed`, pinned read IDs and accepted/rejected historical inputs |
 | Classification/accountability | `change_revision_observed`, `change_classified`, `change_accountability_observed`, exact change/revision/head and policy inputs |
 | Authority/config | `config_applied`, `policy_authority_applied`, all authority observations, write-restriction verification, outside-push warnings and acknowledgements |
-| Checks/retries | `batch_started`, `test_ref_built`, `landing_checks_recorded`, `checks_observed`, `checks_completed`, `checks_failure_confirmed`, `check_rerun_requested`, `check_rerun_dispatch_progress`, `check_rerun_dispatched` |
+| Checks/retries (10b-1b covered) | `batch_started`, `test_ref_built`, `landing_checks_recorded`, `checks_observed`, `checks_completed`, `checks_failure_confirmed`, `check_rerun_requested`, `check_rerun_dispatch_progress`, `check_rerun_dispatched` |
 
 For each selected decision retain the recursive dependency closure resolved by
 10a: governing mode/config history, classification, eligibility and receipt
@@ -378,7 +378,11 @@ docs or testing held code in isolation is not deployment permission.
 The size split was taken: 10b-1 retention/lifecycle/restore/role/config proofs
 are in #152; 10b-2's offline verifier, tamper acceptance and runbook are in #153,
 with design alignment in this docs-only companion. Each implementation slice
-carries its own evidence; neither alone completes 10b or Part 3.
+carries its own evidence; neither alone completes 10b or Part 3. PR 10b-1b
+extends #152 with production-path abandonment, exhausted checks and retry
+history, including pre-window dependencies and unsuccessful attempts; see
+[the retention evidence](adr-0008-10b-1-evidence.md). Unknown kinds have no
+production emitter and are not claimed by this lifecycle fixture.
 
 ## Questions for the maintainer
 
