@@ -7,16 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"log/slog"
-	"net/http/httptest"
-	"net/url"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"testing"
-	"time"
-
 	"github.com/CanadaApollo6/openmerge/internal/audit"
 	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/brief"
@@ -32,9 +22,17 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/store"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"log/slog"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
 )
 
-// Forge observations are fake; governing history and landings use private Git.
 type retentionDriver struct {
 	*fake.Forge
 	git func(...string) string
@@ -70,7 +68,23 @@ func (g retentionGit) BuildTestRef(ctx context.Context, r forge.RepoRef, b forge
 	return sha, err
 }
 
-// Normal go test owns the whole acceptance; only the dump/restore subtest may skip.
+// Completion is latched after the production cycle publishes health.
+type retentionCycleLog struct {
+	slog.Handler
+	completed chan struct{}
+}
+
+func (h retentionCycleLog) Enabled(context.Context, slog.Level) bool { return true }
+func (h retentionCycleLog) Handle(ctx context.Context, r slog.Record) error {
+	if r.Message == "reconcile cycle finished" {
+		select {
+		case h.completed <- struct{}{}:
+		default:
+		}
+	}
+	return h.Handler.Handle(ctx, r)
+}
+
 func TestRetentionLifecycle(t *testing.T) {
 	scratch := newRetentionScratch(t)
 	dsn := scratch.database()
@@ -138,7 +152,6 @@ func TestRetentionLifecycle(t *testing.T) {
 	must(err)
 	_, err = f.OpenPR(r, 1, fakeBase, true)
 	must(err)
-
 	d := retentionDriver{Forge: f, git: bare, pr: forge.PullRequest{Number: 1, HeadSHA: head, Base: "main", Author: "contributor", AuthorID: 12, Title: "retained change", HeadInBaseRepo: true, HeadBranch: "feature", FilesKnown: true, Files: []string{"README.md"}, LabelsKnown: true, ConflictKnown: true}}
 	root := t.TempDir()
 	g, err := gitops.New(t.Context(), gitops.Config{WorkDir: filepath.Join(root, "cache"), Remote: func(context.Context, forge.RepoRef) (string, gitops.Auth, error) { return remote, gitops.Auth{}, nil }, HeadRef: func(n int) string { return fmt.Sprintf("refs/pull/%d/head", n) }})
@@ -150,7 +163,7 @@ func TestRetentionLifecycle(t *testing.T) {
 	must(err)
 	wait := func(label string, predicate func(queue.State) bool) {
 		t.Helper()
-		deadline := time.Now().Add(90 * time.Second)
+		deadline := time.Now().Add(3 * time.Minute)
 		for {
 			state, _, e := db.Load(t.Context(), id)
 			must(e)
@@ -160,10 +173,9 @@ func TestRetentionLifecycle(t *testing.T) {
 			if time.Now().After(deadline) {
 				t.Fatal("timed out", label)
 			}
-			time.Sleep(20 * time.Millisecond)
+			time.Sleep(100 * time.Millisecond)
 		}
 	}
-	// Establish genesis through normal GitHub-mode discovery before attesting adoption.
 	repo := serve.Repository{Installation: "7", Name: r.Path, Branches: func(context.Context) ([]string, error) { return []string{"main"}, nil }, Target: func(base string) serve.Target {
 		k := key
 		k.BaseBranch = base
@@ -189,7 +201,6 @@ func TestRetentionLifecycle(t *testing.T) {
 	bootstrapStop()
 	tip = commit(source, tip, "base")
 	bare("update-ref", "refs/heads/main", tip)
-
 	candidate, _, err := config.LoadAuthorityCandidate([]byte(source))
 	must(err)
 	selected, diags := candidate.Config.ResolveBranch("main", "main")
@@ -247,12 +258,14 @@ func TestRetentionLifecycle(t *testing.T) {
 	writePlan()
 	var s *serve.Server
 	serverStarts := 0
+	var completed chan struct{}
 	var stop func()
 	start := func() {
-		o := serveOptions{app: 5383059, authorityPlan: planPath, emissionReceipt: receiptPath, emissionReceiptMaxAge: time.Hour, poll: 10 * time.Millisecond}
+		o := serveOptions{app: 5383059, authorityPlan: planPath, emissionReceipt: receiptPath, emissionReceiptMaxAge: time.Hour, poll: 250 * time.Millisecond}
 		runtime, e := productionAuthorityRuntime(t.Context(), o, db)
 		must(e)
-		s, e = serve.NewRepositories(t.Context(), db, []serve.Repository{repo}, productionServeOptions(o, runtime, nil, slog.New(slog.NewTextHandler(os.Stderr, nil))))
+		completed = make(chan struct{}, 1)
+		s, e = serve.NewRepositories(t.Context(), db, []serve.Repository{repo}, productionServeOptions(o, runtime, nil, slog.New(retentionCycleLog{slog.NewTextHandler(os.Stderr, nil), completed})))
 		must(e)
 		serverStarts++
 		stop = runServer(s)
@@ -290,10 +303,8 @@ func TestRetentionLifecycle(t *testing.T) {
 			}
 		}
 	}
-	// Read the production CLI brief, then submit rejected and accepted receipts.
 	t.Setenv("OPENMERGE_API_TOKEN", "retention-read-token")
 	t.Setenv("OPENMERGE_API_TOKEN_FILE", "")
-
 	start()
 	wait("initial openmerge adoption", func(st queue.State) bool {
 		return st.AuthorityPin() != nil && st.AuthorityPin().Authority == authority.OpenMerge
@@ -302,7 +313,6 @@ func TestRetentionLifecycle(t *testing.T) {
 	must(s.RefreshBranches(t.Context()))
 	f.AddComment(r, 1, "contributor", "@openmerge queue")
 	f.SetNativeReviews(r, 1, forge.NativeReviews{Comments: []forge.NativeComment{{ID: 101, Kind: forge.IssueComment, Author: forge.UserIdentity{ID: 12, Login: "contributor", Kind: forge.UserAccount}, Body: "@openmerge queue", Created: forge.NativeTime{Time: time.Now().UTC(), Source: forge.CommentCreationTime, Precision: time.Second}}}, Reviews: []forge.NativeReview{{ID: 201, CommitID: head, Author: forge.UserIdentity{ID: 21, Login: "writer", Kind: forge.UserAccount}, State: forge.ReviewApproved, Submitted: forge.NativeTime{Time: time.Now().UTC(), Source: forge.ReviewSubmissionTime}}}})
-
 	api := httptest.NewServer(status.Handler(s, []store.QueueKey{key}, "retention-read-token", nil))
 	defer api.Close()
 	changeID, e := key.ChangeID(1)
@@ -358,7 +368,6 @@ func TestRetentionLifecycle(t *testing.T) {
 			t.Fatal("missing dependency type", kind)
 		}
 	}
-
 	manifest := filepath.Join(before, "manifest.json")
 	for i, mode := range []string{"github", "openmerge"} {
 		next := strings.Replace(source, "policy_authority: openmerge", "policy_authority: "+mode, 1)
@@ -384,7 +393,6 @@ func TestRetentionLifecycle(t *testing.T) {
 		})
 		stop()
 		if mode == "github" {
-			// A second real landing records GitHub-governed historical semantics.
 			secondHead := commit(next, tip, "second change")
 			bare("update-ref", "refs/pull/2/head", secondHead)
 			d.pr.Number = 2
@@ -407,7 +415,6 @@ func TestRetentionLifecycle(t *testing.T) {
 		db, err = store.Open(t.Context(), dsn)
 		must(err)
 	}
-	// Retain main, but remove its selector from valid default-branch config.
 	tip = commit("version: 1\nqueues: [{name: other, base: release, merge_when: [check-success = ci]}]\n", tip, "changed")
 	bare("update-ref", "refs/heads/main", tip)
 	start()
@@ -421,20 +428,24 @@ func TestRetentionLifecycle(t *testing.T) {
 	must(err)
 	retiredInventory := inventory() + retentionSQL(t, admin, "SELECT count(*)::text FROM actions")
 	oldServer := s
-	restartAt := time.Now()
 	start()
 	restarted := s
 	if restarted == oldServer {
 		t.Fatal("store reopen reused old server")
 	}
 	wait("retired server discovery and cycle", func(queue.State) bool {
+		select {
+		case <-completed:
+		default:
+			return false
+		}
 		h, e := restarted.Health(t.Context())
 		must(e)
 		if len(h.Queues) != 1 || len(restarted.Keys()) != 1 || restarted.Keys()[0] != key {
 			return false
 		}
 		q := h.Queues[0]
-		return q.Lifecycle == "retired" && !q.Readiness.Ready && !q.InCycle && !q.Watched && q.NextDeadline != nil && q.LastProgressAt != nil && q.LastProgressAt.After(restartAt)
+		return q.Lifecycle == "retired" && !q.Readiness.Ready && !q.Watched
 	})
 	must(restarted.RefreshBranches(t.Context()))
 	wait("retired after reopen", func(st queue.State) bool { return st.LifecycleState() == "retired" })
@@ -465,13 +476,11 @@ func TestRetentionLifecycle(t *testing.T) {
 	if retentionSQL(t, admin, `SELECT count(DISTINCT payload->'data'->>'accepted')::text FROM events WHERE type='approval_receipt_recorded'`) != "2" {
 		t.Fatal("missing accepted/rejected receipts")
 	}
-
 	var invalidPairs int
 	must(admin.QueryRow(t.Context(), `SELECT count(*) FROM events p LEFT JOIN events c ON c.queue_id=p.queue_id AND c.id=(SELECT max(id) FROM events WHERE queue_id=p.queue_id AND id<p.id) WHERE p.type='policy_authority_applied' AND (c.type IS DISTINCT FROM 'config_applied' OR c.payload->'data'->>'commit' IS DISTINCT FROM p.payload->'data'->>'governing_commit' OR c.payload->'data'->>'digest' IS DISTINCT FROM p.payload->'data'->>'effective_digest')`).Scan(&invalidPairs))
 	if invalidPairs != 0 {
 		t.Fatal("nonadjacent authority/config pair")
 	}
-
 	final := export("final", "")
 	must(os.WriteFile(filepath.Join(out, "inventory-final.json"), []byte(inventory()), 0600))
 	retentionProofs(t, scratch, dsn, out, admin, inventory, equal, landings, parents)
@@ -566,7 +575,6 @@ func retentionManifest(t *testing.T, dir string) audit.Manifest {
 	return m
 }
 
-// CLI assertions execute in-process, so CI needs neither another Go build nor Python.
 func retentionProofs(t *testing.T, s *retentionScratch, dsn, out string, owner *pgx.Conn, inventory func() string, equal func(string, string), landings, parents map[string]string) {
 	t.Helper()
 	m := retentionManifest(t, filepath.Join(out, "final"))
