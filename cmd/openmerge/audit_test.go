@@ -147,7 +147,7 @@ func TestAuditSelectOnlyCommand(t *testing.T) {
 			if json.Unmarshal(raw, &manifest) != nil {
 				t.Fatal("manifest")
 			}
-			if !strings.Contains(out.String(), target) || !strings.Contains(out.String(), manifest.ManifestSHA256) {
+			if out.String() != target+"\nmanifest SHA-256: "+manifest.ManifestSHA256+"\n" {
 				t.Fatal("missing publication path/digest")
 			}
 		}

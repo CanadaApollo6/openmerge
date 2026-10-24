@@ -2304,3 +2304,106 @@ output parent, inspect private `.audit-staging-*` directories and their nested
 `.closure-*` spools, then remove only directories belonging to that stopped run.
 These are unpublished temporary artifacts; preserve any published target and
 verify it by replay before retrying. Do not sweep another active export's spools.
+
+### External anchors and overlapping windows
+
+This procedure is **Inert; deploy the compatible audit binary only after period
+B drains**. It does not complete the PR 11 real-journal acceptance. Before use,
+the organization must choose and record the anchor custodian/signing identity,
+verification and recovery owners, cadence, retention duration, access separation
+from database/service administrators, recovery objectives, and maximum commit lag
+L. There are no supplied defaults or compliance guarantees. Establish L through
+bounded writers or a quiesce/drain barrier; require `until <= custody_time - L`.
+Without a defensible bound, label the window provisional. Backdating and late
+commits remain indistinguishable; omissions before the first anchor are unknown.
+
+Run exports, fresh crosscheck exports, and replays as a dedicated OS identity
+`audit-reader`, using a separate database login with CONNECT, schema USAGE, and
+SELECT only on events/queues, without inherited writes or database CREATE/TEMP
+(including PUBLIC grants). Backup/restore uses a separately authorized recovery
+identity and an isolated database. Do not run migrations or supply forge/service
+credentials. Budget snapshot duration, spool/database space, queue inventory
+memory and I/O: repeatable-read snapshots can delay vacuum. A timeout fails the
+export; partial output is not evidence.
+
+The separate trusted OS custodian `audit-custodian` obtains the five files from
+`audit-reader` by a controlled copy/handoff. Publication creates a 0700 directory
+and 0600 files **owned by audit-reader**; the custodian cannot simply traverse
+these as an unrelated unprivileged user. Use an authorized privileged copier or
+have audit-reader copy bytes into a custodian-controlled intake, then have the
+custodian freeze its own new copy. Reject symlinks/nonregular files, never share
+hard links, and create the destination parent as 0700 while copying. The
+custodian sets the frozen parent to 0750, bundle to 0550, files to 0440, granting
+only a dedicated reader group traversal/read. audit-reader belongs to that group
+but owns none of the frozen paths and cannot write or chmod them. The custodian
+must not modify the frozen copy during verification. Root/owners are not
+restrained by these modes: custody separation is a procedural precondition.
+
+For a quiesced range, audit-reader runs the existing range export twice, to
+separate new paths, and replays the custodian's frozen original to a third new
+path. Freeze the fresh crosscheck too. Capture each command's stdout, stderr,
+and exit separately; require exit 0 and compare **all five files** of original,
+crosscheck and replay with `cmp`, requiring exit 0 for every comparison. Keep
+replay outputs under exclusive trusted control and arrange the same controlled
+custodian handoff before comparison. Any difference requires investigation.
+
+Successful stdout is exactly two LF-terminated lines: line 1 equals the literal
+`--out` argument and line 2 is `manifest SHA-256: <64 lowercase hex>`. Reject any
+extra line or trailing content. Retain that printed digest, not `sha256sum
+manifest.json`: v1 hashes the canonical manifest with manifest_sha256 empty,
+without LF. Receipts are exactly 64 lowercase hex bytes plus one LF, compared
+exactly; never use permissive `sha256sum -c`. Independently retain all five files,
+count/terminal, repository/installation, bounds, version, binary hash, compatible
+configuration, backup identity/hash, required Git objects, custody time and
+immutable storage identity. Never retain credentials. Separately administered
+versioned/write-once storage and an organization-approved detached signature can
+protect custody; preserve signer verification/rotation/revocation records.
+Encryption alone does not authenticate the history or prove completeness.
+
+For later verification, retrieve the trusted receipt/bundle, verify its signature
+against trusted signer identity, and freeze the candidate as above. As
+audit-reader, replay the same frozen candidate against the intended DB or an
+isolated restored backup to a new output. Require exit 0, exact stdout syntax,
+and all five candidate/replay files equal. A failed replay is never an anchor
+comparison pass. With those preconditions, run:
+
+```sh
+python3 scripts/verify-audit-anchor.py --anchor "$TRUSTED/digest.txt" \
+  --replay-stdout "$REPLAY_STDOUT" --replay-out "$NEW_REPLAY" \
+  --earlier "$PRIVATE/A" --later "$PRIVATE/B"
+```
+
+`--replay-out` must equal the replay command's literal `--out` value. Omit
+`--later` for anchor-only comparison. The offline stdlib tool reads files (or
+`--anchor -` / `--replay-stdout -` from stdin), never the DB. Both bundles must
+already be replay-validated; replay B to its own fresh output, require exit 0
+and compare all five files with B before comparison. Use `-` for at most one
+input. Exit 0 says `anchor and overlap match`; 1 reports
+anchor/source mismatch, missing source or in-window addition; 2 means malformed,
+unreadable or usage input. Preserve originals, outputs and actual exits on
+failure; never replace the trusted digest to make a mismatch disappear.
+
+For anchored A and later B, first replay A into C on the later DB and compare
+all five files to A: B cannot substitute for this retention proof. The verifier
+joins exact integer queue/source IDs, comparing queue keys, type, recorded_at
+and payload digest. `context differs …` reports contextual role/reference
+changes but still exits 0; an exit-code-only gate misses these notices. Review
+them before anchoring B.
+A scope source in the common half-open interval must exist in B; any B source
+inside A's anchored interval absent from A is an in-window addition requiring
+investigation, even with an adopted lag bound. `--require-full-coverage` also
+requires B's interval to contain A's entire interval and every A source,
+including closure dependencies. Ordinary partial overlaps do not require A's
+closure-only sources. Chains restart at zero, so prefix/terminal comparisons
+are unsuitable. Anchor B separately only after discrepancies are resolved and
+recorded, retaining A and its receipt.
+
+Replay rebuilds from retained DB sources; it does not walk supplied
+previous_sha256 links. Unchanged stream hashes detect archive edits; a fully
+rehashed valid subset or corresponding DB edit may replay successfully. The
+independent earlier manifest anchor detects the changed commitment, including
+watermark changes that leave the terminal unchanged. This establishes agreement
+with a prior commitment, not authenticity or completeness before anchoring.
+Keep originals before upgrades/first new-event emission; mode rollback does not
+waive v6/v7 snapshot or unknown-event downgrade limits. Restore in isolation and
+reconcile remote history and post-backup landings before service recovery.
