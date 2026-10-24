@@ -144,8 +144,11 @@ class Contract(unittest.TestCase):
             for field, value in [('queue', {**row['source']['queue'], 'base': 'other'}), ('type', 'other'), ('recorded_at', '2026-10-22T12:01:00.000000Z')]:
                 bad = json.loads(json.dumps(row)); bad['source'][field] = value
                 write(b, [bad]); check(1, 'source mismatch')
-            for name in ['manifest.json', 'selection.jsonl']:
+            for name, rows, needle, bad in [('manifest.json', [], b'owner/repo', b'owner/\xffrepo'), ('selection.jsonl', [row], b'"lane": ""', b'"lane": "\xff"')]:
                 write(b, [row]); (b / name).write_bytes(b'\xff\n'); check(2)
+                write(b, rows); target = b / name; raw = target.read_bytes()
+                assert raw.count(needle) == 1
+                target.write_bytes(raw.replace(needle, bad)); check(2)
             write(b, [row]); selection = b / 'selection.jsonl'
             selection.write_bytes(selection.read_bytes()[:-1]); check(2)
             oversized = json.loads(json.dumps(row)); oversized['source']['type'] = 'x' * (4 * 1024 * 1024)

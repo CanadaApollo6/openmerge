@@ -198,7 +198,7 @@ Foreground Python, focused race-enabled Go tests and lint exited 0 (zero lint is
 Pinned: context role/kinds, literal metacharacter out and near-miss, missing stdout LF,
 stdin receipt plus X, uppercase payload/manifest hashes, queue-key order in facts and
 nested reference context, and exact identity-sorted multi-finding messages.
-Optional cases pinned: invalid UTF-8 (manifest/selection), unpadded timestamp,
+Optional cases pinned: invalid UTF-8 inside otherwise valid JSON strings (manifest/selection; both `replace`/`ignore` decode mutants fail), unpadded timestamp,
 argparse exit 2 and exact sanitized stderr (no stdout for malformed input).
 No verifier changes or bug found. Further operator classes/remaining non-defect
 mutation gaps are deferred, as are the existing hardening and OS write-denial items.
