@@ -145,6 +145,11 @@ func TestSchemaKeysMatchLoader(t *testing.T) {
 			return
 		}
 		props := properties(node)
+		for name := range props {
+			if strings.Contains(name, "retention") || strings.Contains(name, "prun") {
+				t.Errorf("%s.%s: retention/pruning property must remain absent", path, name)
+			}
+		}
 		if typ == reflect.TypeFor[cp.Requirement]() {
 			keys := cp.RequirementKeys()
 			for name := range props {
