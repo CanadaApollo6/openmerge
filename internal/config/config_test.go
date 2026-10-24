@@ -356,3 +356,17 @@ func TestGoldenExampleMatchesADR(t *testing.T) {
 		}
 	}
 }
+
+// Retention is deliberately unconditional; no spelling may opt into pruning.
+func TestRetentionKeysRejected(t *testing.T) {
+	for _, key := range []string{"retention", "pruning", "prune_after", "prune_unknown_future_key"} {
+		for _, prefix := range []string{"", "  "} {
+			source := "version: 1\nqueues:\n- name: main\n  merge_when: [check-success = ci]\n" + prefix + key + ": {}\n"
+			_, _, err := Load([]byte(source))
+			if err == nil || !strings.Contains(err.Error(), "unknown key") {
+				t.Fatalf("accepted %s at indentation %q: %v", key, prefix, err)
+			}
+			assertSchemaAgreement(t, []byte(source), err)
+		}
+	}
+}
