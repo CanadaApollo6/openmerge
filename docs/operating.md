@@ -2378,7 +2378,14 @@ python3 scripts/verify-audit-anchor.py --anchor "$TRUSTED/digest.txt" \
 `--anchor -` / `--replay-stdout -` from stdin), never the DB. Both bundles must
 already be replay-validated; replay B to its own fresh output, require exit 0
 and compare all five files with B before comparison. Use `-` for at most one
-input. Exit 0 says `anchor and overlap match`; 1 reports
+input. The verifier rejects a bundle directory or file whose final path component
+is a symlink (symlinked ancestors are not checked; the frozen-copy precondition
+covers them), CRLF selection rows, and selection bytes whose SHA-256 differs from
+`selection_sha256` in the replay-validated manifest. It hashes the same single
+read of the selection stream that it parses, so hash and parse see identical
+bytes; this detects post-replay edits, including erasure. This does not replace the
+five-file replay comparison or the frozen-copy custody requirement.
+Exit 0 says `anchor and overlap match`; 1 reports
 anchor/source mismatch, missing source or in-window addition; 2 means malformed,
 unreadable or usage input. Preserve originals, outputs and actual exits on
 failure; never replace the trusted digest to make a mismatch disappear.

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestOfflineAnchorContract(t *testing.T) {
@@ -305,5 +307,109 @@ func overlapFailure(t *testing.T, receipt, stdout, replay, earlier, later, reaso
 			t.Fatalf("overlap: %v %s", err, out)
 		}
 		t.Logf("overlap full=%t exit=1: %s", full, out)
+	}
+}
+
+// Rehashing isolates semantic watermark checks from the file-hash gate.
+func TestAnchorWatermarkBounds(t *testing.T) {
+	anchorScratchGuard(t)
+	f := database(t)
+	f.queue(t, 1, "")
+	for i := 0; i < 3; i++ {
+		insert(t, f.admin, 1, "2026-10-22T12:00:00Z")
+	}
+	insert(t, f.admin, 1, "2026-10-24T12:00:00Z")
+	original := filepath.Join(t.TempDir(), "original")
+	_, err := f.reader.Export(t.Context(), req(), original)
+	must(t, err)
+	for _, id := range []int64{2, 5} {
+		dir := copyExport(t, original)
+		waters := readWatermarks(t, dir)
+		if len(waters) != 1 || waters[0].ID != 4 {
+			t.Fatal("unexpected original watermark")
+		}
+		waters[0].ID = id
+		writeWatermarks(t, dir, waters)
+		_, err := f.reader.Replay(t.Context(), filepath.Join(dir, "manifest.json"), filepath.Join(t.TempDir(), "replay"))
+		if err != errIntegrity {
+			t.Fatalf("watermark %d: got %v", id, err)
+		}
+	}
+}
+
+func TestAnchorReplayIdentityWriteDenial(t *testing.T) {
+	anchorScratchGuard(t)
+	f := database(t)
+	f.queue(t, 1, "")
+	insert(t, f.admin, 1, "2026-10-22T12:00:00Z")
+	original := filepath.Join(t.TempDir(), "original")
+	_, err := f.reader.Export(t.Context(), req(), original)
+	must(t, err)
+	_, err = f.reader.Replay(t.Context(), filepath.Join(original, "manifest.json"), filepath.Join(t.TempDir(), "replay"))
+	must(t, err)
+	// Probe the same effective identity with read-only mode disabled so privileges,
+	// rather than transaction mode, must deny writes.
+	conn, err := f.reader.pool.Acquire(t.Context())
+	must(t, err)
+	defer conn.Release()
+	_, err = conn.Exec(t.Context(), `SET default_transaction_read_only=off`)
+	must(t, err)
+	for _, sql := range []string{
+		`INSERT INTO events(queue_id,type,payload,recorded_at) VALUES(1,'x','{}',now())`,
+		`UPDATE events SET type='x'`, `DELETE FROM events`,
+		`INSERT INTO queues VALUES(2,'i','owner/repo','other','')`,
+		`UPDATE queues SET lane='x'`, `DELETE FROM queues`,
+	} {
+		_, err := conn.Exec(t.Context(), sql)
+		var denied *pgconn.PgError
+		if !errors.As(err, &denied) || denied.Code != "42501" {
+			t.Fatalf("write probe: expected permission denied, got %v", err)
+		}
+	}
+	replay := filepath.Join(t.TempDir(), "after-probes")
+	_, err = f.reader.Replay(t.Context(), filepath.Join(original, "manifest.json"), replay)
+	must(t, err)
+	manifests(t, original, replay)
+}
+
+func TestAnchorSelectionErasedAfterReplay(t *testing.T) {
+	anchorScratchGuard(t)
+	f := database(t)
+	f.queue(t, 1, "")
+	insert(t, f.admin, 1, "2026-10-22T12:00:00Z")
+	a := filepath.Join(t.TempDir(), "a")
+	m, err := f.reader.Export(t.Context(), req(), a)
+	must(t, err)
+	replay := filepath.Join(t.TempDir(), "replay")
+	got, err := f.reader.Replay(t.Context(), filepath.Join(a, "manifest.json"), replay)
+	must(t, err)
+	if got.ManifestSHA256 != m.ManifestSHA256 {
+		t.Fatal("replay commitment changed")
+	}
+	b := filepath.Join(t.TempDir(), "b")
+	empty := req()
+	empty.From = "2026-10-24T12:00:00Z"
+	empty.Until = "2026-10-24T13:00:00Z"
+	bm, err := f.reader.Export(t.Context(), empty, b)
+	must(t, err)
+	if bm.Count != 0 {
+		t.Fatal("B must be empty")
+	}
+	_, err = f.reader.Replay(t.Context(), filepath.Join(b, "manifest.json"), filepath.Join(t.TempDir(), "b-replay"))
+	must(t, err)
+	receipt, stdout := filepath.Join(t.TempDir(), "receipt"), filepath.Join(t.TempDir(), "stdout")
+	must(t, os.WriteFile(receipt, []byte(m.ManifestSHA256+"\n"), 0600))
+	must(t, os.WriteFile(stdout, []byte(replay+"\nmanifest SHA-256: "+got.ManifestSHA256+"\n"), 0600))
+	args := []string{"../../scripts/verify-audit-anchor.py", "--anchor", receipt, "--replay-stdout", stdout, "--replay-out", replay, "--earlier", a, "--later", b}
+	out, err := exec.Command("python3", args...).CombinedOutput()
+	must(t, err)
+	if string(out) != "anchor and overlap match\n" {
+		t.Fatalf("control: %s", out)
+	}
+	must(t, os.WriteFile(filepath.Join(a, "selection.jsonl"), nil, 0600))
+	out, err = exec.Command("python3", args...).CombinedOutput()
+	status, ok := err.(*exec.ExitError)
+	if !ok || status.ExitCode() != 2 || string(out) != "malformed or unreadable input\n" {
+		t.Fatalf("erasure: %v %s", err, out)
 	}
 }
