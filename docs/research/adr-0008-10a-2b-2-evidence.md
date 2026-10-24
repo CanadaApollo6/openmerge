@@ -578,3 +578,53 @@ threshold. New frozen histories bring the whole PR beyond the historical
 2,500-line wrapper ceiling; it now has a 3,000-line whole-PR ceiling and a
 separate 800-line round-2 gate. No Makefile, CI, Dockerfile or test-flag source
 was changed.
+
+### Completed resumed round-2 stress and cleanup
+
+The shared test Postgres was stopped by a session restart at 17:03, not by
+this work. The interrupted run's five scaling/six vector iterations are not
+counted toward the fresh resumed run below.
+
+Fresh foreground stress: **exit 0 in 13,827.418 s (3h 50m 27s)**, pinned Go
+1.27.3, GOMAXPROCS=1, `-race -count=20`, no `-short`, all four scaling sizes
+and all 16 complete-export vectors. Both changed tests passed 20 times:
+**20 scaling + 20 vector iterations**, comprising **80 scaling subcases and
+320 vector subcases**, with no failures or skipped sizes. Go ran under the
+heavy-work flock with GOFLAGS=-p=2 and GOMEMLIMIT=4GiB. Temporary/build files
+were kept under the round's cache directory.
+
+Eight owned CPU burners ran throughout; minimum consumed CPU ticks:
+**1,375,919**. All eight were terminated and reaped, and their PIDs were
+confirmed absent. No started verifier/test/burner remains running.
+
+Descriptive medians across the 20 stressed iterations (seconds; race and CPU
+contention included, separate from the non-race measurements above):
+
+| Decisions | Export median | Replay median |
+| --- | --- | --- |
+| 64 | 7.651454 | 10.035592 |
+| 256 | 30.387307 | 38.507764 |
+| 512 | 59.261386 | 75.717031 |
+| 1536 | 186.655899 | 228.616055 |
+
+After success, the previously interrupted 1,536-decision fixture schema
+`om_audit_942a17a36d4e5e1622d48720` and its `_reader` role were dropped.
+Together with the earlier explicit cleanup of `om_audit_6147eb6ab0637f57c723677e`
+and its reader role, **no owned schemas or roles remain**. Final inventory is
+byte-identical to the pre-round inventory: the four pre-existing schema/role
+pairs (21f983889ef7200481ebd1c7, 634e78a95ec623f6f6526f17,
+8e05e92603fcf081b6af5d20, db974bd376ed4b39e4744212, all prefixed `om_audit_`)
+were preserved. Test cleanup removed every schema created by the successful
+run; no unknown schema or role was dropped.
+
+Final reference check: all 80 Python/Node canonical files pass. All 243
+existing fixture files (including the original 30 frozen outputs and 211
+fixtures outside audit testdata) remain byte-identical to b6221f4; production
+Go remains unchanged. Final round diff: **685 changed lines**; whole
+PR: **2789 changed lines**. The round remains below 800 lines.
+
+Passing stress log SHA-256:
+`b1de47010ddfd362ef7c51171498d19a8e328249994605f3625390c394d46e89`.
+Full measurements, burner PID/reaping proof and inventories are in
+`resume-summary.json`, `burners.json`, `resume-burners-reaped.json`,
+`cleanup-summary.json` and `db-final.txt` under the private round cache.
