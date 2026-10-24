@@ -1,15 +1,10 @@
 # ADR 0008 PR 10b design: retention and external anchoring
 
-Proposal; acceptance below is planned, not executed. Normative scope:
+Implementation status: #149 merged. 10b-2's fixture acceptance is executed;
+10b-1 is separate and PR 11 real-journal acceptance remains outstanding. Scope:
 [ADR 0008, PR 10b](../adr/0008-openmerge-policy-authority.md#pr-10b-prove-retention-and-external-anchoring).
-Base inspected: `2d6792c`; audit v1 and CLI remain contingent on
-[PR #149](https://github.com/CanadaApollo6/openmerge/pull/149), inspected at
-`b6221f48712ed7b948f157142ed1f9b4f5a6365d`.
-Its `cmd/openmerge/audit.go`, `internal/audit/testdata/README.md`,
-`docs/research/adr-0008-10a-2b-2-evidence.md` and
-`scripts/verify-adr0008-10a-2b-2.py` define the pending command/format contract.
-Reconfirm the merged contract before implementation; this proposal freezes no
-new v1 bytes and edits none of #149's files.
+The merged v1 contract is frozen in `adr-0008-10a-design.md` and
+`internal/audit/testdata/README.md`; implementation adds no new v1 bytes.
 
 ## Decision and limits
 
@@ -170,10 +165,10 @@ Later verification:
    `openmerge audit export --manifest "$PRIVATE/candidate/manifest.json"
    --out "$NEW_REPLAY"` against the intended DB or isolated restored DB.
    Require exit 0; failure is not an anchor comparison pass.
-3. From captured successful stdout require exactly one line matching
-   `manifest SHA-256: [0-9a-f]{64}`. Compare those 64 hex bytes with the trusted
+3. Require exactly two LF-terminated stdout lines: the literal `--out` value,
+   then `manifest SHA-256: [0-9a-f]{64}`. Compare those 64 hex bytes with the trusted
    digest. Require equality; never compare only an unvalidated input field.
-   The planned offline tool below reports mismatch as exit 1 / `anchor mismatch`.
+   The offline tool below reports mismatch as exit 1 / `anchor mismatch`.
 4. Compare all five private candidate/replay files with `cmp`, exit 0 each.
    Record actual digests, stdout/stderr and exits. Preserve originals on failure;
    never update the trusted value to make a mismatch disappear.
@@ -223,13 +218,13 @@ Fresh same-range scans can see late commits. For anchored A and later B:
 5. Anchor B separately only after discrepancies are resolved and documented;
    retain A and its receipt. Resolution does not rewrite A's commitment.
 
-10b-2 will add a small Python stdlib-only offline operator verifier,
-`scripts/verify-audit-anchor.py` (proposed path, not implemented here), distinct
+10b-2 implements the Python stdlib-only offline operator verifier,
+`scripts/verify-audit-anchor.py`, distinct
 from #149's scratch acceptance driver. Invocation contract:
 
 ```sh
 python3 scripts/verify-audit-anchor.py --anchor "$TRUSTED/digest.txt" \
-  --replay-stdout "$REPLAY_STDOUT" --earlier "$PRIVATE/A" --later "$PRIVATE/B"
+  --replay-stdout "$REPLAY_STDOUT" --replay-out "$NEW_REPLAY" --earlier "$PRIVATE/A" --later "$PRIVATE/B"
 ```
 
 Inputs must be already replay-validated read-only private bundles; this tool
@@ -320,22 +315,21 @@ rebuild produces the original chain while the altered stream hash differs.
 Also exercise an edited payload with H but no relinking: rebuilding unchanged DB
 sources fails manifest equality even if supplied file hashes are now consistent.
 
-Terminal-only demonstrator: seed one selected opaque `base_moved` at ID 1 and a
-second `base_moved` ID 2 recorded outside the request interval. Original queue
-watermark is 2; change only that watermark JSONL `id` from 2 to 1, H the watermark
-stream and manifest. All selected IDs remain <=1, ID 1 exists, no owner closure
-uses the changed bound. Expected replay exit 0 with byte-identical events and
-terminal but changed printed manifest digest, so primary comparison exits 1/M.
-Source inspection of `Reader.Replay` in `internal/audit/export.go` confirms it
-accepts an existing saved watermark <= actual max and `build` reproduces that
-saved watermark. This is a code-derived expectation, not an executed DB result;
-10b-2 must demonstrate exit 0 or correct the recipe before claiming acceptance.
-It does not justify terminal-only custody in the meantime.
+Executed terminal-only demonstrator: select independent opaque `base_moved`
+IDs 1/2/3; retain ID 4 outside the request interval. Change only watermark `id`
+4 → 3 and H the watermark stream/manifest. Replay exits 0 with identical events
+and terminal; the changed manifest fails the earlier anchor (exit 1/M).
+[10b-2 evidence](adr-0008-10b-2-evidence.md) records hashes and execution.
+Deviations: this extends the proposed 2 → 1 fixture; `--replay-out` is required
+for exact stdout-path validation; tamper tests call Replay directly with separate
+CLI stdout acceptance. OS replay-identity write-denial acceptance remains open.
+These results do not justify terminal-only custody.
 
 ## Operator guidance to land with implementation
 
 Land the runbook in `docs/operating.md` after #149 merges; record executed
-commands/hashes in a new `docs/research/adr-0008-10b-evidence.md`. Mirror #149: the
+commands/hashes in [10b-1](adr-0008-10b-1-evidence.md) and
+[10b-2](adr-0008-10b-2-evidence.md). Mirror #149: the
 audit binary is **Hold for deployment until period B drains**, including when
 following these operator instructions. Documentation is not a dependency waiver.
 
