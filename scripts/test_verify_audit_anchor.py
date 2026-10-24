@@ -30,14 +30,29 @@ class Contract(unittest.TestCase):
             receipt, stdout = root / 'receipt', root / 'stdout'
             receipt.write_text('a' * 64 + '\n')
             stdout.write_text('output\nmanifest SHA-256: ' + 'a' * 64 + '\n')
-            def check(code, reason='', extra=(), out='output', later=True):
+            def check(code, reason='', extra=(), out='output', later=True, input_text=''):
                 result = subprocess.run([sys.executable, str(SCRIPT), '--anchor', str(receipt),
                     '--replay-stdout', str(stdout), '--replay-out', out,
-                    '--earlier', str(a), *(['--later', str(b)] if later else []), *extra], capture_output=True, text=True, input='')
+                    '--earlier', str(a), *(['--later', str(b)] if later else []), *extra], capture_output=True, text=True, input=input_text)
                 self.assertEqual(result.returncode, code, result.stdout + result.stderr)
                 self.assertIn(reason, result.stdout + result.stderr)
+                self.assertEqual('anchor and overlap match' in result.stdout, code == 0)
+                if code == 0 and not reason: self.assertEqual(result.stdout, 'anchor and overlap match\n')
             write(a, [row]); write(b, [row]); check(0)
             check(0, extra=['--require-full-coverage'])
+            largest = json.loads(json.dumps(row)); largest['source'].update(queue_id=2**63-1, id=2**63-1)
+            write(a, [largest]); write(b, [largest]); check(0); write(a, [row]); write(b, [row])
+            check(0, extra=['--anchor', '-'], input_text='a' * 64 + '\n')
+            check(0, extra=['--replay-stdout', '-'], input_text=stdout.read_text())
+            for out in ['o\nx', 'o\rx', '']:
+                stdout.write_text(out + '\nmanifest SHA-256: ' + 'a' * 64 + '\n'); check(2, out=out)
+            stdout.write_text('output\nmanifest SHA-256: ' + 'a' * 64 + '\n')
+            other = json.loads(json.dumps(row)); other['source']['queue_id'] += 1; other['source']['queue']['lane'] = 'other'
+            write(a, [row, other]); write(b, [row]); check(1, 'missing source')
+            write(a, [row]); write(b, [row, other]); check(1, 'in-window addition'); write(b, [row])
+            other['source']['queue_id'] = row['source']['queue_id']; other['source']['id'] = 2; other['source']['queue'] = row['source']['queue']
+            write(b, [other]); check(1, 'missing source'); check(1, 'in-window addition'); write(b, [row])
+
             check(2, extra=['--require-full-coverage'], later=False)
             extended = json.loads(json.dumps(manifest)); extended['request']['until'] = '2026-10-24T00:00:00.000000Z'
             at_end = json.loads(json.dumps(row)); at_end['source'].update(id=2, recorded_at=manifest['request']['until'])
@@ -80,14 +95,24 @@ class Contract(unittest.TestCase):
             added['source']['id'] = 1; added['payload_sha256'] = 'd' * 64
             write(b, [added]); check(1, 'source mismatch')
             write(b, [row, row]); check(2)
-            for field, value in [('installation', '8'), ('repository', 'other/repo'), ('base', '\ud800')]:
+            for field, value in [('installation', '8'), ('repository', 'other/repo'), ('repository', 'z/repo'), ('base', '\ud800')]:
                 bad = json.loads(json.dumps(row)); bad['source']['queue'][field] = value
                 write(b, [bad]); check(2)
-            for path, value in [(('source', 'type'), ''), (('source', 'type'), '\ud800'), (('role',), 'other'), (('metadata_sha256',), 'bad')]:
+            for path, value in [(('source', 'type'), ''), (('source', 'type'), '\ud800'), (('role',), 'other'), (('metadata_sha256',), 'bad'), (('payload_sha256',), 'b' * 65)]:
                 bad = json.loads(json.dumps(row)); target = bad
                 for key in path[:-1]: target = target[key]
                 target[path[-1]] = value; write(b, [bad]); check(2)
-            for field, value in [('repository', ''), ('from', '2026-10-24T00:00:00.000000Z')]:
+            bad = json.loads(json.dumps(row)); bad.update(role='other')
+            bad['source']['recorded_at'] = '2026-10-21T00:00:00.000000Z'
+            write(b, [bad]); check(2); bad.update(role='dependency', payload_sha256='zz'); write(b, [bad]); check(2)
+            for path, value in [(('source', 'recorded_at'), '2026-13-22T12:00:00.000000Z'), (('source', 'recorded_at'), '2026-10-22T12:00:00.00000Z'), (('source', 'extra'), 1), (('source', 'queue', 'extra'), 'extra'), (('references',), {}), (('evidence_kinds',), {}), (('references',), [1.5]), (('evidence_kinds',), [float('nan')])]:
+                bad = json.loads(json.dumps(row)); target = bad
+                for key in path[:-1]: target = target[key]
+                target[path[-1]] = value; write(b, [bad]); check(2)
+            bad = json.loads(json.dumps(row)); bad['source']['recorded_at'] = '2026-13-22T12:00:00.000000Z'; bad['role'] = 'dependency'; write(b, [bad]); check(2)
+            for field, value in [('version', True), ('version', 2), ('manifest_sha256', 'zz'), ('manifest_sha256', 'a' * 65)]:
+                bad = json.loads(json.dumps(manifest)); bad[field] = value; write(b, [], bad); check(2)
+            for field, value in [('repository', ''), ('installation', ''), ('repository', 7), ('installation', 7), ('from', '2026-10-24T00:00:00.000000Z')]:
                 bad = json.loads(json.dumps(manifest)); bad['request'][field] = value
                 write(b, [], bad); check(2)
             for field, value in [('queue', {**row['source']['queue'], 'base': 'other'}), ('type', 'other'), ('recorded_at', '2026-10-22T12:01:00.000000Z')]:
@@ -99,6 +124,14 @@ class Contract(unittest.TestCase):
             write(b, [oversized]); check(2)
             oversized = json.loads(json.dumps(manifest)); oversized['request']['repository'] = 'x' * (4 * 1024 * 1024)
             write(b, [], oversized); check(2); write(b, [row])
+            target = b / 'manifest.json'; raw = target.read_bytes()
+            target.write_bytes(raw + b' ' * (4 * 1024 * 1024 - len(raw))); check(0)
+            target.write_bytes(target.read_bytes() + b' '); check(2); write(b, [row])
+            maximum = json.loads(json.dumps(row)); maximum['references'] = ['']
+            maximum['references'] = ['x' * (4 * 1024 * 1024 - len(json.dumps(maximum)))]
+            write(b, [maximum]); check(0, 'context differs')
+            maximum['references'][0] += 'x'; write(b, [maximum]); check(2); write(b, [row])
+
 
             partial = json.loads(json.dumps(manifest))
             partial['request'].update({'from': '2026-10-22T12:00:00.000000Z', 'until': '2026-10-24T00:00:00.000000Z'})

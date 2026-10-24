@@ -162,11 +162,33 @@ surrogates, selection final LF/size and manifest size, reversed bounds, role,
 metadata digest, and queue/type/time source-fact comparison. No verifier logic
 changed; the catch-all comment documents its sanitized exit-2 policy.
 
-Round-2 foreground Python tests, the combined Go command above and lint exited 0
-(zero lint issues). All five reported mutants were killed by assertions. Logs
-in `/home/riels/.cache/openmerge-10b2-r2` have SHA-256:
+Round-2 verification and log digests are retained in commit `69a6e9c`.
 
-- python.log: `92fc2dd4846b59baa3cbc9469a64348df33db1aaff21b50b57aa7071ceda2ad6`
-- go.log: `1ce3c678ec233c005117489187f8457c6203a4ddcf5a9b4d742d15b13a3b0a20`
-- lint.log: `e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47`
-- mutations.log: `b797cabc53abd7a1fc74ba278cc7237899e8c95402227ffb332b726f8b34fb45`
+## Round 3 exhaustive single-site sweep
+
+All 26 require sites and 37 Python comparison atoms were deleted/forced or boundary-weakened;
+SQL predicates, type/nonempty conjuncts, validation calls, decoder hooks and identity/source-fact fields were also mutated.
+Every generated script compiled; the real verifier stayed unchanged. **178 tested, 152 killed, 26 equivalent, zero untriaged.**
+Run: `python3 /home/riels/.cache/openmerge-10b2-r3/sweep.py`, then `python3 /home/riels/.cache/openmerge-10b2-r3/triage.py`.
+The complete per-mutant old/new/result/reason table is `sweep-table.csv` in that directory.
+New controls isolate out-of-window unknown roles, payload digest and LF/CR/empty out, alongside the same-push parser/join cases.
+Padded manifest limit/limit+1 and selection 4 MiB+1 including LF/one-byte-over controls pass; final-LF rejection is separate. No bug was exposed.
+
+| Mutants (verifier line/site) | Result/count | Equivalent reason (single mutation only) |
+| --- | --- | --- |
+| Remaining guard/comparison, parsing, SQL, field mutations | Killed / 152 | Contract assertions distinguish their result/output. |
+| Type guards L42/48/79/82/83/85/89 | Equivalent / 7 | Remaining validation or regex/subscript/encode failure still gives sanitized exit 2. |
+| Receipt cap L119; fullmatch→prefix L120 | Equivalent / 2 | Strict fullmatch or the 65-byte cap leaves no room for trailing receipt bytes. |
+| Both-stdin guard L118 | Equivalent / 3 | Blocking reads consume the receipt or reject it; the second read is empty. |
+| Match-presence L124 | Equivalent / 2 | None.group fails into the same sanitized exit 2. |
+| Int64 upper-bound deletion L37 | Equivalent / 1 | SQLite bind rejects overflow with exit 2; tightening to exclude max is killed. |
+| readline length cap L76 | Equivalent / 1 | readline(LIMIT+1) already caps length; final-LF guard remains. |
+| Identity version term L140 | Equivalent / 1 | Both bundles already require integer version 1. |
+| Role comparisons L92/147 | Equivalent / 3 | Allowed roles make >=scope equivalent to ==scope; dependencies cannot lie in A's overlap. |
+| TIME fullmatch→prefix L42 | Equivalent / 1 | strptime still rejects trailing junk; calendar-check deletion is killed. |
+| Shared/anti-join label filters L144/153 | Equivalent / 3 | Extra B self-matches have equal facts/context; extra A self-matches fail the anti-join NULL test. |
+| CLI entry guard L165 | Equivalent / 2 | CLI execution always has __name__=__main__; import behavior is outside this command contract. |
+
+Foreground Python, focused race-enabled Go tests and lint exited 0 (zero lint issues); scratch cleanup assertions passed.
+`triage.log` (driver/result/log digests) SHA-256: `ff3079128f710d061704bcbb3c7b589dff31795c5fbc72f382a42f00b39dc990`.
+`sweep-table.csv` SHA-256: `37f66c1a2d686b0f0bcd385d1b990c578021c3835442cd24b3684badc5bebb27`.
