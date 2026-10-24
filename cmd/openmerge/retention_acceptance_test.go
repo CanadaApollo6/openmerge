@@ -7,6 +7,18 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
 	"github.com/CanadaApollo6/openmerge/internal/audit"
 	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/brief"
@@ -22,15 +34,6 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/store"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"log/slog"
-	"net/http/httptest"
-	"net/url"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"strings"
-	"testing"
-	"time"
 )
 
 type retentionDriver struct {
@@ -55,17 +58,67 @@ func (d retentionDriver) ListOpenPullRequests(context.Context, forge.RepoRef, st
 	return []forge.PullRequestSummary{{Number: d.pr.Number, HeadSHA: d.pr.HeadSHA}}, nil
 }
 
-type retentionGit struct {
-	*gitops.Repo
-	f *fake.Forge
+// Forge observations are fake; journal writes and retry dispatch callbacks use
+// the production executor. The fake provider completes CI deterministically.
+func (d retentionDriver) RerunFailedChecks(ctx context.Context, r forge.RepoRef, req forge.RerunChecksRequest) (forge.RerunChecksResult, error) {
+	target := forge.RerunTarget{WorkflowRunID: 700, Attempt: 1}
+	if err := req.Progress(target); err != nil {
+		return forge.RerunChecksResult{}, err
+	}
+	result, err := d.Forge.RerunFailedChecks(ctx, r, req)
+	if err != nil {
+		return result, err
+	}
+	target.Accepted = true
+	if err := req.Progress(target); err != nil {
+		return result, err
+	}
+	runs, err := d.CheckRuns(ctx, r, req.TestedSHA)
+	if err != nil {
+		return result, err
+	}
+	for i := range runs {
+		if runs[i].State == forge.Pending {
+			runs[i].WorkflowRunID = 700
+			runs[i].State = forge.Failure
+			// The first batch exhausts its retry. The second retains a successful
+			// retry as a pre-window dependency of an abandoned landing decision.
+			if req.Runs[0].ID == 20 {
+				runs[i].State = forge.Success
+			}
+		}
+	}
+	d.SetCheckRuns(r, req.TestedSHA, runs)
+	return result, nil
 }
 
-func (g retentionGit) BuildTestRef(ctx context.Context, r forge.RepoRef, b forge.BuildRequest, o forge.PushOptions) (string, error) {
+type retentionGit struct {
+	*gitops.Repo
+	f        *fake.Forge
+	builds   atomic.Int32
+	rejected atomic.Bool
+}
+
+func (g *retentionGit) BuildTestRef(ctx context.Context, r forge.RepoRef, b forge.BuildRequest, o forge.PushOptions) (string, error) {
 	sha, err := g.Repo.BuildTestRef(ctx, r, b, o)
 	if err == nil {
-		g.f.SetCheckRuns(r, sha, []forge.CheckRun{{ID: 1, Name: "ci", State: forge.Success, HeadBranch: b.Ref}})
+		n := g.builds.Add(1)
+		state := forge.Success
+		if n <= 2 {
+			state = forge.Failure
+		}
+		g.f.SetCheckRuns(r, sha, []forge.CheckRun{{ID: uint64(n) * 10, Attempt: 1, WorkflowRunID: 700, Source: "app:15368", Name: "ci", State: state, HeadBranch: b.Ref}})
 	}
 	return sha, err
+}
+
+// A rejected atomic push leaves the base untouched. The executor must settle
+// the failed attempt through its real fence-abandonment recovery path.
+func (g *retentionGit) Land(ctx context.Context, r forge.RepoRef, req forge.LandRequest, opts forge.PushOptions) (string, error) {
+	if g.rejected.CompareAndSwap(false, true) {
+		return "", forge.ErrLeaseRejected
+	}
+	return g.Repo.Land(ctx, r, req, opts)
 }
 
 // Completion is latched after the production cycle publishes health.
@@ -85,6 +138,15 @@ func (h retentionCycleLog) Handle(ctx context.Context, r slog.Record) error {
 	return h.Handler.Handle(ctx, r)
 }
 
+func (h retentionCycleLog) WithAttrs(attrs []slog.Attr) slog.Handler {
+	h.Handler = h.Handler.WithAttrs(attrs)
+	return h
+}
+func (h retentionCycleLog) WithGroup(name string) slog.Handler {
+	h.Handler = h.Handler.WithGroup(name)
+	return h
+}
+
 func TestRetentionLifecycle(t *testing.T) {
 	scratch := newRetentionScratch(t)
 	dsn := scratch.database()
@@ -93,7 +155,8 @@ func TestRetentionLifecycle(t *testing.T) {
 	if out == "" {
 		out = t.TempDir()
 	} else {
-		must(os.MkdirAll(out, 0700))
+		// Caller supplies an unused directory; never reuse another trial's outputs.
+		must(os.Mkdir(out, 0700))
 	}
 	admin, err := pgx.Connect(t.Context(), dsn)
 	must(err)
@@ -132,7 +195,7 @@ func TestRetentionLifecycle(t *testing.T) {
 		parents[sha] = parent
 		return sha
 	}
-	const source = "version: 1\npolicy_authority: openmerge\nbreak_glass: {team: acme/emergency}\nqueues:\n- name: main\n  base: main\n  merge_method: merge\n  merge_when: [check-success = ci]\n  approvals: {default: {human: true, count: 1, receipt: true}}\n"
+	const source = "version: 1\npolicy_authority: openmerge\nbreak_glass: {team: acme/emergency}\nqueues:\n- name: main\n  base: main\n  merge_method: merge\n  checks: {retry_failed: 1}\n  merge_when: [check-success = ci]\n  approvals: {default: {human: true, count: 1, receipt: true}}\n"
 	githubSource := strings.Replace(strings.Replace(source, "policy_authority: openmerge", "policy_authority: github", 1), "break_glass: {team: acme/emergency}\n", "", 1)
 	tip := commit(githubSource, "", "base")
 	bare("update-ref", "refs/heads/main", tip)
@@ -176,11 +239,13 @@ func TestRetentionLifecycle(t *testing.T) {
 			time.Sleep(100 * time.Millisecond)
 		}
 	}
+	historicalGit := &retentionGit{Repo: g, f: f}
 	repo := serve.Repository{Installation: "7", Name: r.Path, Branches: func(context.Context) ([]string, error) { return []string{"main"}, nil }, Target: func(base string) serve.Target {
 		k := key
 		k.BaseBranch = base
-		return serve.Target{Key: k, Driver: d, Git: retentionGit{g, f}, AuthorityCompletionGit: completionGit, BotLogin: fake.Identity}
+		return serve.Target{Key: k, Driver: d, Git: historicalGit, AuthorityCompletionGit: completionGit, BotLogin: fake.Identity}
 	}}
+	// Establish genesis through normal GitHub-mode discovery before adoption.
 	bootstrap, err := serve.NewRepositories(t.Context(), db, []serve.Repository{repo}, serve.Options{PollInterval: 10 * time.Millisecond, Logger: slog.New(slog.NewTextHandler(os.Stderr, nil))})
 	must(err)
 	runServer := func(server *serve.Server) func() {
@@ -293,6 +358,9 @@ func TestRetentionLifecycle(t *testing.T) {
 		return path
 	}
 	equal := func(a, b string) {
+		if filepath.Base(a) == "before" {
+			retentionClosure(t, admin, b)
+		}
 		for _, name := range []string{"manifest.json", "events.jsonl", "selection.jsonl", "watermarks.jsonl", "dependency_boundaries.jsonl"} {
 			x, e := os.ReadFile(filepath.Join(a, name))
 			must(e)
@@ -339,6 +407,16 @@ func TestRetentionLifecycle(t *testing.T) {
 	f.SetNativeReviews(r, 1, native)
 	must(s.Notify(t.Context(), "7", r.Path, "receipts-1"))
 	api.Close()
+	// Wait for durable failure and dequeue before submitting another command;
+	// no wall-clock sampling can race the planner's failed-batch cleanup.
+	wait("failed retry dequeued", func(st queue.State) bool {
+		var n int
+		must(admin.QueryRow(t.Context(), "SELECT count(*) FROM events WHERE type='checks_failure_confirmed'").Scan(&n))
+		return n == 1 && len(st.Entries) == 0
+	})
+	native.Comments = append(native.Comments, forge.NativeComment{ID: 500, Kind: forge.IssueComment, Author: forge.UserIdentity{ID: 12, Login: "contributor", Kind: forge.UserAccount}, Body: "@openmerge queue", Created: forge.NativeTime{Time: time.Now().UTC(), Source: forge.CommentCreationTime, Precision: time.Second}})
+	f.SetNativeReviews(r, 1, native)
+	must(s.Notify(t.Context(), "7", r.Path, "requeue-after-failure"))
 	wait("settled decision", func(_ queue.State) bool {
 		var n int
 		must(admin.QueryRow(t.Context(), "SELECT count(*) FROM events WHERE type='landed'").Scan(&n))
@@ -349,10 +427,15 @@ func TestRetentionLifecycle(t *testing.T) {
 	must(os.WriteFile(filepath.Join(out, "inventory-before.json"), []byte(inventory()), 0600))
 	landedSHA := bare("rev-parse", "refs/heads/main")
 	landings := map[string]string{landedSHA: tip + " " + head}
+	// Full history retains the exhausted batch, which has no landing decision.
+	// The narrow decision export independently exercises pre-window retry closure.
+	history := export("history", "")
+	retentionHistorical(t, admin, history)
 	var decisionAt time.Time
 	must(admin.QueryRow(t.Context(), "SELECT recorded_at FROM events WHERE type='landing_decision_recorded' ORDER BY id LIMIT 1").Scan(&decisionAt))
 	windowFrom = decisionAt.UTC().Format(time.RFC3339Nano)
 	before := export("before", "")
+	retentionClosure(t, admin, before)
 	selection, err := os.ReadFile(filepath.Join(before, "selection.jsonl"))
 	must(err)
 	dependencies := map[string]bool{}
@@ -360,20 +443,31 @@ func TestRetentionLifecycle(t *testing.T) {
 		var row audit.Selection
 		must(json.Unmarshal(line, &row))
 		if row.Role == "dependency" {
-			dependencies[row.Source.Type] = true
+			recordedAt, e := time.Parse(time.RFC3339Nano, row.Source.RecordedAt)
+			must(e)
+			if recordedAt.Before(decisionAt) {
+				dependencies[row.Source.Type] = true
+			}
 		}
 	}
-	for _, kind := range []string{"policy_authority_applied", "change_revision_observed", "change_accountability_observed", "change_classified", "approval_receipt_recorded", "batch_started", "test_ref_built"} {
+	for _, kind := range []string{"policy_authority_applied", "change_revision_observed", "change_accountability_observed", "change_classified", "approval_receipt_recorded", "batch_started", "test_ref_built", "checks_observed", "check_rerun_requested", "check_rerun_dispatch_progress", "check_rerun_dispatched"} {
 		if !dependencies[kind] {
 			t.Fatal("missing dependency type", kind)
 		}
 	}
 	manifest := filepath.Join(before, "manifest.json")
+	replayHistory := func(name string) {
+		current := export(name+"-history", filepath.Join(history, "manifest.json"))
+		retentionHistorical(t, admin, current)
+		equal(history, current)
+	}
 	for i, mode := range []string{"github", "openmerge"} {
 		next := strings.Replace(source, "policy_authority: openmerge", "policy_authority: "+mode, 1)
 		if mode == "github" {
 			next = strings.Replace(next, "break_glass: {team: acme/emergency}\n", "", 1)
 			next = strings.Replace(next, ", receipt: true", "", 1)
+			// Keep the legacy checks family alongside the new retry-aware history.
+			next = strings.Replace(next, "  checks: {retry_failed: 1}\n", "", 1)
 		}
 		tip = commit(next, bare("rev-parse", "refs/heads/main"), "changed")
 		bare("update-ref", "refs/heads/main", tip)
@@ -411,6 +505,7 @@ func TestRetentionLifecycle(t *testing.T) {
 		}
 		assertInventory()
 		equal(before, export(fmt.Sprintf("transition-%d", i), manifest))
+		replayHistory(fmt.Sprintf("transition-%d", i))
 		db.Close()
 		db, err = store.Open(t.Context(), dsn)
 		must(err)
@@ -423,6 +518,7 @@ func TestRetentionLifecycle(t *testing.T) {
 	stop()
 	assertInventory()
 	equal(before, export("retired-replay", manifest))
+	replayHistory("retired")
 	db.Close()
 	db, err = store.Open(t.Context(), dsn)
 	must(err)
@@ -458,19 +554,27 @@ func TestRetentionLifecycle(t *testing.T) {
 	}
 	assertInventory()
 	equal(before, export("restart-replay", manifest))
+	replayHistory("restart")
 	if serverStarts != 6 {
-		t.Fatal("missing lifecycle start", serverStarts)
+		t.Error("missing lifecycle start", serverStarts)
 	}
 	var pins string
 	must(admin.QueryRow(t.Context(), `SELECT string_agg(payload->'data'->>'authority',',' ORDER BY id) FROM events WHERE type='policy_authority_applied'`).Scan(&pins))
 	if pins != "openmerge,github,openmerge" {
 		t.Fatal("wrong ordered authority pins", pins)
 	}
-	for kind, want := range map[string]int{"landed": 2, "landing_decision_recorded": 2, "policy_authority_applied": 3, "write_restriction_verified": 2, "approval_receipt_recorded": 2, "lifecycle_changed": 1} {
+	counts := map[string]int{"landed": 2, "checks_completed": 1, "landing_decision_recorded": 3, "policy_authority_applied": 3, "write_restriction_verified": 2, "approval_receipt_recorded": 2, "lifecycle_changed": 1}
+	kinds := make([]string, 0, len(counts))
+	for kind := range counts {
+		kinds = append(kinds, kind)
+	}
+	slices.Sort(kinds)
+	for _, kind := range kinds {
+		want := counts[kind]
 		var n int
 		must(admin.QueryRow(t.Context(), "SELECT count(*) FROM events WHERE type=$1", kind).Scan(&n))
 		if n != want {
-			t.Fatal("wrong event count", kind, n, want)
+			t.Error("wrong event count", kind, n, want)
 		}
 	}
 	if retentionSQL(t, admin, `SELECT count(DISTINCT payload->'data'->>'accepted')::text FROM events WHERE type='approval_receipt_recorded'`) != "2" {
@@ -482,6 +586,7 @@ func TestRetentionLifecycle(t *testing.T) {
 		t.Fatal("nonadjacent authority/config pair")
 	}
 	final := export("final", "")
+	retentionScopeOnly(t, final, "checks_completed")
 	must(os.WriteFile(filepath.Join(out, "inventory-final.json"), []byte(inventory()), 0600))
 	retentionProofs(t, scratch, dsn, out, admin, inventory, equal, landings, parents)
 	t.Logf("retention inventory sha256=%x final=%s", sha256.Sum256([]byte(inventory())), final)
@@ -709,6 +814,9 @@ func retentionProofs(t *testing.T, s *retentionScratch, dsn, out string, owner *
 		}
 		equal(filepath.Join(out, "final"), export(t, restored, "restored", "", 0))
 		equal(before, export(t, restored, "restored-before", filepath.Join(before, "manifest.json"), 0))
+		restoredHistory := export(t, restored, "restored-history", filepath.Join(out, "history", "manifest.json"), 0)
+		retentionHistorical(t, c, restoredHistory)
+		equal(filepath.Join(out, "history"), restoredHistory)
 	})
 	summary, err := json.Marshal(map[string]any{"printed_manifest_sha256": digests, "commands": commands, "dependency_removed": dependency, "roles": s.roles, "databases": s.databases, "uid": os.Getuid(), "inventory_sha256": fmt.Sprintf("%x", sha256.Sum256([]byte(inventory())))})
 	retentionMust(t, err)
@@ -768,6 +876,115 @@ func retentionPrefix(t *testing.T, before, after string) {
 			if !bytes.Equal(row, next[table][i]) {
 				t.Fatal("rewritten row", table, i)
 			}
+		}
+	}
+}
+
+// The matrix is deliberately checked for completeness: deleting one family's
+// assertion must not silently reduce the acceptance contract.
+func retentionHistorical(t *testing.T, db *pgx.Conn, dir string) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(dir, "selection.jsonl"))
+	retentionMust(t, err)
+	selected := map[int64]audit.Selection{}
+	var watermark int64
+	for _, line := range bytes.Split(bytes.TrimSpace(raw), []byte("\n")) {
+		var row audit.Selection
+		retentionMust(t, json.Unmarshal(line, &row))
+		selected[row.Source.ID] = row
+		watermark = max(watermark, row.Source.ID)
+	}
+	families := []string{
+		"landing_checks_recorded",
+		"landing_abandoned",
+		"checks_observed",
+		"checks_failure_confirmed",
+		"check_rerun_requested",
+		"check_rerun_dispatch_progress",
+		"check_rerun_dispatched",
+	}
+	if len(families) != 7 {
+		t.Fatal("historical retention assertion matrix incomplete")
+	}
+	for _, kind := range families {
+		rows, e := db.Query(t.Context(), "SELECT id, payload FROM events WHERE type=$1 AND id<=$2 ORDER BY id", kind, watermark)
+		retentionMust(t, e)
+		count := 0
+		for rows.Next() {
+			var id int64
+			var payload []byte
+			retentionMust(t, rows.Scan(&id, &payload))
+			row, ok := selected[id]
+			if !ok || row.Source.Type != kind {
+				rows.Close()
+				t.Fatalf("historical family %s missing event %d", kind, id)
+			}
+			if kind == "checks_failure_confirmed" && (row.Role != "scope" || len(row.References) != 0) {
+				rows.Close()
+				t.Fatal("failure confirmation scope-only contract changed")
+			}
+			canonical, e := audit.Canonical(payload)
+			retentionMust(t, e)
+			if row.PayloadSHA256 != fmt.Sprintf("%x", sha256.Sum256(canonical)) {
+				rows.Close()
+				t.Fatalf("historical family %s payload changed: %d", kind, id)
+			}
+			count++
+		}
+		retentionMust(t, rows.Err())
+		rows.Close()
+		if count == 0 {
+			t.Fatal("historical family not produced", kind)
+		}
+		want := map[string]int{"landing_checks_recorded": 2, "landing_abandoned": 1, "checks_failure_confirmed": 1, "check_rerun_requested": 2, "check_rerun_dispatch_progress": 4, "check_rerun_dispatched": 2}
+		if n, exact := want[kind]; exact && count != n {
+			t.Fatalf("historical family %s count=%d want=%d", kind, count, n)
+		}
+	}
+	// Exhaustion and abandonment must be actual unsuccessful attempts, rather
+	// than unrelated labels added to a happy-path journal.
+	var exhausted, abandoned int
+	retentionMust(t, db.QueryRow(t.Context(), `SELECT count(*) FROM events f JOIN events b ON b.queue_id=f.queue_id AND b.type='batch_started' AND b.payload->'data'->>'batch_id'=f.payload->'data'->>'batch_id' JOIN events d ON d.queue_id=f.queue_id AND d.type='dequeued' AND d.id>f.id WHERE f.type='checks_failure_confirmed' AND d.payload->'data'->>'reason'='checks-failed' AND EXISTS (SELECT 1 FROM jsonb_array_elements(b.payload->'data'->'prs') pr WHERE pr->>'pr'=d.payload->'data'->>'pr')`).Scan(&exhausted))
+	retentionMust(t, db.QueryRow(t.Context(), `SELECT count(*) FROM events a JOIN events s ON s.queue_id=a.queue_id AND s.type='landing_started' AND s.payload->'data'->>'batch_id'=a.payload->'data'->>'batch_id' AND s.id<a.id WHERE a.type='landing_abandoned'`).Scan(&abandoned))
+	if exhausted != 1 || abandoned != 1 {
+		t.Fatalf("unsuccessful attempts: exhausted=%d abandoned=%d", exhausted, abandoned)
+	}
+
+}
+
+func retentionScopeOnly(t *testing.T, dir, kind string) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(dir, "selection.jsonl"))
+	retentionMust(t, err)
+	count := 0
+	for _, line := range bytes.Split(bytes.TrimSpace(raw), []byte("\n")) {
+		var row audit.Selection
+		retentionMust(t, json.Unmarshal(line, &row))
+		if row.Source.Type != kind {
+			continue
+		}
+		if row.Role != "scope" || len(row.References) != 0 {
+			t.Fatal("scope-only contract changed", kind)
+		}
+		count++
+	}
+	if count != 1 {
+		t.Fatal("missing scope-only family", kind, count)
+	}
+}
+
+func TestRetentionCycleLogDerivation(t *testing.T) {
+	for _, grouped := range []bool{false, true} {
+		completed := make(chan struct{}, 1)
+		logger := slog.New(retentionCycleLog{slog.NewTextHandler(&bytes.Buffer{}, nil), completed}).With("queue", "retention")
+		if grouped {
+			logger = logger.WithGroup("worker").With("base", "main")
+		}
+		logger.Info("reconcile cycle finished")
+		select {
+		case <-completed:
+		default:
+			t.Fatal("derived handler lost cycle latch")
 		}
 	}
 }

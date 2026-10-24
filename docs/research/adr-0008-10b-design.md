@@ -44,6 +44,15 @@ Explicit coverage must include these families (the policy is not an allowlist):
 | Authority/config | `config_applied`, `policy_authority_applied`, all authority observations, write-restriction verification, outside-push warnings and acknowledgements |
 | Checks/retries | `batch_started`, `test_ref_built`, `landing_checks_recorded`, `checks_observed`, `checks_completed`, `checks_failure_confirmed`, `check_rerun_requested`, `check_rerun_dispatch_progress`, `check_rerun_dispatched` |
 
+10b-1b asserts ordinary and abandoned landing attempts, including exhausted
+checks and the abandoned b2 → b3 rebuild. Remedy decisions remain deferred.
+The narrow export asserts exact decision/check/start/settlement edges and
+pre-window observation/request/progress/dispatch references. `landing_checks_recorded`
+is retained and checked in that graph. `checks_failure_confirmed` is retained
+as scope only in full history. `checks_completed` is retained as scope only
+after the GitHub-mode landing, with count, prefix and restore checks. Neither
+scope-only family has a closure-reference claim in this fixture.
+
 For each selected decision retain the recursive dependency closure resolved by
 10a: governing mode/config history, classification, eligibility and receipt
 sources, accountability, admitted checks and applicable producer/run/attempt,
@@ -378,7 +387,11 @@ docs or testing held code in isolation is not deployment permission.
 The size split was taken: 10b-1 retention/lifecycle/restore/role/config proofs
 are in #152; 10b-2's offline verifier, tamper acceptance and runbook are in #153,
 with design alignment in this docs-only companion. Each implementation slice
-carries its own evidence; neither alone completes 10b or Part 3.
+carries its own evidence; neither alone completes 10b or Part 3. PR 10b-1b
+extends #152 with production-path abandonment, exhausted checks and retry
+history, including pre-window dependencies and unsuccessful attempts; see
+[the retention evidence](adr-0008-10b-1-evidence.md). Unknown kinds have no
+production emitter and are not claimed by this lifecycle fixture.
 
 ## Questions for the maintainer
 
