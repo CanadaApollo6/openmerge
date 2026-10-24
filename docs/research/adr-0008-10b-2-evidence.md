@@ -198,9 +198,9 @@ Foreground Python, focused race-enabled Go tests and lint exited 0 (zero lint is
 Pinned: context role/kinds, literal metacharacter out and near-miss, missing stdout LF,
 stdin receipt plus X, uppercase payload/manifest hashes, queue-key order in facts and
 nested reference context, and exact identity-sorted multi-finding messages.
-Optional cases pinned: invalid UTF-8 inside otherwise valid JSON strings (manifest/selection; both `replace`/`ignore` decode mutants fail), unpadded timestamp,
+Optional cases pinned: invalid UTF-8 inside otherwise valid JSON strings (manifest/selection; both `replace`/`ignore` decode mutants fail), unpadded month/day/hour/minute/second (each `{1,2}` quantifier mutant fails), uppercase and 65-hex replay-stdout digests,
 argparse exit 2 and exact sanitized stderr (no stdout for malformed input).
-No verifier changes or bug found. Further operator classes/remaining non-defect
+Round 5: a 65-hex stdin receipt exits 2; the 65-byte stdin cap is equivalent to the exact `[0-9a-f]{64}\n` receipt match. Deferred: the `message` tiebreak in `ORDER BY q,id,message` (only reachable when several q=0/id=0 findings coincide). No verifier changes or bug found. Further operator classes/remaining non-defect
 mutation gaps are deferred, as are the existing hardening and OS write-denial items.
 
 Foreground Python, combined race-enabled Go tests above and lint exited 0 (zero issues); 17 targeted variants killed. Run `python3 /home/riels/.cache/openmerge-10b2-r4/targeted.py`. Logs in that directory:

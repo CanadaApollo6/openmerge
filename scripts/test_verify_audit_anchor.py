@@ -68,6 +68,7 @@ class Contract(unittest.TestCase):
             write(a, [largest]); write(b, [largest]); check(0); write(a, [row]); write(b, [row])
             check(0, extra=['--anchor', '-'], input_text='a' * 64 + '\n')
             check(2, extra=['--anchor', '-'], input_text='a' * 64 + '\nX')
+            check(2, extra=['--anchor', '-'], input_text='a' * 65 + '\n')
             check(0, extra=['--replay-stdout', '-'], input_text=stdout.read_text())
             for out in ['o\nx', 'o\rx', '']:
                 stdout.write_text(out + '\nmanifest SHA-256: ' + 'a' * 64 + '\n'); check(2, out=out)
@@ -134,7 +135,8 @@ class Contract(unittest.TestCase):
                 bad = json.loads(json.dumps(row)); target = bad
                 for key in path[:-1]: target = target[key]
                 target[path[-1]] = value; write(b, [bad]); check(2)
-            for at in ['2026-13-22T12:00:00.000000Z', '2026-10-2T12:00:00.000000Z']:
+            for at in ['2026-13-22T12:00:00.000000Z', '2026-1-22T12:00:00.000000Z', '2026-10-2T12:00:00.000000Z',
+                       '2026-10-21T1:00:00.000000Z', '2026-10-21T12:0:00.000000Z', '2026-10-21T12:00:0.000000Z']:
                 bad = json.loads(json.dumps(row)); bad['source']['recorded_at'] = at; bad['role'] = 'dependency'; write(b, [bad]); check(2)
             for field, value in [('version', True), ('version', 2), ('manifest_sha256', 'zz'), ('manifest_sha256', 'a' * 65), ('manifest_sha256', 'A' * 64)]:
                 bad = json.loads(json.dumps(manifest)); bad[field] = value; write(b, [], bad); check(2)
@@ -198,7 +200,8 @@ class Contract(unittest.TestCase):
             receipt.write_text('d' * 64 + '\n'); check(1, 'anchor mismatch')
             receipt.write_text('a' * 64 + '\n')
             for malformed in ['output\nmanifest SHA-256: ' + 'a' * 64, 'wrong\nmanifest SHA-256: ' + 'a' * 64 + '\n',
-                              'output\nmanifest SHA-256: ' + 'a' * 64 + '\nmanifest SHA-256: ' + 'a' * 64 + '\n']:
+                              'output\nmanifest SHA-256: ' + 'a' * 64 + '\nmanifest SHA-256: ' + 'a' * 64 + '\n',
+                              'output\nmanifest SHA-256: ' + 'A' * 64 + '\n', 'output\nmanifest SHA-256: ' + 'a' * 65 + '\n']:
                 stdout.write_text(malformed); check(2)
 
 
