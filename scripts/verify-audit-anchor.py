@@ -2,6 +2,7 @@
 """Offline comparison of already replay-validated, privately frozen v1 bundles."""
 import argparse
 import datetime
+import hashlib
 import json
 import re
 import sqlite3
@@ -61,6 +62,7 @@ def read(path, limit=LIMIT):
 
 
 def load(db, label, directory):
+    require(not directory.is_symlink() and directory.is_dir())
     manifest = decode(read(directory / 'manifest.json'))
     require(type(manifest['version']) is int and manifest['version'] == 1)
     digest(manifest['manifest_sha256'])
@@ -71,9 +73,13 @@ def load(db, label, directory):
     require(start <= end)
     path = directory / 'selection.jsonl'
     require(not path.is_symlink() and path.is_file())
+    expected = digest(manifest['selection_sha256'])
+    selection_hash = hashlib.sha256()
     with path.open('rb') as stream:
         while raw := stream.readline(LIMIT + 1):
             require(len(raw) <= LIMIT + 1 and raw.endswith(b'\n'))
+            require(not raw.endswith(b'\r\n'))
+            selection_hash.update(raw)
             row = decode(raw.decode('utf-8'))
             source = row['source']
             require(isinstance(source, dict) and set(source) == {'queue_id', 'id', 'type', 'recorded_at', 'queue'})
@@ -96,6 +102,7 @@ def load(db, label, directory):
             require(isinstance(row['references'], list) and isinstance(row['evidence_kinds'], list))
             db.execute('INSERT INTO sources VALUES(?,?,?,?,?,?,?)',
                        (label, qid, sid, at, row['role'], facts, context))
+    require(selection_hash.hexdigest() == expected)
     return manifest, start, end
 
 

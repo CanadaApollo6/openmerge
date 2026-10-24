@@ -1,5 +1,6 @@
 """Contract cases; invoked by Go so the existing CI runs them."""
 import json
+import hashlib
 import subprocess
 import sys
 import tempfile
@@ -25,8 +26,9 @@ class Contract(unittest.TestCase):
                 role='scope', references=[], evidence_kinds=[],
                 payload_sha256='b' * 64, metadata_sha256='c' * 64)
             def write(directory, rows, m=manifest):
-                (directory / 'manifest.json').write_text(json.dumps(m))
-                (directory / 'selection.jsonl').write_text(''.join(json.dumps(r) + '\n' for r in rows))
+                raw = ''.join(json.dumps(r) + '\n' for r in rows).encode()
+                (directory / 'manifest.json').write_text(json.dumps({**m, 'selection_sha256': hashlib.sha256(raw).hexdigest()}))
+                (directory / 'selection.jsonl').write_bytes(raw)
             receipt, stdout = root / 'receipt', root / 'stdout'
             receipt.write_text('a' * 64 + '\n')
             stdout.write_text('output\nmanifest SHA-256: ' + 'a' * 64 + '\n')
@@ -43,6 +45,37 @@ class Contract(unittest.TestCase):
                 return result
             write(a, [row]); write(b, [row]); check(0)
             check(0, extra=['--require-full-coverage'])
+            # Replay's manifest/stdout remain frozen; erase A after replay while B is empty.
+            write(b, []); (a / 'selection.jsonl').write_bytes(b''); check(2)
+            write(a, [row]); write(b, [row])
+            for directory in [a, b]:
+                saved = root / 'saved'
+                directory.rename(saved); directory.symlink_to(saved, target_is_directory=True)
+                check(2); directory.unlink(); saved.rename(directory)
+                target = directory / 'selection.jsonl'
+                target.write_bytes(target.read_bytes().replace(b'\n', b'\r\n'))
+                # Rebind hash so CRLF rejection is independently observable.
+                m = json.loads((directory / 'manifest.json').read_text())
+                m['selection_sha256'] = hashlib.sha256(target.read_bytes()).hexdigest()
+                (directory / 'manifest.json').write_text(json.dumps(m)); check(2)
+                write(directory, [row])
+            target = b / 'selection.jsonl'
+            target.write_bytes(target.read_bytes().replace(b'b' * 64, b'd' * 64)); check(2)
+            write(b, [row])
+            for value in ['z' * 64, 'A' * 64, 'a' * 65, None]:
+                m = json.loads((b / 'manifest.json').read_text()); m['selection_sha256'] = value
+                (b / 'manifest.json').write_text(json.dumps(m)); check(2)
+            write(b, [row])
+            global_findings = json.loads(json.dumps(manifest))
+            global_findings['request'].update(installation='8', **{'from': '2026-10-22T13:00:00.000000Z'})
+            write(b, [], global_findings)
+            receipt.write_text('d' * 64 + '\n')
+            self.assertEqual(check(1, extra=['--require-full-coverage']).stdout,
+                'anchor mismatch\nmissing source: full coverage interval not contained\n'
+                'source mismatch: bundle identity\n'
+                f"missing source queue_id={row['source']['queue_id']} id=1\n")
+            receipt.write_text('a' * 64 + '\n'); write(b, [row])
+
             later_start = json.loads(json.dumps(manifest)); later_start['request']['from'] = '2026-10-22T13:00:00.000000Z'
             context = json.loads(json.dumps(row)); context['role'] = 'dependency'
             write(b, [context], later_start); check(0, 'context differs')

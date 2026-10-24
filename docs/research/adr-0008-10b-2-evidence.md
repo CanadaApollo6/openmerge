@@ -209,3 +209,95 @@ Foreground Python, combined race-enabled Go tests above and lint exited 0 (zero 
 - go.log SHA-256: `57c3acab46f31c42e4339e92ff7b30cfdec9d6fda55a347b7ec44193ad5a2723`
 - lint.log SHA-256: `e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47`
 - targeted.json SHA-256: `337471e75253a20c204e5c8aaf63e06534b99b939f441acc93ff3b8edfe1addd`
+
+## PR 10b-2b hardening follow-up
+
+Base: origin/main `a17e1d55f4afcc48163fb4b66c1d8c2a3d1255e1`.
+**Inert; deploy only after period B drains**, including the transitively held
+binary. No production Go or deployment/configuration/schema changes.
+
+Disposition of #153's deferred items:
+
+- Selection integrity: hash exact selection bytes with hashlib while parsing,
+  including LF and empty streams; compare to strict `selection_sha256` in both
+  bundles. This is the only manifest-bound file the offline verifier reads.
+  The manifest commitment itself remains established by prior successful Replay;
+  receipt/stdout are external inputs, not manifest-bound files. The tool still
+  does not independently validate the entire archive or prove replay occurred.
+  `TestAnchorSelectionErasedAfterReplay` exports/replays A and an empty disjoint
+  B, asserts the untouched comparison exits 0, erases A's selection, then asserts
+  exit 2 and the exact sanitized diagnostic. Python pins the same attack.
+- Symlinks: reject bundle-directory symlinks, with independent A and B cases.
+- Line endings: reject CRLF selection rows; A and B negative cases recompute
+  the selection hash so the line-ending guard must independently reject them.
+- Watermarks: `TestAnchorWatermarkBounds` uses selected IDs 1/2/3 and actual max
+  4 outside the range. Rehashed bounds 2 (below selected max) and 5 (above actual
+  max) must both return errIntegrity. These are aggregate semantic rejection
+  assertions: the upper bound also fails the watermark-existence guard; no claim
+  is made that each redundant production check is independently killed.
+- Message tiebreak: reachable. Anchor mismatch, empty B with different
+  installation and narrowed interval, and full-coverage mode produce three
+  q=0/id=0 findings. Exact stdout asserts alphabetical message order, followed
+  by the positive-ID missing-source finding.
+- Replay identity: `TestAnchorReplayIdentityWriteDenial` exports and replays,
+  then uses the same pool's effective DB role outside Replay with
+  default_transaction_read_only disabled. All six INSERT/UPDATE/DELETE probes
+  on events/queues must return permission-denied SQLSTATE 42501; replay afterward
+  must reproduce all five original files. This proves effective DB role grants,
+  not the administrative fixture connection's login isolation.
+  **OS frozen-copy write denial remains open.** This run is UID 1000; ordinary
+  CI has no provisioned second UID/custodian group or privilege to switch
+  identities. Same-owner chmod cannot prove custody because owners can chmod
+  back. DB grants cannot enforce filesystem custody. The runbook's distinct OS
+  owners/private-copy precondition remains required.
+
+Exit contract remains 0 match, 1 comparison failure, 2 malformed/usage/unreadable.
+The runbook documents automatic stream checking; the five-file comparison and
+frozen-copy requirements remain necessary. No production bug was exposed.
+
+### Changed-line operator-class mutation sweep
+
+Reproducible driver: `python3 scripts/test_verify_audit_anchor_mutations.py`.
+It compiles each single-site mutant, runs the full Python contract against it
+in a private temporary directory, asserts killed/equivalent classification and
+prints a per-mutant JSON table. The real verifier is never mutated.
+Executed result: **19 tested, 17 killed, 2 equivalent, zero untriaged**.
+This bounded inventory covers new guards and the message SQL tiebreak;
+it does not claim exhaustive mutation coverage of the existing verifier.
+
+| Operator/site | Killed | Equivalent / reason |
+| --- | ---: | --- |
+| Directory guard deletion, symlink term deletion/negation, AND → OR | 4 | — |
+| Directory type term deletion | 0 | 1: opening directory/manifest.json still rejects a non-directory path |
+| Selection digest validation deletion | 0 | 1: exact lowercase hexdigest equality rejects noncanonical values |
+| Hash field/algorithm change, update deletion, LF exclusion | 4 | — |
+| Hash check deletion, equality inversion, forced true/false | 4 | — |
+| CRLF guard deletion, negation deletion, suffix change | 3 | — |
+| Message tiebreak deletion/reversal | 2 | — |
+
+The existing CI wrapper `TestOfflineAnchorContract` executes the Python cases.
+New DB tests use `anchorScratchGuard` before any connection, allocate unique
+scratch DBs on localhost:54329, and inherit reader-close, schema/role cleanup
+and database-drop/catalog-absence assertions. No live DB or forge calls occur
+in code/tests. No protected parallel-PR files were edited.
+
+Foreground verification on 2026-10-24 (all final commands exit 0):
+
+```sh
+export GOROOT=/home/riels/.local/share/mise/installs/go/1.27.3
+export PATH="$GOROOT/bin:$PATH"
+export OPENMERGE_TEST_DATABASE_URL='postgres://postgres:openmerge@localhost:54329/postgres?sslmode=disable'
+flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB go test ./... -count=1
+flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB go test -race -short ./internal/audit -run 'Test(OfflineAnchorContract|Anchor.*)$' -count=1
+flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB golangci-lint run
+python3 scripts/test_verify_audit_anchor_mutations.py
+git diff --check
+```
+
+Full suite passed, including audit and command packages; final focused race
+run passed; lint reported zero issues. The first write-probe test attempt
+returned 25006 (read-only transaction), so the final test disables default
+read-only mode on its probe connection and requires 42501 instead. The corrected
+focused run passed before the full suite and final race run. Cleanup assertions
+passed with the scratch tests. The final sweep was rerun after adding the valid
+B-row byte-edit/hash-mismatch case and again asserted 17 killed / 2 equivalent.
