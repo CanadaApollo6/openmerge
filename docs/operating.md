@@ -2414,3 +2414,49 @@ with a prior commitment, not authenticity or completeness before anchoring.
 Keep originals before upgrades/first new-event emission; mode rollback does not
 waive v6/v7 snapshot or unknown-event downgrade limits. Restore in isolation and
 reconcile remote history and post-backup landings before service recovery.
+
+
+#### Daily anchoring
+
+Start only after dogfood period B drains. The chosen private fingerprint store
+is `CanadaApollo6/openmerge-audit-anchors`, which has not yet been created.
+The operator also acts as custodian for this trial, so the identity separation
+above is not achieved. A work rollout must move the anchor repository to a
+different owner. This routine does not establish independent custody.
+
+1. Create the private repository with an initial commit. Apply a ruleset that
+   forbids force-push and deletion, including for the automation identity.
+   Provision a dedicated write deploy key for append-only pushes and a private
+   checkout with a tracking branch. GitHub deploy keys do not themselves enforce
+   append-only file content; protect access to the key and review receipt diffs.
+2. Provision the `audit-reader` OS identity and read-only database login described
+   above. Remove inherited write, CREATE and TEMP privileges. Keep the database
+   URL in a protected environment file, with no service or forge credentials.
+   Keep the deploy key separate from the database credentials.
+3. Install a compatible revision-stamped binary, Bash, GNU date/find, flock,
+   Python 3, and Git. Establish and record maximum commit lag L before scheduling.
+   Set `AUDIT_LAG_SECONDS` to L in seconds; 08:00 local must be late enough in UTC.
+4. Set `OPENMERGE_DATABASE_URL`, `AUDIT_REPO`, `AUDIT_INSTALLATION`,
+   `AUDIT_OUTPUT_BASE` and `AUDIT_ANCHOR_CHECKOUT`. Optionally set `OPENMERGE_BIN`.
+   Use a dedicated private output base and one clean anchor checkout per runner.
+   Run `scripts/audit-anchor-daily.sh --dry-run` first. It exports the previous
+   UTC day, replays into a fresh directory and compares both digests and all five
+   files. It appends a local receipt but skips commit, push and pruning. Inspect
+   and remove that uncommitted test receipt before the first scheduled run.
+5. After B, schedule the script daily at 08:00 local. Each TSV receipt records
+   inclusive from, exclusive until, repository, installation, manifest digest,
+   binary revision and local bundle directory name. Keep receipts forever;
+   successful runs prune local bundles older than 90 days. Preserve failures and
+   investigate before retrying; a failed push leaves a local commit to reconcile.
+6. Once a week, after the daily run, invoke the same script with `--weekly`.
+   It exports and replays the previous seven UTC days, freshly replays the last
+   seven daily bundles, then runs the offline verifier with full coverage against
+   each daily receipt. Missing days or mismatches fail. Review any `context
+   differs` notices as described above. Weekly mode appends no receipt.
+7. Each quarter, restore a backup into an isolated scratch database using the
+   recovery identity. Sample retained anchors, retrieve their corresponding
+   bundles from backup if older than 90 days, replay, compare all five files and
+   run the offline verifier. Record the sample, backup identity and outcome.
+
+Keep frozen bundles and captured stdout/stderr private as described above.
+No repository, key, schedule or live service is created by this change.
