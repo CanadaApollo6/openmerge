@@ -203,7 +203,7 @@ def reference(write=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--write-reference", action="store_true")
-    parser.add_argument("--baseline", type=Path)
+    parser.add_argument("--baseline", type=Path, help="Pre-merge acceptance only: requires the historical main baseline and PR/round size gates; omit after merge to verify frozen reference bytes")
     parser.add_argument("--out", type=Path)
     parser.add_argument("--phase", choices=("all", "regression", "acceptance"), default="all")
     args = parser.parse_args()
@@ -221,6 +221,7 @@ def main():
     prior.SLICE = "10a-2b-2"
     prior.CLASSIFICATION = "Hold; deploy only after period B drains"
     prior.EXTRA_PACKAGES = ["./cmd/openmerge"]
+    # --baseline is pre-merge acceptance, not a post-merge regression entrypoint.
     # The original PR plus round-2 frozen histories exceeds the old 2500-line
     # wrapper budget; enforce the user's separate 800-line round budget too.
     prior.MAX_CHANGED_LINES = 3000

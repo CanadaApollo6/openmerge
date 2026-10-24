@@ -628,3 +628,24 @@ Passing stress log SHA-256:
 Full measurements, burner PID/reaping proof and inventories are in
 `resume-summary.json`, `burners.json`, `resume-burners-reaped.json`,
 `cleanup-summary.json` and `db-final.txt` under the private round cache.
+
+### Round-3 latest dispatch/progress rule
+
+Dispatch and progress now explicitly select the greatest matching ID strictly
+before the owner within batch/tested-SHA/request-generation scope. The existing
+`TestCheckAttemptDispatchFollowsRequestGeneration` adds duplicate candidates
+before and after that boundary, pinning both latest-ID and strict-before rules.
+Focused audit/CLI race tests pass; the changed test passes 20 race iterations
+at GOMAXPROCS=1 with eight owned CPU burners, all terminated and reaped.
+Three focused overlays are assertion kills: oldest dispatch, oldest progress,
+and unbounded dispatch/progress. All 80 Python/Node frozen-file checks pass;
+all testdata and production Go bytes are unchanged. Logs: private cache
+`/home/riels/.cache/openmerge-149-r3-fix/`.
+Final scratch inventory matches the initial inventory; no owned schemas/roles remain.
+
+The checks edge wording is `not_recorded` under non-OpenMerge authority.
+Operating guidance identifies the printed/replayed manifest self-hash as the
+anchor, consistent with merged 10b; the manifest file hash is not that value.
+Verifier `--help` now documents `--baseline` as pre-merge acceptance only;
+post-merge frozen-byte verification omits that option. No production behavior,
+vector byte, migration or index changed.

@@ -2293,7 +2293,11 @@ snapshot deadline; choose a larger Go duration (at least 1ms) for larger journal
 A large `--timeout` can hold the repeatable-read snapshot open for that duration,
 holding back vacuum reclamation of old row versions.
 Timeouts report `audit: export timed out` (exit 1). Success prints the published
-directory and manifest SHA-256 for external anchoring.
+directory and `manifest SHA-256: <hex>` for external anchoring. This printed
+value, also printed by `--manifest` replay, is the v1 `manifest_sha256`: the
+canonical manifest hashed with that field empty and without LF. It is the
+anchor value; `sha256sum manifest.json` hashes the file bytes and is not the
+anchor.
 
 After a killed run, first confirm its process has stopped. In the intended
 output parent, inspect private `.audit-staging-*` directories and their nested

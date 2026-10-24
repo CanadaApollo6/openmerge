@@ -367,16 +367,19 @@ owner. Eligibility, classification and relied receipt or
 stance match their complete recorded basis/read/identity and precede the owner;
 required evidence must resolve uniquely. Test-ref selection first chooses the
 latest batch test-ref before the owner, then validates tested_sha. Decision
-check/start references match batch and attempt; the checks edge is absent unless
-OpenMerge authority applies. A start emits all matching retained decision events,
+check/start references match batch and attempt; the checks edge is emitted as
+`not_recorded` unless OpenMerge authority applies. A start emits all matching
+retained decision events,
 or one not_recorded decision edge if none exist. Settlement selectors take each
 matching landed/abandoned event strictly after that attempt's start and strictly
 before the next start for the same batch (or through the watermark if no next
 start); optional single-source selectors must not resolve ambiguously.
 Rerun requests select the greatest matching ID before the check owner, matching
 batch, tested SHA, check source/name AND workflow_run_id when nonzero. Dispatch
-and progress select before the owner in that request's generation; progress also
-matches nonzero workflow_run_id. A missing request leaves generation zero
+and progress each select the greatest matching event ID strictly before the
+owner, scoped to the same batch, tested SHA and selected request generation;
+progress also matches nonzero workflow_run_id. A missing request leaves
+generation zero
 for dispatch/progress lookup. The later observation uses the lowest matching event ID
 strictly after the owner, with the same batch/tested SHA/check source/name.
 
