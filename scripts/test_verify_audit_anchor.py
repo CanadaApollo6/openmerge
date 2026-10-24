@@ -65,6 +65,10 @@ class Contract(unittest.TestCase):
             for value in ['z' * 64, 'A' * 64, 'a' * 65, None]:
                 m = json.loads((b / 'manifest.json').read_text()); m['selection_sha256'] = value
                 (b / 'manifest.json').write_text(json.dumps(m)); check(2)
+            write(b, [row])  # Full-width equality: flip only the final hex digit.
+            m = json.loads((b / 'manifest.json').read_text()); good = m['selection_sha256']
+            m['selection_sha256'] = good[:-1] + ('0' if good[-1] != '0' else '1')
+            (b / 'manifest.json').write_text(json.dumps(m)); check(2)
             write(b, [row])
             global_findings = json.loads(json.dumps(manifest))
             global_findings['request'].update(installation='8', **{'from': '2026-10-22T13:00:00.000000Z'})

@@ -227,7 +227,11 @@ Disposition of #153's deferred items:
   `TestAnchorSelectionErasedAfterReplay` exports/replays A and an empty disjoint
   B, asserts the untouched comparison exits 0, erases A's selection, then asserts
   exit 2 and the exact sanitized diagnostic. Python pins the same attack.
-- Symlinks: reject bundle-directory symlinks, with independent A and B cases.
+- Symlinks: reject a bundle directory whose final path component is a symlink,
+  with independent A and B cases; symlinked ancestors are left to the frozen-copy
+  precondition. Hash and parse share one read, so they see identical bytes; a
+  manifest-and-selection swap after replay is the custody case. A final-hex-digit
+  flip pins full-width digest equality.
 - Line endings: reject CRLF selection rows; A and B negative cases recompute
   the selection hash so the line-ending guard must independently reject them.
 - Watermarks: `TestAnchorWatermarkBounds` uses selected IDs 1/2/3 and actual max
