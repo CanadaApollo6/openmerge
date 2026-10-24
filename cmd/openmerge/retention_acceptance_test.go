@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -357,6 +358,9 @@ func TestRetentionLifecycle(t *testing.T) {
 		return path
 	}
 	equal := func(a, b string) {
+		if filepath.Base(a) == "before" {
+			retentionClosure(t, admin, b)
+		}
 		for _, name := range []string{"manifest.json", "events.jsonl", "selection.jsonl", "watermarks.jsonl", "dependency_boundaries.jsonl"} {
 			x, e := os.ReadFile(filepath.Join(a, name))
 			must(e)
@@ -431,6 +435,7 @@ func TestRetentionLifecycle(t *testing.T) {
 	must(admin.QueryRow(t.Context(), "SELECT recorded_at FROM events WHERE type='landing_decision_recorded' ORDER BY id LIMIT 1").Scan(&decisionAt))
 	windowFrom = decisionAt.UTC().Format(time.RFC3339Nano)
 	before := export("before", "")
+	retentionClosure(t, admin, before)
 	selection, err := os.ReadFile(filepath.Join(before, "selection.jsonl"))
 	must(err)
 	dependencies := map[string]bool{}
@@ -558,11 +563,18 @@ func TestRetentionLifecycle(t *testing.T) {
 	if pins != "openmerge,github,openmerge" {
 		t.Fatal("wrong ordered authority pins", pins)
 	}
-	for kind, want := range map[string]int{"landed": 2, "checks_completed": 1, "landing_decision_recorded": 3, "policy_authority_applied": 3, "write_restriction_verified": 2, "approval_receipt_recorded": 2, "lifecycle_changed": 1} {
+	counts := map[string]int{"landed": 2, "checks_completed": 1, "landing_decision_recorded": 3, "policy_authority_applied": 3, "write_restriction_verified": 2, "approval_receipt_recorded": 2, "lifecycle_changed": 1}
+	kinds := make([]string, 0, len(counts))
+	for kind := range counts {
+		kinds = append(kinds, kind)
+	}
+	slices.Sort(kinds)
+	for _, kind := range kinds {
+		want := counts[kind]
 		var n int
 		must(admin.QueryRow(t.Context(), "SELECT count(*) FROM events WHERE type=$1", kind).Scan(&n))
 		if n != want {
-			t.Fatal("wrong event count", kind, n, want)
+			t.Error("wrong event count", kind, n, want)
 		}
 	}
 	if retentionSQL(t, admin, `SELECT count(DISTINCT payload->'data'->>'accepted')::text FROM events WHERE type='approval_receipt_recorded'`) != "2" {
@@ -574,6 +586,7 @@ func TestRetentionLifecycle(t *testing.T) {
 		t.Fatal("nonadjacent authority/config pair")
 	}
 	final := export("final", "")
+	retentionScopeOnly(t, final, "checks_completed")
 	must(os.WriteFile(filepath.Join(out, "inventory-final.json"), []byte(inventory()), 0600))
 	retentionProofs(t, scratch, dsn, out, admin, inventory, equal, landings, parents)
 	t.Logf("retention inventory sha256=%x final=%s", sha256.Sum256([]byte(inventory())), final)
@@ -882,6 +895,7 @@ func retentionHistorical(t *testing.T, db *pgx.Conn, dir string) {
 		watermark = max(watermark, row.Source.ID)
 	}
 	families := []string{
+		"landing_checks_recorded",
 		"landing_abandoned",
 		"checks_observed",
 		"checks_failure_confirmed",
@@ -889,7 +903,7 @@ func retentionHistorical(t *testing.T, db *pgx.Conn, dir string) {
 		"check_rerun_dispatch_progress",
 		"check_rerun_dispatched",
 	}
-	if len(families) != 6 {
+	if len(families) != 7 {
 		t.Fatal("historical retention assertion matrix incomplete")
 	}
 	for _, kind := range families {
@@ -905,6 +919,10 @@ func retentionHistorical(t *testing.T, db *pgx.Conn, dir string) {
 				rows.Close()
 				t.Fatalf("historical family %s missing event %d", kind, id)
 			}
+			if kind == "checks_failure_confirmed" && (row.Role != "scope" || len(row.References) != 0) {
+				rows.Close()
+				t.Fatal("failure confirmation scope-only contract changed")
+			}
 			canonical, e := audit.Canonical(payload)
 			retentionMust(t, e)
 			if row.PayloadSHA256 != fmt.Sprintf("%x", sha256.Sum256(canonical)) {
@@ -918,7 +936,7 @@ func retentionHistorical(t *testing.T, db *pgx.Conn, dir string) {
 		if count == 0 {
 			t.Fatal("historical family not produced", kind)
 		}
-		want := map[string]int{"landing_abandoned": 1, "checks_failure_confirmed": 1, "check_rerun_requested": 2, "check_rerun_dispatch_progress": 4, "check_rerun_dispatched": 2}
+		want := map[string]int{"landing_checks_recorded": 2, "landing_abandoned": 1, "checks_failure_confirmed": 1, "check_rerun_requested": 2, "check_rerun_dispatch_progress": 4, "check_rerun_dispatched": 2}
 		if n, exact := want[kind]; exact && count != n {
 			t.Fatalf("historical family %s count=%d want=%d", kind, count, n)
 		}
@@ -931,31 +949,27 @@ func retentionHistorical(t *testing.T, db *pgx.Conn, dir string) {
 	if exhausted != 1 || abandoned != 1 {
 		t.Fatalf("unsuccessful attempts: exhausted=%d abandoned=%d", exhausted, abandoned)
 	}
-	// Follow every retained reference, including references of dependencies.
-	visited := map[int64]bool{}
-	var visit func(int64)
-	visit = func(id int64) {
-		if visited[id] {
-			return
+
+}
+
+func retentionScopeOnly(t *testing.T, dir, kind string) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(dir, "selection.jsonl"))
+	retentionMust(t, err)
+	count := 0
+	for _, line := range bytes.Split(bytes.TrimSpace(raw), []byte("\n")) {
+		var row audit.Selection
+		retentionMust(t, json.Unmarshal(line, &row))
+		if row.Source.Type != kind {
+			continue
 		}
-		row, ok := selected[id]
-		if !ok {
-			t.Fatalf("recursive closure missing source %d", id)
+		if row.Role != "scope" || len(row.References) != 0 {
+			t.Fatal("scope-only contract changed", kind)
 		}
-		visited[id] = true
-		for _, ref := range row.References {
-			if ref.Source != nil {
-				visit(ref.Source.ID)
-			}
-		}
+		count++
 	}
-	for id, row := range selected {
-		if row.Role == "scope" {
-			visit(id)
-		}
-	}
-	if len(visited) != len(selected) {
-		t.Fatal("unreachable historical dependency")
+	if count != 1 {
+		t.Fatal("missing scope-only family", kind, count)
 	}
 }
 

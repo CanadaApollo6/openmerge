@@ -38,11 +38,20 @@ Explicit coverage must include these families (the policy is not an allowlist):
 
 | Family | Required retained evidence |
 | --- | --- |
-| Decisions and settlement (10b-1b covered) | `landing_decision_recorded`, `landing_started`, `landed`, `landing_abandoned`, including unsuccessful/remedy attempts |
+| Decisions and settlement | `landing_decision_recorded`, `landing_started`, `landed`, `landing_abandoned`, including unsuccessful/remedy attempts |
 | Approval | `approval_eligibility_observed`, `approval_receipt_recorded`, `review_stance_observed`, pinned read IDs and accepted/rejected historical inputs |
 | Classification/accountability | `change_revision_observed`, `change_classified`, `change_accountability_observed`, exact change/revision/head and policy inputs |
 | Authority/config | `config_applied`, `policy_authority_applied`, all authority observations, write-restriction verification, outside-push warnings and acknowledgements |
-| Checks/retries (10b-1b covered) | `batch_started`, `test_ref_built`, `landing_checks_recorded`, `checks_observed`, `checks_completed`, `checks_failure_confirmed`, `check_rerun_requested`, `check_rerun_dispatch_progress`, `check_rerun_dispatched` |
+| Checks/retries | `batch_started`, `test_ref_built`, `landing_checks_recorded`, `checks_observed`, `checks_completed`, `checks_failure_confirmed`, `check_rerun_requested`, `check_rerun_dispatch_progress`, `check_rerun_dispatched` |
+
+10b-1b asserts ordinary and abandoned landing attempts, including exhausted
+checks and the abandoned b2 → b3 rebuild. Remedy decisions remain deferred.
+The narrow export asserts exact decision/check/start/settlement edges and
+pre-window observation/request/progress/dispatch references. `landing_checks_recorded`
+is retained and checked in that graph. `checks_failure_confirmed` is retained
+as scope only in full history. `checks_completed` is retained as scope only
+after the GitHub-mode landing, with count, prefix and restore checks. Neither
+scope-only family has a closure-reference claim in this fixture.
 
 For each selected decision retain the recursive dependency closure resolved by
 10a: governing mode/config history, classification, eligibility and receipt
