@@ -164,11 +164,11 @@ changed; the catch-all comment documents its sanitized exit-2 policy.
 
 Round-2 verification and log digests are retained in commit `69a6e9c`.
 
-## Round 3 exhaustive single-site sweep
+## Round 3 operator-class sweep
 
-All 26 require sites and 37 Python comparison atoms were deleted/forced or boundary-weakened;
+Operator classes: all 26 require sites and 37 Python comparison atoms were deleted/forced or boundary-weakened;
 SQL predicates, type/nonempty conjuncts, validation calls, decoder hooks and identity/source-fact fields were also mutated.
-Every generated script compiled; the real verifier stayed unchanged. **178 tested, 152 killed, 26 equivalent, zero untriaged.**
+Every generated script compiled; the real verifier stayed unchanged. **178 tested, 152 killed, 26 equivalent, zero untriaged within that inventory.**
 Run: `python3 /home/riels/.cache/openmerge-10b2-r3/sweep.py`, then `python3 /home/riels/.cache/openmerge-10b2-r3/triage.py`.
 The complete per-mutant old/new/result/reason table is `sweep-table.csv` in that directory.
 New controls isolate out-of-window unknown roles, payload digest and LF/CR/empty out, alongside the same-push parser/join cases.
@@ -192,3 +192,20 @@ Padded manifest limit/limit+1 and selection 4 MiB+1 including LF/one-byte-over c
 Foreground Python, focused race-enabled Go tests and lint exited 0 (zero lint issues); scratch cleanup assertions passed.
 `triage.log` (driver/result/log digests) SHA-256: `ff3079128f710d061704bcbb3c7b589dff31795c5fbc72f382a42f00b39dc990`.
 `sweep-table.csv` SHA-256: `37f66c1a2d686b0f0bcd385d1b990c578021c3835442cd24b3684badc5bebb27`.
+
+## Round 4 final acceptance
+
+Pinned: context role/kinds, literal metacharacter out and near-miss, missing stdout LF,
+stdin receipt plus X, uppercase payload/manifest hashes, queue-key order in facts and
+nested reference context, and exact identity-sorted multi-finding messages.
+Optional cases pinned: invalid UTF-8 (manifest/selection), unpadded timestamp,
+argparse exit 2 and exact sanitized stderr (no stdout for malformed input).
+No verifier changes or bug found. Further operator classes/remaining non-defect
+mutation gaps are deferred, as are the existing hardening and OS write-denial items.
+
+Foreground Python, combined race-enabled Go tests above and lint exited 0 (zero issues); 17 targeted variants killed. Run `python3 /home/riels/.cache/openmerge-10b2-r4/targeted.py`. Logs in that directory:
+
+- python.log SHA-256: `7d90a631e1b43875a6ca72b153e18691d0a603a4c945a796e61c7f8e20e45ddd`
+- go.log SHA-256: `57c3acab46f31c42e4339e92ff7b30cfdec9d6fda55a347b7ec44193ad5a2723`
+- lint.log SHA-256: `e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47`
+- targeted.json SHA-256: `337471e75253a20c204e5c8aaf63e06534b99b939f441acc93ff3b8edfe1addd`

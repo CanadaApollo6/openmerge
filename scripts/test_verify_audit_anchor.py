@@ -36,13 +36,38 @@ class Contract(unittest.TestCase):
                     '--earlier', str(a), *(['--later', str(b)] if later else []), *extra], capture_output=True, text=True, input=input_text)
                 self.assertEqual(result.returncode, code, result.stdout + result.stderr)
                 self.assertIn(reason, result.stdout + result.stderr)
+                self.assertEqual(result.stderr, 'malformed or unreadable input\n' if code == 2 else '')
+                if code == 2: self.assertEqual(result.stdout, '')
                 self.assertEqual('anchor and overlap match' in result.stdout, code == 0)
                 if code == 0 and not reason: self.assertEqual(result.stdout, 'anchor and overlap match\n')
+                return result
             write(a, [row]); write(b, [row]); check(0)
             check(0, extra=['--require-full-coverage'])
+            later_start = json.loads(json.dumps(manifest)); later_start['request']['from'] = '2026-10-22T13:00:00.000000Z'
+            context = json.loads(json.dumps(row)); context['role'] = 'dependency'
+            write(b, [context], later_start); check(0, 'context differs')
+            context.update(role='scope', evidence_kinds=['check']); write(b, [context]); check(0, 'context differs')
+            ordered = json.loads(json.dumps(row)); ordered['references'] = [{'source': ordered['source']}]
+            reordered = json.loads(json.dumps(ordered))
+            for source in [reordered['source'], reordered['references'][0]['source']]: source['queue'] = dict(reversed(list(source['queue'].items())))
+            write(a, [ordered]); write(b, [reordered]); check(0); write(a, [row]); write(b, [row])
+            mismatch = json.loads(json.dumps(row)); mismatch['payload_sha256'] = 'd' * 64
+            missing = json.loads(json.dumps(row)); missing['source']['id'] = 3
+            addition = json.loads(json.dumps(row)); addition['source']['id'] = 2
+            low = json.loads(json.dumps(mismatch)); low['source'].update(queue_id=2, id=9)
+            low_original = json.loads(json.dumps(low)); low_original['payload_sha256'] = row['payload_sha256']
+            write(a, [missing, row, low_original]); write(b, [addition, mismatch, low])
+            expected = ['source mismatch queue_id=2 id=9', f"source mismatch queue_id={row['source']['queue_id']} id=1", f"in-window addition queue_id={row['source']['queue_id']} id=2", f"missing source queue_id={row['source']['queue_id']} id=3"]
+            self.assertEqual(check(1).stdout, '\n'.join(expected) + '\n'); write(a, [row]); write(b, [row])
+            for out in ['o.y', 'a(b', '[x]+']:
+                stdout.write_text(out + '\nmanifest SHA-256: ' + 'a' * 64 + '\n'); check(0, out=out)
+            stdout.write_text('oXy\nmanifest SHA-256: ' + 'a' * 64 + '\n'); check(2, out='o.y')
+            stdout.write_text('output\nmanifest SHA-256: ' + 'a' * 64 + '\n'); check(2, extra=['--unknown'])
+
             largest = json.loads(json.dumps(row)); largest['source'].update(queue_id=2**63-1, id=2**63-1)
             write(a, [largest]); write(b, [largest]); check(0); write(a, [row]); write(b, [row])
             check(0, extra=['--anchor', '-'], input_text='a' * 64 + '\n')
+            check(2, extra=['--anchor', '-'], input_text='a' * 64 + '\nX')
             check(0, extra=['--replay-stdout', '-'], input_text=stdout.read_text())
             for out in ['o\nx', 'o\rx', '']:
                 stdout.write_text(out + '\nmanifest SHA-256: ' + 'a' * 64 + '\n'); check(2, out=out)
@@ -98,7 +123,7 @@ class Contract(unittest.TestCase):
             for field, value in [('installation', '8'), ('repository', 'other/repo'), ('repository', 'z/repo'), ('base', '\ud800')]:
                 bad = json.loads(json.dumps(row)); bad['source']['queue'][field] = value
                 write(b, [bad]); check(2)
-            for path, value in [(('source', 'type'), ''), (('source', 'type'), '\ud800'), (('role',), 'other'), (('metadata_sha256',), 'bad'), (('payload_sha256',), 'b' * 65)]:
+            for path, value in [(('source', 'type'), ''), (('source', 'type'), '\ud800'), (('role',), 'other'), (('metadata_sha256',), 'bad'), (('payload_sha256',), 'b' * 65), (('payload_sha256',), 'B' * 64)]:
                 bad = json.loads(json.dumps(row)); target = bad
                 for key in path[:-1]: target = target[key]
                 target[path[-1]] = value; write(b, [bad]); check(2)
@@ -109,8 +134,9 @@ class Contract(unittest.TestCase):
                 bad = json.loads(json.dumps(row)); target = bad
                 for key in path[:-1]: target = target[key]
                 target[path[-1]] = value; write(b, [bad]); check(2)
-            bad = json.loads(json.dumps(row)); bad['source']['recorded_at'] = '2026-13-22T12:00:00.000000Z'; bad['role'] = 'dependency'; write(b, [bad]); check(2)
-            for field, value in [('version', True), ('version', 2), ('manifest_sha256', 'zz'), ('manifest_sha256', 'a' * 65)]:
+            for at in ['2026-13-22T12:00:00.000000Z', '2026-10-2T12:00:00.000000Z']:
+                bad = json.loads(json.dumps(row)); bad['source']['recorded_at'] = at; bad['role'] = 'dependency'; write(b, [bad]); check(2)
+            for field, value in [('version', True), ('version', 2), ('manifest_sha256', 'zz'), ('manifest_sha256', 'a' * 65), ('manifest_sha256', 'A' * 64)]:
                 bad = json.loads(json.dumps(manifest)); bad[field] = value; write(b, [], bad); check(2)
             for field, value in [('repository', ''), ('installation', ''), ('repository', 7), ('installation', 7), ('from', '2026-10-24T00:00:00.000000Z')]:
                 bad = json.loads(json.dumps(manifest)); bad['request'][field] = value
@@ -118,6 +144,8 @@ class Contract(unittest.TestCase):
             for field, value in [('queue', {**row['source']['queue'], 'base': 'other'}), ('type', 'other'), ('recorded_at', '2026-10-22T12:01:00.000000Z')]:
                 bad = json.loads(json.dumps(row)); bad['source'][field] = value
                 write(b, [bad]); check(1, 'source mismatch')
+            for name in ['manifest.json', 'selection.jsonl']:
+                write(b, [row]); (b / name).write_bytes(b'\xff\n'); check(2)
             write(b, [row]); selection = b / 'selection.jsonl'
             selection.write_bytes(selection.read_bytes()[:-1]); check(2)
             oversized = json.loads(json.dumps(row)); oversized['source']['type'] = 'x' * (4 * 1024 * 1024)
@@ -166,7 +194,7 @@ class Contract(unittest.TestCase):
                 receipt.write_text(malformed); check(2)
             receipt.write_text('d' * 64 + '\n'); check(1, 'anchor mismatch')
             receipt.write_text('a' * 64 + '\n')
-            for malformed in ['wrong\nmanifest SHA-256: ' + 'a' * 64 + '\n',
+            for malformed in ['output\nmanifest SHA-256: ' + 'a' * 64, 'wrong\nmanifest SHA-256: ' + 'a' * 64 + '\n',
                               'output\nmanifest SHA-256: ' + 'a' * 64 + '\nmanifest SHA-256: ' + 'a' * 64 + '\n']:
                 stdout.write_text(malformed); check(2)
 
