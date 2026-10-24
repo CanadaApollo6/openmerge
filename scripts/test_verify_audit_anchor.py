@@ -30,13 +30,19 @@ class Contract(unittest.TestCase):
             receipt, stdout = root / 'receipt', root / 'stdout'
             receipt.write_text('a' * 64 + '\n')
             stdout.write_text('output\nmanifest SHA-256: ' + 'a' * 64 + '\n')
-            def check(code, reason='', extra=(), out='output'):
+            def check(code, reason='', extra=(), out='output', later=True):
                 result = subprocess.run([sys.executable, str(SCRIPT), '--anchor', str(receipt),
                     '--replay-stdout', str(stdout), '--replay-out', out,
-                    '--earlier', str(a), '--later', str(b), *extra], capture_output=True, text=True, input='')
+                    '--earlier', str(a), *(['--later', str(b)] if later else []), *extra], capture_output=True, text=True, input='')
                 self.assertEqual(result.returncode, code, result.stdout + result.stderr)
                 self.assertIn(reason, result.stdout + result.stderr)
             write(a, [row]); write(b, [row]); check(0)
+            check(0, extra=['--require-full-coverage'])
+            check(2, extra=['--require-full-coverage'], later=False)
+            extended = json.loads(json.dumps(manifest)); extended['request']['until'] = '2026-10-24T00:00:00.000000Z'
+            at_end = json.loads(json.dumps(row)); at_end['source'].update(id=2, recorded_at=manifest['request']['until'])
+            write(b, [row, at_end], extended); check(0); write(b, [row])
+
             for separator in '\v\f\x1c\x1d\x1e\x85\u2028\u2029':
                 crafted = 'output' + separator + 'manifest SHA-256: ' + 'a' * 64 + separator + 'tail'
                 stdout.write_text(crafted + '\nmanifest SHA-256: ' + 'd' * 64 + '\n')
@@ -64,6 +70,8 @@ class Contract(unittest.TestCase):
             boundary['role'] = 'scope'; boundary['source']['recorded_at'] = manifest['request']['until']
             write(b, [boundary]); check(2)
             identity = json.loads(json.dumps(manifest)); identity['request']['installation'] = '8'
+            write(b, [], identity); check(1, 'bundle identity')
+            identity['request'].update(installation='7', repository='other/repo')
             write(b, [], identity); check(1, 'bundle identity'); write(a, [row]); write(b, [row])
 
             write(b, []); check(1, 'missing source'); check(1, 'missing source', ['--require-full-coverage'])
@@ -72,6 +80,26 @@ class Contract(unittest.TestCase):
             added['source']['id'] = 1; added['payload_sha256'] = 'd' * 64
             write(b, [added]); check(1, 'source mismatch')
             write(b, [row, row]); check(2)
+            for field, value in [('installation', '8'), ('repository', 'other/repo'), ('base', '\ud800')]:
+                bad = json.loads(json.dumps(row)); bad['source']['queue'][field] = value
+                write(b, [bad]); check(2)
+            for path, value in [(('source', 'type'), ''), (('source', 'type'), '\ud800'), (('role',), 'other'), (('metadata_sha256',), 'bad')]:
+                bad = json.loads(json.dumps(row)); target = bad
+                for key in path[:-1]: target = target[key]
+                target[path[-1]] = value; write(b, [bad]); check(2)
+            for field, value in [('repository', ''), ('from', '2026-10-24T00:00:00.000000Z')]:
+                bad = json.loads(json.dumps(manifest)); bad['request'][field] = value
+                write(b, [], bad); check(2)
+            for field, value in [('queue', {**row['source']['queue'], 'base': 'other'}), ('type', 'other'), ('recorded_at', '2026-10-22T12:01:00.000000Z')]:
+                bad = json.loads(json.dumps(row)); bad['source'][field] = value
+                write(b, [bad]); check(1, 'source mismatch')
+            write(b, [row]); selection = b / 'selection.jsonl'
+            selection.write_bytes(selection.read_bytes()[:-1]); check(2)
+            oversized = json.loads(json.dumps(row)); oversized['source']['type'] = 'x' * (4 * 1024 * 1024)
+            write(b, [oversized]); check(2)
+            oversized = json.loads(json.dumps(manifest)); oversized['request']['repository'] = 'x' * (4 * 1024 * 1024)
+            write(b, [], oversized); check(2); write(b, [row])
+
             partial = json.loads(json.dumps(manifest))
             partial['request'].update({'from': '2026-10-22T12:00:00.000000Z', 'until': '2026-10-24T00:00:00.000000Z'})
             write(b, [], partial); check(1, 'missing source')

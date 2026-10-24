@@ -157,7 +157,7 @@ def main():
                 if not failed:
                     print('anchor and overlap match')
                 return int(failed)
-    except Exception:
+    except Exception:  # Unexpected script bugs also map to sanitized exit 2.
         print('malformed or unreadable input', file=sys.stderr)
         return 2
 

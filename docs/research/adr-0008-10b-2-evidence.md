@@ -135,14 +135,15 @@ remain 10b-1; real journal acceptance remains PR 11.
 Digest extraction now uses the validated regex capture, never splitlines.
 Tests pin all eight non-LF separator paths (crafted and benign), each anchor
 comparison independently, malformed queue types, tail containment, half-open
-bounds, role/interval consistency, empty-bundle identity, stdin exclusivity and
-bundle-file symlinks. Optional hardening is deferred to a follow-up for size:
+bounds, role/interval consistency, empty-bundle identity and bundle-file symlinks.
+The stdin guard is redundant defence in depth: a second `-` read gets empty
+input, so its rejection is not independently observable. Optional hardening is deferred to a follow-up for size:
 selection stream hash verification, bundle-directory symlinks, CRLF rejection,
 and negative lowered/raised watermark acceptance. OS write-denial remains open.
 
 The design-document revision (item 6 and the original watermark correction) is
-in [companion PR #154](https://github.com/CanadaApollo6/openmerge/pull/154); it should land with or
-just after #153. The two PRs deliberately share no changed files.
+in [companion PR #154](https://github.com/CanadaApollo6/openmerge/pull/154); it should land
+after #152 and #153. The two PRs deliberately share no changed files.
 
 Round-1 foreground verification: the combined Go command above, Python tests,
 and golangci-lint all exited 0 (lint: zero issues). New logs under
@@ -151,3 +152,21 @@ and golangci-lint all exited 0 (lint: zero issues). New logs under
 - go.log: `babb5a53b87c79257045c839662e49391afac8fb44d139efda9db6f6f15ec447`
 - python.log: `220be22afb09a7f549445dfc985daef81ac717a363dfeb846ee08244b8a0e5b9`
 - lint.log: `e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47`
+
+## Round 2 revision
+
+Acceptance now covers valid B-only sources exactly at A.until with extended B,
+equal-bound full coverage, full coverage without B, and repository mismatch.
+Strict-parser negatives cover queue/request identity, empty repository/type,
+surrogates, selection final LF/size and manifest size, reversed bounds, role,
+metadata digest, and queue/type/time source-fact comparison. No verifier logic
+changed; the catch-all comment documents its sanitized exit-2 policy.
+
+Round-2 foreground Python tests, the combined Go command above and lint exited 0
+(zero lint issues). All five reported mutants were killed by assertions. Logs
+in `/home/riels/.cache/openmerge-10b2-r2` have SHA-256:
+
+- python.log: `92fc2dd4846b59baa3cbc9469a64348df33db1aaff21b50b57aa7071ceda2ad6`
+- go.log: `1ce3c678ec233c005117489187f8457c6203a4ddcf5a9b4d742d15b13a3b0a20`
+- lint.log: `e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47`
+- mutations.log: `b797cabc53abd7a1fc74ba278cc7237899e8c95402227ffb332b726f8b34fb45`
