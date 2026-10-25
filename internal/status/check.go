@@ -9,6 +9,7 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/brief"
 	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
+	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/store"
 )
@@ -59,7 +60,7 @@ func ReviewerCheckSummaryFromProjection(j store.Journal, q *Queue, pr int, polic
 	if err != nil {
 		return "", err
 	}
-	view, found, err := projectBriefFromProjection(j, q, q.LedgerEntry(pr), string(id), "reviewer", briefOptions{policy: func(s queue.State, b queue.ApprovalBasis) (brief.Fact, string) {
+	view, found, err := projectBriefFromProjection(j, q, q.LedgerEntry(pr), string(id), "reviewer", briefOptions{sanitizer: q.sanitizer, policy: func(s queue.State, b queue.ApprovalBasis) (brief.Fact, string) {
 		if facts, ok := s.ApprovalFacts(b.ChangeID); ok && facts.Intent != nil {
 			b = facts.Intent.Basis
 		}
@@ -228,4 +229,12 @@ func checkText(s string, limit int) string {
 	}
 	s = html.EscapeString(s)
 	return strings.NewReplacer("\\", "\\\\", "*", "\\*", "_", "\\_", "[", "\\[", "]", "\\]", "`", "\\`", "#", "\\#", "\n", " ", "\r", " ").Replace(s)
+}
+
+// WaitingCheckText omits volatile queue positions and redacts complete text
+// before escaping or truncation can break exact-value secret matching.
+func WaitingCheckText(q *Queue, e Entry, sanitizer *diagnostic.Sanitizer) string {
+	r := deriveWaitingReason(q, e, false)
+	clean, _ := sanitizer.SanitizeTextRedacted(waitingText(r))
+	return checkText(clean, 1200)
 }

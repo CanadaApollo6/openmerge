@@ -179,7 +179,7 @@ func printStatus(out io.Writer, response status.Response) error {
 		return nil
 	}
 	table := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	if _, err := fmt.Fprintln(table, "REPO\tBASE\tPOS\tPR\tHEAD\tSTATUS\tREASON\tSTATE"); err != nil {
+	if _, err := fmt.Fprintln(table, "REPO\tBASE\tPOS\tPR\tHEAD\tSTATUS\tREASON\tSTATE\tWAITING"); err != nil {
 		return err
 	}
 	queues := response.Queues
@@ -210,11 +210,14 @@ func printStatus(out io.Writer, response status.Response) error {
 			if q.Paused {
 				state = "paused"
 			}
-			if _, err := fmt.Fprintf(table, "%s\t%s\t-\t-\t-\t%s\t%s\t%s\n", q.Repository, q.Base, state, pauseReason, q.State); err != nil {
+			if _, err := fmt.Fprintf(table, "%s\t%s\t-\t-\t-\t%s\t%s\t%s\t%s\n", q.Repository, q.Base, state, pauseReason, q.State, ""); err != nil {
 				return err
 			}
 		}
 		for _, entry := range entries {
+			if entry.WaitingReason.Code == "" {
+				entry.WaitingReason = status.DeriveWaitingReason(&q, entry)
+			}
 			if entry.Status == "paused" {
 				entry.Reason = pauseReason
 			}
@@ -223,7 +226,7 @@ func printStatus(out io.Writer, response status.Response) error {
 			if entry.Position > 0 {
 				position = strconv.Itoa(entry.Position)
 			}
-			if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t#%d\t%s\t%s\t%s\t%s\n", q.Repository, q.Base, position, entry.PR, head, entry.Status, entry.Reason, q.State); err != nil {
+			if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t#%d\t%s\t%s\t%s\t%s\t%s\n", q.Repository, q.Base, position, entry.PR, head, entry.Status, entry.Reason, q.State, status.WaitingSummary(entry.WaitingReason)); err != nil {
 				return err
 			}
 		}

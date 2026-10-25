@@ -254,7 +254,9 @@ func startServe(ctx context.Context, o serveOptions, logger *slog.Logger, saniti
 			return result, nil
 		},
 	}
-	service, err := serve.NewDiscovery(ctx, db, discovery, productionServeOptions(o, authorityRuntime, auditFactory.outsidePushHistory, logger))
+	options := productionServeOptions(o, authorityRuntime, auditFactory.outsidePushHistory, logger)
+	options.Sanitizer = sanitizer
+	service, err := serve.NewDiscovery(ctx, db, discovery, options)
 	if err != nil {
 		return err
 	}

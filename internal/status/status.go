@@ -110,6 +110,7 @@ type BatchPR struct {
 // Entry uses position zero for PRs outside the queue; admission is the latest
 // successful admission, retained on a terminal PR detail response.
 type Entry struct {
+	WaitingReason     WaitingReason `json:"waiting_reason"`
 	Landing           *LandingView  `json:"landing,omitempty"`
 	Change            *ChangeReport `json:"change,omitempty"`
 	Gate              string        `json:"gate,omitempty"`
@@ -368,6 +369,7 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 		}
 		e.Change = reportChange(j.Key, s, e.PR, sanitizer)
 		e.Gate = holdingGate(&q, e, queue.Config{}, time.Time{})
+		e.WaitingReason = DeriveWaitingReason(&q, e)
 		q.Entries = append(q.Entries, e)
 		known[e.PR] = e
 	}
@@ -380,6 +382,8 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 	}
 	e.Change = reportChange(j.Key, s, pr, sanitizer)
 	e.RunLedger = ledger[pr]
+	e.Gate = holdingGate(&q, e, queue.Config{}, time.Time{})
+	e.WaitingReason = DeriveWaitingReason(&q, e)
 	summary := fmt.Sprintf("PR #%d: %s", pr, e.Status)
 	if e.Reason != "" {
 		summary += " (" + e.Reason + ")"

@@ -14,6 +14,7 @@ import (
 
 	"github.com/CanadaApollo6/openmerge/internal/authority"
 	"github.com/CanadaApollo6/openmerge/internal/config"
+	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
 	"github.com/CanadaApollo6/openmerge/internal/forge"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/status"
@@ -53,6 +54,7 @@ type Target struct {
 
 // Options bounds API polling and concurrent queue execution.
 type Options struct {
+	Sanitizer           *diagnostic.Sanitizer
 	Authority           *AuthorityRuntime
 	Health              status.HealthSettings
 	PollInterval        time.Duration

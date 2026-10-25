@@ -282,6 +282,24 @@ Follow-up: prune workers for long-dormant queues to bound worker and polling
 costs. Retain their logs and fences, settle recorded landings first, and restore
 the same queue identity when a matching branch returns.
 
+## Why a PR is waiting
+
+`openmerge queue status` shows a `WAITING` column. Each API entry exposes the
+same explanation as `waiting_reason` (`code`, `text`, optional `details` and
+`url`). The OpenMerge check includes a `Current state:` line at its existing update
+points. These explanations describe recorded state; they do not authorize a
+merge or trigger extra observations.
+
+The reason distinguishes approvals, trust, entry conditions, operator action,
+queue position, batch construction, CI, conflict, dequeue, paused queues, landing,
+and completed outcomes. A landing attempt remains visible while a queue is
+paused. CI names and links appear only when retained run evidence identifies
+them; superseded attempts do not explain the current wait. Approval wait codes
+link to the reviewer brief for the recorded requirements. A conflict does not
+identify the other change when that identity was not recorded.
+
+This presentation change is **Hold** during dogfood. Deploy only after period B.
+
 ## Repository CI checks
 
 The repository requires both `check` and `sim-exits` in `.openmerge.yml`'s
