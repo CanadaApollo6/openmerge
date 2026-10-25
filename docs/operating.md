@@ -286,7 +286,7 @@ the same queue identity when a matching branch returns.
 
 `openmerge queue status` shows a `WAITING` column. Each API entry exposes the
 same explanation as `waiting_reason` (`code`, `text`, optional `details` and
-`url`). The OpenMerge check includes a `Waiting:` line at its existing update
+`url`). The OpenMerge check includes a `Current state:` line at its existing update
 points. These explanations describe recorded state; they do not authorize a
 merge or trigger extra observations.
 

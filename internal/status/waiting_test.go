@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	cp "github.com/CanadaApollo6/openmerge/internal/changepolicy"
+	"github.com/CanadaApollo6/openmerge/internal/diagnostic"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 )
 
@@ -24,6 +26,7 @@ func TestWaitingReasonPrecedence(t *testing.T) {
 		{"conflict", Queue{}, Entry{Status: "dequeued", Reason: "conflict"}, WaitingConflict, "base or another queued change"},
 		{"pending dequeue", Queue{}, Entry{Status: "dequeue-pending", Reason: "requested"}, WaitingDequeued, "Dequeue pending"},
 		{"retired candidate", Queue{State: "retired"}, Entry{Status: "not-queued"}, WaitingPaused, "retired"},
+		{"empty pause reason", Queue{Paused: true}, Entry{Position: 1}, WaitingPaused, "Queue paused"},
 		{"paused", Queue{Paused: true, PauseReason: "manual"}, Entry{Position: 1}, WaitingPaused, "manual"},
 		{"readiness", Queue{Readiness: &Readiness{Reason: "config-unavailable"}}, Entry{Position: 1}, WaitingOperator, "config-unavailable"},
 		{"invalidating", Queue{}, Entry{Status: "invalidating", Reason: "base-moved"}, WaitingQueue, "base-moved"},
@@ -32,6 +35,8 @@ func TestWaitingReasonPrecedence(t *testing.T) {
 		{"preflight", Queue{}, Entry{Status: "testing", BatchID: "b2", Gate: "landing-preflight"}, WaitingLanding, "preflight"},
 		{"chain", Queue{}, Entry{Status: "testing", BatchID: "b2", BatchPosition: 2, Gate: "predecessor-settlement"}, WaitingQueue, "position 2 behind 1 batches"},
 		{"approval before queue", Queue{}, Entry{Position: 3, Change: &ChangeReport{WaitingReasons: []string{"approval-required"}}}, WaitingApprovals, "required approval evidence"},
+		{"approval before trust", Queue{}, Entry{Status: "blocked", Reason: "untrusted", Change: &ChangeReport{WaitingReasons: []string{"approval-required"}}}, WaitingApprovals, "required approval evidence"},
+		{"approval before entry", Queue{}, Entry{Status: "blocked", Reason: "not-eligible", Change: &ChangeReport{WaitingReasons: []string{"approval-required"}}}, WaitingApprovals, "required approval evidence"},
 		{"trust", Queue{}, Entry{Status: "blocked", Reason: "untrusted"}, WaitingTrust, "exact-head"},
 		{"entry", Queue{}, Entry{Status: "blocked", Reason: "not-eligible"}, WaitingEntry, "not-eligible"},
 		{"request", Queue{}, Entry{Status: "not-queued"}, WaitingOperator, "queue request"},
@@ -41,6 +46,9 @@ func TestWaitingReasonPrecedence(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := DeriveWaitingReason(&tc.q, tc.e)
+			if tc.name == "empty pause reason" && got.Text != "Queue paused" {
+				t.Fatalf("got %q", got.Text)
+			}
 			if got.Code != tc.code || !strings.Contains(got.Text, tc.text) {
 				t.Fatalf("got %+v", got)
 			}
@@ -89,9 +97,32 @@ func TestWaitingProjectionAndPolicy(t *testing.T) {
 }
 
 func TestWaitingCheckEscaping(t *testing.T) {
-	r := WaitingReason{Text: "CI <script>\n[link]", Details: []string{strings.Repeat("*", 2000)}}
-	got := WaitingCheckText(r)
+	e := Entry{BatchID: "b1", Detail: "CI <script>\n[link]" + strings.Repeat("*", 2000)}
+	got := WaitingCheckText(&Queue{}, e, nil)
 	if strings.Contains(got, "<script>") || strings.Contains(got, "\n") || !strings.Contains(got, `\[link\]`) || !strings.Contains(got, "…") {
 		t.Fatalf("unsafe or unbounded: %q", got)
+	}
+}
+
+func TestWaitingCheckRedactsBeforeFormatting(t *testing.T) {
+	for _, secret := range []string{"opaque_secret*`value`", strings.Repeat("z", 1300) + "_tail*`"} {
+		sanitizer := diagnostic.NewSanitizer(secret)
+		e := Entry{BatchID: "b1", Detail: secret}
+		got := WaitingCheckText(&Queue{}, e, sanitizer)
+		if !strings.Contains(got, "REDACTED") || strings.Contains(got, "opaque") || strings.Contains(got, "zzzz") || strings.Contains(got, "tail") {
+			t.Fatalf("secret survived formatting: %q", got)
+		}
+	}
+}
+
+func TestWaitingCheckReviewerBriefUsesSharedSanitizer(t *testing.T) {
+	secret := "opaque_secret*`value`"
+	sanitizer := diagnostic.NewSanitizer(secret)
+	j, _, basis, _ := briefRegressionBase(t)
+	j.Events[1].Event = queue.Intent(basis, secret, secret)
+	q, _, _ := Project(j, 0, 0, sanitizer)
+	text, err := ReviewerCheckSummaryFromProjection(j, &q, 1, cp.Policy{Approvals: &cp.Approvals{Default: cp.Requirement{Selector: cp.Human, Count: 1}}}, nil)
+	if err != nil || !strings.Contains(text, "Claimed intent:") || !strings.Contains(text, "REDACTED") || strings.Contains(text, "opaque") || strings.Contains(text, "value") {
+		t.Fatalf("unsafe brief: %s; %v", text, err)
 	}
 }

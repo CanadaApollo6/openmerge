@@ -37,6 +37,10 @@ type WaitingReason struct {
 // DeriveWaitingReason chooses one reason in precedence order. Terminal outcomes
 // survive queue pauses; an in-flight landing still needs settlement during one.
 func DeriveWaitingReason(q *Queue, e Entry) WaitingReason {
+	return deriveWaitingReason(q, e, true)
+}
+
+func deriveWaitingReason(q *Queue, e Entry, position bool) WaitingReason {
 	reason := func(code WaitingCode, text string) WaitingReason { return WaitingReason{Code: code, Text: text} }
 	switch e.Status {
 	case "merged":
@@ -65,7 +69,10 @@ func DeriveWaitingReason(q *Queue, e Entry) WaitingReason {
 		return r
 	}
 	if q.State != "" && q.State != "active" || q.Paused || e.Status == "paused" {
-		r := reason(WaitingPaused, "Queue paused: "+q.PauseReason)
+		r := reason(WaitingPaused, "Queue paused")
+		if q.PauseReason != "" {
+			r.Text += ": " + q.PauseReason
+		}
 		if q.State != "" && q.State != "active" {
 			r.Text = "Queue is " + q.State
 		}
@@ -100,6 +107,8 @@ func DeriveWaitingReason(q *Queue, e Entry) WaitingReason {
 		addWaitingChecks(&r, e, false)
 		return r
 	}
+	// Exact-head approval waits record the admission decision; they explain
+	// the missing evidence more precisely than generic trust/entry observations.
 	if e.Change != nil && len(e.Change.WaitingReasons) > 0 {
 		return WaitingReason{Code: WaitingApprovals, Text: "Waiting for required approval evidence", Details: slices.Clone(e.Change.WaitingReasons), URL: e.Change.BriefURL}
 	}
@@ -113,6 +122,9 @@ func DeriveWaitingReason(q *Queue, e Entry) WaitingReason {
 		return reason(WaitingOperator, "Not queued; waiting for a queue request from a writer")
 	}
 	text := fmt.Sprintf("In queue behind %d changes; waiting for the next test batch", max(0, e.Position-1))
+	if !position {
+		text = "In queue; waiting for the next test batch"
+	}
 	switch e.Gate {
 	case "max_wait":
 		text += " (batch fill timer)"
@@ -172,6 +184,10 @@ func addWaitingChecks(r *WaitingReason, e Entry, failed bool) {
 
 // WaitingSummary is a single line shared by human-facing status displays.
 func WaitingSummary(r WaitingReason) string {
+	return strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(waitingText(r))
+}
+
+func waitingText(r WaitingReason) string {
 	text := r.Text
 	if len(r.Details) > 0 {
 		text += "; " + strings.Join(r.Details, "; ")
@@ -179,5 +195,5 @@ func WaitingSummary(r WaitingReason) string {
 	if r.URL != "" {
 		text += "; " + r.URL
 	}
-	return strings.NewReplacer("\n", " ", "\r", " ", "\t", " ").Replace(text)
+	return text
 }

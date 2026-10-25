@@ -63,7 +63,7 @@ func (s *Server) ledgerSummary(ctx context.Context, w *worker, pr int) (string, 
 		if len(journals) == 0 {
 			return "", nil
 		}
-		projection, _, _ := status.Project(journals[0], 0, 0, nil)
+		projection, _, _ := status.Project(journals[0], 0, 0, s.options.Sanitizer)
 		w.ledgerCache = &ledgerCache{watermark: projection.Watermark, projection: projection, journal: journals[0]}
 	}
 	q := &w.ledgerCache.projection
@@ -75,7 +75,7 @@ func (s *Server) ledgerSummary(ctx context.Context, w *worker, pr int) (string, 
 	status.ApplyPolicy(q, entry, w.plannerConfig(s.options.PollInterval), time.Now())
 	waiting := ""
 	if entry != nil {
-		waiting = "\n\nWaiting: " + status.WaitingCheckText(entry.WaitingReason)
+		waiting = "\n\nCurrent state: " + status.WaitingCheckText(q, *entry, s.options.Sanitizer)
 	}
 	return waiting + "\n\nQueue: " + status.AdaptiveSummary(q) + status.LedgerSummary(entry) + status.QueueInstructions(q), nil
 }
