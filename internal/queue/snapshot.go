@@ -67,6 +67,7 @@ type rulesSnapshot struct {
 	Revision uint64
 }
 type stateSnapshot struct {
+	HeldRequests                                                             map[int]HeldRequest                `json:",omitempty"`
 	Authority                                                                *authorityProjection               `json:",omitempty"`
 	LandingDecisions                                                         map[string]LandingDecisionRecorded `json:",omitempty"`
 	ApprovalWaits                                                            map[ChangeID]ApprovalWait          `json:",omitempty"`
@@ -150,6 +151,7 @@ func encodeSnapshot(s State, requireLegacy bool) ([]byte, error) {
 		Fence:              s.Fence,
 		ConfigCommit:       s.ConfigCommit,
 		ConfigDigest:       s.ConfigDigest,
+		HeldRequests:       s.heldRequests,
 		Entries:            s.Entries,
 		Invalidations:      s.Invalidations,
 		NextBatch:          s.nextBatch,
@@ -282,7 +284,7 @@ func DecodeSnapshot(data []byte) (State, error) {
 	if err := validateChangeSnapshot(v); err != nil {
 		return State{}, err
 	}
-	if len(v.Chain) > 32 || len(v.Invalidations) > 32 || len(v.TestedOrder) > testedHistory || len(v.Checks) > maxRetainedChecks || len(v.Entries) > maxSnapshotEntries || len(v.Effects) > maxSnapshotEffects {
+	if len(v.Chain) > 32 || len(v.Invalidations) > 32 || len(v.TestedOrder) > testedHistory || len(v.Checks) > maxRetainedChecks || len(v.HeldRequests) > maxSnapshotEntries || len(v.Entries) > maxSnapshotEntries || len(v.Effects) > maxSnapshotEffects {
 		return State{}, fmt.Errorf("invalid snapshot bounds")
 	}
 	if err := validateLandingDecisionSnapshot(v.LandingDecisions); err != nil {
@@ -323,6 +325,7 @@ func DecodeSnapshot(data []byte) (State, error) {
 		Fence:              v.Fence,
 		ConfigCommit:       v.ConfigCommit,
 		ConfigDigest:       v.ConfigDigest,
+		heldRequests:       v.HeldRequests,
 		Entries:            v.Entries,
 		Invalidations:      v.Invalidations,
 		nextBatch:          v.NextBatch,
@@ -432,6 +435,12 @@ func DecodeSnapshot(data []byte) (State, error) {
 			return State{}, fmt.Errorf("invalid or duplicate snapshot entry")
 		}
 		entryPRs[entry.PR] = true
+	}
+	for pr, request := range v.HeldRequests {
+		observation, known := s.observations.get(pr)
+		if pr <= 0 || request.PR != pr || request.HeadSHA == "" || request.Conditions == "" || entryPRs[pr] || !known || observation.HeadSHA != request.HeadSHA {
+			return State{}, fmt.Errorf("invalid held queue request")
+		}
 	}
 	for pr, d := range v.Dequeues {
 		d.Action.scope = d.Scope

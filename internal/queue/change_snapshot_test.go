@@ -20,7 +20,7 @@ func TestChangeSnapshotTailEqualsFullReplay(t *testing.T) {
 	events := []Event{
 		evidence, ChecksCompleted{TestedSHA: batch.TestedSHA, Success: true},
 		LandingStarted{BatchID: batch.ID, AttemptID: "attempt", FenceToken: state.Fence, At: now},
-		PRObserved{1, "H2", true, true}, PRClosed{1}, PRObserved{1, record.HeadSHA, true, true},
+		PRObserved{PR: 1, HeadSHA: "H2", Eligible: true, Trusted: true}, PRClosed{1}, PRObserved{PR: 1, HeadSHA: record.HeadSHA, Eligible: true, Trusted: true},
 		Landed{BatchID: batch.ID, NewBaseSHA: batch.TestedSHA, NewFence: "next"}, EnqueueRequested{PR: 1, At: now.Add(time.Hour)},
 	}
 	for split := 0; split <= len(events); split++ {

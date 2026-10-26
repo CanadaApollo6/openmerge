@@ -177,7 +177,7 @@ func TestLandingDecisionStaleBasisAndLegacyAbsence(t *testing.T) {
 			*d = append(*d, (*d)[0])
 		},
 		"head": func(s *State, _ *[]ApprovalEligibilityObserved, _ *[]LandingDecisionRecorded) {
-			*s = Apply(*s, PRObserved{12, strings.Repeat("f", 40), true, true})
+			*s = Apply(*s, PRObserved{PR: 12, HeadSHA: strings.Repeat("f", 40), Eligible: true, Trusted: true})
 		},
 		"intent": func(s *State, _ *[]ApprovalEligibilityObserved, _ *[]LandingDecisionRecorded) {
 			*s = Apply(*s, Intent(fresh.Basis, "edited", "intent"))

@@ -54,6 +54,7 @@ type State struct {
 	BaseSHA          string
 	ConfigCommit     string
 	ConfigDigest     string
+	heldRequests     map[int]HeldRequest
 	Entries          []Entry
 	Active           *Batch
 	Following        []*Batch             `json:",omitempty"`
@@ -189,10 +190,13 @@ const (
 type Event interface{ queueEvent() }
 
 // PRObserved carries eligibility and exact-head trust evaluated outside the queue.
+// PendingConditions is nonempty only when entry eligibility is unknown, rather
+// than definitely false. Omitted evidence preserves legacy rejection on replay.
 type PRObserved struct {
 	PR                int
 	HeadSHA           string
 	Eligible, Trusted bool
+	PendingConditions string `json:",omitempty"`
 }
 
 // BaseMoved invalidates test work when the SHA changes, but cannot settle a landing.
@@ -224,6 +228,7 @@ type ChecksRefreshed struct {
 type PRClosed struct{ PR int }
 
 // EnqueueRequested uses the latest observation, never the caller's view of trust.
+// Unknown entry conditions retain the request for that head until resolved.
 type EnqueueRequested struct {
 	PR int
 	At time.Time

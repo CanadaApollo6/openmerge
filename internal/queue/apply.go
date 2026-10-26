@@ -80,6 +80,9 @@ func apply(s State, e Event) State {
 	case LifecycleChanged:
 		if e.Validate() == nil {
 			s.Lifecycle, s.lifecycleRevision = e, s.revision
+			if s.lifecycleBlocked() {
+				clear(s.heldRequests)
+			}
 		}
 	case ConfigApplied:
 		if e.Validate() != nil {
@@ -119,9 +122,13 @@ func apply(s State, e Event) State {
 		}
 	case ChangeRevisionObserved:
 		s.observeChangeRevision(e)
+		if request, held := s.HeldRequest(e.PR); held && request.HeadSHA != e.HeadSHA {
+			s.cancelHeldRequest(e.PR, HeadChanged)
+		}
 	case PRObserved:
 		s.observeLegacyRevision(e)
 		s.observations.put(e.PR, e)
+		s.refreshHeldRequest(e)
 		if entry := s.entry(e.PR); entry != nil {
 			switch {
 			case entry.HeadSHA != e.HeadSHA:
@@ -139,18 +146,25 @@ func apply(s State, e Event) State {
 		if s.entry(e.PR) == nil {
 			observation, known := s.observations.get(e.PR)
 			switch {
+			case known && !observation.Eligible && observation.PendingConditions != "":
+				if s.heldRequests == nil {
+					s.heldRequests = make(map[int]HeldRequest)
+				}
+				s.heldRequests[e.PR] = HeldRequest{PR: e.PR, HeadSHA: observation.HeadSHA, At: e.At, Conditions: observation.PendingConditions}
 			case !known || !observation.Eligible:
 				s.report(e.PR, "blocked", string(NotEligible), "PR does not satisfy queue entry conditions")
 			case !observation.Trusted:
 				s.report(e.PR, "blocked", string(Untrusted), "PR head has not passed the trust gate")
 			default:
-				s.nextAdmission++
-				s.Entries = append(s.Entries, Entry{PR: e.PR, AdmissionID: s.nextAdmission, HeadSHA: observation.HeadSHA, EnqueuedAt: e.At})
+				delete(s.heldRequests, e.PR)
+				s.admit(e.PR, observation.HeadSHA, e.At)
 			}
 		}
 	case DequeueRequested:
+		s.cancelHeldRequest(e.PR, Requested)
 		s.requestDequeue(e.PR, Requested)
 	case PRClosed:
+		s.cancelHeldRequest(e.PR, Closed)
 		s.observations.remove(e.PR)
 		s.requestDequeue(e.PR, Closed)
 	case BaseMoved:
@@ -428,6 +442,7 @@ func (s *State) refreshChecks(b *Batch) {
 }
 
 func cloneState(s State) State {
+	s.heldRequests = maps.Clone(s.heldRequests)
 	s.authority = cloneAuthority(s.authority)
 	s.approvalWaits = cloneApprovalWaits(s.approvalWaits)
 	s.blockSources = maps.Clone(s.blockSources)

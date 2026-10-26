@@ -485,7 +485,8 @@ func (s *Server) reconcile(ctx context.Context, w *worker, force bool) error {
 		open[summary.Number] = true
 		old, known := w.summaries[summary.Number]
 		needsConflict := slices.Contains(w.cfg.EnterWhen.Attributes(), "conflict") || slices.Contains(w.cfg.MergeWhen.Attributes(), "conflict")
-		if w.stageA == nil && !force && known && old.HeadSHA == summary.HeadSHA && old.UpdatedAt.Equal(summary.UpdatedAt) && (!needsConflict || w.prs[summary.Number].ConflictKnown) {
+		_, held := state.HeldRequest(summary.Number)
+		if w.stageA == nil && !held && !force && known && old.HeadSHA == summary.HeadSHA && old.UpdatedAt.Equal(summary.UpdatedAt) && (!needsConflict || w.prs[summary.Number].ConflictKnown) {
 			continue
 		}
 		if _, err := s.observe(ctx, w, summary.Number); err != nil {
@@ -510,6 +511,11 @@ func (s *Server) reconcile(ctx context.Context, w *worker, force bool) error {
 	for _, entry := range state.Entries {
 		if !open[entry.PR] {
 			closed[entry.PR] = true
+		}
+	}
+	for _, held := range state.HeldRequests() {
+		if !open[held.PR] {
+			closed[held.PR] = true
 		}
 	}
 	for n := range closed {
@@ -596,11 +602,11 @@ func (s *Server) observeWithClassification(ctx context.Context, w *worker, numbe
 		}
 	}
 	w.prs[number] = pr
-	eligible, err := s.eligible(ctx, w, pr)
+	eligible, pending, err := s.entryEligibility(ctx, w, pr)
 	if err != nil {
 		return pr, err
 	}
-	observation := queue.PRObserved{PR: number, HeadSHA: pr.HeadSHA, Eligible: eligible, Trusted: trusted(pr)}
+	observation := queue.PRObserved{PR: number, HeadSHA: pr.HeadSHA, Eligible: eligible, Trusted: trusted(pr), PendingConditions: pending}
 	metadata := observedMetadata(pr)
 	events := []queue.Event{metadata, observation}
 	if pr.Closed || pr.Base != w.Key.BaseBranch {

@@ -115,6 +115,9 @@ func deriveWaitingReason(q *Queue, e Entry, position bool) WaitingReason {
 	if e.Reason == "untrusted" {
 		return reason(WaitingTrust, "Waiting for the exact-head trust gate")
 	}
+	if e.Status == "waiting-entry" {
+		return reason(WaitingEntry, "Waiting for queue entry conditions: "+e.Detail)
+	}
 	if e.Status == "blocked" {
 		return reason(WaitingEntry, "Waiting for queue entry conditions: "+e.Reason)
 	}
