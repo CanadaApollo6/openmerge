@@ -10,7 +10,7 @@ import (
 
 func TestTransportNilBody(t *testing.T) {
 	for _, cached := range []bool{false, true} {
-		for _, code := range []int{http.StatusOK, http.StatusForbidden, http.StatusTooManyRequests} {
+		for _, code := range []int{http.StatusOK, http.StatusNotModified, http.StatusForbidden, http.StatusTooManyRequests} {
 			t.Run(fmt.Sprintf("cache=%t/status=%d", cached, code), func(t *testing.T) {
 				requests := 0
 				tr := cacheTransport(t, 4, 4096, roundTripFunc(func(r *http.Request) (*http.Response, error) {
@@ -24,6 +24,7 @@ func TestTransportNilBody(t *testing.T) {
 						}
 						status = http.StatusNotModified
 					}
+					// Deliberately violate RoundTripper's non-nil Body contract.
 					return &http.Response{StatusCode: status, Header: header, Request: r}, nil
 				}))
 				if !cached {
@@ -37,6 +38,12 @@ func TestTransportNilBody(t *testing.T) {
 					req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://api.test/items", nil)
 					must(t, err)
 					res, err := tr.RoundTrip(req)
+					if cached && code == http.StatusNotModified {
+						if err == nil || res != nil {
+							t.Fatalf("uncached 304: response=%v error=%v", res, err)
+						}
+						continue
+					}
 					if code == http.StatusTooManyRequests {
 						var rate *RateLimitError
 						if !errors.As(err, &rate) || !rate.Secondary || res != nil {

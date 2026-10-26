@@ -141,6 +141,45 @@ func TestInactiveLifecyclesDoNotRefreshDiscovery(t *testing.T) {
 	}
 }
 
+func TestLifecycleCycleDiscoveryRefreshEligibility(t *testing.T) {
+	for _, lifecycle := range []string{"active", "dormant", "retired", "overlapping"} {
+		t.Run(lifecycle, func(t *testing.T) {
+			testSynctest(t, func(t *testing.T) {
+				s, f := managedFixture(t, repositoryConfig, Options{})
+				w := baseWorker(t, s, "main")
+				base, err := f.ReadRef(t.Context(), repo, "main")
+				must(t, err)
+				_, err = f.OpenPR(repo, 1, base, true)
+				must(t, err)
+				must(t, s.lifecycle(t.Context(), w, lifecycle, "lifecycle reason: "+lifecycle))
+				w.ready = false
+				w.waiting = "unrelated configuration read failure"
+				for len(s.refresh) > 0 {
+					<-s.refresh
+				}
+				for _, deadline := range []time.Time{time.Now().Add(-time.Second), {}} {
+					w.validationNext = deadline
+					must(t, s.cycle(t.Context(), w))
+					// Observe the request at the completed cycle boundary. Run's
+					// sweep throttling can hide an unwanted refresh notification.
+					requested := false
+					select {
+					case <-s.refresh:
+						requested = true
+					default:
+					}
+					if want := lifecycle == "active"; requested != want {
+						t.Fatalf("lifecycle=%s deadline=%v requested discovery=%t, want %t", lifecycle, deadline, requested, want)
+					}
+					if lifecycle != "active" && !w.validationNext.IsZero() {
+						t.Fatalf("inactive validation deadline retained: %v", w.validationNext)
+					}
+				}
+			})
+		})
+	}
+}
+
 func TestRefreshNotificationsHaveMinimumSweepInterval(t *testing.T) {
 	s, d := newDiscoveryFixture(t)
 	var sweeps atomic.Int32
