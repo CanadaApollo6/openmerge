@@ -552,7 +552,7 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 				continue
 			}
 			// Never overwrite an admitted or terminal outcome with a queue invitation.
-			if entry == nil || entry.Position > 0 || entry.HeadSHA != pr.HeadSHA || entry.Status != "not-queued" && entry.Status != "blocked" {
+			if entry == nil || entry.Position > 0 || entry.HeadSHA != pr.HeadSHA || (entry.Status != "not-queued" && entry.Status != "blocked") {
 				continue
 			}
 			status := forge.Status{State: forge.Queued, Summary: "Not queued; waiting for a queue request"}

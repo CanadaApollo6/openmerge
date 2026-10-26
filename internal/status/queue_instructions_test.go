@@ -106,6 +106,9 @@ func TestQueueInstructionsRefreshPreservesTerminalSummary(t *testing.T) {
 	pin.Authority = authority.GitHub
 	pin.OpenMerge = nil
 	rollback, _, _ := Project(journal(config, pin), 0, 0, nil)
+	if got := rollback.state.AuthorityPin(); got == nil || got.Authority != authority.GitHub || QueueInstructions(&rollback) != "" {
+		t.Fatal("expected an active GitHub rollback pin without queue instructions")
+	}
 	for _, warning := range []string{"", "\nWARNING: retained safety warning"} {
 		before := "Dequeued: requested; exact head abc\n\nQueue: original ledger" + warning + "\n\nReviewer brief: url\nDigest: unchanged" + queueInstructionParagraph
 		expected := "Dequeued: requested; exact head abc\n\nQueue: original ledger" + QueueInstructions(&active) + warning + "\n\nReviewer brief: url\nDigest: unchanged" + queueInstructionParagraph
