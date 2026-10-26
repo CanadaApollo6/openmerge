@@ -133,6 +133,15 @@ attempts cannot produce a pass by chance.
 The measurement and audit scripts must exist and be reviewed before A's second
 day; they read the live journal read-only and the Actions API.
 
+The [dogfood tool's invocation guide](../../tools/dogfood/README.md#deployment-invocation)
+documents `audit --git-repo` and repeatable `--ci-workflow <path>` selection for
+`audit` and `report`. This repository's trial keeps the default
+`.github/workflows/ci.yml`; its outputs and attempt counting remain unchanged.
+For repositories with several queue workflows, audit requires every selected
+workflow to succeed before `LandingStarted`. Reports sum attempts across those
+workflows, including reruns. Use the same selection for audits and both reports
+and record it in `--ci-config`; `compare` remains offline.
+
 ## Abort conditions
 
 Period A ends, and `max_depth` returns to 1, on any incorrect landing, any queue

@@ -35,7 +35,7 @@ func TestCohortDrainOutcomesAndHeldArrivals(t *testing.T) {
 		t.Fatal(err)
 	}
 	runs := &fakeActions{runs: []*github.WorkflowRun{runFixture(1, 1, 10, 11, 100, "tested")}}
-	r.Runs, err = countRuns(t.Context(), runs, "main", r.Batches)
+	r.Runs, err = countRuns(t.Context(), nil, runs, "main", r.Batches)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,7 +90,7 @@ func TestIncompleteDrainsAndLateDiscardedAttempt(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			r.Runs, err = countRuns(t.Context(), a, "main", r.Batches)
+			r.Runs, err = countRuns(t.Context(), nil, a, "main", r.Batches)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -132,7 +132,7 @@ func collectLandings(j store.Journal) []landing {
 	}
 	return result
 }
-func audit(ctx context.Context, j store.Journal, since, until time.Time, g gitReader, a AuditSource) (AuditResult, error) {
+func audit(ctx context.Context, workflows ciWorkflows, j store.Journal, since, until time.Time, g gitReader, a AuditSource) (AuditResult, error) {
 	result := AuditResult{Version: 2, Queue: j.Key, Since: since, Until: until}
 	if since.IsZero() || !until.After(since) {
 		return result, fmt.Errorf("audit needs a positive time window")
@@ -194,20 +194,31 @@ func audit(ctx context.Context, j store.Journal, since, until time.Time, g gitRe
 			if err != nil {
 				return result, err
 			}
-			runs, err = attempts(ctx, a, listed)
+			runs, err = attempts(ctx, workflows, a, listed)
 			if err != nil {
 				return result, err
 			}
 			success[sha] = runs
 		}
-		passed := false
+		passed := map[string]bool{}
 		for _, r := range runs {
 			if r.GetHeadSHA() == sha && r.GetStatus() == "completed" && r.GetConclusion() == "success" && !r.GetUpdatedAt().IsZero() && !l.PushBefore.IsZero() && !l.PushBefore.After(l.Record.RecordedAt) && r.GetUpdatedAt().Before(l.PushBefore) {
-				passed = true
+				passed[r.GetPath()] = true
 			}
 		}
-		if !passed {
-			violation("ci_success", fmt.Errorf("CI has no successful queue-ref attempt on %s completed before LandingStarted (the conservative pre-push deadline)", sha))
+		var missing []string
+		for _, path := range workflows.paths() {
+			if !passed[path] {
+				missing = append(missing, path)
+			}
+		}
+		if len(missing) > 0 {
+			// Preserve the default diagnostic byte-for-byte for the ADR 0009 trial.
+			if paths := workflows.paths(); len(paths) == 1 && paths[0] == defaultCIWorkflow {
+				violation("ci_success", fmt.Errorf("CI has no successful queue-ref attempt on %s completed before LandingStarted (the conservative pre-push deadline)", sha))
+			} else {
+				violation("ci_success", fmt.Errorf("CI has no successful queue-ref attempt for workflows %s on %s completed before LandingStarted (the conservative pre-push deadline)", strings.Join(missing, ", "), sha))
+			}
 		}
 	}
 	return result, nil

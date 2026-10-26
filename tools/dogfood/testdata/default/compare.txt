@@ -1,0 +1,3 @@
+pass
+- all pre-registered gates pass; median, p95 and runs/merge are each no worse, with zero audited incorrect landings
+B latency with holdovers (50 landed): median 30.0s, p95 90.0s; without identified holdovers (50 landed, 0 removed; may include returning holdovers): median 30.0s, p95 90.0s

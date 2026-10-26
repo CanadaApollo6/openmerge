@@ -89,7 +89,7 @@ func TestWorkflowPathIdentityForAuditAndCounts(t *testing.T) {
 		if hasViolation(r, "ci_success") != wrongPath {
 			t.Fatal(r)
 		}
-		runs, err := countRuns(t.Context(), a, "main", []string{"b1"})
+		runs, err := countRuns(t.Context(), nil, a, "main", []string{"b1"})
 		want := 1
 		if wrongPath {
 			want = 0

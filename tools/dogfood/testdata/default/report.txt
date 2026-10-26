@@ -1,0 +1,17 @@
+CanadaApollo6/openmerge main: 2026-10-01T00:00:00Z -> 2026-10-01T00:01:00Z (exclusive)
+Landed: 1; landed from tested position >=2: 0
+Time to merge (nearest rank): median 35.0s; p95 35.0s
+From first enqueue: median 35.0s; p95 35.0s
+At-close engagement >=2: 0; >=3: 0
+Dequeued: 0; pending cohort: 0; landed at admission close: 1
+Position >=3 landings: 0
+Drain complete: true; end: 2026-10-01T00:01:00Z; duration: 0.0s; held arrivals (first-eligibility lower bound): 0
+Traffic: 1 accepted arrivals; 1440.000/day
+CI run attempts: 2; runs/merge: 2.000
+Multiple batches: 0.0s / 35.0s non-idle (0.00%)
+Audit: 1 landing events checked; 0 violations
+  #1 admission 1, batch b1 position 1: 35.0s (first enqueue 35.0s)
+  Admission #1 at 2026-10-01T00:00:05Z: queue length 1 (including admission)
+  2026-10-01T00:00:00Z event 0: W=1, max_depth=1, open batches=0
+  2026-10-01T00:00:10Z event 3: W=1, max_depth=1, open batches=1
+  2026-10-01T00:00:40Z event 7: W=1, max_depth=1, open batches=0

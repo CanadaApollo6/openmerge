@@ -1,0 +1,19 @@
+{
+  "status": "pass",
+  "reasons": [
+    "all pre-registered gates pass; median, p95 and runs/merge are each no worse, with zero audited incorrect landings"
+  ],
+  "b_latency_sensitivity": {
+    "with_holdovers": {
+      "median_seconds": 30,
+      "p95_seconds": 90
+    },
+    "without_holdovers": {
+      "median_seconds": 30,
+      "p95_seconds": 90
+    },
+    "with_count": 50,
+    "without_count": 50,
+    "holdover_landed": 0
+  }
+}

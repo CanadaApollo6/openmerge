@@ -123,7 +123,7 @@ func TestReviewSquashAndAdminMoveBeforeBatchAreValid(t *testing.T) {
 	id := f.start(10, 1, tested, queue.Squash, false)
 	f.begin(30, id)
 	f.land(40, id, tested)
-	r, err := audit(t.Context(), f.j, epoch.Add(20*time.Second), epoch.Add(time.Hour), gitReader{dir: g.dir}, auditSource(t, f, g, &fakeActions{runs: []*github.WorkflowRun{runFixture(1, 1, 10, 11, 20, tested)}}))
+	r, err := audit(t.Context(), nil, f.j, epoch.Add(20*time.Second), epoch.Add(time.Hour), gitReader{dir: g.dir}, auditSource(t, f, g, &fakeActions{runs: []*github.WorkflowRun{runFixture(1, 1, 10, 11, 20, tested)}}))
 	if err != nil || len(r.Violations) > 0 {
 		t.Fatalf("valid squash rejected: %+v %v", r, err)
 	}

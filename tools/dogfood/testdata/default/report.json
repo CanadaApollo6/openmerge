@@ -1,0 +1,141 @@
+{
+  "report_at": "2026-10-01T01:00:00Z",
+  "queue_drained_at": "2026-10-01T00:01:00Z",
+  "drain_end": "2026-10-01T00:01:00Z",
+  "drain_seconds": 0,
+  "drain_complete": true,
+  "started_batches": [
+    "b1"
+  ],
+  "held_arrivals": null,
+  "dequeues": null,
+  "dequeued": 0,
+  "pending": 0,
+  "landed_at_window_close": 1,
+  "position_ge_2_at_window_close": 0,
+  "position_ge_3_at_window_close": 0,
+  "landed_at_position_ge_3": 0,
+  "version": 2,
+  "queue": {
+    "Installation": "1",
+    "Repository": "CanadaApollo6/openmerge",
+    "BaseBranch": "main",
+    "Lane": ""
+  },
+  "window": {
+    "from": {
+      "time": "2026-10-01T00:00:00Z"
+    },
+    "to": {
+      "time": "2026-10-01T00:01:00Z"
+    }
+  },
+  "ci_config": "",
+  "log_reviewed": false,
+  "changes": [
+    {
+      "pr": 1,
+      "admission_id": 1,
+      "admission_event_id": 2,
+      "landed_event_id": 7,
+      "batch_id": "b1",
+      "enqueued_at": "2026-10-01T00:00:05Z",
+      "first_enqueued_at": "2026-10-01T00:00:05Z",
+      "landed_at": "2026-10-01T00:00:40Z",
+      "seconds": 35,
+      "first_seconds": 35,
+      "chain_position": 1,
+      "tested": true
+    }
+  ],
+  "admissions": [
+    {
+      "event_id": 2,
+      "pr": 1,
+      "admission_id": 1,
+      "accepted_at": "2026-10-01T00:00:05Z",
+      "enqueued_at": "2026-10-01T00:00:05Z",
+      "queue_length": 1
+    }
+  ],
+  "landed": 1,
+  "landed_at_position_ge_2": 0,
+  "time_to_merge": {
+    "median_seconds": 35,
+    "p95_seconds": 35
+  },
+  "first_enqueue_to_merge": {
+    "median_seconds": 35,
+    "p95_seconds": 35
+  },
+  "arrivals_per_day": 1440,
+  "arrivals_by_utc_day": {
+    "2026-10-01": 1
+  },
+  "window_history": [
+    {
+      "at": "2026-10-01T00:00:00Z",
+      "w": 1,
+      "open_batches": 0,
+      "max_depth": 1
+    },
+    {
+      "event_id": 3,
+      "at": "2026-10-01T00:00:10Z",
+      "w": 1,
+      "open_batches": 1,
+      "max_depth": 1
+    },
+    {
+      "event_id": 7,
+      "at": "2026-10-01T00:00:40Z",
+      "w": 1,
+      "open_batches": 0,
+      "max_depth": 1
+    }
+  ],
+  "halvings": null,
+  "non_idle_seconds": 35,
+  "multiple_batch_seconds": 0,
+  "multiple_batch_share_of_non_idle": 0,
+  "run_attempts": [
+    {
+      "run_id": 1,
+      "run_attempt": 1,
+      "at": "2026-10-01T00:00:11Z",
+      "head_sha": "a143cf89bdd5bc252d9ae1796e998031ac6a69f6",
+      "branch": "openmerge/queue/main/b1",
+      "conclusion": "failure",
+      "status": "completed",
+      "completed_at": "2026-10-01T00:00:15Z"
+    },
+    {
+      "run_id": 1,
+      "run_attempt": 2,
+      "at": "2026-10-01T00:00:16Z",
+      "head_sha": "a143cf89bdd5bc252d9ae1796e998031ac6a69f6",
+      "branch": "openmerge/queue/main/b1",
+      "conclusion": "success",
+      "status": "completed",
+      "completed_at": "2026-10-01T00:00:20Z"
+    }
+  ],
+  "run_attempt_count": 2,
+  "runs_per_merge": 2,
+  "audit": {
+    "base_tip": "a143cf89bdd5bc252d9ae1796e998031ac6a69f6",
+    "version": 2,
+    "queue": {
+      "Installation": "1",
+      "Repository": "CanadaApollo6/openmerge",
+      "BaseBranch": "main",
+      "Lane": ""
+    },
+    "since": "2026-10-01T00:00:00Z",
+    "until": "2026-10-01T00:01:00.000000001Z",
+    "checked_event_ids": [
+      7
+    ],
+    "violations": null
+  }
+}
