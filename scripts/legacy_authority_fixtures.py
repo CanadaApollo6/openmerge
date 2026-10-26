@@ -1,6 +1,8 @@
 """Shared deterministic DB fixtures for the legacy HTTP/CLI differential probes."""
 GO_IMPORTS = '''
  "context"
+ "crypto/rand"
+ "encoding/hex"
  "fmt"
  "net/url"
  "os"
@@ -18,7 +20,9 @@ func legacyDBFixture(t *testing.T,kind string)(*store.Store,store.QueueKey) {
  u,err:=url.Parse(raw);if err!=nil {t.Fatal(err)}
  if u.Hostname()!="localhost" || u.Port()!="54329" {t.Fatal("legacy probe requires localhost:54329")}
  conn,err:=pgx.Connect(t.Context(),raw);if err!=nil {t.Fatal(err)}
- schema:=fmt.Sprintf("legacy_authority_%d",time.Now().UnixNano())
+ var token [12]byte
+ if _,err:=rand.Read(token[:]);err!=nil {t.Fatal(err)}
+ schema:="legacy_authority_"+hex.EncodeToString(token[:])
  _,err=conn.Exec(t.Context(),"CREATE SCHEMA "+pgx.Identifier{schema}.Sanitize());if err!=nil {t.Fatal(err)}
  t.Cleanup(func(){_,err:=conn.Exec(context.Background(),"DROP SCHEMA "+pgx.Identifier{schema}.Sanitize()+" CASCADE");if err!=nil {t.Error(err)};_ = conn.Close(context.Background())})
  params:=u.Query();params.Set("search_path",schema);u.RawQuery=params.Encode()
