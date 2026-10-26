@@ -101,9 +101,10 @@ func TestQueueInstructionsReportingPathsDedupeRetryRollback(t *testing.T) {
 			if strings.Count(string(invitation), "@openmerge queue") != 1 || approval && !strings.Contains(string(invitation), "Reviewer brief:") {
 				t.Fatalf("pre-admission brief lost: %s", invitation)
 			}
-			// Both readiness-report paths also use the same single-check suffix.
+			// Explicit readiness failures still use the same single-check suffix.
 			w.managed = true
 			w.ready = false
+			w.waiting = "repository rules block admission"
 			must(t, s.report(t.Context(), w))
 			waiting, err := s.store.Observation(t.Context(), w.id, "status/1")
 			must(t, err)
@@ -113,7 +114,7 @@ func TestQueueInstructionsReportingPathsDedupeRetryRollback(t *testing.T) {
 			if !reflect.DeepEqual(waiting, diagnostic) || strings.Count(string(waiting), "@openmerge queue") != 1 {
 				t.Fatal("readiness paths differ")
 			}
-			if !strings.Contains(string(waiting), "Waiting for queue readiness: validation pending") {
+			if !strings.Contains(string(waiting), "Waiting for queue readiness: repository rules block admission") {
 				t.Fatalf("readiness waiting reason missing: %s", waiting)
 			}
 			// Compare rollback bytes with the same readiness as the initial check.

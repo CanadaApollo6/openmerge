@@ -198,6 +198,15 @@ func (s *Server) RefreshBranches(ctx context.Context) error {
 }
 
 func (s *Server) refreshRepository(ctx context.Context, repo Repository) error {
+	defer func() {
+		// Even repository-wide read failures end the silent startup window.
+		// Workers must publish a real failed attempt through the waiting path.
+		for _, w := range s.repositoryWorkers(repo.Installation, repo.Name) {
+			w.mu.Lock()
+			w.validationAttempted = true
+			w.mu.Unlock()
+		}
+	}()
 	target := repo.Target("")
 	branch, err := target.Driver.DefaultBranch(ctx, forge.RepoRef{Path: repo.Name})
 	if err != nil {

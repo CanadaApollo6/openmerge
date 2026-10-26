@@ -124,6 +124,7 @@ type worker struct {
 	mu                   sync.Mutex
 	managed              bool
 	ready                bool // Branch and policy validation is process-local, never a lifecycle event.
+	validationAttempted  bool
 	waiting              string
 	lifecycleState       string
 	lifecycleDetail      string
