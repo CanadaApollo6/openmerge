@@ -344,7 +344,7 @@ func TestPriorHeadsSurviveLegacyFirstEnrichment(t *testing.T) {
 				head = b.Head
 			}
 			if legacyFirst {
-				s = Apply(s, PRObserved{12, head, true, true})
+				s = Apply(s, PRObserved{PR: 12, HeadSHA: head, Eligible: true, Trusted: true})
 			}
 			event := ChangeRevisionObserved{PR: 12, ChangeID: b.ChangeID, Revision: rev, Predecessor: rev - 1, HeadSHA: head, Basis: RevisionObservationBasis{BaseSHA: fmt.Sprintf("%040x", 1), At: b.At}}
 			s = Apply(restart(t, s), event)

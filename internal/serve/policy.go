@@ -251,9 +251,9 @@ func failureHasUnknownNonReview(failures []condition.Failure) bool {
 	return false
 }
 
-func (s *Server) eligible(ctx context.Context, w *worker, pr forge.PullRequest) (bool, error) {
+func (s *Server) entryEligibility(ctx context.Context, w *worker, pr forge.PullRequest) (bool, string, error) {
 	if w.configError != nil || pr.Closed || pr.Base != w.Key.BaseBranch {
-		return false, nil
+		return false, "", nil
 	}
 	var checks []forge.CheckRun
 	if hasChecks(w.cfg.EnterWhen) {
@@ -263,7 +263,7 @@ func (s *Server) eligible(ctx context.Context, w *worker, pr forge.PullRequest) 
 			w.publishProgress(time.Now())
 		}
 		if err != nil {
-			return false, err
+			return false, "", err
 		}
 	}
 	// Approval evidence cannot affect an entry expression without a review term.
@@ -271,29 +271,44 @@ func (s *Server) eligible(ctx context.Context, w *worker, pr forge.PullRequest) 
 	if w.stageA != nil && slices.Contains(w.cfg.EnterWhen.Attributes(), reviewAttribute) {
 		state, _, err := s.store.Load(ctx, w.id)
 		if err != nil {
-			return false, err
+			return false, "", err
 		}
 		r, _ := state.PRRevision(pr.Number)
 		fresh, err := s.readStageAInputs(ctx, w, state, approvalBasis(r))
 		if err != nil {
-			return false, err
+			return false, "", err
 		}
 		approvals, err := stageAReviewEvidence(state, w.stageA.policy, fresh)
 		if err != nil {
-			return false, err
+			return false, "", err
 		}
 		values, err := policyValuesWithApprovals(w.cfg.EnterWhen, pr, checks, approvals)
 		if err != nil {
-			return false, err
+			return false, "", err
 		}
-		met, _ := w.cfg.EnterWhen.Evaluate(values)
-		return met, nil
+		met, pending := entryDecision(w.cfg.EnterWhen, values)
+		return met, pending, nil
 	}
-	met, err := evaluate(w.cfg.EnterWhen, pr, checks)
+	values, err := policyValues(w.cfg.EnterWhen, pr, checks)
 	if err != nil {
-		return false, s.block(ctx, w, queue.CheckSources, err.Error(), "")
+		return false, "", s.block(ctx, w, queue.CheckSources, err.Error(), "")
 	}
-	return met, nil
+	met, pending := entryDecision(w.cfg.EnterWhen, values)
+	return met, pending, nil
+}
+
+// Evaluate's top-level AND failures distinguish unknown from definitely false,
+// including nested OR/NOT evidence. Any definite failure cancels a held request.
+func entryDecision(expression condition.Expression, values condition.Snapshot) (bool, string) {
+	met, failures := expression.Evaluate(values)
+	var pending []string
+	for _, failure := range failures {
+		if !failure.Unknown {
+			return false, ""
+		}
+		pending = append(pending, failure.Condition)
+	}
+	return met, strings.Join(pending, ", ")
 }
 
 func retryPolicyFailure(expression condition.Expression, prs []forge.PullRequest, checks []forge.CheckRun, name string) bool {

@@ -512,6 +512,11 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 			return err
 		}
 	}
+	for _, held := range state.HeldRequests() {
+		if err := s.status(ctx, w, held.PR, held.HeadSHA, forge.Status{State: forge.Queued, Reason: string(checkstatus.WaitingEntry), Summary: "Waiting for queue entry conditions: " + held.Conditions}); err != nil {
+			return err
+		}
+	}
 	// Authors need the command before admission only under active authority.
 	// A rollback pin refreshes cached checks but must never create invitations.
 	if pin := state.AuthorityPin(); pin != nil {
@@ -522,7 +527,7 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 			return nil
 		}
 		for n, pr := range w.prs {
-			if pr.Closed {
+			if _, held := state.HeldRequest(n); pr.Closed || held {
 				continue
 			}
 			entry := w.ledgerCache.projection.LedgerEntry(n)

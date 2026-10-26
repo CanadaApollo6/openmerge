@@ -126,3 +126,24 @@ func TestWaitingCheckReviewerBriefUsesSharedSanitizer(t *testing.T) {
 		t.Fatalf("unsafe brief: %s; %v", text, err)
 	}
 }
+
+func TestHeldRequestWaitingProjection(t *testing.T) {
+	events := []queue.Event{
+		queue.PRObserved{PR: 1, HeadSHA: "head", Trusted: true, PendingConditions: `check-success = "sign-off"`},
+		queue.EnqueueRequested{PR: 1, At: at},
+	}
+	q, entry, _ := Project(journal(events...), 1, 20, nil)
+	if len(q.Entries) != 0 || entry.Position != 0 || entry.AdmittedAt != nil || entry.Status != "waiting-entry" || entry.WaitingReason.Code != WaitingEntry || entry.WaitingReason.Text != `Waiting for queue entry conditions: check-success = "sign-off"` {
+		t.Fatalf("held request presented as admission or missing waiting evidence: %+v", entry)
+	}
+	events = append(events, queue.DequeueRequested{PR: 1})
+	_, entry, _ = Project(journal(events...), 1, 20, nil)
+	if entry.Status != "not-queued" || entry.WaitingReason.Code != WaitingOperator {
+		t.Fatalf("dequeue retained held status: %+v", entry)
+	}
+	events = append(events, queue.PRObserved{PR: 1, HeadSHA: "head", Trusted: true, Eligible: true})
+	q, entry, _ = Project(journal(events...), 1, 20, nil)
+	if len(q.Entries) != 0 || entry.Position != 0 {
+		t.Fatal("cancelled request was admitted")
+	}
+}

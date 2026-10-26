@@ -99,7 +99,7 @@ func TestClassificationSnapshotTailAndImmutableApply(t *testing.T) {
 	second.Evidence.Classification.Inputs.Generation = 2
 	second.Evidence.Classification.Inputs.Base = strings.Repeat("2", 40)
 	second.Evidence.InputFingerprint = strings.Repeat("3", 64)
-	events := []Event{first, second, PRObserved{12, "new-head", true, true}}
+	events := []Event{first, second, PRObserved{PR: 12, HeadSHA: "new-head", Eligible: true, Trusted: true}}
 	for split := 0; split <= len(events); split++ {
 		full := State{}
 		for _, e := range events[:split] {

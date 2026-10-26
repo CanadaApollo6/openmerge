@@ -124,10 +124,10 @@ func TestChangeRevisionWireValidation(t *testing.T) {
 
 func TestLegacyChangeRevisionsReplayAndReenqueue(t *testing.T) {
 	events := []Event{
-		BaseMoved{SHA: "base-1"}, PRObserved{12, "H1", true, true}, EnqueueRequested{PR: 12}, EnqueueRequested{PR: 12},
-		PRObserved{12, "H1", true, true}, DequeueRequested{12}, Dequeued{PR: 12, AdmissionID: 1, Reason: Requested},
-		EnqueueRequested{PR: 12}, PRObserved{12, "H2", true, true}, PRClosed{12},
-		PRObserved{12, "H1", true, true}, EnqueueRequested{PR: 12},
+		BaseMoved{SHA: "base-1"}, PRObserved{PR: 12, HeadSHA: "H1", Eligible: true, Trusted: true}, EnqueueRequested{PR: 12}, EnqueueRequested{PR: 12},
+		PRObserved{PR: 12, HeadSHA: "H1", Eligible: true, Trusted: true}, DequeueRequested{12}, Dequeued{PR: 12, AdmissionID: 1, Reason: Requested},
+		EnqueueRequested{PR: 12}, PRObserved{PR: 12, HeadSHA: "H2", Eligible: true, Trusted: true}, PRClosed{12},
+		PRObserved{PR: 12, HeadSHA: "H1", Eligible: true, Trusted: true}, EnqueueRequested{PR: 12},
 	}
 	var first, replay State
 	for i, event := range events {
@@ -168,7 +168,7 @@ func TestChangeRevisionPredecessorsAndObservationOrder(t *testing.T) {
 		for i, head := range []string{"H1", "H2", "H1"} {
 			e := changeObservation(t, ChangeRevision(i+1), head)
 			if legacyFirst {
-				state = Apply(state, PRObserved{12, head, true, true})
+				state = Apply(state, PRObserved{PR: 12, HeadSHA: head, Eligible: true, Trusted: true})
 			}
 			before := state
 			if !state.CanObserveChangeRevision(e) {
@@ -179,7 +179,7 @@ func TestChangeRevisionPredecessorsAndObservationOrder(t *testing.T) {
 				t.Fatal("missing revision evidence")
 			}
 			if !legacyFirst {
-				state = Apply(state, PRObserved{12, head, true, true})
+				state = Apply(state, PRObserved{PR: 12, HeadSHA: head, Eligible: true, Trusted: true})
 			}
 			current, _ := state.PRRevision(12)
 			if current.Revision != e.Revision || current.Basis != e.Basis {
@@ -206,7 +206,7 @@ func TestChangeRevisionKeepsHeadChangedAndLandingBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	state = Apply(state, ChangeRevisionObserved{PR: 1, ChangeID: id, Revision: 2, Predecessor: 1, HeadSHA: "H2", Basis: RevisionObservationBasis{BaseSHA: "base", At: now}})
-	state = Apply(state, PRObserved{1, "H2", true, true})
+	state = Apply(state, PRObserved{PR: 1, HeadSHA: "H2", Eligible: true, Trusted: true})
 	if state.Active.Phase != Landing || state.Active.PRs[0].HeadSHA != original[0].HeadSHA || !reflect.DeepEqual(state.BatchRevisions(batch.ID), original) {
 		t.Fatal("new revision rebound started landing")
 	}
@@ -228,7 +228,7 @@ func TestChangeRevisionKeepsHeadChangedAndLandingBinding(t *testing.T) {
 	}
 
 	var waiting State
-	waiting = Apply(waiting, PRObserved{12, "H1", true, true})
+	waiting = Apply(waiting, PRObserved{PR: 12, HeadSHA: "H1", Eligible: true, Trusted: true})
 	waiting = Apply(waiting, EnqueueRequested{PR: 12})
 	waiting = Apply(waiting, changeObservation(t, 2, "H2"))
 	if waiting.dequeues[12].Reason != HeadChanged {

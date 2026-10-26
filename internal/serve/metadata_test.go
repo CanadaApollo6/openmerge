@@ -62,7 +62,7 @@ func TestCoreConditionsHaveDurableInputsAndReconcileMergeability(t *testing.T) {
 	must(t, f.SetPRConditions(repo, 1, []string{"ready"}, new(false)))
 	pr, err = s.observe(t.Context(), w, 1)
 	must(t, err)
-	met, err := s.eligible(t.Context(), w, pr)
+	met, _, err := s.entryEligibility(t.Context(), w, pr)
 	must(t, err)
 	if !met {
 		t.Fatal("complete core metadata did not satisfy entry conditions")
@@ -81,7 +81,7 @@ func TestCoreConditionsHaveDurableInputsAndReconcileMergeability(t *testing.T) {
 	must(t, f.SetPRConditions(repo, 1, []string{}, new(false)))
 	pr, err = s.observe(t.Context(), w, 1)
 	must(t, err)
-	met, err = s.eligible(t.Context(), w, pr)
+	met, _, err = s.entryEligibility(t.Context(), w, pr)
 	must(t, err)
 	if met {
 		t.Fatal("label removal did not revoke eligibility")

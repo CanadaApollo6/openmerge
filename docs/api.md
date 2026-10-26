@@ -206,7 +206,7 @@ configuration has not yet loaded also retain the existing startup behavior.
 
 ENTRY status values are `queued`, `building`, `testing`, `landing`,
 `dequeue-pending`, `paused`, `merged`, `dequeued`, `closed`, `blocked`, and
-`not-queued`. `reason` is the pause or pending/terminal dequeue reason where
+`not-queued`, and `waiting-entry`. `reason` is the pause or pending/terminal dequeue reason where
 applicable. During testing, `reason: unbound-check-provenance` and optional
 `detail` explain required checks observed only in suites outside the queue push.
 `detail` names the check, App source, observed branch (or `null`), and expected
@@ -223,6 +223,10 @@ PR detail includes previously observed, rejected, dequeued and landed PRs.
 Outside the queue, `position` is zero (rendered as `-` in the CLI table),
 `admitted_at` retains the last successful admission (or `null` if never admitted), and `head_sha` is the latest recorded
 head. An admitted entry always pins the admitted head despite later observations.
+A held queue request has `status: waiting-entry`, `reason: entry-conditions`,
+`position: 0`, and a `waiting_reason` with code `entry-conditions` and text
+`Waiting for queue entry conditions: <conditions>`. Its `detail` names the
+unknown conditions. Held requests appear in PR detail, not the admitted queue list.
 An unknown PR returns 404 without contacting GitHub.
 
 WHY has `summary` (human-readable, not a parsing contract), `limit`, and `events`.

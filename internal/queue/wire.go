@@ -35,10 +35,11 @@ type wireApprovalGateRejected struct {
 }
 
 type wirePRObserved struct {
-	PR       int    `json:"pr"`
-	HeadSHA  string `json:"head_sha"`
-	Eligible bool   `json:"eligible"`
-	Trusted  bool   `json:"trusted"`
+	PR                int    `json:"pr"`
+	HeadSHA           string `json:"head_sha"`
+	Eligible          bool   `json:"eligible"`
+	Trusted           bool   `json:"trusted"`
+	PendingConditions string `json:"pending_conditions,omitempty"`
 }
 
 type wireBaseMoved struct {

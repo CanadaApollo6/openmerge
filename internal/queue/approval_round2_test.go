@@ -230,7 +230,7 @@ func TestApprovalQueueAdmissionBudget(t *testing.T) {
 func TestHeadHistoryDoesNotChangeLegacyRevisionRecords(t *testing.T) {
 	b := approvalBasis()
 	s := approvalState(b)
-	s = Apply(s, PRObserved{12, fmt.Sprintf("%040x", 2), true, true})
+	s = Apply(s, PRObserved{PR: 12, HeadSHA: fmt.Sprintf("%040x", 2), Eligible: true, Trusted: true})
 	if s.approvalFacts != nil {
 		t.Fatal("revision-only queue allocated approvals")
 	}

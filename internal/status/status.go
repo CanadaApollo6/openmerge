@@ -230,6 +230,14 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 					}
 				}
 			}
+			if held, ok := s.HeldRequest(n); ok {
+				e.Status, e.Reason, e.Detail = "waiting-entry", string(WaitingEntry), sanitizer.Sanitize(held.Conditions)
+			} else if _, wasHeld := before.HeldRequest(n); wasHeld {
+				switch record.Event.(type) {
+				case queue.DequeueRequested, queue.ChangeRevisionObserved:
+					e.Status, e.Reason, e.Detail = "not-queued", "", ""
+				}
+			}
 			known[n] = e
 		}
 		if landed, ok := record.Event.(queue.Landed); ok && before.Active != nil {

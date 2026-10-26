@@ -282,6 +282,31 @@ Follow-up: prune workers for long-dormant queues to bound worker and polling
 costs. Retain their logs and fences, settle recorded landings first, and restore
 the same queue identity when a matching branch returns.
 
+## Queue requests with pending entry conditions
+
+A writer's `@openmerge queue` request is held when `enter_when` is unknown
+(for example, a pending or missing sign-off check), and admitted automatically
+when the conditions pass. The check and PR detail say
+`Waiting for queue entry conditions: <conditions>`. A held request has no queue
+position and cannot start a batch.
+
+The existing `enqueue_requested` event pins the request to the latest observed
+head. Additive `pending_conditions` evidence on `pr_observed` distinguishes an
+unknown result from a definite failure. Journal replay and queue snapshots retain
+the held request across restarts; no database migration is needed. Held PRs are
+refreshed even when their metadata timestamp has not changed. Admission uses a
+fresh PR observation and the existing exact-SHA trust gate, including a fresh
+writer-permission read for a fork's approving reviewer.
+
+A definite failure cancels the request and reports the existing `blocked:
+not-eligible` outcome. A later pass requires a new queue command. A new head,
+`@openmerge dequeue`, or PR closure also cancels it. Marking the PR draft cancels
+it when `-draft` is an entry condition. These rules apply in GitHub and OpenMerge
+authority modes; landing, batching, and CI policies are unchanged.
+
+This behavior change is **Hold**: deploy it to the live dogfood instance only
+after ADR 0009 period B.
+
 ## Why a PR is waiting
 
 `openmerge queue status` shows a `WAITING` column. Each API entry exposes the
