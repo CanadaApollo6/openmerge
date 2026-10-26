@@ -2,7 +2,9 @@ package github
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
@@ -31,7 +33,10 @@ func serveDatabaseURL(t *testing.T) string {
 	}
 	conn, err := pgx.Connect(t.Context(), raw)
 	must(t, err)
-	schema := fmt.Sprintf("serve_%d", time.Now().UnixNano())
+	var token [12]byte
+	_, err = rand.Read(token[:])
+	must(t, err)
+	schema := "serve_" + hex.EncodeToString(token[:])
 	_, err = conn.Exec(t.Context(), "CREATE SCHEMA "+pgx.Identifier{schema}.Sanitize())
 	must(t, err)
 	t.Cleanup(func() {
