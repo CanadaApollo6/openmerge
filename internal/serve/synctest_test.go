@@ -2,6 +2,9 @@ package serve
 
 import (
 	"net"
+	"strconv"
+	"strings"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -43,6 +46,39 @@ func TestSynctestDatabaseSchemasUnique(t *testing.T) {
 			t.Fatal("same virtual instant reused a scratch schema")
 		}
 	})
+}
+
+func TestSynctestParallelDatabaseFixtures(t *testing.T) {
+	// These channels belong to neither bubble, so waiting keeps both schemas
+	// alive without advancing either bubble's virtual clock.
+	done := [2]chan struct{}{make(chan struct{}), make(chan struct{})}
+	var schemas [2]string
+	// Start both bubbles even when go test limits parallel subtests to one.
+	var bubbles sync.WaitGroup
+	for i := range 2 {
+		bubbles.Go(func() {
+			t.Run(strconv.Itoa(i), func(t *testing.T) {
+				testSynctest(t, func(t *testing.T) {
+					defer func() {
+						close(done[i])
+						<-done[1-i]
+					}()
+					if got := time.Now(); !got.Equal(time.Date(2000, time.January, 1, 0, 0, 0, 0, time.UTC)) {
+						t.Fatalf("fixture creation did not start at virtual t=0: %v", got)
+					}
+					_, conn := databaseConnection(t)
+					must(t, conn.QueryRow(t.Context(), "SELECT current_schema()").Scan(&schemas[i]))
+					if !strings.HasPrefix(schemas[i], "serve_unit_") || len(schemas[i]) > 63 {
+						t.Fatalf("invalid scratch schema name: %q", schemas[i])
+					}
+				})
+			})
+		})
+	}
+	bubbles.Wait()
+	if schemas[0] == schemas[1] && schemas[0] != "" {
+		t.Fatal("parallel bubbles reused a scratch schema")
+	}
 }
 
 // The millisecond fixture is deliberately fast, but a slow race-instrumented
