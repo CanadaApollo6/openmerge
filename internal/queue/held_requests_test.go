@@ -46,3 +46,36 @@ func TestHeldRequestCancelledByAuthorityRevision(t *testing.T) {
 		t.Fatal("new authority head reused old request")
 	}
 }
+
+func TestHeldRequestCancelledByBlockedLifecycle(t *testing.T) {
+	for _, lifecycle := range []string{"dormant", "retired", "overlapping"} {
+		for _, pending := range []string{"", "sign-off"} {
+			t.Run(lifecycle+"/pending="+pending, func(t *testing.T) {
+				state := Apply(State{}, PRObserved{PR: 1, HeadSHA: "head", Trusted: true, PendingConditions: "sign-off"})
+				state = Apply(state, EnqueueRequested{PR: 1, At: epoch})
+				state = Apply(state, LifecycleChanged{State: lifecycle, Detail: "base unavailable"})
+				state = snapshotRoundTrip(t, Config{}, state, epoch)
+				before := state
+				state = Apply(state, PRObserved{PR: 1, HeadSHA: "head", Trusted: true, Eligible: pending == "", PendingConditions: pending})
+				if len(state.Entries) != 0 {
+					t.Fatal("held request admitted into inactive queue")
+				}
+				if _, held := state.HeldRequest(1); held {
+					t.Fatal("inactive queue retained held request")
+				}
+				if _, held := before.HeldRequest(1); !held {
+					t.Fatal("cancellation mutated earlier state")
+				}
+				state = Apply(state, LifecycleChanged{State: "active"})
+				state = Apply(state, PRObserved{PR: 1, HeadSHA: "head", Trusted: true, Eligible: true})
+				if len(state.Entries) != 0 {
+					t.Fatal("reactivation reused cancelled request")
+				}
+				state = Apply(state, EnqueueRequested{PR: 1, At: epoch})
+				if len(state.Entries) != 1 {
+					t.Fatal("fresh request did not admit after reactivation")
+				}
+			})
+		}
+	}
+}

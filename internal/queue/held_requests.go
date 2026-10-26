@@ -42,6 +42,10 @@ func (s *State) refreshHeldRequest(observation PRObserved) {
 		return
 	}
 	switch {
+	case s.lifecycleBlocked():
+		// A fresh request would be dropped in this lifecycle. Leave the PR's
+		// observed status intact rather than reporting a dequeue or stale wait.
+		delete(s.heldRequests, observation.PR)
 	case request.HeadSHA != observation.HeadSHA:
 		s.cancelHeldRequest(observation.PR, HeadChanged)
 	case !observation.Eligible && observation.PendingConditions != "":
@@ -53,7 +57,7 @@ func (s *State) refreshHeldRequest(observation PRObserved) {
 	case !observation.Trusted:
 		delete(s.heldRequests, observation.PR)
 		s.report(observation.PR, "blocked", string(Untrusted), "PR head has not passed the trust gate")
-	case !s.lifecycleBlocked():
+	default:
 		delete(s.heldRequests, observation.PR)
 		s.admit(request.PR, request.HeadSHA, request.At)
 	}

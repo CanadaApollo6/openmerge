@@ -147,3 +147,23 @@ func TestHeldRequestWaitingProjection(t *testing.T) {
 		t.Fatal("cancelled request was admitted")
 	}
 }
+
+func TestHeldRequestBlockedLifecycleMatchesDroppedCommand(t *testing.T) {
+	for _, lifecycle := range []string{"dormant", "retired", "overlapping"} {
+		for _, pending := range []string{"", "sign-off"} {
+			t.Run(lifecycle+"/pending="+pending, func(t *testing.T) {
+				blocked := queue.LifecycleChanged{State: lifecycle, Detail: "base unavailable"}
+				observation := queue.PRObserved{PR: 1, HeadSHA: "head", Trusted: true, Eligible: pending == "", PendingConditions: pending}
+				_, fresh, _ := Project(journal(blocked, observation, queue.EnqueueRequested{PR: 1, At: at}), 1, 20, nil)
+				events := []queue.Event{
+					queue.PRObserved{PR: 1, HeadSHA: "head", Trusted: true, PendingConditions: "sign-off"},
+					queue.EnqueueRequested{PR: 1, At: at}, blocked, observation,
+				}
+				q, held, _ := Project(journal(events...), 1, 20, nil)
+				if len(q.Entries) != 0 || held.Status != fresh.Status || held.Reason != fresh.Reason || held.Detail != fresh.Detail || held.WaitingReason.Text != fresh.WaitingReason.Text {
+					t.Fatalf("cancelled hold differs from dropped command: held=%+v fresh=%+v", held, fresh)
+				}
+			})
+		}
+	}
+}

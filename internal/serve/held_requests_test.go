@@ -37,6 +37,42 @@ func TestHeldQueueRequestPendingToPass(t *testing.T) {
 	})
 }
 
+func TestHeldQueueRequestBlockedLifecycleStatus(t *testing.T) {
+	for _, lifecycle := range []string{"dormant", "retired", "overlapping"} {
+		t.Run(lifecycle, func(t *testing.T) {
+			testSynctest(t, func(t *testing.T) {
+				s, w, f, _ := fixture(t, repositoryConfig+"    enter_when: [check-success = sign-off]\n")
+				pr, err := f.PullRequest(t.Context(), repo, 1)
+				must(t, err)
+				f.SetCheckRuns(repo, pr.HeadSHA, []forge.CheckRun{{Name: "sign-off", State: forge.Pending}})
+				f.AddComment(repo, 1, "writer", "@openmerge queue")
+				must(t, s.reconcile(t.Context(), w, true))
+				if _, held := lifecycleState(t, s, w).HeldRequest(1); !held {
+					t.Fatal("request was not held")
+				}
+				_, err = s.store.Append(t.Context(), w.id, []queue.Event{queue.LifecycleChanged{State: lifecycle, Detail: "base unavailable"}}, "")
+				must(t, err)
+				f.SetCheckRuns(repo, pr.HeadSHA, []forge.CheckRun{{Name: "sign-off", State: forge.Success}})
+				must(t, s.reconcile(t.Context(), w, false))
+				state := lifecycleState(t, s, w)
+				if _, held := state.HeldRequest(1); held || len(state.Entries) != 0 {
+					t.Fatal("inactive queue retained or admitted held request")
+				}
+				cancelled := f.Statuses(repo, 1)[pr.HeadSHA]
+				if cancelled.State != forge.Paused || cancelled.Reason != lifecycle || strings.Contains(cancelled.Summary, "Waiting for queue entry conditions:") {
+					t.Fatalf("stale held status: %+v", cancelled)
+				}
+				f.AddComment(repo, 1, "writer", "@openmerge queue")
+				must(t, s.reconcile(t.Context(), w, true))
+				fresh := f.Statuses(repo, 1)[pr.HeadSHA]
+				if fresh.State != cancelled.State || fresh.Reason != cancelled.Reason || fresh.Summary != cancelled.Summary {
+					t.Fatalf("cancelled hold differs from dropped command: held=%+v fresh=%+v", cancelled, fresh)
+				}
+			})
+		})
+	}
+}
+
 func TestHeldQueueRequestLifecycle(t *testing.T) {
 	for _, authorityMode := range []bool{false, true} {
 		for _, outcome := range []string{"pass", "missing", "fail", "push", "dequeue", "closed", "draft", "restart", "restart-closed", "writer-revoked", "stale-approval", "already-true", "already-false", "unknown-and-false"} {

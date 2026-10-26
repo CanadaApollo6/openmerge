@@ -291,18 +291,46 @@ when the conditions pass. The check and PR detail say
 position and cannot start a batch.
 
 The existing `enqueue_requested` event pins the request to the latest observed
-head. Additive `pending_conditions` evidence on `pr_observed` distinguishes an
+head. `pending_conditions` evidence on `pr_observed` distinguishes an
 unknown result from a definite failure. Journal replay and queue snapshots retain
 the held request across restarts; no database migration is needed. Held PRs are
 refreshed even when their metadata timestamp has not changed. Admission uses a
-fresh PR observation and the existing exact-SHA trust gate, including a fresh
-writer-permission read for a fork's approving reviewer.
+fresh PR observation and the existing exact-SHA trust gate: the head must be in
+the base repository or have an exact-head approval from a reviewer whose current
+write permission is re-read. The command requester's writer permission is checked
+only when the command is accepted; it is not re-checked at admission. Demoting
+the requester while a request is held does not cancel it, provided the PR still
+passes that separate trust gate. This is intended Mergify parity.
 
 A definite failure cancels the request and reports the existing `blocked:
 not-eligible` outcome. A later pass requires a new queue command. A new head,
 `@openmerge dequeue`, or PR closure also cancels it. Marking the PR draft cancels
-it when `-draft` is an entry condition. These rules apply in GitHub and OpenMerge
-authority modes; landing, batching, and CI policies are unchanged.
+it when `-draft` is an entry condition. An observation in a dormant, retired, or
+overlapping queue drops the held request, even if its conditions are still
+pending, just as that lifecycle drops a fresh queue command. The PR then has the
+same status as a dropped fresh command, and reactivation requires a new command.
+These rules apply in GitHub and OpenMerge authority modes; landing, batching,
+and CI policies are unchanged.
+
+Held requests have no expiry, matching Mergify. A condition that never reports
+can hold a request indefinitely, with one forced PR observation per held PR per
+poll even when its metadata timestamp is unchanged. `@openmerge dequeue` clears
+it.
+
+This release creates a **database-restore rollback boundary** on the first
+persisted `pending_conditions` field or held-request snapshot. The field is
+emitted whenever an observation has unknown entry conditions, even before any
+queue command: replay needs that evidence to distinguish holding the next
+`enqueue_requested` from rejecting it. Restricting emission to already-held
+requests would lose that first decision. Older binaries strictly reject the new
+field on the existing `pr_observed` event, and snapshots can contain both
+`HeldRequests` and `PendingConditions` in cached observations. No queue command
+is needed to cross this boundary, so expect it soon after deployment. Once
+crossed, a binary-only rollback below this release is unsafe, even after all
+holds are cleared. Keep a compatible binary or restore a pre-emission database
+backup and reconcile post-backup activity; never edit journal rows or relax
+strict decoding. The rollback check below must inspect fields and snapshots as
+well as event types.
 
 This behavior change is **Hold**: deploy it to the live dogfood instance only
 after ADR 0009 period B.
@@ -1074,10 +1102,13 @@ deploy alongside its SHA and replay report:
   as `tested` and the original head as `landed`; the other three rows must
   have identical tested and landed IDs within each binary.
 
-Forward-only events (for example PR #53's `outside_push_recorded`) make binary
-rollback unsafe once written: an older decoder cannot read them. Before choosing
-binary-only rollback, stop the service and run this read-only query using the
-saved backup watermark (add every event type unsupported by the old binary):
+Forward-only events (for example PR #53's `outside_push_recorded`) and new
+fields on existing events make binary rollback unsafe once written: an older
+strict decoder cannot read them. Held requests introduce `pending_conditions`
+on `pr_observed` and new snapshot fields without changing the event type.
+Before choosing binary-only rollback, stop the service and run these read-only
+queries using the saved backup watermark. Add every event type, event field,
+and snapshot field unsupported by the old binary:
 
 ```bash
 backup_max_event_id=$(cat "$backups/openmerge-$stamp.max-event-id")
@@ -1087,17 +1118,37 @@ BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;
 SELECT id, queue_id, type, recorded_at
 FROM events
 WHERE id > :'backup_max_event_id'::bigint
-  AND type IN ('outside_push_recorded')
+  AND (type IN ('outside_push_recorded')
+       OR (type = 'pr_observed' AND (payload->'data') ? 'pending_conditions'))
 ORDER BY id;
+
+-- These derived snapshots live in bytea JSON cursors, not a snapshots table.
+-- Inspect all current cursors: they have no event-ID or backup-time filter.
+SELECT queue_id, key
+FROM observations
+WHERE key LIKE 'outside-push-audit/%'
+  AND ((convert_from(value, 'UTF8')::jsonb->'State') ? 'HeldRequests'
+       OR EXISTS (
+         SELECT 1
+         FROM jsonb_each(COALESCE(
+           convert_from(value, 'UTF8')::jsonb->'State'->'Observations', '{}'::jsonb
+         )) AS observation
+         WHERE observation.value ? 'PendingConditions'
+       ))
+ORDER BY queue_id, key;
 COMMIT;
 SQL
 ```
 
 The saved watermark precedes `pg_dump`, so this check is conservative if events
-arrived during the backup. Any returned unsupported event rules out binary-only
-rollback; zero rows permit it only after checking all other decoder/schema
-compatibility constraints. Otherwise restore the pre-deploy `pg_dump` backup
-into an appropriate empty database before starting the old binary. A restore
+arrived during the backup. Any returned unsupported event or snapshot rules out
+binary-only rollback. A query/JSON decoding error leaves compatibility unknown
+and also rules it out. Zero rows from both queries permit it only after checking
+all other decoder/schema compatibility constraints, including unsupported fields
+or events already present at or below the watermark. The watermark limits what
+changed since backup; it does not certify that the backup suits the old binary.
+Otherwise restore the pre-deploy `pg_dump` backup into an appropriate empty
+database before starting the old binary. A restore
 loses post-backup journal writes and requires deliberate operator reconciliation;
 keep both the backup and evidence.
 
