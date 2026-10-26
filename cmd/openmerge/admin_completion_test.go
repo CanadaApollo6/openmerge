@@ -11,7 +11,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/CanadaApollo6/openmerge/internal/store"
@@ -161,7 +160,7 @@ func TestAdminDowngradeCheckCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = conn.Close(context.Background()) }()
-	schema := fmt.Sprintf("downgrade_cli_%d", time.Now().UnixNano())
+	schema := testSchemaName(t, "downgrade_cli_")
 	if _, err = conn.Exec(t.Context(), "CREATE SCHEMA "+pgx.Identifier{schema}.Sanitize()); err != nil {
 		t.Fatal(err)
 	}
