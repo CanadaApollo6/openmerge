@@ -13,6 +13,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -82,27 +83,31 @@ func acceptanceDB(t *testing.T) *store.Store {
 }
 
 func TestAcceptanceDBParallelSynctest(t *testing.T) {
+	if os.Getenv("OPENMERGE_TEST_DATABASE_URL") == "" {
+		t.Skip("set OPENMERGE_TEST_DATABASE_URL to run fake-forge acceptance")
+	}
 	if _, err := net.LookupHost("localhost"); err != nil {
 		t.Fatal(err)
 	}
+	// Channels outside the bubbles keep both schemas alive without advancing
+	// either virtual clock. Start both bubbles regardless of -parallel or -run.
 	created := [2]chan struct{}{make(chan struct{}), make(chan struct{})}
+	var bubbles sync.WaitGroup
 	for i := range 2 {
-		t.Run(fmt.Sprint(i), func(t *testing.T) {
-			t.Parallel()
+		bubbles.Go(func() {
 			synctest.Test(t, func(t *testing.T) {
+				defer func() {
+					close(created[i])
+					<-created[1-i]
+				}()
 				if got := time.Now(); !got.Equal(time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)) {
 					t.Fatalf("fixture must start at virtual t=0, got %s", got)
 				}
-				func() {
-					defer close(created[i])
-					acceptanceDB(t)
-				}()
-				// Keep both schemas alive until both creation attempts finish,
-				// including when one fails and exits via t.Fatal.
-				<-created[1-i]
+				acceptanceDB(t)
 			})
 		})
 	}
+	bubbles.Wait()
 }
 
 func TestStageAAcceptanceCLI(t *testing.T) {
