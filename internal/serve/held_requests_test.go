@@ -73,6 +73,70 @@ func TestHeldQueueRequestBlockedLifecycleStatus(t *testing.T) {
 	}
 }
 
+func TestHeldQueueRequestLifecycleReactivation(t *testing.T) {
+	for _, authorityMode := range []bool{false, true} {
+		for _, managed := range []bool{false, true} {
+			for _, lifecycle := range []string{"dormant", "retired", "overlapping"} {
+				t.Run(fmt.Sprintf("authority=%v/managed=%v/%s", authorityMode, managed, lifecycle), func(t *testing.T) {
+					testSynctest(t, func(t *testing.T) {
+						raw := repositoryConfig + "    enter_when: [check-success = sign-off]\n"
+						var s *Server
+						var w *worker
+						var f *fake.Forge
+						if authorityMode {
+							s, w, f, _ = authorityWorkerFixture(t)
+							_, err := f.PushBase(repo, "main", "entry policy", map[string]string{".openmerge.yml": lifecycleConfig(raw)})
+							must(t, err)
+						} else {
+							s, w, f, _ = fixture(t, raw)
+						}
+						pr, err := f.PullRequest(t.Context(), repo, 1)
+						must(t, err)
+						f.SetCheckRuns(repo, pr.HeadSHA, []forge.CheckRun{{Name: "sign-off", State: forge.Pending}})
+						if authorityMode {
+							f.SetNativeReviews(repo, 1, forge.NativeReviews{Comments: []forge.NativeComment{shadowComment(101, "@openmerge queue")}})
+						} else {
+							f.AddComment(repo, 1, "writer", "@openmerge queue")
+						}
+						must(t, s.reconcile(t.Context(), w, true))
+						if _, held := lifecycleState(t, s, w).HeldRequest(1); !held {
+							t.Fatal("request was not held")
+						}
+						w.managed, w.ready = managed, true
+						// No reconcile or PR observation between these store events:
+						// managed workers skip inactive queues; ordinary polls can dedupe.
+						_, err = s.store.Append(t.Context(), w.id, []queue.Event{
+							queue.LifecycleChanged{State: lifecycle, Detail: "base unavailable"},
+							queue.LifecycleChanged{State: "active"},
+						}, "")
+						must(t, err)
+						f.SetCheckRuns(repo, pr.HeadSHA, []forge.CheckRun{{Name: "sign-off", State: forge.Success}})
+						must(t, s.reconcile(t.Context(), w, false))
+						state := lifecycleState(t, s, w)
+						if len(state.Entries) != 0 || len(state.HeldRequests()) != 0 {
+							t.Fatal("reactivation reused old command", state.Entries, state.HeldRequests())
+						}
+						// Also exercise the next full observation after reactivation.
+						must(t, s.reconcile(t.Context(), w, true))
+						if len(lifecycleState(t, s, w).Entries) != 0 {
+							t.Fatal("fresh observation reused old command")
+						}
+						if authorityMode {
+							f.SetNativeReviews(repo, 1, forge.NativeReviews{Comments: []forge.NativeComment{shadowComment(101, "@openmerge queue"), shadowComment(102, "@openmerge queue")}})
+						} else {
+							f.AddComment(repo, 1, "writer", "@openmerge queue")
+						}
+						must(t, s.reconcile(t.Context(), w, true))
+						if len(lifecycleState(t, s, w).Entries) != 1 {
+							t.Fatal("fresh command did not admit after reactivation")
+						}
+					})
+				})
+			}
+		}
+	}
+}
+
 func TestHeldQueueRequestLifecycle(t *testing.T) {
 	for _, authorityMode := range []bool{false, true} {
 		for _, outcome := range []string{"pass", "missing", "fail", "push", "dequeue", "closed", "draft", "restart", "restart-closed", "writer-revoked", "stale-approval", "already-true", "already-false", "unknown-and-false"} {

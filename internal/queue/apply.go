@@ -80,6 +80,9 @@ func apply(s State, e Event) State {
 	case LifecycleChanged:
 		if e.Validate() == nil {
 			s.Lifecycle, s.lifecycleRevision = e, s.revision
+			if s.lifecycleBlocked() {
+				clear(s.heldRequests)
+			}
 		}
 	case ConfigApplied:
 		if e.Validate() != nil {

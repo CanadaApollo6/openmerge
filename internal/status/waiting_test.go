@@ -150,20 +150,25 @@ func TestHeldRequestWaitingProjection(t *testing.T) {
 
 func TestHeldRequestBlockedLifecycleMatchesDroppedCommand(t *testing.T) {
 	for _, lifecycle := range []string{"dormant", "retired", "overlapping"} {
-		for _, pending := range []string{"", "sign-off"} {
-			t.Run(lifecycle+"/pending="+pending, func(t *testing.T) {
-				blocked := queue.LifecycleChanged{State: lifecycle, Detail: "base unavailable"}
-				observation := queue.PRObserved{PR: 1, HeadSHA: "head", Trusted: true, Eligible: pending == "", PendingConditions: pending}
-				_, fresh, _ := Project(journal(blocked, observation, queue.EnqueueRequested{PR: 1, At: at}), 1, 20, nil)
-				events := []queue.Event{
-					queue.PRObserved{PR: 1, HeadSHA: "head", Trusted: true, PendingConditions: "sign-off"},
-					queue.EnqueueRequested{PR: 1, At: at}, blocked, observation,
-				}
-				q, held, _ := Project(journal(events...), 1, 20, nil)
+		t.Run(lifecycle, func(t *testing.T) {
+			observation := queue.PRObserved{PR: 1, HeadSHA: "head", Trusted: true, PendingConditions: "sign-off"}
+			blocked := queue.LifecycleChanged{State: lifecycle, Detail: "base unavailable"}
+			freshEvents := []queue.Event{observation, blocked, queue.EnqueueRequested{PR: 1, At: at}}
+			heldEvents := []queue.Event{observation, queue.EnqueueRequested{PR: 1, At: at}, blocked}
+			compare := func() {
+				t.Helper()
+				_, fresh, _ := Project(journal(freshEvents...), 1, 20, nil)
+				q, held, _ := Project(journal(heldEvents...), 1, 20, nil)
 				if len(q.Entries) != 0 || held.Status != fresh.Status || held.Reason != fresh.Reason || held.Detail != fresh.Detail || held.WaitingReason.Text != fresh.WaitingReason.Text {
 					t.Fatalf("cancelled hold differs from dropped command: held=%+v fresh=%+v", held, fresh)
 				}
-			})
-		}
+			}
+			compare()
+			for _, event := range []queue.Event{queue.LifecycleChanged{State: "active"}, queue.PRObserved{PR: 1, HeadSHA: "head", Trusted: true, Eligible: true}} {
+				freshEvents = append(freshEvents, event)
+				heldEvents = append(heldEvents, event)
+				compare()
+			}
+		})
 	}
 }

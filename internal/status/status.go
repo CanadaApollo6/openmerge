@@ -240,6 +240,15 @@ func Project(j store.Journal, pr, limit int, sanitizer *diagnostic.Sanitizer) (Q
 			}
 			known[n] = e
 		}
+		if _, changed := record.Event.(queue.LifecycleChanged); changed {
+			for _, held := range before.HeldRequests() {
+				if _, retained := s.HeldRequest(held.PR); !retained {
+					e := known[held.PR]
+					e.Status, e.Reason, e.Detail = "blocked", string(queue.NotEligible), ""
+					known[held.PR] = e
+				}
+			}
+		}
 		if landed, ok := record.Event.(queue.Landed); ok && before.Active != nil {
 			for _, pin := range before.Active.PRs {
 				if entryIn(before, pin.PR) && !entryIn(s, pin.PR) {

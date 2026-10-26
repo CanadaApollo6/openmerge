@@ -305,10 +305,11 @@ passes that separate trust gate. This is intended Mergify parity.
 A definite failure cancels the request and reports the existing `blocked:
 not-eligible` outcome. A later pass requires a new queue command. A new head,
 `@openmerge dequeue`, or PR closure also cancels it. Marking the PR draft cancels
-it when `-draft` is an entry condition. An observation in a dormant, retired, or
-overlapping queue drops the held request, even if its conditions are still
-pending, just as that lifecycle drops a fresh queue command. The PR then has the
-same status as a dropped fresh command, and reactivation requires a new command.
+it when `-draft` is an entry condition. Changing the queue lifecycle to dormant,
+retired, or overlapping drops all held requests immediately, even if their
+conditions are still pending, just as that lifecycle drops a fresh queue command.
+The PR then has the same status as a dropped fresh command, and reactivation
+requires a new command.
 These rules apply in GitHub and OpenMerge authority modes; landing, batching,
 and CI policies are unchanged.
 
@@ -1130,9 +1131,11 @@ WHERE key LIKE 'outside-push-audit/%'
   AND ((convert_from(value, 'UTF8')::jsonb->'State') ? 'HeldRequests'
        OR EXISTS (
          SELECT 1
-         FROM jsonb_each(COALESCE(
-           convert_from(value, 'UTF8')::jsonb->'State'->'Observations', '{}'::jsonb
-         )) AS observation
+         FROM jsonb_each(CASE jsonb_typeof(
+           convert_from(value, 'UTF8')::jsonb->'State'->'Observations'
+         ) WHEN 'object' THEN
+           convert_from(value, 'UTF8')::jsonb->'State'->'Observations'
+         ELSE '{}'::jsonb END) AS observation
          WHERE observation.value ? 'PendingConditions'
        ))
 ORDER BY queue_id, key;
