@@ -228,6 +228,7 @@ func (s *Server) discover(ctx context.Context) error {
 	installations, err := s.discovery.Installations(readCtx)
 	cancel()
 	if err != nil {
+		s.markValidationAttempted("", "")
 		return err
 	}
 	present := make(map[string]bool)
@@ -561,6 +562,7 @@ func (s *Server) discoverInstallation(ctx context.Context, installation Installa
 	repos, err := installation.Repositories(readCtx)
 	cancel()
 	if err != nil {
+		s.markValidationAttempted(installation.ID, "")
 		s.recordDiscoveryBackoff(installation.ID, err)
 		result = errors.Join(result, fmt.Errorf("installation %s listing: %w", installation.ID, err))
 		return result
@@ -598,6 +600,7 @@ func (s *Server) discoverInstallation(ctx context.Context, installation Installa
 			basis[w.id] = state.BlockSourceRevision(queue.RepositoryAccess)
 		}
 		if basisFailed {
+			s.markValidationAttempted(repo.Installation, repo.Name)
 			continue
 		}
 		readCtx, cancel := context.WithTimeout(ctx, s.options.ActionTimeout)

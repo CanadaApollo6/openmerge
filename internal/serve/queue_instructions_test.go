@@ -117,6 +117,19 @@ func TestQueueInstructionsReportingPathsDedupeRetryRollback(t *testing.T) {
 			if !strings.Contains(string(waiting), "Waiting for queue readiness: repository rules block admission") {
 				t.Fatalf("readiness waiting reason missing: %s", waiting)
 			}
+			// A completed discovery attempt can leave the original readiness
+			// string in place; both publishers must still agree on its bytes.
+			w.validationAttempted = true
+			w.waiting = "validation pending"
+			must(t, s.report(t.Context(), w))
+			waiting, err = s.store.Observation(t.Context(), w.id, "status/1")
+			must(t, err)
+			must(t, s.reportWaiting(t.Context(), w))
+			diagnostic, err = s.store.Observation(t.Context(), w.id, "status/1")
+			must(t, err)
+			if !reflect.DeepEqual(waiting, diagnostic) || strings.Count(string(waiting), "@openmerge queue") != 1 || !strings.Contains(string(waiting), "Waiting for queue readiness: validation pending") {
+				t.Fatalf("attempted validation readiness paths differ: %s / %s", waiting, diagnostic)
+			}
 			// Compare rollback bytes with the same readiness as the initial check.
 			w.managed = false
 			pin.Authority = authority.GitHub

@@ -629,7 +629,7 @@ func (w *worker) readinessReason() string {
 // Startup has no author-actionable result yet. Explicit validation failures
 // and inactive lifecycles still publish their existing waiting checks.
 func (w *worker) startupValidationPending() bool {
-	return w.validationPending() && !w.validationAttempted && w.configError == nil && (w.waiting == "" || w.waiting == "validation pending")
+	return w.validationPending() && !w.validationAttempted && (w.waiting == "" || w.waiting == "validation pending")
 }
 
 func (w *worker) waitingStatus() forge.Status {
