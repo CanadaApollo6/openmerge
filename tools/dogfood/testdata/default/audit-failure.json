@@ -1,0 +1,23 @@
+{
+  "base_tip": "a143cf89bdd5bc252d9ae1796e998031ac6a69f6",
+  "version": 2,
+  "queue": {
+    "Installation": "1",
+    "Repository": "CanadaApollo6/openmerge",
+    "BaseBranch": "main",
+    "Lane": ""
+  },
+  "since": "2026-10-01T00:00:00Z",
+  "until": "2026-10-01T01:00:00Z",
+  "checked_event_ids": [
+    7
+  ],
+  "violations": [
+    {
+      "event_id": 7,
+      "at": "2026-10-01T00:00:40Z",
+      "check": "ci_success",
+      "message": "CI has no successful queue-ref attempt on a143cf89bdd5bc252d9ae1796e998031ac6a69f6 completed before LandingStarted (the conservative pre-push deadline)"
+    }
+  ]
+}

@@ -60,6 +60,37 @@ replayed to recover tested batches and the previous queue head, including before
 Only landings in `[since, until)` cause per-landing git and API checks. Actions lookups
 are cached by tested SHA within the invocation.
 
+`audit` and `report` accept repeatable `--ci-workflow <path>` flags. With no
+flag, the workflow set is exactly `[".github/workflows/ci.yml"]`, and existing
+audit, report and comparison output stays byte-identical. Explicit paths
+replace the default. Empty paths and duplicate paths are errors. Selection uses
+the exact workflow path and an `openmerge/queue/` head-branch prefix, regardless
+of the workflow's display name.
+
+For Smart-Data-Ohio/smartfire, append all four flags to both audit and report
+commands:
+
+```sh
+  --ci-workflow .github/workflows/frontend.yml \
+  --ci-workflow .github/workflows/rust.yml \
+  --ci-workflow .github/workflows/repo.yml \
+  --ci-workflow .github/workflows/oauth-browser.yml
+```
+
+Every configured workflow must have a completed, successful attempt on the
+tested SHA before `LandingStarted`. A failed attempt followed by a successful
+rerun before that deadline passes. Diagnostics name every workflow lacking
+such an attempt for custom configurations. The default `ci.yml` diagnostic
+retains its original wording for the ADR 0009 trial.
+
+With multiple workflows, reports count each workflow attempt separately,
+including failures, cancellations and reruns. Four workflows run once each
+count as four attempts, and a rerun adds one. Runs per merge divides that sum
+by landed changes, with no normalization by workflow count. Drain waits for all
+selected attempts. Use the same workflow set for audits and both reports, and
+include it in the operator-recorded `--ci-config` identity. `compare` reads
+saved reports offline and has no Actions selection flag.
+
 `--git-repo` accepts a complete clone or bare repository. Alternatively pass
 `--git-cache <cache root>`; the two git flags are mutually exclusive. `--git-cache`
 selects the existing
@@ -85,8 +116,9 @@ For each `landed` event, the audit checks:
   `ahead` or `identical` proves the landing is still in current main's history.
   A rewind that removes a landing is a violation. Missing branch/comparison
   evidence fails closed; no fetch or cache-ref mutation is needed;
-- an attempt of **`.github/workflows/ci.yml`** on an `openmerge/queue/` branch
-  concluded `success` on the tested commit **strictly before `LandingStarted`**.
+- an attempt of **every configured workflow** (default
+  `.github/workflows/ci.yml`) on an `openmerge/queue/` branch completed with
+  `success` on the tested commit **strictly before `LandingStarted`**.
   Use the earlier of that event's `At` and journal `RecordedAt`; when replaying
   a seeded in-flight attempt, require its recorded `StartedAt`. The durable
   event precedes the push, so this is a conservative deadline even if it rejects
@@ -202,7 +234,8 @@ aborted pair, regardless of sample size.
   ≥2 and ≥3 at position ≥3 **before A closes**, and by the six-week deadline.
 - **Actions cost:** list the entire repository's runs with
   `GET /repos/{owner}/{repo}/actions/runs`, filter workflow path
-  `.github/workflows/ci.yml` and the period's **exact batch refs before expanding
+  from `--ci-workflow` (default `.github/workflows/ci.yml`) and the period's
+  **exact batch refs before expanding
   attempts**; never use the API's exact `branch` filter for a prefix. Display
   names are not identity. Fetch **every** attempt 1..`run_attempt` through
   `GET .../actions/runs/{run_id}/attempts/{n}` and deduplicate `(run_id, attempt)`.

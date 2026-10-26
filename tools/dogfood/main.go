@@ -25,6 +25,7 @@ type options struct {
 	database, installation, repository, base, lane string
 	json                                           bool
 	journalTimeout                                 time.Duration
+	ciWorkflows                                    ciWorkflows
 }
 
 func (o *options) flags(fs *flag.FlagSet) {
@@ -35,6 +36,7 @@ func (o *options) flags(fs *flag.FlagSet) {
 	fs.StringVar(&o.lane, "lane", "", "exact journal lane (default empty)")
 	fs.DurationVar(&o.journalTimeout, "journal-timeout", store.DefaultJournalReadTimeout, "maximum journal read lifetime (at least 1ms)")
 	fs.BoolVar(&o.json, "json", false, "emit JSON only")
+	fs.Var(&o.ciWorkflows, "ci-workflow", "queue CI workflow path (repeatable; replaces default .github/workflows/ci.yml; audit requires every workflow to succeed before LandingStarted; reports count each workflow attempt separately, including failures and reruns)")
 }
 func (o options) journal(ctx context.Context) (store.Journal, error) {
 	if o.database == "" || o.installation == "" {
@@ -153,7 +155,7 @@ func reportCommand(ctx context.Context, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	r.Runs, err = countRuns(ctx, a, r.Queue.BaseBranch, r.Batches)
+	r.Runs, err = countRuns(ctx, o.ciWorkflows, a, r.Queue.BaseBranch, r.Batches)
 	if err != nil {
 		return err
 	}
@@ -259,7 +261,7 @@ func auditCommand(ctx context.Context, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	result, err := audit(ctx, j, start, end, gitReader{dir: *repo}, a)
+	result, err := audit(ctx, o.ciWorkflows, j, start, end, gitReader{dir: *repo}, a)
 	if err != nil {
 		return err
 	}

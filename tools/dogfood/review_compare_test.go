@@ -79,7 +79,7 @@ func TestReviewCountRunsSkipsUnrelatedAttemptExpansion(t *testing.T) {
 	other := runFixture(2, 2, 10, 11, 20, "other")
 	other.HeadBranch = new("openmerge/queue/main/another-period")
 	a := &fakeActions{runs: []*github.WorkflowRun{own, other}}
-	runs, err := countRuns(t.Context(), a, "main", []string{"b1"})
+	runs, err := countRuns(t.Context(), nil, a, "main", []string{"b1"})
 	if err != nil || len(runs) != 1 {
 		t.Fatalf("unrelated inaccessible history broke count: %+v %v", runs, err)
 	}

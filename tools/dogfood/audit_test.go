@@ -57,7 +57,7 @@ func auditFixture(t *testing.T, method queue.MergeMethod, base, head, tested, la
 }
 func auditTest(t *testing.T, f *fixture, g *gitFixture, a *fakeActions) AuditResult {
 	t.Helper()
-	r, err := audit(t.Context(), f.j, epoch, epoch.Add(time.Hour), gitReader{dir: g.dir}, auditSource(t, f, g, a))
+	r, err := audit(t.Context(), nil, f.j, epoch, epoch.Add(time.Hour), gitReader{dir: g.dir}, auditSource(t, f, g, a))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestAuditChecksPreviousQueueHeadAcrossExternalBaseMove(t *testing.T) {
 	f.begin(80, id)
 	f.land(90, id, two)
 	a := &fakeActions{runs: []*github.WorkflowRun{runFixture(1, 1, 10, 11, 20, one), runFixture(2, 1, 70, 71, 75, two)}}
-	r, err := audit(t.Context(), f.j, epoch.Add(55*time.Second), epoch.Add(time.Hour), gitReader{dir: g.dir}, auditSource(t, f, g, a))
+	r, err := audit(t.Context(), nil, f.j, epoch.Add(55*time.Second), epoch.Add(time.Hour), gitReader{dir: g.dir}, auditSource(t, f, g, a))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,12 +203,12 @@ func TestAuditSinceAndCoverage(t *testing.T) {
 	if err := attachAudit(&r, f.j, wrong); err == nil {
 		t.Fatal("wrong queue audit accepted")
 	}
-	after, err := audit(t.Context(), f.j, epoch.Add(41*time.Second), epoch.Add(time.Hour), gitReader{dir: g.dir}, auditSource(t, f, g, a))
+	after, err := audit(t.Context(), nil, f.j, epoch.Add(41*time.Second), epoch.Add(time.Hour), gitReader{dir: g.dir}, auditSource(t, f, g, a))
 	if err != nil || len(after.CheckedEventIDs) != 0 {
 		t.Fatalf("after=%+v err=%v", after, err)
 	}
 	a.err = fmt.Errorf("API unavailable")
-	if _, err := audit(t.Context(), f.j, epoch, epoch.Add(time.Hour), gitReader{dir: g.dir}, auditSource(t, f, g, a)); err == nil {
+	if _, err := audit(t.Context(), nil, f.j, epoch, epoch.Add(time.Hour), gitReader{dir: g.dir}, auditSource(t, f, g, a)); err == nil {
 		t.Fatal("API error accepted")
 	}
 }

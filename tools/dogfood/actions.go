@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -103,15 +104,15 @@ type Attempt struct {
 	CompletedAt time.Time `json:"completed_at"`
 }
 
-func queueCI(r *github.WorkflowRun) bool {
-	return r.GetPath() == ".github/workflows/ci.yml" && strings.HasPrefix(r.GetHeadBranch(), "openmerge/queue/")
+func queueCI(r *github.WorkflowRun, workflows ciWorkflows) bool {
+	return slices.Contains(workflows.paths(), r.GetPath()) && strings.HasPrefix(r.GetHeadBranch(), "openmerge/queue/")
 }
 
-func attempts(ctx context.Context, a Actions, runs []*github.WorkflowRun) ([]*github.WorkflowRun, error) {
+func attempts(ctx context.Context, workflows ciWorkflows, a Actions, runs []*github.WorkflowRun) ([]*github.WorkflowRun, error) {
 	seen := map[[2]int64]bool{}
 	var result []*github.WorkflowRun
 	for _, r := range runs {
-		if !queueCI(r) {
+		if !queueCI(r, workflows) {
 			continue
 		}
 		if r.GetID() <= 0 || r.GetRunAttempt() < 1 {
@@ -127,7 +128,7 @@ func attempts(ctx context.Context, a Actions, runs []*github.WorkflowRun) ([]*gi
 			if err != nil {
 				return nil, fmt.Errorf("run %d attempt %d: %w", r.GetID(), n, err)
 			}
-			if run.GetID() != r.GetID() || run.GetRunAttempt() != n || run.GetHeadSHA() != r.GetHeadSHA() || run.GetHeadBranch() != r.GetHeadBranch() || !queueCI(run) {
+			if run.GetID() != r.GetID() || run.GetRunAttempt() != n || run.GetHeadSHA() != r.GetHeadSHA() || run.GetHeadBranch() != r.GetHeadBranch() || run.GetPath() != r.GetPath() || !queueCI(run, workflows) {
 				return nil, fmt.Errorf("run %d attempt %d has inconsistent Actions metadata", r.GetID(), n)
 			}
 			result = append(result, run)
@@ -135,7 +136,7 @@ func attempts(ctx context.Context, a Actions, runs []*github.WorkflowRun) ([]*gi
 	}
 	return result, nil
 }
-func countRuns(ctx context.Context, a Actions, base string, batches []string) ([]Attempt, error) {
+func countRuns(ctx context.Context, workflows ciWorkflows, a Actions, base string, batches []string) ([]Attempt, error) {
 	runs, err := a.List(ctx, "")
 	if err != nil {
 		return nil, err
@@ -150,7 +151,7 @@ func countRuns(ctx context.Context, a Actions, base string, batches []string) ([
 			own = append(own, r)
 		}
 	}
-	expanded, err := attempts(ctx, a, own)
+	expanded, err := attempts(ctx, workflows, a, own)
 	if err != nil {
 		return nil, err
 	}

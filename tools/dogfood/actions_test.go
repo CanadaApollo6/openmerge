@@ -63,7 +63,7 @@ func TestRunAttemptDedupAndBatchAttributionAcrossBoundary(t *testing.T) {
 	wrongBase := runFixture(5, 1, 10, 11, 12, "other-base")
 	wrongBase.HeadBranch = new("openmerge/queue/release/x/b1")
 	a := &fakeActions{runs: []*github.WorkflowRun{first, first, second, discarded, other, wrongBase}, historical: map[[2]int64]*github.WorkflowRun{{1, 1}: runFixture(1, 1, 10, 11, 20, "old")}}
-	runs, err := countRuns(t.Context(), a, "main", []string{"b1"})
+	runs, err := countRuns(t.Context(), nil, a, "main", []string{"b1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestRunAttemptDedupAndBatchAttributionAcrossBoundary(t *testing.T) {
 	}
 	// Even the discarded batch attempt at t=210, after an earlier apparent
 	// drain and B's boundary, belongs to A. Time never assigns it to B.
-	after, err := countRuns(t.Context(), a, "main", []string{"b2"})
+	after, err := countRuns(t.Context(), nil, a, "main", []string{"b2"})
 	if err != nil || len(after) != 1 || after[0].ID != 2 {
 		t.Fatalf("B attempts: %+v, %v", after, err)
 	}
@@ -91,13 +91,13 @@ func TestRunAttemptDedupAndBatchAttributionAcrossBoundary(t *testing.T) {
 }
 func TestActionsAttemptErrorsAreNotSilentlyDropped(t *testing.T) {
 	a := &fakeActions{runs: []*github.WorkflowRun{runFixture(1, 2, 0, 1, 2, "sha")}}
-	if _, err := countRuns(t.Context(), a, "main", []string{"b1"}); err == nil {
+	if _, err := countRuns(t.Context(), nil, a, "main", []string{"b1"}); err == nil {
 		t.Fatal("missing historical attempt accepted")
 	}
 	r := runFixture(1, 2, 0, 1, 2, "sha")
 	r.UpdatedAt = nil
 	a.historical = map[[2]int64]*github.WorkflowRun{{1, 1}: runFixture(1, 1, 0, 1, 2, "sha"), {1, 2}: r}
-	if _, err := countRuns(t.Context(), a, "main", []string{"b1"}); err == nil {
+	if _, err := countRuns(t.Context(), nil, a, "main", []string{"b1"}); err == nil {
 		t.Fatal("missing completion timestamp accepted")
 	}
 }
