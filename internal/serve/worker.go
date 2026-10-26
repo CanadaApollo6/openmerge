@@ -436,6 +436,9 @@ func (s *Server) report(ctx context.Context, w *worker) error {
 		return err
 	}
 	if w.managed && !w.ready {
+		if w.startupValidationPending() {
+			return nil
+		}
 		for n, pr := range w.prs {
 			if !pr.Closed {
 				if err := s.status(ctx, w, n, pr.HeadSHA, w.waitingStatus()); err != nil {
@@ -623,6 +626,12 @@ func (w *worker) readinessReason() string {
 	return "validation pending"
 }
 
+// Startup has no author-actionable result yet. Explicit validation failures
+// and inactive lifecycles still publish their existing waiting checks.
+func (w *worker) startupValidationPending() bool {
+	return w.validationPending() && !w.validationAttempted && (w.waiting == "" || w.waiting == "validation pending")
+}
+
 func (w *worker) waitingStatus() forge.Status {
 	reason := "validation-pending"
 	if w.lifecycleState != "" && w.lifecycleState != "active" {
@@ -645,6 +654,9 @@ func (s *Server) reportWaiting(ctx context.Context, w *worker) error {
 		// Diagnostic heads never replace complete policy observations.
 		if err := s.waitingCommands(ctx, w, pr.Number); err != nil {
 			return err
+		}
+		if w.startupValidationPending() {
+			continue
 		}
 		if err := s.status(ctx, w, pr.Number, pr.HeadSHA, w.waitingStatus()); err != nil {
 			return err

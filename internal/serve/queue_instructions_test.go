@@ -101,9 +101,10 @@ func TestQueueInstructionsReportingPathsDedupeRetryRollback(t *testing.T) {
 			if strings.Count(string(invitation), "@openmerge queue") != 1 || approval && !strings.Contains(string(invitation), "Reviewer brief:") {
 				t.Fatalf("pre-admission brief lost: %s", invitation)
 			}
-			// Both readiness-report paths also use the same single-check suffix.
+			// Explicit readiness failures still use the same single-check suffix.
 			w.managed = true
 			w.ready = false
+			w.waiting = "repository rules block admission"
 			must(t, s.report(t.Context(), w))
 			waiting, err := s.store.Observation(t.Context(), w.id, "status/1")
 			must(t, err)
@@ -113,8 +114,21 @@ func TestQueueInstructionsReportingPathsDedupeRetryRollback(t *testing.T) {
 			if !reflect.DeepEqual(waiting, diagnostic) || strings.Count(string(waiting), "@openmerge queue") != 1 {
 				t.Fatal("readiness paths differ")
 			}
-			if !strings.Contains(string(waiting), "Waiting for queue readiness: validation pending") {
+			if !strings.Contains(string(waiting), "Waiting for queue readiness: repository rules block admission") {
 				t.Fatalf("readiness waiting reason missing: %s", waiting)
+			}
+			// A completed discovery attempt can leave the original readiness
+			// string in place; both publishers must still agree on its bytes.
+			w.validationAttempted = true
+			w.waiting = "validation pending"
+			must(t, s.report(t.Context(), w))
+			waiting, err = s.store.Observation(t.Context(), w.id, "status/1")
+			must(t, err)
+			must(t, s.reportWaiting(t.Context(), w))
+			diagnostic, err = s.store.Observation(t.Context(), w.id, "status/1")
+			must(t, err)
+			if !reflect.DeepEqual(waiting, diagnostic) || strings.Count(string(waiting), "@openmerge queue") != 1 || !strings.Contains(string(waiting), "Waiting for queue readiness: validation pending") {
+				t.Fatalf("attempted validation readiness paths differ: %s / %s", waiting, diagnostic)
 			}
 			// Compare rollback bytes with the same readiness as the initial check.
 			w.managed = false

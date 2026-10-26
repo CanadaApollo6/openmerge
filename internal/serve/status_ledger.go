@@ -77,5 +77,11 @@ func (s *Server) ledgerSummary(ctx context.Context, w *worker, pr int) (string, 
 	if entry != nil {
 		waiting = "\n\nCurrent state: " + status.WaitingCheckText(q, *entry, s.options.Sanitizer)
 	}
-	return waiting + "\n\nQueue: " + status.AdaptiveSummary(q) + status.LedgerSummary(entry) + status.QueueInstructions(q), nil
+	// Restored workers can report durable state and instructions before policy
+	// validation, but must not advertise default window/batch limits.
+	policy := ""
+	if !w.managed || w.configDigest != "" {
+		policy = "\n\nQueue: " + status.AdaptiveSummary(q)
+	}
+	return waiting + policy + status.LedgerSummary(entry) + status.QueueInstructions(q), nil
 }
