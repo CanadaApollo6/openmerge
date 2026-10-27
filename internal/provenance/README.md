@@ -1,8 +1,11 @@
-# ADR 0010 declarations and local inventory (Inert)
+# ADR 0010 declarations and local inventory
 
 This package consumes supplied strings and observations. It has no acquisition,
-network, clock, journal or queue calls. The unwired local gitops reader imports
-it; live queue execution does not.
+network, clock, journal or queue calls. The local gitops reader imports it; live queue execution does not. The Hold
+slice-4a `serve.newProvenancePass` seam consumes that reader and this package,
+without a runtime caller or journal writer. `NewPolicy` validates the no-network
+subset and binds static policy inputs; it does not publish configuration. See the
+[4a evidence](../../docs/research/adr-0010-4a-evidence.md).
 `LoadCandidate` projects `provenance` out and validates the remaining document
 with `config.Load`, following ADR 0008's candidate-only pattern. The public
 loader, public schema, and frozen condition-evidence vocabulary reject these

@@ -501,6 +501,17 @@ func (s State) evaluateApprovals(policy cp.Policy, current cp.ReceiptIdentity, f
 	if !policy.Enabled() {
 		return cp.Evaluate(policy, cp.Input{})
 	}
+	in, reason := s.approvalInput(current, fresh, probeActor)
+	if reason != "" {
+		return cp.Evaluation{OptedIn: true, Reasons: []string{reason}}
+	}
+	policy.Groups = detached(fresh.Groups)
+	return cp.Evaluate(policy, in)
+}
+
+// approvalInput freezes one revision's attributed stances and fresh eligibility.
+// Callers evaluate baseline and additive pools independently from this input.
+func (s State) approvalInput(current cp.ReceiptIdentity, fresh ApprovalEligibilityObserved, probeActor string) (cp.Input, string) {
 	in := cp.Input{Current: current, Actors: map[string]cp.Actor{}, Stances: map[string]cp.Stance{}}
 	id := ChangeID(current.ChangeID)
 	stored, hasClassification := s.Classification(id, ChangeRevision(current.Revision))
@@ -513,13 +524,12 @@ func (s State) evaluateApprovals(policy cp.Policy, current cp.ReceiptIdentity, f
 	f, ok := s.ApprovalFacts(id)
 	_, currentBinding := s.approvalBinding(fresh.Basis)
 	if f.Saturated || !currentBinding || fresh.Validate() != nil || !fresh.Known || fresh.Basis.ChangeID != id || uint64(fresh.Basis.Revision) != current.Revision || fresh.Basis.Head != current.Head {
-		return cp.Evaluation{OptedIn: policy.Enabled(), ReviewsKnown: false, Reasons: []string{"fresh eligibility unresolved"}}
+		return in, "fresh eligibility unresolved"
 	}
 	if f.Intent == nil || f.Intent.Basis.Revision != fresh.Basis.Revision || f.Intent.Basis.Head != current.Head || f.Intent.Digest != current.IntentDigest {
-		return cp.Evaluation{OptedIn: true, Reasons: []string{"current intent not recorded"}}
+		return in, "current intent not recorded"
 	}
 	// Stored group snapshots and Grants.Fresh never flow into this decision.
-	policy.Groups = detached(fresh.Groups)
 	in.Actors = detached(fresh.Actors)
 	if ok && f.Accountability != nil && uint64(f.Accountability.Basis.Revision) == current.Revision && f.Accountability.Basis.Head == current.Head && f.Accountability.PolicyDigest == current.PolicyDigest {
 		a := f.Accountability
@@ -528,8 +538,8 @@ func (s State) evaluateApprovals(policy cp.Policy, current cp.ReceiptIdentity, f
 		for _, h := range a.Humans {
 			in.ExcludedIDs = append(in.ExcludedIDs, h.ID)
 		}
-	} else if policy.Enabled() {
-		return cp.Evaluation{OptedIn: true, Reasons: []string{"accountability not recorded"}}
+	} else {
+		return in, "accountability not recorded"
 	}
 	for user, key := range f.Latest {
 		attributed := f.Sources[key]
@@ -542,7 +552,7 @@ func (s State) evaluateApprovals(policy cp.Policy, current cp.ReceiptIdentity, f
 	if probeActor != "" {
 		in.Stances = map[string]cp.Stance{probeActor: {UserID: probeActor, Kind: cp.Approve, Revision: current.Revision, Head: current.Head}}
 	}
-	return cp.Evaluate(policy, in)
+	return in, ""
 }
 
 // Resolve only THIS read's recorded owner-token pools. Stored classification
@@ -809,4 +819,14 @@ func checkApprovalSnapshotBudget(p approvalProjection) error {
 		}
 	}
 	return nil
+}
+
+// EvaluateAdditionalApproval uses the same revision/stance/freshness boundary
+// as EvaluateApprovals, but evaluates exactly this requirement's reviewer pool.
+func (s State) EvaluateAdditionalApproval(requirement cp.Requirement, current cp.ReceiptIdentity, fresh ApprovalEligibilityObserved) cp.Evaluation {
+	in, reason := s.approvalInput(current, fresh, "")
+	if reason != "" {
+		return cp.Evaluation{OptedIn: true, Reasons: []string{reason}}
+	}
+	return cp.EvaluateRequirement(requirement, fresh.Groups, in)
 }
