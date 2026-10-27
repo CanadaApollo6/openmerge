@@ -13,7 +13,7 @@ import (
 )
 
 // Scope is supplied by configured identity, never inferred from declaration text.
-// Namespace construction and persistence belong to the subsequent journal slice.
+// Namespace construction is explicit in NewJournalIdentity; persistence is unwired.
 type Scope struct {
 	ForgeInstance    string
 	Installation     string

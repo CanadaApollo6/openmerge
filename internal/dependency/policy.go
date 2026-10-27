@@ -14,9 +14,10 @@ import (
 // means off. Empty grants allow no edges; there is no wildcard or inherited grant.
 // This value is deliberately absent from public config structs and digests.
 type Policy struct {
-	Mode      string   `yaml:"mode"`
-	AllowFrom []string `yaml:"allow_from"`
-	AllowTo   []string `yaml:"allow_to"`
+	Mode             string   `yaml:"mode"`
+	AllowFrom        []string `yaml:"allow_from"`
+	AllowTo          []string `yaml:"allow_to"`
+	SingleMaintainer bool     `yaml:"single_maintainer"`
 }
 
 // Validate checks candidate syntax. Served scope is checked separately at use.
@@ -71,6 +72,11 @@ func ParsePolicyCandidate(data []byte) (Policy, error) {
 			return Policy{}, fmt.Errorf("explicit tags are not candidate inputs")
 		}
 		switch key.Value {
+		case "single_maintainer":
+			if value.Kind != yaml.ScalarNode || value.ShortTag() != "!!bool" || (value.Value != "true" && value.Value != "false") {
+				return Policy{}, fmt.Errorf("single_maintainer must be a boolean")
+			}
+			p.SingleMaintainer = value.Value == "true"
 		case "mode":
 			if value.Kind != yaml.ScalarNode || value.ShortTag() != "!!str" {
 				return Policy{}, fmt.Errorf("mode must be a string")

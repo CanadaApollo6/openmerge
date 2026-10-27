@@ -7,6 +7,7 @@
   "required": ["mode"],
   "properties": {
     "mode": {"const": "ordered"},
+    "single_maintainer": {"type": "boolean"},
     "allow_from": {"$ref": "#/$defs/grants"},
     "allow_to": {"$ref": "#/$defs/grants"}
   },
