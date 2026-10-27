@@ -5,7 +5,6 @@ import (
 	"errors"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
@@ -39,6 +38,9 @@ func ReadProvenanceInventory(ctx context.Context, gitDir, scratch string, req pr
 		if parentCtx.Err() == nil && ctx.Err() != nil {
 			outcome, resource = provenance.LimitExceeded, "time"
 		}
+		if errors.Is(err, errProvenanceShape) {
+			resource = "commit_shape"
+		}
 		return fail(outcome, resource, id)
 	}
 	parser, err := NewTrailerParser(ctx, scratch)
@@ -48,28 +50,46 @@ func ReadProvenanceInventory(ctx context.Context, gitDir, scratch string, req pr
 	defer func() { _ = parser.Close() }()
 	result.Policy = parser.Policy()
 	result.PolicyID = result.Policy.Identity()
-	s := &session{r: parser.s.r, dir: gitDir, diffRead: true}
-	objects := map[string]string{}
-	graph, err := readProvenanceGraph(ctx, s, limits, objects, req.Head, req.PinnedBase, req.BuildBase)
+	r, err := newProvenanceReader(ctx, gitDir, limits)
+	if err != nil {
+		return failure(err, "reader", "")
+	}
+	defer func() { _ = r.close() }()
+	// Preflight endpoints before any traversal can expand them internally.
+	for _, id := range []string{req.Head, req.PinnedBase, req.BuildBase} {
+		if err := r.preflight(id); err != nil {
+			return failure(err, "graph", id)
+		}
+	}
+	stable, err := r.frontier(ctx, req.Head, req.PinnedBase, len(req.Excluded))
 	if err != nil {
 		return failure(err, "graph", "")
 	}
-	stableBase := graph.ancestors(req.PinnedBase)
-	buildBase := graph.ancestors(req.BuildBase)
-	head := graph.ancestors(req.Head)
-	result.MergeBases = graph.mergeBases(head, stableBase)
-	result.BuildMergeBases = graph.mergeBases(head, buildBase)
+	build, err := r.frontier(ctx, req.Head, req.BuildBase, len(req.Excluded))
+	if err != nil {
+		return failure(err, "graph", "")
+	}
+	result.MergeBases, err = r.mergeBases(ctx, req.Head, req.PinnedBase)
+	if err != nil {
+		return failure(err, "graph", "")
+	}
+	result.BuildMergeBases, err = r.mergeBases(ctx, req.Head, req.BuildBase)
+	if err != nil {
+		return failure(err, "graph", "")
+	}
+	slices.Sort(result.MergeBases)
+	slices.Sort(result.BuildMergeBases)
 	excluded := make(map[string]bool, len(req.Excluded))
 	for _, id := range req.Excluded {
 		excluded[id] = true
 	}
-	for id := range head {
-		if excluded[id] {
-			continue
-		}
-		if !stableBase[id] {
+	for id := range stable {
+		if !excluded[id] {
 			result.Stable = append(result.Stable, id)
-		} else if !buildBase[id] {
+		}
+	}
+	for id := range build {
+		if _, present := stable[id]; !present && !excluded[id] {
 			result.Additional = append(result.Additional, id)
 		}
 	}
@@ -87,7 +107,10 @@ func ReadProvenanceInventory(ctx context.Context, gitDir, scratch string, req pr
 		commit := provenance.Commit{ObjectID: id}
 		// Include the failed original with Complete=false and no human declarations.
 		result.Commits = append(result.Commits, commit)
-		raw := objects[id]
+		raw, err := r.body(id)
+		if err != nil {
+			return failure(err, "object", id)
+		}
 		author, committer, message, ok := originalProvenanceFields(raw)
 		if !ok {
 			return fail(provenance.ReadPending, "commit_shape", id)
@@ -114,6 +137,9 @@ func ReadProvenanceInventory(ctx context.Context, gitDir, scratch string, req pr
 	if err := ctx.Err(); err != nil {
 		return failure(err, "read", "")
 	}
+	if err := r.close(); err != nil {
+		return failure(err, "object", "")
+	}
 	result.Complete = true
 	result.Diagnostic.Outcome = provenance.ReadComplete
 	return result
@@ -136,136 +162,34 @@ func validInventoryRequest(req provenance.InventoryRequest) bool {
 	return true
 }
 
-type provenanceGraph map[string][]string
-
-func readProvenanceGraph(ctx context.Context, s *session, limits provenance.InventoryLimits, objects map[string]string, heads ...string) (provenanceGraph, error) {
-	graph := provenanceGraph{}
-	todo := slices.Clone(heads)
-	remaining, parentBytes := limits.GraphBytes, 4<<20
-	for len(todo) > 0 {
-		id := todo[len(todo)-1]
-		todo = todo[:len(todo)-1]
-		if _, seen := graph[id]; seen {
-			continue
-		}
-		if len(graph) == limits.GraphCommits {
-			return nil, &provenanceLimitError{"graph"}
-		}
-		// Query type/size before expanding every object, including excluded base
-		// ancestry. rev-list alone cannot bound its own decompressed input bytes.
-		raw, err := readProvenanceObject(ctx, s, id, min(limits.CommitBytes, remaining))
-		if err != nil {
-			if errors.Is(err, errDiffOutputLimit) && remaining < limits.CommitBytes {
-				return nil, &provenanceLimitError{"graph_bytes"}
-			}
-			return nil, err
-		}
-		remaining -= len(raw)
-		if objects != nil {
-			objects[id] = raw
-		}
-		headers, _, ok := strings.Cut(raw, "\n\n")
-		if !ok {
-			return nil, errors.New("malformed graph commit")
-		}
-		var parents []string
-		tree := false
-		for line := range strings.SplitSeq(headers, "\n") {
-			key, value, _ := strings.Cut(line, " ")
-			if key != "tree" && key != "parent" {
-				continue
-			}
-			if !forge.ValidDiffObjectID(value) {
-				return nil, errors.New("invalid graph edge")
-			}
-			if key == "tree" {
-				if tree {
-					return nil, errors.New("duplicate tree")
-				}
-				tree = true
-				continue
-			}
-			parentBytes -= len(value) + 1
-			if parentBytes < 0 {
-				return nil, &provenanceLimitError{"graph_edges"}
-			}
-			parents = append(parents, value)
-		}
-		if !tree {
-			return nil, errors.New("missing tree")
-		}
-		graph[id] = parents
-		todo = append(todo, parents...)
-	}
-	return graph, nil
-}
-
-func (g provenanceGraph) ancestors(head string) map[string]bool {
-	seen := map[string]bool{}
-	todo := []string{head}
-	for len(todo) > 0 {
-		id := todo[len(todo)-1]
-		todo = todo[:len(todo)-1]
-		if seen[id] {
-			continue
-		}
-		seen[id] = true
-		todo = append(todo, g[id]...)
-	}
-	return seen
-}
-
-func (g provenanceGraph) mergeBases(a, b map[string]bool) []string {
-	common := map[string]bool{}
-	for id := range a {
-		if b[id] {
-			common[id] = true
-		}
-	}
-	best := make(map[string]bool, len(common))
-	for id := range common {
-		best[id] = true
-	}
-	for id := range common {
-		for _, parent := range g[id] {
-			delete(best, parent)
-		}
-	}
-	var out []string
-	for id := range best {
-		out = append(out, id)
-	}
-	slices.Sort(out)
-	return out
-}
-
-func readProvenanceObject(ctx context.Context, s *session, id string, limit int) (string, error) {
-	info, err := s.provenanceCommand(ctx, id+"\n", 128, "cat-file", "--batch-check=%(objecttype) %(objectsize)")
-	if err != nil {
-		return "", err
-	}
-	fields := strings.Fields(info)
-	if len(fields) != 2 || fields[0] != "commit" {
-		return "", errors.New("object is missing or is not a commit")
-	}
-	size, err := strconv.Atoi(fields[1])
-	if err != nil || size < 0 {
-		return "", errors.New("invalid commit size")
-	}
-	if size > limit {
-		return "", &provenanceLimitError{"commit_bytes"}
-	}
-	return s.provenanceCommand(ctx, "", limit, "cat-file", "commit", id)
-}
-
 func originalProvenanceFields(raw string) (author, committer, message string, ok bool) {
 	headers, message, found := strings.Cut(raw, "\n\n")
 	if !found {
 		return "", "", "", false
 	}
-	for line := range strings.SplitSeq(headers, "\n") {
+	// Git's commit grammar starts with exactly one tree, consecutive parents,
+	// then author and committer. Unexpected reserved headers after that prefix
+	// must never supply identities or graph edges.
+	lines := strings.Split(headers, "\n")
+	if len(lines) < 3 || !strings.HasPrefix(lines[0], "tree ") || !forge.ValidDiffObjectID(strings.TrimPrefix(lines[0], "tree ")) {
+		return "", "", "", false
+	}
+	i := 1
+	for i < len(lines) && strings.HasPrefix(lines[i], "parent ") {
+		if !forge.ValidDiffObjectID(strings.TrimPrefix(lines[i], "parent ")) {
+			return "", "", "", false
+		}
+		i++
+	}
+	if i+1 >= len(lines) || !strings.HasPrefix(lines[i], "author ") || !strings.HasPrefix(lines[i+1], "committer ") {
+		return "", "", "", false
+	}
+	for j, line := range lines[i:] {
 		key, value, _ := strings.Cut(line, " ")
-		if key != "author" && key != "committer" {
+		if j >= 2 {
+			if key == "tree" || key == "parent" || key == "author" || key == "committer" {
+				return "", "", "", false
+			}
 			continue
 		}
 		left, right := strings.LastIndex(value, "<"), strings.LastIndex(value, ">")

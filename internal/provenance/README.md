@@ -182,8 +182,8 @@ policy digest; existing config/policy digest code and vectors stay unchanged.
 bare repository, private scratch parent, pinned `InventoryRequest`, classifier,
 and `InventoryLimits`. It never opens the transport-enabled `Repo` lifecycle.
 `NewTrailerParser` is reusable separately and removes its template-free private
-repository on `Close`. The caller must close it. Inventory and mapping readers
-create and close their own parsers, including on failed reads.
+repository on `Close`. The caller must close it. Inventory creates and closes
+its own parser, including on failed reads. Mapping uses a hardened local read session directly and needs no parser repository.
 
 Each request names a repository, queue, change, revision and observation
 generation. `Stable` is `PinnedBase..Head`. `Additional` contains originals in
@@ -195,12 +195,19 @@ supply a new revision; a base refresh supplies a new generation. Callers supply
 trusted exact `Excluded` IDs for synthetic markers or other members' originals.
 Contributor trailer spelling never determines exclusions.
 
-The reader walks every parent edge of the three endpoints, with replacements,
-grafts and lazy/network fetching disabled. It follows raw headers, ignoring
-commit-graph acceleration and shallow boundaries. Missing raw ancestors fail the observation. The source repository's
-trailer config and mailmaps cannot affect raw identities or trailer parsing.
-Only normalized declarations are retained. Invalid overlong values remain
-agent evidence with digests, never copied raw values or shortened declarations.
+Git derives ancestry with `rev-list --parents --topo-order`, bounded by
+`--max-count=<frontier limit + 1>`, and best merge bases with `merge-base --all`.
+Two frontiers (`Head ^PinnedBase` and `Head ^BuildBase`) preserve the stable union
+when either base advances or rewrites. Replacements, grafts, commit-graph
+acceleration, shallow boundaries and lazy/network fetching are disabled in the
+same hardened diff-read session. Missing required ancestors fail the observation.
+Graph edges come only from Git's parser: a late `parent` header after author or
+committer cannot alter ancestry. Raw original identity extraction requires the
+strict tree/parents/author/committer prefix; unexpected reserved headers return
+`pending:commit_shape`. The source repository's trailer config and mailmaps
+cannot affect raw identities or trailer parsing. Only normalized declarations
+are retained. Invalid overlong values remain agent evidence with digests, never
+copied raw values or shortened declarations.
 
 `Policy` records `git version`, parser/classifier versions, the pinned invocation
 and configuration isolation. `PolicyID` is SHA-256 of the compact Go JSON of
@@ -210,19 +217,47 @@ classification happens to stay the same. Identity-rule and requirement policy
 bindings remain the responsibility of the later integration slice.
 
 `DefaultInventoryLimits` fixes ceilings of 1,024 source commits, 16 declarations
-per original, 16,384 visited graph commits, 128 MiB of expanded graph commits,
-1 MiB per entire raw commit, 16 MiB
-of cumulative message bytes, and 30 seconds per local read. Retained parent edges have a separate 4 MiB ceiling; stderr is bounded to 8 KiB.
-Object type and size are checked before every raw object is expanded, including
-base ancestors. The inventory uses an evaluation-local raw-object buffer within
-that same budget, so declaration extraction does not re-expand source commits.
-The buffer is discarded after extraction and never enters returned evidence.
-This avoids an unmetered decompression walk inside `rev-list`. The ADR
-specifies the source/declaration/time ceilings. The separate graph, raw-commit,
-message and parent-edge ceilings resolve its unspecified local-reader budgets.
-Callers must supply positive limits and can only lower them. Traversing complete
-old ancestry can exhaust the graph ceiling even for a small change; this is an
-explicit conservative failure, with no unbounded fallback.
+per original, 128 MiB cumulative reconstructed object bytes, 1 MiB per raw
+commit, 16 MiB cumulative message bytes, and 30 seconds per local read.
+`GraphCommits` now bounds each PR frontier, including trusted exclusions, rather
+than whole repository ancestry. Its default remains 16,384; the actual query
+limit is the smaller of that and the source budget plus exclusion count. Old
+base history does not consume a commit-count budget. The sorted union after
+exclusions must still fit 1,024 source commits. Git graph output has an explicit
+`GraphEdgeBytes` ceiling (4 MiB); stderr is bounded to 8 KiB. Callers supply
+positive limits and can only lower them.
+
+One long-lived `cat-file --batch-command` process serves metadata-only `info`
+queries and original `contents` reads. Before a body read, and before traversing
+an endpoint, the reader walks `%(deltabase)` metadata, checks
+`%(objectsize)` and `%(objectsize:disk)`, and charges every reconstructed object
+in the chain against `GraphBytes`. Shared bases are charged again for each
+independently requested object. A chain may contain at most `DeltaDepth` objects
+(default 128); depth or delta expansion overflow is terminal
+`limit_exceeded:expansion`. Raw non-delta size and cumulative byte overflows
+retain `commit_bytes` and `graph_bytes` diagnostics. No raw body is retained
+in returned evidence.
+
+This metadata path does not reconstruct delta bodies in Git
+[2.55](https://github.com/git/git/blob/v2.55.0/packfile.c) or
+[2.56](https://github.com/git/git/blob/v2.56.0/packfile.c):
+`packed_object_info_with_index_pos` uses `get_size_from_delta` to inflate only a
+20-byte delta header when no `contentp` is requested. Verification also ran
+metadata queries for the review's 212-byte target backed by a 192 MiB base under
+a 64 MiB address-space limit on both versions. The CI regression uses a 32 KiB + 1 byte
+base and a lowered 32 KiB budget, plus cumulative-chain and depth boundaries.
+
+Metadata preflight alone cannot bound Git's internal traversal of old ancestry
+or its delta-instruction buffers. Consequently **this inert adapter requires
+`prlimit`**, and runs all source-object Git commands under
+`--as=GraphBytes+256MiB` (384 MiB by default). The extra address space covers Git,
+pack mappings and allocator overhead; pack windows are 1 MiB, mapped-pack budget
+16 MiB, and the delta-base cache is disabled. This is a separate per-process
+memory ceiling, not a whole-history expansion accounting claim. Missing or
+unusable supervision returns pending without an unbounded fallback. Git
+allocation-limit diagnostics produce `limit_exceeded:expansion`; other process
+failures stay pending. The context deadline also bounds Git's internal walks.
+The production transport lifecycle is unchanged.
 
 The inventory also retains the effective `Limits` for evidence.
 `Diagnostic` retains only an outcome, resource and optional original object ID.
@@ -250,6 +285,10 @@ The reader checks actual local graph reachability and composition shape:
 - Stable originals already reachable from the build base map to themselves.
   Their declaration obligations remain in the stable inventory.
 
+Squash and rebase mapping verify graph shape and trusted replay records only.
+They trust the composer's resulting tree; this is not tree-derivation verification
+and does not prove patch equivalence with the originals.
+
 A mapping retains the request, generation, parser policy identity and composition
 ID. Each rebuild supplies a new composition observation. `tested` and `landed`
 are separate stages, so changed landed compositions never reuse tested identity.
@@ -268,7 +307,8 @@ available independently of whether a generated attribution block can fit.
 No live commit message changes in this slice.
 
 Real-Git proof lives in `provenance_inventory_test.go`,
-`provenance_mapping_test.go`, and `provenance_attribution_test.go` in gitops.
+`provenance_mapping_test.go`, `provenance_review_test.go`, and
+`provenance_attribution_test.go` in gitops.
 The promoted parser retains the full commit-reader differential corpus and
 hostile configuration tests in `provenance_trailers_test.go`. Tests intentionally
 compare the deployed Git binary's own commit reader where 2.55 and 2.56 differ.

@@ -251,6 +251,7 @@ func TestProvenanceInventorySourceLimits(t *testing.T) {
 	}{
 		{"source commits", "human\n", "source_commits", func(l *provenance.InventoryLimits) { l.SourceCommits = 1 }},
 		{"graph commits", "human\n", "graph", func(l *provenance.InventoryLimits) { l.GraphCommits = 1 }},
+		{"graph edges", "human\n", "graph_edges", func(l *provenance.InventoryLimits) { l.GraphEdgeBytes = 80 }},
 		{"graph bytes", "human\n", "graph_bytes", func(l *provenance.InventoryLimits) { l.GraphBytes = 300 }},
 		{"commit bytes", strings.Repeat("x", 200), "commit_bytes", func(l *provenance.InventoryLimits) { l.CommitBytes = 300 }},
 		{"message bytes", strings.Repeat("x", 50), "message_bytes", func(l *provenance.InventoryLimits) { l.MessageBytes = 75 }},

@@ -14,7 +14,7 @@ import (
 // MapProvenanceBuild validates a trusted local composition against immutable
 // objects. It does not infer mappings from contributor replay trailers, classify
 // generated committers, publish refs, or mutate the original inventory.
-func MapProvenanceBuild(ctx context.Context, gitDir, scratch string, inventory provenance.Inventory, build provenance.BuildObservation, limits provenance.InventoryLimits) provenance.BuildMapping {
+func MapProvenanceBuild(ctx context.Context, gitDir, _ string, inventory provenance.Inventory, build provenance.BuildObservation, limits provenance.InventoryLimits) provenance.BuildMapping {
 	result := provenance.BuildMapping{Request: inventory.Request, PolicyID: inventory.PolicyID, Build: build}
 	fail := func(outcome provenance.ReadOutcome, resource string) provenance.BuildMapping {
 		result.Diagnostic = provenance.Diagnostic{Outcome: outcome, Resource: resource}
@@ -69,30 +69,49 @@ func MapProvenanceBuild(ctx context.Context, gitDir, scratch string, inventory p
 		if parentCtx.Err() == nil && ctx.Err() != nil {
 			return fail(provenance.LimitExceeded, "time")
 		}
+		if errors.Is(err, errProvenanceShape) {
+			return fail(provenance.ReadPending, "commit_shape")
+		}
 		return fail(provenance.ReadPending, "git")
 	}
-	parser, err := NewTrailerParser(ctx, scratch)
+	r, err := newProvenanceReader(ctx, gitDir, limits)
 	if err != nil {
 		return failure(err)
 	}
-	defer func() { _ = parser.Close() }()
-	s := &session{r: parser.s.r, dir: gitDir, diffRead: true}
-	graph, err := readProvenanceGraph(ctx, s, limits, nil, build.Base, build.Result, inventory.Request.Head)
+	defer func() { _ = r.close() }()
+	for _, id := range []string{build.Base, build.Result, inventory.Request.Head} {
+		if err := r.preflight(id); err != nil {
+			return failure(err)
+		}
+	}
+	graph, err := r.frontier(ctx, build.Result, build.Base, 1)
 	if err != nil {
 		return failure(err)
 	}
-	base, composed := graph.ancestors(build.Base), graph.ancestors(build.Result)
-	if !composed[build.Base] {
+	// Validate every newly composed object's expansion before asking Git for
+	// reachability or accepting any composition evidence.
+	for id := range graph {
+		if err := r.preflight(id); err != nil {
+			return failure(err)
+		}
+	}
+	isBase, err := r.ancestor(ctx, build.Base, build.Result)
+	if err != nil {
+		return failure(err)
+	}
+	if !isBase {
 		return fail(provenance.InvalidInput, "composition_base")
+	}
+	parents, err := r.parents(ctx, build.Result)
+	if err != nil {
+		return failure(err)
 	}
 	switch build.Method {
 	case "merge":
-		parents := graph[build.Result]
 		if build.Marker != "" || len(parents) != 2 || parents[0] != build.Base || parents[1] != inventory.Request.Head {
 			return fail(provenance.InvalidInput, "merge_shape")
 		}
 	case "squash":
-		parents := graph[build.Result]
 		if build.Marker != "" || len(parents) != 1 || parents[0] != build.Base {
 			return fail(provenance.InvalidInput, "squash_shape")
 		}
@@ -102,7 +121,6 @@ func MapProvenanceBuild(ctx context.Context, gitDir, scratch string, inventory p
 				return fail(provenance.InvalidInput, "fast_forward_head")
 			}
 		} else {
-			parents := graph[build.Marker]
 			if build.Marker != build.Result || len(parents) != 1 || parents[0] != inventory.Request.Head {
 				return fail(provenance.InvalidInput, "marker")
 			}
@@ -113,42 +131,56 @@ func MapProvenanceBuild(ctx context.Context, gitDir, scratch string, inventory p
 		}
 		// Every newly composed commit must be a recorded replay; predecessors are
 		// already beneath Base. No extra generated commit can hide in the result.
-		for id := range composed {
-			if !base[id] && !builds[id] {
+		for id := range graph {
+			if !builds[id] {
 				return fail(provenance.InvalidInput, "missing_replay")
 			}
 		}
 	}
 
 	for original := range ids {
+		if err := r.preflight(original); err != nil {
+			return failure(err)
+		}
+		landed, err := r.ancestor(ctx, original, build.Base)
+		if err != nil {
+			return failure(err)
+		}
 		target := original
-		if !base[original] {
+		if !landed {
 			switch build.Method {
 			case "squash":
 				target = build.Result
 			case "rebase":
 				target = replay[original]
-				if target == "" || !composed[target] || base[target] || len(graph[target]) != 1 {
+				if target == "" || len(graph[target]) != 1 {
 					return fail(provenance.InvalidInput, "missing_replay")
 				}
 			}
 		} else if replay[original] != "" {
 			return fail(provenance.InvalidInput, "landed_replay")
 		}
-		if !composed[target] || target == build.Marker {
+		reachable, err := r.ancestor(ctx, target, build.Result)
+		if err != nil {
+			return failure(err)
+		}
+		if !reachable || target == build.Marker {
 			return fail(provenance.InvalidInput, "mapping_target")
 		}
 		result.Commits = append(result.Commits, provenance.CommitMapping{Original: original, Build: target})
 	}
 	if build.Method == "rebase" {
 		for target := range builds {
-			if !composed[target] || base[target] {
+			if _, present := graph[target]; !present {
 				return fail(provenance.InvalidInput, "replay_target")
 			}
 		}
 	}
 	slices.SortFunc(result.Commits, func(a, b provenance.CommitMapping) int { return strings.Compare(a.Original, b.Original) })
 	if err := ctx.Err(); err != nil {
+		return failure(err)
+	}
+	if err := r.close(); err != nil {
 		return failure(err)
 	}
 	result.Complete = true

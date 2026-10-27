@@ -27,22 +27,25 @@ type Diagnostic struct {
 
 // InventoryLimits can lower process ceilings, but cannot raise them. CommitBytes
 // bounds the entire raw object, including headers. MessageBytes is cumulative.
+// GraphCommits counts each PR frontier, not base ancestry. GraphEdgeBytes bounds
+// Git graph output. DeltaDepth counts objects in each reconstruction chain.
 type InventoryLimits struct {
-	SourceCommits, GraphCommits, GraphBytes, CommitBytes, MessageBytes, Declarations int
-	Duration                                                                         time.Duration
+	SourceCommits, GraphCommits, GraphBytes, GraphEdgeBytes, DeltaDepth, CommitBytes, MessageBytes, Declarations int
+	Duration                                                                                                     time.Duration
 }
 
-// DefaultInventoryLimits includes a separate ceiling on ancestry exploration.
+// DefaultInventoryLimits bounds the PR frontier, not the repository history.
 // The ADR does not specify local message/graph ceilings; these conservative
 // defaults bound local reads independently of the later network resolver.
 func DefaultInventoryLimits() InventoryLimits {
-	return InventoryLimits{SourceCommits: 1024, GraphCommits: 16384, GraphBytes: 128 << 20, CommitBytes: 1 << 20, MessageBytes: 16 << 20, Declarations: 16, Duration: 30 * time.Second}
+	return InventoryLimits{SourceCommits: 1024, GraphCommits: 16384, GraphBytes: 128 << 20, GraphEdgeBytes: 4 << 20, DeltaDepth: 128, CommitBytes: 1 << 20, MessageBytes: 16 << 20, Declarations: 16, Duration: 30 * time.Second}
 }
 
 // Validate requires every budget explicitly, within the process ceilings.
 func (l InventoryLimits) Validate() error {
 	ceilings := DefaultInventoryLimits()
 	if l.SourceCommits <= 0 || l.SourceCommits > ceilings.SourceCommits || l.GraphCommits <= 0 || l.GraphCommits > ceilings.GraphCommits ||
+		l.GraphEdgeBytes <= 0 || l.GraphEdgeBytes > ceilings.GraphEdgeBytes || l.DeltaDepth <= 0 || l.DeltaDepth > ceilings.DeltaDepth ||
 		l.GraphBytes <= 0 || l.GraphBytes > ceilings.GraphBytes || l.CommitBytes <= 0 || l.CommitBytes > ceilings.CommitBytes || l.MessageBytes <= 0 || l.MessageBytes > ceilings.MessageBytes ||
 		l.Declarations <= 0 || l.Declarations > ceilings.Declarations || l.Duration <= 0 || l.Duration > ceilings.Duration {
 		return fmt.Errorf("inventory limits must be positive and cannot raise process ceilings")
