@@ -33,7 +33,7 @@ class Contract(unittest.TestCase):
             receipt.write_text('a' * 64 + '\n')
             stdout.write_text('output\nmanifest SHA-256: ' + 'a' * 64 + '\n')
             def check(code, reason='', extra=(), out='output', later=True, input_text=''):
-                result = subprocess.run([sys.executable, str(SCRIPT), '--anchor', str(receipt),
+                result = subprocess.run([sys.executable, "-I", str(SCRIPT), '--anchor', str(receipt),
                     '--replay-stdout', str(stdout), '--replay-out', out,
                     '--earlier', str(a), *(['--later', str(b)] if later else []), *extra], capture_output=True, text=True, input=input_text)
                 self.assertEqual(result.returncode, code, result.stdout + result.stderr)
@@ -44,6 +44,12 @@ class Contract(unittest.TestCase):
                 if code == 0 and not reason: self.assertEqual(result.stdout, 'anchor and overlap match\n')
                 return result
             write(a, [row]); write(b, [row]); check(0)
+            v2 = {**manifest, 'version': 2}
+            provenance = {**row, 'evidence_kinds': ['provenance'],
+                          'source': {**row['source'], 'type': 'change_provenance_observed'}}
+            write(a, [provenance], v2); write(b, [provenance], v2); check(0)
+            check(0, extra=['--require-full-coverage'])
+            write(a, [row]); write(b, [row])
             check(0, extra=['--require-full-coverage'])
             # Replay's manifest/stdout remain frozen; erase A after replay while B is empty.
             write(b, []); (a / 'selection.jsonl').write_bytes(b''); check(2)
@@ -175,7 +181,7 @@ class Contract(unittest.TestCase):
             for at in ['2026-13-22T12:00:00.000000Z', '2026-1-22T12:00:00.000000Z', '2026-10-2T12:00:00.000000Z',
                        '2026-10-21T1:00:00.000000Z', '2026-10-21T12:0:00.000000Z', '2026-10-21T12:00:0.000000Z']:
                 bad = json.loads(json.dumps(row)); bad['source']['recorded_at'] = at; bad['role'] = 'dependency'; write(b, [bad]); check(2)
-            for field, value in [('version', True), ('version', 2), ('manifest_sha256', 'zz'), ('manifest_sha256', 'a' * 65), ('manifest_sha256', 'A' * 64)]:
+            for field, value in [('version', True), ('version', 3), ('manifest_sha256', 'zz'), ('manifest_sha256', 'a' * 65), ('manifest_sha256', 'A' * 64)]:
                 bad = json.loads(json.dumps(manifest)); bad[field] = value; write(b, [], bad); check(2)
             for field, value in [('repository', ''), ('installation', ''), ('repository', 7), ('installation', 7), ('from', '2026-10-24T00:00:00.000000Z')]:
                 bad = json.loads(json.dumps(manifest)); bad['request'][field] = value

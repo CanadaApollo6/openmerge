@@ -344,7 +344,7 @@ func TestSourceStrictReplayIntegrity(t *testing.T) {
 	_, e := f.reader.Export(t.Context(), req(), original)
 	must(t, e)
 	cases := map[string]func(string){
-		"version":  func(d string) { rewriteManifest(t, d, func(m *Manifest) { m.Version = 2 }) },
+		"version":  func(d string) { rewriteManifest(t, d, func(m *Manifest) { m.Version = 3 }) },
 		"path":     func(d string) { rewriteManifest(t, d, func(m *Manifest) { m.Selection = "../selection.jsonl" }) },
 		"absolute": func(d string) { rewriteManifest(t, d, func(m *Manifest) { m.Selection = "/tmp/selection.jsonl" }) },
 		"count":    func(d string) { rewriteManifest(t, d, func(m *Manifest) { m.Count++ }) },

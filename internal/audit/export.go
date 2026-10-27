@@ -90,7 +90,16 @@ func metadata(s Selection) ([]byte, error) {
 // Export publishes a fresh source selection from one repeatable-read snapshot.
 // It retains every selected kind and resolves typed dependencies in that snapshot.
 func (r *Reader) Export(ctx context.Context, req Request, target string) (Manifest, error) {
+	return r.ExportVersion(ctx, req, target, 0)
+}
+
+// ExportVersion accepts 0 (automatic), 1 or 2. Automatic selection examines the
+// complete closure; explicit v1 fails if provenance would be lost.
+func (r *Reader) ExportVersion(ctx context.Context, req Request, target string, version int) (Manifest, error) {
 	var result Manifest
+	if version < 0 || version > 2 {
+		return result, ErrSelectors
+	}
 	err := publish(target, func(dir string) error {
 		return r.snapshot(ctx, func(ctx context.Context, tx pgx.Tx) error {
 			resolved, e := resolve(ctx, tx, req)
@@ -123,11 +132,15 @@ func (r *Reader) Export(ctx context.Context, req Request, target string) (Manife
 			if e != nil {
 				return e
 			}
-			selected, e := closure(ctx, tx, spoolDir, input)
+			selected, e := closureVersion(ctx, tx, spoolDir, input, 2)
 			if e != nil {
 				return e
 			}
-			e = build(dir, resolved, func(emit func(sourceEvent, *Selection) error, water func(watermark) error) error {
+			chosen, e := exportVersion(selected, version)
+			if e != nil {
+				return e
+			}
+			e = buildVersion(dir, resolved, chosen, func(emit func(sourceEvent, *Selection) error, water func(watermark) error) error {
 				f, e := os.Open(watersPath)
 				if e != nil {
 					return errOutput
@@ -142,7 +155,7 @@ func (r *Reader) Export(ctx context.Context, req Request, target string) (Manife
 				}); e != nil {
 					return e
 				}
-				return emitSpool(selected, emit)
+				return emitSpoolVersion(selected, emit, chosen)
 			}, nil, &result)
 			if e != nil {
 				return e
@@ -159,6 +172,10 @@ func (r *Reader) Export(ctx context.Context, req Request, target string) (Manife
 type producer func(func(sourceEvent, *Selection) error, func(watermark) error) error
 
 func build(dir string, req Request, produce producer, want *Manifest, result *Manifest) error {
+	return buildVersion(dir, req, 1, produce, want, result)
+}
+
+func buildVersion(dir string, req Request, version int, produce producer, want *Manifest, result *Manifest) error {
 	events, e := newStream(dir, "events.jsonl")
 	if e != nil {
 		return e
@@ -198,18 +215,18 @@ func build(dir string, req Request, produce producer, want *Manifest, result *Ma
 		current = nil
 		return boundaries.write(raw)
 	}
-	m := Manifest{Dependencies: "dependency_boundaries.jsonl", Version: 1, Request: req, Selection: "selection.jsonl", Watermarks: "watermarks.jsonl", Events: "events.jsonl", TerminalSHA256: zeroDigest}
+	m := Manifest{Dependencies: "dependency_boundaries.jsonl", Version: version, Request: req, Selection: "selection.jsonl", Watermarks: "watermarks.jsonl", Events: "events.jsonl", TerminalSHA256: zeroDigest}
 	emit := func(event sourceEvent, want *Selection) error {
 		payload, e := Canonical(event.payload)
 		if e != nil {
 			return e
 		}
-		s := Selection{Source: event.source, PayloadSHA256: digest(payload), Role: "scope", References: []Reference{}, Kinds: evidenceKinds(event.source.Type)}
+		s := Selection{Source: event.source, PayloadSHA256: digest(payload), Role: "scope", References: []Reference{}, Kinds: evidenceKindsVersion(event.source.Type, version)}
 		if want != nil {
 			s.Role = want.Role
 			s.References = want.References
 		}
-		if !validRole(s.Role) || !validReferences(s.References) {
+		if !validRole(s.Role) || !validReferencesVersion(s.References, version) {
 			return errIntegrity
 		}
 		if s.Role == "dependency" {
@@ -329,7 +346,7 @@ func (r *Reader) Replay(ctx context.Context, manifestPath, target string) (Manif
 		return result, errIntegrity
 	}
 	var m Manifest
-	if strict(raw, &m) != nil || m.Version != 1 || m.Count < 0 || m.Selection != "selection.jsonl" || m.Events != "events.jsonl" || m.Watermarks != "watermarks.jsonl" || m.Dependencies != "dependency_boundaries.jsonl" || !validDigest(m.TerminalSHA256) {
+	if strict(raw, &m) != nil || (m.Version != 1 && m.Version != 2) || m.Count < 0 || m.Selection != "selection.jsonl" || m.Events != "events.jsonl" || m.Watermarks != "watermarks.jsonl" || m.Dependencies != "dependency_boundaries.jsonl" || !validDigest(m.TerminalSHA256) {
 		return result, errIntegrity
 	}
 	canonicalManifest, ce := encode(m)
@@ -395,7 +412,7 @@ func (r *Reader) Replay(ctx context.Context, manifestPath, target string) (Manif
 			defer func() { _ = roots.Close() }()
 			var checkedEmit func(sourceEvent, *Selection) error
 			var previousWater *Source
-			e = build(dir, m.Request, func(emit func(sourceEvent, *Selection) error, water func(watermark) error) error {
+			e = buildVersion(dir, m.Request, m.Version, func(emit func(sourceEvent, *Selection) error, water func(watermark) error) error {
 				if e = lines(files[1], func(raw []byte) error {
 					var w watermark
 					if strict(raw, &w) != nil || w.ID < 0 || w.QueueID <= 0 || w.Queue.Installation != m.Request.Installation || w.Queue.Repository != m.Request.Repository {
@@ -467,7 +484,7 @@ func (r *Reader) Replay(ctx context.Context, manifestPath, target string) (Manif
 				}
 				e = lines(files[0], func(raw []byte) error {
 					var s Selection
-					if strict(raw, &s) != nil || s.Source.ID <= 0 || s.Source.QueueID <= 0 || !validRole(s.Role) || !validReferences(s.References) || !validDigest(s.PayloadSHA256) || !validDigest(s.MetadataSHA256) {
+					if strict(raw, &s) != nil || s.Source.ID <= 0 || s.Source.QueueID <= 0 || !validRole(s.Role) || !validReferencesVersion(s.References, m.Version) || !validDigest(s.PayloadSHA256) || !validDigest(s.MetadataSHA256) {
 						return errIntegrity
 					}
 					if len(page) > 0 && page[0].Source.QueueID != s.Source.QueueID {
@@ -512,7 +529,7 @@ func (r *Reader) Replay(ctx context.Context, manifestPath, target string) (Manif
 				if retained.Close() != nil || roots.Close() != nil {
 					return errOutput
 				}
-				return verifyExactClosure(ctx, tx, spoolDir, rootsPath, selectedPath)
+				return verifyExactClosureVersion(ctx, tx, spoolDir, rootsPath, selectedPath, m.Version)
 			}, &m, &result)
 			if e != nil {
 				return e

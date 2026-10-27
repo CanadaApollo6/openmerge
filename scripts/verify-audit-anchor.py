@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline comparison of already replay-validated, privately frozen v1 bundles."""
+"""Offline comparison of already replay-validated, privately frozen v1/v2 bundles."""
 import argparse
 import datetime
 import hashlib
@@ -64,7 +64,7 @@ def read(path, limit=LIMIT):
 def load(db, label, directory):
     require(not directory.is_symlink() and directory.is_dir())
     manifest = decode(read(directory / 'manifest.json'))
-    require(type(manifest['version']) is int and manifest['version'] == 1)
+    require(type(manifest['version']) is int and manifest['version'] in (1, 2))
     digest(manifest['manifest_sha256'])
     request = manifest['request']
     require(isinstance(request['repository'], str) and request['repository'])
