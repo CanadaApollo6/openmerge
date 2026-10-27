@@ -54,8 +54,7 @@ func TestSharedReaderLiveLoadReportingAndCursorRestart(t *testing.T) {
 	a.Chunks, b.Chunks, b.Index = 2, 2, 1
 	a.Commits, b.Commits = h.Commits[:1], h.Commits[1:]
 	insertReaderEvidence(t, s, q, a)
-	// Persist a legacy cursor at a partial inventory cut. The restarted reader
-	// reconstructs side state from immutable events rather than emitting v9.
+	// Persist v9 at a partial inventory cut; restart resumes the side fold.
 	first, err := s.ReadOutsidePushAudit(t.Context(), q)
 	must(t, err)
 	committed, err := s.CommitOutsidePushAudit(t.Context(), q, first, nil)
@@ -93,11 +92,15 @@ func TestSharedReaderLiveLoadReportingAndCursorRestart(t *testing.T) {
 	}
 	var header struct{ Version int }
 	must(t, json.Unmarshal(resumed.progress.State, &header))
-	if header.Version >= 8 {
-		t.Fatal("reader emitted a new snapshot version")
+	if header.Version != 9 {
+		t.Fatal("side evidence did not retain v9")
 	}
-	if !bytes.Equal(want, resumed.progress.State) {
-		t.Fatal("legacy cursor queue bytes changed")
+	var composed struct{ Base json.RawMessage }
+	must(t, json.Unmarshal(resumed.progress.State, &composed))
+	var dep struct{ Queue json.RawMessage }
+	must(t, json.Unmarshal(composed.Base, &dep))
+	if !bytes.Equal(want, dep.Queue) {
+		t.Fatal("nested legacy queue bytes changed")
 	}
 	committed, err = s.CommitOutsidePushAudit(t.Context(), q, resumed, nil)
 	must(t, err)
@@ -106,7 +109,7 @@ func TestSharedReaderLiveLoadReportingAndCursorRestart(t *testing.T) {
 	}
 	again, err := s.ReadOutsidePushAudit(t.Context(), q)
 	must(t, err)
-	if !bytes.Equal(again.progress.State, want) || again.progress.ScannedThrough != last {
+	if !bytes.Equal(again.progress.State, resumed.progress.State) || again.progress.ScannedThrough != last {
 		t.Fatal("peer restart changed cursor state")
 	}
 }
@@ -135,7 +138,7 @@ func TestSharedReaderLiveRejectsUnresolvedLanding(t *testing.T) {
 	}
 }
 
-func TestSharedReaderCursorAcceptsV9WithoutWritingIt(t *testing.T) {
+func TestSharedReaderCursorResumesStoredV9(t *testing.T) {
 	s := newStore(t)
 	q := ensureQueue(t, s, "")
 	h := readerObservation(t)
@@ -166,7 +169,16 @@ func TestSharedReaderCursorAcceptsV9WithoutWritingIt(t *testing.T) {
 	if audit.CursorResetReason != "" {
 		t.Fatal(audit.CursorResetReason)
 	}
-	if !bytes.Equal(audit.progress.State, base) {
-		t.Fatal("cursor wrote v9 instead of legacy queue bytes")
+	if !bytes.Equal(audit.progress.State, v9) {
+		t.Fatal("stored v9 lost its side projection")
+	}
+	committed, err := s.CommitOutsidePushAudit(t.Context(), q, audit, nil)
+	must(t, err)
+	if !committed {
+		t.Fatal("v9 commit failed")
+	}
+	insertReaderEvidence(t, s, q, h)
+	if _, err := s.ReadOutsidePushAudit(t.Context(), q); err == nil {
+		t.Fatal("stored v9 resume accepted duplicate inventory")
 	}
 }

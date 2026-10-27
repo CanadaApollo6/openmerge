@@ -400,8 +400,9 @@ compare the deployed Git binary's own commit reader where 2.55 and 2.56 differ.
 
 `internal/provenance/journal` defines the separate pure 3a contracts. Slice 3c
 now permits the read-only composed reader at the production import boundary;
-slices 1–2 retain their existing local reader. There are no append calls, SQL
-changes or new production snapshot writes. New events use an independent wire-v1
+slices 1–2 retain their existing local reader. There are no side-event append
+calls, SQL changes or snapshot-table writes. Derived audit cursors may persist
+v9 after the format boundary described below. New events use an independent wire-v1
 envelope, not additional fields in any existing queue event:
 
 - `change_provenance_observed` retains a bounded source-inventory chunk. Its
@@ -517,10 +518,13 @@ Retained v9 event payloads must already equal their canonical encoding byte for
 byte; valid JSON with different whitespace, escaping or field order is rejected
 rather than silently rewritten by the fold. Both callback and returned base
 bytes are detached from caller-owned storage.
-There is no `EncodeSnapshot` here; only test fixtures construct v9 bytes.
+`journal.EncodeSnapshot` composes v9 only for the derived audit cursor through
+`journalreader.CursorSnapshot`; side-event and snapshot-table writers remain
+unwired. Dependency-only or pre-emission v9 has an empty provenance record array
+and provenance `LastID=0`; the containing cursor retains the journal watermark.
 
 Keeping the inner bytes unchanged preserves #163's `HeldRequests` and cached
-`PRObserved.PendingConditions`, as well as dependency state and existing legacy
+`PRObserved.PendingConditions`, as well as dependency state and legacy-only
 cursor encoding. Old queue and dependency decoders strictly refuse v9 and new
 provenance events. This does **not** make post-emission downgrade safe. Slice 3b
 must add audit-v2 closure first, then 3c installs the composed reader everywhere,
@@ -565,20 +569,21 @@ No reader/writer activation or v1 audit-format change occurs in 3a.
 `internal/journalreader` is now the single production composition boundary for
 queue, dependency and provenance codecs. The original 3a inert-import fences
 allow only this reader and store's read-only adapter; a separate AST guard rejects
-production new-event encoder calls and v8/v9 snapshot writes. Existing append
+production new-event encoder calls and v8/v9 snapshot encoding outside the
+derived audit-cursor composer. This guard is a **tripwire**, not proof: it does
+not catch string concatenation, `.sql` files or `_test.go` files. Existing append
 APIs still accept only the sealed legacy `queue.Event` interface. The old queue
 and dependency decoders continue refusing v9 and the new provenance kinds.
 
 Store loads, reporting journals and outside-push cursors use the composed reader.
 Evidence-only operational/warning scans use its strict kind dispatcher and give
-side evidence no queue effect. Queue snapshots written by the existing cursor
-remain byte-identical v6/v7. A cursor reader-version marker certifies that the
-prefix was dispatched; unmarked legacy cursors rebuild once in 256-row passes,
-including after an older binary rewrites the cache. Marked legacy-only cursors
-read only the bounded suffix, with no prefix presence query. Side projections
-are rebuilt from immutable history on every poll once side evidence exists.
-Replay pages close before exact-reference lookups, so pgx never performs a nested query on an actively streaming connection.
-There are no schema, index, public policy, evaluation or writer changes.
+side evidence no queue effect. Legacy-only cursors preserve the complete v6/v7
+observation bytes, including the envelope. Side evidence in the suffix upgrades
+the snapshot to v9, retaining both side projections for restart and bounded
+suffix resume. No upgrade rebuild, prefix probe or per-poll journal-prefix replay
+is needed. Replay pages close before exact-reference lookups, so pgx never
+performs a nested query on an actively streaming connection. There are no schema,
+index, public policy, evaluation or side-event writer changes.
 
 Landing `DecisionID` resolves to an existing `landing_decision_recorded` in the
 same queue, bound to attempt, batch and member revision/head. Layer references
@@ -613,7 +618,7 @@ marker exclusion, the equal-position layer-reference fence, or assembled commit
 sorting. Mixed-feature snapshot-plus-tail tests cover every cut, including partial
 chunks, both wrapper base kinds and #163 held requests. Store integration tests
 exercise actual journal load/reporting, partial-chunk cursor restart, v9 cursor
-loading without new-version writes and wrong-kind decision refusal.
+resume, complete legacy cursor byte goldens and wrong-kind decision refusal.
 
 **BLOCKING before any writer is enabled:** reviewed pruning/compaction must
 preserve audit export/reference closure, and writers must preflight complete
@@ -622,10 +627,27 @@ Three records per single-member attempt exhaust the 4096-record budget around
 attempt **1,366** (4,095 after 1,365 attempts; the next tested record fails).
 Larger inventories/retries or the byte cap fail sooner.
 
-**BLOCKING for the writer slice:** replace per-poll side-prefix replay with a
-reviewed persisted composed cursor (for example v9) or equivalent bounded resume.
-This reader-only migration bounds legacy-only cursor work; it does not solve
-side-evidence poll cost. Invalid records and unresolved references stop queue
+**BLOCKING writer-slice requirement — legacy-cursor prefix invariant:** a
+legacy-format cursor (v6/v7 snapshot in the unchanged legacy envelope) certifies
+that its journal prefix contains **no side-evidence kinds**. In the same
+transaction as the first side-evidence append for a queue, or before it, the
+writer MUST upgrade that queue's cursor to the composed v9 format. The upgrade
+must preserve its watermark, outside-move bookkeeping and complete folded state;
+it must coordinate with cursor compare-and-swap so a concurrent legacy audit
+cannot undo it. This obligation is separate from pruning/compaction and preflight.
+
+Legacy cursors scan only the bounded suffix, with no prefix probe, upgrade
+rebuild or process-memory certificate. A side event encountered in the suffix
+switches the durable snapshot to v9; v9 resumes both side projections thereafter.
+The complete serialized cursor remains byte-identical to main for legacy-only
+queues, including its envelope. After side evidence exists, that queue crosses
+the format boundary and legacy byte identity no longer applies. No side-event
+writer or snapshot-table writer is enabled here. Rollback after emission still
+requires the verified pre-emission backup and external-effect reconciliation;
+an older binary rewriting a v9 cursor as legacy violates this invariant and is
+not a supported rollback path.
+
+Invalid records and unresolved references stop queue
 `Load` and fail `/status`/`Journals` for the entire requested key set. Immutable
 history requires a code fix or restore; see the operator recovery procedure
 above. Writers must validate before append to avoid another availability wedge.

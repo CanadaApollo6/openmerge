@@ -12,7 +12,8 @@ import (
 )
 
 // The new sealed interfaces cannot enter the queue.Event append APIs. Enforce
-// the remaining escape hatches: production codecs, snapshot calls and raw SQL.
+// common escape hatches: production codecs, snapshot calls and raw literals.
+// This is a tripwire, not proof: concatenation, .sql and _test.go are not covered.
 func TestNoProductionNewEventOrSnapshotWriters(t *testing.T) {
 	must(t, filepath.WalkDir("../..", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -89,7 +90,7 @@ func TestNoProductionNewEventOrSnapshotWriters(t *testing.T) {
 			if !ok || aliases[recv.Name] == "" {
 				return true
 			}
-			if sel.Sel.Name == "EncodeSnapshot" {
+			if sel.Sel.Name == "EncodeSnapshot" && rel != "internal/journalreader/snapshot.go" {
 				t.Errorf("production v8/v9 snapshot writer in %s", path)
 			}
 			// Only pure contract folds may call new-event encoders. Reader code decodes;

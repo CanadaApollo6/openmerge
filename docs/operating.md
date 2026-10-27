@@ -2562,7 +2562,8 @@ No repository, key, schedule or live service is created by this change.
 
 The shared reader migration (ADR 0010 slice 3c / ADR 0011) is **Hold**. Deploy
 only after ADR 0009 period B drains. This change installs readers only: it cannot
-append provenance/dependency events or write v8/v9 snapshots. Audit v2 remains a
+append provenance/dependency events. Only derived audit cursors that have entered
+the side-evidence era persist composed v9 snapshots. Audit v2 remains a
 separate ADR 0010 slice 3b PR. Before enabling any writer slice, deploy both the
 shared readers and v2 export support everywhere, drain every older worker and
 reader, verify legacy and new snapshot-plus-tail replay, and take and verify a
@@ -2584,14 +2585,25 @@ consume 4,095 records; attempt **1,366** reaches 4,096 at its inventory and fail
 at its tested companion. Larger inventories, retries or the byte cap exhaust the
 budget sooner. There is no automatic compaction today.
 
-**BLOCKING for the writer slice:** persist a reviewed composed cursor (for
-example v9) or an equivalent bounded side-projection resume mechanism. Once a
-prefix contains side evidence, the current audit cursor replays that prefix on
-every poll because it still writes only queue snapshots. This latent O(history)
-work is not fixed by the legacy-only optimization. The reader-version marker
-certifies a scanned prefix and avoids any presence probe on legacy-only polls;
-unmarked legacy cursors rebuild once in 256-row passes. Neither marker nor
-preflight replaces compaction.
+**BLOCKING writer-slice requirement — legacy-cursor prefix invariant:** a
+legacy-format cursor (v6/v7 snapshot in the unchanged legacy envelope) certifies
+that its journal prefix contains **no side-evidence kinds**. In the same
+transaction as the first side-evidence append for a queue, or before it, the
+writer MUST upgrade that queue's cursor to the composed v9 format. The upgrade
+must preserve its watermark, outside-move bookkeeping and complete folded state;
+it must coordinate with cursor compare-and-swap so a concurrent legacy audit
+cannot undo it. This obligation is separate from pruning/compaction and preflight.
+
+Legacy cursors scan only the bounded suffix, with no prefix probe, upgrade
+rebuild or process-memory certificate. A side event encountered in the suffix
+switches the durable snapshot to v9; v9 resumes both side projections thereafter.
+The complete serialized cursor remains byte-identical to main for legacy-only
+queues, including its envelope. After side evidence exists, that queue crosses
+the format boundary and legacy byte identity no longer applies. No side-event
+writer or snapshot-table writer is enabled here. Rollback after emission still
+requires the verified pre-emission backup and external-effect reconciliation;
+an older binary rewriting a v9 cursor as legacy violates this invariant and is
+not a supported rollback path.
 
 If this limit is encountered, stop new emission for the affected queue and keep
 its immutable journal and snapshots intact. Retain a verified whole-database
@@ -2631,3 +2643,9 @@ emission. A restore requires stopped workers, retaining post-backup evidence,
 token rotation and reconciliation of actual remote refs/subsequent landings under
 ADRs 0010/0011. Restarting, clearing caches, disabling configuration, skipping or
 deleting a bad record does not repair history.
+
+The shared-reader AST writer guard is a **tripwire**, not proof of writer absence.
+It checks production Go imports/calls and individual raw string literals for new
+kind names; it does not catch string concatenation, `.sql` files or `_test.go`
+files. Only `journalreader/snapshot.go` may compose v8/v9 for derived audit
+cursors. Review every future persistence path independently.

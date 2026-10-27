@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/CanadaApollo6/openmerge/internal/authority"
+	"github.com/CanadaApollo6/openmerge/internal/dependency"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -57,7 +59,19 @@ func (t *auditQueryTrace) assertSuffix(tst *testing.T, after int64, wantRows int
 	}
 }
 
-func TestSharedReaderLegacyCursorBoundedRebuildAndIdleResume(t *testing.T) {
+func traceAuditQueries(t *testing.T, s *Store) *auditQueryTrace {
+	t.Helper()
+	cfg := s.pool.Config()
+	s.pool.Close()
+	trace := &auditQueryTrace{}
+	cfg.ConnConfig.Tracer = trace
+	var err error
+	s.pool, err = pgxpool.NewWithConfig(t.Context(), cfg)
+	must(t, err)
+	return trace
+}
+
+func TestSharedReaderLegacyCursorBoundedSuffixAndIdleResume(t *testing.T) {
 	s := newStore(t)
 	q := ensureQueue(t, s, "")
 	events := make([]queue.Event, 2*outsidePushScanLimit+7)
@@ -69,33 +83,18 @@ func TestSharedReaderLegacyCursorBoundedRebuildAndIdleResume(t *testing.T) {
 	must(t, err)
 	raw, err := queue.EncodeSnapshot(state)
 	must(t, err)
-	// An unmarked cursor might have been rewritten by a rolled-back binary.
 	progress, err := json.Marshal(outsidePushProgress{ScannedThrough: last, State: raw})
 	must(t, err)
 	_, err = s.pool.Exec(t.Context(), `INSERT INTO observations(queue_id,key,value) VALUES($1,$2,$3)`, q, outsidePushCursorKey, progress)
 	must(t, err)
-	cfg := s.pool.Config()
-	s.pool.Close()
-	trace := &auditQueryTrace{}
-	cfg.ConnConfig.Tracer = trace
-	s.pool, err = pgxpool.NewWithConfig(t.Context(), cfg)
-	must(t, err)
-	var through int64
-	for pass := 0; pass < 4; pass++ {
+	trace := traceAuditQueries(t, s)
+	// An unmarked deployed cursor must resume immediately, even after restart.
+	for pass := 0; pass < 3; pass++ {
 		trace.reset()
 		audit, err := s.ReadOutsidePushAudit(t.Context(), q)
 		must(t, err)
-		want := int64(outsidePushScanLimit)
-		if pass == 2 {
-			want = 7
-		}
-		if pass == 3 {
-			want = 0
-		}
-		trace.assertSuffix(t, through, want)
-		if pass == 3 {
-			// EXPLAIN uses the actual traced suffix SQL/arguments against this
-			// isolated schema. Pin scanned buffers as well as returned rows.
+		trace.assertSuffix(t, last, 0)
+		if pass == 0 {
 			var plan []struct {
 				Plan struct {
 					Hit  int `json:"Shared Hit Blocks"`
@@ -110,11 +109,30 @@ func TestSharedReaderLegacyCursorBoundedRebuildAndIdleResume(t *testing.T) {
 				t.Fatalf("idle cursor scanned historical buffers: %s", raw)
 			}
 		}
-		if (pass == 0) != (audit.CursorResetReason != "") {
-			t.Fatalf("unexpected reset: %+v", audit)
+		if audit.CursorResetReason != "" || audit.progress.ScannedThrough != last || len(audit.Moves) != 0 {
+			t.Fatalf("legacy cursor rebuilt or repeated historical moves: %+v", audit)
 		}
-		if audit.progress.ReaderVersion != 1 || audit.progress.HasSideEvidence {
-			t.Fatal("legacy prefix certification lost")
+		committed, err := s.CommitOutsidePushAudit(t.Context(), q, audit, nil)
+		must(t, err)
+		if !committed {
+			t.Fatal("cursor CAS failed")
+		}
+		got, err := s.Observation(t.Context(), q, outsidePushCursorKey)
+		must(t, err)
+		if !bytes.Equal(got, progress) {
+			t.Fatal("legacy envelope changed on idle commit")
+		}
+	}
+	// Actual suffix pages remain bounded; no discarded prefix must be rebuilt.
+	appendEvents(t, s, q, events...)
+	through := last
+	for _, want := range []int64{outsidePushScanLimit, outsidePushScanLimit, 7, 0} {
+		trace.reset()
+		audit, err := s.ReadOutsidePushAudit(t.Context(), q)
+		must(t, err)
+		trace.assertSuffix(t, through, want)
+		if audit.CursorResetReason != "" {
+			t.Fatal(audit.CursorResetReason)
 		}
 		committed, err := s.CommitOutsidePushAudit(t.Context(), q, audit, nil)
 		must(t, err)
@@ -123,41 +141,53 @@ func TestSharedReaderLegacyCursorBoundedRebuildAndIdleResume(t *testing.T) {
 		}
 		through = audit.progress.ScannedThrough
 	}
-	if through != last {
-		t.Fatal("rebuild did not reach watermark")
-	}
 }
 
-func TestSharedReaderRollbackCursorRevalidatesSidePrefix(t *testing.T) {
-	s := newStore(t)
-	q := ensureQueue(t, s, "")
-	h := readerObservation(t)
-	h.Chunks, h.Commits = 2, h.Commits[:1]
-	id := insertReaderEvidence(t, s, q, h)
-	state, _, err := s.Load(t.Context(), q)
-	must(t, err)
-	raw, err := queue.EncodeSnapshot(state)
-	must(t, err)
-	// Model an older shared reader that discarded the side projection/marker.
-	progress, err := json.Marshal(outsidePushProgress{ScannedThrough: id, State: raw})
-	must(t, err)
-	_, err = s.pool.Exec(t.Context(), `INSERT INTO observations(queue_id,key,value) VALUES($1,$2,$3)`, q, outsidePushCursorKey, progress)
-	must(t, err)
-	audit, err := s.ReadOutsidePushAudit(t.Context(), q)
-	must(t, err)
-	if audit.CursorResetReason == "" || !audit.progress.HasSideEvidence {
-		t.Fatal("rollback cursor hid side prefix")
-	}
-	committed, err := s.CommitOutsidePushAudit(t.Context(), q, audit, nil)
-	must(t, err)
-	if !committed {
-		t.Fatal("cursor did not commit")
-	}
-	// A duplicate chunk zero must fail after the cursor cut, rather than being
-	// accepted into an empty side projection on roll-forward.
-	insertReaderEvidence(t, s, q, h)
-	if _, err := s.ReadOutsidePushAudit(t.Context(), q); err == nil {
-		t.Fatal("side prefix was not reconstructed")
+func TestSharedReaderLegacyCursorSideSuffixUpgradesAndResumes(t *testing.T) {
+	for _, dependencyOnly := range []bool{false, true} {
+		t.Run(fmt.Sprint(dependencyOnly), func(t *testing.T) {
+			s := newStore(t)
+			q := ensureQueue(t, s, "")
+			appendEvents(t, s, q, queue.BaseMoved{SHA: "base"})
+			legacy := auditPass(t, s, q)
+			h := readerObservation(t)
+			h.Chunks, h.Commits = 2, h.Commits[:1]
+			var evidence any = h
+			if dependencyOnly {
+				var token [32]byte
+				token[0] = 1
+				init, err := dependency.NewJournalIdentity("openmerge-db-v2:sha256:"+strings.Repeat("a", 64), token, "github:https://github.com", "7")
+				must(t, err)
+				evidence = init
+			}
+			id := insertReaderEvidence(t, s, q, evidence)
+			trace := traceAuditQueries(t, s)
+			trace.reset()
+			audit := auditPass(t, s, q)
+			trace.assertSuffix(t, legacy.progress.ScannedThrough, 1)
+			if audit.CursorResetReason != "" || audit.progress.ScannedThrough != id {
+				t.Fatalf("legacy suffix did not fold: %+v", audit)
+			}
+			var header struct{ Version int }
+			must(t, json.Unmarshal(audit.progress.State, &header))
+			if header.Version != 9 {
+				t.Fatal("side suffix did not persist v9")
+			}
+			// A new Store resumes entirely from durable v9 state, without a probe
+			// or replay of the side prefix (also for dependency-only history).
+			s = openTestStore(t, s.pool.Config().ConnString())
+			trace = traceAuditQueries(t, s)
+			trace.reset()
+			again := auditPass(t, s, q)
+			trace.assertSuffix(t, id, 0)
+			if !bytes.Equal(audit.progress.State, again.progress.State) {
+				t.Fatal("v9 projection changed on restart")
+			}
+			insertReaderEvidence(t, s, q, evidence)
+			if _, err := s.ReadOutsidePushAudit(t.Context(), q); err == nil {
+				t.Fatal("v9 resume discarded side projection: duplicate accepted")
+			}
+		})
 	}
 }
 

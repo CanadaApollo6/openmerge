@@ -7,8 +7,8 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 )
 
-// SnapshotVersion is the read-only v8 wrapper. Its encoder remains unwired;
-// queue.SnapshotVersion and legacy cursor writes are unchanged.
+// SnapshotVersion is the v8 dependency wrapper, nested in composed audit cursors.
+// queue.SnapshotVersion and legacy-only cursor writes are unchanged.
 const SnapshotVersion = 8
 
 type snapshot struct {

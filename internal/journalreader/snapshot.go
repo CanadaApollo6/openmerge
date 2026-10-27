@@ -11,8 +11,7 @@ import (
 
 // LoadSnapshot reads legacy/v8/v9 through the one v9 BaseKind dispatcher. Through
 // is the containing cursor's journal watermark, including intervening queue IDs.
-// There is deliberately no corresponding encoder. Production caches continue
-// writing only legacy queue snapshots and rebuild side evidence from the journal.
+// Legacy format asserts a side-evidence-free prefix; v8/v9 retain composed state.
 func (r *Reader) LoadSnapshot(raw []byte, through uint64) error {
 	next := New(queue.State{}, r.expected, r.lookup)
 	decoded, err := pj.DecodeSnapshot(raw, func(kind string, base []byte) error {
@@ -56,7 +55,34 @@ func (r *Reader) LoadSnapshot(raw []byte, through uint64) error {
 			}
 		}
 	}
+	var header struct{ Version int }
+	if err := json.Unmarshal(raw, &header); err != nil {
+		return err
+	}
+	next.composed = header.Version >= 8
 	next.lastID = through
 	*r = next
 	return nil
+}
+
+// CursorSnapshot preserves the deployed queue bytes for a legacy-only prefix.
+// After side evidence (or a new-format load), v9 retains both projections so the
+// next poll resumes the suffix. This does not enable journal/snapshot-table writes.
+func (r Reader) CursorSnapshot() ([]byte, error) {
+	if !r.composed {
+		return queue.EncodeSnapshot(r.Queue)
+	}
+	base, err := dependency.EncodeSnapshot(r.Queue, r.dependencies)
+	if err != nil {
+		return nil, err
+	}
+	kind := "queue"
+	var header struct{ Version int }
+	if err := json.Unmarshal(base, &header); err != nil {
+		return nil, err
+	}
+	if header.Version == dependency.SnapshotVersion {
+		kind = "dependency"
+	}
+	return pj.EncodeSnapshot(kind, base, r.Provenance)
 }

@@ -1,5 +1,5 @@
 // Package journalreader composes the strict queue, dependency and provenance
-// readers. It cannot append events or encode snapshots.
+// readers. It cannot append events; only derived audit cursors encode side state.
 package journalreader
 
 import (
@@ -71,6 +71,7 @@ type Reader struct {
 	expected     dependency.JournalInitialized
 	lookup       Lookup
 	lastID       uint64
+	composed     bool // Persisted by the cursor snapshot format, never its envelope.
 }
 
 // New creates a reader over an immutable queue seed and optional trusted binding.
@@ -124,6 +125,7 @@ func (r *Reader) Apply(id uint64, raw []byte) (_ Event, applyErr error) {
 	if err != nil {
 		return Event{}, err
 	}
+	next.composed = next.composed || e.Queue == nil
 	next.lastID = id
 	*r = next
 	return e, nil

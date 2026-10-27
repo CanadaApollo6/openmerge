@@ -160,7 +160,8 @@ func TestMixedSnapshotTailEveryCut(t *testing.T) {
 				apply(t, &prefix, e.id, records[e.id])
 				through = e.id
 			}
-			raw := snapshot(t, prefix)
+			raw, err := prefix.CursorSnapshot()
+			must(t, err)
 			resumed := New(queue.State{}, init, lookup(records))
 			must(t, resumed.LoadSnapshot(raw, through))
 			for _, e := range events[cut:] {
@@ -339,11 +340,12 @@ func TestMultiMemberDecisionsResolveIndependently(t *testing.T) {
 
 func TestMemberBatchIdentitiesReplayAndV9(t *testing.T) {
 	for _, scenario := range []struct {
-		name                  string
-		tested, landed, check string
-		reject                bool
+		name                           string
+		tested, landed, check, attempt string
+		reject                         bool
 	}{
 		{name: "per-member intermediate build", check: "anchor"},
+		{name: "conflicting attempt", attempt: "other-attempt", reject: true},
 		{name: "conflicting tested", tested: strings.Repeat("e", 40), reject: true},
 		{name: "conflicting landed", landed: strings.Repeat("e", 40), reject: true},
 		{name: "check at intermediate SHA", check: "intermediate", reject: true},
@@ -372,6 +374,9 @@ func TestMemberBatchIdentitiesReplayAndV9(t *testing.T) {
 			second.RecordDigest = pj.MemberDigest(second)
 			l.Members = append(l.Members, second)
 			d := decisionFixture(other)
+			if scenario.attempt != "" {
+				d.AttemptID = scenario.attempt
+			}
 			if scenario.tested != "" {
 				d.TestedSHA = scenario.tested
 			}
@@ -417,5 +422,36 @@ func TestMemberBatchIdentitiesReplayAndV9(t *testing.T) {
 				must(t, err)
 			}
 		})
+	}
+}
+
+func TestPreEmissionV9CursorRemainsNewFormat(t *testing.T) {
+	base, err := queue.EncodeSnapshot(queue.State{})
+	must(t, err)
+	raw, err := pj.EncodeSnapshot("queue", base, pj.State{})
+	must(t, err)
+	r := New(queue.State{}, dependency.JournalInitialized{}, nil)
+	must(t, r.LoadSnapshot(raw, 0))
+	apply(t, &r, 1, encode(t, queue.BaseMoved{SHA: "base"}))
+	next, err := r.CursorSnapshot()
+	must(t, err)
+	var header struct{ Version int }
+	must(t, json.Unmarshal(next, &header))
+	if header.Version != 9 {
+		t.Fatal("queue-only suffix downgraded pre-emission v9 cursor")
+	}
+	restored := New(queue.State{}, dependency.JournalInitialized{}, nil)
+	must(t, restored.LoadSnapshot(next, 1))
+	if restored.Queue.BaseSHA != "base" {
+		t.Fatal("v9 empty-provenance cursor lost queue suffix")
+	}
+	// No provenance records implies LastID zero, never the queue watermark.
+	var corrupt map[string]json.RawMessage
+	must(t, json.Unmarshal(next, &corrupt))
+	corrupt["LastID"] = json.RawMessage(`1`)
+	bad, err := json.Marshal(corrupt)
+	must(t, err)
+	if err := restored.LoadSnapshot(bad, 1); err == nil {
+		t.Fatal("empty-provenance cursor accepted nonzero provenance LastID")
 	}
 }

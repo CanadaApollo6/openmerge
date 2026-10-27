@@ -41,7 +41,7 @@ func stringJSON(v any) string     { b, _ := json.Marshal(v); return string(b) }
 func attemptKey(e Landing) string { return stringJSON([]string{e.AttemptID, e.Stage}) }
 
 // Records returns detached records, suitable for an explicit future snapshot
-// writer. Slice 3a contains no such writer and no production snapshot calls.
+// cursor encoder. Side-event and snapshot-table writers remain unwired.
 func (s State) Records() []Record {
 	out := make([]Record, len(s.records))
 	for i, r := range s.records {

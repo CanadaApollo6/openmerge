@@ -21,8 +21,7 @@ const SnapshotVersion = 9
 // It must not perform I/O or acquire mutable external evidence during replay.
 type BaseDecoder func(kind string, raw []byte) error
 
-// Snapshot returns retained provenance and the exact base bytes. There is no
-// provenance snapshot encoder in this slice, nor any new snapshot writes.
+// Snapshot returns retained provenance and the exact base bytes.
 type Snapshot struct {
 	BaseKind   string
 	Base       json.RawMessage
@@ -60,9 +59,6 @@ func DecodeSnapshot(raw []byte, decodeBase BaseDecoder) (Snapshot, error) {
 		if err := strictJSON(raw, &v); err != nil {
 			return Snapshot{}, err
 		}
-		if len(v.Records) == 0 {
-			return Snapshot{}, ErrMalformed
-		}
 		if len(v.Records) > maxRecords {
 			return Snapshot{}, RetentionLimitError{Records: len(v.Records), Bytes: len(raw)}
 		}
@@ -80,7 +76,11 @@ func DecodeSnapshot(raw []byte, decodeBase BaseDecoder) (Snapshot, error) {
 				return Snapshot{}, ErrMalformed
 			}
 		}
-		if v.LastID != v.Records[len(v.Records)-1].ID {
+		var lastID uint64
+		if len(v.Records) > 0 {
+			lastID = v.Records[len(v.Records)-1].ID
+		}
+		if v.LastID != lastID {
 			return Snapshot{}, ErrBinding
 		}
 		base = v.Base
@@ -119,4 +119,30 @@ func supportedBase(kind string, version int) bool {
 	default:
 		return false
 	}
+}
+
+// EncodeSnapshot composes a derived v9 cursor from a validated base and fold.
+// Empty provenance uses LastID zero, including dependency-only cursors and a
+// writer's required format upgrade before its first side-evidence append.
+func EncodeSnapshot(kind string, base []byte, state State) ([]byte, error) {
+	var header struct{ Version int }
+	if err := json.Unmarshal(base, &header); err != nil {
+		return nil, err
+	}
+	if !supportedBase(kind, header.Version) {
+		return nil, ErrMalformed
+	}
+	records := state.Records()
+	var lastID uint64
+	if len(records) > 0 {
+		lastID = records[len(records)-1].ID
+	}
+	raw, err := json.Marshal(snapshot{SnapshotVersion, kind, base, lastID, records})
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > maxSnapshotBytes {
+		return nil, ErrLimit
+	}
+	return raw, nil
 }
