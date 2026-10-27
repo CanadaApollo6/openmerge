@@ -339,3 +339,27 @@ func TestOverlayJoinsOnlyExactRecordedRequirements(t *testing.T) {
 		}
 	}
 }
+
+func TestDeclarationBindingDomainAndValidation(t *testing.T) {
+	legacy := sample()
+	legacyDigest, err := Digest(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opted := clone(legacy)
+	opted.DeclarationDigest = strings.Repeat("a", 64)
+	current, err := Canonical(opted)
+	if err != nil || !bytes.HasPrefix(current, []byte(`{"Version":"openmerge/brief/provenance-v1"`)) {
+		t.Fatal(string(current), err)
+	}
+	optedDigest, err := Digest(opted)
+	if err != nil || optedDigest == legacyDigest {
+		t.Fatal("declaration binding omitted", err)
+	}
+	for _, bad := range []string{"a", strings.Repeat("A", 64), strings.Repeat("g", 64), strings.Repeat("a", 65)} {
+		opted.DeclarationDigest = bad
+		if _, err := Canonical(opted); err == nil {
+			t.Fatal("malformed declaration digest accepted", bad)
+		}
+	}
+}

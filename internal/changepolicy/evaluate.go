@@ -188,6 +188,17 @@ func inventoryAffected(m Match, c Classification, author AccountKind, match Trut
 	return err == nil && withoutInventoryGap != Unknown
 }
 
+type obligation struct {
+	origin            string
+	cause             ObligationCause
+	ruleIndex         *int
+	requirement       Requirement
+	pool              *IdentitySet
+	path              string
+	side              OwnerSide
+	inventoryAffected bool
+}
+
 // Evaluate only consumes its arguments and never mutates them. Legacy queues
 // return immediately without inspecting classification, grants or stances.
 func Evaluate(policy Policy, in Input) Evaluation {
@@ -213,16 +224,6 @@ func Evaluate(policy Policy, in Input) Evaluation {
 		addFailure("classification basis is unresolved or stale")
 		e.ReviewsKnown = false
 		return e
-	}
-	type obligation struct {
-		origin            string
-		cause             ObligationCause
-		ruleIndex         *int
-		requirement       Requirement
-		pool              *IdentitySet
-		path              string
-		side              OwnerSide
-		inventoryAffected bool
 	}
 	var obligations []obligation
 	codeEvidenceErr, policyEvidenceErr := codeOwnerEvidence(c), policyOwnerEvidence(c)
@@ -254,29 +255,8 @@ func Evaluate(policy Policy, in Input) Evaluation {
 					obligations = append(obligations, obligation{origin: origin, cause: CauseRule, ruleIndex: &ruleIndex, requirement: rule.Require, inventoryAffected: inventoryAffected(rule.When, c, in.AuthorKind, match)})
 					continue
 				}
-				r := rule.Require
-				r.Count = 1
-				if codeEvidenceErr != nil {
-					continue
-				}
-				if !c.InventoryComplete || !c.CodeOwnersKnown {
-					pool := IdentitySet{Reason: "code owners or inventory unresolved; split incomplete changes"}
-					obligations = append(obligations, obligation{origin: origin + " code owners", cause: CauseRuleCodeOwners, ruleIndex: &ruleIndex, requirement: r, pool: &pool, inventoryAffected: !c.InventoryComplete})
-				}
-				for _, owner := range c.CodeOwners {
-					if owner.Status == OwnersUncovered || owner.Status == OwnersOwnerless {
-						continue
-					}
-					pool := owner.Eligible
-					if owner.Status != OwnersResolved || owner.Path == "" ||
-						(owner.Side != OldSide && owner.Side != NewSide) ||
-						owner.LastMatchingEntry == "" || len(pool.IDs) == 0 {
-						pool.Resolved = false
-						if pool.Reason == "" {
-							pool.Reason = "code owner entry unresolved"
-						}
-					}
-					obligations = append(obligations, obligation{origin: origin + " code owner: " + owner.Path + " (" + string(owner.Side) + ")", cause: CauseRuleCodeOwners, ruleIndex: &ruleIndex, requirement: r, pool: &pool, path: owner.Path, side: owner.Side})
+				if codeEvidenceErr == nil {
+					obligations = append(obligations, codeOwnerObligations(rule.Require, c, origin, &ruleIndex)...)
 				}
 			}
 		}
@@ -309,13 +289,18 @@ func Evaluate(policy Policy, in Input) Evaluation {
 		}
 		obligations = append(obligations, obligation{origin: "owner: " + owner.Path, cause: CausePolicyOwner, requirement: Requirement{Selector: AnyWriter, Count: 1}, pool: &pool, path: owner.Path})
 	}
+	return evaluateObligations(e, obligations, policy.Groups, in)
+}
+
+func evaluateObligations(e Evaluation, obligations []obligation, groups map[string]IdentitySet, in Input) Evaluation {
+	addFailure := func(reason string) { e.Allowed = false; e.Reasons = append(e.Reasons, reason) }
 	eligible := map[string]bool{}
 	approved := map[string]bool{}
 	for _, obligation := range obligations {
 		r := obligation.requirement
 		pool := obligation.pool
 		if r.Selector == Group {
-			value := policy.Groups[r.Group]
+			value := groups[r.Group]
 			pool = &value
 		}
 		result := RequirementResult{Path: obligation.path, Side: obligation.side, Origin: obligation.origin, Cause: obligation.cause, RuleIndex: obligation.ruleIndex, Requirement: r, InventoryAffected: obligation.inventoryAffected, EligibleIDs: []string{}, ApprovedIDs: []string{}}
@@ -487,4 +472,57 @@ func cloneStance(s Stance) Stance {
 		s.Receipt = &receipt
 	}
 	return s
+}
+
+// EvaluateRequirement evaluates just one additive approval obligation. It uses
+// the ordinary exclusions, receipts, fresh grants and vetoes, but imports no
+// default, exemption or policy-owner pool from another layer.
+func EvaluateRequirement(r Requirement, groups map[string]IdentitySet, in Input) Evaluation {
+	e := Evaluation{OptedIn: true, Allowed: true, ReviewsKnown: true}
+	if err := r.Validate(); err != nil || r.Selector == None || !classificationMatches(in) {
+		return Evaluation{OptedIn: true, Reasons: []string{"additive approval inputs unresolved or invalid"}}
+	}
+	obligations := []obligation{{origin: "additional", cause: CauseRule, requirement: r}}
+	if r.Selector == CodeOwners {
+		if err := codeOwnerEvidence(in.Classification); err != nil {
+			pool := IdentitySet{Reason: "owner_evidence_incoherent: " + err.Error()}
+			obligations = []obligation{{origin: "code owners", cause: CauseCodeOwnerEvidence, requirement: r, pool: &pool}}
+		} else {
+			obligations = codeOwnerObligations(r, in.Classification, "additional", nil)
+		}
+	}
+	return evaluateObligations(e, obligations, groups, in)
+}
+
+func classificationMatches(in Input) bool {
+	c := in.Classification.Inputs
+	return c.Recorded() && c.ChangeID == in.Current.ChangeID && c.Revision == in.Current.Revision &&
+		c.Base == in.Current.Base && c.Head == in.Current.Head && c.MergeBase == in.Current.MergeBase &&
+		c.PolicyDigest == in.Current.PolicyDigest && c.Generation == in.Current.Generation
+}
+
+func codeOwnerObligations(requirement Requirement, c Classification, origin string, ruleIndex *int) []obligation {
+	var obligations []obligation
+	r := requirement
+	r.Count = 1
+	if !c.InventoryComplete || !c.CodeOwnersKnown {
+		pool := IdentitySet{Reason: "code owners or inventory unresolved; split incomplete changes"}
+		obligations = append(obligations, obligation{origin: origin + " code owners", cause: CauseRuleCodeOwners, ruleIndex: ruleIndex, requirement: r, pool: &pool, inventoryAffected: !c.InventoryComplete})
+	}
+	for _, owner := range c.CodeOwners {
+		if owner.Status == OwnersUncovered || owner.Status == OwnersOwnerless {
+			continue
+		}
+		pool := owner.Eligible
+		if owner.Status != OwnersResolved || owner.Path == "" ||
+			(owner.Side != OldSide && owner.Side != NewSide) ||
+			owner.LastMatchingEntry == "" || len(pool.IDs) == 0 {
+			pool.Resolved = false
+			if pool.Reason == "" {
+				pool.Reason = "code owner entry unresolved"
+			}
+		}
+		obligations = append(obligations, obligation{origin: origin + " code owner: " + owner.Path + " (" + string(owner.Side) + ")", cause: CauseRuleCodeOwners, ruleIndex: ruleIndex, requirement: r, pool: &pool, path: owner.Path, side: owner.Side})
+	}
+	return obligations
 }
