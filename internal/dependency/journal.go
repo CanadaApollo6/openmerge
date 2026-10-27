@@ -10,10 +10,11 @@ import (
 	"strings"
 )
 
-// These contracts are intentionally separate from queue.Event. No production
-// journal reader, emitter, startup, or cursor calls this codec or fold.
+// WireVersion identifies the inert dependency event schema. These contracts
+// are separate from queue.Event; production readers/emitters do not use them.
 const WireVersion = 1
 
+// Journal fold errors preserve the prior immutable state on rejection.
 var (
 	ErrStale = errors.New("stale dependency basis")
 	ErrHeld  = errors.New("dependency-declaration-changed")
@@ -52,6 +53,8 @@ func NewJournalIdentity(databaseIdentity string, token [32]byte, forge, installa
 	return e, e.Validate()
 }
 func (e JournalInitialized) scope() Scope { return Scope{e.ForgeInstance, e.Installation, e.Namespace} }
+
+// Validate checks namespace framing and receipt/incarnation syntax without I/O.
 func (e JournalInitialized) Validate() error {
 	if !validDigestID(e.DatabaseIdentity, "openmerge-db-v2:sha256:") || !hexDigest(e.Incarnation) || e.Incarnation == strings.Repeat("0", 64) || e.Namespace != "omj1_"+digest("openmerge.dependency.journal-namespace", []string{e.DatabaseIdentity, e.Incarnation}) {
 		return ErrMalformed
@@ -113,6 +116,7 @@ func (g Grant) valid(repo string) bool {
 	return cleanText(g.SubjectID) && g.SubjectID == g.ReturnedID && g.RepositoryID == repo && cleanText(g.ReadID) && g.Fresh && g.Allowed
 }
 
+// Accountability records the ADR 0007 identities excluded from independent ack.
 type Accountability struct {
 	Author    string   `json:"author"`
 	Submitter string   `json:"submitter"`
@@ -176,6 +180,7 @@ func (b Baseline) valid() bool {
 	return b.Revision > 0 && hexDigest(b.IntentDigest) && objectID(b.Head)
 }
 
+// DeclaredEdge retains a canonical binding, optional pin and informational baseline.
 type DeclaredEdge struct {
 	Reference  string   `json:"reference"`
 	Queue      QueueKey `json:"queue"`
@@ -190,12 +195,14 @@ type AliasBinding struct {
 	Reference string `json:"reference"`
 }
 
+// DeclarationHold records the complete resulting loosening hold in each declaration.
 type DeclarationHold struct {
 	Held    bool     `json:"held"`
 	Unknown bool     `json:"unknown"`
 	Editors []string `json:"editors"`
 }
 
+// DependenciesDeclared replaces an alias declaration against its exact prior basis.
 type DependenciesDeclared struct {
 	Hold           DeclarationHold `json:"hold"`
 	Namespace      string          `json:"journal_namespace"`
@@ -232,6 +239,8 @@ func validQueue(q QueueKey) bool {
 	_, err := repositoryURL(q.Repository)
 	return err == nil && cleanText(q.Base) && (q.Lane == "" || cleanText(q.Lane))
 }
+
+// Validate checks normalized declaration structure; Apply checks its prior/hold fence.
 func (e DependenciesDeclared) Validate() error {
 	if !validDigestID(e.Namespace, "omj1_") || !e.Alias.valid() || !sortedIDs(e.Hold.Editors) || e.Hold.Unknown && !e.Hold.Held {
 		return ErrMalformed
@@ -292,6 +301,7 @@ type PolicyApplied struct {
 	Writers       []Grant     `json:"writers"`
 }
 
+// PolicyDigest binds adoption, bilateral grants and the single-maintainer setting.
 func PolicyDigest(p Policy, enabled bool) string {
 	p.AllowFrom = unionIDs(p.AllowFrom)
 	p.AllowTo = unionIDs(p.AllowTo)
@@ -300,6 +310,8 @@ func PolicyDigest(p Policy, enabled bool) string {
 		Policy  Policy `json:"policy"`
 	}{enabled, p})
 }
+
+// Validate refuses non-default-branch evidence and inconsistent policy digests.
 func (e PolicyApplied) Validate() error {
 	if !validDigestID(e.Namespace, "omj1_") || !e.Alias.valid() {
 		return ErrMalformed
@@ -333,6 +345,7 @@ type Acknowledged struct {
 	PolicyDigest    string      `json:"policy_digest"`
 }
 
+// Validate checks the recorded declaration, writer and governing-policy evidence.
 func (e Acknowledged) Validate() error {
 	if !validDigestID(e.Namespace, "omj1_") || !e.Alias.valid() {
 		return ErrMalformed
@@ -343,11 +356,13 @@ func (e Acknowledged) Validate() error {
 	return nil
 }
 
+// SelfAcknowledged distinctly records an explicit override of identity exclusions.
 type SelfAcknowledged struct {
 	Acknowledged Acknowledged `json:"acknowledged"`
 	Overridden   []string     `json:"overridden"`
 }
 
+// Validate requires the exact overridden exclusions, including the acknowledging writer.
 func (e SelfAcknowledged) Validate() error {
 	if err := e.Acknowledged.Validate(); err != nil {
 		return err
@@ -375,6 +390,7 @@ type Observed struct {
 	Result         string      `json:"result"`
 }
 
+// Validate checks the supplied source evidence and observation sequence.
 func (e Observed) Validate() error {
 	if !validDigestID(e.Namespace, "omj1_") || !e.Alias.valid() {
 		return ErrMalformed

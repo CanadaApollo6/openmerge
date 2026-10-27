@@ -65,6 +65,8 @@ func decodeEventData[T Event](raw []byte) (Event, error) {
 	}
 	return e, e.Validate()
 }
+
+// DecodeEvent strictly reads only the new dependency kinds, with no queue fallback.
 func DecodeEvent(raw []byte) (Event, error) {
 	if len(raw) > maxEventBytes {
 		return nil, ErrLimit

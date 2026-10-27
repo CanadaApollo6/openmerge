@@ -95,10 +95,14 @@ func (s State) Prior(alias SourceAlias) Basis {
 	}
 	return Basis{d.EventID, d.Event.Digest}
 }
+
+// Declaration returns detached current alias-scoped declaration evidence.
 func (s State) Declaration(alias SourceAlias) (DependenciesDeclared, bool) {
 	d, ok := s.declarations[alias.key()]
 	return cloneDeclaration(d).Event, ok
 }
+
+// Observation returns the current side fact and its journal fence for this key.
 func (s State) Observation(read Observed) (Observed, uint64, bool) {
 	o, ok := s.observations[read.key()]
 	return o.Event, o.EventID, ok
@@ -118,6 +122,7 @@ type HoldStatus struct {
 	MultiWriterWarning      bool
 }
 
+// Hold returns detached authorized-only hold, acknowledgement and warning status.
 func (s State) Hold(alias SourceAlias) HoldStatus {
 	d, ok := s.declarations[alias.key()]
 	if !ok {
