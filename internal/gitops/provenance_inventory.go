@@ -55,9 +55,9 @@ func ReadProvenanceInventory(ctx context.Context, gitDir, scratch string, req pr
 		return failure(err, "reader", "")
 	}
 	defer func() { _ = r.close() }()
-	// Preflight endpoints before any traversal can expand them internally.
+	// Reject visibly oversized endpoints early; the process cap bounds traversal.
 	for _, id := range []string{req.Head, req.PinnedBase, req.BuildBase} {
-		if err := r.preflight(id); err != nil {
+		if err := r.inspectDeltaMetadata(id); err != nil {
 			return failure(err, "graph", id)
 		}
 	}

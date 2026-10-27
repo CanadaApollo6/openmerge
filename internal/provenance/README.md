@@ -217,52 +217,71 @@ classification happens to stay the same. Identity-rule and requirement policy
 bindings remain the responsibility of the later integration slice.
 
 `DefaultInventoryLimits` fixes ceilings of 1,024 source commits, 16 declarations
-per original, 128 MiB cumulative reconstructed object bytes, 1 MiB per raw
-commit, 16 MiB cumulative message bytes, and 30 seconds per local read.
+per original, a 128 MiB `GraphBytes` budget, 1 MiB per raw commit, 16 MiB
+cumulative message bytes, and 30 seconds per local read.
 `GraphCommits` now bounds each PR frontier, including trusted exclusions, rather
 than whole repository ancestry. Its default remains 16,384; the actual query
 limit is the smaller of that and the source budget plus exclusion count. Old
-base history does not consume a commit-count budget. The sorted union after
-exclusions must still fit 1,024 source commits. Git graph output has an explicit
-`GraphEdgeBytes` ceiling (4 MiB); stderr is bounded to 8 KiB. Callers supply
+base history does not consume a commit-count budget. The topo-order walk can
+still traverse old ancestry: its cost scales with base drift and is bounded
+by the deadline and process cap. The sorted union after exclusions must still
+fit 1,024 source commits. Git graph output has an explicit `GraphEdgeBytes`
+ceiling (4 MiB); stderr is bounded to 8 KiB. Callers supply
 positive limits and can only lower them.
 
+**The enforced expansion and memory guarantee is the per-process address-space
+cap.** This inert adapter requires `prlimit` and runs every Git process that
+reads source objects or traverses ancestry under `--as=GraphBytes+16MiB`
+(144 MiB by default). The fixed 16 MiB overhead covers Git, shared libraries,
+pack mappings and allocator overhead. Lowering `GraphBytes` lowers the ceiling
+by the same amount. Pack windows are 1 MiB, the mapped-pack budget is 16 MiB,
+and the delta-base cache is disabled. This bounds each process's address space;
+it does not promise exact cumulative expansion accounting across processes or
+that a reconstruction uses at most `GraphBytes` bytes without the overhead.
+Missing or unusable supervision returns pending without an unbounded fallback.
+Allocator failures (including OOM and calloc failures) and SIGKILL while capped
+produce terminal `limit_exceeded:expansion`. Allocation failures remain terminal
+even if Git recovers through a duplicate object and exits successfully.
+Context cancellation stays pending; the local deadline produces terminal
+`limit_exceeded:time`. Other process failures stay pending. The production transport lifecycle is unchanged.
+
 One long-lived `cat-file --batch-command` process serves metadata-only `info`
-queries and original `contents` reads. Before a body read, and before traversing
-an endpoint, the reader walks `%(deltabase)` metadata, checks
-`%(objectsize)` and `%(objectsize:disk)`, and charges every reconstructed object
-in the chain against `GraphBytes`. Shared bases are charged again for each
-independently requested object. A chain may contain at most `DeltaDepth` objects
-(default 128); depth or delta expansion overflow is terminal
-`limit_exceeded:expansion`. Raw non-delta size and cumulative byte overflows
+queries and original `contents` reads. Before a body read or endpoint traversal,
+the reader follows `%(deltabase)` metadata, checks `%(objectsize)` and
+`%(objectsize:disk)`, and charges the visible chain against `GraphBytes`.
+Shared bases are charged again for each independently requested object.
+**This delta walk is advisory early rejection only.** Each base ID lookup can
+select a standalone duplicate in a different pack, including through a
+multi-pack index, while Git reconstructs the target along the original pack's
+deeper chain. The walk can therefore under-count both expansion bytes and depth.
+`DeltaDepth` (default 128 objects) bounds only this visible metadata chain;
+passing either advisory check never establishes safety. The mandatory process
+cap supplies the guarantee. A visible depth or delta byte overflow returns
+`limit_exceeded:expansion`; raw object and visible non-delta cumulative overflows
 retain `commit_bytes` and `graph_bytes` diagnostics. No raw body is retained
 in returned evidence.
 
-This metadata path does not reconstruct delta bodies in Git
+The metadata path does not reconstruct delta bodies in Git
 [2.55](https://github.com/git/git/blob/v2.55.0/packfile.c) or
 [2.56](https://github.com/git/git/blob/v2.56.0/packfile.c):
 `packed_object_info_with_index_pos` uses `get_size_from_delta` to inflate only a
-20-byte delta header when no `contentp` is requested. Verification also ran
-metadata queries for the review's 212-byte target backed by a 192 MiB base under
-a 64 MiB address-space limit on both versions. The CI regression uses a 32 KiB + 1 byte
-base and a lowered 32 KiB budget, plus cumulative-chain and depth boundaries.
-
-Metadata preflight alone cannot bound Git's internal traversal of old ancestry
-or its delta-instruction buffers. Consequently **this inert adapter requires
-`prlimit`**, and runs all source-object Git commands under
-`--as=GraphBytes+256MiB` (384 MiB by default). The extra address space covers Git,
-pack mappings and allocator overhead; pack windows are 1 MiB, mapped-pack budget
-16 MiB, and the delta-base cache is disabled. This is a separate per-process
-memory ceiling, not a whole-history expansion accounting claim. Missing or
-unusable supervision returns pending without an unbounded fallback. Git
-allocation-limit diagnostics produce `limit_exceeded:expansion`; other process
-failures stay pending. The context deadline also bounds Git's internal walks.
-The production transport lifecycle is unchanged.
+20-byte delta header when no `contentp` is requested. Small fixtures cover
+visible byte/depth boundaries. The multi-pack regression covers both REF_DELTA
+and OFS_DELTA: a preferred standalone 512-byte duplicate hides a 32 MiB base
+from a 20 KiB advisory budget and depth limit of two. Batch body observations,
+inventory traversal and build mapping still fail with `limit_exceeded:expansion`
+under the cap; the same inventory and mapping complete with a 64 MiB budget.
+The base padding is streamed into a compressed pack of tens of KiB, keeping the
+Go fixture's memory small.
+The expanded base must exceed the fixed overhead to exercise the process cap.
+PATH-shim regressions also cover missing/broken `prlimit`, allocator failures,
+SIGKILL, ordinary Git errors and external cancellation.
 
 The inventory also retains the effective `Limits` for evidence.
 `Diagnostic` retains only an outcome, resource and optional original object ID.
-It never exposes stderr or message contents. Git failures, missing ancestors,
-external cancellation, malformed commit headers and embedded message NULs yield
+It never exposes stderr or message contents. Ordinary Git failures, missing
+ancestors, external cancellation, malformed commit headers and embedded message
+NULs yield
 `pending`. Internal work deadlines and exhausted deterministic budgets yield
 terminal `limit_exceeded`. Invalid requests yield `invalid_input`. Failed
 commits retain no partially extracted human declarations. Always pass both

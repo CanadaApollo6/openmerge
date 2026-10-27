@@ -28,7 +28,9 @@ type Diagnostic struct {
 // InventoryLimits can lower process ceilings, but cannot raise them. CommitBytes
 // bounds the entire raw object, including headers. MessageBytes is cumulative.
 // GraphCommits counts each PR frontier, not base ancestry. GraphEdgeBytes bounds
-// Git graph output. DeltaDepth counts objects in each reconstruction chain.
+// Git graph output. GraphBytes sets the Git address-space cap plus fixed
+// overhead, and the advisory delta byte budget. DeltaDepth bounds only the
+// chain visible to advisory metadata queries; duplicate packs can hide bases.
 type InventoryLimits struct {
 	SourceCommits, GraphCommits, GraphBytes, GraphEdgeBytes, DeltaDepth, CommitBytes, MessageBytes, Declarations int
 	Duration                                                                                                     time.Duration

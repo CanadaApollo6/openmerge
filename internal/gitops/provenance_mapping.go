@@ -80,7 +80,7 @@ func MapProvenanceBuild(ctx context.Context, gitDir, _ string, inventory provena
 	}
 	defer func() { _ = r.close() }()
 	for _, id := range []string{build.Base, build.Result, inventory.Request.Head} {
-		if err := r.preflight(id); err != nil {
+		if err := r.inspectDeltaMetadata(id); err != nil {
 			return failure(err)
 		}
 	}
@@ -88,10 +88,10 @@ func MapProvenanceBuild(ctx context.Context, gitDir, _ string, inventory provena
 	if err != nil {
 		return failure(err)
 	}
-	// Validate every newly composed object's expansion before asking Git for
-	// reachability or accepting any composition evidence.
+	// Reject visibly oversized compositions early. Every reachability query
+	// remains supervised regardless of these advisory metadata checks.
 	for id := range graph {
-		if err := r.preflight(id); err != nil {
+		if err := r.inspectDeltaMetadata(id); err != nil {
 			return failure(err)
 		}
 	}
@@ -139,7 +139,7 @@ func MapProvenanceBuild(ctx context.Context, gitDir, _ string, inventory provena
 	}
 
 	for original := range ids {
-		if err := r.preflight(original); err != nil {
+		if err := r.inspectDeltaMetadata(original); err != nil {
 			return failure(err)
 		}
 		landed, err := r.ancestor(ctx, original, build.Base)

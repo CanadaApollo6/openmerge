@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/forge"
@@ -17,9 +18,15 @@ import (
 
 var errProvenanceShape = errors.New("unexpected commit shape")
 
+// provenanceProcessOverhead covers Git, shared libraries, pack mappings and
+// allocator overhead in addition to GraphBytes. The resulting address-space
+// cap, not delta metadata accounting, enforces the expansion/memory bound.
+const provenanceProcessOverhead = 16 << 20
+
 // provenanceReader shares one cat-file process for metadata and original bodies.
 // Only this inert adapter requires prlimit; the live transport is unaffected.
 type provenanceReader struct {
+	ctx        context.Context
 	s          *session
 	limits     provenance.InventoryLimits
 	prlimit    string
@@ -29,7 +36,7 @@ type provenanceReader struct {
 	diagnostic *limitedDiffBuffer
 	remaining  int
 	sizes      map[string]int
-	approved   map[string]bool
+	inspected  map[string]bool
 	closed     bool
 }
 
@@ -42,7 +49,7 @@ func newProvenanceReader(ctx context.Context, gitDir string, limits provenance.I
 	if err != nil {
 		return nil, err
 	}
-	r := &provenanceReader{s: &session{r: &Repo{git: git, cfg: Config{Now: time.Now}}, dir: gitDir, diffRead: true}, limits: limits, prlimit: supervisor, remaining: limits.GraphBytes, sizes: map[string]int{}, approved: map[string]bool{}}
+	r := &provenanceReader{ctx: ctx, s: &session{r: &Repo{git: git, cfg: Config{Now: time.Now}}, dir: gitDir, diffRead: true}, limits: limits, prlimit: supervisor, remaining: limits.GraphBytes, sizes: map[string]int{}, inspected: map[string]bool{}}
 	r.batch = r.command(ctx, "cat-file", "--batch-command=%(objectname) %(objecttype) %(objectsize) %(objectsize:disk) %(deltabase)")
 	r.input, err = r.batch.StdinPipe()
 	if err != nil {
@@ -65,11 +72,11 @@ func newProvenanceReader(ctx context.Context, gitDir string, limits provenance.I
 }
 
 func (r *provenanceReader) command(ctx context.Context, args ...string) *exec.Cmd {
-	// rev-list and merge-base parse bodies internally, before their output can
-	// be preflighted. Bound their address space too, including mmap/cache overhead.
+	// Every object read and traversal needs this cap: advisory metadata can
+	// under-count duplicate packed representations, and walks parse bodies too.
 	cmd := r.s.newCommand(ctx, args...)
 	cmd.Args = append([]string{cmd.Args[0], "-c", "core.packedGitWindowSize=1m", "-c", "core.packedGitLimit=16m", "-c", "core.deltaBaseCacheLimit=0"}, cmd.Args[1:]...)
-	cmd.Args = append([]string{r.prlimit, "--as=" + strconv.Itoa(r.limits.GraphBytes+(256<<20)), "--"}, cmd.Args...)
+	cmd.Args = append([]string{r.prlimit, "--as=" + strconv.Itoa(r.limits.GraphBytes+provenanceProcessOverhead), "--"}, cmd.Args...)
 	cmd.Path = r.prlimit
 	cmd.WaitDelay = time.Second
 	return cmd
@@ -82,10 +89,15 @@ func (r *provenanceReader) close() error {
 	r.closed = true
 	_ = r.input.Close()
 	err := r.batch.Wait()
+	processErr := provenanceProcessError(r.ctx, err, r.diagnostic.String())
+	var limitError *provenanceLimitError
+	if r.ctx.Err() != nil || errors.As(processErr, &limitError) {
+		return processErr
+	}
 	if r.diagnostic.overflow {
 		return errDiffOutputLimit
 	}
-	return provenanceProcessError(err, r.diagnostic.String())
+	return processErr
 }
 
 func (r *provenanceReader) run(ctx context.Context, limit int, args ...string) (string, error) {
@@ -93,36 +105,65 @@ func (r *provenanceReader) run(ctx context.Context, limit int, args ...string) (
 	out, diagnostic := &limitedDiffBuffer{limit: limit}, &limitedDiffBuffer{limit: 8192}
 	cmd.Stdout, cmd.Stderr = out, diagnostic
 	err := cmd.Run()
-	if ctx.Err() != nil {
-		return "", ctx.Err()
+	processErr := provenanceProcessError(ctx, err, diagnostic.String())
+	var limitError *provenanceLimitError
+	if ctx.Err() != nil || errors.As(processErr, &limitError) {
+		return "", processErr
 	}
+	// A bounded writer can itself make cmd.Run fail. Preserve that resource
+	// after checking for an allocator failure or kill under the process cap.
 	if out.overflow {
 		return "", &provenanceLimitError{"graph_edges"}
 	}
 	if diagnostic.overflow {
 		return "", errDiffOutputLimit
 	}
-	if err != nil {
-		return "", provenanceProcessError(err, diagnostic.String())
+	if processErr != nil {
+		return "", processErr
 	}
 	return out.String(), nil
 }
 
-func provenanceProcessError(err error, diagnostic string) error {
-	if err == nil {
-		return nil
+func provenanceProcessError(ctx context.Context, err error, diagnostic string) error {
+	// CommandContext also kills Git. Preserve external cancellation and the
+	// caller's deadline outcome instead of attributing those kills to memory.
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
-	// Git's C-locale allocator diagnostics identify the supervising address
-	// space ceiling, including expansion during its internal graph walk.
-	for _, marker := range []string{"out of memory", "Out of memory", "Cannot allocate memory"} {
+	// A kill while supervised is terminal even without allocator diagnostics.
+	var exited *exec.ExitError
+	if errors.As(err, &exited) {
+		if status, ok := exited.Sys().(syscall.WaitStatus); ok && status.Signal() == syscall.SIGKILL {
+			return &provenanceLimitError{"expansion"}
+		}
+	}
+	// Git may recover from an allocation failure using a duplicate object and
+	// exit zero. It still exhausted the cap: reject its output in that case too.
+	// Diagnostics never escape this adapter.
+	diagnostic = strings.ToLower(diagnostic)
+	for _, marker := range []string{"out of memory", "cannot allocate memory", "calloc failed", "malloc failed", "realloc failed"} {
 		if strings.Contains(diagnostic, marker) {
 			return &provenanceLimitError{"expansion"}
 		}
+	}
+	if err == nil {
+		return nil
 	}
 	if !exitCode(err, 1) {
 		return errors.Join(errProvenanceShape, err)
 	}
 	return err
+}
+
+func (r *provenanceReader) send(request string) error {
+	if _, err := fmt.Fprintln(r.input, request); err != nil {
+		// The batch process may have died under the cap before this write.
+		if processErr := r.close(); processErr != nil {
+			return processErr
+		}
+		return err
+	}
+	return nil
 }
 
 func (r *provenanceReader) header() ([]string, error) {
@@ -145,7 +186,7 @@ func (r *provenanceReader) header() ([]string, error) {
 // info uses Git's metadata-only object_info path: no contentp is requested.
 // Packed delta result sizes come from the delta header, not reconstruction.
 func (r *provenanceReader) info(id string) (size int, base string, err error) {
-	if _, err = fmt.Fprintln(r.input, "info "+id); err != nil {
+	if err = r.send("info " + id); err != nil {
 		return 0, "", err
 	}
 	fields, err := r.header()
@@ -163,8 +204,13 @@ func (r *provenanceReader) info(id string) (size int, base string, err error) {
 	return size, fields[4], nil
 }
 
-func (r *provenanceReader) preflight(id string) error {
-	if r.approved[id] {
+// inspectDeltaMetadata is advisory early rejection only. Each base ID lookup
+// may select a standalone duplicate in a different pack (including via MIDX),
+// under-counting both bytes and depth of Git's actual reconstruction chain.
+// Passing this check never establishes an expansion bound; command's prlimit
+// cap is mandatory for every subsequent read and traversal.
+func (r *provenanceReader) inspectDeltaMetadata(id string) error {
+	if r.inspected[id] {
 		return nil
 	}
 	original := id
@@ -184,8 +230,8 @@ func (r *provenanceReader) preflight(id string) error {
 		if id == original && size > r.limits.CommitBytes {
 			return &provenanceLimitError{"commit_bytes"}
 		}
-		// Charge each independently requested object's full reconstruction chain;
-		// shared delta bases may be expanded again with Git's cache disabled.
+		// Charge the visible chain for early rejection. Shared delta bases may be
+		// expanded again with Git's cache disabled, so charge each requested object.
 		if size > r.remaining {
 			if id != original || strings.Trim(base, "0") != "" {
 				return &provenanceLimitError{"expansion"}
@@ -195,7 +241,7 @@ func (r *provenanceReader) preflight(id string) error {
 		r.remaining -= size
 		r.sizes[id] = size
 		if strings.Trim(base, "0") == "" {
-			r.approved[original] = true
+			r.inspected[original] = true
 			return nil
 		}
 
@@ -204,10 +250,10 @@ func (r *provenanceReader) preflight(id string) error {
 }
 
 func (r *provenanceReader) body(id string) (string, error) {
-	if err := r.preflight(id); err != nil {
+	if err := r.inspectDeltaMetadata(id); err != nil {
 		return "", err
 	}
-	if _, err := fmt.Fprintln(r.input, "contents "+id); err != nil {
+	if err := r.send("contents " + id); err != nil {
 		return "", err
 	}
 	fields, err := r.header()
@@ -276,7 +322,7 @@ func parseProvenanceParents(out string) (provenanceGraph, error) {
 }
 
 func (r *provenanceReader) parents(ctx context.Context, id string) ([]string, error) {
-	if err := r.preflight(id); err != nil {
+	if err := r.inspectDeltaMetadata(id); err != nil {
 		return nil, err
 	}
 	out, err := r.run(ctx, r.limits.GraphEdgeBytes, "rev-list", "--parents", "--max-count=1", id)
