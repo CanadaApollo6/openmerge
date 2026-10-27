@@ -172,7 +172,11 @@ declaration and visibly records a new binding. Declaration observations are
 poll-bounded: coalesce semantic edits within a poll interval into one comparison
 with the last recorded declaration, bounding declaration journal growth to one
 observation per PR per poll. An edit which OpenMerge never observes cannot be
-reconstructed as an intervening act.
+reconstructed as an intervening act. Coalescing retains the union of all
+identified editors across the window, not just the final editor. Identify an
+editor from the authenticated webhook sender, or the forge's edit history where
+the driver exposes it. A polled PR body alone carries no editor identity; fail
+closed when neither source establishes it.
 
 Recognize exact, case-sensitive `Depends-On:` keys on standalone body lines,
 with one non-whitespace reference value. Ignore lines inside fenced code,
@@ -187,9 +191,10 @@ edges, their revision-less or pinned mode, and pinned heads where applicable.
 At binding, record a revision-less edge's observed source revision and intent
 digest as a non-digest baseline, outside the declaration and dependency-basis
 digests; the baseline stays fixed on source pushes. A revision-less edge's
-observed source head also stays outside the declaration digest. B's brief and dependency decision show when the landed revision
-differs: "landed revision N differs from the revision observed at declaration",
-with both revisions and intent digests. This is informational, not a new gate.
+observed source head also stays outside the declaration digest. B's brief and
+dependency decision show when the landed revision differs: "landed revision N
+differs from the revision observed at declaration", with both revisions and
+intent digests. This is informational, not a new gate.
 Use an exact pin when semantic continuity matters, for example if A may be split
 and the eventual revision might omit the part B needs.
 Record a separate dependency-basis digest over resolved evidence and decision inputs,
@@ -203,22 +208,35 @@ including changing an exact pin) sets a durable `dependency-declaration-changed`
 hold. Tightening edits (adding an edge or adding a pin) need no acknowledgement,
 but cannot clear an existing hold. Mixed edits that loosen any edge set the hold.
 An eligible B writer must explicitly acknowledge the current declaration: exclude
-the editing actor(s) responsible for unacknowledged loosening edits and, under
-[ADR 0007](0007-changes-not-prs.md#policy-approvals-stage-a), B's author, submitter and every
-accountable human. Bind the fresh action to the current digest and declaration
-event ID; re-read the writer's identity-bound permission and exclusions.
+the union of all identified editors across the coalesced windows contributing
+to the unacknowledged hold and, under
+[ADR 0007](0007-changes-not-prs.md#policy-approvals-stage-a), B's author, submitter
+and every accountable human. If any loosening edit's actor is unknown or
+unauthenticated, accept no acknowledgement until an authenticated redeclaration
+or fresh authenticated declaration edit establishes the current declaration's
+actor. This restores attribution, not eligibility: retain the identified-editor
+exclusions and the hold until an eligible writer acknowledges. Bind the fresh
+action to the current digest and declaration event ID; re-read the writer's
+identity-bound permission and exclusions.
 Replaying an old action or restoring an earlier digest cannot clear the hold.
 Native head-bound approvals alone never clear it or carry a removed edge.
 B's ordinary review policy still applies after acknowledgement; old receipts
 remain invalid. Unrelated body edits that preserve the declaration do not set
 this hold. A future `@openmerge repin` convenience must use this authorization path.
 
+If no eligible writer exists, the hold blocks indefinitely; this is intentional
+and fail-closed. Recovery requires adding an eligible writer or a replacement
+change. A replacement PR is a new source alias with a fresh declaration, not a
+continuation of the hold; where approval policy applies, it still requires
+independent approval.
+
 Key the hold and expected prior declaration basis by B's stable forge source
-alias (forge instance, installation, repository and PR number), across all its
-queue-owned changes, rather than by change ID. Retargeting B to another enrolled
-base must carry that history and hold into the new change, never initialize an
-empty prior declaration. The hold survives final-edge removal, disabling
-dependency policy, dequeue and re-request. Auto-admission from a held request
+alias (forge instance, installation, stable forge repository ID and PR number),
+across all its queue-owned changes, rather than by change ID. Use the repository
+ID, not its name, so the key survives repository rename and transfer. Retargeting
+B to another enrolled base must carry that history and hold into the new change,
+never initialize an empty prior declaration. The hold survives final-edge
+removal, disabling dependency policy, dequeue and re-request. Auto-admission from a held request
 and re-queue commands never clear it; only the explicit acknowledgement does.
 [#163](https://github.com/CanadaApollo6/openmerge/pull/163) landed on main as
 `1c78bcc`; its held-request admission in `internal/queue/held_requests.go` is
@@ -247,8 +265,8 @@ Suspend B's conflict-grace and `max_wait` clocks during dependency waits; resume
 with their remaining eligible time. Compute batch `max_wait` only from eligible
 candidates. A wait never dequeues B merely because either clock would expire.
 Expose a non-actionable "dependency wait older than N" flag in authorized
-status for operator review; it grants no bypass and changes no queue order. Unchanged dependency inputs
-cause zero extra builds or tests.
+status for operator review; it grants no bypass and changes no queue order.
+Unchanged dependency inputs cause zero extra builds or tests.
 
 Stage A guarantees **landing order**, not integration correctness across repos.
 B's CI may still build an old released client dependency, and A's landing may
@@ -406,7 +424,12 @@ Reuse the `WaitingReason` projection introduced by the
 such as `Waiting for dependency acme/api#42`, adding `at revision 7` only for
 an explicit pin. Apply the audience redaction above before exposing any details.
 `Details` identifies blocking edges and what clears them; `URL` links only to a
-safe, authorized change view. Preserve terminal/settlement/paused precedence.
+safe, authorized change view. For a declaration hold, status and `Details` name
+the required acknowledger class: a B writer who is neither an editor nor B's
+author, submitter or accountable human. If none is eligible, state that the hold
+blocks indefinitely and give the recovery above; if attribution is unresolved,
+require authenticated redeclaration or a fresh authenticated declaration edit
+before acknowledgement. Preserve terminal/settlement/paused precedence.
 #163's `Waiting for queue entry conditions` takes precedence over dependency
 waiting while entry conditions are pending, including before auto-admission;
 once admitted, show the dependency reason before generic queue-position text.
@@ -535,10 +558,11 @@ design may split a kind before its first release; never mutate one after deploym
 Declaration records include the actor/read grant, alias bindings and revision-less
 non-digest baselines, source-alias-keyed expected prior declaration basis, complete
 normalized edges and the durable loosening hold, including an empty declaration
-and excluded editing actors. Acknowledgements bind the current declaration
-event/digest, fresh writer grant and ADR 0007 exclusion evidence. Journal
-initialization records bind the receipt database identity and incarnation token;
-recovery rotates the token before new work.
+and excluded editing actors, retaining their union across coalesced windows and
+any unresolved unknown or unauthenticated loosening actor. Acknowledgements bind
+the current declaration event/digest, fresh writer grant and ADR 0007 exclusion
+evidence. Journal initialization records bind the receipt database identity and
+incarnation token; recovery rotates the token before new work.
 Observations include the source revisions and bases they read; a delayed success
 cannot clear a newer stale/unavailable finding. Invalidation pins exact discarded
 composition IDs and cause. Decision records pin the attempt and inputs atomically
@@ -618,6 +642,12 @@ acknowledgement cannot clear a later edit, including a return to the same digest
 PR 2 also retargets B to another enrolled base after loosening: the new change ID
 retains the source-alias-keyed prior declaration and hold. Tightening alone needs
 no acknowledgement, and tightening after loosening does not clear its hold.
+PR 2 and 4a also cover multiple editors in one coalesced window, unknown or
+unauthenticated loosening actors blocking every acknowledgement until attribution
+is restored, and no eligible writer blocking indefinitely. Verify recovery by
+adding an eligible writer or a replacement PR with a fresh alias/declaration and
+independent approval where required; repository rename/transfer preserves the
+original alias's hold.
 Source rewind, lost access and crash around B's durable start produce the
 documented wait or fenced outcome.
 A second database with identical queue/change IDs and A@7 at a different head
@@ -649,6 +679,13 @@ additional manifest-consumption and partial-landing acceptance, not PR 6's flag.
 5. Confirm the initial graph limits and choose the first two-repo sandbox plus
    the owner of post-B drain/backup acceptance. Recommendation: keep the limits
    fixed for Stage A and record the actual drain evidence before deployment.
+6. Should a repository explicitly configured as single-maintainer allow an
+   audited self-acknowledgement event? The owner is Smartfire's sole developer,
+   so the default indefinite hold is a real operational constraint. This option
+   would let that maintainer clear the declaration hold, but removes its
+   independent check against weakening or removing dependencies. It would not
+   waive independent approval where policy requires it. Owner decision remains
+   open; this ADR grants no self-acknowledgement exception.
 
 ## Consequences
 
