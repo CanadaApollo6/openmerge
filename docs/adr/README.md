@@ -13,6 +13,7 @@ An ADR records one significant decision: the context that forced it, what we cho
 | [0007](0007-changes-not-prs.md) | Make the change the unit of work, with pull requests as one optional view | Accepted |
 | [0008](0008-openmerge-policy-authority.md) | Make OpenMerge authoritative for queue policy behind forge write restrictions | Accepted |
 | [0009](0009-speculative-batching.md) | Test a speculative chain of batches with an adaptive window | Accepted |
+| [0010](0010-agent-provenance.md) | Agent provenance in queue policy and audit | Proposed |
 | [0011](0011-cross-repository-dependent-changes.md) | Cross-repository dependent changes | Proposed |
 
 ## Writing a new ADR
