@@ -15,7 +15,7 @@ An ADR records one significant decision: the context that forced it, what we cho
 | [0009](0009-speculative-batching.md) | Test a speculative chain of batches with an adaptive window | Accepted |
 | [0010](0010-agent-provenance.md) | Agent provenance in queue policy and audit | Accepted |
 | [0011](0011-cross-repository-dependent-changes.md) | Cross-repository dependent changes | Accepted |
-| [0012](0012-hosted-service-architecture.md) | Hosted service architecture | Proposed (Inert) |
+| [0012](0012-hosted-service-architecture.md) | Hosted service architecture | Accepted |
 
 ## Writing a new ADR
 
