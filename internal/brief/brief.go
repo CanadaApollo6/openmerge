@@ -42,6 +42,8 @@ type Fact struct {
 	Classification    *cp.Classification
 	Intent            *Intent
 	ApprovalsRequired bool
+	// DeclarationDigest is present only on an internally opted-in ADR 0010 brief.
+	DeclarationDigest string `json:",omitempty"`
 	Obligations       []Obligation
 }
 
@@ -182,7 +184,7 @@ func canonicalPool(p cp.IdentitySet) cp.IdentitySet {
 
 // Canonical returns compact UTF-8 Go encoding/json with fixed struct order and
 // sorted map keys. Domain, null/empty rules and ordering are specified in README.
-// No mutable approval progress or provenance-only field enters these bytes.
+// No mutable approval progress or governing-config object identity enters these bytes.
 func Canonical(f Fact) ([]byte, error) {
 	if f.Classification == nil || !f.Classification.Inputs.Recorded() || f.Intent == nil || !f.Intent.Recorded || f.Intent.Digest != cp.IntentDigest(f.Intent.Title, f.Intent.Body) {
 		return nil, fmt.Errorf("brief evidence not recorded or intent inconsistent")
@@ -265,13 +267,22 @@ func Canonical(f Fact) ([]byte, error) {
 		return a.Cause == b.Cause && a.Path == b.Path && a.Side == b.Side && a.Requirement == b.Requirement &&
 			(a.RuleIndex == nil && b.RuleIndex == nil || a.RuleIndex != nil && b.RuleIndex != nil && *a.RuleIndex == *b.RuleIndex)
 	})
+	version := Version
+	if f.DeclarationDigest != "" {
+		raw, err := hex.DecodeString(f.DeclarationDigest)
+		if err != nil || len(raw) != sha256.Size || hex.EncodeToString(raw) != f.DeclarationDigest {
+			return nil, fmt.Errorf("invalid declaration digest")
+		}
+		version = "openmerge/brief/provenance-v1"
+	}
 	return json.Marshal(struct {
 		Version           string
 		Classification    cp.Classification
 		IntentDigest      string
 		ApprovalsRequired bool
 		Requirements      []requirement
-	}{Version, c, f.Intent.Digest, f.ApprovalsRequired, obligations})
+		DeclarationDigest string `json:",omitempty"`
+	}{version, c, f.Intent.Digest, f.ApprovalsRequired, obligations, f.DeclarationDigest})
 }
 func compare(a, b string) int {
 	if a < b {
