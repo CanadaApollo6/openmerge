@@ -45,6 +45,15 @@ type State struct {
 	observations   map[string]observationProjection
 }
 
+// VerifyBinding fences full replay against independently verified startup facts,
+// just as DecodeSnapshot does. An uninitialized state cannot authorize work.
+func (s State) VerifyBinding(expected JournalInitialized) error {
+	if s.initialization == nil {
+		return ErrOutOfScope
+	}
+	return s.initialization.VerifyBinding(expected)
+}
+
 func cloneDeclaration(d declarationProjection) declarationProjection {
 	d.Event.Hold.Editors = slices.Clone(d.Event.Hold.Editors)
 	d.Event.Edges = slices.Clone(d.Event.Edges)

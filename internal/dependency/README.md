@@ -1,7 +1,9 @@
-# Dependency candidates (ADR 0011 slices 1–2, Inert)
+# Dependency candidates (ADR 0011 slices 1–3, Inert)
 
-This package is not imported by production code. It accepts immutable supplied
-facts and performs no network, forge, database, journal or filesystem reads.
+This package is not imported by production code. Its pure core accepts immutable
+supplied facts. Slice 3 adds explicit unwired forge acquisitions exercised only
+through fake contracts and HTTP fixtures; there are no database, journal or
+filesystem reads.
 It adds no public configuration or planner gate. Slice 2 supplies a separate,
 unwired codec for new event kinds; the deployed queue/store codecs are untouched.
 A structurally valid graph grants no permission to test, enqueue or land.
@@ -329,3 +331,84 @@ state. ADR 0009 dogfood period B drain remains the activation prerequisite.
 - `TestNewKindsAreNotRuntimeQueueEvents` and `TestNoProductionDependencyImports`
   guard the unwired boundary and old-reader refusal. Candidate schema tests
   still prove that the public loader rejects dependency configuration.
+
+## Slice 3 scoped acquisition and reconciliation (Inert)
+
+`ObserveEdge` is an explicit, unwired acquisition boundary. It requires trusted
+queue-command evidence for an enqueued consumer before any permission or graph
+read; neither PR text nor App visibility grants admission. It checks the
+consumer's authenticated declarer against a fresh per-user permission response
+on the source repository before requesting the source lifecycle/body. The same
+operation runs independently at binding, work preparation and landing-start;
+no stage reuses the prior stage's permission. `WriteGrant.CanRead` evaluates the
+identity-bound response at read level, including triage/read, without changing
+`CanWrite` or any existing permission caller.
+
+The optional `forge.DependencyReader` and fake/GitHub adapters are not called by
+production. GitHub consumes one fresh PR response, rejecting missing identity,
+head, base, body, state or merged fields (including a missing false boolean).
+The observer compares stable repository/PR IDs and the retained queue/change
+binding. A retarget diagnoses the old binding rather than following the new
+change. Closed-unmerged and externally merged sources block. Only supplied
+settled OpenMerge evidence plus ancestry at the exact freshly observed base can
+produce `landed`; a merged flag or matching head cannot. Historical landed
+revision/head is retained separately from the revision-less binding baseline.
+Ancestry and settled-journal acquisition remain supplied contracts, not a new
+production reader. They must be revalidated/fenced by slice 4's start protocol.
+
+`ReadEvidence` returns the declarer, ID-bound source grant/read ID, read stage,
+declaration basis, read sequence/CAS, actual observed revision/base and typed
+reason for trusted persistence/planner callers. A binding read operates on a
+prospective declaration; it must complete before that declaration is committed.
+A future store adapter must assign/check its final declaration event basis and
+persist grant evidence in a **new** companion kind. This slice adds no event
+fields, codec kinds or runtime emission. Acquisition alone grants no permission
+to test or land. Failed reads produce unavailable observations with the retained
+baseline, never inferred fresh source facts or a reusable prior success.
+
+`ScopedObservation` defaults to generic JSON. `View` accepts separately recorded
+complete audience grants; one missing, unknown, mismatched or denied reader
+returns exactly `Dependency cannot be verified`, without typed codes, source
+facts or a success signal, across all source states. `Evidence` is explicitly
+for authorized internal adapters and must not be rendered or logged publicly.
+This fixes the acquisition contract; the complete status renderer and scoped
+audit export remain slice 5. Rendering performs no forge reads.
+
+`ReconcileEdges` accepts exactly the current declaration's edge set and checks
+its basis before I/O. Read failures affect their own edge, and Apply's existing
+CAS/read-sequence fence rejects delayed successes. `RebuildReverse` derives
+sorted direct-consumer wakes from replay/snapshot facts, including unqueued
+sources. An absent or outdated index is an error, never an empty-graph proof.
+`PollDeclarations` independently enumerates dependency-bearing declarations so
+missed wakes are repaired through ordinary polling and start-time rereads.
+Neither wakes nor polling enqueue sources. Runtime scheduling, durable replay
+binding and declaration/graph authorization must remain mandatory when wired;
+`State.VerifyBinding` now provides the full-replay identity fence.
+
+Both permission and scoped source reads use the existing per-installation
+transport, conditional revalidation and quota/backoff accounting. They downgrade
+settlement priority even when called from a landing-start context. The final
+10% remains reserved for settlement; no second budget or central scheduler is
+introduced. Runtime poll scheduling remains unwired.
+
+Proofs:
+
+- `TestDependencyObservationContract` runs the same `dependencytest.Run` against
+  `forge/fake` and the GitHub HTTP fixture. It covers read-level grants, denial,
+  identity mismatch, fresh revocation at all three stages, closure, source
+  retargeting, merged flags, scope, superseded pins, settled/on-base evidence,
+  failed/partial reads, writer-command admission and mixed-audience redaction.
+- `TestDependencyHTTPMissingFieldsFailClosed` rejects partial HTTP observations.
+- `TestDependencyReadsPreserveInstallationSettlementReserve` charges permission
+  and source reads, blocks both at the final 10% even with settlement context,
+  preserves another installation's capacity, and admits actual settlement.
+- `TestReverseWakesRestartAndPollingRepair`,
+  `TestReverseWakesSortedConsumersAndRemovedEdges`, and
+  `TestReconcilePartialReadsAndDelayedSuccess` prove reverse-index rebuilding,
+  polling without a wake, exact complete edge sets, partial-read isolation and
+  delayed-read fencing.
+- `projection_guards_test.go` closes #174 with direct forged-event, stale-ID,
+  policy-CAS, retarget revocation, warning, editor reset, unheld-ack, snapshot
+  basis/duplicate/order, two-alias sort and full-replay binding tests. Each
+  associated guard was disabled locally and its focused test failed; the PR body
+  records all 16 mutations. The original guards were restored before validation.
