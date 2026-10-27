@@ -1,0 +1,221 @@
+[
+  {
+    "Kind": "base_moved",
+    "SnapshotSHA256": "8dc87343a32bf276c916381401611d3dd06d838d75af08e9c51a37a20f714051",
+    "Actions": [],
+    "StatusSHA256": "e07eef29682a28fe44027d0e974d299d8905b0b61942abb381183f3051e0d5b6"
+  },
+  {
+    "Kind": "pr_observed",
+    "SnapshotSHA256": "6a508c939f9cd417023f19f55d1c2faef892fbf11828880b577c60120fa01889",
+    "Actions": [],
+    "StatusSHA256": "ea6512e4c1a8c61edd9a7904a56b2a73073c95f102041bee8d000bdb0c173652"
+  },
+  {
+    "Kind": "enqueue_requested",
+    "SnapshotSHA256": "d648ea06920c6fb97fa0bab8ffc25ca7b2cb6b0c541d3ac8e5485539d7134562",
+    "Actions": [
+      {
+        "version": 1,
+        "type": "build_test_ref",
+        "data": {
+          "batch_id": "b1",
+          "base_sha": "base",
+          "prs": [
+            {
+              "pr": 1,
+              "head_sha": "head"
+            }
+          ],
+          "ref": "openmerge/queue/main/b1",
+          "method": "merge"
+        }
+      }
+    ],
+    "StatusSHA256": "54fd619ce0d4040476084947e576b6211fe1223b9133c2ca2e6b69cb596f835a"
+  },
+  {
+    "Kind": "batch_started",
+    "SnapshotSHA256": "0c129e8401d6493b5929fe28334fd1b43ac646e86c951fa65f3d4199b23f08a3",
+    "Actions": [
+      {
+        "version": 1,
+        "type": "build_test_ref",
+        "data": {
+          "batch_id": "b1",
+          "base_sha": "base",
+          "prs": [
+            {
+              "pr": 1,
+              "head_sha": "head"
+            }
+          ],
+          "ref": "openmerge/queue/main/b1",
+          "method": "merge"
+        }
+      }
+    ],
+    "StatusSHA256": "f72e7107ede838fc748cf60d19e6eca3db757c9dd3292991f55f5d1746d7a7b1"
+  },
+  {
+    "Kind": "test_ref_built",
+    "SnapshotSHA256": "32eb5770ee4d4dbd9a4ff27817c70c7e44a57375c3c8e1eb28d8730b2184037a",
+    "Actions": [
+      {
+        "version": 1,
+        "type": "build_test_ref",
+        "data": {
+          "batch_id": "b1",
+          "base_sha": "base",
+          "prs": [
+            {
+              "pr": 1,
+              "head_sha": "head"
+            }
+          ],
+          "ref": "openmerge/queue/main/b1",
+          "method": "merge"
+        }
+      }
+    ],
+    "StatusSHA256": "8bc53ead0d429da329ca0031694560efc0419a1dd781f7073f2262720d38a67b"
+  },
+  {
+    "Kind": "checks_completed",
+    "SnapshotSHA256": "2c34be381336d7d95a60c446d7492381e869c1e83365d5a2b61f6e7d7077105b",
+    "Actions": [
+      {
+        "version": 1,
+        "type": "build_test_ref",
+        "data": {
+          "batch_id": "b1",
+          "base_sha": "base",
+          "prs": [
+            {
+              "pr": 1,
+              "head_sha": "head"
+            }
+          ],
+          "ref": "openmerge/queue/main/b1",
+          "method": "merge"
+        }
+      }
+    ],
+    "StatusSHA256": "1e0b0d0dbb5c6624a670ae4e0b6aaa29d56f266de3848d2e5a16bc2526a52bb1"
+  },
+  {
+    "Kind": "pr_observed",
+    "SnapshotSHA256": "17de342bc5eccdc649da20d402a0835c31d3adedaa3a29dc2ddb9837a8d44614",
+    "Actions": [
+      {
+        "version": 1,
+        "type": "build_test_ref",
+        "data": {
+          "batch_id": "b1",
+          "base_sha": "base",
+          "prs": [
+            {
+              "pr": 1,
+              "head_sha": "head"
+            }
+          ],
+          "ref": "openmerge/queue/main/b1",
+          "method": "merge"
+        }
+      }
+    ],
+    "StatusSHA256": "0433b2ae0f4468bcc2f5c496fb0f115616f666794f0b298e3e99ba9c4fe9d130"
+  },
+  {
+    "Kind": "enqueue_requested",
+    "SnapshotSHA256": "f4cf2f8464381f6b2548c41ae7616da026be7fcea44a432ab7486cb516c5f831",
+    "Actions": [
+      {
+        "version": 1,
+        "type": "build_test_ref",
+        "data": {
+          "batch_id": "b1",
+          "base_sha": "base",
+          "prs": [
+            {
+              "pr": 1,
+              "head_sha": "head"
+            }
+          ],
+          "ref": "openmerge/queue/main/b1",
+          "method": "merge"
+        }
+      }
+    ],
+    "StatusSHA256": "7707e0fe166c5ca249c5795ed8e05a2cca366ecb1378c7ac3ef6c3fb3a779b8c"
+  },
+  {
+    "Kind": "landing_started",
+    "SnapshotSHA256": "f4c144e743445e3d4c34133c40f03a4dc841259b2b333110ecf64f7a335094c8",
+    "Actions": [
+      {
+        "version": 1,
+        "type": "build_test_ref",
+        "data": {
+          "batch_id": "b1",
+          "base_sha": "base",
+          "prs": [
+            {
+              "pr": 1,
+              "head_sha": "head"
+            }
+          ],
+          "ref": "openmerge/queue/main/b1",
+          "method": "merge"
+        }
+      }
+    ],
+    "StatusSHA256": "05514fb43fe6a3d041fe73292dd6fc08a75a10d012e7440386e5198a19d536d1"
+  },
+  {
+    "Kind": "landed",
+    "SnapshotSHA256": "a0f666d4cbd7a241a7c47644901a592380f4bb34b43ac8d0750ee33d7ff09bcb",
+    "Actions": [
+      {
+        "version": 1,
+        "type": "build_test_ref",
+        "data": {
+          "batch_id": "b1",
+          "base_sha": "base",
+          "prs": [
+            {
+              "pr": 1,
+              "head_sha": "head"
+            }
+          ],
+          "ref": "openmerge/queue/main/b1",
+          "method": "merge"
+        }
+      }
+    ],
+    "StatusSHA256": "b06308b415d047b4c33f5d182af47ae7a8f9e4ddf458b55fb183ddf5ac4d0d2e"
+  },
+  {
+    "Kind": "pr_observed",
+    "SnapshotSHA256": "6521a135b4079037bfa392b274f8be69aaf4d0c19308696c5c142bdae319157f",
+    "Actions": [
+      {
+        "version": 1,
+        "type": "build_test_ref",
+        "data": {
+          "batch_id": "b1",
+          "base_sha": "base",
+          "prs": [
+            {
+              "pr": 1,
+              "head_sha": "head"
+            }
+          ],
+          "ref": "openmerge/queue/main/b1",
+          "method": "merge"
+        }
+      }
+    ],
+    "StatusSHA256": "22f4a36a3f34a976975dd74ab9cc3b8b093bfbb30a88b2dceba8f5cef6ef0411"
+  }
+]

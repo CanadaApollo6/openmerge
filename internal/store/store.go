@@ -509,25 +509,8 @@ func load(ctx context.Context, tx pgx.Tx, q QueueID) (queue.State, int64, error)
 	if err := tx.QueryRow(ctx, `SELECT base, COALESCE(initial_fence, '') FROM queues WHERE id = $1`, q).Scan(&state.BaseBranch, &state.Fence); err != nil {
 		return state, 0, err
 	}
-	rows, err := tx.Query(ctx, `SELECT id, payload FROM events
-		WHERE queue_id = $1 ORDER BY id`, q)
-	if err != nil {
-		return state, 0, err
-	}
-	defer rows.Close()
-	var watermark int64
-	for rows.Next() {
-		var payload []byte
-		if err := rows.Scan(&watermark, &payload); err != nil {
-			return state, 0, err
-		}
-		event, err := queue.DecodeEvent(payload)
-		if err != nil {
-			return state, 0, fmt.Errorf("event %d: %w", watermark, err)
-		}
-		state = queue.Apply(state, event)
-	}
-	return state, watermark, rows.Err()
+	r, watermark, err := replayJournal(ctx, tx, q, state, 0)
+	return r.Queue, watermark, err
 }
 
 // PlannedAction pins an intended effect to its historical event watermark.

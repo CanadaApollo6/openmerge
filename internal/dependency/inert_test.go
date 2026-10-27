@@ -33,6 +33,9 @@ func TestNoProductionDependencyImports(t *testing.T) {
 			if err != nil {
 				return err
 			}
+			if strings.Contains(filepath.ToSlash(path), "internal/journalreader/") || strings.HasSuffix(filepath.ToSlash(path), "internal/store/shared_reader.go") {
+				continue
+			}
 			if value == "github.com/CanadaApollo6/openmerge/internal/dependency" {
 				t.Errorf("runtime dependency import in %s", path)
 			}

@@ -2557,3 +2557,95 @@ different owner. This routine does not establish independent custody.
 
 Keep frozen bundles and captured stdout/stderr private as described above.
 No repository, key, schedule or live service is created by this change.
+
+## Shared reader retention recovery
+
+The shared reader migration (ADR 0010 slice 3c / ADR 0011) is **Hold**. Deploy
+only after ADR 0009 period B drains. This change installs readers only: it cannot
+append provenance/dependency events. Only derived audit cursors that have entered
+the side-evidence era persist composed v9 snapshots. Audit v2 remains a
+separate ADR 0010 slice 3b PR. Before enabling any writer slice, deploy both the
+shared readers and v2 export support everywhere, drain every older worker and
+reader, verify legacy and new snapshot-plus-tail replay, and take and verify a
+whole-database pre-emission backup. This PR alone does not complete that rollout.
+
+Provenance retains at most **4096 records** and **32 MiB of canonical event
+payloads** per queue. A partial inventory chunk consumes one record. Replay
+returns a typed `journal.RetentionLimitError` (also `errors.Is(err, ErrLimit)`),
+including counts and this recovery link, before discarding any evidence or
+publishing a partially validated state. Oversized v9 record collections also
+return that typed error. Dependency's existing bounded active projections remain
+unchanged. Legacy journals do not acquire the provenance record bound.
+
+**BLOCKING before any writer is enabled:** implement reviewed pruning/compaction
+with audit export/reference closure, and have writers preflight the complete
+append below both caps so replay never encounters the limit. At three records
+per single-member successful attempt (inventory, tested, landed), 1,365 attempts
+consume 4,095 records; attempt **1,366** reaches 4,096 at its inventory and fails
+at its tested companion. Larger inventories, retries or the byte cap exhaust the
+budget sooner. There is no automatic compaction today.
+
+**BLOCKING writer-slice requirement — legacy-cursor prefix invariant:** a
+legacy-format cursor (v6/v7 snapshot in the unchanged legacy envelope) certifies
+that its journal prefix contains **no side-evidence kinds**. In the same
+transaction as the first side-evidence append for a queue, or before it, the
+writer MUST upgrade that queue's cursor to the composed v9 format. The upgrade
+must preserve its watermark, outside-move bookkeeping and complete folded state;
+it must coordinate with cursor compare-and-swap so a concurrent legacy audit
+cannot undo it. This obligation is separate from pruning/compaction and preflight.
+
+Legacy cursors scan only the bounded suffix, with no prefix probe, upgrade
+rebuild or process-memory certificate. A side event encountered in the suffix
+switches the durable snapshot to v9; v9 resumes both side projections thereafter.
+The complete serialized cursor remains byte-identical to main for legacy-only
+queues, including its envelope. After side evidence exists, that queue crosses
+the format boundary and legacy byte identity no longer applies. No side-event
+writer or snapshot-table writer is enabled here. Rollback after emission still
+requires the verified pre-emission backup and external-effect reconciliation;
+an older binary rewriting a v9 cursor as legacy violates this invariant and is
+not a supported rollback path.
+
+If this limit is encountered, stop new emission for the affected queue and keep
+its immutable journal and snapshots intact. Retain a verified whole-database
+backup. Deploy a compatible reader with a separately reviewed retention/export
+closure implementation (or a reviewed, resource-budgeted higher bound), then
+replay the retained journal and verify its results before resuming. Restarting,
+clearing a cache, deleting old events, or turning off policy cannot repair a full
+replay over this bound. Do not roll back to an older binary after emission;
+rollback past the boundary requires the verified pre-emission backup and
+reconciliation of subsequent external effects, as specified in ADRs 0010/0011.
+
+Dependency projections decoded without independently verified database identity
+and incarnation are quarantined. They can be replayed for compatibility but the
+shared reader's `Dependencies` accessor refuses them. A snapshot cannot supply
+its own trust binding. The future startup/writer integration must supply the
+operator-verified binding before dependency satisfaction is exposed; no live
+policy or satisfaction path is enabled here.
+
+### Invalid records and unresolved references
+
+An invalid record or unresolved/mismatched reference stops `Load` for its queue.
+`/status` and `Journals` also fail for **every queue in the same requested key
+set**: they do not publish partial results or quarantine just the offending row.
+This is a real availability risk comparable to the **2026-10-16 wedge**. Every
+future writer slice must validate complete candidate records, reference targets,
+batch-wide identities and capacity before append, in the transaction/snapshot
+that fences its write. Reader rejection is not an acceptable write-time check.
+
+On failure, stop emission for the affected queue and record the queue ID, event
+position and error. Keep immutable events, snapshots, logs and a verified
+whole-database backup. Reproduce replay against an isolated restored copy and
+identify whether the producer wrote invalid evidence or the reader has a bug.
+Recovery requires a reviewed compatible **code fix or restore**; immutable events
+cannot be edited in place. Test the fix with full replay and snapshot-plus-tail
+reads, including the combined reporting key set, before deployment and resuming
+emission. A restore requires stopped workers, retaining post-backup evidence,
+token rotation and reconciliation of actual remote refs/subsequent landings under
+ADRs 0010/0011. Restarting, clearing caches, disabling configuration, skipping or
+deleting a bad record does not repair history.
+
+The shared-reader AST writer guard is a **tripwire**, not proof of writer absence.
+It checks production Go imports/calls and individual raw string literals for new
+kind names; it does not catch string concatenation, `.sql` files or `_test.go`
+files. Only `journalreader/snapshot.go` may compose v8/v9 for derived audit
+cursors. Review every future persistence path independently.

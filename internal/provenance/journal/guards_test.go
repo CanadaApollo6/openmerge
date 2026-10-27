@@ -263,6 +263,11 @@ func TestRetainedRecordCap(t *testing.T) {
 	h.Request.Generation = "overflow"
 	h.Digest = InventoryDigest(h, h.Commits)
 	rejectUnchanged(t, s, maxRecords+1, h, ErrLimit)
+	_, limitErr := Apply(s, maxRecords+1, h)
+	var limit RetentionLimitError
+	if !errors.As(limitErr, &limit) || limit.Records != maxRecords+1 || !strings.Contains(limitErr.Error(), "shared-reader-retention-recovery") {
+		t.Fatal("missing typed operator recovery", limitErr)
+	}
 	// Also pin the wrapper's early count limit separately from Apply's cap.
 	raw := snapshotBytes(t, []byte(`{"Version":6}`), s)
 	decoded, err := DecodeSnapshot(raw, func(string, []byte) error { return nil })
@@ -283,7 +288,65 @@ func TestRetainedRecordCap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := DecodeSnapshot(raw, func(string, []byte) error { return nil }); !errors.Is(err, ErrMalformed) {
+	if _, err := DecodeSnapshot(raw, func(string, []byte) error { return nil }); !errors.Is(err, ErrLimit) {
 		t.Fatal("snapshot record cap not enforced before fold", err)
 	}
+}
+
+func TestLandingDeclarationDigestBoundToInventory(t *testing.T) {
+	h, _ := fixture(t)
+	s := apply(t, State{}, 3, h)
+	l := landing(h, []uint64{3})
+	l.Members[0].DeclarationDigest = strings.Repeat("f", 64)
+	l.Members[0].RecordDigest = MemberDigest(l.Members[0])
+	rejectUnchanged(t, s, 11, l, ErrBinding)
+}
+
+func TestTestedLandedBatchMismatch(t *testing.T) {
+	h, _ := fixture(t)
+	l := landing(h, []uint64{3})
+	s := apply(t, apply(t, State{}, 3, h), 11, l)
+	l.Stage, l.BatchID = "landed", "other-batch"
+	l.Members[0].Mapping.Build.Stage = "landed"
+	l.Members[0].Mapping.Build.ID = "composition-L"
+	l.Members[0].RecordDigest = MemberDigest(l.Members[0])
+	rejectUnchanged(t, s, 13, l, ErrBinding)
+}
+
+func TestInventoryUnionCoversEveryOriginal(t *testing.T) {
+	h, c := fixture(t)
+	h.Stable = []string{}
+	h.Digest = InventoryDigest(h, c)
+	rejectUnchanged(t, State{}, 3, h, ErrBinding)
+}
+
+func TestMappingCannotMapOriginalToMarker(t *testing.T) {
+	h, _ := fixture(t)
+	l := landing(h, []uint64{3})
+	l.Members[0].Mapping.Build.Marker = l.Members[0].Mapping.Commits[0].Build
+	l.Members[0].RecordDigest = MemberDigest(l.Members[0])
+	rejectUnchanged(t, apply(t, State{}, 3, h), 11, l, ErrBinding)
+}
+
+func TestLayerReferenceEqualToOwnPosition(t *testing.T) {
+	h, _ := fixture(t)
+	l := landing(h, []uint64{3})
+	l.Members[0].Layers[0].References = []uint64{11}
+	l.Members[0].RecordDigest = MemberDigest(l.Members[0])
+	rejectUnchanged(t, apply(t, State{}, 3, h), 11, l, ErrBinding)
+}
+
+func TestAssembledCommitSortOrder(t *testing.T) {
+	h, c := fixture(t)
+	c[0], c[1] = c[1], c[0]
+	h.Digest = InventoryDigest(h, c)
+	cc := chunks(h, c) // Each chunk is sorted; only the assembled-order guard fires.
+	rejectUnchanged(t, apply(t, State{}, 3, cc[0]), 5, cc[1], ErrBinding)
+}
+
+func TestChunkCommitSortOrder(t *testing.T) {
+	h, c := fixture(t)
+	c[0], c[1] = c[1], c[0]
+	h.Digest = InventoryDigest(h, c)
+	rejectUnchanged(t, State{}, 3, h, ErrMalformed)
 }

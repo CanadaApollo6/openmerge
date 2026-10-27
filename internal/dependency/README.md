@@ -265,9 +265,10 @@ wired here. Normal approvals/CI/trust/owner review remain separate.
 `dependency.EncodeSnapshot` returns the existing queue codec's exact bytes when
 there is no dependency history. With initialization, it explicitly selects the
 new **v8 wrapper**, embedding the unchanged queue snapshot and bounded side state.
-`dependency.DecodeSnapshot` is the only v8 reader and is unwired. The production
-`queue.SnapshotVersion` (7), its automatic v6/v7 selection and store cursors are
-unchanged. The wrapper supports existing v2–v7 queue decoding through delegation;
+`dependency.DecodeSnapshot` supplies the v8 reader through `journalreader`. The
+production `queue.SnapshotVersion` (7), its automatic v6/v7 selection and complete
+legacy-only store cursors are unchanged. Side-era audit cursors nest this v8
+wrapper inside v9. The wrapper supports v2–v7 queue decoding through delegation;
 it does not turn on general persistence, retention or compaction.
 
 The wrapper preserves #163's `HeldRequests` and cached
@@ -276,8 +277,9 @@ legacy version number makes those fields readable by pre-#163 strict readers.
 The first new event or persisted v8 wrapper crosses a further binary rollback
 boundary. Apply **3c-style reader-first rollout**: deploy explicit compatible
 readers everywhere, drain all incompatible workers/readers, and verify the
-whole-database backup before any emission/persistence is enabled in a later slice.
-This Inert PR enables neither. Removing config does not erase history. Rollback
+whole-database backup before side-event emission is enabled in a later slice.
+This Hold migration enables only composed audit-cursor persistence after the
+format boundary, never event emission. Removing config does not erase history. Rollback
 requires a compatible reader, or stopped workers, retained later evidence, the
 tested pre-emission backup, token rotation and reconciliation of actual remote
 refs/subsequent landings. Never delete/skip new records or blindly resume restored
@@ -412,3 +414,51 @@ Proofs:
   basis/duplicate/order, two-alias sort and full-replay binding tests. Each
   associated guard was disabled locally and its focused test failed; the PR body
   records all 16 mutations. The original guards were restored before validation.
+
+The shared reader migration now composes this codec through
+`internal/journalreader` (Hold; see provenance's README). Production code still
+cannot append dependency events; v8 is encoded only inside composed v9 audit
+cursors after the format boundary. Unverified namespace and
+incarnation projections remain quarantined, never satisfied dependencies; the
+future startup/writer integration must supply independently verified identity.
+
+
+## Shared-reader writer blockers
+
+**BLOCKING before any writer is enabled:** implement reviewed pruning/compaction
+with provenance audit export/reference closure. Writers must preflight complete
+appends below both caps so replay never hits the cap. The provenance cap is 4096
+records/32 MiB: at three records per single-member attempt, 1,365 attempts use
+4,095 records and attempt **1,366** fails at its tested companion. Larger
+inventories/retries or the byte cap can fail sooner; compaction is not automatic.
+
+**BLOCKING writer-slice requirement — legacy-cursor prefix invariant:** a
+legacy-format cursor (v6/v7 snapshot in the unchanged legacy envelope) certifies
+that its journal prefix contains **no side-evidence kinds**. In the same
+transaction as the first side-evidence append for a queue, or before it, the
+writer MUST upgrade that queue's cursor to the composed v9 format. The upgrade
+must preserve its watermark, outside-move bookkeeping and complete folded state;
+it must coordinate with cursor compare-and-swap so a concurrent legacy audit
+cannot undo it. This obligation is separate from pruning/compaction and preflight.
+
+Legacy cursors scan only the bounded suffix, with no prefix probe, upgrade
+rebuild or process-memory certificate. A side event encountered in the suffix
+switches the durable snapshot to v9; v9 resumes both side projections thereafter.
+The complete serialized cursor remains byte-identical to main for legacy-only
+queues, including its envelope. After side evidence exists, that queue crosses
+the format boundary and legacy byte identity no longer applies. No side-event
+writer or snapshot-table writer is enabled here. Rollback after emission still
+requires the verified pre-emission backup and external-effect reconciliation;
+an older binary rewriting a v9 cursor as legacy violates this invariant and is
+not a supported rollback path.
+
+Invalid records or unresolved references abort queue `Load` and fail `/status`
+and `Journals` for every queue in the requested key set. Events are immutable;
+recovery requires a code fix or restore. This availability risk is comparable to
+the 2026-10-16 wedge: writers must validate before append. Follow the
+[operator procedure](../../docs/operating.md#invalid-records-and-unresolved-references).
+
+The AST writer guard is a **tripwire**, not proof of writer absence: it does not
+catch string concatenation, `.sql` files or `_test.go` files. The only allowed
+production v8/v9 composer serves derived audit cursors; review any new
+persistence adapter independently.

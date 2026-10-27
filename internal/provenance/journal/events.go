@@ -1,5 +1,5 @@
-// Package journal defines inert ADR 0010 event contracts and pure replay.
-// No live journal reader, writer, queue, or store imports this package.
+// Package journal defines ADR 0010 event contracts and pure replay.
+// Production use is read-only through internal/journalreader.
 package journal
 
 import (
@@ -31,6 +31,16 @@ var (
 	ErrBinding    = errors.New("provenance generation binding mismatch")
 	ErrIncomplete = errors.New("incomplete provenance inventory")
 )
+
+// RetentionLimitError refuses replay without silently discarding evidence needed
+// by audit closure. Recovery requires a compatible reader with reviewed retention;
+// deleting events or resetting cursors cannot recover a full replay.
+type RetentionLimitError struct{ Records, Bytes int }
+
+func (e RetentionLimitError) Error() string {
+	return fmt.Sprintf("provenance retention limit: records=%d (max %d), bytes=%d (max %d); stop writers and deploy a compatible reader with reviewed retention; see docs/operating.md#shared-reader-retention-recovery", e.Records, maxRecords, e.Bytes, maxSnapshotBytes/2)
+}
+func (RetentionLimitError) Unwrap() error { return ErrLimit }
 
 // Event contains only new kinds. It is deliberately separate from queue.Event.
 type Event interface {

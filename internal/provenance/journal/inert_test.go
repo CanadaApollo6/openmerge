@@ -33,6 +33,9 @@ func TestNoRuntimeProvenanceJournalImports(t *testing.T) {
 			if err != nil {
 				return err
 			}
+			if strings.Contains(filepath.ToSlash(path), "internal/journalreader/") || strings.HasSuffix(filepath.ToSlash(path), "internal/store/shared_reader.go") {
+				continue
+			}
 			if value == "github.com/CanadaApollo6/openmerge/internal/provenance/journal" {
 				relative, err := filepath.Rel("../../..", path)
 				if err != nil {

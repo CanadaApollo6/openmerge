@@ -24,7 +24,7 @@ type JournalEvent struct {
 	ID         int64
 	RecordedAt time.Time
 	Payload    json.RawMessage
-	Event      queue.Event
+	Event      queue.Event // nil for side evidence; Payload retains its envelope
 	DedupeKey  *string
 }
 
@@ -66,14 +66,22 @@ func (s *Store) journals(ctx context.Context, keys []QueueKey, warnings bool) ([
 				if err := row.Scan(&e.ID, &e.RecordedAt, &e.Payload, &e.DedupeKey); err != nil {
 					return e, err
 				}
-				e.Event, err = queue.DecodeEvent(e.Payload)
-				if _, ok := e.Event.(queue.PolicyAuthorityApplied); ok {
-					journal.HasAuthorityPin = true
-				}
-				return e, err
+				return e, nil
 			})
 			if err != nil {
 				return err
+			}
+			reader := sharedReader(ctx, tx, id, journal.Seed)
+			for i := range journal.Events {
+				event := &journal.Events[i]
+				decoded, err := reader.Apply(uint64(event.ID), event.Payload)
+				if err != nil {
+					return err
+				}
+				event.Event = decoded.Queue
+				if _, ok := event.Event.(queue.PolicyAuthorityApplied); ok {
+					journal.HasAuthorityPin = true
+				}
 			}
 			ids = append(ids, id)
 			result = append(result, journal)
