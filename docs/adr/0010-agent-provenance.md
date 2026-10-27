@@ -226,8 +226,8 @@ ordinary approvals can remove an added obligation. Owners must write `when`
 accordingly.
 
 The recommended starting policy for repositories that explicitly opt in requires
-one human approval from the repository's ordinary reviewer pool whenever any
-source commit declares agent work, including mixed commits:
+one eligible human approval whenever any source commit declares agent work,
+including mixed commits:
 
 ```yaml
 provenance:
@@ -237,11 +237,18 @@ provenance:
         approvals: {human: true, count: 1}
 ```
 
-Apply ADR 0007's eligibility exclusions: the approver cannot be the change's
-author, submitter, or any accountable human. An eligible baseline human approval
-can also satisfy this rule; no distinct reviewer across pools is required.
+`{human: true, count: 1}` selects any human with write permission who is eligible
+under ADR 0007, excluding the change's author, submitter, and every accountable
+human; a repository may instead name a specific group. An eligible baseline
+human approval can also satisfy this rule; no distinct reviewer across pools
+is required.
 In practice this adds human review only where the baseline has none. Nothing
-is enabled by default, including this starting policy.
+is enabled by default, including this starting policy. In a single-writer
+repository whose only writer is the accountable human for their own agent
+commits, these exclusions leave no eligible approver and the rule blocks
+indefinitely. Such repositories should not enable this agent-review rule unless
+they add a second reviewer eligible under ADR 0007; there is no self-approval
+exception.
 
 When the later resolver ships, checkpoints are optional audit evidence first.
 Enforcing `checkpoint-present` requires a later explicit per-repository opt-in.
@@ -655,9 +662,14 @@ Riel St. Amand (`CanadaApollo6`) accepted all recommendations on 2026-10-27:
 
 1. Accept the separate additive `provenance.requirements` section and the neutral
    `Agent-Session: <source>:<session-id>` trailer format specified above.
-2. Recommend one human approval from the repository's ordinary reviewer pool
-   for any agent-declared source commit, including mixed commits. Apply ADR 0007's
-   exclusions for the change's author, submitter, and all accountable humans.
+2. Recommend one approval from any eligible human with write permission
+   for any agent-declared source commit, including mixed commits; a repository
+   may instead name a specific group. Apply ADR 0007's exclusions for the change's
+   author, submitter, and all accountable humans. In a single-writer repository
+   whose only writer is the accountable human for their own agent commits, no
+   eligible approver remains and the rule blocks indefinitely. Do not enable
+   this agent-review rule unless a second eligible reviewer is added; there is
+   no self-approval exception.
    The same eligible approval may satisfy a baseline human requirement; no
    cross-pool distinctness is required. This adds human review only where the
    baseline has none. Repositories must opt in explicitly; nothing is on by default.
