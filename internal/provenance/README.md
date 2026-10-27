@@ -1,7 +1,8 @@
-# ADR 0010 slice 1 (Inert)
+# ADR 0010 declarations and local inventory (Inert)
 
 This package consumes supplied strings and observations. It has no acquisition,
-network, clock, journal or queue calls. No production package imports it.
+network, clock, journal or queue calls. The unwired local gitops reader imports
+it; live queue execution does not.
 `LoadCandidate` projects `provenance` out and validates the remaining document
 with `config.Load`, following ADR 0008's candidate-only pattern. The public
 loader, public schema, and frozen condition-evidence vocabulary reject these
@@ -9,8 +10,7 @@ additions. Candidate condition parsing retains types on the compiled expression
 without registering new public attributes. Resolver-dependent attributes can be
 compiled here but remain unavailable to public configuration.
 
-The owner's 2026-10-27 acceptance is the authority for this implementation;
-marking the ADR Accepted is a separate docs PR.
+The owner's 2026-10-27 acceptance is the authority for this implementation.
 
 ## Fixed parser choices
 
@@ -21,11 +21,12 @@ message. `IdentityInput.ParsedTrailers` uses that same named type for coauthors.
 The isolated Git adapter is the only intended producer of `GitTrailerOutput`;
 raw message strings require an explicit conversion and must never be supplied.
 No block locator, heuristic threshold, comment skipping or continuation folding
-is implemented here. Git invocation at runtime belongs to slice 2 (inventory);
-no production package calls this API.
+is implemented here. The unwired slice-2 local reader calls this API; live
+queues do not.
 
-The test-only adapter in `internal/gitops/provenance_trailers_test.go` reuses
-`session.run` and `gitEnv`: inherited `GIT_*` variables (including config
+The production `gitops.TrailerParser` adapter in
+`internal/gitops/provenance_parser.go` reuses
+`session.runTo` and `gitEnv`: inherited `GIT_*` variables (including config
 injection) are removed, `GIT_CONFIG_NOSYSTEM=1` disables system config, and
 `GIT_CONFIG_GLOBAL` points to the empty `os.DevNull`. It parses in a fresh bare
 repository initialized with `--template=`, excluding source-repository local
@@ -80,10 +81,10 @@ sessions follow the ADR's exact ASCII grammar. Recognized invalid trailers
 still contribute agent evidence. Values over 161 bytes (the maximum valid
 neutral declaration) retain a SHA-256 and `value_too_long`; invalid UTF-8 retains
 a SHA-256 and `invalid_encoding`. Neither becomes a truncated valid value.
-The slice 2 inventory reader will enforce acquisition and declaration-count
+The slice-2 inventory reader enforces acquisition and declaration-count
 budgets; this string parser makes no completeness claim about truncated input.
 
-### Slice 2 inventory requirements
+### Parser safety requirements
 
 - Produce `GitTrailerOutput` only after a successful isolated Git invocation
   with `--parse --no-divider` and the pinned separator/comment settings above.
@@ -174,3 +175,100 @@ mutable-review trigger which must remain bound. Resolution results, ref tips,
 metadata IDs and current approvals are not accepted by the digest API. Parser
 and classifier policy versions must additionally enter the future effective
 policy digest; existing config/policy digest code and vectors stay unchanged.
+
+## Slice 2 local inventory
+
+`gitops.ReadProvenanceInventory` takes an absolute path to an already-acquired
+bare repository, private scratch parent, pinned `InventoryRequest`, classifier,
+and `InventoryLimits`. It never opens the transport-enabled `Repo` lifecycle.
+`NewTrailerParser` is reusable separately and removes its template-free private
+repository on `Close`. The caller must close it. Inventory and mapping readers
+create and close their own parsers, including on failed reads.
+
+Each request names a repository, queue, change, revision and observation
+generation. `Stable` is `PinnedBase..Head`. `Additional` contains originals in
+`BuildBase..Head` that were absent from `Stable`; `Commits` is their sorted,
+deduplicated union. Both sets of all best merge bases are retained, including
+criss-cross histories. Advancing the build base cannot erase stable originals.
+A rewritten base can add originals without changing the pinned head. Re-pushes
+supply a new revision; a base refresh supplies a new generation. Callers supply
+trusted exact `Excluded` IDs for synthetic markers or other members' originals.
+Contributor trailer spelling never determines exclusions.
+
+The reader walks every parent edge of the three endpoints, with replacements,
+grafts and lazy/network fetching disabled. It follows raw headers, ignoring
+commit-graph acceleration and shallow boundaries. Missing raw ancestors fail the observation. The source repository's
+trailer config and mailmaps cannot affect raw identities or trailer parsing.
+Only normalized declarations are retained. Invalid overlong values remain
+agent evidence with digests, never copied raw values or shortened declarations.
+
+`Policy` records `git version`, parser/classifier versions, the pinned invocation
+and configuration isolation. `PolicyID` is SHA-256 of the compact Go JSON of
+that struct, in field order. Future effective policy identity must include it.
+A different Git version changes the identity even if a particular commit's
+classification happens to stay the same. Identity-rule and requirement policy
+bindings remain the responsibility of the later integration slice.
+
+`DefaultInventoryLimits` fixes ceilings of 1,024 source commits, 16 declarations
+per original, 16,384 visited graph commits, 128 MiB of expanded graph commits,
+1 MiB per entire raw commit, 16 MiB
+of cumulative message bytes, and 30 seconds per local read. Retained parent edges have a separate 4 MiB ceiling; stderr is bounded to 8 KiB.
+Object type and size are checked before every raw object is expanded, including
+base ancestors. The inventory uses an evaluation-local raw-object buffer within
+that same budget, so declaration extraction does not re-expand source commits.
+The buffer is discarded after extraction and never enters returned evidence.
+This avoids an unmetered decompression walk inside `rev-list`. The ADR
+specifies the source/declaration/time ceilings. The separate graph, raw-commit,
+message and parent-edge ceilings resolve its unspecified local-reader budgets.
+Callers must supply positive limits and can only lower them. Traversing complete
+old ancestry can exhaust the graph ceiling even for a small change; this is an
+explicit conservative failure, with no unbounded fallback.
+
+The inventory also retains the effective `Limits` for evidence.
+`Diagnostic` retains only an outcome, resource and optional original object ID.
+It never exposes stderr or message contents. Git failures, missing ancestors,
+external cancellation, malformed commit headers and embedded message NULs yield
+`pending`. Internal work deadlines and exhausted deterministic budgets yield
+terminal `limit_exceeded`. Invalid requests yield `invalid_input`. Failed
+commits retain no partially extracted human declarations. Always pass both
+`Commits` and `Complete` to declaration evaluation. Partial counts are unknown,
+including zero counts and negations, and cannot authorize progress.
+
+## Slice 2 composition evidence and attribution
+
+`gitops.MapProvenanceBuild` takes a complete inventory and a trusted
+`BuildObservation` for one member's local composition. The later composer must
+capture `Replays` at creation time; the current live builder still returns its
+legacy SHA and is unchanged. A replay trailer is never a mapping authority.
+The reader checks actual local graph reachability and composition shape:
+
+- Merge and fast-forward map preserved originals to themselves. A fast-forward
+  test marker is recorded separately and cannot become a contributor.
+- Squash maps newly included originals to that member's generated commit.
+- Rebase requires one explicit original-to-generated pair for every newly
+  replayed original, with no duplicate targets or unrecorded generated commits.
+- Stable originals already reachable from the build base map to themselves.
+  Their declaration obligations remain in the stable inventory.
+
+A mapping retains the request, generation, parser policy identity and composition
+ID. Each rebuild supplies a new composition observation. `tested` and `landed`
+are separate stages, so changed landed compositions never reuse tested identity.
+Batches supply an inventory and observation per member, with that member's
+actual build base; they never pool classifications or counts.
+
+`provenance.RetainAttribution` takes the existing generated trailer block and
+complete original inventory. It adds distinct normalized Entire and neutral
+trailers before the existing authoritative `OpenMerge-*` suffix. It never copies
+reserved contributor trailers. Existing coauthors, sign-offs, suffixes, and every
+line's terminating newline count toward the 64 KiB UTF-8 bound. The one-byte
+lookahead boundary is terminal `limit_exceeded`, returning no partial block.
+Overlong digest-only declarations also fail retention explicitly; invalid UTF-8
+cannot be regenerated as valid text. The inventory classification remains
+available independently of whether a generated attribution block can fit.
+No live commit message changes in this slice.
+
+Real-Git proof lives in `provenance_inventory_test.go`,
+`provenance_mapping_test.go`, and `provenance_attribution_test.go` in gitops.
+The promoted parser retains the full commit-reader differential corpus and
+hostile configuration tests in `provenance_trailers_test.go`. Tests intentionally
+compare the deployed Git binary's own commit reader where 2.55 and 2.56 differ.
