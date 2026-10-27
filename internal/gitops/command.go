@@ -70,7 +70,7 @@ func (s *session) run(ctx context.Context, input string, args ...string) (stdout
 	return out.String(), diagnostic.String(), err
 }
 
-func (s *session) runTo(ctx context.Context, input string, out, diagnostic io.Writer, args ...string) error {
+func (s *session) newCommand(ctx context.Context, args ...string) *exec.Cmd {
 	argv := []string{"-c", "core.hooksPath=" + os.DevNull, "-c", "credential.helper=", "-c", "commit.gpgSign=false", "-c", "gc.auto=0", "-c", "maintenance.auto=false"}
 	if s.diffRead {
 		argv = append(argv, "-c", "core.commitGraph=false")
@@ -102,6 +102,11 @@ func (s *session) runTo(ctx context.Context, input string, out, diagnostic io.Wr
 	if s.authorDate != "" {
 		cmd.Env = append(cmd.Env, "GIT_AUTHOR_DATE="+s.authorDate)
 	}
+	return cmd
+}
+
+func (s *session) runTo(ctx context.Context, input string, out, diagnostic io.Writer, args ...string) error {
+	cmd := s.newCommand(ctx, args...)
 	cmd.Stdin = strings.NewReader(input)
 	cmd.Stdout, cmd.Stderr = out, diagnostic
 	err := cmd.Run()

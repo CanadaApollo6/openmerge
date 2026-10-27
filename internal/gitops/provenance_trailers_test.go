@@ -2,62 +2,50 @@ package gitops
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/CanadaApollo6/openmerge/internal/provenance"
 )
 
-// Slice 1 stays inert: only tests invoke Git for provenance. Reuse the session
-// wrapper's environment isolation, plus a fresh template-free repository so
-// no local trailer.* aliases/config can alter the reference parser's output.
-func provenanceGitParser(t *testing.T) (parse, readCommit func(string) provenance.GitTrailerOutput) {
+// The oracle writes exact message bytes to a real commit and asks Git's
+// independent commit reader for trailers. Only the production adapter produces
+// GitTrailerOutput; the oracle deliberately returns an ordinary string.
+func provenanceGitParser(t *testing.T) (parse func(string) provenance.GitTrailerOutput, readCommit func(string) string) {
 	t.Helper()
-	git, err := exec.LookPath("git")
+	parser, err := NewTrailerParser(t.Context(), t.TempDir())
 	must(t, err)
-	s := &session{r: &Repo{git: git, cfg: Config{Now: time.Now}}}
-	s.dir = filepath.Join(t.TempDir(), "parser.git")
-	_, err = s.command(t.Context(), "", "init", "--bare", "--template=", s.dir)
-	must(t, err)
-	version, err := s.command(t.Context(), "", "--version")
-	must(t, err)
-	t.Log(version)
+	t.Cleanup(func() { must(t, parser.Close()) })
+	s := parser.s
+	t.Log(parser.Policy().GitVersion)
 	tree, err := s.command(t.Context(), "", "mktree")
 	must(t, err)
 	run := func(input string, args ...string) string {
 		t.Helper()
-		pinned := []string{"-c", "trailer.separators=:", "-c", "core.commentChar=#", "-c", "core.commentString=#"}
-		out, diagnostic, err := s.run(t.Context(), input, append(pinned, args...)...)
+		argv := append(append([]string{}, provenanceParserArgs...), args...)
+		out, diagnostic, err := s.run(t.Context(), input, argv...)
 		if err != nil {
-			t.Fatalf("Git trailer adapter: %v: %s", err, diagnostic)
+			t.Fatalf("Git oracle: %v: %s", err, diagnostic)
 		}
 		return out
 	}
-	checkMessage := func(message string) {
-		t.Helper()
-		if strings.ContainsRune(message, '\x00') {
-			t.Fatal("embedded NUL requires an incomplete/pending inventory")
-		}
-	}
 	parse = func(message string) provenance.GitTrailerOutput {
 		t.Helper()
-		checkMessage(message)
-		return provenance.GitTrailerOutput(run(message, "interpret-trailers", "--parse", "--no-divider"))
+		out, err := parser.Parse(t.Context(), message)
+		must(t, err)
+		return out
 	}
-	readCommit = func(message string) provenance.GitTrailerOutput {
+	readCommit = func(message string) string {
 		t.Helper()
-		checkMessage(message)
-		// Write a real commit without commit-tree's message cleanup so the
-		// commit reader sees exactly the same bytes, including CRLF.
+		if strings.ContainsRune(message, 0) {
+			t.Fatal("oracle cannot read embedded NUL")
+		}
 		commit := "tree " + tree + "\nauthor Human <human@example.test> 1 +0000\ncommitter Human <human@example.test> 1 +0000\n\n" + message
 		oid := strings.TrimSpace(run(commit, "hash-object", "-t", "commit", "-w", "--stdin"))
 		out := run("", "log", "-1", "--format=%(trailers:only,unfold)", oid)
-		// Remove only git log's record terminator, preserving trailer bytes.
-		return provenance.GitTrailerOutput(strings.TrimSuffix(out, "\n"))
+		return strings.TrimSuffix(out, "\n")
 	}
 	return parse, readCommit
 }
@@ -73,7 +61,7 @@ func TestProvenanceGitTrailerRegressions(t *testing.T) {
 		// or class, because provenance depends on the deployed Git version.
 		message := "subject\n\nhttps://example.com\nAgent-Session: a:one\n"
 		parsed := parse(message)
-		if reference := readCommit(message); parsed != reference {
+		if reference := readCommit(message); string(parsed) != reference {
 			t.Fatalf("adapter %q != commit reader %q", parsed, reference)
 		}
 		t.Logf("Git trailers: %q", parsed)
@@ -91,7 +79,7 @@ func TestProvenanceGitTrailerRegressions(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			parsed := parse(tc.message)
-			if reference := readCommit(tc.message); parsed != reference {
+			if reference := readCommit(tc.message); string(parsed) != reference {
 				t.Fatalf("adapter %q != commit reader %q", parsed, reference)
 			}
 			if string(parsed) != tc.parsed {
@@ -139,7 +127,7 @@ func TestProvenanceGitTrailerDifferential(t *testing.T) {
 					message := strings.ReplaceAll(prefix+block+suffix, "\n", newline)
 					parsed := parse(message)
 					reference := readCommit(message)
-					if parsed != reference {
+					if string(parsed) != reference {
 						t.Fatalf("adapter %q != commit reader %q: message %q", parsed, reference, message)
 					}
 					want := map[provenance.Declaration]bool{}
@@ -195,7 +183,7 @@ func TestProvenanceGitTrailerConfigIsolation(t *testing.T) {
 	if want != "Agent-Session: a:one\n" {
 		t.Fatalf("unexpected baseline: %q", want)
 	}
-	if got := readCommit(message); got != want {
+	if got := readCommit(message); got != string(want) {
 		t.Fatalf("unexpected commit-reader baseline: %q", got)
 	}
 	poison := filepath.Join(t.TempDir(), "gitconfig")
@@ -208,8 +196,8 @@ func TestProvenanceGitTrailerConfigIsolation(t *testing.T) {
 	t.Setenv("GIT_CONFIG_KEY_0", "trailer.separators")
 	t.Setenv("GIT_CONFIG_VALUE_0", "=")
 	t.Setenv("GIT_CONFIG_PARAMETERS", "'trailer.agent-session.key=Hidden'")
-	for name, read := range map[string]func(string) provenance.GitTrailerOutput{"adapter": parse, "commit reader": readCommit} {
-		if got := read(message); got != want {
+	for name, read := range map[string]func(string) string{"adapter": func(s string) string { return string(parse(s)) }, "commit reader": readCommit} {
+		if got := read(message); got != string(want) {
 			t.Fatalf("inherited config changed %s output: %q != %q", name, got, want)
 		}
 	}
