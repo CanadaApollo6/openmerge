@@ -94,7 +94,7 @@ formatting is normalized through the owning strict codec before comparison.
 ## Mutation proofs
 
 Isolated scratch copies compile and fail their intended behavioral assertion when
-any of these 17 checks is removed or regressed:
+any of these 18 checks is removed or regressed:
 
 1. Abandoned/discarded batch retirement.
 2. PR-close retirement.
@@ -113,6 +113,7 @@ any of these 17 checks is removed or regressed:
 15. Maximum-configuration aggregate reference allowance.
 16. Maximum-configuration record allowance.
 17. Maximum-configuration pending-attempt allowance.
+18. Dropped-change companion retirement alongside pinned/partial generations.
 
 The earlier before-insert, cursor-upgrade, compaction, CAS, budget and production
 writer/encoder/raw-kind tripwires remain in the package suites. Source mutations
@@ -132,7 +133,7 @@ go_safe() {
     GOROOT=/home/riels/.local/share/mise/installs/go/1.27.3 \
     PATH=/home/riels/.local/share/mise/installs/go/1.27.3/bin:$PATH go "$@"
 }
-go_safe test ./internal/store ./internal/journalreader ./internal/provenance/journal ./internal/dependency ./internal/queue ./internal/serve ./internal/status ./internal/audit ./internal/config -count=1 -v
+go_safe test ./internal/journalreader ./internal/provenance/journal ./internal/dependency ./internal/queue ./internal/status ./internal/audit ./internal/config ./internal/brief ./internal/changepolicy ./internal/provenanceeval ./internal/provenance ./internal/gitops -count=1 -v
 go_safe test -race ./internal/store ./internal/serve -count=1
 go_safe vet ./...
 ```
@@ -140,5 +141,28 @@ go_safe vet ./...
 `golangci-lint run` uses the same flock, toolchain and resource environment.
 Toolchain gofmt and `git diff --check` verify formatting. Database tests use
 isolated test schemas and synchronization points. Scratch command output lives
-under `/home/riels/.cache/pr183-fix/`: `packages.log`, `race.log`, `vet.log`,
-`lint.log`, `validation-status.log`, `mutations.json`, and individual mutant logs.
+under `/home/riels/.cache/pr183-fix/`: `post-merge-packages.log`,
+`post-merge-race.log`, `post-merge-vet.log`, `post-merge-lint.log`,
+`post-merge-status.log`, `post-merge-mutations.log`, `mutations.json`,
+`audit-compat.log`, and individual mutant logs.
+
+## Post-merge results
+
+Main advanced during verification. Commit `54b7bf3` (#182 and #184) was merged
+without rewriting the PR's history. The post-merge package matrix above passed,
+including the packages changed upstream. Store and serve run their complete
+package suites under race instrumentation: **PASS**, 170.431 s and 540.456 s.
+The clean pre-merge full core rerun is also retained in `final-core-green.log`.
+
+Post-merge scale diagnostics were 1.81 / 7.73 / 19.11 s for 2,000 / 8,000 /
+20,000 attempts. Assertions pin exactly N generation fences, N attempt fences,
+zero retained payload records and zero lifetime-map copies; elapsed times are
+not performance thresholds. Ten thousand abandonments retain one payload
+record (2,632,922 checkpoint bytes); each 10,000-change drop path retains zero
+payload records (6,576,901–6,926,524 checkpoint bytes, including queue state).
+Lifetime metadata growth remains explicit despite bounded active payloads.
+
+Post-merge **vet PASS**, **lint PASS (0 issues)**, **18/18 compiling mutants
+killed**, gofmt clean, and `git diff --check` clean. All requested checks passed.
+The additional dropped-companion mutant fails the pinned/partial-generation
+close assertion. No production writer was enabled; the PR remains Hold.
