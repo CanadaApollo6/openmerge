@@ -21,9 +21,11 @@ Depends-On: malformed
 ```
 -->
 <!-- Depends-On: malformed -->
+```text
 Text Depends-On: malformed
 depends-on: malformed
 Depends-on: malformed
+```
 
 ```html <!-- not an HTML comment
 Depends-On: malformed

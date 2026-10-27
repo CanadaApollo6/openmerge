@@ -148,7 +148,8 @@
   {
     "name": "code span",
     "body": "`Depends-On: https://github.com/acme/api/pull/42`",
-    "aliases": []
+    "aliases": [],
+    "ambiguous": true
   },
   {
     "name": "multiline code span",
@@ -165,7 +166,8 @@
   {
     "name": "escaped declaration",
     "body": "\\Depends-On: https://github.com/acme/api/pull/42",
-    "aliases": []
+    "aliases": [],
+    "ambiguous": true
   },
   {
     "name": "indented code",
@@ -279,7 +281,7 @@
   },
   {
     "name": "BOM and bare CR",
-    "body": "\ufeffDepends-On: https://github.com/acme/api/pull/42\r",
+    "body": "﻿Depends-On: https://github.com/acme/api/pull/42\r",
     "aliases": [
       "https://github.com/acme/api/pull/42"
     ],
@@ -293,5 +295,178 @@
       "https://github.com/acme/api/pull/43"
     ],
     "ambiguous": false
+  },
+  {
+    "name": "hidden footnote lazy continuation",
+    "body": "[^1]: example\nDepends-On: https://github.com/acme/api/pull/42",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "hidden footnote indented declaration",
+    "body": "[^1]: example\n    Depends-On: https://github.com/acme/api/pull/42",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "referenced footnote",
+    "body": "Example[^1]\n\n[^1]: example\n    Depends-On: https://github.com/acme/api/pull/42",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "footnote first line",
+    "body": "[^1]: Depends-On: https://github.com/acme/api/pull/42",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "unchecked task list",
+    "body": "- [ ] Depends-On: https://github.com/acme/api/pull/42",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "checked task list",
+    "body": "- [x] Depends-On: https://github.com/acme/api/pull/42",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "uppercase checked task list",
+    "body": "- [X] Depends-On: https://github.com/acme/api/pull/42",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "entity in key",
+    "body": "&#68;epends-On: https://github.com/acme/api/pull/42",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "escaped hyphen",
+    "body": "Depends\\-On: https://github.com/acme/api/pull/42",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "entity colon",
+    "body": "Depends-On&#58; https://github.com/acme/api/pull/42",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "nonbreaking hyphen",
+    "body": "Depends‑On: https://github.com/acme/api/pull/42",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "lowercase key",
+    "body": "depends-on: https://github.com/acme/api/pull/42",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "fullwidth colon",
+    "body": "Depends-On： https://github.com/acme/api/pull/42",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "fullwidth key",
+    "body": "Ｄｅｐｅｎｄｓ－Ｏｎ： https://github.com/acme/api/pull/42",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "minus sign",
+    "body": "Depends−On: https://github.com/acme/api/pull/42",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "ratio colon",
+    "body": "Depends-On∶ https://github.com/acme/api/pull/42",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "embedded declaration",
+    "body": "Example Depends-On: https://github.com/acme/api/pull/42",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "strikethrough declaration",
+    "body": "~~Depends-On: https://github.com/acme/api/pull/42~~",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "angle autolink",
+    "body": "Depends-On: <https://github.com/acme/api/pull/42>",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "explicit link",
+    "body": "Depends-On: [https://github.com/acme/api/pull/42](https://github.com/acme/api/pull/42)",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "partial linkify label",
+    "body": "Depends-On: https://github.com/acme/api/pull/42.",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "candidate after inline comment",
+    "body": "Example <!-- ignore --> depends-on: https://github.com/acme/api/pull/42",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "entity in hidden title",
+    "body": "[example](https://example.com \"&#68;epends-On: https://github.com/acme/api/pull/42\")",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "hidden footnote fenced example",
+    "body": "[^1]: example\n\n    ```\n    depends-on: https://github.com/acme/api/pull/42\n    ```",
+    "aliases": []
+  },
+  {
+    "name": "referenced footnote fenced example",
+    "body": "Example[^1]\n\n[^1]: example\n\n    ```\n    depends-on: https://github.com/acme/api/pull/42\n    ```",
+    "aliases": []
+  },
+  {
+    "name": "lookalike quoted example",
+    "body": "> &#68;epends-On： https://github.com/acme/api/pull/42",
+    "aliases": []
+  },
+  {
+    "name": "lookalike indented example",
+    "body": "    Depends‑On: https://github.com/acme/api/pull/42",
+    "aliases": []
+  },
+  {
+    "name": "lookalike HTML comment",
+    "body": "Example <!-- &#68;epends-On： https://github.com/acme/api/pull/42 -->",
+    "aliases": []
+  },
+  {
+    "name": "fence info example",
+    "body": "```Depends-On: https://github.com/acme/api/pull/42\nexample\n```",
+    "aliases": []
+  },
+  {
+    "name": "HTML closing comment example",
+    "body": "<!-- example\ndepends-on: https://github.com/acme/api/pull/42 -->",
+    "aliases": []
   }
 ]

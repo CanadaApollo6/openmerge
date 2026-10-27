@@ -36,13 +36,17 @@ exception or acknowledgement behavior in this package.
   line endings and any BOM); overflow returns `ErrBodyLimit`, never truncation.
   A leading BOM is stripped and CRLF and bare CR become LF, following GFM's
   line-ending rules. Goldmark v1.8.6 (pure Go, MIT, no transitive dependencies)
-  parses CommonMark with the GFM Table extension.
+  parses CommonMark with the full GFM extension set (tables, strikethrough,
+  linkify and task lists) plus its built-in footnote extension.
 
   A **declaration paragraph** is a top-level paragraph containing only exact,
   case-sensitive `Depends-On: <ref>` source lines, with at most three leading
   spaces and exactly one non-whitespace reference per line. Several declarations
-  may share one paragraph. Its inline AST may contain only Text (including soft
-  or hard line breaks), with no HTML, links, images, code spans or emphasis.
+  may share one paragraph. Its inline AST may contain Text (including soft or
+  hard line breaks) and URL autolinks only when their label and destination both
+  exactly equal a literal reference on that paragraph's source lines. Thus GFM
+  linkify preserves plain URL declarations; angle-bracket autolinks, explicit
+  links, HTML, images, code spans and emphasis are ambiguous.
   Source spelling is preserved; escapes or markup cannot manufacture a key or
   reference. Put a blank line between declarations and surrounding prose or
   trailers, for example:
@@ -54,21 +58,32 @@ exception or acknowledgement behavior in this package.
   Depends-On: https://github.com/acme/client/pull/17
   ```
 
-  Any declaration-shaped line elsewhere returns `ErrDeclarationAmbiguous`
+  Candidate detection scans every normalized physical source line independently
+  of the AST. It strips leading container markers, decodes Markdown backslash
+  escapes and HTML entities, applies Unicode NFKC normalization and case folding,
+  and maps Unicode Dash characters and common hyphen/minus and colon lookalikes
+  to ASCII. Any resulting `depends-on:` substring is a candidate, wherever it
+  occurs on the line. This broad scan does not make those spellings acceptable:
+  only exact, case-sensitive source declarations can produce inputs.
+
+  Every candidate outside an ignored example region must be an exact accepted
+  declaration line; otherwise the entire parse returns `ErrDeclarationAmbiguous`
   (`declaration-ambiguous`), with guidance to put each declaration in its own
-  paragraph, with nothing else. This includes mixed prose, lists, headings,
-  table cells, inline HTML, multiline code spans and hidden link/image titles.
+  paragraph, with nothing else. This includes mixed prose, task/ordinary lists,
+  headings, table cells, strikethrough, inline HTML, code spans, hidden link/image
+  titles, and declarations inside referenced or unreferenced footnotes. Entity,
+  escaped, lowercase and Unicode lookalike keys also block. For example,
+  `&#68;epends-On:`, `Depends\-On:`, `depends-on:` and `Depends‑On：` are ambiguous.
   Fenced/indented code blocks, block quotes (including lazy continuations), HTML
-  blocks and HTML comments remain ignored examples. Inline comments shield only
-  their own source, so a declaration followed by a comment is ambiguous. An error
+  blocks and HTML comments remain ignored examples, including inside footnotes.
+  Example coverage is recorded before unused footnotes disappear from the AST.
+  Inline comments shield only their own source, so a declaration followed by a comment is ambiguous. An error
   returns no partial inputs. Literal comment markers in code spans or escaped
   text do not start comments; unclosed blocks follow CommonMark.
 
   This strict grammar refines ADR 0011's “standalone body lines” (~line 181).
   **Slice 6's operating guide must document this rule for users**, including blank
-  lines around declarations and blocking ambiguity diagnostics. Linkify,
-  TaskList and Strikethrough remain disabled: they do not alter eligibility under
-  this grammar.
+  lines around declarations and blocking ambiguity diagnostics.
 - URI segments use RFC 3986 unreserved-only, uppercase percent encoding of UTF-8
   bytes. Encoded unreserved bytes, lowercase escapes, raw reserved characters,
   credentials, invalid UTF-8, controls, query/fragment syntax and extra segments
@@ -112,11 +127,12 @@ exception or acknowledgement behavior in this package.
 - `TestCanonicalURIGolden`, `TestCanonicalURIRejectsMalformedAndForeign`:
   fixed canonical URI/escaping vectors, optional pins, malformed and foreign scope.
 - `TestAuthoritativeIntentBoundaries`, `TestMalformedRecognizedIntentFailsClosed`,
-  `TestIntentCommonMarkCorpus`: body/trailer and 49 CommonMark/GFM boundary cases,
+  `TestIntentCommonMarkCorpus`: body/trailer and CommonMark/GFM/footnote boundary cases,
   including inline/escaped comment markers, list fences, lazy quotes, nested
   lists, setext headings, HTML blocks, multiline code spans, CRLF and tabs.
   `TestIntentAmbiguousDeclarations`, `TestIntentPureDeclarationParagraph`,
-  `TestIntentBareCRFence`, `TestIntentBodyCharacterLimit`: strict paragraph
+  `TestIntentLinkifyPreservesExactReference`, `TestIntentBareCRFence`,
+  `TestIntentBodyCharacterLimit`: strict paragraph
   grammar, review repros, normalization and exact Unicode character cap.
 - `TestRevisionlessAliasesOptionalPinsAndDedupe`,
   `TestResolutionRejectsUnservedAmbiguousAndForeign`: resolution and conflicts.
@@ -140,8 +156,11 @@ exception or acknowledgement behavior in this package.
   depth 1/4 configs. The public loader/schema and all deployed contracts are
   untouched; existing `internal/config` tests retain their legacy digest vectors.
 - `FuzzParseIntent`: corpus seeds, successful canonical round trips, and an
-  independent full-AST walk asserting every produced declaration comes from a
-  pure top-level declaration paragraph with Text-only inline children.
+  independent AST walk asserting every produced declaration comes from a pure
+  top-level declaration paragraph with Text or exact URL-autolink children.
+  It also checks every decoded source candidate: a successful parse must account
+  for it as an exact accepted line or an AST-classified ignored example, even
+  when Markdown hides it. The oracle retains unused footnotes for this check.
 - `FuzzParseReference`: accepted input equals its canonical spelling.
 - `FuzzParsePolicyCandidate`: successful policies validate and round-trip through
   YAML without changing mode or grants.
