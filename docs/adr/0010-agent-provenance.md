@@ -221,6 +221,10 @@ queue selection, including inside nested OR/NOT groups. This placement refines
 the suggested unrestricted conditions to prevent `or: [CI, provenance=human]`
 from authorizing a landing through self-asserted metadata.
 
+Approval-based `when` conditions are not latched: with `#approved-reviews-by < 2`,
+ordinary approvals can remove an added obligation. Owners must write `when`
+accordingly.
+
 This is proposed syntax, not configuration current binaries accept. The second
 rule requires the later checkpoint-resolver slice:
 
@@ -285,7 +289,8 @@ checkpoint does not erase known agent classification or a complete agent count.
 | Request still running, network/authentication error, interrupted read, or transient timeout within the remaining acquisition budget | Pending; no reuse of an earlier passing observation as current evidence. |
 | Successful exact lookup reports no ref/path, invalid ID, wrong object shape, invalid metadata JSON, or unsupported declared format | Known unresolved; checkpoint-present is false and the unresolved count includes the declaration. Absence expires as described below. |
 | Unmapped fork or checkpoint source, or a server without required protocol/filter capability | Terminal `unavailable_source` or `unsupported_capability`, with the source and reason in status and evidence. Resolution-dependent gates fail explicitly. |
-| Deterministic size, entry, or work limit, including the acquisition deadline, exceeded | Terminal `limit_exceeded`. Checkpoint-present cannot pass. Counts needing a truncated inventory have no complete value and cannot authorize progress. Status reports `limit_exceeded`, never retryable pending. |
+| Acquisition deadline exceeded because of a transport stall | Retryable pending, capped at three total acquisition attempts on unchanged inputs; exhaustion is terminal `transport_timeout`. No earlier passing observation can authorize progress. |
+| Deterministic size, entry, or work limit exceeded | Terminal `limit_exceeded`. Checkpoint-present cannot pass. Counts needing a truncated inventory have no complete value and cannot authorize progress. Status reports `limit_exceeded`, never retryable pending. |
 | All required objects read within bounds | Evaluate from the recorded complete values. |
 
 AND is false if any operand is false, otherwise pending if any is pending.
@@ -294,13 +299,15 @@ NOT preserves pending. Only true authorizes progress. Retry transient reads
 with existing bounded backoff; surface persistent errors for the owner to fix,
 without converting elapsed time into a passing result. A terminal limit failure
 is not automatically retried against unchanged inputs; it needs an input,
-source, or owner-approved limit change.
+source, or owner-approved limit change in the binary or deployment configuration.
+Policy cannot raise process ceilings.
 
 Known absence is an observation with an expiry, not a permanent failure.
-Use a bounded negative-cache lifetime, proposed at 30 seconds. Check expiry on
-every evaluation and schedule a wake-up at expiry for a blocked change even if
-no new push or review arrives. Re-observe the exact ref and any enabled fallback
-within that change's budget. An unexpired absence can block with its recorded
+Use a bounded negative-cache lifetime, initially 30 seconds, backing off
+exponentially to five minutes for repeated unchanged absence observations.
+Check expiry on every evaluation and schedule a wake-up at expiry for a blocked
+change even if no new push or review arrives. Re-observe the exact ref and any
+enabled fallback within that change's budget. An unexpired absence can block with its recorded
 reason; an expired absence cannot answer the new evaluation. While its refresh
 runs, resolution-dependent attributes are pending. A late checkpoint can then
 satisfy the gate on the same revision without changing the brief or receipts.
@@ -348,11 +355,13 @@ Keep the canonical evidence-record digest separate from the declaration digest
 bound into the opted-in change's brief and receipt identity. The declaration
 digest covers only inputs derived from the pinned source inventory under the
 governing policy: the declaration inventory, declared classes, and requirement
-definitions those declarations can trigger. Include their `when` expressions;
-do not drop a potential requirement based on a mutable review or checkpoint
-observation. Actual applicability and satisfaction at evaluation are gate
-evidence only. Policy and classifier versions remain bound through the
-effective policy digest.
+definitions those declarations can trigger. Include every rule whose `when` is
+not definitely false when only declaration-derived attributes are known, along
+with its `when` expression; do not drop a potential requirement based on a mutable
+review or checkpoint observation. Actual applicability and satisfaction at
+evaluation are gate evidence only. Policy and classifier versions remain bound
+through the effective policy digest, which independently invalidates receipts on
+any policy edit; the narrower requirement binding is defense in depth.
 
 Checkpoint resolution outcomes, known absence, ref tips, and metadata object
 IDs never enter the brief digest. A checkpoint arriving late or a pusher
@@ -430,19 +439,22 @@ concurrency cap:
 - 64 MiB transferred, 128 MiB expanded objects, 10,000 visited tree entries,
   and 256 KiB per metadata blob. Limit the complete fetch subprocess, disk use,
   and decompression, not merely the bytes later handed to a JSON parser.
-- One 30-second active acquisition deadline per change across all sources and
-  retries, with at most two concurrent fetches per process. Cancellation removes
-  private temporary data. Time waiting for a scheduler slot consumes no active
-  acquisition budget.
+- A 30-second active acquisition deadline per change attempt across all sources,
+  with at most three attempts for transport stalls (90 seconds total active time)
+  and two concurrent fetches per process. Attempt counts survive re-evaluation
+  of unchanged inputs; other resource budgets are cumulative across attempts.
+  Cancellation removes private temporary data. Time waiting for a scheduler slot
+  or retry backoff consumes no active acquisition budget.
 
 The batch budget equals the sum of its members' individual budgets for each
 resource. A member cannot borrow another's allocation. Charge each requesting
 change the full cost of a shared acquisition, as if it ran alone. Never divide
 the cost across members to evade a per-change ceiling. Cache reuse never
 transfers unused budget. If a member exceeds its own budget,
-stop its acquisition, fail only that member with `limit_exceeded`, and exclude
-it. Cancel any composition that already included it, then compose and test the
-remaining members. Never wait for that member's retry before progressing the
+stop its acquisition, fail only that member with `limit_exceeded` (or apply the
+bounded transport-stall retry rule above), and exclude it. Cancel any composition
+that already included it, then compose and test the remaining members. Never wait
+for that member's retry before progressing the
 others. Bound concurrency and schedule fairly across changes and repositories
 so one slow member cannot occupy every slot. The sum is an accounting ceiling,
 not permission to serialize everyone behind one member's deadline.
@@ -573,8 +585,9 @@ permission to deploy its held dependencies. A migration is Hold (migration).
 | 2, Inert | Bounded local inventory and original/build mapping package, after 1; no network or queue wiring | Complete all-parent traversal, merge-side commits, base rewrites, source limits, bounded attribution, and terminal truncation diagnostics through real-Git fixtures. |
 | 3a, Inert | New event contracts and pure snapshot decoder, after 1–2; no append calls or new snapshot writes | Golden payloads, complete/chunked inventory, generation bindings, legacy snapshot bytes, strict old-decoder refusal, and snapshot-plus-tail replay. |
 | 3b, Inert | Read-only audit v2 and dependency selection, after 3a; no runtime writers | Independent canonical vectors, cross-range closure, missing required evidence failure, default byte-identical v1 for legacy-only ranges, automatic v2 for provenance events/decisions, explicit v2, and 10b anchor compatibility. |
+| 3c, Hold (reader migration) | Wire the strict new-event decoder into live journal replay and versioned snapshot loading, after 3a–3b; no writers | Deploy readers and v2 export support everywhere and drain older workers before 4b enables writers; verify legacy and new snapshot-plus-tail replay and take a verified pre-emission backup. |
 | 4a, Hold | Wire no-network evaluation and declaration-bound briefs, after 2 and 3a–3b | Separate baseline, trigger, and rule-local approval snapshots; both eligibility cases below; mutable review/checkpoint outcomes cannot churn receipts; nested policy bypass rejection; per-change pre-CI exclusion and unchanged baseline behavior. |
-| 4b, Hold | Atomic journal writers, landing-start gate and tested T/landed L integration, after 4a and reader rollout | Fake-forge plus real-Git merge/squash/rebase/fast-forward, batches, speculative rebuilds, re-push, restarts, base rewrites, concurrent-generation races, and replay without network. Backup/restore downgrade rehearsal. |
+| 4b, Hold | Atomic journal writers, landing-start gate and tested T/landed L integration, after 4a and completed 3c reader deployment and older-worker drain | Fake-forge plus real-Git merge/squash/rebase/fast-forward, batches, speculative rebuilds, re-push, restarts, base rewrites, concurrent-generation races, and replay without network. Backup/restore downgrade rehearsal. |
 | 5, Hold | Owner-approved no-network public policy/schema, diagnostics, operating guidance, and sandbox activation, after 4b | GitHub and fake/future-driver paths with zero provenance network calls, permissions unchanged, declarations and added review obligations in audit v2, and rollback acceptance after B before explicit owner opt-in. |
 | 6a, Inert | Unwired bounded Entire resolver, approved source mapping contracts, and optional legacy route, after 5; no scheduler or transport calls from live queues | ULID refs, migrated hex refs, optional legacy branch, exact metadata mapping against pinned Entire source, fork and separate-remote fixtures, protocol v2 ref-prefix/filter refusal, huge advertisements/packs/trees/blobs, supervisor termination, and cancellation. |
 | 6b, Hold | Wire resolver opt-in, checkpoint conditions, fair acquisition, negative-cache wake-ups, and gate evidence, after 6a | Same-revision late checkpoint, expiry checked on each evaluation, explicit unmapped/unsupported outcomes, per-member budget exhaustion without stalling honest members, legacy `limit_exceeded`, pre-CI gate and fresh landing-start observation, and unchanged receipts after metadata movement. |
@@ -588,7 +601,7 @@ Acceptance must cover both reviewer-eligibility interactions explicitly:
    fails and landing remains blocked even though both approval obligations pass.
    Compare the baseline inputs and result with provenance disabled; they match.
 2. With the same original pools and approvals, a provenance rule has
-   `when: {not: "approved-reviews-by = bob"}` and adds a `security` approval.
+   `when: [{not: "approved-reviews-by = bob"}]` and adds a `security` approval.
    The trigger sees only Alice and is true. Its own added pool cannot make Bob
    visible to that `when`, turn it false, or create a fixed-point loop. Bob can
    satisfy the rule's approval obligation. Reordering provenance rules, adding
@@ -624,9 +637,9 @@ Activation follows owner review of this ADR and the implementation evidence.
 3. When the later resolver is available, require checkpoints for all agent-declared
    commits, or keep them as optional audit evidence? Recommended: audit and review
    first; neutral trailers and bot-only commits have no checkpoint resolver.
-4. Accept the proposed per-change ceilings, 30-second absence expiry, and 64 KiB
-   attribution bound? Enable the optional legacy branch despite expected
-   `limit_exceeded` on large histories? Recommended: retain hard process bounds
+4. Accept the proposed per-change ceilings, absence backoff from 30 seconds to
+   five minutes, and 64 KiB attribution bound? Enable the optional legacy branch
+   despite expected `limit_exceeded` on large histories? Recommended: retain hard process bounds
    and confirm numbers with representative sandbox fixtures.
 5. Which fork head repositories map to which approved checkpoint repositories,
    credential bindings, and allowed backends? Which separate Entire
