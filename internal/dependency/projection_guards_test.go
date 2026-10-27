@@ -261,3 +261,54 @@ func TestTwoAliasSnapshotSort(t *testing.T) {
 		}
 	}
 }
+
+func TestUnacknowledgedHoldAccumulatesEditorsAcrossTightening(t *testing.T) {
+	f := journalTestFixture(t)
+	s := applyJournal(t, f.start(t), f.policy(false, "e1", "e2", "e3", "independent"))
+	s = applyJournal(t, s, f.declaration(t, s, Input{Reference: f.ref(1, 7)}))
+	for i, revision := range []uint64{0, 7, 0} {
+		d := f.declaration(t, s, Input{Reference: f.ref(1, revision)})
+		d.Attribution.Editors = []string{[]string{"e1", "e2", "e3"}[i]}
+		d.Hold = s.declarationHold(d)
+		s = applyJournal(t, s, d)
+		assertHeld(t, s, f.alias, true)
+	}
+	if h := s.Hold(f.alias); !slices.Equal(h.ExcludedEditors, []string{"e1", "e2", "e3"}) {
+		t.Fatal(h)
+	}
+	for _, editor := range []string{"e1", "e2", "e3"} {
+		if _, err := Apply(s, s.lastID+1, ackFor(t, s, f.alias, editor)); !errors.Is(err, ErrHeld) {
+			t.Fatal("loosening editor acknowledged hold", editor, err)
+		}
+	}
+	s = applyJournal(t, s, ackFor(t, s, f.alias, "independent"))
+	assertHeld(t, s, f.alias, false)
+}
+
+func TestDeclareRetainedPinnedHeadFreeze(t *testing.T) {
+	for _, pinned := range []bool{false, true} {
+		t.Run(map[bool]string{false: "revisionless", true: "pinned"}[pinned], func(t *testing.T) {
+			f := journalTestFixture(t)
+			s := f.start(t)
+			revision := uint64(0)
+			if pinned {
+				revision = 7
+			}
+			s = applyJournal(t, s, f.declaration(t, s, Input{Reference: f.ref(1, revision)}))
+			d := mustDeclaration(t, s, f.alias)
+			d.Prior = s.Prior(f.alias)
+			d.Poll++
+			d.Revision++
+			d.Edges[0].PinnedHead = strings.Repeat("e", 40)
+			d.Digest = DeclarationDigest(d.Edges)
+			d.Hold = s.declarationHold(d)
+			before := snapshotBytes(t, s)
+			// Test the projection boundary directly: the codec independently rejects
+			// inconsistent pin/baseline pairs before Apply reaches this freeze.
+			next := s.clone()
+			if err := next.declare(s.lastID+1, d); !errors.Is(err, ErrStale) || !bytes.Equal(before, snapshotBytes(t, next)) {
+				t.Fatal("retained pin changed", err)
+			}
+		})
+	}
+}

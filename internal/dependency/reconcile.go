@@ -72,27 +72,12 @@ func PollDeclarations(s State) []DependenciesDeclared {
 // and does not prevent unrelated edges/queues from being polled. Apply's CAS and
 // sequence checks fence delayed reads. There is no timer, runtime loop or emission.
 func ReconcileEdges(ctx context.Context, reader forge.DependencyReader, s State, requests []ObservationRequest) ([]ScopedObservation, error) {
-	if len(requests) == 0 || len(requests) > MaxDirectEdges {
-		return nil, ErrLimit
+	if err := s.validateRequestSet(requests); err != nil {
+		return nil, err
 	}
-	first := requests[0]
-	d, ok := s.Declaration(first.Consumer.Alias)
-	if !ok || len(requests) != len(d.Edges) {
-		return nil, ErrStale
-	}
-	seen := map[string]bool{}
-	// Validate the whole request set before doing I/O.
 	for _, r := range requests {
 		if _, err := r.validate(); err != nil {
 			return nil, err
-		}
-		if !reflect.DeepEqual(r.Consumer, d) || r.Declaration != s.Prior(d.Alias) || r.Stage != first.Stage || r.Sequence != first.Sequence || seen[r.Edge.Reference] || !slices.Contains(d.Edges, r.Edge) {
-			return nil, ErrStale
-		}
-		seen[r.Edge.Reference] = true
-		_, prior, _ := s.Observation(Observed{Alias: d.Alias, ChangeID: d.ChangeID, Revision: d.Revision, Source: r.Edge.Reference})
-		if prior != r.Prior {
-			return nil, ErrStale
 		}
 	}
 	out := make([]ScopedObservation, 0, len(requests))
@@ -104,4 +89,29 @@ func ReconcileEdges(ctx context.Context, reader forge.DependencyReader, s State,
 		out = append(out, o)
 	}
 	return out, nil
+}
+
+// validateRequestSet checks completeness and one shared acquisition basis before
+// per-edge validation or I/O. Neither a partial graph nor mixed polls may escape.
+func (s State) validateRequestSet(requests []ObservationRequest) error {
+	if len(requests) == 0 || len(requests) > MaxDirectEdges {
+		return ErrLimit
+	}
+	first := requests[0]
+	d, ok := s.Declaration(first.Consumer.Alias)
+	if !ok || len(requests) != len(d.Edges) {
+		return ErrStale
+	}
+	seen := map[string]bool{}
+	for _, r := range requests {
+		if !reflect.DeepEqual(r.Consumer, d) || r.Declaration != s.Prior(d.Alias) || r.Stage != first.Stage || r.Sequence != first.Sequence || seen[r.Edge.Reference] || !slices.Contains(d.Edges, r.Edge) {
+			return ErrStale
+		}
+		seen[r.Edge.Reference] = true
+		_, prior, _ := s.Observation(Observed{Alias: d.Alias, ChangeID: d.ChangeID, Revision: d.Revision, Source: r.Edge.Reference})
+		if prior != r.Prior {
+			return ErrStale
+		}
+	}
+	return nil
 }

@@ -24,7 +24,7 @@ func (d *Driver) DependencySource(ctx context.Context, repo forge.RepoRef, numbe
 	if err != nil {
 		return forge.DependencySource{}, safeError(err)
 	}
-	if pr == nil || pr.Number == nil || pr.GetNumber() != number || pr.State == nil || pr.GetState() != "open" && pr.GetState() != "closed" || pr.Merged == nil || pr.Body == nil || pr.GetBase().GetRepo().GetID() <= 0 {
+	if pr == nil || pr.Number == nil || pr.GetNumber() != number || pr.State == nil || pr.GetState() != "open" && pr.GetState() != "closed" || pr.Merged == nil || pr.GetBase().GetRepo().GetID() <= 0 {
 		return forge.DependencySource{}, forge.ErrIdentityUnavailable
 	}
 	source := forge.DependencySource{

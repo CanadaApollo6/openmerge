@@ -143,7 +143,7 @@ func TestDependencyReadsPreserveInstallationSettlementReserve(t *testing.T) {
 }
 
 func TestDependencyHTTPMissingFieldsFailClosed(t *testing.T) {
-	for _, field := range []string{"number", "state", "merged", "body", "head", "base", "repository-id", "base-sha"} {
+	for _, field := range []string{"number", "state", "merged", "head", "base", "repository-id", "base-sha"} {
 		t.Run(field, func(t *testing.T) {
 			f := newAPI(t)
 			f.override = func(w http.ResponseWriter, r *http.Request) bool {
@@ -166,6 +166,40 @@ func TestDependencyHTTPMissingFieldsFailClosed(t *testing.T) {
 			source, err := f.driver.DependencySource(t.Context(), testRepo, 1)
 			if err == nil || source.Valid() {
 				t.Fatal("partial HTTP read became a complete observation", source, err)
+			}
+		})
+	}
+}
+
+func TestDependencyHTTPNullBodyObservesSuccessfully(t *testing.T) {
+	for _, absent := range []bool{false, true} {
+		t.Run(fmt.Sprintf("absent=%t", absent), func(t *testing.T) {
+			f := newAPI(t)
+			r := dependencytest.Request()
+			source := dependencytest.Source(r)
+			f.override = func(w http.ResponseWriter, request *http.Request) bool {
+				switch {
+				case strings.HasSuffix(request.URL.Path, "/permission"):
+					f.json(w, map[string]any{"permission": "read", "user": map[string]any{"id": 11, "login": "alice", "type": "User"}})
+				case strings.HasSuffix(request.URL.Path, "/pulls/1"):
+					body := map[string]any{"number": 1, "state": "open", "merged": false, "body": nil,
+						"head": map[string]any{"sha": source.HeadSHA}, "base": map[string]any{"ref": source.Base, "sha": source.BaseSHA, "repo": map[string]any{"id": 50}}}
+					if absent {
+						delete(body, "body")
+					}
+					f.json(w, body)
+				default:
+					return false
+				}
+				return true
+			}
+			got, err := f.driver.DependencySource(t.Context(), testRepo, 1)
+			if err != nil || !got.Valid() || got.Body != "" {
+				t.Fatalf("null body: %+v %v", got, err)
+			}
+			observation, err := dep.ObserveEdge(t.Context(), f.driver, r)
+			if err != nil || observation.Evidence().Code != "dependency-waiting" {
+				t.Fatalf("observation: %+v %v", observation.Evidence(), err)
 			}
 		})
 	}

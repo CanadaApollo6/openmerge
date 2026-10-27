@@ -69,6 +69,11 @@ func TestReverseWakesRestartAndPollingRepair(t *testing.T) {
 	if _, err := index.Wake(foreign, 3); !errors.Is(err, dep.ErrOutOfScope) {
 		t.Fatal(err)
 	}
+	invalid := r.Source.Reference
+	invalid.ChangeID = "invalid"
+	if _, err := index.Wake(invalid, 3); !errors.Is(err, dep.ErrMalformed) {
+		t.Fatal("noncanonical source accepted", err)
+	}
 	// No wake is delivered. Polling still enumerates B and reads A's new landing.
 	r.Source.Landing = &dep.SourceLanding{Revision: r.Source.Current, Commit: strings.Repeat("d", 40), SettlementEventID: 2, BaseSHA: r.Source.BaseSHA, OnBase: true}
 	r.Stage = dep.WorkRead
@@ -153,6 +158,7 @@ func TestReconcilePartialReadsAndDelayedSuccess(t *testing.T) {
 		t.Fatal("delayed read erased revocation", err)
 	}
 	// Reconciliation requires a complete exact set, independently of forge reads.
+	r.Prior = 7
 	if _, err := dep.ReconcileEdges(t.Context(), f, s, []dep.ObservationRequest{r}); !errors.Is(err, dep.ErrStale) {
 		t.Fatal("partial graph accepted", err)
 	}

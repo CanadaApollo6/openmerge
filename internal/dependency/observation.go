@@ -130,6 +130,15 @@ func (o ScopedObservation) View(audience []Grant) ObservationView {
 	return ObservationView{Reason: e.Code, Code: e.Code, Observation: &e.Observation}
 }
 
+// validateConsumerScope checks the consumer binding independently of source
+// reference parsing, which also rejects a foreign namespace later in validate.
+func (r ObservationRequest) validateConsumerScope() error {
+	if r.Consumer.Namespace != r.Registry.Scope.JournalNamespace || r.Consumer.Alias.validate(r.Registry.Scope) != nil || r.Registry.index().validateRepo(r.Consumer.Queue.Repository) != nil {
+		return ErrOutOfScope
+	}
+	return nil
+}
+
 func (r ObservationRequest) validate() (Reference, error) {
 	if r.Stage != BindingRead && r.Stage != WorkRead && r.Stage != LandingStartRead || !cleanText(r.ReadID) || r.Sequence == 0 || r.Declaration.EventID == 0 || r.Declaration.Digest != r.Consumer.Digest || r.Consumer.Validate() != nil {
 		return Reference{}, ErrMalformed
@@ -137,8 +146,8 @@ func (r ObservationRequest) validate() (Reference, error) {
 	if !r.Admission.Enqueued || r.Admission.CommandID == 0 || r.Admission.ChangeID != r.Consumer.ChangeID || r.Admission.Queue != r.Consumer.Queue || !r.Admission.Writer.valid(r.Consumer.Alias.RepositoryID) {
 		return Reference{}, ErrHeld
 	}
-	if r.Consumer.Namespace != r.Registry.Scope.JournalNamespace || r.Consumer.Alias.validate(r.Registry.Scope) != nil || r.Registry.index().validateRepo(r.Consumer.Queue.Repository) != nil {
-		return Reference{}, ErrOutOfScope
+	if err := r.validateConsumerScope(); err != nil {
+		return Reference{}, err
 	}
 	if r.Consumer.Attribution.Unknown || r.Declarer.ID <= 0 || strconv.FormatInt(r.Declarer.ID, 10) != r.Consumer.ReadGrant.SubjectID || !forge.ValidIdentityLogin(r.Declarer.Login) {
 		return Reference{}, ErrHeld

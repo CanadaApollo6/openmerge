@@ -81,6 +81,75 @@ func Run(t *testing.T, newEnv func(*testing.T) Env) {
 		}
 		return o
 	}
+
+	for _, kind := range []string{"landing-other-revision", "landing-other-head", "forge-head-moved", "forge-base-moved", "journal-queue", "journal-reference-pin", "landing-invalid-commit", "stale-pin-head"} {
+		t.Run(kind, func(t *testing.T) {
+			e, r := setup(t)
+			source := Source(r)
+			want := "dependency-unavailable"
+			switch kind {
+			case "landing-other-revision", "landing-other-head", "stale-pin-head":
+				ref := r.Source.Reference
+				ref.Revision = r.Edge.Baseline.Revision
+				r.Edge.Reference, _ = ref.Canonical()
+				r.Edge.PinnedHead = r.Edge.Baseline.Head
+				r.Consumer.Edges = []dependency.DeclaredEdge{r.Edge}
+				r.Consumer.Digest = dependency.DeclarationDigest(r.Consumer.Edges)
+				r.Declaration.Digest = r.Consumer.Digest
+				if kind == "landing-other-revision" {
+					r.Source.Current.Revision++
+				} else {
+					r.Source.Current.Head = strings.Repeat("d", 40)
+				}
+				source.HeadSHA = r.Source.Current.Head
+				if kind != "stale-pin-head" {
+					r.Source.Landing = &dependency.SourceLanding{Revision: r.Source.Current, Commit: strings.Repeat("e", 40), SettlementEventID: 9, BaseSHA: r.Source.BaseSHA, OnBase: true}
+				}
+				want = "dependency-stale"
+			case "forge-head-moved":
+				source.HeadSHA = strings.Repeat("d", 40)
+			case "forge-base-moved":
+				source.BaseSHA = strings.Repeat("d", 40)
+			case "journal-queue":
+				r.Source.Queue.Base = "release"
+				want = "dependency-source-retargeted"
+			case "journal-reference-pin":
+				r.Source.Reference.Revision = 7
+				want = "dependency-source-retargeted"
+			case "landing-invalid-commit":
+				r.Source.Landing = &dependency.SourceLanding{Revision: r.Source.Current, Commit: "not-an-object-id", SettlementEventID: 9, BaseSHA: r.Source.BaseSHA, OnBase: true}
+			}
+			e.SetSource(source)
+			o := read(t, e, r, want)
+			result := "unavailable"
+			if want == "dependency-stale" {
+				result = "stale"
+			}
+			if o.Evidence().Observation.Result != result {
+				t.Fatal(o.Evidence())
+			}
+		})
+	}
+	for _, kind := range []string{"consumer-namespace", "consumer-repository", "edge-not-in-consumer", "declaration-digest", "declaration-event"} {
+		t.Run(kind, func(t *testing.T) {
+			e, r := setup(t)
+			switch kind {
+			case "consumer-namespace":
+				r.Registry.Scope.JournalNamespace = "omj1_" + strings.Repeat("f", 64)
+			case "consumer-repository":
+				r.Registry.Repositories = r.Registry.Repositories[:1]
+			case "edge-not-in-consumer":
+				r.Edge.Baseline.Head = strings.Repeat("d", 40)
+			case "declaration-digest":
+				r.Declaration.Digest = strings.Repeat("f", 64)
+			case "declaration-event":
+				r.Declaration.EventID = 0
+			}
+			if _, err := dependency.ObserveEdge(t.Context(), e.Reader, r); err == nil || e.SourceReads() != 0 {
+				t.Fatal("invalid request admitted", err)
+			}
+		})
+	}
 	for _, permission := range []string{"read", "triage", "write", "maintain", "admin", "none", "", "owner", "READ"} {
 		t.Run("permission-"+permission, func(t *testing.T) {
 			e, r := setup(t)
