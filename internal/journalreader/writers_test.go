@@ -12,7 +12,7 @@ import (
 )
 
 // The new sealed interfaces cannot enter the queue.Event append APIs. Enforce
-// the remaining escape hatches: production codec importers and snapshot calls.
+// the remaining escape hatches: production codecs, snapshot calls and raw SQL.
 func TestNoProductionNewEventOrSnapshotWriters(t *testing.T) {
 	must(t, filepath.WalkDir("../..", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -53,7 +53,27 @@ func TestNoProductionNewEventOrSnapshotWriters(t *testing.T) {
 				t.Errorf("new event codec escaped read-only boundary: %s", path)
 			}
 		}
+		allowedKinds := map[string]bool{
+			"internal/journalreader/reader.go":      true,
+			"internal/provenance/journal/events.go": true,
+			"internal/provenance/journal/codec.go":  true,
+			"internal/dependency/codec.go":          true,
+			"internal/dependency/projection.go":     true,
+			"internal/dependency/snapshot.go":       true,
+		}
+		rel := strings.TrimPrefix(filepath.ToSlash(path), "../../")
 		ast.Inspect(file, func(n ast.Node) bool {
+			if literal, ok := n.(*ast.BasicLit); ok && literal.Kind == token.STRING && !allowedKinds[rel] {
+				value, err := strconv.Unquote(literal.Value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, kind := range []string{"change_provenance_observed", "landing_provenance_recorded", "dependency_journal_initialized", "change_dependencies_declared", "dependency_policy_applied", "dependency_declaration_acknowledged", "dependency_declaration_self_acknowledged", "dependency_observed"} {
+					if strings.Contains(value, kind) {
+						t.Errorf("new kind literal outside read-only codec allowlist in %s: %s", path, kind)
+					}
+				}
+			}
 			call, ok := n.(*ast.CallExpr)
 			if !ok {
 				return true

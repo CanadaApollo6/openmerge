@@ -89,7 +89,12 @@ func (r Reader) Dependencies() (dependency.State, error) {
 
 // Apply is atomic on validation failure. Queue bytes and decisions are unchanged
 // by side evidence. IDs are global journal positions, not side-fold counters.
-func (r *Reader) Apply(id uint64, raw []byte) (Event, error) {
+func (r *Reader) Apply(id uint64, raw []byte) (_ Event, applyErr error) {
+	defer func() {
+		if applyErr != nil {
+			applyErr = fmt.Errorf("event %d: %w", id, applyErr)
+		}
+	}()
 	e, err := DecodeEvent(raw)
 	if err != nil {
 		return Event{}, err
@@ -117,7 +122,7 @@ func (r *Reader) Apply(id uint64, raw []byte) (Event, error) {
 		}
 	}
 	if err != nil {
-		return Event{}, fmt.Errorf("event %d: %w", id, err)
+		return Event{}, err
 	}
 	next.lastID = id
 	*r = next
@@ -196,7 +201,10 @@ func (r Reader) validateLanding(id uint64, l pj.Landing) error {
 				case queue.CheckProvenanceObserved:
 					valid = v.BatchID == l.BatchID && v.TestedSHA == d.TestedSHA
 				case queue.LandingDecisionRecorded:
-					valid = decisionMatches(v, l, m.Request)
+					// Variant and its approval/remedy payload are per member. The
+					// batch/attempt and final tested/landed identities are shared;
+					// Mapping.Build.Result may be an intermediate member commit.
+					valid = decisionMatches(v, l, m.Request) && v.TestedSHA == d.TestedSHA && v.LandedSHA == d.LandedSHA
 					memberBound = memberBound || valid
 				}
 				if v, ok := e.Provenance.(pj.Observation); ok {

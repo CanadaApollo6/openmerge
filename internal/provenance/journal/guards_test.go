@@ -344,20 +344,6 @@ func TestAssembledCommitSortOrder(t *testing.T) {
 	rejectUnchanged(t, apply(t, State{}, 3, cc[0]), 5, cc[1], ErrBinding)
 }
 
-func TestInventoryHeadMembership(t *testing.T) {
-	h, c := fixture(t)
-	h.Request.Head = oid("f")
-	h.Digest = InventoryDigest(h, c)
-	rejectUnchanged(t, State{}, 3, h, ErrBinding)
-	// Empty inventories are valid when a base already contains the head; the
-	// retained best merge base is then the head itself.
-	h.Commits, h.Stable, h.Additional = []p.Commit{}, []string{}, []string{}
-	h.MergeBases = []string{h.Request.Head}
-	h.DeclarationDigest, _ = p.DeclarationDigest(h.Commits, true, nil)
-	h.Digest = InventoryDigest(h, h.Commits)
-	apply(t, State{}, 3, h)
-}
-
 func TestChunkCommitSortOrder(t *testing.T) {
 	h, c := fixture(t)
 	c[0], c[1] = c[1], c[0]

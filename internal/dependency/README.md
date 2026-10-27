@@ -418,3 +418,26 @@ The shared reader migration now composes this codec through
 cannot encode dependency events or write v8 snapshots. Unverified namespace and
 incarnation projections remain quarantined, never satisfied dependencies; the
 future startup/writer integration must supply independently verified identity.
+
+
+## Shared-reader writer blockers
+
+**BLOCKING before any writer is enabled:** implement reviewed pruning/compaction
+with provenance audit export/reference closure. Writers must preflight complete
+appends below both caps so replay never hits the cap. The provenance cap is 4096
+records/32 MiB: at three records per single-member attempt, 1,365 attempts use
+4,095 records and attempt **1,366** fails at its tested companion. Larger
+inventories/retries or the byte cap can fail sooner; compaction is not automatic.
+
+**BLOCKING for the writer slice:** implement reviewed persisted composed cursors
+(for example v9) or equivalent bounded side-projection resume. Current audit
+cursors write only queue snapshots and replay the side prefix on every poll once
+side evidence exists. Version-marked legacy-only cursors use the bounded suffix;
+unmarked legacy cursors rebuild once in 256-row passes, safely including after
+binary rollback/roll-forward. This optimization does not fix side-prefix cost.
+
+Invalid records or unresolved references abort queue `Load` and fail `/status`
+and `Journals` for every queue in the requested key set. Events are immutable;
+recovery requires a code fix or restore. This availability risk is comparable to
+the 2026-10-16 wedge: writers must validate before append. Follow the
+[operator procedure](../../docs/operating.md#invalid-records-and-unresolved-references).

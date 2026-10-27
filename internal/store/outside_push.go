@@ -38,6 +38,9 @@ type outsideLanding struct {
 // The scanned position and fold survive restart even when a landing holds the
 // audited position back. Pending transitions never require replaying a prefix.
 type outsidePushProgress struct {
+	// Only this reader version certifies that the entire prefix was dispatched.
+	ReaderVersion                   int  `json:",omitempty"`
+	HasSideEvidence                 bool `json:",omitempty"`
 	ScannedThrough, AuditedBaseMove int64
 	State                           json.RawMessage
 	ObservedBase                    string
@@ -76,11 +79,21 @@ func (s *Store) ReadOutsidePushAudit(ctx context.Context, q QueueID) (*OutsidePu
 			reader = sharedReader(ctx, s.pool, q, queue.State{})
 			err = reader.LoadSnapshot(a.progress.State, uint64(a.progress.ScannedThrough))
 			state = reader.Queue
+			if err == nil {
+				var header struct{ Version int }
+				err = json.Unmarshal(a.progress.State, &header)
+				if header.Version >= 8 {
+					a.progress.HasSideEvidence = true
+				} else if a.progress.ReaderVersion != 1 {
+					err = fmt.Errorf("audit cursor lacks shared-reader prefix certification")
+				}
+			}
 		}
 		if err != nil {
 			a.CursorResetReason = err.Error()
 			a.progress = outsidePushProgress{}
 			state = queue.State{}
+			reader = sharedReader(ctx, s.pool, q, state)
 		}
 	}
 	if len(a.expected) == 0 || a.CursorResetReason != "" {
@@ -91,26 +104,20 @@ func (s *Store) ReadOutsidePushAudit(ctx context.Context, q QueueID) (*OutsidePu
 	if err != nil {
 		return nil, err
 	}
-	// Legacy cache bytes carry no side projection. Rebuild that projection from
-	// immutable history before tail replay; never write v8/v9 from this cursor.
+	// A certified legacy-only prefix needs no history probe. Unmarked legacy
+	// cursors rebuild once in bounded passes, including after binary rollback.
+	// Side projections still require replay until a future reviewed cursor writer.
 	reader.Queue = state
-	if a.progress.ScannedThrough > 0 {
-		var hasSide bool
-		err := s.pool.QueryRow(ctx, `SELECT EXISTS(SELECT FROM events WHERE queue_id=$1 AND id<=$2 AND type IN ('change_provenance_observed','landing_provenance_recorded','dependency_journal_initialized'))`, q, a.progress.ScannedThrough).Scan(&hasSide)
+	if a.progress.ScannedThrough > 0 && a.progress.HasSideEvidence {
+		var seed queue.State
+		if err := s.pool.QueryRow(ctx, `SELECT base, COALESCE(initial_fence, '') FROM queues WHERE id=$1`, q).Scan(&seed.BaseBranch, &seed.Fence); err != nil {
+			return nil, err
+		}
+		reader, _, err = replayJournal(ctx, s.pool, q, seed, a.progress.ScannedThrough)
 		if err != nil {
 			return nil, err
 		}
-		if hasSide {
-			var seed queue.State
-			if err := s.pool.QueryRow(ctx, `SELECT base, COALESCE(initial_fence, '') FROM queues WHERE id=$1`, q).Scan(&seed.BaseBranch, &seed.Fence); err != nil {
-				return nil, err
-			}
-			reader, _, err = replayJournal(ctx, s.pool, q, seed, a.progress.ScannedThrough)
-			if err != nil {
-				return nil, err
-			}
-			state = reader.Queue
-		}
+		state = reader.Queue
 	}
 	rows, err := s.pool.Query(ctx, `SELECT id, recorded_at, payload FROM events
  WHERE queue_id=$1 AND id > $2 ORDER BY id LIMIT $3`, q, a.progress.ScannedThrough, outsidePushScanLimit)
@@ -132,6 +139,9 @@ func (s *Store) ReadOutsidePushAudit(ctx context.Context, q QueueID) (*OutsidePu
 		decoded, err := reader.Apply(uint64(r.ID), r.Payload)
 		if err != nil {
 			return nil, err
+		}
+		if decoded.Queue == nil {
+			a.progress.HasSideEvidence = true
 		}
 		r.Event = decoded.Queue
 		next := reader.Queue
@@ -175,6 +185,7 @@ func (s *Store) ReadOutsidePushAudit(ctx context.Context, q QueueID) (*OutsidePu
 		a.progress.AuditedBaseMove = move.ID
 		a.progress.Pending = a.progress.Pending[1:]
 	}
+	a.progress.ReaderVersion = 1
 	a.progress.State, err = queue.EncodeSnapshot(state)
 	return a, err
 }

@@ -336,3 +336,86 @@ func TestMultiMemberDecisionsResolveIndependently(t *testing.T) {
 		t.Fatal("cross-member decision accepted", err)
 	}
 }
+
+func TestMemberBatchIdentitiesReplayAndV9(t *testing.T) {
+	for _, scenario := range []struct {
+		name                  string
+		tested, landed, check string
+		reject                bool
+	}{
+		{name: "per-member intermediate build", check: "anchor"},
+		{name: "conflicting tested", tested: strings.Repeat("e", 40), reject: true},
+		{name: "conflicting landed", landed: strings.Repeat("e", 40), reject: true},
+		{name: "check at intermediate SHA", check: "intermediate", reject: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			h := provenanceFixture(t)
+			other := h
+			other.Request.ChangeID = "chg1_" + strings.Repeat("2", 64)
+			other.Digest = pj.InventoryDigest(other, other.Commits)
+			l := landingFixture(t, h)
+			l.Members[0].ObservationIDs = []uint64{5}
+			l.Members[0].RecordDigest = pj.MemberDigest(l.Members[0])
+			second := l.Members[0]
+			second.Request, second.Mapping.Request = other.Request, other.Request
+			second.InventoryDigest, second.ObservationIDs = other.Digest, []uint64{6}
+			// Intermediate per-member composition results need not equal the final
+			// attempt's tested/landed SHA, even when their decisions agree on it.
+			second.Mapping.Build.Result = strings.Repeat("e", 40)
+			second.Layers = append([]pj.Layer{}, second.Layers...)
+			for i := range second.Layers {
+				second.Layers[i].References = []uint64{9}
+				if scenario.check != "" {
+					second.Layers[i].References = []uint64{8, 9}
+				}
+			}
+			second.RecordDigest = pj.MemberDigest(second)
+			l.Members = append(l.Members, second)
+			d := decisionFixture(other)
+			if scenario.tested != "" {
+				d.TestedSHA = scenario.tested
+			}
+			if scenario.landed != "" {
+				d.LandedSHA = scenario.landed
+			}
+			checkSHA := h.Request.Head
+			if scenario.check == "intermediate" {
+				checkSHA = second.Mapping.Build.Result
+			}
+			records := map[uint64][]byte{5: encode(t, h), 6: encode(t, other), 8: encode(t, queue.ChecksCompleted{TestedSHA: checkSHA, Success: true}), 9: encode(t, d), 10: encode(t, decisionFixture(h))}
+			r := New(queue.State{}, dependency.JournalInitialized{}, lookup(records))
+			for _, id := range []uint64{5, 6, 8, 9, 10} {
+				apply(t, &r, id, records[id])
+			}
+			before := snapshot(t, r)
+			_, err := r.Apply(11, encode(t, l))
+			if scenario.reject {
+				if !errors.Is(err, ErrReference) {
+					t.Fatalf("accepted contradictory member evidence: %v", err)
+				}
+				if !bytes.Equal(before, snapshot(t, r)) {
+					t.Fatal("rejection mutated state")
+				}
+			} else {
+				must(t, err)
+			}
+			// Assemble through the pure fold, so v9 validation independently proves
+			// the reference constraint rather than inheriting successful replay.
+			pure, err := pj.Apply(pj.State{}, 5, h)
+			must(t, err)
+			pure, err = pj.Apply(pure, 6, other)
+			must(t, err)
+			r.Provenance, err = pj.Apply(pure, 11, l)
+			must(t, err)
+			restored := New(queue.State{}, dependency.JournalInitialized{}, lookup(records))
+			err = restored.LoadSnapshot(snapshot(t, r), 11)
+			if scenario.reject {
+				if !errors.Is(err, ErrReference) {
+					t.Fatalf("v9 accepted contradictory member evidence: %v", err)
+				}
+			} else {
+				must(t, err)
+			}
+		})
+	}
+}

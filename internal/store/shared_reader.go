@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/CanadaApollo6/openmerge/internal/dependency"
 	"github.com/CanadaApollo6/openmerge/internal/journalreader"
@@ -47,7 +46,7 @@ func replayJournal(ctx context.Context, db journalQuery, q QueueID, seed queue.S
 		}
 		for _, v := range records {
 			if _, err := r.Apply(uint64(v.id), v.raw); err != nil {
-				return r, 0, fmt.Errorf("event %d: %w", v.id, err)
+				return r, 0, err
 			}
 			watermark = v.id
 		}

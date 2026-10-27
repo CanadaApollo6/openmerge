@@ -222,13 +222,6 @@ func validateInventory(g group) error {
 		}
 		originals[c.ObjectID] = true
 	}
-	// No graph edges are persisted. Check the necessary endpoint membership that
-	// can be established from this schema, without inventing a Git read on replay.
-	if h.Complete && !originals[h.Request.Head] && !excluded[h.Request.Head] &&
-		h.Request.Head != h.Request.PinnedBase && h.Request.Head != h.Request.BuildBase &&
-		!slices.Contains(h.MergeBases, h.Request.Head) && !slices.Contains(h.BuildMergeBases, h.Request.Head) {
-		return ErrBinding
-	}
 	union := map[string]bool{}
 	for _, id := range append(slices.Clone(h.Stable), h.Additional...) {
 		if union[id] || !originals[id] {

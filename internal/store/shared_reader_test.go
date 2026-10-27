@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -123,9 +124,11 @@ func TestSharedReaderLiveRejectsUnresolvedLanding(t *testing.T) {
 	l.DecisionID = uint64(id)
 	l.Members[0].ObservationIDs = []uint64{uint64(id)}
 	l.Members[0].RecordDigest = pj.MemberDigest(l.Members[0])
-	insertReaderEvidence(t, s, q, l)
+	landingID := insertReaderEvidence(t, s, q, l)
 	if _, _, err := s.Load(t.Context(), q); err == nil {
 		t.Fatal("live load accepted wrong-kind decision")
+	} else if prefix := fmt.Sprintf("event %d:", landingID); strings.Count(err.Error(), prefix) != 1 {
+		t.Fatalf("event context must appear exactly once: %v", err)
 	}
 	if _, err := s.ReportingJournals(t.Context(), []QueueKey{{Installation: "installation/1", Repository: "owner/repo", BaseBranch: "main"}}); err == nil {
 		t.Fatal("reporting accepted wrong-kind decision")

@@ -572,9 +572,12 @@ and dependency decoders continue refusing v9 and the new provenance kinds.
 Store loads, reporting journals and outside-push cursors use the composed reader.
 Evidence-only operational/warning scans use its strict kind dispatcher and give
 side evidence no queue effect. Queue snapshots written by the existing cursor
-remain byte-identical v6/v7; side projections are rebuilt from immutable journal
-history when resuming a legacy cache. Replay pages close before exact-reference
-lookups, so pgx never performs a nested query on an actively streaming connection.
+remain byte-identical v6/v7. A cursor reader-version marker certifies that the
+prefix was dispatched; unmarked legacy cursors rebuild once in 256-row passes,
+including after an older binary rewrites the cache. Marked legacy-only cursors
+read only the bounded suffix, with no prefix presence query. Side projections
+are rebuilt from immutable history on every poll once side evidence exists.
+Replay pages close before exact-reference lookups, so pgx never performs a nested query on an actively streaming connection.
 There are no schema, index, public policy, evaluation or writer changes.
 
 Landing `DecisionID` resolves to an existing `landing_decision_recorded` in the
@@ -585,16 +588,16 @@ future and mismatched references refuse both live replay and snapshot loading.
 The legacy decision schema is per member: each member must resolve its exact
 decision through the attempt anchor or its layer references; the anchor must
 belong to one of those members. Multi-member evidence with an unbound member is
-refused.
+refused. Member decisions must agree with the anchor on the batch/attempt and
+tested/landed SHAs. Approval/remedy payloads and intermediate per-member build
+results may differ. Check references bind only to the anchor's tested SHA.
 No invalid evidence becomes a complete/Human inventory or a satisfied dependency.
 
-Complete inventories also check the necessary head-membership invariant:
-retained originals, trusted exclusions, a supplied base or a retained best merge
-base must account for the head. Empty inventories whose base already contains
-the head remain valid. The schema has no graph edges; replay cannot prove ancestry,
-merge-base correctness or mapping/tree derivation from hashes. Those facts remain
-trusted local-producer evidence and require slice 4b's graph-verified acquisition;
-replay performs no Git or forge reads and invents no graph proof.
+This migration adds no head-membership rule. Inventory graph completeness,
+ancestry, exclusions and mapping/tree derivation remain the ADR 0010 producer
+contract; the persisted schema has no graph edges with which to prove them.
+The pre-existing fixtures retain their original scope and replay does no Git or
+forge reads.
 
 The 4096-record cap is a typed operator-visible refusal, not automatic pruning.
 See [retention recovery](../../docs/operating.md#shared-reader-retention-recovery).
@@ -611,3 +614,18 @@ sorting. Mixed-feature snapshot-plus-tail tests cover every cut, including parti
 chunks, both wrapper base kinds and #163 held requests. Store integration tests
 exercise actual journal load/reporting, partial-chunk cursor restart, v9 cursor
 loading without new-version writes and wrong-kind decision refusal.
+
+**BLOCKING before any writer is enabled:** reviewed pruning/compaction must
+preserve audit export/reference closure, and writers must preflight complete
+appends below both retention caps so the cap is never reached during replay.
+Three records per single-member attempt exhaust the 4096-record budget around
+attempt **1,366** (4,095 after 1,365 attempts; the next tested record fails).
+Larger inventories/retries or the byte cap fail sooner.
+
+**BLOCKING for the writer slice:** replace per-poll side-prefix replay with a
+reviewed persisted composed cursor (for example v9) or equivalent bounded resume.
+This reader-only migration bounds legacy-only cursor work; it does not solve
+side-evidence poll cost. Invalid records and unresolved references stop queue
+`Load` and fail `/status`/`Journals` for the entire requested key set. Immutable
+history requires a code fix or restore; see the operator recovery procedure
+above. Writers must validate before append to avoid another availability wedge.

@@ -2576,10 +2576,22 @@ publishing a partially validated state. Oversized v9 record collections also
 return that typed error. Dependency's existing bounded active projections remain
 unchanged. Legacy journals do not acquire the provenance record bound.
 
-The reader deliberately does **not** prune. Required audit dependencies can
-outlive the latest generation, and slice 3b has not established the export closure
-and retention contract yet. Do not enable writers on the assumption that these
-4096 records will be compacted automatically.
+**BLOCKING before any writer is enabled:** implement reviewed pruning/compaction
+with audit export/reference closure, and have writers preflight the complete
+append below both caps so replay never encounters the limit. At three records
+per single-member successful attempt (inventory, tested, landed), 1,365 attempts
+consume 4,095 records; attempt **1,366** reaches 4,096 at its inventory and fails
+at its tested companion. Larger inventories, retries or the byte cap exhaust the
+budget sooner. There is no automatic compaction today.
+
+**BLOCKING for the writer slice:** persist a reviewed composed cursor (for
+example v9) or an equivalent bounded side-projection resume mechanism. Once a
+prefix contains side evidence, the current audit cursor replays that prefix on
+every poll because it still writes only queue snapshots. This latent O(history)
+work is not fixed by the legacy-only optimization. The reader-version marker
+certifies a scanned prefix and avoids any presence probe on legacy-only polls;
+unmarked legacy cursors rebuild once in 256-row passes. Neither marker nor
+preflight replaces compaction.
 
 If this limit is encountered, stop new emission for the affected queue and keep
 its immutable journal and snapshots intact. Retain a verified whole-database
@@ -2597,3 +2609,25 @@ shared reader's `Dependencies` accessor refuses them. A snapshot cannot supply
 its own trust binding. The future startup/writer integration must supply the
 operator-verified binding before dependency satisfaction is exposed; no live
 policy or satisfaction path is enabled here.
+
+### Invalid records and unresolved references
+
+An invalid record or unresolved/mismatched reference stops `Load` for its queue.
+`/status` and `Journals` also fail for **every queue in the same requested key
+set**: they do not publish partial results or quarantine just the offending row.
+This is a real availability risk comparable to the **2026-10-16 wedge**. Every
+future writer slice must validate complete candidate records, reference targets,
+batch-wide identities and capacity before append, in the transaction/snapshot
+that fences its write. Reader rejection is not an acceptable write-time check.
+
+On failure, stop emission for the affected queue and record the queue ID, event
+position and error. Keep immutable events, snapshots, logs and a verified
+whole-database backup. Reproduce replay against an isolated restored copy and
+identify whether the producer wrote invalid evidence or the reader has a bug.
+Recovery requires a reviewed compatible **code fix or restore**; immutable events
+cannot be edited in place. Test the fix with full replay and snapshot-plus-tail
+reads, including the combined reporting key set, before deployment and resuming
+emission. A restore requires stopped workers, retaining post-backup evidence,
+token rotation and reconciliation of actual remote refs/subsequent landings under
+ADRs 0010/0011. Restarting, clearing caches, disabling configuration, skipping or
+deleting a bad record does not repair history.

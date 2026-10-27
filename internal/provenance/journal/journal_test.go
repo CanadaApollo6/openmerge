@@ -276,7 +276,6 @@ func TestInventoryChunkFailuresAndOutcomes(t *testing.T) {
 	empty.Stable = []string{}
 	empty.Additional = []string{}
 	empty.Commits = []p.Commit{}
-	empty.MergeBases = []string{empty.Request.Head}
 	empty.DeclarationDigest, _ = p.DeclarationDigest(empty.Commits, true, nil)
 	empty.Digest = InventoryDigest(empty, empty.Commits)
 	s := apply(t, State{}, 3, empty)
@@ -537,7 +536,6 @@ func TestPendingCommitEvidenceAndRebuildFences(t *testing.T) {
 	pushed.Request.Revision = "2"
 	pushed.Request.Generation = "generation-repush"
 	pushed.Request.Head = oid("f")
-	pushed.Request.Excluded = []string{pushed.Request.Head}
 	pushed.PreviousObservationID = 5
 	pushed.Digest = InventoryDigest(pushed, c)
 	s = apply(t, s, 15, pushed)
