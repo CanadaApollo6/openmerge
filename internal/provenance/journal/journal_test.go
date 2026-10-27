@@ -66,7 +66,7 @@ func apply(t *testing.T, s State, id uint64, e Event) State {
 }
 func snapshotBytes(t *testing.T, base []byte, s State) []byte {
 	t.Helper()
-	if len(s.records) == 0 {
+	if len(s.records) == 0 && !s.compacted() {
 		return base
 	}
 	var header struct{ Version int }
@@ -77,7 +77,7 @@ func snapshotBytes(t *testing.T, base []byte, s State) []byte {
 	if header.Version == 8 {
 		kind = "dependency"
 	}
-	raw, err := json.Marshal(snapshot{SnapshotVersion, kind, base, s.records[len(s.records)-1].ID, s.Records()})
+	raw, err := EncodeSnapshot(kind, base, s)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,9 +191,9 @@ func TestCompleteChunkedInventoryAndGenerationBindings(t *testing.T) {
 			l := landing(h, []uint64{3, 5})
 			mutate(&l)
 			l.Members[0].RecordDigest = MemberDigest(l.Members[0])
-			before := snapshotBytes(t, []byte(`{}`), chunked)
+			before := snapshotBytes(t, []byte(`{"Version":6}`), chunked)
 			next, err := Apply(chunked, 11, l)
-			if err == nil || !bytes.Equal(before, snapshotBytes(t, []byte(`{}`), next)) {
+			if err == nil || !bytes.Equal(before, snapshotBytes(t, []byte(`{"Version":6}`), next)) {
 				t.Fatal("bad binding accepted or changed state", err)
 			}
 		})

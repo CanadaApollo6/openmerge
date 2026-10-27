@@ -11,7 +11,7 @@ import (
 // the active batch's next action. Replanning unchanged inputs preserves all keys.
 // Invalid inputs that would produce an unsafe action panic before it is emitted.
 func Plan(cfg Config, s State, now time.Time) []Action {
-	if cfg.MaxDepth() < 1 || cfg.MaxDepth() > 32 || cfg.SpeculationMinDepth < 0 || max(1, cfg.SpeculationMinDepth) > cfg.MaxDepth() {
+	if cfg.MaxDepth() < 1 || cfg.MaxDepth() > MaxSpeculationDepth || cfg.SpeculationMinDepth < 0 || max(1, cfg.SpeculationMinDepth) > cfg.MaxDepth() {
 		panic("invalid speculation window")
 	}
 	if !ValidTargetPassRate(cfg.BatchTargetPassRate) {
@@ -401,7 +401,7 @@ func (s State) batchCandidates(cfg Config, now time.Time) ([]BatchPR, time.Time)
 	if size == 0 {
 		size = 1
 	}
-	if size < 1 || size > 128 || cfg.BatchMaxWait < 0 {
+	if size < 1 || size > MaxBatchSize || cfg.BatchMaxWait < 0 {
 		panic("invalid batch configuration")
 	}
 	var prs []BatchPR

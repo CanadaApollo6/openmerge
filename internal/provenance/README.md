@@ -483,13 +483,11 @@ receipt identity and refreshed evidence. MVP extraction outcomes retain
 `not_requested` checkpoint resolution; resolver observations require a later
 new event kind and are not fabricated by this decoder.
 
-The pure fold retains at most 4096 provenance records / 32 MiB of canonical
+The pure fold retains at most 4256 provenance records / 32 MiB of canonical
 event payloads, within a 64 MiB wrapper bound. It returns detached immutable
-values and leaves prior state unchanged on error. This is a bounded retained
-checkpoint contract, not an activated compaction strategy; future snapshot
-writers must design retention/export closure before deployment. Pruning that
-preserves required audit/export dependencies is required before slice 3c wiring;
-an unbounded live replay cannot use this fold as-is. The eventual
+values and leaves prior state unchanged on error. The writer foundations below add deterministic projection compaction and count
+its replay fences in the byte budget; original journal evidence is retained
+forever for export closure. The eventual
 writer must commit all chunks and member/decision/landing-start bindings
 atomically and reject stale generations under the transaction fence. There is
 no writer or transaction code in 3a.
@@ -564,16 +562,16 @@ No reader/writer activation or v1 audit-format change occurs in 3a.
 - `guards_test.go` pins forged declaration digests, each fail-closed/dedupe guard,
   assembled digest corruption in one or every chunk, tested-before-landed,
   canonical snapshot payloads, base kind/version fences, detached base bytes,
-  and the 4096-record boundary. Each requested guard is also proved by an
+  and the 4256-record boundary. Each requested guard is also proved by an
   isolated source mutation that makes its focused test fail.
 
 ## Shared reader migration (slice 3c, Hold)
 
 `internal/journalreader` is now the single production composition boundary for
 queue, dependency and provenance codecs. The original 3a inert-import fences
-allow only this reader and store's read-only adapter; a separate AST guard rejects
-production new-event encoder calls and v8/v9 snapshot encoding outside the
-derived audit-cursor composer. This guard is a **tripwire**, not proof: it does
+allow this reader and the store adapters. A separate AST guard permits side
+event encoding only in the unwired `store/side_append.go` adapter and rejects
+production callers. Only the derived audit-cursor composer encodes v8/v9. This guard is a **tripwire**, not proof: it does
 not catch string concatenation, `.sql` files or `_test.go` files. Existing append
 APIs still accept only the sealed legacy `queue.Event` interface. The old queue
 and dependency decoders continue refusing v9 and the new provenance kinds.
@@ -607,7 +605,9 @@ contract; the persisted schema has no graph edges with which to prove them.
 The pre-existing fixtures retain their original scope and replay does no Git or
 forge reads.
 
-The 4096-record cap is a typed operator-visible refusal, not automatic pruning.
+The 4256-record active cap is a typed operator-visible refusal. The writer
+foundations compact completed and unpinned superseded projection records,
+retaining original journal evidence and compact replay fences.
 See [retention recovery](../../docs/operating.md#shared-reader-retention-recovery).
 Required export dependencies must not be lost to a speculative pruning policy.
 Audit v2 remains in the separate slice **3b** PR. Default legacy v1 exports and
@@ -623,32 +623,64 @@ chunks, both wrapper base kinds and #163 held requests. Store integration tests
 exercise actual journal load/reporting, partial-chunk cursor restart, v9 cursor
 resume, complete legacy cursor byte goldens and wrong-kind decision refusal.
 
-**BLOCKING before any writer is enabled:** reviewed pruning/compaction must
-preserve audit export/reference closure, and writers must preflight complete
-appends below both retention caps so the cap is never reached during replay.
-Three records per single-member attempt exhaust the 4096-record budget around
-attempt **1,366** (4,095 after 1,365 attempts; the next tested record fails).
-Larger inventories/retries or the byte cap fail sooner.
+**BLOCKING prerequisites for ADR 0010 slice 4b and ADR 0011 slices 4a/4b:**
 
-**BLOCKING writer-slice requirement — legacy-cursor prefix invariant:** a
-legacy-format cursor (v6/v7 snapshot in the unchanged legacy envelope) certifies
-that its journal prefix contains **no side-evidence kinds**. In the same
-transaction as the first side-evidence append for a queue, or before it, the
-writer MUST upgrade that queue's cursor to the composed v9 format. The upgrade
-must preserve its watermark, outside-move bookkeeping and complete folded state;
-it must coordinate with cursor compare-and-swap so a concurrent legacy audit
-cannot undo it. This obligation is separate from pruning/compaction and preflight.
+- **Lifetime fence growth.** Fences count against the 32 MiB projection cap.
+  Astra's review estimates exhaustion at 121–146k retired pairs, about 4–5 months
+  at 1,000 landings/day. Sonnet's review estimates 130–250k lifetime landings and
+  about 0.7 s of checkpoint decode per `Load` at 100k. These are review estimates,
+  not supported capacity guarantees. Before enabling writers on a high-volume
+  queue, provide a fence-compaction strategy, or at minimum a metric and alert.
+- **Shared-transaction helper.** Decisions are written only inside `startLanding`'s
+  transaction; `AppendSide` opens its own transaction. Writer slices must factor
+  `AppendSide`'s validate-and-insert logic into a helper that accepts an existing
+  transaction so a decision and its companion commit atomically.
+- **Idempotent landed companion.** If a tested companion's batch emits `Landed`
+  but a crash prevents its landed companion from being written, the tested
+  companion is never retired. At 32 such unfinished companions, capacity refuses
+  new writer work. Writer slice 4b must write the landed companion idempotently
+  on restart or recovery.
 
-Legacy cursors scan only the bounded suffix, with no prefix probe, upgrade
-rebuild or process-memory certificate. A side event encountered in the suffix
-switches the durable snapshot to v9; v9 resumes both side projections thereafter.
-The complete serialized cursor remains byte-identical to main for legacy-only
-queues, including its envelope. After side evidence exists, that queue crosses
-the format boundary and legacy byte identity no longer applies. No side-event
-writer or snapshot-table writer is enabled here. Rollback after emission still
-requires the verified pre-emission backup and external-effect reconciliation;
-an older binary rewriting a v9 cursor as legacy violates this invariant and is
-not a supported rollback path.
+The **Hold writer foundations** provide the unwired `Store.AppendSide` API.
+It validates an entire bundle through the composed replay fold under the queue
+lock before any INSERT, preflights capacity, and upgrades the existing audit
+cursor to v9 in that same transaction. No production caller is enabled. The
+writer guard allowlists only this adapter and forbids production callers.
+
+Projection compaction retires completed tested/landed pairs, terminal non-landed
+attempts (including abandonment), and generations dropped by dequeue, closure,
+head/revision supersession or queue retirement. Uncertain fenced landings retain
+evidence until their definitive outcome. Exact generation/CAS and attempt fences
+survive restart; retired identities cannot be reused.
+Original journal evidence is retained forever for ADR 0008/0010 audit closure;
+settled and superseded generations remain exportable by original ID. A fresh
+generation is required before further use of a retired inventory. The active
+budget is 4256 records / 32 MiB (including compact metadata), with at most 32
+unfinished tested companions, 385 reference targets per companion and 12,320
+in aggregate. These derive from batch size 128 and speculation depth 32, with
+per-member headroom, and match lookup caching. Writer preflight stays below the record/byte caps;
+capacity refusal must never publish effects or partial bundles. Dependency holds
+are not pruned. See the complete [retention decision, cursor invariant and
+recovery procedure](../../docs/operating.md#shared-reader-retention-recovery).
+
+The owned replay fold updates lifetime fence maps without copying them per event.
+Append and Load resume a separate append/audit checkpoint and its paged suffix;
+append checkpoints never advance outside-push audit progress. Checkpoint work
+and durable identity fences still grow with lifetime history: active projection
+pruning is implemented, but unlimited-history pruning is not fully resolved.
+AppendSide refuses queue events, including decisions, which remain on the existing
+authorized landing path. Dedupe retries compare complete canonical bundle bytes,
+length, reserved IDs and independent binding before returning success.
+
+V9 loads revalidate only retained unfinished companion references. Audits retain
+the 256-row suffix bound, including after large completed histories. The original
+v9 shape remains readable, while a strict `Compaction` checkpoint shape persists
+retired fences. Legacy-only journals retain their exact full cursor bytes.
+The first future side append/compact cursor crosses the rollback boundary:
+deploy compatible readers and audit v2 everywhere first, drain incompatible
+workers/readers, verify the pre-emission backup, and reconcile external effects
+before any restore. No writer may activate until ADR 0009 period B drains and
+its later authority/startup/owner rollout gates are satisfied.
 
 Invalid records and unresolved references stop queue
 `Load` and fail `/status`/`Journals` for the entire requested key set. Immutable

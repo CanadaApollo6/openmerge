@@ -1,5 +1,6 @@
 // Package journal defines ADR 0010 event contracts and pure replay.
-// Production use is read-only through internal/journalreader.
+// Production composition uses internal/journalreader; the store append adapter
+// exists but has no production callers.
 package journal
 
 import (
@@ -20,7 +21,7 @@ const WireVersion = 1
 const (
 	maxEventBytes    = 1 << 20
 	maxSnapshotBytes = 64 << 20
-	maxRecords       = 4096
+	maxRecords       = MaxActiveRecords
 	maxChunkCommits  = 128
 )
 
@@ -35,10 +36,10 @@ var (
 // RetentionLimitError refuses replay without silently discarding evidence needed
 // by audit closure. Recovery requires a compatible reader with reviewed retention;
 // deleting events or resetting cursors cannot recover a full replay.
-type RetentionLimitError struct{ Records, Bytes int }
+type RetentionLimitError struct{ Records, Bytes, Pending, References int }
 
 func (e RetentionLimitError) Error() string {
-	return fmt.Sprintf("provenance retention limit: records=%d (max %d), bytes=%d (max %d); stop writers and deploy a compatible reader with reviewed retention; see docs/operating.md#shared-reader-retention-recovery", e.Records, maxRecords, e.Bytes, maxSnapshotBytes/2)
+	return fmt.Sprintf("provenance retention limit: records=%d (max %d), bytes=%d (max %d), unfinished=%d (max %d), references=%d (max %d); stop writers and deploy a compatible reader with reviewed retention; see docs/operating.md#shared-reader-retention-recovery", e.Records, maxRecords, e.Bytes, maxSnapshotBytes/2, e.Pending, MaxPendingLandings, e.References, MaxRetainedReferences)
 }
 func (RetentionLimitError) Unwrap() error { return ErrLimit }
 

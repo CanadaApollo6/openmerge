@@ -352,7 +352,7 @@ func (p *parser) queue(n *yaml.Node, path string) Queue {
 			value *int
 		}{{"max_depth", &q.Speculation.MaxDepth}, {"min_depth", &q.Speculation.MinDepth}} {
 			if v := fields[field.name]; v != nil {
-				if v.Kind != yaml.ScalarNode || v.ShortTag() != "!!int" || v.Decode(field.value) != nil || *field.value < 1 || *field.value > 32 {
+				if v.Kind != yaml.ScalarNode || v.ShortTag() != "!!int" || v.Decode(field.value) != nil || *field.value < 1 || *field.value > queue.MaxSpeculationDepth {
 					p.error(v, path+".speculation."+field.name, "expected an integer from 1 to 32")
 				}
 			}
@@ -364,7 +364,7 @@ func (p *parser) queue(n *yaml.Node, path string) Queue {
 	if n := fields["batch"]; n != nil {
 		fields := p.fields(n, path+".batch", batchKeys...)
 		if n := fields["max_size"]; n != nil {
-			if n.Kind != yaml.ScalarNode || n.ShortTag() != "!!int" || n.Decode(&q.Batch.MaxSize) != nil || q.Batch.MaxSize < 1 || q.Batch.MaxSize > 128 {
+			if n.Kind != yaml.ScalarNode || n.ShortTag() != "!!int" || n.Decode(&q.Batch.MaxSize) != nil || q.Batch.MaxSize < 1 || q.Batch.MaxSize > queue.MaxBatchSize {
 				p.error(n, path+".batch.max_size", "expected an integer from 1 to 128")
 			}
 		}

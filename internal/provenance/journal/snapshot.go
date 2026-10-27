@@ -40,7 +40,7 @@ type snapshot struct {
 // supplied decoder and v9 through a strict retained-evidence fold. Nested v9
 // wrappers and unrecognized base versions are rejected before invoking callbacks.
 // V9 record payloads must already be canonical; replay preserves their exact bytes.
-func DecodeSnapshot(raw []byte, decodeBase BaseDecoder) (Snapshot, error) {
+func DecodeSnapshot(raw []byte, decodeBase BaseDecoder, validate ...func(uint64, Landing) error) (Snapshot, error) {
 	if len(raw) > maxSnapshotBytes {
 		return Snapshot{}, ErrLimit
 	}
@@ -54,41 +54,46 @@ func DecodeSnapshot(raw []byte, decodeBase BaseDecoder) (Snapshot, error) {
 	base := raw
 	baseKind := ""
 	var state State
+	var records []Record
+	var compacted *checkpoint
 	if header.Version == SnapshotVersion {
+		var discriminator map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &discriminator); err != nil {
+			return Snapshot{}, err
+		}
 		var v snapshot
-		if err := strictJSON(raw, &v); err != nil {
+		if _, ok := discriminator["Compaction"]; ok {
+			var cv compactSnapshot
+			if err := strictJSON(raw, &cv); err != nil {
+				return Snapshot{}, err
+			}
+			v = snapshot{cv.Version, cv.BaseKind, cv.Base, cv.LastID, cv.Records}
+			compacted = &cv.Compaction
+			if cv.LastID != cv.Compaction.Through {
+				return Snapshot{}, ErrBinding
+			}
+		} else if err := strictJSON(raw, &v); err != nil {
 			return Snapshot{}, err
 		}
 		if len(v.Records) > maxRecords {
 			return Snapshot{}, RetentionLimitError{Records: len(v.Records), Bytes: len(raw)}
 		}
-		for _, r := range v.Records {
-			e, err := DecodeEvent(r.Payload)
-			if err != nil {
-				return Snapshot{}, err
+		if compacted == nil {
+			var last uint64
+			if len(v.Records) > 0 {
+				last = v.Records[len(v.Records)-1].ID
 			}
-			state, err = Apply(state, r.ID, e)
-			if err != nil {
-				return Snapshot{}, err
-			}
-			canonical := state.records[len(state.records)-1].Payload
-			if !bytes.Equal(r.Payload, canonical) {
-				return Snapshot{}, ErrMalformed
+			if v.LastID != last {
+				return Snapshot{}, ErrBinding
 			}
 		}
-		var lastID uint64
-		if len(v.Records) > 0 {
-			lastID = v.Records[len(v.Records)-1].ID
-		}
-		if v.LastID != lastID {
-			return Snapshot{}, ErrBinding
-		}
-		base = v.Base
-		baseKind = v.BaseKind
+		records = v.Records
+		base, baseKind = v.Base, v.BaseKind
 		if baseKind != "queue" && baseKind != "dependency" {
 			return Snapshot{}, ErrMalformed
 		}
 	}
+
 	var baseHeader struct{ Version int }
 	if err := json.Unmarshal(base, &baseHeader); err != nil {
 		return Snapshot{}, err
@@ -106,6 +111,36 @@ func DecodeSnapshot(raw []byte, decodeBase BaseDecoder) (Snapshot, error) {
 	}
 	if err := decodeBase(baseKind, slices.Clone(base)); err != nil {
 		return Snapshot{}, err
+	}
+	if compacted != nil {
+		var err error
+		state, err = restoreCheckpoint(*compacted, records)
+		if err != nil {
+			return Snapshot{}, err
+		}
+	}
+	for _, record := range records {
+		e, err := DecodeEvent(record.Payload)
+		if err != nil {
+			return Snapshot{}, err
+		}
+		if compacted == nil {
+			state, err = Apply(state, record.ID, e)
+			if err != nil {
+				return Snapshot{}, err
+			}
+		}
+		if l, ok := e.(Landing); ok {
+			for _, check := range validate {
+				if err := check(record.ID, l); err != nil {
+					return Snapshot{}, err
+				}
+			}
+		}
+		_, canonical, err := EncodeEvent(e)
+		if err != nil || !bytes.Equal(record.Payload, canonical) {
+			return Snapshot{}, ErrMalformed
+		}
 	}
 	return Snapshot{BaseKind: baseKind, Base: slices.Clone(base), Provenance: state}, nil
 }
@@ -137,7 +172,11 @@ func EncodeSnapshot(kind string, base []byte, state State) ([]byte, error) {
 	if len(records) > 0 {
 		lastID = records[len(records)-1].ID
 	}
-	raw, err := json.Marshal(snapshot{SnapshotVersion, kind, base, lastID, records})
+	var value any = snapshot{SnapshotVersion, kind, base, lastID, records}
+	if state.compacted() {
+		value = compactSnapshot{SnapshotVersion, kind, base, state.lastID, records, state.checkpoint()}
+	}
+	raw, err := json.Marshal(value)
 	if err != nil {
 		return nil, err
 	}

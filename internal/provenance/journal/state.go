@@ -21,14 +21,19 @@ type group struct {
 	ids     []uint64
 }
 
-// State is an immutable retained-evidence fold, not a queue authorization API.
-// It keeps bounded records so later audit selection can follow exact references.
+// State is a retained-evidence fold, not a queue authorization API.
+// It keeps bounded active records; audit selection uses immutable journal rows.
 type State struct {
-	records  []Record
-	groups   map[string]group
-	latest   map[string]string
-	landings map[string]Landing
-	bytes    int
+	records    []Record
+	groups     map[string]group
+	latest     map[string]string
+	landings   map[string]Landing
+	bytes      int
+	lastID     uint64
+	retired    map[string]uint64 // generation key -> original chunk zero
+	settled    map[string]uint64 // attempt -> landed or terminal tested companion ID
+	landingIDs map[string]uint64
+	fenceBytes int
 }
 
 func changeKey(r p.InventoryRequest) string {
@@ -40,8 +45,8 @@ func generationKey(r p.InventoryRequest) string {
 func stringJSON(v any) string     { b, _ := json.Marshal(v); return string(b) }
 func attemptKey(e Landing) string { return stringJSON([]string{e.AttemptID, e.Stage}) }
 
-// Records returns detached records, suitable for an explicit future snapshot
-// cursor encoder. Side-event and snapshot-table writers remain unwired.
+// Records returns detached active records. It is not an audit-export source;
+// settled and superseded original evidence remains in the immutable journal.
 func (s State) Records() []Record {
 	out := make([]Record, len(s.records))
 	for i, r := range s.records {
@@ -70,15 +75,22 @@ func (s State) Inventory(r p.InventoryRequest) (Inventory, bool) {
 // DecisionID and layer References are only fenced to earlier positions here;
 // slice 3c's composed reader must resolve their queue/dependency event targets.
 func Apply(s State, id uint64, e Event) (State, error) {
+	s.retired = maps.Clone(s.retired)
+	s.settled = maps.Clone(s.settled)
+	s.latest = maps.Clone(s.latest)
+	return ApplyOwned(s, id, e)
+}
+
+// ApplyOwned transfers ownership of s to the result on success. A failed apply
+// leaves s unchanged. Replay readers own their fold and avoid copying lifetime
+// fences per event; callers retaining old states must use Apply instead.
+func ApplyOwned(s State, id uint64, e Event) (_ State, applyErr error) {
 	_, raw, err := EncodeEvent(e)
 	if err != nil {
 		return s, err
 	}
-	if id == 0 || len(s.records) > 0 && id <= s.records[len(s.records)-1].ID {
+	if id == 0 || id <= s.lastID {
 		return s, ErrBinding
-	}
-	if len(s.records) >= maxRecords || s.bytes+len(raw) > maxSnapshotBytes/2 {
-		return s, RetentionLimitError{Records: len(s.records) + 1, Bytes: s.bytes + len(raw)}
 	}
 	// Detach all caller-owned slices, including nested gate inputs and mappings.
 	e, err = DecodeEvent(raw)
@@ -86,12 +98,21 @@ func Apply(s State, id uint64, e Event) (State, error) {
 		return s, err
 	}
 	next := s
+	if next.retired == nil {
+		next.retired = map[string]uint64{}
+	}
+	next.landingIDs = maps.Clone(s.landingIDs)
+	if next.landingIDs == nil {
+		next.landingIDs = map[string]uint64{}
+	}
+	if next.settled == nil {
+		next.settled = map[string]uint64{}
+	}
 	next.records = slices.Clone(s.records)
 	next.groups = maps.Clone(s.groups)
 	if next.groups == nil {
 		next.groups = map[string]group{}
 	}
-	next.latest = maps.Clone(s.latest)
 	if next.latest == nil {
 		next.latest = map[string]string{}
 	}
@@ -99,15 +120,37 @@ func Apply(s State, id uint64, e Event) (State, error) {
 	if next.landings == nil {
 		next.landings = map[string]Landing{}
 	}
+	var undo []func()
+	defer func() {
+		if applyErr != nil {
+			for i := len(undo) - 1; i >= 0; i-- {
+				undo[i]()
+			}
+		}
+	}()
+	put := func(m map[string]uint64, key string, value uint64) {
+		old, exists := m[key]
+		undo = append(undo, func() {
+			if exists {
+				m[key] = old
+			} else {
+				delete(m, key)
+			}
+		})
+		m[key] = value
+	}
 	switch v := e.(type) {
 	case Observation:
 		key, ck := generationKey(v.Request), changeKey(v.Request)
+		if _, retired := s.retired[key]; retired {
+			return s, ErrBinding
+		}
 		g, exists := s.groups[key]
 		if !exists {
 			if v.Index != 0 {
 				return s, ErrIncomplete
 			}
-			var prior uint64
+			prior := s.retired[s.latest[ck]]
 			if old, ok := s.groups[s.latest[ck]]; ok {
 				prior = old.ids[0]
 			}
@@ -117,6 +160,14 @@ func Apply(s State, id uint64, e Event) (State, error) {
 			g = group{header: v, commits: []p.Commit{}, ids: []uint64{}}
 			g.header.Commits = []p.Commit{}
 			g.header.Index = 0
+			old, exists := next.latest[ck]
+			undo = append(undo, func() {
+				if exists {
+					next.latest[ck] = old
+				} else {
+					delete(next.latest, ck)
+				}
+			})
 			next.latest[ck] = key
 		} else {
 			header := v
@@ -138,6 +189,12 @@ func Apply(s State, id uint64, e Event) (State, error) {
 		}
 		next.groups[key] = g
 	case Landing:
+		if count := ReferenceCount(v); count > MaxLandingReferences {
+			return s, RetentionLimitError{Records: len(s.records) + 1, Bytes: s.bytes + len(raw), References: count}
+		}
+		if _, settled := s.settled[v.AttemptID]; settled {
+			return s, ErrBinding
+		}
 		if v.DecisionID >= id {
 			return s, ErrBinding
 		}
@@ -158,6 +215,9 @@ func Apply(s State, id uint64, e Event) (State, error) {
 		}
 		for _, m := range v.Members {
 			key := generationKey(m.Request)
+			if _, retired := s.retired[key]; retired {
+				return s, ErrBinding
+			}
 			g, exists := s.groups[key]
 			if !exists || s.latest[changeKey(m.Request)] != key || !same(g.header.Request, m.Request) || !g.header.Complete || len(g.ids) != g.header.Chunks {
 				return s, ErrIncomplete
@@ -194,9 +254,15 @@ func Apply(s State, id uint64, e Event) (State, error) {
 			}
 		}
 		next.landings[attemptKey(v)] = v
+		next.landingIDs[attemptKey(v)] = id
 	}
 	next.records = append(next.records, Record{id, raw})
 	next.bytes += len(raw)
+	next.lastID = id
+	next = compact(next, put)
+	if err := next.capacity(false); err != nil {
+		return s, err
+	}
 	return next, nil
 }
 

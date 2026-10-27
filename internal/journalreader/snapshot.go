@@ -2,7 +2,6 @@ package journalreader
 
 import (
 	"encoding/json"
-	"fmt"
 
 	"github.com/CanadaApollo6/openmerge/internal/dependency"
 	pj "github.com/CanadaApollo6/openmerge/internal/provenance/journal"
@@ -36,24 +35,24 @@ func (r *Reader) LoadSnapshot(raw []byte, through uint64) error {
 		var err error
 		next.Queue, next.dependencies, err = dependency.DecodeSnapshot(base, expected)
 		return err
+	}, func(id uint64, l pj.Landing) error {
+		if id > through {
+			return ErrReference
+		}
+		return next.validateLanding(id, l)
 	})
 	if err != nil {
 		return err
+	}
+	if decoded.Provenance.Through() > through {
+		return ErrReference
 	}
 	next.Provenance = decoded.Provenance
 	for _, record := range next.Provenance.Records() {
 		if record.ID > through {
 			return ErrReference
 		}
-		e, err := pj.DecodeEvent(record.Payload)
-		if err != nil {
-			return err
-		}
-		if l, ok := e.(pj.Landing); ok {
-			if err := next.validateLanding(record.ID, l); err != nil {
-				return fmt.Errorf("snapshot event %d: %w", record.ID, err)
-			}
-		}
+
 	}
 	var header struct{ Version int }
 	if err := json.Unmarshal(raw, &header); err != nil {
@@ -85,4 +84,16 @@ func (r Reader) CursorSnapshot() ([]byte, error) {
 		kind = "dependency"
 	}
 	return pj.EncodeSnapshot(kind, base, r.Provenance)
+}
+
+// UpgradeCursor makes the prefix invariant explicit even before any side record.
+func (r *Reader) UpgradeCursor() { r.composed = true }
+
+// Preflight checks the complete candidate projection before any durable insert.
+func (r Reader) Preflight() error {
+	if err := r.Provenance.Preflight(); err != nil {
+		return err
+	}
+	_, err := r.CursorSnapshot()
+	return err
 }

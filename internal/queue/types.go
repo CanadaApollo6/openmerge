@@ -6,6 +6,12 @@ import (
 	"time"
 )
 
+// MaxBatchSize bounds batches accepted by the loader and planner.
+const MaxBatchSize = 128
+
+// MaxSpeculationDepth bounds the loader/planner's in-flight speculation window.
+const MaxSpeculationDepth = 32
+
 // Config controls a queue with a bounded chain of batches. ResolveAfter is the wait before fencing and
 // reading an uncertain landing; it never makes the landing a failure.
 type Config struct {

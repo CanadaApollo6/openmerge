@@ -52,7 +52,7 @@ func TestNoProductionNewEventOrSnapshotWriters(t *testing.T) {
 			aliases[alias] = value
 			slash := filepath.ToSlash(path)
 			auditDecoder := rel == "internal/audit/provenance.go" && value == "github.com/CanadaApollo6/openmerge/internal/provenance/journal"
-			if !strings.Contains(slash, "internal/journalreader/") && !strings.HasSuffix(slash, "internal/store/shared_reader.go") && !strings.Contains(slash, "internal/dependency/") && !auditDecoder {
+			if !strings.Contains(slash, "internal/journalreader/") && !strings.HasSuffix(slash, "internal/store/shared_reader.go") && !strings.HasSuffix(slash, "internal/store/side_append.go") && !strings.Contains(slash, "internal/dependency/") && !auditDecoder {
 				t.Errorf("new event codec escaped read-only boundary: %s", path)
 			}
 		}
@@ -66,6 +66,11 @@ func TestNoProductionNewEventOrSnapshotWriters(t *testing.T) {
 			"internal/dependency/snapshot.go":       true,
 		}
 		ast.Inspect(file, func(n ast.Node) bool {
+			// Include function-value captures, not just direct calls.
+			if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "AppendSide" && rel != "internal/store/side_append.go" {
+				t.Errorf("production side append caller in %s", path)
+			}
+
 			if literal, ok := n.(*ast.BasicLit); ok && literal.Kind == token.STRING && !allowedKinds[rel] {
 				value, err := strconv.Unquote(literal.Value)
 				if err != nil {
@@ -100,7 +105,7 @@ func TestNoProductionNewEventOrSnapshotWriters(t *testing.T) {
 			}
 			// Only pure contract folds may call new-event encoders. Reader code decodes;
 			// any later persistence adapter must be separately reviewed with this fence.
-			if sel.Sel.Name == "EncodeEvent" && !strings.Contains(filepath.ToSlash(path), "internal/dependency/") {
+			if sel.Sel.Name == "EncodeEvent" && !strings.Contains(filepath.ToSlash(path), "internal/dependency/") && rel != "internal/store/side_append.go" {
 				t.Errorf("production new-event encoding outside pure fold in %s", path)
 			}
 			return true
