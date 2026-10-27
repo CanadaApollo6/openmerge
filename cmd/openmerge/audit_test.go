@@ -29,6 +29,10 @@ func TestAuditUsageAndSanitization(t *testing.T) {
 		{[]string{"audit", "export", "--manifest", "a", "--out", "b", "--repo", ""}, 2},
 		{[]string{"audit", "export", "--manifest", "", "--out", "b"}, 2},
 		{good, 1},
+		{append(append([]string{}, good...), "--version", "2"), 1},
+		{append(append([]string{}, good...), "--version", "0"), 2},
+		{append(append([]string{}, good...), "--version", "3"), 2},
+		{[]string{"audit", "export", "--manifest", "a", "--out", "b", "--version", "2"}, 2},
 		{append(append([]string{}, good...), "--timeout", "0s"), 2},
 		{append(append([]string{}, good...), "--until", "10000-01-01T00:00:00Z"), 2},
 		{append(append([]string{}, good...), "stray"), 2},
@@ -181,6 +185,21 @@ func TestAuditSelectOnlyCommand(t *testing.T) {
 		if e != nil || !bytes.Equal(a, b) {
 			t.Fatal("replay differs", file)
 		}
+	}
+	explicit := filepath.Join(root, "explicit-v2")
+	if call(append(selectors, "--out", explicit, "--version", "2")...) != 0 {
+		t.Fatal("explicit v2 failed")
+	}
+	rawV2, err := os.ReadFile(filepath.Join(explicit, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m2 audit.Manifest
+	if json.Unmarshal(rawV2, &m2) != nil || m2.Version != 2 {
+		t.Fatal("explicit version ignored")
+	}
+	if call("--manifest", filepath.Join(explicit, "manifest.json"), "--out", filepath.Join(root, "v2-replay")) != 0 {
+		t.Fatal("v2 CLI replay failed")
 	}
 	if call(append(selectors, "--out", target)...) != 1 {
 		t.Fatal("overwrite accepted")

@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestNoProductionProvenanceJournalImports(t *testing.T) {
+func TestNoRuntimeProvenanceJournalImports(t *testing.T) {
 	err := filepath.WalkDir("../../..", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -34,6 +34,15 @@ func TestNoProductionProvenanceJournalImports(t *testing.T) {
 				return err
 			}
 			if value == "github.com/CanadaApollo6/openmerge/internal/provenance/journal" {
+				relative, err := filepath.Rel("../../..", path)
+				if err != nil {
+					return err
+				}
+				// Slice 3b permits only the read-only export adapter. Live replay,
+				// snapshots and runtime writers remain unwired until 3c/4b.
+				if filepath.ToSlash(relative) == "internal/audit/provenance.go" {
+					continue
+				}
 				t.Errorf("runtime provenance journal import in %s", path)
 			}
 		}

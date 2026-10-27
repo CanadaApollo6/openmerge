@@ -175,7 +175,7 @@ class Contract(unittest.TestCase):
             for at in ['2026-13-22T12:00:00.000000Z', '2026-1-22T12:00:00.000000Z', '2026-10-2T12:00:00.000000Z',
                        '2026-10-21T1:00:00.000000Z', '2026-10-21T12:0:00.000000Z', '2026-10-21T12:00:0.000000Z']:
                 bad = json.loads(json.dumps(row)); bad['source']['recorded_at'] = at; bad['role'] = 'dependency'; write(b, [bad]); check(2)
-            for field, value in [('version', True), ('version', 2), ('manifest_sha256', 'zz'), ('manifest_sha256', 'a' * 65), ('manifest_sha256', 'A' * 64)]:
+            for field, value in [('version', True), ('version', 3), ('manifest_sha256', 'zz'), ('manifest_sha256', 'a' * 65), ('manifest_sha256', 'A' * 64)]:
                 bad = json.loads(json.dumps(manifest)); bad[field] = value; write(b, [], bad); check(2)
             for field, value in [('repository', ''), ('installation', ''), ('repository', 7), ('installation', 7), ('from', '2026-10-24T00:00:00.000000Z')]:
                 bad = json.loads(json.dumps(manifest)); bad['request'][field] = value

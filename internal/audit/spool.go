@@ -248,6 +248,10 @@ func sortSpool(dir, input, output string) error {
 // merged with the on-disk visited set before resolving new records. References
 // may point forward in the final total order: queue UTF-8 tuple, then event ID.
 func closure(ctx context.Context, tx pgx.Tx, dir, input string) (string, error) {
+	return closureVersion(ctx, tx, dir, input, 1)
+}
+
+func closureVersion(ctx context.Context, tx pgx.Tx, dir, input string, version int) (string, error) {
 	visited := filepath.Join(dir, "visited")
 	if e := spoolFile(visited, func(io.Writer) error { return nil }); e != nil {
 		return "", e
@@ -295,11 +299,11 @@ func closure(ctx context.Context, tx pgx.Tx, dir, input string) (string, error) 
 						}
 					} else {
 						added = true
-						refs, deps, e := resolveEvidenceAt(ctx, tx, r.event(), r.MaxID)
+						refs, deps, e := resolveEvidenceVersion(ctx, tx, r.event(), r.MaxID, version)
 						if e != nil {
 							return e
 						}
-						if !validResolution(r.Source, refs, deps) {
+						if !validResolutionVersion(r.Source, refs, deps, version) {
 							return errIntegrity
 						}
 						r.References = refs
@@ -337,7 +341,7 @@ func closure(ctx context.Context, tx pgx.Tx, dir, input string) (string, error) 
 		input = next
 	}
 }
-func emitSpool(path string, emit func(sourceEvent, *Selection) error) error {
+func emitSpoolVersion(path string, emit func(sourceEvent, *Selection) error, version int) error {
 	c, e := openSpool(path)
 	if e != nil {
 		return e
@@ -345,7 +349,7 @@ func emitSpool(path string, emit func(sourceEvent, *Selection) error) error {
 	defer func() { _ = c.f.Close() }()
 	for c.ok {
 		r := c.value
-		s, e := selectionFor(r.event(), r.Role, r.References)
+		s, e := selectionForVersion(r.event(), r.Role, r.References, version)
 		if e != nil {
 			return e
 		}
@@ -359,11 +363,15 @@ func emitSpool(path string, emit func(sourceEvent, *Selection) error) error {
 	return nil
 }
 func selectionFor(e sourceEvent, role string, refs []Reference) (Selection, error) {
+	return selectionForVersion(e, role, refs, 1)
+}
+
+func selectionForVersion(e sourceEvent, role string, refs []Reference, version int) (Selection, error) {
 	payload, err := Canonical(e.payload)
 	if err != nil {
 		return Selection{}, err
 	}
-	s := Selection{Source: e.source, PayloadSHA256: digest(payload), Role: role, References: refs, Kinds: evidenceKinds(e.source.Type)}
+	s := Selection{Source: e.source, PayloadSHA256: digest(payload), Role: role, References: refs, Kinds: evidenceKindsVersion(e.source.Type, version)}
 	m, err := metadata(s)
 	if err != nil {
 		return s, err
@@ -376,8 +384,8 @@ func selectionFor(e sourceEvent, role string, refs []Reference) (Selection, erro
 // Export's own closure is recomputed from those roots in replay's snapshot, so
 // a contradicted reference or absence, a missing retained source, and an
 // unrelated dependency component (including a self-contained cycle) all fail.
-func verifyExactClosure(ctx context.Context, tx pgx.Tx, dir, roots, selected string) error {
-	expectedPath, e := closure(ctx, tx, dir, roots)
+func verifyExactClosureVersion(ctx context.Context, tx pgx.Tx, dir, roots, selected string, version int) error {
+	expectedPath, e := closureVersion(ctx, tx, dir, roots, version)
 	if e != nil {
 		return e
 	}
@@ -395,11 +403,11 @@ func verifyExactClosure(ctx context.Context, tx pgx.Tx, dir, roots, selected str
 		if !expected.ok || !actual.ok {
 			return errIntegrity
 		}
-		want, e := selectionFor(expected.value.event(), expected.value.Role, expected.value.References)
+		want, e := selectionForVersion(expected.value.event(), expected.value.Role, expected.value.References, version)
 		if e != nil {
 			return e
 		}
-		got, e := selectionFor(actual.value.event(), actual.value.Role, actual.value.References)
+		got, e := selectionForVersion(actual.value.event(), actual.value.Role, actual.value.References, version)
 		if e != nil {
 			return e
 		}
@@ -424,7 +432,11 @@ func verifyExactClosure(ctx context.Context, tx pgx.Tx, dir, roots, selected str
 // The resolver's references and emitted sources must agree before a work item
 // is marked resolved. The lists are bounded by one record's evidence budget.
 func validResolution(owner Source, refs []Reference, deps []sourceEvent) bool {
-	if !validReferences(refs) {
+	return validResolutionVersion(owner, refs, deps, 1)
+}
+
+func validResolutionVersion(owner Source, refs []Reference, deps []sourceEvent, version int) bool {
+	if !validReferencesVersion(refs, version) {
 		return false
 	}
 	for _, ref := range refs {

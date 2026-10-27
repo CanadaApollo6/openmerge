@@ -16,12 +16,13 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/audit"
 )
 
-const auditUsage = `Usage: openmerge audit export --repo owner/name --installation <id> --from <RFC3339> --until <RFC3339> --out <directory>
+const auditUsage = `Usage: openmerge audit export --repo owner/name --installation <id> --from <RFC3339> --until <RFC3339> --out <directory> [--version 1|2]
        openmerge audit export --manifest <manifest.json> --out <directory>
 
 Reads OPENMERGE_DATABASE_URL using a read-only snapshot. The output directory
 must not exist. Manifest mode re-exports the exact saved selection and rejects
-range selectors. --timeout defaults to 5m. Linux is required. Exit codes: 0 success; 2 usage/selectors/bounds; 1 source,
+range selectors and --version. Default exports use v1 for legacy-only closure,
+v2 for provenance; explicit v1 refuses provenance. --timeout defaults to 5m. Linux is required. Exit codes: 0 success; 2 usage/selectors/bounds; 1 source,
 integrity, connection or publication failure. No migrations or forge calls.
 `
 
@@ -49,6 +50,7 @@ func runAudit(args []string, stdout, stderr io.Writer) int {
 	until := flags.String("until", "", "exclusive RFC3339 bound")
 	out := flags.String("out", "", "new output directory")
 	timeout := flags.Duration("timeout", 5*time.Minute, "snapshot timeout")
+	version := flags.Int("version", 0, "export version: 1 or 2; default automatic")
 	manifest := flags.String("manifest", "", "saved manifest for exact re-export")
 	if err := flags.Parse(args[1:]); errors.Is(err, flag.ErrHelp) {
 		_, err = io.WriteString(stdout, auditUsage)
@@ -60,16 +62,18 @@ func runAudit(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stderr, "audit: invalid command flags")
 		return 2
 	}
-	selectors, manifestSet := false, false
+	selectors, manifestSet, versionSet := false, false, false
 	flags.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "repo", "installation", "from", "until":
 			selectors = true
 		case "manifest":
 			manifestSet = true
+		case "version":
+			versionSet = true
 		}
 	})
-	invalid := *timeout < time.Millisecond || flags.NArg() != 0 || *out == "" || manifestSet && (*manifest == "" || selectors)
+	invalid := *timeout < time.Millisecond || flags.NArg() != 0 || *out == "" || manifestSet && (*manifest == "" || selectors || versionSet) || versionSet && *version != 1 && *version != 2
 	if !manifestSet {
 		id, err := strconv.ParseInt(*installation, 10, 64)
 		invalid = invalid || err != nil || id <= 0 || strconv.FormatInt(id, 10) != *installation || !auditRepo.MatchString(*repo)
@@ -101,7 +105,7 @@ func runAudit(args []string, stdout, stderr io.Writer) int {
 	if manifestSet {
 		result, err = reader.Replay(context.Background(), *manifest, *out)
 	} else {
-		result, err = reader.Export(context.Background(), audit.Request{Installation: *installation, Repository: *repo, From: *from, Until: *until}, *out)
+		result, err = reader.ExportVersion(context.Background(), audit.Request{Installation: *installation, Repository: *repo, From: *from, Until: *until}, *out, *version)
 	}
 	if err != nil {
 		return auditFailure(stderr, err)
