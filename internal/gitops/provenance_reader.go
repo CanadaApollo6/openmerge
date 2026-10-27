@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -75,8 +76,24 @@ func (r *provenanceReader) command(ctx context.Context, args ...string) *exec.Cm
 	// Every object read and traversal needs this cap: advisory metadata can
 	// under-count duplicate packed representations, and walks parse bodies too.
 	cmd := r.s.newCommand(ctx, args...)
-	cmd.Args = append([]string{cmd.Args[0], "-c", "core.packedGitWindowSize=1m", "-c", "core.packedGitLimit=16m", "-c", "core.deltaBaseCacheLimit=0"}, cmd.Args[1:]...)
-	cmd.Args = append([]string{r.prlimit, "--as=" + strconv.Itoa(r.limits.GraphBytes+provenanceProcessOverhead), "--"}, cmd.Args...)
+	capBytes := r.limits.GraphBytes + provenanceProcessOverhead
+	// Reserve at least 7/8 of the cap for Git, indexes, libraries and object
+	// reconstruction. Bound pack windows independently of total pack size:
+	// default cap 144 MiB -> 8 MiB mapped / 1 MiB windows;
+	// lowered cap 24 MiB -> 3 MiB mapped / 768 KiB windows.
+	// Git rounds windows to twice the page size; round down here as well so
+	// its effective window never exceeds our allocation. Even the minimum cap
+	// (>16 MiB) allows 2 MiB mapped and 512 KiB windows on supported Linux.
+	mapped := min(8<<20, capBytes/8)
+	alignment := 2 * os.Getpagesize()
+	window := min(1<<20, mapped/4) / alignment * alignment
+	// Disable the read-side delta cache. pack.windowMemory and pack.deltaCacheSize
+	// apply to pack-objects (writes), which this reader never invokes. Pack
+	// indexes and in-use windows may exceed the mapping target; prlimit remains
+	// the authoritative bound. All readers, including mapping and batch modes,
+	// use these -c overrides with newCommand's scrubbed Git environment.
+	cmd.Args = append([]string{cmd.Args[0], "-c", "core.packedGitWindowSize=" + strconv.Itoa(window), "-c", "core.packedGitLimit=" + strconv.Itoa(mapped), "-c", "core.deltaBaseCacheLimit=0"}, cmd.Args[1:]...)
+	cmd.Args = append([]string{r.prlimit, "--as=" + strconv.Itoa(capBytes), "--"}, cmd.Args...)
 	cmd.Path = r.prlimit
 	cmd.WaitDelay = time.Second
 	return cmd

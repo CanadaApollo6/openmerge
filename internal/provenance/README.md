@@ -234,8 +234,27 @@ cap.** This inert adapter requires `prlimit` and runs every Git process that
 reads source objects or traverses ancestry under `--as=GraphBytes+16MiB`
 (144 MiB by default). The fixed 16 MiB overhead covers Git, shared libraries,
 pack mappings and allocator overhead. Lowering `GraphBytes` lowers the ceiling
-by the same amount. Pack windows are 1 MiB, the mapped-pack budget is 16 MiB,
-and the delta-base cache is disabled. This bounds each process's address space;
+by the same amount. Every capped invocation (including `rev-list`, `merge-base`,
+and the persistent `cat-file --batch-command` metadata/body reader) pins
+`core.packedGitLimit=min(8 MiB, cap/8)` and
+`core.packedGitWindowSize=min(1 MiB, packedGitLimit/4)`, rounded down to twice
+the OS page size to match Git's alignment. `core.deltaBaseCacheLimit=0` disables
+the read-side delta cache. At the default 144 MiB cap this allows 8 MiB of pack
+windows, each at most 1 MiB; at a 24 MiB cap (`GraphBytes=8 MiB`) it allows
+3 MiB, each at most 768 KiB. Even at the smallest accepted budget the targets
+are 2 MiB and 512 KiB. At least seven eighths of the cap remains for Git,
+libraries, pack indexes, allocator overhead and object reconstruction. A pack
+can exceed the cap because Git unmaps unused windows instead of mapping it all.
+These are mapping/cache targets: in-use windows and pack indexes can exceed
+them, so the process cap remains authoritative. `pack.windowMemory` and
+`pack.deltaCacheSize` configure `pack-objects` writes and do not apply to these
+reads. Build mapping uses this same reader and the same settings.
+
+The settings use command-line `-c` overrides through the hardened Git command
+path: inherited `GIT_*` injection is removed, system/global config is disabled,
+and repo-local values lose to `-c`. Real-Git tests query effective settings
+against hostile 1 GiB local values, including with lowered caps.
+This bounds each process's address space;
 it does not promise exact cumulative expansion accounting across processes or
 that a reconstruction uses at most `GraphBytes` bytes without the overhead.
 Missing or unusable supervision returns pending without an unbounded fallback.
@@ -276,6 +295,13 @@ Go fixture's memory small.
 The expanded base must exceed the fixed overhead to exercise the process cap.
 PATH-shim regressions also cover missing/broken `prlimit`, allocator failures,
 SIGKILL, ordinary Git errors and external cancellation.
+`TestProvenanceInventoryPackLargerThanProcessCap` streams 32 MiB of
+incompressible blob data into one pack larger than its 24 MiB process cap.
+The unpinned control walk fails to mmap it; inventory and fast-forward mapping
+complete through the hardened path even with hostile local memory settings.
+A 32 MiB delta base in that same repository still returns
+`limit_exceeded:expansion`; the hidden-base multi-pack tests above additionally
+prove the mandatory cap catches reconstruction that passes advisory metadata.
 
 The inventory also retains the effective `Limits` for evidence.
 `Diagnostic` retains only an outcome, resource and optional original object ID.
