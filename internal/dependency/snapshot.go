@@ -124,7 +124,10 @@ func (v snapshot) state(expected JournalInitialized) (State, error) {
 		s.policies[p.Event.key()] = p
 	}
 	changes := map[string]bool{}
-	for _, d := range v.Declarations {
+	for i, d := range v.Declarations {
+		if i > 0 && v.Declarations[i-1].EventID >= d.EventID {
+			return State{}, ErrMalformed
+		}
 		if !checkID(d.EventID) || d.Event.Validate() != nil || d.Event.Namespace != v.Initialization.Namespace || d.Event.Alias.validate(v.Initialization.scope()) != nil || !sortedIDs(d.Editors) || d.Event.Prior.EventID >= d.EventID || d.Unknown && !d.Held || changes[d.Event.ChangeID] {
 			return State{}, ErrMalformed
 		}
