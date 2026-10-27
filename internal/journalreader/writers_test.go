@@ -32,6 +32,7 @@ func TestNoProductionNewEventOrSnapshotWriters(t *testing.T) {
 		if err != nil {
 			return err
 		}
+		rel := strings.TrimPrefix(filepath.ToSlash(path), "../../")
 		aliases := map[string]string{}
 		for _, spec := range file.Imports {
 			value, err := strconv.Unquote(spec.Path.Value)
@@ -50,10 +51,12 @@ func TestNoProductionNewEventOrSnapshotWriters(t *testing.T) {
 			}
 			aliases[alias] = value
 			slash := filepath.ToSlash(path)
-			if !strings.Contains(slash, "internal/journalreader/") && !strings.HasSuffix(slash, "internal/store/shared_reader.go") && !strings.HasSuffix(slash, "internal/store/side_append.go") && !strings.Contains(slash, "internal/dependency/") {
+			auditDecoder := rel == "internal/audit/provenance.go" && value == "github.com/CanadaApollo6/openmerge/internal/provenance/journal"
+			if !strings.Contains(slash, "internal/journalreader/") && !strings.HasSuffix(slash, "internal/store/shared_reader.go") && !strings.HasSuffix(slash, "internal/store/side_append.go") && !strings.Contains(slash, "internal/dependency/") && !auditDecoder {
 				t.Errorf("new event codec escaped read-only boundary: %s", path)
 			}
 		}
+		// Audit may name and decode provenance rows; encoder calls remain forbidden.
 		allowedKinds := map[string]bool{
 			"internal/journalreader/reader.go":      true,
 			"internal/provenance/journal/events.go": true,
@@ -62,7 +65,6 @@ func TestNoProductionNewEventOrSnapshotWriters(t *testing.T) {
 			"internal/dependency/projection.go":     true,
 			"internal/dependency/snapshot.go":       true,
 		}
-		rel := strings.TrimPrefix(filepath.ToSlash(path), "../../")
 		ast.Inspect(file, func(n ast.Node) bool {
 			// Include function-value captures, not just direct calls.
 			if sel, ok := n.(*ast.SelectorExpr); ok && sel.Sel.Name == "AppendSide" && rel != "internal/store/side_append.go" {
@@ -75,6 +77,9 @@ func TestNoProductionNewEventOrSnapshotWriters(t *testing.T) {
 					t.Fatal(err)
 				}
 				for _, kind := range []string{"change_provenance_observed", "landing_provenance_recorded", "dependency_journal_initialized", "change_dependencies_declared", "dependency_policy_applied", "dependency_declaration_acknowledged", "dependency_declaration_self_acknowledged", "dependency_observed"} {
+					if rel == "internal/audit/provenance.go" && (kind == "change_provenance_observed" || kind == "landing_provenance_recorded") {
+						continue
+					}
 					if strings.Contains(value, kind) {
 						t.Errorf("new kind literal outside read-only codec allowlist in %s: %s", path, kind)
 					}

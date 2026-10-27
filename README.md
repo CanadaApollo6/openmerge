@@ -463,3 +463,10 @@ existing queue journal outcomes, while retaining original audit evidence and
 rejection fences. Lifetime fences still consume finite checkpoint capacity;
 unlimited-history pruning remains unresolved. See the
 [retention and recovery contract](docs/operating.md#shared-reader-retention-recovery).
+
+Provenance audit exports use bounded scratch storage on the output filesystem.
+The defaults are 256 MiB of accounted index/fold bytes and 65,536 files/directories;
+`--scratch-max-bytes` and `--scratch-max-files` override them. Exhaustion fails the
+export without publishing a bundle. Provision additional space for filesystem
+metadata, selection/merge spools and the final output. See the
+[v2 scratch requirements](docs/research/adr-0010-slice3b-audit-v2.md#provenance-closure).

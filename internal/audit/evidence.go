@@ -590,6 +590,10 @@ func (r *evidenceResolver) checkHistory(c queue.LandingChecksRecorded) error {
 }
 
 func validReferences(refs []Reference) bool {
+	return validReferencesVersion(refs, 1)
+}
+
+func validReferencesVersion(refs []Reference, version int) bool {
 	if refs == nil {
 		return false
 	}
@@ -598,7 +602,7 @@ func validReferences(refs []Reference) bool {
 		if r.Owner.QueueID <= 0 || r.Owner.EventID <= 0 || r.ExpectedType == "" || !validIdentity(r.Identity) || r.Relation != "relied_on" && r.Relation != "excluded_later" {
 			return false
 		}
-		kinds := evidenceKinds(r.ExpectedType)
+		kinds := evidenceKindsVersion(r.ExpectedType, version)
 		if len(kinds) != 1 || kinds[0] != r.Kind {
 			return false
 		}
