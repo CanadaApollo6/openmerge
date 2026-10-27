@@ -36,7 +36,7 @@ func EncodeEvent(e Event) (string, []byte, error) {
 	return e.eventKind(), raw, nil
 }
 
-// DecodeEvent is an explicit, unwired strict decoder. Unknown kinds are errors;
+// DecodeEvent is a strict decoder composed by journalreader. Unknown kinds are errors;
 // no deployed queue event or condition vocabulary is extended here.
 func DecodeEvent(raw []byte) (Event, error) {
 	if len(raw) > maxEventBytes {

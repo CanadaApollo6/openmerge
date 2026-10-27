@@ -7,8 +7,8 @@ import (
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 )
 
-// SnapshotVersion is an explicit, UNWIRED wrapper. It does not change
-// queue.SnapshotVersion, legacy cursors, or the deployed snapshot reader.
+// SnapshotVersion is the v8 dependency wrapper, nested in composed audit cursors.
+// queue.SnapshotVersion and legacy-only cursor writes are unchanged.
 const SnapshotVersion = 8
 
 type snapshot struct {
@@ -69,7 +69,7 @@ func compareID(a, b uint64) int {
 	return 0
 }
 
-// DecodeSnapshot must be opted into explicitly by future compatible readers.
+// DecodeSnapshot is composed by journalreader for compatible readers.
 // Dependency state requires the caller's independently verified binding. Legacy
 // bytes continue through the deployed reader, with no new identity read needed.
 func DecodeSnapshot(raw []byte, expected JournalInitialized) (queue.State, State, error) {

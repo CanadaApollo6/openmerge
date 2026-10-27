@@ -69,15 +69,19 @@ func (s *Store) ReadOutsidePushAudit(ctx context.Context, q QueueID) (*OutsidePu
 		return nil, err
 	}
 	var state queue.State
+	reader := sharedReader(ctx, s.pool, q, state)
 	if len(a.expected) != 0 {
 		err = json.Unmarshal(a.expected, &a.progress)
 		if err == nil {
-			state, err = queue.DecodeSnapshot(a.progress.State)
+			reader = sharedReader(ctx, s.pool, q, queue.State{})
+			err = reader.LoadSnapshot(a.progress.State, uint64(a.progress.ScannedThrough))
+			state = reader.Queue
 		}
 		if err != nil {
 			a.CursorResetReason = err.Error()
 			a.progress = outsidePushProgress{}
 			state = queue.State{}
+			reader = sharedReader(ctx, s.pool, q, state)
 		}
 	}
 	if len(a.expected) == 0 || a.CursorResetReason != "" {
@@ -88,6 +92,11 @@ func (s *Store) ReadOutsidePushAudit(ctx context.Context, q QueueID) (*OutsidePu
 	if err != nil {
 		return nil, err
 	}
+	// Legacy-cursor prefix invariant: a legacy snapshot means no side evidence
+	// exists through its watermark. Writers MUST upgrade this queue's cursor
+	// in or before the first side-evidence append transaction. No prefix probe
+	// or rebuild is needed; a side event in this suffix upgrades the snapshot.
+	reader.Queue = state
 	rows, err := s.pool.Query(ctx, `SELECT id, recorded_at, payload FROM events
  WHERE queue_id=$1 AND id > $2 ORDER BY id LIMIT $3`, q, a.progress.ScannedThrough, outsidePushScanLimit)
 	if err != nil {
@@ -98,15 +107,19 @@ func (s *Store) ReadOutsidePushAudit(ctx context.Context, q QueueID) (*OutsidePu
 		if err := row.Scan(&r.ID, &r.RecordedAt, &r.Payload); err != nil {
 			return r, err
 		}
-		r.Event, err = queue.DecodeEvent(r.Payload)
-		return r, err
+		return r, nil
 	})
 	if err != nil {
 		return nil, err
 	}
 	for _, r := range records {
 		before := state.Active
-		next := queue.Apply(state, r.Event)
+		decoded, err := reader.Apply(uint64(r.ID), r.Payload)
+		if err != nil {
+			return nil, err
+		}
+		r.Event = decoded.Queue
+		next := reader.Queue
 		switch e := r.Event.(type) {
 		case queue.BaseMoved:
 			move := pendingOutsideMove{OutsidePushMove: OutsidePushMove{
@@ -147,7 +160,7 @@ func (s *Store) ReadOutsidePushAudit(ctx context.Context, q QueueID) (*OutsidePu
 		a.progress.AuditedBaseMove = move.ID
 		a.progress.Pending = a.progress.Pending[1:]
 	}
-	a.progress.State, err = queue.EncodeSnapshot(state)
+	a.progress.State, err = reader.CursorSnapshot()
 	return a, err
 }
 
