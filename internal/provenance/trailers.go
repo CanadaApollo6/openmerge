@@ -13,13 +13,21 @@ const maxDeclarationValue = 161 // longest valid neutral source:session-id
 var sessionValue = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}:[A-Za-z0-9._-]{1,128}$`)
 var legacyID = regexp.MustCompile(`^[0-9a-f]{12}$`)
 
+// GitTrailerOutput is colon-separated, unfolded output from the isolated
+// git interpret-trailers --parse --no-divider adapter. That adapter is its only
+// intended producer; do not convert raw commit messages to this type. It must
+// reject embedded NULs before invoking Git (Git truncates messages at NUL), and
+// return no usable output on any Git failure. Both cases require an incomplete,
+// pending commit inventory; they must never be classified as Human.
+type GitTrailerOutput string
+
 type trailer struct{ key, value string }
 
-// gitTrailerPairs decodes Git's colon-separated, unfolded --parse output.
+// gitTrailerPairs decodes Git's colon-separated, unfolded trailer output.
 // Block detection, comment handling and continuation unfolding belong to Git.
-func gitTrailerPairs(parsed string) []trailer {
+func gitTrailerPairs(parsed GitTrailerOutput) []trailer {
 	var out []trailer
-	for line := range strings.SplitSeq(parsed, "\n") {
+	for line := range strings.SplitSeq(string(parsed), "\n") {
 		key, value, ok := strings.Cut(line, ":")
 		if ok {
 			out = append(out, trailer{ascii.Lower(key), strings.TrimPrefix(value, " ")})
@@ -45,11 +53,14 @@ func ValidEntireID(value string) bool {
 	return true
 }
 
-// ParseGitTrailers consumes only the output of git interpret-trailers --parse
-// with colon separators, never a raw commit message. It keeps distinct values,
-// including malformed recognized declarations. Classifier handles coauthors.
+// ParseGitTrailers consumes only git interpret-trailers --parse --no-divider
+// output with colon separators, never a raw commit message. It keeps distinct
+// values, including malformed recognized declarations. Classifier handles coauthors.
 // The caller owns Git invocation, configuration isolation and completeness.
-func ParseGitTrailers(parsed string) []Declaration {
+// On any Git failure or embedded NUL in the message, the caller must mark the
+// commit inventory incomplete/pending, never classify it as Human using empty
+// or partial output. See GitTrailerOutput for the adapter contract.
+func ParseGitTrailers(parsed GitTrailerOutput) []Declaration {
 	var out []Declaration
 	for _, t := range gitTrailerPairs(parsed) {
 		if t.key != "entire-checkpoint" && t.key != "agent-session" {

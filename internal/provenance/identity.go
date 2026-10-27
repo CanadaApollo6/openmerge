@@ -61,10 +61,12 @@ func NewClassifier(rules []IdentityRule) (Classifier, error) {
 
 // IdentityInput contains original Git identities. GeneratedCommitter must come
 // from the trusted build mapping, never a contributor-supplied replay trailer.
-// ParsedTrailers is the same pinned Git --parse output as ParseGitTrailers.
+// ParsedTrailers is the same pinned Git --parse --no-divider output consumed
+// by ParseGitTrailers.
 type IdentityInput struct {
-	AuthorMailbox, CommitterMailbox, ParsedTrailers string
-	GeneratedCommitter                              bool
+	AuthorMailbox, CommitterMailbox string
+	ParsedTrailers                  GitTrailerOutput
+	GeneratedCommitter              bool
 }
 
 // Declarations implements only the provenance mailbox exception. It cannot

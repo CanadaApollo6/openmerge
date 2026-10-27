@@ -15,11 +15,14 @@ marking the ADR Accepted is a separate docs PR.
 ## Fixed parser choices
 
 The deployed Git binary is the reference trailer-block parser. Slice 1 exposes
-`ParseGitTrailers`, which takes the colon-separated, already unfolded output of
-`git interpret-trailers --parse`, not a commit message. `IdentityInput.ParsedTrailers`
-uses that same output for coauthors. No block locator, heuristic threshold,
-comment skipping or continuation folding is implemented here. Git invocation
-at runtime belongs to slice 2 (inventory); no production package calls this API.
+`ParseGitTrailers`, which takes `GitTrailerOutput`: the colon-separated, already
+unfolded output of `git interpret-trailers --parse --no-divider`, not a commit
+message. `IdentityInput.ParsedTrailers` uses that same named type for coauthors.
+The isolated Git adapter is the only intended producer of `GitTrailerOutput`;
+raw message strings require an explicit conversion and must never be supplied.
+No block locator, heuristic threshold, comment skipping or continuation folding
+is implemented here. Git invocation at runtime belongs to slice 2 (inventory);
+no production package calls this API.
 
 The test-only adapter in `internal/gitops/provenance_trailers_test.go` reuses
 `session.run` and `gitEnv`: inherited `GIT_*` variables (including config
@@ -30,10 +33,11 @@ config, includes and named `trailer.*` aliases. It pins
 `-c trailer.separators=:` and both `-c core.commentChar=#` and
 `-c core.commentString=#` (the latter for newer Git). `--parse` supplies
 `--only-trailers --only-input --unfold`; no trailers are added or commands run.
+`--no-divider` uses commit-message semantics, matching Git's commit reader
+`git log --format=%(trailers:only,unfold)` and the
+[forge-driver contract](../../docs/forge-driver-contract.md#building-test-refs).
 This combination leaves no ambient trailer settings to alter the result.
-Slice 2 must reuse this isolation, including the absence of source-local config,
-and include the actual Git version in the effective parser policy identity.
-Tests log the deployed version; fix round 1 ran with **git version 2.56.0**.
+Tests log the deployed version; fix round 2 ran with **git version 2.56.0**.
 See [Git's parser documentation](https://git-scm.com/docs/git-interpret-trailers).
 
 Provenance parsing passes the original message bytes to Git. It deliberately
@@ -41,16 +45,22 @@ does **not** apply gitops metadata's `stripMetadataLines` or
 `rewritePatchDividers`. Those functions prepare attribution for newly generated
 merge messages; they change block eligibility, continuation ownership and patch
 boundaries. Removing a reserved line can also remove its continuation bytes.
-Leaving both untouched preserves every declaration in Git's original trailer
-set and never hides one through a rewrite. A declaration after Git's patch
-divider remains outside that set. Slice 2 must read original commits, rather
-than feed generated/reformatted messages to this extractor.
+Leaving both untouched and using `--parse --no-divider` preserves Git's
+commit-message trailer set. Markdown rules and patch dividers must not hide an
+appended attribution block, as required by the forge-driver contract. A divider
+and following prose can still make an earlier declaration ineligible for the
+final trailer block. Slice 2 must read original commits, rather than feed
+generated/reformatted messages to this extractor.
 
 Named regressions cover cherry-pick markers, patch dividers with text or
 trailing whitespace, and URLs in prose. The differential corpus compares
 1,152 LF/CRLF messages, including continuations, comments, mixed-case keys,
-duplicates, coauthors and Signed-off-by casing, against exactly Git's output.
-A hostile system/global/environment config test pins the isolation contract.
+duplicates, coauthors and Signed-off-by casing. Each original message is written
+byte-for-byte to a real commit object; `--parse --no-divider` output must equal
+`git log --format=%(trailers:only,unfold)` output before declarations and coauthors
+are checked against the commit reader's set. Named regressions also compare
+both readers, including an appended checkpoint after a markdown rule.
+A hostile system/global/environment config test pins both readers' isolation.
 
 Keys normalize to lowercase; values preserve Git's emitted bytes after the
 single formatting space following the colon. In particular, CR bytes retained
@@ -64,6 +74,22 @@ neutral declaration) retain a SHA-256 and `value_too_long`; invalid UTF-8 retain
 a SHA-256 and `invalid_encoding`. Neither becomes a truncated valid value.
 The slice 2 inventory reader will enforce acquisition and declaration-count
 budgets; this string parser makes no completeness claim about truncated input.
+
+### Slice 2 inventory requirements
+
+- Produce `GitTrailerOutput` only after a successful isolated Git invocation
+  with `--parse --no-divider` and the pinned separator/comment settings above.
+- On **any** Git failure (including execution, cancellation or nonzero exit),
+  mark the commit inventory incomplete/pending. Empty or partial failure output
+  must never be parsed as an empty trailer set and classified as Human.
+- Reject an embedded NUL in the original message **before** invoking Git and
+  mark the inventory incomplete/pending. Git truncates at NUL: for example,
+  `subject\n\nbody\0\n\nEntire-Checkpoint: abcdef012345\n` can hide the checkpoint.
+  This is an acquisition failure, never evidence that the commit is Human.
+- Preserve the environment/config isolation, including no source-local config
+  or named trailer aliases, and pass original message bytes without rewriting.
+- Bind the actual Git version, pinned invocation/settings and parser/classifier
+  versions into the effective parser policy identity.
 
 ## Identity choices
 

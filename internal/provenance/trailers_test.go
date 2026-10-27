@@ -30,7 +30,7 @@ func TestTrailerCaseFoldingDuplicatesAndMalformed(t *testing.T) {
 		{"invalid encoding", "Agent-Session: a:\xff\n", []string{""}, []Outcome{InvalidEncoding}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ds := ParseGitTrailers(tc.parsed)
+			ds := ParseGitTrailers(GitTrailerOutput(tc.parsed))
 			var values []string
 			var outcomes []Outcome
 			for _, d := range ds {
@@ -70,7 +70,7 @@ func TestEntireIDStrictFormats(t *testing.T) {
 func TestTrailerValueBounds(t *testing.T) {
 	valid := strings.Repeat("a", 32) + ":" + strings.Repeat("z", 128)
 	for _, value := range []string{valid, valid + "z", strings.Repeat("x", 4096)} {
-		ds := ParseGitTrailers("Agent-Session: " + value)
+		ds := ParseGitTrailers(GitTrailerOutput("Agent-Session: " + value))
 		if len(ds) != 1 {
 			t.Fatal(ds)
 		}
@@ -90,7 +90,7 @@ func FuzzParseGitTrailers(f *testing.F) {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, s string) {
-		a, b := ParseGitTrailers(s), ParseGitTrailers(s)
+		a, b := ParseGitTrailers(GitTrailerOutput(s)), ParseGitTrailers(GitTrailerOutput(s))
 		if !reflect.DeepEqual(a, b) {
 			t.Fatal("nondeterministic")
 		}
