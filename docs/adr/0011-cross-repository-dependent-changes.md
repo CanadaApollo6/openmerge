@@ -61,20 +61,24 @@ The CI provenance below identifies tested inputs, not who produced the code.
 
 ### Scope and staged guarantees
 
-**Ship ordered landing first, with explicit, revision-pinned dependency edges.**
+**Ship ordered landing first, with revision-less change references by default.**
+An optional `@revision` pin requires that exact revision to land. Stage B requires
+revision pins because its CI consumes unlanded code. This default is an owner
+decision, not an open question.
+
 A dependency adds a gate; it never grants trust, approval, enqueue permission,
 priority, or a right to write another repository.
 
 | Stage | Guarantee | Release boundary |
 |---|---|---|
-| A: ordered | B is not tested or started landing until its declared A revision has a confirmed OpenMerge landing on A's target base | Implementation sequence below, after dogfood period B drains |
+| A: ordered | B is not tested or started landing until A has a confirmed OpenMerge landing on its target base, matching the revision if pinned | Implementation sequence below, after dogfood period B drains |
 | B: co-tested speculation | B's CI consumes an identified speculative composition of A; A then B land through separate fences | Deferred; follow-up ADR must close the CI and coordination gates below |
 | Topic submission | No all-or-nothing cross-repository guarantee | Not offered |
 
 Stage A covers distinct repositories in **one serving scope**: the same
 configured forge driver/origin, forge installation identity, and OpenMerge
-database. An App installation is not the same thing as a server process.
-Several workers may cooperate through that database; merely being visible to
+journal namespace within one database. An App installation is not the same
+thing as a server process. Several workers may cooperate through that database; merely being visible to
 one server under ADR 0006 does not make separate installations mutually trusted.
 This also respects ADR 0008's dedicated-database-per-installation authority
 boundary. No cross-installation, cross-forge or cross-server federation ships.
@@ -98,7 +102,7 @@ by Stage A.
 The canonical, versioned reference is an opaque URI:
 
 ```text
-openmerge-change:v1/<forge-instance>/<installation>/<change-id>@<revision>
+openmerge-change:v1/<forge-instance>/<installation>/<journal-namespace>/<change-id>[@<revision>]
 ```
 
 - `forge-instance` is one percent-encoded UTF-8 segment containing
@@ -107,56 +111,95 @@ openmerge-change:v1/<forge-instance>/<installation>/<change-id>@<revision>
   identity, including a nondefault port when applicable, never from PR text.
 - `installation` is the percent-encoded stable installation key already used
   by queue identity, not a database row ID or an OpenMerge process ID.
-- `change-id` is ADR 0007's ID, presently `chg1_` plus 64 lowercase hex digits;
-  `revision` is its positive decimal observation sequence, without leading zeros.
-  A SHA alone is not a revision: H1, H2, H1 are three revisions.
+- `journal-namespace` is `omj1_` plus a domain-separated SHA-256 digest of the
+  ADR 0008 receipt database identity and a journal incarnation token. The
+  [existing identity](../operating.md#receipt-database-binding) binds the
+  cluster `system_identifier`, database and schema names/OIDs, and journal
+  genesis. The token is a random 256-bit value recorded once per incarnation
+  by explicit dependency initialization under the database events lock, shared
+  by workers. Use versioned JSON framing for the namespace digest inputs.
+  Missing, unreadable or mismatched identity fails closed. Initialization and
+  opted-in startup verify this binding; legacy startup gains no identity read.
+- `change-id` is ADR 0007's ID, presently `chg1_` plus 64 lowercase hex digits.
+  Omit `@revision` to accept any OpenMerge-landed revision of that change.
+  An optional `revision` is its positive decimal observation sequence, without
+  leading zeros. A SHA alone is not a revision: H1, H2, H1 are three revisions.
 - The ID resolves to exactly one stored canonical queue key, including its
   repository, base and lane. Resolve within the named serving scope, verify
-  that binding, and reject ambiguity. Do not derive IDs from discovered case
-  aliases, YAML queue names, mutable titles or PR numbers alone.
+  that binding, and reject a foreign journal namespace before looking up an ID.
+  Never reinterpret it in the local journal or fetch remote evidence. Reject
+  ambiguity. Do not derive IDs from discovered case aliases, YAML queue names,
+  mutable titles or PR numbers alone.
 - Components use canonical percent encoding; reject malformed encodings,
   credentials, extra components, queries and fragments. There is no network
   dereference of this URI and no caller-selected OpenMerge endpoint.
 
-For illustration only, `<id>` below stands for a full valid change ID:
+A normal restart preserves the namespace. Every restore, physical clone,
+database/schema recreation or journal reinitialization requires stopped and
+drained workers, a new incarnation token and remote-ref reconciliation before
+resuming dependency work. Old references, including restored declarations, are
+foreign and require explicit redeclaration and fresh authorization; never remap
+them automatically. Non-rewinding failover may retain the namespace only when
+it continues the same exclusive journal. ADR 0008's identity alone cannot detect
+a physical clone or history fork preserving genesis, so operators must fence
+copies and rotate the token before either copy serves divergent history. This
+is a recovery requirement, not automatic clone detection.
+
+For illustration, `<journal>` and `<id>` stand for full valid values. The first
+line is the recommended Stage A form; the second opts into an exact pin:
 
 ```text
-Depends-On: openmerge-change:v1/github%3Ahttps%3A%2F%2Fgithub.com/123/<id>@7
+Depends-On: openmerge-change:v1/github%3Ahttps%3A%2F%2Fgithub.com/123/<journal>/<id>
+Depends-On: openmerge-change:v1/github%3Ahttps%3A%2F%2Fgithub.com/123/<journal>/<id>@7
 ```
 
 The CLI/API read view supplies a copyable canonical reference. A recognized
 HTTPS forge change URL, such as `https://github.com/acme/api/pull/42`, is also
 accepted as an input alias for author convenience. Resolve it through the
-configured driver and served-repository registry, pin its observed change ID,
-revision and head, and show that pin in the brief **before it can authorize
-work**. The URL remains a display alias, never the stored identity. Ambiguous
+configured driver and served-repository registry, bind its journal namespace
+and change ID, and show the binding in the brief before it can authorize work.
+A URL alias is revision-less in Stage A; use a canonical `@revision` for a pin.
+The URL remains a display alias, never the stored identity. Ambiguous
 installation/base/lane selection requires the canonical form. Bare `#42` and
 `forge:owner/repo#42` are rejected: they omit instance and queue scope.
 
 **An alias is bound once per declaration, not followed on every poll.** Its
-binding survives restart and an unrelated body edit. If the target advances,
-the dependency becomes stale; updating it requires a canonical reference to
-the new revision. Removing and re-adding an alias in separately observed
-declarations is a new declaration and visibly records a new binding. An edit
-which OpenMerge never observes cannot be reconstructed as an intervening act.
+change binding survives restart and an unrelated body edit. Source pushes do
+not edit that binding or require B to repin a revision-less edge. An explicit
+pin becomes stale if superseded before landing; changing it edits the declaration.
+Removing and re-adding an alias in separately observed declarations is a new
+declaration and visibly records a new binding. An edit which OpenMerge never
+observes cannot be reconstructed as an intervening act.
 
 Recognize exact, case-sensitive `Depends-On:` keys on standalone body lines,
 with one non-whitespace reference value. Ignore lines inside fenced code,
 indented code, block quotes and HTML comments. Normalize CRLF, sort and dedupe
-resolved pins; reject malformed recognized lines rather than ignoring them.
+resolved edges; reject malformed recognized lines rather than ignoring them.
 Parser fixtures fix these boundaries. Initially bound each declaration to
 32 direct edges and each transitive walk to 256 nodes, 512 edges and depth 16;
 overflow is a visible blocking diagnostic, never a truncated permissive graph.
 
 Record a domain-separated, versioned declaration digest over sorted canonical
-pins and their pinned heads. Record a separate dependency-basis digest over
-the resolved graph and decision inputs. For opted-in changes, extend the
-ADR 0007 brief digest with the declaration digest; this is an explicit proposed
-extension to that contract, leaving all non-opted-in digest bytes unchanged.
-Declaration edits invalidate dependent compositions even at an unchanged head.
-They also invalidate receipt approvals through the new brief/intent digest;
-they do not manufacture a new code revision or silently turn native reviews
-into intent-bound receipts. Recheck authorization under B's own review policy.
+edges, their revision-less or pinned mode, and pinned heads where applicable.
+A revision-less edge's observed source head is not part of that digest. Record
+a separate dependency-basis digest over resolved evidence and decision inputs,
+including the revision that actually landed. For opted-in changes, extend the
+ADR 0007 brief digest with the declaration digest, leaving non-opted-in bytes
+unchanged. Declaration edits retire B's unstarted compositions and invalidate
+intent-bound receipts even at an unchanged head; they create no code revision.
+
+Every semantic declaration edit on a dependency-bearing change, including
+adding, removing, weakening or retargeting an edge, sets a durable
+`dependency-declaration-changed` hold. The hold survives removal of the last
+edge and disabling dependency policy. A B writer must explicitly acknowledge
+the current declaration after the edit; bind the fresh action to its digest
+and declaration event ID, and re-read the writer's identity-bound permission.
+Replaying an old action or restoring an earlier digest cannot clear the hold.
+Native head-bound approvals alone never clear it or carry a removed edge.
+B's ordinary review policy still applies after acknowledgement; old receipts
+remain invalid. Unrelated body edits that preserve the declaration do not set
+this hold. A future `@openmerge repin` convenience is optional work and must use
+this same authorization path.
 
 A shared topic label may later group a graph for navigation. It declares no
 edge, enqueues nothing and carries no landing or approval authority. There is
@@ -164,18 +207,24 @@ no topic expansion that discovers additional executable work implicitly.
 
 ### Stage A: ordered landing
 
-For `B depends on A@7`, A must be queued by someone authorized in A, pass A's
-own gates, and land normally. OpenMerge waits for a **confirmed, settled
-landing of A@7** and checks that its recorded landing commit remains reachable
-from the freshly observed target base. With fast-forward, distinguish the
-tested marker from the head that landed. A PR's closed/merged flag, a matching
+For the default `B depends on A`, A must be queued by someone authorized in A,
+pass A's own gates, and have a confirmed, settled OpenMerge landing. Record the
+landed revision and head as evidence. For `B depends on A@7`, only A@7 satisfies
+the edge. In either case, check that the recorded landing commit remains
+reachable from the freshly observed target base. With fast-forward, distinguish
+the tested marker from the head that landed. A PR's closed/merged flag, a matching
 head SHA, or somebody's assertion that the patch was cherry-picked is insufficient.
 
 Only then may B enter a test composition under B's normal strict queue rules.
 All declared dependencies must satisfy this rule. Unrelated eligible changes
 can pass a waiting B without losing their relative order. Waiting does not
 consume a batch slot, trigger bisection, or count as a defective change.
-Unchanged dependency inputs cause zero extra builds or tests.
+Suspend B's conflict-grace and `max_wait` clocks during dependency waits; resume
+with their remaining eligible time. Compute batch `max_wait` only from eligible
+candidates. A wait never dequeues B merely because either clock would expire.
+Expose a non-actionable "dependency wait older than N" flag in authorized
+status for operator review; it grants no bypass and changes no queue order. Unchanged dependency inputs
+cause zero extra builds or tests.
 
 Stage A guarantees **landing order**, not integration correctness across repos.
 B's CI may still build an old released client dependency, and A's landing may
@@ -187,12 +236,14 @@ ADR deploys a service, publishes a package, or bounds that compatibility window.
 Before B's durable landing start, re-read the relevant declarations, revisions,
 source landing/base evidence, lifecycle and bilateral policy. Record these
 observations; the pure planner consumes recorded facts, not forge calls.
-Revalidate inside the landing-start transaction. Acquire graph queue locks in
-canonical key order, including B, after any existing tenancy/global locks;
-never acquire source locks ad hoc while already holding B's queue lock. Compare
-the recorded queue watermarks/bases with the current fold and retry on drift.
-No forge I/O occurs while this multi-queue lock set is held. A newly expanded
-graph restarts validation with a new lock set rather than escaping the check.
+Revalidate inside the landing-start transaction. Only at landing-start, acquire
+queue locks over B plus its directly landed sources, in canonical key order
+after existing tenancy/global locks. For a batch, use the union of those sets.
+These locks protect landing, not declaration edits or cycle detection. Never
+acquire source locks ad hoc while already holding B's queue lock. Compare the
+recorded queue watermarks/bases with the current fold and retry on drift.
+No forge I/O occurs while these locks are held. A changed direct-source set
+restarts validation with a new lock set.
 
 Store B's dependency decision companion, normal policy decision records and
 unchanged `LandingStarted` atomically. A crash cannot leave an authorized start
@@ -211,45 +262,51 @@ is then changed, removed or inaccessible. Never rewrite its historical decision.
 ### Failure, invalidation and recovery
 
 Dependency state is orthogonal to a change's own trust, approvals and CI state.
-Use these rules before a landing has started:
+Use these rules before a landing has started. Typed reasons below are visible
+only to audiences authorized to read A; all other audiences receive the same
+generic dependency reason defined under cross-repository trust.
 
 | Observation | Result and recovery |
 |---|---|
 | A is open, valid and not yet landed | B waits; A is neither auto-enqueued nor promoted |
 | A was dequeued, rejected by policy, or failed CI | B waits for A's recovery; B is not blamed for A's failure |
-| A closed without landing | Block B with `dependency-closed`; reopen that revision or edit the declaration |
+| A closed without landing | Block B with `dependency-closed`; reopen A or edit the declaration, retaining any explicit pin |
 | A is marked merged but has no OpenMerge landing evidence | Block with `dependency-unverified`; an outside-push acknowledgement is not approval or landing evidence |
 | Unknown ID/revision, malformed or ambiguous alias | Block with `dependency-unresolved`; fix the reference |
 | Timeout, rate limit, permission loss or unreadable source | Block with `dependency-unavailable`; retry with bounded backoff and normal polling |
-| Unserved/removed repo, unsupported mode or another serving scope | Block with `dependency-out-of-scope`; serving/trust adoption or an explicit declaration edit is required |
-| A's declared revision was superseded before landing | Block with `dependency-stale`; repin explicitly and revalidate |
+| Foreign journal namespace, unserved/removed repo, unsupported mode or another serving scope | Block with `dependency-out-of-scope`; serving/trust adoption or an explicit declaration edit is required |
+| A's explicitly pinned revision was superseded before landing | Block with `dependency-stale`; repin explicitly and revalidate |
 | A's confirmed landing is absent from the current source base | Block with `dependency-not-on-base`; repair/reconcile source history or declare replacement work |
-| Cycle, self-edge, conflicting pins for one change, or traversal limit | Block the affected graph with a diagnostic; edit declarations, never choose an arbitrary winner |
+| Declaration changed, including removal of the final edge | Block with `dependency-declaration-changed`; require fresh B writer acknowledgement |
+| Cycle, self-edge, conflicting modes/pins for one change, or traversal limit | Block the affected graph with a diagnostic; edit declarations, never choose an arbitrary winner |
 
-Detect cycles over resolved queue-owned change IDs, not URL spellings, and
-report a deterministic cycle path. Inspect a proposed update against the
-current graph under the same ordered lock discipline so two simultaneous
-updates cannot each admit half a cycle. Incomplete discovery is unknown,
-not proof of acyclicity. Work downstream of an invalid component waits;
-unrelated components and queues continue.
+Cycle detection is a derived projection and diagnostic over journal-scoped
+change IDs, not a serialized declaration-admission protocol. Concurrent edits
+may form a cycle; reconciliation reports a deterministic path and keeps its
+unlanded members waiting. No member can land while a direct source is unlanded.
+Incomplete discovery is unknown, not proof of acyclicity. Work downstream of an
+invalid component waits; unrelated components and queues continue.
 
 A confirmed matching landing is a terminal node for dependency traversal:
 its own historical dependency decision is evidence, not a request to follow
 the change's latest declaration. Recheck that landing's presence and current
 direct-edge consent, without allowing later source edits to replace its pins.
 
-**A pushed dependency invalidates dependents, not just its own batch.** If A@7
-has not landed and a push produces A@8, invalidate every unstarted composition
-using A@7, including transitive consumers and affected ADR 0009 suffixes.
-Preserve B's queue position in a dependency wait; A follows ADR 0007's existing
-head-change dequeue rule. No automatic rebind to A@8 is permitted. If A@7
-already has a confirmed landing still on its target base, a later revision
-does not erase that historical satisfaction. A rewind which removes it does.
+In Stage A, a push from unlanded A@7 to A@8 leaves a revision-less edge waiting
+for any qualifying landing. An explicit A@7 edge waits with `dependency-stale`
+until the declaration is edited; no automatic repin is permitted. B has no
+composition consuming unlanded A@7 to invalidate. A follows ADR 0007's existing
+head-change dequeue rule. A later revision does not erase an already confirmed
+landing still on its target base.
 
-A dequeue of A similarly cascades **invalidation and waiting**, not new
-dequeue commands for B and every other repo. Invalidated members return in
-their original order. Cancel only discarded runs where the existing optional
-capability and depth rules permit; depth-1 cancellation is not added here.
+A source-base rewind removing the satisfying landing retires B's unstarted
+compositions and affected ADR 0009 suffixes, and returns B to dependency waiting.
+A dequeue of an unlanded A keeps B waiting without cascading dequeue commands.
+Declaration or policy edits also retire compositions whose dependency basis is
+no longer valid. Preserve original queue order. Cancel only discarded runs where
+the existing optional capability and depth rules permit; depth-1 cancellation
+is not added here. Stage B additionally requires transitive invalidation when
+an unlanded revision consumed by speculative CI changes, as reserved below.
 Late build/check results never revive a retired composition. Attempts already
 landing settle first, then the remaining graph is reconciled to their actual
 outcomes. No cascade can abandon an uncertain push or roll back a landed base.
@@ -258,8 +315,12 @@ The reverse-edge index is a rebuildable scheduling aid. Source events wake
 known consumers, but missed wakes are repaired by polling and landing-start
 revalidation. A restart rebuilds it before admitting dependency-bearing work;
 absence from the cache is never evidence that there are no dependencies.
-The existing per-installation budget reserves settlement ahead of graph reads;
-cap traversal and back off failures without starving unrelated queues.
+Read dependency graphs only for enqueued changes after an authorized writer's
+queue command; do not scan every PR body or let arbitrary contributors trigger
+graph discovery. Sources may be unqueued, but graph reads never enqueue them.
+Retain at most 32 direct edges per change and the bounded walks above. Charge
+permission and graph reads to ADR 0006's per-installation budget, preserving its
+10% settlement reserve; back off failures without starving unrelated queues.
 
 ### Policy authority and cross-repository trust
 
@@ -291,23 +352,38 @@ CI privileges, as well as A's own trust and bilateral source access. Passing
 A's tests, or being on an allowlist, is not that execution grant. Missing
 capability or grant must fail closed, never fall back to building `main`.
 
+At declaration binding or explicit pin time, require the declarer's read
+authorization on A before reading its lifecycle or expanding its graph. An
+unknown edit actor cannot bind an edge; require authenticated redeclaration.
+Reuse the driver's fresh per-user permission read, binding the returned stable
+user ID to the actor, as ADR 0007 does for `WriteGrant`.
+Add a read-level evaluator; `CanWrite` is not a read-access test. Unknown,
+mismatched, denied or unreadable grants fail closed. Record actor, grant and
+observation basis. A service/App credential or a B writer's access cannot stand
+in for the declarer's. Recheck access before dependency work and landing-start;
+revocation blocks affected work rather than reusing a stale grant.
+
 Views and audit exports enforce their existing authorization boundaries.
-An operator-wide API credential is not converted into per-user forge access.
-B's public check must not disclose private A titles, bodies, checks or hidden
-graph membership. Show only declaration text already visible to that audience
-and a generic inaccessible-dependency reason where authorization is absent.
-Keep full source IDs, observations and diagnostics in authorized operator views.
+For any audience lacking read access to A, use one generic public reason,
+`Dependency cannot be verified`, for unknown, closed, superseded, landed,
+unavailable and out-of-scope sources. Do not expose typed codes, source evidence,
+status transitions or a success signal about A in that view. A public check must
+use this redaction if any of its audience lacks access. Already-visible
+declaration text is not permission to disclose more. Typed reasons, cycle paths,
+source IDs and full diagnostics appear only in authorized views; rendering uses
+recorded audience authorization and fails closed when it is unknown.
 
 ### Status and audit evidence
 
 Reuse the `WaitingReason` projection introduced by the
 [#158 work](https://github.com/CanadaApollo6/openmerge/pull/158), now present in
 `internal/status/waiting.go`. Add presentation code `dependencies` with text
-such as `Waiting for dependency acme/api#42 at revision 7`. `Details` identifies
-the blocking pins and what clears them; `URL` links only to a safe, authorized
-change view. Preserve terminal/settlement/paused precedence and expose this
-gate before generic queue-position text. When B has its own higher-priority
-gate, keep dependency details available in its full brief.
+such as `Waiting for dependency acme/api#42`, adding `at revision 7` only for
+an explicit pin. Apply the audience redaction above before exposing any details.
+`Details` identifies blocking edges and what clears them; `URL` links only to a
+safe, authorized change view. Preserve terminal/settlement/paused precedence
+and expose this gate before generic queue-position text. When B has its own
+higher-priority gate, keep dependency details available in its full brief.
 
 CLI, API and the existing OpenMerge check consume the same projection; add no
 comment stream or second authoritative state machine. Bound and escape graph
@@ -316,9 +392,11 @@ authorized reads. Status rendering never fetches mutable forge state.
 
 Each dependency decision records:
 
-- B's queue, change, revision, head, declaration and dependency-basis digests;
-- every resolved edge, A's pinned revision/head and queue identity, alias binding
-  source, observation event IDs, timestamps and queue watermarks;
+- the journal namespace and B's queue, change, revision, head, declaration event
+  ID, digests and any writer acknowledgement clearing its declaration hold;
+- every resolved edge and mode, optional pin, actual landed revision/head and
+  queue identity, alias binding source, declarer's read grant, observation event
+  IDs, timestamps and queue watermarks;
 - each repository's governing config commit/digest and bilateral trust result;
 - A's confirmed attempt/settlement event, tested and landed commits, freshly
   observed base and ancestry result, or a typed blocking/unknown reason;
@@ -344,7 +422,16 @@ manifest before CI. It lists the full dependency closure, canonical change pins,
 per-repo base, queue ref, batch ID, tested and landing SHAs (including marker/head
 distinction), policy digests, composition generation and manifest digest.
 A queue ref is a fetch locator; the commit ID and manifest digest bind evidence.
-All jobs for this composition consume the same pinned state.
+All jobs for this composition consume the same pinned state. Revision-less
+Stage A declarations must resolve to explicit authorized revision pins before
+Stage B can consume unlanded inputs; Stage A's default is not a co-testing pin.
+
+A push superseding unlanded A@7 with A@8 invalidates all unstarted Stage B
+compositions consuming A@7, including transitive consumers and ADR 0009 suffixes.
+Preserve queue positions while waiting for explicit repinning and fresh
+composition evidence. A dequeue, declaration change or invalidated source
+composition similarly retires affected speculative consumers. No late result
+revives discarded work, and attempts already landing settle through their fences.
 
 OpenMerge does not run CI or set environment variables inside a forge push
 workflow. A repository-owned bootstrap must obtain the authenticated manifest
@@ -375,7 +462,8 @@ Stage B's follow-up must validate this allowance and resource limits.
 If B's start misses the deadline, policy/check evidence changes, or a component
 base differs from the pinned composition's expected transition (A at its exact
 settled landing SHA, B at its pinned predecessor), discard the unused
-cross-repository result and return to ordered waiting/retesting against actual landed state.
+cross-repository result and return to ordered waiting/retesting against actual
+landed state.
 Do not rewrite an existing speculative batch to substitute a new composition.
 Within each repository ADR 0009's depth, prefix settlement, blame and suffix
 invalidation still apply; cross-repo graph size is a separate bounded resource,
@@ -400,7 +488,8 @@ In particular leave `pr_observed`, `config_applied`, approval/brief records,
 Dependency-specific evidence lives in side projections keyed by change/revision
 and batch/attempt, not in a new meaning for an old event.
 
-Stage A proposes additive wire-v1 kinds `dependency_policy_applied`,
+Stage A proposes additive wire-v1 kinds `dependency_journal_initialized`,
+`dependency_declaration_acknowledged`, `dependency_policy_applied`,
 `change_dependencies_declared`, `dependency_observed`,
 `dependency_composition_recorded`, `dependency_compositions_invalidated` and
 `dependency_decision_recorded`.
@@ -412,11 +501,15 @@ or stale companion is refused. Their folds invalidate outdated work without
 extending existing payloads with fields an older decoder cannot read. Fixture
 design may split a kind before its first release; never mutate one after deployment.
 
-Declaration records include alias bindings, expected prior declaration basis
-and complete normalized pins. Observations include the source revisions and
-bases they read; a delayed success cannot clear a newer stale/unavailable
-finding. Invalidation pins exact discarded composition IDs and cause. Decision
-records pin the attempt and inputs atomically with the unchanged durable start.
+Declaration records include the actor/read grant, alias bindings, expected prior
+declaration basis, complete normalized edges and the durable edit hold, including
+an empty declaration. Acknowledgements bind the current declaration event/digest
+and fresh writer grant. Journal initialization records bind the receipt database
+identity and incarnation token; recovery rotates the token before new work.
+Observations include the source revisions and bases they read; a delayed success
+cannot clear a newer stale/unavailable finding. Invalidation pins exact discarded
+composition IDs and cause. Decision records pin the attempt and inputs atomically
+with the unchanged durable start.
 Replays reconstruct both passing and waiting decisions without external reads.
 
 No SQL migration in Stage A. Store new types in the existing journal and reuse
@@ -453,26 +546,39 @@ observation inherits Hold; dormant paths do not waive it.
 
 | PR | Scope and exit tests | Class |
 |---|---|---|
-| 1 | Reference/parser, candidate policy schema and pure bounded graph evaluation; vectors for URI escaping, URL aliases, revision pins, duplicate/conflicting edges, cycles, limits, scope and bilateral grants; public loader still rejects keys | Inert |
-| 2 | New journal kinds, side projections and snapshot codec; strict required/unknown-field tests, immutable fold, dedupe, stale observation/alias binding races, full replay versus snapshot-tail, old wire/cursor bytes, transactional start companions; no runtime emission | Inert |
-| 3 | Scoped driver observations, graph reconciliation and reverse wakes; fake contracts plus HTTP fixtures for closure, merged flags, lost access, unserved refs, polling repair, partial reads and rate budgets; no production wiring | Inert |
-| 4 | Ordered admission, batch/suffix invalidation and atomic landing gate; planner/simulator at depths 1 and 4, bisection/retry paths, concurrent cycle edits, lock-order races, source pushes/rewinds, declaration edits, crash/restart and both cancellation capabilities | Hold |
-| 5 | Shared WaitingReason, CLI/API/check and audit evidence; golden waiting/unknown/redacted/paginated output, unchanged precedence, no rendering-time fetches, deterministic cross-repo export and authorization tests | Hold |
+| 1 | Reference/parser, candidate policy schema and pure bounded graph evaluation; canonical escaping, URI/journal scope, revision-less aliases and optional pins, dedupe/conflicting modes, cycle diagnostics, limits and bilateral grants; public loader still rejects keys | Inert |
+| 2 | Journal namespace/incarnation, declaration holds/acknowledgements, side projections and snapshot codec; required/unknown-field checks, immutable folds, dedupe, alias/observation races, replay versus snapshot-tail, unchanged wire/cursor bytes; divergent histories with identical queue/change IDs and revision numbers, restore/clone/reinitialization rejection; no runtime emission | Inert |
+| 3 | Scoped observations, identity-bound declarer read grants, reconciliation and reverse wakes; fake contracts and HTTP fixtures for denial, ID mismatch/revocation, closure, merged flags, unserved refs, polling repair, partial reads, writer-command admission and ADR 0006 budgets; no production wiring | Inert |
+| 4a | Planner gate, decision companion and landing-start transaction; planner/simulator depths 1/4, bisection/retries, direct-source lock races, concurrent cycle diagnostics, declaration holds, crash atomicity and dependency wait clocks | Hold |
+| 4b | Stage A composition invalidation and reverse cascades; source rewinds, declaration/policy edits, suffix order, restart, late results and both cancellation capabilities; unlanded pushes only stale explicit pins or preserve revision-less waits | Hold |
+| 5 | Shared WaitingReason, CLI/API/check and audit evidence; golden tests make private-source existence, closure, supersession and landing indistinguishable to unauthorized B audiences, with typed diagnostics only for authorized readers; wait-age flag, pagination, unchanged precedence, no rendering-time fetches and scoped export | Hold |
 | 6 | Publish schema/loader and wire the complete gate together; mixed enabled/disabled repos, fail-closed first cycle, drain/backup/restore rehearsal, two-repo real-git and forge-sandbox acceptance, operating guide | Hold |
 
 Every slice preserves byte-identical legacy wire fixtures and non-opted-in
 digests. Differential replay compares next actions at **every revision**, and
-seeded legacy simulations compare results at depths 1 and 4. Disabled queues
-emit no dependency events, make no new dependency reads and retain legacy check
-output. Until PR 6, candidate schemas and test wiring cannot accept unenforced
-public config. Stage A exits only when all six slices and their evidence pass.
+seeded legacy simulations compare results at depths 1 and 4. Queues with no
+dependency adoption or history emit no dependency events, make no new dependency
+reads and retain legacy check output. Disabling adoption cannot clear a retained
+declaration hold or waive an existing edge. Until PR 6, candidate schemas and
+test wiring cannot accept unenforced public config. Stage A exits only when every
+slice and its evidence passes.
 
 The real-git acceptance uses two bare repositories/caches: B waits with no CI,
-A lands, B becomes testable and lands; a pushed A revision, source rewind,
-lost permission and crash around B's durable start must produce the documented
-wait or fenced outcome. A real forge sandbox verifies scoped URL resolution,
-queue-ref CI and access boundaries without changing the live App. Retain binary
-SHAs, configs/digests, commands/exits, source decision/start/settlement IDs and
+A lands, B becomes testable and lands. Review pushes to unlanded A keep a
+revision-less B waiting without declaration edits or re-approval; an explicit
+A@7 waits stale after A@8 and never accepts A@8's landing. Record the actual
+landed revision. At unchanged B head, remove its last edge, weaken a pin or
+retarget A with only pre-edit native approvals: B remains held until a fresh
+writer acknowledgement. An old acknowledgement cannot clear a later edit,
+including a return to the same digest. Source rewind, lost access and crash
+around B's durable start produce the documented wait or fenced outcome.
+A second database with identical queue/change IDs and A@7 at a different head
+must reject the first database's reference; repeat after restore/reinitialization
+and physical-clone token rotation. Test dependency waits across conflict-grace
+and `max_wait` expiry, with no dequeue or rebuild. A real forge sandbox verifies
+scoped URL resolution, queue-ref CI and access boundaries without changing the
+live App. Retain binary SHAs, configs/digests, commands/exits, source
+decision/start/settlement IDs and
 actual tested/landed remote SHAs. Stage B requires a new release decision and
 additional manifest-consumption and partial-landing acceptance, not PR 6's flag.
 
@@ -482,12 +588,12 @@ additional manifest-consumption and partial-landing acceptance, not PR 6's flag.
    bilateral `allow_from`/`allow_to` consent. Recommendation: keep it narrow;
    cross-forge federation needs authenticated remote evidence and tenant restore
    boundaries, not an arbitrary URL fetch.
-2. Confirm the opaque canonical URI plus pinned forge-URL aliases, and the rule
-   that source pushes require explicit repinning. Recommendation: accept these
-   for safety; measure author friction before considering a tracking reference.
+2. Confirm the journal-scoped canonical URI spelling and the operational
+   restore/incarnation procedure. Recommendation: reject old namespaces and
+   require explicit redeclaration after recovery.
 3. Confirm rejection of external/closed-unmerged/outside-queue dependencies and
    preservation of waiting dependents on dequeue. Recommendation: no manual
-   “mark satisfied” override in the first slice; use ordinary corrective changes.
+   "mark satisfied" override in the first slice; use ordinary corrective changes.
 4. Are co-tested speculative groups worth owning CI bootstrap, foreign-code
    execution grants and partial-landing recovery? Recommendation: gather ordered
    wait/CI-cost data first. The 10-minute start allowance is provisional, and
@@ -501,11 +607,16 @@ additional manifest-consumption and partial-landing acceptance, not PR 6's flag.
 - Coordinated work becomes visible and ordered without making OpenMerge a forge
   or requiring PRs as permanent identity. Existing queues remain unchanged until
   explicit adoption; dependency-bearing waits avoid unnecessary CI.
-- Authors must maintain pins and compatible intermediate states. Ordered landing
-  costs serial CI latency and does not test an API/client pair together.
-- Cross-queue reads, graph locks, retention and trust adoption add operational
-  cost. Replayable observations explain why work waited or landed; unknowns stop
-  only affected work rather than granting permission or stopping settlement.
+- Stage A is a single installation, meaning the same organization on GitHub.
+  It does not coordinate separate installations even on one server.
+- Authors maintain compatible intermediate states and any optional exact pins.
+  Revision-less Stage A edges survive source review pushes; declaration edits
+  still require fresh writer acknowledgement. Ordered landing costs serial CI
+  latency and does not test an API/client pair together.
+- Cross-queue reads, landing-start locks, retention and trust adoption add
+  operational cost. Restores require a new namespace and fresh declarations.
+  Replayable observations explain why work waited or landed; unknowns stop only
+  affected work rather than granting permission or stopping settlement.
 - New journal history is a binary downgrade boundary even after disabling the
   feature. Stage B remains deferred; a topic, timeout or pair of successful
   tests cannot establish cross-repository atomicity.
@@ -515,9 +626,17 @@ additional manifest-consumption and partial-landing acceptance, not PR 6's flag.
 - **Shared topic as authority.** Convenient grouping, but mutable membership,
   naming collisions, hidden changes and no inherent order make it unsafe as
   consent to execute or land. Keep topics descriptive only.
-- **Unpinned PR URLs following the latest head.** Familiar, but a push silently
-  changes both the dependency and the work a reviewer thought was related.
-  Accept URLs as pinned aliases and retain stable ADR 0007 identity.
+- **Mandatory exact pins in Stage A.** Rejected as the default because each
+  review push would require editing and reauthorizing B before A has landed.
+  The chosen middle option binds a revision-less reference to one journal-scoped
+  change and requires an actual OpenMerge landing. It is safe for Stage A's
+  ordering guarantee because B consumes no unlanded A code, and the landed
+  revision is recorded. Exact pins remain optional and become mandatory for
+  Stage B's identified speculative inputs.
+- **Unpinned PR URLs following the latest head.** Rejected as moving checkout
+  inputs or proof of satisfaction. Stage A URL aliases bind once to a durable
+  change, never follow a new queue identity or treat the latest head as landed.
+  Declaration edits still require fresh authorization.
 - **Cross-repository speculative testing immediately.** It improves latency and
   integration coverage only when CI proves which foreign inputs it consumed.
   Stage A is useful without inventing that evidence or a distributed coordinator.
