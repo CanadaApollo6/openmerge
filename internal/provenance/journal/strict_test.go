@@ -110,7 +110,7 @@ func TestStrictSnapshotShapeAndBindings(t *testing.T) {
 	base := []byte(`{"Version":6}`)
 	s := apply(t, State{}, 3, h)
 	raw := snapshotBytes(t, base, s)
-	decode := func([]byte) error { return nil }
+	decode := func(string, []byte) error { return nil }
 	var tree any
 	if err := json.Unmarshal(raw, &tree); err != nil {
 		t.Fatal(err)
@@ -153,7 +153,7 @@ func TestStrictSnapshotShapeAndBindings(t *testing.T) {
 	if _, err := DecodeSnapshot(raw, nil); err == nil {
 		t.Fatal("missing base validation")
 	}
-	if _, err := DecodeSnapshot(raw, func([]byte) error { return fmt.Errorf("bad base") }); err == nil {
+	if _, err := DecodeSnapshot(raw, func(string, []byte) error { return fmt.Errorf("bad base") }); err == nil {
 		t.Fatal("base error ignored")
 	}
 }

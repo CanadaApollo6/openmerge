@@ -1,0 +1,289 @@
+package journal
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"testing"
+
+	p "github.com/CanadaApollo6/openmerge/internal/provenance"
+)
+
+func rejectUnchanged(t *testing.T, s State, id uint64, e Event, want error) {
+	t.Helper()
+	before := snapshotBytes(t, []byte(`{"Version":6}`), s)
+	next, err := Apply(s, id, e)
+	if !errors.Is(err, want) {
+		t.Fatalf("want %v, got %v", want, err)
+	}
+	if !bytes.Equal(before, snapshotBytes(t, []byte(`{"Version":6}`), next)) {
+		t.Fatal("rejection changed retained state")
+	}
+}
+
+func TestCompleteInventoryRejectsForgedDeclarationDigest(t *testing.T) {
+	h, c := fixture(t)
+	h.DeclarationDigest = strings.Repeat("a", 64)
+	h.Digest = InventoryDigest(h, c)
+	// Both digests have valid shape and the inventory digest correctly hashes the
+	// forged declaration field. Only recomputation from declarations detects it.
+	if err := h.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	rejectUnchanged(t, State{}, 3, h, ErrBinding)
+}
+
+func TestPassingMemberRequiresCompleteMapping(t *testing.T) {
+	h, _ := fixture(t)
+	l := landing(h, []uint64{3})
+	m := &l.Members[0]
+	m.Mapping.Complete = false
+	m.Mapping.Diagnostic = p.Diagnostic{Outcome: p.ReadPending, Resource: "mapping"}
+	m.RecordDigest = MemberDigest(*m)
+	rejectUnchanged(t, apply(t, State{}, 3, h), 11, l, ErrMalformed)
+	// A pending member can retain an incomplete mapping.
+	m.Result, m.Layers[0].Truth = "pending", "pending"
+	m.RecordDigest = MemberDigest(*m)
+	apply(t, apply(t, State{}, 3, h), 11, l)
+}
+
+func TestDuplicateLandingAttemptStageRejected(t *testing.T) {
+	h, _ := fixture(t)
+	l := landing(h, []uint64{3})
+	s := apply(t, apply(t, State{}, 3, h), 11, l)
+	rejectUnchanged(t, s, 12, l, ErrBinding)
+	l.AttemptID = "another-attempt"
+	apply(t, s, 12, l)
+}
+
+func TestLandingDecisionMustPrecedeEvent(t *testing.T) {
+	h, _ := fixture(t)
+	s := apply(t, State{}, 3, h)
+	for _, decision := range []uint64{11, 12} {
+		t.Run(fmt.Sprint(decision), func(t *testing.T) {
+			l := landing(h, []uint64{3})
+			l.DecisionID = decision
+			rejectUnchanged(t, s, 11, l, ErrBinding)
+		})
+	}
+	apply(t, s, 11, landing(h, []uint64{3}))
+}
+
+func TestCompleteDiagnosticRequiresReadComplete(t *testing.T) {
+	for _, outcome := range []p.ReadOutcome{p.ReadPending, p.LimitExceeded, p.InvalidInput} {
+		t.Run(string(outcome), func(t *testing.T) {
+			h, _ := fixture(t)
+			// Empty resource/object isolate the outcome guard from the other checks.
+			h.Diagnostic = p.Diagnostic{Outcome: outcome}
+			h.Digest = InventoryDigest(h, h.Commits)
+			rejectUnchanged(t, State{}, 3, h, ErrMalformed)
+		})
+	}
+}
+
+func TestLandingRequiresCompleteInventoryIndependently(t *testing.T) {
+	h, _ := fixture(t)
+	s := apply(t, State{}, 3, h)
+	// Isolate the completeness fence from the declaration-digest binding. Wire
+	// validation makes incomplete headers carry an empty declaration digest, so
+	// simply replaying one would let that second fence mask removal of this one.
+	g := s.groups[generationKey(h.Request)]
+	g.header.Complete = false
+	s.groups[generationKey(h.Request)] = g
+	rejectUnchanged(t, s, 11, landing(h, []uint64{3}), ErrIncomplete)
+}
+
+func TestSupersededGenerationRejectsLateChunk(t *testing.T) {
+	h, c := fixture(t)
+	cc := chunks(h, c)
+	s := apply(t, State{}, 3, cc[0])
+	newer := h
+	newer.Request.Generation = "new-generation"
+	newer.PreviousObservationID = 3
+	newer.Digest = InventoryDigest(newer, c)
+	s = apply(t, s, 4, newer)
+	// The old header, index, assembled content and digest all still match.
+	rejectUnchanged(t, s, 5, cc[1], ErrBinding)
+}
+
+func TestAssembledInventoryDigestRejectsCorruption(t *testing.T) {
+	for _, chunked := range []bool{false, true} {
+		t.Run(fmt.Sprint(chunked), func(t *testing.T) {
+			h, c := fixture(t)
+			h.Digest = strings.Repeat("0", 64)
+			if !chunked {
+				rejectUnchanged(t, State{}, 3, h, ErrBinding)
+				return
+			}
+			// Both chunks carry the same corrupted digest: header equality passes.
+			cc := chunks(h, c)
+			s := apply(t, State{}, 3, cc[0])
+			rejectUnchanged(t, s, 5, cc[1], ErrBinding)
+		})
+	}
+}
+
+func TestLandedRequiresPriorTestedAttempt(t *testing.T) {
+	h, _ := fixture(t)
+	s := apply(t, State{}, 3, h)
+	landed := landing(h, []uint64{3})
+	landed.Stage = "landed"
+	landed.Members[0].Mapping.Build.Stage = "landed"
+	landed.Members[0].Mapping.Build.ID = "composition-L"
+	landed.Members[0].RecordDigest = MemberDigest(landed.Members[0])
+	rejectUnchanged(t, s, 13, landed, ErrBinding)
+	other := landing(h, []uint64{3})
+	other.AttemptID = "another-attempt"
+	rejectUnchanged(t, apply(t, s, 11, other), 13, landed, ErrBinding)
+	apply(t, apply(t, s, 11, landing(h, []uint64{3})), 13, landed)
+}
+
+func TestSnapshotRejectsNoncanonicalPayloads(t *testing.T) {
+	h, _ := fixture(t)
+	s := apply(t, State{}, 3, h)
+	canonical := s.Records()[0].Payload
+	raw := snapshotBytes(t, []byte(`{"Version":6}`), s)
+	for name, payload := range map[string][]byte{
+		"whitespace":  bytes.Replace(canonical, []byte(`{"version":1,`), []byte(`{ "version":1,`), 1),
+		"field order": bytes.Replace(canonical, []byte(`{"version":1,"type":"change_provenance_observed",`), []byte(`{"type":"change_provenance_observed","version":1,`), 1),
+		"escape":      bytes.Replace(canonical, []byte(`"change-1"`), []byte(`"\u0063hange-1"`), 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if bytes.Equal(payload, canonical) {
+				t.Fatal("mutation did not change bytes")
+			}
+			if _, err := DecodeEvent(payload); err != nil {
+				t.Fatal("fixture must be valid noncanonical JSON", err)
+			}
+			bad := bytes.Replace(raw, canonical, payload, 1)
+			if _, err := DecodeSnapshot(bad, func(string, []byte) error { return nil }); !errors.Is(err, ErrMalformed) {
+				t.Fatal("accepted noncanonical retained payload", err)
+			}
+		})
+	}
+}
+
+func TestSnapshotBaseKindVersionBindings(t *testing.T) {
+	h, _ := fixture(t)
+	s := apply(t, State{}, 3, h)
+	for _, kind := range []string{"queue", "dependency", "future", ""} {
+		for version := 1; version <= 10; version++ {
+			t.Run(fmt.Sprintf("%s/%d", kind, version), func(t *testing.T) {
+				v := snapshot{SnapshotVersion, kind, json.RawMessage(fmt.Sprintf(`{"Version":%d}`, version)), 3, s.Records()}
+				raw, err := json.Marshal(v)
+				if err != nil {
+					t.Fatal(err)
+				}
+				called := false
+				decoded, err := DecodeSnapshot(raw, func(gotKind string, _ []byte) error {
+					called = true
+					if gotKind != kind {
+						t.Fatalf("callback kind: got %q, want %q", gotKind, kind)
+					}
+					return nil
+				})
+				want := kind == "queue" && version >= 2 && version <= 7 || kind == "dependency" && version == 8
+				if (err == nil) != want || called != want {
+					t.Fatalf("kind/version callback fence: want %v, called %v, err %v", want, called, err)
+				}
+				if want && decoded.BaseKind != kind {
+					t.Fatal("returned wrong base kind")
+				}
+			})
+		}
+	}
+}
+
+func TestUnwrappedSnapshotBaseKinds(t *testing.T) {
+	for version := 2; version <= 8; version++ {
+		want := "queue"
+		if version == 8 {
+			want = "dependency"
+		}
+		raw := []byte(fmt.Sprintf(`{"Version":%d}`, version))
+		decoded, err := DecodeSnapshot(raw, func(kind string, base []byte) error {
+			if kind != want || !bytes.Equal(base, raw) {
+				t.Fatalf("unwrapped v%d: kind %q, base %s", version, kind, base)
+			}
+			return nil
+		})
+		if err != nil || decoded.BaseKind != want {
+			t.Fatalf("unwrapped v%d: %v", version, err)
+		}
+	}
+}
+
+func TestSnapshotBaseBytesDetached(t *testing.T) {
+	for _, wrapped := range []bool{false, true} {
+		t.Run(fmt.Sprint(wrapped), func(t *testing.T) {
+			base := []byte(`{"Version":6}`)
+			raw := bytes.Clone(base)
+			if wrapped {
+				h, _ := fixture(t)
+				raw = snapshotBytes(t, base, apply(t, State{}, 3, h))
+			}
+			original := bytes.Clone(raw)
+			decoded, err := DecodeSnapshot(raw, func(_ string, b []byte) error {
+				b[0] = '!'
+				return nil
+			})
+			if err != nil || !bytes.Equal(raw, original) || !bytes.Equal(decoded.Base, base) {
+				t.Fatal("base decoder aliased input or output", err)
+			}
+			decoded.Base[0] = '!'
+			if !bytes.Equal(raw, original) {
+				t.Fatal("returned base aliased caller bytes")
+			}
+		})
+	}
+}
+
+func TestRetainedRecordCap(t *testing.T) {
+	if maxRecords != 4096 {
+		t.Fatalf("record contract changed: %d", maxRecords)
+	}
+	h, _ := fixture(t)
+	// Empty pending observations keep this focused on record count, not bytes.
+	h.Complete, h.DeclarationDigest = false, ""
+	h.Diagnostic = p.Diagnostic{Outcome: p.ReadPending, Resource: "git"}
+	h.Stable, h.Additional, h.Commits = []string{}, []string{}, []p.Commit{}
+	var s State
+	for i := 1; i <= maxRecords; i++ {
+		h.PreviousObservationID = uint64(i - 1)
+		h.Request.Generation = fmt.Sprint(i)
+		h.Digest = InventoryDigest(h, h.Commits)
+		s = apply(t, s, uint64(i), h)
+	}
+	if len(s.Records()) != 4096 {
+		t.Fatal("lost retained records")
+	}
+	h.PreviousObservationID = maxRecords
+	h.Request.Generation = "overflow"
+	h.Digest = InventoryDigest(h, h.Commits)
+	rejectUnchanged(t, s, maxRecords+1, h, ErrLimit)
+	// Also pin the wrapper's early count limit separately from Apply's cap.
+	raw := snapshotBytes(t, []byte(`{"Version":6}`), s)
+	decoded, err := DecodeSnapshot(raw, func(string, []byte) error { return nil })
+	if err != nil || len(decoded.Provenance.Records()) != maxRecords {
+		t.Fatal("snapshot at the record ceiling rejected", err)
+	}
+	var v snapshot
+	if err := json.Unmarshal(raw, &v); err != nil {
+		t.Fatal(err)
+	}
+	_, payload, err := EncodeEvent(h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Records = append(v.Records, Record{maxRecords + 1, payload})
+	v.LastID++
+	raw, err = json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := DecodeSnapshot(raw, func(string, []byte) error { return nil }); !errors.Is(err, ErrMalformed) {
+		t.Fatal("snapshot record cap not enforced before fold", err)
+	}
+}

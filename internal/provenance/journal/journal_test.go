@@ -69,7 +69,15 @@ func snapshotBytes(t *testing.T, base []byte, s State) []byte {
 	if len(s.records) == 0 {
 		return base
 	}
-	raw, err := json.Marshal(snapshot{SnapshotVersion, base, s.records[len(s.records)-1].ID, s.Records()})
+	var header struct{ Version int }
+	if err := json.Unmarshal(base, &header); err != nil {
+		t.Fatal(err)
+	}
+	kind := "queue"
+	if header.Version == 8 {
+		kind = "dependency"
+	}
+	raw, err := json.Marshal(snapshot{SnapshotVersion, kind, base, s.records[len(s.records)-1].ID, s.Records()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -372,7 +380,7 @@ func TestSnapshotPlusTailEveryCutWithDependencyV8AndHeldRequests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	decode := func(raw []byte) error {
+	decode := func(_ string, raw []byte) error {
 		q, d, err := dependency.DecodeSnapshot(raw, init)
 		if err != nil {
 			return err
@@ -430,7 +438,7 @@ func TestSnapshotPlusTailEveryCutWithDependencyV8AndHeldRequests(t *testing.T) {
 	if _, _, err := dependency.DecodeSnapshot(raw, init); err == nil {
 		t.Fatal("v8 reader accepted v9")
 	}
-	if _, err := DecodeSnapshot(raw, func(raw []byte) error {
+	if _, err := DecodeSnapshot(raw, func(_ string, raw []byte) error {
 		_, _, err := dependency.DecodeSnapshot(raw, dependency.JournalInitialized{})
 		return err
 	}); err == nil {
@@ -443,7 +451,7 @@ func TestLegacySnapshotBytesRemainUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	var q queue.State
-	decoded, err := DecodeSnapshot(raw, func(b []byte) error { var err error; q, err = queue.DecodeSnapshot(b); return err })
+	decoded, err := DecodeSnapshot(raw, func(_ string, b []byte) error { var err error; q, err = queue.DecodeSnapshot(b); return err })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -600,7 +608,7 @@ func TestSnapshotPlusMixedQueueTail(t *testing.T) {
 		var fullS, tailS State
 		for i := 0; i <= len(steps); i++ {
 			if i == cut {
-				decoded, err := DecodeSnapshot(encode(tailQ, tailS), func(base []byte) error {
+				decoded, err := DecodeSnapshot(encode(tailQ, tailS), func(_ string, base []byte) error {
 					var err error
 					tailQ, _, err = dependency.DecodeSnapshot(base, init)
 					return err

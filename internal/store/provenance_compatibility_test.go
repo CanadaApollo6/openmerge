@@ -19,7 +19,7 @@ func TestProvenanceLegacyHeldSnapshotAndCursorGolden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	decoded, err := journal.DecodeSnapshot(raw, func(b []byte) error { var err error; q, err = queue.DecodeSnapshot(b); return err })
+	decoded, err := journal.DecodeSnapshot(raw, func(_ string, b []byte) error { var err error; q, err = queue.DecodeSnapshot(b); return err })
 	if err != nil {
 		t.Fatal(err)
 	}

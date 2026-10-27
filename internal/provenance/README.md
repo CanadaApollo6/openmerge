@@ -420,10 +420,21 @@ envelope, not additional fields in any existing queue event:
   its trusted original-to-build mapping, and its independent baseline, trigger
   and rule-local gate inputs, eligibility pools, evidence references and truth
   values. Only `true` passes; pending triggers cannot skip an unsatisfied
-  obligation. Tested T and landed L retain distinct composition IDs/stages.
-  Replay validates references and result combination; it does not re-evaluate
+  obligation. Landed L requires prior tested T evidence for the same attempt;
+  they retain distinct composition IDs/stages. Replay resolves inventory chunk
+  references and validates result combination; it does not re-evaluate
   expressions, acquire Git objects, authenticate supplied eligibility, or perform
   graph verification. Those are the trusted slice-2/4a producers' responsibilities.
+
+`DecisionID` and layer `References` are only checked for earlier positions in
+3a, not existence or event type: queue/dependency events occupy gaps outside
+this fold. Exact target resolution is deferred to the slice 3c composed reader,
+which must resolve them against the full journal before any writer is enabled.
+`Request.Head` is intentionally not required in the retained commit set: the
+slice-2 frontier subtracts base ancestry and trusted exclusions, so valid sets
+can omit the head, including a complete empty inventory. Graph/head-membership
+validation is deferred to the 3c integration boundary with the trusted producer;
+this pure decoder cannot infer ancestry from object IDs alone.
 
 All fields, including false/zero/empty collections, are required. Collections
 encode as `[]`, not null. Unknown/missing fields, case aliases, duplicate keys,
@@ -455,12 +466,15 @@ Evidence-record v1 hashes use SHA-256 of the UTF-8 domain prefix
 `openmerge-provenance-record-v1` followed by NUL and compact Go JSON, with fixed
 struct field order, HTML escaping and no trailing newline. `InventoryDigest`
 hashes `{header,commits}` after clearing the header's digest, index, chunk count
-and commit array. Thus physical chunking does not change record identity.
+and commit array. Chunk framing is non-canonical by design and the digest ignores
+it; different valid partitions retain the same record identity.
 `MemberDigest` hashes the member with its own record digest cleared; mutable
 condition/approval evidence and build mappings belong here. The separate
-`DeclarationDigest` is supplied by slice 1's complete inventory plus potentially
-applicable rule definitions, not recomputed from mutable gate evidence. Failed
-inventories carry no declaration digest. This preserves the distinction between
+`DeclarationDigest` is recomputed from the complete retained commits using slice
+1's canonical digest with no rule definitions (`DeclarationDigest(commits, true,
+nil)`). This event has no rule-definition payload; a future rule-bearing receipt
+contract needs a new event kind. Mutable gate evidence never enters this digest.
+Failed inventories carry no declaration digest. This preserves the distinction between
 receipt identity and refreshed evidence. MVP extraction outcomes retain
 `not_requested` checkpoint resolution; resolver observations require a later
 new event kind and are not fabricated by this decoder.
@@ -469,7 +483,9 @@ The pure fold retains at most 4096 provenance records / 32 MiB of canonical
 event payloads, within a 64 MiB wrapper bound. It returns detached immutable
 values and leaves prior state unchanged on error. This is a bounded retained
 checkpoint contract, not an activated compaction strategy; future snapshot
-writers must design retention/export closure before deployment. The eventual
+writers must design retention/export closure before deployment. Pruning that
+preserves required audit/export dependencies is required before slice 3c wiring;
+an unbounded live replay cannot use this fold as-is. The eventual
 writer must commit all chunks and member/decision/landing-start bindings
 atomically and reject stale generations under the transaction fence. There is
 no writer or transaction code in 3a.
@@ -477,20 +493,30 @@ no writer or transaction code in 3a.
 ### Snapshot coordination: v9 wraps unchanged v8 or legacy bytes
 
 Dependency's ADR 0011 slice 2 already reserves **v8** as an explicit, unwired
-wrapper. Provenance reserves **v9**, with `Version`, `Base`, `LastID`, and
-`Records`. `Base` is exactly one unchanged queue snapshot (currently v6/v7), or
+wrapper. Provenance reserves **v9**, with `Version`, `BaseKind`, `Base`, `LastID`,
+and `Records`. The required `BaseKind` is `queue` (explicit versions 2–7) or
+`dependency` (version 8), so future version bumps cannot cross namespaces.
+Each kind's version allowlist must be extended deliberately. `Base` is exactly
+one unchanged queue snapshot (currently v6/v7), or
 the complete existing dependency-v8 wrapper. Sharing v8 would change an already
 introduced strict schema and require editing dependency. Distinct outer v9
 preserves that boundary and needs no changes to `internal/dependency`.
 
 `journal.DecodeSnapshot` is an **explicit, unwired decoder only**. It delegates
 base validation through a required pure `BaseDecoder`, returning the exact base
-bytes and the folded provenance state. Slice 3c can wire **one composed reader**:
+bytes, base kind and folded provenance state. The callback receives the validated
+kind separately from the bytes and must dispatch on it, so future overlapping
+version numbers cannot select the wrong decoder. Unwrapped legacy input uses
+the frozen queue-v2–v7/dependency-v8 mapping. Slice 3c can wire **one composed reader**:
 call this decoder with a closure over `dependency.DecodeSnapshot` and its
 independently verified journal identity. That existing decoder handles v8 and
 legacy queue bytes. Legacy/v8 input without provenance returns unchanged base
 bytes and empty provenance state. V9 accepts neither nested v9 nor unknown base
 versions. Dependency identity errors propagate; the wrapper grants no bypass.
+Retained v9 event payloads must already equal their canonical encoding byte for
+byte; valid JSON with different whitespace, escaping or field order is rejected
+rather than silently rewritten by the fold. Both callback and returned base
+bytes are detached from caller-owned storage.
 There is no `EncodeSnapshot` here; only test fixtures construct v9 bytes.
 
 Keeping the inner bytes unchanged preserves #163's `HeldRequests` and cached
@@ -528,3 +554,8 @@ No reader/writer activation or v1 audit-format change occurs in 3a.
   queue event/action wire fixture.
 - `TestNoProductionProvenanceJournalImports` and
   `TestStateDoesNotAliasCallerEvidence`: inertness and immutable evidence.
+- `guards_test.go` pins forged declaration digests, each fail-closed/dedupe guard,
+  assembled digest corruption in one or every chunk, tested-before-landed,
+  canonical snapshot payloads, base kind/version fences, detached base bytes,
+  and the 4096-record boundary. Each requested guard is also proved by an
+  isolated source mutation that makes its focused test fail.

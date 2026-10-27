@@ -1,39 +1,46 @@
 package journal
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"slices"
 )
 
 // SnapshotVersion reserves v9, leaving dependency's explicit v8 unchanged.
-// A v9 Base is exactly one legacy queue snapshot OR dependency v8 wrapper.
+// A v9 BaseKind discriminates an unchanged queue snapshot from a dependency
+// wrapper. Kind-specific version allowlists must be updated for future readers.
 // Slice 3c can compose one reader for both via BaseDecoder, without introducing
 // a production dependency import or teaching old decoders to ignore evidence.
 const SnapshotVersion = 9
 
 // BaseDecoder strictly validates an unchanged legacy/dependency snapshot. The
 // caller owns the concrete state and independently verified dependency identity.
+// Kind is "queue" or "dependency" and selects the decoder independently of its
+// version namespace. Unwrapped legacy input uses the frozen pre-v9 version map.
 // It must not perform I/O; readers must never resolve evidence during replay.
-type BaseDecoder func([]byte) error
+type BaseDecoder func(kind string, raw []byte) error
 
 // Snapshot returns retained provenance and the exact base bytes. There is no
 // provenance snapshot encoder in this slice, nor any new snapshot writes.
 type Snapshot struct {
+	BaseKind   string
 	Base       json.RawMessage
 	Provenance State
 }
 
 type snapshot struct {
-	Version int             `json:"Version"`
-	Base    json.RawMessage `json:"Base"`
-	LastID  uint64          `json:"LastID"`
-	Records []Record        `json:"Records"`
+	Version  int             `json:"Version"`
+	BaseKind string          `json:"BaseKind"`
+	Base     json.RawMessage `json:"Base"`
+	LastID   uint64          `json:"LastID"`
+	Records  []Record        `json:"Records"`
 }
 
 // DecodeSnapshot is explicit and UNWIRED. It accepts legacy/v8 bytes through the
 // supplied decoder and v9 through a strict retained-evidence fold. Nested v9
 // wrappers and unrecognized base versions are rejected before invoking callbacks.
+// V9 record payloads must already be canonical; replay preserves their exact bytes.
 func DecodeSnapshot(raw []byte, decodeBase BaseDecoder) (Snapshot, error) {
 	if len(raw) > maxSnapshotBytes {
 		return Snapshot{}, ErrLimit
@@ -46,6 +53,7 @@ func DecodeSnapshot(raw []byte, decodeBase BaseDecoder) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	base := raw
+	baseKind := ""
 	var state State
 	if header.Version == SnapshotVersion {
 		var v snapshot
@@ -64,21 +72,48 @@ func DecodeSnapshot(raw []byte, decodeBase BaseDecoder) (Snapshot, error) {
 			if err != nil {
 				return Snapshot{}, err
 			}
+			canonical := state.records[len(state.records)-1].Payload
+			if !bytes.Equal(r.Payload, canonical) {
+				return Snapshot{}, ErrMalformed
+			}
 		}
 		if v.LastID != v.Records[len(v.Records)-1].ID {
 			return Snapshot{}, ErrBinding
 		}
 		base = v.Base
+		baseKind = v.BaseKind
+		if baseKind != "queue" && baseKind != "dependency" {
+			return Snapshot{}, ErrMalformed
+		}
 	}
 	var baseHeader struct{ Version int }
 	if err := json.Unmarshal(base, &baseHeader); err != nil {
 		return Snapshot{}, err
 	}
-	if baseHeader.Version < 2 || baseHeader.Version > 8 {
-		return Snapshot{}, fmt.Errorf("unsupported base snapshot version %d", baseHeader.Version)
+	// Legacy unwrapped input has no discriminator. V9 always supplies one, so
+	// future queue and dependency versions can overlap without ambiguity.
+	if baseKind == "" {
+		baseKind = "queue"
+		if baseHeader.Version == 8 {
+			baseKind = "dependency"
+		}
 	}
-	if err := decodeBase(slices.Clone(base)); err != nil {
+	if !supportedBase(baseKind, baseHeader.Version) {
+		return Snapshot{}, fmt.Errorf("unsupported %s base snapshot version %d", baseKind, baseHeader.Version)
+	}
+	if err := decodeBase(baseKind, slices.Clone(base)); err != nil {
 		return Snapshot{}, err
 	}
-	return Snapshot{slices.Clone(base), state}, nil
+	return Snapshot{BaseKind: baseKind, Base: slices.Clone(base), Provenance: state}, nil
+}
+
+func supportedBase(kind string, version int) bool {
+	switch kind {
+	case "queue":
+		return slices.Contains([]int{2, 3, 4, 5, 6, 7}, version)
+	case "dependency":
+		return version == 8
+	default:
+		return false
+	}
 }

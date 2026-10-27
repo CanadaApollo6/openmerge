@@ -51,6 +51,10 @@ type PolicySource struct {
 // except Index and Commits must be identical across chunks. Digest commits to
 // the entire assembled Inventory, including diagnostic, limits and Git version.
 // Generation is Request.Generation; it is unique per change/revision observation.
+// Complete DeclarationDigest is recomputed from Commits with no rule definitions.
+// Head need not occur in Commits: bases/exclusions can remove it (even all
+// originals). Graph membership remains a trusted producer responsibility; slice
+// 3c must preserve that boundary when wiring the composed reader.
 type Observation struct {
 	PreviousObservationID uint64             `json:"previous_observation_id"`
 	Request               p.InventoryRequest `json:"request"`
@@ -175,6 +179,8 @@ type Input struct {
 
 // Layer retains the independently evaluated baseline, trigger, or rule-local
 // obligation. Eligibility and References record its own approval pool/evidence.
+// Apply only fences References to earlier positions; slice 3c must resolve them
+// against the complete journal, including queue/dependency events.
 type Layer struct {
 	Kind        string   `json:"kind"`
 	Rule        string   `json:"rule"`
@@ -204,6 +210,8 @@ func MemberDigest(m Member) string { m.RecordDigest = ""; return hash(m) }
 // Landing is a companion to existing decision/check/LandingStarted events. The
 // later writer must commit all chunk and decision bindings atomically. This
 // contract records evidence; it does not authorize or append a landing.
+// Apply requires a prior tested stage for the same attempt. DecisionID is only
+// position-fenced here; exact target resolution is deferred to slice 3c.
 type Landing struct {
 	AttemptID  string   `json:"attempt_id"`
 	BatchID    string   `json:"batch_id"`
@@ -226,7 +234,9 @@ func eventIDs(values []uint64) bool {
 	return true
 }
 
-// Validate checks bounded member evidence; Apply resolves exact generation refs.
+// Validate checks bounded member evidence; Apply resolves ObservationIDs to exact
+// inventory generations. It only position-fences DecisionID and layer References;
+// slice 3c's composed reader must resolve those external event targets.
 func (e Landing) Validate() error {
 	if !text(e.AttemptID) || !text(e.BatchID) || e.DecisionID == 0 || e.Stage != "tested" && e.Stage != "landed" || len(e.Members) == 0 || len(e.Members) > 1024 {
 		return ErrMalformed

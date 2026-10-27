@@ -67,6 +67,8 @@ func (s State) Inventory(r p.InventoryRequest) (Inventory, bool) {
 // New generations compare against PreviousObservationID (the previous chunk 0),
 // including revisions/re-pushes, base rewrites and incomplete observations.
 // A rejected event leaves the old state byte-for-byte unchanged.
+// DecisionID and layer References are only fenced to earlier positions here;
+// slice 3c's composed reader must resolve their queue/dependency event targets.
 func Apply(s State, id uint64, e Event) (State, error) {
 	_, raw, err := EncodeEvent(e)
 	if err != nil {
@@ -151,6 +153,9 @@ func Apply(s State, id uint64, e Event) (State, error) {
 		if _, exists := s.landings[attemptKey(v)]; exists {
 			return s, ErrBinding
 		}
+		if _, tested := s.landings[stringJSON([]string{v.AttemptID, "tested"})]; v.Stage == "landed" && !tested {
+			return s, ErrBinding
+		}
 		for _, m := range v.Members {
 			key := generationKey(m.Request)
 			g, exists := s.groups[key]
@@ -199,6 +204,12 @@ func validateInventory(g group) error {
 	h := g.header
 	if InventoryDigest(h, g.commits) != h.Digest {
 		return ErrBinding
+	}
+	if h.Complete {
+		declarations, err := p.DeclarationDigest(g.commits, true, nil)
+		if err != nil || h.DeclarationDigest != declarations {
+			return ErrBinding
+		}
 	}
 	originals := map[string]bool{}
 	excluded := map[string]bool{}
