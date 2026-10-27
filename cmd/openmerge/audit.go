@@ -120,6 +120,8 @@ func auditFailure(stderr io.Writer, err error) int {
 	if errors.Is(err, audit.ErrSelectors) {
 		_, _ = fmt.Fprintln(stderr, "audit: invalid selectors or bounds")
 		return 2
+	} else if errors.Is(err, audit.ErrProvenanceVersion) {
+		_, _ = fmt.Fprintln(stderr, "audit: --version 1 cannot include provenance; use --version 2 or omit --version")
 	} else if errors.Is(err, audit.ErrTimeout) {
 		_, _ = fmt.Fprintln(stderr, "audit: export timed out")
 	} else if errors.Is(err, audit.ErrPinRejected) {

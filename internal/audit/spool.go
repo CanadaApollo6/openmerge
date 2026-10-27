@@ -252,6 +252,14 @@ func closure(ctx context.Context, tx pgx.Tx, dir, input string) (string, error) 
 }
 
 func closureVersion(ctx context.Context, tx pgx.Tx, dir, input string, version int) (string, error) {
+	if version == 2 {
+		indexDir, err := os.MkdirTemp(dir, "provenance-index-")
+		if err != nil {
+			return "", errOutput
+		}
+		defer func() { _ = os.RemoveAll(indexDir) }()
+		ctx = context.WithValue(ctx, provenanceIndexKey{}, provenanceIndex{indexDir})
+	}
 	visited := filepath.Join(dir, "visited")
 	if e := spoolFile(visited, func(io.Writer) error { return nil }); e != nil {
 		return "", e
@@ -336,6 +344,11 @@ func closureVersion(ctx context.Context, tx pgx.Tx, dir, input string, version i
 		}
 		if !added || !hasWork {
 			_ = os.Remove(next)
+			if version == 2 {
+				if err := validateProvenanceClosure(visited, dir); err != nil {
+					return "", err
+				}
+			}
 			return visited, nil
 		}
 		input = next

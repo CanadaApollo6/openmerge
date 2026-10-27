@@ -83,7 +83,7 @@ func verifyAnchor(t *testing.T, original, replay, hash string, want int) {
 	var m Manifest
 	must(t, json.Unmarshal(read(t, filepath.Join(replay, "manifest.json")), &m))
 	must(t, os.WriteFile(stdout, []byte(replay+"\nmanifest SHA-256: "+m.ManifestSHA256+"\n"), 0600))
-	output, err := exec.Command("python3", "../../scripts/verify-audit-anchor.py", "--anchor", receipt, "--replay-stdout", stdout, "--replay-out", replay, "--earlier", original).CombinedOutput()
+	output, err := exec.Command("python3", "-I", "../../scripts/verify-audit-anchor.py", "--anchor", receipt, "--replay-stdout", stdout, "--replay-out", replay, "--earlier", original).CombinedOutput()
 	code := 0
 	if err != nil {
 		if exit, ok := err.(*exec.ExitError); ok {

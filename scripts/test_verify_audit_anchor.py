@@ -33,7 +33,7 @@ class Contract(unittest.TestCase):
             receipt.write_text('a' * 64 + '\n')
             stdout.write_text('output\nmanifest SHA-256: ' + 'a' * 64 + '\n')
             def check(code, reason='', extra=(), out='output', later=True, input_text=''):
-                result = subprocess.run([sys.executable, str(SCRIPT), '--anchor', str(receipt),
+                result = subprocess.run([sys.executable, "-I", str(SCRIPT), '--anchor', str(receipt),
                     '--replay-stdout', str(stdout), '--replay-out', out,
                     '--earlier', str(a), *(['--later', str(b)] if later else []), *extra], capture_output=True, text=True, input=input_text)
                 self.assertEqual(result.returncode, code, result.stdout + result.stderr)
@@ -44,6 +44,12 @@ class Contract(unittest.TestCase):
                 if code == 0 and not reason: self.assertEqual(result.stdout, 'anchor and overlap match\n')
                 return result
             write(a, [row]); write(b, [row]); check(0)
+            v2 = {**manifest, 'version': 2}
+            provenance = {**row, 'evidence_kinds': ['provenance'],
+                          'source': {**row['source'], 'type': 'change_provenance_observed'}}
+            write(a, [provenance], v2); write(b, [provenance], v2); check(0)
+            check(0, extra=['--require-full-coverage'])
+            write(a, [row]); write(b, [row])
             check(0, extra=['--require-full-coverage'])
             # Replay's manifest/stdout remain frozen; erase A after replay while B is empty.
             write(b, []); (a / 'selection.jsonl').write_bytes(b''); check(2)

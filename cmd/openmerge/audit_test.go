@@ -74,6 +74,10 @@ func TestAuditUsageAndSanitization(t *testing.T) {
 	if !strings.Contains(err.String(), "audit: export timed out") {
 		t.Fatal("missing timeout diagnostic")
 	}
+	auditFailure(&err, audit.ErrProvenanceVersion)
+	if !strings.Contains(err.String(), "--version 1 cannot include provenance; use --version 2 or omit --version") {
+		t.Fatal("missing provenance version diagnostic")
+	}
 	auditFailure(&err, audit.ErrPinRejected)
 	if !strings.Contains(err.String(), "governing authority pin rejected by queue fold") {
 		t.Fatal("missing rejected pin diagnostic")

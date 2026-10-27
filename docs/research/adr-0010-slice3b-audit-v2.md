@@ -1,9 +1,9 @@
 # ADR 0010 slice 3b: read-only audit export v2 (Inert)
 
-Base: main, `515ba818376f1815db3f33db642c034fe2ffbd6e`.
-This implementation is independent of PR #178 and `internal/journalreader`.
-Only the audit export adapter imports slice 3a's strict provenance codec/fold.
-Live journal replay, snapshot loading and all writers remain unchanged.
+Reviewed head: `f8fbe12`. Fix round 1 merges main (including PR #178)
+without rewriting the reviewed history. Export reads raw immutable `events`
+through its own read-only snapshot; it never loads the composed reader's retained
+side projection or depends on its pruning/compaction policy. No writers change.
 
 ## Version contract
 
@@ -50,20 +50,34 @@ saved queue watermark. No Git, network, forge or checkpoint reads occur.
   `not_recorded`. Missing, duplicate, foreign-queue, malformed, future-fenced
   or inconsistent targets fail publication.
 
-The export-local adapter streams the provenance prefix through slice 3a's pure
-fold. This validates generation fences, complete assembled inventory/declaration
-digests, member record digests, exact chunk bindings, latest-generation use,
-mapping completeness and tested/landed separation. External decision targets
-also match batch, attempt and tested/landed result; layer targets must decode as
-known evidence in this queue. Replay recomputes exact closure, so rehashing a
-bundle cannot hide missing or extraneous dependencies.
+The export-local adapter builds a temporary disk index with one streaming
+SELECT per queue/watermark. It strictly decodes provenance-shaped rows before
+indexing their identities. Malformed companions, including JSONB `170.0` decision
+IDs, fail export in auto, v1 and v2 modes before absence can be inferred. The
+index serves chunk, decision and attempt lookups without repeated unindexed SQL.
+Legacy queues pay one additional scan, independent of decision count; they gain
+no absence edges and keep their v1 bytes.
 
-This adapter deliberately uses the existing queue index and SELECTs, with no
-migration. Prefix queries scan earlier queue history for each selected new record, and
-validation reuses the immutable fold (including its copy costs and bounded
-record/byte state). Oversized prefixes fail closed. Closure's on-disk worklist
-and source pagination remain bounded. This is an inert correctness slice, not
-a new scalable runtime replay reader.
+After closure, a single `(queue,id)` pass folds only selected provenance records.
+`journal.ClosureFold` loads each record's bounded group/attempt neighborhood from
+private disk scratch and uses the unchanged pure `journal.Apply` validation.
+It does not retain or clone a whole prefix, and the live projection's 4,096-record
+and aggregate byte limits do not cap historical or selected export size. Disk
+scratch grows with the journal index and required closure; working memory stays
+bounded by one event and its codec-bounded dependency neighborhood.
+
+This preserves generation fences, complete assembled inventory/declaration
+digests, exact member/chunk bindings, mapping completeness and tested/landed
+separation. Fixed-width raw chunk-zero ID files additionally check actual prior
+and latest generation fences with bounded binary searches, even when an
+intervening generation is outside closure or absent from a pruned projection.
+External decisions must match member identity, batch, attempt and stage result;
+layer targets must decode as known evidence in this queue. Replay recomputes
+exact closure, so rehashing cannot hide missing or extraneous dependencies.
+
+All database access uses existing indexes and SELECTs, with no migration or
+runtime reader change. Projection retention remains the composed reader's
+responsibility; export validity depends on immutable journal retention instead.
 
 ## ADR 0011 dependency evidence decision
 
@@ -98,8 +112,9 @@ permission rules explicitly; do not silently expand this v2 vocabulary.
 - `TestAuditSelectOnlyCommand`: CLI explicit v2 and manifest replay run with a
   SELECT-only role. Usage tests reject version overrides during manifest replay
   and unsupported versions.
-- `TestNoRuntimeProvenanceJournalImports`: permits exactly the export adapter;
-  live readers and writers cannot import the codec.
+- `TestNoRuntimeProvenanceJournalImports`: permits the existing composed
+  reader/store and the read-only export adapter. This fix adds no live wiring
+  or journal writers.
 - Existing `TestCompleteExportV1`, anchor tamper/overlap, retention, strict
   manifest and publication tests continue to apply unchanged, except the
   unsupported-version negative case now uses version 3.
@@ -108,24 +123,52 @@ The 10b verifier keeps the same receipt syntax and replay prerequisite for
 both versions. It compares the version as part of bundle identity and refuses
 unsupported versions. V1 receipts and existing v1 bundles remain valid.
 
-## Validation recorded
+## Fix-round regression proofs
 
-All Go commands used the requested heavy-work lock, Go 1.27.3, `GOFLAGS=-p=2`
-and `GOMEMLIMIT=4GiB`. Database tests used only localhost:54329 with both test
-URL variables set.
+- `TestProvenanceMalformedCompanionID`: Astra's out-of-range `170.0` repro,
+  scaled exponent, string, null and fractional IDs, in auto/v1/v2 modes.
+- `TestProvenanceLinearExport`: 100/300/1,000/4,097 selected records; exactly one
+  provenance SQL scan, no prefix queries, and only scope-page query growth.
+- `TestClosureFoldLinearWork`: exactly two scratch reads and two writes per
+  independent observation for 100/300/1,000/5,000 records; no timing assertions.
+- `TestProvenanceHistoricalRetentionLimit`: one selected observation from 5,000
+  immutable historical records exports and replays successfully.
+- `TestProvenanceLegacyCost`: 10/30 decisions on a 300,000-event legacy queue;
+  automatic export has v1 replay's semantic SQL lookup counts plus one provenance
+  scan. Timing is logged only, never asserted.
+- `TestProvenancePreviousGenerationClosure`: generation 2 names nonzero prior
+  observation 161; both generations' chunks are retained across the time range.
+  The schema has no retained side projection, proving it is unnecessary.
+- `TestProvenanceRawGenerationFences`: rejects omitted previous fences and stale
+  members even when the intervening raw generation is outside closure.
+- Isolated decision attempt and member-identity mismatch tests keep the rest of
+  the evidence internally consistent, so each named binding guard is necessary.
+- `TestClosureFoldMatchesRetainedFold`: valid and invalid fold neighborhoods
+  agree with the original retained fold; storage failures poison the fold.
+- The Python anchor contract includes positive provenance v2 overlap and full
+  coverage. Explicit v1 refusal has a dedicated actionable CLI diagnostic.
 
-- `go test ./internal/audit/... ./cmd/openmerge/... ./internal/provenance/journal/...`:
-  pass (audit 140.518s, CLI 96.553s, journal 4.425s).
-- `go vet ./...`: pass.
-- `golangci-lint run`: pass, zero issues.
-- `gofmt` on all touched Go files and `git diff --check`: pass.
-- `python3 scripts/derive-audit-v2.py`: all 20 v2 reference files reproduced.
-- `node scripts/verify-audit-v1-node.cjs`: 100 frozen v1 files identical.
-- Main's original Python anchor verifier, extracted at the pinned base,
-  refuses the v2 reference bundle with exit 2.
-- Main's original Go binary, built from `git archive` into scratch, refuses
-  the same v2 manifest with exit 1 and publishes no output. This checks the
-  actual old reader, without modifying or entering the project's main checkout.
+Validation and mutation command logs for fix round 1 are retained under
+`/home/riels/.cache/pr181-fix/`. The byte oracle runs in scratch; no frozen
+reference files are regenerated in the repository.
 
-Scratch command logs and the original main-generated bundle were retained at
-`/home/riels/.cache/adr0010-slice3b/`.
+## Fix-round validation recorded
+
+All Go commands used the requested `flock`/Go 1.27.3/`GOFLAGS=-p=2`/`GOMEMLIMIT=4GiB` wrapper and both localhost:54329 test URL variables. Python entrypoints used `-I`.
+
+- `go test ./internal/audit/... ./cmd/openmerge/... ./internal/provenance/... -count=1 -v` — PASS (audit 173.696s; CLI 96.632s; provenance 0.011s; journal 5.722s).
+- `go vet ./...` — PASS.
+- `golangci-lint run` — PASS, 0 issues.
+- `gofmt` on changed Go files and `git diff --check` — PASS.
+- `python3 -I scripts/test_verify_audit_anchor.py` — PASS, including positive v2 overlap/full coverage.
+- `scripts/derive-audit-v2.py`, loaded with `python3 -I` and its output root redirected to scratch — all 20 frozen v2 files reproduce byte-for-byte; repository fixtures untouched.
+- `node scripts/verify-audit-v1-node.cjs` — all 100 frozen v1 files identical.
+- Seven compiling Go behavioral mutants killed: ignore malformed companions, always-true member match, ignore decision attempt, omit previous-generation closure, skip closure fold, ignore raw generation fence, repeat fold-store reads. The corrected raw-fence mutant is included; a compiler-invalid draft is excluded.
+- Python anchor sweep: 18 non-equivalent mutants killed (including reject-all-v2), two documented equivalent cases.
+
+Measured scale (timings are evidence, never CI assertions):
+
+- 100 / 300 / 1,000 / 4,097 selected observations: 0.189 / 0.573 / 1.811 / 7.446 seconds; 9 / 15 / 37 / 134 SQL queries, with exactly one provenance scan each.
+- Pure fold: exactly 2 reads + 2 writes per independent observation through 5,000 records (10,000 reads + 10,000 writes at 5,000).
+- 5,000 historical observations / 1 selected: export + replay 3.041 seconds. Unrelated bad assembled digests are not folded.
+- 300,000-event legacy queue: 10 decisions export 2.218s versus unchanged v1 replay 2.227s; 30 decisions export 6.755s versus v1 replay 6.053s. Semantic lookup counts match v1, with one additional queue-wide provenance scan instead of three additional scans per decision.

@@ -2,10 +2,17 @@ package audit
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
 	"time"
 
+	p "github.com/CanadaApollo6/openmerge/internal/provenance"
 	pj "github.com/CanadaApollo6/openmerge/internal/provenance/journal"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 	"github.com/jackc/pgx/v5"
@@ -40,7 +47,7 @@ func exportVersion(path string, requested int) (int, error) {
 		}
 	}
 	if requested == 1 && version == 2 {
-		return 0, errIntegrity
+		return 0, ErrProvenanceVersion
 	}
 	if requested == 2 {
 		version = 2
@@ -65,22 +72,9 @@ func resolveEvidenceVersion(ctx context.Context, tx pgx.Tx, event sourceEvent, m
 		}
 		r.refs, r.sources = refs, deps
 		if event.source.Type == "landing_decision_recorded" {
-			// Invalid stages must not disappear behind the stage-specific selectors.
-			invalid, err := r.lookup("provenance", "landing_provenance_recorded", evidenceIdentity("invalid-stage"),
-				`payload->'data'->>'decision_id'=$3 AND COALESCE(payload->'data'->>'stage','') NOT IN ('tested','landed')`, false, fmt.Sprint(event.source.ID))
-			if err != nil || invalid != nil {
-				return nil, nil, errSource
-			}
-			r.refs = r.refs[:len(r.refs)-1]
-			// No synthetic absence edge: legacy-only selections stay frozen v1.
 			for _, stage := range []string{"tested", "landed"} {
-				_, err := r.lookup("provenance", "landing_provenance_recorded", evidenceIdentity("decision", fmt.Sprint(event.source.ID), stage),
-					`payload->'data'->>'decision_id'=$3 AND payload->'data'->>'stage'=$4`, false, fmt.Sprint(event.source.ID), stage)
-				if err != nil {
+				if _, err := r.provenanceLookup(evidenceIdentity("decision", fmt.Sprint(event.source.ID), stage), false); err != nil {
 					return nil, nil, err
-				}
-				if r.refs[len(r.refs)-1].Source == nil {
-					r.refs = r.refs[:len(r.refs)-1]
 				}
 			}
 		}
@@ -101,71 +95,24 @@ func decodeProvenance(event sourceEvent) (pj.Event, error) {
 	return e, nil
 }
 
-// Validate the bounded retained provenance prefix with slice 3a's pure fold.
-// This is export-local, not a live reader migration. Pagination limits buffers;
-// the codec's record/byte limits bound fold state and fail closed on excess.
-func (r *evidenceResolver) provenancePrefix(through int64) error {
-	var state pj.State
-	var after int64
-	for {
-		rows, err := r.tx.Query(r.ctx, `SELECT id,type,recorded_at,CASE WHEN octet_length(payload::text)<=4194304 THEN payload::text ELSE NULL END FROM events WHERE queue_id=$1 AND id>$2 AND id<=$3 AND type IN ('change_provenance_observed','landing_provenance_recorded') ORDER BY id LIMIT 32`, r.event.source.QueueID, after, through)
-		if err != nil {
-			return errSource
-		}
-		count := 0
-		for rows.Next() {
-			var event sourceEvent
-			var at time.Time
-			if rows.Scan(&event.source.ID, &event.source.Type, &at, &event.payload) != nil {
-				rows.Close()
-				return errSource
-			}
-			e, err := decodeProvenance(event)
-			if err != nil {
-				rows.Close()
-				return err
-			}
-			state, err = pj.Apply(state, uint64(event.source.ID), e)
-			if err != nil {
-				rows.Close()
-				return errSource
-			}
-			after = event.source.ID
-			count++
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			return errSource
-		}
-		if count < pageSize {
-			return nil
-		}
-	}
-}
-
 func (r *evidenceResolver) provenance() error {
 	e, err := decodeProvenance(r.event)
 	if err != nil {
 		return err
 	}
-	through := r.event.source.ID
 	switch v := e.(type) {
 	case pj.Observation:
+		if v.Index == 0 {
+			prior, err := r.previousInventory(v.Request, r.event.source.ID)
+			if err != nil || prior != v.PreviousObservationID {
+				return errSource
+			}
+		}
 		// Retain all chunks, including cross-range siblings, and the previous
 		// generation fence. Exact Request equality includes head/base/exclusions.
-		request, err := json.Marshal(v.Request)
-		if err != nil {
-			return errSource
-		}
 		for i := 0; i < v.Chunks; i++ {
-			chunk, err := r.lookup("provenance", "change_provenance_observed", evidenceIdentity("inventory", v.Request.ChangeID, v.Request.Generation, fmt.Sprint(i)),
-				`payload->'data'->'request'=$3::jsonb AND payload->'data'->>'index'=$4`, true, string(request), fmt.Sprint(i))
-			if err != nil {
+			if _, err := r.provenanceLookup(inventoryLookupIdentity(v, i), true); err != nil {
 				return err
-			}
-			if chunk.source.ID > through {
-				through = chunk.source.ID
 			}
 		}
 		if v.PreviousObservationID != 0 {
@@ -198,6 +145,10 @@ func (r *evidenceResolver) provenance() error {
 		}
 		matched := false
 		for _, m := range v.Members {
+			latest, err := r.previousInventory(m.Request, r.event.source.ID)
+			if err != nil || latest != m.ObservationIDs[0] {
+				return errSource
+			}
 			if m.Request.ChangeID == change && m.Request.Revision == fmt.Sprint(revision) && m.Request.Head == head {
 				matched = true
 			}
@@ -228,15 +179,11 @@ func (r *evidenceResolver) provenance() error {
 			return errSource
 		}
 		if v.Stage == "landed" {
-			_, err := r.lookup("provenance", "landing_provenance_recorded", evidenceIdentity(v.AttemptID, "tested"),
-				`payload->'data'->>'attempt_id'=$3 AND payload->'data'->>'stage'='tested' AND id<$4`, true, v.AttemptID, r.event.source.ID)
+			_, err := r.provenanceLookup(evidenceIdentity(v.AttemptID, "tested"), true)
 			if err != nil {
 				return err
 			}
 		}
-	}
-	if err := r.provenancePrefix(through); err != nil {
-		return err
 	}
 	for i := range r.refs {
 		r.refs[i].Owner = r.owner
@@ -273,4 +220,224 @@ func (r *evidenceResolver) provenanceID(id uint64, typ, relation string) (*sourc
 		ExpectedType: found.source.Type, Identity: evidenceIdentity(relation, fmt.Sprint(id)), Source: &found.source})
 	r.sources = append(r.sources, found)
 	return &found, nil
+}
+
+// ErrProvenanceVersion explains why an explicit legacy export cannot be emitted.
+var ErrProvenanceVersion = errors.New("audit: provenance requires export version 2")
+
+type provenanceIndexKey struct{}
+type provenanceIndex struct{ dir string }
+
+// Index raw immutable journal rows once per queue/snapshot, independently of any
+// retained side projection. Result rows and lookup files are individually bounded;
+// neither historical payloads nor an in-memory identity map accumulate.
+func (p provenanceIndex) queue(ctx context.Context, tx pgx.Tx, source Source, maxID int64) (string, error) {
+	dir := filepath.Join(p.dir, fmt.Sprintf("%d-%d", source.QueueID, maxID))
+	if _, err := os.Stat(dir); err == nil {
+		return dir, nil
+	}
+	if os.Mkdir(dir, 0700) != nil {
+		return "", errOutput
+	}
+	rows, err := tx.Query(ctx, provenanceIndexSQL, source.QueueID, maxID)
+	if err != nil {
+		return "", errSource
+	}
+	defer rows.Close()
+	for rows.Next() {
+		event := sourceEvent{source: Source{QueueID: source.QueueID, Queue: source.Queue}}
+		var at time.Time
+		if rows.Scan(&event.source.ID, &event.source.Type, &at, &event.payload) != nil {
+			return "", errSource
+		}
+		event.source.RecordedAt = stamp(at)
+		// Decode every companion-shaped row before using its identity. Thus
+		// 170, 170.0, 1.70e2 and malformed/missing IDs cannot hide evidence.
+		e, err := decodeProvenance(event)
+		if err != nil {
+			return "", err
+		}
+		var keys []Identity
+		switch v := e.(type) {
+		case pj.Observation:
+			keys = []Identity{inventoryLookupIdentity(v, v.Index)}
+			if v.Index == 0 {
+				path := filepath.Join(dir, inventoryHistoryKey(v.Request))
+				f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0600)
+				if err != nil {
+					return "", errOutput
+				}
+				raw := binary.BigEndian.AppendUint64(nil, uint64(event.source.ID))
+				_, err = f.Write(raw)
+				closeErr := f.Close()
+				if err != nil || closeErr != nil {
+					return "", errOutput
+				}
+			}
+		case pj.Landing:
+			keys = []Identity{evidenceIdentity("decision", fmt.Sprint(v.DecisionID), v.Stage), evidenceIdentity(v.AttemptID, v.Stage)}
+		}
+		for _, key := range keys {
+			path := filepath.Join(dir, digest([]byte(key)))
+			if _, err := os.Stat(path); err == nil {
+				// A bounded duplicate marker; unrelated lookups still work.
+				if os.WriteFile(path, nil, 0600) != nil {
+					return "", errOutput
+				}
+				continue
+			}
+			if err := spoolFile(path, func(out io.Writer) error {
+				return spoolWrite(out, spoolRecord{Source: event.source, Payload: event.payload})
+			}); err != nil {
+				return "", err
+			}
+		}
+	}
+	if rows.Err() != nil {
+		return "", errSource
+	}
+	return dir, nil
+}
+
+const provenanceIndexSQL = `SELECT id,type,recorded_at,CASE WHEN octet_length(payload::text)<=1048576 THEN payload::text ELSE NULL END FROM events WHERE queue_id=$1 AND id<=$2 AND type IN ('change_provenance_observed','landing_provenance_recorded') ORDER BY id`
+
+func inventoryLookupIdentity(v pj.Observation, index int) Identity {
+	raw, _ := json.Marshal(v.Request)
+	return evidenceIdentity("inventory-request", string(raw), fmt.Sprint(index))
+}
+
+func (r *evidenceResolver) provenanceLookup(key Identity, required bool) (*sourceEvent, error) {
+	index, ok := r.ctx.Value(provenanceIndexKey{}).(provenanceIndex)
+	if !ok {
+		return nil, errSource
+	}
+	dir, err := index.queue(r.ctx, r.tx, r.event.source, r.maxID)
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(dir, digest([]byte(key)))
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		if required {
+			return nil, errSource
+		}
+		return nil, nil
+	}
+	c, err := openSpool(path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = c.f.Close() }()
+	if !c.ok {
+		return nil, errSource
+	}
+	found := c.value.event()
+	decoded, err := decodeProvenance(found)
+	if err != nil {
+		return nil, err
+	}
+	identity := key
+	if v, ok := decoded.(pj.Observation); ok {
+		identity = evidenceIdentity("inventory", v.Request.ChangeID, v.Request.Generation, fmt.Sprint(v.Index))
+	}
+	r.refs = append(r.refs, Reference{Kind: "provenance", Relation: "relied_on", Status: "recorded", Owner: r.owner,
+		ExpectedType: found.source.Type, Identity: identity, Source: &found.source})
+	r.sources = append(r.sources, found)
+	return &found, nil
+}
+
+// The closed spool is already in (queue,id) order. Fold each selected provenance
+// record exactly once; unrelated history is never folded. Temporary per-queue
+// fold state is disk-backed so the projection's 4096-record retention ceiling
+// cannot become an export lifetime or selection-size ceiling.
+func validateProvenanceClosure(path, dir string) error {
+	c, err := openSpool(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = c.f.Close() }()
+	var queueID int64
+	var fold *pj.ClosureFold
+	for c.ok {
+		event := c.value.event()
+		if isProvenance(event.source.Type) {
+			if fold == nil || queueID != event.source.QueueID {
+				queueID = event.source.QueueID
+				storeDir := filepath.Join(dir, fmt.Sprintf("fold-%d", queueID))
+				if os.Mkdir(storeDir, 0700) != nil {
+					return errOutput
+				}
+				fold = &pj.ClosureFold{Store: provenanceFoldStore{storeDir}}
+			}
+			e, err := decodeProvenance(event)
+			if err != nil {
+				return err
+			}
+			if err := fold.Apply(uint64(event.source.ID), e); err != nil {
+				return errSource
+			}
+		}
+		if err := c.next(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type provenanceFoldStore struct{ dir string }
+
+func (s provenanceFoldStore) Get(key string) ([]byte, error) {
+	raw, err := os.ReadFile(filepath.Join(s.dir, digest([]byte(key))))
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	return raw, err
+}
+func (s provenanceFoldStore) Put(key string, raw []byte) error {
+	return os.WriteFile(filepath.Join(s.dir, digest([]byte(key))), raw, 0600)
+}
+
+// Preserve raw-journal generation fences even when an intervening observation
+// is outside closure or has been pruned from the side projection. Fixed-width
+// ID files allow bounded binary searches without re-scanning per-change history.
+func inventoryHistoryKey(r p.InventoryRequest) string {
+	return "history-" + digest([]byte(evidenceIdentity(r.Repository, r.Queue, r.ChangeID)))
+}
+func (r *evidenceResolver) previousInventory(request p.InventoryRequest, before int64) (uint64, error) {
+	index, ok := r.ctx.Value(provenanceIndexKey{}).(provenanceIndex)
+	if !ok {
+		return 0, errSource
+	}
+	dir, err := index.queue(r.ctx, r.tx, r.event.source, r.maxID)
+	if err != nil {
+		return 0, err
+	}
+	f, err := os.Open(filepath.Join(dir, inventoryHistoryKey(request)))
+	if os.IsNotExist(err) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, errOutput
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil || info.Size()%8 != 0 {
+		return 0, errOutput
+	}
+	var readErr error
+	read := func(i int) uint64 {
+		var raw [8]byte
+		if _, err := f.ReadAt(raw[:], int64(i)*8); err != nil {
+			readErr = err
+		}
+		return binary.BigEndian.Uint64(raw[:])
+	}
+	i := sort.Search(int(info.Size()/8), func(i int) bool { return read(i) >= uint64(before) })
+	var id uint64
+	if i > 0 {
+		id = read(i - 1)
+	}
+	if readErr != nil {
+		return 0, errOutput
+	}
+	return id, nil
 }
