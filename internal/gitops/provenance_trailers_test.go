@@ -66,6 +66,18 @@ func TestProvenanceGitTrailerRegressions(t *testing.T) {
 	parse, readCommit := provenanceGitParser(t)
 	classifier, err := provenance.NewClassifier([]provenance.IdentityRule{{ID: "human", Mailbox: "human@example.test", Class: provenance.Human}})
 	must(t, err)
+	t.Run("URL in prose", func(t *testing.T) {
+		// Git < 2.56 parses the URL as "https: //example.com", admitting
+		// Agent-Session as agent evidence: a tightening-only difference from
+		// 2.56. Compare readers from the same binary, not a fixed trailer set
+		// or class, because provenance depends on the deployed Git version.
+		message := "subject\n\nhttps://example.com\nAgent-Session: a:one\n"
+		parsed := parse(message)
+		if reference := readCommit(message); parsed != reference {
+			t.Fatalf("adapter %q != commit reader %q", parsed, reference)
+		}
+		t.Logf("Git trailers: %q", parsed)
+	})
 	for _, tc := range []struct {
 		name, message, parsed string
 		class                 provenance.Class
@@ -73,18 +85,17 @@ func TestProvenanceGitTrailerRegressions(t *testing.T) {
 		{"cherry-pick marker", "subject\n\nAgent-Session: a:one\n(cherry picked from commit " + strings.Repeat("a", 40) + ")\n", "Agent-Session: a:one\n", provenance.Mixed},
 		{"patch divider with text", "subject\n\nAgent-Session: a:one\n--- patch\ndiff\n", "", provenance.Human},
 		{"patch divider with whitespace", "subject\n\nAgent-Session: a:one\n--- \t\ndiff\n", "", provenance.Human},
-		{"URL in prose", "subject\n\nhttps://example.com\nAgent-Session: a:one\n", "", provenance.Human},
 		{"divider before declaration", "subject\n\nbody\n--- patch\n\nAgent-Session: a:one\n", "Agent-Session: a:one\n", provenance.Mixed},
 		{"markdown rule before checkpoint", "subject\n\nbody\n---\n\nEntire-Checkpoint: abcdef012345\n", "Entire-Checkpoint: abcdef012345\n", provenance.Mixed},
 		{"reserved metadata continuation", "subject\n\nOpenMerge-Batch: contributor\n Agent-Session: a:one\n", "OpenMerge-Batch: contributor Agent-Session: a:one\n", provenance.Human},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			parsed := parse(tc.message)
-			if string(parsed) != tc.parsed {
-				t.Fatalf("Git output %q, want %q", parsed, tc.parsed)
-			}
 			if reference := readCommit(tc.message); parsed != reference {
 				t.Fatalf("adapter %q != commit reader %q", parsed, reference)
+			}
+			if string(parsed) != tc.parsed {
+				t.Fatalf("Git output %q, want %q", parsed, tc.parsed)
 			}
 			declarations := provenance.ParseGitTrailers(parsed)
 			identities := classifier.Declarations(provenance.IdentityInput{AuthorMailbox: "human@example.test", ParsedTrailers: parsed})

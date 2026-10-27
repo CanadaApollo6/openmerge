@@ -37,7 +37,9 @@ config, includes and named `trailer.*` aliases. It pins
 `git log --format=%(trailers:only,unfold)` and the
 [forge-driver contract](../../docs/forge-driver-contract.md#building-test-refs).
 This combination leaves no ambient trailer settings to alter the result.
-Tests log the deployed version; fix round 2 ran with **git version 2.56.0**.
+Tests log the deployed version. PR #171's CI used **git version 2.55.0**
+(`/usr/bin/git`, Ubuntu 24.04 runner image `20261012.334.1`); the local binary
+is **git version 2.56.0**.
 See [Git's parser documentation](https://git-scm.com/docs/git-interpret-trailers).
 
 Provenance parsing passes the original message bytes to Git. It deliberately
@@ -53,7 +55,13 @@ final trailer block. Slice 2 must read original commits, rather than feed
 generated/reformatted messages to this extractor.
 
 Named regressions cover cherry-pick markers, patch dividers with text or
-trailing whitespace, and URLs in prose. The differential corpus compares
+trailing whitespace, and URLs in prose. For every named case, the adapter is
+checked against `git log %(trailers:only,unfold)` from the same Git binary;
+tests do not assume version-dependent output is identical. Git versions older
+than 2.56 parse the URL line in the URL-in-prose case as a `https: //…` trailer,
+so the commit yields agent evidence on those versions. Git 2.56 no longer parses
+it as a trailer. This 2.55-to-2.56 classification difference only tightens
+policy on older Git. The differential corpus compares
 1,152 LF/CRLF messages, including continuations, comments, mixed-case keys,
 duplicates, coauthors and Signed-off-by casing. Each original message is written
 byte-for-byte to a real commit object; `--parse --no-divider` output must equal
@@ -89,7 +97,11 @@ budgets; this string parser makes no completeness claim about truncated input.
 - Preserve the environment/config isolation, including no source-local config
   or named trailer aliases, and pass original message bytes without rewriting.
 - Bind the actual Git version, pinned invocation/settings and parser/classifier
-  versions into the effective parser policy identity.
+  versions into the effective parser policy identity and evidence. Provenance
+  results depend on Git version, so an upgrade that changes classification is
+  a policy-identity change. The concrete example is Git 2.55 parsing the URL
+  line in the URL-in-prose regression as a `https: //…` trailer and counting
+  agent evidence, while Git 2.56 does not.
 
 ## Identity choices
 
