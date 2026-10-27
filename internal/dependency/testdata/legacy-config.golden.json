@@ -1,0 +1,378 @@
+[
+  {
+    "Source": "version: 1\nqueues:\n  - name: default\n    merge_when: [check-success = ci]\n",
+    "Parsed": {
+      "PolicyAuthority": "",
+      "BreakGlass": null,
+      "Version": 1,
+      "Classification": {
+        "Docs": null,
+        "Generated": null,
+        "Sensitive": null
+      },
+      "Groups": null,
+      "Agents": null,
+      "Policy": {
+        "Classification": {
+          "Docs": null,
+          "Generated": null,
+          "Sensitive": null
+        },
+        "Groups": null,
+        "Agents": null,
+        "Queues": null
+      },
+      "Queues": [
+        {
+          "Name": "default",
+          "Changes": {
+            "PullRequests": ""
+          },
+          "Approvals": null,
+          "Base": "",
+          "EnterWhen": {},
+          "MergeWhen": {},
+          "MergeMethod": "squash",
+          "CheckTimeout": 3600000000000,
+          "Checks": {
+            "RetryFailed": 0
+          },
+          "Speculation": {
+            "MaxDepth": 1,
+            "MinDepth": 1
+          },
+          "Batch": {
+            "TargetPassRate": 0,
+            "MaxSize": 1,
+            "MaxWait": 0
+          }
+        }
+      ],
+      "DeleteHeadBranch": null
+    },
+    "Warnings": null,
+    "Error": "",
+    "Digests": [
+      "e987d299363c0c3caafda346bcecfad6fea43c72415114d2313f263d491dbce5",
+      "75c86e0f6a55101c55b9de4d07940a8d98c1f110df2b98aad901cf0557bfa4aa"
+    ]
+  },
+  {
+    "Source": "version: 1\nqueues:\n  - name: default\n    merge_when: [check-success = ci]\n    speculation: {max_depth: 1, min_depth: 1}\n",
+    "Parsed": {
+      "PolicyAuthority": "",
+      "BreakGlass": null,
+      "Version": 1,
+      "Classification": {
+        "Docs": null,
+        "Generated": null,
+        "Sensitive": null
+      },
+      "Groups": null,
+      "Agents": null,
+      "Policy": {
+        "Classification": {
+          "Docs": null,
+          "Generated": null,
+          "Sensitive": null
+        },
+        "Groups": null,
+        "Agents": null,
+        "Queues": null
+      },
+      "Queues": [
+        {
+          "Name": "default",
+          "Changes": {
+            "PullRequests": ""
+          },
+          "Approvals": null,
+          "Base": "",
+          "EnterWhen": {},
+          "MergeWhen": {},
+          "MergeMethod": "squash",
+          "CheckTimeout": 3600000000000,
+          "Checks": {
+            "RetryFailed": 0
+          },
+          "Speculation": {
+            "MaxDepth": 1,
+            "MinDepth": 1
+          },
+          "Batch": {
+            "TargetPassRate": 0,
+            "MaxSize": 1,
+            "MaxWait": 0
+          }
+        }
+      ],
+      "DeleteHeadBranch": null
+    },
+    "Warnings": null,
+    "Error": "",
+    "Digests": [
+      "e987d299363c0c3caafda346bcecfad6fea43c72415114d2313f263d491dbce5",
+      "75c86e0f6a55101c55b9de4d07940a8d98c1f110df2b98aad901cf0557bfa4aa"
+    ]
+  },
+  {
+    "Source": "version: 1\nqueues:\n  - name: default\n    merge_when: [check-success = ci]\n    speculation: {max_depth: 4, min_depth: 2}\n",
+    "Parsed": {
+      "PolicyAuthority": "",
+      "BreakGlass": null,
+      "Version": 1,
+      "Classification": {
+        "Docs": null,
+        "Generated": null,
+        "Sensitive": null
+      },
+      "Groups": null,
+      "Agents": null,
+      "Policy": {
+        "Classification": {
+          "Docs": null,
+          "Generated": null,
+          "Sensitive": null
+        },
+        "Groups": null,
+        "Agents": null,
+        "Queues": null
+      },
+      "Queues": [
+        {
+          "Name": "default",
+          "Changes": {
+            "PullRequests": ""
+          },
+          "Approvals": null,
+          "Base": "",
+          "EnterWhen": {},
+          "MergeWhen": {},
+          "MergeMethod": "squash",
+          "CheckTimeout": 3600000000000,
+          "Checks": {
+            "RetryFailed": 0
+          },
+          "Speculation": {
+            "MaxDepth": 4,
+            "MinDepth": 2
+          },
+          "Batch": {
+            "TargetPassRate": 0,
+            "MaxSize": 1,
+            "MaxWait": 0
+          }
+        }
+      ],
+      "DeleteHeadBranch": null
+    },
+    "Warnings": null,
+    "Error": "",
+    "Digests": [
+      "508c928c80e41eac1bb57b4800bb399222c5f682a457232f4c1e8f6b9c41d05d",
+      "228bc020683ad5b117544758dfcea2e6d1b2c672225dec8f03785830c429967d"
+    ]
+  },
+  {
+    "Source": "version: 1\nqueues:\n  - name: default\n    merge_when: [check-success = ci]\n    batch: {max_size: 8, max_wait: 5m}\n    checks: {retry_failed: 1}\n",
+    "Parsed": {
+      "PolicyAuthority": "",
+      "BreakGlass": null,
+      "Version": 1,
+      "Classification": {
+        "Docs": null,
+        "Generated": null,
+        "Sensitive": null
+      },
+      "Groups": null,
+      "Agents": null,
+      "Policy": {
+        "Classification": {
+          "Docs": null,
+          "Generated": null,
+          "Sensitive": null
+        },
+        "Groups": null,
+        "Agents": null,
+        "Queues": null
+      },
+      "Queues": [
+        {
+          "Name": "default",
+          "Changes": {
+            "PullRequests": ""
+          },
+          "Approvals": null,
+          "Base": "",
+          "EnterWhen": {},
+          "MergeWhen": {},
+          "MergeMethod": "squash",
+          "CheckTimeout": 3600000000000,
+          "Checks": {
+            "RetryFailed": 1
+          },
+          "Speculation": {
+            "MaxDepth": 1,
+            "MinDepth": 1
+          },
+          "Batch": {
+            "TargetPassRate": 0,
+            "MaxSize": 8,
+            "MaxWait": 300000000000
+          }
+        }
+      ],
+      "DeleteHeadBranch": null
+    },
+    "Warnings": null,
+    "Error": "",
+    "Digests": [
+      "7e7bf58395957ae0fec2d17a162233de0aa3f6e582d9cc2eb6eb4cd049956512",
+      "936a86848e84606ba89a7ae1ee56db20d204957d800189accb6a83ea9aa505e8"
+    ]
+  },
+  {
+    "Source": "version: 1\nqueues:\n  - name: default\n    merge_when: [check-success = ci]\n    dependencies: {mode: ordered}\n",
+    "Parsed": null,
+    "Warnings": null,
+    "Error": "line 5: queues[0].dependencies: unknown key \"dependencies\"",
+    "Digests": null
+  },
+  {
+    "Source": "version: 1\nqueues:\n  - name: default\n    merge_when: [check-success = ci]\nsingle_maintainer: true\n",
+    "Parsed": null,
+    "Warnings": null,
+    "Error": "line 5: single_maintainer: unknown key \"single_maintainer\"",
+    "Digests": null
+  },
+  {
+    "Source": "version: 2\nqueues: []\n",
+    "Parsed": null,
+    "Warnings": null,
+    "Error": "line 1: version: unsupported version \"2\"; supported versions: 1\nline 2: queues: at least one queue is required",
+    "Digests": null
+  },
+  {
+    "Source": "version: 1\nqueues: [{name: default, merge_when: []}]\n",
+    "Parsed": null,
+    "Warnings": null,
+    "Error": "line 2: queues[0].merge_when: queue \"default\" merge_when must require a positive named check-success equality in its conjunction and reject missing or failed checks (for example merge_when: [check-success = ci]); checks under or/not and counts do not qualify",
+    "Digests": null
+  },
+  {
+    "Source": "version: 1\n\nqueues:\n  - name: default\n    enter_when:                    # must hold to join and to stay in the queue\n      - \"#approved-reviews-by \u003e= 1\"\n      - check-success = lint\n    merge_when:                    # checked against the tested batch before landing\n      - check-success = integration\n    merge_method: squash           # merge | squash | rebase\n    batch:\n      max_size: 8\n      max_wait: 30s\n",
+    "Parsed": {
+      "PolicyAuthority": "",
+      "BreakGlass": null,
+      "Version": 1,
+      "Classification": {
+        "Docs": null,
+        "Generated": null,
+        "Sensitive": null
+      },
+      "Groups": null,
+      "Agents": null,
+      "Policy": {
+        "Classification": {
+          "Docs": null,
+          "Generated": null,
+          "Sensitive": null
+        },
+        "Groups": null,
+        "Agents": null,
+        "Queues": null
+      },
+      "Queues": [
+        {
+          "Name": "default",
+          "Changes": {
+            "PullRequests": ""
+          },
+          "Approvals": null,
+          "Base": "",
+          "EnterWhen": {},
+          "MergeWhen": {},
+          "MergeMethod": "squash",
+          "CheckTimeout": 3600000000000,
+          "Checks": {
+            "RetryFailed": 0
+          },
+          "Speculation": {
+            "MaxDepth": 1,
+            "MinDepth": 1
+          },
+          "Batch": {
+            "TargetPassRate": 0,
+            "MaxSize": 8,
+            "MaxWait": 30000000000
+          }
+        }
+      ],
+      "DeleteHeadBranch": null
+    },
+    "Warnings": null,
+    "Error": "",
+    "Digests": [
+      "a57358ddcdca7125eacfaaf6fcd0525a25b101a7637857b9eabe9250184adc12",
+      "25e57981bdff17be713abb035e2851525205d0e8c685da1e67b078db0b2da14a"
+    ]
+  },
+  {
+    "Source": "version: 1\nqueues:\n  - name: default\n    enter_when:\n      - \"-draft\"\n      - check-success = sign-off\n    merge_when:\n      - check-success = check\n      - check-success = sim-exits\n    merge_method: squash\n    speculation:\n      max_depth: 4\n",
+    "Parsed": {
+      "PolicyAuthority": "",
+      "BreakGlass": null,
+      "Version": 1,
+      "Classification": {
+        "Docs": null,
+        "Generated": null,
+        "Sensitive": null
+      },
+      "Groups": null,
+      "Agents": null,
+      "Policy": {
+        "Classification": {
+          "Docs": null,
+          "Generated": null,
+          "Sensitive": null
+        },
+        "Groups": null,
+        "Agents": null,
+        "Queues": null
+      },
+      "Queues": [
+        {
+          "Name": "default",
+          "Changes": {
+            "PullRequests": ""
+          },
+          "Approvals": null,
+          "Base": "",
+          "EnterWhen": {},
+          "MergeWhen": {},
+          "MergeMethod": "squash",
+          "CheckTimeout": 3600000000000,
+          "Checks": {
+            "RetryFailed": 0
+          },
+          "Speculation": {
+            "MaxDepth": 4,
+            "MinDepth": 1
+          },
+          "Batch": {
+            "TargetPassRate": 0,
+            "MaxSize": 1,
+            "MaxWait": 0
+          }
+        }
+      ],
+      "DeleteHeadBranch": null
+    },
+    "Warnings": null,
+    "Error": "",
+    "Digests": [
+      "d932c50377e7fbc58580d94b7affadc51d246d9582bc9a37664b8134efa7d3d4",
+      "e58c893b8b3af7685dc07a086824b3bc1fc044456083d193f9566f8387cb58fc"
+    ]
+  }
+]

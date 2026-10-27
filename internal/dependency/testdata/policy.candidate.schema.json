@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "dependency-policy-candidate.json",
+  "title": "Inert ADR 0011 per-queue dependencies value",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["mode"],
+  "properties": {
+    "mode": {"const": "ordered"},
+    "allow_from": {"$ref": "#/$defs/grants"},
+    "allow_to": {"$ref": "#/$defs/grants"}
+  },
+  "$defs": {
+    "grants": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "format": "openmerge-dependency-repository"}
+    }
+  }
+}
