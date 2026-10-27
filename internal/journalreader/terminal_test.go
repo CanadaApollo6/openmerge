@@ -10,7 +10,16 @@ import (
 	"time"
 )
 
+// Short mode keeps all ten checkpoint/reuse probes; only the history shrinks.
+func terminalHistorySize() int {
+	if testing.Short() {
+		return 200
+	}
+	return 10000
+}
+
 func TestTenThousandAbandonedAttemptsRetireDurably(t *testing.T) {
+	n := terminalHistorySize()
 	records := map[uint64][]byte{}
 	r := New(queue.State{BaseBranch: "main", BaseSHA: "base"}, dependency.JournalInitialized{}, lookup(records))
 	var id, previous uint64
@@ -27,7 +36,7 @@ func TestTenThousandAbandonedAttemptsRetireDurably(t *testing.T) {
 	at := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
 	add(queue.PRObserved{PR: 1, HeadSHA: h.Request.Head, Trusted: true, Eligible: true})
 	add(queue.EnqueueRequested{PR: 1, At: at})
-	for i := 0; i < 10000; i++ {
+	for i := 0; i < n; i++ {
 		batch, attempt := fmt.Sprintf("b%d", i+1), fmt.Sprintf("attempt-%d", i+1)
 		add(queue.BatchStarted{BatchID: batch, BaseSHA: r.Queue.BaseSHA, PRs: []queue.BatchPR{{PR: 1, HeadSHA: h.Request.Head}}, At: at})
 		testedSHA := fmt.Sprintf("%040x", i+100)
@@ -61,7 +70,7 @@ func TestTenThousandAbandonedAttemptsRetireDurably(t *testing.T) {
 		if len(r.Provenance.Records()) > 1 {
 			t.Fatalf("abandoned records accumulated at %d: %d", i, len(r.Provenance.Records()))
 		}
-		if i%1000 != 999 {
+		if (i+1)%(n/10) != 0 {
 			continue
 		}
 		raw, err := r.CursorSnapshot()
@@ -79,6 +88,7 @@ func TestTenThousandAbandonedAttemptsRetireDurably(t *testing.T) {
 }
 
 func TestTenThousandDroppedChangesRetireDurably(t *testing.T) {
+	n := terminalHistorySize()
 	for _, kind := range []string{"closed", "dequeued", "head", "change-retired", "queue-retired"} {
 		t.Run(kind, func(t *testing.T) {
 			records := map[uint64][]byte{}
@@ -94,7 +104,7 @@ func TestTenThousandDroppedChangesRetireDurably(t *testing.T) {
 			}
 			at := time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
 			h := provenanceFixture(t)
-			for i := 1; i <= 10000; i++ {
+			for i := 1; i <= n; i++ {
 				h.Request.ChangeID = fmt.Sprintf("chg1_%064x", i)
 				h.Request.Generation = fmt.Sprint(i)
 				h.Digest = pj.InventoryDigest(h, h.Commits)
@@ -131,7 +141,7 @@ func TestTenThousandDroppedChangesRetireDurably(t *testing.T) {
 				if len(r.Provenance.Records()) != 0 {
 					t.Fatalf("dropped change retained inventory at %d", i)
 				}
-				if i%1000 != 0 {
+				if i%(n/10) != 0 {
 					continue
 				}
 				raw, err := r.CursorSnapshot()

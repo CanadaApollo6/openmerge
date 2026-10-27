@@ -343,11 +343,17 @@ func TestSideAppendConcurrentGenerationCAS(t *testing.T) {
 }
 
 func TestSideEvidenceLargeHistoryBoundedAuditAndReloadCost(t *testing.T) {
+	prefix, attempts := 260000, 2000
+	if testing.Short() {
+		// Still span two 512-row replay pages and retain lifetime fences.
+		prefix, attempts = 1024, 200
+	}
+	total := prefix + 4*attempts
 	s := newStore(t)
 	q := ensureQueue(t, s, "")
 	// Each isolated schema has its own sequence. Populate a genuinely large prefix
 	// in one statement; no live database or forge calls are involved.
-	_, err := s.pool.Exec(t.Context(), `INSERT INTO events(queue_id,type,payload) SELECT $1,'refresh_requested','{"version":1,"type":"refresh_requested","data":{}}'::jsonb FROM generate_series(1,260000)`, q)
+	_, err := s.pool.Exec(t.Context(), `INSERT INTO events(queue_id,type,payload) SELECT $1,'refresh_requested','{"version":1,"type":"refresh_requested","data":{}}'::jsonb FROM generate_series(1,$2)`, q, prefix)
 	must(t, err)
 	var last uint64
 	must(t, s.pool.QueryRow(t.Context(), `SELECT max(id) FROM events WHERE queue_id=$1`, q).Scan(&last))
@@ -360,8 +366,8 @@ func TestSideEvidenceLargeHistoryBoundedAuditAndReloadCost(t *testing.T) {
 		}
 		return b, nil
 	})
-	rows := make([][]any, 0, 8000)
-	for i := 0; i < 2000; i++ {
+	rows := make([][]any, 0, 4*attempts)
+	for i := 0; i < attempts; i++ {
 		h := sideInventory(t)
 		// Distinct changes ensure settlement also releases current inventories,
 		// rather than relying only on same-change supersession.
@@ -391,7 +397,7 @@ func TestSideEvidenceLargeHistoryBoundedAuditAndReloadCost(t *testing.T) {
 	// COPY uses the same sequence positions consumed by the test's builders.
 	copied, err := s.pool.CopyFrom(t.Context(), []string{"events"}, []string{"queue_id", "type", "payload"}, pgx.CopyFromRows(rows))
 	must(t, err)
-	if copied != 8000 {
+	if copied != int64(4*attempts) {
 		t.Fatal("history fixture incomplete")
 	}
 	if len(reader.Provenance.Records()) != 0 {
@@ -426,13 +432,13 @@ func TestSideEvidenceLargeHistoryBoundedAuditAndReloadCost(t *testing.T) {
 			if len(plan) != 1 || plan[0].Plan.Hit+plan[0].Plan.Read > 16 {
 				t.Fatalf("side-era idle query scanned historical buffers: %s", planRaw)
 			}
-			t.Logf("268000-row idle suffix plan: %d shared buffers, %.3f ms SQL execution", plan[0].Plan.Hit+plan[0].Plan.Read, plan[0].Execution)
+			t.Logf("%d-row idle suffix plan: %d shared buffers, %.3f ms SQL execution", total, plan[0].Plan.Hit+plan[0].Plan.Read, plan[0].Execution)
 		}
 		if a.CursorResetReason != "" {
 			t.Fatal(a.CursorResetReason)
 		}
 	}
-	t.Logf("v9 load at 268000 rows: %d cursor bytes, 0 reference queries; each idle poll: 1 suffix query, 0 rows", len(raw))
+	t.Logf("v9 load at %d rows: %d cursor bytes, 0 reference queries; each idle poll: 1 suffix query, 0 rows", total, len(raw))
 	// Snapshot restore also keeps old attempt/generation duplicate fences.
 	h := sideInventory(t)
 	h.Request.ChangeID = "chg1_" + strings.Repeat("0", 64)
@@ -443,7 +449,7 @@ func TestSideEvidenceLargeHistoryBoundedAuditAndReloadCost(t *testing.T) {
 	}
 	// Inspect the source evidence directly: compaction does not alter or remove
 	// the inventory, tested/landed pair, decision or closure references.
-	if got := count(t, s, `SELECT count(*) FROM events WHERE queue_id=$1`, q); got != 268000 {
+	if got := count(t, s, `SELECT count(*) FROM events WHERE queue_id=$1`, q); got != total {
 		t.Fatalf("audit evidence pruned: %d", got)
 	}
 	appendEvents(t, s, q, queue.PRObserved{PR: 2, HeadSHA: "head"})
@@ -577,9 +583,13 @@ func TestSideAppendRefusesLandingDecision(t *testing.T) {
 }
 
 func TestSideAppendAndLoadResumeCheckpointWithOnlySuffixRows(t *testing.T) {
+	prefix := 2000
+	if testing.Short() {
+		prefix = 1024
+	}
 	s := newStore(t)
 	q := ensureQueue(t, s, "")
-	_, err := s.pool.Exec(t.Context(), `INSERT INTO events(queue_id,type,payload) SELECT $1,'refresh_requested','{"version":1,"type":"refresh_requested","data":{}}'::jsonb FROM generate_series(1,2000)`, q)
+	_, err := s.pool.Exec(t.Context(), `INSERT INTO events(queue_id,type,payload) SELECT $1,'refresh_requested','{"version":1,"type":"refresh_requested","data":{}}'::jsonb FROM generate_series(1,$2)`, q, prefix)
 	must(t, err)
 	h := sideInventory(t)
 	last, err := s.AppendSide(t.Context(), q, sideObservation(h, "initial"))
@@ -598,7 +608,7 @@ func TestSideAppendAndLoadResumeCheckpointWithOnlySuffixRows(t *testing.T) {
 		for _, query := range trace.queries {
 			if strings.Contains(query.SQL, "id>$2") {
 				suffix++
-				if query.Args[1].(int64) < 2000 {
+				if query.Args[1].(int64) < int64(prefix) {
 					t.Fatal("append replayed historical prefix")
 				}
 			}
@@ -617,5 +627,5 @@ func TestSideAppendAndLoadResumeCheckpointWithOnlySuffixRows(t *testing.T) {
 			t.Fatalf("load read history: %d queries/%d rows at %d", queries, rows, watermark)
 		}
 	}
-	t.Log("2000-row prefix, 20 appends: each append 1 dedupe + 1 empty suffix query; each Load 1 empty suffix query, 0 historical rows")
+	t.Logf("%d-row prefix, 20 appends: each append 1 dedupe + 1 empty suffix query; each Load 1 empty suffix query, 0 historical rows", prefix)
 }

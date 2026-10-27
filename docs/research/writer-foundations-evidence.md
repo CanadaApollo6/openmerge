@@ -230,3 +230,86 @@ The complete store and serve suites also pass under `-race`. `go vet ./...`
 passes, `golangci-lint run` reports **0 issues**, and gofmt and `git diff --check`
 are clean. All required round-2 validation passes. No production writer is
 enabled; the PR remains Hold.
+
+## Fix round 3: CI test cost
+
+`make test` runs `go test -race -short -count=1 -timeout=15m ./...`.
+Short mode now uses 200 abandonments, 200 changes per drop path, 200
+settled/superseded generations and 400 completed owned-fold attempts. The
+terminal tests retain all ten reload/reuse probes. Every event still asserts
+bounded active records; the owned fold asserts exactly N generation/attempt
+fences and unchanged identities for all three lifetime maps. Closure-fold work
+remains exactly 2N gets and 2N puts at N=100 and 300. No elapsed-time threshold
+serves as a correctness assertion.
+
+The side-evidence history fixture uses a 1,024-row prefix and 200 settled
+attempts in short mode; checkpoint-resume still makes 20 appends after a
+1,024-row prefix. Both prefixes span two 512-row pages. Exact query counts,
+zero historical rows, idle buffer bounds, retained source evidence and durable
+identity-reuse refusal remain asserted. Without `-short`, the original
+10,000/20,000-event tests, 5,000-event closure fold, 2,000-generation retention
+and 268,000-row side-evidence history still run.
+
+Capacity tests continue to exercise the actual 4,256-record ceiling and
+128-member × 32-attempt configuration in short mode. Their setup combines
+individually validated, disjoint inventories, then exercises the production fold
+at the boundary, preflight, overflow rejection and checkpoint reload. A real
+retired seed selects compact-checkpoint restoration; the expensive growing-map
+replay setup and noncompact reload remain in non-short mode. This avoids
+quadratic fixture construction without reducing the accepted capacity proof.
+
+All changes in this round are tests or documentation. The Makefile, CI,
+Dockerfile, production implementation and test flags are unchanged.
+
+CI-mode package results (`-race -short -count=1 -timeout=15m`, uncached):
+
+- `internal/journalreader`: **PASS**, 20.911 s.
+- `internal/provenance/journal`: **PASS**, 211.080 s.
+- `internal/store`: **PASS**, 97.816 s.
+- `internal/serve`: **PASS**, 298.502 s.
+- `internal/audit`: **PASS**, 101.996 s.
+- `internal/dependency`: **PASS**, 7.826 s.
+
+All six finish below five minutes locally. The initial profiling invocation
+finished five packages successfully; its journal process was deliberately
+stopped after identifying the expensive capacity setup. The journal package
+was then rerun to completion after that fixture change. Timings above use that
+final successful journal run. Its record-cap proof falls from 126.87 s to
+47.16 s with race instrumentation; these are observations, not assertions.
+
+Commands use `go_safe` and both database URL exports defined above:
+
+```sh
+# Initial measurement; journal interrupted for the capacity-fixture fix.
+go_safe test -race -short -count=1 -timeout=15m -json ./internal/journalreader ./internal/provenance/journal ./internal/store ./internal/serve ./internal/audit ./internal/dependency
+# Final journal measurement: PASS.
+go_safe test -race -short -count=1 -timeout=15m -json ./internal/provenance/journal
+go_safe vet ./...                    # PASS
+# Same flock, toolchain and resource environment:
+golangci-lint run                    # PASS, 0 issues
+gofmt -l .                           # PASS, no output
+git diff --check                     # PASS
+```
+
+Round-3 commands, JSON test events, timing summaries, mutation scripts and
+individual mutant logs are retained under `/home/riels/.cache/pr183-fix-r3/`.
+`packages.jsonl` records the profiling run; `journal-final.jsonl` records the
+final journal pass. `static-results.log` records successful vet, lint, gofmt
+and diff-check exit codes.
+
+Mutation reruns also use `-race -short -count=1 -timeout=15m` through `go_safe`:
+
+```sh
+python3 /home/riels/.cache/pr183-fix-r3/mutations.py      # 18/18 compiling mutants KILLED
+python3 /home/riels/.cache/pr183-fix-r3/map-mutations.py  # 2/2 compiling mutants KILLED
+```
+
+All original 18 mutation proofs remain killed in short mode. Abandonment and
+all five drop-retirement mutations fail their intended active-record assertion
+at the first attempt/change, with N=200 configured. Independent retired,
+settled and latest-map-copy mutations each fail `fold copied a lifetime map`
+with N=400 configured. Checkpoint resume, binding, dedupe, compact-fence/reuse,
+pinned/partial companion retirement and all three maximum-envelope mutations
+also fail their intended behavioral tests. Build errors are excluded from the
+kill count. The additional two map-copy proofs bring this round to **20/20
+compiling mutants killed**. No source mutation was applied in this worktree.

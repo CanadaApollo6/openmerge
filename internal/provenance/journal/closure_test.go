@@ -30,7 +30,11 @@ func (s *countedClosureStore) Put(key string, raw []byte) error {
 }
 
 func TestClosureFoldLinearWork(t *testing.T) {
-	for _, n := range []int{100, 300, 1000, 5000} {
+	sizes := []int{100, 300}
+	if !testing.Short() {
+		sizes = append(sizes, 1000, 5000)
+	}
+	for _, n := range sizes {
 		t.Run(fmt.Sprint(n), func(t *testing.T) {
 			h, commits := fixture(t)
 			store := &countedClosureStore{values: map[string][]byte{}}

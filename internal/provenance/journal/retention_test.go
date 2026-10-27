@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"testing"
-	"time"
 
+	p "github.com/CanadaApollo6/openmerge/internal/provenance"
 	"github.com/CanadaApollo6/openmerge/internal/queue"
 )
 
@@ -30,11 +31,51 @@ func retainedSnapshot(t *testing.T, s State) State {
 	return decoded.Provenance
 }
 
+// Capacity tests exercise the real limits in both modes. Short mode seeds a
+// compact checkpoint and combines disjoint, individually validated inventories
+// instead of replaying an ever-growing active map for every setup event.
+func capacityFixture(t *testing.T) State {
+	t.Helper()
+	if !testing.Short() {
+		return State{}
+	}
+	h, _ := fixture(t)
+	h.Request.ChangeID = "capacity-seed"
+	h.Digest = InventoryDigest(h, h.Commits)
+	s := apply(t, State{}, 1, h)
+	return RetireOwned(s, 2, "", func(p.InventoryRequest) bool { return true })
+}
+
+func addCapacityInventory(t *testing.T, s State, id uint64, h Observation) State {
+	t.Helper()
+	if !testing.Short() || len(s.records) == maxRecords-1 {
+		next, err := ApplyOwned(s, id, h)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return next
+	}
+	part := apply(t, State{}, id, h)
+	if len(part.records) != 1 || len(part.groups) != 1 || s.latest[changeKey(h.Request)] != "" || id <= s.lastID {
+		t.Fatal("capacity fixture requires disjoint, ordered single-record inventories")
+	}
+	s.records = append(s.records, part.records...)
+	maps.Copy(s.groups, part.groups)
+	maps.Copy(s.latest, part.latest)
+	s.bytes += part.bytes
+	s.lastID = id
+	return s
+}
+
 func TestRetentionThousandsOfSettledAndSupersededGenerations(t *testing.T) {
+	n := 2000
+	if testing.Short() {
+		n = 200
+	}
 	h, _ := fixture(t)
 	var s State
 	var prior uint64
-	for i := 0; i < 2000; i++ {
+	for i := 0; i < n; i++ {
 		id := uint64(i*4 + 3)
 		h.Request.Generation = fmt.Sprint(i)
 		h.PreviousObservationID = prior
@@ -55,12 +96,12 @@ func TestRetentionThousandsOfSettledAndSupersededGenerations(t *testing.T) {
 			t.Fatal("settled/superseded history accumulated")
 		}
 		prior = id
-		if i%200 == 0 {
+		if (i+1)%(n/10) == 0 {
 			s = retainedSnapshot(t, s)
 		}
 	}
 	s = retainedSnapshot(t, s)
-	if len(s.retired) != 1999 || len(s.settled) != 1000 {
+	if len(s.retired) != n-1 || len(s.settled) != n/2 {
 		t.Fatalf("lost compact fences: %d/%d", len(s.retired), len(s.settled))
 	}
 	// The active last generation still requires its exact CAS predecessor.
@@ -285,8 +326,11 @@ func TestOwnedFoldScalePreservesFenceMaps(t *testing.T) {
 	var s State
 	var prior uint64
 	var retiredMap, settledMap, latestMap uintptr
-	started := time.Now()
-	for i := 0; i < 20000; i++ {
+	n := 20000
+	if testing.Short() {
+		n = 400
+	}
+	for i := 0; i < n; i++ {
 		id := uint64(i*4 + 3)
 		h.Request.Generation = fmt.Sprint(i)
 		h.PreviousObservationID = prior
@@ -320,8 +364,8 @@ func TestOwnedFoldScalePreservesFenceMaps(t *testing.T) {
 		if len(s.records) != 0 || len(s.retired) != i+1 || len(s.settled) != i+1 {
 			t.Fatal("nonlinear retained state")
 		}
-		if i == 1999 || i == 7999 || i == 19999 {
-			t.Logf("%d attempts: %d retired, %d settled, 0 records; 0 lifetime-map copies; %s elapsed", i+1, len(s.retired), len(s.settled), time.Since(started))
+		if (i+1)%(n/10) == 0 {
+			t.Logf("%d attempts: %d retired, %d settled, 0 records; 0 lifetime-map copies", i+1, len(s.retired), len(s.settled))
 		}
 	}
 }
@@ -331,7 +375,7 @@ func TestMaximumBatchAtMaximumSpeculationDepthFitsReferenceBudget(t *testing.T) 
 		t.Fatal("retention no longer covers the accepted configuration maxima")
 	}
 	h, _ := fixture(t)
-	var s State
+	s := capacityFixture(t)
 	var id uint64 = 1000
 	for attempt := 0; attempt < MaxPendingLandings; attempt++ {
 		members := make([]Member, MaxBatchMembers)
@@ -339,11 +383,7 @@ func TestMaximumBatchAtMaximumSpeculationDepthFitsReferenceBudget(t *testing.T) 
 			h.Request.ChangeID = fmt.Sprintf("member-%d-%d", attempt, member)
 			h.Digest = InventoryDigest(h, h.Commits)
 			id++
-			var err error
-			s, err = ApplyOwned(s, id, h)
-			if err != nil {
-				t.Fatal(err)
-			}
+			s = addCapacityInventory(t, s, id, h)
 			m := landing(h, []uint64{id}).Members[0]
 			for layer := range m.Layers {
 				m.Layers[layer].References = []uint64{uint64(2*member + 2), uint64(2*member + 3)}

@@ -249,13 +249,13 @@ func TestRetainedRecordCap(t *testing.T) {
 	h.Complete, h.DeclarationDigest = false, ""
 	h.Diagnostic = p.Diagnostic{Outcome: p.ReadPending, Resource: "git"}
 	h.Stable, h.Additional, h.Commits = []string{}, []string{}, []p.Commit{}
-	var s State
+	s := capacityFixture(t)
 	for i := 1; i <= maxRecords; i++ {
 		h.Request.ChangeID = fmt.Sprint(i)
 		h.PreviousObservationID = 0
 		h.Request.Generation = fmt.Sprint(i)
 		h.Digest = InventoryDigest(h, h.Commits)
-		s = apply(t, s, uint64(i), h)
+		s = addCapacityInventory(t, s, uint64(i+2), h)
 		if i == maxRecords-1 {
 			if err := s.Preflight(); err != nil {
 				t.Fatal("preflight refused headroom", err)
@@ -272,8 +272,8 @@ func TestRetainedRecordCap(t *testing.T) {
 	h.PreviousObservationID = 0
 	h.Request.Generation = "overflow"
 	h.Digest = InventoryDigest(h, h.Commits)
-	rejectUnchanged(t, s, maxRecords+1, h, ErrLimit)
-	_, limitErr := Apply(s, maxRecords+1, h)
+	rejectUnchanged(t, s, maxRecords+3, h, ErrLimit)
+	_, limitErr := Apply(s, maxRecords+3, h)
 	var limit RetentionLimitError
 	if !errors.As(limitErr, &limit) || limit.Records != maxRecords+1 || !strings.Contains(limitErr.Error(), "shared-reader-retention-recovery") {
 		t.Fatal("missing typed operator recovery", limitErr)
@@ -292,7 +292,7 @@ func TestRetainedRecordCap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	v.Records = append(v.Records, Record{maxRecords + 1, payload})
+	v.Records = append(v.Records, Record{maxRecords + 3, payload})
 	v.LastID++
 	raw, err = json.Marshal(v)
 	if err != nil {
