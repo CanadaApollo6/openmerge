@@ -111,11 +111,17 @@ func oracleDeclarationCandidate(line string) bool {
 		}
 		unescaped.WriteByte(line[i])
 	}
-	decoded := cases.Fold().String(norm.NFKC.String(html.UnescapeString(unescaped.String())))
+	var withoutFormat strings.Builder
+	for _, r := range html.UnescapeString(unescaped.String()) {
+		if !unicode.Is(unicode.Cf, r) {
+			withoutFormat.WriteRune(r)
+		}
+	}
+	decoded := cases.Fold().String(norm.NFKC.String(withoutFormat.String()))
 	var key strings.Builder
 	for _, r := range decoded {
 		switch {
-		case unicode.Is(unicode.Dash, r) || strings.ContainsRune("\u00ad\u02d7\u2043\u2212\u2796", r):
+		case unicode.Is(unicode.Dash, r) || strings.ContainsRune("\u02d7\u2043\u2212\u2796", r):
 			key.WriteByte('-')
 		case strings.ContainsRune("\u02d0\u02f8\u0589\u05c3\u205a\u2236\ua789", r):
 			key.WriteByte(':')
@@ -154,6 +160,7 @@ func assertIntentProseLines(t testing.TB, body string) {
 	).Parser().Parse(text.NewReader(source))
 	ignored := make([]bool, len(source))
 	accepted := make([]bool, len(physicalLines))
+	pureParagraphs := make(map[ast.Node]bool)
 	cover := func(segment text.Segment) {
 		for i := segment.Start; i < segment.Stop; i++ {
 			ignored[i] = true
@@ -235,11 +242,54 @@ func assertIntentProseLines(t testing.TB, body string) {
 		for _, line := range lineNumbers {
 			accepted[line] = true
 		}
+		pureParagraphs[n] = true
 		want = append(want, paragraph...)
 		return ast.WalkContinue, nil
 	})
 	if walkErr != nil {
 		t.Fatal(walkErr)
+	}
+	// Independently group inline leaves by their nearest block, ignoring only
+	// example ancestors. Formatting and raw HTML contribute no visible text.
+	rendered := make(map[ast.Node]*strings.Builder)
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering {
+			return ast.WalkContinue, nil
+		}
+		switch n.Kind() {
+		case ast.KindCodeBlock, ast.KindFencedCodeBlock, ast.KindBlockquote, ast.KindHTMLBlock, ast.KindRawHTML:
+			return ast.WalkSkipChildren, nil
+		}
+		if n.Type() != ast.TypeInline {
+			return ast.WalkContinue, nil
+		}
+		block := n.Parent()
+		for block != nil && block.Type() == ast.TypeInline {
+			block = block.Parent()
+		}
+		if block == nil {
+			return ast.WalkContinue, nil
+		}
+		if rendered[block] == nil {
+			rendered[block] = &strings.Builder{}
+		}
+		switch inline := n.(type) {
+		case *ast.Text:
+			rendered[block].Write(inline.Value(source))
+			if inline.SoftLineBreak() || inline.HardLineBreak() {
+				rendered[block].WriteByte('\n')
+			}
+		case *ast.String:
+			rendered[block].Write(inline.Value)
+		case *ast.AutoLink:
+			rendered[block].Write(inline.Label(source))
+		}
+		return ast.WalkContinue, nil
+	})
+	for block, visible := range rendered {
+		if !pureParagraphs[block] && oracleDeclarationCandidate(visible.String()) {
+			t.Fatalf("silently dropped rendered candidate: %q", visible.String())
+		}
 	}
 	// A successful parse must account for every decoded candidate, even when
 	// Markdown omits it from visible text. Do not merely check produced inputs.

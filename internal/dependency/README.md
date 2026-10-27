@@ -60,11 +60,17 @@ exception or acknowledgement behavior in this package.
 
   Candidate detection scans every normalized physical source line independently
   of the AST. It strips leading container markers, decodes Markdown backslash
-  escapes and HTML entities, applies Unicode NFKC normalization and case folding,
-  and maps Unicode Dash characters and common hyphen/minus and colon lookalikes
-  to ASCII. Any resulting `depends-on:` substring is a candidate, wherever it
-  occurs on the line. This broad scan does not make those spellings acceptable:
-  only exact, case-sensitive source declarations can produce inputs.
+  escapes and HTML entities, deletes every Unicode format character (category
+  Cf, including zero-width characters, mid-line BOM and soft hyphen), applies
+  Unicode NFKC normalization and case folding, and maps Unicode Dash characters
+  and common hyphen/minus and colon lookalikes to ASCII, in that order. Any
+  resulting `depends-on:` substring is a candidate, wherever it occurs on the
+  line. A second pass joins rendered inline text in each non-example AST block,
+  dropping emphasis, strong, strikethrough, link markup, raw inline HTML tags
+  and inline comments. Code-span contents remain text. It applies the same
+  normalization, catching keys such as `**Depends-On**:`, `Depends-**On**:`,
+  `Depends-<!-- x -->On:` and `[Depends-On](<URL>):`. Neither scan widens the
+  accepted grammar: only exact, case-sensitive source declarations produce inputs.
 
   Every candidate outside an ignored example region must be an exact accepted
   declaration line; otherwise the entire parse returns `ErrDeclarationAmbiguous`
@@ -76,10 +82,21 @@ exception or acknowledgement behavior in this package.
   `&#68;epends-On:`, `Depends\-On:`, `depends-on:` and `Depends‑On：` are ambiguous.
   Fenced/indented code blocks, block quotes (including lazy continuations), HTML
   blocks and HTML comments remain ignored examples, including inside footnotes.
-  Example coverage is recorded before unused footnotes disappear from the AST.
-  Inline comments shield only their own source, so a declaration followed by a comment is ambiguous. An error
-  returns no partial inputs. Literal comment markers in code spans or escaped
-  text do not start comments; unclosed blocks follow CommonMark.
+  Example coverage and rendered candidates are recorded before unused footnotes
+  disappear from the AST. Inline comments shield only their own source; removing
+  them may join a rendered candidate, which is ambiguous. A declaration followed
+  by a comment is also ambiguous. An error returns no partial inputs. Literal
+  comment markers in code spans or escaped text do not start comments; unclosed
+  blocks follow CommonMark.
+
+  Accepted residuals: cross-script homoglyphs such as Cyrillic `е` and Greek `Ο`
+  are not detected; that would require a confusables skeleton. HTML blocks remain
+  ignored example regions by design, so `<div>Depends-On: …</div>` and a line
+  beginning with `<!-- x -->` are ignored even if GitHub renders declaration text.
+  A declaration hidden in the author's own body is equivalent to never writing
+  it. Removing a previously parsed edge is a loosening edit: ADR 0011's
+  declaration-change hold catches that edit and requires independent
+  acknowledgement. That hold belongs to later slices; this package remains inert.
 
   This strict grammar refines ADR 0011's “standalone body lines” (~line 181).
   **Slice 6's operating guide must document this rule for users**, including blank
@@ -160,7 +177,9 @@ exception or acknowledgement behavior in this package.
   top-level declaration paragraph with Text or exact URL-autolink children.
   It also checks every decoded source candidate: a successful parse must account
   for it as an exact accepted line or an AST-classified ignored example, even
-  when Markdown hides it. The oracle retains unused footnotes for this check.
+  when Markdown hides it. An independent inline-leaf walk checks rendered-text
+  candidates through formatting, links, code spans and inline tags/comments.
+  The oracle retains unused footnotes for both checks.
 - `FuzzParseReference`: accepted input equals its canonical spelling.
 - `FuzzParsePolicyCandidate`: successful policies validate and round-trip through
   YAML without changing mode or grants.

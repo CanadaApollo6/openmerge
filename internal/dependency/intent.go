@@ -74,13 +74,19 @@ func ParseIntent(body string, scope Scope) ([]Input, error) {
 func declarationCandidate(line []byte) bool {
 	line = bytes.TrimLeft(line, " \t>#+-*0123456789.)[]")
 	decoded := html.UnescapeString(string(util.UnescapePunctuations(line)))
+	decoded = strings.Map(func(r rune) rune {
+		if unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, decoded)
 	decoded = cases.Fold().String(norm.NFKC.String(decoded))
 	decoded = strings.Map(func(r rune) rune {
 		if unicode.Is(unicode.Dash, r) {
 			return '-'
 		}
 		switch r {
-		case '\u00ad', '\u02d7', '\u2043', '\u2212', '\u2796':
+		case '\u02d7', '\u2043', '\u2212', '\u2796':
 			return '-'
 		case '\u02d0', '\u02f8', '\u0589', '\u05c3', '\u205a', '\u2236', '\ua789':
 			return ':'
@@ -90,11 +96,45 @@ func declarationCandidate(line []byte) bool {
 	return strings.Contains(decoded, "depends-on:")
 }
 
-// intentExamples runs before Goldmark removes unreferenced footnotes, so even
-// examples inside hidden definitions retain their source coverage.
-type intentExamples struct{ ignored []bool }
+// renderedIntentText joins inline text through formatting, links and code spans,
+// dropping raw HTML tags/comments. Block and line boundaries stay separate.
+func renderedIntentText(block ast.Node, source []byte) []byte {
+	var rendered bytes.Buffer
+	for child := block.FirstChild(); child != nil; child = child.NextSibling() {
+		if child.Type() != ast.TypeInline {
+			continue
+		}
+		_ = ast.Walk(child, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
+			if !entering {
+				return ast.WalkContinue, nil
+			}
+			switch inline := node.(type) {
+			case *ast.Text:
+				rendered.Write(inline.Segment.Value(source))
+				if inline.SoftLineBreak() || inline.HardLineBreak() {
+					rendered.WriteByte('\n')
+				}
+			case *ast.String:
+				rendered.Write(inline.Value)
+			case *ast.AutoLink:
+				rendered.Write(inline.Label(source))
+			case *ast.RawHTML:
+				return ast.WalkSkipChildren, nil
+			}
+			return ast.WalkContinue, nil
+		})
+	}
+	return rendered.Bytes()
+}
 
-func (e intentExamples) Transform(doc *ast.Document, reader text.Reader, _ parser.Context) {
+// intentExamples runs before Goldmark removes unreferenced footnotes, retaining
+// both ignored source coverage and rendered candidates from hidden definitions.
+type intentExamples struct {
+	ignored  []bool
+	rendered []ast.Node
+}
+
+func (e *intentExamples) Transform(doc *ast.Document, reader text.Reader, _ parser.Context) {
 	source := reader.Source()
 	ignore := func(segment text.Segment) {
 		for i := segment.Start; i < segment.Stop; i++ {
@@ -116,6 +156,9 @@ func (e intentExamples) Transform(doc *ast.Document, reader text.Reader, _ parse
 		}
 		if example {
 			depth++
+		}
+		if depth == 0 && node.Type() == ast.TypeBlock && declarationCandidate(renderedIntentText(node, source)) {
+			e.rendered = append(e.rendered, node)
 		}
 		if depth > 0 && node.Type() == ast.TypeBlock {
 			for i := 0; i < node.Lines().Len(); i++ {
@@ -145,9 +188,10 @@ func (e intentExamples) Transform(doc *ast.Document, reader text.Reader, _ parse
 // non-example source line for candidates, including text omitted from the AST.
 func intentLines(source []byte) ([]text.Segment, error) {
 	ignored := make([]bool, len(source))
+	examples := &intentExamples{ignored: ignored}
 	doc := goldmark.New(
 		goldmark.WithExtensions(extension.GFM, extension.Footnote),
-		goldmark.WithParserOptions(parser.WithASTTransformers(util.Prioritized(intentExamples{ignored}, 998))),
+		goldmark.WithParserOptions(parser.WithASTTransformers(util.Prioritized(examples, 998))),
 	).Parser().Parse(text.NewReader(source))
 	var physicalLines []text.Segment
 	start := 0
@@ -161,6 +205,7 @@ func intentLines(source []byte) ([]text.Segment, error) {
 		return sort.Search(len(physicalLines), func(i int) bool { return physicalLines[i].Start > segment.Start }) - 1
 	}
 	accepted := make([]bool, len(physicalLines))
+	pureParagraphs := make(map[ast.Node]bool)
 	var lines []text.Segment
 	_ = ast.Walk(doc, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
 		paragraph, ok := node.(*ast.Paragraph)
@@ -197,14 +242,26 @@ func intentLines(source []byte) ([]text.Segment, error) {
 			accepted[index] = true
 			lines = append(lines, physicalLines[index])
 		}
+		pureParagraphs[paragraph] = true
 		return ast.WalkContinue, nil
 	})
+	for _, block := range examples.rendered {
+		if pureParagraphs[block] {
+			continue
+		}
+		position := block.Pos()
+		for ancestor := block.Parent(); position < 0 && ancestor != nil; ancestor = ancestor.Parent() {
+			position = ancestor.Pos()
+		}
+		line := bytes.Count(source[:max(0, position)], []byte{'\n'}) + 1
+		return nil, fmt.Errorf("line %d: %w", line, ErrDeclarationAmbiguous)
+	}
 	for index, segment := range physicalLines {
 		if accepted[index] {
 			continue
 		}
-		// Keep ignored spans separate: deleting a comment must not manufacture
-		// a key by joining otherwise unrelated source fragments.
+		// Keep ignored spans separate in the source scan. The rendered pass
+		// independently checks keys joined across inline comments or tags.
 		for start := segment.Start; start < segment.Stop; {
 			if ignored[start] {
 				start++
