@@ -1,6 +1,6 @@
 # 0010. Agent provenance in queue policy and audit
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-27
 
 ## Context
@@ -178,7 +178,7 @@ or supply an approver identity. Agent evaluations remain ordinary CI checks
 required through `check-success = X`.
 
 Add the attributes below to the existing condition grammar, but permit their
-use only in a proposed additive per-queue `provenance.requirements` section.
+use only in an additive per-queue `provenance.requirements` section.
 Each rule has a `when` expression using the existing list, `or:`, `and:`,
 `not:`, and atom syntax. Its `require` mapping accepts `conditions`, an expression
 in that grammar, and `approvals`, an ADR 0007 approval requirement.
@@ -225,8 +225,29 @@ Approval-based `when` conditions are not latched: with `#approved-reviews-by < 2
 ordinary approvals can remove an added obligation. Owners must write `when`
 accordingly.
 
-This is proposed syntax, not configuration current binaries accept. The second
-rule requires the later checkpoint-resolver slice:
+The recommended starting policy for repositories that explicitly opt in requires
+one human approval from the repository's ordinary reviewer pool whenever any
+source commit declares agent work, including mixed commits:
+
+```yaml
+provenance:
+  requirements:
+    - when: ["#agent-commits > 0"]
+      require:
+        approvals: {human: true, count: 1}
+```
+
+Apply ADR 0007's eligibility exclusions: the approver cannot be the change's
+author, submitter, or any accountable human. An eligible baseline human approval
+can also satisfy this rule; no distinct reviewer across pools is required.
+In practice this adds human review only where the baseline has none. Nothing
+is enabled by default, including this starting policy.
+
+When the later resolver ships, checkpoints are optional audit evidence first.
+Enforcing `checkpoint-present` requires a later explicit per-repository opt-in.
+The following stricter example illustrates additional obligations, not the
+starting policy. Its second rule requires the later checkpoint-resolver slice.
+These examples describe future configuration; current binaries do not accept it:
 
 ```yaml
 provenance:
@@ -327,8 +348,8 @@ Never trust a contributor-supplied replay trailer to choose an original.
 OpenMerge's build result supplies that mapping. Merge preserves original
 history. Only provenance-opted-in queues retain distinct recognized trailers
 in the single attribution block of squash and generated merge messages. Bound
-that block to a proposed 64 KiB of UTF-8, counting existing attribution and
-sign-off content as well. If required retention would exceed the bound, fail
+that block to 64 KiB of UTF-8, counting existing attribution and sign-off
+content as well. If required retention would exceed the bound, fail
 that change with terminal `limit_exceeded` before publishing a test ref. Never
 silently truncate attribution. Queues without opt-in keep existing messages.
 Counts still use originals, not generated commits or copied trailers.
@@ -396,9 +417,11 @@ Use the authenticated Git transport already authorized for that repository.
 Only owner-approved source repository mappings can expand it. A mapping has
 the conceptual shape `(source forge host, stable source repository ID, provenance
 source/version) -> (approved checkpoint repository ID, transport credential
-binding, allowed backends)`. Exact configuration keys belong to the resolver
-slice. Resolve destinations through the owner's configured transport registry;
-no entry is a contributor-supplied URL. Record the selected mapping and both
+binding, allowed backends)`. No fork or separate `checkpoint_remote` mappings
+are approved now. Add mappings per repository only when needed; every unmapped
+source returns visible `unavailable_source`. Exact configuration keys belong to
+the resolver slice. Resolve destinations through the owner's configured transport
+registry; no entry is a contributor-supplied URL. Record the selected mapping and both
 repository identities in evidence.
 
 For same-repository PRs and direct changes, the default checkpoint source is
@@ -431,7 +454,7 @@ filtering gets terminal `unsupported_capability`, not an unrestricted discovery
 fallback or indefinite pending. Use bounded shallow/filtered object acquisition;
 if a required object filter is unsupported, report the same explicit outcome.
 
-Enforce these proposed hard ceilings per change evaluation, with a global
+Enforce these hard ceilings per change evaluation, with a global
 concurrency cap:
 
 - 1,024 source commits, 16 declarations per commit, and 128 distinct checkpoint
@@ -466,11 +489,11 @@ output. Enforce byte limits during transport and decompression, tree limits
 during traversal, and disk limits with a quota on private temporary storage.
 A parser checking a blob after an unbounded fetch does not enforce these limits.
 
-These are proposed safety bounds, not measurements of Entire checkpoint sizes.
-Owners must confirm them before implementation. Policy cannot raise process
-ceilings. The optional legacy branch can exceed them even with a shallow fetch;
-large branches are expected to return terminal `limit_exceeded`. There is no
-unbounded fallback. Bound advertisements, repeated missing-ID probes, retries,
+These are owner-accepted safety bounds, not measurements of Entire checkpoint
+sizes. Confirm the numbers against representative sandbox fixtures in slice 6a
+before wiring the resolver. Policy cannot raise process ceilings. The optional
+legacy branch can exceed them even with a shallow fetch; large branches are
+expected to return terminal `limit_exceeded`. There is no unbounded fallback. Bound advertisements, repeated missing-ID probes, retries,
 cache size, and negative-cache lifetime too. Cache successes by repository and
 object ID. Check negative-cache expiry on every evaluation and refresh required
 mutable tips at the landing gate. Never retain transcripts as an intentional
@@ -547,7 +570,7 @@ new version; unchanged legacy queues retain their existing encoding.
 
 ### Related ideas
 
-Cross-repository dependent changes are being drafted separately as ADR 0011.
+Cross-repository dependent changes are accepted separately in ADR 0011.
 This ADR defines no dependency graph, cross-repository ordering, or atomic
 multi-repository landing protocol.
 
@@ -565,7 +588,7 @@ accept that cost and the limits of self-declaration before activation.
 
 ### Rollout and tests
 
-This **Proposed, docs-only PR is Inert**. It activates nothing. The
+This **docs-only acceptance is Inert**. It activates nothing. The
 owner-delegate has decided to ship the no-network declaration, review, evidence,
 and audit path first. The Entire network resolver is a later independent opt-in.
 Pure unwired packages are **Inert**. Shared evaluation, reporting, acquisition,
@@ -589,7 +612,7 @@ permission to deploy its held dependencies. A migration is Hold (migration).
 | 4a, Hold | Wire no-network evaluation and declaration-bound briefs, after 2 and 3a–3b | Separate baseline, trigger, and rule-local approval snapshots; both eligibility cases below; mutable review/checkpoint outcomes cannot churn receipts; nested policy bypass rejection; per-change pre-CI exclusion and unchanged baseline behavior. |
 | 4b, Hold | Atomic journal writers, landing-start gate and tested T/landed L integration, after 4a and completed 3c reader deployment and older-worker drain | Fake-forge plus real-Git merge/squash/rebase/fast-forward, batches, speculative rebuilds, re-push, restarts, base rewrites, concurrent-generation races, and replay without network. Backup/restore downgrade rehearsal. |
 | 5, Hold | Owner-approved no-network public policy/schema, diagnostics, operating guidance, and sandbox activation, after 4b | GitHub and fake/future-driver paths with zero provenance network calls, permissions unchanged, declarations and added review obligations in audit v2, and rollback acceptance after B before explicit owner opt-in. |
-| 6a, Inert | Unwired bounded Entire resolver, approved source mapping contracts, and optional legacy route, after 5; no scheduler or transport calls from live queues | ULID refs, migrated hex refs, optional legacy branch, exact metadata mapping against pinned Entire source, fork and separate-remote fixtures, protocol v2 ref-prefix/filter refusal, huge advertisements/packs/trees/blobs, supervisor termination, and cancellation. |
+| 6a, Inert | Unwired bounded Entire resolver, approved source mapping contracts, and optional legacy route, after 5; no scheduler or transport calls from live queues | ULID refs, migrated hex refs, optional legacy branch, representative sandbox confirmation of per-change ceilings, 30-second-to-five-minute absence backoff and 64 KiB attribution bound, exact metadata mapping against pinned Entire source, fork and separate-remote fixtures, protocol v2 ref-prefix/filter refusal, huge advertisements/packs/trees/blobs, supervisor termination, and cancellation. |
 | 6b, Hold | Wire resolver opt-in, checkpoint conditions, fair acquisition, negative-cache wake-ups, and gate evidence, after 6a | Same-revision late checkpoint, expiry checked on each evaluation, explicit unmapped/unsupported outcomes, per-member budget exhaustion without stalling honest members, legacy `limit_exceeded`, pre-CI gate and fresh landing-start observation, and unchanged receipts after metadata movement. |
 
 Acceptance must cover both reviewer-eligibility interactions explicitly:
@@ -626,29 +649,30 @@ Activation follows owner review of this ADR and the implementation evidence.
   present or when explicitly requested. Legacy queues and 10b consumers retain
   their existing output.
 
-### Open questions for the owner
+### Owner decisions (2026-10-27)
 
-1. Accept the additive requirement section and neutral `Agent-Session` format?
-   Recommended: yes; the independent baseline snapshot prevents new pools from
-   weakening ordinary policy, and declarations need no vendor storage protocol.
-2. Which declarations warrant extra review, and which human pool/count applies?
-   Recommended: include undeclared work or retain universal baseline human review
-   when omission matters. Decide whether an extra reviewer must be distinct.
-3. When the later resolver is available, require checkpoints for all agent-declared
-   commits, or keep them as optional audit evidence? Recommended: audit and review
-   first; neutral trailers and bot-only commits have no checkpoint resolver.
-4. Accept the proposed per-change ceilings, absence backoff from 30 seconds to
-   five minutes, and 64 KiB attribution bound? Enable the optional legacy branch
-   despite expected `limit_exceeded` on large histories? Recommended: retain hard process bounds
-   and confirm numbers with representative sandbox fixtures.
-5. Which fork head repositories map to which approved checkpoint repositories,
-   credential bindings, and allowed backends? Which separate Entire
-   `checkpoint_remote` destinations are approved? Recommended: explicit mappings
-   only, with visible `unavailable_source` for every unmapped fork or source.
-6. Accept the restore boundary after first new-event emission? Recommended: yes,
-   with reader-first rollout, retention, and external anchors covering provenance
-   exactly as other ADR 0008 decision dependencies. The export-default decision
-   above is settled; it is not an open question.
+Riel St. Amand (`CanadaApollo6`) accepted all recommendations on 2026-10-27:
+
+1. Accept the separate additive `provenance.requirements` section and the neutral
+   `Agent-Session: <source>:<session-id>` trailer format specified above.
+2. Recommend one human approval from the repository's ordinary reviewer pool
+   for any agent-declared source commit, including mixed commits. Apply ADR 0007's
+   exclusions for the change's author, submitter, and all accountable humans.
+   The same eligible approval may satisfy a baseline human requirement; no
+   cross-pool distinctness is required. This adds human review only where the
+   baseline has none. Repositories must opt in explicitly; nothing is on by default.
+3. Record checkpoints as optional audit evidence when the later resolver ships.
+   `checkpoint-present` enforcement is a later, separate per-repository opt-in.
+4. Accept the per-change ceilings, absence backoff from 30 seconds to five
+   minutes, and 64 KiB attribution bound. Confirm these numbers against
+   representative sandbox fixtures in slice 6a. Legacy-branch resolution remains
+   optional; large histories are expected to return terminal `limit_exceeded`.
+5. Approve no fork or separate `checkpoint_remote` mappings now. Return visible
+   `unavailable_source` for every unmapped source; add owner-approved mappings
+   per repository only when needed.
+6. Accept the database-restore boundary after first new-event emission and the
+   reader-first rollout specified above. Preserve retention and external anchors
+   for provenance dependencies under ADR 0008.
 
 ## Alternatives considered
 

@@ -1,6 +1,6 @@
 # 0011. Cross-repository dependent changes
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-27
 
 ## Context
@@ -53,7 +53,7 @@ policy authoritative per repository, and
 [ADR 0002](0002-storage-and-state-model.md) requires replayable decisions.
 None provides a transaction across independent git repositories.
 
-**Related:** agent provenance is being drafted separately as ADR 0010. This ADR
+**Related:** agent provenance is accepted separately in ADR 0010. This ADR
 does not design agent identity, session capture, attribution or provenance trust.
 The CI provenance below identifies tested inputs, not who produced the code.
 
@@ -72,18 +72,21 @@ priority, or a right to write another repository.
 | Stage | Guarantee | Release boundary |
 |---|---|---|
 | A: ordered | B is not tested or started landing until A has a confirmed OpenMerge landing on its target base, matching the revision if pinned | Implementation sequence below, after dogfood period B drains |
-| B: co-tested speculation | B's CI consumes an identified speculative composition of A; A then B land through separate fences | Deferred; follow-up ADR must close the CI and coordination gates below |
+| B: co-tested speculation | B's CI consumes an identified speculative composition of A; A then B land through separate fences | Deferred until ordered landing has real usage; follow-up ADR must close the CI and coordination gates below |
 | Topic submission | No all-or-nothing cross-repository guarantee | Not offered |
 
 Stage A covers distinct repositories in **one serving scope**: the same
 configured forge driver/origin, forge installation identity, and OpenMerge
-journal namespace within one database. An App installation is not the same
+journal namespace within one database. On GitHub, both repositories must also
+belong to the same organisation. An App installation is not the same
 thing as a server process. Several workers may cooperate through that database; merely being visible to
 one server under ADR 0006 does not make separate installations mutually trusted.
 This also respects ADR 0008's dedicated-database-per-installation authority
 boundary. No cross-installation, cross-forge or cross-server federation ships.
 
 Both endpoints must be served, explicitly opted in and use strict verification.
+External dependencies in repositories OpenMerge does not serve are rejected.
+There is no manual "mark satisfied" override.
 Post-merge queues need a separate decision on verification/green evidence
 ([ADR 0005](0005-verification-modes.md)); a successful push there is not strict
 validation. Same-repository edges are rejected in this first slice; ADR 0009's
@@ -224,10 +227,39 @@ B's ordinary review policy still applies after acknowledgement; old receipts
 remain invalid. Unrelated body edits that preserve the declaration do not set
 this hold. A future `@openmerge repin` convenience must use this authorization path.
 
-If no eligible writer exists, the hold blocks indefinitely; this is intentional
-and fail-closed. Recovery requires adding an eligible writer or a replacement
-change. A replacement PR is a new source alias with a fresh declaration, not a
-continuation of the hold; where approval policy applies, it still requires
+**Single-maintainer self-acknowledgement requires explicit repository opt-in.**
+The repository's governing, owner-approved policy may declare it single-maintainer
+with top-level `dependencies: {single_maintainer: true}`. This repository-wide
+setting is separate from the per-queue dependency consent below. Omitted or false
+keeps the strict rule above; never infer it from writer count, common ownership,
+or lack of an eligible independent acknowledger.
+
+Only in an opted-in repository may an otherwise-excluded B writer acknowledge a
+loosening edit, including their own. They must still be authenticated, identified,
+and freshly authorized to write B. The unknown/unauthenticated-editor rule above
+still blocks every acknowledgement until attribution is restored. Bind a
+self-acknowledgement to the current declaration event/digest, governing policy
+commit/digest, writer grant, and the editor/author/submitter/accountable-human
+exclusions it overrides. Record it as a distinct
+`dependency_declaration_self_acknowledged` event, visible as self-acknowledgement
+in authorized status and audit export. It clears only the declaration hold;
+B's ordinary approvals, owner review, trust, CI, and dependency gates still apply.
+In particular it grants no self-approval exception under ADR 0007.
+
+Enabling the opt-in is itself a policy change. In `openmerge` authority mode,
+ADR 0008 requires governing-owner approval under the existing policy. Otherwise
+it goes through normal governing-policy review. Include the setting in the
+dependency policy digest; a proposed edit cannot authorize itself.
+If recorded permission observations show more than one eligible repository
+writer, warn that the single-maintainer opt-in is enabled in a multi-writer
+repository. Count authenticated identities with write permission before the
+change-specific exclusions. This is diagnostic only: it neither blocks nor
+revokes the explicit opt-in, and cannot enable it.
+
+Without this opt-in, if no eligible writer exists, the hold blocks indefinitely;
+this is intentional and fail-closed. Recovery requires adding an eligible writer
+or a replacement change. A replacement PR is a new source alias with a fresh
+declaration, not a continuation of the hold; where approval policy applies, it still requires
 independent approval.
 
 Key the hold and expected prior declaration basis by B's stable forge source
@@ -320,7 +352,7 @@ generic dependency reason defined under cross-repository trust.
 | Foreign journal namespace, unserved/removed repo, unsupported mode or another serving scope | Block with `dependency-out-of-scope`; serving/trust adoption or an explicit declaration edit is required |
 | A's explicitly pinned revision was superseded before landing | Block with `dependency-stale`; repin explicitly and revalidate |
 | A's confirmed landing is absent from the current source base | Block with `dependency-not-on-base`; repair/reconcile source history or declare replacement work |
-| Declaration loosened, including removal of the final edge | Block with `dependency-declaration-changed`; require explicit eligible non-editor B writer acknowledgement with ADR 0007 exclusions |
+| Declaration loosened, including removal of the final edge | Block with `dependency-declaration-changed`; require explicit eligible non-editor B writer acknowledgement with ADR 0007 exclusions, or audited self-acknowledgement under the explicit single-maintainer opt-in; unresolved edit attribution blocks both |
 | Cycle, self-edge, conflicting modes/pins for one change, or traversal limit | Block the affected graph with a diagnostic; edit declarations, never choose an arbitrary winner |
 
 Cycle detection is a derived projection and diagnostic over journal-scoped
@@ -373,7 +405,7 @@ mode or bypass grants. A and B each pass their own exact-revision gates and
 retain their own default-branch config commit and semantic digest as evidence.
 No dependency declaration or topic can satisfy either repository's policy.
 
-Stage A proposes a per-queue `dependencies` section with `mode: ordered`,
+Stage A defines a per-queue `dependencies` section with `mode: ordered`,
 `allow_from` and `allow_to` lists of canonical repository URLs. Absence is off.
 B's `allow_from` must name A; A's `allow_to` must name B. Both lists are resolved
 against the served scope, never arbitrary HTTP hosts, and both queues must be
@@ -426,10 +458,15 @@ an explicit pin. Apply the audience redaction above before exposing any details.
 `Details` identifies blocking edges and what clears them; `URL` links only to a
 safe, authorized change view. For a declaration hold, status and `Details` name
 the required acknowledger class: a B writer who is neither an editor nor B's
-author, submitter or accountable human. If none is eligible, state that the hold
-blocks indefinitely and give the recovery above; if attribution is unresolved,
-require authenticated redeclaration or a fresh authenticated declaration edit
-before acknowledgement. Preserve terminal/settlement/paused precedence.
+author, submitter or accountable human. Without the single-maintainer opt-in,
+if none is eligible, state that the hold blocks indefinitely and give the recovery
+above. If attribution is unresolved, require authenticated redeclaration or a fresh authenticated declaration edit
+before acknowledgement. In a repository with `dependencies.single_maintainer: true`,
+also show the authenticated writer self-acknowledgement option and any
+multi-writer diagnostic. Show a completed self-acknowledgement distinctly,
+including its actor and event reference, even after the hold clears. Repositories
+without the opt-in keep the strict acknowledger class unchanged.
+Preserve terminal/settlement/paused precedence.
 #163's `Waiting for queue entry conditions` takes precedence over dependency
 waiting while entry conditions are pending, including before auto-admission;
 once admitted, show the dependency reason before generic queue-position text.
@@ -445,7 +482,9 @@ Each dependency decision records:
 
 - the journal namespace and B's queue, change, revision, head, declaration event
   ID, digests, stable forge source alias and any eligible writer acknowledgement
-  clearing its declaration hold, including the exclusion/permission evidence;
+  clearing its declaration hold, including the exclusion/permission evidence.
+  A self-acknowledgement is explicitly identified with its distinct event kind,
+  actor, overridden exclusions, and governing single-maintainer opt-in evidence;
 - every resolved edge and mode, optional pin, actual landed revision/head and
   queue identity, alias binding source, revision-less binding baseline and its
   informational comparison to the landed revision, declarer's read grant,
@@ -467,8 +506,10 @@ anchor to detect deliberate rewriting.
 ### Deferred Stage B: co-tested speculative landing
 
 This ADR reserves the following contract and failure policy, **without enabling
-Stage B or accepting its configuration**. A follow-up ADR must specify scheduling,
-execution grants, manifest publication/receipts and acceptance evidence first.
+Stage B or accepting its configuration**. Stage B is deferred until ordered
+landing has real usage and wait/CI-cost evidence. A follow-up ADR must specify
+scheduling, execution grants, manifest publication/receipts and acceptance
+evidence first.
 
 For an initial two-repository chain A then B, create one immutable composition
 manifest before CI. It lists the full dependency closure, canonical change pins,
@@ -510,7 +551,8 @@ is **10 minutes from A's confirmed settlement to B's durable start**, with one
 active cross-repository group per participating queue. Record the deadline once
 in the journal; restart never renews it. This bounds permission to reuse a
 co-tested result, not the time to finish an uncertain push or restore service.
-Stage B's follow-up must validate this allowance and resource limits.
+This ten-minute allowance remains provisional and unvalidated. Stage B's
+follow-up must validate it and the resource limits.
 
 If B's start misses the deadline, policy/check evidence changes, or a component
 base differs from the pinned composition's expected transition (A at its exact
@@ -543,7 +585,8 @@ and batch/attempt, with declaration history/holds keyed by stable forge source
 alias across queue-owned changes, not in a new meaning for an old event.
 
 Stage A proposes additive wire-v1 kinds `dependency_journal_initialized`,
-`dependency_declaration_acknowledged`, `dependency_policy_applied`,
+`dependency_declaration_acknowledged`,
+`dependency_declaration_self_acknowledged`, `dependency_policy_applied`,
 `change_dependencies_declared`, `dependency_observed`,
 `dependency_composition_recorded`, `dependency_compositions_invalidated` and
 `dependency_decision_recorded`.
@@ -561,8 +604,13 @@ normalized edges and the durable loosening hold, including an empty declaration
 and excluded editing actors, retaining their union across coalesced windows and
 any unresolved unknown or unauthenticated loosening actor. Acknowledgements bind
 the current declaration event/digest, fresh writer grant and ADR 0007 exclusion
-evidence. Journal initialization records bind the receipt database identity and
-incarnation token; recovery rotates the token before new work.
+evidence. Self-acknowledgements use their distinct event kind and also bind the
+repository's governing single-maintainer opt-in and overridden exclusions. Replay
+must reject self-acknowledgement without that policy evidence or with unresolved
+unknown/unauthenticated editing actors. Status and scoped audit exports preserve
+the distinct event kind and evidence rather than presenting it as independent
+acknowledgement. Journal initialization records bind the receipt database
+identity and incarnation token; recovery rotates the token before new work.
 Observations include the source revisions and bases they read; a delayed success
 cannot clear a newer stale/unavailable finding. Invalidation pins exact discarded
 composition IDs and cause. Decision records pin the attempt and inputs atomically
@@ -600,7 +648,9 @@ and activation deploy only **after ADR 0009 dogfood period B drains**, expected
 mid-November 2026; the recorded drain, not a calendar date, is the gate. Follow
 the [dogfood plan](../research/phase2-dogfood.md#plan): no queued entries, active
 batches/chain or still-running queue-ref CI from that period, including discarded
-runs. Do not change live App grants, trial CI or queue behavior during the pair.
+runs. Riel St. Amand owns post-period-B drain and whole-database backup acceptance,
+including the recorded evidence before deployment. Do not change live App grants,
+trial CI or queue behavior during the pair.
 
 PR numbers below are planned slices, not issue numbers. Inert components may
 merge before the drain, but this ADR authorizes no feature binary deployment
@@ -610,13 +660,13 @@ observation inherits Hold; dormant paths do not waive it.
 
 | PR | Scope and exit tests | Class |
 |---|---|---|
-| 1 | Reference/parser, candidate policy schema and pure bounded graph evaluation; canonical escaping, URI/journal scope, revision-less aliases and optional pins, dedupe/conflicting modes, cycle diagnostics, limits and bilateral grants; public loader still rejects keys | Inert |
-| 2 | Journal namespace/incarnation, loosening holds/eligible acknowledgements keyed by forge source alias, side projections and snapshot codec; required/unknown-field checks, immutable folds, dedupe, alias/observation races, poll coalescing, revision-less binding baselines, replay versus snapshot-tail (including #163 held requests), unchanged wire/cursor bytes; divergent histories with identical queue/change IDs and revision numbers, restore/clone/reinitialization rejection; writer-author self-acknowledgement rejection and retarget-to-enrolled-base fixture preserving the prior declaration/hold under a new change ID; no runtime emission | Inert |
+| 1 | Reference/parser, candidate policy schema including the repository single-maintainer opt-in and pure bounded graph evaluation; canonical escaping, URI/journal scope, revision-less aliases and optional pins, dedupe/conflicting modes, cycle diagnostics, limits and bilateral grants; public loader still rejects keys | Inert |
+| 2 | Journal namespace/incarnation, loosening holds/eligible acknowledgements keyed by forge source alias, side projections and snapshot codec; required/unknown-field checks, immutable folds, dedupe, alias/observation races, poll coalescing, revision-less binding baselines, replay versus snapshot-tail (including #163 held requests), unchanged wire/cursor bytes; divergent histories with identical queue/change IDs and revision numbers, restore/clone/reinitialization rejection; distinct audited self-acknowledgement event/replay with governing opt-in evidence, opt-in acceptance and rejection without it (including multi-writer repositories), unknown/unauthenticated-editor rejection even with opt-in, and retarget-to-enrolled-base fixture preserving the prior declaration/hold under a new change ID; no runtime emission | Inert |
 | 3 | Scoped observations, identity-bound declarer read grants, reconciliation and reverse wakes; fake contracts and HTTP fixtures for denial, ID mismatch/revocation, closure, source retargeting, merged flags, unserved refs, polling repair, partial reads, writer-command admission and ADR 0006 budgets; no production wiring | Inert |
-| 4a | Planner gate, decision companion and landing-start transaction; planner/simulator depths 1/4, bisection/retries, direct-source lock races, concurrent cycle diagnostics, declaration holds with writer-author/editor exclusion, tightening without acknowledgement, held-request auto-admission and dequeue/re-request preserving holds, crash atomicity and dependency wait clocks | Hold |
+| 4a | Planner gate, decision companion and landing-start transaction; planner/simulator depths 1/4, bisection/retries, direct-source lock races, concurrent cycle diagnostics, declaration holds with writer-author/editor exclusion by default, explicit single-maintainer self-acknowledgement and policy-change approval, unchanged strict behavior for multi-writer repositories without opt-in, unresolved attribution blocking both paths, tightening without acknowledgement, held-request auto-admission and dequeue/re-request preserving holds, crash atomicity and dependency wait clocks | Hold |
 | 4b | Stage A composition invalidation and reverse cascades; source rewinds, declaration/policy edits, suffix order, restart, late results and both cancellation capabilities; unlanded pushes only stale explicit pins or preserve revision-less waits | Hold |
-| 5 | Shared WaitingReason, CLI/API/check and audit evidence; golden tests make private-source existence, closure, supersession and landing indistinguishable to unauthorized B audiences, with typed diagnostics only for authorized readers; wait-age flag, pagination, unchanged precedence, no rendering-time fetches and scoped export | Hold |
-| 6 | Publish schema/loader and wire the complete gate together; mixed enabled/disabled repos, fail-closed first cycle, drain/backup/restore rehearsal, two-repo real-git and forge-sandbox acceptance, operating guide | Hold |
+| 5 | Shared WaitingReason, CLI/API/check and audit evidence, distinct self-acknowledgement status/export and diagnostic-only multi-writer warning for opted-in repositories; golden tests make private-source existence, closure, supersession and landing indistinguishable to unauthorized B audiences, with typed diagnostics only for authorized readers; wait-age flag, pagination, unchanged precedence, no rendering-time fetches and scoped export | Hold |
+| 6 | Publish schema/loader and wire the complete gate together; mixed enabled/disabled repos, fail-closed first cycle, drain/backup/restore rehearsal, two-repo real-git and forge-sandbox acceptance, operating guide; Stage B remains deferred until real ordered-landing usage and a follow-up ADR | Hold |
 
 Every slice preserves byte-identical legacy wire fixtures and non-opted-in
 digests. Differential replay compares next actions at **every revision**, and
@@ -632,19 +682,26 @@ A lands, B becomes testable and lands. Review pushes to unlanded A keep a
 revision-less B waiting without declaration edits or re-approval; an explicit
 A@7 waits stale after A@8 and never accepts A@8's landing. Record the actual
 landed revision. At unchanged B head, remove its last edge, weaken a pin or
-retarget A with only pre-edit native approvals: B remains held until a fresh
-eligible writer acknowledgement, excluding the editor, author, submitter and
-accountable humans. PR 2 and 4a cover a writer-author's B with a surviving native
-approval: they remove `Depends-On` at the same head and attempt self-acknowledgement;
-B cannot land before A through that bypass. An eligible independent writer can
-acknowledge the removal, subject to B's ordinary review policy. An old
-acknowledgement cannot clear a later edit, including a return to the same digest.
+retarget A with only pre-edit native approvals: without single-maintainer opt-in,
+B remains held until a fresh eligible writer acknowledgement, excluding the
+editor, author, submitter and accountable humans. PR 2 and 4a cover a
+writer-author's B with a surviving native approval: they remove `Depends-On` at the same head and attempt self-acknowledgement;
+B without the single-maintainer opt-in cannot land before A through that bypass.
+Repeat in a multi-writer repository without opt-in to prove the strict rule is
+unaffected. In an opted-in repository, the same authenticated writer can clear
+the hold only through the distinct audited self-acknowledgement event, with
+normal review/CI gates still enforced. Unknown or unauthenticated loosening
+actors block even with opt-in. PR 5 verifies distinct status and export evidence
+and the diagnostic-only warning when an opted-in repository has multiple writers.
+An eligible independent writer can acknowledge the removal, subject to B's
+ordinary review policy. An old acknowledgement cannot clear a later edit, including a return to the same digest.
 PR 2 also retargets B to another enrolled base after loosening: the new change ID
 retains the source-alias-keyed prior declaration and hold. Tightening alone needs
 no acknowledgement, and tightening after loosening does not clear its hold.
 PR 2 and 4a also cover multiple editors in one coalesced window, unknown or
 unauthenticated loosening actors blocking every acknowledgement until attribution
-is restored, and no eligible writer blocking indefinitely. Verify recovery by
+is restored, and no eligible writer blocking indefinitely without opt-in. Verify
+recovery by
 adding an eligible writer or a replacement PR with a fresh alias/declaration and
 independent approval where required; repository rename/transfer preserves the
 original alias's hold.
@@ -660,50 +717,65 @@ decision/start/settlement IDs and
 actual tested/landed remote SHAs. Stage B requires a new release decision and
 additional manifest-consumption and partial-landing acceptance, not PR 6's flag.
 
-### Open questions for the owner
+### Owner decisions (2026-10-27)
 
-1. Confirm Stage A's same-installation, strict-only, cross-repository scope and
-   bilateral `allow_from`/`allow_to` consent. Recommendation: keep it narrow;
-   cross-forge federation needs authenticated remote evidence and tenant restore
-   boundaries, not an arbitrary URL fetch.
-2. Confirm the journal-scoped canonical URI spelling and the operational
-   restore/incarnation procedure. Recommendation: reject old namespaces and
-   require explicit redeclaration after recovery.
-3. Confirm rejection of external/closed-unmerged/outside-queue dependencies and
-   preservation of waiting dependents on dequeue. Recommendation: no manual
-   "mark satisfied" override in the first slice; use ordinary corrective changes.
-4. Are co-tested speculative groups worth owning CI bootstrap, foreign-code
-   execution grants and partial-landing recovery? Recommendation: gather ordered
-   wait/CI-cost data first. The 10-minute start allowance is provisional, and
-   cannot promise compatibility or recovery time.
-5. Confirm the initial graph limits and choose the first two-repo sandbox plus
-   the owner of post-B drain/backup acceptance. Recommendation: keep the limits
-   fixed for Stage A and record the actual drain evidence before deployment.
-6. Should a repository explicitly configured as single-maintainer allow an
-   audited self-acknowledgement event? The owner is Smartfire's sole developer,
-   so the default indefinite hold is a real operational constraint. This option
-   would let that maintainer clear the declaration hold, but removes its
-   independent check against weakening or removing dependencies. It would not
-   waive independent approval where policy requires it. Owner decision remains
-   open; this ADR grants no self-acknowledgement exception.
+Riel St. Amand (`CanadaApollo6`) accepted all recommendations on 2026-10-27:
+
+1. Confirm narrow Stage A: distinct repositories in a single installation and
+   the same GitHub organisation, strict verification only, with explicit bilateral
+   `allow_from`/`allow_to` consent. No federation or implicit adoption.
+2. Accept the canonical URI spelling and restore/incarnation procedure above.
+   Rotate the token after restore, clone, or reinitialization, reconcile remote
+   refs, and require explicit redeclaration and fresh authorization of old references.
+3. Reject external dependencies in repositories OpenMerge does not serve.
+   Closed-unmerged and outside-queue sources cannot satisfy an edge, and dequeue
+   preserves waiting dependents. There is no manual "mark satisfied" override;
+   use ordinary corrective changes or an authorized declaration edit.
+4. Defer Stage B co-tested speculative landing until ordered landing has real
+   usage. A follow-up ADR and release decision must close its execution, CI,
+   coordination, and partial-landing gates. The ten-minute start allowance remains
+   provisional and unvalidated.
+5. Accept 32 direct edges per declaration and transitive limits of 256 nodes,
+   512 edges, and depth 16. Accept the two-repository real-git and isolated
+   forge-sandbox selection above. Riel St. Amand owns post-period-B drain and
+   whole-database backup acceptance; record that evidence before deployment.
+6. Accept explicit per-repository single-maintainer self-acknowledgement through
+   governing `dependencies: {single_maintainer: true}` as specified in the Decision.
+   Only this opt-in permits an otherwise-excluded authenticated, identified writer
+   to acknowledge a loosening edit. Unknown/unauthenticated edit attribution still
+   blocks. Record a distinct `dependency_declaration_self_acknowledged` event,
+   visible in status and audit export, with the opt-in and exclusion evidence.
+   Enabling it is a policy change requiring ADR 0008 governing-owner approval in
+   authority mode or normal policy review otherwise. It never applies implicitly
+   or waives ordinary approvals. Warn diagnostically when an opted-in repository
+   has multiple eligible writers; do not block or revoke the opt-in automatically.
+   Repositories without it retain the strict rule unchanged.
 
 ## Consequences
 
 - Coordinated work becomes visible and ordered without making OpenMerge a forge
   or requiring PRs as permanent identity. Existing queues remain unchanged until
   explicit adoption; dependency-bearing waits avoid unnecessary CI.
-- Stage A is a single installation, meaning the same organization on GitHub.
+- Stage A requires a single installation and the same organisation on GitHub.
   It does not coordinate separate installations even on one server.
 - Authors maintain compatible intermediate states and any optional exact pins.
   Revision-less Stage A edges survive source review pushes; loosening edits need
-  an eligible non-editor writer acknowledgement with ADR 0007 exclusions. Ordered
-  landing costs serial CI latency and does not test an API/client pair together.
+  an eligible non-editor writer acknowledgement with ADR 0007 exclusions by
+  default. An explicit, reviewed single-maintainer opt-in permits an authenticated
+  writer's audited self-acknowledgement, sacrificing that independent check on
+  dependency loosening. Unknown/unauthenticated edit attribution still blocks it;
+  ordinary approvals are never waived. Multi-writer repositories without opt-in
+  keep the strict rule; opted-in ones receive a diagnostic-only warning.
+  Ordered landing costs serial CI latency and does not test an API/client pair
+  together.
 - Cross-queue reads, landing-start locks, retention and trust adoption add
   operational cost. Restores require a new namespace and fresh declarations.
   Replayable observations explain why work waited or landed; unknowns stop only
   affected work rather than granting permission or stopping settlement.
 - New journal history is a binary downgrade boundary even after disabling the
-  feature. Stage B remains deferred; a topic, timeout or pair of successful
+  feature. Riel St. Amand owns post-period-B drain and backup acceptance. Stage B
+  remains deferred until ordered landing has real usage, and its ten-minute
+  allowance is provisional and unvalidated. A topic, timeout or pair of successful
   tests cannot establish cross-repository atomicity.
 
 ## Alternatives considered
