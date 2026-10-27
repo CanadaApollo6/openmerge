@@ -19,10 +19,13 @@ import (
 
 var errProvenanceShape = errors.New("unexpected commit shape")
 
-// provenanceProcessOverhead covers Git, shared libraries, pack mappings and
-// allocator overhead in addition to GraphBytes. The resulting address-space
-// cap, not delta metadata accounting, enforces the expansion/memory bound.
+// provenanceProcessOverhead covers Git, shared libraries and allocator overhead.
+// Index mappings and missing reverse indexes are budgeted separately. The capped
+// address space, not delta metadata accounting, enforces the memory bound.
 const provenanceProcessOverhead = 16 << 20
+
+// Even repositories with enormous indexes may never raise a reader above 2 GiB.
+const provenanceProcessCeiling = 2 << 30
 
 // provenanceReader shares one cat-file process for metadata and original bodies.
 // Only this inert adapter requires prlimit; the live transport is unaffected.
@@ -31,6 +34,7 @@ type provenanceReader struct {
 	s          *session
 	limits     provenance.InventoryLimits
 	prlimit    string
+	indexBytes int
 	batch      *exec.Cmd
 	input      io.WriteCloser
 	output     *bufio.Reader
@@ -50,8 +54,12 @@ func newProvenanceReader(ctx context.Context, gitDir string, limits provenance.I
 	if err != nil {
 		return nil, err
 	}
-	r := &provenanceReader{ctx: ctx, s: &session{r: &Repo{git: git, cfg: Config{Now: time.Now}}, dir: gitDir, diffRead: true}, limits: limits, prlimit: supervisor, remaining: limits.GraphBytes, sizes: map[string]int{}, inspected: map[string]bool{}}
-	r.batch = r.command(ctx, "cat-file", "--batch-command=%(objectname) %(objecttype) %(objectsize) %(objectsize:disk) %(deltabase)")
+	indexBytes, err := provenanceIndexBytes(ctx, gitDir)
+	if err != nil {
+		return nil, err
+	}
+	r := &provenanceReader{indexBytes: indexBytes, ctx: ctx, s: &session{r: &Repo{git: git, cfg: Config{Now: time.Now}}, dir: gitDir, diffRead: true}, limits: limits, prlimit: supervisor, remaining: limits.GraphBytes, sizes: map[string]int{}, inspected: map[string]bool{}}
+	r.batch = r.command(ctx, "cat-file", "--batch-command=%(objectname) %(objecttype) %(objectsize) %(deltabase)")
 	r.input, err = r.batch.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -76,7 +84,7 @@ func (r *provenanceReader) command(ctx context.Context, args ...string) *exec.Cm
 	// Every object read and traversal needs this cap: advisory metadata can
 	// under-count duplicate packed representations, and walks parse bodies too.
 	cmd := r.s.newCommand(ctx, args...)
-	capBytes := r.limits.GraphBytes + provenanceProcessOverhead
+	capBytes := int(min(int64(provenanceProcessCeiling), int64(r.limits.GraphBytes)+provenanceProcessOverhead+int64(r.indexBytes)))
 	// Reserve at least 7/8 of the cap for Git, indexes, libraries and object
 	// reconstruction. Bound pack windows independently of total pack size:
 	// default cap 144 MiB -> 8 MiB mapped / 1 MiB windows;
@@ -87,7 +95,8 @@ func (r *provenanceReader) command(ctx context.Context, args ...string) *exec.Cm
 	mapped := min(8<<20, capBytes/8)
 	alignment := 2 * os.Getpagesize()
 	window := min(1<<20, mapped/4) / alignment * alignment
-	// Disable the read-side delta cache. pack.windowMemory and pack.deltaCacheSize
+	// Minimize the read-side delta cache; Git can still retain its latest base.
+	// pack.windowMemory and pack.deltaCacheSize
 	// apply to pack-objects (writes), which this reader never invokes. Pack
 	// indexes and in-use windows may exceed the mapping target; prlimit remains
 	// the authoritative bound. All readers, including mapping and batch modes,
@@ -106,9 +115,15 @@ func (r *provenanceReader) close() error {
 	r.closed = true
 	_ = r.input.Close()
 	err := r.batch.Wait()
-	processErr := provenanceProcessError(r.ctx, err, r.diagnostic.String())
+	processCtx := r.ctx
+	if err == nil {
+		// A deadline arriving after a clean exit must not turn success into failure.
+		// Still reject allocator diagnostics even when Git recovered and exited zero.
+		processCtx = context.WithoutCancel(r.ctx)
+	}
+	processErr := provenanceProcessError(processCtx, err, r.diagnostic.String())
 	var limitError *provenanceLimitError
-	if r.ctx.Err() != nil || errors.As(processErr, &limitError) {
+	if processCtx.Err() != nil || errors.As(processErr, &limitError) {
 		return processErr
 	}
 	if r.diagnostic.overflow {
@@ -210,15 +225,14 @@ func (r *provenanceReader) info(id string) (size int, base string, err error) {
 	if err != nil {
 		return 0, "", err
 	}
-	if len(fields) != 5 || fields[0] != id || fields[1] != "commit" || !forge.ValidDiffObjectID(fields[4]) {
+	if len(fields) != 4 || fields[0] != id || fields[1] != "commit" || !forge.ValidDiffObjectID(fields[3]) {
 		return 0, "", errProvenanceShape
 	}
 	size, err = strconv.Atoi(fields[2])
-	disk, diskErr := strconv.ParseUint(fields[3], 10, 64)
-	if err != nil || size <= 0 || diskErr != nil || disk == 0 {
+	if err != nil || size <= 0 {
 		return 0, "", errProvenanceShape
 	}
-	return size, fields[4], nil
+	return size, fields[3], nil
 }
 
 // inspectDeltaMetadata is advisory early rejection only. Each base ID lookup
@@ -248,7 +262,7 @@ func (r *provenanceReader) inspectDeltaMetadata(id string) error {
 			return &provenanceLimitError{"commit_bytes"}
 		}
 		// Charge the visible chain for early rejection. Shared delta bases may be
-		// expanded again with Git's cache disabled, so charge each requested object.
+		// expanded again with Git's cache minimized, so charge each requested object.
 		if size > r.remaining {
 			if id != original || strings.Trim(base, "0") != "" {
 				return &provenanceLimitError{"expansion"}
@@ -277,7 +291,7 @@ func (r *provenanceReader) body(id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if len(fields) != 5 || fields[0] != id || fields[1] != "commit" || fields[2] != strconv.Itoa(r.sizes[id]) {
+	if len(fields) != 4 || fields[0] != id || fields[1] != "commit" || fields[2] != strconv.Itoa(r.sizes[id]) {
 		return "", errProvenanceShape
 	}
 	raw := make([]byte, r.sizes[id]+1)

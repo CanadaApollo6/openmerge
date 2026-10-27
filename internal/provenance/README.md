@@ -231,16 +231,38 @@ positive limits and can only lower them.
 
 **The enforced expansion and memory guarantee is the per-process address-space
 cap.** This inert adapter requires `prlimit` and runs every Git process that
-reads source objects or traverses ancestry under `--as=GraphBytes+16MiB`
-(144 MiB by default). The fixed 16 MiB overhead covers Git, shared libraries,
-pack mappings and allocator overhead. Lowering `GraphBytes` lowers the ceiling
-by the same amount. Every capped invocation (including `rev-list`, `merge-base`,
+reads source objects or traverses ancestry under
+`--as=min(2 GiB, GraphBytes + 16 MiB + indexBytes)`. The 16 MiB base overhead
+covers Git, shared libraries and allocator overhead; the default cap starts at
+144 MiB before indexes. `indexBytes` sums the stat sizes of `objects/pack/*.idx`,
+`*.rev` and `multi-pack-index`. For each `.idx` without a matching `.rev`, it
+also reserves `12 * ceil(idxSize / 24)` bytes for a heap reverse index: about
+12 bytes/object, conservatively deriving the count from the minimum 24 bytes
+per object in a SHA-1 v1 index (v2 and SHA-256 indexes use more). Headers and
+large-offset tables make this estimate conservative. All arithmetic saturates
+at the hard **2 GiB per-process ceiling**; huge indexes may still fail closed.
+Below that ceiling, lowering `GraphBytes` lowers the cap by the same amount.
+
+Sizing uses Go's root-constrained filesystem API, so symlinks cannot escape the
+supplied Git directory; nonregular indexes and sizing failures stay pending.
+Repositories must remain stable during the read. Alternate object directories
+(`objects/info/alternates`, even an empty file) and linked-worktree `commondir`
+files are unsupported and fail closed before any source Git reader starts.
+Inherited alternate-object environment variables are scrubbed as well.
+The extra index allowance accounts for read-only file mappings and potential
+heap reverse indexes; it does not weaken the expansion guarantee: every source
+read remains supervised under the computed cap, with no unbounded fallback.
+It does not turn `GraphBytes` into an exact reconstruction-only memory limit.
+
+Every capped invocation (including `rev-list`, `merge-base`,
 and the persistent `cat-file --batch-command` metadata/body reader) pins
 `core.packedGitLimit=min(8 MiB, cap/8)` and
 `core.packedGitWindowSize=min(1 MiB, packedGitLimit/4)`, rounded down to twice
-the OS page size to match Git's alignment. `core.deltaBaseCacheLimit=0` disables
-the read-side delta cache. At the default 144 MiB cap this allows 8 MiB of pack
-windows, each at most 1 MiB; at a 24 MiB cap (`GraphBytes=8 MiB`) it allows
+the OS page size to match Git's alignment. `core.deltaBaseCacheLimit=0` minimizes
+the read-side delta cache; Git can still retain the latest base. At a 144 MiB
+cap (before adding indexes) this allows 8 MiB of pack
+windows, each at most 1 MiB; at a 24 MiB cap (`GraphBytes=8 MiB`, before
+indexes) it allows
 3 MiB, each at most 768 KiB. Even at the smallest accepted budget the targets
 are 2 MiB and 512 KiB. At least seven eighths of the cap remains for Git,
 libraries, pack indexes, allocator overhead and object reconstruction. A pack
@@ -266,8 +288,9 @@ Context cancellation stays pending; the local deadline produces terminal
 
 One long-lived `cat-file --batch-command` process serves metadata-only `info`
 queries and original `contents` reads. Before a body read or endpoint traversal,
-the reader follows `%(deltabase)` metadata, checks `%(objectsize)` and
-`%(objectsize:disk)`, and charges the visible chain against `GraphBytes`.
+the reader follows `%(deltabase)` metadata, checks `%(objectsize)`, and charges
+the visible chain against `GraphBytes`. It does not request `%(objectsize:disk)`,
+which can cause Git to build a reverse index for the entire pack.
 Shared bases are charged again for each independently requested object.
 **This delta walk is advisory early rejection only.** Each base ID lookup can
 select a standalone duplicate in a different pack, including through a
@@ -293,15 +316,30 @@ under the cap; the same inventory and mapping complete with a 64 MiB budget.
 The base padding is streamed into a compressed pack of tens of KiB, keeping the
 Go fixture's memory small.
 The expanded base must exceed the fixed overhead to exercise the process cap.
+`TestProvenanceInventoryIndexLargerThanFixedOverhead` imports 610,000 tiny blobs
+into one pack whose `.idx` alone exceeds 16 MiB. A small PR completes with an
+8 MiB `GraphBytes` budget, including a MIDX, both with and without `.rev`.
+Sizing regressions check the exact allowance, sparse-file saturation at 2 GiB,
+and fail-closed external symlinks and alternates.
 PATH-shim regressions also cover missing/broken `prlimit`, allocator failures,
 SIGKILL, ordinary Git errors and external cancellation.
 `TestProvenanceInventoryPackLargerThanProcessCap` streams 32 MiB of
-incompressible blob data into one pack larger than its 24 MiB process cap.
+incompressible blob data into one pack larger than its approximately 24 MiB
+process cap (including its small index allowance).
 The unpinned control walk fails to mmap it; inventory and fast-forward mapping
 complete through the hardened path even with hostile local memory settings.
 A 32 MiB delta base in that same repository still returns
 `limit_exceeded:expansion`; the hidden-base multi-pack tests above additionally
 prove the mandatory cap catches reconstruction that passes advisory metadata.
+
+Topo-order traversal also allocates for base drift, even when the PR frontier
+is small. Measurements with commit-graph disabled found about 240–425 bytes per
+visited drift commit. The default 128 MiB work budget gives an arithmetic upper
+envelope of roughly 315,000–559,000 such commits before pack windows, object
+reconstruction and other working allocations; practical capacity is lower and
+depends on topology and Git version. This is a sizing estimate, not an ancestry
+completion guarantee. Large base drift can still fail closed under the process
+cap or 30-second deadline; `GraphCommits` only bounds the retained PR frontier.
 
 The inventory also retains the effective `Limits` for evidence.
 `Diagnostic` retains only an outcome, resource and optional original object ID.
