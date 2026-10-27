@@ -1,6 +1,6 @@
 # 0012. Hosted service architecture
 
-- **Status:** Proposed (Inert; documentation only)
+- **Status:** Accepted
 - **Date:** 2026-10-27
 
 ## Context
@@ -24,11 +24,11 @@ endpoints. Its bearer token permits reads over the configured engine scope, not 
 or queue mutation. The [operating guide](../operating.md) also imposes whole-database restore
 boundaries that a dashboard deployment cannot waive.
 
-This ADR proposes the product boundary and hosting choices. It adds no runtime, schema, migration,
-credentials, infrastructure, App grants, or active service. **Implementation starts only after ADR
-0009 period B drains**, expected in mid-November 2026. A calendar date does not establish the drain.
-Design and this docs-only PR may proceed now. Acceptance still needs the runtime clarification below
-and the implementation gates in the rollout plan.
+This ADR records the accepted product boundary and hosting choices. It adds no runtime, schema,
+migration, credentials, infrastructure, App grants, or active service. **Implementation starts
+only after ADR 0009 period B drains**, expected in mid-November 2026. A calendar date does not
+establish the drain. This **docs-only acceptance is Inert**. It activates nothing and does not
+waive the implementation gates in the rollout plan.
 
 ## Decision
 
@@ -91,8 +91,9 @@ hosting region, and provisioning request IDs. It holds no engine events or landi
 BetterAuth's [Drizzle adapter](https://better-auth.com/docs/adapters/drizzle) supports SQLite; D1
 uses [SQLite semantics](https://developers.cloudflare.com/d1/best-practices/query-d1/). This is an
 integration choice, not evidence that every plugin works on Workers. Pin versions and qualify
-accounts, organizations, token revocation, and SSO against D1 and `workerd` before alpha. A failed
-qualification blocks that slice; it does not move auth tables into an engine database.
+GitHub sign-in, accounts, organizations, and token revocation against D1 and `workerd` before
+alpha. Qualify enterprise SAML/SSO separately before offering it. A failed qualification blocks
+that slice; it does not move auth tables into an engine database.
 
 KV is eventually consistent, with updates potentially invisible elsewhere for [60 seconds or
 more](https://developers.cloudflare.com/kv/concepts/how-kv-works/). Later use may cache public
@@ -121,19 +122,16 @@ not change those runtimes. Workers currently have a [128 MB isolate memory limit
 CPU](https://developers.cloudflare.com/workers/platform/limits/), which further favors small request
 handlers over Git or journal replay there.
 
-Propose this explicit interpretation of the owner's runtime requirement: OpenMerge-controlled
-TypeScript tooling and conventional servers use Bun; browser bundles and Cloudflare-managed Worker,
-DO, and Workflow execution are named deployment exceptions. Worker integration tests must exercise
+The owner accepts Bun for all OpenMerge-controlled TypeScript tooling, tests, builds and
+non-Worker services. Browser execution and Cloudflare Workers (`workerd`, including DO and
+Workflow execution) are the only runtime exceptions. Worker integration tests must exercise
 `workerd` through Bun-invoked tooling, in addition to Bun unit tests. Qualify the actual CLI
 dependencies under Bun; `bunx` alone does not prove their execution runtime. Do not silently add a
 Node service or claim that Worker tests run on Bun.
 
-**Owner ratification of these exceptions is required before TypeScript Worker implementation.** If
-the requirement literally includes every execution host, this design cannot satisfy it as written.
-The alternative is a Bun control-plane origin behind Cloudflare ingress, with the Worker role and
-storage adapters redesigned before implementation. scriptc is not a demonstrated escape from this
-conflict. Selecting Bun now avoids adding an experimental compiler to the hosting and auth
-qualification work.
+Do not use scriptc. It remains a possible future option only after qualification: it is experimental
+and Worker compatibility is unproven. Selecting Bun avoids adding an experimental compiler to the
+hosting and auth qualification work.
 
 ### Keep Postgres as the only engine system of record
 
@@ -154,8 +152,9 @@ is introduced here. Shared physical database servers are possible, with separate
 restore units; noisy-neighbor and cluster-admin risks remain. Shared multi-tenant engine databases
 require a future ADR for scoped locks, watermarks, receipts, completion, and restores.
 
-Use managed Postgres for production, with **PlanetScale Postgres as the first candidate to
-qualify**, not its MySQL product. The provider publishes [Postgres direct and PgBouncer connection
+Use managed Postgres with **synchronous HA** for production. **PlanetScale Postgres is a candidate
+only if it passes the zero-acknowledged-commit-loss failover qualification below**, not its MySQL
+product. The provider publishes [Postgres direct and PgBouncer connection
 options](https://planetscale.com/blog/scaling-postgres-connections-with-pgbouncer). Use direct
 primary connections initially. Do not insert transaction pooling, Hyperdrive, a read replica, or a
 serverless SQL adapter into lock-sensitive engine paths without proving their semantics against the
@@ -307,6 +306,9 @@ exporter selects sources and computes every manifest and digest.
 
 ### Hold the hosted App key outside public product services
 
+Use one shared hosted GitHub App per region for alpha. Customer-owned Apps are a later enterprise
+option, not an alpha requirement.
+
 The hosted GitHub App private key belongs in a regional **sign-only HSM/KMS key vault**, used by a
 Go credential broker under the engine infrastructure security boundary. This follows GitHub's
 [sign-only key-vault guidance](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/managing-private-keys-for-github-apps#storing-private-keys).
@@ -336,13 +338,14 @@ This requires a reviewed Go credential-provider adapter before hosted alpha. Tod
 a local App private key; a remote broker is proposed, not existing functionality. Keep the local-key
 provider as the self-hosted default, with no dependency on the broker or Cloudflare. Do not
 distribute a shared public App's full private key to every hosted cell as an alpha shortcut.
-Separate customer-owned Apps can use separate broker key partitions.
+Later enterprise customer-owned Apps can use separate broker key partitions.
 
 The broker is a high-trust service: compromise of the shared App key can affect all its
-installations. Scoped tokens reduce cell-to-cell exposure but do not remove this root risk. Name a
-primary/backup custodian, compromise contact, rotation procedure, and emergency revocation owner
-before alpha. Follow ADR 0008's recommended 90-day rotation and immediate rotation after exposure.
-For routine rotation, overlap then delete: import a new key, validate remote signing/token issuance,
+installations. Scoped tokens reduce cell-to-cell exposure but do not remove this root risk. Riel
+St. Amand owns App keys, protection, audit custody/signing, recovery and on-call, including
+compromise contact and emergency revocation. There is no backup person yet; the owner accepts this
+single-person coverage risk. Document the rotation procedure before alpha. Follow ADR 0008's
+recommended 90-day rotation and immediate rotation after exposure. For routine rotation, overlap then delete: import a new key, validate remote signing/token issuance,
 switch all broker instances, then delete the old key without downtime. GitHub supports
 [multiple active keys for rotation](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/managing-private-keys-for-github-apps#about-private-keys-for-github-apps).
 Compromise requires prompt revocation rather than waiting for a routine overlap window.
@@ -357,13 +360,12 @@ webhook or broker credentials. Restrict network paths and rotate credentials aft
 
 ### Separate product login from forge authority
 
-Use BetterAuth for accounts and sessions, its [organization
-plugin](https://better-auth.com/docs/plugins) for product membership, [SSO
-plugin](https://better-auth.com/docs/plugins/sso) for enterprise login, and [API Key
-plugin](https://better-auth.com/docs/plugins/api-key) for product API tokens. Those are product
-identities and permissions. SSO can establish access to an organization's dashboard; it cannot
-establish repository write permission. Qualify the selected SSO methods and any commercial service
-terms before sale.
+Use **GitHub sign-in only for alpha**, with BetterAuth for accounts and sessions, its [organization
+plugin](https://better-auth.com/docs/plugins) for product membership, and [API Key
+plugin](https://better-auth.com/docs/plugins/api-key) for product API tokens. SAML/SSO is a later
+enterprise feature using the [SSO plugin](https://better-auth.com/docs/plugins/sso), subject to
+qualification and commercial terms before sale. These are product identities and permissions. SSO
+can establish access to an organization's dashboard; it cannot establish repository write permission.
 
 Bind a product organization to a GitHub App installation only after server-side forge confirmation
 of installation ownership/control, with a single-use, expiring onboarding challenge. An installation
@@ -373,12 +375,12 @@ separately. Require explicit authenticated account linking, and do not merge for
 through email equality. Other forges use their driver.
 
 Dashboard authorization checks the current product session/token scope, org membership and
-installation binding on every request, using authoritative reads for revocation. Private repository
-visibility is the intersection with freshly verified forge access for a linked user; unknown access
-denies the read. Alpha product tokens are user-bound and scoped read-only. Org-owned service tokens
-and SSO-only private-repository viewers stay disabled until a separate explicit data-access policy
-is approved. Never equate org membership with visibility of every private repository on an
-installation.
+installation binding on every request, using authoritative reads for revocation. Repository
+visibility always derives from forge permissions: intersect product access with freshly verified
+forge access for a linked user; unknown access denies the read. Alpha product tokens are
+user-bound and scoped read-only. Org-owned service tokens and SSO-only private-repository viewers
+stay disabled until a separate explicit data-access policy is approved. Never equate org
+membership with visibility of every private repository on an installation.
 
 A hosted Go authorization adapter performs those forge reads through `internal/forge`; it is
 a prerequisite for private views, not an existing user-auth endpoint in `/v1`.
@@ -408,8 +410,14 @@ and applicable block-recovery runbooks, including their backup, drain and verifi
 Acknowledgement records observation, not approval, and clears no rules/suspect block. Recovery may
 clear only the specific source after its documented proof succeeds; neither consent nor staff
 judgement permits policy relaxation, event edits or bypass of normal engine gates. Missing proof
-leaves the block in place. This interim support process must be staffed and audited before hosted
-alpha; it does not add a dashboard mutation path.
+leaves the block in place.
+
+The owner accepts this interim owner-consented, staff-executed support process, with Riel St.
+Amand as the responsible support/recovery owner. It must be staffed and audited before hosted
+alpha; it does not add a dashboard mutation path. Customer self-service acknowledgement and block
+recovery through reviewed forge-authorized write APIs is the target by GA. No recovery-time SLA or
+other paid recovery promises are offered before beta; beta terms require tested evidence and
+explicit approval.
 
 ### Use one AI gateway for useful, optional assistance
 
@@ -420,11 +428,14 @@ model providers. Do not also deploy Vercel AI Gateway. There is no requirement h
 second gateway, credential set, or billing path. Models remain replaceable behind the chosen
 gateway.
 
-Start with opt-in CI failure summaries grounded in links to exact failed runs and bounded redacted
-log excerpts. Add flaky-test triage that suggests likely rerun patterns from recorded history,
-without deciding whether a failure is confirmed. Reviewer agents may produce advisory comments or
-ordinary CI checks, with explicit run/SHA/producer provenance. They get no App landing key and
-cannot submit human approval receipts or waive required reviewers.
+Hosted AI is **off by default**. Require explicit per-organisation opt-in and a monthly spend cap
+before any model call; enforce the cap across calls and retries. The first feature is **CI-failure
+summaries only**, grounded in links to exact failed runs and bounded redacted log excerpts. Defer
+flaky-test triage and reviewer agents to later rollout decisions. Later triage may suggest rerun
+patterns from recorded history without deciding whether a failure is confirmed. Later reviewer
+agents may produce advisory comments or ordinary CI checks, with explicit run/SHA/producer
+provenance. They get no App landing key and cannot submit human approval receipts or waive
+required reviewers.
 
 AI output is labelled generated, with source links, model/prompt version and input digest. It never
 supplies policy facts, changes queue ordering, requests unbounded retries, clears a block, or
@@ -434,12 +445,14 @@ CI. Generated brief prose remains subject to ADR 0007 Stage C prerequisites; thi
 does not activate that stage or alter ADR 0010 provenance.
 
 Models receive untrusted diff/log text, not instructions with credentials or write tools. Bound
-inputs, execution time, output size, retries, and per-org spend. Disable private-content caching and
-prompt/response logging by default; [AI Gateway
-logging](https://developers.cloudflare.com/ai-gateway/observability/logging/) is enabled by default
-and its controls do not control Logpush exports. Verify all logging/export destinations and
-model-provider retention before opt-in. Store only approved metadata and explicitly retained
-generated artifacts. An AI outage removes assistance; it never blocks settlement or weakens policy.
+inputs, execution time, output size, retries, and per-org monthly spend. Require **no
+provider-side retention** of submitted content. Disable private-content caching and
+prompt/response logging; [AI Gateway
+logging](https://developers.cloudflare.com/ai-gateway/observability/logging/) is enabled by
+default and its controls do not control Logpush exports. Verify all logging/export destinations
+and model-provider no-retention terms/configuration before opt-in; if they cannot be verified, do
+not send content. Store only approved metadata and explicitly retained generated artifacts. An AI
+outage removes assistance; it never blocks settlement or weakens policy.
 
 ### Retain audit evidence and publish independent anchors
 
@@ -485,12 +498,14 @@ dependency, and export capabilities as they become available. Hosted product fla
 engine policy meaning. The Go engine must not import Cloudflare SDKs or require a hosted account,
 license-server call, remote token broker, DO, or AI gateway to land.
 
-Ship the dashboard source and static bundle for self-hosted use, reading the same `/v1` API through
-a local authenticated backend. A Bun companion can add BetterAuth using a separately scoped
-supported SQL store; it must not add tables to the receipt-bound engine schema. Cloudflare account
-management, billing, managed backups, SSO operations and hosted support are service features, not
-engine prerequisites. Document packaging and any paid support terms before release without making
-self-hosted safety features hosted-only.
+Ship self-hosted OpenMerge as a **single binary plus a Docker image**. Ship the dashboard source
+and static bundle with this packaging, reading the same `/v1` API through a local authenticated
+backend. A Bun companion can add BetterAuth using a separately scoped supported SQL store; it must
+not add tables to the receipt-bound engine schema. Cloudflare account management, billing, managed
+backups, SSO operations and hosted support are service features, not engine prerequisites.
+Licensing (open-core versus source-available) remains an explicit owner decision due **before
+beta**; this acceptance introduces no licensing restriction. Document paid support terms before
+release without making self-hosted safety features hosted-only.
 
 AI assistance is optional and off by default. Self-hosted operators may bring one gateway/provider
 endpoint, credentials, data policy and spend limits, or omit the assistance component entirely.
@@ -505,12 +520,13 @@ nonce-bound renewal, valid for at most 60 seconds measured from the local monoto
 It verifies the enrolled cell/installation and deployment generation. Replayed responses cannot extend the deadline.
 This management poll is not the event-delivery path or an alternative queue journal.
 
-Lost contact uses the bounded renewal grace; an authenticated explicit infrastructure suspension
-closes the gate immediately on receipt. On expiry or suspension, stop fresh admissions, builds, and
-landing starts. Recheck the gate at durable start and immediately before a new landing push. Do not cancel held
-requests or pretend queue lifecycle changed. A healthy renewal removes only this availability
-restriction; every normal engine gate still applies. This adapter is future **Hold** work with
-race/restart tests, not a new `/v1` write endpoint or a DO landing decision.
+Lost control-plane contact has a **60-second grace**, bounded by the renewal deadline above; an
+authenticated explicit infrastructure suspension closes the gate immediately on receipt. On expiry
+or suspension, stop fresh admissions, builds, and landing starts. Recheck the gate at durable
+start and immediately before a new landing push. Do not cancel held requests or pretend queue
+lifecycle changed. A healthy renewal removes only this availability restriction; every normal
+engine gate still applies. This adapter is future **Hold** work with race/restart tests, not a new
+`/v1` write endpoint or a DO landing decision.
 
 A total control-plane outage therefore stops new hosted work after bounded detection. It cannot
 trigger a landing or corrupt evidence. An attempt already started may have pushed before expiry and
@@ -529,10 +545,10 @@ source evidence. Engine DB failure stops mutation; `/v1/live` remains a process 
 falls back to cached policy or identity evidence to authorize work; unexpired cached broker tokens
 are only transport credentials under the rules above.
 
-Start hosted alpha in one explicitly selected engine/DB region. Keep Git caches, broker, exporter
-and backups within the declared regional storage policy, with encrypted backups and TLS on every
-cross-host path. Region changes are restore and identity operations, not edits to an account
-preference.
+Start hosted alpha in **one US engine/DB region**, selected during host/Postgres qualification.
+Keep Git caches, broker, exporter and backups within the declared regional storage policy, with
+encrypted backups and TLS on every cross-host path. Region changes are restore and identity
+operations, not edits to an account preference.
 
 Cloudflare's global execution is distinct from a DB region. [DO location
 hints](https://developers.cloudflare.com/durable-objects/reference/data-location/) are best effort;
@@ -551,9 +567,10 @@ diffs and personal data from routine telemetry.
 
 Deploy the engine cells and credential broker as pinned Go images on regional Linux VMs/containers
 supporting the real Git binary and `prlimit`. Start alpha with one active cell per installation,
-bounded CPU/memory/disk, and a unique cache directory. Use a regional container/VM host, including
-Fly as a candidate, without moving the public control plane off Cloudflare. Qualify the host before
-selection. Automatic multi-region engine failover is outside this ADR.
+bounded CPU/memory/disk, and a unique cache directory. Run cells on **Fly.io or Cloudflare
+Containers, whichever qualifies first**, without moving the public control plane off Cloudflare.
+Host qualification must prove these engine requirements before selection. Automatic multi-region
+engine failover is outside this ADR.
 
 Deploy Worker bundles separately, with pinned compatibility dates, Bun-built assets, reviewed D1/DO
 migrations, and staged traffic. Control-plane rollback must preserve product-schema compatibility
@@ -564,14 +581,17 @@ Collect engine JSON logs and infrastructure/Worker metrics with correlated opaqu
 delivery, batch and attempt IDs. Monitor engine progress, block/settlement age, database
 reachability, quota reserve, disk, webhook backlog, DLQ age, auth failures, availability-renewal
 age, audit lag and AI spend. Keep telemetry access tenant-scoped; logs are not the journal. Adopt
-ADR 0008's health/protection-verification alerts and named on-call/backup ownership. Only process
-liveness restarts a cell; a queue or DB problem raises an alert.
+ADR 0008's health/protection-verification alerts. Riel St. Amand owns on-call; no backup person is
+assigned, an accepted coverage risk. Only process liveness restarts a cell; a queue or DB problem
+raises an alert.
 
-Upgrade in cohorts after sandbox validation, canarying the owner's own cells first and then one
-installation at a time within each cohort. Abort fleet progression on the first failed eligibility
-check, migration, replay or health check; recover that cell before approving another cohort. Notify
-tenants in advance of version/boundary changes, expected interruption and recovery contact, and use
-their agreed maintenance windows. Freeze intake and settle what can settle. An automated, cell-local
+After sandbox validation, upgrade the owner's own cells first, then weekly cohorts with **48 hours
+notice**, one installation at a time within each cohort. Expedite security fixes, giving notice as
+soon as practical; the safety and compatibility gates still apply. Abort fleet progression on the
+first failed eligibility check, migration, replay or health check; recover that cell before
+approving another cohort. Notify tenants of version/boundary changes, expected interruption and
+recovery contact under that notice policy, and use their agreed maintenance windows.
+Freeze intake and settle what can settle. An automated, cell-local
 precondition check must prove a drained queue, no active batches/CI, no unsettled attempts, no held
 requests and no `pending_conditions` in current projections/snapshots before eligibility; inspect
 historical evidence separately for reader compatibility. Stop every writer and incompatible reader,
@@ -608,7 +628,9 @@ must preserve that failure.
 Use encrypted nightly logical backups plus provider PITR where qualified, pre-change backups, and
 separately retained signed anchors. Routine HA failover must lose zero acknowledged commits as
 qualified above. For disaster recovery only, initial engineering targets are RPO at most 15 minutes
-with PITR and RTO at most four hours for one cell; these are unproven targets, not a customer SLA.
+with PITR and RTO at most four hours for one cell; these are unproven engineering targets. Offer no
+recovery-time SLA or other paid recovery promises before beta; any beta terms require qualification
+and explicit approval.
 Any nonzero-RPO recovery, including PITR, must stop writers, retain surviving evidence, follow the
 [documented restore-then-reconcile-refs procedure](../operating.md#cursor-prefix-invariant-and-rollback)
 and the steps above, and reconcile actual base/fence refs and subsequent effects before resuming.
@@ -640,7 +662,9 @@ broker/observability, Worker requests/CPU, Queue operations/retries, D1 reads/wr
 requests/duration/storage, R2 storage/operations, network transfer, and model tokens. Keep idle
 cells warm in the first qualification cohort for polling and settlement. A 15-second renewal adds
 about 17.28 million requests/month for 100 continuously running cells, before dashboard and delivery
-calls; budget that deliberate availability cost rather than hiding it in webhook volume.
+calls; budget that deliberate availability cost rather than hiding it in webhook volume. The first
+qualification cohort stays warm for baseline measurements; the selected initial product tiers are
+packed cells on shared hosts and a hibernated tier for small installations, subject to qualification.
 
 For AI, assume 10% of changes request one 8,000-input/1,000-output-token summary: 48 million input
 and 6 million output tokens/month. Charge usage at the selected provider's actual rates, including
@@ -670,15 +694,16 @@ identity and credentials remain per cell in every tier, with identical activatio
 policy, settlement and audit guarantees. Shared hosts/clusters add correlated outage and privileged
 operator risks; dedicated physical isolation can remain a separate option.
 
-An optional hibernated tier may stop an idle cell and wake it on a verified webhook hint, with an
-independent slow poll (proposed maximum ten minutes) to wake and reconcile even when hints are lost.
-A restricted regional supervisor schedules starts, not engine decisions. A cell-local serialized
-sleep check closes intake and must prove no queued entries, active batches/CI, unsettled attempts,
-held requests or pending conditions before stopping; unknown state prohibits sleep. Resume from the same DB identity, restore
-all process-local gates fail-closed, reset webhook health, obtain a fresh availability renewal and
-forge/policy observations, and recover/settle before admitting work. Idle suspension never abandons
-an attempt, recreates a DB or bypasses a receipt. Qualify sleep/wake races and polling latency before
-offering this tier; the current engine does not implement it.
+The selected hibernated tier for small installations may stop an idle cell and wake it on a
+verified webhook hint, with an independent slow poll (proposed maximum ten minutes) to wake and
+reconcile even when hints are lost. A restricted regional supervisor schedules starts, not engine
+decisions. A cell-local serialized sleep check closes intake and must prove no queued entries,
+active batches/CI, unsettled attempts, held requests or pending conditions before stopping;
+unknown state prohibits sleep. Resume from the same DB identity, restore all process-local gates
+fail-closed, reset webhook health, obtain a fresh availability renewal and forge/policy
+observations, and recover/settle before admitting work. Idle suspension never abandons an attempt,
+recreates a DB or bypasses a receipt. Qualify sleep/wake races and polling latency before offering
+this tier; the current engine does not implement it.
 
 Per-installation monthly infrastructure cost floors depend on measured density. For an explicit
 planning example only, let `n = 20` small installations share a host costing `H = $100/month` and a
@@ -687,15 +712,18 @@ cache, evidence and backups. For hibernation, assume `W = $20/month` for a share
 supervisor and separately meter active compute `A`. These are hypothetical cost inputs, not vendor
 quotes, proven capacity, customer prices or an SLA; retained evidence growth raises `S`.
 
-| Candidate tier | Planning cost floor per installation-month, before shared product services/support/AI |
+| Tier / comparison baseline | Planning cost floor per installation-month, before shared product services/support/AI |
 |---|---|
-| Dedicated warm | Existing $50-150 cell/DB/storage allowance; replace with a qualified HA quote |
+| Dedicated warm (comparison baseline) | Existing $50-150 cell/DB/storage allowance; replace with a qualified HA quote |
 | Shared warm | `(H + P) / n + S`, or $17 at the illustrative density |
-| Hibernated, optional | `(P + W) / n + S + A`, or $13 idle floor plus active compute; provisioned warm capacity still costs money if the host cannot scale down |
+| Hibernated (small installations) | `(P + W) / n + S + A`, or $13 idle floor plus active compute; provisioned warm capacity still costs money if the host cannot scale down |
 
 The HA DB, retained evidence and wake service never become free when compute sleeps. Quote each
 pool and its minimum capacity, measure idle memory/Git peaks and simultaneous wakes, then replace
-these inputs with the 30-day bill. Owner choices on tiers, density, latency and pricing remain open.
+these inputs with the 30-day alpha bill. Start with packed cells on shared hosts plus the hibernated
+tier for small installations; qualify density and wake latency during alpha. Measure real cost
+floors during alpha before setting any prices. Dedicated warm remains a comparison baseline, not
+the initial default tier.
 
 ### Roll out after period B, with explicit activation gates
 
@@ -712,16 +740,17 @@ where review requires.
 
 | Slice | Scope and exit evidence | Class |
 |---|---|---|
-| 0, now | This ADR and index only; no deployment. Resolve runtime exception and named owners before implementation. | Inert |
+| 0, now | Accept this ADR and index with the dated owner decisions; no deployment. Runtime exceptions and ownership are settled; no backup person is an accepted risk. | Inert |
 | 1, after B | Contract/threat-model fixtures, Bun/workerd and BetterAuth/D1 qualification, regional host/Postgres identity/locks/restore qualification, budget. No production writers or resources. | Inert |
 | 2 | Read-only dashboard and product auth in isolated staging, stable-ID onboarding proof and negative tenant-access/revocation tests. No engine mutations or production binding. | Inert |
 | 3 | Go broker adapter, isolated engine cells, queued webhook transport, private read-only API integration, availability gate and failure/replay tests. Prove retries and outages preserve fences, held requests and evidence. | Hold |
 | 4 | Audit R2 publication and independently signed 10b anchors. Prove five-file replay, tamper/omission detection, overlapping ranges and isolated restore with actual custody roles. | Hold |
-| 5 | Hosted alpha on the owner's repositories after 3/4, reviewed per-installation enrollment, documented backup/restore and support owners. Require observed isolation, outage drills, upgrade/downgrade evidence and a 30-day bill. | Hold |
-| 6 | Optional AI summaries/triage, then advisory reviewer agents, each with privacy/spend opt-in and exact-run provenance. No human-review substitution. | Hold |
-| 7 | External paid beta after alpha acceptance, security/residency review, tested recovery targets, self-hosted dashboard packaging, and approved pricing/support terms. | Hold |
+| 5 | Hosted alpha on the owner's Smart-Data-Ohio repositories after 3/4, in one US region with a shared regional GitHub App and GitHub-only sign-in. Review enrollment and document backup/restore and support ownership. Qualify packed/shared and small-installation hibernated tiers; require isolation, outage drills, upgrade/downgrade evidence and a 30-day bill before setting prices. | Hold |
+| 6 | CI-failure summaries only as the first AI feature, off by default with per-organisation opt-in, a monthly spend cap, no provider-side retention, Cloudflare AI Gateway and exact-run provenance. Triage/reviewer agents require later rollout decisions. No human-review substitution. | Hold |
+| 7 | External paid beta after alpha acceptance, security/residency review, tested recovery targets, single-binary and Docker self-hosted packaging, the owner's open-core versus source-available licensing decision, and approved pricing/support terms. No paid recovery promises before beta. | Hold |
 
-Include **Smart-Data-Ohio/smartfire** in the owner alpha. It already runs a separate engine
+Run the hosted alpha on the owner's **Smart-Data-Ohio** repositories, including
+**Smart-Data-Ohio/smartfire**. It already runs a separate engine
 instance; preserve its database, installation scope, cache, credentials and history. Start by
 attaching a read-only view. A later hosted migration is an explicit drained cutover with tested
 backup and remote-ref reconciliation, not registration in a shared database. Do not reuse the
@@ -750,9 +779,11 @@ alpha does not authorize that switch or ADR 0010/0011 activation.
 - Hosted availability now includes the control-plane renewal path. A deliberate
   pause after failure is preferable to inventing a second landing authority.
   Settlement may remain pending until forge credentials return.
-- We owe integration contracts, runtime exception approval, managed-Postgres
-  qualification, security/custody ownership, recovery drills and measured cost
-  before hosting customers. This Proposed ADR certifies none of those as done.
+- We owe integration contracts, managed-Postgres and host qualification, custody
+  configuration, recovery drills and measured cost before hosting customers.
+  Runtime exceptions and Riel St. Amand's ownership are accepted; absent backup
+  coverage is an accepted risk. This acceptance certifies no implementation or
+  operational qualification as complete.
 
 ## Alternatives considered
 
@@ -789,36 +820,57 @@ alpha does not authorize that switch or ADR 0010/0011 activation.
   stop during lost control-plane coordination. Choose a bounded availability
   gate while preserving independent settlement and self-hosted behavior.
 
-### Open questions for the owner
+### Owner decisions (2026-10-27)
 
-1. Ratify the Bun requirement's explicit browser/workerd exceptions, or choose
-   a Bun origin and revise the Worker architecture before implementation?
-2. Which regional engine host and managed Postgres tier should be qualified
-   first, and which alpha region/data-handling policy may customers rely on?
-   PlanetScale Postgres is a candidate, not an assertion of identity privileges.
-3. Who are the primary/backup App-key, protection, audit-signing, recovery and
-   on-call owners? Which independently controlled anchor channel and retention
-   period replace the personal trial's shared custody?
-4. Accept the 15-second renewal/60-second stop-detection design and its cost?
-   Which tested recovery objectives and outage obligations become paid promises?
-5. Should external beta use the shared hosted public App or offer customer-owned
-   Apps/key partitions first? What level of physical DB/compute isolation is sold?
-6. Which SSO methods and product roles ship first? Keep org-owned API tokens and
-   SSO-only private-repository viewing disabled, or approve a separate explicit
-   data-access policy? Forge merge authority remains outside that choice.
-7. Which AI providers, private-data consent, spend caps and log retention are
-   acceptable? Are CI summaries sufficient for alpha, with reviewer agents later?
-8. What self-hosted packaging, support/licensing terms, and measured per-installation
-   budget should gate beta? This ADR does not introduce a licensing restriction.
-9. Which dedicated-warm, shared-warm and optional hibernated tiers should ship, at
-   what qualified density, idle/wake latency and measured cost floor? What pricing
-   and physical-isolation options should beta offer after quotes and the alpha bill?
-10. Accept the interim forge-verified owner-consent/staff-executed recovery process,
-    with which support owners and response obligations? When should reviewed write
-    APIs enable customer self-service acknowledgement and block recovery?
-11. What fleet upgrade cadence, canary/cohort sizes, tenant notice period and
-    maintenance-window commitments should apply, including boundary cutovers?
+Riel St. Amand (`CanadaApollo6`) accepted all recommendations on 2026-10-27:
+
+1. **TypeScript runtime:** use Bun for tooling, tests, builds and every non-Worker
+   TypeScript service. Cloudflare Workers (`workerd`, including DO/Workflow execution)
+   and browser code are the only runtime exceptions. Do not use scriptc; it remains
+   a possible future option after qualification because it is experimental and
+   Worker compatibility is unproven.
+2. **Host, Postgres and region:** start in one US region. Run cells on Fly.io or
+   Cloudflare Containers, whichever qualifies first. Require managed Postgres with
+   synchronous HA. Use PlanetScale Postgres only if it passes the specified
+   zero-acknowledged-commit-loss failover qualification, as well as the engine's
+   identity, lock and restore tests; otherwise select a managed tier that passes.
+3. **Ownership:** Riel St. Amand owns keys, protection, audit custody/signing,
+   recovery and on-call. There is no backup person yet; accept that coverage risk.
+   This does not waive independently controlled anchors or custody qualification.
+4. **Contact loss and suspension:** accept the 15-second renewal cadence and
+   60-second lost-contact grace bounded by the renewal deadline. Explicit
+   authenticated suspension closes the availability gate immediately on receipt.
+   Preserve settlement of started attempts. Offer no recovery-time SLA or other
+   paid recovery promises before beta; beta terms need tested evidence and approval.
+5. **GitHub App:** use one shared GitHub App per region for alpha. Customer-owned
+   Apps are a later enterprise option, with separate broker key partitions.
+6. **Sign-in and access:** GitHub sign-in only for alpha. Repository visibility
+   always derives from forge permissions, intersected with product access; unknown
+   forge access denies reads. SAML/SSO comes later for enterprise. Keep org-owned
+   service tokens and SSO-only private-repository viewing disabled pending a separate
+   data-access policy; product roles never grant merge authority.
+7. **AI:** off by default, with explicit per-organisation opt-in and a monthly
+   spend cap enforced across calls and retries. The first feature is CI-failure
+   summaries only, through Cloudflare AI Gateway. Require no provider-side retention
+   and verify gateway logging/export controls before sending content. Triage and
+   reviewer agents require later rollout decisions.
+8. **Packaging and licensing:** ship self-hosted as a single binary plus a Docker
+   image. **Remaining owner decision, due before beta:** choose open-core versus
+   source-available licensing. This acceptance introduces no licensing restriction.
+9. **Tiers and pricing:** start with packed cells on shared hosts plus the
+   hibernated tier for small installations, preserving per-cell isolation and all
+   qualification gates. Measure real cost floors during alpha, including the
+   30-day bill, before setting any prices; illustrative costs are not prices.
+10. **Support recovery:** accept the interim forge-verified owner-consented,
+    staff-executed recovery process above, owned by Riel St. Amand and audited with
+    exact-evidence consent. Customer self-service through reviewed forge-authorized
+    write APIs is the target by GA; no recovery promises are added before beta.
+11. **Upgrades:** upgrade the owner's own cells first, then weekly cohorts with
+    48 hours notice. Expedite security fixes with notice as soon as practical.
+    Retain sandbox, drain, compatibility, backup and abort gates for every rollout.
 
 Vendor facts above were checked against public primary sources on 2026-10-27. Recheck limits,
-compatibility and prices during qualification. Proposed resource sizes, recovery targets, costs and
-schedules are engineering assumptions until the corresponding rollout evidence exists.
+compatibility and prices during qualification. Resource sizes, recovery targets, illustrative costs
+and proposed polling bounds remain engineering assumptions until rollout evidence exists. The owner
+decisions above settle runtime, ownership, initial scope and upgrade cadence; acceptance does not
+waive the ADR 0009 period-B drain or any implementation/activation gate.
