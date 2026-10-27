@@ -1,4 +1,5 @@
 A body declaration:
+
 Depends-On: https://github.com/acme/api/pull/1
 
 These are examples, not declarations:
@@ -31,4 +32,5 @@ Depends-On: malformed
 
 A trailer-shaped block in the authoritative body is also supported:
 Signed-off-by: A Writer <writer@example.com>
+
 Depends-On: https://github.com/acme/api/pull/3

@@ -32,19 +32,43 @@ exception or acknowledgement behavior in this package.
   scope and never manufactures one from declaration text.
 - `ParseIntent` consumes the authoritative PR body, including trailer-shaped
   lines in that body. It never accepts a list of commit messages or PR comments.
-  `Depends-On:` is case-sensitive and must start a standalone prose line, with
-  at most three leading spaces and exactly one non-whitespace reference. CRLF is
-  normalized. Goldmark v1.8.6 (pure Go, MIT, no transitive dependencies) parses
-  CommonMark. Only top-level paragraphs count: list items (including lazy
-  continuations), headings, fenced/indented code, block quotes, HTML blocks and
-  GFM table cells are excluded. Lines overlapping inline code or raw HTML
-  (including multiline comments) are excluded in full. Original source line
-  segments preserve escapes and markup; stripping them cannot manufacture a key
-  or reference. Literal comment markers in code spans or escaped text do not
-  start comments. Unclosed blocks follow CommonMark, rather than a separate
-  comment/fence state machine. Only the GFM Table extension is enabled because
-  it changes paragraph boundaries. Linkify, TaskList and Strikethrough do not
-  change which source lines qualify under these rules and remain disabled.
+  The raw body is capped at 65,536 Unicode characters before parsing (including
+  line endings and any BOM); overflow returns `ErrBodyLimit`, never truncation.
+  A leading BOM is stripped and CRLF and bare CR become LF, following GFM's
+  line-ending rules. Goldmark v1.8.6 (pure Go, MIT, no transitive dependencies)
+  parses CommonMark with the GFM Table extension.
+
+  A **declaration paragraph** is a top-level paragraph containing only exact,
+  case-sensitive `Depends-On: <ref>` source lines, with at most three leading
+  spaces and exactly one non-whitespace reference per line. Several declarations
+  may share one paragraph. Its inline AST may contain only Text (including soft
+  or hard line breaks), with no HTML, links, images, code spans or emphasis.
+  Source spelling is preserved; escapes or markup cannot manufacture a key or
+  reference. Put a blank line between declarations and surrounding prose or
+  trailers, for example:
+
+  ```text
+  This PR needs the API change.
+
+  Depends-On: https://github.com/acme/api/pull/42
+  Depends-On: https://github.com/acme/client/pull/17
+  ```
+
+  Any declaration-shaped line elsewhere returns `ErrDeclarationAmbiguous`
+  (`declaration-ambiguous`), with guidance to put each declaration in its own
+  paragraph, with nothing else. This includes mixed prose, lists, headings,
+  table cells, inline HTML, multiline code spans and hidden link/image titles.
+  Fenced/indented code blocks, block quotes (including lazy continuations), HTML
+  blocks and HTML comments remain ignored examples. Inline comments shield only
+  their own source, so a declaration followed by a comment is ambiguous. An error
+  returns no partial inputs. Literal comment markers in code spans or escaped
+  text do not start comments; unclosed blocks follow CommonMark.
+
+  This strict grammar refines ADR 0011's “standalone body lines” (~line 181).
+  **Slice 6's operating guide must document this rule for users**, including blank
+  lines around declarations and blocking ambiguity diagnostics. Linkify,
+  TaskList and Strikethrough remain disabled: they do not alter eligibility under
+  this grammar.
 - URI segments use RFC 3986 unreserved-only, uppercase percent encoding of UTF-8
   bytes. Encoded unreserved bytes, lowercase escapes, raw reserved characters,
   credentials, invalid UTF-8, controls, query/fragment syntax and extra segments
@@ -88,9 +112,12 @@ exception or acknowledgement behavior in this package.
 - `TestCanonicalURIGolden`, `TestCanonicalURIRejectsMalformedAndForeign`:
   fixed canonical URI/escaping vectors, optional pins, malformed and foreign scope.
 - `TestAuthoritativeIntentBoundaries`, `TestMalformedRecognizedIntentFailsClosed`,
-  `TestIntentCommonMarkCorpus`: body/trailer and 39 CommonMark/GFM boundary cases,
+  `TestIntentCommonMarkCorpus`: body/trailer and 49 CommonMark/GFM boundary cases,
   including inline/escaped comment markers, list fences, lazy quotes, nested
   lists, setext headings, HTML blocks, multiline code spans, CRLF and tabs.
+  `TestIntentAmbiguousDeclarations`, `TestIntentPureDeclarationParagraph`,
+  `TestIntentBareCRFence`, `TestIntentBodyCharacterLimit`: strict paragraph
+  grammar, review repros, normalization and exact Unicode character cap.
 - `TestRevisionlessAliasesOptionalPinsAndDedupe`,
   `TestResolutionRejectsUnservedAmbiguousAndForeign`: resolution and conflicts.
 - `TestCycleDiagnosticsDerivedAndDeterministic`,
@@ -102,6 +129,8 @@ exception or acknowledgement behavior in this package.
   expands exactly 64 times. The test stops at expansion 65 if memoization breaks.
 - `TestResolveInputCapBeforeBindingWork`,
   `TestOriginsRejectAlternateCanonicalSpellings`: raw input cap and origin syntax.
+- `TestGraphPolicyCacheIsPerNode`: two nodes in one repository with distinct
+  policies cannot share validation results; each evaluation rebuilds its cache.
 - `BenchmarkEvaluateLadder1024Served`: the ladder with 1024 served repositories
   and full grant lists on every node, exercising scoped-validation caching.
 - `TestCandidatePolicySchemaAgreement`, `TestPublicConfigRejectsDependencyKeys`:
@@ -111,8 +140,8 @@ exception or acknowledgement behavior in this package.
   depth 1/4 configs. The public loader/schema and all deployed contracts are
   untouched; existing `internal/config` tests retain their legacy digest vectors.
 - `FuzzParseIntent`: corpus seeds, successful canonical round trips, and an
-  independent full-AST walk asserting selected source lines never overlap code,
-  quote, comment/raw HTML or list nodes.
+  independent full-AST walk asserting every produced declaration comes from a
+  pure top-level declaration paragraph with Text-only inline children.
 - `FuzzParseReference`: accepted input equals its canonical spelling.
 - `FuzzParsePolicyCandidate`: successful policies validate and round-trip through
   YAML without changing mode or grants.

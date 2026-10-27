@@ -1,12 +1,13 @@
 package dependency
 
 import (
-	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
@@ -19,7 +20,7 @@ func TestAuthoritativeIntentBoundaries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, text := range []string{string(body), strings.ReplaceAll(string(body), "\n", "\r\n")} {
+	for _, text := range []string{string(body), strings.ReplaceAll(string(body), "\n", "\r\n"), "\ufeff" + strings.ReplaceAll(string(body), "\n", "\r")} {
 		inputs, err := ParseIntent(text, testScope())
 		if err != nil {
 			t.Fatal(err)
@@ -44,9 +45,10 @@ func TestMalformedRecognizedIntentFailsClosed(t *testing.T) {
 }
 
 func intentCorpus(t testing.TB) []struct {
-	Name    string
-	Body    string
-	Aliases []string
+	Name      string
+	Body      string
+	Aliases   []string
+	Ambiguous bool
 } {
 	t.Helper()
 	data, err := os.ReadFile("testdata/intent-commonmark.json")
@@ -54,9 +56,10 @@ func intentCorpus(t testing.TB) []struct {
 		t.Fatal(err)
 	}
 	var cases []struct {
-		Name    string
-		Body    string
-		Aliases []string
+		Name      string
+		Body      string
+		Aliases   []string
+		Ambiguous bool
 	}
 	if err := json.Unmarshal(data, &cases); err != nil {
 		t.Fatal(err)
@@ -68,6 +71,12 @@ func TestIntentCommonMarkCorpus(t *testing.T) {
 	for _, tc := range intentCorpus(t) {
 		t.Run(tc.Name, func(t *testing.T) {
 			inputs, err := ParseIntent(tc.Body, testScope())
+			if tc.Ambiguous {
+				if !errors.Is(err, ErrDeclarationAmbiguous) || inputs != nil {
+					t.Fatalf("got %v, %v; want ambiguity without partial inputs", inputs, err)
+				}
+				return
+			}
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -82,83 +91,129 @@ func TestIntentCommonMarkCorpus(t *testing.T) {
 	}
 }
 
-// Check selected source lines against an independent walk of the entire AST,
-// including excluded containers. A declaration must never overlap any forbidden
-// node, even through lazy continuations or multiline inline nodes.
+// Independently derive every possible successful input from whole paragraphs.
+// This deliberately does not call intentLines or its normalization helper.
 func assertIntentProseLines(t testing.TB, body string) {
 	t.Helper()
-	source := []byte(strings.ReplaceAll(body, "\r\n", "\n"))
-	lines := intentLines(source)
-	doc := goldmark.New(goldmark.WithExtensions(extension.Table)).Parser().Parse(text.NewReader(source))
-	err := ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
-		if !entering {
-			return ast.WalkContinue, nil
-		}
-		forbidden := false
-		for ancestor := n; ancestor != nil; ancestor = ancestor.Parent() {
-			switch ancestor.Kind() {
-			case ast.KindCodeBlock, ast.KindFencedCodeBlock, ast.KindBlockquote,
-				ast.KindHTMLBlock, ast.KindCodeSpan, ast.KindRawHTML, ast.KindList:
-				forbidden = true
-			}
-		}
-		if !forbidden {
-			return ast.WalkContinue, nil
-		}
-		var segments []text.Segment
-		switch node := n.(type) {
-		case *ast.Text:
-			segments = append(segments, node.Segment)
-		case *ast.RawHTML:
-			for i := 0; i < node.Segments.Len(); i++ {
-				segments = append(segments, node.Segments.At(i))
-			}
-		default:
-			if n.Type() == ast.TypeBlock {
-				for i := 0; i < n.Lines().Len(); i++ {
-					segments = append(segments, n.Lines().At(i))
-				}
-			}
-		}
-		for _, span := range segments {
-			for _, line := range lines {
-				if span.Start < line.Stop && line.Start < span.Stop {
-					t.Fatalf("selected line %q overlaps %s node %q", line.Value(source), n.Kind(), source[span.Start:span.Stop])
-				}
-			}
-		}
-		return ast.WalkContinue, nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Every returned input must correspond to a selected, unmodified source line.
 	inputs, err := ParseIntent(body, testScope())
 	if err != nil {
+		if inputs != nil {
+			t.Fatal("error returned partial inputs")
+		}
 		return
 	}
+	if utf8.RuneCountInString(body) > MaxBodyCharacters {
+		t.Fatal("oversized body succeeded")
+	}
+	body = strings.TrimPrefix(body, "\ufeff")
+	body = strings.ReplaceAll(strings.ReplaceAll(body, "\r\n", "\n"), "\r", "\n")
+	source := []byte(body)
+	physicalLines := strings.Split(body, "\n")
+	doc := goldmark.New(goldmark.WithExtensions(extension.Table)).Parser().Parse(text.NewReader(source))
 	var want []Input
-	for _, line := range lines {
-		raw := string(bytes.TrimSuffix(line.Value(source), []byte{'\n'}))
-		trimmed := strings.TrimLeft(raw, " ")
-		if len(raw)-len(trimmed) > 3 {
-			continue
+	walkErr := ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if !entering || n.Kind() != ast.KindParagraph || n.Parent() != doc {
+			return ast.WalkContinue, nil
 		}
-		value, ok := strings.CutPrefix(trimmed, "Depends-On:")
-		if !ok {
-			continue
+		for child := n.FirstChild(); child != nil; child = child.NextSibling() {
+			if child.Kind() != ast.KindText {
+				return ast.WalkSkipChildren, nil
+			}
 		}
-		fields := strings.Fields(value)
-		if len(fields) != 1 {
-			t.Fatal("malformed selected declaration succeeded")
+		var paragraph []Input
+		for i := 0; i < n.Lines().Len(); i++ {
+			segment := n.Lines().At(i)
+			lineNumber := strings.Count(body[:segment.Start], "\n")
+			raw := physicalLines[lineNumber]
+			line := strings.TrimLeft(raw, " ")
+			if len(raw)-len(line) > 3 || !strings.HasPrefix(line, "Depends-On:") {
+				return ast.WalkSkipChildren, nil
+			}
+			fields := strings.Fields(strings.TrimPrefix(line, "Depends-On:"))
+			if len(fields) != 1 {
+				return ast.WalkSkipChildren, nil
+			}
+			input, parseErr := parseInput(fields[0], testScope())
+			if parseErr != nil {
+				t.Fatalf("malformed pure declaration paragraph succeeded: %v", parseErr)
+			}
+			paragraph = append(paragraph, input)
 		}
-		input, err := parseInput(fields[0], testScope())
-		if err != nil {
-			t.Fatal(err)
-		}
-		want = append(want, input)
+		want = append(want, paragraph...)
+		return ast.WalkSkipChildren, nil
+	})
+	if walkErr != nil {
+		t.Fatal(walkErr)
 	}
 	if !reflect.DeepEqual(inputs, want) {
-		t.Fatalf("inputs %v; want source inputs %v", inputs, want)
+		t.Fatalf("inputs %v; want only pure declaration paragraphs %v", inputs, want)
+	}
+}
+
+func TestIntentAmbiguousDeclarations(t *testing.T) {
+	const declaration = "Depends-On: https://github.com/acme/api/pull/42"
+	for _, tc := range []struct{ name, body string }{
+		{"bare CR mixed prose", "x\r" + declaration},
+		{"mixed prose", "Example\n" + declaration},
+		{"prose after", declaration + "\nExample"},
+		{"indented continuation", declaration + "\n    " + declaration},
+		{"list item", "- " + declaration},
+		{"ordered list", "1. " + declaration},
+		{"inline code HTML", "Example <code>\n" + declaration + "\n</code>"},
+		{"inline pre HTML", "Example <pre>\n" + declaration + "\n</pre>"},
+		{"link title", "[example](https://example.com \"\n" + declaration + "\n\")"},
+		{"image title", "![example](https://example.com/a.png \"\n" + declaration + "\n\")"},
+		{"image alt", "![\n" + declaration + "\n](https://example.com/a.png)"},
+		{"reference title", "[example]: https://example.com \"\n" + declaration + "\n\""},
+		{"emphasis", "Depends-On: *https://github.com/acme/api/pull/42*"},
+		{"code span", "Depends-On: `https://github.com/acme/api/pull/42`"},
+		{"comment after", declaration + " <!-- example -->"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// A preceding valid paragraph must not leak a partial declaration.
+			inputs, err := ParseIntent(declaration+"\n\n"+tc.body, testScope())
+			if !errors.Is(err, ErrDeclarationAmbiguous) || inputs != nil || !strings.Contains(err.Error(), "own paragraph, with nothing else") {
+				t.Fatalf("got %v, %v; want actionable ambiguity without partial inputs", inputs, err)
+			}
+		})
+	}
+}
+
+func TestIntentPureDeclarationParagraph(t *testing.T) {
+	body := "Depends-On: https://github.com/acme/api/pull/1\nDepends-On: https://github.com/acme/api/pull/2  \nDepends-On: https://github.com/acme/api/pull/3"
+	inputs, err := ParseIntent(body, testScope())
+	if err != nil || len(inputs) != 3 {
+		t.Fatalf("got %v, %v", inputs, err)
+	}
+	for i, input := range inputs {
+		if input.Alias != "https://github.com/acme/api/pull/"+string(rune('1'+i)) {
+			t.Fatal(inputs)
+		}
+	}
+}
+
+func TestIntentBareCRFence(t *testing.T) {
+	inputs, err := ParseIntent("```\rtext `\nDepends-On: https://github.com/acme/api/pull/42", testScope())
+	if err != nil || len(inputs) != 0 {
+		t.Fatalf("unclosed fence must ignore example: %v, %v", inputs, err)
+	}
+}
+
+func TestIntentBodyCharacterLimit(t *testing.T) {
+	const declaration = "Depends-On: https://github.com/acme/api/pull/42"
+	for _, char := range []string{"x", "é", "😀"} {
+		body := strings.Repeat(char, MaxBodyCharacters-2-len(declaration)) + "\n\n" + declaration
+		inputs, err := ParseIntent(body, testScope())
+		if err != nil || len(inputs) != 1 {
+			t.Fatalf("exact character cap: %v, %v", inputs, err)
+		}
+		inputs, err = ParseIntent(body+char, testScope())
+		if !errors.Is(err, ErrBodyLimit) || inputs != nil {
+			t.Fatalf("character overflow: %v, %v", inputs, err)
+		}
+	}
+	// The cap must win before scope validation or expensive Markdown parsing.
+	if inputs, err := ParseIntent(strings.Repeat("[", MaxBodyCharacters+1), Scope{}); !errors.Is(err, ErrBodyLimit) || inputs != nil {
+		t.Fatalf("oversized adversarial body: %v, %v", inputs, err)
 	}
 }

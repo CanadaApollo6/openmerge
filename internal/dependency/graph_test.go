@@ -352,3 +352,26 @@ func BenchmarkEvaluateLadder1024Served(b *testing.B) {
 		}
 	}
 }
+
+func TestGraphPolicyCacheIsPerNode(t *testing.T) {
+	g := graphFixture(3)
+	connect(&g, 0, 1, 2)
+	second := g.Nodes[testRef(2, 0).ChangeID]
+	second.Queue = g.Nodes[testRef(1, 0).ChangeID].Queue
+	// Both nodes grant the edge, but only the second has an unserved grant.
+	// Reusing the first node's successful policy validation by repository would
+	// bypass scope validation for the second node's distinct policy.
+	second.Policy.AllowTo = append(second.Policy.AllowTo, "https://github.com/acme/unserved")
+	g.Nodes[second.Reference.ChangeID] = second
+	p := evaluate(g)
+	want := []Diagnostic{{Code: "dependency-out-of-scope", Path: []string{testRef(0, 0).ChangeID, second.Reference.ChangeID}}}
+	if !reflect.DeepEqual(p.Diagnostics, want) {
+		t.Fatalf("distinct node policy was not validated: %+v", p)
+	}
+	// Repairing supplied facts must also invalidate the previous evaluation's
+	// cached error; cache entries are private to a single evaluation.
+	second.Policy.AllowTo = second.Policy.AllowTo[:len(second.Policy.AllowTo)-1]
+	if p := evaluate(g); !p.Valid() {
+		t.Fatalf("previous evaluation's policy error leaked: %+v", p)
+	}
+}

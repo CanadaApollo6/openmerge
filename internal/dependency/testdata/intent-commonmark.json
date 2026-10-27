@@ -40,17 +40,20 @@
   {
     "name": "nested list",
     "body": "- outer\n  - inner\n\n    Depends-On: https://github.com/acme/api/pull/42",
-    "aliases": []
+    "aliases": [],
+    "ambiguous": true
   },
   {
     "name": "list paragraph",
     "body": "- example\n\n  Depends-On: https://github.com/acme/api/pull/42",
-    "aliases": []
+    "aliases": [],
+    "ambiguous": true
   },
   {
     "name": "lazy list",
     "body": "- example\nDepends-On: https://github.com/acme/api/pull/42",
-    "aliases": []
+    "aliases": [],
+    "ambiguous": true
   },
   {
     "name": "list ends at blank",
@@ -62,17 +65,20 @@
   {
     "name": "setext heading",
     "body": "Depends-On: https://github.com/acme/api/pull/42\n---\n",
-    "aliases": []
+    "aliases": [],
+    "ambiguous": true
   },
   {
     "name": "setext multiline heading",
     "body": "Example\nDepends-On: https://github.com/acme/api/pull/42\n===\n",
-    "aliases": []
+    "aliases": [],
+    "ambiguous": true
   },
   {
     "name": "atx heading",
     "body": "# Depends-On: https://github.com/acme/api/pull/42",
-    "aliases": []
+    "aliases": [],
+    "ambiguous": true
   },
   {
     "name": "html block",
@@ -136,7 +142,8 @@
   {
     "name": "comment shares declaration line",
     "body": "Depends-On: https://github.com/acme/api/pull/42 <!-- comment -->",
-    "aliases": []
+    "aliases": [],
+    "ambiguous": true
   },
   {
     "name": "code span",
@@ -146,16 +153,14 @@
   {
     "name": "multiline code span",
     "body": "Example `\nDepends-On: https://github.com/acme/api/pull/42\n`\n\nDepends-On: https://github.com/acme/api/pull/42",
-    "aliases": [
-      "https://github.com/acme/api/pull/42"
-    ]
+    "aliases": [],
+    "ambiguous": true
   },
   {
     "name": "unmatched code marker is literal",
     "body": "Example `\nDepends-On: https://github.com/acme/api/pull/42",
-    "aliases": [
-      "https://github.com/acme/api/pull/42"
-    ]
+    "aliases": [],
+    "ambiguous": true
   },
   {
     "name": "escaped declaration",
@@ -180,7 +185,8 @@
   {
     "name": "four space lazy prose continuation",
     "body": "Example\n    Depends-On: https://github.com/acme/api/pull/42",
-    "aliases": []
+    "aliases": [],
+    "ambiguous": true
   },
   {
     "name": "three spaces",
@@ -206,7 +212,8 @@
   {
     "name": "gfm table",
     "body": "Depends-On: https://github.com/acme/api/pull/42 |\n--- |\nexample |",
-    "aliases": []
+    "aliases": [],
+    "ambiguous": true
   },
   {
     "name": "fenced tilde",
@@ -221,5 +228,70 @@
     "aliases": [
       "https://github.com/acme/api/pull/42"
     ]
+  },
+  {
+    "name": "bare CR fence",
+    "body": "```\rtext `\nDepends-On: https://github.com/acme/api/pull/42",
+    "aliases": [],
+    "ambiguous": false
+  },
+  {
+    "name": "bare CR mixed prose",
+    "body": "x\rDepends-On: https://github.com/acme/api/pull/42",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "inline HTML code",
+    "body": "Example <code>\nDepends-On: https://github.com/acme/api/pull/42\n</code>",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "inline HTML pre",
+    "body": "Example <pre>\nDepends-On: https://github.com/acme/api/pull/42\n</pre>",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "link title",
+    "body": "[example](https://example.com \"\nDepends-On: https://github.com/acme/api/pull/42\n\")",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "image title",
+    "body": "![example](https://example.com/a.png \"\nDepends-On: https://github.com/acme/api/pull/42\n\")",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "mixed prose",
+    "body": "Example\nDepends-On: https://github.com/acme/api/pull/42",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "list item",
+    "body": "- Depends-On: https://github.com/acme/api/pull/42",
+    "aliases": [],
+    "ambiguous": true
+  },
+  {
+    "name": "BOM and bare CR",
+    "body": "\ufeffDepends-On: https://github.com/acme/api/pull/42\r",
+    "aliases": [
+      "https://github.com/acme/api/pull/42"
+    ],
+    "ambiguous": false
+  },
+  {
+    "name": "pure declaration paragraph",
+    "body": "Depends-On: https://github.com/acme/api/pull/42\nDepends-On: https://github.com/acme/api/pull/43",
+    "aliases": [
+      "https://github.com/acme/api/pull/42",
+      "https://github.com/acme/api/pull/43"
+    ],
+    "ambiguous": false
   }
 ]
