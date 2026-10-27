@@ -11,7 +11,11 @@ import (
 func retireTerminal(s pj.State, id uint64, event queue.Event, before, after queue.State) pj.State {
 	// A definitive successful landing needs its later landed companion; all other
 	// discarded/rebuilt attempts are terminal non-landed work.
-	if _, landed := event.(queue.Landed); !landed {
+	if outcome, landed := event.(queue.Landed); landed {
+		if old := before.Batch(outcome.BatchID); old != nil && old.Phase == queue.Landing && after.Batch(outcome.BatchID) == nil && after.BaseSHA == outcome.NewBaseSHA {
+			s = pj.AwaitLandedOwned(s, id, old.ID, old.LandingAttempt.ID)
+		}
+	} else {
 		for _, old := range before.Batches() {
 			next := after.Batch(old.ID)
 			if next == nil || old.LandingAttempt.ID != "" && old.LandingAttempt.ID != next.LandingAttempt.ID {
@@ -20,7 +24,7 @@ func retireTerminal(s pj.State, id uint64, event queue.Event, before, after queu
 		}
 	}
 	// Close/head/lifecycle changes cannot resolve an uncertain fenced push.
-	// Preserve its evidence until Landed or LandingAbandoned supplies the outcome.
+	// After Landed, preserve it until the landed companion completes recovery.
 	protected := func(change string) bool {
 		for _, batch := range after.Batches() {
 			if batch.Phase != queue.Landing {

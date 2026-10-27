@@ -48,6 +48,18 @@ type tableSnapshot struct {
 	FenceTable string          `json:"FenceTable"`
 }
 
+// recoverySnapshot is a distinct strict v9 shape. Earlier readers reject its
+// Awaiting discriminator; snapshots without pending recovery keep their bytes.
+type recoverySnapshot struct {
+	Version    int             `json:"Version"`
+	BaseKind   string          `json:"BaseKind"`
+	Base       json.RawMessage `json:"Base"`
+	LastID     uint64          `json:"LastID"`
+	Records    []Record        `json:"Records"`
+	FenceTable string          `json:"FenceTable"`
+	Awaiting   []fence         `json:"Awaiting"`
+}
+
 // DecodeSnapshot accepts legacy/v8 bytes through the
 // supplied decoder and v9 through a strict retained-evidence fold. Nested v9
 // wrappers and unrecognized base versions are rejected before invoking callbacks.
@@ -68,6 +80,7 @@ func DecodeSnapshot(raw []byte, decodeBase BaseDecoder, validate ...func(uint64,
 	var state State
 	var records []Record
 	var compacted *checkpoint
+	var awaiting []fence
 	if header.Version == SnapshotVersion {
 		var discriminator map[string]json.RawMessage
 		if err := json.Unmarshal(raw, &discriminator); err != nil {
@@ -76,7 +89,17 @@ func DecodeSnapshot(raw []byte, decodeBase BaseDecoder, validate ...func(uint64,
 		var v snapshot
 		if _, ok := discriminator["FenceTable"]; ok {
 			var tv tableSnapshot
-			if err := strictJSON(raw, &tv); err != nil {
+			if _, pending := discriminator["Awaiting"]; pending {
+				var rv recoverySnapshot
+				if err := strictJSON(raw, &rv); err != nil {
+					return Snapshot{}, err
+				}
+				if len(rv.Awaiting) == 0 {
+					return Snapshot{}, ErrBinding
+				}
+				awaiting = rv.Awaiting
+				tv = tableSnapshot{rv.Version, rv.BaseKind, rv.Base, rv.LastID, rv.Records, rv.FenceTable}
+			} else if err := strictJSON(raw, &tv); err != nil {
 				return Snapshot{}, err
 			}
 			table, err := base64.StdEncoding.Strict().DecodeString(tv.FenceTable)
@@ -141,7 +164,7 @@ func DecodeSnapshot(raw []byte, decodeBase BaseDecoder, validate ...func(uint64,
 	}
 	if compacted != nil {
 		var err error
-		state, err = restoreCheckpoint(*compacted, records)
+		state, err = restoreCheckpoint(*compacted, records, awaiting)
 		if err != nil {
 			return Snapshot{}, err
 		}
@@ -206,12 +229,18 @@ func EncodeSnapshot(kind string, base []byte, state State) ([]byte, error) {
 	if state.compacted() {
 		value = compactSnapshot{SnapshotVersion, kind, base, state.lastID, records, state.checkpoint()}
 	}
-	if len(state.retired)+len(state.settled) >= 128 {
-		table := packFences(state.checkpoint())
-		if state.bytes+4*((len(table)+2)/3)+130 > maxSnapshotBytes/2 {
-			return nil, RetentionLimitError{Records: len(records), Bytes: state.bytes + 4*((len(table)+2)/3) + 130}
+	if len(state.retired)+len(state.settled) >= 128 || len(state.awaiting) != 0 {
+		table := state.packedTable
+		if table == nil || state.packedAt != state.fenceBytes {
+			table = packFences(state.checkpoint())
+		}
+		if state.bytes+state.awaitingBytes+4*((len(table)+2)/3)+130 > maxSnapshotBytes/2 {
+			return nil, RetentionLimitError{Records: len(records), Bytes: state.bytes + state.awaitingBytes + 4*((len(table)+2)/3) + 130}
 		}
 		value = tableSnapshot{SnapshotVersion, kind, base, state.lastID, records, base64.StdEncoding.EncodeToString(table)}
+		if len(state.awaiting) != 0 {
+			value = recoverySnapshot{SnapshotVersion, kind, base, state.lastID, records, base64.StdEncoding.EncodeToString(table), sortedFences(state.awaiting)}
+		}
 	}
 	raw, err := json.Marshal(value)
 	if err != nil {

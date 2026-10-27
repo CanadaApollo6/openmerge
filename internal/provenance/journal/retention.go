@@ -83,28 +83,77 @@ func sortedFences(m map[string]uint64) []fence {
 	return out
 }
 func (s State) checkpoint() checkpoint {
-	return checkpoint{s.lastID, sortedFences(s.retired), sortedFences(s.settled)}
+	return checkpoint{Through: s.lastID, Generations: sortedFences(s.retired), Settled: sortedFences(s.settled)}
 }
-func (s State) compacted() bool { return len(s.retired) != 0 || len(s.settled) != 0 }
+func (s State) compacted() bool {
+	return len(s.retired) != 0 || len(s.settled) != 0 || len(s.awaiting) != 0
+}
 
 // Through is the latest provenance or terminal queue ID folded into this state.
 func (s State) Through() uint64 { return s.lastID }
 
-// Preflight leaves headroom below both caps for a transaction's complete bundle.
-func (s State) Preflight() error {
+// DefaultHighWaterPercent reserves queue-driven retirement headroom.
+const DefaultHighWaterPercent = 80
+
+// CapacityGauge measures the retained provenance projection, excluding the base.
+type CapacityGauge struct {
+	FenceCount     int `json:"fence_count"`
+	ProjectedBytes int `json:"projected_bytes"`
+	LimitBytes     int `json:"limit_bytes"`
+	HighWaterBytes int `json:"high_water_bytes"`
+}
+
+// Capacity measures at most once for an unchanged table; encoding reuses it.
+func (s *State) Capacity(percent int) CapacityGauge {
+	if percent == 0 {
+		percent = DefaultHighWaterPercent
+	}
+	metadata := 0
+	if s.compacted() {
+		metadata = s.fenceBytes + 128
+		if len(s.retired)+len(s.settled) >= 128 {
+			if s.packedAt != s.fenceBytes || s.packedTable == nil {
+				s.measureFences()
+			}
+			metadata = s.packedBytes + 128
+		}
+	}
+	limit := maxSnapshotBytes / 2
+	return CapacityGauge{len(s.retired) + len(s.settled), s.bytes + metadata + s.awaitingBytes, limit, limit * percent / 100}
+}
+
+// PackingWork counts fence entries visited by capacity packs, for cost checks.
+func (s State) PackingWork() uint64 { return s.packingWork }
+
+// Preflight runs once after folding a complete side bundle. Queue replay and
+// checkpoint encoding retain the hard cap, so terminal growth can use the reserve.
+func (s *State) Preflight(highWater ...int) error {
+	percent := DefaultHighWaterPercent
+	if len(highWater) > 0 && highWater[0] != 0 {
+		percent = highWater[0]
+	}
+	if percent < 1 || percent >= 100 {
+		return fmt.Errorf("invalid side evidence high-water percentage %d", percent)
+	}
 	if err := s.fenceTableCapacity(); err != nil {
 		return err
 	}
-	// Writers measure the complete table, rather than relying on replay's
-	// amortized capacity estimate. Checkpoint encoding enforces it again.
-	if len(s.retired)+len(s.settled) >= 128 {
-		s.measureFences()
+	if s.fenceBytes > maxFenceTableBytes*percent/100 || len(s.retired)+len(s.settled) > maxFenceEntries*percent/100 {
+		return fmt.Errorf("%w: expanded fence high-water reserve (%d%%) reached", ErrLimit, percent)
 	}
-	return s.capacity(true)
+	gauge := s.Capacity(percent)
+	if err := s.capacity(true); err != nil {
+		return err
+	}
+	if gauge.ProjectedBytes+1 > gauge.HighWaterBytes {
+		return RetentionLimitError{Records: len(s.records) + 1, Bytes: gauge.ProjectedBytes + 1}
+	}
+	return nil
 }
 
 func (s *State) measureFences() {
 	table := packFences(s.checkpoint())
+	s.packedTable = table
 	s.packedAt = s.fenceBytes
 	s.packedBytes = 4*((len(table)+2)/3) + 2
 	s.packingWork += uint64(len(s.retired) + len(s.settled))
@@ -128,9 +177,9 @@ func (s *State) capacity(reserve bool) error {
 		if len(s.retired)+len(s.settled) >= 128 {
 			// Amortize replay measurements geometrically. Charge new fences
 			// at twice their JSON size between measurements; writers and
-			// checkpoint encoding always measure the exact table independently.
+			// checkpoint encoding reuse an exact cached measurement.
 			metadata = s.packedBytes + 2*(s.fenceBytes-s.packedAt) + 128
-			if s.packedAt == 0 || s.fenceBytes >= 2*s.packedAt || metadata+s.bytes+1 >= maxSnapshotBytes/2 {
+			if s.packedAt == 0 || s.fenceBytes >= 2*s.packedAt || s.fenceBytes != s.packedAt && metadata+s.bytes+1 >= maxSnapshotBytes/2 {
 				s.measureFences()
 				metadata = s.packedBytes + 128
 			}
@@ -143,7 +192,7 @@ func (s *State) capacity(reserve bool) error {
 			references += ReferenceCount(l)
 		}
 	}
-	records, bytes := len(s.records), s.bytes+metadata
+	records, bytes := len(s.records), s.bytes+metadata+s.awaitingBytes
 	if reserve {
 		records++
 		bytes++
@@ -161,6 +210,10 @@ func compact(s State, put func(map[string]uint64, string, uint64)) State {
 	for key, l := range s.landings {
 		if l.Stage != "landed" {
 			continue
+		}
+		if outcome, pending := s.awaiting[l.AttemptID]; pending {
+			s.awaitingBytes -= fenceSize(l.AttemptID, outcome)
+			delete(s.awaiting, l.AttemptID)
 		}
 		put(s.settled, l.AttemptID, s.lastID)
 		s.fenceBytes += fenceSize(l.AttemptID, s.lastID)
@@ -208,7 +261,11 @@ func compact(s State, put func(map[string]uint64, string, uint64)) State {
 // restoreCheckpoint reconstructs active inventories independently, then validates
 // pending attempts against them. Retired fences certify previously folded facts;
 // like dependency's v8 projection they are structurally checked, not DB reread.
-func restoreCheckpoint(c checkpoint, records []Record) (State, error) {
+func restoreCheckpoint(c checkpoint, records []Record, recovery ...[]fence) (State, error) {
+	var awaiting []fence
+	if len(recovery) != 0 {
+		awaiting = recovery[0]
+	}
 	s := State{groups: map[string]group{}, latest: map[string]string{}, landings: map[string]Landing{}, retired: map[string]uint64{}, settled: map[string]uint64{}, landingIDs: map[string]uint64{}}
 	latestID := map[string]uint64{}
 	history := map[string][]uint64{}
@@ -326,6 +383,19 @@ func restoreCheckpoint(c checkpoint, records []Record) (State, error) {
 		}
 		s.landings[attemptKey(l)] = next.landings[attemptKey(l)]
 		s.landingIDs[attemptKey(l)] = r.ID
+	}
+	if len(awaiting) > MaxPendingLandings {
+		return State{}, ErrLimit
+	}
+	s.awaiting = map[string]uint64{}
+	for i, f := range awaiting {
+		l, ok := s.landings[stringJSON([]string{f.Key, "tested"})]
+		if !ok || l.AttemptID != f.Key || f.ID <= s.landingIDs[attemptKey(l)] || f.ID > c.Through || seenIDs[f.ID] || i > 0 && awaiting[i-1].Key >= f.Key {
+			return State{}, ErrBinding
+		}
+		seenIDs[f.ID] = true
+		s.awaiting[f.Key] = f.ID
+		s.awaitingBytes += fenceSize(f.Key, f.ID)
 	}
 	s.lastID = c.Through
 	if err := s.capacity(false); err != nil {

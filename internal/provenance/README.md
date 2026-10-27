@@ -636,7 +636,15 @@ slices 4a/4b (production integration remains disabled):**
   wrapper in a second transaction while holding the first transaction's lock.
 - **Landed recovery.** The unwired `RecoverLanded` helper checks an immutable
   `Landed` row against the immediately preceding queue state, rejecting stale
-  outcomes and mismatched attempts/decisions. Its deterministic outcome key
+  outcomes and mismatched attempts/decisions. It validates exact historical batch
+  membership, revisions and heads, the accepted decision's tested identity, and
+  the terminal member's final landed composition (intermediate results remain
+  valid). Close, dequeue and head-change events preserve a pending landed
+  companion until recovery completes. V9 checkpoints optionally retain bounded
+  `Awaiting` attempt/outcome markers, including alongside `FenceTable`; deploy
+  this reader before writing those checkpoints. Original event fields do not
+  change. An existing companion under another key
+  returns typed `LandedAlreadyCompleteError`. Its deterministic outcome key
   compares complete canonical bundles on retry. The caller must reconstruct the
   actual landed composition from immutable inputs: a `Landed` row alone cannot
   supply source-to-build mappings. Recovery appends the missing companion once,
@@ -647,8 +655,9 @@ slices 4a/4b (production integration remains disabled):**
   A watermark/range is unsound because these IDs have no monotonic allocation
   contract. The strict `FenceTable` v9 checkpoint shape reads both earlier v9
   shapes; legacy-only queues retain their full byte identity. Replay measures
-  compressed capacity geometrically; writer preflight and checkpoint encoding
-  measure the complete table exactly. The 32 MiB projection ceiling still applies,
+  compressed capacity geometrically; bundle preflight measures once and final
+  checkpoint encoding reuses the unchanged pack. The 32 MiB projection ceiling
+  still applies,
   including base64 framing. Decoding also bounds expansion to 128 MiB and
   2,097,152 fences; preflight and encoding enforce these same memory bounds.
   This reduces lifetime metadata substantially without
@@ -656,6 +665,32 @@ slices 4a/4b (production integration remains disabled):**
   folds 200,001 real landings outside short mode (400 in short mode), asserts
   linear capacity-measurement work, and checks restart, suffix equivalence and
   exact generation/attempt reuse rejection. Original audit rows never change.
+
+- **Capacity and queue-event reserve.** Side append preflights once per complete
+  bundle. It caches the exact fence pack for the final cursor encode, rather
+  than packing per record. `Store.WithSideHighWaterPercent` configures the
+  admission threshold (default 80% of the 32 MiB provenance projection cap;
+  values must be 1–99). The same fraction reserves expanded fence bytes and
+  entry capacity. Queue-driven retirement and recovery replay retain the
+  hard cap, reserving space for terminal fence growth. Queue status JSON exposes
+  `provenance_capacity.fence_count`, `projected_bytes`, `limit_bytes` and
+  `high_water_bytes` for queues with retained side evidence. Alert at 70% of
+  `limit_bytes`, before the default 80% admission refusal. Track fence count and
+  growth rate to plan rollover well before refusal; raising the threshold spends
+  the queue-event reserve. Projected bytes include active canonical evidence,
+  compressed/base64 fences and framing, but exclude the queue/dependency base;
+  final snapshot encoding independently enforces the complete snapshot cap.
+
+**Still BLOCKING before enabling writers on a high-volume queue:** a structural
+fence bound (e.g., deriving attempt/generation IDs from monotonic journal positions
+so a watermark can replace per-ID fences), or an explicit lifetime/rollover
+policy. Lossless compaction only delays the cliff: the reviewed identity
+distribution reaches the hard projection cap at about 281k lifetime landings;
+the default high-water mark refuses new side evidence earlier. This estimate
+is workload-dependent, not a supported lifetime guarantee. No structural bound
+or rollover policy is implemented here. Production integration, reader-first
+rollout, authority/start fencing, namespace recovery and owner opt-in remain
+gated; no production writer is enabled.
 
 The **Hold writer foundations** provide the unwired `Store.AppendSide` API.
 It validates an entire bundle through the composed replay fold under the queue

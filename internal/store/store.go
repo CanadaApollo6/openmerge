@@ -31,13 +31,23 @@ type Store struct {
 	warningCaches     sync.Map // QueueID -> *outsideWarningCache; never a worker lock
 	pool              *pgxpool.Pool
 	testLockScope     string
+
+	sideHighWater int
 	// Tests synchronize contenders immediately before the blocking lock call.
 	beforeQueueLock          func()
 	beforeNotificationUpdate func()
+	afterSidePreflight       func(uint64, int)
 }
 
 // Option configures a store before migrations run.
 type Option func(*Store)
+
+// WithSideHighWaterPercent configures the side-evidence byte threshold (default
+// 80). Zero selects the default; other values must be in 1..99. Invalid values
+// cause append preflight to refuse the operation.
+func WithSideHighWaterPercent(percent int) Option {
+	return func(s *Store) { s.sideHighWater = percent }
+}
 
 // WithTestLockScope isolates advisory locks for tests using separate schemas in
 // one database. Every store sharing a schema must use the same scope. Never use

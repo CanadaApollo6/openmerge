@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	p "github.com/CanadaApollo6/openmerge/internal/provenance"
 	"strings"
 	"testing"
 )
@@ -20,7 +21,11 @@ func TestRetireOwnedLandingsBranchSettlesAttempt(t *testing.T) {
 	s := apply(t, State{}, 3, h)
 	l := landing(h, []uint64{3})
 	s = apply(t, s, 11, l)
+	bytesBefore := s.fenceBytes
 	s = RetireOwned(s, 12, l.BatchID, nil)
+	if s.fenceBytes != bytesBefore+fenceSize(l.AttemptID, 11) {
+		t.Fatal("terminal attempt fence bytes not charged")
+	}
 	if s.settled[l.AttemptID] != 11 || len(s.landings) != 0 {
 		t.Fatal("terminal outcome did not settle the tested attempt")
 	}
@@ -265,5 +270,132 @@ func TestFenceTablePreservesLongEscapedGenerationKeys(t *testing.T) {
 	s = retainedSnapshot(t, s)
 	if len(s.retired) != 128 {
 		t.Fatal("long generation identities lost")
+	}
+}
+
+func TestSideHighWaterReservesTerminalFenceHeadroom(t *testing.T) {
+	h, _ := fixture(t)
+	s := State{retired: map[string]uint64{}, settled: map[string]uint64{}}
+	// A small configurable high-water mark exercises the production budget
+	// calculation with real, lossless fences without a huge CI fixture.
+	for i := 0; i < 8000; i++ {
+		key := fmt.Sprintf("attempt-%x", sha256.Sum256(fmt.Appendf(nil, "headroom-%d", i)))
+		id := uint64(i + 1)
+		s.settled[key] = id
+		s.fenceBytes += fenceSize(key, id)
+	}
+	s.lastID = 8000
+	s = apply(t, s, 8001, h)
+	l := landing(h, []uint64{8001})
+	s = apply(t, s, 8002, l)
+	before := s.Capacity(1)
+	if before.ProjectedBytes <= before.HighWaterBytes || before.ProjectedBytes >= before.LimitBytes {
+		t.Fatal("fixture misses high-water reserve", before)
+	}
+	if err := s.Preflight(1); !errors.Is(err, ErrLimit) {
+		t.Fatal("writer crossed high water", err)
+	}
+	if err := s.Preflight(); err != nil {
+		t.Fatal("default should admit this small fixture", err)
+	}
+	bytes := s.fenceBytes
+	s = RetireOwned(s, 8003, l.BatchID, nil)
+	s = RetireOwned(s, 8004, "", func(p.InventoryRequest) bool { return true })
+	if s.fenceBytes <= bytes {
+		t.Fatal("terminal events did not grow fences")
+	}
+	raw, err := EncodeSnapshot("queue", []byte(`{"Version":6}`), s)
+	if err != nil {
+		t.Fatal("terminal reserve cannot encode", err)
+	}
+	restored := retainedSnapshot(t, s)
+	if len(restored.settled) != 8001 || len(restored.retired) != 1 {
+		t.Fatal("terminal fences lost")
+	}
+	t.Logf("high-water=%d projected=%d; terminal growth encodes %d bytes", before.HighWaterBytes, before.ProjectedBytes, len(raw))
+	// The default threshold is independently checked at its actual 80% boundary.
+	over := State{bytes: (maxSnapshotBytes / 2) * DefaultHighWaterPercent / 100}
+	if err := over.Preflight(); !errors.Is(err, ErrLimit) {
+		t.Fatal("default high water ignored", err)
+	}
+	expansion := State{fenceBytes: maxFenceTableBytes*DefaultHighWaterPercent/100 + 1}
+	if err := expansion.Preflight(); !errors.Is(err, ErrLimit) {
+		t.Fatal("expansion reserve ignored", err)
+	}
+	for _, invalid := range []int{-1, 100} {
+		if err := s.Preflight(invalid); err == nil {
+			t.Fatal("invalid high water accepted", invalid)
+		}
+	}
+}
+
+func TestRecoveryCheckpointPreservesOnlyAcceptedPendingAttempts(t *testing.T) {
+	h, _ := fixture(t)
+	s := apply(t, State{}, 3, h)
+	l := landing(h, []uint64{3})
+	s = apply(t, s, 11, l)
+	s = AwaitLandedOwned(s, 12, l.BatchID, l.AttemptID)
+	raw, err := EncodeSnapshot("queue", []byte(`{"Version":6}`), s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v recoverySnapshot
+	if err := json.Unmarshal(raw, &v); err != nil {
+		t.Fatal(err)
+	}
+	if len(v.Awaiting) != 1 || v.Awaiting[0].ID != 12 {
+		t.Fatal("pending outcome missing")
+	}
+	restored := retainedSnapshot(t, s)
+	restored = RetireOwned(restored, 13, l.BatchID, func(p.InventoryRequest) bool { return true })
+	if len(restored.records) != 2 || !restored.pendingGeneration(generationKey(h.Request)) {
+		t.Fatal("accepted pending evidence retired")
+	}
+	for _, kind := range []string{"empty", "unknown", "before-tested", "future", "duplicate", "null", "missing"} {
+		t.Run(kind, func(t *testing.T) {
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &fields); err != nil {
+				t.Fatal(err)
+			}
+			markers := []fence{{l.AttemptID, 12}}
+			switch kind {
+			case "empty":
+				markers = []fence{}
+			case "unknown":
+				markers[0].Key = "other"
+			case "before-tested":
+				markers[0].ID = 11
+			case "future":
+				markers[0].ID = 14
+			case "duplicate":
+				markers = append(markers, markers[0])
+			}
+			b, err := json.Marshal(markers)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fields["Awaiting"] = b
+			if kind == "null" {
+				fields["Awaiting"] = json.RawMessage(`null`)
+			}
+			if kind == "missing" {
+				delete(fields, "FenceTable")
+			}
+			b, err = json.Marshal(fields)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := DecodeSnapshot(b, func(string, []byte) error { return nil }); err == nil {
+				t.Fatal("invalid pending marker accepted")
+			}
+		})
+	}
+	l.Stage = "landed"
+	l.Members[0].Mapping.Build.Stage = "landed"
+	l.Members[0].Mapping.Build.ID = "finished"
+	l.Members[0].RecordDigest = MemberDigest(l.Members[0])
+	restored = apply(t, restored, 14, l)
+	if len(restored.awaiting) != 0 || restored.awaitingBytes != 0 || len(restored.records) != 0 {
+		t.Fatal("completion did not release pending evidence")
 	}
 }

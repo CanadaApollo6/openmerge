@@ -163,6 +163,10 @@ func (s *Store) startLandingWithSide(ctx context.Context, claim ClaimedAction, c
 			if err != nil {
 				return err
 			}
+			request, err = withTestedBatchValidation(request, state, start.BatchID, start.AttemptID, land.TestedSHA, decisionIDs)
+			if err != nil {
+				return err
+			}
 			_, err = s.appendSideTx(ctx, tx, claim.QueueID, request)
 			return err
 		}

@@ -1,5 +1,126 @@
 # Hold writer prerequisite evidence — 2026-10-27
 
+## PR #188 fix round 1
+
+Starting head: `3bef3b3f40a881d662056c440d06b465246ca03d`. Fetched the requested
+branch and main refs, created the local fix branch, and merged main at `8a26d32`.
+
+Recovery could settle contradictory or incomplete landed evidence, and side append
+repacked lifetime fences for every candidate while holding the queue advisory.
+This change fixes both while keeping ADR 0010/0011 writers **Hold**. No production
+writer is enabled; the ordinary start still supplies a literal nil builder.
+
+- Bind recovery to the historical batch's tested SHA, accepted decision, exact
+  membership/revision/head coverage and terminal member's `NewBaseSHA` composition.
+  Intermediate per-member results remain valid. Enforce coverage at the tested
+  start seam as well, with Astra's singleton and two-member regression probes.
+- Check capacity once per bundle and reuse the exact packed table in the final
+  cursor encode. The lock-held work test includes multiple completed pairs:
+  3/10/30 records each require one candidate pack (130/136/156 entry visits).
+- Reserve capacity with configurable side-admission high water (80% by default),
+  including expanded fence bytes and entries. Queue status JSON exposes fence
+  count, projected bytes, cap and high-water bytes. Document alerting at 70%.
+- Persist bounded accepted-`Landed` recovery markers in a separate strict v9
+  `Awaiting` checkpoint shape. Close/dequeue/head-change retirement preserves
+  the exact pending evidence until the landed companion completes, across restart.
+  Earlier checkpoint shapes remain readable; deploy this reader before writing
+  recovery markers. No existing event fields change.
+- Return typed `LandedAlreadyCompleteError` when another dedupe key already holds
+  the valid companion. Add the missing `RetireOwned` fence-byte accounting assertion.
+- Update the root README and both codec READMEs: transaction factoring, missing
+  companion recovery and capacity visibility are resolved under Hold.
+
+**Still BLOCKING before enabling writers on a high-volume queue:** a structural
+fence bound (for example, monotonic journal-position-derived identities so a
+watermark can replace per-ID fences), or an explicit lifetime/rollover policy.
+Compaction only delays the hard cliff to about 281k lifetime landings for the
+reviewed identity distribution; admission stops earlier. Neither long-term policy
+nor structural bound is implemented here. Production integration, authority/start
+fencing, namespace recovery, owner opt-in and reader-first rollout remain gated.
+
+The original atomic rollback, lock order (including FK `KEY SHARE` wait), lossless
+fence packing, legacy byte identity and #181 compatibility guarantees remain.
+No migrations, indexes, Makefile, CI, Dockerfile or test flags change. Main's
+retention acceptance test update is merged into the branch.
+
+### Validation (fix round 1)
+
+The affected packages pass `go test -race -short -count=1 -timeout=15m` under the
+required flock, Go 1.27.3, `GOFLAGS=-p=2`, `GOMEMLIMIT=4GiB`, and both designated
+PostgreSQL test URL variables. Total wall time: **343.797 s**; every package is
+under five minutes.
+
+| Package | CI-mode time |
+| --- | ---: |
+| `internal/store` | 122.211 s |
+| `internal/journalreader` | 20.593 s |
+| `internal/provenance/journal` | 225.600 s |
+| `internal/status` | 10.252 s |
+| `internal/audit` | 101.014 s |
+| `cmd/openmerge` | 101.714 s |
+
+`go vet ./...` exits 0; `golangci-lint run` exits 0 with `0 issues.`. All 16 changed
+Go files pass gofmt; `git diff --check` passes. The separate verbose work-count
+run passes in 7.736 s. Full store/journalreader suites include legacy cursor byte
+goldens and the Hold guards; full audit covers #181 v1 and v2 compatibility.
+
+All **eight** new isolated mutants compiled and failed the intended behavioral
+assertions under `-race -short`; sources were restored after each run:
+
+| Mutation | Failing test |
+| --- | --- |
+| `fence-byte-charge` | `TestRetireOwnedLandingsBranchSettlesAttempt` |
+| `decision-binding` | `TestRecoveryRejectsContradictoryBindings/wrong-tested-decision` |
+| `terminal-composition` | `TestRecoveryRejectsContradictoryBindings/wrong-landed-result` |
+| `recovery-membership` | `TestRecoverCompanionRequiresExactBatchCoverage/incomplete-historical-tested` |
+| `start-membership` | `TestStartCompanionRequiresExactBatchCoverage/missing` |
+| `per-record-preflight` | `TestSideBundlePacksFencesOnceUnderLock` |
+| `high-water` | `TestSideHighWaterReservesTerminalFenceHeadroom` |
+| `pending-companion` | `TestRecoverySurvivesTerminalQueueEvents/close` |
+
+Restoring per-record preflight increases the 10-record bundle from **136** to
+**402** entry visits, and the 30-record bundle from **156** to **1,470**. The final
+implementation requires one candidate pack per bundle: **130/136/156** visits for
+**3/10/30** records. Prefix checkpoint loading remains a fixed lifetime-table cost.
+
+See `docs/research/writer-prerequisites-evidence.md` for commands, bounds and logs.
+
+### Reproduction commands
+
+Every Go command uses this prefix:
+
+```sh
+flock /home/riels/.cache/openmerge-heavy.lock env GOFLAGS=-p=2 GOMEMLIMIT=4GiB GOROOT=/home/riels/.local/share/mise/installs/go/1.27.3 PATH=/home/riels/.local/share/mise/installs/go/1.27.3/bin:$PATH go ...
+```
+
+Both `TEST_DATABASE_URL` and `OPENMERGE_TEST_DATABASE_URL` are set to
+`postgres://postgres@localhost:54329/postgres?sslmode=disable`.
+Commands following the common environment/lock prefix:
+
+```sh
+go test -race -short -count=1 -timeout=15m ./internal/store ./internal/journalreader ./internal/provenance/journal ./internal/status ./internal/audit ./cmd/openmerge
+go test -race -short -count=1 -timeout=15m -v ./internal/store -run '^TestSideBundlePacksFencesOnceUnderLock$'
+go vet ./...
+golangci-lint run
+gofmt -l internal/journalreader/snapshot.go internal/journalreader/terminal.go internal/provenance/journal/retention.go internal/provenance/journal/snapshot.go internal/provenance/journal/state.go internal/provenance/journal/terminal.go internal/provenance/journal/writer_prerequisites_test.go internal/status/status.go internal/store/journal.go internal/store/landing_start.go internal/store/side_append.go internal/store/store.go internal/status/provenance_capacity_test.go internal/store/recovery_bindings_test.go internal/store/recovery_membership_test.go internal/store/side_capacity_test.go
+git diff --check
+```
+
+The mutation runner uses that same prefix and CI flags for each focused test.
+It was run as `python /home/riels/.cache/pr188-fix/mutations.py` from the isolated
+`/home/riels/.cache/pr188-fix/mutation-src/` copy. All eight mutants compiled and
+were killed; none was applied to the implementation worktree. Baseline and final
+logs, `mutations.json`, `mutation-*.log`, `work-counts.log`, `verification.json`,
+`ci-final.log`, `vet.log`, `lint.log`, and `gofmt.log` remain in
+`/home/riels/.cache/pr188-fix/`.
+The earlier broad pass caught forbidden codec imports; the wrappers and gauge
+type were moved into the existing allowed side-append boundary, and the clean
+final run passes both unchanged import/writer guards.
+
+No live database, systemd service, production writer, queue or merge was touched.
+
+## Original implementation evidence (3bef3b3)
+
 Base: fetched `origin/main` at `7e7942f` (#183), using the required explicit
 refspec. Branch: `feat/writer-prerequisites`.
 
