@@ -1,0 +1,159 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:openmerge:provenance:candidate-v1",
+  "title": "ADR 0010 candidate provenance additions (not public configuration)",
+  "$comment": "Additions-only projection. Full candidate loading also validates the public projection, approval opt-in, and group references. The provenance-condition format asserts the shared Go grammar. Duplicate keys, aliases, explicit tags, and YAML budgets are parser checks.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "requirements"
+  ],
+  "properties": {
+    "requirements": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "when",
+          "require"
+        ],
+        "properties": {
+          "when": {
+            "$ref": "#/$defs/expression"
+          },
+          "require": {
+            "type": "object",
+            "additionalProperties": false,
+            "minProperties": 1,
+            "properties": {
+              "conditions": {
+                "$ref": "#/$defs/expression"
+              },
+              "approvals": {
+                "$ref": "#/$defs/requirement"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "requirement": {
+      "oneOf": [
+        {
+          "const": "any_writer"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "any_writer": {
+              "const": true
+            },
+            "group": {
+              "type": "string",
+              "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+            },
+            "human": {
+              "const": true
+            },
+            "receipt": {
+              "const": true
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9223372036854775807,
+              "default": 1
+            }
+          },
+          "anyOf": [
+            {
+              "required": [
+                "any_writer"
+              ]
+            },
+            {
+              "required": [
+                "group"
+              ]
+            },
+            {
+              "required": [
+                "human"
+              ]
+            }
+          ],
+          "not": {
+            "required": [
+              "any_writer",
+              "group"
+            ]
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "code_owners": {
+              "const": true
+            },
+            "receipt": {
+              "const": true
+            }
+          },
+          "required": [
+            "code_owners"
+          ]
+        }
+      ]
+    },
+    "expression": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/condition"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/condition"
+          }
+        }
+      ]
+    },
+    "condition": {
+      "oneOf": [
+        {
+          "type": "string",
+          "format": "provenance-condition"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "maxProperties": 1,
+          "properties": {
+            "and": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/condition"
+              }
+            },
+            "or": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/condition"
+              }
+            },
+            "not": {
+              "$ref": "#/$defs/condition"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,17 @@
+[
+  {
+    "Name": "empty",
+    "Canonical": "{\"Version\":\"openmerge-declarations-v1\",\"Commits\":[],\"Rules\":[]}",
+    "SHA256": "8aba1f27767f0817c98540c3ca9a8bb960ef3559ffe7177a74e0181160500e88"
+  },
+  {
+    "Name": "undeclared",
+    "Canonical": "{\"Version\":\"openmerge-declarations-v1\",\"Commits\":[{\"ObjectID\":\"a\",\"Class\":\"undeclared\",\"Declarations\":[]}],\"Rules\":[]}",
+    "SHA256": "b36ea1cff4c468d7ab1dbb0d844ae0c33a63edc7316b41e877bf2575ef851980"
+  },
+  {
+    "Name": "potential-rules",
+    "Canonical": "{\"Version\":\"openmerge-declarations-v1\",\"Commits\":[{\"ObjectID\":\"a\",\"Class\":\"agent\",\"Declarations\":[{\"Source\":\"git-trailers\",\"Version\":\"git-trailers-v1\",\"Kind\":\"entire-checkpoint\",\"Value\":\"abcdef012345\",\"ValueDigest\":\"\",\"Outcome\":\"not_requested\",\"Class\":\"agent\",\"RuleID\":\"\"}]},{\"ObjectID\":\"b\",\"Class\":\"undeclared\",\"Declarations\":[]}],\"Rules\":[\"{\\\"When\\\":\\\"approved-reviews-by = \\\\\\\"bob\\\\\\\"\\\",\\\"Conditions\\\":\\\"check-success = \\\\\\\"ci\\\\\\\"\\\",\\\"Approvals\\\":{\\\"Selector\\\":\\\"any_writer\\\",\\\"Group\\\":\\\"\\\",\\\"Human\\\":true,\\\"Receipt\\\":false,\\\"Count\\\":2}}\",\"{\\\"When\\\":\\\"provenance = \\\\\\\"agent\\\\\\\"\\\",\\\"Conditions\\\":\\\"checkpoint-present\\\",\\\"Approvals\\\":null}\"]}",
+    "SHA256": "cad25bf6694671b919e4b0367cbb7fb7e4651c084d45e0f4645e3f04d0b9ad94"
+  }
+]
