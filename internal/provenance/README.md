@@ -14,18 +14,49 @@ marking the ADR Accepted is a separate docs PR.
 
 ## Fixed parser choices
 
-ADR 0010 requires Git trailer semantics without defining every Git default.
-`git-trailers-v1` fixes colon separators, ASCII case-insensitive keys, LF/CRLF,
-a final nonblank paragraph after the subject, and space/tab continuations
-unfolded with one ASCII space and trimmed at the edges. It fixes Git's default
-column-zero `#` comment prefix and `---` patch divider. A block must consist
-entirely of trailers/continuations, or include Git's built-in `Signed-off-by`
-and at least 25% trailer lines. The custom declaration keys do not make mixed
-prose a trailer block. Display examples indented or outside the final block
-are not declarations. No Git config, hooks or external parser is read or run.
+The deployed Git binary is the reference trailer-block parser. Slice 1 exposes
+`ParseGitTrailers`, which takes the colon-separated, already unfolded output of
+`git interpret-trailers --parse`, not a commit message. `IdentityInput.ParsedTrailers`
+uses that same output for coauthors. No block locator, heuristic threshold,
+comment skipping or continuation folding is implemented here. Git invocation
+at runtime belongs to slice 2 (inventory); no production package calls this API.
 
-Keys normalize to lowercase; values preserve case. Identical unfolded values
-deduplicate, distinct values remain separate. Entire IDs are 12 lowercase hex
+The test-only adapter in `internal/gitops/provenance_trailers_test.go` reuses
+`session.run` and `gitEnv`: inherited `GIT_*` variables (including config
+injection) are removed, `GIT_CONFIG_NOSYSTEM=1` disables system config, and
+`GIT_CONFIG_GLOBAL` points to the empty `os.DevNull`. It parses in a fresh bare
+repository initialized with `--template=`, excluding source-repository local
+config, includes and named `trailer.*` aliases. It pins
+`-c trailer.separators=:` and both `-c core.commentChar=#` and
+`-c core.commentString=#` (the latter for newer Git). `--parse` supplies
+`--only-trailers --only-input --unfold`; no trailers are added or commands run.
+This combination leaves no ambient trailer settings to alter the result.
+Slice 2 must reuse this isolation, including the absence of source-local config,
+and include the actual Git version in the effective parser policy identity.
+Tests log the deployed version; fix round 1 ran with **git version 2.56.0**.
+See [Git's parser documentation](https://git-scm.com/docs/git-interpret-trailers).
+
+Provenance parsing passes the original message bytes to Git. It deliberately
+does **not** apply gitops metadata's `stripMetadataLines` or
+`rewritePatchDividers`. Those functions prepare attribution for newly generated
+merge messages; they change block eligibility, continuation ownership and patch
+boundaries. Removing a reserved line can also remove its continuation bytes.
+Leaving both untouched preserves every declaration in Git's original trailer
+set and never hides one through a rewrite. A declaration after Git's patch
+divider remains outside that set. Slice 2 must read original commits, rather
+than feed generated/reformatted messages to this extractor.
+
+Named regressions cover cherry-pick markers, patch dividers with text or
+trailing whitespace, and URLs in prose. The differential corpus compares
+1,152 LF/CRLF messages, including continuations, comments, mixed-case keys,
+duplicates, coauthors and Signed-off-by casing, against exactly Git's output.
+A hostile system/global/environment config test pins the isolation contract.
+
+Keys normalize to lowercase; values preserve Git's emitted bytes after the
+single formatting space following the colon. In particular, CR bytes retained
+by Git while unfolding CRLF continuations remain invalid evidence, not stripped
+into valid values. Identical unfolded values deduplicate; distinct values remain
+separate. Entire IDs are 12 lowercase hex
 or 26 canonical uppercase Crockford digits with first digit 0–7. Neutral
 sessions follow the ADR's exact ASCII grammar. Recognized invalid trailers
 still contribute agent evidence. Values over 161 bytes (the maximum valid

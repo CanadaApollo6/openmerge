@@ -10,70 +10,22 @@ import (
 
 const maxDeclarationValue = 161 // longest valid neutral source:session-id
 
-var trailerLine = regexp.MustCompile(`^([A-Za-z0-9-]+)[ \t]*:[ \t]*(.*)$`)
 var sessionValue = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}:[A-Za-z0-9._-]{1,128}$`)
 var legacyID = regexp.MustCompile(`^[0-9a-f]{12}$`)
 
 type trailer struct{ key, value string }
 
-// finalTrailers fixes Git's colon separator and default trailer-block rules:
-// the last nonblank paragraph must be all trailers/continuations, or contain a
-// built-in Signed-off-by and at least 25 percent trailer lines. A title alone is
-// never a trailer block. Whitespace continuations unfold with one ASCII space.
-// A patch divider (---) ends the message; CRLF, column-zero # comments and
-// trailing blank lines are ignored. No host Git configuration is consulted.
-func finalTrailers(message string) []trailer {
-	message = strings.ReplaceAll(message, "\r\n", "\n")
-	var lines []string
-	for _, line := range strings.Split(message, "\n") {
-		if !strings.HasPrefix(line, "#") {
-			lines = append(lines, line)
-		}
-	}
-	for i, line := range lines {
-		if line == "---" {
-			lines = lines[:i]
-			break
-		}
-	}
-	for len(lines) > 0 && strings.Trim(lines[len(lines)-1], " \t\r") == "" {
-		lines = lines[:len(lines)-1]
-	}
-	start := len(lines)
-	for start > 0 && strings.Trim(lines[start-1], " \t\r") != "" {
-		start--
-	}
-	if start == 0 {
-		return nil
-	}
+// gitTrailerPairs decodes Git's colon-separated, unfolded --parse output.
+// Block detection, comment handling and continuation unfolding belong to Git.
+func gitTrailerPairs(parsed string) []trailer {
 	var out []trailer
-	count, recognized := 0, false
-	canFold := false
-	for _, line := range lines[start:] {
-		if strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") {
-			if canFold {
-				out[len(out)-1].value += " " + strings.Trim(line, " \t\r")
-				count++
-			}
-			continue
+	for line := range strings.SplitSeq(parsed, "\n") {
+		key, value, ok := strings.Cut(line, ":")
+		if ok {
+			out = append(out, trailer{ascii.Lower(key), strings.TrimPrefix(value, " ")})
 		}
-		m := trailerLine.FindStringSubmatch(line)
-		canFold = m != nil
-		if m == nil {
-			continue
-		}
-		key := ascii.Lower(m[1])
-		recognized = recognized || key == "signed-off-by"
-		out = append(out, trailer{key, strings.Trim(m[2], " \t\r")})
-		count++
 	}
-	if count == len(lines)-start || recognized && count*4 >= len(lines)-start {
-		for i := range out {
-			out[i].value = strings.Trim(out[i].value, " \t\r")
-		}
-		return out
-	}
-	return nil
+	return out
 }
 
 // ValidEntireID accepts lowercase legacy hex or canonical uppercase ULIDs.
@@ -93,11 +45,13 @@ func ValidEntireID(value string) bool {
 	return true
 }
 
-// ParseTrailers keeps distinct normalized declarations, including malformed
-// recognized values. Coauthor identities are matched separately by Classifier.
-func ParseTrailers(message string) []Declaration {
+// ParseGitTrailers consumes only the output of git interpret-trailers --parse
+// with colon separators, never a raw commit message. It keeps distinct values,
+// including malformed recognized declarations. Classifier handles coauthors.
+// The caller owns Git invocation, configuration isolation and completeness.
+func ParseGitTrailers(parsed string) []Declaration {
 	var out []Declaration
-	for _, t := range finalTrailers(message) {
+	for _, t := range gitTrailerPairs(parsed) {
 		if t.key != "entire-checkpoint" && t.key != "agent-session" {
 			continue
 		}

@@ -24,10 +24,10 @@ func TestIdentitySpoofingAndClassConflicts(t *testing.T) {
 		{"substring spoof", IdentityInput{AuthorMailbox: "x" + bot}, Undeclared},
 		{"domain suffix spoof", IdentityInput{AuthorMailbox: bot + ".evil"}, Undeclared},
 		{"unicode spoof", IdentityInput{AuthorMailbox: "humаn@example.com"}, Undeclared},
-		{"coauthor", IdentityInput{Message: "subject\n\nCO-AUTHORED-BY: Anything <" + bot + ">"}, Agent},
-		{"human coauthor alone", IdentityInput{Message: "subject\n\nCo-Authored-By: Person <human@example.com>"}, Undeclared},
-		{"coauthor display spoof", IdentityInput{Message: "subject\n\nCo-Authored-By: " + bot + " <unknown@example.com>"}, Undeclared},
-		{"multiple coauthors on one line", IdentityInput{Message: "subject\n\nCo-Authored-By: A <unknown@example.com>, B <" + bot + ">"}, Undeclared},
+		{"coauthor", IdentityInput{ParsedTrailers: "CO-AUTHORED-BY: Anything <" + bot + ">"}, Agent},
+		{"human coauthor alone", IdentityInput{ParsedTrailers: "Co-Authored-By: Person <human@example.com>"}, Undeclared},
+		{"coauthor display spoof", IdentityInput{ParsedTrailers: "Co-Authored-By: " + bot + " <unknown@example.com>"}, Undeclared},
+		{"multiple coauthors on one line", IdentityInput{ParsedTrailers: "Co-Authored-By: A <unknown@example.com>, B <" + bot + ">"}, Undeclared},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := Classify(c.Declarations(tc.input)); got != tc.want {

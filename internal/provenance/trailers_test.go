@@ -8,34 +8,29 @@ import (
 
 func TestTrailerCaseFoldingDuplicatesAndMalformed(t *testing.T) {
 	for _, tc := range []struct {
-		name, message string
-		values        []string
-		outcomes      []Outcome
+		name, parsed string
+		values       []string
+		outcomes     []Outcome
 	}{
-		{"case duplicate", "subject\n\nEntire-Checkpoint: abcdef012345\neNTIRE-cHECKPOINT: abcdef012345", []string{"abcdef012345"}, []Outcome{NotRequested}},
-		{"distinct", "subject\n\nAgent-Session: a:one\nAgent-Session: b:two", []string{"a:one", "b:two"}, []Outcome{NotRequested, NotRequested}},
-		{"folded neutral", "subject\n\nAgent-Session: a:\n\tone", []string{"a: one"}, []Outcome{InvalidValue}},
-		{"folded checkpoint", "subject\n\nEntire-Checkpoint: abcdef\n  012345", []string{"abcdef 012345"}, []Outcome{InvalidValue}},
-		{"CRLF whitespace", "subject\r\n\r\nAGENT-SESSION \t: a:one \t\r\n\r\n", []string{"a:one"}, []Outcome{NotRequested}},
-		{"empty", "subject\n\nEntire-Checkpoint:", []string{""}, []Outcome{InvalidValue}},
-		{"upper hex", "subject\n\nEntire-Checkpoint: ABCDEF012345", []string{"ABCDEF012345"}, []Outcome{InvalidValue}},
-		{"prose example", "subject\n\nExample: this is prose\n\n    Agent-Session: a:one", nil, nil},
-		{"nonfinal example", "subject\n\nAgent-Session: a:one\n\nMore explanation", nil, nil},
-		{"subject only", "Agent-Session: a:one", nil, nil},
-		{"prose example mixed with footer", "subject\n\nprose\nAgent-Session: a:one\nprose\nprose", nil, nil},
-		{"signed-off quarter", "subject\n\nprose\nSigned-off-by: A <a@example.com>\nAgent-Session: a:one\nprose\nprose\nprose\nprose\nprose", []string{"a:one"}, []Outcome{NotRequested}},
-		{"folded empty checkpoint", "subject\n\nEntire-Checkpoint:\n abcdef012345", []string{"abcdef012345"}, []Outcome{NotRequested}},
-		{"fixed comment prefix", "subject\n\nAgent-Session: a:one\n\n# comment", []string{"a:one"}, []Outcome{NotRequested}},
-		{"less than quarter", "subject\n\nprose\nprose\nAgent-Session: a:one\nprose\nprose", nil, nil},
-		{"patch divider", "subject\n\nAgent-Session: a:one\n---\ndiff", []string{"a:one"}, []Outcome{NotRequested}},
-		{"body divider", "subject\n\nbody\n---\n\nAgent-Session: a:one", nil, nil},
-		{"invalid source", "subject\n\nAgent-Session: Source:one", []string{"Source:one"}, []Outcome{InvalidValue}},
-		{"invalid session", "subject\n\nAgent-Session: source:https://x", []string{"source:https://x"}, []Outcome{InvalidValue}},
-		{"empty session", "subject\n\nAgent-Session: source:", []string{"source:"}, []Outcome{InvalidValue}},
-		{"non ASCII", "subject\n\nAgent-Session: a:é", []string{"a:é"}, []Outcome{InvalidValue}},
+		{"case duplicate", "Entire-Checkpoint: abcdef012345\neNTIRE-cHECKPOINT: abcdef012345\n", []string{"abcdef012345"}, []Outcome{NotRequested}},
+		{"distinct", "Agent-Session: a:one\nAgent-Session: b:two\n", []string{"a:one", "b:two"}, []Outcome{NotRequested, NotRequested}},
+		{"unfolded neutral", "Agent-Session: a: one\n", []string{"a: one"}, []Outcome{InvalidValue}},
+		{"unfolded checkpoint", "Entire-Checkpoint: abcdef 012345\n", []string{"abcdef 012345"}, []Outcome{InvalidValue}},
+		{"Git preserved CR", "Agent-Session: a:\r one\n", []string{"a:\r one"}, []Outcome{InvalidValue}},
+		{"Git emitted whitespace is evidence", "Agent-Session:  a:one \t\r\n", []string{" a:one \t\r"}, []Outcome{InvalidValue}},
+		{"empty", "Entire-Checkpoint: \n", []string{""}, []Outcome{InvalidValue}},
+		{"upper hex", "Entire-Checkpoint: ABCDEF012345\n", []string{"ABCDEF012345"}, []Outcome{InvalidValue}},
+		{"valid checkpoint", "Entire-Checkpoint: abcdef012345\n", []string{"abcdef012345"}, []Outcome{NotRequested}},
+		{"unrelated keys", "Signed-off-by: A <a@example.com>\nCo-authored-by: B <b@example.com>\n", nil, nil},
+		{"no trailers", "", nil, nil},
+		{"invalid source", "Agent-Session: Source:one\n", []string{"Source:one"}, []Outcome{InvalidValue}},
+		{"invalid session", "Agent-Session: source:https://x\n", []string{"source:https://x"}, []Outcome{InvalidValue}},
+		{"empty session", "Agent-Session: source:\n", []string{"source:"}, []Outcome{InvalidValue}},
+		{"non ASCII", "Agent-Session: a:é\n", []string{"a:é"}, []Outcome{InvalidValue}},
+		{"invalid encoding", "Agent-Session: a:\xff\n", []string{""}, []Outcome{InvalidEncoding}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ds := ParseTrailers(tc.message)
+			ds := ParseGitTrailers(tc.parsed)
 			var values []string
 			var outcomes []Outcome
 			for _, d := range ds {
@@ -75,7 +70,7 @@ func TestEntireIDStrictFormats(t *testing.T) {
 func TestTrailerValueBounds(t *testing.T) {
 	valid := strings.Repeat("a", 32) + ":" + strings.Repeat("z", 128)
 	for _, value := range []string{valid, valid + "z", strings.Repeat("x", 4096)} {
-		ds := ParseTrailers("subject\n\nAgent-Session: " + value)
+		ds := ParseGitTrailers("Agent-Session: " + value)
 		if len(ds) != 1 {
 			t.Fatal(ds)
 		}
@@ -90,12 +85,12 @@ func TestTrailerValueBounds(t *testing.T) {
 	}
 }
 
-func FuzzParseTrailers(f *testing.F) {
-	for _, s := range []string{"subject\n\nAgent-Session: a:one", "x\n\nEntire-Checkpoint: abcdef012345", "x\n\nEntire-Checkpoint:\n x", "x\r\n\r\nCo-Authored-By: bot <bot@example.com>"} {
+func FuzzParseGitTrailers(f *testing.F) {
+	for _, s := range []string{"Agent-Session: a:one", "Entire-Checkpoint: abcdef012345", "Entire-Checkpoint:\n x", "Co-Authored-By: bot <bot@example.com>"} {
 		f.Add(s)
 	}
 	f.Fuzz(func(t *testing.T, s string) {
-		a, b := ParseTrailers(s), ParseTrailers(s)
+		a, b := ParseGitTrailers(s), ParseGitTrailers(s)
 		if !reflect.DeepEqual(a, b) {
 			t.Fatal("nondeterministic")
 		}

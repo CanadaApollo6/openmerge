@@ -12,7 +12,7 @@ import (
 
 func digestFixture(t *testing.T) ([]Commit, []Rule) {
 	t.Helper()
-	commits := []Commit{{"b", true, nil}, {"a", true, ParseTrailers("subject\n\nEntire-Checkpoint: abcdef012345")}}
+	commits := []Commit{{"b", true, nil}, {"a", true, ParseGitTrailers("Entire-Checkpoint: abcdef012345")}}
 	checkpoint, ci := expression(t, "checkpoint-present"), expression(t, "check-success = ci")
 	rules := []Rule{
 		{When: expression(t, "provenance = human"), Conditions: &ci}, // definitely false; omitted
@@ -93,7 +93,7 @@ func TestDeclarationDigestConservativeBinding(t *testing.T) {
 		t.Fatal("fixture mutated")
 	}
 	for _, mutate := range []func(){
-		func() { changed[0].Declarations = ParseTrailers("subject\n\nAgent-Session: generic:one") },
+		func() { changed[0].Declarations = ParseGitTrailers("Agent-Session: generic:one") },
 		func() { changedRules[2].Approvals.Count = 3 },
 		func() { changedRules[2].When = expression(t, "approved-reviews-by = alice") },
 		func() { changedRules[1].When = expression(t, "#agent-commits > 0") },
@@ -130,8 +130,8 @@ func TestDeclarationDigestRejectsIncompleteAndMutableOutcomes(t *testing.T) {
 		}
 	}
 	// Invalid bytes remain distinguishable evidence rather than JSON replacement.
-	a := ParseTrailers("subject\n\nAgent-Session: a:\xff")
-	b := ParseTrailers("subject\n\nAgent-Session: a:\xfe")
+	a := ParseGitTrailers("Agent-Session: a:\xff")
+	b := ParseGitTrailers("Agent-Session: a:\xfe")
 	if a[0].Outcome != InvalidEncoding || b[0].Outcome != InvalidEncoding {
 		t.Fatal(a, b)
 	}
