@@ -873,11 +873,63 @@ func retentionPrefix(t *testing.T, before, after string) {
 			t.Fatal("lost rows", table)
 		}
 		for i, row := range old[table] {
-			if !bytes.Equal(row, next[table][i]) {
-				t.Fatal("rewritten row", table, i)
+			nextRow := next[table][i]
+			if table == "queues" {
+				row = retentionQueueEvidence(t, row)
+				nextRow = retentionQueueEvidence(t, nextRow)
+			}
+			if !bytes.Equal(row, nextRow) {
+				t.Fatalf("rewritten row %s %d: before=%s after=%s", table, i, row, nextRow)
 			}
 		}
 	}
+}
+
+func retentionQueueEvidence(t *testing.T, row json.RawMessage) []byte {
+	t.Helper()
+	var fields map[string]json.RawMessage
+	retentionMust(t, json.Unmarshal(row, &fields))
+	// NotifyDelivery sets this coalesced wakeup hint; TakeNotification clears it.
+	// Either boolean is valid at a snapshot, and neither carries journal evidence.
+	// Keep every other column, including initial_fence, the immutable replay seed.
+	if value := string(fields["reconcile_requested"]); value != "true" && value != "false" {
+		t.Fatal("invalid reconcile_requested", value)
+	}
+	delete(fields, "reconcile_requested")
+	evidence, err := json.Marshal(fields)
+	retentionMust(t, err)
+	return evidence
+}
+
+func TestRetentionInventoryNotifications(t *testing.T) {
+	dsn := newRetentionScratch(t).database()
+	db, err := store.Open(t.Context(), dsn)
+	retentionMust(t, err)
+	defer db.Close()
+	admin, err := pgx.Connect(t.Context(), dsn)
+	retentionMust(t, err)
+	defer func() { retentionMust(t, admin.Close(context.Background())) }()
+	id, err := db.EnsureQueue(t.Context(), store.QueueKey{Installation: "7", Repository: "acme/retention", BaseBranch: "main"})
+	retentionMust(t, err)
+	_, err = db.Append(t.Context(), id, []queue.Event{queue.FenceInitialized{Token: "retention-fence"}}, "")
+	retentionMust(t, err)
+	before := retentionSQL(t, admin, retentionInventorySQL)
+	retentionMust(t, db.Notify(t.Context(), id, "retention-notification"))
+	pending := retentionSQL(t, admin, retentionInventorySQL)
+	if before == pending {
+		t.Fatal("notification did not change inventory")
+	}
+	retentionPrefix(t, before, pending)
+	requested, err := db.TakeNotification(t.Context(), id)
+	retentionMust(t, err)
+	if !requested {
+		t.Fatal("notification was not pending")
+	}
+	after := retentionSQL(t, admin, retentionInventorySQL)
+	if pending == after {
+		t.Fatal("consuming notification did not change inventory")
+	}
+	retentionPrefix(t, pending, after)
 }
 
 // The matrix is deliberately checked for completeness: deleting one family's
