@@ -1,0 +1,26 @@
+[
+  {
+    "Forge": "github:https://github.com",
+    "Installation": "123",
+    "Namespace": "omj1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "ChangeID": "chg1_0000000000000000000000000000000000000000000000000000000000000001",
+    "Revision": 0,
+    "URI": "openmerge-change:v1/github%3Ahttps%3A%2F%2Fgithub.com/123/omj1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/chg1_0000000000000000000000000000000000000000000000000000000000000001"
+  },
+  {
+    "Forge": "github:https://github.com",
+    "Installation": "123",
+    "Namespace": "omj1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "ChangeID": "chg1_0000000000000000000000000000000000000000000000000000000000000001",
+    "Revision": 7,
+    "URI": "openmerge-change:v1/github%3Ahttps%3A%2F%2Fgithub.com/123/omj1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/chg1_0000000000000000000000000000000000000000000000000000000000000001@7"
+  },
+  {
+    "Forge": "github:https://git.example:8443",
+    "Installation": "org /team+%:@?&=é",
+    "Namespace": "omj1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "ChangeID": "chg1_0000000000000000000000000000000000000000000000000000000000000001",
+    "Revision": 18446744073709551615,
+    "URI": "openmerge-change:v1/github%3Ahttps%3A%2F%2Fgit.example%3A8443/org%20%2Fteam%2B%25%3A%40%3F%26%3D%C3%A9/omj1_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/chg1_0000000000000000000000000000000000000000000000000000000000000001@18446744073709551615"
+  }
+]
