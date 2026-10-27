@@ -12,7 +12,8 @@ import (
 )
 
 // Candidate holds future additions separately from the public configuration.
-// Neither config.Load nor any runtime package imports this package.
+// config.Load does not import this package. The internal 4a seam cannot publish
+// candidate additions through the public loader.
 type Candidate struct {
 	Config       config.Config
 	Requirements map[string][]Rule

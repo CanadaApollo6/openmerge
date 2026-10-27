@@ -85,8 +85,8 @@ func TestNoNetworkPolicyValidationAndIdentity(t *testing.T) {
 	// Definitions are immutable across caller edits and returned copies.
 	before := original.Rules()[0].Approvals.Count
 	rule.Approvals.Count = 99
-	copy := original.Rules()
-	copy[0].Approvals.Count = 42
+	returned := original.Rules()
+	returned[0].Approvals.Count = 42
 	if original.Rules()[0].Approvals.Count != before {
 		t.Fatal("policy aliased caller")
 	}
