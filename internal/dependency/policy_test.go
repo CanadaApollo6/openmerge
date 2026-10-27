@@ -49,7 +49,10 @@ func TestCandidatePolicySchemaAgreement(t *testing.T) {
 		{"mode: ordered\nallow_from: [https://github.com/acme/api, https://github.com/acme/api]", false},
 		{"mode: ordered\nallow_to: [42]", false}, {"mode: ordered\nallow_from: null", false}, {"mode: ordered\nallow_to: [https://github.com/acme/api/]", false},
 		{"mode: ordered\nallow_to: ['https://github.com/acme/api?x']", false},
-		{"mode: ordered\nsingle_maintainer: true", false},
+		{"mode: ordered\nsingle_maintainer: true", true},
+		{"mode: ordered\nsingle_maintainer: false", true},
+		{"mode: ordered\nsingle_maintainer: 'true'", false},
+		{"mode: ordered\nsingle_maintainer: null", false},
 	} {
 		t.Run(tc.yaml, func(t *testing.T) {
 			_, err := ParsePolicyCandidate([]byte(tc.yaml))
@@ -118,7 +121,7 @@ func FuzzParsePolicyCandidate(f *testing.F) {
 			t.Fatal(err)
 		}
 		reparsed, err := ParsePolicyCandidate(raw)
-		if err != nil || policy.Mode != reparsed.Mode || !slices.Equal(policy.AllowFrom, reparsed.AllowFrom) || !slices.Equal(policy.AllowTo, reparsed.AllowTo) {
+		if err != nil || policy.Mode != reparsed.Mode || policy.SingleMaintainer != reparsed.SingleMaintainer || !slices.Equal(policy.AllowFrom, reparsed.AllowFrom) || !slices.Equal(policy.AllowTo, reparsed.AllowTo) {
 			t.Fatalf("roundtrip: %+v %v", reparsed, err)
 		}
 	})
